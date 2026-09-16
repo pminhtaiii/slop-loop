@@ -2,13 +2,15 @@
 
 Label: wayfinder:map
 
+Canonical map: [Local Coding Agent MVP](https://github.com/pminhtaiii/slop-loop/issues/1). Its six decision tickets are GitHub sub-issues; GitHub records which tickets block others.
+
 ## Destination
 
 An implementation-ready specification for a secure local coding agent MVP, aligned with the context pack: an interactive CLI that answers questions about Python repositories and fixes a small bug in an isolated Git worktree, runs trusted checks, and returns a reviewable diff and verification report.
 
 ## Notes
 
-The agreed baseline is recorded in [First Local MVP](../../coding-agent-context/context/project-overview.md#first-local-mvp). Read the context pack before resolving a ticket, especially `tool-policy.md` and `progress-checker.md`. Use the grilling and domain-modeling skills for human decisions. This map plans the MVP; it does not implement the runtime. Tickets are local Markdown issues under `issues/`.
+The agreed baseline is recorded in [First Local MVP](../../coding-agent-context/context/project-overview.md#first-local-mvp). Read the context pack before resolving a ticket, especially `tool-policy.md` and `progress-checker.md`. Use the grilling and domain-modeling skills for human decisions. This map plans the MVP; it does not implement the runtime. Resolve decisions on the GitHub issues linked from the canonical map.
 
 ## Decisions so far
 
