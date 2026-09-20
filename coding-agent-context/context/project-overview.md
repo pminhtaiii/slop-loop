@@ -2,7 +2,7 @@
 
 ## About the Project
 
-This project is a secure, extensible **coding agent system** designed to operate directly on software repositories.
+Slop Loop is a secure, extensible **coding-agent system** designed to operate directly on software repositories.
 
 The system is intended to behave less like a code-generation chatbot and more like an autonomous software engineering runtime: it can understand a repository, reason about a task, inspect relevant code, plan changes, modify files, execute verification, interact with version control and CI systems, and produce auditable engineering outcomes.
 
@@ -16,9 +16,22 @@ The long-term goal is to provide a general foundation for building reliable codi
 
 ---
 
+## Phase 0 Foundation
+
+Phase 0 records and verifies the application foundation only. It does not implement the future coding-agent loop, model integration, repository tools, sandbox, CLI, or Git delivery.
+
+The implementation baseline is TypeScript on Node.js 24 LTS, pnpm with a pinned version and lockfile, native ESM, strict TypeScript, and tsc compilation without a bundler. The application is private, single-package, and single-process, designed to evolve as a modular monolith when real subsystem boundaries appear.
+
+Phase 0 uses Zod 4 for strict configuration validation, Pino behind a small createLogger factory, Vitest for source-level behavior tests, type-aware ESLint, and Prettier. The source tree is limited to config.ts, logging.ts, and index.ts with focused tests for configuration, logging, and compiled startup.
+
+SLOP_LOOP_LOG_LEVEL is the only setting and defaults to info. loadConfig accepts an injectable environment map, inspects only SLOP_LOOP_* names, rejects unknown names in that namespace, validates strictly, and returns a typed frozen configuration object. Operational logs remain separate from future canonical audit evidence.
+
+pnpm test runs source behavior; pnpm build creates dist/; pnpm smoke executes node dist/index.js. The smoke path does not import src/, use package self-reference, or require an exports map. pnpm format rewrites intentionally, while pnpm format:check verifies only.
+
+Ubuntu CI runs frozen installation, lint, format:check, typecheck, test, build, and smoke. Windows CI runs frozen installation, test, build, and smoke. Publication, SDK, CLI behavior, coverage gates, tarball tests, microservices, workspaces, and dependency-boundary tooling are deferred.
 ## First Local MVP
 
-The first usable version is an interactive terminal CLI for one developer and Python repositories. It supports two switchable session modes: `Ask` answers questions using read-only repository tools, while `Edit` can update or create text files and run trusted verification. The developer may ask what the agent is doing without stopping the task. `/clear` or exiting starts the next interaction with empty context and no file permissions; the MVP does not persist session history.
+The first usable product after Phase 0 is an interactive terminal CLI for one developer and Python target repositories. It supports two switchable session modes: `Ask` answers questions using read-only repository tools, while `Edit` can update or create text files and run trusted verification. The developer may ask what the agent is doing without stopping the task. `/clear` or exiting starts the next interaction with empty context and no file permissions; the MVP does not persist session history.
 
 The MVP edits the developer's current checkout. Before mutation, the agent requests permission for each canonical repository-relative path and intended update/create operation; one request may list several path-operation pairs. Permission lasts for the current session and branch state. A branch switch preserves the conversation, but a previously changed path requires reauthorization if a later task needs to edit it. External changes invalidate permission for the affected file. The agent does not delete or rename files in the MVP.
 
@@ -1029,3 +1042,5 @@ It is how much useful engineering work the system can safely automate while pres
 - Permission binds a canonical repository-relative path and intended operation: update or create. Create uses exclusive creation and fails if the target exists.
 - Canonical JSONL uses UTF-8, sorted keys, compact separators, preserved Unicode, rejected non-finite numbers, UTC RFC 3339 timestamps with exactly three fractional digits and Z, and LF endings. Events form a SHA-256 chain through previous_event_hash and event_hash. A session manifest records session_id, event count, and final hash.
 - BUDGET_EXHAUSTED records the budget, configured limit, observed usage, and whether the triggering tool result was committed to audit before the stop.
+
+

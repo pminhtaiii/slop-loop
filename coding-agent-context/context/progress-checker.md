@@ -14,33 +14,38 @@ Overall status:
 PLANNING / CONTEXT FOUNDATION
 ```
 
-The context package has been defined. Runtime implementation status must be updated as code is built.
+The TypeScript/Node 24 single-process foundation and Phase 0 design frontier are recorded. Runtime implementation status must be updated as code is built.
 
-The agreed first MVP is an interactive local CLI for Python repositories. It supports `Ask` and `Edit` modes in one in-memory session, repository questions, permission-gated updates and creation in the current checkout, trusted Docker verification, progress questions, and a final diff and verification report. The developer owns Git writes. The first model provider remains undecided. Worktrees, session persistence, API/web, active-task scope changes, and remote Git delivery are deferred. These are planned behaviors, not completed capabilities.
+The agreed future product MVP is an interactive local CLI implemented in TypeScript for Python target repositories. It supports `Ask` and `Edit` modes in one in-memory session, repository questions, permission-gated updates and creation in the current checkout, trusted Docker verification, progress questions, and a final diff and verification report. The developer owns Git writes. The first model provider remains undecided. Worktrees, session persistence, API/web, active-task scope changes, and remote Git delivery are deferred. These are planned behaviors, not completed capabilities.
 
 ---
 
-## Phase 0 — Project Foundation
+## Phase 0 — TypeScript Application Foundation
 
-- [ ] Initialize Python project and package layout.
-- [ ] Configure formatter/linter/typechecker.
-- [ ] Add pytest structure.
-- [ ] Add configuration model.
-- [ ] Add structured logging.
-- [ ] Add CI baseline.
-- [x] Define context architecture and development rules.
+- [ ] Pin Node.js 24 LTS and pnpm version; create the private single-package manifest and lockfile.
+- [ ] Configure native ESM, strict TypeScript, tsc build to dist/, and no bundler.
+- [ ] Configure type-aware ESLint and Prettier.
+- [ ] Add only src/config.ts, src/logging.ts, and src/index.ts.
+- [ ] Add Vitest tests for configuration and logging plus a separate compiled smoke path.
+- [ ] Implement strict Zod 4 configuration for SLOP_LOOP_LOG_LEVEL with default info, injectable environment map, unknown-prefixed-variable rejection, and frozen typed output.
+- [ ] Implement the small Pino createLogger factory with controlled nested fields and explicit redaction.
+- [ ] Add pnpm format and pnpm format:check with explicit rewrite/check semantics.
+- [ ] Add Ubuntu full CI and Windows test/build/smoke CI.
+- [x] Record the TypeScript, Node 24, single-process, private-package, and future modular-monolith decision.
+- [x] Synchronize context, glossary, architecture, standards, libraries, workflow, policy, and progress.
+
+Phase 0 must not create speculative subsystem directories, workspaces, microservices, package self-reference, exports, publication, SDK, CLI behavior, coverage gates, deployment, or model/provider behavior.
 
 Exit gate:
 
-```text
-lint passes
-typecheck passes
-unit test harness runs
-CI executes on pull request
-```
-
----
-
+~~~text
+pnpm lint
+pnpm format:check
+pnpm typecheck
+pnpm test
+pnpm build
+pnpm smoke
+~~~
 ## Phase 1 — Task Domain & Orchestrator
 
 - [ ] Define `TaskContext`.
@@ -453,3 +458,5 @@ Acceptance:
 - [ ] Modified verification config is deferred to a later validated session.
 - [ ] Canonical JSONL, event hash chain, and manifest verify deterministically.
 - [ ] BUDGET_EXHAUSTED records budget, limit, usage, and audit ordering.
+
+

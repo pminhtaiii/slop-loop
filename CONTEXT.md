@@ -1,8 +1,25 @@
-# Coding Agent Context
+# Slop Loop Context
 
-Shared language for the local coding agent and its developer-facing CLI.
+Shared language for Slop Loop, the local coding-agent system and its developer-facing CLI.
 
 ## Language
+
+**Slop Loop**:
+The product being built: a controlled local coding-agent application. The name defines the SLOP_LOOP_* application configuration namespace but does not yet define a public package, SDK, or CLI contract.
+_Avoid_: Coding Agent as a product name, Slop
+
+**Application configuration variable**:
+An environment variable owned by Slop Loop and prefixed with SLOP_LOOP_; Phase 0 recognizes only explicitly declared names within this namespace.
+_Avoid_: CODING_AGENT_*, SLOP_*, unprefixed application settings
+
+**Target repository**:
+The developer repository on which the coding agent performs analysis, proposes changes, and eventually runs trusted verification profiles. The first target repositories are Python repositories; pytest, Ruff, and mypy belong to those repositories, not to Slop Loop's implementation.
+_Avoid_: host repository, implementation repository
+
+**Modular monolith**:
+A single-process application whose real subsystem boundaries are introduced only when concrete behavior creates them. Phase 0 starts without speculative subsystem directories or dependency-boundary machinery.
+_Avoid_: microservices, distributed MVP
+
 
 **Developer prompt**:
 The request a developer enters to start a repository question or code-editing task.
@@ -35,6 +52,9 @@ _Avoid_: agent-owned branch
 **Verification profile**:
 A trusted, named set of checks such as tests, lint, type checking, or a build that the runtime can execute in an ephemeral sandbox copy. The model cannot supply arbitrary shell commands.
 _Avoid_: arbitrary command, host execution
+**Operational log**:
+Structured diagnostic output used to understand application behavior. It is separate from canonical audit evidence and is not the authorization record.
+_Avoid_: audit event, audit chain
 **Audit event**:
 One bounded, structured record in a session's canonical append-only JSONL evidence stream.
 _Avoid_: log message, database row
@@ -64,3 +84,5 @@ _Avoid_: model command, live repository policy
 **Audit chain**:
 Canonical UTF-8 JSONL events linked by SHA-256 hashes and closed by a manifest with event count and final hash.
 _Avoid_: database authority, debug log
+
+

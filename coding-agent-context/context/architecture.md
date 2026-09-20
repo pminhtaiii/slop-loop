@@ -8,24 +8,33 @@ Runtime behavior must not be assumed implemented merely because it appears here.
 
 ---
 
+## Phase 0 Topology
+
+The MVP starts as one private, single-package, single-process application, designed to evolve as a modular monolith as real subsystem boundaries appear. Phase 0 creates no speculative subsystem folders, workspace packages, microservices, dependency-boundary tooling, package self-reference, exports map, publication, SDK, CLI behavior, coverage gate, or bundler.
+
+The implementation baseline is Node.js 24 LTS, pnpm with a pinned version and lockfile, native ESM, strict TypeScript, tsc compilation to dist/, Zod 4, Pino, Vitest, type-aware ESLint, and Prettier.
+
+Phase 0 source files are config.ts, logging.ts, and index.ts; focused tests cover configuration and logging, while smoke is separate from pnpm test. pnpm build produces dist/ and pnpm smoke executes node dist/index.js. SLOP_LOOP_LOG_LEVEL defaults to info; configuration is injectable, strict, unknown-prefixed names are rejected, and returned config is frozen. Operational logs remain separate from canonical audit evidence.
+
+CI runs the full lint, format:check, typecheck, test, build, and smoke sequence on Ubuntu; Windows runs install, test, build, and smoke.
 ## Stack
 
 The following is the recommended MVP baseline. Replace individual technologies only through an explicit architecture decision while preserving the boundaries described in this document.
 
 | Layer | Tool / Technology | Purpose |
 | --- | --- | --- |
-| Language | Python 3.11+ | Agent runtime and deterministic orchestration |
-| API | FastAPI | Task submission and status/result API |
-| Validation | Pydantic v2 | Strict wire models and policy contracts |
-| LLM Client | Provider-neutral adapter | OpenAI-compatible or other model provider |
-| Sandbox | Docker | Ephemeral isolated task execution |
+| Language | TypeScript, strict mode | Slop Loop implementation |
+| API | Future transport decision | Task submission and status/result API after Phase 0 |
+| Validation | Zod 4 | Strict Phase 0 configuration and future contracts |
+| LLM Client | Provider-neutral adapter | Future model-provider integration |
+| Sandbox | Docker, future product behavior | Ephemeral isolated task execution |
 | Audit evidence | Append-only JSONL | Canonical session events; databases are rebuildable indexes only |
 | Git | Native Git CLI behind controlled adapter | Diff, branch, status, patch evidence |
-| CI | GitHub Actions initially | Repository-level validation |
+| CI | GitHub Actions, Ubuntu and Windows | Phase 0 quality gates |
 | Observability | Structured JSONL + OpenTelemetry optional | Audit evidence, traces, and metrics |
-| Testing | pytest | Unit, integration, security/boundary tests |
+| Testing | Vitest for Slop Loop; target profiles for repositories | Source behavior and future boundary tests |
 
-The first product interface is an interactive local CLI. FastAPI is a later transport. The provider-ready prototype uses a deterministic mock `ModelClient`; one real provider implementation and a small end-to-end integration test are required before the product is called a usable MVP. Provider selection remains open.
+Phase 0 is a private compiled application foundation. The first product interface after Phase 0 is an interactive local CLI for Python target repositories; an HTTP transport is later. The provider-ready prototype uses a deterministic mock `ModelClient`; one real provider implementation and a small end-to-end integration test are required before the product is called a usable MVP. Provider selection remains open.
 
 ---
 
@@ -60,8 +69,21 @@ Model-visible Result
 
 ---
 
-## Project Structure
+## Future Conceptual Project Structure
 
+The following source tree is future conceptual architecture; it is not created during Phase 0. Phase 0 uses only the minimal tree below.
+
+~~~text
+src/
+  config.ts
+  logging.ts
+  index.ts
+
+tests/
+  config.test.ts
+  logging.test.ts
+  smoke.test.ts
+~~~
 ```text
 /
 ├── AGENTS.md
@@ -157,7 +179,7 @@ Model-visible Result
 
 ## 1. API Layer (Later)
 
-When added, the API is a thin transport boundary. The MVP CLI invokes the same orchestrator directly.
+When added, an API transport is a thin boundary. The future CLI invokes the same orchestrator directly; the transport framework remains undecided.
 
 Responsibilities:
 
@@ -378,7 +400,7 @@ The developer owns branch switching, staging, commits, and every remote Git acti
 
 ## 9. Verification Service
 
-Verification commands come from trusted configuration, not arbitrary model strings.
+Verification commands come from trusted configuration, not arbitrary model strings. The first target repositories are Python repositories; pytest, Ruff, and mypy are target-repository profiles, not Slop Loop implementation dependencies.
 
 Example:
 
@@ -688,3 +710,5 @@ The agent must not bypass repository branch protections.
 - Permission binds a canonical repository-relative path and intended operation: update or create. Create uses exclusive creation and fails if the target exists.
 - Canonical JSONL uses UTF-8, sorted keys, compact separators, preserved Unicode, rejected non-finite numbers, UTC RFC 3339 timestamps with exactly three fractional digits and Z, and LF endings. Events form a SHA-256 chain through previous_event_hash and event_hash. A session manifest records session_id, event count, and final hash.
 - BUDGET_EXHAUSTED records the budget, configured limit, observed usage, and whether the triggering tool result was committed to audit before the stop.
+
+

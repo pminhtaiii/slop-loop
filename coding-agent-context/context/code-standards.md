@@ -21,82 +21,59 @@ The agent operates like a careful senior engineer:
 
 ---
 
-## Python
+## TypeScript and Node.js
 
-- Python 3.11+.
-- Type all public functions and methods.
-- `mypy` or equivalent type checking should pass for production modules.
-- Use `from __future__ import annotations` where useful.
-- Prefer immutable/frozen data models for security contracts.
-- Never use `eval`, `exec`, dynamic code import from model-controlled strings, or pickle on untrusted data.
-- Never call `subprocess` directly from arbitrary business modules.
-- All process execution goes through the sandbox/execution adapter.
-- Catch exceptions only when adding context or translating to a typed domain error.
-- Never silently swallow exceptions.
-- Use `pathlib.Path`, never manual string path concatenation for security-sensitive paths.
+- Use Node.js 24 LTS and TypeScript in strict mode.
+- Use native ESM and tsc; no bundler in Phase 0.
+- Use pnpm only, with a pinned package-manager version and committed lockfile.
+- Compile the private application to dist/.
+- Do not use eval, Function constructors, dynamic model-controlled imports, or unsafe deserialization.
+- Keep future process execution, filesystem mutation, network access, and secrets behind deterministic adapters.
 
----
+Phase 0 source structure is limited to config.ts, logging.ts, and index.ts. Future architectural modules and test directories are introduced only when their first real behavior exists.
 
-## Pydantic Models
+Phase 0 commands are: pnpm format for intentional rewrite; pnpm format:check for verification only; pnpm lint; pnpm typecheck; pnpm test for Vitest source tests; pnpm build; and pnpm smoke for node dist/index.js.
 
-All API, tool, and policy wire contracts must:
+The repository policy says coding agents format only files they intentionally modify. This is a code-standard policy, not a Phase 0 model capability.
 
-```python
-from pydantic import BaseModel, ConfigDict
+## Runtime Validation (Zod 4)
 
-class ToolCall(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-```
+Use Zod 4 for strict runtime configuration and future external/model contracts. Prefer closed objects, explicit enums, bounded strings and collections, and validation before policy or execution.
+
+Phase 0 recognizes only SLOP_LOOP_LOG_LEVEL under the SLOP_LOOP_* namespace, defaults it to info, rejects unknown prefixed names, accepts an injectable environment map, and returns typed frozen configuration.
 
 Rules:
-
-- `extra="forbid"` for external or model-produced structures.
-- Constrain strings, lists, numeric ranges, and enum values.
-- Do not accept arbitrary nested dictionaries when a typed schema is possible.
-- Validation must occur before policy evaluation.
-- Validation errors must not trigger tool execution.
-
----
+- Reject unknown keys where a closed object is intended.
+- Do not pass unvalidated plain objects into policy, tools, logging, or execution.
+- Validation errors must never trigger privileged work.
 
 ## Module Boundaries
 
-Production dependency direction:
+Phase 0 has no real subsystem modules and does not enforce a dependency graph. Do not create speculative orchestration, policy, tools, sandbox, audit, or repository directories.
+
+When those boundaries appear with real behavior, keep contracts narrow and maintain this direction:
 
 ```text
-api
- ↓
+interfaces / contracts
+  ↓
 orchestration
- ↓
-llm --------------------┐
- ↓                      │
-tool protocol           │
- ↓                      │
-policy                   │
- ↓                      │
-tools                    │
- ↓                      │
-sandbox / repository ----┘
-```
-
-Cross-cutting:
-
-```text
-audit
-config
-domain contracts
+  ↓
+policy and capability checks
+  ↓
+tools and verification
+  ↓
+sandbox / repository / integrations
 ```
 
 Rules:
+- model adapters cannot authorize actions;
+- tools cannot bypass policy;
+- policy cannot depend on model responses;
+- sandbox contains no model logic;
+- audit remains observational, never an authorization dependency;
+- the composition root may wire concrete adapters;
+- circular dependencies are forbidden.
 
-- `llm/` cannot import Docker or subprocess backends.
-- `tools/` cannot bypass `policy/`.
-- `policy/` cannot depend on model responses.
-- `sandbox/` contains no LLM logic.
-- `api/` cannot invoke tools directly.
-- `audit/` must not become an authorization dependency.
-- Circular dependencies are forbidden.
-
----
 
 ## Orchestrator Rules
 
@@ -121,12 +98,11 @@ without hard external bounds.
 Preferred:
 
 ```python
-for _ in range(budget.max_steps):
-    transition = runner.step(state)
-    if transition.terminal:
-        break
-else:
-    raise RetryBudgetExhausted()
+for (let step = 0; step < budget.maxSteps; step += 1) {
+  const transition = runner.step(state);
+  if (transition.terminal) break;
+}
+// Exhaustion is handled as a typed terminal outcome.
 ```
 
 ---
@@ -295,7 +271,7 @@ Client/model-visible messages should describe the class of failure without leaki
 
 ## Test Standards
 
-Every behavior should be tested at the lowest useful level.
+Slop Loop source behavior uses Vitest. Every behavior should be tested at the lowest useful level.
 
 ### Unit Tests
 
@@ -373,20 +349,17 @@ If an existing test is believed to be incorrect, document the conflict and requi
 
 ## Naming
 
-### Python
+### TypeScript
 
-- modules: `snake_case.py`
-- functions: `snake_case`
-- variables: `snake_case`
-- classes: `PascalCase`
-- constants: `UPPER_SNAKE_CASE`
-- private implementation details: leading `_`
+- files: descriptive kebab-free names such as config.ts and logging.ts;
+- functions and variables: camelCase;
+- types, interfaces, classes, and enums: PascalCase;
+- constants: UPPER_SNAKE_CASE when genuinely constant;
+- avoid vague names such as Manager, Helper, Data, Thing, or Utils2;
 
 ### Domain Names
 
 Prefer explicit security semantics:
-
-Good:
 
 ```text
 ToolCapability
@@ -397,17 +370,7 @@ TaskBudget
 WorkspaceBoundary
 ```
 
-Avoid vague names:
-
-```text
-Manager
-Helper
-Data
-Thing
-Utils2
-```
-
----
+Python naming rules apply only inside target repositories, not to Slop Loop implementation.
 
 ## Function Design
 
@@ -448,3 +411,5 @@ Before marking a task complete:
 - Are logs free of secrets?
 - Are all tests green?
 - Is the final diff minimal and explainable?
+
+

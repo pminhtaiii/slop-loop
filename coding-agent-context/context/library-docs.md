@@ -33,80 +33,23 @@ No library feature may be used to bypass project policy.
 
 ## MVP Classification
 
-Implemented MVP dependencies are Python 3.11+, standard-library `argparse`, Pydantic v2, a Docker adapter, trusted `subprocess` and read-only Git adapters, a provider-scoped HTTP client, and repository-configured pytest/Ruff/mypy profiles. FastAPI, databases, OpenTelemetry, Greptile, Git-provider integration, and session persistence are future or optional references.
+Phase 0 implementation dependencies are Node.js 24 LTS, native ESM TypeScript, pnpm, Zod 4, Pino, Vitest, type-aware ESLint, Prettier, and tsc. There is no bundler. pytest, Ruff, and mypy are trusted verification tools in the first Python target repositories, not Slop Loop dependencies. Docker, process adapters, Git, provider HTTP, audit persistence, and session behavior are future product concerns.
 
 ---
 
-## `argparse`
+## Node.js Runtime and pnpm
 
-Use standard-library `argparse` for CLI startup options. The interactive terminal layer supplies labeled `Ask` / `Edit` controls plus typed `/mode ask`, `/mode edit`, and `/clear` fallbacks. Mode changes are developer actions handled by policy code, never model tool calls.
+Use Node.js 24 LTS APIs and native ESM. pnpm is the only package manager; pin its version and commit the lockfile. Use tsc for the private dist/ artifact and do not add a bundler in Phase 0.
 
----
+The Phase 0 scripts are pnpm format for intentional rewrite, pnpm format:check for verification only, pnpm lint, pnpm typecheck, pnpm test for Vitest source behavior, pnpm build, and pnpm smoke for node dist/index.js.
+## HTTP Transport — Future
 
-## FastAPI — Future
+A future HTTP boundary may submit tasks and return status/results. It remains a thin transport layer, validates external input with Zod, delegates to orchestration, never invokes tools directly, and never embeds policy logic. The framework is intentionally undecided.
+## Vitest, ESLint, and Prettier
 
-### Purpose
+Vitest tests Slop Loop source behavior and must not depend on dist/ existing. ESLint uses type-aware TypeScript rules. Prettier is explicit: pnpm format rewrites intentionally and pnpm format:check verifies without changing files.
 
-Thin HTTP boundary for:
-
-- task submission;
-- task/result lookup;
-- health endpoints.
-
-### Rules
-
-- Routes validate request models using Pydantic.
-- Routes never call sandbox/process adapters directly.
-- Routes delegate to application/orchestration services.
-- Internal exceptions map to stable error responses.
-- Health endpoints do not invoke the LLM.
-
-Example:
-
-```python
-@router.post("/tasks", response_model=TaskAccepted)
-async def create_task(
-    request: CreateTaskRequest,
-    service: TaskService = Depends(get_task_service),
-) -> TaskAccepted:
-    return await service.create(request)
-```
-
----
-
-## Pydantic v2
-
-### Purpose
-
-Strict validation for:
-
-- API payloads;
-- tool calls;
-- tool outputs;
-- capability manifests;
-- policy configuration;
-- audit events.
-
-### Required Pattern
-
-```python
-from pydantic import BaseModel, ConfigDict, Field
-
-class ReadFileArgs(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    path: str = Field(min_length=1, max_length=1024)
-    max_bytes: int = Field(default=65536, ge=1, le=65536)
-```
-
-### Rules
-
-- `extra="forbid"` for model-produced contracts.
-- Use enums/Literals for closed value sets.
-- Bound arrays and strings.
-- Do not pass unvalidated `dict` objects into tool execution.
-
----
+Coding agents format only files they intentionally modify; this is repository policy, not a Phase 0 model capability.
 
 ## Docker SDK / Docker CLI Adapter
 
@@ -119,14 +62,11 @@ The project should isolate Docker-specific behavior behind `SandboxBackend`.
 Conceptual interface:
 
 ```python
-class SandboxBackend(Protocol):
-    async def create(self, spec: SandboxSpec) -> SandboxHandle: ...
-    async def execute(
-        self,
-        handle: SandboxHandle,
-        spec: ExecutionSpec,
-    ) -> ExecutionResult: ...
-    async def destroy(self, handle: SandboxHandle) -> None: ...
+interface SandboxBackend {
+  create(spec: SandboxSpec): Promise<SandboxHandle>;
+  execute(handle: SandboxHandle, spec: ExecutionSpec): Promise<ExecutionResult>;
+  destroy(handle: SandboxHandle): Promise<void>;
+}
 ```
 
 ### Rules
@@ -142,25 +82,23 @@ class SandboxBackend(Protocol):
 
 ---
 
-## subprocess
+## Node.js Process Execution
 
 ### Purpose
 
-Internal implementation detail for trusted host-side adapters only.
+Internal implementation detail for trusted adapters only. Node child_process APIs remain behind a deterministic execution adapter.
 
 ### Required Pattern
 
-```python
-result = subprocess.run(
-    argv,
-    cwd=workspace,
-    env=safe_env,
-    shell=False,
-    capture_output=True,
-    timeout=timeout_seconds,
-    check=False,
-)
-```
+~~~ts
+const result = await executor.run({
+  argv,
+  cwd: workspace,
+  env: safeEnv,
+  timeoutMs,
+  shell: false,
+});
+~~~
 
 ### Rules
 
@@ -203,7 +141,7 @@ git rev-parse --show-toplevel
 
 ### Purpose
 
-Primary Python test runner.
+Primary test runner for Python target repositories; it is not a Slop Loop implementation dependency.
 
 ### Usage
 
@@ -230,7 +168,7 @@ tests:
 
 ### Purpose
 
-Linting and formatting checks.
+Linting and formatting checks for Python target repositories; it is not a Slop Loop implementation dependency.
 
 Recommended profile:
 
@@ -248,7 +186,7 @@ Formatting should initially be a separate explicit operation rather than a hidde
 
 ### Purpose
 
-Static type checking for production modules.
+Static type checking for Python target repositories; it is not Slop Loop's TypeScript checker.
 
 Recommended profile:
 
@@ -302,11 +240,11 @@ Model-generated SQL is forbidden.
 
 ---
 
-## HTTP Client (`httpx`)
+## HTTP Client (Node fetch)
 
 ### Purpose
 
-The configured model-provider API in the MVP. Git-provider API use is future work.
+A future model-provider API adapter. Git-provider API use is future work. Node's configured fetch or another reviewed client remains behind the adapter.
 
 Rules:
 
@@ -355,10 +293,11 @@ No provider SDK may be imported throughout the codebase.
 
 Wrap the provider behind:
 
-```python
-class ModelClient(Protocol):
-    async def complete(self, request: ModelRequest) -> ModelResponse: ...
-```
+~~~ts
+interface ModelClient {
+  complete(request: ModelRequest): Promise<ModelResponse>;
+}
+~~~
 
 Rules:
 
@@ -421,3 +360,5 @@ Future dependency installation requires:
 - version constraint validation;
 - network egress restriction;
 - supply-chain scanning.
+
+
