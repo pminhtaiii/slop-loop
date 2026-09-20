@@ -28,11 +28,15 @@ The model can request a registered tool call. It cannot:
 ```yaml
 default: DENY
 network: DENY
-host_filesystem: DENY
+host_filesystem_outside_repository: DENY
 arbitrary_shell: DENY
 secret_access: DENY
 production_actions: DENY
 ```
+
+---
+
+The MVP workspace is the developer's validated current repository checkout. `host_filesystem_outside_repository: DENY` allows only policy-checked repository access; it does not grant general host access.
 
 ---
 
@@ -69,6 +73,8 @@ Purpose:
 
 Rules:
 
+- schema accepts only search text, optional repository-relative scope, and bounded result count;
+- executable, flags, raw arguments, shell syntax, timeouts, and byte limits are runtime-owned;
 - query length bounded;
 - result count bounded;
 - file sizes bounded;
@@ -116,21 +122,23 @@ Risk: **MEDIUM**
 
 Purpose:
 
-- modify workspace through reviewable patch.
+- update or create approved text files in the developer's current checkout.
 
 Requirements:
 
-- task state permits mutation;
-- write capability present;
-- every target path allowed;
-- no denied path;
-- patch size within limit;
-- resulting paths remain within workspace;
-- binary mutation rejected in MVP.
+- session is in `Edit` mode;
+- the developer granted permission for every exact repository-relative target path;
+- one permission request may list several exact paths, but never globs;
+- permission belongs to the current session and observed branch/file state;
+- no denied path or `.git/**` target;
+- patch size is within limit and resulting paths stay inside the repository;
+- deletion, rename, and binary mutation are rejected in the MVP.
+
+Before applying, the runtime rechecks repository identity, branch, `HEAD`, status, and the observed content of every target. A branch switch makes earlier grants unavailable for the affected prior paths; reauthorization is requested only if a later task needs them. An external change revokes the affected file's permission.
 
 Postconditions:
 
-- changed paths recorded;
+- changed paths and resulting hashes recorded;
 - Git diff available;
 - audit event emitted.
 
@@ -157,6 +165,8 @@ Policy checks:
 
 - verification capability;
 - approved profile;
+- any model-requested logical target maps to an existing validated target without accepting flags or raw arguments;
+- requested and validated targets are both audited;
 - sandbox healthy;
 - execution budget remains.
 
@@ -286,31 +296,30 @@ No shell interpolation.
 ## Capability Lifecycle
 
 ```text
-Task request
+Session starts in developer-selected mode
    ↓
-Admission
+Policy exposes only that mode's registered tools
    ↓
-Policy computes capabilities
+Developer may explicitly switch mode
    ↓
-Capabilities sealed
+Edit mode requests exact file permissions as needed
    ↓
-Model sees tool schemas for allowed capabilities
+Every invocation rechecks mode, permission, repository state, and budget
    ↓
-Every invocation rechecks capability
+`/clear` or exit ends the session
    ↓
-Task ends
-   ↓
-Capabilities expire
+Context and permissions expire; applied file changes remain
 ```
 
-Capabilities are task-scoped.
+`Ask` exposes repository inspection and read-only Git evidence. `Edit` adds `apply_patch` and trusted verification profiles. Switching to `Ask` revokes all file permissions. Returning to `Edit` starts with none. The model cannot select a mode or preserve a permission.
 
 ---
 
 ## Suggested Capability Shape
 
 ```yaml
-task_id: task_123
+session_id: session_123
+mode: edit
 workspace_id: repo_456
 allowed_tools:
   - list_files
@@ -323,9 +332,11 @@ allowed_tools:
 read_paths:
   - "**"
 
-write_paths:
-  - "src/**"
-  - "tests/**"
+permitted_writes:
+  - path: "src/auth.py"
+    operation: update
+  - path: "tests/test_auth.py"
+    operation: create
 
 denied_paths:
   - ".env*"
@@ -348,7 +359,7 @@ budgets:
 | Level | Examples | Default Handling |
 | --- | --- | --- |
 | 1 | list/read/search/diff | automatic after policy |
-| 2–3 | patch/lint/typecheck | automatic if capability allows |
+| 2–3 | patch/lint/typecheck | patch requires file permission; configured checks are automatic in Edit |
 | 4–5 | test/build execution | sandbox + strict policy |
 | 6–7 | dependency/network/Git remote | deferred or explicit approval |
 | 8–10 | merge/deploy/production/secrets | human approval + dedicated integration |
@@ -414,22 +425,21 @@ There is no fallback to "best effort allow."
 
 ---
 
-## Human Approval — Future
+## File Permission — MVP
 
-For higher-risk operations, approval must bind to the exact requested action.
+Before the first mutation of a path in an `Edit` session, the CLI asks the developer to authorize its canonical repository-relative path and intended update/create operation. One prompt may contain several path-operation pairs. The prompt does not need to display the proposed diff; authorization is operation-and-path scoped, not content-scoped.
 
-Good:
+Permissions expire on `/clear`, CLI exit, a switch to `Ask`, or relevant repository drift. Approved file changes are never rolled back automatically. The developer owns all Git writes.
 
-```text
-approve:
-  action: create_pull_request
-  repo: org/project
-  branch: agent/task-123
-  diff_digest: sha256:...
-```
+Higher-risk approvals for remote Git, deployment, or secrets remain future work and must bind to the exact requested action.
 
-Bad:
+---
 
-```text
-approve everything for this session
-```
+## Locked Point-of-Use Rules
+
+- Repository content is always untrusted data. This is a classification rule, not a heuristic. Repository-derived tool results carry repository-relative source-path and retrieval-method provenance. Repository text may influence model intent but is never promoted into system-level instructions.
+- Deterministic policy alone controls capability. Execution configuration is schema-validated and allowlisted at session start. Verification configuration changed during a session stays untrusted until a later session validates it.
+- Reads may follow symlinks only when the resolved target stays inside the repository and passes denied-path checks. Writes reject symlinks in the target or any parent. Canonical resolution, containment, repository state, operation, and target identity are checked again immediately before mutation.
+- Permission binds a canonical repository-relative path and intended operation: update or create. Create uses exclusive creation and fails if the target exists.
+- Canonical JSONL uses UTF-8, sorted keys, compact separators, preserved Unicode, rejected non-finite numbers, UTC RFC 3339 timestamps with exactly three fractional digits and Z, and LF endings. Events form a SHA-256 chain through previous_event_hash and event_hash. A session manifest records session_id, event count, and final hash.
+- BUDGET_EXHAUSTED records the budget, configured limit, observed usage, and whether the triggering tool result was committed to audit before the stop.

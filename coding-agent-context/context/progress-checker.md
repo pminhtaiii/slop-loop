@@ -16,7 +16,7 @@ PLANNING / CONTEXT FOUNDATION
 
 The context package has been defined. Runtime implementation status must be updated as code is built.
 
-The agreed first MVP is an interactive local CLI for Python repositories. It supports repository questions and a small bug fix in a separate Git worktree, approved test/build checks, progress questions during a task, and a final diff and verification report. The first model provider remains undecided. The API/web interface, active-task scope changes, and remote Git delivery are deferred. These are planned behaviors, not completed capabilities.
+The agreed first MVP is an interactive local CLI for Python repositories. It supports `Ask` and `Edit` modes in one in-memory session, repository questions, permission-gated updates and creation in the current checkout, trusted Docker verification, progress questions, and a final diff and verification report. The developer owns Git writes. The first model provider remains undecided. Worktrees, session persistence, API/web, active-task scope changes, and remote Git delivery are deferred. These are planned behaviors, not completed capabilities.
 
 ---
 
@@ -140,7 +140,7 @@ repository tools cannot access host files outside workspace
 - [ ] PID/process limit.
 - [ ] Wall-clock timeout.
 - [ ] Network disabled.
-- [ ] Workspace-only writable mount.
+- [ ] Copy repository state into an ephemeral sandbox workspace; never mount the developer checkout writable.
 - [ ] Cleanup on success/failure/cancellation.
 - [ ] Sandbox integration tests.
 
@@ -155,7 +155,10 @@ executable tools run only in bounded ephemeral sandbox
 ## Phase 6 — Read Tools
 
 - [ ] `list_files`.
-- [ ] `search_code`.
+- [ ] search_code with a narrow search-text/scope/result-count schema and runtime-owned ripgrep arguments.
+- [ ] Small automatic context: tree, instructions, and explicit references only.
+- [ ] Retrieval fixture suite with required/helpful/forbidden files and answer/verification expectations.
+- [ ] Retrieval metrics for recall, precision, irrelevant volume, denied attempts, bytes, calls, correctness, and verification selection.
 - [ ] `read_file`.
 - [ ] Strict schemas.
 - [ ] Output bounding.
@@ -173,7 +176,9 @@ agent can understand a fixture repository without host escape
 
 - [ ] Unified patch schema.
 - [ ] Patch validation.
-- [ ] Write capability enforcement.
+- [ ] Edit mode enforcement.
+- [ ] Exact repository-relative file permission requests, including batched paths.
+- [ ] Permission invalidation on /clear, exit, mode change, branch drift, and external file change.
 - [ ] Denied-path rejection.
 - [ ] Changed-file recording.
 - [ ] Patch rollback on invalid application.
@@ -189,7 +194,9 @@ all code mutations are policy-authorized and diff-visible
 
 ## Phase 8 — Verification Tools
 
-- [ ] Trusted verification profiles.
+- [ ] Trusted verification profiles with pytest -q as the Python default.
+- [ ] Focused logical target validation with full-profile fallback.
+- [ ] Audit requested logical target and executed profile/validated target.
 - [ ] `run_tests`.
 - [ ] `run_build`.
 - [ ] `run_linter`.
@@ -210,18 +217,19 @@ agent can verify code without arbitrary shell capability
 
 ## Phase 9 — Git Evidence
 
-- [ ] Workspace Git validation.
-- [ ] Separate task Git worktree without changing the developer's current worktree or branch.
-- [ ] `git status`.
+- [ ] Current-checkout Git validation.
+- [ ] Read-only branch and `HEAD` detection.
+- [ ] Stable `git status` evidence.
 - [ ] `git_diff`.
-- [ ] Optional local task branch.
+- [ ] Detect branch switches without switching branches for the user.
+- [ ] Reauthorize previously changed paths only when a later task needs them.
 - [ ] Final diff artifact.
-- [ ] Git safety tests.
+- [ ] Tests proving the agent cannot stage, commit, switch, push, merge, or alter `.git/**`.
 
 Exit gate:
 
 ```text
-final result reflects actual workspace mutation
+final result reflects actual checkout mutation and no Git write was performed
 ```
 
 ---
@@ -235,7 +243,8 @@ final result reflects actual workspace mutation
 - [ ] Bounded tool result injection.
 - [ ] Model retry budget.
 - [ ] Model error handling.
-- [ ] Mock model integration tests.
+- [ ] Deterministic mock ModelClient that exercises the full orchestration loop.
+- [ ] One real ModelClient and a small end-to-end integration test before usable-MVP release.
 
 Exit gate:
 
@@ -267,7 +276,10 @@ fixture task completes end-to-end or terminates with typed failure
 
 ## Phase 12 — Audit & Observability
 
-- [ ] Structured audit schema.
+- [ ] Structured audit schema with stable event_id, session_id, timestamp, event type, policy decision, and bounded result metadata.
+- [ ] Append-only JSONL file per session in application-local storage as canonical evidence.
+- [ ] Reader filters by session, event type, tool, path, decision, and time.
+- [ ] Any later database is a rebuildable index, never a writable authority.
 - [ ] Tool request events.
 - [ ] Policy decision events.
 - [ ] Execution result events.
@@ -286,7 +298,11 @@ a completed task can be reconstructed from metadata without exposing secrets
 
 ## Phase 13 — Interactive CLI
 
-- [ ] Start a repository question or bug-fix task from the terminal.
+- [ ] Start an in-memory session from the terminal.
+- [ ] Display a labeled Ask / Edit mode selector with a typed fallback.
+- [ ] Preserve conversation when the developer changes mode.
+- [ ] Revoke file permissions when entering Ask; returning to Edit starts without permissions.
+- [ ] /clear and exit discard context and permissions while leaving applied edits in place.
 - [ ] Show task state and recent actions while work continues.
 - [ ] Answer informational questions about the active task without stopping it.
 - [ ] Stop only on an explicit stop request or a required blocking decision.
@@ -407,6 +423,9 @@ Acceptance:
 ## Deferred Backlog
 
 - [ ] Web interface.
+- [ ] Separate Git worktrees.
+- [ ] Persistent/restorable session history and retention policy.
+- [ ] Agent-performed Git writes.
 - [ ] Changes to active-task scope through conversation.
 - [ ] GitHub App authentication.
 - [ ] Automatic PR creation.
@@ -421,3 +440,16 @@ Acceptance:
 - [ ] Production deploy.
 - [ ] Canary and rollback.
 - [ ] SBOM/provenance signing.
+
+---
+
+## Final Security Acceptance Checklist
+
+- [ ] Repository results retain source-path and retrieval-method provenance.
+- [ ] Repository text cannot enter system-level instructions or change policy.
+- [ ] Write symlinks and path swaps are rejected at point of use.
+- [ ] Permission binds canonical path and update/create operation.
+- [ ] Create fails if the target exists.
+- [ ] Modified verification config is deferred to a later validated session.
+- [ ] Canonical JSONL, event hash chain, and manifest verify deterministically.
+- [ ] BUDGET_EXHAUSTED records budget, limit, usage, and audit ordering.

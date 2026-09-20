@@ -19,13 +19,13 @@ The following is the recommended MVP baseline. Replace individual technologies o
 | Validation | Pydantic v2 | Strict wire models and policy contracts |
 | LLM Client | Provider-neutral adapter | OpenAI-compatible or other model provider |
 | Sandbox | Docker | Ephemeral isolated task execution |
-| Persistence | SQLite for local MVP / PostgreSQL later | Tasks, runs, tool calls, audit metadata |
+| Audit evidence | Append-only JSONL | Canonical session events; databases are rebuildable indexes only |
 | Git | Native Git CLI behind controlled adapter | Diff, branch, status, patch evidence |
 | CI | GitHub Actions initially | Repository-level validation |
-| Observability | Structured JSON logs + OpenTelemetry optional | Traces, metrics, audit correlation |
+| Observability | Structured JSONL + OpenTelemetry optional | Audit evidence, traces, and metrics |
 | Testing | pytest | Unit, integration, security/boundary tests |
 
-The first product interface is an interactive local CLI. FastAPI is a later transport; it is not required for the first end-to-end MVP. The initial model provider remains open.
+The first product interface is an interactive local CLI. FastAPI is a later transport. The provider-ready prototype uses a deterministic mock `ModelClient`; one real provider implementation and a small end-to-end integration test are required before the product is called a usable MVP. Provider selection remains open.
 
 ---
 
@@ -172,9 +172,9 @@ Example request shape:
 
 ```json
 {
-  "task": "Fix the discount validation bug",
-  "workspace": "repo-123",
-  "allowed_paths": ["src/", "tests/"],
+  "prompt": "Fix the discount validation bug",
+  "repository": "repo-123",
+  "mode": "edit",
   "verification_profile": "default"
 }
 ```
@@ -192,28 +192,29 @@ RECEIVED
   ↓
 ADMITTED
   ↓
-SANDBOX_READY
-  ↓
 INSPECTING
-  ↓
-PLANNING
-  ↓
-IMPLEMENTING
-  ↓
-VERIFYING
-  ↓
-REPAIRING
-  ↓
-REVIEWING
-  ↓
-COMPLETED / FAILED / BLOCKED
+  ├─ Ask → ANSWERING → COMPLETED / FAILED / BLOCKED
+  └─ Edit → PLANNING
+               ↓
+       WAITING_FOR_FILE_PERMISSION
+               ↓
+         IMPLEMENTING
+               ↓
+         SANDBOX_READY
+               ↓
+          VERIFYING
+               ↓
+          REPAIRING ──→ WAITING_FOR_FILE_PERMISSION (when a new path is needed)
+               ↓
+          REVIEWING
+               ↓
+       COMPLETED / FAILED / BLOCKED
 ```
-
 Rules:
 
 - Model output may suggest the next action, but legal state transitions are defined in code.
-- A task may not skip admission or sandbox creation.
-- Mutation tools are unavailable before the plan state.
+- A task may not skip admission. A tool that executes repository code may not skip sandbox creation; an `Ask` session does not create a sandbox.
+- Mutation tools are available only in `Edit` mode after permission for every target path. Switching to `Ask` revokes all file permissions.
 - Every state transition is auditable.
 - Retry transitions consume explicit budget.
 
@@ -241,6 +242,16 @@ It never receives:
 - unbounded command execution.
 
 Provider-specific logic must stay behind the adapter.
+
+---
+
+## Context Selection
+
+Automatic context is deliberately small: the repository tree, applicable project instructions, and files explicitly referenced by the developer. All other content enters the session through budgeted `list_files`, `search_code`, and `read_file` calls.
+
+`search_code` is implemented by a deterministic adapter such as ripgrep. Its model-visible schema contains only search text, an optional repository-relative scope, and a bounded result count. Executable paths, flags, raw arguments, shell syntax, byte limits, denied paths, and timeouts remain runtime-owned. Semantic indexes and Elasticsearch are deferred.
+
+Retrieval evaluation fixtures declare required files, optional helpful files, forbidden files, expected answer properties, and expected verification behavior. Measures include required-file recall, context precision, irrelevant volume, denied-access attempts, bytes retrieved, tool calls, answer correctness, and correct verification-path selection.
 
 ---
 
@@ -274,10 +285,10 @@ Policy checks include:
 
 ```text
 tool registered?
-tool granted for this task?
-task in legal state?
-path inside workspace?
-path allowed by capability?
+tool available in the developer-selected mode?
+session in legal state?
+path inside repository?
+exact target path permitted for this session and branch state?
 path forbidden?
 command profile approved?
 network required?
@@ -297,13 +308,14 @@ There is no fail-open mode.
 
 ## 6. Capability Model
 
-Capabilities are sealed by deterministic code after task admission.
+Deterministic policy derives the visible tool set from the developer-selected session mode. The model cannot add tools, switch modes, or grant file permission. Explicit developer actions may change mode or add exact file paths; each tool call revalidates the current policy state.
 
-Example conceptual capability:
+Example conceptual Edit-session capability:
 
 ```yaml
-task_id: task_123
-workspace_id: workspace_abc
+session_id: session_123
+repository_id: repo_abc
+mode: edit
 tools:
   - list_files
   - search_code
@@ -314,20 +326,19 @@ tools:
 paths:
   read:
     - "**"
-  write:
-    - "src/**"
-    - "tests/**"
+  permitted_write:
+    - "src/discount.py"
+    - "tests/test_discount.py"
 network: false
-expires_at: "task end"
+expires_at: "session end"
 ```
 
-The model can consume this capability but cannot mutate it.
+Switching to `Ask` clears `permitted_write`. Returning to `Edit` begins with an empty set. Repository drift invalidates affected grants as defined in `tool-policy.md`.
 
 ---
-
 ## 7. Sandbox
 
-Every task executes in an ephemeral sandbox.
+Every tool that executes repository code runs against an ephemeral Docker copy. Repository inspection and approved file patches use deterministic host adapters constrained to the validated checkout.
 
 Minimum isolation:
 
@@ -342,7 +353,7 @@ Minimum isolation:
 - no host home directory mount;
 - no Docker socket inside the sandbox;
 - no SSH agent forwarding;
-- only task workspace mounted writable.
+- a copied repository snapshot is writable only inside the ephemeral sandbox; the developer checkout is not mounted writable.
 
 The sandbox is destroyed after completion or failure.
 
@@ -350,18 +361,18 @@ The sandbox is destroyed after completion or failure.
 
 ## 8. Repository Workspace
 
-Repository handling is separated from reasoning.
+The MVP operates on the developer's current checkout. Repository handling remains deterministic and separate from model reasoning.
 
 Responsibilities:
 
-- create a separate Git worktree for each task;
-- validate repository identity;
-- keep the developer's current worktree and branch untouched;
-- expose workspace root;
-- collect status/diff;
-- prevent traversal outside workspace.
+- validate repository identity, branch, `HEAD`, and status;
+- expose the repository root without granting access outside it;
+- track file content observed before each authorized mutation;
+- require session-scoped permission for each canonical repository-relative path and intended update/create operation;
+- invalidate affected permissions after a branch switch or external file change;
+- collect status and diff without performing Git writes.
 
-Persistent host repository mutation is not allowed directly.
+The developer owns branch switching, staging, commits, and every remote Git action. A branch switch preserves the conversation. When a later task needs a path the agent changed before the switch, the runtime requests reauthorization, which may group several paths. Worktree isolation is a future option.
 
 ---
 
@@ -387,10 +398,12 @@ profiles:
 The model requests:
 
 ```text
-run_tests(profile="default")
+run_tests(profile="default", target="tests/test_discount.py::test_invalid_discount")
 
 run_build(profile="default")
 ```
+
+The audit event records both the model-requested logical target and the deterministic profile/validated target actually executed. The model never supplies flags or command arguments. Invalid or uncertain targets fall back to the full configured profile within budget.
 
 rather than:
 
@@ -402,43 +415,40 @@ run_shell("anything")
 
 ## 10. Audit System
 
-Each meaningful action creates a structured event.
+Canonical audit evidence is one append-only JSON Lines file per session in the application's local data directory, outside the repository. SQLite or another database may later index the files, but it is rebuildable and never a second writable authority.
 
-Minimum event fields:
+Every event contains:
 
 ```text
+event_id
+session_id
 timestamp
-task_id
-run_id
-step_id
 event_type
-tool_name
 policy_decision
+tool_name (when applicable)
+requested logical target (when applicable)
+validated profile/target (when applicable)
 duration_ms
 exit_code
-bytes_in
-bytes_out
+bounded bytes/count/result metadata
 redaction_count
 ```
 
-Do not log raw secrets.
-
-Raw source code should not be duplicated into telemetry unless explicitly required and protected.
+Events never duplicate raw prompts, source files, secrets, credentials, or unbounded command output. Readers may filter canonical events by session, event type, tool, path, decision, or time.
 
 ---
-
 ## Trust Model
 
-### Trusted
+### Trusted after validation
 
 - deterministic policy configuration;
-- sealed task capabilities;
+- deterministic session mode and file-permission state;
 - tool registry;
 - sandbox configuration;
-- verification profiles;
+- verification profiles loaded through strict schema validation and allowlisting at session start;
 - orchestrator state machine.
 
-### Lower Trust
+### Untrusted Data
 
 - user task text;
 - repository source code;
@@ -608,7 +618,7 @@ Allowed MVP operations:
 status
 diff
 show
-optional local branch creation
+
 ```
 
 Deferred/high-risk:
@@ -667,3 +677,14 @@ The agent must not bypass repository branch protections.
 - Network is denied unless explicitly enabled.
 - Every mutation appears in Git diff.
 - Every task terminates under finite budgets.
+
+---
+
+## Locked MVP Security Decisions
+
+- Repository content is always untrusted data. This is a classification rule, not a heuristic. Repository-derived tool results carry repository-relative source-path and retrieval-method provenance. Repository text may influence model intent but is never promoted into system-level instructions.
+- Deterministic policy alone controls capability. Execution configuration is schema-validated and allowlisted at session start. Verification configuration changed during a session stays untrusted until a later session validates it.
+- Reads may follow symlinks only when the resolved target stays inside the repository and passes denied-path checks. Writes reject symlinks in the target or any parent. Canonical resolution, containment, repository state, operation, and target identity are checked again immediately before mutation.
+- Permission binds a canonical repository-relative path and intended operation: update or create. Create uses exclusive creation and fails if the target exists.
+- Canonical JSONL uses UTF-8, sorted keys, compact separators, preserved Unicode, rejected non-finite numbers, UTC RFC 3339 timestamps with exactly three fractional digits and Z, and LF endings. Events form a SHA-256 chain through previous_event_hash and event_hash. A session manifest records session_id, event count, and final hash.
+- BUDGET_EXHAUSTED records the budget, configured limit, observed usage, and whether the triggering tool result was committed to audit before the stop.

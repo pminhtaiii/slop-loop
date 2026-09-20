@@ -352,17 +352,24 @@ A task is complete only when:
 Before calling the Coding Agent MVP usable:
 
 1. Unknown tool call is denied.
-2. Path traversal is denied.
-3. Symlink escape is denied.
-4. Network is disabled in sandbox.
-5. Arbitrary shell is unavailable.
-6. Tool execution has timeout.
-7. Tool output has size bound.
-8. Patch changes appear in Git diff.
-9. Test execution works inside sandbox.
-10. Agent loop terminates on budget exhaustion.
-11. Policy failure is fail-closed.
-12. Repository prompt injection cannot alter capabilities.
-13. Audit record exists for every tool request and decision.
-14. Full smoke task completes:
-    `inspect → patch → test → diff → result`.
+2. `Ask` mode cannot mutate files or execute repository code.
+3. Only an explicit developer action changes session mode.
+4. Every updated or created path has current session permission; globs, deletion, rename, and `.git/**` writes are denied.
+5. `/clear`, exit, switching to `Ask`, branch drift, and external target-file changes revoke the applicable permissions without rolling back approved edits.
+6. Path traversal and symlink escape are denied.
+7. Network is disabled in the Docker sandbox.
+8. The developer checkout is copied into the sandbox and is never mounted writable for verification.
+9. Docker or dependency failure becomes a blocker; host execution and autonomous installation are unavailable.
+10. Arbitrary shell is unavailable; execution time and output are bounded.
+11. The agent performs no Git write, while actual file changes appear in status and diff evidence.
+12. Agent loops terminate on budget exhaustion and policy failure is fail-closed.
+13. Repository prompt injection cannot alter modes, capabilities, or permissions.
+14. An audit record exists for every tool request, permission decision, mode change, and repository-state invalidation.
+15. Full smoke task completes:
+    `inspect → request file permission → patch current checkout → verify sandbox copy → diff → result`.
+
+---
+
+## Final Security Practice Gate
+
+A practice run must prove provenance-marked repository results, no repository-to-system instruction promotion, point-of-use path identity validation, write-symlink rejection, operation-bound permission, exclusive create, delayed trust for changed verification configuration, JSONL hash-chain verification, and complete BUDGET_EXHAUSTED evidence.

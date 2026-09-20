@@ -18,12 +18,15 @@ The long-term goal is to provide a general foundation for building reliable codi
 
 ## First Local MVP
 
-The first usable version is an interactive terminal CLI for one developer and Python repositories. It supports two workflows: answer questions about repository code, and fix a small bug by reading context, editing files, running approved checks, and reporting the actual diff and verification results. A developer can ask what the agent is doing during a task; an informational question does not stop the task. The agent stops when the developer explicitly requests it or when a required decision blocks progress. Changing the scope of an active task is deferred.
+The first usable version is an interactive terminal CLI for one developer and Python repositories. It supports two switchable session modes: `Ask` answers questions using read-only repository tools, while `Edit` can update or create text files and run trusted verification. The developer may ask what the agent is doing without stopping the task. `/clear` or exiting starts the next interaction with empty context and no file permissions; the MVP does not persist session history.
 
-Each task uses a separate Git worktree so the developer's current worktree and branch are not modified. The agent may edit its task worktree without approval for each patch. The developer reviews the final diff and verification report. A successful MVP task ends locally; it does not push, create a pull request, merge, or deploy.
+The MVP edits the developer's current checkout. Before mutation, the agent requests permission for each canonical repository-relative path and intended update/create operation; one request may list several path-operation pairs. Permission lasts for the current session and branch state. A branch switch preserves the conversation, but a previously changed path requires reauthorization if a later task needs to edit it. External changes invalidate permission for the affected file. The agent does not delete or rename files in the MVP.
 
-Executable checks, including tests and builds, are selected from trusted named verification profiles. The model cannot provide shell commands. The first model provider is undecided; the provider adapter must keep tool authorization independent of the chosen model.
+The developer controls Git writes. The agent may inspect branch, `HEAD`, status, and diff through a fixed read-only adapter, but it does not switch branches, stage, commit, push, merge, or create pull requests. Approved edits remain in the checkout if a task stops or the session is cleared.
 
+Executable checks are selected from trusted named verification profiles. The runtime copies the current repository state into an ephemeral Docker sandbox with network and resource limits, runs the configured checks there, and destroys it afterward. Docker unavailability or a missing dependency is a reported blocker; the runtime does not fall back to host execution or autonomous installation. The model cannot provide shell commands.
+
+Provider selection is deferred. The provider-ready prototype uses a deterministic mock `ModelClient` to exercise the full loop; a usable MVP requires one real implementation and a small end-to-end integration test. Tool authorization remains independent of the chosen provider.
 The reference end-to-end task fixes the `calculate_discount()` defect in a fixture Python repository and produces a correct diff, passing checks, and an audit trace. A web interface and remote Git delivery are later product surfaces.
 
 ---
@@ -385,6 +388,8 @@ architecture documentation
 previous tool results
 ```
 
+The context engine automatically loads only the repository tree, applicable project instructions, and explicit developer references. The model obtains everything else through bounded, budgeted list/search/read tools. `search_code` exposes search text, optional repository-relative scope, and a result limit; the runtime owns ripgrep execution and arguments.
+
 The context engine should optimize for relevance rather than blindly loading entire repositories.
 
 Future versions may support semantic indexing, symbol graphs, dependency graphs, incremental repository memory, and architecture-aware retrieval.
@@ -543,11 +548,7 @@ The architecture should not depend permanently on one sandbox technology.
 
 ## 8. Repository Workspace
 
-Each task operates on an isolated working copy.
-
-The workspace layer handles checkout, branch setup, workspace identity, file boundaries, diff collection, and cleanup.
-
-The original repository should remain unaffected until explicit Git integration occurs.
+The workspace layer validates repository identity, file boundaries, authorized mutations, and diff collection. The local MVP works in the developer's current checkout with session-scoped permission for each target file; the developer controls Git operations. Later deployments may add isolated worktrees or remote workspaces without changing the authorization boundary.
 
 ---
 
@@ -651,7 +652,7 @@ Examples include GitHub installation tokens, temporary cloud credentials, stagin
 
 ## 13. Audit and Observability
 
-The system records both engineering activity and security decisions.
+The system records both engineering activity and security decisions. The MVP canonical record is one append-only JSONL file per session in application-local storage. Any later database is a rebuildable index rather than a second writable authority.
 
 ### Audit Events
 
@@ -676,11 +677,11 @@ Possible metrics include task success rate, average tool calls, average repair l
 
 ---
 
-## 14. Approval System
+## 14. Permission and Approval System
 
-Approval is part of the architecture, not an ad-hoc confirmation prompt.
+The MVP uses session-scoped permission for exact repository-relative file paths. This permission authorizes update or creation at those paths without requiring a patch preview; repository drift may invalidate it.
 
-Approval should bind to a specific action.
+Future higher-risk approval is part of the architecture rather than an ad-hoc prompt and binds to a specific action.
 
 Example:
 
@@ -1017,3 +1018,14 @@ A mature version of the system should demonstrate:
 The central measure of success is not how much authority the model receives.
 
 It is how much useful engineering work the system can safely automate while preserving control.
+
+---
+
+### Final MVP Security Boundary
+
+- Repository content is always untrusted data. This is a classification rule, not a heuristic. Repository-derived tool results carry repository-relative source-path and retrieval-method provenance. Repository text may influence model intent but is never promoted into system-level instructions.
+- Deterministic policy alone controls capability. Execution configuration is schema-validated and allowlisted at session start. Verification configuration changed during a session stays untrusted until a later session validates it.
+- Reads may follow symlinks only when the resolved target stays inside the repository and passes denied-path checks. Writes reject symlinks in the target or any parent. Canonical resolution, containment, repository state, operation, and target identity are checked again immediately before mutation.
+- Permission binds a canonical repository-relative path and intended operation: update or create. Create uses exclusive creation and fails if the target exists.
+- Canonical JSONL uses UTF-8, sorted keys, compact separators, preserved Unicode, rejected non-finite numbers, UTC RFC 3339 timestamps with exactly three fractional digits and Z, and LF endings. Events form a SHA-256 chain through previous_event_hash and event_hash. A session manifest records session_id, event count, and final hash.
+- BUDGET_EXHAUSTED records the budget, configured limit, observed usage, and whether the triggering tool result was committed to audit before the stop.

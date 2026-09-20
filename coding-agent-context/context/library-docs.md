@@ -31,7 +31,19 @@ No library feature may be used to bypass project policy.
 
 ---
 
-## FastAPI
+## MVP Classification
+
+Implemented MVP dependencies are Python 3.11+, standard-library `argparse`, Pydantic v2, a Docker adapter, trusted `subprocess` and read-only Git adapters, a provider-scoped HTTP client, and repository-configured pytest/Ruff/mypy profiles. FastAPI, databases, OpenTelemetry, Greptile, Git-provider integration, and session persistence are future or optional references.
+
+---
+
+## `argparse`
+
+Use standard-library `argparse` for CLI startup options. The interactive terminal layer supplies labeled `Ask` / `Edit` controls plus typed `/mode ask`, `/mode edit`, and `/clear` fallbacks. Mode changes are developer actions handled by policy code, never model tool calls.
+
+---
+
+## FastAPI — Future
 
 ### Purpose
 
@@ -123,7 +135,7 @@ class SandboxBackend(Protocol):
 - Never mount host `/`.
 - Run as non-root where supported.
 - Network is disabled by default.
-- Mount only the task workspace writable.
+- Copy the current repository state into an ephemeral sandbox workspace. Never mount the developer checkout writable.
 - Explicitly set memory/CPU/PID limits.
 - Always destroy sandboxes in cleanup/finally paths.
 - Image selection comes from trusted config, never model output.
@@ -176,18 +188,14 @@ git diff --cached --no-ext-diff
 git rev-parse --show-toplevel
 ```
 
-Optional:
-
-```text
-git switch -c agent/<task-id>
-```
-
 ### Rules
 
-- Git commands execute only in validated workspace.
-- No `push`, `merge`, `reset --hard`, `clean -fdx`, `rebase`, or force operations in MVP.
+- Git commands execute only in the validated current checkout.
+- The adapter may read repository root, branch, `HEAD`, status, and diff.
+- The developer performs branch switches, staging, commits, and remote operations.
+- No Git write operation is exposed in the MVP, including writes to `.git/**`.
 - Do not use Git configuration to execute external helpers.
-- Final reported diff must be generated deterministically from the workspace.
+- Final status and diff evidence must be generated deterministically from the checkout.
 
 ---
 
@@ -258,7 +266,7 @@ Do not weaken global type rules to resolve a local implementation issue without 
 
 ### Purpose
 
-Local MVP persistence for:
+Possible later rebuildable indexing of canonical JSONL audit evidence for:
 
 - tasks;
 - agent runs;
@@ -267,6 +275,7 @@ Local MVP persistence for:
 
 ### Rules
 
+- JSONL remains the canonical writable audit authority; the database is rebuilt from it.
 - Database access is not exposed as a model tool.
 - Use parameterized queries or an ORM.
 - Do not store raw secrets.
@@ -297,7 +306,7 @@ Model-generated SQL is forbidden.
 
 ### Purpose
 
-Deterministic provider integrations such as model API or Git provider API.
+The configured model-provider API in the MVP. Git-provider API use is future work.
 
 Rules:
 
@@ -310,7 +319,7 @@ Rules:
 
 ---
 
-## OpenTelemetry
+## OpenTelemetry — Optional / Future
 
 ### Purpose
 
@@ -340,6 +349,8 @@ full_command_output
 
 ## LLM Provider Adapter
 
+The provider-ready prototype uses a deterministic mock. Provider selection is deferred; usable-MVP release requires one real adapter and a small end-to-end integration test.
+
 No provider SDK may be imported throughout the codebase.
 
 Wrap the provider behind:
@@ -356,6 +367,12 @@ Rules:
 - Tool responses are bounded before they return to the provider.
 - Provider retries obey task budgets.
 - Provider switching must not alter authorization semantics.
+
+---
+
+## Greptile — Future Reference
+
+Greptile is an external code-review service with Git-host and CLI workflows. It is not an MVP dependency, verification profile, or model-callable tool. If evaluated later, integrate it behind explicit network and external-service policy.
 
 ---
 
