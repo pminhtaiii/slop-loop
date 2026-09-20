@@ -84,14 +84,14 @@ if ($PathsOnly) {
 # Validate required directories and files
 if (-not (Test-Path $paths.FEATURE_DIR -PathType Container)) {
     Write-Output "ERROR: Feature directory not found: $($paths.FEATURE_DIR)"
-    $specifyCommand = '/speckit.specify'
+    $specifyCommand = '/speckit-specify'
     Write-Output "Run $specifyCommand first to create the feature structure."
     exit 1
 }
 
 if (-not (Test-Path $paths.IMPL_PLAN -PathType Leaf)) {
     Write-Output "ERROR: plan.md not found in $($paths.FEATURE_DIR)"
-    $planCommand = '/speckit.plan'
+    $planCommand = '/speckit-plan'
     Write-Output "Run $planCommand first to create the implementation plan."
     exit 1
 }
@@ -99,7 +99,7 @@ if (-not (Test-Path $paths.IMPL_PLAN -PathType Leaf)) {
 # Check for tasks.md if required
 if ($RequireTasks -and -not (Test-Path $paths.TASKS -PathType Leaf)) {
     Write-Output "ERROR: tasks.md not found in $($paths.FEATURE_DIR)"
-    $tasksCommand = '/speckit.tasks'
+    $tasksCommand = '/speckit-tasks'
     Write-Output "Run $tasksCommand first to create the task list."
     exit 1
 }
