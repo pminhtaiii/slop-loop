@@ -33,13 +33,13 @@ Ubuntu CI runs frozen installation, lint, format:check, typecheck, test, build, 
 
 The first usable product after Phase 0 is an interactive terminal CLI for one developer and Python target repositories. It supports two switchable session modes: `Ask` answers questions using read-only repository tools, while `Edit` can update or create text files and run trusted verification. The developer may ask what the agent is doing without stopping the task. `/clear` or exiting starts the next interaction with empty context and no file permissions; the MVP does not persist session history.
 
-The MVP edits the developer's current checkout. Before mutation, the agent requests permission for each canonical repository-relative path and intended update/create operation; one request may list several path-operation pairs. Permission lasts for the current session and branch state. A branch switch preserves the conversation, but a previously changed path requires reauthorization if a later task needs to edit it. External changes invalidate permission for the affected file. The agent does not delete or rename files in the MVP.
+The MVP edits the developer's current checkout. Before mutation, the agent requests permission for each canonical repository-relative path and intended update/create operation; one request may list several path-operation pairs. Permission lasts for the current session and observed branch/file state. A branch switch preserves the conversation, but affected prior grants become unavailable and a later task needs reauthorization only if it needs an affected path-operation pair. External changes make the affected file's grant unavailable. The agent does not delete or rename files in the MVP.
 
 The developer controls Git writes. The agent may inspect branch, `HEAD`, status, and diff through a fixed read-only adapter, but it does not switch branches, stage, commit, push, merge, or create pull requests. Approved edits remain in the checkout if a task stops or the session is cleared.
 
 Executable checks are selected from trusted named verification profiles. The runtime copies the current repository state into an ephemeral Docker sandbox with network and resource limits, runs the configured checks there, and destroys it afterward. Docker unavailability or a missing dependency is a reported blocker; the runtime does not fall back to host execution or autonomous installation. The model cannot provide shell commands.
 
-Provider selection is deferred. The provider-ready prototype uses a deterministic mock `ModelClient` to exercise the full loop; a usable MVP requires one real implementation and a small end-to-end integration test. Tool authorization remains independent of the chosen provider.
+Provider selection is deferred. The planned provider-ready prototype will use a deterministic mock `ModelClient` to exercise the full loop; a usable MVP requires one real implementation and a small end-to-end integration test. Tool authorization remains independent of the chosen provider.
 The reference end-to-end task fixes the `calculate_discount()` defect in a fixture Python repository and produces a correct diff, passing checks, and an audit trace. A web interface and remote Git delivery are later product surfaces.
 
 ---
@@ -561,7 +561,7 @@ The architecture should not depend permanently on one sandbox technology.
 
 ## 8. Repository Workspace
 
-The workspace layer validates repository identity, file boundaries, authorized mutations, and diff collection. The local MVP works in the developer's current checkout with session-scoped permission for each target file; the developer controls Git operations. Later deployments may add isolated worktrees or remote workspaces without changing the authorization boundary.
+The workspace layer validates repository identity, file boundaries, authorized mutations, and diff collection. The local MVP works in the developer's current checkout with session-scoped permission for each exact target path-operation pair; the developer controls Git operations. Later deployments may add isolated worktrees or remote workspaces without changing the authorization boundary.
 
 ---
 
@@ -692,7 +692,7 @@ Possible metrics include task success rate, average tool calls, average repair l
 
 ## 14. Permission and Approval System
 
-The MVP uses session-scoped permission for exact repository-relative file paths. This permission authorizes update or creation at those paths without requiring a patch preview; repository drift may invalidate it.
+The MVP uses session-scoped permission for exact canonical repository-relative path-operation pairs. Each permission authorizes either update or create, not both, without requiring a patch preview; repository drift may make affected grants unavailable.
 
 Future higher-risk approval is part of the architecture rather than an ad-hoc prompt and binds to a specific action.
 

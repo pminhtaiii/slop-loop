@@ -2,7 +2,7 @@
 
 ## Status
 
-This document defines the intended MVP architecture for the Coding Agent.
+This document defines the intended MVP architecture for Slop Loop.
 
 Runtime behavior must not be assumed implemented merely because it appears here. `context/progress-checker.md` is the source of truth for implementation status.
 
@@ -31,10 +31,10 @@ The following is the recommended MVP baseline. Replace individual technologies o
 | Audit evidence | Append-only JSONL | Canonical session events; databases are rebuildable indexes only |
 | Git | Native Git CLI behind controlled adapter | Diff, branch, status, patch evidence |
 | CI | GitHub Actions, Ubuntu and Windows | Phase 0 quality gates |
-| Observability | Structured JSONL + OpenTelemetry optional | Audit evidence, traces, and metrics |
+| Observability | Pino operational logs + optional OpenTelemetry | Diagnostics, traces, and metrics; separate from canonical audit evidence |
 | Testing | Vitest for Slop Loop; target profiles for repositories | Source behavior and future boundary tests |
 
-Phase 0 is a private compiled application foundation. The first product interface after Phase 0 is an interactive local CLI for Python target repositories; an HTTP transport is later. The provider-ready prototype uses a deterministic mock `ModelClient`; one real provider implementation and a small end-to-end integration test are required before the product is called a usable MVP. Provider selection remains open.
+Phase 0 is a private compiled application foundation. The first product interface after Phase 0 is an interactive local CLI for Python target repositories; an HTTP transport is later. The planned provider-ready prototype will use a deterministic mock `ModelClient`; one real provider implementation and a small end-to-end integration test are required before the product is called a usable MVP. Provider selection remains open.
 
 ---
 
@@ -87,65 +87,65 @@ tests/
 ```text
 /
 ├── AGENTS.md
-├── pyproject.toml
+├── package.json
 ├── README.md
 ├── .env.example
 │
 ├── src/
 │   └── coding_agent/
-│       ├── cli.py
+│       ├── cli.ts
 │       ├── api/
-│       │   ├── routes.py
-│       │   └── schemas.py
+│       │   ├── routes.ts
+│       │   └── schemas.ts
 │       │
 │       ├── orchestration/
-│       │   ├── runner.py
-│       │   ├── state.py
-│       │   ├── budgets.py
-│       │   └── transitions.py
+│       │   ├── runner.ts
+│       │   ├── state.ts
+│       │   ├── budgets.ts
+│       │   └── transitions.ts
 │       │
 │       ├── llm/
-│       │   ├── client.py
-│       │   ├── prompts.py
-│       │   └── tool_protocol.py
+│       │   ├── client.ts
+│       │   ├── prompts.ts
+│       │   └── tool_protocol.ts
 │       │
 │       ├── tools/
-│       │   ├── registry.py
-│       │   ├── contracts.py
-│       │   ├── read_file.py
-│       │   ├── list_files.py
-│       │   ├── search_code.py
-│       │   ├── apply_patch.py
-│       │   ├── run_tests.py
-│       │   ├── run_linter.py
-│       │   ├── run_typecheck.py
-│       │   └── git_diff.py
+│       │   ├── registry.ts
+│       │   ├── contracts.ts
+│       │   ├── read_file.ts
+│       │   ├── list_files.ts
+│       │   ├── search_code.ts
+│       │   ├── apply_patch.ts
+│       │   ├── run_tests.ts
+│       │   ├── run_linter.ts
+│       │   ├── run_typecheck.ts
+│       │   └── git_diff.ts
 │       │
 │       ├── policy/
-│       │   ├── engine.py
-│       │   ├── capabilities.py
-│       │   ├── paths.py
-│       │   └── commands.py
+│       │   ├── engine.ts
+│       │   ├── capabilities.ts
+│       │   ├── paths.ts
+│       │   └── commands.ts
 │       │
 │       ├── sandbox/
-│       │   ├── manager.py
-│       │   ├── docker_backend.py
-│       │   └── limits.py
+│       │   ├── manager.ts
+│       │   ├── docker_backend.ts
+│       │   └── limits.ts
 │       │
 │       ├── repository/
-│       │   ├── workspace.py
-│       │   └── git.py
+│       │   ├── workspace.ts
+│       │   └── git.ts
 │       │
 │       ├── verification/
-│       │   ├── service.py
-│       │   └── result.py
+│       │   ├── service.ts
+│       │   └── result.ts
 │       │
 │       ├── audit/
-│       │   ├── events.py
-│       │   ├── logger.py
-│       │   └── redaction.py
+│       │   ├── events.ts
+│       │   ├── logger.ts
+│       │   └── redaction.ts
 │       │
-│       └── config.py
+│       └── config.ts
 │
 ├── tests/
 │   ├── unit/
@@ -236,7 +236,7 @@ Rules:
 
 - Model output may suggest the next action, but legal state transitions are defined in code.
 - A task may not skip admission. A tool that executes repository code may not skip sandbox creation; an `Ask` session does not create a sandbox.
-- Mutation tools are available only in `Edit` mode after permission for every target path. Switching to `Ask` revokes all file permissions.
+- Mutation tools are available only in `Edit` mode after permission for every exact target path-operation pair. Switching to `Ask` revokes all file permissions.
 - Every state transition is auditable.
 - Retry transitions consume explicit budget.
 
@@ -310,7 +310,7 @@ tool registered?
 tool available in the developer-selected mode?
 session in legal state?
 path inside repository?
-exact target path permitted for this session and branch state?
+exact target path-operation pair permitted for this session and observed branch/file state?
 path forbidden?
 command profile approved?
 network required?
@@ -330,7 +330,7 @@ There is no fail-open mode.
 
 ## 6. Capability Model
 
-Deterministic policy derives the visible tool set from the developer-selected session mode. The model cannot add tools, switch modes, or grant file permission. Explicit developer actions may change mode or add exact file paths; each tool call revalidates the current policy state.
+Deterministic policy derives the visible tool set from the developer-selected session mode. The model cannot add tools, switch modes, or grant file permission. Explicit developer actions may change mode or grant exact path-operation permissions; each tool call revalidates the current policy state.
 
 Example conceptual Edit-session capability:
 
@@ -348,14 +348,16 @@ tools:
 paths:
   read:
     - "**"
-  permitted_write:
-    - "src/discount.py"
-    - "tests/test_discount.py"
+  permitted_writes:
+    - path: "src/discount.py"
+      operation: update
+    - path: "tests/test_discount.py"
+      operation: create
 network: false
 expires_at: "session end"
 ```
 
-Switching to `Ask` clears `permitted_write`. Returning to `Edit` begins with an empty set. Repository drift invalidates affected grants as defined in `tool-policy.md`.
+Switching to `Ask` clears `permitted_writes`. Returning to `Edit` begins with an empty set. Repository drift makes affected path-operation grants unavailable as defined in `tool-policy.md`; later use requires reauthorization.
 
 ---
 ## 7. Sandbox
@@ -391,10 +393,10 @@ Responsibilities:
 - expose the repository root without granting access outside it;
 - track file content observed before each authorized mutation;
 - require session-scoped permission for each canonical repository-relative path and intended update/create operation;
-- invalidate affected permissions after a branch switch or external file change;
+- make affected path-operation grants unavailable after a branch switch or external file change;
 - collect status and diff without performing Git writes.
 
-The developer owns branch switching, staging, commits, and every remote Git action. A branch switch preserves the conversation. When a later task needs a path the agent changed before the switch, the runtime requests reauthorization, which may group several paths. Worktree isolation is a future option.
+The developer owns branch switching, staging, commits, and every remote Git action. A branch switch preserves the conversation. When a later task needs an affected prior path-operation grant, the runtime requests reauthorization, which may group several pairs. Worktree isolation is a future option.
 
 ---
 

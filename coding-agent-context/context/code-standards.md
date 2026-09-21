@@ -1,6 +1,6 @@
 # Code Standards
 
-Implementation rules and conventions for the Coding Agent project. The coding agent must follow these rules in every implementation session to prevent security drift and architectural inconsistency.
+Implementation rules and conventions for Slop Loop. The coding agent must follow these rules in every implementation session to prevent security drift and architectural inconsistency.
 
 ---
 
@@ -88,7 +88,7 @@ The orchestrator must:
 
 Never implement:
 
-```python
+```text
 while not model_says_done:
     ...
 ```
@@ -97,7 +97,7 @@ without hard external bounds.
 
 Preferred:
 
-```python
+```ts
 for (let step = 0; step < budget.maxSteps; step += 1) {
   const transition = runner.step(state);
   if (transition.terminal) break;
@@ -176,23 +176,23 @@ No arbitrary shell command interface in MVP.
 
 Bad:
 
-```python
-run_shell(command: str)
+```text
+run_shell(command)
 ```
 
 Preferred:
 
-```python
-run_tests(profile: VerificationProfile)
-run_build(profile: VerificationProfile)
-run_linter(profile: VerificationProfile)
-run_typecheck(profile: VerificationProfile)
+```text
+run_tests(profile)
+run_build(profile)
+run_linter(profile)
+run_typecheck(profile)
 ```
 
 If a generic executor exists internally:
 
 - arguments must be an argv list, not a shell string;
-- `shell=False`;
+- shell execution disabled (`shell: false`);
 - executable must be allowlisted;
 - working directory fixed to workspace;
 - environment constructed explicitly;
@@ -223,24 +223,13 @@ If a generic executor exists internally:
 
 ---
 
-## Logging and Audit
+## Operational Logging and Canonical Audit Evidence
 
-Use structured events.
+### Operational Logging
 
-Good:
+Operational logs are structured, bounded, redacted diagnostics. Phase 0 uses Pino for this purpose. They are not authorization records and do not constitute canonical audit evidence.
 
-```json
-{
-  "event_type": "tool_call",
-  "task_id": "task_123",
-  "tool": "run_tests",
-  "decision": "ALLOW",
-  "duration_ms": 1820,
-  "exit_code": 0
-}
-```
-
-Avoid:
+Avoid logging:
 
 ```text
 Full prompt: ...
@@ -250,6 +239,10 @@ Raw secret: ...
 
 Log content only when necessary for debugging and when redaction policy allows it.
 
+### Canonical Audit Evidence
+
+Phase 0 does not implement audit persistence. When MVP audit is implemented, canonical evidence must follow ADR 0002: append-only JSONL with its defined integrity rules. Operational logs cannot replace that audit stream.
+
 ---
 
 ## Error Handling
@@ -258,11 +251,9 @@ Translate infrastructure errors into bounded domain errors.
 
 Example:
 
-```python
-try:
-    result = sandbox.execute(spec)
-except SandboxTimeout as exc:
-    raise ToolExecutionError(code="TOOL_TIMEOUT") from exc
+```text
+attempt sandbox execution
+on sandbox timeout: return bounded TOOL_TIMEOUT domain error
 ```
 
 Client/model-visible messages should describe the class of failure without leaking host internals.

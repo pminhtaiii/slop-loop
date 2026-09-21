@@ -127,14 +127,14 @@ Purpose:
 Requirements:
 
 - session is in `Edit` mode;
-- the developer granted permission for every exact repository-relative target path;
-- one permission request may list several exact paths, but never globs;
+- the developer granted permission for every exact canonical repository-relative target path-operation pair;
+- one permission request may list several exact path-operation pairs, but never globs;
 - permission belongs to the current session and observed branch/file state;
 - no denied path or `.git/**` target;
 - patch size is within limit and resulting paths stay inside the repository;
 - deletion, rename, and binary mutation are rejected in the MVP.
 
-Before applying, the runtime rechecks repository identity, branch, `HEAD`, status, and the observed content of every target. A branch switch makes earlier grants unavailable for the affected prior paths; reauthorization is requested only if a later task needs them. An external change revokes the affected file's permission.
+Before applying, the runtime rechecks repository identity, branch, `HEAD`, status, and the observed content of every target. A branch switch makes affected prior path-operation grants unavailable; reauthorization is requested only if a later task needs them. An external change revokes the affected file's permission.
 
 Postconditions:
 
@@ -259,8 +259,8 @@ capability allow-pattern check
 
 Do not authorize using:
 
-```python
-str(path).startswith(str(workspace))
+```text
+requested_path starts with workspace_path
 ```
 
 Use path-aware containment after canonical resolution.

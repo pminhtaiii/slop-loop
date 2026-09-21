@@ -1,6 +1,6 @@
 # Development Workflow
 
-Mandatory workflow for building the Coding Agent itself.
+Mandatory workflow for building Slop Loop itself.
 
 The purpose is to prevent a security-sensitive agent project from evolving through ad-hoc implementation.
 
@@ -349,7 +349,7 @@ A task is complete only when:
 
 ## MVP Release Gate
 
-Before calling the Coding Agent MVP usable:
+Before calling the Slop Loop MVP usable:
 
 1. Unknown tool call is denied.
 2. `Ask` mode cannot mutate files or execute repository code.

@@ -38,15 +38,15 @@ A registered operation the agent may request within the capabilities granted to 
 _Avoid_: arbitrary command
 
 **File permission**:
-The developer's authorization for the agent to update or create one or more named repository-relative files during the current session and branch state. A single request may list several files, and the permission is renewed when a later session or branch change invalidates it.
+The developer's authorization for one or more operation-bound file permissions during the current session and observed branch/file state. A single request may batch several canonical repository-relative path-operation pairs; it is not blanket write permission.
 _Avoid_: blanket edit permission, repository-wide approval
 
 **File edit request**:
-The agent's request for permission to update or create one or more named repository-relative paths during an Edit session.
+The agent's request during an Edit session for the developer to authorize one or more exact canonical repository-relative path-operation pairs.
 _Avoid_: patch proposal, repository-wide edit request
 
 **Branch state**:
-The Git branch and checkout state selected by the developer. A branch switch preserves the conversation, but permissions for files the agent actually changed before the switch must be revalidated and may require one grouped reauthorization request.
+The Git branch and checkout state selected by the developer. A branch switch preserves the conversation, but affected prior grants become unavailable; later use of an affected path-operation pair requires reauthorization and may use one grouped request.
 _Avoid_: agent-owned branch
 
 **Verification profile**:
@@ -74,7 +74,7 @@ Untrusted repository data whose tool result retains source-path and retrieval-me
 _Avoid_: repository instructions, trusted prompt
 
 **Operation-bound file permission**:
-Authorization for one canonical repository-relative path and one operation: update or create. Create is exclusive.
+An atomic authorization for one canonical repository-relative path and exactly one operation: `update` or `create`. Permission for `update` does not authorize `create`, and create is exclusive.
 _Avoid_: filename-only permission, generic write permission
 
 **Trusted verification profile**:

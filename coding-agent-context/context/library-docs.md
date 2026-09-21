@@ -1,6 +1,6 @@
 # Library Docs
 
-Project-specific usage rules for third-party libraries in the Coding Agent MVP.
+Project-specific usage rules for third-party libraries in the Slop Loop MVP.
 
 This file describes **how this project uses libraries**, not their complete upstream documentation.
 
@@ -33,7 +33,7 @@ No library feature may be used to bypass project policy.
 
 ## MVP Classification
 
-Phase 0 implementation dependencies are Node.js 24 LTS, native ESM TypeScript, pnpm, Zod 4, Pino, Vitest, type-aware ESLint, Prettier, and tsc. There is no bundler. pytest, Ruff, and mypy are trusted verification tools in the first Python target repositories, not Slop Loop dependencies. Docker, process adapters, Git, provider HTTP, audit persistence, and session behavior are future product concerns.
+The selected Phase 0 implementation and development stack is Node.js 24 LTS, native ESM TypeScript, pnpm, Zod 4, Pino, Vitest, type-aware ESLint, Prettier, and tsc. There is no bundler. Selection does not indicate implementation completion; `context/progress-checker.md` is the source of truth. pytest, Ruff, and mypy are trusted verification tools in the first Python target repositories, not Slop Loop dependencies. Docker, process adapters, Git, provider HTTP, audit persistence, and session behavior are future product concerns.
 
 ---
 
@@ -42,6 +42,15 @@ Phase 0 implementation dependencies are Node.js 24 LTS, native ESM TypeScript, p
 Use Node.js 24 LTS APIs and native ESM. pnpm is the only package manager; pin its version and commit the lockfile. Use tsc for the private dist/ artifact and do not add a bundler in Phase 0.
 
 The Phase 0 scripts are pnpm format for intentional rewrite, pnpm format:check for verification only, pnpm lint, pnpm typecheck, pnpm test for Vitest source behavior, pnpm build, and pnpm smoke for node dist/index.js.
+
+## Zod 4
+
+Use Zod 4 for runtime validation. At external or model-facing boundaries, validate before policy or execution. In Phase 0, accept only `SLOP_LOOP_LOG_LEVEL`, default it to `info`, reject unknown `SLOP_LOOP_*` names, and ignore unrelated environment variables. The environment map may be injectable for tests; return a typed, frozen configuration result.
+
+## Pino
+
+Use Pino only for operational logging through a small `createLogger` factory with fixed redaction and injectable output for tests. Put untrusted repository, model, and tool data under application-controlled fields. Redaction is defense in depth, not an authorization boundary, and Pino logs are not canonical audit evidence.
+
 ## HTTP Transport — Future
 
 A future HTTP boundary may submit tasks and return status/results. It remains a thin transport layer, validates external input with Zod, delegates to orchestration, never invokes tools directly, and never embeds policy logic. The framework is intentionally undecided.
@@ -61,7 +70,7 @@ The project should isolate Docker-specific behavior behind `SandboxBackend`.
 
 Conceptual interface:
 
-```python
+```ts
 interface SandboxBackend {
   create(spec: SandboxSpec): Promise<SandboxHandle>;
   execute(handle: SandboxHandle, spec: ExecutionSpec): Promise<ExecutionResult>;
@@ -103,7 +112,7 @@ const result = await executor.run({
 ### Rules
 
 - Never execute model-provided shell strings.
-- `shell=True` is forbidden.
+- `shell: true` is forbidden.
 - Executable and argument shape must come from an approved command profile.
 - Environment is allowlisted.
 - stdout/stderr are bounded and redacted.
@@ -287,7 +296,7 @@ full_command_output
 
 ## LLM Provider Adapter
 
-The provider-ready prototype uses a deterministic mock. Provider selection is deferred; usable-MVP release requires one real adapter and a small end-to-end integration test.
+The planned provider-ready prototype will use a deterministic mock. Provider selection is deferred; usable-MVP release requires one real adapter and a small end-to-end integration test.
 
 No provider SDK may be imported throughout the codebase.
 

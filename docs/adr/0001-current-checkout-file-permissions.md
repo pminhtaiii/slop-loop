@@ -1,6 +1,6 @@
 # Edit the current checkout with session-scoped file permission
 
-The local MVP edits the developer's current checkout because task worktree lifecycle and recovery would delay the first usable product. Before updating or creating a text file, the runtime requires developer permission for its canonical repository-relative path and intended update/create operation; one request may include several path-operation pairs, and permissions expire with session, mode, branch, or relevant file-state changes. The developer retains all Git writes, verification runs against an ephemeral Docker copy, and separate task worktrees remain a future isolation option.
+The local MVP edits the developer's current checkout because task worktree lifecycle and recovery would delay the first usable product. Before updating or creating a text file, the runtime requires developer permission for its canonical repository-relative path and intended update/create operation; one request may include several path-operation pairs, and permissions are scoped to the current session, mode, and observed branch/file state. Branch or relevant file drift makes affected prior grants unavailable; reauthorization is requested only when a later task needs an affected grant. The developer retains all Git writes, verification runs against an ephemeral Docker copy, and separate task worktrees remain a future isolation option.
 
 ---
 

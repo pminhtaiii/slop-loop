@@ -1,6 +1,6 @@
-# Coding Agent Context Pack
+# Slop Loop Context Pack
 
-This folder is a context package for building a secure coding agent MVP.
+This folder is a context package for building the secure Slop Loop MVP.
 
 ## Files
 
@@ -18,16 +18,25 @@ context/
 ## Suggested Reading Order for an Agent
 
 ```text
-1. project-overview.md
-2. architecture.md
-3. tool-policy.md
-4. code-standards.md
-5. library-docs.md
-6. workflow.md
-7. progress-checker.md
+1. ../CONTEXT.md
+2. project-overview.md
+3. architecture.md
+4. tool-policy.md
+5. code-standards.md
+6. library-docs.md
+7. workflow.md
+8. progress-checker.md
 ```
 
 Before implementing a specific feature, the agent should then inspect the relevant production code and tests.
+
+## Authority and Reading Notes
+
+- `../CONTEXT.md` is the authoritative shared vocabulary.
+- `context/tool-policy.md` is authoritative for model-accessible tool permissions, capabilities, and security rules.
+- `context/progress-checker.md` is the source of truth for implemented, planned, and deferred status.
+- Accepted architectural decisions and their rationale are recorded under `../docs/adr/`.
+- `project-overview.md` and `architecture.md` may describe intended or future behavior; neither proves that behavior is implemented.
 
 ## Key Principle
 

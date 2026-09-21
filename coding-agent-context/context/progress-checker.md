@@ -182,8 +182,8 @@ agent can understand a fixture repository without host escape
 - [ ] Unified patch schema.
 - [ ] Patch validation.
 - [ ] Edit mode enforcement.
-- [ ] Exact repository-relative file permission requests, including batched paths.
-- [ ] Permission invalidation on /clear, exit, mode change, branch drift, and external file change.
+- [ ] Exact canonical repository-relative path-operation permission requests, including batched pairs.
+- [ ] Revoke file permissions on `/clear`, exit, and switching to `Ask`; make affected grants unavailable on branch drift or relevant external file change.
 - [ ] Denied-path rejection.
 - [ ] Changed-file recording.
 - [ ] Patch rollback on invalid application.
@@ -227,7 +227,7 @@ agent can verify code without arbitrary shell capability
 - [ ] Stable `git status` evidence.
 - [ ] `git_diff`.
 - [ ] Detect branch switches without switching branches for the user.
-- [ ] Reauthorize previously changed paths only when a later task needs them.
+- [ ] Reauthorize affected prior path-operation grants only when a later task needs them.
 - [ ] Final diff artifact.
 - [ ] Tests proving the agent cannot stage, commit, switch, push, merge, or alter `.git/**`.
 
