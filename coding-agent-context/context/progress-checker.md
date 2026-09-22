@@ -22,7 +22,7 @@ The agreed future product MVP is an interactive local CLI implemented in TypeScr
 
 ## Phase 0 — TypeScript Application Foundation
 
-- [ ] Pin Node.js 24 LTS and pnpm version; create the private single-package manifest and lockfile.
+- [x] Pin Node.js 24 LTS and pnpm version; create the private single-package manifest and lockfile.
 - [ ] Configure native ESM, strict TypeScript, tsc build to dist/, and no bundler.
 - [ ] Configure type-aware ESLint and Prettier.
 - [ ] Add only src/config.ts, src/logging.ts, and src/index.ts.

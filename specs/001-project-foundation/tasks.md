@@ -17,14 +17,14 @@ description: "Actionable task list for the Phase 0 private application foundatio
 
 **Purpose**: Establish the smallest reproducible TypeScript/Node project surface without introducing application behavior.
 
-- [ ] T001 Create `package.json` with private single-package metadata, native ESM configuration, Node.js 24 and pnpm 12 requirements, Zod 4 and Pino runtime dependencies, and the planned TypeScript/Vitest/ESLint/Prettier development dependencies.
-- [ ] T002 [P] Create the root single-package `pnpm-workspace.yaml` without adding workspace packages or future subsystem packages.
-- [ ] T003 [P] Create strict NodeNext compiler settings in `tsconfig.json` for TypeScript source under `src/`, emitting the private application artifact under `dist/` without bundling tests.
-- [ ] T004 [P] Create the type-aware flat ESLint configuration in `eslint.config.mjs` for the TypeScript source, tests, and repository configuration files.
-- [ ] T005 [P] Create the Prettier configuration in `prettier.config.mjs` and formatting exclusions in `.prettierignore` for generated output and dependency directories.
-- [ ] T006 [P] Create the Node-oriented Vitest configuration in `vitest.config.ts` with source-test discovery under `tests/` and no requirement that `dist/` already exists.
-- [ ] T007 [P] Add generated-output and dependency exclusions to `.gitignore`, including `dist/`, coverage output, and local installation artifacts.
-- [ ] T008 Install the pinned dependency graph with `pnpm install` and generate the reproducible lockfile at `pnpm-lock.yaml` for developer review.
+- [x] T001 Create `package.json` with private single-package metadata, native ESM configuration, Node.js 24 and pnpm 12 requirements, Zod 4 and Pino runtime dependencies, and the planned TypeScript/Vitest/ESLint/Prettier development dependencies.
+- [x] T002 [P] Create the root single-package `pnpm-workspace.yaml` without adding workspace packages or future subsystem packages.
+- [x] T003 [P] Create strict NodeNext compiler settings in `tsconfig.json` for TypeScript source under `src/`, emitting the private application artifact under `dist/` without bundling tests.
+- [x] T004 [P] Create the type-aware flat ESLint configuration in `eslint.config.mjs` for the TypeScript source, tests, and repository configuration files.
+- [x] T005 [P] Create the Prettier configuration in `prettier.config.mjs` and formatting exclusions in `.prettierignore` for generated output and dependency directories.
+- [x] T006 [P] Create the Node-oriented Vitest configuration in `vitest.config.ts` with source-test discovery under `tests/` and no requirement that `dist/` already exists.
+- [x] T007 [P] Add generated-output and dependency exclusions to `.gitignore`, including `dist/`, coverage output, and local installation artifacts.
+- [x] T008 Install the pinned dependency graph with `pnpm install` and generate the reproducible lockfile at `pnpm-lock.yaml` for developer review.
 
 ---
 

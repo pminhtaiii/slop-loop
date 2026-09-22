@@ -1,0 +1,12 @@
+dist/
+node_modules/
+coverage/
+pnpm-lock.yaml
+skills-lock.json
+.agents/
+.specify/
+.vscode/
+specs/
+docs/
+coding-agent-context/
+*.md
