@@ -40,6 +40,25 @@ describe("Application startup smoke tests", () => {
     expect(firstRecord.status).toBe("started");
   });
 
+  it("emits the structured startup record even when SLOP_LOOP_LOG_LEVEL is set to warn", () => {
+    const memory = createMemoryStream();
+    const result = start({
+      env: { SLOP_LOOP_LOG_LEVEL: "warn" },
+      destination: memory.stream,
+    });
+
+    expect(result.status).toBe("started");
+    expect(result.config.logLevel).toBe("warn");
+
+    const lines = memory.getLines();
+    expect(lines.length).toBeGreaterThan(0);
+
+    const firstRecord = JSON.parse(lines[0]!) as Record<string, unknown>;
+    expect(firstRecord.level).toBe(30);
+    expect(firstRecord.status).toBe("started");
+    expect(firstRecord.logLevel).toBe("warn");
+  });
+
   it("fails with a bounded diagnostic when configuration has an invalid log level", () => {
     expect(() =>
       start({
