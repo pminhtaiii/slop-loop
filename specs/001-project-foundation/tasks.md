@@ -34,7 +34,7 @@ description: "Actionable task list for the Phase 0 private application foundatio
 
 **⚠️ CRITICAL**: User-story work starts only after this phase is complete.
 
-- [ ] T009 Create the no-emit strict test/configuration type-check project in `tsconfig.test.json`, extending the production settings while including `tests/` and `vitest.config.ts` without emitting into `dist/`.
+- [x] T009 Create the no-emit strict test/configuration type-check project in `tsconfig.test.json`, extending the production settings while including `tests/` and `vitest.config.ts` without emitting into `dist/`.
 
 **Checkpoint**: The repository can install its pinned dependencies and statically validate both production and test configuration without any application behavior or generated artifact.
 
