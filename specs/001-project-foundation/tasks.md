@@ -50,13 +50,13 @@ description: "Actionable task list for the Phase 0 private application foundatio
 
 > Write these tests first and run the focused test so it fails before implementing the startup path.
 
-- [ ] T010 [US1] Add RED source startup tests in `tests/smoke.test.ts` that exercise the source entrypoint without `dist/`, assert successful default startup at `info` with a structured record, and assert bounded failure for invalid configuration.
+- [x] T010 [US1] Add RED source startup tests in `tests/smoke.test.ts` that exercise the source entrypoint without `dist/`, assert successful default startup at `info` with a structured record, and assert bounded failure for invalid configuration.
 
 ### Implementation for User Story 1
 
-- [ ] T011 [P] [US1] Implement the initial injectable configuration seam in `src/config.ts` so startup can receive environment data, default the absent log level to `info`, and return an immutable typed configuration value.
-- [ ] T012 [P] [US1] Implement the initial Pino factory seam in `src/logging.ts` so startup can create a level-aware operational logger with injectable output for tests.
-- [ ] T013 [US1] Implement the private application entrypoint in `src/index.ts` to load configuration, create the logger, emit one bounded structured startup record, report configuration errors diagnostically, and exit unsuccessfully rather than claiming startup success.
+- [x] T011 [P] [US1] Implement the initial injectable configuration seam in `src/config.ts` so startup can receive environment data, default the absent log level to `info`, and return an immutable typed configuration value.
+- [x] T012 [P] [US1] Implement the initial Pino factory seam in `src/logging.ts` so startup can create a level-aware operational logger with injectable output for tests.
+- [x] T013 [US1] Implement the private application entrypoint in `src/index.ts` to load configuration, create the logger, emit one bounded structured startup record, report configuration errors diagnostically, and exit unsuccessfully rather than claiming startup success.
 
 **Checkpoint**: User Story 1 is independently testable from source and provides the first demonstrable private application startup increment.
 
