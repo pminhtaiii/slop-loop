@@ -22,14 +22,7 @@ export function start(options: StartOptions = {}): StartResult {
     destination: options.destination,
   });
 
-  const startupLogger = logger.isLevelEnabled("info")
-    ? logger
-    : createLogger({
-        level: "info",
-        destination: options.destination,
-      });
-
-  startupLogger.info({ status: "started", logLevel: config.logLevel }, "Application started");
+  logger.info({ status: "started", logLevel: config.logLevel }, "Application started");
 
   return {
     status: "started",
