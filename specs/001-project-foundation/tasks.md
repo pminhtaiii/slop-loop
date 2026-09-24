@@ -94,13 +94,13 @@ description: "Actionable task list for the Phase 0 private application foundatio
 
 > Add the command/boundary assertions first and confirm they fail before wiring the build and smoke commands.
 
-- [ ] T018 [US3] Extend `tests/smoke.test.ts` with RED package-script and boundary assertions that `pnpm test` is source-level and artifact-independent, `pnpm build` targets the compiled output, and `pnpm smoke` names `node dist/index.js` without source imports or package self-reference.
+- [x] T018 [US3] Extend `tests/smoke.test.ts` with RED package-script and boundary assertions that `pnpm test` is source-level and artifact-independent, `pnpm build` targets the compiled output, and `pnpm smoke` names `node dist/index.js` without source imports or package self-reference.
 
 ### Implementation for User Story 3
 
-- [ ] T019 [P] [US3] Add the explicit verification scripts to `package.json`: `lint`, `format`, `format:check`, `typecheck`, `test`, `build`, and `smoke`, with `test` running Vitest independently, `build` invoking `tsc`, and `smoke` executing exactly `node dist/index.js`.
-- [ ] T020 [P] [US3] Finalize `tsconfig.json` so `pnpm build` emits the private application entrypoint and its source modules into `dist/` with native ESM semantics and no test output.
-- [ ] T021 [P] [US3] Finalize `vitest.config.ts` so `pnpm test` discovers source-level tests under `tests/` without importing, creating, or requiring `dist/`.
+- [x] T019 [P] [US3] Add the explicit verification scripts to `package.json`: `lint`, `format`, `format:check`, `typecheck`, `test`, `build`, and `smoke`, with `test` running Vitest independently, `build` invoking `tsc`, and `smoke` executing exactly `node dist/index.js`.
+- [x] T020 [P] [US3] Finalize `tsconfig.json` so `pnpm build` emits the private application entrypoint and its source modules into `dist/` with native ESM semantics and no test output.
+- [x] T021 [P] [US3] Finalize `vitest.config.ts` so `pnpm test` discovers source-level tests under `tests/` without importing, creating, or requiring `dist/`.
 
 **Checkpoint**: Source tests pass before a build, `pnpm build` creates `dist/index.js`, and `pnpm smoke` starts only the compiled entrypoint successfully.
 
