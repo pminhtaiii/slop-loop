@@ -75,4 +75,28 @@ describe("Configuration contract tests (User Story 2 / T014)", () => {
     expect(config.logLevel).toBe("debug");
     expect(customEnv).toEqual({ SLOP_LOOP_LOG_LEVEL: "debug" });
   });
+
+  describe("Diagnostic bounding and sanitization (Issue 3)", () => {
+    it("bounds excessively long invalid log level strings in diagnostic output", () => {
+      const veryLongInput = "a".repeat(200);
+      expect(() =>
+        loadConfig({
+          SLOP_LOOP_LOG_LEVEL: veryLongInput,
+        }),
+      ).toThrowError(
+        new RegExp(
+          `Invalid SLOP_LOOP_LOG_LEVEL '${"a".repeat(64)}\\.\\.\\.'\\. Accepted values: ${LOG_LEVELS.join(", ")}`,
+        ),
+      );
+    });
+
+    it("sanitizes control characters in diagnostic output", () => {
+      const controlCharsInput = "bad\nlevel\r\t\x00value";
+      expect(() =>
+        loadConfig({
+          SLOP_LOOP_LOG_LEVEL: controlCharsInput,
+        }),
+      ).toThrowError(/Invalid SLOP_LOOP_LOG_LEVEL 'bad level value'\./);
+    });
+  });
 });

@@ -20,6 +20,30 @@ export class ConfigurationError extends Error {
   }
 }
 
+function removeControlCharacters(str: string): string {
+  let result = "";
+  for (let i = 0; i < str.length; i++) {
+    const code = str.charCodeAt(i);
+    if ((code >= 0 && code <= 31) || (code >= 127 && code <= 159)) {
+      result += " ";
+    } else {
+      result += str[i];
+    }
+  }
+  return result;
+}
+
+export function formatDiagnosticValue(value: unknown, maxLength = 64): string {
+  if (typeof value !== "string") {
+    return String(value);
+  }
+  const sanitized = removeControlCharacters(value).replace(/\s+/g, " ").trim();
+  if (sanitized.length <= maxLength) {
+    return sanitized;
+  }
+  return `${sanitized.slice(0, maxLength)}...`;
+}
+
 function projectEnvironment(env: NodeJS.ProcessEnv): Record<string, unknown> {
   const projected: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(env)) {
@@ -39,11 +63,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       (issue) => issue.code === "unrecognized_keys",
     );
     if (unrecognizedIssue && "keys" in unrecognizedIssue) {
-      const unknownKeys = unrecognizedIssue.keys.join(", ");
+      const unknownKeys = unrecognizedIssue.keys
+        .map((key) => formatDiagnosticValue(key, 64))
+        .join(", ");
       throw new ConfigurationError(`Unknown application configuration setting(s): ${unknownKeys}`);
     }
 
-    const rawLogLevel = env.SLOP_LOOP_LOG_LEVEL;
+    const rawLogLevel = formatDiagnosticValue(env.SLOP_LOOP_LOG_LEVEL);
     throw new ConfigurationError(
       `Invalid SLOP_LOOP_LOG_LEVEL '${rawLogLevel}'. Accepted values: ${LOG_LEVELS.join(", ")}`,
     );
