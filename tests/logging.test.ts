@@ -178,12 +178,16 @@ describe("Operational logging contract tests (User Story 2 / T015)", () => {
           token: "bearer_xyz",
           key: "ssh_key_content",
           apiKey: "sk-1234567890",
+          authorization: "Bearer secret_auth_1",
+          Authorization: "Bearer secret_auth_2",
           nested: {
             password: "nested_password",
             secret: "nested_secret",
             token: "nested_token",
             key: "nested_key",
             apiKey: "nested_api_key",
+            authorization: "Bearer nested_auth_1",
+            Authorization: "Bearer nested_auth_2",
           },
         },
         "Sensitive log attempt",
@@ -195,6 +199,8 @@ describe("Operational logging contract tests (User Story 2 / T015)", () => {
       expect(record.token).toBe("[REDACTED]");
       expect(record.key).toBe("[REDACTED]");
       expect(record.apiKey).toBe("[REDACTED]");
+      expect(record.authorization).toBe("[REDACTED]");
+      expect(record.Authorization).toBe("[REDACTED]");
 
       const nested = record.nested as Record<string, unknown>;
       expect(nested.password).toBe("[REDACTED]");
@@ -202,6 +208,8 @@ describe("Operational logging contract tests (User Story 2 / T015)", () => {
       expect(nested.token).toBe("[REDACTED]");
       expect(nested.key).toBe("[REDACTED]");
       expect(nested.apiKey).toBe("[REDACTED]");
+      expect(nested.authorization).toBe("[REDACTED]");
+      expect(nested.Authorization).toBe("[REDACTED]");
     });
 
     it("redacts sensitive fields inside nested untrusted categories", () => {
