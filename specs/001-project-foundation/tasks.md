@@ -17,14 +17,14 @@ description: "Actionable task list for the Phase 0 private application foundatio
 
 **Purpose**: Establish the smallest reproducible TypeScript/Node project surface without introducing application behavior.
 
-- [ ] T001 Create `package.json` with private single-package metadata, native ESM configuration, Node.js 24 and pnpm 12 requirements, Zod 4 and Pino runtime dependencies, and the planned TypeScript/Vitest/ESLint/Prettier development dependencies.
-- [ ] T002 [P] Create the root single-package `pnpm-workspace.yaml` without adding workspace packages or future subsystem packages.
-- [ ] T003 [P] Create strict NodeNext compiler settings in `tsconfig.json` for TypeScript source under `src/`, emitting the private application artifact under `dist/` without bundling tests.
-- [ ] T004 [P] Create the type-aware flat ESLint configuration in `eslint.config.mjs` for the TypeScript source, tests, and repository configuration files.
-- [ ] T005 [P] Create the Prettier configuration in `prettier.config.mjs` and formatting exclusions in `.prettierignore` for generated output and dependency directories.
-- [ ] T006 [P] Create the Node-oriented Vitest configuration in `vitest.config.ts` with source-test discovery under `tests/` and no requirement that `dist/` already exists.
-- [ ] T007 [P] Add generated-output and dependency exclusions to `.gitignore`, including `dist/`, coverage output, and local installation artifacts.
-- [ ] T008 Install the pinned dependency graph with `pnpm install` and generate the reproducible lockfile at `pnpm-lock.yaml` for developer review.
+- [x] T001 Create `package.json` with private single-package metadata, native ESM configuration, Node.js 24 and pnpm 12 requirements, Zod 4 and Pino runtime dependencies, and the planned TypeScript/Vitest/ESLint/Prettier development dependencies.
+- [x] T002 [P] Create the root single-package `pnpm-workspace.yaml` without adding workspace packages or future subsystem packages.
+- [x] T003 [P] Create strict NodeNext compiler settings in `tsconfig.json` for TypeScript source under `src/`, emitting the private application artifact under `dist/` without bundling tests.
+- [x] T004 [P] Create the type-aware flat ESLint configuration in `eslint.config.mjs` for the TypeScript source, tests, and repository configuration files.
+- [x] T005 [P] Create the Prettier configuration in `prettier.config.mjs` and formatting exclusions in `.prettierignore` for generated output and dependency directories.
+- [x] T006 [P] Create the Node-oriented Vitest configuration in `vitest.config.ts` with source-test discovery under `tests/` and no requirement that `dist/` already exists.
+- [x] T007 [P] Add generated-output and dependency exclusions to `.gitignore`, including `dist/`, coverage output, and local installation artifacts.
+- [x] T008 Install the pinned dependency graph with `pnpm install` and generate the reproducible lockfile at `pnpm-lock.yaml` for developer review.
 
 ---
 
@@ -34,7 +34,7 @@ description: "Actionable task list for the Phase 0 private application foundatio
 
 **⚠️ CRITICAL**: User-story work starts only after this phase is complete.
 
-- [ ] T009 Create the no-emit strict test/configuration type-check project in `tsconfig.test.json`, extending the production settings while including `tests/` and `vitest.config.ts` without emitting into `dist/`.
+- [x] T009 Create the no-emit strict test/configuration type-check project in `tsconfig.test.json`, extending the production settings while including `tests/` and `vitest.config.ts` without emitting into `dist/`.
 
 **Checkpoint**: The repository can install its pinned dependencies and statically validate both production and test configuration without any application behavior or generated artifact.
 
@@ -50,13 +50,13 @@ description: "Actionable task list for the Phase 0 private application foundatio
 
 > Write these tests first and run the focused test so it fails before implementing the startup path.
 
-- [ ] T010 [US1] Add RED source startup tests in `tests/smoke.test.ts` that exercise the source entrypoint without `dist/`, assert successful default startup at `info` with a structured record, and assert bounded failure for invalid configuration.
+- [x] T010 [US1] Add RED source startup tests in `tests/smoke.test.ts` that exercise the source entrypoint without `dist/`, assert successful default startup at `info` with a structured record, and assert bounded failure for invalid configuration.
 
 ### Implementation for User Story 1
 
-- [ ] T011 [P] [US1] Implement the initial injectable configuration seam in `src/config.ts` so startup can receive environment data, default the absent log level to `info`, and return an immutable typed configuration value.
-- [ ] T012 [P] [US1] Implement the initial Pino factory seam in `src/logging.ts` so startup can create a level-aware operational logger with injectable output for tests.
-- [ ] T013 [US1] Implement the private application entrypoint in `src/index.ts` to load configuration, create the logger, emit one bounded structured startup record, report configuration errors diagnostically, and exit unsuccessfully rather than claiming startup success.
+- [x] T011 [P] [US1] Implement the initial injectable configuration seam in `src/config.ts` so startup can receive environment data, default the absent log level to `info`, and return an immutable typed configuration value.
+- [x] T012 [P] [US1] Implement the initial Pino factory seam in `src/logging.ts` so startup can create a level-aware operational logger with injectable output for tests.
+- [x] T013 [US1] Implement the private application entrypoint in `src/index.ts` to load configuration, create the logger, emit one bounded structured startup record, report configuration errors diagnostically, and exit unsuccessfully rather than claiming startup success.
 
 **Checkpoint**: User Story 1 is independently testable from source and provides the first demonstrable private application startup increment.
 
@@ -72,13 +72,13 @@ description: "Actionable task list for the Phase 0 private application foundatio
 
 > Write these tests first and run them to confirm the strict configuration and logging assertions fail before hardening the implementation.
 
-- [ ] T014 [P] [US2] Add RED configuration contract tests in `tests/config.test.ts` for injectable environments, the `info` default, all six accepted levels, invalid values, unknown `SLOP_LOOP_*` names, ignored unrelated variables, frozen results, and actionable validation failures.
-- [ ] T015 [P] [US2] Add RED operational logging tests in `tests/logging.test.ts` for effective levels, structured newline-delimited records, application-controlled nesting of repository/model/tool data, explicit redaction paths, injectable output, and separation from canonical audit evidence.
+- [x] T014 [P] [US2] Add RED configuration contract tests in `tests/config.test.ts` for injectable environments, the `info` default, all six accepted levels, invalid values, unknown `SLOP_LOOP_*` names, ignored unrelated variables, frozen results, and actionable validation failures.
+- [x] T015 [P] [US2] Add RED operational logging tests in `tests/logging.test.ts` for effective levels, structured newline-delimited records, application-controlled nesting of repository/model/tool data, explicit redaction paths, injectable output, and separation from canonical audit evidence.
 
 ### Implementation for User Story 2
 
-- [ ] T016 [P] [US2] Complete `src/config.ts` with a strict Zod 4 projected schema that recognizes only `SLOP_LOOP_LOG_LEVEL`, accepts exactly `trace`, `debug`, `info`, `warn`, `error`, and `fatal`, rejects every other `SLOP_LOOP_*` name/value, ignores unrelated environment names, and freezes the typed result.
-- [ ] T017 [P] [US2] Complete `src/logging.ts` with a narrow Pino `createLogger()` factory, fixed explicit redaction, injectable test output, and application-controlled nesting for potentially untrusted values; keep operational logging separate from any canonical audit stream.
+- [x] T016 [P] [US2] Complete `src/config.ts` with a strict Zod 4 projected schema that recognizes only `SLOP_LOOP_LOG_LEVEL`, accepts exactly `trace`, `debug`, `info`, `warn`, `error`, and `fatal`, rejects every other `SLOP_LOOP_*` name/value, ignores unrelated environment names, and freezes the typed result.
+- [x] T017 [P] [US2] Complete `src/logging.ts` with a narrow Pino `createLogger()` factory, fixed explicit redaction, injectable test output, and application-controlled nesting for potentially untrusted values; keep operational logging separate from any canonical audit stream.
 
 **Checkpoint**: User Stories 1 and 2 both pass their focused source tests; startup uses the complete strict configuration and controlled operational logging contracts.
 
