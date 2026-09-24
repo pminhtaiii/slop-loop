@@ -7,7 +7,11 @@ export interface AppConfig {
   readonly logLevel: LogLevel;
 }
 
-const logLevelSchema = z.enum(LOG_LEVELS);
+const projectedConfigSchema = z
+  .object({
+    SLOP_LOOP_LOG_LEVEL: z.enum(LOG_LEVELS).default("info"),
+  })
+  .strict();
 
 export class ConfigurationError extends Error {
   constructor(message: string) {
@@ -16,27 +20,36 @@ export class ConfigurationError extends Error {
   }
 }
 
-export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
-  const unknownKeys = Object.keys(env).filter(
-    (key) => key.startsWith("SLOP_LOOP_") && key !== "SLOP_LOOP_LOG_LEVEL",
-  );
-
-  if (unknownKeys.length > 0) {
-    throw new ConfigurationError(
-      `Unknown application configuration setting(s): ${unknownKeys.join(", ")}`,
-    );
+function projectEnvironment(env: NodeJS.ProcessEnv): Record<string, unknown> {
+  const projected: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (key.startsWith("SLOP_LOOP_")) {
+      projected[key] = value;
+    }
   }
+  return projected;
+}
 
-  const rawLogLevel = env.SLOP_LOOP_LOG_LEVEL ?? "info";
+export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
+  const projected = projectEnvironment(env);
+  const parseResult = projectedConfigSchema.safeParse(projected);
 
-  const parseResult = logLevelSchema.safeParse(rawLogLevel);
   if (!parseResult.success) {
+    const unrecognizedIssue = parseResult.error.issues.find(
+      (issue) => issue.code === "unrecognized_keys",
+    );
+    if (unrecognizedIssue && "keys" in unrecognizedIssue) {
+      const unknownKeys = unrecognizedIssue.keys.join(", ");
+      throw new ConfigurationError(`Unknown application configuration setting(s): ${unknownKeys}`);
+    }
+
+    const rawLogLevel = env.SLOP_LOOP_LOG_LEVEL;
     throw new ConfigurationError(
       `Invalid SLOP_LOOP_LOG_LEVEL '${rawLogLevel}'. Accepted values: ${LOG_LEVELS.join(", ")}`,
     );
   }
 
   return Object.freeze({
-    logLevel: parseResult.data,
+    logLevel: parseResult.data.SLOP_LOOP_LOG_LEVEL,
   });
 }

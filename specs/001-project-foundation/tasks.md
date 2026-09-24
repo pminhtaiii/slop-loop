@@ -72,13 +72,13 @@ description: "Actionable task list for the Phase 0 private application foundatio
 
 > Write these tests first and run them to confirm the strict configuration and logging assertions fail before hardening the implementation.
 
-- [ ] T014 [P] [US2] Add RED configuration contract tests in `tests/config.test.ts` for injectable environments, the `info` default, all six accepted levels, invalid values, unknown `SLOP_LOOP_*` names, ignored unrelated variables, frozen results, and actionable validation failures.
-- [ ] T015 [P] [US2] Add RED operational logging tests in `tests/logging.test.ts` for effective levels, structured newline-delimited records, application-controlled nesting of repository/model/tool data, explicit redaction paths, injectable output, and separation from canonical audit evidence.
+- [x] T014 [P] [US2] Add RED configuration contract tests in `tests/config.test.ts` for injectable environments, the `info` default, all six accepted levels, invalid values, unknown `SLOP_LOOP_*` names, ignored unrelated variables, frozen results, and actionable validation failures.
+- [x] T015 [P] [US2] Add RED operational logging tests in `tests/logging.test.ts` for effective levels, structured newline-delimited records, application-controlled nesting of repository/model/tool data, explicit redaction paths, injectable output, and separation from canonical audit evidence.
 
 ### Implementation for User Story 2
 
-- [ ] T016 [P] [US2] Complete `src/config.ts` with a strict Zod 4 projected schema that recognizes only `SLOP_LOOP_LOG_LEVEL`, accepts exactly `trace`, `debug`, `info`, `warn`, `error`, and `fatal`, rejects every other `SLOP_LOOP_*` name/value, ignores unrelated environment names, and freezes the typed result.
-- [ ] T017 [P] [US2] Complete `src/logging.ts` with a narrow Pino `createLogger()` factory, fixed explicit redaction, injectable test output, and application-controlled nesting for potentially untrusted values; keep operational logging separate from any canonical audit stream.
+- [x] T016 [P] [US2] Complete `src/config.ts` with a strict Zod 4 projected schema that recognizes only `SLOP_LOOP_LOG_LEVEL`, accepts exactly `trace`, `debug`, `info`, `warn`, `error`, and `fatal`, rejects every other `SLOP_LOOP_*` name/value, ignores unrelated environment names, and freezes the typed result.
+- [x] T017 [P] [US2] Complete `src/logging.ts` with a narrow Pino `createLogger()` factory, fixed explicit redaction, injectable test output, and application-controlled nesting for potentially untrusted values; keep operational logging separate from any canonical audit stream.
 
 **Checkpoint**: User Stories 1 and 2 both pass their focused source tests; startup uses the complete strict configuration and controlled operational logging contracts.
 
