@@ -6,6 +6,58 @@ export interface LoggerOptions {
   destination?: DestinationStream;
 }
 
+export const REDACTED_PATHS = [
+  "password",
+  "secret",
+  "token",
+  "key",
+  "apiKey",
+  "api_key",
+  "authorization",
+  "Authorization",
+  "*.password",
+  "*.secret",
+  "*.token",
+  "*.key",
+  "*.apiKey",
+  "*.api_key",
+  "*.authorization",
+  "*.Authorization",
+  "*.*.password",
+  "*.*.secret",
+  "*.*.token",
+  "*.*.key",
+  "*.*.apiKey",
+  "*.*.api_key",
+  "*.*.authorization",
+  "*.*.Authorization",
+  "*.*.*.password",
+  "*.*.*.secret",
+  "*.*.*.token",
+  "*.*.*.key",
+  "*.*.*.apiKey",
+  "*.*.*.api_key",
+  "*.*.*.authorization",
+  "*.*.*.Authorization",
+] as const;
+
+export const UNTRUSTED_DATA_CATEGORIES = ["repository", "model", "tool"] as const;
+export type UntrustedDataCategory = (typeof UNTRUSTED_DATA_CATEGORIES)[number];
+
+/**
+ * Wraps untrusted or external data (such as repository contents, model responses,
+ * or tool execution outputs) under an application-controlled namespace field so
+ * it cannot overwrite core operational log metadata.
+ */
+export function nestUntrusted(
+  category: UntrustedDataCategory,
+  data: unknown,
+): Record<string, unknown> {
+  return {
+    [category]: data,
+  };
+}
+
 export function createLogger(options: LoggerOptions = {}): Logger {
   const level = options.level ?? "info";
   const destination = options.destination;
@@ -14,7 +66,7 @@ export function createLogger(options: LoggerOptions = {}): Logger {
     level,
     base: undefined,
     redact: {
-      paths: ["*.password", "*.secret", "*.token", "*.key", "password", "secret", "token", "key"],
+      paths: [...REDACTED_PATHS],
       censor: "[REDACTED]",
     },
   };
