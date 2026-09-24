@@ -506,6 +506,41 @@ describe("Operational logging contract tests (User Story 2 / T015)", () => {
       expect(repo.createdAt).toBe("2026-09-24T12:00:00.000Z");
       expect(repo.failing).toBe("[UNSERIALIZABLE]");
     });
+
+    it("scrubs common credential patterns in untrusted string values such as stdout", () => {
+      const memory = createMemoryStream();
+      const logger = createLogger({ destination: memory.stream });
+
+      const stdoutWithCredentials = [
+        "Connecting to https://api.example.com",
+        "Authorization: Bearer secret_bearer_token_12345",
+        "Bearer super_secret_bare_token_xyz987",
+        'Response payload: {"token": "json_secret_token_abc"}',
+        'Header payload: {"authorization": "custom_auth_token"}',
+        'Escaped quote payload: {"password": "pass\\"word\\"123"}',
+      ].join("\n");
+
+      logger.info(
+        nestUntrusted("tool", {
+          stdout: stdoutWithCredentials,
+        }),
+        "Tool command output",
+      );
+
+      const record = memory.getRecords()[0]!;
+      const tool = record.tool as { stdout: string };
+
+      expect(tool.stdout).not.toContain("secret_bearer_token_12345");
+      expect(tool.stdout).not.toContain("super_secret_bare_token_xyz987");
+      expect(tool.stdout).not.toContain("json_secret_token_abc");
+      expect(tool.stdout).not.toContain("custom_auth_token");
+      expect(tool.stdout).not.toContain('pass\\"word\\"123');
+      expect(tool.stdout).toContain("Authorization: Bearer [REDACTED]");
+      expect(tool.stdout).toContain("Bearer [REDACTED]");
+      expect(tool.stdout).toContain('"token": "[REDACTED]"');
+      expect(tool.stdout).toContain('"authorization": "[REDACTED]"');
+      expect(tool.stdout).toContain('"password": "[REDACTED]"');
+    });
   });
 
   describe("Injectable output seam", () => {

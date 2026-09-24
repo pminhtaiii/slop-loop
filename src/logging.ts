@@ -64,6 +64,16 @@ export function isSensitiveKey(key: string): boolean {
   return SENSITIVE_KEY_NAMES.has(key.toLowerCase());
 }
 
+export function scrubStringCredentials(value: string): string {
+  return value
+    .replace(/(authorization\s*:\s*(?:bearer|basic)\s+)[^\s,;]+/gi, "$1[REDACTED]")
+    .replace(/(\b(?:bearer|basic)\s+)[a-zA-Z0-9_\-.~+/=]{8,}/gi, "$1[REDACTED]")
+    .replace(
+      /("(?:password|secret|token|key|apiKey|api_key|authorization|access_token|accessToken|client_secret|clientSecret)"\s*:\s*")(?:[^"\\]|\\.)*(")/gi,
+      "$1[REDACTED]$2",
+    );
+}
+
 export function boundUntrustedData(
   data: unknown,
   depth = 0,
@@ -79,10 +89,11 @@ export function boundUntrustedData(
   }
 
   if (typeof data === "string") {
-    if (data.length > MAX_UNTRUSTED_STRING_LENGTH) {
-      return `${data.slice(0, MAX_UNTRUSTED_STRING_LENGTH)}... [truncated]`;
+    const scrubbed = scrubStringCredentials(data);
+    if (scrubbed.length > MAX_UNTRUSTED_STRING_LENGTH) {
+      return `${scrubbed.slice(0, MAX_UNTRUSTED_STRING_LENGTH)}... [truncated]`;
     }
-    return data;
+    return scrubbed;
   }
 
   if (typeof data === "number" || typeof data === "boolean") {

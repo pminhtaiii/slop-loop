@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
@@ -147,14 +148,22 @@ describe("Packaging and verification boundary contract (User Story 3 / T018)", (
 
   it("ensures source and test files do not import from dist or use package self-reference", () => {
     const scanDirs = [path.join(rootDir, "src"), path.join(rootDir, "tests")];
-    const scannedFiles: string[] = [];
 
-    for (const dir of scanDirs) {
-      const files = fs.readdirSync(dir).filter((file) => file.endsWith(".ts"));
-      for (const file of files) {
-        scannedFiles.push(path.join(dir, file));
+    const collectTsFiles = (dir: string): string[] => {
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      const files: string[] = [];
+      for (const entry of entries) {
+        const fullPath = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          files.push(...collectTsFiles(fullPath));
+        } else if (entry.isFile() && entry.name.endsWith(".ts")) {
+          files.push(fullPath);
+        }
       }
-    }
+      return files;
+    };
+
+    const scannedFiles = scanDirs.flatMap((dir) => collectTsFiles(dir));
 
     expect(scannedFiles.length).toBeGreaterThan(0);
 
@@ -170,10 +179,13 @@ describe("Packaging and verification boundary contract (User Story 3 / T018)", (
   });
 
   it("reports failure when the compiled artifact does not exist (SC-004 / US3 Scenario 4)", () => {
-    const distIndexPath = path.join(rootDir, "dist", "index.js");
-    if (!fs.existsSync(distIndexPath)) {
-      const result = spawnSync(process.execPath, [distIndexPath], { encoding: "utf-8" });
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "slop-loop-smoke-"));
+    try {
+      const missingDistIndexPath = path.join(tempDir, "dist", "index.js");
+      const result = spawnSync(process.execPath, [missingDistIndexPath], { encoding: "utf-8" });
       expect(result.status).not.toBe(0);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
     }
   });
 });
