@@ -1,7 +1,8 @@
 <!-- SPECKIT START -->
-For additional context about technologies to be used, project structure,
-shell commands, and other important information, read the current plan
-at specs/001-project-foundation/plan.md
+For the approved Phase 1 design, read the plan at
+specs/002-task-domain-orchestrator/plan.md. Phase 1 source work was explicitly
+authorized before Phase 0 completion; the Phase 0 exit gate remains a
+prerequisite for Phase 1 integration readiness.
 <!-- SPECKIT END -->
 
 ## Slop Loop Project Context

@@ -210,35 +210,32 @@ The orchestrator owns deterministic task state.
 Canonical states:
 
 ```text
-RECEIVED
-  ↓
-ADMITTED
-  ↓
-INSPECTING
-  ├─ Ask → ANSWERING → COMPLETED / FAILED / BLOCKED
-  └─ Edit → PLANNING
-               ↓
-       WAITING_FOR_FILE_PERMISSION
-               ↓
-         IMPLEMENTING
-               ↓
-         SANDBOX_READY
-               ↓
-          VERIFYING
-               ↓
-          REPAIRING ──→ WAITING_FOR_FILE_PERMISSION (when a new path is needed)
-               ↓
-          REVIEWING
-               ↓
-       COMPLETED / FAILED / BLOCKED
+RECEIVED -> ADMITTED -> INSPECTING
+                         | Ask -> ANSWERING -> COMPLETED (ANSWERED)
+                         | Edit -> PLANNING -> WAITING_FOR_FILE_PERMISSION
+                                               -> IMPLEMENTING -> SANDBOX_READY
+                                               -> VERIFYING -> REVIEWING
+                                                               -> COMPLETED (EDIT_VERIFIED)
+VERIFYING -> REPAIRING -> WAITING_FOR_FILE_PERMISSION or IMPLEMENTING
+REVIEWING -> REPAIRING
+INSPECTING or PLANNING -> COMPLETED (NO_CHANGE_NEEDED, Edit only)
+ANSWERING -> PLANNING (trusted Ask to Edit switch for CHANGE intent)
+Active Edit state -> PAUSED_FOR_MODE (trusted Edit to Ask switch)
+PAUSED_FOR_MODE -> INSPECTING (trusted Ask to Edit resume)
+Any active state -> FAILED / BLOCKED / CANCELLED for its typed reason
 ```
 Rules:
 
 - Model output may suggest the next action, but legal state transitions are defined in code.
+- Each task has an immutable trusted intent: `INFORMATIONAL` or `CHANGE`. An informational task cannot enter Edit work by switching mode; a new change request is a new task.
+- A developer may switch an active Edit task to Ask. The task enters `PAUSED_FOR_MODE`; returning to Edit resumes at `INSPECTING` and traverses the permission stage again. The later permission subsystem must revoke grants on the switch to Ask.
+- `CANCELLED` is a distinct terminal state for explicit developer cancellation. Terminal state and typed outcome remain sealed together.
 - A task may not skip admission. A tool that executes repository code may not skip sandbox creation; an `Ask` session does not create a sandbox.
 - Mutation tools are available only in `Edit` mode after permission for every exact target path-operation pair. Switching to `Ask` revokes all file permissions.
 - Every state transition is auditable.
 - Retry transitions consume explicit budget.
+- Entering `REPAIRING` requires a one-use authorization issued only after the runner consumes a retry allowance.
+- Phase 1 implements this graph with deterministic in-memory events and simulated time. Real model, tool, permission, sandbox, timer, CLI, and audit integrations belong to later phases.
 
 ---
 

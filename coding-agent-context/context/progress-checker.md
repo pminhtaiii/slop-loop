@@ -11,10 +11,10 @@ Do not mark a capability complete because it appears in architecture or planning
 Overall status:
 
 ```text
-PLANNING / CONTEXT FOUNDATION
+PHASE 1 DOMAIN CORE IMPLEMENTED / PHASE 0 INTEGRATION PENDING
 ```
 
-The TypeScript/Node 24 single-process foundation and Phase 0 design frontier are recorded. Runtime implementation status must be updated as code is built.
+The isolated Phase 1 task domain and deterministic orchestrator are implemented and verified by source-level tests. Phase 0 runtime and its full exit gate remain incomplete, so Phase 1 is not integration-ready. Phase 1 has no real model, tool, permission, sandbox, CLI, or audit adapter.
 
 The agreed future product MVP is an interactive local CLI implemented in TypeScript for Python target repositories. It supports `Ask` and `Edit` modes in one in-memory session, repository questions, permission-gated updates and creation in the current checkout, trusted Docker verification, progress questions, and a final diff and verification report. The developer owns Git writes. The first model provider remains undecided. Worktrees, session persistence, API/web, active-task scope changes, and remote Git delivery are deferred. These are planned behaviors, not completed capabilities.
 
@@ -48,13 +48,15 @@ pnpm smoke
 ~~~
 ## Phase 1 — Task Domain & Orchestrator
 
-- [ ] Define `TaskContext`.
-- [ ] Define task state enum.
-- [ ] Implement validated transitions.
-- [ ] Implement task budgets.
-- [ ] Implement terminal outcomes.
-- [ ] Add transition unit tests.
-- [ ] Add retry/budget exhaustion tests.
+- [x] Define `TaskContext`.
+- [x] Define task state enum.
+- [x] Implement validated transitions.
+- [x] Implement task budgets.
+- [x] Implement terminal outcomes.
+- [x] Add transition unit tests.
+- [x] Add retry/budget exhaustion tests.
+
+The 45 Phase 1 tests, lint, typecheck, and build pass in this checkout. Budget expiry is checked on each event or injected clock tick; a later runtime must schedule real clock checks and bound external calls. Phase 0 `format:check` and `smoke` remain open, so the full integration gate has not passed.
 
 Exit gate:
 
