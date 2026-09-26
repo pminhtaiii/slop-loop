@@ -130,9 +130,9 @@ description: "Actionable task list for the Phase 0 private application foundatio
 
 **Purpose**: Reconcile the implemented Phase 0 surface with the maintainer-facing workflow without widening the application boundary.
 
-- [ ] T024 [P] Document the private single-process startup, `SLOP_LOOP_*` namespace, and source/build/smoke verification commands in `README.md` without describing a public SDK, package self-reference, exports map, or CLI contract.
-- [ ] T025 Verify the command sequence and expected outcomes in `specs/001-project-foundation/quickstart.md` against `package.json`, `src/index.ts`, and `dist/index.js` after a clean install/build cycle.
-- [ ] T026 Run the canonical local verification sequence from `specs/001-project-foundation/quickstart.md` (`pnpm lint`, `pnpm format:check`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `pnpm smoke`) and confirm no generated artifacts or formatting changes are accidentally committed.
+- [x] T024 [P] Document the private single-process startup, `SLOP_LOOP_*` namespace, and source/build/smoke verification commands in `README.md` without describing a public SDK, package self-reference, exports map, or CLI contract.
+- [x] T025 Verify the command sequence and expected outcomes in `specs/001-project-foundation/quickstart.md` against `package.json`, `src/index.ts`, and `dist/index.js` after a clean install/build cycle.
+- [x] T026 Run the canonical local verification sequence from `specs/001-project-foundation/quickstart.md` (`pnpm lint`, `pnpm format:check`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `pnpm smoke`) and confirm no generated artifacts or formatting changes are accidentally committed.
 
 ---
 

@@ -11,7 +11,7 @@ Do not mark a capability complete because it appears in architecture or planning
 Overall status:
 
 ```text
-PLANNING / CONTEXT FOUNDATION
+PHASE 0 FOUNDATION COMPLETE
 ```
 
 The TypeScript/Node 24 single-process foundation and Phase 0 design frontier are recorded. Runtime implementation status must be updated as code is built.
