@@ -11,10 +11,10 @@ Do not mark a capability complete because it appears in architecture or planning
 Overall status:
 
 ```text
-PHASE 1 DOMAIN CORE IMPLEMENTED / PHASE 0 INTEGRATION PENDING
+PHASE 0 FOUNDATION COMPLETE / PHASE 1 DOMAIN CORE IMPLEMENTED
 ```
 
-The isolated Phase 1 task domain and deterministic orchestrator are implemented and verified by source-level tests. Phase 0 runtime and its full exit gate remain incomplete, so Phase 1 is not integration-ready. Phase 1 has no real model, tool, permission, sandbox, CLI, or audit adapter.
+Phase 0 runtime and its exit gate are complete on `development` and its source is present in this checkout. The Phase 1 task domain and deterministic orchestrator are implemented. The combined source checks pass locally, but the pinned pnpm 12 gate has not run in this checkout, so Phase 1 integration readiness is not yet claimed. Phase 1 has no real model, tool, permission, sandbox, CLI, or audit adapter.
 
 The agreed future product MVP is an interactive local CLI implemented in TypeScript for Python target repositories. It supports `Ask` and `Edit` modes in one in-memory session, repository questions, permission-gated updates and creation in the current checkout, trusted Docker verification, progress questions, and a final diff and verification report. The developer owns Git writes. The first model provider remains undecided. Worktrees, session persistence, API/web, active-task scope changes, and remote Git delivery are deferred. These are planned behaviors, not completed capabilities.
 
@@ -23,14 +23,14 @@ The agreed future product MVP is an interactive local CLI implemented in TypeScr
 ## Phase 0 — TypeScript Application Foundation
 
 - [x] Pin Node.js 24 LTS and pnpm version; create the private single-package manifest and lockfile.
-- [ ] Configure native ESM, strict TypeScript, tsc build to dist/, and no bundler.
-- [ ] Configure type-aware ESLint and Prettier.
-- [ ] Add only src/config.ts, src/logging.ts, and src/index.ts.
-- [ ] Add Vitest tests for configuration and logging plus a separate compiled smoke path.
-- [ ] Implement strict Zod 4 configuration for SLOP_LOOP_LOG_LEVEL with default info, injectable environment map, unknown-prefixed-variable rejection, and frozen typed output.
-- [ ] Implement the small Pino createLogger factory with controlled nested fields and explicit redaction.
-- [ ] Add pnpm format and pnpm format:check with explicit rewrite/check semantics.
-- [ ] Add Ubuntu full CI and Windows test/build/smoke CI.
+- [x] Configure native ESM, strict TypeScript, tsc build to dist/, and no bundler.
+- [x] Configure type-aware ESLint and Prettier.
+- [x] Add only src/config.ts, src/logging.ts, and src/index.ts.
+- [x] Add Vitest tests for configuration and logging plus a separate compiled smoke path.
+- [x] Implement strict Zod 4 configuration for SLOP_LOOP_LOG_LEVEL with default info, injectable environment map, unknown-prefixed-variable rejection, and frozen typed output.
+- [x] Implement the small Pino createLogger factory with controlled nested fields and explicit redaction.
+- [x] Add pnpm format and pnpm format:check with explicit rewrite/check semantics.
+- [x] Add Ubuntu full CI and Windows test/build/smoke CI.
 - [x] Record the TypeScript, Node 24, single-process, private-package, and future modular-monolith decision.
 - [x] Synchronize context, glossary, architecture, standards, libraries, workflow, policy, and progress.
 
@@ -56,7 +56,7 @@ pnpm smoke
 - [x] Add transition unit tests.
 - [x] Add retry/budget exhaustion tests.
 
-The 45 Phase 1 tests, lint, typecheck, and build pass in this checkout. Budget expiry is checked on each event or injected clock tick; a later runtime must schedule real clock checks and bound external calls. Phase 0 `format:check` and `smoke` remain open, so the full integration gate has not passed.
+The merged checkout passes 98 tests across Phase 0 and Phase 1, source and test typechecks, lint, build, compiled smoke, and Prettier with `--end-of-line auto` when their installed binaries are invoked directly. The pinned pnpm 12 executable is blocked locally by Windows Application Control; plain Prettier check flags CRLF checkout line endings from `core.autocrlf=true`. The full pnpm-script gate must still run for the combined branch. Budget expiry is checked on each event or injected clock tick; a later runtime must schedule real clock checks and bound external calls.
 
 Exit gate:
 

@@ -4,7 +4,7 @@
 
 **Created**: 2026-09-25
 
-**Status**: Plan approved; isolated Phase 1 core implemented; Phase 0 integration gate pending
+**Status**: Plan approved; Phase 0 source merged locally; Phase 1 core implemented; combined pinned-manager gate pending
 
 **Input**: Phase 1 product-level Task Domain & Orchestrator from `coding-agent-context/context/progress-checker.md`, refined by the developer's Phase 1 design decisions.
 

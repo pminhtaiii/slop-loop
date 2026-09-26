@@ -23,7 +23,17 @@ export default tseslint.config(
     },
   },
   {
-    files: ["**/*.{js,mjs,cjs}", "vitest.config.ts"],
+    files: ["tests/**/*.ts"],
+    languageOptions: {
+      parserOptions: {
+        project: ["./tsconfig.test.json"],
+        projectService: false,
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
+  },
+  {
+    files: ["**/*.{js,mjs,cjs}"],
     ...tseslint.configs.disableTypeChecked,
   },
 );

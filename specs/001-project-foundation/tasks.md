@@ -34,7 +34,7 @@ description: "Actionable task list for the Phase 0 private application foundatio
 
 **⚠️ CRITICAL**: User-story work starts only after this phase is complete.
 
-- [ ] T009 Create the no-emit strict test/configuration type-check project in `tsconfig.test.json`, extending the production settings while including `tests/` and `vitest.config.ts` without emitting into `dist/`.
+- [x] T009 Create the no-emit strict test/configuration type-check project in `tsconfig.test.json`, extending the production settings while including `tests/` and `vitest.config.ts` without emitting into `dist/`.
 
 **Checkpoint**: The repository can install its pinned dependencies and statically validate both production and test configuration without any application behavior or generated artifact.
 
@@ -50,13 +50,13 @@ description: "Actionable task list for the Phase 0 private application foundatio
 
 > Write these tests first and run the focused test so it fails before implementing the startup path.
 
-- [ ] T010 [US1] Add RED source startup tests in `tests/smoke.test.ts` that exercise the source entrypoint without `dist/`, assert successful default startup at `info` with a structured record, and assert bounded failure for invalid configuration.
+- [x] T010 [US1] Add RED source startup tests in `tests/smoke.test.ts` that exercise the source entrypoint without `dist/`, assert successful default startup at `info` with a structured record, and assert bounded failure for invalid configuration.
 
 ### Implementation for User Story 1
 
-- [ ] T011 [P] [US1] Implement the initial injectable configuration seam in `src/config.ts` so startup can receive environment data, default the absent log level to `info`, and return an immutable typed configuration value.
-- [ ] T012 [P] [US1] Implement the initial Pino factory seam in `src/logging.ts` so startup can create a level-aware operational logger with injectable output for tests.
-- [ ] T013 [US1] Implement the private application entrypoint in `src/index.ts` to load configuration, create the logger, emit one bounded structured startup record, report configuration errors diagnostically, and exit unsuccessfully rather than claiming startup success.
+- [x] T011 [P] [US1] Implement the initial injectable configuration seam in `src/config.ts` so startup can receive environment data, default the absent log level to `info`, and return an immutable typed configuration value.
+- [x] T012 [P] [US1] Implement the initial Pino factory seam in `src/logging.ts` so startup can create a level-aware operational logger with injectable output for tests.
+- [x] T013 [US1] Implement the private application entrypoint in `src/index.ts` to load configuration, create the logger, emit one bounded structured startup record, report configuration errors diagnostically, and exit unsuccessfully rather than claiming startup success.
 
 **Checkpoint**: User Story 1 is independently testable from source and provides the first demonstrable private application startup increment.
 
@@ -72,13 +72,13 @@ description: "Actionable task list for the Phase 0 private application foundatio
 
 > Write these tests first and run them to confirm the strict configuration and logging assertions fail before hardening the implementation.
 
-- [ ] T014 [P] [US2] Add RED configuration contract tests in `tests/config.test.ts` for injectable environments, the `info` default, all six accepted levels, invalid values, unknown `SLOP_LOOP_*` names, ignored unrelated variables, frozen results, and actionable validation failures.
-- [ ] T015 [P] [US2] Add RED operational logging tests in `tests/logging.test.ts` for effective levels, structured newline-delimited records, application-controlled nesting of repository/model/tool data, explicit redaction paths, injectable output, and separation from canonical audit evidence.
+- [x] T014 [P] [US2] Add RED configuration contract tests in `tests/config.test.ts` for injectable environments, the `info` default, all six accepted levels, invalid values, unknown `SLOP_LOOP_*` names, ignored unrelated variables, frozen results, and actionable validation failures.
+- [x] T015 [P] [US2] Add RED operational logging tests in `tests/logging.test.ts` for effective levels, structured newline-delimited records, application-controlled nesting of repository/model/tool data, explicit redaction paths, injectable output, and separation from canonical audit evidence.
 
 ### Implementation for User Story 2
 
-- [ ] T016 [P] [US2] Complete `src/config.ts` with a strict Zod 4 projected schema that recognizes only `SLOP_LOOP_LOG_LEVEL`, accepts exactly `trace`, `debug`, `info`, `warn`, `error`, and `fatal`, rejects every other `SLOP_LOOP_*` name/value, ignores unrelated environment names, and freezes the typed result.
-- [ ] T017 [P] [US2] Complete `src/logging.ts` with a narrow Pino `createLogger()` factory, fixed explicit redaction, injectable test output, and application-controlled nesting for potentially untrusted values; keep operational logging separate from any canonical audit stream.
+- [x] T016 [P] [US2] Complete `src/config.ts` with a strict Zod 4 projected schema that recognizes only `SLOP_LOOP_LOG_LEVEL`, accepts exactly `trace`, `debug`, `info`, `warn`, `error`, and `fatal`, rejects every other `SLOP_LOOP_*` name/value, ignores unrelated environment names, and freezes the typed result.
+- [x] T017 [P] [US2] Complete `src/logging.ts` with a narrow Pino `createLogger()` factory, fixed explicit redaction, injectable test output, and application-controlled nesting for potentially untrusted values; keep operational logging separate from any canonical audit stream.
 
 **Checkpoint**: User Stories 1 and 2 both pass their focused source tests; startup uses the complete strict configuration and controlled operational logging contracts.
 
@@ -94,13 +94,13 @@ description: "Actionable task list for the Phase 0 private application foundatio
 
 > Add the command/boundary assertions first and confirm they fail before wiring the build and smoke commands.
 
-- [ ] T018 [US3] Extend `tests/smoke.test.ts` with RED package-script and boundary assertions that `pnpm test` is source-level and artifact-independent, `pnpm build` targets the compiled output, and `pnpm smoke` names `node dist/index.js` without source imports or package self-reference.
+- [x] T018 [US3] Extend `tests/smoke.test.ts` with RED package-script and boundary assertions that `pnpm test` is source-level and artifact-independent, `pnpm build` targets the compiled output, and `pnpm smoke` names `node dist/index.js` without source imports or package self-reference.
 
 ### Implementation for User Story 3
 
-- [ ] T019 [P] [US3] Add the explicit verification scripts to `package.json`: `lint`, `format`, `format:check`, `typecheck`, `test`, `build`, and `smoke`, with `test` running Vitest independently, `build` invoking `tsc`, and `smoke` executing exactly `node dist/index.js`.
-- [ ] T020 [P] [US3] Finalize `tsconfig.json` so `pnpm build` emits the private application entrypoint and its source modules into `dist/` with native ESM semantics and no test output.
-- [ ] T021 [P] [US3] Finalize `vitest.config.ts` so `pnpm test` discovers source-level tests under `tests/` without importing, creating, or requiring `dist/`.
+- [x] T019 [P] [US3] Add the explicit verification scripts to `package.json`: `lint`, `format`, `format:check`, `typecheck`, `test`, `build`, and `smoke`, with `test` running Vitest independently, `build` invoking `tsc`, and `smoke` executing exactly `node dist/index.js`.
+- [x] T020 [P] [US3] Finalize `tsconfig.json` so `pnpm build` emits the private application entrypoint and its source modules into `dist/` with native ESM semantics and no test output.
+- [x] T021 [P] [US3] Finalize `vitest.config.ts` so `pnpm test` discovers source-level tests under `tests/` without importing, creating, or requiring `dist/`.
 
 **Checkpoint**: Source tests pass before a build, `pnpm build` creates `dist/index.js`, and `pnpm smoke` starts only the compiled entrypoint successfully.
 
@@ -116,11 +116,11 @@ description: "Actionable task list for the Phase 0 private application foundatio
 
 > Encode the platform command assignment first and confirm it fails until the workflow is present.
 
-- [ ] T022 [US4] Add RED workflow contract assertions in `tests/ci.test.ts` for pull-request/default-branch triggers, frozen installs, the complete Ubuntu command sequence, the Windows test/build/smoke sequence, and the absence of publication/deployment steps.
+- [x] T022 [US4] Add RED workflow contract assertions in `tests/ci.test.ts` for pull-request/default-branch triggers, frozen installs, the complete Ubuntu command sequence, the Windows test/build/smoke sequence, and the absence of publication/deployment steps.
 
 ### Implementation for User Story 4
 
-- [ ] T023 [US4] Create `.github/workflows/ci.yml` with Node.js 24 and pinned pnpm setup, frozen installs, Ubuntu lint/format-check/typecheck/test/build/smoke gates, Windows test/build/smoke gates, pull-request and default-branch push triggers, and no release/publication/deployment jobs.
+- [x] T023 [US4] Create `.github/workflows/ci.yml` with Node.js 24 and pinned pnpm setup, frozen installs, Ubuntu lint/format-check/typecheck/test/build/smoke gates, Windows test/build/smoke gates, pull-request and default-branch push triggers, and no release/publication/deployment jobs.
 
 **Checkpoint**: Each platform job performs exactly its assigned Phase 0 checks and exposes a failed check as a failed job.
 
@@ -130,9 +130,9 @@ description: "Actionable task list for the Phase 0 private application foundatio
 
 **Purpose**: Reconcile the implemented Phase 0 surface with the maintainer-facing workflow without widening the application boundary.
 
-- [ ] T024 [P] Document the private single-process startup, `SLOP_LOOP_*` namespace, and source/build/smoke verification commands in `README.md` without describing a public SDK, package self-reference, exports map, or CLI contract.
-- [ ] T025 Verify the command sequence and expected outcomes in `specs/001-project-foundation/quickstart.md` against `package.json`, `src/index.ts`, and `dist/index.js` after a clean install/build cycle.
-- [ ] T026 Run the canonical local verification sequence from `specs/001-project-foundation/quickstart.md` (`pnpm lint`, `pnpm format:check`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `pnpm smoke`) and confirm no generated artifacts or formatting changes are accidentally committed.
+- [x] T024 [P] Document the private single-process startup, `SLOP_LOOP_*` namespace, and source/build/smoke verification commands in `README.md` without describing a public SDK, package self-reference, exports map, or CLI contract.
+- [x] T025 Verify the command sequence and expected outcomes in `specs/001-project-foundation/quickstart.md` against `package.json`, `src/index.ts`, and `dist/index.js` after a clean install/build cycle.
+- [x] T026 Run the canonical local verification sequence from `specs/001-project-foundation/quickstart.md` (`pnpm lint`, `pnpm format:check`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `pnpm smoke`) and confirm no generated artifacts or formatting changes are accidentally committed.
 
 ---
 

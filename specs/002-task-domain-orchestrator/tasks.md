@@ -2,7 +2,7 @@
 
 **Input**: [spec.md](./spec.md), [plan.md](./plan.md), [research.md](./research.md), [data-model.md](./data-model.md), [contracts/orchestrator.md](./contracts/orchestrator.md)
 
-**Prerequisites**: The developer approved this plan and chose the dedicated `feat/002-task-domain-orchestrator` branch in the current checkout. The developer then explicitly authorized isolated Phase 1 code work before Phase 0 is complete. Phase 0 remains an open integration gate; T001 stays open until its full exit gate passes.
+**Prerequisites**: The developer approved this plan and chose the dedicated `feat/002-task-domain-orchestrator` branch in the current checkout. The developer then explicitly authorized isolated Phase 1 code work before Phase 0 was complete. Phase 0 source has since been merged from `development`; T001 stays open until the combined pinned-manager gate passes.
 
 **Tests**: TDD is mandatory. Each RED task writes a behavior test, runs it, and records that it fails because the behavior is absent. Each paired GREEN task implements the minimum behavior and reruns the focused test. `pnpm test` is the regression suite.
 
@@ -18,7 +18,7 @@
 
 **Purpose**: Establish the already-selected TypeScript runtime as a verified prerequisite. This phase does not implement Phase 0 on behalf of Phase 1.
 
-- [ ] T001 Run the Phase 0 exit gate from `coding-agent-context/context/progress-checker.md` and `specs/001-project-foundation/quickstart.md` (`pnpm lint`, `pnpm format:check`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `pnpm smoke`) before declaring Phase 1 integration-ready; the developer explicitly allowed isolated Phase 1 code and test work while this remains open.
+- [ ] T001 Run the combined Phase 0 and Phase 1 exit gate with pinned pnpm 12 (`pnpm lint`, `pnpm format:check`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `pnpm smoke`) before declaring Phase 1 integration-ready. Phase 0 source is now present, but Windows Application Control blocks the local pinned executable.
 - [x] T002 Record the developer-approved dedicated `feat/002-task-domain-orchestrator` branch in this checkout in `specs/002-task-domain-orchestrator/plan.md` before editing `src/` or `tests/`.
 
 ---
@@ -142,11 +142,11 @@ The Phase 0 project and Vitest source-test boundary supply the shared foundation
 
 ## Implementation strategy
 
-1. Build and test the isolated Phase 1 module under the developer's explicit Phase 0 gate override; plan and branch choice are approved. Do not mark T001 complete until Phase 0 actually passes.
+1. Build and test the Phase 1 module on the merged Phase 0 runtime. Do not mark T001 complete until the combined pinned-manager gate passes.
 2. Deliver US1 as the minimum testable lifecycle contract.
 3. Add US2 to meet the finite-budget exit gate before exposing more lifecycle behavior.
 4. Add US3 mode control and US4 outcome honesty without connecting privileged adapters.
-5. Run the full quality gate and record its Phase 0 failures; complete security convergence, dual-axis review, and factual context sync. T001 remains open until Phase 0 passes.
+5. Run the full quality gate on the combined branch; complete security convergence, dual-axis review, and factual context sync. T001 remains open until the pinned-manager gate passes.
 
 ## Scope guardrails
 

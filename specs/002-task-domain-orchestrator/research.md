@@ -60,4 +60,4 @@ This feature is a domain boundary. Its design inputs are the approved Phase 1 di
 
 ## Dependency and status
 
-`coding-agent-context/context/progress-checker.md` remains authoritative: Phase 1 is unimplemented. Phase 0 has not passed its runtime exit gate, so Phase 1 implementation must wait for Phase 0 runtime, package-manager availability, and the standard verification commands. Design artifacts can be reviewed now.
+At the time of this design decision, Phase 1 was unimplemented and Phase 0 had not passed its runtime exit gate. Phase 0 is now complete on `development` and its source has been merged into the Phase 1 checkout. `coding-agent-context/context/progress-checker.md` remains authoritative for current implementation and verification status.

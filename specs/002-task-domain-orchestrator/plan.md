@@ -34,7 +34,7 @@ Create the isolated orchestration module before Phase 0 integration under the de
 
 The repository constitution is an unfilled template and adds no operative gate. The governing documents are `CONTEXT.md`, the context pack, and ADR 0003. Pre-design and post-design review both **pass for documentation** with these constraints:
 
-- Phase 0 remains the implementation prerequisite. Its runtime and quality gate are incomplete according to `progress-checker.md`; a Phase 1 code task cannot be marked ready until the Phase 0 exit gate passes.
+- Phase 0 is complete on `development` and its source is present in this checkout. The combined branch still needs the full pinned-manager quality gate before Phase 1 is integration-ready.
 - This plan adds a real orchestration boundary only when its behavior is implemented. It does not change the private TypeScript, native ESM, single-process decision in ADR 0003.
 - The model never owns state, mode, budget, capabilities, or authorization. Phase 1 only simulates later trusted events.
 - The tool, file permission, sandbox, audit, and CLI decisions in tool policy and ADRs 0001–0002 remain later-phase work.
@@ -58,7 +58,7 @@ specs/002-task-domain-orchestrator/
 └── tasks.md
 ```
 
-### Source Code (isolated Phase 1 implementation; Phase 0 entrypoint pending)
+### Source Code (Phase 0 runtime and Phase 1 domain core)
 
 ```text
 src/
@@ -123,13 +123,13 @@ The exhaustive state transitions and input/output semantics are in [data-model.m
 
 ## Dependency and Approval Gates
 
-1. **Phase 0 integration prerequisite**: Complete the Phase 0 runtime and all six exit commands before calling Phase 1 integration-ready. The developer explicitly authorized isolated Phase 1 code work before this gate; keep the Phase 0 prerequisite visibly open and do not claim the full gate passed.
+1. **Phase 0 integration prerequisite**: The Phase 0 runtime and its standalone CI gate are complete on `development` and merged into this checkout. Run all six pinned pnpm exit commands on the combined branch before calling Phase 1 integration-ready.
 2. **Developer approval**: The developer approved this plan and chose the dedicated `feat/002-task-domain-orchestrator` branch in the current checkout. No isolated worktree is required for the approved arrangement.
 3. **Implementation**: The developer authorized the isolated Phase 1 RED → GREEN work recorded in [tasks.md](./tasks.md) before the Phase 0 gate. No Phase 0 runtime or package script was added as part of that override.
 
 **Local verification note**: Windows Application Control blocks the pinned pnpm 12.5.1 native executable. The current checkout's lockfile has a pnpm 12 package-manager document plus a dependency document, which pnpm 10 cannot read together. For local tests only, pnpm 10.34.5 JavaScript was bootstrapped in ignored `node_modules/`; the dependency document was used temporarily for a frozen install and the tracked lockfile was restored byte-for-byte. The full pinned-manager gate remains unverified.
 
-**Implementation verification**: The isolated Phase 1 suite passes with 45 tests across five files. Lint, source and test typechecks, build, and scoped Prettier checks pass. Repository-wide `format:check` still flags seven untouched Phase 0 setup files, and `smoke` cannot run because Phase 0 has no `src/index.ts` or compiled `dist/index.js`. T001 stays open until the full Phase 0 exit gate passes.
+**Implementation verification**: Before this merge, the isolated Phase 1 suite passed 45 tests. After merging Phase 0, the combined checkout passes 98 tests, lint, source and test typechecks, build, compiled smoke, and Prettier with `--end-of-line auto` using the installed binaries directly. The pinned pnpm 12 executable is blocked on this Windows host. Plain Prettier check flags CRLF checkout line endings from `core.autocrlf=true`; the full pnpm-script gate remains open for the combined branch. T001 stays open until that gate passes.
 
 ## Complexity Tracking
 
