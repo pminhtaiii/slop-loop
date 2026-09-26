@@ -37,13 +37,15 @@ function parseKeyValue(line: string): { key: string; value: string } | null {
 
 /**
  * Lightweight deterministic parser for GitHub Actions CI workflow YAML.
- * Extracts triggers and jobs without introducing unapproved runtime dependencies.
+ * Extracts triggers, permissions, and jobs without introducing unapproved runtime dependencies.
  */
 function parseWorkflow(content: string): {
+  permissions: Record<string, string>;
   triggers: { push?: { branches?: string[] }; pullRequest?: boolean };
   jobs: Record<string, Job>;
 } {
   const lines = content.split(/\r?\n/);
+  const permissions: Record<string, string> = {};
   const triggers: { push?: { branches?: string[] }; pullRequest?: boolean } = {};
   const jobs: Record<string, Job> = {};
 
@@ -52,6 +54,8 @@ function parseWorkflow(content: string): {
   let currentJob: Job | null = null;
   let currentStep: Step | null = null;
   let inPushBranches = false;
+
+  let currentStepBlock = "";
 
   for (let i = 0; i < lines.length; i++) {
     const rawLine = lines[i]!;
@@ -66,12 +70,25 @@ function parseWorkflow(content: string): {
 
     if (indent === 0) {
       inPushBranches = false;
+      currentStepBlock = "";
       if (trimmed.startsWith("on:")) {
         currentSection = "on";
+      } else if (trimmed.startsWith("permissions:")) {
+        currentSection = "permissions";
       } else if (trimmed.startsWith("jobs:")) {
         currentSection = "jobs";
       } else {
         currentSection = "";
+      }
+      continue;
+    }
+
+    if (currentSection === "permissions") {
+      if (indent === 2) {
+        const parsed = parseKeyValue(trimmed);
+        if (parsed) {
+          permissions[parsed.key] = parsed.value;
+        }
       }
       continue;
     }
@@ -104,6 +121,7 @@ function parseWorkflow(content: string): {
         };
         jobs[currentJobId] = currentJob;
         currentStep = null;
+        currentStepBlock = "";
       } else if (currentJob && indent === 4) {
         const parsed = parseKeyValue(trimmed);
         if (parsed) {
@@ -117,22 +135,36 @@ function parseWorkflow(content: string): {
         if (trimmed.startsWith("- ")) {
           currentStep = {};
           currentJob.steps.push(currentStep);
+          currentStepBlock = "";
           const stepLine = trimmed.replace(/^-\s*/, "");
           const parsed = parseKeyValue(stepLine);
           if (parsed) {
             applyStepProperty(currentStep, parsed.key, parsed.value);
           }
         } else if (currentStep) {
-          const parsed = parseKeyValue(trimmed);
-          if (parsed) {
-            applyStepProperty(currentStep, parsed.key, parsed.value);
+          if (trimmed === "with:") {
+            currentStepBlock = "with";
+          } else if (trimmed.endsWith(":") && !trimmed.includes(" ")) {
+            currentStepBlock = trimmed.slice(0, -1);
+          } else if (currentStepBlock === "with" && indent > 8) {
+            const parsed = parseKeyValue(trimmed);
+            if (parsed) {
+              currentStep.with = currentStep.with ?? {};
+              currentStep.with[parsed.key] = parsed.value;
+            }
+          } else {
+            currentStepBlock = "";
+            const parsed = parseKeyValue(trimmed);
+            if (parsed) {
+              applyStepProperty(currentStep, parsed.key, parsed.value);
+            }
           }
         }
       }
     }
   }
 
-  return { triggers, jobs };
+  return { permissions, triggers, jobs };
 }
 
 function applyStepProperty(step: Step, key: string, value: string): void {
@@ -146,17 +178,16 @@ function applyStepProperty(step: Step, key: string, value: string): void {
     case "run":
       step.run = value;
       break;
-    case "version":
-    case "node-version":
-      step.with = step.with ?? {};
-      step.with[key] = value;
-      break;
     default:
       break;
   }
 }
 
 function assertToolchainSetup(job: Job): void {
+  const checkoutStep = job.steps.find((s) => s.uses?.startsWith("actions/checkout"));
+  expect(checkoutStep, `Expected actions/checkout step in job ${job.id}`).toBeDefined();
+  expect(checkoutStep?.with?.["persist-credentials"]).toBe("false");
+
   const pnpmSetup = job.steps.find((s) => s.uses?.startsWith("pnpm/action-setup"));
   expect(pnpmSetup, `Expected pnpm/action-setup step in job ${job.id}`).toBeDefined();
   expect(pnpmSetup?.with?.version).toMatch(/^12(\.|$)/);
@@ -179,6 +210,13 @@ describe("Platform Quality Gates Workflow Contract (User Story 4 / T022)", () =>
 
     const content = fs.readFileSync(CI_WORKFLOW_PATH, "utf-8");
     expect(content.trim().length).toBeGreaterThan(0);
+  });
+
+  it("configures workflow permissions to contents: read (least privilege principle)", () => {
+    const content = fs.readFileSync(CI_WORKFLOW_PATH, "utf-8");
+    const { permissions } = parseWorkflow(content);
+
+    expect(permissions.contents).toBe("read");
   });
 
   it("configures pull_request and default-branch push triggers (FR-010, FR-011, SC-005)", () => {
