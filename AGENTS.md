@@ -13,6 +13,7 @@ Before implementing or reviewing repository changes:
 - Read `coding-agent-context/README.md` for the context map and reading order.
 - Treat `coding-agent-context/context/tool-policy.md` as authoritative for model-accessible tool, capability, and security policy.
 - Follow `coding-agent-context/context/workflow.md` for the mandatory feature-development workflow.
+- Read `coding-agent-context/context/testing.md` for phase-specific verification commands and expected behavior.
 - Use `coding-agent-context/context/progress-checker.md` as the source of truth for implemented, planned, and deferred status.
 - Read relevant ADRs under `docs/adr/` before changing an accepted architectural decision.
 
