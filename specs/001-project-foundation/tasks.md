@@ -116,11 +116,11 @@ description: "Actionable task list for the Phase 0 private application foundatio
 
 > Encode the platform command assignment first and confirm it fails until the workflow is present.
 
-- [ ] T022 [US4] Add RED workflow contract assertions in `tests/ci.test.ts` for pull-request/default-branch triggers, frozen installs, the complete Ubuntu command sequence, the Windows test/build/smoke sequence, and the absence of publication/deployment steps.
+- [x] T022 [US4] Add RED workflow contract assertions in `tests/ci.test.ts` for pull-request/default-branch triggers, frozen installs, the complete Ubuntu command sequence, the Windows test/build/smoke sequence, and the absence of publication/deployment steps.
 
 ### Implementation for User Story 4
 
-- [ ] T023 [US4] Create `.github/workflows/ci.yml` with Node.js 24 and pinned pnpm setup, frozen installs, Ubuntu lint/format-check/typecheck/test/build/smoke gates, Windows test/build/smoke gates, pull-request and default-branch push triggers, and no release/publication/deployment jobs.
+- [x] T023 [US4] Create `.github/workflows/ci.yml` with Node.js 24 and pinned pnpm setup, frozen installs, Ubuntu lint/format-check/typecheck/test/build/smoke gates, Windows test/build/smoke gates, pull-request and default-branch push triggers, and no release/publication/deployment jobs.
 
 **Checkpoint**: Each platform job performs exactly its assigned Phase 0 checks and exposes a failed check as a failed job.
 
@@ -130,9 +130,9 @@ description: "Actionable task list for the Phase 0 private application foundatio
 
 **Purpose**: Reconcile the implemented Phase 0 surface with the maintainer-facing workflow without widening the application boundary.
 
-- [ ] T024 [P] Document the private single-process startup, `SLOP_LOOP_*` namespace, and source/build/smoke verification commands in `README.md` without describing a public SDK, package self-reference, exports map, or CLI contract.
-- [ ] T025 Verify the command sequence and expected outcomes in `specs/001-project-foundation/quickstart.md` against `package.json`, `src/index.ts`, and `dist/index.js` after a clean install/build cycle.
-- [ ] T026 Run the canonical local verification sequence from `specs/001-project-foundation/quickstart.md` (`pnpm lint`, `pnpm format:check`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `pnpm smoke`) and confirm no generated artifacts or formatting changes are accidentally committed.
+- [x] T024 [P] Document the private single-process startup, `SLOP_LOOP_*` namespace, and source/build/smoke verification commands in `README.md` without describing a public SDK, package self-reference, exports map, or CLI contract.
+- [x] T025 Verify the command sequence and expected outcomes in `specs/001-project-foundation/quickstart.md` against `package.json`, `src/index.ts`, and `dist/index.js` after a clean install/build cycle.
+- [x] T026 Run the canonical local verification sequence from `specs/001-project-foundation/quickstart.md` (`pnpm lint`, `pnpm format:check`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `pnpm smoke`) and confirm no generated artifacts or formatting changes are accidentally committed.
 
 ---
 
