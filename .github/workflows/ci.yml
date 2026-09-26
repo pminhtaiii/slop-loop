@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  ubuntu-gate:
+    name: Ubuntu Quality Gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.5.1
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run lint
+        run: pnpm lint
+
+      - name: Check formatting
+        run: pnpm format:check
+
+      - name: Check types
+        run: pnpm typecheck
+
+      - name: Run source tests
+        run: pnpm test
+
+      - name: Build application
+        run: pnpm build
+
+      - name: Run smoke test
+        run: pnpm smoke
+
+  windows-gate:
+    name: Windows Quality Gate
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.5.1
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run source tests
+        run: pnpm test
+
+      - name: Build application
+        run: pnpm build
+
+      - name: Run smoke test
+        run: pnpm smoke

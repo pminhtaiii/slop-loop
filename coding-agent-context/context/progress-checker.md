@@ -30,7 +30,7 @@ The agreed future product MVP is an interactive local CLI implemented in TypeScr
 - [x] Implement strict Zod 4 configuration for SLOP_LOOP_LOG_LEVEL with default info, injectable environment map, unknown-prefixed-variable rejection, and frozen typed output.
 - [x] Implement the small Pino createLogger factory with controlled nested fields and explicit redaction.
 - [x] Add pnpm format and pnpm format:check with explicit rewrite/check semantics.
-- [ ] Add Ubuntu full CI and Windows test/build/smoke CI.
+- [x] Add Ubuntu full CI and Windows test/build/smoke CI.
 - [x] Record the TypeScript, Node 24, single-process, private-package, and future modular-monolith decision.
 - [x] Synchronize context, glossary, architecture, standards, libraries, workflow, policy, and progress.
 
