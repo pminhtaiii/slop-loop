@@ -12,6 +12,7 @@ context/
 ├── library-docs.md       # Project-specific third-party library usage rules
 ├── tool-policy.md        # Authoritative model tool/capability security policy
 ├── workflow.md           # Required feature-development workflow
+├── testing.md            # Phase-specific verification procedures
 └── progress-checker.md   # Implemented-vs-planned status tracker
 ```
 
@@ -26,6 +27,7 @@ context/
 6. library-docs.md
 7. workflow.md
 8. progress-checker.md
+9. testing.md
 ```
 
 Before implementing a specific feature, the agent should then inspect the relevant production code and tests.
@@ -35,6 +37,7 @@ Before implementing a specific feature, the agent should then inspect the releva
 - `../CONTEXT.md` is the authoritative shared vocabulary.
 - `context/tool-policy.md` is authoritative for model-accessible tool permissions, capabilities, and security rules.
 - `context/progress-checker.md` is the source of truth for implemented, planned, and deferred status.
+- `context/testing.md` records how to verify each implemented product phase.
 - Accepted architectural decisions and their rationale are recorded under `../docs/adr/`.
 - `project-overview.md` and `architecture.md` may describe intended or future behavior; neither proves that behavior is implemented.
 
