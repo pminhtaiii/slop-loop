@@ -116,11 +116,11 @@ description: "Actionable task list for the Phase 0 private application foundatio
 
 > Encode the platform command assignment first and confirm it fails until the workflow is present.
 
-- [ ] T022 [US4] Add RED workflow contract assertions in `tests/ci.test.ts` for pull-request/default-branch triggers, frozen installs, the complete Ubuntu command sequence, the Windows test/build/smoke sequence, and the absence of publication/deployment steps.
+- [x] T022 [US4] Add RED workflow contract assertions in `tests/ci.test.ts` for pull-request/default-branch triggers, frozen installs, the complete Ubuntu command sequence, the Windows test/build/smoke sequence, and the absence of publication/deployment steps.
 
 ### Implementation for User Story 4
 
-- [ ] T023 [US4] Create `.github/workflows/ci.yml` with Node.js 24 and pinned pnpm setup, frozen installs, Ubuntu lint/format-check/typecheck/test/build/smoke gates, Windows test/build/smoke gates, pull-request and default-branch push triggers, and no release/publication/deployment jobs.
+- [x] T023 [US4] Create `.github/workflows/ci.yml` with Node.js 24 and pinned pnpm setup, frozen installs, Ubuntu lint/format-check/typecheck/test/build/smoke gates, Windows test/build/smoke gates, pull-request and default-branch push triggers, and no release/publication/deployment jobs.
 
 **Checkpoint**: Each platform job performs exactly its assigned Phase 0 checks and exposes a failed check as a failed job.
 
