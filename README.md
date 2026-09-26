@@ -18,7 +18,7 @@ The application foundation provides:
 
 ## Prerequisites
 
-- **Node.js**: `>= 24.0.0` (LTS recommended)
+- **Node.js**: `^24.0.0` (Node.js 24 LTS)
 - **pnpm**: `^12.0.0` (pinned via `packageManager: pnpm@12.5.1` in `package.json`)
 
 ---
