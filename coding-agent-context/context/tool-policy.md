@@ -21,6 +21,8 @@ The model can request a registered tool call. It cannot:
 - expose secrets;
 - change approval requirements.
 
+Here “the model” means the coding model acting within an admitted task. At trusted task admission, a separate Jev classifier may select only `small`, `medium`, or `large`; application code maps that category to the fixed, finite profile in ADR 0006. If Jev fails or returns an unusable response, application code selects Medium. Handling a valid low-confidence choice is still an open design decision; probabilities are retained as evidence. During execution, trusted budget policy may promote Small to Medium or Medium to Large when a counted limit is reached, with cumulative usage and no reset. Large is the cap. Neither Jev nor the coding model can select tools, modes, file permissions, numeric limits, or a promotion. The coding model cannot increase budgets itself.
+
 ---
 
 ## Default Policy
@@ -298,20 +300,26 @@ No shell interpolation.
 ```text
 Session starts in developer-selected mode
    ↓
-Policy exposes only that mode's registered tools
+One task starts with that mode fixed until terminal outcome
    ↓
-Developer may explicitly switch mode
+Policy exposes only that task mode's registered tools
    ↓
 Edit mode requests exact file permissions as needed
    ↓
 Every invocation rechecks mode, permission, repository state, and budget
+   ↓
+Developer may stop the task; no mode change is queued during active work
+   ↓
+After the task ends, developer may select the next task's mode
    ↓
 `/clear` or exit ends the session
    ↓
 Context and permissions expire; applied file changes remain
 ```
 
-`Ask` exposes repository inspection and read-only Git evidence. `Edit` adds `apply_patch` and trusted verification profiles. Switching to `Ask` revokes all file permissions. Returning to `Edit` starts with none. The model cannot select a mode or preserve a permission.
+`Ask` exposes repository inspection and read-only Git evidence. `Edit` adds `apply_patch` and trusted verification profiles. A task's mode cannot change while it runs. After a task ends, selecting `Ask` revokes all file permissions; selecting `Edit` after Ask starts without them. The model cannot select a mode or preserve a permission. The Phase 1 runner still implements immediate mode switching; the progress tracker records that implementation until it is refined and verified.
+
+A session may contain multiple tasks, but at most one task is active per current checkout in the MVP. A task waiting for developer permission retains the active slot until it reaches a terminal outcome; no other task may execute against that checkout meanwhile. This constraint does not imply automatic task queueing. Later isolated checkouts may support concurrency under a separate policy.
 
 ---
 
@@ -347,9 +355,12 @@ network:
   enabled: false
 
 budgets:
+  profile: small
+  max_model_turns: 30
   max_tool_calls: 60
+  max_general_retries: 3
   max_patch_attempts: 3
-  max_task_seconds: 900
+  max_active_task_seconds: 1800
 ```
 
 ---
