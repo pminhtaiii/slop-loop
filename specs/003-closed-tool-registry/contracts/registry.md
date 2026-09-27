@@ -14,7 +14,7 @@ This Phase 2 entry contract covers recognition and input shape only. `coding-age
 
 ## Fixed Catalog and Arguments
 
-All arguments are strict objects. Strings are nonempty and length-bounded; fields below are the only accepted keys. Lengths count JavaScript string units. Values remain untrusted until later checks.
+All arguments are strict objects. Strings are nonempty and length-bounded; fields below are the only accepted keys. Lengths count Unicode code points (characters), matching Draft 2020-12 `maxLength` semantics. Values remain untrusted until later checks.
 
 | Tool | Required | Optional | Structural constraints |
 | --- | --- | --- | --- |

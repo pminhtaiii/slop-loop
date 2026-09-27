@@ -14,12 +14,12 @@ No shared runtime foundation is added. Phase 2 remains pure and isolated from th
 
 ## Phase 3: User Story 1 — Recognize and validate calls (P1)
 
-- [ ] T031 [US1] RED: Add strict outer-call tests for missing/extra top-level fields, arrays, and null; add unknown-name, valid-argument, missing-field, wrong-type, unknown-key, oversize, and forbidden command/control-field cases for all nine tools in `tests/tools/registry.test.ts`; run `pnpm exec vitest run tests/tools/registry.test.ts` and confirm intended failure.
+- [ ] T031 [US1] RED: Add strict outer-call tests for missing/extra top-level fields, arrays, and null; add unknown-name, valid-argument, missing-field, wrong-type, unknown-key, oversize (including supplementary-plane characters at the maxLength boundary), and forbidden command/control-field cases for all nine tools in `tests/tools/registry.test.ts`; run `pnpm exec vitest run tests/tools/registry.test.ts` and confirm intended failure.
 - [ ] T032 [US1] GREEN: Add strict `{ name, arguments }` parsing, the fixed nine-entry strict Zod 4 catalog, and `validateToolCall(call: unknown)` in `src/tools/registry.ts`; rerun focused Vitest and ensure errors omit raw argument text. No registration or execution API.
 
 ## Phase 4: User Story 2 — Present trusted selection (P1)
 
-- [ ] T033 [US2] RED: Add exact Ask/Edit selection, mixed known/unknown selected-name total-failure, and schema-parity fixtures for all nine tools in `tests/tools/registry.test.ts`, covering required/optional fields, types, limits, and `additionalProperties: false`; confirm intended failure.
+- [ ] T033 [US2] RED: Add exact Ask/Edit selection, mixed known/unknown selected-name total-failure, and schema-parity fixtures for all nine tools in `tests/tools/registry.test.ts`, covering required/optional fields, types, limits (confirming Draft 2020-12 maxLength agreement on supplementary-plane strings at the boundary), and `additionalProperties: false`; confirm intended failure.
 - [ ] T034 [US2] GREEN: Implement trusted Ask/Edit typed candidate-name mapping in `src/tools/selection.ts` and provider-neutral Zod-derived schema projection for `readonly string[]` in `src/tools/registry.ts`; validate all names before projecting, then rerun focused Vitest. Use input JSON Schema conversion, fail closed on unsupported conversion, and do not add a second argument schema or authorize calls.
 
 ## Phase 5: Polish, Verification, and Context Sync

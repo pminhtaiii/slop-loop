@@ -1,5 +1,6 @@
 // One-off research probe. Run with: node --env-file=.env docs/research/jev-live-trial.mjs small
 // The key stays in process memory; output contains only selected response fields.
+/* global process, console, performance, fetch, AbortSignal */
 
 const cases = {
   small: "Correct the typo 'recieve' in one README sentence and check the edited file.",

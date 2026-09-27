@@ -13,7 +13,7 @@
 2. **Strict Zod object per name.** Parse untrusted arguments; reject unknown keys. Parsed values are not permissions.
 3. **Derived neutral schema.** Use `z.toJSONSchema(schema, { io: 'input', target: 'draft-2020-12', cycles: 'throw', unrepresentable: 'throw' })` with representable schemas. Zod's strict object conversion emits `additionalProperties: false`. Assert parity in tests; provider conversion waits for Phase 10. [Zod's JSON Schema documentation](https://zod.dev/json-schema) confirms these options.
 4. **Trusted mode table outside registry.** Ask/Edit candidate selection is deterministic composition code, preparatory until a real task composer exists. The registry only validates candidate names and projects schemas. ADR 0007 mode behavior is separate.
-5. **Conservative structural bounds.** Strings are finite, result limit 1–100, patch text at most 65,536 JavaScript string units. These bound parsing, not filesystem or execution bytes.
+5. **Conservative structural bounds.** Strings are finite, result limit 1–100, patch text at most 65,536 Unicode code points (characters), matching Draft 2020-12 `maxLength` semantics. These bound parsing, not filesystem or execution bytes.
 6. **One strict call envelope.** Parse unknown model-call data as exactly `{ name, arguments }`, then validate the registered name's arguments. Provider-specific envelope conversion waits for Phase 10. Candidate schema projection accepts strings and rejects the whole selection if any name is unknown.
 
 ## Excluded Work
