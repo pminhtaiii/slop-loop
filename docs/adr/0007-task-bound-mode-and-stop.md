@@ -1,0 +1,9 @@
+# Bind mode to one task and allow an explicit stop
+
+Status: accepted design; implementation pending.
+
+The developer selects `Ask` or `Edit` before starting a task. Its mode stays fixed until that task reaches a terminal outcome. A session may contain multiple tasks, but the MVP allows only one active task per current checkout. Waiting for developer permission still occupies that slot. It does not queue a mode change for the active task. The developer may stop that task, then select a mode for another task. This keeps tool visibility, repository state, and permission assumptions stable throughout one task while preserving an immediate way to halt work.
+
+This replaces ADR 0004's same-task `Edit → Ask → Edit` pause and resume design and the Phase 1 plan's proposed one-unfinished-task-per-session invariant for future integration. Waiting tasks retain the checkout slot because another task could change repository state while a permission decision is pending. Concurrency may be reconsidered when tasks have isolated checkouts such as separate worktrees. The current Phase 1 implementation, tests, and planning documents still implement or describe the earlier choices; `coding-agent-context/context/progress-checker.md` must continue to report implemented behavior until refinement and verification are complete.
+
+Stop cancels pending permission requests, prevents new model turns and tool calls, and attempts to abort work in flight. The runner must ignore any late model response and prevent it from causing further repository changes. Already completed edits remain and are reported. The checkout slot is released only when local execution can no longer make changes and cleanup has reached a terminal `CANCELLED` outcome. A remote request may continue server-side after local cancellation; it has no authority to resume the task. Exact cancellation behavior for each future adapter still needs to be specified.

@@ -30,12 +30,24 @@ A continuous interaction with one agent context and its temporary permissions. A
 _Avoid_: saved session, permanent permission
 
 **Task mode**:
-The developer-selected `Ask` or `Edit` mode for the current session. The developer may switch modes during the session; switching into `Edit` does not restore permissions that were previously revoked.
+The developer-selected `Ask` or `Edit` mode bound to one task from start to terminal outcome. A different mode requires a new task.
 _Avoid_: model-selected permission
+
+**Active task**:
+The one task occupying a target checkout's execution slot, including while it waits for developer permission. The slot is released when the task reaches a terminal outcome.
+_Avoid_: running task, unfinished task
 
 **Agent tool**:
 A registered operation the agent may request within the capabilities granted to its session.
 _Avoid_: arbitrary command
+
+**Closed tool registry**:
+The authoritative catalog of agent tool names and call contracts from which model-visible tool schemas are derived. It does not grant permission or perform operations.
+_Avoid_: tool executor, permission list
+
+**Model-visible tool set**:
+The registered tools selected for presentation to the model from trusted session state, including the developer-selected task mode. Visibility does not authorize a call.
+_Avoid_: granted capabilities, executable tools
 
 **File permission**:
 The developer's authorization for one or more operation-bound file permissions during the current session and observed branch/file state. A single request may batch several canonical repository-relative path-operation pairs; it is not blanket write permission.

@@ -109,7 +109,7 @@ for (let step = 0; step < budget.maxSteps; step += 1) {
 
 ## Tool Contract Standard
 
-Each tool must define:
+Before a tool can execute, its complete contract must define:
 
 ```text
 name
