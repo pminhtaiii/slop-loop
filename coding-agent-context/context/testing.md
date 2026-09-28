@@ -44,3 +44,29 @@ All commands must exit successfully. `pnpm test` includes the focused Phase 1 te
 Ubuntu CI runs this full command sequence with a frozen pnpm install. Windows CI runs the source tests, build, and smoke. If the pinned pnpm executable is blocked on a local machine, record that limitation and use the matching CI run as evidence for the pinned-manager gate; direct invocation of installed binaries is useful local diagnosis but is not the same pnpm-script gate.
 
 For the detailed Phase 1 contract and additional test scenarios, see `specs/002-task-domain-orchestrator/quickstart.md` and `specs/002-task-domain-orchestrator/plan.md`.
+
+## Phase 2 — Closed Tool Registry
+
+### Prerequisites and focused tests
+
+Use Node.js 24, pnpm 12.5.1 from `package.json`, and `pnpm install --frozen-lockfile`. From the repository root, run:
+
+```sh
+pnpm exec vitest run tests/tools/registry.test.ts
+```
+
+The focused suite proves that:
+
+1. Exactly nine fixed tool names are recognized. Unknown names, outer names beyond 64 Unicode code points, malformed `{ name, arguments }` calls, unknown argument keys, wrong types, and out-of-range values are rejected without returning raw query or patch text.
+2. String bounds count Unicode code points; a supplementary-plane character at a `maxLength` boundary agrees with the advertised Draft 2020-12 JSON Schema.
+3. Trusted Ask selection exposes four names and Edit exposes nine. An unknown selected name fails the whole schema request; duplicate or reordered candidates produce one stable catalog-ordered result per name.
+4. Required and optional fields, types, limits, and `additionalProperties: false` agree between runtime validation and the Zod-derived model-visible schema for every tool.
+5. Validated calls retain name-specific TypeScript argument types. Caller changes to returned schema data cannot change later results or the trusted selection.
+
+### Combined quality gate and current limitation
+
+Run `pnpm lint`, `pnpm format:check`, `pnpm typecheck`, `pnpm test`, `pnpm build`, and `pnpm smoke` on the combined checkout. The full source suite includes 77 registry tests and 98 Phase 0/1 tests. `pnpm smoke` still executes the Phase 0 compiled entrypoint; it does not exercise registry functions or a tool invocation loop.
+
+On this Windows checkout, pnpm 12.5.1 can run through Corepack outside the local sandbox. The pinned scripts for lint, typecheck, test, build, and smoke pass. `pnpm format:check` reports 15 unchanged files with CRLF line endings; `pnpm exec prettier --check . --end-of-line auto` passes as a diagnostic. That diagnostic does not replace the full pnpm-script gate. Phase 2 source is implemented, while integration readiness remains open until the required format gate passes in a checkout or CI run.
+
+The registry is pure and does not execute a tool or decide authorization. Phase 3 policy, later adapters, provider conversion, and complete executable tool contracts require separate verification. See `specs/003-closed-tool-registry/quickstart.md` and `specs/003-closed-tool-registry/contracts/registry.md`.

@@ -268,7 +268,7 @@ Provider-specific logic must stay behind the adapter.
 
 Automatic context is deliberately small: the repository tree, applicable project instructions, and files explicitly referenced by the developer. All other content enters the session through budgeted `list_files`, `search_code`, and `read_file` calls.
 
-`search_code` is implemented by a deterministic adapter such as ripgrep. Its model-visible schema contains only search text, an optional repository-relative scope, and a bounded result count. Executable paths, flags, raw arguments, shell syntax, byte limits, denied paths, and timeouts remain runtime-owned. Semantic indexes and Elasticsearch are deferred.
+When implemented, `search_code` uses a deterministic adapter such as ripgrep. Its model-visible input schema already contains only search text, an optional repository-relative scope, and a bounded result count. Executable paths, flags, raw arguments, shell syntax, byte limits, denied paths, and timeouts remain runtime-owned. Semantic indexes and Elasticsearch are deferred.
 
 Retrieval evaluation fixtures declare required files, optional helpful files, forbidden files, expected answer properties, and expected verification behavior. Measures include required-file recall, context precision, irrelevant volume, denied-access attempts, bytes retrieved, tool calls, answer correctness, and correct verification-path selection.
 
@@ -277,6 +277,8 @@ Retrieval evaluation fixtures declare required files, optional helpful files, fo
 ## 4. Tool Registry
 
 The tool registry is closed.
+
+Phase 2 implements nine fixed non-executable definitions in `src/tools/registry.ts`. It strictly validates proposed `{ name, arguments }` calls and derives provider-neutral input JSON Schema from the same Zod 4 schemas. `src/tools/selection.ts` supplies the trusted Ask four-name and Edit nine-name candidate sets. Unknown selected names fail the entire schema request. This boundary is not connected to the Phase 1 runner and cannot grant a capability or execute an operation; Phase 3 policy and later adapters own those responsibilities. Complete executable tool contracts remain a later-phase gate.
 
 MVP tools:
 

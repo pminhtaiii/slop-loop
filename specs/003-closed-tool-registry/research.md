@@ -2,7 +2,7 @@
 
 ## Evidence
 
-- `coding-agent-context/context/progress-checker.md` marks all Phase 2 items planned. Current `src/` has Phase 0 and Phase 1 source; no registry exists.
+- At planning time, `coding-agent-context/context/progress-checker.md` marked all Phase 2 items planned, and `src/` had only Phase 0 and Phase 1 source. The progress checker now records implemented status.
 - ADR 0005 fixes catalog ownership, trusted selection, exact Ask/Edit names, strict Zod 4 schemas, and provider-neutral derivation.
 - `coding-agent-context/context/tool-policy.md` forbids arbitrary shell, authorization by visibility, and model-chosen limits.
 - `package.json` already includes Zod 4 and Vitest.

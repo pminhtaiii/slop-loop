@@ -49,7 +49,7 @@ The `tools/` directory appears with its first real behavior. Both modules are pu
 ## Design
 
 1. Define the nine-name catalog with descriptions and strict Zod object schemas. Provide no registration API.
-2. Validate one unknown input with a strict outer `{ name, arguments }` Zod object first, then exact name lookup and name-specific `safeParse`. Reject missing/extra top-level fields. Return a typed accepted call or bounded error; omit raw patch/query text from errors. Provider envelope normalization belongs to Phase 10.
+2. Validate one unknown input with a strict outer `{ name, arguments }` Zod object first, then exact name lookup and name-specific `safeParse`. Reject missing/extra top-level fields and names outside 1–64 Unicode code points. Return a typed accepted call or bounded error; omit raw patch/query text from errors. Provider envelope normalization belongs to Phase 10.
 3. Define the Ask/Edit candidate-name mapping in `src/tools/selection.ts`, outside the registry. The registry's `modelVisibleToolsForNames(names: readonly string[])` validates **all** candidate names before projecting any schema; one unknown name fails the whole request. This is preparatory until a real task composer exists.
 4. Derive provider-neutral input JSON Schema with `z.toJSONSchema(schema, { io: 'input', target: 'draft-2020-12', cycles: 'throw', unrepresentable: 'throw' })`. Use only representable strict objects; fail closed if conversion cannot represent a definition. Do not maintain parallel schemas. Phase 10 owns provider conversion.
 5. Test valid/invalid fixtures, fixed selection, and parity for all nine tools. Test that raw command and control fields fail.
@@ -73,6 +73,6 @@ The `tools/` directory appears with its first real behavior. Both modules are pu
 
 Write each behavior test first and confirm expected RED. Implement minimum GREEN and run focused Vitest. Then run `pnpm lint`, `pnpm format:check`, `pnpm typecheck`, `pnpm test`, `pnpm build`, and `pnpm smoke`. Security convergence and separate standards/security and specification reviews must clear HIGH findings. Update phase-relevant context and `progress-checker.md` only after verification. See [tasks.md](./tasks.md).
 
-Phase 2 can be implemented as an isolated pure module. Phase 1's pinned pnpm gate remains a prerequisite for integration readiness. Phase 3 consumes validated calls for per-invocation authorization; later phases own adapters. The Spec Kit agent-context step should add the Phase 2 plan pointer to the managed `AGENTS.md` section while preserving its approved Phase 1 pointer; the parent reviewer is handling that shared-file edit.
+Phase 2 can be implemented as an isolated pure module. Phase 1's pinned pnpm gate remains a prerequisite for integration readiness. Phase 3 consumes validated calls for per-invocation authorization; later phases own adapters. The managed `AGENTS.md` section now contains the Phase 2 plan pointer alongside the approved Phase 1 pointer.
 
 The existing Phase 1 runner keeps its private model-proposal schema and immediate same-task mode behavior for now. Registry work must not feed raw model input into trusted runner event variants; ADR 0007's task-bound mode change is separate.

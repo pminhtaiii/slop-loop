@@ -6,7 +6,7 @@
 
 ## Proposed Call and Validation Result
 
-Input is one `unknown` value. A strict outer object accepts exactly `{ name, arguments }` and rejects missing or extra fields. Validation then checks the exact name and parses arguments with that name's strict schema. Success contains the name and parsed structural arguments. Failure identifies `INVALID_CALL`, `UNKNOWN_TOOL`, or `INVALID_ARGUMENTS` with bounded metadata, not raw argument contents. Provider-specific envelope conversion belongs to Phase 10. Success does not authorize a run.
+Input is one `unknown` value. A strict outer object accepts exactly `{ name, arguments }`, requires a name of 1–64 Unicode code points, and rejects missing or extra fields. Validation then checks the exact name and parses arguments with that name's strict schema. Success contains the name and parsed structural arguments. Failure identifies `INVALID_CALL`, `UNKNOWN_TOOL`, or `INVALID_ARGUMENTS` with bounded metadata, not raw argument contents. Provider-specific envelope conversion belongs to Phase 10. Success does not authorize a run.
 
 ## Model-Visible Schema
 

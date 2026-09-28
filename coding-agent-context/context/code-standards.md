@@ -38,7 +38,7 @@ The repository policy says coding agents format only files they intentionally mo
 
 ## Runtime Validation (Zod 4)
 
-Use Zod 4 for strict runtime configuration and future external/model contracts. Prefer closed objects, explicit enums, bounded strings and collections, and validation before policy or execution.
+Use Zod 4 for strict runtime configuration and external/model contracts, including the Phase 2 registry. Prefer closed objects, explicit enums, bounded strings and collections, and validation before policy or execution. Registry input JSON Schema is derived from its strict runtime Zod schema; do not maintain a second handwritten argument contract.
 
 Phase 0 recognizes only SLOP_LOOP_LOG_LEVEL under the SLOP_LOOP_* namespace, defaults it to info, rejects unknown prefixed names, accepts an injectable environment map, and returns typed frozen configuration.
 
