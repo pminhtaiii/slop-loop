@@ -1,11 +1,36 @@
 import { describe, expect, it } from "vitest";
 
 import { admitTask, createTask } from "../../src/orchestration/task.js";
-import type { TaskMode } from "../../src/orchestration/task.js";
 import { runTaskEvent } from "../../src/orchestration/runner.js";
-import { advanceTask, changeTaskMode, finishTask } from "../../src/orchestration/transitions.js";
+import { advanceTask, finishTask } from "../../src/orchestration/transitions.js";
 
 describe("trusted task transitions", () => {
+  it("rejects a budget handoff that contradicts its exhaustion evidence", () => {
+    const admitted = admitTask(
+      createTask({ taskId: "handoff-evidence", objective: "Explain build", mode: "Ask" }),
+      0,
+    );
+    const answering = advanceTask(advanceTask(admitted, "INSPECTING"), "ANSWERING");
+    const failed = finishTask(answering, {
+      state: "FAILED",
+      reason: "BUDGET_EXHAUSTED",
+      evidence: { resource: "MODEL_TURNS", limit: 60, observed: 60, attempted: 61 },
+      handoff: {
+        exhaustedBudget: "TOOL_ATTEMPTS",
+        limit: 120,
+        observed: 60,
+        objective: "Explain build",
+        completedActions: [],
+        changedPaths: [],
+        verification: "NOT_RUN",
+        blockers: [],
+        stopReason: "MODEL_TURNS limit reached",
+        remainingSteps: ["Review handoff"],
+      },
+    });
+    expect(failed.outcome?.reason).toBe("INVALID_TRANSITION");
+  });
+
   it("follows the Ask and Edit paths after admission", () => {
     const ask = admitTask(
       createTask({ taskId: "ask-1", objective: "Explain the build", mode: "Ask" }),
@@ -51,7 +76,7 @@ describe("trusted task transitions", () => {
     expect(advanceTask(inspecting, "PLANNING").outcome?.reason).toBe("INVALID_TRANSITION");
   });
 
-  it("pauses Edit and resumes through fresh inspection", () => {
+  it("keeps an Edit task at the permission gate when a mode switch is requested", () => {
     const admitted = admitTask(
       createTask({ taskId: "switch-1", objective: "Fix the build", mode: "Edit" }),
       0,
@@ -61,24 +86,18 @@ describe("trusted task transitions", () => {
       "WAITING_FOR_FILE_PERMISSION",
     );
 
-    const paused = changeTaskMode(waiting, "Ask");
-    expect(paused).toMatchObject({
+    const refused = runTaskEvent(waiting, { kind: "MODE_CHANGE", mode: "Ask" }, 1_000);
+    expect(refused.task).toMatchObject({
       taskId: "switch-1",
       objective: "Fix the build",
-      mode: "Ask",
-      state: "PAUSED_FOR_MODE",
-      pausedFrom: "WAITING_FOR_FILE_PERMISSION",
+      mode: "Edit",
+      state: "WAITING_FOR_FILE_PERMISSION",
     });
-    const resumed = changeTaskMode(paused, "Edit");
-    expect(resumed.state).toBe("INSPECTING");
-    expect(resumed.pausedFrom).toBeNull();
-    expect(resumed.usage).toEqual(waiting.usage);
-    expect(advanceTask(advanceTask(resumed, "PLANNING"), "WAITING_FOR_FILE_PERMISSION").state).toBe(
-      "WAITING_FOR_FILE_PERMISSION",
-    );
+    expect(refused.status).toBe("ACTION_REJECTED");
+    expect(refused.task.usage.modelTurns).toBe(0);
   });
 
-  it("allows same-objective Ask to Edit but never revives a terminal task", () => {
+  it("does not let an Ask task with change intent enter the Edit path", () => {
     const admitted = admitTask(
       createTask({
         taskId: "switch-2",
@@ -89,12 +108,15 @@ describe("trusted task transitions", () => {
       0,
     );
     const answering = advanceTask(advanceTask(admitted, "INSPECTING"), "ANSWERING");
-    const edit = changeTaskMode(answering, "Edit");
-    expect(edit.state).toBe("PLANNING");
-    expect(edit.objective).toBe("Investigate and fix the build");
+    const refused = runTaskEvent(answering, { kind: "MODE_CHANGE", mode: "Edit" }, 1_000);
+    expect(refused.task.mode).toBe("Ask");
+    expect(refused.task.state).toBe("ANSWERING");
+    expect(advanceTask(refused.task, "PLANNING").outcome?.reason).toBe("INVALID_TRANSITION");
 
     const completed = finishTask(answering, { state: "COMPLETED", reason: "ANSWERED" });
-    expect(changeTaskMode(completed, "Edit")).toBe(completed);
+    expect(runTaskEvent(completed, { kind: "MODE_CHANGE", mode: "Edit" }, 2_000).task).toBe(
+      completed,
+    );
   });
 
   it("does not turn an explanation-only task into an Edit task", () => {
@@ -105,8 +127,9 @@ describe("trusted task transitions", () => {
     const answering = advanceTask(advanceTask(admitted, "INSPECTING"), "ANSWERING");
 
     expect(answering.intent).toBe("INFORMATIONAL");
-    expect(changeTaskMode(answering, "Edit")).toBe(answering);
-    expect(changeTaskMode(answering, "Admin" as TaskMode)).toBe(answering);
+    const refused = runTaskEvent(answering, { kind: "MODE_CHANGE", mode: "Edit" }, 1_000);
+    expect(refused.status).toBe("ACTION_REJECTED");
+    expect(refused.task.mode).toBe("Ask");
   });
 
   it("cannot enter REPAIRING without an explicit budgeted retry", () => {

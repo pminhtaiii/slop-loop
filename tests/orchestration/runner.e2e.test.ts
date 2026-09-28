@@ -20,7 +20,7 @@ describe("scripted task lifecycle", () => {
       "COMPLETED",
     ]);
     expect(result.task.outcome?.reason).toBe("ANSWERED");
-    expect(result.task.usage.agentSteps).toBe(3);
+    expect(result.task.usage).toMatchObject({ modelTurns: 1, toolAttempts: 0 });
   });
 
   it("completes Edit only after permission stage, sandbox stage and verification", () => {
@@ -68,7 +68,7 @@ describe("scripted task lifecycle", () => {
     expect(result.results.map((item) => item.task.state)).toEqual(["INSPECTING", "COMPLETED"]);
   });
 
-  it("reinspects after a mode pause and then follows the permission path", () => {
+  it("keeps Edit mode through a rejected switch and follows the permission path", () => {
     const initial = admitTask(
       createTask({ taskId: "pause-e2e", objective: "Fix the build", mode: "Edit" }),
       0,
@@ -78,43 +78,56 @@ describe("scripted task lifecycle", () => {
       { event: { kind: "TRUSTED_TRANSITION", target: "PLANNING" }, now: 2_000 },
       { event: { kind: "TRUSTED_TRANSITION", target: "WAITING_FOR_FILE_PERMISSION" }, now: 3_000 },
       { event: { kind: "MODE_CHANGE", mode: "Ask" }, now: 4_000 },
-      { event: { kind: "MODE_CHANGE", mode: "Edit" }, now: 5_000 },
-      { event: { kind: "TRUSTED_TRANSITION", target: "PLANNING" }, now: 6_000 },
-      { event: { kind: "TRUSTED_TRANSITION", target: "WAITING_FOR_FILE_PERMISSION" }, now: 7_000 },
       { event: { kind: "TRUSTED_TRANSITION", target: "IMPLEMENTING" }, now: 8_000 },
       { event: { kind: "TRUSTED_TRANSITION", target: "SANDBOX_READY" }, now: 9_000 },
       { event: { kind: "TRUSTED_TRANSITION", target: "VERIFYING" }, now: 10_000 },
       { event: { kind: "VERIFICATION_RESULT", passed: true }, now: 11_000 },
       { event: { kind: "MODEL_PROPOSAL", action: "COMPLETE" }, now: 12_000 },
     ]);
-    expect(result.results.map((item) => item.task.state).slice(3, 7)).toEqual([
-      "PAUSED_FOR_MODE",
-      "INSPECTING",
-      "PLANNING",
+    expect(result.results.map((item) => item.task.state).slice(3, 5)).toEqual([
       "WAITING_FOR_FILE_PERMISSION",
+      "IMPLEMENTING",
     ]);
     expect(result.task.state).toBe("COMPLETED");
+    expect(result.task.mode).toBe("Edit");
   });
 
-  it("terminates a repeated invalid proposal loop on its finite step budget", () => {
+  it("terminates a repeated invalid proposal loop at the Large turn cap", () => {
     const initial = admitTask(
       createTask({ taskId: "exhaust-e2e", objective: "Explain the build", mode: "Ask" }),
       0,
+      "Large",
     );
     const result = runTaskScript(initial, [
       { event: { kind: "TRUSTED_TRANSITION", target: "INSPECTING" }, now: 1_000 },
       { event: { kind: "TRUSTED_TRANSITION", target: "ANSWERING" }, now: 2_000 },
-      ...Array.from({ length: 30 }, () => ({
+      ...Array.from({ length: 121 }, () => ({
         event: { kind: "MODEL_PROPOSAL" as const, action: "PLAN" as const },
         now: 3_000,
       })),
     ]);
     expect(result.task.state).toBe("FAILED");
-    expect(result.task.usage.agentSteps).toBe(30);
+    expect(result.task.usage.modelTurns).toBe(120);
     expect(result.task.outcome).toMatchObject({
       reason: "BUDGET_EXHAUSTED",
-      evidence: { resource: "AGENT_STEPS", observed: 30, attempted: 31 },
+      evidence: { resource: "MODEL_TURNS", observed: 120, attempted: 121 },
+      handoff: { objective: "Explain the build", exhaustedBudget: "MODEL_TURNS" },
     });
-    expect(result.results.length).toBe(31);
+    expect(result.results.length).toBe(123);
+  });
+
+  it("ignores later scripted work after developer stop", () => {
+    const initial = admitTask(
+      createTask({ taskId: "stop-e2e", objective: "Explain the build", mode: "Ask" }),
+      0,
+    );
+    const result = runTaskScript(initial, [
+      { event: { kind: "TRUSTED_TRANSITION", target: "INSPECTING" }, now: 1_000 },
+      { event: { kind: "CANCEL" }, now: 2_000 },
+      { event: { kind: "MODEL_PROPOSAL", action: "COMPLETE" }, now: 3_000 },
+    ]);
+    expect(result.task.state).toBe("CANCELLED");
+    expect(result.task.usage.modelTurns).toBe(0);
+    expect(result.results).toHaveLength(2);
   });
 });

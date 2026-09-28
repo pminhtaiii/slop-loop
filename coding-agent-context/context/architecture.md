@@ -219,23 +219,20 @@ RECEIVED -> ADMITTED -> INSPECTING
 VERIFYING -> REPAIRING -> WAITING_FOR_FILE_PERMISSION or IMPLEMENTING
 REVIEWING -> REPAIRING
 INSPECTING or PLANNING -> COMPLETED (NO_CHANGE_NEEDED, Edit only)
-ANSWERING -> PLANNING (trusted Ask to Edit switch for CHANGE intent)
-Active Edit state -> PAUSED_FOR_MODE (trusted Edit to Ask switch)
-PAUSED_FOR_MODE -> INSPECTING (trusted Ask to Edit resume)
 Any active state -> FAILED / BLOCKED / CANCELLED for its typed reason
 ```
 Rules:
 
 - Model output may suggest the next action, but legal state transitions are defined in code.
 - Each task has an immutable trusted intent: `INFORMATIONAL` or `CHANGE`. An informational task cannot enter Edit work by switching mode; a new change request is a new task.
-- A developer may switch an active Edit task to Ask. The task enters `PAUSED_FOR_MODE`; returning to Edit resumes at `INSPECTING` and traverses the permission stage again. The later permission subsystem must revoke grants on the switch to Ask.
+- A task's mode remains fixed from admission to terminal outcome. The developer may stop the active task and select another mode for a later task. A permission wait retains the active checkout slot.
 - `CANCELLED` is a distinct terminal state for explicit developer cancellation. Terminal state and typed outcome remain sealed together.
 - A task may not skip admission. A tool that executes repository code may not skip sandbox creation; an `Ask` session does not create a sandbox.
-- Mutation tools are available only in `Edit` mode after permission for every exact target path-operation pair. Switching to `Ask` revokes all file permissions.
+- Mutation tools are available only in `Edit` mode after permission for every exact target path-operation pair. Selecting `Ask` for a later task revokes all file permissions when the later session subsystem is implemented.
 - Every state transition is auditable.
 - Retry transitions consume explicit budget.
 - Entering `REPAIRING` requires a one-use authorization issued only after the runner consumes a retry allowance.
-- Phase 1 implements this graph with deterministic in-memory events and simulated time. Real model, tool, permission, sandbox, timer, CLI, and audit integrations belong to later phases.
+- The Phase 1 runner, reconciled in T038–T040, implements this graph with deterministic in-memory events and simulated time. Real model, tool, permission, sandbox, timer, CLI, and audit integrations belong to later phases.
 
 ---
 
@@ -278,7 +275,7 @@ Retrieval evaluation fixtures declare required files, optional helpful files, fo
 
 The tool registry is closed.
 
-Phase 2 implements nine fixed non-executable definitions in `src/tools/registry.ts`. It strictly validates proposed `{ name, arguments }` calls and derives provider-neutral input JSON Schema from the same Zod 4 schemas. `src/tools/selection.ts` supplies the trusted Ask four-name and Edit nine-name candidate sets. Unknown selected names fail the entire schema request. This boundary is not connected to the Phase 1 runner and cannot grant a capability or execute an operation; Phase 3 policy and later adapters own those responsibilities. Complete executable tool contracts remain a later-phase gate.
+Phase 2 implements nine fixed non-executable definitions in `src/tools/registry.ts`. It strictly validates proposed `{ name, arguments }` calls and derives provider-neutral input JSON Schema from the same Zod 4 schemas. T041 adds trusted capability/effect metadata to those same definitions. `src/tools/selection.ts` supplies the trusted Ask four-name and Edit nine-name candidate sets. Unknown selected names fail the entire schema request. This boundary is not connected to the Phase 1 runner and cannot authorize or execute an operation; the Phase 3 policy/gateway and later adapters own those responsibilities. Complete executable tool contracts remain a later-phase gate.
 
 MVP tools:
 
@@ -597,18 +594,16 @@ Internal exceptions must not be surfaced as raw stack traces to untrusted client
 
 ## Budget Model
 
-Recommended initial limits:
+Current fixed task profiles from ADR 0006:
 
 ```text
-max_agent_steps: 30
-max_tool_calls: 60
-max_patch_attempts: 3
-max_single_tool_seconds: 120
-max_task_seconds: 900
-max_tool_output_bytes: 65536
+Small:  30 model turns,  60 tool attempts, 3 shared retries
+Medium: 60 model turns, 120 tool attempts, 5 shared retries
+Large: 120 model turns, 240 tool attempts, 8 shared retries
+Active work: 1800 seconds, excluding developer permission waits
 ```
 
-Values are configuration, not model suggestions.
+Admission seals the initial profile and permitted Small → Medium → Large promotion schedule. Capacity usage is cumulative; the initial retry ceiling never increases on promotion. The runner enforces these counters in memory. Tool runtime and output limits remain adapter contracts for later phases; none executes yet.
 
 ---
 

@@ -19,9 +19,9 @@ pnpm exec vitest run tests/orchestration/task.test.ts tests/orchestration/transi
 Confirm that the tests cover these Phase 1 exit conditions:
 
 1. A task enters only declared states. An illegal internal transition becomes `FAILED / INVALID_TRANSITION` without entering the requested state; terminal tasks cannot continue.
-2. The last permitted agent step can complete, while the next step, a fourth retry, or the 900-second deadline produces a typed `BUDGET_EXHAUSTED` outcome with limit and usage evidence.
-3. A trusted `Edit → Ask → Edit` mode change keeps task identity, objective, and usage, then resumes at inspection. Informational tasks cannot switch into Edit.
-4. Invalid model proposals consume a step but leave a permitted task route open. Cancellation, blocking, failure, and completion remain distinct.
+2. Small/Medium/Large profiles cap model turns at 30/60/120 and dispatched tool attempts at 60/120/240. The next capacity charge promotes within the sealed schedule or ends at Large with `BUDGET_EXHAUSTED` and a bounded handoff. Shared recovery retries remain fixed at the initial profile's 3/5/8 ceiling; the active-work deadline is 1,800 seconds.
+3. Task mode stays fixed. A same-task mode change is rejected; stop aborts in-flight work where supported and retains the checkout slot until the attempt settles. A permission wait retains the slot but does not consume active-work time.
+4. Invalid model proposals consume a model turn. Individually dispatched calls consume a separate tool attempt; internal lifecycle events consume neither. Cancellation, blocking, failure, and completion remain distinct.
 5. A changed Edit task completes only with a passing verification result for its current attempt. No-change completion reports that verification did not run.
 
 `runner.e2e.test.ts` uses scripted events and an injected clock. Permission, verification, and sandbox events in these tests are fixtures, not calls to real adapters. Deadline expiry is checked when an event or clock tick is processed; a later runtime must schedule ticks and bound external calls.
@@ -65,8 +65,18 @@ The focused suite proves that:
 
 ### Combined quality gate and current limitation
 
-Run `pnpm lint`, `pnpm format:check`, `pnpm typecheck`, `pnpm test`, `pnpm build`, and `pnpm smoke` on the combined checkout. The full source suite includes 77 registry tests and 98 Phase 0/1 tests. `pnpm smoke` still executes the Phase 0 compiled entrypoint; it does not exercise registry functions or a tool invocation loop.
+Run `pnpm lint`, `pnpm format:check`, `pnpm typecheck`, `pnpm test`, `pnpm build`, and `pnpm smoke` on the combined checkout. The current full source suite includes 90 registry tests and 115 Phase 0/1 tests. `pnpm smoke` still executes the Phase 0 compiled entrypoint; it does not exercise registry functions or a tool invocation loop.
 
 On this Windows checkout, pnpm 12.5.1 can run through Corepack outside the local sandbox. The pinned scripts for lint, typecheck, test, build, and smoke pass. `pnpm format:check` reports 15 unchanged files with CRLF line endings; `pnpm exec prettier --check . --end-of-line auto` passes as a diagnostic. That diagnostic does not replace the full pnpm-script gate. Phase 2 source is implemented, while integration readiness remains open until the required format gate passes in a checkout or CI run.
 
-The registry is pure and does not execute a tool or decide authorization. Phase 3 policy, later adapters, provider conversion, and complete executable tool contracts require separate verification. See `specs/003-closed-tool-registry/quickstart.md` and `specs/003-closed-tool-registry/contracts/registry.md`.
+The registry is pure and does not execute a tool or decide authorization. T041 adds trusted capability/effect metadata without making an adapter executable. Phase 3 policy, later adapters, provider conversion, and complete executable tool contracts require separate verification. See `specs/003-closed-tool-registry/quickstart.md` and `specs/003-closed-tool-registry/contracts/registry.md`.
+
+## Phase 3 — Policy Engine & Capabilities: prerequisite checkpoint
+
+T037–T041 are implemented in this checkout. Run the focused prerequisite suite with:
+
+```sh
+pnpm exec vitest run tests/orchestration tests/tools/registry.test.ts
+```
+
+On 2026-09-28, that suite passed 152 tests. A frozen pnpm install, lint, typecheck, the full 205-test suite, build, and smoke passed. `pnpm format:check` still failed on the same 15 unchanged CRLF files; the full gate remains open. These prerequisite tests prove runner budget/stop behavior and registry classification only. They do not prove policy authorization, gateway execution routing, audit ordering, real path containment, or durable JSONL evidence. T042–T058 remain open.

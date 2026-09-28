@@ -1,4 +1,5 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
+import * as registry from "../../src/tools/registry.js";
 import { modelVisibleToolsForNames, validateToolCall } from "../../src/tools/registry.js";
 import { selectedToolNamesForMode } from "../../src/tools/selection.js";
 
@@ -125,6 +126,52 @@ describe("closed tool call validation (T031/T032)", () => {
       expect(result).toEqual({ ok: false, code: "INVALID_ARGUMENTS" });
       expect(JSON.stringify(result)).not.toContain("private-");
     }
+  });
+});
+
+describe("trusted tool metadata (T041)", () => {
+  it.each([
+    ["list_files", "repository_read", "LOW", "read", "none", "none"],
+    ["search_code", "repository_read", "LOW", "read", "none", "none"],
+    ["read_file", "repository_read", "LOW", "read", "none", "none"],
+    ["git_diff", "git_evidence", "LOW", "read", "none", "none"],
+    ["apply_patch", "workspace_write", "MEDIUM", "workspace_mutation", "workspace", "none"],
+    ["run_tests", "verification", "MEDIUM", "sandbox_execution", "none", "trusted_profile"],
+    ["run_build", "verification", "MEDIUM", "sandbox_execution", "none", "trusted_profile"],
+    ["run_linter", "verification", "MEDIUM", "sandbox_execution", "none", "trusted_profile"],
+    ["run_typecheck", "verification", "MEDIUM", "sandbox_execution", "none", "trusted_profile"],
+  ] as const)(
+    "%s requires %s and classifies its effects",
+    (name, requiredCapability, risk, effect, mutation, execution) => {
+      expect(registry.toolMetadataForName(name)).toEqual({
+        requiredCapability,
+        risk,
+        effect,
+        mutation,
+        execution,
+      });
+    },
+  );
+
+  it.each(["shell", "constructor", "__proto__"])(
+    "does not provide trusted metadata for unregistered %s",
+    (name) => {
+      expect(() => registry.toolMetadataForName(name)).toThrow("Unknown tool name");
+    },
+  );
+
+  it("keeps trusted metadata separate from model-visible schemas and caller mutation", () => {
+    const metadata = registry.toolMetadataForName("apply_patch");
+    expect(Object.isFrozen(metadata)).toBe(true);
+    expect(() => {
+      (metadata as { risk: string }).risk = "LOW";
+    }).toThrow(TypeError);
+    expect(registry.toolMetadataForName("apply_patch").risk).toBe("MEDIUM");
+    expect(Object.keys(modelVisibleToolsForNames(["apply_patch"])[0] ?? {})).toEqual([
+      "name",
+      "description",
+      "parameters",
+    ]);
   });
 });
 

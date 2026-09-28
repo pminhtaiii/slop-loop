@@ -6,11 +6,11 @@
 
 ## Phase 1: Setup and prerequisites
 
-- [ ] T037 Check Phase 0/1 status and Phase 2 registry source using coding-agent-context/context/progress-checker.md and specs/003-closed-tool-registry/plan.md; note unmet gates in specs/004-policy-engine-capabilities/quickstart.md
-- [ ] T038 Reconcile fixed task mode, legal transitions, and stop/checkout-slot lifecycle with ADR 0007 in src/orchestration/task.ts, src/orchestration/transitions.ts, and src/orchestration/runner.ts
-- [ ] T039 Implement separate turn/attempt counters, paused active-work time, sealed cumulative promotion, and fixed shared retries in src/orchestration/budget.ts and src/orchestration/runner.ts
-- [ ] T040 Revise old lifecycle tests and cover mode, budgets, waits, stop, and handoff in tests/orchestration/task.test.ts, tests/orchestration/budget.test.ts, tests/orchestration/runner.test.ts, and tests/orchestration/runner.e2e.test.ts
-- [ ] T041 Extend Phase 2's nine-name registry with trusted capability/effect metadata in src/tools/registry.ts and tests/tools/registry.test.ts; keep fake result contracts in test fixtures
+- [x] T037 Check Phase 0/1 status and Phase 2 registry source using coding-agent-context/context/progress-checker.md and specs/003-closed-tool-registry/plan.md; note unmet gates in specs/004-policy-engine-capabilities/quickstart.md
+- [x] T038 Reconcile fixed task mode, legal transitions, and stop/checkout-slot lifecycle with ADR 0007 in src/orchestration/task.ts, src/orchestration/transitions.ts, and src/orchestration/runner.ts
+- [x] T039 Implement separate turn/attempt counters, paused active-work time, sealed cumulative promotion, and fixed shared retries in src/orchestration/budget.ts and src/orchestration/runner.ts
+- [x] T040 Revise old lifecycle tests and cover mode, budgets, waits, stop, and handoff in tests/orchestration/task.test.ts, tests/orchestration/budget.test.ts, tests/orchestration/runner.test.ts, and tests/orchestration/runner.e2e.test.ts
+- [x] T041 Extend Phase 2's nine-name registry with trusted capability/effect metadata in src/tools/registry.ts and tests/tools/registry.test.ts; keep fake result contracts in test fixtures
 
 **Checkpoint**: The reconciled runner is verified and Phase 2's registry source is available. T041 waits for actual Phase 2 source; planning text alone is insufficient.
 

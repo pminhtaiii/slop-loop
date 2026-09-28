@@ -24,8 +24,8 @@ describe("task admission", () => {
       mode: "Ask",
       state: "ADMITTED",
       admittedAt: 1_000,
-      usage: { agentSteps: 0, retries: 0 },
-      budget: { maxAgentSteps: 30, maxRetries: 3, maxTaskSeconds: 900 },
+      usage: { modelTurns: 0, toolAttempts: 0, retries: 0 },
+      budget: { initialProfile: "Medium", maxModelTurns: 60, maxToolAttempts: 120, maxRetries: 5 },
     });
     expect(received.state).toBe("RECEIVED");
     expect(Object.isFrozen(admitted)).toBe(true);
@@ -52,9 +52,7 @@ describe("task admission", () => {
     expect(admitTask(received, Number.NaN).outcome?.reason).toBe("INTERNAL_ERROR");
     expect(
       admitTask(received, 0, {
-        maxAgentSteps: 0,
-        maxRetries: 3,
-        maxTaskSeconds: 900,
+        maxModelTurns: 0,
       }).outcome?.reason,
     ).toBe("INTERNAL_ERROR");
   });
@@ -158,12 +156,26 @@ describe("typed task outcomes", () => {
     const failed = finishTask(answering, {
       state: "FAILED",
       reason: "BUDGET_EXHAUSTED",
-      evidence: { resource: "AGENT_STEPS", limit: 30, observed: 30, attempted: 31 },
+      evidence: { resource: "MODEL_TURNS", limit: 30, observed: 30, attempted: 31 },
+      handoff: {
+        exhaustedBudget: "MODEL_TURNS",
+        limit: 30,
+        observed: 30,
+        objective: "Explain the build",
+        completedActions: [],
+        changedPaths: [],
+        verification: "NOT_RUN",
+        blockers: [],
+        stopReason: "MODEL_TURNS limit reached",
+        remainingSteps: ["Start a new task"],
+      },
     });
     if (failed.outcome?.reason !== "BUDGET_EXHAUSTED") throw new Error("Budget outcome missing");
 
     expect(Object.isFrozen(failed.outcome)).toBe(true);
     expect(Object.isFrozen(failed.outcome.evidence)).toBe(true);
+    expect(Object.isFrozen(failed.outcome.handoff)).toBe(true);
+    expect(Object.isFrozen(failed.outcome.handoff.remainingSteps)).toBe(true);
   });
 
   it("rejects invented passing verification on an Ask answer", () => {
