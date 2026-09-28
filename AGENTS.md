@@ -5,6 +5,9 @@ exit gate remains prerequisite for Phase 1 integration readiness.
 
 For planned Phase 2 closed tool registry work, read
 `specs/003-closed-tool-registry/plan.md`.
+
+For planned Phase 3 policy engine and tool gateway work, read
+`specs/004-policy-engine-capabilities/plan.md`.
 <!-- SPECKIT END -->
 
 ## Slop Loop Project Context

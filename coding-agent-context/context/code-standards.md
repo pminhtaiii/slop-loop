@@ -70,7 +70,7 @@ Rules:
 - tools cannot bypass policy;
 - policy cannot depend on model responses;
 - sandbox contains no model logic;
-- audit remains observational, never an authorization dependency;
+- audit remains observational, never an authorization authority; successful canonical pre-execution evidence gates every model-visible tool dispatch;
 - the composition root may wire concrete adapters;
 - circular dependencies are forbidden.
 

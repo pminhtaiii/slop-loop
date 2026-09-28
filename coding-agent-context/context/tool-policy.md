@@ -10,6 +10,8 @@ If another context file conflicts with this file on tool permissions, this file 
 
 > Tool availability is a deterministic capability, never a model decision.
 
+The closed tool catalog is the single trusted source for each executable tool's name, input and output schemas, risk/effect metadata, mutation/execution classification, required capability, runtime limits, and maximum output size. The Phase 2 non-executable registry may be narrower; complete the contract before enabling an adapter. Model-visible selection and registry validation do not authorize invocation. A mandatory `ToolGateway` alone holds executor references and obtains a fresh, call-scoped decision context from trusted task, permission, budget, workspace, network, profile, and executor-readiness state. It discards that context after the call; no snapshot authorizes another call or session.
+
 The model can request a registered tool call. It cannot:
 
 - register tools;
@@ -21,7 +23,7 @@ The model can request a registered tool call. It cannot:
 - expose secrets;
 - change approval requirements.
 
-Here “the model” means the coding model acting within an admitted task. At trusted task admission, a separate Jev classifier may select only `small`, `medium`, or `large`; application code maps that category to the fixed, finite profile in ADR 0006. If Jev fails or returns an unusable response, application code selects Medium. Handling a valid low-confidence choice is still an open design decision; probabilities are retained as evidence. During execution, trusted budget policy may promote Small to Medium or Medium to Large when a counted limit is reached, with cumulative usage and no reset. Large is the cap. Neither Jev nor the coding model can select tools, modes, file permissions, numeric limits, or a promotion. The coding model cannot increase budgets itself.
+Here “the model” means the coding model acting within an admitted task. At trusted task admission, a separate Jev classifier may select only `small`, `medium`, or `large`; application code maps that category to the fixed, finite profile in ADR 0006 when the chosen category's probability is at least 0.7. A valid lower-confidence choice, failed classification, or unusable response selects Medium; probabilities are retained as evidence. Admission seals the initial profile, permitted promotion edges, trusted triggers, cumulative-accounting semantics, Large as the maximum, and one shared general-retry ceiling from the initial profile. During execution, trusted budget policy may promote Small to Medium or Medium to Large within that schedule when work-capacity limits (model turns or tool attempts) are reached, with cumulative usage and no reset. Promotion never replenishes or increases the retry ceiling. Verification/repair, model recovery, and ordinary-denial recovery spend that shared allowance with recorded reasons; exhausting it terminates at the current profile without promotion. Neither Jev nor the coding model can select tools, modes, file permissions, numeric limits, or a promotion. The coding model cannot increase budgets itself.
 
 ---
 
@@ -409,6 +411,7 @@ Do not attempt to solve prompt injection solely through prompt wording.
 
 Before returning a result to the model:
 
+- validate the executor output against the registered output schema;
 - enforce maximum bytes;
 - normalize result type;
 - remove internal host paths where unnecessary;
@@ -417,6 +420,7 @@ Before returning a result to the model:
 - mark repository/tool content as untrusted.
 
 Oversized results must be truncated or rejected according to tool contract.
+Validation, bounding, normalization, sanitization, and redaction occur before either canonical audit representation or model context. A returned result that violates its contract does not prove an earlier persistent effect failed; the gateway reports effect status separately from `TOOL_CONTRACT_FAILURE`, stops unsafe continuation, and never replays the executor solely because its result was invalid.
 
 ---
 
@@ -434,11 +438,17 @@ Any of the following means tool execution is denied:
 
 There is no fallback to "best effort allow."
 
+An ordinary `DENY` means trusted policy evaluated the call and found it forbidden or ineligible; the runner may permit bounded model recovery, charging an applicable retry when it asks the model to recover. Exhausting denial recovery terminates the task without profile promotion, regardless of whether the denied calls were identical; no similarity heuristic is used. A validly evaluated forbidden path is an ordinary `DENY`. `FAILED / POLICY_FAILURE` is terminal when the authorization component fails or required trusted authority state, such as path facts, cannot be produced or validated. `BLOCKED` is reserved for an external dependency or environment condition while the authority system remains healthy. None of these outcomes executes the denied call.
+
+Audit evidence does not authorize a call and is not an input to `PolicyEngine`. Every individually dispatched model-submitted request, including unknown or malformed calls, receives bounded request identity and validation or policy decision evidence without raw arguments. Before dispatching any model-visible tool, including read-only tools, the gateway must successfully append canonical request and decision evidence. If the required append fails or the sink is unavailable, the gateway returns `BLOCKED / AUDIT_UNAVAILABLE` with zero executor calls; it never falls back to unaudited execution. Result evidence follows execution. If the result append fails after an effect may have occurred, notify the developer, stop further dispatch, and make only a small bounded number of synchronous persistence retries through an idempotent event interface with stable `event_id`; never rerun the executor. If persistence remains unconfirmed, return `BLOCKED / AUDIT_INCOMPLETE` and report the actual or possible effect. Phase 3 proves the ordering with a fake sink and Phase 12 supplies the real JSONL writer.
+
 ---
 
 ## File Permission — MVP
 
 Before the first mutation of a path in an `Edit` session, the CLI asks the developer to authorize its canonical repository-relative path and intended update/create operation. One prompt may contain several path-operation pairs. The prompt does not need to display the proposed diff; authorization is operation-and-path scoped, not content-scoped.
+
+Valid grants may be reused across Edit tasks and bounded repairs in the same still-open session only when the new task's sealed ceiling permits them and current repository checks pass. The grant's observed state advances after the agent's own authorized write. An external target change invalidates the affected grant even if the file is later restored to its previous bytes; a later use needs fresh authorization. Git status alone does not prove that a target stayed unchanged.
 
 Permissions expire on `/clear`, CLI exit, a switch to `Ask`, or relevant repository drift. Approved file changes are never rolled back automatically. The developer owns all Git writes.
 
