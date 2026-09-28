@@ -18,7 +18,7 @@
 
 **Purpose**: Establish the already-selected TypeScript runtime as a verified prerequisite. This phase does not implement Phase 0 on behalf of Phase 1.
 
-- [ ] T001 Run the combined Phase 0 and Phase 1 exit gate with pinned pnpm 12 (`pnpm lint`, `pnpm format:check`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `pnpm smoke`) before declaring Phase 1 integration-ready. Phase 0 source is now present, but Windows Application Control blocks the local pinned executable.
+- [x] T001 Run the combined Phase 0 and Phase 1 exit gate with pinned pnpm 12 (`pnpm lint`, `pnpm format:check`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `pnpm smoke`) before declaring Phase 1 integration-ready. Phase 0 source is now present, but Windows Application Control blocks the local pinned executable.
 - [x] T002 Record the developer-approved dedicated `feat/002-task-domain-orchestrator` branch in this checkout in `specs/002-task-domain-orchestrator/plan.md` before editing `src/` or `tests/`.
 
 ---
