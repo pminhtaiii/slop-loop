@@ -1,0 +1,2 @@
+# Keep tracked text files LF on Windows and Unix checkouts.
+* text=auto eol=lf

@@ -36,6 +36,8 @@ Phase 0 commands are: pnpm format for intentional rewrite; pnpm format:check for
 
 The repository policy says coding agents format only files they intentionally modify. This is a code-standard policy, not a Phase 0 model capability.
 
+Tracked text files use LF line endings on Windows and Unix through `.gitattributes`. Keep Prettier's ordinary `format:check` gate meaningful on both platforms; `--end-of-line auto` is only a diagnostic override.
+
 ## Runtime Validation (Zod 4)
 
 Use Zod 4 for strict runtime configuration and external/model contracts, including the Phase 2 registry. Prefer closed objects, explicit enums, bounded strings and collections, and validation before policy or execution. Registry input JSON Schema is derived from its strict runtime Zod schema; do not maintain a second handwritten argument contract.

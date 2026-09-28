@@ -67,7 +67,7 @@ The focused suite proves that:
 
 Run `pnpm lint`, `pnpm format:check`, `pnpm typecheck`, `pnpm test`, `pnpm build`, and `pnpm smoke` on the combined checkout. The current full source suite includes 90 registry tests and 115 Phase 0/1 tests. `pnpm smoke` still executes the Phase 0 compiled entrypoint; it does not exercise registry functions or a tool invocation loop.
 
-On this Windows checkout, pnpm 12.5.1 can run through Corepack outside the local sandbox. The pinned scripts for lint, typecheck, test, build, and smoke pass. `pnpm format:check` reports 15 unchanged files with CRLF line endings; `pnpm exec prettier --check . --end-of-line auto` passes as a diagnostic. That diagnostic does not replace the full pnpm-script gate. Phase 2 source is implemented, while integration readiness remains open until the required format gate passes in a checkout or CI run.
+On 2026-09-28, a tracked LF checkout rule resolved the Windows CRLF mismatch. Pinned pnpm 12.5.1 through Corepack passed frozen install, lint, `format:check`, typecheck, all 205 tests, build, and smoke on this combined checkout. Phase 2 source is implemented; T035 security/spec review and T036 final context/diff review remain open before declaring Phase 2 integration-ready.
 
 The registry is pure and does not execute a tool or decide authorization. T041 adds trusted capability/effect metadata without making an adapter executable. Phase 3 policy, later adapters, provider conversion, and complete executable tool contracts require separate verification. See `specs/003-closed-tool-registry/quickstart.md` and `specs/003-closed-tool-registry/contracts/registry.md`.
 
@@ -79,4 +79,4 @@ T037–T041 are implemented in this checkout. Run the focused prerequisite suite
 pnpm exec vitest run tests/orchestration tests/tools/registry.test.ts
 ```
 
-On 2026-09-28, that suite passed 152 tests. A frozen pnpm install, lint, typecheck, the full 205-test suite, build, and smoke passed. `pnpm format:check` still failed on the same 15 unchanged CRLF files; the full gate remains open. These prerequisite tests prove runner budget/stop behavior and registry classification only. They do not prove policy authorization, gateway execution routing, audit ordering, real path containment, or durable JSONL evidence. T042–T058 remain open.
+On 2026-09-28, that suite passed 152 tests. Frozen install and all pinned quality scripts, including `format:check`, passed on the combined checkout. These prerequisite tests prove runner budget/stop behavior and registry classification only. They do not prove policy authorization, gateway execution routing, audit ordering, real path containment, or durable JSONL evidence. T042–T058 and the Phase 3 exit gate remain open.

@@ -1,6 +1,6 @@
 # Quickstart: Validate the Task Domain and Orchestrator
 
-This guide describes validation for the Phase 1 source core. The Phase 0 runtime is now present in this checkout; the combined pinned-manager gate remains pending.
+This guide describes validation for the Phase 1 source core. The Phase 0 runtime is present in this checkout; the combined pinned-manager gate passed on 2026-09-28 after the LF checkout fix.
 
 ## Prerequisites
 
