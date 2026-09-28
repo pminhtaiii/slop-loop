@@ -11,10 +11,10 @@ Do not mark a capability complete because it appears in architecture or planning
 Overall status:
 
 ```text
-PHASE 0 FOUNDATION COMPLETE / PHASE 1 DOMAIN CORE IMPLEMENTED / PHASE 2 REGISTRY SOURCE IMPLEMENTED
+PHASE 0 FOUNDATION COMPLETE / PHASE 1 RUNNER RECONCILED / PHASE 2 REGISTRY SOURCE IMPLEMENTED / PHASE 3 PREREQUISITES IMPLEMENTED
 ```
 
-Phase 0 runtime and its exit gate are complete on `development` and its source is present in this checkout. The Phase 1 task domain and deterministic orchestrator are implemented. Phase 2 now has a pure closed registry and trusted Ask/Edit name selector. The combined checkout passes the pnpm 12.5.1 lint, typecheck, test, build, and smoke scripts locally, but `pnpm format:check` fails on 15 unchanged CRLF files in this Windows checkout. The full pinned-manager gate has not passed here, so Phase 1 and Phase 2 integration readiness is not claimed. There is still no real model, tool execution, permission, sandbox, CLI, or audit adapter.
+Phase 0 runtime and its exit gate are complete on `development` and its source is present in this checkout. The Phase 1 task domain and deterministic orchestrator are implemented, with ADR 0006/0007 runner reconciliation in this checkout. Phase 2 has a pure closed registry, trusted Ask/Edit name selector, and T041 capability/effect metadata. T037–T041 establish Phase 3 prerequisites; the policy engine and gateway remain unimplemented. A tracked LF checkout rule resolved the Windows CRLF mismatch, and the combined checkout now passes frozen install plus every pnpm 12.5.1 quality script. The Phase 1 combined gate is satisfied. Phase 2 T035/T036 review and Phase 3 T042–T058 remain open; neither Phase 2 integration readiness nor Phase 3 completion is claimed. There is still no real model, tool execution, permission, sandbox, CLI, or audit adapter.
 
 The agreed future product MVP is an interactive local CLI implemented in TypeScript for Python target repositories. It supports `Ask` and `Edit` modes in one in-memory session, repository questions, permission-gated updates and creation in the current checkout, trusted Docker verification, progress questions, and a final diff and verification report. The developer owns Git writes. The first model provider remains undecided. Worktrees, session persistence, API/web, active-task scope changes, and remote Git delivery are deferred. These are planned behaviors, not completed capabilities.
 
@@ -56,7 +56,7 @@ pnpm smoke
 - [x] Add transition unit tests.
 - [x] Add retry/budget exhaustion tests.
 
-The current checkout passes 175 tests across Phases 0–2, including the Phase 1 regression suite. Pinned pnpm 12.5.1 runs through Corepack outside the local sandbox. `pnpm format:check` flags 15 unchanged CRLF files from this Windows checkout; `pnpm exec prettier --check . --end-of-line auto` passes. The full pnpm-script gate remains open. Budget expiry is checked on each event or injected clock tick; a later runtime must schedule real clock checks and bound external calls.
+The current checkout passes 205 tests across Phases 0–2 and the Phase 3 prerequisite changes, including the Phase 1 regression suite. Pinned pnpm 12.5.1 runs through Corepack outside the local sandbox; frozen install and all six quality scripts, including `format:check`, passed on 2026-09-28. The 152-test focused prerequisite suite also passed. The Phase 1 combined gate is satisfied. Budget expiry is checked on each event or injected clock tick; a later runtime must schedule real clock checks and bound external calls.
 
 Exit gate:
 
@@ -88,7 +88,7 @@ MVP names registered as definitions only; tool adapters remain planned:
 - [x] `run_typecheck`
 - [x] `git_diff`
 
-The focused registry suite passes 77 tests. It checks strict call envelopes, the 64-code-point name bound, all nine argument contracts, Unicode code-point length bounds, unknown-name denial, Ask/Edit selection, schema parity, and safe copies. Registry functions have no policy decision or execution path and are not wired into the Phase 1 runner. The full Phase 2 quality gate remains open only at the Windows `format:check` step described above.
+The focused registry suite passes 90 tests. It checks strict call envelopes, the 64-code-point name bound, all nine argument contracts, Unicode code-point length bounds, unknown-name denial, Ask/Edit selection, schema parity, safe copies, and trusted metadata isolation. Registry functions have no policy decision or execution path and are not wired into the Phase 1 runner. The pinned quality scripts pass on this checkout; Phase 2 T035/T036 review tasks remain open.
 
 Exit gate:
 
@@ -100,7 +100,7 @@ the registry cannot accept or register an unknown tool; there is no invocation p
 
 ## Phase 3 — Policy Engine & Capabilities
 
-- [ ] Define `ToolCapability`.
+- [x] Define `ToolCapability` in the trusted registry metadata for all nine names; policy use remains open.
 - [ ] Define `PolicyDecision`.
 - [ ] Seal capabilities during task admission.
 - [ ] Recheck capability on every tool call.
@@ -110,6 +110,8 @@ the registry cannot accept or register an unknown tool; there is no invocation p
 - [ ] Implement budget checks.
 - [ ] Fail closed on policy exception.
 - [ ] Add negative authorization tests.
+
+T037–T041 are implemented and verified as a prerequisite slice: fixed per-task mode, separate cumulative model-turn/tool-attempt counters, shared finite retries, permission-wait clock exclusion, checkout-slot stop fencing, bounded budget handoff, and trusted registry classification. The focused suite passes 152 tests, and the pinned quality scripts now pass on this checkout. The policy engine, invocation ceiling, gateway, fake executor/audit integration, and Phase 3 exit gate remain open at T042–T058.
 
 Exit gate:
 

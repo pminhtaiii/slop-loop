@@ -1,12 +1,11 @@
 import { z } from "zod";
 
 import { TaskState } from "./task.js";
-import type { TaskContext, TaskMode, TaskOutcome, TaskState as TaskStateType } from "./task.js";
+import type { TaskContext, TaskOutcome, TaskState as TaskStateType } from "./task.js";
 
 const transitions: Readonly<Partial<Record<TaskStateType, readonly TaskStateType[]>>> = {
   ADMITTED: [TaskState.INSPECTING],
   INSPECTING: [TaskState.ANSWERING, TaskState.PLANNING],
-  ANSWERING: [TaskState.PLANNING],
   PLANNING: [TaskState.WAITING_FOR_FILE_PERMISSION],
   WAITING_FOR_FILE_PERMISSION: [TaskState.IMPLEMENTING],
   IMPLEMENTING: [TaskState.SANDBOX_READY],
@@ -15,6 +14,8 @@ const transitions: Readonly<Partial<Record<TaskStateType, readonly TaskStateType
   REPAIRING: [TaskState.WAITING_FOR_FILE_PERMISSION, TaskState.IMPLEMENTING],
   REVIEWING: [TaskState.REPAIRING],
 };
+
+const handoffList = z.array(z.string().max(256)).max(32);
 
 const outcomeSchema = z.union([
   z.strictObject({
@@ -35,10 +36,22 @@ const outcomeSchema = z.union([
     state: z.literal(TaskState.FAILED),
     reason: z.literal("BUDGET_EXHAUSTED"),
     evidence: z.strictObject({
-      resource: z.enum(["AGENT_STEPS", "RETRIES", "TASK_TIME"]),
+      resource: z.enum(["MODEL_TURNS", "TOOL_ATTEMPTS", "RETRIES", "ACTIVE_WORK_TIME"]),
       limit: z.number().finite().nonnegative(),
       observed: z.number().finite().nonnegative(),
       attempted: z.number().finite().nonnegative(),
+    }),
+    handoff: z.strictObject({
+      exhaustedBudget: z.enum(["MODEL_TURNS", "TOOL_ATTEMPTS", "RETRIES", "ACTIVE_WORK_TIME"]),
+      limit: z.number().finite().nonnegative(),
+      observed: z.number().finite().nonnegative(),
+      objective: z.string().max(4_096),
+      completedActions: handoffList,
+      changedPaths: handoffList,
+      verification: z.enum(["NOT_RUN", "PASSED", "FAILED"]),
+      blockers: handoffList,
+      stopReason: z.string().max(128),
+      remainingSteps: handoffList,
     }),
   }),
   z.strictObject({
@@ -119,6 +132,18 @@ export function finishTask(task: TaskContext, outcome: TaskOutcome): TaskContext
   if (!parsed.success) return invalidTransition(task);
   outcome = parsed.data;
 
+  if (
+    outcome.state === TaskState.FAILED &&
+    outcome.reason === "BUDGET_EXHAUSTED" &&
+    (outcome.handoff.exhaustedBudget !== outcome.evidence.resource ||
+      outcome.handoff.limit !== outcome.evidence.limit ||
+      outcome.handoff.observed !== outcome.evidence.observed ||
+      outcome.handoff.objective !== task.objective ||
+      outcome.handoff.verification !== task.verification)
+  ) {
+    return invalidTransition(task);
+  }
+
   if (outcome.state === TaskState.COMPLETED) {
     const answered =
       outcome.reason === "ANSWERED" && task.mode === "Ask" && task.state === TaskState.ANSWERING;
@@ -157,48 +182,22 @@ export function finishTask(task: TaskContext, outcome: TaskOutcome): TaskContext
           : outcome;
   const sealedOutcome =
     evidence.state === TaskState.FAILED && evidence.reason === "BUDGET_EXHAUSTED"
-      ? { ...evidence, evidence: Object.freeze({ ...evidence.evidence }) }
+      ? {
+          ...evidence,
+          evidence: Object.freeze({ ...evidence.evidence }),
+          handoff: Object.freeze({
+            ...evidence.handoff,
+            completedActions: Object.freeze([...evidence.handoff.completedActions]),
+            changedPaths: Object.freeze([...evidence.handoff.changedPaths]),
+            blockers: Object.freeze([...evidence.handoff.blockers]),
+            remainingSteps: Object.freeze([...evidence.handoff.remainingSteps]),
+          }),
+        }
       : evidence;
 
   return Object.freeze({
     ...task,
     state: outcome.state,
     outcome: Object.freeze(sealedOutcome),
-  });
-}
-
-export function changeTaskMode(task: TaskContext, mode: TaskMode): TaskContext {
-  if (isTerminal(task.state) || task.mode === mode) return task;
-  if (mode !== "Ask" && mode !== "Edit") return task;
-  if (mode === "Edit" && task.intent !== "CHANGE") return task;
-
-  if (task.mode === "Edit" && mode === "Ask") {
-    if (task.state === TaskState.RECEIVED) {
-      return Object.freeze({ ...task, mode });
-    }
-    return Object.freeze({
-      ...task,
-      mode,
-      state: TaskState.PAUSED_FOR_MODE,
-      pausedFrom: task.state,
-      retryAuthorized: false,
-    });
-  }
-
-  if (task.state === TaskState.PAUSED_FOR_MODE) {
-    return Object.freeze({
-      ...task,
-      mode,
-      state: TaskState.INSPECTING,
-      pausedFrom: null,
-      verification: "NOT_RUN",
-      retryAuthorized: false,
-    });
-  }
-
-  return Object.freeze({
-    ...task,
-    mode,
-    state: task.state === TaskState.ANSWERING ? TaskState.PLANNING : task.state,
   });
 }

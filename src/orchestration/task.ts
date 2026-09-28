@@ -1,7 +1,27 @@
 import { z } from "zod";
 
-import { DEFAULT_TASK_BUDGET, validateTaskBudget } from "./budget.js";
+import { EMPTY_TASK_USAGE, createTaskBudget } from "./budget.js";
 import type { BudgetExhaustion, TaskBudget, TaskUsage } from "./budget.js";
+
+export interface BudgetHandoff {
+  readonly exhaustedBudget: BudgetExhaustion["resource"];
+  readonly limit: number;
+  readonly observed: number;
+  readonly objective: string;
+  readonly completedActions: readonly string[];
+  readonly changedPaths: readonly string[];
+  readonly verification: "NOT_RUN" | "PASSED" | "FAILED";
+  readonly blockers: readonly string[];
+  readonly stopReason: string;
+  readonly remainingSteps: readonly string[];
+}
+
+export interface TaskProgress {
+  readonly completedActions: readonly string[];
+  readonly changedPaths: readonly string[];
+  readonly blockers: readonly string[];
+  readonly remainingSteps: readonly string[];
+}
 
 export const TaskState = {
   RECEIVED: "RECEIVED",
@@ -15,7 +35,6 @@ export const TaskState = {
   VERIFYING: "VERIFYING",
   REPAIRING: "REPAIRING",
   REVIEWING: "REVIEWING",
-  PAUSED_FOR_MODE: "PAUSED_FOR_MODE",
   COMPLETED: "COMPLETED",
   FAILED: "FAILED",
   BLOCKED: "BLOCKED",
@@ -45,6 +64,7 @@ export type TaskOutcome =
       readonly state: typeof TaskState.FAILED;
       readonly reason: "BUDGET_EXHAUSTED";
       readonly evidence: Readonly<BudgetExhaustion>;
+      readonly handoff: Readonly<BudgetHandoff>;
     }
   | {
       readonly state: typeof TaskState.FAILED;
@@ -72,8 +92,9 @@ export interface TaskContext {
   readonly budget: Readonly<TaskBudget> | null;
   readonly usage: Readonly<TaskUsage>;
   readonly admittedAt: number | null;
-  readonly pausedFrom: TaskState | null;
+  readonly lastObservedAt: number | null;
   readonly changed: boolean;
+  readonly progress: Readonly<TaskProgress>;
   readonly verification: "NOT_RUN" | "PASSED" | "FAILED";
   readonly retryAuthorized: boolean;
   readonly outcome: TaskOutcome | null;
@@ -99,10 +120,16 @@ export function createTask(input: z.input<typeof taskInputSchema>): TaskContext 
     mode: parsed.mode,
     state: TaskState.RECEIVED,
     budget: null,
-    usage: Object.freeze({ agentSteps: 0, retries: 0 }),
+    usage: EMPTY_TASK_USAGE,
     admittedAt: null,
-    pausedFrom: null,
+    lastObservedAt: null,
     changed: false,
+    progress: Object.freeze({
+      completedActions: Object.freeze([]),
+      changedPaths: Object.freeze([]),
+      blockers: Object.freeze([]),
+      remainingSteps: Object.freeze([]),
+    }),
     verification: "NOT_RUN",
     retryAuthorized: false,
     outcome: null,
@@ -112,7 +139,7 @@ export function createTask(input: z.input<typeof taskInputSchema>): TaskContext 
 export function admitTask(
   task: TaskContext,
   now: number,
-  requestedBudget: unknown = DEFAULT_TASK_BUDGET,
+  requestedProfile: unknown = "Medium",
 ): TaskContext {
   if (
     task.state === TaskState.COMPLETED ||
@@ -133,7 +160,7 @@ export function admitTask(
 
   let budget: Readonly<TaskBudget>;
   try {
-    budget = validateTaskBudget(requestedBudget);
+    budget = createTaskBudget(requestedProfile);
   } catch {
     return failed("INTERNAL_ERROR");
   }
@@ -142,5 +169,6 @@ export function admitTask(
     state: TaskState.ADMITTED,
     budget,
     admittedAt: now,
+    lastObservedAt: now,
   });
 }

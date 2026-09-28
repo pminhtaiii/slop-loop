@@ -1,7 +1,7 @@
 # Tasks: Closed Tool Registry
 
 - **Input**: [spec.md](./spec.md), [plan.md](./plan.md), [contracts/registry.md](./contracts/registry.md)
-- **Status**: T031–T034 implemented with RED/GREEN evidence. T035 remains open because the combined Windows checkout fails `pnpm format:check` on 15 unchanged CRLF files; other pinned scripts and the focused registry suite pass. T036 documentation is synchronized, but final task completion follows the T035 gate.
+- **Status**: T031–T034 implemented with RED/GREEN evidence. The combined pinned-manager gate now passes on Windows after the LF checkout fix. T035 remains open for its Phase 2 security/spec review, and T036 remains open for final context sync and diff review.
 - **Numbering**: Continues the repository-wide GitHub task sequence after closed T001–T030; issues T031–T036 track this plan.
 
 ## Phase 1: Setup

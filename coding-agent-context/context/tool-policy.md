@@ -46,7 +46,7 @@ The MVP workspace is the developer's validated current repository checkout. `hos
 
 ## MVP Tool Set
 
-Phase 2 currently implements only the closed definitions and strict input validation for the nine names below. Trusted Ask/Edit selection determines model-visible schemas, not permission. The registry has no dispatcher or policy authority. The operation descriptions below remain the contract for later policy and adapter phases; no repository tool executes yet.
+The registry currently implements the closed definitions, strict input validation, and T041 trusted capability/effect metadata for the nine names below. Trusted Ask/Edit selection determines model-visible schemas, not permission. The registry has no dispatcher or policy authority. The operation descriptions below remain the contract for later policy and adapter phases; no repository tool executes yet.
 
 ## `list_files`
 
@@ -321,7 +321,7 @@ After the task ends, developer may select the next task's mode
 Context and permissions expire; applied file changes remain
 ```
 
-`Ask` exposes repository inspection and read-only Git evidence. `Edit` adds `apply_patch` and trusted verification profiles. A task's mode cannot change while it runs. After a task ends, selecting `Ask` revokes all file permissions; selecting `Edit` after Ask starts without them. The model cannot select a mode or preserve a permission. The Phase 1 runner still implements immediate mode switching; the progress tracker records that implementation until it is refined and verified.
+`Ask` exposes repository inspection and read-only Git evidence. `Edit` adds `apply_patch` and trusted verification profiles. A task's mode cannot change while it runs. After a task ends, selecting `Ask` revokes all file permissions; selecting `Edit` after Ask starts without them. The model cannot select a mode or preserve a permission. The Phase 1 runner now rejects same-task mode changes; session mode selection and permission revocation remain future CLI work.
 
 A session may contain multiple tasks, but at most one task is active per current checkout in the MVP. A task waiting for developer permission retains the active slot until it reaches a terminal outcome; no other task may execute against that checkout meanwhile. This constraint does not imply automatic task queueing. Later isolated checkouts may support concurrency under a separate policy.
 

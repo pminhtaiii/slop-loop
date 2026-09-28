@@ -2,7 +2,7 @@
 
 **Input**: [spec.md](./spec.md), [plan.md](./plan.md), [research.md](./research.md), [data-model.md](./data-model.md), [contracts/orchestrator.md](./contracts/orchestrator.md)
 
-**Prerequisites**: The developer approved this plan and chose the dedicated `feat/002-task-domain-orchestrator` branch in the current checkout. The developer then explicitly authorized isolated Phase 1 code work before Phase 0 was complete. Phase 0 source has since been merged from `development`; T001 stays open until the combined pinned-manager gate passes.
+**Prerequisites**: The developer approved this plan and chose the dedicated `feat/002-task-domain-orchestrator` branch in the current checkout. The developer then explicitly authorized isolated Phase 1 code work before Phase 0 was complete. Phase 0 source has since been merged from `development`; the combined pinned-manager gate passed on 2026-09-28 in the Phase 3 prerequisite checkout.
 
 **Tests**: TDD is mandatory. Each RED task writes a behavior test, runs it, and records that it fails because the behavior is absent. Each paired GREEN task implements the minimum behavior and reruns the focused test. `pnpm test` is the regression suite.
 
@@ -18,14 +18,14 @@
 
 **Purpose**: Establish the already-selected TypeScript runtime as a verified prerequisite. This phase does not implement Phase 0 on behalf of Phase 1.
 
-- [ ] T001 Run the combined Phase 0 and Phase 1 exit gate with pinned pnpm 12 (`pnpm lint`, `pnpm format:check`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `pnpm smoke`) before declaring Phase 1 integration-ready. Phase 0 source is now present, but Windows Application Control blocks the local pinned executable.
+- [x] T001 Run the combined Phase 0 and Phase 1 exit gate with pinned pnpm 12 (`pnpm lint`, `pnpm format:check`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `pnpm smoke`) before declaring Phase 1 integration-ready. Verified on 2026-09-28 with Corepack pnpm 12.5.1 after the LF checkout fix; all six scripts passed.
 - [x] T002 Record the developer-approved dedicated `feat/002-task-domain-orchestrator` branch in this checkout in `specs/002-task-domain-orchestrator/plan.md` before editing `src/` or `tests/`.
 
 ---
 
 ## Phase 2: Foundational
 
-The Phase 0 project and Vitest source-test boundary supply the shared foundation. Do not create speculative policy, session, model, tool, or sandbox scaffolding. The developer explicitly allowed isolated Phase 1 story work before T001; T001 still blocks integration-ready completion.
+The Phase 0 project and Vitest source-test boundary supply the shared foundation. Do not create speculative policy, session, model, tool, or sandbox scaffolding. The developer explicitly allowed isolated Phase 1 story work before T001; its combined pinned-manager gate has now passed.
 
 ---
 
@@ -121,7 +121,7 @@ The Phase 0 project and Vitest source-test boundary supply the shared foundation
 
 ### Phase dependencies
 
-1. T002 and the isolated Phase 1 implementation are complete. The developer explicitly authorized isolated source and test work with T001 open; T001 still blocks integration-ready completion.
+1. T002 and the isolated Phase 1 implementation are complete. The developer explicitly authorized isolated source and test work before T001; the combined pinned-manager gate later passed.
 2. US1 task and transition contracts block US2 runner construction.
 3. US2 budgeted runner blocks US3 mid-task mode tests and US4 outcome scripts.
 4. US3 and US4 both depend on the US1/US2 base; US4 E2E scripts include the US3 pause path.
@@ -142,11 +142,11 @@ The Phase 0 project and Vitest source-test boundary supply the shared foundation
 
 ## Implementation strategy
 
-1. Build and test the Phase 1 module on the merged Phase 0 runtime. Do not mark T001 complete until the combined pinned-manager gate passes.
+1. Build and test the Phase 1 module on the merged Phase 0 runtime. T001 was marked complete after the combined pinned-manager gate passed.
 2. Deliver US1 as the minimum testable lifecycle contract.
 3. Add US2 to meet the finite-budget exit gate before exposing more lifecycle behavior.
 4. Add US3 mode control and US4 outcome honesty without connecting privileged adapters.
-5. Run the full quality gate on the combined branch; complete security convergence, dual-axis review, and factual context sync. T001 remains open until the pinned-manager gate passes.
+5. Run the full quality gate on the combined branch; complete security convergence, dual-axis review, and factual context sync. The pinned-manager gate passed on 2026-09-28.
 
 ## Scope guardrails
 
