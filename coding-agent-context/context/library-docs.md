@@ -47,6 +47,8 @@ The Phase 0 scripts are pnpm format for intentional rewrite, pnpm format:check f
 
 Use Zod 4 for runtime validation. At external or model-facing boundaries, validate before policy or execution. In Phase 0, accept only `SLOP_LOOP_LOG_LEVEL`, default it to `info`, reject unknown `SLOP_LOOP_*` names, and ignore unrelated environment variables. The environment map may be injectable for tests; return a typed, frozen configuration result.
 
+The Phase 2 registry uses one strict Zod argument object per fixed tool name. `z.toJSONSchema` derives provider-neutral Draft 2020-12 input schemas with `io: 'input'`, `cycles: 'throw'`, and `unrepresentable: 'throw'`. Keep string length limits consistent with JSON Schema Unicode code-point semantics and test the advertised/runtime contract for every tool. Schema conversion is metadata only; authorization and execution belong to later phases.
+
 ## Pino
 
 Use Pino only for operational logging through a small `createLogger` factory with fixed redaction and injectable output for tests. Put untrusted repository, model, and tool data under application-controlled fields. Redaction is defense in depth, not an authorization boundary, and Pino logs are not canonical audit evidence.

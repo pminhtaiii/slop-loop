@@ -11,10 +11,10 @@ Do not mark a capability complete because it appears in architecture or planning
 Overall status:
 
 ```text
-PHASE 0 FOUNDATION COMPLETE / PHASE 1 DOMAIN CORE IMPLEMENTED
+PHASE 0 FOUNDATION COMPLETE / PHASE 1 DOMAIN CORE IMPLEMENTED / PHASE 2 REGISTRY SOURCE IMPLEMENTED
 ```
 
-Phase 0 runtime and its exit gate are complete on `development` and its source is present in this checkout. The Phase 1 task domain and deterministic orchestrator are implemented. The combined source checks pass locally, but the pinned pnpm 12 gate has not run in this checkout, so Phase 1 integration readiness is not yet claimed. Phase 1 has no real model, tool, permission, sandbox, CLI, or audit adapter.
+Phase 0 runtime and its exit gate are complete on `development` and its source is present in this checkout. The Phase 1 task domain and deterministic orchestrator are implemented. Phase 2 now has a pure closed registry and trusted Ask/Edit name selector. The combined checkout passes the pnpm 12.5.1 lint, typecheck, test, build, and smoke scripts locally, but `pnpm format:check` fails on 15 unchanged CRLF files in this Windows checkout. The full pinned-manager gate has not passed here, so Phase 1 and Phase 2 integration readiness is not claimed. There is still no real model, tool execution, permission, sandbox, CLI, or audit adapter.
 
 The agreed future product MVP is an interactive local CLI implemented in TypeScript for Python target repositories. It supports `Ask` and `Edit` modes in one in-memory session, repository questions, permission-gated updates and creation in the current checkout, trusted Docker verification, progress questions, and a final diff and verification report. The developer owns Git writes. The first model provider remains undecided. Worktrees, session persistence, API/web, active-task scope changes, and remote Git delivery are deferred. These are planned behaviors, not completed capabilities.
 
@@ -56,7 +56,7 @@ pnpm smoke
 - [x] Add transition unit tests.
 - [x] Add retry/budget exhaustion tests.
 
-The merged checkout passes 98 tests across Phase 0 and Phase 1, source and test typechecks, lint, build, compiled smoke, and Prettier with `--end-of-line auto` when their installed binaries are invoked directly. The pinned pnpm 12 executable is blocked locally by Windows Application Control; plain Prettier check flags CRLF checkout line endings from `core.autocrlf=true`. The full pnpm-script gate must still run for the combined branch. Budget expiry is checked on each event or injected clock tick; a later runtime must schedule real clock checks and bound external calls.
+The current checkout passes 175 tests across Phases 0–2, including the Phase 1 regression suite. Pinned pnpm 12.5.1 runs through Corepack outside the local sandbox. `pnpm format:check` flags 15 unchanged CRLF files from this Windows checkout; `pnpm exec prettier --check . --end-of-line auto` passes. The full pnpm-script gate remains open. Budget expiry is checked on each event or injected clock tick; a later runtime must schedule real clock checks and bound external calls.
 
 Exit gate:
 
@@ -69,29 +69,31 @@ task always terminates under finite budget
 
 ## Phase 2 — Closed Tool Registry
 
-- [ ] Define tool contract.
-- [ ] Define strict tool call schema.
-- [ ] Implement closed registry.
-- [ ] Reject unknown tools.
-- [ ] Generate model-visible schemas only from allowed registry entries.
-- [ ] Add registry security tests.
+- [x] Define the non-executable registry entry and validated-call contract; complete executable tool contracts in later owning phases.
+- [x] Define strict outer and per-tool argument schemas.
+- [x] Implement the fixed nine-name closed registry and trusted Ask/Edit selector.
+- [x] Reject unknown tool names and malformed arguments.
+- [x] Derive provider-neutral model-visible input schemas only for registered selected names.
+- [x] Add registry security and advertised/runtime parity tests.
 
-MVP tool targets:
+MVP names registered as definitions only; tool adapters remain planned:
 
-- [ ] `list_files`
-- [ ] `search_code`
-- [ ] `read_file`
-- [ ] `apply_patch`
-- [ ] `run_tests`
-- [ ] `run_build`
-- [ ] `run_linter`
-- [ ] `run_typecheck`
-- [ ] `git_diff`
+- [x] `list_files`
+- [x] `search_code`
+- [x] `read_file`
+- [x] `apply_patch`
+- [x] `run_tests`
+- [x] `run_build`
+- [x] `run_linter`
+- [x] `run_typecheck`
+- [x] `git_diff`
+
+The focused registry suite passes 77 tests. It checks strict call envelopes, the 64-code-point name bound, all nine argument contracts, Unicode code-point length bounds, unknown-name denial, Ask/Edit selection, schema parity, and safe copies. Registry functions have no policy decision or execution path and are not wired into the Phase 1 runner. The full Phase 2 quality gate remains open only at the Windows `format:check` step described above.
 
 Exit gate:
 
 ```text
-model cannot invoke or register an unknown tool
+the registry cannot accept or register an unknown tool; there is no invocation path yet
 ```
 
 ---

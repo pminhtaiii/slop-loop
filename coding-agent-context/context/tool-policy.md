@@ -44,6 +44,8 @@ The MVP workspace is the developer's validated current repository checkout. `hos
 
 ## MVP Tool Set
 
+Phase 2 currently implements only the closed definitions and strict input validation for the nine names below. Trusted Ask/Edit selection determines model-visible schemas, not permission. The registry has no dispatcher or policy authority. The operation descriptions below remain the contract for later policy and adapter phases; no repository tool executes yet.
+
 ## `list_files`
 
 Risk: **LOW**

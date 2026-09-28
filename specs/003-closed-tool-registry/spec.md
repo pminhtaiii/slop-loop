@@ -2,7 +2,7 @@
 
 - **Feature Branch**: `feat/003-closed-tool-registry`
 - **Created**: 2026-09-27
-- **Status**: Draft for review
+- **Status**: Source implemented; combined pinned quality gate pending
 - **Input**: Phase 2 registry accepted in ADR 0005.
 
 ## User Scenarios & Testing
@@ -35,7 +35,7 @@ A trusted task composer obtains provider-neutral schemas for names selected from
 
 ### Edge Cases
 
-- The outer proposed call must be a strict object containing exactly `name` and `arguments`; missing or extra top-level keys fail. Empty or non-object arguments, arrays, null, unknown argument keys, and invalid numeric ranges fail.
+- The outer proposed call must be a strict object containing exactly `name` and `arguments`; missing or extra top-level keys and names outside 1–64 Unicode code points fail. `arguments` must be an object: `null`, arrays, scalars, unknown keys, and invalid numeric ranges fail. An empty object is valid when the tool has no required arguments, including `git_diff` and `list_files`.
 - No tool accepts an executable, shell flags, raw command, timeout, environment map, budget change, mode, or permission grant.
 - A structurally valid path or profile still requires later trusted authorization, canonicalization, and configuration checks.
 
