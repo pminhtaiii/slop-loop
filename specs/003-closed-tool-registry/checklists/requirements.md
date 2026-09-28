@@ -8,6 +8,6 @@
 - [x] Structural bounds and limits are explicit; path/profile authorization remains with its owning phase.
 - [x] Full executable Tool Contract Standard fields are acknowledged with an explicit later-phase completion gate.
 - [x] Unknown name/field, malformed input, and schema divergence cases are covered.
-- [x] No source implementation or Phase 2 completion is claimed.
+- [x] Planning completeness is separate from implementation status; `progress-checker.md` records verified source and the open integration gate.
 - [x] ADR 0006/0007 refinements remain separate.
 - [x] Phase 1 pinned-manager integration prerequisite remains visible.
