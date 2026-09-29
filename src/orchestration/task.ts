@@ -84,12 +84,14 @@ export type TaskOutcome =
         | "INTERNAL_ERROR"
         | "VERIFICATION_FAILED"
         | "POLICY_FAILURE"
-        | "EXECUTION_FAILURE";
+        | "EXECUTION_FAILURE"
+        | "TOOL_CONTRACT_FAILURE";
       readonly verification?: "FAILED";
     }
   | {
       readonly state: typeof TaskState.BLOCKED;
-      readonly reason: "DEPENDENCY_UNAVAILABLE" | "POLICY_DENIED";
+      readonly reason:
+        "DEPENDENCY_UNAVAILABLE" | "POLICY_DENIED" | "AUDIT_UNAVAILABLE" | "AUDIT_INCOMPLETE";
     }
   | {
       readonly state: typeof TaskState.CANCELLED;

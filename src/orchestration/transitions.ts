@@ -62,12 +62,18 @@ const outcomeSchema = z.union([
       "VERIFICATION_FAILED",
       "POLICY_FAILURE",
       "EXECUTION_FAILURE",
+      "TOOL_CONTRACT_FAILURE",
     ]),
     verification: z.literal("FAILED").optional(),
   }),
   z.strictObject({
     state: z.literal(TaskState.BLOCKED),
-    reason: z.enum(["DEPENDENCY_UNAVAILABLE", "POLICY_DENIED"]),
+    reason: z.enum([
+      "DEPENDENCY_UNAVAILABLE",
+      "POLICY_DENIED",
+      "AUDIT_UNAVAILABLE",
+      "AUDIT_INCOMPLETE",
+    ]),
   }),
   z.strictObject({
     state: z.literal(TaskState.CANCELLED),

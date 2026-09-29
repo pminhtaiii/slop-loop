@@ -24,7 +24,158 @@ function readyToVerify(task: ReturnType<typeof createTask>) {
 }
 
 describe("ToolGateway", () => {
-  it("denies an admitted task before any executor can start", () => {
+  it("blocks an allowed read before execution when pre-evidence is unavailable", async () => {
+    let executions = 0;
+    const gateway = new ToolGateway({
+      workspace: {
+        factsFor: () => ({
+          workspaceId: "workspace-1",
+          operation: "read" as const,
+          canonicalPath: "src/index.ts",
+          status: "ALLOWED" as const,
+        }),
+      },
+      grants: { grantFor: () => undefined },
+      audit: { appendIfAbsent: () => Promise.resolve({ status: "UNAVAILABLE" as const }) },
+      executors: { read_file: { execute: () => (executions += 1) } },
+    });
+    const task = readyToRead(
+      admitTask(
+        createTask({ taskId: "gateway-audit-outage", objective: "Read source", mode: "Ask" }),
+        0,
+        "Medium",
+        { sessionId: "session-1", workspaceId: "workspace-1", eligibleTools: ["read_file"] },
+      ),
+    );
+
+    const result = await gateway.invoke(
+      task,
+      { name: "read_file", arguments: { path: "src/index.ts" } },
+      0,
+    );
+    expect(result).toMatchObject({ kind: "BLOCKED", reason: "AUDIT_UNAVAILABLE" });
+    expect(executions).toBe(0);
+  });
+
+  it("fences executor start when cancellation wins during a pending pre-append", async () => {
+    let executions = 0;
+    let releaseAppend: ((result: { status: "COMMITTED"; eventId: string }) => void) | undefined;
+    let announceAppend: (() => void) | undefined;
+    const appendStarted = new Promise<void>((resolve) => {
+      announceAppend = resolve;
+    });
+    const controller = new AbortController();
+    const gateway = new ToolGateway({
+      workspace: {
+        factsFor: () => ({
+          workspaceId: "workspace-1",
+          operation: "read" as const,
+          canonicalPath: "src/index.ts",
+          status: "ALLOWED" as const,
+        }),
+      },
+      grants: { grantFor: () => undefined },
+      audit: {
+        appendIfAbsent: (event) =>
+          new Promise((resolve) => {
+            announceAppend?.();
+            releaseAppend = () => resolve({ status: "COMMITTED", eventId: event.eventId });
+          }),
+      },
+      executors: { read_file: { execute: () => (executions += 1) } },
+    });
+    const task = readyToRead(
+      admitTask(
+        createTask({ taskId: "gateway-cancel-fence", objective: "Read source", mode: "Ask" }),
+        0,
+        "Medium",
+        { sessionId: "session-1", workspaceId: "workspace-1", eligibleTools: ["read_file"] },
+      ),
+    );
+    const invocation = gateway.invoke(
+      task,
+      { name: "read_file", arguments: { path: "src/index.ts" } },
+      0,
+      { signal: controller.signal, canStart: () => false },
+    );
+    await appendStarted;
+    controller.abort();
+    releaseAppend?.({ status: "COMMITTED", eventId: "ignored" });
+
+    await expect(invocation).resolves.toMatchObject({ kind: "CANCELLED" });
+    expect(executions).toBe(0);
+  });
+
+  it("retries a result append with the same event ID without replaying an effect", async () => {
+    let executions = 0;
+    const events: string[] = [];
+    const gateway = new ToolGateway({
+      workspace: {
+        factsFor: () => ({
+          workspaceId: "workspace-1",
+          operation: "read" as const,
+          canonicalPath: "src/index.ts",
+          status: "ALLOWED" as const,
+        }),
+      },
+      grants: { grantFor: () => undefined },
+      audit: {
+        appendIfAbsent: (event) => {
+          events.push(event.eventId);
+          return Promise.resolve(
+            event.kind === "REQUEST_DECISION"
+              ? { status: "COMMITTED" as const, eventId: event.eventId }
+              : { status: "UNAVAILABLE" as const },
+          );
+        },
+      },
+      executors: { read_file: { execute: () => ({ text: `run-${++executions}` }) } },
+    });
+    const task = readyToRead(
+      admitTask(
+        createTask({ taskId: "gateway-result-retry", objective: "Read source", mode: "Ask" }),
+        0,
+        "Medium",
+        { sessionId: "session-1", workspaceId: "workspace-1", eligibleTools: ["read_file"] },
+      ),
+    );
+
+    await expect(
+      gateway.invoke(task, { name: "read_file", arguments: { path: "src/index.ts" } }, 0),
+    ).resolves.toMatchObject({ kind: "BLOCKED", reason: "AUDIT_INCOMPLETE", effect: "COMPLETED" });
+    expect(executions).toBe(1);
+    expect(new Set(events.filter((event) => event.endsWith(":RESULT"))).size).toBe(1);
+    expect(events.filter((event) => event.endsWith(":RESULT"))).toHaveLength(3);
+  });
+
+  it("reports contract failure after an oversized effect without exposing its output", async () => {
+    const gateway = new ToolGateway({
+      workspace: {
+        factsFor: () => ({
+          workspaceId: "workspace-1",
+          operation: "read" as const,
+          canonicalPath: "src/index.ts",
+          status: "ALLOWED" as const,
+        }),
+      },
+      grants: { grantFor: () => undefined },
+      executors: { read_file: { execute: () => "x".repeat(32_769) } },
+    });
+    const task = readyToRead(
+      admitTask(
+        createTask({ taskId: "gateway-oversize", objective: "Read source", mode: "Ask" }),
+        0,
+        "Medium",
+        { sessionId: "session-1", workspaceId: "workspace-1", eligibleTools: ["read_file"] },
+      ),
+    );
+
+    await expect(
+      gateway.invoke(task, { name: "read_file", arguments: { path: "src/index.ts" } }, 0),
+    ).resolves.toMatchObject({ kind: "TOOL_CONTRACT_FAILURE", effect: "COMPLETED" });
+  });
+
+  it("denies an admitted task before any executor can start", async () => {
     let executions = 0;
     const gateway = new ToolGateway({
       workspace: {
@@ -46,7 +197,7 @@ describe("ToolGateway", () => {
     );
 
     expect(
-      gateway.invoke(task, { name: "read_file", arguments: { path: "src/index.ts" } }, 0),
+      await gateway.invoke(task, { name: "read_file", arguments: { path: "src/index.ts" } }, 0),
     ).toMatchObject({
       kind: "DENY",
       reason: "TASK_STATE_NOT_ELIGIBLE",
@@ -54,7 +205,7 @@ describe("ToolGateway", () => {
     expect(executions).toBe(0);
   });
 
-  it("executes an explicitly allowed call exactly once", () => {
+  it("executes an explicitly allowed call exactly once", async () => {
     const received: unknown[] = [];
     const gateway = new ToolGateway({
       workspace: {
@@ -84,7 +235,7 @@ describe("ToolGateway", () => {
       ),
     );
 
-    const result = gateway.invoke(
+    const result = await gateway.invoke(
       task,
       { name: "read_file", arguments: { path: "src/index.ts" } },
       0,
@@ -94,7 +245,7 @@ describe("ToolGateway", () => {
     expect(received).toEqual([{ name: "read_file", arguments: { path: "src/index.ts" } }]);
   });
 
-  it("reports an executor exception separately from policy failure", () => {
+  it("reports an executor exception separately from policy failure", async () => {
     const gateway = new ToolGateway({
       workspace: {
         factsFor: () => ({
@@ -123,20 +274,24 @@ describe("ToolGateway", () => {
     );
 
     expect(
-      gateway.invoke(task, { name: "read_file", arguments: { path: "src/index.ts" } }, 0),
+      await gateway.invoke(task, { name: "read_file", arguments: { path: "src/index.ts" } }, 0),
     ).toMatchObject({ kind: "FAILED", reason: "EXECUTION_FAILURE" });
   });
 
-  it("rejects Promise-returning executors at the synchronous boundary", () => {
+  it("accepts an abortable asynchronous executor", async () => {
     const executor: ToolExecutor = {
-      // @ts-expect-error Phase 3 executor results cannot be Promise-like.
       execute: () => Promise.resolve({ text: "source" }),
     };
 
-    expect(executor).toBeDefined();
+    await expect(
+      executor.execute(
+        { name: "read_file", arguments: { path: "x" } },
+        { paths: [], signal: new AbortController().signal },
+      ),
+    ).resolves.toEqual({ text: "source" });
   });
 
-  it("revalidates malformed and unknown calls before asking ports or invoking an executor", () => {
+  it("revalidates malformed and unknown calls before asking ports or invoking an executor", async () => {
     let factRequests = 0;
     let executions = 0;
     const gateway = new ToolGateway({
@@ -156,11 +311,11 @@ describe("ToolGateway", () => {
       { sessionId: "session-1", workspaceId: "workspace-1", eligibleTools: ["read_file"] },
     );
 
-    expect(gateway.invoke(task, { name: "shell", arguments: {} }, 0)).toMatchObject({
+    expect(await gateway.invoke(task, { name: "shell", arguments: {} }, 0)).toMatchObject({
       kind: "DENY",
       reason: "UNKNOWN_TOOL",
     });
-    expect(gateway.invoke(task, { name: "read_file", arguments: {} }, 1)).toMatchObject({
+    expect(await gateway.invoke(task, { name: "read_file", arguments: {} }, 1)).toMatchObject({
       kind: "DENY",
       reason: "INVALID_ARGUMENTS",
     });
@@ -168,7 +323,7 @@ describe("ToolGateway", () => {
     expect(executions).toBe(0);
   });
 
-  it("fails closed when a trusted authority provider is unavailable", () => {
+  it("fails closed when a trusted authority provider is unavailable", async () => {
     let executions = 0;
     const gateway = new ToolGateway({
       workspace: {
@@ -189,7 +344,7 @@ describe("ToolGateway", () => {
     );
 
     expect(
-      gateway.invoke(task, { name: "read_file", arguments: { path: "src/index.ts" } }, 0),
+      await gateway.invoke(task, { name: "read_file", arguments: { path: "src/index.ts" } }, 0),
     ).toMatchObject({
       kind: "FAILED",
       reason: "POLICY_FAILURE",
@@ -197,7 +352,7 @@ describe("ToolGateway", () => {
     expect(executions).toBe(0);
   });
 
-  it("fails closed when a provider returns malformed trusted path facts", () => {
+  it("fails closed when a provider returns malformed trusted path facts", async () => {
     let executions = 0;
     const gateway = new ToolGateway({
       workspace: {
@@ -221,7 +376,7 @@ describe("ToolGateway", () => {
     );
 
     expect(
-      gateway.invoke(task, { name: "read_file", arguments: { path: "src/index.ts" } }, 0),
+      await gateway.invoke(task, { name: "read_file", arguments: { path: "src/index.ts" } }, 0),
     ).toMatchObject({
       kind: "FAILED",
       reason: "POLICY_FAILURE",
@@ -229,7 +384,7 @@ describe("ToolGateway", () => {
     expect(executions).toBe(0);
   });
 
-  it("fails closed when a provider returns an unrecognized trusted path status", () => {
+  it("fails closed when a provider returns an unrecognized trusted path status", async () => {
     let executions = 0;
     const gateway = new ToolGateway({
       workspace: {
@@ -253,12 +408,12 @@ describe("ToolGateway", () => {
     );
 
     expect(
-      gateway.invoke(task, { name: "read_file", arguments: { path: "src/index.ts" } }, 0),
+      await gateway.invoke(task, { name: "read_file", arguments: { path: "src/index.ts" } }, 0),
     ).toMatchObject({ kind: "FAILED", reason: "POLICY_FAILURE" });
     expect(executions).toBe(0);
   });
 
-  it("does not execute a mutation unavailable in Ask mode or a call missing its capability", () => {
+  it("does not execute a mutation unavailable in Ask mode or a call missing its capability", async () => {
     let executions = 0;
     const gateway = new ToolGateway({
       workspace: {
@@ -302,13 +457,13 @@ describe("ToolGateway", () => {
     );
 
     expect(
-      gateway.invoke(askTask, { name: "apply_patch", arguments: { patch: "patch" } }, 0),
+      await gateway.invoke(askTask, { name: "apply_patch", arguments: { patch: "patch" } }, 0),
     ).toMatchObject({
       kind: "DENY",
       reason: "TOOL_NOT_ELIGIBLE",
     });
     expect(
-      gateway.invoke(
+      await gateway.invoke(
         missingCapabilityTask,
         { name: "read_file", arguments: { path: "src/index.ts" } },
         1,
@@ -317,7 +472,7 @@ describe("ToolGateway", () => {
     expect(executions).toBe(0);
   });
 
-  it("uses a fresh trusted profile approval for verification execution", () => {
+  it("uses a fresh trusted profile approval for verification execution", async () => {
     let executions = 0;
     const gateway = new ToolGateway({
       workspace: { factsFor: () => undefined },
@@ -337,15 +492,15 @@ describe("ToolGateway", () => {
     );
 
     expect(
-      gateway.invoke(task, { name: "run_tests", arguments: { profile: "other" } }, 0),
+      await gateway.invoke(task, { name: "run_tests", arguments: { profile: "other" } }, 0),
     ).toMatchObject({ kind: "DENY", reason: "PROFILE_NOT_APPROVED" });
     expect(
-      gateway.invoke(task, { name: "run_tests", arguments: { profile: "unit" } }, 1),
+      await gateway.invoke(task, { name: "run_tests", arguments: { profile: "unit" } }, 1),
     ).toMatchObject({ kind: "EXECUTED" });
     expect(executions).toBe(1);
   });
 
-  it("uses fresh path facts before every executor invocation", () => {
+  it("uses fresh path facts before every executor invocation", async () => {
     let factRequests = 0;
     let executions = 0;
     const gateway = new ToolGateway({
@@ -373,10 +528,11 @@ describe("ToolGateway", () => {
     );
 
     expect(
-      gateway.invoke(task, { name: "read_file", arguments: { path: "src/index.ts" } }, 0).kind,
+      (await gateway.invoke(task, { name: "read_file", arguments: { path: "src/index.ts" } }, 0))
+        .kind,
     ).toBe("EXECUTED");
     expect(
-      gateway.invoke(task, { name: "read_file", arguments: { path: "src/index.ts" } }, 1),
+      await gateway.invoke(task, { name: "read_file", arguments: { path: "src/index.ts" } }, 1),
     ).toMatchObject({
       kind: "DENY",
       reason: "FORBIDDEN_PATH",
@@ -385,7 +541,7 @@ describe("ToolGateway", () => {
     expect(executions).toBe(1);
   });
 
-  it("requires a current grant for every path in a workspace mutation", () => {
+  it("requires a current grant for every path in a workspace mutation", async () => {
     let executions = 0;
     let receivedPaths: readonly unknown[] = [];
     let grantForNewPath = false;
@@ -437,14 +593,14 @@ describe("ToolGateway", () => {
     );
 
     expect(
-      gateway.invoke(task, { name: "apply_patch", arguments: { patch: "patch" } }, 0),
+      await gateway.invoke(task, { name: "apply_patch", arguments: { patch: "patch" } }, 0),
     ).toMatchObject({ kind: "NEEDS_FILE_PERMISSION", reason: "MISSING_FILE_GRANT" });
     expect(executions).toBe(0);
     expect(receivedPaths).toEqual([]);
 
     grantForNewPath = true;
     expect(
-      gateway.invoke(task, { name: "apply_patch", arguments: { patch: "patch" } }, 1),
+      await gateway.invoke(task, { name: "apply_patch", arguments: { patch: "patch" } }, 1),
     ).toMatchObject({ kind: "EXECUTED" });
     expect(executions).toBe(1);
     expect(receivedPaths).toEqual([
@@ -453,7 +609,7 @@ describe("ToolGateway", () => {
     ]);
   });
 
-  it("rechecks a current exact grant and blocks a later invalidated grant", () => {
+  it("rechecks a current exact grant and blocks a later invalidated grant", async () => {
     let grantRequests = 0;
     let executions = 0;
     const gateway = new ToolGateway({
@@ -489,10 +645,10 @@ describe("ToolGateway", () => {
     );
 
     expect(
-      gateway.invoke(task, { name: "apply_patch", arguments: { patch: "patch" } }, 0).kind,
+      (await gateway.invoke(task, { name: "apply_patch", arguments: { patch: "patch" } }, 0)).kind,
     ).toBe("EXECUTED");
     expect(
-      gateway.invoke(task, { name: "apply_patch", arguments: { patch: "patch" } }, 1),
+      await gateway.invoke(task, { name: "apply_patch", arguments: { patch: "patch" } }, 1),
     ).toMatchObject({
       kind: "DENY",
       reason: "GRANT_INVALIDATED",
