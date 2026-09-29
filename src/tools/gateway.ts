@@ -98,6 +98,18 @@ function writePaths(paths: readonly TrustedPathFacts[]): readonly TrustedPathFac
   return paths.filter((path) => path.operation === "update" || path.operation === "create");
 }
 
+/**
+ * Phase 3 fake executors are synchronous. A thenable cannot safely cross this
+ * synchronous gateway boundary because its eventual rejection is otherwise
+ * indistinguishable from a successful execution.
+ */
+function isThenable(value: unknown): value is PromiseLike<unknown> {
+  if (value === null || (typeof value !== "object" && typeof value !== "function")) {
+    return false;
+  }
+  return typeof (value as { readonly then?: unknown }).then === "function";
+}
+
 function deniedDecision(
   decision: Extract<PolicyDecision, { readonly kind: "DENY" }>,
 ): ToolGatewayResult {
@@ -169,10 +181,15 @@ export class ToolGateway {
       return { kind: "DENY", invocationId, reason: "EXECUTOR_UNAVAILABLE" };
     }
     try {
+      const result = executor.execute(validated.call, Object.freeze({ paths }));
+      if (isThenable(result)) {
+        void Promise.resolve(result).catch(() => undefined);
+        return { kind: "FAILED", invocationId, reason: "EXECUTION_FAILURE" };
+      }
       return {
         kind: "EXECUTED",
         invocationId,
-        result: executor.execute(validated.call, Object.freeze({ paths })),
+        result,
       };
     } catch {
       return { kind: "FAILED", invocationId, reason: "EXECUTION_FAILURE" };

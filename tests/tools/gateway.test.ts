@@ -126,6 +126,35 @@ describe("ToolGateway", () => {
     ).toMatchObject({ kind: "FAILED", reason: "EXECUTION_FAILURE" });
   });
 
+  it("treats a rejected executor Promise as an execution failure", () => {
+    const rejected = Promise.reject(new Error("executor rejected"));
+    void rejected.catch(() => undefined);
+    const gateway = new ToolGateway({
+      workspace: {
+        factsFor: () => ({
+          workspaceId: "workspace-1",
+          operation: "read" as const,
+          canonicalPath: "src/index.ts",
+          status: "ALLOWED" as const,
+        }),
+      },
+      grants: { grantFor: () => undefined },
+      executors: { read_file: { execute: () => rejected } },
+    });
+    const task = readyToRead(
+      admitTask(
+        createTask({ taskId: "gateway-rejected-promise", objective: "Read source", mode: "Ask" }),
+        0,
+        "Medium",
+        { sessionId: "session-1", workspaceId: "workspace-1", eligibleTools: ["read_file"] },
+      ),
+    );
+
+    expect(
+      gateway.invoke(task, { name: "read_file", arguments: { path: "src/index.ts" } }, 0),
+    ).toMatchObject({ kind: "FAILED", reason: "EXECUTION_FAILURE" });
+  });
+
   it("revalidates malformed and unknown calls before asking ports or invoking an executor", () => {
     let factRequests = 0;
     let executions = 0;
