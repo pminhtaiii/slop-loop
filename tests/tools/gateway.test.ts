@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { admitTask, createTask } from "../../src/orchestration/task.js";
 import { advanceTask } from "../../src/orchestration/transitions.js";
 import { ToolGateway } from "../../src/tools/gateway.js";
+import type { ToolExecutor } from "../../src/tools/gateway.js";
 
 function readyToRead(task: ReturnType<typeof createTask>) {
   return advanceTask(advanceTask(task, "INSPECTING"), "ANSWERING");
@@ -91,6 +92,48 @@ describe("ToolGateway", () => {
 
     expect(result).toMatchObject({ kind: "EXECUTED", result: { text: "source" } });
     expect(received).toEqual([{ name: "read_file", arguments: { path: "src/index.ts" } }]);
+  });
+
+  it("reports an executor exception separately from policy failure", () => {
+    const gateway = new ToolGateway({
+      workspace: {
+        factsFor: () => ({
+          workspaceId: "workspace-1",
+          operation: "read" as const,
+          canonicalPath: "src/index.ts",
+          status: "ALLOWED" as const,
+        }),
+      },
+      grants: { grantFor: () => undefined },
+      executors: {
+        read_file: {
+          execute: () => {
+            throw new Error("executor failed");
+          },
+        },
+      },
+    });
+    const task = readyToRead(
+      admitTask(
+        createTask({ taskId: "gateway-executor-failure", objective: "Read source", mode: "Ask" }),
+        0,
+        "Medium",
+        { sessionId: "session-1", workspaceId: "workspace-1", eligibleTools: ["read_file"] },
+      ),
+    );
+
+    expect(
+      gateway.invoke(task, { name: "read_file", arguments: { path: "src/index.ts" } }, 0),
+    ).toMatchObject({ kind: "FAILED", reason: "EXECUTION_FAILURE" });
+  });
+
+  it("rejects Promise-returning executors at the synchronous boundary", () => {
+    const executor: ToolExecutor = {
+      // @ts-expect-error Phase 3 executor results cannot be Promise-like.
+      execute: () => Promise.resolve({ text: "source" }),
+    };
+
+    expect(executor).toBeDefined();
   });
 
   it("revalidates malformed and unknown calls before asking ports or invoking an executor", () => {

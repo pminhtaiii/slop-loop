@@ -61,6 +61,7 @@ const outcomeSchema = z.union([
       "INTERNAL_ERROR",
       "VERIFICATION_FAILED",
       "POLICY_FAILURE",
+      "EXECUTION_FAILURE",
     ]),
     verification: z.literal("FAILED").optional(),
   }),

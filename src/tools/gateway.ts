@@ -33,8 +33,22 @@ export interface ToolExecutionAuthority {
   readonly paths: readonly TrustedPathFacts[];
 }
 
+/** Values a Phase 3 fake executor may return without starting asynchronous work. */
+export interface SynchronousToolObject {
+  readonly [key: string]: SynchronousToolResult;
+}
+
+export type SynchronousToolResult =
+  | string
+  | number
+  | boolean
+  | null
+  | void
+  | readonly SynchronousToolResult[]
+  | SynchronousToolObject;
+
 export interface ToolExecutor {
-  execute(call: ValidatedToolCall, authority: ToolExecutionAuthority): unknown;
+  execute(call: ValidatedToolCall, authority: ToolExecutionAuthority): SynchronousToolResult;
 }
 
 export interface ToolGatewayDependencies {
@@ -68,7 +82,11 @@ export type ToolGatewayResult =
         | "EXECUTOR_UNAVAILABLE"
         | "TASK_UNAVAILABLE";
     }
-  | { readonly kind: "FAILED"; readonly invocationId: string; readonly reason: "POLICY_FAILURE" };
+  | {
+      readonly kind: "FAILED";
+      readonly invocationId: string;
+      readonly reason: "POLICY_FAILURE" | "EXECUTION_FAILURE";
+    };
 
 function deniedValidation(
   result: Exclude<ValidationResult, { readonly ok: true }>,
@@ -114,6 +132,11 @@ export class ToolGateway {
     this.executors = Object.freeze({ ...dependencies.executors });
   }
 
+  /**
+   * Validates a proposed call and executes it only after current policy allows it.
+   * Reports trusted-fact or policy exceptions as POLICY_FAILURE and executor
+   * exceptions as EXECUTION_FAILURE, with an invocation ID for each request.
+   */
   invoke(task: TaskContext, proposedCall: unknown, responsePosition: number): ToolGatewayResult {
     const ceiling = task.capabilityCeiling;
     const invocationId = `${task.taskId}:${responsePosition}:${this.nextInvocation++}`;
@@ -130,15 +153,17 @@ export class ToolGateway {
     const validated = validateToolCall(proposedCall);
     if (!validated.ok) return deniedValidation(validated, invocationId);
 
+    let decision: PolicyDecision;
+    let paths: readonly TrustedPathFacts[];
     try {
-      const paths = normalizePaths(this.workspace.factsFor(validated.call, ceiling));
+      paths = normalizePaths(this.workspace.factsFor(validated.call, ceiling));
       const execution = this.execution?.factsFor(validated.call, ceiling);
       const grants = Object.freeze(
         writePaths(paths)
           .map((path) => this.grants.grantFor(path, ceiling))
           .filter((grant): grant is FileGrantView => grant !== undefined),
       );
-      const decision = PolicyEngine.evaluate(
+      decision = PolicyEngine.evaluate(
         validated.call,
         createPolicyDecisionContext({
           invocationId,
@@ -152,20 +177,25 @@ export class ToolGateway {
           ...(execution === undefined ? {} : { execution }),
         }),
       );
-      if (decision.kind === "DENY") return deniedDecision(decision);
-      if (decision.kind === "NEEDS_FILE_PERMISSION") return decision;
+    } catch {
+      return { kind: "FAILED", invocationId, reason: "POLICY_FAILURE" };
+    }
+    if (decision.kind === "DENY") return deniedDecision(decision);
+    if (decision.kind === "NEEDS_FILE_PERMISSION") return decision;
 
-      const executor = this.executors[validated.call.name];
-      if (executor === undefined) {
-        return { kind: "DENY", invocationId, reason: "EXECUTOR_UNAVAILABLE" };
-      }
+    const executor = this.executors[validated.call.name];
+    if (executor === undefined) {
+      return { kind: "DENY", invocationId, reason: "EXECUTOR_UNAVAILABLE" };
+    }
+    try {
+      const result = executor.execute(validated.call, Object.freeze({ paths }));
       return {
         kind: "EXECUTED",
         invocationId,
-        result: executor.execute(validated.call, Object.freeze({ paths })),
+        result,
       };
     } catch {
-      return { kind: "FAILED", invocationId, reason: "POLICY_FAILURE" };
+      return { kind: "FAILED", invocationId, reason: "EXECUTION_FAILURE" };
     }
   }
 }

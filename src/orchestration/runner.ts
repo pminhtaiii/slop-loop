@@ -25,6 +25,7 @@ export type TaskEvent =
   | { readonly kind: "TICK" }
   | { readonly kind: "CANCEL" }
   | { readonly kind: "POLICY_FAILURE" }
+  | { readonly kind: "EXECUTION_FAILURE" }
   | { readonly kind: "POLICY_DENIAL"; readonly authorizedRouteRemains: boolean }
   | { readonly kind: "TRUSTED_TRANSITION"; readonly target: TaskStateType }
   | { readonly kind: "VERIFICATION_RESULT"; readonly passed: boolean }
@@ -117,6 +118,10 @@ function recover(task: TaskContext, reason: RetryReason): TaskProcessingCore {
   return applyCharge(task, consumeRetry(task.budget, task.usage, reason));
 }
 
+/**
+ * Applies a task event with budget accounting and lifecycle checks.
+ * Preserves terminal tasks and ends active tasks on policy or execution failure.
+ */
 function processTaskEvent(task: TaskContext, event: TaskEvent, now: number): TaskProcessingCore {
   if (isTerminal(task.state)) {
     return { status: "ALREADY_TERMINAL", task, reason: "ALREADY_TERMINAL" };
@@ -139,6 +144,13 @@ function processTaskEvent(task: TaskContext, event: TaskEvent, now: number): Tas
     return {
       status: "ACCEPTED",
       task: finishTask(task, { state: TaskState.FAILED, reason: "POLICY_FAILURE" }),
+    };
+  }
+
+  if (event.kind === "EXECUTION_FAILURE") {
+    return {
+      status: "ACCEPTED",
+      task: finishTask(task, { state: TaskState.FAILED, reason: "EXECUTION_FAILURE" }),
     };
   }
 
@@ -467,6 +479,11 @@ export class TaskRunner {
     );
   }
 
+  /**
+   * Dispatches proposed calls in order, charging and settling each tool attempt.
+   * Stops when an attempt cannot start or a call fails, is denied, or needs file
+   * permission. Returns the results collected before dispatch stopped.
+   */
   dispatchProposals(
     gateway: ToolGateway,
     proposedCalls: readonly unknown[],
@@ -484,10 +501,10 @@ export class TaskRunner {
       }
       results.push(result);
       if (result.kind === "FAILED") {
-        this.process({ kind: "POLICY_FAILURE" }, now);
+        this.process({ kind: result.reason }, now);
         break;
       }
-      if (result.kind === "DENY") break;
+      if (result.kind === "DENY" || result.kind === "NEEDS_FILE_PERMISSION") break;
     }
     return Object.freeze(results);
   }

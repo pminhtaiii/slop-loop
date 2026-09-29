@@ -80,7 +80,11 @@ export type TaskOutcome =
   | {
       readonly state: typeof TaskState.FAILED;
       readonly reason:
-        "INVALID_TRANSITION" | "INTERNAL_ERROR" | "VERIFICATION_FAILED" | "POLICY_FAILURE";
+        | "INVALID_TRANSITION"
+        | "INTERNAL_ERROR"
+        | "VERIFICATION_FAILED"
+        | "POLICY_FAILURE"
+        | "EXECUTION_FAILURE";
       readonly verification?: "FAILED";
     }
   | {

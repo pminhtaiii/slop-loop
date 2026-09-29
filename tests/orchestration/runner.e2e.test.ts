@@ -9,6 +9,17 @@ function readyToRead(task: ReturnType<typeof createTask>) {
   return advanceTask(advanceTask(task, "INSPECTING"), "ANSWERING");
 }
 
+/** Advances an admitted Edit task through the legal states to IMPLEMENTING. */
+function readyToWrite(task: ReturnType<typeof createTask>) {
+  return advanceTask(
+    advanceTask(
+      advanceTask(advanceTask(task, "INSPECTING"), "PLANNING"),
+      "WAITING_FOR_FILE_PERMISSION",
+    ),
+    "IMPLEMENTING",
+  );
+}
+
 describe("scripted task lifecycle", () => {
   it("completes an Ask task through admission, inspection and answering", () => {
     const initial = admitTask(
@@ -210,6 +221,45 @@ describe("scripted task lifecycle", () => {
     expect(results[0]).toMatchObject({ kind: "EXECUTED" });
     expect(runner.task.usage.toolAttempts).toBe(1);
     expect(executions).toBe(1);
+  });
+
+  it("discards a response tail when an eligible mutation needs file permission", () => {
+    const initial = readyToWrite(
+      admitTask(
+        createTask({ taskId: "gateway-permission-e2e", objective: "Patch source", mode: "Edit" }),
+        0,
+        "Small",
+        { sessionId: "session-1", workspaceId: "workspace-1", eligibleTools: ["apply_patch"] },
+      ),
+    );
+    let executions = 0;
+    const gateway = new ToolGateway({
+      workspace: {
+        factsFor: () => ({
+          workspaceId: "workspace-1",
+          operation: "update" as const,
+          canonicalPath: "src/index.ts",
+          status: "ALLOWED" as const,
+        }),
+      },
+      grants: { grantFor: () => undefined },
+      executors: { apply_patch: { execute: () => (executions += 1) } },
+    });
+    const runner = new TaskRunner(initial, new TaskCheckoutSlot());
+
+    const results = runner.dispatchProposals(
+      gateway,
+      [
+        { name: "apply_patch", arguments: { patch: "patch" } },
+        { name: "apply_patch", arguments: { patch: "second patch" } },
+      ],
+      1_000,
+    );
+
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({ kind: "NEEDS_FILE_PERMISSION" });
+    expect(runner.task.usage.toolAttempts).toBe(1);
+    expect(executions).toBe(0);
   });
 
   it("terminates with POLICY_FAILURE and stops the response after a trusted-fact failure", () => {
