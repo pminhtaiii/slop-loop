@@ -68,7 +68,11 @@ export type ToolGatewayResult =
         | "EXECUTOR_UNAVAILABLE"
         | "TASK_UNAVAILABLE";
     }
-  | { readonly kind: "FAILED"; readonly invocationId: string; readonly reason: "POLICY_FAILURE" };
+  | {
+      readonly kind: "FAILED";
+      readonly invocationId: string;
+      readonly reason: "POLICY_FAILURE" | "EXECUTION_FAILURE";
+    };
 
 function deniedValidation(
   result: Exclude<ValidationResult, { readonly ok: true }>,
@@ -130,15 +134,17 @@ export class ToolGateway {
     const validated = validateToolCall(proposedCall);
     if (!validated.ok) return deniedValidation(validated, invocationId);
 
+    let decision: PolicyDecision;
+    let paths: readonly TrustedPathFacts[];
     try {
-      const paths = normalizePaths(this.workspace.factsFor(validated.call, ceiling));
+      paths = normalizePaths(this.workspace.factsFor(validated.call, ceiling));
       const execution = this.execution?.factsFor(validated.call, ceiling);
       const grants = Object.freeze(
         writePaths(paths)
           .map((path) => this.grants.grantFor(path, ceiling))
           .filter((grant): grant is FileGrantView => grant !== undefined),
       );
-      const decision = PolicyEngine.evaluate(
+      decision = PolicyEngine.evaluate(
         validated.call,
         createPolicyDecisionContext({
           invocationId,
@@ -152,20 +158,24 @@ export class ToolGateway {
           ...(execution === undefined ? {} : { execution }),
         }),
       );
-      if (decision.kind === "DENY") return deniedDecision(decision);
-      if (decision.kind === "NEEDS_FILE_PERMISSION") return decision;
+    } catch {
+      return { kind: "FAILED", invocationId, reason: "POLICY_FAILURE" };
+    }
+    if (decision.kind === "DENY") return deniedDecision(decision);
+    if (decision.kind === "NEEDS_FILE_PERMISSION") return decision;
 
-      const executor = this.executors[validated.call.name];
-      if (executor === undefined) {
-        return { kind: "DENY", invocationId, reason: "EXECUTOR_UNAVAILABLE" };
-      }
+    const executor = this.executors[validated.call.name];
+    if (executor === undefined) {
+      return { kind: "DENY", invocationId, reason: "EXECUTOR_UNAVAILABLE" };
+    }
+    try {
       return {
         kind: "EXECUTED",
         invocationId,
         result: executor.execute(validated.call, Object.freeze({ paths })),
       };
     } catch {
-      return { kind: "FAILED", invocationId, reason: "POLICY_FAILURE" };
+      return { kind: "FAILED", invocationId, reason: "EXECUTION_FAILURE" };
     }
   }
 }

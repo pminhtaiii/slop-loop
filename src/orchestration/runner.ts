@@ -25,6 +25,7 @@ export type TaskEvent =
   | { readonly kind: "TICK" }
   | { readonly kind: "CANCEL" }
   | { readonly kind: "POLICY_FAILURE" }
+  | { readonly kind: "EXECUTION_FAILURE" }
   | { readonly kind: "POLICY_DENIAL"; readonly authorizedRouteRemains: boolean }
   | { readonly kind: "TRUSTED_TRANSITION"; readonly target: TaskStateType }
   | { readonly kind: "VERIFICATION_RESULT"; readonly passed: boolean }
@@ -139,6 +140,13 @@ function processTaskEvent(task: TaskContext, event: TaskEvent, now: number): Tas
     return {
       status: "ACCEPTED",
       task: finishTask(task, { state: TaskState.FAILED, reason: "POLICY_FAILURE" }),
+    };
+  }
+
+  if (event.kind === "EXECUTION_FAILURE") {
+    return {
+      status: "ACCEPTED",
+      task: finishTask(task, { state: TaskState.FAILED, reason: "EXECUTION_FAILURE" }),
     };
   }
 
@@ -484,10 +492,10 @@ export class TaskRunner {
       }
       results.push(result);
       if (result.kind === "FAILED") {
-        this.process({ kind: "POLICY_FAILURE" }, now);
+        this.process({ kind: result.reason }, now);
         break;
       }
-      if (result.kind === "DENY") break;
+      if (result.kind === "DENY" || result.kind === "NEEDS_FILE_PERMISSION") break;
     }
     return Object.freeze(results);
   }

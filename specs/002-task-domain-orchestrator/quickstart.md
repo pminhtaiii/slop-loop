@@ -23,10 +23,10 @@ pnpm exec vitest run tests/orchestration/runner.e2e.test.ts
 Expected behavior:
 
 - Both Ask and Edit scripts traverse only graph-legal states. Direct `RECEIVED → IMPLEMENTING` ends `FAILED / INVALID_TRANSITION` without entering `IMPLEMENTING`.
-- Model proposals invalid in the current state are refused and charged as steps; the task may continue within budget.
-- The 30th permitted step may complete. A 31st attempted step and a fourth general retry stop before execution with typed budget evidence.
-- A simulated deadline at 900 seconds expires a paused or permission-waiting task.
-- Edit→Ask→Edit preserves identity, objective, and usage; the task re-enters inspection and cannot bypass later permission checks.
+- Invalid model proposals are refused and consume one model turn; the task may continue within its model-turn budget.
+- Model turns and individually dispatched tool attempts have separate Small/Medium/Large limits. Capacity promotion raises only those limits and preserves cumulative usage; retries remain bounded by the initial profile.
+- A simulated 1,800-second active-work limit ends the task with typed budget evidence. Permission waits do not add to active-work time.
+- A same-task mode-change request returns `TASK_MODE_FIXED` and preserves the task mode and lifecycle state.
 - Cancellation, blocking, failure, completion, and no-change completion are distinct; terminal replay preserves the first outcome.
 - Changed-file completion requires a scripted trusted passing-verification event for the current change attempt. Repair and Edit resumption invalidate earlier passing evidence. The test asserts only the contract, not real verification execution.
 
