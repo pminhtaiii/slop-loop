@@ -56,7 +56,12 @@ const outcomeSchema = z.union([
   }),
   z.strictObject({
     state: z.literal(TaskState.FAILED),
-    reason: z.enum(["INVALID_TRANSITION", "INTERNAL_ERROR", "VERIFICATION_FAILED"]),
+    reason: z.enum([
+      "INVALID_TRANSITION",
+      "INTERNAL_ERROR",
+      "VERIFICATION_FAILED",
+      "POLICY_FAILURE",
+    ]),
     verification: z.literal("FAILED").optional(),
   }),
   z.strictObject({

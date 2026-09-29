@@ -56,6 +56,45 @@ describe("task admission", () => {
       }).outcome?.reason,
     ).toBe("INTERNAL_ERROR");
   });
+
+  it("seals task authority at admission instead of taking it from later tool calls", () => {
+    const admitted = admitTask(
+      createTask({ taskId: "sealed-authority", objective: "Read source", mode: "Ask" }),
+      0,
+      "Small",
+      {
+        sessionId: "session-1",
+        workspaceId: "workspace-1",
+        eligibleTools: ["read_file"],
+      },
+    );
+
+    expect(admitted.capabilityCeiling).toMatchObject({
+      taskId: "sealed-authority",
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      mode: "Ask",
+      eligibleTools: ["read_file"],
+      capabilities: ["repository_read"],
+      resources: {
+        initialProfile: "Small",
+        promotionSchedule: ["Medium", "Large"],
+        maxRetries: 3,
+      },
+    });
+    expect(Object.isFrozen(admitted.capabilityCeiling)).toBe(true);
+    expect(Object.isFrozen(admitted.capabilityCeiling?.resources)).toBe(true);
+  });
+
+  it("does not invent session or workspace authority when admission has none", () => {
+    const admitted = admitTask(
+      createTask({ taskId: "unbound-authority", objective: "Explain source", mode: "Ask" }),
+      0,
+    );
+
+    expect(admitted.state).toBe("ADMITTED");
+    expect(admitted.capabilityCeiling).toBeNull();
+  });
 });
 
 describe("terminal task sealing", () => {
