@@ -101,15 +101,15 @@ the registry cannot accept or register an unknown tool; there is no invocation p
 ## Phase 3 — Policy Engine & Capabilities
 
 - [x] Define `ToolCapability` in the trusted registry metadata for all nine names; policy use remains open.
-- [ ] Define `PolicyDecision`.
-- [ ] Seal capabilities during task admission.
-- [ ] Recheck capability on every tool call.
-- [ ] Implement default deny.
-- [ ] Implement tool allowlist.
-- [ ] Implement read/write path capabilities.
-- [ ] Implement budget checks.
-- [ ] Fail closed on policy exception.
-- [ ] Add negative authorization tests.
+- [x] Define `PolicyDecision`.
+- [x] Seal capabilities during task admission.
+- [x] Recheck capability on every tool call.
+- [x] Implement default deny.
+- [x] Implement tool allowlist.
+- [x] Implement read/write path capabilities through fake trusted facts.
+- [x] Implement budget checks.
+- [x] Fail closed on policy exception.
+- [x] Add negative authorization tests.
 
 T037–T058 are implemented and verified: fixed per-task mode, separate cumulative model-turn/tool-attempt counters, shared finite retries, permission-wait clock exclusion, checkout-slot stop fencing, bounded budget handoff, trusted registry classification, policy ceilings, gateway routing, fake audit ordering, output-contract handling, and typed audit outcomes. The full suite passed with 238 tests on 2026-09-30. This remains a fake-port proof; real containment, grant, executor, sandbox, and JSONL integrations are later-phase gates.
 

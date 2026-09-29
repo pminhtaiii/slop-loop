@@ -88,6 +88,7 @@ export type ToolGatewayResult =
       readonly kind: "FAILED";
       readonly invocationId: string;
       readonly reason: "POLICY_FAILURE" | "EXECUTION_FAILURE";
+      readonly effect?: "POSSIBLE";
     }
   | {
       readonly kind: "BLOCKED";
@@ -157,10 +158,11 @@ function safeOutput(
     const normalized = value === undefined ? null : value;
     const encoded = JSON.stringify(normalized);
     if (encoded === undefined) return { ok: false };
-    const bytes = new TextEncoder().encode(encoded).byteLength;
-    return bytes > MAX_RESULT_BYTES
-      ? { ok: false }
-      : { ok: true, value: redact(normalized), bytes };
+    const sanitized = redact(JSON.parse(encoded));
+    const sanitizedEncoded = JSON.stringify(sanitized);
+    if (sanitizedEncoded === undefined) return { ok: false };
+    const bytes = new TextEncoder().encode(sanitizedEncoded).byteLength;
+    return bytes > MAX_RESULT_BYTES ? { ok: false } : { ok: true, value: sanitized, bytes };
   } catch {
     return { ok: false };
   }
@@ -180,6 +182,22 @@ export class ToolGateway {
     this.execution = dependencies.execution;
     this.audit = dependencies.audit ?? committedAudit;
     this.executors = Object.freeze({ ...dependencies.executors });
+  }
+
+  private async appendCommitted(event: AuditEvent): Promise<boolean> {
+    try {
+      const result = await this.audit.appendIfAbsent(event);
+      return result.status === "COMMITTED" && result.eventId === event.eventId;
+    } catch {
+      return false;
+    }
+  }
+
+  private async appendResult(event: AuditEvent): Promise<boolean> {
+    for (let attempt = 0; attempt < RESULT_APPEND_ATTEMPTS; attempt += 1) {
+      if (await this.appendCommitted(event)) return true;
+    }
+    return false;
   }
 
   async invoke(
@@ -248,7 +266,7 @@ export class ToolGateway {
       decision.kind === "DENY" ? decision.reason : decision.kind,
       "NONE",
     );
-    if ((await this.audit.appendIfAbsent(pre)).status !== "COMMITTED")
+    if (!(await this.appendCommitted(pre)))
       return { kind: "BLOCKED", invocationId, reason: "AUDIT_UNAVAILABLE", effect: "NONE" };
     if (decision.kind !== "ALLOW") return decision;
     if (fence !== undefined && (!fence.canStart() || fence.signal.aborted))
@@ -264,7 +282,17 @@ export class ToolGateway {
         Object.freeze({ paths, signal: fence?.signal ?? new AbortController().signal }),
       );
     } catch {
-      return { kind: "FAILED", invocationId, reason: "EXECUTION_FAILURE" };
+      const failureEvent = eventFor(
+        task,
+        invocationId,
+        "RESULT",
+        tool,
+        "EXECUTION_FAILURE",
+        "POSSIBLE",
+      );
+      if (!(await this.appendResult(failureEvent)))
+        return { kind: "BLOCKED", invocationId, reason: "AUDIT_INCOMPLETE", effect: "POSSIBLE" };
+      return { kind: "FAILED", invocationId, reason: "EXECUTION_FAILURE", effect: "POSSIBLE" };
     }
     const checked = safeOutput(output);
     const resultEvent = eventFor(
@@ -276,14 +304,7 @@ export class ToolGateway {
       "COMPLETED",
       checked.ok ? checked.bytes : undefined,
     );
-    let appended = false;
-    for (let attempt = 0; attempt < RESULT_APPEND_ATTEMPTS; attempt += 1) {
-      if ((await this.audit.appendIfAbsent(resultEvent)).status === "COMMITTED") {
-        appended = true;
-        break;
-      }
-    }
-    if (!appended)
+    if (!(await this.appendResult(resultEvent)))
       return { kind: "BLOCKED", invocationId, reason: "AUDIT_INCOMPLETE", effect: "COMPLETED" };
     if (!checked.ok) return { kind: "TOOL_CONTRACT_FAILURE", invocationId, effect: "COMPLETED" };
     return { kind: "EXECUTED", invocationId, result: checked.value, effect: "COMPLETED" };

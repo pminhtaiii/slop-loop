@@ -24,6 +24,86 @@ function readyToVerify(task: ReturnType<typeof createTask>) {
 }
 
 describe("ToolGateway", () => {
+  it("records a possible effect when an executor fails after execution started", async () => {
+    const events: { readonly kind: string; readonly effect: string }[] = [];
+    const gateway = new ToolGateway({
+      workspace: {
+        factsFor: () => ({
+          workspaceId: "workspace-1",
+          operation: "read" as const,
+          canonicalPath: "src/index.ts",
+          status: "ALLOWED" as const,
+        }),
+      },
+      grants: { grantFor: () => undefined },
+      audit: {
+        appendIfAbsent: (event) => {
+          events.push(event);
+          return Promise.resolve({ status: "COMMITTED" as const, eventId: event.eventId });
+        },
+      },
+      executors: {
+        read_file: {
+          execute: () => {
+            throw new Error("effect may have occurred");
+          },
+        },
+      },
+    });
+    const task = readyToRead(
+      admitTask(
+        createTask({ taskId: "gateway-possible-effect", objective: "Read source", mode: "Ask" }),
+        0,
+        "Medium",
+        { sessionId: "session-1", workspaceId: "workspace-1", eligibleTools: ["read_file"] },
+      ),
+    );
+
+    await expect(
+      gateway.invoke(task, { name: "read_file", arguments: { path: "src/index.ts" } }, 0),
+    ).resolves.toMatchObject({ kind: "FAILED", reason: "EXECUTION_FAILURE", effect: "POSSIBLE" });
+    expect(events).toContainEqual(expect.objectContaining({ kind: "RESULT", effect: "POSSIBLE" }));
+  });
+
+  it("blocks execution when pre-evidence rejects or acknowledges a different event", async () => {
+    for (const audit of [
+      { appendIfAbsent: () => Promise.reject(new Error("sink offline")) },
+      { appendIfAbsent: () => Promise.resolve({ status: "COMMITTED" as const, eventId: "wrong" }) },
+    ]) {
+      let executions = 0;
+      const gateway = new ToolGateway({
+        workspace: {
+          factsFor: () => ({
+            workspaceId: "workspace-1",
+            operation: "read" as const,
+            canonicalPath: "src/index.ts",
+            status: "ALLOWED" as const,
+          }),
+        },
+        grants: { grantFor: () => undefined },
+        audit,
+        executors: { read_file: { execute: () => (executions += 1) } },
+      });
+      const task = readyToRead(
+        admitTask(
+          createTask({
+            taskId: "gateway-pre-audit-integrity",
+            objective: "Read source",
+            mode: "Ask",
+          }),
+          0,
+          "Medium",
+          { sessionId: "session-1", workspaceId: "workspace-1", eligibleTools: ["read_file"] },
+        ),
+      );
+
+      await expect(
+        gateway.invoke(task, { name: "read_file", arguments: { path: "src/index.ts" } }, 0),
+      ).resolves.toMatchObject({ kind: "BLOCKED", reason: "AUDIT_UNAVAILABLE" });
+      expect(executions).toBe(0);
+    }
+  });
+
   it("blocks an allowed read before execution when pre-evidence is unavailable", async () => {
     let executions = 0;
     const gateway = new ToolGateway({
@@ -146,6 +226,85 @@ describe("ToolGateway", () => {
     expect(executions).toBe(1);
     expect(new Set(events.filter((event) => event.endsWith(":RESULT"))).size).toBe(1);
     expect(events.filter((event) => event.endsWith(":RESULT"))).toHaveLength(3);
+  });
+
+  it("reuses an identical result event after a committed-but-unacknowledged append", async () => {
+    let executions = 0;
+    const resultPayloads = new Map<string, string>();
+    let resultAttempts = 0;
+    const gateway = new ToolGateway({
+      workspace: {
+        factsFor: () => ({
+          workspaceId: "workspace-1",
+          operation: "read" as const,
+          canonicalPath: "src/index.ts",
+          status: "ALLOWED" as const,
+        }),
+      },
+      grants: { grantFor: () => undefined },
+      audit: {
+        appendIfAbsent: (event) => {
+          if (event.kind === "REQUEST_DECISION")
+            return Promise.resolve({ status: "COMMITTED" as const, eventId: event.eventId });
+          resultAttempts += 1;
+          const payload = JSON.stringify(event);
+          const prior = resultPayloads.get(event.eventId);
+          if (prior !== undefined && prior !== payload)
+            return Promise.resolve({ status: "INTEGRITY_FAILURE" as const });
+          resultPayloads.set(event.eventId, payload);
+          return resultAttempts === 1
+            ? Promise.reject(new Error("ack lost after commit"))
+            : Promise.resolve({ status: "COMMITTED" as const, eventId: event.eventId });
+        },
+      },
+      executors: { read_file: { execute: () => ({ text: `run-${++executions}` }) } },
+    });
+    const task = readyToRead(
+      admitTask(
+        createTask({
+          taskId: "gateway-committed-unacknowledged",
+          objective: "Read source",
+          mode: "Ask",
+        }),
+        0,
+        "Medium",
+        { sessionId: "session-1", workspaceId: "workspace-1", eligibleTools: ["read_file"] },
+      ),
+    );
+
+    await expect(
+      gateway.invoke(task, { name: "read_file", arguments: { path: "src/index.ts" } }, 0),
+    ).resolves.toMatchObject({ kind: "EXECUTED", result: { text: "run-1" } });
+    expect(executions).toBe(1);
+    expect(resultAttempts).toBe(2);
+    expect(resultPayloads).toHaveLength(1);
+  });
+
+  it("rejects a result whose redaction expands past the output bound", async () => {
+    const gateway = new ToolGateway({
+      workspace: {
+        factsFor: () => ({
+          workspaceId: "workspace-1",
+          operation: "read" as const,
+          canonicalPath: "src/index.ts",
+          status: "ALLOWED" as const,
+        }),
+      },
+      grants: { grantFor: () => undefined },
+      executors: { read_file: { execute: () => "token=a ".repeat(4_000) } },
+    });
+    const task = readyToRead(
+      admitTask(
+        createTask({ taskId: "gateway-redaction-bound", objective: "Read source", mode: "Ask" }),
+        0,
+        "Medium",
+        { sessionId: "session-1", workspaceId: "workspace-1", eligibleTools: ["read_file"] },
+      ),
+    );
+
+    await expect(
+      gateway.invoke(task, { name: "read_file", arguments: { path: "src/index.ts" } }, 0),
+    ).resolves.toMatchObject({ kind: "TOOL_CONTRACT_FAILURE", effect: "COMPLETED" });
   });
 
   it("reports contract failure after an oversized effect without exposing its output", async () => {
