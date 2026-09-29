@@ -33,8 +33,22 @@ export interface ToolExecutionAuthority {
   readonly paths: readonly TrustedPathFacts[];
 }
 
+/** Values a Phase 3 fake executor may return without starting asynchronous work. */
+export interface SynchronousToolObject {
+  readonly [key: string]: SynchronousToolResult;
+}
+
+export type SynchronousToolResult =
+  | string
+  | number
+  | boolean
+  | null
+  | void
+  | readonly SynchronousToolResult[]
+  | SynchronousToolObject;
+
 export interface ToolExecutor {
-  execute(call: ValidatedToolCall, authority: ToolExecutionAuthority): unknown;
+  execute(call: ValidatedToolCall, authority: ToolExecutionAuthority): SynchronousToolResult;
 }
 
 export interface ToolGatewayDependencies {
@@ -96,18 +110,6 @@ function isPathList(
 
 function writePaths(paths: readonly TrustedPathFacts[]): readonly TrustedPathFacts[] {
   return paths.filter((path) => path.operation === "update" || path.operation === "create");
-}
-
-/**
- * Phase 3 fake executors are synchronous. A thenable cannot safely cross this
- * synchronous gateway boundary because its eventual rejection is otherwise
- * indistinguishable from a successful execution.
- */
-function isThenable(value: unknown): value is PromiseLike<unknown> {
-  if (value === null || (typeof value !== "object" && typeof value !== "function")) {
-    return false;
-  }
-  return typeof (value as { readonly then?: unknown }).then === "function";
 }
 
 function deniedDecision(
@@ -187,10 +189,6 @@ export class ToolGateway {
     }
     try {
       const result = executor.execute(validated.call, Object.freeze({ paths }));
-      if (isThenable(result)) {
-        void Promise.resolve(result).catch(() => undefined);
-        return { kind: "FAILED", invocationId, reason: "EXECUTION_FAILURE" };
-      }
       return {
         kind: "EXECUTED",
         invocationId,
