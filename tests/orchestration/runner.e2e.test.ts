@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { runTaskScript } from "../../src/orchestration/runner.js";
+import { runTaskScript, TaskCheckoutSlot, TaskRunner } from "../../src/orchestration/runner.js";
 import { admitTask, createTask } from "../../src/orchestration/task.js";
+import { advanceTask } from "../../src/orchestration/transitions.js";
+import { ToolGateway } from "../../src/tools/gateway.js";
+
+function readyToRead(task: ReturnType<typeof createTask>) {
+  return advanceTask(advanceTask(task, "INSPECTING"), "ANSWERING");
+}
 
 describe("scripted task lifecycle", () => {
   it("completes an Ask task through admission, inspection and answering", () => {
@@ -129,5 +135,122 @@ describe("scripted task lifecycle", () => {
     expect(result.task.state).toBe("CANCELLED");
     expect(result.task.usage.modelTurns).toBe(0);
     expect(result.results).toHaveLength(2);
+  });
+
+  it("dispatches calls serially and discards a response tail after its first denial", () => {
+    const initial = readyToRead(
+      admitTask(
+        createTask({ taskId: "gateway-denial-e2e", objective: "Read source", mode: "Ask" }),
+        0,
+        "Small",
+        { sessionId: "session-1", workspaceId: "workspace-1", eligibleTools: ["read_file"] },
+      ),
+    );
+    let executions = 0;
+    const gateway = new ToolGateway({
+      workspace: {
+        factsFor: () => ({
+          workspaceId: "workspace-1",
+          operation: "read" as const,
+          canonicalPath: "src/index.ts",
+          status: "ALLOWED" as const,
+        }),
+      },
+      grants: { grantFor: () => undefined },
+      executors: { read_file: { execute: () => (executions += 1) } },
+    });
+    const runner = new TaskRunner(initial, new TaskCheckoutSlot());
+
+    const results = runner.dispatchProposals(
+      gateway,
+      [
+        { name: "shell", arguments: {} },
+        { name: "read_file", arguments: { path: "src/index.ts" } },
+      ],
+      1_000,
+    );
+
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({ kind: "DENY", reason: "UNKNOWN_TOOL" });
+    expect(runner.task.usage.toolAttempts).toBe(1);
+    expect(executions).toBe(0);
+  });
+
+  it("charges one received call when runner dispatch reaches an allowed executor", () => {
+    const initial = readyToRead(
+      admitTask(
+        createTask({ taskId: "gateway-allow-e2e", objective: "Read source", mode: "Ask" }),
+        0,
+        "Small",
+        { sessionId: "session-1", workspaceId: "workspace-1", eligibleTools: ["read_file"] },
+      ),
+    );
+    let executions = 0;
+    const gateway = new ToolGateway({
+      workspace: {
+        factsFor: () => ({
+          workspaceId: "workspace-1",
+          operation: "read" as const,
+          canonicalPath: "src/index.ts",
+          status: "ALLOWED" as const,
+        }),
+      },
+      grants: { grantFor: () => undefined },
+      executors: { read_file: { execute: () => (executions += 1) } },
+    });
+    const runner = new TaskRunner(initial, new TaskCheckoutSlot());
+
+    const results = runner.dispatchProposals(
+      gateway,
+      [{ name: "read_file", arguments: { path: "src/index.ts" } }],
+      1_000,
+    );
+
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({ kind: "EXECUTED" });
+    expect(runner.task.usage.toolAttempts).toBe(1);
+    expect(executions).toBe(1);
+  });
+
+  it("terminates with POLICY_FAILURE and stops the response after a trusted-fact failure", () => {
+    const initial = readyToRead(
+      admitTask(
+        createTask({
+          taskId: "gateway-policy-failure-e2e",
+          objective: "Read source",
+          mode: "Ask",
+        }),
+        0,
+        "Small",
+        { sessionId: "session-1", workspaceId: "workspace-1", eligibleTools: ["read_file"] },
+      ),
+    );
+    let executions = 0;
+    const gateway = new ToolGateway({
+      workspace: {
+        factsFor: () => {
+          throw new Error("workspace unavailable");
+        },
+      },
+      grants: { grantFor: () => undefined },
+      executors: { read_file: { execute: () => (executions += 1) } },
+    });
+    const slot = new TaskCheckoutSlot();
+    const runner = new TaskRunner(initial, slot);
+
+    const results = runner.dispatchProposals(
+      gateway,
+      [
+        { name: "read_file", arguments: { path: "src/index.ts" } },
+        { name: "read_file", arguments: { path: "src/other.ts" } },
+      ],
+      1_000,
+    );
+
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({ kind: "FAILED", reason: "POLICY_FAILURE" });
+    expect(runner.task.outcome).toMatchObject({ state: "FAILED", reason: "POLICY_FAILURE" });
+    expect(slot.heldBy).toBeNull();
+    expect(executions).toBe(0);
   });
 });

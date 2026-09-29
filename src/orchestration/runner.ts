@@ -5,6 +5,7 @@ import type { BudgetDecision, BudgetExhaustion, RetryReason, TaskUsage } from ".
 import { TaskState } from "./task.js";
 import type { TaskContext, TaskOutcome, TaskState as TaskStateType } from "./task.js";
 import { advanceTask, finishTask, isTerminal } from "./transitions.js";
+import type { ToolGateway, ToolGatewayResult } from "../tools/gateway.js";
 
 export type TaskEvent =
   | { readonly kind: "MODEL_PROPOSAL"; readonly action: "PLAN" | "COMPLETE" | "INVALID" }
@@ -23,6 +24,7 @@ export type TaskEvent =
   | { readonly kind: "REPLACE_OBJECTIVE"; readonly objective: string }
   | { readonly kind: "TICK" }
   | { readonly kind: "CANCEL" }
+  | { readonly kind: "POLICY_FAILURE" }
   | { readonly kind: "POLICY_DENIAL"; readonly authorizedRouteRemains: boolean }
   | { readonly kind: "TRUSTED_TRANSITION"; readonly target: TaskStateType }
   | { readonly kind: "VERIFICATION_RESULT"; readonly passed: boolean }
@@ -130,6 +132,13 @@ function processTaskEvent(task: TaskContext, event: TaskEvent, now: number): Tas
     return {
       status: "ACCEPTED",
       task: finishTask(task, { state: TaskState.CANCELLED, reason: "CANCELLED_BY_DEVELOPER" }),
+    };
+  }
+
+  if (event.kind === "POLICY_FAILURE") {
+    return {
+      status: "ACCEPTED",
+      task: finishTask(task, { state: TaskState.FAILED, reason: "POLICY_FAILURE" }),
     };
   }
 
@@ -456,6 +465,31 @@ export class TaskRunner {
       this.slot.heldBy === this.currentTask.taskId &&
       this.abortController?.signal.aborted === false
     );
+  }
+
+  dispatchProposals(
+    gateway: ToolGateway,
+    proposedCalls: readonly unknown[],
+    now: number,
+  ): readonly ToolGatewayResult[] {
+    const results: ToolGatewayResult[] = [];
+    for (const [responsePosition, proposedCall] of proposedCalls.entries()) {
+      const attempt = this.beginToolAttempt(now);
+      if (attempt === null) break;
+      let result: ToolGatewayResult;
+      try {
+        result = gateway.invoke(this.currentTask, proposedCall, responsePosition);
+      } finally {
+        this.settleToolAttempt(attempt.generation, now);
+      }
+      results.push(result);
+      if (result.kind === "FAILED") {
+        this.process({ kind: "POLICY_FAILURE" }, now);
+        break;
+      }
+      if (result.kind === "DENY") break;
+    }
+    return Object.freeze(results);
   }
 
   stop(now: number): void {

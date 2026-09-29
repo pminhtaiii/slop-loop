@@ -2,6 +2,10 @@ import { z } from "zod";
 
 import { EMPTY_TASK_USAGE, createTaskBudget } from "./budget.js";
 import type { BudgetExhaustion, TaskBudget, TaskUsage } from "./budget.js";
+import { createTaskCapabilityCeiling } from "../policy/engine.js";
+import type { TaskCapabilityCeiling } from "../policy/engine.js";
+import { selectedToolNamesForMode } from "../tools/selection.js";
+import type { ToolCapability, ToolName } from "../tools/registry.js";
 
 export interface BudgetHandoff {
   readonly exhaustedBudget: BudgetExhaustion["resource"];
@@ -21,6 +25,13 @@ export interface TaskProgress {
   readonly changedPaths: readonly string[];
   readonly blockers: readonly string[];
   readonly remainingSteps: readonly string[];
+}
+
+export interface TaskAdmissionAuthority {
+  readonly sessionId: string;
+  readonly workspaceId: string;
+  readonly eligibleTools?: readonly ToolName[];
+  readonly capabilities?: readonly ToolCapability[];
 }
 
 export const TaskState = {
@@ -68,7 +79,8 @@ export type TaskOutcome =
     }
   | {
       readonly state: typeof TaskState.FAILED;
-      readonly reason: "INVALID_TRANSITION" | "INTERNAL_ERROR" | "VERIFICATION_FAILED";
+      readonly reason:
+        "INVALID_TRANSITION" | "INTERNAL_ERROR" | "VERIFICATION_FAILED" | "POLICY_FAILURE";
       readonly verification?: "FAILED";
     }
   | {
@@ -90,6 +102,7 @@ export interface TaskContext {
   readonly mode: TaskMode;
   readonly state: TaskState;
   readonly budget: Readonly<TaskBudget> | null;
+  readonly capabilityCeiling: Readonly<TaskCapabilityCeiling> | null;
   readonly usage: Readonly<TaskUsage>;
   readonly admittedAt: number | null;
   readonly lastObservedAt: number | null;
@@ -120,6 +133,7 @@ export function createTask(input: z.input<typeof taskInputSchema>): TaskContext 
     mode: parsed.mode,
     state: TaskState.RECEIVED,
     budget: null,
+    capabilityCeiling: null,
     usage: EMPTY_TASK_USAGE,
     admittedAt: null,
     lastObservedAt: null,
@@ -140,6 +154,7 @@ export function admitTask(
   task: TaskContext,
   now: number,
   requestedProfile: unknown = "Medium",
+  authority?: TaskAdmissionAuthority,
 ): TaskContext {
   if (
     task.state === TaskState.COMPLETED ||
@@ -159,8 +174,20 @@ export function admitTask(
   if (!Number.isFinite(now) || now < 0) return failed("INTERNAL_ERROR");
 
   let budget: Readonly<TaskBudget>;
+  let capabilityCeiling: Readonly<TaskCapabilityCeiling> | null = null;
   try {
     budget = createTaskBudget(requestedProfile);
+    if (authority !== undefined) {
+      capabilityCeiling = createTaskCapabilityCeiling({
+        taskId: task.taskId,
+        sessionId: authority.sessionId,
+        workspaceId: authority.workspaceId,
+        mode: task.mode,
+        eligibleTools: authority.eligibleTools ?? selectedToolNamesForMode(task.mode),
+        ...(authority.capabilities === undefined ? {} : { capabilities: authority.capabilities }),
+        resources: budget,
+      });
+    }
   } catch {
     return failed("INTERNAL_ERROR");
   }
@@ -168,6 +195,7 @@ export function admitTask(
     ...task,
     state: TaskState.ADMITTED,
     budget,
+    capabilityCeiling,
     admittedAt: now,
     lastObservedAt: now,
   });

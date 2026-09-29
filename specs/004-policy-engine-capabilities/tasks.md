@@ -20,11 +20,11 @@
 
 **Independent test**: With a fake executor, explicit allow executes once; wrong mode, unknown/malformed, missing capability, forbidden, and failed authority calls execute zero times.
 
-- [ ] T042 [P] [US1] Add failing pure decision tests for allow, deny, permission-needed, and trusted-fact failure in tests/policy/engine.test.ts
-- [ ] T043 [US1] Implement admission-sealed TaskCapabilityCeiling, invocation-scoped PolicyDecisionContext, and side-effect-free PolicyEngine in src/policy/engine.ts
-- [ ] T044 [US1] Add failing gateway routing and revalidation tests with a private fake executor mapping in tests/tools/gateway.test.ts
-- [ ] T045 [US1] Implement single exported ToolGateway invocation and private executor dispatch, registry revalidation, fresh trusted-context assembly, and fail-closed outcomes in src/tools/gateway.ts
-- [ ] T046 [US1] Integrate serial runner dispatch through ToolGateway, charging only received calls and discarding later proposals after first DENY, in src/orchestration/runner.ts and tests/orchestration/runner.e2e.test.ts
+- [x] T042 [P] [US1] Add failing pure decision tests for allow, deny, permission-needed, and trusted-fact failure in tests/policy/engine.test.ts
+- [x] T043 [US1] Implement admission-sealed TaskCapabilityCeiling, invocation-scoped PolicyDecisionContext, and side-effect-free PolicyEngine in src/policy/engine.ts
+- [x] T044 [US1] Add failing gateway routing and revalidation tests with a private fake executor mapping in tests/tools/gateway.test.ts
+- [x] T045 [US1] Implement single exported ToolGateway invocation and private executor dispatch, registry revalidation, fresh trusted-context assembly, and fail-closed outcomes in src/tools/gateway.ts
+- [x] T046 [US1] Integrate serial runner dispatch through ToolGateway, charging only received calls and discarding later proposals after first DENY, in src/orchestration/runner.ts and tests/orchestration/runner.e2e.test.ts
 
 **Checkpoint**: No tested caller can reach a fake executor except through explicit gateway ALLOW.
 
@@ -34,9 +34,9 @@
 
 **Independent test**: Fake workspace/grant providers distinguish read, eligible missing grant, exact valid grant, forbidden path, external drift, restored bytes, and unavailable facts.
 
-- [ ] T047 [P] [US2] Add fake path/grant policy cases, including irreversible external-edit invalidation and same-open-session grant reuse, in tests/policy/engine.test.ts
-- [ ] T048 [US2] Add trusted workspace and grant fact ports with invocation-scoped canonical path and exact operation checks in src/policy/engine.ts and src/tools/gateway.ts
-- [ ] T049 [US2] Prove gateway rechecks the new task ceiling and fresh path/grant facts before each fake execution in tests/tools/gateway.test.ts
+- [x] T047 [P] [US2] Add fake path/grant policy cases, including irreversible external-edit invalidation and same-open-session grant reuse, in tests/policy/engine.test.ts
+- [x] T048 [US2] Add trusted workspace and grant fact ports with invocation-scoped canonical path and exact operation checks in src/policy/engine.ts and src/tools/gateway.ts
+- [x] T049 [US2] Prove gateway rechecks the new task ceiling and fresh path/grant facts before each fake execution in tests/tools/gateway.test.ts
 
 **Checkpoint**: Fake facts enforce narrow grants; real containment and grant ledger remain Phase 4/7 gates.
 
