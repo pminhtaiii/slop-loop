@@ -118,6 +118,11 @@ export class ToolGateway {
     this.executors = Object.freeze({ ...dependencies.executors });
   }
 
+  /**
+   * Validates a proposed call and executes it only after current policy allows it.
+   * Reports trusted-fact or policy exceptions as POLICY_FAILURE and executor
+   * exceptions as EXECUTION_FAILURE, with an invocation ID for each request.
+   */
   invoke(task: TaskContext, proposedCall: unknown, responsePosition: number): ToolGatewayResult {
     const ceiling = task.capabilityCeiling;
     const invocationId = `${task.taskId}:${responsePosition}:${this.nextInvocation++}`;

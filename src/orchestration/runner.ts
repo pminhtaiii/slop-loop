@@ -118,6 +118,10 @@ function recover(task: TaskContext, reason: RetryReason): TaskProcessingCore {
   return applyCharge(task, consumeRetry(task.budget, task.usage, reason));
 }
 
+/**
+ * Applies a task event with budget accounting and lifecycle checks.
+ * Preserves terminal tasks and ends active tasks on policy or execution failure.
+ */
 function processTaskEvent(task: TaskContext, event: TaskEvent, now: number): TaskProcessingCore {
   if (isTerminal(task.state)) {
     return { status: "ALREADY_TERMINAL", task, reason: "ALREADY_TERMINAL" };
@@ -475,6 +479,11 @@ export class TaskRunner {
     );
   }
 
+  /**
+   * Dispatches proposed calls in order, charging and settling each tool attempt.
+   * Stops when an attempt cannot start or a call fails, is denied, or needs file
+   * permission. Returns the results collected before dispatch stopped.
+   */
   dispatchProposals(
     gateway: ToolGateway,
     proposedCalls: readonly unknown[],

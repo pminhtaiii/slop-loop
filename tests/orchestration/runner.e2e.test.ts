@@ -9,6 +9,7 @@ function readyToRead(task: ReturnType<typeof createTask>) {
   return advanceTask(advanceTask(task, "INSPECTING"), "ANSWERING");
 }
 
+/** Advances an admitted Edit task through the legal states to IMPLEMENTING. */
 function readyToWrite(task: ReturnType<typeof createTask>) {
   return advanceTask(
     advanceTask(
