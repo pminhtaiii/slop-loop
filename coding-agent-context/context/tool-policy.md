@@ -42,6 +42,8 @@ production_actions: DENY
 
 The MVP workspace is the developer's validated current repository checkout. `host_filesystem_outside_repository: DENY` allows only policy-checked repository access; it does not grant general host access.
 
+At task admission, trusted application code discovers the checkout root from the launch directory with `git rev-parse --show-toplevel`, resolves its physical path, validates it as the current checkout, and seals it for the task. Admission outside a valid Git checkout is rejected. Launching in a subdirectory does not narrow the workspace. Sibling and nested repositories, including submodules, are outside that task's repository-tool authority. Repository tools may access tracked and untracked nonignored files, subject to all other policy checks; ignored paths and `.git` internals are excluded. The developer may paste an OS-temp handoff document into the prompt, but a file reference in the prompt does not authorize reading that external path.
+
 ---
 
 ## MVP Tool Set
@@ -84,6 +86,7 @@ Rules:
 - query length bounded;
 - result count bounded;
 - file sizes bounded;
+- searched files larger than 4 MiB skipped with a bounded indication;
 - binary files skipped by default;
 - no host-wide search.
 
@@ -100,10 +103,12 @@ Purpose:
 Rules:
 
 - workspace confinement;
-- byte limit;
+- 64 KiB whole-file size limit and 64 KiB model-visible result limit;
+- return an explicit size-limit result when a file exceeds that limit rather than returning a partial file;
 - deny known secret paths by default;
 - binary content rejected in MVP;
 - symlink resolution cannot escape workspace.
+- symlink resolution must not enter another repository; nonregular content targets are rejected.
 
 Default denied patterns:
 
@@ -140,7 +145,7 @@ Requirements:
 - patch size is within limit and resulting paths stay inside the repository;
 - deletion, rename, and binary mutation are rejected in the MVP.
 
-Before applying, the runtime rechecks repository identity, branch, `HEAD`, status, and the observed content of every target. A branch switch makes affected prior path-operation grants unavailable; reauthorization is requested only if a later task needs them. An external change revokes the affected file's permission.
+Before applying, the runtime rechecks repository identity, branch, `HEAD`, status, and the observed content of every target. A detected branch switch revokes all prior path-operation grants and invalidates any pending permission prompt; a resumed task requests fresh exact permissions when it next needs to edit. An external change revokes the affected file's permission.
 
 Postconditions:
 
@@ -270,6 +275,8 @@ requested_path starts with workspace_path
 ```
 
 Use path-aware containment after canonical resolution.
+
+Repository content reads and mutations reject hard-linked files in the MVP. In-repository directory symlinks may be traversed for listing and search only when the resolved target remains in the same selected repository and passes path policy; traversal detects cycles. The checkout root itself may be on a mounted filesystem, but nested mount crossings, Linux bind mounts, Windows junctions, and equivalent reparse boundaries are denied at point of use. Pipes, devices, sockets, and other nonregular content targets are rejected. Search output is capped at 200 matches, 32 KiB total returned bytes, and 4 KiB per returned line; searched files above 4 MiB are skipped with a bounded indication. Additional omitted matches are explicitly marked as truncation, and shortened lines are marked separately. The `read_file` model-visible result cap is 64 KiB. These limits are runtime-owned, never supplied by the model or repository content. The executable tool registry and gateway must use per-tool output contracts for these bounds; unrelated tools retain smaller limits.
 
 ---
 
@@ -452,7 +459,9 @@ Before the first mutation of a path in an `Edit` session, the CLI asks the devel
 
 Valid grants may be reused across Edit tasks and bounded repairs in the same still-open session only when the new task's sealed ceiling permits them and current repository checks pass. The grant's observed state advances after the agent's own authorized write. An external target change invalidates the affected grant even if the file is later restored to its previous bytes; a later use needs fresh authorization. Git status alone does not prove that a target stayed unchanged.
 
-Permissions expire on `/clear`, CLI exit, a switch to `Ask`, or relevant repository drift. Approved file changes are never rolled back automatically. The developer owns all Git writes.
+After a detected branch switch in the same validated checkout, the active task may continue with its original mode, workspace identity, tools, and budgets. Further tool dispatch pauses while all earlier file grants and pending permission prompts are invalidated and trusted branch, `HEAD`, status, diff, and relevant file evidence are refreshed. The agent reassesses whether the task is complete; status and diff alone are not sufficient. An explicit developer instruction to continue needs no separate resume confirmation; otherwise the UI offers a resume choice. Any later mutation requires a fresh exact path-operation grant. Replacement of the checkout with a different repository cannot rebind the sealed workspace and requires a new task. Trusted runtime Git checks occur at admission, immediately before mutation, after tool calls, and on resume; a switch away and back entirely between checks is outside the MVP detection guarantee. The model receives a bounded trusted branch/`HEAD`/status snapshot when work starts or refreshes; `git_diff` remains the sole model-visible Git tool, with no `git_status` tool in the MVP.
+
+Permissions expire on `/clear`, CLI exit, a switch to `Ask`, or a branch switch. Relevant external file drift invalidates affected grants. Approved file changes are never rolled back automatically. The developer owns all Git writes.
 
 Higher-risk approvals for remote Git, deployment, or secrets remain future work and must bind to the exact requested action.
 

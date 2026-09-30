@@ -353,7 +353,7 @@ network: false
 expires_at: "session end"
 ```
 
-Switching to `Ask` clears `permitted_writes`. Returning to `Edit` begins with an empty set. Repository drift makes affected path-operation grants unavailable as defined in `tool-policy.md`; later use requires reauthorization.
+Switching to `Ask` clears `permitted_writes`. Returning to `Edit` begins with an empty set. A branch switch clears all file grants; other relevant external file drift invalidates affected grants as defined in `tool-policy.md`. Later mutation requires fresh permission.
 
 ---
 ## 7. Sandbox
@@ -386,13 +386,14 @@ The MVP operates on the developer's current checkout. Repository handling remain
 Responsibilities:
 
 - validate repository identity, branch, `HEAD`, and status;
+- supply bounded trusted branch, `HEAD`, and status evidence to the model at admission and after a detected checkout change, without adding a `git_status` tool;
 - expose the repository root without granting access outside it;
 - track file content observed before each authorized mutation;
 - require session-scoped permission for each canonical repository-relative path and intended update/create operation;
-- make affected path-operation grants unavailable after a branch switch or external file change;
+- revoke all path-operation grants and stale prompts after a branch switch, or affected grants after another external file change;
 - collect status and diff without performing Git writes.
 
-The developer owns branch switching, staging, commits, and every remote Git action. A branch switch preserves the conversation. When a later task needs an affected prior path-operation grant, the runtime requests reauthorization, which may group several pairs. Worktree isolation is a future option.
+The developer owns branch switching, staging, commits, and every remote Git action. A branch switch within the same validated checkout may preserve the active task and conversation. The runtime pauses dispatch, refreshes repository evidence, and requests fresh exact permissions only if resumed work needs mutation; an explicit developer request to continue needs no extra resume confirmation. Replacing the checkout with another repository requires a new task. Worktree isolation is a future option.
 
 ---
 
@@ -706,5 +707,3 @@ The agent must not bypass repository branch protections.
 - Permission binds a canonical repository-relative path and intended operation: update or create. Create uses exclusive creation and fails if the target exists.
 - Canonical JSONL uses UTF-8, sorted keys, compact separators, preserved Unicode, rejected non-finite numbers, UTC RFC 3339 timestamps with exactly three fractional digits and Z, and LF endings. Events form a SHA-256 chain through previous_event_hash and event_hash. A session manifest records session_id, event count, and final hash.
 - BUDGET_EXHAUSTED records the budget, configured limit, observed usage, and whether the triggering tool result was committed to audit before the stop.
-
-
