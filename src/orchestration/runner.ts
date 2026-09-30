@@ -26,6 +26,9 @@ export type TaskEvent =
   | { readonly kind: "CANCEL" }
   | { readonly kind: "POLICY_FAILURE" }
   | { readonly kind: "EXECUTION_FAILURE" }
+  | { readonly kind: "AUDIT_UNAVAILABLE" }
+  | { readonly kind: "AUDIT_INCOMPLETE" }
+  | { readonly kind: "TOOL_CONTRACT_FAILURE" }
   | { readonly kind: "POLICY_DENIAL"; readonly authorizedRouteRemains: boolean }
   | { readonly kind: "TRUSTED_TRANSITION"; readonly target: TaskStateType }
   | { readonly kind: "VERIFICATION_RESULT"; readonly passed: boolean }
@@ -151,6 +154,20 @@ function processTaskEvent(task: TaskContext, event: TaskEvent, now: number): Tas
     return {
       status: "ACCEPTED",
       task: finishTask(task, { state: TaskState.FAILED, reason: "EXECUTION_FAILURE" }),
+    };
+  }
+
+  if (event.kind === "TOOL_CONTRACT_FAILURE") {
+    return {
+      status: "ACCEPTED",
+      task: finishTask(task, { state: TaskState.FAILED, reason: "TOOL_CONTRACT_FAILURE" }),
+    };
+  }
+
+  if (event.kind === "AUDIT_UNAVAILABLE" || event.kind === "AUDIT_INCOMPLETE") {
+    return {
+      status: "ACCEPTED",
+      task: finishTask(task, { state: TaskState.BLOCKED, reason: event.kind }),
     };
   }
 
@@ -484,18 +501,21 @@ export class TaskRunner {
    * Stops when an attempt cannot start or a call fails, is denied, or needs file
    * permission. Returns the results collected before dispatch stopped.
    */
-  dispatchProposals(
+  async dispatchProposals(
     gateway: ToolGateway,
     proposedCalls: readonly unknown[],
     now: number,
-  ): readonly ToolGatewayResult[] {
+  ): Promise<readonly ToolGatewayResult[]> {
     const results: ToolGatewayResult[] = [];
     for (const [responsePosition, proposedCall] of proposedCalls.entries()) {
       const attempt = this.beginToolAttempt(now);
       if (attempt === null) break;
       let result: ToolGatewayResult;
       try {
-        result = gateway.invoke(this.currentTask, proposedCall, responsePosition);
+        result = await gateway.invoke(this.currentTask, proposedCall, responsePosition, {
+          signal: attempt.signal,
+          canStart: () => this.canStart(attempt.generation),
+        });
       } finally {
         this.settleToolAttempt(attempt.generation, now);
       }
@@ -504,7 +524,19 @@ export class TaskRunner {
         this.process({ kind: result.reason }, now);
         break;
       }
-      if (result.kind === "DENY" || result.kind === "NEEDS_FILE_PERMISSION") break;
+      if (result.kind === "BLOCKED") {
+        this.process({ kind: result.reason }, now);
+        break;
+      }
+      if (result.kind === "TOOL_CONTRACT_FAILURE") {
+        this.process({ kind: "TOOL_CONTRACT_FAILURE" }, now);
+        break;
+      }
+      if (result.kind === "DENY") {
+        this.process({ kind: "RECOVER", reason: "DENIAL_RECOVERY" }, now);
+        break;
+      }
+      if (result.kind === "NEEDS_FILE_PERMISSION" || result.kind === "CANCELLED") break;
     }
     return Object.freeze(results);
   }

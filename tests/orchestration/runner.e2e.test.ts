@@ -148,7 +148,7 @@ describe("scripted task lifecycle", () => {
     expect(result.results).toHaveLength(2);
   });
 
-  it("dispatches calls serially and discards a response tail after its first denial", () => {
+  it("dispatches calls serially and discards a response tail after its first denial", async () => {
     const initial = readyToRead(
       admitTask(
         createTask({ taskId: "gateway-denial-e2e", objective: "Read source", mode: "Ask" }),
@@ -172,7 +172,7 @@ describe("scripted task lifecycle", () => {
     });
     const runner = new TaskRunner(initial, new TaskCheckoutSlot());
 
-    const results = runner.dispatchProposals(
+    const results = await runner.dispatchProposals(
       gateway,
       [
         { name: "shell", arguments: {} },
@@ -187,7 +187,36 @@ describe("scripted task lifecycle", () => {
     expect(executions).toBe(0);
   });
 
-  it("charges one received call when runner dispatch reaches an allowed executor", () => {
+  it("ends a denial loop at the shared recovery ceiling without promoting capacity", async () => {
+    const initial = readyToRead(
+      admitTask(
+        createTask({ taskId: "gateway-denial-retry-e2e", objective: "Read source", mode: "Ask" }),
+        0,
+        "Small",
+        { sessionId: "session-1", workspaceId: "workspace-1", eligibleTools: ["read_file"] },
+      ),
+    );
+    const gateway = new ToolGateway({
+      workspace: { factsFor: () => undefined },
+      grants: { grantFor: () => undefined },
+      executors: { read_file: { execute: () => ({ text: "unused" }) } },
+    });
+    const runner = new TaskRunner(initial, new TaskCheckoutSlot());
+
+    for (let response = 0; response < 4; response += 1) {
+      await runner.dispatchProposals(gateway, [{ name: "shell", arguments: {} }], 1_000 + response);
+    }
+
+    expect(runner.task.outcome).toMatchObject({
+      state: "FAILED",
+      reason: "BUDGET_EXHAUSTED",
+      evidence: { resource: "RETRIES", limit: 3, observed: 3, attempted: 4 },
+    });
+    expect(runner.task.budget?.activeProfile).toBe("Small");
+    expect(runner.task.usage).toMatchObject({ toolAttempts: 4, retries: 3 });
+  });
+
+  it("charges one received call when runner dispatch reaches an allowed executor", async () => {
     const initial = readyToRead(
       admitTask(
         createTask({ taskId: "gateway-allow-e2e", objective: "Read source", mode: "Ask" }),
@@ -211,7 +240,7 @@ describe("scripted task lifecycle", () => {
     });
     const runner = new TaskRunner(initial, new TaskCheckoutSlot());
 
-    const results = runner.dispatchProposals(
+    const results = await runner.dispatchProposals(
       gateway,
       [{ name: "read_file", arguments: { path: "src/index.ts" } }],
       1_000,
@@ -223,7 +252,7 @@ describe("scripted task lifecycle", () => {
     expect(executions).toBe(1);
   });
 
-  it("discards a response tail when an eligible mutation needs file permission", () => {
+  it("discards a response tail when an eligible mutation needs file permission", async () => {
     const initial = readyToWrite(
       admitTask(
         createTask({ taskId: "gateway-permission-e2e", objective: "Patch source", mode: "Edit" }),
@@ -247,7 +276,7 @@ describe("scripted task lifecycle", () => {
     });
     const runner = new TaskRunner(initial, new TaskCheckoutSlot());
 
-    const results = runner.dispatchProposals(
+    const results = await runner.dispatchProposals(
       gateway,
       [
         { name: "apply_patch", arguments: { patch: "patch" } },
@@ -262,7 +291,7 @@ describe("scripted task lifecycle", () => {
     expect(executions).toBe(0);
   });
 
-  it("terminates with POLICY_FAILURE and stops the response after a trusted-fact failure", () => {
+  it("terminates with POLICY_FAILURE and stops the response after a trusted-fact failure", async () => {
     const initial = readyToRead(
       admitTask(
         createTask({
@@ -288,7 +317,7 @@ describe("scripted task lifecycle", () => {
     const slot = new TaskCheckoutSlot();
     const runner = new TaskRunner(initial, slot);
 
-    const results = runner.dispatchProposals(
+    const results = await runner.dispatchProposals(
       gateway,
       [
         { name: "read_file", arguments: { path: "src/index.ts" } },
@@ -301,6 +330,46 @@ describe("scripted task lifecycle", () => {
     expect(results[0]).toMatchObject({ kind: "FAILED", reason: "POLICY_FAILURE" });
     expect(runner.task.outcome).toMatchObject({ state: "FAILED", reason: "POLICY_FAILURE" });
     expect(slot.heldBy).toBeNull();
+    expect(executions).toBe(0);
+  });
+
+  it("blocks the task and stops dispatch when canonical pre-evidence is unavailable", async () => {
+    const initial = readyToRead(
+      admitTask(
+        createTask({ taskId: "gateway-audit-block-e2e", objective: "Read source", mode: "Ask" }),
+        0,
+        "Small",
+        { sessionId: "session-1", workspaceId: "workspace-1", eligibleTools: ["read_file"] },
+      ),
+    );
+    let executions = 0;
+    const gateway = new ToolGateway({
+      workspace: {
+        factsFor: () => ({
+          workspaceId: "workspace-1",
+          operation: "read" as const,
+          canonicalPath: "src/index.ts",
+          status: "ALLOWED" as const,
+        }),
+      },
+      grants: { grantFor: () => undefined },
+      audit: { appendIfAbsent: () => Promise.resolve({ status: "UNAVAILABLE" as const }) },
+      executors: { read_file: { execute: () => (executions += 1) } },
+    });
+    const runner = new TaskRunner(initial, new TaskCheckoutSlot());
+
+    const results = await runner.dispatchProposals(
+      gateway,
+      [
+        { name: "read_file", arguments: { path: "src/index.ts" } },
+        { name: "read_file", arguments: { path: "src/other.ts" } },
+      ],
+      1_000,
+    );
+
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({ kind: "BLOCKED", reason: "AUDIT_UNAVAILABLE" });
+    expect(runner.task.outcome).toMatchObject({ state: "BLOCKED", reason: "AUDIT_UNAVAILABLE" });
     expect(executions).toBe(0);
   });
 });

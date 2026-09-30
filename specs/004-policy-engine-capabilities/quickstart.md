@@ -31,4 +31,4 @@ pnpm build
 pnpm smoke
 ~~~
 
-T037–T041 now provide the reconciled runner, bounded budget handoff, and trusted registry metadata. The policy engine, gateway, fake-boundary routing tests, and full Phase 3 exit gate remain open at T042–T058. The current code does not prove actual symlink containment or JSONL durability.
+T037–T058 provide the reconciled runner, sealed policy authority, asynchronous fake-boundary gateway, cancellation fence, bounded audit evidence, result validation, and typed runner outcomes. The current code still does not prove actual symlink containment, file mutation, sandbox execution, or durable JSONL evidence.

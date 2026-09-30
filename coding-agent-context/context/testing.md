@@ -79,4 +79,12 @@ T037–T041 are implemented in this checkout. Run the focused prerequisite suite
 pnpm exec vitest run tests/orchestration tests/tools/registry.test.ts
 ```
 
-On 2026-09-28, that suite passed 152 tests. Frozen install and all pinned quality scripts, including `format:check`, passed on the combined checkout. These prerequisite tests prove runner budget/stop behavior and registry classification only. They do not prove policy authorization, gateway execution routing, audit ordering, real path containment, or durable JSONL evidence. T042–T058 and the Phase 3 exit gate remain open.
+On 2026-09-28, that suite passed 152 tests. Frozen install and all pinned quality scripts, including `format:check`, passed on the combined checkout. These prerequisite tests prove runner budget/stop behavior and registry classification only. Phase 3 adds the focused policy, gateway, and runner suites below; real path containment and durable JSONL evidence remain later-phase work.
+
+### Phase 3 focused gateway and runner tests
+
+```sh
+pnpm exec vitest run tests/policy/engine.test.ts tests/tools/gateway.test.ts tests/orchestration/runner.e2e.test.ts
+```
+
+On 2026-09-30, the full pinned test suite passed with 238 tests. These tests prove fake-port policy denial, committed pre-evidence before executor start, audit outage blocking, stable result-event retry without executor replay, output bounds, effect-status reporting, denial recovery exhaustion, and cancellation fencing. They do not provide real filesystem containment, process/sandbox, grant-ledger, or JSONL persistence evidence.

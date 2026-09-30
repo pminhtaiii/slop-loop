@@ -11,10 +11,10 @@ Do not mark a capability complete because it appears in architecture or planning
 Overall status:
 
 ```text
-PHASE 0 FOUNDATION COMPLETE / PHASE 1 RUNNER RECONCILED / PHASE 2 REGISTRY SOURCE IMPLEMENTED / PHASE 3 PREREQUISITES IMPLEMENTED
+PHASE 0 FOUNDATION COMPLETE / PHASE 1 RUNNER RECONCILED / PHASE 2 REGISTRY SOURCE IMPLEMENTED / PHASE 3 FAKE-PORT AUTHORITY CORE IMPLEMENTED
 ```
 
-Phase 0 runtime and its exit gate are complete on `development` and its source is present in this checkout. The Phase 1 task domain and deterministic orchestrator are implemented, with ADR 0006/0007 runner reconciliation in this checkout. Phase 2 has a pure closed registry, trusted Ask/Edit name selector, and T041 capability/effect metadata. T037–T041 establish Phase 3 prerequisites; the policy engine and gateway remain unimplemented. A tracked LF checkout rule resolved the Windows CRLF mismatch, and the combined checkout now passes frozen install plus every pnpm 12.5.1 quality script. The Phase 1 combined gate is satisfied. Phase 2 T035/T036 review and Phase 3 T042–T058 remain open; neither Phase 2 integration readiness nor Phase 3 completion is claimed. There is still no real model, tool execution, permission, sandbox, CLI, or audit adapter.
+Phase 0 runtime and its exit gate are complete on `development` and its source is present in this checkout. The Phase 1 task domain and deterministic orchestrator are implemented, with ADR 0006/0007 runner reconciliation in this checkout. Phase 2 has a pure closed registry, trusted Ask/Edit name selector, and T041 capability/effect metadata. T037–T058 implement the Phase 3 fake-port authority core: policy decisions, task ceilings, asynchronous gateway routing, cancellation fencing, bounded audit events, output contract handling, and typed runner outcomes. There is still no real model, filesystem tool execution, permission ledger, sandbox, CLI, or durable audit adapter; Phase 4, 5, 7, 8, and 12 own those integrations.
 
 The agreed future product MVP is an interactive local CLI implemented in TypeScript for Python target repositories. It supports `Ask` and `Edit` modes in one in-memory session, repository questions, permission-gated updates and creation in the current checkout, trusted Docker verification, progress questions, and a final diff and verification report. The developer owns Git writes. The first model provider remains undecided. Worktrees, session persistence, API/web, active-task scope changes, and remote Git delivery are deferred. These are planned behaviors, not completed capabilities.
 
@@ -101,17 +101,17 @@ the registry cannot accept or register an unknown tool; there is no invocation p
 ## Phase 3 — Policy Engine & Capabilities
 
 - [x] Define `ToolCapability` in the trusted registry metadata for all nine names; policy use remains open.
-- [ ] Define `PolicyDecision`.
-- [ ] Seal capabilities during task admission.
-- [ ] Recheck capability on every tool call.
-- [ ] Implement default deny.
-- [ ] Implement tool allowlist.
-- [ ] Implement read/write path capabilities.
-- [ ] Implement budget checks.
-- [ ] Fail closed on policy exception.
-- [ ] Add negative authorization tests.
+- [x] Define `PolicyDecision`.
+- [x] Seal capabilities during task admission.
+- [x] Recheck capability on every tool call.
+- [x] Implement default deny.
+- [x] Implement tool allowlist.
+- [x] Implement read/write path capabilities through fake trusted facts.
+- [x] Implement budget checks.
+- [x] Fail closed on policy exception.
+- [x] Add negative authorization tests.
 
-T037–T041 are implemented and verified as a prerequisite slice: fixed per-task mode, separate cumulative model-turn/tool-attempt counters, shared finite retries, permission-wait clock exclusion, checkout-slot stop fencing, bounded budget handoff, and trusted registry classification. The focused suite passes 152 tests, and the pinned quality scripts now pass on this checkout. The policy engine, invocation ceiling, gateway, fake executor/audit integration, and Phase 3 exit gate remain open at T042–T058.
+T037–T058 are implemented and verified: fixed per-task mode, separate cumulative model-turn/tool-attempt counters, shared finite retries, permission-wait clock exclusion, checkout-slot stop fencing, bounded budget handoff, trusted registry classification, policy ceilings, gateway routing, fake audit ordering, output-contract handling, and typed audit outcomes. The full suite passed with 238 tests on 2026-09-30. This remains a fake-port proof; real containment, grant, executor, sandbox, and JSONL integrations are later-phase gates.
 
 Exit gate:
 

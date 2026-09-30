@@ -46,9 +46,9 @@
 
 **Independent test**: Scripted runner and fake executor show promotion only on capacity, no retry refill, no late continuation after stop, and a handoff on every finite-budget terminal path.
 
-- [ ] T050 [P] [US3] Add failing serial denial-loop, promotion, deadline, and shared retry fixtures in tests/orchestration/runner.e2e.test.ts
-- [ ] T051 [US3] Connect runner-owned budget charging, sealed promotion, shared recovery reasons, and finite-budget handoff to gateway outcomes in src/orchestration/budget.ts and src/orchestration/runner.ts
-- [ ] T052 [US3] Fence executor start after pending pre-append, abort in-flight work, and test safe slot release in src/orchestration/runner.ts, src/tools/gateway.ts, and tests/orchestration/runner.e2e.test.ts
+- [x] T050 [P] [US3] Add failing serial denial-loop, promotion, deadline, and shared retry fixtures in tests/orchestration/runner.e2e.test.ts
+- [x] T051 [US3] Connect runner-owned budget charging, sealed promotion, shared recovery reasons, and finite-budget handoff to gateway outcomes in src/orchestration/budget.ts and src/orchestration/runner.ts
+- [x] T052 [US3] Fence executor start after pending pre-append, abort in-flight work, and test safe slot release in src/orchestration/runner.ts, src/tools/gateway.ts, and tests/orchestration/runner.e2e.test.ts
 
 **Checkpoint**: Every finite budget ends with bounded handoff; stop precludes later mutation/transition.
 
@@ -58,17 +58,17 @@
 
 **Independent test**: Fake audit sink proves request/decision append before every read/effect, zero execution on outage, idempotent result retry, and invalid-result effect status.
 
-- [ ] T053 [P] [US4] Add fake audit ordering and outage tests, including malformed/unknown request evidence and read-call blocking, in tests/tools/gateway.test.ts
-- [ ] T054 [US4] Implement bounded canonical request/decision evidence and pre-execution append gate for every dispatched call in src/tools/gateway.ts
-- [ ] T055 [US4] Add committed-but-unacknowledged append, duplicate-ID rejection, invalid output, oversize output, and possible-effect fixtures in tests/tools/gateway.test.ts
-- [ ] T056 [US4] Implement output-contract validation, byte/size bounds, sanitization/redaction, effect-status separation, and finite synchronous appendIfAbsent result retries in src/tools/gateway.ts
-- [ ] T057 [US4] Integrate AUDIT_UNAVAILABLE, AUDIT_INCOMPLETE, and TOOL_CONTRACT_FAILURE runner outcomes with stop-further-dispatch behavior in src/orchestration/runner.ts and tests/orchestration/runner.e2e.test.ts
+- [x] T053 [P] [US4] Add fake audit ordering and outage tests, including malformed/unknown request evidence and read-call blocking, in tests/tools/gateway.test.ts
+- [x] T054 [US4] Implement bounded canonical request/decision evidence and pre-execution append gate for every dispatched call in src/tools/gateway.ts
+- [x] T055 [US4] Add committed-but-unacknowledged append, duplicate-ID rejection, invalid output, oversize output, and possible-effect fixtures in tests/tools/gateway.test.ts
+- [x] T056 [US4] Implement output-contract validation, byte/size bounds, sanitization/redaction, effect-status separation, and finite synchronous appendIfAbsent result retries in src/tools/gateway.ts
+- [x] T057 [US4] Integrate AUDIT_UNAVAILABLE, AUDIT_INCOMPLETE, and TOOL_CONTRACT_FAILURE runner outcomes with stop-further-dispatch behavior in src/orchestration/runner.ts and tests/orchestration/runner.e2e.test.ts
 
 **Checkpoint**: No fake execution without committed pre-evidence, no duplicate result event or executor replay.
 
 ## Phase 6: Cross-cutting validation
 
-- [ ] T058 Run specs/004-policy-engine-capabilities/quickstart.md and the pinned pnpm quality gate; record evidence and deferred gates in coding-agent-context/context/testing.md and coding-agent-context/context/progress-checker.md
+- [x] T058 Run specs/004-policy-engine-capabilities/quickstart.md and the pinned pnpm quality gate; record evidence and deferred gates in coding-agent-context/context/testing.md and coding-agent-context/context/progress-checker.md
 
 ## Dependencies and order
 

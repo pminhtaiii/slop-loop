@@ -9,117 +9,168 @@ import type {
   TrustedPathFacts,
 } from "../policy/engine.js";
 import { validateToolCall } from "./registry.js";
-import type { ToolName, ValidatedToolCall, ValidationResult } from "./registry.js";
+import type { ToolName, ValidatedToolCall } from "./registry.js";
+
+const MAX_RESULT_BYTES = 32_768;
+const RESULT_APPEND_ATTEMPTS = 3;
 
 export interface WorkspaceFactsPort {
   factsFor(
     call: ValidatedToolCall,
     ceiling: TaskCapabilityCeiling,
-  ): TrustedPathFacts | readonly TrustedPathFacts[] | undefined;
+  ):
+    | TrustedPathFacts
+    | readonly TrustedPathFacts[]
+    | undefined
+    | Promise<TrustedPathFacts | readonly TrustedPathFacts[] | undefined>;
 }
-
 export interface FileGrantPort {
-  grantFor(path: TrustedPathFacts, ceiling: TaskCapabilityCeiling): FileGrantView | undefined;
+  grantFor(
+    path: TrustedPathFacts,
+    ceiling: TaskCapabilityCeiling,
+  ): FileGrantView | undefined | Promise<FileGrantView | undefined>;
 }
-
 export interface ExecutionFactsPort {
   factsFor(
     call: ValidatedToolCall,
     ceiling: TaskCapabilityCeiling,
-  ): TrustedExecutionFacts | undefined;
+  ): TrustedExecutionFacts | undefined | Promise<TrustedExecutionFacts | undefined>;
 }
-
 export interface ToolExecutionAuthority {
   readonly paths: readonly TrustedPathFacts[];
+  readonly signal: AbortSignal;
 }
-
-/** Values a Phase 3 fake executor may return without starting asynchronous work. */
-export interface SynchronousToolObject {
-  readonly [key: string]: SynchronousToolResult;
-}
-
-export type SynchronousToolResult =
-  | string
-  | number
-  | boolean
-  | null
-  | void
-  | readonly SynchronousToolResult[]
-  | SynchronousToolObject;
-
 export interface ToolExecutor {
-  execute(call: ValidatedToolCall, authority: ToolExecutionAuthority): SynchronousToolResult;
+  execute(call: ValidatedToolCall, authority: ToolExecutionAuthority): unknown;
 }
-
+export interface AuditEvent {
+  readonly eventId: string;
+  readonly kind: "REQUEST_DECISION" | "RESULT";
+  readonly taskId: string;
+  readonly invocationId: string;
+  readonly tool: string;
+  readonly decision: string;
+  readonly effect: "NONE" | "COMPLETED" | "POSSIBLE";
+  readonly bytes?: number;
+}
+export type AuditAppendResult =
+  | { readonly status: "COMMITTED"; readonly eventId: string }
+  | { readonly status: "UNAVAILABLE" | "INTEGRITY_FAILURE" };
+export interface AuditSink {
+  appendIfAbsent(event: AuditEvent): Promise<AuditAppendResult>;
+}
+export interface InvocationFence {
+  readonly signal: AbortSignal;
+  canStart(): boolean;
+}
 export interface ToolGatewayDependencies {
   readonly workspace: WorkspaceFactsPort;
   readonly grants: FileGrantPort;
   readonly execution?: ExecutionFactsPort;
+  readonly audit?: AuditSink;
   readonly executors: Readonly<Partial<Record<ToolName, ToolExecutor>>>;
 }
 
 export type ToolGatewayResult =
-  | { readonly kind: "EXECUTED"; readonly invocationId: string; readonly result: unknown }
+  | {
+      readonly kind: "EXECUTED";
+      readonly invocationId: string;
+      readonly result: unknown;
+      readonly effect: "COMPLETED";
+    }
   | {
       readonly kind: "NEEDS_FILE_PERMISSION";
       readonly invocationId: string;
       readonly reason: "MISSING_FILE_GRANT";
     }
-  | {
-      readonly kind: "DENY";
-      readonly invocationId: string;
-      readonly reason:
-        | "INVALID_CALL"
-        | "UNKNOWN_TOOL"
-        | "INVALID_ARGUMENTS"
-        | "TOOL_NOT_ELIGIBLE"
-        | "CAPABILITY_MISSING"
-        | "TASK_STATE_NOT_ELIGIBLE"
-        | "PROFILE_NOT_APPROVED"
-        | "EXECUTOR_NOT_READY"
-        | "FORBIDDEN_PATH"
-        | "GRANT_INVALIDATED"
-        | "EXECUTOR_UNAVAILABLE"
-        | "TASK_UNAVAILABLE";
-    }
+  | { readonly kind: "DENY"; readonly invocationId: string; readonly reason: string }
   | {
       readonly kind: "FAILED";
       readonly invocationId: string;
       readonly reason: "POLICY_FAILURE" | "EXECUTION_FAILURE";
-    };
+      readonly effect?: "POSSIBLE";
+    }
+  | {
+      readonly kind: "BLOCKED";
+      readonly invocationId: string;
+      readonly reason: "AUDIT_UNAVAILABLE" | "AUDIT_INCOMPLETE";
+      readonly effect: "NONE" | "COMPLETED" | "POSSIBLE";
+    }
+  | {
+      readonly kind: "TOOL_CONTRACT_FAILURE";
+      readonly invocationId: string;
+      readonly effect: "COMPLETED" | "POSSIBLE";
+    }
+  | { readonly kind: "CANCELLED"; readonly invocationId: string };
 
-function deniedValidation(
-  result: Exclude<ValidationResult, { readonly ok: true }>,
-  invocationId: string,
-) {
-  return { kind: "DENY" as const, invocationId, reason: result.code };
-}
+const committedAudit: AuditSink = Object.freeze({
+  appendIfAbsent(event: AuditEvent) {
+    return Promise.resolve({ status: "COMMITTED" as const, eventId: event.eventId });
+  },
+});
 
 function normalizePaths(
   facts: TrustedPathFacts | readonly TrustedPathFacts[] | undefined,
 ): readonly TrustedPathFacts[] {
   if (facts === undefined) return Object.freeze([]);
-  return Object.freeze(isPathList(facts) ? [...facts] : [facts]);
+  if (Array.isArray(facts)) return Object.freeze(Array.from(facts as readonly TrustedPathFacts[]));
+  return Object.freeze([facts as TrustedPathFacts]);
 }
-
-function isPathList(
-  facts: TrustedPathFacts | readonly TrustedPathFacts[],
-): facts is readonly TrustedPathFacts[] {
-  return Array.isArray(facts);
+function eventFor(
+  task: TaskContext,
+  invocationId: string,
+  kind: AuditEvent["kind"],
+  tool: string,
+  decision: string,
+  effect: AuditEvent["effect"],
+  bytes?: number,
+): AuditEvent {
+  return Object.freeze({
+    eventId: `${invocationId}:${kind}`,
+    kind,
+    taskId: task.taskId,
+    invocationId,
+    tool: tool.slice(0, 64),
+    decision,
+    effect,
+    ...(bytes === undefined ? {} : { bytes }),
+  });
 }
-
-function writePaths(paths: readonly TrustedPathFacts[]): readonly TrustedPathFacts[] {
-  return paths.filter((path) => path.operation === "update" || path.operation === "create");
+function redact(value: unknown): unknown {
+  if (typeof value === "string")
+    return value.replaceAll(/(token|secret|password)=[^\s&]+/gi, "$1=[REDACTED]");
+  if (Array.isArray(value)) return Object.freeze((value as readonly unknown[]).map(redact));
+  if (value !== null && typeof value === "object")
+    return Object.freeze(
+      Object.fromEntries(
+        Object.entries(value).map(([key, item]) => [
+          key,
+          /token|secret|password/i.test(key) ? "[REDACTED]" : redact(item),
+        ]),
+      ),
+    );
+  return value;
 }
-
-function deniedDecision(
-  decision: Extract<PolicyDecision, { readonly kind: "DENY" }>,
-): ToolGatewayResult {
-  return decision;
+function safeOutput(
+  value: unknown,
+): { readonly ok: true; readonly value: unknown; readonly bytes: number } | { readonly ok: false } {
+  try {
+    const normalized = value === undefined ? null : value;
+    const encoded = JSON.stringify(normalized);
+    if (encoded === undefined) return { ok: false };
+    const sanitized = redact(JSON.parse(encoded));
+    const sanitizedEncoded = JSON.stringify(sanitized);
+    if (sanitizedEncoded === undefined) return { ok: false };
+    const bytes = new TextEncoder().encode(sanitizedEncoded).byteLength;
+    return bytes > MAX_RESULT_BYTES ? { ok: false } : { ok: true, value: sanitized, bytes };
+  } catch {
+    return { ok: false };
+  }
 }
 
 export class ToolGateway {
   private nextInvocation = 0;
+  private readonly audit: AuditSink;
   private readonly workspace: WorkspaceFactsPort;
   private readonly grants: FileGrantPort;
   private readonly execution: ExecutionFactsPort | undefined;
@@ -129,73 +180,133 @@ export class ToolGateway {
     this.workspace = dependencies.workspace;
     this.grants = dependencies.grants;
     this.execution = dependencies.execution;
+    this.audit = dependencies.audit ?? committedAudit;
     this.executors = Object.freeze({ ...dependencies.executors });
   }
 
-  /**
-   * Validates a proposed call and executes it only after current policy allows it.
-   * Reports trusted-fact or policy exceptions as POLICY_FAILURE and executor
-   * exceptions as EXECUTION_FAILURE, with an invocation ID for each request.
-   */
-  invoke(task: TaskContext, proposedCall: unknown, responsePosition: number): ToolGatewayResult {
-    const ceiling = task.capabilityCeiling;
+  private async appendCommitted(event: AuditEvent): Promise<boolean> {
+    try {
+      const result = await this.audit.appendIfAbsent(event);
+      return result.status === "COMMITTED" && result.eventId === event.eventId;
+    } catch {
+      return false;
+    }
+  }
+
+  private async appendResult(event: AuditEvent): Promise<boolean> {
+    for (let attempt = 0; attempt < RESULT_APPEND_ATTEMPTS; attempt += 1) {
+      if (await this.appendCommitted(event)) return true;
+    }
+    return false;
+  }
+
+  async invoke(
+    task: TaskContext,
+    proposedCall: unknown,
+    responsePosition: number,
+    fence?: InvocationFence,
+  ): Promise<ToolGatewayResult> {
     const invocationId = `${task.taskId}:${responsePosition}:${this.nextInvocation++}`;
+    const ceiling = task.capabilityCeiling;
     if (
       ceiling === null ||
       task.taskId !== ceiling.taskId ||
       task.mode !== ceiling.mode ||
       task.budget === null ||
       isTerminal(task.state)
-    ) {
+    )
       return { kind: "DENY", invocationId, reason: "TASK_UNAVAILABLE" };
-    }
-
     const validated = validateToolCall(proposedCall);
-    if (!validated.ok) return deniedValidation(validated, invocationId);
-
-    let decision: PolicyDecision;
-    let paths: readonly TrustedPathFacts[];
-    try {
-      paths = normalizePaths(this.workspace.factsFor(validated.call, ceiling));
-      const execution = this.execution?.factsFor(validated.call, ceiling);
-      const grants = Object.freeze(
-        writePaths(paths)
-          .map((path) => this.grants.grantFor(path, ceiling))
-          .filter((grant): grant is FileGrantView => grant !== undefined),
-      );
-      decision = PolicyEngine.evaluate(
-        validated.call,
-        createPolicyDecisionContext({
-          invocationId,
-          taskId: task.taskId,
-          sessionId: ceiling.sessionId,
-          workspaceId: ceiling.workspaceId,
-          taskState: task.state,
-          ceiling,
-          paths,
-          grants,
-          ...(execution === undefined ? {} : { execution }),
-        }),
-      );
-    } catch {
-      return { kind: "FAILED", invocationId, reason: "POLICY_FAILURE" };
+    const tool =
+      typeof proposedCall === "object" &&
+      proposedCall !== null &&
+      "name" in proposedCall &&
+      typeof proposedCall.name === "string"
+        ? proposedCall.name
+        : "invalid";
+    let decision: PolicyDecision | ToolGatewayResult;
+    let paths: readonly TrustedPathFacts[] = Object.freeze([]);
+    if (!validated.ok) decision = { kind: "DENY", invocationId, reason: validated.code };
+    else {
+      try {
+        paths = normalizePaths(await this.workspace.factsFor(validated.call, ceiling));
+        const grants: FileGrantView[] = [];
+        for (const path of paths) {
+          if (path.operation === "read") continue;
+          const grant = await this.grants.grantFor(path, ceiling);
+          if (grant !== undefined) grants.push(grant);
+        }
+        const execution =
+          this.execution === undefined
+            ? undefined
+            : await this.execution.factsFor(validated.call, ceiling);
+        decision = PolicyEngine.evaluate(
+          validated.call,
+          createPolicyDecisionContext({
+            invocationId,
+            taskId: task.taskId,
+            sessionId: ceiling.sessionId,
+            workspaceId: ceiling.workspaceId,
+            taskState: task.state,
+            ceiling,
+            paths,
+            grants: Object.freeze(grants),
+            ...(execution === undefined ? {} : { execution }),
+          }),
+        );
+      } catch {
+        decision = { kind: "FAILED", invocationId, reason: "POLICY_FAILURE" };
+      }
     }
-    if (decision.kind === "DENY") return deniedDecision(decision);
-    if (decision.kind === "NEEDS_FILE_PERMISSION") return decision;
-
+    const pre = eventFor(
+      task,
+      invocationId,
+      "REQUEST_DECISION",
+      tool,
+      decision.kind === "DENY" ? decision.reason : decision.kind,
+      "NONE",
+    );
+    if (!(await this.appendCommitted(pre)))
+      return { kind: "BLOCKED", invocationId, reason: "AUDIT_UNAVAILABLE", effect: "NONE" };
+    if (decision.kind !== "ALLOW") return decision;
+    if (fence !== undefined && (!fence.canStart() || fence.signal.aborted))
+      return { kind: "CANCELLED", invocationId };
+    if (!validated.ok) throw new Error("Validated call missing after allow decision");
     const executor = this.executors[validated.call.name];
-    if (executor === undefined) {
+    if (executor === undefined)
       return { kind: "DENY", invocationId, reason: "EXECUTOR_UNAVAILABLE" };
-    }
+    let output: unknown;
     try {
-      const result = executor.execute(validated.call, Object.freeze({ paths }));
-      return {
-        kind: "EXECUTED",
-        invocationId,
-        result,
-      };
+      output = await executor.execute(
+        validated.call,
+        Object.freeze({ paths, signal: fence?.signal ?? new AbortController().signal }),
+      );
     } catch {
-      return { kind: "FAILED", invocationId, reason: "EXECUTION_FAILURE" };
+      const failureEvent = eventFor(
+        task,
+        invocationId,
+        "RESULT",
+        tool,
+        "EXECUTION_FAILURE",
+        "POSSIBLE",
+      );
+      if (!(await this.appendResult(failureEvent)))
+        return { kind: "BLOCKED", invocationId, reason: "AUDIT_INCOMPLETE", effect: "POSSIBLE" };
+      return { kind: "FAILED", invocationId, reason: "EXECUTION_FAILURE", effect: "POSSIBLE" };
     }
+    const checked = safeOutput(output);
+    const resultEvent = eventFor(
+      task,
+      invocationId,
+      "RESULT",
+      tool,
+      checked.ok ? "EXECUTED" : "TOOL_CONTRACT_FAILURE",
+      "COMPLETED",
+      checked.ok ? checked.bytes : undefined,
+    );
+    if (!(await this.appendResult(resultEvent)))
+      return { kind: "BLOCKED", invocationId, reason: "AUDIT_INCOMPLETE", effect: "COMPLETED" };
+    if (!checked.ok) return { kind: "TOOL_CONTRACT_FAILURE", invocationId, effect: "COMPLETED" };
+    return { kind: "EXECUTED", invocationId, result: checked.value, effect: "COMPLETED" };
   }
 }
