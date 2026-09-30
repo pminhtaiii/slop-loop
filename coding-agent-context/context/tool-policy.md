@@ -10,6 +10,8 @@ If another context file conflicts with this file on tool permissions, this file 
 
 > Tool availability is a deterministic capability, never a model decision.
 
+The closed tool catalog is the single trusted source for each executable tool's name, input and output schemas, risk/effect metadata, mutation/execution classification, required capability, runtime limits, and maximum output size. The Phase 2 non-executable registry may be narrower; complete the contract before enabling an adapter. Model-visible selection and registry validation do not authorize invocation. A mandatory `ToolGateway` alone holds executor references and obtains a fresh, call-scoped decision context from trusted task, permission, budget, workspace, network, profile, and executor-readiness state. It discards that context after the call; no snapshot authorizes another call or session.
+
 The model can request a registered tool call. It cannot:
 
 - register tools;
@@ -20,6 +22,8 @@ The model can request a registered tool call. It cannot:
 - increase budgets;
 - expose secrets;
 - change approval requirements.
+
+Here “the model” means the coding model acting within an admitted task. At trusted task admission, a separate Jev classifier may select only `small`, `medium`, or `large`; application code maps that category to the fixed, finite profile in ADR 0006 when the chosen category's probability is at least 0.7. A valid lower-confidence choice, failed classification, or unusable response selects Medium; probabilities are retained as evidence. Admission seals the initial profile, permitted promotion edges, trusted triggers, cumulative-accounting semantics, Large as the maximum, and one shared general-retry ceiling from the initial profile. During execution, trusted budget policy may promote Small to Medium or Medium to Large within that schedule when work-capacity limits (model turns or tool attempts) are reached, with cumulative usage and no reset. Promotion never replenishes or increases the retry ceiling. Verification/repair, model recovery, and ordinary-denial recovery spend that shared allowance with recorded reasons; exhausting it terminates at the current profile without promotion. Neither Jev nor the coding model can select tools, modes, file permissions, numeric limits, or a promotion. The coding model cannot increase budgets itself.
 
 ---
 
@@ -41,6 +45,8 @@ The MVP workspace is the developer's validated current repository checkout. `hos
 ---
 
 ## MVP Tool Set
+
+The registry currently implements the closed definitions, strict input validation, and T041 trusted capability/effect metadata for the nine names below. Trusted Ask/Edit selection determines model-visible schemas, not permission. The registry has no dispatcher or policy authority. The operation descriptions below remain the contract for later policy and adapter phases; no repository tool executes yet.
 
 ## `list_files`
 
@@ -298,20 +304,26 @@ No shell interpolation.
 ```text
 Session starts in developer-selected mode
    ↓
-Policy exposes only that mode's registered tools
+One task starts with that mode fixed until terminal outcome
    ↓
-Developer may explicitly switch mode
+Policy exposes only that task mode's registered tools
    ↓
 Edit mode requests exact file permissions as needed
    ↓
 Every invocation rechecks mode, permission, repository state, and budget
+   ↓
+Developer may stop the task; no mode change is queued during active work
+   ↓
+After the task ends, developer may select the next task's mode
    ↓
 `/clear` or exit ends the session
    ↓
 Context and permissions expire; applied file changes remain
 ```
 
-`Ask` exposes repository inspection and read-only Git evidence. `Edit` adds `apply_patch` and trusted verification profiles. Switching to `Ask` revokes all file permissions. Returning to `Edit` starts with none. The model cannot select a mode or preserve a permission.
+`Ask` exposes repository inspection and read-only Git evidence. `Edit` adds `apply_patch` and trusted verification profiles. A task's mode cannot change while it runs. After a task ends, selecting `Ask` revokes all file permissions; selecting `Edit` after Ask starts without them. The model cannot select a mode or preserve a permission. The Phase 1 runner now rejects same-task mode changes; session mode selection and permission revocation remain future CLI work.
+
+A session may contain multiple tasks, but at most one task is active per current checkout in the MVP. A task waiting for developer permission retains the active slot until it reaches a terminal outcome; no other task may execute against that checkout meanwhile. This constraint does not imply automatic task queueing. Later isolated checkouts may support concurrency under a separate policy.
 
 ---
 
@@ -347,9 +359,12 @@ network:
   enabled: false
 
 budgets:
+  profile: small
+  max_model_turns: 30
   max_tool_calls: 60
+  max_general_retries: 3
   max_patch_attempts: 3
-  max_task_seconds: 900
+  max_active_task_seconds: 1800
 ```
 
 ---
@@ -398,6 +413,7 @@ Do not attempt to solve prompt injection solely through prompt wording.
 
 Before returning a result to the model:
 
+- validate the executor output against the registered output schema;
 - enforce maximum bytes;
 - normalize result type;
 - remove internal host paths where unnecessary;
@@ -406,6 +422,7 @@ Before returning a result to the model:
 - mark repository/tool content as untrusted.
 
 Oversized results must be truncated or rejected according to tool contract.
+Validation, bounding, normalization, sanitization, and redaction occur before either canonical audit representation or model context. A returned result that violates its contract does not prove an earlier persistent effect failed; the gateway reports effect status separately from `TOOL_CONTRACT_FAILURE`, stops unsafe continuation, and never replays the executor solely because its result was invalid.
 
 ---
 
@@ -423,11 +440,17 @@ Any of the following means tool execution is denied:
 
 There is no fallback to "best effort allow."
 
+An ordinary `DENY` means trusted policy evaluated the call and found it forbidden or ineligible; the runner may permit bounded model recovery, charging an applicable retry when it asks the model to recover. Exhausting denial recovery terminates the task without profile promotion, regardless of whether the denied calls were identical; no similarity heuristic is used. A validly evaluated forbidden path is an ordinary `DENY`. `FAILED / POLICY_FAILURE` is terminal when the authorization component fails or required trusted authority state, such as path facts, cannot be produced or validated. `BLOCKED` is reserved for an external dependency or environment condition while the authority system remains healthy. None of these outcomes executes the denied call.
+
+Audit evidence does not authorize a call and is not an input to `PolicyEngine`. Every individually dispatched model-submitted request, including unknown or malformed calls, receives bounded request identity and validation or policy decision evidence without raw arguments. Before dispatching any model-visible tool, including read-only tools, the gateway must successfully append canonical request and decision evidence. If the required append fails or the sink is unavailable, the gateway returns `BLOCKED / AUDIT_UNAVAILABLE` with zero executor calls; it never falls back to unaudited execution. Result evidence follows execution. If the result append fails after an effect may have occurred, notify the developer, stop further dispatch, and make only a small bounded number of synchronous persistence retries through an idempotent event interface with stable `event_id`; never rerun the executor. If persistence remains unconfirmed, return `BLOCKED / AUDIT_INCOMPLETE` and report the actual or possible effect. Phase 3 proves the ordering with a fake sink and Phase 12 supplies the real JSONL writer.
+
 ---
 
 ## File Permission — MVP
 
 Before the first mutation of a path in an `Edit` session, the CLI asks the developer to authorize its canonical repository-relative path and intended update/create operation. One prompt may contain several path-operation pairs. The prompt does not need to display the proposed diff; authorization is operation-and-path scoped, not content-scoped.
+
+Valid grants may be reused across Edit tasks and bounded repairs in the same still-open session only when the new task's sealed ceiling permits them and current repository checks pass. The grant's observed state advances after the agent's own authorized write. An external target change invalidates the affected grant even if the file is later restored to its previous bytes; a later use needs fresh authorization. Git status alone does not prove that a target stayed unchanged.
 
 Permissions expire on `/clear`, CLI exit, a switch to `Ask`, or relevant repository drift. Approved file changes are never rolled back automatically. The developer owns all Git writes.
 

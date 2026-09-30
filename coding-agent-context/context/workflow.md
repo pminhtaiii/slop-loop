@@ -67,6 +67,7 @@ context/tool-policy.md
 context/code-standards.md
 context/library-docs.md
 context/progress-checker.md
+context/testing.md
 ```
 
 Then inspect the relevant production code and tests.
@@ -190,6 +191,8 @@ If the specification changed, document and approve the specification change firs
 
 ## Step 7: Verify
 
+Use `context/testing.md` for phase-specific commands and expected behavior.
+
 Minimum verification for ordinary changes:
 
 ```text
@@ -295,6 +298,8 @@ No unresolved blocking findings.
 
 A feature is incomplete if implementation changes project truth but context files remain stale.
 
+At the end of each product phase, review every file in `coding-agent-context/context/`. Update every phase-relevant statement and confirm the files agree with the implementation and verification evidence.
+
 Update when applicable:
 
 ```text
@@ -303,6 +308,7 @@ code-standards.md
 library-docs.md
 tool-policy.md
 progress-checker.md
+testing.md
 project-overview.md
 ```
 

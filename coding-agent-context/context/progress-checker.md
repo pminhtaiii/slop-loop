@@ -11,10 +11,10 @@ Do not mark a capability complete because it appears in architecture or planning
 Overall status:
 
 ```text
-PHASE 0 FOUNDATION COMPLETE
+PHASE 0 FOUNDATION COMPLETE / PHASE 1 RUNNER RECONCILED / PHASE 2 REGISTRY SOURCE IMPLEMENTED / PHASE 3 FAKE-PORT AUTHORITY CORE IMPLEMENTED
 ```
 
-The TypeScript/Node 24 single-process foundation and Phase 0 design frontier are recorded. Runtime implementation status must be updated as code is built.
+Phase 0 runtime and its exit gate are complete on `development` and its source is present in this checkout. The Phase 1 task domain and deterministic orchestrator are implemented, with ADR 0006/0007 runner reconciliation in this checkout. Phase 2 has a pure closed registry, trusted Ask/Edit name selector, and T041 capability/effect metadata. T037–T058 implement the Phase 3 fake-port authority core: policy decisions, task ceilings, asynchronous gateway routing, cancellation fencing, bounded audit events, output contract handling, and typed runner outcomes. There is still no real model, filesystem tool execution, permission ledger, sandbox, CLI, or durable audit adapter; Phase 4, 5, 7, 8, and 12 own those integrations.
 
 The agreed future product MVP is an interactive local CLI implemented in TypeScript for Python target repositories. It supports `Ask` and `Edit` modes in one in-memory session, repository questions, permission-gated updates and creation in the current checkout, trusted Docker verification, progress questions, and a final diff and verification report. The developer owns Git writes. The first model provider remains undecided. Worktrees, session persistence, API/web, active-task scope changes, and remote Git delivery are deferred. These are planned behaviors, not completed capabilities.
 
@@ -48,13 +48,15 @@ pnpm smoke
 ~~~
 ## Phase 1 — Task Domain & Orchestrator
 
-- [ ] Define `TaskContext`.
-- [ ] Define task state enum.
-- [ ] Implement validated transitions.
-- [ ] Implement task budgets.
-- [ ] Implement terminal outcomes.
-- [ ] Add transition unit tests.
-- [ ] Add retry/budget exhaustion tests.
+- [x] Define `TaskContext`.
+- [x] Define task state enum.
+- [x] Implement validated transitions.
+- [x] Implement task budgets.
+- [x] Implement terminal outcomes.
+- [x] Add transition unit tests.
+- [x] Add retry/budget exhaustion tests.
+
+The current checkout passes 205 tests across Phases 0–2 and the Phase 3 prerequisite changes, including the Phase 1 regression suite. Pinned pnpm 12.5.1 runs through Corepack outside the local sandbox; frozen install and all six quality scripts, including `format:check`, passed on 2026-09-28. The 152-test focused prerequisite suite also passed. The Phase 1 combined gate is satisfied. Budget expiry is checked on each event or injected clock tick; a later runtime must schedule real clock checks and bound external calls.
 
 Exit gate:
 
@@ -67,45 +69,49 @@ task always terminates under finite budget
 
 ## Phase 2 — Closed Tool Registry
 
-- [ ] Define tool contract.
-- [ ] Define strict tool call schema.
-- [ ] Implement closed registry.
-- [ ] Reject unknown tools.
-- [ ] Generate model-visible schemas only from allowed registry entries.
-- [ ] Add registry security tests.
+- [x] Define the non-executable registry entry and validated-call contract; complete executable tool contracts in later owning phases.
+- [x] Define strict outer and per-tool argument schemas.
+- [x] Implement the fixed nine-name closed registry and trusted Ask/Edit selector.
+- [x] Reject unknown tool names and malformed arguments.
+- [x] Derive provider-neutral model-visible input schemas only for registered selected names.
+- [x] Add registry security and advertised/runtime parity tests.
 
-MVP tool targets:
+MVP names registered as definitions only; tool adapters remain planned:
 
-- [ ] `list_files`
-- [ ] `search_code`
-- [ ] `read_file`
-- [ ] `apply_patch`
-- [ ] `run_tests`
-- [ ] `run_build`
-- [ ] `run_linter`
-- [ ] `run_typecheck`
-- [ ] `git_diff`
+- [x] `list_files`
+- [x] `search_code`
+- [x] `read_file`
+- [x] `apply_patch`
+- [x] `run_tests`
+- [x] `run_build`
+- [x] `run_linter`
+- [x] `run_typecheck`
+- [x] `git_diff`
+
+The focused registry suite passes 90 tests. It checks strict call envelopes, the 64-code-point name bound, all nine argument contracts, Unicode code-point length bounds, unknown-name denial, Ask/Edit selection, schema parity, safe copies, and trusted metadata isolation. Registry functions have no policy decision or execution path and are not wired into the Phase 1 runner. The pinned quality scripts pass on this checkout; Phase 2 T035/T036 review tasks remain open.
 
 Exit gate:
 
 ```text
-model cannot invoke or register an unknown tool
+the registry cannot accept or register an unknown tool; there is no invocation path yet
 ```
 
 ---
 
 ## Phase 3 — Policy Engine & Capabilities
 
-- [ ] Define `ToolCapability`.
-- [ ] Define `PolicyDecision`.
-- [ ] Seal capabilities during task admission.
-- [ ] Recheck capability on every tool call.
-- [ ] Implement default deny.
-- [ ] Implement tool allowlist.
-- [ ] Implement read/write path capabilities.
-- [ ] Implement budget checks.
-- [ ] Fail closed on policy exception.
-- [ ] Add negative authorization tests.
+- [x] Define `ToolCapability` in the trusted registry metadata for all nine names; policy use remains open.
+- [x] Define `PolicyDecision`.
+- [x] Seal capabilities during task admission.
+- [x] Recheck capability on every tool call.
+- [x] Implement default deny.
+- [x] Implement tool allowlist.
+- [x] Implement read/write path capabilities through fake trusted facts.
+- [x] Implement budget checks.
+- [x] Fail closed on policy exception.
+- [x] Add negative authorization tests.
+
+T037–T058 are implemented and verified: fixed per-task mode, separate cumulative model-turn/tool-attempt counters, shared finite retries, permission-wait clock exclusion, checkout-slot stop fencing, bounded budget handoff, trusted registry classification, policy ceilings, gateway routing, fake audit ordering, output-contract handling, and typed audit outcomes. The full suite passed with 238 tests on 2026-09-30. This remains a fake-port proof; real containment, grant, executor, sandbox, and JSONL integrations are later-phase gates.
 
 Exit gate:
 

@@ -26,19 +26,55 @@ The request a developer enters to start a repository question or code-editing ta
 _Avoid_: tool call, command
 
 **Session**:
-A continuous interaction with one agent context and its temporary permissions. A session starts with a fresh context and ends when the developer uses `/clear`, exits the CLI, or starts with a new context; the MVP does not persist session history.
+A continuous in-memory interaction in one CLI process that can contain multiple tasks and temporary permissions. It ends on `/clear`, CLI exit, or a new context; restoring an ended session is deferred.
 _Avoid_: saved session, permanent permission
 
 **Task mode**:
-The developer-selected `Ask` or `Edit` mode for the current session. The developer may switch modes during the session; switching into `Edit` does not restore permissions that were previously revoked.
+The developer-selected `Ask` or `Edit` mode bound to one task from start to terminal outcome. A different mode requires a new task.
 _Avoid_: model-selected permission
+
+**Active task**:
+The one task occupying a target checkout's execution slot, including while it waits for developer permission. The slot is released when the task reaches a terminal outcome.
+_Avoid_: running task, unfinished task
 
 **Agent tool**:
 A registered operation the agent may request within the capabilities granted to its session.
 _Avoid_: arbitrary command
 
+**Closed tool registry**:
+The authoritative catalog of agent tool names and call contracts from which model-visible tool schemas are derived. It does not grant permission or perform operations.
+_Avoid_: tool executor, permission list
+
+**Tool gateway**:
+The mandatory boundary between a validated agent tool request and its executor. It permits execution only after current task authority and policy allow the call.
+_Avoid_: tool registry, executor
+
+**Policy decision context**:
+The trusted task, permission, budget, and environment facts assembled for one agent tool request. It is scoped to that request and cannot authorize a later call.
+_Avoid_: reusable policy snapshot, model-supplied authority
+
+**Model-visible tool set**:
+The registered tools selected for presentation to the model from trusted session state, including the developer-selected task mode. Visibility does not authorize a call.
+_Avoid_: granted capabilities, executable tools
+
+**Task capability ceiling**:
+The maximum authority sealed for one task at admission, bound to its session, workspace, fixed mode, eligible tools, resource limits, and trusted budget promotion schedule. Later file permissions and model requests cannot expand it.
+_Avoid_: file permission, model-visible tool set
+
+**Work capacity budget**:
+The finite model-turn and tool-attempt allowances for one task. Trusted policy may promote the active profile only within the schedule sealed at admission.
+_Avoid_: model-selected budget, recovery budget
+
+**Recovery budget**:
+The one shared task-level allowance for verification/repair, model, and denial recovery, fixed by the initial admitted profile. Promotion never enlarges it, and exhaustion ends the task.
+_Avoid_: work capacity budget, unlimited retry
+
+**Budget handoff**:
+A bounded developer-facing summary emitted when a task ends with `BUDGET_EXHAUSTED`, for use when starting a later task. It does not restore the ended session or carry authority forward.
+_Avoid_: restorable session, continuation permission
+
 **File permission**:
-The developer's authorization for one or more operation-bound file permissions during the current session and observed branch/file state. A single request may batch several canonical repository-relative path-operation pairs; it is not blanket write permission.
+The developer's authorization for exact file `update` or `create` operations during the current session and observed branch/file state. A valid grant may be reused across Edit tasks and repairs in that session, but external target changes invalidate it; one request may batch several exact canonical repository-relative path-operation pairs.
 _Avoid_: blanket edit permission, repository-wide approval
 
 **File edit request**:

@@ -210,35 +210,29 @@ The orchestrator owns deterministic task state.
 Canonical states:
 
 ```text
-RECEIVED
-  ↓
-ADMITTED
-  ↓
-INSPECTING
-  ├─ Ask → ANSWERING → COMPLETED / FAILED / BLOCKED
-  └─ Edit → PLANNING
-               ↓
-       WAITING_FOR_FILE_PERMISSION
-               ↓
-         IMPLEMENTING
-               ↓
-         SANDBOX_READY
-               ↓
-          VERIFYING
-               ↓
-          REPAIRING ──→ WAITING_FOR_FILE_PERMISSION (when a new path is needed)
-               ↓
-          REVIEWING
-               ↓
-       COMPLETED / FAILED / BLOCKED
+RECEIVED -> ADMITTED -> INSPECTING
+                         | Ask -> ANSWERING -> COMPLETED (ANSWERED)
+                         | Edit -> PLANNING -> WAITING_FOR_FILE_PERMISSION
+                                               -> IMPLEMENTING -> SANDBOX_READY
+                                               -> VERIFYING -> REVIEWING
+                                                               -> COMPLETED (EDIT_VERIFIED)
+VERIFYING -> REPAIRING -> WAITING_FOR_FILE_PERMISSION or IMPLEMENTING
+REVIEWING -> REPAIRING
+INSPECTING or PLANNING -> COMPLETED (NO_CHANGE_NEEDED, Edit only)
+Any active state -> FAILED / BLOCKED / CANCELLED for its typed reason
 ```
 Rules:
 
 - Model output may suggest the next action, but legal state transitions are defined in code.
+- Each task has an immutable trusted intent: `INFORMATIONAL` or `CHANGE`. An informational task cannot enter Edit work by switching mode; a new change request is a new task.
+- A task's mode remains fixed from admission to terminal outcome. The developer may stop the active task and select another mode for a later task. A permission wait retains the active checkout slot.
+- `CANCELLED` is a distinct terminal state for explicit developer cancellation. Terminal state and typed outcome remain sealed together.
 - A task may not skip admission. A tool that executes repository code may not skip sandbox creation; an `Ask` session does not create a sandbox.
-- Mutation tools are available only in `Edit` mode after permission for every exact target path-operation pair. Switching to `Ask` revokes all file permissions.
+- Mutation tools are available only in `Edit` mode after permission for every exact target path-operation pair. Selecting `Ask` for a later task revokes all file permissions when the later session subsystem is implemented.
 - Every state transition is auditable.
 - Retry transitions consume explicit budget.
+- Entering `REPAIRING` requires a one-use authorization issued only after the runner consumes a retry allowance.
+- The Phase 1 runner, reconciled in T038–T040, implements this graph with deterministic in-memory events and simulated time. Real model, tool, permission, sandbox, timer, CLI, and audit integrations belong to later phases.
 
 ---
 
@@ -271,7 +265,7 @@ Provider-specific logic must stay behind the adapter.
 
 Automatic context is deliberately small: the repository tree, applicable project instructions, and files explicitly referenced by the developer. All other content enters the session through budgeted `list_files`, `search_code`, and `read_file` calls.
 
-`search_code` is implemented by a deterministic adapter such as ripgrep. Its model-visible schema contains only search text, an optional repository-relative scope, and a bounded result count. Executable paths, flags, raw arguments, shell syntax, byte limits, denied paths, and timeouts remain runtime-owned. Semantic indexes and Elasticsearch are deferred.
+When implemented, `search_code` uses a deterministic adapter such as ripgrep. Its model-visible input schema already contains only search text, an optional repository-relative scope, and a bounded result count. Executable paths, flags, raw arguments, shell syntax, byte limits, denied paths, and timeouts remain runtime-owned. Semantic indexes and Elasticsearch are deferred.
 
 Retrieval evaluation fixtures declare required files, optional helpful files, forbidden files, expected answer properties, and expected verification behavior. Measures include required-file recall, context precision, irrelevant volume, denied-access attempts, bytes retrieved, tool calls, answer correctness, and correct verification-path selection.
 
@@ -280,6 +274,8 @@ Retrieval evaluation fixtures declare required files, optional helpful files, fo
 ## 4. Tool Registry
 
 The tool registry is closed.
+
+Phase 2 implements nine fixed non-executable definitions in `src/tools/registry.ts`. It strictly validates proposed `{ name, arguments }` calls and derives provider-neutral input JSON Schema from the same Zod 4 schemas. T041 adds trusted capability/effect metadata to those same definitions. `src/tools/selection.ts` supplies the trusted Ask four-name and Edit nine-name candidate sets. Unknown selected names fail the entire schema request. This boundary is not connected to the Phase 1 runner and cannot authorize or execute an operation; the Phase 3 policy/gateway and later adapters own those responsibilities. Complete executable tool contracts remain a later-phase gate.
 
 MVP tools:
 
@@ -598,18 +594,16 @@ Internal exceptions must not be surfaced as raw stack traces to untrusted client
 
 ## Budget Model
 
-Recommended initial limits:
+Current fixed task profiles from ADR 0006:
 
 ```text
-max_agent_steps: 30
-max_tool_calls: 60
-max_patch_attempts: 3
-max_single_tool_seconds: 120
-max_task_seconds: 900
-max_tool_output_bytes: 65536
+Small:  30 model turns,  60 tool attempts, 3 shared retries
+Medium: 60 model turns, 120 tool attempts, 5 shared retries
+Large: 120 model turns, 240 tool attempts, 8 shared retries
+Active work: 1800 seconds, excluding developer permission waits
 ```
 
-Values are configuration, not model suggestions.
+Admission seals the initial profile and permitted Small → Medium → Large promotion schedule. Capacity usage is cumulative; the initial retry ceiling never increases on promotion. The runner enforces these counters in memory. Tool runtime and output limits remain adapter contracts for later phases; none executes yet.
 
 ---
 
