@@ -8,6 +8,9 @@ For planned Phase 2 closed tool registry work, read
 
 For planned Phase 3 policy engine and tool gateway work, read
 `specs/004-policy-engine-capabilities/plan.md`.
+
+For planned Phase 4 workspace-boundary work, read
+`specs/005-workspace-boundary/plan.md`.
 <!-- SPECKIT END -->
 
 ## Slop Loop Project Context

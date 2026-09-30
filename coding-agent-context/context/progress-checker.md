@@ -124,14 +124,19 @@ policy failure cannot become ALLOW
 
 ## Phase 4 — Workspace Boundary
 
+- [ ] Discover, canonicalize, and seal the selected current Git checkout root at admission; reject launch outside a valid checkout.
+- [ ] Exclude sibling and nested repositories, ignored paths, and `.git` internals from repository tools while allowing nonignored tracked and untracked files.
 - [ ] Implement workspace canonicalization.
 - [ ] Block `..` traversal.
 - [ ] Block absolute path escape.
 - [ ] Block symlink escape.
+- [ ] Block hard-linked content, nested mount/reparse crossings, and nonregular content targets.
 - [ ] Add denied secret path patterns.
-- [ ] Bound read sizes.
-- [ ] Bound search results.
+- [ ] Bound `read_file` to 64 KiB whole-file content with an explicit size-limit result.
+- [ ] Bound `search_code` to 200 matches, 32 KiB total output, 4 KiB per returned line, and 4 MiB per searched file; mark omitted matches and shortened lines.
 - [ ] Add adversarial filesystem tests.
+
+The current registry still caps `search_code` at 100 matches and the fake gateway uses a 32 KiB generic output cap. The planned 200-match schema and per-tool output contracts are not implemented.
 
 Exit gate:
 
@@ -189,7 +194,7 @@ agent can understand a fixture repository without host escape
 - [ ] Patch validation.
 - [ ] Edit mode enforcement.
 - [ ] Exact canonical repository-relative path-operation permission requests, including batched pairs.
-- [ ] Revoke file permissions on `/clear`, exit, and switching to `Ask`; make affected grants unavailable on branch drift or relevant external file change.
+- [ ] Revoke file permissions on `/clear`, exit, switching to `Ask`, and branch switch; make affected grants unavailable on other relevant external file change.
 - [ ] Denied-path rejection.
 - [ ] Changed-file recording.
 - [ ] Patch rollback on invalid application.
@@ -231,9 +236,10 @@ agent can verify code without arbitrary shell capability
 - [ ] Current-checkout Git validation.
 - [ ] Read-only branch and `HEAD` detection.
 - [ ] Stable `git status` evidence.
+- [ ] Trusted branch/`HEAD`/status snapshots at admission and refresh checkpoints without a model-visible `git_status` tool.
 - [ ] `git_diff`.
 - [ ] Detect branch switches without switching branches for the user.
-- [ ] Reauthorize affected prior path-operation grants only when a later task needs them.
+- [ ] Invalidate all grants and stale permission prompts on branch switch; refresh repository evidence and allow the same task to resume in the same checkout, requesting fresh exact grants only when mutation is needed.
 - [ ] Final diff artifact.
 - [ ] Tests proving the agent cannot stage, commit, switch, push, merge, or alter `.git/**`.
 
@@ -447,6 +453,7 @@ Acceptance:
 - [ ] Reviewer agent.
 - [ ] Long-term repository memory/index.
 - [ ] Multi-agent workflows.
+- [ ] Agent terminal-command capability under a separately designed sandbox and authorization policy; arbitrary shell remains denied in the MVP.
 - [ ] Staging deploy.
 - [ ] Production deploy.
 - [ ] Canary and rollback.
@@ -464,5 +471,3 @@ Acceptance:
 - [ ] Modified verification config is deferred to a later validated session.
 - [ ] Canonical JSONL, event hash chain, and manifest verify deterministically.
 - [ ] BUDGET_EXHAUSTED records budget, limit, usage, and audit ordering.
-
-
