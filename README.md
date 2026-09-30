@@ -84,4 +84,4 @@ pnpm smoke
 Continuous Integration is automated via GitHub Actions (`.github/workflows/ci.yml`) on pull requests and pushes to `main`:
 
 - **Ubuntu Quality Gate (`ubuntu-latest`)**: Runs the complete verification sequence: frozen install, lint, format check, type check, unit tests, build, and compiled smoke verification.
-- **Windows Quality Gate (`windows-latest`)**: Runs platform runtime and artifact verification: frozen install, unit tests, build, and compiled smoke verification..
+- **Windows Quality Gate (`windows-latest`)**: Runs platform runtime and artifact verification: frozen install, unit tests, build, and compiled smoke verification.
