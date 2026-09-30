@@ -65,9 +65,10 @@ describe("ToolGateway", () => {
     expect(events).toContainEqual(expect.objectContaining({ kind: "RESULT", effect: "POSSIBLE" }));
   });
 
-  it("blocks execution when pre-evidence rejects or acknowledges a different event", async () => {
+  it("blocks execution when pre-evidence rejects a duplicate ID, fails, or acknowledges a different event", async () => {
     for (const audit of [
       { appendIfAbsent: () => Promise.reject(new Error("sink offline")) },
+      { appendIfAbsent: () => Promise.resolve({ status: "INTEGRITY_FAILURE" as const }) },
       { appendIfAbsent: () => Promise.resolve({ status: "COMMITTED" as const, eventId: "wrong" }) },
     ]) {
       let executions = 0;
