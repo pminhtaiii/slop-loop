@@ -200,10 +200,12 @@ describe("trusted checkout selection and admission", () => {
     fixture.git("worktree", "add", "-qb", "second", second);
     const { selectWorkspace, closeWorkspace } = await import("../../src/workspace/admission.js");
     const originalOpen = fs.openSync;
+    const firstIdentity = fs.statSync(first, { bigint: true });
     let switched = false;
     let rootOpens = 0;
     const openSpy = vi.spyOn(fs, "openSync").mockImplementation((...args) => {
-      if (args[0] === first) {
+      const opened = fs.statSync(args[0], { bigint: true });
+      if (opened.dev === firstIdentity.dev && opened.ino === firstIdentity.ino) {
         rootOpens += 1;
         if (!switched && rootOpens === 2) {
           switched = true;

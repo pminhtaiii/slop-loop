@@ -202,10 +202,11 @@ describe("effective checkout membership", () => {
     expect(selected.kind).toBe("SELECTED");
     if (selected.kind !== "SELECTED") return;
     cleanup.push(() => closeWorkspace(selected.workspace));
+    const inspectedNested = path.join(selected.workspace.root, "nested");
     const originalLstat = fs.lstatSync;
     let inspections = 0;
     const lstatSpy = vi.spyOn(fs, "lstatSync").mockImplementation((...args) => {
-      if (args[0] === nested) inspections += 1;
+      if (args[0] === inspectedNested) inspections += 1;
       return originalLstat(...args);
     });
     try {
