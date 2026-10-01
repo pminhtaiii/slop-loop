@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import { runTaskScript, TaskCheckoutSlot, TaskRunner } from "../../src/orchestration/runner.js";
-import { admitTask, createTask } from "../../src/orchestration/task.js";
+import { createTask } from "../../src/orchestration/task.js";
+import { admitTask, TEST_WORKSPACE_ID } from "../support/admission.js";
 import { advanceTask } from "../../src/orchestration/transitions.js";
 import { ToolGateway } from "../../src/tools/gateway.js";
 
@@ -154,14 +155,14 @@ describe("scripted task lifecycle", () => {
         createTask({ taskId: "gateway-denial-e2e", objective: "Read source", mode: "Ask" }),
         0,
         "Small",
-        { sessionId: "session-1", workspaceId: "workspace-1", eligibleTools: ["read_file"] },
+        { sessionId: "session-1", workspaceId: TEST_WORKSPACE_ID, eligibleTools: ["read_file"] },
       ),
     );
     let executions = 0;
     const gateway = new ToolGateway({
       workspace: {
         factsFor: () => ({
-          workspaceId: "workspace-1",
+          workspaceId: TEST_WORKSPACE_ID,
           operation: "read" as const,
           canonicalPath: "src/index.ts",
           status: "ALLOWED" as const,
@@ -193,7 +194,7 @@ describe("scripted task lifecycle", () => {
         createTask({ taskId: "gateway-denial-retry-e2e", objective: "Read source", mode: "Ask" }),
         0,
         "Small",
-        { sessionId: "session-1", workspaceId: "workspace-1", eligibleTools: ["read_file"] },
+        { sessionId: "session-1", workspaceId: TEST_WORKSPACE_ID, eligibleTools: ["read_file"] },
       ),
     );
     const gateway = new ToolGateway({
@@ -222,14 +223,14 @@ describe("scripted task lifecycle", () => {
         createTask({ taskId: "gateway-allow-e2e", objective: "Read source", mode: "Ask" }),
         0,
         "Small",
-        { sessionId: "session-1", workspaceId: "workspace-1", eligibleTools: ["read_file"] },
+        { sessionId: "session-1", workspaceId: TEST_WORKSPACE_ID, eligibleTools: ["read_file"] },
       ),
     );
     let executions = 0;
     const gateway = new ToolGateway({
       workspace: {
         factsFor: () => ({
-          workspaceId: "workspace-1",
+          workspaceId: TEST_WORKSPACE_ID,
           operation: "read" as const,
           canonicalPath: "src/index.ts",
           status: "ALLOWED" as const,
@@ -258,14 +259,14 @@ describe("scripted task lifecycle", () => {
         createTask({ taskId: "gateway-permission-e2e", objective: "Patch source", mode: "Edit" }),
         0,
         "Small",
-        { sessionId: "session-1", workspaceId: "workspace-1", eligibleTools: ["apply_patch"] },
+        { sessionId: "session-1", workspaceId: TEST_WORKSPACE_ID, eligibleTools: ["apply_patch"] },
       ),
     );
     let executions = 0;
     const gateway = new ToolGateway({
       workspace: {
         factsFor: () => ({
-          workspaceId: "workspace-1",
+          workspaceId: TEST_WORKSPACE_ID,
           operation: "update" as const,
           canonicalPath: "src/index.ts",
           status: "ALLOWED" as const,
@@ -301,7 +302,7 @@ describe("scripted task lifecycle", () => {
         }),
         0,
         "Small",
-        { sessionId: "session-1", workspaceId: "workspace-1", eligibleTools: ["read_file"] },
+        { sessionId: "session-1", workspaceId: TEST_WORKSPACE_ID, eligibleTools: ["read_file"] },
       ),
     );
     let executions = 0;
@@ -339,14 +340,14 @@ describe("scripted task lifecycle", () => {
         createTask({ taskId: "gateway-audit-block-e2e", objective: "Read source", mode: "Ask" }),
         0,
         "Small",
-        { sessionId: "session-1", workspaceId: "workspace-1", eligibleTools: ["read_file"] },
+        { sessionId: "session-1", workspaceId: TEST_WORKSPACE_ID, eligibleTools: ["read_file"] },
       ),
     );
     let executions = 0;
     const gateway = new ToolGateway({
       workspace: {
         factsFor: () => ({
-          workspaceId: "workspace-1",
+          workspaceId: TEST_WORKSPACE_ID,
           operation: "read" as const,
           canonicalPath: "src/index.ts",
           status: "ALLOWED" as const,

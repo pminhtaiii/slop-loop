@@ -88,3 +88,9 @@ pnpm exec vitest run tests/policy/engine.test.ts tests/tools/gateway.test.ts tes
 ```
 
 On 2026-09-30, the full pinned test suite passed with 238 tests. These tests prove fake-port policy denial, committed pre-evidence before executor start, audit outage blocking, stable result-event retry without executor replay, output bounds, effect-status reporting, denial recovery exhaustion, and cancellation fencing. They do not provide real filesystem containment, process/sandbox, grant-ledger, or JSONL persistence evidence.
+
+## Phase 4 — Internal phases 1–3 checkpoint (T059–T068)
+
+On 2026-10-01, the Windows checkout completed `pnpm lint`, `pnpm format:check`, `pnpm typecheck`, `pnpm test` (259 passing tests), `pnpm build`, and `pnpm smoke`. The focused `pnpm exec vitest run tests/workspace tests/ci.test.ts` suite passed 23 tests covering trusted root/subdirectory selection, denied missing/forged identities, same-path linked-worktree gitfile replacement, a gitfile switch during selection, sanitized Git discovery, tracked/untracked/ignored membership, gitlinks, nested and bare repositories (including a missing config), ordinary repository-shaped directories, a leading byte-order mark in an untracked pathname, sibling paths, native-loader compatibility, and the configured CI jobs.
+
+The local Node-API addon was compiled with MinGW g++ against Node 24.14.0 headers and loaded successfully for these tests. The pinned `pnpm native:build` target was attempted in and outside the sandbox; both attempts failed because this Windows host lacks Visual C++ Build Tools. No Ubuntu native build or CI job result has been observed. Therefore these results verify the source behavior of T059–T068 locally but do not satisfy the two-host native build or Phase 4 workspace-containment exit gate in `specs/005-workspace-boundary/quickstart.md`. Later T069–T087 remain open.

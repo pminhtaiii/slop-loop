@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import * as runnerModule from "../../src/orchestration/runner.js";
 import { runModelProposal, runTaskEvent } from "../../src/orchestration/runner.js";
-import { admitTask, createTask } from "../../src/orchestration/task.js";
+import { createTask } from "../../src/orchestration/task.js";
+import { admitTask } from "../support/admission.js";
 import { advanceTask } from "../../src/orchestration/transitions.js";
 
 function answeringTask(profile: "Small" | "Medium" | "Large" = "Medium") {
