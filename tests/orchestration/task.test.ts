@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { admitTask, createTask } from "../../src/orchestration/task.js";
+import { admitTask as admitTrustedTask, createTask } from "../../src/orchestration/task.js";
+import { admitTask, TEST_WORKSPACE_ID } from "../support/admission.js";
 import type { TaskOutcome } from "../../src/orchestration/task.js";
 import { runTaskEvent } from "../../src/orchestration/runner.js";
 import { advanceTask, finishTask } from "../../src/orchestration/transitions.js";
@@ -64,7 +65,7 @@ describe("task admission", () => {
       "Small",
       {
         sessionId: "session-1",
-        workspaceId: "workspace-1",
+        workspaceId: TEST_WORKSPACE_ID,
         eligibleTools: ["read_file"],
       },
     );
@@ -72,7 +73,7 @@ describe("task admission", () => {
     expect(admitted.capabilityCeiling).toMatchObject({
       taskId: "sealed-authority",
       sessionId: "session-1",
-      workspaceId: "workspace-1",
+      workspaceId: TEST_WORKSPACE_ID,
       mode: "Ask",
       eligibleTools: ["read_file"],
       capabilities: ["repository_read"],
@@ -86,13 +87,13 @@ describe("task admission", () => {
     expect(Object.isFrozen(admitted.capabilityCeiling?.resources)).toBe(true);
   });
 
-  it("does not invent session or workspace authority when admission has none", () => {
-    const admitted = admitTask(
+  it("rejects admission without trusted workspace authority", () => {
+    const admitted = admitTrustedTask(
       createTask({ taskId: "unbound-authority", objective: "Explain source", mode: "Ask" }),
       0,
     );
 
-    expect(admitted.state).toBe("ADMITTED");
+    expect(admitted.state).toBe("FAILED");
     expect(admitted.capabilityCeiling).toBeNull();
   });
 });

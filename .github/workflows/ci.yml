@@ -29,8 +29,25 @@ jobs:
         with:
           node-version: 24
 
+      - name: Setup Python for node-gyp
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Refresh native package index
+        run: sudo apt-get update
+
+      - name: Install native compiler prerequisites
+        run: sudo apt-get install -y make g++
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Build native workspace addon
+        run: pnpm native:build
+
+      - name: Run workspace boundary tests
+        run: pnpm exec vitest run tests/workspace
 
       - name: Run lint
         run: pnpm lint
@@ -69,8 +86,19 @@ jobs:
         with:
           node-version: 24
 
+      - name: Setup Python for node-gyp
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Build native workspace addon with runner Visual C++ tools
+        run: pnpm native:build
+
+      - name: Run workspace boundary tests
+        run: pnpm exec vitest run tests/workspace
 
       - name: Run source tests
         run: pnpm test

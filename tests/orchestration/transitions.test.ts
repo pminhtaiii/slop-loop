@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { admitTask, createTask } from "../../src/orchestration/task.js";
+import { createTask } from "../../src/orchestration/task.js";
+import { admitTask } from "../support/admission.js";
 import { runTaskEvent } from "../../src/orchestration/runner.js";
 import { advanceTask, finishTask } from "../../src/orchestration/transitions.js";
 

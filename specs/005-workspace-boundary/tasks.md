@@ -8,16 +8,16 @@
 
 **Purpose**: Make the planned native boundary buildable on both supported hosts.
 
-- [ ] T059 Add a fail-closed Node-API addon build and load target in package.json and native/workspace/binding.gyp; pin the build dependency in pnpm-lock.yaml
-- [ ] T060 [P] Add Windows and Ubuntu native build prerequisites and boundary test jobs in .github/workflows/ci.yml
+- [X] T059 Add a fail-closed Node-API addon build and load target in package.json and native/workspace/binding.gyp; pin the build dependency in pnpm-lock.yaml
+- [X] T060 [P] Add Windows and Ubuntu native build prerequisites and boundary test jobs in .github/workflows/ci.yml
 
 ## Phase 2: Foundational
 
 **Purpose**: Establish one trusted workspace identity and an OS-backed access contract before story work.
 
-- [ ] T061 Add workspace identity, path request, safe opened-target, and typed failure contracts in src/workspace/types.ts
-- [ ] T062 Add a native loader that rejects missing, incompatible, or unsupported backends without falling back to path-only access in src/workspace/native.ts
-- [ ] T063 [P] Add shared Git-checkout, symlink, and denied-path fixture helpers in tests/workspace/fixtures.ts
+- [X] T061 Add workspace identity, path request, safe opened-target, and typed failure contracts in src/workspace/types.ts
+- [X] T062 Add a native loader that rejects missing, incompatible, or unsupported backends without falling back to path-only access in src/workspace/native.ts
+- [X] T063 [P] Add shared Git-checkout, symlink, and denied-path fixture helpers in tests/workspace/fixtures.ts
 
 **Checkpoint**: Story tests can use one workspace contract and controlled real filesystem fixtures.
 
@@ -27,11 +27,11 @@
 
 **Independent test**: Root and subdirectory admission select the same eligible checkout; non-repository, sibling, nested, submodule, and same-path replacement identities fail before admission or later access.
 
-- [ ] T064 [US1] Write failing selector-to-admission, missing/forged ID, and same-path linked-worktree replacement tests in tests/workspace/admission.test.ts
-- [ ] T065 [P] [US1] Write failing tracked, untracked, ignored, gitlink, and nested-repository membership tests in tests/workspace/membership.test.ts
-- [ ] T066 [US1] Implement fixed-argv Git discovery, physical root and held-handle OS identity, worktree gitdir identity, and same-path replacement check in src/workspace/admission.ts
-- [ ] T067 [US1] Implement NUL-delimited Git membership with gitlink and nested-repository exclusion in src/workspace/membership.ts
-- [ ] T068 [US1] Require successful trusted selectWorkspace before admitting a task and seal only its returned ID in src/orchestration/task.ts and src/workspace/admission.ts
+- [X] T064 [US1] Write failing selector-to-admission, missing/forged ID, and same-path linked-worktree replacement tests in tests/workspace/admission.test.ts
+- [X] T065 [P] [US1] Write failing tracked, untracked, ignored, gitlink, and nested-repository membership tests in tests/workspace/membership.test.ts
+- [X] T066 [US1] Implement fixed-argv Git discovery, physical root and held-handle OS identity, worktree gitdir identity, and same-path replacement check in src/workspace/admission.ts
+- [X] T067 [US1] Implement NUL-delimited Git membership with gitlink and nested-repository exclusion in src/workspace/membership.ts
+- [X] T068 [US1] Require successful trusted selectWorkspace before admitting a task and seal only its returned ID in src/orchestration/task.ts and src/workspace/admission.ts
 
 **Checkpoint**: US1 tests pass without model-visible file executors.
 

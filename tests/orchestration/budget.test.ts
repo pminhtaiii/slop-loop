@@ -8,7 +8,8 @@ import {
   createTaskBudget,
   recordActiveWork,
 } from "../../src/orchestration/budget.js";
-import { admitTask, createTask } from "../../src/orchestration/task.js";
+import { createTask } from "../../src/orchestration/task.js";
+import { admitTask } from "../support/admission.js";
 
 describe("task budgets", () => {
   it("admits a sealed fixed Small profile with separate work capacities", () => {

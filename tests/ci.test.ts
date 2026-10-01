@@ -242,7 +242,11 @@ describe("Platform Quality Gates Workflow Contract (User Story 4 / T022)", () =>
     const runCommands = ubuntuJob!.steps.map((s) => s.run).filter((r): r is string => Boolean(r));
 
     const expectedSequence = [
+      "sudo apt-get update",
+      "sudo apt-get install -y make g++",
       "pnpm install --frozen-lockfile",
+      "pnpm native:build",
+      "pnpm exec vitest run tests/workspace",
       "pnpm lint",
       "pnpm format:check",
       "pnpm typecheck",
@@ -268,6 +272,8 @@ describe("Platform Quality Gates Workflow Contract (User Story 4 / T022)", () =>
 
     const expectedSequence = [
       "pnpm install --frozen-lockfile",
+      "pnpm native:build",
+      "pnpm exec vitest run tests/workspace",
       "pnpm test",
       "pnpm build",
       "pnpm smoke",

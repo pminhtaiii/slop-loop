@@ -124,7 +124,7 @@ policy failure cannot become ALLOW
 
 ## Phase 4 — Workspace Boundary
 
-- [ ] Discover, canonicalize, and seal the selected current Git checkout root at admission; reject launch outside a valid checkout.
+- [x] Discover, canonicalize, and seal the selected current Git checkout root at admission; reject launch outside a valid checkout.
 - [ ] Exclude sibling and nested repositories, ignored paths, and `.git` internals from repository tools while allowing nonignored tracked and untracked files.
 - [ ] Implement workspace canonicalization.
 - [ ] Block `..` traversal.
@@ -135,6 +135,8 @@ policy failure cannot become ALLOW
 - [ ] Bound `read_file` to 64 KiB whole-file content with an explicit size-limit result.
 - [ ] Bound `search_code` to 200 matches, 32 KiB total output, 4 KiB per returned line, and 4 MiB per searched file; mark omitted matches and shortened lines.
 - [ ] Add adversarial filesystem tests.
+
+T059–T068 implement the native-addon build/load contract, checkout selection and sealed admission, Git membership candidate enumeration, and US1 fixtures. On 2026-10-01, [CI run 31](https://github.com/pminhtaiii/slop-loop/actions/runs/36857259445) for commit `cd2be96dfffcafe07f8cf07289595563c5020383` passed `pnpm native:build`, 23 workspace tests, and the 265-test source suite on both Ubuntu and Windows; application build and smoke passed on both, and Ubuntu also passed lint, formatting, and type checking. The local Windows source suite also passed 265 tests with a manually compiled Node-API addon. The standard `pnpm native:build` command remains unavailable on that particular host because Visual C++ Build Tools are absent, but its native build is verified on both CI hosts. This is a partial Phase 4 checkpoint, not the workspace-boundary exit gate. Real path facts, safe content opens, and model-visible repository executors remain absent.
 
 The current registry still caps `search_code` at 100 matches and the fake gateway uses a 32 KiB generic output cap. The planned 200-match schema and per-tool output contracts are not implemented.
 
