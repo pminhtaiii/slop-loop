@@ -1,6 +1,7 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createGitCheckout } from "./fixtures.js";
 
@@ -151,5 +152,69 @@ describe("effective checkout membership", () => {
     cleanup.push(() => closeWorkspace(selected.workspace));
     expect(isWorkspaceMember(selected.workspace, "ordinary/HEAD")).toBe(true);
     expect(isWorkspaceMember(selected.workspace, "ordinary/objects/item.txt")).toBe(true);
+  });
+
+  it("excludes an indexed path whose directory became an external symlink", async () => {
+    const fixture = createGitCheckout();
+    cleanup.push(() => fixture.cleanup());
+    fixture.write("alias/tracked.ts", "export const tracked = true;\n");
+    fixture.git("add", "alias/tracked.ts");
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "slop-loop-outside-"));
+    cleanup.push(() => fs.rmSync(outside, { recursive: true, force: true }));
+    fs.writeFileSync(path.join(outside, "tracked.ts"), "outside\n");
+    fs.rmSync(path.join(fixture.root, "alias"), { recursive: true });
+    fixture.symlink("alias", outside, "junction");
+    const { selectWorkspace, closeWorkspace } = await import("../../src/workspace/admission.js");
+    const { isWorkspaceMember } = await import("../../src/workspace/membership.js");
+    const selected = selectWorkspace(fixture.root);
+    expect(selected.kind).toBe("SELECTED");
+    if (selected.kind !== "SELECTED") return;
+    cleanup.push(() => closeWorkspace(selected.workspace));
+    expect(isWorkspaceMember(selected.workspace, "alias/tracked.ts")).toBe(false);
+  });
+
+  it("excludes an indexed path when a parent directory cannot be inspected", async () => {
+    const fixture = createGitCheckout();
+    cleanup.push(() => fixture.cleanup());
+    fixture.write("missing/tracked.ts", "export const tracked = true;\n");
+    fixture.git("add", "missing/tracked.ts");
+    fs.rmSync(path.join(fixture.root, "missing"), { recursive: true });
+    const { selectWorkspace, closeWorkspace } = await import("../../src/workspace/admission.js");
+    const { isWorkspaceMember } = await import("../../src/workspace/membership.js");
+    const selected = selectWorkspace(fixture.root);
+    expect(selected.kind).toBe("SELECTED");
+    if (selected.kind !== "SELECTED") return;
+    cleanup.push(() => closeWorkspace(selected.workspace));
+    expect(isWorkspaceMember(selected.workspace, "missing/tracked.ts")).toBe(false);
+  });
+
+  it("inspects a blocked nested prefix once per enumeration", async () => {
+    const fixture = createGitCheckout();
+    cleanup.push(() => fixture.cleanup());
+    fixture.write("nested/first.ts", "first\n");
+    fixture.write("nested/second.ts", "second\n");
+    fixture.git("add", "nested");
+    const nested = path.join(fixture.root, "nested");
+    fixture.git("-C", nested, "init", "-q");
+    const { selectWorkspace, closeWorkspace } = await import("../../src/workspace/admission.js");
+    const { listWorkspaceMembers } = await import("../../src/workspace/membership.js");
+    const selected = selectWorkspace(fixture.root);
+    expect(selected.kind).toBe("SELECTED");
+    if (selected.kind !== "SELECTED") return;
+    cleanup.push(() => closeWorkspace(selected.workspace));
+    const originalLstat = fs.lstatSync;
+    let inspections = 0;
+    const lstatSpy = vi.spyOn(fs, "lstatSync").mockImplementation((...args) => {
+      if (args[0] === nested) inspections += 1;
+      return originalLstat(...args);
+    });
+    try {
+      const members = listWorkspaceMembers(selected.workspace);
+      expect(members).not.toContain("nested/first.ts");
+      expect(members).not.toContain("nested/second.ts");
+      expect(inspections).toBe(1);
+    } finally {
+      lstatSpy.mockRestore();
+    }
   });
 });

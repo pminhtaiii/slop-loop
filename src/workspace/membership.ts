@@ -17,12 +17,26 @@ function nulNames(output: Buffer): string[] {
     .split("\0");
 }
 
-function hasNestedRepository(root: string, name: string): boolean {
+function hasNestedRepository(root: string, name: string, blockedPrefixes: Set<string>): boolean {
   const components = name.split("/");
   let directory = root;
   for (const component of components.slice(0, -1)) {
     directory = path.join(directory, component);
-    if (fs.existsSync(path.join(directory, ".git"))) return true;
+    if (blockedPrefixes.has(directory)) return true;
+    try {
+      const prefix = fs.lstatSync(directory);
+      if (prefix.isSymbolicLink() || !prefix.isDirectory()) {
+        blockedPrefixes.add(directory);
+        return true;
+      }
+    } catch {
+      blockedPrefixes.add(directory);
+      return true;
+    }
+    if (fs.existsSync(path.join(directory, ".git"))) {
+      blockedPrefixes.add(directory);
+      return true;
+    }
     if (
       fs.existsSync(path.join(directory, "HEAD")) &&
       fs.existsSync(path.join(directory, "objects")) &&
@@ -34,9 +48,11 @@ function hasNestedRepository(root: string, name: string): boolean {
             .toString("utf8")
             .trim() === "true"
         ) {
+          blockedPrefixes.add(directory);
           return true;
         }
       } catch {
+        blockedPrefixes.add(directory);
         return true;
       }
     }
@@ -63,14 +79,16 @@ export function listWorkspaceMembers(workspace: SelectedWorkspace): readonly str
   )) {
     names.add(name);
   }
+  const gitlinkNames = [...gitlinks];
+  const blockedPrefixes = new Set<string>();
   return Object.freeze(
     [...names]
       .filter(
         (name) =>
           name !== ".git" &&
           !name.split("/").includes(".git") &&
-          ![...gitlinks].some((gitlink) => name === gitlink || name.startsWith(`${gitlink}/`)) &&
-          !hasNestedRepository(workspace.root, name),
+          !gitlinkNames.some((gitlink) => name === gitlink || name.startsWith(`${gitlink}/`)) &&
+          !hasNestedRepository(workspace.root, name, blockedPrefixes),
       )
       .sort(),
   );

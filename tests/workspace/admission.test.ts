@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { admitTask, createTask } from "../../src/orchestration/task.js";
 import type { TaskAdmissionAuthority } from "../../src/orchestration/task.js";
+import { runTrustedGit } from "../../src/workspace/git.js";
 import { createGitCheckout } from "./fixtures.js";
 
 const cleanup: Array<() => void> = [];
@@ -13,6 +14,38 @@ afterEach(() => {
 });
 
 describe("trusted checkout selection and admission", () => {
+  it("discovers a fixture checkout with the restricted Git environment", () => {
+    const fixture = createGitCheckout();
+    cleanup.push(() => fixture.cleanup());
+    const gitValue = (option: string): string =>
+      runTrustedGit(fixture.root, ["rev-parse", option]).toString("utf8").trim();
+    expect(gitValue("--is-inside-work-tree"), "Git worktree discovery").toBe("true");
+    expect(gitValue("--is-bare-repository"), "Git bare-repository discovery").toBe("false");
+    expect(fs.realpathSync(gitValue("--show-toplevel")), "Git root discovery").toBe(
+      fs.realpathSync(fixture.root),
+    );
+    expect(fs.statSync(fs.realpathSync(gitValue("--absolute-git-dir"))).isDirectory()).toBe(true);
+  });
+
+  it("opens fixture directories with stable operating-system identities", () => {
+    const fixture = createGitCheckout();
+    cleanup.push(() => fixture.cleanup());
+    const root = fs.realpathSync(fixture.root);
+    const gitdir = fs.realpathSync(path.join(root, ".git"));
+    for (const directory of [root, gitdir]) {
+      const fd = fs.openSync(directory, "r");
+      try {
+        const held = fs.fstatSync(fd, { bigint: true });
+        const current = fs.statSync(directory, { bigint: true });
+        expect(held.isDirectory(), "opened directory type").toBe(true);
+        expect(held.dev, "directory device identity").toBe(current.dev);
+        expect(held.ino, "directory file identity").toBe(current.ino);
+      } finally {
+        fs.closeSync(fd);
+      }
+    }
+  });
+
   it("selects the same physical checkout from its root and a subdirectory", async () => {
     const fixture = createGitCheckout();
     cleanup.push(() => fixture.cleanup());
@@ -21,8 +54,8 @@ describe("trusted checkout selection and admission", () => {
     const { isWorkspaceMember } = await import("../../src/workspace/membership.js");
     const root = selectWorkspace(fixture.root);
     const child = selectWorkspace(path.join(fixture.root, "src"));
-    expect(root.kind).toBe("SELECTED");
-    expect(child.kind).toBe("SELECTED");
+    expect(root).toMatchObject({ kind: "SELECTED" });
+    expect(child).toMatchObject({ kind: "SELECTED" });
     if (root.kind !== "SELECTED" || child.kind !== "SELECTED") return;
     cleanup.push(
       () => closeWorkspace(root.workspace),
