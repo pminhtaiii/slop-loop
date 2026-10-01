@@ -37,6 +37,18 @@ function sameIdentity(first: Identity, second: Identity): boolean {
   return first.dev === second.dev && first.ino === second.ino;
 }
 
+function containsPhysicalDirectory(root: string, launch: string): boolean {
+  const rootIdentity = fs.statSync(root, { bigint: true });
+  if (!rootIdentity.isDirectory()) return false;
+  let current = launch;
+  while (true) {
+    if (sameIdentity(rootIdentity, fs.statSync(current, { bigint: true }))) return true;
+    const parent = path.dirname(current);
+    if (parent === current) return false;
+    current = parent;
+  }
+}
+
 function gitValue(cwd: string, option: string): string {
   const result = runTrustedGit(cwd, ["rev-parse", option]).toString("utf8");
   return result.replace(/\r?\n$/, "");
@@ -48,8 +60,7 @@ function discoverCheckout(launchDirectory: string): { root: string; gitdir: stri
   if (gitValue(launch, "--is-inside-work-tree") !== "true") throw new Error("Not a worktree");
   if (gitValue(launch, "--is-bare-repository") !== "false") throw new Error("Bare repository");
   const root = fs.realpathSync(gitValue(launch, "--show-toplevel"));
-  const relative = path.relative(root, launch);
-  if (relative.startsWith(`..${path.sep}`) || relative === ".." || path.isAbsolute(relative)) {
+  if (!containsPhysicalDirectory(root, launch)) {
     throw new Error("Launch path escapes checkout");
   }
   return { root, gitdir: fs.realpathSync(gitValue(launch, "--absolute-git-dir")) };

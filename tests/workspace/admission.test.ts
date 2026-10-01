@@ -13,6 +13,13 @@ afterEach(() => {
   while (cleanup.length > 0) cleanup.pop()?.();
 });
 
+function expectSamePhysicalDirectory(first: string, second: string): void {
+  const firstIdentity = fs.statSync(first, { bigint: true });
+  const secondIdentity = fs.statSync(second, { bigint: true });
+  expect(firstIdentity.dev).toBe(secondIdentity.dev);
+  expect(firstIdentity.ino).toBe(secondIdentity.ino);
+}
+
 describe("trusted checkout selection and admission", () => {
   it("discovers a fixture checkout with the restricted Git environment", () => {
     const fixture = createGitCheckout();
@@ -21,9 +28,7 @@ describe("trusted checkout selection and admission", () => {
       runTrustedGit(fixture.root, ["rev-parse", option]).toString("utf8").trim();
     expect(gitValue("--is-inside-work-tree"), "Git worktree discovery").toBe("true");
     expect(gitValue("--is-bare-repository"), "Git bare-repository discovery").toBe("false");
-    expect(fs.realpathSync(gitValue("--show-toplevel")), "Git root discovery").toBe(
-      fs.realpathSync(fixture.root),
-    );
+    expectSamePhysicalDirectory(gitValue("--show-toplevel"), fixture.root);
     expect(fs.statSync(fs.realpathSync(gitValue("--absolute-git-dir"))).isDirectory()).toBe(true);
   });
 
@@ -46,6 +51,43 @@ describe("trusted checkout selection and admission", () => {
     }
   });
 
+  it("accepts a physical checkout through a differently spelled directory alias", async () => {
+    const fixture = createGitCheckout();
+    cleanup.push(() => fixture.cleanup());
+    const aliasHome = fs.mkdtempSync(path.join(os.tmpdir(), "slop-loop-alias-"));
+    cleanup.push(() => {
+      const resolved = path.resolve(aliasHome);
+      if (path.dirname(resolved) !== path.resolve(os.tmpdir())) {
+        throw new Error("Alias cleanup escaped the temporary directory");
+      }
+      fs.rmSync(resolved, { recursive: true, force: true });
+    });
+    const alias = path.join(aliasHome, "checkout");
+    fs.symlinkSync(fixture.root, alias, "junction");
+    const launch = path.join(alias, "src");
+    expect(fs.statSync(alias, { bigint: true }).ino).toBe(
+      fs.statSync(fixture.root, { bigint: true }).ino,
+    );
+    const gitRoot = runTrustedGit(launch, ["rev-parse", "--show-toplevel"]).toString("utf8").trim();
+    expectSamePhysicalDirectory(gitRoot, fixture.root);
+    const originalRealpath = fs.realpathSync;
+    const realpathSpy = vi.spyOn(fs, "realpathSync").mockImplementation((...args) => {
+      if (args[0] === launch) return launch;
+      return originalRealpath(...args);
+    });
+    try {
+      const { selectWorkspace, closeWorkspace } = await import("../../src/workspace/admission.js");
+      const selected = selectWorkspace(launch);
+      expect(selected.kind).toBe("SELECTED");
+      if (selected.kind === "SELECTED") {
+        cleanup.push(() => closeWorkspace(selected.workspace));
+        expectSamePhysicalDirectory(selected.workspace.root, fixture.root);
+      }
+    } finally {
+      realpathSpy.mockRestore();
+    }
+  });
+
   it("selects the same physical checkout from its root and a subdirectory", async () => {
     const fixture = createGitCheckout();
     cleanup.push(() => fixture.cleanup());
@@ -61,7 +103,7 @@ describe("trusted checkout selection and admission", () => {
       () => closeWorkspace(root.workspace),
       () => closeWorkspace(child.workspace),
     );
-    expect(root.workspace.root).toBe(fs.realpathSync(fixture.root));
+    expectSamePhysicalDirectory(root.workspace.root, fixture.root);
     expect(child.workspace.root).toBe(root.workspace.root);
     expect(child.workspace.workspaceId).not.toBe("");
     expect(isWorkspaceMember(root.workspace, "src/tracked.ts")).toBe(true);
@@ -105,7 +147,7 @@ describe("trusted checkout selection and admission", () => {
       expect(selected.kind).toBe("SELECTED");
       if (selected.kind === "SELECTED") {
         cleanup.push(() => closeWorkspace(selected.workspace));
-        expect(selected.workspace.root).toBe(fs.realpathSync(fixture.root));
+        expectSamePhysicalDirectory(selected.workspace.root, fixture.root);
       }
     } finally {
       if (previous === undefined) delete process.env.GIT_DIR;
