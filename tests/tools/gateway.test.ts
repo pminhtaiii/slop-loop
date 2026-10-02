@@ -32,6 +32,7 @@ describe("ToolGateway", () => {
         factsFor: () => ({
           workspaceId: TEST_WORKSPACE_ID,
           operation: "read" as const,
+          requestedPath: "src/index.ts",
           canonicalPath: "src/index.ts",
           status: "ALLOWED" as const,
         }),
@@ -78,6 +79,7 @@ describe("ToolGateway", () => {
           factsFor: () => ({
             workspaceId: TEST_WORKSPACE_ID,
             operation: "read" as const,
+            requestedPath: "src/index.ts",
             canonicalPath: "src/index.ts",
             status: "ALLOWED" as const,
           }),
@@ -113,6 +115,7 @@ describe("ToolGateway", () => {
         factsFor: () => ({
           workspaceId: TEST_WORKSPACE_ID,
           operation: "read" as const,
+          requestedPath: "src/index.ts",
           canonicalPath: "src/index.ts",
           status: "ALLOWED" as const,
         }),
@@ -152,6 +155,7 @@ describe("ToolGateway", () => {
         factsFor: () => ({
           workspaceId: TEST_WORKSPACE_ID,
           operation: "read" as const,
+          requestedPath: "src/index.ts",
           canonicalPath: "src/index.ts",
           status: "ALLOWED" as const,
         }),
@@ -196,6 +200,7 @@ describe("ToolGateway", () => {
         factsFor: () => ({
           workspaceId: TEST_WORKSPACE_ID,
           operation: "read" as const,
+          requestedPath: "src/index.ts",
           canonicalPath: "src/index.ts",
           status: "ALLOWED" as const,
         }),
@@ -239,6 +244,7 @@ describe("ToolGateway", () => {
         factsFor: () => ({
           workspaceId: TEST_WORKSPACE_ID,
           operation: "read" as const,
+          requestedPath: "src/index.ts",
           canonicalPath: "src/index.ts",
           status: "ALLOWED" as const,
         }),
@@ -288,6 +294,7 @@ describe("ToolGateway", () => {
         factsFor: () => ({
           workspaceId: TEST_WORKSPACE_ID,
           operation: "read" as const,
+          requestedPath: "src/index.ts",
           canonicalPath: "src/index.ts",
           status: "ALLOWED" as const,
         }),
@@ -315,6 +322,7 @@ describe("ToolGateway", () => {
         factsFor: () => ({
           workspaceId: TEST_WORKSPACE_ID,
           operation: "read" as const,
+          requestedPath: "src/index.ts",
           canonicalPath: "src/index.ts",
           status: "ALLOWED" as const,
         }),
@@ -343,6 +351,7 @@ describe("ToolGateway", () => {
         factsFor: () => ({
           workspaceId: TEST_WORKSPACE_ID,
           operation: "read" as const,
+          requestedPath: "src/index.ts",
           canonicalPath: "src/index.ts",
           status: "ALLOWED" as const,
         }),
@@ -373,6 +382,7 @@ describe("ToolGateway", () => {
         factsFor: () => ({
           workspaceId: TEST_WORKSPACE_ID,
           operation: "read" as const,
+          requestedPath: "src/index.ts",
           canonicalPath: "src/index.ts",
           status: "ALLOWED" as const,
         }),
@@ -412,6 +422,7 @@ describe("ToolGateway", () => {
         factsFor: () => ({
           workspaceId: TEST_WORKSPACE_ID,
           operation: "read" as const,
+          requestedPath: "src/index.ts",
           canonicalPath: "src/index.ts",
           status: "ALLOWED" as const,
         }),
@@ -520,6 +531,7 @@ describe("ToolGateway", () => {
         factsFor: () => ({
           workspaceId: TEST_WORKSPACE_ID,
           operation: "read" as const,
+          requestedPath: "src/index.ts",
           canonicalPath: "",
           status: "ALLOWED" as const,
         }),
@@ -552,6 +564,7 @@ describe("ToolGateway", () => {
         factsFor: () => ({
           workspaceId: TEST_WORKSPACE_ID,
           operation: "read" as const,
+          requestedPath: "src/index.ts",
           canonicalPath: "src/index.ts",
           status: "UNKNOWN" as never,
         }),
@@ -581,6 +594,7 @@ describe("ToolGateway", () => {
         factsFor: () => ({
           workspaceId: TEST_WORKSPACE_ID,
           operation: "update" as const,
+          requestedPath: "src/index.ts",
           canonicalPath: "src/index.ts",
           status: "ALLOWED" as const,
         }),
@@ -671,6 +685,7 @@ describe("ToolGateway", () => {
           return {
             workspaceId: TEST_WORKSPACE_ID,
             operation: "read" as const,
+            requestedPath: "src/index.ts",
             canonicalPath: "src/index.ts",
             status: factRequests === 1 ? ("ALLOWED" as const) : ("FORBIDDEN" as const),
           };
@@ -712,12 +727,14 @@ describe("ToolGateway", () => {
           {
             workspaceId: TEST_WORKSPACE_ID,
             operation: "update" as const,
+            requestedPath: "src/index.ts",
             canonicalPath: "src/index.ts",
             status: "ALLOWED" as const,
           },
           {
             workspaceId: TEST_WORKSPACE_ID,
             operation: "create" as const,
+            requestedPath: "src/new.ts",
             canonicalPath: "src/new.ts",
             status: "ALLOWED" as const,
           },
@@ -778,6 +795,7 @@ describe("ToolGateway", () => {
         factsFor: () => ({
           workspaceId: TEST_WORKSPACE_ID,
           operation: "update" as const,
+          requestedPath: "src/index.ts",
           canonicalPath: "src/index.ts",
           status: "ALLOWED" as const,
         }),

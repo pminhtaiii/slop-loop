@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -21,6 +22,24 @@ function expectSamePhysicalDirectory(first: string, second: string): void {
 }
 
 describe("trusted checkout selection and admission", () => {
+  it("rejects admission when native relative-open enforcement is unavailable", async () => {
+    const fixture = createGitCheckout();
+    cleanup.push(() => fixture.cleanup());
+    const require = createRequire(import.meta.url);
+    const native = require("../../native/workspace/build/Release/workspace_boundary.node") as {
+      openRelative: (...arguments_: unknown[]) => number;
+    };
+    const original = native.openRelative;
+    native.openRelative = () => {
+      throw new Error("openat2 unavailable");
+    };
+    try {
+      const { selectWorkspace } = await import("../../src/workspace/admission.js");
+      expect(selectWorkspace(fixture.root)).toMatchObject({ kind: "REJECTED" });
+    } finally {
+      native.openRelative = original;
+    }
+  });
   it("discovers a fixture checkout with the restricted Git environment", () => {
     const fixture = createGitCheckout();
     cleanup.push(() => fixture.cleanup());

@@ -14,6 +14,8 @@ The MVP starts as one private, single-package, single-process application, desig
 
 The implementation baseline is Node.js 24 LTS, pnpm with a pinned version and lockfile, native ESM, strict TypeScript, tsc compilation to dist/, Zod 4, Pino, Vitest, type-aware ESLint, and Prettier.
 
+Phase 4 currently adds an in-process Node-API workspace addon and a TypeScript `WorkspaceBoundary` for trusted checkout identity, native held-root opens, and invocation-scoped read-path facts. The gateway checks exact requested path coverage before read-tool dispatch. This is a partial implementation checkpoint; complete cross-platform symlink and mount enforcement, mutation preflight, retrieval executors, and the Phase 4 exit gate remain open. `context/progress-checker.md` records the verified status.
+
 Phase 0 source files are config.ts, logging.ts, and index.ts; focused tests cover configuration and logging, while smoke is separate from pnpm test. pnpm build produces dist/ and pnpm smoke executes node dist/index.js. SLOP_LOOP_LOG_LEVEL defaults to info; configuration is injectable, strict, unknown-prefixed names are rejected, and returned config is frozen. Operational logs remain separate from canonical audit evidence.
 
 CI runs the full lint, format:check, typecheck, test, build, and smoke sequence on Ubuntu; Windows runs install, test, build, and smoke.

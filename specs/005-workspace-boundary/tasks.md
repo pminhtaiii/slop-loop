@@ -44,13 +44,13 @@
 - [ ] T069 [P] [US2] Write failing relative-path, secret-alias, and symlink policy tests in tests/workspace/path-policy.test.ts
 - [ ] T070 [P] [US2] Write failing native open, hard-link, nonregular, cycle, and eligible-to-outside/ignored/secret swap tests in tests/workspace/native-boundary.test.ts
 - [ ] T071 [P] [US2] Write failing Linux bind-mount and Windows junction/reparse integration tests, with an explicit unavailable-fixture outcome, in tests/workspace/mount-boundary.test.ts
-- [ ] T072 [P] [US2] Write failing gateway tests for explicit paths, implicit roots, search scope, and missing/duplicate/extra/wrong-alias facts in tests/tools/workspace-gateway.test.ts
-- [ ] T073 [US2] Implement strict relative-path parsing plus requested-alias and resolved-target deny checks in src/workspace/path-policy.ts
+- [X] T072 [P] [US2] Write failing gateway tests for explicit paths, implicit roots, search scope, and missing/duplicate/extra/wrong-alias facts in tests/tools/workspace-gateway.test.ts
+- [X] T073 [US2] Implement strict relative-path parsing plus requested-alias and resolved-target deny checks in src/workspace/path-policy.ts
 - [ ] T074 [US2] Implement root-held Linux openat2 read and directory traversal, including safe in-root symlink resolution and no nested-mount crossing, in native/workspace/linux.cc
 - [ ] T075 [P] [US2] Implement root-held Windows relative read and directory traversal with symlink handling and junction/reparse denial in native/workspace/windows.cc
 - [ ] T076 [US2] Implement common Node-API binding, opened-handle identity and link/type checks, bounded traversal, and handle cleanup in native/workspace/addon.cc
 - [ ] T077 [US2] Recheck held-root/gitdir identity and implement current Git/path/native eligibility with opened-target identity matching in src/workspace/boundary.ts
-- [ ] T078 [US2] Add requestedPath facts and exact request-to-fact coverage for paths, implicit roots, and search scope before dispatch in src/policy/engine.ts and src/tools/gateway.ts
+- [X] T078 [US2] Add requestedPath facts and exact request-to-fact coverage for paths, implicit roots, and search scope before dispatch in src/policy/engine.ts and src/tools/gateway.ts
 
 **Checkpoint**: US2 tests pass on Windows and Ubuntu; any unavailable critical mount/reparse fixture leaves the exit gate open.
 

@@ -38,6 +38,7 @@ describe("PolicyEngine", () => {
         path: {
           workspaceId: "workspace-1",
           operation: "read",
+          requestedPath: "src/index.ts",
           canonicalPath: "src/index.ts",
           status: "ALLOWED",
         },
@@ -72,6 +73,7 @@ describe("PolicyEngine", () => {
           path: {
             workspaceId: "workspace-1",
             operation: "read",
+            requestedPath: "src/index.ts",
             canonicalPath: "src/index.ts",
             status: "ALLOWED",
           },
@@ -139,6 +141,7 @@ describe("PolicyEngine", () => {
           path: {
             workspaceId: "workspace-1",
             operation: "read",
+            requestedPath: "src/index.ts",
             canonicalPath: "src/index.ts",
             status: "ALLOWED",
           },
@@ -199,6 +202,7 @@ describe("PolicyEngine", () => {
           path: {
             workspaceId: "workspace-1",
             operation: "read",
+            requestedPath: ".env",
             canonicalPath: ".env",
             status: "FORBIDDEN",
           },
@@ -221,6 +225,7 @@ describe("PolicyEngine", () => {
     const path = {
       workspaceId: "workspace-1",
       operation: "update" as const,
+      requestedPath: "src/index.ts",
       canonicalPath: "src/index.ts",
       status: "ALLOWED" as const,
     };
@@ -289,6 +294,7 @@ describe("PolicyEngine", () => {
           path: {
             workspaceId: "workspace-1",
             operation: "update",
+            requestedPath: "src/index.ts",
             canonicalPath: "src/index.ts",
             status: "ALLOWED",
           },

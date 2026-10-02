@@ -35,6 +35,8 @@ No library feature may be used to bypass project policy.
 
 The selected Phase 0 implementation and development stack is Node.js 24 LTS, native ESM TypeScript, pnpm, Zod 4, Pino, Vitest, type-aware ESLint, Prettier, and tsc. There is no bundler. Selection does not indicate implementation completion; `context/progress-checker.md` is the source of truth. pytest, Ruff, and mypy are trusted verification tools in the first Python target repositories, not Slop Loop dependencies. Docker, process adapters, Git, provider HTTP, audit persistence, and session behavior are future product concerns.
 
+Phase 4 uses the pinned `node-gyp` development dependency to build one in-process Node-API addon for workspace filesystem enforcement. The addon must be built with `pnpm native:build` on each supported host before native-boundary evidence is accepted. A manually compiled MinGW addon is useful for local Windows diagnosis but does not satisfy the pinned native-build gate or replace Ubuntu and Windows CI verification.
+
 ---
 
 ## Node.js Runtime and pnpm
