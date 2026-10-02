@@ -41,15 +41,15 @@
 
 **Independent test**: Adversarial path, link, mount, secret, file-type, swap, and missing-fact fixtures never expose forbidden content or reach the fake executor.
 
-- [ ] T069 [P] [US2] Write failing relative-path, secret-alias, and symlink policy tests in tests/workspace/path-policy.test.ts
-- [ ] T070 [P] [US2] Write failing native open, hard-link, nonregular, cycle, and eligible-to-outside/ignored/secret swap tests in tests/workspace/native-boundary.test.ts
-- [ ] T071 [P] [US2] Write failing Linux bind-mount and Windows junction/reparse integration tests, with an explicit unavailable-fixture outcome, in tests/workspace/mount-boundary.test.ts
+- [X] T069 [P] [US2] Write failing relative-path, secret-alias, and symlink policy tests in tests/workspace/path-policy.test.ts
+- [X] T070 [P] [US2] Write failing native open, hard-link, nonregular, cycle, and eligible-to-outside/ignored/secret swap tests in tests/workspace/native-boundary.test.ts
+- [X] T071 [P] [US2] Write failing Linux bind-mount and Windows junction/reparse integration tests, with an explicit unavailable-fixture outcome, in tests/workspace/mount-boundary.test.ts
 - [X] T072 [P] [US2] Write failing gateway tests for explicit paths, implicit roots, search scope, and missing/duplicate/extra/wrong-alias facts in tests/tools/workspace-gateway.test.ts
 - [X] T073 [US2] Implement strict relative-path parsing plus requested-alias and resolved-target deny checks in src/workspace/path-policy.ts
-- [ ] T074 [US2] Implement root-held Linux openat2 read and directory traversal, including safe in-root symlink resolution and no nested-mount crossing, in native/workspace/linux.cc
-- [ ] T075 [P] [US2] Implement root-held Windows relative read and directory traversal with symlink handling and junction/reparse denial in native/workspace/windows.cc
-- [ ] T076 [US2] Implement common Node-API binding, opened-handle identity and link/type checks, bounded traversal, and handle cleanup in native/workspace/addon.cc
-- [ ] T077 [US2] Recheck held-root/gitdir identity and implement current Git/path/native eligibility with opened-target identity matching in src/workspace/boundary.ts
+- [X] T074 [US2] Implement root-held Linux openat2 read and directory traversal, including safe in-root symlink resolution and no nested-mount crossing, in native/workspace/linux.cc
+- [X] T075 [P] [US2] Implement root-held Windows relative read and directory traversal with symlink handling and junction/reparse denial in native/workspace/windows.cc
+- [X] T076 [US2] Implement common Node-API binding, opened-handle identity and link/type checks, bounded traversal, and handle cleanup in native/workspace/addon.cc
+- [X] T077 [US2] Recheck held-root/gitdir identity and implement current Git/path/native eligibility with opened-target identity matching in src/workspace/boundary.ts
 - [X] T078 [US2] Add requestedPath facts and exact request-to-fact coverage for paths, implicit roots, and search scope before dispatch in src/policy/engine.ts and src/tools/gateway.ts
 
 **Checkpoint**: US2 tests pass on Windows and Ubuntu; any unavailable critical mount/reparse fixture leaves the exit gate open.
@@ -91,3 +91,7 @@
 ## Implementation strategy
 
 Complete setup and foundational work, then US1 as the first testable slice. Finish US2's fail-closed OS boundary before enabling any later file adapter. Finish US3's bounded contracts and both-host gate before marking Phase 4 verified. Phase 6 owns model-visible retrieval, Phase 7 owns mutation grants and point-of-use writes, and Phase 9 owns Git evidence and branch-switch detection.
+
+## Phase 7: Convergence
+
+- [ ] T088 Provide a Windows host that can create real file and directory symlink fixtures and a Linux host that can run or explicitly report unavailable bind-mount fixtures; run the T069–T078 adversarial tests on both, record exact passing/skipped evidence, and keep the US2 checkpoint open until critical fixtures pass per SC-001 and SC-003 (partial)

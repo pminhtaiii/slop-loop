@@ -4,7 +4,11 @@ import path from "node:path";
 import type { TaskCapabilityCeiling, TrustedPathFacts } from "../policy/engine.js";
 import type { ValidatedToolCall } from "../tools/registry.js";
 import { nativeRootForWorkspace, workspaceForId } from "./admission.js";
-import { listWorkspaceMembers } from "./membership.js";
+import {
+  isIgnoredWorkspacePath,
+  isNestedWorkspacePath,
+  listWorkspaceMembers,
+} from "./membership.js";
 import {
   closeNativeDescriptor,
   listNativeDirectory,
@@ -17,6 +21,7 @@ import { isDeniedRepositoryPath, parseRepositoryPath } from "./path-policy.js";
 import type {
   OpenedDirectoryTarget,
   OpenedRegularTarget,
+  MutationPathInspection,
   SelectedWorkspace,
   WorkspaceAccessResult,
 } from "./types.js";
@@ -50,14 +55,44 @@ function requestedPathFor(
 
 type InspectedTarget = { fd: number; canonicalPath: string; identity: string };
 
-function inspect(
+function isMissing(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+}
+
+function mutationSnapshot(
+  root: string,
+  normalized: string,
+  operation: "update" | "create",
+): readonly string[] | null {
+  const components = normalized.split("/");
+  const identities: string[] = [];
+  for (let index = 0; index < components.length; index += 1) {
+    const current = path.join(root, ...components.slice(0, index + 1));
+    const final = index + 1 === components.length;
+    try {
+      const stat = fs.lstatSync(current, { bigint: true });
+      if (
+        stat.isSymbolicLink() ||
+        (final && operation === "create") ||
+        (final && (!stat.isFile() || stat.nlink !== 1n)) ||
+        (!final && !stat.isDirectory())
+      )
+        return null;
+      identities.push(`${stat.dev}:${stat.ino}:${stat.mode}:${stat.nlink}`);
+    } catch (error) {
+      if (isMissing(error)) return final && operation === "create" ? identities : null;
+      throw error;
+    }
+  }
+  return identities;
+}
+
+function eligibleAlias(
   workspace: SelectedWorkspace,
-  requested: string,
+  normalized: string,
   kind: "file" | "directory",
-): InspectedTarget | null {
-  const normalized = parseRepositoryPath(requested);
-  if (normalized === null || isDeniedRepositoryPath(normalized)) return null;
-  const members = listWorkspaceMembers(workspace);
+  members: readonly string[],
+): boolean {
   let aliasEligible =
     kind === "file"
       ? members.includes(normalized)
@@ -86,7 +121,18 @@ function inspect(
       }
     }
   }
-  if (!aliasEligible) return null;
+  return aliasEligible;
+}
+
+function inspect(
+  workspace: SelectedWorkspace,
+  requested: string,
+  kind: "file" | "directory",
+): InspectedTarget | null {
+  const normalized = parseRepositoryPath(requested);
+  if (normalized === null || isDeniedRepositoryPath(normalized)) return null;
+  const members = listWorkspaceMembers(workspace);
+  if (!eligibleAlias(workspace, normalized, kind, members)) return null;
   const nativeRoot = nativeRootForWorkspace(workspace);
   if (nativeRoot === null) throw new Error("Workspace identity unavailable");
   let fd: number;
@@ -113,13 +159,20 @@ function inspect(
       (kind === "file" && opened.links !== 1)
     )
       return null;
+    const currentMembers = listWorkspaceMembers(workspace);
+    if (!eligibleAlias(workspace, normalized, kind, currentMembers)) return null;
+    if (nativeRootForWorkspace(workspace) !== nativeRoot) return null;
     const member =
       kind === "file"
-        ? members.includes(canonicalPath)
-        : canonicalPath === "." || members.some((name) => name.startsWith(`${canonicalPath}/`));
+        ? currentMembers.includes(canonicalPath)
+        : canonicalPath === "." ||
+          currentMembers.some((name) => name.startsWith(`${canonicalPath}/`));
     if (!member) return null;
     const atPath = fs.statSync(path.join(workspace.root, canonicalPath), { bigint: true });
     if (opened.device !== atPath.dev.toString() || opened.inode !== atPath.ino.toString())
+      return null;
+    const atAlias = fs.statSync(path.join(workspace.root, normalized), { bigint: true });
+    if (opened.device !== atAlias.dev.toString() || opened.inode !== atAlias.ino.toString())
       return null;
     retained = true;
     return { fd, canonicalPath, identity: `${opened.device}:${opened.inode}` };
@@ -143,6 +196,93 @@ function inspectAndClose(
 }
 
 export class WorkspaceBoundary {
+  inspectMutationPath(
+    workspaceId: string,
+    requestedPath: string,
+    operation: "update" | "create",
+  ): MutationPathInspection {
+    const workspace = workspaceForId(workspaceId);
+    if (workspace === null) return { kind: "UNAVAILABLE", reason: "IDENTITY_CHANGED" };
+    const normalized = parseRepositoryPath(requestedPath);
+    if (
+      (operation !== "update" && operation !== "create") ||
+      normalized === null ||
+      normalized === "." ||
+      isDeniedRepositoryPath(normalized)
+    )
+      return { kind: "FORBIDDEN", reason: "PATH_DENIED" };
+    let parentFd: number | undefined;
+    let targetFd: number | undefined;
+    try {
+      const rootFd = nativeRootForWorkspace(workspace);
+      if (rootFd === null) return { kind: "UNAVAILABLE", reason: "IDENTITY_CHANGED" };
+      const parentPath = normalized.split("/").slice(0, -1).join("/") || ".";
+      parentFd = openNativeTarget(rootFd, parentPath, "directory");
+      const parent = nativeTargetIdentity(parentFd);
+      if (canonicalRelativePath(workspace.root, nativeTargetPath(parentFd)) !== parentPath)
+        return { kind: "FORBIDDEN", reason: "TARGET_DENIED" };
+      let targetIdentity: string | null = null;
+      if (operation === "update") {
+        targetFd = openNativeTarget(rootFd, normalized, "file");
+        const target = nativeTargetIdentity(targetFd);
+        if (canonicalRelativePath(workspace.root, nativeTargetPath(targetFd)) !== normalized)
+          return { kind: "FORBIDDEN", reason: "TARGET_DENIED" };
+        targetIdentity = `${target.device}:${target.inode}`;
+      }
+      const before = mutationSnapshot(workspace.root, normalized, operation);
+      if (
+        before === null ||
+        isNestedWorkspacePath(workspace, normalized) ||
+        isIgnoredWorkspacePath(workspace, normalized)
+      )
+        return { kind: "FORBIDDEN", reason: "TARGET_DENIED" };
+      if (operation === "update" && !listWorkspaceMembers(workspace).includes(normalized))
+        return { kind: "FORBIDDEN", reason: "TARGET_DENIED" };
+      const after = mutationSnapshot(workspace.root, normalized, operation);
+      if (nativeRootForWorkspace(workspace) !== rootFd)
+        return { kind: "UNAVAILABLE", reason: "IDENTITY_CHANGED" };
+      if (
+        after === null ||
+        before.length !== after.length ||
+        before.some((identity, index) => identity !== after[index]) ||
+        (operation === "update" && !listWorkspaceMembers(workspace).includes(normalized)) ||
+        isIgnoredWorkspacePath(workspace, normalized) ||
+        isNestedWorkspacePath(workspace, normalized)
+      )
+        return { kind: "FORBIDDEN", reason: "TARGET_DENIED" };
+      const parentAtPath = fs.statSync(path.join(workspace.root, parentPath), { bigint: true });
+      if (
+        parent.device !== parentAtPath.dev.toString() ||
+        parent.inode !== parentAtPath.ino.toString()
+      )
+        return { kind: "FORBIDDEN", reason: "TARGET_DENIED" };
+      if (targetFd !== undefined) {
+        const targetAtPath = fs.statSync(path.join(workspace.root, normalized), { bigint: true });
+        if (targetIdentity !== `${targetAtPath.dev}:${targetAtPath.ino}`)
+          return { kind: "FORBIDDEN", reason: "TARGET_DENIED" };
+      }
+      return {
+        kind: "INSPECTED",
+        canonicalPath: normalized,
+        operation,
+        parentIdentity: `${parent.device}:${parent.inode}`,
+        targetIdentity,
+      };
+    } catch (error) {
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "WORKSPACE_OPEN_DENIED"
+      )
+        return { kind: "FORBIDDEN", reason: "TARGET_DENIED" };
+      return { kind: "UNAVAILABLE", reason: "INSPECTION_FAILED" };
+    } finally {
+      if (targetFd !== undefined) closeNativeDescriptor(targetFd);
+      if (parentFd !== undefined) closeNativeDescriptor(parentFd);
+    }
+  }
+
   factsFor(call: ValidatedToolCall, ceiling: TaskCapabilityCeiling): readonly TrustedPathFacts[] {
     const workspace = workspaceForId(ceiling.workspaceId);
     if (workspace === null) throw new Error("Workspace identity unavailable");

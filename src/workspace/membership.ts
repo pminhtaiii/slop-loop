@@ -17,7 +17,24 @@ function nulNames(output: Buffer): string[] {
     .split("\0");
 }
 
-function hasNestedRepository(root: string, name: string, blockedPrefixes: Set<string>): boolean {
+function existsForMembership(name: string, strict: boolean): boolean {
+  if (!strict) return fs.existsSync(name);
+  try {
+    fs.lstatSync(name);
+    return true;
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT")
+      return false;
+    throw error;
+  }
+}
+
+function hasNestedRepository(
+  root: string,
+  name: string,
+  blockedPrefixes: Set<string>,
+  strict = false,
+): boolean {
   const components = name.split("/");
   let directory = root;
   for (const component of components.slice(0, -1)) {
@@ -29,18 +46,19 @@ function hasNestedRepository(root: string, name: string, blockedPrefixes: Set<st
         blockedPrefixes.add(directory);
         return true;
       }
-    } catch {
+    } catch (error) {
+      if (strict) throw error;
       blockedPrefixes.add(directory);
       return true;
     }
-    if (fs.existsSync(path.join(directory, ".git"))) {
+    if (existsForMembership(path.join(directory, ".git"), strict)) {
       blockedPrefixes.add(directory);
       return true;
     }
     if (
-      fs.existsSync(path.join(directory, "HEAD")) &&
-      fs.existsSync(path.join(directory, "objects")) &&
-      fs.existsSync(path.join(directory, "refs"))
+      existsForMembership(path.join(directory, "HEAD"), strict) &&
+      existsForMembership(path.join(directory, "objects"), strict) &&
+      existsForMembership(path.join(directory, "refs"), strict)
     ) {
       try {
         if (
@@ -51,7 +69,8 @@ function hasNestedRepository(root: string, name: string, blockedPrefixes: Set<st
           blockedPrefixes.add(directory);
           return true;
         }
-      } catch {
+      } catch (error) {
+        if (strict) throw error;
         blockedPrefixes.add(directory);
         return true;
       }
@@ -96,4 +115,36 @@ export function listWorkspaceMembers(workspace: SelectedWorkspace): readonly str
 
 export function isWorkspaceMember(workspace: SelectedWorkspace, requestedPath: string): boolean {
   return listWorkspaceMembers(workspace).includes(requestedPath);
+}
+
+/** Reject an ancestor that is another repository before planning a new file. */
+export function isNestedWorkspacePath(
+  workspace: SelectedWorkspace,
+  requestedPath: string,
+): boolean {
+  if (!verifyWorkspace(workspace)) throw new Error("Workspace identity unavailable");
+  return hasNestedRepository(workspace.root, requestedPath, new Set(), true);
+}
+
+/** Git applies ignore rules to prospective create paths as well as existing files. */
+export function isIgnoredWorkspacePath(
+  workspace: SelectedWorkspace,
+  requestedPath: string,
+): boolean {
+  if (!verifyWorkspace(workspace)) throw new Error("Workspace identity unavailable");
+  try {
+    runTrustedGit(workspace.root, [
+      "-C",
+      workspace.root,
+      "check-ignore",
+      "-q",
+      "--",
+      requestedPath,
+    ]);
+    return true;
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "status" in error && error.status === 1)
+      return false;
+    throw error;
+  }
 }

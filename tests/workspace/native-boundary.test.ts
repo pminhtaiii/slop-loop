@@ -1,7 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { selectWorkspace, closeWorkspace } from "../../src/workspace/admission.js";
+import { WorkspaceBoundary } from "../../src/workspace/boundary.js";
 import {
   closeNativeDescriptor,
   listNativeDirectory,
@@ -28,6 +31,26 @@ describe("native workspace open", () => {
   });
 
   it.skipIf(!symlinkFixtureAvailable("file"))(
+    "opens relative and absolute aliases whose targets remain inside the held root",
+    () => {
+      const fixture = createGitCheckout();
+      cleanup.push(() => fixture.cleanup());
+      fixture.symlink("relative.ts", "src/tracked.ts");
+      fixture.symlink("absolute.ts", path.join(fixture.root, "src/tracked.ts"));
+      const root = openNativeRoot(fixture.root);
+      cleanup.push(() => closeNativeDescriptor(root));
+      for (const alias of ["relative.ts", "absolute.ts"]) {
+        const fd = openNativeTarget(root, alias, "file");
+        try {
+          expect(readNativeTarget(fd, 128).toString("utf8")).toContain("tracked");
+        } finally {
+          closeNativeDescriptor(fd);
+        }
+      }
+    },
+  );
+
+  it.skipIf(!symlinkFixtureAvailable("file"))(
     "rejects escape through a symlink even after an eligible alias is swapped",
     () => {
       const fixture = createGitCheckout();
@@ -47,6 +70,49 @@ describe("native workspace open", () => {
     },
   );
 
+  it.skipIf(!symlinkFixtureAvailable("file"))(
+    "stops a held read after its alias changes to ignored or secret content",
+    () => {
+      const fixture = createGitCheckout();
+      cleanup.push(() => fixture.cleanup());
+      fixture.writeDeniedPaths();
+      fixture.write(".gitignore", "*.log\n");
+      fixture.write("ignored.log", "ignored\n");
+      fixture.symlink("alias.ts", "src/tracked.ts");
+      const selected = selectWorkspace(fixture.root);
+      expect(selected.kind).toBe("SELECTED");
+      if (selected.kind !== "SELECTED") return;
+      cleanup.push(() => closeWorkspace(selected.workspace));
+      const boundary = new WorkspaceBoundary();
+      for (const target of ["ignored.log", ".env"]) {
+        const opened = boundary.openRegularRead(selected.workspace.workspaceId, "alias.ts");
+        expect(opened.kind).toBe("OPENED");
+        if (opened.kind !== "OPENED") return;
+        try {
+          fs.rmSync(path.join(fixture.root, "alias.ts"));
+          fixture.symlink("alias.ts", target);
+          expect(() => opened.target.read(128)).toThrow("Workspace target changed");
+        } finally {
+          opened.target.close();
+          fs.rmSync(path.join(fixture.root, "alias.ts"));
+          fixture.symlink("alias.ts", "src/tracked.ts");
+        }
+      }
+    },
+  );
+
+  it.skipIf(!symlinkFixtureAvailable("file"))(
+    "does not collapse an uninspected symlink target component before opening",
+    () => {
+      const fixture = createGitCheckout();
+      cleanup.push(() => fixture.cleanup());
+      fixture.symlink("alias.ts", "missing/../src/tracked.ts");
+      const root = openNativeRoot(fixture.root);
+      cleanup.push(() => closeNativeDescriptor(root));
+      expect(() => openNativeTarget(root, "alias.ts", "file")).toThrow();
+    },
+  );
+
   it("rejects traversal independently of TypeScript validation", () => {
     const fixture = createGitCheckout();
     cleanup.push(() => fixture.cleanup());
@@ -56,6 +122,39 @@ describe("native workspace open", () => {
     expect(() => openNativeTarget(rootFd, ".git/config", "file")).toThrow();
     expect(() => openNativeTarget(rootFd, ".GIT/config", "file")).toThrow();
     expect(() => openNativeTarget(rootFd, "src/tracked.ts:stream", "file")).toThrow();
+  });
+
+  it("rejects a hard-linked target and a directory requested as a regular file", () => {
+    const fixture = createGitCheckout();
+    cleanup.push(() => fixture.cleanup());
+    fs.linkSync(path.join(fixture.root, "src/tracked.ts"), path.join(fixture.root, "hard.ts"));
+    const root = openNativeRoot(fixture.root);
+    cleanup.push(() => closeNativeDescriptor(root));
+    expect(() => openNativeTarget(root, "hard.ts", "file")).toThrow();
+    expect(() => openNativeTarget(root, "src", "file")).toThrow();
+  });
+
+  it.skipIf(process.platform !== "linux")("rejects a Linux FIFO without blocking", (context) => {
+    const fixture = createGitCheckout();
+    cleanup.push(() => fixture.cleanup());
+    try {
+      execFileSync("mkfifo", [path.join(fixture.root, "pipe")], { timeout: 5_000 });
+    } catch {
+      context.skip("UNAVAILABLE: mkfifo fixture could not be created");
+      return;
+    }
+    const root = openNativeRoot(fixture.root);
+    cleanup.push(() => closeNativeDescriptor(root));
+    expect(() => openNativeTarget(root, "pipe", "file")).toThrow();
+  });
+
+  it.skipIf(!symlinkFixtureAvailable("dir"))("rejects a directory symlink cycle", () => {
+    const fixture = createGitCheckout();
+    cleanup.push(() => fixture.cleanup());
+    fixture.symlink("src/cycle", "../src/cycle", "dir");
+    const root = openNativeRoot(fixture.root);
+    cleanup.push(() => closeNativeDescriptor(root));
+    expect(() => openNativeTarget(root, "src/cycle/tracked.ts", "file")).toThrow();
   });
 
   it("enumerates from an opened directory with a fixed entry limit", () => {

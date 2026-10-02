@@ -13,6 +13,67 @@ afterEach(() => {
 });
 
 describe("real workspace facts", () => {
+  it("preflights update and exclusive create with current parent and target identities", () => {
+    const fixture = createGitCheckout();
+    cleanup.push(() => fixture.cleanup());
+    const selected = selectWorkspace(fixture.root);
+    expect(selected.kind).toBe("SELECTED");
+    if (selected.kind !== "SELECTED") return;
+    cleanup.push(() => closeWorkspace(selected.workspace));
+    const boundary = new WorkspaceBoundary();
+    expect(
+      boundary.inspectMutationPath(selected.workspace.workspaceId, "src/tracked.ts", "update"),
+    ).toMatchObject({ kind: "INSPECTED", canonicalPath: "src/tracked.ts", operation: "update" });
+    expect(
+      boundary.inspectMutationPath(selected.workspace.workspaceId, "new.ts", "create"),
+    ).toMatchObject({ kind: "INSPECTED", canonicalPath: "new.ts", targetIdentity: null });
+    expect(
+      boundary.inspectMutationPath(selected.workspace.workspaceId, "src/tracked.ts", "create"),
+    ).toMatchObject({ kind: "FORBIDDEN" });
+    expect(
+      boundary.inspectMutationPath(selected.workspace.workspaceId, ".env", "create"),
+    ).toMatchObject({ kind: "FORBIDDEN" });
+    fixture.write(".gitignore", "*.log\n");
+    expect(
+      boundary.inspectMutationPath(selected.workspace.workspaceId, "ignored.log", "create"),
+    ).toMatchObject({ kind: "FORBIDDEN" });
+  }, 10_000);
+
+  it("does not preflight a create inside a nested repository", () => {
+    const fixture = createGitCheckout();
+    cleanup.push(() => fixture.cleanup());
+    fs.mkdirSync(path.join(fixture.root, "nested"));
+    fixture.git("-C", path.join(fixture.root, "nested"), "init", "-q");
+    const selected = selectWorkspace(fixture.root);
+    expect(selected.kind).toBe("SELECTED");
+    if (selected.kind !== "SELECTED") return;
+    cleanup.push(() => closeWorkspace(selected.workspace));
+    expect(
+      new WorkspaceBoundary().inspectMutationPath(
+        selected.workspace.workspaceId,
+        "nested/new.ts",
+        "create",
+      ),
+    ).toMatchObject({ kind: "FORBIDDEN" });
+  });
+
+  it.skipIf(process.platform !== "win32")("rejects a junction in a mutation parent", () => {
+    const fixture = createGitCheckout();
+    cleanup.push(() => fixture.cleanup());
+    fixture.symlink("linked", path.join(fixture.root, "src"), "junction");
+    const selected = selectWorkspace(fixture.root);
+    expect(selected.kind).toBe("SELECTED");
+    if (selected.kind !== "SELECTED") return;
+    cleanup.push(() => closeWorkspace(selected.workspace));
+    expect(
+      new WorkspaceBoundary().inspectMutationPath(
+        selected.workspace.workspaceId,
+        "linked/new.ts",
+        "create",
+      ),
+    ).toMatchObject({ kind: "FORBIDDEN" });
+  });
+
   it("allows a member file and an implicit root scope", () => {
     const fixture = createGitCheckout();
     cleanup.push(() => fixture.cleanup());
@@ -163,6 +224,28 @@ describe("real workspace facts", () => {
       fs.renameSync(path.join(fixture.root, "src/tracked.ts"), path.join(fixture.root, ".env"));
       fixture.write("src/tracked.ts", "replacement\n");
       expect(() => opened.target.read(128)).toThrow();
+    } finally {
+      opened.target.close();
+    }
+  });
+
+  it("does not read a held file after Git ignore rules remove its membership", () => {
+    const fixture = createGitCheckout();
+    cleanup.push(() => fixture.cleanup());
+    fixture.write("ephemeral.log", "initial\n");
+    const selected = selectWorkspace(fixture.root);
+    expect(selected.kind).toBe("SELECTED");
+    if (selected.kind !== "SELECTED") return;
+    cleanup.push(() => closeWorkspace(selected.workspace));
+    const opened = new WorkspaceBoundary().openRegularRead(
+      selected.workspace.workspaceId,
+      "ephemeral.log",
+    );
+    expect(opened.kind).toBe("OPENED");
+    if (opened.kind !== "OPENED") return;
+    try {
+      fixture.write(".gitignore", "*.log\n");
+      expect(() => opened.target.read(128)).toThrow("Workspace target changed");
     } finally {
       opened.target.close();
     }
