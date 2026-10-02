@@ -21,6 +21,16 @@ static int OpenComponent(int parent, const std::string& name, uint64_t flags) {
   return static_cast<int>(syscall(SYS_openat2, parent, name.c_str(), &how, sizeof(how)));
 }
 
+bool ProbeWorkspaceWalk(int root_fd) {
+  if (root_fd < 0) { errno = EBADF; return false; }
+  // Every selected checkout has a .git entry. Open only its directory entry;
+  // never follow it or expose a descriptor to repository tools.
+  const int entry = OpenComponent(root_fd, ".git", O_PATH);
+  if (entry < 0) return false;
+  close(entry);
+  return true;
+}
+
 static bool NormalizePath(const std::string& raw, std::vector<std::string>* components,
                           size_t verified_prefix = 0) {
   components->clear();
@@ -46,7 +56,11 @@ static bool NormalizePath(const std::string& raw, std::vector<std::string>* comp
 
 int OpenWorkspaceRelative(int root_fd, const std::string& relative, bool directory) {
   if (root_fd < 0) return -1;
-  if (relative == ".") return directory ? dup(root_fd) : -1;
+  if (relative == ".") {
+    if (directory) return dup(root_fd);
+    errno = EISDIR;
+    return -1;
+  }
   std::vector<std::string> parts;
   if (!NormalizePath(relative, &parts) || parts.empty()) { errno = EACCES; return -1; }
   const std::string root_path = GetWorkspacePath(root_fd);
@@ -88,7 +102,9 @@ int OpenWorkspaceRelative(int root_fd, const std::string& relative, bool directo
       }
       if (resolved.empty()) {
         if (parent != root_fd) close(parent);
-        return directory ? dup(root_fd) : -1;
+        if (directory) return dup(root_fd);
+        errno = EISDIR;
+        return -1;
       }
       if (parent != root_fd) close(parent);
       parent = root_fd;

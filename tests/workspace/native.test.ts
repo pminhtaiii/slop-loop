@@ -18,6 +18,13 @@ describe("native workspace backend loader", () => {
 
   it("rejects missing and incompatible backends", () => {
     expect(validateNativeBackend(null)).toMatchObject({ kind: "UNAVAILABLE" });
+    const loaded = loadNativeWorkspaceBackend();
+    expect(loaded.kind).toBe("READY");
+    if (loaded.kind === "READY")
+      expect(validateNativeBackend({ ...loaded.backend, probeWalk: undefined })).toMatchObject({
+        kind: "UNAVAILABLE",
+        reason: "UNSUPPORTED_BACKEND",
+      });
     expect(
       validateNativeBackend({
         abi: 2,

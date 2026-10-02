@@ -9,6 +9,7 @@ export interface NativeWorkspaceBackend {
   readonly capability: string;
   openRoot(root: string): number;
   openRelative(rootFd: number, relativePath: string, directory: boolean): number;
+  probeWalk(rootFd: number): void;
   closeDescriptor(fd: number): void;
   targetPath(fd: number): string;
   targetIdentity(fd: number): { device: string; inode: string; links: number; directory: boolean };
@@ -32,6 +33,7 @@ export function validateNativeBackend(candidate: unknown): NativeLoadResult {
     backend.arch !== process.arch ||
     typeof backend.openRoot !== "function" ||
     typeof backend.openRelative !== "function" ||
+    typeof backend.probeWalk !== "function" ||
     typeof backend.closeDescriptor !== "function" ||
     typeof backend.targetPath !== "function" ||
     typeof backend.targetIdentity !== "function" ||
@@ -61,6 +63,11 @@ export function openNativeTarget(
   kind: "file" | "directory",
 ): number {
   return requiredBackend().openRelative(rootFd, relativePath, kind === "directory");
+}
+
+/** Confirms that the native backend can walk an existing child of the held root. */
+export function probeNativeWalk(rootFd: number): void {
+  requiredBackend().probeWalk(rootFd);
 }
 
 export function closeNativeDescriptor(fd: number): void {

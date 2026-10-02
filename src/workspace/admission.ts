@@ -7,7 +7,7 @@ import {
   loadNativeWorkspaceBackend,
   nativeTargetIdentity,
   openNativeRoot,
-  openNativeTarget,
+  probeNativeWalk,
 } from "./native.js";
 import { runTrustedGit } from "./git.js";
 import type {
@@ -96,8 +96,7 @@ export function selectWorkspace(launchDirectory: string): WorkspaceSelectionResu
     const rootIdentity = identityFor(rootFd);
     const gitdirIdentity = identityFor(gitdirFd);
     nativeRootFd = openNativeRoot(checkout.root);
-    const probeFd = openNativeTarget(nativeRootFd, ".", "directory");
-    closeNativeDescriptor(probeFd);
+    probeNativeWalk(nativeRootFd);
     const nativeIdentity = nativeTargetIdentity(nativeRootFd);
     if (
       !nativeIdentity.directory ||

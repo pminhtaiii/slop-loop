@@ -3,7 +3,11 @@ import fs from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 
-import { selectWorkspace, closeWorkspace } from "../../src/workspace/admission.js";
+import {
+  selectWorkspace,
+  closeWorkspace,
+  nativeRootForWorkspace,
+} from "../../src/workspace/admission.js";
 import { WorkspaceBoundary } from "../../src/workspace/boundary.js";
 import { createGitCheckout, symlinkFixtureAvailable } from "./fixtures.js";
 
@@ -150,6 +154,47 @@ describe("real workspace facts", () => {
     }
   });
 
+  it("does not issue forbidden facts when the held root fails post-open verification", () => {
+    const fixture = createGitCheckout();
+    cleanup.push(() => fixture.cleanup());
+    const selected = selectWorkspace(fixture.root);
+    expect(selected.kind).toBe("SELECTED");
+    if (selected.kind !== "SELECTED") return;
+    cleanup.push(() => closeWorkspace(selected.workspace));
+    const rootFd = nativeRootForWorkspace(selected.workspace);
+    expect(rootFd).not.toBeNull();
+    const require = createRequire(import.meta.url);
+    const native = require("../../native/workspace/build/Release/workspace_boundary.node") as {
+      targetPath: (...arguments_: unknown[]) => string;
+      targetIdentity: (...arguments_: unknown[]) => unknown;
+    };
+    const originalPath = native.targetPath;
+    const originalIdentity = native.targetIdentity;
+    let targetOpened = false;
+    let rootChecksAfterOpen = 0;
+    native.targetPath = (...args: unknown[]) => {
+      targetOpened = true;
+      return originalPath(...args);
+    };
+    native.targetIdentity = (...args: unknown[]) => {
+      if (targetOpened && args[0] === rootFd && ++rootChecksAfterOpen === 3)
+        throw new Error("root identity unavailable");
+      return originalIdentity(...args);
+    };
+    try {
+      const boundary = new WorkspaceBoundary();
+      const ceiling = { workspaceId: selected.workspace.workspaceId } as Parameters<
+        typeof boundary.factsFor
+      >[1];
+      expect(() =>
+        boundary.factsFor({ name: "read_file", arguments: { path: "src/tracked.ts" } }, ceiling),
+      ).toThrow("Workspace identity unavailable");
+    } finally {
+      native.targetPath = originalPath;
+      native.targetIdentity = originalIdentity;
+    }
+  });
+
   it.skipIf(!symlinkFixtureAvailable("file"))(
     "rejects an ignored alias to an otherwise eligible file",
     () => {
@@ -272,6 +317,43 @@ describe("real workspace facts", () => {
       });
     } finally {
       native.listDirectory = original;
+    }
+  });
+
+  it("does not omit an entry when its native inspection is unavailable", () => {
+    const fixture = createGitCheckout();
+    cleanup.push(() => fixture.cleanup());
+    const selected = selectWorkspace(fixture.root);
+    expect(selected.kind).toBe("SELECTED");
+    if (selected.kind !== "SELECTED") return;
+    cleanup.push(() => closeWorkspace(selected.workspace));
+    const opened = new WorkspaceBoundary().openDirectory(selected.workspace.workspaceId, "src");
+    expect(opened.kind).toBe("OPENED");
+    if (opened.kind !== "OPENED") return;
+    const require = createRequire(import.meta.url);
+    const native = require("../../native/workspace/build/Release/workspace_boundary.node") as {
+      openRelative: (...arguments_: unknown[]) => number;
+    };
+    const original = native.openRelative;
+    native.openRelative = (...args: unknown[]) => {
+      if (args[1] === "src/tracked.ts")
+        throw Object.assign(new Error("native inspection unavailable"), {
+          code: "WORKSPACE_OPEN_UNAVAILABLE",
+        });
+      return original(...args);
+    };
+    try {
+      expect(() => opened.target.nextEntry()).toThrow("native inspection unavailable");
+    } finally {
+      native.openRelative = original;
+    }
+    try {
+      expect(opened.target.nextEntry()).toMatchObject({
+        name: "tracked.ts",
+        canonicalPath: "src/tracked.ts",
+      });
+    } finally {
+      opened.target.close();
     }
   });
 

@@ -42,20 +42,48 @@ using NtCreateFileFunction = NTSTATUS(NTAPI*)(PHANDLE, ACCESS_MASK, POBJECT_ATTR
                                               PIO_STATUS_BLOCK, PLARGE_INTEGER, ULONG, ULONG,
                                               ULONG, ULONG, PVOID, ULONG);
 
-static bool IsDirectory(HANDLE handle) {
-  BY_HANDLE_FILE_INFORMATION info;
-  return GetFileInformationByHandle(handle, &info) &&
-         (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+bool ProbeWorkspaceWalk(int root_fd) {
+  if (root_fd < 0) { SetLastError(ERROR_INVALID_HANDLE); return false; }
+  const intptr_t raw = _get_osfhandle(root_fd);
+  if (raw == -1) { SetLastError(ERROR_INVALID_HANDLE); return false; }
+  const HMODULE module = GetModuleHandleW(L"ntdll.dll");
+  if (!module) { SetLastError(ERROR_NOT_SUPPORTED); return false; }
+  const auto nt_create = reinterpret_cast<NtCreateFileFunction>(GetProcAddress(module, "NtCreateFile"));
+  if (!nt_create) { SetLastError(ERROR_NOT_SUPPORTED); return false; }
+  std::wstring child_name = L".git";
+  UNICODE_STRING name;
+  name.Length = static_cast<USHORT>(child_name.size() * sizeof(wchar_t));
+  name.MaximumLength = name.Length;
+  name.Buffer = child_name.data();
+  OBJECT_ATTRIBUTES attributes;
+  InitializeObjectAttributes(&attributes, &name, OBJ_CASE_INSENSITIVE,
+                             reinterpret_cast<HANDLE>(raw), nullptr);
+  IO_STATUS_BLOCK status;
+  HANDLE child = INVALID_HANDLE_VALUE;
+  const NTSTATUS outcome = nt_create(&child, FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+                                     &attributes, &status, nullptr, FILE_ATTRIBUTE_NORMAL,
+                                     FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                     FILE_OPEN, FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
+                                     nullptr, 0);
+  if (outcome < 0) {
+    const auto to_dos = reinterpret_cast<ULONG(WINAPI*)(NTSTATUS)>(GetProcAddress(module, "RtlNtStatusToDosError"));
+    SetLastError(to_dos == nullptr ? ERROR_NOT_SUPPORTED : to_dos(outcome));
+    return false;
+  }
+  CloseHandle(child);
+  return true;
 }
 
 static bool SafeHandle(HANDLE handle, bool directory) {
   FILE_ATTRIBUTE_TAG_INFO tag;
   if (!GetFileInformationByHandleEx(handle, FileAttributeTagInfo, &tag, sizeof(tag))) return false;
   if ((tag.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) { SetLastError(ERROR_ACCESS_DENIED); return false; }
-  if (IsDirectory(handle) != directory) { SetLastError(ERROR_ACCESS_DENIED); return false; }
+  BY_HANDLE_FILE_INFORMATION info;
+  if (!GetFileInformationByHandle(handle, &info)) return false;
+  if (((info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) != directory) {
+    SetLastError(ERROR_ACCESS_DENIED); return false;
+  }
   if (!directory) {
-    BY_HANDLE_FILE_INFORMATION info;
-    if (!GetFileInformationByHandle(handle, &info)) return false;
     if (info.nNumberOfLinks != 1) { SetLastError(ERROR_ACCESS_DENIED); return false; }
   }
   return true;
@@ -148,7 +176,9 @@ static bool RelativeSymlinkTarget(HANDLE link, const std::wstring& root,
 
 int OpenWorkspaceRelative(int root_fd, const std::string& relative, bool directory) {
   if (root_fd < 0) return -1;
-  if (relative == ".") return directory ? _dup(root_fd) : -1;
+  if (relative == ".") {
+    if (!directory) { SetLastError(ERROR_ACCESS_DENIED); return -1; }
+  }
   const intptr_t raw = _get_osfhandle(root_fd);
   if (raw == -1) { SetLastError(ERROR_INVALID_HANDLE); return -1; }
   HANDLE parent = reinterpret_cast<HANDLE>(raw);
@@ -156,6 +186,11 @@ int OpenWorkspaceRelative(int root_fd, const std::string& relative, bool directo
   if (!module) { SetLastError(ERROR_NOT_SUPPORTED); return -1; }
   const auto nt_create = reinterpret_cast<NtCreateFileFunction>(GetProcAddress(module, "NtCreateFile"));
   if (!nt_create) { SetLastError(ERROR_NOT_SUPPORTED); return -1; }
+  if (relative == ".") {
+    const int copy = _dup(root_fd);
+    if (copy < 0) SetLastError(ERROR_TOO_MANY_OPEN_FILES);
+    return copy;
+  }
   std::vector<std::string> parts;
   if (!NormalizeParts(relative, &parts) || parts.empty()) { SetLastError(ERROR_ACCESS_DENIED); return -1; }
   const std::wstring root_path = DecodeUtf8(GetWorkspacePath(root_fd));
@@ -222,7 +257,15 @@ int OpenWorkspaceRelative(int root_fd, const std::string& relative, bool directo
       if (!NormalizeParts(expanded, &resolved, absolute ? 0 : prefix.size())) {
         SetLastError(ERROR_ACCESS_DENIED); return -1;
       }
-      if (resolved.empty()) return directory ? _dup(root_fd) : -1;
+      if (resolved.empty()) {
+        if (directory) {
+          const int copy = _dup(root_fd);
+          if (copy < 0) SetLastError(ERROR_TOO_MANY_OPEN_FILES);
+          return copy;
+        }
+        SetLastError(ERROR_ACCESS_DENIED);
+        return -1;
+      }
       parts.swap(resolved);
       prefix.clear();
       parent = reinterpret_cast<HANDLE>(raw);

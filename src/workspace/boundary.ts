@@ -54,6 +54,31 @@ function requestedPathFor(
 }
 
 type InspectedTarget = { fd: number; canonicalPath: string; identity: string };
+type MemberSnapshot = {
+  names: ReadonlySet<string>;
+  directories: ReadonlySet<string>;
+};
+type InspectionEvidence = { rootFd: number; members: MemberSnapshot };
+
+function memberSnapshot(workspace: SelectedWorkspace): MemberSnapshot {
+  const names = new Set(listWorkspaceMembers(workspace));
+  const directories = new Set<string>();
+  for (const name of names) {
+    let separator = name.indexOf("/");
+    while (separator !== -1) {
+      directories.add(name.slice(0, separator));
+      separator = name.indexOf("/", separator + 1);
+    }
+  }
+  return { names, directories };
+}
+
+function inspectionEvidence(workspace: SelectedWorkspace): InspectionEvidence {
+  const members = memberSnapshot(workspace);
+  const rootFd = nativeRootForWorkspace(workspace);
+  if (rootFd === null) throw new Error("Workspace identity unavailable");
+  return { rootFd, members };
+}
 
 function isMissing(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
@@ -91,19 +116,17 @@ function eligibleAlias(
   workspace: SelectedWorkspace,
   normalized: string,
   kind: "file" | "directory",
-  members: readonly string[],
+  members: MemberSnapshot,
 ): boolean {
   let aliasEligible =
     kind === "file"
-      ? members.includes(normalized)
-      : normalized === "." ||
-        members.includes(normalized) ||
-        members.some((name) => name.startsWith(`${normalized}/`));
+      ? members.names.has(normalized)
+      : normalized === "." || members.names.has(normalized) || members.directories.has(normalized);
   if (!aliasEligible) {
     const components = normalized.split("/");
     for (let count = 1; count < components.length; count += 1) {
       const prefix = components.slice(0, count).join("/");
-      if (!members.includes(prefix)) continue;
+      if (!members.names.has(prefix)) continue;
       try {
         if (fs.lstatSync(path.join(workspace.root, prefix)).isSymbolicLink()) {
           aliasEligible = true;
@@ -128,16 +151,15 @@ function inspect(
   workspace: SelectedWorkspace,
   requested: string,
   kind: "file" | "directory",
+  evidence?: InspectionEvidence,
 ): InspectedTarget | null {
   const normalized = parseRepositoryPath(requested);
   if (normalized === null || isDeniedRepositoryPath(normalized)) return null;
-  const members = listWorkspaceMembers(workspace);
-  if (!eligibleAlias(workspace, normalized, kind, members)) return null;
-  const nativeRoot = nativeRootForWorkspace(workspace);
-  if (nativeRoot === null) throw new Error("Workspace identity unavailable");
+  const before = evidence ?? inspectionEvidence(workspace);
+  if (!eligibleAlias(workspace, normalized, kind, before.members)) return null;
   let fd: number;
   try {
-    fd = openNativeTarget(nativeRoot, normalized, kind);
+    fd = openNativeTarget(before.rootFd, normalized, kind);
   } catch (error) {
     if (
       typeof error === "object" &&
@@ -159,14 +181,14 @@ function inspect(
       (kind === "file" && opened.links !== 1)
     )
       return null;
-    const currentMembers = listWorkspaceMembers(workspace);
+    const currentMembers = memberSnapshot(workspace);
     if (!eligibleAlias(workspace, normalized, kind, currentMembers)) return null;
-    if (nativeRootForWorkspace(workspace) !== nativeRoot) return null;
+    if (nativeRootForWorkspace(workspace) !== before.rootFd)
+      throw new Error("Workspace identity unavailable");
     const member =
       kind === "file"
-        ? currentMembers.includes(canonicalPath)
-        : canonicalPath === "." ||
-          currentMembers.some((name) => name.startsWith(`${canonicalPath}/`));
+        ? currentMembers.names.has(canonicalPath)
+        : canonicalPath === "." || currentMembers.directories.has(canonicalPath);
     if (!member) return null;
     const atPath = fs.statSync(path.join(workspace.root, canonicalPath), { bigint: true });
     if (opened.device !== atPath.dev.toString() || opened.inode !== atPath.ino.toString())
@@ -335,8 +357,6 @@ export class WorkspaceBoundary {
             throw new Error("Invalid native read");
           }
           const stillEligible = (): boolean => {
-            const currentWorkspace = workspaceForId(workspaceId);
-            if (currentWorkspace !== workspace) return false;
             let current: InspectedTarget | null;
             try {
               current = inspect(workspace, requestedPath, "file");
@@ -402,19 +422,24 @@ export class WorkspaceBoundary {
         identity: opened.identity,
         nextEntry(): { name: string; canonicalPath: string } | null {
           if (closed) throw new Error("Directory target is closed");
+          const evidence = inspectionEvidence(workspace);
           while (next < names.length) {
-            const name = names[next++];
+            const name = names[next];
             if (
               name === undefined ||
               name.includes("/") ||
               name.includes("\\") ||
               name === "." ||
               name === ".."
-            )
+            ) {
+              next += 1;
               continue;
+            }
             const alias = requestedPath === "." ? name : `${requestedPath}/${name}`;
             const child =
-              inspect(workspace, alias, "file") ?? inspect(workspace, alias, "directory");
+              inspect(workspace, alias, "file", evidence) ??
+              inspect(workspace, alias, "directory", evidence);
+            next += 1;
             if (child === null) continue;
             try {
               if (

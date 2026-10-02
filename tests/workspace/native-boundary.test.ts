@@ -30,23 +30,72 @@ describe("native workspace open", () => {
     expect(readNativeTarget(fd, 128).toString("utf8")).toContain("tracked");
   });
 
+  it("classifies a file request for the workspace root as denied", () => {
+    const fixture = createGitCheckout();
+    cleanup.push(() => fixture.cleanup());
+    const root = openNativeRoot(fixture.root);
+    cleanup.push(() => closeNativeDescriptor(root));
+    let failure: unknown;
+    try {
+      openNativeTarget(root, ".", "file");
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toMatchObject({ code: "WORKSPACE_OPEN_DENIED" });
+  });
+
   it.skipIf(!symlinkFixtureAvailable("file"))(
-    "opens relative and absolute aliases whose targets remain inside the held root",
+    "opens a relative alias whose target remains inside the held root",
     () => {
       const fixture = createGitCheckout();
       cleanup.push(() => fixture.cleanup());
       fixture.symlink("relative.ts", "src/tracked.ts");
-      fixture.symlink("absolute.ts", path.join(fixture.root, "src/tracked.ts"));
       const root = openNativeRoot(fixture.root);
       cleanup.push(() => closeNativeDescriptor(root));
-      for (const alias of ["relative.ts", "absolute.ts"]) {
-        const fd = openNativeTarget(root, alias, "file");
-        try {
-          expect(readNativeTarget(fd, 128).toString("utf8")).toContain("tracked");
-        } finally {
-          closeNativeDescriptor(fd);
-        }
+      const fd = openNativeTarget(root, "relative.ts", "file");
+      try {
+        expect(readNativeTarget(fd, 128).toString("utf8")).toContain("tracked");
+      } finally {
+        closeNativeDescriptor(fd);
       }
+    },
+  );
+
+  it.skipIf(!symlinkFixtureAvailable("file"))(
+    "opens an absolute alias to the canonical physical checkout root",
+    () => {
+      const fixture = createGitCheckout();
+      cleanup.push(() => fixture.cleanup());
+      fixture.symlink(
+        "absolute.ts",
+        path.join(fs.realpathSync.native(fixture.root), "src/tracked.ts"),
+      );
+      const root = openNativeRoot(fixture.root);
+      cleanup.push(() => closeNativeDescriptor(root));
+      const fd = openNativeTarget(root, "absolute.ts", "file");
+      try {
+        expect(readNativeTarget(fd, 128).toString("utf8")).toContain("tracked");
+      } finally {
+        closeNativeDescriptor(fd);
+      }
+    },
+  );
+
+  it.skipIf(!symlinkFixtureAvailable("dir"))(
+    "classifies a file alias to the workspace root as denied",
+    () => {
+      const fixture = createGitCheckout();
+      cleanup.push(() => fixture.cleanup());
+      fixture.symlink("root-alias.ts", fs.realpathSync.native(fixture.root), "dir");
+      const root = openNativeRoot(fixture.root);
+      cleanup.push(() => closeNativeDescriptor(root));
+      let failure: unknown;
+      try {
+        openNativeTarget(root, "root-alias.ts", "file");
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toMatchObject({ code: "WORKSPACE_OPEN_DENIED" });
     },
   );
 

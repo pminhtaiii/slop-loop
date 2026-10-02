@@ -129,6 +129,23 @@ napi_value OpenRelative(napi_env env, napi_callback_info info) {
   return result;
 }
 
+napi_value ProbeWalk(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value argv[1];
+  int32_t root_token = -1;
+  if (napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr) != napi_ok || argc != 1 ||
+      napi_get_value_int32(env, argv[0], &root_token) != napi_ok) {
+    ThrowDenied(env); return nullptr;
+  }
+  std::lock_guard<std::mutex> guard(descriptor_mutex);
+  const auto root = root_descriptors.find(root_token);
+  if (root == root_descriptors.end()) { ThrowDenied(env); return nullptr; }
+  if (!ProbeWorkspaceWalk(root->second)) { ThrowOpenFailure(env); return nullptr; }
+  napi_value result;
+  napi_get_undefined(env, &result);
+  return result;
+}
+
 napi_value CloseDescriptor(napi_env env, napi_callback_info info) {
   size_t argc = 1;
   napi_value argv[1];
@@ -284,6 +301,7 @@ napi_value Initialize(napi_env env, napi_value exports) {
   SetString(env, exports, "capability", "identity-v1");
   ExportFunction(env, exports, "openRoot", OpenRoot);
   ExportFunction(env, exports, "openRelative", OpenRelative);
+  ExportFunction(env, exports, "probeWalk", ProbeWalk);
   ExportFunction(env, exports, "closeDescriptor", CloseDescriptor);
   ExportFunction(env, exports, "targetPath", TargetPath);
   ExportFunction(env, exports, "targetIdentity", TargetIdentity);
