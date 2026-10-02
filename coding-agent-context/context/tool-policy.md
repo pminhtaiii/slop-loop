@@ -282,21 +282,27 @@ Repository content reads and mutations reject hard-linked files in the MVP. In-r
 
 ## Command Policy
 
+Phase 5 verification uses one workspace-filtered snapshot per trusted verification verdict. Capture through the trusted workspace boundary; hash the bytes actually copied and relevant metadata into the snapshot manifest; rescan eligible checkout content for observed capture races; retry a bounded number of times and stop if no stable snapshot is available. Each check runs in its own fresh offline Linux container clone of the same captured bytes, so tests, lint, typecheck, build, and any required repository-owned native compilation all bind to one snapshot identity. After checks, compare the eligible live checkout to the original manifest; results remain valid for that snapshot, but any mismatch marks the verdict stale for the current checkout and requires fresh verification. This capture is non-atomic and cannot prove absence of rapid change-and-restore races. Watchers are advisory signals only. Atomic filesystem snapshots and external-writer exclusion are deferred. The host application performs orchestration; Docker executes verification only. Target-repository content/configuration/code is untrusted data/code; trusted runtime configuration alone determines authority and execution policy (ADR 0011, Q20). No supporting services are in MVP scope. Dependency preparation is developer-triggered only; the agent cannot invoke it, install dependencies, or enable network access. A minimal preparation helper is part of Phase 5; the later interactive CLI may expose it. When an image is stale, the runtime explains/reports that state and offers or starts preparation only after explicit developer confirmation. The model cannot initiate preparation or provide confirmation (ADR 0011, Q22). Preparation may fetch only exact declared, locked artifacts, including required transitives, from approved public registries. Trusted preparation validates sources, restricts destinations to approved public registries, rejects redirects outside them, and verifies lockfile integrity hashes; unsupported sources or integrity failures block preparation. Feature 006 selects enforcement in its plan; implementation and adversarial proof remain required (ADR 0011, Q18). Untrusted preparation execution has no developer secrets, sensitive host directories, Docker socket, or writable real-checkout mount. See ADR 0011 for settled design.
+
 Approved commands are declared in trusted configuration.
+
+For Phase 5, a trusted task-attempt coordinator retains one sealed snapshot across verification tool calls and enforces the complete configured check set (reference: full tests, lint, typecheck and build). Targeted/partial/duplicate checks cannot authorize passing task verification. Only trusted complete evidence for the active attempt, with canonical results, settled cleanup and final current-checkout comparison, may produce runner success; bare model booleans or replayed verdicts cannot. A retry starts a fresh verdict without earlier check coverage.
+
+Preparation downloads run with lifecycle/build scripts disabled and restricted network; any explicitly allowlisted dependency script runs offline and is tied to the exact locked dependency identity. An unsupported script blocks preparation until the developer updates trusted application configuration. The target repository's Dockerfile is never executed and cannot set Docker privileges, mounts, networking, or build instructions; the application-owned recipe is the only trusted recipe. The dependency script allowlist is part of the preparation fingerprint, so changes stale the image. Repository-owned native addons compile offline from the captured snapshot under a separate trusted profile; dependency-owned native components may be prepared once. The initial source set is approved public registries and supported patterns required by Slop Loop; private registries, Git/SSH dependencies, arbitrary tarball URLs, and other unsupported sources are rejected. The preparation fingerprint also covers manifests, lockfile, approved package-manager configuration, Node/pnpm versions, Linux architecture, base-image digest, and recipe. Ordinary source edits do not invalidate it. Fingerprint drift blocks verification until developer-triggered preparation; the agent cannot install dependencies or rebuild the image. Missing toolchain prerequisites block execution. Repository code and dependency scripts are treated as malicious. The MVP accepts hardened Docker with non-root execution, dropped capabilities, no privilege escalation, default seccomp, and tightly restricted writable paths, while documenting residual isolation limits. Only `/workspace` and `/tmp` are writable; the system, toolchain, and root filesystem are read-only. The developer checkout is never mounted writable and verification output is never copied back automatically (ADR 0011, Q19). Cleanup blocks further verification if stop/removal remains unconfirmed after bounded retries; there is no host fallback. Initial CPU, memory, PID, and timeout defaults are accepted subject to integration validation; initial output and writable-storage bounds are selected in the Feature 006 plan and require integration proof (ADR 0011, Q14).
 
 Example:
 
 ```yaml
 profiles:
-  python:
+  typescript:
     tests:
-      argv: ["pytest", "-q"]
+      argv: ["pnpm", "test"]
       timeout_seconds: 120
     lint:
-      argv: ["ruff", "check", "."]
+      argv: ["pnpm", "lint"]
       timeout_seconds: 60
     typecheck:
-      argv: ["mypy", "src"]
+      argv: ["pnpm", "typecheck"]
       timeout_seconds: 120
 ```
 

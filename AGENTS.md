@@ -11,6 +11,10 @@ For planned Phase 3 policy engine and tool gateway work, read
 
 For planned Phase 4 workspace-boundary work, read
 `specs/005-workspace-boundary/plan.md`.
+
+For planned Phase 5 offline verification sandbox and developer preparation,
+read `specs/006-offline-verification-sandbox/plan.md`. Real sandbox integration
+requires the complete Phase 4 workspace-boundary exit gate.
 <!-- SPECKIT END -->
 
 ## Slop Loop Project Context
