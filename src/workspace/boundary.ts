@@ -8,6 +8,7 @@ import {
   isIgnoredWorkspacePath,
   isNestedWorkspacePath,
   listWorkspaceMembers,
+  workspaceMemberEvidence,
 } from "./membership.js";
 import {
   closeNativeDescriptor,
@@ -60,8 +61,8 @@ type MemberSnapshot = {
 };
 type InspectionEvidence = { rootFd: number; members: MemberSnapshot };
 
-function memberSnapshot(workspace: SelectedWorkspace): MemberSnapshot {
-  const names = new Set(listWorkspaceMembers(workspace));
+function memberSnapshot(members: readonly string[]): MemberSnapshot {
+  const names = new Set(members);
   const directories = new Set<string>();
   for (const name of names) {
     let separator = name.indexOf("/");
@@ -74,10 +75,8 @@ function memberSnapshot(workspace: SelectedWorkspace): MemberSnapshot {
 }
 
 function inspectionEvidence(workspace: SelectedWorkspace): InspectionEvidence {
-  const members = memberSnapshot(workspace);
-  const rootFd = nativeRootForWorkspace(workspace);
-  if (rootFd === null) throw new Error("Workspace identity unavailable");
-  return { rootFd, members };
+  const evidence = workspaceMemberEvidence(workspace);
+  return { rootFd: evidence.rootFd, members: memberSnapshot(evidence.members) };
 }
 
 function isMissing(error: unknown): boolean {
@@ -181,10 +180,10 @@ function inspect(
       (kind === "file" && opened.links !== 1)
     )
       return null;
-    const currentMembers = memberSnapshot(workspace);
+    const current = workspaceMemberEvidence(workspace, before.rootFd);
+    if (current.rootFd !== before.rootFd) throw new Error("Workspace identity unavailable");
+    const currentMembers = memberSnapshot(current.members);
     if (!eligibleAlias(workspace, normalized, kind, currentMembers)) return null;
-    if (nativeRootForWorkspace(workspace) !== before.rootFd)
-      throw new Error("Workspace identity unavailable");
     const member =
       kind === "file"
         ? currentMembers.names.has(canonicalPath)

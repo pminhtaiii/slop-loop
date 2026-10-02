@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { verifyWorkspace } from "./admission.js";
+import { nativeRootForWorkspace, verifyWorkspace } from "./admission.js";
 import { runTrustedGit } from "./git.js";
 import type { SelectedWorkspace } from "./types.js";
 
@@ -79,8 +79,12 @@ function hasNestedRepository(
   return false;
 }
 
-export function listWorkspaceMembers(workspace: SelectedWorkspace): readonly string[] {
-  if (!verifyWorkspace(workspace)) throw new Error("Workspace identity unavailable");
+export function workspaceMemberEvidence(
+  workspace: SelectedWorkspace,
+  verifiedRootFd?: number,
+): { readonly rootFd: number; readonly members: readonly string[] } {
+  const rootFd = verifiedRootFd ?? nativeRootForWorkspace(workspace);
+  if (rootFd === null || rootFd === undefined) throw new Error("Workspace identity unavailable");
   const tracked = nulNames(
     gitOutput(workspace.root, ["ls-files", "--cached", "--stage", "-z", "--full-name"]),
   );
@@ -100,7 +104,7 @@ export function listWorkspaceMembers(workspace: SelectedWorkspace): readonly str
   }
   const gitlinkNames = [...gitlinks];
   const blockedPrefixes = new Set<string>();
-  return Object.freeze(
+  const members = Object.freeze(
     [...names]
       .filter(
         (name) =>
@@ -111,6 +115,13 @@ export function listWorkspaceMembers(workspace: SelectedWorkspace): readonly str
       )
       .sort(),
   );
+  if (nativeRootForWorkspace(workspace) !== rootFd)
+    throw new Error("Workspace identity unavailable");
+  return { rootFd, members };
+}
+
+export function listWorkspaceMembers(workspace: SelectedWorkspace): readonly string[] {
+  return workspaceMemberEvidence(workspace).members;
 }
 
 export function isWorkspaceMember(workspace: SelectedWorkspace, requestedPath: string): boolean {

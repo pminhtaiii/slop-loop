@@ -177,7 +177,7 @@ describe("real workspace facts", () => {
       return originalPath(...args);
     };
     native.targetIdentity = (...args: unknown[]) => {
-      if (targetOpened && args[0] === rootFd && ++rootChecksAfterOpen === 3)
+      if (targetOpened && args[0] === rootFd && ++rootChecksAfterOpen === 1)
         throw new Error("root identity unavailable");
       return originalIdentity(...args);
     };

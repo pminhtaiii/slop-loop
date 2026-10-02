@@ -64,8 +64,7 @@ function gitValue(cwd: string, option: string): string {
 function discoverCheckout(launchDirectory: string): { root: string; gitdir: string } {
   const launch = fs.realpathSync(launchDirectory);
   if (!fs.statSync(launch).isDirectory()) throw new Error("Launch path is not a directory");
-  if (gitValue(launch, "--is-inside-work-tree") !== "true") throw new Error("Not a worktree");
-  if (gitValue(launch, "--is-bare-repository") !== "false") throw new Error("Bare repository");
+  // --show-toplevel fails outside a worktree, including bare repositories.
   const root = fs.realpathSync(gitValue(launch, "--show-toplevel"));
   if (!containsPhysicalDirectory(root, launch)) {
     throw new Error("Launch path escapes checkout");

@@ -103,7 +103,9 @@ static bool NormalizeParts(const std::string& raw, std::vector<std::string>* par
       parts->pop_back();
       --verified_prefix;
     } else if (!part.empty() && part != ".") {
-      if (part.find(':') != std::string::npos || part.find('\0') != std::string::npos) return false;
+      if (part.find('\\') != std::string::npos || part.find(':') != std::string::npos ||
+          part.find('\0') != std::string::npos)
+        return false;
       parts->push_back(part);
     }
     if (end == std::string::npos) break;
@@ -203,12 +205,14 @@ int OpenWorkspaceRelative(int root_fd, const std::string& relative, bool directo
     const int needed = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, part.data(),
                                             static_cast<int>(part.size()), nullptr, 0);
     if (needed <= 0 || needed > 32767) {
+      SetLastError(ERROR_ACCESS_DENIED);
       if (parent != reinterpret_cast<HANDLE>(raw)) CloseHandle(parent);
       return -1;
     }
     std::wstring wide(static_cast<size_t>(needed), L'\0');
     if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, part.data(),
                             static_cast<int>(part.size()), wide.data(), needed) != needed) {
+      SetLastError(ERROR_ACCESS_DENIED);
       if (parent != reinterpret_cast<HANDLE>(raw)) CloseHandle(parent);
       return -1;
     }
