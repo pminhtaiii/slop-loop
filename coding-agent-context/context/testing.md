@@ -127,7 +127,7 @@ On 2026-10-02, [CI run 35](https://github.com/pminhtaiii/slop-loop/actions/runs/
    - Skipped test classification: Of the 3 skipped tests on Ubuntu, 2 are Windows-only junction fixtures (`tests/workspace/mount-boundary.test.ts` Windows junction and `tests/workspace/boundary.test.ts` mutation-parent junction). The 1 critical skipped test is `tests/workspace/mount-boundary.test.ts` Linux bind mount, which explicitly reported `UNAVAILABLE: Linux bind-mount fixture requires mount capability`.
 
 3. **Evidence gap and status reconciliation**:
-   - The GitHub-hosted Ubuntu runner does not provide mount capability (`CAP_SYS_ADMIN` / unprivileged `mount` execution). A skipped test is **not** containment evidence; Linux bind-mount containment has **not** been proven safe.
+   - The GitHub-hosted Ubuntu runner could not create the Linux bind-mount fixture because the required mount capability was unavailable. A skipped test is **not** containment evidence; Linux bind-mount containment has **not** been proven safe.
    - Implementation for T069–T078 is complete, and cross-platform CI verification currently available has passed for both Windows real symlink/junction behavior and Linux native/symlink behavior.
    - Convergence task T088 remains **partial** with this known verification limitation, and the US2 checkpoint remains open per SC-001/SC-003 until critical mount fixtures can actually be verified.
    - Project Phase 4 remains incomplete as T079–T087 remain open (retrieval bounding, output contracts, quickstart gate, and status reconciliation); the registry still caps `search_code` at 100 matches, and the gateway still applies a generic 32 KiB result cap pending T079–T085. The overall Phase 4 exit gate remains open.
