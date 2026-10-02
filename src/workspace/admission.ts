@@ -2,7 +2,13 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
-import { loadNativeWorkspaceBackend } from "./native.js";
+import {
+  closeNativeDescriptor,
+  loadNativeWorkspaceBackend,
+  nativeTargetIdentity,
+  openNativeRoot,
+  probeNativeWalk,
+} from "./native.js";
 import { runTrustedGit } from "./git.js";
 import type {
   SelectedWorkspace,
@@ -20,6 +26,7 @@ interface HeldCheckout {
   readonly gitdir: string;
   readonly rootFd: number;
   readonly gitdirFd: number;
+  readonly nativeRootFd: number;
   readonly rootIdentity: Identity;
   readonly gitdirIdentity: Identity;
 }
@@ -57,8 +64,7 @@ function gitValue(cwd: string, option: string): string {
 function discoverCheckout(launchDirectory: string): { root: string; gitdir: string } {
   const launch = fs.realpathSync(launchDirectory);
   if (!fs.statSync(launch).isDirectory()) throw new Error("Launch path is not a directory");
-  if (gitValue(launch, "--is-inside-work-tree") !== "true") throw new Error("Not a worktree");
-  if (gitValue(launch, "--is-bare-repository") !== "false") throw new Error("Bare repository");
+  // --show-toplevel fails outside a worktree, including bare repositories.
   const root = fs.realpathSync(gitValue(launch, "--show-toplevel"));
   if (!containsPhysicalDirectory(root, launch)) {
     throw new Error("Launch path escapes checkout");
@@ -76,6 +82,7 @@ export function selectWorkspace(launchDirectory: string): WorkspaceSelectionResu
   let launchFd: number | undefined;
   let rootFd: number | undefined;
   let gitdirFd: number | undefined;
+  let nativeRootFd: number | undefined;
   let discoveryComplete = false;
   try {
     const launch = fs.realpathSync(launchDirectory);
@@ -87,6 +94,15 @@ export function selectWorkspace(launchDirectory: string): WorkspaceSelectionResu
     gitdirFd = fs.openSync(checkout.gitdir, "r");
     const rootIdentity = identityFor(rootFd);
     const gitdirIdentity = identityFor(gitdirFd);
+    nativeRootFd = openNativeRoot(checkout.root);
+    probeNativeWalk(nativeRootFd);
+    const nativeIdentity = nativeTargetIdentity(nativeRootFd);
+    if (
+      !nativeIdentity.directory ||
+      nativeIdentity.device !== rootIdentity.dev.toString() ||
+      nativeIdentity.inode !== rootIdentity.ino.toString()
+    )
+      return failure("INVALID_IDENTITY");
     const currentRoot = fs.statSync(checkout.root, { bigint: true });
     const currentGitdir = fs.statSync(checkout.gitdir, { bigint: true });
     if (!sameIdentity(rootIdentity, currentRoot) || !sameIdentity(gitdirIdentity, currentGitdir)) {
@@ -110,12 +126,14 @@ export function selectWorkspace(launchDirectory: string): WorkspaceSelectionResu
       ...checkout,
       rootFd,
       gitdirFd,
+      nativeRootFd,
       rootIdentity,
       gitdirIdentity,
     });
     selectedById.set(workspace.workspaceId, workspace);
     rootFd = undefined;
     gitdirFd = undefined;
+    nativeRootFd = undefined;
     return Object.freeze({ kind: "SELECTED", workspace });
   } catch {
     return failure(discoveryComplete ? "INVALID_IDENTITY" : "NOT_A_CHECKOUT");
@@ -126,7 +144,11 @@ export function selectWorkspace(launchDirectory: string): WorkspaceSelectionResu
       try {
         if (rootFd !== undefined) fs.closeSync(rootFd);
       } finally {
-        if (gitdirFd !== undefined) fs.closeSync(gitdirFd);
+        try {
+          if (gitdirFd !== undefined) fs.closeSync(gitdirFd);
+        } finally {
+          if (nativeRootFd !== undefined) closeNativeDescriptor(nativeRootFd);
+        }
       }
     }
   }
@@ -141,6 +163,8 @@ export function verifyWorkspace(workspace: SelectedWorkspace): boolean {
     const rootAtPath = fs.statSync(record.root, { bigint: true });
     const gitdirAtPath = fs.statSync(record.gitdir, { bigint: true });
     return (
+      nativeTargetIdentity(record.nativeRootFd).device === record.rootIdentity.dev.toString() &&
+      nativeTargetIdentity(record.nativeRootFd).inode === record.rootIdentity.ino.toString() &&
       sameIdentity(record.rootIdentity, identityFor(record.rootFd)) &&
       sameIdentity(record.gitdirIdentity, identityFor(record.gitdirFd)) &&
       sameIdentity(record.rootIdentity, rootAtPath) &&
@@ -149,6 +173,12 @@ export function verifyWorkspace(workspace: SelectedWorkspace): boolean {
   } catch {
     return false;
   }
+}
+
+/** Internal native root authority, never passed to model-visible tools. */
+export function nativeRootForWorkspace(workspace: SelectedWorkspace): number | null {
+  const record = held.get(workspace);
+  return record !== undefined && verifyWorkspace(workspace) ? record.nativeRootFd : null;
 }
 
 export function trustedWorkspaceId(workspace: unknown): string | null {
@@ -174,6 +204,10 @@ export function closeWorkspace(workspace: SelectedWorkspace): void {
   try {
     fs.closeSync(record.rootFd);
   } finally {
-    fs.closeSync(record.gitdirFd);
+    try {
+      fs.closeSync(record.gitdirFd);
+    } finally {
+      closeNativeDescriptor(record.nativeRootFd);
+    }
   }
 }

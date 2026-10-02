@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { verifyWorkspace } from "./admission.js";
+import { nativeRootForWorkspace, verifyWorkspace } from "./admission.js";
 import { runTrustedGit } from "./git.js";
 import type { SelectedWorkspace } from "./types.js";
 
@@ -17,7 +17,24 @@ function nulNames(output: Buffer): string[] {
     .split("\0");
 }
 
-function hasNestedRepository(root: string, name: string, blockedPrefixes: Set<string>): boolean {
+function existsForMembership(name: string, strict: boolean): boolean {
+  if (!strict) return fs.existsSync(name);
+  try {
+    fs.lstatSync(name);
+    return true;
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT")
+      return false;
+    throw error;
+  }
+}
+
+function hasNestedRepository(
+  root: string,
+  name: string,
+  blockedPrefixes: Set<string>,
+  strict = false,
+): boolean {
   const components = name.split("/");
   let directory = root;
   for (const component of components.slice(0, -1)) {
@@ -29,18 +46,19 @@ function hasNestedRepository(root: string, name: string, blockedPrefixes: Set<st
         blockedPrefixes.add(directory);
         return true;
       }
-    } catch {
+    } catch (error) {
+      if (strict) throw error;
       blockedPrefixes.add(directory);
       return true;
     }
-    if (fs.existsSync(path.join(directory, ".git"))) {
+    if (existsForMembership(path.join(directory, ".git"), strict)) {
       blockedPrefixes.add(directory);
       return true;
     }
     if (
-      fs.existsSync(path.join(directory, "HEAD")) &&
-      fs.existsSync(path.join(directory, "objects")) &&
-      fs.existsSync(path.join(directory, "refs"))
+      existsForMembership(path.join(directory, "HEAD"), strict) &&
+      existsForMembership(path.join(directory, "objects"), strict) &&
+      existsForMembership(path.join(directory, "refs"), strict)
     ) {
       try {
         if (
@@ -51,7 +69,8 @@ function hasNestedRepository(root: string, name: string, blockedPrefixes: Set<st
           blockedPrefixes.add(directory);
           return true;
         }
-      } catch {
+      } catch (error) {
+        if (strict) throw error;
         blockedPrefixes.add(directory);
         return true;
       }
@@ -60,8 +79,12 @@ function hasNestedRepository(root: string, name: string, blockedPrefixes: Set<st
   return false;
 }
 
-export function listWorkspaceMembers(workspace: SelectedWorkspace): readonly string[] {
-  if (!verifyWorkspace(workspace)) throw new Error("Workspace identity unavailable");
+export function workspaceMemberEvidence(
+  workspace: SelectedWorkspace,
+  verifiedRootFd?: number,
+): { readonly rootFd: number; readonly members: readonly string[] } {
+  const rootFd = verifiedRootFd ?? nativeRootForWorkspace(workspace);
+  if (rootFd === null || rootFd === undefined) throw new Error("Workspace identity unavailable");
   const tracked = nulNames(
     gitOutput(workspace.root, ["ls-files", "--cached", "--stage", "-z", "--full-name"]),
   );
@@ -81,7 +104,7 @@ export function listWorkspaceMembers(workspace: SelectedWorkspace): readonly str
   }
   const gitlinkNames = [...gitlinks];
   const blockedPrefixes = new Set<string>();
-  return Object.freeze(
+  const members = Object.freeze(
     [...names]
       .filter(
         (name) =>
@@ -92,8 +115,47 @@ export function listWorkspaceMembers(workspace: SelectedWorkspace): readonly str
       )
       .sort(),
   );
+  if (nativeRootForWorkspace(workspace) !== rootFd)
+    throw new Error("Workspace identity unavailable");
+  return { rootFd, members };
+}
+
+export function listWorkspaceMembers(workspace: SelectedWorkspace): readonly string[] {
+  return workspaceMemberEvidence(workspace).members;
 }
 
 export function isWorkspaceMember(workspace: SelectedWorkspace, requestedPath: string): boolean {
   return listWorkspaceMembers(workspace).includes(requestedPath);
+}
+
+/** Reject an ancestor that is another repository before planning a new file. */
+export function isNestedWorkspacePath(
+  workspace: SelectedWorkspace,
+  requestedPath: string,
+): boolean {
+  if (!verifyWorkspace(workspace)) throw new Error("Workspace identity unavailable");
+  return hasNestedRepository(workspace.root, requestedPath, new Set(), true);
+}
+
+/** Git applies ignore rules to prospective create paths as well as existing files. */
+export function isIgnoredWorkspacePath(
+  workspace: SelectedWorkspace,
+  requestedPath: string,
+): boolean {
+  if (!verifyWorkspace(workspace)) throw new Error("Workspace identity unavailable");
+  try {
+    runTrustedGit(workspace.root, [
+      "-C",
+      workspace.root,
+      "check-ignore",
+      "-q",
+      "--",
+      requestedPath,
+    ]);
+    return true;
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "status" in error && error.status === 1)
+      return false;
+    throw error;
+  }
 }

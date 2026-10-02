@@ -51,3 +51,15 @@ export type WorkspaceAccessResult<T extends OpenedWorkspaceTarget> =
       readonly kind: "UNAVAILABLE";
       readonly reason: "IDENTITY_CHANGED" | "NATIVE_UNAVAILABLE" | "INSPECTION_FAILED";
     };
+
+/** A snapshot for permission planning; it never authorizes a later write. */
+export type MutationPathInspection =
+  | {
+      readonly kind: "INSPECTED";
+      readonly canonicalPath: string;
+      readonly operation: "update" | "create";
+      readonly parentIdentity: string;
+      readonly targetIdentity: string | null;
+    }
+  | { readonly kind: "FORBIDDEN"; readonly reason: "PATH_DENIED" | "TARGET_DENIED" }
+  | { readonly kind: "UNAVAILABLE"; readonly reason: "IDENTITY_CHANGED" | "INSPECTION_FAILED" };

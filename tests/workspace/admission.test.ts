@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -21,6 +22,25 @@ function expectSamePhysicalDirectory(first: string, second: string): void {
 }
 
 describe("trusted checkout selection and admission", () => {
+  it("rejects admission when the native capability probe cannot open a real child", async () => {
+    const fixture = createGitCheckout();
+    cleanup.push(() => fixture.cleanup());
+    const require = createRequire(import.meta.url);
+    const native = require("../../native/workspace/build/Release/workspace_boundary.node") as {
+      probeWalk?: (...arguments_: unknown[]) => void;
+    };
+    const original = native.probeWalk;
+    native.probeWalk = () => {
+      throw new Error("native path walk unavailable");
+    };
+    try {
+      const { selectWorkspace } = await import("../../src/workspace/admission.js");
+      expect(selectWorkspace(fixture.root)).toMatchObject({ kind: "REJECTED" });
+    } finally {
+      if (original === undefined) delete native.probeWalk;
+      else native.probeWalk = original;
+    }
+  });
   it("discovers a fixture checkout with the restricted Git environment", () => {
     const fixture = createGitCheckout();
     cleanup.push(() => fixture.cleanup());

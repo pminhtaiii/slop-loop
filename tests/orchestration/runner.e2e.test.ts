@@ -164,6 +164,7 @@ describe("scripted task lifecycle", () => {
         factsFor: () => ({
           workspaceId: TEST_WORKSPACE_ID,
           operation: "read" as const,
+          requestedPath: "src/index.ts",
           canonicalPath: "src/index.ts",
           status: "ALLOWED" as const,
         }),
@@ -232,6 +233,7 @@ describe("scripted task lifecycle", () => {
         factsFor: () => ({
           workspaceId: TEST_WORKSPACE_ID,
           operation: "read" as const,
+          requestedPath: "src/index.ts",
           canonicalPath: "src/index.ts",
           status: "ALLOWED" as const,
         }),
@@ -268,6 +270,7 @@ describe("scripted task lifecycle", () => {
         factsFor: () => ({
           workspaceId: TEST_WORKSPACE_ID,
           operation: "update" as const,
+          requestedPath: "src/index.ts",
           canonicalPath: "src/index.ts",
           status: "ALLOWED" as const,
         }),
@@ -349,6 +352,7 @@ describe("scripted task lifecycle", () => {
         factsFor: () => ({
           workspaceId: TEST_WORKSPACE_ID,
           operation: "read" as const,
+          requestedPath: "src/index.ts",
           canonicalPath: "src/index.ts",
           status: "ALLOWED" as const,
         }),

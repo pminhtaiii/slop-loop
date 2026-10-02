@@ -94,3 +94,40 @@ On 2026-09-30, the full pinned test suite passed with 238 tests. These tests pro
 On 2026-10-01, [CI run 31](https://github.com/pminhtaiii/slop-loop/actions/runs/36857259445) for commit `cd2be96dfffcafe07f8cf07289595563c5020383` passed on Ubuntu and Windows. Both jobs completed `pnpm native:build`, `pnpm exec vitest run tests/workspace` (23 passing tests), `pnpm test` (265 passing tests), `pnpm build`, and `pnpm smoke`; the Ubuntu job also completed `pnpm lint`, `pnpm format:check`, and `pnpm typecheck`. The workspace tests cover trusted root/subdirectory selection, physical directory aliases, denied missing/forged identities, same-path linked-worktree gitfile replacement, a gitfile switch during selection, sanitized Git discovery, tracked/untracked/ignored membership, gitlinks, nested and bare repositories (including a missing config), ordinary repository-shaped directories, a leading byte-order mark in an untracked pathname, sibling paths, symlinked and uninspectable directory prefixes, and native-loader compatibility.
 
 The local Windows checkout also passed `pnpm lint`, `pnpm format:check`, `pnpm typecheck`, `pnpm test` (265 tests), `pnpm build`, and `pnpm smoke`. Its Node-API addon was compiled with MinGW g++ against Node 24.14.0 headers for local tests. The standard `pnpm native:build` command still cannot complete on this particular host because Visual C++ Build Tools are absent; the successful Ubuntu and Windows CI builds provide the two-host native-build evidence. T059–T068 remain a partial Phase 4 checkpoint: the workspace-containment exit gate in `specs/005-workspace-boundary/quickstart.md` is not satisfied because later T069–T087 path, content-open, and tool integration work remains open.
+
+## Phase 4 — Internal phase 4 two-host CI verification checkpoint (T069–T078, T088 partial)
+
+### Historical local Windows diagnostic checkpoints (2026-10-02)
+
+On 2026-10-02, the local Windows checkout compiled the changed native addon with MinGW g++ and Node 24.14.0 headers for diagnostic testing. The focused command `pnpm exec vitest run tests/workspace tests/tools/workspace-gateway.test.ts tests/policy/engine.test.ts tests/tools/registry.test.ts` initially passed 167 tests with five skipped cases. After review fixes, the full `pnpm test` command passed 313 tests with five skipped cases; `pnpm lint`, `pnpm format:check`, `pnpm typecheck`, `pnpm build`, `pnpm smoke`, and `git diff --check` passed. The skipped cases included Linux bind-mount coverage and real symlink fixtures unavailable on this Windows host. The native Windows fixture denied a junction, hard-linked content, traversal, Git metadata, and an alternate data stream; a pinned opened file did not return bytes after its alias changed. An additional regression test proved that a closed opaque native token cannot read a later handle that reuses the same OS descriptor. Real workspace facts reached the existing gateway, and missing, duplicate, extra, wrong-alias, and wrong-operation read facts were rejected before fake executor dispatch.
+
+Later on 2026-10-02, Visual C++ Build Tools 2026 were available on this Windows host. The Node 24.14.0 addon built successfully with `pnpm native:build`, using Python 3.12.11 at `C:\msys64\ucrt64\bin\python.exe` and the unencrypted local node-gyp header cache selected by `npm_config_devdir`. That intermediate local full `pnpm test` run passed 318 tests with 11 skipped (due to local Windows symlink privilege absence and platform skips); `pnpm lint`, `pnpm format:check`, `pnpm typecheck`, `pnpm build`, `pnpm smoke`, and `git diff --check` passed on this checkout. A single parallel full-suite run exceeded Vitest's five-second limit in the Git-heavy mutation-preflight test; that integration test was given a ten-second limit and passed.
+
+### Two-host CI verification (PR #119, CI run 35)
+
+On 2026-10-02, [CI run 35](https://github.com/pminhtaiii/slop-loop/actions/runs/37008013232) for PR #119 on branch `feat/005-workspace-boundary` (verified commit `fe0709553e927e78362328f087440693d1a107b5`) passed both Windows Quality Gate and Ubuntu Quality Gate:
+
+1. **Windows Quality Gate (PASS)**:
+   - Native build: `pnpm native:build` with runner Visual C++ tools succeeded.
+   - Workspace boundary tests (`pnpm exec vitest run tests/workspace`): 79 passed, 2 skipped (81 total).
+   - Full source tests (`pnpm test`): 332 passed, 2 skipped (334 total).
+   - Application build (`pnpm build`): passed.
+   - Smoke test (`pnpm smoke`): passed.
+   - Real Windows symlink and junction behavior executed and verified: Windows runner privileges allowed real file and directory symlink fixtures to execute and pass; Windows junction denial for internal and external checkout targets passed.
+   - Skipped test classification: The 2 skipped tests on Windows are Linux-only cases (`tests/workspace/native-boundary.test.ts` Linux FIFO and `tests/workspace/mount-boundary.test.ts` Linux bind mount). These are expected platform exclusions and do not block Windows evidence.
+
+2. **Ubuntu Quality Gate (PASS)**:
+   - Native build: `pnpm native:build` with runner g++ and make succeeded.
+   - Workspace boundary tests (`pnpm exec vitest run tests/workspace`): 78 passed, 3 skipped (81 total).
+   - Code standards: `pnpm lint`, `pnpm format:check`, and `pnpm typecheck` all passed cleanly.
+   - Full source tests (`pnpm test`): 331 passed, 3 skipped (334 total).
+   - Application build (`pnpm build`): passed.
+   - Smoke test (`pnpm smoke`): passed.
+   - Real Linux native openat2 traversal, symlink resolution, and FIFO rejection executed and passed.
+   - Skipped test classification: Of the 3 skipped tests on Ubuntu, 2 are Windows-only junction fixtures (`tests/workspace/mount-boundary.test.ts` Windows junction and `tests/workspace/boundary.test.ts` mutation-parent junction). The 1 critical skipped test is `tests/workspace/mount-boundary.test.ts` Linux bind mount, which explicitly reported `UNAVAILABLE: Linux bind-mount fixture requires mount capability`.
+
+3. **Evidence gap and status reconciliation**:
+   - The GitHub-hosted Ubuntu runner could not create the Linux bind-mount fixture because the required mount capability was unavailable. A skipped test is **not** containment evidence; Linux bind-mount containment has **not** been proven safe.
+   - Implementation for T069–T078 is complete, and cross-platform CI verification currently available has passed for both Windows real symlink/junction behavior and Linux native/symlink behavior.
+   - Convergence task T088 remains **partial** with this known verification limitation, and the US2 checkpoint remains open per SC-001/SC-003 until critical mount fixtures can actually be verified.
+   - Project Phase 4 remains incomplete as T079–T087 remain open (retrieval bounding, output contracts, quickstart gate, and status reconciliation); the registry still caps `search_code` at 100 matches, and the gateway still applies a generic 32 KiB result cap pending T079–T085. The overall Phase 4 exit gate remains open.

@@ -8,7 +8,7 @@ import type {
   TrustedExecutionFacts,
   TrustedPathFacts,
 } from "../policy/engine.js";
-import { validateToolCall } from "./registry.js";
+import { toolMetadataForName, validateToolCall } from "./registry.js";
 import type { ToolName, ValidatedToolCall } from "./registry.js";
 
 const MAX_RESULT_BYTES = 32_768;
@@ -115,6 +115,34 @@ function normalizePaths(
   if (facts === undefined) return Object.freeze([]);
   if (Array.isArray(facts)) return Object.freeze(Array.from(facts as readonly TrustedPathFacts[]));
   return Object.freeze([facts as TrustedPathFacts]);
+}
+function expectedReadPath(call: ValidatedToolCall): string | null {
+  switch (call.name) {
+    case "read_file":
+      return call.arguments.path;
+    case "list_files":
+      return call.arguments.path ?? ".";
+    case "search_code":
+      return call.arguments.scope ?? ".";
+    default:
+      return null;
+  }
+}
+
+function assertExactPathCoverage(
+  call: ValidatedToolCall,
+  paths: readonly TrustedPathFacts[],
+  workspaceId: string,
+): void {
+  const expected = expectedReadPath(call);
+  if (expected === null) return;
+  if (
+    paths.length !== 1 ||
+    paths[0]?.workspaceId !== workspaceId ||
+    paths[0].requestedPath !== expected ||
+    paths[0].operation !== "read"
+  )
+    throw new TypeError("Required trusted path facts are inconsistent");
 }
 function eventFor(
   task: TaskContext,
@@ -230,6 +258,11 @@ export class ToolGateway {
     else {
       try {
         paths = normalizePaths(await this.workspace.factsFor(validated.call, ceiling));
+        if (
+          ceiling.eligibleTools.includes(validated.call.name) &&
+          ceiling.capabilities.includes(toolMetadataForName(validated.call.name).requiredCapability)
+        )
+          assertExactPathCoverage(validated.call, paths, ceiling.workspaceId);
         const grants: FileGrantView[] = [];
         for (const path of paths) {
           if (path.operation === "read") continue;

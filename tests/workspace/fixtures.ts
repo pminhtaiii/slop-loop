@@ -12,6 +12,22 @@ export interface GitCheckoutFixture {
   cleanup(): void;
 }
 
+/** Reports whether the host can create a real symlink fixture, separate from junction support. */
+export function symlinkFixtureAvailable(kind: "file" | "dir"): boolean {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "slop-loop-link-probe-"));
+  try {
+    const target = path.join(directory, "target");
+    if (kind === "file") fs.writeFileSync(target, "fixture");
+    else fs.mkdirSync(target);
+    fs.symlinkSync("target", path.join(directory, "alias"), kind);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+}
+
 export function createGitCheckout(): GitCheckoutFixture {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "slop-loop-workspace-"));
   const git = (...args: string[]): string =>
