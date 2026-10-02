@@ -94,4 +94,4 @@ Complete setup and foundational work, then US1 as the first testable slice. Fini
 
 ## Phase 7: Convergence
 
-- [ ] T088 Provide a Windows host that can create real file and directory symlink fixtures and a Linux host that can run or explicitly report unavailable bind-mount fixtures; run the T069–T078 adversarial tests on both, record exact passing/skipped evidence, and keep the US2 checkpoint open until critical fixtures pass per SC-001 and SC-003 (partial)
+- [ ] T088 Provide a Windows host that can create real file and directory symlink fixtures and a Linux host that can run or explicitly report unavailable bind-mount fixtures; run the T069–T078 adversarial tests on both, record exact passing/skipped evidence, and keep the US2 checkpoint open until critical fixtures pass per SC-001 and SC-003 (partial: PR #119 CI run #35 verified two-host symlink and junction behavior; Linux bind mount remains unavailable on GitHub runner)
