@@ -363,7 +363,7 @@ TaskBudget
 WorkspaceBoundary
 ```
 
-Python naming rules apply only inside target repositories, not to Slop Loop implementation.
+Target repositories follow their own naming rules; the initial TypeScript reference target is Slop Loop itself.
 
 ## Function Design
 

@@ -13,7 +13,7 @@ An environment variable owned by Slop Loop and prefixed with SLOP_LOOP_; Phase 0
 _Avoid_: CODING_AGENT_*, SLOP_*, unprefixed application settings
 
 **Target repository**:
-The developer repository on which the coding agent performs analysis, proposes changes, and eventually runs trusted verification profiles. The first target repositories are Python repositories; pytest, Ruff, and mypy belong to those repositories, not to Slop Loop's implementation.
+The developer repository on which the coding agent performs analysis, proposes changes, and eventually runs trusted verification profiles. The first target repositories are TypeScript repositories, initially Slop Loop itself.
 _Avoid_: host repository, implementation repository
 
 **Workspace**:
