@@ -187,6 +187,44 @@ describe("sandbox core contracts", () => {
     await expect(coordinator.verdict()).resolves.toMatchObject({ status: "PASS", freshness: "CURRENT" });
   });
 
+    it("fails closed when readiness is not enforced and always cleans up thrown runs", async () => {
+      let cleaned = 0;
+      const backend = new DockerSandboxBackend({
+        readiness: () => ({ networkDisabled: true, limitsEnforced: false, readOnlyMounts: true }),
+        inspectImage: (imageId) => ({ imageId, fingerprint: "fingerprint", architecture: "linux-x64" }),
+        copySnapshot: () => "snapshot:snapshot-mount",
+        run: () => { throw new Error("runner failed"); },
+        stopAndRemove: () => { cleaned += 1; return "CONFIRMED"; },
+      });
+      await expect(backend.executeCheck({
+        snapshot,
+        image: { imageId: "sha256:" + "a".repeat(64), fingerprint: "fingerprint", architecture: "linux-x64", status: "READY" },
+        target: { check: "tests", argv: ["pnpm", "test"] },
+        limits: DEFAULT_SANDBOX_LIMITS,
+      })).rejects.toThrow("Sandbox runtime not ready");
+      expect(cleaned).toBe(0);
+    });
+
+    it("seals evidence identities and rejects mismatched attempts", () => {
+      const coordinator = new VerificationCoordinator(["tests"], snapshot, () => "CURRENT", {
+        preparationFingerprint: "prep", profileSetId: "profiles-v1", taskId: "task", attemptId: "attempt", nativeIdentity: "native-v1",
+      });
+      expect(() => coordinator.record({
+        check: "tests", snapshotId: snapshot.snapshotId, imageId: "sha256:" + "a".repeat(64), status: "PASS", cleanup: "CONFIRMED",
+        preparationFingerprint: "other", profileSetId: "profiles-v1", targetId: "tests:ordinary", taskId: "task", attemptId: "attempt", nativeIdentity: "native-v1",
+      })).toThrow("evidence identity");
+    });
+
+    it("does not expose mutable snapshot buffers", async () => {
+      const captured = await captureSnapshot({
+        workspaceId: "workspace",
+        entries: () => Promise.resolve([{ path: "index.ts", bytes: Buffer.from("export {}"), mode: 0o644 }]),
+      }, { exclusionPolicyId: "default", maxEntries: 10, maxBytes: 100, maxFileBytes: 50 });
+      const original = captured.entries[0]?.hash;
+      captured.entries[0]?.content.fill(0);
+      expect(captured.entries[0]?.hash).toBe(original);
+      expect(captured.entries[0]?.content).not.toEqual(Buffer.alloc(9));
+    });
   it("exposes a narrow backend without accepting model-controlled runtime options", () => {
     const backend = new DockerSandboxBackend({
       readiness: () => ({ networkDisabled: true, limitsEnforced: true, readOnlyMounts: true }),

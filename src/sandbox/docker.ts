@@ -38,6 +38,9 @@ export class DockerSandboxBackend implements SandboxBackend {
     return Promise.resolve("READY" as const);
   }
   executeCheck(input: { readonly snapshot: import("./types.js").VerificationSnapshot; readonly image: PreparedImageRecord; readonly target: { readonly check: string; readonly argv: readonly string[] }; readonly limits: SandboxLimits }): Promise<VerificationEvidence> {
+    const runtime = this.docker.readiness();
+    if (!runtime.networkDisabled || !runtime.limitsEnforced || !runtime.readOnlyMounts)
+      return Promise.reject(new Error("Sandbox runtime not ready"));
     validateFixedArgv(input.target.argv);
     const allowed = new Map([
       ["tests", "pnpm test"],
@@ -64,14 +67,20 @@ export class DockerSandboxBackend implements SandboxBackend {
     if (this.docker.copySnapshot === undefined) throw new Error("Snapshot materialization unavailable");
     const mount = this.docker.copySnapshot(input.snapshot.entries);
     if (!/^snapshot:[A-Za-z0-9._-]+$/.test(mount)) throw new Error("Untrusted snapshot mount");
-    const result = this.docker.run([
-      "run", "--rm", "--network=none", "--read-only", "--cap-drop=ALL",
-      "--security-opt=no-new-privileges", "--cpus", String(input.limits.cpus),
-      "--memory", String(input.limits.memoryBytes), "--pids-limit", String(input.limits.maxPids),
-      "--mount", `type=bind,src=${mount.slice("snapshot:".length)},dst=/snapshot,readonly`,
-      input.image.imageId, ...input.target.argv,
-    ], input.limits);
-    const cleanup = this.docker.stopAndRemove?.(result.id) ?? "UNCERTAIN";
+    let result: ReturnType<DockerPort["run"]> | undefined;
+    let cleanup: "CONFIRMED" | "UNCERTAIN" = "UNCERTAIN";
+    try {
+      result = this.docker.run([
+        "run", "--rm", "--network=none", "--read-only", "--cap-drop=ALL",
+        "--security-opt=no-new-privileges", "--cpus", String(input.limits.cpus),
+        "--memory", String(input.limits.memoryBytes), "--pids-limit", String(input.limits.maxPids),
+        "--mount", `type=bind,src=${mount.slice("snapshot:".length)},dst=/snapshot,readonly`,
+        input.image.imageId, ...input.target.argv,
+      ], input.limits);
+    } finally {
+      if (result !== undefined) cleanup = this.docker.stopAndRemove?.(result.id) ?? "UNCERTAIN";
+    }
+    if (result === undefined) throw new Error("Sandbox execution failed");
     const output = result.output.slice(0, input.limits.maxOutputBytes);
     return Promise.resolve({
       check: input.target.check,

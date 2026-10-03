@@ -27,12 +27,13 @@ export async function captureSnapshot(source: SnapshotSource, limits: SnapshotLi
     totalBytes += entry.bytes.byteLength;
     if (totalBytes > limits.maxBytes) throw new Error("Snapshot byte limit exceeded");
     const content = Buffer.from(entry.bytes);
+    const immutable = Buffer.from(content);
     return {
       path: entry.path,
       bytes: content.byteLength,
       mode: entry.mode & 0o777,
       hash: createHash("sha256").update(content).digest("hex"),
-      content,
+      get content() { return Buffer.from(immutable); },
     };
   }).sort((a, b) => a.path.localeCompare(b.path));
   if (new Set(entries.map((entry) => entry.path)).size !== entries.length)

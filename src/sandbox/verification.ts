@@ -2,14 +2,23 @@ import type { Freshness, VerificationEvidence, VerificationSnapshot, Verificatio
 
 export class VerificationCoordinator {
   private readonly evidence = new Map<string, VerificationEvidence>();
+  private readonly identity?: { readonly preparationFingerprint: string; readonly profileSetId: string; readonly taskId: string; readonly attemptId: string; readonly nativeIdentity: string };
   constructor(
     private readonly requiredChecks: readonly string[],
     private readonly sealedSnapshot?: VerificationSnapshot,
     private readonly freshnessProvider?: () => Freshness,
-  ) {}
+    identity?: { readonly preparationFingerprint: string; readonly profileSetId: string; readonly taskId: string; readonly attemptId: string; readonly nativeIdentity: string },
+  ) { this.identity = identity; }
   record(evidence: VerificationEvidence): void {
     if (!this.requiredChecks.includes(evidence.check)) throw new Error("Unexpected verification check");
     if (this.evidence.has(evidence.check)) throw new Error("Duplicate verification check");
+    if (this.identity && (
+      evidence.preparationFingerprint !== this.identity.preparationFingerprint ||
+      evidence.profileSetId !== this.identity.profileSetId ||
+      evidence.taskId !== this.identity.taskId ||
+      evidence.attemptId !== this.identity.attemptId ||
+      evidence.nativeIdentity !== this.identity.nativeIdentity
+    )) throw new Error("evidence identity mismatch");
     if (this.evidence.size > 0) {
       const first = this.evidence.values().next().value as VerificationEvidence;
       if (first.snapshotId !== evidence.snapshotId || first.imageId !== evidence.imageId)
