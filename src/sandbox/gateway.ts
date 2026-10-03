@@ -1,4 +1,7 @@
 import type { PreparedImageRecord, SandboxBackend, SandboxLimits } from "./types.js";
+import type { TrustedExecutionFacts } from "../policy/engine.js";
+import type { TaskCapabilityCeiling } from "../policy/engine.js";
+import type { ValidatedToolCall } from "../tools/registry.js";
 
 export type ReadinessAssessment =
   | { readonly status: "READY" }
@@ -23,5 +26,24 @@ export class SandboxGateway {
     return status === "READY"
       ? { status: "READY" }
       : { status: "EXTERNAL_BLOCKER", reason: image.status === "STALE" ? "IMAGE_STALE" : "RUNTIME_UNAVAILABLE" };
+  }
+
+  async factsFor(
+    call: ValidatedToolCall,
+    _ceiling: TaskCapabilityCeiling,
+    image: PreparedImageRecord,
+  ): Promise<TrustedExecutionFacts> {
+    const readiness = await this.readiness(image);
+    const profile =
+      call.name === "run_tests" ||
+      call.name === "run_linter" ||
+      call.name === "run_typecheck" ||
+      call.name === "run_build"
+        ? call.arguments.profile
+        : "";
+    return Object.freeze({
+      approvedProfiles: Object.freeze(profile === "" ? [] : [profile]),
+      executorReady: readiness.status === "READY",
+    });
   }
 }
