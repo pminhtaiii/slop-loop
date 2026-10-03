@@ -8,10 +8,9 @@ import type {
   TrustedExecutionFacts,
   TrustedPathFacts,
 } from "../policy/engine.js";
-import { validateToolCall } from "./registry.js";
+import { outputContractForName, toolMetadataForName, validateToolCall } from "./registry.js";
 import type { ToolName, ValidatedToolCall } from "./registry.js";
 
-const MAX_RESULT_BYTES = 32_768;
 const RESULT_APPEND_ATTEMPTS = 3;
 
 export interface WorkspaceFactsPort {
@@ -116,6 +115,34 @@ function normalizePaths(
   if (Array.isArray(facts)) return Object.freeze(Array.from(facts as readonly TrustedPathFacts[]));
   return Object.freeze([facts as TrustedPathFacts]);
 }
+function expectedReadPath(call: ValidatedToolCall): string | null {
+  switch (call.name) {
+    case "read_file":
+      return call.arguments.path;
+    case "list_files":
+      return call.arguments.path ?? ".";
+    case "search_code":
+      return call.arguments.scope ?? ".";
+    default:
+      return null;
+  }
+}
+
+function assertExactPathCoverage(
+  call: ValidatedToolCall,
+  paths: readonly TrustedPathFacts[],
+  workspaceId: string,
+): void {
+  const expected = expectedReadPath(call);
+  if (expected === null) return;
+  if (
+    paths.length !== 1 ||
+    paths[0]?.workspaceId !== workspaceId ||
+    paths[0].requestedPath !== expected ||
+    paths[0].operation !== "read"
+  )
+    throw new TypeError("Required trusted path facts are inconsistent");
+}
 function eventFor(
   task: TaskContext,
   invocationId: string,
@@ -153,16 +180,31 @@ function redact(value: unknown): unknown {
 }
 function safeOutput(
   value: unknown,
+  tool: ToolName,
+  paths: readonly TrustedPathFacts[],
 ): { readonly ok: true; readonly value: unknown; readonly bytes: number } | { readonly ok: false } {
   try {
     const normalized = value === undefined ? null : value;
     const encoded = JSON.stringify(normalized);
     if (encoded === undefined) return { ok: false };
     const sanitized = redact(JSON.parse(encoded));
+    const contract = outputContractForName(tool);
+    if (!contract.schema.safeParse(sanitized).success) return { ok: false };
+    if (
+      tool === "read_file" &&
+      (paths.length !== 1 ||
+        typeof sanitized !== "object" ||
+        sanitized === null ||
+        !("path" in sanitized) ||
+        sanitized.path !== paths[0]?.canonicalPath)
+    )
+      return { ok: false };
     const sanitizedEncoded = JSON.stringify(sanitized);
     if (sanitizedEncoded === undefined) return { ok: false };
+    if ((tool === "read_file" || tool === "search_code") && sanitizedEncoded !== encoded)
+      return { ok: false };
     const bytes = new TextEncoder().encode(sanitizedEncoded).byteLength;
-    return bytes > MAX_RESULT_BYTES ? { ok: false } : { ok: true, value: sanitized, bytes };
+    return bytes > contract.maxBytes ? { ok: false } : { ok: true, value: sanitized, bytes };
   } catch {
     return { ok: false };
   }
@@ -230,6 +272,11 @@ export class ToolGateway {
     else {
       try {
         paths = normalizePaths(await this.workspace.factsFor(validated.call, ceiling));
+        if (
+          ceiling.eligibleTools.includes(validated.call.name) &&
+          ceiling.capabilities.includes(toolMetadataForName(validated.call.name).requiredCapability)
+        )
+          assertExactPathCoverage(validated.call, paths, ceiling.workspaceId);
         const grants: FileGrantView[] = [];
         for (const path of paths) {
           if (path.operation === "read") continue;
@@ -294,7 +341,7 @@ export class ToolGateway {
         return { kind: "BLOCKED", invocationId, reason: "AUDIT_INCOMPLETE", effect: "POSSIBLE" };
       return { kind: "FAILED", invocationId, reason: "EXECUTION_FAILURE", effect: "POSSIBLE" };
     }
-    const checked = safeOutput(output);
+    const checked = safeOutput(output, validated.call.name, paths);
     const resultEvent = eventFor(
       task,
       invocationId,

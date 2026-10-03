@@ -6,6 +6,8 @@ import { createTaskCapabilityCeiling } from "../policy/engine.js";
 import type { TaskCapabilityCeiling } from "../policy/engine.js";
 import { selectedToolNamesForMode } from "../tools/selection.js";
 import type { ToolCapability, ToolName } from "../tools/registry.js";
+import { trustedWorkspaceId } from "../workspace/admission.js";
+import type { SelectedWorkspace } from "../workspace/types.js";
 
 export interface BudgetHandoff {
   readonly exhaustedBudget: BudgetExhaustion["resource"];
@@ -29,7 +31,7 @@ export interface TaskProgress {
 
 export interface TaskAdmissionAuthority {
   readonly sessionId: string;
-  readonly workspaceId: string;
+  readonly workspace: SelectedWorkspace;
   readonly eligibleTools?: readonly ToolName[];
   readonly capabilities?: readonly ToolCapability[];
 }
@@ -183,17 +185,17 @@ export function admitTask(
   let capabilityCeiling: Readonly<TaskCapabilityCeiling> | null = null;
   try {
     budget = createTaskBudget(requestedProfile);
-    if (authority !== undefined) {
-      capabilityCeiling = createTaskCapabilityCeiling({
-        taskId: task.taskId,
-        sessionId: authority.sessionId,
-        workspaceId: authority.workspaceId,
-        mode: task.mode,
-        eligibleTools: authority.eligibleTools ?? selectedToolNamesForMode(task.mode),
-        ...(authority.capabilities === undefined ? {} : { capabilities: authority.capabilities }),
-        resources: budget,
-      });
-    }
+    const workspaceId = trustedWorkspaceId(authority?.workspace);
+    if (authority === undefined || workspaceId === null) return failed("INTERNAL_ERROR");
+    capabilityCeiling = createTaskCapabilityCeiling({
+      taskId: task.taskId,
+      sessionId: authority.sessionId,
+      workspaceId,
+      mode: task.mode,
+      eligibleTools: authority.eligibleTools ?? selectedToolNamesForMode(task.mode),
+      ...(authority.capabilities === undefined ? {} : { capabilities: authority.capabilities }),
+      resources: budget,
+    });
   } catch {
     return failed("INTERNAL_ERROR");
   }

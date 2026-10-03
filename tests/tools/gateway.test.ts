@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { admitTask, createTask } from "../../src/orchestration/task.js";
+import { createTask } from "../../src/orchestration/task.js";
+import { admitTask, TEST_WORKSPACE_ID } from "../support/admission.js";
 import { advanceTask } from "../../src/orchestration/transitions.js";
 import { ToolGateway } from "../../src/tools/gateway.js";
 import type { ToolExecutor } from "../../src/tools/gateway.js";
@@ -29,8 +30,9 @@ describe("ToolGateway", () => {
     const gateway = new ToolGateway({
       workspace: {
         factsFor: () => ({
-          workspaceId: "workspace-1",
+          workspaceId: TEST_WORKSPACE_ID,
           operation: "read" as const,
+          requestedPath: "src/index.ts",
           canonicalPath: "src/index.ts",
           status: "ALLOWED" as const,
         }),
@@ -55,7 +57,7 @@ describe("ToolGateway", () => {
         createTask({ taskId: "gateway-possible-effect", objective: "Read source", mode: "Ask" }),
         0,
         "Medium",
-        { sessionId: "session-1", workspaceId: "workspace-1", eligibleTools: ["read_file"] },
+        { sessionId: "session-1", workspaceId: TEST_WORKSPACE_ID, eligibleTools: ["read_file"] },
       ),
     );
 
@@ -75,8 +77,9 @@ describe("ToolGateway", () => {
       const gateway = new ToolGateway({
         workspace: {
           factsFor: () => ({
-            workspaceId: "workspace-1",
+            workspaceId: TEST_WORKSPACE_ID,
             operation: "read" as const,
+            requestedPath: "src/index.ts",
             canonicalPath: "src/index.ts",
             status: "ALLOWED" as const,
           }),
@@ -94,7 +97,7 @@ describe("ToolGateway", () => {
           }),
           0,
           "Medium",
-          { sessionId: "session-1", workspaceId: "workspace-1", eligibleTools: ["read_file"] },
+          { sessionId: "session-1", workspaceId: TEST_WORKSPACE_ID, eligibleTools: ["read_file"] },
         ),
       );
 
@@ -110,8 +113,9 @@ describe("ToolGateway", () => {
     const gateway = new ToolGateway({
       workspace: {
         factsFor: () => ({
-          workspaceId: "workspace-1",
+          workspaceId: TEST_WORKSPACE_ID,
           operation: "read" as const,
+          requestedPath: "src/index.ts",
           canonicalPath: "src/index.ts",
           status: "ALLOWED" as const,
         }),
@@ -125,7 +129,7 @@ describe("ToolGateway", () => {
         createTask({ taskId: "gateway-audit-outage", objective: "Read source", mode: "Ask" }),
         0,
         "Medium",
-        { sessionId: "session-1", workspaceId: "workspace-1", eligibleTools: ["read_file"] },
+        { sessionId: "session-1", workspaceId: TEST_WORKSPACE_ID, eligibleTools: ["read_file"] },
       ),
     );
 
@@ -149,8 +153,9 @@ describe("ToolGateway", () => {
     const gateway = new ToolGateway({
       workspace: {
         factsFor: () => ({
-          workspaceId: "workspace-1",
+          workspaceId: TEST_WORKSPACE_ID,
           operation: "read" as const,
+          requestedPath: "src/index.ts",
           canonicalPath: "src/index.ts",
           status: "ALLOWED" as const,
         }),
@@ -170,7 +175,7 @@ describe("ToolGateway", () => {
         createTask({ taskId: "gateway-cancel-fence", objective: "Read source", mode: "Ask" }),
         0,
         "Medium",
-        { sessionId: "session-1", workspaceId: "workspace-1", eligibleTools: ["read_file"] },
+        { sessionId: "session-1", workspaceId: TEST_WORKSPACE_ID, eligibleTools: ["read_file"] },
       ),
     );
     const invocation = gateway.invoke(
@@ -193,8 +198,9 @@ describe("ToolGateway", () => {
     const gateway = new ToolGateway({
       workspace: {
         factsFor: () => ({
-          workspaceId: "workspace-1",
+          workspaceId: TEST_WORKSPACE_ID,
           operation: "read" as const,
+          requestedPath: "src/index.ts",
           canonicalPath: "src/index.ts",
           status: "ALLOWED" as const,
         }),
@@ -210,14 +216,23 @@ describe("ToolGateway", () => {
           );
         },
       },
-      executors: { read_file: { execute: () => ({ text: `run-${++executions}` }) } },
+      executors: {
+        read_file: {
+          execute: () => ({
+            kind: "CONTENT",
+            path: "src/index.ts",
+            method: "workspace-read",
+            content: `run-${++executions}`,
+          }),
+        },
+      },
     });
     const task = readyToRead(
       admitTask(
         createTask({ taskId: "gateway-result-retry", objective: "Read source", mode: "Ask" }),
         0,
         "Medium",
-        { sessionId: "session-1", workspaceId: "workspace-1", eligibleTools: ["read_file"] },
+        { sessionId: "session-1", workspaceId: TEST_WORKSPACE_ID, eligibleTools: ["read_file"] },
       ),
     );
 
@@ -236,8 +251,9 @@ describe("ToolGateway", () => {
     const gateway = new ToolGateway({
       workspace: {
         factsFor: () => ({
-          workspaceId: "workspace-1",
+          workspaceId: TEST_WORKSPACE_ID,
           operation: "read" as const,
+          requestedPath: "src/index.ts",
           canonicalPath: "src/index.ts",
           status: "ALLOWED" as const,
         }),
@@ -258,7 +274,16 @@ describe("ToolGateway", () => {
             : Promise.resolve({ status: "COMMITTED" as const, eventId: event.eventId });
         },
       },
-      executors: { read_file: { execute: () => ({ text: `run-${++executions}` }) } },
+      executors: {
+        read_file: {
+          execute: () => ({
+            kind: "CONTENT",
+            path: "src/index.ts",
+            method: "workspace-read",
+            content: `run-${++executions}`,
+          }),
+        },
+      },
     });
     const task = readyToRead(
       admitTask(
@@ -269,13 +294,13 @@ describe("ToolGateway", () => {
         }),
         0,
         "Medium",
-        { sessionId: "session-1", workspaceId: "workspace-1", eligibleTools: ["read_file"] },
+        { sessionId: "session-1", workspaceId: TEST_WORKSPACE_ID, eligibleTools: ["read_file"] },
       ),
     );
 
     await expect(
       gateway.invoke(task, { name: "read_file", arguments: { path: "src/index.ts" } }, 0),
-    ).resolves.toMatchObject({ kind: "EXECUTED", result: { text: "run-1" } });
+    ).resolves.toMatchObject({ kind: "EXECUTED", result: { content: "run-1" } });
     expect(executions).toBe(1);
     expect(resultAttempts).toBe(2);
     expect(resultPayloads).toHaveLength(1);
@@ -285,8 +310,9 @@ describe("ToolGateway", () => {
     const gateway = new ToolGateway({
       workspace: {
         factsFor: () => ({
-          workspaceId: "workspace-1",
+          workspaceId: TEST_WORKSPACE_ID,
           operation: "read" as const,
+          requestedPath: "src/index.ts",
           canonicalPath: "src/index.ts",
           status: "ALLOWED" as const,
         }),
@@ -299,7 +325,7 @@ describe("ToolGateway", () => {
         createTask({ taskId: "gateway-redaction-bound", objective: "Read source", mode: "Ask" }),
         0,
         "Medium",
-        { sessionId: "session-1", workspaceId: "workspace-1", eligibleTools: ["read_file"] },
+        { sessionId: "session-1", workspaceId: TEST_WORKSPACE_ID, eligibleTools: ["read_file"] },
       ),
     );
 
@@ -312,8 +338,9 @@ describe("ToolGateway", () => {
     const gateway = new ToolGateway({
       workspace: {
         factsFor: () => ({
-          workspaceId: "workspace-1",
+          workspaceId: TEST_WORKSPACE_ID,
           operation: "read" as const,
+          requestedPath: "src/index.ts",
           canonicalPath: "src/index.ts",
           status: "ALLOWED" as const,
         }),
@@ -326,7 +353,7 @@ describe("ToolGateway", () => {
         createTask({ taskId: "gateway-oversize", objective: "Read source", mode: "Ask" }),
         0,
         "Medium",
-        { sessionId: "session-1", workspaceId: "workspace-1", eligibleTools: ["read_file"] },
+        { sessionId: "session-1", workspaceId: TEST_WORKSPACE_ID, eligibleTools: ["read_file"] },
       ),
     );
 
@@ -340,8 +367,9 @@ describe("ToolGateway", () => {
     const gateway = new ToolGateway({
       workspace: {
         factsFor: () => ({
-          workspaceId: "workspace-1",
+          workspaceId: TEST_WORKSPACE_ID,
           operation: "read" as const,
+          requestedPath: "src/index.ts",
           canonicalPath: "src/index.ts",
           status: "ALLOWED" as const,
         }),
@@ -353,7 +381,7 @@ describe("ToolGateway", () => {
       createTask({ taskId: "gateway-admitted", objective: "Read source", mode: "Ask" }),
       0,
       "Medium",
-      { sessionId: "session-1", workspaceId: "workspace-1", eligibleTools: ["read_file"] },
+      { sessionId: "session-1", workspaceId: TEST_WORKSPACE_ID, eligibleTools: ["read_file"] },
     );
 
     expect(
@@ -370,8 +398,9 @@ describe("ToolGateway", () => {
     const gateway = new ToolGateway({
       workspace: {
         factsFor: () => ({
-          workspaceId: "workspace-1",
+          workspaceId: TEST_WORKSPACE_ID,
           operation: "read" as const,
+          requestedPath: "src/index.ts",
           canonicalPath: "src/index.ts",
           status: "ALLOWED" as const,
         }),
@@ -381,7 +410,12 @@ describe("ToolGateway", () => {
         read_file: {
           execute: (call: unknown) => {
             received.push(call);
-            return { text: "source" };
+            return {
+              kind: "CONTENT",
+              path: "src/index.ts",
+              method: "workspace-read",
+              content: "source",
+            };
           },
         },
       },
@@ -391,7 +425,7 @@ describe("ToolGateway", () => {
         createTask({ taskId: "gateway-allow", objective: "Read source", mode: "Ask" }),
         0,
         "Medium",
-        { sessionId: "session-1", workspaceId: "workspace-1", eligibleTools: ["read_file"] },
+        { sessionId: "session-1", workspaceId: TEST_WORKSPACE_ID, eligibleTools: ["read_file"] },
       ),
     );
 
@@ -401,7 +435,7 @@ describe("ToolGateway", () => {
       0,
     );
 
-    expect(result).toMatchObject({ kind: "EXECUTED", result: { text: "source" } });
+    expect(result).toMatchObject({ kind: "EXECUTED", result: { content: "source" } });
     expect(received).toEqual([{ name: "read_file", arguments: { path: "src/index.ts" } }]);
   });
 
@@ -409,8 +443,9 @@ describe("ToolGateway", () => {
     const gateway = new ToolGateway({
       workspace: {
         factsFor: () => ({
-          workspaceId: "workspace-1",
+          workspaceId: TEST_WORKSPACE_ID,
           operation: "read" as const,
+          requestedPath: "src/index.ts",
           canonicalPath: "src/index.ts",
           status: "ALLOWED" as const,
         }),
@@ -429,7 +464,7 @@ describe("ToolGateway", () => {
         createTask({ taskId: "gateway-executor-failure", objective: "Read source", mode: "Ask" }),
         0,
         "Medium",
-        { sessionId: "session-1", workspaceId: "workspace-1", eligibleTools: ["read_file"] },
+        { sessionId: "session-1", workspaceId: TEST_WORKSPACE_ID, eligibleTools: ["read_file"] },
       ),
     );
 
@@ -462,13 +497,25 @@ describe("ToolGateway", () => {
         },
       },
       grants: { grantFor: () => undefined },
-      executors: { read_file: { execute: () => (executions += 1) } },
+      executors: {
+        read_file: {
+          execute: () => {
+            executions += 1;
+            return {
+              kind: "CONTENT",
+              path: "src/index.ts",
+              method: "workspace-read",
+              content: "source",
+            };
+          },
+        },
+      },
     });
     const task = admitTask(
       createTask({ taskId: "gateway-revalidation", objective: "Read source", mode: "Ask" }),
       0,
       "Medium",
-      { sessionId: "session-1", workspaceId: "workspace-1", eligibleTools: ["read_file"] },
+      { sessionId: "session-1", workspaceId: TEST_WORKSPACE_ID, eligibleTools: ["read_file"] },
     );
 
     expect(await gateway.invoke(task, { name: "shell", arguments: {} }, 0)).toMatchObject({
@@ -499,7 +546,7 @@ describe("ToolGateway", () => {
         createTask({ taskId: "gateway-fact-failure", objective: "Read source", mode: "Ask" }),
         0,
         "Medium",
-        { sessionId: "session-1", workspaceId: "workspace-1", eligibleTools: ["read_file"] },
+        { sessionId: "session-1", workspaceId: TEST_WORKSPACE_ID, eligibleTools: ["read_file"] },
       ),
     );
 
@@ -517,8 +564,9 @@ describe("ToolGateway", () => {
     const gateway = new ToolGateway({
       workspace: {
         factsFor: () => ({
-          workspaceId: "workspace-1",
+          workspaceId: TEST_WORKSPACE_ID,
           operation: "read" as const,
+          requestedPath: "src/index.ts",
           canonicalPath: "",
           status: "ALLOWED" as const,
         }),
@@ -531,7 +579,7 @@ describe("ToolGateway", () => {
         createTask({ taskId: "gateway-malformed-facts", objective: "Read source", mode: "Ask" }),
         0,
         "Medium",
-        { sessionId: "session-1", workspaceId: "workspace-1", eligibleTools: ["read_file"] },
+        { sessionId: "session-1", workspaceId: TEST_WORKSPACE_ID, eligibleTools: ["read_file"] },
       ),
     );
 
@@ -549,8 +597,9 @@ describe("ToolGateway", () => {
     const gateway = new ToolGateway({
       workspace: {
         factsFor: () => ({
-          workspaceId: "workspace-1",
+          workspaceId: TEST_WORKSPACE_ID,
           operation: "read" as const,
+          requestedPath: "src/index.ts",
           canonicalPath: "src/index.ts",
           status: "UNKNOWN" as never,
         }),
@@ -563,7 +612,7 @@ describe("ToolGateway", () => {
         createTask({ taskId: "gateway-invalid-status", objective: "Read source", mode: "Ask" }),
         0,
         "Medium",
-        { sessionId: "session-1", workspaceId: "workspace-1", eligibleTools: ["read_file"] },
+        { sessionId: "session-1", workspaceId: TEST_WORKSPACE_ID, eligibleTools: ["read_file"] },
       ),
     );
 
@@ -578,8 +627,9 @@ describe("ToolGateway", () => {
     const gateway = new ToolGateway({
       workspace: {
         factsFor: () => ({
-          workspaceId: "workspace-1",
+          workspaceId: TEST_WORKSPACE_ID,
           operation: "update" as const,
+          requestedPath: "src/index.ts",
           canonicalPath: "src/index.ts",
           status: "ALLOWED" as const,
         }),
@@ -587,7 +637,7 @@ describe("ToolGateway", () => {
       grants: {
         grantFor: () => ({
           sessionId: "session-1",
-          workspaceId: "workspace-1",
+          workspaceId: TEST_WORKSPACE_ID,
           canonicalPath: "src/index.ts",
           operation: "update" as const,
           status: "GRANTED" as const,
@@ -602,7 +652,7 @@ describe("ToolGateway", () => {
       createTask({ taskId: "gateway-wrong-mode", objective: "Read source", mode: "Ask" }),
       0,
       "Medium",
-      { sessionId: "session-1", workspaceId: "workspace-1" },
+      { sessionId: "session-1", workspaceId: TEST_WORKSPACE_ID },
     );
     const missingCapabilityTask = admitTask(
       createTask({ taskId: "gateway-missing-capability", objective: "Read source", mode: "Ask" }),
@@ -610,7 +660,7 @@ describe("ToolGateway", () => {
       "Medium",
       {
         sessionId: "session-1",
-        workspaceId: "workspace-1",
+        workspaceId: TEST_WORKSPACE_ID,
         eligibleTools: ["read_file"],
         capabilities: [],
       },
@@ -647,7 +697,7 @@ describe("ToolGateway", () => {
         createTask({ taskId: "gateway-profile", objective: "Verify source", mode: "Edit" }),
         0,
         "Medium",
-        { sessionId: "session-1", workspaceId: "workspace-1", eligibleTools: ["run_tests"] },
+        { sessionId: "session-1", workspaceId: TEST_WORKSPACE_ID, eligibleTools: ["run_tests"] },
       ),
     );
 
@@ -668,22 +718,35 @@ describe("ToolGateway", () => {
         factsFor: () => {
           factRequests += 1;
           return {
-            workspaceId: "workspace-1",
+            workspaceId: TEST_WORKSPACE_ID,
             operation: "read" as const,
+            requestedPath: "src/index.ts",
             canonicalPath: "src/index.ts",
             status: factRequests === 1 ? ("ALLOWED" as const) : ("FORBIDDEN" as const),
           };
         },
       },
       grants: { grantFor: () => undefined },
-      executors: { read_file: { execute: () => (executions += 1) } },
+      executors: {
+        read_file: {
+          execute: () => {
+            executions += 1;
+            return {
+              kind: "CONTENT",
+              path: "src/index.ts",
+              method: "workspace-read",
+              content: "source",
+            };
+          },
+        },
+      },
     });
     const task = readyToRead(
       admitTask(
         createTask({ taskId: "gateway-fresh-path", objective: "Read source", mode: "Ask" }),
         0,
         "Medium",
-        { sessionId: "session-1", workspaceId: "workspace-1", eligibleTools: ["read_file"] },
+        { sessionId: "session-1", workspaceId: TEST_WORKSPACE_ID, eligibleTools: ["read_file"] },
       ),
     );
 
@@ -709,14 +772,16 @@ describe("ToolGateway", () => {
       workspace: {
         factsFor: () => [
           {
-            workspaceId: "workspace-1",
+            workspaceId: TEST_WORKSPACE_ID,
             operation: "update" as const,
+            requestedPath: "src/index.ts",
             canonicalPath: "src/index.ts",
             status: "ALLOWED" as const,
           },
           {
-            workspaceId: "workspace-1",
+            workspaceId: TEST_WORKSPACE_ID,
             operation: "create" as const,
+            requestedPath: "src/new.ts",
             canonicalPath: "src/new.ts",
             status: "ALLOWED" as const,
           },
@@ -727,7 +792,7 @@ describe("ToolGateway", () => {
           path.operation !== "read" && (path.canonicalPath === "src/index.ts" || grantForNewPath)
             ? {
                 sessionId: "session-1",
-                workspaceId: "workspace-1",
+                workspaceId: TEST_WORKSPACE_ID,
                 canonicalPath: path.canonicalPath,
                 operation: path.operation,
                 status: "GRANTED" as const,
@@ -748,7 +813,7 @@ describe("ToolGateway", () => {
         createTask({ taskId: "gateway-multiple-paths", objective: "Patch source", mode: "Edit" }),
         0,
         "Medium",
-        { sessionId: "session-1", workspaceId: "workspace-1", eligibleTools: ["apply_patch"] },
+        { sessionId: "session-1", workspaceId: TEST_WORKSPACE_ID, eligibleTools: ["apply_patch"] },
       ),
     );
 
@@ -775,8 +840,9 @@ describe("ToolGateway", () => {
     const gateway = new ToolGateway({
       workspace: {
         factsFor: () => ({
-          workspaceId: "workspace-1",
+          workspaceId: TEST_WORKSPACE_ID,
           operation: "update" as const,
+          requestedPath: "src/index.ts",
           canonicalPath: "src/index.ts",
           status: "ALLOWED" as const,
         }),
@@ -786,7 +852,7 @@ describe("ToolGateway", () => {
           grantRequests += 1;
           return {
             sessionId: "session-1",
-            workspaceId: "workspace-1",
+            workspaceId: TEST_WORKSPACE_ID,
             canonicalPath: "src/index.ts",
             operation: "update" as const,
             status: grantRequests === 1 ? ("GRANTED" as const) : ("INVALIDATED" as const),
@@ -800,7 +866,7 @@ describe("ToolGateway", () => {
         createTask({ taskId: "gateway-fresh-grant", objective: "Patch source", mode: "Edit" }),
         0,
         "Medium",
-        { sessionId: "session-1", workspaceId: "workspace-1", eligibleTools: ["apply_patch"] },
+        { sessionId: "session-1", workspaceId: TEST_WORKSPACE_ID, eligibleTools: ["apply_patch"] },
       ),
     );
 

@@ -13,8 +13,12 @@ An environment variable owned by Slop Loop and prefixed with SLOP_LOOP_; Phase 0
 _Avoid_: CODING_AGENT_*, SLOP_*, unprefixed application settings
 
 **Target repository**:
-The developer repository on which the coding agent performs analysis, proposes changes, and eventually runs trusted verification profiles. The first target repositories are Python repositories; pytest, Ruff, and mypy belong to those repositories, not to Slop Loop's implementation.
+The developer repository on which the coding agent performs analysis, proposes changes, and eventually runs trusted verification profiles. The first target repositories are TypeScript repositories, initially Slop Loop itself.
 _Avoid_: host repository, implementation repository
+
+**Workspace**:
+The validated current checkout of one target repository that bounds repository tool access. It spans the checkout even when Slop Loop starts in a subdirectory; other repositories, whether sibling or nested, remain outside it.
+_Avoid_: launch folder, collection of repositories
 
 **Modular monolith**:
 A single-process application whose real subsystem boundaries are introduced only when concrete behavior creates them. Phase 0 starts without speculative subsystem directories or dependency-boundary machinery.
@@ -74,7 +78,7 @@ A bounded developer-facing summary emitted when a task ends with `BUDGET_EXHAUST
 _Avoid_: restorable session, continuation permission
 
 **File permission**:
-The developer's authorization for exact file `update` or `create` operations during the current session and observed branch/file state. A valid grant may be reused across Edit tasks and repairs in that session, but external target changes invalidate it; one request may batch several exact canonical repository-relative path-operation pairs.
+The developer's authorization for exact file `update` or `create` operations during the current session and observed branch/file state. A valid grant may be reused across Edit tasks and repairs in that session, but a branch switch revokes all grants and external target changes invalidate affected grants; one request may batch several exact canonical repository-relative path-operation pairs.
 _Avoid_: blanket edit permission, repository-wide approval
 
 **File edit request**:
@@ -82,7 +86,7 @@ The agent's request during an Edit session for the developer to authorize one or
 _Avoid_: patch proposal, repository-wide edit request
 
 **Branch state**:
-The Git branch and checkout state selected by the developer. A branch switch preserves the conversation, but affected prior grants become unavailable; later use of an affected path-operation pair requires reauthorization and may use one grouped request.
+The Git branch and checkout state selected by the developer. A branch switch within the same workspace may preserve the active task and conversation after repository evidence is refreshed, but revokes all earlier file grants and pending permission prompts.
 _Avoid_: agent-owned branch
 
 **Verification profile**:

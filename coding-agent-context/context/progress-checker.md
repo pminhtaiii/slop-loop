@@ -16,7 +16,7 @@ PHASE 0 FOUNDATION COMPLETE / PHASE 1 RUNNER RECONCILED / PHASE 2 REGISTRY SOURC
 
 Phase 0 runtime and its exit gate are complete on `development` and its source is present in this checkout. The Phase 1 task domain and deterministic orchestrator are implemented, with ADR 0006/0007 runner reconciliation in this checkout. Phase 2 has a pure closed registry, trusted Ask/Edit name selector, and T041 capability/effect metadata. T037–T058 implement the Phase 3 fake-port authority core: policy decisions, task ceilings, asynchronous gateway routing, cancellation fencing, bounded audit events, output contract handling, and typed runner outcomes. There is still no real model, filesystem tool execution, permission ledger, sandbox, CLI, or durable audit adapter; Phase 4, 5, 7, 8, and 12 own those integrations.
 
-The agreed future product MVP is an interactive local CLI implemented in TypeScript for Python target repositories. It supports `Ask` and `Edit` modes in one in-memory session, repository questions, permission-gated updates and creation in the current checkout, trusted Docker verification, progress questions, and a final diff and verification report. The developer owns Git writes. The first model provider remains undecided. Worktrees, session persistence, API/web, active-task scope changes, and remote Git delivery are deferred. These are planned behaviors, not completed capabilities.
+The agreed future product MVP is an interactive local CLI implemented in TypeScript for TypeScript target repositories. It supports `Ask` and `Edit` modes in one in-memory session, repository questions, permission-gated updates and creation in the current checkout, trusted Docker verification, progress questions, and a final diff and verification report. The developer owns Git writes. The first model provider remains undecided. Worktrees, session persistence, API/web, active-task scope changes, and remote Git delivery are deferred. These are planned behaviors, not completed capabilities.
 
 ---
 
@@ -124,14 +124,25 @@ policy failure cannot become ALLOW
 
 ## Phase 4 — Workspace Boundary
 
-- [ ] Implement workspace canonicalization.
-- [ ] Block `..` traversal.
-- [ ] Block absolute path escape.
-- [ ] Block symlink escape.
-- [ ] Add denied secret path patterns.
-- [ ] Bound read sizes.
-- [ ] Bound search results.
-- [ ] Add adversarial filesystem tests.
+- [x] Discover, canonicalize, and seal the selected current Git checkout root at admission; reject launch outside a valid checkout.
+- [x] Exclude sibling and nested repositories, ignored paths, and `.git` internals from workspace path facts while allowing nonignored tracked and untracked files.
+- [x] Implement workspace canonicalization.
+- [x] Block `..` traversal.
+- [x] Block absolute path escape.
+- [x] Block symlink escape in the native workspace boundary.
+- [x] Block hard-linked content, tested Windows junction/reparse crossings, and nonregular content targets; Linux bind-mount containment remains UNVERIFIED / UNAVAILABLE under the accepted T088 exception.
+- [x] Add denied secret path patterns.
+- [x] Bound the `read_file` result contract to 64 KiB whole-file content with an explicit size-limit result.
+- [x] Bound the `search_code` result contract to 200 matches, 32 KiB total output, 4 KiB per returned line, and 4 MiB per searched file; mark omitted matches and shortened lines.
+- [x] Add adversarial filesystem tests for available Windows and Ubuntu fixtures; Linux bind-mount containment remains UNVERIFIED / UNAVAILABLE under T088.
+
+T059–T068 implement the native-addon build/load contract, checkout selection and sealed admission, Git membership candidate enumeration, and US1 fixtures. On 2026-10-01, [CI run 31](https://github.com/pminhtaiii/slop-loop/actions/runs/36857259445) for commit `cd2be96dfffcafe07f8cf07289595563c5020383` passed `pnpm native:build`, 23 workspace tests, and the 265-test source suite on both Ubuntu and Windows; application build and smoke passed on both, and Ubuntu also passed lint, formatting, and type checking. The local Windows source suite also passed 265 tests with a manually compiled Node-API addon. Visual C++ Build Tools were installed on this host on 2026-10-02 and the current native source now passes the standard local Windows build. This earlier CI run proves T059–T068 only; it does not verify the later boundary source.
+
+Internal Phase 4 T069–T078 implementation is complete in this checkout: strict requested-alias and resolved-target policy, exact gateway fact coverage, native held-root traversal on Linux and Windows, hard-link/nonregular/reparse denial, current Git and root/gitdir rechecks, bounded directory enumeration, and mutation-path preflight that checks components with `lstat` after a native held-root parent open. On 2026-10-02, [CI run 35](https://github.com/pminhtaiii/slop-loop/actions/runs/37008013232) for PR #119 (verified commit `fe0709553e927e78362328f087440693d1a107b5`) passed both Windows Quality Gate and Ubuntu Quality Gate. Windows CI passed `pnpm native:build`, workspace boundary tests (79 passed, 2 skipped of 81), full source tests (332 passed, 2 skipped of 334), application build, and smoke; real Windows symlink and junction fixtures were executed and passed, while the 2 skipped tests are platform-specific Linux-only cases (FIFO and bind mount). Ubuntu CI passed `pnpm native:build`, workspace boundary tests (78 passed, 3 skipped of 81), full source tests (331 passed, 3 skipped of 334), lint, format check, typecheck, application build, and smoke; real Linux native openat2 traversal and symlinks passed. Of Ubuntu's 3 skipped tests, 2 are Windows junction cases and 1 is the Linux bind-mount fixture, which explicitly reported `UNAVAILABLE: Linux bind-mount fixture requires mount capability` because the required mount capability was unavailable on the runner.
+
+A skipped critical fixture is not containment evidence; Linux bind-mount containment remains **UNVERIFIED / UNAVAILABLE** because neither the local host nor GitHub-hosted Ubuntu can create the required fixture. T088 remains unchecked under the explicit MVP acceptance exception and is never a PASS. No model-visible repository content or patch executor is enabled. Internal Phase 5 T079–T085 is implemented: the registry accepts 200 search matches and owns the 64 KiB read, 32 KiB search, and 16 KiB other-tool result ceilings. Directory child opens are relative to a retained parent handle, with parent identity and location rechecks; each directory call compares two fresh Git membership snapshots and holds at most one child handle at a time.
+
+On 2026-10-03, [PR #164 CI run #41](https://github.com/pminhtaiii/slop-loop/actions/runs/37096538680) verified implementation commit `0b990c03718fa9ae9f1f33de230f9cf53ff38d71` on both supported hosts. Windows passed native build, workspace tests (106 passed, 2 skipped of 108), full source tests (371 passed, 2 skipped of 373), application build, smoke, and real junction behavior. Ubuntu passed native build, workspace tests (105 passed, 3 skipped of 108), lint, format check, typecheck, full source tests (370 passed, 3 skipped of 373), application build, and smoke; the Linux bind-mount fixture explicitly reported `UNAVAILABLE: Linux bind-mount fixture requires mount capability`. The full source suite includes all files named by the focused quickstart command; that exact command also passed locally on Windows at this implementation commit (200 passed, 17 skipped of 217), along with lint, format check, and typecheck. The final full GitHub CodeRabbit review of this head reported no actionable comments and no architecture-level security concern. T086 and T087 are complete, so Internal Phase 6 and Project Phase 4 — Workspace Boundary are complete for the available fixtures under the accepted T088 exception. This later documentation-only update records evidence for the implementation commit; it does not change the tested source. Project Phase 5 sandbox, Project Phase 6 model-visible retrieval executors, and Project Phase 7 mutation execution remain later work.
 
 Exit gate:
 
@@ -143,8 +154,18 @@ repository tools cannot access host files outside workspace
 
 ## Phase 5 — Sandbox
 
+Planning artifacts: [specification](../../specs/006-offline-verification-sandbox/spec.md), [implementation plan](../../specs/006-offline-verification-sandbox/plan.md), [tasks T089–T131](../../specs/006-offline-verification-sandbox/tasks.md). T088 is reserved by the developer. The plan selects initial bounds and enforcement mechanisms with real integration/security proof gates; it does not complete any implementation checkbox or the Phase 4 prerequisite.
+
+Design checkpoint (2026-10-02; Q1–Q23 decisions recorded): Slop Loop stays on the host and Docker runs verification only for TypeScript targets, initially Slop Loop itself with trusted pnpm profiles. One verification verdict captures one filtered working-tree snapshot through the trusted workspace boundary; all checks in that verdict use fresh Linux container clones of the same captured bytes. Supporting services are out of MVP scope. Verification is offline. Image preparation is developer-triggered from an application-owned recipe and fetches exact locked dependencies from approved public registries with restricted networking. Download disables lifecycle/build scripts; only scripts allowlisted in trusted config for exact locked dependency identities may execute, offline. Unsupported scripts block preparation until the developer updates trusted config. Repository Dockerfiles are never executed or given authority over build instructions, Docker privileges, mounts, or networking. Preparation has no secrets, sensitive host directories, Docker socket, or writable real-checkout mount. A fingerprint covers manifests, lockfile, approved package-manager configuration, exact-identity script allowlist, Node/pnpm versions, Linux architecture, base-image digest, and recipe. Drift blocks verification pending developer preparation; ordinary source edits do not invalidate the image. The image provides the toolchain, while repository-owned native addons are rebuilt offline under a separate trusted profile from the captured source in each check container. Q18 accepts locked-artifact integrity and approved-source rules, with planned enforcement requiring integration proof. Repository code/configuration is untrusted; the runtime alone supplies authority. The MVP accepts hardened Docker with documented residual limits. Only `/workspace` and `/tmp` are writable; the system, toolchain, and root filesystem remain read-only, and verification output never copies back automatically. When the runtime detects a stale image, it explains/reports the state and gates preparation on explicit developer confirmation; the minimal helper belongs to Phase 5, with later interactive-CLI exposure (Q22). The model cannot initiate preparation or enable networking. Future agent browser research requires a separate capability. No sandbox implementation is claimed.
+
+Q16 is accepted: hash copied bytes and relevant metadata into a snapshot manifest, rescan eligible checkout content for observed capture races, retry a bounded number of times, and stop if no stable snapshot is obtained. After checks, compare the live checkout to that manifest and mark results stale on mismatch. Capture is non-atomic and cannot exclude rapid change-and-restore races; watchers are advisory only, with atomic snapshots and external-writer exclusion deferred. Q15 cleanup and Q17 hardened-Docker policies are accepted. Initial Q14 defaults are 2 CPUs, 4 GiB total memory including tmpfs, swap disabled, 256 PIDs, and 300 seconds per check including native compilation, bounded by the active-task deadline and stricter trusted profile timeout; no automatic expansion is allowed. These values require integration validation.
+
+Q18 accepts exact locked artifacts, approved public registry destinations, redirect rejection outside those destinations, lockfile integrity-hash verification, and blocking unsupported sources or integrity failures; the plan selects enforcement pending integration proof. Q19 accepts writable `/workspace` (snapshot/build artifacts) and `/tmp` only, with read-only system/toolchain/root filesystem, no writable developer-checkout mount, and no automatic copyback. Q20 makes target-repository data and code untrusted and leaves authority with the runtime. Q21 accepts an application-owned recipe, no execution of target Dockerfiles, exact locked-identity script allowlisting for offline dependency lifecycle scripts, blocking unsupported scripts pending trusted config changes, and a separate trusted profile for repository-owned native builds; the allowlist enters the fingerprint. The plan selects enforcement pending integration proof. Q22 accepts the minimal developer-triggered Phase 5 preparation helper, later interactive-CLI exposure, and stale-image explanation/reporting with preparation gated on explicit developer confirmation; the model cannot trigger it. Q23 accepts ending a stale-image task in terminal `BLOCKED` without rollback, then using the developer-confirmed helper and admitting a new task that reevaluates the repository and captures a fresh snapshot. The blocked task does not resume and task authority is not restored; session-scoped file grants remain subject to the existing new-task admission contract. The image fingerprint must match dependency data captured for the verification snapshot in both the valid-image and post-preparation paths. The linked plan now specifies initial storage/output caps, finite retries, image/runtime/prerequisite checks, profile binding and snapshot limits; real fixture validation remains required. See ADR 0011.
+
 - [ ] Define `SandboxBackend`.
+  Settled design: Linux-only verification; Windows checks stay in developer/CI workflows. Capture one workspace-validated working-tree snapshot per verdict, including approved edits and eligible untracked files, excluding `.git`, denied secrets, nested repositories, host `node_modules`, and stale/generated artifacts. Hash copied bytes and relevant metadata, rescan for observed capture races, and bind all check results to that manifest. Each check gets a fresh container clone of those bytes. See ADR 0011 for the non-atomic capture limitation.
 - [ ] Implement Docker backend.
+  Settled preparation design: developer-triggered restricted-network fetching with scripts disabled, followed by offline execution only for exact locked-identity scripts allowlisted by trusted config; public approved-registry sources only, with unsupported private-registry/Git/SSH/arbitrary-URL sources rejected. Target Dockerfiles never run. Fingerprint manifests, lockfile, approved package-manager configuration, script allowlist, Node/pnpm versions, Linux architecture, base-image digest, and application-owned recipe; source-only changes remain verifiable. Rebuild repository-owned native addons offline from the captured snapshot under a separate trusted profile in each check container using prepared prerequisites; dependency-owned native components may be prepared once. Missing prerequisites or fingerprint drift block execution, never automatic installation or image rebuilding. Q18/Q21 mechanisms and concrete output/storage bounds are selected in the plan; implementation and integration validation remain open.
 - [ ] Non-root container execution.
 - [ ] CPU limit.
 - [ ] Memory limit.
@@ -189,7 +210,7 @@ agent can understand a fixture repository without host escape
 - [ ] Patch validation.
 - [ ] Edit mode enforcement.
 - [ ] Exact canonical repository-relative path-operation permission requests, including batched pairs.
-- [ ] Revoke file permissions on `/clear`, exit, and switching to `Ask`; make affected grants unavailable on branch drift or relevant external file change.
+- [ ] Revoke file permissions on `/clear`, exit, switching to `Ask`, and branch switch; make affected grants unavailable on other relevant external file change.
 - [ ] Denied-path rejection.
 - [ ] Changed-file recording.
 - [ ] Patch rollback on invalid application.
@@ -205,7 +226,7 @@ all code mutations are policy-authorized and diff-visible
 
 ## Phase 8 — Verification Tools
 
-- [ ] Trusted verification profiles with pytest -q as the Python default.
+- [ ] Trusted verification profiles with pnpm test as the TypeScript reference profile.
 - [ ] Focused logical target validation with full-profile fallback.
 - [ ] Audit requested logical target and executed profile/validated target.
 - [ ] `run_tests`.
@@ -231,9 +252,10 @@ agent can verify code without arbitrary shell capability
 - [ ] Current-checkout Git validation.
 - [ ] Read-only branch and `HEAD` detection.
 - [ ] Stable `git status` evidence.
+- [ ] Trusted branch/`HEAD`/status snapshots at admission and refresh checkpoints without a model-visible `git_status` tool.
 - [ ] `git_diff`.
 - [ ] Detect branch switches without switching branches for the user.
-- [ ] Reauthorize affected prior path-operation grants only when a later task needs them.
+- [ ] Invalidate all grants and stale permission prompts on branch switch; refresh repository evidence and allow the same task to resume in the same checkout, requesting fresh exact grants only when mutation is needed.
 - [ ] Final diff artifact.
 - [ ] Tests proving the agent cannot stage, commit, switch, push, merge, or alter `.git/**`.
 
@@ -398,7 +420,7 @@ all scenarios fail safely
 Reference demo task:
 
 ```text
-Given a fixture repository with a defect in calculate_discount(),
+Given a fixture repository with a defect in calculateDiscount(),
 locate the implementation, fix the bug without changing its public API,
 run the relevant tests, and return the diff and verification result.
 ```
@@ -447,6 +469,7 @@ Acceptance:
 - [ ] Reviewer agent.
 - [ ] Long-term repository memory/index.
 - [ ] Multi-agent workflows.
+- [ ] Agent terminal-command capability under a separately designed sandbox and authorization policy; arbitrary shell remains denied in the MVP.
 - [ ] Staging deploy.
 - [ ] Production deploy.
 - [ ] Canary and rollback.
@@ -464,5 +487,3 @@ Acceptance:
 - [ ] Modified verification config is deferred to a later validated session.
 - [ ] Canonical JSONL, event hash chain, and manifest verify deterministically.
 - [ ] BUDGET_EXHAUSTED records budget, limit, usage, and audit ordering.
-
-

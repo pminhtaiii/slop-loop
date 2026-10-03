@@ -33,7 +33,9 @@ No library feature may be used to bypass project policy.
 
 ## MVP Classification
 
-The selected Phase 0 implementation and development stack is Node.js 24 LTS, native ESM TypeScript, pnpm, Zod 4, Pino, Vitest, type-aware ESLint, Prettier, and tsc. There is no bundler. Selection does not indicate implementation completion; `context/progress-checker.md` is the source of truth. pytest, Ruff, and mypy are trusted verification tools in the first Python target repositories, not Slop Loop dependencies. Docker, process adapters, Git, provider HTTP, audit persistence, and session behavior are future product concerns.
+The selected Phase 0 implementation and development stack is Node.js 24 LTS, native ESM TypeScript, pnpm, Zod 4, Pino, Vitest, type-aware ESLint, Prettier, and tsc. There is no bundler. Selection does not indicate implementation completion; `context/progress-checker.md` is the source of truth. The first target repositories are TypeScript repositories, initially Slop Loop itself, using trusted pnpm verification profiles. Docker verification is planned for Phase 5 but is not implemented; process adapters, Git, provider HTTP, audit persistence, and session behavior are also future product concerns.
+
+Phase 4 uses the pinned `node-gyp` development dependency to build one in-process Node-API addon for workspace filesystem enforcement. The addon must be built with `pnpm native:build` on each supported host before native-boundary evidence is accepted. A manually compiled MinGW addon is useful for local Windows diagnosis but does not satisfy the pinned native-build gate or replace Ubuntu and Windows CI verification.
 
 ---
 
@@ -85,10 +87,17 @@ interface SandboxBackend {
 - Never expose Docker socket to the task container.
 - Never mount host `/`.
 - Run as non-root where supported.
-- Network is disabled by default.
-- Copy the current repository state into an ephemeral sandbox workspace. Never mount the developer checkout writable.
-- Explicitly set memory/CPU/PID limits.
-- Always destroy sandboxes in cleanup/finally paths.
+- Each verification check uses a fresh offline Linux container cloned from the same captured snapshot for its profile verdict; there are no supporting services in the MVP.
+- Keep the system directories, toolchain, and root filesystem read-only. Only the copied snapshot/build artifacts under `/workspace` and `/tmp` are writable. Never mount the developer checkout writable or copy results back automatically.
+- Filter the workspace snapshot to include current working-tree edits and eligible untracked files while excluding `.git`, denied secrets, nested repositories, host `node_modules`, and stale/generated artifacts.
+- Target-repository content/configuration/code is untrusted; only trusted runtime configuration determines authority and execution policy.
+- Preparation is developer-triggered. Fetch only exact locked artifacts from approved public registries with lifecycle/build scripts disabled and restricted network; validate sources, reject destinations/redirects outside the allowlist, and verify lockfile integrity hashes. Unsupported sources and integrity failures block preparation. Run any explicitly allowlisted lifecycle/build script offline only for its exact locked dependency identity; unsupported scripts block until the developer updates trusted configuration. The target repo Dockerfile is never executed or allowed to select privileges, mounts, network, or build instructions. Repository-owned native compilation uses a separate trusted profile. Never give preparation secrets, sensitive host directories, the Docker socket, or a writable real-checkout mount. Feature 006 selects Q18/Q21 mechanisms pending implementation and adversarial proof.
+- Fingerprint manifests, lockfile, approved package-manager configuration, exact-identity script allowlist, Node/pnpm versions, Linux architecture, base-image digest, and application-owned preparation recipe. Reject stale images pending developer preparation; never install automatically.
+- Rebuild repository-owned native addons offline from the captured snapshot inside each check container with the prepared toolchain; missing prerequisites block execution.
+- Treat repository code and dependency scripts as malicious. The MVP accepts hardened Docker with documented residual isolation limits; a dedicated VM is deferred for future reconsideration.
+- Cleanup uses bounded retries, blocks further verification if container stop/removal remains unconfirmed, reports identity/state, and reconciles only Slop Loop-owned resources at startup. Never fall back to host execution.
+- A minimal preparation helper is a Phase 5 developer-facing operation. On a stale image, explain/report the state and offer/start preparation only after explicit developer confirmation; the model cannot initiate it or enable networking. The later interactive CLI may expose the helper (Q22).
+- Initial CPU/memory/PID/time defaults are selected and require Phase 5 integration validation. Initial output and writable-storage bounds are selected in the Feature 006 plan and require integration proof; see ADR 0011 Q14.
 - Image selection comes from trusted config, never model output.
 
 ---
@@ -148,68 +157,19 @@ git rev-parse --show-toplevel
 
 ---
 
-## pytest
+## TypeScript target verification
 
-### Purpose
+The first targets are TypeScript repositories, initially Slop Loop itself. Trusted profiles use pnpm test (Vitest), pnpm lint (ESLint), pnpm typecheck (tsc), and pnpm build. Profile argv and limits are runtime-owned; the model cannot supply shell commands or arbitrary scripts. Package scripts and dependencies are untrusted repository code and execute only inside the sandbox. Results include bounded output and exit status; failures do not authorize weakening checks.
 
-Primary test runner for Python target repositories; it is not a Slop Loop implementation dependency.
-
-### Usage
-
-The model does not construct arbitrary pytest shell commands.
-
-Trusted verification profile:
-
-```yaml
-tests:
-  argv: ["pytest", "-q"]
-  timeout_seconds: 120
-```
-
-### Rules
-
-- Test invocation is config-owned.
-- Exit code and bounded output are returned.
-- Test failures are evidence, not permission to alter tests.
-- Security tests run in CI and before release.
+The reference toolchain is Node.js 24 and pnpm 12.5.1, pinned by package.json. A separate developer-triggered preparation step produces a versioned verification image containing dependencies and build tools. One profile verdict captures one workspace-filtered snapshot; each check runs in a fresh offline Linux container clone of those same captured bytes. There are no supporting services. Fingerprint drift blocks verification until developer preparation; ordinary source edits do not invalidate the image. Verification cannot enable network or fall back to host execution. These are planned profiles, not implemented sandbox capability.
 
 ---
 
-## Ruff
+## Phase 5 preparation and native build decisions
 
-### Purpose
+Dependency downloading uses restricted networking with lifecycle/build scripts disabled. Only exact locked dependency identities from approved public registries may be fetched. Trusted preparation validates destinations and redirects and verifies lockfile integrity hashes; unsupported sources and integrity failures block preparation. Feature 006 selects the mechanism pending implementation and adversarial proof. A dependency lifecycle/build script may execute only offline when trusted configuration allowlists that exact locked identity; unsupported scripts block preparation until the developer updates trusted configuration. The allowlist is included in the preparation fingerprint. Target Dockerfiles are never executed or allowed to set privileges, mounts, network, or build instructions. Repository-owned native compilation uses a separate trusted profile. Preparation is developer-triggered and never agent-triggered.
 
-Linting and formatting checks for Python target repositories; it is not a Slop Loop implementation dependency.
-
-Recommended profile:
-
-```yaml
-lint:
-  argv: ["ruff", "check", "."]
-  timeout_seconds: 60
-```
-
-Formatting should initially be a separate explicit operation rather than a hidden side effect.
-
----
-
-## mypy
-
-### Purpose
-
-Static type checking for Python target repositories; it is not Slop Loop's TypeScript checker.
-
-Recommended profile:
-
-```yaml
-typecheck:
-  argv: ["mypy", "src"]
-  timeout_seconds: 120
-```
-
-Do not weaken global type rules to resolve a local implementation issue without explicit approval.
-
----
+The image fingerprint covers manifests, lockfile, approved package-manager configuration, exact-identity lifecycle/build-script allowlist, Node/pnpm versions, Linux architecture, base-image digest, and application-owned preparation recipe. Ordinary source edits do not invalidate it; fingerprint drift requires explicit preparation. Repository-owned native addons rebuild offline from the captured source in each fresh check container under a separate trusted profile, using image-provided compiler tools, Python where needed, and matching Node headers. Dependency-owned native components may be prepared once. Missing prerequisites block verification. Snapshot bytes are hashed into a manifest, checked for observed capture races with bounded retries, and compared with the live checkout after checks. Capture is non-atomic and cannot exclude rapid change-and-restore races; watchers are advisory. See ADR 0011 Q16.
 
 ## SQLite
 
@@ -371,5 +331,3 @@ Future dependency installation requires:
 - version constraint validation;
 - network egress restriction;
 - supply-chain scanning.
-
-

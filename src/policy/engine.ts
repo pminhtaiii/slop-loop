@@ -10,6 +10,7 @@ export type FileGrantStatus = "GRANTED" | "MISSING" | "INVALIDATED";
 
 export interface TrustedPathFacts {
   readonly workspaceId: string;
+  readonly requestedPath: string;
   readonly operation: TrustedPathOperation;
   readonly canonicalPath: string;
   readonly status: TrustedPathStatus;
@@ -107,7 +108,9 @@ export interface PolicyDecisionContextInput {
 function requiredPathOperation(call: ValidatedToolCall): TrustedPathOperation | null {
   const metadata = toolMetadataForName(call.name);
   if (metadata.mutation === "workspace") return "update";
-  return "path" in call.arguments ? "read" : null;
+  return call.name === "read_file" || call.name === "list_files" || call.name === "search_code"
+    ? "read"
+    : null;
 }
 
 function ensureIdentifier(value: string, label: string): void {
@@ -118,6 +121,13 @@ function ensureIdentifier(value: string, label: string): void {
 
 function clonePath(path: TrustedPathFacts): TrustedPathFacts {
   ensureIdentifier(path.workspaceId, "workspace ID");
+  if (
+    typeof path.requestedPath !== "string" ||
+    path.requestedPath.length === 0 ||
+    path.requestedPath.length > 1_024
+  ) {
+    throw new TypeError("Invalid requested path");
+  }
   if (path.canonicalPath.length === 0 || path.canonicalPath.length > 1_024) {
     throw new TypeError("Invalid canonical path");
   }

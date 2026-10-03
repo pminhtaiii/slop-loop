@@ -14,6 +14,8 @@ The MVP starts as one private, single-package, single-process application, desig
 
 The implementation baseline is Node.js 24 LTS, pnpm with a pinned version and lockfile, native ESM, strict TypeScript, tsc compilation to dist/, Zod 4, Pino, Vitest, type-aware ESLint, and Prettier.
 
+Phase 4 currently provides an in-process Node-API workspace addon and a TypeScript `WorkspaceBoundary` for trusted checkout identity, native held-root opens, invocation-scoped read-path facts, mutation-path preflight, bounded retrieval contracts, and hardened directory enumeration. Directory children open relative to the retained parent handle, with at most one child handle open at a time. Each enumeration obtains fresh before-and-after Git membership snapshots: the first is reused across initial child inspection, the second must agree with it before results are emitted, and subsequent calls obtain fresh evidence again. Accepted children are reopened relative to that parent and their canonical location, alias, identity, and link count are checked again before the batch is emitted. File reads revalidate workspace membership and opened-target identity at the point of use. The gateway checks exact requested path coverage and catalog-owned result contracts before returning tool results. Boundary-level bounded read/search builders exist; complete model-visible retrieval executors remain Phase 6. PR #164 CI run #41 verified implementation commit `0b990c03718fa9ae9f1f33de230f9cf53ff38d71` on Windows and Ubuntu; the Phase 4 exit gate is complete for available fixtures. Linux bind-mount containment remains UNVERIFIED / UNAVAILABLE under the accepted T088 MVP exception. `context/progress-checker.md` records the verified status.
+
 Phase 0 source files are config.ts, logging.ts, and index.ts; focused tests cover configuration and logging, while smoke is separate from pnpm test. pnpm build produces dist/ and pnpm smoke executes node dist/index.js. SLOP_LOOP_LOG_LEVEL defaults to info; configuration is injectable, strict, unknown-prefixed names are rejected, and returned config is frozen. Operational logs remain separate from canonical audit evidence.
 
 CI runs the full lint, format:check, typecheck, test, build, and smoke sequence on Ubuntu; Windows runs install, test, build, and smoke.
@@ -34,7 +36,7 @@ The following is the recommended MVP baseline. Replace individual technologies o
 | Observability | Pino operational logs + optional OpenTelemetry | Diagnostics, traces, and metrics; separate from canonical audit evidence |
 | Testing | Vitest for Slop Loop; target profiles for repositories | Source behavior and future boundary tests |
 
-Phase 0 is a private compiled application foundation. The first product interface after Phase 0 is an interactive local CLI for Python target repositories; an HTTP transport is later. The planned provider-ready prototype will use a deterministic mock `ModelClient`; one real provider implementation and a small end-to-end integration test are required before the product is called a usable MVP. Provider selection remains open.
+Phase 0 is a private compiled application foundation. The first product interface after Phase 0 is an interactive local CLI for TypeScript target repositories; an HTTP transport is later. The planned provider-ready prototype will use a deterministic mock `ModelClient`; one real provider implementation and a small end-to-end integration test are required before the product is called a usable MVP. Provider selection remains open.
 
 ---
 
@@ -353,7 +355,7 @@ network: false
 expires_at: "session end"
 ```
 
-Switching to `Ask` clears `permitted_writes`. Returning to `Edit` begins with an empty set. Repository drift makes affected path-operation grants unavailable as defined in `tool-policy.md`; later use requires reauthorization.
+Switching to `Ask` clears `permitted_writes`. Returning to `Edit` begins with an empty set. A branch switch clears all file grants; other relevant external file drift invalidates affected grants as defined in `tool-policy.md`. Later mutation requires fresh permission.
 
 ---
 ## 7. Sandbox
@@ -364,7 +366,7 @@ Minimum isolation:
 
 - dedicated working directory;
 - non-root execution;
-- read-only base filesystem where practical;
+- read-only system, toolchain, and root filesystem, with only `/workspace` and `/tmp` writable;
 - bounded CPU;
 - bounded memory;
 - bounded process count;
@@ -373,9 +375,15 @@ Minimum isolation:
 - no host home directory mount;
 - no Docker socket inside the sandbox;
 - no SSH agent forwarding;
-- a copied repository snapshot is writable only inside the ephemeral sandbox; the developer checkout is not mounted writable.
+- never mount the developer checkout writable or copy verification changes back automatically.
 
-The sandbox is destroyed after completion or failure.
+Each trusted verification verdict is bound to one snapshot captured through the trusted workspace boundary. Hash the bytes actually copied into a manifest with relevant metadata, then rescan eligible checkout content for observed capture races. Retry a bounded number of times and stop if a stable snapshot cannot be obtained. Every test, lint, typecheck, build, and required native compilation check runs in a fresh Linux container clone populated from that same captured snapshot; rebuild repository-owned native addons offline from the captured source inside the check container. After all checks, compare the current eligible checkout with the original snapshot manifest. Results remain evidence for that snapshot, but a mismatch marks the verdict stale for the current checkout and requires fresh verification. This is not an atomic filesystem snapshot and cannot rule out rapid external change-and-restore races. File watchers may signal possible changes but never establish authority; atomic filesystem snapshots and excluding external writers are deferred (ADR 0011, Q16).
+
+Each check uses bounded stop/removal retries. If cleanup cannot be confirmed, further verification is blocked and the container identity/state is reported; startup reconciliation is limited to Slop Loop-owned resources, with no host-execution fallback (ADR 0011, Q15). The MVP has no PostgreSQL, Redis, or other supporting services. The trusted application remains on the host; Docker executes verification only. A separate developer-triggered preparation step produces a versioned dependency-ready verification image from an application-owned trusted recipe; verification runs offline. Preparation fetches only exact declared and locked artifacts (including required transitives) from approved public registries with restricted networking and scripts disabled. Trusted preparation validates sources, restricts destinations to approved registries, rejects redirects outside them, and verifies lockfile integrity hashes; unsupported sources and integrity failures block preparation. Feature 006 selects enforcement pending implementation and adversarial proof (ADR 0011, Q18). A dependency lifecycle/build script may run only offline and only when trusted configuration allowlists that exact locked dependency identity; unsupported scripts block preparation pending a developer config update. The allowlist is part of the preparation fingerprint (ADR 0011, Q21). The target repository's Dockerfile is never executed and cannot choose privileges, mounts, network access, or build instructions. Repository-owned native compilation is a separate trusted profile. Preparation has no developer secrets, sensitive host directories, Docker socket, or writable mount of the real checkout. Private registries, Git/SSH dependencies, arbitrary tarball URLs, and other unsupported sources are rejected. Future browser research belongs to a separate capability boundary, not the verification container.
+
+Verification uses Linux containers even on Windows hosts; Windows-specific checks remain for developer/CI workflows, and native addons are rebuilt for Linux from the captured snapshot. The workspace boundary filters the current working tree snapshot, including approved edits and eligible untracked files, excluding `.git`, denied secrets, nested repositories, host `node_modules`, and stale/generated artifacts. Dependencies come from the prepared image. The preparation fingerprint covers dependency manifests, lockfile, approved package-manager configuration, Node/pnpm versions, Linux architecture, base-image digest, preparation recipe, and exact-identity lifecycle/build-script allowlist; ordinary source edits do not invalidate it. The agent cannot initiate preparation, install dependencies, or enable networking. Fingerprint drift blocks verification with a stale-image result until the developer prepares again. A minimal developer-triggered preparation helper belongs to Phase 5; the later interactive CLI may expose it. The runtime reports and explains stale state, and offers/starts preparation only after explicit developer confirmation (ADR 0011, Q22). Under Q23, the current task ends in terminal `BLOCKED` without rollback; after explicit developer preparation, a new task reevaluates the repository and captures a fresh snapshot. The blocked task does not resume; task authority is not restored, and session-scoped file grants remain governed by new-task admission. The image fingerprint must match dependency data captured for the verification snapshot on both the direct and post-preparation paths. Dependency-owned native components may be prepared once and bound to the fingerprint; repository-owned native addons compile offline from the same captured snapshot inside each fresh check container under a separate trusted profile, using prepared compiler/build tools, Python where required by `node-gyp`, and matching Node headers. Missing prerequisites block execution.
+
+Repository code and dependency installation scripts are treated as malicious. The MVP uses hardened Docker with non-root execution, dropped capabilities, no privilege escalation, default seccomp, and tightly restricted writable paths. The only writable locations are the copied snapshot/build artifacts at `/workspace` and `/tmp`; system directories, toolchain, and root filesystem are read-only, with no automatic copyback to the developer checkout (ADR 0011, Q19). Document residual container/kernel escape limits explicitly; a dedicated disposable VM is deferred for future reconsideration (ADR 0011, Q17). Initial per-check resource defaults are 2 CPUs, 4 GiB total memory including tmpfs, swap disabled, 256 PIDs, and 300 seconds wall-clock including native compilation. Also cap each check by the remaining active-task deadline and any stricter trusted profile timeout. Do not expand resources automatically; only trusted developer configuration may change them. Validate these initial values during Phase 5 integration. Initial output and writable-storage bounds are selected in the Feature 006 plan and require integration proof (ADR 0011, Q14).
 
 ---
 
@@ -386,19 +394,20 @@ The MVP operates on the developer's current checkout. Repository handling remain
 Responsibilities:
 
 - validate repository identity, branch, `HEAD`, and status;
+- supply bounded trusted branch, `HEAD`, and status evidence to the model at admission and after a detected checkout change, without adding a `git_status` tool;
 - expose the repository root without granting access outside it;
 - track file content observed before each authorized mutation;
 - require session-scoped permission for each canonical repository-relative path and intended update/create operation;
-- make affected path-operation grants unavailable after a branch switch or external file change;
+- revoke all path-operation grants and stale prompts after a branch switch, or affected grants after another external file change;
 - collect status and diff without performing Git writes.
 
-The developer owns branch switching, staging, commits, and every remote Git action. A branch switch preserves the conversation. When a later task needs an affected prior path-operation grant, the runtime requests reauthorization, which may group several pairs. Worktree isolation is a future option.
+The developer owns branch switching, staging, commits, and every remote Git action. A branch switch within the same validated checkout may preserve the active task and conversation. The runtime pauses dispatch, refreshes repository evidence, and requests fresh exact permissions only if resumed work needs mutation; an explicit developer request to continue needs no extra resume confirmation. Replacing the checkout with another repository requires a new task. Worktree isolation is a future option.
 
 ---
 
 ## 9. Verification Service
 
-Verification commands come from trusted configuration, not arbitrary model strings. The first target repositories are Python repositories; pytest, Ruff, and mypy are target-repository profiles, not Slop Loop implementation dependencies.
+Verification commands come from trusted configuration, not arbitrary model strings. The first target repositories are TypeScript repositories, initially Slop Loop itself, using trusted pnpm verification profiles.
 
 Example:
 
@@ -406,19 +415,19 @@ Example:
 profiles:
   default:
     tests:
-      - ["pytest", "-q"]
+      - ["pnpm", "test"]
     build:
-      - ["python", "-m", "build"] # Example only; configured per trusted project profile
+      - ["pnpm", "build"] # Example only; configured per trusted project profile
     lint:
-      - ["ruff", "check", "."]
+      - ["pnpm", "lint"]
     typecheck:
-      - ["mypy", "src"]
+      - ["pnpm", "typecheck"]
 ```
 
 The model requests:
 
 ```text
-run_tests(profile="default", target="tests/test_discount.py::test_invalid_discount")
+run_tests(profile="default", target="tests/orchestration/task.test.ts")
 
 run_build(profile="default")
 ```
@@ -706,5 +715,3 @@ The agent must not bypass repository branch protections.
 - Permission binds a canonical repository-relative path and intended operation: update or create. Create uses exclusive creation and fails if the target exists.
 - Canonical JSONL uses UTF-8, sorted keys, compact separators, preserved Unicode, rejected non-finite numbers, UTC RFC 3339 timestamps with exactly three fractional digits and Z, and LF endings. Events form a SHA-256 chain through previous_event_hash and event_hash. A session manifest records session_id, event count, and final hash.
 - BUDGET_EXHAUSTED records the budget, configured limit, observed usage, and whether the triggering tool result was committed to audit before the stop.
-
-
