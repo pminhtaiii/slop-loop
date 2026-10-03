@@ -62,7 +62,7 @@ Write tests first for each contract: root/subdirectory/sibling/nested/submodule 
 | Relative/absolute traversal or prefix collision | Strict relative parser, physical containment, held-root open | Adversarial path fixtures |
 | Symlink alias or parent swap | Alias and target policy; native root-relative open; post-open identity | In-root, escape, cycle, and swap fixtures |
 | Hard link or special file | Opened-handle type and link-count rejection | Hard-link, pipe, device/socket fixtures |
-| Nested bind mount or junction | Linux no-cross-device open; Windows reparse-tag deny | Real mount/junction fixture or gate remains open |
+| Nested bind mount or junction | Linux no-cross-device open; Windows reparse-tag deny | Available real fixtures; unavailable Linux bind mount remains the accepted T088 gap |
 | Nested Git repository/submodule or ignored content | Git membership plus metadata-boundary check | Tracked/untracked/ignored/gitlink fixtures |
 | Secret-path alias | Deny on both requested and resolved path | Secret symlink and case-variant fixtures |
 | Output flood | Per-tool caps and explicit limit/truncation signals | Byte-bound and long-line fixtures |

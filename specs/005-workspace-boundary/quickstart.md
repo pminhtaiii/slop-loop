@@ -1,6 +1,6 @@
 # Quickstart: Verify the Workspace Boundary
 
-This guide describes the validation gate for the planned Phase 4 implementation. The commands and native build target become runnable as the tasks are completed; the current progress checker still marks Phase 4 open.
+This guide describes the validation gate for Phase 4. The commands and native build target are runnable; `coding-agent-context/context/progress-checker.md` records the completed Phase 4 status and accepted T088 verification gap.
 
 ## Prerequisites
 

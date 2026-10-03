@@ -72,7 +72,7 @@
 
 ## Phase 6: Polish and phase gate
 
-- [ ] T086 Run specs/005-workspace-boundary/quickstart.md and the pinned project gate on Windows and Ubuntu; record exact native fixture evidence and remaining gates in coding-agent-context/context/testing.md
+- [X] T086 Run specs/005-workspace-boundary/quickstart.md and the pinned project gate on Windows and Ubuntu; record exact native fixture evidence and remaining gates in coding-agent-context/context/testing.md
 - [X] T087 Update Phase 4 status only from observed test evidence in coding-agent-context/context/progress-checker.md and reconcile any changed boundary wording in coding-agent-context/context/tool-policy.md
 
 ## Dependencies and execution order
