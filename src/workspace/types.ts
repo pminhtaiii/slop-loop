@@ -39,7 +39,8 @@ export interface OpenedRegularTarget extends OpenedTargetBase {
 
 export interface OpenedDirectoryTarget extends OpenedTargetBase {
   readonly kind: "directory";
-  nextEntry(): { readonly name: string; readonly canonicalPath: string } | null;
+  /** Returns one validated snapshot; each call revalidates the whole directory operation. */
+  entries(): readonly { readonly name: string; readonly canonicalPath: string }[];
 }
 
 export type OpenedWorkspaceTarget = OpenedRegularTarget | OpenedDirectoryTarget;

@@ -203,7 +203,7 @@ const expectedContracts: readonly ExpectedContract[] = [
     fields: {
       query: { type: "string", minLength: 1, maxLength: 512 },
       scope: { type: "string", minLength: 1, maxLength: 1024 },
-      limit: { type: "integer", minimum: 1, maximum: 100 },
+      limit: { type: "integer", minimum: 1, maximum: 200 },
     },
   },
   {
@@ -348,11 +348,12 @@ describe("trusted tool selection and advertised contracts (T033/T034)", () => {
           ).toBe(accepted);
         }
       } else {
+        const maximum = expected.maximum;
         for (const [value, accepted] of [
           [1, true],
-          [100, true],
+          [maximum, true],
           [0, false],
-          [101, false],
+          [maximum + 1, false],
           [1.5, false],
           ["1", false],
         ] as const) {

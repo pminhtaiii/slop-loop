@@ -6,7 +6,7 @@ This guide describes the validation gate for the planned Phase 4 implementation.
 
 - Node.js 24, pnpm 12.5.1 from `package.json`, Git, and a checkout containing the completed Phase 0–3 source.
 - Ubuntu with Linux `openat2` support (kernel 5.6 or later), Python, `make`, and a C/C++ compiler; or Windows with Python and Visual C++ Build Tools.
-- Permission to run the OS-specific adversarial fixtures. A skipped mount/junction fixture is not evidence that the Phase 4 host-boundary exit gate passed.
+- Permission to run the OS-specific adversarial fixtures. A skipped mount/junction fixture is not containment evidence. The project accepts the unavailable Linux bind-mount fixture as a known MVP verification gap under T088; all other available fixtures remain required for the Phase 4 decision.
 
 From the repository root:
 
@@ -39,6 +39,6 @@ pnpm build
 pnpm smoke
 ```
 
-Run the focused and full gates on both supported OSes. `pnpm smoke` currently covers only the compiled Phase 0 entrypoint; it does not replace native boundary or gateway integration tests. Record exact commands, platform/kernel, fixture availability, results, and any blocked adversarial case in `coding-agent-context/context/testing.md`. Only then update `coding-agent-context/context/progress-checker.md` from planned to verified. The later Phase 6/7 adapters must prove that they use the same safe open primitive before their own exit gates can pass.
+Run the focused and full gates on both supported OSes. `pnpm smoke` currently covers only the compiled Phase 0 entrypoint; it does not replace native boundary or gateway integration tests. Record exact commands, platform/kernel, fixture availability, results, and any blocked adversarial case in `coding-agent-context/context/testing.md`. Update `coding-agent-context/context/progress-checker.md` only from observed evidence. Linux bind-mount containment remains UNVERIFIED / UNAVAILABLE under the accepted T088 exception and must not be reported as passed. The later Phase 6/7 adapters must prove that they use the same safe open primitive before their own exit gates can pass.
 
 See [contracts/workspace-boundary.md](contracts/workspace-boundary.md) for outcomes and [data-model.md](data-model.md) for the sealed identity and fact lifetimes.

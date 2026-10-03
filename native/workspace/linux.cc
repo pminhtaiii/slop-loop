@@ -54,10 +54,10 @@ static bool NormalizePath(const std::string& raw, std::vector<std::string>* comp
   return true;
 }
 
-int OpenWorkspaceRelative(int root_fd, const std::string& relative, bool directory) {
-  if (root_fd < 0) return -1;
+static int OpenWorkspaceFrom(int root_fd, int start_fd, const std::string& relative, bool directory) {
+  if (root_fd < 0 || start_fd < 0) { errno = EBADF; return -1; }
   if (relative == ".") {
-    if (directory) return dup(root_fd);
+    if (directory) return dup(start_fd);
     errno = EISDIR;
     return -1;
   }
@@ -65,8 +65,24 @@ int OpenWorkspaceRelative(int root_fd, const std::string& relative, bool directo
   if (!NormalizePath(relative, &parts) || parts.empty()) { errno = EACCES; return -1; }
   const std::string root_path = GetWorkspacePath(root_fd);
   if (root_path.empty()) { errno = EIO; return -1; }
-  int parent = root_fd;
+  const std::string start_path = GetWorkspacePath(start_fd);
+  if (start_path != root_path &&
+      (start_path.size() <= root_path.size() ||
+       start_path.compare(0, root_path.size(), root_path) != 0 ||
+       start_path[root_path.size()] != '/')) { errno = EXDEV; return -1; }
+  int parent = start_fd;
+  bool owns_parent = false;
   std::vector<std::string> prefix;
+  if (start_path != root_path) {
+    std::string relative_parent = start_path.substr(root_path.size() + 1);
+    size_t from = 0;
+    while (from < relative_parent.size()) {
+      const size_t to = relative_parent.find('/', from);
+      prefix.push_back(relative_parent.substr(from, to == std::string::npos ? to : to - from));
+      if (to == std::string::npos) break;
+      from = to + 1;
+    }
+  }
   unsigned int links = 0;
   size_t index = 0;
   while (index < parts.size()) {
@@ -101,13 +117,14 @@ int OpenWorkspaceRelative(int root_fd, const std::string& relative, bool directo
         errno = EACCES; break;
       }
       if (resolved.empty()) {
-        if (parent != root_fd) close(parent);
+        if (owns_parent) close(parent);
         if (directory) return dup(root_fd);
         errno = EISDIR;
         return -1;
       }
-      if (parent != root_fd) close(parent);
+      if (owns_parent) close(parent);
       parent = root_fd;
+      owns_parent = false;
       prefix.clear();
       parts.swap(resolved);
       index = 0;
@@ -116,8 +133,9 @@ int OpenWorkspaceRelative(int root_fd, const std::string& relative, bool directo
     const bool final = index + 1 == parts.size();
     if (!final) {
       if (!S_ISDIR(inspected.st_mode)) { close(entry); errno = ENOTDIR; break; }
-      if (parent != root_fd) close(parent);
+      if (owns_parent) close(parent);
       parent = entry;
+      owns_parent = true;
       prefix.push_back(name);
       ++index;
       continue;
@@ -133,12 +151,20 @@ int OpenWorkspaceRelative(int root_fd, const std::string& relative, bool directo
         actual.st_ino == inspected.st_ino &&
         (directory ? S_ISDIR(actual.st_mode) : S_ISREG(actual.st_mode) && actual.st_nlink == 1);
     close(entry);
-    if (parent != root_fd) close(parent);
+    if (owns_parent) close(parent);
     if (!same) { close(opened); errno = EACCES; return -1; }
     return opened;
   }
-  if (parent != root_fd) close(parent);
+  if (owns_parent) close(parent);
   return -1;
+}
+
+int OpenWorkspaceRelative(int root_fd, const std::string& relative, bool directory) {
+  return OpenWorkspaceFrom(root_fd, root_fd, relative, directory);
+}
+
+int OpenWorkspaceChild(int root_fd, int parent_fd, const std::string& name, bool directory) {
+  return OpenWorkspaceFrom(root_fd, parent_fd, name, directory);
 }
 
 void CloseWorkspaceDescriptor(int fd) { close(fd); }
@@ -146,7 +172,7 @@ void CloseWorkspaceDescriptor(int fd) { close(fd); }
 int ReadWorkspaceDescriptor(int fd, char* output, unsigned int capacity) {
   unsigned int total = 0;
   while (total < capacity) {
-    const ssize_t length = read(fd, output + total, capacity - total);
+    const ssize_t length = pread(fd, output + total, capacity - total, total);
     if (length > 0) { total += static_cast<unsigned int>(length); continue; }
     if (length == 0) break;
     if (errno != EINTR) return -1;

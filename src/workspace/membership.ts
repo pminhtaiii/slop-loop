@@ -85,22 +85,30 @@ export function workspaceMemberEvidence(
 ): { readonly rootFd: number; readonly members: readonly string[] } {
   const rootFd = verifiedRootFd ?? nativeRootForWorkspace(workspace);
   if (rootFd === null || rootFd === undefined) throw new Error("Workspace identity unavailable");
-  const tracked = nulNames(
-    gitOutput(workspace.root, ["ls-files", "--cached", "--stage", "-z", "--full-name"]),
+  const entries = nulNames(
+    gitOutput(workspace.root, [
+      "ls-files",
+      "--cached",
+      "--others",
+      "--exclude-standard",
+      "--stage",
+      "-t",
+      "-z",
+      "--full-name",
+    ]),
   );
   const gitlinks = new Set<string>();
   const names = new Set<string>();
-  for (const entry of tracked) {
-    const tab = entry.indexOf("\t");
-    if (tab < 0) throw new Error("Invalid Git index entry");
-    const name = entry.slice(tab + 1);
-    if (entry.startsWith("160000 ")) gitlinks.add(name);
+  for (const entry of entries) {
+    const untracked = entry.startsWith("? ");
+    const staged = untracked
+      ? null
+      : /^[HSMRC] ([0-7]{6}) [0-9a-f]{40,64} [0-3]\t(.*)$/su.exec(entry);
+    if (!untracked && staged === null) throw new Error("Invalid Git index entry");
+    const name = untracked ? entry.slice(2) : staged?.[2];
+    if (name === undefined || name.length === 0) throw new Error("Invalid Git index entry");
+    if (staged?.[1] === "160000") gitlinks.add(name);
     else names.add(name);
-  }
-  for (const name of nulNames(
-    gitOutput(workspace.root, ["ls-files", "--others", "--exclude-standard", "-z", "--full-name"]),
-  )) {
-    names.add(name);
   }
   const gitlinkNames = [...gitlinks];
   const blockedPrefixes = new Set<string>();

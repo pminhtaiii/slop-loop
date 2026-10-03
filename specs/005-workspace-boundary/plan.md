@@ -16,13 +16,13 @@ Create a real, checkout-bound workspace authority for Phase 3's policy gateway. 
 - **Testing**: Vitest adversarial filesystem fixtures, native helper tests on Windows and Ubuntu, TypeScript typecheck, ESLint, Prettier, pinned pnpm gate.
 - **Target Platform**: Local Windows and Ubuntu CLI. Linux backend requires `openat2` support (kernel 5.6+); unavailable native enforcement fails closed.
 - **Project Type**: Private single-package, single-process application.
-- **Performance Goals**: No new latency SLO; bound read/search content and avoid host-wide or unbounded traversal.
+- **Performance Goals**: No new latency SLO; bound read/search content and avoid host-wide or unbounded traversal. Reuse current Git member enumeration within an operation when safe while preserving point-of-use identity checks.
 - **Constraints**: One selected checkout per task; no host escape, no arbitrary shell or network; 64 KiB whole-file read/result, 200 search matches, 32 KiB search output, 4 KiB line, 4 MiB searched-file cap; one in-flight gateway call.
 - **Scale/Scope**: One active checkout slot. Phase 4 supplies boundary primitives and real policy facts, not complete Phase 6/7/9/13 adapters.
 
 ## Constitution Check
 
-The checked-in `.specify/memory/constitution.md` is an unratified template and contains no operative gates. Apply the project authority hierarchy instead: `CONTEXT.md` vocabulary, `coding-agent-context/context/tool-policy.md` security policy, `workflow.md` development sequence, `testing.md` verification, `progress-checker.md` implemented status, and ADR 0001/0003/0005/0008/0009/0010. ADR 0003 favors one TypeScript process; the native addon is a justified, single-process exception required for race-resistant cross-platform file access. Do not claim Phase 4 integration until the native helper, adversarial fixtures, and pinned quality gate pass on both supported platforms. This gate is rechecked after the design below.
+The checked-in `.specify/memory/constitution.md` is an unratified template and contains no operative gates. Apply the project authority hierarchy instead: `CONTEXT.md` vocabulary, `coding-agent-context/context/tool-policy.md` security policy, `workflow.md` development sequence, `testing.md` verification, `progress-checker.md` implemented status, and ADR 0001/0003/0005/0008/0009/0010. ADR 0003 favors one TypeScript process; the native addon is a justified, single-process exception required for race-resistant cross-platform file access. Do not claim Phase 4 integration until the native helper, available adversarial fixtures, and pinned quality gate pass on both supported platforms. Linux bind-mount fixture execution remains an explicitly accepted MVP verification gap under T088 when mount capability is unavailable; it is never recorded as passed. This gate is rechecked after the design below.
 
 ## Authority and Integration Boundaries
 
@@ -53,7 +53,7 @@ Bind the existing `WorkspaceFactsPort` to the real provider keyed by sealed work
 
 ### 5. Adversarial verification and context sync
 
-Write tests first for each contract: root/subdirectory/sibling/nested/submodule and same-path linked-worktree replacement; Git environment override; ignored/tracked membership; traversal/absolute/case/Unicode; symlink alias/escape/cycle; hard links; nested mounts/junctions; nonregular paths; target swaps from eligible to outside, ignored, or secret content; file/search/output bounds; missing, duplicate, extra, and wrong-alias gateway facts. Use real OS fixtures for mount/reparse behavior where the environment permits, and do not treat a skipped critical fixture as passed exit evidence. Run [quickstart.md](quickstart.md) and the full pinned gate. Update testing/progress only with observed implementation evidence.
+Write tests first for each contract: root/subdirectory/sibling/nested/submodule and same-path linked-worktree replacement; Git environment override; ignored/tracked membership; traversal/absolute/case/Unicode; symlink alias/escape/cycle; hard links; nested mounts/junctions; nonregular paths; target swaps from eligible to outside, ignored, or secret content; file/search/output bounds; missing, duplicate, extra, and wrong-alias gateway facts. Use real OS fixtures for mount/reparse behavior where the environment permits, and do not treat a skipped critical fixture as passed evidence. The unavailable Linux bind-mount fixture is the accepted T088 MVP exception only. Run [quickstart.md](quickstart.md) and the full pinned gate. Update testing/progress only with observed implementation evidence.
 
 ## Threat Review
 
@@ -89,4 +89,4 @@ Write tests first for each contract: root/subdirectory/sibling/nested/submodule 
 
 ## Post-Design Constitution Check
 
-No operative constitution rule is violated. The native addon is the only deviation from the TypeScript-first implementation style in ADR 0003; it preserves the single-process private package and is confined to OS filesystem enforcement. The project authority files and phase ownership remain consistent. If native support or the required adversarial fixture cannot be verified on a supported platform, Phase 4 is not integration-ready and later repository executors remain disabled.
+No operative constitution rule is violated. The native addon is the only deviation from the TypeScript-first implementation style in ADR 0003; it preserves the single-process private package and is confined to OS filesystem enforcement. The project authority files and phase ownership remain consistent. If native support or an available required adversarial fixture cannot be verified on a supported platform, Phase 4 is not integration-ready and later repository executors remain disabled. The unavailable Linux bind-mount fixture is tracked as UNVERIFIED / UNAVAILABLE under the accepted T088 MVP exception, not as a pass.

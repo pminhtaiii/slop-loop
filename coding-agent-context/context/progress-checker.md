@@ -125,22 +125,22 @@ policy failure cannot become ALLOW
 ## Phase 4 — Workspace Boundary
 
 - [x] Discover, canonicalize, and seal the selected current Git checkout root at admission; reject launch outside a valid checkout.
-- [ ] Exclude sibling and nested repositories, ignored paths, and `.git` internals from repository tools while allowing nonignored tracked and untracked files.
-- [ ] Implement workspace canonicalization.
-- [ ] Block `..` traversal.
-- [ ] Block absolute path escape.
-- [ ] Block symlink escape.
-- [ ] Block hard-linked content, nested mount/reparse crossings, and nonregular content targets.
-- [ ] Add denied secret path patterns.
-- [ ] Bound `read_file` to 64 KiB whole-file content with an explicit size-limit result.
-- [ ] Bound `search_code` to 200 matches, 32 KiB total output, 4 KiB per returned line, and 4 MiB per searched file; mark omitted matches and shortened lines.
-- [ ] Add adversarial filesystem tests.
+- [x] Exclude sibling and nested repositories, ignored paths, and `.git` internals from workspace path facts while allowing nonignored tracked and untracked files.
+- [x] Implement workspace canonicalization.
+- [x] Block `..` traversal.
+- [x] Block absolute path escape.
+- [x] Block symlink escape in the native workspace boundary.
+- [x] Block hard-linked content, tested Windows junction/reparse crossings, and nonregular content targets; Linux bind-mount containment remains UNVERIFIED / UNAVAILABLE under the accepted T088 exception.
+- [x] Add denied secret path patterns.
+- [x] Bound the `read_file` result contract to 64 KiB whole-file content with an explicit size-limit result.
+- [x] Bound the `search_code` result contract to 200 matches, 32 KiB total output, 4 KiB per returned line, and 4 MiB per searched file; mark omitted matches and shortened lines.
+- [x] Add adversarial filesystem tests for the available Windows fixtures; current-source Ubuntu execution and Linux bind-mount containment remain unverified.
 
 T059–T068 implement the native-addon build/load contract, checkout selection and sealed admission, Git membership candidate enumeration, and US1 fixtures. On 2026-10-01, [CI run 31](https://github.com/pminhtaiii/slop-loop/actions/runs/36857259445) for commit `cd2be96dfffcafe07f8cf07289595563c5020383` passed `pnpm native:build`, 23 workspace tests, and the 265-test source suite on both Ubuntu and Windows; application build and smoke passed on both, and Ubuntu also passed lint, formatting, and type checking. The local Windows source suite also passed 265 tests with a manually compiled Node-API addon. Visual C++ Build Tools were installed on this host on 2026-10-02 and the current native source now passes the standard local Windows build. This earlier CI run proves T059–T068 only; it does not verify the later boundary source.
 
 Internal Phase 4 T069–T078 implementation is complete in this checkout: strict requested-alias and resolved-target policy, exact gateway fact coverage, native held-root traversal on Linux and Windows, hard-link/nonregular/reparse denial, current Git and root/gitdir rechecks, bounded directory enumeration, and mutation-path preflight that checks components with `lstat` after a native held-root parent open. On 2026-10-02, [CI run 35](https://github.com/pminhtaiii/slop-loop/actions/runs/37008013232) for PR #119 (verified commit `fe0709553e927e78362328f087440693d1a107b5`) passed both Windows Quality Gate and Ubuntu Quality Gate. Windows CI passed `pnpm native:build`, workspace boundary tests (79 passed, 2 skipped of 81), full source tests (332 passed, 2 skipped of 334), application build, and smoke; real Windows symlink and junction fixtures were executed and passed, while the 2 skipped tests are platform-specific Linux-only cases (FIFO and bind mount). Ubuntu CI passed `pnpm native:build`, workspace boundary tests (78 passed, 3 skipped of 81), full source tests (331 passed, 3 skipped of 334), lint, format check, typecheck, application build, and smoke; real Linux native openat2 traversal and symlinks passed. Of Ubuntu's 3 skipped tests, 2 are Windows junction cases and 1 is the Linux bind-mount fixture, which explicitly reported `UNAVAILABLE: Linux bind-mount fixture requires mount capability` because the required mount capability was unavailable on the runner.
 
-A skipped critical fixture is not containment evidence; Linux bind-mount containment has not been proven safe. While code implementation and currently available cross-platform CI evidence have converged for T069–T078, convergence task T088 remains partial with this known verification limitation, and the US2 checkpoint remains open per SC-001/SC-003. No model-visible repository content or patch executor is enabled. Project Phase 4 remains incomplete as T079–T087 remain open (retrieval bounding, output contracts, quickstart gate, and status reconciliation); the registry still caps `search_code` at 100 matches, and the gateway still applies a generic 32 KiB result cap pending T079–T085. The overall Phase 4 exit gate remains open.
+A skipped critical fixture is not containment evidence; Linux bind-mount containment remains **UNVERIFIED / UNAVAILABLE** because neither the local host nor GitHub-hosted Ubuntu can create the required fixture. The project explicitly accepts T088 as an MVP verification gap; T088 alone does not block the Phase 4 exit decision, and the skipped fixture is never a PASS. No model-visible repository content or patch executor is enabled. Internal Phase 5 T079–T085 is implemented and passes the current local Windows checks. The registry accepts 200 search matches and owns the 64 KiB read, 32 KiB search, and 16 KiB other-tool result ceilings. Directory child opens are relative to a retained parent handle, with parent identity and location rechecks; each directory call returns one freshly validated snapshot, using two Git membership enumerations to check for changes across the call rather than one per child, and holds at most one child handle at a time. The current Windows source passes the focused and full test suites, native build, lint, formatting, typecheck, application build, and smoke as detailed in `testing.md`. T087 records this observed status. T086 remains partial because the current source has not run on Ubuntu; the historical two-host PR #119 CI run predates these changes. The overall Phase 4 exit gate remains open pending that current-source two-host evidence and review of the remaining available fixtures.
 
 Exit gate:
 

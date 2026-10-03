@@ -15,11 +15,64 @@ const pathSchema = z.string().min(1).max(1024);
 const querySchema = z.string().min(1).max(512);
 const profileSchema = z.string().min(1).max(64);
 const resultLimitSchema = z.number().int().min(1).max(100);
+const searchLimitSchema = z.number().int().min(1).max(200);
+
+const sourcePath = z
+  .string()
+  .min(1)
+  .max(1024)
+  .refine(
+    (value) =>
+      !value.startsWith("/") &&
+      !value.includes("\\") &&
+      !value.includes(":") &&
+      !value.includes("\0") &&
+      value
+        .split("/")
+        .every((segment) => segment.length > 0 && segment !== "." && segment !== ".."),
+  );
+const readOutputSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    kind: z.literal("CONTENT"),
+    path: sourcePath,
+    method: z.literal("workspace-read"),
+    content: z.string(),
+  }),
+  z.strictObject({
+    kind: z.literal("SIZE_LIMIT"),
+    path: sourcePath,
+    method: z.literal("workspace-read"),
+  }),
+  z.strictObject({
+    kind: z.literal("BINARY"),
+    path: sourcePath,
+    method: z.literal("workspace-read"),
+  }),
+]);
+const searchOutputSchema = z.strictObject({
+  kind: z.literal("SEARCH_RESULT"),
+  method: z.literal("workspace-search"),
+  matches: z
+    .array(
+      z.strictObject({
+        path: sourcePath,
+        lineNumber: z.number().int().positive(),
+        line: z.string().refine((line) => new TextEncoder().encode(line).byteLength <= 4_096),
+        shortened: z.boolean(),
+      }),
+    )
+    .max(200),
+  skipped: z.array(z.strictObject({ path: sourcePath, reason: z.enum(["SIZE_LIMIT", "BINARY"]) })),
+  omittedMatches: z.boolean(),
+  shortenedLines: z.boolean(),
+  omittedFiles: z.boolean(),
+});
 
 const toolDefinitions = {
   list_files: {
     description: "List repository paths within a bounded scope.",
     arguments: z.strictObject({ path: pathSchema.optional(), limit: resultLimitSchema.optional() }),
+    output: { schema: z.unknown(), maxBytes: 16_384 },
     metadata: {
       requiredCapability: "repository_read",
       risk: "LOW",
@@ -33,8 +86,9 @@ const toolDefinitions = {
     arguments: z.strictObject({
       query: querySchema,
       scope: pathSchema.optional(),
-      limit: resultLimitSchema.optional(),
+      limit: searchLimitSchema.optional(),
     }),
+    output: { schema: searchOutputSchema, maxBytes: 32_768 },
     metadata: {
       requiredCapability: "repository_read",
       risk: "LOW",
@@ -46,6 +100,7 @@ const toolDefinitions = {
   read_file: {
     description: "Read one repository file.",
     arguments: z.strictObject({ path: pathSchema }),
+    output: { schema: readOutputSchema, maxBytes: 65_536 },
     metadata: {
       requiredCapability: "repository_read",
       risk: "LOW",
@@ -57,6 +112,7 @@ const toolDefinitions = {
   git_diff: {
     description: "Inspect read-only Git diff evidence.",
     arguments: z.strictObject({}),
+    output: { schema: z.unknown(), maxBytes: 16_384 },
     metadata: {
       requiredCapability: "git_evidence",
       risk: "LOW",
@@ -68,6 +124,7 @@ const toolDefinitions = {
   apply_patch: {
     description: "Propose a bounded text patch for later authorization.",
     arguments: z.strictObject({ patch: z.string().min(1).max(65_536) }),
+    output: { schema: z.unknown(), maxBytes: 16_384 },
     metadata: {
       requiredCapability: "workspace_write",
       risk: "MEDIUM",
@@ -79,6 +136,7 @@ const toolDefinitions = {
   run_tests: {
     description: "Request a trusted test profile and optional logical target.",
     arguments: z.strictObject({ profile: profileSchema, target: pathSchema.optional() }),
+    output: { schema: z.unknown(), maxBytes: 16_384 },
     metadata: {
       requiredCapability: "verification",
       risk: "MEDIUM",
@@ -90,6 +148,7 @@ const toolDefinitions = {
   run_build: {
     description: "Request a trusted build profile.",
     arguments: z.strictObject({ profile: profileSchema }),
+    output: { schema: z.unknown(), maxBytes: 16_384 },
     metadata: {
       requiredCapability: "verification",
       risk: "MEDIUM",
@@ -101,6 +160,7 @@ const toolDefinitions = {
   run_linter: {
     description: "Request a trusted lint profile.",
     arguments: z.strictObject({ profile: profileSchema }),
+    output: { schema: z.unknown(), maxBytes: 16_384 },
     metadata: {
       requiredCapability: "verification",
       risk: "MEDIUM",
@@ -112,6 +172,7 @@ const toolDefinitions = {
   run_typecheck: {
     description: "Request a trusted typecheck profile.",
     arguments: z.strictObject({ profile: profileSchema }),
+    output: { schema: z.unknown(), maxBytes: 16_384 },
     metadata: {
       requiredCapability: "verification",
       risk: "MEDIUM",
@@ -122,10 +183,22 @@ const toolDefinitions = {
   },
 } as const satisfies Record<
   string,
-  { readonly description: string; readonly arguments: z.ZodType; readonly metadata: ToolMetadata }
+  {
+    readonly description: string;
+    readonly arguments: z.ZodType;
+    readonly output: { readonly schema: z.ZodType; readonly maxBytes: number };
+    readonly metadata: ToolMetadata;
+  }
 >;
 
 export type ToolName = keyof typeof toolDefinitions;
+
+export function outputContractForName(name: ToolName): {
+  readonly schema: z.ZodType;
+  readonly maxBytes: number;
+} {
+  return Object.freeze({ ...toolDefinitions[name].output });
+}
 
 export type ValidatedToolCall = {
   [Name in ToolName]: {

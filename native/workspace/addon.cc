@@ -129,6 +129,42 @@ napi_value OpenRelative(napi_env env, napi_callback_info info) {
   return result;
 }
 
+napi_value OpenChild(napi_env env, napi_callback_info info) {
+  size_t argc = 4;
+  napi_value argv[4];
+  if (napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr) != napi_ok || argc != 4) {
+    ThrowDenied(env); return nullptr;
+  }
+  int32_t root_token = -1;
+  int32_t parent_token = -1;
+  bool directory = false;
+  std::string name;
+  if (napi_get_value_int32(env, argv[0], &root_token) != napi_ok ||
+      napi_get_value_int32(env, argv[1], &parent_token) != napi_ok ||
+      !ReadString(env, argv[2], &name) ||
+      napi_get_value_bool(env, argv[3], &directory) != napi_ok ||
+      !SafeRelative(name) || name == "." || name.find('/') != std::string::npos) {
+    ThrowDenied(env); return nullptr;
+  }
+  std::lock_guard<std::mutex> guard(descriptor_mutex);
+  const auto root = root_descriptors.find(root_token);
+  const auto parent = target_descriptors.find(parent_token);
+  WorkspaceIdentity parent_identity = {};
+  if (root == root_descriptors.end() || parent == target_descriptors.end() ||
+      !GetWorkspaceIdentity(parent->second, &parent_identity) || !parent_identity.directory) {
+    ThrowDenied(env); return nullptr;
+  }
+  const int opened = OpenWorkspaceChild(root->second, parent->second, name, directory);
+  if (opened < 0) { ThrowOpenFailure(env); return nullptr; }
+  const int32_t token = AllocateToken();
+  napi_value result;
+  if (token < 0 || napi_create_int32(env, token, &result) != napi_ok) {
+    CloseWorkspaceDescriptor(opened); ThrowDenied(env); return nullptr;
+  }
+  target_descriptors.emplace(token, opened);
+  return result;
+}
+
 napi_value ProbeWalk(napi_env env, napi_callback_info info) {
   size_t argc = 1;
   napi_value argv[1];
@@ -282,7 +318,7 @@ void ExportFunction(napi_env env, napi_value exports, const char* name, napi_cal
 
 napi_value Initialize(napi_env env, napi_value exports) {
   napi_value abi;
-  if (napi_create_uint32(env, 1, &abi) != napi_ok) return exports;
+  if (napi_create_uint32(env, 2, &abi) != napi_ok) return exports;
   napi_set_named_property(env, exports, "abi", abi);
 #if defined(_WIN32)
   SetString(env, exports, "platform", "win32");
@@ -298,9 +334,10 @@ napi_value Initialize(napi_env env, napi_value exports) {
 #else
   SetString(env, exports, "arch", "unsupported");
 #endif
-  SetString(env, exports, "capability", "identity-v1");
+  SetString(env, exports, "capability", "identity-v2");
   ExportFunction(env, exports, "openRoot", OpenRoot);
   ExportFunction(env, exports, "openRelative", OpenRelative);
+  ExportFunction(env, exports, "openChild", OpenChild);
   ExportFunction(env, exports, "probeWalk", ProbeWalk);
   ExportFunction(env, exports, "closeDescriptor", CloseDescriptor);
   ExportFunction(env, exports, "targetPath", TargetPath);

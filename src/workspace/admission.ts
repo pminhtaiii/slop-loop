@@ -56,20 +56,23 @@ function containsPhysicalDirectory(root: string, launch: string): boolean {
   }
 }
 
-function gitValue(cwd: string, option: string): string {
-  const result = runTrustedGit(cwd, ["rev-parse", option]).toString("utf8");
-  return result.replace(/\r?\n$/, "");
-}
-
 function discoverCheckout(launchDirectory: string): { root: string; gitdir: string } {
   const launch = fs.realpathSync(launchDirectory);
   if (!fs.statSync(launch).isDirectory()) throw new Error("Launch path is not a directory");
   // --show-toplevel fails outside a worktree, including bare repositories.
-  const root = fs.realpathSync(gitValue(launch, "--show-toplevel"));
+  const output = runTrustedGit(launch, [
+    "rev-parse",
+    "--show-toplevel",
+    "--absolute-git-dir",
+  ]).toString("utf8");
+  const locations = output.replace(/\r?\n$/, "").split(/\r?\n/u);
+  if (locations.length !== 2 || locations.some((location) => location.length === 0))
+    throw new Error("Invalid Git checkout discovery");
+  const root = fs.realpathSync(locations[0]!);
   if (!containsPhysicalDirectory(root, launch)) {
     throw new Error("Launch path escapes checkout");
   }
-  return { root, gitdir: fs.realpathSync(gitValue(launch, "--absolute-git-dir")) };
+  return { root, gitdir: fs.realpathSync(locations[1]!) };
 }
 
 function failure(reason: WorkspaceFailureReason): WorkspaceSelectionResult {
