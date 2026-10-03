@@ -24,9 +24,32 @@ function invoke(
     workspace: { factsFor: () => facts },
     grants: { grantFor: () => undefined },
     executors: {
-      read_file: { execute: () => ++executions },
+      read_file: {
+        execute: () => {
+          executions += 1;
+          return {
+            kind: "CONTENT",
+            path: "src/tracked.ts",
+            method: "workspace-read",
+            content: "source",
+          };
+        },
+      },
       list_files: { execute: () => ++executions },
-      search_code: { execute: () => ++executions },
+      search_code: {
+        execute: () => {
+          executions += 1;
+          return {
+            kind: "SEARCH_RESULT",
+            method: "workspace-search",
+            matches: [],
+            skipped: [],
+            omittedMatches: false,
+            shortenedLines: false,
+            omittedFiles: false,
+          };
+        },
+      },
     },
   });
   return {
@@ -90,7 +113,19 @@ describe("gateway path fact coverage", () => {
         const gateway = new ToolGateway({
           workspace: new WorkspaceBoundary(),
           grants: { grantFor: () => undefined },
-          executors: { read_file: { execute: () => ++executions } },
+          executors: {
+            read_file: {
+              execute: () => {
+                executions += 1;
+                return {
+                  kind: "CONTENT",
+                  path: "src/tracked.ts",
+                  method: "workspace-read",
+                  content: "source",
+                };
+              },
+            },
+          },
         });
         expect(
           await gateway.invoke(

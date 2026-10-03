@@ -52,6 +52,6 @@ The feature specification is [spec.md](spec.md). The current policy and ADR 0009
 
 ## Decision 7 — Keep the existing phase gates visible
 
-**Decision**: Phase 4 verification covers native boundary fixtures on Windows and Ubuntu, real-facts-to-gateway integration with fake executors, and the pinned quality gate. The Phase 4 exit claim is limited to the tested boundary/open primitives until Phase 6/7 adapters use them. The progress checker remains unchecked until implementation and required verification exist.
+**Decision**: Phase 4 verification covers native boundary fixtures on Windows and Ubuntu, real-facts-to-gateway integration with fake executors, and the pinned quality gate. The Phase 4 exit claim is limited to the tested boundary/open primitives until Phase 6/7 adapters use them. The progress checker records completion only from implementation and required verification evidence.
 
 **Rationale**: Phase 3's gateway is a fake-port proof. The accepted Phase 0 gate and Phase 1 runner reconciliation remain prerequisites; planning artifacts do not prove containment. See `coding-agent-context/context/progress-checker.md` and `coding-agent-context/context/testing.md`.

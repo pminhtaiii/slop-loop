@@ -243,14 +243,315 @@ describe("real workspace facts", () => {
     const opened = new WorkspaceBoundary().openDirectory(selected.workspace.workspaceId, "src");
     expect(opened.kind).toBe("OPENED");
     if (opened.kind !== "OPENED") return;
-    const entries = [];
-    for (let entry = opened.target.nextEntry(); entry !== null; entry = opened.target.nextEntry())
-      entries.push(entry.name);
+    const entries = opened.target.entries().map((entry) => entry.name);
     expect(entries).toEqual(expect.arrayContaining(["tracked.ts", "extra.ts"]));
     expect(entries).not.toContain("ignored.log");
     opened.target.close();
-    expect(() => opened.target.nextEntry()).toThrow();
+    expect(() => opened.target.entries()).toThrow();
   });
+
+  it("rejects entries when the retained parent directory is replaced", () => {
+    const fixture = createGitCheckout();
+    cleanup.push(() => fixture.cleanup());
+    const selected = selectWorkspace(fixture.root);
+    expect(selected.kind).toBe("SELECTED");
+    if (selected.kind !== "SELECTED") return;
+    cleanup.push(() => closeWorkspace(selected.workspace));
+    const opened = new WorkspaceBoundary().openDirectory(selected.workspace.workspaceId, "src");
+    expect(opened.kind).toBe("OPENED");
+    if (opened.kind !== "OPENED") return;
+    try {
+      fs.renameSync(path.join(fixture.root, "src"), path.join(fixture.root, "old-src"));
+      fs.mkdirSync(path.join(fixture.root, "src"));
+      fixture.write("src/tracked.ts", "replacement\n");
+      expect(() => opened.target.entries()).toThrow("Directory target changed");
+    } finally {
+      opened.target.close();
+    }
+  });
+
+  it.skipIf(!symlinkFixtureAvailable("dir"))(
+    "rejects entries after a directory alias is retargeted",
+    () => {
+      const fixture = createGitCheckout();
+      cleanup.push(() => fixture.cleanup());
+      fixture.write("other/tracked.ts", "other\n");
+      fixture.symlink("src-link", "src", "dir");
+      const selected = selectWorkspace(fixture.root);
+      expect(selected.kind).toBe("SELECTED");
+      if (selected.kind !== "SELECTED") return;
+      cleanup.push(() => closeWorkspace(selected.workspace));
+      const opened = new WorkspaceBoundary().openDirectory(
+        selected.workspace.workspaceId,
+        "src-link",
+      );
+      expect(opened.kind).toBe("OPENED");
+      if (opened.kind !== "OPENED") return;
+      try {
+        fs.unlinkSync(path.join(fixture.root, "src-link"));
+        fixture.symlink("src-link", "other", "dir");
+        expect(() => opened.target.entries()).toThrow("Directory target changed");
+      } finally {
+        opened.target.close();
+      }
+    },
+  );
+
+  it("rejects a parent swap during child resolution", () => {
+    const fixture = createGitCheckout();
+    cleanup.push(() => fixture.cleanup());
+    const selected = selectWorkspace(fixture.root);
+    expect(selected.kind).toBe("SELECTED");
+    if (selected.kind !== "SELECTED") return;
+    cleanup.push(() => closeWorkspace(selected.workspace));
+    const opened = new WorkspaceBoundary().openDirectory(selected.workspace.workspaceId, "src");
+    expect(opened.kind).toBe("OPENED");
+    if (opened.kind !== "OPENED") return;
+    const require = createRequire(import.meta.url);
+    const native = require("../../native/workspace/build/Release/workspace_boundary.node") as {
+      openChild: (...arguments_: unknown[]) => number;
+    };
+    const original = native.openChild;
+    let swapped = false;
+    native.openChild = (...args: unknown[]) => {
+      if (!swapped && args[2] === "tracked.ts") {
+        swapped = true;
+        fs.renameSync(path.join(fixture.root, "src"), path.join(fixture.root, "old-src"));
+        fs.mkdirSync(path.join(fixture.root, "src"));
+        fixture.write("src/tracked.ts", "replacement\n");
+      }
+      return original(...args);
+    };
+    try {
+      expect(() => opened.target.entries()).toThrow("Directory target changed");
+    } finally {
+      native.openChild = original;
+      opened.target.close();
+    }
+  });
+
+  it("fails closed when Git membership changes while opening directory children", () => {
+    const fixture = createGitCheckout();
+    cleanup.push(() => fixture.cleanup());
+    fixture.write("src/transient.log", "temporary\n");
+    const selected = selectWorkspace(fixture.root);
+    expect(selected.kind).toBe("SELECTED");
+    if (selected.kind !== "SELECTED") return;
+    cleanup.push(() => closeWorkspace(selected.workspace));
+    const opened = new WorkspaceBoundary().openDirectory(selected.workspace.workspaceId, "src");
+    expect(opened.kind).toBe("OPENED");
+    if (opened.kind !== "OPENED") return;
+    const require = createRequire(import.meta.url);
+    const native = require("../../native/workspace/build/Release/workspace_boundary.node") as {
+      openChild: (...arguments_: unknown[]) => number;
+    };
+    const original = native.openChild;
+    let changed = false;
+    native.openChild = (...args: unknown[]) => {
+      const result = original(...args);
+      if (!changed && args[2] === "transient.log") {
+        changed = true;
+        fixture.write(".gitignore", "*.log\n");
+      }
+      return result;
+    };
+    try {
+      expect(() => opened.target.entries()).toThrow("Directory target changed");
+      const names = opened.target.entries().map((entry) => entry.name);
+      expect(names).not.toContain("transient.log");
+      expect(names).toContain("tracked.ts");
+    } finally {
+      native.openChild = original;
+      opened.target.close();
+    }
+  });
+
+  it("rejects an earlier child replaced while a later child opens", () => {
+    const fixture = createGitCheckout();
+    cleanup.push(() => fixture.cleanup());
+    fixture.write("src/extra.ts", "extra\n");
+    fixture.write("outside.txt", "linked\n");
+    const selected = selectWorkspace(fixture.root);
+    expect(selected.kind).toBe("SELECTED");
+    if (selected.kind !== "SELECTED") return;
+    cleanup.push(() => closeWorkspace(selected.workspace));
+    const opened = new WorkspaceBoundary().openDirectory(selected.workspace.workspaceId, "src");
+    expect(opened.kind).toBe("OPENED");
+    if (opened.kind !== "OPENED") return;
+    const require = createRequire(import.meta.url);
+    const native = require("../../native/workspace/build/Release/workspace_boundary.node") as {
+      openChild: (...arguments_: unknown[]) => number;
+    };
+    const original = native.openChild;
+    let firstName: string | null = null;
+    let replaced = false;
+    native.openChild = (...args: unknown[]) => {
+      const name = String(args[2]);
+      if (firstName === null) firstName = name;
+      else if (!replaced && name !== firstName) {
+        replaced = true;
+        fs.unlinkSync(path.join(fixture.root, "src", firstName));
+        fs.linkSync(
+          path.join(fixture.root, "outside.txt"),
+          path.join(fixture.root, "src", firstName),
+        );
+      }
+      return original(...args);
+    };
+    try {
+      expect(() => opened.target.entries()).toThrow("Directory target changed");
+      expect(replaced).toBe(true);
+    } finally {
+      native.openChild = original;
+      opened.target.close();
+    }
+  });
+
+  it("rechecks the canonical location of a child before returning a directory snapshot", () => {
+    const fixture = createGitCheckout();
+    cleanup.push(() => fixture.cleanup());
+    fixture.write(".env", "secret\n");
+    const selected = selectWorkspace(fixture.root);
+    expect(selected.kind).toBe("SELECTED");
+    if (selected.kind !== "SELECTED") return;
+    cleanup.push(() => closeWorkspace(selected.workspace));
+    const opened = new WorkspaceBoundary().openDirectory(selected.workspace.workspaceId, "src");
+    expect(opened.kind).toBe("OPENED");
+    if (opened.kind !== "OPENED") return;
+    const require = createRequire(import.meta.url);
+    const native = require("../../native/workspace/build/Release/workspace_boundary.node") as {
+      openChild: (...arguments_: unknown[]) => number;
+      openRelative: (rootFd: number, path: string, directory: boolean) => number;
+    };
+    const original = native.openChild;
+    let opens = 0;
+    native.openChild = (...args: unknown[]) => {
+      if (args[2] === "tracked.ts" && ++opens === 2)
+        return native.openRelative(Number(args[0]), ".env", false);
+      return original(...args);
+    };
+    try {
+      expect(() => opened.target.entries()).toThrow("Directory target changed");
+      expect(opens).toBe(2);
+    } finally {
+      native.openChild = original;
+      opened.target.close();
+    }
+  });
+
+  it.skipIf(!symlinkFixtureAvailable("file"))(
+    "rejects a child alias retarget to a denied path without changing its inode",
+    () => {
+      const fixture = createGitCheckout();
+      cleanup.push(() => fixture.cleanup());
+      fixture.write("src/extra.ts", "extra\n");
+      fixture.git("add", "src/extra.ts");
+      fixture.write(".gitignore", ".env\n");
+      const selected = selectWorkspace(fixture.root);
+      expect(selected.kind).toBe("SELECTED");
+      if (selected.kind !== "SELECTED") return;
+      cleanup.push(() => closeWorkspace(selected.workspace));
+      const opened = new WorkspaceBoundary().openDirectory(selected.workspace.workspaceId, "src");
+      expect(opened.kind).toBe("OPENED");
+      if (opened.kind !== "OPENED") return;
+      const require = createRequire(import.meta.url);
+      const native = require("../../native/workspace/build/Release/workspace_boundary.node") as {
+        openChild: (...arguments_: unknown[]) => number;
+      };
+      const original = native.openChild;
+      let firstName: string | null = null;
+      let retargeted = false;
+      native.openChild = (...args: unknown[]) => {
+        const name = String(args[2]);
+        if (firstName === null) firstName = name;
+        else if (!retargeted && name !== firstName) {
+          retargeted = true;
+          fs.renameSync(path.join(fixture.root, "src", firstName), path.join(fixture.root, ".env"));
+          fixture.symlink(`src/${firstName}`, "../.env");
+        }
+        return original(...args);
+      };
+      try {
+        expect(() => opened.target.entries()).toThrow("Directory target changed");
+        expect(retargeted).toBe(true);
+      } finally {
+        native.openChild = original;
+        opened.target.close();
+      }
+    },
+  );
+
+  it("revalidates child membership and identity for each directory snapshot", () => {
+    const fixture = createGitCheckout();
+    cleanup.push(() => fixture.cleanup());
+    fixture.write("src/transient.log", "temporary\n");
+    fixture.write("src/replace.ts", "original\n");
+    fixture.write("outside.txt", "linked\n");
+    const selected = selectWorkspace(fixture.root);
+    expect(selected.kind).toBe("SELECTED");
+    if (selected.kind !== "SELECTED") return;
+    cleanup.push(() => closeWorkspace(selected.workspace));
+    const opened = new WorkspaceBoundary().openDirectory(selected.workspace.workspaceId, "src");
+    expect(opened.kind).toBe("OPENED");
+    if (opened.kind !== "OPENED") return;
+    try {
+      expect(opened.target.entries().map((entry) => entry.name)).toEqual(
+        expect.arrayContaining(["transient.log", "replace.ts"]),
+      );
+      fixture.write(".gitignore", "*.log\n");
+      fs.unlinkSync(path.join(fixture.root, "src/replace.ts"));
+      fs.linkSync(
+        path.join(fixture.root, "outside.txt"),
+        path.join(fixture.root, "src/replace.ts"),
+      );
+      const names = opened.target.entries().map((entry) => entry.name);
+      expect(names).not.toContain("transient.log");
+      expect(names).not.toContain("replace.ts");
+      expect(names).toContain("tracked.ts");
+    } finally {
+      opened.target.close();
+    }
+  });
+
+  it.skipIf(!symlinkFixtureAvailable("dir"))(
+    "rejects an alias retarget during child resolution",
+    () => {
+      const fixture = createGitCheckout();
+      cleanup.push(() => fixture.cleanup());
+      fixture.write("other/tracked.ts", "other\n");
+      fixture.symlink("src-link", "src", "dir");
+      const selected = selectWorkspace(fixture.root);
+      expect(selected.kind).toBe("SELECTED");
+      if (selected.kind !== "SELECTED") return;
+      cleanup.push(() => closeWorkspace(selected.workspace));
+      const opened = new WorkspaceBoundary().openDirectory(
+        selected.workspace.workspaceId,
+        "src-link",
+      );
+      expect(opened.kind).toBe("OPENED");
+      if (opened.kind !== "OPENED") return;
+      const require = createRequire(import.meta.url);
+      const native = require("../../native/workspace/build/Release/workspace_boundary.node") as {
+        openChild: (...arguments_: unknown[]) => number;
+      };
+      const original = native.openChild;
+      let swapped = false;
+      native.openChild = (...args: unknown[]) => {
+        if (!swapped && args[2] === "tracked.ts") {
+          swapped = true;
+          fs.unlinkSync(path.join(fixture.root, "src-link"));
+          fixture.symlink("src-link", "other", "dir");
+        }
+        return original(...args);
+      };
+      try {
+        expect(() => opened.target.entries()).toThrow("Directory target changed");
+      } finally {
+        native.openChild = original;
+        opened.target.close();
+      }
+    },
+  );
 
   it("does not read a pinned file after its eligible alias changes", () => {
     const fixture = createGitCheckout();
@@ -332,23 +633,23 @@ describe("real workspace facts", () => {
     if (opened.kind !== "OPENED") return;
     const require = createRequire(import.meta.url);
     const native = require("../../native/workspace/build/Release/workspace_boundary.node") as {
-      openRelative: (...arguments_: unknown[]) => number;
+      openChild: (...arguments_: unknown[]) => number;
     };
-    const original = native.openRelative;
-    native.openRelative = (...args: unknown[]) => {
-      if (args[1] === "src/tracked.ts")
+    const original = native.openChild;
+    native.openChild = (...args: unknown[]) => {
+      if (args[2] === "tracked.ts")
         throw Object.assign(new Error("native inspection unavailable"), {
           code: "WORKSPACE_OPEN_UNAVAILABLE",
         });
       return original(...args);
     };
     try {
-      expect(() => opened.target.nextEntry()).toThrow("native inspection unavailable");
+      expect(() => opened.target.entries()).toThrow("native inspection unavailable");
     } finally {
-      native.openRelative = original;
+      native.openChild = original;
     }
     try {
-      expect(opened.target.nextEntry()).toMatchObject({
+      expect(opened.target.entries()).toContainEqual({
         name: "tracked.ts",
         canonicalPath: "src/tracked.ts",
       });
@@ -378,7 +679,7 @@ describe("real workspace facts", () => {
       expect(opened.kind).toBe("OPENED");
       if (opened.kind === "OPENED") {
         try {
-          expect(opened.target.nextEntry()).toMatchObject({
+          expect(opened.target.entries()).toContainEqual({
             name: "tracked.ts",
             canonicalPath: "src/tracked.ts",
           });
@@ -403,9 +704,7 @@ describe("real workspace facts", () => {
       expect(opened.kind).toBe("OPENED");
       if (opened.kind !== "OPENED") return;
       try {
-        const names = [];
-        for (let item = opened.target.nextEntry(); item !== null; item = opened.target.nextEntry())
-          names.push(item.name);
+        const names = opened.target.entries().map((entry) => entry.name);
         expect(names).not.toContain("back");
       } finally {
         opened.target.close();

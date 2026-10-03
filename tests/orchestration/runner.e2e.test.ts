@@ -170,7 +170,19 @@ describe("scripted task lifecycle", () => {
         }),
       },
       grants: { grantFor: () => undefined },
-      executors: { read_file: { execute: () => (executions += 1) } },
+      executors: {
+        read_file: {
+          execute: () => {
+            executions += 1;
+            return {
+              kind: "CONTENT",
+              path: "src/index.ts",
+              method: "workspace-read",
+              content: "source",
+            };
+          },
+        },
+      },
     });
     const runner = new TaskRunner(initial, new TaskCheckoutSlot());
 
@@ -239,7 +251,19 @@ describe("scripted task lifecycle", () => {
         }),
       },
       grants: { grantFor: () => undefined },
-      executors: { read_file: { execute: () => (executions += 1) } },
+      executors: {
+        read_file: {
+          execute: () => {
+            executions += 1;
+            return {
+              kind: "CONTENT",
+              path: "src/index.ts",
+              method: "workspace-read",
+              content: "source",
+            };
+          },
+        },
+      },
     });
     const runner = new TaskRunner(initial, new TaskCheckoutSlot());
 

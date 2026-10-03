@@ -52,7 +52,7 @@
 - [X] T077 [US2] Recheck held-root/gitdir identity and implement current Git/path/native eligibility with opened-target identity matching in src/workspace/boundary.ts
 - [X] T078 [US2] Add requestedPath facts and exact request-to-fact coverage for paths, implicit roots, and search scope before dispatch in src/policy/engine.ts and src/tools/gateway.ts
 
-**Checkpoint**: US2 tests pass on Windows and Ubuntu; any unavailable critical mount/reparse fixture leaves the exit gate open.
+**Checkpoint**: US2 tests pass on Windows and Ubuntu. The Linux bind-mount fixture remains UNVERIFIED / UNAVAILABLE where mount capability is absent; the project explicitly accepts this T088 evidence gap for MVP, without treating the skipped fixture as a pass. Other available gates must pass.
 
 ## Phase 5: User Story 3 — Retrieval is bounded and unambiguous (P2)
 
@@ -60,20 +60,20 @@
 
 **Independent test**: Boundary-level read/search fixtures and gateway results respect all byte, match, line, and file limits; unrelated tool output ceilings stay unchanged.
 
-- [ ] T079 [P] [US3] Write failing whole-file, binary, and explicit size-limit tests in tests/workspace/read-bounds.test.ts
-- [ ] T080 [P] [US3] Write failing search file/match/line/total-output and truncation-marker tests in tests/workspace/search-bounds.test.ts
-- [ ] T081 [P] [US3] Write failing registered output-schema, per-tool maximum, and gateway validation tests in tests/tools/output-contracts.test.ts
-- [ ] T082 [US3] Implement complete-or-size-limit bounded read contract over safe opened handles in src/workspace/retrieval.ts
-- [ ] T083 [US3] Implement bounded search result assembly with separate omitted-match and shortened-line markers in src/workspace/retrieval.ts
-- [ ] T084 [US3] Split search_code.limit to 1–200 and register output schemas and per-tool byte maxima in src/tools/registry.ts
-- [ ] T085 [US3] Enforce trusted 64 KiB read, 32 KiB search, and existing smaller other-tool result ceilings in src/tools/gateway.ts
+- [X] T079 [P] [US3] Write failing whole-file, binary, and explicit size-limit tests in tests/workspace/read-bounds.test.ts
+- [X] T080 [P] [US3] Write failing search file/match/line/total-output and truncation-marker tests in tests/workspace/search-bounds.test.ts
+- [X] T081 [P] [US3] Write failing registered output-schema, per-tool maximum, and gateway validation tests in tests/tools/output-contracts.test.ts
+- [X] T082 [US3] Implement complete-or-size-limit bounded read contract over safe opened handles in src/workspace/retrieval.ts
+- [X] T083 [US3] Implement bounded search result assembly with separate omitted-match and shortened-line markers in src/workspace/retrieval.ts
+- [X] T084 [US3] Split search_code.limit to 1–200 and register output schemas and per-tool byte maxima in src/tools/registry.ts
+- [X] T085 [US3] Enforce trusted 64 KiB read, 32 KiB search, and existing smaller other-tool result ceilings in src/tools/gateway.ts
 
 **Checkpoint**: US3 fixture contracts pass; complete model-visible read/search executors remain Phase 6.
 
 ## Phase 6: Polish and phase gate
 
-- [ ] T086 Run specs/005-workspace-boundary/quickstart.md and the pinned project gate on Windows and Ubuntu; record exact native fixture evidence and remaining gates in coding-agent-context/context/testing.md
-- [ ] T087 Update Phase 4 status only from observed test evidence in coding-agent-context/context/progress-checker.md and reconcile any changed boundary wording in coding-agent-context/context/tool-policy.md
+- [X] T086 Run specs/005-workspace-boundary/quickstart.md and the pinned project gate on Windows and Ubuntu; record exact native fixture evidence and remaining gates in coding-agent-context/context/testing.md
+- [X] T087 Update Phase 4 status only from observed test evidence in coding-agent-context/context/progress-checker.md and reconcile any changed boundary wording in coding-agent-context/context/tool-policy.md
 
 ## Dependencies and execution order
 
@@ -94,4 +94,4 @@ Complete setup and foundational work, then US1 as the first testable slice. Fini
 
 ## Phase 7: Convergence
 
-- [ ] T088 Provide a Windows host that can create real file and directory symlink fixtures and a Linux host that can run or explicitly report unavailable bind-mount fixtures; run the T069–T078 adversarial tests on both, record exact passing/skipped evidence, and keep the US2 checkpoint open until critical fixtures pass per SC-001 and SC-003 (partial: PR #119 CI run #35 verified two-host symlink and junction behavior; Linux bind mount remains unavailable on GitHub runner)
+- [ ] T088 Known accepted MVP verification gap: PR #119 CI run #35 verified two-host symlink and junction behavior, but the Linux bind-mount fixture reported UNAVAILABLE because GitHub-hosted Ubuntu lacks mount capability; local fixture creation is also unavailable. Preserve this unchecked task for future execution evidence. It does not independently block the Phase 4 exit decision when T079–T087 and every other available gate pass; never report Linux bind-mount containment as PASS (partial: SC-001 and SC-003).

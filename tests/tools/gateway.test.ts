@@ -216,7 +216,16 @@ describe("ToolGateway", () => {
           );
         },
       },
-      executors: { read_file: { execute: () => ({ text: `run-${++executions}` }) } },
+      executors: {
+        read_file: {
+          execute: () => ({
+            kind: "CONTENT",
+            path: "src/index.ts",
+            method: "workspace-read",
+            content: `run-${++executions}`,
+          }),
+        },
+      },
     });
     const task = readyToRead(
       admitTask(
@@ -265,7 +274,16 @@ describe("ToolGateway", () => {
             : Promise.resolve({ status: "COMMITTED" as const, eventId: event.eventId });
         },
       },
-      executors: { read_file: { execute: () => ({ text: `run-${++executions}` }) } },
+      executors: {
+        read_file: {
+          execute: () => ({
+            kind: "CONTENT",
+            path: "src/index.ts",
+            method: "workspace-read",
+            content: `run-${++executions}`,
+          }),
+        },
+      },
     });
     const task = readyToRead(
       admitTask(
@@ -282,7 +300,7 @@ describe("ToolGateway", () => {
 
     await expect(
       gateway.invoke(task, { name: "read_file", arguments: { path: "src/index.ts" } }, 0),
-    ).resolves.toMatchObject({ kind: "EXECUTED", result: { text: "run-1" } });
+    ).resolves.toMatchObject({ kind: "EXECUTED", result: { content: "run-1" } });
     expect(executions).toBe(1);
     expect(resultAttempts).toBe(2);
     expect(resultPayloads).toHaveLength(1);
@@ -392,7 +410,12 @@ describe("ToolGateway", () => {
         read_file: {
           execute: (call: unknown) => {
             received.push(call);
-            return { text: "source" };
+            return {
+              kind: "CONTENT",
+              path: "src/index.ts",
+              method: "workspace-read",
+              content: "source",
+            };
           },
         },
       },
@@ -412,7 +435,7 @@ describe("ToolGateway", () => {
       0,
     );
 
-    expect(result).toMatchObject({ kind: "EXECUTED", result: { text: "source" } });
+    expect(result).toMatchObject({ kind: "EXECUTED", result: { content: "source" } });
     expect(received).toEqual([{ name: "read_file", arguments: { path: "src/index.ts" } }]);
   });
 
@@ -474,7 +497,19 @@ describe("ToolGateway", () => {
         },
       },
       grants: { grantFor: () => undefined },
-      executors: { read_file: { execute: () => (executions += 1) } },
+      executors: {
+        read_file: {
+          execute: () => {
+            executions += 1;
+            return {
+              kind: "CONTENT",
+              path: "src/index.ts",
+              method: "workspace-read",
+              content: "source",
+            };
+          },
+        },
+      },
     });
     const task = admitTask(
       createTask({ taskId: "gateway-revalidation", objective: "Read source", mode: "Ask" }),
@@ -692,7 +727,19 @@ describe("ToolGateway", () => {
         },
       },
       grants: { grantFor: () => undefined },
-      executors: { read_file: { execute: () => (executions += 1) } },
+      executors: {
+        read_file: {
+          execute: () => {
+            executions += 1;
+            return {
+              kind: "CONTENT",
+              path: "src/index.ts",
+              method: "workspace-read",
+              content: "source",
+            };
+          },
+        },
+      },
     });
     const task = readyToRead(
       admitTask(

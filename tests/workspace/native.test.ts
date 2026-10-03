@@ -8,12 +8,13 @@ describe("native workspace backend loader", () => {
     expect(loaded).toMatchObject({
       kind: "READY",
       backend: {
-        abi: 1,
+        abi: 2,
         platform: process.platform,
         arch: process.arch,
-        capability: "identity-v1",
+        capability: "identity-v2",
       },
     });
+    if (loaded.kind === "READY") expect(typeof loaded.backend.openChild).toBe("function");
   });
 
   it("rejects missing and incompatible backends", () => {
@@ -25,9 +26,14 @@ describe("native workspace backend loader", () => {
         kind: "UNAVAILABLE",
         reason: "UNSUPPORTED_BACKEND",
       });
+    if (loaded.kind === "READY")
+      expect(validateNativeBackend({ ...loaded.backend, openChild: undefined })).toMatchObject({
+        kind: "UNAVAILABLE",
+        reason: "UNSUPPORTED_BACKEND",
+      });
     expect(
       validateNativeBackend({
-        abi: 2,
+        abi: 1,
         platform: process.platform,
         arch: process.arch,
         capability: "identity-v1",
@@ -35,10 +41,10 @@ describe("native workspace backend loader", () => {
     ).toMatchObject({ kind: "UNAVAILABLE", reason: "UNSUPPORTED_BACKEND" });
     expect(
       validateNativeBackend({
-        abi: 1,
+        abi: 2,
         platform: "darwin",
         arch: process.arch,
-        capability: "identity-v1",
+        capability: "identity-v2",
       }),
     ).toMatchObject({ kind: "UNAVAILABLE", reason: "UNSUPPORTED_BACKEND" });
   });

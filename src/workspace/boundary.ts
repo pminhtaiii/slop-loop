@@ -15,6 +15,7 @@ import {
   listNativeDirectory,
   nativeTargetIdentity,
   nativeTargetPath,
+  openNativeChild,
   openNativeTarget,
   readNativeTarget,
 } from "./native.js";
@@ -59,7 +60,6 @@ type MemberSnapshot = {
   names: ReadonlySet<string>;
   directories: ReadonlySet<string>;
 };
-type InspectionEvidence = { rootFd: number; members: MemberSnapshot };
 
 function memberSnapshot(members: readonly string[]): MemberSnapshot {
   const names = new Set(members);
@@ -72,11 +72,6 @@ function memberSnapshot(members: readonly string[]): MemberSnapshot {
     }
   }
   return { names, directories };
-}
-
-function inspectionEvidence(workspace: SelectedWorkspace): InspectionEvidence {
-  const evidence = workspaceMemberEvidence(workspace);
-  return { rootFd: evidence.rootFd, members: memberSnapshot(evidence.members) };
 }
 
 function isMissing(error: unknown): boolean {
@@ -146,19 +141,49 @@ function eligibleAlias(
   return aliasEligible;
 }
 
+function validateOpened(
+  workspace: SelectedWorkspace,
+  fd: number,
+  normalized: string,
+  kind: "file" | "directory",
+  members: MemberSnapshot,
+): InspectedTarget | null {
+  const opened = nativeTargetIdentity(fd);
+  const canonicalPath = canonicalRelativePath(workspace.root, nativeTargetPath(fd));
+  if (
+    canonicalPath === null ||
+    isDeniedRepositoryPath(canonicalPath) ||
+    opened.directory !== (kind === "directory") ||
+    (kind === "file" && opened.links !== 1) ||
+    !eligibleAlias(workspace, normalized, kind, members)
+  )
+    return null;
+  const member =
+    kind === "file"
+      ? members.names.has(canonicalPath)
+      : canonicalPath === "." || members.directories.has(canonicalPath);
+  if (!member) return null;
+  const atPath = fs.statSync(path.join(workspace.root, canonicalPath), { bigint: true });
+  if (opened.device !== atPath.dev.toString() || opened.inode !== atPath.ino.toString())
+    return null;
+  const atAlias = fs.statSync(path.join(workspace.root, normalized), { bigint: true });
+  if (opened.device !== atAlias.dev.toString() || opened.inode !== atAlias.ino.toString())
+    return null;
+  return { fd, canonicalPath, identity: `${opened.device}:${opened.inode}` };
+}
+
 function inspect(
   workspace: SelectedWorkspace,
   requested: string,
   kind: "file" | "directory",
-  evidence?: InspectionEvidence,
 ): InspectedTarget | null {
   const normalized = parseRepositoryPath(requested);
   if (normalized === null || isDeniedRepositoryPath(normalized)) return null;
-  const before = evidence ?? inspectionEvidence(workspace);
-  if (!eligibleAlias(workspace, normalized, kind, before.members)) return null;
+  const rootFd = nativeRootForWorkspace(workspace);
+  if (rootFd === null) throw new Error("Workspace identity unavailable");
   let fd: number;
   try {
-    fd = openNativeTarget(before.rootFd, normalized, kind);
+    fd = openNativeTarget(rootFd, normalized, kind);
   } catch (error) {
     if (
       typeof error === "object" &&
@@ -171,32 +196,14 @@ function inspect(
   }
   let retained = false;
   try {
-    const opened = nativeTargetIdentity(fd);
-    const canonicalPath = canonicalRelativePath(workspace.root, nativeTargetPath(fd));
-    if (
-      canonicalPath === null ||
-      isDeniedRepositoryPath(canonicalPath) ||
-      opened.directory !== (kind === "directory") ||
-      (kind === "file" && opened.links !== 1)
-    )
-      return null;
-    const current = workspaceMemberEvidence(workspace, before.rootFd);
-    if (current.rootFd !== before.rootFd) throw new Error("Workspace identity unavailable");
-    const currentMembers = memberSnapshot(current.members);
-    if (!eligibleAlias(workspace, normalized, kind, currentMembers)) return null;
-    const member =
-      kind === "file"
-        ? currentMembers.names.has(canonicalPath)
-        : canonicalPath === "." || currentMembers.directories.has(canonicalPath);
-    if (!member) return null;
-    const atPath = fs.statSync(path.join(workspace.root, canonicalPath), { bigint: true });
-    if (opened.device !== atPath.dev.toString() || opened.inode !== atPath.ino.toString())
-      return null;
-    const atAlias = fs.statSync(path.join(workspace.root, normalized), { bigint: true });
-    if (opened.device !== atAlias.dev.toString() || opened.inode !== atAlias.ino.toString())
-      return null;
+    // Resolve the opened handle before the post-open workspace verification.
+    nativeTargetPath(fd);
+    const current = workspaceMemberEvidence(workspace, rootFd);
+    if (current.rootFd !== rootFd) throw new Error("Workspace identity unavailable");
+    const result = validateOpened(workspace, fd, normalized, kind, memberSnapshot(current.members));
+    if (result === null) return null;
     retained = true;
-    return { fd, canonicalPath, identity: `${opened.device}:${opened.inode}` };
+    return result;
   } finally {
     if (!retained) closeNativeDescriptor(fd);
   }
@@ -409,8 +416,116 @@ export class WorkspaceBoundary {
       return { kind: "UNAVAILABLE", reason: "INSPECTION_FAILED" };
     }
     let closed = false;
-    let next = 0;
-    const visited = new Set([opened.identity]);
+    const parentIsCurrent = (): boolean => {
+      try {
+        if (
+          canonicalRelativePath(workspace.root, nativeTargetPath(opened.fd)) !==
+          opened.canonicalPath
+        )
+          return false;
+        for (const relative of [requestedPath, opened.canonicalPath]) {
+          const atPath = fs.statSync(path.join(workspace.root, relative), { bigint: true });
+          if (`${atPath.dev}:${atPath.ino}` !== opened.identity) return false;
+        }
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    const prepareEntries = (): readonly { name: string; canonicalPath: string }[] => {
+      if (!parentIsCurrent()) throw new Error("Directory target changed");
+      const rootFd = nativeRootForWorkspace(workspace);
+      if (rootFd === null) throw new Error("Workspace identity unavailable");
+      const before = workspaceMemberEvidence(workspace, rootFd);
+      if (before.rootFd !== rootFd || !parentIsCurrent())
+        throw new Error("Directory target changed");
+      const members = memberSnapshot(before.members);
+      const tryOpen = (name: string, kind: "file" | "directory"): number | null => {
+        try {
+          return openNativeChild(rootFd, opened.fd, name, kind);
+        } catch (error) {
+          if (
+            typeof error === "object" &&
+            error !== null &&
+            "code" in error &&
+            error.code === "WORKSPACE_OPEN_DENIED"
+          )
+            return null;
+          throw error;
+        }
+      };
+      const entries: Array<{
+        name: string;
+        alias: string;
+        canonicalPath: string;
+        identity: string;
+        kind: "file" | "directory";
+      }> = [];
+      const visited = new Set([opened.identity]);
+      for (const name of names) {
+        if (name.includes("/") || name.includes("\\") || name === "." || name === "..") continue;
+        const alias = requestedPath === "." ? name : `${requestedPath}/${name}`;
+        if (parseRepositoryPath(alias) === null || isDeniedRepositoryPath(alias)) continue;
+        const fileFd = tryOpen(name, "file");
+        const fd = fileFd ?? tryOpen(name, "directory");
+        if (fd === null) continue;
+        try {
+          const child = validateOpened(
+            workspace,
+            fd,
+            alias,
+            fileFd === null ? "directory" : "file",
+            members,
+          );
+          if (
+            child === null ||
+            visited.has(child.identity) ||
+            child.canonicalPath === "." ||
+            child.canonicalPath === opened.canonicalPath ||
+            opened.canonicalPath.startsWith(`${child.canonicalPath}/`)
+          )
+            continue;
+          visited.add(child.identity);
+          entries.push({
+            name,
+            alias,
+            canonicalPath: child.canonicalPath,
+            identity: child.identity,
+            kind: fileFd === null ? "directory" : "file",
+          });
+        } finally {
+          closeNativeDescriptor(fd);
+        }
+      }
+      const after = workspaceMemberEvidence(workspace, rootFd);
+      if (
+        after.rootFd !== rootFd ||
+        before.members.length !== after.members.length ||
+        before.members.some((member, index) => member !== after.members[index]) ||
+        !parentIsCurrent()
+      )
+        throw new Error("Directory target changed");
+      const finalMembers = memberSnapshot(after.members);
+      for (const entry of entries) {
+        const fd = tryOpen(entry.name, entry.kind);
+        if (fd === null) throw new Error("Directory target changed");
+        try {
+          const current = validateOpened(workspace, fd, entry.alias, entry.kind, finalMembers);
+          if (
+            current === null ||
+            current.identity !== entry.identity ||
+            current.canonicalPath !== entry.canonicalPath
+          )
+            throw new Error("Directory target changed");
+        } finally {
+          closeNativeDescriptor(fd);
+        }
+      }
+      if (!parentIsCurrent()) throw new Error("Directory target changed");
+      return Object.freeze(
+        entries.map(({ name, canonicalPath }) => Object.freeze({ name, canonicalPath })),
+      );
+    };
     return {
       kind: "OPENED",
       target: {
@@ -419,42 +534,10 @@ export class WorkspaceBoundary {
         requestedPath,
         canonicalPath: opened.canonicalPath,
         identity: opened.identity,
-        nextEntry(): { name: string; canonicalPath: string } | null {
+        entries(): readonly { name: string; canonicalPath: string }[] {
           if (closed) throw new Error("Directory target is closed");
-          const evidence = inspectionEvidence(workspace);
-          while (next < names.length) {
-            const name = names[next];
-            if (
-              name === undefined ||
-              name.includes("/") ||
-              name.includes("\\") ||
-              name === "." ||
-              name === ".."
-            ) {
-              next += 1;
-              continue;
-            }
-            const alias = requestedPath === "." ? name : `${requestedPath}/${name}`;
-            const child =
-              inspect(workspace, alias, "file", evidence) ??
-              inspect(workspace, alias, "directory", evidence);
-            next += 1;
-            if (child === null) continue;
-            try {
-              if (
-                visited.has(child.identity) ||
-                child.canonicalPath === "." ||
-                child.canonicalPath === opened.canonicalPath ||
-                opened.canonicalPath.startsWith(`${child.canonicalPath}/`)
-              )
-                continue;
-              visited.add(child.identity);
-              return { name, canonicalPath: child.canonicalPath };
-            } finally {
-              closeNativeDescriptor(child.fd);
-            }
-          }
-          return null;
+          if (!parentIsCurrent()) throw new Error("Directory target changed");
+          return prepareEntries();
         },
         close(): void {
           if (!closed) {

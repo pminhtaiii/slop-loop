@@ -176,20 +176,23 @@ static bool RelativeSymlinkTarget(HANDLE link, const std::wstring& root,
   return true;
 }
 
-int OpenWorkspaceRelative(int root_fd, const std::string& relative, bool directory) {
-  if (root_fd < 0) return -1;
+static int OpenWorkspaceFrom(int root_fd, int start_fd, const std::string& relative, bool directory) {
+  if (root_fd < 0 || start_fd < 0) { SetLastError(ERROR_INVALID_HANDLE); return -1; }
   if (relative == ".") {
     if (!directory) { SetLastError(ERROR_ACCESS_DENIED); return -1; }
   }
   const intptr_t raw = _get_osfhandle(root_fd);
   if (raw == -1) { SetLastError(ERROR_INVALID_HANDLE); return -1; }
-  HANDLE parent = reinterpret_cast<HANDLE>(raw);
+  const intptr_t start_raw = _get_osfhandle(start_fd);
+  if (start_raw == -1) { SetLastError(ERROR_INVALID_HANDLE); return -1; }
+  HANDLE parent = reinterpret_cast<HANDLE>(start_raw);
+  bool owns_parent = false;
   const HMODULE module = GetModuleHandleW(L"ntdll.dll");
   if (!module) { SetLastError(ERROR_NOT_SUPPORTED); return -1; }
   const auto nt_create = reinterpret_cast<NtCreateFileFunction>(GetProcAddress(module, "NtCreateFile"));
   if (!nt_create) { SetLastError(ERROR_NOT_SUPPORTED); return -1; }
   if (relative == ".") {
-    const int copy = _dup(root_fd);
+    const int copy = _dup(start_fd);
     if (copy < 0) SetLastError(ERROR_TOO_MANY_OPEN_FILES);
     return copy;
   }
@@ -198,6 +201,31 @@ int OpenWorkspaceRelative(int root_fd, const std::string& relative, bool directo
   const std::wstring root_path = DecodeUtf8(GetWorkspacePath(root_fd));
   if (root_path.empty()) { SetLastError(ERROR_INVALID_HANDLE); return -1; }
   std::vector<std::string> prefix;
+  const std::wstring start_path = DecodeUtf8(GetWorkspacePath(start_fd));
+  const auto equal = [](wchar_t left, wchar_t right) { return towlower(left) == towlower(right); };
+  if (start_path.empty() || start_path.size() < root_path.size() ||
+      !std::equal(root_path.begin(), root_path.end(), start_path.begin(), equal) ||
+      (start_path.size() > root_path.size() && start_path[root_path.size()] != L'\\')) {
+    SetLastError(ERROR_ACCESS_DENIED); return -1;
+  }
+  if (start_path.size() > root_path.size()) {
+    const std::wstring suffix = start_path.substr(root_path.size() + 1);
+    const int bytes = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, suffix.data(),
+                                          static_cast<int>(suffix.size()), nullptr, 0, nullptr, nullptr);
+    if (bytes <= 0) { SetLastError(ERROR_ACCESS_DENIED); return -1; }
+    std::string utf8(static_cast<size_t>(bytes), '\0');
+    if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, suffix.data(),
+                            static_cast<int>(suffix.size()), utf8.data(), bytes,
+                            nullptr, nullptr) != bytes) { SetLastError(ERROR_ACCESS_DENIED); return -1; }
+    std::replace(utf8.begin(), utf8.end(), '\\', '/');
+    size_t from = 0;
+    while (from < utf8.size()) {
+      const size_t to = utf8.find('/', from);
+      prefix.push_back(utf8.substr(from, to == std::string::npos ? to : to - from));
+      if (to == std::string::npos) break;
+      from = to + 1;
+    }
+  }
   size_t index = 0;
   unsigned int links = 0;
   while (index < parts.size()) {
@@ -206,14 +234,14 @@ int OpenWorkspaceRelative(int root_fd, const std::string& relative, bool directo
                                             static_cast<int>(part.size()), nullptr, 0);
     if (needed <= 0 || needed > 32767) {
       SetLastError(ERROR_ACCESS_DENIED);
-      if (parent != reinterpret_cast<HANDLE>(raw)) CloseHandle(parent);
+      if (owns_parent) CloseHandle(parent);
       return -1;
     }
     std::wstring wide(static_cast<size_t>(needed), L'\0');
     if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, part.data(),
                             static_cast<int>(part.size()), wide.data(), needed) != needed) {
       SetLastError(ERROR_ACCESS_DENIED);
-      if (parent != reinterpret_cast<HANDLE>(raw)) CloseHandle(parent);
+      if (owns_parent) CloseHandle(parent);
       return -1;
     }
     UNICODE_STRING name;
@@ -232,7 +260,7 @@ int OpenWorkspaceRelative(int root_fd, const std::string& relative, bool directo
                                        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                                        FILE_OPEN, options, nullptr, 0);
     if (outcome < 0) {
-      if (parent != reinterpret_cast<HANDLE>(raw)) CloseHandle(parent);
+      if (owns_parent) CloseHandle(parent);
       const auto to_dos = reinterpret_cast<ULONG(WINAPI*)(NTSTATUS)>(GetProcAddress(module, "RtlNtStatusToDosError"));
       SetLastError(to_dos == nullptr ? ERROR_NOT_SUPPORTED : to_dos(outcome));
       return -1;
@@ -241,7 +269,7 @@ int OpenWorkspaceRelative(int root_fd, const std::string& relative, bool directo
     if (!GetFileInformationByHandleEx(child, FileAttributeTagInfo, &tag, sizeof(tag))) {
       const DWORD failure = GetLastError();
       CloseHandle(child);
-      if (parent != reinterpret_cast<HANDLE>(raw)) CloseHandle(parent);
+      if (owns_parent) CloseHandle(parent);
       SetLastError(failure);
       return -1;
     }
@@ -253,7 +281,7 @@ int OpenWorkspaceRelative(int root_fd, const std::string& relative, bool directo
                         RelativeSymlinkTarget(child, root_path, prefix, &expanded, &absolute);
       const DWORD failure = GetLastError();
       CloseHandle(child);
-      if (parent != reinterpret_cast<HANDLE>(raw)) CloseHandle(parent);
+      if (owns_parent) CloseHandle(parent);
       if (!safe) { SetLastError(failure); return -1; }
       for (size_t remaining = index + 1; remaining < parts.size(); ++remaining)
         expanded += "/" + parts[remaining];
@@ -273,36 +301,54 @@ int OpenWorkspaceRelative(int root_fd, const std::string& relative, bool directo
       parts.swap(resolved);
       prefix.clear();
       parent = reinterpret_cast<HANDLE>(raw);
+      owns_parent = false;
       index = 0;
       continue;
     }
     if (!SafeHandle(child, want_directory)) {
       const DWORD failure = GetLastError();
       CloseHandle(child);
-      if (parent != reinterpret_cast<HANDLE>(raw)) CloseHandle(parent);
+      if (owns_parent) CloseHandle(parent);
       SetLastError(failure);
       return -1;
     }
     if (final) {
-      if (parent != reinterpret_cast<HANDLE>(raw)) CloseHandle(parent);
+      if (owns_parent) CloseHandle(parent);
       const int fd = _open_osfhandle(reinterpret_cast<intptr_t>(child), _O_RDONLY | _O_BINARY);
       if (fd < 0) CloseHandle(child);
       return fd;
     }
-    if (parent != reinterpret_cast<HANDLE>(raw)) CloseHandle(parent);
+    if (owns_parent) CloseHandle(parent);
     parent = child;
+    owns_parent = true;
     prefix.push_back(part);
     ++index;
   }
-  if (parent != reinterpret_cast<HANDLE>(raw)) CloseHandle(parent);
+  if (owns_parent) CloseHandle(parent);
   SetLastError(ERROR_ACCESS_DENIED);
   return -1;
+}
+
+int OpenWorkspaceRelative(int root_fd, const std::string& relative, bool directory) {
+  return OpenWorkspaceFrom(root_fd, root_fd, relative, directory);
+}
+
+int OpenWorkspaceChild(int root_fd, int parent_fd, const std::string& name, bool directory) {
+  return OpenWorkspaceFrom(root_fd, parent_fd, name, directory);
 }
 
 void CloseWorkspaceDescriptor(int fd) { _close(fd); }
 
 int ReadWorkspaceDescriptor(int fd, char* output, unsigned int capacity) {
-  return _read(fd, output, capacity);
+  if (_lseeki64(fd, 0, SEEK_SET) < 0) return -1;
+  unsigned int total = 0;
+  while (total < capacity) {
+    const int length = _read(fd, output + total, capacity - total);
+    if (length > 0) { total += static_cast<unsigned int>(length); continue; }
+    if (length == 0) break;
+    return -1;
+  }
+  return static_cast<int>(total);
 }
 
 bool GetWorkspaceIdentity(int fd, WorkspaceIdentity* identity) {

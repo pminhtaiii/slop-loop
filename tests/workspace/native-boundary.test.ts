@@ -8,6 +8,7 @@ import { WorkspaceBoundary } from "../../src/workspace/boundary.js";
 import {
   closeNativeDescriptor,
   listNativeDirectory,
+  openNativeChild,
   openNativeRoot,
   openNativeTarget,
   readNativeTarget,
@@ -29,6 +30,45 @@ describe("native workspace open", () => {
     cleanup.push(() => closeNativeDescriptor(fd));
     expect(readNativeTarget(fd, 128).toString("utf8")).toContain("tracked");
   });
+
+  it("opens a child from the retained parent after its original path is replaced", () => {
+    const fixture = createGitCheckout();
+    cleanup.push(() => fixture.cleanup());
+    const root = openNativeRoot(fixture.root);
+    cleanup.push(() => closeNativeDescriptor(root));
+    const parent = openNativeTarget(root, "src", "directory");
+    cleanup.push(() => closeNativeDescriptor(parent));
+    fs.renameSync(path.join(fixture.root, "src"), path.join(fixture.root, "old-src"));
+    fs.mkdirSync(path.join(fixture.root, "src"));
+    fixture.write("src/tracked.ts", "replacement\n");
+    const child = openNativeChild(root, parent, "tracked.ts", "file");
+    try {
+      expect(readNativeTarget(child, 128).toString("utf8")).toContain("tracked");
+      expect(readNativeTarget(child, 128).toString("utf8")).not.toContain("replacement");
+    } finally {
+      closeNativeDescriptor(child);
+    }
+  });
+
+  it.skipIf(!symlinkFixtureAvailable("file"))(
+    "resolves a retained child symlink to an eligible sibling within the held root",
+    () => {
+      const fixture = createGitCheckout();
+      cleanup.push(() => fixture.cleanup());
+      fixture.write("other/eligible.ts", "sibling\n");
+      fixture.symlink("src/to-other.ts", "../other/eligible.ts");
+      const root = openNativeRoot(fixture.root);
+      cleanup.push(() => closeNativeDescriptor(root));
+      const parent = openNativeTarget(root, "src", "directory");
+      cleanup.push(() => closeNativeDescriptor(parent));
+      const child = openNativeChild(root, parent, "to-other.ts", "file");
+      try {
+        expect(readNativeTarget(child, 128).toString("utf8")).toBe("sibling\n");
+      } finally {
+        closeNativeDescriptor(child);
+      }
+    },
+  );
 
   it("classifies a file request for the workspace root as denied", () => {
     const fixture = createGitCheckout();

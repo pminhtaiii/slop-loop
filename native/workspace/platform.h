@@ -13,6 +13,7 @@ struct WorkspaceIdentity {
 
 int OpenWorkspaceRoot(const std::string& path);
 int OpenWorkspaceRelative(int root_fd, const std::string& relative, bool directory);
+int OpenWorkspaceChild(int root_fd, int parent_fd, const std::string& name, bool directory);
 bool ProbeWorkspaceWalk(int root_fd);
 void CloseWorkspaceDescriptor(int fd);
 int ReadWorkspaceDescriptor(int fd, char* output, unsigned int capacity);
