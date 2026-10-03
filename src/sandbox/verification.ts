@@ -1,8 +1,12 @@
-import type { VerificationEvidence, VerificationSnapshot, VerificationVerdict } from "./types.js";
+import type { Freshness, VerificationEvidence, VerificationSnapshot, VerificationVerdict } from "./types.js";
 
 export class VerificationCoordinator {
   private readonly evidence = new Map<string, VerificationEvidence>();
-  constructor(private readonly requiredChecks: readonly string[]) {}
+  constructor(
+    private readonly requiredChecks: readonly string[],
+    private readonly sealedSnapshot?: VerificationSnapshot,
+    private readonly freshnessProvider?: () => Freshness,
+  ) {}
   record(evidence: VerificationEvidence): void {
     if (!this.requiredChecks.includes(evidence.check)) throw new Error("Unexpected verification check");
     if (this.evidence.has(evidence.check)) throw new Error("Duplicate verification check");
@@ -13,24 +17,36 @@ export class VerificationCoordinator {
     }
     this.evidence.set(evidence.check, Object.freeze({ ...evidence }));
   }
-  verdict(input: { readonly snapshotId: string; readonly freshness: "CURRENT" | "STALE" | "UNCONFIRMED" }): Promise<VerificationVerdict> {
+  verdict(): Promise<VerificationVerdict> {
+    const freshness = this.freshnessProvider?.() ?? "UNCONFIRMED";
     const evidence = Object.freeze([...this.evidence.values()]);
+    const sealedSnapshotId = this.sealedSnapshot?.snapshotId;
     const complete =
       evidence.length === this.requiredChecks.length &&
-      evidence.every((item) => item.snapshotId === input.snapshotId);
+      sealedSnapshotId !== undefined &&
+      evidence.every((item) => item.snapshotId === sealedSnapshotId);
     const passed =
       complete &&
-      input.freshness === "CURRENT" &&
-      evidence.every((item) => item.status === "PASS" && item.cleanup === "CONFIRMED");
+      freshness === "CURRENT" &&
+      evidence.every((item) =>
+        item.status === "PASS" &&
+        item.cleanup === "CONFIRMED" &&
+        item.preparationFingerprint.length > 0 &&
+        item.profileSetId.length > 0 &&
+        item.targetId.length > 0 &&
+        item.taskId.length > 0 &&
+        item.attemptId.length > 0 &&
+        item.nativeIdentity.length > 0,
+      );
     return Promise.resolve(
       Object.freeze({
-        status: input.freshness !== "CURRENT" ? "INCOMPLETE" : passed ? "PASS" : complete ? "FAIL" : "INCOMPLETE",
-        freshness: input.freshness,
+        status: freshness !== "CURRENT" ? "INCOMPLETE" : passed ? "PASS" : complete ? "FAIL" : "INCOMPLETE",
+        freshness,
         evidence,
       }),
     );
   }
   snapshotFor(): VerificationSnapshot | undefined {
-    return undefined;
+    return this.sealedSnapshot;
   }
 }

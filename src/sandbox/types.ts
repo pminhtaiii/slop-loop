@@ -43,6 +43,12 @@ export interface VerificationEvidence {
   readonly status: "PASS" | "FAIL";
   readonly cleanup: "CONFIRMED" | "UNCERTAIN";
   readonly output?: string;
+  readonly preparationFingerprint: string;
+  readonly profileSetId: string;
+  readonly targetId: string;
+  readonly taskId: string;
+  readonly attemptId: string;
+  readonly nativeIdentity: string;
 }
 
 export interface VerificationVerdict {

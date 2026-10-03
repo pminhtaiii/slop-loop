@@ -1,8 +1,10 @@
 import type { PreparedImageRecord, SandboxBackend, SandboxLimits, VerificationEvidence } from "./types.js";
 
 export interface DockerPort {
+  readiness(): { readonly networkDisabled: boolean; readonly limitsEnforced: boolean; readonly readOnlyMounts: boolean };
+  inspectImage(imageId: string): { readonly imageId: string; readonly fingerprint: string; readonly architecture: string };
   copySnapshot?(entries: readonly { readonly path: string; readonly content: Buffer; readonly mode: number }[]): string;
-  run(argv: readonly string[]): { readonly id: string; readonly output: string; readonly exitCode: number };
+  run(argv: readonly string[], limits: SandboxLimits): { readonly id: string; readonly output: string; readonly exitCode: number; readonly elapsedSeconds?: number };
   stopAndRemove?(id: string): "CONFIRMED" | "UNCERTAIN";
 }
 
@@ -20,6 +22,7 @@ export function validateFixedArgv(argv: readonly string[]): void {
 export class DockerSandboxBackend implements SandboxBackend {
   constructor(private readonly docker: DockerPort) {}
   readiness(image: PreparedImageRecord, limits: SandboxLimits) {
+    const runtime = this.docker.readiness();
     if (
       image.status !== "READY" ||
       !/^sha256:[0-9a-f]{64}$/.test(image.imageId) ||
@@ -27,6 +30,9 @@ export class DockerSandboxBackend implements SandboxBackend {
       image.architecture !== "linux-x64" ||
       limits.cpus <= 0 ||
       limits.maxOutputBytes <= 0
+      || !runtime.networkDisabled
+      || !runtime.limitsEnforced
+      || !runtime.readOnlyMounts
     )
       return Promise.resolve("BLOCKED" as const);
     return Promise.resolve("READY" as const);
@@ -48,22 +54,43 @@ export class DockerSandboxBackend implements SandboxBackend {
       input.image.architecture !== "linux-x64"
     )
       throw new Error("Image is not immutable and ready");
+    const inspected = this.docker.inspectImage(input.image.imageId);
+    if (
+      inspected.imageId !== input.image.imageId ||
+      inspected.fingerprint !== input.image.fingerprint ||
+      inspected.architecture !== input.image.architecture
+    )
+      throw new Error("Prepared image identity mismatch");
     if (this.docker.copySnapshot === undefined) throw new Error("Snapshot materialization unavailable");
     const mount = this.docker.copySnapshot(input.snapshot.entries);
+    if (!/^snapshot:[A-Za-z0-9._-]+$/.test(mount)) throw new Error("Untrusted snapshot mount");
     const result = this.docker.run([
       "run", "--rm", "--network=none", "--read-only", "--cap-drop=ALL",
-      "--security-opt=no-new-privileges", "--mount", mount,
+      "--security-opt=no-new-privileges", "--cpus", String(input.limits.cpus),
+      "--memory", String(input.limits.memoryBytes), "--pids-limit", String(input.limits.maxPids),
+      "--mount", `type=bind,src=${mount.slice("snapshot:".length)},dst=/snapshot,readonly`,
       input.image.imageId, ...input.target.argv,
-    ]);
-    const cleanup = this.docker.stopAndRemove?.(result.id) ?? "CONFIRMED";
+    ], input.limits);
+    const cleanup = this.docker.stopAndRemove?.(result.id) ?? "UNCERTAIN";
     const output = result.output.slice(0, input.limits.maxOutputBytes);
     return Promise.resolve({
       check: input.target.check,
       snapshotId: input.snapshot.snapshotId,
       imageId: input.image.imageId,
-      status: result.exitCode === 0 && result.output.length <= input.limits.maxOutputBytes ? "PASS" : "FAIL",
+      status:
+        result.exitCode === 0 &&
+        result.output.length <= input.limits.maxOutputBytes &&
+        (result.elapsedSeconds === undefined || result.elapsedSeconds <= input.limits.timeoutSeconds)
+          ? "PASS"
+          : "FAIL",
       cleanup,
       output,
+      preparationFingerprint: input.image.fingerprint,
+      profileSetId: "profiles-v1",
+      targetId: `${input.target.check}:${input.target.argv.join(" ")}`,
+      taskId: "sandbox-task",
+      attemptId: "sandbox-attempt",
+      nativeIdentity: "native-v1",
     });
   }
 }
