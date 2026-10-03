@@ -2,13 +2,13 @@
 
 **Input**: [spec.md](spec.md), [plan.md](plan.md), [research.md](research.md), [data-model.md](data-model.md), [contract](contracts/sandbox.md), [quickstart.md](quickstart.md).
 
-**Tests**: Mandatory TDD and security/integration/E2E checks under the project workflow and FR-022. Run each RED test and confirm the intended missing-behavior failure before implementation. The IDs begin at **T089** because the developer reserves T088 outside this tracked feature. No task is already implemented.
+**Tests**: Mandatory TDD and security/integration/E2E checks under the project workflow and FR-022. Run each RED test and confirm the intended missing-behavior failure before implementation. The IDs begin at **T089** because T088 is the existing unchecked Workspace Boundary verification task, outside Feature 006. No Phase 5 task is already implemented.
 
 ## Phase 1: Setup
 
-**Purpose**: Make the design executable without claiming missing Phase 4 or sandbox infrastructure.
+**Purpose**: Make the design executable using the satisfied Phase 4 prerequisite without claiming sandbox infrastructure exists.
 
-- [ ] T089 Add fail-closed sandbox types in src/sandbox/types.ts and RED tests in tests/sandbox/contracts.test.ts; record the externally satisfied Phase 4 gate before any real boundary integration in specs/006-offline-verification-sandbox/quickstart.md
+- [ ] T089 Add fail-closed sandbox types in src/sandbox/types.ts and RED tests in tests/sandbox/contracts.test.ts; confirm the recorded Phase 4 gate evidence in specs/006-offline-verification-sandbox/quickstart.md before real boundary integration
 - [ ] T090 [P] Add bounded trusted configuration and profile fixture builders in tests/sandbox/fixtures.ts without model, network, or writable-host authority
 - [ ] T091 Pin maintained YAML/archive parsers for bounded input and transfer validation in package.json and pnpm-lock.yaml; preserve Node/pnpm pins and validate the frozen install
 - [ ] T092 [P] Add sandbox:test in package.json and separate source/real Linux Docker jobs in .github/workflows/ci.yml; record unavailable-platform and Windows evidence requirements in specs/006-offline-verification-sandbox/quickstart.md
@@ -22,7 +22,7 @@
 - [ ] T095 Implement strict trusted configuration/profile/limit validation and versioned canonical identities in src/sandbox/config.ts and src/sandbox/preparation.ts; satisfy T093 and T094 without preparation execution
 - [ ] T096 [P] Add controlled checkout, artifact registry, late-output, owned-resource and finite-clock fixtures in tests/sandbox/fixtures.ts with no unbounded public network requirement
 
-**Checkpoint**: Fixtures and trusted immutable contracts exist; real workspace integration is still gated on Phase 4.
+**Checkpoint**: Fixtures and trusted immutable contracts exist; the satisfied Phase 4 prerequisite permits real workspace integration, subject to the unfinished Phase 5 implementation and its own gates.
 
 ## Phase 3: User Story 1 — Verify the actual edited repository offline (P1)
 
@@ -86,19 +86,19 @@
 
 ## Phase 7: Verification, Review and Context Synchronization
 
-- [ ] T129 Run the Phase 4 prerequisite, pinned gate and specs/006-offline-verification-sandbox/quickstart.md matrix on Ubuntu and Windows Docker Desktop; record versions, limits and fixture availability in coding-agent-context/context/testing.md
+- [ ] T129 Rerun the satisfied Phase 4 prerequisite as final regression verification, then run the pinned gate and specs/006-offline-verification-sandbox/quickstart.md matrix on Ubuntu and Windows Docker Desktop; record versions, limits and fixture availability in coding-agent-context/context/testing.md
 - [ ] T130 Perform security convergence and separate standards/spec reviews against specs/006-offline-verification-sandbox/spec.md and plan.md; record and resolve authorization/path/network/storage/cancellation findings before declaring integration ready
 - [ ] T131 Sync CONTEXT.md, docs/adr/0011-disposable-offline-verification-containers.md and coding-agent-context/context with observed evidence; close Phase 5 only after its exit gate passes
 
 ## Dependencies and Execution Order
 
-- **External prerequisite before real integration:** complete and record the entire Phase 4 exit gate from specs/005-workspace-boundary/quickstart.md, including its remaining implementation/review tasks and required Linux/Windows evidence. T089 records this dependency; documenting it is not satisfying it. Until observed gate evidence exists, T098 may only use fake ports, T099 only unit/fake fixtures, and T100 only isolated backend work without real repository capture. Real boundary/container integration in T098–T100, T105, T108/T110, T111/T113/T115, T122 and T127–T128 is blocked. Every real sandbox integration fixture inherits the same prerequisite, including broker/network fixtures; T108/T110 remain fake/unit-only until it passes. Do not mark these tasks complete from partial/unit-only work. T129 reruns the prerequisite as final regression validation; it is not the first admission gate and is not a predecessor that creates a dependency cycle.
+- **External prerequisite before real integration:** The Phase 4 exit gate in specs/005-workspace-boundary/quickstart.md is satisfied by PR #164 / CI run #41 on implementation commit `0b990c03718fa9ae9f1f33de230f9cf53ff38d71`. Windows and Ubuntu Quality Gates passed for available fixtures. Linux bind-mount containment remains UNVERIFIED / UNAVAILABLE under the accepted, unchecked T088 MVP exception; T088 is not a PASS and does not independently block Phase 4 completion or Phase 5 work. T089 confirms this existing evidence. Real boundary/container integration in T098–T100, T105, T108/T110, T111/T113/T115, T122 and T127–T128 may proceed on this baseline; each task still needs its own Phase 5 implementation and required evidence. Do not mark tasks complete from partial/unit-only work. T129 reruns the prerequisite as final regression validation, not as the first evidence required to start Phase 5.
 
 - Setup T089–T092 → foundational T093–T096 → US1 T097–T105. US2 T106–T115 depends on foundational contracts; its real smoke uses US1 readiness/layout.
 - US3 T116–T122 integrates US1+US2 and current Phase 3 lifecycle. US4 T123–T128 depends on US1 execution contracts; final cancellation wiring and recovery additionally require US2/US3 behavior.
 - T129–T131 require every story and the Phase 4 prerequisite. Publishing these planning artifacts does not satisfy any implementation task.
 - Within each story, RED tasks precede their corresponding implementation: T097→T098; T099→T100; T101→T102; T103→T104; T106/T111→T113; T107→T109; T108→T110; T111→T112/T113; T116→T117; T118→T119; T120→T121; T123/T124→T125/T126. Integration RED fixtures may be written before implementation but never marked done from skipped/unavailable environments.
-- T088 remains reserved; no task or issue in this feature reuses it.
+- T088 remains the unchecked Workspace Boundary verification task; no task or issue in Feature 006 reuses it.
 
 ## Parallel Opportunities
 

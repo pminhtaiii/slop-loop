@@ -1,6 +1,6 @@
 # GitHub issues: Offline Verification Sandbox
 
-Tasks T089–T131, created or deduplicated against all open and closed issues in the configured origin repository. T088 remains reserved. Issue descriptions link to reviewed planning commit 6ca9001f6ddf194f9d53c7100e0670fa966ed03b. Dependency links are prerequisites, not implementation evidence; all tasks remain unchecked.
+Tasks T089–T131, created or deduplicated against all open and closed issues in the configured origin repository. T088 is the existing unchecked Workspace Boundary verification task and is not reused by Feature 006. Issue descriptions link to reviewed planning commit 6ca9001f6ddf194f9d53c7100e0670fa966ed03b. Dependency links are prerequisites, not implementation evidence; all Phase 5 tasks remain unchecked.
 
 | Task / issue | Feature dependencies |
 | --- | --- |

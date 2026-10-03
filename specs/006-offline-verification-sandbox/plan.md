@@ -26,7 +26,7 @@ Implement Phase 5 as a host-owned sandbox module, a developer-only preparation h
 
 ## Authority, Prerequisites and Phase Ownership
 
-- Phase 3 provides gateway/policy/runner and fake-port proofs. Phase 4 is incomplete. Unit/fake sandbox work may proceed; safe snapshot integration and the Phase 5 exit gate require the full Phase 4 boundary gate on both hosts.
+- Phase 3 provides gateway/policy/runner and fake-port proofs. The Phase 4 boundary prerequisite is satisfied by PR #164 / CI run #41 on implementation commit `0b990c03718fa9ae9f1f33de230f9cf53ff38d71`: Windows and Ubuntu Quality Gates passed for available fixtures. Linux bind-mount containment remains UNVERIFIED / UNAVAILABLE under the accepted, unchecked T088 MVP exception. Phase 5 implementation, including real snapshot integration, may begin on this baseline; its own exit gate still requires the Phase 5 evidence below.
 - Reuse selected workspace identity, Git membership, safe opened handles and held-root enumeration. Point-of-copy access must use safe primitives again; a preflight fact never authorizes a plain path open.
 - Snapshot reads have separate trusted bounds from model reads. Extend native enumeration/copy contracts as necessary without increasing the 64 KiB model-read limit.
 - Supply `ExecutionFactsPort` and `ToolExecutor` through the existing gateway; the gateway alone dispatches model-visible executors under current Edit authority, budget/fence and successful canonical pre-execution evidence.
@@ -176,4 +176,4 @@ Change existing workspace/tool/policy/orchestrator seams only as necessary, plus
 
 ## Post-Design Constitution Check
 
-The design preserves one trusted application, closed tools, no arbitrary shell, offline verification, audit-first gateway, finite task/cleanup bounds and developer-owned Git writes. Research resolves mechanisms/defaults without claiming implementation. Integration remains gated if Phase 4, real platform hardening, exact source/script enforcement, preparation quota accounting or cancellation/cleanup cannot be proved. No unresolved clarification placeholder substitutes for a required security fixture.
+The design preserves one trusted application, closed tools, no arbitrary shell, offline verification, audit-first gateway, finite task/cleanup bounds and developer-owned Git writes. Research resolves mechanisms/defaults without claiming implementation. The Phase 4 prerequisite has been proved for available fixtures under the accepted T088 exception. Phase 5 integration readiness still requires real platform hardening, exact source/script enforcement, preparation quota accounting and cancellation/cleanup proof. No unresolved clarification placeholder substitutes for a required security fixture.

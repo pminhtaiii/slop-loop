@@ -1,6 +1,6 @@
 # Research: Workspace Boundary
 
-The feature specification is [spec.md](spec.md). The current policy and ADR 0009/0010 define product behavior; this document resolves the implementation choices needed for the plan. Phase 4 is not implemented.
+The feature specification is [spec.md](spec.md). The current policy and ADR 0009/0010 define product behavior; this document records the implementation choices used for Phase 4. Project Phase 4 is complete for available fixtures on implementation commit `0b990c03718fa9ae9f1f33de230f9cf53ff38d71`, verified by PR #164 / CI run #41. Linux bind-mount containment remains UNVERIFIED / UNAVAILABLE under the accepted, unchecked T088 MVP exception.
 
 ## Decision 1 — Use an OS-backed, handle-relative filesystem boundary
 
@@ -8,7 +8,7 @@ The feature specification is [spec.md](spec.md). The current policy and ADR 0009
 
 **Rationale**: Node 24 provides `realpath`, `lstat`, `open`, and handle metadata, but path validation followed by a path-based open can race with a changed parent component. `O_NOFOLLOW` protects only the final component on supported POSIX systems. Linux `openat2` can constrain resolution below a held root and reject nested mounts; Windows requires held-handle relative traversal and reparse-tag inspection. A real boundary is needed before Phase 6 or 7 enables file adapters. [Node filesystem documentation](https://nodejs.org/download/release/v24.17.0/docs/api/fs.html), [Linux openat2](https://man7.org/linux/man-pages/man2/openat2.2.html), [Windows reparse operations](https://learn.microsoft.com/en-us/windows/win32/fileio/reparse-point-operations), [Windows relative open](https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntcreatefile).
 
-**Alternatives considered**: Pure TypeScript `realpath` plus `lstat` is simpler but proves only static eligibility, not open-time confinement under path swaps. A helper process would broaden the single-process architecture. A Node-API addon is the narrowest exception to ADR 0003; it adds an OS toolchain and needs explicit Windows and Ubuntu CI coverage. If implementation cannot meet the native contract, Phase 4's exit gate remains open and later file adapters stay disabled.
+**Alternatives considered**: Pure TypeScript `realpath` plus `lstat` is simpler but proves only static eligibility, not open-time confinement under path swaps. A helper process would broaden the single-process architecture. A Node-API addon is the narrowest exception to ADR 0003; it adds an OS toolchain and needs explicit Windows and Ubuntu CI coverage. The implemented native contract and available two-host gate passed; a future regression would block dependent adapters until resolved.
 
 ## Decision 2 — Constrain each operating system's actual open
 
@@ -38,7 +38,7 @@ The feature specification is [spec.md](spec.md). The current policy and ADR 0009
 
 **Decision**: A real workspace provider maps the task's sealed workspace identity to the validated root and implements the existing `WorkspaceFactsPort`. It supplies requested-alias and resolved-target facts for explicit file paths, `search_code.scope`, and implicit root-scoped `list_files`/`search_code`. The gateway independently derives each expected path-operation pair and requires exactly one matching fact; missing, duplicate, extra, or inconsistent facts fail closed. Phase 7 extends the request derivation to parsed patch targets before enabling writes. A safe opened-handle primitive is shared with future adapters; Phase 4 tests it directly, while actual model-visible read/search executors remain Phase 6 and patch/grant execution remains Phase 7.
 
-**Rationale**: Phase 3 currently asks the workspace port for fresh facts, but root-scoped list/search and `search_code.scope` lack required path facts. Returning only a preflight verdict without a safe actual-open primitive would leave a time-of-check gap for future adapters. Branch/`HEAD`/status/diff snapshots and branch-switch handling remain Phase 9; no `git_status` tool is added. See `src/policy/engine.ts`, `src/tools/gateway.ts`, ADR 0008, and ADR 0010.
+**Rationale**: At the Phase 4 design checkpoint, Phase 3 asked the workspace port for fresh facts, but root-scoped list/search and `search_code.scope` lacked required path facts. Returning only a preflight verdict without a safe actual-open primitive would leave a time-of-check gap for future adapters. Branch/`HEAD`/status/diff snapshots and branch-switch handling remain Phase 9; no `git_status` tool is added. See `src/policy/engine.ts`, `src/tools/gateway.ts`, ADR 0008, and ADR 0010.
 
 **Alternatives considered**: Duplicating path rules in each tool adapter would create inconsistent authority. Implementing the Phase 7 grant ledger or Phase 9 Git evidence here would blur the feature boundary.
 
@@ -46,7 +46,7 @@ The feature specification is [spec.md](spec.md). The current policy and ADR 0009
 
 **Decision**: Make `search_code.limit` accept 1–200 without changing `list_files`'s existing 1–100 range. Register separate output schemas and output-byte maxima in the closed tool catalog: 64 KiB maximum result for `read_file`, 32 KiB for `search_code`, and smaller existing limits for unrelated tools. Phase 4 supplies bounded output/limit contracts and tests with fixture results; Phase 6 implements actual retrieval and source provenance. Whole-file reads above 64 KiB return an explicit limit result. Search limits include 200 matches, 4 KiB per returned line, 4 MiB per searched file, and a 32 KiB total with separate omitted-match and shortened-line indicators.
 
-**Rationale**: The registry currently shares a 100-match limit between list and search; the fake gateway has one 32 KiB post-capture limit. Raising the global limit would expand unrelated tools. A content limit and the encoded result envelope must both be checked, so some files under 64 KiB can still receive a size-limit result.
+**Rationale**: At the Phase 4 design checkpoint, the registry shared a 100-match limit between list and search, and the fake gateway had one 32 KiB post-capture limit. Raising the global limit would expand unrelated tools. A content limit and the encoded result envelope must both be checked, so some files under 64 KiB can still receive a size-limit result.
 
 **Alternatives considered**: Global 64 KiB gateway cap unnecessarily enlarges other tool outputs. Truncating `read_file` would make partial source appear complete. Chunked reads remain deferred.
 

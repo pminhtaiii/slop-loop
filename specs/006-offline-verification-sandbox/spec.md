@@ -135,7 +135,7 @@ As a developer, I want failures, resource abuse, cancellation, and runtime outag
 
 ## Assumptions and Dependencies
 
-- Phase 3 supplies gateway/task/budget/audit seams; Phase 4 remains incomplete and its real workspace-boundary exit gate is required before integration readiness.
+- Phase 3 supplies gateway/task/budget/audit seams. Phase 4's real workspace-boundary exit gate is satisfied by PR #164 / CI run #41 on implementation commit `0b990c03718fa9ae9f1f33de230f9cf53ff38d71`, under the accepted T088 MVP exception. Linux bind-mount containment remains UNVERIFIED / UNAVAILABLE; T088 stays unchecked and does not independently block Phase 5 implementation. Phase 5's own implementation and integration evidence remain outstanding.
 - Existing permission ledger, model provider, complete interactive CLI, durable session/audit adapters, and all read/patch/Git executors remain owned by their later phases. This phase proves its seams with fixtures rather than claiming those products exist.
 - This is content-identified copy-and-compare verification, not an atomic filesystem snapshot; rapid external change-and-restore races outside observations remain a documented limitation.
 - A local trusted execution engine and developer-maintained pinned base toolchain are prerequisites. Dedicated disposable VMs and broader dependency sources can be separately designed later.

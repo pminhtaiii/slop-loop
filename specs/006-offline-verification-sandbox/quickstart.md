@@ -4,7 +4,7 @@ This is a future implementation validation guide, not evidence that Phase 5 exis
 
 ## Prerequisites
 
-- Complete the Phase 4 workspace-boundary gate in `specs/005-workspace-boundary/quickstart.md`; safe capture is not ready while the required Linux/Windows native fixtures remain unavailable/unverified.
+- The Phase 4 workspace-boundary prerequisite is satisfied by PR #164 / CI run #41 for implementation commit `0b990c03718fa9ae9f1f33de230f9cf53ff38d71`: Windows and Ubuntu Quality Gates passed for available fixtures. Linux bind-mount containment remains UNVERIFIED / UNAVAILABLE under the accepted, unchecked T088 MVP exception; it is not a containment PASS and does not independently block Phase 5 implementation. Safe snapshot capture itself remains a Phase 5 implementation and verification task.
 - Node.js 24, pinned pnpm 12.5.1, a frozen install and standard `pnpm native:build` on the host. Windows requires Visual C++ Build Tools; a diagnostic alternate build does not satisfy the standard gate.
 - Local Linux Docker Engine, or Docker Desktop on Windows in Linux mode, with verified CPU/memory/PID/readonly/seccomp/tmpfs support and trusted local daemon identity.
 - A developer-provisioned digest-pinned toolchain base containing Node, pnpm, Git, Python, compiler/make and matching Node headers. Verification never pulls the base or installs tools.
@@ -85,4 +85,4 @@ The sandbox's reference target test profile selects ordinary source/native tests
 
 ## Exit gate
 
-Declare Phase 5 ready only after the complete Phase 4 prerequisite, contract/unit/security/integration/E2E suites, frozen pinned gate, enforced source/script/builder bounds, real platform hardening and cleanup/freshness fixtures pass. Record observed evidence in `coding-agent-context/context/testing.md` and status in `progress-checker.md`. Keep all later model/CLI/grant/durable-audit integrations explicitly deferred where still absent.
+The Phase 4 prerequisite is already satisfied under the accepted T088 exception; T129 may rerun it as final regression verification. Declare Phase 5 ready only after its contract/unit/security/integration/E2E suites, frozen pinned gate, enforced source/script/builder bounds, real platform hardening and cleanup/freshness fixtures pass. Record observed Phase 5 evidence in `coding-agent-context/context/testing.md` and status in `progress-checker.md`. Keep all later model/CLI/grant/durable-audit integrations explicitly deferred where still absent.
