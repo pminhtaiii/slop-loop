@@ -612,7 +612,7 @@ Large: 120 model turns, 240 tool attempts, 8 shared retries
 Active work: 1800 seconds, excluding developer permission waits
 ```
 
-Admission seals the initial profile and permitted Small → Medium → Large promotion schedule. Capacity usage is cumulative; the initial retry ceiling never increases on promotion. The runner enforces these counters in memory. Tool runtime and output limits remain adapter contracts for later phases; none executes yet.
+Admission seals the initial profile and permitted Small → Medium → Large promotion schedule. Capacity usage is cumulative; the initial retry ceiling never increases on promotion. The runner enforces these counters in memory. Phase 4 defines bounded read/search result contracts, tests gateway output validation with fake executors, and tests boundary-level read/search builders directly. No model-visible filesystem executor is implemented; Phase 6 owns complete `list_files`, `search_code`, and `read_file` execution, while Phase 5 owns sandbox runtime limits.
 
 ---
 

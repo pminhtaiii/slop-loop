@@ -2,7 +2,7 @@
 
 **Feature Branch**: `feat/005-workspace-boundary`
 **Created**: 2026-09-30
-**Status**: Draft for review
+**Status**: Implemented and verified for available fixtures; T088 remains an accepted, unchecked MVP verification gap.
 **Input**: Phase 4 progress tracker, ADR 0009/0010, tool policy, and workspace-boundary grilling decisions.
 
 ## User Scenarios & Testing

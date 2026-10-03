@@ -4,6 +4,8 @@
 
 **Input**: [spec.md](spec.md), ADR 0008/0009/0010, authoritative tool policy, and [research.md](research.md).
 
+**Current status**: Project Phase 4 is complete for available fixtures. PR #164 / CI run #41 verified implementation commit `0b990c03718fa9ae9f1f33de230f9cf53ff38d71` on Windows and Ubuntu; T086/T087 and Internal Phase 6 are complete. Linux bind-mount containment remains UNVERIFIED / UNAVAILABLE under the accepted, unchecked T088 MVP exception. The sequence below records the implementation plan.
+
 ## Summary
 
 Create a real, checkout-bound workspace authority for Phase 3's policy gateway. Trusted admission discovers and seals one Git worktree root; path evaluation excludes other repositories, ignored and secret content, hard links, nested mounts, and unsafe file types. A narrow OS-backed open/traversal layer closes the path-check/open race before later read or patch adapters can be enabled. Phase 4 also defines and verifies the agreed read/search bounds and per-tool output contracts. Complete model-visible read/search, write grants, Git evidence, and CLI resume behavior remain later phases.
