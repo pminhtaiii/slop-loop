@@ -98,6 +98,14 @@ export function boundedSearch(
     shortenedLines,
     omittedFiles,
   });
+  // Each flag changing from false to true removes one byte from the JSON envelope.
+  let resultBytes = encodedBytes(result());
+  const reserveItem = (item: unknown, previousCount: number): boolean => {
+    const addedBytes = encodedBytes(item) + (previousCount > 0 ? 1 : 0);
+    if (resultBytes + addedBytes > SEARCH_BYTES) return false;
+    resultBytes += addedBytes;
+    return true;
+  };
   for (const file of files) {
     if (file.path.length > 1024) throw new TypeError("Invalid source path");
     const bytes = typeof file.content === "string" ? encoder.encode(file.content) : file.content;
@@ -108,10 +116,11 @@ export function boundedSearch(
           ? "BINARY"
           : null;
     if (reason !== null) {
-      skipped.push({ path: file.path, reason });
-      if (encodedBytes(result()) > SEARCH_BYTES) {
-        skipped.pop();
+      const item: SearchResult["skipped"][number] = { path: file.path, reason };
+      if (reserveItem(item, skipped.length)) skipped.push(item);
+      else if (!omittedFiles) {
         omittedFiles = true;
+        resultBytes -= 1;
       }
       continue;
     }
@@ -120,17 +129,26 @@ export function boundedSearch(
     for (const [index, line] of content.split(/\r?\n/u).entries()) {
       if (!line.includes(query)) continue;
       if (matches.length >= limit) {
-        omittedMatches = true;
+        if (!omittedMatches) {
+          omittedMatches = true;
+          resultBytes -= 1;
+        }
         continue;
       }
       const shortened = shortenedLine(line);
-      matches.push({ path: file.path, lineNumber: index + 1, ...shortened });
-      if (encodedBytes(result()) > SEARCH_BYTES) {
-        matches.pop();
-        omittedMatches = true;
+      const item = { path: file.path, lineNumber: index + 1, ...shortened };
+      if (!reserveItem(item, matches.length)) {
+        if (!omittedMatches) {
+          omittedMatches = true;
+          resultBytes -= 1;
+        }
         continue;
       }
-      if (shortened.shortened) shortenedLines = true;
+      matches.push(item);
+      if (shortened.shortened && !shortenedLines) {
+        shortenedLines = true;
+        resultBytes -= 1;
+      }
     }
   }
   return result();

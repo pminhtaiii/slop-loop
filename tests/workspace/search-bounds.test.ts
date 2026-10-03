@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { boundedSearch } from "../../src/workspace/retrieval.js";
 
 describe("bounded workspace search", () => {
@@ -70,6 +70,69 @@ describe("bounded workspace search", () => {
     }));
     const result = boundedSearch(files, "x");
     expect(result.omittedFiles).toBe(true);
+    expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(32768);
+  });
+  it("uses the byte freed by an omitted-match flag for trailing skipped metadata", () => {
+    const skipped = Array.from({ length: 34 }, (_, index) => ({
+      path: `${"a".repeat(900)}-${index}`,
+      reason: "BINARY",
+    }));
+    const envelope = {
+      kind: "SEARCH_RESULT",
+      method: "workspace-search",
+      matches: [{ path: "a", lineNumber: 1, line: "needle", shortened: false }],
+      skipped: [...skipped, { path: "", reason: "BINARY" }],
+      omittedMatches: true,
+      shortenedLines: false,
+      omittedFiles: false,
+    };
+    const tailLength = 32768 - Buffer.byteLength(JSON.stringify(envelope));
+    expect(tailLength).toBeGreaterThan(0);
+    expect(tailLength).toBeLessThanOrEqual(1024);
+    const result = boundedSearch(
+      [
+        { path: "a", content: "needle\nneedle" },
+        ...skipped.map(({ path }) => ({ path, content: Buffer.from([0]) })),
+        { path: "z".repeat(tailLength), content: Buffer.from([0]) },
+      ],
+      "needle",
+      1,
+    );
+    expect(result.skipped).toHaveLength(skipped.length + 1);
+    expect(result.omittedMatches).toBe(true);
+    expect(Buffer.byteLength(JSON.stringify(result))).toBe(32768);
+  });
+  it("keeps scanning for both omission flags without serializing the growing result per item", () => {
+    const files = [
+      ...Array.from({ length: 100 }, (_, index) => ({
+        path: `${"a".repeat(500)}-${index}`,
+        content: Buffer.from([0]),
+      })),
+      {
+        path: "matches",
+        content: Array.from({ length: 100 }, () => `needle${"x".repeat(900)}`).join("\n"),
+      },
+    ];
+    const stringify = vi.spyOn(JSON, "stringify");
+    let result;
+    let fullResultSerializations;
+    try {
+      result = boundedSearch(files, "needle");
+      fullResultSerializations = stringify.mock.calls.filter(([value]) => {
+        const candidate: unknown = value;
+        return (
+          typeof candidate === "object" &&
+          candidate !== null &&
+          "kind" in candidate &&
+          candidate.kind === "SEARCH_RESULT"
+        );
+      }).length;
+    } finally {
+      stringify.mockRestore();
+    }
+    expect(fullResultSerializations).toBeLessThanOrEqual(1);
+    expect(result.omittedFiles).toBe(true);
+    expect(result.omittedMatches).toBe(true);
     expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(32768);
   });
 });
