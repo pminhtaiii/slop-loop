@@ -8,6 +8,16 @@ import {
 import { captureSnapshot } from "../../src/sandbox/snapshot.js";
 import { DockerSandboxBackend, validateFixedArgv } from "../../src/sandbox/docker.js";
 import { VerificationCoordinator } from "../../src/sandbox/verification.js";
+import type { VerificationSnapshot } from "../../src/sandbox/types.js";
+
+const snapshot: VerificationSnapshot = {
+  formatVersion: 1,
+  workspaceId: "workspace",
+  exclusionPolicyId: "default",
+  entries: [{ path: "index.ts", bytes: 8, mode: 0o644, hash: "hash", content: Buffer.from("export {}") }],
+  totalBytes: 8,
+  snapshotId: "snapshot-id",
+};
 
 describe("sandbox core contracts", () => {
   it("rejects unbounded and unknown trusted configuration", () => {
@@ -64,6 +74,17 @@ describe("sandbox core contracts", () => {
     });
   });
 
+  it("does not pass stale or unconfirmed evidence", async () => {
+    const coordinator = new VerificationCoordinator(["tests"]);
+    coordinator.record({ check: "tests", snapshotId: "snap", imageId: "img", status: "PASS", cleanup: "CONFIRMED" });
+    await expect(coordinator.verdict({ snapshotId: "snap", freshness: "STALE" })).resolves.toMatchObject({
+      status: "INCOMPLETE",
+    });
+    await expect(coordinator.verdict({ snapshotId: "snap", freshness: "UNCONFIRMED" })).resolves.toMatchObject({
+      status: "INCOMPLETE",
+    });
+  });
+
   it("captures bounded bytes through the injected workspace seam", async () => {
     const snapshot = await captureSnapshot(
       {
@@ -75,9 +96,49 @@ describe("sandbox core contracts", () => {
     expect(snapshot.entries[0]?.path).toBe("index.ts");
   });
 
+  it("materializes the sealed snapshot before running a trusted logical check", async () => {
+    const calls: readonly (readonly string[])[] = [];
+    let staged: readonly string[] | undefined;
+    const backend = new DockerSandboxBackend({
+      copySnapshot: (entries) => {
+        staged = entries.map((entry) => entry.path);
+        return "snapshot-mount";
+      },
+      run: (argv) => {
+        (calls as string[][]).push([...argv]);
+        return { id: "container", output: "ok", exitCode: 0 };
+      },
+    });
+    await backend.executeCheck({
+      snapshot,
+      image: { imageId: "sha256:" + "a".repeat(64), fingerprint: "fingerprint", architecture: "linux-x64", status: "READY" },
+      target: { check: "tests", argv: ["pnpm", "test"] },
+      limits: DEFAULT_SANDBOX_LIMITS,
+    });
+    expect(staged).toEqual(["index.ts"]);
+    expect(calls[0]).toContain("snapshot-mount");
+  });
+
+  it("rejects output overflow and reports cleanup uncertainty", async () => {
+    const backend = new DockerSandboxBackend({
+      copySnapshot: () => "snapshot-mount",
+      run: () => ({ id: "container", output: "0123456789", exitCode: 0 }),
+      stopAndRemove: () => "UNCERTAIN",
+    });
+    await expect(
+      backend.executeCheck({
+        snapshot,
+        image: { imageId: "sha256:" + "b".repeat(64), fingerprint: "fingerprint", architecture: "linux-x64", status: "READY" },
+        target: { check: "tests", argv: ["pnpm", "test"] },
+        limits: { ...DEFAULT_SANDBOX_LIMITS, maxOutputBytes: 4 },
+      }),
+    ).resolves.toMatchObject({ status: "FAIL", cleanup: "UNCERTAIN" });
+  });
+
   it("exposes a narrow backend without accepting model-controlled runtime options", () => {
     const backend = new DockerSandboxBackend({
       run: () => ({ id: "container", output: "", exitCode: 0 }),
+      copySnapshot: () => "snapshot-mount",
     });
     expect(backend).toBeDefined();
   });

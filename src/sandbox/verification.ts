@@ -18,8 +18,17 @@ export class VerificationCoordinator {
     const complete =
       evidence.length === this.requiredChecks.length &&
       evidence.every((item) => item.snapshotId === input.snapshotId);
-    const passed = complete && evidence.every((item) => item.status === "PASS" && item.cleanup === "CONFIRMED");
-    return Promise.resolve(Object.freeze({ status: passed ? "PASS" : complete ? "FAIL" : "INCOMPLETE", freshness: input.freshness, evidence }));
+    const passed =
+      complete &&
+      input.freshness === "CURRENT" &&
+      evidence.every((item) => item.status === "PASS" && item.cleanup === "CONFIRMED");
+    return Promise.resolve(
+      Object.freeze({
+        status: input.freshness !== "CURRENT" ? "INCOMPLETE" : passed ? "PASS" : complete ? "FAIL" : "INCOMPLETE",
+        freshness: input.freshness,
+        evidence,
+      }),
+    );
   }
   snapshotFor(): VerificationSnapshot | undefined {
     return undefined;

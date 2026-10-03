@@ -42,6 +42,7 @@ export interface VerificationEvidence {
   readonly imageId: string;
   readonly status: "PASS" | "FAIL";
   readonly cleanup: "CONFIRMED" | "UNCERTAIN";
+  readonly output?: string;
 }
 
 export interface VerificationVerdict {
@@ -55,7 +56,7 @@ export interface SandboxBackend {
   executeCheck(input: {
     readonly snapshot: VerificationSnapshot;
     readonly image: PreparedImageRecord;
-    readonly argv: readonly string[];
+    readonly target: { readonly check: string; readonly argv: readonly string[] };
     readonly limits: SandboxLimits;
   }): Promise<VerificationEvidence>;
 }
