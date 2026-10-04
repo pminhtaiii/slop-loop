@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_SANDBOX_LIMITS,
@@ -127,11 +128,11 @@ describe("sandbox core contracts", () => {
       }),
       copySnapshot: (entries) => {
         staged = entries.map((entry) => entry.path);
-        return "snapshot:snapshot-mount";
+        return resolve("staging", "snapshot-mount");
       },
       run: (argv) => {
         (calls as string[][]).push([...argv]);
-        return { id: "container", output: "ok", exitCode: 0 };
+        return Promise.resolve({ id: "container", output: "ok", exitCode: 0 });
       },
     });
     await backend.executeCheck({
@@ -160,9 +161,9 @@ describe("sandbox core contracts", () => {
         fingerprint: "fingerprint",
         architecture: "linux-x64",
       }),
-      copySnapshot: () => "snapshot:snapshot-mount",
-      run: () => ({ id: "container", output: "0123456789", exitCode: 0 }),
-      stopAndRemove: () => "UNCERTAIN",
+      copySnapshot: () => resolve("staging", "snapshot-mount"),
+      run: () => Promise.resolve({ id: "container", output: "0123456789", exitCode: 0 }),
+      stopAndRemove: () => Promise.resolve("UNCERTAIN"),
     });
     await expect(
       backend.executeCheck({
@@ -188,8 +189,8 @@ describe("sandbox core contracts", () => {
         fingerprint: "fingerprint",
         architecture: "linux-x64",
       }),
-      copySnapshot: () => "snapshot:snapshot-mount",
-      run: () => ({ id: "container", output: "", exitCode: 0 }),
+      copySnapshot: () => resolve("staging", "snapshot-mount"),
+      run: () => Promise.resolve({ id: "container", output: "", exitCode: 0 }),
     });
     await expect(
       backend.readiness(
@@ -201,7 +202,7 @@ describe("sandbox core contracts", () => {
         },
         DEFAULT_SANDBOX_LIMITS,
       ),
-    ).resolves.toBe("BLOCKED");
+    ).resolves.toEqual({ status: "BLOCKED", reason: "RUNTIME_UNAVAILABLE" });
   });
 
   it("retains the sealed snapshot and derives freshness from the trusted comparator", async () => {
@@ -253,13 +254,13 @@ describe("sandbox core contracts", () => {
         fingerprint: "fingerprint",
         architecture: "linux-x64",
       }),
-      copySnapshot: () => "snapshot:snapshot-mount",
+      copySnapshot: () => resolve("staging", "snapshot-mount"),
       run: () => {
-        throw new Error("runner failed");
+        return Promise.reject(new Error("runner failed"));
       },
       stopAndRemove: () => {
         cleaned += 1;
-        return "CONFIRMED";
+        return Promise.resolve("CONFIRMED");
       },
     });
     await expect(
@@ -327,9 +328,9 @@ describe("sandbox core contracts", () => {
         fingerprint: "fingerprint",
         architecture: "linux-x64",
       }),
-      copySnapshot: () => "snapshot:snapshot-mount",
-      run: () => ({ id: "container", output: "", exitCode: 0 }),
-      stopAndRemove: () => "CONFIRMED",
+      copySnapshot: () => resolve("staging", "snapshot-mount"),
+      run: () => Promise.resolve({ id: "container", output: "", exitCode: 0 }),
+      stopAndRemove: () => Promise.resolve("CONFIRMED"),
     });
     const evidence = await backend.executeCheck({
       snapshot,
@@ -357,14 +358,15 @@ describe("sandbox core contracts", () => {
   it("preserves an external readiness blocker in typed execution facts", async () => {
     const gateway = new (await import("../../src/sandbox/gateway.js")).SandboxGateway(
       {
-        readiness: () => Promise.resolve("BLOCKED" as const),
+        readiness: () =>
+          Promise.resolve({ status: "BLOCKED" as const, reason: "IMAGE_STALE" as const }),
         executeCheck: () => Promise.reject(new Error("must not execute")),
       },
       DEFAULT_SANDBOX_LIMITS,
     );
     const facts = await gateway.factsFor(
       { name: "run_tests", arguments: { profile: "ordinary" } } as never,
-      {} as never,
+      { eligibleTools: ["run_tests"] } as never,
       {
         imageId: "sha256:" + "a".repeat(64),
         fingerprint: "fingerprint",
@@ -372,10 +374,10 @@ describe("sandbox core contracts", () => {
         status: "STALE",
       },
     );
-    expect(typeof facts.readiness === "object" ? facts.readiness.status : undefined).toBe(
+    expect(typeof facts?.readiness === "object" ? facts?.readiness.status : undefined).toBe(
       "EXTERNAL_BLOCKER",
     );
-    expect(facts.readiness).toMatchObject({ reason: "IMAGE_STALE" });
+    expect(facts?.readiness).toMatchObject({ reason: "IMAGE_STALE" });
   });
   it("exposes a narrow backend without accepting model-controlled runtime options", () => {
     const backend = new DockerSandboxBackend({
@@ -385,8 +387,8 @@ describe("sandbox core contracts", () => {
         fingerprint: "fingerprint",
         architecture: "linux-x64",
       }),
-      run: () => ({ id: "container", output: "", exitCode: 0 }),
-      copySnapshot: () => "snapshot:snapshot-mount",
+      run: () => Promise.resolve({ id: "container", output: "", exitCode: 0 }),
+      copySnapshot: () => resolve("staging", "snapshot-mount"),
     });
     expect(backend).toBeDefined();
   });

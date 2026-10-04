@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { expect, it } from "vitest";
 
 import { DockerSandboxBackend } from "../../src/sandbox/docker.js";
@@ -18,12 +19,12 @@ it("builds a non-root, offline, read-only Docker invocation with bounded writabl
   const backend = new DockerSandboxBackend({
     readiness: () => ({ networkDisabled: true, limitsEnforced: true, readOnlyMounts: true }),
     inspectImage: (imageId) => ({ imageId, fingerprint: "fingerprint", architecture: "linux-x64" }),
-    copySnapshot: () => "snapshot:mount",
+    copySnapshot: () => resolve("staging", "mount"),
     run: (args) => {
       argv = args;
-      return { id: "container", output: "", exitCode: 0 };
+      return Promise.resolve({ id: "container", output: "", exitCode: 0 });
     },
-    stopAndRemove: () => "CONFIRMED",
+    stopAndRemove: () => Promise.resolve("CONFIRMED"),
   });
 
   await backend.executeCheck({
@@ -71,9 +72,9 @@ it("blocks the next run when cleanup cannot be confirmed", async () => {
   const backend = new DockerSandboxBackend({
     readiness: () => ({ networkDisabled: true, limitsEnforced: true, readOnlyMounts: true }),
     inspectImage: (imageId) => ({ imageId, fingerprint: "fingerprint", architecture: "linux-x64" }),
-    copySnapshot: () => "snapshot:mount",
-    run: () => ({ id: "container", output: "", exitCode: 0 }),
-    stopAndRemove: () => "UNCERTAIN",
+    copySnapshot: () => resolve("staging", "mount"),
+    run: () => Promise.resolve({ id: "container", output: "", exitCode: 0 }),
+    stopAndRemove: () => Promise.resolve("UNCERTAIN"),
   });
   const input = {
     snapshot,

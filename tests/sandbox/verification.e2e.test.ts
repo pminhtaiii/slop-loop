@@ -26,7 +26,8 @@ describe("Phase 5 verification journey", () => {
     requireDocker({ skip });
     const gateway = new SandboxGateway(
       {
-        readiness: () => Promise.resolve("BLOCKED" as const),
+        readiness: () =>
+          Promise.resolve({ status: "BLOCKED" as const, reason: "IMAGE_STALE" as const }),
         executeCheck: () => Promise.reject(new Error("not reached")),
       },
       DEFAULT_SANDBOX_LIMITS,

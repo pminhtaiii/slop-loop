@@ -127,3 +127,17 @@ export function mapVerificationTarget(
   if (tool === "run_build" && profile === "build") return profiles.build;
   throw new Error("Unapproved verification target");
 }
+
+/** Profile authority comes from the same fixed configuration as target mapping. */
+export function approvedProfilesForTool(tool: string): readonly string[] {
+  return Object.freeze(
+    Object.keys(profiles).filter((profile) => {
+      try {
+        mapVerificationTarget(tool, profile);
+        return true;
+      } catch {
+        return false;
+      }
+    }),
+  );
+}

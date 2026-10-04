@@ -10,7 +10,8 @@ import type { SandboxBackend } from "../../src/sandbox/types.js";
 describe("stale image task lifecycle", () => {
   it("maps a missing image to preparation required", async () => {
     const backend: SandboxBackend = {
-      readiness: () => Promise.resolve("BLOCKED" as const),
+      readiness: () =>
+        Promise.resolve({ status: "BLOCKED" as const, reason: "PREPARATION_REQUIRED" as const }),
       executeCheck: () => Promise.reject(new Error("not reached")),
     };
     const gateway = new SandboxGateway(backend, DEFAULT_SANDBOX_LIMITS);

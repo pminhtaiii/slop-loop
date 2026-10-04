@@ -1,3 +1,6 @@
+import { parseAllDocuments } from "yaml";
+import { z } from "zod";
+
 const APPROVED_REGISTRY_HOSTS = new Set(["registry.npmjs.org"]);
 const EXACT_VERSION =
   /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/u;
@@ -39,35 +42,37 @@ export function parseLockedArtifacts(lockfile: string): readonly LockedArtifact[
   if (lockfile.length === 0 || lockfile.length > 32 * 1024 * 1024) {
     throw new TypeError("Lockfile is outside the supported bounds");
   }
-  const lines = lockfile.split(/\r?\n/u);
+  const schema = z.object({
+    packages: z.record(
+      z.string(),
+      z.object({
+        resolution: z.object({ integrity: z.string(), tarball: z.string().optional() }),
+      }),
+    ),
+  });
+  const packages = parseAllDocuments(lockfile).flatMap((document) => {
+    const error = document.errors[0];
+    if (error !== undefined) throw error;
+    return Object.entries(schema.parse(document.toJS({ maxAliasCount: 0 })).packages);
+  });
   const artifacts: LockedArtifact[] = [];
-  for (let index = 0; index < lines.length; index += 1) {
-    const packageMatch = /^ {2}([^:\s][^:]*):\s*$/u.exec(lines[index] ?? "");
-    if (!packageMatch) continue;
-    const key = packageMatch[1];
-    if (!key || key.startsWith("http")) continue;
-    let integrity = "";
-    let tarball = "";
-    for (let cursor = index + 1; cursor < lines.length; cursor += 1) {
-      const line = lines[cursor] ?? "";
-      if (/^ {2}[^ \t]/u.test(line)) break;
-      const integrityMatch = /^\s+integrity:\s*(\S+)\s*$/u.exec(line);
-      const tarballMatch = /^\s+tarball:\s*(\S+)\s*$/u.exec(line);
-      if (integrityMatch?.[1]) integrity = integrityMatch[1];
-      if (tarballMatch?.[1]) tarball = tarballMatch[1];
-    }
-    if (integrity || tarball) {
-      const versionMatch = /@([^@/]+)$/u.exec(key);
-      if (!versionMatch?.[1]) throw new TypeError("Locked package version is missing");
-      artifacts.push(
-        validateLockedArtifact({
-          name: artifactName(key),
-          version: versionMatch[1],
-          tarball,
-          integrity,
-        }),
-      );
-    }
+  for (const [rawKey, entry] of packages) {
+    const key = rawKey.replace(/^\//u, "");
+    const name = artifactName(key);
+    if (!/^(?:@[a-z0-9._-]+\/)?[a-z0-9._-]+$/u.test(name))
+      throw new TypeError("Locked package identity is invalid");
+    const version = key.slice(key.lastIndexOf("@") + 1);
+    const basename = name.slice(name.lastIndexOf("/") + 1);
+    artifacts.push(
+      validateLockedArtifact({
+        name,
+        version,
+        integrity: entry.resolution.integrity,
+        tarball:
+          entry.resolution.tarball ??
+          `https://registry.npmjs.org/${name}/-/${basename}-${version}.tgz`,
+      }),
+    );
   }
   if (artifacts.length === 0) throw new TypeError("No locked registry artifacts found");
   return Object.freeze(artifacts);

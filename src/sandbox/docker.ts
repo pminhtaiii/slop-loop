@@ -1,7 +1,10 @@
+import { isAbsolute, normalize, parse } from "node:path";
+import { randomUUID } from "node:crypto";
 import type {
   PreparedImageRecord,
   SandboxBackend,
   SandboxLimits,
+  SandboxReadiness,
   VerificationEvidence,
 } from "./types.js";
 import { CleanupExecutionGate } from "./cleanup.js";
@@ -29,13 +32,13 @@ export interface DockerPort {
       readonly deadlineAt: number;
       readonly resourceId?: string;
     },
-  ): {
+  ): Promise<{
     readonly id: string;
     readonly output: string;
     readonly exitCode: number;
     readonly elapsedSeconds?: number;
-  };
-  stopAndRemove?(id: string): "CONFIRMED" | "UNCERTAIN";
+  }>;
+  stopAndRemove?(id: string): Promise<"CONFIRMED" | "UNCERTAIN">;
 }
 
 export function validateFixedArgv(argv: readonly string[]): void {
@@ -53,7 +56,13 @@ export class DockerSandboxBackend implements SandboxBackend {
   private readonly cleanupGate = new CleanupExecutionGate();
 
   constructor(private readonly docker: DockerPort) {}
-  readiness(image: PreparedImageRecord, limits: SandboxLimits) {
+  readiness(image: PreparedImageRecord, limits: SandboxLimits): Promise<SandboxReadiness> {
+    if (!this.cleanupGate.canStart())
+      return Promise.resolve({ status: "BLOCKED", reason: "CLEANUP_UNCONFIRMED" });
+    if (image.status === "MISSING")
+      return Promise.resolve({ status: "BLOCKED", reason: "PREPARATION_REQUIRED" });
+    if (image.status === "STALE")
+      return Promise.resolve({ status: "BLOCKED", reason: "IMAGE_STALE" });
     const runtime = this.docker.readiness();
     if (
       image.status !== "READY" ||
@@ -67,10 +76,10 @@ export class DockerSandboxBackend implements SandboxBackend {
       !runtime.readOnlyMounts ||
       !this.cleanupGate.canStart()
     )
-      return Promise.resolve("BLOCKED" as const);
-    return Promise.resolve("READY" as const);
+      return Promise.resolve({ status: "BLOCKED", reason: "RUNTIME_UNAVAILABLE" });
+    return Promise.resolve({ status: "READY" });
   }
-  executeCheck(input: {
+  async executeCheck(input: {
     readonly snapshot: import("./types.js").VerificationSnapshot;
     readonly image: PreparedImageRecord;
     readonly target: {
@@ -92,7 +101,7 @@ export class DockerSandboxBackend implements SandboxBackend {
       !runtime.readOnlyMounts ||
       !this.cleanupGate.canStart()
     )
-      return Promise.reject(new Error("Sandbox runtime not ready"));
+      throw new Error("Sandbox runtime not ready");
     validateFixedArgv(input.target.argv);
     const allowed = new Map([
       ["tests", "pnpm test"],
@@ -119,15 +128,24 @@ export class DockerSandboxBackend implements SandboxBackend {
     if (this.docker.copySnapshot === undefined)
       throw new Error("Snapshot materialization unavailable");
     const mount = this.docker.copySnapshot(input.snapshot.entries);
-    if (!/^snapshot:[A-Za-z0-9._-]+$/.test(mount)) throw new Error("Untrusted snapshot mount");
+    if (
+      !isAbsolute(mount) ||
+      normalize(mount) !== mount ||
+      mount === parse(mount).root ||
+      /[,"]/u.test(mount) ||
+      [...mount].some(
+        (character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127,
+      )
+    )
+      throw new Error("Untrusted snapshot mount");
     if (input.runtime.signal.aborted || input.runtime.deadlineAt <= Date.now())
-      return Promise.reject(new Error("Sandbox deadline expired"));
-    const resourceId = this.docker.registerResource?.();
-    let result: ReturnType<DockerPort["run"]> | undefined;
+      throw new Error("Sandbox deadline expired");
+    const resourceId = this.docker.registerResource?.() ?? randomUUID();
+    let result: Awaited<ReturnType<DockerPort["run"]>> | undefined;
     let cleanup: "CONFIRMED" | "UNCERTAIN" = "UNCERTAIN";
     this.cleanupGate.hold();
     try {
-      result = this.docker.run(
+      result = await this.docker.run(
         [
           "run",
           "--rm",
@@ -141,7 +159,10 @@ export class DockerSandboxBackend implements SandboxBackend {
           "slop-loop.owner=verification",
           "--label",
           `slop-loop.taskId=${input.target.taskId}`,
-          ...(resourceId === undefined ? [] : ["--label", `slop-loop.containerId=${resourceId}`]),
+          "--label",
+          `slop-loop.containerId=${resourceId}`,
+          "--name",
+          resourceId,
           "--tmpfs",
           `/tmp:rw,nosuid,nodev,noexec,size=268435456`,
           "--tmpfs",
@@ -153,7 +174,9 @@ export class DockerSandboxBackend implements SandboxBackend {
           "--pids-limit",
           String(input.limits.maxPids),
           "--mount",
-          `type=bind,src=${mount.slice("snapshot:".length)},dst=/snapshot,readonly`,
+          `type=bind,src=${mount},dst=/snapshot,readonly`,
+          "--workdir",
+          "/snapshot",
           input.image.imageId,
           ...input.target.argv,
         ],
@@ -161,18 +184,25 @@ export class DockerSandboxBackend implements SandboxBackend {
         { ...input.runtime, resourceId },
       );
     } finally {
-      if (result !== undefined) cleanup = this.docker.stopAndRemove?.(result.id) ?? "UNCERTAIN";
-      this.cleanupGate.settle({ status: cleanup, attempts: 1 });
+      try {
+        cleanup = (await this.docker.stopAndRemove?.(result?.id ?? resourceId)) ?? "UNCERTAIN";
+      } finally {
+        this.cleanupGate.settle({ status: cleanup, attempts: 1 });
+      }
     }
     if (result === undefined) throw new Error("Sandbox execution failed");
-    const output = result.output.slice(0, input.limits.maxOutputBytes);
-    return Promise.resolve({
+    const bytes = Buffer.from(result.output, "utf8");
+    const overflow = bytes.length > input.limits.maxOutputBytes;
+    let end = Math.min(bytes.length, input.limits.maxOutputBytes);
+    while (end > 0 && end < bytes.length && (bytes[end]! & 0xc0) === 0x80) end -= 1;
+    const output = bytes.subarray(0, end).toString("utf8");
+    return {
       check: input.target.check,
       snapshotId: input.snapshot.snapshotId,
       imageId: input.image.imageId,
       status:
         result.exitCode === 0 &&
-        result.output.length <= input.limits.maxOutputBytes &&
+        !overflow &&
         !input.runtime.signal.aborted &&
         input.runtime.deadlineAt > Date.now() &&
         (result.elapsedSeconds === undefined ||
@@ -187,6 +217,6 @@ export class DockerSandboxBackend implements SandboxBackend {
       attemptId: input.target.attemptId,
       nativeIdentity: input.target.nativeIdentity,
       profileSetId: input.target.profileSetId,
-    });
+    };
   }
 }

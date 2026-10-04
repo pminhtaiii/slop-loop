@@ -159,21 +159,32 @@ Observed local Windows commands at that checkpoint:
 
 This record binds CI and review evidence to the implementation commit above. A later documentation-only commit records that evidence; it does not change the tested implementation or create a circular requirement to rerun implementation CI.
 
-## Phase 5 final two-host verification
+## Phase 5 two-host source verification (integration gate open)
 
-CI run [#48](https://github.com/pminhtaiii/slop-loop/actions/runs/37096538680) for
+CI run [#48](https://github.com/pminhtaiii/slop-loop/actions/runs/37173595059) for
 [PR #167](https://github.com/pminhtaiii/slop-loop/pull/167), branch
-`feat/006-offline-verification-sandbox`, passed both the Ubuntu Quality Gate and
-Windows Quality Gate with status `SUCCESS`. The run is the final Phase 5 verification
-evidence for the pinned regression matrix and the real Docker-gated sandbox checks.
+`feat/006-offline-verification-sandbox`, succeeded on both quality jobs (run head SHA
+`038dabaf7b24c649a067ec70b74ac0576718a9b6`). The logs establish source regression
+coverage, not completion of the Phase 5 Docker integration gate.
 
-- Ubuntu Quality Gate: `SUCCESS`.
-- Windows Quality Gate: `SUCCESS`.
-- Both gates completed the Phase 5 verification, security/recovery integration, native
-  regression, quality, build and smoke checks required by the workflow.
-- The local Windows checkpoint below remains historical environment evidence only; its
-  unavailable Docker/native fixtures do not override the successful two-host CI result.
+- Ubuntu: workspace tests 105 passed / 3 skipped; full source suite 436 passed /
+  7 skipped. Native build, lint, formatting, typecheck, build and smoke passed.
+- Windows: workspace tests 106 passed / 2 skipped; full source suite 435 passed /
+  8 skipped. Native build, build and smoke passed. This job does not run lint,
+  formatting or typecheck.
+- Docker security and recovery suites: all four tests skipped on both hosts.
+  Ubuntu reported the required integration image unavailable; Windows reported
+  the local Docker daemon inaccessible.
+- The two E2E harness tests passed on Ubuntu and skipped on Windows. The current
+  harness checks developer binding/new task identity and a stubbed stale-readiness
+  response; it does not execute the full preparation/new-snapshot journey.
+- `verification.integration.test.ts` and `preparation.integration.test.ts` do not
+  exist in the tested source. No separate real Linux Docker job is configured.
 
-This CI result closes the Phase 5 integration gate. The integration suites retain typed
-unavailable outcomes for unsupported local environments and never replace Docker
-execution with mocks.
+For T091/T092 this run proves frozen installation and the existing source workflow,
+but not the required parser dependencies or separate Docker job. It supplies no
+completion evidence for T105/T111/T115. T122 has partial harness coverage only;
+T127/T128 have unavailable fixtures. All eight tasks remain unchecked. T129 has
+source/native regression evidence only; its full two-platform Docker matrix and
+T131 phase closure remain pending. Phase 5's exit gate stays open until the required
+implementation and real integration evidence pass; skipped fixtures are not passes.
