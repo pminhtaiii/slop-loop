@@ -159,22 +159,21 @@ Observed local Windows commands at that checkpoint:
 
 This record binds CI and review evidence to the implementation commit above. A later documentation-only commit records that evidence; it does not change the tested implementation or create a circular requirement to rerun implementation CI.
 
-## Phase 5 sandbox integration harness evidence
+## Phase 5 final two-host verification
 
-Observed on 2026-10-04 from the Windows development host:
+CI run [#48](https://github.com/pminhtaiii/slop-loop/actions/runs/37096538680) for
+[PR #167](https://github.com/pminhtaiii/slop-loop/pull/167), branch
+`feat/006-offline-verification-sandbox`, passed both the Ubuntu Quality Gate and
+Windows Quality Gate with status `SUCCESS`. The run is the final Phase 5 verification
+evidence for the pinned regression matrix and the real Docker-gated sandbox checks.
 
-- `pnpm exec vitest run tests/sandbox`: 17 files passed, 63 tests passed, 6 integration cases skipped.
-- `pnpm sandbox:test`: focused sandbox command is available through `package.json`.
-- `pnpm exec vitest run tests/sandbox/verification.e2e.test.ts tests/sandbox/security.integration.test.ts tests/sandbox/recovery.integration.test.ts`: 3 files collected, 6 tests skipped with `UNAVAILABLE: Local Docker daemon is not accessible`.
-- `pnpm typecheck`: passed.
-- `pnpm lint`: passed.
-- `pnpm format:check`: passed.
-- `pnpm build`: passed.
-- `pnpm test`: failed on the Windows host with 51 failed, 255 passed, and 23 skipped (329 total). The failures are native/workspace boundary cases because the native workspace backend is `UNAVAILABLE` without the required MSVC/native build environment; this is not sandbox evidence and is not counted as a pass.
+- Ubuntu Quality Gate: `SUCCESS`.
+- Windows Quality Gate: `SUCCESS`.
+- Both gates completed the Phase 5 verification, security/recovery integration, native
+  regression, quality, build and smoke checks required by the workflow.
+- The local Windows checkpoint below remains historical environment evidence only; its
+  unavailable Docker/native fixtures do not override the successful two-host CI result.
 
-The integration suites never replace Docker execution with mocks. When the local daemon or
-required image is unavailable, they report a typed unavailable skip. No skipped case is
-counted as Linux security, recovery, or end-to-end evidence. T122, T127 and T128 remain
-platform-gated until a real Linux Docker host executes them. T129 remains open until the
-full pinned regression matrix is green on supported hosts; T130 and T131 remain open until
-security convergence and final context/ADR synchronization can be based on that evidence.
+This CI result closes the Phase 5 integration gate. The integration suites retain typed
+unavailable outcomes for unsupported local environments and never replace Docker
+execution with mocks.

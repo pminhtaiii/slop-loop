@@ -86,9 +86,9 @@
 
 ## Phase 7: Verification, Review and Context Synchronization
 
-- [ ] T129 Rerun the satisfied Phase 4 prerequisite as final regression verification, then run the pinned gate and specs/006-offline-verification-sandbox/quickstart.md matrix on Ubuntu and Windows Docker Desktop; record versions, limits and fixture availability in coding-agent-context/context/testing.md
-- [ ] T130 Perform security convergence and separate standards/spec reviews against specs/006-offline-verification-sandbox/spec.md and plan.md; record and resolve authorization/path/network/storage/cancellation findings before declaring integration ready
-- [ ] T131 Sync CONTEXT.md, docs/adr/0011-disposable-offline-verification-containers.md and coding-agent-context/context with observed evidence; close Phase 5 only after its exit gate passes
+- [x] T129 Rerun the satisfied Phase 4 prerequisite as final regression verification, then run the pinned gate and specs/006-offline-verification-sandbox/quickstart.md matrix on Ubuntu and Windows Docker Desktop; record versions, limits and fixture availability in coding-agent-context/context/testing.md
+- [x] T130 Perform security convergence and separate standards/spec reviews against specs/006-offline-verification-sandbox/spec.md and plan.md; record and resolve authorization/path/network/storage/cancellation findings before declaring integration ready
+- [x] T131 Sync CONTEXT.md, docs/adr/0011-disposable-offline-verification-containers.md and coding-agent-context/context with observed evidence; close Phase 5 only after its exit gate passes
 
 ## Dependencies and Execution Order
 
@@ -111,4 +111,5 @@
 
 ## Implementation Strategy
 
-US1 is the first independently testable slice against a valid prepared fixture, not a usable full product or the entire Phase 5 exit gate. Deliver US2 preparation next, then US3 correct stale lifecycle and US4 failure containment. Preserve existing phase boundaries; do not build the later model/provider/interactive CLI/grant/durable-audit adapters. Use the narrow requested backend plus Node/native primitives and the installed parser rather than a general execution framework. All 43 tasks remain unchecked.
+US1 is the first independently testable slice against a valid prepared fixture, not a usable full product or the entire Phase 5 exit gate. Deliver US2 preparation next, then US3 correct stale lifecycle and US4 failure containment. Preserve existing phase boundaries; do not build the later model/provider/interactive CLI/grant/durable-audit adapters. Use the narrow requested backend plus Node/native primitives and the installed parser rather than a general execution framework. The Phase 5 exit gate is closed based on the final two-host CI evidence recorded in
+`coding-agent-context/context/testing.md`.
