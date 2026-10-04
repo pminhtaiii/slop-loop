@@ -154,7 +154,7 @@ repository tools cannot access host files outside workspace
 
 ## Phase 5 — Sandbox
 
-Planning artifacts: [specification](../../specs/006-offline-verification-sandbox/spec.md), [implementation plan](../../specs/006-offline-verification-sandbox/plan.md), [tasks T089–T131](../../specs/006-offline-verification-sandbox/tasks.md). T088 remains the unchecked Workspace Boundary verification gap and is not reused by Phase 5. The Phase 4 external prerequisite is satisfied by PR #164 / CI run #41 under the accepted T088 exception, so Phase 5 implementation may begin on this baseline. The plan selects initial bounds and enforcement mechanisms with real integration/security proof gates; no Phase 5 implementation checkbox or Phase 5 exit gate is complete.
+Planning artifacts: [specification](../../specs/006-offline-verification-sandbox/spec.md), [implementation plan](../../specs/006-offline-verification-sandbox/plan.md), [tasks T089–T131](../../specs/006-offline-verification-sandbox/tasks.md). T088 remains the unchecked Workspace Boundary verification gap and is not reused by Phase 5. The Phase 4 external prerequisite is satisfied by PR #164 / CI run #41 under the accepted T088 exception. Phase 5 unit and contract implementation is present through T126, while real Docker evidence and final convergence tasks remain open.
 
 Design checkpoint (2026-10-02; Q1–Q23 decisions recorded): Slop Loop stays on the host and Docker runs verification only for TypeScript targets, initially Slop Loop itself with trusted pnpm profiles. One verification verdict captures one filtered working-tree snapshot through the trusted workspace boundary; all checks in that verdict use fresh Linux container clones of the same captured bytes. Supporting services are out of MVP scope. Verification is offline. Image preparation is developer-triggered from an application-owned recipe and fetches exact locked dependencies from approved public registries with restricted networking. Download disables lifecycle/build scripts; only scripts allowlisted in trusted config for exact locked dependency identities may execute, offline. Unsupported scripts block preparation until the developer updates trusted config. Repository Dockerfiles are never executed or given authority over build instructions, Docker privileges, mounts, or networking. Preparation has no secrets, sensitive host directories, Docker socket, or writable real-checkout mount. A fingerprint covers manifests, lockfile, approved package-manager configuration, exact-identity script allowlist, Node/pnpm versions, Linux architecture, base-image digest, and recipe. Drift blocks verification pending developer preparation; ordinary source edits do not invalidate the image. The image provides the toolchain, while repository-owned native addons are rebuilt offline under a separate trusted profile from the captured source in each check container. Q18 accepts locked-artifact integrity and approved-source rules, with planned enforcement requiring integration proof. Repository code/configuration is untrusted; the runtime alone supplies authority. The MVP accepts hardened Docker with documented residual limits. Only `/workspace` and `/tmp` are writable; the system, toolchain, and root filesystem remain read-only, and verification output never copies back automatically. When the runtime detects a stale image, it explains/reports the state and gates preparation on explicit developer confirmation; the minimal helper belongs to Phase 5, with later interactive-CLI exposure (Q22). The model cannot initiate preparation or enable networking. Future agent browser research requires a separate capability. No sandbox implementation is claimed.
 
@@ -487,3 +487,17 @@ Acceptance:
 - [ ] Modified verification config is deferred to a later validated session.
 - [ ] Canonical JSONL, event hash chain, and manifest verify deterministically.
 - [ ] BUDGET_EXHAUSTED records budget, limit, usage, and audit ordering.
+
+## Phase 5 observed checkpoint (2026-10-04)
+
+Core sandbox contracts, safe snapshot, developer preparation pipeline, fail-closed broker,
+archive validator, cleanup lifecycle, and unit/contract suites are complete. The focused
+sandbox suite reports 63 passing tests across 17 files, with 6 platform-gated skips. Real Docker integration is
+platform-gated: the local Windows host reports `UNAVAILABLE: Local Docker daemon is not
+accessible`, so integration harnesses skip without treating unavailable fixtures as passes.
+The final quality gates `pnpm lint`, `pnpm format:check`, `pnpm typecheck`, and
+`pnpm build` passed. The requested full `pnpm test` run failed with 51 native/workspace
+failures, 255 passed, and 23 skipped because this Windows host cannot load the native
+workspace backend without the required MSVC build environment. The Phase 5 exit gate
+remains open until the native regression matrix, real Linux Docker security/recovery/E2E
+evidence, and security/spec convergence are available.

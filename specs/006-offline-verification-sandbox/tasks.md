@@ -8,10 +8,10 @@
 
 **Purpose**: Make the design executable using the satisfied Phase 4 prerequisite without claiming sandbox infrastructure exists.
 
-- [ ] T089 Add fail-closed sandbox types in src/sandbox/types.ts and RED tests in tests/sandbox/contracts.test.ts; confirm the recorded Phase 4 gate evidence in specs/006-offline-verification-sandbox/quickstart.md before real boundary integration
+- [x] T089 Add fail-closed sandbox types in src/sandbox/types.ts and RED tests in tests/sandbox/contracts.test.ts; confirm the recorded Phase 4 gate evidence in specs/006-offline-verification-sandbox/quickstart.md before real boundary integration
 - [x] T090 [P] Add bounded trusted configuration and profile fixture builders in tests/sandbox/fixtures.ts without model, network, or writable-host authority
 - [ ] T091 Pin maintained YAML/archive parsers for bounded input and transfer validation in package.json and pnpm-lock.yaml; preserve Node/pnpm pins and validate the frozen install
-- [ ] T092 [P] Add sandbox:test in package.json and separate source/real Linux Docker jobs in .github/workflows/ci.yml; record unavailable-platform and Windows evidence requirements in specs/006-offline-verification-sandbox/quickstart.md
+- [ ] T092 [P] Add sandbox:test in package.json and separate source/real Linux Docker jobs in .github/workflows/ci.yml; record unavailable-platform and Windows evidence requirements in specs/006-offline-verification-sandbox/quickstart.md (local script added; CI/platform evidence remains open)
 
 ## Phase 2: Foundational
 
@@ -46,15 +46,15 @@
 
 **Independent test**: Explicit developer preparation produces a usable image; forged confirmation, source/integrity/script violations and missing tools publish none.
 
-- [ ] T106 [US2] Write RED trusted developer-action binding, model/repo confirmation rejection, recipe ownership and changed-input cancellation tests in tests/sandbox/preparation.test.ts
-- [ ] T107 [P] [US2] Write RED bounded supported lock grammar, exact artifact graph, unsupported URLs/hooks/configDependencies, integrity and multiversion script allowlist tests in tests/sandbox/downloads.test.ts
-- [ ] T108 [P] [US2] Write RED approved-destination, redirect/private-IP/DNS-rebinding, direct-bypass, disabled-script fetch and finite download tests in tests/sandbox/broker.test.ts
-- [ ] T109 [US2] Implement strict YAML/schema locked graph, sanitized pnpm inputs, exact-identity-to-name allow map and frozen no-hook fetch in src/sandbox/downloads.ts; reject unsupported source/config forms before network access
-- [ ] T110 [US2] Implement a temporary trusted approved-public-destination broker and isolated preparation egress setup in src/sandbox/broker.ts and src/sandbox/docker.ts; prove no direct bypass and keep network setup authority out of untrusted code
+- [x] T106 [US2] Write RED trusted developer-action binding, model/repo confirmation rejection, recipe ownership and changed-input cancellation tests in tests/sandbox/preparation.test.ts
+- [x] T107 [P] [US2] Write RED bounded supported lock grammar, exact artifact graph, unsupported URLs/hooks/configDependencies, integrity and multiversion script allowlist tests in tests/sandbox/downloads.test.ts
+- [x] T108 [P] [US2] Write RED approved-destination, redirect/private-IP/DNS-rebinding, direct-bypass, disabled-script fetch and finite download tests in tests/sandbox/broker.test.ts
+- [x] T109 [US2] Implement strict YAML/schema locked graph, sanitized pnpm inputs, exact-identity-to-name allow map and frozen no-hook fetch in src/sandbox/downloads.ts; reject unsupported source/config forms before network access
+- [x] T110 [US2] Implement a temporary trusted approved-public-destination broker and isolated preparation egress setup in src/sandbox/broker.ts and src/sandbox/docker.ts; prove no direct bypass and keep network setup authority out of untrusted code
 - [ ] T111 [US2] Write RED offline exact dependency scripts with root hooks disabled, hostile archive/link/sparse/expansion, frozen export, safe publication and failure cleanup tests in tests/sandbox/preparation.integration.test.ts
-- [ ] T112 [US2] Add the application-owned digest-pinned offline recipe in sandbox/verification.Dockerfile with prepared readonly dependencies and toolchain checks; never execute the target Dockerfile or fetch OS tools/headers during verification
-- [ ] T113 [US2] Implement bounded developer preparation, safe frozen store/context import in src/sandbox/archive.ts, immutable publication and private records in src/sandbox/preparation.ts; preserve prior image on failure
-- [ ] T114 [US2] Add the developer-only explicit-confirmation preparation helper in scripts/prepare-verification.ts and package.json as sandbox:prepare without registering any model tool or resuming a blocked task
+- [x] T112 [US2] Add the application-owned digest-pinned offline recipe in sandbox/verification.Dockerfile with prepared readonly dependencies and toolchain checks; never execute the target Dockerfile or fetch OS tools/headers during verification
+- [x] T113 [US2] Implement bounded developer preparation, safe frozen store/context import in src/sandbox/archive.ts, immutable publication and private records in src/sandbox/preparation.ts; preserve prior image on failure
+- [x] T114 [US2] Add the developer-only explicit-confirmation preparation helper in scripts/prepare-verification.ts and package.json as sandbox:prepare without registering any model tool or resuming a blocked task
 - [ ] T115 [US2] Prove exact locked public artifacts and approved scripts through the controlled registry plus a reference-lock smoke case in tests/sandbox/preparation.integration.test.ts; record broker, builder quota and platform enforcement evidence
 
 ## Phase 5: User Story 3 — Recognize stale preparation and verification (P1)
@@ -63,13 +63,13 @@
 
 **Independent test**: Source-only edits reuse preparation; dependency/tag/policy drift blocks; checkout drift produces historical stale evidence; explicit preparation is followed by new admission.
 
-- [ ] T116 [US3] Write RED external-readiness BLOCKED with zero executor/recovery charge versus ordinary denial or policy failure, audit/fence and snapshot identity tests in tests/sandbox/gateway.test.ts
-- [ ] T117 [US3] Extend typed readiness/blocker and result contracts in src/policy/engine.ts, src/tools/gateway.ts and src/tools/registry.ts; wire src/sandbox/gateway.ts with eligibility-first, audit-first zero-executor blockers
-- [ ] T118 [P] [US3] Write RED stale-image BLOCKED, preserved edits, no resume, subset/boolean/replayed verdict rejection, fresh complete evidence and late-success tests in tests/sandbox/lifecycle.test.ts
-- [ ] T119 [US3] Validate trusted task-attempt complete verdict evidence at src/orchestration/runner.ts and src/sandbox/gateway.ts; reject bare success booleans, partial/stale/replayed results and map blockers without resumable state
-- [ ] T120 [P] [US3] Write RED mutable-tag swap, captured-dependency fingerprint mismatch and final content/path/mode change tests in tests/sandbox/identity.test.ts and tests/sandbox/verification.test.ts
-- [ ] T121 [US3] Implement immutable image point-of-use validation and safe final checkout comparison in src/sandbox/preparation.ts, src/sandbox/snapshot.ts and src/sandbox/verification.ts; distinguish historical pass from current verified state
-- [ ] T122 [US3] Add the full stale-image developer-confirmation preparation and new-task reevaluation/snapshot journey in tests/sandbox/verification.e2e.test.ts with fixture grants and existing fake audit ports
+- [x] T116 [US3] Write RED external-readiness BLOCKED with zero executor/recovery charge versus ordinary denial or policy failure, audit/fence and snapshot identity tests in tests/sandbox/gateway.test.ts
+- [x] T117 [US3] Extend typed readiness/blocker and result contracts in src/policy/engine.ts, src/tools/gateway.ts and src/tools/registry.ts; wire src/sandbox/gateway.ts with eligibility-first, audit-first zero-executor blockers
+- [x] T118 [P] [US3] Write RED stale-image BLOCKED, preserved edits, no resume, subset/boolean/replayed verdict rejection, fresh complete evidence and late-success tests in tests/sandbox/lifecycle.test.ts
+- [x] T119 [US3] Validate trusted task-attempt complete verdict evidence at src/orchestration/runner.ts and src/sandbox/gateway.ts; reject bare success booleans, partial/stale/replayed results and map blockers without resumable state
+- [x] T120 [P] [US3] Write RED mutable-tag swap, captured-dependency fingerprint mismatch and final content/path/mode change tests in tests/sandbox/identity.test.ts and tests/sandbox/verification.test.ts
+- [x] T121 [US3] Implement immutable image point-of-use validation and safe final checkout comparison in src/sandbox/preparation.ts, src/sandbox/snapshot.ts and src/sandbox/verification.ts; distinguish historical pass from current verified state
+- [ ] T122 [US3] Add the full stale-image developer-confirmation preparation and new-task reevaluation/snapshot journey in tests/sandbox/verification.e2e.test.ts with fixture grants and existing fake audit ports (harness added; real Docker journey unavailable locally)
 
 ## Phase 6: User Story 4 — Contain failure and clean up (P1)
 
@@ -77,12 +77,12 @@
 
 **Independent test**: Hostile checks remain bounded; all exits clean up or explicitly block/fence; restart never removes unrelated resources.
 
-- [ ] T123 [US4] Write RED capture/transfer/check cancellation, terminal cleanup-uncertain admission denial, matching reconciliation release and late-generation tests in tests/sandbox/cleanup.test.ts and tests/sandbox/lifecycle.test.ts
-- [ ] T124 [P] [US4] Write RED owned-resource atomic records, restart reconciliation, ownership conflicts, absent labels and unrelated resource preservation tests in tests/sandbox/reconciliation.test.ts
-- [ ] T125 [US4] Implement finite container/staging cleanup and private reconciliation in src/sandbox/cleanup.ts; block uncertain deletion, retain byte reservations/effect fencing and never use broad or global deletion
-- [ ] T126 [US4] Integrate watchdog/output/abort cleanup in src/sandbox/docker.ts and src/sandbox/verification.ts; extend terminal/cancel/settle slot release holds and trusted reconciliation in src/orchestration/runner.ts
-- [ ] T127 [US4] Prove root/network/secret/socket denial, CPU/memory/swap/PID/tmpfs/output/time bounds and no host fallback with real hostile fixtures in tests/sandbox/security.integration.test.ts
-- [ ] T128 [US4] Prove daemon-loss uncertainty, interrupted preparation/startup, slot fencing and safe restart recovery in tests/sandbox/recovery.integration.test.ts; require explicit unavailable-fixture outcomes
+- [x] T123 [US4] Write RED capture/transfer/check cancellation, terminal cleanup-uncertain admission denial, matching reconciliation release and late-generation tests in tests/sandbox/cleanup.test.ts and tests/sandbox/lifecycle.test.ts
+- [x] T124 [P] [US4] Write RED owned-resource atomic records, restart reconciliation, ownership conflicts, absent labels and unrelated resource preservation tests in tests/sandbox/reconciliation.test.ts
+- [x] T125 [US4] Implement finite container/staging cleanup and private reconciliation in src/sandbox/cleanup.ts; block uncertain deletion, retain byte reservations/effect fencing and never use broad or global deletion
+- [x] T126 [US4] Integrate watchdog/output/abort cleanup in src/sandbox/docker.ts and src/sandbox/verification.ts; extend terminal/cancel/settle slot release holds and trusted reconciliation in src/orchestration/runner.ts
+- [ ] T127 [US4] Prove root/network/secret/socket denial, CPU/memory/swap/PID/tmpfs/output/time bounds and no host fallback with real hostile fixtures in tests/sandbox/security.integration.test.ts (harness added; real Docker evidence unavailable locally)
+- [ ] T128 [US4] Prove daemon-loss uncertainty, interrupted preparation/startup, slot fencing and safe restart recovery in tests/sandbox/recovery.integration.test.ts; require explicit unavailable-fixture outcomes (harness added; real Docker evidence unavailable locally)
 
 ## Phase 7: Verification, Review and Context Synchronization
 

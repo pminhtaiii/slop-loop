@@ -15,6 +15,7 @@
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json --noEmit",
     "test": "vitest run",
+    "sandbox:test": "vitest run tests/sandbox",
     "native:build": "node-gyp rebuild --directory native/workspace",
     "sandbox:prepare": "tsx scripts/prepare-verification.ts",
     "build": "tsc",

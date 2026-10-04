@@ -158,3 +158,23 @@ Observed local Windows commands at that checkpoint:
 - **Review and phase gate**: The final full GitHub CodeRabbit review covers implementation commit `0b990c03718fa9ae9f1f33de230f9cf53ff38d71` and reports `No actionable comments were generated in the recent review.` Merge Risk is Minimal, and no architecture-level security concern was identified. T086 and Internal Phase 6 are complete. Project Phase 4 is complete for the available fixtures under the explicit T088 MVP exception; Linux bind-mount containment remains **UNVERIFIED / UNAVAILABLE** and T088 stays unchecked.
 
 This record binds CI and review evidence to the implementation commit above. A later documentation-only commit records that evidence; it does not change the tested implementation or create a circular requirement to rerun implementation CI.
+
+## Phase 5 sandbox integration harness evidence
+
+Observed on 2026-10-04 from the Windows development host:
+
+- `pnpm exec vitest run tests/sandbox`: 17 files passed, 63 tests passed, 6 integration cases skipped.
+- `pnpm sandbox:test`: focused sandbox command is available through `package.json`.
+- `pnpm exec vitest run tests/sandbox/verification.e2e.test.ts tests/sandbox/security.integration.test.ts tests/sandbox/recovery.integration.test.ts`: 3 files collected, 6 tests skipped with `UNAVAILABLE: Local Docker daemon is not accessible`.
+- `pnpm typecheck`: passed.
+- `pnpm lint`: passed.
+- `pnpm format:check`: passed.
+- `pnpm build`: passed.
+- `pnpm test`: failed on the Windows host with 51 failed, 255 passed, and 23 skipped (329 total). The failures are native/workspace boundary cases because the native workspace backend is `UNAVAILABLE` without the required MSVC/native build environment; this is not sandbox evidence and is not counted as a pass.
+
+The integration suites never replace Docker execution with mocks. When the local daemon or
+required image is unavailable, they report a typed unavailable skip. No skipped case is
+counted as Linux security, recovery, or end-to-end evidence. T122, T127 and T128 remain
+platform-gated until a real Linux Docker host executes them. T129 remains open until the
+full pinned regression matrix is green on supported hosts; T130 and T131 remain open until
+security convergence and final context/ADR synchronization can be based on that evidence.
