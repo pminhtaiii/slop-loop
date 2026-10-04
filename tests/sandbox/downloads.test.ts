@@ -80,6 +80,31 @@ snapshots:
   ]);
 });
 
+it.each(["", "/"])("strips pnpm peer suffixes with leading prefix '%s'", (prefix) => {
+  expect(
+    parseLockedArtifacts(`
+packages:
+  '${prefix}pkg@1.2.3(peer@4.0.0)':
+    resolution: {integrity: sha512-YWJj}
+  '${prefix}@scope/pkg@2.0.0-beta.1(@scope/peer@4.0.0(nested@5.0.0))(other@6.0.0)':
+    resolution: {integrity: sha512-ZGVm}
+`),
+  ).toEqual([
+    {
+      name: "pkg",
+      version: "1.2.3",
+      integrity: "sha512-YWJj",
+      tarball: "https://registry.npmjs.org/pkg/-/pkg-1.2.3.tgz",
+    },
+    {
+      name: "@scope/pkg",
+      version: "2.0.0-beta.1",
+      integrity: "sha512-ZGVm",
+      tarball: "https://registry.npmjs.org/@scope/pkg/-/pkg-2.0.0-beta.1.tgz",
+    },
+  ]);
+});
+
 it.each([
   "resolution: {tarball: 'https://evil.example/pkg.tgz', integrity: sha512-YWJj}",
   "resolution: {integrity: 123}",

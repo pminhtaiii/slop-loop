@@ -57,7 +57,7 @@ export function parseLockedArtifacts(lockfile: string): readonly LockedArtifact[
   });
   const artifacts: LockedArtifact[] = [];
   for (const [rawKey, entry] of packages) {
-    const key = rawKey.replace(/^\//u, "");
+    const key = rawKey.replace(/^\//u, "").replace(/\(.*\)$/u, "");
     const name = artifactName(key);
     if (!/^(?:@[a-z0-9._-]+\/)?[a-z0-9._-]+$/u.test(name))
       throw new TypeError("Locked package identity is invalid");
