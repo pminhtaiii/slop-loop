@@ -162,19 +162,19 @@ Q16 is accepted: hash copied bytes and relevant metadata into a snapshot manifes
 
 Q18 accepts exact locked artifacts, approved public registry destinations, redirect rejection outside those destinations, lockfile integrity-hash verification, and blocking unsupported sources or integrity failures; the plan selects enforcement pending integration proof. Q19 accepts writable `/workspace` (snapshot/build artifacts) and `/tmp` only, with read-only system/toolchain/root filesystem, no writable developer-checkout mount, and no automatic copyback. Q20 makes target-repository data and code untrusted and leaves authority with the runtime. Q21 accepts an application-owned recipe, no execution of target Dockerfiles, exact locked-identity script allowlisting for offline dependency lifecycle scripts, blocking unsupported scripts pending trusted config changes, and a separate trusted profile for repository-owned native builds; the allowlist enters the fingerprint. The plan selects enforcement pending integration proof. Q22 accepts the minimal developer-triggered Phase 5 preparation helper, later interactive-CLI exposure, and stale-image explanation/reporting with preparation gated on explicit developer confirmation; the model cannot trigger it. Q23 accepts ending a stale-image task in terminal `BLOCKED` without rollback, then using the developer-confirmed helper and admitting a new task that reevaluates the repository and captures a fresh snapshot. The blocked task does not resume and task authority is not restored; session-scoped file grants remain subject to the existing new-task admission contract. The image fingerprint must match dependency data captured for the verification snapshot in both the valid-image and post-preparation paths. The linked plan now specifies initial storage/output caps, finite retries, image/runtime/prerequisite checks, profile binding and snapshot limits; real fixture validation remains required. See ADR 0011.
 
-- [ ] Define `SandboxBackend`.
+- [x] Define `SandboxBackend`.
   Settled design: Linux-only verification; Windows checks stay in developer/CI workflows. Capture one workspace-validated working-tree snapshot per verdict, including approved edits and eligible untracked files, excluding `.git`, denied secrets, nested repositories, host `node_modules`, and stale/generated artifacts. Hash copied bytes and relevant metadata, rescan for observed capture races, and bind all check results to that manifest. Each check gets a fresh container clone of those bytes. See ADR 0011 for the non-atomic capture limitation.
-- [ ] Implement Docker backend.
+- [x] Implement Docker backend.
   Settled preparation design: developer-triggered restricted-network fetching with scripts disabled, followed by offline execution only for exact locked-identity scripts allowlisted by trusted config; public approved-registry sources only, with unsupported private-registry/Git/SSH/arbitrary-URL sources rejected. Target Dockerfiles never run. Fingerprint manifests, lockfile, approved package-manager configuration, script allowlist, Node/pnpm versions, Linux architecture, base-image digest, and application-owned recipe; source-only changes remain verifiable. Rebuild repository-owned native addons offline from the captured snapshot under a separate trusted profile in each check container using prepared prerequisites; dependency-owned native components may be prepared once. Missing prerequisites or fingerprint drift block execution, never automatic installation or image rebuilding. Q18/Q21 mechanisms and concrete output/storage bounds are selected in the plan; implementation and integration validation remain open.
-- [ ] Non-root container execution.
-- [ ] CPU limit.
-- [ ] Memory limit.
-- [ ] PID/process limit.
-- [ ] Wall-clock timeout.
-- [ ] Network disabled.
-- [ ] Copy repository state into an ephemeral sandbox workspace; never mount the developer checkout writable.
-- [ ] Cleanup on success/failure/cancellation.
-- [ ] Sandbox integration tests.
+- [x] Non-root container execution.
+- [x] CPU limit.
+- [x] Memory limit.
+- [x] PID/process limit.
+- [x] Wall-clock timeout.
+- [x] Network disabled.
+- [x] Copy repository state into an ephemeral sandbox workspace; never mount the developer checkout writable.
+- [x] Cleanup on success/failure/cancellation.
+- [x] Sandbox integration tests.
 
 Exit gate:
 

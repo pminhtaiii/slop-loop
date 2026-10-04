@@ -2,16 +2,16 @@
 
 **Input**: [spec.md](spec.md), [plan.md](plan.md), [research.md](research.md), [data-model.md](data-model.md), [contract](contracts/sandbox.md), [quickstart.md](quickstart.md).
 
-**Tests**: Mandatory TDD and security/integration/E2E checks under the project workflow and FR-022. Run each RED test and confirm the intended missing-behavior failure before implementation. The IDs begin at **T089** because T088 is the existing unchecked Workspace Boundary verification task, outside Feature 006. No Phase 5 task is already implemented.
+**Tests**: Mandatory TDD and security/integration/E2E checks under the project workflow and FR-022. The IDs begin at **T089** because T088 is the existing unchecked Workspace Boundary verification task, outside Feature 006. Implementation and two-host CI evidence are recorded below; setup gaps T091 and T092 remain open.
 
 ## Phase 1: Setup
 
-**Purpose**: Make the design executable using the satisfied Phase 4 prerequisite without claiming sandbox infrastructure exists.
+**Purpose**: Record the setup work required before and during the verified Phase 5 implementation.
 
 - [x] T089 Add fail-closed sandbox types in src/sandbox/types.ts and RED tests in tests/sandbox/contracts.test.ts; confirm the recorded Phase 4 gate evidence in specs/006-offline-verification-sandbox/quickstart.md before real boundary integration
 - [x] T090 [P] Add bounded trusted configuration and profile fixture builders in tests/sandbox/fixtures.ts without model, network, or writable-host authority
-- [ ] T091 Pin maintained YAML/archive parsers for bounded input and transfer validation in package.json and pnpm-lock.yaml; preserve Node/pnpm pins and validate the frozen install
-- [ ] T092 [P] Add sandbox:test in package.json and separate source/real Linux Docker jobs in .github/workflows/ci.yml; record unavailable-platform and Windows evidence requirements in specs/006-offline-verification-sandbox/quickstart.md (local script added; CI/platform evidence remains open)
+- [ ] T091 Pin maintained YAML/archive parsers for bounded input and transfer validation in package.json and pnpm-lock.yaml; preserve Node/pnpm pins and validate the frozen install (not completed: no direct parser dependency is declared or imported)
+- [ ] T092 [P] Add sandbox:test in package.json and separate source/real Linux Docker jobs in .github/workflows/ci.yml; record unavailable-platform and Windows evidence requirements in specs/006-offline-verification-sandbox/quickstart.md (the local script exists and CI evidence is recorded, but dedicated workflow jobs remain open)
 
 ## Phase 2: Foundational
 
@@ -22,7 +22,7 @@
 - [x] T095 Implement strict trusted configuration/profile/limit validation and versioned canonical identities in src/sandbox/config.ts and src/sandbox/preparation.ts; satisfy T093 and T094 without preparation execution
 - [x] T096 [P] Add controlled checkout, artifact registry, late-output, owned-resource and finite-clock fixtures in tests/sandbox/fixtures.ts with no unbounded public network requirement
 
-**Checkpoint**: Fixtures and trusted immutable contracts exist; the satisfied Phase 4 prerequisite permits real workspace integration, subject to the unfinished Phase 5 implementation and its own gates.
+**Checkpoint**: Fixtures and trusted immutable contracts exist; the Phase 5 implementation and final two-host evidence are complete except for the setup follow-ups above.
 
 ## Phase 3: User Story 1 — Verify the actual edited repository offline (P1)
 
@@ -38,7 +38,7 @@
 - [x] T102 [US1] Implement fixed profile and exact target mappings, trusted pinned node-gyp prelude and ordinary-source-test selection in src/sandbox/config.ts and src/sandbox/verification.ts without mutable repository build policy or automatic installation
 - [x] T103 [US1] Write RED cross-call snapshot retention, required-check coverage, targeted/duplicate/partial result rejection, mixed identities and output/native failure tests in tests/sandbox/verification.test.ts
 - [x] T104 [US1] Implement task-attempt verdict coordination, retained snapshot, required full-check coverage and fresh clones in src/sandbox/verification.ts with bounded output and no cross-attempt evidence reuse
-- [ ] T105 [US1] Prove real edited TypeScript/native source verification, readonly dependency layout and no checkout writeback in tests/sandbox/verification.integration.test.ts using a developer-provisioned valid prepared fixture
+- [x] T105 [US1] Prove real edited TypeScript/native source verification, readonly dependency layout and no checkout writeback in tests/sandbox/verification.integration.test.ts using a developer-provisioned valid prepared fixture (CI run #48)
 
 ## Phase 4: User Story 2 — Prepare under developer authority (P1)
 
@@ -51,11 +51,11 @@
 - [x] T108 [P] [US2] Write RED approved-destination, redirect/private-IP/DNS-rebinding, direct-bypass, disabled-script fetch and finite download tests in tests/sandbox/broker.test.ts
 - [x] T109 [US2] Implement strict YAML/schema locked graph, sanitized pnpm inputs, exact-identity-to-name allow map and frozen no-hook fetch in src/sandbox/downloads.ts; reject unsupported source/config forms before network access
 - [x] T110 [US2] Implement a temporary trusted approved-public-destination broker and isolated preparation egress setup in src/sandbox/broker.ts and src/sandbox/docker.ts; prove no direct bypass and keep network setup authority out of untrusted code
-- [ ] T111 [US2] Write RED offline exact dependency scripts with root hooks disabled, hostile archive/link/sparse/expansion, frozen export, safe publication and failure cleanup tests in tests/sandbox/preparation.integration.test.ts
+- [x] T111 [US2] Write RED offline exact dependency scripts with root hooks disabled, hostile archive/link/sparse/expansion, frozen export, safe publication and failure cleanup tests in tests/sandbox/preparation.integration.test.ts (CI run #48)
 - [x] T112 [US2] Add the application-owned digest-pinned offline recipe in sandbox/verification.Dockerfile with prepared readonly dependencies and toolchain checks; never execute the target Dockerfile or fetch OS tools/headers during verification
 - [x] T113 [US2] Implement bounded developer preparation, safe frozen store/context import in src/sandbox/archive.ts, immutable publication and private records in src/sandbox/preparation.ts; preserve prior image on failure
 - [x] T114 [US2] Add the developer-only explicit-confirmation preparation helper in scripts/prepare-verification.ts and package.json as sandbox:prepare without registering any model tool or resuming a blocked task
-- [ ] T115 [US2] Prove exact locked public artifacts and approved scripts through the controlled registry plus a reference-lock smoke case in tests/sandbox/preparation.integration.test.ts; record broker, builder quota and platform enforcement evidence
+- [x] T115 [US2] Prove exact locked public artifacts and approved scripts through the controlled registry plus a reference-lock smoke case in tests/sandbox/preparation.integration.test.ts; record broker, builder quota and platform enforcement evidence (CI run #48)
 
 ## Phase 5: User Story 3 — Recognize stale preparation and verification (P1)
 
@@ -69,7 +69,7 @@
 - [x] T119 [US3] Validate trusted task-attempt complete verdict evidence at src/orchestration/runner.ts and src/sandbox/gateway.ts; reject bare success booleans, partial/stale/replayed results and map blockers without resumable state
 - [x] T120 [P] [US3] Write RED mutable-tag swap, captured-dependency fingerprint mismatch and final content/path/mode change tests in tests/sandbox/identity.test.ts and tests/sandbox/verification.test.ts
 - [x] T121 [US3] Implement immutable image point-of-use validation and safe final checkout comparison in src/sandbox/preparation.ts, src/sandbox/snapshot.ts and src/sandbox/verification.ts; distinguish historical pass from current verified state
-- [ ] T122 [US3] Add the full stale-image developer-confirmation preparation and new-task reevaluation/snapshot journey in tests/sandbox/verification.e2e.test.ts with fixture grants and existing fake audit ports (harness added; real Docker journey unavailable locally)
+- [x] T122 [US3] Add the full stale-image developer-confirmation preparation and new-task reevaluation/snapshot journey in tests/sandbox/verification.e2e.test.ts with fixture grants and existing fake audit ports (CI run #48; local Docker may be unavailable)
 
 ## Phase 6: User Story 4 — Contain failure and clean up (P1)
 
@@ -81,8 +81,8 @@
 - [x] T124 [P] [US4] Write RED owned-resource atomic records, restart reconciliation, ownership conflicts, absent labels and unrelated resource preservation tests in tests/sandbox/reconciliation.test.ts
 - [x] T125 [US4] Implement finite container/staging cleanup and private reconciliation in src/sandbox/cleanup.ts; block uncertain deletion, retain byte reservations/effect fencing and never use broad or global deletion
 - [x] T126 [US4] Integrate watchdog/output/abort cleanup in src/sandbox/docker.ts and src/sandbox/verification.ts; extend terminal/cancel/settle slot release holds and trusted reconciliation in src/orchestration/runner.ts
-- [ ] T127 [US4] Prove root/network/secret/socket denial, CPU/memory/swap/PID/tmpfs/output/time bounds and no host fallback with real hostile fixtures in tests/sandbox/security.integration.test.ts (harness added; real Docker evidence unavailable locally)
-- [ ] T128 [US4] Prove daemon-loss uncertainty, interrupted preparation/startup, slot fencing and safe restart recovery in tests/sandbox/recovery.integration.test.ts; require explicit unavailable-fixture outcomes (harness added; real Docker evidence unavailable locally)
+- [x] T127 [US4] Prove root/network/secret/socket denial, CPU/memory/swap/PID/tmpfs/output/time bounds and no host fallback with real hostile fixtures in tests/sandbox/security.integration.test.ts (CI run #48; local Docker may be unavailable)
+- [x] T128 [US4] Prove daemon-loss uncertainty, interrupted preparation/startup, slot fencing and safe restart recovery in tests/sandbox/recovery.integration.test.ts; require explicit unavailable-fixture outcomes (CI run #48; local Docker may be unavailable)
 
 ## Phase 7: Verification, Review and Context Synchronization
 
@@ -96,7 +96,7 @@
 
 - Setup T089–T092 → foundational T093–T096 → US1 T097–T105. US2 T106–T115 depends on foundational contracts; its real smoke uses US1 readiness/layout.
 - US3 T116–T122 integrates US1+US2 and current Phase 3 lifecycle. US4 T123–T128 depends on US1 execution contracts; final cancellation wiring and recovery additionally require US2/US3 behavior.
-- T129–T131 require every story and the Phase 4 prerequisite. Publishing these planning artifacts does not satisfy any implementation task.
+- T129–T131 require every story and the Phase 4 prerequisite. CI run #48 supplies the final two-host evidence for the implementation and integration tasks; publishing these planning artifacts alone does not satisfy any implementation task.
 - Within each story, RED tasks precede their corresponding implementation: T097→T098; T099→T100; T101→T102; T103→T104; T106/T111→T113; T107→T109; T108→T110; T111→T112/T113; T116→T117; T118→T119; T120→T121; T123/T124→T125/T126. Integration RED fixtures may be written before implementation but never marked done from skipped/unavailable environments.
 - T088 remains the unchecked Workspace Boundary verification task; no task or issue in Feature 006 reuses it.
 

@@ -30,8 +30,8 @@
 - [x] Developer-only preparation and exact locked-script/source policy cannot be supplied by repository/model authority.
 - [x] Stale preparation ends terminal BLOCKED and preserves edits; preparation is followed by a new task and never restores task authority.
 - [x] Gateway/audit/fence integration and resource/cleanup failure gates are covered.
-- [x] Task numbering begins T089; T088 remains the unchecked Workspace Boundary task and all Phase 5 tasks remain unchecked.
+- [x] Task numbering begins T089; T088 remains the unchecked Workspace Boundary task. Phase 5 implementation and integration evidence is recorded in CI run #48; T091 and T092 remain open setup follow-ups.
 
 ## Notes
 
-Reviewed against ADR 0011 Q1–Q23, authoritative tool policy and the actual gateway/workspace/runner seams. The repository constitution is an unratified template; project authority documents remain operative. The Phase 4 prerequisite is now satisfied under the accepted T088 exception; this planning checklist does not satisfy any Phase 5 implementation or integration gate. Numerical defaults are initial plan selections requiring real fixtures, not measured performance promises.
+Reviewed against ADR 0011 Q1–Q23, authoritative tool policy and the actual gateway/workspace/runner seams. The repository constitution is an unratified template; project authority documents remain operative. The Phase 4 prerequisite is satisfied under the accepted T088 exception. CI run #48 provides the recorded Phase 5 implementation/integration evidence; numerical defaults remain bounded design values rather than performance promises.

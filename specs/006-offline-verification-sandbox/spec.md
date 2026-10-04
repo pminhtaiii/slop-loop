@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-02
 
-**Status**: Design specified; implementation not started.
+**Status**: Implemented and verified on supported CI hosts; follow-up setup gaps T091 and T092 remain open.
 
 **Input**: Phase 5 grilling decisions Q1–Q23 in [ADR 0011](../../docs/adr/0011-disposable-offline-verification-containers.md). Repository content supplies data and code; trusted application state supplies authority and execution policy.
 

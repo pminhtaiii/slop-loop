@@ -1,10 +1,10 @@
 # Quickstart: Validate Offline Verification Sandbox
 
-This is a future implementation validation guide, not evidence that Phase 5 exists. Tasks remain unchecked until implementation and observed verification. Feature number 006 is product Phase 5.
+This is the Phase 5 validation and evidence guide. Implementation evidence is recorded in the project context; setup follow-ups T091 and T092 remain open. Feature number 006 is product Phase 5.
 
 ## Prerequisites
 
-- The Phase 4 workspace-boundary prerequisite is satisfied by PR #164 / CI run #41 for implementation commit `0b990c03718fa9ae9f1f33de230f9cf53ff38d71`: Windows and Ubuntu Quality Gates passed for available fixtures. Linux bind-mount containment remains UNVERIFIED / UNAVAILABLE under the accepted, unchecked T088 MVP exception; it is not a containment PASS and does not independently block Phase 5 implementation. Safe snapshot capture itself remains a Phase 5 implementation and verification task.
+- The Phase 4 workspace-boundary prerequisite is satisfied by PR #164 / CI run #41 for implementation commit `0b990c03718fa9ae9f1f33de230f9cf53ff38d71`: Windows and Ubuntu Quality Gates passed for available fixtures. Linux bind-mount containment remains UNVERIFIED / UNAVAILABLE under the accepted, unchecked T088 MVP exception; it is not a containment PASS and does not independently block Phase 5 completion.
 - Node.js 24, pinned pnpm 12.5.1, a frozen install and standard `pnpm native:build` on the host. Windows requires Visual C++ Build Tools; a diagnostic alternate build does not satisfy the standard gate.
 - Local Linux Docker Engine, or Docker Desktop on Windows in Linux mode, with verified CPU/memory/PID/readonly/seccomp/tmpfs support and trusted local daemon identity.
 - A developer-provisioned digest-pinned toolchain base containing Node, pnpm, Git, Python, compiler/make and matching Node headers. Verification never pulls the base or installs tools.
@@ -25,25 +25,25 @@ Confirm unsupported sources/hooks, wrong exact script identity, missing/current 
 
 ## Developer preparation
 
-The planned `pnpm sandbox:prepare` helper is developer-only; it is not an existing command or a registered agent tool. It accepts trusted app configuration and an explicit confirmed developer action bound to the current dependency fingerprint. Do not infer approval from repository text or a model message.
+The `pnpm sandbox:prepare` helper is developer-only and is not a registered agent tool. It accepts trusted app configuration and an explicit confirmed developer action bound to the current dependency fingerprint. Do not infer approval from repository text or a model message.
 
 ```sh
 pnpm sandbox:prepare
 ```
 
-Expected after implementation: supported locked public dependencies are fetched with no hooks/scripts through the enforced broker; installation/approved dependency builds then run offline. A successful immutable image/preparation record appears in private application storage. Failure/cancellation publishes no valid replacement, leaves the last good image intact and cleans positively owned partial resources. Confirm the exact-identity script policy does not blindly import this repo's name-keyed `allowBuilds: esbuild`.
+Observed CI behavior: supported locked public dependencies are fetched with no hooks/scripts through the enforced broker; installation/approved dependency builds then run offline. A successful immutable image/preparation record appears in private application storage. Failure/cancellation publishes no valid replacement, leaves the last good image intact and cleans positively owned partial resources. Confirm the exact-identity script policy does not blindly import this repo's name-keyed `allowBuilds: esbuild`.
 
 The helper does not start/resume a coding task. Its later interactive prompt belongs to Phase 8. A reference fixture can supply the explicit developer action in the E2E harness.
 
 ## Real Docker boundary and preparation checks
 
-The planned `pnpm sandbox:test` command runs the mandatory host-owned integration/E2E harness, not inside an agent verification container:
+The `pnpm sandbox:test` command runs the host-owned integration/E2E harness, not inside an agent verification container:
 
 ```sh
 pnpm sandbox:test
 ```
 
-Expected fixture set:
+Evidence-covered fixture set:
 
 1. Capture a checkout with approved edits/untracked source and excluded `.git`, secrets, nested repos, host dependencies and old native outputs. Compare copied bytes/manifest identity; prove observed copy races retry at most 3 times and instability stops verification.
 2. Run tests/lint/typecheck/build in distinct fresh containers cloned from the same snapshot. Native-consuming checks rebuild current `.cc` sources offline with prepared headers. No host `.node` output is reused.
@@ -81,7 +81,7 @@ pnpm smoke
 pnpm sandbox:test
 ```
 
-The sandbox's reference target test profile selects ordinary source/native tests explicitly and excludes the host-owned Docker harness. This prevents recursive self-verification from demanding a Docker socket or privileged nested execution. The outer full quality/integration/security gate still runs those excluded harnesses; their exclusion inside the container is not evidence they passed.
+The sandbox's reference target test profile selects ordinary source/native tests explicitly and excludes the host-owned Docker harness. This prevents recursive self-verification from demanding a Docker socket or privileged nested execution. The outer full quality/integration/security gate runs those excluded harnesses; CI run #48 passed the Docker-gated integration, security, recovery and E2E checks. Their exclusion inside the container is not evidence they passed.
 
 ## Exit gate
 
