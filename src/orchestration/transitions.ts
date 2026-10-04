@@ -73,6 +73,10 @@ const outcomeSchema = z.union([
       "POLICY_DENIED",
       "AUDIT_UNAVAILABLE",
       "AUDIT_INCOMPLETE",
+      "PREPARATION_REQUIRED",
+      "IMAGE_STALE",
+      "RUNTIME_UNAVAILABLE",
+      "CLEANUP_UNCONFIRMED",
     ]),
   }),
   z.strictObject({

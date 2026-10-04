@@ -28,6 +28,10 @@ export type TaskEvent =
   | { readonly kind: "EXECUTION_FAILURE" }
   | { readonly kind: "AUDIT_UNAVAILABLE" }
   | { readonly kind: "AUDIT_INCOMPLETE" }
+  | { readonly kind: "PREPARATION_REQUIRED" }
+  | { readonly kind: "IMAGE_STALE" }
+  | { readonly kind: "RUNTIME_UNAVAILABLE" }
+  | { readonly kind: "CLEANUP_UNCONFIRMED" }
   | { readonly kind: "TOOL_CONTRACT_FAILURE" }
   | { readonly kind: "POLICY_DENIAL"; readonly authorizedRouteRemains: boolean }
   | { readonly kind: "TRUSTED_TRANSITION"; readonly target: TaskStateType }
@@ -164,7 +168,14 @@ function processTaskEvent(task: TaskContext, event: TaskEvent, now: number): Tas
     };
   }
 
-  if (event.kind === "AUDIT_UNAVAILABLE" || event.kind === "AUDIT_INCOMPLETE") {
+  if (
+    event.kind === "AUDIT_UNAVAILABLE" ||
+    event.kind === "AUDIT_INCOMPLETE" ||
+    event.kind === "PREPARATION_REQUIRED" ||
+    event.kind === "IMAGE_STALE" ||
+    event.kind === "RUNTIME_UNAVAILABLE" ||
+    event.kind === "CLEANUP_UNCONFIRMED"
+  ) {
     return {
       status: "ACCEPTED",
       task: finishTask(task, { state: TaskState.BLOCKED, reason: event.kind }),

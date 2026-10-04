@@ -15,12 +15,15 @@
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json --noEmit",
     "test": "vitest run",
+    "sandbox:test": "vitest run tests/sandbox",
     "native:build": "node-gyp rebuild --directory native/workspace",
+    "sandbox:prepare": "tsx scripts/prepare-verification.ts",
     "build": "tsc",
     "smoke": "node dist/index.js"
   },
   "dependencies": {
     "pino": "^10.3.1",
+    "yaml": "2.9.1",
     "zod": "^4.6.5"
   },
   "devDependencies": {
@@ -29,6 +32,7 @@
     "eslint": "^9.20.0",
     "node-gyp": "12.4.0",
     "prettier": "^3.5.2",
+    "tsx": "^4.23.15",
     "typescript": "^5.8.2",
     "typescript-eslint": "^8.24.1",
     "vitest": "^3.0.7"

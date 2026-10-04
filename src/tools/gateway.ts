@@ -92,7 +92,13 @@ export type ToolGatewayResult =
   | {
       readonly kind: "BLOCKED";
       readonly invocationId: string;
-      readonly reason: "AUDIT_UNAVAILABLE" | "AUDIT_INCOMPLETE";
+      readonly reason:
+        | "AUDIT_UNAVAILABLE"
+        | "AUDIT_INCOMPLETE"
+        | "PREPARATION_REQUIRED"
+        | "IMAGE_STALE"
+        | "RUNTIME_UNAVAILABLE"
+        | "CLEANUP_UNCONFIRMED";
       readonly effect: "NONE" | "COMPLETED" | "POSSIBLE";
     }
   | {

@@ -10,3 +10,4 @@ specs/
 docs/
 coding-agent-context/
 *.md
+sandbox/verification.Dockerfile

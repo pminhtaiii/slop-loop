@@ -1,0 +1,87 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  captureSnapshot,
+  captureSnapshotWithRetries,
+  type SnapshotSource,
+} from "../../src/sandbox/snapshot.js";
+
+const limits = {
+  exclusionPolicyId: "default",
+  maxEntries: 2,
+  maxBytes: 10,
+  maxFileBytes: 8,
+};
+
+describe("safe snapshot capture", () => {
+  it("hashes copied bytes and exposes defensive content copies", async () => {
+    const source: SnapshotSource = {
+      workspaceId: "workspace",
+      entries: () =>
+        Promise.resolve([{ path: "index.ts", bytes: Buffer.from("export {}"), mode: 0o755 }]),
+    };
+
+    const snapshot = await captureSnapshot(source, { ...limits, maxBytes: 32, maxFileBytes: 32 });
+    const entry = snapshot.entries[0];
+    expect(entry?.hash).toBe("f4c5cf9bb78e85f15dc27180260637cf24b2a24bc39e0788783a3accc4dde614");
+    if (entry === undefined) return;
+    const content = entry.content;
+    content[0] = 0;
+    expect(entry.content[0]).not.toBe(0);
+  });
+
+  it("rejects unsafe links, special files, excluded paths, and bounds violations", async () => {
+    for (const path of [".git/config", "node_modules/pkg/index.js", "../outside", ".env"]) {
+      await expect(
+        captureSnapshot(
+          {
+            workspaceId: "workspace",
+            entries: () => Promise.resolve([{ path, bytes: Buffer.from("x"), mode: 0o644 }]),
+          },
+          limits,
+        ),
+      ).rejects.toThrow();
+    }
+    await expect(
+      captureSnapshot(
+        {
+          workspaceId: "workspace",
+          entries: () =>
+            Promise.resolve([{ path: "a", bytes: Buffer.from("123456789"), mode: 0o644 }]),
+        },
+        limits,
+      ),
+    ).rejects.toThrow();
+    for (const kind of ["symlink", "fifo", "socket"] as const) {
+      await expect(
+        captureSnapshot(
+          {
+            workspaceId: "workspace",
+            entries: () =>
+              Promise.resolve([{ path: "entry", bytes: Buffer.from("x"), mode: 0o644, kind }]),
+          },
+          limits,
+        ),
+      ).rejects.toThrow();
+    }
+  });
+
+  it("retries observed capture races and fails closed after three unstable attempts", async () => {
+    let calls = 0;
+    const source: SnapshotSource = {
+      workspaceId: "workspace",
+      entries: () => {
+        calls += 1;
+        return Promise.resolve([
+          {
+            path: "index.ts",
+            bytes: Buffer.from(calls % 2 === 0 ? "stable" : "changed"),
+            mode: 0o644,
+          },
+        ]);
+      },
+    };
+    await expect(captureSnapshotWithRetries(source, { ...limits, maxBytes: 32 })).rejects.toThrow();
+    expect(calls).toBe(6);
+  });
+});

@@ -48,6 +48,45 @@ describe("PolicyEngine", () => {
     expect(decision).toEqual({ kind: "ALLOW", invocationId: "invocation-1" });
   });
 
+  it("maps legacy external readiness facts to a typed blocker", () => {
+    const validated = validateToolCall({ name: "run_tests", arguments: { profile: "unit" } });
+    expect(validated.ok).toBe(true);
+    if (!validated.ok) return;
+
+    const ceiling = createCeiling({
+      taskId: "policy-legacy-readiness",
+      sessionId: "session-1",
+      workspaceId: "workspace-1",
+      mode: "Edit",
+      eligibleTools: ["run_tests"],
+    });
+
+    expect(
+      PolicyEngine.evaluate(
+        validated.call,
+        createPolicyDecisionContext({
+          invocationId: "invocation-legacy-readiness",
+          taskId: "policy-legacy-readiness",
+          sessionId: "session-1",
+          workspaceId: "workspace-1",
+          taskState: "VERIFYING",
+          ceiling,
+          execution: {
+            approvedProfiles: ["unit"],
+            executorReady: false,
+            readiness: "EXTERNAL_BLOCKER",
+            blockerReason: "IMAGE_STALE",
+          },
+        }),
+      ),
+    ).toEqual({
+      kind: "BLOCKED",
+      invocationId: "invocation-legacy-readiness",
+      reason: "IMAGE_STALE",
+      effect: "NONE",
+    });
+  });
+
   it("denies a call before the lifecycle state admits its metadata-defined effect", () => {
     const validated = validateToolCall({ name: "read_file", arguments: { path: "src/index.ts" } });
     expect(validated.ok).toBe(true);
