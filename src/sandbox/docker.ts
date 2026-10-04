@@ -1,10 +1,40 @@
-import type { PreparedImageRecord, SandboxBackend, SandboxLimits, VerificationEvidence } from "./types.js";
+import type {
+  PreparedImageRecord,
+  SandboxBackend,
+  SandboxLimits,
+  VerificationEvidence,
+} from "./types.js";
+import { CleanupExecutionGate } from "./cleanup.js";
 
 export interface DockerPort {
-  readiness(): { readonly networkDisabled: boolean; readonly limitsEnforced: boolean; readonly readOnlyMounts: boolean };
-  inspectImage(imageId: string): { readonly imageId: string; readonly fingerprint: string; readonly architecture: string };
-  copySnapshot?(entries: readonly { readonly path: string; readonly content: Buffer; readonly mode: number }[]): string;
-  run(argv: readonly string[], limits: SandboxLimits): { readonly id: string; readonly output: string; readonly exitCode: number; readonly elapsedSeconds?: number };
+  readiness(): {
+    readonly networkDisabled: boolean;
+    readonly limitsEnforced: boolean;
+    readonly readOnlyMounts: boolean;
+  };
+  inspectImage(imageId: string): {
+    readonly imageId: string;
+    readonly fingerprint: string;
+    readonly architecture: string;
+  };
+  copySnapshot?(
+    entries: readonly { readonly path: string; readonly content: Buffer; readonly mode: number }[],
+  ): string;
+  registerResource?(): string;
+  run(
+    argv: readonly string[],
+    limits: SandboxLimits,
+    runtime: {
+      readonly signal: AbortSignal;
+      readonly deadlineAt: number;
+      readonly resourceId?: string;
+    },
+  ): {
+    readonly id: string;
+    readonly output: string;
+    readonly exitCode: number;
+    readonly elapsedSeconds?: number;
+  };
   stopAndRemove?(id: string): "CONFIRMED" | "UNCERTAIN";
 }
 
@@ -20,6 +50,8 @@ export function validateFixedArgv(argv: readonly string[]): void {
 }
 
 export class DockerSandboxBackend implements SandboxBackend {
+  private readonly cleanupGate = new CleanupExecutionGate();
+
   constructor(private readonly docker: DockerPort) {}
   readiness(image: PreparedImageRecord, limits: SandboxLimits) {
     const runtime = this.docker.readiness();
@@ -29,17 +61,37 @@ export class DockerSandboxBackend implements SandboxBackend {
       !image.fingerprint ||
       image.architecture !== "linux-x64" ||
       limits.cpus <= 0 ||
-      limits.maxOutputBytes <= 0
-      || !runtime.networkDisabled
-      || !runtime.limitsEnforced
-      || !runtime.readOnlyMounts
+      limits.maxOutputBytes <= 0 ||
+      !runtime.networkDisabled ||
+      !runtime.limitsEnforced ||
+      !runtime.readOnlyMounts ||
+      !this.cleanupGate.canStart()
     )
       return Promise.resolve("BLOCKED" as const);
     return Promise.resolve("READY" as const);
   }
-  executeCheck(input: { readonly snapshot: import("./types.js").VerificationSnapshot; readonly image: PreparedImageRecord; readonly target: { readonly check: string; readonly argv: readonly string[] }; readonly limits: SandboxLimits }): Promise<VerificationEvidence> {
+  executeCheck(input: {
+    readonly snapshot: import("./types.js").VerificationSnapshot;
+    readonly image: PreparedImageRecord;
+    readonly target: {
+      readonly check: string;
+      readonly argv: readonly string[];
+      readonly profileSetId: string;
+      readonly targetId: string;
+      readonly taskId: string;
+      readonly attemptId: string;
+      readonly nativeIdentity: string;
+    };
+    readonly limits: SandboxLimits;
+    readonly runtime: { readonly signal: AbortSignal; readonly deadlineAt: number };
+  }): Promise<VerificationEvidence> {
     const runtime = this.docker.readiness();
-    if (!runtime.networkDisabled || !runtime.limitsEnforced || !runtime.readOnlyMounts)
+    if (
+      !runtime.networkDisabled ||
+      !runtime.limitsEnforced ||
+      !runtime.readOnlyMounts ||
+      !this.cleanupGate.canStart()
+    )
       return Promise.reject(new Error("Sandbox runtime not ready"));
     validateFixedArgv(input.target.argv);
     const allowed = new Map([
@@ -64,21 +116,53 @@ export class DockerSandboxBackend implements SandboxBackend {
       inspected.architecture !== input.image.architecture
     )
       throw new Error("Prepared image identity mismatch");
-    if (this.docker.copySnapshot === undefined) throw new Error("Snapshot materialization unavailable");
+    if (this.docker.copySnapshot === undefined)
+      throw new Error("Snapshot materialization unavailable");
     const mount = this.docker.copySnapshot(input.snapshot.entries);
     if (!/^snapshot:[A-Za-z0-9._-]+$/.test(mount)) throw new Error("Untrusted snapshot mount");
+    if (input.runtime.signal.aborted || input.runtime.deadlineAt <= Date.now())
+      return Promise.reject(new Error("Sandbox deadline expired"));
+    const resourceId = this.docker.registerResource?.();
     let result: ReturnType<DockerPort["run"]> | undefined;
     let cleanup: "CONFIRMED" | "UNCERTAIN" = "UNCERTAIN";
+    this.cleanupGate.hold();
     try {
-      result = this.docker.run([
-        "run", "--rm", "--network=none", "--read-only", "--cap-drop=ALL",
-        "--security-opt=no-new-privileges", "--cpus", String(input.limits.cpus),
-        "--memory", String(input.limits.memoryBytes), "--pids-limit", String(input.limits.maxPids),
-        "--mount", `type=bind,src=${mount.slice("snapshot:".length)},dst=/snapshot,readonly`,
-        input.image.imageId, ...input.target.argv,
-      ], input.limits);
+      result = this.docker.run(
+        [
+          "run",
+          "--rm",
+          "--user",
+          "1000:1000",
+          "--network=none",
+          "--read-only",
+          "--cap-drop=ALL",
+          "--security-opt=no-new-privileges",
+          "--label",
+          "slop-loop.owner=verification",
+          "--label",
+          `slop-loop.taskId=${input.target.taskId}`,
+          ...(resourceId === undefined ? [] : ["--label", `slop-loop.containerId=${resourceId}`]),
+          "--tmpfs",
+          `/tmp:rw,nosuid,nodev,noexec,size=268435456`,
+          "--tmpfs",
+          `/workspace:rw,nosuid,nodev,size=2147483648`,
+          "--cpus",
+          String(input.limits.cpus),
+          "--memory",
+          String(input.limits.memoryBytes),
+          "--pids-limit",
+          String(input.limits.maxPids),
+          "--mount",
+          `type=bind,src=${mount.slice("snapshot:".length)},dst=/snapshot,readonly`,
+          input.image.imageId,
+          ...input.target.argv,
+        ],
+        input.limits,
+        { ...input.runtime, resourceId },
+      );
     } finally {
       if (result !== undefined) cleanup = this.docker.stopAndRemove?.(result.id) ?? "UNCERTAIN";
+      this.cleanupGate.settle({ status: cleanup, attempts: 1 });
     }
     if (result === undefined) throw new Error("Sandbox execution failed");
     const output = result.output.slice(0, input.limits.maxOutputBytes);
@@ -89,17 +173,20 @@ export class DockerSandboxBackend implements SandboxBackend {
       status:
         result.exitCode === 0 &&
         result.output.length <= input.limits.maxOutputBytes &&
-        (result.elapsedSeconds === undefined || result.elapsedSeconds <= input.limits.timeoutSeconds)
+        !input.runtime.signal.aborted &&
+        input.runtime.deadlineAt > Date.now() &&
+        (result.elapsedSeconds === undefined ||
+          result.elapsedSeconds <= input.limits.timeoutSeconds)
           ? "PASS"
           : "FAIL",
       cleanup,
       output,
       preparationFingerprint: input.image.fingerprint,
-      profileSetId: "profiles-v1",
-      targetId: `${input.target.check}:${input.target.argv.join(" ")}`,
-      taskId: "sandbox-task",
-      attemptId: "sandbox-attempt",
-      nativeIdentity: "native-v1",
+      targetId: input.target.targetId,
+      taskId: input.target.taskId,
+      attemptId: input.target.attemptId,
+      nativeIdentity: input.target.nativeIdentity,
+      profileSetId: input.target.profileSetId,
     });
   }
 }

@@ -63,6 +63,7 @@ export interface SandboxBackend {
     readonly snapshot: VerificationSnapshot;
     readonly image: PreparedImageRecord;
     readonly target: { readonly check: string; readonly argv: readonly string[] };
+    readonly runtime: { readonly signal: AbortSignal; readonly deadlineAt: number };
     readonly limits: SandboxLimits;
   }): Promise<VerificationEvidence>;
 }

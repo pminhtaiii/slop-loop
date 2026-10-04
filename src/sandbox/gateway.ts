@@ -7,7 +7,8 @@ export type ReadinessAssessment =
   | { readonly status: "READY" }
   | {
       readonly status: "EXTERNAL_BLOCKER";
-      readonly reason: "PREPARATION_REQUIRED" | "IMAGE_STALE" | "RUNTIME_UNAVAILABLE" | "CLEANUP_UNCONFIRMED";
+      readonly reason:
+        "PREPARATION_REQUIRED" | "IMAGE_STALE" | "RUNTIME_UNAVAILABLE" | "CLEANUP_UNCONFIRMED";
     };
 
 export interface SandboxExecutionFacts {
@@ -25,7 +26,15 @@ export class SandboxGateway {
     const status = await this.backend.readiness(image, this.limits);
     return status === "READY"
       ? { status: "READY" }
-      : { status: "EXTERNAL_BLOCKER", reason: image.status === "STALE" ? "IMAGE_STALE" : "RUNTIME_UNAVAILABLE" };
+      : {
+          status: "EXTERNAL_BLOCKER",
+          reason:
+            image.status === "STALE"
+              ? "IMAGE_STALE"
+              : image.status === "MISSING"
+                ? "PREPARATION_REQUIRED"
+                : "RUNTIME_UNAVAILABLE",
+        };
   }
 
   async factsFor(
@@ -44,6 +53,7 @@ export class SandboxGateway {
     return Object.freeze({
       approvedProfiles: Object.freeze(profile === "" ? [] : [profile]),
       executorReady: readiness.status === "READY",
+      readiness,
     });
   }
 }

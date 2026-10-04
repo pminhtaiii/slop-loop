@@ -14,9 +14,21 @@ const snapshot: VerificationSnapshot = {
   formatVersion: 1,
   workspaceId: "workspace",
   exclusionPolicyId: "default",
-  entries: [{ path: "index.ts", bytes: 8, mode: 0o644, hash: "hash", content: Buffer.from("export {}") }],
+  entries: [
+    { path: "index.ts", bytes: 8, mode: 0o644, hash: "hash", content: Buffer.from("export {}") },
+  ],
   totalBytes: 8,
   snapshotId: "snapshot-id",
+};
+const runtime = { signal: new AbortController().signal, deadlineAt: Date.now() + 30_000 };
+const target = {
+  check: "tests",
+  argv: ["pnpm", "test"],
+  profileSetId: "profiles-v1",
+  targetId: "tests:ordinary",
+  taskId: "task",
+  attemptId: "attempt",
+  nativeIdentity: "native-v1",
 };
 
 describe("sandbox core contracts", () => {
@@ -61,8 +73,12 @@ describe("sandbox core contracts", () => {
       imageId: "sha256:" + "f".repeat(64),
       status: "PASS",
       cleanup: "CONFIRMED",
-      preparationFingerprint: "prep", profileSetId: "profiles-v1", targetId: "tests:ordinary",
-      taskId: "task", attemptId: "attempt", nativeIdentity: "native-v1",
+      preparationFingerprint: "prep",
+      profileSetId: "profiles-v1",
+      targetId: "tests:ordinary",
+      taskId: "task",
+      attemptId: "attempt",
+      nativeIdentity: "native-v1",
     });
     coordinator.record({
       check: "lint",
@@ -70,8 +86,12 @@ describe("sandbox core contracts", () => {
       imageId: "sha256:" + "f".repeat(64),
       status: "PASS",
       cleanup: "CONFIRMED",
-      preparationFingerprint: "prep", profileSetId: "profiles-v1", targetId: "lint:lint",
-      taskId: "task", attemptId: "attempt", nativeIdentity: "native-v1",
+      preparationFingerprint: "prep",
+      profileSetId: "profiles-v1",
+      targetId: "lint:lint",
+      taskId: "task",
+      attemptId: "attempt",
+      nativeIdentity: "native-v1",
     });
     await expect(coordinator.verdict()).resolves.toMatchObject({
       status: "PASS",
@@ -87,7 +107,8 @@ describe("sandbox core contracts", () => {
     const snapshot = await captureSnapshot(
       {
         workspaceId: "workspace",
-        entries: () => Promise.resolve([{ path: "index.ts", bytes: Buffer.from("export {}"), mode: 0o644 }]),
+        entries: () =>
+          Promise.resolve([{ path: "index.ts", bytes: Buffer.from("export {}"), mode: 0o644 }]),
       },
       { exclusionPolicyId: "default", maxEntries: 10, maxBytes: 100, maxFileBytes: 50 },
     );
@@ -99,7 +120,11 @@ describe("sandbox core contracts", () => {
     let staged: readonly string[] | undefined;
     const backend = new DockerSandboxBackend({
       readiness: () => ({ networkDisabled: true, limitsEnforced: true, readOnlyMounts: true }),
-      inspectImage: (imageId) => ({ imageId, fingerprint: "fingerprint", architecture: "linux-x64" }),
+      inspectImage: (imageId) => ({
+        imageId,
+        fingerprint: "fingerprint",
+        architecture: "linux-x64",
+      }),
       copySnapshot: (entries) => {
         staged = entries.map((entry) => entry.path);
         return "snapshot:snapshot-mount";
@@ -111,18 +136,30 @@ describe("sandbox core contracts", () => {
     });
     await backend.executeCheck({
       snapshot,
-      image: { imageId: "sha256:" + "a".repeat(64), fingerprint: "fingerprint", architecture: "linux-x64", status: "READY" },
-      target: { check: "tests", argv: ["pnpm", "test"] },
+      image: {
+        imageId: "sha256:" + "a".repeat(64),
+        fingerprint: "fingerprint",
+        architecture: "linux-x64",
+        status: "READY",
+      },
+      target,
       limits: DEFAULT_SANDBOX_LIMITS,
+      runtime,
     });
     expect(staged).toEqual(["index.ts"]);
-    expect(calls[0]?.some((arg) => arg.includes("snapshot-mount") && arg.includes("readonly"))).toBe(true);
+    expect(
+      calls[0]?.some((arg) => arg.includes("snapshot-mount") && arg.includes("readonly")),
+    ).toBe(true);
   });
 
   it("rejects output overflow and reports cleanup uncertainty", async () => {
     const backend = new DockerSandboxBackend({
       readiness: () => ({ networkDisabled: true, limitsEnforced: true, readOnlyMounts: true }),
-      inspectImage: (imageId) => ({ imageId, fingerprint: "fingerprint", architecture: "linux-x64" }),
+      inspectImage: (imageId) => ({
+        imageId,
+        fingerprint: "fingerprint",
+        architecture: "linux-x64",
+      }),
       copySnapshot: () => "snapshot:snapshot-mount",
       run: () => ({ id: "container", output: "0123456789", exitCode: 0 }),
       stopAndRemove: () => "UNCERTAIN",
@@ -130,9 +167,15 @@ describe("sandbox core contracts", () => {
     await expect(
       backend.executeCheck({
         snapshot,
-        image: { imageId: "sha256:" + "b".repeat(64), fingerprint: "fingerprint", architecture: "linux-x64", status: "READY" },
-        target: { check: "tests", argv: ["pnpm", "test"] },
+        image: {
+          imageId: "sha256:" + "b".repeat(64),
+          fingerprint: "fingerprint",
+          architecture: "linux-x64",
+          status: "READY",
+        },
+        target,
         limits: { ...DEFAULT_SANDBOX_LIMITS, maxOutputBytes: 4 },
+        runtime,
       }),
     ).resolves.toMatchObject({ status: "FAIL", cleanup: "UNCERTAIN" });
   });
@@ -140,14 +183,25 @@ describe("sandbox core contracts", () => {
   it("requires explicit runtime enforcement and read-only snapshot mounting", async () => {
     const backend = new DockerSandboxBackend({
       readiness: () => ({ networkDisabled: false, limitsEnforced: false, readOnlyMounts: false }),
-      inspectImage: (imageId) => ({ imageId, fingerprint: "fingerprint", architecture: "linux-x64" }),
+      inspectImage: (imageId) => ({
+        imageId,
+        fingerprint: "fingerprint",
+        architecture: "linux-x64",
+      }),
       copySnapshot: () => "snapshot:snapshot-mount",
       run: () => ({ id: "container", output: "", exitCode: 0 }),
     });
-    await expect(backend.readiness(
-      { imageId: "sha256:" + "c".repeat(64), fingerprint: "fingerprint", architecture: "linux-x64", status: "READY" },
-      DEFAULT_SANDBOX_LIMITS,
-    )).resolves.toBe("BLOCKED");
+    await expect(
+      backend.readiness(
+        {
+          imageId: "sha256:" + "c".repeat(64),
+          fingerprint: "fingerprint",
+          architecture: "linux-x64",
+          status: "READY",
+        },
+        DEFAULT_SANDBOX_LIMITS,
+      ),
+    ).resolves.toBe("BLOCKED");
   });
 
   it("retains the sealed snapshot and derives freshness from the trusted comparator", async () => {
@@ -184,51 +238,153 @@ describe("sandbox core contracts", () => {
       attemptId: "attempt",
       nativeIdentity: "native-v1",
     });
-    await expect(coordinator.verdict()).resolves.toMatchObject({ status: "PASS", freshness: "CURRENT" });
+    await expect(coordinator.verdict()).resolves.toMatchObject({
+      status: "PASS",
+      freshness: "CURRENT",
+    });
   });
 
-    it("fails closed when readiness is not enforced and always cleans up thrown runs", async () => {
-      let cleaned = 0;
-      const backend = new DockerSandboxBackend({
-        readiness: () => ({ networkDisabled: true, limitsEnforced: false, readOnlyMounts: true }),
-        inspectImage: (imageId) => ({ imageId, fingerprint: "fingerprint", architecture: "linux-x64" }),
-        copySnapshot: () => "snapshot:snapshot-mount",
-        run: () => { throw new Error("runner failed"); },
-        stopAndRemove: () => { cleaned += 1; return "CONFIRMED"; },
-      });
-      await expect(backend.executeCheck({
+  it("fails closed when readiness is not enforced and always cleans up thrown runs", async () => {
+    let cleaned = 0;
+    const backend = new DockerSandboxBackend({
+      readiness: () => ({ networkDisabled: true, limitsEnforced: false, readOnlyMounts: true }),
+      inspectImage: (imageId) => ({
+        imageId,
+        fingerprint: "fingerprint",
+        architecture: "linux-x64",
+      }),
+      copySnapshot: () => "snapshot:snapshot-mount",
+      run: () => {
+        throw new Error("runner failed");
+      },
+      stopAndRemove: () => {
+        cleaned += 1;
+        return "CONFIRMED";
+      },
+    });
+    await expect(
+      backend.executeCheck({
         snapshot,
-        image: { imageId: "sha256:" + "a".repeat(64), fingerprint: "fingerprint", architecture: "linux-x64", status: "READY" },
-        target: { check: "tests", argv: ["pnpm", "test"] },
+        image: {
+          imageId: "sha256:" + "a".repeat(64),
+          fingerprint: "fingerprint",
+          architecture: "linux-x64",
+          status: "READY",
+        },
+        target,
         limits: DEFAULT_SANDBOX_LIMITS,
-      })).rejects.toThrow("Sandbox runtime not ready");
-      expect(cleaned).toBe(0);
-    });
+        runtime,
+      }),
+    ).rejects.toThrow("Sandbox runtime not ready");
+    expect(cleaned).toBe(0);
+  });
 
-    it("seals evidence identities and rejects mismatched attempts", () => {
-      const coordinator = new VerificationCoordinator(["tests"], snapshot, () => "CURRENT", {
-        preparationFingerprint: "prep", profileSetId: "profiles-v1", taskId: "task", attemptId: "attempt", nativeIdentity: "native-v1",
-      });
-      expect(() => coordinator.record({
-        check: "tests", snapshotId: snapshot.snapshotId, imageId: "sha256:" + "a".repeat(64), status: "PASS", cleanup: "CONFIRMED",
-        preparationFingerprint: "other", profileSetId: "profiles-v1", targetId: "tests:ordinary", taskId: "task", attemptId: "attempt", nativeIdentity: "native-v1",
-      })).toThrow("evidence identity");
+  it("seals evidence identities and rejects mismatched attempts", () => {
+    const coordinator = new VerificationCoordinator(["tests"], snapshot, () => "CURRENT", {
+      preparationFingerprint: "prep",
+      profileSetId: "profiles-v1",
+      taskId: "task",
+      attemptId: "attempt",
+      nativeIdentity: "native-v1",
     });
+    expect(() =>
+      coordinator.record({
+        check: "tests",
+        snapshotId: snapshot.snapshotId,
+        imageId: "sha256:" + "a".repeat(64),
+        status: "PASS",
+        cleanup: "CONFIRMED",
+        preparationFingerprint: "other",
+        profileSetId: "profiles-v1",
+        targetId: "tests:ordinary",
+        taskId: "task",
+        attemptId: "attempt",
+        nativeIdentity: "native-v1",
+      }),
+    ).toThrow("evidence identity");
+  });
 
-    it("does not expose mutable snapshot buffers", async () => {
-      const captured = await captureSnapshot({
+  it("does not expose mutable snapshot buffers", async () => {
+    const captured = await captureSnapshot(
+      {
         workspaceId: "workspace",
-        entries: () => Promise.resolve([{ path: "index.ts", bytes: Buffer.from("export {}"), mode: 0o644 }]),
-      }, { exclusionPolicyId: "default", maxEntries: 10, maxBytes: 100, maxFileBytes: 50 });
-      const original = captured.entries[0]?.hash;
-      captured.entries[0]?.content.fill(0);
-      expect(captured.entries[0]?.hash).toBe(original);
-      expect(captured.entries[0]?.content).not.toEqual(Buffer.alloc(9));
+        entries: () =>
+          Promise.resolve([{ path: "index.ts", bytes: Buffer.from("export {}"), mode: 0o644 }]),
+      },
+      { exclusionPolicyId: "default", maxEntries: 10, maxBytes: 100, maxFileBytes: 50 },
+    );
+    const original = captured.entries[0]?.hash;
+    captured.entries[0]?.content.fill(0);
+    expect(captured.entries[0]?.hash).toBe(original);
+    expect(captured.entries[0]?.content).not.toEqual(Buffer.alloc(9));
+  });
+
+  it("requires sealed execution identities and backend-provided identity values", async () => {
+    const backend = new DockerSandboxBackend({
+      readiness: () => ({ networkDisabled: true, limitsEnforced: true, readOnlyMounts: true }),
+      inspectImage: (imageId) => ({
+        imageId,
+        fingerprint: "fingerprint",
+        architecture: "linux-x64",
+      }),
+      copySnapshot: () => "snapshot:snapshot-mount",
+      run: () => ({ id: "container", output: "", exitCode: 0 }),
+      stopAndRemove: () => "CONFIRMED",
     });
+    const evidence = await backend.executeCheck({
+      snapshot,
+      image: {
+        imageId: "sha256:" + "a".repeat(64),
+        fingerprint: "fingerprint",
+        architecture: "linux-x64",
+        status: "READY",
+      },
+      target: {
+        ...target,
+        profileSetId: "profiles-v2",
+        targetId: "target-v2",
+        taskId: "task-v2",
+        attemptId: "attempt-v2",
+        nativeIdentity: "native-v2",
+      },
+      limits: DEFAULT_SANDBOX_LIMITS,
+      runtime,
+    });
+    expect(evidence.taskId).toBe("task-v2");
+    expect(evidence.profileSetId).toBe("profiles-v2");
+  });
+
+  it("preserves an external readiness blocker in typed execution facts", async () => {
+    const gateway = new (await import("../../src/sandbox/gateway.js")).SandboxGateway(
+      {
+        readiness: () => Promise.resolve("BLOCKED" as const),
+        executeCheck: () => Promise.reject(new Error("must not execute")),
+      },
+      DEFAULT_SANDBOX_LIMITS,
+    );
+    const facts = await gateway.factsFor(
+      { name: "run_tests", arguments: { profile: "ordinary" } } as never,
+      {} as never,
+      {
+        imageId: "sha256:" + "a".repeat(64),
+        fingerprint: "fingerprint",
+        architecture: "linux-x64",
+        status: "STALE",
+      },
+    );
+    expect(typeof facts.readiness === "object" ? facts.readiness.status : undefined).toBe(
+      "EXTERNAL_BLOCKER",
+    );
+    expect(facts.readiness).toMatchObject({ reason: "IMAGE_STALE" });
+  });
   it("exposes a narrow backend without accepting model-controlled runtime options", () => {
     const backend = new DockerSandboxBackend({
       readiness: () => ({ networkDisabled: true, limitsEnforced: true, readOnlyMounts: true }),
-      inspectImage: (imageId) => ({ imageId, fingerprint: "fingerprint", architecture: "linux-x64" }),
+      inspectImage: (imageId) => ({
+        imageId,
+        fingerprint: "fingerprint",
+        architecture: "linux-x64",
+      }),
       run: () => ({ id: "container", output: "", exitCode: 0 }),
       copySnapshot: () => "snapshot:snapshot-mount",
     });

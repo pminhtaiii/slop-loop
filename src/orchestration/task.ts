@@ -93,7 +93,14 @@ export type TaskOutcome =
   | {
       readonly state: typeof TaskState.BLOCKED;
       readonly reason:
-        "DEPENDENCY_UNAVAILABLE" | "POLICY_DENIED" | "AUDIT_UNAVAILABLE" | "AUDIT_INCOMPLETE";
+        | "DEPENDENCY_UNAVAILABLE"
+        | "POLICY_DENIED"
+        | "AUDIT_UNAVAILABLE"
+        | "AUDIT_INCOMPLETE"
+        | "PREPARATION_REQUIRED"
+        | "IMAGE_STALE"
+        | "RUNTIME_UNAVAILABLE"
+        | "CLEANUP_UNCONFIRMED";
     }
   | {
       readonly state: typeof TaskState.CANCELLED;
