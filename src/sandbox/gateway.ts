@@ -1,6 +1,8 @@
 import type { PreparedImageRecord, SandboxBackend, SandboxLimits } from "./types.js";
 import type { TrustedExecutionFacts } from "../policy/engine.js";
 import type { TaskCapabilityCeiling } from "../policy/engine.js";
+import { approvedProfilesForTool } from "./config.js";
+import { toolMetadataForName } from "../tools/registry.js";
 import type { ValidatedToolCall } from "../tools/registry.js";
 
 export type ReadinessAssessment =
@@ -24,34 +26,22 @@ export class SandboxGateway {
 
   async readiness(image: PreparedImageRecord): Promise<ReadinessAssessment> {
     const status = await this.backend.readiness(image, this.limits);
-    return status === "READY"
+    return status.status === "READY"
       ? { status: "READY" }
-      : {
-          status: "EXTERNAL_BLOCKER",
-          reason:
-            image.status === "STALE"
-              ? "IMAGE_STALE"
-              : image.status === "MISSING"
-                ? "PREPARATION_REQUIRED"
-                : "RUNTIME_UNAVAILABLE",
-        };
+      : { status: "EXTERNAL_BLOCKER", reason: status.reason };
   }
 
   async factsFor(
     call: ValidatedToolCall,
-    _ceiling: TaskCapabilityCeiling,
+    ceiling: TaskCapabilityCeiling,
     image: PreparedImageRecord,
-  ): Promise<TrustedExecutionFacts> {
+  ): Promise<TrustedExecutionFacts | undefined> {
+    if (toolMetadataForName(call.name).execution !== "trusted_profile") return undefined;
     const readiness = await this.readiness(image);
-    const profile =
-      call.name === "run_tests" ||
-      call.name === "run_linter" ||
-      call.name === "run_typecheck" ||
-      call.name === "run_build"
-        ? call.arguments.profile
-        : "";
     return Object.freeze({
-      approvedProfiles: Object.freeze(profile === "" ? [] : [profile]),
+      approvedProfiles: ceiling.eligibleTools.includes(call.name)
+        ? approvedProfilesForTool(call.name)
+        : Object.freeze([]),
       executorReady: readiness.status === "READY",
       readiness,
     });

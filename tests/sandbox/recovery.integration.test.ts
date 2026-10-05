@@ -2,8 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import { requireDockerImage, runDocker } from "./integration-fixtures.js";
 import { CleanupExecutionGate, createVerificationLabels } from "../../src/sandbox/cleanup.js";
+import { DockerCliExecution } from "../../src/sandbox/docker-process.js";
 
-describe("Phase 5 Docker recovery integration", () => {
+describe("Phase 5 Docker recovery integration (T128)", () => {
   it("is platform-gated before exercising daemon-loss recovery", ({ skip }) => {
     requireDockerImage({ skip }, "alpine:3.20");
     const labels = createVerificationLabels("recovery-task", "recovery-container");
@@ -38,5 +39,50 @@ describe("Phase 5 Docker recovery integration", () => {
     gate.hold();
     gate.settle({ status: "CONFIRMED", attempts: 1 });
     expect(gate.canStart()).toBe(true);
+  });
+
+  it("reconciles interrupted container lifecycle with ownership fencing", async ({ skip }) => {
+    requireDockerImage({ skip }, "alpine:3.20");
+    const docker = new DockerCliExecution();
+    const resourceId = docker.registerResource();
+
+    // Create interrupted container
+    runDocker([
+      "create",
+      "--name",
+      resourceId,
+      "--label",
+      "slop-loop.owner=verification",
+      "--label",
+      `slop-loop.containerId=${resourceId}`,
+      "--label",
+      "slop-loop.taskId=interrupted-task-01",
+      "alpine:3.20",
+      "sleep",
+      "120",
+    ]);
+
+    try {
+      // Recovery stops and removes the orphaned container
+      const outcome = await docker.stopAndRemove(resourceId);
+      expect(outcome).toBe("CONFIRMED");
+
+      // Verify container is gone
+      const remaining = runDocker([
+        "container",
+        "ls",
+        "--all",
+        "--quiet",
+        "--filter",
+        `name=^/${resourceId}$`,
+      ]);
+      expect(remaining).toBe("");
+    } finally {
+      try {
+        runDocker(["rm", "--force", "--", resourceId]);
+      } catch {
+        // already cleaned up
+      }
+    }
   });
 });

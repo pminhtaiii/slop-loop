@@ -108,3 +108,45 @@ jobs:
 
       - name: Run smoke test
         run: pnpm smoke
+
+  ubuntu-docker-gate:
+    name: Ubuntu Docker Integration Gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.5.1
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Setup Python for node-gyp
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Refresh native package index
+        run: sudo apt-get update
+
+      - name: Install native compiler prerequisites
+        run: sudo apt-get install -y make g++
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build native workspace addon
+        run: pnpm native:build
+
+      - name: Pull required Docker integration images
+        run: docker pull alpine:3.20
+
+      - name: Run sandbox Docker integration tests
+        run: pnpm sandbox:test

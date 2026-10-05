@@ -1,4 +1,10 @@
-export type SandboxStatus = "READY" | "BLOCKED" | "FAILED";
+export type SandboxReadiness =
+  | { readonly status: "READY" }
+  | {
+      readonly status: "BLOCKED";
+      readonly reason:
+        "PREPARATION_REQUIRED" | "IMAGE_STALE" | "RUNTIME_UNAVAILABLE" | "CLEANUP_UNCONFIRMED";
+    };
 export type Freshness = "CURRENT" | "STALE" | "UNCONFIRMED";
 
 export interface SandboxLimits {
@@ -58,7 +64,7 @@ export interface VerificationVerdict {
 }
 
 export interface SandboxBackend {
-  readiness(image: PreparedImageRecord, limits: SandboxLimits): Promise<SandboxStatus>;
+  readiness(image: PreparedImageRecord, limits: SandboxLimits): Promise<SandboxReadiness>;
   executeCheck(input: {
     readonly snapshot: VerificationSnapshot;
     readonly image: PreparedImageRecord;
