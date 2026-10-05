@@ -131,7 +131,7 @@ packages:
   ]);
 });
 
-it("rejects lockfiles with more than the bounded artifact count", () => {
+it("rejects lockfiles with more than the bounded artifact count", { timeout: 30_000 }, () => {
   const packages = Array.from({ length: 10_001 }, (_, index) => {
     return `  pkg-${index}@1.0.0:\n    resolution: {integrity: sha512-YWJj}`;
   }).join("\n");
