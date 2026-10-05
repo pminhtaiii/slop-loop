@@ -1,6 +1,6 @@
 # Use disposable offline containers for verification
 
-Status: Q1–Q23 design choices recorded. Feature 006 selects initial limits and enforcement mechanisms in its plan/research; real integration evidence is still required. No sandbox implementation is claimed.
+Status: Implemented and verified in Phase 5 under PR #167 / CI run #54. Q1–Q23 design choices implemented and verified on the native Linux Docker daemon.
 
 The Phase 5 design session on 2026-10-02 keeps the trusted Slop Loop application on the host and uses Docker only for verification. A trusted verification verdict captures one workspace-filtered snapshot; every check in that verdict runs in its own fresh Linux container cloned from that same snapshot. Initial targets are TypeScript repositories, starting with Slop Loop itself and trusted pnpm profiles. PostgreSQL, Redis, and other supporting services are outside MVP scope. Verification containers run offline. Future browser research requires a separately designed capability and does not grant network access to verification.
 

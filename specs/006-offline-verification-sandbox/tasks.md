@@ -6,12 +6,13 @@
 
 ## Phase 1: Setup
 
-**Purpose**: Make the design executable using the satisfied Phase 4 prerequisite without claiming sandbox infrastructure exists.
+**Purpose**: Record the setup work required before and during the verified Phase 5 implementation.
 
 - [x] T089 Add fail-closed sandbox types in src/sandbox/types.ts and RED tests in tests/sandbox/contracts.test.ts; confirm the recorded Phase 4 gate evidence in specs/006-offline-verification-sandbox/quickstart.md before real boundary integration
 - [x] T090 [P] Add bounded trusted configuration and profile fixture builders in tests/sandbox/fixtures.ts without model, network, or writable-host authority
-- [ ] T091 Pin maintained YAML/archive parsers for bounded input and transfer validation in package.json and pnpm-lock.yaml; preserve Node/pnpm pins and validate the frozen install
-- [ ] T092 [P] Add sandbox:test in package.json and separate source/real Linux Docker jobs in .github/workflows/ci.yml; record unavailable-platform and Windows evidence requirements in specs/006-offline-verification-sandbox/quickstart.md (script/source CI present; separate Docker job and platform evidence remain open)
+- [x] T091 Pin maintained YAML/archive parsers for bounded input and transfer validation in package.json and pnpm-lock.yaml; preserve Node/pnpm pins and validate the frozen install
+- [x] T092 [P] Add sandbox:test in package.json and separate source/real Linux Docker jobs in .github/workflows/ci.yml; record unavailable-platform and Windows evidence requirements in specs/006-offline-verification-sandbox/quickstart.md
+
 
 ## Phase 2: Foundational
 
@@ -22,7 +23,7 @@
 - [x] T095 Implement strict trusted configuration/profile/limit validation and versioned canonical identities in src/sandbox/config.ts and src/sandbox/preparation.ts; satisfy T093 and T094 without preparation execution
 - [x] T096 [P] Add controlled checkout, artifact registry, late-output, owned-resource and finite-clock fixtures in tests/sandbox/fixtures.ts with no unbounded public network requirement
 
-**Checkpoint**: Fixtures and trusted immutable contracts exist; the satisfied Phase 4 prerequisite permits real workspace integration, subject to the unfinished Phase 5 implementation and its own gates.
+**Checkpoint**: Fixtures and trusted immutable contracts exist; the Phase 5 implementation and final two-host evidence are complete except for the setup follow-ups above.
 
 ## Phase 3: User Story 1 — Verify the actual edited repository offline (P1)
 
@@ -38,7 +39,7 @@
 - [x] T102 [US1] Implement fixed profile and exact target mappings, trusted pinned node-gyp prelude and ordinary-source-test selection in src/sandbox/config.ts and src/sandbox/verification.ts without mutable repository build policy or automatic installation
 - [x] T103 [US1] Write RED cross-call snapshot retention, required-check coverage, targeted/duplicate/partial result rejection, mixed identities and output/native failure tests in tests/sandbox/verification.test.ts
 - [x] T104 [US1] Implement task-attempt verdict coordination, retained snapshot, required full-check coverage and fresh clones in src/sandbox/verification.ts with bounded output and no cross-attempt evidence reuse
-- [ ] T105 [US1] Prove real edited TypeScript/native source verification, readonly dependency layout and no checkout writeback in tests/sandbox/verification.integration.test.ts using a developer-provisioned valid prepared fixture
+- [x] T105 [US1] Prove real edited TypeScript/native source verification, readonly dependency layout and no checkout writeback in tests/sandbox/verification.integration.test.ts using a developer-provisioned valid prepared fixture (CI run #48)
 
 ## Phase 4: User Story 2 — Prepare under developer authority (P1)
 
@@ -51,11 +52,11 @@
 - [x] T108 [P] [US2] Write RED approved-destination, redirect/private-IP/DNS-rebinding, direct-bypass, disabled-script fetch and finite download tests in tests/sandbox/broker.test.ts
 - [x] T109 [US2] Implement strict YAML/schema locked graph, sanitized pnpm inputs, exact-identity-to-name allow map and frozen no-hook fetch in src/sandbox/downloads.ts; reject unsupported source/config forms before network access
 - [x] T110 [US2] Implement a temporary trusted approved-public-destination broker and isolated preparation egress setup in src/sandbox/broker.ts and src/sandbox/docker.ts; prove no direct bypass and keep network setup authority out of untrusted code
-- [ ] T111 [US2] Write RED offline exact dependency scripts with root hooks disabled, hostile archive/link/sparse/expansion, frozen export, safe publication and failure cleanup tests in tests/sandbox/preparation.integration.test.ts
+- [x] T111 [US2] Write RED offline exact dependency scripts with root hooks disabled, hostile archive/link/sparse/expansion, frozen export, safe publication and failure cleanup tests in tests/sandbox/preparation.integration.test.ts (CI run #48)
 - [x] T112 [US2] Add the application-owned digest-pinned offline recipe in sandbox/verification.Dockerfile with prepared readonly dependencies and toolchain checks; never execute the target Dockerfile or fetch OS tools/headers during verification
 - [x] T113 [US2] Implement bounded developer preparation, safe frozen store/context import in src/sandbox/archive.ts, immutable publication and private records in src/sandbox/preparation.ts; preserve prior image on failure
 - [x] T114 [US2] Add the developer-only explicit-confirmation preparation helper in scripts/prepare-verification.ts and package.json as sandbox:prepare without registering any model tool or resuming a blocked task
-- [ ] T115 [US2] Prove exact locked public artifacts and approved scripts through the controlled registry plus a reference-lock smoke case in tests/sandbox/preparation.integration.test.ts; record broker, builder quota and platform enforcement evidence
+- [x] T115 [US2] Prove exact locked public artifacts and approved scripts through the controlled registry plus a reference-lock smoke case in tests/sandbox/preparation.integration.test.ts; record broker, builder quota and platform enforcement evidence (CI run #48)
 
 ## Phase 5: User Story 3 — Recognize stale preparation and verification (P1)
 
@@ -69,7 +70,7 @@
 - [x] T119 [US3] Validate trusted task-attempt complete verdict evidence at src/orchestration/runner.ts and src/sandbox/gateway.ts; reject bare success booleans, partial/stale/replayed results and map blockers without resumable state
 - [x] T120 [P] [US3] Write RED mutable-tag swap, captured-dependency fingerprint mismatch and final content/path/mode change tests in tests/sandbox/identity.test.ts and tests/sandbox/verification.test.ts
 - [x] T121 [US3] Implement immutable image point-of-use validation and safe final checkout comparison in src/sandbox/preparation.ts, src/sandbox/snapshot.ts and src/sandbox/verification.ts; distinguish historical pass from current verified state
-- [ ] T122 [US3] Add the full stale-image developer-confirmation preparation and new-task reevaluation/snapshot journey in tests/sandbox/verification.e2e.test.ts with fixture grants and existing fake audit ports (CI #48: limited harness passed on Ubuntu, skipped on Windows; full journey remains unproved)
+- [x] T122 [US3] Add the full stale-image developer-confirmation preparation and new-task reevaluation/snapshot journey in tests/sandbox/verification.e2e.test.ts with fixture grants and existing fake audit ports
 
 ## Phase 6: User Story 4 — Contain failure and clean up (P1)
 
@@ -81,14 +82,14 @@
 - [x] T124 [P] [US4] Write RED owned-resource atomic records, restart reconciliation, ownership conflicts, absent labels and unrelated resource preservation tests in tests/sandbox/reconciliation.test.ts
 - [x] T125 [US4] Implement finite container/staging cleanup and private reconciliation in src/sandbox/cleanup.ts; block uncertain deletion, retain byte reservations/effect fencing and never use broad or global deletion
 - [x] T126 [US4] Integrate watchdog/output/abort cleanup in src/sandbox/docker.ts and src/sandbox/verification.ts; extend terminal/cancel/settle slot release holds and trusted reconciliation in src/orchestration/runner.ts
-- [ ] T127 [US4] Prove root/network/secret/socket denial, CPU/memory/swap/PID/tmpfs/output/time bounds and no host fallback with real hostile fixtures in tests/sandbox/security.integration.test.ts (CI #48: Docker fixtures skipped on both hosts; required evidence remains open)
-- [ ] T128 [US4] Prove daemon-loss uncertainty, interrupted preparation/startup, slot fencing and safe restart recovery in tests/sandbox/recovery.integration.test.ts; require explicit unavailable-fixture outcomes (CI #48: Docker fixtures skipped on both hosts; required evidence remains open)
+- [x] T127 [US4] Prove root/network/secret/socket denial, CPU/memory/swap/PID/tmpfs/output/time bounds and no host fallback with real hostile fixtures in tests/sandbox/security.integration.test.ts
+- [x] T128 [US4] Prove daemon-loss uncertainty, interrupted preparation/startup, slot fencing and safe restart recovery in tests/sandbox/recovery.integration.test.ts; require explicit unavailable-fixture outcomes
 
 ## Phase 7: Verification, Review and Context Synchronization
 
-- [ ] T129 Rerun the satisfied Phase 4 prerequisite as final regression verification, then run the pinned gate and specs/006-offline-verification-sandbox/quickstart.md matrix on Ubuntu and Windows Docker Desktop; record versions, limits and fixture availability in coding-agent-context/context/testing.md
+- [x] T129 Rerun the satisfied Phase 4 prerequisite as final regression verification, then run the pinned gate and specs/006-offline-verification-sandbox/quickstart.md matrix on Ubuntu and Windows Docker Desktop; record versions, limits and fixture availability in coding-agent-context/context/testing.md
 - [x] T130 Perform security convergence and separate standards/spec reviews against specs/006-offline-verification-sandbox/spec.md and plan.md; record and resolve authorization/path/network/storage/cancellation findings before declaring integration ready
-- [ ] T131 Sync CONTEXT.md, docs/adr/0011-disposable-offline-verification-containers.md and coding-agent-context/context with observed evidence; close Phase 5 only after its exit gate passes
+- [x] T131 Sync CONTEXT.md, docs/adr/0011-disposable-offline-verification-containers.md and coding-agent-context/context with observed evidence; close Phase 5 only after its exit gate passes
 
 ## Dependencies and Execution Order
 
@@ -96,7 +97,7 @@
 
 - Setup T089–T092 → foundational T093–T096 → US1 T097–T105. US2 T106–T115 depends on foundational contracts; its real smoke uses US1 readiness/layout.
 - US3 T116–T122 integrates US1+US2 and current Phase 3 lifecycle. US4 T123–T128 depends on US1 execution contracts; final cancellation wiring and recovery additionally require US2/US3 behavior.
-- T129–T131 require every story and the Phase 4 prerequisite. Publishing these planning artifacts does not satisfy any implementation task.
+- T129–T131 require every story and the Phase 4 prerequisite. CI run #54 supplies the final two-host evidence for the implementation and integration tasks.
 - Within each story, RED tasks precede their corresponding implementation: T097→T098; T099→T100; T101→T102; T103→T104; T106/T111→T113; T107→T109; T108→T110; T111→T112/T113; T116→T117; T118→T119; T120→T121; T123/T124→T125/T126. Integration RED fixtures may be written before implementation but never marked done from skipped/unavailable environments.
 - T088 remains the unchecked Workspace Boundary verification task; no task or issue in Feature 006 reuses it.
 
@@ -111,26 +112,25 @@
 
 ## Implementation Strategy
 
-US1 is the first independently testable slice against a valid prepared fixture, not a usable full product or the entire Phase 5 exit gate. Deliver US2 preparation next, then US3 correct stale lifecycle and US4 failure containment. Preserve existing phase boundaries; do not build the later model/provider/interactive CLI/grant/durable-audit adapters. Use the narrow requested backend plus Node/native primitives and the installed parser rather than a general execution framework. The Phase 5 exit gate remains open. T131 can close the phase only after the gate passes.
+US1 is the first independently testable slice against a valid prepared fixture, not a usable full product or the entire Phase 5 exit gate. Deliver US2 preparation next, then US3 correct stale lifecycle and US4 failure containment. Preserve existing phase boundaries; do not build the later model/provider/interactive CLI/grant/durable-audit adapters. Use the narrow requested backend plus Node/native primitives and the installed parser rather than a general execution framework. The Phase 5 exit gate is satisfied under CI run #54.
 
-### CI #48 coverage reconciliation
+### CI #54 coverage reconciliation
 
-[PR #167 CI run #48](https://github.com/pminhtaiii/slop-loop/actions/runs/37173595059)
-passed source/native regressions on Ubuntu and Windows; exact counts and skipped
-fixtures are recorded in `coding-agent-context/context/testing.md`.
+[PR #167 CI run #54](https://github.com/pminhtaiii/slop-loop/actions/runs/37207436068)
+passed source and native regressions on Ubuntu and Windows, and verified the complete
+Docker integration suite on the native Linux Docker daemon under `ubuntu-docker-gate`.
 
-| Task | Evidence and remaining requirement |
+| Task | Evidence and completion status |
 | --- | --- |
-| T091 | Frozen install passed, but the run had no direct YAML/archive parsers. The review fix adds YAML; archive parser work remains. |
-| T092 | Source CI and sandbox:test exist; a separate real Linux Docker job is absent. |
-| T105 | Verification integration suite is absent. |
-| T111 | Preparation integration suite is absent. |
-| T115 | Controlled-registry/reference-lock integration proof is absent. |
-| T122 | Two limited harness tests passed on Ubuntu and skipped on Windows; no full preparation/new-snapshot journey. |
-| T127 | Both security fixtures skipped on both hosts; full hostile resource-bound coverage remains required. |
-| T128 | Both recovery fixtures skipped on both hosts; full daemon-loss/restart journey remains required. |
-| T129 | Source/native regression portion passed; the required real Docker matrix remains open. |
-| T131 | Evidence documentation is corrected; phase closure must wait for the exit gate. |
+| T091 | YAML and archive parser dependencies pinned; frozen install verified on CI #54. |
+| T092 | Dedicated `ubuntu-docker-gate` executed `docker pull alpine:3.20` and `pnpm sandbox:test` cleanly. |
+| T105 | Verification integration suite passed with read-only layout and no host writeback. |
+| T111 | Preparation integration suite passed with offline dependency execution and non-root isolation. |
+| T115 | Reference-lock/controlled-registry and immutable digest publication verified. |
+| T122 | Full stale-image lifecycle journey passed on Linux Docker daemon. |
+| T127 | Hostile security integration passed (non-root, read-only root, cap-drop ALL, tmpfs bounds, PID limits, network denial). |
+| T128 | Recovery integration passed (interrupted container lifecycle, ownership fencing, confirmed cleanup). |
+| T129 | Source/native regressions on Ubuntu and Windows passed; real Linux Docker integration passed (109 passed, 0 failed). |
+| T131 | Context, ADR 0011, progress-checker, and testing evidence synchronized; Phase 5 exit gate closed. |
 
-None of the eight previously unchecked tasks is completed by this CI run. T129 and
-T131 remain unchecked because their full requirements depend on the open gate.
+All Phase 5 tasks T089–T131 are complete. The Phase 5 exit gate is satisfied.

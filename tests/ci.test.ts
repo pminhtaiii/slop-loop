@@ -291,9 +291,9 @@ describe("Platform Quality Gates Workflow Contract (User Story 4 / T022)", () =>
     const content = fs.readFileSync(CI_WORKFLOW_PATH, "utf-8");
     const { jobs } = parseWorkflow(content);
 
-    // Must have exactly the two platform gate jobs
+    // Must have exactly the three platform gate jobs (ubuntu-gate, windows-gate, ubuntu-docker-gate)
     const jobIds = Object.keys(jobs);
-    expect(jobIds.length).toBe(2);
+    expect(jobIds.length).toBe(3);
 
     for (const job of Object.values(jobs)) {
       // Job name/id must not suggest release or deployment

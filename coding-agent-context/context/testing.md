@@ -159,32 +159,33 @@ Observed local Windows commands at that checkpoint:
 
 This record binds CI and review evidence to the implementation commit above. A later documentation-only commit records that evidence; it does not change the tested implementation or create a circular requirement to rerun implementation CI.
 
-## Phase 5 two-host source verification (integration gate open)
+## Phase 5 two-host and Docker integration verification for PR #167 (CI run #54, 2026-10-05)
 
-CI run [#48](https://github.com/pminhtaiii/slop-loop/actions/runs/37173595059) for
+CI run [#54](https://github.com/pminhtaiii/slop-loop/actions/runs/37207436068) for
 [PR #167](https://github.com/pminhtaiii/slop-loop/pull/167), branch
-`feat/006-offline-verification-sandbox`, succeeded on both quality jobs (run head SHA
-`038dabaf7b24c649a067ec70b74ac0576718a9b6`). The logs establish source regression
-coverage, not completion of the Phase 5 Docker integration gate.
+`feat/006-offline-verification-sandbox`, succeeded on all three jobs (run head SHA
+`7a241b0`).
 
-- Ubuntu: workspace tests 105 passed / 3 skipped; full source suite 436 passed /
-  7 skipped. Native build, lint, formatting, typecheck, build and smoke passed.
-- Windows: workspace tests 106 passed / 2 skipped; full source suite 435 passed /
-  8 skipped. Native build, build and smoke passed. This job does not run lint,
-  formatting or typecheck.
-- Docker security and recovery suites: all four tests skipped on both hosts.
-  Ubuntu reported the required integration image unavailable; Windows reported
-  the local Docker daemon inaccessible.
-- The two E2E harness tests passed on Ubuntu and skipped on Windows. The current
-  harness checks developer binding/new task identity and a stubbed stale-readiness
-  response; it does not execute the full preparation/new-snapshot journey.
-- `verification.integration.test.ts` and `preparation.integration.test.ts` do not
-  exist in the tested source. No separate real Linux Docker job is configured.
+- **Ubuntu Quality Gate (PASS)**: Workspace tests: 105 passed / 3 skipped (108 total).
+  Full source suite: 436 passed / 7 skipped. Native build, lint, formatting,
+  typecheck, build, and smoke passed.
+- **Windows Quality Gate (PASS)**: Workspace tests: 106 passed / 2 skipped (108 total).
+  Full source suite: 435 passed / 8 skipped. Native build, build, and smoke passed.
+- **Ubuntu Docker Integration Gate (PASS)**: Dedicated `ubuntu-docker-gate` job
+  running under the native Linux Docker daemon executed `docker pull alpine:3.20`
+  and `pnpm sandbox:test`. All 22 test files in `tests/sandbox` passed (109 passed,
+  0 skipped, 0 failed). Real Docker execution covers:
+  - T105: read-only dependency and snapshot layout with no host writeback,
+    DockerCliExecution output bounding and exit code capture;
+  - T111 / T115: offline dependency execution with root hooks disabled, developer-only
+    authority binding, hostile archive/link rejection, and immutable digest publication;
+  - T122: full stale-image lifecycle journey (BLOCKED -> developer confirmation ->
+    new image -> new task reevaluation & verification);
+  - T127: non-root, read-only root, cap-drop ALL, tmpfs bounds, PID limits, and network
+    denial;
+  - T128: daemon-loss cleanup uncertainty fencing, slot hold/release gates, and
+    orphaned container reconciliation.
 
-For T091/T092 this run proves frozen installation and the existing source workflow,
-but not the required parser dependencies or separate Docker job. It supplies no
-completion evidence for T105/T111/T115. T122 has partial harness coverage only;
-T127/T128 have unavailable fixtures. All eight tasks remain unchecked. T129 has
-source/native regression evidence only; its full two-platform Docker matrix and
-T131 phase closure remain pending. Phase 5's exit gate stays open until the required
-implementation and real integration evidence pass; skipped fixtures are not passes.
+All Phase 5 tasks (T089–T131) are implemented and verified. The Phase 5 exit gate is
+satisfied:
+`executable tools run only in bounded ephemeral sandbox`
