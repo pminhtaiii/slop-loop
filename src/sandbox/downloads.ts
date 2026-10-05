@@ -2,6 +2,7 @@ import { parseAllDocuments } from "yaml";
 import { z } from "zod";
 
 const APPROVED_REGISTRY_HOSTS = new Set(["registry.npmjs.org"]);
+const MAX_ARTIFACTS = 10_000;
 const EXACT_VERSION =
   /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/u;
 const INTEGRITY = /^sha(?:256|384|512)-[A-Za-z0-9+/]+={0,2}$/u;
@@ -55,6 +56,9 @@ export function parseLockedArtifacts(lockfile: string): readonly LockedArtifact[
     if (error !== undefined) throw error;
     return Object.entries(schema.parse(document.toJS({ maxAliasCount: 0 })).packages);
   });
+  if (packages.length > MAX_ARTIFACTS) {
+    throw new TypeError("Locked artifact count exceeds limit");
+  }
   const artifacts: LockedArtifact[] = [];
   for (const [rawKey, entry] of packages) {
     const key = rawKey.replace(/^\//u, "").replace(/\(.*\)$/u, "");

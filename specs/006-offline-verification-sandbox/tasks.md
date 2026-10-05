@@ -116,20 +116,26 @@ US1 is the first independently testable slice against a valid prepared fixture, 
 
 ### CI #48 coverage reconciliation
 
+The implementation follow-up commit adds the parser, integration suites and
+dedicated Linux Docker job listed below, but CI #48 predates that commit.
+Those additions are therefore source-level progress, not live completion
+evidence. The task checkboxes must not be treated as Phase 5 exit-gate proof
+until the new commit runs without unavailable critical fixtures.
+
 [PR #167 CI run #48](https://github.com/pminhtaiii/slop-loop/actions/runs/37173595059)
 passed source/native regressions on Ubuntu and Windows; exact counts and skipped
 fixtures are recorded in `coding-agent-context/context/testing.md`.
 
 | Task | Evidence and remaining requirement |
 | --- | --- |
-| T091 | Frozen install passed, but the run had no direct YAML/archive parsers. The review fix adds YAML; archive parser work remains. |
-| T092 | Source CI and sandbox:test exist; a separate real Linux Docker job is absent. |
-| T105 | Verification integration suite is absent. |
-| T111 | Preparation integration suite is absent. |
-| T115 | Controlled-registry/reference-lock integration proof is absent. |
-| T122 | Two limited harness tests passed on Ubuntu and skipped on Windows; no full preparation/new-snapshot journey. |
-| T127 | Both security fixtures skipped on both hosts; full hostile resource-bound coverage remains required. |
-| T128 | Both recovery fixtures skipped on both hosts; full daemon-loss/restart journey remains required. |
+| T091 | YAML/archive parser implementation and bounded parser tests are present; frozen-install evidence must be rerun on the current commit. |
+| T092 | Dedicated `ubuntu-docker-gate` is present; its execution on the current commit is still required. |
+| T105 | Verification integration suite is present; live Docker execution and full snapshot/native journey remain required. |
+| T111 | Preparation integration suite is present; full offline preparation and failure-cleanup journey remain required. |
+| T115 | Reference-lock/controlled-registry proof remains partial and must run through the real preparation path. |
+| T122 | Lifecycle E2E is present but still uses synthetic preparation/snapshot seams; full real journey remains required. |
+| T127 | Hostile security fixtures are present but have not produced live evidence in the current environment. |
+| T128 | Recovery fixtures are present but daemon-loss/restart evidence remains required. |
 | T129 | Source/native regression portion passed; the required real Docker matrix remains open. |
 | T131 | Evidence documentation is corrected; phase closure must wait for the exit gate. |
 

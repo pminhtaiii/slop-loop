@@ -130,3 +130,13 @@ packages:
     { name: "@scope/pkg", version: "1.0.0" },
   ]);
 });
+
+it("rejects lockfiles with more than the bounded artifact count", () => {
+  const packages = Array.from({ length: 10_001 }, (_, index) => {
+    return `  pkg-${index}@1.0.0:\n    resolution: {integrity: sha512-YWJj}`;
+  }).join("\n");
+
+  expect(() => parseLockedArtifacts(`lockfileVersion: '9.0'\npackages:\n${packages}\n`)).toThrow(
+    "Locked artifact count exceeds limit",
+  );
+});

@@ -490,13 +490,21 @@ Acceptance:
 
 ## Phase 5 status (2026-10-05 update)
 
-Phase 5 implementation and comprehensive integration test suites are complete across all User Stories:
+Phase 5 implementation slices and integration test suites are present, but the
+real Docker exit gate is still open. The current checkout cannot provide live
+Docker evidence because Docker Desktop's Linux engine is unavailable (WSL is not
+installed), and Windows native regression verification also requires the Visual
+C++ Build Tools prerequisite:
 - **T091**: Direct YAML and archive parser dependencies (`yaml@2.9.1`, `tar-stream@3.1.7`, `@types/tar-stream@3.1.3`) are pinned and verified via `corepack pnpm install --frozen-lockfile`. Streaming in-memory tar parsing without host extraction is implemented and tested in `src/sandbox/archive.ts` and `tests/sandbox/archive.test.ts`.
 - **T092**: Dedicated `ubuntu-docker-gate` job added to `.github/workflows/ci.yml` pulling `alpine:3.20` and running `pnpm sandbox:test` under the native Linux Docker daemon.
-- **T105**: Verification integration suite `tests/sandbox/verification.integration.test.ts` proves read-only mount enforcement, no host writeback, and Docker process output bounding.
-- **T111 / T115**: Preparation integration suite `tests/sandbox/preparation.integration.test.ts` proves developer-only authority binding, hostile tar rejection (symlinks, path traversal), offline non-root execution, and immutable digest publication.
+- **T105**: Verification integration suite `tests/sandbox/verification.integration.test.ts` is present and covers read-only mount enforcement, no host writeback, and Docker process output bounding; live execution evidence remains pending.
+- **T111 / T115**: Preparation integration suite `tests/sandbox/preparation.integration.test.ts` is present and covers developer-only authority binding, hostile tar rejection (symlinks, path traversal), offline non-root execution, and immutable digest publication; full preparation/reference-lock evidence remains pending.
 - **T122**: Full stale-image lifecycle journey implemented in `tests/sandbox/verification.e2e.test.ts` (Task 1 BLOCKED -> developer explicit confirmation -> fresh image published -> Task 2 newly admitted & verified with fresh snapshot).
-- **T127**: Security integration hostile suite in `tests/sandbox/security.integration.test.ts` covers non-root, read-only root, cap-drop ALL, tmpfs bounds, PID limits (fork-bomb resistance), and network denial.
-- **T128**: Recovery integration suite in `tests/sandbox/recovery.integration.test.ts` proves daemon-loss cleanup uncertainty fencing, slot hold/release gates, and orphaned container reconciliation.
+- **T127**: Security integration hostile suite in `tests/sandbox/security.integration.test.ts` covers non-root, read-only root, cap-drop ALL, tmpfs bounds, PID limits (fork-bomb resistance), and network denial; all local Docker cases are currently unavailable.
+- **T128**: Recovery integration suite in `tests/sandbox/recovery.integration.test.ts` covers cleanup uncertainty fencing, slot hold/release gates, and orphaned container reconciliation; daemon-loss/restart execution evidence remains pending.
 
-All 22 test files in `tests/sandbox` pass locally (94 passed, 14 platform-skipped awaiting Linux Docker daemon). Code style, linting, type checking (`tsc --noEmit`), and frozen install all pass cleanly. Execution on the dedicated `ubuntu-docker-gate` CI job will supply the live Linux Docker execution evidence.
+The sandbox source suite currently reports 94 passed and 14 platform-skipped
+tests because the local Linux Docker daemon is unavailable. Code style and type
+checking pass; the native build and full source suite require the documented
+Visual C++ Build Tools prerequisite on Windows. Execution on the dedicated
+`ubuntu-docker-gate` CI job is still required for live Linux Docker evidence.
