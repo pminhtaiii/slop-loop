@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -12,9 +12,11 @@ describe("T105: Verification Integration Suite", () => {
     requireDockerImage(context, "alpine:3.20");
 
     const hostDir = mkdtempSync(join(tmpdir(), "slop-loop-t105-"));
+    chmodSync(hostDir, 0o755);
     const canaryFile = join(hostDir, "source.ts");
     const initialContent = "export const answer = 42;\n";
     writeFileSync(canaryFile, initialContent, "utf8");
+    chmodSync(canaryFile, 0o644);
 
     try {
       // 1. Attempt to write to the read-only mounted snapshot inside the container must fail
