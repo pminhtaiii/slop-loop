@@ -19,6 +19,10 @@ export interface TarReadableSource {
   destroy?(error?: Error): unknown;
 }
 
+/**
+ * Sanitizes and validates an archive entry path to ensure it is a safe relative POSIX path.
+ * Rejects absolute paths, Windows drive letters, backslashes, and traversal segments (..).
+ */
 export function sanitizeArchivePath(path: string): string {
   if (
     path.length === 0 ||
@@ -35,6 +39,11 @@ export function sanitizeArchivePath(path: string): string {
   return parts.join("/");
 }
 
+/**
+ * Validates a collection of in-memory archive entries against bounded resource limits.
+ * Enforces maximum entry counts, total uncompressed bytes, individual file size limits,
+ * path uniqueness, and prohibits special files or symlinks.
+ */
 export function validateArchiveEntries(
   entries: readonly ArchiveEntry[],
   limits: ArchiveLimits = {},

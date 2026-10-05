@@ -14,12 +14,19 @@ export interface LockedArtifact {
   readonly integrity: string;
 }
 
+/**
+ * Extracts the package name from a locked package identifier key.
+ */
 function artifactName(key: string): string {
   const at = key.lastIndexOf("@");
   if (at <= 0) throw new TypeError("Locked package identity is invalid");
   return key.slice(0, at);
 }
 
+/**
+ * Validates a locked package artifact record ensuring exact semver versioning,
+ * valid cryptographic integrity hash, and approved public registry origin.
+ */
 export function validateLockedArtifact(input: LockedArtifact): LockedArtifact {
   if (!input.name || !EXACT_VERSION.test(input.version)) {
     throw new TypeError("Locked artifact must use an exact version");
@@ -39,6 +46,10 @@ export function validateLockedArtifact(input: LockedArtifact): LockedArtifact {
   return Object.freeze({ ...input });
 }
 
+/**
+ * Parses and extracts locked package artifacts from a pnpm lockfile string.
+ * Validates schema, bounded artifact count, package identity naming, and integrity.
+ */
 export function parseLockedArtifacts(lockfile: string): readonly LockedArtifact[] {
   if (lockfile.length === 0 || lockfile.length > 32 * 1024 * 1024) {
     throw new TypeError("Lockfile is outside the supported bounds");
