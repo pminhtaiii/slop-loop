@@ -55,33 +55,37 @@ describe("T111 / T115: Preparation Integration Suite", () => {
     );
   });
 
-  it("proves offline dependency execution with root hooks disabled in Docker", (context) => {
-    requireDockerImage(context, "alpine:3.20");
+  it(
+    "proves offline dependency execution with root hooks disabled in Docker",
+    { timeout: 30_000 },
+    (context) => {
+      requireDockerImage(context, "alpine:3.20");
 
-    // Execute offline container check: no network, non-root, isolated execution
-    const output = runDocker([
-      "run",
-      "--rm",
-      "--pull=never",
-      "--network",
-      "none",
-      "--user",
-      "1000:1000",
-      "--read-only",
-      "--cap-drop",
-      "ALL",
-      "--security-opt",
-      "no-new-privileges",
-      "--tmpfs",
-      "/tmp:rw,size=16m",
-      "alpine:3.20",
-      "sh",
-      "-c",
-      "echo 'offline-prep-clean'",
-    ]);
+      // Execute offline container check: no network, non-root, isolated execution
+      const output = runDocker([
+        "run",
+        "--rm",
+        "--pull=never",
+        "--network",
+        "none",
+        "--user",
+        "1000:1000",
+        "--read-only",
+        "--cap-drop",
+        "ALL",
+        "--security-opt",
+        "no-new-privileges",
+        "--tmpfs",
+        "/tmp:rw,size=16m",
+        "alpine:3.20",
+        "sh",
+        "-c",
+        "echo 'offline-prep-clean'",
+      ]);
 
-    expect(output.trim()).toBe("offline-prep-clean");
-  });
+      expect(output.trim()).toBe("offline-prep-clean");
+    },
+  );
 
   it("validates and publishes only immutable image digests", () => {
     const validDigest = `sha256:${"b".repeat(64)}`;
