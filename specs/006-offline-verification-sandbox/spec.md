@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-02
 
-**Status**: Implementation slices are present; the real Docker integration exit gate remains open pending a CI run on the current commit.
+**Status**: Implemented and verified on supported CI hosts under PR #167 / CI run #54; Phase 5 exit gate is closed.
 
 **Input**: Phase 5 grilling decisions Q1–Q23 in [ADR 0011](../../docs/adr/0011-disposable-offline-verification-containers.md). Repository content supplies data and code; trusted application state supplies authority and execution policy.
 

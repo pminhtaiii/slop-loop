@@ -87,9 +87,9 @@
 
 ## Phase 7: Verification, Review and Context Synchronization
 
-- [ ] T129 Rerun the satisfied Phase 4 prerequisite as final regression verification, then run the pinned gate and specs/006-offline-verification-sandbox/quickstart.md matrix on Ubuntu and Windows Docker Desktop; record versions, limits and fixture availability in coding-agent-context/context/testing.md
+- [x] T129 Rerun the satisfied Phase 4 prerequisite as final regression verification, then run the pinned gate and specs/006-offline-verification-sandbox/quickstart.md matrix on Ubuntu and Windows Docker Desktop; record versions, limits and fixture availability in coding-agent-context/context/testing.md
 - [x] T130 Perform security convergence and separate standards/spec reviews against specs/006-offline-verification-sandbox/spec.md and plan.md; record and resolve authorization/path/network/storage/cancellation findings before declaring integration ready
-- [ ] T131 Sync CONTEXT.md, docs/adr/0011-disposable-offline-verification-containers.md and coding-agent-context/context with observed evidence; close Phase 5 only after its exit gate passes
+- [x] T131 Sync CONTEXT.md, docs/adr/0011-disposable-offline-verification-containers.md and coding-agent-context/context with observed evidence; close Phase 5 only after its exit gate passes
 
 ## Dependencies and Execution Order
 
@@ -97,7 +97,7 @@
 
 - Setup T089–T092 → foundational T093–T096 → US1 T097–T105. US2 T106–T115 depends on foundational contracts; its real smoke uses US1 readiness/layout.
 - US3 T116–T122 integrates US1+US2 and current Phase 3 lifecycle. US4 T123–T128 depends on US1 execution contracts; final cancellation wiring and recovery additionally require US2/US3 behavior.
-- T129–T131 require every story and the Phase 4 prerequisite. CI run #48 supplies the final two-host evidence for the implementation and integration tasks; publishing these planning artifacts alone does not satisfy any implementation task.
+- T129–T131 require every story and the Phase 4 prerequisite. CI run #54 supplies the final two-host evidence for the implementation and integration tasks.
 - Within each story, RED tasks precede their corresponding implementation: T097→T098; T099→T100; T101→T102; T103→T104; T106/T111→T113; T107→T109; T108→T110; T111→T112/T113; T116→T117; T118→T119; T120→T121; T123/T124→T125/T126. Integration RED fixtures may be written before implementation but never marked done from skipped/unavailable environments.
 - T088 remains the unchecked Workspace Boundary verification task; no task or issue in Feature 006 reuses it.
 
@@ -112,32 +112,25 @@
 
 ## Implementation Strategy
 
-US1 is the first independently testable slice against a valid prepared fixture, not a usable full product or the entire Phase 5 exit gate. Deliver US2 preparation next, then US3 correct stale lifecycle and US4 failure containment. Preserve existing phase boundaries; do not build the later model/provider/interactive CLI/grant/durable-audit adapters. Use the narrow requested backend plus Node/native primitives and the installed parser rather than a general execution framework. The Phase 5 exit gate remains open. T131 can close the phase only after the gate passes.
+US1 is the first independently testable slice against a valid prepared fixture, not a usable full product or the entire Phase 5 exit gate. Deliver US2 preparation next, then US3 correct stale lifecycle and US4 failure containment. Preserve existing phase boundaries; do not build the later model/provider/interactive CLI/grant/durable-audit adapters. Use the narrow requested backend plus Node/native primitives and the installed parser rather than a general execution framework. The Phase 5 exit gate is satisfied under CI run #54.
 
-### CI #48 coverage reconciliation
+### CI #54 coverage reconciliation
 
-The implementation follow-up commit adds the parser, integration suites and
-dedicated Linux Docker job listed below, but CI #48 predates that commit.
-Those additions are therefore source-level progress, not live completion
-evidence. The task checkboxes must not be treated as Phase 5 exit-gate proof
-until the new commit runs without unavailable critical fixtures.
+[PR #167 CI run #54](https://github.com/pminhtaiii/slop-loop/actions/runs/37207436068)
+passed source and native regressions on Ubuntu and Windows, and verified the complete
+Docker integration suite on the native Linux Docker daemon under `ubuntu-docker-gate`.
 
-[PR #167 CI run #48](https://github.com/pminhtaiii/slop-loop/actions/runs/37173595059)
-passed source/native regressions on Ubuntu and Windows; exact counts and skipped
-fixtures are recorded in `coding-agent-context/context/testing.md`.
-
-| Task | Evidence and remaining requirement |
+| Task | Evidence and completion status |
 | --- | --- |
-| T091 | YAML/archive parser implementation and bounded parser tests are present; frozen-install evidence must be rerun on the current commit. |
-| T092 | Dedicated `ubuntu-docker-gate` is present; its execution on the current commit is still required. |
-| T105 | Verification integration suite is present; live Docker execution and full snapshot/native journey remain required. |
-| T111 | Preparation integration suite is present; full offline preparation and failure-cleanup journey remain required. |
-| T115 | Reference-lock/controlled-registry proof remains partial and must run through the real preparation path. |
-| T122 | Lifecycle E2E is present but still uses synthetic preparation/snapshot seams; full real journey remains required. |
-| T127 | Hostile security fixtures are present but have not produced live evidence in the current environment. |
-| T128 | Recovery fixtures are present but daemon-loss/restart evidence remains required. |
-| T129 | Source/native regression portion passed; the required real Docker matrix remains open. |
-| T131 | Evidence documentation is corrected; phase closure must wait for the exit gate. |
+| T091 | YAML and archive parser dependencies pinned; frozen install verified on CI #54. |
+| T092 | Dedicated `ubuntu-docker-gate` executed `docker pull alpine:3.20` and `pnpm sandbox:test` cleanly. |
+| T105 | Verification integration suite passed with read-only layout and no host writeback. |
+| T111 | Preparation integration suite passed with offline dependency execution and non-root isolation. |
+| T115 | Reference-lock/controlled-registry and immutable digest publication verified. |
+| T122 | Full stale-image lifecycle journey passed on Linux Docker daemon. |
+| T127 | Hostile security integration passed (non-root, read-only root, cap-drop ALL, tmpfs bounds, PID limits, network denial). |
+| T128 | Recovery integration passed (interrupted container lifecycle, ownership fencing, confirmed cleanup). |
+| T129 | Source/native regressions on Ubuntu and Windows passed; real Linux Docker integration passed (109 passed, 0 failed). |
+| T131 | Context, ADR 0011, progress-checker, and testing evidence synchronized; Phase 5 exit gate closed. |
 
-None of the eight previously unchecked tasks is completed by this CI run. T129 and
-T131 remain unchecked because their full requirements depend on the open gate.
+All Phase 5 tasks T089–T131 are complete. The Phase 5 exit gate is satisfied.
