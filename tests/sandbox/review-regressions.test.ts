@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { expect, it, vi } from "vitest";
 import { DockerSandboxBackend, type DockerPort } from "../../src/sandbox/docker.js";
@@ -168,4 +168,12 @@ it("does not import from tools layer in sandbox gateway (module boundary inversi
 it("does not export speculative SandboxExecutionFacts interface", async () => {
   const gatewayModule = await import("../../src/sandbox/gateway.js");
   expect("SandboxExecutionFacts" in gatewayModule).toBe(false);
+});
+
+it("ensures all sandbox source files use kebab-free names", () => {
+  const sandboxDir = resolve(__dirname, "../../src/sandbox");
+  const files = readdirSync(sandboxDir).filter((file) => file.endsWith(".ts"));
+  for (const file of files) {
+    expect(file).not.toContain("-");
+  }
 });

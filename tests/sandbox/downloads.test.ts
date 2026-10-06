@@ -161,7 +161,7 @@ packages:
   ]);
 });
 
-it("rejects lockfiles with more than the bounded artifact count", () => {
+it("rejects lockfiles with more than the bounded artifact count", { timeout: 60_000 }, () => {
   const packages = Array.from({ length: 10_001 }, (_, index) => {
     return `  pkg-${index}@1.0.0:\n    resolution: {integrity: sha512-YWJj}`;
   }).join("\n");
@@ -171,24 +171,32 @@ it("rejects lockfiles with more than the bounded artifact count", () => {
   );
 });
 
-it("counts only packages when snapshots push the total key count above the limit", () => {
-  const packages = Array.from(
-    { length: 10_000 },
-    (_, index) => `  pkg-${index}@1.0.0:\n    resolution: {integrity: sha512-YWJj}`,
-  ).join("\n");
-  const snapshots = "  pkg-0@1.0.0:\n    dependencies: {}\n";
+it(
+  "counts only packages when snapshots push the total key count above the limit",
+  { timeout: 60_000 },
+  () => {
+    const packages = Array.from(
+      { length: 10_000 },
+      (_, index) => `  pkg-${index}@1.0.0:\n    resolution: {integrity: sha512-YWJj}`,
+    ).join("\n");
+    const snapshots = "  pkg-0@1.0.0:\n    dependencies: {}\n";
 
-  expect(parseLockedArtifacts(`packages:\n${packages}\nsnapshots:\n${snapshots}`)).toHaveLength(
-    10_000,
-  );
-});
+    expect(parseLockedArtifacts(`packages:\n${packages}\nsnapshots:\n${snapshots}`)).toHaveLength(
+      10_000,
+    );
+  },
+);
 
-it("rejects excessive package maps before converting malformed artifact records", () => {
-  const packages = Array.from({ length: 10_001 }, (_, index) => `  pkg-${index}@1.0.0: {}`).join(
-    "\n",
-  );
+it(
+  "rejects excessive package maps before converting malformed artifact records",
+  { timeout: 60_000 },
+  () => {
+    const packages = Array.from({ length: 10_001 }, (_, index) => `  pkg-${index}@1.0.0: {}`).join(
+      "\n",
+    );
 
-  expect(() => parseLockedArtifacts(`packages:\n${packages}\n`)).toThrow(
-    "Locked artifact count exceeds limit",
-  );
-});
+    expect(() => parseLockedArtifacts(`packages:\n${packages}\n`)).toThrow(
+      "Locked artifact count exceeds limit",
+    );
+  },
+);

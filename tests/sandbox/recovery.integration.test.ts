@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { requireDockerImage, runDocker } from "./integration-fixtures.js";
 import { CleanupExecutionGate, createVerificationLabels } from "../../src/sandbox/cleanup.js";
-import { DockerCliExecution } from "../../src/sandbox/docker-process.js";
+import { DockerCliExecution } from "../../src/sandbox/dockerprocess.js";
 
 describe("Phase 5 Docker recovery integration (T128)", () => {
   it(

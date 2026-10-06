@@ -171,6 +171,8 @@ CI run [#54](https://github.com/pminhtaiii/slop-loop/actions/runs/37207436068) f
   typecheck, build, and smoke passed.
 - **Windows Quality Gate (PASS)**: Workspace tests: 106 passed / 2 skipped (108 total).
   Full source suite: 435 passed / 8 skipped. Native build, build, and smoke passed.
+  The local Windows host does not have active Docker Desktop running during CI; Windows CI executes the complete source and native test suite (435 passed, 8 skipped), while live container execution runs on the dedicated Ubuntu Linux Docker daemon gate (`ubuntu-docker-gate`).
+- **Windows Docker Desktop execution & fixture recording (T129, FR-022)**: Windows Docker Desktop integration requires Docker Desktop with Linux containers enabled; when Docker Desktop daemon is unavailable, integration tests fail-closed or report UNAVAILABLE, and real verification evidence is supplied by CI run #54 on native Linux Docker Engine.
 - **Ubuntu Docker Integration Gate (PASS)**: Dedicated `ubuntu-docker-gate` job
   running under the native Linux Docker daemon executed `docker pull alpine:3.20`
   and `pnpm sandbox:test`. All 22 test files in `tests/sandbox` passed (109 passed,

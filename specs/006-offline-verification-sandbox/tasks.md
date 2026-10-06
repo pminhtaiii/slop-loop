@@ -131,6 +131,7 @@ Docker integration suite on the native Linux Docker daemon under `ubuntu-docker-
 | T127 | Hostile security integration passed (non-root, read-only root, cap-drop ALL, tmpfs bounds, PID limits, network denial). |
 | T128 | Recovery integration passed (interrupted container lifecycle, ownership fencing, confirmed cleanup). |
 | T129 | Source/native regressions on Ubuntu and Windows passed; real Linux Docker integration passed (109 passed, 0 failed). |
+| T130 | Security convergence and dual-axis (standards and spec) code reviews completed; findings resolved before integration. |
 | T131 | Context, ADR 0011, progress-checker, and testing evidence synchronized; Phase 5 exit gate closed. |
 
 All Phase 5 tasks T089–T131 are complete. The Phase 5 exit gate is satisfied.

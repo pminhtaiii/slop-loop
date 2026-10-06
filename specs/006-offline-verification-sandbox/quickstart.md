@@ -1,6 +1,6 @@
 # Quickstart: Validate Offline Verification Sandbox
 
-This is the Phase 5 validation and evidence guide. Implementation evidence is recorded in the project context; setup follow-ups T091 and T092 remain open. Feature number 006 is product Phase 5.
+This is the Phase 5 validation and evidence guide. Implementation and integration evidence is recorded in the project context; CI run #54 closed the Phase 5 exit gate, and setup tasks T091 and T092 are complete. Feature number 006 is product Phase 5.
 
 ## Prerequisites
 
@@ -81,7 +81,7 @@ pnpm smoke
 pnpm sandbox:test
 ```
 
-The sandbox's reference target test profile selects ordinary source/native tests explicitly and excludes the host-owned Docker harness. This prevents recursive self-verification from demanding a Docker socket or privileged nested execution. The outer full quality/integration/security gate runs those excluded harnesses; CI run #48 passed the Docker-gated integration, security, recovery and E2E checks. Their exclusion inside the container is not evidence they passed.
+The sandbox's reference target test profile selects ordinary source/native tests explicitly and excludes the host-owned Docker harness. This prevents recursive self-verification from demanding a Docker socket or privileged nested execution. The outer full quality/integration/security gate runs those excluded harnesses; CI run #54 passed the Docker-gated integration, security, recovery and E2E checks and closed the Phase 5 exit gate, with T091 and T092 complete. Their exclusion inside the container is not evidence they passed.
 
 ## Exit gate
 

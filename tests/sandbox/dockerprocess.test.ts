@@ -2,7 +2,7 @@ import { PassThrough } from "node:stream";
 import { afterEach, expect, it, vi } from "vitest";
 import { ChildProcess, spawn } from "node:child_process";
 import { promisify } from "node:util";
-import { DockerCliExecution } from "../../src/sandbox/docker-process.js";
+import { DockerCliExecution } from "../../src/sandbox/dockerprocess.js";
 import { DEFAULT_SANDBOX_LIMITS } from "../../src/sandbox/config.js";
 
 const { execFileMock } = vi.hoisted(() => {
