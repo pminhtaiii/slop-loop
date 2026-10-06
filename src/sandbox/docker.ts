@@ -8,6 +8,7 @@ import type {
   VerificationEvidence,
 } from "./types.js";
 import { CleanupExecutionGate } from "./cleanup.js";
+import { mapVerificationTarget } from "./config.js";
 
 export interface DockerPort {
   readiness(): {
@@ -103,13 +104,21 @@ export class DockerSandboxBackend implements SandboxBackend {
     )
       throw new Error("Sandbox runtime not ready");
     validateFixedArgv(input.target.argv);
-    const allowed = new Map([
-      ["tests", "pnpm test"],
-      ["lint", "pnpm lint"],
-      ["typecheck", "pnpm typecheck"],
-      ["build", "pnpm build"],
-    ]);
-    if (allowed.get(input.target.check) !== input.target.argv.join(" "))
+    const checkToTool: Record<string, [string, string]> = {
+      tests: ["run_tests", "ordinary"],
+      lint: ["run_linter", "lint"],
+      typecheck: ["run_typecheck", "typecheck"],
+      build: ["run_build", "build"],
+    };
+    const mapped = checkToTool[input.target.check];
+    let approvedTarget: { readonly argv: readonly string[]; readonly check: string };
+    try {
+      if (!mapped) throw new Error("Unapproved logical verification target");
+      approvedTarget = mapVerificationTarget(mapped[0], mapped[1]);
+    } catch {
+      throw new Error("Unapproved logical verification target");
+    }
+    if (approvedTarget.argv.join(" ") !== input.target.argv.join(" "))
       throw new Error("Unapproved logical verification target");
     if (
       input.image.status !== "READY" ||
@@ -140,7 +149,7 @@ export class DockerSandboxBackend implements SandboxBackend {
       throw new Error("Untrusted snapshot mount");
     if (input.runtime.signal.aborted || input.runtime.deadlineAt <= Date.now())
       throw new Error("Sandbox deadline expired");
-    const resourceId = this.docker.registerResource?.() ?? randomUUID();
+    const resourceId = this.docker.registerResource?.() ?? `slop-loop-${randomUUID()}`;
     let result: Awaited<ReturnType<DockerPort["run"]>> | undefined;
     let cleanup: "CONFIRMED" | "UNCERTAIN" = "UNCERTAIN";
     this.cleanupGate.hold();

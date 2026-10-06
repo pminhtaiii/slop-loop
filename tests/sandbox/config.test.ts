@@ -64,6 +64,20 @@ describe("trusted sandbox configuration", () => {
     }
   });
 
+  it.each(["docker", "Docker", "DOCKER", "sandbox:test", "Sandbox:Test", "SANDBOX:TEST"])(
+    "rejects recursive suite %s in profile names and arguments",
+    (suite) => {
+      for (const profiles of [
+        { [suite]: { argv: ["pnpm", "test"] } },
+        { ordinary: { argv: ["pnpm", suite] } },
+      ]) {
+        expect(() => validateTrustedConfiguration({ ...trustedConfiguration(), profiles })).toThrow(
+          "Unapproved recursive-Docker profile suites are rejected",
+        );
+      }
+    },
+  );
+
   it("rejects remote engines and shell metacharacters in profile argv", () => {
     expect(() =>
       validateTrustedConfiguration({

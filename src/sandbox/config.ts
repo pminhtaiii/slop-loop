@@ -13,12 +13,25 @@ export const DEFAULT_SANDBOX_LIMITS: SandboxLimits = Object.freeze({
   memoryBytes: 4 * 1024 * 1024 * 1024,
 });
 
+export const NODE_GYP_PRELUDE = Object.freeze(["node-gyp", "rebuild"] as const);
+
 const PROFILES = Object.freeze({
   ordinary: Object.freeze({ argv: ["pnpm", "test"] as const, check: "tests" }),
   lint: Object.freeze({ argv: ["pnpm", "lint"] as const, check: "lint" }),
   typecheck: Object.freeze({ argv: ["pnpm", "typecheck"] as const, check: "typecheck" }),
   build: Object.freeze({ argv: ["pnpm", "build"] as const, check: "build" }),
+  native: Object.freeze({
+    argv: ["pnpm", "build"] as const,
+    check: "build",
+    nativePrelude: NODE_GYP_PRELUDE,
+  }),
 });
+
+export interface VerificationTargetMapping {
+  readonly argv: readonly string[];
+  readonly check: string;
+  readonly nativePrelude?: readonly string[];
+}
 
 export type VerificationProfile = keyof typeof PROFILES;
 export type PreparationInputs = {
@@ -90,12 +103,18 @@ export function validateTrustedConfiguration(value: unknown): TrustedSandboxConf
   if (!parsed.success) throw new TypeError("Invalid trusted sandbox configuration");
   const configuredProfiles = parsed.data.profiles;
   if (configuredProfiles !== undefined) {
-    for (const profile of Object.values(configuredProfiles)) {
+    for (const [profileName, profile] of Object.entries(configuredProfiles)) {
       if (profile.argv.some(containsShellMetacharacter)) {
         throw new TypeError("Shell metacharacters are not allowed in profile argv");
       }
       if (profile.argv[0] !== "pnpm") {
         throw new TypeError("Only approved pnpm profile commands are allowed");
+      }
+      if (
+        /docker|sandbox:test/i.test(profileName) ||
+        profile.argv.some((arg) => /docker|sandbox:test/i.test(arg))
+      ) {
+        throw new TypeError("Unapproved recursive-Docker profile suites are rejected");
       }
     }
   }
@@ -109,15 +128,31 @@ export function validateTrustedConfiguration(value: unknown): TrustedSandboxConf
   });
 }
 
-export function mapVerificationTarget(
-  tool: string,
-  profile: string,
-): { readonly argv: readonly string[]; readonly check: string } {
+export function mapVerificationTarget(tool: string, profile: string): VerificationTargetMapping {
+  if (/docker|sandbox:test/i.test(tool) || /docker|sandbox:test/i.test(profile)) {
+    throw new Error("Unapproved recursive-Docker verification suite");
+  }
   if (tool === "run_tests" && profile === "ordinary") return PROFILES.ordinary;
   if (tool === "run_linter" && profile === "lint") return PROFILES.lint;
   if (tool === "run_typecheck" && profile === "typecheck") return PROFILES.typecheck;
   if (tool === "run_build" && profile === "build") return PROFILES.build;
+  if (
+    (tool === "run_build" || tool === "native_build") &&
+    (profile === "native" || profile === "native_build")
+  ) {
+    return PROFILES.native;
+  }
   throw new Error("Unapproved verification target");
+}
+
+export function mapNativePrelude(tool: string, profile: string): readonly string[] | undefined {
+  if (
+    (tool === "run_build" || tool === "native_build") &&
+    (profile === "native" || profile === "native_build")
+  ) {
+    return NODE_GYP_PRELUDE;
+  }
+  return undefined;
 }
 
 /** Profile authority comes from the same fixed configuration as target mapping. */

@@ -1,9 +1,56 @@
 import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
+import { z } from "zod";
 import type { DockerPort } from "./docker.js";
 
 const execDocker = promisify(execFile);
+
+function allowlistedDockerEnv(): Record<string, string> {
+  const allowlist: Record<string, string | undefined> = {
+    PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
+    DOCKER_HOST: process.env.DOCKER_HOST,
+    HOME: process.env.HOME,
+    USER: process.env.USER,
+    SYSTEMROOT: process.env.SystemRoot ?? process.env.SYSTEMROOT,
+    WINDIR: process.env.windir ?? process.env.WINDIR,
+  };
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(allowlist)) {
+    if (value !== undefined) {
+      env[key] = value;
+    }
+  }
+  return env;
+}
+
+const containerLabelsSchema = z
+  .object({
+    "slop-loop.owner": z.literal("verification"),
+    "slop-loop.containerId": z.string().min(1),
+    "slop-loop.taskId": z.string().min(1),
+  })
+  .catchall(z.unknown());
+
+function truncateUtf8(buf: Buffer, maxBytes: number): string {
+  let len = Math.min(buf.length, maxBytes);
+  let i = len;
+  while (i > 0 && (buf[i - 1]! & 0xc0) === 0x80) {
+    i--;
+  }
+  if (i > 0 && (buf[i - 1]! & 0x80) !== 0) {
+    const lead = buf[i - 1]!;
+    let expectedLength = 1;
+    if ((lead & 0xe0) === 0xc0) expectedLength = 2;
+    else if ((lead & 0xf0) === 0xe0) expectedLength = 3;
+    else if ((lead & 0xf8) === 0xf0) expectedLength = 4;
+
+    if (len - (i - 1) < expectedLength) {
+      len = i - 1;
+    }
+  }
+  return buf.subarray(0, len).toString("utf8");
+}
 
 /** Process operations composed with trusted readiness, image inspection and staging ports. */
 export class DockerCliExecution {
@@ -43,15 +90,22 @@ export class DockerCliExecution {
           signal,
           killSignal: "SIGKILL",
           stdio: ["ignore", "pipe", "pipe"],
+          env: allowlistedDockerEnv(),
         });
         const chunks: Buffer[] = [];
         let bytes = 0;
+        let outputExceeded = false;
         let failure: Error | undefined;
         const collect = (chunk: Buffer) => {
-          const available = Math.max(0, limits.maxOutputBytes + 1 - bytes);
-          if (available > 0) chunks.push(Buffer.from(chunk.subarray(0, available)));
-          bytes += Math.min(chunk.length, available);
-          if (bytes > limits.maxOutputBytes) controller.abort();
+          if (bytes < limits.maxOutputBytes) {
+            const available = limits.maxOutputBytes - bytes;
+            chunks.push(Buffer.from(chunk.subarray(0, available)));
+          }
+          bytes += chunk.length;
+          if (bytes > limits.maxOutputBytes) {
+            outputExceeded = true;
+            controller.abort();
+          }
         };
         child.stdout.on("data", collect);
         child.stderr.on("data", collect);
@@ -59,8 +113,25 @@ export class DockerCliExecution {
           failure = error;
         });
         child.once("close", (code) => {
-          if (failure || signal.aborted) reject(failure ?? new Error("Sandbox execution aborted"));
-          else resolve({ id, output: Buffer.concat(chunks).toString("utf8"), exitCode: code ?? 1 });
+          if (failure) {
+            reject(failure);
+          } else if (runtime.signal.aborted) {
+            reject(new Error("Sandbox execution aborted"));
+          } else if (outputExceeded) {
+            resolve({
+              id,
+              output: truncateUtf8(Buffer.concat(chunks), limits.maxOutputBytes),
+              exitCode: code ?? 1,
+            });
+          } else if (controller.signal.aborted) {
+            reject(new Error("Sandbox execution aborted"));
+          } else {
+            resolve({
+              id,
+              output: truncateUtf8(Buffer.concat(chunks), limits.maxOutputBytes),
+              exitCode: code ?? 1,
+            });
+          }
         });
       });
     } finally {
@@ -83,6 +154,7 @@ export class DockerCliExecution {
           maxBuffer: 64 * 1024,
           encoding: "utf8",
           shell: false,
+          env: allowlistedDockerEnv(),
         })
       ).stdout.trim();
     const find = () =>
@@ -93,18 +165,10 @@ export class DockerCliExecution {
         const labels: unknown = JSON.parse(
           await command(["inspect", "--format", "{{json .Config.Labels}}", "--", container]),
         );
-        if (
-          typeof labels !== "object" ||
-          labels === null ||
-          !("slop-loop.owner" in labels) ||
-          labels["slop-loop.owner"] !== "verification" ||
-          !("slop-loop.containerId" in labels) ||
-          labels["slop-loop.containerId"] !== id ||
-          !("slop-loop.taskId" in labels) ||
-          typeof labels["slop-loop.taskId"] !== "string" ||
-          labels["slop-loop.taskId"].length === 0
-        )
+        const parsed = containerLabelsSchema.safeParse(labels);
+        if (!parsed.success || parsed.data["slop-loop.containerId"] !== id) {
           return "UNCERTAIN";
+        }
         await command(["rm", "--force", "--", container]);
       }
       if ((await find()) !== "") return "UNCERTAIN";

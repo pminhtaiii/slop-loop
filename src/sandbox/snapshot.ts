@@ -36,16 +36,26 @@ function safePath(value: string): boolean {
   );
 }
 
+function isGeneratedOutput(value: string): boolean {
+  return (
+    /^(?:dist|coverage)(?:\/|$)/iu.test(value) ||
+    (/^native\//iu.test(value) && /(?:^|\/)build(?:\/|$)/iu.test(value.slice(7)))
+  );
+}
+
 async function captureOnce(
   source: SnapshotSource,
   limits: SnapshotLimits,
 ): Promise<VerificationSnapshot> {
   const raw = await source.entries();
-  if (raw.length > limits.maxEntries) throw new Error("Snapshot entry limit exceeded");
+  const included = raw.filter((entry) => {
+    if (!safePath(entry.path)) throw new Error("Unsafe snapshot path");
+    return !isGeneratedOutput(entry.path);
+  });
+  if (included.length > limits.maxEntries) throw new Error("Snapshot entry limit exceeded");
   let totalBytes = 0;
-  const entries = raw
+  const entries = included
     .map((entry) => {
-      if (!safePath(entry.path)) throw new Error("Unsafe snapshot path");
       if (entry.kind !== undefined && entry.kind !== "file")
         throw new Error("Unsupported snapshot entry type");
       if (entry.linkTarget !== undefined) throw new Error("Symlink snapshot entries are forbidden");
@@ -66,7 +76,7 @@ async function captureOnce(
       });
     })
     .sort((a, b) => a.path.localeCompare(b.path));
-  if (new Set(entries.map((entry) => entry.path)).size !== entries.length)
+  if (new Set(entries.map((entry) => entry.path.toLowerCase())).size !== entries.length)
     throw new Error("Snapshot path collision");
   const identity = JSON.stringify(
     entries.map(({ path, bytes, mode, hash }) => ({ path, bytes, mode, hash })),
