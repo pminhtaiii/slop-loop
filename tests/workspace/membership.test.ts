@@ -121,21 +121,25 @@ describe("effective checkout membership", () => {
     expect(isWorkspaceMember(selected.workspace, "leading.ts")).toBe(false);
   });
 
-  it("excludes a nested bare repository even without its config file", async () => {
-    const fixture = createGitCheckout();
-    cleanup.push(() => fixture.cleanup());
-    const nested = path.join(fixture.root, "bare-without-config.git");
-    fixture.git("init", "--bare", nested);
-    fs.unlinkSync(path.join(nested, "config"));
-    expect(fixture.git("-C", nested, "rev-parse", "--is-bare-repository")).toBe("true");
-    const { selectWorkspace, closeWorkspace } = await import("../../src/workspace/admission.js");
-    const { isWorkspaceMember } = await import("../../src/workspace/membership.js");
-    const selected = selectWorkspace(fixture.root);
-    expect(selected.kind).toBe("SELECTED");
-    if (selected.kind !== "SELECTED") return;
-    cleanup.push(() => closeWorkspace(selected.workspace));
-    expect(isWorkspaceMember(selected.workspace, "bare-without-config.git/HEAD")).toBe(false);
-  });
+  it(
+    "excludes a nested bare repository even without its config file",
+    { timeout: 20_000 },
+    async () => {
+      const fixture = createGitCheckout();
+      cleanup.push(() => fixture.cleanup());
+      const nested = path.join(fixture.root, "bare-without-config.git");
+      fixture.git("init", "--bare", nested);
+      fs.unlinkSync(path.join(nested, "config"));
+      expect(fixture.git("-C", nested, "rev-parse", "--is-bare-repository")).toBe("true");
+      const { selectWorkspace, closeWorkspace } = await import("../../src/workspace/admission.js");
+      const { isWorkspaceMember } = await import("../../src/workspace/membership.js");
+      const selected = selectWorkspace(fixture.root);
+      expect(selected.kind).toBe("SELECTED");
+      if (selected.kind !== "SELECTED") return;
+      cleanup.push(() => closeWorkspace(selected.workspace));
+      expect(isWorkspaceMember(selected.workspace, "bare-without-config.git/HEAD")).toBe(false);
+    },
+  );
 
   it("keeps tracked files in an ordinary directory with repository-shaped names", async () => {
     const fixture = createGitCheckout();

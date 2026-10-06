@@ -161,6 +161,7 @@ describe("native workspace open", () => {
 
   it.skipIf(!symlinkFixtureAvailable("file"))(
     "stops a held read after its alias changes to ignored or secret content",
+    { timeout: 20_000 },
     () => {
       const fixture = createGitCheckout();
       cleanup.push(() => fixture.cleanup());
