@@ -4,6 +4,7 @@ import {
   bindDeveloperPreparation,
   preparationFingerprint,
   publishPreparedImage,
+  validatePreparedImage,
 } from "../../src/sandbox/preparation.js";
 
 describe("developer-only preparation", () => {
@@ -156,5 +157,21 @@ describe("developer-only preparation", () => {
       architecture: "linux-x64",
       status: "READY",
     });
+
+    expect(() =>
+      validatePreparedImage({
+        imageId: "latest",
+        fingerprint: "fingerprint",
+        architecture: "linux-x64",
+      }),
+    ).toThrow(/immutable image digest/i);
+
+    const validated = validatePreparedImage({
+      imageId: `sha256:${"a".repeat(64)}`,
+      fingerprint: "fingerprint",
+      architecture: "linux-x64",
+    });
+    expect(validated).toEqual(published);
+    expect(Object.isFrozen(validated)).toBe(true);
   });
 });

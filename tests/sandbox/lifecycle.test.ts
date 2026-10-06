@@ -4,7 +4,7 @@ import { SandboxGateway } from "../../src/sandbox/gateway.js";
 import { DEFAULT_SANDBOX_LIMITS } from "../../src/sandbox/config.js";
 import { createTaskBudget } from "../../src/orchestration/budget.js";
 import { TaskState, createTask } from "../../src/orchestration/task.js";
-import { runTaskEvent } from "../../src/orchestration/runner.js";
+import { TaskCheckoutSlot, TaskRunner, runTaskEvent } from "../../src/orchestration/runner.js";
 import type { SandboxBackend } from "../../src/sandbox/types.js";
 
 describe("stale image task lifecycle", () => {
@@ -46,5 +46,32 @@ describe("stale image task lifecycle", () => {
 
     expect(oldTask.taskId).not.toBe(newTask.taskId);
     expect(newTask.state).toBe(TaskState.RECEIVED);
+  });
+});
+
+describe("TaskCheckoutSlot fencing on unconfirmed cleanup", () => {
+  it("holds the slot when task finishes with CLEANUP_UNCONFIRMED until settled", () => {
+    const slot = new TaskCheckoutSlot();
+    const task = Object.freeze({
+      ...createTask({ taskId: "task-1", objective: "verify", mode: "Edit" }),
+      state: TaskState.ADMITTED,
+      budget: createTaskBudget("Medium"),
+      lastObservedAt: 1,
+    });
+    const runner = new TaskRunner(task, slot);
+    runner.process({ kind: "CLEANUP_UNCONFIRMED" }, 2);
+
+    expect(runner.task.state).toBe(TaskState.BLOCKED);
+    expect(slot.isHeld).toBe(true);
+    expect(() => slot.claim("task-2")).toThrow("Checkout already has an active task");
+
+    slot.settle("UNCERTAIN");
+    expect(slot.isHeld).toBe(true);
+    expect(() => slot.claim("task-2")).toThrow("Checkout already has an active task");
+
+    slot.settle("CONFIRMED");
+    expect(slot.isHeld).toBe(false);
+    expect(() => slot.claim("task-2")).not.toThrow();
+    expect(slot.heldBy).toBe("task-2");
   });
 });

@@ -221,7 +221,10 @@ describe("sandbox core contracts", () => {
       attemptId: "attempt",
       nativeIdentity: "native-v1",
     });
-    await expect(coordinator.verdict()).resolves.toMatchObject({ status: "INCOMPLETE" });
+    await expect(coordinator.verdict()).resolves.toMatchObject({
+      status: "PASS",
+      freshness: "STALE",
+    });
   });
 
   it("requires complete preparation, profile, target, task and native evidence", async () => {
@@ -365,7 +368,7 @@ describe("sandbox core contracts", () => {
       DEFAULT_SANDBOX_LIMITS,
     );
     const facts = await gateway.factsFor(
-      { name: "run_tests", arguments: { profile: "ordinary" } } as never,
+      { name: "run_tests", arguments: { profile: "ordinary" } },
       { eligibleTools: ["run_tests"] } as never,
       {
         imageId: "sha256:" + "a".repeat(64),

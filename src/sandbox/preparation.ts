@@ -30,11 +30,7 @@ const preparedImageInputSchema = z.strictObject({
     .refine((val) => val.trim().length > 0, "Prepared image metadata is incomplete"),
 });
 
-export function validatePreparedImage(input: {
-  readonly imageId: string;
-  readonly fingerprint: string;
-  readonly architecture: string;
-}): PreparedImageRecord {
+function freezePreparedImage(input: unknown): PreparedImageRecord {
   const parsed = preparedImageInputSchema.safeParse(input);
   if (!parsed.success) {
     throw new TypeError(parsed.error.issues[0]?.message ?? "Invalid prepared image metadata");
@@ -47,21 +43,20 @@ export function validatePreparedImage(input: {
   });
 }
 
+export function validatePreparedImage(input: {
+  readonly imageId: string;
+  readonly fingerprint: string;
+  readonly architecture: string;
+}): PreparedImageRecord {
+  return freezePreparedImage(input);
+}
+
 export function publishPreparedImage(input: {
   readonly imageId: string;
   readonly fingerprint: string;
   readonly architecture: string;
 }): PreparedImageRecord {
-  const parsed = preparedImageInputSchema.safeParse(input);
-  if (!parsed.success) {
-    throw new TypeError(parsed.error.issues[0]?.message ?? "Invalid prepared image metadata");
-  }
-  return Object.freeze({
-    imageId: parsed.data.imageId,
-    fingerprint: parsed.data.fingerprint,
-    architecture: parsed.data.architecture,
-    status: "READY" as const,
-  });
+  return freezePreparedImage(input);
 }
 
 export interface DeveloperPreparationBinding {

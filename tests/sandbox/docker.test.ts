@@ -270,3 +270,38 @@ it("validates targets against approved profiles and rejects unapproved commands"
     }),
   ).rejects.toThrow("Unapproved logical verification target");
 });
+
+it("records exit code and truncation state in verification evidence", async () => {
+  const backend = new DockerSandboxBackend({
+    readiness: () => ({ networkDisabled: true, limitsEnforced: true, readOnlyMounts: true }),
+    inspectImage: (imageId) => ({ imageId, fingerprint: "fingerprint", architecture: "linux-x64" }),
+    copySnapshot: () => resolve("staging", "mount"),
+    run: () => Promise.resolve({ id: "container", output: "output exceeds limit", exitCode: 1 }),
+    stopAndRemove: () => Promise.resolve("CONFIRMED"),
+  });
+
+  const evidence = await backend.executeCheck({
+    snapshot,
+    image: {
+      imageId: "sha256:" + "a".repeat(64),
+      fingerprint: "fingerprint",
+      architecture: "linux-x64",
+      status: "READY",
+    },
+    target: {
+      check: "tests",
+      argv: ["pnpm", "test"],
+      profileSetId: "profiles-v1",
+      targetId: "tests:ordinary",
+      taskId: "task",
+      attemptId: "attempt",
+      nativeIdentity: "native",
+    },
+    limits: { ...DEFAULT_SANDBOX_LIMITS, maxOutputBytes: 5 },
+    runtime: { signal: new AbortController().signal, deadlineAt: Date.now() + 30_000 },
+  });
+
+  expect(evidence.exitCode).toBe(1);
+  expect(evidence.truncated).toBe(true);
+  expect(evidence.status).toBe("FAIL");
+});

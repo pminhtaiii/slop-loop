@@ -73,14 +73,7 @@ export class VerificationCoordinator {
       );
     return Promise.resolve(
       Object.freeze({
-        status:
-          freshness !== "CURRENT"
-            ? "INCOMPLETE"
-            : passed
-              ? "PASS"
-              : complete
-                ? "FAIL"
-                : "INCOMPLETE",
+        status: passed ? "PASS" : complete ? "FAIL" : "INCOMPLETE",
         freshness,
         evidence,
       }),

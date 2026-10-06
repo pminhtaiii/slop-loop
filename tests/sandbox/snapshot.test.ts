@@ -14,6 +14,21 @@ const limits = {
 };
 
 describe("safe snapshot capture", () => {
+  it.each(["C:", "C:/", "C:/file.txt", "C:file.txt", "c:/file.txt", "z:file.txt"])(
+    "rejects Windows drive-qualified paths: %s",
+    async (path) => {
+      await expect(
+        captureSnapshot(
+          {
+            workspaceId: "workspace",
+            entries: () => Promise.resolve([{ path, bytes: Buffer.from("x"), mode: 0o644 }]),
+          },
+          limits,
+        ),
+      ).rejects.toThrow("Unsafe snapshot path");
+    },
+  );
+
   it("hashes copied bytes and exposes defensive content copies", async () => {
     const source: SnapshotSource = {
       workspaceId: "workspace",
@@ -31,7 +46,22 @@ describe("safe snapshot capture", () => {
   });
 
   it("rejects unsafe links, special files, excluded paths, and bounds violations", async () => {
-    for (const path of [".git/config", "node_modules/pkg/index.js", "../outside", ".env"]) {
+    for (const path of [
+      ".git/config",
+      "nested/.git/config",
+      "nested/.git",
+      "node_modules/pkg/index.js",
+      "src/node_modules/pkg/index.js",
+      "sub/node_modules",
+      "../outside",
+      ".env",
+      "nested/.env",
+      "nested/.env.local",
+      "foo//bar",
+      "trailing/",
+      "/absolute",
+      "win\\path",
+    ]) {
       await expect(
         captureSnapshot(
           {

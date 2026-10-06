@@ -2,8 +2,6 @@ import type { PreparedImageRecord, SandboxBackend, SandboxLimits } from "./types
 import type { TrustedExecutionFacts } from "../policy/engine.js";
 import type { TaskCapabilityCeiling } from "../policy/engine.js";
 import { approvedProfilesForTool } from "./config.js";
-import { toolMetadataForName } from "../tools/registry.js";
-import type { ValidatedToolCall } from "../tools/registry.js";
 
 export type ReadinessAssessment =
   | { readonly status: "READY" }
@@ -12,11 +10,6 @@ export type ReadinessAssessment =
       readonly reason:
         "PREPARATION_REQUIRED" | "IMAGE_STALE" | "RUNTIME_UNAVAILABLE" | "CLEANUP_UNCONFIRMED";
     };
-
-export interface SandboxExecutionFacts {
-  readonly readiness: ReadinessAssessment;
-  readonly image: PreparedImageRecord;
-}
 
 export class SandboxGateway {
   constructor(
@@ -32,14 +25,14 @@ export class SandboxGateway {
   }
 
   async factsFor(
-    call: ValidatedToolCall,
+    call: { readonly name: string; readonly arguments?: unknown },
     ceiling: TaskCapabilityCeiling,
     image: PreparedImageRecord,
   ): Promise<TrustedExecutionFacts | undefined> {
-    if (toolMetadataForName(call.name).execution !== "trusted_profile") return undefined;
+    if (approvedProfilesForTool(call.name).length === 0) return undefined;
     const readiness = await this.readiness(image);
     return Object.freeze({
-      approvedProfiles: ceiling.eligibleTools.includes(call.name)
+      approvedProfiles: (ceiling.eligibleTools as readonly string[]).includes(call.name)
         ? approvedProfilesForTool(call.name)
         : Object.freeze([]),
       executorReady: readiness.status === "READY",
