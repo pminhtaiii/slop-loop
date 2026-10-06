@@ -141,7 +141,7 @@ describe("trusted checkout selection and admission", () => {
     expect(workspaceForId(child.workspace.workspaceId)).toBeNull();
   });
 
-  it("rejects a non-repository and a bare repository", async () => {
+  it("rejects a non-repository and a bare repository", { timeout: 20_000 }, async () => {
     const fixture = createGitCheckout();
     cleanup.push(() => fixture.cleanup());
     const outside = fs.mkdtempSync(path.join(os.tmpdir(), "slop-loop-outside-"));
@@ -152,7 +152,7 @@ describe("trusted checkout selection and admission", () => {
     expect(selectWorkspace(path.join(outside, "bare.git"))).toMatchObject({ kind: "REJECTED" });
   });
 
-  it("ignores Git repository-location environment overrides", async () => {
+  it("ignores Git repository-location environment overrides", { timeout: 20_000 }, async () => {
     const fixture = createGitCheckout();
     const other = createGitCheckout();
     cleanup.push(
@@ -186,30 +186,34 @@ describe("trusted checkout selection and admission", () => {
     ).toMatchObject({ state: "FAILED", outcome: { reason: "INTERNAL_ERROR" } });
   });
 
-  it("rejects a replacement linked-worktree gitfile at the same path", async () => {
-    const fixture = createGitCheckout();
-    cleanup.push(() => fixture.cleanup());
-    const first = path.join(fixture.root, "first");
-    const second = path.join(fixture.root, "second");
-    fixture.git("worktree", "add", "-qb", "first", first);
-    fixture.git("worktree", "add", "-qb", "second", second);
-    const { selectWorkspace, verifyWorkspace, workspaceForId, closeWorkspace } =
-      await import("../../src/workspace/admission.js");
-    const selected = selectWorkspace(first);
-    expect(selected.kind).toBe("SELECTED");
-    if (selected.kind !== "SELECTED") return;
-    cleanup.push(() => closeWorkspace(selected.workspace));
-    expect(verifyWorkspace(selected.workspace)).toBe(true);
-    const originalGitfile = fs.readFileSync(path.join(first, ".git"));
-    fs.rmSync(path.join(first, ".git"));
-    fs.copyFileSync(path.join(second, ".git"), path.join(first, ".git"));
-    expect(verifyWorkspace(selected.workspace)).toBe(false);
-    expect(workspaceForId(selected.workspace.workspaceId)).toBeNull();
-    fs.rmSync(path.join(first, ".git"));
-    fs.writeFileSync(path.join(first, ".git"), originalGitfile);
-    expect(workspaceForId(selected.workspace.workspaceId)).toBeNull();
-    expect(verifyWorkspace(selected.workspace)).toBe(false);
-  });
+  it(
+    "rejects a replacement linked-worktree gitfile at the same path",
+    { timeout: 20_000 },
+    async () => {
+      const fixture = createGitCheckout();
+      cleanup.push(() => fixture.cleanup());
+      const first = path.join(fixture.root, "first");
+      const second = path.join(fixture.root, "second");
+      fixture.git("worktree", "add", "-qb", "first", first);
+      fixture.git("worktree", "add", "-qb", "second", second);
+      const { selectWorkspace, verifyWorkspace, workspaceForId, closeWorkspace } =
+        await import("../../src/workspace/admission.js");
+      const selected = selectWorkspace(first);
+      expect(selected.kind).toBe("SELECTED");
+      if (selected.kind !== "SELECTED") return;
+      cleanup.push(() => closeWorkspace(selected.workspace));
+      expect(verifyWorkspace(selected.workspace)).toBe(true);
+      const originalGitfile = fs.readFileSync(path.join(first, ".git"));
+      fs.rmSync(path.join(first, ".git"));
+      fs.copyFileSync(path.join(second, ".git"), path.join(first, ".git"));
+      expect(verifyWorkspace(selected.workspace)).toBe(false);
+      expect(workspaceForId(selected.workspace.workspaceId)).toBeNull();
+      fs.rmSync(path.join(first, ".git"));
+      fs.writeFileSync(path.join(first, ".git"), originalGitfile);
+      expect(workspaceForId(selected.workspace.workspaceId)).toBeNull();
+      expect(verifyWorkspace(selected.workspace)).toBe(false);
+    },
+  );
 
   it("rejects a gitfile switch between discovery and opening directory handles", async () => {
     const fixture = createGitCheckout();

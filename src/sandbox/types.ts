@@ -68,7 +68,15 @@ export interface SandboxBackend {
   executeCheck(input: {
     readonly snapshot: VerificationSnapshot;
     readonly image: PreparedImageRecord;
-    readonly target: { readonly check: string; readonly argv: readonly string[] };
+    readonly target: {
+      readonly check: string;
+      readonly argv: readonly string[];
+      readonly profileSetId: string;
+      readonly targetId: string;
+      readonly taskId: string;
+      readonly attemptId: string;
+      readonly nativeIdentity: string;
+    };
     readonly runtime: { readonly signal: AbortSignal; readonly deadlineAt: number };
     readonly limits: SandboxLimits;
   }): Promise<VerificationEvidence>;
