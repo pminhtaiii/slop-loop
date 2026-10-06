@@ -14,6 +14,21 @@ const limits = {
 };
 
 describe("safe snapshot capture", () => {
+  it.each(["C:", "C:/", "C:/file.txt", "C:file.txt", "c:/file.txt", "z:file.txt"])(
+    "rejects Windows drive-qualified paths: %s",
+    async (path) => {
+      await expect(
+        captureSnapshot(
+          {
+            workspaceId: "workspace",
+            entries: () => Promise.resolve([{ path, bytes: Buffer.from("x"), mode: 0o644 }]),
+          },
+          limits,
+        ),
+      ).rejects.toThrow("Unsafe snapshot path");
+    },
+  );
+
   it("hashes copied bytes and exposes defensive content copies", async () => {
     const source: SnapshotSource = {
       workspaceId: "workspace",

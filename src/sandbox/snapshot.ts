@@ -21,7 +21,7 @@ export interface SnapshotLimits {
 }
 
 function safePath(value: string): boolean {
-  if (value.length === 0) return false;
+  if (value.length === 0 || /^[a-z]:/iu.test(value)) return false;
   return !value
     .split("/")
     .some(
