@@ -84,4 +84,40 @@ describe("safe snapshot capture", () => {
     await expect(captureSnapshotWithRetries(source, { ...limits, maxBytes: 32 })).rejects.toThrow();
     expect(calls).toBe(6);
   });
+
+  it("rejects declared generated outputs (dist, coverage, native build paths)", async () => {
+    for (const path of [
+      "dist",
+      "dist/bundle.js",
+      "coverage",
+      "coverage/lcov.info",
+      "native/build",
+      "native/build/addon.node",
+      "native/addon/build/Release/addon.node",
+    ]) {
+      await expect(
+        captureSnapshot(
+          {
+            workspaceId: "workspace",
+            entries: () => Promise.resolve([{ path, bytes: Buffer.from("x"), mode: 0o644 }]),
+          },
+          { ...limits, maxBytes: 32, maxFileBytes: 32 },
+        ),
+      ).rejects.toThrow("Unsafe snapshot path");
+    }
+  });
+
+  it("rejects case collisions on linux paths", async () => {
+    const source: SnapshotSource = {
+      workspaceId: "workspace",
+      entries: () =>
+        Promise.resolve([
+          { path: "file.txt", bytes: Buffer.from("a"), mode: 0o644 },
+          { path: "FILE.TXT", bytes: Buffer.from("b"), mode: 0o644 },
+        ]),
+    };
+    await expect(
+      captureSnapshot(source, { ...limits, maxEntries: 10, maxBytes: 32, maxFileBytes: 32 }),
+    ).rejects.toThrow("Snapshot path collision");
+  });
 });

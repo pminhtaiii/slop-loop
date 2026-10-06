@@ -1,4 +1,4 @@
-import { parseAllDocuments } from "yaml";
+import { isMap, parseAllDocuments } from "yaml";
 import { z } from "zod";
 
 const APPROVED_REGISTRY_HOSTS = new Set(["registry.npmjs.org"]);
@@ -43,6 +43,11 @@ export function validateLockedArtifact(input: LockedArtifact): LockedArtifact {
   if (url.protocol !== "https:" || !APPROVED_REGISTRY_HOSTS.has(url.hostname)) {
     throw new TypeError("Locked artifact registry is not approved");
   }
+  const basename = input.name.slice(input.name.lastIndexOf("/") + 1);
+  const expectedPath = `/${input.name}/-/${basename}-${input.version}.tgz`;
+  if (url.pathname !== expectedPath || url.search !== "" || url.hash !== "") {
+    throw new TypeError("Locked artifact URL is not an approved registry URL");
+  }
   return Object.freeze({ ...input });
 }
 
@@ -54,6 +59,30 @@ export function parseLockedArtifacts(lockfile: string): readonly LockedArtifact[
   if (lockfile.length === 0 || lockfile.length > 32 * 1024 * 1024) {
     throw new TypeError("Lockfile is outside the supported bounds");
   }
+  const rawKeyMatches = lockfile.match(/(?:^|\n)\s{2}(?:'[^']+'|"[^"]+"|[^\s:]+):\s*(?:\n|$)/g);
+  if (rawKeyMatches && rawKeyMatches.length > MAX_ARTIFACTS) {
+    throw new TypeError("Locked artifact count exceeds limit");
+  }
+  const docs = parseAllDocuments(lockfile);
+  let totalRawPackages = 0;
+  for (const document of docs) {
+    const error = document.errors[0];
+    if (error !== undefined) throw error;
+    const pkgs = document.get("packages");
+    if (isMap(pkgs)) {
+      totalRawPackages += pkgs.items.length;
+    } else if (
+      pkgs !== null &&
+      typeof pkgs === "object" &&
+      "items" in pkgs &&
+      Array.isArray((pkgs as { items?: unknown }).items)
+    ) {
+      totalRawPackages += (pkgs as { items: unknown[] }).items.length;
+    }
+  }
+  if (totalRawPackages > MAX_ARTIFACTS) {
+    throw new TypeError("Locked artifact count exceeds limit");
+  }
   const schema = z.object({
     packages: z.record(
       z.string(),
@@ -62,9 +91,7 @@ export function parseLockedArtifacts(lockfile: string): readonly LockedArtifact[
       }),
     ),
   });
-  const packages = parseAllDocuments(lockfile).flatMap((document) => {
-    const error = document.errors[0];
-    if (error !== undefined) throw error;
+  const packages = docs.flatMap((document) => {
     return Object.entries(schema.parse(document.toJS({ maxAliasCount: 0 })).packages);
   });
   if (packages.length > MAX_ARTIFACTS) {

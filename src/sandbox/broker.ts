@@ -83,9 +83,14 @@ export class ApprovedFetchBroker {
     if (url.protocol !== "https:" || !this.approvedHosts.has(url.hostname.toLowerCase())) {
       throw new Error("Broker destination is not approved");
     }
+    if (url.port !== "" && url.port !== "443") {
+      throw new Error("Broker destination port is not approved");
+    }
     const addresses = await this.options.resolve(url.hostname);
-    const address = addresses.find(isPublicAddress);
-    if (!address) throw new Error("Broker destination resolves to a private address");
+    if (addresses.length === 0 || addresses.some((addr) => !isPublicAddress(addr))) {
+      throw new Error("Broker destination resolves to a private address");
+    }
+    const address = addresses[0]!;
     const response = await this.options.request(url, address);
     if (response.statusCode >= 300 && response.statusCode < 400) {
       throw new Error("Broker redirects are not allowed");

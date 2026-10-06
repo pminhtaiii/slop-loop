@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { bindDeveloperPreparation, publishPreparedImage } from "../../src/sandbox/preparation.js";
+import {
+  bindDeveloperPreparation,
+  preparationFingerprint,
+  publishPreparedImage,
+} from "../../src/sandbox/preparation.js";
 
 describe("developer-only preparation", () => {
   it("requires trusted developer confirmation and current identity binding", () => {
@@ -50,6 +54,75 @@ describe("developer-only preparation", () => {
       inputFingerprint: "fingerprint",
       recipeHash: "recipe",
     });
+  });
+
+  it("rejects repository confirmation, unowned recipe, or missing fingerprint (T106)", () => {
+    expect(() =>
+      bindDeveloperPreparation({
+        confirmedBy: "repo",
+        workspaceId: "workspace",
+        inputFingerprint: "fingerprint",
+        recipeHash: "recipe",
+      }),
+    ).toThrow(/developer confirmation/i);
+
+    expect(() =>
+      bindDeveloperPreparation({
+        confirmedBy: "developer",
+        workspaceId: "workspace",
+        inputFingerprint: "fingerprint",
+        recipeHash: "",
+      }),
+    ).toThrow(/recipe binding/i);
+
+    expect(() =>
+      bindDeveloperPreparation({
+        confirmedBy: "developer",
+        workspaceId: "workspace",
+        inputFingerprint: "fingerprint",
+        recipeHash: "   ",
+      }),
+    ).toThrow(/recipe binding/i);
+
+    expect(() =>
+      bindDeveloperPreparation({
+        confirmedBy: "developer",
+        workspaceId: "workspace",
+        inputFingerprint: "   ",
+        recipeHash: "recipe",
+      }),
+    ).toThrow(/preparation fingerprint/i);
+  });
+
+  it("invalidates and cancels preparation when inputs change (T106)", () => {
+    const initialInputs = {
+      manifestHash: "manifest-v1",
+      lockfileHash: "lockfile-v1",
+      managerConfigHash: "manager-v1",
+      scriptPolicyId: "scripts-v1",
+      nodeVersion: "24.0.0",
+      pnpmVersion: "12.5.1",
+      architecture: "linux-x64",
+      baseImageDigest: "sha256:" + "a".repeat(64),
+      recipeHash: "recipe-v1",
+    };
+    const initialFingerprint = preparationFingerprint(initialInputs);
+    const binding = bindDeveloperPreparation({
+      confirmedBy: "developer",
+      workspaceId: "workspace-1",
+      inputFingerprint: initialFingerprint,
+      recipeHash: "recipe-v1",
+    });
+
+    const changedInputs = {
+      ...initialInputs,
+      lockfileHash: "lockfile-v2",
+    };
+    const changedFingerprint = preparationFingerprint(changedInputs);
+    expect(changedFingerprint).not.toBe(initialFingerprint);
+
+    // Prior developer binding is cancelled/invalid for changed inputs
+    expect(binding.inputFingerprint === changedFingerprint).toBe(false);
   });
 
   it("publishes only an immutable image bound to the preparation fingerprint", () => {

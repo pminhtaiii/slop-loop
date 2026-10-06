@@ -29,6 +29,8 @@ function safePath(value: string): boolean {
     !value.startsWith("node_modules/") &&
     value !== ".git" &&
     value !== "node_modules" &&
+    !/^(?:dist|coverage)(?:\/|$)/u.test(value) &&
+    !(value.startsWith("native/") && /(?:^|\/)build(?:\/|$)/u.test(value.slice(7))) &&
     !/(^|\/)\.env(?:\.|$)/u.test(value) &&
     !value
       .split("/")
@@ -66,7 +68,7 @@ async function captureOnce(
       });
     })
     .sort((a, b) => a.path.localeCompare(b.path));
-  if (new Set(entries.map((entry) => entry.path)).size !== entries.length)
+  if (new Set(entries.map((entry) => entry.path.toLowerCase())).size !== entries.length)
     throw new Error("Snapshot path collision");
   const identity = JSON.stringify(
     entries.map(({ path, bytes, mode, hash }) => ({ path, bytes, mode, hash })),

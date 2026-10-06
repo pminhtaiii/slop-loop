@@ -49,6 +49,35 @@ packages:
       }),
     ).toThrow();
   });
+
+  it("rejects non-standard or mismatched tarball URLs for approved registry", () => {
+    expect(() =>
+      validateLockedArtifact({
+        name: "pkg",
+        version: "1.2.3",
+        tarball: "https://registry.npmjs.org/other/-/other-1.2.3.tgz",
+        integrity: `sha512-${"a".repeat(86)}`,
+      }),
+    ).toThrow(TypeError);
+
+    expect(() =>
+      validateLockedArtifact({
+        name: "pkg",
+        version: "1.2.3",
+        tarball: "https://registry.npmjs.org/pkg/-/pkg-2.0.0.tgz",
+        integrity: `sha512-${"a".repeat(86)}`,
+      }),
+    ).toThrow(TypeError);
+
+    expect(() =>
+      validateLockedArtifact({
+        name: "pkg",
+        version: "1.2.3",
+        tarball: "https://registry.npmjs.org/pkg/-/pkg-1.2.3.tgz?param=1",
+        integrity: `sha512-${"a".repeat(86)}`,
+      }),
+    ).toThrow(TypeError);
+  });
 });
 
 it("parses pnpm v9 inline resolutions and quoted scoped package identities", () => {
@@ -107,6 +136,7 @@ packages:
 
 it.each([
   "resolution: {tarball: 'https://evil.example/pkg.tgz', integrity: sha512-YWJj}",
+  "resolution: {tarball: 'https://registry.npmjs.org/wrong/-/wrong-1.2.3.tgz', integrity: sha512-YWJj}",
   "resolution: {integrity: 123}",
   "resolution: {directory: '../pkg'}",
 ])("rejects unsupported or malformed pnpm resolution %s", (resolution) => {
@@ -131,7 +161,7 @@ packages:
   ]);
 });
 
-it("rejects lockfiles with more than the bounded artifact count", { timeout: 30_000 }, () => {
+it("rejects lockfiles with more than the bounded artifact count", { timeout: 2_000 }, () => {
   const packages = Array.from({ length: 10_001 }, (_, index) => {
     return `  pkg-${index}@1.0.0:\n    resolution: {integrity: sha512-YWJj}`;
   }).join("\n");

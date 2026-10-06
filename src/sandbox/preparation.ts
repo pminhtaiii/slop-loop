@@ -52,7 +52,16 @@ export function publishPreparedImage(input: {
   readonly fingerprint: string;
   readonly architecture: string;
 }): PreparedImageRecord {
-  return validatePreparedImage(input);
+  const parsed = preparedImageInputSchema.safeParse(input);
+  if (!parsed.success) {
+    throw new TypeError(parsed.error.issues[0]?.message ?? "Invalid prepared image metadata");
+  }
+  return Object.freeze({
+    imageId: parsed.data.imageId,
+    fingerprint: parsed.data.fingerprint,
+    architecture: parsed.data.architecture,
+    status: "READY" as const,
+  });
 }
 
 export interface DeveloperPreparationBinding {

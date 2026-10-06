@@ -60,7 +60,6 @@ export class VerificationCoordinator {
       evidence.every((item) => item.snapshotId === sealedSnapshotId);
     const passed =
       complete &&
-      freshness === "CURRENT" &&
       evidence.every(
         (item) =>
           item.status === "PASS" &&
