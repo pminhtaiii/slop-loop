@@ -36,3 +36,4 @@ Artifact format, link, task consistency and final publication evidence are recor
 - `git diff --check` passed.
 - Changed-document formatting passed using the installed Prettier CLI under Node 24.14.0. Corepack's local cache write was sandbox-restricted; invoking the already installed formatter directly avoided a dependency install.
 - Existing GitHub issues were fetched across all open/closed pages from verified origin `pminhtaiii/slop-loop`; no T132–T158 issue existed before publication.
+- Published 27 issues #173–#199. Fresh GitHub pagination verified one unique issue-title match per task and all declared dependency URLs. Four titles were shortened to remove prerequisite IDs that would confuse ID-based deduplication; full task descriptions and dependencies remain in the bodies. See issues.md.
