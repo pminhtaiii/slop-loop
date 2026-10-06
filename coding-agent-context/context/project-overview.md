@@ -401,7 +401,7 @@ architecture documentation
 previous tool results
 ```
 
-The context engine automatically loads only the repository tree, applicable project instructions, and explicit developer references. The model obtains everything else through bounded, budgeted list/search/read tools. `search_code` exposes search text, optional repository-relative scope, and a result limit; the runtime owns ripgrep execution and arguments.
+Planned Phase 6 context selection automatically loads only a bounded repository tree, eligible root `AGENTS.md` and explicit structured developer references through the same authorized, budgeted retrieval path as agent calls. Nested instructions are not automatically discovered; the agent retrieves them when needed. `search_code` preserves search-text/scope/result-count inputs and uses case-sensitive literal matching over safe-boundary live-checkout bytes without a grep/ripgrep executable. All content stays untrusted; content identity is per-call evidence, not a fixed snapshot. See `specs/007-repository-read-tools/plan.md`; these executors and bootstrap remain planned.
 
 The context engine should optimize for relevance rather than blindly loading entire repositories.
 

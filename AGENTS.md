@@ -15,6 +15,10 @@ For planned Phase 4 workspace-boundary work, read
 For planned Phase 5 offline verification sandbox and developer preparation,
 read `specs/006-offline-verification-sandbox/plan.md`. Real sandbox integration
 requires the complete Phase 4 workspace-boundary exit gate.
+
+For planned Phase 6 repository read tools and automatic context, read
+`specs/007-repository-read-tools/plan.md`. Phase 6 remains planned; it does not
+close the open Phase 5 Windows Docker verification gate.
 <!-- SPECKIT END -->
 
 ## Slop Loop Project Context

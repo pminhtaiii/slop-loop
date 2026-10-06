@@ -186,9 +186,11 @@ executable tools run only in bounded ephemeral sandbox
 
 ## Phase 6 — Read Tools
 
+Planning artifacts: [specification](../../specs/007-repository-read-tools/spec.md), [implementation plan](../../specs/007-repository-read-tools/plan.md), [tasks T132–T158](../../specs/007-repository-read-tools/tasks.md). The 2026-10-06 design selects live-checkout safe reads, in-process case-sensitive literal search, root-only automatic instruction discovery and shared bootstrap/task authority. The existing narrow sensitive-content heuristic remains, with dedicated performance evidence required before ready-to-compose integration. Retrieval snapshots, regex/executable search and live-provider evaluation are deferred. All Phase 6 implementation tasks remain planned; this feature does not close the open Phase 5 Windows Docker gate or T088.
+
 - [ ] `list_files`.
-- [ ] search_code with a narrow search-text/scope/result-count schema and runtime-owned ripgrep arguments.
-- [ ] Small automatic context: tree, instructions, and explicit references only.
+- [ ] `search_code` with the existing narrow search-text/scope/result-count schema and safe in-process literal matching.
+- [ ] Small automatic context: bounded tree, root `AGENTS.md`, and explicit developer references through the same authorized retrieval path.
 - [ ] Retrieval fixture suite with required/helpful/forbidden files and answer/verification expectations.
 - [ ] Retrieval metrics for recall, precision, irrelevant volume, denied attempts, bytes, calls, correctness, and verification selection.
 - [ ] `read_file`.

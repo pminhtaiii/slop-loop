@@ -265,11 +265,11 @@ Provider-specific logic must stay behind the adapter.
 
 ## Context Selection
 
-Automatic context is deliberately small: the repository tree, applicable project instructions, and files explicitly referenced by the developer. All other content enters the session through budgeted `list_files`, `search_code`, and `read_file` calls.
+Planned Phase 6 automatic context is deliberately small: a bounded repository tree, eligible root `AGENTS.md`, and structured files explicitly referenced by the developer. Nested instructions are not discovered automatically or loaded after descendant access; the agent may retrieve them explicitly. An explicitly developer-referenced nested instruction file is ordinary reference content. Bootstrap uses the same runner/gateway authority, workspace policy, audit and task allowances as agent-requested retrieval (ADR 0012). All repository content remains untrusted.
 
-When implemented, `search_code` uses a deterministic adapter such as ripgrep. Its model-visible input schema already contains only search text, an optional repository-relative scope, and a bounded result count. Executable paths, flags, raw arguments, shell syntax, byte limits, denied paths, and timeouts remain runtime-owned. Semantic indexes and Elasticsearch are deferred.
+Planned Phase 6 `search_code` uses existing in-process case-sensitive literal matching over safely opened live-checkout bytes, rather than a grep/ripgrep executable. Its model-visible input schema already contains only search text, optional repository-relative file/directory scope, and bounded result count. Source-byte identity is per call, not a task snapshot or authority. Runtime-owned work/output/deadline limits and cooperative cancellation produce explicit incomplete results. Semantic indexes, regex and retrieval snapshots are deferred. See `specs/007-repository-read-tools/plan.md`; complete executors are not implemented yet.
 
-Retrieval evaluation fixtures declare required files, optional helpful files, forbidden files, expected answer properties, and expected verification behavior. Measures include required-file recall, context precision, irrelevant volume, denied-access attempts, bytes retrieved, tool calls, answer correctness, and correct verification-path selection.
+Planned retrieval fixtures declare required/helpful/forbidden files, expected evidence/answer properties and verification selections. Measures separate delivered content from discovery and include recall, precision, irrelevant volume, denied attempts, bytes, calls and scripted property/selection checks. Live-model answer correctness remains unmeasured until provider integration. The existing narrow gateway heuristic remains; Phase 6 requires dedicated maximum-size/adversarial latency evidence before ready-to-compose retrieval enablement, without adding a broad scanner.
 
 ---
 

@@ -2,6 +2,10 @@
 
 Record the verification procedure for each product phase here when that phase is implemented. Use `progress-checker.md` for completion status; a documented test plan alone does not prove a capability exists.
 
+## Planned Phase 6 — Repository Read Tools
+
+Feature 007's planned commands, native host matrix and benchmark methodology are in [quickstart.md](../../specs/007-repository-read-tools/quickstart.md). The spec, plan and T132–T158 require real gateway/boundary fixture traces, root-only bootstrap accounting, whole-file/hash/output contracts, explicit incomplete search, adversarial confinement and dedicated calibrated narrow-heuristic performance evidence on Ubuntu and Windows. These Phase 6 tests/commands are not implemented or passed by the planning PR. Live-model answer correctness is not measured by scripted traces. Phase 5's Windows Docker gate and T088 remain separately open/unavailable as recorded in the progress checker.
+
 ## Phase 1 — Task Domain & Orchestrator
 
 ### Prerequisites
