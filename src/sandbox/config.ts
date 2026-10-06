@@ -13,14 +13,14 @@ export const DEFAULT_SANDBOX_LIMITS: SandboxLimits = Object.freeze({
   memoryBytes: 4 * 1024 * 1024 * 1024,
 });
 
-const profiles = Object.freeze({
+const PROFILES = Object.freeze({
   ordinary: Object.freeze({ argv: ["pnpm", "test"] as const, check: "tests" }),
   lint: Object.freeze({ argv: ["pnpm", "lint"] as const, check: "lint" }),
   typecheck: Object.freeze({ argv: ["pnpm", "typecheck"] as const, check: "typecheck" }),
   build: Object.freeze({ argv: ["pnpm", "build"] as const, check: "build" }),
 });
 
-export type VerificationProfile = keyof typeof profiles;
+export type VerificationProfile = keyof typeof PROFILES;
 export type PreparationInputs = {
   readonly manifestHash: string;
   readonly lockfileHash: string;
@@ -33,26 +33,16 @@ export type PreparationInputs = {
   readonly recipeHash: string;
 };
 
-const approvedRegistry = "https://registry.npmjs.org";
-const limitMaximums: Record<keyof SandboxLimits, number> = {
-  maxEntries: 50_000,
-  maxBytes: 256 * 1024 * 1024,
-  maxFileBytes: 16 * 1024 * 1024,
-  maxOutputBytes: 1024 * 1024,
-  timeoutSeconds: 300,
-  maxPids: 256,
-  cpus: 2,
-  memoryBytes: 4 * 1024 * 1024 * 1024,
-};
+const APPROVED_REGISTRY = "https://registry.npmjs.org";
 const limitsSchema = z.strictObject({
-  maxEntries: z.number().int().positive().max(limitMaximums.maxEntries),
-  maxBytes: z.number().int().positive().max(limitMaximums.maxBytes),
-  maxFileBytes: z.number().int().positive().max(limitMaximums.maxFileBytes),
-  maxOutputBytes: z.number().int().positive().max(limitMaximums.maxOutputBytes),
-  timeoutSeconds: z.number().int().positive().max(limitMaximums.timeoutSeconds),
-  maxPids: z.number().int().positive().max(limitMaximums.maxPids),
-  cpus: z.number().int().positive().max(limitMaximums.cpus),
-  memoryBytes: z.number().int().positive().max(limitMaximums.memoryBytes),
+  maxEntries: z.number().int().positive().max(DEFAULT_SANDBOX_LIMITS.maxEntries),
+  maxBytes: z.number().int().positive().max(DEFAULT_SANDBOX_LIMITS.maxBytes),
+  maxFileBytes: z.number().int().positive().max(DEFAULT_SANDBOX_LIMITS.maxFileBytes),
+  maxOutputBytes: z.number().int().positive().max(DEFAULT_SANDBOX_LIMITS.maxOutputBytes),
+  timeoutSeconds: z.number().int().positive().max(DEFAULT_SANDBOX_LIMITS.timeoutSeconds),
+  maxPids: z.number().int().positive().max(DEFAULT_SANDBOX_LIMITS.maxPids),
+  cpus: z.number().int().positive().max(DEFAULT_SANDBOX_LIMITS.cpus),
+  memoryBytes: z.number().int().positive().max(DEFAULT_SANDBOX_LIMITS.memoryBytes),
 });
 const profileSchema = z.strictObject({
   argv: z.array(z.string().min(1)).min(1).max(8),
@@ -60,7 +50,7 @@ const profileSchema = z.strictObject({
 const trustedConfigurationSchema = z.strictObject({
   limits: limitsSchema,
   engine: z.strictObject({ kind: z.literal("local") }),
-  approvedRegistries: z.array(z.literal(approvedRegistry)).min(1).max(4),
+  approvedRegistries: z.array(z.literal(APPROVED_REGISTRY)).min(1).max(4),
   profiles: z.record(z.string().min(1).max(32), profileSchema).optional(),
 });
 
@@ -98,9 +88,9 @@ function containsShellMetacharacter(value: string): boolean {
 export function validateTrustedConfiguration(value: unknown): TrustedSandboxConfiguration {
   const parsed = trustedConfigurationSchema.safeParse(value);
   if (!parsed.success) throw new TypeError("Invalid trusted sandbox configuration");
-  const profiles = parsed.data.profiles;
-  if (profiles !== undefined) {
-    for (const profile of Object.values(profiles)) {
+  const configuredProfiles = parsed.data.profiles;
+  if (configuredProfiles !== undefined) {
+    for (const profile of Object.values(configuredProfiles)) {
       if (profile.argv.some(containsShellMetacharacter)) {
         throw new TypeError("Shell metacharacters are not allowed in profile argv");
       }
@@ -113,7 +103,9 @@ export function validateTrustedConfiguration(value: unknown): TrustedSandboxConf
     ...parsed.data,
     limits: Object.freeze(parsed.data.limits),
     approvedRegistries: Object.freeze([...parsed.data.approvedRegistries]),
-    ...(profiles === undefined ? {} : { profiles: Object.freeze({ ...profiles }) }),
+    ...(configuredProfiles === undefined
+      ? {}
+      : { profiles: Object.freeze({ ...configuredProfiles }) }),
   });
 }
 
@@ -121,17 +113,17 @@ export function mapVerificationTarget(
   tool: string,
   profile: string,
 ): { readonly argv: readonly string[]; readonly check: string } {
-  if (tool === "run_tests" && profile === "ordinary") return profiles.ordinary;
-  if (tool === "run_linter" && profile === "lint") return profiles.lint;
-  if (tool === "run_typecheck" && profile === "typecheck") return profiles.typecheck;
-  if (tool === "run_build" && profile === "build") return profiles.build;
+  if (tool === "run_tests" && profile === "ordinary") return PROFILES.ordinary;
+  if (tool === "run_linter" && profile === "lint") return PROFILES.lint;
+  if (tool === "run_typecheck" && profile === "typecheck") return PROFILES.typecheck;
+  if (tool === "run_build" && profile === "build") return PROFILES.build;
   throw new Error("Unapproved verification target");
 }
 
 /** Profile authority comes from the same fixed configuration as target mapping. */
 export function approvedProfilesForTool(tool: string): readonly string[] {
   return Object.freeze(
-    Object.keys(profiles).filter((profile) => {
+    Object.keys(PROFILES).filter((profile) => {
       try {
         mapVerificationTarget(tool, profile);
         return true;

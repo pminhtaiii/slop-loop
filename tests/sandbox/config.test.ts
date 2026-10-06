@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { DEFAULT_SANDBOX_LIMITS, validateTrustedConfiguration } from "../../src/sandbox/config.js";
+import { trustedConfiguration, verificationProfile } from "./fixtures.js";
 
 describe("trusted sandbox configuration", () => {
   it("accepts a bounded local configuration", () => {
@@ -13,6 +14,20 @@ describe("trusted sandbox configuration", () => {
     ).toMatchObject({
       engine: { kind: "local" },
       approvedRegistries: ["https://registry.npmjs.org"],
+    });
+  });
+
+  it("provides valid trusted configuration and profile fixture builders", () => {
+    const config = trustedConfiguration();
+    expect(validateTrustedConfiguration(config)).toMatchObject({
+      engine: { kind: "local" },
+      approvedRegistries: ["https://registry.npmjs.org"],
+    });
+
+    const profile = verificationProfile();
+    expect(profile).toEqual({
+      argv: ["pnpm", "test"],
+      check: "tests",
     });
   });
 

@@ -1,4 +1,7 @@
-import { DEFAULT_SANDBOX_LIMITS } from "../../src/sandbox/config.js";
+import {
+  DEFAULT_SANDBOX_LIMITS,
+  type TrustedSandboxConfiguration,
+} from "../../src/sandbox/config.js";
 import type {
   PreparedImageRecord,
   SandboxLimits,
@@ -7,6 +10,30 @@ import type {
 
 export function sandboxLimits(overrides: Partial<SandboxLimits> = {}): SandboxLimits {
   return Object.freeze({ ...DEFAULT_SANDBOX_LIMITS, ...overrides });
+}
+
+export function trustedConfiguration(
+  overrides?: Partial<TrustedSandboxConfiguration>,
+): TrustedSandboxConfiguration {
+  return Object.freeze({
+    limits: DEFAULT_SANDBOX_LIMITS,
+    engine: Object.freeze({ kind: "local" as const }),
+    approvedRegistries: Object.freeze(["https://registry.npmjs.org"]),
+    profiles: Object.freeze({
+      ordinary: Object.freeze({ argv: Object.freeze(["pnpm", "test"]) }),
+    }),
+    ...overrides,
+  });
+}
+
+export function verificationProfile(
+  overrides?: Partial<{ readonly argv: readonly string[]; readonly check: string }>,
+): { readonly argv: readonly string[]; readonly check: string } {
+  return Object.freeze({
+    argv: Object.freeze(["pnpm", "test"]),
+    check: "tests",
+    ...overrides,
+  });
 }
 
 export function preparedImage(overrides: Partial<PreparedImageRecord> = {}): PreparedImageRecord {
@@ -32,8 +59,13 @@ export function finiteClock(start = 0) {
   });
 }
 
+export function lateOutput(value: string, limit = DEFAULT_SANDBOX_LIMITS.maxOutputBytes): string {
+  if (!Number.isSafeInteger(limit) || limit <= 0) throw new RangeError("Invalid output limit");
+  return value.slice(0, limit);
+}
+
 export function boundedOutput(value = ""): string {
-  return value.slice(0, DEFAULT_SANDBOX_LIMITS.maxOutputBytes);
+  return lateOutput(value, DEFAULT_SANDBOX_LIMITS.maxOutputBytes);
 }
 
 export function controlledCheckout(
@@ -59,11 +91,6 @@ export function controlledCheckout(
 export function artifactRegistry(artifacts: readonly string[] = ["pkg@1.0.0"]): readonly string[] {
   if (artifacts.length > 10_000) throw new RangeError("Artifact fixture is unbounded");
   return Object.freeze([...artifacts]);
-}
-
-export function lateOutput(value: string, limit = DEFAULT_SANDBOX_LIMITS.maxOutputBytes): string {
-  if (!Number.isSafeInteger(limit) || limit <= 0) throw new RangeError("Invalid output limit");
-  return value.slice(0, limit);
 }
 
 export function ownedResource(id = "fixture-resource") {

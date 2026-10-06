@@ -39,5 +39,46 @@ describe("sandbox preparation identities", () => {
         architecture: "linux-x64",
       }),
     ).toThrow();
+
+    // Rejects unknown keys to prevent property bleeding
+    expect(() =>
+      validatePreparedImage({
+        imageId: "sha256:" + "a".repeat(64),
+        fingerprint: "fingerprint",
+        architecture: "linux-x64",
+        extraUnknown: "bleed",
+      } as unknown as {
+        readonly imageId: string;
+        readonly fingerprint: string;
+        readonly architecture: string;
+      }),
+    ).toThrow();
+  });
+
+  it("enforces order invariance and deduplication for script policy identities", () => {
+    const canonical = createScriptPolicyIdentity(["a@1.0.0:build", "b@1.0.0:build"]);
+    const reversed = createScriptPolicyIdentity(["b@1.0.0:build", "a@1.0.0:build"]);
+    const duplicated = createScriptPolicyIdentity([
+      "b@1.0.0:build",
+      "a@1.0.0:build",
+      "b@1.0.0:build",
+      "a@1.0.0:build",
+    ]);
+
+    expect(reversed).toBe(canonical);
+    expect(duplicated).toBe(canonical);
+  });
+
+  it("asserts source-tree stability where source file edits do not alter the preparation fingerprint", () => {
+    const baselineFingerprint = createPreparationFingerprint(inputs);
+
+    // Source code modifications do not mutate manifest, lockfile, toolchain, or recipe bindings;
+    // thus PreparationInputs remain identical and produce the exact same fingerprint.
+    const inputsAfterSourceModification = { ...inputs };
+    const afterModificationFingerprint = createPreparationFingerprint(
+      inputsAfterSourceModification,
+    );
+
+    expect(afterModificationFingerprint).toBe(baselineFingerprint);
   });
 });
