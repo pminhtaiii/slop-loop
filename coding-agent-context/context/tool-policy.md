@@ -82,6 +82,7 @@ Purpose:
 Rules:
 
 - schema accepts only search text, optional repository-relative scope, and bounded result count;
+- planned Phase 6 matching is case-sensitive literal text over safe-boundary bytes, with no grep/ripgrep executable or regular-expression capability;
 - executable, flags, raw arguments, shell syntax, timeouts, and byte limits are runtime-owned;
 - query length bounded;
 - result count bounded;
@@ -279,6 +280,12 @@ Use path-aware containment after canonical resolution.
 Repository content reads and mutations reject hard-linked files in the MVP. In-repository directory symlinks may be traversed for listing and search only when the resolved target remains in the same selected repository and passes path policy; traversal detects cycles. The checkout root itself may be on a mounted filesystem, but nested mount crossings, Linux bind mounts, Windows junctions, and equivalent reparse boundaries are denied at point of use. Linux bind-mount fixture execution is UNVERIFIED / UNAVAILABLE on the available hosts; the project accepts this T088 verification gap for MVP without treating the skipped fixture as a pass. Pipes, devices, sockets, and other nonregular content targets are rejected. Search output is capped at 200 matches, 32 KiB total returned bytes, and 4 KiB per returned line; searched files above 4 MiB are skipped with a bounded indication. Additional omitted matches are explicitly marked as truncation, and shortened lines are marked separately. The `read_file` model-visible result cap is 64 KiB. These limits are runtime-owned, never supplied by the model or repository content. The executable tool registry and gateway must use per-tool output contracts for these bounds; unrelated tools retain smaller limits. If generic result redaction would alter a read or search payload, the gateway fails the tool contract instead of claiming that rewritten text is complete. Phase 6 must define any more specific secret-content outcome before enabling real retrieval executors.
 
 ---
+
+### Planned Phase 6 Retrieval Integration
+
+Feature 007 defines real read executors, truthful incomplete-search results and consumed-byte identity for live per-call evidence. Bootstrap uses the same task runner, gateway, ceilings, attempts, workspace checks and audit; trusted origin metadata grants no additional authority. Automatically discovered instruction content is limited to root `AGENTS.md`; nested instructions require explicit retrieval, while explicit developer references remain ordinary untrusted data.
+
+The existing narrow secret-like text/object-key heuristic remains, with whole affected read/search result withheld as `TOOL_CONTRACT_FAILURE` if sanitization would alter source. Listing source paths must also remain faithful rather than being silently rewritten. No broader scanner or secret bypass is introduced. Dedicated calibrated performance evidence gates ready-to-compose integration, not per-call hardware lookup. These are planned requirements; no Phase 6 executor is enabled by this documentation. See `specs/007-repository-read-tools/plan.md`.
 
 ## Command Policy
 

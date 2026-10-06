@@ -1,0 +1,3 @@
+# Automatic context uses task retrieval authority
+
+Accepted during Phase 6 design on 2026-10-06. Automatic repository context, including applicable instruction files and developer-referenced files, uses the same authorized retrieval path, workspace checks, output contracts, provenance, audit requirements, and task allowances as task-requested retrieval. This avoids a separate bootstrap access path that could expose denied content or bypass task security; repository instruction text remains untrusted data rather than runtime authority. Bootstrap retrieval is identified as runtime-initiated, and bounded omissions are reported so later retrieval can obtain additional context. Phase 6 implementation remains planned.
