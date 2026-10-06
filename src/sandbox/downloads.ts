@@ -59,6 +59,13 @@ export function parseLockedArtifacts(lockfile: string): readonly LockedArtifact[
   if (lockfile.length === 0 || lockfile.length > 32 * 1024 * 1024) {
     throw new TypeError("Lockfile is outside the supported bounds");
   }
+  const pkgsMatch = lockfile.match(/(?:^|\n)packages:\s*\n([\s\S]*?)(?=\n\S|\n*$)/u);
+  if (pkgsMatch) {
+    const rawCount = (pkgsMatch[1]!.match(/^ {2}\S[^\n:]*:\s*(?:\n|$)/gmu) ?? []).length;
+    if (rawCount > MAX_ARTIFACTS) {
+      throw new TypeError("Locked artifact count exceeds limit");
+    }
+  }
   const docs = parseAllDocuments(lockfile);
   let totalRawPackages = 0;
   for (const document of docs) {

@@ -171,6 +171,8 @@ CI run [#54](https://github.com/pminhtaiii/slop-loop/actions/runs/37207436068) f
   typecheck, build, and smoke passed.
 - **Windows Quality Gate (PASS)**: Workspace tests: 106 passed / 2 skipped (108 total).
   Full source suite: 435 passed / 8 skipped. Native build, build, and smoke passed.
+  The local Windows host does not have active Docker Desktop running during CI; Windows CI executes the complete source and native test suite (435 passed, 8 skipped), while live container execution runs on the dedicated Ubuntu Linux Docker daemon gate (`ubuntu-docker-gate`).
+- **Windows Docker Desktop execution & fixture recording (T129, FR-022)**: **UNVERIFIED / UNAVAILABLE**. Successful Windows Docker Desktop Linux-mode fixture results have not been recorded. Required evidence includes preparation storage enforcement: the effective finite Docker Desktop disk-image limit, bound engine/storage identity, and a quota-exhaustion fixture for that platform. Record exact engine/platform versions, limits and fixture outcomes. Native Linux Docker results and Windows source/native regressions do not satisfy this requirement; unavailable fixtures are not a PASS.
 - **Ubuntu Docker Integration Gate (PASS)**: Dedicated `ubuntu-docker-gate` job
   running under the native Linux Docker daemon executed `docker pull alpine:3.20`
   and `pnpm sandbox:test`. All 22 test files in `tests/sandbox` passed (109 passed,
@@ -186,6 +188,4 @@ CI run [#54](https://github.com/pminhtaiii/slop-loop/actions/runs/37207436068) f
   - T128: daemon-loss cleanup uncertainty fencing, slot hold/release gates, and
     orphaned container reconciliation.
 
-All Phase 5 tasks (T089–T131) are implemented and verified. The Phase 5 exit gate is
-satisfied:
-`executable tools run only in bounded ephemeral sandbox`
+The Phase 5 exit gate remains open until successful Windows Docker Desktop Linux-mode fixture results, including preparation storage enforcement, are recorded. T129 and T131 remain open under FR-022. The gate remains: `executable tools run only in bounded ephemeral sandbox`.

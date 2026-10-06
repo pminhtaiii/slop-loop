@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { DockerCliExecution } from "../../src/sandbox/docker-process.js";
+import { DockerCliExecution } from "../../src/sandbox/dockerprocess.js";
 import { requireDockerImage, runDocker } from "./integration-fixtures.js";
 
 for (const owner of ["verification", "unrelated"]) {

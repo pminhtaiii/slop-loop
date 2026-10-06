@@ -33,7 +33,7 @@ No library feature may be used to bypass project policy.
 
 ## MVP Classification
 
-The selected Phase 0 implementation and development stack is Node.js 24 LTS, native ESM TypeScript, pnpm, Zod 4, Pino, Vitest, type-aware ESLint, Prettier, and tsc. There is no bundler. Selection does not indicate implementation completion; `context/progress-checker.md` is the source of truth. The first target repositories are TypeScript repositories, initially Slop Loop itself, using trusted pnpm verification profiles. Docker verification is planned for Phase 5 but is not implemented; process adapters, Git, provider HTTP, audit persistence, and session behavior are also future product concerns.
+The selected Phase 0 implementation and development stack is Node.js 24 LTS, native ESM TypeScript, pnpm, Zod 4, Pino, Vitest, type-aware ESLint, Prettier, and tsc. There is no bundler. Selection does not indicate implementation completion; `context/progress-checker.md` is the source of truth. The first target repositories are TypeScript repositories, initially Slop Loop itself, using trusted pnpm verification profiles. Docker verification is implemented with Linux evidence for Phase 5 (under CI run #54); its exit gate remains open pending successful Windows Docker Desktop Linux-mode fixtures, including preparation storage enforcement; process adapters, Git, provider HTTP, audit persistence, and session behavior are also future product concerns.
 
 Phase 4 uses the pinned `node-gyp` development dependency to build one in-process Node-API addon for workspace filesystem enforcement. The addon must be built with `pnpm native:build` on each supported host before native-boundary evidence is accepted. A manually compiled MinGW addon is useful for local Windows diagnosis but does not satisfy the pinned native-build gate or replace Ubuntu and Windows CI verification.
 
@@ -54,6 +54,10 @@ The Phase 2 registry uses one strict Zod argument object per fixed tool name. `z
 ## Pino
 
 Use Pino only for operational logging through a small `createLogger` factory with fixed redaction and injectable output for tests. Put untrusted repository, model, and tool data under application-controlled fields. Redaction is defense in depth, not an authorization boundary, and Pino logs are not canonical audit evidence.
+
+## YAML and tar-stream
+
+Use pinned dependencies `yaml` (v2.9.1) and `tar-stream` (v3.1.7 with `@types/tar-stream@3.1.3`) as approved parser libraries for strict lockfile parsing and safe in-memory streaming tar import without host extraction.
 
 ## HTTP Transport — Future
 

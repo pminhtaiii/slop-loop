@@ -32,7 +32,7 @@ const containerLabelsSchema = z
   })
   .catchall(z.unknown());
 
-function truncateUtf8(buf: Buffer, maxBytes: number): string {
+export function truncateUtf8(buf: Buffer, maxBytes: number): string {
   let len = Math.min(buf.length, maxBytes);
   let i = len;
   while (i > 0 && (buf[i - 1]! & 0xc0) === 0x80) {

@@ -23,7 +23,7 @@
 - [x] T095 Implement strict trusted configuration/profile/limit validation and versioned canonical identities in src/sandbox/config.ts and src/sandbox/preparation.ts; satisfy T093 and T094 without preparation execution
 - [x] T096 [P] Add controlled checkout, artifact registry, late-output, owned-resource and finite-clock fixtures in tests/sandbox/fixtures.ts with no unbounded public network requirement
 
-**Checkpoint**: Fixtures and trusted immutable contracts exist; the Phase 5 implementation and final two-host evidence are complete except for the setup follow-ups above.
+**Checkpoint**: Fixtures and trusted immutable contracts exist; Phase 5 has Linux Docker evidence, while required Windows Docker Desktop Linux-mode fixtures remain outstanding.
 
 ## Phase 3: User Story 1 — Verify the actual edited repository offline (P1)
 
@@ -87,9 +87,9 @@
 
 ## Phase 7: Verification, Review and Context Synchronization
 
-- [x] T129 Rerun the satisfied Phase 4 prerequisite as final regression verification, then run the pinned gate and specs/006-offline-verification-sandbox/quickstart.md matrix on Ubuntu and Windows Docker Desktop; record versions, limits and fixture availability in coding-agent-context/context/testing.md
+- [ ] T129 Rerun the satisfied Phase 4 prerequisite as final regression verification, then run the pinned gate and specs/006-offline-verification-sandbox/quickstart.md matrix on Ubuntu and Windows Docker Desktop; record versions, limits and fixture availability in coding-agent-context/context/testing.md
 - [x] T130 Perform security convergence and separate standards/spec reviews against specs/006-offline-verification-sandbox/spec.md and plan.md; record and resolve authorization/path/network/storage/cancellation findings before declaring integration ready
-- [x] T131 Sync CONTEXT.md, docs/adr/0011-disposable-offline-verification-containers.md and coding-agent-context/context with observed evidence; close Phase 5 only after its exit gate passes
+- [ ] T131 Sync CONTEXT.md, docs/adr/0011-disposable-offline-verification-containers.md and coding-agent-context/context with observed evidence; close Phase 5 only after its exit gate passes
 
 ## Dependencies and Execution Order
 
@@ -97,7 +97,7 @@
 
 - Setup T089–T092 → foundational T093–T096 → US1 T097–T105. US2 T106–T115 depends on foundational contracts; its real smoke uses US1 readiness/layout.
 - US3 T116–T122 integrates US1+US2 and current Phase 3 lifecycle. US4 T123–T128 depends on US1 execution contracts; final cancellation wiring and recovery additionally require US2/US3 behavior.
-- T129–T131 require every story and the Phase 4 prerequisite. CI run #54 supplies the final two-host evidence for the implementation and integration tasks.
+- T129–T131 require every story and the Phase 4 prerequisite. CI run #54 supplies two-host source/native regressions and Linux Docker integration evidence. T129 and T131 remain open pending successful Windows Docker Desktop Linux-mode fixtures, including preparation storage enforcement.
 - Within each story, RED tasks precede their corresponding implementation: T097→T098; T099→T100; T101→T102; T103→T104; T106/T111→T113; T107→T109; T108→T110; T111→T112/T113; T116→T117; T118→T119; T120→T121; T123/T124→T125/T126. Integration RED fixtures may be written before implementation but never marked done from skipped/unavailable environments.
 - T088 remains the unchecked Workspace Boundary verification task; no task or issue in Feature 006 reuses it.
 
@@ -112,7 +112,7 @@
 
 ## Implementation Strategy
 
-US1 is the first independently testable slice against a valid prepared fixture, not a usable full product or the entire Phase 5 exit gate. Deliver US2 preparation next, then US3 correct stale lifecycle and US4 failure containment. Preserve existing phase boundaries; do not build the later model/provider/interactive CLI/grant/durable-audit adapters. Use the narrow requested backend plus Node/native primitives and the installed parser rather than a general execution framework. The Phase 5 exit gate is satisfied under CI run #54.
+US1 is the first independently testable slice against a valid prepared fixture, not a usable full product or the entire Phase 5 exit gate. Deliver US2 preparation next, then US3 correct stale lifecycle and US4 failure containment. Preserve existing phase boundaries; do not build the later model/provider/interactive CLI/grant/durable-audit adapters. Use the narrow requested backend plus Node/native primitives and the installed parser rather than a general execution framework. The Phase 5 exit gate remains open until successful Windows Docker Desktop Linux-mode fixture results, including preparation storage enforcement, are recorded.
 
 ### CI #54 coverage reconciliation
 
@@ -130,7 +130,8 @@ Docker integration suite on the native Linux Docker daemon under `ubuntu-docker-
 | T122 | Full stale-image lifecycle journey passed on Linux Docker daemon. |
 | T127 | Hostile security integration passed (non-root, read-only root, cap-drop ALL, tmpfs bounds, PID limits, network denial). |
 | T128 | Recovery integration passed (interrupted container lifecycle, ownership fencing, confirmed cleanup). |
-| T129 | Source/native regressions on Ubuntu and Windows passed; real Linux Docker integration passed (109 passed, 0 failed). |
-| T131 | Context, ADR 0011, progress-checker, and testing evidence synchronized; Phase 5 exit gate closed. |
+| T129 | Open: source/native regressions on Ubuntu and Windows passed; real Linux Docker integration passed (109 passed, 0 failed). Required Windows Docker Desktop Linux-mode fixtures, including preparation storage enforcement, remain UNVERIFIED / UNAVAILABLE. |
+| T130 | Security convergence and dual-axis (standards and spec) code reviews completed; findings resolved before integration. |
+| T131 | Open: documentation reflects available evidence; final completion sync awaits the Phase 5 exit gate. |
 
-All Phase 5 tasks T089–T131 are complete. The Phase 5 exit gate is satisfied.
+T129 and T131 remain open. The Phase 5 exit gate remains open until successful Windows Docker Desktop Linux-mode fixture results, including preparation storage enforcement, are recorded. Unavailable fixtures are not a PASS.

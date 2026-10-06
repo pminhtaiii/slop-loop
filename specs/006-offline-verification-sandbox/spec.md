@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-02
 
-**Status**: Implemented and verified on supported CI hosts under PR #167 / CI run #54; Phase 5 exit gate is closed.
+**Status**: Implemented with source/native regressions on Ubuntu and Windows and native Linux Docker evidence under PR #167 / CI run #54. The Phase 5 exit gate remains open until successful Windows Docker Desktop Linux-mode fixture results, including preparation storage enforcement, are recorded.
 
 **Input**: Phase 5 grilling decisions Q1–Q23 in [ADR 0011](../../docs/adr/0011-disposable-offline-verification-containers.md). Repository content supplies data and code; trusted application state supplies authority and execution policy.
 

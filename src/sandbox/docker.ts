@@ -9,6 +9,7 @@ import type {
 } from "./types.js";
 import { CleanupExecutionGate } from "./cleanup.js";
 import { mapVerificationTarget } from "./config.js";
+import { truncateUtf8 } from "./dockerprocess.js";
 
 export interface DockerPort {
   readiness(): {
@@ -205,9 +206,7 @@ export class DockerSandboxBackend implements SandboxBackend {
     if (result === undefined) throw new Error("Sandbox execution failed");
     const bytes = Buffer.from(result.output, "utf8");
     const overflow = bytes.length > input.limits.maxOutputBytes;
-    let end = Math.min(bytes.length, input.limits.maxOutputBytes);
-    while (end > 0 && end < bytes.length && (bytes[end]! & 0xc0) === 0x80) end -= 1;
-    const output = bytes.subarray(0, end).toString("utf8");
+    const output = truncateUtf8(bytes, input.limits.maxOutputBytes);
     return {
       check: input.target.check,
       snapshotId: input.snapshot.snapshotId,

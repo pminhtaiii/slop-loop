@@ -90,7 +90,7 @@ The Git branch and checkout state selected by the developer. A branch switch wit
 _Avoid_: agent-owned branch
 
 **Verification profile**:
-A trusted, named set of checks such as tests, lint, type checking, or a build that the runtime can execute in an ephemeral sandbox copy. The model cannot supply arbitrary shell commands.
+Trusted named checks and their finite limits, selected without arbitrary model-provided commands, such as tests, lint, type checking, or a build that the runtime can execute in an ephemeral sandbox copy.
 _Avoid_: arbitrary command, host execution
 **Operational log**:
 Structured diagnostic output used to understand application behavior. It is separate from canonical audit evidence and is not the authorization record.
@@ -124,5 +124,28 @@ _Avoid_: model command, live repository policy
 **Audit chain**:
 Canonical UTF-8 JSONL events linked by SHA-256 hashes and closed by a manifest with event count and final hash.
 _Avoid_: database authority, debug log
+
+---
+
+**Verification snapshot**:
+Content-identified eligible working-tree inputs and relevant metadata used by one verdict.
+_Avoid_: atomic filesystem snapshot, live checkout reference
+
+**Prepared verification environment**:
+Immutable dependency/toolchain environment bound to a preparation fingerprint and trusted provenance.
+_Avoid_: dynamic dependency install, host toolchain reuse
+
+**Verification verdict**:
+Aggregate evidence for one snapshot/environment/profile combination, with separate current-checkout freshness.
+_Avoid_: replayed verdict, partial check success
+
+**Preparation action**:
+Explicit developer authority to build a replacement environment under the trusted recipe and policy.
+_Avoid_: model-initiated preparation, automatic rebuild
+
+**Owned execution resource**:
+Disposable execution object whose ownership is sufficient for bounded cleanup and restart reconciliation.
+_Avoid_: unowned container, host process fallback
+
 
 

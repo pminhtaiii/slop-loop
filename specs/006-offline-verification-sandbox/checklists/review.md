@@ -16,4 +16,4 @@ Numerical defaults and selected mechanisms still require the implementation task
 
 Final rereview on 2026-10-02: both reviewers reported no remaining High or Critical findings. The specification/task reviewer also reported no remaining Medium findings. The security reviewer confirmed the runner slot-hold changes and retained implementation proof requirements. All reported documentation findings above were addressed before commit/push.
 
-Current state: Project Phase 4 is complete for available fixtures. Linux bind-mount containment remains UNVERIFIED / UNAVAILABLE and T088 remains unchecked. Feature 006 implementation is complete for the evidence-covered tasks under CI run #48; T091 and T092 remain open setup follow-ups.
+Current state: Project Phase 4 is complete for available fixtures. Linux bind-mount containment remains UNVERIFIED / UNAVAILABLE and T088 remains unchecked. Feature 006 has Linux Docker evidence under CI run #54, and T091 and T092 are completed. The Phase 5 exit gate remains open until successful Windows Docker Desktop Linux-mode fixture results, including preparation storage enforcement, are recorded. T129 and T131 remain open.

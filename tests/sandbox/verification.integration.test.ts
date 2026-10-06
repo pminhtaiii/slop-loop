@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { requireDockerImage, runDocker } from "./integration-fixtures.js";
-import { DockerCliExecution } from "../../src/sandbox/docker-process.js";
+import { DockerCliExecution } from "../../src/sandbox/dockerprocess.js";
 import { DEFAULT_SANDBOX_LIMITS } from "../../src/sandbox/config.js";
 
 describe("T105: Verification Integration Suite", () => {
