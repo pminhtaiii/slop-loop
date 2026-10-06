@@ -111,7 +111,7 @@ export function validateTrustedConfiguration(value: unknown): TrustedSandboxConf
         throw new TypeError("Only approved pnpm profile commands are allowed");
       }
       if (
-        profileName.includes("docker") ||
+        /docker|sandbox:test/i.test(profileName) ||
         profile.argv.some((arg) => /docker|sandbox:test/i.test(arg))
       ) {
         throw new TypeError("Unapproved recursive-Docker profile suites are rejected");

@@ -29,12 +29,17 @@ function safePath(value: string): boolean {
     !value.startsWith("node_modules/") &&
     value !== ".git" &&
     value !== "node_modules" &&
-    !/^(?:dist|coverage)(?:\/|$)/u.test(value) &&
-    !(value.startsWith("native/") && /(?:^|\/)build(?:\/|$)/u.test(value.slice(7))) &&
     !/(^|\/)\.env(?:\.|$)/u.test(value) &&
     !value
       .split("/")
       .some((part) => part === "" || part === "." || part === ".." || part.includes("\0"))
+  );
+}
+
+function isGeneratedOutput(value: string): boolean {
+  return (
+    /^(?:dist|coverage)(?:\/|$)/iu.test(value) ||
+    (/^native\//iu.test(value) && /(?:^|\/)build(?:\/|$)/iu.test(value.slice(7)))
   );
 }
 
@@ -43,11 +48,14 @@ async function captureOnce(
   limits: SnapshotLimits,
 ): Promise<VerificationSnapshot> {
   const raw = await source.entries();
-  if (raw.length > limits.maxEntries) throw new Error("Snapshot entry limit exceeded");
+  const included = raw.filter((entry) => {
+    if (!safePath(entry.path)) throw new Error("Unsafe snapshot path");
+    return !isGeneratedOutput(entry.path);
+  });
+  if (included.length > limits.maxEntries) throw new Error("Snapshot entry limit exceeded");
   let totalBytes = 0;
-  const entries = raw
+  const entries = included
     .map((entry) => {
-      if (!safePath(entry.path)) throw new Error("Unsafe snapshot path");
       if (entry.kind !== undefined && entry.kind !== "file")
         throw new Error("Unsupported snapshot entry type");
       if (entry.linkTarget !== undefined) throw new Error("Symlink snapshot entries are forbidden");

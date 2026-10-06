@@ -85,27 +85,49 @@ describe("safe snapshot capture", () => {
     expect(calls).toBe(6);
   });
 
-  it("rejects declared generated outputs (dist, coverage, native build paths)", async () => {
-    for (const path of [
+  it("omits generated outputs regardless of case before applying snapshot limits", async () => {
+    const generatedPaths = [
       "dist",
       "dist/bundle.js",
+      "DIST/bundle.js",
       "coverage",
       "coverage/lcov.info",
+      "Coverage/lcov.info",
       "native/build",
       "native/build/addon.node",
       "native/addon/build/Release/addon.node",
-    ]) {
+      "native/addon/BUILD/Release/addon.node",
+      "NATIVE/addon/Build/Release/addon.node",
+    ];
+    const snapshot = await captureSnapshot(
+      {
+        workspaceId: "workspace",
+        entries: () =>
+          Promise.resolve([
+            { path: "index.ts", bytes: Buffer.from("x"), mode: 0o644 },
+            ...generatedPaths.map((path) => ({ path, bytes: Buffer.alloc(32), mode: 0o644 })),
+          ]),
+      },
+      { ...limits, maxEntries: 1, maxBytes: 1, maxFileBytes: 1 },
+    );
+    expect(snapshot.entries.map(({ path }) => path)).toEqual(["index.ts"]);
+    expect(snapshot.totalBytes).toBe(1);
+  });
+
+  it.each(["dist/../secret", "DIST/.env", "coverage//file", "native/build/./addon.node"])(
+    "still rejects unsafe paths within generated outputs: %s",
+    async (path) => {
       await expect(
         captureSnapshot(
           {
             workspaceId: "workspace",
             entries: () => Promise.resolve([{ path, bytes: Buffer.from("x"), mode: 0o644 }]),
           },
-          { ...limits, maxBytes: 32, maxFileBytes: 32 },
+          limits,
         ),
       ).rejects.toThrow("Unsafe snapshot path");
-    }
-  });
+    },
+  );
 
   it("rejects case collisions on linux paths", async () => {
     const source: SnapshotSource = {
