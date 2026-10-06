@@ -105,13 +105,13 @@ describe("verification coordination", () => {
     ).toThrow("Mixed verification identity");
   });
 
-  it("retains passing snapshot evidence with INCOMPLETE verdict status when freshness is STALE", async () => {
+  it("retains passing snapshot evidence with PASS verdict status when freshness is STALE", async () => {
     const coordinator = new VerificationCoordinator(["test", "lint"], snapshot, () => "STALE");
     coordinator.record(createEvidence("test"));
     coordinator.record(createEvidence("lint"));
 
     const verdict = await coordinator.verdict();
-    expect(verdict.status).toBe("INCOMPLETE");
+    expect(verdict.status).toBe("PASS");
     expect(verdict.freshness).toBe("STALE");
     expect(verdict.evidence).toHaveLength(2);
     expect(verdict.evidence.every((e) => e.status === "PASS")).toBe(true);

@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { expect, it, vi } from "vitest";
 import { DockerSandboxBackend, type DockerPort } from "../../src/sandbox/docker.js";
@@ -157,4 +158,14 @@ it("returns no execution facts or readiness checks for inspection tools", async 
     gateway.factsFor({ name: "read_file", arguments: { path: "index.ts" } }, ceiling, image),
   ).resolves.toBeUndefined();
   expect(readiness).not.toHaveBeenCalled();
+});
+
+it("does not import from tools layer in sandbox gateway (module boundary inversion)", () => {
+  const source = readFileSync(resolve(__dirname, "../../src/sandbox/gateway.ts"), "utf-8");
+  expect(source).not.toMatch(/from\s+["'].*\/tools\//);
+});
+
+it("does not export speculative SandboxExecutionFacts interface", async () => {
+  const gatewayModule = await import("../../src/sandbox/gateway.js");
+  expect("SandboxExecutionFacts" in gatewayModule).toBe(false);
 });

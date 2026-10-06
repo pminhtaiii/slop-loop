@@ -396,13 +396,26 @@ export function runTaskScript(
 
 export class TaskCheckoutSlot {
   private owner: string | null = null;
+  private held = false;
 
   get heldBy(): string | null {
     return this.owner;
   }
 
+  get isHeld(): boolean {
+    return this.held;
+  }
+
+  hold(): void {
+    this.held = true;
+  }
+
+  settle(status: "CONFIRMED" | "UNCERTAIN"): void {
+    this.held = status !== "CONFIRMED";
+  }
+
   claim(taskId: string): void {
-    if (this.owner !== null) throw new Error("Checkout already has an active task");
+    if (this.owner !== null || this.held) throw new Error("Checkout already has an active task");
     this.owner = taskId;
   }
 
@@ -473,6 +486,9 @@ export class TaskRunner {
     const result = runTaskEvent(this.currentTask, event, now);
     this.currentTask = result.task;
     if (isTerminal(this.currentTask.state)) {
+      if (this.currentTask.outcome?.reason === "CLEANUP_UNCONFIRMED") {
+        this.slot.hold();
+      }
       if (this.inFlightGeneration === null) {
         this.slot.release(this.currentTask.taskId);
       } else {

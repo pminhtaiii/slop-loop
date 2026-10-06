@@ -31,7 +31,22 @@ describe("safe snapshot capture", () => {
   });
 
   it("rejects unsafe links, special files, excluded paths, and bounds violations", async () => {
-    for (const path of [".git/config", "node_modules/pkg/index.js", "../outside", ".env"]) {
+    for (const path of [
+      ".git/config",
+      "nested/.git/config",
+      "nested/.git",
+      "node_modules/pkg/index.js",
+      "src/node_modules/pkg/index.js",
+      "sub/node_modules",
+      "../outside",
+      ".env",
+      "nested/.env",
+      "nested/.env.local",
+      "foo//bar",
+      "trailing/",
+      "/absolute",
+      "win\\path",
+    ]) {
       await expect(
         captureSnapshot(
           {

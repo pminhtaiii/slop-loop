@@ -21,19 +21,20 @@ export interface SnapshotLimits {
 }
 
 function safePath(value: string): boolean {
-  return (
-    value.length > 0 &&
-    !value.startsWith("/") &&
-    !value.includes("\\") &&
-    !value.startsWith(".git/") &&
-    !value.startsWith("node_modules/") &&
-    value !== ".git" &&
-    value !== "node_modules" &&
-    !/(^|\/)\.env(?:\.|$)/u.test(value) &&
-    !value
-      .split("/")
-      .some((part) => part === "" || part === "." || part === ".." || part.includes("\0"))
-  );
+  if (value.length === 0) return false;
+  return !value
+    .split("/")
+    .some(
+      (part) =>
+        part === "" ||
+        part === "." ||
+        part === ".." ||
+        part === ".git" ||
+        part === "node_modules" ||
+        part.includes("\0") ||
+        part.includes("\\") ||
+        /^\.env(?:\.|$)/u.test(part),
+    );
 }
 
 function isGeneratedOutput(value: string): boolean {

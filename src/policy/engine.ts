@@ -35,9 +35,7 @@ export type TrustedReadiness =
 export interface TrustedExecutionFacts {
   readonly approvedProfiles: readonly string[];
   readonly executorReady: boolean;
-  readonly readiness?: TrustedReadiness | "READY" | "EXTERNAL_BLOCKER";
-  readonly blockerReason?:
-    "PREPARATION_REQUIRED" | "IMAGE_STALE" | "RUNTIME_UNAVAILABLE" | "CLEANUP_UNCONFIRMED";
+  readonly readiness?: TrustedReadiness;
 }
 
 export interface TaskCapabilityCeiling {
@@ -183,27 +181,19 @@ function cloneExecution(execution: TrustedExecutionFacts): TrustedExecutionFacts
   if (typeof execution.executorReady !== "boolean") {
     throw new TypeError("Invalid executor readiness");
   }
-  const readiness =
-    typeof execution.readiness === "string" ? { status: execution.readiness } : execution.readiness;
-  const blockerReason =
-    readiness?.status === "EXTERNAL_BLOCKER"
-      ? "reason" in readiness
-        ? readiness.reason
-        : execution.blockerReason
-      : undefined;
+  const readiness = execution.readiness;
   if (readiness !== undefined) {
     if (readiness.status === "READY") {
       if (!execution.executorReady) throw new TypeError("Invalid trusted readiness");
     } else if (readiness.status === "EXTERNAL_BLOCKER") {
       if (
         execution.executorReady ||
-        blockerReason === undefined ||
         ![
           "PREPARATION_REQUIRED",
           "IMAGE_STALE",
           "RUNTIME_UNAVAILABLE",
           "CLEANUP_UNCONFIRMED",
-        ].includes(blockerReason)
+        ].includes(readiness.reason)
       )
         throw new TypeError("Invalid trusted readiness");
     } else {
@@ -219,7 +209,7 @@ function cloneExecution(execution: TrustedExecutionFacts): TrustedExecutionFacts
           readiness: Object.freeze(
             readiness.status === "READY"
               ? { status: "READY" as const }
-              : { status: "EXTERNAL_BLOCKER" as const, reason: blockerReason! },
+              : { status: "EXTERNAL_BLOCKER" as const, reason: readiness.reason },
           ),
         }),
   });
@@ -367,20 +357,11 @@ function decideExecutionAuthority(
   }
   if (!context.execution.executorReady) {
     const readiness = context.execution.readiness;
-    const blockerReason =
-      typeof readiness === "object" && readiness.status === "EXTERNAL_BLOCKER"
-        ? readiness.reason
-        : context.execution.blockerReason;
-    if (
-      (typeof readiness === "object" && readiness.status === "EXTERNAL_BLOCKER") ||
-      readiness === "EXTERNAL_BLOCKER"
-    ) {
-      if (blockerReason === undefined)
-        return { kind: "DENY", invocationId: context.invocationId, reason: "EXECUTOR_NOT_READY" };
+    if (readiness?.status === "EXTERNAL_BLOCKER") {
       return {
         kind: "BLOCKED",
         invocationId: context.invocationId,
-        reason: blockerReason,
+        reason: readiness.reason,
         effect: "NONE",
       };
     }

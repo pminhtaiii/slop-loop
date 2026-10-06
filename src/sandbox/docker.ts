@@ -118,7 +118,10 @@ export class DockerSandboxBackend implements SandboxBackend {
     } catch {
       throw new Error("Unapproved logical verification target");
     }
-    if (approvedTarget.argv.join(" ") !== input.target.argv.join(" "))
+    if (
+      approvedTarget.argv.length !== input.target.argv.length ||
+      approvedTarget.argv.some((arg, index) => arg !== input.target.argv[index])
+    )
       throw new Error("Unapproved logical verification target");
     if (
       input.image.status !== "READY" ||
@@ -220,6 +223,8 @@ export class DockerSandboxBackend implements SandboxBackend {
           : "FAIL",
       cleanup,
       output,
+      exitCode: result.exitCode,
+      truncated: overflow,
       preparationFingerprint: input.image.fingerprint,
       targetId: input.target.targetId,
       taskId: input.target.taskId,

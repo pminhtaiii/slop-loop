@@ -49,6 +49,8 @@ export interface VerificationEvidence {
   readonly status: "PASS" | "FAIL";
   readonly cleanup: "CONFIRMED" | "UNCERTAIN";
   readonly output?: string;
+  readonly exitCode?: number;
+  readonly truncated?: boolean;
   readonly preparationFingerprint: string;
   readonly profileSetId: string;
   readonly targetId: string;
