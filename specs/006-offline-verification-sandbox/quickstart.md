@@ -1,6 +1,6 @@
 # Quickstart: Validate Offline Verification Sandbox
 
-This is the Phase 5 validation and evidence guide. Implementation and integration evidence is recorded in the project context; CI run #54 closed the Phase 5 exit gate, and setup tasks T091 and T092 are complete. Feature number 006 is product Phase 5.
+This is the Phase 5 validation and evidence guide. Implementation and integration evidence is recorded in the project context; CI run #54 supplies source/native regressions on both hosts and Linux Docker evidence, and setup tasks T091 and T092 are complete. The Phase 5 exit gate remains open until successful Windows Docker Desktop Linux-mode fixture results, including preparation storage enforcement, are recorded. Feature number 006 is product Phase 5.
 
 ## Prerequisites
 
@@ -81,7 +81,7 @@ pnpm smoke
 pnpm sandbox:test
 ```
 
-The sandbox's reference target test profile selects ordinary source/native tests explicitly and excludes the host-owned Docker harness. This prevents recursive self-verification from demanding a Docker socket or privileged nested execution. The outer full quality/integration/security gate runs those excluded harnesses; CI run #54 passed the Docker-gated integration, security, recovery and E2E checks and closed the Phase 5 exit gate, with T091 and T092 complete. Their exclusion inside the container is not evidence they passed.
+The sandbox's reference target test profile selects ordinary source/native tests explicitly and excludes the host-owned Docker harness. This prevents recursive self-verification from demanding a Docker socket or privileged nested execution. The outer full quality/integration/security gate runs those excluded harnesses; CI run #54 passed the Docker-gated integration, security, recovery and E2E checks on native Linux Docker, with T091 and T092 complete. Windows Docker Desktop Linux-mode fixtures, including preparation storage enforcement, remain required before closing the Phase 5 exit gate. Their exclusion inside the container is not evidence they passed.
 
 ## Exit gate
 
