@@ -1,5 +1,6 @@
 import { isTerminal } from "../orchestration/transitions.js";
 import type { TaskContext } from "../orchestration/task.js";
+import type { ToolCleanupTracker } from "../orchestration/runner.js";
 import { createPolicyDecisionContext, PolicyEngine } from "../policy/engine.js";
 import type {
   FileGrantView,
@@ -38,6 +39,7 @@ export interface ExecutionFactsPort {
 export interface ToolExecutionAuthority {
   readonly paths: readonly TrustedPathFacts[];
   readonly signal: AbortSignal;
+  readonly cleanup?: ToolCleanupTracker;
 }
 export interface ToolExecutor {
   execute(call: ValidatedToolCall, authority: ToolExecutionAuthority): unknown;
@@ -61,6 +63,7 @@ export interface AuditSink {
 export interface InvocationFence {
   readonly signal: AbortSignal;
   canStart(): boolean;
+  readonly cleanup?: ToolCleanupTracker;
 }
 export interface ToolGatewayDependencies {
   readonly workspace: WorkspaceFactsPort;
@@ -332,7 +335,11 @@ export class ToolGateway {
     try {
       output = await executor.execute(
         validated.call,
-        Object.freeze({ paths, signal: fence?.signal ?? new AbortController().signal }),
+        Object.freeze({
+          paths,
+          signal: fence?.signal ?? new AbortController().signal,
+          ...(fence?.cleanup ? { cleanup: fence.cleanup } : {}),
+        }),
       );
     } catch {
       const failureEvent = eventFor(

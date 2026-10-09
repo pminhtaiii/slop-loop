@@ -56,11 +56,14 @@ it.each(["deadline", "abort"])(
       signal: controller.signal,
       deadlineAt: Date.now() + 5000,
     });
-    const rejected = expect(running).rejects.toThrow();
+    const terminated = expect(running).resolves.toMatchObject({
+      terminationReason: cause === "abort" ? "CANCELLED" : "TIMEOUT",
+      truncated: false,
+    });
     expect(signal?.aborted).toBe(false);
     if (cause === "abort") controller.abort();
     else await vi.advanceTimersByTimeAsync(5000);
-    await rejected;
+    await terminated;
     expect(signal?.aborted).toBe(true);
     expect(cleanup).toHaveBeenCalledWith(resourceId);
     expect(spawn).toHaveBeenCalledWith(
@@ -148,6 +151,36 @@ it("aborts process, cleans up, and resolves with truncated output when combined 
   expect(result.id).toBe(resourceId);
   expect(Buffer.byteLength(result.output, "utf8")).toBeLessThanOrEqual(3);
   expect(result.exitCode).toBe(137);
+  expect(result).toMatchObject({ truncated: true, terminationReason: "OUTPUT_LIMIT" });
+});
+
+it("preserves overflow even when close reports zero and abort emits an error", async () => {
+  const process = child();
+  vi.mocked(spawn).mockImplementation((_command, _args, options) => {
+    options?.signal?.addEventListener("abort", () => {
+      process.emit("error", Object.assign(new Error("aborted"), { name: "AbortError" }));
+      process.emit("close", 0);
+    });
+    return process;
+  });
+  const docker = new DockerCliExecution();
+  vi.spyOn(docker, "stopAndRemove").mockResolvedValue("CONFIRMED");
+  const running = docker.run(
+    ["run"],
+    { ...DEFAULT_SANDBOX_LIMITS, maxOutputBytes: 3 },
+    {
+      resourceId: docker.registerResource(),
+      signal: new AbortController().signal,
+      deadlineAt: Date.now() + 5000,
+    },
+  );
+  process.stdout.write("éé");
+  await expect(running).resolves.toMatchObject({
+    output: "é",
+    truncated: true,
+    terminationReason: "OUTPUT_LIMIT",
+    exitCode: 0,
+  });
 });
 
 it("stopAndRemove uses allowlisted environment and verifies labels with strict Zod schema", async () => {

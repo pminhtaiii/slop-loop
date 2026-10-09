@@ -41,7 +41,14 @@ function port(overrides: Partial<DockerPort> = {}): DockerPort {
     inspectImage: () => image,
     copySnapshot: () => resolve("staging", "snapshot"),
     registerResource: () => "owned-container",
-    run: () => Promise.resolve({ id: "owned-container", output: "ok", exitCode: 0 }),
+    run: () =>
+      Promise.resolve({
+        id: "owned-container",
+        output: "ok",
+        exitCode: 0,
+        truncated: false,
+        terminationReason: "EXITED" as const,
+      }),
     stopAndRemove: () => Promise.resolve("CONFIRMED"),
     ...overrides,
   };
@@ -102,7 +109,16 @@ it.each([
   ["a😀", 5, "a😀", "PASS"],
 ])("caps UTF-8 output %s at %i bytes", async (output, maxOutputBytes, expected, status) => {
   const backend = new DockerSandboxBackend(
-    port({ run: () => Promise.resolve({ id: "owned-container", output, exitCode: 0 }) }),
+    port({
+      run: () =>
+        Promise.resolve({
+          id: "owned-container",
+          output,
+          exitCode: 0,
+          truncated: false,
+          terminationReason: "EXITED" as const,
+        }),
+    }),
   );
   const request = input();
   const evidence = await backend.executeCheck({

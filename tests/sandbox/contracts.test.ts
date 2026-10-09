@@ -74,6 +74,10 @@ describe("sandbox core contracts", () => {
       imageId: "sha256:" + "f".repeat(64),
       status: "PASS",
       cleanup: "CONFIRMED",
+      exitCode: 0,
+      truncated: false,
+      terminationReason: "EXITED",
+      nativePrelude: "PASS",
       preparationFingerprint: "prep",
       profileSetId: "profiles-v1",
       targetId: "tests:ordinary",
@@ -87,6 +91,10 @@ describe("sandbox core contracts", () => {
       imageId: "sha256:" + "f".repeat(64),
       status: "PASS",
       cleanup: "CONFIRMED",
+      exitCode: 0,
+      truncated: false,
+      terminationReason: "EXITED",
+      nativePrelude: "PASS",
       preparationFingerprint: "prep",
       profileSetId: "profiles-v1",
       targetId: "lint:lint",
@@ -132,7 +140,13 @@ describe("sandbox core contracts", () => {
       },
       run: (argv) => {
         (calls as string[][]).push([...argv]);
-        return Promise.resolve({ id: "container", output: "ok", exitCode: 0 });
+        return Promise.resolve({
+          id: "container",
+          output: "ok",
+          exitCode: 0,
+          truncated: false,
+          terminationReason: "EXITED" as const,
+        });
       },
     });
     await backend.executeCheck({
@@ -162,7 +176,14 @@ describe("sandbox core contracts", () => {
         architecture: "linux-x64",
       }),
       copySnapshot: () => resolve("staging", "snapshot-mount"),
-      run: () => Promise.resolve({ id: "container", output: "0123456789", exitCode: 0 }),
+      run: () =>
+        Promise.resolve({
+          id: "container",
+          output: "0123456789",
+          exitCode: 0,
+          truncated: false,
+          terminationReason: "EXITED" as const,
+        }),
       stopAndRemove: () => Promise.resolve("UNCERTAIN"),
     });
     await expect(
@@ -190,7 +211,14 @@ describe("sandbox core contracts", () => {
         architecture: "linux-x64",
       }),
       copySnapshot: () => resolve("staging", "snapshot-mount"),
-      run: () => Promise.resolve({ id: "container", output: "", exitCode: 0 }),
+      run: () =>
+        Promise.resolve({
+          id: "container",
+          output: "",
+          exitCode: 0,
+          truncated: false,
+          terminationReason: "EXITED" as const,
+        }),
     });
     await expect(
       backend.readiness(
@@ -214,6 +242,10 @@ describe("sandbox core contracts", () => {
       imageId: "sha256:" + "d".repeat(64),
       status: "PASS",
       cleanup: "CONFIRMED",
+      exitCode: 0,
+      truncated: false,
+      terminationReason: "EXITED",
+      nativePrelude: "PASS",
       preparationFingerprint: "prep",
       profileSetId: "profiles-v1",
       targetId: "tests:ordinary",
@@ -235,6 +267,10 @@ describe("sandbox core contracts", () => {
       imageId: "sha256:" + "e".repeat(64),
       status: "PASS",
       cleanup: "CONFIRMED",
+      exitCode: 0,
+      truncated: false,
+      terminationReason: "EXITED",
+      nativePrelude: "PASS",
       preparationFingerprint: "prep",
       profileSetId: "profiles-v1",
       targetId: "tests:ordinary",
@@ -298,6 +334,10 @@ describe("sandbox core contracts", () => {
         imageId: "sha256:" + "a".repeat(64),
         status: "PASS",
         cleanup: "CONFIRMED",
+        exitCode: 0,
+        truncated: false,
+        terminationReason: "EXITED",
+        nativePrelude: "PASS",
         preparationFingerprint: "other",
         profileSetId: "profiles-v1",
         targetId: "tests:ordinary",
@@ -332,7 +372,14 @@ describe("sandbox core contracts", () => {
         architecture: "linux-x64",
       }),
       copySnapshot: () => resolve("staging", "snapshot-mount"),
-      run: () => Promise.resolve({ id: "container", output: "", exitCode: 0 }),
+      run: () =>
+        Promise.resolve({
+          id: "container",
+          output: "",
+          exitCode: 0,
+          truncated: false,
+          terminationReason: "EXITED" as const,
+        }),
       stopAndRemove: () => Promise.resolve("CONFIRMED"),
     });
     const evidence = await backend.executeCheck({
@@ -390,7 +437,14 @@ describe("sandbox core contracts", () => {
         fingerprint: "fingerprint",
         architecture: "linux-x64",
       }),
-      run: () => Promise.resolve({ id: "container", output: "", exitCode: 0 }),
+      run: () =>
+        Promise.resolve({
+          id: "container",
+          output: "",
+          exitCode: 0,
+          truncated: false,
+          terminationReason: "EXITED" as const,
+        }),
       copySnapshot: () => resolve("staging", "snapshot-mount"),
     });
     expect(backend).toBeDefined();

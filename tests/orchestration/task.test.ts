@@ -1,9 +1,10 @@
+import { runObservedTaskEvent as runTaskEvent } from "../support/verification.js";
+import { verificationResult } from "../support/verification.js";
 import { describe, expect, it } from "vitest";
 
 import { admitTask as admitTrustedTask, createTask } from "../../src/orchestration/task.js";
 import { admitTask, TEST_WORKSPACE_ID } from "../support/admission.js";
 import type { TaskOutcome } from "../../src/orchestration/task.js";
-import { runTaskEvent } from "../../src/orchestration/runner.js";
 import { advanceTask, finishTask } from "../../src/orchestration/transitions.js";
 
 describe("task admission", () => {
@@ -160,11 +161,7 @@ describe("typed task outcomes", () => {
     expect(
       finishTask(verifying, { state: "FAILED", reason: "VERIFICATION_FAILED" }).outcome,
     ).toMatchObject({ state: "FAILED", reason: "INVALID_TRANSITION" });
-    const failedCheck = runTaskEvent(
-      verifying,
-      { kind: "VERIFICATION_RESULT", passed: false },
-      1_000,
-    ).task;
+    const failedCheck = runTaskEvent(verifying, verificationResult(verifying, false), 1_000).task;
     expect(failedCheck.verification).toBe("FAILED");
     expect(
       finishTask(failedCheck, { state: "FAILED", reason: "VERIFICATION_FAILED" }).outcome,

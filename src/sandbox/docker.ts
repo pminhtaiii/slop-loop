@@ -39,6 +39,8 @@ export interface DockerPort {
     readonly output: string;
     readonly exitCode: number;
     readonly elapsedSeconds?: number;
+    readonly truncated: boolean;
+    readonly terminationReason: import("./types.js").TerminationReason;
   }>;
   stopAndRemove?(id: string): Promise<"CONFIRMED" | "UNCERTAIN">;
 }
@@ -94,7 +96,7 @@ export class DockerSandboxBackend implements SandboxBackend {
       readonly nativeIdentity: string;
     };
     readonly limits: SandboxLimits;
-    readonly runtime: { readonly signal: AbortSignal; readonly deadlineAt: number };
+    readonly runtime: Parameters<SandboxBackend["executeCheck"]>[0]["runtime"];
   }): Promise<VerificationEvidence> {
     const runtime = this.docker.readiness();
     if (
@@ -154,6 +156,7 @@ export class DockerSandboxBackend implements SandboxBackend {
     if (input.runtime.signal.aborted || input.runtime.deadlineAt <= Date.now())
       throw new Error("Sandbox deadline expired");
     const resourceId = this.docker.registerResource?.() ?? `slop-loop-${randomUUID()}`;
+    const acknowledge = input.runtime.cleanup?.hold(resourceId);
     let result: Awaited<ReturnType<DockerPort["run"]>> | undefined;
     let cleanup: "CONFIRMED" | "UNCERTAIN" = "UNCERTAIN";
     this.cleanupGate.hold();
@@ -198,14 +201,18 @@ export class DockerSandboxBackend implements SandboxBackend {
       );
     } finally {
       try {
-        cleanup = (await this.docker.stopAndRemove?.(result?.id ?? resourceId)) ?? "UNCERTAIN";
+        cleanup = (await this.docker.stopAndRemove?.(resourceId)) ?? "UNCERTAIN";
       } finally {
         this.cleanupGate.settle({ status: cleanup, attempts: 1 });
+        acknowledge?.(cleanup);
       }
     }
     if (result === undefined) throw new Error("Sandbox execution failed");
     const bytes = Buffer.from(result.output, "utf8");
-    const overflow = bytes.length > input.limits.maxOutputBytes;
+    const overflow =
+      result.truncated === true ||
+      result.terminationReason === "OUTPUT_LIMIT" ||
+      bytes.length > input.limits.maxOutputBytes;
     const output = truncateUtf8(bytes, input.limits.maxOutputBytes);
     return {
       check: input.target.check,
@@ -214,6 +221,8 @@ export class DockerSandboxBackend implements SandboxBackend {
       status:
         result.exitCode === 0 &&
         !overflow &&
+        result.truncated === false &&
+        result.terminationReason === "EXITED" &&
         !input.runtime.signal.aborted &&
         input.runtime.deadlineAt > Date.now() &&
         (result.elapsedSeconds === undefined ||
@@ -224,6 +233,16 @@ export class DockerSandboxBackend implements SandboxBackend {
       output,
       exitCode: result.exitCode,
       truncated: overflow,
+      terminationReason: overflow
+        ? "OUTPUT_LIMIT"
+        : (result.terminationReason ??
+          (input.runtime.signal.aborted
+            ? "CANCELLED"
+            : input.runtime.deadlineAt <= Date.now() ||
+                (result.elapsedSeconds !== undefined &&
+                  result.elapsedSeconds > input.limits.timeoutSeconds)
+              ? "TIMEOUT"
+              : "EXITED")),
       preparationFingerprint: input.image.fingerprint,
       targetId: input.target.targetId,
       taskId: input.target.taskId,

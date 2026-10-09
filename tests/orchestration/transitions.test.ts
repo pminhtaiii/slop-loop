@@ -1,8 +1,9 @@
+import { runObservedTaskEvent as runTaskEvent } from "../support/verification.js";
+import { verificationResult } from "../support/verification.js";
 import { describe, expect, it } from "vitest";
 
 import { createTask } from "../../src/orchestration/task.js";
 import { admitTask } from "../support/admission.js";
-import { runTaskEvent } from "../../src/orchestration/runner.js";
 import { advanceTask, finishTask } from "../../src/orchestration/transitions.js";
 
 describe("trusted task transitions", () => {
@@ -149,7 +150,7 @@ describe("trusted task transitions", () => {
     ] as const) {
       task = advanceTask(task, target);
     }
-    const reviewing = runTaskEvent(task, { kind: "VERIFICATION_RESULT", passed: true }, 1_000).task;
+    const reviewing = runTaskEvent(task, verificationResult(task), 1_000).task;
     expect(reviewing.state).toBe("REVIEWING");
 
     const bypass = advanceTask(reviewing, "REPAIRING");

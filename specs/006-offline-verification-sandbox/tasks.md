@@ -135,3 +135,12 @@ Docker integration suite on the native Linux Docker daemon under `ubuntu-docker-
 | T131 | Open: documentation reflects available evidence; final completion sync awaits the Phase 5 exit gate. |
 
 T129 and T131 remain open. The Phase 5 exit gate remains open until successful Windows Docker Desktop Linux-mode fixture results, including preparation storage enforcement, are recorded. Unavailable fixtures are not a PASS.
+
+## Phase 8: Convergence — Milestone 1 audit remediation
+
+This section assesses F01/F02/F10 on baseline `934fc40e6ff000b4a802aa1b0522d64db0a5f93d` only. IDs T132–T158 already belong to Feature 007 and are preserved. Earlier checked integration tasks are historical claims, not new acceptance evidence for the audited gaps. See [Milestone 1 evidence](milestone-1-evidence.md).
+
+- [x] T159 Reject boolean-only Edit completion and require trusted, full-check, canonical-result-confirmed, current task/attempt completion receipts in src/orchestration/runner.ts and src/sandbox/verification.ts, with RED/GREEN partial, targeted, stale, cross-task/attempt, replay and malformed/native-failure regressions per FR-004/015/020 (contradicts; source acceptance only)
+- [x] T160 Fence checkout release behind exact task/resource/generation cleanup acknowledgements, preserve terminal failure/cancellation, reject stale/replayed acknowledgements and add trusted gateway/backend resource-tracking hooks in src/orchestration/runner.ts, src/tools/gateway.ts and src/sandbox/docker.ts per FR-017 (partial; source contract acceptance only)
+- [x] T161 Preserve explicit overflow/termination and truncation metadata from DockerCliExecution through DockerSandboxBackend and VerificationCoordinator; prove output-limit/zero-exit/AbortError and UTF-8 boundary handling with source regressions per FR-016/020 (partial; source acceptance only)
+- [ ] T162 Prove F02 resource fencing through concrete private staging/container ownership, durable records and restart reconciliation with matching acknowledgements; prove F01/F10 through real full-check Docker execution and overflow fixtures on both required platforms per FR-017/018/022 and SC-004/006 (partial; deferred to authorized later milestones, not executed by Milestone 1)

@@ -14,6 +14,124 @@ const snapshot: VerificationSnapshot = {
   snapshotId: "snapshot",
 };
 
+it("cannot pass a process-truncated zero-exit result", async () => {
+  const backend = new DockerSandboxBackend({
+    readiness: () => ({ networkDisabled: true, limitsEnforced: true, readOnlyMounts: true }),
+    inspectImage: (imageId) => ({ imageId, fingerprint: "fingerprint", architecture: "linux-x64" }),
+    copySnapshot: () => resolve("staging", "mount"),
+    run: () =>
+      Promise.resolve({
+        id: "container",
+        output: "é",
+        exitCode: 0,
+        truncated: true,
+        terminationReason: "OUTPUT_LIMIT" as const,
+      }),
+    stopAndRemove: () => Promise.resolve("CONFIRMED"),
+  });
+  const evidence = await backend.executeCheck({
+    snapshot,
+    image: {
+      imageId: "sha256:" + "a".repeat(64),
+      fingerprint: "fingerprint",
+      architecture: "linux-x64",
+      status: "READY",
+    },
+    target: {
+      check: "tests",
+      argv: ["pnpm", "test"],
+      profileSetId: "profiles",
+      targetId: "tests:ordinary",
+      taskId: "task",
+      attemptId: "attempt",
+      nativeIdentity: "native",
+    },
+    limits: { ...DEFAULT_SANDBOX_LIMITS, maxOutputBytes: 3 },
+    runtime: { signal: new AbortController().signal, deadlineAt: Date.now() + 30000 },
+  });
+  expect(evidence).toMatchObject({
+    status: "FAIL",
+    truncated: true,
+    terminationReason: "OUTPUT_LIMIT",
+    output: "é",
+  });
+});
+
+it("cannot pass an adapter result without explicit termination and truncation metadata", async () => {
+  const backend = new DockerSandboxBackend({
+    readiness: () => ({ networkDisabled: true, limitsEnforced: true, readOnlyMounts: true }),
+    inspectImage: (imageId) => ({ imageId, fingerprint: "fingerprint", architecture: "linux-x64" }),
+    copySnapshot: () => resolve("staging", "mount"),
+    // @ts-expect-error incomplete adapter result must fail closed at runtime
+    run: () => Promise.resolve({ id: "container", output: "", exitCode: 0 }),
+    stopAndRemove: () => Promise.resolve("CONFIRMED"),
+  });
+  const evidence = await backend.executeCheck({
+    snapshot,
+    image: {
+      imageId: "sha256:" + "a".repeat(64),
+      fingerprint: "fingerprint",
+      architecture: "linux-x64",
+      status: "READY",
+    },
+    target: {
+      check: "tests",
+      argv: ["pnpm", "test"],
+      profileSetId: "profiles",
+      targetId: "tests:ordinary",
+      taskId: "task",
+      attemptId: "attempt",
+      nativeIdentity: "native",
+    },
+    limits: DEFAULT_SANDBOX_LIMITS,
+    runtime: { signal: new AbortController().signal, deadlineAt: Date.now() + 30000 },
+  });
+  expect(evidence.status).toBe("FAIL");
+});
+
+it("cleans the registered resource instead of a mismatching returned identity", async () => {
+  const removed: string[] = [];
+  const backend = new DockerSandboxBackend({
+    readiness: () => ({ networkDisabled: true, limitsEnforced: true, readOnlyMounts: true }),
+    inspectImage: (imageId) => ({ imageId, fingerprint: "fingerprint", architecture: "linux-x64" }),
+    copySnapshot: () => resolve("staging", "mount"),
+    registerResource: () => "registered-container",
+    run: () =>
+      Promise.resolve({
+        id: "other-container",
+        output: "",
+        exitCode: 0,
+        truncated: false,
+        terminationReason: "EXITED" as const,
+      }),
+    stopAndRemove: (id) => {
+      removed.push(id);
+      return Promise.resolve("CONFIRMED");
+    },
+  });
+  await backend.executeCheck({
+    snapshot,
+    image: {
+      imageId: "sha256:" + "a".repeat(64),
+      fingerprint: "fingerprint",
+      architecture: "linux-x64",
+      status: "READY",
+    },
+    target: {
+      check: "tests",
+      argv: ["pnpm", "test"],
+      profileSetId: "profiles",
+      targetId: "tests:ordinary",
+      taskId: "task",
+      attemptId: "attempt",
+      nativeIdentity: "native",
+    },
+    limits: DEFAULT_SANDBOX_LIMITS,
+    runtime: { signal: new AbortController().signal, deadlineAt: Date.now() + 30000 },
+  });
+  expect(removed).toEqual(["registered-container"]);
+});
+
 it("builds a non-root, offline, read-only Docker invocation with bounded writable mounts", async () => {
   let argv: readonly string[] = [];
   const backend = new DockerSandboxBackend({
@@ -22,7 +140,13 @@ it("builds a non-root, offline, read-only Docker invocation with bounded writabl
     copySnapshot: () => resolve("staging", "mount"),
     run: (args) => {
       argv = args;
-      return Promise.resolve({ id: "container", output: "", exitCode: 0 });
+      return Promise.resolve({
+        id: "container",
+        output: "",
+        exitCode: 0,
+        truncated: false,
+        terminationReason: "EXITED" as const,
+      });
     },
     stopAndRemove: () => Promise.resolve("CONFIRMED"),
   });
@@ -73,7 +197,14 @@ it("blocks the next run when cleanup cannot be confirmed", async () => {
     readiness: () => ({ networkDisabled: true, limitsEnforced: true, readOnlyMounts: true }),
     inspectImage: (imageId) => ({ imageId, fingerprint: "fingerprint", architecture: "linux-x64" }),
     copySnapshot: () => resolve("staging", "mount"),
-    run: () => Promise.resolve({ id: "container", output: "", exitCode: 0 }),
+    run: () =>
+      Promise.resolve({
+        id: "container",
+        output: "",
+        exitCode: 0,
+        truncated: false,
+        terminationReason: "EXITED" as const,
+      }),
     stopAndRemove: () => Promise.resolve("UNCERTAIN"),
   });
   const input = {
@@ -120,7 +251,13 @@ it("registers resource with docker port and ensures slop-loop ownership prefix",
     run: (args, _limits, runtime) => {
       passedArgv = args;
       passedRuntime = runtime;
-      return Promise.resolve({ id: registeredId, output: "", exitCode: 0 });
+      return Promise.resolve({
+        id: registeredId,
+        output: "",
+        exitCode: 0,
+        truncated: false,
+        terminationReason: "EXITED" as const,
+      });
     },
     stopAndRemove: () => Promise.resolve("CONFIRMED"),
   });
@@ -157,7 +294,13 @@ it("registers resource with docker port and ensures slop-loop ownership prefix",
     copySnapshot: () => resolve("staging", "mount"),
     run: (_args, _limits, runtime) => {
       passedRuntime = runtime;
-      return Promise.resolve({ id: runtime.resourceId ?? "container", output: "", exitCode: 0 });
+      return Promise.resolve({
+        id: runtime.resourceId ?? "container",
+        output: "",
+        exitCode: 0,
+        truncated: false,
+        terminationReason: "EXITED" as const,
+      });
     },
     stopAndRemove: () => Promise.resolve("CONFIRMED"),
   });
@@ -192,7 +335,14 @@ it("validates targets against approved profiles and rejects unapproved commands"
     readiness: () => ({ networkDisabled: true, limitsEnforced: true, readOnlyMounts: true }),
     inspectImage: (imageId) => ({ imageId, fingerprint: "fingerprint", architecture: "linux-x64" }),
     copySnapshot: () => resolve("staging", "mount"),
-    run: () => Promise.resolve({ id: "container", output: "", exitCode: 0 }),
+    run: () =>
+      Promise.resolve({
+        id: "container",
+        output: "",
+        exitCode: 0,
+        truncated: false,
+        terminationReason: "EXITED" as const,
+      }),
     stopAndRemove: () => Promise.resolve("CONFIRMED"),
   });
 
@@ -276,7 +426,14 @@ it("records exit code and truncation state in verification evidence", async () =
     readiness: () => ({ networkDisabled: true, limitsEnforced: true, readOnlyMounts: true }),
     inspectImage: (imageId) => ({ imageId, fingerprint: "fingerprint", architecture: "linux-x64" }),
     copySnapshot: () => resolve("staging", "mount"),
-    run: () => Promise.resolve({ id: "container", output: "output exceeds limit", exitCode: 1 }),
+    run: () =>
+      Promise.resolve({
+        id: "container",
+        output: "output exceeds limit",
+        exitCode: 1,
+        truncated: false,
+        terminationReason: "EXITED" as const,
+      }),
     stopAndRemove: () => Promise.resolve("CONFIRMED"),
   });
 

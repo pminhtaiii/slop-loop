@@ -6,6 +6,15 @@ import { TaskState } from "./task.js";
 import type { TaskContext, TaskOutcome, TaskState as TaskStateType } from "./task.js";
 import { advanceTask, finishTask, isTerminal } from "./transitions.js";
 import type { ToolGateway, ToolGatewayResult } from "../tools/gateway.js";
+import {
+  observeVerificationCompletion,
+  observeVerificationFreshness,
+  verificationObservationStatus,
+} from "../sandbox/verification.js";
+import type {
+  TrustedVerificationCompletion,
+  TrustedVerificationObservation,
+} from "../sandbox/verification.js";
 
 export type TaskEvent =
   | { readonly kind: "MODEL_PROPOSAL"; readonly action: "PLAN" | "COMPLETE" | "INVALID" }
@@ -35,7 +44,7 @@ export type TaskEvent =
   | { readonly kind: "TOOL_CONTRACT_FAILURE" }
   | { readonly kind: "POLICY_DENIAL"; readonly authorizedRouteRemains: boolean }
   | { readonly kind: "TRUSTED_TRANSITION"; readonly target: TaskStateType }
-  | { readonly kind: "VERIFICATION_RESULT"; readonly passed: boolean }
+  | { readonly kind: "VERIFICATION_RESULT"; readonly evidence: TrustedVerificationCompletion }
   | { readonly kind: "RETRY" }
   | { readonly kind: "NO_CHANGE" };
 
@@ -129,7 +138,12 @@ function recover(task: TaskContext, reason: RetryReason): TaskProcessingCore {
  * Applies a task event with budget accounting and lifecycle checks.
  * Preserves terminal tasks and ends active tasks on policy or execution failure.
  */
-function processTaskEvent(task: TaskContext, event: TaskEvent, now: number): TaskProcessingCore {
+function processTaskEvent(
+  task: TaskContext,
+  event: TaskEvent,
+  now: number,
+  observation?: TrustedVerificationObservation,
+): TaskProcessingCore {
   if (isTerminal(task.state)) {
     return { status: "ALREADY_TERMINAL", task, reason: "ALREADY_TERMINAL" };
   }
@@ -281,9 +295,12 @@ function processTaskEvent(task: TaskContext, event: TaskEvent, now: number): Tas
   }
   if (event.kind === "VERIFICATION_RESULT") {
     if (observed.state !== TaskState.VERIFYING) {
-      return { status: "ACCEPTED", task: advanceTask(observed, TaskState.REVIEWING) };
+      return { status: "ACTION_REJECTED", task: observed, reason: "ACTION_NOT_ALLOWED" };
     }
-    if (!event.passed) {
+    const verdict = verificationObservationStatus(observation, task, now, "RESULT", event.evidence);
+    if (verdict === undefined)
+      return { status: "ACTION_REJECTED", task: observed, reason: "ACTION_NOT_ALLOWED" };
+    if (verdict === "FAIL") {
       return {
         status: "ACCEPTED",
         task: Object.freeze({ ...observed, verification: "FAILED" as const }),
@@ -335,6 +352,7 @@ function processTaskEvent(task: TaskContext, event: TaskEvent, now: number): Tas
     charged.mode === "Edit" &&
     charged.state === TaskState.REVIEWING &&
     charged.verification === "PASSED" &&
+    verificationObservationStatus(observation, task, now, "COMPLETE") === "PASS" &&
     charged.changed
   ) {
     return {
@@ -349,12 +367,14 @@ function processTaskEvent(task: TaskContext, event: TaskEvent, now: number): Tas
   };
 }
 
+/** Pure transition: runtime authority is supplied as an immutable, authenticated observation. */
 export function runTaskEvent(
   task: TaskContext,
   event: TaskEvent,
   now: number,
+  observation?: TrustedVerificationObservation,
 ): TaskProcessingResult {
-  const result = processTaskEvent(task, event, now);
+  const result = processTaskEvent(task, event, now, observation);
   const reason = result.reason ?? (result.task !== task ? result.task.outcome?.reason : undefined);
   return Object.freeze({
     status: result.status,
@@ -364,6 +384,28 @@ export function runTaskEvent(
     usage: result.task.usage,
     ...(reason === undefined ? {} : { reason }),
   });
+}
+
+/** Stateful trusted ingress. Reducer preflight avoids consuming receipts for ineligible events. */
+export function observeTaskEvent(
+  task: TaskContext,
+  event: TaskEvent,
+  now: number,
+): TrustedVerificationObservation | undefined {
+  const resultEvent = event.kind === "VERIFICATION_RESULT" && task.state === TaskState.VERIFYING;
+  const completionEvent =
+    event.kind === "MODEL_PROPOSAL" &&
+    event.action === "COMPLETE" &&
+    task.mode === "Edit" &&
+    task.state === TaskState.REVIEWING &&
+    task.verification === "PASSED";
+  if (!resultEvent && !completionEvent) return undefined;
+  const preflight = runTaskEvent(task, event, now);
+  if (preflight.status !== "ACTION_REJECTED" || preflight.reason !== "ACTION_NOT_ALLOWED")
+    return undefined;
+  return event.kind === "VERIFICATION_RESULT"
+    ? observeVerificationCompletion(event.evidence, task, now)
+    : observeVerificationFreshness(task, now);
 }
 
 export function runModelProposal(
@@ -381,47 +423,98 @@ export function runModelProposal(
 
 export function runTaskScript(
   initial: TaskContext,
-  script: readonly { readonly event: TaskEvent; readonly now: number }[],
+  script: readonly {
+    readonly event: TaskEvent;
+    readonly now: number;
+    readonly observation?: TrustedVerificationObservation;
+  }[],
 ): { readonly task: TaskContext; readonly results: readonly TaskProcessingResult[] } {
   let task = initial;
   const results: TaskProcessingResult[] = [];
   for (const entry of script) {
     if (isTerminal(task.state)) break;
-    const result = runTaskEvent(task, entry.event, entry.now);
+    const result = runTaskEvent(task, entry.event, entry.now, entry.observation);
     results.push(result);
     task = result.task;
   }
   return Object.freeze({ task, results: Object.freeze(results) });
 }
 
+export interface CleanupIdentity {
+  readonly taskId: string;
+  readonly resourceId: string;
+  readonly generation: number;
+}
+export type CleanupAcknowledgement = CleanupIdentity & {
+  readonly status: "CONFIRMED" | "UNCERTAIN";
+};
+export interface ToolCleanupTracker {
+  hold(resourceId: string): (status: "CONFIRMED" | "UNCERTAIN") => boolean;
+}
+
 export class TaskCheckoutSlot {
   private owner: string | null = null;
-  private held = false;
+  private readonly holds = new Map<string, CleanupIdentity>();
+  private releasePending = false;
+  private generation = 0;
+  private readonly settled = new Set<string>();
+
+  nextGeneration(): number {
+    if (this.generation === Number.MAX_SAFE_INTEGER)
+      throw new Error("Checkout generation exhausted");
+    if (!this.isHeld) this.settled.clear();
+    return ++this.generation;
+  }
 
   get heldBy(): string | null {
     return this.owner;
   }
 
   get isHeld(): boolean {
-    return this.held;
+    return this.holds.size > 0;
   }
 
-  hold(): void {
-    this.held = true;
+  hold(identity: CleanupIdentity): void {
+    if (
+      identity.taskId !== this.owner ||
+      !identity.resourceId ||
+      !Number.isSafeInteger(identity.generation) ||
+      identity.generation < 0
+    )
+      throw new Error("Invalid cleanup hold identity");
+    if (this.holds.has(identity.resourceId)) throw new Error("Resource already held");
+    if (this.settled.has(`${identity.generation}:${identity.resourceId}`))
+      throw new Error("Resource identity already settled");
+    this.holds.set(identity.resourceId, Object.freeze({ ...identity }));
   }
 
-  settle(status: "CONFIRMED" | "UNCERTAIN"): void {
-    this.held = status !== "CONFIRMED";
+  settle(ack: CleanupAcknowledgement): boolean {
+    const hold = this.holds.get(ack.resourceId);
+    if (
+      !hold ||
+      ack.status !== "CONFIRMED" ||
+      hold.taskId !== ack.taskId ||
+      hold.generation !== ack.generation
+    )
+      return false;
+    this.holds.delete(ack.resourceId);
+    this.settled.add(`${ack.generation}:${ack.resourceId}`);
+    if (!this.isHeld && this.releasePending) {
+      this.owner = null;
+      this.releasePending = false;
+    }
+    return true;
   }
 
   claim(taskId: string): void {
-    if (this.owner !== null || this.held) throw new Error("Checkout already has an active task");
+    if (this.owner !== null || this.isHeld) throw new Error("Checkout already has an active task");
     this.owner = taskId;
   }
 
   release(taskId: string): void {
     if (this.owner !== taskId) throw new Error("Checkout slot ownership mismatch");
-    this.owner = null;
+    if (this.isHeld) this.releasePending = true;
+    else this.owner = null;
   }
 }
 
@@ -432,12 +525,15 @@ export class TaskRunner {
   private generation = 0;
   private abortController: AbortController | null = null;
   private stopping = false;
+  private attemptCleanup: CleanupIdentity | null = null;
+  private trackedResources = false;
 
   constructor(task: TaskContext, slot: TaskCheckoutSlot) {
     if (task.budget === null || isTerminal(task.state)) {
       throw new Error("Only an admitted active task can claim a checkout slot");
     }
     slot.claim(task.taskId);
+    this.generation = slot.nextGeneration();
     this.currentTask = task;
     this.slot = slot;
   }
@@ -464,6 +560,25 @@ export class TaskRunner {
     if (isTerminal(this.currentTask.state)) return runTaskEvent(this.currentTask, event, now);
     if (this.stopping) return this.reject("ACTION_REJECTED", "TASK_STOPPING");
     if (
+      this.slot.isHeld &&
+      this.inFlightGeneration === null &&
+      event.kind !== "CANCEL" &&
+      event.kind !== "TICK" &&
+      event.kind !== "PROGRESS" &&
+      ![
+        "POLICY_FAILURE",
+        "EXECUTION_FAILURE",
+        "TOOL_CONTRACT_FAILURE",
+        "AUDIT_UNAVAILABLE",
+        "AUDIT_INCOMPLETE",
+        "PREPARATION_REQUIRED",
+        "IMAGE_STALE",
+        "RUNTIME_UNAVAILABLE",
+        "CLEANUP_UNCONFIRMED",
+      ].includes(event.kind)
+    )
+      return this.reject("ACTION_REJECTED", "TASK_STOPPING");
+    if (
       this.inFlightGeneration !== null &&
       event.kind !== "CANCEL" &&
       event.kind !== "PROGRESS" &&
@@ -483,11 +598,20 @@ export class TaskRunner {
         ...(this.currentTask.outcome === null ? {} : { reason: this.currentTask.outcome.reason }),
       });
     }
-    const result = runTaskEvent(this.currentTask, event, now);
+    const result = runTaskEvent(
+      this.currentTask,
+      event,
+      now,
+      observeTaskEvent(this.currentTask, event, now),
+    );
     this.currentTask = result.task;
     if (isTerminal(this.currentTask.state)) {
-      if (this.currentTask.outcome?.reason === "CLEANUP_UNCONFIRMED") {
-        this.slot.hold();
+      if (this.currentTask.outcome?.reason === "CLEANUP_UNCONFIRMED" && !this.slot.isHeld) {
+        this.slot.hold({
+          taskId: this.currentTask.taskId,
+          resourceId: "unconfirmed-cleanup",
+          generation: this.generation,
+        });
       }
       if (this.inFlightGeneration === null) {
         this.slot.release(this.currentTask.taskId);
@@ -500,17 +624,30 @@ export class TaskRunner {
     return result;
   }
 
-  beginToolAttempt(
-    now: number,
-  ): { readonly generation: number; readonly signal: AbortSignal } | null {
-    if (this.stopping || this.inFlightGeneration !== null) return null;
+  beginToolAttempt(now: number): {
+    readonly generation: number;
+    readonly signal: AbortSignal;
+    readonly cleanupIdentity?: CleanupIdentity;
+  } | null {
+    if (this.stopping || this.inFlightGeneration !== null || this.slot.isHeld) return null;
     const result = this.process({ kind: "TOOL_ATTEMPT" }, now);
     if (result.status !== "ACCEPTED" || isTerminal(this.currentTask.state)) return null;
-    this.inFlightGeneration = ++this.generation;
+    this.generation = this.slot.nextGeneration();
+    this.inFlightGeneration = this.generation;
+    this.trackedResources = false;
     this.abortController = new AbortController();
+    if (this.currentTask.mode === "Edit" && this.currentTask.state === TaskState.VERIFYING) {
+      this.attemptCleanup = Object.freeze({
+        taskId: this.currentTask.taskId,
+        resourceId: `tool-attempt-${this.inFlightGeneration}`,
+        generation: this.inFlightGeneration,
+      });
+      this.slot.hold(this.attemptCleanup);
+    }
     return Object.freeze({
       generation: this.inFlightGeneration,
       signal: this.abortController.signal,
+      ...(this.attemptCleanup === null ? {} : { cleanupIdentity: this.attemptCleanup }),
     });
   }
 
@@ -521,6 +658,19 @@ export class TaskRunner {
       this.slot.heldBy === this.currentTask.taskId &&
       this.abortController?.signal.aborted === false
     );
+  }
+
+  /** Trusted adapter registers effects before creating resources; output is never authority. */
+  cleanupTracker(generation: number): ToolCleanupTracker {
+    return Object.freeze({
+      hold: (resourceId: string) => {
+        if (!this.canStart(generation)) throw new Error("Tool attempt is fenced");
+        const identity = Object.freeze({ taskId: this.currentTask.taskId, generation, resourceId });
+        this.slot.hold(identity);
+        this.trackedResources = true;
+        return (status: "CONFIRMED" | "UNCERTAIN") => this.slot.settle({ ...identity, status });
+      },
+    });
   }
 
   /**
@@ -537,13 +687,29 @@ export class TaskRunner {
     for (const [responsePosition, proposedCall] of proposedCalls.entries()) {
       const attempt = this.beginToolAttempt(now);
       if (attempt === null) break;
-      let result: ToolGatewayResult;
+      let result: ToolGatewayResult | undefined;
       try {
         result = await gateway.invoke(this.currentTask, proposedCall, responsePosition, {
           signal: attempt.signal,
           canStart: () => this.canStart(attempt.generation),
+          cleanup: this.cleanupTracker(attempt.generation),
         });
       } finally {
+        // These gateway outcomes prove no executor ran. All other outcomes require
+        // a trusted cleanup adapter acknowledgement, independent of tool output.
+        if (
+          attempt.cleanupIdentity &&
+          result &&
+          (result.kind === "DENY" ||
+            result.kind === "CANCELLED" ||
+            (result.kind === "FAILED" &&
+              result.reason === "POLICY_FAILURE" &&
+              result.effect === undefined) ||
+            result.kind === "NEEDS_FILE_PERMISSION" ||
+            (result.kind === "BLOCKED" && result.effect === "NONE"))
+        ) {
+          this.slot.settle({ ...attempt.cleanupIdentity, status: "CONFIRMED" });
+        }
         this.settleToolAttempt(attempt.generation, now);
       }
       results.push(result);
@@ -581,8 +747,11 @@ export class TaskRunner {
 
   settleToolAttempt(generation: number, now: number): void {
     if (this.inFlightGeneration !== generation) throw new Error("Unknown in-flight tool attempt");
+    if (this.attemptCleanup && this.trackedResources)
+      this.slot.settle({ ...this.attemptCleanup, status: "CONFIRMED" });
     this.inFlightGeneration = null;
     this.abortController = null;
+    this.attemptCleanup = null;
     if (this.stopping) {
       if (!isTerminal(this.currentTask.state)) {
         this.currentTask = runTaskEvent(this.currentTask, { kind: "CANCEL" }, now).task;

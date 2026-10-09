@@ -21,6 +21,10 @@ const createEvidence = (
   imageId: "image-1",
   status: "PASS",
   cleanup: "CONFIRMED",
+  exitCode: 0,
+  truncated: false,
+  terminationReason: "EXITED",
+  nativePrelude: "PASS",
   preparationFingerprint: "fingerprint-1",
   profileSetId: "profile-1",
   targetId: "target-1",
@@ -31,6 +35,30 @@ const createEvidence = (
 });
 
 describe("verification coordination", () => {
+  it.each(["exitCode", "terminationReason", "truncated", "nativePrelude"] as const)(
+    "refuses PASS when execution metadata %s is missing",
+    async (field) => {
+      const coordinator = new VerificationCoordinator(["test"], snapshot, () => "CURRENT");
+      coordinator.record(
+        createEvidence("test", {
+          exitCode: 0,
+          truncated: false,
+          terminationReason: "EXITED",
+          nativePrelude: "PASS",
+          [field]: undefined,
+        }),
+      );
+      expect((await coordinator.verdict()).status).toBe("FAIL");
+    },
+  );
+
+  it("refuses PASS when evidence reports output overflow despite zero exit", async () => {
+    const coordinator = new VerificationCoordinator(["test"], snapshot, () => "CURRENT");
+    coordinator.record(
+      createEvidence("test", { exitCode: 0, truncated: true, terminationReason: "OUTPUT_LIMIT" }),
+    );
+    expect((await coordinator.verdict()).status).toBe("FAIL");
+  });
   it("rejects duplicate required checks before execution can satisfy coverage", () => {
     expect(
       () => new VerificationCoordinator(["tests", "tests"], snapshot, () => "CURRENT"),

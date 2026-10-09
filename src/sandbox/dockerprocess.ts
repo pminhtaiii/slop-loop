@@ -113,23 +113,27 @@ export class DockerCliExecution {
           failure = error;
         });
         child.once("close", (code) => {
-          if (failure) {
-            reject(failure);
-          } else if (runtime.signal.aborted) {
-            reject(new Error("Sandbox execution aborted"));
-          } else if (outputExceeded) {
+          if (outputExceeded || signal.aborted) {
             resolve({
               id,
               output: truncateUtf8(Buffer.concat(chunks), limits.maxOutputBytes),
               exitCode: code ?? 1,
+              truncated: outputExceeded,
+              terminationReason: outputExceeded
+                ? "OUTPUT_LIMIT"
+                : runtime.signal.aborted
+                  ? "CANCELLED"
+                  : "TIMEOUT",
             });
-          } else if (controller.signal.aborted) {
-            reject(new Error("Sandbox execution aborted"));
+          } else if (failure) {
+            reject(failure);
           } else {
             resolve({
               id,
               output: truncateUtf8(Buffer.concat(chunks), limits.maxOutputBytes),
               exitCode: code ?? 1,
+              truncated: false,
+              terminationReason: "EXITED",
             });
           }
         });

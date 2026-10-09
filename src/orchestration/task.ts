@@ -125,6 +125,8 @@ export interface TaskContext {
   readonly progress: Readonly<TaskProgress>;
   readonly verification: "NOT_RUN" | "PASSED" | "FAILED";
   readonly retryAuthorized: boolean;
+  readonly verificationAttemptSequence: number;
+  readonly verificationAttemptId?: string;
   readonly outcome: TaskOutcome | null;
 }
 
@@ -161,6 +163,7 @@ export function createTask(input: z.input<typeof taskInputSchema>): TaskContext 
     }),
     verification: "NOT_RUN",
     retryAuthorized: false,
+    verificationAttemptSequence: 0,
     outcome: null,
   });
 }
