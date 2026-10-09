@@ -185,9 +185,9 @@ it("builds a non-root, offline, read-only Docker invocation with bounded writabl
       "--label",
       "slop-loop.taskId=task",
       "--tmpfs",
-      "/tmp:rw,nosuid,nodev,noexec,size=268435456",
+      "/tmp:rw,nosuid,nodev,noexec,size=268435456,uid=1000,gid=1000,mode=0700",
       "--tmpfs",
-      "/workspace:rw,nosuid,nodev,size=2147483648",
+      "/workspace:rw,nosuid,nodev,size=2147483648,uid=1000,gid=1000,mode=0700",
     ]),
   );
 });
@@ -461,4 +461,164 @@ it("records exit code and truncation state in verification evidence", async () =
   expect(evidence.exitCode).toBe(1);
   expect(evidence.truncated).toBe(true);
   expect(evidence.status).toBe("FAIL");
+});
+
+it("uses a bounded writable clone layout and preserves real native-prelude metadata", async () => {
+  let launched: readonly string[] = [];
+  const backend = new DockerSandboxBackend({
+    readiness: () => ({ networkDisabled: true, limitsEnforced: true, readOnlyMounts: true }),
+    inspectImage: (imageId) => ({ imageId, fingerprint: "fingerprint", architecture: "linux-x64" }),
+    copySnapshot: () => resolve("staging", "mount"),
+    run: (argv) => {
+      launched = argv;
+      return Promise.resolve({
+        id: "container",
+        output: "",
+        exitCode: 0,
+        truncated: false,
+        terminationReason: "EXITED",
+        nativePrelude: "NOT_REQUIRED",
+      });
+    },
+    stopAndRemove: () => Promise.resolve("CONFIRMED"),
+  });
+  const evidence = await backend.executeCheck({
+    snapshot,
+    image: {
+      imageId: "sha256:" + "a".repeat(64),
+      fingerprint: "fingerprint",
+      architecture: "linux-x64",
+      status: "READY",
+    },
+    target: {
+      check: "build",
+      argv: ["pnpm", "build"],
+      profileSetId: "profile",
+      targetId: "build:build",
+      taskId: "task",
+      attemptId: "attempt",
+      nativeIdentity: "none",
+    },
+    limits: DEFAULT_SANDBOX_LIMITS,
+    runtime: { signal: new AbortController().signal, deadlineAt: Date.now() + 30000 },
+  });
+  expect(launched[launched.indexOf("--workdir") + 1]).toBe("/workspace");
+  expect(launched).toContain("--memory-swap");
+  expect(launched[launched.indexOf("--memory-swap") + 1]).toBe(
+    String(DEFAULT_SANDBOX_LIMITS.memoryBytes),
+  );
+  expect(launched).toContain("--log-driver=none");
+  expect(evidence.nativePrelude).toBe("NOT_REQUIRED");
+});
+
+function checkInput(signal = new AbortController().signal) {
+  return {
+    snapshot,
+    image: {
+      imageId: "sha256:" + "a".repeat(64),
+      fingerprint: "fingerprint",
+      architecture: "linux-x64",
+      status: "READY" as const,
+    },
+    target: {
+      check: "build",
+      argv: ["pnpm", "build"],
+      profileSetId: "profile",
+      targetId: "build:build",
+      taskId: "task",
+      attemptId: "attempt",
+      nativeIdentity: "native",
+    },
+    limits: DEFAULT_SANDBOX_LIMITS,
+    runtime: { signal, deadlineAt: Date.now() + 30000 },
+  };
+}
+it("cleans an aborted launch without a cleanup acknowledgement and retains uncertainty", async () => {
+  const controller = new AbortController();
+  const removed: string[] = [];
+  let released = false;
+  const backend = new DockerSandboxBackend({
+    readiness: () => ({ networkDisabled: true, limitsEnforced: true, readOnlyMounts: true }),
+    inspectImage: (imageId) => ({ imageId, fingerprint: "fingerprint", architecture: "linux-x64" }),
+    registerResource: () => "owned-aborted-launch",
+    copySnapshot: () => resolve("staging", "mount"),
+    releaseSnapshot: () => {
+      released = true;
+      return Promise.resolve("CONFIRMED");
+    },
+    run: () => {
+      controller.abort();
+      return Promise.reject(new Error("launch cancelled after container creation"));
+    },
+    stopAndRemove: (id) => {
+      removed.push(id);
+      return Promise.resolve("UNCERTAIN");
+    },
+  });
+  const input = checkInput(controller.signal);
+  await expect(backend.executeCheck(input)).rejects.toThrow(
+    "launch cancelled after container creation",
+  );
+  expect(removed).toEqual(["owned-aborted-launch"]);
+  expect(released).toBe(false);
+  expect(await backend.readiness(input.image, input.limits)).toEqual({
+    status: "BLOCKED",
+    reason: "CLEANUP_UNCONFIRMED",
+  });
+});
+it("retains staging cleanup uncertainty after cancellation during materialization", async () => {
+  const controller = new AbortController();
+  const acknowledgements: string[] = [];
+  const backend = new DockerSandboxBackend({
+    readiness: () => ({ networkDisabled: true, limitsEnforced: true, readOnlyMounts: true }),
+    inspectImage: (imageId) => ({ imageId, fingerprint: "fingerprint", architecture: "linux-x64" }),
+    copySnapshot: () => {
+      controller.abort();
+      return resolve("staging", "mount");
+    },
+    releaseSnapshot: () => Promise.resolve("UNCERTAIN"),
+    run: () => Promise.reject(new Error("must not run")),
+    stopAndRemove: () => Promise.resolve("CONFIRMED"),
+  });
+  const input = checkInput(controller.signal);
+  await expect(
+    backend.executeCheck({
+      ...input,
+      runtime: {
+        ...input.runtime,
+        cleanup: {
+          hold: () => (status) => {
+            acknowledgements.push(status);
+            return true;
+          },
+        },
+      },
+    }),
+  ).rejects.toThrow("Sandbox deadline expired");
+  expect(acknowledgements).toContain("UNCERTAIN");
+  expect(await backend.readiness(input.image, input.limits)).toEqual({
+    status: "BLOCKED",
+    reason: "CLEANUP_UNCONFIRMED",
+  });
+});
+it("cannot classify a failed native prelude as PASS even with zero process exit", async () => {
+  const backend = new DockerSandboxBackend({
+    readiness: () => ({ networkDisabled: true, limitsEnforced: true, readOnlyMounts: true }),
+    inspectImage: (imageId) => ({ imageId, fingerprint: "fingerprint", architecture: "linux-x64" }),
+    copySnapshot: () => resolve("staging", "mount"),
+    run: () =>
+      Promise.resolve({
+        id: "container",
+        output: "",
+        exitCode: 0,
+        truncated: false,
+        terminationReason: "EXITED" as const,
+        nativePrelude: "FAIL" as const,
+      }),
+    stopAndRemove: () => Promise.resolve("CONFIRMED"),
+  });
+  expect(await backend.executeCheck(checkInput())).toMatchObject({
+    status: "FAIL",
+    nativePrelude: "FAIL",
+  });
 });

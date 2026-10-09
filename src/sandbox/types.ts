@@ -20,6 +20,7 @@ export interface SandboxLimits {
 }
 
 export interface SnapshotEntry {
+  readonly canonicalPath?: string;
   readonly path: string;
   readonly bytes: number;
   readonly mode: number;

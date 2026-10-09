@@ -12,11 +12,17 @@ import { mapVerificationTarget } from "./config.js";
 import { truncateUtf8 } from "./dockerprocess.js";
 
 export interface DockerPort {
-  readiness(): {
-    readonly networkDisabled: boolean;
-    readonly limitsEnforced: boolean;
-    readonly readOnlyMounts: boolean;
-  };
+  readiness():
+    | {
+        readonly networkDisabled: boolean;
+        readonly limitsEnforced: boolean;
+        readonly readOnlyMounts: boolean;
+      }
+    | Promise<{
+        readonly networkDisabled: boolean;
+        readonly limitsEnforced: boolean;
+        readonly readOnlyMounts: boolean;
+      }>;
   inspectImage(imageId: string): {
     readonly imageId: string;
     readonly fingerprint: string;
@@ -24,7 +30,9 @@ export interface DockerPort {
   };
   copySnapshot?(
     entries: readonly { readonly path: string; readonly content: Buffer; readonly mode: number }[],
-  ): string;
+    runtime?: { readonly signal: AbortSignal; readonly deadlineAt: number },
+  ): string | Promise<string>;
+  releaseSnapshot?(mount: string): Promise<"CONFIRMED" | "UNCERTAIN">;
   registerResource?(): string;
   run(
     argv: readonly string[],
@@ -41,8 +49,15 @@ export interface DockerPort {
     readonly elapsedSeconds?: number;
     readonly truncated: boolean;
     readonly terminationReason: import("./types.js").TerminationReason;
+    readonly nativePrelude?: "PASS" | "FAIL" | "NOT_REQUIRED";
   }>;
   stopAndRemove?(id: string): Promise<"CONFIRMED" | "UNCERTAIN">;
+}
+
+export class SnapshotMaterializationError extends Error {
+  constructor(readonly cleanup: "CONFIRMED" | "UNCERTAIN") {
+    super("Snapshot materialization failed");
+  }
 }
 
 export function validateFixedArgv(argv: readonly string[]): void {
@@ -60,14 +75,14 @@ export class DockerSandboxBackend implements SandboxBackend {
   private readonly cleanupGate = new CleanupExecutionGate();
 
   constructor(private readonly docker: DockerPort) {}
-  readiness(image: PreparedImageRecord, limits: SandboxLimits): Promise<SandboxReadiness> {
+  async readiness(image: PreparedImageRecord, limits: SandboxLimits): Promise<SandboxReadiness> {
     if (!this.cleanupGate.canStart())
       return Promise.resolve({ status: "BLOCKED", reason: "CLEANUP_UNCONFIRMED" });
     if (image.status === "MISSING")
       return Promise.resolve({ status: "BLOCKED", reason: "PREPARATION_REQUIRED" });
     if (image.status === "STALE")
       return Promise.resolve({ status: "BLOCKED", reason: "IMAGE_STALE" });
-    const runtime = this.docker.readiness();
+    const runtime = await this.docker.readiness();
     if (
       image.status !== "READY" ||
       !/^sha256:[0-9a-f]{64}$/.test(image.imageId) ||
@@ -98,7 +113,7 @@ export class DockerSandboxBackend implements SandboxBackend {
     readonly limits: SandboxLimits;
     readonly runtime: Parameters<SandboxBackend["executeCheck"]>[0]["runtime"];
   }): Promise<VerificationEvidence> {
-    const runtime = this.docker.readiness();
+    const runtime = await this.docker.readiness();
     if (
       !runtime.networkDisabled ||
       !runtime.limitsEnforced ||
@@ -142,25 +157,40 @@ export class DockerSandboxBackend implements SandboxBackend {
       throw new Error("Prepared image identity mismatch");
     if (this.docker.copySnapshot === undefined)
       throw new Error("Snapshot materialization unavailable");
-    const mount = this.docker.copySnapshot(input.snapshot.entries);
-    if (
-      !isAbsolute(mount) ||
-      normalize(mount) !== mount ||
-      mount === parse(mount).root ||
-      /[,"]/u.test(mount) ||
-      [...mount].some(
-        (character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127,
-      )
-    )
-      throw new Error("Untrusted snapshot mount");
     if (input.runtime.signal.aborted || input.runtime.deadlineAt <= Date.now())
       throw new Error("Sandbox deadline expired");
     const resourceId = this.docker.registerResource?.() ?? `slop-loop-${randomUUID()}`;
-    const acknowledge = input.runtime.cleanup?.hold(resourceId);
+    const acknowledgeStage = this.docker.releaseSnapshot
+      ? input.runtime.cleanup?.hold(`snapshot:${resourceId}`)
+      : undefined;
+    let acknowledge: ReturnType<NonNullable<typeof input.runtime.cleanup>["hold"]> | undefined;
+    let mount: string | undefined;
+    let stageCleanup: "CONFIRMED" | "UNCERTAIN" = "UNCERTAIN";
     let result: Awaited<ReturnType<DockerPort["run"]>> | undefined;
-    let cleanup: "CONFIRMED" | "UNCERTAIN" = "UNCERTAIN";
+    let cleanup: "CONFIRMED" | "UNCERTAIN" = "CONFIRMED";
+    let launched = false;
     this.cleanupGate.hold();
     try {
+      try {
+        mount = await this.docker.copySnapshot(input.snapshot.entries, input.runtime);
+      } catch (error) {
+        if (error instanceof SnapshotMaterializationError) stageCleanup = error.cleanup;
+        throw error;
+      }
+      if (
+        !isAbsolute(mount) ||
+        normalize(mount) !== mount ||
+        mount === parse(mount).root ||
+        /[,"]/u.test(mount) ||
+        [...mount].some(
+          (character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127,
+        )
+      )
+        throw new Error("Untrusted snapshot mount");
+      if (input.runtime.signal.aborted || input.runtime.deadlineAt <= Date.now())
+        throw new Error("Sandbox deadline expired");
+      acknowledge = input.runtime.cleanup?.hold(resourceId);
+      launched = true;
       result = await this.docker.run(
         [
           "run",
@@ -169,6 +199,14 @@ export class DockerSandboxBackend implements SandboxBackend {
           "1000:1000",
           "--network=none",
           "--read-only",
+          "--log-driver=none",
+          "--pull=never",
+          "--env",
+          "HOME=/tmp",
+          "--env",
+          "COREPACK_ENABLE_NETWORK=0",
+          "--env",
+          "COREPACK_ENABLE_PROJECT_SPEC=0",
           "--cap-drop=ALL",
           "--security-opt=no-new-privileges",
           "--label",
@@ -180,19 +218,21 @@ export class DockerSandboxBackend implements SandboxBackend {
           "--name",
           resourceId,
           "--tmpfs",
-          `/tmp:rw,nosuid,nodev,noexec,size=268435456`,
+          `/tmp:rw,nosuid,nodev,noexec,size=268435456,uid=1000,gid=1000,mode=0700`,
           "--tmpfs",
-          `/workspace:rw,nosuid,nodev,size=2147483648`,
+          `/workspace:rw,nosuid,nodev,size=2147483648,uid=1000,gid=1000,mode=0700`,
           "--cpus",
           String(input.limits.cpus),
           "--memory",
+          String(input.limits.memoryBytes),
+          "--memory-swap",
           String(input.limits.memoryBytes),
           "--pids-limit",
           String(input.limits.maxPids),
           "--mount",
           `type=bind,src=${mount},dst=/snapshot,readonly`,
           "--workdir",
-          "/snapshot",
+          "/workspace",
           input.image.imageId,
           ...input.target.argv,
         ],
@@ -201,10 +241,25 @@ export class DockerSandboxBackend implements SandboxBackend {
       );
     } finally {
       try {
-        cleanup = (await this.docker.stopAndRemove?.(resourceId)) ?? "UNCERTAIN";
+        if (launched || acknowledge || result !== undefined)
+          cleanup = (await this.docker.stopAndRemove?.(resourceId)) ?? "UNCERTAIN";
+        else if (mount && !input.runtime.signal.aborted)
+          cleanup = (await this.docker.stopAndRemove?.(resourceId)) ?? "UNCERTAIN";
+      } catch {
+        cleanup = "UNCERTAIN";
       } finally {
-        this.cleanupGate.settle({ status: cleanup, attempts: 1 });
         acknowledge?.(cleanup);
+        if (this.docker.releaseSnapshot) {
+          try {
+            if (mount && cleanup === "CONFIRMED")
+              stageCleanup = await this.docker.releaseSnapshot(mount);
+          } catch {
+            stageCleanup = "UNCERTAIN";
+          }
+          acknowledgeStage?.(stageCleanup);
+          if (stageCleanup !== "CONFIRMED") cleanup = "UNCERTAIN";
+        }
+        this.cleanupGate.settle({ status: cleanup, attempts: 1 });
       }
     }
     if (result === undefined) throw new Error("Sandbox execution failed");
@@ -220,6 +275,7 @@ export class DockerSandboxBackend implements SandboxBackend {
       imageId: input.image.imageId,
       status:
         result.exitCode === 0 &&
+        result.nativePrelude !== "FAIL" &&
         !overflow &&
         result.truncated === false &&
         result.terminationReason === "EXITED" &&
@@ -230,6 +286,7 @@ export class DockerSandboxBackend implements SandboxBackend {
           ? "PASS"
           : "FAIL",
       cleanup,
+      nativePrelude: result.nativePrelude,
       output,
       exitCode: result.exitCode,
       truncated: overflow,

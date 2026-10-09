@@ -1,3 +1,5 @@
+import type { SelectedWorkspace } from "../workspace/types.js";
+import { workspaceSnapshotSource } from "./workspacesnapshot.js";
 import { createHash } from "node:crypto";
 import type { Freshness, VerificationSnapshot } from "./types.js";
 
@@ -8,6 +10,7 @@ export interface SnapshotSource {
       readonly path: string;
       readonly bytes: Buffer;
       readonly mode: number;
+      readonly canonicalPath?: string;
       readonly kind?: "file" | "symlink" | "fifo" | "socket";
       readonly linkTarget?: string;
     }[]
@@ -45,10 +48,11 @@ function isGeneratedOutput(value: string): boolean {
 }
 
 async function captureOnce(
-  source: SnapshotSource,
+  source: SnapshotSource | SelectedWorkspace,
   limits: SnapshotLimits,
 ): Promise<VerificationSnapshot> {
-  const raw = await source.entries();
+  const adapter = "entries" in source ? source : workspaceSnapshotSource(source, limits);
+  const raw = await adapter.entries();
   const included = raw.filter((entry) => {
     if (!safePath(entry.path)) throw new Error("Unsafe snapshot path");
     return !isGeneratedOutput(entry.path);
@@ -70,6 +74,7 @@ async function captureOnce(
         path: entry.path,
         bytes: content.byteLength,
         mode: entry.mode & 0o777,
+        canonicalPath: entry.canonicalPath ?? entry.path,
         hash: createHash("sha256").update(content).digest("hex"),
         get content() {
           return Buffer.from(immutable);
@@ -80,7 +85,13 @@ async function captureOnce(
   if (new Set(entries.map((entry) => entry.path.toLowerCase())).size !== entries.length)
     throw new Error("Snapshot path collision");
   const identity = JSON.stringify(
-    entries.map(({ path, bytes, mode, hash }) => ({ path, bytes, mode, hash })),
+    entries.map(({ path, bytes, mode, hash, canonicalPath }) => ({
+      path,
+      bytes,
+      mode,
+      hash,
+      canonicalPath,
+    })),
   );
   return Object.freeze({
     formatVersion: 1,
@@ -95,27 +106,35 @@ async function captureOnce(
 }
 
 export async function captureSnapshot(
-  source: SnapshotSource,
+  source: SnapshotSource | SelectedWorkspace,
   limits: SnapshotLimits,
+  signal?: AbortSignal,
 ): Promise<VerificationSnapshot> {
+  signal?.throwIfAborted();
+  source = "entries" in source ? source : workspaceSnapshotSource(source, limits, signal);
   const captured = await captureOnce(source, limits);
+  signal?.throwIfAborted();
   const rescan = await captureOnce(source, limits);
+  signal?.throwIfAborted();
   if (captured.snapshotId !== rescan.snapshotId) throw new Error("Snapshot capture race detected");
   return captured;
 }
 
 export async function captureSnapshotWithRetries(
-  source: SnapshotSource,
+  source: SnapshotSource | SelectedWorkspace,
   limits: SnapshotLimits,
   attempts = 3,
+  signal?: AbortSignal,
 ): Promise<VerificationSnapshot> {
   if (!Number.isSafeInteger(attempts) || attempts < 1 || attempts > 3)
     throw new RangeError("Snapshot attempts must be between 1 and 3");
   let lastError: unknown;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
-      return await captureSnapshot(source, limits);
+      return await captureSnapshot(source, limits, signal);
     } catch (error) {
+      if (!(error instanceof Error) || error.message !== "Snapshot capture race detected")
+        throw error;
       lastError = error;
     }
   }
@@ -124,11 +143,12 @@ export async function captureSnapshotWithRetries(
 
 export async function compareCurrent(
   snapshot: VerificationSnapshot,
-  source: SnapshotSource,
+  source: SnapshotSource | SelectedWorkspace,
   limits: SnapshotLimits,
+  signal?: AbortSignal,
 ): Promise<Freshness> {
   try {
-    const current = await captureSnapshot(source, limits);
+    const current = await captureSnapshot(source, limits, signal);
     return current.snapshotId === snapshot.snapshotId ? "CURRENT" : "STALE";
   } catch {
     return "UNCONFIRMED";

@@ -8,6 +8,8 @@ struct WorkspaceIdentity {
   uint64_t device;
   uint64_t inode;
   uint32_t links;
+  uint64_t size;
+  uint32_t mode;
   bool directory;
 };
 

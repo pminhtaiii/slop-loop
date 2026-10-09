@@ -53,6 +53,8 @@ export interface AuditEvent {
   readonly decision: string;
   readonly effect: "NONE" | "COMPLETED" | "POSSIBLE";
   readonly bytes?: number;
+  /** Trusted verification adapter binding, persisted with the canonical RESULT. */
+  readonly verificationEvidenceDigest?: string;
 }
 export type AuditAppendResult =
   | { readonly status: "COMMITTED"; readonly eventId: string }

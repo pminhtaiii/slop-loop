@@ -13,6 +13,38 @@ export const DEFAULT_SANDBOX_LIMITS: SandboxLimits = Object.freeze({
   memoryBytes: 4 * 1024 * 1024 * 1024,
 });
 
+/** Application-owned ordinary suite; the host Docker harness is never selected inside verification. */
+export const ORDINARY_TEST_PATHS = Object.freeze([
+  "tests/ci.test.ts",
+  "tests/config.test.ts",
+  "tests/logging.test.ts",
+  "tests/smoke.test.ts",
+  "tests/orchestration",
+  "tests/policy",
+  "tests/tools",
+  "tests/workspace",
+  "tests/sandbox/archive.test.ts",
+  "tests/sandbox/attempt.test.ts",
+  "tests/sandbox/broker.test.ts",
+  "tests/sandbox/cleanup.test.ts",
+  "tests/sandbox/config.test.ts",
+  "tests/sandbox/contracts.test.ts",
+  "tests/sandbox/docker.test.ts",
+  "tests/sandbox/dockerprocess.test.ts",
+  "tests/sandbox/downloads.test.ts",
+  "tests/sandbox/identity.test.ts",
+  "tests/sandbox/lifecycle.test.ts",
+  "tests/sandbox/local-docker.test.ts",
+  "tests/sandbox/preparation.test.ts",
+  "tests/sandbox/profiles.test.ts",
+  "tests/sandbox/reconciliation.test.ts",
+  "tests/sandbox/review-regressions.test.ts",
+  "tests/sandbox/snapshot.test.ts",
+  "tests/sandbox/spec-regressions.test.ts",
+  "tests/sandbox/verification.test.ts",
+  "tests/sandbox/workspace-snapshot.test.ts",
+]);
+
 export const NODE_GYP_PRELUDE = Object.freeze(["node-gyp", "rebuild"] as const);
 
 const PROFILES = Object.freeze({

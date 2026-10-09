@@ -13,7 +13,14 @@ export interface NativeWorkspaceBackend {
   probeWalk(rootFd: number): void;
   closeDescriptor(fd: number): void;
   targetPath(fd: number): string;
-  targetIdentity(fd: number): { device: string; inode: string; links: number; directory: boolean };
+  targetIdentity(fd: number): {
+    device: string;
+    inode: string;
+    links: number;
+    directory: boolean;
+    size: number;
+    mode: number;
+  };
   readTarget(fd: number, capacity: number): Buffer;
   listDirectory(fd: number, limit: number): string[];
 }
@@ -29,7 +36,7 @@ export function validateNativeBackend(candidate: unknown): NativeLoadResult {
   const backend = candidate as Partial<NativeWorkspaceBackend>;
   if (
     backend.abi !== 2 ||
-    backend.capability !== "identity-v2" ||
+    backend.capability !== "identity-v3" ||
     backend.platform !== process.platform ||
     backend.arch !== process.arch ||
     typeof backend.openRoot !== "function" ||
@@ -94,6 +101,8 @@ export function nativeTargetIdentity(fd: number): {
   inode: string;
   links: number;
   directory: boolean;
+  size: number;
+  mode: number;
 } {
   return requiredBackend().targetIdentity(fd);
 }

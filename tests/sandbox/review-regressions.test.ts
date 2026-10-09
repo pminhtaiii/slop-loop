@@ -54,7 +54,7 @@ function port(overrides: Partial<DockerPort> = {}): DockerPort {
   };
 }
 
-it("awaits execution and cleanup and uses the absolute snapshot as the working directory", async () => {
+it("awaits execution and cleanup and uses a writable clone of the readonly snapshot", async () => {
   const run = vi.fn((...args: Parameters<DockerPort["run"]>) => port().run(...args));
   const stopAndRemove = vi
     .fn<(id: string) => Promise<"CONFIRMED">>()
@@ -69,7 +69,7 @@ it("awaits execution and cleanup and uses the absolute snapshot as the working d
     expect.arrayContaining([
       `type=bind,src=${resolve("staging", "snapshot")},dst=/snapshot,readonly`,
       "--workdir",
-      "/snapshot",
+      "/workspace",
     ]),
   );
   expect(stopAndRemove).toHaveBeenCalledWith("owned-container");

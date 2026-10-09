@@ -35,6 +35,8 @@ export interface OpenedRegularTarget extends OpenedTargetBase {
   readonly kind: "regular";
   /** Reads from the validated held handle, never from a path string. */
   read(maxBytes: number): Buffer;
+  /** Optional for older read adapters; required by trusted snapshot capture. */
+  metadata?(): { readonly size: number; readonly mode: number };
 }
 
 export interface OpenedDirectoryTarget extends OpenedTargetBase {

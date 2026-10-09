@@ -3,6 +3,15 @@ import { describe, expect, it } from "vitest";
 import { loadNativeWorkspaceBackend, validateNativeBackend } from "../../src/workspace/native.js";
 
 describe("native workspace backend loader", () => {
+  it("rejects a stale identity-v2 addon lacking snapshot metadata and larger reads", () => {
+    const loaded = loadNativeWorkspaceBackend();
+    expect(loaded.kind).toBe("READY");
+    if (loaded.kind !== "READY") throw new Error("Current addon unavailable");
+    expect(validateNativeBackend({ ...loaded.backend, capability: "identity-v2" })).toEqual({
+      kind: "UNAVAILABLE",
+      reason: "UNSUPPORTED_BACKEND",
+    });
+  });
   it("loads the addon only when its ABI, platform, architecture, and capability match", () => {
     const loaded = loadNativeWorkspaceBackend();
     expect(loaded).toMatchObject({
@@ -11,7 +20,7 @@ describe("native workspace backend loader", () => {
         abi: 2,
         platform: process.platform,
         arch: process.arch,
-        capability: "identity-v2",
+        capability: "identity-v3",
       },
     });
     if (loaded.kind === "READY") expect(typeof loaded.backend.openChild).toBe("function");

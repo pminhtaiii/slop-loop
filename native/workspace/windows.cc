@@ -359,6 +359,8 @@ bool GetWorkspaceIdentity(int fd, WorkspaceIdentity* identity) {
   identity->inode = (static_cast<uint64_t>(information.nFileIndexHigh) << 32) | information.nFileIndexLow;
   identity->links = information.nNumberOfLinks;
   identity->directory = (information.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+  identity->size = (static_cast<uint64_t>(information.nFileSizeHigh) << 32) | information.nFileSizeLow;
+  identity->mode = (information.dwFileAttributes & FILE_ATTRIBUTE_READONLY) ? 0444 : 0644;
   return true;
 }
 

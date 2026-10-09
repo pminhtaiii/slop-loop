@@ -335,6 +335,22 @@ export class WorkspaceBoundary {
     workspaceId: string,
     requestedPath: string,
   ): WorkspaceAccessResult<OpenedRegularTarget> {
+    return this.openRead(workspaceId, requestedPath, 4 * 1024 * 1024);
+  }
+
+  /** Trusted snapshot seam; model read/search limits are unchanged. */
+  openSnapshotRead(
+    workspaceId: string,
+    requestedPath: string,
+  ): WorkspaceAccessResult<OpenedRegularTarget> {
+    return this.openRead(workspaceId, requestedPath, 16 * 1024 * 1024);
+  }
+
+  private openRead(
+    workspaceId: string,
+    requestedPath: string,
+    capacity: number,
+  ): WorkspaceAccessResult<OpenedRegularTarget> {
     const workspace = workspaceForId(workspaceId);
     if (workspace === null) return { kind: "UNAVAILABLE", reason: "IDENTITY_CHANGED" };
     let opened: InspectedTarget | null;
@@ -353,13 +369,15 @@ export class WorkspaceBoundary {
         requestedPath,
         canonicalPath: opened.canonicalPath,
         identity: opened.identity,
+        metadata() {
+          if (closed) throw new Error("Closed workspace target");
+          const identity = nativeTargetIdentity(opened.fd);
+          if (!Number.isSafeInteger(identity.size) || !Number.isSafeInteger(identity.mode))
+            throw new Error("Snapshot metadata unavailable");
+          return { size: identity.size, mode: identity.mode };
+        },
         read(maxBytes: number): Buffer {
-          if (
-            closed ||
-            !Number.isSafeInteger(maxBytes) ||
-            maxBytes < 0 ||
-            maxBytes > 4 * 1024 * 1024
-          ) {
+          if (closed || !Number.isSafeInteger(maxBytes) || maxBytes < 0 || maxBytes > capacity) {
             throw new Error("Invalid native read");
           }
           const stillEligible = (): boolean => {
