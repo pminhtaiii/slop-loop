@@ -1,7 +1,9 @@
+import { runObservedTaskEvent as runTaskEvent } from "../support/verification.js";
+import { verificationResult } from "../support/verification.js";
 import { describe, expect, it } from "vitest";
 
 import * as runnerModule from "../../src/orchestration/runner.js";
-import { runModelProposal, runTaskEvent } from "../../src/orchestration/runner.js";
+import { runModelProposal } from "../../src/orchestration/runner.js";
 import { createTask } from "../../src/orchestration/task.js";
 import { admitTask } from "../support/admission.js";
 import { advanceTask } from "../../src/orchestration/transitions.js";
@@ -47,6 +49,96 @@ function verifyingEditTask() {
 }
 
 describe("bounded task runner", () => {
+  it("retains a cancelled checkout after settlement until matching resource cleanup", () => {
+    const slot = new runnerModule.TaskCheckoutSlot();
+    const runner = new runnerModule.TaskRunner(verifyingEditTask(), slot);
+    const attempt = runner.beginToolAttempt(1)!;
+    const identity = {
+      taskId: runner.task.taskId,
+      resourceId: "container-1",
+      generation: attempt.generation,
+    };
+    slot.hold(identity);
+    runner.stop(2);
+    runner.settleToolAttempt(attempt.generation, 3);
+    expect(runner.task.state).toBe("CANCELLED");
+    expect(slot.heldBy).toBe(identity.taskId);
+    expect(
+      slot.settle({ ...identity, generation: identity.generation + 1, status: "CONFIRMED" }),
+    ).toBe(false);
+    expect(slot.settle({ ...identity, taskId: "other", status: "CONFIRMED" })).toBe(false);
+    expect(slot.settle({ ...identity, resourceId: "other", status: "CONFIRMED" })).toBe(false);
+    expect(slot.isHeld).toBe(true);
+    expect(slot.settle({ ...identity, status: "UNCERTAIN" })).toBe(false);
+    expect(slot.settle({ ...identity, status: "CONFIRMED" })).toBe(true);
+    expect(slot.heldBy).toBe(identity.taskId);
+    expect(slot.settle({ ...attempt.cleanupIdentity!, status: "CONFIRMED" })).toBe(true);
+    expect(slot.heldBy).toBeNull();
+    expect(slot.settle({ ...identity, status: "CONFIRMED" })).toBe(false);
+  });
+  it("rejects a bare success boolean as Edit completion authority", () => {
+    const result = runTaskEvent(
+      verifyingEditTask(),
+      // @ts-expect-error legacy model-shaped boolean must fail closed
+      { kind: "VERIFICATION_RESULT", passed: true },
+      1,
+    );
+    expect(result.status).toBe("ACTION_REJECTED");
+    expect(result.task.verification).toBe("NOT_RUN");
+    expect(runModelProposal(result.task, { action: "COMPLETE" }, 2).status).toBe("ACTION_REJECTED");
+  });
+  it("holds a cancelled verification attempt even without an adapter cleanup acknowledgement", () => {
+    const slot = new runnerModule.TaskCheckoutSlot();
+    const runner = new runnerModule.TaskRunner(verifyingEditTask(), slot);
+    const attempt = runner.beginToolAttempt(1)!;
+    runner.stop(2);
+    runner.settleToolAttempt(attempt.generation, 3);
+    expect(slot.isHeld).toBe(true);
+    expect(slot.heldBy).toBe(runner.task.taskId);
+    expect(() => slot.claim("next-task")).toThrow("Checkout already has an active task");
+  });
+  it("retains every resource through cancellation and ignores late registration", () => {
+    const slot = new runnerModule.TaskCheckoutSlot();
+    const runner = new runnerModule.TaskRunner(verifyingEditTask(), slot);
+    const attempt = runner.beginToolAttempt(1)!;
+    const tracker = runner.cleanupTracker(attempt.generation);
+    const first = tracker.hold("container-1");
+    const second = tracker.hold("staging-1");
+    runner.stop(2);
+    expect(() => tracker.hold("late-resource")).toThrow("Tool attempt is fenced");
+    expect(first("CONFIRMED")).toBe(true);
+    runner.settleToolAttempt(attempt.generation, 3);
+    expect(slot.heldBy).toBe(runner.task.taskId);
+    expect(second("UNCERTAIN")).toBe(false);
+    expect(second("CONFIRMED")).toBe(true);
+    expect(slot.heldBy).toBeNull();
+    expect(first("CONFIRMED")).toBe(false);
+  });
+  it("rejects an old cleanup callback when a task/resource name is reused", () => {
+    const slot = new runnerModule.TaskCheckoutSlot();
+    const first = new runnerModule.TaskRunner(verifyingEditTask(), slot);
+    const attempt = first.beginToolAttempt(1)!;
+    const oldAck = first.cleanupTracker(attempt.generation).hold("container");
+    oldAck("CONFIRMED");
+    first.stop(2);
+    first.settleToolAttempt(attempt.generation, 3);
+    const second = new runnerModule.TaskRunner(verifyingEditTask(), slot);
+    const next = second.beginToolAttempt(4)!;
+    second.cleanupTracker(next.generation).hold("container");
+    expect(oldAck("CONFIRMED")).toBe(false);
+  });
+  it("cannot recycle a settled cleanup identity within one attempt", () => {
+    const runner = new runnerModule.TaskRunner(
+      verifyingEditTask(),
+      new runnerModule.TaskCheckoutSlot(),
+    );
+    const attempt = runner.beginToolAttempt(1)!;
+    const tracker = runner.cleanupTracker(attempt.generation);
+    const ack = tracker.hold("container");
+    expect(ack("CONFIRMED")).toBe(true);
+    expect(() => tracker.hold("container")).toThrow("Resource identity already settled");
+    expect(ack("CONFIRMED")).toBe(false);
+  });
   it("keeps a terminal task inert after its checkout slot has been released", () => {
     const slot = new runnerModule.TaskCheckoutSlot();
     const runner = new runnerModule.TaskRunner(answeringTask(), slot);
@@ -401,7 +493,7 @@ describe("bounded task runner", () => {
     expect(
       runTaskEvent(unverified, { kind: "MODEL_PROPOSAL", action: "COMPLETE" }, 1_000).status,
     ).toBe("ACTION_REJECTED");
-    const passed = runTaskEvent(unverified, { kind: "VERIFICATION_RESULT", passed: true }, 1_000);
+    const passed = runTaskEvent(unverified, verificationResult(unverified), 1_000);
     expect(passed.task.state).toBe("REVIEWING");
     expect(passed.task.verification).toBe("PASSED");
 
@@ -418,11 +510,8 @@ describe("bounded task runner", () => {
   });
 
   it("requires fresh verification after a review retry", () => {
-    const passed = runTaskEvent(
-      verifyingEditTask(),
-      { kind: "VERIFICATION_RESULT", passed: true },
-      1_000,
-    );
+    const initial = verifyingEditTask();
+    const passed = runTaskEvent(initial, verificationResult(initial), 1_000);
     const retry = runTaskEvent(passed.task, { kind: "RETRY" }, 1_000);
     expect(retry.task.state).toBe("REPAIRING");
     expect(retry.task.usage.retries).toBe(1);
@@ -445,7 +534,7 @@ describe("bounded task runner", () => {
     for (let retry = 0; retry < 3; retry += 1) {
       task = runTaskEvent(task, { kind: "RECOVER", reason: "MODEL_RECOVERY" }, 1_000).task;
     }
-    const failed = runTaskEvent(task, { kind: "VERIFICATION_RESULT", passed: false }, 1_000);
+    const failed = runTaskEvent(task, verificationResult(task, false), 1_000);
     expect(failed.task.state).toBe("VERIFYING");
     const exhausted = runTaskEvent(failed.task, { kind: "RETRY" }, 1_000);
     expect(exhausted.task.outcome).toMatchObject({
@@ -471,11 +560,8 @@ describe("bounded task runner", () => {
   });
 
   it("stops before a fourth repair retry without charging a model turn", () => {
-    let task = runTaskEvent(
-      verifyingEditTask(),
-      { kind: "VERIFICATION_RESULT", passed: true },
-      1_000,
-    ).task;
+    const initial = verifyingEditTask();
+    let task = runTaskEvent(initial, verificationResult(initial), 1_000).task;
     for (let retryNumber = 1; retryNumber <= 3; retryNumber += 1) {
       task = runTaskEvent(task, { kind: "RETRY" }, 1_000).task;
       expect(task.state).toBe("REPAIRING");
@@ -483,7 +569,7 @@ describe("bounded task runner", () => {
       for (const target of ["IMPLEMENTING", "SANDBOX_READY", "VERIFYING"] as const) {
         task = runTaskEvent(task, { kind: "TRUSTED_TRANSITION", target }, 1_000).task;
       }
-      task = runTaskEvent(task, { kind: "VERIFICATION_RESULT", passed: true }, 1_000).task;
+      task = runTaskEvent(task, verificationResult(task), 1_000).task;
       expect(task.state).toBe("REVIEWING");
     }
 

@@ -41,13 +41,20 @@ function port(overrides: Partial<DockerPort> = {}): DockerPort {
     inspectImage: () => image,
     copySnapshot: () => resolve("staging", "snapshot"),
     registerResource: () => "owned-container",
-    run: () => Promise.resolve({ id: "owned-container", output: "ok", exitCode: 0 }),
+    run: () =>
+      Promise.resolve({
+        id: "owned-container",
+        output: "ok",
+        exitCode: 0,
+        truncated: false,
+        terminationReason: "EXITED" as const,
+      }),
     stopAndRemove: () => Promise.resolve("CONFIRMED"),
     ...overrides,
   };
 }
 
-it("awaits execution and cleanup and uses the absolute snapshot as the working directory", async () => {
+it("awaits execution and cleanup and uses a writable clone of the readonly snapshot", async () => {
   const run = vi.fn((...args: Parameters<DockerPort["run"]>) => port().run(...args));
   const stopAndRemove = vi
     .fn<(id: string) => Promise<"CONFIRMED">>()
@@ -62,7 +69,7 @@ it("awaits execution and cleanup and uses the absolute snapshot as the working d
     expect.arrayContaining([
       `type=bind,src=${resolve("staging", "snapshot")},dst=/snapshot,readonly`,
       "--workdir",
-      "/snapshot",
+      "/workspace",
     ]),
   );
   expect(stopAndRemove).toHaveBeenCalledWith("owned-container");
@@ -102,7 +109,16 @@ it.each([
   ["a😀", 5, "a😀", "PASS"],
 ])("caps UTF-8 output %s at %i bytes", async (output, maxOutputBytes, expected, status) => {
   const backend = new DockerSandboxBackend(
-    port({ run: () => Promise.resolve({ id: "owned-container", output, exitCode: 0 }) }),
+    port({
+      run: () =>
+        Promise.resolve({
+          id: "owned-container",
+          output,
+          exitCode: 0,
+          truncated: false,
+          terminationReason: "EXITED" as const,
+        }),
+    }),
   );
   const request = input();
   const evidence = await backend.executeCheck({

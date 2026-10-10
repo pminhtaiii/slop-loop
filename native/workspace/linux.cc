@@ -187,6 +187,8 @@ bool GetWorkspaceIdentity(int fd, WorkspaceIdentity* identity) {
   identity->inode = static_cast<uint64_t>(information.st_ino);
   identity->links = static_cast<uint32_t>(information.st_nlink);
   identity->directory = S_ISDIR(information.st_mode);
+  identity->size = static_cast<uint64_t>(information.st_size);
+  identity->mode = static_cast<uint32_t>(information.st_mode & 0777);
   return true;
 }
 

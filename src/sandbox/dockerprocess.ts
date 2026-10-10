@@ -6,12 +6,9 @@ import type { DockerPort } from "./docker.js";
 
 const execDocker = promisify(execFile);
 
-function allowlistedDockerEnv(): Record<string, string> {
+export function allowlistedDockerEnv(): Record<string, string> {
   const allowlist: Record<string, string | undefined> = {
     PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
-    DOCKER_HOST: process.env.DOCKER_HOST,
-    HOME: process.env.HOME,
-    USER: process.env.USER,
     SYSTEMROOT: process.env.SystemRoot ?? process.env.SYSTEMROOT,
     WINDIR: process.env.windir ?? process.env.WINDIR,
   };
@@ -54,6 +51,7 @@ export function truncateUtf8(buf: Buffer, maxBytes: number): string {
 
 /** Process operations composed with trusted readiness, image inspection and staging ports. */
 export class DockerCliExecution {
+  constructor(private readonly cliPrefix: readonly string[] = []) {}
   private readonly resources = new Set<string>();
   private readonly running = new Set<string>();
 
@@ -85,7 +83,7 @@ export class DockerCliExecution {
     const timer = setTimeout(() => controller.abort(), remaining);
     try {
       return await new Promise((resolve, reject) => {
-        const child = spawn("docker", [...argv], {
+        const child = spawn("docker", [...this.cliPrefix, ...argv], {
           shell: false,
           signal,
           killSignal: "SIGKILL",
@@ -113,23 +111,27 @@ export class DockerCliExecution {
           failure = error;
         });
         child.once("close", (code) => {
-          if (failure) {
-            reject(failure);
-          } else if (runtime.signal.aborted) {
-            reject(new Error("Sandbox execution aborted"));
-          } else if (outputExceeded) {
+          if (outputExceeded || signal.aborted) {
             resolve({
               id,
               output: truncateUtf8(Buffer.concat(chunks), limits.maxOutputBytes),
               exitCode: code ?? 1,
+              truncated: outputExceeded,
+              terminationReason: outputExceeded
+                ? "OUTPUT_LIMIT"
+                : runtime.signal.aborted
+                  ? "CANCELLED"
+                  : "TIMEOUT",
             });
-          } else if (controller.signal.aborted) {
-            reject(new Error("Sandbox execution aborted"));
+          } else if (failure) {
+            reject(failure);
           } else {
             resolve({
               id,
               output: truncateUtf8(Buffer.concat(chunks), limits.maxOutputBytes),
               exitCode: code ?? 1,
+              truncated: false,
+              terminationReason: "EXITED",
             });
           }
         });
@@ -149,7 +151,7 @@ export class DockerCliExecution {
     if (!this.resources.has(id)) return "UNCERTAIN";
     const command = async (argv: readonly string[]) =>
       (
-        await execDocker("docker", [...argv], {
+        await execDocker("docker", [...this.cliPrefix, ...argv], {
           timeout: 5000,
           maxBuffer: 64 * 1024,
           encoding: "utf8",

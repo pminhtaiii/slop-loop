@@ -2,6 +2,8 @@
 
 This is the Phase 5 validation and evidence guide. Implementation and integration evidence is recorded in the project context; CI run #54 supplies source/native regressions on both hosts and Linux Docker evidence, and setup tasks T091 and T092 are complete. The Phase 5 exit gate remains open until successful Windows Docker Desktop Linux-mode fixture results, including preparation storage enforcement, are recorded. Feature number 006 is product Phase 5.
 
+Evidence boundary for the current branch: CI run #54 tested older commit `7a241b0`. It does not validate the later M1–M3 source changes at `3ffc986` plus the uncommitted M3 tree. See [M3 evidence](milestone-3-evidence.md) and the [M4–M6 handoff](handoff.md); current production preparation and Windows quota admission still require the real fixtures and possible platform source work described there.
+
 ## Prerequisites
 
 - The Phase 4 workspace-boundary prerequisite is satisfied by PR #164 / CI run #41 for implementation commit `0b990c03718fa9ae9f1f33de230f9cf53ff38d71`: Windows and Ubuntu Quality Gates passed for available fixtures. Linux bind-mount containment remains UNVERIFIED / UNAVAILABLE under the accepted, unchecked T088 MVP exception; it is not a containment PASS and does not independently block Phase 5 completion.
@@ -18,7 +20,7 @@ From the root after implementation:
 ```sh
 pnpm install --frozen-lockfile
 pnpm native:build
-pnpm exec vitest run tests/sandbox/config.test.ts tests/sandbox/snapshot.test.ts tests/sandbox/profiles.test.ts tests/sandbox/preparation.test.ts tests/sandbox/downloads.test.ts tests/sandbox/broker.test.ts tests/sandbox/verification.test.ts tests/sandbox/gateway.test.ts tests/sandbox/lifecycle.test.ts tests/sandbox/cleanup.test.ts
+pnpm exec vitest run tests/sandbox/config.test.ts tests/sandbox/snapshot.test.ts tests/sandbox/profiles.test.ts tests/sandbox/preparation.test.ts tests/sandbox/downloads.test.ts tests/sandbox/broker.test.ts tests/sandbox/verification.test.ts tests/tools/gateway.test.ts tests/sandbox/lifecycle.test.ts tests/sandbox/cleanup.test.ts
 ```
 
 Confirm unsupported sources/hooks, wrong exact script identity, missing/current authority, image/tag replacement, mixed snapshots, copied-byte mismatch, stale final comparison, capture overflow/retry exhaustion, and cleanup uncertainty all return their specified outcomes with zero unauthorized execution. Tests use fake ports for unavailable adapters; fake tests do not replace the real gate.

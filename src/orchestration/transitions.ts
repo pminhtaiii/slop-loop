@@ -130,6 +130,17 @@ export function advanceTask(task: TaskContext, target: TaskStateType): TaskConte
     return invalidTransition(task);
   }
 
+  if (
+    target === TaskState.VERIFYING &&
+    (!Number.isSafeInteger(task.verificationAttemptSequence) ||
+      task.verificationAttemptSequence < 0 ||
+      task.verificationAttemptSequence >= Number.MAX_SAFE_INTEGER)
+  ) {
+    return invalidTransition(task);
+  }
+
+  const verificationAttemptSequence =
+    task.verificationAttemptSequence + (target === TaskState.VERIFYING ? 1 : 0);
   return Object.freeze({
     ...task,
     state: target,
@@ -139,6 +150,13 @@ export function advanceTask(task: TaskContext, target: TaskStateType): TaskConte
         ? "NOT_RUN"
         : task.verification,
     retryAuthorized: false,
+    verificationAttemptSequence,
+    verificationAttemptId:
+      target === TaskState.VERIFYING
+        ? `${task.taskId}:verification:${verificationAttemptSequence}`
+        : target === TaskState.REPAIRING || target === TaskState.IMPLEMENTING
+          ? undefined
+          : task.verificationAttemptId,
   });
 }
 

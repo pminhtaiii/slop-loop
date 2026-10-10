@@ -1,10 +1,98 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { WorkspaceBoundary } from "../workspace/boundary.js";
+import { verifyWorkspace } from "../workspace/admission.js";
+import type { SelectedWorkspace } from "../workspace/types.js";
 import { z } from "zod";
 import { createPreparationFingerprint, type PreparationInputs } from "./config.js";
 import type { PreparedImageRecord } from "./types.js";
 
 export { createPreparationFingerprint };
 export type { PreparationInputs, PreparedImageRecord };
+
+export type PreparationPolicy = Omit<PreparationInputs, "manifestHash" | "lockfileHash">;
+const policySchema = z.strictObject({
+  managerConfigHash: z.string().regex(/^[a-f0-9]{64}$/u),
+  scriptPolicyId: z.string().regex(/^[a-f0-9]{64}$/u),
+  nodeVersion: z.literal("24.14.0"),
+  pnpmVersion: z.literal("12.5.1"),
+  architecture: z.literal("linux-x64"),
+  baseImageDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/u),
+  recipeHash: z.string().regex(/^[a-f0-9]{64}$/u),
+});
+const issuedActions = new WeakSet<object>();
+export function isPreparationAction(
+  value: unknown,
+): value is ReturnType<typeof createPreparationAction> {
+  return typeof value === "object" && value !== null && issuedActions.has(value);
+}
+
+/** Construction and confirmation belong only to the trusted developer helper, never a tool. */
+export function createPreparationAction(workspace: SelectedWorkspace, policy: PreparationPolicy) {
+  const frozenPolicy = Object.freeze(policySchema.parse(policy));
+  const boundary = new WorkspaceBoundary();
+  const readInputs = () => {
+    if (!verifyWorkspace(workspace)) throw new Error("Preparation workspace unavailable");
+    const read = (name: string) => {
+      const opened = boundary.openSnapshotRead(workspace.workspaceId, name);
+      if (opened.kind !== "OPENED") throw new Error("Preparation path authority unavailable");
+      try {
+        if (opened.target.canonicalPath !== name) throw new Error("Preparation input alias denied");
+        const metadata = opened.target.metadata?.();
+        if (!metadata || metadata.size > 16 * 1024 * 1024)
+          throw new Error("Preparation input limit exceeded");
+        const bytes = opened.target.read(metadata.size);
+        if (bytes.length !== metadata.size) throw new Error("Preparation inputs changed");
+        return bytes;
+      } finally {
+        opened.target.close();
+      }
+    };
+    const manifest = read("package.json");
+    const lockfile = read("pnpm-lock.yaml");
+    if (!verifyWorkspace(workspace)) throw new Error("Preparation workspace unavailable");
+    const hash = (value: Buffer) => createHash("sha256").update(value).digest("hex");
+    const inputs = Object.freeze({
+      ...frozenPolicy,
+      manifestHash: hash(manifest),
+      lockfileHash: hash(lockfile),
+    });
+    return { inputs, manifest, lockfile, fingerprint: createPreparationFingerprint(inputs) };
+  };
+  const initial = readInputs();
+  const deadlineAt = Date.now() + 15 * 60_000;
+  const challenge = `prepare ${workspace.workspaceId} ${initial.fingerprint} ${randomUUID()}`;
+  const receipts = new WeakSet<object>();
+  let confirmed = false;
+  const current = () => {
+    if (Date.now() >= deadlineAt) throw new Error("Preparation confirmation expired");
+    const observed = readInputs();
+    if (observed.fingerprint !== initial.fingerprint) throw new Error("Preparation inputs changed");
+    return observed;
+  };
+  const action = Object.freeze({
+    challenge,
+    deadlineAt,
+    workspaceId: workspace.workspaceId,
+    fingerprint: initial.fingerprint,
+    confirm(answer: string): object {
+      current();
+      if (confirmed || answer !== challenge)
+        throw new Error("Preparation confirmation unavailable");
+      confirmed = true;
+      const receipt = Object.freeze({});
+      receipts.add(receipt);
+      return receipt;
+    },
+    consume(receipt: unknown) {
+      if (receipt === null || typeof receipt !== "object" || !receipts.delete(receipt))
+        throw new Error("Preparation confirmation unavailable");
+      return current();
+    },
+    revalidate: current,
+  });
+  issuedActions.add(action);
+  return action;
+}
 
 export function preparationFingerprint(inputs: PreparationInputs): string {
   return createPreparationFingerprint(inputs);

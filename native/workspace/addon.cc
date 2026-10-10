@@ -244,7 +244,11 @@ napi_value TargetIdentity(napi_env env, napi_callback_info info) {
   napi_create_object(env, &result);
   SetString(env, result, "device", std::to_string(identity.device).c_str());
   SetString(env, result, "inode", std::to_string(identity.inode).c_str());
-  napi_value links, directory;
+  napi_value links, directory, mode, size;
+  napi_create_uint32(env, identity.mode, &mode);
+  napi_create_double(env, static_cast<double>(identity.size), &size);
+  napi_set_named_property(env, result, "mode", mode);
+  napi_set_named_property(env, result, "size", size);
   napi_create_uint32(env, identity.links, &links);
   napi_get_boolean(env, identity.directory, &directory);
   napi_set_named_property(env, result, "links", links);
@@ -259,7 +263,7 @@ napi_value ReadTarget(napi_env env, napi_callback_info info) {
   uint32_t capacity = 0;
   if (napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr) != napi_ok || argc != 2 ||
       napi_get_value_int32(env, argv[0], &token) != napi_ok || token < 0 ||
-      napi_get_value_uint32(env, argv[1], &capacity) != napi_ok || capacity > 4 * 1024 * 1024) {
+      napi_get_value_uint32(env, argv[1], &capacity) != napi_ok || capacity > 16 * 1024 * 1024) {
     ThrowDenied(env); return nullptr;
   }
   std::vector<char> buffer(capacity);
@@ -334,7 +338,7 @@ napi_value Initialize(napi_env env, napi_value exports) {
 #else
   SetString(env, exports, "arch", "unsupported");
 #endif
-  SetString(env, exports, "capability", "identity-v2");
+  SetString(env, exports, "capability", "identity-v3");
   ExportFunction(env, exports, "openRoot", OpenRoot);
   ExportFunction(env, exports, "openRelative", OpenRelative);
   ExportFunction(env, exports, "openChild", OpenChild);

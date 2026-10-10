@@ -6,6 +6,7 @@ export type SandboxReadiness =
         "PREPARATION_REQUIRED" | "IMAGE_STALE" | "RUNTIME_UNAVAILABLE" | "CLEANUP_UNCONFIRMED";
     };
 export type Freshness = "CURRENT" | "STALE" | "UNCONFIRMED";
+export type TerminationReason = "EXITED" | "OUTPUT_LIMIT" | "TIMEOUT" | "CANCELLED";
 
 export interface SandboxLimits {
   readonly maxEntries: number;
@@ -19,6 +20,7 @@ export interface SandboxLimits {
 }
 
 export interface SnapshotEntry {
+  readonly canonicalPath?: string;
   readonly path: string;
   readonly bytes: number;
   readonly mode: number;
@@ -51,6 +53,8 @@ export interface VerificationEvidence {
   readonly output?: string;
   readonly exitCode?: number;
   readonly truncated?: boolean;
+  readonly terminationReason?: TerminationReason;
+  readonly nativePrelude?: "PASS" | "FAIL" | "NOT_REQUIRED";
   readonly preparationFingerprint: string;
   readonly profileSetId: string;
   readonly targetId: string;
@@ -79,7 +83,13 @@ export interface SandboxBackend {
       readonly attemptId: string;
       readonly nativeIdentity: string;
     };
-    readonly runtime: { readonly signal: AbortSignal; readonly deadlineAt: number };
+    readonly runtime: {
+      readonly signal: AbortSignal;
+      readonly deadlineAt: number;
+      readonly cleanup?: {
+        hold(resourceId: string): (status: "CONFIRMED" | "UNCERTAIN") => boolean;
+      };
+    };
     readonly limits: SandboxLimits;
   }): Promise<VerificationEvidence>;
 }

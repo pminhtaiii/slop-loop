@@ -1,3 +1,5 @@
+import { runObservedTaskEvent as runTaskEvent } from "../support/verification.js";
+import { verificationResult } from "../support/verification.js";
 import { describe, expect, it } from "vitest";
 
 import { runTaskScript, TaskCheckoutSlot, TaskRunner } from "../../src/orchestration/runner.js";
@@ -22,6 +24,30 @@ function readyToWrite(task: ReturnType<typeof createTask>) {
 }
 
 describe("scripted task lifecycle", () => {
+  it("produces identical verification task state for the same initial task and event sequence", () => {
+    const initial = admitTask(
+      createTask({ taskId: "deterministic-edit", objective: "Verify an edit", mode: "Edit" }),
+      0,
+    );
+    const script = (
+      [
+        "INSPECTING",
+        "PLANNING",
+        "WAITING_FOR_FILE_PERMISSION",
+        "IMPLEMENTING",
+        "SANDBOX_READY",
+        "VERIFYING",
+      ] as const
+    ).map((target, index) => ({
+      event: { kind: "TRUSTED_TRANSITION" as const, target },
+      now: index + 1,
+    }));
+    const first = runTaskScript(initial, script);
+    const replay = runTaskScript(initial, script);
+    expect(first.task.state).toBe("VERIFYING");
+    expect(replay).toEqual(first);
+    expect(first.task.verificationAttemptId).toBe("deterministic-edit:verification:1");
+  });
   it("completes an Ask task through admission, inspection and answering", () => {
     const initial = admitTask(
       createTask({ taskId: "ask-e2e", objective: "Explain the build", mode: "Ask" }),
@@ -53,10 +79,19 @@ describe("scripted task lifecycle", () => {
       { event: { kind: "TRUSTED_TRANSITION", target: "IMPLEMENTING" }, now: 4_000 },
       { event: { kind: "TRUSTED_TRANSITION", target: "SANDBOX_READY" }, now: 5_000 },
       { event: { kind: "TRUSTED_TRANSITION", target: "VERIFYING" }, now: 6_000 },
-      { event: { kind: "VERIFICATION_RESULT", passed: true }, now: 7_000 },
-      { event: { kind: "MODEL_PROPOSAL", action: "COMPLETE" }, now: 8_000 },
     ]);
-    expect(result.results.map((item) => item.task.state)).toEqual([
+    const verified = runTaskEvent(result.task, verificationResult(result.task), 7_000);
+    const completion = runTaskEvent(
+      verified.task,
+      { kind: "MODEL_PROPOSAL", action: "COMPLETE" },
+      8_000,
+    );
+    const completed = { task: completion.task, results: [completion] };
+    const journey = {
+      task: completed.task,
+      results: [...result.results, verified, ...completed.results],
+    };
+    expect(journey.results.map((item) => item.task.state)).toEqual([
       "INSPECTING",
       "PLANNING",
       "WAITING_FOR_FILE_PERMISSION",
@@ -66,7 +101,10 @@ describe("scripted task lifecycle", () => {
       "REVIEWING",
       "COMPLETED",
     ]);
-    expect(result.task.outcome).toMatchObject({ reason: "EDIT_VERIFIED", verification: "PASSED" });
+    expect(completed.task.outcome).toMatchObject({
+      reason: "EDIT_VERIFIED",
+      verification: "PASSED",
+    });
   });
 
   it("ends a no-change Edit during inspection without invented verification", () => {
@@ -99,15 +137,19 @@ describe("scripted task lifecycle", () => {
       { event: { kind: "TRUSTED_TRANSITION", target: "IMPLEMENTING" }, now: 8_000 },
       { event: { kind: "TRUSTED_TRANSITION", target: "SANDBOX_READY" }, now: 9_000 },
       { event: { kind: "TRUSTED_TRANSITION", target: "VERIFYING" }, now: 10_000 },
-      { event: { kind: "VERIFICATION_RESULT", passed: true }, now: 11_000 },
-      { event: { kind: "MODEL_PROPOSAL", action: "COMPLETE" }, now: 12_000 },
     ]);
+    const verified = runTaskEvent(result.task, verificationResult(result.task), 11_000);
+    const completed = runTaskEvent(
+      verified.task,
+      { kind: "MODEL_PROPOSAL", action: "COMPLETE" },
+      12_000,
+    );
     expect(result.results.map((item) => item.task.state).slice(3, 5)).toEqual([
       "WAITING_FOR_FILE_PERMISSION",
       "IMPLEMENTING",
     ]);
-    expect(result.task.state).toBe("COMPLETED");
-    expect(result.task.mode).toBe("Edit");
+    expect(completed.task.state).toBe("COMPLETED");
+    expect(completed.task.mode).toBe("Edit");
   });
 
   it("terminates a repeated invalid proposal loop at the Large turn cap", () => {

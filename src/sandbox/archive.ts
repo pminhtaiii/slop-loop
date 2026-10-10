@@ -1,9 +1,144 @@
 import tar from "tar-stream";
+import { Transform, type TransformCallback, type Readable } from "node:stream";
+
+/** Only local path/linkpath/mtime PAX records may reach tar-stream normalization. */
+function validatePaxRecords(payload: Buffer): void {
+  const keys = new Set<string>();
+  let offset = 0;
+  while (offset < payload.length) {
+    const space = payload.indexOf(32, offset);
+    const encoded = payload.subarray(offset, space).toString("utf8");
+    const length = Number(encoded);
+    const end = offset + length;
+    if (
+      space < offset ||
+      !/^[1-9][0-9]*$/u.test(encoded) ||
+      !Number.isSafeInteger(length) ||
+      end > payload.length ||
+      end <= space + 1 ||
+      payload[end - 1] !== 10
+    )
+      throw new Error("Archive extensions are unsupported");
+    const record = payload.subarray(space + 1, end - 1).toString("utf8");
+    const equals = record.indexOf("=");
+    const key = record.slice(0, equals);
+    const value = record.slice(equals + 1);
+    if (
+      equals < 1 ||
+      !["path", "linkpath", "mtime"].includes(key) ||
+      keys.has(key) ||
+      !value ||
+      (key === "mtime" && !/^-?[0-9]+(?:\.[0-9]+)?$/u.test(value))
+    )
+      throw new Error("Archive extensions are unsupported");
+    keys.add(key);
+    offset = end;
+  }
+  if (!keys.has("path")) throw new Error("Archive extensions are unsupported");
+}
+
+/** Raw grammar gate bounds metadata and rejects GNU/global PAX/sparse extensions. */
+class TarGrammarGate extends Transform {
+  private header = Buffer.alloc(0);
+  private remaining = 0;
+  private metadataBytes = 0;
+  private pax: Buffer | undefined;
+  private paxOffset = 0;
+  private zeros = 0;
+  private declaredBytes = 0;
+  constructor(private readonly limits: ArchiveLimits) {
+    super();
+  }
+  override _transform(chunk: Buffer, _encoding: BufferEncoding, callback: TransformCallback): void {
+    try {
+      let offset = 0;
+      while (offset < chunk.length) {
+        if (this.remaining > 0) {
+          const count = Math.min(this.remaining, chunk.length - offset);
+          if (this.pax) {
+            const copied = Math.min(count, this.pax.length - this.paxOffset);
+            chunk.copy(this.pax, this.paxOffset, offset, offset + copied);
+            this.paxOffset += copied;
+            if (this.paxOffset === this.pax.length) {
+              validatePaxRecords(this.pax);
+              this.pax = undefined;
+            }
+          }
+          this.push(chunk.subarray(offset, offset + count));
+          this.remaining -= count;
+          offset += count;
+          continue;
+        }
+        const count = Math.min(512 - this.header.length, chunk.length - offset);
+        this.header = Buffer.concat([this.header, chunk.subarray(offset, offset + count)]);
+        offset += count;
+        if (this.header.length !== 512) continue;
+        const header = this.header;
+        this.header = Buffer.alloc(0);
+        this.metadataBytes += 512;
+        if (this.metadataBytes > 16 * 1024 * 1024)
+          throw new Error("Archive metadata exceeds limit");
+        if (header.every((byte) => byte === 0)) {
+          this.zeros++;
+        } else {
+          if (this.zeros) throw new Error("Archive trailing records are unsupported");
+          const type = header[156];
+          if (type === 103 || type === 76 || type === 75 || type === 83)
+            throw new Error("Archive extensions are unsupported");
+          if (
+            type !== 0 &&
+            type !== 120 &&
+            type !== 48 &&
+            type !== 53 &&
+            !(type === 50 && this.limits.allowRelativeSymlinks)
+          )
+            throw new Error("Archive links and special files are not allowed");
+          const encoded = header.subarray(124, 136).toString("ascii").replace(/\0.*$/u, "").trim();
+          if (!/^[0-7]+$/u.test(encoded) || header[124]! & 0x80)
+            throw new Error("Archive size encoding is unsupported");
+          const size = Number.parseInt(encoded, 8);
+          if (
+            !Number.isSafeInteger(size) ||
+            (type !== 120 && size > (this.limits.maxFileBytes ?? 128 * 1024 * 1024))
+          )
+            throw new Error("Archive entry exceeds file limit");
+          if (type === 120) {
+            this.metadataBytes += size;
+            if (this.metadataBytes > 16 * 1024 * 1024)
+              throw new Error("Archive metadata exceeds limit");
+            if (size === 0) throw new Error("Archive extensions are unsupported");
+            this.pax = Buffer.alloc(size);
+            this.paxOffset = 0;
+          }
+          if (type === 53 && size !== 0)
+            throw new Error("Archive directory payload is unsupported");
+          if (type === 50 && size !== 0) throw new Error("Archive link payload is unsupported");
+          this.declaredBytes += size;
+          if (this.declaredBytes > (this.limits.maxBytes ?? 4 * 1024 * 1024 * 1024))
+            throw new Error("Archive expansion exceeds limit");
+          this.remaining = Math.ceil(size / 512) * 512;
+        }
+        this.push(header);
+      }
+      callback();
+    } catch (error) {
+      callback(error instanceof Error ? error : new Error("Archive grammar failure"));
+    }
+  }
+  override _flush(callback: TransformCallback): void {
+    callback(
+      this.header.length || this.remaining || this.zeros < 2
+        ? new Error("Archive truncated")
+        : undefined,
+    );
+  }
+}
 
 export interface ArchiveEntry {
   readonly path: string;
   readonly kind: "file" | "directory" | "symlink" | "hardlink" | "fifo" | "socket";
   readonly size: number;
+  readonly mode?: number;
   readonly target?: string;
 }
 
@@ -11,6 +146,7 @@ export interface ArchiveLimits {
   readonly maxFileBytes?: number;
   readonly maxEntries?: number;
   readonly maxBytes?: number;
+  readonly allowRelativeSymlinks?: boolean;
 }
 
 export interface TarReadableSource {
@@ -26,6 +162,7 @@ export interface TarReadableSource {
 export function sanitizeArchivePath(path: string): string {
   if (
     path.length === 0 ||
+    Array.from(path).some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127) ||
     path.includes("\\") ||
     /^[A-Za-z]:/u.test(path) ||
     path.startsWith("/") ||
@@ -79,6 +216,7 @@ export function validateArchiveEntries(
 export async function parseTarStream(
   source: TarReadableSource,
   limits: ArchiveLimits = {},
+  consumeFile?: (entry: ArchiveEntry, stream: Readable, mode: number) => Promise<void>,
 ): Promise<readonly ArchiveEntry[]> {
   const maxFileBytes = limits.maxFileBytes ?? 128 * 1024 * 1024;
   const maxEntries = limits.maxEntries ?? 50_000;
@@ -89,6 +227,7 @@ export async function parseTarStream(
   let totalBytes = 0;
 
   const extract = tar.extract();
+  const grammar = new TarGrammarGate(limits);
 
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -96,6 +235,7 @@ export async function parseTarStream(
       if (!settled) {
         settled = true;
         source.destroy?.();
+        grammar.destroy();
         extract.destroy();
         reject(err instanceof Error ? err : new Error(String(err)));
       }
@@ -122,7 +262,11 @@ export async function parseTarStream(
         else if (header.type === "fifo") kind = "fifo";
         else throw new Error("Archive links and special files are not allowed");
 
-        if (kind !== "file" && kind !== "directory") {
+        if (
+          kind !== "file" &&
+          kind !== "directory" &&
+          !(kind === "symlink" && limits.allowRelativeSymlinks)
+        ) {
           throw new Error("Archive links and special files are not allowed");
         }
 
@@ -136,11 +280,22 @@ export async function parseTarStream(
           throw new Error("Archive expansion exceeds limit");
         }
 
-        entries.push(Object.freeze({ path, kind, size }));
+        const entry = Object.freeze({
+          path,
+          kind,
+          size,
+          ...(consumeFile ? { mode: header.mode ?? 0 } : {}),
+          ...(kind === "symlink" ? { target: header.linkname ?? "" } : {}),
+        });
+        entries.push(entry);
 
-        // Drain stream without writing to disk
-        stream.on("end", () => next());
-        stream.resume();
+        stream.on("error", fail);
+        if (kind === "file" && consumeFile) {
+          consumeFile(entry, stream, header.mode ?? 0).then(() => next(), fail);
+        } else {
+          stream.on("end", () => next());
+          stream.resume();
+        }
       } catch (err) {
         fail(err);
       }
@@ -148,14 +303,26 @@ export async function parseTarStream(
 
     extract.on("finish", () => {
       if (!settled) {
+        const kinds = new Map(entries.map((entry) => [entry.path.toLowerCase(), entry.kind]));
+        for (const entry of entries) {
+          const segments = entry.path.toLowerCase().split("/");
+          for (let end = 1; end < segments.length; end++) {
+            const parent = kinds.get(segments.slice(0, end).join("/"));
+            if (parent !== undefined && parent !== "directory") {
+              fail(new Error("Archive parent is not a directory"));
+              return;
+            }
+          }
+        }
         settled = true;
         resolve(Object.freeze(entries));
       }
     });
 
     extract.on("error", fail);
+    grammar.on("error", fail);
     source.on?.("error", fail);
 
-    source.pipe(extract);
+    source.pipe(grammar).pipe(extract);
   });
 }

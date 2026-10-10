@@ -65,11 +65,12 @@ describe("TaskCheckoutSlot fencing on unconfirmed cleanup", () => {
     expect(slot.isHeld).toBe(true);
     expect(() => slot.claim("task-2")).toThrow("Checkout already has an active task");
 
-    slot.settle("UNCERTAIN");
+    const identity = { taskId: "task-1", resourceId: "unconfirmed-cleanup", generation: 1 };
+    slot.settle({ ...identity, status: "UNCERTAIN" });
     expect(slot.isHeld).toBe(true);
     expect(() => slot.claim("task-2")).toThrow("Checkout already has an active task");
 
-    slot.settle("CONFIRMED");
+    slot.settle({ ...identity, status: "CONFIRMED" });
     expect(slot.isHeld).toBe(false);
     expect(() => slot.claim("task-2")).not.toThrow();
     expect(slot.heldBy).toBe("task-2");

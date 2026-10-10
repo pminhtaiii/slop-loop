@@ -3,6 +3,18 @@ import { describe, expect, it } from "vitest";
 import { ApprovedFetchBroker, isPublicAddress } from "../../src/sandbox/broker.js";
 
 describe("approved preparation broker", () => {
+  it.each(["192.0.2.1", "198.51.100.1", "203.0.113.10", "192.0.0.9", "192.88.99.1"])(
+    "rejects special-purpose IPv4 destination %s",
+    (address) => {
+      expect(isPublicAddress(address)).toBe(false);
+    },
+  );
+  it.each(["::ffff:7f00:1", "::ffff:a00:1", "2001:db8::1", "2001::1"])(
+    "rejects encoded private or special-use IPv6 destination %s",
+    (address) => {
+      expect(isPublicAddress(address)).toBe(false);
+    },
+  );
   it.each(["127.0.0.1", "::1", "10.0.0.1", "192.168.1.10", "169.254.1.1"])(
     "rejects private or local address %s",
     (address) => {
@@ -13,7 +25,7 @@ describe("approved preparation broker", () => {
   it("allows only approved public registry destinations", async () => {
     const broker = new ApprovedFetchBroker({
       approvedHosts: ["registry.npmjs.org"],
-      resolve: () => Promise.resolve(["203.0.113.10"]),
+      resolve: () => Promise.resolve(["1.1.1.1"]),
       request: () =>
         Promise.resolve({
           statusCode: 200,
@@ -43,7 +55,7 @@ describe("approved preparation broker", () => {
   it("rejects when any resolved address is private (DNS rebinding defense)", async () => {
     const broker = new ApprovedFetchBroker({
       approvedHosts: ["registry.npmjs.org"],
-      resolve: () => Promise.resolve(["203.0.113.10", "127.0.0.1"]),
+      resolve: () => Promise.resolve(["1.1.1.1", "127.0.0.1"]),
       request: () =>
         Promise.resolve({
           statusCode: 200,
@@ -60,7 +72,7 @@ describe("approved preparation broker", () => {
   it("rejects non-standard ports", async () => {
     const broker = new ApprovedFetchBroker({
       approvedHosts: ["registry.npmjs.org"],
-      resolve: () => Promise.resolve(["203.0.113.10"]),
+      resolve: () => Promise.resolve(["1.1.1.1"]),
       request: () =>
         Promise.resolve({
           statusCode: 200,
@@ -82,7 +94,7 @@ describe("approved preparation broker", () => {
   it.each([301, 302, 307, 308])("rejects HTTP redirect status code %i", async (status) => {
     const broker = new ApprovedFetchBroker({
       approvedHosts: ["registry.npmjs.org"],
-      resolve: () => Promise.resolve(["203.0.113.10"]),
+      resolve: () => Promise.resolve(["1.1.1.1"]),
       request: () =>
         Promise.resolve({
           statusCode: status,
@@ -100,7 +112,7 @@ describe("approved preparation broker", () => {
     const broker = new ApprovedFetchBroker({
       approvedHosts: ["registry.npmjs.org"],
       maxBytes: 10,
-      resolve: () => Promise.resolve(["203.0.113.10"]),
+      resolve: () => Promise.resolve(["1.1.1.1"]),
       request: () =>
         Promise.resolve({
           statusCode: 200,
@@ -123,7 +135,7 @@ describe("approved preparation broker", () => {
     const broker = new ApprovedFetchBroker({
       approvedHosts: ["registry.npmjs.org"],
       maxBytes: 10,
-      resolve: () => Promise.resolve(["203.0.113.10"]),
+      resolve: () => Promise.resolve(["1.1.1.1"]),
       request: () =>
         Promise.resolve({
           statusCode: 200,
