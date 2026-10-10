@@ -15,7 +15,7 @@ interface BrokerOptions {
 
 function isPrivateIpv4(address: string): boolean {
   const octets = address.split(".").map(Number);
-  const [first, second] = octets;
+  const [first, second, third] = octets;
   if (first === undefined || second === undefined || octets.length !== 4) return true;
   return (
     first === 0 ||
@@ -25,6 +25,10 @@ function isPrivateIpv4(address: string): boolean {
     (first === 169 && second === 254) ||
     (first === 172 && second !== undefined && second >= 16 && second <= 31) ||
     (first === 192 && second === 168) ||
+    (first === 192 && second === 0 && (third === 0 || third === 2)) ||
+    (first === 192 && second === 88 && third === 99) ||
+    (first === 198 && second === 51 && third === 100) ||
+    (first === 203 && second === 0 && third === 113) ||
     (first === 198 && second !== undefined && (second === 18 || second === 19)) ||
     first >= 224
   );
@@ -36,16 +40,15 @@ export function isPublicAddress(address: string): boolean {
   const version = isIP(normalized);
   if (version === 4) return !isPrivateIpv4(normalized);
   if (version !== 6) return false;
-  return !(
-    normalized === "::" ||
-    normalized === "::1" ||
-    normalized.startsWith("fc") ||
-    normalized.startsWith("fd") ||
-    normalized.startsWith("fe8") ||
-    normalized.startsWith("fe9") ||
-    normalized.startsWith("fea") ||
-    normalized.startsWith("feb") ||
-    normalized.startsWith("ff")
+  const [first, second] = normalized.split(":");
+  const prefix = Number.parseInt(first!, 16);
+  const subnet = Number.parseInt(second || "0", 16);
+  // Narrow registry support to global unicast, excluding documentation and transition ranges.
+  return (
+    prefix >= 0x2000 &&
+    prefix <= 0x3fff &&
+    !(prefix === 0x2001 && (subnet < 0x200 || subnet === 0xdb8)) &&
+    prefix !== 0x2002
   );
 }
 

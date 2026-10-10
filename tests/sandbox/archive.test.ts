@@ -3,6 +3,15 @@ import { describe, expect, it } from "vitest";
 import { sanitizeArchivePath, validateArchiveEntries } from "../../src/sandbox/archive.js";
 
 describe("preparation archive boundary", () => {
+  it("rejects PAX metadata before the maintained parser normalizes it", async () => {
+    const { parseTarStream } = await import("../../src/sandbox/archive.js");
+    const tar = (await import("tar-stream")).default;
+    const pack = tar.pack();
+    const header = { name: "package/index.js", pax: { comment: "unsupported extension" } };
+    pack.entry(header, "fixture");
+    pack.finalize();
+    await expect(parseTarStream(pack)).rejects.toThrow("Archive extensions are unsupported");
+  });
   it.each(["../outside", "/absolute", "C:\\temp\\file", "dir\\file"])(
     "rejects unsafe tar path %s",
     (path) => {
