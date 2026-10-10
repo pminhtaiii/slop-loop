@@ -36,8 +36,8 @@ export async function runDeveloperPreparation(
   const abort = new AbortController();
   let enteredPreparation = false;
   const cancel = () => abort.abort();
-  process.once("SIGINT", cancel);
-  process.once("SIGTERM", cancel);
+  process.on("SIGINT", cancel);
+  process.on("SIGTERM", cancel);
   try {
     const action = createPreparationAction(selected.workspace, composed.policy);
     const prompt =

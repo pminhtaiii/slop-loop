@@ -359,10 +359,11 @@ it("does not report confirmed cleanup when the coordinator throws after confirma
   }
 });
 
-it("cancels the developer action on SIGINT and removes its signal handlers", async () => {
+it.each(["SIGINT", "SIGTERM"] as const)("handles repeated %s until cleanup", async (signal) => {
   const f = fixture(),
     checkout = createGitCheckout();
-  const listeners = process.listenerCount("SIGINT");
+  const listeners = process.listenerCount(signal);
+  const retained: number[] = [];
   try {
     checkout.write("package.json", "{}");
     checkout.write("pnpm-lock.yaml", "lockfileVersion: '9.0'\n");
@@ -371,13 +372,17 @@ it("cancels the developer action on SIGINT and removes its signal handlers", asy
       {
         launchDirectory: checkout.root,
         prompt: (challenge) => {
-          process.emit("SIGINT");
+          process.emit(signal);
+          retained.push(process.listenerCount(signal));
+          process.emit(signal);
+          retained.push(process.listenerCount(signal));
           return Promise.resolve(challenge);
         },
       },
     );
     expect(result.status).toBe("CANCELLED");
-    expect(process.listenerCount("SIGINT")).toBe(listeners);
+    expect(retained).toEqual([listeners + 1, listeners + 1]);
+    expect(process.listenerCount(signal)).toBe(listeners);
   } finally {
     checkout.cleanup();
   }

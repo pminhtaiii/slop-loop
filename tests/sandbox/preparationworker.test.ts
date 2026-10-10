@@ -201,6 +201,7 @@ it("imports canonical bytes into a fresh CAS-free recipient and runs only the ma
     ).toString(),
   ).toBe("import:PASS");
   if (process.platform !== "win32") {
+    expect(fs.statSync(path.join(options.privateRoot, "node_modules")).mode & 0o777).toBe(0o755);
     expect(
       fs.statSync(path.join(options.privateRoot, "node_modules", input.instruction.root)).mode &
         0o777,

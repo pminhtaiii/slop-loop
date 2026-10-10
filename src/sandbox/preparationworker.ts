@@ -386,6 +386,7 @@ export async function runPreparationWorkerPhase(
     }
     const destination = path.join(root, "node_modules");
     if (fs.existsSync(destination)) throw new Error("Import destination already exists");
+    fs.chmodSync(imported.root, 0o755);
     fs.renameSync(imported.root, destination);
     writeExclusive(
       root,

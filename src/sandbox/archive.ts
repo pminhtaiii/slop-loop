@@ -1,11 +1,49 @@
 import tar from "tar-stream";
 import { Transform, type TransformCallback, type Readable } from "node:stream";
 
-/** Raw grammar gate precedes tar-stream: hidden PAX/GNU/sparse records never reach normalization. */
+/** Only local path/linkpath/mtime PAX records may reach tar-stream normalization. */
+function validatePaxRecords(payload: Buffer): void {
+  const keys = new Set<string>();
+  let offset = 0;
+  while (offset < payload.length) {
+    const space = payload.indexOf(32, offset);
+    const encoded = payload.subarray(offset, space).toString("utf8");
+    const length = Number(encoded);
+    const end = offset + length;
+    if (
+      space < offset ||
+      !/^[1-9][0-9]*$/u.test(encoded) ||
+      !Number.isSafeInteger(length) ||
+      end > payload.length ||
+      end <= space + 1 ||
+      payload[end - 1] !== 10
+    )
+      throw new Error("Archive extensions are unsupported");
+    const record = payload.subarray(space + 1, end - 1).toString("utf8");
+    const equals = record.indexOf("=");
+    const key = record.slice(0, equals);
+    const value = record.slice(equals + 1);
+    if (
+      equals < 1 ||
+      !["path", "linkpath", "mtime"].includes(key) ||
+      keys.has(key) ||
+      !value ||
+      (key === "mtime" && !/^-?[0-9]+(?:\.[0-9]+)?$/u.test(value))
+    )
+      throw new Error("Archive extensions are unsupported");
+    keys.add(key);
+    offset = end;
+  }
+  if (!keys.has("path")) throw new Error("Archive extensions are unsupported");
+}
+
+/** Raw grammar gate bounds metadata and rejects GNU/global PAX/sparse extensions. */
 class TarGrammarGate extends Transform {
   private header = Buffer.alloc(0);
   private remaining = 0;
-  private headers = 0;
+  private metadataBytes = 0;
+  private pax: Buffer | undefined;
+  private paxOffset = 0;
   private zeros = 0;
   private declaredBytes = 0;
   constructor(private readonly limits: ArchiveLimits) {
@@ -17,6 +55,15 @@ class TarGrammarGate extends Transform {
       while (offset < chunk.length) {
         if (this.remaining > 0) {
           const count = Math.min(this.remaining, chunk.length - offset);
+          if (this.pax) {
+            const copied = Math.min(count, this.pax.length - this.paxOffset);
+            chunk.copy(this.pax, this.paxOffset, offset, offset + copied);
+            this.paxOffset += copied;
+            if (this.paxOffset === this.pax.length) {
+              validatePaxRecords(this.pax);
+              this.pax = undefined;
+            }
+          }
           this.push(chunk.subarray(offset, offset + count));
           this.remaining -= count;
           offset += count;
@@ -28,17 +75,19 @@ class TarGrammarGate extends Transform {
         if (this.header.length !== 512) continue;
         const header = this.header;
         this.header = Buffer.alloc(0);
-        if (++this.headers * 512 > 16 * 1024 * 1024)
+        this.metadataBytes += 512;
+        if (this.metadataBytes > 16 * 1024 * 1024)
           throw new Error("Archive metadata exceeds limit");
         if (header.every((byte) => byte === 0)) {
           this.zeros++;
         } else {
           if (this.zeros) throw new Error("Archive trailing records are unsupported");
           const type = header[156];
-          if (type === 120 || type === 103 || type === 76 || type === 75 || type === 83)
+          if (type === 103 || type === 76 || type === 75 || type === 83)
             throw new Error("Archive extensions are unsupported");
           if (
             type !== 0 &&
+            type !== 120 &&
             type !== 48 &&
             type !== 53 &&
             !(type === 50 && this.limits.allowRelativeSymlinks)
@@ -48,8 +97,19 @@ class TarGrammarGate extends Transform {
           if (!/^[0-7]+$/u.test(encoded) || header[124]! & 0x80)
             throw new Error("Archive size encoding is unsupported");
           const size = Number.parseInt(encoded, 8);
-          if (!Number.isSafeInteger(size) || size > (this.limits.maxFileBytes ?? 128 * 1024 * 1024))
+          if (
+            !Number.isSafeInteger(size) ||
+            (type !== 120 && size > (this.limits.maxFileBytes ?? 128 * 1024 * 1024))
+          )
             throw new Error("Archive entry exceeds file limit");
+          if (type === 120) {
+            this.metadataBytes += size;
+            if (this.metadataBytes > 16 * 1024 * 1024)
+              throw new Error("Archive metadata exceeds limit");
+            if (size === 0) throw new Error("Archive extensions are unsupported");
+            this.pax = Buffer.alloc(size);
+            this.paxOffset = 0;
+          }
           if (type === 53 && size !== 0)
             throw new Error("Archive directory payload is unsupported");
           if (type === 50 && size !== 0) throw new Error("Archive link payload is unsupported");
