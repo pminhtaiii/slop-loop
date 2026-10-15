@@ -83,3 +83,66 @@ test('existing files outside the checkout are rejected as context targets', asyn
   assert.equal(result.status, 1, result.stderr);
   assert.match(result.stderr, /target is outside the checkout/);
 });
+
+test('new context documents need a route from the context README', async (t) => {
+  const root = await fixture(t);
+  await writeFile(join(root, 'context/README.md'), '# Context\n');
+  await writeFile(join(root, 'context/unrouted.md'), '# Forgotten policy\n');
+  const result = check(root);
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /context\/unrouted\.md is not routed from context\/README\.md/);
+});
+
+async function stackFixture(t, claim, choice = 'TypeScript') {
+  const root = await fixture(t);
+  await writeFile(join(root, 'context/contract.json'), JSON.stringify({
+    requiredDocuments: ['context/README.md', 'context/tech_stack.md'],
+    facts: { 'runtime-language': { source: 'context/tech_stack.md', tableRow: 'Implementation' } },
+  }));
+  await writeFile(join(root, 'context/tech_stack.md'), `# Stack\n| Area | Choice | Scope |\n|---|---|---|\n| Implementation | ${choice} | Runtime |\n`);
+  await writeFile(join(root, 'context/README.md'), `# Context\n[Stack](tech_stack.md)\n${claim}\n`);
+  return root;
+}
+
+test('marked facts match their source table without duplicating values in the contract', async (t) => {
+  const root = await stackFixture(t, '<!-- context-fact: runtime-language -->`TypeScript`<!-- /context-fact -->');
+  const result = check(root);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /1 canonical facts/);
+});
+
+test('a source stack change exposes a stale repeated claim', async (t) => {
+  const root = await stackFixture(t, '<!-- context-fact: runtime-language -->TypeScript<!-- /context-fact -->', 'Rust');
+  const result = check(root);
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /context\/README\.md:3: fact runtime-language conflicts with context\/tech_stack\.md: expected Rust/);
+});
+
+test('unknown or incomplete fact markers fail rather than silently bypass checks', async (t) => {
+  for (const [claim, message] of [
+    ['<!-- context-fact: typo -->TypeScript<!-- /context-fact -->', /unknown fact typo/],
+    ['<!-- context-fact: runtime-language -->TypeScript', /malformed context-fact markers/],
+  ]) {
+    const root = await stackFixture(t, claim);
+    const result = check(root);
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, message);
+  }
+});
+
+test('agent instructions must expose the context entry point', async (t) => {
+  const root = await fixture(t);
+  await writeFile(join(root, 'context/README.md'), '# Context\n');
+  await writeFile(join(root, 'AGENTS.md'), '# No route\n');
+  const result = check(root);
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /AGENTS\.md must route to context\/README\.md/);
+});
+
+test('duplicate source rows cannot give a fact two authoritative values', async (t) => {
+  const root = await stackFixture(t, '<!-- context-fact: runtime-language -->TypeScript<!-- /context-fact -->');
+  await writeFile(join(root, 'context/tech_stack.md'), '| Implementation | TypeScript |\n| Implementation | Rust |\n');
+  const result = check(root);
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /fact runtime-language needs one source row Implementation/);
+});

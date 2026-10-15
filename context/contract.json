@@ -1,0 +1,31 @@
+{
+  "requiredDocuments": [
+    "AGENTS.md",
+    "context/README.md",
+    "context/project_overview.md",
+    "context/tech_stack.md",
+    "context/architecture.md",
+    "context/code_standard.md",
+    "context/tools_permissions.md",
+    "context/runtime_policy.md",
+    "context/state_and_memory.md",
+    "context/workflow.md",
+    "context/testing.md",
+    "context/progress_checker.md",
+    "docs/progress-checker-matrices.md"
+  ],
+  "facts": {
+    "runtime-language": {
+      "source": "context/tech_stack.md",
+      "tableRow": "slop-loop implementation"
+    },
+    "orchestrator": {
+      "source": "context/tech_stack.md",
+      "tableRow": "Workflow orchestration"
+    },
+    "target-environment": {
+      "source": "context/tech_stack.md",
+      "tableRow": "Initial target repositories"
+    }
+  }
+}

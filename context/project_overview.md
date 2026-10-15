@@ -2,13 +2,13 @@
 
 ## Purpose
 
-**slop-loop** is an intended TypeScript coding-agent system for small Python repositories. It combines model reasoning with a controlled harness that owns repository access, workflow state, verification, and task completion. The goal is to make coding work inspectable, bounded, verifiable, and resumable. The approved stack and choices still open are recorded in [tech_stack.md](tech_stack.md).
+**slop-loop** is an intended <!-- context-fact: runtime-language -->TypeScript<!-- /context-fact --> coding-agent system for small Python repositories. It combines model reasoning with a controlled harness that owns repository access, workflow state, verification, and task completion. The goal is to make coding work inspectable, bounded, verifiable, and resumable. The approved stack and choices still open are recorded in [tech_stack.md](tech_stack.md).
 
 The product runtime is a target design. The code and tests in the current repository define what exists today; [progress_checker.md](progress_checker.md) summarizes the evidence inspected so far.
 
 ## Initial scope
 
-The first target repositories are Python projects of roughly 1,000–10,000 lines with an existing `pytest` suite and source, tests, and project guidance in an approved workspace. Intended tasks include repository questions, localized bug fixes, bounded multi-file features, test generation, CI or test failure analysis, behavior-preserving refactors, and code review.
+The first target repositories use <!-- context-fact: target-environment -->Python with `pytest`<!-- /context-fact -->, have roughly 1,000–10,000 lines, and include source, tests, and project guidance in an approved workspace. Intended tasks include repository questions, localized bug fixes, bounded multi-file features, test generation, CI or test failure analysis, behavior-preserving refactors, and code review.
 
 The primary user is a developer who provides an issue or coding request, can inspect progress and approve or reject sensitive actions, and receives the resulting diff with verification evidence. End-to-end use cases and evaluation criteria remain candidates until scope is selected; see the [target verification matrices](../docs/progress-checker-matrices.md).
 

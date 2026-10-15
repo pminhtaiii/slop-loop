@@ -156,6 +156,6 @@ The final submitted use cases must cover every required knowledge area. After ch
 
 ## Initial vertical-slice target
 
-The first end-to-end target is: receive an issue, read the repository, run a baseline test, apply a controlled patch, run a focused test, run regression tests, and produce an evidence-backed report.
+The first vertical slice proves the controlled repository-tool and verification path: receive an issue, read the repository, run a baseline test, apply a controlled patch, run a focused test, run regression tests, and produce an evidence-backed report. Bounded repair and reviewer stages remain separate evidence requirements for the full task workflow above.
 
 Exit evidence should show repository reads stay inside the workspace, patches use the controlled mechanism, existing tests cannot be weakened, focused and regression checks pass, tool actions are traceable, and the final report distinguishes implementation from verification.

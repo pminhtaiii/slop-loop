@@ -33,7 +33,7 @@ function factValue(value) {
 try {
   const root = await realpath(resolve(args[1] ?? resolve(dirname(fileURLToPath(import.meta.url)), '../..')));
   const contract = JSON.parse(await readFile(resolve(root, 'context/contract.json'), 'utf8'));
-  if (!Array.isArray(contract.requiredDocuments) || !contract.facts || typeof contract.facts !== 'object' || Array.isArray(contract.facts)) {
+  if (!Array.isArray(contract.requiredDocuments) || contract.requiredDocuments.some((file) => typeof file !== 'string') || !contract.facts || typeof contract.facts !== 'object' || Array.isArray(contract.facts)) {
     throw new Error('context/contract.json requires requiredDocuments and a facts object.');
   }
   const files = ['AGENTS.md', 'docs/progress-checker-matrices.md'];
@@ -74,7 +74,11 @@ try {
 
   const facts = new Map();
   for (const [id, definition] of Object.entries(contract.facts)) {
-    const rows = (sources.get(definition.source) ?? '').split('\n')
+    if (!definition || typeof definition.source !== 'string' || typeof definition.tableRow !== 'string') {
+      failures.push(`context/contract.json: fact ${id} requires a source and tableRow`);
+      continue;
+    }
+    const rows = maskCode(sources.get(definition.source) ?? '').split('\n')
       .map((line) => line.split('|').map((cell) => cell.trim()))
       .filter((cells) => cells[1] === definition.tableRow);
     if (rows.length !== 1 || !rows[0][2]) {
@@ -96,6 +100,14 @@ try {
       } else if (factValue(claim[2]) !== facts.get(claim[1])) {
         failures.push(`${location}: fact ${claim[1]} conflicts with ${contract.facts[claim[1]].source}: expected ${facts.get(claim[1])}`);
       }
+    }
+  }
+  if (!localTargets.get('AGENTS.md')?.has('context/README.md')) {
+    failures.push('AGENTS.md must route to context/README.md with a Markdown link');
+  }
+  for (const file of files) {
+    if (file.startsWith('context/') && file !== 'context/README.md' && !localTargets.get('context/README.md')?.has(file)) {
+      failures.push(`${file} is not routed from context/README.md`);
     }
   }
   if (failures.length) {

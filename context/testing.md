@@ -31,7 +31,11 @@ Run the complete contributor test suite with Node's test-runner discovery:
 node --test
 ```
 
-When editing `context/*.md`, `AGENTS.md`, or `docs/progress-checker-matrices.md`, check local inline file links with:
+## Context consistency check
+
+After changing [the context contract](contract.json), `AGENTS.md`, `context/*.md`, or `docs/progress-checker-matrices.md`, run the consistency check. It checks that required documents exist, declared fact sources resolve to one table row, every context Markdown page is linked from `context/README.md`, `AGENTS.md` links to that README, local inline Markdown file links resolve, and explicitly marked fact claims match their source rows. It ignores external URLs, heading-only links, and examples in fenced code blocks. It cannot detect conflicts in unmarked prose, so review related documents for semantic consistency.
+
+Run:
 
 ```powershell
 node scripts/ci/check-context.mjs

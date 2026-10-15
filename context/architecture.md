@@ -1,6 +1,6 @@
 # Target Runtime Architecture
 
-This document describes the intended slop-loop runtime; it is not evidence that runtime components exist. The approved implementation is TypeScript with the official TypeScript `@langchain/langgraph` package for orchestration. See [tech_stack.md](tech_stack.md) for open choices and [progress_checker.md](progress_checker.md) for current repository evidence.
+This document describes the intended slop-loop runtime; it is not evidence that runtime components exist. The approved implementation is <!-- context-fact: runtime-language -->TypeScript<!-- /context-fact --> with the official TypeScript <!-- context-fact: orchestrator -->`@langchain/langgraph`<!-- /context-fact --> package for orchestration. See [tech_stack.md](tech_stack.md) for open choices and [progress_checker.md](progress_checker.md) for current repository evidence.
 
 ## Authority and ownership
 

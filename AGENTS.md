@@ -14,4 +14,4 @@ Use the single-context layout (`GLOSSARY.md` and `docs/adr/` at the repo root). 
 
 ## Project context
 
-Use `context/README.md` to find the relevant project context. Load only the documents needed for the task.
+Use [context/README.md](context/README.md) to find the relevant project context. Load only the documents needed for the task.
