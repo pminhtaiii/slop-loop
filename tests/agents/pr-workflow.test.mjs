@@ -59,6 +59,11 @@ test('unresolved, stale, spoofed, incomplete, or mismatched review evidence bloc
   e.pr.reviews.pageInfo.hasPreviousPage = false;
   e.pr.headRefOid = 'different';
   assert.equal(assess(e).status, 'BLOCKED');
+  const waiting = evidence();
+  waiting.pr.reviews.nodes[0].commit.oid = 'old';
+  waiting.pr.reviewDecision = 'CHANGES_REQUESTED';
+  waiting.pr.reviewThreads.nodes = [{ id: 'old-finding', isResolved: false }];
+  assert.equal(assess(waiting).status, 'WAITING_REVIEW', 'after pushing a fix, await the new-head review before repeating an old finding');
 });
 
 test('PR sizing reports generated changes and binaries separately without hiding them', () => {
@@ -91,7 +96,11 @@ async function checkout(t) {
   const execute = (binary, args, cwd) => {
     calls.push([binary, ...args]);
     if (binary === process.execPath) { if (failGate) throw new Error('Local gate failed'); return 'passed'; }
-    if (binary === 'git') { if (['fetch', 'push'].includes(args[0])) return ''; return git(...args); }
+    if (binary === 'git') {
+      if (args[0] === 'fetch') return '';
+      if (args[0] === 'push') { e.pr.headRefOid = git('rev-parse', 'HEAD'); for (const check of e.checks) check.head_sha = e.pr.headRefOid; return ''; }
+      return git(...args);
+    }
     if (args[0] === 'pr' && args[1] === 'list') return JSON.stringify(created ? [{ ...e.pr }] : []);
     if (args[0] === 'pr' && args[1] === 'create') { created = true; return e.pr.url; }
     if (args[0] === 'pr' && args[1] === 'ready') { e.pr.isDraft = false; return ''; }
@@ -102,7 +111,9 @@ async function checkout(t) {
     return '';
   };
   const run = (...args) => runWorkflow([...args, '--root', root], { execute });
-  return { root, body, e, calls, run, execute, fail: () => { failGate = true; } };
+  let revision = 0;
+  const advance = async () => { await writeFile(join(root, 'change.md'), `repair ${++revision}\n`); git('add', 'change.md'); git('commit', '--quiet', '-m', `repair ${revision}`); };
+  return { root, body, e, calls, run, execute, advance, fail: () => { failGate = true; } };
 }
 
 test('publishing is gated and repeatable; repair count survives new publishes and stops at three', async (t) => {
@@ -121,12 +132,24 @@ test('publishing is gated and repeatable; repair count survives new publishes an
   assert.equal((await f.run('status')).status, 'AWAITING_HUMAN_MERGE');
   assert.equal(f.calls.some((call) => call.includes('merge') || call.includes('--force')), false);
   f.e.pr.reviewThreads.nodes = [{ id: 'finding', isResolved: false }];
-  for (let round = 0; round < 3; round++) await f.run('repair', '--reason', `Diagnosed round ${round + 1}`);
+  await f.run('repair', '--reason', 'Diagnosed round 1');
+  await assert.rejects(f.run('repair', '--reason', 'duplicate command'), /already reserved/);
+  for (let round = 1; round < 3; round++) {
+    await f.advance();
+    await f.run('publish', '--body-file', f.body);
+    assert.equal((await f.run('status')).status, 'WAITING_REVIEW');
+    f.e.pr.reviews.nodes[0].commit.oid = f.e.pr.headRefOid;
+    await f.run('repair', '--reason', `Diagnosed round ${round + 1}`);
+  }
+  assert.equal((await f.run('status')).status, 'NEEDS_FIX', 'the last reserved round must still be allowed to finish');
+  await f.advance();
   await f.run('publish', '--body-file', f.body);
+  f.e.pr.reviews.nodes[0].commit.oid = f.e.pr.headRefOid;
   assert.equal((await f.run('status')).status, 'BLOCKED');
   await assert.rejects(f.run('repair', '--reason', 'fourth'), /BLOCKED/);
   const record = JSON.parse(await readFile(join(f.root, '.agent-work/pr-workflow/001-example.json'), 'utf8'));
   assert.equal(record.repairRounds.length, 3);
+  assert.equal(new Set(record.repairRounds.map((round) => round.head)).size, 3);
 });
 
 test('a failed local gate never pushes or opens a PR', async (t) => {
@@ -143,6 +166,11 @@ test('additional required reviews and non-draft merge blockers prevent readiness
   e.pr.mergeStateStatus = 'BLOCKED';
   e.pr.isDraft = false;
   assert.equal(assess(e).status, 'BLOCKED');
+  e.pr.reviewDecision = 'CHANGES_REQUESTED';
+  assert.equal(assess(e).status, 'NEEDS_FIX', 'a fixable review must remain repairable on a non-draft PR');
+  e.pr.reviewDecision = 'REVIEW_REQUIRED';
+  assert.equal(assess(e).status, 'WAITING_REVIEW');
+  e.pr.reviewDecision = 'APPROVED';
   e.pr.isDraft = true;
   assert.equal(assess(e).status, 'READY_FOR_HUMAN', 'a validated draft may move to ready, but cannot be merged by this helper');
 });

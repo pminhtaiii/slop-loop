@@ -19,14 +19,16 @@ export function assess({ head, pr, checks }) {
   if (pr.reviews.pageInfo.hasPreviousPage || pr.reviewThreads.pageInfo.hasNextPage) return { ...result, status: 'BLOCKED', reason: 'Review data exceeds the bounded page; inspect manually.' };
   result.unresolved = pr.reviewThreads.nodes.filter((thread) => !thread.isResolved);
   if (pr.mergeable === 'CONFLICTING' || pr.mergeStateStatus === 'BEHIND') return { ...result, status: 'BLOCKED', reason: 'Update the feature branch against development and rerun verification.' };
-  if (pr.mergeStateStatus === 'BLOCKED' && pr.isDraft === false) return { ...result, status: 'BLOCKED', reason: 'GitHub reports an unmet merge requirement.' };
   const latest = checksRequired.map((name) => checks.filter((check) => check.name === name && check.head_sha === head && check.app?.slug === 'github-actions').sort((a, b) => b.id - a.id)[0]);
   result.failedChecks = latest.filter((check) => check?.status === 'completed' && check.conclusion !== 'success').map((check) => ({ name: check.name, conclusion: check.conclusion, url: check.details_url }));
   const reviews = pr.reviews.nodes.filter((review) => review.author?.__typename === 'Bot' && review.author.login.replace(/\[bot\]$/, '') === 'coderabbitai' && review.commit?.oid === head);
   const review = reviews.at(-1);
-  if (result.failedChecks.length || result.unresolved.length || review?.state === 'CHANGES_REQUESTED' || pr.reviewDecision === 'CHANGES_REQUESTED') result.status = 'NEEDS_FIX';
+  if (result.failedChecks.length) result.status = 'NEEDS_FIX';
   else if (pr.mergeable === 'UNKNOWN' || latest.some((check) => !check || check.status !== 'completed')) result.status = 'WAITING_CI';
+  else if (!review) result.status = 'WAITING_REVIEW';
+  else if (result.unresolved.length || review.state === 'CHANGES_REQUESTED' || pr.reviewDecision === 'CHANGES_REQUESTED') result.status = 'NEEDS_FIX';
   else if (review?.state !== 'APPROVED' || pr.reviewDecision !== 'APPROVED') result.status = 'WAITING_REVIEW';
+  else if (pr.mergeStateStatus === 'BLOCKED' && pr.isDraft === false) return { ...result, status: 'BLOCKED', reason: 'GitHub reports an unmet merge requirement.' };
   else result.status = pr.isDraft === false ? 'AWAITING_HUMAN_MERGE' : 'READY_FOR_HUMAN';
   return result;
 }
@@ -68,7 +70,7 @@ export async function runWorkflow(args, dependencies = {}) {
   }
   if (command === 'publish' && !values['body-file'] || command === 'repair' && !values.reason?.trim()) throw new Error(usage);
   if (values.base && values.base !== 'development') throw new Error('The pilot only publishes to development.');
-  const now = dependencies.now ?? Date.now;
+  const now = dependencies.now ?? (() => Math.floor(performance.now()));
   const deadline = command === 'watch' ? now() + 600_000 : undefined;
   const repo = await repository(values.root ?? resolve(dirname(fileURLToPath(import.meta.url)), '../..'));
   const call = (binary, argv, timeout = 30_000) => {
@@ -147,9 +149,10 @@ export async function runWorkflow(args, dependencies = {}) {
     const result = assess({ head, pr, checks: pages.flatMap((page) => page.check_runs) });
     Object.assign(record, { pr: pr.number, url: pr.url, head, status: result.status, observation: result });
     delete record.reason;
-    if (result.status === 'NEEDS_FIX' && record.repairRounds.length >= maxRepairs) Object.assign(record, { status: 'BLOCKED', reason: 'Three repair rounds exhausted; human guidance required.' });
+    if (result.status === 'NEEDS_FIX' && record.repairRounds.length >= maxRepairs && record.repairRounds.at(-1)?.head !== head) Object.assign(record, { status: 'BLOCKED', reason: 'Three repair rounds exhausted; human guidance required.' });
     if (command === 'repair') {
       if (record.status !== 'NEEDS_FIX') throw new Error(`Repair requires a current finding; status is ${record.status}.`);
+      if (record.repairRounds.at(-1)?.head === head) throw new Error('A repair is already reserved for this head; publish its fix before reserving another round.');
       if (values.reason.length > 2000) throw new Error('Keep the diagnosed repair reason within 2000 characters.');
       record.repairRounds.push({ head, reason: values.reason, startedAt: new Date().toISOString() });
       record.status = 'REPAIR_RESERVED';
