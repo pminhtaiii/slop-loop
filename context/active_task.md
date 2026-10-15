@@ -21,16 +21,6 @@ The script preserves these instructions and changes only the managed data below.
     "updatedAt": "2026-10-15T09:20:36.102Z",
     "result": "Dump layout and clean-agent-dump skill ready in codex/agent-dump-setup. Guarded nested Git checkout cleanup; context and tests passed. Retain this uncommitted worktree for review.",
     "checkout": "C:/coding agent/.agent-work/worktrees/dump-space-setup"
-  },
-  {
-    "owner": "codex-context-five",
-    "task": "context-five",
-    "checkout": "C:\\coding agent",
-    "summary": "Clarify data and checkpoint contracts, define glossary, extract maintenance guide, structure progress evidence",
-    "next": "Update context and domain documentation",
-    "status": "active",
-    "verification": "",
-    "updatedAt": "2026-10-15T11:05:28.244Z"
   }
 ]
 ```
