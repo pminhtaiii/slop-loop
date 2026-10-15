@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { copyFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
@@ -16,7 +16,7 @@ function git(root, args) {
 }
 
 async function fixture(t) {
-  const root = await mkdtemp(join(tmpdir(), 'agent-context path with spaces-'));
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'agent-context path with spaces-')));
   t.after(async () => rm(root, { recursive: true, force: true }));
   const cliPath = join(root, 'scripts', 'agents', 'agent-context.mjs');
   const tasksPath = join(root, 'specs', 'feature', 'tasks.md');
