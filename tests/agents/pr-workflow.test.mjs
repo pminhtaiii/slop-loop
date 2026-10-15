@@ -201,6 +201,30 @@ test('preflight reports freshness, dirty paths, naming, and size without publish
   } }), /Fetch unavailable/);
 });
 
+test('preflight measures the fetched development tip even without a tracking refspec', async (t) => {
+  const f = await checkout(t);
+  const git = (...args) => {
+    const result = spawnSync('git', args, { cwd: f.root, encoding: 'utf8', windowsHide: true });
+    assert.equal(result.status, 0, result.stderr); return result.stdout.trim();
+  };
+  const remote = join(f.root, '.agent-work/remote.git');
+  git('init', '--bare', '--quiet', remote);
+  git('push', remote, 'refs/remotes/origin/development:refs/heads/development');
+  const advanced = git('commit-tree', 'HEAD^{tree}', '-p', 'origin/development', '-m', 'remote base advances');
+  git('push', remote, `${advanced}:refs/heads/development`);
+  git('config', `url.${remote.split('\\').join('/')}.insteadOf`, 'https://github.com/example/project.git');
+  git('config', '--unset-all', 'remote.origin.fetch');
+  const report = await runWorkflow(['preflight', '--root', f.root], { execute(binary, args, cwd, timeout) {
+    // Keep the origin identity seam GitHub-shaped while real Git fetches a local remote.
+    if (binary === 'git' && args[0] === 'remote' && args[1] === 'get-url') return 'https://github.com/example/project.git';
+    const result = spawnSync(binary, args, { cwd, timeout, encoding: 'utf8', windowsHide: true });
+    assert.equal(result.status, 0, result.stderr); return result.stdout.trim();
+  } });
+  assert.equal(report.base, advanced);
+  assert.equal(report.behind, 1);
+  assert.equal(report.status, 'BLOCKED');
+});
+
 test('a failed local gate never pushes or opens a PR', async (t) => {
   const f = await checkout(t); f.fail();
   await assert.rejects(f.run('publish', '--body-file', f.body), /Local gate failed/);

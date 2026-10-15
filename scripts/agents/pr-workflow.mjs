@@ -89,7 +89,7 @@ export async function runWorkflow(args, dependencies = {}) {
   const match = origin.match(/^(?:https:\/\/github\.com\/|git@github\.com:)([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?)(?:\.git)?$/);
   if (!match) throw new Error('origin must identify a GitHub repository over HTTPS or SSH.');
   if (command === 'preflight') {
-    git('fetch', '--no-tags', 'origin', 'development');
+    git('fetch', '--no-tags', 'origin', 'refs/heads/development:refs/remotes/origin/development');
     const head = git('rev-parse', 'HEAD'), base = git('rev-parse', 'origin/development');
     const [behind, ahead] = git('rev-list', '--left-right', '--count', `${base}...${head}`).split(/\s+/).map(Number);
     const dirty = git('status', '--porcelain', '--untracked-files=all');
@@ -123,7 +123,7 @@ export async function runWorkflow(args, dependencies = {}) {
       const body = await readFile(bodyPath, 'utf8');
       if (!body.trim() || Buffer.byteLength(body) > 65_536) throw new Error('PR body must contain 1–65536 bytes.');
       if (git('status', '--porcelain', '--untracked-files=all')) throw new Error('Commit the assigned changes before publishing; checkout must be clean.');
-      git('fetch', '--no-tags', 'origin', 'development');
+      git('fetch', '--no-tags', 'origin', 'refs/heads/development:refs/remotes/origin/development');
       const size = changedLines(git('diff', '--numstat', '--no-renames', 'origin/development...HEAD'));
       if (!size.reviewable && !size.generated && !size.binaries) throw new Error('No changes against development.');
       const head = git('rev-parse', 'HEAD');

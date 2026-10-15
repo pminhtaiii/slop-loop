@@ -20,6 +20,8 @@ Other UCs remain unselected for this batch. This is not a permanent `OUT_OF_SCOP
 
 ### Shared foundation ownership
 
+All owners use the [context index](../context/README.md) to load the implementation, standards, and policy guidance triggered by their boundary; the assignment report includes this entry point alongside its UC-specific links.
+
 | Boundary | Owner | Deliverable |
 |---|---|---|
 | Foundation lead, bootstrap, shared contracts, repository tools, and evaluation infrastructure | Tai | Integrate the TypeScript/LangGraph bootstrap, model/tool contracts, controlled repository execution, verification results, budgets, sanitized traces, and evaluation entry point. Coordinate shared-file ownership before implementation. |

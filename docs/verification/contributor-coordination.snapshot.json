@@ -2,11 +2,11 @@
   "schemaVersion": 1,
   "root": "C:\\coding agent\\.agent-work\\worktrees\\contributor-helpers",
   "branch": "feat/004-contributor-helpers",
-  "head": "c66834ec8de08caaf025023d8953a4e18daf03c2",
+  "head": "5b71979700e6ee4842d80a4076928862137b5ab1",
   "files": [
     {
       "path": "scripts/agents/pr-workflow.mjs",
-      "sha256": "e6392c94a1014a32cd02e64f64e36fabf5073debb8d3a2ef1d2bc163c0ca0eeb"
+      "sha256": "0b8753ef5e22021d2ebdf7e37dc405f3323a40a22e94e19007e092585273ec8d"
     },
     {
       "path": "scripts/agents/agent-context.mjs",
@@ -18,7 +18,7 @@
     },
     {
       "path": "tests/agents/pr-workflow.test.mjs",
-      "sha256": "58c20096b3dc9834e167cb01cf09e63018b9dd8ac2d07bf802e1fa5e2bce21fb"
+      "sha256": "417e6626ff4876337cb766aba4f48f06988ef014d1b7e828e0b4810297a6b247"
     },
     {
       "path": "tests/agents/agent-context.test.mjs",
