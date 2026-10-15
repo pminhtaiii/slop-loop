@@ -6,6 +6,7 @@ import {
   mkdtemp,
   open,
   readFile,
+  realpath,
   readdir,
   rename,
   rm,
@@ -27,7 +28,7 @@ const date = '2026-10-09';
 const sessionId = 'chat-123';
 
 async function fixture(t) {
-  const root = await mkdtemp(join(tmpdir(), 'agent-work checkout with spaces-'));
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'agent-work checkout with spaces-')));
   t.after(async () => rm(root, { recursive: true, force: true }));
   const initialized = spawnSync('git', ['init', '--quiet', root], {
     encoding: 'utf8',

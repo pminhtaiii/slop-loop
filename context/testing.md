@@ -17,6 +17,8 @@ For every validation command, report the exact command and its exit status. Dist
 
 Do not mark a task complete until its implementation is integrated and its applicable checks pass. Do not claim feature completion while required tests, convergence, or review gates remain unresolved.
 
+Before a draft PR is created or updated, the workflow runs the same repository gates as `.github/workflows/contributor-checks.yml`: `node scripts/ci/check-context.mjs` and `node --test`. Remote readiness separately requires the current-head Ubuntu and Windows CI checks, a current-head CodeRabbit approval, and no unresolved review threads. See the [PR workflow](../docs/agents/pr-workflow.md) for status and repair behavior. These contributor gates verify repository helpers and context consistency; they do not verify the planned slop-loop runtime.
+
 ## Local helper tests
 
 The task-context and managed-session helpers require Node.js 20 or newer, use Node.js built-ins, and can be tested without installing packages:

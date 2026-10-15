@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
@@ -16,7 +16,7 @@ function run(root, ...args) {
   return spawnSync(process.execPath, [cli, ...args, '--root', root], { encoding: 'utf8', windowsHide: true, timeout: 15_000 });
 }
 async function fixture(t) {
-  const root = await mkdtemp(join(tmpdir(), 'agent-worktree-'));
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'agent-worktree-')));
   t.after(() => rm(root, { recursive: true, force: true }));
   git(root, ['init', '--quiet', '-b', 'main']);
   git(root, ['config', 'core.autocrlf', 'false']);

@@ -29,10 +29,10 @@ Mutations in the primary checkout refresh its Markdown view automatically. Worke
 ## Workflow pipeline
 
 ```text
-build-spec (task graph and TDD) → speckit-converge → code-review → PR/CI (separately authorized)
+build-spec (task graph and TDD) → speckit-converge → code-review → context refresh → contributor PR/CI
 ```
 
-`/build-spec` owns implementation, convergence, and code review for the integrated revision. PR creation, remote issue changes, CI publishing, and deployment require separate authorization.
+`/build-spec` owns implementation, convergence, and code review for the integrated revision. The contributor PR pilot has standing limited authorization for coordinator commits, feature-branch pushes, and draft PR creation/updates; workers have no remote authority. Follow the [PR and CI workflow](../docs/agents/pr-workflow.md). The pilot uses `development` as its base and leaves every merge to a human. Remote issue changes and deployment remain separately authorized.
 
 ## Agent coordination
 
@@ -98,5 +98,5 @@ After implementation and verification, update affected context documents from in
 
 ## Step 4: PR and CI (`/pr-feedback-loop`)
 
-This stage is separate from local feature completion and requires explicit user authorization. Run the repository's applicable local gates before publishing changes; report remote CI outcomes and any unrun gates accurately.
+After implementation, refresh affected context before publishing. The approved contributor PR pilot authorizes the coordinator to run the [PR workflow](../docs/agents/pr-workflow.md) for draft creation and updates on `development`; workers do not write remotely. Only `READY_FOR_HUMAN` permits the `ready` command, and every merge remains a human action. Report missing or stale evidence as waiting or blocked, never as ready.
 
