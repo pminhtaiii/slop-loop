@@ -1,6 +1,6 @@
 # Contributor Workflow
 
-This workflow governs contributors implementing an approved local Spec Kit feature. The feature's `spec.md`, `plan.md`, and `tasks.md` are the source of truth for authorized scope. It describes repository work, not the slop-loop product runtime; see [architecture.md](architecture.md) for the target runtime flow.
+This workflow governs contributors implementing an approved local Spec Kit feature. The feature's `spec.md`, `plan.md`, and `tasks.md` are the source of truth for that feature's scope. For an explicitly authorized helper, documentation, or maintenance task without an approved feature, follow the user's stated scope and do not invent Spec Kit task IDs or planning artifacts. This describes repository work, not the slop-loop product runtime; see [architecture.md](architecture.md) for the target runtime flow.
 
 ## Input readiness
 
@@ -66,7 +66,7 @@ Assess the integrated implementation against the approved spec, plan, and task l
 
 ## Step 3: Code review (`/code-review`)
 
-Review the pinned integrated revision against repository standards and the originating specification. Resolve blocking findings within the authorized task scope and rerun affected checks, convergence, and review for the changed revision.
+Review the pinned integrated revision against [backend code standards](code_standard.md), other applicable repository conventions, and the originating specification. Resolve blocking findings within the authorized task scope and rerun affected checks, convergence, and review for the changed revision.
 
 ## Step 4: PR and CI (`/pr-feedback-loop`)
 

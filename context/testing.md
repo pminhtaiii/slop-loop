@@ -24,3 +24,19 @@ The task-context and managed-session helpers require Node.js 20 or newer, use No
 ```powershell
 node --test tests/ci/agent-context.test.mjs tests/ci/agent-work.test.mjs
 ```
+
+Run the complete contributor test suite with Node's test-runner discovery:
+
+```powershell
+node --test
+```
+
+When editing `context/*.md`, `AGENTS.md`, or `docs/progress-checker-matrices.md`, check local inline file links with:
+
+```powershell
+node scripts/ci/check-context.mjs
+```
+
+## Runtime bootstrap gate
+
+Before the TypeScript runtime is considered ready, CI must run strict TypeScript compiler checks and mechanical lint rules. Record the compiler and linter choices in [tech_stack.md](tech_stack.md) when they are selected; this requirement does not select tools or justify adding them before that decision. Runtime boundary changes also need evidence from the relevant [target verification matrices](../docs/progress-checker-matrices.md).

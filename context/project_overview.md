@@ -22,9 +22,9 @@ Detailed runtime component boundaries are in [architecture.md](architecture.md).
 
 The initial project does not target production operation, direct production merges or deployment, unrestricted shell execution, access outside the approved workspace, secret access, large monorepos, or architecture-wide rewrites. It does not replace deterministic verification with model judgment.
 
-The project must build its own coding-agent workflow. Existing coding-agent products such as Codex CLI, Claude Code, Gemini CLI, Copilot Agent, Aider, OpenHands, SWE-agent, or Cursor Agent must not act as the implementation agent. LLM APIs and workflow libraries may be used as building blocks.
+For target repository tasks, the slop-loop runtime must use its own coding-agent workflow; an existing coding-agent product must not act as its delegated implementation agent. This restriction applies to the product runtime, not to assistants contributors may use while developing the project. LLM APIs and workflow libraries may be used as building blocks.
 
-Repair loops and expensive actions must be bounded. Risky operations require human approval or are forbidden; existing tests must not be weakened to make a change pass. The detailed rules live in [tools_permissions.md](tools_permissions.md) and the [target verification matrices](../docs/progress-checker-matrices.md).
+Repair loops and expensive actions must be bounded. Risky operations require human approval or are forbidden; existing tests must not be weakened to make a change pass. [tools_permissions.md](tools_permissions.md) defines permissions, [runtime_policy.md](runtime_policy.md) defines cross-cutting enforcement, and the [target verification matrices](../docs/progress-checker-matrices.md) define required evidence.
 
 ## Sources of truth
 

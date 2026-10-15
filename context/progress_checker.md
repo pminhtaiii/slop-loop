@@ -6,13 +6,15 @@ This page records observed implementation evidence for this repository. A design
 
 | Status | Meaning |
 |---|---|
-| `NOT_STARTED` | No implementation work has been verified |
+| `NOT_STARTED` | Evidence indicates implementation work has not begun |
 | `IN_PROGRESS` | Implementation is actively being developed |
 | `BLOCKED` | A known blocker prevents progress |
 | `IMPLEMENTED_UNVERIFIED` | Implementation exists, but required verification is incomplete |
 | `VERIFIED` | Implementation exists; required verification passed, evidence is identifiable, and no known blocker invalidates the result |
 
 Use `OUT_OF_SCOPE` only as a scope decision after the use-case set is selected. It is not a verification status. Do not use `NOT_STARTED` to mean that a capability is out of scope.
+
+Missing or uninspected evidence alone does not establish `NOT_STARTED`. If the inspection is insufficient to tell whether work has begun, leave the status unassigned and state what remains unknown.
 
 ## Repository observations
 

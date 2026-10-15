@@ -10,7 +10,7 @@ The system follows `Coding Agent = Model + Harness`: the model reasons and propo
 |---|---|
 | Model | Interpret the request, form hypotheses and plans, inspect supplied evidence, propose edits, explain results. A proposal does not authorize execution. |
 | Workflow control | Task transitions, persisted state, repair and cost budgets, approval pauses, checkpointing, reviewer coordination, and completion rules. |
-| Policy | Classification of actions as allowed, approval-required, or forbidden. Detailed rules are in [tools_permissions.md](tools_permissions.md). |
+| Policy | Classification of actions as allowed, approval-required, or forbidden, plus cross-cutting execution requirements. [tools_permissions.md](tools_permissions.md) is authoritative for permission classes and role access; [runtime_policy.md](runtime_policy.md) defines operational enforcement requirements. |
 | Repository tools | Bounded workspace reads, search, controlled patching, approved commands, and test execution. |
 | Verification and review | Required checks establish completion; a separate read-only reviewer assesses the final diff and evidence. |
 
@@ -44,4 +44,4 @@ For changes, establish a pre-edit baseline, apply a controlled patch, run focuse
 
 The reviewer examines the diff against acceptance criteria and repository conventions for logic errors, edge cases, security concerns, missing tests, and unsupported changes. The reviewer has read-only authority. Reviewer iteration, repair cycles, and expensive actions must have explicit limits; repair uses new tool, test, or review evidence and returns through verification before delivery. When a budget is exhausted or no safe next action exists, stop and report the blocker.
 
-Each run should have traceable workflow-node, tool-call, skill-invocation, result, error, approval, verification, repair, and review records, including relevant arguments, outcomes, and timing. Record per-run token usage and cost estimates so evaluation can explain how the final state was reached. Target acceptance evidence is listed in [the verification matrices](../docs/progress-checker-matrices.md).
+Each run should have traceable workflow-node, tool-call, skill-invocation, result, error, approval, verification, repair, and review records. Record metadata and only sanitized, bounded approved command details under [runtime_policy.md](runtime_policy.md); never include raw prompts, raw tool output, or protected payloads. Record per-run token usage and cost estimates so evaluation can explain how the final state was reached. Target acceptance evidence is listed in [the verification matrices](../docs/progress-checker-matrices.md).

@@ -1,23 +1,17 @@
 # Project Context
 
-Use this page to find the context needed for a task. Load only the relevant documents. These files describe the project and its intended runtime; `progress_checker.md` records the implementation evidence found in the repository.
+Start here, then load only the documents triggered by the task. These pages describe the intended slop-loop runtime and the evidence found in this repository; they do not prove that a planned capability exists.
 
-## Project and stack
+| Task | Read |
+|---|---|
+| Understand project scope or plan a runtime change | [Project overview](project_overview.md), [technology stack](tech_stack.md), and [architecture](architecture.md). Then load the policy and state documents for the boundaries involved. |
+| Review TypeScript runtime code | [Backend code standards](code_standard.md) is the primary standards reference. Add [architecture](architecture.md) or the relevant policy document when a finding depends on that design. |
+| Implement or change a runtime boundary | [Architecture](architecture.md), [backend code standards](code_standard.md), and the relevant [runtime policy](runtime_policy.md), [tools and permissions](tools_permissions.md), or [state and memory](state_and_memory.md). For implementation, use [testing guidance](testing.md) and the relevant [target verification matrix](../docs/progress-checker-matrices.md) rows as validation criteria. |
+| Change tool access, approvals, command execution, secrets, or sandboxing | [Tools and permissions](tools_permissions.md) is authoritative for permission classes and role access; [runtime policy](runtime_policy.md) defines cross-cutting enforcement requirements. Add [state and memory](state_and_memory.md) when approval or recovery records change. |
+| Change checkpoints, resume, compaction, or repository memory | [State and memory](state_and_memory.md). Add [runtime policy](runtime_policy.md) when replay, approval binding, or execution limits are affected. |
+| Implement an approved local Spec Kit feature | [Contributor workflow](workflow.md) and [testing guidance](testing.md), then the feature's `spec.md`, `plan.md`, and `tasks.md`. |
+| Complete an explicitly authorized helper, documentation, or maintenance task without an approved feature | Follow the user's stated scope and the relevant source documents. Do not invent Spec Kit task IDs or planning artifacts. |
+| Check what exists or what evidence is required | [Implementation status](progress_checker.md) reports repository observations; [target verification matrices](../docs/progress-checker-matrices.md) define evidence for planned capabilities. |
+| Change runtime implementation choices | [Technology stack](tech_stack.md) records approved choices and open decisions. |
 
-- [Project overview](project_overview.md): purpose, scope, users, and non-goals.
-- [Technology stack](tech_stack.md): approved choices and decisions still open.
-
-## Runtime design
-
-- [Architecture](architecture.md): target runtime components and their boundaries.
-- [Tools and permissions](tools_permissions.md): target tool, approval, safety, and role policy.
-- [State and memory](state_and_memory.md): target task state, checkpoints, recovery, compaction, and memory behavior.
-
-## Contributor workflow and current state
-
-- [Contributor workflow](workflow.md): how contributors implement an approved local Spec Kit feature. It describes repository work, not the slop-loop runtime flow.
-- [Testing guidance](testing.md): current contributor testing commands and reporting rules. It is not the complete verification specification for the target runtime.
-- [Implementation status](progress_checker.md): concise, evidence-based observations about this repository.
-- [Target verification matrices](../docs/progress-checker-matrices.md): detailed evidence criteria for planned runtime and evaluation capabilities; these are targets, not claims of implementation.
-
-Issue tracking, triage labels, and domain-document conventions are maintained in [`docs/agents/`](../docs/agents/).
+Issue tracking, triage labels, and domain-document conventions are documented in [issue tracker guidance](../docs/agents/issue-tracker.md), [triage labels](../docs/agents/triage-labels.md), and [domain documentation guidance](../docs/agents/domain.md).

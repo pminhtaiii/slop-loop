@@ -1,6 +1,6 @@
 # State and Memory
 
-This document defines target behavior for persisted state, recovery, compaction, and repository memory. It does not claim these capabilities are implemented; see [progress_checker.md](progress_checker.md) for current repository evidence. The target runtime retains LangGraph checkpoint integration; the persistence backend remains open in [tech_stack.md](tech_stack.md).
+This document defines the target state schema and behavior for recovery, compaction, and repository memory. It does not claim these capabilities are implemented; see [progress_checker.md](progress_checker.md) for current repository evidence. [runtime_policy.md](runtime_policy.md) defines cross-cutting execution, approval-binding, and replay constraints. The target runtime retains LangGraph checkpoint integration; the persistence backend remains open in [tech_stack.md](tech_stack.md).
 
 ## State ownership
 

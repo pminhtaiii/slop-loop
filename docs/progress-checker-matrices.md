@@ -16,12 +16,14 @@ These tables preserve target evidence criteria for the planned slop-loop runtime
 | `run_tests` | Initial target `pytest` execution and timeout evidence |
 | `run_command` allowlist | Tests for allowed commands and rejected commands |
 | Git operations | Permission and approval evidence |
-| Workspace containment | Path traversal tests |
+| Workspace containment | Path traversal and symlink/junction escape tests for reads and writes |
 | Secret-file protection | Rejection tests for `.env`, PEM, and SSH access |
-| Test network isolation | Evidence that a network attempt is blocked |
-| Command restrictions | Evidence that unsafe commands are rejected |
+| Command executable and arguments | Exact executable and argument validation; no-shell execution; injection attempts cannot launch another command |
+| Subprocess sandbox | Restricted environment inheritance, filesystem access, process resources, and network by default; provider credentials are unavailable to repository commands |
+| Test network isolation | Evidence that a repository-command network attempt is blocked |
+| Finite execution limits | Configured finite timeout, output, CPU, memory, process, repair, review, token, and cost bounds; missing required bounds reject the operation |
 | Prompt-injection resistance | Attack evaluation cases |
-| Audit logging | Structured records for controlled actions |
+| Audit logging | Structured metadata, sanitized approved command details, and bounded redacted diagnostics or protected-artifact references; raw prompts, secrets, and protected payloads are absent |
 
 A tool is not verified by a successful ordinary call alone; its safety constraints also need evidence.
 
@@ -50,7 +52,8 @@ Applied code with incomplete required verification remains `IMPLEMENTED_UNVERIFI
 |---|---|
 | Approval classification | Risky actions are identified correctly |
 | Workflow pause | Execution stops before the action |
-| Approve and resume | Resume occurs at the interrupted point |
+| Approval binding | Decision is bound to the normalized action, repository identity/state, and policy identity/version |
+| Approve and resume | Resume occurs at the interrupted point only while the approval binding remains valid |
 | Reject and adapt | A rejected action is not retried indirectly |
 | Modify then approve | Revised action runs only after approval |
 | Forbidden-action handling | A forbidden action cannot be approved |
@@ -66,7 +69,7 @@ Approval applies to a specific proposed action; materially changed actions are r
 | Step states (`todo`, `doing`, `done`, `failed`) | State-transition tests |
 | Checkpoint after task steps | Checkpoint is persisted |
 | Process restart recovery | Terminate and restart the runtime, then restore state |
-| Resume without duplicate work | Completed steps are not rerun unnecessarily |
+| Resume without duplicate work | Completed steps are not rerun unnecessarily; uncertain non-idempotent outcomes are reconciled before retry |
 | Goal, constraints, and acceptance criteria | Each survives restart |
 | Context compaction | Long-context test |
 | Compaction summary validation | Required summary fields are retained |
@@ -86,7 +89,7 @@ Continuing in the same process is not evidence of restart recovery. Resume must 
 | Bounded coder-reviewer loop | Iteration limit is enforced |
 | Reviewer quality | Evaluation against known-good and known-bad diffs |
 | Run identity and workflow trace | Unique run ID and node-level records |
-| Tool, skill, error, approval, and verification trace | Structured records with relevant arguments, results, timing, decisions, and evidence |
+| Tool, skill, error, approval, and verification trace | Metadata and sanitized, bounded approved command details under [runtime policy](../context/runtime_policy.md), with outcomes, timing, decisions, and protected-artifact references; no raw prompts, tool output, or protected payloads |
 | Token usage and cost | Per-run accounting and estimate |
 
 Trace records should explain how the final task state was reached.

@@ -1,6 +1,6 @@
 # Tools and Permissions
 
-This is the target runtime policy for repository tools and agent roles, not a claim that enforcement exists today. Enforce security and correctness rules in deterministic policy and tools where practical; prompt instructions alone are insufficient. Current implementation evidence is in [progress_checker.md](progress_checker.md).
+This is the authoritative target policy for permission classes, repository tools, and agent roles, not a claim that enforcement exists today. Enforce security and correctness rules in deterministic policy and tools where practical; prompt instructions alone are insufficient. [runtime_policy.md](runtime_policy.md) defines cross-cutting execution, approval-binding, limit, recovery, and trace requirements. Current implementation evidence is in [progress_checker.md](progress_checker.md).
 
 ## Permission classes
 
