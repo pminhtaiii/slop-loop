@@ -19,14 +19,15 @@ export function assess({ head, pr, checks }) {
   if (pr.reviews.pageInfo.hasPreviousPage || pr.reviewThreads.pageInfo.hasNextPage) return { ...result, status: 'BLOCKED', reason: 'Review data exceeds the bounded page; inspect manually.' };
   result.unresolved = pr.reviewThreads.nodes.filter((thread) => !thread.isResolved);
   if (pr.mergeable === 'CONFLICTING' || pr.mergeStateStatus === 'BEHIND') return { ...result, status: 'BLOCKED', reason: 'Update the feature branch against development and rerun verification.' };
+  if (pr.mergeStateStatus === 'BLOCKED' && pr.isDraft === false) return { ...result, status: 'BLOCKED', reason: 'GitHub reports an unmet merge requirement.' };
   const latest = checksRequired.map((name) => checks.filter((check) => check.name === name && check.head_sha === head && check.app?.slug === 'github-actions').sort((a, b) => b.id - a.id)[0]);
   result.failedChecks = latest.filter((check) => check?.status === 'completed' && check.conclusion !== 'success').map((check) => ({ name: check.name, conclusion: check.conclusion, url: check.details_url }));
   const reviews = pr.reviews.nodes.filter((review) => review.author?.__typename === 'Bot' && review.author.login.replace(/\[bot\]$/, '') === 'coderabbitai' && review.commit?.oid === head);
   const review = reviews.at(-1);
-  if (result.failedChecks.length || result.unresolved.length || review?.state === 'CHANGES_REQUESTED') result.status = 'NEEDS_FIX';
+  if (result.failedChecks.length || result.unresolved.length || review?.state === 'CHANGES_REQUESTED' || pr.reviewDecision === 'CHANGES_REQUESTED') result.status = 'NEEDS_FIX';
   else if (pr.mergeable === 'UNKNOWN' || latest.some((check) => !check || check.status !== 'completed')) result.status = 'WAITING_CI';
-  else if (review?.state !== 'APPROVED') result.status = 'WAITING_REVIEW';
-  else result.status = 'READY_FOR_HUMAN';
+  else if (review?.state !== 'APPROVED' || pr.reviewDecision !== 'APPROVED') result.status = 'WAITING_REVIEW';
+  else result.status = pr.isDraft === false ? 'AWAITING_HUMAN_MERGE' : 'READY_FOR_HUMAN';
   return result;
 }
 
@@ -49,7 +50,7 @@ function execute(binary, args, cwd, timeout = 30_000) {
 }
 
 const query = `query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){
-  number url title state isDraft headRefName headRefOid baseRefName mergeable mergeStateStatus
+  number url title state isDraft headRefName headRefOid baseRefName mergeable mergeStateStatus reviewDecision
   reviews(last:100){pageInfo{hasPreviousPage} nodes{author{login __typename} state commit{oid}}}
   reviewThreads(first:100){pageInfo{hasNextPage} nodes{id isResolved isOutdated comments(first:1){nodes{url body}}}}
 }}}`;
@@ -67,8 +68,16 @@ export async function runWorkflow(args, dependencies = {}) {
   }
   if (command === 'publish' && !values['body-file'] || command === 'repair' && !values.reason?.trim()) throw new Error(usage);
   if (values.base && values.base !== 'development') throw new Error('The pilot only publishes to development.');
+  const now = dependencies.now ?? Date.now;
+  const deadline = command === 'watch' ? now() + 600_000 : undefined;
   const repo = await repository(values.root ?? resolve(dirname(fileURLToPath(import.meta.url)), '../..'));
-  const call = (binary, argv, timeout) => (dependencies.execute ?? execute)(binary, argv, repo.root, timeout);
+  const call = (binary, argv, timeout = 30_000) => {
+    if (deadline !== undefined) {
+      timeout = Math.min(timeout, deadline - now());
+      if (timeout <= 0) throw new Error('Watch deadline reached.');
+    }
+    return (dependencies.execute ?? execute)(binary, argv, repo.root, timeout);
+  };
   const git = (...argv) => call('git', argv);
   const branch = git('symbolic-ref', '--quiet', '--short', 'HEAD');
   if (!featureName.test(branch)) throw new Error('Use feat/<three-digit-number>-<lowercase-description>; main and development cannot be published.');
@@ -101,12 +110,13 @@ export async function runWorkflow(args, dependencies = {}) {
       const size = changedLines(git('diff', '--numstat', '--no-renames', 'origin/development...HEAD'));
       if (!size.reviewable && !size.generated && !size.binaries) throw new Error('No changes against development.');
       const head = git('rev-parse', 'HEAD');
-      call(process.execPath, [resolve(repo.root, 'scripts/ci/check-context.mjs')], 600_000);
-      call(process.execPath, ['--test'], 600_000);
+      const contextOutput = call(process.execPath, [resolve(repo.root, 'scripts/ci/check-context.mjs')], 600_000);
+      const testOutput = call(process.execPath, ['--test'], 600_000);
       if (git('status', '--porcelain', '--untracked-files=all') || git('rev-parse', 'HEAD') !== head) throw new Error('Checkout changed during local gates; inspect before push.');
       let pr = find();
       if (record.pr && (!pr || pr.number !== record.pr)) throw new Error('Recorded PR is closed or replaced; start a new feature branch instead of resetting its budget.');
       if (pr && !record.pr && !record.publicationStarted) throw new Error('Existing PR has no local accounting; recover its workflow record before publishing.');
+      record.localVerification = { head, context: contextOutput.slice(-2000), tests: testOutput.split('\n').slice(-10).join('\n') };
       record.publicationStarted = true;
       await save();
       git('push', 'origin', `HEAD:refs/heads/${branch}`);
@@ -118,8 +128,16 @@ export async function runWorkflow(args, dependencies = {}) {
       }
       Object.assign(record, { pr: pr.number, url: pr.url, publishedHead: head, size, status: 'PUBLISHED' });
       await save();
+      if (record.requestedReviewHead !== head) {
+        const request = `@coderabbitai review\n\n<!-- slop-loop-review:${head} -->`;
+        const pages = json('api', '--paginate', '--slurp', `repos/${remote}/issues/${pr.number}/comments?per_page=100`);
+        if (!pages.flat().some((comment) => comment.body === request)) gh('pr', 'comment', String(pr.number), '--repo', remote, '--body', request);
+        record.requestedReviewHead = head;
+        await save();
+      }
       return record;
     }
+    if (!record.pr && !record.publicationStarted) throw new Error('Missing PR accounting; restore its original record rather than reset the repair budget.');
     const prRef = find();
     if (!prRef) throw new Error('No open feature PR; use publish first.');
     if (record.pr && record.pr !== prRef.number) throw new Error('PR identity changed; inspect the retained record.');
@@ -128,6 +146,7 @@ export async function runWorkflow(args, dependencies = {}) {
     const pages = json('api', '--paginate', '--slurp', `repos/${remote}/commits/${head}/check-runs?per_page=100`);
     const result = assess({ head, pr, checks: pages.flatMap((page) => page.check_runs) });
     Object.assign(record, { pr: pr.number, url: pr.url, head, status: result.status, observation: result });
+    delete record.reason;
     if (result.status === 'NEEDS_FIX' && record.repairRounds.length >= maxRepairs) Object.assign(record, { status: 'BLOCKED', reason: 'Three repair rounds exhausted; human guidance required.' });
     if (command === 'repair') {
       if (record.status !== 'NEEDS_FIX') throw new Error(`Repair requires a current finding; status is ${record.status}.`);
@@ -136,7 +155,7 @@ export async function runWorkflow(args, dependencies = {}) {
       record.status = 'REPAIR_RESERVED';
     }
     if (command === 'ready') {
-      if (record.status !== 'READY_FOR_HUMAN') throw new Error(`Not ready: ${record.status}.`);
+      if (!['READY_FOR_HUMAN', 'AWAITING_HUMAN_MERGE'].includes(record.status)) throw new Error(`Not ready: ${record.status}.`);
       if (git('status', '--porcelain', '--untracked-files=all')) throw new Error('Uncommitted work cannot be marked ready.');
       if (pr.isDraft) gh('pr', 'ready', String(pr.number), '--repo', remote);
       record.status = 'AWAITING_HUMAN_MERGE';
@@ -145,13 +164,15 @@ export async function runWorkflow(args, dependencies = {}) {
     return record;
   };
   if (command !== 'watch') return withLock(`${path}.lock`, processCommand);
-  const deadline = Date.now() + 600_000;
   let previous;
-  while (Date.now() < deadline) {
-    const record = await runWorkflow(['status', '--root', repo.root], dependencies);
-    if (record.status !== previous) { (dependencies.report ?? console.log)(JSON.stringify(record)); previous = record.status; }
-    if (!['WAITING_CI', 'WAITING_REVIEW', 'PUBLISHED'].includes(record.status)) return record;
-    await new Promise((done) => setTimeout(done, 15_000));
+  while (now() < deadline) {
+    try {
+      const record = await withLock(`${path}.lock`, processCommand);
+      if (record.status !== previous) { (dependencies.report ?? console.log)(JSON.stringify(record)); previous = record.status; }
+      if (!['WAITING_CI', 'WAITING_REVIEW', 'PUBLISHED'].includes(record.status)) return record;
+    } catch (error) { if (now() < deadline) throw error; }
+    const delay = Math.max(0, Math.min(15_000, deadline - now()));
+    await (dependencies.sleep ?? ((ms) => new Promise((done) => setTimeout(done, ms))))(delay);
   }
   return { status: 'TIMED_OUT', reason: 'Ten-minute watch ended; state is retained. Resume status/watch later.' };
 }

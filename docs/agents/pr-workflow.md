@@ -26,9 +26,13 @@ node scripts/agents/pr-workflow.mjs publish --base development --body-file <file
 
 Refresh the body after each repair so its summary and evidence describe the latest head. `publish` is the authorized remote-write path for this pilot.
 
+After publishing a new head, the helper requests CodeRabbit with `@coderabbitai review`. A head-specific marker and retained accounting prevent duplicate requests when the same publication is resumed. This also works when CodeRabbit skips automatic reviews for the repository. Review service rate limits or access restrictions still block readiness; the command cannot bypass them.
+
+The GitHub Actions workflow named **Contributor checks** runs context consistency and the full Node helper test suite on Linux and Windows. These jobs validate contributor tooling and documentation; they do not establish that the planned product runtime is implemented.
+
 ## Check readiness
 
-`status` compares local HEAD with the open PR head and inspects checks and review data for that SHA. Read the returned JSON `status` field; exit code 0 means the observation ran, not that CI or review passed. Readiness requires both current-head GitHub Actions matrix checks (`contributor-checks (ubuntu-latest)` and `contributor-checks (windows-latest)`) to pass, a CodeRabbit Bot `APPROVED` review on the same head, and no unresolved review threads. Missing or stale evidence stays waiting or blocked.
+`status` compares local HEAD with the open PR head and inspects checks and review data for that SHA. Read the returned JSON `status` field; exit code 0 means the observation ran, not that CI or review passed. Readiness requires both current-head GitHub Actions matrix checks (`contributor-checks (ubuntu-latest)` and `contributor-checks (windows-latest)`) to pass, a CodeRabbit Bot `APPROVED` review on the same head, GitHub's aggregate review decision to be `APPROVED`, and no unresolved review threads or non-draft merge blocker. Missing or stale evidence stays waiting or blocked.
 
 ```powershell
 node scripts/agents/pr-workflow.mjs status [--root <checkout>]
@@ -37,7 +41,7 @@ node scripts/agents/pr-workflow.mjs watch [--root <checkout>]
 
 `watch` polls every 15 seconds for at most ten minutes, then returns `TIMED_OUT` with state retained. The compatibility command `node .agents/skills/pr-feedback-loop/scripts/inspect-ci.mjs` delegates to `status`; it has no repository-specific or latest-run fallback.
 
-Only `READY_FOR_HUMAN` permits `ready`. That command rechecks the PR and moves a draft to ready for review, recording `AWAITING_HUMAN_MERGE`; it never merges. A human still reviews and merges explicitly.
+Use `ready` when status is `READY_FOR_HUMAN`. That command rechecks the PR and moves a draft to ready for review, recording `AWAITING_HUMAN_MERGE`; it never merges. Repeating it for an already eligible non-draft PR is safe; subsequent status reports retain `AWAITING_HUMAN_MERGE`. A human still reviews and merges explicitly.
 
 ```powershell
 node scripts/agents/pr-workflow.mjs ready [--root <checkout>]
@@ -52,3 +56,5 @@ Before any repair edit, register the active owner/task through the [active-task 
 ```powershell
 node scripts/agents/pr-workflow.mjs repair --reason "<diagnosed finding>" [--root <checkout>]
 ```
+
+Shared workflow records live in the primary checkout's ignored `.agent-work/pr-workflow/`. Retain them across agent restarts and pushes. If a record is missing for an existing PR, restore its original accounting from a retained copy before continuing; `status`, `repair`, and `ready` refuse to initialize a fresh budget. A new clone does not authorize a replacement PR or zeroed retry count. A recorded publication intent can recover a create-response interruption without duplicating the PR.

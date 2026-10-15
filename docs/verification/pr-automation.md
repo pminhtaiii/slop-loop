@@ -5,11 +5,13 @@ Base: `323b907541db4ca2817b761ecf4bf3f42ac2660f` (`main` when the pilot began). 
 ## Local evidence
 
 - `node scripts/ci/check-context.mjs`: exit 0; 14 Markdown files, three canonical facts.
-- `node --test`: exit 0; 54 passed, zero failed, one existing Windows file-symlink permission skip.
-- The seven PR-helper tests cover current-head CI/review evidence, missing/stale/spoofed results, unresolved threads, no merge command, generated/binary size reporting, repeatable publication, retained three-round repair accounting, and no remote publication after a failed local gate. GitHub and process boundaries are simulated; Git fixtures are real disposable repositories.
+- Initial `node --test` at `6a5bb8d`: exit 0; 54 passed, zero failed, one existing Windows file-symlink permission skip. The publisher reruns context consistency and the full suite before each new head is pushed, retaining their output summaries with that head in its local workflow record.
+- The hardened PR-helper tests cover current-head CI/review evidence, aggregate review decisions, missing/stale/spoofed results, unresolved threads, no merge command, generated/binary size reporting, repeatable publication and review requests, retained three-round repair accounting, missing-state refusal, bounded watch deadlines, and no remote publication after a failed local gate. GitHub/process/clock boundaries are simulated; Git fixtures are real disposable repositories.
 - Main's Windows CI failures were traced to `RUNNER~1` temporary paths versus their canonical `runneradmin` path. Three existing fixtures now use `realpath(mkdtemp(...))`; assertions and production helpers are unchanged.
 
 The initial missing-module runs were scaffolding failures, not evidence of a behavioral regression. Passing simulated GitHub tests do not establish that CodeRabbit is installed or has reviewed this PR.
+
+Local review of `6a5bb8d` found one Standards finding and three Spec findings (one overlaps): missing aggregate-review gating, missing-state retry resets, and watch deadline overruns. The aggregate-review regression test failed with `READY_FOR_HUMAN` instead of `WAITING_REVIEW` before the fix. After hardening, `node --test tests/agents/pr-workflow.test.mjs` exited 0 with ten passing tests. A subsequent small deadline-initialization adjustment is revalidated by the mandatory publication gate. Read-only skill pressure scenarios and their exact source snapshots are retained in the originating session; they evaluated the initial skill revision, not later helper changes.
 
 ## Repository setup
 
@@ -19,4 +21,4 @@ The coordinator currently uses the owner's signed-in `gh` account. The helper ca
 
 ## Remote evidence
 
-The live pilot's CI, CodeRabbit findings, and readiness outcome are reported on its PR. Local checks alone do not establish remote readiness. Stacked PR operations remain outside this milestone.
+Both GitHub Actions matrix jobs passed for the initial `6a5bb8d` pilot. CodeRabbit was then enabled and reported that automatic reviews were skipped because the repository had fewer than ten stars. The user explicitly requested `@coderabbitai review`; that command was posted, and the publisher now requests one review per new head automatically. Review results and readiness for later heads are reported on the PR; initial-head green checks do not prove a later head is ready. Stacked PR operations remain outside this milestone.
