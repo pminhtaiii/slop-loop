@@ -2,6 +2,7 @@
   "requiredDocuments": [
     "AGENTS.md",
     "context/README.md",
+    "context/active_task.md",
     "context/project_overview.md",
     "context/tech_stack.md",
     "context/architecture.md",

@@ -25,6 +25,12 @@ The task-context and managed-session helpers require Node.js 20 or newer, use No
 node --test tests/ci/agent-context.test.mjs tests/ci/agent-work.test.mjs
 ```
 
+Test active-task handoff behavior directly with:
+
+```powershell
+node --test tests/ci/active-task.test.mjs
+```
+
 Run the complete contributor test suite with Node's test-runner discovery:
 
 ```powershell

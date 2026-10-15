@@ -15,3 +15,5 @@ Use the single-context layout (`GLOSSARY.md` and `docs/adr/` at the repo root). 
 ## Project context
 
 Use [context/README.md](context/README.md) to find the relevant project context. Load only the documents needed for the task.
+
+Before implementation, follow the [active-task handoff](context/workflow.md#active-task-handoff).

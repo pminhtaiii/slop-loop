@@ -1,3 +1,5 @@
 .env
 .agent-work/
 .scratch/agent-work.lock
+context/.active-task.lock
+context/.active-task-*.tmp

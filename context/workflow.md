@@ -6,6 +6,24 @@ This workflow governs contributors implementing an approved local Spec Kit featu
 
 Before implementation, confirm the selected feature has `spec.md`, `plan.md`, and `tasks.md`, and resolve inconsistencies that block safe execution. Do not regenerate planning artifacts unless the user asks or a concrete gap requires it. `tasks.md` is the only task-status ledger.
 
+## Active-task handoff
+
+Before a coordinator or worker edits its assigned scope, register a unique owner/task entry in [active_task.md](active_task.md). This file tracks current contributor ownership and handoff; `tasks.md` remains the only feature task-status ledger, and this handoff is separate from the product runtime state in [state_and_memory.md](state_and_memory.md).
+
+Use a distinct owner ID for each session or worker and a task ID that identifies its assignment:
+
+```powershell
+node scripts/ci/active-task.mjs start --owner <owner-id> --task <task-id> --summary "<assignment>" --next "<next action>"
+node scripts/ci/active-task.mjs update --owner <owner-id> --task <task-id> --next "<next action>" --verification "<verification evidence>"
+node scripts/ci/active-task.mjs update --owner <owner-id> --task <task-id> --status blocked --next "<blocker or resume action>"
+node scripts/ci/active-task.mjs finish --owner <owner-id> --task <task-id> --result "<completed work and evidence>"
+node scripts/ci/active-task.mjs clear --owner <owner-id> --task <task-id>
+```
+
+Update the next action at meaningful progress and pause points; include verification when it changes. Mark blocked or interrupted work `blocked` and keep its entry. Set it back to `active` when resuming. A worker must finish its entry before reporting and include its owner and task IDs in the report. `finish` retains the completed handoff for coordinator review. After integrating the result and recording durable evidence and task status, the coordinator clears only that completed owner/task entry. Coordinators follow the same lifecycle for their own entry and leave other owners' entries untouched. Only completed entries can be cleared; clearing removes the one matching managed entry while preserving the file's permanent instructions and data markers. The helper does not commit or push.
+
+The helper serializes writes and fails when the file is busy; wait until the writer finishes before retrying. It does not automatically reclaim stale locks. Use `--root <checkout>` to select another checkout and `--help` for command syntax.
+
 ## Workflow pipeline
 
 ```text
