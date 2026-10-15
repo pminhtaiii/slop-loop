@@ -16,13 +16,13 @@ function evidence() {
   };
 }
 
-test('only current-head CI and CodeRabbit approval make a PR ready for human approval', () => {
+test('current-head CI allows human review without CodeRabbit approval', () => {
   const e = evidence();
   assert.equal(assess(e).status, 'READY_FOR_HUMAN');
   e.pr.reviews.nodes[0].commit.oid = 'old';
-  assert.equal(assess(e).status, 'WAITING_REVIEW');
+  assert.equal(assess(e).status, 'READY_FOR_HUMAN');
   e.pr.reviews.nodes = [];
-  assert.equal(assess(e).status, 'WAITING_REVIEW');
+  assert.equal(assess(e).status, 'READY_FOR_HUMAN');
 });
 
 test('merge and unknown commands are rejected before executing anything', async () => {
@@ -53,7 +53,7 @@ test('unresolved, stale, spoofed, incomplete, or mismatched review evidence bloc
   assert.equal(assess(e).status, 'NEEDS_FIX');
   e.pr.reviewThreads.nodes = [];
   e.pr.reviews.nodes[0].author.__typename = 'User';
-  assert.equal(assess(e).status, 'WAITING_REVIEW');
+  assert.equal(assess(e).status, 'READY_FOR_HUMAN');
   e.pr.reviews.pageInfo.hasPreviousPage = true;
   assert.equal(assess(e).status, 'BLOCKED');
   e.pr.reviews.pageInfo.hasPreviousPage = false;
@@ -63,7 +63,7 @@ test('unresolved, stale, spoofed, incomplete, or mismatched review evidence bloc
   waiting.pr.reviews.nodes[0].commit.oid = 'old';
   waiting.pr.reviewDecision = 'CHANGES_REQUESTED';
   waiting.pr.reviewThreads.nodes = [{ id: 'old-finding', isResolved: false }];
-  assert.equal(assess(waiting).status, 'WAITING_REVIEW', 'after pushing a fix, await the new-head review before repeating an old finding');
+  assert.equal(assess(waiting).status, 'NEEDS_FIX', 'unresolved conversations still require attention without a new bot review');
 });
 
 test('PR sizing reports generated changes and binaries separately without hiding them', () => {
@@ -137,7 +137,7 @@ test('publishing is gated and repeatable; repair count survives new publishes an
   for (let round = 1; round < 3; round++) {
     await f.advance();
     await f.run('publish', '--body-file', f.body);
-    assert.equal((await f.run('status')).status, 'WAITING_REVIEW');
+    assert.equal((await f.run('status')).status, 'NEEDS_FIX');
     f.e.pr.reviews.nodes[0].commit.oid = f.e.pr.headRefOid;
     await f.run('repair', '--reason', `Diagnosed round ${round + 1}`);
   }
@@ -158,18 +158,18 @@ test('a failed local gate never pushes or opens a PR', async (t) => {
   assert.equal(f.calls.some((call) => call[0] === 'git' && call[1] === 'push' || call[0] === 'gh' && call[2] === 'create'), false);
 });
 
-test('additional required reviews and non-draft merge blockers prevent readiness', () => {
+test('bot review decisions are advisory while GitHub merge blockers remain enforced', () => {
   const e = evidence();
   e.pr.reviewDecision = 'REVIEW_REQUIRED';
-  assert.equal(assess(e).status, 'WAITING_REVIEW');
+  assert.equal(assess(e).status, 'READY_FOR_HUMAN');
   e.pr.reviewDecision = 'APPROVED';
   e.pr.mergeStateStatus = 'BLOCKED';
   e.pr.isDraft = false;
   assert.equal(assess(e).status, 'BLOCKED');
   e.pr.reviewDecision = 'CHANGES_REQUESTED';
-  assert.equal(assess(e).status, 'NEEDS_FIX', 'a fixable review must remain repairable on a non-draft PR');
+  assert.equal(assess(e).status, 'BLOCKED', 'server-side merge blockers remain enforced');
   e.pr.reviewDecision = 'REVIEW_REQUIRED';
-  assert.equal(assess(e).status, 'WAITING_REVIEW');
+  assert.equal(assess(e).status, 'BLOCKED');
   e.pr.reviewDecision = 'APPROVED';
   e.pr.isDraft = true;
   assert.equal(assess(e).status, 'READY_FOR_HUMAN', 'a validated draft may move to ready, but cannot be merged by this helper');

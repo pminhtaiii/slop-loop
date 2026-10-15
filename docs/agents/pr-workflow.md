@@ -6,7 +6,7 @@ This workflow covers the repository's approved contributor PR pilot. It governs 
 
 The coordinator has standing limited authorization to commit scoped contributor changes, push feature branches, and create or update their PRs through the pilot workflow. Workers can return local changes to the coordinator; they do not write to GitHub or push. The helper uses Git and the signed-in human's `gh` account; this pilot does not provision a separate GitHub bot identity.
 
-Every pilot PR targets `development`. Never push directly to `main` or `development`. The helper does not merge. A human performs every merge after readiness is established; CodeRabbit's current-head approval is review evidence, not human merge approval. GitHub does not let the PR author approve their own PR, so the pilot uses CodeRabbit Bot's current-head approval as its required review evidence. If repository rules require a human-only reviewer, readiness stays blocked until a distinct identity supplies it. There is no auto-merge.
+Every pilot PR targets `development`. Never push directly to `main` or `development`. The helper does not merge. A human performs every merge after CI passes and review conversations are resolved. CodeRabbit reviews are advisory: its approval is optional, including after a fix. GitHub review approval is not a branch requirement; the human merge decision is an operating rule. There is no auto-merge.
 
 ## Branch and size
 
@@ -26,13 +26,13 @@ node scripts/agents/pr-workflow.mjs publish --base development --body-file <file
 
 Refresh the body after each repair so its summary and evidence describe the latest head. `publish` is the authorized remote-write path for this pilot.
 
-After publishing a new head, the helper requests CodeRabbit with `@coderabbitai review`. A head-specific marker and retained accounting prevent duplicate requests when the same publication is resumed. This also works when CodeRabbit skips automatic reviews for the repository. Review service rate limits or access restrictions still block readiness; the command cannot bypass them.
+After publishing a new head, the helper requests CodeRabbit with `@coderabbitai review`. A head-specific marker and retained accounting prevent duplicate requests when the same publication is resumed. This also works when CodeRabbit skips automatic reviews for the repository. Review service rate limits or missing bot approval do not block readiness.
 
 The GitHub Actions workflow named **Contributor checks** runs context consistency and the full Node helper test suite on Linux and Windows. These jobs validate contributor tooling and documentation; they do not establish that the planned product runtime is implemented.
 
 ## Check readiness
 
-`status` compares local HEAD with the open PR head and inspects checks and review data for that SHA. Read the returned JSON `status` field; exit code 0 means the observation ran, not that CI or review passed. Readiness requires both current-head GitHub Actions matrix checks (`contributor-checks (ubuntu-latest)` and `contributor-checks (windows-latest)`) to pass, a CodeRabbit Bot `APPROVED` review on the same head, GitHub's aggregate review decision to be `APPROVED`, and no unresolved review threads or non-draft merge blocker. Missing or stale evidence stays waiting or blocked.
+`status` compares local HEAD with the open PR head and inspects checks and review data for that SHA. Read the returned JSON `status` field; exit code 0 means the observation ran, not that CI or review passed. Readiness requires both current-head GitHub Actions matrix checks (`contributor-checks (ubuntu-latest)` and `contributor-checks (windows-latest)`) to pass, resolved review conversations, and no non-draft GitHub merge blocker. CodeRabbit review decisions are advisory; missing or stale CI stays waiting or blocked.
 
 ```powershell
 node scripts/agents/pr-workflow.mjs status [--root <checkout>]
@@ -57,4 +57,4 @@ Before any repair edit, register the active owner/task through the [active-task 
 node scripts/agents/pr-workflow.mjs repair --reason "<diagnosed finding>" [--root <checkout>]
 ```
 
-Shared workflow records live in the primary checkout's ignored `.agent-work/pr-workflow/`. Retain them across agent restarts and pushes. One head can reserve only one repair round; repeating the command cannot spend another round before a fix is committed and published. After publishing a fix, await its current-head review before treating older review findings as another failed repair. A reserved round can finish its fix even when no unreserved rounds remain; three unsuccessful published repairs block further attempts. If a record is missing for an existing PR, restore its original accounting from a retained copy before continuing; `status`, `repair`, and `ready` refuse to initialize a fresh budget. A new clone does not authorize a replacement PR or zeroed retry count. A recorded publication intent can recover a create-response interruption without duplicating the PR.
+Shared workflow records live in the primary checkout's ignored `.agent-work/pr-workflow/`. Retain them across agent restarts and pushes. One head can reserve only one repair round; repeating the command cannot spend another round before a fix is committed and published. After publishing a fix, verify the change and resolve its addressed conversation with evidence; another CodeRabbit approval is optional. A reserved round can finish its fix even when no unreserved rounds remain; three unsuccessful published repairs block further attempts. If a record is missing for an existing PR, restore its original accounting from a retained copy before continuing; `status`, `repair`, and `ready` refuse to initialize a fresh budget. A new clone does not authorize a replacement PR or zeroed retry count. A recorded publication intent can recover a create-response interruption without duplicating the PR.

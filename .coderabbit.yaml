@@ -2,7 +2,7 @@
 language: en-US
 reviews:
   profile: chill
-  request_changes_workflow: true
+  request_changes_workflow: false
   allow_author_approval: false
   auto_review:
     enabled: true

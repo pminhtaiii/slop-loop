@@ -21,13 +21,9 @@ export function assess({ head, pr, checks }) {
   if (pr.mergeable === 'CONFLICTING' || pr.mergeStateStatus === 'BEHIND') return { ...result, status: 'BLOCKED', reason: 'Update the feature branch against development and rerun verification.' };
   const latest = checksRequired.map((name) => checks.filter((check) => check.name === name && check.head_sha === head && check.app?.slug === 'github-actions').sort((a, b) => b.id - a.id)[0]);
   result.failedChecks = latest.filter((check) => check?.status === 'completed' && check.conclusion !== 'success').map((check) => ({ name: check.name, conclusion: check.conclusion, url: check.details_url }));
-  const reviews = pr.reviews.nodes.filter((review) => review.author?.__typename === 'Bot' && review.author.login.replace(/\[bot\]$/, '') === 'coderabbitai' && review.commit?.oid === head);
-  const review = reviews.at(-1);
   if (result.failedChecks.length) result.status = 'NEEDS_FIX';
   else if (pr.mergeable === 'UNKNOWN' || latest.some((check) => !check || check.status !== 'completed')) result.status = 'WAITING_CI';
-  else if (!review) result.status = 'WAITING_REVIEW';
-  else if (result.unresolved.length || review.state === 'CHANGES_REQUESTED' || pr.reviewDecision === 'CHANGES_REQUESTED') result.status = 'NEEDS_FIX';
-  else if (review?.state !== 'APPROVED' || pr.reviewDecision !== 'APPROVED') result.status = 'WAITING_REVIEW';
+  else if (result.unresolved.length) result.status = 'NEEDS_FIX';
   else if (pr.mergeStateStatus === 'BLOCKED' && pr.isDraft === false) return { ...result, status: 'BLOCKED', reason: 'GitHub reports an unmet merge requirement.' };
   else result.status = pr.isDraft === false ? 'AWAITING_HUMAN_MERGE' : 'READY_FOR_HUMAN';
   return result;
