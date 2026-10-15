@@ -9,6 +9,7 @@ This page records approved implementation choices and keeps undecided choices ex
 | slop-loop implementation | TypeScript | Core coding-agent runtime |
 | Workflow orchestration | `@langchain/langgraph` | Retain the official TypeScript implementation as the orchestration library |
 | Initial target repositories | Python with `pytest` | Repositories the runtime will initially operate on |
+| Task execution environment | Docker | Agent loop and trusted harness on host; repository and Python/pytest tooling in task container; host-side tools use Docker execution directly; see [ADR-0003](../docs/adr/0003-docker-task-workspace-boundary.md) |
 
 These choices describe the intended product stack. They do not establish that the runtime or these dependencies are already implemented in this repository.
 
@@ -29,7 +30,7 @@ No choice is recorded yet for:
 - a CLI or service framework;
 - the LLM provider and model;
 - the persistence and LangGraph checkpoint backend;
-- the isolation mechanism used to execute repository commands;
+- the concrete Docker isolation configuration;
 - deployment and supported operating environments;
 - the evaluation harness and reporting format.
 

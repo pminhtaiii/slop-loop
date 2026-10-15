@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "entries": [
+    {
+      "owner": "codex-docker-design",
+      "task": "docker-boundary-discussion",
+      "checkout": "C:\\coding agent",
+      "summary": "Record accepted Docker and workspace boundary decisions",
+      "next": "Coordinator review and evidence recording",
+      "status": "completed",
+      "verification": "ADR-0004 records renewed approval for material replans; context validation passed",
+      "updatedAt": "2026-10-15T17:04:22.848Z",
+      "result": "Recorded Docker isolation and hybrid UC-03 workflow in ADR-0003/0004; synchronized stack, architecture, runtime policy, tool permissions, and state/recovery context. Context checks passed: 30 Markdown files, 3 canonical facts. Discussion complete; implementation not started. Existing GLOSSARY.md changes preserved."
+    }
+  ]
+}

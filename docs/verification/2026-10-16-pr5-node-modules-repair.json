@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "entries": [
+    {
+      "owner": "codex-pr5-ci",
+      "task": "remove-tracked-dependencies",
+      "checkout": "C:\\coding agent",
+      "summary": "Fix Windows checkout failure caused by tracked node_modules",
+      "next": "Coordinator review and evidence recording",
+      "status": "completed",
+      "verification": "",
+      "updatedAt": "2026-10-15T17:41:05.490Z",
+      "result": "Removed 6034 tracked dependency files using git rm --cached and ignored node_modules; local dependency files preserved. Zero tracked node_modules paths; context validation passed. Required publish gates and remote CI follow."
+    }
+  ]
+}

@@ -18,6 +18,12 @@ The model does not receive unrestricted filesystem or shell access. State and re
 
 ## Runtime flow
 
+For the first local UC-03 slice, the trusted host owns the agent loop, LangGraph, task state/checkpoints, policy, model proxy and credentials, Docker controller, and hidden grading. A fresh Docker task container holds the repository copy at /workspace/repo, scratch area at /workspace/scratch, Python, pytest, and prepared dependencies. Reuse the prepared image across tasks, but never share writable task state between different tasks. Task containers have no network access. Host-side tools invoke Docker's existing execution interface after policy checks; no separate REST or gRPC service is required for this slice. See [ADR-0003](../docs/adr/0003-docker-task-workspace-boundary.md).
+
+UC-03 uses adaptive reasoning and permitted tool calls within harness-enforced high-level stages. Before production-code edits, record acceptance criteria, reproduction/baseline evidence, required checks, and a fix plan, then obtain human approval of the diagnosis and plan. A new regression test may be added during reproduction without weakening existing tests. Every material strategy replan requires renewed human approval before edits under that strategy. Allow at most three material replans after the initial plan per task; rejected plans wait for user feedback. Minor implementation adjustments do not count as replans. See [ADR-0004](../docs/adr/0004-uc03-adaptive-workflow-and-replan-limit.md).
+
+The general flow below describes stage ordering; the UC-03 MVP additionally pauses for plan approval before editing and for renewed approval after a material replan.
+
 ```mermaid
 flowchart TD
     I[Issue or question] --> T[Triage]

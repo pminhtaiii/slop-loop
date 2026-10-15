@@ -20,7 +20,18 @@ The script preserves these instructions and changes only the managed data below.
     "verification": "C:/coding agent/.agent-work/2026-10-15/dump-space-setup/verification.md; 37 passed, one existing skip",
     "updatedAt": "2026-10-15T09:20:36.102Z",
     "result": "Dump layout and clean-agent-dump skill ready in codex/agent-dump-setup. Guarded nested Git checkout cleanup; context and tests passed. Retain this uncommitted worktree for review.",
-    "checkout": "C:/coding agent/.agent-work/worktrees/dump-space-setup"
+    "checkout": "/home/vercel-sandbox/workspace/repos/github.com/pminhtaiii/slop-loop"
+  },
+  {
+    "owner": "coderabbit-8ef9a633",
+    "task": "adr-0004-dates",
+    "checkout": "/home/vercel-sandbox/workspace/repos/github.com/pminhtaiii/slop-loop",
+    "summary": "Verify and correct ADR-0004 approval dates",
+    "next": "Coordinator review and evidence recording",
+    "status": "completed",
+    "verification": "Context updater/check passed: 30 Markdown files, 3 canonical facts; no context policy changes required.",
+    "updatedAt": "2026-10-15T17:35:03.190Z",
+    "result": "Removed unsupported acceptance and closure claims; verified recording date as 2026-10-15 UTC from commit 2c79794b868dc9cfaceb16abd68cf9e3a9a38ea0. Approval dates remain unverified."
   }
 ]
 ```

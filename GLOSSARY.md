@@ -16,6 +16,42 @@ A requested unit of work with a goal and acceptance criteria. A product-runtime 
 
 One attempt by the product runtime to advance a task. Starting another run preserves the task's identity and any task-scoped limits.
 
+## Bug task
+
+A task to correct a specific observed behavior in a target repository. Its acceptance criteria describe the intended behavior and any existing behavior that must be preserved.
+
+## Acceptance criteria
+
+Explicit conditions that define a satisfactory outcome for a task. They express what must be true, rather than prescribing how the agent implements the change.
+
+## Task scope
+
+The work authorized by the user's request and agreed acceptance criteria. An improvement outside that scope requires additional user permission.
+
+## Harness
+
+The part of the product runtime that controls execution, permissions, workflow state, limits, verification, and completion. The model proposes actions and outcomes; the harness governs their execution and acceptance.
+
+## Baseline
+
+Evidence of repository behavior before a proposed fix, including reproduction of the reported failure and the results of required existing checks.
+
+## Verification
+
+The process of checking a proposed result against agreed acceptance criteria and required checks using observable evidence. Verification of a reported bug does not establish that the entire codebase is free of bugs.
+
+## Regression test
+
+A test that checks a specific behavior to detect its unintended recurrence or change. For a bug fix, it demonstrates the reported failure before the fix and the intended behavior afterward.
+
+## Completion gate
+
+The harness-controlled decision that required verification and review evidence satisfies the task's agreed completion requirements. An agent's proposal that work is finished does not itself pass this gate.
+
+## Milestone update
+
+A concise user-facing account of meaningful progress, its evidence, and the next action. It communicates the work's status rather than raw internal chain of thought.
+
 ## Session
 
 A grouping of contributor work and its temporary artifacts. A contributor session is distinct from a product-runtime run.

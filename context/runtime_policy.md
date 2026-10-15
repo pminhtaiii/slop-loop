@@ -12,13 +12,15 @@ Provider credentials are trusted runtime configuration available only through th
 - Validate each command against a configured executable and argument policy. Pass an executable and structured argument vector directly to process creation. Do not interpolate model or repository text into a shell command, enable shell parsing, or accept an unconfigured executable.
 - Run repository subprocesses in a sandbox with workspace-scoped filesystem access, network blocked by default, and explicit CPU, memory, process, time, and output bounds. Give child processes only a minimal configured environment; never inherit the host environment or provider credentials wholesale. Provider network access belongs to the provider adapter, not repository commands.
 
+For the first local Docker slice, repository commands run in fresh per-task containers with networking disabled and dependencies prepared before execution. Missing dependencies are reported as environment prerequisites rather than downloaded during a task. Enforce the repository and scratch write boundary, controlled read-only runtime resources, and denial of other host files. Provider access stays on the trusted host. Do not expose agent files, checkpoints, credentials, hidden grading, or Docker control to repository code. Refuse execution when required isolation cannot be established. Container lifecycle and recovery integration must preserve the same task workspace identity on resume; exact storage and teardown mechanics remain open.
+
 ## Approval identity
 
 Bind each approval to the exact normalized action, repository identity and relevant revision/worktree state, and policy identity/version. Persist that binding with the approval decision. On resume, revalidate all bound identities before execution; a materially changed action, repository state, or policy invalidates the approval and requires a new decision. Approval authorizes only that action.
 
 ## Finite limits and interruption
 
-Timeout, output, CPU, memory, process, repair, reviewer-iteration, token, and cost limits must be finite and configured before the operation they constrain begins. Their values and configuration source remain `OPEN`; this document sets no defaults. If a required limit is absent, invalid, or unlimited, reject the affected operation before its side effect.
+Timeout, output, CPU, memory, process, repair, reviewer-iteration, token, and cost limits must be finite and configured before the operation they constrain begins. Except for the accepted UC-03 limit of three material replans after the initial plan per task, numeric values and configuration source remain `OPEN`; this document sets no other defaults. A fourth material replan must stop with an incomplete outcome. Replans and restarts do not reset other task-scoped budgets; non-replan tool activity still consumes its applicable finite limits. If a required limit is absent, invalid, or unlimited, reject the affected operation before its side effect.
 
 After interruption, reconcile whether a non-idempotent action took effect before retrying it. Use recorded evidence or inspect the current repository and external outcome; never blindly replay an action whose outcome is uncertain. Retry only when the operation is idempotent or duplicate effects are prevented, as specified by the relevant tool policy.
 
