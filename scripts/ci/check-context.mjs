@@ -65,7 +65,12 @@ try {
         if (isAbsolute(fromRoot) || fromRoot === '..' || fromRoot.startsWith('../') || fromRoot.startsWith('..\\')) {
           throw new Error('target is outside the checkout');
         }
-        localTargets.get(file).add(fromRoot.split('\\').join('/'));
+        const linked = fromRoot.split('\\').join('/');
+        localTargets.get(file).add(linked);
+        if (linked.endsWith('.md') && !sources.has(linked)) {
+          sources.set(linked, await readFile(destination, 'utf8'));
+          files.push(linked);
+        }
       } catch (error) {
         failures.push(`${location}: ${target} (${error.code ?? error.message})`);
       }

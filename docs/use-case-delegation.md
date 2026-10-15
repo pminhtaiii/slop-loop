@@ -18,7 +18,17 @@ Other UCs remain unselected for this batch. This is not a permanent `OUT_OF_SCOP
 
 ## Delivery order and shared work
 
-1. **Agree contracts and bootstrap.** The coordinator assigns a shared-foundation owner before runtime implementation. Record the open stack choices from [tech_stack.md](../context/tech_stack.md#open-decisions), then approve the feature artifacts. Agree validated bug-task input, task/step state, normalized action identity, policy version, verification result, and cumulative budget accounting. Assign shared files to one owner.
+### Shared foundation ownership
+
+| Boundary | Owner | Deliverable |
+|---|---|---|
+| Foundation lead, bootstrap, shared contracts, repository tools, and evaluation infrastructure | Tai | Integrate the TypeScript/LangGraph bootstrap, model/tool contracts, controlled repository execution, verification results, budgets, sanitized traces, and evaluation entry point. Coordinate shared-file ownership before implementation. |
+| Persistence and recovery | Thanh Tan | Own task/step storage, checkpoint contracts, persisted budget accounting, restart reconciliation, and the storage interface consumed by approvals. |
+| Approval integration | Trong Tan | Own normalized action/policy identity, classification and decision contracts, and the approval gate used by repository tools and resumed workflows. |
+
+**First integration milestone:** the three owners agree the task, action, verification, budget, and checkpoint contracts in approved feature artifacts. Then demonstrate one controlled bug-task fixture through baseline, patch, and verification, plus an approval-required action that pauses, survives process restart, and resumes exactly once after a valid decision. Required limits, isolation, and sanitized evidence must be enforced. Tai coordinates integration; Thanh Tan supplies recovery evidence and Trong Tan supplies approval-binding evidence. This milestone does not by itself verify every UC acceptance case below.
+
+1. **Agree contracts and bootstrap.** Tai coordinates the shared-foundation owners above. Record the open stack choices from [tech_stack.md](../context/tech_stack.md#open-decisions), then approve the feature artifacts. Agree validated bug-task input, task/step state, normalized action identity, policy version, verification result, and cumulative budget accounting. Assign shared files to one owner.
 2. **Build independent boundaries.** Thanh Tan's UC-04 persistence/recovery and Trong Tan's UC-05 approval can proceed in parallel against those contracts using controlled fixtures. Tai can prepare UC-03 seeded bug fixtures and acceptance tests while its tool and approval dependencies are being built.
 3. **Integrate the bug-fix slice.** Integrate bounded repository tools, baseline/focused/regression verification, repair limits, and the approval gate before UC-03 executes real repository changes. Its ordinary path may use allowed actions; approval-required actions must pause through UC-05.
 4. **Prove restart and approval together.** UC-04 integrates the feature workflow and UC-05 decisions, then demonstrates real process restart, retained budgets, and no duplicate side effects. Run each selected UC's evaluation cases and record evidence before updating capability status.

@@ -63,6 +63,31 @@ test('missing local targets fail with their source file and line', async (t) => 
   assert.match(result.stderr, /context\/README\.md:2: missing\.md/);
 });
 
+test('linked agent documents are checked transitively with cycles visited once', async (t) => {
+  const root = await fixture(t);
+  await writeFile(join(root, 'context/README.md'), '[Delegation](../docs/delegation.md)\n');
+  await writeFile(join(root, 'docs/delegation.md'), '[Guide](guide.md)\n');
+  await writeFile(join(root, 'docs/guide.md'), '[Back](delegation.md)\n[Context](../context/README.md)\n');
+  assert.equal(check(root).status, 0);
+  await writeFile(join(root, 'docs/guide.md'), '# Guide\n[Missing](missing.md)\n');
+  const result = check(root);
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /docs\/guide\.md:2: missing\.md/);
+});
+
+test('linked documents retain code-example masking and checkout containment', async (t) => {
+  const root = await fixture(t);
+  const outside = await fixture(t);
+  await writeFile(join(root, 'context/README.md'), '[Guide](../docs/guide.md)\n');
+  await writeFile(join(root, 'docs/guide.md'), '```md\n[Example](absent.md)\n```\n`[Example](also-absent.md)`\n');
+  assert.equal(check(root).status, 0);
+  const target = relative(join(root, 'docs'), join(outside, 'AGENTS.md')).split('\\').join('/');
+  await writeFile(join(root, 'docs/guide.md'), `[Escape](${target})\n`);
+  const result = check(root);
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /docs\/guide\.md:1: .*target is outside the checkout/);
+});
+
 test('example links inside fenced and inline code do not fail the check', async (t) => {
   const root = await fixture(t);
   await writeFile(join(root, 'context/README.md'), [

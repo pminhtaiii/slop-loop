@@ -17,7 +17,7 @@ For every validation command, report the exact command and its exit status. Dist
 
 Do not mark a task complete until its implementation is integrated and its applicable checks pass. Do not claim feature completion while required tests, convergence, or review gates remain unresolved.
 
-Before a draft PR is created or updated, the workflow runs the same repository gates as `.github/workflows/contributor-checks.yml`: `node scripts/ci/check-context.mjs` and `node --test`. Remote readiness separately requires the current-head Ubuntu and Windows CI checks, a current-head CodeRabbit approval, and no unresolved review threads. See the [PR workflow](../docs/agents/pr-workflow.md) for status and repair behavior. These contributor gates verify repository helpers and context consistency; they do not verify the planned slop-loop runtime.
+Before a draft PR is created or updated, the workflow runs the same repository gates as `.github/workflows/contributor-checks.yml`: `node scripts/ci/check-context.mjs` and `node --test`. Remote readiness separately requires the current-head Ubuntu and Windows CI checks and no unresolved review threads or GitHub merge blocker. CodeRabbit approval is advisory and optional. See the [PR workflow](../docs/agents/pr-workflow.md) for status and repair behavior. These contributor gates verify repository helpers and context consistency; they do not verify the planned slop-loop runtime.
 
 ## Local helper tests
 
@@ -43,7 +43,7 @@ node --test
 
 ## Context consistency check
 
-After changing [the context contract](contract.json), `AGENTS.md`, `context/*.md`, or `docs/progress-checker-matrices.md`, run the consistency check. It checks that required documents exist, declared fact sources resolve to one table row, every context Markdown page is linked from `context/README.md`, `AGENTS.md` links to that README, local inline Markdown file links resolve, and explicitly marked fact claims match their source rows. It ignores external URLs, heading-only links, and examples in fenced code blocks. It cannot detect conflicts in unmarked prose, so review related documents for semantic consistency.
+After changing [the context contract](contract.json), `AGENTS.md`, `context/*.md`, the matrices, or referenced agent documentation, run the consistency check. It follows local inline links transitively into Markdown documents from the existing roots, visits cycles once, and enforces checkout containment for every checked link. It checks that required documents exist, declared fact sources resolve to one table row, every context Markdown page is linked from `context/README.md`, `AGENTS.md` links to that README, local inline Markdown file links resolve, and explicitly marked fact claims match their source rows. It ignores external URLs, heading-only links, and examples in fenced code blocks. It cannot detect conflicts in unmarked prose, so review related documents for semantic consistency.
 
 Run:
 
