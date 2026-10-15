@@ -15,6 +15,8 @@ async function fixture(t) {
   t.after(() => rm(checkout, { recursive: true, force: true }));
   await mkdir(join(checkout, 'context'));
   await writeFile(join(checkout, 'context/active_task.md'), '# Active task\nPermanent instructions.\n<!-- active-task:start -->\n```json\n[]\n```\n<!-- active-task:end -->\nPermanent footer.\n');
+  const initialized = spawnSync('git', ['init', '--quiet', checkout], { encoding: 'utf8', windowsHide: true });
+  assert.equal(initialized.status, 0, initialized.stderr);
   return checkout;
 }
 
@@ -83,13 +85,40 @@ test('a busy lock is retained and prevents any task-file mutation', async (t) =>
   const checkout = await fixture(t);
   const path = join(checkout, 'context/active_task.md');
   const baseline = await readFile(path, 'utf8');
-  const lock = join(checkout, 'context/.active-task.lock');
+  await mkdir(join(checkout, '.agent-work', 'state'), { recursive: true });
+  const lock = join(checkout, '.agent-work/state/active-task.lock');
   await writeFile(lock, 'another writer');
   const result = run(checkout, 'start', '--owner', 'parent', '--task', 'T001', '--summary', 'Work', '--next', 'Verify');
   assert.equal(result.status, 1);
   assert.match(result.stderr, /file is busy/);
   assert.equal(await readFile(path, 'utf8'), baseline);
   assert.equal(await readFile(lock, 'utf8'), 'another writer');
+});
+
+test('linked worktrees share assignments without modifying the coordinator view', async (t) => {
+  const checkout = await fixture(t);
+  await writeFile(join(checkout, '.gitignore'), '.agent-work/\n');
+  for (const args of [
+    ['add', '.gitignore', 'context/active_task.md'],
+    ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--quiet', '-m', 'fixture'],
+    ['worktree', 'add', '-b', 'worker', join(checkout, '.agent-work/worktrees/worker')],
+  ]) {
+    const result = spawnSync('git', args, { cwd: checkout, encoding: 'utf8', windowsHide: true });
+    assert.equal(result.status, 0, result.stderr);
+  }
+  const parentView = await readFile(join(checkout, 'context/active_task.md'), 'utf8');
+  const worker = join(checkout, '.agent-work/worktrees/worker');
+  const workerView = await readFile(join(worker, 'context/active_task.md'), 'utf8');
+  let result = run(worker, 'start', '--owner', 'worker', '--task', 'T001', '--summary', 'Shared assignment', '--next', 'Verify');
+  assert.equal(result.status, 0, result.stderr);
+  result = run(checkout, 'list');
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Shared assignment/);
+  assert.equal(await readFile(join(checkout, 'context/active_task.md'), 'utf8'), parentView);
+  assert.equal(await readFile(join(worker, 'context/active_task.md'), 'utf8'), workerView);
+  result = run(checkout, 'render');
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(await readFile(join(checkout, 'context/active_task.md'), 'utf8'), /Shared assignment/);
 });
 
 test('overlapping writers either serialize or report busy without losing an assignment', async (t) => {

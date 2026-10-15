@@ -1,23 +1,28 @@
-import { randomUUID } from 'node:crypto';
-import { lstat, open, readFile, realpath, rename, unlink } from 'node:fs/promises';
+import { lstat, readFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { atomicWrite, dataDirectory, readJson, repository, withLock } from './agent-store.mjs';
 
 const usage = `Usage:
   node scripts/ci/active-task.mjs start --owner <id> --task <id> --summary <text> --next <text>
   node scripts/ci/active-task.mjs update --owner <id> --task <id> [--next <text>] [--verification <text>] [--status active|blocked]
   node scripts/ci/active-task.mjs finish --owner <id> --task <id> --result <text>
   node scripts/ci/active-task.mjs clear --owner <id> --task <id>
+  node scripts/ci/active-task.mjs list
+  node scripts/ci/active-task.mjs render
 
 All commands accept --root <checkout>. Use a unique owner per session/worker.
 finish retains the result for review; clear removes only that completed entry.
+All worktrees share the primary checkout's .agent-work/state/active-tasks.json.
+Primary mutations refresh Markdown; worker mutations leave tracked views unchanged.
+render explicitly refreshes the selected checkout's view.
 A busy lock is not automatically reclaimed. The permanent template is preserved.`;
 
 function parseArguments(args) {
   const [command, ...options] = args;
   const fields = {
     start: ['summary', 'next'], update: ['next', 'verification', 'status'],
-    finish: ['result'], clear: [],
+    finish: ['result'], clear: [], list: [], render: [],
   };
   if (!Object.hasOwn(fields, command)) throw new Error(usage);
   const values = {};
@@ -29,7 +34,7 @@ function parseArguments(args) {
     }
     values[name] = value;
   }
-  for (const name of ['owner', 'task']) {
+  for (const name of ['list', 'render'].includes(command) ? [] : ['owner', 'task']) {
     if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(values[name] ?? '')) throw new Error(`A valid --${name} ID is required.`);
   }
   for (const name of command === 'start' ? ['summary', 'next'] : command === 'finish' ? ['result'] : []) {
@@ -45,7 +50,11 @@ function managedEntries(source) {
   const ends = source.split('<!-- active-task:end -->').length - 1;
   const block = source.match(/(<!-- active-task:start -->\r?\n```json\r?\n)([\s\S]*?)(\r?\n```\r?\n<!-- active-task:end -->)/);
   if (starts !== 1 || ends !== 1 || !block) throw new Error('Active-task markers are damaged; file left unchanged.');
-  const entries = JSON.parse(block[2]);
+  const entries = validateEntries(JSON.parse(block[2]));
+  return { block, entries };
+}
+
+function validateEntries(entries) {
   const keys = new Set();
   if (!Array.isArray(entries)) throw new Error('Active-task data must be an array.');
   for (const entry of entries) {
@@ -56,35 +65,49 @@ function managedEntries(source) {
     if (keys.has(key)) throw new Error('Duplicate active-task ownership; file left unchanged.');
     keys.add(key);
   }
-  return { block, entries };
+  return entries;
 }
 
 async function run(args) {
   if (args.length === 1 && ['--help', '-h'].includes(args[0])) return console.log(usage);
   const { command, values } = parseArguments(args);
-  const root = await realpath(resolve(values.root ?? resolve(dirname(fileURLToPath(import.meta.url)), '../..')));
-  const directory = resolve(root, 'context');
+  const repo = await repository(values.root ?? resolve(dirname(fileURLToPath(import.meta.url)), '../..'));
+  const directory = resolve(repo.root, 'context');
   if (!(await lstat(directory)).isDirectory()) throw new Error('context must be a regular directory, not a link.');
   const path = resolve(directory, 'active_task.md');
-  const lockPath = resolve(directory, '.active-task.lock');
-  let lock;
-  try {
-    lock = await open(lockPath, 'wx');
-  } catch (error) {
-    if (error.code === 'EEXIST') throw new Error('Active-task file is busy; retry after the other writer finishes. Do not reclaim the lock automatically.');
-    throw error;
-  }
-  const lockIdentity = await lock.stat();
-  let temporary;
-  try {
+  const store = await dataDirectory(repo, 'state');
+  const statePath = resolve(store, 'active-tasks.json');
+  await withLock(resolve(store, 'active-task.lock'), async () => {
     const original = await lstat(path);
     if (!original.isFile() || original.isSymbolicLink()) throw new Error('active_task.md must be a regular file, not a link.');
     const source = await readFile(path, 'utf8');
-    const { block, entries } = managedEntries(source);
+    const { block } = managedEntries(source);
+    let entries;
+    try { entries = validateEntries(await readJson(statePath)); }
+    catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+      entries = [];
+      for (const worktree of repo.worktrees) {
+        const legacyPath = resolve(worktree.worktree, 'context/active_task.md');
+        const legacyStat = await lstat(legacyPath).catch((missing) => { if (missing.code !== 'ENOENT') throw missing; });
+        if (!legacyStat) continue;
+        if (!legacyStat.isFile() || legacyStat.isSymbolicLink()) throw new Error('Legacy handoff must be a regular file.');
+        for (const legacy of managedEntries(await readFile(legacyPath, 'utf8')).entries) {
+          const previous = entries.find((entry) => entry.owner === legacy.owner && entry.task === legacy.task);
+          if (previous) {
+            const { checkout, ...previousData } = previous;
+            if (JSON.stringify(previousData) !== JSON.stringify(legacy)) throw new Error('Conflicting legacy handoffs; reconcile them before migration.');
+          } else entries.push({ ...legacy, checkout: worktree.worktree });
+        }
+      }
+    }
+    if (command === 'list') return console.log(JSON.stringify(entries, null, 2));
     const index = entries.findIndex((entry) => entry.owner === values.owner && entry.task === values.task);
-    if (command === 'start') {
+    if (command === 'render') {
+      // The shared store is authoritative; rendering changes only this checkout.
+    } else if (command === 'start') {
       if (index !== -1) throw new Error('Entry already exists; use update or finish instead of overwriting it.');
-      entries.push({ owner: values.owner, task: values.task, summary: values.summary, next: values.next, status: 'active', verification: '', updatedAt: new Date().toISOString() });
+      entries.push({ owner: values.owner, task: values.task, checkout: repo.root, summary: values.summary, next: values.next, status: 'active', verification: '', updatedAt: new Date().toISOString() });
     } else {
       if (index === -1) throw new Error('No entry matches that owner and task.');
       const entry = entries[index];
@@ -100,24 +123,13 @@ async function run(args) {
     }
     const newline = source.includes('\r\n') ? '\r\n' : '\n';
     const content = source.slice(0, block.index) + block[1] + JSON.stringify(entries, null, 2).replace(/\n/g, newline) + block[3] + source.slice(block.index + block[0].length);
-    const tempPath = resolve(directory, `.active-task-${randomUUID()}.tmp`);
-    const output = await open(tempPath, 'wx', original.mode & 0o777);
-    temporary = tempPath;
-    try {
-      await output.writeFile(content, 'utf8');
-      await output.sync();
-    } finally {
-      await output.close();
+    await atomicWrite(statePath, JSON.stringify(entries, null, 2) + '\n');
+    if (repo.root === repo.primary || command === 'render') {
+      try { await atomicWrite(path, content); }
+      catch (error) { throw new Error(`Shared state saved, but view refresh failed: ${error.message}`); }
     }
-    await rename(tempPath, path);
-    temporary = undefined;
     console.log(`${command}: ${values.owner}/${values.task}; ${entries.length} assignment(s) retained.`);
-  } finally {
-    if (temporary) await unlink(temporary);
-    await lock.close();
-    const current = await lstat(lockPath).catch((error) => { if (error.code !== 'ENOENT') throw error; });
-    if (current?.ino === lockIdentity.ino && current?.dev === lockIdentity.dev) await unlink(lockPath);
-  }
+  });
 }
 
 run(process.argv.slice(2)).catch((error) => {

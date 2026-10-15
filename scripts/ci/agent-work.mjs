@@ -492,6 +492,7 @@ async function firstUnsafeEntry(sessionDirectory) {
       return 'cannot safely inspect session directory';
     }
     for (const entryName of entries) {
+      if (entryName.toLowerCase() === '.git') return 'contains a Git checkout; remove it through Git worktree tooling';
       const entryPath = join(directory, entryName);
       let stat;
       try {

@@ -31,6 +31,8 @@ Test active-task handoff behavior directly with:
 node --test tests/ci/active-task.test.mjs
 ```
 
+Test worktree retirement eligibility and safe removal in disposable Git repositories with `node --test tests/ci/agent-worktree.test.mjs`. These checks cover preview-only operation, retained branches, unmerged commits, dirty/untracked/ignored data, resumed tasks, changed evidence, and locked or unknown worktrees. Skill evaluations additionally follow [the versioned evidence procedure](workflow.md#skill-evaluation-evidence).
+
 Run the complete contributor test suite with Node's test-runner discovery:
 
 ```powershell

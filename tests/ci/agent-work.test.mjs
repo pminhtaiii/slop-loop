@@ -467,3 +467,20 @@ test('cleanup retains a linked marker without following its target', async (t) =
   assert.equal(await readFile(outsideMarker, 'utf8'), markerContents);
   await lstat(path);
 });
+
+test('session cleanup retains nested Git checkouts and the separate worktree area', async (t) => {
+  const root = await fixture(t);
+  await start(root);
+  await finish(root);
+  const nested = join(sessionPath(root), 'worker');
+  await mkdir(nested);
+  await writeFile(join(nested, '.git'), 'gitdir: retained-worktree-metadata\n');
+  const worktrees = join(root, '.agent-work', 'worktrees');
+  await mkdir(worktrees);
+  await writeFile(join(worktrees, 'keep.txt'), 'separate agent checkout\n');
+  const result = run(root, ['cleanup', '--apply']);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /contains a Git checkout/);
+  assert.equal(await readFile(join(nested, '.git'), 'utf8'), 'gitdir: retained-worktree-metadata\n');
+  assert.equal(await readFile(join(worktrees, 'keep.txt'), 'utf8'), 'separate agent checkout\n');
+});

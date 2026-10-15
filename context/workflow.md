@@ -8,7 +8,7 @@ Before implementation, confirm the selected feature has `spec.md`, `plan.md`, an
 
 ## Active-task handoff
 
-Before a coordinator or worker edits its assigned scope, register a unique owner/task entry in [active_task.md](active_task.md). This file tracks current contributor ownership and handoff; `tasks.md` remains the only feature task-status ledger, and this handoff is separate from the product runtime state in [state_and_memory.md](state_and_memory.md).
+Before a coordinator or worker edits its assigned scope, register a unique owner/task entry. All linked worktrees share the primary checkout's ignored `.agent-work/state/active-tasks.json`; [active_task.md](active_task.md) is a readable checkout-local view. `tasks.md` remains the only feature task-status ledger, separate from product runtime state in [state_and_memory.md](state_and_memory.md). Use the primary checkout's helper with `--root <worker-checkout>` when a worker has an older helper version.
 
 Use a distinct owner ID for each session or worker and a task ID that identifies its assignment:
 
@@ -18,11 +18,13 @@ node scripts/ci/active-task.mjs update --owner <owner-id> --task <task-id> --nex
 node scripts/ci/active-task.mjs update --owner <owner-id> --task <task-id> --status blocked --next "<blocker or resume action>"
 node scripts/ci/active-task.mjs finish --owner <owner-id> --task <task-id> --result "<completed work and evidence>"
 node scripts/ci/active-task.mjs clear --owner <owner-id> --task <task-id>
+node scripts/ci/active-task.mjs list
+node scripts/ci/active-task.mjs render
 ```
 
 Update the next action at meaningful progress and pause points; include verification when it changes. Mark blocked or interrupted work `blocked` and keep its entry. Set it back to `active` when resuming. A worker must finish its entry before reporting and include its owner and task IDs in the report. `finish` retains the completed handoff for coordinator review. After integrating the result and recording durable evidence and task status, the coordinator clears only that completed owner/task entry. Coordinators follow the same lifecycle for their own entry and leave other owners' entries untouched. Only completed entries can be cleared; clearing removes the one matching managed entry while preserving the file's permanent instructions and data markers. The helper does not commit or push.
 
-The helper serializes writes and fails when the file is busy; wait until the writer finishes before retrying. It does not automatically reclaim stale locks. Use `--root <checkout>` to select another checkout and `--help` for command syntax.
+Mutations in the primary checkout refresh its Markdown view automatically. Worker mutations update only the ignored shared store, keeping tracked worker files clean for retirement. Use `list` to inspect shared work and explicit `render` to refresh the selected checkout's view; review generated entries before committing. Workers do not write another checkout's Markdown file. On first use, the helper imports existing handoffs from registered checkouts, rejecting conflicting legacy entries for reconciliation. Shared writes use one lock across worktrees; a busy lock requires retry after the writer finishes, not automatic reclamation. Use `--root <checkout>` to select the invoking view and `--help` for command syntax.
 
 ## Workflow pipeline
 
@@ -53,7 +55,7 @@ node scripts/ci/agent-work.mjs list [--root <checkout>]
 node scripts/ci/agent-work.mjs finish --session <date>/<session-id> [--root <checkout>]
 ```
 
-Keep drafts, worker notes, raw logs, and review snapshots in `.agent-work/<date>/<session-id>/`. Keep approved specs, task ledgers, and concise verification records at their canonical paths. Leave a session active while work may resume. Cleanup previews by default; only explicitly authorized human action may apply cleanup.
+Keep drafts, worker notes, raw logs, and review snapshots in `.agent-work/<date>/<session-id>/`. Before creating task worktrees or cleaning a run, follow [the dump workspace guide](../docs/agents/workspace.md): worktrees live separately under `.agent-work/worktrees/`, with machine-readable ownership receipts. Keep approved specs, task ledgers, and concise verification records at their canonical paths. Leave a session active while work may resume. Cleanup previews by default; only explicitly authorized human action may apply cleanup.
 
 ### Task briefs and handoffs
 
@@ -71,6 +73,10 @@ node scripts/ci/agent-context.mjs verify --snapshot <snapshot.json> [--root <che
 ```
 
 Verify the snapshot against the same checkout before relying on review findings. Recheck findings against current source before acting.
+
+### Skill evaluation evidence
+
+Before each baseline or follow-up evaluation, use `agent-context.mjs snapshot --files ... --root <checkout>` to save that phase's exact source revision and hashes in its own session subfolder. Include the skill, loaded references, and helper source files that can affect the scenario; a no-skill baseline records the source environment and explicitly records that the skill was absent. Store the request, output, checks/exit statuses, and a relative pointer to that snapshot with the result. Verify the snapshot before dispatch and again after the evaluation; if verification fails, mark the result invalid and repeat against a new snapshot. Keep baseline and follow-up artifacts separate and keep each evaluated checkout unchanged while its agent runs. Historical evaluations without snapshots remain labelled unversioned, rather than assigning them inferred hashes later.
 
 ## Step 1: Implement with TDD (`/build-spec`)
 

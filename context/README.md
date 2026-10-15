@@ -11,6 +11,7 @@ Start here, then load only the documents triggered by the task. These pages desc
 | Change checkpoints, resume, compaction, or repository memory | [State and memory](state_and_memory.md). Add [runtime policy](runtime_policy.md) when replay, approval binding, or execution limits are affected. |
 | Implement an approved local Spec Kit feature | [Contributor workflow](workflow.md) and [testing guidance](testing.md), then the feature's `spec.md`, `plan.md`, and `tasks.md`. |
 | Start, update, or hand off contributor work | Follow the [active-task handoff](workflow.md#active-task-handoff) and maintain [active_task.md](active_task.md). |
+| Create task worktrees or clean completed runs | [Dump workspace guide](../docs/agents/workspace.md) covers registered ownership, evidence retention, and preview-first retirement. |
 | Complete an explicitly authorized helper, documentation, or maintenance task without an approved feature | Follow the user's stated scope and the relevant source documents. Do not invent Spec Kit task IDs or planning artifacts. |
 | Check current implementation status | [Implementation status](progress_checker.md) reports repository observations. |
 | Find target verification criteria | Relevant sections of the [target verification matrices](../docs/progress-checker-matrices.md) define evidence for planned capabilities. |
