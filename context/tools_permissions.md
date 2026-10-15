@@ -23,6 +23,8 @@ This is the authoritative target policy for permission classes, repository tools
 
 Read-only Git commands such as `git status`, `git diff`, `git log`, and `git show` are `ALLOWED` in the current workspace. `git commit` and `git push` require approval. Before a commit request, show the files, diff summary, verification status, and proposed message; approval applies only to that proposed state. A push request must name its remote and destination branch. Direct push to a protected main branch is `FORBIDDEN`.
 
+The UC-03 MVP adds a workflow prerequisite to ordinary patch permission: human approval of the diagnosis and fix plan before production-code edits. Investigation may use permitted reads, searches, and reproduction commands, and may add a regression test demonstrating the failure. A material replan requires renewed approval before edits under the revised strategy. Plan approval does not waive action-specific approvals or forbidden-action rules. If a plan is rejected, wait for user feedback; do not autonomously generate alternatives. A user-requested material revision consumes the same replan allowance. These plan-specific rules supplement the general action rejection behavior below; see [ADR-0004](../docs/adr/0004-uc03-adaptive-workflow-and-replan-limit.md).
+
 ## Approval-required actions
 
 Obtain approval before dependency installation or declaration changes, file deletion, structure-changing renames or moves, sensitive configuration changes, unusually broad patches, or commands outside the allowlist. Sensitive configuration includes CI, dependency and requirements files, security, workflow, and `pyproject.toml` files. Exact breadth thresholds belong to deterministic runtime policy. Show the exact command or action before asking.
