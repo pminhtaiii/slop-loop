@@ -8,14 +8,19 @@ const checksRequired = ['contributor-checks (ubuntu-latest)', 'contributor-check
 const featureName = /^feat\/\d{3}-[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const maxRepairs = 3;
 const usage = `Usage: node scripts/agents/pr-workflow.mjs <publish|status|ready|repair|watch> [--root <checkout>]
-publish requires --body-file <file>; optional --base development.
+publish requires --body-file <file> and --summary <short summary>; optional --base development.
 repair requires --reason <diagnosed finding>. At most three repair rounds per PR.
 watch polls for at most ten minutes, stopping for fixes, human approval, or timeout.
 The helper never commits, merges, force-pushes, or resolves review threads.`;
 
+function validSummary(value) {
+  return typeof value === 'string' && value.length > 0 && value.length <= 80 && value === value.trim() && !/[\r\n]/.test(value);
+}
+
 export function assess({ head, pr, checks }) {
   const result = { status: 'WAITING_CI', failedChecks: [], unresolved: [] };
-  if (pr.state !== 'OPEN' || pr.headRefOid !== head || !featureName.test(pr.headRefName) || pr.title !== pr.headRefName || pr.baseRefName !== 'development') return { ...result, status: 'BLOCKED', reason: 'PR identity, base, state, or current HEAD does not match.' };
+  const titlePrefix = `${pr.headRefName}: `;
+  if (pr.state !== 'OPEN' || pr.headRefOid !== head || !featureName.test(pr.headRefName) || !pr.title.startsWith(titlePrefix) || !validSummary(pr.title.slice(titlePrefix.length)) || pr.baseRefName !== 'development') return { ...result, status: 'BLOCKED', reason: 'PR identity, title, base, state, or current HEAD does not match.' };
   if (pr.reviews.pageInfo.hasPreviousPage || pr.reviewThreads.pageInfo.hasNextPage) return { ...result, status: 'BLOCKED', reason: 'Review data exceeds the bounded page; inspect manually.' };
   result.unresolved = pr.reviewThreads.nodes.filter((thread) => !thread.isResolved);
   if (pr.mergeable === 'CONFLICTING' || pr.mergeStateStatus === 'BEHIND') return { ...result, status: 'BLOCKED', reason: 'Update the feature branch against development and rerun verification.' };
@@ -56,7 +61,7 @@ const query = `query($owner:String!,$name:String!,$number:Int!){repository(owner
 export async function runWorkflow(args, dependencies = {}) {
   if (args.length === 1 && ['--help', '-h'].includes(args[0])) return { usage };
   const [command, ...rest] = args;
-  const allowed = { publish: ['root', 'base', 'body-file'], status: ['root'], ready: ['root'], repair: ['root', 'reason'], watch: ['root'] };
+  const allowed = { publish: ['root', 'base', 'body-file', 'summary'], status: ['root'], ready: ['root'], repair: ['root', 'reason'], watch: ['root'] };
   if (!Object.hasOwn(allowed, command)) throw new Error(usage);
   const values = {};
   for (let index = 0; index < rest.length; index += 2) {
@@ -65,6 +70,7 @@ export async function runWorkflow(args, dependencies = {}) {
     values[name] = value;
   }
   if (command === 'publish' && !values['body-file'] || command === 'repair' && !values.reason?.trim()) throw new Error(usage);
+  if (command === 'publish' && !validSummary(values.summary)) throw new Error('Provide --summary with 1–80 characters on one line, without surrounding whitespace.');
   if (values.base && values.base !== 'development') throw new Error('The pilot only publishes to development.');
   const now = dependencies.now ?? (() => Math.floor(performance.now()));
   const deadline = command === 'watch' ? now() + 600_000 : undefined;
@@ -99,6 +105,7 @@ export async function runWorkflow(args, dependencies = {}) {
       return prs[0];
     };
     if (command === 'publish') {
+      const title = `${branch}: ${values.summary}`;
       const bodyPath = resolve(values['body-file']);
       if ((await stat(bodyPath)).size > 65_536) throw new Error('PR body exceeds 65536 bytes.');
       const body = await readFile(bodyPath, 'utf8');
@@ -118,9 +125,9 @@ export async function runWorkflow(args, dependencies = {}) {
       record.publicationStarted = true;
       await save();
       git('push', 'origin', `HEAD:refs/heads/${branch}`);
-      if (pr) gh('pr', 'edit', String(pr.number), '--repo', remote, '--title', branch, '--body-file', bodyPath);
+      if (pr) gh('pr', 'edit', String(pr.number), '--repo', remote, '--title', title, '--body-file', bodyPath);
       else {
-        gh('pr', 'create', '--repo', remote, '--head', branch, '--base', 'development', '--draft', '--title', branch, '--body-file', bodyPath);
+        gh('pr', 'create', '--repo', remote, '--head', branch, '--base', 'development', '--draft', '--title', title, '--body-file', bodyPath);
         pr = find();
         if (!pr) throw new Error('PR created but lookup failed; rerun publish to recover.');
       }

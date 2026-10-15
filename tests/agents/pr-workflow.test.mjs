@@ -9,7 +9,7 @@ import { assess, changedLines, runWorkflow } from '../../scripts/agents/pr-workf
 function evidence() {
   return {
     head: 'abc',
-    pr: { state: 'OPEN', headRefOid: 'abc', headRefName: 'feat/001-example', title: 'feat/001-example', baseRefName: 'development', reviewDecision: 'APPROVED',
+    pr: { state: 'OPEN', headRefOid: 'abc', headRefName: 'feat/001-example', title: 'feat/001-example: add the example workflow', baseRefName: 'development', reviewDecision: 'APPROVED',
       reviews: { pageInfo: { hasPreviousPage: false }, nodes: [{ author: { login: 'coderabbitai', __typename: 'Bot' }, state: 'APPROVED', commit: { oid: 'abc' } }] },
       reviewThreads: { pageInfo: { hasNextPage: false }, nodes: [] } },
     checks: ['contributor-checks (ubuntu-latest)', 'contributor-checks (windows-latest)'].map((name, id) => ({ id, name, head_sha: 'abc', status: 'completed', conclusion: 'success', app: { slug: 'github-actions' } })),
@@ -28,6 +28,24 @@ test('current-head CI allows human review without CodeRabbit approval', () => {
 test('merge and unknown commands are rejected before executing anything', async () => {
   let called = false;
   await assert.rejects(runWorkflow(['merge'], { execute() { called = true; } }), /Usage/);
+  assert.equal(called, false);
+});
+
+test('PR titles require their branch prefix and a short summary', () => {
+  const e = evidence();
+  e.pr.title = `${e.pr.headRefName}: add the example workflow`;
+  assert.equal(assess(e).status, 'READY_FOR_HUMAN');
+  for (const title of [e.pr.headRefName, `${e.pr.headRefName}: `, 'feat/002-other: summary', `${e.pr.headRefName}: ${'x'.repeat(81)}`, `${e.pr.headRefName}: two\nlines`]) {
+    e.pr.title = title;
+    assert.equal(assess(e).status, 'BLOCKED', title);
+  }
+});
+
+test('publishing rejects missing or invalid summaries before executing commands', async () => {
+  let called = false;
+  for (const args of [[], ['--summary', ' '], ['--summary', 'x'.repeat(81)], ['--summary', 'two\nlines']]) {
+    await assert.rejects(runWorkflow(['publish', '--body-file', 'body.md', ...args], { execute() { called = true; } }), /summary/);
+  }
   assert.equal(called, false);
 });
 
@@ -110,7 +128,7 @@ async function checkout(t) {
     if (args[0] === 'api') return JSON.stringify([{ check_runs: e.checks }]);
     return '';
   };
-  const run = (...args) => runWorkflow([...args, '--root', root], { execute });
+  const run = (...args) => runWorkflow([...args, ...(args[0] === 'publish' ? ['--summary', 'add the example workflow'] : []), '--root', root], { execute });
   let revision = 0;
   const advance = async () => { await writeFile(join(root, 'change.md'), `repair ${++revision}\n`); git('add', 'change.md'); git('commit', '--quiet', '-m', `repair ${revision}`); };
   return { root, body, e, calls, run, execute, advance, fail: () => { failGate = true; } };
@@ -121,6 +139,9 @@ test('publishing is gated and repeatable; repair count survives new publishes an
   await f.run('publish', '--body-file', f.body);
   await f.run('publish', '--body-file', f.body);
   assert.equal(f.calls.filter((call) => call[0] === 'gh' && call[1] === 'pr' && call[2] === 'create').length, 1);
+  for (const call of f.calls.filter((call) => call[0] === 'gh' && call[1] === 'pr' && ['create', 'edit'].includes(call[2]))) {
+    assert.equal(call[call.indexOf('--title') + 1], 'feat/001-example: add the example workflow');
+  }
   assert.equal(f.calls.filter((call) => call[0] === 'gh' && call[1] === 'pr' && call[2] === 'comment').length, 1);
   const savedPath = join(f.root, '.agent-work/pr-workflow/001-example.json');
   const saved = JSON.parse(await readFile(savedPath, 'utf8'));
