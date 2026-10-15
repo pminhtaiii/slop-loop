@@ -1,6 +1,6 @@
-# Implementation Workflow
+# Contributor Workflow
 
-This workflow governs implementation of an approved local Spec Kit feature. The feature's `spec.md`, `plan.md`, and `tasks.md` are the source of truth for authorized scope.
+This workflow governs contributors implementing an approved local Spec Kit feature. The feature's `spec.md`, `plan.md`, and `tasks.md` are the source of truth for authorized scope. It describes repository work, not the slop-loop product runtime; see [architecture.md](architecture.md) for the target runtime flow.
 
 ## Input readiness
 
@@ -56,7 +56,7 @@ Verify the snapshot against the same checkout before relying on review findings.
 
 ## Step 1: Implement with TDD (`/build-spec`)
 
-Implement each ready task in a test-first vertical slice. Preserve approved behavior and unique coverage; do not skip tests, weaken assertions, or relax safety constraints to make a change pass. Resolve unrelated harness failures before claiming a behavioral RED. Report actual commands and exit statuses, and leave failed or unintegrated tasks unchecked.
+Implement each ready task in a test-first vertical slice, following [testing.md](testing.md) and the existing-test protections in [tools_permissions.md](tools_permissions.md). Resolve unrelated harness failures before claiming a behavioral RED. Report actual commands and exit statuses, and leave failed or unintegrated tasks unchecked.
 
 Integrate one worker at a time. Confirm its base is current, changes stay within owned paths, and acceptance checks pass on the integration branch before recording task completion.
 
