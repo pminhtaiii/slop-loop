@@ -24,11 +24,11 @@ const idPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const reservedWindowsNamePattern = /^(?:CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])$/i;
 
 const usage = `Usage:
-  node scripts/ci/agent-work.mjs start --session <id> [--date YYYY-MM-DD] [--root <checkout>]
-  node scripts/ci/agent-work.mjs finish --session <date>/<id> [--root <checkout>]
-  node scripts/ci/agent-work.mjs list [--root <checkout>]
-  node scripts/ci/agent-work.mjs cleanup [--session <date>/<id>] [--root <checkout>]
-  node scripts/ci/agent-work.mjs cleanup --apply [--session <date>/<id>] [--root <checkout>]
+  node scripts/agents/agent-work.mjs start --session <id> [--date YYYY-MM-DD] [--root <checkout>]
+  node scripts/agents/agent-work.mjs finish --session <date>/<id> [--root <checkout>]
+  node scripts/agents/agent-work.mjs list [--root <checkout>]
+  node scripts/agents/agent-work.mjs cleanup [--session <date>/<id>] [--root <checkout>]
+  node scripts/agents/agent-work.mjs cleanup --apply [--session <date>/<id>] [--root <checkout>]
 
 Cleanup previews by default. --apply removes only valid finished sessions.`;
 

@@ -7,7 +7,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const cliSource = resolve(repositoryRoot, 'scripts/ci/agent-context.mjs');
+const cliSource = resolve(repositoryRoot, 'scripts/agents/agent-context.mjs');
 
 function git(root, args) {
   const result = spawnSync('git', args, { cwd: root, encoding: 'utf8', windowsHide: true });
@@ -18,7 +18,7 @@ function git(root, args) {
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), 'agent-context path with spaces-'));
   t.after(async () => rm(root, { recursive: true, force: true }));
-  const cliPath = join(root, 'scripts', 'ci', 'agent-context.mjs');
+  const cliPath = join(root, 'scripts', 'agents', 'agent-context.mjs');
   const tasksPath = join(root, 'specs', 'feature', 'tasks.md');
   const planPath = join(root, 'specs', 'feature', 'plan.md');
   const tasks = `# Tasks
@@ -109,7 +109,7 @@ This unrelated database note should not be copied into task context.
   git(root, [
     'add',
     '--',
-    'scripts/ci/agent-context.mjs',
+    'scripts/agents/agent-context.mjs',
     'specs/feature/tasks.md',
     'specs/feature/plan.md',
     'src/declared file.ts',

@@ -13,13 +13,13 @@ Before a coordinator or worker edits its assigned scope, register a unique owner
 Use a distinct owner ID for each session or worker and a task ID that identifies its assignment:
 
 ```powershell
-node scripts/ci/active-task.mjs start --owner <owner-id> --task <task-id> --summary "<assignment>" --next "<next action>"
-node scripts/ci/active-task.mjs update --owner <owner-id> --task <task-id> --next "<next action>" --verification "<verification evidence>"
-node scripts/ci/active-task.mjs update --owner <owner-id> --task <task-id> --status blocked --next "<blocker or resume action>"
-node scripts/ci/active-task.mjs finish --owner <owner-id> --task <task-id> --result "<completed work and evidence>"
-node scripts/ci/active-task.mjs clear --owner <owner-id> --task <task-id>
-node scripts/ci/active-task.mjs list
-node scripts/ci/active-task.mjs render
+node scripts/agents/active-task.mjs start --owner <owner-id> --task <task-id> --summary "<assignment>" --next "<next action>"
+node scripts/agents/active-task.mjs update --owner <owner-id> --task <task-id> --next "<next action>" --verification "<verification evidence>"
+node scripts/agents/active-task.mjs update --owner <owner-id> --task <task-id> --status blocked --next "<blocker or resume action>"
+node scripts/agents/active-task.mjs finish --owner <owner-id> --task <task-id> --result "<completed work and evidence>"
+node scripts/agents/active-task.mjs clear --owner <owner-id> --task <task-id>
+node scripts/agents/active-task.mjs list
+node scripts/agents/active-task.mjs render
 ```
 
 Update the next action at meaningful progress and pause points; include verification when it changes. Mark blocked or interrupted work `blocked` and keep its entry. Set it back to `active` when resuming. A worker must finish its entry before reporting and include its owner and task IDs in the report. `finish` retains the completed handoff for coordinator review. After integrating the result and recording durable evidence and task status, the coordinator clears only that completed owner/task entry. Coordinators follow the same lifecycle for their own entry and leave other owners' entries untouched. Only completed entries can be cleared; clearing removes the one matching managed entry while preserving the file's permanent instructions and data markers. The helper does not commit or push.
@@ -41,8 +41,8 @@ Keep worker changes scoped to assigned task IDs and owned files. Implementers do
 Use the task helper to derive context from the canonical ledger:
 
 ```powershell
-node scripts/ci/agent-context.mjs handoff --tasks specs/<feature>/tasks.md [--root <checkout>]
-node scripts/ci/agent-context.mjs task --tasks specs/<feature>/tasks.md --task T001 --plan specs/<feature>/plan.md [--root <checkout>]
+node scripts/agents/agent-context.mjs handoff --tasks specs/<feature>/tasks.md [--root <checkout>]
+node scripts/agents/agent-context.mjs task --tasks specs/<feature>/tasks.md --task T001 --plan specs/<feature>/plan.md [--root <checkout>]
 ```
 
 These commands report task context only; they never change task status.
@@ -50,9 +50,9 @@ These commands report task context only; they never change task status.
 Create a managed session directory before coordinated work:
 
 ```powershell
-node scripts/ci/agent-work.mjs start --session <session-id> [--date YYYY-MM-DD] [--root <checkout>]
-node scripts/ci/agent-work.mjs list [--root <checkout>]
-node scripts/ci/agent-work.mjs finish --session <date>/<session-id> [--root <checkout>]
+node scripts/agents/agent-work.mjs start --session <session-id> [--date YYYY-MM-DD] [--root <checkout>]
+node scripts/agents/agent-work.mjs list [--root <checkout>]
+node scripts/agents/agent-work.mjs finish --session <date>/<session-id> [--root <checkout>]
 ```
 
 Keep drafts, worker notes, raw logs, and review snapshots in `.agent-work/<date>/<session-id>/`. Before creating task worktrees or cleaning a run, follow [the dump workspace guide](../docs/agents/workspace.md): worktrees live separately under `.agent-work/worktrees/`, with machine-readable ownership receipts. Keep approved specs, task ledgers, and concise verification records at their canonical paths. Leave a session active while work may resume. Cleanup previews by default; only explicitly authorized human action may apply cleanup.
@@ -68,8 +68,8 @@ Record a concise handoff with checkout, branch/revision, ledger and next candida
 Pin the review to a base/target revision or create a file snapshot:
 
 ```powershell
-node scripts/ci/agent-context.mjs snapshot --files <repo-relative-path>... [--root <checkout>]
-node scripts/ci/agent-context.mjs verify --snapshot <snapshot.json> [--root <checkout>]
+node scripts/agents/agent-context.mjs snapshot --files <repo-relative-path>... [--root <checkout>]
+node scripts/agents/agent-context.mjs verify --snapshot <snapshot.json> [--root <checkout>]
 ```
 
 Verify the snapshot against the same checkout before relying on review findings. Recheck findings against current source before acting.
@@ -91,6 +91,10 @@ Assess the integrated implementation against the approved spec, plan, and task l
 ## Step 3: Code review (`/code-review`)
 
 Review the pinned integrated revision against [backend code standards](code_standard.md), other applicable repository conventions, and the originating specification. Resolve blocking findings within the authorized task scope and rerun affected checks, convergence, and review for the changed revision.
+
+## Context refresh
+
+After implementation and verification, update affected context documents from inspected code and test evidence, preserving their existing format. Follow [context maintenance](../docs/agents/context-maintenance.md) for the update-plan format, preview/apply commands, and failure handling. Review semantic consistency and report validation before finishing the active task.
 
 ## Step 4: PR and CI (`/pr-feedback-loop`)
 

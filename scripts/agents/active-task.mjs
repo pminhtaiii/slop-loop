@@ -4,12 +4,12 @@ import { fileURLToPath } from 'node:url';
 import { atomicWrite, dataDirectory, readJson, repository, withLock } from './agent-store.mjs';
 
 const usage = `Usage:
-  node scripts/ci/active-task.mjs start --owner <id> --task <id> --summary <text> --next <text>
-  node scripts/ci/active-task.mjs update --owner <id> --task <id> [--next <text>] [--verification <text>] [--status active|blocked]
-  node scripts/ci/active-task.mjs finish --owner <id> --task <id> --result <text>
-  node scripts/ci/active-task.mjs clear --owner <id> --task <id>
-  node scripts/ci/active-task.mjs list
-  node scripts/ci/active-task.mjs render
+  node scripts/agents/active-task.mjs start --owner <id> --task <id> --summary <text> --next <text>
+  node scripts/agents/active-task.mjs update --owner <id> --task <id> [--next <text>] [--verification <text>] [--status active|blocked]
+  node scripts/agents/active-task.mjs finish --owner <id> --task <id> --result <text>
+  node scripts/agents/active-task.mjs clear --owner <id> --task <id>
+  node scripts/agents/active-task.mjs list
+  node scripts/agents/active-task.mjs render
 
 All commands accept --root <checkout>. Use a unique owner per session/worker.
 finish retains the result for review; clear removes only that completed entry.

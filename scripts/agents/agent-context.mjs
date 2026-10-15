@@ -6,11 +6,11 @@ import { fileURLToPath } from 'node:url';
 
 const moduleRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const usage = `Usage:
-  node scripts/ci/agent-context.mjs handoff --tasks <tasks.md> [--root <checkout>]
-  node scripts/ci/agent-context.mjs task --tasks <tasks.md> --task T017 [--plan <plan.md>] [--root <checkout>]
-  node scripts/ci/agent-context.mjs snapshot --files <repo-relative-file...> [--root <checkout>]
-  node scripts/ci/agent-context.mjs verify --snapshot <snapshot.json> [--root <checkout>]
-  node scripts/ci/agent-context.mjs --help`;
+  node scripts/agents/agent-context.mjs handoff --tasks <tasks.md> [--root <checkout>]
+  node scripts/agents/agent-context.mjs task --tasks <tasks.md> --task T017 [--plan <plan.md>] [--root <checkout>]
+  node scripts/agents/agent-context.mjs snapshot --files <repo-relative-file...> [--root <checkout>]
+  node scripts/agents/agent-context.mjs verify --snapshot <snapshot.json> [--root <checkout>]
+  node scripts/agents/agent-context.mjs --help`;
 
 function fail(message) {
   throw new Error(`${message}\n\n${usage}`);

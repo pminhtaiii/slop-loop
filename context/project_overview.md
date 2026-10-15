@@ -31,7 +31,7 @@ Repair loops and expensive actions must be bounded. Risky operations require hum
 | Question | Authority |
 |---|---|
 | What is the requested task? | Active user request or accepted GitHub issue |
-| What terms and design choices are established? | `GLOSSARY.md` and relevant ADRs under `docs/adr/`, when present |
+| What terms and design choices are established? | [GLOSSARY.md](../GLOSSARY.md) for terms; relevant ADRs under `docs/adr/` when decisions warrant a record |
 | What behavior is implemented? | Current repository code and tests |
 | Where is an active workflow now? | Structured runtime state and checkpoints, when implemented |
 | What is implemented and verified in this project? | [progress_checker.md](progress_checker.md), with identifiable evidence |

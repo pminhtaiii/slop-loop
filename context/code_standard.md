@@ -1,6 +1,6 @@
 # Backend Code Standards
 
-These standards apply to the slop-loop runtime written in <!-- context-fact: runtime-language -->TypeScript<!-- /context-fact --> and orchestrated with <!-- context-fact: orchestrator -->`@langchain/langgraph`<!-- /context-fact -->. They do not describe the Python repositories the runtime operates on. The approved runtime choices and open decisions are recorded in [Technology stack](tech_stack.md). Existing contributor helpers under `scripts/ci/` remain Node.js `.mjs` modules and should keep their current conventions.
+These standards apply to the slop-loop runtime written in <!-- context-fact: runtime-language -->TypeScript<!-- /context-fact --> and orchestrated with <!-- context-fact: orchestrator -->`@langchain/langgraph`<!-- /context-fact -->. They do not describe the Python repositories the runtime operates on. The approved runtime choices and open decisions are recorded in [Technology stack](tech_stack.md). Existing contributor helpers under `scripts/agents/` and CI checks under `scripts/ci/` remain Node.js `.mjs` modules and should keep their current conventions.
 
 ## Engineering discipline
 

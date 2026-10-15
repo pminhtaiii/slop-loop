@@ -15,7 +15,7 @@ This is the authoritative target policy for permission classes, repository tools
 | Tool | Default | Required constraints |
 |---|---|---|
 | `list_dir` | `ALLOWED` | Stay inside the approved workspace; hide protected directories; bound results. |
-| `read_file` | `ALLOWED` | Stay inside the workspace; bound file size; reject secrets such as `.env`, PEM/key files, SSH data, credentials, and secret configuration. |
+| `read_file` | `ALLOWED` | Return bounded approved source excerpts under [runtime policy](runtime_policy.md#trace-and-diagnostic-data); validate paths and content, and reject secrets such as `.env`, PEM/key files, SSH data, credentials, and secret configuration. |
 | `search_code` | `ALLOWED` | Search only the approved workspace; bound results; exclude protected files. |
 | `apply_patch` | `ALLOWED` for ordinary bounded source changes | Accept a valid unified diff; validate paths and forbidden files; check patch breadth; do not weaken existing tests. Sensitive files or scope beyond normal boundaries require approval. |
 | `run_tests` | `ALLOWED` for approved test commands | Enforce a timeout, restrict network access, bound output, and return failures as evidence. The initial target repositories use `pytest`, for example `python -m pytest`, or another approved repository command. |

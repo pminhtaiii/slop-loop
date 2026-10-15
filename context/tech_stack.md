@@ -14,7 +14,7 @@ These choices describe the intended product stack. They do not establish that th
 
 ## Existing contributor helpers
 
-The repository currently has Node.js ES module helpers under `scripts/ci/` and corresponding tests under `tests/ci/`. The existing helper test command uses Node's built-in test runner and requires Node.js 20 or newer; see [testing guidance](testing.md).
+The repository has Node.js ES module agent helpers under `scripts/agents/` with tests under `tests/agents/`. CI validation scripts and their tests live under `scripts/ci/` and `tests/ci/`. The existing helper test command uses Node's built-in test runner and requires Node.js 20 or newer; see [testing guidance](testing.md).
 
 This is contributor tooling already present in the repository. It does not select the core runtime's Node.js version, package manager, or test framework.
 

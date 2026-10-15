@@ -18,10 +18,10 @@ import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { withOperationLock } from '../../scripts/ci/agent-work.mjs';
+import { withOperationLock } from '../../scripts/agents/agent-work.mjs';
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const cliPath = resolve(repositoryRoot, 'scripts/ci/agent-work.mjs');
+const cliPath = resolve(repositoryRoot, 'scripts/agents/agent-work.mjs');
 const workspaceName = 'project';
 const date = '2026-10-09';
 const sessionId = 'chat-123';

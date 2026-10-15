@@ -9,7 +9,7 @@ These tables preserve target evidence criteria for the planned slop-loop runtime
 | Target capability | Minimum evidence |
 |---|---|
 | `list_dir` | Workspace-bounded tests |
-| `read_file` | Workspace boundary and secret-denylist tests |
+| `read_file` | Workspace boundary, secret-denylist, and output-bound tests; approved source excerpts reach model/reviewer context with provenance, while secrets embedded in permitted source are sanitized or rejected and source bodies stay out of traces |
 | `search_code` | Search against real repository content |
 | `apply_patch` | Unified-diff application tests |
 | Existing-test protection | Rejection tests for attempts to weaken existing tests |
@@ -71,6 +71,8 @@ Approval applies to a specific proposed action; materially changed actions are r
 | Process restart recovery | Terminate and restart the runtime, then restore state |
 | Resume without duplicate work | Completed steps are not rerun unnecessarily; uncertain non-idempotent outcomes are reconciled before retry |
 | Goal, constraints, and acceptance criteria | Each survives restart |
+| Cumulative budget recovery | Repair, reviewer-iteration, token, and cost limits, consumption, scopes, and reservations survive process restart; a new run ID cannot reset a task-scoped allowance; exhausted or missing accounting prevents the next constrained action |
+| Interrupted budgeted action | Terminate after reservation and before result settlement; resume keeps the reservation charged until reconciled, without restoring spent allowance or repeating an uncertain side effect |
 | Context compaction | Long-context test |
 | Compaction summary validation | Required summary fields are retained |
 | Long-term repository memory | A new session consumes a stored convention |

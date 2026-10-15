@@ -9,8 +9,8 @@ Retire owned, completed artifacts while retaining source work and verification e
 
 ## Inspect and propose
 
-1. Inspect `agent-work.mjs list` and `active-task.mjs list`, and confirm the workers stopped. Session cleanup previews with `node scripts/ci/agent-work.mjs cleanup --session <date/id> --root <integration-checkout>`. A finished marker does not prove its evidence is expendable.
-2. For each registered worker, run `node scripts/ci/agent-worktree.mjs cleanup --id <worker-id> --root <checkout>`. Use its eligibility result instead of reconstructing Git deletion checks. Missing receipts, unaccepted handoffs, unmerged commits, local content, resumed tasks, changed evidence, and locked worktrees stay retained. A historical Markdown receipt alone is insufficient.
+1. Inspect `agent-work.mjs list` and `active-task.mjs list`, and confirm the workers stopped. Session cleanup previews with `node scripts/agents/agent-work.mjs cleanup --session <date/id> --root <integration-checkout>`. A finished marker does not prove its evidence is expendable.
+2. For each registered worker, run `node scripts/agents/agent-worktree.mjs cleanup --id <worker-id> --root <checkout>`. Use its eligibility result instead of reconstructing Git deletion checks. Missing receipts, unaccepted handoffs, unmerged commits, local content, resumed tasks, changed evidence, and locked worktrees stay retained. A historical Markdown receipt alone is insufficient.
 3. Present exact eligible paths, retained paths with reasons, and the location of durable evidence. Default to preview unless the user has authorized applying cleanup to those paths.
 
 ## Apply authorized cleanup

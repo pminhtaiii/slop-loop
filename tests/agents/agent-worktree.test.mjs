@@ -6,7 +6,7 @@ import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-const cli = resolve(dirname(fileURLToPath(import.meta.url)), '../../scripts/ci/agent-worktree.mjs');
+const cli = resolve(dirname(fileURLToPath(import.meta.url)), '../../scripts/agents/agent-worktree.mjs');
 function git(root, args) {
   const result = spawnSync('git', args, { cwd: root, encoding: 'utf8', windowsHide: true });
   assert.equal(result.status, 0, result.stderr);

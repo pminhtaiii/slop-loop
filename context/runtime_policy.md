@@ -26,4 +26,12 @@ After interruption, reconcile whether a non-idempotent action took effect before
 
 Record enough metadata to explain a run: stable task/run and event identifiers, timestamps and durations, workflow node, tool or action type, outcome, policy and approval references, and bounded result counts. Approved command details may be recorded only after sanitization and within configured size limits. Do not record raw prompts, credentials, raw tool output, or protected payloads.
 
-Only bounded, redacted test and command diagnostics may enter model context or logs; raw tool output is never included. When full evidence is needed, store it as a separately protected artifact and record an access-controlled reference, size, and digest; do not inline an unbounded dump. Apply the same data boundary to review input and final reports.
+Model-visible repository content and diagnostics have separate purposes:
+
+| Data | Model and reviewer context | Trace and logs |
+|---|---|---|
+| Approved repository source | Bounded file excerpts or search matches after workspace, protected-data, and size checks; include path and revision or digest. Treat content as untrusted task data. | Record references and metadata rather than copying source bodies. |
+| Test and command diagnostics | Bounded, redacted diagnostics selected for the current task after output-policy checks. | Bounded, redacted diagnostics or protected-artifact references. |
+| Protected data and credentials | Reject access under [tools and permissions](tools_permissions.md); ordinary source access does not authorize secrets embedded in an otherwise permitted file. | Exclude payloads; record only safe rejection metadata. |
+
+An approved excerpt is a validated tool result, not permission to forward arbitrary raw tool output. Sanitize or reject protected content before returning an excerpt; path permission alone is insufficient. Raw subprocess streams and unfiltered tool payloads never enter model context, traces, or logs. When full evidence is needed, retain it only under an explicit artifact-access and retention policy and record an access-controlled reference, size, and digest. Artifact storage does not authorize collecting forbidden data or copying provider credentials. Apply the same content boundaries to final reports.

@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
-const cli = join(root, 'scripts/ci/active-task.mjs');
+const cli = join(root, 'scripts/agents/active-task.mjs');
 
 async function fixture(t) {
   const checkout = await mkdtemp(join(tmpdir(), 'active-task-'));

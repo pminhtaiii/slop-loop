@@ -5,9 +5,9 @@ import { fileURLToPath } from 'node:url';
 import { atomicWrite, dataDirectory, git, inside, readJson, repository, withLock } from './agent-store.mjs';
 
 const usage = `Usage:
-  node scripts/ci/agent-worktree.mjs register --id <id> --path <worker> --integration-ref <branch> --session <date/id> --owner <owner> --task <task>
-  node scripts/ci/agent-worktree.mjs accept --id <id> --evidence <repo-file> --workers-stopped
-  node scripts/ci/agent-worktree.mjs cleanup --id <id> [--apply]
+  node scripts/agents/agent-worktree.mjs register --id <id> --path <worker> --integration-ref <branch> --session <date/id> --owner <owner> --task <task>
+  node scripts/agents/agent-worktree.mjs accept --id <id> --evidence <repo-file> --workers-stopped
+  node scripts/agents/agent-worktree.mjs cleanup --id <id> [--apply]
 All commands accept --root <checkout>. Cleanup previews by default, retains branches,
 and never force-removes a checkout. accept attests that workers stopped and the handoff was reviewed.`;
 

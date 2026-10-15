@@ -7,7 +7,7 @@ This document defines the target state schema and behavior for recovery, compact
 | Record | Purpose | Required contents |
 |---|---|---|
 | Task state | Authoritative current workflow state | Task and run IDs; task type; goal; acceptance criteria; constraints; plan and current step; changed files; verification, repair, approval, and review state; open risks; next action; overall status |
-| Checkpoint | Restore a workflow after interruption | Current workflow node; full task state; pending approval; remaining repair budget; verification progress |
+| Checkpoint | Restore a workflow after interruption | Current workflow node; full task state; pending approval; configured limits and consumed or reserved repair, reviewer-iteration, token, and cost budgets; verification progress |
 | Trace | Explain how a run reached its current state | Ordered workflow, tool, approval, verification, error, and result events |
 | Long-term memory | Reuse repository knowledge across tasks | Stable conventions, common commands, and durable repository constraints |
 
@@ -17,9 +17,11 @@ Each plan step has one of these states: `todo`, `doing`, `done`, or `failed`. Th
 
 Write checkpoints at meaningful boundaries: plan creation, baseline completion, implementation steps, patch application, verification, approval request or resolution, and review completion.
 
+Persist each cumulative budget's scope (task or run), configured limit, consumed amount, outstanding reservations, and accounting/configuration identity. Derive remaining allowance from those records. Validate and reserve allowance atomically and durably within its scope before starting a budgeted action, then settle it against the observed result; a crash between execution and checkpointing must not restore spent allowance. An unresolved reservation remains charged until evidence reconciles it. A restart or new run ID within the same task cannot reset a task-scoped budget. Budget increases require an explicit authorized configuration change recorded with its previous accounting; loading configuration alone cannot replenish allowance. Exact numeric limits remain open in [runtime_policy.md](runtime_policy.md).
+
 Resume by loading the task and latest checkpoint, restoring task state, inspecting the current repository, validating saved assumptions, and continuing from the next required action. Do not blindly replay a completed step. Compare the stored Git revision, working-tree state, expected changed files, and relevant file hashes when practical. If the workspace changed unexpectedly, re-evaluate affected assumptions before continuing.
 
-After restart, preserve the goal, constraints, acceptance criteria, completed steps, repair count, approval decisions, and verification evidence. Resume evidence must come from terminating and restoring the runtime process; continuing in the same process does not demonstrate restart recovery.
+After restart, preserve the goal, constraints, acceptance criteria, completed steps, cumulative budget accounting, approval decisions, and verification evidence. Reconcile pending reservations before the next constrained action. Missing, inconsistent, or exhausted accounting blocks that action until reconciled or explicitly reauthorized; it does not imply a fresh budget. Resume evidence must come from terminating and restoring the runtime process; continuing in the same process does not demonstrate restart recovery.
 
 An active-task handoff may be generated from runtime state for a human or another agent. Include the task, goal, acceptance criteria, constraints, completed work, current state, open risks, next action, and verification evidence. Keep detailed execution history in the trace.
 

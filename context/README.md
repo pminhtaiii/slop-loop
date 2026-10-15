@@ -5,6 +5,7 @@ Start here, then load only the documents triggered by the task. These pages desc
 | Task | Read |
 |---|---|
 | Understand project scope or plan a runtime change | [Project overview](project_overview.md), [technology stack](tech_stack.md), and [architecture](architecture.md). Then load the policy and state documents for the boundaries involved. |
+| Interpret task, run, session, or recovery terminology | Use the canonical definitions in the [glossary](../GLOSSARY.md). |
 | Review TypeScript runtime code | [Backend code standards](code_standard.md) is the primary standards reference. For a feature review, also read its originating `spec.md`. Add [architecture](architecture.md) or the relevant policy document when a finding depends on that design. |
 | Implement or change a runtime boundary | [Architecture](architecture.md), [backend code standards](code_standard.md), and the relevant [runtime policy](runtime_policy.md), [tools and permissions](tools_permissions.md), or [state and memory](state_and_memory.md). For implementation, use [testing guidance](testing.md) and the relevant [target verification matrix](../docs/progress-checker-matrices.md) rows as validation criteria. |
 | Change tool access, approvals, command execution, secrets, or sandboxing | [Tools and permissions](tools_permissions.md) is authoritative for permission classes and role access; [runtime policy](runtime_policy.md) defines cross-cutting enforcement requirements. Add [state and memory](state_and_memory.md) when approval or recovery records change. |
@@ -17,5 +18,6 @@ Start here, then load only the documents triggered by the task. These pages desc
 | Find target verification criteria | Relevant sections of the [target verification matrices](../docs/progress-checker-matrices.md) define evidence for planned capabilities. |
 | Change runtime implementation choices | [Technology stack](tech_stack.md) records approved choices and open decisions. |
 | Edit project context or its contract | Read [testing guidance](testing.md) for the context consistency check, [the context contract](contract.json), and the document that owns the affected fact or rule. |
+| Finish implementation and refresh context | Follow [context refresh](workflow.md#context-refresh) to update affected documents in their existing format and validate the edits. |
 
 Issue tracking, triage labels, and domain-document conventions are documented in [issue tracker guidance](../docs/agents/issue-tracker.md), [triage labels](../docs/agents/triage-labels.md), and [domain documentation guidance](../docs/agents/domain.md).
