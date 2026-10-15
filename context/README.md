@@ -15,6 +15,7 @@ Start here, then load only the documents triggered by the task. These pages desc
 | Start, update, or hand off contributor work | Follow the [active-task handoff](workflow.md#active-task-handoff) and maintain [active_task.md](active_task.md). |
 | Create task worktrees or clean completed runs | [Dump workspace guide](../docs/agents/workspace.md) covers registered ownership, evidence retention, and preview-first retirement. |
 | Complete an explicitly authorized helper, documentation, or maintenance task without an approved feature | Follow the user's stated scope and the relevant source documents. Do not invent Spec Kit task IDs or planning artifacts. |
+| Delegate selected use cases to colleagues | [Use-case delegation map](../docs/use-case-delegation.md) records owners, dependencies, and delivery briefs for UC-03, UC-04, and UC-05. |
 | Check current implementation status | [Implementation status](progress_checker.md) reports repository observations. |
 | Find target verification criteria | Relevant sections of the [target verification matrices](../docs/progress-checker-matrices.md) define evidence for planned capabilities. |
 | Change runtime implementation choices | [Technology stack](tech_stack.md) records approved choices and open decisions. |
