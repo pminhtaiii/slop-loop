@@ -10,6 +10,8 @@ Every pilot PR targets `development`. Never push directly to `main` or `developm
 
 ## Branch and size
 
+Before editing an assigned feature checkout, run `node scripts/agents/pr-workflow.mjs preflight`. It fetches `origin/development`, reports ahead/behind counts, branch naming, dirty paths, and committed diff size, and returns `READY_TO_WORK` or `BLOCKED`. Exit 0 means the report succeeded; read its status. Fetch failure stops the report rather than trusting stale refs. It never switches branches, resets files, rebases, pushes, or opens a PR. Resolve a stale base or invalid branch deliberately; inspect dirty files and retain work. When resuming the same assignment, dirty paths may be expected and require review rather than discarding them. A clean preflight is not a CI or merge-readiness result.
+
 Name a feature branch `feat/NNN-lowercase-description` with a zero-padded three-digit feature number, and title its PR `<branch-name>: <short summary>`, for example `feat/003-retro-improvements: tighten workflow and context checks`. The summary must be 1–80 characters on one line without surrounding whitespace. The pilot base is `development`; parent-branch stacking is outside this pilot.
 
 Keep the change near 1,000 added plus deleted lines against the immediate base (`origin/development`). This is an advisory target. Report reviewable line changes and generated lockfile changes separately, along with their sum and binary file count. If the total is over target, explain why and split the work when it can stand alone. The pilot uses this repository's Node context and test gates; other native project stacks need explicit plan metadata before they are added.

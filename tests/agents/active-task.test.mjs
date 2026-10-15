@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile, spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
@@ -38,6 +38,74 @@ test('a completed task can be cleared while preserving the permanent file exactl
   result = run(checkout, 'clear', '--owner', 'parent', '--task', 'tracking');
   assert.equal(result.status, 0, result.stderr);
   assert.equal(await readFile(path, 'utf8'), baseline);
+});
+
+test('archive previews without writes then preserves evidence before targeted clearing and safe retries', async (t) => {
+  const checkout = await fixture(t);
+  await mkdir(join(checkout, 'docs/verification'), { recursive: true });
+  for (const owner of ['done', 'busy', 'blocked']) {
+    assert.equal(run(checkout, 'start', '--owner', owner, '--task', 'T001', '--summary', `${owner} work`, '--next', 'Verify').status, 0);
+  }
+  assert.equal(run(checkout, 'update', '--owner', 'blocked', '--task', 'T001', '--status', 'blocked').status, 0);
+  assert.equal(run(checkout, 'finish', '--owner', 'done', '--task', 'T001', '--result', 'Checks passed at revision abc').status, 0);
+  const args = ['archive', '--owner', 'done', '--task', 'T001', '--output', 'docs/verification/done.json'];
+  const before = run(checkout, 'list').stdout;
+  let result = run(checkout, ...args);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).applied, false);
+  assert.equal(run(checkout, 'list').stdout, before);
+  await assert.rejects(access(join(checkout, 'docs/verification/done.json')), { code: 'ENOENT' });
+  result = run(checkout, ...args, '--apply');
+  assert.equal(result.status, 0, result.stderr);
+  const archived = await readFile(join(checkout, 'docs/verification/done.json'), 'utf8');
+  assert.equal(JSON.parse(archived).entries[0].result, 'Checks passed at revision abc');
+  assert.deepEqual(JSON.parse(run(checkout, 'list').stdout).map((entry) => entry.owner), ['busy', 'blocked']);
+  result = run(checkout, ...args, '--apply');
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(await readFile(join(checkout, 'docs/verification/done.json'), 'utf8'), archived);
+  for (const owner of ['busy', 'blocked']) assert.equal(run(checkout, 'archive', '--owner', owner, '--task', 'T001', '--output', 'docs/verification/no.json', '--apply').status, 1);
+});
+
+test('archive refuses unsafe destinations, collisions, and a busy store without clearing evidence', async (t) => {
+  const checkout = await fixture(t);
+  await mkdir(join(checkout, 'docs/verification'), { recursive: true });
+  run(checkout, 'start', '--owner', 'done', '--task', 'T001', '--summary', 'Work', '--next', 'Verify');
+  run(checkout, 'finish', '--owner', 'done', '--task', 'T001', '--result', 'Original result');
+  const before = run(checkout, 'list').stdout;
+  const args = ['archive', '--owner', 'done', '--task', 'T001'];
+  await writeFile(join(checkout, 'docs/verification/collision.json'), '{"unrelated":"retain"}\n');
+  for (const output of ['../escape.json', '.agent-work/archive.json', 'context/active_task.md', 'docs/verification/collision.json']) {
+    assert.equal(run(checkout, ...args, '--output', output, '--apply').status, 1);
+    assert.equal(run(checkout, 'list').stdout, before);
+  }
+  await writeFile(join(checkout, '.agent-work/state/active-task.lock'), 'other writer');
+  assert.equal(run(checkout, ...args, '--output', 'docs/verification/new.json', '--apply').status, 1);
+  await assert.rejects(access(join(checkout, 'docs/verification/new.json')), { code: 'ENOENT' });
+  await rm(join(checkout, '.agent-work/state/active-task.lock'));
+  const outside = await fixture(t);
+  await rm(join(checkout, 'docs/verification'), { recursive: true });
+  await symlink(outside, join(checkout, 'docs/verification'), process.platform === 'win32' ? 'junction' : 'dir');
+  assert.equal(run(checkout, ...args, '--output', 'docs/verification/escape.json', '--apply').status, 1);
+  assert.equal(run(checkout, 'list').stdout, before);
+});
+
+test('archive resumes after saving evidence and refuses a later task that reused the same ID', async (t) => {
+  const checkout = await fixture(t);
+  await mkdir(join(checkout, 'docs/verification'), { recursive: true });
+  run(checkout, 'start', '--owner', 'worker', '--task', 'T001', '--summary', 'First task', '--next', 'Verify');
+  run(checkout, 'finish', '--owner', 'worker', '--task', 'T001', '--result', 'First result');
+  const entry = JSON.parse(run(checkout, 'list').stdout)[0];
+  const file = join(checkout, 'docs/verification/resume.json');
+  await writeFile(file, JSON.stringify({ schemaVersion: 1, entries: [entry] }));
+  const args = ['archive', '--owner', 'worker', '--task', 'T001', '--output', 'docs/verification/resume.json', '--apply'];
+  assert.equal(run(checkout, ...args).status, 0);
+  assert.deepEqual(JSON.parse(run(checkout, 'list').stdout), []);
+  run(checkout, 'start', '--owner', 'worker', '--task', 'T001', '--summary', 'Second task', '--next', 'Verify');
+  run(checkout, 'finish', '--owner', 'worker', '--task', 'T001', '--result', 'Second result');
+  const before = run(checkout, 'list').stdout;
+  assert.equal(run(checkout, ...args).status, 1);
+  assert.equal(run(checkout, 'list').stdout, before);
+  assert.equal(JSON.parse(await readFile(file, 'utf8')).entries[0].result, 'First result');
 });
 
 test('worker cleanup preserves the parent entry and active or blocked work', async (t) => {

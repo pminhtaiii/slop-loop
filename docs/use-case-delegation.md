@@ -20,6 +20,8 @@ Other UCs remain unselected for this batch. This is not a permanent `OUT_OF_SCOP
 
 ### Shared foundation ownership
 
+All owners use the [context index](../context/README.md) to load the implementation, standards, and policy guidance triggered by their boundary; the assignment report includes this entry point alongside its UC-specific links.
+
 | Boundary | Owner | Deliverable |
 |---|---|---|
 | Foundation lead, bootstrap, shared contracts, repository tools, and evaluation infrastructure | Tai | Integrate the TypeScript/LangGraph bootstrap, model/tool contracts, controlled repository execution, verification results, budgets, sanitized traces, and evaluation entry point. Coordinate shared-file ownership before implementation. |
@@ -81,6 +83,8 @@ Shared foundation includes the model adapter and structured-output validation, L
 These are proposed evidence mappings, not claims of coverage. The matrices require every knowledge area in the final submitted set; resolve gaps before final scope approval.
 
 ## Assign and hand off
+
+Before assigning or starting a UC, run `node scripts/agents/agent-context.mjs assignment --uc UC-03` (substitute the canonical ID). The JSON report derives the owner, prerequisites, brief, shared foundation, linked context, and feature artifacts from this map. `NEEDS_PLANNING` identifies missing owners or local planning links; `REVIEW_REQUIRED` means links exist, not that their approval or dependency evidence has passed. Confirm those conditions before implementation. The helper is read-only and does not assign GitHub users, rewrite this map, or update task status.
 
 For each UC, fill its owner and link the approved feature artifacts. In those artifacts, assign one owner for shared code, identify dependencies and owned paths, and define executable acceptance checks. Use `UC-*` for use-case identity and the feature's own `T*` IDs for implementation tasks; maintain task completion only in that feature's `tasks.md`.
 

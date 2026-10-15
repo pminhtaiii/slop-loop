@@ -130,6 +130,36 @@ function run(fixtureValue, args, cwd = tmpdir()) {
   });
 }
 
+test('assignment derives a UC brief and flags missing planning artifacts without changing tasks', async (t) => {
+  const current = await fixture(t);
+  const path = join(current.root, 'docs/use-case-delegation.md');
+  const source = '# Delegation\n## Assignments\n| UC | Delivery | Owner | Start condition | Feature artifacts |\n|---|---|---|---|---|\n| UC-03 | Bug fix | Tai | Bounded tools and approval gate | Not created |\n## Delivery order and shared work\n### Shared foundation ownership\nTai leads foundation; others own state and approval.\n## UC-03: Bug fix\n**Deliver:** fix a seeded bug.\n**Acceptance handoff:** baseline and regression pass.\n[Testing](../context/testing.md)\n## UC-04: Resume\nUnrelated brief.\n';
+  await writeFile(path, source);
+  let result = run(current, ['assignment', '--uc', 'UC-03']);
+  assert.equal(result.status, 0, result.stderr);
+  let output = JSON.parse(result.stdout);
+  assert.equal(output.owner, 'Tai');
+  assert.equal(output.status, 'NEEDS_PLANNING');
+  assert.match(output.brief, /baseline and regression/);
+  assert.doesNotMatch(output.brief, /Unrelated brief/);
+  assert.ok(output.context.includes('context/testing.md'));
+  assert.match(output.prerequisites, /approval gate/);
+  const linked = source.replace('Not created', '[Spec](spec.md) [Plan](../specs/feature/plan.md) [Tasks](../specs/feature/tasks.md)');
+  await writeFile(path, linked);
+  result = run(current, ['assignment', '--uc', 'UC-03']);
+  output = JSON.parse(result.stdout);
+  assert.equal(output.status, 'REVIEW_REQUIRED', 'file presence must not claim dependency or approval readiness');
+  assert.equal(output.artifacts.length, 3);
+  for (const text of [linked + '\n| UC-03 | Duplicate | Someone | Unknown | Unknown |\n', linked.replace('[Spec](spec.md)', '[Spec](../../../escape.md)')]) {
+    await writeFile(path, text);
+    assert.equal(run(current, ['assignment', '--uc', 'UC-03']).status, 1);
+  }
+  await writeFile(path, source);
+  assert.equal(run(current, ['assignment', '--uc', 'UC-01']).status, 1);
+  assert.equal(run(current, ['assignment', '--uc', 'UC3']).status, 1);
+  assert.equal(git(current.root, ['diff', '--', 'specs/feature/tasks.md']), '');
+});
+
 test('handoff derives canonical counts and workflow pointers from source docs', async (t) => {
   const current = await fixture(t);
   const result = run(current, ['handoff', '--tasks', 'specs/feature/tasks.md']);
