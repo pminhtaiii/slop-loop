@@ -36,7 +36,7 @@ Create one task worktree and branch from the current integration tip for each di
 
 Reserve tool capacity for the coordinator and one merger agent. Run no more implementers than the remaining available slots. Use an implementer subagent for each task or tightly coupled pair and a separate merger subagent for integration.
 
-Use [Agent Coordination](../../../context/workflow.md#agent-coordination-task-briefs-handoffs-and-reviews) for the existing `agent:context` and `agent:work` helpers, session reuse, task briefs, worker-state refresh, handoffs, and review snapshots. The context helper takes repo-relative task and plan paths; keep the absolute feature directory for direct reads and worker briefs, and pass the absolute checkout through its root option.
+Use [Agent Coordination](../../../context/workflow.md#agent-coordination) for the `agent-context.mjs` and `agent-work.mjs` helpers, session reuse, task briefs, worker-state refresh, handoffs, and review snapshots. Run them with Node.js as documented there. The context helper takes repo-relative task and plan paths; keep the absolute feature directory for direct reads and worker briefs, and pass the absolute checkout through its root option.
 
 Use the helper-generated brief and add only the selected task's relevant contract and acceptance details. The implementer applies TDD in vertical slices, follows the repository's type, constructor-injection, ports-and-adapters, lint, and test rules, and reports actual commands with exit statuses. A worker never changes task status in `tasks.md`. Keep worker artifacts in their session subfolders and accepted specs, `tasks.md`, and concise verification records at canonical paths.
 
