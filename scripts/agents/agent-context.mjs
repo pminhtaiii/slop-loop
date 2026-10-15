@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const moduleRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const usage = `Usage:
+  node scripts/agents/agent-context.mjs assignment --uc UC-03 [--root <checkout>]
   node scripts/agents/agent-context.mjs handoff --tasks <tasks.md> [--root <checkout>]
   node scripts/agents/agent-context.mjs task --tasks <tasks.md> --task T017 [--plan <plan.md>] [--root <checkout>]
   node scripts/agents/agent-context.mjs snapshot --files <repo-relative-file...> [--root <checkout>]
@@ -21,7 +22,7 @@ function parseArguments(argv) {
     return { help: true };
   }
   const mode = argv[0];
-  if (!['handoff', 'task', 'snapshot', 'verify'].includes(mode)) fail(`Unknown mode: ${mode}`);
+  if (!['assignment', 'handoff', 'task', 'snapshot', 'verify'].includes(mode)) fail(`Unknown mode: ${mode}`);
   if (argv.slice(1).includes('--help') || argv.slice(1).includes('-h')) {
     if (argv.length === 2) return { help: true };
     fail('Help cannot be combined with other options.');
@@ -41,7 +42,7 @@ function parseArguments(argv) {
       if (files.length === 0) fail('--files requires at least one repo-relative path.');
       continue;
     }
-    if (!['--tasks', '--task', '--plan', '--snapshot', '--root'].includes(option)) {
+    if (!['--uc', '--tasks', '--task', '--plan', '--snapshot', '--root'].includes(option)) {
       fail(`Unknown option or positional argument: ${option}`);
     }
     if (values.has(option)) fail(`${option} may be supplied once.`);
@@ -54,6 +55,7 @@ function parseArguments(argv) {
   }
 
   const allowed = {
+    assignment: ['--uc', '--root'],
     handoff: ['--tasks', '--root'],
     task: ['--tasks', '--task', '--plan', '--root'],
     snapshot: ['--files', '--root'],
@@ -63,6 +65,7 @@ function parseArguments(argv) {
     if (!allowed.includes(option)) fail(`${option} is not valid for ${mode}.`);
   }
   for (const required of {
+    assignment: ['--uc'],
     handoff: ['--tasks'],
     task: ['--tasks', '--task'],
     snapshot: ['--files'],
@@ -73,6 +76,7 @@ function parseArguments(argv) {
   if (mode === 'task' && !/^T\d{3}$/.test(values.get('--task'))) {
     fail(`Invalid task ID ${values.get('--task')}; use a canonical ID such as T017.`);
   }
+  if (mode === 'assignment' && !/^UC-\d{2}$/.test(values.get('--uc'))) fail('Use a canonical use-case ID such as UC-03.');
   return { mode, values, files };
 }
 
@@ -230,6 +234,64 @@ async function readOptionalText(root, path) {
       return null;
     throw error;
   }
+}
+
+async function assignment(root, uc) {
+  const sourcePath = 'docs/use-case-delegation.md';
+  const source = markdownLines(await readFile(await repoFile(root, sourcePath, 'delegation map'), 'utf8'));
+  const sections = headings(source.lines, source.visible);
+  const rows = source.lines.filter((line, index) => source.visible[index] && /^\|\s*UC-\d{2}\s*\|/.test(line))
+    .map((line) => line.split('|').slice(1, -1).map((cell) => cell.trim()));
+  const seen = new Set();
+  for (const row of rows) {
+    if (row.length !== 5 || seen.has(row[0])) fail('Delegation assignments require five columns and unique UC IDs.');
+    seen.add(row[0]);
+  }
+  const row = rows.find((entry) => entry[0] === uc);
+  if (!row) fail(`${uc} is not assigned in the selected batch; inspect ${sourcePath}.`);
+  const section = (matches) => {
+    const found = sections.filter(matches);
+    if (found.length !== 1) fail('Delegation map requires a unique UC brief and shared-work section.');
+    const start = found[0];
+    const end = sections.find((heading) => heading.index > start.index && heading.level <= start.level)?.index ?? source.lines.length;
+    return source.lines.slice(start.index, end).join('\n').trim();
+  };
+  const brief = section((heading) => heading.level === 2 && heading.title.startsWith(`${uc}:`));
+  const sharedFoundation = section((heading) => heading.level === 2 && heading.title === 'Delivery order and shared work');
+  const missing = [];
+  const pointers = async (text, artifacts = false) => {
+    const result = [];
+    const prose = markdownLines(text);
+    for (const line of prose.lines.filter((_, index) => prose.visible[index])) {
+      for (const match of line.matchAll(/\[[^\]]*\]\((?:<([^>]+)>|([^\s)]+))\)/g)) {
+        const target = (match[1] ?? match[2]).split('#')[0];
+        if (!target) continue;
+        if (/^[a-z][a-z\d+.-]*:/i.test(target)) {
+          if (artifacts) fail('Feature artifacts must be local checkout paths.');
+          continue;
+        }
+        const input = normalizedRepoPath(root, resolve(root, 'docs', decodeURIComponent(target)));
+        try {
+          const path = await repoFile(root, input, 'assignment link');
+          if (!(await stat(path)).isFile()) fail(`Assignment link is not a file: ${input}`);
+          result.push(normalizedRepoPath(root, path));
+        } catch (error) {
+          if (error.code !== 'ENOENT') throw error;
+          missing.push(`Missing linked file: ${input}`);
+        }
+      }
+    }
+    return [...new Set(result)];
+  };
+  const artifacts = await pointers(row[4], true);
+  for (const name of ['spec.md', 'plan.md', 'tasks.md']) {
+    if (!artifacts.some((path) => basename(path) === name)) missing.push(`Link the approved ${name} in the Feature artifacts cell.`);
+  }
+  if (!row[2] || /pending|unassigned/i.test(row[2])) missing.push('Assign a colleague owner.');
+  const context = await pointers(brief + '\n' + sharedFoundation);
+  process.stdout.write(JSON.stringify({ ...(await checkout(root)), uc, owner: row[2], delivery: row[1], prerequisites: row[3],
+    status: missing.length ? 'NEEDS_PLANNING' : 'REVIEW_REQUIRED', missing, artifacts, context, brief, sharedFoundation,
+    source: sourcePath, note: 'Confirm artifact approval and dependency evidence before implementation; this report never updates task status.' }, null, 2) + '\n');
 }
 
 function workflowEvidencePointers(root, activeText) {
@@ -568,6 +630,7 @@ async function main() {
   }
   const values = args.values;
   const root = await resolveRoot(values.get('--root'));
+  if (args.mode === 'assignment') return assignment(root, values.get('--uc'));
   if (args.mode === 'handoff') return handoff(root, values.get('--tasks'));
   if (args.mode === 'task')
     return taskContext(root, values.get('--tasks'), values.get('--task'), values.get('--plan'));

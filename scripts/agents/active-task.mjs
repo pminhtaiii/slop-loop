@@ -1,6 +1,7 @@
-import { lstat, readFile } from 'node:fs/promises';
+import { lstat, open, readFile, realpath } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isDeepStrictEqual } from 'node:util';
 import { atomicWrite, dataDirectory, readJson, repository, withLock } from './agent-store.mjs';
 
 const usage = `Usage:
@@ -8,11 +9,13 @@ const usage = `Usage:
   node scripts/agents/active-task.mjs update --owner <id> --task <id> [--next <text>] [--verification <text>] [--status active|blocked]
   node scripts/agents/active-task.mjs finish --owner <id> --task <id> --result <text>
   node scripts/agents/active-task.mjs clear --owner <id> --task <id>
+  node scripts/agents/active-task.mjs archive --owner <id> --task <id> --output docs/verification/<name>.json [--apply]
   node scripts/agents/active-task.mjs list
   node scripts/agents/active-task.mjs render
 
 All commands accept --root <checkout>. Use a unique owner per session/worker.
 finish retains the result for review; clear removes only that completed entry.
+archive previews by default; --apply preserves and verifies a completed handoff before clearing it.
 All worktrees share the primary checkout's .agent-work/state/active-tasks.json.
 Primary mutations refresh Markdown; worker mutations leave tracked views unchanged.
 render explicitly refreshes the selected checkout's view.
@@ -22,17 +25,19 @@ function parseArguments(args) {
   const [command, ...options] = args;
   const fields = {
     start: ['summary', 'next'], update: ['next', 'verification', 'status'],
-    finish: ['result'], clear: [], list: [], render: [],
+    finish: ['result'], clear: [], archive: ['output'], list: [], render: [],
   };
   if (!Object.hasOwn(fields, command)) throw new Error(usage);
   const values = {};
-  for (let index = 0; index < options.length; index += 2) {
+  for (let index = 0; index < options.length; index++) {
+    if (options[index] === '--apply' && command === 'archive' && !values.apply) { values.apply = true; continue; }
     const name = options[index].slice(2);
     const value = options[index + 1];
     if (!options[index].startsWith('--') || !['root', 'owner', 'task', ...fields[command]].includes(name) || Object.hasOwn(values, name) || !value?.trim() || value.startsWith('--')) {
       throw new Error(`Invalid or duplicate option: ${options[index]}\n${usage}`);
     }
     values[name] = value;
+    index++;
   }
   for (const name of ['list', 'render'].includes(command) ? [] : ['owner', 'task']) {
     if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(values[name] ?? '')) throw new Error(`A valid --${name} ID is required.`);
@@ -42,6 +47,7 @@ function parseArguments(args) {
   }
   if (command === 'update' && !fields.update.some((name) => values[name])) throw new Error('update requires progress, verification, or status.');
   if (values.status && !['active', 'blocked'].includes(values.status)) throw new Error('Status must be active or blocked.');
+  if (command === 'archive' && !values.output) throw new Error('archive requires --output docs/verification/<name>.json.');
   return { command, values };
 }
 
@@ -103,7 +109,38 @@ async function run(args) {
     }
     if (command === 'list') return console.log(JSON.stringify(entries, null, 2));
     const index = entries.findIndex((entry) => entry.owner === values.owner && entry.task === values.task);
-    if (command === 'render') {
+    if (command === 'archive') {
+      if (!/^docs\/verification\/[A-Za-z0-9][A-Za-z0-9._-]*\.json$/.test(values.output)) throw new Error('Archive output must be a JSON file directly under docs/verification/.');
+      for (const part of ['docs', 'docs/verification']) {
+        const directory = resolve(repo.root, part);
+        const info = await lstat(directory);
+        if (!info.isDirectory() || info.isSymbolicLink() || await realpath(directory) !== directory) throw new Error('Archive directories must be regular checkout directories, not links.');
+      }
+      const output = resolve(repo.root, values.output);
+      let archive;
+      try { archive = await readJson(output); }
+      catch (error) { if (error.code !== 'ENOENT') throw error; }
+      if (archive) {
+        if (archive.schemaVersion !== 1 || !Array.isArray(archive.entries) || archive.entries.length !== 1) throw new Error('Archive already exists with different content; choose another output.');
+        const saved = validateEntries(archive.entries)[0];
+        if (saved.owner !== values.owner || saved.task !== values.task || saved.status !== 'completed' || index !== -1 && !isDeepStrictEqual(saved, entries[index])) throw new Error('Archive already exists with different content; retain the handoff.');
+      }
+      if (index === -1) {
+        if (!archive) throw new Error('No entry matches that owner and task.');
+        return console.log(JSON.stringify({ applied: Boolean(values.apply), alreadyArchived: true, output: values.output }));
+      }
+      const entry = entries[index];
+      if (entry.status !== 'completed') throw new Error('Only completed entries can be archived; retain active or blocked work.');
+      if (!values.apply) return console.log(JSON.stringify({ applied: false, output: values.output, entry }));
+      const expected = { schemaVersion: 1, entries: [entry] };
+      if (!archive) {
+        const handle = await open(output, 'wx', 0o600);
+        try { await handle.writeFile(JSON.stringify(expected, null, 2) + '\n', 'utf8'); await handle.sync(); }
+        finally { await handle.close(); }
+      }
+      if (!isDeepStrictEqual(await readJson(output), expected)) throw new Error('Archive verification failed; handoff retained.');
+      entries.splice(index, 1);
+    } else if (command === 'render') {
       // The shared store is authoritative; rendering changes only this checkout.
     } else if (command === 'start') {
       if (index !== -1) throw new Error('Entry already exists; use update or finish instead of overwriting it.');
@@ -128,7 +165,7 @@ async function run(args) {
       try { await atomicWrite(path, content); }
       catch (error) { throw new Error(`Shared state saved, but view refresh failed: ${error.message}`); }
     }
-    console.log(`${command}: ${values.owner}/${values.task}; ${entries.length} assignment(s) retained.`);
+    console.log(command === 'archive' ? JSON.stringify({ applied: true, output: values.output, retained: entries.length }) : `${command}: ${values.owner}/${values.task}; ${entries.length} assignment(s) retained.`);
   });
 }
 

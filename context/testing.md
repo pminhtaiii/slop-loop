@@ -27,13 +27,15 @@ The task-context and managed-session helpers require Node.js 20 or newer, use No
 node --test tests/agents/agent-context.test.mjs tests/agents/agent-work.test.mjs
 ```
 
-Test active-task handoff behavior directly with:
+Test active-task handoff behavior, preview/apply archival, collision refusal, and archive recovery directly with:
 
 ```powershell
 node --test tests/agents/active-task.test.mjs
 ```
 
 Test worktree retirement eligibility and safe removal in disposable Git repositories with `node --test tests/agents/agent-worktree.test.mjs`. These checks cover preview-only operation, retained branches, unmerged commits, dirty/untracked/ignored data, resumed tasks, changed evidence, and locked or unknown worktrees. Skill evaluations additionally follow [the versioned evidence procedure](workflow.md#skill-evaluation-evidence).
+
+For contributor coordination changes, run `node --test tests/agents/pr-workflow.test.mjs tests/agents/agent-context.test.mjs tests/agents/active-task.test.mjs`. These cover preflight reporting without publication, UC brief extraction without ledger writes, and archive-before-clear safety, alongside existing behavior. Report partial evidence separately from complete regression results.
 
 Run the complete contributor test suite with Node's test-runner discovery:
 

@@ -7,7 +7,8 @@ import { atomicWrite, dataDirectory, readJson, repository, withLock } from './ag
 const checksRequired = ['contributor-checks (ubuntu-latest)', 'contributor-checks (windows-latest)'];
 const featureName = /^feat\/\d{3}-[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const maxRepairs = 3;
-const usage = `Usage: node scripts/agents/pr-workflow.mjs <publish|status|ready|repair|watch> [--root <checkout>]
+const usage = `Usage: node scripts/agents/pr-workflow.mjs <preflight|publish|status|ready|repair|watch> [--root <checkout>]
+preflight fetches origin/development and reports freshness, naming, dirty paths, and diff size; it never publishes.
 publish requires --body-file <file> and --summary <short summary>; optional --base development.
 repair requires --reason <diagnosed finding>. At most three repair rounds per PR.
 watch polls for at most ten minutes, stopping for fixes, human approval, or timeout.
@@ -61,7 +62,7 @@ const query = `query($owner:String!,$name:String!,$number:Int!){repository(owner
 export async function runWorkflow(args, dependencies = {}) {
   if (args.length === 1 && ['--help', '-h'].includes(args[0])) return { usage };
   const [command, ...rest] = args;
-  const allowed = { publish: ['root', 'base', 'body-file', 'summary'], status: ['root'], ready: ['root'], repair: ['root', 'reason'], watch: ['root'] };
+  const allowed = { preflight: ['root'], publish: ['root', 'base', 'body-file', 'summary'], status: ['root'], ready: ['root'], repair: ['root', 'reason'], watch: ['root'] };
   if (!Object.hasOwn(allowed, command)) throw new Error(usage);
   const values = {};
   for (let index = 0; index < rest.length; index += 2) {
@@ -83,11 +84,22 @@ export async function runWorkflow(args, dependencies = {}) {
     return (dependencies.execute ?? execute)(binary, argv, repo.root, timeout);
   };
   const git = (...argv) => call('git', argv);
-  const branch = git('symbolic-ref', '--quiet', '--short', 'HEAD');
-  if (!featureName.test(branch)) throw new Error('Use feat/<three-digit-number>-<lowercase-description>; main and development cannot be published.');
+  const branch = command === 'preflight' ? git('branch', '--show-current') : git('symbolic-ref', '--quiet', '--short', 'HEAD');
   const origin = git('remote', 'get-url', 'origin');
   const match = origin.match(/^(?:https:\/\/github\.com\/|git@github\.com:)([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?)(?:\.git)?$/);
   if (!match) throw new Error('origin must identify a GitHub repository over HTTPS or SSH.');
+  if (command === 'preflight') {
+    git('fetch', '--no-tags', 'origin', 'development');
+    const head = git('rev-parse', 'HEAD'), base = git('rev-parse', 'origin/development');
+    const [behind, ahead] = git('rev-list', '--left-right', '--count', `${base}...${head}`).split(/\s+/).map(Number);
+    const dirty = git('status', '--porcelain', '--untracked-files=all');
+    const branchValid = featureName.test(branch);
+    const blockers = [!branchValid && 'Use a feat/NNN-description branch.', behind > 0 && 'Branch is behind development; integrate its changes before editing.', dirty && 'Review existing dirty paths before starting another assignment.'].filter(Boolean);
+    const size = changedLines(git('diff', '--numstat', '--no-renames', `${base}...${head}`));
+    if (git('rev-parse', 'HEAD') !== head || git('branch', '--show-current') !== branch) throw new Error('Checkout changed during preflight; rerun it.');
+    return { status: blockers.length ? 'BLOCKED' : 'READY_TO_WORK', branch, branchValid, head, base, behind, ahead, dirty, size, blockers };
+  }
+  if (!featureName.test(branch)) throw new Error('Use feat/<three-digit-number>-<lowercase-description>; main and development cannot be published.');
   const remote = match[1], [owner, name] = remote.split('/');
   const gh = (...argv) => call('gh', argv);
   const json = (...argv) => JSON.parse(gh(...argv));

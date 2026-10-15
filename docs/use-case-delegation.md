@@ -82,6 +82,8 @@ These are proposed evidence mappings, not claims of coverage. The matrices requi
 
 ## Assign and hand off
 
+Before assigning or starting a UC, run `node scripts/agents/agent-context.mjs assignment --uc UC-03` (substitute the canonical ID). The JSON report derives the owner, prerequisites, brief, shared foundation, linked context, and feature artifacts from this map. `NEEDS_PLANNING` identifies missing owners or local planning links; `REVIEW_REQUIRED` means links exist, not that their approval or dependency evidence has passed. Confirm those conditions before implementation. The helper is read-only and does not assign GitHub users, rewrite this map, or update task status.
+
 For each UC, fill its owner and link the approved feature artifacts. In those artifacts, assign one owner for shared code, identify dependencies and owned paths, and define executable acceptance checks. Use `UC-*` for use-case identity and the feature's own `T*` IDs for implementation tasks; maintain task completion only in that feature's `tasks.md`.
 
 Colleagues follow the [contributor workflow](../context/workflow.md) for isolated worktrees, active-task registration, integration, and context refresh. A completion handoff includes the UC/task IDs, branch and revision, changed paths, focused/regression/evaluation commands and outcomes, evidence links, and remaining blockers. The coordinator updates observed implementation status only after reviewing integrated evidence.

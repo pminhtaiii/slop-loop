@@ -173,6 +173,34 @@ test('publishing is gated and repeatable; repair count survives new publishes an
   assert.equal(new Set(record.repairRounds.map((round) => round.head)).size, 3);
 });
 
+test('preflight reports freshness, dirty paths, naming, and size without publishing', async (t) => {
+  const f = await checkout(t);
+  const first = await f.run('preflight');
+  assert.equal(first.status, 'READY_TO_WORK');
+  assert.equal(first.ahead, 1);
+  assert.equal(first.behind, 0);
+  assert.equal(first.size.reviewable, 1);
+  assert.equal(f.calls.some((call) => call[0] === 'gh' || call.includes('push') || call[0] === process.execPath), false);
+  await writeFile(join(f.root, 'unfinished.md'), 'retain this work\n');
+  const dirty = await f.run('preflight');
+  assert.equal(dirty.status, 'BLOCKED');
+  assert.match(dirty.dirty, /unfinished\.md/);
+  const git = (...args) => {
+    const result = spawnSync('git', args, { cwd: f.root, encoding: 'utf8', windowsHide: true });
+    assert.equal(result.status, 0, result.stderr); return result.stdout.trim();
+  };
+  const advanced = git('commit-tree', 'HEAD^{tree}', '-p', 'origin/development', '-m', 'base advances');
+  git('update-ref', 'refs/remotes/origin/development', advanced);
+  assert.equal((await f.run('preflight')).behind, 1);
+  git('checkout', '-b', 'wrong-name');
+  assert.equal((await f.run('preflight')).branchValid, false);
+  assert.equal(await readFile(join(f.root, 'unfinished.md'), 'utf8'), 'retain this work\n');
+  await assert.rejects(runWorkflow(['preflight', '--root', f.root], { execute(binary, args, cwd, timeout) {
+    if (binary === 'git' && args[0] === 'fetch') throw new Error('Fetch unavailable');
+    return f.execute(binary, args, cwd, timeout);
+  } }), /Fetch unavailable/);
+});
+
 test('a failed local gate never pushes or opens a PR', async (t) => {
   const f = await checkout(t); f.fail();
   await assert.rejects(f.run('publish', '--body-file', f.body), /Local gate failed/);
