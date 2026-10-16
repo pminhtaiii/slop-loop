@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
 import test from 'node:test';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -26,7 +26,7 @@ function git(cwd, ...args) {
 function flag(args, name) { return args[args.indexOf(name) + 1]; }
 
 async function fixture(t) {
-  const root = await mkdtemp(join(tmpdir(), 'submission-pr-'));
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'submission-pr-')));
   t.after(() => rm(root, { recursive: true, force: true }));
   const source = join(root, 'source');
   const privateSeed = join(root, 'private-seed');
@@ -146,7 +146,7 @@ async function fixture(t) {
 }
 
 test('inspection rejects a public submission repository before any publication write', async t => {
-  const root = await mkdtemp(join(tmpdir(), 'submission-pr-guard-'));
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'submission-pr-guard-')));
   t.after(() => rm(root, { recursive: true, force: true }));
   const calls = [];
   const execute = (binary, args) => {
