@@ -95,6 +95,7 @@ test('routine summaries expose comments and log paths without historical command
   assert.equal(summary.logs.tests.log, 'tests.log');
   assert.equal(summary.unresolved[0].id, 'thread');
   assert.doesNotMatch(JSON.stringify(summary), /lengthy/);
+  assert.equal(workflowSummary({ schemaVersion: 1, repairRounds: [], observation: { reason: 'Update the feature branch against development.' } }).reason, 'Update the feature branch against development.');
 });
 
 async function checkout(t) {

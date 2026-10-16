@@ -36,7 +36,20 @@ test('failed and timed-out gates retain diagnostics, exit status and bounded sum
     assert.ok(failure);
     assert.ok(failure.message.length < 2500);
     assert.equal(failure.gate.status, timeout ? 'timed-out' : 'failed');
-    assert.equal(failure.gate.exitCode, timeout ? null : 2);
+    if (timeout) assert.notEqual(failure.gate.exitCode, 0, 'termination preserves the platform exit status');
+    else assert.equal(failure.gate.exitCode, 2);
     assert.match(await readFile(logPath, 'utf8'), timeout ? /"status":"timed-out"/ : /x{5000}/);
   }
+});
+
+test('gate timeout terminates descendants inheriting its output pipes', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'workflow-gate-tree-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const script = "const {spawn}=require('node:child_process');const child=spawn(process.execPath,['-e','setTimeout(() => {}, 6000)'],{stdio:['ignore','inherit','inherit']});require('node:fs').writeFileSync('descendant.pid',String(child.pid));setTimeout(() => {},6000);";
+  const started = Date.now();
+  await assert.rejects(runGate({ name: 'nested', args: ['-e', script], cwd: directory, logPath: join(directory, 'nested.log'), timeout: 1500, report() {} }), /timed-out/);
+  const pid = Number(await readFile(join(directory, 'descendant.pid'), 'utf8'));
+  t.after(() => { try { process.kill(pid); } catch (error) { if (error.code !== 'ESRCH') throw error; } });
+  assert.throws(() => process.kill(pid, 0), error => error.code === 'ESRCH', 'descendant must not survive a gate timeout');
+  assert.ok(Date.now() - started < 5000, 'timeout must not wait for inherited pipes from surviving descendants');
 });
