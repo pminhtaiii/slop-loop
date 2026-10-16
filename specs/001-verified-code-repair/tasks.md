@@ -298,7 +298,7 @@ Develop accepted contract mocks once (T004), then run independent story lanes on
 
 ## Phase 2 integration corrections
 
-- [ ] T035 Preserve Node.js 24 source-test discovery and compiled runtime-test compatibility per FR-013 (partial).
+- [X] T035 Preserve Node.js 24 source-test discovery and compiled runtime-test compatibility per FR-013 (partial).
   - **Owner**: Tai / integration lane.
   - **Dependencies**: T003; apply the same import convention to T004 files before final publication.
   - **Owned Paths**: tsconfig.json; src/contracts/uc03.ts (erasable TypeScript syntax only); tests/runtime/contract/uc03.test.ts; relative imports in T004 support/tests when integrated.
