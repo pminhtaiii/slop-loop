@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "root": "C:\\coding agent",
+  "branch": "feat/001-verified-code-repair",
+  "head": "aac6b98d2413a117b99fb2b5565337197c1ac2ea",
+  "files": [
+    {
+      "path": "package.json",
+      "sha256": "63c9ede6c7f2eaa3715f8b29a74daa2c9e245f5b7d42c15f5b1a8951850cfdd6"
+    },
+    {
+      "path": "package-lock.json",
+      "sha256": "f4e48688024f626fbf8932be6f47c7e66819886dd7da3692499e6d0ed76803a3"
+    },
+    {
+      "path": "tsconfig.json",
+      "sha256": "c8acc09f1fc4c583515d1820a8b4b310e4c839a88e0e3c06b9dc00791e3cace9"
+    },
+    {
+      "path": "eslint.config.mjs",
+      "sha256": "5972e0dced3c7e1075fb4d4508b96215c3eb27a5389ba026b7c5927f2ae5be3f"
+    },
+    {
+      "path": ".github/workflows/runtime-checks.yml",
+      "sha256": "1a741bf3bf932c6c78729929cda522d77936a96e42587c855e3dc3b2fbdbdb94"
+    },
+    {
+      "path": ".github/workflows/contributor-checks.yml",
+      "sha256": "fb73d094b4f302c9f04d981aad1d217117b2649ed3f1aa313fc4912894aff0b9"
+    },
+    {
+      "path": "tests/runtime/bootstrap.test.ts",
+      "sha256": "acf1c22137ccd013d1ac9cef97e7b1f155d52dacf1dbc9f0def6e410bfc0aa07"
+    },
+    {
+      "path": "specs/001-verified-code-repair/spec.md",
+      "sha256": "4303fe9b2d565fec8a119b81e93df21863f4df68b74c1d432092d6652ba47c46"
+    },
+    {
+      "path": "specs/001-verified-code-repair/plan.md",
+      "sha256": "6255d35ab95a4afee10a5a916836b9cffcb8225b0b887a20981fca53cc9942fc"
+    },
+    {
+      "path": "specs/001-verified-code-repair/tasks.md",
+      "sha256": "1575208fbc925a79857e08c9902530efc00b1ed3b8b3e7e6fa3ee5221cf1d832"
+    },
+    {
+      "path": "specs/001-verified-code-repair/contracts/decisions.md",
+      "sha256": "92e96473237daaa9fe29da35ce1d3ace082f5e5d386720da4baee99dac8bb145"
+    },
+    {
+      "path": "context/tech_stack.md",
+      "sha256": "114ce8fa1445893441311e16bfe0ebb9059514090c5971b1430654573fcbb70a"
+    },
+    {
+      "path": "context/testing.md",
+      "sha256": "be4e9fae7704122fb1230cdc08afa74a6b51c2ae78394e52f93fbdaccc7768ad"
+    }
+  ]
+}
