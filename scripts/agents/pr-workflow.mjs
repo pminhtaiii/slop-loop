@@ -1,4 +1,6 @@
 import { spawnSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import { runGate } from './workflow-gate.mjs';
 import { assertNoTrackedArtifacts } from '../ci/check-tracked-files.mjs';
 import { readFile, stat } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
@@ -8,11 +10,12 @@ import { atomicWrite, dataDirectory, readJson, repository, withLock } from './ag
 const checksRequired = ['contributor-checks (ubuntu-latest)', 'contributor-checks (windows-latest)', 'runtime-checks (ubuntu-latest)', 'runtime-checks (windows-latest)'];
 const featureName = /^feat\/\d{3}-[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const maxRepairs = 3;
-const usage = `Usage: node scripts/agents/pr-workflow.mjs <preflight|publish|status|ready|repair|watch|record-app-state|complete> [--root <checkout>]
+const usage = `Usage: node scripts/agents/pr-workflow.mjs <preflight|publish|status|ready|repair|watch|record-app-state|complete|prepare-next> [--root <checkout>]
 preflight fetches origin/development and reports freshness, naming, dirty paths, and diff size; it never publishes.
 publish requires --body-file <file> and --summary <short summary>; optional --base development.
 repair requires --reason <diagnosed finding>. At most three repair rounds per PR.
 record-app-state requires --receipt <app list_thread_pull_requests JSON>.
+prepare-next --branch feat/NNN-description creates a fresh branch from fetched development after this branch's recorded PR merges; source branches and worktrees are retained.
 complete verifies clean published current-head work, linked PR evidence and passing CI; it never merges.
 watch polls for at most ten minutes, stopping for fixes, human approval, or timeout.
 The helper never commits, merges, force-pushes, or resolves review threads.`;
@@ -32,7 +35,6 @@ export function assess({ head, pr, checks }) {
   result.failedChecks = latest.filter((check) => check?.status === 'completed' && check.conclusion !== 'success').map((check) => ({ name: check.name, conclusion: check.conclusion, url: check.details_url }));
   if (result.failedChecks.length) result.status = 'NEEDS_FIX';
   else if (pr.mergeable === 'UNKNOWN' || latest.some((check) => !check || check.status !== 'completed')) result.status = 'WAITING_CI';
-  else if (result.unresolved.length) result.status = 'NEEDS_FIX';
   else if (pr.mergeStateStatus === 'BLOCKED' && pr.isDraft === false) return { ...result, status: 'BLOCKED', reason: 'GitHub reports an unmet merge requirement.' };
   else result.status = pr.isDraft === false ? 'AWAITING_HUMAN_MERGE' : 'READY_FOR_HUMAN';
   return result;
@@ -50,6 +52,13 @@ export function changedLines(numstat) {
   return { reviewable, generated, binaries, overTarget: reviewable + generated > 1000 };
 }
 
+export function workflowSummary(record) {
+  if (record.usage || !record.schemaVersion) return record;
+  const unresolved = (record.observation?.unresolved ?? []).map(thread => ({ id: thread.id, isOutdated: thread.isOutdated, urls: thread.comments?.nodes.map(comment => comment.url) ?? [] }));
+  const logs = Object.fromEntries(Object.entries(record.gateLogs ?? {}).map(([name, gate]) => [name, { status: gate.status, exitCode: gate.exitCode, log: gate.log, durationMs: gate.durationMs }]));
+  return { status: record.status, branch: record.branch, head: record.head ?? record.publishedHead, pr: record.pr, url: record.url, size: record.size, reason: record.reason, repairRounds: record.repairRounds.length, failedChecks: record.observation?.failedChecks ?? [], unresolved, logs, localVerifiedHead: record.localVerification?.head };
+}
+
 function execute(binary, args, cwd, timeout = 30_000) {
   const result = spawnSync(binary, args, { cwd, encoding: 'utf8', windowsHide: true, timeout, maxBuffer: 2 * 1024 * 1024 });
   if (result.error || result.status !== 0) throw new Error(result.error?.message || result.stderr || result.stdout || `${binary} failed (${result.status})`);
@@ -65,7 +74,7 @@ const query = `query($owner:String!,$name:String!,$number:Int!){repository(owner
 export async function runWorkflow(args, dependencies = {}) {
   if (args.length === 1 && ['--help', '-h'].includes(args[0])) return { usage };
   const [command, ...rest] = args;
-  const allowed = { preflight: ['root'], publish: ['root', 'base', 'body-file', 'summary'], status: ['root'], 'record-app-state': ['root', 'receipt'], complete: ['root'], ready: ['root'], repair: ['root', 'reason'], watch: ['root'] };
+  const allowed = { preflight: ['root'], 'prepare-next': ['root', 'branch'], publish: ['root', 'base', 'body-file', 'summary'], status: ['root'], 'record-app-state': ['root', 'receipt'], complete: ['root'], ready: ['root'], repair: ['root', 'reason'], watch: ['root'] };
   if (!Object.hasOwn(allowed, command)) throw new Error(usage);
   const values = {};
   for (let index = 0; index < rest.length; index += 2) {
@@ -77,6 +86,7 @@ export async function runWorkflow(args, dependencies = {}) {
   if (command === 'publish' && !values['body-file'] || command === 'repair' && !values.reason?.trim()) throw new Error(usage);
   if (command === 'publish' && !validSummary(values.summary)) throw new Error('Provide --summary with 1–80 characters on one line, without surrounding whitespace.');
   if (values.base && values.base !== 'development') throw new Error('The pilot only publishes to development.');
+  if (command === 'prepare-next' && !featureName.test(values.branch ?? '')) throw new Error('prepare-next requires --branch feat/NNN-description.');
   const now = dependencies.now ?? (() => Math.floor(performance.now()));
   const deadline = command === 'watch' ? now() + 600_000 : undefined;
   const repo = await repository(values.root ?? resolve(dirname(fileURLToPath(import.meta.url)), '../..'));
@@ -116,10 +126,22 @@ export async function runWorkflow(args, dependencies = {}) {
     if (record.schemaVersion !== 1 || record.repository !== remote || record.branch !== branch || record.base !== 'development' || !Array.isArray(record.repairRounds)) throw new Error('Invalid or mismatched PR workflow record.');
     const save = async () => { record.updatedAt = new Date().toISOString(); await atomicWrite(path, JSON.stringify(record, null, 2) + '\n'); };
     const find = () => {
-      const prs = json('pr', 'list', '--repo', remote, '--head', branch, '--state', 'open', '--json', 'number,url,baseRefName');
+      const prs = json('pr', 'list', '--repo', remote, '--head', branch, '--state', 'open', '--json', 'number,url,baseRefName,headRefOid');
       if (prs.length > 1 || prs.some((pr) => pr.baseRefName !== 'development')) throw new Error('Conflicting open PR/base; inspect before publishing.');
       return prs[0];
     };
+    if (command === 'prepare-next') {
+      if (git('status', '--porcelain', '--untracked-files=all')) throw new Error('prepare-next requires a clean checkout; commit or preserve local work first.');
+      if (!record.pr) throw new Error('A recorded merged PR is required; preserve its workflow accounting.');
+      const merged = json('pr', 'view', String(record.pr), '--repo', remote, '--json', 'state,headRefName,baseRefName');
+      if (merged.state !== 'MERGED' || merged.headRefName !== branch || merged.baseRefName !== 'development') throw new Error('The recorded PR must be merged into development before preparing another branch.');
+      if (values.branch === branch || git('branch', '--list', values.branch)) throw new Error('Choose a different branch; target already exists.');
+      git('fetch', '--no-tags', 'origin', 'refs/heads/development:refs/remotes/origin/development');
+      const base = git('rev-parse', 'origin/development');
+      if (git('status', '--porcelain', '--untracked-files=all') || git('branch', '--show-current') !== branch) throw new Error('Checkout changed during preparation.');
+      git('switch', '--no-track', '-c', values.branch, base);
+      return { status: 'READY_TO_WORK', branch: values.branch, head: base, base, preservedBranch: branch, mergedPr: record.pr };
+    }
     if (command === 'publish') {
       const title = `${branch}: ${values.summary}`;
       const bodyPath = resolve(values['body-file']);
@@ -128,31 +150,48 @@ export async function runWorkflow(args, dependencies = {}) {
       if (!body.trim() || Buffer.byteLength(body) > 65_536) throw new Error('PR body must contain 1–65536 bytes.');
       if (git('status', '--porcelain', '--untracked-files=all')) throw new Error('Commit the assigned changes before publishing; checkout must be clean.');
       assertNoTrackedArtifacts(git('ls-files', '-z'));
+      const initialPr = find();
+      if (record.pr && (!initialPr || initialPr.number !== record.pr)) throw new Error('Recorded PR is closed or replaced; start a new feature branch instead of resetting its budget.');
+      if (initialPr && !record.pr && !record.publicationStarted) throw new Error('Existing PR has no local accounting; recover its workflow record before publishing.');
       git('fetch', '--no-tags', 'origin', 'refs/heads/development:refs/remotes/origin/development');
       const size = changedLines(git('diff', '--numstat', '--no-renames', 'origin/development...HEAD'));
       if (!size.reviewable && !size.generated && !size.binaries) throw new Error('No changes against development.');
       const head = git('rev-parse', 'HEAD');
-      const contextOutput = call(process.execPath, [resolve(repo.root, 'scripts/ci/check-context.mjs')], 600_000);
+      const gateLogs = {};
+      const gate = async (name, argv) => {
+        if (dependencies.execute) return call(process.execPath, argv, 600_000);
+        const directory = await dataDirectory(repo, 'pr-workflow-logs');
+        try {
+          const result = await runGate({ name, args: argv, cwd: repo.root, logPath: resolve(directory, `${Date.now()}-${randomUUID()}-${name}.log`), report: dependencies.report });
+          gateLogs[name] = result;
+          return result.summary || 'Passed without output.';
+        } catch (error) {
+          if (error.gate) { record.gateLogs = { ...gateLogs, [name]: error.gate }; await save(); }
+          throw error;
+        }
+      };
+      const contextOutput = await gate('context', [resolve(repo.root, 'scripts/ci/check-context.mjs')]);
       const dependencyChanges = git('diff', '--name-only', record.publishedHead ?? 'origin/development', 'HEAD', '--', 'package.json', '**/package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', '.npmrc', '.pnpmfile.cjs', 'pnpmfile.cjs');
-      const installOutput = dependencyChanges ? call(process.execPath, [resolve(repo.root, 'scripts/ci/check-dependency-install.mjs')], 600_000) : 'Dependency inputs unchanged since the last publication/base.';
-      const runtimeOutput = call(process.execPath, [resolve(repo.root, 'scripts/ci/check-runtime.mjs')], 600_000);
-      const testOutput = call(process.execPath, ['--test'], 600_000);
-      if (git('status', '--porcelain', '--untracked-files=all') || git('rev-parse', 'HEAD') !== head) throw new Error('Checkout changed during local gates; inspect before push.');
+      const installOutput = dependencyChanges ? await gate('dependencies', [resolve(repo.root, 'scripts/ci/check-dependency-install.mjs')]) : 'Dependency inputs unchanged since the last publication/base.';
+      const runtimeOutput = await gate('runtime', [resolve(repo.root, 'scripts/ci/check-runtime.mjs')]);
+      const testOutput = await gate('tests', ['--test']);
+      if (git('status', '--porcelain', '--untracked-files=all') || git('rev-parse', 'HEAD') !== head || git('branch', '--show-current') !== branch) throw new Error('Checkout changed during local gates; inspect before push.');
       let pr = find();
       if (record.pr && (!pr || pr.number !== record.pr)) throw new Error('Recorded PR is closed or replaced; start a new feature branch instead of resetting its budget.');
-      if (pr && !record.pr && !record.publicationStarted) throw new Error('Existing PR has no local accounting; recover its workflow record before publishing.');
+      if (pr?.number !== initialPr?.number || pr?.headRefOid !== initialPr?.headRefOid) throw new Error('PR changed during local gates; inspect its current head before publishing.');
       record.localVerification = { head, context: contextOutput.slice(-2000), runtime: runtimeOutput.slice(-2000), dependencies: installOutput.slice(-2000), tests: testOutput.split('\n').slice(-10).join('\n') };
+      record.gateLogs = gateLogs;
       delete record.completion;
       record.publicationStarted = true;
       await save();
-      git('push', 'origin', `HEAD:refs/heads/${branch}`);
+      git('push', '--set-upstream', 'origin', `HEAD:refs/heads/${branch}`);
       if (pr) gh('pr', 'edit', String(pr.number), '--repo', remote, '--title', title, '--body-file', bodyPath);
       else {
         gh('pr', 'create', '--repo', remote, '--head', branch, '--base', 'development', '--draft', '--title', title, '--body-file', bodyPath);
         pr = find();
         if (!pr) throw new Error('PR created but lookup failed; rerun publish to recover.');
       }
-      Object.assign(record, { pr: pr.number, url: pr.url, publishedHead: head, size, status: 'PUBLISHED' });
+      Object.assign(record, { pr: pr.number, url: pr.url, head, publishedHead: head, size, status: 'PUBLISHED' });
       await save();
       if (record.requestedReviewHead !== head) {
         const request = `@coderabbitai review\n\n<!-- slop-loop-review:${head} -->`;
@@ -183,8 +222,9 @@ export async function runWorkflow(args, dependencies = {}) {
     delete record.reason;
     if (result.status === 'NEEDS_FIX' && record.repairRounds.length >= maxRepairs && record.repairRounds.at(-1)?.head !== head) Object.assign(record, { status: 'BLOCKED', reason: 'Three repair rounds exhausted; human guidance required.' });
     if (command === 'repair') {
-      if (record.status !== 'NEEDS_FIX') throw new Error(`Repair requires a current finding; status is ${record.status}.`);
+      if (record.status !== 'NEEDS_FIX' && !(result.unresolved.length && ['READY_FOR_HUMAN', 'AWAITING_HUMAN_MERGE'].includes(record.status))) throw new Error(`Repair requires a current finding; status is ${record.status}.`);
       if (record.repairRounds.at(-1)?.head === head) throw new Error('A repair is already reserved for this head; publish its fix before reserving another round.');
+      if (record.repairRounds.length >= maxRepairs) throw new Error('Three repair rounds exhausted; human guidance required.');
       if (values.reason.length > 2000) throw new Error('Keep the diagnosed repair reason within 2000 characters.');
       record.repairRounds.push({ head, reason: values.reason, startedAt: new Date().toISOString() });
       record.status = 'REPAIR_RESERVED';
@@ -211,7 +251,7 @@ export async function runWorkflow(args, dependencies = {}) {
   while (now() < deadline) {
     try {
       const record = await withLock(`${path}.lock`, processCommand);
-      if (record.status !== previous) { (dependencies.report ?? console.log)(JSON.stringify(record)); previous = record.status; }
+      if (record.status !== previous) { (dependencies.report ?? console.log)(JSON.stringify(workflowSummary(record))); previous = record.status; }
       if (!['WAITING_CI', 'WAITING_REVIEW', 'PUBLISHED'].includes(record.status)) return record;
     } catch (error) { if (now() < deadline) throw error; }
     const delay = Math.max(0, Math.min(15_000, deadline - now()));
@@ -221,5 +261,5 @@ export async function runWorkflow(args, dependencies = {}) {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  runWorkflow(process.argv.slice(2)).then((result) => console.log(JSON.stringify(result, null, 2))).catch((error) => { console.error(error.message); process.exitCode = 1; });
+  runWorkflow(process.argv.slice(2)).then((result) => console.log(JSON.stringify(workflowSummary(result), null, 2))).catch((error) => { console.error(error.message); process.exitCode = 1; });
 }
