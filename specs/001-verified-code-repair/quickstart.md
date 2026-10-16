@@ -9,7 +9,7 @@ From repository root, run:
 ```powershell
 & .specify/scripts/powershell/setup-tasks.ps1 -Json
 node scripts/ci/check-context.mjs
-node scripts/agents/agent-context.mjs handoff --tasks specs/005-uc03-bug-fix/tasks.md
+node scripts/agents/agent-context.mjs handoff --tasks specs/001-verified-code-repair/tasks.md
 ```
 
 Expected: Spec Kit resolves this feature and design documents, context links/facts pass, handoff reports unchecked implementation tasks. These checks do not establish product behavior. See checklists/planning-validation.md and docs/verification/2026-10-16-uc03-planning.md for checks actually run.

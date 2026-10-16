@@ -1,8 +1,8 @@
-# Feature Specification: UC-03 — End-to-end Bug Fix
+# Feature Specification: UC-03 — Verified Code Repair
 
 **Feature Branch**: `feat/007-uc03-sdd-review`
 
-**Feature Identity**: `005-uc03-bug-fix` (preserved); original authoring branch `feat/005-uc03-execution-design`.
+**Feature Identity**: `001-verified-code-repair` (preserved); original authoring branch `feat/005-uc03-execution-design`.
 
 **Created**: 2026-10-16
 

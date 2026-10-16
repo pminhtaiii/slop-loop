@@ -10,7 +10,7 @@ Assignments use the colleague names supplied by the project owner. These rows ar
 
 | UC | Delivery | Owner | Start condition | Feature artifacts |
 |---|---|---|---|---|
-| UC-03 | Evidence-backed end-to-end bug fix | Tai | Validated bug-task input contract; shared tools, verification, and UC-05 action gate integrated | Draft for review: [spec](../specs/005-uc03-bug-fix/spec.md), [plan](../specs/005-uc03-bug-fix/plan.md), [tasks](../specs/005-uc03-bug-fix/tasks.md); approval and shared contract agreement pending |
+| UC-03 | Evidence-backed end-to-end bug fix | Tai | Validated bug-task input contract; shared tools, verification, and UC-05 action gate integrated | Draft for review: [spec](../specs/001-verified-code-repair/spec.md), [plan](../specs/001-verified-code-repair/plan.md), [tasks](../specs/001-verified-code-repair/tasks.md); approval and shared contract agreement pending |
 | UC-04 | Multi-step feature with restart/resume | Thanh Tan | Shared persisted task/step contracts and budget ownership agreed; UC-05 binding contract agreed | Not created; link approved spec, plan, and task ledger here |
 | UC-05 | Bound human approval and safe continuation | Trong Tan | Shared action/policy identity and persisted decision contracts agreed | Not created; link approved spec, plan, and task ledger here |
 

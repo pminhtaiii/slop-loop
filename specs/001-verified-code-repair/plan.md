@@ -1,8 +1,8 @@
-# Implementation Plan: UC-03 — End-to-end Bug Fix
+# Implementation Plan: UC-03 — Verified Code Repair
 
-**Branch**: `feat/007-uc03-sdd-review` | **Date**: 2026-10-16 | **Spec**: [spec.md](spec.md)
+**Branch**: `feat/001-verified-code-repair` | **Date**: 2026-10-16 | **Spec**: [spec.md](spec.md)
 
-**Input**: `/specs/005-uc03-bug-fix/spec.md`
+**Input**: `/specs/001-verified-code-repair/spec.md`
 **Status**: Draft proposal for owner review. No runtime implementation is authorized or claimed. ADR-0002 requires contract agreement before finalizing this plan/task ledger; this artifact deliberately exposes that gate.
 
 ## Summary
@@ -39,7 +39,7 @@ Post-design recheck: same conditions remain; no unresolved behavioral clarificat
 
 ### Documentation (this feature)
 
-`specs/005-uc03-bug-fix/`: spec.md, plan.md, research.md, data-model.md, quickstart.md, contracts/interfaces.md, contracts/acceptance.md, tasks.md, checklists/requirements.md, checklists/planning-validation.md. See the [requirements checklist](checklists/requirements.md), [planning validation checklist](checklists/planning-validation.md) and [source/verification record](../../docs/verification/2026-10-16-uc03-planning.md).
+`specs/001-verified-code-repair/`: spec.md, plan.md, research.md, data-model.md, quickstart.md, contracts/interfaces.md, contracts/acceptance.md, tasks.md, checklists/requirements.md, checklists/planning-validation.md. See the [requirements checklist](checklists/requirements.md), [planning validation checklist](checklists/planning-validation.md) and [source/verification record](../../docs/verification/2026-10-16-uc03-planning.md).
 
 ### Source Code (repository root)
 
