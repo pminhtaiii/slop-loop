@@ -32,11 +32,17 @@ test('a completed task can be cleared while preserving the permanent file exactl
   const baseline = await readFile(path, 'utf8');
   let result = run(checkout, 'start', '--owner', 'parent', '--task', 'tracking', '--summary', 'Implement tracking', '--next', 'Verify changes');
   assert.equal(result.status, 0, result.stderr);
-  assert.match(await readFile(path, 'utf8'), /Implement tracking/);
+  assert.equal(await readFile(path, 'utf8'), baseline);
+  assert.match(run(checkout, 'list').stdout, /Implement tracking/);
   result = run(checkout, 'finish', '--owner', 'parent', '--task', 'tracking', '--result', 'Tests passed; evidence recorded');
   assert.equal(result.status, 0, result.stderr);
+  assert.equal(await readFile(path, 'utf8'), baseline);
+  assert.equal(run(checkout, 'render').status, 0);
+  assert.match(await readFile(path, 'utf8'), /Tests passed; evidence recorded/);
   result = run(checkout, 'clear', '--owner', 'parent', '--task', 'tracking');
   assert.equal(result.status, 0, result.stderr);
+  assert.match(await readFile(path, 'utf8'), /Tests passed; evidence recorded/);
+  assert.equal(run(checkout, 'render').status, 0);
   assert.equal(await readFile(path, 'utf8'), baseline);
 });
 
@@ -121,16 +127,16 @@ test('worker cleanup preserves the parent entry and active or blocked work', asy
   result = run(checkout, 'update', '--owner', 'worker', '--task', 'T001', '--status', 'blocked', '--next', 'Wait for required input', '--verification', 'Focused check not run');
   assert.equal(result.status, 0, result.stderr);
   const blocked = await readFile(path, 'utf8');
-  assert.match(blocked, /Wait for required input/);
+  assert.match(run(checkout, 'list').stdout, /Wait for required input/);
   result = run(checkout, 'clear', '--owner', 'worker', '--task', 'T001');
   assert.equal(result.status, 1);
   assert.equal(await readFile(path, 'utf8'), blocked);
   result = run(checkout, 'finish', '--owner', 'worker', '--task', 'T001', '--result', 'Assignment complete; handoff in evidence.md');
   assert.equal(result.status, 0, result.stderr);
-  assert.match(await readFile(path, 'utf8'), /Assignment complete/);
+  assert.match(run(checkout, 'list').stdout, /Assignment complete/);
   result = run(checkout, 'clear', '--owner', 'worker', '--task', 'T001');
   assert.equal(result.status, 0, result.stderr);
-  const retained = await readFile(path, 'utf8');
+  const retained = run(checkout, 'list').stdout;
   assert.match(retained, /parent assignment/);
   assert.doesNotMatch(retained, /worker assignment/);
 });
@@ -206,7 +212,7 @@ test('overlapping writers either serialize or report busy without losing an assi
       assert.equal(retry.status, 0, retry.stderr);
     }
   }
-  const source = await readFile(join(checkout, 'context/active_task.md'), 'utf8');
+  const source = run(checkout, 'list').stdout;
   assert.match(source, /worker-one/);
   assert.match(source, /worker-two/);
 });

@@ -39,6 +39,6 @@ Memory is advisory and may be stale. Confirm it against current repository evide
 
 Keep runtime-generated state, checkpoints, traces, and memory separate from human-authored context. Markdown context must not be the primary store for runtime state. State answers “what is true now?”; trace answers “how did we get here?” Resume from state and use traces for explanation, debugging, and evaluation.
 
-Contributor handoffs use one ignored `.agent-work/state/active-tasks.json` store in the primary checkout, shared by linked worktrees. [active_task.md](active_task.md) is a generated local view, refreshed by the contributor helper. This store is not the slop-loop product runtime's task state or checkpoint; runtime persistence remains governed by the structured records above.
+Contributor handoffs use one ignored `.agent-work/state/active-tasks.json` store in the primary checkout, shared by linked worktrees. [active_task.md](active_task.md) is an optional local snapshot refreshed only by the explicit `render` command; routine mutations update ignored state without changing tracked Markdown. This store is not the slop-loop product runtime's task state or checkpoint; runtime persistence remains governed by the structured records above.
 
 The target persistence model must guarantee that completed work and budgets survive restart, resume validates the current repository, compaction does not destroy task state, and stored memory cannot override current evidence. See [the verification matrices](../docs/progress-checker-matrices.md) for required evidence.

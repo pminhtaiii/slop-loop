@@ -17,7 +17,7 @@ For every validation command, report the exact command and its exit status. Dist
 
 Do not mark a task complete until its implementation is integrated and its applicable checks pass. Do not claim feature completion while required tests, convergence, or review gates remain unresolved.
 
-Before a draft PR is created or updated, the workflow runs the same repository gates as `.github/workflows/contributor-checks.yml`: `node scripts/ci/check-context.mjs` and `node --test`. Remote readiness separately requires the current-head Ubuntu and Windows CI checks and no unresolved review threads or GitHub merge blocker. CodeRabbit approval is advisory and optional. See the [PR workflow](../docs/agents/pr-workflow.md) for status and repair behavior. These contributor gates verify repository helpers and context consistency; they do not verify the planned slop-loop runtime.
+Before a draft PR is created or updated, the workflow runs the same repository gates as `.github/workflows/contributor-checks.yml`: `node scripts/ci/check-tracked-files.mjs`, `node scripts/ci/check-context.mjs`, and `node --test`. The tracked-file gate rejects installed node_modules directories at any depth, including force-added ignored files; local untracked dependencies and tracked lockfiles are permitted. Remote readiness separately requires the current-head Ubuntu and Windows CI checks and no unresolved review threads or GitHub merge blocker. CodeRabbit approval is advisory and optional. See the [PR workflow](../docs/agents/pr-workflow.md) for status and repair behavior. These contributor gates verify repository helpers and context consistency; they do not verify the planned slop-loop runtime.
 
 ## Local helper tests
 

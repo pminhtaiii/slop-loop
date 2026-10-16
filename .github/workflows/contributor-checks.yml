@@ -30,5 +30,7 @@ jobs:
           node-version: '24'
       - name: Check context consistency
         run: node scripts/ci/check-context.mjs
+      - name: Check tracked files
+        run: node scripts/ci/check-tracked-files.mjs
       - name: Test contributor helpers
         run: node --test
