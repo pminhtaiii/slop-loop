@@ -26,10 +26,10 @@ Date: 2026-10-16. Draft design research against local authoritative sources; no 
 
 ## Open stack choices resolved for drafting
 
-**Decision**: Keep open choices as explicit selection outputs of T001, behind injected ports. Draft candidate: supported Node LTS, npm lockfile, strict tsc, mechanically enforced lint, runtime behavioral tests plus pytest fixtures, provider adapter with configured model, durable UC-04 checkpoint backend, local JSON adapter and machine-readable evaluation JSON. Candidates are not approved values or installed packages.
+**Decision**: Keep open choices as explicit selection outputs of T001, behind injected ports. Draft candidate: supported Node LTS, pnpm lockfile, strict tsc, mechanically enforced lint, runtime behavioral tests plus pytest fixtures, provider adapter with configured model, durable UC-04 checkpoint backend, local JSON adapter and machine-readable evaluation JSON. Candidates are not approved values or installed packages.
 **Rationale**: [tech_stack.md](../../context/tech_stack.md) deliberately leaves versions, package/build/lint/test tools, provider, checkpoint backend, isolation configuration, deployment/host support and evaluation format open. Existing helper Node requirements establish none of them. A planning draft can specify checks and ports without asserting approval.
-**Alternatives considered**: Silently infer npm/test framework from helpers; select a database on UC-04's behalf; add a web/service framework. All are unnecessary or overstep ownership.
-**Decision owners and exit**: Tai selects runtime toolchain/provider/evaluation/platform/profile; Thanh Tan selects storage/checkpointer; Trong Tan agrees action/plan schema. T001 records exact choices and accepted artifact revisions. No technology-specific implementation begins with unresolved choices.
+**Alternatives considered**: Silently infer package-manager/test framework from helpers; select a database on UC-04's behalf; add a web/service framework. All are unnecessary or overstep ownership.
+**Decision owners and exit**: Tai selects runtime toolchain/provider/evaluation/platform/profile; Thanh Tan selects storage/checkpointer; Trong Tan agrees action/plan schema. T001 records exact choices and accepted artifact revisions. The user approved Phase 1 bootstrap on 2026-10-16 (Asia/Saigon), with Node 24/npm, strict TypeScript, LangGraph, ESLint and Node tests. Production-only choices remain required before real execution; see [decisions](contracts/decisions.md).
 
 ## Budget accounting
 
@@ -48,3 +48,5 @@ Date: 2026-10-16. Draft design research against local authoritative sources; no 
 **Decision**: Public seeded Python bugs and attack repositories; host-private hidden checks; separate agent-visible and grading authority; structured case results and two-run regression comparison. See contracts/acceptance.md.
 **Rationale**: Target matrices require actual execution and reproducible outcomes. Contributor helper skills do not establish K2 runtime skill loading, and these UCs do not establish K6 MCP coverage.
 **Alternatives considered**: Expanding into runtime skill loading/MCP to claim complete knowledge coverage is outside UC-03. Record these wider-project gaps rather than add unselected use cases.
+
+Package-manager amendment on 2026-10-16 (Asia/Saigon): the user selected pnpm instead of npm and authorized removing the npm-installed dependencies. The selected manager is pnpm 12.5.1, with pnpm-lock.yaml and frozen installs; direct dependency pins remain unchanged. Historical npm verification is retained as historical evidence only.

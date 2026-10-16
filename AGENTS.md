@@ -29,5 +29,5 @@ The contributor PR pilot targets `development` and treats about 1,000 added plus
 <!-- SPECKIT START -->
 ## Active Spec Kit feature
 
-UC-03 planning draft: [spec](specs/005-uc03-bug-fix/spec.md), [plan](specs/005-uc03-bug-fix/plan.md), [tasks](specs/005-uc03-bug-fix/tasks.md). These artifacts require owner review and shared contract agreement before implementation; they do not prove runtime capability.
+UC-03 verified code repair: [spec](specs/001-verified-code-repair/spec.md), [plan](specs/001-verified-code-repair/plan.md), [tasks](specs/001-verified-code-repair/tasks.md). Phase 1 build setup is authorized with user-confirmed shared contract agreement; production choices remain gates before real execution. Later phases require separate authorization. See the [decision record](specs/001-verified-code-repair/contracts/decisions.md); setup does not prove runtime capability.
 <!-- SPECKIT END -->

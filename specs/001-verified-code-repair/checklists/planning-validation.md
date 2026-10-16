@@ -19,6 +19,6 @@ Date: 2026-10-16. Scope: artifact validity/source consistency, not runtime verif
 - [x] Context links/facts and contributor test suite pass with the documented existing Windows symlink skip.
 - [x] Context refresh reviewed affected documents and used updater --apply; no runtime status promoted.
 
-P2 repair review additionally checks read-only command views/protected-content admission, host-provider reservation/settlement/interruption and runnable behavioral RED ownership. See [P2 repair evidence](../../../docs/verification/2026-10-16-uc03-p2-repair.md) for current validation and re-review; the original record below is historical.
+P2 repair review additionally checks read-only command views/protected-content admission, host-provider reservation/settlement/interruption and runnable behavioral RED ownership. See [P2 repair evidence](https://github.com/pminhtaiii/slop-loop/blob/2e6455fa77d6849c0711174cecca441d78a2f5c3/docs/verification/2026-10-16-uc03-p2-repair.md) for current validation and re-review; the original record below is historical.
 
-See [verification record](../../../docs/verification/2026-10-16-uc03-planning.md) for exact checks, limitations and source provenance. Implementation tasks stay unchecked; the checklist above evaluates planning output only.
+See [verification record](https://github.com/pminhtaiii/slop-loop/blob/2e6455fa77d6849c0711174cecca441d78a2f5c3/docs/verification/2026-10-16-uc03-planning.md) for exact checks, limitations and source provenance. Implementation tasks stay unchecked; the checklist above evaluates planning output only.

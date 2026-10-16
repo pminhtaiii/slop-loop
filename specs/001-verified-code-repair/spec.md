@@ -1,12 +1,12 @@
-# Feature Specification: UC-03 — End-to-end Bug Fix
+# Feature Specification: UC-03 — Verified Code Repair
 
-**Feature Branch**: `feat/007-uc03-sdd-review`
+**Feature Branch**: `feat/001-verified-code-repair`
 
-**Feature Identity**: `005-uc03-bug-fix` (preserved); original authoring branch `feat/005-uc03-execution-design`.
+**Feature Identity**: `001-verified-code-repair` (renamed from `005-uc03-bug-fix` at user request); original authoring branch `feat/005-uc03-execution-design`.
 
 **Created**: 2026-10-16
 
-**Status**: Draft for review; planning only, not implementation authorization.
+**Status**: Phase 1 build setup authorized on 2026-10-16 (Asia/Saigon). The user confirmed shared-owner agreement to the current contracts and explicitly deferred production choices until before real execution. Later phases are outside this implementation request; see [decisions](contracts/decisions.md).
 
 **Input**: Specify only UC-03 from approved scope, acceptance criteria, security policy and decisions; enable parallel work with contract-bound mocks without claiming real acceptance.
 
