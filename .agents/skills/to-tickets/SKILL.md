@@ -2,6 +2,10 @@
 name: to-tickets
 description: Break a plan, spec, or the current conversation into a set of tracer-bullet tickets, each declaring its blocking edges, published to the configured tracker (edges as text in one file per ticket locally, or native blocking links on a real tracker).
 disable-model-invocation: true
+metadata:
+  source: https://github.com/mattpocock/skills/tree/49dd158d1076134a641b33efb035946536778336/skills/engineering/to-tickets
+  upstream-commit: 49dd158d1076134a641b33efb035946536778336
+  local-adaptation: dependency-aware-readiness
 ---
 
 # To Tickets
@@ -60,9 +64,9 @@ Iterate until the user approves the breakdown.
 Publish the approved tickets. **How** depends on the tracker `/setup-matt-pocock-skills` configured; the tickets are the same either way, only the shape of the blocking edges changes:
 
 - **Local files** → write one file per ticket under `.scratch/<feature-slug>/issues/<NN>-<slug>.md`, numbered from `01` in dependency order (blockers first). Each file's "Blocked by" lists the numbers/titles it depends on. Use the per-ticket file template below: one ticket per file, never a single combined file.
-- **A real issue tracker (GitHub, Linear, …)** → publish one issue per ticket in dependency order (blockers first) so each ticket's blocking edges can reference real identifiers. Use the platform's native blocking relationship where it has one; otherwise set each ticket's "Blocked by" to the blocking issues. If the source was an existing issue, make each ticket its sub-issue (tracker doc's operation). Apply the `ready-for-agent` triage label unless instructed otherwise; the tickets are agent-grabbable by construction.
+- **A real issue tracker (GitHub, Linear, …)** → publish one issue per ticket in dependency order (blockers first) so each ticket's blocking edges can reference real identifiers. Use the platform's native blocking relationship where it has one; otherwise set each ticket's "Blocked by" to the blocking issues. If the source was an existing issue, make each ticket its sub-issue (tracker doc's operation). Apply `ready-for-agent` only when all declared blockers are completed and the brief is otherwise agent-ready. With unfinished blockers, publish the dependency links/body but leave that ready label off; do not invent a sixth canonical triage label. Preserve the user-approved breakdown and evaluate readiness from the actual frontier.
 
-Work the **frontier**: any ticket whose blockers are all done. For a purely linear chain that means top to bottom.
+Work the **frontier**: any ticket whose blockers are all done. Recheck blocker state before assigning readiness or starting work; after blockers complete, the authorized ticket workflow may promote the child to `ready-for-agent`. For a purely linear chain that means top to bottom. A shared component is a blocker only when required work cannot proceed through the agreed mock/stub contract; do not manufacture dependencies that prevent an independently implementable slice.
 
 Do NOT close or modify any parent issue.
 
@@ -74,7 +78,7 @@ Do NOT close or modify any parent issue.
 
 **Blocked by:** the numbers/titles of the tickets that gate this one, or "None (can start immediately)".
 
-**Status:** ready-for-agent
+**Status:** choose `ready-for-agent` only if all blockers are completed; otherwise use `pending-dependencies` as local file metadata, never as an additional tracker label.
 
 - [ ] Acceptance criterion 1
 - [ ] Acceptance criterion 2
