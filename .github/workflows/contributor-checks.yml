@@ -28,6 +28,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+      - name: Select npm version
+        run: npm install --global npm@11.9.0 --ignore-scripts
+      - name: Install dependencies for test discovery
+        run: npm ci
       - name: Check context consistency
         run: node scripts/ci/check-context.mjs
       - name: Check tracked files

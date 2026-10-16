@@ -7,7 +7,7 @@
 - **Scope**: Phase 1 setup (T001 / T002 release). This document satisfies T001. Later implementation phases and real execution remain gated.
 
 ## Contract v0.1 Baseline Hashes
-The contract v0.1 baseline consists of the core specification, shared data model, and shared interfaces. All mocks (T004) and future real adapters (T025, T028, T030, T032) must conform strictly to these accepted schemas and interfaces:
+The contract v0.1 baseline is commit `04f3747`, consisting of the core specification, shared data model, and shared interfaces. The hashes below identify that baseline, not later authorization-wording amendments in spec.md. All mocks (T004) and future real adapters (T025, T028, T030, T032) must conform strictly to these accepted schemas and interfaces:
 - `specs/001-verified-code-repair/spec.md`:
   - **Git Object ID**: `46e85eb34ed9a5db32174db43564b8116a05ec24`
   - **SHA-256**: `674F63855D393C71C481BFFA46F321C5D70291DC458FA113CB8FCA900E7F4F23`
@@ -36,21 +36,21 @@ Shared path and capability ownership is agreed across the three cooperating use 
   - [ADR-0001](../../../docs/adr/0001-uc03-scope-and-completion.md): UC-03 Scope and Completion Evidence.
   - [ADR-0002](../../../docs/adr/0002-uc03-specification-order-and-shared-dependencies.md): Specification Order and Shared Dependencies.
   - [ADR-0003](../../../docs/adr/0003-docker-task-workspace-boundary.md): Docker Task Workspace Boundary.
-  - [ADR-0004](../../../docs/adr/0004-uc03-adaptive-workflow-and-replan-limit.md): UC-03 High-Level Gates with Adaptive Execution and Replan Limit (accepted 2026-10-15/16 Asia/Saigon).
+  - [ADR-0004](../../../docs/adr/0004-uc03-adaptive-workflow-and-replan-limit.md): UC-03 High-Level Gates with Adaptive Execution and Replan Limit (initial discussion accepted October 15; approval-gate decisions and closure confirmed October 16, Asia/Saigon).
 - **Constitutional Status**: `.specify/memory/constitution.md` remains an unratified placeholder template. In accordance with ADR-0002 and repository policy, this feature does NOT assert an artificial constitution pass or claim ratification of placeholder text. Governance strictly adheres to AGENTS.md, context rules, and accepted ADRs.
 
 ## Exact Fix-Plan Approval Binding and Material Replan Semantics
 Preserving the decisions in ADR-0004 and `contracts/interfaces.md`:
 1. **Pre-Edit Gate & Human Plan Approval**:
-   - Investigation is bounded to read-only tools, search, and reproduction command execution.
-   - Before applying any production code edits or controlled patches, the agent must persist baseline evidence, acceptance criteria, required checks, diagnosis, and a proposed fix plan.
+   - Investigation is bounded to permitted reads, search, reproduction commands and policy-compliant new regression tests.
+   - Before applying any production code edits, the agent must persist baseline evidence, acceptance criteria, required checks, diagnosis, and a proposed fix plan.
    - The diagnosis and fix plan must receive explicit human approval through UC-05 (`approve_fix_plan` action kind). Automatic plan approval is prohibited.
    - Approval binds: task ID, workspace/repository revision digest, planVersion, strategy digest, diagnosis/baseline evidence references, criteria/check-set digest, and policy version.
    - Adding a new regression test during investigation to demonstrate pre-fix failure is permitted under test-protection policy; if it alters repository state, the plan binds to that updated baseline.
 2. **Material Replan Limit and Semantics**:
    - A task is capped at **at most three material replans** after the initial plan.
    - A material replan is defined as a substantial shift in the recorded fix strategy or root-cause diagnosis in response to new evidence or failed repair verification.
-   - Minor implementation adjustments, additional code reads, searches, or wording clarifications within the approved strategy preserve the existing plan binding and do not consume a replan slot.
+   - Minor implementation adjustments, additional code reads, searches, or wording clarifications within the approved strategy do not consume a replan slot. Changed repository state still requires action-binding reevaluation and invalidates affected verification/review evidence; only unchanged material fields preserve the relevant binding.
    - Each material replan creates a new proposal ID, consumes one of the three task-scoped replan allowances, invalidates prior edit authorization, and requires renewed human approval via UC-05.
    - Human approval or run restart does not reset or replenish the replan allowance.
    - Upon encountering a fourth required material replan, the agent must halt execution, fail closed, and report an incomplete outcome and blocker.
@@ -64,7 +64,7 @@ In accordance with the host-provider budget protocol defined in `contracts/inter
    - Applies to all host-side LLM calls made by both the coder (`ModelPort` via T008) and the reviewer (`ReviewerPort` via T009).
    - Neither coder nor reviewer models execute within the untrusted Docker task container; credentials and provider calls remain host-contained.
 2. **Request Envelope and Ceilings**:
-   - Every provider request is assigned a stable, idempotent `providerRequestId` bound to task ID, run ID, role (`coder` or `reviewer`), call purpose, provider/model identity, pricing-policy identity, and an approved-context digest.
+   - Every provider request is assigned a stable internal `providerRequestId` bound to task ID, run ID, role (`coder` or `reviewer`), call purpose, provider/model identity, pricing-policy identity, and an approved-context digest. This does not imply provider-side idempotency; that requires separate supported and evidenced behavior.
    - Each call requires finite, conservative ceilings for input tokens, output tokens, and maximum billable cost (accounting for provider-specific overhead, reasoning tokens, and cache fees). Reviewer calls also require an iteration allowance.
    - Missing, exhausted, or unbounded allowances result in **zero network dispatch** (immediate fail-closed denial).
 3. **Atomic Pre-Dispatch Reservation**:
@@ -84,9 +84,10 @@ Per user confirmation on 2026-10-16 (Asia/Saigon), a scope amendment is in effec
    - **Package Manager**: npm with strict lockfile (`package-lock.json`).
    - **Language**: TypeScript with strict mode compilation (`tsc`).
    - **Orchestration**: `@langchain/langgraph` (official package).
-   - **Linter/Formatter**: ESLint with `typescript-eslint` (strictly enforced mechanical linting).
+   - **Linter**: ESLint with `typescript-eslint` (strictly enforced mechanical linting); no formatter is selected.
    - **Test Runner**: Built-in Node test runner (`node --test`) for runtime unit, contract, and smoke testing.
-   - Exact package versions will be selected and pinned by the bootstrap implementation worker in T002 and recorded in `package.json` and `package-lock.json`. To prevent guessing or drift, versions must be referenced directly from the generated lockfile when integrated.
+   - T002 pins npm 11.9.0, TypeScript 6.0.3, ESLint 10.12.0, typescript-eslint 8.71.2, @types/node 24.19.2, @langchain/langgraph 1.5.0 and its @langchain/core peer 1.2.18 in package.json/package-lock.json. TypeScript 6.0.3 satisfies the linter peer range (<6.1); latest TypeScript 7 was not selected. CI explicitly selects npm 11.9.0. Runtime tests execute compiled JavaScript after the build.
+   - **Declaration-check limitation**: `skipLibCheck: true` avoids verified third-party declaration errors under `exactOptionalPropertyTypes` in LangChain/LangGraph/langsmith. Repository TypeScript retains strict checking, including implicit-any rejection. Reevaluate this exception when those dependencies change.
 2. **Deferred Production Choices (Mandatory Release Gates Before Real Execution)**:
    - The user explicitly approved deferring finite production configurations. These choices are **not** blockers to the Phase 1 build bootstrap (T002), but remain strict prerequisites before any real workflow execution (T024, T028+).
    - Production choices that must not be fabricated and remain deferred:

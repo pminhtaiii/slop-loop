@@ -1,22 +1,38 @@
 # Quickstart Validation Guide: UC-03
 
-This is a future validation contract, not a claim that runtime commands exist. Planning-only checkout currently has no UC-03 runtime runner. Do not install tools, start containers or run hypothetical runtime commands as part of this planning task.
+Phase 1 provides the build toolchain and a LangGraph dependency smoke test. It does not provide the UC-03 runtime runner. The user authorized setup and confirmed shared contracts on 2026-10-16 (Asia/Saigon); production choices remain required before real execution. See [decisions](contracts/decisions.md).
+
+## Build setup (available now)
+
+Use Node.js 24 LTS and the npm version pinned in package.json. From repository root:
+
+```powershell
+npm ci
+npm run typecheck
+npm run lint
+npm run build
+npm run test:runtime
+node --test
+```
+
+The runtime smoke test checks the installed LangGraph integration, not a repaired repository. Runtime CI runs the build gates on Ubuntu and Windows. Compiler/linter rejection probes and exact local results are recorded in [Phase 1 verification](../../docs/verification/2026-10-16-verified-code-repair-phase1.md).
 
 ## Current planning checks (available now)
 
 From repository root, run:
 
 ```powershell
-& .specify/scripts/powershell/setup-tasks.ps1 -Json
+$env:SPECIFY_FEATURE_DIRECTORY = (Resolve-Path specs/001-verified-code-repair).Path
+& .specify/scripts/powershell/check-prerequisites.ps1 -Json -RequireTasks -IncludeTasks
 node scripts/ci/check-context.mjs
 node scripts/agents/agent-context.mjs handoff --tasks specs/001-verified-code-repair/tasks.md
 ```
 
-Expected: Spec Kit resolves this feature and design documents, context links/facts pass, handoff reports unchecked implementation tasks. These checks do not establish product behavior. See checklists/planning-validation.md and docs/verification/2026-10-16-uc03-planning.md for checks actually run.
+Expected: Spec Kit resolves this feature and design documents, context links/facts pass, handoff reports the current task ledger. These checks do not establish product behavior. See checklists/planning-validation.md and docs/verification/2026-10-16-uc03-planning.md for checks actually run.
 
 ## Future prerequisites
 
-T001 records approved feature/contract revisions, constitution handling, alignment with accepted ADR-0004, actual Node/package/test/build/lint versions, provider/model, supported hosts, Docker profile/image digest, artifact retention and every required finite limit. T002 installs only those selected dependencies in the later implementation phase. Use a prepared Python/pytest image; task containers cannot download missing dependencies. Supply trusted provider credentials only to host configuration, never to repo files/argv/child environment.
+T001 records shared-contract confirmation, constitution handling and alignment with accepted ADR-0004. T002 establishes the selected Node/npm/TypeScript/LangGraph/lint/test bootstrap. The user-approved amendment defers provider/model, supported execution hosts, Docker profile/image digest, artifact retention and every required finite production limit until before real execution; those choices are not supplied by bootstrap defaults. Use a prepared Python/pytest image; task containers cannot download missing dependencies. Supply trusted provider credentials only to host configuration, never to repo files/argv/child environment.
 
 X04-STATE and X05-GATE deliveries must match contract v0.1 (or its explicitly agreed successor), with actual owner-ledger/revision/evidence links. Mock suites may run before they arrive; real execution cannot. T024/T025 gate real operations. Reviewer configuration is separate and read-only.
 

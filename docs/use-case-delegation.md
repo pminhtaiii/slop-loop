@@ -10,7 +10,7 @@ Assignments use the colleague names supplied by the project owner. These rows ar
 
 | UC | Delivery | Owner | Start condition | Feature artifacts |
 |---|---|---|---|---|
-| UC-03 | Evidence-backed end-to-end bug fix | Tai | Validated bug-task input contract; shared tools, verification, and UC-05 action gate integrated | Draft for review: [spec](../specs/001-verified-code-repair/spec.md), [plan](../specs/001-verified-code-repair/plan.md), [tasks](../specs/001-verified-code-repair/tasks.md); approval and shared contract agreement pending |
+| UC-03 | Evidence-backed end-to-end bug fix | Tai | Validated bug-task input contract; shared tools, verification, and UC-05 action gate integrated | Phase 1 build setup authorized: [spec](../specs/001-verified-code-repair/spec.md), [plan](../specs/001-verified-code-repair/plan.md), [tasks](../specs/001-verified-code-repair/tasks.md); shared contract agreement confirmed by user, production choices deferred before real execution per [decisions](../specs/001-verified-code-repair/contracts/decisions.md) |
 | UC-04 | Multi-step feature with restart/resume | Thanh Tan | Shared persisted task/step contracts and budget ownership agreed; UC-05 binding contract agreed | Not created; link approved spec, plan, and task ledger here |
 | UC-05 | Bound human approval and safe continuation | Trong Tan | Shared action/policy identity and persisted decision contracts agreed | Not created; link approved spec, plan, and task ledger here |
 
@@ -45,7 +45,7 @@ Shared foundation includes the model adapter and structured-output validation, L
 
 **Acceptance handoff:** successful fix, repairable failed patch, exhausted repair budget, previously passing regression failure, attempted existing-test weakening, workspace escape, secret access, forbidden/injected command, and missing required execution limit. Repository-command isolation must be enforced before real command execution; mocked command results alone do not verify this UC. Incomplete required verification remains `IMPLEMENTED_UNVERIFIED`.
 
-**Boundary:** use the shared bug-task input contract and UC-05's action gate; UC-01 is not a prerequisite for this batch. Own the bug-fix route, not independent copies of policy, persistence, or command execution. The target workflow's read-only reviewer requirements still need an assigned shared owner; contributor CodeRabbit is not the runtime reviewer.
+**Boundary:** use the shared bug-task input contract and UC-05's action gate; UC-01 is not a prerequisite for this batch. Own the bug-fix route, not independent copies of policy, persistence, or command execution. Tai owns the shared read-only runtime reviewer per the confirmed Phase 1 decision record; contributor CodeRabbit is not the runtime reviewer.
 
 ## UC-04: Multi-step feature with resume
 

@@ -3,7 +3,7 @@
 **Branch**: `feat/001-verified-code-repair` | **Date**: 2026-10-16 | **Spec**: [spec.md](spec.md)
 
 **Input**: `/specs/001-verified-code-repair/spec.md`
-**Status**: Draft proposal for owner review. No runtime implementation is authorized or claimed. ADR-0002 requires contract agreement before finalizing this plan/task ledger; this artifact deliberately exposes that gate.
+**Status**: Phase 1 build setup authorized on 2026-10-16 (Asia/Saigon), with user-confirmed shared-owner agreement to the current contracts. The user explicitly approved deferring production choices until before real execution. This scope amendment releases T002 only; later phases and runtime acceptance remain unimplemented. See [decisions](contracts/decisions.md).
 
 ## Summary
 
@@ -11,10 +11,10 @@ Implement a localized bug-fix route through validation, adaptive investigation/r
 
 ## Technical Context
 
-**Language/Version**: TypeScript (approved), strict mode; runtime Node version selected at T001, not inferred from contributor Node helpers.
-**Primary Dependencies**: Official `@langchain/langgraph` and Docker approved; exact versions, package manager/lockfile, provider/model, schema/build/lint tools remain T001 decisions. No dependencies installed by this planning change.
+**Language/Version**: TypeScript, strict mode; Node.js 24 LTS selected explicitly for Phase 1. Exact compiler version is pinned in package.json.
+**Primary Dependencies**: Official `@langchain/langgraph`, npm/package-lock, strict tsc, ESLint/typescript-eslint and Node tests selected for Phase 1. Exact direct versions are pinned in package.json. Provider/model and schema tooling remain future choices; Docker remains the approved target execution boundary.
 **Storage**: UC-04 durable task/checkpoint/budget port; backend selected by Thanh Tan, not a UC-03 local database.
-**Testing**: Python/pytest inside prepared task image; runtime test/build tools selected at T001. Contract, behavioral, isolation and real integration suites required. Existing contributor `node --test` remains distinct.
+**Testing**: Built-in Node tests on compiled TypeScript for the runtime bootstrap; Python/pytest inside a prepared image for later target-repository checks. Contract, behavioral, isolation and real integration suites remain required in their later tasks. Existing contributor `node --test` remains distinct.
 **Target Platform**: Trusted host with Docker Linux task containers; concrete host support and escape/resource configurations must be selected and verified before real execution.
 **Project Type**: Local agent library/use-case with a thin JSON-file command adapter; adapter choice proposed here, not a new service.
 **Performance Goals**: Bounded configurable operation time/resources and bounded evidence output; no invented latency/service SLA.
@@ -23,7 +23,7 @@ Implement a localized bug-fix route through validation, adaptive investigation/r
 
 ## Constitution Check
 
-Pre-research inspection: `.specify/memory/constitution.md` is an unratified placeholder template. A constitution pass cannot be asserted. Repository instructions, accepted ADR-0001/0002/0003 and current security/state contracts govern this draft. ADR-0004 now records accepted approval/replan decisions and closure; exact shared approval binding and accounting details remain T001 signoff items. Feature implementation is still not authorized by an accepted ADR alone.
+Governance: `.specify/memory/constitution.md` remains an unratified placeholder template, not an asserted constitution pass. The Phase 1 decision record applies AGENTS.md, context policy and accepted ADRs without ratifying the placeholder. The table below records the original draft gates; user-confirmed contract agreement and the bootstrap-only amendment release T001/T002, while production choices still gate real execution. Repository instructions, accepted ADR-0001/0002/0003 and current security/state contracts govern this draft. ADR-0004 now records accepted approval/replan decisions and closure; exact shared approval binding and accounting details remain T001 signoff items. Accepted ADRs alone do not authorize feature implementation; this session explicitly authorizes Phase 1 only.
 
 | Gate | Draft design assessment | Implementation release condition |
 |---|---|---|
@@ -33,7 +33,7 @@ Pre-research inspection: `.specify/memory/constitution.md` is an unratified plac
 | Completion evidence | PASS as design: baseline, final checks and reviewer bound to final state | T028–T033 real integration evidence |
 | Open choices | Drafting can proceed; implementation readiness NOT PASSED | T001 records decisions, finite configurations consistent with accepted ADR-0004; approvals are not inferred from this request |
 
-Post-design recheck: same conditions remain; no unresolved behavioral clarification was hidden. Draft plan/tasks are complete for review, not finalized approved implementation instructions. Conditional choices have named decision owners and tasks instead of invented approvals.
+Phase 1 recheck: the user confirmed current shared contracts and authorized build setup. Deferred operational choices remain named release gates in contracts/decisions.md. Later implementation phases remain unchecked and outside this request.
 
 ## Project Structure
 
@@ -43,7 +43,7 @@ Post-design recheck: same conditions remain; no unresolved behavioral clarificat
 
 ### Source Code (repository root)
 
-All paths below are proposed future ownership; this change creates none of them.
+The paths below remain the future product-runtime layout. Phase 1 adds build/lint/CI configuration and a dependency smoke test, rather than these product modules.
 
 ```text
 src/contracts/uc03.ts              # Tai: canonical ports and runtime validators
@@ -92,6 +92,6 @@ IDs are delivery references, not fabricated UC-04/UC-05 task numbers. Link their
 
 ## Complexity Tracking
 
-No justified policy exception or additional service. Placeholder constitution and pending decisions are readiness gaps, not waived violations. Keep numeric budgets configurable and fail closed; a finite test profile is not a production default.
+No additional service or runtime-policy exception. The user-approved amendment permits bootstrap while production choices remain release gates; the placeholder constitution is not implicitly ratified. Keep numeric budgets configurable and fail closed; a finite test profile is not a production default.
 
-Publication only: [Post-SDD handoff](../../docs/verification/2026-10-16-uc03-post-sdd.md) records transfer to review branch 007 while preserving feature directory 005 and all T001–T034 IDs. No Specify, Plan or Tasks generation was rerun; approval remains pending.
+Publication only: [Post-SDD handoff](../../docs/verification/2026-10-16-uc03-post-sdd.md) records transfer to review branch 007 while preserving feature directory 005 and all T001–T034 IDs. No Specify, Plan or Tasks generation was rerun. This historical handoff predates the user-requested rename to feature 001 and Phase 1 authorization recorded above.
