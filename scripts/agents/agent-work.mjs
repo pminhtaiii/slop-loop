@@ -1,3 +1,4 @@
+import { readJson, repository } from './agent-store.mjs';
 import { randomUUID } from 'node:crypto';
 import {
   lstat,
@@ -472,6 +473,13 @@ async function finishSession(checkout, date, id) {
       writeOutput(`Session ${date}/${id} is already finished`);
       return;
     }
+    const repo = await repository(checkout);
+    const assignments = await readJson(join(repo.primary, '.agent-work/state/active-tasks.json')).catch((error) => {
+      if (error.code !== 'ENOENT') throw error;
+      return [];
+    });
+    if (!Array.isArray(assignments) || assignments.some((entry) => !entry || !['active', 'blocked', 'completed', 'handed-off'].includes(entry.status))) throw new Error('Invalid shared task state; retain the session.');
+    if (assignments.some((entry) => !['completed', 'handed-off'].includes(entry.status) && (!entry.checkout || resolve(entry.checkout) === checkout))) throw new Error('Contributor assignments remain active or blocked. Publish and finish them, or return worker results with active-task handoff, before finishing the session.');
     await writeManifest(sessionDirectory, {
       ...current,
       status: 'finished',

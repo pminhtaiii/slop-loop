@@ -16,7 +16,7 @@ Use the single-context layout (`GLOSSARY.md` and `docs/adr/` at the repo root). 
 
 Use [context/README.md](context/README.md) to find the relevant project context. Load only the documents needed for the task.
 
-Before implementation, follow the [active-task handoff](context/workflow.md#active-task-handoff).
+Before implementation and before declaring contributor work complete, follow the [active-task handoff](context/workflow.md#active-task-handoff). Contributor completion requires the published, linked PR gate; worker handoff is separate.
 
 After implementation, follow the [context refresh](context/workflow.md#context-refresh): review affected context documents, prepare evidence-based updates in their existing format, and run `node scripts/agents/update-context.mjs --updates <edits.json> --apply` before handoff.
 

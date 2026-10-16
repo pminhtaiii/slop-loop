@@ -485,3 +485,17 @@ test('session cleanup retains nested Git checkouts and the separate worktree are
   assert.equal(await readFile(join(nested, '.git'), 'utf8'), 'gitdir: retained-worktree-metadata\n');
   assert.equal(await readFile(join(worktrees, 'keep.txt'), 'utf8'), 'separate agent checkout\n');
 });
+
+test('session finish retains active contributor work until completion or worker handoff', async (t) => {
+  const root = await fixture(t);
+  await start(root);
+  await mkdir(join(root, '.agent-work/state'), { recursive: true });
+  const state = join(root, '.agent-work/state/active-tasks.json');
+  await writeFile(state, JSON.stringify([{ owner: 'coordinator', task: 'publish', checkout: root, status: 'active' }]));
+  let result = run(root, ['finish', '--session', `${date}/${sessionId}`]);
+  assert.equal(result.status, 1);
+  assert.equal((await marker(root)).status, 'active');
+  await writeFile(state, JSON.stringify([{ owner: 'worker', task: 'implement', checkout: root, status: 'handed-off', role: 'worker' }]));
+  result = run(root, ['finish', '--session', `${date}/${sessionId}`]);
+  assert.equal(result.status, 0, result.stderr);
+});

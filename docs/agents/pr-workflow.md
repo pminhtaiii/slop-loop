@@ -20,7 +20,7 @@ Keep the change near 1,000 added plus deleted lines against the immediate base (
 
 Before each publish, review the current scoped revision, refresh affected context, and prepare a PR body from the current diff and verified evidence using the [PR body skill](../../.agents/skills/pr/SKILL.md). The coordinator commits that revision to a clean feature branch; `publish` refuses a dirty checkout.
 
-Call `publish` as soon as the first coherent, scoped revision passes the local gates. It rejects tracked node_modules directories, runs `node scripts/ci/check-context.mjs` and `node --test`, measures the diff against `origin/development`, pushes the feature branch, then creates a draft PR or updates the existing open PR. The tracked-file guard also runs in CI as `node scripts/ci/check-tracked-files.mjs`. Ignored local dependencies and tracked dependency lockfiles are permitted. It combines the branch and required `--summary` as the PR title and rejects a base other than `development`.
+Call `publish` as soon as the first coherent, scoped revision passes the local gates. It rejects tracked node_modules directories and local-only docs/verification records, runs `node scripts/ci/check-context.mjs`, `node scripts/ci/check-runtime.mjs` and `node --test`, measures the diff against `origin/development`, pushes the feature branch, then creates a draft PR or updates the existing open PR. Runtime validation removes stale dist output, then runs typecheck, lint, build and compiled runtime tests through the same command used by runtime CI. When package manifests, pnpm lock/workspace settings, .npmrc or pnpm hooks differ from the last published head (or development for the first publication), publish first runs `node scripts/ci/check-dependency-install.mjs`: a frozen install with a unique metadata cache and explicit lockfile policy verification. This leaves the release-age policy enabled and removes only its own temporary cache. Documentation-only subsequent revisions skip this install check. The tracked-file guard also runs in CI as `node scripts/ci/check-tracked-files.mjs`. Ignored local dependencies and tracked dependency lockfiles are permitted. It combines the branch and required `--summary` as the PR title and rejects a base other than `development`.
 
 ```powershell
 node scripts/agents/pr-workflow.mjs publish --base development --body-file <file> --summary "<short summary>" [--root <checkout>]
@@ -34,7 +34,7 @@ The GitHub Actions workflow named **Contributor checks** runs context consistenc
 
 ## Check readiness
 
-`status` compares local HEAD with the open PR head and inspects checks and review data for that SHA. Read the returned JSON `status` field; exit code 0 means the observation ran, not that CI or review passed. Readiness requires both current-head GitHub Actions matrix checks (`contributor-checks (ubuntu-latest)` and `contributor-checks (windows-latest)`) to pass, resolved review conversations, and no non-draft GitHub merge blocker. CodeRabbit review decisions are advisory; missing or stale CI stays waiting or blocked.
+`status` compares local HEAD with the open PR head and inspects checks and review data for that SHA. Read the returned JSON `status` field; exit code 0 means the observation ran, not that CI or review passed. Readiness requires all four current-head GitHub Actions matrix checks (`contributor-checks (ubuntu-latest)`, `contributor-checks (windows-latest)`, `runtime-checks (ubuntu-latest)` and `runtime-checks (windows-latest)`) to pass, resolved review conversations, and no non-draft GitHub merge blocker. CodeRabbit review decisions are advisory; missing or stale CI stays waiting or blocked.
 
 ```powershell
 node scripts/agents/pr-workflow.mjs status [--root <checkout>]
@@ -48,6 +48,19 @@ Use `ready` when status is `READY_FOR_HUMAN`. That command rechecks the PR and m
 ```powershell
 node scripts/agents/pr-workflow.mjs ready [--root <checkout>]
 ```
+
+## Enforce completion
+
+`active-task.mjs finish` calls `pr-workflow.mjs complete` before changing the assignment to completed. Completion requires a clean checkout, current local publication and verification evidence, a live matching open PR against development, an app-link receipt, all four current-head CI jobs passing and no unresolved review threads or merge blocker. Unpublished, dirty, stale, unlinked or failing work stays active/blocked. Pending CI also stays active; hand monitoring to the app watcher and finish after checks pass. A final status report is not contributor completion, and merging is not required.
+
+After linking the PR, save the app's `list_thread_pull_requests` result as ignored local JSON. Import that result rather than a handwritten link claim:
+
+```powershell
+node scripts/agents/pr-workflow.mjs record-app-state --receipt .agent-work/<date>/<session>/app-state.json
+node scripts/agents/active-task.mjs finish --owner <owner> --task <task> --result "Published PR and passing checks"
+```
+
+The receipt is local workflow accounting, not a signed security credential. The helper verifies publication and CI live through GitHub; repository tools cannot intercept an arbitrary assistant final response. AGENTS and the build workflow route completion through this gate. Register workers explicitly with `active-task.mjs start --role worker`; they return `handed-off` results with `handoff`, without completing the coordinator's assignment or gaining remote authority. Coordinator roles cannot use that shortcut. Archive/retirement accepts reviewed worker handoffs separately from published contributor completion. Session finish refuses active/blocked assignments in the same checkout; other checkouts are unaffected.
 
 ## Repair current-head findings
 
