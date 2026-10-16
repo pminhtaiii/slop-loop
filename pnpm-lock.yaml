@@ -167,11 +167,11 @@ importers:
   .:
     dependencies:
       '@langchain/core':
-        specifier: 1.2.18
-        version: 1.2.18
+        specifier: 1.2.17
+        version: 1.2.17
       '@langchain/langgraph':
         specifier: 1.5.0
-        version: 1.5.0(@langchain/core@1.2.18)(zod@4.6.7)
+        version: 1.5.0(@langchain/core@1.2.17)(zod@4.6.7)
     devDependencies:
       '@types/node':
         specifier: 24.19.2
@@ -256,8 +256,8 @@ packages:
   '@keyv/serialize@1.1.1':
     resolution: {integrity: sha512-dXn3FZhPv0US+7dtJsIi2R+c7qWYiReoEh5zUntWCf4oSpMNib8FDhSoed6m3QyZdx5hK7iLFkYk3rNxwt8vTA==}
 
-  '@langchain/core@1.2.18':
-    resolution: {integrity: sha512-ccwixbasSfP0ZGEUsN0/qdA1PK3GBzA1fwSi7PlQpvnT78/chR5FAKcodsvSk8imUNP/SWWeWnBG2VDrR1JLJQ==}
+  '@langchain/core@1.2.17':
+    resolution: {integrity: sha512-aLQLSed6oLCMLtJHrINhnFmsu79G2UiDlRslbOx+TSN9NmU+WuDv1OtVxrLpYglhXNy53elSduMVk3XBPG9ulw==}
     engines: {node: '>=20'}
 
   '@langchain/langgraph-checkpoint@1.2.0':
@@ -541,8 +541,8 @@ packages:
   keyv@5.6.0:
     resolution: {integrity: sha512-CYDD3SOtsHtyXeEORYRx2qBtpDJFjRTGXUtmNEMGyzYOKj1TE3tycdlho7kA1Ufx9OYWZzg52QFBGALTirzDSw==}
 
-  langsmith@0.11.0:
-    resolution: {integrity: sha512-NMyaEhfHKAVPdXR8jqP1in4BAr2RhJTmBsH+ZzhvBDTxWUsuaprnJxkRe/3NY5d2+wCaPtzbDK2Myhh6vg2q7w==}
+  langsmith@0.10.13:
+    resolution: {integrity: sha512-v5500fr7rVzQSfQphTBJV2/OrMRDzb2QfLfoO+gvPBY/kER99QF2+wbG6QQUydm0N7ueyJfBOYhq6tqYacXVAA==}
     peerDependencies:
       '@opentelemetry/api': '*'
       '@opentelemetry/exporter-trace-otlp-proto': '*'
@@ -774,12 +774,12 @@ snapshots:
 
   '@keyv/serialize@1.1.1': {}
 
-  '@langchain/core@1.2.18':
+  '@langchain/core@1.2.17':
     dependencies:
       '@cfworker/json-schema': 4.1.1
       '@standard-schema/spec': 1.1.0
       js-tiktoken: 1.0.21
-      langsmith: 0.11.0
+      langsmith: 0.10.13
       mustache: 4.2.0
       p-queue: 6.6.2
       zod: 4.6.7
@@ -790,23 +790,23 @@ snapshots:
       - openai
       - ws
 
-  '@langchain/langgraph-checkpoint@1.2.0(@langchain/core@1.2.18)':
+  '@langchain/langgraph-checkpoint@1.2.0(@langchain/core@1.2.17)':
     dependencies:
-      '@langchain/core': 1.2.18
+      '@langchain/core': 1.2.17
 
-  '@langchain/langgraph-sdk@1.12.4(@langchain/core@1.2.18)':
+  '@langchain/langgraph-sdk@1.12.4(@langchain/core@1.2.17)':
     dependencies:
-      '@langchain/core': 1.2.18
+      '@langchain/core': 1.2.17
       '@langchain/protocol': 0.0.19
       '@types/json-schema': 7.0.15
       p-queue: 9.3.5
       p-retry: 7.1.1
 
-  '@langchain/langgraph@1.5.0(@langchain/core@1.2.18)(zod@4.6.7)':
+  '@langchain/langgraph@1.5.0(@langchain/core@1.2.17)(zod@4.6.7)':
     dependencies:
-      '@langchain/core': 1.2.18
-      '@langchain/langgraph-checkpoint': 1.2.0(@langchain/core@1.2.18)
-      '@langchain/langgraph-sdk': 1.12.4(@langchain/core@1.2.18)
+      '@langchain/core': 1.2.17
+      '@langchain/langgraph-checkpoint': 1.2.0(@langchain/core@1.2.17)
+      '@langchain/langgraph-sdk': 1.12.4(@langchain/core@1.2.17)
       '@langchain/protocol': 0.0.19
       '@standard-schema/spec': 1.1.0
       zod: 4.6.7
@@ -1097,7 +1097,7 @@ snapshots:
     dependencies:
       '@keyv/serialize': 1.1.1
 
-  langsmith@0.11.0:
+  langsmith@0.10.13:
     dependencies:
       p-queue: 6.6.2
 
