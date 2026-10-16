@@ -29,7 +29,7 @@ Tai is accountable for all local tasks, including shared foundation. Named lanes
 
 ## Phase 2: Foundational (Minimal Development Prerequisites)
 
-- [ ] T003 Implement canonical contract validators and conformance vectors in src/contracts/uc03.ts and tests/runtime/contract/uc03.test.ts.
+- [X] T003 Implement canonical contract validators and conformance vectors in src/contracts/uc03.ts and tests/runtime/contract/uc03.test.ts.
   - **Owner**: Tai / contracts lane; UC-04/UC-05 owners review their ports.
   - **Dependencies**: T001, T002.
   - **Owned Paths**: src/contracts/uc03.ts; tests/runtime/contract/uc03.test.ts.
