@@ -12,7 +12,7 @@ Implement a localized bug-fix route through validation, adaptive investigation/r
 ## Technical Context
 
 **Language/Version**: TypeScript, strict mode; Node.js 24 LTS selected explicitly for Phase 1. Exact compiler version is pinned in package.json.
-**Primary Dependencies**: Official `@langchain/langgraph`, npm/package-lock, strict tsc, ESLint/typescript-eslint and Node tests selected for Phase 1. Exact direct versions are pinned in package.json. Provider/model and schema tooling remain future choices; Docker remains the approved target execution boundary.
+**Primary Dependencies**: Official `@langchain/langgraph`, pnpm/pnpm-lock, strict tsc, ESLint/typescript-eslint and Node tests selected for Phase 1. Exact direct versions are pinned in package.json. Provider/model and schema tooling remain future choices; Docker remains the approved target execution boundary.
 **Storage**: UC-04 durable task/checkpoint/budget port; backend selected by Thanh Tan, not a UC-03 local database.
 **Testing**: Built-in Node tests on compiled TypeScript for the runtime bootstrap; Python/pytest inside a prepared image for later target-repository checks. Contract, behavioral, isolation and real integration suites remain required in their later tasks. Existing contributor `node --test` remains distinct.
 **Target Platform**: Trusted host with Docker Linux task containers; concrete host support and escape/resource configurations must be selected and verified before real execution.
@@ -39,7 +39,7 @@ Phase 1 recheck: the user confirmed current shared contracts and authorized buil
 
 ### Documentation (this feature)
 
-`specs/001-verified-code-repair/`: spec.md, plan.md, research.md, data-model.md, quickstart.md, contracts/interfaces.md, contracts/acceptance.md, tasks.md, checklists/requirements.md, checklists/planning-validation.md. See the [requirements checklist](checklists/requirements.md), [planning validation checklist](checklists/planning-validation.md) and [source/verification record](../../docs/verification/2026-10-16-uc03-planning.md).
+`specs/001-verified-code-repair/`: spec.md, plan.md, research.md, data-model.md, quickstart.md, contracts/interfaces.md, contracts/acceptance.md, tasks.md, checklists/requirements.md, checklists/planning-validation.md. See the [requirements checklist](checklists/requirements.md), [planning validation checklist](checklists/planning-validation.md) and [source/verification record](https://github.com/pminhtaiii/slop-loop/blob/2e6455fa77d6849c0711174cecca441d78a2f5c3/docs/verification/2026-10-16-uc03-planning.md).
 
 ### Source Code (repository root)
 
@@ -94,4 +94,4 @@ IDs are delivery references, not fabricated UC-04/UC-05 task numbers. Link their
 
 No additional service or runtime-policy exception. The user-approved amendment permits bootstrap while production choices remain release gates; the placeholder constitution is not implicitly ratified. Keep numeric budgets configurable and fail closed; a finite test profile is not a production default.
 
-Publication only: [Post-SDD handoff](../../docs/verification/2026-10-16-uc03-post-sdd.md) records transfer to review branch 007 while preserving feature directory 005 and all T001–T034 IDs. No Specify, Plan or Tasks generation was rerun. This historical handoff predates the user-requested rename to feature 001 and Phase 1 authorization recorded above.
+Publication only: [Post-SDD handoff](https://github.com/pminhtaiii/slop-loop/blob/ee5be9b147efb44511b8e65ece375fc904c5f062/docs/verification/2026-10-16-uc03-post-sdd.md) records transfer to review branch 007 while preserving feature directory 005 and all T001–T034 IDs. No Specify, Plan or Tasks generation was rerun. This historical handoff predates the user-requested rename to feature 001 and Phase 1 authorization recorded above.

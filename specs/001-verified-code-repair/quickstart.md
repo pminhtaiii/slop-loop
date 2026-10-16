@@ -4,18 +4,18 @@ Phase 1 provides the build toolchain and a LangGraph dependency smoke test. It d
 
 ## Build setup (available now)
 
-Use Node.js 24 LTS and the npm version pinned in package.json. From repository root:
+Use Node.js 24 LTS and the pnpm version pinned in package.json. From repository root:
 
 ```powershell
-npm ci
-npm run typecheck
-npm run lint
-npm run build
-npm run test:runtime
+pnpm install --frozen-lockfile
+pnpm run typecheck
+pnpm run lint
+pnpm run build
+pnpm run test:runtime
 node --test
 ```
 
-The runtime smoke test checks the installed LangGraph integration, not a repaired repository. Runtime CI runs the build gates on Ubuntu and Windows. Compiler/linter rejection probes and exact local results are recorded in [Phase 1 verification](../../docs/verification/2026-10-16-verified-code-repair-phase1.md).
+The runtime smoke test checks the installed LangGraph integration, not a repaired repository. Runtime CI runs the build gates on Ubuntu and Windows. Current results are local-only at `docs/verification/2026-10-16-verified-code-repair-phase1.md`; earlier compiler/linter probes and initial npm results are retained in [initial Phase 1 verification](https://github.com/pminhtaiii/slop-loop/blob/ee5be9b147efb44511b8e65ece375fc904c5f062/docs/verification/2026-10-16-verified-code-repair-phase1.md).
 
 ## Current planning checks (available now)
 
@@ -32,7 +32,7 @@ Expected: Spec Kit resolves this feature and design documents, context links/fac
 
 ## Future prerequisites
 
-T001 records shared-contract confirmation, constitution handling and alignment with accepted ADR-0004. T002 establishes the selected Node/npm/TypeScript/LangGraph/lint/test bootstrap. The user-approved amendment defers provider/model, supported execution hosts, Docker profile/image digest, artifact retention and every required finite production limit until before real execution; those choices are not supplied by bootstrap defaults. Use a prepared Python/pytest image; task containers cannot download missing dependencies. Supply trusted provider credentials only to host configuration, never to repo files/argv/child environment.
+T001 records shared-contract confirmation, constitution handling and alignment with accepted ADR-0004. T002 establishes the selected Node/pnpm/TypeScript/LangGraph/lint/test bootstrap. The user-approved amendment defers provider/model, supported execution hosts, Docker profile/image digest, artifact retention and every required finite production limit until before real execution; those choices are not supplied by bootstrap defaults. Use a prepared Python/pytest image; task containers cannot download missing dependencies. Supply trusted provider credentials only to host configuration, never to repo files/argv/child environment.
 
 X04-STATE and X05-GATE deliveries must match contract v0.1 (or its explicitly agreed successor), with actual owner-ledger/revision/evidence links. Mock suites may run before they arrive; real execution cannot. T024/T025 gate real operations. Reviewer configuration is separate and read-only.
 

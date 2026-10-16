@@ -81,12 +81,12 @@ In accordance with the host-provider budget protocol defined in `contracts/inter
 Per user confirmation on 2026-10-16 (Asia/Saigon), a scope amendment is in effect for Phase 1:
 1. **Bootstrap Stack Selection (Authorized for T001/T002)**:
    - **Runtime**: Node.js 24 LTS.
-   - **Package Manager**: npm with strict lockfile (`package-lock.json`).
+   - **Package Manager**: pnpm 12.5.1 with frozen lockfile (`pnpm-lock.yaml`), per the user's package-manager amendment after initial Phase 1 publication.
    - **Language**: TypeScript with strict mode compilation (`tsc`).
    - **Orchestration**: `@langchain/langgraph` (official package).
    - **Linter**: ESLint with `typescript-eslint` (strictly enforced mechanical linting); no formatter is selected.
    - **Test Runner**: Built-in Node test runner (`node --test`) for runtime unit, contract, and smoke testing.
-   - T002 pins npm 11.9.0, TypeScript 6.0.3, ESLint 10.12.0, typescript-eslint 8.71.2, @types/node 24.19.2, @langchain/langgraph 1.5.0 and its @langchain/core peer 1.2.18 in package.json/package-lock.json. TypeScript 6.0.3 satisfies the linter peer range (<6.1); latest TypeScript 7 was not selected. CI explicitly selects npm 11.9.0. Runtime tests execute compiled JavaScript after the build.
+   - T002 now pins pnpm 12.5.1, TypeScript 6.0.3, ESLint 10.12.0, typescript-eslint 8.71.2, @types/node 24.19.2, @langchain/langgraph 1.5.0 and its @langchain/core peer 1.2.18 in package.json/pnpm-lock.yaml. TypeScript 6.0.3 satisfies the linter peer range (<6.1); latest TypeScript 7 was not selected. CI reads the pinned pnpm version from package.json. Runtime tests execute compiled JavaScript after the build.
    - **Declaration-check limitation**: `skipLibCheck: true` avoids verified third-party declaration errors under `exactOptionalPropertyTypes` in LangChain/LangGraph/langsmith. Repository TypeScript retains strict checking, including implicit-any rejection. Reevaluate this exception when those dependencies change.
 2. **Deferred Production Choices (Mandatory Release Gates Before Real Execution)**:
    - The user explicitly approved deferring finite production configurations. These choices are **not** blockers to the Phase 1 build bootstrap (T002), but remain strict prerequisites before any real workflow execution (T024, T028+).
@@ -106,3 +106,5 @@ Per user confirmation on 2026-10-16 (Asia/Saigon), a scope amendment is in effec
   - Agreement on contract v0.1 interfaces and acceptance criteria does **not** prove that real production adapters or external services exist today.
   - No foreign task IDs, branch links, or external commit ledgers are currently available for UC-04 or UC-05. Such identifiers are external delivery references and must not be fabricated or invented.
   - Until real adapters are integrated (T025, T028, T032), UC-03 development proceeds safely against controlled, deterministic mocks (`T004`) satisfying the shared contract v0.1 validation suite.
+
+Package-manager amendment: the user explicitly selected pnpm instead of npm and authorized removing the npm-created installation on 2026-10-16 (Asia/Saigon). This supersedes the initial npm selection, not the selected runtime dependencies or production execution gates.

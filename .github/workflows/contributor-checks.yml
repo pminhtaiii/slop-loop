@@ -28,10 +28,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-      - name: Select npm version
-        run: npm install --global npm@11.9.0 --ignore-scripts
+      - name: Select pinned pnpm version
+        uses: pnpm/setup@c9883cc79df532ad1a7b81bf9ab944ceb090d65c # v2.0.0
+        with:
+          install: false
       - name: Install dependencies for test discovery
-        run: npm ci
+        run: pnpm install --frozen-lockfile
       - name: Check context consistency
         run: node scripts/ci/check-context.mjs
       - name: Check tracked files

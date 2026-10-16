@@ -7,15 +7,15 @@ This page records approved implementation choices and keeps undecided choices ex
 | Area | Choice | Scope |
 |---|---|---|
 | slop-loop implementation | TypeScript | Core coding-agent runtime |
-| Runtime toolchain | Node.js 24 LTS, npm@11.9.0 | Phase 1 bootstrap; npm lockfile |
-| Compiler and build | TypeScript 6.0.3, strict NodeNext ESM | npm run typecheck / npm run build |
-| Runtime test runner | Node.js built-in test runner | npm run test:runtime; compiled TypeScript tests |
-| Mechanical lint | ESLint 10.12.0, typescript-eslint 8.71.2 | npm run lint |
+| Runtime toolchain | Node.js 24 LTS, pnpm@12.5.1 | Phase 1 bootstrap; frozen pnpm-lock.yaml |
+| Compiler and build | TypeScript 6.0.3, strict NodeNext ESM | pnpm run typecheck / pnpm run build |
+| Runtime test runner | Node.js built-in test runner | pnpm run test:runtime; compiled TypeScript tests |
+| Mechanical lint | ESLint 10.12.0, typescript-eslint 8.71.2 | pnpm run lint |
 | Workflow orchestration | `@langchain/langgraph` | Retain the official TypeScript implementation as the orchestration library |
 | Initial target repositories | Python with `pytest` | Repositories the runtime will initially operate on |
 | Task execution environment | Docker | Agent loop and trusted harness on host; repository and Python/pytest tooling in task container; host-side tools use Docker execution directly; see [ADR-0003](../docs/adr/0003-docker-task-workspace-boundary.md) |
 
-Phase 1 provides the strict TypeScript/LangGraph build and a dependency smoke test, not the UC-03 workflow. Exact direct versions are pinned in [package.json](../package.json) and transitive versions in [package-lock.json](../package-lock.json). The user confirmed shared-contract agreement and approved bootstrap-only scope; [decisions](../specs/001-verified-code-repair/contracts/decisions.md) retains production release gates.
+Phase 1 provides the strict TypeScript/LangGraph build and a dependency smoke test, not the UC-03 workflow. Exact direct versions are pinned in [package.json](../package.json) and transitive versions in [pnpm-lock.yaml](../pnpm-lock.yaml). The user confirmed shared-contract agreement and approved bootstrap-only scope; [decisions](../specs/001-verified-code-repair/contracts/decisions.md) retains production release gates.
 
 ## Existing contributor helpers
 
