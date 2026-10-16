@@ -45,11 +45,15 @@ test('failed and timed-out gates retain diagnostics, exit status and bounded sum
 test('gate timeout terminates descendants inheriting its output pipes', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'workflow-gate-tree-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
-  const script = "const {spawn}=require('node:child_process');const child=spawn(process.execPath,['-e','setTimeout(() => {}, 6000)'],{stdio:['ignore','inherit','inherit']});require('node:fs').writeFileSync('descendant.pid',String(child.pid));setTimeout(() => {},6000);";
+  const script = "const {spawn}=require('node:child_process');const child=spawn(process.execPath,['-e',\"setInterval(() => require('node:fs').appendFileSync('heartbeat','x'),50);setTimeout(() => process.exit(),6000)\"],{stdio:['ignore','inherit','inherit']});require('node:fs').writeFileSync('descendant.pid',String(child.pid));setTimeout(() => {},6000);";
   const started = Date.now();
   await assert.rejects(runGate({ name: 'nested', args: ['-e', script], cwd: directory, logPath: join(directory, 'nested.log'), timeout: 1500, report() {} }), /timed-out/);
   const pid = Number(await readFile(join(directory, 'descendant.pid'), 'utf8'));
   t.after(() => { try { process.kill(pid); } catch (error) { if (error.code !== 'ESRCH') throw error; } });
-  assert.throws(() => process.kill(pid, 0), error => error.code === 'ESRCH', 'descendant must not survive a gate timeout');
+  if (process.platform === 'win32') assert.throws(() => process.kill(pid, 0), error => error.code === 'ESRCH', 'descendant must not survive a gate timeout');
+  const heartbeat = () => readFile(join(directory, 'heartbeat'), 'utf8').catch(error => { if (error.code === 'ENOENT') return ''; throw error; });
+  const stopped = await heartbeat();
+  await new Promise(resolve => setTimeout(resolve, 200));
+  assert.equal(await heartbeat(), stopped, 'descendant activity stops, even while POSIX waits to reap a zombie PID');
   assert.ok(Date.now() - started < 5000, 'timeout must not wait for inherited pipes from surviving descendants');
 });
