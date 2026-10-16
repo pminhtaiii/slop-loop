@@ -1,6 +1,6 @@
 # Quickstart Validation Guide: UC-03
 
-Phase 1 provides the build toolchain and a LangGraph dependency smoke test. It does not provide the UC-03 runtime runner. The user authorized setup and confirmed shared contracts on 2026-10-16 (Asia/Saigon); production choices remain required before real execution. See [decisions](contracts/decisions.md).
+Phase 1 provides the build toolchain and a LangGraph dependency smoke test. Phase 2 adds canonical contract validation and controlled test-only port mocks; it does not provide the UC-03 runtime runner. The user authorized Phase 2 and confirmed shared contracts on 2026-10-16 (Asia/Saigon); production choices remain required before real execution. See [decisions](contracts/decisions.md).
 
 ## Build setup (available now)
 
@@ -18,6 +18,8 @@ node --test
 The runtime smoke test checks the installed LangGraph integration, not a repaired repository. Runtime CI runs the build gates on Ubuntu and Windows. Current results are local-only at `docs/verification/2026-10-16-verified-code-repair-phase1.md`; earlier compiler/linter probes and initial npm results are retained in [initial Phase 1 verification](https://github.com/pminhtaiii/slop-loop/blob/ee5be9b147efb44511b8e65ece375fc904c5f062/docs/verification/2026-10-16-verified-code-repair-phase1.md).
 
 ## Current planning checks (available now)
+
+After `pnpm run build`, run the canonical contract suite directly with `node --test dist/tests/runtime/contract/uc03.test.js`. `pnpm run validate:runtime` cleans compiled output and runs typecheck, lint, build and all compiled runtime tests. Contract and mock passes establish development conformance only; real execution remains gated at T024/T025/T028 and later acceptance tasks.
 
 From repository root, run:
 

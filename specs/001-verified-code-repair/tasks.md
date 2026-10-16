@@ -2,9 +2,9 @@
 
 **Input**: Design documents from `/specs/001-verified-code-repair/`.
 **Prerequisites**: [plan.md](plan.md), [spec.md](spec.md), [research.md](research.md), [data-model.md](data-model.md), [interfaces](contracts/interfaces.md), [acceptance](contracts/acceptance.md).
-**Status**: Phase 1 (T001–T002) authorized on 2026-10-16 (Asia/Saigon). User confirmed shared-owner agreement to current contracts and amended T001 to release build scaffolding while production choices remain mandatory before real execution. Later phases are not authorized by this request. Completion is recorded only after integrated checks; see [decisions](contracts/decisions.md).
+**Status**: Phase 1 (T001–T002) completed; Phase 2 (T003–T004) authorized by the user on 2026-10-16 (Asia/Saigon). Shared-owner agreement to current contracts remains recorded, and production choices remain mandatory before real execution. Phase 3 onward requires separate authorization. Completion is recorded only after integrated checks; see [decisions](contracts/decisions.md).
 **Tests**: Required by FR-013 and repository test-first guidance. Each implementation task demonstrates its behavioral RED before GREEN; a missing module/collection failure is not a valid behavioral RED. Bootstrap commands are available in quickstart.md; behavioral product-runtime commands remain future work.
-**Phase 1 evidence**: [Initial verification](https://github.com/pminhtaiii/slop-loop/blob/ee5be9b147efb44511b8e65ece375fc904c5f062/docs/verification/2026-10-16-verified-code-repair-phase1.md) records integrated checks and independent review for T001–T002. Current pnpm verification and future evidence outputs under `docs/verification/` are intentionally local-only and must not be force-added. The remaining 32 tasks are unchecked and outside this request.
+**Phase 1 evidence**: [Initial verification](https://github.com/pminhtaiii/slop-loop/blob/ee5be9b147efb44511b8e65ece375fc904c5f062/docs/verification/2026-10-16-verified-code-repair-phase1.md) records integrated checks and independent review for T001–T002. Current pnpm verification and future evidence outputs under `docs/verification/` are intentionally local-only and must not be force-added. This request covers T003–T004 only; T005–T034 remain outside scope.
 **Organization**: User-story phases follow Spec Kit; priorities do not override DAG edges or permit delayed safety gates. US3 is P1 despite its section position. Final phase integrates all stories.
 
 ## Format: `[ID] [P?] [Story] Description`
@@ -29,7 +29,7 @@ Tai is accountable for all local tasks, including shared foundation. Named lanes
 
 ## Phase 2: Foundational (Minimal Development Prerequisites)
 
-- [ ] T003 Implement canonical contract validators and conformance vectors in src/contracts/uc03.ts and tests/runtime/contract/uc03.test.ts.
+- [X] T003 Implement canonical contract validators and conformance vectors in src/contracts/uc03.ts and tests/runtime/contract/uc03.test.ts.
   - **Owner**: Tai / contracts lane; UC-04/UC-05 owners review their ports.
   - **Dependencies**: T001, T002.
   - **Owned Paths**: src/contracts/uc03.ts; tests/runtime/contract/uc03.test.ts.
@@ -295,3 +295,11 @@ After T001 approval, deliver US1's narrow seeded route with required US3 securit
 ### Incremental and parallel delivery
 
 Develop accepted contract mocks once (T004), then run independent story lanes on saved-state fixtures. Integrate real components at named tasks, serially merge shared-file changes, rerun affected checks and let only the coordinator update status. Report mode mock/real, exact revisions/commands/exits and limitations in every handoff. Do not publish tickets via to-tickets in this request.
+
+## Phase 2 integration corrections
+
+- [X] T035 Preserve Node.js 24 source-test discovery and compiled runtime-test compatibility per FR-013 (partial).
+  - **Owner**: Tai / integration lane.
+  - **Dependencies**: T003; apply the same import convention to T004 files before final publication.
+  - **Owned Paths**: tsconfig.json; src/contracts/uc03.ts (erasable TypeScript syntax only); tests/runtime/contract/uc03.test.ts; relative imports in T004 support/tests when integrated.
+  - **Acceptance Checks**: Reproduce the publication failure from `node --test` discovering TypeScript tests with unresolved `.js` imports. Use source-resolvable relative imports and compiler rewriting for emitted JavaScript, preserving strict checking and dependency versions. Node 24 source discovery and compiled runtime tests both pass without transformation flags or prebuilt source-side JavaScript. This is a Phase 2 test-tooling correction, not authorization for later runtime phases.

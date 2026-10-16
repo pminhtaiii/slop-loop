@@ -6,6 +6,10 @@
 - **User Confirmation Provenance**: Confirmed directly by the user on 2026-10-16 in Asia/Saigon. The user confirmed that shared use-case owners (UC-04, UC-05) agreed to the current contract v0.1 definitions, and explicitly approved the bootstrap stack while confirming the scope amendment to defer finite production configuration choices until before real execution.
 - **Scope**: Phase 1 setup (T001 / T002 release). This document satisfies T001. Later implementation phases and real execution remain gated.
 
+## Phase 2 Authorization
+
+On 2026-10-16 (Asia/Saigon), the user authorized the next phase of the first specification: Phase 2, T003 canonical contract validators/conformance vectors and T004 controlled test-only port mocks. The integration branch is `feat/001-verified-code-repair-phase2`, created from the latest `origin/development`. The user approved using Gemini 3.8 Flash High with scoped repository content for small implementation assignments and requested independent GPT-6.1-Sol low-reasoning reviews. This contributor model selection does not select a production runtime provider. Phase 3 onward, real repository execution, and the deferred production choices remain separately gated. Existing accepted contract semantics and external ownership are unchanged.
+
 ## Contract v0.1 Baseline Hashes
 The contract v0.1 baseline is commit `04f3747`, consisting of the core specification, shared data model, and shared interfaces. The hashes below identify that baseline, not later authorization-wording amendments in spec.md. All mocks (T004) and future real adapters (T025, T028, T030, T032) must conform strictly to these accepted schemas and interfaces:
 - `specs/001-verified-code-repair/spec.md`:
