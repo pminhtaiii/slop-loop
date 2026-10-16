@@ -7,27 +7,63 @@
 
 export const CONTRACT_VERSION = '0.1.0' as const;
 
-export type TaskOutcome =
-  | 'COMPLETED'
-  | 'IMPLEMENTED_UNVERIFIED'
-  | 'INCOMPLETE'
-  | 'FAILED';
+export const TASK_OUTCOMES = [
+  'COMPLETED',
+  'IMPLEMENTED_UNVERIFIED',
+  'INCOMPLETE',
+  'FAILED',
+] as const;
 
-export type EnvelopeOutcome =
-  | 'success'
-  | 'needs-info'
-  | 'pending-approval'
-  | 'denied'
-  | 'conflict'
-  | 'exhausted'
-  | 'timeout'
-  | 'error'
-  | 'uncertain-effect';
+export type TaskOutcome = (typeof TASK_OUTCOMES)[number];
+
+export const ENVELOPE_OUTCOMES = [
+  'success',
+  'needs-info',
+  'pending-approval',
+  'denied',
+  'conflict',
+  'exhausted',
+  'timeout',
+  'error',
+  'uncertain-effect',
+] as const;
+
+export type EnvelopeOutcome = (typeof ENVELOPE_OUTCOMES)[number];
 
 export type PermissionClass =
   | 'ALLOWED'
   | 'APPROVAL_REQUIRED'
   | 'FORBIDDEN';
+
+export const TASK_NODES = [
+  'Validate',
+  'NeedsInfo',
+  'Investigate',
+  'AwaitPlan',
+  'AwaitFeedback',
+  'Patch',
+  'Verify',
+  'Review',
+  'Repair',
+  'Deliver',
+  'Incomplete',
+] as const;
+
+export type TaskNode = (typeof TASK_NODES)[number];
+
+export const ALLOWED_NODE_TRANSITIONS: Readonly<Record<TaskNode, readonly TaskNode[]>> = {
+  Validate: ['NeedsInfo', 'Investigate'],
+  NeedsInfo: ['Validate'],
+  Investigate: ['AwaitPlan'],
+  AwaitPlan: ['AwaitFeedback', 'Patch'],
+  AwaitFeedback: ['Investigate', 'Incomplete'],
+  Patch: ['Verify', 'Repair'],
+  Verify: ['Review', 'Repair'],
+  Review: ['Deliver', 'Repair'],
+  Repair: ['Patch', 'Investigate', 'Incomplete'],
+  Deliver: [],
+  Incomplete: [],
+};
 
 export interface TaskEnvelope {
   readonly schemaVersion: string;
@@ -212,28 +248,13 @@ export interface Run {
   readonly outcome?: TaskOutcome | undefined;
 }
 
-export interface TaskState {
-  readonly schemaVersion: string;
-  readonly stateVersion: number;
-  readonly taskId: string;
-  readonly runId: string;
-  readonly workspaceId: string;
-  readonly goal: string;
-  readonly acceptanceCriteria: readonly string[];
-  readonly constraints: readonly string[];
-  readonly node: string;
-  readonly planVersion: number;
-  readonly changedPaths: readonly string[];
-  readonly evidenceRefs: readonly string[];
-  readonly risks: readonly string[];
-  readonly nextAction: string;
-  readonly outcome?: TaskOutcome | undefined;
-}
+export type PlanStepStatus = 'todo' | 'doing' | 'done' | 'failed';
+export const PLAN_STEP_STATUSES: readonly PlanStepStatus[] = ['todo', 'doing', 'done', 'failed'];
 
 export interface PlanStep {
   readonly stepId: string;
   readonly description: string;
-  readonly status: 'todo' | 'doing' | 'done' | 'failed';
+  readonly status: PlanStepStatus;
   readonly actionRefs: readonly string[];
   readonly evidenceRefs: readonly string[];
 }
@@ -266,6 +287,47 @@ export interface BudgetLedger {
   readonly unit: string;
   readonly configurationId: string;
   readonly version: number;
+}
+
+export interface TaskState {
+  readonly schemaVersion: string;
+  readonly stateVersion: number;
+  readonly taskId: string;
+  readonly runId: string;
+  readonly workspaceId: string;
+  readonly repositoryId: string;
+  readonly repositoryRevisionDigest: string;
+  readonly goal: string;
+  readonly observedBehavior?: string | undefined;
+  readonly expectedBehavior?: string | undefined;
+  readonly reproduction?: string | undefined;
+  readonly acceptanceCriteria: readonly string[];
+  readonly constraints: readonly string[];
+  readonly requiredCheckIds?: readonly string[] | undefined;
+  readonly taskContext?: BugTask | undefined;
+  readonly node: TaskNode;
+  readonly planVersion: number;
+  readonly replanCount: number;
+  readonly plan?: FixPlan | undefined;
+  readonly steps?: readonly PlanStep[] | undefined;
+  readonly changedPaths: readonly string[];
+  readonly evidenceRefs: readonly string[];
+  readonly approvalDecisionRefs?: readonly string[] | undefined;
+  readonly activeDecisionId?: string | undefined;
+  readonly reviewRefs?: readonly string[] | undefined;
+  readonly latestReviewRef?: string | undefined;
+  readonly budgetLedgers?: readonly BudgetLedger[] | undefined;
+  readonly checkpointConfigId?: string | undefined;
+  readonly checkpointVersion?: number | undefined;
+  readonly risks: readonly string[];
+  readonly nextAction: string;
+  readonly outcome?: TaskOutcome | undefined;
+}
+
+export type TaskCheckpoint = TaskState;
+
+export interface StateTransitionOptions {
+  readonly allowSameNode?: boolean | undefined;
 }
 
 export interface CheckResult {
@@ -428,6 +490,24 @@ function isPlainObject(val: unknown): val is Record<string, unknown> {
   return typeof val === 'object' && val !== null && !Array.isArray(val);
 }
 
+function rejectUnknownKeys(
+  obj: Record<string, unknown>,
+  allowedKeys: readonly string[],
+  path: string,
+  errors: ValidationError[]
+): void {
+  const allowedSet = new Set(allowedKeys);
+  for (const key of Object.keys(obj)) {
+    if (!allowedSet.has(key)) {
+      errors.push({
+        path: path ? `${path}.${key}` : key,
+        message: `Unknown property: ${key}`,
+        code: 'UNKNOWN_PROPERTY',
+      });
+    }
+  }
+}
+
 function validateNonEmptyString(
   val: unknown,
   path: string,
@@ -495,6 +575,22 @@ function validateNonNegativeInteger(
       path,
       message: `${path} must be a finite non-negative integer`,
       code: 'INVALID_NON_NEGATIVE_INTEGER',
+    });
+    return undefined;
+  }
+  return val;
+}
+
+function validateNonNegativeNumber(
+  val: unknown,
+  path: string,
+  errors: ValidationError[]
+): number | undefined {
+  if (typeof val !== 'number' || !Number.isFinite(val) || val < 0) {
+    errors.push({
+      path,
+      message: `${path} must be a finite non-negative number`,
+      code: 'INVALID_NON_NEGATIVE_NUMBER',
     });
     return undefined;
   }
@@ -884,7 +980,6 @@ export function validateNormalizedAction(input: unknown): ValidationResult<Norma
   if (kind === 'run_command') {
     const executable = validateNonEmptyString(input['executable'], 'executable', errors);
     if (executable) {
-      // Reject shell metacharacters and arbitrary shell execution
       if (/[\s;&|><`$\r\n]/.test(executable)) {
         errors.push({
           path: 'executable',
@@ -1265,4 +1360,967 @@ export function validateCommandView(
   };
 
   return { ok: true, value: commandView };
+}
+
+/* ------------------------------------------------------------------
+ * Slice 2 Validators: TaskEnvelope, TaskNode, Outcomes, PlanStep,
+ * FixPlan, BudgetLedger, TaskState/Checkpoint, and State Transitions
+ * ------------------------------------------------------------------ */
+
+const TASK_ENVELOPE_ALLOWED_KEYS = [
+  'schemaVersion',
+  'requestId',
+  'taskId',
+  'runId',
+  'workspaceId',
+  'expectedStateVersion',
+  'repositoryRevisionDigest',
+  'trustedConfigId',
+] as const;
+
+export function validateTaskEnvelope(input: unknown): ValidationResult<TaskEnvelope> {
+  if (!isPlainObject(input)) {
+    return {
+      ok: false,
+      errors: [{ path: 'envelope', message: 'TaskEnvelope must be an object', code: 'INVALID_TYPE' }],
+    };
+  }
+
+  const errors: ValidationError[] = [];
+  rejectUnknownKeys(input, TASK_ENVELOPE_ALLOWED_KEYS, '', errors);
+
+  const schemaVersion = validateNonEmptyString(input['schemaVersion'], 'schemaVersion', errors);
+  if (schemaVersion && schemaVersion !== CONTRACT_VERSION) {
+    errors.push({
+      path: 'schemaVersion',
+      message: `schemaVersion must match current contract version ${CONTRACT_VERSION}`,
+      code: 'SCHEMA_VERSION_MISMATCH',
+    });
+  }
+
+  const requestId = validateNonEmptyString(input['requestId'], 'requestId', errors);
+  const taskId = validateNonEmptyString(input['taskId'], 'taskId', errors);
+  const runId = validateNonEmptyString(input['runId'], 'runId', errors);
+  const workspaceId = validateNonEmptyString(input['workspaceId'], 'workspaceId', errors);
+  const expectedStateVersion = validateNonNegativeInteger(
+    input['expectedStateVersion'],
+    'expectedStateVersion',
+    errors
+  );
+  const repositoryRevisionDigest = validateNonEmptyString(
+    input['repositoryRevisionDigest'],
+    'repositoryRevisionDigest',
+    errors
+  );
+  const trustedConfigId = validateNonEmptyString(input['trustedConfigId'], 'trustedConfigId', errors);
+
+  if (
+    errors.length > 0 ||
+    !schemaVersion ||
+    schemaVersion !== CONTRACT_VERSION ||
+    !requestId ||
+    !taskId ||
+    !runId ||
+    !workspaceId ||
+    expectedStateVersion === undefined ||
+    !repositoryRevisionDigest ||
+    !trustedConfigId
+  ) {
+    return { ok: false, errors };
+  }
+
+  return {
+    ok: true,
+    value: {
+      schemaVersion,
+      requestId,
+      taskId,
+      runId,
+      workspaceId,
+      expectedStateVersion,
+      repositoryRevisionDigest,
+      trustedConfigId,
+    },
+  };
+}
+
+export function validateTaskNode(input: unknown): ValidationResult<TaskNode> {
+  if (typeof input !== 'string') {
+    return {
+      ok: false,
+      errors: [{ path: 'node', message: 'node must be a string', code: 'INVALID_TYPE' }],
+    };
+  }
+  if (!TASK_NODES.includes(input as TaskNode)) {
+    return {
+      ok: false,
+      errors: [
+        {
+          path: 'node',
+          message: `node must be one of: ${TASK_NODES.join(', ')}`,
+          code: 'INVALID_NODE',
+        },
+      ],
+    };
+  }
+  return { ok: true, value: input as TaskNode };
+}
+
+export function validateTaskOutcome(input: unknown): ValidationResult<TaskOutcome> {
+  if (typeof input !== 'string') {
+    return {
+      ok: false,
+      errors: [{ path: 'outcome', message: 'TaskOutcome must be a string', code: 'INVALID_TYPE' }],
+    };
+  }
+  if (!TASK_OUTCOMES.includes(input as TaskOutcome)) {
+    return {
+      ok: false,
+      errors: [
+        {
+          path: 'outcome',
+          message: `TaskOutcome must be one of: ${TASK_OUTCOMES.join(', ')}`,
+          code: 'INVALID_OUTCOME',
+        },
+      ],
+    };
+  }
+  return { ok: true, value: input as TaskOutcome };
+}
+
+export function validateEnvelopeOutcome(input: unknown): ValidationResult<EnvelopeOutcome> {
+  if (typeof input !== 'string') {
+    return {
+      ok: false,
+      errors: [
+        {
+          path: 'envelopeOutcome',
+          message: 'EnvelopeOutcome must be a string',
+          code: 'INVALID_TYPE',
+        },
+      ],
+    };
+  }
+  if (!ENVELOPE_OUTCOMES.includes(input as EnvelopeOutcome)) {
+    return {
+      ok: false,
+      errors: [
+        {
+          path: 'envelopeOutcome',
+          message: `EnvelopeOutcome must be one of: ${ENVELOPE_OUTCOMES.join(', ')}`,
+          code: 'INVALID_ENVELOPE_OUTCOME',
+        },
+      ],
+    };
+  }
+  return { ok: true, value: input as EnvelopeOutcome };
+}
+
+const PLAN_STEP_ALLOWED_KEYS = [
+  'stepId',
+  'description',
+  'status',
+  'actionRefs',
+  'evidenceRefs',
+] as const;
+
+export function validatePlanStep(input: unknown, path = 'planStep'): ValidationResult<PlanStep> {
+  if (!isPlainObject(input)) {
+    return {
+      ok: false,
+      errors: [{ path, message: `${path} must be an object`, code: 'INVALID_TYPE' }],
+    };
+  }
+
+  const errors: ValidationError[] = [];
+  rejectUnknownKeys(input, PLAN_STEP_ALLOWED_KEYS, path, errors);
+
+  const stepId = validateNonEmptyString(input['stepId'], `${path}.stepId`, errors);
+  const description = validateNonEmptyString(input['description'], `${path}.description`, errors);
+
+  const status = input['status'] as PlanStepStatus;
+  if (!PLAN_STEP_STATUSES.includes(status)) {
+    errors.push({
+      path: `${path}.status`,
+      message: `${path}.status must be one of: ${PLAN_STEP_STATUSES.join(', ')}`,
+      code: 'INVALID_STEP_STATUS',
+    });
+  }
+
+  if (!Array.isArray(input['actionRefs'])) {
+    errors.push({
+      path: `${path}.actionRefs`,
+      message: `${path}.actionRefs must be an array of strings`,
+      code: 'INVALID_TYPE',
+    });
+  } else {
+    for (let i = 0; i < input['actionRefs'].length; i++) {
+      if (typeof input['actionRefs'][i] !== 'string') {
+        errors.push({
+          path: `${path}.actionRefs[${i}]`,
+          message: `${path}.actionRefs[${i}] must be a string`,
+          code: 'INVALID_TYPE',
+        });
+      }
+    }
+  }
+
+  if (!Array.isArray(input['evidenceRefs'])) {
+    errors.push({
+      path: `${path}.evidenceRefs`,
+      message: `${path}.evidenceRefs must be an array of strings`,
+      code: 'INVALID_TYPE',
+    });
+  } else {
+    for (let i = 0; i < input['evidenceRefs'].length; i++) {
+      if (typeof input['evidenceRefs'][i] !== 'string') {
+        errors.push({
+          path: `${path}.evidenceRefs[${i}]`,
+          message: `${path}.evidenceRefs[${i}] must be a string`,
+          code: 'INVALID_TYPE',
+        });
+      }
+    }
+  }
+
+  if (
+    errors.length > 0 ||
+    !stepId ||
+    !description ||
+    !PLAN_STEP_STATUSES.includes(status) ||
+    !Array.isArray(input['actionRefs']) ||
+    !Array.isArray(input['evidenceRefs'])
+  ) {
+    return { ok: false, errors };
+  }
+
+  return {
+    ok: true,
+    value: {
+      stepId,
+      description,
+      status,
+      actionRefs: input['actionRefs'] as readonly string[],
+      evidenceRefs: input['evidenceRefs'] as readonly string[],
+    },
+  };
+}
+
+const FIX_PLAN_ALLOWED_KEYS = [
+  'planVersion',
+  'diagnosis',
+  'suspectedCauseLocations',
+  'evidenceRefs',
+  'strategy',
+  'scopedChanges',
+  'checkSetDigest',
+  'baselineRef',
+  'strategyDigest',
+  'decisionRef',
+] as const;
+
+export function validateFixPlan(input: unknown, path = 'fixPlan'): ValidationResult<FixPlan> {
+  if (!isPlainObject(input)) {
+    return {
+      ok: false,
+      errors: [{ path, message: `${path} must be an object`, code: 'INVALID_TYPE' }],
+    };
+  }
+
+  const errors: ValidationError[] = [];
+  rejectUnknownKeys(input, FIX_PLAN_ALLOWED_KEYS, path, errors);
+
+  const planVersion = validatePositiveInteger(input['planVersion'], `${path}.planVersion`, errors);
+  const diagnosis = validateNonEmptyString(input['diagnosis'], `${path}.diagnosis`, errors);
+  const strategy = validateNonEmptyString(input['strategy'], `${path}.strategy`, errors);
+  const checkSetDigest = validateNonEmptyString(input['checkSetDigest'], `${path}.checkSetDigest`, errors);
+  const baselineRef = validateNonEmptyString(input['baselineRef'], `${path}.baselineRef`, errors);
+  const strategyDigest = validateNonEmptyString(input['strategyDigest'], `${path}.strategyDigest`, errors);
+
+  let decisionRef: string | undefined;
+  if (input['decisionRef'] !== undefined) {
+    decisionRef = validateNonEmptyString(input['decisionRef'], `${path}.decisionRef`, errors);
+  }
+
+  if (!Array.isArray(input['suspectedCauseLocations'])) {
+    errors.push({
+      path: `${path}.suspectedCauseLocations`,
+      message: `${path}.suspectedCauseLocations must be an array of location strings`,
+      code: 'INVALID_TYPE',
+    });
+  } else if (input['suspectedCauseLocations'].length === 0) {
+    errors.push({
+      path: `${path}.suspectedCauseLocations`,
+      message: `${path}.suspectedCauseLocations must contain at least one location`,
+      code: 'EMPTY_CAUSE_LOCATIONS',
+    });
+  } else {
+    for (let i = 0; i < input['suspectedCauseLocations'].length; i++) {
+      validateNonEmptyString(input['suspectedCauseLocations'][i], `${path}.suspectedCauseLocations[${i}]`, errors);
+    }
+  }
+
+  if (!Array.isArray(input['evidenceRefs'])) {
+    errors.push({
+      path: `${path}.evidenceRefs`,
+      message: `${path}.evidenceRefs must be an array of evidence references`,
+      code: 'INVALID_TYPE',
+    });
+  } else if (input['evidenceRefs'].length === 0) {
+    errors.push({
+      path: `${path}.evidenceRefs`,
+      message: `${path}.evidenceRefs must contain at least one evidence reference`,
+      code: 'EMPTY_EVIDENCE_REFS',
+    });
+  } else {
+    for (let i = 0; i < input['evidenceRefs'].length; i++) {
+      validateNonEmptyString(input['evidenceRefs'][i], `${path}.evidenceRefs[${i}]`, errors);
+    }
+  }
+
+  if (!Array.isArray(input['scopedChanges'])) {
+    errors.push({
+      path: `${path}.scopedChanges`,
+      message: `${path}.scopedChanges must be an array of file/module paths`,
+      code: 'INVALID_TYPE',
+    });
+  } else if (input['scopedChanges'].length === 0) {
+    errors.push({
+      path: `${path}.scopedChanges`,
+      message: `${path}.scopedChanges must contain at least one targeted path`,
+      code: 'EMPTY_SCOPED_CHANGES',
+    });
+  } else {
+    for (let i = 0; i < input['scopedChanges'].length; i++) {
+      validateNonEmptyString(input['scopedChanges'][i], `${path}.scopedChanges[${i}]`, errors);
+    }
+  }
+
+  if (
+    errors.length > 0 ||
+    planVersion === undefined ||
+    !diagnosis ||
+    !strategy ||
+    !checkSetDigest ||
+    !baselineRef ||
+    !strategyDigest ||
+    !Array.isArray(input['suspectedCauseLocations']) ||
+    input['suspectedCauseLocations'].length === 0 ||
+    !Array.isArray(input['evidenceRefs']) ||
+    input['evidenceRefs'].length === 0 ||
+    !Array.isArray(input['scopedChanges']) ||
+    input['scopedChanges'].length === 0
+  ) {
+    return { ok: false, errors };
+  }
+
+  return {
+    ok: true,
+    value: {
+      planVersion,
+      diagnosis,
+      suspectedCauseLocations: input['suspectedCauseLocations'] as readonly string[],
+      evidenceRefs: input['evidenceRefs'] as readonly string[],
+      strategy,
+      scopedChanges: input['scopedChanges'] as readonly string[],
+      checkSetDigest,
+      baselineRef,
+      strategyDigest,
+      ...(decisionRef !== undefined ? { decisionRef } : {}),
+    },
+  };
+}
+
+const BUDGET_RESERVATION_ALLOWED_KEYS = ['reservationId', 'keyedId', 'amount'] as const;
+
+const BUDGET_LEDGER_ALLOWED_KEYS = [
+  'scope',
+  'kind',
+  'limit',
+  'consumed',
+  'reservations',
+  'unit',
+  'configurationId',
+  'version',
+] as const;
+
+export function validateBudgetLedger(
+  input: unknown,
+  path = 'budgetLedger'
+): ValidationResult<BudgetLedger> {
+  if (!isPlainObject(input)) {
+    return {
+      ok: false,
+      errors: [{ path, message: `${path} must be an object`, code: 'INVALID_TYPE' }],
+    };
+  }
+
+  const errors: ValidationError[] = [];
+  rejectUnknownKeys(input, BUDGET_LEDGER_ALLOWED_KEYS, path, errors);
+
+  const scope = input['scope'];
+  if (scope !== 'task' && scope !== 'run') {
+    errors.push({
+      path: `${path}.scope`,
+      message: `${path}.scope must be "task" or "run"`,
+      code: 'INVALID_SCOPE',
+    });
+  }
+
+  const kind = validateNonEmptyString(input['kind'], `${path}.kind`, errors);
+  const limit = validateNonNegativeNumber(input['limit'], `${path}.limit`, errors);
+  const consumed = validateNonNegativeNumber(input['consumed'], `${path}.consumed`, errors);
+  const unit = validateNonEmptyString(input['unit'], `${path}.unit`, errors);
+  const configurationId = validateNonEmptyString(input['configurationId'], `${path}.configurationId`, errors);
+  const version = validateNonNegativeInteger(input['version'], `${path}.version`, errors);
+
+  const reservations: BudgetReservation[] = [];
+  if (!Array.isArray(input['reservations'])) {
+    errors.push({
+      path: `${path}.reservations`,
+      message: `${path}.reservations must be an array of reservations`,
+      code: 'INVALID_TYPE',
+    });
+  } else {
+    for (let i = 0; i < input['reservations'].length; i++) {
+      const resItem = input['reservations'][i];
+      const resPath = `${path}.reservations[${i}]`;
+      if (!isPlainObject(resItem)) {
+        errors.push({
+          path: resPath,
+          message: `${resPath} must be an object`,
+          code: 'INVALID_TYPE',
+        });
+        continue;
+      }
+      rejectUnknownKeys(resItem, BUDGET_RESERVATION_ALLOWED_KEYS, resPath, errors);
+      const resId = validateNonEmptyString(resItem['reservationId'], `${resPath}.reservationId`, errors);
+      const keyedId = validateNonEmptyString(resItem['keyedId'], `${resPath}.keyedId`, errors);
+      const amount = validateNonNegativeNumber(resItem['amount'], `${resPath}.amount`, errors);
+      if (resId && keyedId && amount !== undefined) {
+        reservations.push({ reservationId: resId, keyedId, amount });
+      }
+    }
+  }
+
+  if (
+    errors.length > 0 ||
+    (scope !== 'task' && scope !== 'run') ||
+    !kind ||
+    limit === undefined ||
+    consumed === undefined ||
+    !unit ||
+    !configurationId ||
+    version === undefined ||
+    !Array.isArray(input['reservations'])
+  ) {
+    return { ok: false, errors };
+  }
+
+  return {
+    ok: true,
+    value: {
+      scope,
+      kind,
+      limit,
+      consumed,
+      reservations,
+      unit,
+      configurationId,
+      version,
+    },
+  };
+}
+
+const TASK_STATE_ALLOWED_KEYS = [
+  'schemaVersion',
+  'stateVersion',
+  'taskId',
+  'runId',
+  'workspaceId',
+  'repositoryId',
+  'repositoryRevisionDigest',
+  'goal',
+  'observedBehavior',
+  'expectedBehavior',
+  'reproduction',
+  'acceptanceCriteria',
+  'constraints',
+  'requiredCheckIds',
+  'taskContext',
+  'node',
+  'planVersion',
+  'replanCount',
+  'plan',
+  'steps',
+  'changedPaths',
+  'evidenceRefs',
+  'approvalDecisionRefs',
+  'activeDecisionId',
+  'reviewRefs',
+  'latestReviewRef',
+  'budgetLedgers',
+  'checkpointConfigId',
+  'checkpointVersion',
+  'risks',
+  'nextAction',
+  'outcome',
+] as const;
+
+export function validateTaskState(input: unknown): ValidationResult<TaskState> {
+  if (!isPlainObject(input)) {
+    return {
+      ok: false,
+      errors: [{ path: 'taskState', message: 'TaskState must be an object', code: 'INVALID_TYPE' }],
+    };
+  }
+
+  const errors: ValidationError[] = [];
+  rejectUnknownKeys(input, TASK_STATE_ALLOWED_KEYS, '', errors);
+
+  const schemaVersion = validateNonEmptyString(input['schemaVersion'], 'schemaVersion', errors);
+  if (schemaVersion && schemaVersion !== CONTRACT_VERSION) {
+    errors.push({
+      path: 'schemaVersion',
+      message: `schemaVersion must match current contract version ${CONTRACT_VERSION}`,
+      code: 'SCHEMA_VERSION_MISMATCH',
+    });
+  }
+
+  const stateVersion = validatePositiveInteger(input['stateVersion'], 'stateVersion', errors);
+  const taskId = validateNonEmptyString(input['taskId'], 'taskId', errors);
+  const runId = validateNonEmptyString(input['runId'], 'runId', errors);
+  const workspaceId = validateNonEmptyString(input['workspaceId'], 'workspaceId', errors);
+  const repositoryId = validateNonEmptyString(input['repositoryId'], 'repositoryId', errors);
+  const repositoryRevisionDigest = validateNonEmptyString(
+    input['repositoryRevisionDigest'],
+    'repositoryRevisionDigest',
+    errors
+  );
+  const goal = validateNonEmptyString(input['goal'], 'goal', errors);
+  const nextAction = validateNonEmptyString(input['nextAction'], 'nextAction', errors);
+
+  let observedBehavior: string | undefined;
+  if (input['observedBehavior'] !== undefined) {
+    observedBehavior = validateNonEmptyString(input['observedBehavior'], 'observedBehavior', errors);
+  }
+
+  let expectedBehavior: string | undefined;
+  if (input['expectedBehavior'] !== undefined) {
+    expectedBehavior = validateNonEmptyString(input['expectedBehavior'], 'expectedBehavior', errors);
+  }
+
+  let reproduction: string | undefined;
+  if (input['reproduction'] !== undefined) {
+    reproduction = validateNonEmptyString(input['reproduction'], 'reproduction', errors);
+  }
+
+  if (!Array.isArray(input['acceptanceCriteria'])) {
+    errors.push({
+      path: 'acceptanceCriteria',
+      message: 'acceptanceCriteria must be an array of strings',
+      code: 'INVALID_TYPE',
+    });
+  }
+
+  if (!Array.isArray(input['constraints'])) {
+    errors.push({
+      path: 'constraints',
+      message: 'constraints must be an array of strings',
+      code: 'INVALID_TYPE',
+    });
+  }
+
+  let requiredCheckIds: readonly string[] | undefined;
+  if (input['requiredCheckIds'] !== undefined) {
+    if (!Array.isArray(input['requiredCheckIds'])) {
+      errors.push({
+        path: 'requiredCheckIds',
+        message: 'requiredCheckIds must be an array of strings',
+        code: 'INVALID_TYPE',
+      });
+    } else {
+      requiredCheckIds = input['requiredCheckIds'] as readonly string[];
+    }
+  }
+
+  let taskContext: BugTask | undefined;
+  if (input['taskContext'] !== undefined) {
+    const contextRes = validateBugTask(input['taskContext']);
+    if (!contextRes.ok) {
+      errors.push(...contextRes.errors);
+    } else {
+      taskContext = contextRes.value;
+    }
+  }
+
+  const nodeRes = validateTaskNode(input['node']);
+  let node: TaskNode | undefined;
+  if (!nodeRes.ok) {
+    errors.push(...nodeRes.errors);
+  } else {
+    node = nodeRes.value;
+  }
+
+  const planVersion = validatePositiveInteger(input['planVersion'], 'planVersion', errors);
+  const replanCount = validateNonNegativeInteger(input['replanCount'], 'replanCount', errors);
+  if (replanCount !== undefined && replanCount > 3) {
+    errors.push({
+      path: 'replanCount',
+      message: 'replanCount cannot exceed 3 (fixed task-scoped replan limit)',
+      code: 'REPLAN_CAP_EXCEEDED',
+    });
+  }
+
+  let plan: FixPlan | undefined;
+  if (input['plan'] !== undefined) {
+    const planRes = validateFixPlan(input['plan'], 'plan');
+    if (!planRes.ok) {
+      errors.push(...planRes.errors);
+    } else {
+      plan = planRes.value;
+    }
+  }
+
+  let steps: PlanStep[] | undefined;
+  if (input['steps'] !== undefined) {
+    if (!Array.isArray(input['steps'])) {
+      errors.push({
+        path: 'steps',
+        message: 'steps must be an array of PlanStep objects',
+        code: 'INVALID_TYPE',
+      });
+    } else {
+      steps = [];
+      for (let i = 0; i < input['steps'].length; i++) {
+        const stepRes = validatePlanStep(input['steps'][i], `steps[${i}]`);
+        if (!stepRes.ok) {
+          errors.push(...stepRes.errors);
+        } else {
+          steps.push(stepRes.value);
+        }
+      }
+    }
+  }
+
+  if (!Array.isArray(input['changedPaths'])) {
+    errors.push({
+      path: 'changedPaths',
+      message: 'changedPaths must be an array of strings',
+      code: 'INVALID_TYPE',
+    });
+  }
+
+  if (!Array.isArray(input['evidenceRefs'])) {
+    errors.push({
+      path: 'evidenceRefs',
+      message: 'evidenceRefs must be an array of strings',
+      code: 'INVALID_TYPE',
+    });
+  }
+
+  let approvalDecisionRefs: readonly string[] | undefined;
+  if (input['approvalDecisionRefs'] !== undefined) {
+    if (!Array.isArray(input['approvalDecisionRefs'])) {
+      errors.push({
+        path: 'approvalDecisionRefs',
+        message: 'approvalDecisionRefs must be an array of strings',
+        code: 'INVALID_TYPE',
+      });
+    } else {
+      approvalDecisionRefs = input['approvalDecisionRefs'] as readonly string[];
+    }
+  }
+
+  let activeDecisionId: string | undefined;
+  if (input['activeDecisionId'] !== undefined) {
+    activeDecisionId = validateNonEmptyString(input['activeDecisionId'], 'activeDecisionId', errors);
+  }
+
+  let reviewRefs: readonly string[] | undefined;
+  if (input['reviewRefs'] !== undefined) {
+    if (!Array.isArray(input['reviewRefs'])) {
+      errors.push({
+        path: 'reviewRefs',
+        message: 'reviewRefs must be an array of strings',
+        code: 'INVALID_TYPE',
+      });
+    } else {
+      reviewRefs = input['reviewRefs'] as readonly string[];
+    }
+  }
+
+  let latestReviewRef: string | undefined;
+  if (input['latestReviewRef'] !== undefined) {
+    latestReviewRef = validateNonEmptyString(input['latestReviewRef'], 'latestReviewRef', errors);
+  }
+
+  let budgetLedgers: BudgetLedger[] | undefined;
+  if (input['budgetLedgers'] !== undefined) {
+    if (!Array.isArray(input['budgetLedgers'])) {
+      errors.push({
+        path: 'budgetLedgers',
+        message: 'budgetLedgers must be an array of BudgetLedger objects',
+        code: 'INVALID_TYPE',
+      });
+    } else {
+      budgetLedgers = [];
+      for (let i = 0; i < input['budgetLedgers'].length; i++) {
+        const ledgerRes = validateBudgetLedger(input['budgetLedgers'][i], `budgetLedgers[${i}]`);
+        if (!ledgerRes.ok) {
+          errors.push(...ledgerRes.errors);
+        } else {
+          budgetLedgers.push(ledgerRes.value);
+        }
+      }
+    }
+  }
+
+  let checkpointConfigId: string | undefined;
+  if (input['checkpointConfigId'] !== undefined) {
+    checkpointConfigId = validateNonEmptyString(input['checkpointConfigId'], 'checkpointConfigId', errors);
+  }
+
+  let checkpointVersion: number | undefined;
+  if (input['checkpointVersion'] !== undefined) {
+    checkpointVersion = validateNonNegativeInteger(input['checkpointVersion'], 'checkpointVersion', errors);
+  }
+
+  if (!Array.isArray(input['risks'])) {
+    errors.push({
+      path: 'risks',
+      message: 'risks must be an array of strings',
+      code: 'INVALID_TYPE',
+    });
+  }
+
+  // Terminal vs Non-terminal outcome validation
+  let outcome: TaskOutcome | undefined;
+  const rawOutcome = input['outcome'];
+  if (node === 'Deliver') {
+    if (rawOutcome !== 'COMPLETED' && rawOutcome !== 'IMPLEMENTED_UNVERIFIED') {
+      errors.push({
+        path: 'outcome',
+        message: 'Deliver node requires outcome COMPLETED or IMPLEMENTED_UNVERIFIED',
+        code: 'INVALID_TERMINAL_OUTCOME',
+      });
+    } else {
+      outcome = rawOutcome;
+    }
+  } else if (node === 'Incomplete') {
+    if (rawOutcome !== 'INCOMPLETE' && rawOutcome !== 'FAILED') {
+      errors.push({
+        path: 'outcome',
+        message: 'Incomplete node requires outcome INCOMPLETE or FAILED',
+        code: 'INVALID_TERMINAL_OUTCOME',
+      });
+    } else {
+      outcome = rawOutcome;
+    }
+  } else {
+    if (rawOutcome !== undefined) {
+      errors.push({
+        path: 'outcome',
+        message: `Non-terminal node ${node} cannot have an outcome set`,
+        code: 'NON_TERMINAL_OUTCOME_SET',
+      });
+    }
+  }
+
+  if (
+    errors.length > 0 ||
+    !schemaVersion ||
+    schemaVersion !== CONTRACT_VERSION ||
+    stateVersion === undefined ||
+    !taskId ||
+    !runId ||
+    !workspaceId ||
+    !repositoryId ||
+    !repositoryRevisionDigest ||
+    !goal ||
+    !Array.isArray(input['acceptanceCriteria']) ||
+    !Array.isArray(input['constraints']) ||
+    !node ||
+    planVersion === undefined ||
+    replanCount === undefined ||
+    replanCount > 3 ||
+    !Array.isArray(input['changedPaths']) ||
+    !Array.isArray(input['evidenceRefs']) ||
+    !Array.isArray(input['risks']) ||
+    !nextAction
+  ) {
+    return { ok: false, errors };
+  }
+
+  return {
+    ok: true,
+    value: {
+      schemaVersion,
+      stateVersion,
+      taskId,
+      runId,
+      workspaceId,
+      repositoryId,
+      repositoryRevisionDigest,
+      goal,
+      ...(observedBehavior !== undefined ? { observedBehavior } : {}),
+      ...(expectedBehavior !== undefined ? { expectedBehavior } : {}),
+      ...(reproduction !== undefined ? { reproduction } : {}),
+      acceptanceCriteria: input['acceptanceCriteria'] as readonly string[],
+      constraints: input['constraints'] as readonly string[],
+      ...(requiredCheckIds !== undefined ? { requiredCheckIds } : {}),
+      ...(taskContext !== undefined ? { taskContext } : {}),
+      node,
+      planVersion,
+      replanCount,
+      ...(plan !== undefined ? { plan } : {}),
+      ...(steps !== undefined ? { steps } : {}),
+      changedPaths: input['changedPaths'] as readonly string[],
+      evidenceRefs: input['evidenceRefs'] as readonly string[],
+      ...(approvalDecisionRefs !== undefined ? { approvalDecisionRefs } : {}),
+      ...(activeDecisionId !== undefined ? { activeDecisionId } : {}),
+      ...(reviewRefs !== undefined ? { reviewRefs } : {}),
+      ...(latestReviewRef !== undefined ? { latestReviewRef } : {}),
+      ...(budgetLedgers !== undefined ? { budgetLedgers } : {}),
+      ...(checkpointConfigId !== undefined ? { checkpointConfigId } : {}),
+      ...(checkpointVersion !== undefined ? { checkpointVersion } : {}),
+      risks: input['risks'] as readonly string[],
+      nextAction,
+      ...(outcome !== undefined ? { outcome } : {}),
+    },
+  };
+}
+
+export function validateStateTransition(
+  priorState: unknown,
+  nextState: unknown,
+  options?: StateTransitionOptions
+): ValidationResult<TaskState> {
+  const priorRes = validateTaskState(priorState);
+  if (!priorRes.ok) {
+    return {
+      ok: false,
+      errors: priorRes.errors.map((e) => ({
+        ...e,
+        path: `priorState.${e.path}`,
+      })),
+    };
+  }
+
+  const nextRes = validateTaskState(nextState);
+  if (!nextRes.ok) {
+    return {
+      ok: false,
+      errors: nextRes.errors.map((e) => ({
+        ...e,
+        path: `nextState.${e.path}`,
+      })),
+    };
+  }
+
+  const prior = priorRes.value;
+  const next = nextRes.value;
+  const errors: ValidationError[] = [];
+
+  // 1. CAS State Version Check
+  if (next.stateVersion !== prior.stateVersion + 1) {
+    errors.push({
+      path: 'stateVersion',
+      message: `CAS conflict: expected stateVersion ${prior.stateVersion + 1}, got ${next.stateVersion}`,
+      code: 'CAS_CONFLICT',
+    });
+  }
+
+  // 2. Identity preservation
+  if (next.taskId !== prior.taskId) {
+    errors.push({
+      path: 'taskId',
+      message: `Task identity mismatch: prior ${prior.taskId} !== next ${next.taskId}`,
+      code: 'TASK_IDENTITY_MISMATCH',
+    });
+  }
+
+  if (next.workspaceId !== prior.workspaceId) {
+    errors.push({
+      path: 'workspaceId',
+      message: `Workspace identity mismatch: prior ${prior.workspaceId} !== next ${next.workspaceId}`,
+      code: 'WORKSPACE_IDENTITY_MISMATCH',
+    });
+  }
+
+  if (next.repositoryId !== prior.repositoryId) {
+    errors.push({
+      path: 'repositoryId',
+      message: `Repository identity mismatch: prior ${prior.repositoryId} !== next ${next.repositoryId}`,
+      code: 'REPOSITORY_IDENTITY_MISMATCH',
+    });
+  }
+
+  if (next.schemaVersion !== prior.schemaVersion) {
+    errors.push({
+      path: 'schemaVersion',
+      message: `Schema version mismatch: prior ${prior.schemaVersion} !== next ${next.schemaVersion}`,
+      code: 'SCHEMA_VERSION_MISMATCH',
+    });
+  }
+
+  // 3. Terminal node check
+  if (prior.node === 'Deliver' || prior.node === 'Incomplete') {
+    errors.push({
+      path: 'node',
+      message: `Cannot transition from terminal node: ${prior.node}`,
+      code: 'TERMINAL_NODE_CANNOT_TRANSITION',
+    });
+  }
+
+  // 4. Allowed Node Transition Check
+  if (prior.node === next.node) {
+    if (!options?.allowSameNode) {
+      errors.push({
+        path: 'node',
+        message: `Self-transition on node ${prior.node} is not allowed without allowSameNode option`,
+        code: 'INVALID_NODE_TRANSITION',
+      });
+    }
+  } else {
+    const allowed = ALLOWED_NODE_TRANSITIONS[prior.node] ?? [];
+    if (!allowed.includes(next.node)) {
+      errors.push({
+        path: 'node',
+        message: `Invalid transition from ${prior.node} to ${next.node}. Allowed: ${allowed.join(', ') || 'none'}`,
+        code: 'INVALID_NODE_TRANSITION',
+      });
+    }
+  }
+
+  // 5. Material Replan Limits & Replenishment Prohibition
+  if (next.replanCount < prior.replanCount) {
+    errors.push({
+      path: 'replanCount',
+      message: `replanCount cannot decrease from ${prior.replanCount} to ${next.replanCount} (replenishment prohibited)`,
+      code: 'REPLAN_COUNT_DECREASED',
+    });
+  }
+  if (next.replanCount > 3) {
+    errors.push({
+      path: 'replanCount',
+      message: 'replanCount exceeds 3 (fixed task-scoped replan limit)',
+      code: 'REPLAN_CAP_EXCEEDED',
+    });
+  }
+
+  // 6. Plan required before entering AwaitPlan
+  if (next.node === 'AwaitPlan' && !next.plan) {
+    errors.push({
+      path: 'plan',
+      message: 'A baseline and fix plan must be recorded before entering AwaitPlan',
+      code: 'MISSING_PLAN',
+    });
+  }
+
+  if (errors.length > 0) {
+    return { ok: false, errors };
+  }
+
+  return { ok: true, value: next };
 }
