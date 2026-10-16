@@ -2,7 +2,7 @@
 
 ### Issue tracker
 
-GitHub Issues via `gh`. See `docs/agents/issue-tracker.md`.
+Paired GitHub tickets via the helper backed by `gh`. See `docs/agents/issue-tracker.md` and `docs/agents/paired-publication.md`.
 
 ### Triage labels
 
