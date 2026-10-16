@@ -7,6 +7,8 @@ description: Use when preparing, publishing, monitoring, or updating an authoriz
 
 Use the [contributor PR workflow](../../../docs/agents/pr-workflow.md) for authority, branch, size, context-refresh, and human-merge rules. This flow belongs to the coordinator; workers do not write remotely. Register any repair work through the [active-task handoff](../../../context/workflow.md#active-task-handoff) before editing.
 
+When `publication-targets.json` exists, follow [paired publication](../../../docs/agents/paired-publication.md). Publish creates or updates both PRs; link both returned URLs in the app and import a receipt containing both. Retain partial-publication accounting and retry the same command instead of creating a replacement pair. Only the public review PR receives the CodeRabbit request.
+
 ## Publish and monitor
 
 1. Check the task handoff, working tree, feature branch, immediate base, and diff. The branch must be `feat/NNN-lowercase-description`; its PR title must use `<branch-name>: <short summary>` (1–80 characters for the summary on one line) and its base must be `development`.

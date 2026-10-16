@@ -2,11 +2,13 @@
 
 This workflow covers the repository's approved contributor PR pilot. It governs contributor coordination, not the slop-loop product runtime. The target runtime policy remains in [tools and permissions](../../context/tools_permissions.md).
 
+[Paired publication](paired-publication.md) is enabled by [publication-targets.json](../../publication-targets.json): `origin` remains the public review repository against `development`, and a private `submission` partner receives the same tracked source tree against `main`. The existing publish command handles both. Private repository identity stays out of public bodies; both returned PRs must be linked in the app before completion.
+
 ## Authority and merge
 
 The coordinator has standing limited authorization to commit scoped contributor changes, push feature branches, and create or update their PRs through the pilot workflow. Workers can return local changes to the coordinator; they do not write to GitHub or push. The helper uses Git and the signed-in human's `gh` account; this pilot does not provision a separate GitHub bot identity.
 
-Every pilot PR targets `development`. Never push directly to `main` or `development`. The helper does not merge. A human decides each merge. The coordinator may execute a merge only when explicitly instructed for that PR, after exact-head CI passes and GitHub reports no merge blocker. Authorization to open or merge another PR does not carry over; never bypass branch protections. CodeRabbit reviews and unresolved conversations are advisory: their presence is reported for the human merge decision, and bot approval is optional, including after a fix. GitHub review approval is not a branch requirement; the human merge decision is an operating rule. There is no auto-merge.
+Every public review PR targets `development`; its configured submission partner targets `main`. Never push directly to `main` or `development`. The helper does not merge. A human decides each merge. The coordinator may execute a merge only when explicitly instructed for that PR, after exact-head CI passes and GitHub reports no merge blocker. Authorization to open or merge another PR does not carry over; never bypass branch protections. CodeRabbit reviews and unresolved conversations are advisory: their presence is reported for the human merge decision, and bot approval is optional, including after a fix. GitHub review approval is not a branch requirement; the human merge decision is an operating rule. There is no auto-merge.
 
 ## Branch and size
 

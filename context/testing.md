@@ -23,6 +23,8 @@ T004 test support lives under `tests/runtime/support/uc03/`, with state/approval
 
 The shared mock scenario matrix in `tests/runtime/contract/uc03-port-conformance.test.ts` covers missing/exhausted profiles, malformed results, stale state and valid progression where applicable to each port. It retains typed stale-patch rejection and combines settlement-to-actual usage with fresh replan admission. Identity-keyed approval decisions are not consumable queues.
 
+Paired publication uses `tests/agents/publication-targets.test.mjs`, `tests/agents/submission-pr.test.mjs`, `tests/agents/paired-issues.test.mjs` and the PR-helper integration tests. They exercise configured-target refusal, unrelated Git histories with exact source-tree snapshots, fast-forward mirror updates, interrupted publication recovery, stable ticket identity, duplicate refusal, canonical Windows fixture paths and publication of the validated body snapshot through disposable Git repositories and injected GitHub APIs. These tests create no live review or submission objects.
+
 ## Local helper tests
 
 The task-context and managed-session helpers require Node.js 20 or newer, use Node.js built-ins, and can be tested without installing packages:

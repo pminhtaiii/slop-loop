@@ -1,6 +1,8 @@
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { runGate } from './workflow-gate.mjs';
+import { publicationTargets, withPublicationBody } from './publication-targets.mjs';
+import { inspectSubmissionTarget, publishSubmission, verifySubmission } from './submission-pr.mjs';
 import { assertNoTrackedArtifacts } from '../ci/check-tracked-files.mjs';
 import { readFile, stat } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
@@ -18,7 +20,8 @@ record-app-state requires --receipt <app list_thread_pull_requests JSON>.
 prepare-next --branch feat/NNN-description creates a fresh branch from fetched development after this branch's recorded PR merges; source branches and worktrees are retained.
 complete verifies clean published current-head work, linked PR evidence and passing CI; it never merges.
 watch polls for at most ten minutes, stopping for fixes, human approval, or timeout.
-The helper never commits, merges, force-pushes, or resolves review threads.`;
+Configured paired publication also opens a submission PR with the same source tree and separate submission ancestry.
+The helper never merges, force-pushes, or resolves review threads.`;
 
 function validSummary(value) {
   return typeof value === 'string' && value.length > 0 && value.length <= 80 && value === value.trim() && !/[\r\n]/.test(value);
@@ -56,7 +59,7 @@ export function workflowSummary(record) {
   if (record.usage || !record.schemaVersion) return record;
   const unresolved = (record.observation?.unresolved ?? []).map(thread => ({ id: thread.id, isOutdated: thread.isOutdated, urls: thread.comments?.nodes.map(comment => comment.url) ?? [] }));
   const logs = Object.fromEntries(Object.entries(record.gateLogs ?? {}).map(([name, gate]) => [name, { status: gate.status, exitCode: gate.exitCode, log: gate.log, durationMs: gate.durationMs }]));
-  return { status: record.status, branch: record.branch, head: record.head ?? record.publishedHead, pr: record.pr, url: record.url, size: record.size, reason: record.reason ?? record.observation?.reason, repairRounds: record.repairRounds.length, failedChecks: record.observation?.failedChecks ?? [], unresolved, logs, localVerifiedHead: record.localVerification?.head };
+  return { status: record.status, branch: record.branch, head: record.head ?? record.publishedHead, pr: record.pr, url: record.url, submission: record.submission, size: record.size, reason: record.reason ?? record.observation?.reason, repairRounds: record.repairRounds.length, failedChecks: record.observation?.failedChecks ?? [], unresolved, logs, localVerifiedHead: record.localVerification?.head };
 }
 
 function execute(binary, args, cwd, timeout = 30_000) {
@@ -124,6 +127,9 @@ export async function runWorkflow(args, dependencies = {}) {
     try { record = await readJson(path); }
     catch (error) { if (error.code !== 'ENOENT') throw error; record = { schemaVersion: 1, repository: remote, branch, base: 'development', repairRounds: [] }; }
     if (record.schemaVersion !== 1 || record.repository !== remote || record.branch !== branch || record.base !== 'development' || !Array.isArray(record.repairRounds)) throw new Error('Invalid or mismatched PR workflow record.');
+    const pairedExecute = (binary, argv, cwd, timeout) => call(binary, argv, timeout);
+    const targets = command === 'prepare-next' ? null : await publicationTargets(repo, pairedExecute);
+    if (command !== 'prepare-next' && record.pairedTargets && JSON.stringify(record.pairedTargets) !== JSON.stringify(targets)) throw new Error('Paired publication targets changed; restore their configuration and retained accounting.');
     const save = async () => { record.updatedAt = new Date().toISOString(); await atomicWrite(path, JSON.stringify(record, null, 2) + '\n'); };
     const find = () => {
       const prs = json('pr', 'list', '--repo', remote, '--head', branch, '--state', 'open', '--json', 'number,url,baseRefName,headRefOid');
@@ -148,6 +154,11 @@ export async function runWorkflow(args, dependencies = {}) {
       if ((await stat(bodyPath)).size > 65_536) throw new Error('PR body exceeds 65536 bytes.');
       const body = await readFile(bodyPath, 'utf8');
       if (!body.trim() || Buffer.byteLength(body) > 65_536) throw new Error('PR body must contain 1–65536 bytes.');
+      if (targets) {
+        const publicContent = `${title}\n${body}`.toLowerCase();
+        const privateRepository = targets.submission.repository.toLowerCase();
+        if (publicContent.includes(privateRepository) || publicContent.includes(encodeURIComponent(privateRepository))) throw new Error('Public PR content must not include the private repository identity.');
+      }
       if (git('status', '--porcelain', '--untracked-files=all')) throw new Error('Commit the assigned changes before publishing; checkout must be clean.');
       assertNoTrackedArtifacts(git('ls-files', '-z'));
       const initialPr = find();
@@ -157,6 +168,7 @@ export async function runWorkflow(args, dependencies = {}) {
       const size = changedLines(git('diff', '--numstat', '--no-renames', 'origin/development...HEAD'));
       if (!size.reviewable && !size.generated && !size.binaries) throw new Error('No changes against development.');
       const head = git('rev-parse', 'HEAD');
+      if (targets) await inspectSubmissionTarget({ repo, targets, branch, execute: pairedExecute });
       const gateLogs = {};
       const gate = async (name, argv) => {
         if (dependencies.execute) return call(process.execPath, argv, 600_000);
@@ -183,16 +195,32 @@ export async function runWorkflow(args, dependencies = {}) {
       record.gateLogs = gateLogs;
       delete record.completion;
       record.publicationStarted = true;
+      if (targets) record.pairedTargets = targets;
       await save();
       git('push', '--set-upstream', 'origin', `HEAD:refs/heads/${branch}`);
-      if (pr) gh('pr', 'edit', String(pr.number), '--repo', remote, '--title', title, '--body-file', bodyPath);
-      else {
-        gh('pr', 'create', '--repo', remote, '--head', branch, '--base', 'development', '--draft', '--title', title, '--body-file', bodyPath);
-        pr = find();
-        if (!pr) throw new Error('PR created but lookup failed; rerun publish to recover.');
-      }
+      await withPublicationBody(repo, body, async frozenBodyPath => {
+        if (pr) gh('pr', 'edit', String(pr.number), '--repo', remote, '--title', title, '--body-file', frozenBodyPath);
+        else {
+          gh('pr', 'create', '--repo', remote, '--head', branch, '--base', 'development', '--draft', '--title', title, '--body-file', frozenBodyPath);
+          pr = find();
+          if (!pr) throw new Error('PR created but lookup failed; rerun publish to recover.');
+        }
+      });
       Object.assign(record, { pr: pr.number, url: pr.url, head, publishedHead: head, size, status: 'PUBLISHED' });
       await save();
+      if (targets) {
+        try {
+          record.submission = await publishSubmission({ repo, targets, branch, head, title, body, primaryPr: { number: pr.number, url: pr.url }, execute: pairedExecute });
+          delete record.submissionError;
+          delete record.reason;
+          await save();
+        } catch (error) {
+          record.status = 'PARTIAL_PUBLICATION';
+          record.reason = record.submissionError = error.message;
+          await save();
+          throw new Error(`Public PR published at ${pr.url}; submission publication incomplete. Retain accounting and rerun publish. ${error.message}`);
+        }
+      }
       if (record.requestedReviewHead !== head) {
         const request = `@coderabbitai review\n\n<!-- slop-loop-review:${head} -->`;
         const pages = json('api', '--paginate', '--slurp', `repos/${remote}/issues/${pr.number}/comments?per_page=100`);
@@ -207,6 +235,13 @@ export async function runWorkflow(args, dependencies = {}) {
       const receipt = await readJson(resolve(values.receipt));
       const linked = (receipt.structuredContent ?? receipt).pullRequests?.find((pr) => pr.url === record.url && pr.repository === remote && pr.number === record.pr);
       if (!linked) throw new Error('The app receipt must include this linked PR.');
+      if (targets) {
+        const submission = await verifySubmission({ repo, targets, branch, sourceHead: git('rev-parse', 'HEAD'), execute: pairedExecute });
+        const pairedLink = (receipt.structuredContent ?? receipt).pullRequests?.find(pr => pr.url === submission.url && pr.repository === submission.repository && pr.number === submission.number);
+        if (!pairedLink) throw new Error('The app receipt must include both linked PRs, including submission.');
+        record.submission = submission;
+        record.submissionAppLink = { url: pairedLink.url, repository: pairedLink.repository, number: pairedLink.number, recordedAt: new Date().toISOString() };
+      }
       record.appLink = { url: linked.url, repository: remote, number: linked.number, recordedAt: new Date().toISOString() };
       await save();
       return record;
@@ -220,6 +255,15 @@ export async function runWorkflow(args, dependencies = {}) {
     const result = assess({ head, pr, checks: pages.flatMap((page) => page.check_runs) });
     Object.assign(record, { pr: pr.number, url: pr.url, head, status: result.status, observation: result });
     delete record.reason;
+    if (targets) {
+      try {
+        record.submission = await verifySubmission({ repo, targets, branch, sourceHead: head, execute: pairedExecute });
+        delete record.submissionError;
+      } catch (error) {
+        record.status = 'PARTIAL_PUBLICATION';
+        record.reason = record.submissionError = error.message;
+      }
+    }
     if (result.status === 'NEEDS_FIX' && record.repairRounds.length >= maxRepairs && record.repairRounds.at(-1)?.head !== head) Object.assign(record, { status: 'BLOCKED', reason: 'Three repair rounds exhausted; human guidance required.' });
     if (command === 'repair') {
       if (record.status !== 'NEEDS_FIX' && !(result.unresolved.length && ['READY_FOR_HUMAN', 'AWAITING_HUMAN_MERGE'].includes(record.status))) throw new Error(`Repair requires a current finding; status is ${record.status}.`);
@@ -233,13 +277,18 @@ export async function runWorkflow(args, dependencies = {}) {
       if (git('status', '--porcelain', '--untracked-files=all')) throw new Error('Completion requires a clean checkout.');
       if (record.publishedHead !== head || record.localVerification?.head !== head || !['context', 'runtime', 'dependencies', 'tests'].every((gate) => typeof record.localVerification?.[gate] === 'string' && record.localVerification[gate].trim())) throw new Error('Completion requires the current head to be published and locally verified.');
       if (record.appLink?.url !== pr.url || record.appLink?.number !== pr.number || record.appLink?.repository !== remote) throw new Error('Completion requires an app receipt for the linked PR; run record-app-state.');
+      if (targets && record.submissionAppLink?.url !== record.submission?.url) throw new Error('Completion requires an app receipt for both linked PRs.');
       if (!['READY_FOR_HUMAN', 'AWAITING_HUMAN_MERGE'].includes(record.status)) throw new Error(`Completion blocked: ${record.status}. Keep the assignment active/blocked and hand pending CI to the app watcher.`);
       if (git('rev-parse', 'HEAD') !== head) throw new Error('Checkout changed during completion verification.');
-      record.completion = { head, url: pr.url, pr: pr.number, ci: 'passed', appLink: record.appLink, verifiedAt: new Date().toISOString() };
+      record.completion = { head, url: pr.url, pr: pr.number, ci: 'passed', appLink: record.appLink, submission: record.submission, submissionAppLink: record.submissionAppLink, verifiedAt: new Date().toISOString() };
     }
     if (command === 'ready') {
       if (!['READY_FOR_HUMAN', 'AWAITING_HUMAN_MERGE'].includes(record.status)) throw new Error(`Not ready: ${record.status}.`);
       if (git('status', '--porcelain', '--untracked-files=all')) throw new Error('Uncommitted work cannot be marked ready.');
+      if (targets && record.submission.isDraft) {
+        gh('pr', 'ready', String(record.submission.number), '--repo', record.submission.repository);
+        record.submission.isDraft = false;
+      }
       if (pr.isDraft) gh('pr', 'ready', String(pr.number), '--repo', remote);
       record.status = 'AWAITING_HUMAN_MERGE';
     }
