@@ -660,7 +660,19 @@ export type ModelPortResult =
   | ModelPortDenied
   | ModelPortInvalid;
 
-export interface ModelPort {
+export type PortProvenance = 'real' | 'mock';
+
+export interface PortIdentity {
+  readonly provenance: PortProvenance;
+}
+
+export function isAdmittedForProduction(ports: readonly unknown[]): boolean {
+  return ports.length > 0 && Array.from(ports).every(port =>
+    isPlainObject(port) && Object.hasOwn(port, 'provenance') && port['provenance'] === 'real'
+  );
+}
+
+export interface ModelPort extends PortIdentity {
   propose(
     state: TaskState,
     evidence: readonly SourceEvidence[],
@@ -668,7 +680,7 @@ export interface ModelPort {
   ): Promise<ModelPortResult>;
 }
 
-export interface RepositoryPort {
+export interface RepositoryPort extends PortIdentity {
   listDir(path: string): Promise<readonly string[]>;
   readFile(path: string): Promise<SourceEvidence>;
   searchCode(query: string): Promise<readonly SourceEvidence[]>;
@@ -678,14 +690,14 @@ export interface RepositoryPort {
   inspectDiff(baseRevisionDigest: string): Promise<{ readonly diff: string; readonly diffDigest: string; readonly changedFiles: readonly string[] }>;
 }
 
-export interface ExecutionGuard {
+export interface ExecutionGuard extends PortIdentity {
   validateAndExecute(
     action: NormalizedAction,
     state: TaskState
   ): Promise<{ readonly outcome: EnvelopeOutcome; readonly result?: unknown }>;
 }
 
-export interface StatePort {
+export interface StatePort extends PortIdentity {
   loadTask(taskId: string): Promise<TaskState | null>;
   transition(state: TaskState, expectedVersion: number): Promise<TaskState>;
   reserve(scope: 'task' | 'run', kind: string, amount: number, actionId: string): Promise<string>;
@@ -710,14 +722,14 @@ export interface StatePort {
   recover(taskId: string): Promise<TaskState>;
 }
 
-export interface ApprovalPort {
+export interface ApprovalPort extends PortIdentity {
   classify(action: NormalizedAction): Promise<PermissionClass>;
   requestDecision(binding: ApprovalBinding): Promise<ApprovalBinding>;
   validateBinding(binding: ApprovalBinding): Promise<boolean>;
   resolve(decisionId: string): Promise<ApprovalBinding>;
 }
 
-export interface ReviewerPort {
+export interface ReviewerPort extends PortIdentity {
   review(
     task: BugTask,
     diff: string,
@@ -726,7 +738,7 @@ export interface ReviewerPort {
   ): Promise<ReviewResult>;
 }
 
-export interface TelemetryPort {
+export interface TelemetryPort extends PortIdentity {
   emitActivity(event: ActivityEvent): Promise<void>;
   recordUsage(taskId: string, runId: string, usage: ProviderUsage): Promise<void>;
 }

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  isAdmittedForProduction,
   validateBugTask,
   validateProviderUsage,
   validateProviderRequest,
@@ -2995,4 +2996,22 @@ test('Evidence admission honors advertised identity expectations', () => {
   const d = createValidDelivery();
   for (const context of [{ expectedDiffDigest: 'other' }, { expectedBaselineRef: 'other' }, { expectedReviewRef: 'other' }]) assert.equal(validateDelivery(d, context).ok, false);
   assert.equal(validateActivityEvent({ ...createValidActivityEvent(), durationMs: Number.MAX_SAFE_INTEGER + 1 }).ok, false);
+});
+
+test('production admission accepts ports with explicit real provenance', () => {
+  assert.equal(isAdmittedForProduction([{ provenance: 'real' }]), true);
+  assert.equal(isAdmittedForProduction([{ provenance: 'real' }, { provenance: 'real' }]), true);
+});
+
+test('production admission denies absent, mock, and invalid provenance without fallback', () => {
+  const deniedLists: readonly (readonly unknown[])[] = [
+    [], [{}], [null], [undefined], [{ provenance: 'mock' }],
+    [{ provenance: undefined }], [{ provenance: '' }], [{ provenance: 'REAL' }],
+    [{ provenance: 'real' }, { provenance: 'mock' }],
+    [{ provenance: 'real' }, {}], [Object.create({ provenance: 'real' })],
+    [Object.assign([], { provenance: 'real' })], Array<unknown>(1),
+  ];
+  for (const ports of deniedLists) {
+    assert.equal(isAdmittedForProduction(ports), false);
+  }
 });
