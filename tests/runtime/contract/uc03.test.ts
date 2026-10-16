@@ -2,6 +2,24 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   validateBugTask,
+  validateProviderUsage,
+  validateProviderRequest,
+  validateReservationBundle,
+  validateModelProposal,
+  validateModelResult,
+  validateDispatchAdmission,
+  isAdmittedForDispatch,
+  BudgetExhaustionError,
+  BudgetConflictError,
+  type ProviderUsage,
+  type ProviderRequest,
+  type ModelProposal,
+  type ModelResult,
+  type ProviderRequestValidationContext,
+  type DispatchAdmissionContext,
+  type ReservationBundle,
+  type ReservationBundleItem,
+  type ModelPortResult,
   validateExecutionLimits,
   validateBudgetLimits,
   validateNormalizedAction,
@@ -1596,4 +1614,727 @@ test('T003 Defect 6 Regression: validateCommandView verifies view digest and rej
   if (!res.ok) {
     assert.ok(res.errors.some((e) => e.code === 'UNTRUSTED_FILE_ADMISSION'));
   }
+});
+
+/* ------------------------------------------------------------------
+ * T003 Provider Accounting Slice Tests:
+ * ProviderUsage, ProviderRequest, ModelProposal, ModelResult,
+ * ReservationBundle, Dispatch Admission, and Budget Errors
+ * ------------------------------------------------------------------ */
+
+function createValidProviderUsage(): ProviderUsage {
+  return {
+    inputTokens: 1200,
+    outputTokens: 450,
+    costUsd: 0.015,
+    billableTokens: 1750, // includes 100 overhead tokens
+  };
+}
+
+function createValidProviderRequest(role: 'coder' | 'reviewer' = 'coder'): ProviderRequest {
+  return {
+    providerRequestId: 'req-prov-001',
+    taskId: 'task-uc03-calc-001',
+    runId: 'run-001',
+    role,
+    purpose: role === 'coder' ? 'propose_code_patch' : 'review_code_diff',
+    providerId: 'provider-test',
+    modelId: 'model-v1',
+    configId: 'config-uc03-v1',
+    pricingPolicyId: 'pricing-standard-v1',
+    contextDigest: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+    timeoutMs: 30000,
+    maxInputTokens: 8000,
+    maxOutputTokens: 2000,
+    maxBillableTokens: 11000, // conservative ceiling >= 8000 + 2000
+    maxCostUsd: 0.15,
+    reservationRef: 'res-bundle-001',
+    dispatchState: 'reserved',
+  };
+}
+
+function createValidReservationBundle(role: 'coder' | 'reviewer' = 'coder'): ReservationBundle {
+  const reservations: ReservationBundleItem[] = [
+    {
+      ledgerIdentity: 'ledger-task-tokens',
+      scope: 'task',
+      kind: 'tokens',
+      configurationId: 'config-uc03-v1',
+      version: 1,
+      requestId: 'req-prov-001',
+      amount: 11000,
+    },
+    {
+      ledgerIdentity: 'ledger-task-cost',
+      scope: 'task',
+      kind: 'cost',
+      configurationId: 'config-uc03-v1',
+      version: 1,
+      requestId: 'req-prov-001',
+      amount: 0.15,
+    },
+    {
+      ledgerIdentity: 'ledger-run-tokens',
+      scope: 'run',
+      kind: 'tokens',
+      configurationId: 'config-uc03-v1',
+      version: 1,
+      requestId: 'req-prov-001',
+      amount: 11000,
+    },
+    {
+      ledgerIdentity: 'ledger-run-cost',
+      scope: 'run',
+      kind: 'cost',
+      configurationId: 'config-uc03-v1',
+      version: 1,
+      requestId: 'req-prov-001',
+      amount: 0.15,
+    },
+  ];
+
+  if (role === 'reviewer') {
+    reservations.push({
+      ledgerIdentity: 'ledger-task-iteration',
+      scope: 'task',
+      kind: 'iteration',
+      configurationId: 'config-uc03-v1',
+      version: 1,
+      requestId: 'req-prov-001',
+      amount: 1,
+    });
+  }
+
+  return {
+    bundleId: 'bundle-001',
+    transactionRef: 'tx-atomic-001',
+    taskId: 'task-uc03-calc-001',
+    runId: 'run-001',
+    reservations,
+  };
+}
+
+function createMatchingLedgers(role: 'coder' | 'reviewer' = 'coder'): BudgetLedger[] {
+  const ledgers: BudgetLedger[] = [
+    {
+      scope: 'task',
+      kind: 'tokens',
+      limit: 100000,
+      consumed: 5000,
+      reservations: [{ reservationId: 'res-1', keyedId: 'req-prov-001', amount: 11000 }],
+      unit: 'count',
+      configurationId: 'config-uc03-v1',
+      version: 1,
+    },
+    {
+      scope: 'task',
+      kind: 'cost',
+      limit: 5.0,
+      consumed: 0.10,
+      reservations: [{ reservationId: 'res-2', keyedId: 'req-prov-001', amount: 0.15 }],
+      unit: 'usd',
+      configurationId: 'config-uc03-v1',
+      version: 1,
+    },
+    {
+      scope: 'run',
+      kind: 'tokens',
+      limit: 50000,
+      consumed: 2000,
+      reservations: [{ reservationId: 'res-3', keyedId: 'req-prov-001', amount: 11000 }],
+      unit: 'count',
+      configurationId: 'config-uc03-v1',
+      version: 1,
+    },
+    {
+      scope: 'run',
+      kind: 'cost',
+      limit: 2.0,
+      consumed: 0.05,
+      reservations: [{ reservationId: 'res-4', keyedId: 'req-prov-001', amount: 0.15 }],
+      unit: 'usd',
+      configurationId: 'config-uc03-v1',
+      version: 1,
+    },
+  ];
+
+  if (role === 'reviewer') {
+    ledgers.push({
+      scope: 'task',
+      kind: 'iteration',
+      limit: 5,
+      consumed: 1,
+      reservations: [{ reservationId: 'res-5', keyedId: 'req-prov-001', amount: 1 }],
+      unit: 'count',
+      configurationId: 'config-uc03-v1',
+      version: 1,
+    });
+  }
+
+  return ledgers;
+}
+
+// 1. ProviderUsage validation tests
+test('ProviderUsage validation: accepts valid usage with inputTokens, outputTokens, costUsd, and billableTokens', (): void => {
+  const usage = createValidProviderUsage();
+  const res = validateProviderUsage(usage);
+  assert.equal(res.ok, true);
+  if (res.ok) {
+    assert.equal(res.value.inputTokens, 1200);
+    assert.equal(res.value.outputTokens, 450);
+    assert.equal(res.value.costUsd, 0.015);
+    assert.equal(res.value.billableTokens, 1750);
+  }
+
+  // Without optional billableTokens
+  const withoutOverhead = {
+    inputTokens: 100,
+    outputTokens: 50,
+    costUsd: 0.002,
+  };
+  const res2 = validateProviderUsage(withoutOverhead);
+  assert.equal(res2.ok, true);
+});
+
+test('ProviderUsage validation: rejects non-object, negative, float, NaN, or infinite limits', (): void => {
+  assert.equal(validateProviderUsage(null).ok, false);
+  assert.equal(validateProviderUsage('not-an-object').ok, false);
+  assert.equal(validateProviderUsage([]).ok, false);
+
+  // Negative tokens
+  assert.equal(validateProviderUsage({ inputTokens: -1, outputTokens: 10, costUsd: 0.01 }).ok, false);
+  assert.equal(validateProviderUsage({ inputTokens: 10, outputTokens: -5, costUsd: 0.01 }).ok, false);
+
+  // Float tokens (tokens must be integers)
+  assert.equal(validateProviderUsage({ inputTokens: 10.5, outputTokens: 10, costUsd: 0.01 }).ok, false);
+  assert.equal(validateProviderUsage({ inputTokens: 10, outputTokens: 2.25, costUsd: 0.01 }).ok, false);
+
+  // Negative cost
+  assert.equal(validateProviderUsage({ inputTokens: 10, outputTokens: 10, costUsd: -0.01 }).ok, false);
+
+  // NaN or Infinity
+  assert.equal(validateProviderUsage({ inputTokens: NaN, outputTokens: 10, costUsd: 0.01 }).ok, false);
+  assert.equal(validateProviderUsage({ inputTokens: 10, outputTokens: Infinity, costUsd: 0.01 }).ok, false);
+  assert.equal(validateProviderUsage({ inputTokens: 10, outputTokens: 10, costUsd: Infinity }).ok, false);
+});
+
+test('ProviderUsage validation: rejects unknown properties', (): void => {
+  const withUnknown = {
+    ...createValidProviderUsage(),
+    unexpectedField: 'unauthorized',
+  };
+  const res = validateProviderUsage(withUnknown);
+  assert.equal(res.ok, false);
+  if (!res.ok) {
+    assert.ok(res.errors.some((e) => e.code === 'UNKNOWN_PROPERTY'));
+  }
+});
+
+test('ProviderUsage validation: rejects billableTokens less than sum of input and output tokens', (): void => {
+  const invalidOverhead = {
+    inputTokens: 1000,
+    outputTokens: 500,
+    costUsd: 0.02,
+    billableTokens: 1400, // less than 1000 + 500!
+  };
+  const res = validateProviderUsage(invalidOverhead);
+  assert.equal(res.ok, false);
+  if (!res.ok) {
+    assert.ok(res.errors.some((e) => e.code === 'INVALID_BILLABLE_TOKENS'));
+  }
+});
+
+// 2. ModelProposal and ModelResult validation tests
+test('ModelProposal validation: accepts valid proposal with actions and rejects unknown properties', (): void => {
+  const proposal: ModelProposal = {
+    proposalId: 'prop-001',
+    content: 'Here is the proposed fix in calculator.py',
+    actions: [
+      {
+        actionId: 'act-patch-1',
+        kind: 'apply_patch',
+        patchContent: '--- a/src/calculator.py\n+++ b/src/calculator.py\n@@ -1 +1 @@\n- x\n+ y\n',
+        targetPaths: ['src/calculator.py'],
+        baseRevisionDigest: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+      },
+    ],
+  };
+  const res = validateModelProposal(proposal);
+  assert.equal(res.ok, true);
+
+  // Unknown property
+  const unknownProp = {
+    ...proposal,
+    unauthorizedTelemetry: true,
+  };
+  const resUnknown = validateModelProposal(unknownProp);
+  assert.equal(resUnknown.ok, false);
+  if (!resUnknown.ok) {
+    assert.ok(resUnknown.errors.some((e) => e.code === 'UNKNOWN_PROPERTY'));
+  }
+});
+
+test('ModelProposal validation: recursively rejects invalid actions (forbidden chars, escaping paths, etc.)', (): void => {
+  const badActionProposal = {
+    proposalId: 'prop-bad-action',
+    content: 'Attempting directory escape action',
+    actions: [
+      {
+        actionId: 'act-escape',
+        kind: 'apply_patch',
+        patchContent: 'diff',
+        targetPaths: ['../outside.py'], // escaping relative path!
+        baseRevisionDigest: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+      },
+    ],
+  };
+  const res = validateModelProposal(badActionProposal);
+  assert.equal(res.ok, false);
+  if (!res.ok) {
+    assert.ok(res.errors.some((e) => e.code === 'WORKSPACE_ESCAPE'));
+  }
+});
+
+test('ModelResult validation: accepts valid result and rejects invalid proposal or usage', (): void => {
+  const result: ModelResult = {
+    proposal: {
+      proposalId: 'prop-001',
+      content: 'Fix proposed',
+    },
+    observedUsage: createValidProviderUsage(),
+  };
+  const res = validateModelResult(result);
+  assert.equal(res.ok, true);
+
+  // Bad proposal
+  assert.equal(validateModelResult({ ...result, proposal: { proposalId: '' } }).ok, false);
+
+  // Bad usage
+  assert.equal(validateModelResult({ ...result, observedUsage: { inputTokens: -1 } }).ok, false);
+
+  // Unknown property
+  assert.equal(validateModelResult({ ...result, extraScore: 99 }).ok, false);
+});
+
+// 3. ProviderRequest validation tests
+test('ProviderRequest validation: accepts valid reserved request with coder/reviewer role, ceilings, and digests', (): void => {
+  const coderReq = createValidProviderRequest('coder');
+  const resCoder = validateProviderRequest(coderReq);
+  assert.equal(resCoder.ok, true);
+  if (resCoder.ok) {
+    assert.equal(resCoder.value.role, 'coder');
+    assert.equal(resCoder.value.dispatchState, 'reserved');
+  }
+
+  const reviewerReq = createValidProviderRequest('reviewer');
+  const resReviewer = validateProviderRequest(reviewerReq);
+  assert.equal(resReviewer.ok, true);
+  if (resReviewer.ok) {
+    assert.equal(resReviewer.value.role, 'reviewer');
+  }
+});
+
+test('ProviderRequest validation: rejects unknown properties or invalid roles', (): void => {
+  const unknownProp = {
+    ...createValidProviderRequest(),
+    arbitraryExecutionFlag: true,
+  };
+  assert.equal(validateProviderRequest(unknownProp).ok, false);
+
+  const invalidRole = {
+    ...createValidProviderRequest(),
+    role: 'administrator',
+  };
+  assert.equal(validateProviderRequest(invalidRole).ok, false);
+});
+
+test('ProviderRequest validation: rejects missing, negative, NaN, infinite, or unsafe token/cost limits', (): void => {
+  const base = createValidProviderRequest();
+
+  // Negative timeout
+  assert.equal(validateProviderRequest({ ...base, timeoutMs: -100 }).ok, false);
+
+  // Float tokens (tokens must be finite non-negative integers)
+  assert.equal(validateProviderRequest({ ...base, maxInputTokens: 500.5 }).ok, false);
+  assert.equal(validateProviderRequest({ ...base, maxOutputTokens: -1 }).ok, false);
+  assert.equal(validateProviderRequest({ ...base, maxBillableTokens: NaN }).ok, false);
+
+  // Negative or infinite cost
+  assert.equal(validateProviderRequest({ ...base, maxCostUsd: -1 }).ok, false);
+  assert.equal(validateProviderRequest({ ...base, maxCostUsd: Infinity }).ok, false);
+});
+
+test('ProviderRequest validation: enforces maxBillableTokens >= maxInputTokens + maxOutputTokens', (): void => {
+  const base = createValidProviderRequest();
+  const insufficientBillable = {
+    ...base,
+    maxInputTokens: 5000,
+    maxOutputTokens: 5000,
+    maxBillableTokens: 9000, // less than input + output ceiling!
+  };
+  const res = validateProviderRequest(insufficientBillable);
+  assert.equal(res.ok, false);
+  if (!res.ok) {
+    assert.ok(res.errors.some((e) => e.code === 'INVALID_BILLABLE_CEILING'));
+  }
+});
+
+test('ProviderRequest validation: discriminates dispatchState (reserved, dispatched, settled, uncertain)', (): void => {
+  const base = createValidProviderRequest();
+  const validUsage = createValidProviderUsage();
+
+  // Reserved cannot have observedUsage or uncertainReason
+  const reservedWithUsage = {
+    ...base,
+    dispatchState: 'reserved' as const,
+    observedUsage: validUsage,
+  };
+  assert.equal(validateProviderRequest(reservedWithUsage).ok, false);
+
+  // Dispatched cannot have observedUsage or uncertainReason
+  const dispatched = {
+    ...base,
+    dispatchState: 'dispatched' as const,
+  };
+  assert.equal(validateProviderRequest(dispatched).ok, true);
+
+  const dispatchedWithUsage = {
+    ...base,
+    dispatchState: 'dispatched' as const,
+    observedUsage: validUsage,
+  };
+  assert.equal(validateProviderRequest(dispatchedWithUsage).ok, false);
+
+  // Settled requires observedUsage and cannot have uncertainReason
+  const settledValid = {
+    ...base,
+    dispatchState: 'settled' as const,
+    observedUsage: validUsage,
+  };
+  assert.equal(validateProviderRequest(settledValid).ok, true);
+
+  const settledMissingUsage = {
+    ...base,
+    dispatchState: 'settled' as const,
+    observedUsage: undefined,
+  };
+  assert.equal(validateProviderRequest(settledMissingUsage).ok, false);
+
+  // Uncertain requires uncertainReason; observedUsage is optional
+  const uncertainValid = {
+    ...base,
+    dispatchState: 'uncertain' as const,
+    uncertainReason: 'Gateway timeout after 30000ms prior to response headers',
+  };
+  assert.equal(validateProviderRequest(uncertainValid).ok, true);
+
+  const uncertainMissingReason = {
+    ...base,
+    dispatchState: 'uncertain' as const,
+    uncertainReason: undefined,
+  };
+  assert.equal(validateProviderRequest(uncertainMissingReason).ok, false);
+});
+
+test('ProviderRequest validation: checks trusted expected request identity context and rejects mismatches', (): void => {
+  const req = createValidProviderRequest('coder');
+  const validContext: ProviderRequestValidationContext = {
+    expectedTaskId: req.taskId,
+    expectedRunId: req.runId,
+    expectedRole: 'coder',
+    expectedPurpose: req.purpose,
+    expectedProviderId: req.providerId,
+    expectedModelId: req.modelId,
+    expectedConfigId: req.configId,
+    expectedPricingPolicyId: req.pricingPolicyId,
+    expectedContextDigest: req.contextDigest,
+    expectedProviderRequestId: req.providerRequestId,
+  };
+
+  const matchingRes = validateProviderRequest(req, validContext);
+  assert.equal(matchingRes.ok, true);
+
+  // Mismatch in role
+  const badRoleCtx: ProviderRequestValidationContext = { ...validContext, expectedRole: 'reviewer' };
+  const resBadRole = validateProviderRequest(req, badRoleCtx);
+  assert.equal(resBadRole.ok, false);
+  if (!resBadRole.ok) {
+    assert.ok(resBadRole.errors.some((e) => e.code === 'REQUEST_IDENTITY_MISMATCH'));
+  }
+
+  // Mismatch in context digest
+  const badDigestCtx: ProviderRequestValidationContext = { ...validContext, expectedContextDigest: 'sha256:different' };
+  assert.equal(validateProviderRequest(req, badDigestCtx).ok, false);
+});
+
+// 4. ReservationBundle validation tests
+test('ReservationBundle validation: accepts valid bundle with transactionRef and per-scope reservations', (): void => {
+  const bundle = createValidReservationBundle('coder');
+  const res = validateReservationBundle(bundle);
+  assert.equal(res.ok, true);
+  if (res.ok) {
+    assert.equal(res.value.transactionRef, 'tx-atomic-001');
+    assert.equal(res.value.reservations.length, 4);
+  }
+});
+
+test('ReservationBundle validation: rejects bundle missing transactionRef or with invalid/negative amounts', (): void => {
+  const noTxRef = {
+    ...createValidReservationBundle(),
+    transactionRef: '',
+  };
+  assert.equal(validateReservationBundle(noTxRef).ok, false);
+
+  const negAmount = {
+    ...createValidReservationBundle(),
+    reservations: [
+      {
+        ledgerIdentity: 'ledger-task-tokens',
+        scope: 'task' as const,
+        kind: 'tokens',
+        configurationId: 'config-uc03-v1',
+        version: 1,
+        requestId: 'req-prov-001',
+        amount: -500,
+      },
+    ],
+  };
+  assert.equal(validateReservationBundle(negAmount).ok, false);
+});
+
+test('ReservationBundle validation: rejects unknown properties on bundle and items', (): void => {
+  const unknownBundleProp = {
+    ...createValidReservationBundle(),
+    bypassCheck: true,
+  };
+  assert.equal(validateReservationBundle(unknownBundleProp).ok, false);
+
+  const unknownItemProp = {
+    ...createValidReservationBundle(),
+    reservations: [
+      {
+        ...createValidReservationBundle().reservations[0],
+        overdraftAllowed: true,
+      },
+    ],
+  };
+  assert.equal(validateReservationBundle(unknownItemProp).ok, false);
+});
+
+// 5. Shared Dispatch Admission Predicate tests
+test('validateDispatchAdmission: accepts valid coder request with full task/run token and cost reservations', (): void => {
+  const req = createValidProviderRequest('coder');
+  const bundle = createValidReservationBundle('coder');
+  const ledgers = createMatchingLedgers('coder');
+
+  const context: DispatchAdmissionContext = {
+    reservationBundle: bundle,
+    ledgers,
+  };
+
+  const res = validateDispatchAdmission(req, context);
+  assert.equal(res.ok, true);
+  assert.equal(isAdmittedForDispatch(req, context), true);
+});
+
+test('validateDispatchAdmission: accepts valid reviewer request with task/run token, cost, and reviewer iteration reservations', (): void => {
+  const req = createValidProviderRequest('reviewer');
+  const bundle = createValidReservationBundle('reviewer');
+  const ledgers = createMatchingLedgers('reviewer');
+
+  const context: DispatchAdmissionContext = {
+    reservationBundle: bundle,
+    ledgers,
+  };
+
+  const res = validateDispatchAdmission(req, context);
+  assert.equal(res.ok, true);
+  assert.equal(isAdmittedForDispatch(req, context), true);
+});
+
+test('validateDispatchAdmission: rejects bare ref or missing context (untrusted claimed reservation alone cannot permit dispatch)', (): void => {
+  const req = createValidProviderRequest('coder');
+
+  // Bare request without context must NOT authorize
+  assert.equal(isAdmittedForDispatch(req, null), false);
+  assert.equal(isAdmittedForDispatch(req, undefined), false);
+
+  const resBare = validateDispatchAdmission(req, {});
+  assert.equal(resBare.ok, false);
+  if (!resBare.ok) {
+    assert.ok(resBare.errors.some((e) => e.code === 'ABSENT_RESERVATION_BUNDLE' || e.code === 'UNTRUSTED_DISPATCH_AUTHORIZATION'));
+  }
+});
+
+test('validateDispatchAdmission: rejects telemetry estimate (bare ref or telemetry estimate must NOT authorize)', (): void => {
+  const req = createValidProviderRequest('coder');
+  const bundle = createValidReservationBundle('coder');
+  const ledgers = createMatchingLedgers('coder');
+
+  const contextWithTelemetry: DispatchAdmissionContext = {
+    reservationBundle: bundle,
+    ledgers,
+    isTelemetryEstimate: true,
+  };
+
+  const res = validateDispatchAdmission(req, contextWithTelemetry);
+  assert.equal(res.ok, false);
+  assert.equal(isAdmittedForDispatch(req, contextWithTelemetry), false);
+  if (!res.ok) {
+    assert.ok(res.errors.some((e) => e.code === 'TELEMETRY_ESTIMATE_CANNOT_AUTHORIZE'));
+  }
+});
+
+test('validateDispatchAdmission: rejects partial reservation bundle (missing run cost, task token, or reviewer iteration)', (): void => {
+  const req = createValidProviderRequest('coder');
+  const bundle = createValidReservationBundle('coder');
+  const ledgers = createMatchingLedgers('coder');
+
+  // Missing run cost reservation
+  const partialBundle: ReservationBundle = {
+    ...bundle,
+    reservations: bundle.reservations.filter((r) => !(r.scope === 'run' && r.kind === 'cost')),
+  };
+
+  const res = validateDispatchAdmission(req, { reservationBundle: partialBundle, ledgers });
+  assert.equal(res.ok, false);
+  assert.equal(isAdmittedForDispatch(req, { reservationBundle: partialBundle, ledgers }), false);
+  if (!res.ok) {
+    assert.ok(res.errors.some((e) => e.code === 'PARTIAL_RESERVATION'));
+  }
+
+  // Reviewer role missing iteration reservation
+  const reviewerReq = createValidProviderRequest('reviewer');
+  const reviewerBundleNoIteration = createValidReservationBundle('coder'); // coder bundle has no iteration reservation
+  const reviewerLedgers = createMatchingLedgers('reviewer');
+
+  const resReviewer = validateDispatchAdmission(reviewerReq, {
+    reservationBundle: reviewerBundleNoIteration,
+    ledgers: reviewerLedgers,
+  });
+  assert.equal(resReviewer.ok, false);
+  if (!resReviewer.ok) {
+    assert.ok(resReviewer.errors.some((e) => e.code === 'PARTIAL_RESERVATION'));
+  }
+});
+
+test('validateDispatchAdmission: rejects exhausted budget (ledger limit exceeded)', (): void => {
+  const req = createValidProviderRequest('coder');
+  const bundle = createValidReservationBundle('coder');
+  const ledgers = createMatchingLedgers('coder');
+
+  // Exhausted task cost ledger (consumed 4.95 out of 5.0, requesting 0.15 exceeds limit 5.0)
+  const exhaustedLedgers = ledgers.map((l) => {
+    if (l.scope === 'task' && l.kind === 'cost') {
+      return {
+        ...l,
+        consumed: 4.95,
+        reservations: [],
+      };
+    }
+    return l;
+  });
+
+  const res = validateDispatchAdmission(req, { reservationBundle: bundle, ledgers: exhaustedLedgers });
+  assert.equal(res.ok, false);
+  assert.equal(isAdmittedForDispatch(req, { reservationBundle: bundle, ledgers: exhaustedLedgers }), false);
+  if (!res.ok) {
+    assert.ok(res.errors.some((e) => e.code === 'BUDGET_EXHAUSTED'));
+  }
+});
+
+test('validateDispatchAdmission: rejects mismatched task, run, or request IDs', (): void => {
+  const req = createValidProviderRequest('coder');
+  const bundle = createValidReservationBundle('coder');
+  const ledgers = createMatchingLedgers('coder');
+
+  // Bundle for different task
+  const badTaskBundle = { ...bundle, taskId: 'different-task-id' };
+  assert.equal(validateDispatchAdmission(req, { reservationBundle: badTaskBundle, ledgers }).ok, false);
+
+  // Bundle for different request
+  const badReqBundle: ReservationBundle = {
+    ...bundle,
+    reservations: bundle.reservations.map((r) => ({ ...r, requestId: 'different-req-id' })),
+  };
+  assert.equal(validateDispatchAdmission(req, { reservationBundle: badReqBundle, ledgers }).ok, false);
+});
+
+test('validateDispatchAdmission: rejects uncertain request (uncertain retains charge and cannot replay)', (): void => {
+  const uncertainReq: ProviderRequest = {
+    ...createValidProviderRequest('coder'),
+    dispatchState: 'uncertain',
+    uncertainReason: 'Network socket reset',
+  };
+  const bundle = createValidReservationBundle('coder');
+  const ledgers = createMatchingLedgers('coder');
+
+  const res = validateDispatchAdmission(uncertainReq, { reservationBundle: bundle, ledgers });
+  assert.equal(res.ok, false);
+  assert.equal(isAdmittedForDispatch(uncertainReq, { reservationBundle: bundle, ledgers }), false);
+  if (!res.ok) {
+    assert.ok(res.errors.some((e) => e.code === 'UNCERTAIN_CANNOT_REPLAY' || e.code === 'INVALID_DISPATCH_STATE'));
+  }
+});
+
+// 6. Budget error classes and ModelPort typed outcome tests
+test('Budget error classes: instantiate with typed codes and details', (): void => {
+  const exErr = new BudgetExhaustionError('Tokens limit exhausted', { scope: 'task', kind: 'tokens', limit: 1000, requested: 1500 });
+  assert.equal(exErr.code, 'BUDGET_EXHAUSTED');
+  assert.equal(exErr.details?.scope, 'task');
+
+  const confErr = new BudgetConflictError('CAS version conflict in ledger', { scope: 'task', kind: 'cost', version: 3 });
+  assert.equal(confErr.code, 'BUDGET_CONFLICT');
+  assert.equal(confErr.details?.version, 3);
+});
+
+test('ModelPort and observed usage accounting: observed malformed-response usage remains valid accounting', (): void => {
+  // Even if a model proposal response is malformed or invalid schema,
+  // observedUsage returned by the provider is still valid accounting and can be validated.
+  const malformedProposal = {
+    proposalId: 'prop-malformed',
+    content: 'Truncated json output',
+    actions: 'not-an-array' as unknown as readonly unknown[],
+  };
+  assert.equal(validateModelProposal(malformedProposal).ok, false);
+
+  // But the provider usage recorded during that failed call is valid
+  const observedUsageFromFailedCall = {
+    inputTokens: 5000,
+    outputTokens: 200,
+    costUsd: 0.05,
+    billableTokens: 5200,
+  };
+  const usageRes = validateProviderUsage(observedUsageFromFailedCall);
+  assert.equal(usageRes.ok, true);
+
+  // ModelPort typed outcomes verify discriminated union shape
+  const observedOutcome: ModelPortResult = {
+    outcome: 'observed',
+    result: {
+      proposal: { proposalId: 'prop-1', content: 'ok' },
+      observedUsage: createValidProviderUsage(),
+    },
+  };
+  assert.equal(observedOutcome.outcome, 'observed');
+
+  const uncertainOutcome: ModelPortResult = {
+    outcome: 'uncertain',
+    reason: 'Timeout waiting for provider headers',
+  };
+  assert.equal(uncertainOutcome.outcome, 'uncertain');
+
+  const deniedOutcome: ModelPortResult = {
+    outcome: 'denied',
+    reason: 'Task budget tokens exhausted prior to network dispatch',
+  };
+  assert.equal(deniedOutcome.outcome, 'denied');
+
+  const invalidOutcome: ModelPortResult = {
+    outcome: 'invalid',
+    errors: [{ path: 'proposal.actions', message: 'Invalid action', code: 'INVALID_TYPE' }],
+    observedUsage: observedUsageFromFailedCall,
+  };
+  assert.equal(invalidOutcome.outcome, 'invalid');
+  assert.equal(invalidOutcome.observedUsage?.costUsd, 0.05);
 });
