@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { runGate } from './workflow-gate.mjs';
-import { publicationTargets } from './publication-targets.mjs';
+import { publicationTargets, withPublicationBody } from './publication-targets.mjs';
 import { inspectSubmissionTarget, publishSubmission, verifySubmission } from './submission-pr.mjs';
 import { assertNoTrackedArtifacts } from '../ci/check-tracked-files.mjs';
 import { readFile, stat } from 'node:fs/promises';
@@ -198,12 +198,14 @@ export async function runWorkflow(args, dependencies = {}) {
       if (targets) record.pairedTargets = targets;
       await save();
       git('push', '--set-upstream', 'origin', `HEAD:refs/heads/${branch}`);
-      if (pr) gh('pr', 'edit', String(pr.number), '--repo', remote, '--title', title, '--body-file', bodyPath);
-      else {
-        gh('pr', 'create', '--repo', remote, '--head', branch, '--base', 'development', '--draft', '--title', title, '--body-file', bodyPath);
-        pr = find();
-        if (!pr) throw new Error('PR created but lookup failed; rerun publish to recover.');
-      }
+      await withPublicationBody(repo, body, async frozenBodyPath => {
+        if (pr) gh('pr', 'edit', String(pr.number), '--repo', remote, '--title', title, '--body-file', frozenBodyPath);
+        else {
+          gh('pr', 'create', '--repo', remote, '--head', branch, '--base', 'development', '--draft', '--title', title, '--body-file', frozenBodyPath);
+          pr = find();
+          if (!pr) throw new Error('PR created but lookup failed; rerun publish to recover.');
+        }
+      });
       Object.assign(record, { pr: pr.number, url: pr.url, head, publishedHead: head, size, status: 'PUBLISHED' });
       await save();
       if (targets) {

@@ -1,5 +1,18 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, unlink } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
+import { atomicWrite, dataDirectory } from './agent-store.mjs';
+
+export async function withPublicationBody(repo, body, operation) {
+  const directory = await dataDirectory(repo, 'publication-bodies');
+  const path = resolve(directory, `${randomUUID()}.md`);
+  try {
+    await atomicWrite(path, body);
+    return await operation(path);
+  } finally {
+    await unlink(path).catch(error => { if (error.code !== 'ENOENT') throw error; });
+  }
+}
 
 export function githubRepository(url) {
   const match = url.trim().match(/^(?:https:\/\/github\.com\/|git@github\.com:)([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?)(?:\.git)?$/);

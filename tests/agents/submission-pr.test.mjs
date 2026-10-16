@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import test from 'node:test';
 import { tmpdir } from 'node:os';
@@ -98,7 +99,7 @@ async function fixture(t) {
         repository: flag(args, '--repo'),
         url: `https://github.com/${flag(args, '--repo')}/pull/${prs.length + 1}`,
         title: flag(args, '--title'),
-        body: flag(args, '--body'),
+        body: readFileSync(flag(args, '--body-file'), 'utf8'),
         state: 'OPEN',
         isDraft: args.includes('--draft'),
         baseRefName: flag(args, '--base'),
@@ -113,7 +114,7 @@ async function fixture(t) {
       const pr = prs.find((item) => item.number === Number(args[2]));
       if (!pr) throw new Error('PR not found');
       pr.title = flag(args, '--title');
-      pr.body = flag(args, '--body');
+      pr.body = readFileSync(flag(args, '--body-file'), 'utf8');
       return pr.url;
     }
     throw new Error(`Unexpected gh command: ${args.join(' ')}`);

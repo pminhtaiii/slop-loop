@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
 import { atomicWrite, dataDirectory, readJson, withLock } from './agent-store.mjs';
-import { githubRepository } from './publication-targets.mjs';
+import { githubRepository, withPublicationBody } from './publication-targets.mjs';
 
 const featureBranch = /^feat\/\d{3}-[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const gitHash = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i;
@@ -275,7 +275,7 @@ export async function publishSubmission({ repo, targets, branch, head, title, bo
       const createTitle = record.pendingTitle ?? record.title;
       const createBody = record.pendingBody ?? record.body;
       try {
-        command(execute, 'gh', ['pr', 'create', '--repo', record.targets.submission.repository, '--head', branch, '--base', 'main', '--draft', '--title', createTitle, '--body', createBody], repo);
+        await withPublicationBody(repo, createBody, path => command(execute, 'gh', ['pr', 'create', '--repo', record.targets.submission.repository, '--head', branch, '--base', 'main', '--draft', '--title', createTitle, '--body-file', path], repo));
       } catch (createError) {
         try { state = await inspectState({ repo, targets, branch, execute }); pr = state.pr; }
         catch { throw createError; }
@@ -288,7 +288,7 @@ export async function publishSubmission({ repo, targets, branch, head, title, bo
       if (!pr || !String(pr.body).includes(record.marker)) throw new Error('Submission PR creation did not produce the retained recovery marker.');
     } else if (record.pendingTitle !== undefined && (pr.title !== record.pendingTitle || String(pr.body ?? '').replace(/\r\n/g, '\n') !== record.pendingBody.replace(/\r\n/g, '\n'))) {
       try {
-        command(execute, 'gh', ['pr', 'edit', String(pr.number), '--repo', record.targets.submission.repository, '--title', record.pendingTitle, '--body', record.pendingBody], repo);
+        await withPublicationBody(repo, record.pendingBody, path => command(execute, 'gh', ['pr', 'edit', String(pr.number), '--repo', record.targets.submission.repository, '--title', record.pendingTitle, '--body-file', path], repo));
       } catch (editError) {
         try { state = await inspectState({ repo, targets, branch, execute }); pr = state.pr; }
         catch { throw editError; }

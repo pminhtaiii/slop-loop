@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { spawnSync } from 'node:child_process';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -157,6 +158,24 @@ test('publish rejects tracked dependencies before tests, push, or PR creation', 
   git('commit', '--quiet', '-m', 'accidental dependencies');
   await assert.rejects(f.run('publish', '--body-file', f.body), /Installed dependencies must remain untracked/);
   assert.equal(f.calls.some((call) => call[0] === process.execPath || call[0] === 'gh' || call[1] === 'push'), false);
+});
+
+test('publication uses the validated body snapshot even if its file changes during gates', async t => {
+  const f = await checkout(t);
+  const expectedBody = 'Summary and verification\n' + 'x'.repeat(40_000);
+  await writeFile(f.body, expectedBody);
+  let publishedBody;
+  await runWorkflow(['publish', '--body-file', f.body, '--summary', 'freeze the publication body', '--root', f.root], {
+    execute(binary, args, cwd, timeout) {
+      if (binary === process.execPath) writeFileSync(f.body, 'Changed after validation');
+      if (binary === 'gh' && args[0] === 'pr' && args[1] === 'create') publishedBody = readFileSync(args[args.indexOf('--body-file') + 1], 'utf8');
+      return f.execute(binary, args, cwd, timeout);
+    },
+  });
+  const create = f.calls.find(call => call[0] === 'gh' && call[1] === 'pr' && call[2] === 'create');
+  assert.ok(create.includes('--body-file'));
+  assert.equal(publishedBody, expectedBody);
+  assert.ok(create.join(' ').length < 1000, 'large bodies must stay outside the Windows command line');
 });
 
 test('publishing is gated and repeatable; repair count survives new publishes and stops at three', async (t) => {
@@ -515,7 +534,7 @@ test('paired publication resumes after a partial private PR failure and gates co
       const number = 7;
       const pr = {
         number, url: `https://github.com/course/private/pull/${number}`, title: args[args.indexOf('--title') + 1],
-        body: args[args.indexOf('--body') + 1], state: 'OPEN', isDraft: args.includes('--draft'),
+        body: readFileSync(args[args.indexOf('--body-file') + 1], 'utf8'), state: 'OPEN', isDraft: args.includes('--draft'),
         headRefName: args[args.indexOf('--head') + 1], baseRefName: args[args.indexOf('--base') + 1],
         headRefOid: privateHead(`refs/heads/${args[args.indexOf('--head') + 1]}`),
       };
