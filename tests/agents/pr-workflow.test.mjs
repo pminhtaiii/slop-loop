@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assess, changedLines, runWorkflow } from '../../scripts/agents/pr-workflow.mjs';
+import { assess, changedLines, runWorkflow, workflowSummary } from '../../scripts/agents/pr-workflow.mjs';
 
 function evidence() {
   return {
@@ -65,10 +65,11 @@ test('failed, missing, skipped, spoofed, or superseded CI cannot be accepted', (
   assert.equal(assess(e).status, 'WAITING_CI');
 });
 
-test('unresolved, stale, spoofed, incomplete, or mismatched review evidence blocks readiness', () => {
+test('unresolved comments remain visible and advisory while incomplete or mismatched evidence blocks', () => {
   const e = evidence();
   e.pr.reviewThreads.nodes.push({ id: 'thread', isResolved: false, isOutdated: true });
-  assert.equal(assess(e).status, 'NEEDS_FIX');
+  assert.equal(assess(e).status, 'READY_FOR_HUMAN');
+  assert.equal(assess(e).unresolved[0].id, 'thread');
   e.pr.reviewThreads.nodes = [];
   e.pr.reviews.nodes[0].author.__typename = 'User';
   assert.equal(assess(e).status, 'READY_FOR_HUMAN');
@@ -81,11 +82,20 @@ test('unresolved, stale, spoofed, incomplete, or mismatched review evidence bloc
   waiting.pr.reviews.nodes[0].commit.oid = 'old';
   waiting.pr.reviewDecision = 'CHANGES_REQUESTED';
   waiting.pr.reviewThreads.nodes = [{ id: 'old-finding', isResolved: false }];
-  assert.equal(assess(waiting).status, 'NEEDS_FIX', 'unresolved conversations still require attention without a new bot review');
+  assert.equal(assess(waiting).status, 'READY_FOR_HUMAN', 'comments are advisory under the human merge policy');
 });
 
 test('PR sizing reports generated changes and binaries separately without hiding them', () => {
   assert.deepEqual(changedLines('700\t400\tsrc/code.ts\n200\t100\tpackage-lock.json\n-\t-\tasset.png\n'), { reviewable: 1100, generated: 300, binaries: 1, overTarget: true });
+});
+
+test('routine summaries expose comments and log paths without historical command output', () => {
+  const summary = workflowSummary({ schemaVersion: 1, repairRounds: [], localVerification: { head: 'abc', tests: 'private lengthy test transcript' }, gateLogs: { tests: { status: 'passed', log: 'tests.log', exitCode: 0, summary: 'lengthy output' } }, observation: { unresolved: [{ id: 'thread', isOutdated: false, comments: { nodes: [{ url: 'https://example.invalid/comment', body: 'lengthy comment' }] } }] } });
+  assert.equal(summary.localVerifiedHead, 'abc');
+  assert.equal(summary.logs.tests.log, 'tests.log');
+  assert.equal(summary.unresolved[0].id, 'thread');
+  assert.doesNotMatch(JSON.stringify(summary), /lengthy/);
+  assert.equal(workflowSummary({ schemaVersion: 1, repairRounds: [], observation: { reason: 'Update the feature branch against development.' } }).reason, 'Update the feature branch against development.');
 });
 
 async function checkout(t) {
@@ -119,7 +129,8 @@ async function checkout(t) {
       if (args[0] === 'push') { e.pr.headRefOid = git('rev-parse', 'HEAD'); for (const check of e.checks) check.head_sha = e.pr.headRefOid; return ''; }
       return git(...args);
     }
-    if (args[0] === 'pr' && args[1] === 'list') return JSON.stringify(created ? [{ ...e.pr }] : []);
+    if (args[0] === 'pr' && args[1] === 'list') return JSON.stringify(created && e.pr.state === 'OPEN' ? [{ ...e.pr }] : []);
+    if (args[0] === 'pr' && args[1] === 'view') return JSON.stringify(e.pr);
     if (args[0] === 'pr' && args[1] === 'create') { created = true; return e.pr.url; }
     if (args[0] === 'pr' && args[1] === 'ready') { e.pr.isDraft = false; return ''; }
     if (args[0] === 'pr' && args[1] === 'comment') { comments.push({ body: args[args.indexOf('--body') + 1] }); return ''; }
@@ -172,16 +183,16 @@ test('publishing is gated and repeatable; repair count survives new publishes an
   for (let round = 1; round < 3; round++) {
     await f.advance();
     await f.run('publish', '--body-file', f.body);
-    assert.equal((await f.run('status')).status, 'NEEDS_FIX');
+    assert.equal((await f.run('status')).status, 'AWAITING_HUMAN_MERGE');
     f.e.pr.reviews.nodes[0].commit.oid = f.e.pr.headRefOid;
     await f.run('repair', '--reason', `Diagnosed round ${round + 1}`);
   }
-  assert.equal((await f.run('status')).status, 'NEEDS_FIX', 'the last reserved round must still be allowed to finish');
+  assert.equal((await f.run('status')).status, 'AWAITING_HUMAN_MERGE', 'advisory comments do not block human review');
   await f.advance();
   await f.run('publish', '--body-file', f.body);
   f.e.pr.reviews.nodes[0].commit.oid = f.e.pr.headRefOid;
-  assert.equal((await f.run('status')).status, 'BLOCKED');
-  await assert.rejects(f.run('repair', '--reason', 'fourth'), /BLOCKED/);
+  assert.equal((await f.run('status')).status, 'AWAITING_HUMAN_MERGE');
+  await assert.rejects(f.run('repair', '--reason', 'fourth'), /Three repair rounds/);
   const record = JSON.parse(await readFile(join(f.root, '.agent-work/pr-workflow/001-example.json'), 'utf8'));
   assert.equal(record.repairRounds.length, 3);
   assert.equal(new Set(record.repairRounds.map((round) => round.head)).size, 3);
@@ -243,6 +254,82 @@ test('a failed local gate never pushes or opens a PR', async (t) => {
   const f = await checkout(t); f.fail();
   await assert.rejects(f.run('publish', '--body-file', f.body), /Local gate failed/);
   assert.equal(f.calls.some((call) => call[0] === 'git' && call[1] === 'push' || call[0] === 'gh' && call[2] === 'create'), false);
+});
+
+test('closed PRs skip expensive gates and PR changes during gates prevent push', async (t) => {
+  const f = await checkout(t);
+  await f.run('publish', '--body-file', f.body);
+  f.e.pr.state = 'MERGED';
+  f.calls.length = 0;
+  await assert.rejects(f.run('publish', '--body-file', f.body), /closed or replaced/);
+  assert.equal(f.calls.some(call => call[0] === process.execPath || call[1] === 'push'), false);
+  f.e.pr.state = 'OPEN';
+  for (const change of ['closed', 'head']) {
+    f.calls.length = 0;
+    const oldHead = f.e.pr.headRefOid;
+    await assert.rejects(runWorkflow(['publish', '--body-file', f.body, '--summary', 'lifecycle race', '--root', f.root], {
+      execute(binary, args, cwd, timeout) {
+        const output = f.execute(binary, args, cwd, timeout);
+        if (binary === process.execPath && args[0].endsWith('check-runtime.mjs')) {
+          if (change === 'closed') f.e.pr.state = 'MERGED';
+          else f.e.pr.headRefOid = 'external-commit';
+        }
+        return output;
+      },
+    }), /closed or replaced|changed during local gates/);
+    assert.equal(f.calls.some(call => call[1] === 'push' || call[0] === 'gh' && ['edit', 'create'].includes(call[2])), false);
+    f.e.pr.state = 'OPEN'; f.e.pr.headRefOid = oldHead;
+  }
+});
+
+test('prepare-next preserves the merged feature and refuses dirty, unmerged or existing targets', async t => {
+  const f = await checkout(t);
+  await f.run('publish', '--body-file', f.body);
+  const target = 'feat/001-next-work';
+  await assert.rejects(f.run('prepare-next', '--branch', target), /merged/);
+  f.e.pr.state = 'MERGED';
+  await writeFile(join(f.root, 'dirty.md'), 'keep me');
+  await assert.rejects(f.run('prepare-next', '--branch', target), /clean/);
+  assert.equal(await readFile(join(f.root, 'dirty.md'), 'utf8'), 'keep me');
+  await rm(join(f.root, 'dirty.md'));
+  await assert.rejects(f.run('prepare-next', '--branch', 'feat/001-example'), /exists|different/);
+  const source = f.e.head;
+  const result = await f.run('prepare-next', '--branch', target);
+  assert.equal(result.branch, target);
+  assert.equal(result.status, 'READY_TO_WORK');
+  const git = (...args) => spawnSync('git', args, { cwd: f.root, encoding: 'utf8', windowsHide: true });
+  assert.equal(git('rev-parse', 'feat/001-example').stdout.trim(), source);
+  assert.equal(git('rev-parse', 'HEAD').stdout.trim(), git('rev-parse', 'origin/development').stdout.trim());
+  assert.notEqual(git('rev-parse', '--abbrev-ref', '@{upstream}').status, 0, 'new branch must not track development');
+  assert.equal(f.calls.some(call => ['reset', 'clean'].includes(call[1]) || call.includes('--force')), false);
+});
+
+test('publication tracks the remote feature and post-squash preparation survives its remote deletion', async t => {
+  const f = await checkout(t);
+  const git = (...args) => {
+    const result = spawnSync('git', args, { cwd: f.root, encoding: 'utf8', windowsHide: true });
+    assert.equal(result.status, 0, result.stderr); return result.stdout.trim();
+  };
+  const remote = join(f.root, '.agent-work/remote.git');
+  git('init', '--bare', '--quiet', remote);
+  git('push', remote, 'refs/remotes/origin/development:refs/heads/development');
+  git('config', `url.${remote.split('\\').join('/')}.insteadOf`, 'https://github.com/example/project.git');
+  const execute = (binary, args, cwd, timeout) => {
+    if (binary !== 'git') return f.execute(binary, args, cwd, timeout);
+    if (args[0] === 'remote' && args[1] === 'get-url') return 'https://github.com/example/project.git';
+    return git(...args);
+  };
+  await runWorkflow(['publish', '--root', f.root, '--body-file', f.body, '--summary', 'remote tracking'], { execute });
+  assert.equal(git('rev-parse', '--abbrev-ref', '@{upstream}'), 'origin/feat/001-example');
+  const source = git('rev-parse', 'HEAD');
+  const squash = git('commit-tree', 'HEAD^{tree}', '-p', 'origin/development', '-m', 'squash merge');
+  git('push', remote, `${squash}:refs/heads/development`);
+  git('push', remote, '--delete', 'feat/001-example');
+  f.e.pr.state = 'MERGED';
+  const result = await runWorkflow(['prepare-next', '--root', f.root, '--branch', 'feat/001-fresh'], { execute });
+  assert.equal(result.head, squash);
+  assert.equal(git('rev-parse', 'feat/001-example'), source);
+  assert.equal(git('status', '--porcelain'), '');
 });
 
 test('bot review decisions are advisory while GitHub merge blockers remain enforced', () => {
