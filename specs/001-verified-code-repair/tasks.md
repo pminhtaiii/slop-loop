@@ -35,7 +35,7 @@ Tai is accountable for all local tasks, including shared foundation. Named lanes
   - **Owned Paths**: src/contracts/uc03.ts; tests/runtime/contract/uc03.test.ts.
   - **Acceptance Checks**: Behavioral tests reject malformed input/model/review/checkpoint/action data, invalid finite limits, stale digests and invalid transitions; agree envelope/version and typed outcomes from interfaces.md. One schema suite applies unchanged to mocks and real adapters. No persistence or approval implementation here. Include CommandView admission/digest and ProviderRequest role, finite ceilings, pre-dispatch reservation refs, observed/uncertain usage vectors from the revised data model; no provider call may accept a post-call estimate as authority.
 
-- [ ] T004 Build controlled port mocks in tests/runtime/support/uc03/ and verify them in tests/runtime/contract/uc03-mocks.test.ts.
+- [X] T004 Build controlled port mocks in tests/runtime/support/uc03/ and verify them in tests/runtime/contract/uc03-mocks.test.ts.
   - **Owner**: Tai / test-support lane.
   - **Dependencies**: T003.
   - **Owned Paths**: tests/runtime/support/uc03/; tests/runtime/contract/uc03-mocks.test.ts.
@@ -303,3 +303,11 @@ Develop accepted contract mocks once (T004), then run independent story lanes on
   - **Dependencies**: T003; apply the same import convention to T004 files before final publication.
   - **Owned Paths**: tsconfig.json; src/contracts/uc03.ts (erasable TypeScript syntax only); tests/runtime/contract/uc03.test.ts; relative imports in T004 support/tests when integrated.
   - **Acceptance Checks**: Reproduce the publication failure from `node --test` discovering TypeScript tests with unresolved `.js` imports. Use source-resolvable relative imports and compiler rewriting for emitted JavaScript, preserving strict checking and dependency versions. Node 24 source discovery and compiled runtime tests both pass without transformation flags or prebuilt source-side JavaScript. This is a Phase 2 test-tooling correction, not authorization for later runtime phases.
+
+## Phase 2 review corrections
+
+- [X] T036 Use the canonical validation-error type in the controlled repository mock per plan: strict TypeScript boundaries (partial).
+  - **Owner**: Tai / test-support lane.
+  - **Dependencies**: T004.
+  - **Owned Paths**: tests/runtime/support/uc03/fake-repository.ts.
+  - **Acceptance Checks**: Replace the unnecessary `unknown[]` / `as never` validation-error cast with the canonical `ValidationError[]` type. Preserve behavior and pass strict typecheck plus existing provider/repository vectors; no additional runtime capability.
