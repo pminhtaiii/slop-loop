@@ -62,6 +62,34 @@ import {
   type FixPlan,
   type BudgetLedger,
   type TaskState,
+  validateCheckResult,
+  validateBaseline,
+  validateBaselineAdmission,
+  validateVerificationResult,
+  validateVerificationAdmission,
+  validateSourceEvidence,
+  validateReviewFinding,
+  validateReviewResult,
+  validateReviewAdmission,
+  validateTaskWorkspace,
+  validateRun,
+  validateActivityEvent,
+  validateDelivery,
+  type CheckResult,
+  type Baseline,
+  type BaselineAdmissionContext,
+  type VerificationResult,
+  type VerificationAdmissionContext,
+  type SourceEvidence,
+  type SourceEvidenceLimits,
+  type ReviewFinding,
+  type ReviewResult,
+  type ReviewAdmissionContext,
+  type TrustedDiffLines,
+  type TaskWorkspace,
+  type Run,
+  type ActivityEvent,
+  type Delivery,
 } from '../../../src/contracts/uc03.js';
 
 function createValidCheck(): CheckDefinition {
@@ -2521,4 +2549,408 @@ test('state repair: feedback cannot erase strategy identity to evade replan char
     const replacement: TaskState = { ...retained, stateVersion: 3, node: 'AwaitPlan', plan: { ...createValidFixPlan(), strategy: 'changed', strategyDigest: 'changed' } };
     assert.equal(validateStateTransition(retained, replacement).ok, false);
   }
+});
+
+/* ------------------------------------------------------------------
+ * Slice 4 Tests: Evidence, Baseline, Verification, Review, Exported Records
+ * ------------------------------------------------------------------ */
+
+function createValidCheckResult(outcome: CheckResult['outcome'] = 'pass'): CheckResult {
+  return {
+    checkId: 'check-pytest-repro',
+    outcome,
+    outputExcerpt: 'FAILED test_calculator.py::test_division_by_zero',
+    durationMs: 1250,
+  };
+}
+
+function createValidBaseline(): Baseline {
+  return {
+    evidenceId: 'baseline-evidence-001',
+    repositorySnapshotDigest: 'sha256:baseline-snapshot-1111111111111111111111111111111111111111111111111111111111111111',
+    checkSetDigest: 'sha256:check-set-2222222222222222222222222222222222222222222222222222222222222222',
+    reproductionFailureSignature: 'FAILED test_calculator.py::test_division_by_zero',
+    checkResults: [
+      createValidCheckResult('fail'),
+      { checkId: 'check-pytest-passing-1', outcome: 'pass', outputExcerpt: 'PASSED test_addition', durationMs: 200 },
+    ],
+    testProtectionDigest: 'sha256:test-protection-3333333333333333333333333333333333333333333333333333333333333333',
+  };
+}
+
+function createValidVerificationResult(outcome: VerificationResult['outcome'] = 'pass'): VerificationResult {
+  return {
+    evidenceId: 'verification-evidence-001',
+    taskId: 'task-12345678',
+    runId: 'run-001',
+    actionId: 'action-pytest-run',
+    phase: 'focused',
+    repoDigest: 'sha256:repo-rev-4444444444444444444444444444444444444444444444444444444444444444',
+    diffDigest: 'sha256:diff-5555555555555555555555555555555555555555555555555555555555555555',
+    commandIdentity: 'pytest -q tests/test_calculator.py',
+    outcome,
+    testedIds: ['check-pytest-repro'],
+    diagnosticRefs: ['diag-ref-001'],
+  };
+}
+
+function createValidSourceEvidence(): SourceEvidence {
+  return {
+    path: 'src/calculator.py',
+    revisionDigest: 'sha256:calc-rev-6666666666666666666666666666666666666666666666666666666666666666',
+    boundedExcerpt: 'def divide(a, b):\n    if b == 0:\n        raise ZeroDivisionError("division by zero")\n    return a / b\n',
+    resultCount: 1,
+    truncated: false,
+  };
+}
+
+function createValidReviewFinding(severity: ReviewFinding['severity'] = 'error'): ReviewFinding {
+  return {
+    file: 'src/calculator.py',
+    line: 12,
+    side: 'new',
+    severity,
+    message: 'Potential division by zero unhandled',
+    evidenceRef: 'evidence-ref-123',
+  };
+}
+
+function createValidReviewResult(status: ReviewResult['status'] = 'accepted'): ReviewResult {
+  return {
+    reviewId: 'review-001',
+    reviewerRoleConfigId: 'config-read-only-reviewer-v1',
+    repoDigest: 'sha256:repo-rev-4444444444444444444444444444444444444444444444444444444444444444',
+    diffDigest: 'sha256:diff-5555555555555555555555555555555555555555555555555555555555555555',
+    checkSetDigest: 'sha256:check-set-2222222222222222222222222222222222222222222222222222222222222222',
+    status,
+    findings: status === 'findings' ? [createValidReviewFinding('error')] : [],
+    iterationReservationRef: 'reservation-reviewer-iter-001',
+  };
+}
+
+function createValidTaskWorkspace(): TaskWorkspace {
+  return {
+    taskId: 'task-12345678',
+    workspaceId: 'workspace-default-001',
+    containerImageDigest: 'sha256:img-7777777777777777777777777777777777777777777777777777777777777777',
+    repoVolumeId: 'vol-repo-001',
+    scratchVolumeId: 'vol-scratch-001',
+    expectedRepoState: 'sha256:repo-rev-4444444444444444444444444444444444444444444444444444444444444444',
+  };
+}
+
+function createValidRun(): Run {
+  return {
+    runId: 'run-001',
+    taskId: 'task-12345678',
+    startTime: '2026-10-16T10:00:00Z',
+    endTime: '2026-10-16T10:05:00Z',
+    totalUsage: {
+      inputTokens: 1000,
+      outputTokens: 250,
+      costUsd: 0.05,
+      billableTokens: 1250,
+    },
+    outcome: 'COMPLETED',
+  };
+}
+
+function createValidActivityEvent(): ActivityEvent {
+  return {
+    eventId: 'event-001',
+    taskId: 'task-12345678',
+    runId: 'run-001',
+    timestamp: '2026-10-16T10:02:30Z',
+    node: 'Verify',
+    actionType: 'run_tests',
+    outcome: 'pass',
+    durationMs: 3400,
+    evidenceRefs: ['evidence-ref-123'],
+  };
+}
+
+function createValidDelivery(): Delivery {
+  return {
+    taskId: 'task-12345678',
+    runId: 'run-001',
+    outcome: 'COMPLETED',
+    diffDigest: 'sha256:diff-5555555555555555555555555555555555555555555555555555555555555555',
+    changedFiles: ['src/calculator.py'],
+    baselineRef: 'baseline-evidence-001',
+    verificationRefs: ['verification-evidence-001'],
+    reviewRef: 'review-001',
+    limitations: [],
+    safeNextAction: 'Inspect repair report and verify CI status',
+  };
+}
+
+test('CheckResult validation: validates canonical outcomes and finite fields', () => {
+  for (const outcome of ['pass', 'fail', 'timeout', 'error', 'not-run'] as const) {
+    const valid = createValidCheckResult(outcome);
+    assert.equal(validateCheckResult(valid).ok, true, `outcome: ${outcome}`);
+  }
+  assert.equal(validateCheckResult(null).ok, false);
+  assert.equal(validateCheckResult({ ...createValidCheckResult(), checkId: '' }).ok, false);
+  assert.equal(validateCheckResult({ ...createValidCheckResult(), outcome: 'unknown' as unknown as CheckResult['outcome'] }).ok, false);
+  assert.equal(validateCheckResult({ ...createValidCheckResult(), durationMs: -10 }).ok, false);
+  assert.equal(validateCheckResult({ ...createValidCheckResult(), durationMs: 2.5 }).ok, false);
+  assert.equal(validateCheckResult({ ...createValidCheckResult(), unknownProp: true } as unknown as Record<string, unknown>).ok, false);
+});
+
+test('Baseline validation: validates structure, checkResults uniqueness and allowlists', () => {
+  const base = createValidBaseline();
+  assert.equal(validateBaseline(base).ok, true);
+  assert.equal(validateBaseline(null).ok, false);
+  assert.equal(validateBaseline({ ...base, evidenceId: '' }).ok, false);
+  assert.equal(validateBaseline({ ...base, checkResults: [] }).ok, false);
+  assert.equal(validateBaseline({ ...base, checkResults: [base.checkResults[0] ?? createValidCheckResult(), base.checkResults[0] ?? createValidCheckResult()] }).ok, false);
+  assert.equal(validateBaseline({ ...base, unknownKey: 'extra' } as unknown as Record<string, unknown>).ok, false);
+});
+
+test('Baseline admission: distinguishes expected reproduction and passing checks vs environment failures', () => {
+  const base = createValidBaseline();
+  const context: BaselineAdmissionContext = {
+    expectedRepositorySnapshotDigest: base.repositorySnapshotDigest,
+    expectedCheckSetDigest: base.checkSetDigest,
+    expectedTestProtectionDigest: base.testProtectionDigest,
+    expectedReproductionCheckId: 'check-pytest-repro',
+    expectedPassingCheckIds: ['check-pytest-passing-1'],
+  };
+  assert.equal(validateBaselineAdmission(base, context).ok, true);
+
+  const reproPassed = {
+    ...base,
+    checkResults: [
+      { checkId: 'check-pytest-repro', outcome: 'pass' as const, outputExcerpt: 'PASSED' },
+      base.checkResults[1] ?? createValidCheckResult(),
+    ],
+  };
+  assert.equal(validateBaselineAdmission(reproPassed, context).ok, false);
+
+  for (const envOutcome of ['error', 'timeout', 'not-run'] as const) {
+    const envFailed = {
+      ...base,
+      checkResults: [
+        { checkId: 'check-pytest-repro', outcome: envOutcome, outputExcerpt: 'ENV ERROR' },
+        base.checkResults[1] ?? createValidCheckResult(),
+      ],
+    };
+    assert.equal(validateBaselineAdmission(envFailed, context).ok, false, envOutcome);
+  }
+
+  for (const badOutcome of ['fail', 'error', 'timeout', 'not-run'] as const) {
+    const passingFailed = {
+      ...base,
+      checkResults: [
+        base.checkResults[0] ?? createValidCheckResult(),
+        { checkId: 'check-pytest-passing-1', outcome: badOutcome, outputExcerpt: 'FAILED' },
+      ],
+    };
+    assert.equal(validateBaselineAdmission(passingFailed, context).ok, false, `passing check: ${badOutcome}`);
+  }
+
+  assert.equal(validateBaselineAdmission(base, { ...context, expectedRepositorySnapshotDigest: 'stale' }).ok, false);
+  assert.equal(validateBaselineAdmission(base, { ...context, expectedCheckSetDigest: 'stale' }).ok, false);
+  assert.equal(validateBaselineAdmission(base, { ...context, expectedTestProtectionDigest: 'stale' }).ok, false);
+});
+
+test('VerificationResult validation: accepts phases and requires testedIds', () => {
+  for (const phase of ['baseline', 'focused', 'regression', 'compatibility', 'diff'] as const) {
+    assert.equal(validateVerificationResult({ ...createValidVerificationResult(), phase }).ok, true, phase);
+  }
+  for (const outcome of ['pass', 'fail', 'timeout', 'error', 'not-run'] as const) {
+    assert.equal(validateVerificationResult({ ...createValidVerificationResult(), outcome }).ok, true, outcome);
+  }
+  assert.equal(validateVerificationResult({ ...createValidVerificationResult(), testedIds: [] }).ok, false);
+  assert.equal(validateVerificationResult({ ...createValidVerificationResult(), phase: 'unknown' as unknown as VerificationResult['phase'] }).ok, false);
+  assert.equal(validateVerificationResult({ ...createValidVerificationResult(), extraField: true } as unknown as Record<string, unknown>).ok, false);
+});
+
+test('Verification admission: requires exact identities and passing executed outcome', () => {
+  const ver = createValidVerificationResult('pass');
+  const context: VerificationAdmissionContext = {
+    expectedTaskId: ver.taskId,
+    expectedRunId: ver.runId,
+    expectedRepoDigest: ver.repoDigest,
+    expectedDiffDigest: ver.diffDigest,
+    expectedCheckId: 'check-pytest-repro',
+    requiredPhase: 'focused',
+  };
+  assert.equal(validateVerificationAdmission(ver, context).ok, true);
+
+  for (const nonPass of ['fail', 'timeout', 'error', 'not-run'] as const) {
+    assert.equal(validateVerificationAdmission({ ...ver, outcome: nonPass }, context).ok, false, nonPass);
+  }
+
+  assert.equal(validateVerificationAdmission(ver, { ...context, expectedTaskId: 'other' }).ok, false);
+  assert.equal(validateVerificationAdmission(ver, { ...context, expectedRunId: 'other' }).ok, false);
+  assert.equal(validateVerificationAdmission(ver, { ...context, expectedRepoDigest: 'stale' }).ok, false);
+  assert.equal(validateVerificationAdmission(ver, { ...context, expectedDiffDigest: 'stale' }).ok, false);
+  assert.equal(validateVerificationAdmission(ver, { ...context, expectedCheckId: 'check-other' }).ok, false);
+  assert.equal(validateVerificationAdmission(ver, { ...context, requiredPhase: 'regression' }).ok, false);
+});
+
+test('SourceEvidence validation: bounds excerpts, validates canonical paths and rejects protected files', () => {
+  const ev = createValidSourceEvidence();
+  assert.equal(validateSourceEvidence(ev).ok, true);
+
+  assert.equal(validateSourceEvidence({ ...ev, path: '../outside.py' }).ok, false);
+  assert.equal(validateSourceEvidence({ ...ev, path: '/absolute/path.py' }).ok, false);
+  assert.equal(validateSourceEvidence({ ...ev, path: './relative.py' }).ok, false);
+
+  assert.equal(validateSourceEvidence({ ...ev, path: '.env' }).ok, false);
+  assert.equal(validateSourceEvidence({ ...ev, path: '.git/config' }).ok, false);
+  assert.equal(validateSourceEvidence({ ...ev, path: '.agents/secret.json' }).ok, false);
+  assert.equal(validateSourceEvidence({ ...ev, path: 'eval/uc03/private/secret.py' }).ok, false);
+
+  const limits: SourceEvidenceLimits = { maxExcerptBytes: 50, maxResultCount: 1 };
+  assert.equal(validateSourceEvidence(ev, limits).ok, false);
+  assert.equal(validateSourceEvidence({ ...ev, resultCount: 5 }, { maxResultCount: 2 }).ok, false);
+  assert.equal(validateSourceEvidence(ev, { allowedPaths: ['src/other.py'] }).ok, false);
+  assert.equal(validateSourceEvidence(ev, { allowedPaths: ['src/calculator.py'] }).ok, true);
+  assert.equal(validateSourceEvidence({ ...ev, unknownField: true } as unknown as Record<string, unknown>).ok, false);
+});
+
+test('ReviewFinding validation: requires explicit side, valid severity, and canonical path', () => {
+  const finding = createValidReviewFinding();
+  assert.equal(validateReviewFinding(finding).ok, true);
+  assert.equal(validateReviewFinding({ ...finding, side: 'old' }).ok, true);
+
+  assert.equal(validateReviewFinding({ ...finding, line: 0 }).ok, false);
+  assert.equal(validateReviewFinding({ ...finding, line: -5 }).ok, false);
+  assert.equal(validateReviewFinding({ ...finding, side: 'unknown' as unknown as ReviewFinding['side'] }).ok, false);
+  assert.equal(validateReviewFinding({ ...finding, severity: 'critical' as unknown as ReviewFinding['severity'] }).ok, false);
+  assert.equal(validateReviewFinding({ ...finding, file: '../escape.py' }).ok, false);
+  assert.equal(validateReviewFinding({ ...finding, file: '.env' }).ok, false);
+  assert.equal(validateReviewFinding({ ...finding, unknownProp: 123 } as unknown as Record<string, unknown>).ok, false);
+});
+
+test('ReviewResult validation: accepted status forbids actionable findings, findings status requires them', () => {
+  const accepted = createValidReviewResult('accepted');
+  assert.equal(validateReviewResult(accepted).ok, true);
+
+  const acceptedWithError = { ...accepted, findings: [createValidReviewFinding('error')] };
+  assert.equal(validateReviewResult(acceptedWithError).ok, false);
+  const acceptedWithWarning = { ...accepted, findings: [createValidReviewFinding('warning')] };
+  assert.equal(validateReviewResult(acceptedWithWarning).ok, false);
+  const acceptedWithInfo = { ...accepted, findings: [createValidReviewFinding('info')] };
+  assert.equal(validateReviewResult(acceptedWithInfo).ok, true);
+
+  const findingsWithoutFindings = { ...accepted, status: 'findings' as const, findings: [] };
+  assert.equal(validateReviewResult(findingsWithoutFindings).ok, false);
+  const findingsWithInfoOnly = { ...accepted, status: 'findings' as const, findings: [createValidReviewFinding('info')] };
+  assert.equal(validateReviewResult(findingsWithInfoOnly).ok, false);
+  const validFindings = { ...accepted, status: 'findings' as const, findings: [createValidReviewFinding('error')] };
+  assert.equal(validateReviewResult(validFindings).ok, true);
+
+  assert.equal(validateReviewResult({ ...accepted, extraField: true } as unknown as Record<string, unknown>).ok, false);
+});
+
+test('Review admission: verifies trusted diff-line membership and role configuration', () => {
+  const review = createValidReviewResult('findings');
+  const trustedDiffLines: TrustedDiffLines = {
+    'src/calculator.py': {
+      newLines: [10, 11, 12, 13],
+      oldLines: [5, 6],
+    },
+  };
+  const context: ReviewAdmissionContext = {
+    expectedRepoDigest: review.repoDigest,
+    expectedDiffDigest: review.diffDigest,
+    expectedCheckSetDigest: review.checkSetDigest,
+    expectedRoleConfigId: review.reviewerRoleConfigId,
+    expectedIterationReservationRef: review.iterationReservationRef,
+    trustedDiffLines,
+  };
+  assert.equal(validateReviewAdmission(review, context).ok, true);
+
+  const findingNotInDiff = {
+    ...review,
+    findings: [{ ...createValidReviewFinding('error'), line: 999, side: 'new' as const }],
+  };
+  assert.equal(validateReviewAdmission(findingNotInDiff, context).ok, false);
+
+  const findingOldLineInDiff = {
+    ...review,
+    findings: [{ ...createValidReviewFinding('error'), line: 5, side: 'old' as const }],
+  };
+  assert.equal(validateReviewAdmission(findingOldLineInDiff, context).ok, true);
+
+  const findingOldLineNotInDiff = {
+    ...review,
+    findings: [{ ...createValidReviewFinding('error'), line: 99, side: 'old' as const }],
+  };
+  assert.equal(validateReviewAdmission(findingOldLineNotInDiff, context).ok, false);
+
+  const findingFileNotInDiff = {
+    ...review,
+    findings: [{ ...createValidReviewFinding('error'), file: 'src/other.py' }],
+  };
+  assert.equal(validateReviewAdmission(findingFileNotInDiff, context).ok, false);
+
+  assert.equal(validateReviewAdmission(review, { ...context, expectedRepoDigest: 'stale' }).ok, false);
+  assert.equal(validateReviewAdmission(review, { ...context, expectedDiffDigest: 'stale' }).ok, false);
+  assert.equal(validateReviewAdmission(review, { ...context, expectedRoleConfigId: 'other-role' }).ok, false);
+});
+
+test('TaskWorkspace, Run, ActivityEvent, Delivery validation: validates exported records', () => {
+  const ws = createValidTaskWorkspace();
+  assert.equal(validateTaskWorkspace(ws).ok, true);
+  assert.equal(validateTaskWorkspace(ws, { expectedTaskId: ws.taskId, expectedWorkspaceId: ws.workspaceId }).ok, true);
+  assert.equal(validateTaskWorkspace(ws, { expectedTaskId: 'other' }).ok, false);
+  assert.equal(validateTaskWorkspace({ ...ws, containerImageDigest: '' }).ok, false);
+  assert.equal(validateTaskWorkspace({ ...ws, extra: 1 } as unknown as Record<string, unknown>).ok, false);
+
+  const run = createValidRun();
+  assert.equal(validateRun(run).ok, true);
+  assert.equal(validateRun({ ...run, outcome: 'FAILED' }).ok, true);
+  assert.equal(validateRun({ ...run, outcome: 'INVALID' as unknown as TaskOutcome }).ok, false);
+  assert.equal(validateRun({ ...run, extra: 1 } as unknown as Record<string, unknown>).ok, false);
+
+  const event = createValidActivityEvent();
+  assert.equal(validateActivityEvent(event).ok, true);
+  assert.equal(validateActivityEvent({ ...event, durationMs: -1 }).ok, false);
+  assert.equal(validateActivityEvent({ ...event, durationMs: 2.5 }).ok, false);
+  assert.equal(validateActivityEvent({ ...event, extra: 1 } as unknown as Record<string, unknown>).ok, false);
+
+  const delivery = createValidDelivery();
+  assert.equal(validateDelivery(delivery).ok, true);
+  assert.equal(validateDelivery(delivery, { expectedTaskId: delivery.taskId, expectedRunId: delivery.runId }).ok, true);
+  assert.equal(validateDelivery(delivery, { expectedTaskId: 'other' }).ok, false);
+  assert.equal(validateDelivery({ ...delivery, outcome: 'COMPLETED', changedFiles: [] }).ok, false);
+  assert.equal(validateDelivery({ ...delivery, outcome: 'COMPLETED', verificationRefs: [] }).ok, false);
+  assert.equal(validateDelivery({ ...delivery, changedFiles: ['../escape.py'] }).ok, false);
+  assert.equal(validateDelivery({ ...delivery, extra: 1 } as unknown as Record<string, unknown>).ok, false);
+});
+
+test('Completion compatibility: validateStateTransition accepts validated VerificationResult and ReviewResult directly', () => {
+  const prior: TaskState = { ...createValidTaskState('Review'), plan: createValidFixPlan() };
+  const next: TaskState = { ...prior, stateVersion: 2, node: 'Deliver', outcome: 'COMPLETED', latestReviewRef: 'review-001', reviewRefs: ['review-001'] };
+  const verification: VerificationResult = {
+    ...createValidVerificationResult('pass'),
+    repoDigest: next.repositoryRevisionDigest,
+    testedIds: ['check-pytest-focused'],
+  };
+  const review: ReviewResult = {
+    ...createValidReviewResult('accepted'),
+    repoDigest: next.repositoryRevisionDigest,
+    checkSetDigest: createValidFixPlan().checkSetDigest,
+  };
+
+  const completion = {
+    taskId: next.taskId,
+    runId: next.runId,
+    repositoryRevisionDigest: next.repositoryRevisionDigest,
+    diffDigest: verification.diffDigest ?? '',
+    authorizedDiffDigest: verification.diffDigest ?? '',
+    baselineRef: createValidFixPlan().baselineRef,
+    checkSetDigest: createValidFixPlan().checkSetDigest,
+    criteriaDigest: computeCanonicalSha256(next.acceptanceCriteria),
+    protectedTestsDigest: 'protected',
+    originalProtectedTestsDigest: 'protected',
+    checks: [verification],
+    review: { ...review, repositoryRevisionDigest: next.repositoryRevisionDigest, roleConfigId: review.reviewerRoleConfigId },
+  };
+
+  assert.equal(validateStateTransition(prior, next, { trusted: { completion } }).ok, true);
 });
