@@ -1,6 +1,6 @@
 # Shared Interfaces: UC-03 Contract v0.1
 
-**Status**: Canonical draft proposal, not an agreed/implemented API. T001 obtains Tai/Thanh Tan/Trong Tan agreement on the same version and records accepted revisions. Until then no mock or adapter is called contract-conformant. All later consumers and mocks use T003 validators; no alternate schemas. Additive changes require contract tests; breaking changes update the version and all consumers before integration.
+**Status**: T001 records accepted logical contract v0.1 and shared-owner agreement in [decisions](decisions.md). T003 provides the executable schema version `0.1.0` in [canonical contracts](../../../src/contracts/uc03.ts), with conformance vectors in [contract tests](../../../tests/runtime/contract/uc03.test.ts). All later consumers and mocks use these validators; no alternate schemas. Additive changes require contract tests; breaking changes update the version and all consumers before integration. Schema conformance does not establish real adapter, isolation, durability or workflow acceptance.
 
 ## Envelope and validation
 
@@ -9,6 +9,8 @@ Requests carry schemaVersion, request/action ID, task/run/workspace ID, expected
 Bug input requires repositoryId, goal, observed/expected behavior, reproduction, acceptanceCriteria, constraints and requiredChecks. Host input resolves an approved workspace; model-supplied arbitrary host paths are never workspace authority. Missing criteria/reproduction requests information; ambiguity pauses for confirmation. Check definitions use structured executable and argv, expected purpose/phase and finite config refs, not shell strings.
 
 ## Port ownership and semantics
+
+The canonical module separates schema parsing from admission against explicit trusted current context. Its digest helpers use SHA-256 over JSON with sorted object keys; use validated records and preserve patch bytes. Review findings identify old/new diff sides explicitly. Provider dispatch admission requires the authoritative request history and exact persisted multi-budget reservation receipt; a schema-valid request or bare reference grants no dispatch permission. Each port carries explicit `real` or `mock` provenance; `isAdmittedForProduction` rejects mock, missing and invalid markers. Later production composition must invoke that guard and the relevant admission checks; the marker alone does not attest adapter correctness.
 
 | Port | Operations and results | Owner / executable contract checks |
 |---|---|---|
