@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 /**
  * UC-03 Verified Code Repair - Canonical v0.1 Contracts and Runtime Validators
  *
@@ -89,17 +90,17 @@ export type ValidationResult<T> =
 export interface ExecutionLimits {
   readonly timeoutMs: number;
   readonly maxOutputBytes: number;
-  readonly maxCpuCores?: number | undefined;
-  readonly maxMemoryBytes?: number | undefined;
-  readonly maxPids?: number | undefined;
+  readonly maxCpuCores: number;
+  readonly maxMemoryBytes: number;
+  readonly maxPids: number;
 }
 
 export interface BudgetLimits {
   readonly maxReplanCount: number;
-  readonly maxTokens?: number | undefined;
-  readonly maxCostUsd?: number | undefined;
-  readonly maxRepairAttempts?: number | undefined;
-  readonly maxReviewIterations?: number | undefined;
+  readonly maxTokens: number;
+  readonly maxCostUsd: number;
+  readonly maxRepairAttempts: number;
+  readonly maxReviewIterations: number;
 }
 
 export type CheckPurpose =
@@ -132,6 +133,8 @@ export interface BugTask {
   readonly requiredChecks: readonly CheckDefinition[];
   readonly limits: ExecutionLimits;
   readonly budgetLimits: BudgetLimits;
+  readonly configId: string;
+  readonly configVersion: string;
 }
 
 export interface RunCommandAction {
@@ -182,8 +185,34 @@ export interface ApprovalBinding {
   readonly policyVersion: string;
   readonly planVersion?: number | undefined;
   readonly strategyDigest?: string | undefined;
+  readonly baselineRef?: string | undefined;
+  readonly evidenceRefs?: readonly string[] | undefined;
+  readonly criteriaDigest?: string | undefined;
+  readonly checkSetDigest?: string | undefined;
   readonly status: ApprovalStatus;
   readonly reason?: string | undefined;
+}
+
+export interface ApprovalBindingContext {
+  readonly currentTaskId?: string | undefined;
+  readonly currentWorkspaceId?: string | undefined;
+  readonly currentRepositoryRevisionDigest?: string | undefined;
+  readonly currentPolicyId?: string | undefined;
+  readonly currentPolicyVersion?: string | undefined;
+  readonly currentNormalizedActionDigest?: string | undefined;
+  readonly currentPlanVersion?: number | undefined;
+  readonly currentStrategyDigest?: string | undefined;
+  readonly currentBaselineRef?: string | undefined;
+  readonly currentEvidenceRefs?: readonly string[] | undefined;
+  readonly currentCriteriaDigest?: string | undefined;
+  readonly currentCheckSetDigest?: string | undefined;
+}
+
+export interface CommandViewValidationContext {
+  readonly currentCanonicalRevisionDigest?: string | undefined;
+  readonly currentExclusionsPolicyVersion?: string | undefined;
+  readonly expectedViewDigest?: string | undefined;
+  readonly trustedFileDigests?: Readonly<Record<string, string>> | undefined;
 }
 
 export interface AdmittedFile {
@@ -412,6 +441,73 @@ export interface Delivery {
   readonly safeNextAction: string;
 }
 
+
+export function canonicalJsonStringify(val: unknown): string {
+  if (val === null || typeof val !== 'object') {
+    return JSON.stringify(val);
+  }
+  if (Array.isArray(val)) {
+    return `[${val.map((item) => canonicalJsonStringify(item)).join(',')}]`;
+  }
+  const obj = val as Record<string, unknown>;
+  const sortedKeys = Object.keys(obj).sort();
+  const entries: string[] = [];
+  for (const k of sortedKeys) {
+    if (obj[k] !== undefined) {
+      entries.push(`${JSON.stringify(k)}:${canonicalJsonStringify(obj[k])}`);
+    }
+  }
+  return `{${entries.join(',')}}`;
+}
+
+export function computeCanonicalSha256(val: unknown): string {
+  const json = canonicalJsonStringify(val);
+  const hash = createHash('sha256').update(json, 'utf8').digest('hex');
+  return `sha256:${hash}`;
+}
+
+export function computeActionDigest(action: NormalizedAction): string {
+  return computeCanonicalSha256(action);
+}
+
+export function computeCommandViewDigest(view: Omit<CommandView, 'viewDigest'> | CommandView): string {
+  const rest = { ...(view as Record<string, unknown>) };
+  delete rest['viewDigest'];
+  return computeCanonicalSha256(rest);
+}
+
+export function isCanonicalRelativePath(filePath: string): boolean {
+  if (typeof filePath !== 'string' || filePath.length === 0) return false;
+  if (filePath.includes('\0')) return false;
+  if (filePath.includes('\\')) return false;
+  if (filePath.startsWith('/') || /^[a-zA-Z]:/.test(filePath)) return false;
+  if (filePath.startsWith('./') || filePath === '.') return false;
+  if (filePath.startsWith('../') || filePath === '..') return false;
+  if (filePath.endsWith('/')) return false;
+  if (filePath.endsWith('/..') || filePath.endsWith('/.')) return false;
+  if (filePath.includes('//') || filePath.includes('/./') || filePath.includes('/../')) return false;
+  return true;
+}
+
+export function normalizeLexicalPath(filePath: string): string | null {
+  if (typeof filePath !== 'string' || filePath.includes('\0')) return null;
+  const normalized = filePath.replace(/\\/g, '/');
+  if (normalized.startsWith('/') || /^[a-zA-Z]:/.test(normalized)) return null;
+
+  const segments = normalized.split('/');
+  const stack: string[] = [];
+  for (const seg of segments) {
+    if (seg === '' || seg === '.') continue;
+    if (seg === '..') {
+      if (stack.length === 0) return null;
+      stack.pop();
+    } else {
+      stack.push(seg);
+    }
+  }
+  return stack.join('/');
+}
+
 /* ------------------------------------------------------------------
  * Port Signatures
  * ------------------------------------------------------------------ */
@@ -597,23 +693,12 @@ function validateNonNegativeNumber(
   return val;
 }
 
-function isPathEscaping(filePath: string): boolean {
-  const normalized = filePath.replace(/\\/g, '/');
-  if (
-    normalized.startsWith('../') ||
-    normalized.includes('/../') ||
-    normalized === '..' ||
-    normalized.startsWith('/') ||
-    /^[a-zA-Z]:/.test(normalized)
-  ) {
-    return true;
-  }
-  return false;
-}
 
-function isProtectedPath(filePath: string): boolean {
-  const normalized = filePath.replace(/\\/g, '/').toLowerCase();
-  const baseName = normalized.split('/').pop() ?? normalized;
+export function isProtectedPath(filePath: string): boolean {
+  const lex = normalizeLexicalPath(filePath);
+  const target = (lex ?? filePath.replace(/\\/g, '/')).toLowerCase();
+  const segments = target.split('/');
+  const baseName = segments[segments.length - 1] ?? target;
 
   // .env files
   if (baseName === '.env' || baseName.startsWith('.env.')) {
@@ -642,15 +727,146 @@ function isProtectedPath(filePath: string): boolean {
     return true;
   }
   // Git metadata
-  if (normalized.startsWith('.git/') || normalized === '.git') {
+  if (segments.includes('.git') || target.startsWith('.git/') || target === '.git') {
+    return true;
+  }
+  // Agent files (.agents, .codex, AGENTS.md, CLAUDE.md)
+  if (segments.includes('.agents') || target.startsWith('.agents/') || target === '.agents') {
+    return true;
+  }
+  if (segments.includes('.codex') || target.startsWith('.codex/') || target === '.codex') {
+    return true;
+  }
+  if (baseName === 'agents.md' || baseName === 'claude.md') {
     return true;
   }
   // Hidden evaluation / grading
-  if (normalized.startsWith('eval/uc03/private/') || normalized.includes('/private/grading')) {
+  if (
+    target.startsWith('eval/uc03/private/') ||
+    target.includes('private/grading') ||
+    target.includes('/private/') ||
+    target.startsWith('private/')
+  ) {
     return true;
   }
   return false;
 }
+
+
+const EXECUTION_LIMITS_ALLOWED_KEYS = [
+  'timeoutMs',
+  'maxOutputBytes',
+  'maxCpuCores',
+  'maxMemoryBytes',
+  'maxPids',
+] as const;
+
+const BUDGET_LIMITS_ALLOWED_KEYS = [
+  'maxReplanCount',
+  'maxTokens',
+  'maxCostUsd',
+  'maxRepairAttempts',
+  'maxReviewIterations',
+] as const;
+
+const CHECK_DEFINITION_ALLOWED_KEYS = [
+  'checkId',
+  'executable',
+  'argv',
+  'purpose',
+  'workingDirectory',
+  'timeoutMs',
+  'maxOutputBytes',
+] as const;
+
+const BUG_TASK_ALLOWED_KEYS = [
+  'taskId',
+  'repositoryId',
+  'initialRevisionDigest',
+  'goal',
+  'observedBehavior',
+  'expectedBehavior',
+  'reproduction',
+  'acceptanceCriteria',
+  'constraints',
+  'requiredChecks',
+  'limits',
+  'budgetLimits',
+  'configId',
+  'configVersion',
+] as const;
+
+const RUN_COMMAND_ACTION_ALLOWED_KEYS = [
+  'actionId',
+  'kind',
+  'executable',
+  'argv',
+  'workingDirectory',
+  'purpose',
+] as const;
+
+const APPLY_PATCH_ACTION_ALLOWED_KEYS = [
+  'actionId',
+  'kind',
+  'patchContent',
+  'targetPaths',
+  'baseRevisionDigest',
+] as const;
+
+const APPROVE_FIX_PLAN_ACTION_ALLOWED_KEYS = [
+  'actionId',
+  'kind',
+  'planVersion',
+  'strategyDigest',
+  'diagnosisEvidenceRefs',
+  'checkSetDigest',
+] as const;
+
+const APPROVAL_BINDING_ACTION_ALLOWED_KEYS = [
+  'decisionId',
+  'actionKind',
+  'normalizedActionDigest',
+  'taskId',
+  'workspaceId',
+  'repositoryRevisionDigest',
+  'policyId',
+  'policyVersion',
+  'status',
+  'reason',
+] as const;
+
+const APPROVAL_BINDING_FIX_PLAN_ALLOWED_KEYS = [
+  'decisionId',
+  'actionKind',
+  'normalizedActionDigest',
+  'taskId',
+  'workspaceId',
+  'repositoryRevisionDigest',
+  'policyId',
+  'policyVersion',
+  'planVersion',
+  'strategyDigest',
+  'baselineRef',
+  'evidenceRefs',
+  'criteriaDigest',
+  'checkSetDigest',
+  'status',
+  'reason',
+] as const;
+
+const COMMAND_VIEW_ALLOWED_KEYS = [
+  'viewId',
+  'viewDigest',
+  'taskId',
+  'workspaceId',
+  'canonicalRevisionDigest',
+  'admittedFiles',
+  'exclusionsPolicyVersion',
+  'scratchIdentity',
+  'mountedReadOnly',
+] as const;
+
+const ADMITTED_FILE_ALLOWED_KEYS = ['path', 'digest'] as const;
 
 /* ------------------------------------------------------------------
  * Validators
@@ -665,34 +881,31 @@ export function validateExecutionLimits(input: unknown): ValidationResult<Execut
   }
 
   const errors: ValidationError[] = [];
+  rejectUnknownKeys(input, EXECUTION_LIMITS_ALLOWED_KEYS, 'limits', errors);
+
   const timeoutMs = validatePositiveInteger(input['timeoutMs'], 'limits.timeoutMs', errors);
   const maxOutputBytes = validatePositiveInteger(input['maxOutputBytes'], 'limits.maxOutputBytes', errors);
+  const maxCpuCores = validatePositiveNumber(input['maxCpuCores'], 'limits.maxCpuCores', errors);
+  const maxMemoryBytes = validatePositiveInteger(input['maxMemoryBytes'], 'limits.maxMemoryBytes', errors);
+  const maxPids = validatePositiveInteger(input['maxPids'], 'limits.maxPids', errors);
 
-  let maxCpuCores: number | undefined;
-  if (input['maxCpuCores'] !== undefined) {
-    maxCpuCores = validatePositiveNumber(input['maxCpuCores'], 'limits.maxCpuCores', errors);
-  }
-
-  let maxMemoryBytes: number | undefined;
-  if (input['maxMemoryBytes'] !== undefined) {
-    maxMemoryBytes = validatePositiveInteger(input['maxMemoryBytes'], 'limits.maxMemoryBytes', errors);
-  }
-
-  let maxPids: number | undefined;
-  if (input['maxPids'] !== undefined) {
-    maxPids = validatePositiveInteger(input['maxPids'], 'limits.maxPids', errors);
-  }
-
-  if (errors.length > 0 || timeoutMs === undefined || maxOutputBytes === undefined) {
+  if (
+    errors.length > 0 ||
+    timeoutMs === undefined ||
+    maxOutputBytes === undefined ||
+    maxCpuCores === undefined ||
+    maxMemoryBytes === undefined ||
+    maxPids === undefined
+  ) {
     return { ok: false, errors };
   }
 
   const result: ExecutionLimits = {
     timeoutMs,
     maxOutputBytes,
-    ...(maxCpuCores !== undefined ? { maxCpuCores } : {}),
-    ...(maxMemoryBytes !== undefined ? { maxMemoryBytes } : {}),
-    ...(maxPids !== undefined ? { maxPids } : {}),
+    maxCpuCores,
+    maxMemoryBytes,
+    maxPids,
   };
 
   return { ok: true, value: result };
@@ -707,6 +920,8 @@ export function validateBudgetLimits(input: unknown): ValidationResult<BudgetLim
   }
 
   const errors: ValidationError[] = [];
+  rejectUnknownKeys(input, BUDGET_LIMITS_ALLOWED_KEYS, 'budgetLimits', errors);
+
   const replan = validateNonNegativeInteger(input['maxReplanCount'], 'budgetLimits.maxReplanCount', errors);
   if (replan !== undefined && replan > 3) {
     errors.push({
@@ -716,36 +931,29 @@ export function validateBudgetLimits(input: unknown): ValidationResult<BudgetLim
     });
   }
 
-  let maxTokens: number | undefined;
-  if (input['maxTokens'] !== undefined) {
-    maxTokens = validatePositiveInteger(input['maxTokens'], 'budgetLimits.maxTokens', errors);
-  }
+  const maxTokens = validateNonNegativeInteger(input['maxTokens'], 'budgetLimits.maxTokens', errors);
+  const maxCostUsd = validateNonNegativeNumber(input['maxCostUsd'], 'budgetLimits.maxCostUsd', errors);
+  const maxRepairAttempts = validateNonNegativeInteger(input['maxRepairAttempts'], 'budgetLimits.maxRepairAttempts', errors);
+  const maxReviewIterations = validateNonNegativeInteger(input['maxReviewIterations'], 'budgetLimits.maxReviewIterations', errors);
 
-  let maxCostUsd: number | undefined;
-  if (input['maxCostUsd'] !== undefined) {
-    maxCostUsd = validatePositiveNumber(input['maxCostUsd'], 'budgetLimits.maxCostUsd', errors);
-  }
-
-  let maxRepairAttempts: number | undefined;
-  if (input['maxRepairAttempts'] !== undefined) {
-    maxRepairAttempts = validatePositiveInteger(input['maxRepairAttempts'], 'budgetLimits.maxRepairAttempts', errors);
-  }
-
-  let maxReviewIterations: number | undefined;
-  if (input['maxReviewIterations'] !== undefined) {
-    maxReviewIterations = validatePositiveInteger(input['maxReviewIterations'], 'budgetLimits.maxReviewIterations', errors);
-  }
-
-  if (errors.length > 0 || replan === undefined || replan > 3) {
+  if (
+    errors.length > 0 ||
+    replan === undefined ||
+    replan > 3 ||
+    maxTokens === undefined ||
+    maxCostUsd === undefined ||
+    maxRepairAttempts === undefined ||
+    maxReviewIterations === undefined
+  ) {
     return { ok: false, errors };
   }
 
   const result: BudgetLimits = {
     maxReplanCount: replan,
-    ...(maxTokens !== undefined ? { maxTokens } : {}),
-    ...(maxCostUsd !== undefined ? { maxCostUsd } : {}),
-    ...(maxRepairAttempts !== undefined ? { maxRepairAttempts } : {}),
-    ...(maxReviewIterations !== undefined ? { maxReviewIterations } : {}),
+    maxTokens,
+    maxCostUsd,
+    maxRepairAttempts,
+    maxReviewIterations,
   };
 
   return { ok: true, value: result };
@@ -765,9 +973,13 @@ export function validateCheckDefinition(
     return undefined;
   }
 
+  const initialErrorsCount = errors.length;
+  rejectUnknownKeys(input, CHECK_DEFINITION_ALLOWED_KEYS, path, errors);
+
   const checkId = validateNonEmptyString(input['checkId'], `${path}.checkId`, errors);
   const executable = validateNonEmptyString(input['executable'], `${path}.executable`, errors);
 
+  let argvValid = false;
   if (!Array.isArray(input['argv'])) {
     errors.push({
       path: `${path}.argv`,
@@ -775,8 +987,10 @@ export function validateCheckDefinition(
       code: 'INVALID_TYPE',
     });
   } else {
+    let allStrings = true;
     for (let i = 0; i < input['argv'].length; i++) {
       if (typeof input['argv'][i] !== 'string') {
+        allStrings = false;
         errors.push({
           path: `${path}.argv[${i}]`,
           message: `${path}.argv[${i}] must be a string`,
@@ -784,6 +998,7 @@ export function validateCheckDefinition(
         });
       }
     }
+    if (allStrings) argvValid = true;
   }
 
   const validPurposes: readonly CheckPurpose[] = [
@@ -818,9 +1033,10 @@ export function validateCheckDefinition(
   }
 
   if (
+    errors.length > initialErrorsCount ||
     !checkId ||
     !executable ||
-    !Array.isArray(input['argv']) ||
+    !argvValid ||
     !validPurposes.includes(purpose)
   ) {
     return undefined;
@@ -846,6 +1062,7 @@ export function validateBugTask(input: unknown): ValidationResult<BugTask> {
   }
 
   const errors: ValidationError[] = [];
+  rejectUnknownKeys(input, BUG_TASK_ALLOWED_KEYS, 'bugTask', errors);
 
   const taskId = validateNonEmptyString(input['taskId'], 'taskId', errors);
   const repositoryId = validateNonEmptyString(input['repositoryId'], 'repositoryId', errors);
@@ -854,6 +1071,8 @@ export function validateBugTask(input: unknown): ValidationResult<BugTask> {
   const observedBehavior = validateNonEmptyString(input['observedBehavior'], 'observedBehavior', errors);
   const expectedBehavior = validateNonEmptyString(input['expectedBehavior'], 'expectedBehavior', errors);
   const reproduction = validateNonEmptyString(input['reproduction'], 'reproduction', errors);
+  const configId = validateNonEmptyString(input['configId'], 'configId', errors);
+  const configVersion = validateNonEmptyString(input['configVersion'], 'configVersion', errors);
 
   if (!Array.isArray(input['acceptanceCriteria'])) {
     errors.push({
@@ -932,6 +1151,8 @@ export function validateBugTask(input: unknown): ValidationResult<BugTask> {
     !observedBehavior ||
     !expectedBehavior ||
     !reproduction ||
+    !configId ||
+    !configVersion ||
     !Array.isArray(input['acceptanceCriteria']) ||
     input['acceptanceCriteria'].length === 0 ||
     !Array.isArray(input['constraints']) ||
@@ -956,6 +1177,8 @@ export function validateBugTask(input: unknown): ValidationResult<BugTask> {
     requiredChecks,
     limits: limitsRes.value,
     budgetLimits: budgetLimitsRes.value,
+    configId,
+    configVersion,
   };
 
   return { ok: true, value: bugTask };
@@ -978,6 +1201,8 @@ export function validateNormalizedAction(input: unknown): ValidationResult<Norma
   }
 
   if (kind === 'run_command') {
+    rejectUnknownKeys(input, RUN_COMMAND_ACTION_ALLOWED_KEYS, '', errors);
+
     const executable = validateNonEmptyString(input['executable'], 'executable', errors);
     if (executable) {
       if (/[\s;&|><`$\r\n]/.test(executable)) {
@@ -1029,7 +1254,26 @@ export function validateNormalizedAction(input: unknown): ValidationResult<Norma
   }
 
   if (kind === 'apply_patch') {
-    const patchContent = validateNonEmptyString(input['patchContent'], 'patchContent', errors);
+    rejectUnknownKeys(input, APPLY_PATCH_ACTION_ALLOWED_KEYS, '', errors);
+
+    const rawPatch = input['patchContent'];
+    let patchContent: string | undefined;
+    if (typeof rawPatch !== 'string') {
+      errors.push({
+        path: 'patchContent',
+        message: 'patchContent must be a string',
+        code: 'INVALID_TYPE',
+      });
+    } else if (rawPatch.trim().length === 0) {
+      errors.push({
+        path: 'patchContent',
+        message: 'patchContent must be a non-empty string',
+        code: 'EMPTY_STRING',
+      });
+    } else {
+      patchContent = rawPatch;
+    }
+
     const baseRevisionDigest = validateNonEmptyString(input['baseRevisionDigest'], 'baseRevisionDigest', errors);
 
     if (!Array.isArray(input['targetPaths'])) {
@@ -1047,12 +1291,21 @@ export function validateNormalizedAction(input: unknown): ValidationResult<Norma
     } else {
       for (let i = 0; i < input['targetPaths'].length; i++) {
         const p = validateNonEmptyString(input['targetPaths'][i], `targetPaths[${i}]`, errors);
-        if (p && isPathEscaping(p)) {
-          errors.push({
-            path: `targetPaths[${i}]`,
-            message: `targetPaths[${i}] must not escape repository workspace: ${p}`,
-            code: 'WORKSPACE_ESCAPE',
-          });
+        if (p) {
+          if (!isCanonicalRelativePath(p)) {
+            errors.push({
+              path: `targetPaths[${i}]`,
+              message: `targetPaths[${i}] must be a canonical relative path: ${p}`,
+              code: 'WORKSPACE_ESCAPE',
+            });
+          }
+          if (isProtectedPath(p)) {
+            errors.push({
+              path: `targetPaths[${i}]`,
+              message: `targetPaths[${i}] targets protected path: ${p}`,
+              code: 'PROTECTED_PATH_FORBIDDEN',
+            });
+          }
         }
       }
     }
@@ -1078,6 +1331,8 @@ export function validateNormalizedAction(input: unknown): ValidationResult<Norma
   }
 
   if (kind === 'approve_fix_plan') {
+    rejectUnknownKeys(input, APPROVE_FIX_PLAN_ACTION_ALLOWED_KEYS, '', errors);
+
     const planVersion = validatePositiveInteger(input['planVersion'], 'planVersion', errors);
     const strategyDigest = validateNonEmptyString(input['strategyDigest'], 'strategyDigest', errors);
     const checkSetDigest = validateNonEmptyString(input['checkSetDigest'], 'checkSetDigest', errors);
@@ -1134,7 +1389,10 @@ export function validateNormalizedAction(input: unknown): ValidationResult<Norma
   };
 }
 
-export function validateApprovalBinding(input: unknown): ValidationResult<ApprovalBinding> {
+export function validateApprovalBinding(
+  input: unknown,
+  context?: ApprovalBindingContext
+): ValidationResult<ApprovalBinding> {
   if (!isPlainObject(input)) {
     return {
       ok: false,
@@ -1143,7 +1401,6 @@ export function validateApprovalBinding(input: unknown): ValidationResult<Approv
   }
 
   const errors: ValidationError[] = [];
-  const decisionId = validateNonEmptyString(input['decisionId'], 'decisionId', errors);
   const actionKind = input['actionKind'];
   if (actionKind !== 'action' && actionKind !== 'fix_plan') {
     errors.push({
@@ -1151,8 +1408,16 @@ export function validateApprovalBinding(input: unknown): ValidationResult<Approv
       message: 'actionKind must be either "action" or "fix_plan"',
       code: 'INVALID_ACTION_KIND',
     });
+    return { ok: false, errors };
   }
 
+  if (actionKind === 'fix_plan') {
+    rejectUnknownKeys(input, APPROVAL_BINDING_FIX_PLAN_ALLOWED_KEYS, '', errors);
+  } else {
+    rejectUnknownKeys(input, APPROVAL_BINDING_ACTION_ALLOWED_KEYS, '', errors);
+  }
+
+  const decisionId = validateNonEmptyString(input['decisionId'], 'decisionId', errors);
   const normalizedActionDigest = validateNonEmptyString(input['normalizedActionDigest'], 'normalizedActionDigest', errors);
   const taskId = validateNonEmptyString(input['taskId'], 'taskId', errors);
   const workspaceId = validateNonEmptyString(input['workspaceId'], 'workspaceId', errors);
@@ -1172,6 +1437,10 @@ export function validateApprovalBinding(input: unknown): ValidationResult<Approv
 
   let planVersion: number | undefined;
   let strategyDigest: string | undefined;
+  let baselineRef: string | undefined;
+  let evidenceRefs: readonly string[] | undefined;
+  let criteriaDigest: string | undefined;
+  let checkSetDigest: string | undefined;
 
   if (actionKind === 'fix_plan') {
     if (input['planVersion'] === undefined) {
@@ -1193,12 +1462,56 @@ export function validateApprovalBinding(input: unknown): ValidationResult<Approv
     } else {
       strategyDigest = validateNonEmptyString(input['strategyDigest'], 'strategyDigest', errors);
     }
-  } else {
-    if (input['planVersion'] !== undefined) {
-      planVersion = validatePositiveInteger(input['planVersion'], 'planVersion', errors);
+
+    if (input['baselineRef'] === undefined) {
+      errors.push({
+        path: 'baselineRef',
+        message: 'baselineRef is required for fix_plan approval bindings',
+        code: 'MISSING_PLAN_FIELD',
+      });
+    } else {
+      baselineRef = validateNonEmptyString(input['baselineRef'], 'baselineRef', errors);
     }
-    if (input['strategyDigest'] !== undefined) {
-      strategyDigest = validateNonEmptyString(input['strategyDigest'], 'strategyDigest', errors);
+
+    if (input['criteriaDigest'] === undefined) {
+      errors.push({
+        path: 'criteriaDigest',
+        message: 'criteriaDigest is required for fix_plan approval bindings',
+        code: 'MISSING_PLAN_FIELD',
+      });
+    } else {
+      criteriaDigest = validateNonEmptyString(input['criteriaDigest'], 'criteriaDigest', errors);
+    }
+
+    if (input['checkSetDigest'] === undefined) {
+      errors.push({
+        path: 'checkSetDigest',
+        message: 'checkSetDigest is required for fix_plan approval bindings',
+        code: 'MISSING_PLAN_FIELD',
+      });
+    } else {
+      checkSetDigest = validateNonEmptyString(input['checkSetDigest'], 'checkSetDigest', errors);
+    }
+
+    if (!Array.isArray(input['evidenceRefs'])) {
+      errors.push({
+        path: 'evidenceRefs',
+        message: 'evidenceRefs must be an array of evidence references',
+        code: 'MISSING_PLAN_FIELD',
+      });
+    } else if (input['evidenceRefs'].length === 0) {
+      errors.push({
+        path: 'evidenceRefs',
+        message: 'evidenceRefs must not be empty',
+        code: 'MISSING_PLAN_FIELD',
+      });
+    } else {
+      const refs: string[] = [];
+      for (let i = 0; i < input['evidenceRefs'].length; i++) {
+        const r = validateNonEmptyString(input['evidenceRefs'][i], `evidenceRefs[${i}]`, errors);
+        if (r) refs.push(r);
+      }
+      evidenceRefs = refs;
     }
   }
 
@@ -1207,17 +1520,71 @@ export function validateApprovalBinding(input: unknown): ValidationResult<Approv
     reason = validateNonEmptyString(input['reason'], 'reason', errors);
   }
 
+  if (context) {
+    if (context.currentTaskId !== undefined && context.currentTaskId !== taskId) {
+      errors.push({ path: 'taskId', message: 'Binding taskId does not match current context', code: 'STALE_APPROVAL_BINDING' });
+    }
+    if (context.currentWorkspaceId !== undefined && context.currentWorkspaceId !== workspaceId) {
+      errors.push({ path: 'workspaceId', message: 'Binding workspaceId does not match current context', code: 'STALE_APPROVAL_BINDING' });
+    }
+    if (context.currentRepositoryRevisionDigest !== undefined && context.currentRepositoryRevisionDigest !== repositoryRevisionDigest) {
+      errors.push({ path: 'repositoryRevisionDigest', message: 'Binding repositoryRevisionDigest does not match current context', code: 'STALE_APPROVAL_BINDING' });
+    }
+    if (context.currentPolicyId !== undefined && context.currentPolicyId !== policyId) {
+      errors.push({ path: 'policyId', message: 'Binding policyId does not match current context', code: 'STALE_APPROVAL_BINDING' });
+    }
+    if (context.currentPolicyVersion !== undefined && context.currentPolicyVersion !== policyVersion) {
+      errors.push({ path: 'policyVersion', message: 'Binding policyVersion does not match current context', code: 'STALE_APPROVAL_BINDING' });
+    }
+    if (context.currentNormalizedActionDigest !== undefined && context.currentNormalizedActionDigest !== normalizedActionDigest) {
+      errors.push({ path: 'normalizedActionDigest', message: 'Binding normalizedActionDigest does not match current context', code: 'STALE_APPROVAL_BINDING' });
+    }
+    if (actionKind === 'fix_plan') {
+      if (context.currentPlanVersion !== undefined && context.currentPlanVersion !== planVersion) {
+        errors.push({ path: 'planVersion', message: 'Binding planVersion does not match current context', code: 'STALE_APPROVAL_BINDING' });
+      }
+      if (context.currentStrategyDigest !== undefined && context.currentStrategyDigest !== strategyDigest) {
+        errors.push({ path: 'strategyDigest', message: 'Binding strategyDigest does not match current context', code: 'STALE_APPROVAL_BINDING' });
+      }
+      if (context.currentBaselineRef !== undefined && context.currentBaselineRef !== baselineRef) {
+        errors.push({ path: 'baselineRef', message: 'Binding baselineRef does not match current context', code: 'STALE_APPROVAL_BINDING' });
+      }
+      if (context.currentCriteriaDigest !== undefined && context.currentCriteriaDigest !== criteriaDigest) {
+        errors.push({ path: 'criteriaDigest', message: 'Binding criteriaDigest does not match current context', code: 'STALE_APPROVAL_BINDING' });
+      }
+      if (context.currentCheckSetDigest !== undefined && context.currentCheckSetDigest !== checkSetDigest) {
+        errors.push({ path: 'checkSetDigest', message: 'Binding checkSetDigest does not match current context', code: 'STALE_APPROVAL_BINDING' });
+      }
+      if (context.currentEvidenceRefs !== undefined) {
+        const match =
+          Array.isArray(evidenceRefs) &&
+          context.currentEvidenceRefs.length === evidenceRefs.length &&
+          context.currentEvidenceRefs.every((r, idx) => r === evidenceRefs?.[idx]);
+        if (!match) {
+          errors.push({ path: 'evidenceRefs', message: 'Binding evidenceRefs do not match current context', code: 'STALE_APPROVAL_BINDING' });
+        }
+      }
+    }
+  }
+
   if (
     errors.length > 0 ||
     !decisionId ||
-    (actionKind !== 'action' && actionKind !== 'fix_plan') ||
     !normalizedActionDigest ||
     !taskId ||
     !workspaceId ||
     !repositoryRevisionDigest ||
     !policyId ||
     !policyVersion ||
-    !validStatuses.includes(status)
+    !validStatuses.includes(status) ||
+    (actionKind === 'fix_plan' &&
+      (planVersion === undefined ||
+        !strategyDigest ||
+        !baselineRef ||
+        !criteriaDigest ||
+        !checkSetDigest ||
+        !evidenceRefs ||
+        evidenceRefs.length === 0))
   ) {
     return { ok: false, errors };
   }
@@ -1234,6 +1601,10 @@ export function validateApprovalBinding(input: unknown): ValidationResult<Approv
     status,
     ...(planVersion !== undefined ? { planVersion } : {}),
     ...(strategyDigest !== undefined ? { strategyDigest } : {}),
+    ...(baselineRef !== undefined ? { baselineRef } : {}),
+    ...(evidenceRefs !== undefined ? { evidenceRefs } : {}),
+    ...(criteriaDigest !== undefined ? { criteriaDigest } : {}),
+    ...(checkSetDigest !== undefined ? { checkSetDigest } : {}),
     ...(reason !== undefined ? { reason } : {}),
   };
 
@@ -1242,7 +1613,7 @@ export function validateApprovalBinding(input: unknown): ValidationResult<Approv
 
 export function validateCommandView(
   input: unknown,
-  options?: { readonly currentCanonicalRevisionDigest?: string }
+  options?: CommandViewValidationContext
 ): ValidationResult<CommandView> {
   if (!isPlainObject(input)) {
     return {
@@ -1252,6 +1623,8 @@ export function validateCommandView(
   }
 
   const errors: ValidationError[] = [];
+  rejectUnknownKeys(input, COMMAND_VIEW_ALLOWED_KEYS, '', errors);
+
   const viewId = validateNonEmptyString(input['viewId'], 'viewId', errors);
   const viewDigest = validateNonEmptyString(input['viewDigest'], 'viewDigest', errors);
   const taskId = validateNonEmptyString(input['taskId'], 'taskId', errors);
@@ -1293,14 +1666,16 @@ export function validateCommandView(
         continue;
       }
 
+      rejectUnknownKeys(file, ADMITTED_FILE_ALLOWED_KEYS, `admittedFiles[${i}]`, errors);
+
       const filePath = validateNonEmptyString(file['path'], `admittedFiles[${i}].path`, errors);
       const fileDigest = validateNonEmptyString(file['digest'], `admittedFiles[${i}].digest`, errors);
 
       if (filePath) {
-        if (isPathEscaping(filePath)) {
+        if (!isCanonicalRelativePath(filePath)) {
           errors.push({
             path: `admittedFiles[${i}].path`,
-            message: `admittedFiles[${i}].path escapes repository workspace: ${filePath}`,
+            message: `admittedFiles[${i}].path must be a canonical relative path: ${filePath}`,
             code: 'WORKSPACE_ESCAPE',
           });
         }
@@ -1310,6 +1685,22 @@ export function validateCommandView(
             message: `admittedFiles[${i}].path contains protected data which cannot be admitted: ${filePath}`,
             code: 'PROTECTED_DATA_ADMITTED',
           });
+        }
+
+        if (options?.trustedFileDigests !== undefined) {
+          if (!(filePath in options.trustedFileDigests)) {
+            errors.push({
+              path: `admittedFiles[${i}]`,
+              message: `Admitted file has no trusted evidence: ${filePath}`,
+              code: 'UNTRUSTED_FILE_ADMISSION',
+            });
+          } else if (fileDigest && options.trustedFileDigests[filePath] !== fileDigest) {
+            errors.push({
+              path: `admittedFiles[${i}].digest`,
+              message: `Admitted file digest mismatch for ${filePath}: expected ${options.trustedFileDigests[filePath]}, got ${fileDigest}`,
+              code: 'FILE_DIGEST_MISMATCH',
+            });
+          }
         }
       }
 
@@ -1328,6 +1719,30 @@ export function validateCommandView(
       path: 'canonicalRevisionDigest',
       message: `CommandView canonicalRevisionDigest (${canonicalRevisionDigest}) does not match current repository revision (${options.currentCanonicalRevisionDigest})`,
       code: 'STALE_COMMAND_VIEW',
+    });
+  }
+
+  if (
+    options?.currentExclusionsPolicyVersion !== undefined &&
+    exclusionsPolicyVersion &&
+    options.currentExclusionsPolicyVersion !== exclusionsPolicyVersion
+  ) {
+    errors.push({
+      path: 'exclusionsPolicyVersion',
+      message: `CommandView exclusionsPolicyVersion (${exclusionsPolicyVersion}) does not match current policy (${options.currentExclusionsPolicyVersion})`,
+      code: 'STALE_EXCLUSIONS_POLICY',
+    });
+  }
+
+  if (
+    options?.expectedViewDigest !== undefined &&
+    viewDigest &&
+    options.expectedViewDigest !== viewDigest
+  ) {
+    errors.push({
+      path: 'viewDigest',
+      message: `CommandView viewDigest (${viewDigest}) does not match expected view digest (${options.expectedViewDigest})`,
+      code: 'VIEW_DIGEST_MISMATCH',
     });
   }
 

@@ -7,6 +7,15 @@ import {
   validateNormalizedAction,
   validateApprovalBinding,
   validateCommandView,
+  validateCheckDefinition,
+  canonicalJsonStringify,
+  computeCanonicalSha256,
+  computeActionDigest,
+  computeCommandViewDigest,
+  isCanonicalRelativePath,
+  isProtectedPath,
+  type ApprovalBindingContext,
+  type CommandViewValidationContext,
   validateTaskEnvelope,
   validateTaskNode,
   validateTaskOutcome,
@@ -16,6 +25,7 @@ import {
   validateBudgetLedger,
   validateTaskState,
   validateStateTransition,
+  type ValidationError,
   type BugTask,
   type CheckDefinition,
   type ExecutionLimits,
@@ -87,6 +97,8 @@ function createValidBugTask(): BugTask {
     requiredChecks: [createValidCheck()],
     limits: createValidLimits(),
     budgetLimits: createValidBudgetLimits(),
+    configId: 'config-uc03-v1',
+    configVersion: '1.0.0',
   };
 }
 
@@ -192,18 +204,13 @@ test('ExecutionLimits validation: accepts valid execution limits', (): void => {
   }
 });
 
-test('ExecutionLimits validation: accepts minimal execution limits without optional fields', (): void => {
+test('ExecutionLimits validation: rejects execution limits when mandatory CPU, memory, or PIDs are missing', (): void => {
   const limits = {
     timeoutMs: 10000,
     maxOutputBytes: 65536,
   };
   const res = validateExecutionLimits(limits);
-  assert.equal(res.ok, true);
-  if (res.ok) {
-    assert.equal(res.value.timeoutMs, 10000);
-    assert.equal(res.value.maxOutputBytes, 65536);
-    assert.equal(res.value.maxCpuCores, undefined);
-  }
+  assert.equal(res.ok, false);
 });
 
 test('ExecutionLimits validation: rejects non-object, missing, zero, negative, or float limits', (): void => {
@@ -430,6 +437,10 @@ test('ApprovalBinding validation: accepts valid fix_plan approval binding with p
     policyVersion: '1.0.0',
     planVersion: 1,
     strategyDigest: 'sha256:strategy-digest-456',
+    baselineRef: 'evidence-baseline-001',
+    evidenceRefs: ['evidence-baseline-001'],
+    criteriaDigest: 'sha256:criteria-digest-789',
+    checkSetDigest: 'sha256:checkset-digest-101',
     status: 'approved',
   };
   const res = validateApprovalBinding(binding);
@@ -441,16 +452,20 @@ test('ApprovalBinding validation: accepts valid fix_plan approval binding with p
 });
 
 test('ApprovalBinding validation: rejects fix_plan binding missing planVersion or strategyDigest', (): void => {
-  const missingPlanFields: ApprovalBinding = {
+  const missingPlanFields = {
     decisionId: 'dec-plan-bad',
-    actionKind: 'fix_plan',
+    actionKind: 'fix_plan' as const,
     normalizedActionDigest: 'sha256:plan-digest',
     taskId: 'task-1',
     workspaceId: 'ws-1',
     repositoryRevisionDigest: 'sha256:repo-rev-123',
     policyId: 'policy-default',
     policyVersion: '1.0.0',
-    status: 'pending',
+    baselineRef: 'evidence-baseline-001',
+    evidenceRefs: ['evidence-baseline-001'],
+    criteriaDigest: 'sha256:criteria-digest-789',
+    checkSetDigest: 'sha256:checkset-digest-101',
+    status: 'pending' as const,
   };
   const res = validateApprovalBinding(missingPlanFields);
   assert.equal(res.ok, false);
@@ -1263,4 +1278,322 @@ test('validateStateTransition: respects allowSameNode option and rejects unpermi
   // With allowSameNode: true
   const allowedRes = validateStateTransition(s0, sSame, { allowSameNode: true });
   assert.equal(allowedRes.ok, true);
+});
+
+/* ------------------------------------------------------------------
+ * T003 Core Correction Regression Tests (Defects 1-6)
+ * ------------------------------------------------------------------ */
+
+// Defect 1: Limits & BugTask profile
+test('T003 Defect 1 Regression: ExecutionLimits requires all finite CPU, memory, and PID limits', (): void => {
+  const missingCpu = {
+    timeoutMs: 1000,
+    maxOutputBytes: 1024,
+    maxMemoryBytes: 1024 * 1024,
+    maxPids: 10,
+  };
+  const res = validateExecutionLimits(missingCpu);
+  assert.equal(res.ok, false, 'Expected missing maxCpuCores to fail validation');
+
+  const missingMem = {
+    timeoutMs: 1000,
+    maxOutputBytes: 1024,
+    maxCpuCores: 2,
+    maxPids: 10,
+  };
+  assert.equal(validateExecutionLimits(missingMem).ok, false, 'Expected missing maxMemoryBytes to fail validation');
+
+  const missingPids = {
+    timeoutMs: 1000,
+    maxOutputBytes: 1024,
+    maxCpuCores: 2,
+    maxMemoryBytes: 1024 * 1024,
+  };
+  assert.equal(validateExecutionLimits(missingPids).ok, false, 'Expected missing maxPids to fail validation');
+});
+
+test('T003 Defect 1 Regression: BudgetLimits requires all finite limits and accepts finite 0 budget as valid exhausted budget', (): void => {
+  const missingTokens = {
+    maxReplanCount: 3,
+    maxCostUsd: 1.0,
+    maxRepairAttempts: 2,
+    maxReviewIterations: 2,
+  };
+  assert.equal(validateBudgetLimits(missingTokens).ok, false, 'Expected missing maxTokens to fail');
+
+  const exhaustedBudget: BudgetLimits = {
+    maxReplanCount: 0,
+    maxTokens: 0,
+    maxCostUsd: 0,
+    maxRepairAttempts: 0,
+    maxReviewIterations: 0,
+  };
+  const res = validateBudgetLimits(exhaustedBudget);
+  assert.equal(res.ok, true, 'Finite 0 budget should be valid exhausted budget');
+  if (res.ok) {
+    assert.equal(res.value.maxTokens, 0);
+    assert.equal(res.value.maxCostUsd, 0);
+  }
+});
+
+test('T003 Defect 1 Regression: BugTask requires configId and configVersion', (): void => {
+  const taskNoConfigId = Object.fromEntries(
+    Object.entries(createValidBugTask()).filter(([k]) => k !== 'configId')
+  );
+  assert.equal(validateBugTask(taskNoConfigId).ok, false, 'Expected missing configId to fail');
+
+  const taskNoConfigVer = Object.fromEntries(
+    Object.entries(createValidBugTask()).filter(([k]) => k !== 'configVersion')
+  );
+  assert.equal(validateBugTask(taskNoConfigVer).ok, false, 'Expected missing configVersion to fail');
+});
+
+// Defect 2: Patch content byte-for-byte preservation
+test('T003 Defect 2 Regression: apply_patch preserves patchContent byte-for-byte while rejecting whitespace-only string', (): void => {
+  const rawDiff = '  --- a/file.py\n+++ b/file.py\n@@ -1 +1 @@\n- old\n+ new\n  \n';
+  const action = {
+    actionId: 'act-patch-preserve',
+    kind: 'apply_patch',
+    patchContent: rawDiff,
+    targetPaths: ['src/calculator.py'],
+    baseRevisionDigest: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+  };
+  const res = validateNormalizedAction(action);
+  assert.equal(res.ok, true);
+  if (res.ok && res.value.kind === 'apply_patch') {
+    assert.equal(res.value.patchContent, rawDiff, 'patchContent must preserve bytes and whitespace byte-for-byte');
+  }
+
+  const whitespaceOnly = {
+    ...action,
+    patchContent: '   \n  \t  \n',
+  };
+  assert.equal(validateNormalizedAction(whitespaceOnly).ok, false, 'Whitespace-only patchContent must be rejected');
+});
+
+// Defect 3: Relative path normalization and protected path rejection
+test('T003 Defect 3 Regression: rejects non-canonical relative path aliases (./ prefix, trailing slashes, NUL bytes, traversal endings)', (): void => {
+  const badPaths = [
+    './src/calculator.py',
+    'src/calculator.py/',
+    'src/\0calculator.py',
+    'src/..',
+    'src/./calculator.py',
+    'src//calculator.py',
+    '/workspace/calculator.py',
+  ];
+
+  assert.equal(isCanonicalRelativePath('src/calculator.py'), true);
+  for (const badPath of badPaths) {
+    assert.equal(isCanonicalRelativePath(badPath), false, `Expected isCanonicalRelativePath(${badPath}) to be false`);
+    const action = {
+      actionId: 'act-patch-badpath',
+      kind: 'apply_patch',
+      patchContent: 'diff',
+      targetPaths: [badPath],
+      baseRevisionDigest: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+    };
+    const res = validateNormalizedAction(action);
+    assert.equal(res.ok, false, `Expected non-canonical path ${badPath} to be rejected`);
+  }
+});
+
+test('T003 Defect 3 Regression: rejects protected agent files (.agents, .codex, AGENTS.md, CLAUDE.md, .git) and private grading', (): void => {
+  const protectedPaths = [
+    '.agents/skills/tool.md',
+    '.codex/instructions.md',
+    'AGENTS.md',
+    'CLAUDE.md',
+    '.git/HEAD',
+    'eval/uc03/private/rubric.json',
+    'tests/private/grading/secret.py',
+  ];
+
+  assert.equal(isProtectedPath('src/calculator.py'), false);
+  for (const p of protectedPaths) {
+    assert.equal(isProtectedPath(p), true, `Expected isProtectedPath(${p}) to be true`);
+    const view = {
+      ...createValidCommandView(),
+      admittedFiles: [
+        { path: 'src/calculator.py', digest: 'sha256:file1' },
+        { path: p, digest: 'sha256:protected' },
+      ],
+    };
+    const res = validateCommandView(view);
+    assert.equal(res.ok, false, `Expected protected path ${p} to be rejected`);
+    if (!res.ok) {
+      assert.ok(res.errors.some((e) => e.code === 'PROTECTED_DATA_ADMITTED'));
+    }
+  }
+});
+
+// Defect 4: Per-object allowlists reject unknown fields recursively
+test('T003 Defect 4 Regression: per-object allowlists reject unknown fields recursively', (): void => {
+  // run_command unknown properties (e.g. shell, env)
+  const cmdWithShell = {
+    actionId: 'act-cmd-1',
+    kind: 'run_command',
+    executable: 'pytest',
+    argv: ['-q'],
+    workingDirectory: '/workspace/repo',
+    shell: '/bin/bash',
+  };
+  const resCmd = validateNormalizedAction(cmdWithShell);
+  assert.equal(resCmd.ok, false, 'run_command with shell property must be rejected');
+  if (!resCmd.ok) {
+    assert.ok(resCmd.errors.some((e) => e.code === 'UNKNOWN_PROPERTY'));
+  }
+
+  // CheckDefinition unknown properties
+  const checkWithUnknown = {
+    ...createValidCheck(),
+    shell: true,
+  };
+  const errorsCheck: ValidationError[] = [];
+  const resCheck = validateCheckDefinition(checkWithUnknown, 'check', errorsCheck);
+  assert.equal(resCheck, undefined);
+  assert.ok(errorsCheck.some((e) => e.code === 'UNKNOWN_PROPERTY'));
+
+  // AdmittedFile unknown properties in CommandView
+  const viewWithAdmittedUnknown = {
+    ...createValidCommandView(),
+    admittedFiles: [
+      { path: 'src/calculator.py', digest: 'sha256:file1', unadmittedFlag: true },
+    ],
+  };
+  const resView = validateCommandView(viewWithAdmittedUnknown);
+  assert.equal(resView.ok, false);
+  if (!resView.ok) {
+    assert.ok(resView.errors.some((e) => e.code === 'UNKNOWN_PROPERTY'));
+  }
+
+  // ExecutionLimits unknown property
+  const limitsUnknown = {
+    ...createValidLimits(),
+    unlimited: true,
+  };
+  assert.equal(validateExecutionLimits(limitsUnknown).ok, false);
+
+  // BudgetLimits unknown property
+  const budgetUnknown = {
+    ...createValidBudgetLimits(),
+    infiniteBudget: true,
+  };
+  assert.equal(validateBudgetLimits(budgetUnknown).ok, false);
+});
+
+// Defect 5: Exported validateCheckDefinition must never return typed check definition on local errors
+test('T003 Defect 5 Regression: validateCheckDefinition returns undefined when invalid argv or options cause local errors', (): void => {
+  const badArgvCheck = {
+    checkId: 'check-1',
+    executable: 'pytest',
+    argv: ['-q', 12345 as unknown as string],
+    purpose: 'focused',
+  };
+  const errors1: ValidationError[] = [];
+  const res1 = validateCheckDefinition(badArgvCheck, 'check', errors1);
+  assert.equal(res1, undefined, 'validateCheckDefinition must return undefined when argv has non-string elements');
+  assert.ok(errors1.length > 0);
+
+  const badTimeoutCheck = {
+    ...createValidCheck(),
+    timeoutMs: -500,
+  };
+  const errors2: ValidationError[] = [];
+  const res2 = validateCheckDefinition(badTimeoutCheck, 'check', errors2);
+  assert.equal(res2, undefined, 'validateCheckDefinition must return undefined when timeoutMs is invalid');
+  assert.ok(errors2.length > 0);
+});
+
+// Defect 6: ApprovalBinding freshness, context verification, deterministic digest
+test('T003 Defect 6 Regression: ApprovalBinding includes fix-plan identities and rejects stale material identity against context', (): void => {
+  const validFixPlanBinding: ApprovalBinding = {
+    decisionId: 'dec-plan-001',
+    actionKind: 'fix_plan',
+    normalizedActionDigest: 'sha256:plan-action-digest',
+    taskId: 'task-1',
+    workspaceId: 'ws-1',
+    repositoryRevisionDigest: 'sha256:repo-rev-123',
+    policyId: 'policy-default',
+    policyVersion: '1.0.0',
+    planVersion: 1,
+    strategyDigest: 'sha256:strategy-digest-456',
+    baselineRef: 'evidence-baseline-001',
+    evidenceRefs: ['evidence-baseline-001'],
+    criteriaDigest: 'sha256:criteria-digest-789',
+    checkSetDigest: 'sha256:checkset-digest-101',
+    status: 'approved',
+  };
+
+  // Missing fix-plan specific identity
+  const missingBaseline = {
+    ...validFixPlanBinding,
+    baselineRef: undefined,
+  };
+  assert.equal(validateApprovalBinding(missingBaseline).ok, false, 'Missing baselineRef must fail');
+
+  // Stale check against trusted context
+  const context: ApprovalBindingContext = {
+    currentTaskId: 'task-1',
+    currentWorkspaceId: 'ws-1',
+    currentRepositoryRevisionDigest: 'sha256:repo-rev-123',
+    currentPlanVersion: 2, // material mismatch: current plan version is 2, binding has 1!
+  };
+  const staleRes = validateApprovalBinding(validFixPlanBinding, context);
+  assert.equal(staleRes.ok, false, 'Validation must fail against stale trusted context');
+  if (!staleRes.ok) {
+    assert.ok(staleRes.errors.some((e) => e.code === 'STALE_APPROVAL_BINDING'));
+  }
+});
+
+test('T003 Defect 6 Regression: computeCanonicalSha256 produces exact deterministic conformance vector regardless of key order', (): void => {
+  const objA = {
+    actionId: 'act-1',
+    kind: 'run_command',
+    executable: 'pytest',
+    argv: ['-q'],
+    workingDirectory: '/workspace/repo',
+  };
+  const objB = {
+    workingDirectory: '/workspace/repo',
+    argv: ['-q'],
+    executable: 'pytest',
+    kind: 'run_command',
+    actionId: 'act-1',
+  };
+
+  const jsonA = canonicalJsonStringify(objA);
+  const jsonB = canonicalJsonStringify(objB);
+  assert.equal(jsonA, jsonB);
+
+  const digestA = computeCanonicalSha256(objA);
+  const digestB = computeCanonicalSha256(objB);
+  assert.equal(digestA, digestB, 'Digests must match regardless of key order');
+
+  // Literal conformance vector verification
+  // Canonical JSON: {"actionId":"act-1","argv":["-q"],"executable":"pytest","kind":"run_command","workingDirectory":"/workspace/repo"}
+  const expectedCanonical = '{"actionId":"act-1","argv":["-q"],"executable":"pytest","kind":"run_command","workingDirectory":"/workspace/repo"}';
+  assert.equal(jsonA, expectedCanonical);
+  assert.equal(digestA, 'sha256:1cf5b6e6dc5c926b7dfc51b9f140d4b057e1262e03beeb279579d14afe537e0a');
+  assert.equal(computeActionDigest(objA as unknown as RunCommandAction), digestA);
+
+  const sampleView = createValidCommandView();
+  assert.equal(computeCommandViewDigest(sampleView).startsWith('sha256:'), true);
+});
+
+test('T003 Defect 6 Regression: validateCommandView verifies view digest and rejects unevidenced files against trusted context', (): void => {
+  const view = createValidCommandView();
+  const contextWithTrustedEvidence: CommandViewValidationContext = {
+    currentCanonicalRevisionDigest: view.canonicalRevisionDigest,
+    currentExclusionsPolicyVersion: view.exclusionsPolicyVersion,
+    trustedFileDigests: {
+      'src/calculator.py': 'sha256:file1',
+      // 'tests/test_calculator.py' is missing from trusted evidence!
+    },
+  };
+  const res = validateCommandView(view, contextWithTrustedEvidence);
+  assert.equal(res.ok, false, 'Unevidenced file admission must be rejected when trusted evidence context is supplied');
+  if (!res.ok) {
+    assert.ok(res.errors.some((e) => e.code === 'UNTRUSTED_FILE_ADMISSION'));
+  }
 });
