@@ -8,10 +8,12 @@ import { atomicWrite, dataDirectory, readJson, repository, withLock } from './ag
 const checksRequired = ['contributor-checks (ubuntu-latest)', 'contributor-checks (windows-latest)', 'runtime-checks (ubuntu-latest)', 'runtime-checks (windows-latest)'];
 const featureName = /^feat\/\d{3}-[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const maxRepairs = 3;
-const usage = `Usage: node scripts/agents/pr-workflow.mjs <preflight|publish|status|ready|repair|watch> [--root <checkout>]
+const usage = `Usage: node scripts/agents/pr-workflow.mjs <preflight|publish|status|ready|repair|watch|record-app-state|complete> [--root <checkout>]
 preflight fetches origin/development and reports freshness, naming, dirty paths, and diff size; it never publishes.
 publish requires --body-file <file> and --summary <short summary>; optional --base development.
 repair requires --reason <diagnosed finding>. At most three repair rounds per PR.
+record-app-state requires --receipt <app list_thread_pull_requests JSON>.
+complete verifies clean published current-head work, linked PR evidence and passing CI; it never merges.
 watch polls for at most ten minutes, stopping for fixes, human approval, or timeout.
 The helper never commits, merges, force-pushes, or resolves review threads.`;
 
@@ -63,7 +65,7 @@ const query = `query($owner:String!,$name:String!,$number:Int!){repository(owner
 export async function runWorkflow(args, dependencies = {}) {
   if (args.length === 1 && ['--help', '-h'].includes(args[0])) return { usage };
   const [command, ...rest] = args;
-  const allowed = { preflight: ['root'], publish: ['root', 'base', 'body-file', 'summary'], status: ['root'], ready: ['root'], repair: ['root', 'reason'], watch: ['root'] };
+  const allowed = { preflight: ['root'], publish: ['root', 'base', 'body-file', 'summary'], status: ['root'], 'record-app-state': ['root', 'receipt'], complete: ['root'], ready: ['root'], repair: ['root', 'reason'], watch: ['root'] };
   if (!Object.hasOwn(allowed, command)) throw new Error(usage);
   const values = {};
   for (let index = 0; index < rest.length; index += 2) {
@@ -71,6 +73,7 @@ export async function runWorkflow(args, dependencies = {}) {
     if (!rest[index].startsWith('--') || !allowed[command].includes(name) || Object.hasOwn(values, name) || !value || value.startsWith('--')) throw new Error(usage);
     values[name] = value;
   }
+  if (command === 'record-app-state' && !values.receipt) throw new Error('record-app-state requires --receipt with the app list_thread_pull_requests result.');
   if (command === 'publish' && !values['body-file'] || command === 'repair' && !values.reason?.trim()) throw new Error(usage);
   if (command === 'publish' && !validSummary(values.summary)) throw new Error('Provide --summary with 1–80 characters on one line, without surrounding whitespace.');
   if (values.base && values.base !== 'development') throw new Error('The pilot only publishes to development.');
@@ -139,6 +142,7 @@ export async function runWorkflow(args, dependencies = {}) {
       if (record.pr && (!pr || pr.number !== record.pr)) throw new Error('Recorded PR is closed or replaced; start a new feature branch instead of resetting its budget.');
       if (pr && !record.pr && !record.publicationStarted) throw new Error('Existing PR has no local accounting; recover its workflow record before publishing.');
       record.localVerification = { head, context: contextOutput.slice(-2000), runtime: runtimeOutput.slice(-2000), dependencies: installOutput.slice(-2000), tests: testOutput.split('\n').slice(-10).join('\n') };
+      delete record.completion;
       record.publicationStarted = true;
       await save();
       git('push', 'origin', `HEAD:refs/heads/${branch}`);
@@ -160,6 +164,14 @@ export async function runWorkflow(args, dependencies = {}) {
       return record;
     }
     if (!record.pr && !record.publicationStarted) throw new Error('Missing PR accounting; restore its original record rather than reset the repair budget.');
+    if (command === 'record-app-state') {
+      const receipt = await readJson(resolve(values.receipt));
+      const linked = (receipt.structuredContent ?? receipt).pullRequests?.find((pr) => pr.url === record.url && pr.repository === remote && pr.number === record.pr);
+      if (!linked) throw new Error('The app receipt must include this linked PR.');
+      record.appLink = { url: linked.url, repository: remote, number: linked.number, recordedAt: new Date().toISOString() };
+      await save();
+      return record;
+    }
     const prRef = find();
     if (!prRef) throw new Error('No open feature PR; use publish first.');
     if (record.pr && record.pr !== prRef.number) throw new Error('PR identity changed; inspect the retained record.');
@@ -176,6 +188,14 @@ export async function runWorkflow(args, dependencies = {}) {
       if (values.reason.length > 2000) throw new Error('Keep the diagnosed repair reason within 2000 characters.');
       record.repairRounds.push({ head, reason: values.reason, startedAt: new Date().toISOString() });
       record.status = 'REPAIR_RESERVED';
+    }
+    if (command === 'complete') {
+      if (git('status', '--porcelain', '--untracked-files=all')) throw new Error('Completion requires a clean checkout.');
+      if (record.publishedHead !== head || record.localVerification?.head !== head || !['context', 'runtime', 'dependencies', 'tests'].every((gate) => typeof record.localVerification?.[gate] === 'string' && record.localVerification[gate].trim())) throw new Error('Completion requires the current head to be published and locally verified.');
+      if (record.appLink?.url !== pr.url || record.appLink?.number !== pr.number || record.appLink?.repository !== remote) throw new Error('Completion requires an app receipt for the linked PR; run record-app-state.');
+      if (!['READY_FOR_HUMAN', 'AWAITING_HUMAN_MERGE'].includes(record.status)) throw new Error(`Completion blocked: ${record.status}. Keep the assignment active/blocked and hand pending CI to the app watcher.`);
+      if (git('rev-parse', 'HEAD') !== head) throw new Error('Checkout changed during completion verification.');
+      record.completion = { head, url: pr.url, pr: pr.number, ci: 'passed', appLink: record.appLink, verifiedAt: new Date().toISOString() };
     }
     if (command === 'ready') {
       if (!['READY_FOR_HUMAN', 'AWAITING_HUMAN_MERGE'].includes(record.status)) throw new Error(`Not ready: ${record.status}.`);

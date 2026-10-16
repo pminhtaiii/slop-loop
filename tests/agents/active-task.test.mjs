@@ -26,17 +26,19 @@ function run(checkout, ...args) {
   });
 }
 
-test('a completed task can be cleared while preserving the permanent file exactly', async (t) => {
+test('a worker handoff can be cleared while preserving the permanent file exactly', async (t) => {
   const checkout = await fixture(t);
   const path = join(checkout, 'context/active_task.md');
   const baseline = await readFile(path, 'utf8');
-  let result = run(checkout, 'start', '--owner', 'parent', '--task', 'tracking', '--summary', 'Implement tracking', '--next', 'Verify changes');
+  let result = run(checkout, 'start', '--role', 'worker', '--owner', 'parent', '--task', 'tracking', '--summary', 'Implement tracking', '--next', 'Verify changes');
   assert.equal(result.status, 0, result.stderr);
   assert.equal(await readFile(path, 'utf8'), baseline);
   assert.match(run(checkout, 'list').stdout, /Implement tracking/);
-  result = run(checkout, 'finish', '--owner', 'parent', '--task', 'tracking', '--result', 'Tests passed; evidence recorded');
+  assert.equal(run(checkout, 'finish', '--owner', 'parent', '--task', 'tracking', '--result', 'Worker cannot complete contributor work').status, 1);
+  result = run(checkout, 'handoff', '--owner', 'parent', '--task', 'tracking', '--result', 'Tests passed; evidence recorded');
   assert.equal(result.status, 0, result.stderr);
   assert.equal(await readFile(path, 'utf8'), baseline);
+  assert.equal(JSON.parse(run(checkout, 'list').stdout)[0].status, 'handed-off');
   assert.equal(run(checkout, 'render').status, 0);
   assert.match(await readFile(path, 'utf8'), /Tests passed; evidence recorded/);
   result = run(checkout, 'clear', '--owner', 'parent', '--task', 'tracking');
@@ -50,10 +52,10 @@ test('archive previews without writes then preserves evidence before targeted cl
   const checkout = await fixture(t);
   await mkdir(join(checkout, 'docs/verification'), { recursive: true });
   for (const owner of ['done', 'busy', 'blocked']) {
-    assert.equal(run(checkout, 'start', '--owner', owner, '--task', 'T001', '--summary', `${owner} work`, '--next', 'Verify').status, 0);
+    assert.equal(run(checkout, 'start', '--role', 'worker', '--owner', owner, '--task', 'T001', '--summary', `${owner} work`, '--next', 'Verify').status, 0);
   }
   assert.equal(run(checkout, 'update', '--owner', 'blocked', '--task', 'T001', '--status', 'blocked').status, 0);
-  assert.equal(run(checkout, 'finish', '--owner', 'done', '--task', 'T001', '--result', 'Checks passed at revision abc').status, 0);
+  assert.equal(run(checkout, 'handoff', '--owner', 'done', '--task', 'T001', '--result', 'Checks passed at revision abc').status, 0);
   const args = ['archive', '--owner', 'done', '--task', 'T001', '--output', 'docs/verification/done.json'];
   const before = run(checkout, 'list').stdout;
   let result = run(checkout, ...args);
@@ -75,8 +77,8 @@ test('archive previews without writes then preserves evidence before targeted cl
 test('archive refuses unsafe destinations, collisions, and a busy store without clearing evidence', async (t) => {
   const checkout = await fixture(t);
   await mkdir(join(checkout, 'docs/verification'), { recursive: true });
-  run(checkout, 'start', '--owner', 'done', '--task', 'T001', '--summary', 'Work', '--next', 'Verify');
-  run(checkout, 'finish', '--owner', 'done', '--task', 'T001', '--result', 'Original result');
+  run(checkout, 'start', '--role', 'worker', '--owner', 'done', '--task', 'T001', '--summary', 'Work', '--next', 'Verify');
+  run(checkout, 'handoff', '--owner', 'done', '--task', 'T001', '--result', 'Original result');
   const before = run(checkout, 'list').stdout;
   const args = ['archive', '--owner', 'done', '--task', 'T001'];
   await writeFile(join(checkout, 'docs/verification/collision.json'), '{"unrelated":"retain"}\n');
@@ -98,16 +100,16 @@ test('archive refuses unsafe destinations, collisions, and a busy store without 
 test('archive resumes after saving evidence and refuses a later task that reused the same ID', async (t) => {
   const checkout = await fixture(t);
   await mkdir(join(checkout, 'docs/verification'), { recursive: true });
-  run(checkout, 'start', '--owner', 'worker', '--task', 'T001', '--summary', 'First task', '--next', 'Verify');
-  run(checkout, 'finish', '--owner', 'worker', '--task', 'T001', '--result', 'First result');
+  run(checkout, 'start', '--role', 'worker', '--owner', 'worker', '--task', 'T001', '--summary', 'First task', '--next', 'Verify');
+  run(checkout, 'handoff', '--owner', 'worker', '--task', 'T001', '--result', 'First result');
   const entry = JSON.parse(run(checkout, 'list').stdout)[0];
   const file = join(checkout, 'docs/verification/resume.json');
   await writeFile(file, JSON.stringify({ schemaVersion: 1, entries: [entry] }));
   const args = ['archive', '--owner', 'worker', '--task', 'T001', '--output', 'docs/verification/resume.json', '--apply'];
   assert.equal(run(checkout, ...args).status, 0);
   assert.deepEqual(JSON.parse(run(checkout, 'list').stdout), []);
-  run(checkout, 'start', '--owner', 'worker', '--task', 'T001', '--summary', 'Second task', '--next', 'Verify');
-  run(checkout, 'finish', '--owner', 'worker', '--task', 'T001', '--result', 'Second result');
+  run(checkout, 'start', '--role', 'worker', '--owner', 'worker', '--task', 'T001', '--summary', 'Second task', '--next', 'Verify');
+  run(checkout, 'handoff', '--owner', 'worker', '--task', 'T001', '--result', 'Second result');
   const before = run(checkout, 'list').stdout;
   assert.equal(run(checkout, ...args).status, 1);
   assert.equal(run(checkout, 'list').stdout, before);
@@ -118,12 +120,12 @@ test('worker cleanup preserves the parent entry and active or blocked work', asy
   const checkout = await fixture(t);
   const path = join(checkout, 'context/active_task.md');
   for (const owner of ['parent', 'worker']) {
-    const result = run(checkout, 'start', '--owner', owner, '--task', 'T001', '--summary', `${owner} assignment`, '--next', 'Implement');
+    const result = run(checkout, 'start', '--role', 'worker', '--owner', owner, '--task', 'T001', '--summary', `${owner} assignment`, '--next', 'Implement');
     assert.equal(result.status, 0, result.stderr);
   }
   let result = run(checkout, 'clear', '--owner', 'worker', '--task', 'T001');
   assert.equal(result.status, 1);
-  assert.match(result.stderr, /Only completed entries/);
+  assert.match(result.stderr, /Only completed or handed-off entries/);
   result = run(checkout, 'update', '--owner', 'worker', '--task', 'T001', '--status', 'blocked', '--next', 'Wait for required input', '--verification', 'Focused check not run');
   assert.equal(result.status, 0, result.stderr);
   const blocked = await readFile(path, 'utf8');
@@ -131,7 +133,7 @@ test('worker cleanup preserves the parent entry and active or blocked work', asy
   result = run(checkout, 'clear', '--owner', 'worker', '--task', 'T001');
   assert.equal(result.status, 1);
   assert.equal(await readFile(path, 'utf8'), blocked);
-  result = run(checkout, 'finish', '--owner', 'worker', '--task', 'T001', '--result', 'Assignment complete; handoff in evidence.md');
+  result = run(checkout, 'handoff', '--owner', 'worker', '--task', 'T001', '--result', 'Assignment complete; handoff in evidence.md');
   assert.equal(result.status, 0, result.stderr);
   assert.match(run(checkout, 'list').stdout, /Assignment complete/);
   result = run(checkout, 'clear', '--owner', 'worker', '--task', 'T001');
@@ -149,7 +151,7 @@ test('damaged markers and malformed data fail without overwriting the file', asy
     '# Preserve this\n<!-- active-task:start -->\n```json\nnot json\n```\n<!-- active-task:end -->\n',
   ]) {
     await writeFile(path, source);
-    const result = run(checkout, 'start', '--owner', 'parent', '--task', 'T001', '--summary', 'Work', '--next', 'Verify');
+    const result = run(checkout, 'start', '--role', 'worker', '--owner', 'parent', '--task', 'T001', '--summary', 'Work', '--next', 'Verify');
     assert.equal(result.status, 1);
     assert.equal(await readFile(path, 'utf8'), source);
   }
@@ -162,7 +164,7 @@ test('a busy lock is retained and prevents any task-file mutation', async (t) =>
   await mkdir(join(checkout, '.agent-work', 'state'), { recursive: true });
   const lock = join(checkout, '.agent-work/state/active-task.lock');
   await writeFile(lock, 'another writer');
-  const result = run(checkout, 'start', '--owner', 'parent', '--task', 'T001', '--summary', 'Work', '--next', 'Verify');
+  const result = run(checkout, 'start', '--role', 'worker', '--owner', 'parent', '--task', 'T001', '--summary', 'Work', '--next', 'Verify');
   assert.equal(result.status, 1);
   assert.match(result.stderr, /file is busy/);
   assert.equal(await readFile(path, 'utf8'), baseline);
@@ -183,7 +185,7 @@ test('linked worktrees share assignments without modifying the coordinator view'
   const parentView = await readFile(join(checkout, 'context/active_task.md'), 'utf8');
   const worker = join(checkout, '.agent-work/worktrees/worker');
   const workerView = await readFile(join(worker, 'context/active_task.md'), 'utf8');
-  let result = run(worker, 'start', '--owner', 'worker', '--task', 'T001', '--summary', 'Shared assignment', '--next', 'Verify');
+  let result = run(worker, 'start', '--role', 'worker', '--owner', 'worker', '--task', 'T001', '--summary', 'Shared assignment', '--next', 'Verify');
   assert.equal(result.status, 0, result.stderr);
   result = run(checkout, 'list');
   assert.equal(result.status, 0, result.stderr);
@@ -199,7 +201,7 @@ test('overlapping writers either serialize or report busy without losing an assi
   const checkout = await fixture(t);
   const execute = promisify(execFile);
   const assignments = ['worker-one', 'worker-two'].map((owner) => [
-    'start', '--owner', owner, '--task', 'T001', '--summary', owner, '--next', 'Verify',
+    'start', '--role', 'worker', '--owner', owner, '--task', 'T001', '--summary', owner, '--next', 'Verify',
   ]);
   const outcomes = await Promise.all(assignments.map((args) => execute(process.execPath, [cli, ...args, '--root', checkout], {
     windowsHide: true, timeout: 10_000,
@@ -215,4 +217,14 @@ test('overlapping writers either serialize or report busy without losing an assi
   const source = run(checkout, 'list').stdout;
   assert.match(source, /worker-one/);
   assert.match(source, /worker-two/);
+});
+
+test('contributor finish refuses unpublished work and retains the active assignment', async (t) => {
+  const checkout = await fixture(t);
+  assert.equal(run(checkout, 'start', '--owner', 'coordinator', '--task', 'publish', '--summary', 'Contributor changes', '--next', 'Publish').status, 0);
+  const before = run(checkout, 'list').stdout;
+  assert.equal(run(checkout, 'handoff', '--owner', 'coordinator', '--task', 'publish', '--result', 'Skip PR').status, 1);
+  const result = run(checkout, 'finish', '--owner', 'coordinator', '--task', 'publish', '--result', 'Implementation done');
+  assert.equal(result.status, 1, result.stderr);
+  assert.equal(run(checkout, 'list').stdout, before);
 });

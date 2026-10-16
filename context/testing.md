@@ -35,7 +35,7 @@ node --test tests/agents/active-task.test.mjs
 
 Test worktree retirement eligibility and safe removal in disposable Git repositories with `node --test tests/agents/agent-worktree.test.mjs`. These checks cover preview-only operation, retained branches, unmerged commits, dirty/untracked/ignored data, resumed tasks, changed evidence, and locked or unknown worktrees. Skill evaluations additionally follow [the versioned evidence procedure](workflow.md#skill-evaluation-evidence).
 
-For contributor coordination changes, run `node --test tests/agents/pr-workflow.test.mjs tests/agents/agent-context.test.mjs tests/agents/active-task.test.mjs`. These cover preflight reporting without publication, UC brief extraction without ledger writes, and archive-before-clear safety, alongside existing behavior. Report partial evidence separately from complete regression results.
+For contributor coordination changes, run `node --test tests/agents/pr-workflow.test.mjs tests/agents/agent-context.test.mjs tests/agents/active-task.test.mjs`. These cover preflight reporting without publication, UC brief extraction without ledger writes, and archive-before-clear safety, alongside existing behavior. Completion regressions also cover active-task finish refusing unpublished work, worker handoff without contributor completion, session closure refusing active work, and PR completion refusing dirty/stale/unlinked/pending/failing revisions. Report partial evidence separately from complete regression results.
 
 Run the complete contributor test suite with Node's test-runner discovery:
 

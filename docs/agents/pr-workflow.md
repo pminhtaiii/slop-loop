@@ -49,6 +49,19 @@ Use `ready` when status is `READY_FOR_HUMAN`. That command rechecks the PR and m
 node scripts/agents/pr-workflow.mjs ready [--root <checkout>]
 ```
 
+## Enforce completion
+
+`active-task.mjs finish` calls `pr-workflow.mjs complete` before changing the assignment to completed. Completion requires a clean checkout, current local publication and verification evidence, a live matching open PR against development, an app-link receipt, all four current-head CI jobs passing and no unresolved review threads or merge blocker. Unpublished, dirty, stale, unlinked or failing work stays active/blocked. Pending CI also stays active; hand monitoring to the app watcher and finish after checks pass. A final status report is not contributor completion, and merging is not required.
+
+After linking the PR, save the app's `list_thread_pull_requests` result as ignored local JSON. Import that result rather than a handwritten link claim:
+
+```powershell
+node scripts/agents/pr-workflow.mjs record-app-state --receipt .agent-work/<date>/<session>/app-state.json
+node scripts/agents/active-task.mjs finish --owner <owner> --task <task> --result "Published PR and passing checks"
+```
+
+The receipt is local workflow accounting, not a signed security credential. The helper verifies publication and CI live through GitHub; repository tools cannot intercept an arbitrary assistant final response. AGENTS and the build workflow route completion through this gate. Register workers explicitly with `active-task.mjs start --role worker`; they return `handed-off` results with `handoff`, without completing the coordinator's assignment or gaining remote authority. Coordinator roles cannot use that shortcut. Archive/retirement accepts reviewed worker handoffs separately from published contributor completion. Session finish refuses active/blocked assignments in the same checkout; other checkouts are unaffected.
+
 ## Repair current-head findings
 
 For feedback disputing a decision's date or approval status, check the original user confirmation and its stated timezone before editing the record. A commit timestamp dates the commit, not the decision; UTC and the user's local calendar date may differ. Preserve confirmed decisions, record the timezone and evidence, and mark only genuinely missing evidence as unverified.

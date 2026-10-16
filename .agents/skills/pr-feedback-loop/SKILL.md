@@ -41,3 +41,7 @@ Call `ready` only when `status` is `READY_FOR_HUMAN`. It moves the draft to revi
 ```powershell
 node scripts/agents/pr-workflow.mjs ready [--root <checkout>]
 ```
+
+## Complete contributor work
+
+Before declaring contributor work complete, publish the current clean revision and link its PR in the app. Save the app's `list_thread_pull_requests` result as local JSON, then run `pr-workflow.mjs record-app-state --receipt <file>` and `active-task.mjs finish`. Finish verifies the live PR head, local publication gates, app-link receipt, all four CI jobs and resolved review threads; it retains that evidence with the assignment. A status report or local implementation pass does not complete the assignment. Pending checks keep it active while the app watcher monitors; failures retain active/blocked work. Workers register with `--role worker` and use `active-task.mjs handoff` to return local results without remote authority. Session finish refuses active/blocked assignments in its checkout. Human merge authorization is unchanged.

@@ -340,3 +340,26 @@ test('dependency changes require a fresh install before publishing; documentatio
   await run();
   assert.equal(pushes(), before + 2, 'unchanged dependencies permit documentation publication');
 });
+
+test('completion requires a clean published current head, linked PR and passing CI', async (t) => {
+  const f = await checkout(t);
+  await assert.rejects(f.run('complete'), /Missing PR accounting/);
+  await f.run('publish', '--body-file', f.body);
+  await assert.rejects(f.run('complete'), /linked/);
+  const receipt = join(f.root, '.agent-work/app-state.json');
+  await writeFile(receipt, JSON.stringify({ pullRequests: [] }));
+  await assert.rejects(f.run('record-app-state', '--receipt', receipt), /linked PR/);
+  await writeFile(receipt, JSON.stringify({ pullRequests: [{ url: f.e.pr.url, repository: 'example/project', number: 1 }] }));
+  await f.run('record-app-state', '--receipt', receipt);
+  assert.equal((await f.run('complete')).completion.head, f.e.head);
+  f.e.checks[2].status = 'in_progress';
+  await assert.rejects(f.run('complete'), /WAITING_CI/);
+  f.e.checks[2].status = 'completed'; f.e.checks[2].conclusion = 'failure';
+  await assert.rejects(f.run('complete'), /NEEDS_FIX/);
+  f.e.checks[2].conclusion = 'success';
+  await writeFile(join(f.root, 'dirty.md'), 'unpublished');
+  await assert.rejects(f.run('complete'), /clean/);
+  await rm(join(f.root, 'dirty.md'));
+  await f.advance();
+  await assert.rejects(f.run('complete'), /published|BLOCKED/);
+});
