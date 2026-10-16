@@ -1650,7 +1650,7 @@ function createValidProviderRequest(role: 'coder' | 'reviewer' = 'coder'): Provi
     maxOutputTokens: 2000,
     maxBillableTokens: 11000, // conservative ceiling >= 8000 + 2000
     maxCostUsd: 0.15,
-    reservationRef: 'res-bundle-001',
+    reservationRef: 'bundle-001',
     dispatchState: 'reserved',
   };
 }
@@ -1723,7 +1723,7 @@ function createMatchingLedgers(role: 'coder' | 'reviewer' = 'coder'): BudgetLedg
       kind: 'tokens',
       limit: 100000,
       consumed: 5000,
-      reservations: [{ reservationId: 'res-1', keyedId: 'req-prov-001', amount: 11000 }],
+      reservations: [{ reservationId: 'bundle-001:ledger-task-tokens', keyedId: 'req-prov-001', amount: 11000 }],
       unit: 'count',
       configurationId: 'config-uc03-v1',
       version: 1,
@@ -1733,7 +1733,7 @@ function createMatchingLedgers(role: 'coder' | 'reviewer' = 'coder'): BudgetLedg
       kind: 'cost',
       limit: 5.0,
       consumed: 0.10,
-      reservations: [{ reservationId: 'res-2', keyedId: 'req-prov-001', amount: 0.15 }],
+      reservations: [{ reservationId: 'bundle-001:ledger-task-cost', keyedId: 'req-prov-001', amount: 0.15 }],
       unit: 'usd',
       configurationId: 'config-uc03-v1',
       version: 1,
@@ -1743,7 +1743,7 @@ function createMatchingLedgers(role: 'coder' | 'reviewer' = 'coder'): BudgetLedg
       kind: 'tokens',
       limit: 50000,
       consumed: 2000,
-      reservations: [{ reservationId: 'res-3', keyedId: 'req-prov-001', amount: 11000 }],
+      reservations: [{ reservationId: 'bundle-001:ledger-run-tokens', keyedId: 'req-prov-001', amount: 11000 }],
       unit: 'count',
       configurationId: 'config-uc03-v1',
       version: 1,
@@ -1753,7 +1753,7 @@ function createMatchingLedgers(role: 'coder' | 'reviewer' = 'coder'): BudgetLedg
       kind: 'cost',
       limit: 2.0,
       consumed: 0.05,
-      reservations: [{ reservationId: 'res-4', keyedId: 'req-prov-001', amount: 0.15 }],
+      reservations: [{ reservationId: 'bundle-001:ledger-run-cost', keyedId: 'req-prov-001', amount: 0.15 }],
       unit: 'usd',
       configurationId: 'config-uc03-v1',
       version: 1,
@@ -1766,7 +1766,7 @@ function createMatchingLedgers(role: 'coder' | 'reviewer' = 'coder'): BudgetLedg
       kind: 'iteration',
       limit: 5,
       consumed: 1,
-      reservations: [{ reservationId: 'res-5', keyedId: 'req-prov-001', amount: 1 }],
+      reservations: [{ reservationId: 'bundle-001:ledger-task-iteration', keyedId: 'req-prov-001', amount: 1 }],
       unit: 'count',
       configurationId: 'config-uc03-v1',
       version: 1,
@@ -2130,6 +2130,7 @@ test('validateDispatchAdmission: accepts valid coder request with full task/run 
   const ledgers = createMatchingLedgers('coder');
 
   const context: DispatchAdmissionContext = {
+    ...trustedProviderContext(req.role),
     reservationBundle: bundle,
     ledgers,
   };
@@ -2145,6 +2146,7 @@ test('validateDispatchAdmission: accepts valid reviewer request with task/run to
   const ledgers = createMatchingLedgers('reviewer');
 
   const context: DispatchAdmissionContext = {
+    ...trustedProviderContext(req.role),
     reservationBundle: bundle,
     ledgers,
   };
@@ -2174,6 +2176,7 @@ test('validateDispatchAdmission: rejects telemetry estimate (bare ref or telemet
   const ledgers = createMatchingLedgers('coder');
 
   const contextWithTelemetry: DispatchAdmissionContext = {
+    ...trustedProviderContext(req.role),
     reservationBundle: bundle,
     ledgers,
     isTelemetryEstimate: true,
@@ -2198,9 +2201,9 @@ test('validateDispatchAdmission: rejects partial reservation bundle (missing run
     reservations: bundle.reservations.filter((r) => !(r.scope === 'run' && r.kind === 'cost')),
   };
 
-  const res = validateDispatchAdmission(req, { reservationBundle: partialBundle, ledgers });
+  const res = validateDispatchAdmission(req, { ...trustedProviderContext(req.role), reservationBundle: partialBundle, ledgers });
   assert.equal(res.ok, false);
-  assert.equal(isAdmittedForDispatch(req, { reservationBundle: partialBundle, ledgers }), false);
+  assert.equal(isAdmittedForDispatch(req, { ...trustedProviderContext(req.role), reservationBundle: partialBundle, ledgers }), false);
   if (!res.ok) {
     assert.ok(res.errors.some((e) => e.code === 'PARTIAL_RESERVATION'));
   }
@@ -2211,6 +2214,7 @@ test('validateDispatchAdmission: rejects partial reservation bundle (missing run
   const reviewerLedgers = createMatchingLedgers('reviewer');
 
   const resReviewer = validateDispatchAdmission(reviewerReq, {
+    ...trustedProviderContext('reviewer'),
     reservationBundle: reviewerBundleNoIteration,
     ledgers: reviewerLedgers,
   });
@@ -2237,9 +2241,9 @@ test('validateDispatchAdmission: rejects exhausted budget (ledger limit exceeded
     return l;
   });
 
-  const res = validateDispatchAdmission(req, { reservationBundle: bundle, ledgers: exhaustedLedgers });
+  const res = validateDispatchAdmission(req, { ...trustedProviderContext(req.role), reservationBundle: bundle, ledgers: exhaustedLedgers });
   assert.equal(res.ok, false);
-  assert.equal(isAdmittedForDispatch(req, { reservationBundle: bundle, ledgers: exhaustedLedgers }), false);
+  assert.equal(isAdmittedForDispatch(req, { ...trustedProviderContext(req.role), reservationBundle: bundle, ledgers: exhaustedLedgers }), false);
   if (!res.ok) {
     assert.ok(res.errors.some((e) => e.code === 'BUDGET_EXHAUSTED'));
   }
@@ -2414,5 +2418,107 @@ test('repair: deterministic completion binds every required check and current re
   assert.equal(validateStateTransition(prior, next, { trusted: { completion } }).ok, true);
   for (const altered of [{ ...completion, checks: [] }, { ...completion, authorizedDiffDigest: 'other' }, { ...completion, protectedTestsDigest: 'changed' }, { ...completion, repositoryRevisionDigest: 'stale' }, { ...completion, review: { ...completion.review, diffDigest: 'stale' } }]) {
     assert.equal(validateStateTransition(prior, next, { trusted: { completion: altered } }).ok, false);
+  }
+});
+
+function trustedProviderContext(role: 'coder' | 'reviewer' = 'coder') {
+  const expectedRequest = createValidProviderRequest(role);
+  const reservationBundle = createValidReservationBundle(role);
+  return {
+    reservationIds: Object.fromEntries(reservationBundle.reservations.map((item, index) => [item.ledgerIdentity, createMatchingLedgers(role)[index]?.reservations[0]?.reservationId ?? 'missing'])),
+    expectedRequest,
+    storedRequests: [expectedRequest],
+    taskAccountingStatus: 'healthy' as const,
+    transactionRef: reservationBundle.transactionRef,
+    ledgerIdentities: reservationBundle.reservations.map(item => item.ledgerIdentity),
+    requireRunReviewIteration: false,
+    reservationBundle,
+    ledgers: createMatchingLedgers(role),
+  };
+}
+
+test('provider repair: exact persisted reservations and receipt identity are required', () => {
+  const req = createValidProviderRequest();
+  const context = trustedProviderContext();
+  assert.equal(validateDispatchAdmission(req, context).ok, true);
+  assert.equal(validateDispatchAdmission(req, { ...context, ledgers: context.ledgers.map(l => ({ ...l, reservations: [] })) }).ok, false);
+  assert.equal(validateDispatchAdmission({ ...req, reservationRef: 'other' }, context).ok, false);
+  assert.equal(validateDispatchAdmission(req, { ...context, transactionRef: 'other' }).ok, false);
+  assert.equal(validateDispatchAdmission(req, { ...context, ledgerIdentities: ['other'] }).ok, false);
+  assert.equal(validateDispatchAdmission(req, { ...context, reservationIds: {} }).ok, false);
+  assert.equal(validateDispatchAdmission(req, { ...context, ledgers: context.ledgers.map(l => ({ ...l, reservations: l.reservations.map(r => ({ ...r, amount: r.amount + 1 })) })) }).ok, false);
+  assert.equal(validateDispatchAdmission(req, { ...context, ledgers: context.ledgers.map(l => ({ ...l, version: 2 })) }).ok, false);
+  assert.equal(validateDispatchAdmission(req, { ...context, ledgers: [...context.ledgers, context.ledgers[0]] }).ok, false);
+});
+
+test('provider repair: trusted complete request identity, persisted state and task health prevent replay', () => {
+  const req = createValidProviderRequest();
+  const context = trustedProviderContext();
+  for (const key of ['purpose', 'providerId', 'modelId', 'configId', 'pricingPolicyId', 'contextDigest', 'providerRequestId', 'taskId', 'runId']) {
+    assert.equal(validateDispatchAdmission({ ...req, [key]: 'changed' }, context).ok, false, key);
+  }
+  assert.equal(validateDispatchAdmission({ ...req, role: 'reviewer' }, context).ok, false);
+  assert.equal(validateDispatchAdmission(req, { ...context, expectedRequest: {} }).ok, false);
+  assert.equal(validateDispatchAdmission(req, { ...context, storedRequests: [] }).ok, false);
+  for (const dispatchState of ['dispatched', 'settled', 'uncertain']) {
+    assert.equal(validateDispatchAdmission(req, { ...context, storedRequests: [{ ...req, dispatchState }] }).ok, false);
+  }
+  assert.equal(validateDispatchAdmission(req, { ...context, storedRequests: [req, req] }).ok, false);
+  assert.equal(validateDispatchAdmission(req, { ...context, taskAccountingStatus: 'unknown' }).ok, false);
+  assert.equal(validateDispatchAdmission(req, { ...context, storedRequests: [req, { ...req, providerRequestId: 'other', dispatchState: 'uncertain', uncertainReason: 'missing usage' }] }).ok, false);
+});
+
+test('provider repair: reviewer requires task iteration and configured run iteration', () => {
+  const req = createValidProviderRequest('reviewer');
+  const context = trustedProviderContext('reviewer');
+  assert.equal(validateDispatchAdmission(req, context).ok, true);
+  const runOnly = { ...context, reservationBundle: { ...context.reservationBundle, reservations: context.reservationBundle.reservations.map(item => item.kind === 'iteration' ? { ...item, scope: 'run' } : item) } };
+  assert.equal(validateDispatchAdmission(req, runOnly).ok, false);
+  assert.equal(validateDispatchAdmission(req, { ...context, requireRunReviewIteration: true }).ok, false);
+  const taskIteration = context.reservationBundle.reservations[4];
+  const taskLedger = context.ledgers[4];
+  assert.ok(taskIteration);
+  assert.ok(taskLedger);
+  const item = { ...taskIteration, scope: 'run' as const, ledgerIdentity: 'ledger-run-iteration' };
+  const ledger = { ...taskLedger, scope: 'run' as const, reservations: [{ reservationId: 'run-iteration', keyedId: req.providerRequestId, amount: 1 }] };
+  assert.equal(validateDispatchAdmission(req, {
+    ...context,
+    requireRunReviewIteration: true,
+    reservationBundle: { ...context.reservationBundle, reservations: [...context.reservationBundle.reservations, item] },
+    ledgers: [...context.ledgers, ledger],
+    ledgerIdentities: [...context.ledgerIdentities, item.ledgerIdentity],
+    reservationIds: { ...context.reservationIds, [item.ledgerIdentity]: 'run-iteration' },
+  }).ok, true);
+});
+
+test('provider repair: counts and versions are safe integers and sums stay exact', () => {
+  const req = createValidProviderRequest();
+  for (const key of ['maxInputTokens', 'maxOutputTokens', 'maxBillableTokens', 'timeoutMs']) {
+    assert.equal(validateProviderRequest({ ...req, [key]: 2 ** 53 }).ok, false, key);
+  }
+  assert.equal(validateProviderUsage({ inputTokens: Number.MAX_SAFE_INTEGER, outputTokens: 1, costUsd: 0 }).ok, false);
+  const context = trustedProviderContext();
+  for (const amount of [2.5, 2 ** 53]) {
+    assert.equal(validateReservationBundle({ ...context.reservationBundle, reservations: context.reservationBundle.reservations.map(item => item.kind === 'tokens' ? { ...item, amount } : item) }).ok, false);
+  }
+  assert.equal(validateReservationBundle({ ...context.reservationBundle, reservations: context.reservationBundle.reservations.map(item => ({ ...item, version: 2 ** 53 })) }).ok, false);
+  assert.equal(validateBudgetLedger({ ...createMatchingLedgers()[0], consumed: Number.MAX_SAFE_INTEGER, limit: Number.MAX_SAFE_INTEGER }).ok, false);
+  assert.equal(validateBudgetLedger({ ...createMatchingLedgers()[0], reservations: [{ reservationId: 'fraction', keyedId: 'fraction', amount: 2.5 }] }).ok, false);
+  const reviewer = createValidReservationBundle('reviewer');
+  assert.equal(validateReservationBundle({ ...reviewer, reservations: reviewer.reservations.map(item => item.kind === 'iteration' ? { ...item, amount: 1.5 } : item) }).ok, false);
+});
+
+
+test('state repair: feedback cannot erase strategy identity to evade replan charges', () => {
+  for (const replanCount of [0, 3]) {
+    const prior: TaskState = { ...createValidTaskState('AwaitFeedback'), plan: createValidFixPlan(), replanCount, budgetLedgers: [{ ...createValidBudgetLedger(), consumed: replanCount, reservations: [] }] };
+    const erased: TaskState = { ...prior, stateVersion: 2, node: 'Investigate', plan: undefined };
+    assert.equal(validateStateTransition(prior, erased).ok, false);
+    const retained: TaskState = { ...prior, stateVersion: 2, node: 'Investigate' };
+    assert.equal(validateStateTransition(prior, retained).ok, true);
+    const minor: TaskState = { ...retained, stateVersion: 3, node: 'AwaitPlan', plan: { ...createValidFixPlan() } };
+    assert.equal(validateStateTransition(retained, minor).ok, true);
+    const replacement: TaskState = { ...retained, stateVersion: 3, node: 'AwaitPlan', plan: { ...createValidFixPlan(), strategy: 'changed', strategyDigest: 'changed' } };
+    assert.equal(validateStateTransition(retained, replacement).ok, false);
   }
 });

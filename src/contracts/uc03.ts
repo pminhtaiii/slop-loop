@@ -301,9 +301,18 @@ export interface ProviderRequestValidationContext {
   readonly expectedProviderRequestId?: string | undefined;
 }
 
+/** Host-only StatePort snapshot. Never populate from a model or client projection. */
 export interface DispatchAdmissionContext {
-  readonly ledgers?: readonly BudgetLedger[] | undefined;
-  readonly reservationBundle?: ReservationBundle | undefined;
+  readonly expectedRequest: ProviderRequest;
+  readonly storedRequests: readonly ProviderRequest[];
+  readonly taskAccountingStatus: 'healthy' | 'unknown';
+  readonly transactionRef: string;
+  /** Authoritative ledger IDs, in the same order as ledgers. */
+  readonly ledgerIdentities: readonly string[];
+  readonly requireRunReviewIteration: boolean;
+  readonly reservationIds: Readonly<Record<string, string>>;
+  readonly ledgers: readonly BudgetLedger[];
+  readonly reservationBundle: ReservationBundle;
   readonly isTelemetryEstimate?: boolean | undefined;
 }
 
@@ -767,7 +776,7 @@ function validatePositiveInteger(
   path: string,
   errors: ValidationError[]
 ): number | undefined {
-  if (typeof val !== 'number' || !Number.isFinite(val) || !Number.isInteger(val) || val <= 0) {
+  if (typeof val !== 'number' || !Number.isFinite(val) || !Number.isSafeInteger(val) || val <= 0) {
     errors.push({
       path,
       message: `${path} must be a finite positive integer`,
@@ -799,7 +808,7 @@ function validateNonNegativeInteger(
   path: string,
   errors: ValidationError[]
 ): number | undefined {
-  if (typeof val !== 'number' || !Number.isFinite(val) || !Number.isInteger(val) || val < 0) {
+  if (typeof val !== 'number' || !Number.isFinite(val) || !Number.isSafeInteger(val) || val < 0) {
     errors.push({
       path,
       message: `${path} must be a finite non-negative integer`,
@@ -1535,7 +1544,7 @@ export function validateApprovalBinding(input: unknown, context?: ApprovalBindin
     const value = context?.[field];
     if (value === undefined ||
       (typeof value === 'string' && !value.trim()) ||
-      (field === 'currentPlanVersion' && (!Number.isInteger(value) ||
+      (field === 'currentPlanVersion' && (!Number.isSafeInteger(value) ||
       Number(value) < 1)) ||
       (field === 'currentEvidenceRefs' && (!Array.isArray(value) ||
       value.length === 0 ||
@@ -2378,6 +2387,20 @@ export function validateBudgetLedger(
     }
   }
 
+  const ledgerTotal = (consumed ?? 0) + reservations.reduce((sum, reservation) => sum + reservation.amount, 0);
+  if (!Number.isFinite(ledgerTotal)) errors.push({ path, code: 'INVALID_ACCOUNTING_TOTAL', message: 'Ledger totals must remain finite' });
+  if (kind !== 'cost') {
+    const amounts = [limit, consumed, ...reservations.map(reservation => reservation.amount)];
+    const total = (consumed ?? 0) + reservations.reduce((sum, reservation) => sum + reservation.amount, 0);
+    if (amounts.some(amount => !Number.isSafeInteger(amount)) || !Number.isSafeInteger(total)) {
+      errors.push({ path, code: 'UNSAFE_COUNT_SUM', message: 'Count ledger amounts and totals must be safe integers' });
+    }
+  }
+  if (new Set(reservations.map(reservation => reservation.reservationId)).size !== reservations.length ||
+      new Set(reservations.map(reservation => reservation.keyedId)).size !== reservations.length) {
+    errors.push({ path, code: 'DUPLICATE_RESERVATION', message: 'Ledger reservation IDs and keys must be unique' });
+  }
+
   if (
     errors.length > 0 ||
     (scope !== 'task' && scope !== 'run') ||
@@ -2887,6 +2910,9 @@ export function validateStateTransition(
     const removed = ledger.reservations.filter(r => !current.reservations.some(n => n.reservationId === r.reservationId && n.keyedId === r.keyedId && n.amount === r.amount)).reduce((sum, r) => sum + r.amount, 0);
     if (current.consumed < ledger.consumed + removed) fail('budgetLedgers', 'ACCOUNTING_RESET', 'Removed reservations must remain charged as consumption');
   }
+  if (prior.plan && !next.plan && next.planVersion !== prior.planVersion + 1) {
+    fail('plan', 'PLAN_IDENTITY_DROPPED', 'Retain the recorded strategy until a new charged plan version is reserved');
+  }
   const material = (prior.plan && next.plan && (prior.plan.strategyDigest !== next.plan.strategyDigest ||
       prior.plan.strategy !== next.plan.strategy)) ||
       next.planVersion > prior.planVersion ||
@@ -3116,6 +3142,7 @@ export function validateProviderUsage(input: unknown): ValidationResult<Provider
     }
   }
 
+  if (typeof input['inputTokens'] === 'number' && typeof input['outputTokens'] === 'number' && !Number.isSafeInteger(input['inputTokens'] + input['outputTokens'])) errors.push({ path: 'inputTokens', code: 'UNSAFE_COUNT_SUM', message: 'Token totals must remain safe integers' });
   if (
     errors.length > 0 ||
     inputTokens === undefined ||
@@ -3313,7 +3340,7 @@ export function validateReservationBundle(input: unknown): ValidationResult<Rese
       const configurationId = validateNonEmptyString(item['configurationId'], `${itemPath}.configurationId`, errors);
       const version = validateNonNegativeInteger(item['version'], `${itemPath}.version`, errors);
       const requestId = validateNonEmptyString(item['requestId'], `${itemPath}.requestId`, errors);
-      const amount = validateNonNegativeNumber(item['amount'], `${itemPath}.amount`, errors);
+      const amount = (kind === 'cost' ? validateNonNegativeNumber : validateNonNegativeInteger)(item['amount'], `${itemPath}.amount`, errors);
 
       if (
         ledgerIdentity &&
@@ -3571,6 +3598,7 @@ export function validateProviderRequest(
     }
   }
 
+  if (typeof input['maxInputTokens'] === 'number' && typeof input['maxOutputTokens'] === 'number' && !Number.isSafeInteger(input['maxInputTokens'] + input['maxOutputTokens'])) errors.push({ path: 'maxBillableTokens', code: 'UNSAFE_COUNT_SUM', message: 'Token ceilings must remain safe integers' });
   if (
     errors.length > 0 ||
     !providerRequestId ||
@@ -3669,6 +3697,42 @@ export function validateDispatchAdmission(
     return { ok: false, errors };
   }
 
+  // Schema parsing alone does not authorize a network request. The host must supply
+  // a complete trusted identity and the persisted task accounting snapshot.
+  const fail = (code: string, message: string): void => { errors.push({ path: 'context', code, message }); };
+  const expected = validateProviderRequest(context['expectedRequest']);
+  if (!expected.ok || !Array.isArray(context['storedRequests']) ||
+      context['taskAccountingStatus'] !== 'healthy' ||
+      typeof context['requireRunReviewIteration'] !== 'boolean' ||
+      typeof context['transactionRef'] !== 'string' || !context['transactionRef'].trim() ||
+      !Array.isArray(context['ledgerIdentities']) || !isPlainObject(context['reservationIds'])) {
+    fail('UNTRUSTED_DISPATCH_AUTHORIZATION', 'Complete trusted identity, receipt and healthy task accounting are required');
+    return { ok: false, errors };
+  }
+  const identityKeys = PROVIDER_REQUEST_ALLOWED_KEYS;
+  if (identityKeys.some(key => (req as unknown as Record<string, unknown>)[key] !==
+      (expected.value as unknown as Record<string, unknown>)[key])) {
+    fail('PROVIDER_IDENTITY_MISMATCH', 'Request differs from the complete trusted reserved envelope');
+  }
+  const seenRequestIds = new Set<string>();
+  let storedMatches = 0;
+  for (const raw of context['storedRequests']) {
+    const stored = validateProviderRequest(raw);
+    if (!stored.ok) { fail('INVALID_ACCOUNTING_HISTORY', 'Stored request history must be valid'); continue; }
+    const value = stored.value;
+    if (seenRequestIds.has(value.providerRequestId)) fail('DUPLICATE_REQUEST_ID', 'History contains duplicate request identity');
+    seenRequestIds.add(value.providerRequestId);
+    if (value.taskId === req.taskId && (value.dispatchState === 'uncertain' || value.dispatchState === 'dispatched')) {
+      fail('UNRESOLVED_ACCOUNTING', 'Outstanding provider accounting prevents constrained dispatch');
+    }
+    if (value.providerRequestId === req.providerRequestId) {
+      storedMatches++;
+      if (identityKeys.some(key => (value as unknown as Record<string, unknown>)[key] !==
+          (req as unknown as Record<string, unknown>)[key])) fail('REQUEST_REPLAY', 'Persisted request is not the same undispatched reservation');
+    }
+  }
+  if (storedMatches !== 1) fail('MISSING_STORED_REQUEST', 'Exactly one persisted reserved request is required');
+
   // 4. Reservation bundle presence and validation
   const rawBundle = context['reservationBundle'];
   if (!rawBundle) {
@@ -3687,6 +3751,16 @@ export function validateDispatchAdmission(
   }
   const bundle = bundleRes.value;
 
+  if (req.reservationRef !== bundle.bundleId || context['transactionRef'] !== bundle.transactionRef) {
+    fail('RESERVATION_MISMATCH', 'Request and atomic StatePort receipt must bind this exact bundle');
+  }
+  const itemIds = new Set<string>();
+  for (const item of bundle.reservations) {
+    const key = `${item.scope}:${item.kind}`;
+    if (itemIds.has(key)) fail('DUPLICATE_RESERVATION', 'Duplicate budget entries cannot authorize dispatch');
+    itemIds.add(key);
+    if (item.configurationId !== req.configId) fail('LEDGER_CONFIG_MISMATCH', 'Reservation must use the trusted request configuration');
+  }
   // 5. Bundle identity comparison
   if (bundle.taskId !== req.taskId) {
     errors.push({
@@ -3774,7 +3848,7 @@ export function validateDispatchAdmission(
 
   if (req.role === 'reviewer') {
     const iterationRes = bundle.reservations.find(
-      (r) => (r.kind === 'iteration' || r.kind === 'review_iteration')
+      (r) => r.scope === 'task' && (r.kind === 'iteration' || r.kind === 'review_iteration')
     );
     if (!iterationRes || iterationRes.amount < 1) {
       errors.push({
@@ -3785,6 +3859,10 @@ export function validateDispatchAdmission(
     }
   }
 
+  if (req.role === 'reviewer' && context['requireRunReviewIteration'] === true &&
+      !bundle.reservations.some(item => item.scope === 'run' && (item.kind === 'iteration' || item.kind === 'review_iteration') && item.amount >= 1)) {
+    fail('PARTIAL_RESERVATION', 'Trusted profile also requires a run review iteration');
+  }
   // 7. Ledgers validation and capacity check
   const rawLedgers = context['ledgers'];
   if (!Array.isArray(rawLedgers)) {
@@ -3812,10 +3890,17 @@ export function validateDispatchAdmission(
     return { ok: false, errors };
   }
 
+  const ledgerIds = context['ledgerIdentities'] as unknown[];
+  if (ledgerIds.length !== validatedLedgers.length || ledgerIds.some(id => typeof id !== 'string' || !id.trim()) ||
+      new Set(ledgerIds).size !== ledgerIds.length ||
+      new Set(validatedLedgers.map(ledger => `${ledger.scope}:${ledger.kind}`)).size !== validatedLedgers.length) {
+    fail('INVALID_LEDGER_IDENTITIES', 'Every authoritative ledger needs a unique identity and budget slot');
+    return { ok: false, errors };
+  }
   // Match each bundle reservation against a ledger
   for (const item of bundle.reservations) {
     const matchingLedger = validatedLedgers.find(
-      (l) => l.scope === item.scope && l.kind === item.kind
+      (l, index) => ledgerIds[index] === item.ledgerIdentity && l.scope === item.scope && l.kind === item.kind
     );
     if (!matchingLedger) {
       errors.push({
@@ -3835,6 +3920,13 @@ export function validateDispatchAdmission(
       continue;
     }
 
+    const persisted = matchingLedger.reservations.filter(reservation => reservation.keyedId === req.providerRequestId);
+    if (matchingLedger.version !== item.version || persisted.length !== 1 ||
+        persisted[0]?.amount !== item.amount ||
+        typeof context['reservationIds'][item.ledgerIdentity] !== 'string' ||
+        persisted[0]?.reservationId !== context['reservationIds'][item.ledgerIdentity]) {
+      fail('MISSING_PERSISTED_RESERVATION', 'Exact reserved amount, ID, ledger version and bundle identity must exist in StatePort');
+    }
     // Capacity calculation: limit - consumed - sum(other reservations)
     const otherReservationsSum = matchingLedger.reservations
       .filter((r) => r.keyedId !== req.providerRequestId)
