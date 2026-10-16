@@ -34,11 +34,5 @@ jobs:
           install: false
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-      - name: Strict type check
-        run: pnpm run typecheck
-      - name: Lint
-        run: pnpm run lint
-      - name: Build
-        run: pnpm run build
-      - name: Runtime tests
-        run: pnpm run test:runtime
+      - name: Validate runtime from a clean build
+        run: pnpm run validate:runtime

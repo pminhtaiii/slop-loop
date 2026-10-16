@@ -1,11 +1,11 @@
 import { spawnSync } from 'node:child_process';
-import { assertNoTrackedDependencies } from '../ci/check-tracked-files.mjs';
+import { assertNoTrackedArtifacts } from '../ci/check-tracked-files.mjs';
 import { readFile, stat } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { atomicWrite, dataDirectory, readJson, repository, withLock } from './agent-store.mjs';
 
-const checksRequired = ['contributor-checks (ubuntu-latest)', 'contributor-checks (windows-latest)'];
+const checksRequired = ['contributor-checks (ubuntu-latest)', 'contributor-checks (windows-latest)', 'runtime-checks (ubuntu-latest)', 'runtime-checks (windows-latest)'];
 const featureName = /^feat\/\d{3}-[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const maxRepairs = 3;
 const usage = `Usage: node scripts/agents/pr-workflow.mjs <preflight|publish|status|ready|repair|watch> [--root <checkout>]
@@ -124,18 +124,21 @@ export async function runWorkflow(args, dependencies = {}) {
       const body = await readFile(bodyPath, 'utf8');
       if (!body.trim() || Buffer.byteLength(body) > 65_536) throw new Error('PR body must contain 1–65536 bytes.');
       if (git('status', '--porcelain', '--untracked-files=all')) throw new Error('Commit the assigned changes before publishing; checkout must be clean.');
-      assertNoTrackedDependencies(git('ls-files', '-z'));
+      assertNoTrackedArtifacts(git('ls-files', '-z'));
       git('fetch', '--no-tags', 'origin', 'refs/heads/development:refs/remotes/origin/development');
       const size = changedLines(git('diff', '--numstat', '--no-renames', 'origin/development...HEAD'));
       if (!size.reviewable && !size.generated && !size.binaries) throw new Error('No changes against development.');
       const head = git('rev-parse', 'HEAD');
       const contextOutput = call(process.execPath, [resolve(repo.root, 'scripts/ci/check-context.mjs')], 600_000);
+      const dependencyChanges = git('diff', '--name-only', record.publishedHead ?? 'origin/development', 'HEAD', '--', 'package.json', '**/package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', '.npmrc', '.pnpmfile.cjs', 'pnpmfile.cjs');
+      const installOutput = dependencyChanges ? call(process.execPath, [resolve(repo.root, 'scripts/ci/check-dependency-install.mjs')], 600_000) : 'Dependency inputs unchanged since the last publication/base.';
+      const runtimeOutput = call(process.execPath, [resolve(repo.root, 'scripts/ci/check-runtime.mjs')], 600_000);
       const testOutput = call(process.execPath, ['--test'], 600_000);
       if (git('status', '--porcelain', '--untracked-files=all') || git('rev-parse', 'HEAD') !== head) throw new Error('Checkout changed during local gates; inspect before push.');
       let pr = find();
       if (record.pr && (!pr || pr.number !== record.pr)) throw new Error('Recorded PR is closed or replaced; start a new feature branch instead of resetting its budget.');
       if (pr && !record.pr && !record.publicationStarted) throw new Error('Existing PR has no local accounting; recover its workflow record before publishing.');
-      record.localVerification = { head, context: contextOutput.slice(-2000), tests: testOutput.split('\n').slice(-10).join('\n') };
+      record.localVerification = { head, context: contextOutput.slice(-2000), runtime: runtimeOutput.slice(-2000), dependencies: installOutput.slice(-2000), tests: testOutput.split('\n').slice(-10).join('\n') };
       record.publicationStarted = true;
       await save();
       git('push', 'origin', `HEAD:refs/heads/${branch}`);

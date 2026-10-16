@@ -24,7 +24,7 @@ Use the [contributor PR workflow](../../../docs/agents/pr-workflow.md) for autho
    node scripts/agents/pr-workflow.mjs watch [--root <checkout>]
    ```
 
-   Read JSON `status`; exit 0 only means the observation succeeded. Readiness requires both matrix CI jobs to pass for that SHA and zero unresolved review threads. CodeRabbit approval is advisory and optional, including after fixes. Missing evidence stays waiting or blocked. `inspect-ci.mjs` is a thin `status` alias with no unrelated fallback.
+   Read JSON `status`; exit 0 only means the observation succeeded. Readiness requires all four contributor/runtime matrix CI jobs to pass for that SHA and zero unresolved review threads. CodeRabbit approval is advisory and optional, including after fixes. Missing evidence stays waiting or blocked. `inspect-ci.mjs` is a thin `status` alias with no unrelated fallback.
 
 ## Repair
 

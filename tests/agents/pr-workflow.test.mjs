@@ -12,7 +12,7 @@ function evidence() {
     pr: { state: 'OPEN', headRefOid: 'abc', headRefName: 'feat/001-example', title: 'feat/001-example: add the example workflow', baseRefName: 'development', reviewDecision: 'APPROVED',
       reviews: { pageInfo: { hasPreviousPage: false }, nodes: [{ author: { login: 'coderabbitai', __typename: 'Bot' }, state: 'APPROVED', commit: { oid: 'abc' } }] },
       reviewThreads: { pageInfo: { hasNextPage: false }, nodes: [] } },
-    checks: ['contributor-checks (ubuntu-latest)', 'contributor-checks (windows-latest)'].map((name, id) => ({ id, name, head_sha: 'abc', status: 'completed', conclusion: 'success', app: { slug: 'github-actions' } })),
+    checks: ['contributor-checks (ubuntu-latest)', 'contributor-checks (windows-latest)', 'runtime-checks (ubuntu-latest)', 'runtime-checks (windows-latest)'].map((name, id) => ({ id, name, head_sha: 'abc', status: 'completed', conclusion: 'success', app: { slug: 'github-actions' } })),
   };
 }
 
@@ -289,4 +289,54 @@ test('watch caps every observation and sleep to the remaining ten-minute deadlin
   });
   assert.equal(result.status, 'TIMED_OUT');
   assert.ok(clock <= 600_000, `watch spent ${clock}ms`);
+});
+
+test('runtime CI must pass on the current head before readiness', () => {
+  for (const name of ['runtime-checks (ubuntu-latest)', 'runtime-checks (windows-latest)']) {
+    for (const state of ['missing', 'failure', 'pending', 'stale']) {
+      const e = evidence();
+      const check = e.checks.find((item) => item.name === name);
+      if (state === 'missing') e.checks = e.checks.filter((item) => item !== check);
+      if (state === 'failure') check.conclusion = 'failure';
+      if (state === 'pending') check.status = 'in_progress';
+      if (state === 'stale') check.head_sha = 'old';
+      assert.equal(assess(e).status, state === 'failure' ? 'NEEDS_FIX' : 'WAITING_CI', `${name}: ${state}`);
+    }
+  }
+});
+
+test('runtime validation failure prevents publication', async (t) => {
+  const f = await checkout(t);
+  await assert.rejects(runWorkflow(['publish', '--body-file', f.body, '--summary', 'gate runtime', '--root', f.root], {
+    execute(binary, args, cwd, timeout) {
+      if (binary === process.execPath && args[0].endsWith('check-runtime.mjs')) throw new Error('Runtime typecheck failed');
+      return f.execute(binary, args, cwd, timeout);
+    },
+  }), /Runtime typecheck failed/);
+  assert.equal(f.calls.some((call) => call[1] === 'push' || call[0] === 'gh' && call[2] === 'create'), false);
+});
+
+test('dependency changes require a fresh install before publishing; documentation changes do not', async (t) => {
+  const f = await checkout(t);
+  await f.run('publish', '--body-file', f.body);
+  const git = (...args) => {
+    const result = spawnSync('git', args, { cwd: f.root, encoding: 'utf8', windowsHide: true });
+    assert.equal(result.status, 0, result.stderr);
+  };
+  await writeFile(join(f.root, 'package.json'), '{"private":true}\n');
+  git('add', 'package.json'); git('commit', '--quiet', '-m', 'change dependency inputs');
+  const run = () => runWorkflow(['publish', '--body-file', f.body, '--summary', 'gate dependencies', '--root', f.root], {
+    execute(binary, args, cwd, timeout) {
+      if (binary === process.execPath && args[0].endsWith('check-dependency-install.mjs')) throw new Error('Release age rejected');
+      return f.execute(binary, args, cwd, timeout);
+    },
+  });
+  const pushes = () => f.calls.filter((call) => call[1] === 'push').length;
+  const before = pushes();
+  await assert.rejects(run(), /Release age rejected/);
+  assert.equal(pushes(), before);
+  await f.run('publish', '--body-file', f.body);
+  await f.advance();
+  await run();
+  assert.equal(pushes(), before + 2, 'unchanged dependencies permit documentation publication');
 });

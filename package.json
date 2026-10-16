@@ -9,6 +9,8 @@
   },
   "scripts": {
     "build": "tsc",
+    "check:dependency-install": "node scripts/ci/check-dependency-install.mjs",
+    "validate:runtime": "node scripts/ci/check-runtime.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test:runtime": "node -e \"const { globSync } = require('node:fs'); const { spawnSync } = require('node:child_process'); const files = globSync('dist/tests/runtime/**/*.test.js'); if (!files.length) { console.error('No runtime tests found'); process.exit(1); } const res = spawnSync(process.execPath, ['--test', ...files], { stdio: 'inherit' }); process.exit(res.status ?? 1);\""
