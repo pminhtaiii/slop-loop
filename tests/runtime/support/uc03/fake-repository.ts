@@ -355,12 +355,7 @@ export class FakeRepositoryPort implements RepositoryPort {
       return scripted;
     }
 
-    // Default clean output
-    return {
-      exitCode: 0,
-      stdout: `[FakeRepositoryPort] executed command: ${fullKey}`,
-      stderr: '',
-    };
+    throw new Error('SCRIPT_EXHAUSTED: No scripted command response');
   }
 
   async runTests(check: CheckDefinition): Promise<CheckResult> {
@@ -379,18 +374,12 @@ export class FakeRepositoryPort implements RepositoryPort {
     if (scripted) {
       const checked = validateCheckResult(scripted);
       if (checked.ok) return checked.value;
-      return scripted;
+      throw new Error(
+        `INVALID_CHECK_RESULT: ${checked.errors.map((e) => `${e.code}: ${e.message}`).join('; ')}`
+      );
     }
 
-    // Default passing check result
-    const defaultResult: CheckResult = {
-      checkId: check.checkId,
-      outcome: 'pass',
-      outputExcerpt: `1 passed in 0.05s (${check.checkId})`,
-      durationMs: 50,
-    };
-
-    return defaultResult;
+    throw new Error('SCRIPT_EXHAUSTED: No scripted check response');
   }
 
   async inspectDiff(

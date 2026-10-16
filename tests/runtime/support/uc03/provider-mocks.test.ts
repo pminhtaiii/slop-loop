@@ -520,11 +520,19 @@ test('FakeRepositoryPort: runCommand acts strictly as spy and returns scripted d
     workingDirectory: 'tests',
   };
 
-  // Default output
+  await assert.rejects(repo.runCommand(command), /SCRIPT_EXHAUSTED/);
+  assert.equal(repo.commands.length, 1);
+
+  // Explicit default output
+  repo.setCommandResult('default', {
+    exitCode: 0,
+    stdout: '[FakeRepositoryPort] scripted command output',
+    stderr: '',
+  });
   const res1 = await repo.runCommand(command);
   assert.equal(res1.exitCode, 0);
   assert.match(res1.stdout, /FakeRepositoryPort/);
-  assert.equal(repo.commands.length, 1);
+  assert.equal(repo.commands.length, 2);
 
   // Scripted diagnostic output
   repo.setCommandResult('pytest tests/test_calculator.py -k test_zero', {
@@ -543,18 +551,27 @@ test('FakeRepositoryPort: runCommand acts strictly as spy and returns scripted d
   const res2 = await repo.runCommand(failureCommand);
   assert.equal(res2.exitCode, 1);
   assert.match(res2.stdout, /ZeroDivisionError/);
-  assert.equal(repo.commands.length, 2);
+  assert.equal(repo.commands.length, 3);
 });
 
 test('FakeRepositoryPort: runTests returns scripted CheckResult with pass/fail/timeout diagnostics', async () => {
   const repo = new FakeRepositoryPort();
   const check = createFixtureCheckDefinition({ checkId: 'check-repro' });
 
-  // Default check result is pass
+  await assert.rejects(repo.runTests(check), /SCRIPT_EXHAUSTED/);
+  assert.equal(repo.tests.length, 1);
+
+  // Scripted passing check result
+  repo.setTestResult('check-repro', {
+    checkId: 'check-repro',
+    outcome: 'pass',
+    outputExcerpt: '1 passed in 0.05s (check-repro)',
+    durationMs: 50,
+  });
   const r1 = await repo.runTests(check);
   assert.equal(r1.checkId, 'check-repro');
   assert.equal(r1.outcome, 'pass');
-  assert.equal(repo.tests.length, 1);
+  assert.equal(repo.tests.length, 2);
 
   // Scripted failure check result
   repo.setTestResult('check-repro', {
@@ -579,6 +596,18 @@ test('FakeRepositoryPort: runTests returns scripted CheckResult with pass/fail/t
   const timeoutCheck = createFixtureCheckDefinition({ checkId: 'check-timeout' });
   const r3 = await repo.runTests(timeoutCheck);
   assert.equal(r3.outcome, 'timeout');
+});
+
+test('FakeRepositoryPort: runTests rejects invalid scripted check results', async () => {
+  const check = createFixtureCheckDefinition();
+  const repo = new FakeRepositoryPort({
+    testResults: {
+      default: { checkId: check.checkId, outcome: 'pass', durationMs: -1 },
+    },
+  });
+
+  await assert.rejects(repo.runTests(check), /INVALID_CHECK_RESULT/);
+  assert.equal(repo.tests.length, 1);
 });
 
 test('FakeRepositoryPort: inspectDiff computes or returns versioned diffs', async () => {

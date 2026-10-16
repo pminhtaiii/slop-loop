@@ -549,7 +549,7 @@ export class MemoryStatePort implements StatePort {
   }
 
   async recover(taskId: string): Promise<TaskState> {
-    const cp = this.tasks.get(taskId) ?? this.checkpoints.get(taskId);
+    const cp = this.checkpoints.get(taskId);
     if (!cp) {
       throw new Error(`No checkpoint found for task ${taskId}`);
     }

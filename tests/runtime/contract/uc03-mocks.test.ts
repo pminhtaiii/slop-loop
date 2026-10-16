@@ -418,6 +418,36 @@ test('MemoryStatePort checkpoint & recover: preserves task context, version, and
   assert.equal(tokenLedger.reservations.some((r) => r.keyedId === 'act-checkpoint-res'), true);
 });
 
+test('MemoryStatePort checkpoint & recover: rejects tasks without a checkpoint', async (): Promise<void> => {
+  const initial = createTestTaskState();
+  const statePort = new MemoryStatePort();
+  await statePort.transition(initial, 0);
+  await assert.rejects(statePort.recover(initial.taskId), /No checkpoint found/);
+});
+
+test('MemoryStatePort checkpoint & recover: restores the checkpoint version with current accounting', async (): Promise<void> => {
+  const initial = createTestTaskState();
+  const statePort = new MemoryStatePort({ initialTaskState: initial });
+  await statePort.checkpoint(initial);
+  await statePort.transition({
+    ...initial,
+    stateVersion: 2,
+    node: 'Investigate',
+    nextAction: 'Uncheckpointed investigation',
+  }, 1);
+  await statePort.reserve('task', 'tokens', 1000, 'after-checkpoint');
+
+  const current = await statePort.loadTask(initial.taskId);
+  assert.equal(current?.stateVersion, 2);
+  const recovered = await statePort.recover(initial.taskId);
+  assert.equal(recovered.stateVersion, 1);
+  assert.equal(recovered.node, 'Validate');
+  assert.equal(recovered.nextAction, initial.nextAction);
+  const tokenLedger = recovered.budgetLedgers?.find((l) => l.scope === 'task' && l.kind === 'tokens');
+  assert.ok(tokenLedger);
+  assert.equal(tokenLedger.reservations.some((r) => r.keyedId === 'after-checkpoint' && r.amount === 1000), true);
+});
+
 /* ------------------------------------------------------------------
  * 8. ScriptedApprovalPort Classification & Action Recording
  * ------------------------------------------------------------------ */
