@@ -24,6 +24,7 @@ import {
   validateBudgetLimits,
   validateNormalizedAction,
   validateApprovalBinding,
+  parseApprovalBinding,
   validateCommandView,
   validateCheckDefinition,
   canonicalJsonStringify,
@@ -435,7 +436,7 @@ test('ApprovalBinding validation: accepts valid action approval binding', (): vo
     policyVersion: '1.0.0',
     status: 'pending',
   };
-  const res = validateApprovalBinding(binding);
+  const res = parseApprovalBinding(binding);
   assert.equal(res.ok, true);
   if (res.ok) {
     assert.equal(res.value.decisionId, 'dec-001');
@@ -461,7 +462,7 @@ test('ApprovalBinding validation: accepts valid fix_plan approval binding with p
     checkSetDigest: 'sha256:checkset-digest-101',
     status: 'approved',
   };
-  const res = validateApprovalBinding(binding);
+  const res = parseApprovalBinding(binding);
   assert.equal(res.ok, true);
   if (res.ok) {
     assert.equal(res.value.actionKind, 'fix_plan');
@@ -674,10 +675,11 @@ function createValidTaskState(node: TaskNode = 'Validate'): TaskState {
     repositoryRevisionDigest: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
     goal: 'Fix ZeroDivisionError when dividing by zero in Calculator.divide',
     observedBehavior: 'Calling Calculator.divide(10, 0) raises unhandled ZeroDivisionError',
-    expectedBehavior: 'Calling Calculator.divide(10, 0) raises custom CalculationError',
+    taskContext: createValidBugTask(),
+    expectedBehavior: createValidBugTask().expectedBehavior,
     reproduction: 'python -m pytest tests/test_calculator.py -k test_divide_zero',
-    acceptanceCriteria: ['Calculator.divide(x, 0) raises CalculationError'],
-    constraints: ['Do not modify external public API signatures'],
+    acceptanceCriteria: createValidBugTask().acceptanceCriteria,
+    constraints: createValidBugTask().constraints,
     requiredCheckIds: ['check-pytest-focused'],
     node,
     planVersion: 1,
@@ -1047,7 +1049,7 @@ test('validateStateTransition: accepts valid canonical transitions per data-mode
     nextAction: 'Investigate revised strategy per feedback',
   };
   const resRevision = validateStateTransition(s3Rejected, s4Revision);
-  assert.equal(resRevision.ok, true);
+  assert.equal(resRevision.ok, false, 'requires trusted authorization context');
 
   // AwaitPlan -> Patch (approved plan)
   const s3Patch: TaskState = {
@@ -1058,7 +1060,7 @@ test('validateStateTransition: accepts valid canonical transitions per data-mode
     nextAction: 'Apply controlled code patch',
   };
   const resPatch = validateStateTransition(s2, s3Patch);
-  assert.equal(resPatch.ok, true);
+  assert.equal(resPatch.ok, false, 'requires trusted authorization context');
 
   // Patch -> Verify
   const s4Verify: TaskState = {
@@ -1090,7 +1092,7 @@ test('validateStateTransition: accepts valid canonical transitions per data-mode
     nextAction: 'Delivery complete',
   };
   const resDeliver = validateStateTransition(s5Review, s6Deliver);
-  assert.equal(resDeliver.ok, true);
+  assert.equal(resDeliver.ok, false, 'requires trusted authorization context');
 
   // Verify -> Repair (failed checks)
   const s5Repair: TaskState = {
@@ -1110,7 +1112,7 @@ test('validateStateTransition: accepts valid canonical transitions per data-mode
     nextAction: 'Apply revised patch under same strategy',
   };
   const resRepairPatch = validateStateTransition(s5Repair, s6Patch);
-  assert.equal(resRepairPatch.ok, true);
+  assert.equal(resRepairPatch.ok, false, 'requires trusted authorization context');
 
   // Repair -> Investigate (material replan within limit)
   const s6Replan: TaskState = {
@@ -1121,7 +1123,7 @@ test('validateStateTransition: accepts valid canonical transitions per data-mode
     nextAction: 'Prepare revised fix plan',
   };
   const resReplan = validateStateTransition(s5Repair, s6Replan);
-  assert.equal(resReplan.ok, true);
+  assert.equal(resReplan.ok, false, 'requires trusted authorization context');
 
   // Repair -> Incomplete (exhaustion)
   const s6Incomplete: TaskState = {
@@ -1238,7 +1240,7 @@ test('validateStateTransition: enforces CAS stateVersion and preserves identity'
 });
 
 test('validateStateTransition: enforces maximum 3 material replans and prohibits replenishment', (): void => {
-  const sRepair = { ...createValidTaskState('Repair'), replanCount: 3 };
+  const sRepair = { ...createValidTaskState('Repair'), replanCount: 3, budgetLedgers: [{ ...createValidBudgetLedger(), consumed: 3 }] };
 
   // 4th material replan attempt must fail
   const fourthReplan: TaskState = {
@@ -2337,4 +2339,80 @@ test('ModelPort and observed usage accounting: observed malformed-response usage
   };
   assert.equal(invalidOutcome.outcome, 'invalid');
   assert.equal(invalidOutcome.observedUsage?.costUsd, 0.05);
+});
+
+
+test('repair: state arrays and original context fail closed', () => {
+  const state = createValidTaskState();
+  for (const key of ['acceptanceCriteria', 'constraints', 'requiredCheckIds', 'changedPaths', 'evidenceRefs', 'approvalDecisionRefs', 'reviewRefs', 'risks']) {
+    assert.equal(validateTaskState({ ...state, [key]: [null] }).ok, false, key);
+  }
+  assert.equal(validateTaskState({ ...state, changedPaths: ['../escape'] }).ok, false);
+  assert.equal(validateTaskState({ ...state, taskContext: undefined }).ok, false);
+});
+
+test('repair: sensitive transitions require trusted authorization', () => {
+  const prior = { ...createValidTaskState('AwaitPlan'), plan: createValidFixPlan() };
+  assert.equal(validateStateTransition(prior, { ...prior, stateVersion: 2, node: 'Patch' }).ok, false);
+  const review = createValidTaskState('Review');
+  assert.equal(validateStateTransition(review, { ...review, stateVersion: 2, node: 'Deliver', outcome: 'COMPLETED' }).ok, false);
+});
+
+function freshContext(binding: ApprovalBinding): ApprovalBindingContext {
+  return { currentTaskId: binding.taskId, currentWorkspaceId: binding.workspaceId, currentRepositoryRevisionDigest: binding.repositoryRevisionDigest, currentPolicyId: binding.policyId, currentPolicyVersion: binding.policyVersion, currentNormalizedActionDigest: binding.normalizedActionDigest, currentPlanVersion: binding.planVersion, currentStrategyDigest: binding.strategyDigest, currentBaselineRef: binding.baselineRef, currentEvidenceRefs: binding.evidenceRefs, currentCriteriaDigest: binding.criteriaDigest, currentCheckSetDigest: binding.checkSetDigest };
+}
+
+function approvedPlan(state: TaskState): ApprovalBinding {
+  const plan = state.plan ?? createValidFixPlan();
+  return { decisionId: 'dec-plan-001', actionKind: 'fix_plan', status: 'approved', normalizedActionDigest: 'sha256:action', taskId: state.taskId, workspaceId: state.workspaceId, repositoryRevisionDigest: state.repositoryRevisionDigest, policyId: 'policy', policyVersion: '1', planVersion: plan.planVersion, strategyDigest: plan.strategyDigest, baselineRef: plan.baselineRef, evidenceRefs: plan.evidenceRefs, criteriaDigest: computeCanonicalSha256(state.acceptanceCriteria), checkSetDigest: plan.checkSetDigest };
+}
+
+test('repair: approved admission requires all current freshness fields', () => {
+  const binding = approvedPlan(createValidTaskState());
+  assert.equal(parseApprovalBinding(binding).ok, true);
+  assert.equal(validateApprovalBinding(binding).ok, false);
+  assert.equal(validateApprovalBinding(binding, {}).ok, false);
+  assert.equal(validateApprovalBinding(binding, freshContext(binding)).ok, true);
+  for (const field of Object.keys(freshContext(binding))) {
+    assert.equal(validateApprovalBinding(binding, { ...freshContext(binding), [field]: undefined }).ok, false, field);
+  }
+});
+
+test('repair: fresh approved exact plan admits editing and rejects rejected or stale bindings', () => {
+  const prior = { ...createValidTaskState('AwaitPlan'), plan: createValidFixPlan() };
+  const next: TaskState = { ...prior, stateVersion: 2, node: 'Patch', activeDecisionId: 'dec-plan-001' };
+  const binding = approvedPlan(next);
+  const options = { trusted: { approval: { binding, freshness: freshContext(binding) } } };
+  assert.equal(validateStateTransition(prior, next, options).ok, true);
+  for (const status of ['pending', 'rejected', 'stale']) assert.equal(validateStateTransition(prior, next, { trusted: { approval: { binding: { ...binding, status }, freshness: freshContext(binding) } } }).ok, false);
+  assert.equal(validateStateTransition(prior, next, { trusted: { approval: { binding, freshness: { ...freshContext(binding), currentPolicyVersion: 'changed' } } } }).ok, false);
+});
+
+test('repair: original task/config and charged accounting survive transitions', () => {
+  const prior = { ...createValidTaskState(), budgetLedgers: [createValidBudgetLedger()] };
+  const next: TaskState = { ...prior, stateVersion: 2, node: 'Investigate' };
+  assert.equal(validateStateTransition(prior, next).ok, true);
+  assert.equal(validateStateTransition(prior, { ...next, taskContext: { ...createValidBugTask(), configVersion: 'changed' } }).ok, false);
+  assert.equal(validateStateTransition(prior, { ...next, budgetLedgers: undefined }).ok, false);
+  assert.equal(validateTaskState({ ...prior, taskContext: { ...createValidBugTask(), taskId: 'other' } }).ok, false);
+});
+
+test('repair: material strategy requires a new version and charged task reservation', () => {
+  const prior = { ...createValidTaskState('Repair'), plan: createValidFixPlan(), budgetLedgers: [createValidBudgetLedger()] };
+  const next: TaskState = { ...prior, stateVersion: 2, node: 'Investigate', planVersion: 2, plan: undefined, replanCount: 1, budgetLedgers: [{ ...createValidBudgetLedger(), version: 2, reservations: [{ reservationId: 'slot', keyedId: 'proposal', amount: 1 }] }] };
+  const options = { trusted: { replanReservation: { proposalId: 'proposal', taskId: next.taskId, configurationId: createValidBugTask().configId, priorCount: 0, nextCount: 1, reservationId: 'slot' } } };
+  assert.equal(validateStateTransition(prior, next, options).ok, true);
+  assert.equal(validateStateTransition(prior, { ...next, replanCount: 0 }, options).ok, false);
+  assert.equal(validateStateTransition(prior, { ...next, budgetLedgers: [] }, options).ok, false);
+  assert.equal(validateStateTransition(prior, { ...next, plan: { ...createValidFixPlan(), strategy: 'different' } }, options).ok, false);
+});
+
+test('repair: deterministic completion binds every required check and current review', () => {
+  const prior: TaskState = { ...createValidTaskState('Review'), plan: createValidFixPlan() };
+  const next: TaskState = { ...prior, stateVersion: 2, node: 'Deliver', outcome: 'COMPLETED', latestReviewRef: 'review', reviewRefs: ['review'] };
+  const completion = { taskId: next.taskId, runId: next.runId, repositoryRevisionDigest: next.repositoryRevisionDigest, diffDigest: 'diff', authorizedDiffDigest: 'diff', baselineRef: createValidFixPlan().baselineRef, checkSetDigest: createValidFixPlan().checkSetDigest, criteriaDigest: computeCanonicalSha256(next.acceptanceCriteria), protectedTestsDigest: 'protected', originalProtectedTestsDigest: 'protected', checks: [{ checkId: createValidCheck().checkId, outcome: 'pass' as const, repositoryRevisionDigest: next.repositoryRevisionDigest, diffDigest: 'diff' }], review: { reviewId: 'review', status: 'accepted' as const, repositoryRevisionDigest: next.repositoryRevisionDigest, diffDigest: 'diff', checkSetDigest: createValidFixPlan().checkSetDigest, roleConfigId: 'read-only-reviewer' } };
+  assert.equal(validateStateTransition(prior, next, { trusted: { completion } }).ok, true);
+  for (const altered of [{ ...completion, checks: [] }, { ...completion, authorizedDiffDigest: 'other' }, { ...completion, protectedTestsDigest: 'changed' }, { ...completion, repositoryRevisionDigest: 'stale' }, { ...completion, review: { ...completion.review, diffDigest: 'stale' } }]) {
+    assert.equal(validateStateTransition(prior, next, { trusted: { completion: altered } }).ok, false);
+  }
 });

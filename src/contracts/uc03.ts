@@ -416,8 +416,34 @@ export interface TaskState {
 
 export type TaskCheckpoint = TaskState;
 
+/** Host-owned evidence boundary, never populated from model proposals. */
+export interface TrustedTransitionContext {
+  readonly approval?: { readonly binding: unknown; readonly freshness: ApprovalBindingContext };
+  readonly completion?: {
+    readonly taskId: string; readonly runId: string; readonly repositoryRevisionDigest: string;
+    readonly diffDigest: string; readonly checkSetDigest: string; readonly baselineRef: string;
+    readonly criteriaDigest: string; readonly authorizedDiffDigest: string;
+    readonly protectedTestsDigest: string; readonly originalProtectedTestsDigest: string;
+    readonly checks: readonly { readonly checkId: string; readonly outcome: 'pass'; readonly repositoryRevisionDigest: string; readonly diffDigest: string }[];
+    readonly review: { readonly reviewId: string;
+    readonly status: 'accepted';
+    readonly repositoryRevisionDigest: string;
+    readonly diffDigest: string;
+    readonly checkSetDigest: string;
+    readonly roleConfigId: string };
+  };
+  readonly replanReservation?: { readonly proposalId: string;
+    readonly taskId: string;
+    readonly configurationId: string;
+    readonly priorCount: number;
+    readonly nextCount: number;
+    readonly reservationId: string };
+}
+
 export interface StateTransitionOptions {
   readonly allowSameNode?: boolean | undefined;
+  /** Only the host may supply these records, after validating external evidence. */
+  readonly trusted?: TrustedTransitionContext | undefined;
 }
 
 export interface CheckResult {
@@ -1496,7 +1522,34 @@ export function validateNormalizedAction(input: unknown): ValidationResult<Norma
   };
 }
 
-export function validateApprovalBinding(
+/** Admission requires host-owned current identities; parsing alone grants no permission. */
+export function validateApprovalBinding(input: unknown, context?: ApprovalBindingContext): ValidationResult<ApprovalBinding> {
+  const parsed = parseApprovalBinding(input);
+  if (!parsed.ok) return parsed;
+  const binding = parsed.value;
+  if (binding.status !== 'approved') return parsed;
+  const required: (keyof ApprovalBindingContext)[] = ['currentTaskId', 'currentWorkspaceId', 'currentRepositoryRevisionDigest', 'currentPolicyId', 'currentPolicyVersion', 'currentNormalizedActionDigest'];
+  if (binding.actionKind === 'fix_plan') required.push('currentPlanVersion', 'currentStrategyDigest', 'currentBaselineRef', 'currentEvidenceRefs', 'currentCriteriaDigest', 'currentCheckSetDigest');
+  const errors: ValidationError[] = [];
+  for (const field of required) {
+    const value = context?.[field];
+    if (value === undefined ||
+      (typeof value === 'string' && !value.trim()) ||
+      (field === 'currentPlanVersion' && (!Number.isInteger(value) ||
+      Number(value) < 1)) ||
+      (field === 'currentEvidenceRefs' && (!Array.isArray(value) ||
+      value.length === 0 ||
+      value.some(v => typeof v !== 'string' ||
+      !v.trim())))) {
+      errors.push({ path: `context.${field}`, code: 'MISSING_FRESHNESS_CONTEXT', message: 'Complete trusted freshness context is required' });
+    }
+  }
+  const checked = parseApprovalBinding(input, context);
+  if (!checked.ok) errors.push(...checked.errors);
+  return errors.length ? { ok: false, errors } : checked;
+}
+
+export function parseApprovalBinding(
   input: unknown,
   context?: ApprovalBindingContext
 ): ValidationResult<ApprovalBinding> {
@@ -2400,6 +2453,14 @@ export function validateTaskState(input: unknown): ValidationResult<TaskState> {
   const errors: ValidationError[] = [];
   rejectUnknownKeys(input, TASK_STATE_ALLOWED_KEYS, '', errors);
 
+  for (const key of ['acceptanceCriteria', 'constraints', 'requiredCheckIds', 'changedPaths', 'evidenceRefs', 'approvalDecisionRefs', 'reviewRefs', 'risks']) {
+    const value = input[key];
+    if (Array.isArray(value)) value.forEach((item, index) => {
+      validateNonEmptyString(item, `${key}[${index}]`, errors);
+      if (key === 'changedPaths' && (typeof item !== 'string' ||
+      !isCanonicalRelativePath(item))) errors.push({ path: `${key}[${index}]`, code: 'INVALID_PATH', message: 'Changed path must be canonical and relative' });
+    });
+  }
   const schemaVersion = validateNonEmptyString(input['schemaVersion'], 'schemaVersion', errors);
   if (schemaVersion && schemaVersion !== CONTRACT_VERSION) {
     errors.push({
@@ -2476,6 +2537,11 @@ export function validateTaskState(input: unknown): ValidationResult<TaskState> {
     }
   }
 
+  if (!taskContext) errors.push({ path: 'taskContext', code: 'MISSING_TASK_CONTEXT', message: 'Complete original validated BugTask is required for recovery' });
+  if (taskContext) {
+    const originals: Record<string, unknown> = { taskId: taskContext.taskId, repositoryId: taskContext.repositoryId, goal: taskContext.goal, observedBehavior: taskContext.observedBehavior, expectedBehavior: taskContext.expectedBehavior, reproduction: taskContext.reproduction, acceptanceCriteria: taskContext.acceptanceCriteria, constraints: taskContext.constraints, requiredCheckIds: taskContext.requiredChecks.map(c => c.checkId) };
+    for (const [key, value] of Object.entries(originals)) if (canonicalJsonStringify(input[key]) !== canonicalJsonStringify(value)) errors.push({ path: key, code: 'TASK_CONTEXT_MISMATCH', message: 'State must preserve original task context' });
+  }
   const nodeRes = validateTaskNode(input['node']);
   let node: TaskNode | undefined;
   if (!nodeRes.ok) {
@@ -2596,6 +2662,21 @@ export function validateTaskState(input: unknown): ValidationResult<TaskState> {
         }
       }
     }
+  }
+
+  const ledgerKeys = new Set<string>();
+  for (const ledger of budgetLedgers ?? []) {
+    const key = `${ledger.scope}:${ledger.kind}`;
+    if (ledgerKeys.has(key)) errors.push({ path: 'budgetLedgers', code: 'DUPLICATE_LEDGER', message: 'Each accounting scope and kind must have one ledger' });
+    ledgerKeys.add(key);
+    if (ledger.consumed + ledger.reservations.reduce((sum, r) => sum + r.amount, 0) > ledger.limit) errors.push({ path: 'budgetLedgers', code: 'BUDGET_EXHAUSTED', message: 'Persisted charges cannot exceed the configured limit' });
+  }
+  if (replanCount !== undefined && replanCount > 0) {
+    const ledger = budgetLedgers?.find(l => l.scope === 'task' && l.kind === 'replan');
+    if (!ledger ||
+      ledger.configurationId !== taskContext?.configId ||
+      ledger.limit > 3 ||
+      ledger.consumed + ledger.reservations.reduce((sum, r) => sum + r.amount, 0) < replanCount) errors.push({ path: 'budgetLedgers', code: 'MISSING_REPLAN_ACCOUNTING', message: 'Recovery must retain all task-scoped replan charges' });
   }
 
   let checkpointConfigId: string | undefined;
@@ -2784,6 +2865,100 @@ export function validateStateTransition(
       message: `Schema version mismatch: prior ${prior.schemaVersion} !== next ${next.schemaVersion}`,
       code: 'SCHEMA_VERSION_MISMATCH',
     });
+  }
+
+  const fail = (path: string, code: string, message: string): void => { errors.push({ path, code, message }); };
+  if (canonicalJsonStringify(prior.taskContext) !== canonicalJsonStringify(next.taskContext)) fail('taskContext', 'IMMUTABLE_TASK_CONTEXT', 'Original task and configuration cannot change');
+  if (next.plan && next.plan.planVersion !== next.planVersion) fail('planVersion', 'PLAN_VERSION_MISMATCH', 'Plan version must match state');
+  if (prior.checkpointConfigId !== undefined && next.checkpointConfigId !== prior.checkpointConfigId) fail('checkpointConfigId', 'IMMUTABLE_CHECKPOINT_CONFIG', 'Checkpoint configuration cannot disappear or change');
+  if (prior.checkpointVersion !== undefined && (next.checkpointVersion === undefined ||
+      next.checkpointVersion < prior.checkpointVersion)) fail('checkpointVersion', 'CHECKPOINT_VERSION_RESET', 'Checkpoint version cannot disappear or reset');
+  if (next.planVersion < prior.planVersion) fail('planVersion', 'PLAN_VERSION_DECREASED', 'Plan versions cannot reset');
+  for (const ledger of prior.budgetLedgers ?? []) {
+    const current = next.budgetLedgers?.find(l => l.scope === ledger.scope && l.kind === ledger.kind);
+    if (!current ||
+      current.configurationId !== ledger.configurationId ||
+      current.limit !== ledger.limit ||
+      current.unit !== ledger.unit ||
+      current.consumed < ledger.consumed ||
+      current.version < ledger.version) {
+      fail('budgetLedgers', 'ACCOUNTING_RESET', 'Persisted accounting cannot disappear or reset'); continue;
+    }
+    const removed = ledger.reservations.filter(r => !current.reservations.some(n => n.reservationId === r.reservationId && n.keyedId === r.keyedId && n.amount === r.amount)).reduce((sum, r) => sum + r.amount, 0);
+    if (current.consumed < ledger.consumed + removed) fail('budgetLedgers', 'ACCOUNTING_RESET', 'Removed reservations must remain charged as consumption');
+  }
+  const material = (prior.plan && next.plan && (prior.plan.strategyDigest !== next.plan.strategyDigest ||
+      prior.plan.strategy !== next.plan.strategy)) ||
+      next.planVersion > prior.planVersion ||
+      (prior.node === 'Repair' && next.node === 'Investigate');
+  if (material || next.replanCount > prior.replanCount) {
+    const reservation = options?.trusted?.replanReservation;
+    const ledger = next.budgetLedgers?.find(l => l.scope === 'task' && l.kind === 'replan');
+    if (next.replanCount !== prior.replanCount + 1 ||
+      !reservation ||
+      !reservation.proposalId?.trim() ||
+      prior.budgetLedgers?.some(l => l.reservations.some(r => r.reservationId === reservation.reservationId ||
+      r.keyedId === reservation.proposalId)) ||
+      reservation.taskId !== next.taskId ||
+      reservation.configurationId !== next.taskContext?.configId ||
+      reservation.priorCount !== prior.replanCount ||
+      reservation.nextCount !== next.replanCount ||
+      !ledger ||
+      ledger.limit > 3 ||
+      ledger.configurationId !== reservation.configurationId ||
+      !ledger.reservations.some(r => r.reservationId === reservation.reservationId && r.keyedId === reservation.proposalId && r.amount === 1) ||
+      ledger.consumed + ledger.reservations.reduce((sum, r) => sum + r.amount, 0) < next.replanCount) fail('replanCount', 'MISSING_REPLAN_RESERVATION', 'Material replan needs one monotone task-scoped reserved slot');
+    if (prior.node === 'Repair' && next.node === 'Investigate' && next.planVersion !== prior.planVersion + 1) fail('planVersion', 'MATERIAL_PLAN_VERSION', 'Reserve the new plan version before investigation');
+    if (prior.plan && next.plan && (prior.plan.strategyDigest !== next.plan.strategyDigest ||
+      prior.plan.strategy !== next.plan.strategy) && next.planVersion !== prior.planVersion + 1) fail('planVersion', 'MATERIAL_PLAN_VERSION', 'Material strategy changes require a new plan version');
+  }
+  if (next.node === 'Patch') {
+    const authorization = options?.trusted?.approval;
+    const admitted = validateApprovalBinding(authorization?.binding, authorization?.freshness);
+    const binding = admitted.ok ? admitted.value : undefined;
+    const plan = next.plan;
+    if (!binding ||
+      binding.status !== 'approved' ||
+      binding.actionKind !== 'fix_plan' ||
+      !plan ||
+      material ||
+      binding.taskId !== next.taskId ||
+      binding.workspaceId !== next.workspaceId ||
+      binding.repositoryRevisionDigest !== next.repositoryRevisionDigest ||
+      binding.planVersion !== next.planVersion ||
+      binding.strategyDigest !== plan.strategyDigest ||
+      binding.baselineRef !== plan.baselineRef ||
+      binding.checkSetDigest !== plan.checkSetDigest ||
+      binding.criteriaDigest !== computeCanonicalSha256(next.acceptanceCriteria) ||
+      canonicalJsonStringify(binding.evidenceRefs) !== canonicalJsonStringify(plan.evidenceRefs) ||
+      binding.decisionId !== next.activeDecisionId ||
+      plan.decisionRef !== binding.decisionId) fail('node', 'UNAPPROVED_PATCH', 'Patch requires a fresh trusted approved binding for this exact plan');
+  }
+  if (next.outcome === 'COMPLETED') {
+    const evidence = options?.trusted?.completion;
+    const plan = next.plan;
+    if (!evidence ||
+      !plan ||
+      evidence.taskId !== next.taskId ||
+      evidence.runId !== next.runId ||
+      evidence.repositoryRevisionDigest !== next.repositoryRevisionDigest ||
+      !evidence.diffDigest?.trim() ||
+      evidence.authorizedDiffDigest !== evidence.diffDigest ||
+      evidence.baselineRef !== plan.baselineRef ||
+      !next.evidenceRefs.includes(evidence.baselineRef) ||
+      evidence.criteriaDigest !== computeCanonicalSha256(next.acceptanceCriteria) ||
+      evidence.checkSetDigest !== plan.checkSetDigest ||
+      !evidence.protectedTestsDigest?.trim() ||
+      evidence.protectedTestsDigest !== evidence.originalProtectedTestsDigest ||
+      !Array.isArray(evidence.checks) ||
+      !next.taskContext?.requiredChecks.every(c => evidence.checks.some(r => r.checkId === c.checkId && r.outcome === 'pass' && r.repositoryRevisionDigest === next.repositoryRevisionDigest && r.diffDigest === evidence.diffDigest)) ||
+      evidence.review?.status !== 'accepted' ||
+      !evidence.review.roleConfigId?.trim() ||
+      evidence.review.repositoryRevisionDigest !== next.repositoryRevisionDigest ||
+      evidence.review.diffDigest !== evidence.diffDigest ||
+      evidence.review.checkSetDigest !== evidence.checkSetDigest ||
+      evidence.review.reviewId !== next.latestReviewRef ||
+      !next.reviewRefs?.includes(evidence.review.reviewId)) fail('outcome', 'UNSUPPORTED_COMPLETION', 'Completion requires trusted current baseline, authorized diff, passing checks, test protection and accepted read-only review');
   }
 
   // 3. Terminal node check
