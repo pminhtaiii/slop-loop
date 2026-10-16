@@ -433,6 +433,8 @@ export interface TrustedTransitionContext {
     readonly diffDigest: string; readonly checkSetDigest: string; readonly baselineRef: string;
     readonly criteriaDigest: string; readonly authorizedDiffDigest: string;
     readonly protectedTestsDigest: string; readonly originalProtectedTestsDigest: string;
+    readonly reviewerRoleConfigId?: string;
+    readonly reviewIterationReservationRef?: string;
     readonly checks: readonly (
       | { readonly checkId: string; readonly outcome: 'pass'; readonly repositoryRevisionDigest: string; readonly diffDigest: string }
       | VerificationResult
@@ -2972,7 +2974,29 @@ export function validateStateTransition(
   if (next.outcome === 'COMPLETED') {
     const evidence = options?.trusted?.completion;
     const plan = next.plan;
+    const rawChecksValid = evidence && Array.isArray(evidence.checks) && evidence.checks.every(record => {
+      if (!isPlainObject(record)) return false;
+      if ('checkId' in record) return Object.keys(record).every(key => ['checkId', 'outcome', 'repositoryRevisionDigest', 'diffDigest'].includes(key));
+      const shape = validateVerificationResult(record);
+      if (!shape.ok) return false;
+      const matching = next.taskContext?.requiredChecks.filter(check => shape.value.testedIds.includes(check.checkId));
+      return !!matching?.length && shape.value.testedIds.every(id => matching.some(check => check.checkId === id)) && matching.every(check => validateVerificationAdmission(record, {
+        expectedTaskId: next.taskId, expectedRunId: next.runId,
+        expectedRepoDigest: next.repositoryRevisionDigest, expectedDiffDigest: evidence.diffDigest,
+        expectedCheckId: check.checkId, requiredPhase: check.purpose === 'reproduction' ? 'focused' : check.purpose,
+      }).ok);
+    });
+    const rawReviewValid = evidence && evidence.review !== null && typeof evidence.review === 'object' && ('roleConfigId' in evidence.review
+      ? Object.keys(evidence.review).every(key => ['reviewId', 'status', 'repositoryRevisionDigest', 'diffDigest', 'checkSetDigest', 'roleConfigId'].includes(key))
+      : !!evidence.reviewerRoleConfigId && !!evidence.reviewIterationReservationRef && validateReviewAdmission(evidence.review, {
+          expectedReviewId: next.latestReviewRef, expectedRepoDigest: next.repositoryRevisionDigest,
+          expectedDiffDigest: evidence.diffDigest, expectedCheckSetDigest: evidence.checkSetDigest,
+          expectedRoleConfigId: evidence.reviewerRoleConfigId,
+          expectedIterationReservationRef: evidence.reviewIterationReservationRef,
+        }).ok);
+
     if (!evidence ||
+      !rawChecksValid || !rawReviewValid ||
       !plan ||
       evidence.taskId !== next.taskId ||
       evidence.runId !== next.runId ||
@@ -4116,13 +4140,7 @@ export function validateCheckResult(input: unknown, path = 'checkResult'): Valid
   }
 
   if (input.durationMs !== undefined) {
-    if (typeof input.durationMs !== 'number' || !Number.isInteger(input.durationMs) || input.durationMs < 0) {
-      errors.push({
-        path: `${path}.durationMs`,
-        message: `${path}.durationMs must be a finite non-negative integer`,
-        code: 'INVALID_NON_NEGATIVE_INTEGER',
-      });
-    }
+    validateNonNegativeInteger(input.durationMs, `${path}.durationMs`, errors);
   }
 
   if (errors.length > 0) {
@@ -4147,6 +4165,9 @@ export function validateBaseline(input: unknown, path = 'baseline'): ValidationR
     'testProtectionDigest',
   ];
   rejectUnknownKeys(input, allowedKeys, path, errors);
+  for (const field of ['reproductionFailureSignature', 'testProtectionDigest']) {
+    if (input[field] === undefined) errors.push({ path: `${path}.${field}`, message: `${path}.${field} is required`, code: 'REQUIRED_FIELD' });
+  }
 
   if (typeof input.evidenceId !== 'string' || input.evidenceId.trim().length === 0) {
     errors.push({
@@ -4172,7 +4193,7 @@ export function validateBaseline(input: unknown, path = 'baseline'): ValidationR
     });
   }
 
-  if (input.reproductionFailureSignature !== undefined && typeof input.reproductionFailureSignature !== 'string') {
+  if (typeof input.reproductionFailureSignature !== 'string' || input.reproductionFailureSignature.trim().length === 0) {
     errors.push({
       path: `${path}.reproductionFailureSignature`,
       message: `${path}.reproductionFailureSignature must be a string`,
@@ -4180,7 +4201,7 @@ export function validateBaseline(input: unknown, path = 'baseline'): ValidationR
     });
   }
 
-  if (input.testProtectionDigest !== undefined && typeof input.testProtectionDigest !== 'string') {
+  if (typeof input.testProtectionDigest !== 'string' || input.testProtectionDigest.trim().length === 0) {
     errors.push({
       path: `${path}.testProtectionDigest`,
       message: `${path}.testProtectionDigest must be a string`,
@@ -4228,6 +4249,7 @@ export function validateBaselineAdmission(baseline: unknown, context: BaselineAd
   }
   const value = shapeRes.value;
   const errors: ValidationError[] = [];
+  if (context.expectedEvidenceId !== undefined && value.evidenceId !== context.expectedEvidenceId) errors.push({ path: 'evidenceId', message: 'Expected identity mismatch', code: 'IDENTITY_MISMATCH' });
 
   if (context.expectedRepositorySnapshotDigest !== undefined && value.repositorySnapshotDigest !== context.expectedRepositorySnapshotDigest) {
     errors.push({
@@ -4327,6 +4349,9 @@ export function validateVerificationResult(input: unknown, path = 'verificationR
     'diagnosticRefs',
   ];
   rejectUnknownKeys(input, allowedKeys, path, errors);
+  for (const field of ['repoDigest', 'diagnosticRefs']) {
+    if (input[field] === undefined) errors.push({ path: `${path}.${field}`, message: `${path}.${field} is required`, code: 'REQUIRED_FIELD' });
+  }
 
   if (typeof input.evidenceId !== 'string' || input.evidenceId.trim().length === 0) {
     errors.push({
@@ -4496,6 +4521,9 @@ export function validateSourceEvidence(input: unknown, limits?: SourceEvidenceLi
 
   const allowedKeys = ['path', 'revisionDigest', 'boundedExcerpt', 'resultCount', 'truncated'];
   rejectUnknownKeys(input, allowedKeys, path, errors);
+  for (const field of ['revisionDigest']) {
+    if (input[field] === undefined) errors.push({ path: `${path}.${field}`, message: `${path}.${field} is required`, code: 'REQUIRED_FIELD' });
+  }
 
   if (typeof input.path !== 'string' || !isCanonicalRelativePath(input.path) || isProtectedPath(input.path)) {
     errors.push({
@@ -4521,13 +4549,7 @@ export function validateSourceEvidence(input: unknown, limits?: SourceEvidenceLi
     });
   }
 
-  if (typeof input.resultCount !== 'number' || !Number.isInteger(input.resultCount) || input.resultCount < 0) {
-    errors.push({
-      path: `${path}.resultCount`,
-      message: `${path}.resultCount must be a finite non-negative integer`,
-      code: 'INVALID_NON_NEGATIVE_INTEGER',
-    });
-  }
+  validateNonNegativeInteger(input.resultCount, `${path}.resultCount`, errors);
 
   if (typeof input.truncated !== 'boolean') {
     errors.push({
@@ -4593,13 +4615,7 @@ export function validateReviewFinding(input: unknown, path = 'reviewFinding'): V
     });
   }
 
-  if (typeof input.line !== 'number' || !Number.isInteger(input.line) || input.line <= 0) {
-    errors.push({
-      path: `${path}.line`,
-      message: `${path}.line must be a positive integer`,
-      code: 'INVALID_POSITIVE_INTEGER',
-    });
-  }
+  validatePositiveInteger(input.line, `${path}.line`, errors);
 
   if (!REVIEW_SIDES.includes(input.side as ReviewSide)) {
     errors.push({
@@ -4657,6 +4673,9 @@ export function validateReviewResult(input: unknown, path = 'reviewResult'): Val
     'iterationReservationRef',
   ];
   rejectUnknownKeys(input, allowedKeys, path, errors);
+  for (const field of ['repoDigest', 'diffDigest', 'checkSetDigest', 'iterationReservationRef']) {
+    if (input[field] === undefined) errors.push({ path: `${path}.${field}`, message: `${path}.${field} is required`, code: 'REQUIRED_FIELD' });
+  }
 
   if (typeof input.reviewId !== 'string' || input.reviewId.trim().length === 0) {
     errors.push({
@@ -4764,6 +4783,7 @@ export function validateReviewAdmission(review: unknown, context: ReviewAdmissio
   }
   const value = shapeRes.value;
   const errors: ValidationError[] = [];
+  if (context.expectedReviewId !== undefined && value.reviewId !== context.expectedReviewId) errors.push({ path: 'reviewId', message: 'Expected identity mismatch', code: 'IDENTITY_MISMATCH' });
 
   if (context.expectedRepoDigest !== undefined && value.repoDigest !== context.expectedRepoDigest) {
     errors.push({
@@ -4868,6 +4888,9 @@ export function validateTaskWorkspace(
     'expectedRepoState',
   ];
   rejectUnknownKeys(input, allowedKeys, path, errors);
+  for (const field of ['expectedRepoState']) {
+    if (input[field] === undefined) errors.push({ path: `${path}.${field}`, message: `${path}.${field} is required`, code: 'REQUIRED_FIELD' });
+  }
 
   if (typeof input.taskId !== 'string' || input.taskId.trim().length === 0) {
     errors.push({
@@ -5021,6 +5044,9 @@ export function validateActivityEvent(input: unknown, path = 'activityEvent'): V
     'evidenceRefs',
   ];
   rejectUnknownKeys(input, allowedKeys, path, errors);
+  for (const field of ['outcome', 'durationMs', 'evidenceRefs']) {
+    if (input[field] === undefined) errors.push({ path: `${path}.${field}`, message: `${path}.${field} is required`, code: 'REQUIRED_FIELD' });
+  }
 
   if (typeof input.eventId !== 'string' || input.eventId.trim().length === 0) {
     errors.push({
@@ -5079,13 +5105,7 @@ export function validateActivityEvent(input: unknown, path = 'activityEvent'): V
   }
 
   if (input.durationMs !== undefined) {
-    if (typeof input.durationMs !== 'number' || !Number.isInteger(input.durationMs) || input.durationMs < 0) {
-      errors.push({
-        path: `${path}.durationMs`,
-        message: `${path}.durationMs must be a finite non-negative integer`,
-        code: 'INVALID_NON_NEGATIVE_INTEGER',
-      });
-    }
+    validateNonNegativeInteger(input.durationMs, `${path}.durationMs`, errors);
   }
 
   if (input.evidenceRefs !== undefined) {
@@ -5122,6 +5142,9 @@ export function validateDelivery(
     'safeNextAction',
   ];
   rejectUnknownKeys(input, allowedKeys, path, errors);
+  for (const field of ['diffDigest', 'changedFiles', 'baselineRef', 'verificationRefs', 'reviewRef', 'limitations', 'safeNextAction']) {
+    if (input[field] === undefined) errors.push({ path: `${path}.${field}`, message: `${path}.${field} is required`, code: 'REQUIRED_FIELD' });
+  }
 
   if (typeof input.taskId !== 'string' || input.taskId.trim().length === 0) {
     errors.push({
@@ -5237,6 +5260,9 @@ export function validateDelivery(
   }
 
   if (context !== undefined) {
+    if (context.expectedDiffDigest !== undefined && input.diffDigest !== context.expectedDiffDigest) errors.push({ path: 'diffDigest', message: 'Expected identity mismatch', code: 'IDENTITY_MISMATCH' });
+    if (context.expectedBaselineRef !== undefined && input.baselineRef !== context.expectedBaselineRef) errors.push({ path: 'baselineRef', message: 'Expected identity mismatch', code: 'IDENTITY_MISMATCH' });
+    if (context.expectedReviewRef !== undefined && input.reviewRef !== context.expectedReviewRef) errors.push({ path: 'reviewRef', message: 'Expected identity mismatch', code: 'IDENTITY_MISMATCH' });
     if (context.expectedTaskId !== undefined && input.taskId !== context.expectedTaskId) {
       errors.push({
         path: `${path}.taskId`,

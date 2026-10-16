@@ -2928,6 +2928,7 @@ test('Completion compatibility: validateStateTransition accepts validated Verifi
   const next: TaskState = { ...prior, stateVersion: 2, node: 'Deliver', outcome: 'COMPLETED', latestReviewRef: 'review-001', reviewRefs: ['review-001'] };
   const verification: VerificationResult = {
     ...createValidVerificationResult('pass'),
+    taskId: next.taskId, runId: next.runId,
     repoDigest: next.repositoryRevisionDigest,
     testedIds: ['check-pytest-focused'],
   };
@@ -2949,8 +2950,49 @@ test('Completion compatibility: validateStateTransition accepts validated Verifi
     protectedTestsDigest: 'protected',
     originalProtectedTestsDigest: 'protected',
     checks: [verification],
-    review: { ...review, repositoryRevisionDigest: next.repositoryRevisionDigest, roleConfigId: review.reviewerRoleConfigId },
+    review,
+    reviewerRoleConfigId: review.reviewerRoleConfigId,
+    reviewIterationReservationRef: review.iterationReservationRef,
   };
 
   assert.equal(validateStateTransition(prior, next, { trusted: { completion } }).ok, true);
+  for (const patch of [{ taskId: 'other' }, { runId: 'other' }, { phase: 'baseline' }, { diagnosticRefs: undefined }, { extra: true }]) {
+    assert.equal(validateStateTransition(prior, next, { trusted: { completion: { ...completion, checks: [{ ...verification, ...patch }] as VerificationResult[] } } }).ok, false);
+  }
+  const actionable = { ...review, findings: [createValidReviewFinding('error')] };
+  assert.equal(validateStateTransition(prior, next, { trusted: { completion: { ...completion, review: actionable } } }).ok, false);
+  assert.equal(validateStateTransition(prior, next, { trusted: { completion: { ...completion, reviewerRoleConfigId: 'other' } } }).ok, false);
+  assert.equal(validateStateTransition(prior, next, { trusted: { completion: { ...completion, reviewIterationReservationRef: 'other' } } }).ok, false);
+});
+
+
+test('Evidence schemas reject every missing required exported field', () => {
+  const cases: [Record<string, unknown>, (input: unknown) => { ok: boolean }, string[]][] = [
+    [createValidBaseline() as unknown as Record<string, unknown>, validateBaseline, ['evidenceId','repositorySnapshotDigest','checkSetDigest','reproductionFailureSignature','checkResults','testProtectionDigest']],
+    [createValidVerificationResult('pass') as unknown as Record<string, unknown>, validateVerificationResult, ['evidenceId','taskId','runId','actionId','phase','repoDigest','commandIdentity','outcome','testedIds','diagnosticRefs']],
+    [createValidSourceEvidence() as unknown as Record<string, unknown>, validateSourceEvidence, ['path','revisionDigest','boundedExcerpt','resultCount','truncated']],
+    [createValidReviewResult('accepted') as unknown as Record<string, unknown>, validateReviewResult, ['reviewId','reviewerRoleConfigId','repoDigest','diffDigest','checkSetDigest','status','findings','iterationReservationRef']],
+    [createValidActivityEvent() as unknown as Record<string, unknown>, validateActivityEvent, ['eventId','taskId','runId','timestamp','node','actionType','outcome','durationMs','evidenceRefs']],
+    [createValidTaskWorkspace() as unknown as Record<string, unknown>, validateTaskWorkspace, ['taskId','workspaceId','containerImageDigest','repoVolumeId','scratchVolumeId','expectedRepoState']],
+    [createValidDelivery() as unknown as Record<string, unknown>, validateDelivery, ['taskId','runId','outcome','diffDigest','changedFiles','baselineRef','verificationRefs','reviewRef','limitations','safeNextAction']],
+  ];
+  cases.push(
+    [createValidRun() as unknown as Record<string, unknown>, validateRun, ['runId','taskId','startTime']],
+    [createValidReviewFinding('error') as unknown as Record<string, unknown>, validateReviewFinding, ['file','line','side','severity','message']],
+    [{ checkId: 'focused', outcome: 'pass' }, validateCheckResult, ['checkId','outcome']],
+  );
+  for (const [record, validate, fields] of cases) for (const field of fields) {
+    const omitted = Object.fromEntries(Object.entries(record).filter(([key]) => key !== field));
+    assert.equal(validate(omitted).ok, false, field);
+  }
+});
+
+test('Evidence admission honors advertised identity expectations', () => {
+  const b = createValidBaseline();
+  assert.equal(validateBaselineAdmission(b, { expectedEvidenceId: 'other', expectedRepositorySnapshotDigest: b.repositorySnapshotDigest, expectedCheckSetDigest: b.checkSetDigest, expectedTestProtectionDigest: b.testProtectionDigest, expectedReproductionCheckId: b.checkResults[0]?.checkId ?? 'missing', expectedPassingCheckIds: [] }).ok, false);
+  const r = createValidReviewResult('accepted');
+  assert.equal(validateReviewAdmission(r, { expectedReviewId: 'other', expectedRepoDigest: r.repoDigest, expectedDiffDigest: r.diffDigest, expectedCheckSetDigest: r.checkSetDigest, expectedRoleConfigId: r.reviewerRoleConfigId }).ok, false);
+  const d = createValidDelivery();
+  for (const context of [{ expectedDiffDigest: 'other' }, { expectedBaselineRef: 'other' }, { expectedReviewRef: 'other' }]) assert.equal(validateDelivery(d, context).ok, false);
+  assert.equal(validateActivityEvent({ ...createValidActivityEvent(), durationMs: Number.MAX_SAFE_INTEGER + 1 }).ok, false);
 });
