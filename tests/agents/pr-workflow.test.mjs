@@ -134,6 +134,20 @@ async function checkout(t) {
   return { root, body, e, calls, run, execute, advance, fail: () => { failGate = true; } };
 }
 
+test('publish rejects tracked dependencies before tests, push, or PR creation', async (t) => {
+  const f = await checkout(t);
+  await mkdir(join(f.root, 'node_modules/lib'), { recursive: true });
+  await writeFile(join(f.root, 'node_modules/lib/index.js'), 'export {};\n');
+  const git = (...args) => {
+    const result = spawnSync('git', args, { cwd: f.root, encoding: 'utf8', windowsHide: true });
+    assert.equal(result.status, 0, result.stderr);
+  };
+  git('add', 'node_modules');
+  git('commit', '--quiet', '-m', 'accidental dependencies');
+  await assert.rejects(f.run('publish', '--body-file', f.body), /Installed dependencies must remain untracked/);
+  assert.equal(f.calls.some((call) => call[0] === process.execPath || call[0] === 'gh' || call[1] === 'push'), false);
+});
+
 test('publishing is gated and repeatable; repair count survives new publishes and stops at three', async (t) => {
   const f = await checkout(t);
   await f.run('publish', '--body-file', f.body);

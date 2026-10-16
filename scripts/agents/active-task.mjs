@@ -17,8 +17,7 @@ All commands accept --root <checkout>. Use a unique owner per session/worker.
 finish retains the result for review; clear removes only that completed entry.
 archive previews by default; --apply preserves and verifies a completed handoff before clearing it.
 All worktrees share the primary checkout's .agent-work/state/active-tasks.json.
-Primary mutations refresh Markdown; worker mutations leave tracked views unchanged.
-render explicitly refreshes the selected checkout's view.
+Only render refreshes the selected checkout's Markdown view; other mutations update local shared state only.
 A busy lock is not automatically reclaimed. The permanent template is preserved.`;
 
 function parseArguments(args) {
@@ -161,7 +160,7 @@ async function run(args) {
     const newline = source.includes('\r\n') ? '\r\n' : '\n';
     const content = source.slice(0, block.index) + block[1] + JSON.stringify(entries, null, 2).replace(/\n/g, newline) + block[3] + source.slice(block.index + block[0].length);
     await atomicWrite(statePath, JSON.stringify(entries, null, 2) + '\n');
-    if (repo.root === repo.primary || command === 'render') {
+    if (command === 'render') {
       try { await atomicWrite(path, content); }
       catch (error) { throw new Error(`Shared state saved, but view refresh failed: ${error.message}`); }
     }

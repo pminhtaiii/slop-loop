@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "entries": [
+    {
+      "owner": "codex-retro-guards",
+      "task": "dependency-guard-and-decision-evidence",
+      "checkout": "C:\\coding agent",
+      "summary": "Add tracked dependency publish/CI guard and restore confirmed ADR decisions",
+      "next": "Coordinator review and evidence recording",
+      "status": "completed",
+      "verification": "10 focused CLI/handoff tests passed; publish rejection regression passed; tracked-file and context checks passed; full publish gate pending",
+      "updatedAt": "2026-10-16T01:20:00.516Z",
+      "result": "Added shared tracked-dependency guard in publish and CI, restored confirmed ADR decisions with timezone evidence, and made all handoff Markdown rendering explicit. Focused checks passed; full publish gate follows."
+    }
+  ]
+}
