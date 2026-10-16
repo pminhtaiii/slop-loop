@@ -91,7 +91,7 @@ import {
   type Run,
   type ActivityEvent,
   type Delivery,
-} from '../../../src/contracts/uc03.js';
+} from '../../../src/contracts/uc03.ts';
 
 function createValidCheck(): CheckDefinition {
   return {

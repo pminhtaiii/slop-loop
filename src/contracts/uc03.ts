@@ -318,23 +318,27 @@ export interface DispatchAdmissionContext {
 
 export class BudgetExhaustionError extends Error {
   readonly code = 'BUDGET_EXHAUSTED' as const;
+  readonly details: { scope?: string; kind?: string; limit?: number; requested?: number } | undefined;
   constructor(
     message: string,
-    readonly details?: { scope?: string; kind?: string; limit?: number; requested?: number }
+    details?: { scope?: string; kind?: string; limit?: number; requested?: number }
   ) {
     super(message);
     this.name = 'BudgetExhaustionError';
+    this.details = details;
   }
 }
 
 export class BudgetConflictError extends Error {
   readonly code = 'BUDGET_CONFLICT' as const;
+  readonly details: { scope?: string; kind?: string; version?: number } | undefined;
   constructor(
     message: string,
-    readonly details?: { scope?: string; kind?: string; version?: number }
+    details?: { scope?: string; kind?: string; version?: number }
   ) {
     super(message);
     this.name = 'BudgetConflictError';
+    this.details = details;
   }
 }
 
