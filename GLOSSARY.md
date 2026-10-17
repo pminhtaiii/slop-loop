@@ -20,6 +20,18 @@ One attempt by the product runtime to advance a task. Starting another run prese
 
 A task to correct a specific observed behavior in a target repository. Its acceptance criteria describe the intended behavior and any existing behavior that must be preserved.
 
+## Issue triage
+
+Assessment of a reported issue to classify it, recommend severity, identify supporting evidence and missing information, and recommend a destination for further handling. Triage does not itself authorize or carry out that handling.
+
+## Severity recommendation
+
+An assessment of an issue's impact on functionality and affected users, considering available workarounds. It is distinct from business priority or scheduling order.
+
+## Clarification
+
+A request for missing facts or intended behavior needed to understand a task. Providing clarification does not authorize an action.
+
 ## Acceptance criteria
 
 Explicit conditions that define a satisfactory outcome for a task. They express what must be true, rather than prescribing how the agent implements the change.
