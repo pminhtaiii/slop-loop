@@ -1,6 +1,6 @@
 # Implementation Plan: UC-01 Evidence-backed Issue Triage
 
-**Branch**: `feat/011-uc01-issue-triage-specs` | **Date**: 2026-10-17 | **Spec**: [spec.md](spec.md)
+**Branch**: `feat/012-uc01-issue-triage-specs` | **Date**: 2026-10-17 | **Spec**: [spec.md](spec.md)
 
 **Input**: Draft specification in `specs/002-uc01-issue-triage/`.
 **Status**: DRAFT proposal. Planning/publication only; no runtime implementation authorization.

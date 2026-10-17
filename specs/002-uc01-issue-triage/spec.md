@@ -1,6 +1,6 @@
 # Feature Specification: UC-01 Evidence-backed Issue Triage
 
-**Feature Branch**: `feat/011-uc01-issue-triage-specs`
+**Feature Branch**: `feat/012-uc01-issue-triage-specs`
 
 **Created**: 2026-10-17 (Asia/Bangkok)
 
