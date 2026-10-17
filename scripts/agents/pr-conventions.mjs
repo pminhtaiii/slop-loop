@@ -30,6 +30,7 @@ export function assertNewDescription(body) {
 // Read-only inventory: fetch-independent live heads and paginated PR history include deleted branches.
 export function assertAvailableNumber({ branch, targets, execute, root, fresh = false }) {
   assertNewBranch(branch);
+  if (!fresh) return;
   const call = (binary, args) => execute(binary, args, root, 60_000);
   const names = new Set(call('git', ['for-each-ref', '--format=%(refname:short)', 'refs/heads']).split(/\r?\n/));
   let priorPr = false;
@@ -39,14 +40,14 @@ export function assertAvailableNumber({ branch, targets, execute, root, fresh = 
       const match = line.match(/^(?:[a-f0-9]{40}|[a-f0-9]{64})\s+refs\/heads\/(.+)$/i);
       if (!match) throw new Error('Invalid remote branch inventory; cannot verify unique NNN.');
       names.add(match[1]);
-      if (fresh && match[1] === branch) throw new Error('New branch already exists on a publication remote.');
+      if (match[1] === branch) throw new Error('New branch already exists on a publication remote.');
     }
     const pages = JSON.parse(call('gh', ['api', '--paginate', '--slurp', `repos/${target.repository}/pulls?state=all&per_page=100`]));
     if (!Array.isArray(pages) || pages.some(page => !Array.isArray(page) || page.some(pr => typeof pr.head?.ref !== 'string'))) throw new Error('Incomplete PR history; cannot verify unique NNN.');
     for (const pr of pages.flat()) { names.add(pr.head.ref); if (pr.head.ref === branch) priorPr = true; }
   }
   const number = branch.slice(5, 8);
-  if ([...names].some(name => name !== branch && name.startsWith(`feat/${number}-`)) || fresh && priorPr) throw new Error(`Feature number ${number} was already used; select a unique NNN.`);
+  if ([...names].some(name => name !== branch && name.startsWith(`feat/${number}-`)) || priorPr) throw new Error(`Feature number ${number} was already used; select a unique NNN.`);
 }
 
 export function assertNewSummary(summary) {

@@ -679,6 +679,31 @@ test('new publish rejects reused numbers across local branches, live heads and p
   }
 });
 
+test('an established convention-v1 PR remains updateable after a historical same-number PR is recorded', async t => {
+  const f = await checkout(t);
+  const initial = await f.run('publish', '--body-file', f.body);
+  assert.equal(initial.status, 'PUBLISHED');
+  const recordPath = join(f.root, '.agent-work/pr-workflow/010-tooling-example.json');
+  const record = JSON.parse(await readFile(recordPath, 'utf8'));
+  assert.equal(record.conventionVersion, 1);
+  const recordedPr = record.pr;
+  f.calls.length = 0;
+
+  const updated = await runWorkflow(['publish', '--body-file', f.body, '--summary', 'add the example workflow', '--root', f.root], {
+    execute(binary, args, cwd, timeout) {
+      if (binary === 'gh' && args[0] === 'api' && args.at(-1).includes('/pulls?')) {
+        return JSON.stringify([[{ state: 'closed', head: { ref: 'feat/010-uc01-historical' } }]]);
+      }
+      return f.execute(binary, args, cwd, timeout);
+    },
+  });
+
+  assert.equal(updated.status, 'PUBLISHED');
+  assert.equal(updated.pr, recordedPr);
+  assert.equal(f.calls.filter(call => call[0] === 'gh' && call[1] === 'pr' && call[2] === 'edit').length, 1);
+  assert.equal(f.calls.some(call => call[0] === 'gh' && call[1] === 'pr' && call[2] === 'create'), false);
+});
+
 test('new publish validates action summary and ordered nonempty description sections before gates', async t => {
   const f = await checkout(t);
   for (const summary of ['tooling changes', 'Standardize tooling']) {
