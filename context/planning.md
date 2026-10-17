@@ -41,10 +41,10 @@ Every task in `tasks.md` must adhere to the canonical checklist format:
 - [ ] [TaskID] [P?] [Story?] Description with exact file path
 ```
 
-- **TaskID**: Canonical sequential identifier (`T001`, `T002`, `T003`...).
-- **[P] marker**: Present *only* if the task is parallelizable (no shared unmerged files or uncompleted dependencies).
+- **TaskID**: Canonical sequential identifier (`T001`, `T002`, `T003`...), unique and in ledger order. Dependency checks reject unknown IDs, self-references, and cycles. Supported declarations include per-task `- **Dependencies**:` lists, dependency-section `T002 follows T001`, arrow lists, and Mermaid chains/groups. External gates remain separate from internal task IDs and do not establish delivery or authorization.
+- **[P] marker**: Present *only* if the task is parallelizable (no shared unmerged files or uncompleted dependencies). The helper compares normalized ownership within each phase; labeled `Owned Paths` supplies the ownership set when present. Dispatch still requires a ready dependency frontier.
 - **[Story?] tag**: Mandatory for user story phase tasks (`[US1]`, `[US2]`...), omitted for setup and foundational phases.
-- **File path**: Must name explicit repository-relative file paths for owned implementation and test files.
+- **File path**: Must name explicit repository-relative file paths for owned implementation and test files. Use slash-separated paths; for a root filename, use backticks or `./` to make ownership explicit. Bare `package.json`, `tsconfig.json`, and `eslint.config.*` are recognized root configuration targets; a labeled `**Owned Paths**:` list also explicitly identifies bare filenames. Absolute paths and paths escaping the repository are invalid; normalize equivalent paths before checking parallel ownership.
 
 ---
 
@@ -130,8 +130,10 @@ node scripts/agents/planning-workflow.mjs review-brief --dir specs/<feature> --r
 # Evaluate findings from a subagent review report
 node scripts/agents/planning-workflow.mjs evaluate-review --review <review-output.md>
 
-# Check combined planning readiness status
+# Check automated planning validation status (independent reviews still required)
 node scripts/agents/planning-workflow.mjs status --dir specs/<feature>
 ```
 
-When all automated checks pass and review subagents report zero unresolved P0 and P1 issues, the coordinator marks the planning gate as `PASSED` and the plan is approved for implementation handoff in [workflow.md](workflow.md).
+The helper's `status` command reports automated validation only. A clean result is `awaiting-independent-reviews`, with `automatedValidationPassed: true` and `readyForImplementation: false`; it does not retain or certify either independent review. Evaluate each current-artifact review separately: reports must contain a valid findings table or an explicit standalone "No blocking issues found." declaration; malformed or empty reports fail. Review briefs include nested contract files, including non-Markdown schemas.
+
+When automated checks pass and both independent reviews have zero unresolved P0/P1 findings, the coordinator records the evidence and passes the planning quality gate for handoff in [workflow.md](workflow.md). This quality gate does not itself grant implementation authorization or override feature-specific user gates.

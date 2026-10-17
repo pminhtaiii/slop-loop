@@ -29,6 +29,8 @@ Paired issue completion uses `tests/agents/complete-paired-issues.test.mjs` at t
 
 ## Local helper tests
 
+The planning-workflow regressions cover required artifact types, unique sequential task IDs, invalid dependency graphs, normalized explicit ownership and directory overlap, dependency-ordered shared paths, nested contract inventories, malformed review rejection, and automated-only status. These checks do not certify independent reviews or authorize feature implementation.
+
 The task-context, managed-session, and planning-workflow helpers require Node.js 20 or newer, use Node.js built-ins, and can be tested without installing packages:
 
 ```powershell
