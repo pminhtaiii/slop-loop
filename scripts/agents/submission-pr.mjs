@@ -28,7 +28,7 @@ function normalizeTargets(targets) {
     primary: { remote: targets?.primary?.remote, repository: targets?.primary?.repository, base: targets?.primary?.base },
     submission: { remote: targets?.submission?.remote, repository: targets?.submission?.repository, base: targets?.submission?.base },
   };
-  if (normalized.primary.remote !== 'origin' || normalized.primary.base !== 'development' || normalized.submission.remote !== 'submission' || normalized.submission.base !== 'main' || typeof normalized.primary.repository !== 'string' || typeof normalized.submission.repository !== 'string') throw new Error('Submission targets must be public origin/development and private submission/main.');
+  if (normalized.primary.remote !== 'origin' || normalized.primary.base !== 'development' || normalized.submission.remote !== 'submission' || !['development', 'main'].includes(normalized.submission.base) || typeof normalized.primary.repository !== 'string' || typeof normalized.submission.repository !== 'string') throw new Error('Submission targets must be public origin/development and private submission/development (or historical main).');
   if (normalized.primary.repository.toLowerCase() === normalized.submission.repository.toLowerCase()) throw new Error('Public and submission repositories must be different.');
   return normalized;
 }
@@ -66,7 +66,7 @@ function repoAccess(execute, repo, repository, expectedVisibility) {
 }
 
 function assertRecord(record, targets, branch) {
-  if (record.schemaVersion !== 1 || record.branch !== branch || record.base !== 'main' || JSON.stringify(record.targets) !== JSON.stringify(targets) || !gitHash.test(record.mainBase ?? '') || !gitHash.test(record.sourceHead ?? '') || !gitHash.test(record.sourceTree ?? '') || record.mirrorHead !== null && !gitHash.test(record.mirrorHead ?? '') || record.previousMirrorHead !== null && !gitHash.test(record.previousMirrorHead ?? '') || typeof record.marker !== 'string' || !record.marker.startsWith('<!-- paired-submission:') || !['branch-pending', 'pr-pending', 'complete'].includes(record.phase)) {
+  if (record.schemaVersion !== 1 || record.branch !== branch || record.base !== targets.submission.base || JSON.stringify(record.targets) !== JSON.stringify(targets) || !gitHash.test(record.mainBase ?? '') || !gitHash.test(record.sourceHead ?? '') || !gitHash.test(record.sourceTree ?? '') || record.mirrorHead !== null && !gitHash.test(record.mirrorHead ?? '') || record.previousMirrorHead !== null && !gitHash.test(record.previousMirrorHead ?? '') || typeof record.marker !== 'string' || !record.marker.startsWith('<!-- paired-submission:') || !['branch-pending', 'pr-pending', 'complete'].includes(record.phase)) {
     throw new Error('Submission publication record is invalid or belongs to different targets; inspect before publishing.');
   }
 }
@@ -101,9 +101,9 @@ async function inspectState({ repo, targets, branch, execute }) {
   repoAccess(execute, repo, normalized.primary.repository, false);
   repoAccess(execute, repo, normalized.submission.repository, true);
 
-  const mainReference = 'refs/heads/main';
+  const mainReference = `refs/heads/${normalized.submission.base}`;
   const mainHead = parseRef(git(execute, repo, 'ls-remote', '--heads', 'submission', mainReference), mainReference);
-  if (!mainHead) throw new Error('The private submission repository must already have a main branch.');
+  if (!mainHead) throw new Error('The private submission repository must already have its configured base branch.');
 
   const { path, record } = await readRecord(repo, branch);
   const branchReference = `refs/heads/${branch}`;
@@ -123,7 +123,7 @@ async function inspectState({ repo, targets, branch, execute }) {
   const pr = prs[0] ?? null;
   if (record.prNumber && (!pr || pr.number !== record.prNumber)) throw new Error('The retained submission PR is closed, missing, or replaced; inspect before publishing.');
   if (pr) {
-    if (pr.state !== 'OPEN' || pr.baseRefName !== 'main' || pr.headRefName !== branch || !record.marker || !String(pr.body).includes(record.marker) || !matchingMetadata(pr, record)) throw new Error('The submission PR has unexpected edits or identity; inspect before publishing.');
+    if (pr.state !== 'OPEN' || pr.baseRefName !== normalized.submission.base || pr.headRefName !== branch || !record.marker || !String(pr.body).includes(record.marker) || !matchingMetadata(pr, record)) throw new Error('The submission PR has unexpected edits or identity; inspect before publishing.');
     if (record.prUrl && pr.url !== record.prUrl) throw new Error('The retained submission PR URL changed; inspect before publishing.');
     if (!remoteHead || pr.headRefOid !== remoteHead) throw new Error('The submission PR head does not match its remote feature branch.');
   }
@@ -132,7 +132,7 @@ async function inspectState({ repo, targets, branch, execute }) {
 
 export async function inspectSubmissionTarget(args) {
   const state = await inspectState(args);
-  return { repository: state.targets.submission.repository, branch: args.branch, base: 'main', mainHead: state.mainHead, head: state.remoteHead, number: state.pr?.number, url: state.pr?.url };
+  return { repository: state.targets.submission.repository, branch: args.branch, base: state.targets.submission.base, mainHead: state.mainHead, head: state.remoteHead, number: state.pr?.number, url: state.pr?.url };
 }
 
 function primaryPrUrl(primaryPr, repository) {
@@ -163,9 +163,9 @@ function commitMirror(execute, repo, tree, parent, branch, sourceHead) {
 }
 
 async function materializeInitialMirror(execute, repo, state, record) {
-  git(execute, repo, 'fetch', '--no-tags', '--no-write-fetch-head', 'submission', 'refs/heads/main');
-  const mainNow = parseRef(git(execute, repo, 'ls-remote', '--heads', 'submission', 'refs/heads/main'), 'refs/heads/main');
-  if (mainNow !== record.mainBase) throw new Error('Submission main changed during inspection; rerun publication after reviewing the new base.');
+  git(execute, repo, 'fetch', '--no-tags', '--no-write-fetch-head', 'submission', `refs/heads/${record.base}`);
+  const mainNow = parseRef(git(execute, repo, 'ls-remote', '--heads', 'submission', `refs/heads/${record.base}`), `refs/heads/${record.base}`);
+  if (mainNow !== record.mainBase) throw new Error('Submission base changed during inspection; rerun publication after reviewing the new base.');
   git(execute, repo, 'cat-file', '-e', `${record.mainBase}^{commit}`);
   record.mirrorHead = commitMirror(execute, repo, record.sourceTree, record.mainBase, record.branch, record.sourceHead);
   record.previousMirrorHead = null;
@@ -179,7 +179,7 @@ function resultRecord(record, pr) {
     number: pr.number,
     url: pr.url,
     branch: record.branch,
-    base: 'main',
+    base: record.base,
     head: record.mirrorHead,
     sourceHead: record.sourceHead,
     sourceTree: record.sourceTree,
@@ -209,7 +209,8 @@ export async function publishSubmission({ repo, targets, branch, head, title, bo
         targets: state.targets,
         repository: state.targets.submission.repository,
         branch,
-        base: 'main',
+        base: state.targets.submission.base,
+        // Schema v1 retains this field name for historical records; it is the configured base SHA.
         mainBase: state.mainHead,
         sourceHead,
         sourceTree,
@@ -275,7 +276,7 @@ export async function publishSubmission({ repo, targets, branch, head, title, bo
       const createTitle = record.pendingTitle ?? record.title;
       const createBody = record.pendingBody ?? record.body;
       try {
-        await withPublicationBody(repo, createBody, path => command(execute, 'gh', ['pr', 'create', '--repo', record.targets.submission.repository, '--head', branch, '--base', 'main', '--draft', '--title', createTitle, '--body-file', path], repo));
+        await withPublicationBody(repo, createBody, path => command(execute, 'gh', ['pr', 'create', '--repo', record.targets.submission.repository, '--head', branch, '--base', record.base, '--draft', '--title', createTitle, '--body-file', path], repo));
       } catch (createError) {
         try { state = await inspectState({ repo, targets, branch, execute }); pr = state.pr; }
         catch { throw createError; }
@@ -298,7 +299,7 @@ export async function publishSubmission({ repo, targets, branch, head, title, bo
       pr = state.pr;
     }
 
-    if (!pr || pr.state !== 'OPEN' || pr.headRefOid !== record.mirrorHead || pr.baseRefName !== 'main' || !String(pr.body).includes(record.marker)) throw new Error('The submission PR does not match its retained branch and source.');
+    if (!pr || pr.state !== 'OPEN' || pr.headRefOid !== record.mirrorHead || pr.baseRefName !== record.base || !String(pr.body).includes(record.marker)) throw new Error('The submission PR does not match its retained branch and source.');
     record.prNumber = pr.number;
     record.prUrl = pr.url;
     if (record.pendingTitle !== undefined) {
@@ -325,6 +326,7 @@ export async function verifySubmission({ repo, targets, branch, sourceHead, exec
   const actualSourceTree = git(execute, repo, 'rev-parse', '--verify', `${actualSourceHead}^{tree}`).toLowerCase();
   const mirrorTree = git(execute, repo, 'rev-parse', '--verify', `${record.mirrorHead}^{tree}`).toLowerCase();
   if (actualSourceTree !== record.sourceTree || mirrorTree !== record.sourceTree) throw new Error('Submission mirror tree differs from the retained public source tree.');
+  git(execute, repo, 'merge-base', '--is-ancestor', record.mainBase, record.mirrorHead);
   if (git(execute, repo, 'branch', '--show-current') !== branch || git(execute, repo, 'rev-parse', 'HEAD').toLowerCase() !== actualSourceHead) throw new Error('The public checkout changed during submission verification.');
   return resultRecord(record, state.pr);
 }

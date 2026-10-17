@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { runGate } from './workflow-gate.mjs';
 import { publicationTargets, withPublicationBody } from './publication-targets.mjs';
 import { inspectSubmissionTarget, publishSubmission, verifySubmission } from './submission-pr.mjs';
+import { assertNewBranch, assertNewDescription, assertNewSummary, assertAvailableNumber } from './pr-conventions.mjs';
 import { assertNoTrackedArtifacts } from '../ci/check-tracked-files.mjs';
 import { readFile, stat } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
@@ -17,7 +18,7 @@ preflight fetches origin/development and reports freshness, naming, dirty paths,
 publish requires --body-file <file> and --summary <short summary>; optional --base development.
 repair requires --reason <diagnosed finding>. At most three repair rounds per PR.
 record-app-state requires --receipt <app list_thread_pull_requests JSON>.
-prepare-next --branch feat/NNN-description creates a fresh branch from fetched development after this branch's recorded PR merges; source branches and worktrees are retained.
+prepare-next --branch feat/NNN-scope-description creates a fresh unique branch from fetched development after this branch's recorded PR merges; source branches and worktrees are retained.
 complete verifies clean published current-head work, linked PR evidence and passing CI; it never merges.
 watch polls for at most ten minutes, stopping for fixes, human approval, or timeout.
 Configured paired publication also opens a submission PR with the same source tree and separate submission ancestry.
@@ -89,7 +90,7 @@ export async function runWorkflow(args, dependencies = {}) {
   if (command === 'publish' && !values['body-file'] || command === 'repair' && !values.reason?.trim()) throw new Error(usage);
   if (command === 'publish' && !validSummary(values.summary)) throw new Error('Provide --summary with 1–80 characters on one line, without surrounding whitespace.');
   if (values.base && values.base !== 'development') throw new Error('The pilot only publishes to development.');
-  if (command === 'prepare-next' && !featureName.test(values.branch ?? '')) throw new Error('prepare-next requires --branch feat/NNN-description.');
+  if (command === 'prepare-next') assertNewBranch(values.branch);
   const now = dependencies.now ?? (() => Math.floor(performance.now()));
   const deadline = command === 'watch' ? now() + 600_000 : undefined;
   const repo = await repository(values.root ?? resolve(dirname(fileURLToPath(import.meta.url)), '../..'));
@@ -142,6 +143,7 @@ export async function runWorkflow(args, dependencies = {}) {
       const merged = json('pr', 'view', String(record.pr), '--repo', remote, '--json', 'state,headRefName,baseRefName');
       if (merged.state !== 'MERGED' || merged.headRefName !== branch || merged.baseRefName !== 'development') throw new Error('The recorded PR must be merged into development before preparing another branch.');
       if (values.branch === branch || git('branch', '--list', values.branch)) throw new Error('Choose a different branch; target already exists.');
+      assertAvailableNumber({ branch: values.branch, targets: await publicationTargets(repo, pairedExecute) ?? { primary: { remote: 'origin', repository: remote } }, execute: pairedExecute, root: repo.root, fresh: true });
       git('fetch', '--no-tags', 'origin', 'refs/heads/development:refs/remotes/origin/development');
       const base = git('rev-parse', 'origin/development');
       if (git('status', '--porcelain', '--untracked-files=all') || git('branch', '--show-current') !== branch) throw new Error('Checkout changed during preparation.');
@@ -164,6 +166,13 @@ export async function runWorkflow(args, dependencies = {}) {
       const initialPr = find();
       if (record.pr && (!initialPr || initialPr.number !== record.pr)) throw new Error('Recorded PR is closed or replaced; start a new feature branch instead of resetting its budget.');
       if (initialPr && !record.pr && !record.publicationStarted) throw new Error('Existing PR has no local accounting; recover its workflow record before publishing.');
+      const newConventions = record.conventionVersion === 1 || !record.pr && !record.publicationStarted;
+      if (newConventions) {
+        if (targets && targets.submission.base !== 'development') throw new Error('New paired work requires submission/development; retain historical main configuration only for existing pairs.');
+        assertNewSummary(values.summary);
+        assertNewDescription(body);
+        assertAvailableNumber({ branch, targets: targets ?? { primary: { remote: 'origin', repository: remote } }, execute: pairedExecute, root: repo.root, fresh: !record.pr && !record.publicationStarted });
+      }
       git('fetch', '--no-tags', 'origin', 'refs/heads/development:refs/remotes/origin/development');
       const size = changedLines(git('diff', '--numstat', '--no-renames', 'origin/development...HEAD'));
       if (!size.reviewable && !size.generated && !size.binaries) throw new Error('No changes against development.');
@@ -195,6 +204,7 @@ export async function runWorkflow(args, dependencies = {}) {
       record.gateLogs = gateLogs;
       delete record.completion;
       record.publicationStarted = true;
+      if (newConventions) record.conventionVersion = 1;
       if (targets) record.pairedTargets = targets;
       await save();
       git('push', '--set-upstream', 'origin', `HEAD:refs/heads/${branch}`);

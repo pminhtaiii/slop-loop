@@ -192,8 +192,8 @@ function readSubmissionPr(call, repo, target, branch) {
   if (listed.length > 1) throw new Error('Multiple submission PRs use this feature branch; inspect before completing issues.');
   if (!listed.length) return null;
   const item = listed[0];
-  if (!Number.isSafeInteger(item?.number) || item.number < 1 || item.headRefName !== branch || item.baseRefName !== 'main') throw new Error('The submission PR does not use the public feature branch and main base.');
-  return readPr(call, repo, target.repository, item.number, 'submission', branch, 'main');
+  if (!Number.isSafeInteger(item?.number) || item.number < 1 || item.headRefName !== branch || item.baseRefName !== target.base) throw new Error('The submission PR does not use the public feature branch and configured base (historical main requires its original configuration).');
+  return readPr(call, repo, target.repository, item.number, 'submission', branch, target.base);
 }
 
 function prIdentity(pr, repositoryName) {

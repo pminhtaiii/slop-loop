@@ -2,19 +2,19 @@
 
 This workflow covers the repository's approved contributor PR pilot. It governs contributor coordination, not the slop-loop product runtime. The target runtime policy remains in [tools and permissions](../../context/tools_permissions.md).
 
-[Paired publication](paired-publication.md) is enabled by [publication-targets.json](../../publication-targets.json): `origin` remains the public review repository against `development`, and a private `submission` partner receives the same tracked source tree against `main`. The existing publish command handles both. Private repository identity stays out of public bodies; both returned PRs must be linked in the app before completion.
+[Paired publication](paired-publication.md) is enabled by [publication-targets.json](../../publication-targets.json): `origin` remains the public review repository against `development`, and a private `submission` partner receives the same tracked source tree against `development`. The existing publish command handles both. Private repository identity stays out of public bodies; both returned PRs must be linked in the app before completion.
 
 ## Authority and merge
 
 The coordinator has standing limited authorization to commit scoped contributor changes, push feature branches, and create or update their PRs through the pilot workflow. Workers can return local changes to the coordinator; they do not write to GitHub or push. The helper uses Git and the signed-in human's `gh` account; this pilot does not provision a separate GitHub bot identity.
 
-Every public review PR targets `development`; its configured submission partner targets `main`. Never push directly to `main` or `development`. The helper does not merge. A human decides each merge. The coordinator may execute a merge only when explicitly instructed for that PR, after exact-head CI passes and GitHub reports no merge blocker. Authorization to open or merge another PR does not carry over; never bypass branch protections. CodeRabbit reviews and unresolved conversations are advisory: their presence is reported for the human merge decision, and bot approval is optional, including after a fix. GitHub review approval is not a branch requirement; the human merge decision is an operating rule. There is no auto-merge.
+Every public review PR targets `development`; its configured submission partner targets `development`. Never push directly to `main` or `development`. The helper does not merge. A human decides each merge. The coordinator may execute a merge only when explicitly instructed for that PR, after exact-head CI passes and GitHub reports no merge blocker. Authorization to open or merge another PR does not carry over; never bypass branch protections. CodeRabbit reviews and unresolved conversations are advisory: their presence is reported for the human merge decision, and bot approval is optional, including after a fix. GitHub review approval is not a branch requirement; the human merge decision is an operating rule. There is no auto-merge.
 
 ## Branch and size
 
 Before editing an assigned feature checkout, run `node scripts/agents/pr-workflow.mjs preflight`. It fetches `origin/development`, reports ahead/behind counts, branch naming, dirty paths, and committed diff size, and returns `READY_TO_WORK` or `BLOCKED`. Exit 0 means the report succeeded; read its status. Fetch failure stops the report rather than trusting stale refs. It never switches branches, resets files, rebases, pushes, or opens a PR. Resolve a stale base or invalid branch deliberately; inspect dirty files and retain work. When resuming the same assignment, dirty paths may be expected and require review rather than discarding them. A clean preflight is not a CI or merge-readiness result.
 
-Name a feature branch `feat/NNN-lowercase-description` with a zero-padded three-digit feature number, and title its PR `<branch-name>: <short summary>`, for example `feat/003-retro-improvements: tighten workflow and context checks`. The summary must be 1–80 characters on one line without surrounding whitespace. The pilot base is `development`; parent-branch stacking is outside this pilot.
+Follow the [branch and PR conventions](pr-conventions.md) for new scoped branch names, unique identifiers, action summaries and the three-section body. The pilot base is `development`; parent-branch stacking is outside this pilot. Historical identities remain readable as described there.
 
 Keep the change near 1,000 added plus deleted lines against the immediate base (`origin/development`). This is an advisory target. Report reviewable line changes and generated lockfile changes separately, along with their sum and binary file count. If the total is over target, explain why and split the work when it can stand alone. The pilot uses this repository's Node context and test gates; other native project stacks need explicit plan metadata before they are added.
 
@@ -85,7 +85,7 @@ Publication emits JSON gate start/result events on stderr while keeping final JS
 After the recorded feature PR is merged into development, run:
 
 ```powershell
-node scripts/agents/pr-workflow.mjs prepare-next --branch feat/001-next-description
+node scripts/agents/pr-workflow.mjs prepare-next --branch feat/011-tooling-next-description
 ```
 
 This fetches development and switches a clean checkout to a new branch at that exact tip, with no development upstream. It retains the original feature branch and workflow record, including squash-merged history. It refuses unmerged/mismatched PRs, dirty checkouts and existing local target branches. A deleted remote feature branch is supported; no reset, worktree removal or cleanup is performed. Commit or otherwise preserve local work before retrying a refusal.

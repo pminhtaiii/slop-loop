@@ -19,7 +19,7 @@ async function workspace(t) {
   assert.equal(initialized.status, 0, initialized.stderr);
   await writeFile(join(root, 'publication-targets.json'), JSON.stringify({
     schemaVersion: 1,
-    submission: { remote: 'submission', base: 'main' },
+    submission: { remote: 'submission', base: 'development' },
   }));
   return root;
 }
@@ -263,7 +263,7 @@ test('changed local target identity and incomplete issue pagination fail before 
   const configPath = join(root, 'publication-targets.json');
   await writeFile(configPath, JSON.stringify({
     schemaVersion: 1,
-    submission: { remote: 'submission', base: 'main' },
+    submission: { remote: 'submission', base: 'development' },
   }));
   const changedClient = { ...client, execute: (binary, args, cwd, timeout) => {
     if (binary === 'git' && args[2] === 'submission') return 'https://github.com/course/changed.git';

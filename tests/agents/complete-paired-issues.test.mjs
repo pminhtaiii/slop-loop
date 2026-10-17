@@ -38,7 +38,7 @@ async function fixture(t, options = {}) {
   git(root, 'init', '--initial-branch=main');
   await writeFile(join(root, 'publication-targets.json'), JSON.stringify({
     schemaVersion: 1,
-    submission: { remote: 'submission', base: 'main' },
+    submission: { remote: 'submission', base: 'development' },
   }));
   const key = 'localized-bug';
   const publicIssue = {
@@ -74,7 +74,7 @@ async function fixture(t, options = {}) {
       mergedAt: null,
       headRefName: branch,
       headRefOid: privateHead,
-      baseRefName: 'main',
+      baseRefName: 'development',
       isDraft: false,
       isCrossRepository: false,
     },
@@ -366,7 +366,7 @@ test('cross-repository PRs, duplicate submission PRs, and changed PR identity ar
   duplicate.extraSubmissionPRs.push({
     number: 10,
     url: `https://github.com/${privateRepository}/pull/10`,
-    baseRefName: 'main',
+    baseRefName: 'development',
     headRefName: branch,
     state: 'MERGED',
   });
