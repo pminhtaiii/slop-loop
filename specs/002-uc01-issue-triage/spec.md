@@ -79,6 +79,8 @@ As an integrator, I receive a recommendation from my configured destination cata
 - **FR-012**: Treat issue/source/answer content as untrusted. Enforce workspace/protected-data boundaries, prevent tool escalation and emit only sanitized bounded metadata or safe references.
 - **FR-013**: Return assessed, needs-info, invalid-input, denied, pending-approval, conflict, exhausted, timeout, uncertain or error outcomes. Incomplete outcomes never masquerade as complete assessments; no unbounded retry.
 - **FR-014**: Support controlled fixtures/mocks; identify mock evidence and reject mock dependencies in production. Real foundation, approval/accounting and receiving-workflow integration need separate acceptance evidence.
+- **FR-015**: Design versioned cases, expected outcomes and grading rules before each authorized implementation slice. Run applicable contract/behavior/safety checks immediately after that slice, then impacted regression checks; retain results, traceable evidence, limits and failure analysis before task acceptance. Unavailable checks are not-run with an explicit blocker, never passed by omission.
+- **FR-016**: Keep contract, mock behavior, real integration, held-out model quality and project evaluation separate. Reuse stable UC-scoped case definitions and isolated results through Tai's future shared evaluation interface; no independent competing runner or claim of implemented shared registration.
 
 ### Key Entities
 
@@ -97,7 +99,8 @@ As an integrator, I receive a recommendation from my configured destination cata
 - **SC-003**: All five severity examples and feature-request/unknown-impact cases in the acceptance matrix meet expected outcomes and impact explanations.
 - **SC-004**: All material-unknown cases return relevant questions; all valid subsequent-answer cases preserve identity and distinguish answers from repository findings.
 - **SC-005**: All missing-budget, stale-context, protected-data and injection cases terminate within configured limits; zero unauthorized constrained calls occur.
-- **SC-006**: Before real-runtime acceptance, Thai and the owner approve a labeled held-out corpus and numeric quality/latency thresholds, then measure classification/severity agreement, clarification relevance, destination agreement and elapsed time. Fixture passes establish no model quality or runtime verification.
+- **SC-006**: Prepare a labeled held-out corpus before feature implementation, with at least five classification examples covering clear defect, feature request, ambiguity, irrelevant content and malicious instructions. Before real-runtime acceptance, approve corpus/rules and remaining thresholds, then compare at least two equivalent real-model evaluation runs. Classification accuracy must reach at least 80% under the user-supplied SE373 floor, with full required execution, separate safety gates, severity/clarification/destination metrics, latency, tokens and cost. Fixture passes establish no model quality or runtime verification.
+- **SC-007**: Every slice retains applicable results and regression evidence before acceptance; every required unrun case has status, reason and an execution condition. The same versioned UC-01 cases must support scoped selection and future shared-project registration without cross-UC execution, ID collision, result overwrite or a false project pass when a required UC fails or is missing.
 
 ## Assumptions
 
@@ -105,3 +108,4 @@ As an integrator, I receive a recommendation from my configured destination cata
 - Application supplies authorized repository, catalogs and caller context; issue text never chooses host paths or policy.
 - Classification defaults, provider/model, numeric production limits and deployment interface remain owner decisions. Test examples are not defaults.
 - Technical readiness and permission to implement are separate: only planning/publication is authorized and all implementation checkboxes remain open.
+- The current user reports leader agreement to evaluation-first incremental delivery; this approves a direction, not the proposed evaluation schema, new authority or runtime implementation. See [evaluation contract](contracts/evaluation.md) and [decision/source gaps](contracts/decisions.md). The two original coursework Markdown documents were not available for independent verification; supplied minima are used explicitly, not presented as independently checked quotations.
