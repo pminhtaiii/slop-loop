@@ -14,6 +14,9 @@
 | Continuation | opaque ref to issue/report/repository/task, prior questions, config and snapshot | Caller/UC-04 owns retention; UC-01 validates supplied binding, stores no durable wait |
 | Catalog | id, version, classifications, destinations | Unique entry IDs; responsibility text may overlap; undetermined reserved; UC-04/05 capability IDs excluded. Ambiguous destination matches return undetermined with material questions when needed |
 | Outcome | status plus assessment or safe error fields | Discriminated union; errors cannot carry an accepted assessment |
+| Evaluation case | UC-scoped stable caseId, dataset/version/digest, input, prerequisites, rule/version, requirements/tasks | Proposed [evaluation contract](contracts/evaluation.md); separate public inputs from grader-only expected outcomes/labels |
+| Case result | run/attempt/UC/case/level, status, provenance, source/config identities, metrics and safe evidence refs | pass/fail/error/not-run distinct from product Outcome; no overwrite, mock promotion or hidden-label disclosure |
+| Registration / run manifest | UC, supported versions/levels, case/oracle refs, required capabilities and required-case gate policy | Tai approves shared seam; selected UC scope and required-project coverage validated before dispatch; not implemented |
 
 ## State transitions
 

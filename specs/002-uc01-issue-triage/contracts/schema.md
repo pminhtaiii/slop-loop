@@ -59,3 +59,7 @@ Repository kind requires repository and forbids questionId; path is canonical wo
 - `{status:Failure, reasonCode:Id, safeMessage:Text, nextAction:Text, eventRef:Id}` has no assessment. `Failure = 'invalid-input'|'denied'|'pending-approval'|'conflict'|'exhausted'|'timeout'|'uncertain'|'error'`. Pending-approval references a shared action event, never a clarification decision.
 
 An invalid provider proposal maps to error with reasonCode `invalid-model-output`, not invalid caller input. Tool denial/pause, stale state and provider uncertainty retain their corresponding failure. Stable codes and safe diagnostics must exclude raw prompts/output/secrets. A model timeout with uncertain billable usage returns uncertain; confirmed canceled/non-dispatched timeouts may return timeout. All outcomes carry safe event references through the shared telemetry boundary.
+
+## Evaluation boundary
+
+The proposed [evaluation records](evaluation.md) wrap this product contract and identify actual execution level/provenance; they do not add grading labels or runner authority to Invocation, Assessment or Outcome. Product denial/error and evaluation pass/fail/error/not-run have different meanings: an expected denied product outcome may pass a negative case. Invalid structured model output remains a typed product failure, not a fabricated corrected Assessment or an automatic extra LLM call. Any retry-policy change remains a separate approval decision. IssueTicket terminology from missing coursework sources is not a reason to replace Assessment, rewrite the report or dispatch work.
