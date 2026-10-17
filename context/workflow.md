@@ -101,5 +101,7 @@ After implementation and verification, update affected context documents from in
 
 ## Step 4: PR and CI (`/pr-feedback-loop`)
 
+While waiting for a resolving PR review, assess each scoped paired ticket against all acceptance criteria, prepare evidence and preview [paired ticket completion](../docs/agents/paired-publication.md#complete-paired-tickets). Apply only after both resolving PRs merge, their source snapshots match and the public exact-head CI passes. CodeRabbit approval is advisory. Keep partial-close accounting and retry the same stable key; never infer completion from labels, age or CI alone. This issue lifecycle is separate from contributor handoff and human merge authority.
+
 After implementation, refresh affected context before publishing. The approved contributor PR pilot authorizes the coordinator to run the [PR workflow](../docs/agents/pr-workflow.md) for draft creation and updates on `development`; workers do not write remotely. Only `READY_FOR_HUMAN` permits the `ready` command. A human decides each merge; the coordinator may execute it only when explicitly instructed for that PR, after required checks pass, following the linked workflow. Report missing or stale evidence as waiting or blocked, never as ready.
 

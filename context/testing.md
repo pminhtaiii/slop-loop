@@ -25,6 +25,8 @@ The shared mock scenario matrix in `tests/runtime/contract/uc03-port-conformance
 
 Paired publication uses `tests/agents/publication-targets.test.mjs`, `tests/agents/submission-pr.test.mjs`, `tests/agents/paired-issues.test.mjs` and the PR-helper integration tests. They exercise configured-target refusal, unrelated Git histories with exact source-tree snapshots, fast-forward mirror updates, interrupted publication recovery, stable ticket identity, duplicate refusal, canonical Windows fixture paths and publication of the validated body snapshot through disposable Git repositories and injected GitHub APIs. These tests create no live review or submission objects.
 
+Paired issue completion uses `tests/agents/complete-paired-issues.test.mjs` at the public CLI/module and external GitHub boundaries. Coverage includes preview without remote mutations, merged-PR/current-head CI and source-tree admission, exact stable-key identity, protected public audit content and recovery from interrupted per-side comments or closes. Disposable fixture roots are canonicalized for Windows; these tests close no live issues.
+
 ## Local helper tests
 
 The task-context and managed-session helpers require Node.js 20 or newer, use Node.js built-ins, and can be tested without installing packages:

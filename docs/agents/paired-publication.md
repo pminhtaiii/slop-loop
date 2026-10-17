@@ -32,6 +32,32 @@ Use the same key for later title/body updates. The default label is `needs-triag
 
 The ticket helper validates both repository roles, write access and issue availability before writes. Opaque identity markers and ignored `.agent-work/paired-issues/` receipts support retries after partial writes or lost create responses. Duplicate markers or mismatched identities stop publication for inspection. Closed tickets remain closed; comments, assignees and issue state are not automatically synchronized.
 
+### Complete paired tickets
+
+During CodeRabbit review of a resolving PR, verify every acceptance criterion on both issues for the stable key, prepare evidence, and preview the completion command. An open PR is still waiting: apply only after both paired resolving PRs are merged, using the same source tree and confirming all four contributor/runtime CI jobs pass for the public PR's exact head. CodeRabbit approval is not required, and labels, age, or CI success alone do not establish that acceptance criteria are met.
+
+The evidence file has this shape:
+
+```json
+{
+  "schemaVersion": 1,
+  "summary": "Verified repair evidence",
+  "acceptance": [
+    { "criterion": "<acceptance criterion>", "evidence": "<verification evidence>" }
+  ]
+}
+```
+
+Run from the public review checkout, naming the stable key and public resolving PR explicitly:
+
+```powershell
+node scripts/agents/complete-paired-issues.mjs --key <stable-key> --pr <public-PR-URL> --evidence-file <evidence.json> [--apply] [--root <checkout>]
+```
+
+Without `--apply`, the command previews and makes no remote changes. The explicit `--pr` URL and evidence file record the agent's assertion that every criterion is satisfied. Applying adds an idempotent audit comment to each exact paired issue, linking it to that repository's resolving PR, then closes both issues. If one close succeeds and the other fails, retain ignored `.agent-work/paired-issue-completion/` and `.agent-work/paired-issues/` records and retry the same command. Completion targets only the exact stable-key pair; it does not delete or reopen issues or promote labels. This explicit cleanup is separate from ticket publication, which preserves closed state and does not synchronize issue state.
+
+Read the JSON `status`, not just the exit code: `READY_TO_COMPLETE` is an eligible preview, `COMPLETED` confirms both issues are closed, and `WAITING_*` or `BLOCKED` leaves cleanup pending. Evidence may be revised before apply begins; retain the same evidence when recovering an interrupted apply.
+
 ## Privacy and configuration
 
 Configure `origin` as the public review repository and `submission` as the private coursework repository. The helper refuses reversed visibility or identical repositories. Configuration without this file retains the original single-repository behavior for other checkouts and helper fixtures.
