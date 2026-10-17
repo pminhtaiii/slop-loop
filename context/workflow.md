@@ -4,7 +4,7 @@ This workflow governs contributors implementing an approved local Spec Kit featu
 
 ## Input readiness
 
-Before starting edits in an assigned feature checkout, run `node scripts/agents/pr-workflow.mjs preflight` and inspect its status, freshness, branch name, and dirty paths. Follow [the PR workflow](../docs/agents/pr-workflow.md#branch-and-size) for blocked reports; preserve existing work. For a selected use case, run `node scripts/agents/agent-context.mjs assignment --uc UC-03` with its canonical ID, then confirm the reported owner, prerequisites, and approved artifacts. `NEEDS_PLANNING` and `REVIEW_REQUIRED` are not implementation authorization. Before implementation, confirm the selected feature has `spec.md`, `plan.md`, and `tasks.md`, and resolve inconsistencies that block safe execution. Do not regenerate planning artifacts unless the user asks or a concrete gap requires it. `tasks.md` is the only task-status ledger.
+Before starting edits in an assigned feature checkout, run `node scripts/agents/pr-workflow.mjs preflight` and inspect its status, freshness, branch name, and dirty paths. Follow [the PR workflow](../docs/agents/pr-workflow.md#branch-and-size) for blocked reports; preserve existing work. For a selected use case, run `node scripts/agents/agent-context.mjs assignment --uc UC-03` with its canonical ID, then confirm the reported owner, prerequisites, and approved artifacts. `NEEDS_PLANNING` and `REVIEW_REQUIRED` are not implementation authorization. Before implementation, confirm the selected feature has `spec.md`, `plan.md`, and `tasks.md`, and resolve inconsistencies that block safe execution. Follow the [planning workflow](planning.md) to author or update specs, plans, and task breakdowns through its deterministic P0/P1 review loop before implementation authorization. Do not regenerate planning artifacts unless the user asks or a concrete gap requires it. `tasks.md` is the only task-status ledger.
 
 ## Active-task handoff
 
@@ -32,7 +32,7 @@ Routine mutations in every checkout update only the ignored shared store, keepin
 ## Workflow pipeline
 
 ```text
-build-spec (task graph and TDD) â†’ speckit-converge â†’ code-review â†’ context refresh â†’ contributor PR/CI
+planning loop (plan, tasks, P0/P1 audit) -> build-spec (task graph and TDD) -> speckit-converge -> code-review -> context refresh -> contributor PR/CI
 ```
 
 `/build-spec` owns implementation, convergence, and code review for the integrated revision. The contributor PR pilot has standing limited authorization for coordinator commits, feature-branch pushes, and draft PR creation/updates; workers have no remote authority. Follow the [PR and CI workflow](../docs/agents/pr-workflow.md). The pilot uses `development` as the base for both public and private PRs. Follow the [branch and PR conventions](../docs/agents/pr-conventions.md) before creating a new work branch or preparing PR metadata; identifiers are unique across both repositories and historical PRs. A human decides each merge; coordinator execution requires an explicit instruction for that PR and passing required checks. Remote issue changes and deployment remain separately authorized.

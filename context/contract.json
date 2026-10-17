@@ -11,6 +11,7 @@
     "context/runtime_policy.md",
     "context/state_and_memory.md",
     "context/workflow.md",
+    "context/planning.md",
     "context/testing.md",
     "context/progress_checker.md",
     "docs/progress-checker-matrices.md"

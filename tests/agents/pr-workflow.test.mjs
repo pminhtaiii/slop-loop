@@ -6,6 +6,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { assess, changedLines, runWorkflow, workflowSummary } from '../../scripts/agents/pr-workflow.mjs';
+import { assertAvailableNumber } from '../../scripts/agents/pr-conventions.mjs';
 
 function evidence() {
   return {
@@ -677,6 +678,129 @@ test('new publish rejects reused numbers across local branches, live heads and p
     }), /unique NNN|already exists/);
     assert.equal(f.calls.some(c => c[1] === 'push' || c[0] === process.execPath), false);
   }
+});
+
+test('an established convention-v1 PR remains updateable after a historical same-number PR is recorded', async t => {
+  const f = await checkout(t);
+  const initial = await f.run('publish', '--body-file', f.body);
+  assert.equal(initial.status, 'PUBLISHED');
+  const recordPath = join(f.root, '.agent-work/pr-workflow/010-tooling-example.json');
+  const record = JSON.parse(await readFile(recordPath, 'utf8'));
+  assert.equal(record.conventionVersion, 1);
+  const recordedPr = record.pr;
+  f.calls.length = 0;
+
+  const updated = await runWorkflow(['publish', '--body-file', f.body, '--summary', 'add the example workflow', '--root', f.root], {
+    execute(binary, args, cwd, timeout) {
+      if (binary === 'gh' && args[0] === 'api' && args.at(-1).includes('/pulls?')) {
+        return JSON.stringify([[{ state: 'closed', head: { ref: 'feat/010-uc01-historical' } }]]);
+      }
+      return f.execute(binary, args, cwd, timeout);
+    },
+  });
+
+  assert.equal(updated.status, 'PUBLISHED');
+  assert.equal(updated.pr, recordedPr);
+  assert.equal(f.calls.filter(call => call[0] === 'gh' && call[1] === 'pr' && call[2] === 'edit').length, 1);
+  assert.equal(f.calls.some(call => call[0] === 'gh' && call[1] === 'pr' && call[2] === 'create'), false);
+});
+
+test('assertAvailableNumber returns early when hasPr is true and checks collisions on retries', () => {
+  let executed = false;
+  assertAvailableNumber({
+    branch: 'feat/010-tooling-example',
+    targets: { primary: { remote: 'origin', repository: 'example/project' } },
+    execute() { executed = true; },
+    root: '.',
+    fresh: false,
+    hasPr: true,
+  });
+  assert.equal(executed, false, 'established PR with hasPr=true must return early without checking inventory');
+
+  const executeWithConflict = (binary, args) => {
+    if (binary === 'git' && args[0] === 'for-each-ref') return 'feat/010-tooling-example';
+    if (binary === 'git' && args[0] === 'ls-remote') return 'a'.repeat(40) + '\trefs/heads/feat/010-tooling-example\n' + 'b'.repeat(40) + '\trefs/heads/feat/010-other-tooling';
+    if (binary === 'gh' && args[0] === 'api') return JSON.stringify([[]]);
+    return '';
+  };
+  assert.throws(() => {
+    assertAvailableNumber({
+      branch: 'feat/010-tooling-example',
+      targets: { primary: { remote: 'origin', repository: 'example/project' } },
+      execute: executeWithConflict,
+      root: '.',
+      fresh: false,
+      hasPr: false,
+    });
+  }, /Feature number 010 was already used; select a unique NNN\./);
+
+  const executeClean = (binary, args) => {
+    if (binary === 'git' && args[0] === 'for-each-ref') return 'feat/010-tooling-example';
+    if (binary === 'git' && args[0] === 'ls-remote') return 'a'.repeat(40) + '\trefs/heads/feat/010-tooling-example';
+    if (binary === 'gh' && args[0] === 'api') return JSON.stringify([[]]);
+    return '';
+  };
+  assert.doesNotThrow(() => {
+    assertAvailableNumber({
+      branch: 'feat/010-tooling-example',
+      targets: { primary: { remote: 'origin', repository: 'example/project' } },
+      execute: executeClean,
+      root: '.',
+      fresh: false,
+      hasPr: false,
+    });
+  });
+});
+
+test('an unrecorded retry allows its own pushed branch on remote but rejects other branches sharing the number', async t => {
+  const f = await checkout(t);
+  await mkdir(join(f.root, '.agent-work/pr-workflow'), { recursive: true });
+  const recordPath = join(f.root, '.agent-work/pr-workflow/010-tooling-example.json');
+  await writeFile(recordPath, JSON.stringify({
+    schemaVersion: 1,
+    repository: 'example/project',
+    branch: 'feat/010-tooling-example',
+    base: 'development',
+    repairRounds: [],
+    publicationStarted: true,
+    conventionVersion: 1,
+  }));
+
+  await assert.rejects(runWorkflow(['publish', '--body-file', f.body, '--summary', 'add the example workflow', '--root', f.root], {
+    execute(binary, args, cwd, timeout) {
+      if (binary === 'git' && args[0] === 'ls-remote') {
+        return 'a'.repeat(40) + '\trefs/heads/feat/010-tooling-example\n' + 'b'.repeat(40) + '\trefs/heads/feat/010-other-feature';
+      }
+      return f.execute(binary, args, cwd, timeout);
+    },
+  }), /Feature number 010 was already used; select a unique NNN\./);
+
+  await assert.rejects(runWorkflow(['publish', '--body-file', f.body, '--summary', 'add the example workflow', '--root', f.root], {
+    execute(binary, args, cwd, timeout) {
+      if (binary === 'git' && args[0] === 'ls-remote') {
+        return 'a'.repeat(40) + '\trefs/heads/feat/010-tooling-example';
+      }
+      if (binary === 'gh' && args[0] === 'api' && args.at(-1).includes('/pulls?')) {
+        return JSON.stringify([[{ state: 'closed', head: { ref: 'feat/010-other-historical' } }]]);
+      }
+      return f.execute(binary, args, cwd, timeout);
+    },
+  }), /Feature number 010 was already used; select a unique NNN\./);
+
+  const retried = await runWorkflow(['publish', '--body-file', f.body, '--summary', 'add the example workflow', '--root', f.root], {
+    execute(binary, args, cwd, timeout) {
+      if (binary === 'git' && args[0] === 'ls-remote') {
+        return 'a'.repeat(40) + '\trefs/heads/feat/010-tooling-example';
+      }
+      return f.execute(binary, args, cwd, timeout);
+    },
+  });
+
+  assert.equal(retried.status, 'PUBLISHED');
+  assert.equal(retried.pr, 1);
+  const updatedRecord = JSON.parse(await readFile(recordPath, 'utf8'));
+  assert.equal(updatedRecord.pr, 1);
+  assert.equal(updatedRecord.publicationStarted, true);
 });
 
 test('new publish validates action summary and ordered nonempty description sections before gates', async t => {

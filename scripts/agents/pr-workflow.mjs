@@ -171,7 +171,7 @@ export async function runWorkflow(args, dependencies = {}) {
         if (targets && targets.submission.base !== 'development') throw new Error('New paired work requires submission/development; retain historical main configuration only for existing pairs.');
         assertNewSummary(values.summary);
         assertNewDescription(body);
-        assertAvailableNumber({ branch, targets: targets ?? { primary: { remote: 'origin', repository: remote } }, execute: pairedExecute, root: repo.root, fresh: !record.pr && !record.publicationStarted });
+        assertAvailableNumber({ branch, targets: targets ?? { primary: { remote: 'origin', repository: remote } }, execute: pairedExecute, root: repo.root, fresh: !record.pr && !record.publicationStarted, hasPr: Boolean(record.pr) });
       }
       git('fetch', '--no-tags', 'origin', 'refs/heads/development:refs/remotes/origin/development');
       const size = changedLines(git('diff', '--numstat', '--no-renames', 'origin/development...HEAD'));

@@ -28,8 +28,9 @@ export function assertNewDescription(body) {
 }
 
 // Read-only inventory: fetch-independent live heads and paginated PR history include deleted branches.
-export function assertAvailableNumber({ branch, targets, execute, root, fresh = false }) {
+export function assertAvailableNumber({ branch, targets, execute, root, fresh = false, hasPr = false }) {
   assertNewBranch(branch);
+  if (hasPr) return;
   const call = (binary, args) => execute(binary, args, root, 60_000);
   const names = new Set(call('git', ['for-each-ref', '--format=%(refname:short)', 'refs/heads']).split(/\r?\n/));
   let priorPr = false;
@@ -46,7 +47,7 @@ export function assertAvailableNumber({ branch, targets, execute, root, fresh = 
     for (const pr of pages.flat()) { names.add(pr.head.ref); if (pr.head.ref === branch) priorPr = true; }
   }
   const number = branch.slice(5, 8);
-  if ([...names].some(name => name !== branch && name.startsWith(`feat/${number}-`)) || fresh && priorPr) throw new Error(`Feature number ${number} was already used; select a unique NNN.`);
+  if ([...names].some(name => name !== branch && name.startsWith(`feat/${number}-`)) || (fresh && priorPr)) throw new Error(`Feature number ${number} was already used; select a unique NNN.`);
 }
 
 export function assertNewSummary(summary) {
