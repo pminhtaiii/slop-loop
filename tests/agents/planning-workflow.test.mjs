@@ -64,6 +64,31 @@ test('validateArtifacts: flags unresolved NEEDS CLARIFICATION markers as P1 erro
   assert.ok(p1Codes.includes('UNRESOLVED_CLARIFICATION'), 'Should flag NEEDS CLARIFICATION in plan.md and research.md');
 });
 
+test('validateArtifacts: flags unresolved clarification markers across all artifacts and recursive contracts', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'planning-wf-test-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+
+  await writeRequiredArtifacts(directory, {
+    'spec.md': '# Spec\nNEEDS CLARIFICATION on user roles\n',
+    'data-model.md': '# Data Model\nNEEDS CLARIFICATION on schema\n',
+    'quickstart.md': '# Quickstart\nNEEDS CLARIFICATION on port\n',
+    'tasks.md': '# Tasks\n- [ ] T001 Setup in src/index.ts NEEDS CLARIFICATION\n',
+  });
+  await mkdir(join(directory, 'contracts', 'services'), { recursive: true });
+  await writeFile(join(directory, 'contracts', 'services', 'user.md'), '# User Contract\nNEEDS CLARIFICATION on auth\n', 'utf8');
+
+  const result = await validateArtifacts({ featureDir: directory });
+  assert.equal(result.valid, false);
+  const clarificationFiles = result.p1
+    .filter(i => i.code === 'UNRESOLVED_CLARIFICATION')
+    .map(i => i.file);
+  assert.ok(clarificationFiles.includes('spec.md'));
+  assert.ok(clarificationFiles.includes('data-model.md'));
+  assert.ok(clarificationFiles.includes('quickstart.md'));
+  assert.ok(clarificationFiles.includes('tasks.md'));
+  assert.ok(clarificationFiles.includes('contracts/services/user.md'));
+});
+
 test('validateArtifacts: passes when core planning artifacts are clean and present', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'planning-wf-test-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -175,6 +200,38 @@ X04[X04-STATE] --> T004
   assert.equal(result.valid, true, JSON.stringify(result.p0));
 });
 
+test('validateTaskLedger: accepts dependency chains with whitespace around -> arrows', () => {
+  const result = validateTaskLedger(`# Tasks
+## Phase 1: Setup
+- [ ] T001 Prepare first file in src/one.ts
+- [ ] T002 Prepare second file in src/two.ts
+- [ ] T003 Prepare third file in src/three.ts
+
+## Dependencies & Execution Order
+T001 -> T002 -> T003
+`);
+  assert.equal(result.valid, true, JSON.stringify(result.p0));
+  assert.equal(result.p0.length, 0);
+});
+
+test('validateTaskLedger: flags any unparsed task line in Dependencies section as MALFORMED_DEPENDENCY', () => {
+  const result = validateTaskLedger(`# Tasks
+## Phase 1: Setup
+- [ ] T001 Prepare first file in src/one.ts
+- [ ] T002 Prepare second file in src/two.ts
+
+## Dependencies & Execution Order
+T002 depends on T001
+T002 after T001
+T001 unparsed words
+`);
+  const malformed = result.p0.filter(issue => issue.code === 'MALFORMED_DEPENDENCY');
+  assert.equal(malformed.length, 3);
+  assert.ok(malformed.some(m => m.message.includes('T002 depends on T001')));
+  assert.ok(malformed.some(m => m.message.includes('T002 after T001')));
+  assert.ok(malformed.some(m => m.message.includes('T001 unparsed words')));
+});
+
 test('validateTaskLedger: continues dependency validation through nested headings and task Owned Paths', () => {
   const result = validateTaskLedger(`# Tasks
 - [ ] T001 Prepare first file
@@ -272,6 +329,21 @@ test('validateTaskLedger: requires explicit local paths and rejects absolute or 
   assert.equal(result.p0.some(issue => issue.code === 'AMBIGUOUS_ROOT_PATH' && ['T002', 'T003', 'T004'].includes(issue.task)), false);
 });
 
+test('validateTaskLedger: excludes version numbers, abbreviations, and capitalized frameworks from AMBIGUOUS_ROOT_PATH', () => {
+  const result = validateTaskLedger(`# Tasks
+## Phase 1: Setup
+- [ ] T001 Upgrade React.js to 18.2.0 and Vue.js to 3.0 in package.json (e.g. for hooks, i.e. state)
+- [ ] T002 Configure tsconfig.json and eslint.config.mjs
+- [ ] T003 Fix main.ts and util.js
+`);
+  const ambiguous = result.p0.filter(issue => issue.code === 'AMBIGUOUS_ROOT_PATH');
+  assert.equal(ambiguous.length, 2);
+  const ambiguousMessages = ambiguous.map(issue => issue.message);
+  assert.ok(ambiguousMessages.some(msg => msg.includes('main.ts')));
+  assert.ok(ambiguousMessages.some(msg => msg.includes('util.js')));
+  assert.equal(ambiguous.some(issue => ['T001', 'T002'].includes(issue.task)), false);
+});
+
 test('generateReviewBrief: generates specialized review instructions for subagent roles', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'planning-wf-test-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -289,6 +361,19 @@ test('generateReviewBrief: generates specialized review instructions for subagen
   const testabilityBrief = await generateReviewBrief({ featureDir: directory, role: 'testability' });
   assert.equal(testabilityBrief.role, 'testability');
   assert.ok(testabilityBrief.prompt.includes('Testability & Edge Cases Reviewer'));
+});
+
+test('generateReviewBrief: rejects unknown review roles', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'planning-wf-test-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+
+  await assert.rejects(
+    () => generateReviewBrief({ featureDir: directory, role: 'invalid' }),
+    {
+      name: 'Error',
+      message: 'Unknown review role: invalid (expected standards|testability)',
+    }
+  );
 });
 
 test('generateReviewBrief: includes all contracts files recursively regardless of extension', async t => {

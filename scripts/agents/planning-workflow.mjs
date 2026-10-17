@@ -56,9 +56,34 @@ export async function validateArtifacts({ featureDir, root = process.cwd() }) {
     }
   };
 
-  await checkClarifications('plan.md');
-  await checkClarifications('research.md');
-  await checkClarifications('spec.md');
+  const filesToCheck = [
+    'spec.md',
+    'plan.md',
+    'research.md',
+    'data-model.md',
+    'quickstart.md',
+    'tasks.md',
+  ];
+
+  const contractsDir = join(dir, 'contracts');
+  if (await directoryExists(contractsDir)) {
+    const scanContracts = async (currentDir, relPrefix) => {
+      const entries = await readdir(currentDir, { withFileTypes: true }).catch(() => []);
+      for (const entry of entries) {
+        const relPath = `${relPrefix}/${entry.name}`;
+        if (entry.isDirectory()) {
+          await scanContracts(join(currentDir, entry.name), relPath);
+        } else if (entry.isFile()) {
+          filesToCheck.push(relPath);
+        }
+      }
+    };
+    await scanContracts(contractsDir, 'contracts');
+  }
+
+  for (const filename of filesToCheck) {
+    await checkClarifications(filename);
+  }
 
   const valid = p0.length === 0 && p1.length === 0;
   return { valid, p0, p1, p2 };
@@ -88,7 +113,11 @@ function collectPathReferences(text) {
   for (const match of plainText.matchAll(/\b[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)+\b/g)) {
     const candidate = match[0];
     const before = plainText[match.index - 1];
-    if (candidate.toLowerCase() === 'node.js' || before === '/' || before === '\\') continue;
+    if (before === '/' || before === '\\') continue;
+    if (!/\.[a-z][a-z0-9]*$/i.test(candidate)) continue;
+    if (/^\d+(?:\.\d+)+$/.test(candidate)) continue;
+    if (/^(?:e\.g|i\.e)\.?$/i.test(candidate)) continue;
+    if (['node.js', 'vue.js', 'react.js'].includes(candidate.toLowerCase()) || /^[A-Z][A-Za-z0-9_-]*\.js$/.test(candidate)) continue;
     if (['package.json', 'tsconfig.json'].includes(candidate.toLowerCase()) || /^eslint\.config\.[A-Za-z0-9_-]+$/i.test(candidate)) {
       paths.push(candidate);
     } else {
@@ -170,7 +199,7 @@ export function validateTaskLedger(tasksContent) {
       const declaration = line.replace(/^[-*]\s+/, '');
       const arrow = declaration.match(/^((?:T\d{3}(?:\s*,\s*T\d{3})*))\s*->\s*((?:T\d{3}(?:\s*,\s*T\d{3})*))[.]?$/);
       const follows = declaration.match(/^((?:T\d{3}(?:\s*,\s*T\d{3})*))\s+follows\s+((?:T\d{3}(?:\s*,\s*T\d{3})*))[.]?$/i);
-      const chain = declaration.match(/^(T\d{3}(?:(?:\s*-->|\s*->|\s*→\s*)T\d{3})+)/);
+      const chain = declaration.match(/^(T\d{3}(?:\s*(?:-->|->|→)\s*T\d{3})+)/);
       const addEdges = (prerequisites, dependents) => {
         for (const prerequisite of prerequisites.split(/\s*,\s*/).filter(Boolean)) {
           for (const dependent of dependents.split(/\s*,\s*/).filter(Boolean)) {
@@ -200,7 +229,7 @@ export function validateTaskLedger(tasksContent) {
       } else if (chain && !/^(?:-->|->|→)/.test(declaration.slice(chain[0].length).trim())) {
         const ids = chain[0].match(/T\d{3}/g);
         for (let index = 0; index < ids.length - 1; index += 1) addEdges(ids[index], ids[index + 1]);
-      } else if (/^T\d+\b/.test(declaration) && /->|→|\bfollows\b|\bdependenc(?:y|ies)\b|,|&/.test(declaration)) {
+      } else if (/^T\d+\b/.test(declaration)) {
         p0.push({ code: 'MALFORMED_DEPENDENCY', message: `Malformed dependency declaration: "${line}"`, line: lineNum });
       }
       continue;
@@ -399,6 +428,9 @@ export function validateTaskLedger(tasksContent) {
 }
 
 export async function generateReviewBrief({ featureDir, role = 'standards', root = process.cwd() }) {
+  if (!['standards', 'testability'].includes(role)) {
+    throw new Error(`Unknown review role: ${role} (expected standards|testability)`);
+  }
   const dir = resolve(root, featureDir);
   const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
   const targetFiles = entries.filter(entry => entry.isFile() && entry.name.endsWith('.md')).map(entry => entry.name);
