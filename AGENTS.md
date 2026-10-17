@@ -29,5 +29,7 @@ The contributor PR pilot targets `development` and treats about 1,000 added plus
 <!-- SPECKIT START -->
 ## Active Spec Kit feature
 
+UC-01 evidence-backed issue triage: DRAFT [spec](specs/002-uc01-issue-triage/spec.md), [plan](specs/002-uc01-issue-triage/plan.md), [tasks](specs/002-uc01-issue-triage/tasks.md). Planning/publication only; artifact approval, shared consumer contracts and implementation authorization remain pending in [decisions](specs/002-uc01-issue-triage/contracts/decisions.md). No UC-01 runtime implementation or verification is claimed.
+
 UC-03 verified code repair: [spec](specs/001-verified-code-repair/spec.md), [plan](specs/001-verified-code-repair/plan.md), [tasks](specs/001-verified-code-repair/tasks.md). Phase 1 build setup is complete; Phase 2 contract validators and controlled mocks (T003–T004) are authorized with user-confirmed shared contract agreement. Production choices remain gates before real execution; Phase 3 onward requires separate authorization. See the [decision record](specs/001-verified-code-repair/contracts/decisions.md); test-only foundations do not prove runtime capability.
 <!-- SPECKIT END -->
