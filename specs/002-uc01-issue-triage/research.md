@@ -35,3 +35,11 @@
 ## Open production decisions
 
 Provider/model, transport, numeric budgets, catalog defaults, real adapter versions and evaluation thresholds remain release gates in [decisions](contracts/decisions.md). Research resolves a planning approach, not those approvals. The constitution is an unratified template. No external technology recommendation or new dependency is needed for this documentation scope.
+
+## Incremental evaluation and source inspection
+
+**Decision**: Follow the leader direction reported by the user: design cases/rubrics first, implement authorized slices, execute available checks immediately, accumulate failure/regression evidence, then integrate Tai's shared evaluation. Propose versioned reusable case/result/registration records in [evaluation](contracts/evaluation.md); keep T001–T016 and the six existing Issue identities.
+**Rationale**: On 2026-10-17 at 2763d4a, package.json and both CI workflows expose build/type/lint/runtime/helper tests; tests/runtime contains bootstrap and UC-03 contracts/mocks. No evals/ directory, UC-01 runtime or shared runner exists. Early Node tests can verify local contracts/behavior without a competing runner; shared/project acceptance requires a real delivery and versioned agreement.
+**Alternatives considered**: Deferring all case design/safety until T015 prevents incremental acceptance; building a UC-01 orchestrator duplicates Tai's ownership; pretending mock accuracy is model quality misstates evidence. A hard 100% gate on all classification samples would also obscure the user-supplied 80% floor, so hard security/contract gates, scored quality and execution completeness remain distinct.
+
+The two original course Markdown sources are unavailable in this session/tracked inventory. Only the user's supplied minima are relied on. IssueTicket fields, retry wording and full-project counts are pending source reconciliation in [decisions](contracts/decisions.md); ADR-0005 is unchanged.

@@ -1,8 +1,8 @@
-# Quickstart: validating the UC-01 draft
+# Quickstart: incremental UC-01 verification
 
-**Status**: Planning only. No UC-01 runtime commands or test suites exist yet. Commands below separate checks available now from future authorized acceptance.
+**Status**: DRAFT planning only. No UC-01 runtime/tests, executable evaluation dataset or shared evaluation runner is implemented by this revision. Future paths in tasks are proposals pending ownership agreement; no new runner command or implementation path is selected.
 
-## Available planning checks
+## Existing planning and repository checks
 
 From the repository root in PowerShell:
 
@@ -14,17 +14,31 @@ node scripts/ci/check-runtime.mjs
 node --test
 ```
 
-Expected: assignment reports Thai and draft artifacts, not implementation authorization; handoff reflects all unchecked tasks; context check validates links/facts. Existing runtime/helper tests exercise the baseline only, not UC-01. Runtime check requires installed approved dependencies and supported Node/pnpm; report environmental failures accurately.
+These commands exist now. Assignment/handoff show Thai, draft artifacts and 16 unchecked tasks; context checks validate links/facts. Runtime and full Node suites exercise existing bootstrap/UC-03 contracts/mocks/contributor helpers, not UC-01 cases, classification accuracy or project evaluation. Report actual exit status, failures and skipped checks. Existing `pnpm run validate:runtime` is a build/lint/type/test command, not a model evaluation runner.
 
-## Future controlled acceptance (not authorized here)
+## Future authorized slice workflow
 
-After A-ARTIFACTS and X-FOUNDATION-AGREEMENT, implement tasks in the [ledger](tasks.md). Build with existing `pnpm run validate:runtime`; planned compiled tests will be runnable as `node --test dist/tests/runtime/uc01/*.test.js` after they exist. This is a future path, not a passing result.
+1. At T001 approve actual domain scope/consumer contracts; keep shared evaluation API/version agreement separately pending with Tai. Directional agreement grants no implementation permission.
+2. T002 designs product/evaluation vectors and grading statuses before validator code. T003 defines bounded mock scripts/call spies; T004 prepares versioned C01–C22 inputs, private expected outcomes/rules and development/held-out split. Validate isolation and case/result identities before feature work.
+3. T005–T006 execute available US1 cases immediately, including irrelevant input, invalid output, injection and budget guards. T007–T008 do the same for clarification/answer injection, then T009–T010 for catalog/routing. Run impacted earlier regressions and capture each result before accepting the slice.
+4. Use the existing Node test mechanism for local UC-01 tests after they exist and are authorized, with the proposed case/rule design and injected ports. Confirm actual test module paths/discovery from the implementation; do not invent a CLI invocation or report an absent suite as passed. This is local test coverage, not a parallel runner.
+5. T011–T013 execute real adapter/restart/policy/receiver checks only with actual owner deliveries, versions and configured authority. Missing components yield not-run records with reasons and retry gates. T014 consolidates earlier safety regression evidence; it never postpones early available attack checks.
+6. T015 uses the corpus/rules designed earlier, approved thresholds and actual model/runner deliveries for two comparable scored runs and shared registration/conformance. T016 reconciles runtime gates and separates UC-01 verdict from project verdict. No context capability promotion without complete required real evidence.
 
-1. Use C01–C08 fixtures for configured classification and all severity outcomes; inspect the three impact dimensions and reporter/repository evidence distinction.
-2. Use C06/C10 to return questions, retain caller-owned continuation binding and supply answers in the next invocation; C11 must deny stale/foreign answers before calls.
-3. Change catalog for C12/C13; only supported compatible recommendation or undetermined is accepted; dispatch spy remains zero.
-4. Run C14–C22 negative cases, including unsupported model tools, protected data, missing budgets, uncertain usage and mock production admission. Assert actual consumed/retained accounting and safe termination.
+## Current availability and later run conditions
 
-## Future real integration
+| Evaluation scope | Status in this planning revision | Condition to execute |
+|---|---|---|
+| UC-01 contract/mock behavior | not-run: no UC-01 validators/tests exist | A-ARTIFACTS, agreed domain seam and authorized T002–T010 implementation |
+| Real adapters / receiver | not-run: required real deliveries absent | X-READ-MODEL, X04-STATE, X05-GATE, X-RECEIVER and A-PRODUCTION; actual versioned integration |
+| Held-out model quality | not-run: no approved corpus/grader/provider run | Prepared T004 data design, A-EVALUATION/A-PRODUCTION, actual model and required integrations |
+| Shared scoped registration | not-run: runner/signatures not delivered/agreed | X-EVAL-AGREEMENT and X-EVAL-RUNNER; actual T015 compatibility evidence |
+| Whole project / one-command entry point | not-run: no runner or approved required-UC/case manifest | Tai's real runner, confirmed course-wide requirements and all required UC registrations/deliveries |
 
-T011–T013 require recorded shared adapter versions and [owner gates](contracts/decisions.md). Run actual guarded read/provider, durable reservation/restart and policy pause/resume cases with their owners. Validate receiving-workflow projection without dispatch. Keep hidden grading inaccessible. T015 needs separately approved real-run configuration and thresholds; record two evaluation runs with usage, agreement and safe sanitized evidence. If unavailable, report BLOCKED, preserve mock-only results and leave tasks unchecked.
+This availability table is not a task ledger or execution result. Missing checks cannot be recorded as pass. Existing repository checks have separate coordinator logs; none establish these future capabilities.
+
+## Evidence and shared compatibility
+
+Use [evaluation records](contracts/evaluation.md) for case/dataset/rule IDs, code/subject/config identities, provenance, pass/fail/error/not-run and safe trace/evidence refs. Preserve failures and unknown usage; raw prompts/secrets/gold labels stay out of public artifacts. Real runs record actual latency/tokens/cost or explicit unknowns, never mock zeros presented as measurements. Keep equivalent corpus/oracle/config identities for before/after comparison and report intentional treatment changes.
+
+The same case definitions must later register through Tai's approved seam. Prove UC-01-only selection, no global ID collisions, required-project coverage, isolated result namespaces and non-passing overall status for required UC failures/missing work. No actual shared command is documented until Tai/leader selects and delivers it. See [decisions](contracts/decisions.md) for pending sources, approvals and delivery gates.

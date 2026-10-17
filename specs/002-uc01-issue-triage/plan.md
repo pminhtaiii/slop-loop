@@ -14,7 +14,7 @@ Thai owns an assessment boundary for one issue/repository. Validate input and tr
 **Language/Version**: Proposed consumer uses approved TypeScript 6.0.3, Node.js 24 LTS, strict NodeNext ESM.
 **Primary Dependencies**: Existing LangGraph and Node built-ins; no new package proposed. Graph wiring consumes shared ports rather than new tools.
 **Storage**: No UC-01 store. UC-04 supplies durable task accounting and continuation storage; fixtures are explicitly in-memory.
-**Testing**: Node test runner, controlled port spies, contract vectors and held-out evaluation; [acceptance](contracts/acceptance.md).
+**Testing**: Evaluation-first at each slice using Node contract/behavior tests and controlled ports, followed by actual integration and held-out/shared evaluation; [acceptance](contracts/acceptance.md) and proposed [evaluation contract](contracts/evaluation.md).
 **Target Platform**: Host harness; approved target repository read boundary owned by Tai. Deployment/API transport remains open.
 **Project Type**: Internal runtime assessment module, with no CLI/service framework selected.
 **Performance Goals**: Finite configured invocation deadline and call ceilings; numeric production values and measured quality thresholds require approval, not invented defaults.
@@ -75,15 +75,25 @@ The existing executable ModelPort requires UC-03 TaskState/ModelProposal, and Re
 3. Implement US1 through mocked shared ports (T005–T006); demo classified issue plus evidence-linked severity with zero side effects. This is the first vertical slice and includes setup/foundation prerequisites.
 4. Extend US1 to later-answer clarification (T007–T008), then catalog recommendation cases (T009–T010); retain independently runnable story tests.
 5. Integrate real shared foundation/policy/accounting only when delivered and approved (T011–T012); do not replace unavailable ports with production mocks. Receiving-workflow compatibility is validated without dispatch (T013).
-6. Evaluate safety and real-provider quality separately (T014–T015); authorize any paid/provider run separately with finite approved config. T016 records evidence and leaves unmet runtime checks unverified.
+6. T014 consolidates safety regressions already exercised at the earliest owning slices; it is not their first execution point. T015 runs real-model comparisons and proves shared evaluation registration using data/rules designed at T002–T004. Authorize paid/provider runs separately with finite approved config. T016 reconciles accumulated evidence and all runtime gates before any capability update.
+
+At every step: define behavior and freeze relevant case/oracle/rule versions before implementation; execute available checks immediately after implementation; record pass/fail/error/not-run plus actual evidence; run impacted regressions; accept only that task's declared level/scope when complete. Deferred real checks retain explicit blockers and never inherit mock passes. T001–T016 and all six ticket groupings are preserved; no extra evaluation task ledger or runner is introduced.
+
+## Evaluation architecture and observed baseline
+
+Inspection at source 2763d4a on 2026-10-17 found package scripts for typecheck/lint/build/runtime validation, `tests/runtime/` bootstrap plus UC-03 contract/mocks, and contributor/runtime Ubuntu/Windows CI. There is no `evals/`, UC-01 runtime/test suite, registered case catalog or shared evaluation runner. Existing Node tests are useful local verification infrastructure; neither those tests nor CI establish model accuracy or one-command project evaluation.
+
+T002 designs/validates the proposed case/result/grading records; T003 supplies finite mock responses and trace/call spies; T004 prepares C01–C22 cases/oracles and held-out corpus design before T005–T010 behavior work. Each functional slice consumes those records in ordinary Node tests. Tai owns future case discovery, grader infrastructure, project selection/orchestration and reporting; Thai owns UC-01 case content and consumer compatibility. The [evaluation contract](contracts/evaluation.md) defines IDs, versions, isolation, status/metric semantics, aggregation and registration without choosing an unapproved runner command or implementation path.
+
+X-EVAL-AGREEMENT approves shared registration/result signatures with Tai; X-EVAL-RUNNER supplies a tested real version. These gate T015 shared registration, not early approved local contract/mock slices. When the runner is absent, local tests still produce level-specific evidence and shared-integration cases stay not-run. T015 needs actual scoped registration, failure propagation and cross-UC isolation evidence; a full-project claim additionally requires the owner's required-UC/case manifest and all external deliveries. T016 distinguishes UC-01 runtime acceptance from whole-project evaluation.
 
 ## Verification strategy
 
 - Trace each FR to acceptance cases and implementation tasks; validate schema shapes, citation membership, severity dimensions and question/answer binding.
 - Unit/contract tests use disjoint owned paths and deterministic fixtures; no live GitHub issue fetching, network, provider access, commands or actual recovery is implied.
-- Attack tests cover injected tools, path escape, protected content, stale continuation, malformed citations, absent/exhausted budgets and uncertain provider usage. Shared guards must prevent effects before denial.
+- Attack tests cover injected tools, path escape, protected content, stale continuation, malformed citations, absent/exhausted budgets and uncertain provider usage at the first slice capable of observing them, not only T014. Shared guards must prevent effects before denial; mock guard-ordering evidence is separate from real containment evidence.
 - Integration consumes versioned shared adapters with `real` provenance and records immutable revisions/config identities; perform actual UC-04 restart and UC-05 pause/resume acceptance jointly. Clarification itself is a needs-info result, not a durable wait implementation.
-- Compare two held-out evaluation runs with machine-readable metrics, hidden labels outside model/tool context, and owner-approved numeric thresholds. Deterministic schema passes never prove model judgment quality.
+- Compare two equivalent held-out real-model runs with machine-readable metrics, hidden labels outside model/tool context, the user-supplied 80% classification floor and owner-approved remaining thresholds. Retain case failures and completeness separately from aggregate scores. Deterministic schema passes never prove model judgment quality.
 - Planning gates: context checker, runtime baseline validator and full Node suite. Those checks validate existing repository integration only; no UC-01 runtime exists in this change.
 
 ## Dependencies and release gates

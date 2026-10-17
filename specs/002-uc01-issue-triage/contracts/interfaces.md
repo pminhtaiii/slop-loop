@@ -41,3 +41,11 @@ Model/tool retry ceiling is finite trusted configuration; this draft proposes no
 | Receiver compatibility | Validate assessment projection against receiving owner's versioned input, including missing reproduction/criteria for UC-03 | T013; no dispatch. Recommendation never bypasses receiver intake/approval |
 
 UC-01 does not depend on UC-03 repair execution. A real adapter cannot be admitted merely by setting `provenance='real'`; composition verifies delivery/version and policy/accounting configuration, with tests asserting zero dispatch on failed admission.
+
+## Proposed evaluation consumer seam
+
+The [evaluation contract](evaluation.md) defines PublicCase/GradingCase/CaseResult and a versioned registration descriptor. Thai owns domain cases, expected outcomes and local contract/behavior adapters; Tai owns shared selection, orchestration, trusted grading infrastructure and one-command project evaluation. No new platform or executable path/command is selected here.
+
+Proposed capabilities are register versioned UC cases, select one UC/requested level or the required project manifest, execute via authorized SUT adapter, grade through isolated oracle access and aggregate without losing per-case status/evidence. X-EVAL-AGREEMENT must confirm actual signatures, status translation and isolation; X-EVAL-RUNNER must identify an implemented delivery and conformance evidence. Existing UC-03 ModelPort/StatePort types are not repurposed as evaluation schemas.
+
+Standalone Node tests may consume the same versioned case/rule designs before that runner exists; this proves only the exercised local level. T015 must prove real registration without changing case/oracle semantics, correct UC scoping, required-UC coverage, isolated result namespaces, failure propagation and comparable reporting. Missing shared capabilities are not-run with owner/gate reasons, never replaced by a second UC-01 runner or silently mapped to pass.
