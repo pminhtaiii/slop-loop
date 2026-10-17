@@ -68,6 +68,8 @@ Shared foundation includes the model adapter and structured-output validation, L
 
 ## UC-05: Human approval
 
+Agreed CLI, task-wide pause/rejection, plan-coverage, and low-latency checker direction: [ADR-0006](adr/0006-uc05-cli-and-human-control.md). The design interview is closed; implementation, detailed checker rules, latency targets, and benchmarks remain deferred. Adaptation after rejection requires explicit developer direction; no autonomous safer workaround. This planning agreement does not create feature artifacts or establish runtime capability.
+
 **Owns:** action classification, approval pause, decision validation, and continuation at the interrupted action, following [tools and permissions](../context/tools_permissions.md) and [runtime policy](../context/runtime_policy.md).
 
 **Deliver:** deterministic allowed/approval-required/forbidden decisions. Bind approval to the normalized action, repository identity/state, and policy identity/version. Persist the action and decision through UC-04's storage contract. A materially changed action requires reevaluation.

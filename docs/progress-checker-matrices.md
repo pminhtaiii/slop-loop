@@ -54,12 +54,12 @@ Applied code with incomplete required verification remains `IMPLEMENTED_UNVERIFI
 | Workflow pause | Execution stops before the action |
 | Approval binding | Decision is bound to the normalized action, repository identity/state, and policy identity/version |
 | Approve and resume | Resume occurs at the interrupted point only while the approval binding remains valid |
-| Reject and adapt | A rejected action is not retried indirectly |
+| Reject and adapt | Rejection stops all agents on the task; no indirect retry or autonomous workaround; explicit developer direction is required before continuation, with fresh approval for revised approval-required actions |
 | Modify then approve | Revised action runs only after approval |
 | Forbidden-action handling | A forbidden action cannot be approved |
 | Approval audit trail | Decision records include the action and outcome |
 
-Approval applies to a specific proposed action; materially changed actions are reevaluated. Rejection cannot be bypassed through an equivalent tool or command form.
+Approval applies to a specific proposed action; materially changed actions are reevaluated. Rejection cannot be bypassed through an equivalent tool or command form. Under [ADR-0006](adr/0006-uc05-cli-and-human-control.md), pending approval pauses the entire task, including model calls and background investigation. Rejection and pending pauses survive restart; cancellation and durable outcome recording may continue. Explain stale bindings before requesting a fresh decision. These are target criteria, not evidence of runtime enforcement.
 
 ## State, checkpoint, and recovery
 
