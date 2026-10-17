@@ -11,7 +11,7 @@ When `publication-targets.json` exists, follow [paired publication](../../../doc
 
 ## Publish and monitor
 
-1. Check the task handoff, working tree, feature branch, immediate base, and diff. The branch must be `feat/NNN-lowercase-description`; its PR title must use `<branch-name>: <short summary>` (1–80 characters for the summary on one line) and its base must be `development`.
+1. Check the task handoff, working tree, immediate base and diff. Follow the [branch and PR conventions](../../../docs/agents/pr-conventions.md) for new scoped names, unique numbers, action summaries, descriptions and historical compatibility. Both configured PR bases are development.
 2. Refresh affected context before publishing. Prepare the body from the final diff and verified evidence using the [PR body skill](../pr/SKILL.md).
 3. Commit the scoped work to a clean feature branch, then publish early as a draft. `publish` runs the repository gates, pushes the branch, and creates or updates its PR:
 

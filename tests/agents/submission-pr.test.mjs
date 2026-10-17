@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import test from 'node:test';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,7 +10,7 @@ import { inspectSubmissionTarget, publishSubmission, verifySubmission } from '..
 const branch = 'feat/001-example';
 const targets = {
   primary: { remote: 'origin', repository: 'example/public', base: 'development' },
-  submission: { remote: 'submission', repository: 'course/private', base: 'main' },
+  submission: { remote: 'submission', repository: 'course/private', base: 'development' },
 };
 const primaryPr = { number: 42, url: 'https://github.com/example/public/pull/42' };
 const title = `${branch}: mirror the approved source`;
@@ -48,6 +48,7 @@ async function fixture(t) {
   git(source, 'add', '.');
   git(source, 'commit', '--quiet', '-m', 'public source');
   git(source, 'push', '--quiet', 'origin', 'HEAD:refs/heads/main');
+  git(source, 'push', '--quiet', 'origin', 'HEAD:refs/heads/development');
   git(source, 'switch', '--quiet', '-c', branch);
   await writeFile(join(source, 'src', 'feature.txt'), 'feature one\n');
   git(source, 'add', '.');
@@ -61,6 +62,10 @@ async function fixture(t) {
   git(privateSeed, 'add', '.');
   git(privateSeed, 'commit', '--quiet', '-m', 'initial private history');
   git(privateSeed, 'push', '--quiet', privateRemote, 'HEAD:refs/heads/main');
+  await writeFile(join(privateSeed, 'development.txt'), 'distinct private development base\n');
+  git(privateSeed, 'add', '.');
+  git(privateSeed, 'commit', '--quiet', '-m', 'private development base');
+  git(privateSeed, 'push', '--quiet', privateRemote, 'HEAD:refs/heads/development');
 
   const repo = { root: source, primary: source };
   const prs = [];
@@ -165,6 +170,8 @@ test('publication mirrors the complete source tree onto private ancestry and ver
   const f = await fixture(t);
   const publicMain = git(f.source, 'ls-remote', 'origin', 'refs/heads/main');
   const privateMain = f.remoteHead('refs/heads/main');
+  const publicDevelopment = git(f.source, 'ls-remote', 'origin', 'refs/heads/development');
+  const privateDevelopment = f.remoteHead('refs/heads/development');
   const sourceHead = git(f.source, 'rev-parse', 'HEAD');
 
   const published = await publishSubmission(f.input());
@@ -174,12 +181,16 @@ test('publication mirrors the complete source tree onto private ancestry and ver
   assert.equal(published.head, mirrorHead);
   assert.equal(published.sourceHead, sourceHead);
   assert.equal(published.sourceTree, sourceTree);
-  assert.equal(published.base, 'main');
+  assert.equal(published.base, 'development');
   assert.equal(published.isDraft, true);
   assert.equal(git(f.source, 'rev-parse', `${mirrorHead}^{tree}`), sourceTree);
-  assert.equal(git(f.source, 'rev-parse', `${mirrorHead}^`), privateMain);
+  assert.equal(git(f.source, 'rev-parse', `${mirrorHead}^`), f.remoteHead('refs/heads/development'));
+  assert.notEqual(git(f.source, 'rev-parse', `${mirrorHead}^`), privateMain);
   assert.equal(git(f.source, 'ls-remote', 'origin', 'refs/heads/main'), publicMain);
   assert.equal(f.remoteHead('refs/heads/main'), privateMain);
+  assert.equal(git(f.source, 'ls-remote', 'origin', 'refs/heads/development'), publicDevelopment);
+  assert.equal(f.remoteHead('refs/heads/development'), privateDevelopment);
+  assert.deepEqual(f.calls.filter(c => c[0] === 'git' && c[1] === 'push'), [['git', 'push', 'submission', `${mirrorHead}:refs/heads/${branch}`]]);
   assert.match(f.prs[0].body, /https:\/\/github\.com\/example\/public\/pull\/42/);
   assert.doesNotMatch(f.prs[0].body, /course\/private/);
 
@@ -193,7 +204,7 @@ test('same-head retry reuses the mirror commit and PR; a new source tree advance
   assert.equal(again.head, first.head);
   assert.equal(again.number, first.number);
   assert.equal(f.prs.length, 1);
-  assert.equal(git(f.source, 'rev-list', '--count', `${f.remoteHead('refs/heads/main')}..${again.head}`), '1');
+  assert.equal(git(f.source, 'rev-list', '--count', `${f.remoteHead('refs/heads/development')}..${again.head}`), '1');
 
   await writeFile(join(f.source, 'src', 'feature.txt'), 'feature two\n');
   git(f.source, 'add', '.');
@@ -262,4 +273,26 @@ test('invalid branch names are rejected before querying or writing either target
   f.calls.length = 0;
   await assert.rejects(publishSubmission(input), /feat\/NNN-description/);
   assert.equal(f.calls.length, 0);
+});
+
+test('missing submission development never falls back to the existing main branch', async t => {
+  const f = await fixture(t);
+  git(f.source, 'push', 'submission', '--delete', 'development');
+  f.calls.length = 0;
+  await assert.rejects(publishSubmission(f.input()), /configured base/);
+  assert.equal(f.calls.some(c => c[1] === 'push' || c[1] === 'pr' && ['create', 'edit'].includes(c[2])), false);
+});
+
+test('historical main records remain verifiable and target migration refuses to rewrite them', async t => {
+  const f = await fixture(t);
+  const historical = { ...targets, submission: { ...targets.submission, base: 'main' } };
+  const first = await publishSubmission(f.input({ targets: historical }));
+  const path = join(f.source, '.agent-work/paired-prs/feat-001-example.json');
+  const snapshot = await readFile(path, 'utf8');
+  assert.equal(first.base, 'main');
+  assert.equal((await verifySubmission({ ...f.input({ targets: historical }), sourceHead: first.sourceHead })).head, first.head);
+  f.calls.length = 0;
+  await assert.rejects(publishSubmission(f.input()), /different targets/);
+  assert.equal(f.calls.some(c => c[1] === 'push' || c[1] === 'pr' && ['create', 'edit'].includes(c[2])), false);
+  assert.equal(await readFile(path, 'utf8'), snapshot);
 });

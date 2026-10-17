@@ -35,7 +35,7 @@ Routine mutations in every checkout update only the ignored shared store, keepin
 build-spec (task graph and TDD) â†’ speckit-converge â†’ code-review â†’ context refresh â†’ contributor PR/CI
 ```
 
-`/build-spec` owns implementation, convergence, and code review for the integrated revision. The contributor PR pilot has standing limited authorization for coordinator commits, feature-branch pushes, and draft PR creation/updates; workers have no remote authority. Follow the [PR and CI workflow](../docs/agents/pr-workflow.md). The pilot uses `development` as its base. A human decides each merge; coordinator execution requires an explicit instruction for that PR and passing required checks. Remote issue changes and deployment remain separately authorized.
+`/build-spec` owns implementation, convergence, and code review for the integrated revision. The contributor PR pilot has standing limited authorization for coordinator commits, feature-branch pushes, and draft PR creation/updates; workers have no remote authority. Follow the [PR and CI workflow](../docs/agents/pr-workflow.md). The pilot uses `development` as the base for both public and private PRs. Follow the [branch and PR conventions](../docs/agents/pr-conventions.md) before creating a new work branch or preparing PR metadata; identifiers are unique across both repositories and historical PRs. A human decides each merge; coordinator execution requires an explicit instruction for that PR and passing required checks. Remote issue changes and deployment remain separately authorized.
 
 ## Agent coordination
 

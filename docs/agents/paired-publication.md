@@ -4,13 +4,13 @@ The public `origin` repository is the review source of truth, including CodeRabb
 
 ## Pull requests
 
-Use the existing publication command from the public checkout:
+Follow the [branch and PR conventions](pr-conventions.md) for the shared feature branch, identical titles and PR descriptions. Use the existing publication command from the public checkout:
 
 ```powershell
 node scripts/agents/pr-workflow.mjs publish --base development --body-file <body.md> --summary "<short summary>"
 ```
 
-The helper validates both targets before publishing, runs the normal local gates, publishes the public feature PR against `development`, then creates or updates its submission partner against `main`. Both repositories receive feature branches, never direct writes to their default branches. Both PRs remain subject to human merge decisions.
+The helper validates both targets before publishing, runs the normal local gates, publishes the public feature PR against `development`, then creates or updates its submission partner against `development`. Both repositories receive feature branches, never direct writes to their default branches. Both PRs remain subject to human merge decisions.
 
 The submission repository has separate Git history. Its feature commit has submission ancestry and an exact copy of the public source commit's tracked tree. This includes the project README at the repository root, replacing the initial submission README as approved. Ignored dependencies, local evidence and agent state are excluded. The source SHA and tree are retained as provenance; the two PR heads are intentionally different commits.
 
@@ -19,6 +19,14 @@ Two GitHub operations cannot be atomic. If publication stops after one target su
 After CodeRabbit or another contributor commits fixes to the public feature branch, pull those changes into the public checkout, verify them, and rerun publication to update the submission snapshot. This is explicit command-driven synchronization; opening a PR directly in GitHub does not run the helper.
 
 Link both returned PR URLs in the app and import a receipt containing both through `record-app-state`. The completion gate checks the public current-head CI and both matching published PR identities. It does not claim the submission repository's CI passed without inspecting it. Public review comments remain advisory under the [PR workflow](pr-workflow.md).
+
+## Target transition
+
+New pairs use public `origin/development` and private `submission/development`. Repository default branches may remain `main`; this does not change PR bases. The first mirror commit is parented by the inspected submission base SHA; subsequent mirror commits advance the same feature branch by fast-forward. Schema-v1 records retain the historical field name `mainBase` for that configured base SHA.
+
+Configuration and retained pair targets must agree. Historical `submission/main` configuration remains readable for recovery and verification; records and PRs are never automatically retargeted. A changed configuration on an active pair blocks publication, verification and contributor completion before remote writes. Keep the record and repair budget intact. Finish or inspect that pair in a separate checkout with its original configuration, then use a fresh unique branch for development-targeted work. Do not rewrite the private history, reset records, or force-update a branch to bypass the refusal. Historical paired-ticket completion likewise requires the original base configuration and exact recorded resolving PR identity; preview before applying.
+
+An existing private feature branch or PR without retained accounting also blocks adoption. Retain both workflow and pair stores across partial publication. No transition writes to either base branch or to submission/main.
 
 ## Tickets
 

@@ -9,7 +9,7 @@ metadata:
     url: "https://github.com/humanlayer/skills/blob/main/plugins/show-me/skills/show-me/SKILL.md"
 ---
 
-Use this template for writing the PR body:
+Follow the [branch and PR conventions](../../../docs/agents/pr-conventions.md) for new work and historical compatibility. Use this template for writing the PR body:
 
 ```markdown
 ## Summary

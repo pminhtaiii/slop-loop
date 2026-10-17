@@ -10,7 +10,7 @@ import { assess, changedLines, runWorkflow, workflowSummary } from '../../script
 function evidence() {
   return {
     head: 'abc',
-    pr: { state: 'OPEN', headRefOid: 'abc', headRefName: 'feat/001-example', title: 'feat/001-example: add the example workflow', baseRefName: 'development', reviewDecision: 'APPROVED',
+    pr: { state: 'OPEN', headRefOid: 'abc', headRefName: 'feat/010-tooling-example', title: 'feat/010-tooling-example: add the example workflow', baseRefName: 'development', reviewDecision: 'APPROVED',
       reviews: { pageInfo: { hasPreviousPage: false }, nodes: [{ author: { login: 'coderabbitai', __typename: 'Bot' }, state: 'APPROVED', commit: { oid: 'abc' } }] },
       reviewThreads: { pageInfo: { hasNextPage: false }, nodes: [] } },
     checks: ['contributor-checks (ubuntu-latest)', 'contributor-checks (windows-latest)', 'runtime-checks (ubuntu-latest)', 'runtime-checks (windows-latest)'].map((name, id) => ({ id, name, head_sha: 'abc', status: 'completed', conclusion: 'success', app: { slug: 'github-actions' } })),
@@ -110,11 +110,11 @@ async function checkout(t) {
   await writeFile(join(root, '.gitignore'), '.agent-work/\n');
   git('add', '.gitignore'); git('commit', '--quiet', '-m', 'base');
   git('update-ref', 'refs/remotes/origin/development', 'HEAD');
-  git('checkout', '--quiet', '-b', 'feat/001-example');
+  git('checkout', '--quiet', '-b', 'feat/010-tooling-example');
   git('remote', 'add', 'origin', 'https://github.com/example/project.git');
   await writeFile(join(root, 'change.md'), 'change\n'); git('add', 'change.md'); git('commit', '--quiet', '-m', 'feature');
   await mkdir(join(root, '.agent-work'));
-  const body = join(root, '.agent-work/body.md'); await writeFile(body, 'Summary and verification');
+  const body = join(root, '.agent-work/body.md'); await writeFile(body, '## Summary\n\nStandardize tooling.\n\n## Evidence\n\nBefore: legacy behavior; after: verified checks.\n\n## Merge Danger\n\n**Door:** two-way; revert commit.\n\n**Blast Radius:** tooling; integration checks required.');
   const head = git('rev-parse', 'HEAD');
   const e = evidence(); e.head = head; e.pr.headRefOid = head; e.pr.reviews.nodes[0].commit.oid = head;
   for (const check of e.checks) check.head_sha = head;
@@ -127,6 +127,7 @@ async function checkout(t) {
     if (binary === process.execPath) { if (failGate) throw new Error('Local gate failed'); return 'passed'; }
     if (binary === 'git') {
       if (args[0] === 'fetch') return '';
+      if (args[0] === 'ls-remote' && args.includes('origin')) return '';
       if (args[0] === 'push') { e.pr.headRefOid = git('rev-parse', 'HEAD'); for (const check of e.checks) check.head_sha = e.pr.headRefOid; return ''; }
       return git(...args);
     }
@@ -135,6 +136,7 @@ async function checkout(t) {
     if (args[0] === 'pr' && args[1] === 'create') { created = true; return e.pr.url; }
     if (args[0] === 'pr' && args[1] === 'ready') { e.pr.isDraft = false; return ''; }
     if (args[0] === 'pr' && args[1] === 'comment') { comments.push({ body: args[args.indexOf('--body') + 1] }); return ''; }
+    if (args[0] === 'api' && args.at(-1).includes('/pulls?')) return JSON.stringify([[]]);
     if (args[0] === 'api' && args[1] === 'graphql') return JSON.stringify({ data: { repository: { pullRequest: e.pr } } });
     if (args[0] === 'api' && args.at(-1).includes('/comments?')) return JSON.stringify([comments]);
     if (args[0] === 'api') return JSON.stringify([{ check_runs: e.checks }]);
@@ -162,7 +164,7 @@ test('publish rejects tracked dependencies before tests, push, or PR creation', 
 
 test('publication uses the validated body snapshot even if its file changes during gates', async t => {
   const f = await checkout(t);
-  const expectedBody = 'Summary and verification\n' + 'x'.repeat(40_000);
+  const expectedBody = '## Summary\n\nChange tooling.\n\n## Evidence\n\nVerified checks.\n\n## Merge Danger\n\n**Door:** two-way\n\n**Blast Radius:** tooling\n' + 'x'.repeat(40_000);
   await writeFile(f.body, expectedBody);
   let publishedBody;
   await runWorkflow(['publish', '--body-file', f.body, '--summary', 'freeze the publication body', '--root', f.root], {
@@ -184,10 +186,10 @@ test('publishing is gated and repeatable; repair count survives new publishes an
   await f.run('publish', '--body-file', f.body);
   assert.equal(f.calls.filter((call) => call[0] === 'gh' && call[1] === 'pr' && call[2] === 'create').length, 1);
   for (const call of f.calls.filter((call) => call[0] === 'gh' && call[1] === 'pr' && ['create', 'edit'].includes(call[2]))) {
-    assert.equal(call[call.indexOf('--title') + 1], 'feat/001-example: add the example workflow');
+    assert.equal(call[call.indexOf('--title') + 1], 'feat/010-tooling-example: add the example workflow');
   }
   assert.equal(f.calls.filter((call) => call[0] === 'gh' && call[1] === 'pr' && call[2] === 'comment').length, 1);
-  const savedPath = join(f.root, '.agent-work/pr-workflow/001-example.json');
+  const savedPath = join(f.root, '.agent-work/pr-workflow/010-tooling-example.json');
   const saved = JSON.parse(await readFile(savedPath, 'utf8'));
   delete saved.requestedReviewHead;
   await writeFile(savedPath, JSON.stringify(saved));
@@ -212,7 +214,7 @@ test('publishing is gated and repeatable; repair count survives new publishes an
   f.e.pr.reviews.nodes[0].commit.oid = f.e.pr.headRefOid;
   assert.equal((await f.run('status')).status, 'AWAITING_HUMAN_MERGE');
   await assert.rejects(f.run('repair', '--reason', 'fourth'), /Three repair rounds/);
-  const record = JSON.parse(await readFile(join(f.root, '.agent-work/pr-workflow/001-example.json'), 'utf8'));
+  const record = JSON.parse(await readFile(join(f.root, '.agent-work/pr-workflow/010-tooling-example.json'), 'utf8'));
   assert.equal(record.repairRounds.length, 3);
   assert.equal(new Set(record.repairRounds.map((round) => round.head)).size, 3);
 });
@@ -277,7 +279,7 @@ test('a failed local gate never pushes or opens a PR', async (t) => {
 
 test('configured paired publication refuses a missing submission remote before primary gates or writes', async t => {
   const f = await checkout(t);
-  await writeFile(join(f.root, 'publication-targets.json'), JSON.stringify({ schemaVersion: 1, submission: { remote: 'submission', base: 'main' } }));
+  await writeFile(join(f.root, 'publication-targets.json'), JSON.stringify({ schemaVersion: 1, submission: { remote: 'submission', base: 'development' } }));
   const committed = spawnSync('git', ['add', 'publication-targets.json'], { cwd: f.root, windowsHide: true }); assert.equal(committed.status, 0);
   const saved = spawnSync('git', ['commit', '--quiet', '-m', 'enable paired publication'], { cwd: f.root, windowsHide: true }); assert.equal(saved.status, 0);
   f.calls.length = 0;
@@ -296,7 +298,7 @@ test('closed PRs skip expensive gates and PR changes during gates prevent push',
   for (const change of ['closed', 'head']) {
     f.calls.length = 0;
     const oldHead = f.e.pr.headRefOid;
-    await assert.rejects(runWorkflow(['publish', '--body-file', f.body, '--summary', 'lifecycle race', '--root', f.root], {
+    await assert.rejects(runWorkflow(['publish', '--body-file', f.body, '--summary', 'fix lifecycle race', '--root', f.root], {
       execute(binary, args, cwd, timeout) {
         const output = f.execute(binary, args, cwd, timeout);
         if (binary === process.execPath && args[0].endsWith('check-runtime.mjs')) {
@@ -321,13 +323,13 @@ test('prepare-next preserves the merged feature and refuses dirty, unmerged or e
   await assert.rejects(f.run('prepare-next', '--branch', target), /clean/);
   assert.equal(await readFile(join(f.root, 'dirty.md'), 'utf8'), 'keep me');
   await rm(join(f.root, 'dirty.md'));
-  await assert.rejects(f.run('prepare-next', '--branch', 'feat/001-example'), /exists|different/);
+  await assert.rejects(f.run('prepare-next', '--branch', 'feat/010-tooling-example'), /exists|different/);
   const source = f.e.head;
   const result = await f.run('prepare-next', '--branch', target);
   assert.equal(result.branch, target);
   assert.equal(result.status, 'READY_TO_WORK');
   const git = (...args) => spawnSync('git', args, { cwd: f.root, encoding: 'utf8', windowsHide: true });
-  assert.equal(git('rev-parse', 'feat/001-example').stdout.trim(), source);
+  assert.equal(git('rev-parse', 'feat/010-tooling-example').stdout.trim(), source);
   assert.equal(git('rev-parse', 'HEAD').stdout.trim(), git('rev-parse', 'origin/development').stdout.trim());
   assert.notEqual(git('rev-parse', '--abbrev-ref', '@{upstream}').status, 0, 'new branch must not track development');
   assert.equal(f.calls.some(call => ['reset', 'clean'].includes(call[1]) || call.includes('--force')), false);
@@ -348,16 +350,16 @@ test('publication tracks the remote feature and post-squash preparation survives
     if (args[0] === 'remote' && args[1] === 'get-url') return 'https://github.com/example/project.git';
     return git(...args);
   };
-  await runWorkflow(['publish', '--root', f.root, '--body-file', f.body, '--summary', 'remote tracking'], { execute });
-  assert.equal(git('rev-parse', '--abbrev-ref', '@{upstream}'), 'origin/feat/001-example');
+  await runWorkflow(['publish', '--root', f.root, '--body-file', f.body, '--summary', 'configure remote tracking'], { execute });
+  assert.equal(git('rev-parse', '--abbrev-ref', '@{upstream}'), 'origin/feat/010-tooling-example');
   const source = git('rev-parse', 'HEAD');
   const squash = git('commit-tree', 'HEAD^{tree}', '-p', 'origin/development', '-m', 'squash merge');
   git('push', remote, `${squash}:refs/heads/development`);
-  git('push', remote, '--delete', 'feat/001-example');
+  git('push', remote, '--delete', 'feat/010-tooling-example');
   f.e.pr.state = 'MERGED';
-  const result = await runWorkflow(['prepare-next', '--root', f.root, '--branch', 'feat/001-fresh'], { execute });
+  const result = await runWorkflow(['prepare-next', '--root', f.root, '--branch', 'feat/011-tooling-fresh'], { execute });
   assert.equal(result.head, squash);
-  assert.equal(git('rev-parse', 'feat/001-example'), source);
+  assert.equal(git('rev-parse', 'feat/010-tooling-example'), source);
   assert.equal(git('status', '--porcelain'), '');
 });
 
@@ -381,7 +383,7 @@ test('bot review decisions are advisory while GitHub merge blockers remain enfor
 test('missing accounting fails closed instead of granting a fresh budget to an existing PR', async (t) => {
   const f = await checkout(t);
   await f.run('publish', '--body-file', f.body);
-  const record = join(f.root, '.agent-work/pr-workflow/001-example.json');
+  const record = join(f.root, '.agent-work/pr-workflow/010-tooling-example.json');
   await rm(record);
   for (const command of ['status', 'ready']) await assert.rejects(f.run(command), /Missing PR accounting/);
   await assert.rejects(f.run('repair', '--reason', 'try again'), /Missing PR accounting/);
@@ -498,9 +500,10 @@ test('paired publication resumes after a partial private PR failure and gates co
   git(privateSeed, 'commit', '--quiet', '-m', 'private initial history');
   git(privateSeed, 'remote', 'add', 'origin', privateRemote);
   git(privateSeed, 'push', '--quiet', 'origin', 'HEAD:refs/heads/main');
+  git(privateSeed, 'push', '--quiet', 'origin', 'HEAD:refs/heads/development');
   git(f.root, 'remote', 'add', 'submission', 'https://github.com/course/private.git');
   git(f.root, 'config', `url.${privateRemote.replace(/\\/g, '/')}.insteadOf`, 'https://github.com/course/private.git');
-  await writeFile(join(f.root, 'publication-targets.json'), JSON.stringify({ schemaVersion: 1, submission: { remote: 'submission', base: 'main' } }));
+  await writeFile(join(f.root, 'publication-targets.json'), JSON.stringify({ schemaVersion: 1, submission: { remote: 'submission', base: 'development' } }));
   git(f.root, 'add', 'publication-targets.json');
   git(f.root, 'commit', '--quiet', '-m', 'enable paired publication');
 
@@ -574,10 +577,10 @@ test('paired publication resumes after a partial private PR failure and gates co
   f.calls.length = 0;
   await assert.rejects(publish(), /private/i);
   assert.equal(f.calls.some(call => call[0] === 'git' && call[1] === 'push' && call[2] === 'origin' || call[0] === 'gh' && call[1] === 'pr' && call[2] === 'create'), false, 'private repository identity must be rejected before public publication');
-  await writeFile(f.body, 'Summary and verification');
+  await writeFile(f.body, '## Summary\n\nStandardize tooling.\n\n## Evidence\n\nBefore: legacy behavior; after: verified checks.\n\n## Merge Danger\n\n**Door:** two-way; revert commit.\n\n**Blast Radius:** tooling; integration checks required.');
 
   await assert.rejects(publish(), /submission publication incomplete/);
-  const recordPath = join(f.root, '.agent-work/pr-workflow/001-example.json');
+  const recordPath = join(f.root, '.agent-work/pr-workflow/010-tooling-example.json');
   const partial = JSON.parse(await readFile(recordPath, 'utf8'));
   assert.equal(partial.status, 'PARTIAL_PUBLICATION');
   assert.ok(partial.pr, 'the public PR remains recorded after the private create failure');
@@ -587,7 +590,7 @@ test('paired publication resumes after a partial private PR failure and gates co
   assert.equal(published.status, 'PUBLISHED');
   assert.equal(privatePrs.length, 1);
   assert.equal(published.submission.number, 7);
-  assert.equal(published.submission.head, privateHead('refs/heads/feat/001-example'));
+  assert.equal(published.submission.head, privateHead('refs/heads/feat/010-tooling-example'));
   assert.equal(privateHead('refs/heads/main'), privateMain);
   assert.match(privatePrs[0].body, /https:\/\/github\.com\/example\/project\/pull\/1/);
   assert.doesNotMatch(await readFile(f.body, 'utf8'), /course\/private/);
@@ -613,4 +616,88 @@ test('paired publication resumes after a partial private PR failure and gates co
   assert.equal(ready.submission.isDraft, false);
   assert.equal(privatePrs[0].isDraft, false);
   assert.equal(f.e.pr.isDraft, false);
+});
+
+test('new publication requires a scope before gates or writes', async t => {
+  const f = await checkout(t);
+  const result = spawnSync('git', ['switch', '-c', 'feat/011-unscoped'], { cwd: f.root, windowsHide: true });
+  assert.equal(result.status, 0);
+  await assert.rejects(f.run('publish', '--body-file', f.body), /scope/);
+  assert.equal(f.calls.some(c => c[1] === 'push'), false);
+});
+
+test('invalid new branch forms and incomplete history are refused before gates or writes', async t => {
+  for (const branch of ['feat/000-tooling-work', 'feat/12-tooling-work', 'feat/012-Tooling-work', 'feat/012-tooling-work_thing', 'feat/012-tooling-work--thing', 'feat/012-tooling']) {
+    const f = await checkout(t);
+    assert.equal(spawnSync('git', ['switch', '-c', branch], { cwd: f.root, windowsHide: true }).status, 0);
+    await assert.rejects(f.run('publish', '--body-file', f.body), /scope|three-digit/);
+    assert.equal(f.calls.some(c => c[1] === 'push' || c[0] === process.execPath), false);
+  }
+  const f = await checkout(t);
+  await assert.rejects(runWorkflow(['publish', '--body-file', f.body, '--summary', 'add tooling', '--root', f.root], {
+    execute(binary, args, cwd, timeout) {
+      if (binary === 'gh' && args[0] === 'api' && args.at(-1).includes('/pulls?')) return JSON.stringify([{ truncated: true }]);
+      return f.execute(binary, args, cwd, timeout);
+    },
+  }), /Incomplete PR history/);
+  assert.equal(f.calls.some(c => c[1] === 'push' || c[0] === process.execPath), false);
+});
+
+test('new paired work requires development bases while public base overrides fail before commands', async t => {
+  let executed = false;
+  await assert.rejects(runWorkflow(['publish', '--body-file', 'body.md', '--summary', 'add tooling', '--base', 'main'], {
+    execute() { executed = true; },
+  }), /only publishes to development/);
+  assert.equal(executed, false);
+  const f = await checkout(t);
+  const git = (...args) => {
+    const result = spawnSync('git', args, { cwd: f.root, windowsHide: true });
+    assert.equal(result.status, 0);
+  };
+  git('remote', 'add', 'submission', 'https://github.com/course/private.git');
+  await writeFile(join(f.root, 'publication-targets.json'), JSON.stringify({ schemaVersion: 1, submission: { remote: 'submission', base: 'main' } }));
+  git('add', 'publication-targets.json');
+  git('commit', '--quiet', '-m', 'historical configuration');
+  await assert.rejects(f.run('publish', '--body-file', f.body), /New paired work requires submission\/development/);
+  assert.equal(f.calls.some(c => c[1] === 'push' || c[0] === process.execPath), false);
+});
+
+test('new publish rejects reused numbers across local branches, live heads and paginated closed PR history', async t => {
+  for (const source of ['local', 'remote', 'closed', 'merged', 'exact']) {
+    const f = await checkout(t);
+    if (source === 'local') assert.equal(spawnSync('git', ['branch', 'feat/010-tooling-prior'], { cwd: f.root, windowsHide: true }).status, 0);
+    await assert.rejects(runWorkflow(['publish', '--body-file', f.body, '--summary', 'standardize tooling', '--root', f.root], {
+      execute(binary, args, cwd, timeout) {
+        if (binary === 'git' && args[0] === 'ls-remote' && source === 'remote') return 'a'.repeat(40) + '\trefs/heads/feat/010-infra-prior';
+        if (binary === 'gh' && args[0] === 'api' && args.at(-1).includes('/pulls?') && ['closed', 'merged', 'exact'].includes(source)) {
+          return JSON.stringify([[], [{ state: 'closed', merged_at: source === 'merged' ? '2026-10-16' : null, head: { ref: source === 'exact' ? 'feat/010-tooling-example' : 'feat/010-legacy' } }]]);
+        }
+        return f.execute(binary, args, cwd, timeout);
+      },
+    }), /unique NNN|already exists/);
+    assert.equal(f.calls.some(c => c[1] === 'push' || c[0] === process.execPath), false);
+  }
+});
+
+test('new publish validates action summary and ordered nonempty description sections before gates', async t => {
+  const f = await checkout(t);
+  for (const summary of ['tooling changes', 'Standardize tooling']) {
+    await assert.rejects(runWorkflow(['publish', '--body-file', f.body, '--summary', summary, '--root', f.root], { execute: f.execute }), /action verb/);
+  }
+  for (const body of ['plain text', '## Evidence\nchecks\n## Summary\nchange\n## Merge Danger\nrisk', '## Summary\n\n## Evidence\nchecks\n## Merge Danger\nrisk', '## Summary\nchange\n## Evidence\nchecks\n## Merge Danger\nrisk']) {
+    await writeFile(f.body, body);
+    await assert.rejects(f.run('publish', '--body-file', f.body), /description|Merge Danger/);
+  }
+  assert.equal(f.calls.some(c => c[1] === 'push' || c[0] === process.execPath), false);
+});
+
+test('legacy branch identity and retained publication intent remain readable', async t => {
+  const f = await checkout(t), legacy = 'feat/001-example';
+  assert.equal(spawnSync('git', ['switch', '-c', legacy], { cwd: f.root, windowsHide: true }).status, 0);
+  Object.assign(f.e.pr, { headRefName: legacy, title: legacy + ': historical title' });
+  await mkdir(join(f.root, '.agent-work/pr-workflow'), { recursive: true });
+  await writeFile(join(f.root, '.agent-work/pr-workflow/001-example.json'), JSON.stringify({ schemaVersion: 1, repository: 'example/project', branch: legacy, base: 'development', repairRounds: [], publicationStarted: true }));
+  await writeFile(f.body, 'Historical unstructured description');
+  assert.equal((await f.run('publish', '--body-file', f.body)).status, 'PUBLISHED');
+  assert.equal(assess(f.e).status, 'READY_FOR_HUMAN');
 });

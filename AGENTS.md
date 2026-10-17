@@ -22,7 +22,7 @@ After implementation, follow the [context refresh](context/workflow.md#context-r
 
 ## Branch and PR naming
 
-Name feature branches `feat/<feature-number>-<short-description>`, using the feature's zero-padded three-digit number and a lowercase, hyphen-separated description (for example, `feat/001-agent-workspace`). Use `<branch-name>: <short summary>` for the PR title (for example, `feat/001-agent-workspace: add isolated agent storage`). Keep the summary to one line and at most 80 characters.
+Before creating a feature branch, publishing or updating a PR, read the [branch and PR conventions](docs/agents/pr-conventions.md), the single source of truth for scoped names, unique identifiers, titles, descriptions and historical compatibility.
 
 The contributor PR pilot targets `development` and treats about 1,000 added plus deleted lines against the immediate base as a soft size target. Report reviewable lines, generated lockfile lines, binaries, and total (`reviewable + generated`). The coordinator has standing limited authorization to commit scoped contributor work, push feature branches, and create or update pilot PRs; worker agents have no remote authority. Never push directly to `main` or `development`. A human decides each merge; the coordinator may execute it only when explicitly instructed for that PR and all required checks pass. Open the draft early once the scoped change passes the local publish gates. Follow [the PR workflow](docs/agents/pr-workflow.md) for status, review, repair, and readiness.
 
