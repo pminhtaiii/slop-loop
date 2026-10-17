@@ -18,6 +18,8 @@ Retain the key for later updates and use the returned URLs; issue numbers differ
 - **Apply / remove labels**: `gh issue edit <number> --add-label "..."` / `--remove-label "..."`
 - **Close**: `gh issue close <number> --comment "..."`
 
+For paired issues resolved by a PR, follow [Complete paired tickets](paired-publication.md#complete-paired-tickets): verify every acceptance criterion and preview during review; apply only after both resolving PRs merge and the public exact-head CI passes. That helper closes the exact stable-key pair with evidence and per-side audit comments.
+
 Resolve repository identities from the configured Git remotes. For paired work use explicit returned URLs or `--repo`; automatic `gh` inference selects only one repository.
 
 ## Pull requests as a triage surface
