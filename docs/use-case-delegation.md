@@ -10,7 +10,7 @@ Assignments use the colleague names supplied by the project owner. These rows ar
 
 | UC | Delivery | Owner | Start condition | Feature artifacts |
 |---|---|---|---|---|
-| UC-01 | Evidence-backed issue classification, severity, and backend destination recommendation | Thai | Planning agreed; consumes Tai's shared foundation; implementation requires Thai's approved spec, plan, and tasks | Not created; agreed design in [ADR-0005](adr/0005-uc01-triage-boundary-and-assessment.md) |
+| UC-01 | Evidence-backed issue classification, severity, and backend destination recommendation | Thai | Planning agreed; consumes Tai's shared foundation; implementation requires Thai's approved spec, plan, and tasks | DRAFT [spec](../specs/002-uc01-issue-triage/spec.md), [plan](../specs/002-uc01-issue-triage/plan.md), [tasks](../specs/002-uc01-issue-triage/tasks.md); pending approval and consumer-contract agreement per [decisions](../specs/002-uc01-issue-triage/contracts/decisions.md). ADR-0005 remains the accepted basis; planning only, runtime not verified |
 | UC-03 | Evidence-backed end-to-end bug fix | Tai | Validated bug-task input contract; shared tools, verification, and UC-05 action gate integrated | Phase 1 build setup authorized: [spec](../specs/001-verified-code-repair/spec.md), [plan](../specs/001-verified-code-repair/plan.md), [tasks](../specs/001-verified-code-repair/tasks.md); shared contract agreement confirmed by user, production choices deferred before real execution per [decisions](../specs/001-verified-code-repair/contracts/decisions.md) |
 | UC-04 | Multi-step feature with restart/resume | Thanh Tan | Shared persisted task/step contracts and budget ownership agreed; UC-05 binding contract agreed | Not created; link approved spec, plan, and task ledger here |
 | UC-05 | Bound human approval and safe continuation | Trong Tan | Shared action/policy identity and persisted decision contracts agreed | Not created; link approved spec, plan, and task ledger here |
@@ -44,7 +44,7 @@ Shared foundation includes the model adapter and structured-output validation, L
 
 **Boundary:** consume Tai's shared read/search interfaces; use controlled fixtures until available. Additional shared capabilities require coordination with Tai. UC-03 owns debugging and repair; UC-04 owns durable recovery; UC-05 owns action approval. Clarification is not approval. Recommend destinations without dispatching work, and integrate with other UCs later through validated contracts.
 
-**Next handoff:** Thai writes his own spec, plan, and task ledger, defining schemas, configured classifications/destinations, bounded execution, and evaluation examples. No runtime implementation or verified capability is claimed by this planning agreement.
+**Next handoff:** Thai reviews the DRAFT [spec, plan and task ledger](../specs/002-uc01-issue-triage/plan.md), including schemas, configured classifications/destinations, bounded execution and evaluation cases. Obtain artifact approval and versioned consumer-contract agreement before implementation; current shared model types are bug-specific and real adapters remain external deliveries. Planning publication and contributor CI establish no UC-01 runtime capability.
 
 ## UC-03: End-to-end bug fix
 
