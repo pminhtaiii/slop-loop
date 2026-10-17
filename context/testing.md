@@ -29,10 +29,10 @@ Paired issue completion uses `tests/agents/complete-paired-issues.test.mjs` at t
 
 ## Local helper tests
 
-The task-context and managed-session helpers require Node.js 20 or newer, use Node.js built-ins, and can be tested without installing packages:
+The task-context, managed-session, and planning-workflow helpers require Node.js 20 or newer, use Node.js built-ins, and can be tested without installing packages:
 
 ```powershell
-node --test tests/agents/agent-context.test.mjs tests/agents/agent-work.test.mjs
+node --test tests/agents/agent-context.test.mjs tests/agents/agent-work.test.mjs tests/agents/planning-workflow.test.mjs
 ```
 
 Test active-task handoff behavior, preview/apply archival, collision refusal, and archive recovery directly with:
