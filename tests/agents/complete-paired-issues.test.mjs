@@ -153,6 +153,9 @@ async function fixture(t, options = {}) {
       const body = readFileSync(args[args.indexOf('--body-file') + 1], 'utf8');
       issue.comments.push(body);
       writes.push({ kind: 'comment', repository: repositoryName, body });
+      if (repositoryName === publicRepository && options.changePrivateIssueAfterPublicComment) {
+        privateIssue.body = `Changed criteria after first audit comment.\n${markerFor(key)}`;
+      }
       if (repositoryName === loseCommentResponse) {
         loseCommentResponse = null;
         throw new Error('simulated lost comment response');
@@ -435,13 +438,13 @@ test('duplicate ticket markers, marker comments, and escaped private identity ar
   assert.deepEqual(escaped.writes, []);
 });
 
-test('malformed evidence and generated comments over GitHub limit are refused', async t => {
+test('malformed or oversized evidence is refused while large local evidence yields bounded comments', async t => {
   const malformed = await fixture(t);
   await writeFile(malformed.evidenceFile, '{"schemaVersion":1,"summary":"ok","acceptance":[]}');
   await assert.rejects(runIssueCompletion(malformed.args, { execute: malformed.execute }), /at least one acceptance entry/i);
   assert.deepEqual(malformed.writes, []);
 
-  const tooLarge = await fixture(t);
+  const tooLarge = await fixture(t, { loseCloseResponse: false });
   mergePair(tooLarge);
   const evidence = {
     schemaVersion: 1,
@@ -451,6 +454,43 @@ test('malformed evidence and generated comments over GitHub limit are refused', 
   const content = JSON.stringify(evidence);
   assert.ok(Buffer.byteLength(content) <= 65_536);
   await writeFile(tooLarge.evidenceFile, content);
-  await assert.rejects(runIssueCompletion([...tooLarge.args, '--apply'], { execute: tooLarge.execute }), /completion comment exceeds 65536 bytes/i);
-  assert.deepEqual(tooLarge.writes, []);
+  assert.equal((await runIssueCompletion([...tooLarge.args, '--apply'], { execute: tooLarge.execute })).status, 'COMPLETED');
+  for (const write of tooLarge.writes.filter(write => write.kind === 'comment')) {
+    assert.ok(Buffer.byteLength(write.body) < 1000);
+    assert.equal(write.body.includes(evidence.summary), false);
+  }
+  const oversized = await fixture(t);
+  await writeFile(oversized.evidenceFile, 'x'.repeat(65_537));
+  await assert.rejects(runIssueCompletion(oversized.args, { execute: oversized.execute }), /Evidence file exceeds 65536 bytes/);
+  assert.deepEqual(oversized.writes, []);
+});
+
+test('audit comments contain metadata instead of protected free-form evidence', async t => {
+  const f = await fixture(t, { loseCloseResponse: false });
+  mergePair(f);
+  const evidence = {
+    schemaVersion: 1,
+    summary: 'SYNTHETIC_PRIVATE_KEY_BYTES and raw source context',
+    acceptance: [{ criterion: 'CONFIDENTIAL_CRITERION_TEXT', evidence: 'SYNTHETIC_PROMPT_AND_TOKEN_PAYLOAD' }],
+  };
+  await writeFile(f.evidenceFile, JSON.stringify(evidence));
+  assert.equal((await runIssueCompletion([...f.args, '--apply'], { execute: f.execute })).status, 'COMPLETED');
+  const digest = createHash('sha256').update(JSON.stringify(evidence)).digest('hex');
+  const comments = f.writes.filter(write => write.kind === 'comment');
+  assert.equal(comments.length, 2);
+  for (const comment of comments) {
+    assert.doesNotMatch(comment.body, /SYNTHETIC_|CONFIDENTIAL_|raw source context/);
+    assert.ok(comment.body.includes(digest));
+    assert.match(comment.body, /Acceptance criteria attested: 1/);
+  }
+});
+
+test('each audit comment revalidates admission after the first comment changes counterpart criteria', async t => {
+  const f = await fixture(t, { changePrivateIssueAfterPublicComment: true, loseCloseResponse: false });
+  mergePair(f);
+  await assert.rejects(runIssueCompletion([...f.args, '--apply'], { execute: f.execute }), /changed/i);
+  assert.equal(f.writes.filter(write => write.kind === 'comment').length, 1);
+  assert.equal(f.writes.filter(write => write.kind === 'close').length, 0);
+  assert.equal(f.publicIssue.state, 'open');
+  assert.equal(f.privateIssue.state, 'open');
 });

@@ -58,6 +58,10 @@ Without `--apply`, the command previews and makes no remote changes. The explici
 
 Read the JSON `status`, not just the exit code: `READY_TO_COMPLETE` is an eligible preview, `COMPLETED` confirms both issues are closed, and `WAITING_*` or `BLOCKED` leaves cleanup pending. Evidence may be revised before apply begins; retain the same evidence when recovering an interrupted apply.
 
+Changed acceptance criteria, resolving PR identity or evidence after an apply begins requires inspection and reconciliation. Preserve the records instead of deleting them to force a new attempt.
+
+Audit comments publish only the resolving PR link, the number of attested criteria and the evidence digest. Detailed summary and criterion evidence stay in the local evidence file; they are never copied into GitHub comments. Admission is rechecked before each comment and each close.
+
 ## Privacy and configuration
 
 Configure `origin` as the public review repository and `submission` as the private coursework repository. The helper refuses reversed visibility or identical repositories. Configuration without this file retains the original single-repository behavior for other checkouts and helper fixtures.

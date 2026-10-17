@@ -296,10 +296,9 @@ function commentBody(pr, evidence, marker) {
   return [
     `Completed with [PR #${pr.number}](${pr.url}).`,
     '',
-    `Summary: ${evidence.summary}`,
-    '',
-    'Acceptance evidence:',
-    ...evidence.acceptance.flatMap(({ criterion, evidence: detail }) => [`- Criterion: ${criterion}`, `  Evidence: ${detail}`]),
+    `Acceptance criteria attested: ${evidence.acceptance.length}.`,
+    `Evidence SHA-256: ${createHash('sha256').update(JSON.stringify(evidence)).digest('hex')}`,
+    'Detailed evidence is retained locally by the completing agent.',
     '',
     marker,
   ].join('\n');
@@ -470,6 +469,11 @@ export async function runIssueCompletion(args, dependencies = {}) {
     record.verified = current.verified;
     await saveCompletionRecord(recordPath, record);
     for (const side of sides) {
+      const beforeComment = await inspectCurrent(values, evidenceInput, repo, call, targets, recordPath);
+      if (beforeComment.status !== 'READY' || !sameVerifiedSnapshot(record.verified, beforeComment.verified)) throw new Error('PR, CI, tree, or issue evidence changed before completion comments could be added.');
+      validateCompletionRecord(record, beforeComment.expected);
+      current = beforeComment;
+      ({ bodies, comments } = issueCommentsState(call, repo, targets, current, evidenceInput.evidence, record));
       if (current.pair.issues[side].state === 'closed') {
         record.progress[side].closed = true;
         await saveCompletionRecord(recordPath, record);
