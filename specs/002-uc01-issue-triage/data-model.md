@@ -12,7 +12,7 @@
 | Question | id, text, affects, reason | Material missing fact; IDs unique within immutable prior assessment |
 | Answer | questionId, text | Trusted continuation resolves original question; text remains reporter data, never approval |
 | Continuation | opaque ref to issue/report/repository/task, prior questions, config and snapshot | Caller/UC-04 owns retention; UC-01 validates supplied binding, stores no durable wait |
-| Catalog | id, version, classifications, destinations | Unique IDs/responsibilities, undetermined reserved; UC-04/05 capability IDs excluded |
+| Catalog | id, version, classifications, destinations | Unique entry IDs; responsibility text may overlap; undetermined reserved; UC-04/05 capability IDs excluded. Ambiguous destination matches return undetermined with material questions when needed |
 | Outcome | status plus assessment or safe error fields | Discriminated union; errors cannot carry an accepted assessment |
 
 ## State transitions
