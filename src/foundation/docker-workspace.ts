@@ -25,6 +25,7 @@ import {
   type AdmittedFile,
   type ValidationError,
   type ValidationResult,
+  computeCanonicalSha256,
   computeCommandViewDigest,
   isCanonicalRelativePath,
   isProtectedPath,
@@ -122,6 +123,17 @@ const EMBEDDED_SECRET_PATTERNS: readonly RegExp[] = [
 
 export function containsProtectedContent(content: string): boolean {
   return typeof content === 'string' && content.length > 0 && EMBEDDED_SECRET_PATTERNS.some((re) => re.test(content));
+}
+
+export function computeWorkspaceVolumeIds(
+  taskId: string,
+  workspaceId: string
+): { readonly repoVolumeId: string; readonly scratchVolumeId: string } {
+  const tupleHash = computeCanonicalSha256([taskId, workspaceId]).slice('sha256:'.length);
+  return {
+    repoVolumeId: `vol-repo-${tupleHash}`,
+    scratchVolumeId: `vol-scratch-${tupleHash}`,
+  };
 }
 
 export function computeFileDigest(content: string | Buffer | Uint8Array): string {
@@ -280,8 +292,7 @@ export class DockerWorkspaceManager {
       throw new Error('INVALID_REVISION_DIGEST: initialRevisionDigest must be sha256 hex digest');
     }
 
-    const repoVolumeId = `vol-repo-${params.taskId}-${params.workspaceId}`;
-    const scratchVolumeId = `vol-scratch-${params.taskId}-${params.workspaceId}`;
+    const { repoVolumeId, scratchVolumeId } = computeWorkspaceVolumeIds(params.taskId, params.workspaceId);
 
     const workspace: TaskWorkspace = {
       taskId: params.taskId,
@@ -323,6 +334,19 @@ export class DockerWorkspaceManager {
 
     if (params.workspace.containerImageDigest !== params.profile.imageDigest) {
       throw new Error(`IMAGE_DIGEST_MISMATCH: ${params.workspace.containerImageDigest} !== ${params.profile.imageDigest}`);
+    }
+
+    const expectedVolumeIds = computeWorkspaceVolumeIds(params.workspace.taskId, params.workspace.workspaceId);
+    if (
+      params.workspace.repoVolumeId !== expectedVolumeIds.repoVolumeId ||
+      params.workspace.scratchVolumeId !== expectedVolumeIds.scratchVolumeId
+    ) {
+      throw new Error('VOLUME_IDENTITY_MISMATCH: Resumed workspace volume identities do not match canonical deterministic volume identities');
+    }
+
+    const recordedWs = this.workspaces.get(params.workspace.workspaceId);
+    if (recordedWs && recordedWs.taskId !== params.workspace.taskId) {
+      throw new Error(`VOLUME_IDENTITY_MISMATCH: Cross-task workspace identity drift detected: taskId '${params.workspace.taskId}' does not match recorded taskId '${recordedWs.taskId}'`);
     }
     const recorded = this.canonicalVolumes.get(params.workspace.workspaceId);
     if (recorded && (recorded.repoVolumeId !== params.workspace.repoVolumeId || recorded.scratchVolumeId !== params.workspace.scratchVolumeId)) {

@@ -10,6 +10,7 @@ import {
   type MaterializeViewParams,
   type AdmitCommandViewParams,
   validateDockerProfile,
+  computeWorkspaceVolumeIds,
   DockerWorkspaceManager,
   computeFileDigest,
   containsProtectedContent,
@@ -428,8 +429,13 @@ test('DockerWorkspaceManager: createWorkspace validates profile, allocates volum
   assert.equal(workspace.workspaceId, 'ws-uc03-101');
   assert.equal(workspace.containerImageDigest, profile.imageDigest);
   assert.equal(workspace.expectedRepoState, 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef');
-  assert.ok(workspace.repoVolumeId.includes('task-uc03-101'));
-  assert.ok(workspace.scratchVolumeId.includes('task-uc03-101'));
+  const expectedVolumeIds = computeWorkspaceVolumeIds('task-uc03-101', 'ws-uc03-101');
+  assert.equal(workspace.repoVolumeId, expectedVolumeIds.repoVolumeId);
+  assert.equal(workspace.scratchVolumeId, expectedVolumeIds.scratchVolumeId);
+  assert.ok(workspace.repoVolumeId.startsWith('vol-repo-'));
+  assert.ok(workspace.scratchVolumeId.startsWith('vol-scratch-'));
+  assert.match(workspace.repoVolumeId, /^vol-repo-[0-9a-f]{64}$/);
+  assert.match(workspace.scratchVolumeId, /^vol-scratch-[0-9a-f]{64}$/);
 
   // Validated by canonical validateTaskWorkspace
   const valid = validateTaskWorkspace(workspace);
@@ -1094,4 +1100,215 @@ test('containsProtectedContent: detects marker secrets, private keys, bearer tok
   assert.equal(containsProtectedContent('Authorization: Bearer abcd1234efgh5678'), true);
   assert.equal(containsProtectedContent('api_key = "sk-123456789012345678901234"'), true);
   assert.equal(containsProtectedContent('github_token = "ghp_123456789012345678901234567890123456"'), true);
+});
+
+test('DockerWorkspaceManager: isolates volumes across delimiter-collision task/workspace tuples (probe)', async () => {
+  const controller = new FakeDockerLifecycleController();
+  const manager = new DockerWorkspaceManager({ controller });
+  const profile = createValidProfile();
+  const rev = 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+
+  // Hyphen collision probe: task 'a-b' / ws 'c' vs task 'a' / ws 'b-c'
+  const ws1 = await manager.createWorkspace({
+    taskId: 'a-b',
+    workspaceId: 'c',
+    initialRevisionDigest: rev,
+    profile,
+  });
+
+  const ws2 = await manager.createWorkspace({
+    taskId: 'a',
+    workspaceId: 'b-c',
+    initialRevisionDigest: rev,
+    profile,
+  });
+
+  // Verify volume identities are strictly disjoint
+  assert.notEqual(ws1.repoVolumeId, ws2.repoVolumeId, 'repoVolumeIds must not collide');
+  assert.notEqual(ws1.scratchVolumeId, ws2.scratchVolumeId, 'scratchVolumeIds must not collide');
+  assert.notEqual(ws1.repoVolumeId, ws1.scratchVolumeId, 'repo and scratch volume IDs must be role-distinct');
+  assert.notEqual(ws2.repoVolumeId, ws2.scratchVolumeId, 'repo and scratch volume IDs must be role-distinct');
+
+  // Verify all 4 created volumes in controller are unique
+  assert.equal(controller.createdVolumes.length, 4);
+  assert.equal(new Set(controller.createdVolumes).size, 4, 'Controller must create 4 distinct volumes');
+
+  // Verify Docker volume naming safety: lowercase alphanumeric and hyphens, role-distinct prefixes, no colons
+  const dockerVolumeRegex = /^vol-(?:repo|scratch)-[0-9a-f]{64}$/;
+  for (const volId of controller.createdVolumes) {
+    assert.match(volId, dockerVolumeRegex, `Volume ID '${volId}' must match Docker-safe format`);
+    assert.equal(volId.includes(':'), false, `Volume ID '${volId}' must not contain colons`);
+    assert.ok(volId.length <= 255, `Volume ID '${volId}' must be <= 255 characters`);
+  }
+});
+
+test('DockerWorkspaceManager: stable resume preserves exact identities across multiple resumes', async () => {
+  const controller = new FakeDockerLifecycleController();
+  const manager = new DockerWorkspaceManager({ controller });
+  const profile = createValidProfile();
+  const rev = 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+
+  const ws = await manager.createWorkspace({
+    taskId: 'task-stable-1',
+    workspaceId: 'ws-stable-1',
+    initialRevisionDigest: rev,
+    profile,
+  });
+
+  const expectedVolumeIds = computeWorkspaceVolumeIds('task-stable-1', 'ws-stable-1');
+  assert.equal(ws.repoVolumeId, expectedVolumeIds.repoVolumeId);
+  assert.equal(ws.scratchVolumeId, expectedVolumeIds.scratchVolumeId);
+
+  // First resume
+  const resumed1 = await manager.resumeWorkspace({ workspace: ws, profile });
+  assert.equal(resumed1.repoVolumeId, ws.repoVolumeId);
+  assert.equal(resumed1.scratchVolumeId, ws.scratchVolumeId);
+  assert.equal(resumed1.taskId, ws.taskId);
+  assert.equal(resumed1.workspaceId, ws.workspaceId);
+
+  // Second resume
+  const resumed2 = await manager.resumeWorkspace({ workspace: ws, profile });
+  assert.equal(resumed2.repoVolumeId, ws.repoVolumeId);
+  assert.equal(resumed2.scratchVolumeId, ws.scratchVolumeId);
+
+  // Zero new volumes created during resumes
+  assert.equal(controller.createdVolumes.length, 2);
+});
+
+test('DockerWorkspaceManager: rejects cross-task resume identity drift and volume tampering', async () => {
+  const controller = new FakeDockerLifecycleController();
+  const manager = new DockerWorkspaceManager({ controller });
+  const profile = createValidProfile();
+  const rev = 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+
+  const ws = await manager.createWorkspace({
+    taskId: 'task-drift-owner',
+    workspaceId: 'ws-drift-target',
+    initialRevisionDigest: rev,
+    profile,
+  });
+
+  // Attempt cross-task resume with different taskId but reusing original volumes
+  const crossTaskDrift = {
+    ...ws,
+    taskId: 'task-drift-hijacker',
+  };
+  await assert.rejects(
+    async () => {
+      await manager.resumeWorkspace({ workspace: crossTaskDrift, profile });
+    },
+    { message: /VOLUME_IDENTITY_MISMATCH/ }
+  );
+
+  // Attempt cross-task resume with recomputed volumes for the hijacker
+  const hijackerVolumes = computeWorkspaceVolumeIds('task-drift-hijacker', 'ws-drift-target');
+  const crossTaskWithNewVols = {
+    ...ws,
+    taskId: 'task-drift-hijacker',
+    repoVolumeId: hijackerVolumes.repoVolumeId,
+    scratchVolumeId: hijackerVolumes.scratchVolumeId,
+  };
+  await assert.rejects(
+    async () => {
+      await manager.resumeWorkspace({ workspace: crossTaskWithNewVols, profile });
+    },
+    { message: /VOLUME_IDENTITY_MISMATCH/ }
+  );
+
+  // Tampered repoVolumeId
+  await assert.rejects(
+    async () => {
+      await manager.resumeWorkspace({
+        workspace: { ...ws, repoVolumeId: 'vol-repo-tampered-12345' },
+        profile,
+      });
+    },
+    { message: /VOLUME_IDENTITY_MISMATCH/ }
+  );
+
+  // Tampered scratchVolumeId
+  await assert.rejects(
+    async () => {
+      await manager.resumeWorkspace({
+        workspace: { ...ws, scratchVolumeId: 'vol-scratch-tampered-12345' },
+        profile,
+      });
+    },
+    { message: /VOLUME_IDENTITY_MISMATCH/ }
+  );
+});
+
+test('DockerWorkspaceManager: duplicate workspaceId fails before effects (zero additional volumes)', async () => {
+  const controller = new FakeDockerLifecycleController();
+  const manager = new DockerWorkspaceManager({ controller });
+  const profile = createValidProfile();
+  const rev = 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+
+  await manager.createWorkspace({
+    taskId: 'task-dup-1',
+    workspaceId: 'ws-unique-1',
+    initialRevisionDigest: rev,
+    profile,
+  });
+  assert.equal(controller.createdVolumes.length, 2);
+
+  // Duplicate with same taskId
+  await assert.rejects(
+    async () => {
+      await manager.createWorkspace({
+        taskId: 'task-dup-1',
+        workspaceId: 'ws-unique-1',
+        initialRevisionDigest: rev,
+        profile,
+      });
+    },
+    { message: /WORKSPACE_ALREADY_EXISTS/ }
+  );
+  assert.equal(controller.createdVolumes.length, 2, 'No new volumes allocated on duplicate workspaceId');
+
+  // Duplicate with different taskId
+  await assert.rejects(
+    async () => {
+      await manager.createWorkspace({
+        taskId: 'task-dup-2',
+        workspaceId: 'ws-unique-1',
+        initialRevisionDigest: rev,
+        profile,
+      });
+    },
+    { message: /WORKSPACE_ALREADY_EXISTS/ }
+  );
+  assert.equal(controller.createdVolumes.length, 2, 'No new volumes allocated on cross-task duplicate workspaceId');
+});
+
+test('DockerWorkspaceManager: invalid taskId or workspaceId variants fail before effects', async () => {
+  const controller = new FakeDockerLifecycleController();
+  const manager = new DockerWorkspaceManager({ controller });
+  const profile = createValidProfile();
+  const rev = 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+
+  const invalidInputs = [
+    { taskId: '', workspaceId: 'ws-valid' },
+    { taskId: '   ', workspaceId: 'ws-valid' },
+    { taskId: 'task-valid', workspaceId: '' },
+    { taskId: 'task-valid', workspaceId: '   ' },
+    { taskId: 123 as unknown as string, workspaceId: 'ws-valid' },
+    { taskId: 'task-valid', workspaceId: null as unknown as string },
+  ];
+
+  for (const inv of invalidInputs) {
+    await assert.rejects(
+      async () => {
+        await manager.createWorkspace({
+          taskId: inv.taskId,
+          workspaceId: inv.workspaceId,
+          initialRevisionDigest: rev,
+          profile,
+        });
+      },
+      { message: /INVALID_TASK_WORKSPACE/ }
+    );
+  }
+
+  assert.equal(controller.createdVolumes.length, 0, 'Zero volumes created across all invalid ID attempts');
 });
