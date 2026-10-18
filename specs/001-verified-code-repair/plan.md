@@ -3,7 +3,7 @@
 **Branch**: `feat/001-verified-code-repair` | **Date**: 2026-10-16 | **Spec**: [spec.md](spec.md)
 
 **Input**: `/specs/001-verified-code-repair/spec.md`
-**Status**: Phase 1 build setup completed; Phase 2 contract validators and controlled mocks (T003–T004) authorized on 2026-10-16 (Asia/Saigon). User-confirmed shared-owner agreement and deferred production choices remain in force. Phase 3 onward and real runtime acceptance remain outside this request. See [decisions](contracts/decisions.md).
+**Status**: Phase 1 build setup completed; Phase 2 contract validators and controlled mocks (T003–T004) authorized on 2026-10-16 (Asia/Saigon). User-confirmed shared-owner agreement and deferred production choices remain in force. Phase 3 (T005–T014) is authorized on 2026-10-18 (Asia/Saigon). Phase 4 onward and real runtime acceptance remain outside this request. See [decisions](contracts/decisions.md).
 
 ## Summary
 
@@ -33,7 +33,7 @@ Governance: `.specify/memory/constitution.md` remains an unratified placeholder 
 | Completion evidence | PASS as design: baseline, final checks and reviewer bound to final state | T028–T033 real integration evidence |
 | Open choices | Drafting can proceed; implementation readiness NOT PASSED | T001 records decisions, finite configurations consistent with accepted ADR-0004; approvals are not inferred from this request |
 
-Phase 2 recheck: the user authorized canonical validators and controlled test-only mocks after Phase 1. Deferred operational choices remain named release gates in contracts/decisions.md. Phase 3 onward remains unchecked and outside this request.
+Phase 2 recheck: the user authorized canonical validators and controlled test-only mocks after Phase 1. Deferred operational choices remain named release gates in contracts/decisions.md. Phase 3 (T005–T014) is now authorized by the user on 2026-10-18 (Asia/Saigon); tasks remain unchecked until integrated evidence passes. Phase 4 onward and real execution remain gated.
 
 ## Project Structure
 
