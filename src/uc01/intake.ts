@@ -13,7 +13,7 @@ export class IntakeBinder {
   bind(invocation: unknown, context: unknown): Validation<BoundIntake> {
     const result = validateIntake(invocation, context);
     if (!result.ok) return result;
-    if (isProtectedPayload(JSON.stringify(result.value))) return { ok: false, status: 'invalid-input', reasonCode: 'protected-content', path: '$' };
+    if (isProtectedPayload(result.value)) return { ok: false, status: 'invalid-input', reasonCode: 'protected-content', path: '$' };
     return result;
   }
 

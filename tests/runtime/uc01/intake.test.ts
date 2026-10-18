@@ -50,3 +50,14 @@ test('C22 changed report digest, extra issue and empty report fail input admissi
     { ...invocation, issue: { ...invocation.issue, originalReport: '', reportDigest: sha256Text('') } },
   ]) assert.equal(new IntakeBinder().bind(input, context).ok, false);
 });
+
+test('C15 protected path metadata is rejected before excerpt admission or model context', () => {
+  const repository = { id: 'repository-metadata', kind: 'repository', sourceRef: 'source', contentDigest: invocation.issue.reportDigest,
+    safeExcerptRef: 'safe-reference', provenance: 'mock', repository: { repositoryId: context.repositoryId,
+      snapshotDigest: context.repositorySnapshotDigest, path: '.env', fileDigest: 'b'.repeat(64), startLine: 1, endLine: 1 } };
+  for (const trusted of [{ ...context, evidenceRegistry: [...context.evidenceRegistry, repository] }, { ...context, configId: '.env' }]) {
+    const result = new IntakeBinder().bind(invocation, trusted);
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.reasonCode, 'protected-content');
+  }
+});

@@ -76,7 +76,7 @@ function sharedFailure(value: unknown): void {
   if (value && typeof value === 'object' && Object.getOwnPropertyDescriptor(value, 'kind')?.value === 'failure') {
     const result = record(value, ['kind', 'status', 'reasonCode', 'eventRef']);
     const status = result.status;
-    if (!['invalid-input', 'denied', 'pending-approval', 'conflict', 'exhausted', 'timeout', 'uncertain', 'error'].includes(String(status))) stop('error', 'invalid-shared-output');
+    if (typeof status !== 'string' || !['invalid-input', 'denied', 'pending-approval', 'conflict', 'exhausted', 'timeout', 'uncertain', 'error'].includes(status)) stop('error', 'invalid-shared-output');
     const code = id(result.reasonCode); id(result.eventRef);
     if (!/^[a-z0-9][a-z0-9-]{0,95}$/u.test(code)) stop('error', 'invalid-shared-output');
     stop(status as Failure, code); // Checked against the complete failure union above.
@@ -198,7 +198,7 @@ export class IssueAssessor {
         const response = validateModelResponse(raw, currentContext);
         if (!response.ok) stop('error', 'invalid-model-output');
         countBytes(raw, 'output');
-        if (isProtectedPayload(canonical(raw))) stop('error', 'protected-model-output');
+        if (isProtectedPayload(response.value)) stop('error', 'protected-model-output');
         if (response.value.kind === 'failure') {
           sharedFailure({ kind: 'failure', status: response.value.status, reasonCode: response.value.reasonCode, eventRef: response.value.eventRef });
           stop('error', 'invalid-model-output');
@@ -214,7 +214,11 @@ export class IssueAssessor {
             // Validate the complete assessment before making a durable binding request.
             const preview = validateOutcome({ status: 'needs-info', assessment, continuationRef: 'pending', eventRef: 'pending' }, input, currentContext);
             if (!preview.ok) stop('error', 'invalid-model-output');
-            const bound = await call(operation, () => ports.bindContinuation(operation, assessment));
+            sequence += 1;
+            const bindingId = `${input.invocationId}:bind:${sequence}`;
+            const bindingOperation = { ...operation, operationId: bindingId, requestId: bindingId,
+              deadlineEpochMs: Math.min(deadline, clock(now) + timeout) };
+            const bound = await call(bindingOperation, () => ports.bindContinuation(bindingOperation, assessment));
             sharedFailure(bound); const binding = record(bound, ['kind', 'continuationRef']);
             if (binding.kind !== 'bound') stop('error', 'continuation-bind-failed');
             result = { status: 'needs-info', assessment, continuationRef: id(binding.continuationRef), eventRef: 'pending' };

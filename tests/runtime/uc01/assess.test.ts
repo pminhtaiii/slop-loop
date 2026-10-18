@@ -30,7 +30,7 @@ function proposal(context: TrustedContext, classification = 'defect', severity: 
 }
 const usage: Usage = { inputTokens: 20, outputTokens: 10, totalTokens: 30, costUnits: 30, state: 'settled', reservationRef: 'reservation' };
 function harness(value = scenario(), answer: unknown = { kind: 'assessment', proposal: proposal(value.context), usage }) {
-  const calls: string[] = []; const requests: ModelRequest[] = []; const settlements: Usage[] = [];
+  const calls: string[] = []; const requests: ModelRequest[] = []; const settlements: Usage[] = []; const bindings: OperationContext[] = [];
   const ports = {
     provenance: 'mock' as const,
     async guard(context: OperationContext): Promise<unknown> { calls.push('guard'); return { kind: 'admitted', admissionRef: `admission:${context.requestId}`, requestId: context.requestId, contextDigest: operationContextDigest(context) }; },
@@ -39,13 +39,13 @@ function harness(value = scenario(), answer: unknown = { kind: 'assessment', pro
     async proposeAssessment(_context: OperationContext, _admission: unknown, request: ModelRequest): Promise<unknown> { calls.push('model'); requests.push(request); return answer; },
     async readEvidence(): Promise<unknown> { calls.push('read'); return {}; },
     async searchEvidence(): Promise<unknown> { calls.push('search'); return {}; },
-    async bindContinuation(): Promise<unknown> { calls.push('bind'); return { kind: 'bound', continuationRef: 'continuation' }; },
+    async bindContinuation(context: OperationContext): Promise<unknown> { bindings.push(context); calls.push('bind'); return { kind: 'bound', continuationRef: 'continuation' }; },
     async emitSafeEvent(): Promise<unknown> { calls.push('event'); return { eventRef: 'safe-event' }; },
   };
   const options = { ports, now: () => 100, profileId: 'uc01-fixture-v1' as const, ceiling: { inputTokens: 500, outputTokens: 250, totalTokens: 750, costUnits: 750, pricingId: 'uc01-fixture-token-units-v1' },
     excerpts: { resolveExcerpt: (entry: { sourceRef: string }) => entry.sourceRef === value.invocation.issue.id ? value.invocation.issue.originalReport
       : value.invocation.suppliedEvidence.find(item => item.sourceRef === entry.sourceRef)?.content } };
-  return { value, calls, requests, settlements, ports, options };
+  return { value, calls, requests, settlements, bindings, ports, options };
 }
 
 test('C02 preserves original issue and returns reporter-backed P0 after guarded reserved assessment', async () => {
@@ -326,4 +326,29 @@ test('C22 final telemetry reference cannot overflow the accepted outcome bound',
     const result = await new IssueAssessor(h.options).assessIssue(h.value.invocation, h.value.context);
     assert.equal(validateOutcome(result, h.value.invocation, h.value.context).ok, true);
   }
+});
+
+test('C14 non-string shared failure status is rejected without invoking coercion', async () => {
+  const h = harness(); let coerced = false;
+  h.ports.guard = async () => ({ kind: 'failure', status: { toString() { coerced = true; return 'denied'; } }, reasonCode: 'denied', eventRef: 'event' });
+  const result = await new IssueAssessor(h.options).assessIssue(h.value.invocation, h.value.context);
+  assert.equal(result.status, 'error'); assert.equal(coerced, false); assert.equal(h.requests.length, 0);
+});
+
+test('C06 continuation binding receives a fresh call deadline within the remaining invocation allowance', async () => {
+  const value = scenario(); const candidate = { ...proposal(value.context), questions: [
+    { id: 'users', text: 'Which users are affected?', affects: ['scope' as const], reason: 'Affected users can change severity.' },
+  ] };
+  const h = harness(value, { kind: 'assessment', proposal: candidate, usage }); let time = 100;
+  h.options.now = () => time;
+  h.ports.settle = async () => { h.calls.push('settle'); time = 1200; return { kind: 'settled', accountingRef: 'account' }; };
+  const result = await new IssueAssessor(h.options).assessIssue(value.invocation, value.context);
+  assert.equal(result.status, 'needs-info'); assert.equal(h.bindings[0]?.deadlineEpochMs, 2200);
+});
+
+test('C15 model-proposed protected path metadata never enters caller output', async () => {
+  const value = scenario(); const candidate = proposal(value.context);
+  const h = harness(value, { kind: 'assessment', proposal: { ...candidate, uncertainties: ['.env'] }, usage });
+  const result = await new IssueAssessor(h.options).assessIssue(value.invocation, value.context);
+  assert.equal(result.status, 'error'); assert.deepEqual(h.settlements, [usage]);
 });
