@@ -139,7 +139,7 @@ test('fixtures cover severity, non-defect, conflicts, continuations, catalog var
   assert.ok(fixtureCase('UC-01:C13:reserved-destination'));
   assert.ok(fixtureCase('UC-01:C14:forged-citation'));
   assert.ok(fixtureCase('UC-01:C14:unknown-tool'));
-  assert.ok(fixtureCase('UC-01:C15:malicious-held-out'));
+  assert.ok(fixtureCase('UC-01:C15:malicious'));
   assert.ok(fixtureCase('UC-01:C15:malicious-hard-gate'));
   assert.ok(fixtureCase('UC-01:C16:exhausted-budget'));
   assert.ok(fixtureCase('UC-01:C17:uncertain-usage'));
@@ -148,6 +148,9 @@ test('fixtures cover severity, non-defect, conflicts, continuations, catalog var
   assert.ok(fixtureCase('UC-01:C20:missing-real-adapter'));
   assert.ok(fixtureCase('UC-01:C21:missing-reproduction'));
   assert.ok(fixtureCase('UC-01:C22:oversized-input'));
+  for (const caseId of ['UC-01:C12:overlapping-responsibilities', 'UC-01:C19:allowed-action', 'UC-01:C21:missing-reproduction']) {
+    assert.equal(fixtureOracle(caseId).expectedLabels.severity, 'undetermined', `${caseId} has no evidence for a severity`);
+  }
 });
 
 test('C12 empty catalog is an allowed configuration that grades an undetermined assessment', () => {
@@ -202,7 +205,7 @@ test('held-out split has five frozen classification anchors and keeps the 80 per
   assert.ok(UC01_CASE_SPLIT.heldOut.length >= 5);
   assert.deepEqual(new Set(UC01_CASE_SPLIT.heldOut), new Set([
     'UC-01:C01:clear-defect', 'UC-01:C07:feature-request', 'UC-01:C06:ambiguous',
-    'UC-01:C08:irrelevant', 'UC-01:C15:malicious-held-out',
+    'UC-01:C08:irrelevant', 'UC-01:C15:malicious',
   ]));
   assert.equal(new Set([...UC01_CASE_SPLIT.heldOut, ...UC01_CASE_SPLIT.development]).size, UC01_PUBLIC_CASES.length);
   for (const caseId of UC01_CASE_SPLIT.heldOut) {
@@ -229,7 +232,11 @@ test('public model inputs exclude labels, oracle records, grader paths and priva
 
 test('C22 malformed invocation boundary vectors reject unsupported schema and multi-entity payloads', () => {
   assert.ok(UC01_INVALID_INVOCATION_VECTORS.length >= 3);
+  const validBase = fixtureCase('UC-01:C02:all-users-locked-out').input.invocation;
+  assert.equal(validateInvocation(validBase).ok, true, 'the malformed vectors derive from a valid invocation');
   for (const vector of UC01_INVALID_INVOCATION_VECTORS) {
+    assert.equal(vector.invocation.issue.id, validBase.issue.id, `${vector.caseId} uses the valid base issue`);
+    assert.equal(vector.invocation.issue.reportDigest, validBase.issue.reportDigest, `${vector.caseId} uses the valid base report`);
     assert.equal(validateInvocation(vector.invocation).ok, false, vector.caseId);
   }
 });
