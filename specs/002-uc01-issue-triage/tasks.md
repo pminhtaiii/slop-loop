@@ -1,7 +1,7 @@
 # Tasks: UC-01 Evidence-backed Issue Triage
 
 **Input**: [spec](spec.md), [plan](plan.md), [research](research.md), [data model](data-model.md), [schema](contracts/schema.md), [interfaces](contracts/interfaces.md), [acceptance](contracts/acceptance.md), [evaluation contract](contracts/evaluation.md).
-**Status**: T001 artifact/consumer agreement approved on 2026-10-18, including reviewed signatures, finite fixture profile and path ownership; see [decisions](contracts/decisions.md). T001 is complete after coordinator verification. T002–T016 remain open and are not authorized by this T001-only instruction.
+**Status**: T001 artifact/consumer agreement approved on 2026-10-18, including reviewed signatures, finite fixture profile and path ownership; see [decisions](contracts/decisions.md). T001–T004 are complete after coordinator verification. T002–T004 implementation was separately authorized on 2026-10-18; T005–T016 remain open and require separate authorization.
 **Tests**: Required controlled contract/behavior/evaluation cases. Follow repository test-first guidance after implementation authorization; collection failures do not constitute behavioral RED.
 **Ledger**: This is the only implementation task-status ledger. Tickets group tasks into verifiable slices, never a competing checklist of task completion.
 
@@ -26,21 +26,21 @@ Sequential T001–T016; story tasks carry [US1], [US2] or [US3]. Thai owns all l
 
 ## Phase 2: Contract validation and controlled mocks
 
-- [ ] T002 Design evaluation vectors before implementing UC-01-specific contract validators in src/uc01/contracts.ts and tests/runtime/uc01/contract.test.ts.
+- [X] T002 Design evaluation vectors before implementing UC-01-specific contract validators in src/uc01/contracts.ts and tests/runtime/uc01/contract.test.ts.
   - **Owner**: Thai.
   - **Dependencies**: T001.
   - **Owned Paths**: src/uc01/contracts.ts; tests/runtime/uc01/contract.test.ts.
   - **Acceptance Checks**: Behavioral vectors reject malformed/extra fields, invalid catalogs/limits/identity/digests, forged evidence/locators, wrong severity dimensions and model variants. Check all outcome unions and reference consistency against agreed schema; never fork src/contracts/uc03.ts. C13,C14,C22 pass; validation alone authorizes no tool.
   - **Evaluation & Evidence**: Before validator code: design product/evaluation metadata and deterministic grader vectors for C13,C14,C22 plus case-ID/version/result-state, oracle isolation and aggregation negatives. Include canonical digest projection/encoding vectors from the evaluation contract and correct-class/wrong-severity and wrong-class/correct-severity to separate classification correctness from overall case failure. Run immediately after validators; retain component and overall results, input/oracle/rule digests and code/config. No shared runner or real-model quality claim.
 
-- [ ] T003 Create controlled shared-port mocks and call spies in tests/runtime/support/uc01/ports.ts and tests/runtime/uc01/ports.test.ts.
+- [X] T003 Create controlled shared-port mocks and call spies in tests/runtime/support/uc01/ports.ts and tests/runtime/uc01/ports.test.ts.
   - **Owner**: Thai; shared owners review conformance.
   - **Dependencies**: T002.
   - **Owned Paths**: tests/runtime/support/uc01/ports.ts; tests/runtime/uc01/ports.test.ts.
   - **Acceptance Checks**: Scripted model/read/search, caller continuation, policy/accounting and safe telemetry ports conform to agreed consumer seam; explicit mock provenance and finite profile. Simulate denial/pause/stale/budget/uncertain usage; record attempted calls including zero on denied admission. No real network/files/commands/storage; replacements T011/T012.
   - **Evaluation & Evidence**: Before mock code: script allowed/denied/pending/stale/exhausted/uncertain C15-C19 responses and finite call/usage counters, with expected guard ordering and sanitized traces. Run conformance and zero-call/label-access checks immediately; regress T002. Retain mock-tagged results; no durable/real enforcement claim.
 
-- [ ] T004 Prepare versioned C01–C22 input/oracle/grading fixtures and held-out design in tests/runtime/support/uc01/fixtures.ts.
+- [X] T004 Prepare versioned C01–C22 input/oracle/grading fixtures and held-out design in tests/runtime/support/uc01/fixtures.ts.
   - **Owner**: Thai; Tai coordinates future shared runner.
   - **Dependencies**: T002.
   - **Owned Paths**: tests/runtime/support/uc01/fixtures.ts; tests/runtime/uc01/fixtures.test.ts.
@@ -168,7 +168,8 @@ All edges point toward higher task IDs: no cycle. Redundant explicit contract de
 ## Initial readiness and parallel opportunities
 
 - COMPLETE: T001 records the approved baseline, reviewed consumer contract, finite fixture profile and path ownership with user/member approval provenance.
-- Dependency READY but unauthorized: T002 now has its T001 prerequisite met; a separate instruction must authorize implementation. T003–T016 remain blocked by unchecked internal predecessors and any later external gates. Technical readiness cannot expand the T001-only scope.
+- COMPLETE: T002–T004 implement the local contract validators, controlled shared-port mocks, and versioned fixture/grading design; checks and local evidence are recorded for this authorized slice. No live calls or runtime capability are claimed.
+- READY but unauthorized: T005 has its internal prerequisites met; implementation still requires separate authorization. T006–T016 remain gated by their unchecked predecessors and any external delivery gates.
 - MOCK-capable after agreement: T002–T010 and T014; no real foundation prerequisite. T003 is the explicit mock task, T002 explicit validation; T011–T013 explicit real/receiver integration. T013 may use an agreed receiving contract without dispatch but cannot replace missing X-RECEIVER approval.
 - After T002 completes, T003 and T004 own disjoint files. After T003/T004, T005, T007 and T009 own disjoint files and can be delegated in parallel. After T010, T011/T013/T014 are disjoint if external gates permit. These are future opportunities, not present `[P]` markings.
 - T006/T008/T010 all edit assess.ts and are strictly sequenced. Never parallelize them or shared contract amendments with consumers.
