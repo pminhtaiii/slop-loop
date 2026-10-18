@@ -47,7 +47,7 @@ Tai is accountable for all local tasks, including shared foundation. Named lanes
 
 **Goal**: Validated task to evidence-backed final result. **Independent Test**: C01/C02/C16 through the injected route; real acceptance at T028. The mock milestone alone is not a delivered verified fix.
 
-- [ ] T005 [P] [US1] Prepare public seeded bug and input fixtures in fixtures/uc03/success/ and fixtures/uc03/input/.
+- [X] T005 [P] [US1] Prepare public seeded bug and input fixtures in fixtures/uc03/success/ and fixtures/uc03/input/.
   - **Owner**: Tai / evaluation-fixture lane.
   - **Dependencies**: T004.
   - **Owned Paths**: fixtures/uc03/success/; fixtures/uc03/input/.
