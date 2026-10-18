@@ -657,6 +657,9 @@ export function aggregateCaseResults(publicValues: unknown, gradingValues: unkno
     const firstSelection = selections[0];
     if (!firstSelection) reject('$.selections');
     const selectedLevel = firstSelection.level;
+    const selectedRecord = caseMap.get(firstSelection.caseId);
+    if (!selectedRecord) reject('$.selections');
+    const mockModelQuality = selectedLevel === 'model-quality' && selectedRecord.prerequisites.expectedProvenance === 'mock';
     if (selected.size !== caseMap.size || [...caseMap.values()].some(record => !selected.has(`${record.caseId}\u0000${selectedLevel}`))) reject('$.selections');
     const firstPublicCase = publicCases[0];
     if (firstPublicCase && publicCases.some(item => item.datasetId !== firstPublicCase.datasetId || item.datasetVersion !== firstPublicCase.datasetVersion)) reject('$.publicCases');
@@ -679,7 +682,7 @@ export function aggregateCaseResults(publicValues: unknown, gradingValues: unkno
       if (!result) {
         missing += 1; incomplete = true;
         if (selection.record.gate === 'hard') { hardCases += 1; hardIncomplete = true; }
-        if (selection.record.gate === 'scored') total += 1;
+        if (selection.record.gate === 'scored' && !mockModelQuality) total += 1;
         continue;
       }
       if (result.status === 'pass') pass += 1;
@@ -695,7 +698,7 @@ export function aggregateCaseResults(publicValues: unknown, gradingValues: unkno
         if (result.status === 'fail') hardFailed = true;
         if (result.status === 'error' || result.status === 'not-run') hardIncomplete = true;
       }
-      if (selection.record.gate === 'scored') {
+      if (selection.record.gate === 'scored' && !mockModelQuality) {
         total += 1;
         if (result.metrics.classification === 'correct') correct += 1;
       }
@@ -704,7 +707,7 @@ export function aggregateCaseResults(publicValues: unknown, gradingValues: unkno
     const accuracy = total === 0 ? null : correct / total;
     const qualityVerdict = total === 0 ? 'not-applicable' : (accuracy ?? 0) >= minimumAccuracy ? 'pass' : 'fail';
     const acceptance = hardGate === 'fail' || qualityVerdict === 'fail' || safetyFailed ? 'fail'
-      : incomplete || hardGate === 'incomplete' ? 'incomplete' : 'pass';
+      : incomplete || hardGate === 'incomplete' || mockModelQuality ? 'incomplete' : 'pass';
     return { counts: { pass, fail, error, notRun, missing }, hardGate,
       quality: { correct, total, accuracy, verdict: qualityVerdict }, completeness: incomplete ? 'incomplete' : 'complete', acceptance };
   }, null);

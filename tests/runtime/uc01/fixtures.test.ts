@@ -301,9 +301,9 @@ test('held-out aggregation can be exercised locally as mock data without a real-
   const aggregate = aggregateCaseResults(cases, oracles, results, cases.map(record => ({ caseId: record.caseId, level: 'model-quality' })), 0.8);
   assert.equal(aggregate.ok, true, JSON.stringify(aggregate));
   if (aggregate.ok) {
-    assert.deepEqual(aggregate.value.quality, { correct: 4, total: 5, accuracy: 0.8, verdict: 'pass' });
+    assert.deepEqual(aggregate.value.quality, { correct: 0, total: 0, accuracy: null, verdict: 'not-applicable' });
     assert.equal(aggregate.value.hardGate, 'not-applicable');
     assert.equal(aggregate.value.completeness, 'complete');
-    assert.equal(aggregate.value.acceptance, 'pass');
+    assert.equal(aggregate.value.acceptance, 'incomplete');
   }
 });

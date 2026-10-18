@@ -253,9 +253,10 @@ test('grading separates classification from severity and distinguishes product f
   assert.equal(malformed.ok && malformed.value.status, 'fail');
 });
 
-function frozenCase(familyId: string, caseId: string, scored = false): Readonly<Record<string, unknown>> {
+function frozenCase(familyId: string, caseId: string, scored = false, expectedProvenance: 'mock' | 'real' = 'mock'): Readonly<Record<string, unknown>> {
   const record = { ...publicCase, caseId, familyId, categories: scored ? ['model-quality'] : ['error'],
-    levels: scored ? ['model-quality'] : ['contract'], gate: scored ? 'scored' : 'hard' };
+    levels: scored ? ['model-quality'] : ['contract'], gate: scored ? 'scored' : 'hard',
+    prerequisites: { ...publicCase.prerequisites, expectedProvenance } };
   return { ...record, caseDigest: publicCaseDigest(record) };
 }
 
@@ -267,23 +268,25 @@ function gradingFor(record: Readonly<Record<string, unknown>>, expectedClassific
 }
 
 function resultFor(record: Readonly<Record<string, unknown>>, overrides: Readonly<Record<string, unknown>> = {}): Record<string, unknown> {
+  const provenance = (record.prerequisites as { expectedProvenance: 'mock' | 'real' }).expectedProvenance;
   const result: Record<string, unknown> = {
     contractVersion: 'uc01-evaluation-draft-v1', datasetId: record.datasetId, datasetVersion: record.datasetVersion,
     caseId: record.caseId, caseDigest: record.caseDigest, oracleDigest: gradingFor(record).oracleDigest,
     runId: 'run-1', attemptId: 'attempt-1', ucId: 'UC-01', level: Array.isArray(record.levels) ? record.levels[0] : 'contract',
-    provenance: 'mock', status: 'fail', reasonCode: 'criterion-mismatch', safeSummary: 'A grading criterion failed',
+    provenance, status: 'fail', reasonCode: 'criterion-mismatch', safeSummary: 'A grading criterion failed',
     codeRevision: 'revision-1', subjectSnapshotDigest: (record.input as { repositorySnapshotDigest: string }).repositorySnapshotDigest, configDigest: digest,
     catalogId: (record.prerequisites as { catalogId: string }).catalogId,
     catalogVersion: (record.prerequisites as { catalogVersion: string }).catalogVersion,
     policyId: (record.prerequisites as { policyId: string }).policyId,
     policyVersion: (record.prerequisites as { policyVersion: string }).policyVersion,
-    adapterVersions: ['controlled-mock-v1'], graderVersion: 'local-grader-v1',
+    adapterVersions: provenance === 'mock' ? ['controlled-mock-v1'] : ['real-adapter-v1'], graderVersion: 'local-grader-v1',
     gradingRuleId: record.gradingRuleId, gradingRuleVersion: record.gradingRuleVersion, capabilityRefs: [],
     startedAt: 100, durationMs: 12,
     metrics: { classification: 'correct', severity: 'incorrect', provenance: 'correct', evidenceSupport: 'correct', clarification: 'correct',
-      destination: 'correct', safety: 'correct', durationMs: { state: 'simulated', value: 12 },
-      inputTokens: { state: 'simulated', value: 1 }, outputTokens: { state: 'simulated', value: 1 },
-      cost: { state: 'simulated', value: 2 } },
+      destination: 'correct', safety: 'correct', durationMs: { state: provenance === 'mock' ? 'simulated' : 'observed', value: 12 },
+      inputTokens: { state: provenance === 'mock' ? 'simulated' : 'observed', value: 1 }, outputTokens: { state: provenance === 'mock' ? 'simulated' : 'observed', value: 1 },
+      cost: { state: provenance === 'mock' ? 'simulated' : 'observed', value: 2,
+        ...(provenance === 'real' ? { currency: 'USD', pricingId: 'fixture-pricing-v1' } : {}) } },
     traceRefs: ['trace-1'], evidenceRefs: ['evidence-1'], failureAnalysisRef: 'analysis-1',
     ...overrides,
   };
@@ -336,9 +339,9 @@ test('aggregation rejects manifest omissions and duplicates, preserves hard gate
   const aggregate = (cases: readonly unknown[], grades: readonly unknown[], results: readonly unknown[], selections: readonly unknown[]) =>
     aggregateCaseResults(cases, grades, results, selections);
   const qualityCases = [
-    frozenCase('C01', 'UC-01:C01:clear-defect', true), frozenCase('C07', 'UC-01:C07:feature-request', true),
-    frozenCase('C06', 'UC-01:C06:ambiguous', true), frozenCase('C08', 'UC-01:C08:irrelevant', true),
-    frozenCase('C15', 'UC-01:C15:malicious', true),
+    frozenCase('C01', 'UC-01:C01:clear-defect', true, 'real'), frozenCase('C07', 'UC-01:C07:feature-request', true, 'real'),
+    frozenCase('C06', 'UC-01:C06:ambiguous', true, 'real'), frozenCase('C08', 'UC-01:C08:irrelevant', true, 'real'),
+    frozenCase('C15', 'UC-01:C15:malicious', true, 'real'),
   ];
   const qualityGrades = qualityCases.map(record => gradingFor(record));
   const selections = qualityCases.map(record => ({ caseId: record.caseId, level: 'model-quality' }));
@@ -347,7 +350,7 @@ test('aggregation rejects manifest omissions and duplicates, preserves hard gate
     ...(index === 4 ? { reasonCode: 'wrong-classification', safeSummary: 'Observed class did not match the oracle', failureAnalysisRef: 'analysis-5' } : {}),
     metrics: { ...resultFor(record).metrics as object, classification: index === 4 ? 'incorrect' : 'correct', severity: index === 0 ? 'incorrect' : 'not-applicable' } }));
   const acceptedAtFloor = aggregate(qualityCases, qualityGrades, fourCorrect, selections);
-  assert.equal(acceptedAtFloor.ok, true);
+  assert.equal(acceptedAtFloor.ok, true, JSON.stringify(acceptedAtFloor));
   const acceptedAtFloorValue = aggregateValue(acceptedAtFloor);
   assert.deepEqual([acceptedAtFloorValue.quality, acceptedAtFloorValue.counts, acceptedAtFloorValue.completeness, acceptedAtFloorValue.acceptance],
     [{ correct: 4, total: 5, accuracy: 0.8, verdict: 'pass' }, { pass: 3, fail: 2, error: 0, notRun: 0, missing: 0 }, 'complete', 'pass']);
@@ -378,7 +381,8 @@ test('aggregation rejects manifest omissions and duplicates, preserves hard gate
   assert.equal(aggregate(qualityCases, qualityGrades, fourCorrect, selections.slice(1)).ok, false);
   assert.equal(aggregate(qualityCases, qualityGrades, fourCorrect, [...selections, { caseId: 'UC-01:C22:missing', level: 'model-quality' }]).ok, false);
 
-  const hardRecord = { ...publicCase, caseId: 'UC-01:C13:bad-catalog', familyId: 'C13', categories: ['safety'], levels: ['model-quality'], gate: 'hard' };
+  const hardRecord = { ...publicCase, caseId: 'UC-01:C13:bad-catalog', familyId: 'C13', categories: ['safety'], levels: ['model-quality'], gate: 'hard',
+    prerequisites: { ...publicCase.prerequisites, expectedProvenance: 'real' } };
   const hardCase = { ...hardRecord, caseDigest: publicCaseDigest(hardRecord) };
   const hardFailure = resultFor(hardCase, { status: 'fail', reasonCode: 'forbidden-destination', safeSummary: 'The catalog was rejected',
     metrics: { ...resultFor(hardCase).metrics as object, classification: 'not-applicable', severity: 'not-applicable' } });
@@ -402,8 +406,14 @@ test('aggregation rejects manifest omissions and duplicates, preserves hard gate
   const realRecord = { ...publicCase, caseId: 'UC-01:C13:real-case', familyId: 'C13', levels: ['model-quality'], gate: 'hard',
     prerequisites: { ...publicCase.prerequisites, expectedProvenance: 'real' } };
   const realCase = { ...realRecord, caseDigest: publicCaseDigest(realRecord) };
-  const mixedProvenance = aggregate([...qualityCases, realCase], [...qualityGrades, gradingFor(realCase)],
-    [...fourCorrect, resultFor(realCase, { provenance: 'real' })], [...selections, { caseId: realCase.caseId, level: 'model-quality' }]);
+  const mockQualityCases = [
+    frozenCase('C01', 'UC-01:C01:clear-defect', true), frozenCase('C07', 'UC-01:C07:feature-request', true),
+    frozenCase('C06', 'UC-01:C06:ambiguous', true), frozenCase('C08', 'UC-01:C08:irrelevant', true),
+    frozenCase('C15', 'UC-01:C15:malicious', true),
+  ];
+  const mixedProvenance = aggregate([...mockQualityCases, realCase], [...mockQualityCases.map(record => gradingFor(record)), gradingFor(realCase)],
+    [...mockQualityCases.map(record => resultFor(record)), resultFor(realCase)],
+    [...mockQualityCases.map(record => ({ caseId: record.caseId, level: 'model-quality' })), { caseId: realCase.caseId, level: 'model-quality' }]);
   assert.equal(mixedProvenance.ok, false);
 });
 
