@@ -46,6 +46,31 @@ test('sanitizeText redacts custom and builtin secret patterns', () => {
   assert.match(custom, /\[REDACTED\]/);
 });
 
+test('sanitizeText redacts secrets without capture groups and prevents offset/prefix leakage', () => {
+  // Built-in marker secret at offset 0
+  const markerResult = sanitizeText('MARKER_SECRET_0123');
+  assert.equal(markerResult, '[REDACTED]');
+  assert.equal(markerResult.includes('0123'), false);
+  assert.equal(markerResult.includes('MARKER_SECRET'), false);
+
+  // Custom regex without capture group matching string with digit 0 at offset 0
+  const customResult = sanitizeText('SENSITIVE0TOKEN', [/SENSITIVE0TOKEN/g]);
+  assert.equal(customResult, '[REDACTED]');
+  assert.equal(customResult.includes('SENSITIVE'), false);
+  assert.equal(customResult.includes('TOKEN'), false);
+
+  // Custom regex without capture groups matching at non-zero offset
+  const textWithOffset = 'preceding-data MARKER_SECRET_98765 post';
+  const offsetResult = sanitizeText(textWithOffset);
+  assert.equal(offsetResult, 'preceding-data [REDACTED] post');
+  assert.equal(offsetResult.includes('MARKER_SECRET'), false);
+  assert.equal(offsetResult.includes('98765'), false);
+
+  // Multiple marker secrets
+  const multiResult = sanitizeText('MARKER_SECRET_000 and MARKER_SECRET_111');
+  assert.equal(multiResult, '[REDACTED] and [REDACTED]');
+});
+
 test('emitActivity enforces whitelisted metadata and rejects unknown keys', async () => {
   const telemetry = new SanitizedTelemetry();
 
@@ -162,7 +187,8 @@ test('bounded redacted diagnostics truncates and hashes diagnostic refs', () => 
   assert.equal(diag.sanitizedContent.includes(markerSecret), false);
   assert.match(diag.sanitizedContent, /\[REDACTED\]/);
   assert.match(diag.sanitizedContent, /\[TRUNCATED\]/);
-  assert.ok(diag.byteCount <= 550);
+  assert.ok(diag.byteCount <= 500);
+  assert.equal(Buffer.byteLength(diag.sanitizedContent, 'utf8'), diag.byteCount);
   assert.match(diag.diagnosticRef, /^diag:sha256:[a-f0-9]{64}$/);
 
   // Short diagnostic is not truncated
@@ -170,6 +196,103 @@ test('bounded redacted diagnostics truncates and hashes diagnostic refs', () => 
   assert.equal(shortDiag.truncated, false);
   assert.equal(shortDiag.redacted, false);
   assert.equal(shortDiag.sanitizedContent, 'clean short diagnostic message');
+  assert.equal(shortDiag.byteCount, Buffer.byteLength('clean short diagnostic message', 'utf8'));
+});
+
+test('bounded redacted diagnostics enforces byte bounds INCLUDING suffix and safe UTF-8 split', () => {
+  // Tiny bound maxBytes: 1
+  const diag1 = sanitizeDiagnostic('abcdef', { maxBytes: 1 });
+  assert.equal(diag1.truncated, true);
+  assert.ok(diag1.byteCount <= 1, `Expected byteCount <= 1, got ${diag1.byteCount}`);
+  assert.equal(Buffer.byteLength(diag1.sanitizedContent, 'utf8'), diag1.byteCount);
+  assert.ok(Buffer.byteLength(diag1.sanitizedContent, 'utf8') <= 1);
+
+  // Tiny bound maxBytes: 3
+  const diag3 = sanitizeDiagnostic('abcdef', { maxBytes: 3 });
+  assert.equal(diag3.truncated, true);
+  assert.ok(diag3.byteCount <= 3, `Expected byteCount <= 3, got ${diag3.byteCount}`);
+  assert.equal(Buffer.byteLength(diag3.sanitizedContent, 'utf8'), diag3.byteCount);
+  assert.ok(Buffer.byteLength(diag3.sanitizedContent, 'utf8') <= 3);
+
+  // Bound equal to truncation notice length (15 bytes)
+  const diag15 = sanitizeDiagnostic('long diagnostic content', { maxBytes: 15 });
+  assert.equal(diag15.truncated, true);
+  assert.ok(diag15.byteCount <= 15, `Expected byteCount <= 15, got ${diag15.byteCount}`);
+  assert.equal(Buffer.byteLength(diag15.sanitizedContent, 'utf8'), diag15.byteCount);
+
+  // Bound slightly above truncation notice (20 bytes)
+  const diag20 = sanitizeDiagnostic('long diagnostic content', { maxBytes: 20 });
+  assert.equal(diag20.truncated, true);
+  assert.ok(diag20.byteCount <= 20, `Expected byteCount <= 20, got ${diag20.byteCount}`);
+  assert.equal(Buffer.byteLength(diag20.sanitizedContent, 'utf8'), diag20.byteCount);
+  assert.match(diag20.sanitizedContent, /\[TRUNCATED\]/);
+
+  // UTF-8 multibyte 2-byte character split ('é' is 2 bytes: 0xC3 0xA9)
+  const diagUtf8 = sanitizeDiagnostic('é'.repeat(100), { maxBytes: 21 });
+  assert.equal(diagUtf8.truncated, true);
+  assert.ok(diagUtf8.byteCount <= 21, `Expected byteCount <= 21, got ${diagUtf8.byteCount}`);
+  assert.equal(Buffer.byteLength(diagUtf8.sanitizedContent, 'utf8'), diagUtf8.byteCount);
+  assert.equal(diagUtf8.sanitizedContent.includes('\uFFFD'), false, 'Must not contain replacement character');
+
+  // UTF-8 multibyte 4-byte emoji ('🚀' is 4 bytes)
+  const diagEmoji = sanitizeDiagnostic('🚀'.repeat(50), { maxBytes: 19 });
+  assert.equal(diagEmoji.truncated, true);
+  assert.ok(diagEmoji.byteCount <= 19, `Expected byteCount <= 19, got ${diagEmoji.byteCount}`);
+  assert.equal(Buffer.byteLength(diagEmoji.sanitizedContent, 'utf8'), diagEmoji.byteCount);
+  assert.equal(diagEmoji.sanitizedContent.includes('\uFFFD'), false, 'Must not contain replacement character');
+});
+
+test('missing or invalid finite diagnostic limits fail closed', () => {
+  // sanitizeDiagnostic without maxBytes or with invalid maxBytes
+  assert.throws(
+    () => sanitizeDiagnostic('some text', {} as unknown as { readonly maxBytes: number }),
+    /INVALID_DIAGNOSTIC_LIMIT/
+  );
+  assert.throws(
+    () => sanitizeDiagnostic('some text', undefined as unknown as { readonly maxBytes: number }),
+    /INVALID_DIAGNOSTIC_LIMIT/
+  );
+  assert.throws(
+    () => sanitizeDiagnostic('some text', { maxBytes: 0 }),
+    /INVALID_DIAGNOSTIC_LIMIT/
+  );
+  assert.throws(
+    () => sanitizeDiagnostic('some text', { maxBytes: -10 }),
+    /INVALID_DIAGNOSTIC_LIMIT/
+  );
+  assert.throws(
+    () => sanitizeDiagnostic('some text', { maxBytes: NaN }),
+    /INVALID_DIAGNOSTIC_LIMIT/
+  );
+  assert.throws(
+    () => sanitizeDiagnostic('some text', { maxBytes: 1.5 }),
+    /INVALID_DIAGNOSTIC_LIMIT/
+  );
+  assert.throws(
+    () => sanitizeDiagnostic('some text', { maxBytes: Infinity }),
+    /INVALID_DIAGNOSTIC_LIMIT/
+  );
+
+  // SanitizedTelemetry with invalid maxDiagnosticBytes constructor option
+  assert.throws(
+    () => new SanitizedTelemetry({ maxDiagnosticBytes: 0 }),
+    /INVALID_DIAGNOSTIC_LIMIT/
+  );
+  assert.throws(
+    () => new SanitizedTelemetry({ maxDiagnosticBytes: -5 }),
+    /INVALID_DIAGNOSTIC_LIMIT/
+  );
+  assert.throws(
+    () => new SanitizedTelemetry({ maxDiagnosticBytes: NaN }),
+    /INVALID_DIAGNOSTIC_LIMIT/
+  );
+
+  // SanitizedTelemetry without maxDiagnosticBytes fails closed when recordDiagnostic is invoked
+  const unconfiguredTelemetry = new SanitizedTelemetry();
+  assert.throws(
+    () => unconfiguredTelemetry.recordDiagnostic('task-1', 'run-1', 'raw error trace'),
+    /INVALID_DIAGNOSTIC_LIMIT/
+  );
 });
 
 test('recordDiagnostic stores and retrieves redacted diagnostics', () => {

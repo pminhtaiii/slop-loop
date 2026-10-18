@@ -23,8 +23,6 @@ export interface RedactedDiagnostic {
   readonly redacted: boolean;
 }
 
-const DEFAULT_MAX_DIAGNOSTIC_BYTES = 1024;
-
 const BUILTIN_SECRET_PATTERNS: readonly RegExp[] = [
   /MARKER_SECRET[A-Za-z0-9_-]*/gi,
   /marker[-_]?secret[-_]?[A-Za-z0-9_-]*/gi,
@@ -32,8 +30,11 @@ const BUILTIN_SECRET_PATTERNS: readonly RegExp[] = [
   /Bearer\s+[A-Za-z0-9\-._~+/]+=*/gi,
   /(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,}/g,
   /sk-[A-Za-z0-9-_]{20,}/g,
-  /(?:token|secret|password|api[_-]?key|access[_-]?token|auth)[\s:=]+([^\s,;"']+)/gi,
+  /(?:token|secret|password|api[_-]?key|access[_-]?token|auth)[\s:=]+[^\s,;"']+/gi,
 ];
+
+const TRUNCATION_SUFFIX = ' ... [TRUNCATED]';
+const TRUNCATION_NOTICE = '... [TRUNCATED]';
 
 export function sanitizeText(
   text: string,
@@ -52,30 +53,46 @@ export function sanitizeText(
         if (pattern.length > 0) {
           sanitized = sanitized.replaceAll(pattern, '[REDACTED]');
         }
-      } else {
-        sanitized = sanitized.replace(pattern, (match, captured: string | undefined) => {
-          if (captured !== undefined && match.includes(captured)) {
-            return match.replace(captured, '[REDACTED]');
-          }
-          return '[REDACTED]';
-        });
+      } else if (pattern instanceof RegExp) {
+        const flags = pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`;
+        const re = new RegExp(pattern.source, flags);
+        sanitized = sanitized.replace(re, () => '[REDACTED]');
       }
     }
   }
 
   // Apply built-in secret patterns
   for (const regex of BUILTIN_SECRET_PATTERNS) {
-    // Reset state for global regexes
-    const re = new RegExp(regex.source, regex.flags);
-    sanitized = sanitized.replace(re, (match, captured: string | undefined) => {
-      if (captured !== undefined && match.includes(captured)) {
-        return match.replace(captured, '[REDACTED]');
-      }
-      return '[REDACTED]';
-    });
+    const flags = regex.flags.includes('g') ? regex.flags : `${regex.flags}g`;
+    const re = new RegExp(regex.source, flags);
+    sanitized = sanitized.replace(re, () => '[REDACTED]');
   }
 
   return sanitized;
+}
+
+export function truncateUtf8ToBytes(text: string, maxBytes: number): string {
+  if (maxBytes <= 0 || text.length === 0) {
+    return '';
+  }
+  const buf = Buffer.from(text, 'utf8');
+  if (buf.length <= maxBytes) {
+    return text;
+  }
+
+  let cut = maxBytes;
+  const initialByte = buf[cut];
+  if (initialByte !== undefined && (initialByte & 0xc0) === 0x80) {
+    while (cut > 0) {
+      const b = buf[cut];
+      if (b === undefined || (b & 0xc0) !== 0x80) {
+        break;
+      }
+      cut--;
+    }
+  }
+
+  return buf.subarray(0, cut).toString('utf8');
 }
 
 export function sanitizeDiagnostic(
@@ -85,7 +102,21 @@ export function sanitizeDiagnostic(
     readonly customPatterns?: readonly (RegExp | string)[];
   }
 ): RedactedDiagnostic {
-  const maxBytes = options?.maxBytes ?? DEFAULT_MAX_DIAGNOSTIC_BYTES;
+  if (typeof content !== 'string') {
+    throw new TypeError('content must be a string');
+  }
+
+  const maxBytes = options?.maxBytes;
+  if (
+    maxBytes === undefined ||
+    typeof maxBytes !== 'number' ||
+    !Number.isFinite(maxBytes) ||
+    !Number.isSafeInteger(maxBytes) ||
+    maxBytes <= 0
+  ) {
+    throw new Error('INVALID_DIAGNOSTIC_LIMIT: maxBytes must be a finite positive integer');
+  }
+
   const originalSanitized = sanitizeText(content, options?.customPatterns);
   const wasRedacted = originalSanitized !== content;
 
@@ -95,12 +126,18 @@ export function sanitizeDiagnostic(
   let byteLen = Buffer.byteLength(finalContent, 'utf8');
   if (byteLen > maxBytes) {
     wasTruncated = true;
-    const truncationNotice = ' ... [TRUNCATED]';
-    const noticeBytes = Buffer.byteLength(truncationNotice, 'utf8');
-    const targetBytes = Math.max(0, maxBytes - noticeBytes);
+    const suffixBytes = Buffer.byteLength(TRUNCATION_SUFFIX, 'utf8');
+    const noticeBytes = Buffer.byteLength(TRUNCATION_NOTICE, 'utf8');
 
-    const buf = Buffer.from(finalContent, 'utf8');
-    finalContent = buf.subarray(0, targetBytes).toString('utf8') + truncationNotice;
+    if (maxBytes >= suffixBytes) {
+      const targetPrefixBytes = maxBytes - suffixBytes;
+      const prefix = truncateUtf8ToBytes(originalSanitized, targetPrefixBytes);
+      finalContent = prefix.length > 0 ? prefix + TRUNCATION_SUFFIX : TRUNCATION_NOTICE;
+    } else if (maxBytes >= noticeBytes) {
+      finalContent = TRUNCATION_NOTICE;
+    } else {
+      finalContent = truncateUtf8ToBytes(TRUNCATION_NOTICE, maxBytes);
+    }
     byteLen = Buffer.byteLength(finalContent, 'utf8');
   }
 
@@ -116,7 +153,7 @@ export function sanitizeDiagnostic(
   };
 }
 
-export function isProtectedPayload(val: unknown): boolean {
+export function isProtectedPayload(val: unknown, seen = new Set<unknown>()): boolean {
   if (typeof val === 'string') {
     const trimmed = val.trim();
     if (isProtectedPath(trimmed)) {
@@ -129,7 +166,8 @@ export function isProtectedPayload(val: unknown): boolean {
       return true;
     }
     for (const regex of BUILTIN_SECRET_PATTERNS) {
-      const re = new RegExp(regex.source, regex.flags);
+      const flags = regex.flags.includes('g') ? regex.flags : `${regex.flags}g`;
+      const re = new RegExp(regex.source, flags);
       if (re.test(trimmed)) {
         return true;
       }
@@ -138,8 +176,12 @@ export function isProtectedPayload(val: unknown): boolean {
   }
 
   if (typeof val === 'object' && val !== null) {
+    if (seen.has(val)) {
+      return false;
+    }
+    seen.add(val);
     for (const [key, value] of Object.entries(val)) {
-      if (isProtectedPayload(key) || isProtectedPayload(value)) {
+      if (isProtectedPayload(key, seen) || isProtectedPayload(value, seen)) {
         return true;
       }
     }
@@ -150,7 +192,7 @@ export function isProtectedPayload(val: unknown): boolean {
 
 export class SanitizedTelemetry implements TelemetryPort {
   readonly provenance: PortProvenance;
-  private readonly maxDiagnosticBytes: number;
+  private readonly maxDiagnosticBytes: number | undefined;
   private readonly secretPatterns: readonly (RegExp | string)[];
   private readonly sink: ((event: ActivityEvent) => void | Promise<void>) | undefined;
   private readonly events: Map<string, ActivityEvent[]>;
@@ -159,7 +201,19 @@ export class SanitizedTelemetry implements TelemetryPort {
 
   constructor(options: TelemetryOptions = {}) {
     this.provenance = options.provenance ?? 'real';
-    this.maxDiagnosticBytes = options.maxDiagnosticBytes ?? DEFAULT_MAX_DIAGNOSTIC_BYTES;
+    if (options.maxDiagnosticBytes !== undefined) {
+      if (
+        typeof options.maxDiagnosticBytes !== 'number' ||
+        !Number.isFinite(options.maxDiagnosticBytes) ||
+        !Number.isSafeInteger(options.maxDiagnosticBytes) ||
+        options.maxDiagnosticBytes <= 0
+      ) {
+        throw new Error('INVALID_DIAGNOSTIC_LIMIT: maxDiagnosticBytes must be a finite positive integer');
+      }
+      this.maxDiagnosticBytes = options.maxDiagnosticBytes;
+    } else {
+      this.maxDiagnosticBytes = undefined;
+    }
     this.secretPatterns = options.secretPatterns ?? [];
     this.sink = options.sink;
     this.events = new Map();
@@ -272,6 +326,11 @@ export class SanitizedTelemetry implements TelemetryPort {
     _runId: string,
     rawDiagnostic: string
   ): RedactedDiagnostic {
+    if (this.maxDiagnosticBytes === undefined) {
+      throw new Error(
+        'INVALID_DIAGNOSTIC_LIMIT: maxDiagnosticBytes must be configured with a finite positive integer to record diagnostics'
+      );
+    }
     const redacted = sanitizeDiagnostic(rawDiagnostic, {
       maxBytes: this.maxDiagnosticBytes,
       customPatterns: this.secretPatterns,
