@@ -5,12 +5,17 @@ import {
   type DockerMountConfig,
   type DockerResourceLimits,
   type DockerLifecycleController,
+  type CanonicalRepositorySnapshot,
+  type CanonicalSnapshotEntry,
+  type MaterializeViewParams,
+  type AdmitCommandViewParams,
   validateDockerProfile,
   DockerWorkspaceManager,
   computeFileDigest,
   containsProtectedContent,
 } from '../../../src/foundation/docker-workspace.ts';
 import {
+  type CommandView,
   validateCommandView,
   validateTaskWorkspace,
 } from '../../../src/contracts/uc03.ts';
@@ -20,6 +25,13 @@ export class FakeDockerLifecycleController implements DockerLifecycleController 
   private readonly volumes = new Set<string>();
   readonly createdVolumes: string[] = [];
   readonly removedVolumes: string[] = [];
+
+  snapshotToReturn?: CanonicalRepositorySnapshot;
+  readonly materializedViews: {
+    readonly view: CommandView;
+    readonly files: Record<string, string | Uint8Array>;
+  }[] = [];
+  onMaterialize?: () => Promise<void> | void;
 
   async createVolume(id: string): Promise<void> {
     this.volumes.add(id);
@@ -33,6 +45,23 @@ export class FakeDockerLifecycleController implements DockerLifecycleController 
   async removeVolume(id: string): Promise<void> {
     this.volumes.delete(id);
     this.removedVolumes.push(id);
+  }
+
+  async getCanonicalSnapshot(workspaceId: string): Promise<CanonicalRepositorySnapshot> {
+    if (!this.snapshotToReturn) {
+      throw new Error(`NO_SNAPSHOT_CONFIGURED: No snapshot configured for workspace ${workspaceId}`);
+    }
+    return this.snapshotToReturn;
+  }
+
+  async materializeView(params: MaterializeViewParams): Promise<void> {
+    if (this.onMaterialize) {
+      await this.onMaterialize();
+    }
+    this.materializedViews.push({
+      view: params.view,
+      files: { ...params.files },
+    });
   }
 }
 
@@ -63,6 +92,24 @@ function createValidProfile(overrides?: Partial<DockerProfile>): DockerProfile {
       },
     ],
     ...overrides,
+  };
+}
+
+function createSnapshotEntry(
+  path: string,
+  content: string,
+  options?: {
+    readonly kind?: string;
+    readonly digest?: string;
+    readonly linkTarget?: string;
+  }
+): CanonicalSnapshotEntry {
+  return {
+    path,
+    kind: options?.kind ?? 'regular',
+    content,
+    digest: options?.digest ?? computeFileDigest(content),
+    ...(options?.linkTarget !== undefined ? { linkTarget: options.linkTarget } : {}),
   };
 }
 
@@ -438,6 +485,563 @@ test('DockerWorkspaceManager: resumeWorkspace verifies stable volume identities 
   );
 });
 
+test('DockerWorkspaceManager: admitCommandView fails closed when controller is missing getCanonicalSnapshot', async () => {
+  const controllerWithoutSnapshot: DockerLifecycleController = {
+    provenance: 'mock',
+    createVolume: () => Promise.resolve(),
+    hasVolume: () => Promise.resolve(true),
+    removeVolume: () => Promise.resolve(),
+    materializeView: () => Promise.resolve(),
+  };
+  const manager = new DockerWorkspaceManager({ controller: controllerWithoutSnapshot });
+  const ws = await manager.createWorkspace({
+    taskId: 'task-snap-01',
+    workspaceId: 'ws-snap-01',
+    initialRevisionDigest: 'sha256:0111111111111111111111111111111111111111111111111111111111111111',
+    profile: createValidProfile(),
+  });
+
+  await assert.rejects(
+    async () => {
+      await manager.admitCommandView({ workspaceId: ws.workspaceId });
+    },
+    { message: /CONTROLLER_SNAPSHOT_METHOD_REQUIRED/ }
+  );
+});
+
+test('DockerWorkspaceManager: admitCommandView fails closed when controller is missing materializeView', async () => {
+  const controllerWithoutMaterializer: DockerLifecycleController = {
+    provenance: 'mock',
+    createVolume: () => Promise.resolve(),
+    hasVolume: () => Promise.resolve(true),
+    removeVolume: () => Promise.resolve(),
+    getCanonicalSnapshot: async () => ({
+      canonicalRevisionDigest: 'sha256:0111111111111111111111111111111111111111111111111111111111111111',
+      entries: [createSnapshotEntry('src/a.py', 'x = 1\n')],
+    }),
+  };
+  const manager = new DockerWorkspaceManager({ controller: controllerWithoutMaterializer });
+  const ws = await manager.createWorkspace({
+    taskId: 'task-snap-02',
+    workspaceId: 'ws-snap-02',
+    initialRevisionDigest: 'sha256:0111111111111111111111111111111111111111111111111111111111111111',
+    profile: createValidProfile(),
+  });
+
+  await assert.rejects(
+    async () => {
+      await manager.admitCommandView({ workspaceId: ws.workspaceId });
+    },
+    { message: /CONTROLLER_MATERIALIZE_METHOD_REQUIRED/ }
+  );
+});
+
+test('DockerWorkspaceManager: admitCommandView rejects when controller returns stale or mismatching canonical revision', async () => {
+  const controller = new FakeDockerLifecycleController();
+  const manager = new DockerWorkspaceManager({ controller });
+  const rev1 = 'sha256:0111111111111111111111111111111111111111111111111111111111111111';
+  const staleRev = 'sha256:0999999999999999999999999999999999999999999999999999999999999999';
+
+  const ws = await manager.createWorkspace({
+    taskId: 'task-snap-03',
+    workspaceId: 'ws-snap-03',
+    initialRevisionDigest: rev1,
+    profile: createValidProfile(),
+  });
+
+  controller.snapshotToReturn = {
+    canonicalRevisionDigest: staleRev,
+    entries: [createSnapshotEntry('src/calculator.py', 'def add(a, b): return a + b\n')],
+  };
+
+  await assert.rejects(
+    async () => {
+      await manager.admitCommandView({ workspaceId: ws.workspaceId });
+    },
+    { message: /STALE_COMMAND_VIEW/ }
+  );
+});
+
+test('DockerWorkspaceManager: admitCommandView rejects caller self-authorized files and uses controller snapshot as sole authority', async () => {
+  const controller = new FakeDockerLifecycleController();
+  const manager = new DockerWorkspaceManager({ controller });
+  const rev = 'sha256:0222222222222222222222222222222222222222222222222222222222222222';
+
+  const ws = await manager.createWorkspace({
+    taskId: 'task-snap-04',
+    workspaceId: 'ws-snap-04',
+    initialRevisionDigest: rev,
+    profile: createValidProfile(),
+  });
+
+  const trustedFile = 'src/trusted.py';
+  const trustedContent = 'def trusted(): return True\n';
+  controller.snapshotToReturn = {
+    canonicalRevisionDigest: rev,
+    entries: [createSnapshotEntry(trustedFile, trustedContent)],
+  };
+
+  // Caller attempts to self-authorize an injected file
+  const untrustedInput: AdmitCommandViewParams & { readonly canonicalFiles?: Record<string, string> } = {
+    workspaceId: ws.workspaceId,
+    canonicalFiles: {
+      'src/injected_by_caller.py': 'def attack(): pass\n',
+    },
+  };
+
+  const view = await manager.admitCommandView(untrustedInput);
+
+  assert.equal(view.admittedFiles.length, 1);
+  const admitted0 = view.admittedFiles[0];
+  assert.ok(admitted0);
+  assert.equal(admitted0.path, trustedFile);
+  assert.equal(controller.materializedViews.length, 1);
+  const mat0 = controller.materializedViews[0];
+  assert.ok(mat0);
+  assert.deepEqual(Object.keys(mat0.files), [trustedFile]);
+  assert.equal(mat0.files[trustedFile], trustedContent);
+  assert.equal('src/injected_by_caller.py' in mat0.files, false);
+});
+
+test('DockerWorkspaceManager: admitCommandView rejects invalid file digests that do not match entry content', async () => {
+  const controller = new FakeDockerLifecycleController();
+  const manager = new DockerWorkspaceManager({ controller });
+  const rev = 'sha256:0333333333333333333333333333333333333333333333333333333333333333';
+
+  const ws = await manager.createWorkspace({
+    taskId: 'task-snap-05',
+    workspaceId: 'ws-snap-05',
+    initialRevisionDigest: rev,
+    profile: createValidProfile(),
+  });
+
+  controller.snapshotToReturn = {
+    canonicalRevisionDigest: rev,
+    entries: [
+      createSnapshotEntry('src/corrupt.py', 'def corrupt(): pass\n', {
+        digest: 'sha256:0000000000000000000000000000000000000000000000000000000000000000',
+      }),
+    ],
+  };
+
+  await assert.rejects(
+    async () => {
+      await manager.admitCommandView({ workspaceId: ws.workspaceId });
+    },
+    { message: /FILE_DIGEST_MISMATCH/ }
+  );
+  assert.equal(controller.materializedViews.length, 0);
+});
+
+test('DockerWorkspaceManager: admitCommandView rejects escaping canonical paths in snapshot entries', async () => {
+  const controller = new FakeDockerLifecycleController();
+  const manager = new DockerWorkspaceManager({ controller });
+  const rev = 'sha256:0444444444444444444444444444444444444444444444444444444444444444';
+
+  const ws = await manager.createWorkspace({
+    taskId: 'task-snap-06',
+    workspaceId: 'ws-snap-06',
+    initialRevisionDigest: rev,
+    profile: createValidProfile(),
+  });
+
+  controller.snapshotToReturn = {
+    canonicalRevisionDigest: rev,
+    entries: [
+      createSnapshotEntry('../escape.py', 'x = 1\n'),
+    ],
+  };
+
+  await assert.rejects(
+    async () => {
+      await manager.admitCommandView({ workspaceId: ws.workspaceId });
+    },
+    { message: /WORKSPACE_ESCAPE/ }
+  );
+  assert.equal(controller.materializedViews.length, 0);
+});
+
+test('DockerWorkspaceManager: admitCommandView rejects unknown file kinds before materialization', async () => {
+  const controller = new FakeDockerLifecycleController();
+  const manager = new DockerWorkspaceManager({ controller });
+  const rev = 'sha256:0555555555555555555555555555555555555555555555555555555555555555';
+
+  const ws = await manager.createWorkspace({
+    taskId: 'task-snap-07',
+    workspaceId: 'ws-snap-07',
+    initialRevisionDigest: rev,
+    profile: createValidProfile(),
+  });
+
+  controller.snapshotToReturn = {
+    canonicalRevisionDigest: rev,
+    entries: [
+      createSnapshotEntry('src/pipe', '', { kind: 'fifo', digest: computeFileDigest('') }),
+    ],
+  };
+
+  await assert.rejects(
+    async () => {
+      await manager.admitCommandView({ workspaceId: ws.workspaceId });
+    },
+    { message: /UNKNOWN_FILE_KIND/ }
+  );
+  assert.equal(controller.materializedViews.length, 0);
+});
+
+test('DockerWorkspaceManager: admitCommandView rejects symlink link targets (chained symlinks)', async () => {
+  const controller = new FakeDockerLifecycleController();
+  const manager = new DockerWorkspaceManager({ controller });
+  const rev = 'sha256:0666666666666666666666666666666666666666666666666666666666666666';
+
+  const ws = await manager.createWorkspace({
+    taskId: 'task-snap-08',
+    workspaceId: 'ws-snap-08',
+    initialRevisionDigest: rev,
+    profile: createValidProfile(),
+  });
+
+  controller.snapshotToReturn = {
+    canonicalRevisionDigest: rev,
+    entries: [
+      createSnapshotEntry('src/target.py', 'def real(): pass\n'),
+      createSnapshotEntry('src/link_b.py', '', {
+        kind: 'symlink',
+        linkTarget: 'src/target.py',
+        digest: computeFileDigest('def real(): pass\n'),
+      }),
+      createSnapshotEntry('src/link_a.py', '', {
+        kind: 'symlink',
+        linkTarget: 'src/link_b.py', // Chained symlink (symlink link target)
+        digest: computeFileDigest('def real(): pass\n'),
+      }),
+    ],
+  };
+
+  await assert.rejects(
+    async () => {
+      await manager.admitCommandView({ workspaceId: ws.workspaceId });
+    },
+    { message: /UNSAFE_LINK_TARGET/ }
+  );
+  assert.equal(controller.materializedViews.length, 0);
+});
+
+test('DockerWorkspaceManager: admitCommandView rejects outside link targets (/etc/shadow, ../outside)', async () => {
+  const controller = new FakeDockerLifecycleController();
+  const manager = new DockerWorkspaceManager({ controller });
+  const rev = 'sha256:0777777777777777777777777777777777777777777777777777777777777777';
+
+  const ws = await manager.createWorkspace({
+    taskId: 'task-snap-09',
+    workspaceId: 'ws-snap-09',
+    initialRevisionDigest: rev,
+    profile: createValidProfile(),
+  });
+
+  for (const outsideTarget of ['/etc/shadow', '../outside.py', '../../secret']) {
+    controller.snapshotToReturn = {
+      canonicalRevisionDigest: rev,
+      entries: [
+        createSnapshotEntry('src/escape_link.py', '', {
+          kind: 'symlink',
+          linkTarget: outsideTarget,
+          digest: computeFileDigest(''),
+        }),
+      ],
+    };
+
+    await assert.rejects(
+      async () => {
+        await manager.admitCommandView({ workspaceId: ws.workspaceId });
+      },
+      { message: /UNSAFE_LINK_TARGET/ },
+      `Expected outside link target ${outsideTarget} to be rejected`
+    );
+  }
+  assert.equal(controller.materializedViews.length, 0);
+});
+
+test('DockerWorkspaceManager: admitCommandView rejects excluded link targets (.env, secret-bearing targets)', async () => {
+  const controller = new FakeDockerLifecycleController();
+  const manager = new DockerWorkspaceManager({ controller });
+  const rev = 'sha256:0888888888888888888888888888888888888888888888888888888888888888';
+
+  const ws = await manager.createWorkspace({
+    taskId: 'task-snap-10',
+    workspaceId: 'ws-snap-10',
+    initialRevisionDigest: rev,
+    profile: createValidProfile(),
+  });
+
+  // Link pointing to protected path .env
+  controller.snapshotToReturn = {
+    canonicalRevisionDigest: rev,
+    entries: [
+      createSnapshotEntry('.env', 'DATABASE_KEY=secret\n'),
+      createSnapshotEntry('src/env_link.py', '', {
+        kind: 'symlink',
+        linkTarget: '.env',
+        digest: computeFileDigest('DATABASE_KEY=secret\n'),
+      }),
+    ],
+  };
+
+  await assert.rejects(
+    async () => {
+      await manager.admitCommandView({ workspaceId: ws.workspaceId });
+    },
+    { message: /FORBIDDEN_LINK_TARGET/ }
+  );
+
+  // Link pointing to file containing embedded secret
+  controller.snapshotToReturn = {
+    canonicalRevisionDigest: rev,
+    entries: [
+      createSnapshotEntry('src/secret_source.py', 'API_KEY = "MARKER_SECRET_FORBIDDEN_01"\n'),
+      createSnapshotEntry('src/secret_link.py', '', {
+        kind: 'symlink',
+        linkTarget: 'src/secret_source.py',
+        digest: computeFileDigest('API_KEY = "MARKER_SECRET_FORBIDDEN_01"\n'),
+      }),
+    ],
+  };
+
+  await assert.rejects(
+    async () => {
+      await manager.admitCommandView({ workspaceId: ws.workspaceId });
+    },
+    { message: /FORBIDDEN_LINK_TARGET/ }
+  );
+  assert.equal(controller.materializedViews.length, 0);
+});
+
+test('DockerWorkspaceManager: admitCommandView excludes protected paths and unrequired embedded secrets before materialization', async () => {
+  const controller = new FakeDockerLifecycleController();
+  const manager = new DockerWorkspaceManager({ controller });
+  const rev = 'sha256:0999999999999999999999999999999999999999999999999999999999999999';
+
+  const ws = await manager.createWorkspace({
+    taskId: 'task-snap-11',
+    workspaceId: 'ws-snap-11',
+    initialRevisionDigest: rev,
+    profile: createValidProfile(),
+  });
+
+  const calcPy = 'def add(a, b): return a + b\n';
+  const testPy = 'def test_add(): assert add(1, 2) == 3\n';
+
+  controller.snapshotToReturn = {
+    canonicalRevisionDigest: rev,
+    entries: [
+      createSnapshotEntry('src/calculator.py', calcPy),
+      createSnapshotEntry('tests/test_calculator.py', testPy),
+      createSnapshotEntry('.env', 'DATABASE_PASSWORD=secret123\n'),
+      createSnapshotEntry('keys/id_rsa', '-----BEGIN RSA PRIVATE KEY-----\nMIIE...\n-----END RSA PRIVATE KEY-----\n'),
+      createSnapshotEntry('.git/config', '[core]\nrepositoryformatversion = 0\n'),
+      createSnapshotEntry('.agents/skills/tdd/SKILL.md', '# TDD Skill\n'),
+      createSnapshotEntry('config/unrequired_credentials.txt', 'api_key: MARKER_SECRET_UNREQUIRED_01\n'),
+    ],
+  };
+
+  const view = await manager.admitCommandView({ workspaceId: ws.workspaceId });
+
+  // Admitted view assertions
+  assert.equal(view.admittedFiles.length, 2);
+  const admittedPaths = view.admittedFiles.map((f) => f.path);
+  assert.deepEqual(admittedPaths.sort(), ['src/calculator.py', 'tests/test_calculator.py']);
+  assert.equal(
+    view.admittedFiles.find((f) => f.path === 'src/calculator.py')?.digest,
+    computeFileDigest(calcPy)
+  );
+  assert.equal(
+    view.admittedFiles.find((f) => f.path === 'tests/test_calculator.py')?.digest,
+    computeFileDigest(testPy)
+  );
+  assert.equal(view.mountedReadOnly, true);
+  assert.equal(view.scratchIdentity, ws.scratchVolumeId);
+
+  // Validate canonical command view
+  const valid = validateCommandView(view);
+  assert.equal(valid.ok, true);
+
+  // Materialization spy assertions: receives permitted bytes ONLY and read-only view identity
+  assert.equal(controller.materializedViews.length, 1);
+  const materialized = controller.materializedViews[0];
+  assert.ok(materialized);
+  assert.equal(materialized.view.viewId, view.viewId);
+  assert.equal(materialized.view.mountedReadOnly, true);
+  assert.deepEqual(Object.keys(materialized.files).sort(), ['src/calculator.py', 'tests/test_calculator.py']);
+  assert.equal(materialized.files['src/calculator.py'], calcPy);
+  assert.equal(materialized.files['tests/test_calculator.py'], testPy);
+
+  // Verify zero protected bytes sent to controller
+  for (const forbiddenKey of ['.env', 'keys/id_rsa', '.git/config', '.agents/skills/tdd/SKILL.md', 'config/unrequired_credentials.txt']) {
+    assert.equal(forbiddenKey in materialized.files, false, `Forbidden key ${forbiddenKey} must not be passed to materializeView`);
+  }
+});
+
+test('DockerWorkspaceManager: admitCommandView fails closed when required file is a protected path (no silent redaction)', async () => {
+  const controller = new FakeDockerLifecycleController();
+  const manager = new DockerWorkspaceManager({ controller });
+  const rev = 'sha256:0aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+
+  const ws = await manager.createWorkspace({
+    taskId: 'task-snap-12',
+    workspaceId: 'ws-snap-12',
+    initialRevisionDigest: rev,
+    profile: createValidProfile(),
+  });
+
+  controller.snapshotToReturn = {
+    canonicalRevisionDigest: rev,
+    entries: [
+      createSnapshotEntry('src/calculator.py', 'def add(a, b): return a + b\n'),
+      createSnapshotEntry('.env', 'SECRET=true\n'),
+    ],
+    requiredFiles: ['.env', 'src/calculator.py'],
+  };
+
+  await assert.rejects(
+    async () => {
+      await manager.admitCommandView({ workspaceId: ws.workspaceId });
+    },
+    { message: /PROTECTED_PATH_FORBIDDEN/ }
+  );
+  assert.equal(controller.materializedViews.length, 0);
+});
+
+test('DockerWorkspaceManager: admitCommandView fails closed when required file contains embedded secret (no silent redaction)', async () => {
+  const controller = new FakeDockerLifecycleController();
+  const manager = new DockerWorkspaceManager({ controller });
+  const rev = 'sha256:0bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+
+  const ws = await manager.createWorkspace({
+    taskId: 'task-snap-13',
+    workspaceId: 'ws-snap-13',
+    initialRevisionDigest: rev,
+    profile: createValidProfile(),
+  });
+
+  controller.snapshotToReturn = {
+    canonicalRevisionDigest: rev,
+    entries: [
+      createSnapshotEntry('src/auth.py', 'TOKEN = "MARKER_SECRET_REQUIRED_TOKEN_99"\ndef login(): pass\n'),
+    ],
+  };
+
+  await assert.rejects(
+    async () => {
+      await manager.admitCommandView({
+        workspaceId: ws.workspaceId,
+        requiredFiles: ['src/auth.py'],
+      });
+    },
+    { message: /REQUIRED_FILE_CONTAINS_PROTECTED_CONTENT/ }
+  );
+  assert.equal(controller.materializedViews.length, 0);
+});
+
+test('DockerWorkspaceManager: admitCommandView fails closed when required file is missing from snapshot', async () => {
+  const controller = new FakeDockerLifecycleController();
+  const manager = new DockerWorkspaceManager({ controller });
+  const rev = 'sha256:0ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc';
+
+  const ws = await manager.createWorkspace({
+    taskId: 'task-snap-14',
+    workspaceId: 'ws-snap-14',
+    initialRevisionDigest: rev,
+    profile: createValidProfile(),
+  });
+
+  controller.snapshotToReturn = {
+    canonicalRevisionDigest: rev,
+    entries: [
+      createSnapshotEntry('src/calculator.py', 'def add(a, b): return a + b\n'),
+    ],
+    requiredFiles: ['src/calculator.py', 'tests/test_calculator.py'],
+  };
+
+  await assert.rejects(
+    async () => {
+      await manager.admitCommandView({ workspaceId: ws.workspaceId });
+    },
+    { message: /REQUIRED_FILE_EXCLUDED/ }
+  );
+  assert.equal(controller.materializedViews.length, 0);
+});
+
+test('DockerWorkspaceManager: admitCommandView accepts valid link target pointing to permitted regular file', async () => {
+  const controller = new FakeDockerLifecycleController();
+  const manager = new DockerWorkspaceManager({ controller });
+  const rev = 'sha256:0ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd';
+
+  const ws = await manager.createWorkspace({
+    taskId: 'task-snap-15',
+    workspaceId: 'ws-snap-15',
+    initialRevisionDigest: rev,
+    profile: createValidProfile(),
+  });
+
+  const calcContent = 'def add(a, b): return a + b\n';
+  const calcDigest = computeFileDigest(calcContent);
+
+  controller.snapshotToReturn = {
+    canonicalRevisionDigest: rev,
+    entries: [
+      createSnapshotEntry('src/calculator.py', calcContent),
+      createSnapshotEntry('src/calc_alias.py', '', {
+        kind: 'symlink',
+        linkTarget: 'src/calculator.py',
+        digest: calcDigest,
+      }),
+    ],
+  };
+
+  const view = await manager.admitCommandView({ workspaceId: ws.workspaceId });
+  assert.equal(view.admittedFiles.length, 2);
+  assert.equal(controller.materializedViews.length, 1);
+  const matLink = controller.materializedViews[0];
+  assert.ok(matLink);
+  assert.equal(matLink.files['src/calc_alias.py'], calcContent);
+});
+
+test('DockerWorkspaceManager: admitCommandView rejects view if canonical revision changed during snapshot/materialization', async () => {
+  const controller = new FakeDockerLifecycleController();
+  const manager = new DockerWorkspaceManager({ controller });
+  const rev1 = 'sha256:0eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+  const rev2 = 'sha256:0fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff';
+
+  const ws = await manager.createWorkspace({
+    taskId: 'task-snap-16',
+    workspaceId: 'ws-snap-16',
+    initialRevisionDigest: rev1,
+    profile: createValidProfile(),
+  });
+
+  controller.snapshotToReturn = {
+    canonicalRevisionDigest: rev1,
+    entries: [
+      createSnapshotEntry('src/calculator.py', 'def add(a, b): return a + b\n'),
+    ],
+  };
+
+  // Simulate concurrent revision mutation during materialization
+  controller.onMaterialize = () => {
+    manager.setCanonicalRevision(ws.workspaceId, rev2);
+  };
+
+  await assert.rejects(
+    async () => {
+      await manager.admitCommandView({ workspaceId: ws.workspaceId });
+    },
+    { message: /CANONICAL_REVISION_CHANGED/ }
+  );
+
+  // Active view must not be stored on concurrent drift
+  assert.equal(manager.getActiveCommandView(ws.workspaceId), null);
+});
+
 test('DockerWorkspaceManager: changed canonical revision invalidates active command views', async () => {
   const controller = new FakeDockerLifecycleController();
   const manager = new DockerWorkspaceManager({ controller });
@@ -453,16 +1057,15 @@ test('DockerWorkspaceManager: changed canonical revision invalidates active comm
     profile,
   });
 
-  const canonicalFiles = {
-    'src/calculator.py': 'def add(a, b): return a + b\n',
-    'tests/test_calculator.py': 'def test_add(): assert add(1, 2) == 3\n',
+  controller.snapshotToReturn = {
+    canonicalRevisionDigest: rev1,
+    entries: [
+      createSnapshotEntry('src/calculator.py', 'def add(a, b): return a + b\n'),
+      createSnapshotEntry('tests/test_calculator.py', 'def test_add(): assert add(1, 2) == 3\n'),
+    ],
   };
 
-  const view = await manager.admitCommandView({
-    workspaceId: ws.workspaceId,
-    canonicalRevisionDigest: rev1,
-    canonicalFiles,
-  });
+  const view = await manager.admitCommandView({ workspaceId: ws.workspaceId });
 
   assert.equal(view.canonicalRevisionDigest, rev1);
   assert.equal(manager.getActiveCommandView(ws.workspaceId)?.viewId, view.viewId);
@@ -477,151 +1080,9 @@ test('DockerWorkspaceManager: changed canonical revision invalidates active comm
       await manager.admitCommandView({
         workspaceId: ws.workspaceId,
         canonicalRevisionDigest: rev1,
-        canonicalFiles,
       });
     },
     { message: /STALE_COMMAND_VIEW/ }
-  );
-});
-
-test('DockerWorkspaceManager: command-view admission excludes protected paths and unrequired embedded secrets before copying', async () => {
-  const controller = new FakeDockerLifecycleController();
-  const manager = new DockerWorkspaceManager({ controller });
-  const profile = createValidProfile();
-  const rev = 'sha256:0333333333333333333333333333333333333333333333333333333333333333';
-
-  const ws = await manager.createWorkspace({
-    taskId: 'task-uc03-104',
-    workspaceId: 'ws-uc03-104',
-    initialRevisionDigest: rev,
-    profile,
-  });
-
-  const canonicalFiles = {
-    'src/calculator.py': 'def add(a, b): return a + b\n',
-    'tests/test_calculator.py': 'def test_add(): assert add(1, 2) == 3\n',
-    '.env': 'DATABASE_PASSWORD=secret123\n',
-    'keys/id_rsa': '-----BEGIN RSA PRIVATE KEY-----\nMIIE...\n-----END RSA PRIVATE KEY-----\n',
-    '.git/config': '[core]\nrepositoryformatversion = 0\n',
-    '.agents/skills/tdd/SKILL.md': '# TDD Skill\n',
-    'config/unrequired_credentials.txt': 'api_key: MARKER_SECRET_UNREQUIRED_01\n',
-  };
-
-  const view = await manager.admitCommandView({
-    workspaceId: ws.workspaceId,
-    canonicalRevisionDigest: rev,
-    canonicalFiles,
-  });
-
-  // Verify byte-identical admitted files
-  assert.equal(view.admittedFiles.length, 2);
-  const admittedPaths = view.admittedFiles.map((f) => f.path);
-  assert.deepEqual(admittedPaths.sort(), ['src/calculator.py', 'tests/test_calculator.py']);
-  assert.equal(
-    view.admittedFiles.find((f) => f.path === 'src/calculator.py')?.digest,
-    computeFileDigest(canonicalFiles['src/calculator.py'])
-  );
-  assert.equal(
-    view.admittedFiles.find((f) => f.path === 'tests/test_calculator.py')?.digest,
-    computeFileDigest(canonicalFiles['tests/test_calculator.py'])
-  );
-
-  // Invariants: mountedReadOnly true, scratchIdentity matches scratch volume
-  assert.equal(view.mountedReadOnly, true);
-  assert.equal(view.scratchIdentity, ws.scratchVolumeId);
-
-  // Passes canonical validateCommandView
-  const valid = validateCommandView(view);
-  assert.equal(valid.ok, true);
-});
-
-test('DockerWorkspaceManager: rejects admission when required file is a protected path (no silent redaction)', async () => {
-  const controller = new FakeDockerLifecycleController();
-  const manager = new DockerWorkspaceManager({ controller });
-  const profile = createValidProfile();
-  const rev = 'sha256:0444444444444444444444444444444444444444444444444444444444444444';
-
-  const ws = await manager.createWorkspace({
-    taskId: 'task-uc03-105',
-    workspaceId: 'ws-uc03-105',
-    initialRevisionDigest: rev,
-    profile,
-  });
-
-  const canonicalFiles = {
-    'src/calculator.py': 'def add(a, b): return a + b\n',
-    '.env': 'SECRET=true\n',
-  };
-
-  await assert.rejects(
-    async () => {
-      await manager.admitCommandView({
-        workspaceId: ws.workspaceId,
-        canonicalRevisionDigest: rev,
-        canonicalFiles,
-        requiredFiles: ['.env', 'src/calculator.py'],
-      });
-    },
-    { message: /PROTECTED_PATH_FORBIDDEN/ }
-  );
-});
-
-test('DockerWorkspaceManager: rejects admission when required file contains embedded secret (no silent redaction)', async () => {
-  const controller = new FakeDockerLifecycleController();
-  const manager = new DockerWorkspaceManager({ controller });
-  const profile = createValidProfile();
-  const rev = 'sha256:0555555555555555555555555555555555555555555555555555555555555555';
-
-  const ws = await manager.createWorkspace({
-    taskId: 'task-uc03-106',
-    workspaceId: 'ws-uc03-106',
-    initialRevisionDigest: rev,
-    profile,
-  });
-
-  const canonicalFiles = {
-    'src/auth.py': 'TOKEN = "MARKER_SECRET_REQUIRED_TOKEN_99"\ndef login(): pass\n',
-  };
-
-  await assert.rejects(
-    async () => {
-      await manager.admitCommandView({
-        workspaceId: ws.workspaceId,
-        canonicalRevisionDigest: rev,
-        canonicalFiles,
-        requiredFiles: ['src/auth.py'],
-      });
-    },
-    { message: /REQUIRED_FILE_CONTAINS_PROTECTED_CONTENT/ }
-  );
-});
-
-test('DockerWorkspaceManager: rejects escaping paths in canonicalFiles', async () => {
-  const controller = new FakeDockerLifecycleController();
-  const manager = new DockerWorkspaceManager({ controller });
-  const profile = createValidProfile();
-  const rev = 'sha256:0666666666666666666666666666666666666666666666666666666666666666';
-
-  const ws = await manager.createWorkspace({
-    taskId: 'task-uc03-107',
-    workspaceId: 'ws-uc03-107',
-    initialRevisionDigest: rev,
-    profile,
-  });
-
-  const canonicalFiles = {
-    '../escaping.py': 'x = 1\n',
-  };
-
-  await assert.rejects(
-    async () => {
-      await manager.admitCommandView({
-        workspaceId: ws.workspaceId,
-        canonicalRevisionDigest: rev,
-        canonicalFiles,
-      });
-    },
-    { message: /WORKSPACE_ESCAPE/ }
   );
 });
 
