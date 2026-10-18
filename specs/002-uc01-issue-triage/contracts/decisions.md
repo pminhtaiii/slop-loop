@@ -1,6 +1,25 @@
 # Decisions and Authorization: UC-01
 
-**Status**: DRAFT, revised 2026-10-17 (Asia/Bangkok). The current user reports leader agreement to evaluation-first -> incremental implementation -> continuous verification -> evidence collection -> shared evaluation integration. This records the reported direction and this documentation/Issue-publication authorization, not approval of detailed schemas or runtime implementation.
+**Status**: T001 artifact and consumer-contract agreement approved on 2026-10-18 (Asia/Bangkok). The user confirmed approval by themselves and the other members, including the concrete signatures, fixture profile and commit message. Runtime implementation remains outside this T001-only authorization.
+
+## T001 approval provenance and approved agreement
+
+On 2026-10-18 (Asia/Bangkok), the user requested implementation of T001 and independent subagent review. In response to the question asking for artifact approval and agreement with Tai, Thanh Tan and Trong Tan over model/read-search/evidence, accounting/policy/continuation, fixture profile and paths, the user replied **“Tôi xác nhận phê duyệt”**. This is the user's confirmation of the existing baseline and reported agreement, not separate messages from those owners. The approved baseline is repository commit `5cf4d14e9af770142fafe75894dfb172fd9fd663`: `spec.md`, `plan.md`, `research.md`, `data-model.md`, `quickstart.md`, `tasks.md`, and `contracts/{schema,interfaces,acceptance,evaluation,decisions}.md` in this feature directory. Approval of the proposed evaluation design does not satisfy the separate shared runner/corpus/real-run gates.
+
+The authorized action in this chat is T001 documentation and review only. T002–T016, real shared adapters, provider calls and production configuration are outside this instruction. No new approval is inferred from technical readiness. The user has reviewed and approved the commit message `docs(uc01): record T001 artifact and consumer-contract agreement`.
+
+Independent review of the baseline found that its required exact consumer signatures and numeric fixture profile were absent, and that `SourceEvidence.boundedExcerpt` was incorrectly called `excerpt`. Those details were then supplied and independently reviewed as `uc01-consumer-v1-candidate` and `uc01-fixture-v1-candidate`. After the additions and their ADR/context alignment were explained, the user stated: **“Tôi và các thành viên khác đã phê duyệt, message commit cũng đã được phê duyệt. Hãy hoàn thành phần còn lại để kết thúc T001.”** This records member approval as reported by the user, without inventing individual messages. The reviewed candidate content is adopted unchanged as **`uc01-consumer-v1`**, with **`uc01-fixture-v1`**; the product wire discriminator remains `uc01-draft-v1` and no executable UC-03 type is changed. The exact approved signature/profile definitions are retained in this revision of interfaces.md and schema.md.
+
+| Agreement item | Approved agreement / owner |
+|---|---|
+| Model role and request/result | `triage` on a separate consumer seam, with signatures and closed variants in [interfaces](interfaces.md#versioned-consumer-signatures); Thai validates proposals, Tai owns transport. Existing coder/reviewer UC-03 types remain unchanged. |
+| Read/search and evidence | Guarded operation context and results in interfaces; canonical SourceEvidence is preserved under `source`, independently verified RepositoryLocation under `location`. No inferred line spans/digests. |
+| Accounting/policy | Stable request/reservation identities, bound guard context, settlement and uncertainty rules in interfaces; Tai composes, Thanh Tan owns accounting, Trong Tan owns policy. |
+| Continuation | Caller/UC-04 resolves the schema's immutable issue/task/report/repository/config/question binding; no local persistence or approval interpretation. |
+| Finite fixture profile | `uc01-fixture-v1` in [schema](schema.md#finite-controlled-fixture-profile), synthetic units, cumulative task/run bounds, no provider access. |
+| Owned paths | Thai: `src/uc01/`, `tests/runtime/uc01/`, `tests/runtime/support/uc01/`; coordinator: agreement amendments, canonical ledger and context. Tai: `src/contracts/uc03.ts`, `src/foundation/`, shared evaluation infrastructure; Thanh Tan: `src/persistence/`; Trong Tan: `src/approvals/`. No foreign-path runtime edits in T001. |
+
+T001 exit records approval of the artifact baseline plus the reviewed signature/profile amendments, finite mock-only execution and path ownership. The coordinator closes only T001 after the final current-artifact reviews and local checks pass. This is a contract agreement gate, not a requirement for real adapter availability. Production numeric choices, real deliveries, receiver agreement, shared evaluation agreement/runner and scored runs remain separately gated below.
 
 ## Accepted basis
 
@@ -10,8 +29,8 @@
 
 | Gate | Decision required / evidence | Owner | Blocks |
 |---|---|---|---|
-| A-ARTIFACTS | Review/approve UC-01 spec, plan, contracts and ledger; explicit implementation scope | Project owner with Thai | All implementation; planning/publication is authorized only |
-| X-FOUNDATION-AGREEMENT | Versioned triage model request/result seam, read/search envelope, SourceEvidence projection, finite fixture profile and owned paths | Thai + Tai; Thanh Tan/Trong Tan for accounting/policy bindings | T001 exit; mocks may start only after this agreement |
+| A-ARTIFACTS | SATISFIED for T001: baseline and reviewed amendments approved by the user/member confirmation above; scope is T001 documentation and contributor publication | Project owner with Thai | T002 onward requires separate implementation authorization |
+| X-FOUNDATION-AGREEMENT | SATISFIED by user-reported member approval of `uc01-consumer-v1`, `uc01-fixture-v1`, evidence projection and path ownership above | Thai + Tai; Thanh Tan/Trong Tan for accounting/policy bindings | T001 agreement exit met; mocks still require explicit task implementation authorization |
 | X-READ-MODEL | Real shared read/search and model adapters with guards and actual revisions; no forced bug TaskState | Tai | T011, T012 |
 | X04-STATE | Durable task budgets/reservations/uncertain-use reconciliation and continuation binding; real restart evidence | Thanh Tan | T011, T012 |
 | X05-GATE | Policy classification, bound pause/resume/denial for shared actions | Trong Tan | T011, T012 |

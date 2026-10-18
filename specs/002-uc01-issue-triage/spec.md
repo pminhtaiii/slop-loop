@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-17 (Asia/Bangkok)
 
-**Status**: DRAFT; planning authorized, artifact approval and implementation authorization pending.
+**Status**: Existing artifact baseline approved by the user on 2026-10-18; T001 documentation/review authorized. The consumer signature and numeric fixture amendments are approved through user-confirmed member agreement in [decisions](contracts/decisions.md). Runtime implementation is not authorized.
 
 **Input**: One supplied issue for one selected repository; assess classification, severity, evidence, material unknowns and a configured backend recommendation.
 
@@ -104,8 +104,8 @@ As an integrator, I receive a recommendation from my configured destination cata
 
 ## Assumptions
 
-- [ADR-0005](../../docs/adr/0005-uc01-triage-boundary-and-assessment.md) is accepted; detailed contracts/task paths here are proposals pending review.
+- [ADR-0005](../../docs/adr/0005-uc01-triage-boundary-and-assessment.md) is accepted; consumer contracts/task paths are approved at T001; later delivery gates remain separate.
 - Application supplies authorized repository, catalogs and caller context; issue text never chooses host paths or policy.
 - Classification defaults, provider/model, numeric production limits and deployment interface remain owner decisions. Test examples are not defaults.
-- Technical readiness and permission to implement are separate: only planning/publication is authorized and all implementation checkboxes remain open.
+- Technical readiness and permission to implement are separate: T001 documentation/review and its agreement are approved; only T001 is complete and T002 onward is unauthorized.
 - The current user reports leader agreement to evaluation-first incremental delivery; this approves a direction, not the proposed evaluation schema, new authority or runtime implementation. See [evaluation contract](contracts/evaluation.md) and [decision/source gaps](contracts/decisions.md). The two original coursework Markdown documents were not available for independent verification; supplied minima are used explicitly, not presented as independently checked quotations.

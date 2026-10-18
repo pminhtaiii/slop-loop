@@ -1,6 +1,6 @@
 # Quickstart: incremental UC-01 verification
 
-**Status**: DRAFT planning only. No UC-01 runtime/tests, executable evaluation dataset or shared evaluation runner is implemented by this revision. Future paths in tasks are proposals pending ownership agreement; no new runner command or implementation path is selected.
+**Status**: T001 artifact/consumer agreement approved; subsequent implementation is not authorized. No UC-01 runtime/tests, executable evaluation dataset or shared evaluation runner is implemented by this revision. Future implementation paths have T001 ownership agreement; no new runner command or implementation path is selected.
 
 ## Existing planning and repository checks
 
@@ -14,11 +14,11 @@ node scripts/ci/check-runtime.mjs
 node --test
 ```
 
-These commands exist now. Assignment/handoff show Thai, draft artifacts and 16 unchecked tasks; context checks validate links/facts. Runtime and full Node suites exercise existing bootstrap/UC-03 contracts/mocks/contributor helpers, not UC-01 cases, classification accuracy or project evaluation. Report actual exit status, failures and skipped checks. Existing `pnpm run validate:runtime` is a build/lint/type/test command, not a model evaluation runner.
+These commands exist now. Assignment/handoff show Thai, approved T001 artifacts, one completed task and 15 unchecked tasks; context checks validate links/facts. Runtime and full Node suites exercise existing bootstrap/UC-03 contracts/mocks/contributor helpers, not UC-01 cases, classification accuracy or project evaluation. Report actual exit status, failures and skipped checks. Existing `pnpm run validate:runtime` is a build/lint/type/test command, not a model evaluation runner.
 
 ## Future authorized slice workflow
 
-1. At T001 approve actual domain scope/consumer contracts; keep shared evaluation API/version agreement separately pending with Tai. Directional agreement grants no implementation permission.
+1. T001 records user-confirmed member approval of domain scope/consumer contracts and the finite fixture profile; keep shared evaluation API/version agreement separately pending with Tai. Directional agreement grants no implementation permission.
 2. T002 designs product/evaluation vectors and grading statuses before validator code. T003 defines bounded mock scripts/call spies; T004 prepares versioned C01–C22 inputs, private expected outcomes/rules and development/held-out split. Validate isolation and case/result identities before feature work.
 3. T005–T006 execute available US1 cases immediately, including irrelevant input, invalid output, injection and budget guards. T007–T008 do the same for clarification/answer injection, then T009–T010 for catalog/routing. Run impacted earlier regressions and capture each result before accepting the slice.
 4. Use the existing Node test mechanism for local UC-01 tests after they exist and are authorized, with the proposed case/rule design and injected ports. Confirm actual test module paths/discovery from the implementation; do not invent a CLI invocation or report an absent suite as passed. This is local test coverage, not a parallel runner.

@@ -1,6 +1,6 @@
 # Research: UC-01
 
-**Status**: DRAFT design research, 2026-10-17. Accepted boundaries come from [ADR-0005](../../docs/adr/0005-uc01-triage-boundary-and-assessment.md); detailed choices below await approval.
+**Status**: DRAFT design research, 2026-10-17. Accepted boundaries come from [ADR-0005](../../docs/adr/0005-uc01-triage-boundary-and-assessment.md); the existing design baseline and concrete T001 consumer/fixture amendments are approved in [decisions](contracts/decisions.md). Production choices and shared evaluation agreement remain separately gated.
 
 ## Assessment boundary
 

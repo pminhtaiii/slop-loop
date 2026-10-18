@@ -1,6 +1,6 @@
 # Shared Consumer Interfaces: UC-01
 
-**Status**: DRAFT proposal; signatures and bindings require X-FOUNDATION-AGREEMENT. Accepted UC-03 [interfaces](../../001-verified-code-repair/contracts/interfaces.md) and [canonical types](../../../src/contracts/uc03.ts) remain unchanged.
+**Status**: `uc01-consumer-v1` approved at T001 on 2026-10-18 through user-confirmed member agreement in [decisions](decisions.md); implementation and real adapter deliveries remain separate gates. Accepted UC-03 [interfaces](../../001-verified-code-repair/contracts/interfaces.md) and [canonical types](../../../src/contracts/uc03.ts) remain unchanged.
 
 ## Operations and ownership
 
@@ -9,18 +9,71 @@
 | assessIssue | Invocation + separate TrustedContext -> Outcome ([schema](schema.md)) | Thai; validates, composes narrow shared capabilities and returns results; no transport selected |
 | readEvidence | `{path:Text}` + bound shared operation context -> safe result containing canonical SourceEvidence or typed failure | Tai; workspace-selected read only, protection, finite output/time, revision binding, policy/accounting; no filesystem implementation in UC-01 |
 | searchEvidence | `{query:Text}` + same context -> bounded SourceEvidence[] or typed failure | Tai; approved repository only, bounded results and uncertainty for truncated/empty searches |
-| proposeAssessment | validated intake + admitted bounded evidence + request/reservation identity -> proposal, read/search request, or safe failure with usage/uncertainty | Tai model transport and accounting, Thai assessment validator. Triage-compatible input/output/role is pending; existing coder/reviewer-only ProviderRequest is not silently extended |
+| proposeAssessment | validated intake + admitted bounded evidence + request/reservation identity -> proposal, read/search request, or safe failure with usage/uncertainty | Tai model transport and accounting, Thai assessment validator. Triage-compatible input/output/role is agreed below; existing coder/reviewer-only ProviderRequest is not silently extended |
 | bindContinuation | validated prior assessment identity/question set -> opaque reference; resolve reference on later invocation | Trusted caller, durable implementation UC-04; Thai validates projection, never builds a durable store |
 | guard/reserve/settle | shared operation identity/config/state -> admitted action or typed pause/denial/conflict/exhaustion/uncertainty | Tai composes UC-05 policy and UC-04 accounting. No local alternative ledger/approval engine |
 | emitSafeEvent | event IDs/type/outcome/duration/counts/config refs -> eventRef | Tai telemetry; no raw report/source/prompt/answer/model body |
 
-Shared operation context binds task/run/workspace/repository/snapshot, operation/request IDs, policy/config versions and finite limits/accounting receipts. Exact adapter signatures are an explicit agreement gate; this document specifies requirements, not already implemented interfaces. A safe shared failure maps to the Outcome failure union without copying raw exception messages.
+Shared operation context binds task/run/workspace/repository/snapshot, operation/request IDs, policy/config versions and finite limits/accounting receipts. The versioned signatures below define the approved consumer requirements, not already implemented shared adapters. A safe shared failure maps to the Outcome failure union without copying raw exception messages.
 
 Model tool request proposed shape: `{kind:'read', path:Text}` or `{kind:'search', query:Text}`; one request per response and no other operations. Model response variants are `{kind:'assessment', proposal:Proposal}` or `{kind:'tool-request', request:...}` plus shared usage/outcome envelope. Tool requests consume model allowance too. Harness rejects unknown variants/extra keys and never executes arbitrary action arrays. No separate report rewrite purpose is admitted.
 
 ## Evidence projection
 
-Current SourceEvidence carries path/revisionDigest/excerpt/resultCount/truncated, not trusted line spans or file digests. Preserve its original fields in the shared record; do not invent locator metadata. Proposed UC-01 repository evidence requires shared delivery to supply independently verified file digest/line span/snapshot. Tai must agree that additive seam or explicitly revise this draft before T001 can exit. Pure fixture metadata is marked mock. Reporter-supplied snippets are never promoted to repository findings.
+Current SourceEvidence carries path/revisionDigest/boundedExcerpt/resultCount/truncated, not trusted line spans or file digests. Preserve its original fields in the shared record; do not invent locator metadata. Proposed UC-01 repository evidence requires shared delivery to supply independently verified file digest/line span/snapshot. User-confirmed member agreement at T001 adopts the additive seam below; real tooling must deliver it before real integration. Pure fixture metadata is marked mock. Reporter-supplied snippets are never promoted to repository findings.
+
+## Versioned consumer signatures
+
+`uc01-consumer-v1` records the reviewed consumer agreement approved at T001; it is documentation, not a shared implementation or a UC-03 type extension. Types below refer to the closed records in [schema](schema.md). All promises may return only the stated closed variants. Unknown keys/variants fail validation. Text and collections obey the selected finite profile.
+
+```text
+OperationContext = {
+  taskId, runId, invocationId, repositoryId, workspaceId,
+  repositorySnapshotDigest, configId, configVersion, policyId, policyVersion,
+  operationId, requestId, accountingRef, deadlineEpochMs, limits
+}
+SharedFailure = {kind: 'failure', status: Failure, reasonCode, eventRef}
+Admission = {kind: 'admitted', admissionRef, requestId, contextDigest}
+Usage = {inputTokens, outputTokens, totalTokens, costUnits,
+         state: 'settled'|'uncertain', reservationRef}
+RepositoryFinding = {source: SourceEvidence, location: RepositoryLocation,
+                     safeExcerptRef, provenance: 'mock'|'real'}
+ModelEvidence = {evidence: Evidence, boundedExcerpt: Text}
+
+guard(context: OperationContext,
+      action: {kind: 'model'|'read'|'search', inputDigest: Digest})
+  -> Promise<Admission | SharedFailure>
+reserve(context: OperationContext, admission: Admission,
+        ceiling: {inputTokens, outputTokens, totalTokens, costUnits, pricingId})
+  -> Promise<{kind: 'reserved', reservationRef, requestId} | SharedFailure>
+settle(context: OperationContext, reservationRef: Id, usage: Usage)
+  -> Promise<{kind: 'settled', accountingRef} | SharedFailure>
+readEvidence(context: OperationContext, admission: Admission, path: Text)
+  -> Promise<{kind: 'read', finding: RepositoryFinding} | SharedFailure>
+searchEvidence(context: OperationContext, admission: Admission, query: Text)
+  -> Promise<{kind: 'search', findings: RepositoryFinding[], truncated: boolean}
+             | SharedFailure>
+proposeAssessment(context: OperationContext, admission: Admission,
+  request: {role: 'triage', invocation: Invocation, evidence: ModelEvidence[],
+            priorQuestions: Question[], catalog: Catalog, reservationRef: Id})
+  -> Promise<{kind: 'assessment', proposal: Proposal, usage: Usage}
+             | {kind: 'tool-request', request: ReadOrSearch, usage: Usage}
+             | (SharedFailure & {usage: Usage}))
+bindContinuation(context: OperationContext, assessment: Assessment)
+  -> Promise<{kind: 'bound', continuationRef: Id} | SharedFailure>
+resolveContinuation(context: OperationContext, continuationRef: Id)
+  -> Promise<{kind: 'resolved', continuation: Continuation} | SharedFailure>
+emitSafeEvent(event: {eventId, type, outcome, durationMs, counts, configRef})
+  -> Promise<{eventRef: Id}>
+```
+
+Identity fields are schema Ids, snapshot/context/input digests are Digests, timestamps/durations/counters are finite nonnegative safe integers, and deadlines must be future and within configured invocation bounds. `Failure` is the schema failure union; adapters do not return raw exception text. `ReadOrSearch` is exactly the two tool variants above. `Continuation` is exactly the trusted continuation projection in schema, not a UC-03 TaskState. Telemetry failures fail closed to a safe caller error and authorize no extra constrained call.
+
+Admission binds the complete normalized context and action input digest; consumers cannot reuse it for another request/action, policy/config version or snapshot. Hash the logical action payload using SHA-256 over UTF-8 canonical JSON (recursively sorted object keys, preserved array order, compact ECMAScript JSON.stringify values, no BOM/newline): read `{kind:'read', path}`, search `{kind:'search', query}`, model `{kind:'model', role, invocation, evidence, priorQuestions, catalog}`. Exclude later-created admission/reservation receipts, usage and event fields to avoid circular dependencies. Reservation remains bound separately to the same context/requestId/admission and pricing/ceiling. Every read/search is guarded and charged to cumulative tool/time/output bounds. Provider dispatch requires both admission and the same request's atomic task/run reservation. Settled usage must reconcile the reservation, token totals and pricing; invalid output still settles. Missing or uncertain usage retains the full reserved ceiling, with no automatic redispatch. `state: 'uncertain'` never releases allowance. A shared failure before dispatch uses zero observed usage with its reservation reference retained; it never fabricates a provider success. Shared accounting resolves idempotency and restart behavior; the consumer does not build another ledger.
+
+Before constructing a model request, the trusted harness resolves each safeExcerptRef to its admitted bounded text, checks its exact UTF-8 digest against evidence.contentDigest, enforces protected-data/aggregate input bounds and requires membership in the current evidence registry. The same rule applies to reporter and answer evidence. An oversized source is either rejected or admitted as a separately identified bounded excerpt with its own digest; never compare an excerpt digest with an untruncated source digest. The `priorQuestions` projection comes from validated resolved continuation (empty on initial intake); IDs/text/affects/reason match the immutable prior assessment. Provider-visible context contains only admitted invocation content, ModelEvidence, priorQuestions and catalog. Host accounting/policy/admission/reservation identities and continuationRef stay in the adapter control plane; grading labels/oracles and raw trusted context never enter model/tool context. Request payload limits include all model-visible fields, not just the original report.
+
+`source` preserves canonical SourceEvidence exactly, including `boundedExcerpt`, `resultCount` and `truncated`. Its path/revisionDigest must match location.path/location.snapshotDigest. Shared tooling independently verifies the file digest and valid line span at that snapshot, binds the safe excerpt reference to boundedExcerpt, and computes the admitted content digest from its exact UTF-8 bytes. Search results require one independently locatable finding per returned excerpt; omitted/truncated results cannot prove absence. Missing locator verification returns a typed incomplete result rather than repository-origin Evidence. Mock fixtures may synthesize these bindings only with `provenance: 'mock'`. The harness allocates Evidence IDs and source references after admission; the model cannot mint locations, findings or provenance.
 
 ## Bounded protocol
 
