@@ -27,6 +27,8 @@ Paired publication uses `tests/agents/publication-targets.test.mjs`, `tests/agen
 
 Paired issue completion uses `tests/agents/complete-paired-issues.test.mjs` at the public CLI/module and external GitHub boundaries. Coverage includes preview without remote mutations, merged-PR/current-head CI and source-tree admission, exact stable-key identity, metadata-only audit comments, per-comment/per-close revalidation and recovery from interrupted per-side comments or closes. Disposable fixture roots are canonicalized for Windows; these tests close no live issues.
 
+Phase 3 telemetry checks run with `node --test tests/runtime/unit/telemetry.test.ts` (source) or the emitted test after building. The integrated 19-case telemetry suite covers secret redaction, tiny and UTF-8 byte bounds, protected metadata rejection before sink effects, and independent task/run usage keys. The integrated runtime gate passed typecheck, lint, build and 249 compiled tests on 2026-10-18. T005 public fixtures passed canonical JSON and static Python checks; pytest has not been executed because real execution remains gated at T024/T028. Other Phase 3 worker results require independent review and integrated checks before their task status changes.
+
 ## Local helper tests
 
 The planning-workflow regressions cover required artifact types, unique sequential task IDs, invalid dependency graphs, normalized explicit ownership and directory overlap, dependency-ordered shared paths, nested contract inventories, malformed review rejection, and automated-only status. These checks do not certify independent reviews or authorize feature implementation.
