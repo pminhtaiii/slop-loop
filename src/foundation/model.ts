@@ -84,6 +84,58 @@ export interface ContextDigestPayload {
 }
 
 /**
+ * Synchronous deep clone utility for creating detached copies of caller data.
+ * Does not mutate or freeze caller-owned objects.
+ */
+export function deepClone<T>(val: T, seen = new WeakMap<object, unknown>()): T {
+  if (val === null || typeof val !== 'object') {
+    return val;
+  }
+  if (seen.has(val)) {
+    return seen.get(val) as T;
+  }
+  if (Array.isArray(val)) {
+    const copyArr: unknown[] = [];
+    seen.set(val, copyArr);
+    for (const item of val) {
+      copyArr.push(deepClone(item, seen));
+    }
+    return copyArr as unknown as T;
+  }
+  const copyObj: Record<string, unknown> = {};
+  seen.set(val, copyObj);
+  for (const key of Object.keys(val)) {
+    copyObj[key] = deepClone((val as Record<string, unknown>)[key], seen);
+  }
+  return copyObj as T;
+}
+
+/**
+ * Synchronous deep freeze utility for internal snapshots.
+ * Recursively freezes own properties and nested objects/arrays.
+ */
+export function deepFreeze<T>(val: T, seen = new WeakSet<object>()): Readonly<T> {
+  if (val === null || typeof val !== 'object') {
+    return val;
+  }
+  if (seen.has(val)) {
+    return val;
+  }
+  seen.add(val);
+  Object.freeze(val);
+  if (Array.isArray(val)) {
+    for (const item of val) {
+      deepFreeze(item, seen);
+    }
+  } else {
+    for (const key of Object.keys(val)) {
+      deepFreeze((val as Record<string, unknown>)[key], seen);
+    }
+  }
+  return val;
+}
+
+/**
  * Computes a deterministic canonical digest for the exact state and evidence
  * payload admitted and sent to host transport. Reuses canonical sha256.
  */
@@ -171,8 +223,21 @@ export class HostModelPort implements ModelPort {
     evidence: readonly SourceEvidence[],
     request: ProviderRequest
   ): Promise<ModelPortResult> {
-    // 1. Runtime validate TaskState
-    const stateRes = validateTaskState(state);
+    // 0. Synchronous deep snapshot of ALL caller-owned state, evidence, request
+    // and relevant host configuration before the first await.
+    // Callers' objects are NOT frozen or shallow-cloned.
+    const snapshotState = deepFreeze(deepClone(state));
+    const snapshotEvidence = deepFreeze(deepClone(evidence));
+    const snapshotRequest = deepFreeze(deepClone(request));
+    const snapshotConfig =
+      this.options.providerConfig !== undefined
+        ? deepFreeze(deepClone(this.options.providerConfig))
+        : undefined;
+    const transport = this.options.transport;
+    const admissionLoader = this.options.admissionLoader;
+
+    // 1. Runtime validate TaskState using detached snapshot
+    const stateRes = validateTaskState(snapshotState);
     if (!stateRes.ok) {
       return {
         outcome: 'invalid',
@@ -181,15 +246,15 @@ export class HostModelPort implements ModelPort {
     }
 
     // 2. Runtime validate approved bounded SourceEvidence with provenance / current revision and protected content checks
-    if (!Array.isArray(evidence)) {
+    if (!Array.isArray(snapshotEvidence)) {
       return {
         outcome: 'invalid',
         errors: [{ path: 'evidence', message: 'evidence must be an array', code: 'INVALID_TYPE' }],
       };
     }
 
-    for (let i = 0; i < evidence.length; i++) {
-      const item = evidence[i];
+    for (let i = 0; i < snapshotEvidence.length; i++) {
+      const item = snapshotEvidence[i];
       const evRes = validateSourceEvidence(item, undefined, `evidence[${i}]`);
       if (!evRes.ok) {
         return {
@@ -197,13 +262,13 @@ export class HostModelPort implements ModelPort {
           errors: sanitizeValidationErrors(evRes.errors),
         };
       }
-      if (item.revisionDigest !== state.repositoryRevisionDigest) {
+      if (item.revisionDigest !== snapshotState.repositoryRevisionDigest) {
         return {
           outcome: 'invalid',
           errors: [
             {
               path: `evidence[${i}].revisionDigest`,
-              message: `Evidence revisionDigest ${item.revisionDigest} does not match current state revisionDigest ${state.repositoryRevisionDigest}`,
+              message: `Evidence revisionDigest ${item.revisionDigest} does not match current state revisionDigest ${snapshotState.repositoryRevisionDigest}`,
               code: 'STALE_EVIDENCE_REVISION',
             },
           ],
@@ -224,13 +289,13 @@ export class HostModelPort implements ModelPort {
     }
 
     // 3. Compute canonical digest from EXACT context payload to be sent to host transport
-    const computedContextDigest = computeContextDigest(state, evidence);
+    const computedContextDigest = computeContextDigest(snapshotState, snapshotEvidence);
 
     // Runtime validate ProviderRequest identity/role/config/pricing/caps/contextDigest against computedContextDigest
-    const cfg = this.options.providerConfig;
-    const reqRes = validateProviderRequest(request, {
-      expectedTaskId: state.taskId,
-      expectedRunId: state.runId,
+    const cfg = snapshotConfig;
+    const reqRes = validateProviderRequest(snapshotRequest, {
+      expectedTaskId: snapshotState.taskId,
+      expectedRunId: snapshotState.runId,
       expectedContextDigest: computedContextDigest,
       ...(cfg?.providerId !== undefined ? { expectedProviderId: cfg.providerId } : {}),
       ...(cfg?.modelId !== undefined ? { expectedModelId: cfg.modelId } : {}),
@@ -247,7 +312,9 @@ export class HostModelPort implements ModelPort {
     // 4. Canonical validateDispatchAdmission using trusted StatePort snapshot/receipt
     let admissionContext: DispatchAdmissionContext | null | undefined;
     try {
-      admissionContext = await this.options.admissionLoader(request);
+      // Pass frozen detached clone of request so admission loader cannot alter transported data
+      const loaderRequest = deepFreeze(deepClone(snapshotRequest));
+      admissionContext = await admissionLoader(loaderRequest);
     } catch {
       return {
         outcome: 'denied',
@@ -262,7 +329,7 @@ export class HostModelPort implements ModelPort {
       };
     }
 
-    const admissionRes = validateDispatchAdmission(request, admissionContext);
+    const admissionRes = validateDispatchAdmission(snapshotRequest, admissionContext);
     if (!admissionRes.ok) {
       const primary = admissionRes.errors[0];
       return {
@@ -280,33 +347,37 @@ export class HostModelPort implements ModelPort {
     }
 
     // 5. Pass envelope enforced token/cost/time caps to host transport; no tool execution ever
-    const caps: HostModelCaps = {
-      timeoutMs: request.timeoutMs,
-      maxInputTokens: request.maxInputTokens,
-      maxOutputTokens: request.maxOutputTokens,
-      maxBillableTokens: request.maxBillableTokens,
-      maxCostUsd: request.maxCostUsd,
-    };
+    const caps: HostModelCaps = deepFreeze({
+      timeoutMs: snapshotRequest.timeoutMs,
+      maxInputTokens: snapshotRequest.maxInputTokens,
+      maxOutputTokens: snapshotRequest.maxOutputTokens,
+      maxBillableTokens: snapshotRequest.maxBillableTokens,
+      maxCostUsd: snapshotRequest.maxCostUsd,
+    });
 
-    const payload: HostModelTransportPayload = {
-      state,
-      evidence,
-      request,
+    const untrustedEvidenceItems: readonly UntrustedContextItem[] = deepFreeze(
+      snapshotEvidence.map((e) => ({
+        path: e.path,
+        revisionDigest: e.revisionDigest,
+        content: e.boundedExcerpt,
+        isUntrustedRepositoryContent: true as const,
+      }))
+    );
+
+    const payload: HostModelTransportPayload = deepFreeze({
+      state: snapshotState,
+      evidence: snapshotEvidence,
+      request: snapshotRequest,
       caps,
       untrustedContext: {
-        evidenceItems: evidence.map((e) => ({
-          path: e.path,
-          revisionDigest: e.revisionDigest,
-          content: e.boundedExcerpt,
-          isUntrustedRepositoryContent: true,
-        })),
+        evidenceItems: untrustedEvidenceItems,
       },
-    };
+    });
 
     // 6. Execute transport and validate raw provider ModelResult/usage
     let rawResult: unknown;
     try {
-      rawResult = await this.options.transport.execute(payload);
+      rawResult = await transport.execute(payload);
     } catch (err: unknown) {
       const errName = err instanceof Error ? err.name : '';
       const errMsg = err instanceof Error ? err.message : String(err);
@@ -324,11 +395,17 @@ export class HostModelPort implements ModelPort {
 
     if (isPlainObject(rawResult)) {
       if (rawResult['outcome'] === 'uncertain') {
-        const reason = typeof rawResult['reason'] === 'string' ? redactSensitiveData(rawResult['reason']) : 'PROVIDER_UNCERTAIN';
+        const reason =
+          typeof rawResult['reason'] === 'string'
+            ? redactSensitiveData(rawResult['reason'])
+            : 'PROVIDER_UNCERTAIN';
         return { outcome: 'uncertain', reason };
       }
       if (rawResult['outcome'] === 'denied') {
-        const reason = typeof rawResult['reason'] === 'string' ? redactSensitiveData(rawResult['reason']) : 'PROVIDER_DENIED';
+        const reason =
+          typeof rawResult['reason'] === 'string'
+            ? redactSensitiveData(rawResult['reason'])
+            : 'PROVIDER_DENIED';
         return { outcome: 'denied', reason };
       }
     }
@@ -352,34 +429,34 @@ export class HostModelPort implements ModelPort {
     const { proposal, observedUsage } = modelResultRes.value;
     const usageErrors: ValidationError[] = [];
 
-    if (observedUsage.inputTokens > request.maxInputTokens) {
+    if (observedUsage.inputTokens > snapshotRequest.maxInputTokens) {
       usageErrors.push({
         path: 'observedUsage.inputTokens',
-        message: `Observed input tokens (${observedUsage.inputTokens}) exceed maxInputTokens (${request.maxInputTokens})`,
+        message: `Observed input tokens (${observedUsage.inputTokens}) exceed maxInputTokens (${snapshotRequest.maxInputTokens})`,
         code: 'USAGE_EXCEEDS_CAPS',
       });
     }
-    if (observedUsage.outputTokens > request.maxOutputTokens) {
+    if (observedUsage.outputTokens > snapshotRequest.maxOutputTokens) {
       usageErrors.push({
         path: 'observedUsage.outputTokens',
-        message: `Observed output tokens (${observedUsage.outputTokens}) exceed maxOutputTokens (${request.maxOutputTokens})`,
+        message: `Observed output tokens (${observedUsage.outputTokens}) exceed maxOutputTokens (${snapshotRequest.maxOutputTokens})`,
         code: 'USAGE_EXCEEDS_CAPS',
       });
     }
-    if (observedUsage.costUsd > request.maxCostUsd) {
+    if (observedUsage.costUsd > snapshotRequest.maxCostUsd) {
       usageErrors.push({
         path: 'observedUsage.costUsd',
-        message: `Observed cost ($${observedUsage.costUsd}) exceeds maxCostUsd ($${request.maxCostUsd})`,
+        message: `Observed cost ($${observedUsage.costUsd}) exceeds maxCostUsd ($${snapshotRequest.maxCostUsd})`,
         code: 'USAGE_EXCEEDS_CAPS',
       });
     }
     if (
       observedUsage.billableTokens !== undefined &&
-      observedUsage.billableTokens > request.maxBillableTokens
+      observedUsage.billableTokens > snapshotRequest.maxBillableTokens
     ) {
       usageErrors.push({
         path: 'observedUsage.billableTokens',
-        message: `Observed billable tokens (${observedUsage.billableTokens}) exceed maxBillableTokens (${request.maxBillableTokens})`,
+        message: `Observed billable tokens (${observedUsage.billableTokens}) exceed maxBillableTokens (${snapshotRequest.maxBillableTokens})`,
         code: 'USAGE_EXCEEDS_CAPS',
       });
     }

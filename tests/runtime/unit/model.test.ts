@@ -635,3 +635,298 @@ test('HostModelPort: caller boolean flags cannot bypass admission', async () => 
   assert.equal(transport.callCount, 0, 'Transport must NOT be called on tampered request with unauthorized keys');
   assert.equal(result.outcome, 'invalid');
 });
+
+// ----------------------------------------------------------------------------
+// 7. Synchronous Deep Snapshot & Mutation Resistance (T008-a-immutable)
+// ----------------------------------------------------------------------------
+
+test('HostModelPort: caller async mutation of evidence boundedExcerpt during admission loader wait does NOT alter dispatched transport payload', async () => {
+  const transport = new StubTransport();
+  const state = createFixtureTaskState();
+  const originalExcerpt = 'def divide(a, b):\n    return a / b\n';
+  const evidence = [createFixtureSourceEvidence({ revisionDigest: state.repositoryRevisionDigest, boundedExcerpt: originalExcerpt })];
+  const contextDigest = computeContextDigest(state, evidence);
+  const baseRequest = createFixtureProviderRequest({ contextDigest });
+  const { context, request } = createFixtureAdmissionContext({ request: baseRequest });
+
+  let releaseLoader!: () => void;
+  const loaderWait = new Promise<void>((resolve) => {
+    releaseLoader = resolve;
+  });
+
+  const admissionLoader: AuthoritativeAdmissionLoader = async (req: ProviderRequest) => {
+    await loaderWait;
+    if (req.providerRequestId === request.providerRequestId) {
+      return context;
+    }
+    return null;
+  };
+
+  const port = new HostModelPort({
+    transport,
+    admissionLoader,
+    providerConfig: {
+      providerId: request.providerId,
+      modelId: request.modelId,
+      configId: request.configId,
+      pricingPolicyId: request.pricingPolicyId,
+    },
+  });
+
+  // Start propose seam
+  const pending = port.propose(state, evidence, request);
+
+  // Synchronously mutate caller evidence while admission is deferred
+  (evidence[0] as { boundedExcerpt: string }).boundedExcerpt = 'MARKER_SECRET_ASYNC_MUTATION';
+  (evidence as SourceEvidence[]).push(
+    createFixtureSourceEvidence({
+      path: 'src/secret.py',
+      revisionDigest: state.repositoryRevisionDigest,
+      boundedExcerpt: 'UNAPPROVED_CONTEXT_MARKER',
+    })
+  );
+
+  // Resume admission loader
+  releaseLoader();
+  const result = await pending;
+
+  assert.equal(transport.callCount, 1);
+  assert.equal(result.outcome, 'observed');
+  assert.ok(transport.lastPayload);
+  assert.equal(transport.lastPayload.evidence.length, 1);
+  assert.equal(transport.lastPayload.evidence[0]?.boundedExcerpt, originalExcerpt);
+  assert.equal(transport.lastPayload.untrustedContext.evidenceItems.length, 1);
+  assert.equal(transport.lastPayload.untrustedContext.evidenceItems[0]?.content, originalExcerpt);
+
+  // Secret marker must be completely absent from transport payload and result
+  const serializedPayload = JSON.stringify(transport.lastPayload);
+  assert.equal(serializedPayload.includes('MARKER_SECRET'), false);
+  assert.equal(serializedPayload.includes('UNAPPROVED_CONTEXT'), false);
+  const serializedResult = JSON.stringify(result);
+  assert.equal(serializedResult.includes('MARKER_SECRET'), false);
+});
+
+test('HostModelPort: caller async mutation of state arrays and taskContext during admission loader wait does NOT alter dispatched transport payload', async () => {
+  const transport = new StubTransport();
+  const state = createFixtureTaskState();
+  const originalCriteria = [...state.acceptanceCriteria];
+  const originalGoal = state.goal;
+  const originalTaskContextGoal = state.taskContext?.goal;
+
+  const evidence = [createFixtureSourceEvidence({ revisionDigest: state.repositoryRevisionDigest })];
+  const contextDigest = computeContextDigest(state, evidence);
+  const baseRequest = createFixtureProviderRequest({ contextDigest });
+  const { context, request } = createFixtureAdmissionContext({ request: baseRequest });
+
+  let releaseLoader!: () => void;
+  const loaderWait = new Promise<void>((resolve) => {
+    releaseLoader = resolve;
+  });
+
+  const admissionLoader: AuthoritativeAdmissionLoader = async (req: ProviderRequest) => {
+    await loaderWait;
+    if (req.providerRequestId === request.providerRequestId) {
+      return context;
+    }
+    return null;
+  };
+
+  const port = new HostModelPort({
+    transport,
+    admissionLoader,
+    providerConfig: {
+      providerId: request.providerId,
+      modelId: request.modelId,
+      configId: request.configId,
+      pricingPolicyId: request.pricingPolicyId,
+    },
+  });
+
+  const pending = port.propose(state, evidence, request);
+
+  // Mutate state nested arrays, taskContext, and fields while loader waits
+  (state.acceptanceCriteria as string[]).push('MUTATED_CRITERIA_UNAPPROVED');
+  (state.constraints as string[]).push('MUTATED_CONSTRAINT_UNAPPROVED');
+  (state.changedPaths as string[]).push('src/mutated.py');
+  if (state.taskContext) {
+    (state.taskContext as { goal: string }).goal = 'MUTATED_TASK_CONTEXT_GOAL';
+    (state.taskContext.acceptanceCriteria as string[]).push('MUTATED_CRITERIA_UNAPPROVED');
+  }
+  (state as { goal: string }).goal = 'MUTATED_TOP_LEVEL_GOAL';
+
+  releaseLoader();
+  const result = await pending;
+
+  assert.equal(transport.callCount, 1);
+  assert.equal(result.outcome, 'observed');
+  assert.ok(transport.lastPayload);
+  assert.deepEqual(transport.lastPayload.state.acceptanceCriteria, originalCriteria);
+  assert.equal(transport.lastPayload.state.goal, originalGoal);
+  assert.equal(transport.lastPayload.state.taskContext?.goal, originalTaskContextGoal);
+
+  const serializedPayload = JSON.stringify(transport.lastPayload);
+  assert.equal(serializedPayload.includes('MUTATED_CRITERIA_UNAPPROVED'), false);
+  assert.equal(serializedPayload.includes('MUTATED_TASK_CONTEXT_GOAL'), false);
+  assert.equal(serializedPayload.includes('MUTATED_TOP_LEVEL_GOAL'), false);
+});
+
+test('HostModelPort: caller async mutation of request and host providerConfig during admission loader wait does NOT alter caps or identity', async () => {
+  const transport = new StubTransport();
+  const state = createFixtureTaskState();
+  const evidence = [createFixtureSourceEvidence({ revisionDigest: state.repositoryRevisionDigest })];
+  const contextDigest = computeContextDigest(state, evidence);
+  const baseRequest = createFixtureProviderRequest({ contextDigest });
+  const { context, request: fixtureRequest } = createFixtureAdmissionContext({ request: baseRequest });
+  const request = { ...fixtureRequest };
+  const originalCost = request.maxCostUsd;
+  const originalInputTokens = request.maxInputTokens;
+
+  let releaseLoader!: () => void;
+  const loaderWait = new Promise<void>((resolve) => {
+    releaseLoader = resolve;
+  });
+
+  const admissionLoader: AuthoritativeAdmissionLoader = async (req: ProviderRequest) => {
+    await loaderWait;
+    if (req.providerRequestId === request.providerRequestId) {
+      return context;
+    }
+    return null;
+  };
+
+  const providerConfig = {
+    providerId: request.providerId,
+    modelId: request.modelId,
+    configId: request.configId,
+    pricingPolicyId: request.pricingPolicyId,
+  };
+
+  const port = new HostModelPort({
+    transport,
+    admissionLoader,
+    providerConfig,
+  });
+
+  const pending = port.propose(state, evidence, request);
+
+  // Mutate caller request and host config while loader is deferred
+  (request as { maxCostUsd: number }).maxCostUsd = 999999;
+  (request as { maxInputTokens: number }).maxInputTokens = 999999;
+  (providerConfig as { providerId: string }).providerId = 'MUTATED_HOST_PROVIDER_CONFIG';
+
+  releaseLoader();
+  const result = await pending;
+
+  assert.equal(transport.callCount, 1);
+  assert.equal(result.outcome, 'observed');
+  assert.ok(transport.lastPayload);
+  assert.equal(transport.lastPayload.request.maxCostUsd, originalCost);
+  assert.equal(transport.lastPayload.caps.maxCostUsd, originalCost);
+  assert.equal(transport.lastPayload.caps.maxInputTokens, originalInputTokens);
+  assert.equal(transport.lastPayload.request.providerId, request.providerId);
+});
+
+test('HostModelPort: caller objects are NOT frozen or shallow-cloned, internal payload is frozen', async () => {
+  const { port, transport, state, evidence, request } = createValidSetup();
+
+  const result = await port.propose(state, evidence, request);
+
+  assert.equal(result.outcome, 'observed');
+  assert.equal(transport.callCount, 1);
+
+  // Caller objects must NOT be frozen
+  assert.equal(Object.isFrozen(state), false, 'Caller state must not be frozen');
+  assert.equal(Object.isFrozen(state.acceptanceCriteria), false, 'Caller state arrays must not be frozen');
+  assert.equal(Object.isFrozen(evidence), false, 'Caller evidence must not be frozen');
+  assert.equal(Object.isFrozen(evidence[0]), false, 'Caller evidence item must not be frozen');
+  assert.equal(Object.isFrozen(request), false, 'Caller request must not be frozen');
+
+  // Internal transport payload must be deeply frozen
+  assert.ok(transport.lastPayload);
+  assert.equal(Object.isFrozen(transport.lastPayload), true, 'Transport payload must be frozen');
+  assert.equal(Object.isFrozen(transport.lastPayload.state), true, 'Snapshot state must be frozen');
+  assert.equal(Object.isFrozen(transport.lastPayload.evidence), true, 'Snapshot evidence must be frozen');
+  assert.equal(Object.isFrozen(transport.lastPayload.request), true, 'Snapshot request must be frozen');
+  assert.equal(Object.isFrozen(transport.lastPayload.caps), true, 'Snapshot caps must be frozen');
+  assert.equal(Object.isFrozen(transport.lastPayload.untrustedContext), true, 'Snapshot untrustedContext must be frozen');
+});
+
+test('HostModelPort: admission loader attempting to mutate request argument cannot alter transport payload', async () => {
+  const transport = new StubTransport();
+  const state = createFixtureTaskState();
+  const evidence = [createFixtureSourceEvidence({ revisionDigest: state.repositoryRevisionDigest })];
+  const contextDigest = computeContextDigest(state, evidence);
+  const baseRequest = createFixtureProviderRequest({ contextDigest });
+  const { context, request } = createFixtureAdmissionContext({ request: baseRequest });
+  const originalCost = request.maxCostUsd;
+
+  const admissionLoader: AuthoritativeAdmissionLoader = async (loaderReq: ProviderRequest) => {
+    try {
+      (loaderReq as { maxCostUsd: number }).maxCostUsd = 999999;
+    } catch {
+      // TypeError expected because loaderReq is frozen
+    }
+    return context;
+  };
+
+  const port = new HostModelPort({
+    transport,
+    admissionLoader,
+    providerConfig: {
+      providerId: request.providerId,
+      modelId: request.modelId,
+      configId: request.configId,
+      pricingPolicyId: request.pricingPolicyId,
+    },
+  });
+
+  const result = await port.propose(state, evidence, request);
+
+  assert.equal(transport.callCount, 1);
+  assert.equal(result.outcome, 'observed');
+  assert.ok(transport.lastPayload);
+  assert.equal(transport.lastPayload.request.maxCostUsd, originalCost);
+  assert.equal(transport.lastPayload.caps.maxCostUsd, originalCost);
+});
+
+test('HostModelPort: fail-closed ZERO transport calls when unapproved secret is present initially even with deferred loader', async () => {
+  const transport = new StubTransport();
+  const state = createFixtureTaskState();
+  const secretMarker = 'MARKER_SECRET_INITIAL_UNAPPROVED';
+  const unapprovedEvidence = [
+    createFixtureSourceEvidence({
+      revisionDigest: state.repositoryRevisionDigest,
+      boundedExcerpt: secretMarker,
+    }),
+  ];
+  const baseRequest = createFixtureProviderRequest({ contextDigest: 'sha256:dummy' });
+  const { context, request } = createFixtureAdmissionContext({ request: baseRequest });
+
+  let loaderInvoked = false;
+  const admissionLoader: AuthoritativeAdmissionLoader = async () => {
+    loaderInvoked = true;
+    return context;
+  };
+
+  const port = new HostModelPort({
+    transport,
+    admissionLoader,
+    providerConfig: {
+      providerId: request.providerId,
+      modelId: request.modelId,
+      configId: request.configId,
+      pricingPolicyId: request.pricingPolicyId,
+    },
+  });
+
+  const result = await port.propose(state, unapprovedEvidence, request);
+
+  assert.equal(transport.callCount, 0, 'Transport must NEVER be called');
+  assert.equal(loaderInvoked, false, 'Admission loader must not be invoked on invalid initial snapshot');
+  assert.equal(result.outcome, 'invalid');
+  if (result.outcome === 'invalid') {
+    assert.ok(result.errors.some((e) => e.code === 'PROTECTED_CONTENT_FORBIDDEN'));
+    const serialized = JSON.stringify(result.errors);
+    assert.equal(serialized.includes(secretMarker), false, 'Secret marker must not be leaked');
+  }
+});
