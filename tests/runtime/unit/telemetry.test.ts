@@ -585,3 +585,45 @@ test('runUsage and recordDiagnostic enforce consistent identity validation', asy
   await telemetry.recordUsage('task-clean-1', 'run-clean-1', validUsage);
   assert.deepEqual(telemetry.getRunUsage('task-clean-1', 'run-clean-1'), validUsage);
 });
+
+test('recordUsage and getRunUsage isolate usage across delimiter-collision task and run identities', async () => {
+  const telemetry = new SanitizedTelemetry();
+
+  const usage1: ProviderUsage = {
+    inputTokens: 100,
+    outputTokens: 50,
+    costUsd: 0.002,
+    billableTokens: 150,
+  };
+
+  const usage2: ProviderUsage = {
+    inputTokens: 200,
+    outputTokens: 100,
+    costUsd: 0.005,
+    billableTokens: 300,
+  };
+
+  // Identities that collide under naive `${taskId}:${runId}` concatenation
+  // Task "a:b" with Run "c" vs Task "a" with Run "b:c"
+  await telemetry.recordUsage('a:b', 'c', usage1);
+  await telemetry.recordUsage('a', 'b:c', usage2);
+
+  const res1 = telemetry.getRunUsage('a:b', 'c');
+  const res2 = telemetry.getRunUsage('a', 'b:c');
+
+  assert.deepEqual(res1, usage1, 'Task a:b run c usage must not cross-correlate with task a run b:c');
+  assert.deepEqual(res2, usage2, 'Task a run b:c usage must not cross-correlate with task a:b run c');
+
+  // Additional delimiter variations
+  const usage3: ProviderUsage = {
+    inputTokens: 50,
+    outputTokens: 25,
+    costUsd: 0.001,
+  };
+  await telemetry.recordUsage('a:b:c', 'd', usage3);
+
+  assert.deepEqual(telemetry.getRunUsage('a:b:c', 'd'), usage3);
+  assert.deepEqual(telemetry.getRunUsage('a:b', 'c'), usage1);
+  assert.deepEqual(telemetry.getRunUsage('a', 'b:c'), usage2);
+  assert.equal(telemetry.getRunUsage('a', 'b:c:d'), undefined);
+});

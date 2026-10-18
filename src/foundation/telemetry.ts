@@ -381,7 +381,7 @@ export class SanitizedTelemetry implements TelemetryPort {
       throw new Error('INVALID_NON_NEGATIVE_INTEGER: billableTokens must be a non-negative integer');
     }
 
-    const key = `${taskId}:${runId}`;
+    const key = JSON.stringify([taskId, runId]);
     const existing = this.runUsage.get(key);
 
     if (!existing) {
@@ -446,7 +446,7 @@ export class SanitizedTelemetry implements TelemetryPort {
   }
 
   getRunUsage(taskId: string, runId: string): ProviderUsage | undefined {
-    const usage = this.runUsage.get(`${taskId}:${runId}`);
+    const usage = this.runUsage.get(JSON.stringify([taskId, runId]));
     return usage ? { ...usage } : undefined;
   }
 
