@@ -627,3 +627,223 @@ test('recordUsage and getRunUsage isolate usage across delimiter-collision task 
   assert.deepEqual(telemetry.getRunUsage('a', 'b:c'), usage2);
   assert.equal(telemetry.getRunUsage('a', 'b:c:d'), undefined);
 });
+test('PR49 P1 Finding 1: PEM regex redacts legacy encrypted PEM with hyphenated headers and truncated PEM without end marker', () => {
+  const encryptedPem = [
+    '-----BEGIN RSA PRIVATE KEY-----',
+    'Proc-Type: 4,ENCRYPTED',
+    'DEK-Info: AES-128-CBC,fixture',
+    'RklYVFVSRQ==',
+    '-----END RSA PRIVATE KEY-----',
+  ].join('\n');
+
+  const truncatedPem = [
+    '-----BEGIN PRIVATE KEY-----',
+    'RklYVFVSRQ==',
+  ].join('\n');
+
+  // 1. sanitizeText directly
+  const encryptedResult = sanitizeText(encryptedPem);
+  assert.equal(encryptedResult, '[REDACTED]');
+  assert.equal(encryptedResult.includes('Proc-Type'), false);
+  assert.equal(encryptedResult.includes('DEK-Info'), false);
+  assert.equal(encryptedResult.includes('RklYVFVSRQ=='), false);
+
+  const truncatedResult = sanitizeText(truncatedPem);
+  assert.equal(truncatedResult, '[REDACTED]');
+  assert.equal(truncatedResult.includes('RklYVFVSRQ=='), false);
+
+  const mixedText = `prefix log ${encryptedPem} middle ${truncatedPem}`;
+  const mixedResult = sanitizeText(mixedText);
+  assert.equal(mixedResult, 'prefix log [REDACTED] middle [REDACTED]');
+  assert.equal(mixedResult.includes('RklYVFVSRQ=='), false);
+
+  // 2. recordDiagnostic
+  const telemetry = new SanitizedTelemetry({ maxDiagnosticBytes: 512 });
+  const diagEncrypted = telemetry.recordDiagnostic('task-1', 'run-1', `Diagnostic: ${encryptedPem}`);
+  assert.equal(diagEncrypted.redacted, true);
+  assert.equal(diagEncrypted.sanitizedContent.includes('Proc-Type'), false);
+  assert.equal(diagEncrypted.sanitizedContent.includes('RklYVFVSRQ=='), false);
+  assert.match(diagEncrypted.sanitizedContent, /\[REDACTED\]/);
+
+  const diagTruncated = telemetry.recordDiagnostic('task-1', 'run-1', `Diagnostic: ${truncatedPem}`);
+  assert.equal(diagTruncated.redacted, true);
+  assert.equal(diagTruncated.sanitizedContent.includes('RklYVFVSRQ=='), false);
+  assert.match(diagTruncated.sanitizedContent, /\[REDACTED\]/);
+
+  // 3. isProtectedPayload
+  assert.equal(isProtectedPayload(encryptedPem), true);
+  assert.equal(isProtectedPayload(truncatedPem), true);
+});
+
+test('PR49 P1 Finding 2: generic secret pattern redacts JSON quoted keys, suffixnames, Basic/Bearer/Token auth, and preserves whitespace forms', () => {
+  const regressionCases = [
+    { name: 'JSON double-quoted api_key', raw: '{"api_key":"fixture-value-123"}', forbidden: 'fixture-value-123' },
+    { name: 'JSON single-quoted api_key', raw: "{'api_key':'fixture-value-123'}", forbidden: 'fixture-value-123' },
+    { name: 'JSON uppercase API_KEY', raw: '{"API_KEY":"fixture-value-123"}', forbidden: 'fixture-value-123' },
+    { name: 'JSON camelCase apiKey', raw: '{"apiKey":"fixture-value-123"}', forbidden: 'fixture-value-123' },
+    { name: 'JSON with whitespace', raw: '{ "api_key" : "fixture-value-123" }', forbidden: 'fixture-value-123' },
+    { name: 'Suffixname SECRET_KEY', raw: 'SECRET_KEY=fixture-value-123', forbidden: 'fixture-value-123' },
+    { name: 'Suffixname AWS_SECRET_ACCESS_KEY', raw: 'AWS_SECRET_ACCESS_KEY=fixture-value-456', forbidden: 'fixture-value-456' },
+    { name: 'Multiple suffixnames', raw: 'SECRET_KEY=fixture-value-123 AWS_SECRET_ACCESS_KEY=fixture-value-456', forbidden: 'fixture-value-123' },
+    { name: 'Authorization Basic', raw: 'Authorization: Basic Zml4dHVyZTpwYXNz', forbidden: 'Zml4dHVyZTpwYXNz' },
+    { name: 'Basic standalone', raw: 'Basic Zml4dHVyZTpwYXNz', forbidden: 'Zml4dHVyZTpwYXNz' },
+    { name: 'Authorization Bearer', raw: 'Authorization: Bearer eyJhbGciOi', forbidden: 'eyJhbGciOi' },
+    { name: 'Bearer standalone', raw: 'Bearer eyJhbGciOi', forbidden: 'eyJhbGciOi' },
+    { name: 'Authorization Token', raw: 'Authorization: Token mytoken123', forbidden: 'mytoken123' },
+    { name: 'Token standalone', raw: 'Token mytoken123', forbidden: 'mytoken123' },
+    { name: 'Prior token whitespace form', raw: 'token fixture-value-123', forbidden: 'fixture-value-123' },
+    { name: 'Prior secret whitespace form', raw: 'secret fixture-value-123', forbidden: 'fixture-value-123' },
+    { name: 'Prior password whitespace form', raw: 'password fixture-value-123', forbidden: 'fixture-value-123' },
+  ];
+
+  for (const c of regressionCases) {
+    const sanitized = sanitizeText(c.raw);
+    assert.equal(sanitized.includes(c.forbidden), false, `${c.name} must not leak secret`);
+    assert.match(sanitized, /\[REDACTED\]/, `${c.name} must contain [REDACTED]`);
+    assert.equal(isProtectedPayload(c.raw), true, `${c.name} must be detected as protected payload`);
+  }
+
+  // Diagnostic sanitization
+  const telemetry = new SanitizedTelemetry({ maxDiagnosticBytes: 512 });
+  for (const c of regressionCases) {
+    const diag = telemetry.recordDiagnostic('task-1', 'run-1', `Error log: ${c.raw}`);
+    assert.equal(diag.redacted, true);
+    assert.equal(diag.sanitizedContent.includes(c.forbidden), false);
+    assert.match(diag.sanitizedContent, /\[REDACTED\]/);
+  }
+
+  // Preserves valid non-secret text
+  const cleanJson = '{"name":"agent","count":42,"status":"ok"}';
+  assert.equal(sanitizeText(cleanJson), cleanJson);
+});
+
+test('PR49 P1 Finding 3: emitActivity rejects protected evidenceRef with generic index reason and echoes no raw path or payload', async () => {
+  const sink: ActivityEvent[] = [];
+  const telemetry = new SanitizedTelemetry({
+    sink: (e) => {
+      sink.push(e);
+    },
+  });
+
+  const protectedRefScenarios = [
+    {
+      ref: '.env?MARKER_SECRET_REF',
+      index: 0,
+      refs: ['.env?MARKER_SECRET_REF'],
+      markers: ['MARKER_SECRET_REF', '.env'],
+    },
+    {
+      ref: 'eval/uc03/private/secret.key',
+      index: 1,
+      refs: ['clean-evidence-ref-1', 'eval/uc03/private/secret.key'],
+      markers: ['private', 'secret.key', 'eval/uc03'],
+    },
+    {
+      ref: '/workspace/.env.production?SECRET_TOKEN=xyz',
+      index: 0,
+      refs: ['/workspace/.env.production?SECRET_TOKEN=xyz'],
+      markers: ['SECRET_TOKEN', '.env.production'],
+    },
+  ];
+
+  for (const scenario of protectedRefScenarios) {
+    const event: ActivityEvent = {
+      ...VALID_EVENT,
+      eventId: `evt-reject-${scenario.index}-${Date.now()}`,
+      evidenceRefs: scenario.refs,
+    };
+
+    let caughtError: Error | undefined;
+    await assert.rejects(
+      async () => {
+        try {
+          await telemetry.emitActivity(event);
+        } catch (err) {
+          caughtError = err as Error;
+          throw err;
+        }
+      },
+      (err: Error) => {
+        assert.match(err.message, new RegExp(`^Protected path reference rejected: evidenceRefs\\\[${scenario.index}\\\] contains protected path$`));
+        // Assert no marker or raw path is leaked in the error message
+        for (const marker of scenario.markers) {
+          assert.equal(err.message.includes(marker), false, `Error must not echo "${marker}"`);
+        }
+        assert.equal(err.message.includes(scenario.ref), false, 'Error must not echo raw ref');
+        // Serialized error contains no marker or raw ref
+        const serialized = JSON.stringify(err.message);
+        for (const marker of scenario.markers) {
+          assert.equal(serialized.includes(marker), false, `Serialized error must not contain "${marker}"`);
+        }
+        return true;
+      }
+    );
+
+    assert.ok(caughtError);
+    assert.equal(sink.length, 0, 'Sink must have zero effects on rejected evidenceRef');
+    assert.equal(telemetry.getEvents().length, 0, 'Stored events must have zero effects on rejected evidenceRef');
+  }
+
+});
+
+test('PR49 P1 end-to-end: emitActivity redacts outcomes and evidenceRefs without leaking markers while preserving valid metadata', async () => {
+  const sink: ActivityEvent[] = [];
+  const telemetry = new SanitizedTelemetry({
+    sink: (e) => {
+      sink.push(e);
+    },
+  });
+
+  const encryptedPem = '-----BEGIN RSA PRIVATE KEY-----\nProc-Type: 4,ENCRYPTED\nDEK-Info: AES-128-CBC,fixture\nRklYVFVSRQ==\n-----END RSA PRIVATE KEY-----';
+  const truncatedPem = '-----BEGIN PRIVATE KEY-----\nRklYVFVSRQ==';
+
+  const complexOutcome = [
+    `Encrypted: ${encryptedPem}`,
+    `Truncated: ${truncatedPem}`,
+    'Config: {"api_key":"fixture-value-123"}',
+    'Env: SECRET_KEY=fixture-value-123 AWS_SECRET_ACCESS_KEY=fixture-value-456',
+    'Auth: Authorization: Basic Zml4dHVyZTpwYXNz',
+    'Whitespace: token fixture-value-123',
+  ].join(' | ');
+
+  const event: ActivityEvent = {
+    eventId: 'evt-all-p1-safe',
+    taskId: 'task-uc03-p1',
+    runId: 'run-p1-001',
+    timestamp: '2026-10-18T10:00:00.000Z',
+    node: 'Verify',
+    actionType: 'run_tests',
+    outcome: complexOutcome,
+    durationMs: 320,
+    evidenceRefs: ['evidence-clean-1', 'evidence-clean-2'],
+  };
+
+  await telemetry.emitActivity(event);
+
+  assert.equal(sink.length, 1);
+  const emitted = sink[0];
+  assert.ok(emitted);
+
+  // Assert original valid metadata is completely unchanged
+  assert.equal(emitted.eventId, 'evt-all-p1-safe');
+  assert.equal(emitted.taskId, 'task-uc03-p1');
+  assert.equal(emitted.runId, 'run-p1-001');
+  assert.equal(emitted.timestamp, '2026-10-18T10:00:00.000Z');
+  assert.equal(emitted.node, 'Verify');
+  assert.equal(emitted.actionType, 'run_tests');
+  assert.equal(emitted.durationMs, 320);
+  assert.deepEqual(emitted.evidenceRefs, ['evidence-clean-1', 'evidence-clean-2']);
+
+  // Assert all secrets/markers are absent from outcome
+  assert.equal(emitted.outcome.includes('Proc-Type'), false);
+  assert.equal(emitted.outcome.includes('DEK-Info'), false);
+  assert.equal(emitted.outcome.includes('RklYVFVSRQ=='), false);
+  assert.equal(emitted.outcome.includes('fixture-value-123'), false);
+  assert.equal(emitted.outcome.includes('fixture-value-456'), false);
+  assert.equal(emitted.outcome.includes('Zml4dHVyZTpwYXNz'), false);
+
+  // Assert stored event matches emitted
+  const stored = telemetry.getEvents('task-uc03-p1');
+  assert.equal(stored.length, 1);
+  assert.deepEqual(stored[0], emitted);
+});

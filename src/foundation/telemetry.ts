@@ -26,11 +26,11 @@ export interface RedactedDiagnostic {
 const BUILTIN_SECRET_PATTERNS: readonly RegExp[] = [
   /MARKER_SECRET[A-Za-z0-9_-]*/gi,
   /marker[-_]?secret[-_]?[A-Za-z0-9_-]*/gi,
-  /-----BEGIN[ A-Z0-9_-]+KEY-----[^-]+-----END[ A-Z0-9_-]+KEY-----/gs,
-  /Bearer\s+[A-Za-z0-9\-._~+/]+=*/gi,
+  /-----BEGIN[ A-Z0-9_]+KEY-----(?:(?!-----BEGIN)[\s\S])*?-----END[ A-Z0-9_]+KEY-----|-----BEGIN[ A-Z0-9_]+KEY-----(?:(?!-----BEGIN)[\s\S])*/gi,
+  /(?:Authorization:\s*)?(?:Bearer|Basic|Token)\s+[A-Za-z0-9\-._~+/]+=*/gi,
   /(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,}/g,
   /sk-[A-Za-z0-9-_]{20,}/g,
-  /(?:token|secret|password|api[_-]?key|access[_-]?token|auth)[\s:=]+[^\s,;"']+/gi,
+  /(?:['"]?(?:(?:aws[_-]?)?secret(?:[_-]?(?:access[_-]?)?key)?|api[_-]?key|access[_-]?(?:token|key)|token|password|auth)['"]?)[\s:=]+(?:'[^'\r\n]+'|"[^"\r\n]+"|[^\s,;'"{}]+)/gi,
 ];
 
 const TRUNCATION_SUFFIX = ' ... [TRUNCATED]';
@@ -301,13 +301,13 @@ export class SanitizedTelemetry implements TelemetryPort {
       throw new Error(`Protected metadata rejected: timestamp contains protected data or secret`);
     }
 
-    // Reject protected path refs fail-closed
-    for (const ref of valid.evidenceRefs) {
+    // Reject protected path refs fail-closed without leaking payload
+    for (let i = 0; i < valid.evidenceRefs.length; i++) {
+      const ref = valid.evidenceRefs[i];
       if (typeof ref !== 'string' || ref.trim().length === 0 || isProtectedPathRef(ref)) {
-        throw new Error(`Protected path reference rejected: evidenceRefs contains protected path "${ref}"`);
+        throw new Error(`Protected path reference rejected: evidenceRefs[${i}] contains protected path`);
       }
     }
-
     // Redact permitted bounded diagnostic/outcome fields according to contract
     const sanitizedOutcome = sanitizeText(valid.outcome, this.secretPatterns);
     const sanitizedEvidenceRefs = valid.evidenceRefs.map((ref) =>
