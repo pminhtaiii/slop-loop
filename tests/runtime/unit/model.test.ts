@@ -8,6 +8,8 @@ import {
 } from '../../../src/contracts/uc03.ts';
 import {
   HostModelPort,
+  computeContextDigest,
+  containsProtectedContent,
   type HostModelTransport,
   type HostModelTransportPayload,
   type AuthoritativeAdmissionLoader,
@@ -16,6 +18,7 @@ import {
   createFixtureTaskState,
   createFixtureSourceEvidence,
   createFixtureAdmissionContext,
+  createFixtureProviderRequest,
 } from '../support/uc03/port-fixtures.ts';
 
 class StubTransport implements HostModelTransport {
@@ -49,7 +52,9 @@ function createValidSetup() {
   const transport = new StubTransport();
   const state = createFixtureTaskState();
   const evidence = [createFixtureSourceEvidence({ revisionDigest: state.repositoryRevisionDigest })];
-  const { context, request } = createFixtureAdmissionContext();
+  const contextDigest = computeContextDigest(state, evidence);
+  const baseRequest = createFixtureProviderRequest({ contextDigest });
+  const { context, request } = createFixtureAdmissionContext({ request: baseRequest });
 
   const admissionLoader: AuthoritativeAdmissionLoader = async (req: ProviderRequest) => {
     if (req.providerRequestId === request.providerRequestId) {
@@ -69,7 +74,7 @@ function createValidSetup() {
     },
   });
 
-  return { port, transport, state, evidence, request, context, admissionLoader };
+  return { port, transport, state, evidence, request, context, admissionLoader, contextDigest };
 }
 
 // ----------------------------------------------------------------------------
@@ -269,9 +274,11 @@ test('HostModelPort: ZERO transport calls on canonical admission denial (exhaust
   const transport = new StubTransport();
   const state = createFixtureTaskState();
   const evidence = [createFixtureSourceEvidence({ revisionDigest: state.repositoryRevisionDigest })];
+  const contextDigest = computeContextDigest(state, evidence);
 
   // Exhausted budget
   const { context: exhaustedContext, request } = createFixtureAdmissionContext({
+    request: createFixtureProviderRequest({ contextDigest }),
     taskTokensConsumed: 100000,
     taskTokensLimit: 100000,
   });
@@ -294,9 +301,11 @@ test('HostModelPort: ZERO transport calls on partial reservation bundle', async 
   const transport = new StubTransport();
   const state = createFixtureTaskState();
   const evidence = [createFixtureSourceEvidence({ revisionDigest: state.repositoryRevisionDigest })];
+  const contextDigest = computeContextDigest(state, evidence);
 
   // Omit run cost reservation
   const { context: partialContext, request } = createFixtureAdmissionContext({
+    request: createFixtureProviderRequest({ contextDigest }),
     omitRunCostRes: true,
   });
 
@@ -318,8 +327,10 @@ test('HostModelPort: ZERO transport calls on uncertain stored request in history
   const transport = new StubTransport();
   const state = createFixtureTaskState();
   const evidence = [createFixtureSourceEvidence({ revisionDigest: state.repositoryRevisionDigest })];
+  const contextDigest = computeContextDigest(state, evidence);
 
   const { context: uncertainContext, request } = createFixtureAdmissionContext({
+    request: createFixtureProviderRequest({ contextDigest }),
     includeUncertainStoredRequest: true,
   });
 
@@ -461,4 +472,166 @@ test('HostModelPort: proposal with actions is observed and returned, never execu
     assert.equal(result.result.proposal.actions?.length, 1);
     assert.equal(result.result.proposal.actions?.[0]?.kind, 'run_command');
   }
+});
+
+// ----------------------------------------------------------------------------
+// 6. Context Digest and Protected Content Boundary Verification (T008-a Fixes)
+// ----------------------------------------------------------------------------
+
+test('computeContextDigest: deterministic and binds state/evidence semantics', () => {
+  const state = createFixtureTaskState();
+  const evidence = [createFixtureSourceEvidence({ revisionDigest: state.repositoryRevisionDigest })];
+
+  const digest1 = computeContextDigest(state, evidence);
+  const digest2 = computeContextDigest({ state, evidence });
+  assert.equal(digest1, digest2, 'Digest must be deterministic across parameter styles');
+  assert.match(digest1, /^sha256:[a-f0-9]{64}$/);
+
+  // Changing evidence boundedExcerpt alters digest
+  const modifiedExcerpt = [createFixtureSourceEvidence({ revisionDigest: state.repositoryRevisionDigest, boundedExcerpt: 'different content' })];
+  assert.notEqual(computeContextDigest(state, modifiedExcerpt), digest1);
+
+  // Changing evidence path alters digest
+  const modifiedPath = [createFixtureSourceEvidence({ path: 'src/other.py', revisionDigest: state.repositoryRevisionDigest })];
+  assert.notEqual(computeContextDigest(state, modifiedPath), digest1);
+
+  // Changing evidence revisionDigest alters digest
+  const modifiedRev = [createFixtureSourceEvidence({ revisionDigest: 'sha256:0000000000000000000000000000000000000000000000000000000000000000' })];
+  assert.notEqual(computeContextDigest(state, modifiedRev), digest1);
+
+  // Changing state semantics alters digest
+  const modifiedState = { ...state, goal: 'completely altered goal' };
+  assert.notEqual(computeContextDigest(modifiedState, evidence), digest1);
+});
+
+test('containsProtectedContent: detects marker secrets, keys, and tokens', () => {
+  assert.equal(containsProtectedContent('MARKER_SECRET_UNAPPROVED_CONTEXT'), true);
+  assert.equal(containsProtectedContent('something MARKER_SECRET present'), true);
+  assert.equal(containsProtectedContent('SECRET_KEY=abcdef123456'), true);
+  assert.equal(containsProtectedContent('sk-secret-key-12345'), true);
+  assert.equal(containsProtectedContent('api_key=secret-token-xyz'), true);
+  assert.equal(containsProtectedContent('-----BEGIN RSA PRIVATE KEY-----'), true);
+  assert.equal(containsProtectedContent('def divide(a, b):\n    return a / b\n'), false);
+});
+
+test('HostModelPort: ZERO transport calls when evidence excerpt is swapped to unapproved content', async () => {
+  const { port, transport, state, request } = createValidSetup();
+
+  // Swapped evidence excerpt without updating request contextDigest
+  const unapprovedEvidence = [
+    createFixtureSourceEvidence({
+      revisionDigest: state.repositoryRevisionDigest,
+      boundedExcerpt: 'def divide(a, b):\n    return a / (b or 1)\n',
+    }),
+  ];
+
+  const result = await port.propose(state, unapprovedEvidence, request);
+
+  assert.equal(transport.callCount, 0, 'Transport must NEVER be called on unapproved evidence excerpt');
+  assert.equal(result.outcome, 'invalid');
+  if (result.outcome === 'invalid') {
+    assert.ok(result.errors.some((e) => e.path === 'contextDigest' && e.code === 'REQUEST_IDENTITY_MISMATCH'));
+  }
+});
+
+test('HostModelPort: ZERO transport calls on MARKER_SECRET_UNAPPROVED_CONTEXT and no secret leak', async () => {
+  const { port, transport, state, request } = createValidSetup();
+
+  const secretMarker = 'MARKER_SECRET_UNAPPROVED_CONTEXT';
+  const unapprovedEvidence = [
+    createFixtureSourceEvidence({
+      revisionDigest: state.repositoryRevisionDigest,
+      boundedExcerpt: secretMarker,
+    }),
+  ];
+
+  const result = await port.propose(state, unapprovedEvidence, request);
+
+  assert.equal(transport.callCount, 0, 'Transport must NEVER dispatch secret marker');
+  assert.equal(result.outcome, 'invalid');
+  if (result.outcome === 'invalid') {
+    assert.ok(result.errors.some((e) => e.code === 'PROTECTED_CONTENT_FORBIDDEN'));
+    // Verify secret marker is not leaked in error messages
+    const serialized = JSON.stringify(result.errors);
+    assert.equal(serialized.includes(secretMarker), false, 'Secret marker must not be leaked in errors');
+  }
+});
+
+test('HostModelPort: ZERO transport calls on embedded secret in schema-valid path', async () => {
+  const { port, transport, state, request } = createValidSetup();
+
+  const rawSecret = 'sk-prod-api-key-99999999';
+  const embeddedSecretEvidence = [
+    createFixtureSourceEvidence({
+      path: 'src/calculator.py', // Schema-valid path
+      revisionDigest: state.repositoryRevisionDigest,
+      boundedExcerpt: `def get_client():\n    return Client(api_key='${rawSecret}')\n`,
+    }),
+  ];
+
+  const result = await port.propose(state, embeddedSecretEvidence, request);
+
+  assert.equal(transport.callCount, 0, 'Transport must NOT be called for embedded secret even in schema-valid path');
+  assert.equal(result.outcome, 'invalid');
+  if (result.outcome === 'invalid') {
+    assert.ok(result.errors.some((e) => e.code === 'PROTECTED_CONTENT_FORBIDDEN'));
+    const serialized = JSON.stringify(result.errors);
+    assert.equal(serialized.includes(rawSecret), false, 'Raw secret must not be leaked in error message');
+  }
+});
+
+test('HostModelPort: ZERO transport calls when caller reuses old valid request against modified payload', async () => {
+  const { transport, state } = createValidSetup();
+
+  // Create baseline context and request
+  const baselineEvidence = [createFixtureSourceEvidence({ revisionDigest: state.repositoryRevisionDigest })];
+  const baselineDigest = computeContextDigest(state, baselineEvidence);
+  const { context, request: oldRequest } = createFixtureAdmissionContext({
+    request: createFixtureProviderRequest({ contextDigest: baselineDigest }),
+  });
+
+  const port = new HostModelPort({
+    transport,
+    admissionLoader: async () => context,
+  });
+
+  // Modified evidence with new digest
+  const modifiedEvidence = [
+    createFixtureSourceEvidence({
+      revisionDigest: state.repositoryRevisionDigest,
+      boundedExcerpt: 'def divide(a, b):\n    return a // b\n',
+    }),
+  ];
+  const newDigest = computeContextDigest(state, modifiedEvidence);
+
+  // Attempt 1: Caller passes old request with old receipt digest -> fails in validateProviderRequest
+  const result1 = await port.propose(state, modifiedEvidence, oldRequest);
+  assert.equal(transport.callCount, 0);
+  assert.equal(result1.outcome, 'invalid');
+
+  // Attempt 2: Caller updates request.contextDigest to newDigest without host re-approval
+  // Host loader still returns context with old expectedRequest.contextDigest
+  const forgedRequest: ProviderRequest = {
+    ...oldRequest,
+    contextDigest: newDigest,
+  };
+  const result2 = await port.propose(state, modifiedEvidence, forgedRequest);
+  assert.equal(transport.callCount, 0);
+  assert.equal(result2.outcome, 'denied');
+});
+
+test('HostModelPort: caller boolean flags cannot bypass admission', async () => {
+  const { port, transport, state, evidence, request } = createValidSetup();
+
+  // Caller attempts to attach extra bypass flags
+  const tamperedRequest = {
+    ...request,
+    isApproved: true,
+    bypassAdmission: true,
+  };
+
+  const result = await port.propose(state, evidence, tamperedRequest as unknown as ProviderRequest);
+
+  assert.equal(transport.callCount, 0, 'Transport must NOT be called on tampered request with unauthorized keys');
+  assert.equal(result.outcome, 'invalid');
 });

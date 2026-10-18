@@ -29,6 +29,7 @@ import {
   validateDispatchAdmission,
   validateModelResult,
   validateProviderUsage,
+  computeCanonicalSha256,
 } from '../contracts/uc03.ts';
 
 export interface HostModelCaps {
@@ -77,6 +78,68 @@ export interface HostModelPortOptions {
   readonly providerConfig?: HostProviderConfig | undefined;
 }
 
+export interface ContextDigestPayload {
+  readonly state: TaskState;
+  readonly evidence: readonly SourceEvidence[];
+}
+
+/**
+ * Computes a deterministic canonical digest for the exact state and evidence
+ * payload admitted and sent to host transport. Reuses canonical sha256.
+ */
+export function computeContextDigest(
+  stateOrPayload: TaskState | ContextDigestPayload,
+  maybeEvidence?: readonly SourceEvidence[]
+): string {
+  let state: TaskState;
+  let evidence: readonly SourceEvidence[];
+
+  if (maybeEvidence !== undefined) {
+    state = stateOrPayload as TaskState;
+    evidence = maybeEvidence;
+  } else if (
+    typeof stateOrPayload === 'object' &&
+    stateOrPayload !== null &&
+    'state' in stateOrPayload &&
+    'evidence' in stateOrPayload
+  ) {
+    state = (stateOrPayload as ContextDigestPayload).state;
+    evidence = (stateOrPayload as ContextDigestPayload).evidence;
+  } else {
+    throw new Error('computeContextDigest requires state and evidence');
+  }
+
+  // Canonicalize evidence items to guarantee deterministic property ordering
+  const canonicalEvidence = evidence.map((e) => ({
+    boundedExcerpt: e.boundedExcerpt,
+    path: e.path,
+    resultCount: e.resultCount,
+    revisionDigest: e.revisionDigest,
+    truncated: e.truncated,
+  }));
+
+  return computeCanonicalSha256({
+    evidence: canonicalEvidence,
+    state,
+  });
+}
+
+export { computeContextDigest as computeModelContextDigest };
+
+/**
+ * Detects embedded protected secrets, credential patterns, and marker phrases.
+ */
+export function containsProtectedContent(text: string): boolean {
+  if (typeof text !== 'string') return false;
+  return (
+    /MARKER_SECRET/i.test(text) ||
+    /UNAPPROVED_CONTEXT/i.test(text) ||
+    /BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY/i.test(text) ||
+    /(?:sk-|api[_-]?key\s*[:=]|token\s*[:=]|password\s*[:=]|bearer\s+)[a-zA-Z0-9_\-.]+/i.test(text) ||
+    /SECRET_KEY/i.test(text)
+  );
+}
+
 function redactSensitiveData(text: string): string {
   return text
     .replace(/(?:sk-|api_key=|key=|token=|password=|bearer\s+)[a-zA-Z0-9_\-.]+/gi, '[REDACTED]')
@@ -97,8 +160,11 @@ function isPlainObject(val: unknown): val is Record<string, unknown> {
 
 export class HostModelPort implements ModelPort {
   readonly provenance: PortProvenance = 'real';
+  readonly options: HostModelPortOptions;
 
-  constructor(public readonly options: HostModelPortOptions) {}
+  constructor(options: HostModelPortOptions) {
+    this.options = options;
+  }
 
   async propose(
     state: TaskState,
@@ -114,7 +180,7 @@ export class HostModelPort implements ModelPort {
       };
     }
 
-    // 2. Runtime validate approved bounded SourceEvidence with provenance / current revision
+    // 2. Runtime validate approved bounded SourceEvidence with provenance / current revision and protected content checks
     if (!Array.isArray(evidence)) {
       return {
         outcome: 'invalid',
@@ -143,13 +209,29 @@ export class HostModelPort implements ModelPort {
           ],
         };
       }
+      if (containsProtectedContent(item.boundedExcerpt)) {
+        return {
+          outcome: 'invalid',
+          errors: [
+            {
+              path: `evidence[${i}].boundedExcerpt`,
+              message: 'Evidence boundedExcerpt contains protected content or embedded secret',
+              code: 'PROTECTED_CONTENT_FORBIDDEN',
+            },
+          ],
+        };
+      }
     }
 
-    // 3. Runtime validate ProviderRequest identity/role/config/pricing/caps/contextDigest
+    // 3. Compute canonical digest from EXACT context payload to be sent to host transport
+    const computedContextDigest = computeContextDigest(state, evidence);
+
+    // Runtime validate ProviderRequest identity/role/config/pricing/caps/contextDigest against computedContextDigest
     const cfg = this.options.providerConfig;
     const reqRes = validateProviderRequest(request, {
       expectedTaskId: state.taskId,
       expectedRunId: state.runId,
+      expectedContextDigest: computedContextDigest,
       ...(cfg?.providerId !== undefined ? { expectedProviderId: cfg.providerId } : {}),
       ...(cfg?.modelId !== undefined ? { expectedModelId: cfg.modelId } : {}),
       ...(cfg?.configId !== undefined ? { expectedConfigId: cfg.configId } : {}),
@@ -186,6 +268,14 @@ export class HostModelPort implements ModelPort {
       return {
         outcome: 'denied',
         reason: `${primary?.code ?? 'ADMISSION_DENIED'}: ${redactSensitiveData(primary?.message ?? 'Dispatch admission failed')}`,
+      };
+    }
+
+    // Bound context verification: ensure host approved context matches computed exact payload digest
+    if (admissionContext.expectedRequest.contextDigest !== computedContextDigest) {
+      return {
+        outcome: 'denied',
+        reason: 'CONTEXT_DIGEST_MISMATCH: Authoritative admission context digest does not match computed exact payload digest',
       };
     }
 
