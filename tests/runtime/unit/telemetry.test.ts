@@ -440,3 +440,148 @@ test('recordUsage projects per-run usage and cost while keeping ledger external'
     /non-empty runId/
   );
 });
+
+test('fail-closed validation rejects protected stable identifiers with zero sink and stored effects', async () => {
+  const sink: ActivityEvent[] = [];
+  const telemetry = new SanitizedTelemetry({
+    sink: (e) => {
+      sink.push(e);
+    },
+  });
+
+  const protectedFields: Partial<ActivityEvent>[] = [
+    { eventId: 'MARKER_SECRET_ID_0123' },
+    { taskId: 'MARKER_SECRET_TASK_0123' },
+    { runId: 'MARKER_SECRET_RUN_0123' },
+    { node: 'MARKER_SECRET_NODE' },
+    { actionType: 'MARKER_SECRET_ACTION' },
+    { eventId: '.env' },
+    { taskId: 'id_rsa' },
+  ];
+
+  for (const fieldOverride of protectedFields) {
+    const invalidEvent = { ...VALID_EVENT, ...fieldOverride };
+    await assert.rejects(
+      () => telemetry.emitActivity(invalidEvent),
+      /Protected identifier rejected|protected/i
+    );
+    assert.equal(sink.length, 0, 'Sink must have zero effects on protected identifier');
+    assert.equal(telemetry.getEvents().length, 0, 'Stored events must have zero effects on protected identifier');
+  }
+});
+
+test('fail-closed validation rejects protected path refs with zero sink and stored effects', async () => {
+  const sink: ActivityEvent[] = [];
+  const telemetry = new SanitizedTelemetry({
+    sink: (e) => {
+      sink.push(e);
+    },
+  });
+
+  const protectedRefsList = [
+    ['.env'],
+    ['.env.local'],
+    ['id_rsa'],
+    ['credentials.json'],
+    ['secrets.json'],
+    ['.git/config'],
+    ['.agents/workflow.md'],
+    ['eval/uc03/private/secret.key'],
+    ['safe-ref-1', '.env'],
+  ];
+
+  for (const evidenceRefs of protectedRefsList) {
+    const invalidEvent = { ...VALID_EVENT, evidenceRefs };
+    await assert.rejects(
+      () => telemetry.emitActivity(invalidEvent),
+      /Protected path reference rejected|protected/i
+    );
+    assert.equal(sink.length, 0, 'Sink must have zero effects on protected path ref');
+    assert.equal(telemetry.getEvents().length, 0, 'Stored events must have zero effects on protected path ref');
+  }
+});
+
+test('no marker in sink for every emitted field and preserves valid events unchanged', async () => {
+  const sink: ActivityEvent[] = [];
+  const telemetry = new SanitizedTelemetry({
+    sink: (e) => {
+      sink.push(e);
+    },
+  });
+
+  // 1. Preserves valid clean event unchanged
+  await telemetry.emitActivity(VALID_EVENT);
+  assert.equal(sink.length, 1);
+  assert.deepEqual(sink[0], VALID_EVENT);
+  assert.deepEqual(telemetry.getEvents(VALID_EVENT.taskId)[0], VALID_EVENT);
+
+  // 2. Emitting an event with secret in outcome and permitted ref redacts them so no marker in sink
+  const markerOutcome = 'pass with MARKER_SECRET_OUTCOME_VAL';
+  const markerRef = 'evidence-ref-MARKER_SECRET_EVID';
+  const eventWithSecrets: ActivityEvent = {
+    ...VALID_EVENT,
+    eventId: 'evt-clean-123',
+    outcome: markerOutcome,
+    evidenceRefs: [markerRef, 'clean-evidence-ref'],
+  };
+
+  await telemetry.emitActivity(eventWithSecrets);
+  assert.equal(sink.length, 2);
+  const emitted = sink[1];
+  assert.ok(emitted);
+
+  // Verify no marker in ANY emitted field
+  const markerRegex = /MARKER_SECRET/i;
+  assert.equal(markerRegex.test(emitted.eventId), false);
+  assert.equal(markerRegex.test(emitted.taskId), false);
+  assert.equal(markerRegex.test(emitted.runId), false);
+  assert.equal(markerRegex.test(emitted.timestamp), false);
+  assert.equal(markerRegex.test(emitted.node), false);
+  assert.equal(markerRegex.test(emitted.actionType), false);
+  assert.equal(markerRegex.test(emitted.outcome), false);
+  assert.match(emitted.outcome, /\[REDACTED\]/);
+  for (const ref of emitted.evidenceRefs) {
+    assert.equal(markerRegex.test(ref), false);
+  }
+  assert.match(emitted.evidenceRefs[0] ?? '', /\[REDACTED\]/);
+  assert.equal(emitted.evidenceRefs[1], 'clean-evidence-ref');
+});
+
+test('runUsage and recordDiagnostic enforce consistent identity validation', async () => {
+  const telemetry = new SanitizedTelemetry({ maxDiagnosticBytes: 256 });
+  const validUsage: ProviderUsage = {
+    inputTokens: 10,
+    outputTokens: 5,
+    costUsd: 0.001,
+  };
+
+  // Protected taskId in recordUsage
+  await assert.rejects(
+    () => telemetry.recordUsage('MARKER_SECRET_TASK_0123', 'run-1', validUsage),
+    /Protected identifier rejected/i
+  );
+  assert.equal(telemetry.getRunUsage('MARKER_SECRET_TASK_0123', 'run-1'), undefined);
+
+  // Protected runId in recordUsage
+  await assert.rejects(
+    () => telemetry.recordUsage('task-clean-1', 'MARKER_SECRET_RUN_0123', validUsage),
+    /Protected identifier rejected/i
+  );
+  assert.equal(telemetry.getRunUsage('task-clean-1', 'MARKER_SECRET_RUN_0123'), undefined);
+
+  // Protected taskId in recordDiagnostic
+  assert.throws(
+    () => telemetry.recordDiagnostic('MARKER_SECRET_TASK_0123', 'run-1', 'diag content'),
+    /Protected identifier rejected/i
+  );
+
+  // Protected runId in recordDiagnostic
+  assert.throws(
+    () => telemetry.recordDiagnostic('task-clean-1', 'MARKER_SECRET_RUN_0123', 'diag content'),
+    /Protected identifier rejected/i
+  );
+
+  // Valid identities record correctly
+  await telemetry.recordUsage('task-clean-1', 'run-clean-1', validUsage);
+  assert.deepEqual(telemetry.getRunUsage('task-clean-1', 'run-clean-1'), validUsage);
+});

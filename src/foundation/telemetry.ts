@@ -153,10 +153,41 @@ export function sanitizeDiagnostic(
   };
 }
 
-export function isProtectedPayload(val: unknown, seen = new Set<unknown>()): boolean {
+export function isProtectedPathRef(ref: string): boolean {
+  if (typeof ref !== 'string') {
+    return false;
+  }
+  const trimmed = ref.trim();
+  if (isProtectedPath(trimmed)) {
+    return true;
+  }
+  const stripped = trimmed.replace(/^file:\/\/\/?/i, '');
+  const cleanPath = stripped.split('#')[0]?.split('?')[0] ?? stripped;
+  if (isProtectedPath(cleanPath)) {
+    return true;
+  }
+  return false;
+}
+
+export function isProtectedPayload(
+  val: unknown,
+  customPatternsOrSeen?: readonly (RegExp | string)[] | Set<unknown>,
+  maybeSeen?: Set<unknown>
+): boolean {
+  let customPatterns: readonly (RegExp | string)[] | undefined;
+  let seen: Set<unknown>;
+
+  if (customPatternsOrSeen instanceof Set) {
+    seen = customPatternsOrSeen;
+    customPatterns = undefined;
+  } else {
+    customPatterns = customPatternsOrSeen;
+    seen = maybeSeen ?? new Set<unknown>();
+  }
+
   if (typeof val === 'string') {
     const trimmed = val.trim();
-    if (isProtectedPath(trimmed)) {
+    if (isProtectedPathRef(trimmed)) {
       return true;
     }
     if (
@@ -164,6 +195,21 @@ export function isProtectedPayload(val: unknown, seen = new Set<unknown>()): boo
       trimmed.includes('KEY-----')
     ) {
       return true;
+    }
+    if (customPatterns && customPatterns.length > 0) {
+      for (const pattern of customPatterns) {
+        if (typeof pattern === 'string') {
+          if (pattern.length > 0 && trimmed.includes(pattern)) {
+            return true;
+          }
+        } else if (pattern instanceof RegExp) {
+          const flags = pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`;
+          const re = new RegExp(pattern.source, flags);
+          if (re.test(trimmed)) {
+            return true;
+          }
+        }
+      }
     }
     for (const regex of BUILTIN_SECRET_PATTERNS) {
       const flags = regex.flags.includes('g') ? regex.flags : `${regex.flags}g`;
@@ -181,7 +227,10 @@ export function isProtectedPayload(val: unknown, seen = new Set<unknown>()): boo
     }
     seen.add(val);
     for (const [key, value] of Object.entries(val)) {
-      if (isProtectedPayload(key, seen) || isProtectedPayload(value, seen)) {
+      if (
+        isProtectedPayload(key, customPatterns, seen) ||
+        isProtectedPayload(value, customPatterns, seen)
+      ) {
         return true;
       }
     }
@@ -232,6 +281,34 @@ export class SanitizedTelemetry implements TelemetryPort {
 
     const valid = validation.value;
 
+    // Reject protected stable identities fail-closed rather than rewriting to preserve linkage
+    if (isProtectedPayload(valid.eventId, this.secretPatterns)) {
+      throw new Error(`Protected identifier rejected: eventId contains protected data or secret`);
+    }
+    if (isProtectedPayload(valid.taskId, this.secretPatterns)) {
+      throw new Error(`Protected identifier rejected: taskId contains protected data or secret`);
+    }
+    if (isProtectedPayload(valid.runId, this.secretPatterns)) {
+      throw new Error(`Protected identifier rejected: runId contains protected data or secret`);
+    }
+    if (isProtectedPayload(valid.node, this.secretPatterns)) {
+      throw new Error(`Protected identifier rejected: node contains protected data or secret`);
+    }
+    if (isProtectedPayload(valid.actionType, this.secretPatterns)) {
+      throw new Error(`Protected identifier rejected: actionType contains protected data or secret`);
+    }
+    if (isProtectedPayload(valid.timestamp, this.secretPatterns)) {
+      throw new Error(`Protected metadata rejected: timestamp contains protected data or secret`);
+    }
+
+    // Reject protected path refs fail-closed
+    for (const ref of valid.evidenceRefs) {
+      if (typeof ref !== 'string' || ref.trim().length === 0 || isProtectedPathRef(ref)) {
+        throw new Error(`Protected path reference rejected: evidenceRefs contains protected path "${ref}"`);
+      }
+    }
+
+    // Redact permitted bounded diagnostic/outcome fields according to contract
     const sanitizedOutcome = sanitizeText(valid.outcome, this.secretPatterns);
     const sanitizedEvidenceRefs = valid.evidenceRefs.map((ref) =>
       sanitizeText(ref, this.secretPatterns)
@@ -263,8 +340,14 @@ export class SanitizedTelemetry implements TelemetryPort {
     if (typeof taskId !== 'string' || taskId.trim().length === 0) {
       throw new Error('recordUsage requires a non-empty taskId');
     }
+    if (isProtectedPayload(taskId, this.secretPatterns)) {
+      throw new Error('Protected identifier rejected: recordUsage taskId contains protected data or secret');
+    }
     if (typeof runId !== 'string' || runId.trim().length === 0) {
       throw new Error('recordUsage requires a non-empty runId');
+    }
+    if (isProtectedPayload(runId, this.secretPatterns)) {
+      throw new Error('Protected identifier rejected: recordUsage runId contains protected data or secret');
     }
     if (
       typeof usage !== 'object' ||
@@ -322,10 +405,22 @@ export class SanitizedTelemetry implements TelemetryPort {
   }
 
   recordDiagnostic(
-    _taskId: string,
-    _runId: string,
+    taskId: string,
+    runId: string,
     rawDiagnostic: string
   ): RedactedDiagnostic {
+    if (typeof taskId !== 'string' || taskId.trim().length === 0) {
+      throw new Error('recordDiagnostic requires a non-empty taskId');
+    }
+    if (isProtectedPayload(taskId, this.secretPatterns)) {
+      throw new Error('Protected identifier rejected: recordDiagnostic taskId contains protected data or secret');
+    }
+    if (typeof runId !== 'string' || runId.trim().length === 0) {
+      throw new Error('recordDiagnostic requires a non-empty runId');
+    }
+    if (isProtectedPayload(runId, this.secretPatterns)) {
+      throw new Error('Protected identifier rejected: recordDiagnostic runId contains protected data or secret');
+    }
     if (this.maxDiagnosticBytes === undefined) {
       throw new Error(
         'INVALID_DIAGNOSTIC_LIMIT: maxDiagnosticBytes must be configured with a finite positive integer to record diagnostics'
