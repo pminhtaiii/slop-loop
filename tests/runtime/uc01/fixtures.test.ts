@@ -173,6 +173,7 @@ test('frozen cases bind the exact trusted catalog contents for each catalog vari
     assert.equal(record.prerequisites.catalogDigest, canonicalDigest('PublicCase', catalog), caseId);
     assert.equal(catalog.id, record.prerequisites.catalogId, caseId);
     assert.equal(catalog.version, record.prerequisites.catalogVersion, caseId);
+    if (caseId === 'UC-01:C13:reserved-destination') assert.equal(catalog.destinations[0]?.id, 'uc04-recovery');
 
     const sample = caseId === 'UC-01:C13:reserved-destination'
       ? { invocation: record.input.invocation, context: contextFor(record), outcome: {

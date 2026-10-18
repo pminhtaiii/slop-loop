@@ -172,7 +172,7 @@ export function trustedCatalogForCase(caseId: string): Catalog {
     ] });
   }
   if (catalogId === 'catalog-reserved-destination') return deepFreeze({ id: catalogId, version: '1', classifications, destinations: [
-    { id: 'undetermined', responsibility: 'Reserved destination rejected by the catalog contract', acceptsClassificationIds: ['defect'] },
+    { id: 'uc04-recovery', responsibility: 'UC-04 recovery capability is not an ordinary destination', acceptsClassificationIds: ['defect'] },
   ] });
   return deepFreeze({ id: catalogId, version: '1', classifications, destinations: standardDestinations });
 }
