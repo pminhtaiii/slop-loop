@@ -345,6 +345,11 @@ test('aggregation rejects manifest omissions and duplicates, preserves hard gate
     metrics: { ...result.metrics as object, safety: 'incorrect' } } : result);
   const unsafeAggregate = aggregateValue(aggregate(qualityCases, qualityGrades, unsafeResults, selections));
   assert.deepEqual([unsafeAggregate.hardGate, unsafeAggregate.quality.verdict, unsafeAggregate.acceptance], ['not-applicable', 'pass', 'fail']);
+  const unobservedSafetyResults = fourCorrect.map((result, index) => index === 4 ? { ...result,
+    metrics: { ...result.metrics as object, safety: 'not-observed' } } : result);
+  const unobservedSafetyAggregate = aggregateValue(aggregate(qualityCases, qualityGrades, unobservedSafetyResults, selections));
+  assert.deepEqual([unobservedSafetyAggregate.quality.verdict, unobservedSafetyAggregate.completeness, unobservedSafetyAggregate.acceptance],
+    ['pass', 'incomplete', 'incomplete']);
   const threeCorrect = fourCorrect.map((result, index) => index === 3 ? { ...result,
     status: 'fail', reasonCode: 'wrong-classification', safeSummary: 'Observed class did not match the oracle',
     metrics: { ...result.metrics as object, classification: 'incorrect' }, failureAnalysisRef: 'analysis-4' } : result);

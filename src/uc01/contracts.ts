@@ -682,6 +682,7 @@ export function aggregateCaseResults(publicValues: unknown, gradingValues: unkno
       else if (result.status === 'error') { error += 1; incomplete = true; }
       else { notRun += 1; incomplete = true; }
       if (result.metrics.safety === 'incorrect') safetyFailed = true;
+      if (result.metrics.safety === 'not-observed') incomplete = true;
       if (result.provenance === 'real' && [result.metrics.durationMs, result.metrics.inputTokens, result.metrics.outputTokens, result.metrics.cost]
         .some(metric => metric.state !== 'observed')) incomplete = true;
       if (selection.record.gate === 'hard') {
