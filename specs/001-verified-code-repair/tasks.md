@@ -2,9 +2,9 @@
 
 **Input**: Design documents from `/specs/001-verified-code-repair/`.
 **Prerequisites**: [plan.md](plan.md), [spec.md](spec.md), [research.md](research.md), [data-model.md](data-model.md), [interfaces](contracts/interfaces.md), [acceptance](contracts/acceptance.md).
-**Status**: Phase 1 (T001–T002) completed; Phase 2 (T003–T004) authorized by the user on 2026-10-16 (Asia/Saigon). Shared-owner agreement to current contracts remains recorded, and production choices remain mandatory before real execution. Phase 3 onward requires separate authorization. Completion is recorded only after integrated checks; see [decisions](contracts/decisions.md).
+**Status**: Phase 1 (T001–T002) completed; Phase 2 (T003–T004) authorized by the user on 2026-10-16 (Asia/Saigon). Shared-owner agreement to current contracts remains recorded, and production choices remain mandatory before real execution. Phase 3 (T005–T014) is authorized by the user on 2026-10-18 (Asia/Saigon); Phase 4 onward and real execution remain separately gated. Completion is recorded only after integrated checks; see [decisions](contracts/decisions.md).
 **Tests**: Required by FR-013 and repository test-first guidance. Each implementation task demonstrates its behavioral RED before GREEN; a missing module/collection failure is not a valid behavioral RED. Bootstrap commands are available in quickstart.md; behavioral product-runtime commands remain future work.
-**Phase 1 evidence**: [Initial verification](https://github.com/pminhtaiii/slop-loop/blob/ee5be9b147efb44511b8e65ece375fc904c5f062/docs/verification/2026-10-16-verified-code-repair-phase1.md) records integrated checks and independent review for T001–T002. Current pnpm verification and future evidence outputs under `docs/verification/` are intentionally local-only and must not be force-added. This request covers T003–T004 only; T005–T034 remain outside scope.
+**Phase 1 evidence**: [Initial verification](https://github.com/pminhtaiii/slop-loop/blob/ee5be9b147efb44511b8e65ece375fc904c5f062/docs/verification/2026-10-16-verified-code-repair-phase1.md) records integrated checks and independent review for T001–T002. Current pnpm verification and future evidence outputs under `docs/verification/` are intentionally local-only and must not be force-added. The current request covers Phase 3 T005–T014; T015–T034 remain outside scope.
 **Organization**: User-story phases follow Spec Kit; priorities do not override DAG edges or permit delayed safety gates. US3 is P1 despite its section position. Final phase integrates all stories.
 
 ## Format: `[ID] [P?] [Story] Description`
@@ -47,7 +47,7 @@ Tai is accountable for all local tasks, including shared foundation. Named lanes
 
 **Goal**: Validated task to evidence-backed final result. **Independent Test**: C01/C02/C16 through the injected route; real acceptance at T028. The mock milestone alone is not a delivered verified fix.
 
-- [ ] T005 [P] [US1] Prepare public seeded bug and input fixtures in fixtures/uc03/success/ and fixtures/uc03/input/.
+- [X] T005 [P] [US1] Prepare public seeded bug and input fixtures in fixtures/uc03/success/ and fixtures/uc03/input/.
   - **Owner**: Tai / evaluation-fixture lane.
   - **Dependencies**: T004.
   - **Owned Paths**: fixtures/uc03/success/; fixtures/uc03/input/.
@@ -77,7 +77,7 @@ Tai is accountable for all local tasks, including shared foundation. Named lanes
   - **Owned Paths**: src/foundation/reviewer.ts; tests/runtime/unit/reviewer.test.ts.
   - **Acceptance Checks**: Separate role/config, validated findings and real diff line membership, read-only bounded evidence, write/execute rejection and finite iteration reservations. T004 scripted outputs enable tests; reviewer quality and real enforcement need T030. Route all reviewer model calls through the same budgeted ModelPort protocol; reserve reviewer iterations and token/cost ceilings before provider dispatch, settle actual usage and retain unknown charges on interruption. Tests independently assert zero reviewer provider calls with absent/exhausted token/cost or iteration allowances. Model/reviewer telemetry never replenishes the shared task ledger.
 
-- [ ] T010 [P] [US1] Implement sanitized activity and usage event boundary in src/foundation/telemetry.ts.
+- [X] T010 [P] [US1] Implement sanitized activity and usage event boundary in src/foundation/telemetry.ts.
   - **Owner**: Tai / telemetry lane (shared foundation).
   - **Dependencies**: T004.
   - **Owned Paths**: src/foundation/telemetry.ts; tests/runtime/unit/telemetry.test.ts.

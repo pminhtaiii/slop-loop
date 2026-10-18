@@ -10,6 +10,10 @@
 
 On 2026-10-16 (Asia/Saigon), the user authorized the next phase of the first specification: Phase 2, T003 canonical contract validators/conformance vectors and T004 controlled test-only port mocks. The integration branch is `feat/001-verified-code-repair-phase2`, created from the latest `origin/development`. The user approved using Gemini 3.8 Flash High with scoped repository content for small implementation assignments and requested independent GPT-6.1-Sol low-reasoning reviews. This contributor model selection does not select a production runtime provider. Phase 3 onward, real repository execution, and the deferred production choices remain separately gated. Existing accepted contract semantics and external ownership are unchanged.
 
+## Phase 3 Authorization
+
+On 2026-10-18 (Asia/Saigon), the user authorized the next phase of the first specification, Phase 3 (T005–T014), and confirmed creating a fresh branch after pulling current changes. Integration uses `feat/015-uc03-success-boundaries`, based on `origin/development` at `dba1e4cce38d1ee782872aaa08444e9e43e3b9cc`. Implementation uses small Gemini 3.8 Flash High assignments, independent GPT-6.1-Sol low-reasoning review, and Gemini follow-up repairs. This authorizes the specified injected boundaries and fixtures, not real repository execution, production provider selection, or Phase 4 onward. T024/T025/T028 and deferred production choices remain gates before real execution.
+
 ## Contract v0.1 Baseline Hashes
 The contract v0.1 baseline is commit `04f3747`, consisting of the core specification, shared data model, and shared interfaces. The hashes below identify that baseline, not later authorization-wording amendments in spec.md. All mocks (T004) and future real adapters (T025, T028, T030, T032) must conform strictly to these accepted schemas and interfaces:
 - `specs/001-verified-code-repair/spec.md`:
