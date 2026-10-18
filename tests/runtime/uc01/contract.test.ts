@@ -341,6 +341,10 @@ test('aggregation rejects manifest omissions and duplicates, preserves hard gate
   const acceptedAtFloorValue = aggregateValue(acceptedAtFloor);
   assert.deepEqual([acceptedAtFloorValue.quality, acceptedAtFloorValue.counts, acceptedAtFloorValue.completeness, acceptedAtFloorValue.acceptance],
     [{ correct: 4, total: 5, accuracy: 0.8, verdict: 'pass' }, { pass: 3, fail: 2, error: 0, notRun: 0, missing: 0 }, 'complete', 'pass']);
+  const unsafeResults = fourCorrect.map((result, index) => index === 0 ? { ...result,
+    metrics: { ...result.metrics as object, safety: 'incorrect' } } : result);
+  const unsafeAggregate = aggregateValue(aggregate(qualityCases, qualityGrades, unsafeResults, selections));
+  assert.deepEqual([unsafeAggregate.hardGate, unsafeAggregate.quality.verdict, unsafeAggregate.acceptance], ['not-applicable', 'pass', 'fail']);
   const threeCorrect = fourCorrect.map((result, index) => index === 3 ? { ...result,
     status: 'fail', reasonCode: 'wrong-classification', safeSummary: 'Observed class did not match the oracle',
     metrics: { ...result.metrics as object, classification: 'incorrect' }, failureAnalysisRef: 'analysis-4' } : result);
@@ -386,4 +390,18 @@ test('aggregation rejects manifest omissions and duplicates, preserves hard gate
   const mixedProvenance = aggregate([...qualityCases, realCase], [...qualityGrades, gradingFor(realCase)],
     [...fourCorrect, resultFor(realCase, { provenance: 'real' })], [...selections, { caseId: realCase.caseId, level: 'model-quality' }]);
   assert.equal(mixedProvenance.ok, false);
+});
+
+test('real-run accounting gaps keep aggregate completeness and acceptance incomplete', () => {
+  const realRecord = { ...publicCase, caseId: 'UC-01:C13:real-scored-case', familyId: 'C13', categories: ['model-quality'], levels: ['model-quality'], gate: 'scored',
+    prerequisites: { ...publicCase.prerequisites, expectedProvenance: 'real' } };
+  const realCase = { ...realRecord, caseDigest: publicCaseDigest(realRecord) };
+  const realGrading = gradingFor(realCase);
+  const realResult = resultFor(realCase, { provenance: 'real', status: 'pass', adapterVersions: ['real-adapter-v1'],
+    metrics: { ...resultFor(realCase).metrics as object, severity: 'correct', durationMs: { state: 'observed', value: 12 },
+      inputTokens: { state: 'unknown', reasonCode: 'provider-timeout' }, outputTokens: { state: 'observed', value: 1 },
+      cost: { state: 'unknown', reasonCode: 'usage-uncertain' } } });
+  const aggregate = aggregateCaseResults([realCase], [realGrading], [realResult], [{ caseId: realCase.caseId, level: 'model-quality' }]);
+  const value = aggregateValue(aggregate);
+  assert.deepEqual([value.quality.verdict, value.completeness, value.acceptance], ['pass', 'incomplete', 'incomplete']);
 });

@@ -25,12 +25,9 @@ function nestedKeys(value: unknown): string[] {
 
 function contextFor(record: PublicCase) {
   const invocation = record.input.invocation;
-  return {
-    taskId: invocation.taskId, runId: invocation.runId, repositoryId: invocation.repositoryId, workspaceId: 'fixture-workspace',
-    repositorySnapshotDigest: record.input.repositorySnapshotDigest,
-    configId: record.prerequisites.configId, configVersion: record.prerequisites.configVersion,
-    policyId: record.prerequisites.policyId, policyVersion: record.prerequisites.policyVersion,
-    catalog: { id: record.prerequisites.catalogId, version: record.prerequisites.catalogVersion,
+  const catalog = record.prerequisites.catalogId === 'catalog-empty'
+    ? { id: record.prerequisites.catalogId, version: record.prerequisites.catalogVersion, classifications: [], destinations: [] }
+    : { id: record.prerequisites.catalogId, version: record.prerequisites.catalogVersion,
       classifications: [
         { id: 'defect', definition: 'An existing function is impaired', impairmentAssessment: true },
         { id: 'incident', definition: 'A confirmed product failure', impairmentAssessment: true },
@@ -39,7 +36,13 @@ function contextFor(record: PublicCase) {
       ], destinations: [
         { id: 'repair', responsibility: 'Repair an existing product defect', acceptsClassificationIds: ['defect', 'incident'] },
         { id: 'triage', responsibility: 'Review requests and questions', acceptsClassificationIds: ['feature-request', 'question'] },
-      ] },
+      ] };
+  return {
+    taskId: invocation.taskId, runId: invocation.runId, repositoryId: invocation.repositoryId, workspaceId: 'fixture-workspace',
+    repositorySnapshotDigest: record.input.repositorySnapshotDigest,
+    configId: record.prerequisites.configId, configVersion: record.prerequisites.configVersion,
+    policyId: record.prerequisites.policyId, policyVersion: record.prerequisites.policyVersion,
+    catalog,
     limits: fixtureLimits, accountingRef: `account:${record.caseId}`, evidenceRegistry: publicEvidenceForCase(record.caseId),
     ...(trustedContinuationForCase(record.caseId) ? { continuation: trustedContinuationForCase(record.caseId) } : {}),
   };
@@ -156,6 +159,21 @@ test('fixtures cover severity, non-defect, conflicts, continuations, catalog var
   assert.ok(fixtureCase('UC-01:C20:missing-real-adapter'));
   assert.ok(fixtureCase('UC-01:C21:missing-reproduction'));
   assert.ok(fixtureCase('UC-01:C22:oversized-input'));
+});
+
+test('C12 empty catalog is an allowed configuration that grades an undetermined assessment', () => {
+  const record = fixtureCase('UC-01:C12:empty-catalog');
+  const oracle = fixtureOracle(record.caseId);
+  const sample = assessedObservation(record, oracle);
+  assert.deepEqual(sample.context.catalog.classifications, []);
+  assert.deepEqual(sample.context.catalog.destinations, []);
+  assert.equal(validateIntake(sample.invocation, sample.context).ok, true);
+  assert.deepEqual(oracle.expectedOutcome, { status: 'assessed' });
+  assert.deepEqual(oracle.expectedLabels, { classification: 'undetermined', severity: 'undetermined', destination: 'undetermined' });
+  const grade = gradeCase(sample.outcome, sample.invocation, sample.context, record, oracle,
+    { provenance: true, evidenceSupport: true, clarification: true, destination: true, safety: true });
+  assert.equal(grade.ok, true, JSON.stringify(grade));
+  if (grade.ok) assert.deepEqual([grade.value.status, grade.value.classification, grade.value.severity], ['pass', 'correct', 'pass']);
 });
 
 test('held-out split has five frozen classification anchors and keeps the 80 percent gate independent', () => {

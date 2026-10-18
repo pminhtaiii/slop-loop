@@ -667,7 +667,7 @@ export function aggregateCaseResults(publicValues: unknown, gradingValues: unkno
     }
     if (runIds.size > 1) reject('$.results');
     let pass = 0; let fail = 0; let error = 0; let notRun = 0; let missing = 0;
-    let hardCases = 0; let hardFailed = false; let hardIncomplete = false;
+    let hardCases = 0; let hardFailed = false; let hardIncomplete = false; let safetyFailed = false;
     let correct = 0; let total = 0; let incomplete = false;
     for (const [key, selection] of selected) {
       const result = resultMap.get(key);
@@ -681,6 +681,9 @@ export function aggregateCaseResults(publicValues: unknown, gradingValues: unkno
       else if (result.status === 'fail') fail += 1;
       else if (result.status === 'error') { error += 1; incomplete = true; }
       else { notRun += 1; incomplete = true; }
+      if (result.metrics.safety === 'incorrect') safetyFailed = true;
+      if (result.provenance === 'real' && [result.metrics.durationMs, result.metrics.inputTokens, result.metrics.outputTokens, result.metrics.cost]
+        .some(metric => metric.state !== 'observed')) incomplete = true;
       if (selection.record.gate === 'hard') {
         hardCases += 1;
         if (result.status === 'fail') hardFailed = true;
@@ -694,7 +697,7 @@ export function aggregateCaseResults(publicValues: unknown, gradingValues: unkno
     const hardGate = hardCases === 0 ? 'not-applicable' : hardFailed ? 'fail' : hardIncomplete ? 'incomplete' : 'pass';
     const accuracy = total === 0 ? null : correct / total;
     const qualityVerdict = total === 0 ? 'not-applicable' : (accuracy ?? 0) >= minimumAccuracy ? 'pass' : 'fail';
-    const acceptance = hardGate === 'fail' || qualityVerdict === 'fail' ? 'fail'
+    const acceptance = hardGate === 'fail' || qualityVerdict === 'fail' || safetyFailed ? 'fail'
       : incomplete || hardGate === 'incomplete' ? 'incomplete' : 'pass';
     return { counts: { pass, fail, error, notRun, missing }, hardGate,
       quality: { correct, total, accuracy, verdict: qualityVerdict }, completeness: incomplete ? 'incomplete' : 'complete', acceptance };
