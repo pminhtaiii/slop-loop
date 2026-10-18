@@ -30,7 +30,7 @@ const BUILTIN_SECRET_PATTERNS: readonly RegExp[] = [
   /(?:Authorization:\s*)?(?:Bearer|Basic|Token)\s+[A-Za-z0-9\-._~+/]+=*/gi,
   /(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,}/g,
   /sk-[A-Za-z0-9-_]{20,}/g,
-  /(?:['"]?(?:(?:aws[_-]?)?secret(?:[_-]?(?:access[_-]?)?key)?|api[_-]?key|access[_-]?(?:token|key)|token|password|auth)['"]?)[\s:=]+(?:'[^'\r\n]+'|"[^"\r\n]+"|[^\s,;'"{}]+)/gi,
+  /(?:['"]?(?:(?:aws[_-]?)?secret(?:[_-]?(?:access[_-]?)?key)?|api[_-]?key|access[_-]?(?:token|key)|token|password|auth)['"]?)[\s:=]+(?:'[^'\r\n]+'|"[^"\r\n]+"|[^\s,;'\"{}]+)/gi,
 ];
 
 const TRUNCATION_SUFFIX = ' ... [TRUNCATED]';
@@ -314,21 +314,39 @@ export class SanitizedTelemetry implements TelemetryPort {
       sanitizeText(ref, this.secretPatterns)
     );
 
-    const sanitizedEvent: ActivityEvent = {
-      ...valid,
+    const storedEvidenceRefs = Object.freeze([...sanitizedEvidenceRefs]);
+    const storedEvent: ActivityEvent = Object.freeze({
+      eventId: valid.eventId,
+      taskId: valid.taskId,
+      runId: valid.runId,
+      timestamp: valid.timestamp,
+      node: valid.node,
+      actionType: valid.actionType,
       outcome: sanitizedOutcome,
-      evidenceRefs: sanitizedEvidenceRefs,
-    };
+      durationMs: valid.durationMs,
+      evidenceRefs: storedEvidenceRefs,
+    });
 
-    let taskEvents = this.events.get(sanitizedEvent.taskId);
+    let taskEvents = this.events.get(storedEvent.taskId);
     if (!taskEvents) {
       taskEvents = [];
-      this.events.set(sanitizedEvent.taskId, taskEvents);
+      this.events.set(storedEvent.taskId, taskEvents);
     }
-    taskEvents.push(sanitizedEvent);
+    taskEvents.push(storedEvent);
 
     if (this.sink) {
-      await this.sink(sanitizedEvent);
+      const sinkEvent: ActivityEvent = {
+        eventId: storedEvent.eventId,
+        taskId: storedEvent.taskId,
+        runId: storedEvent.runId,
+        timestamp: storedEvent.timestamp,
+        node: storedEvent.node,
+        actionType: storedEvent.actionType,
+        outcome: storedEvent.outcome,
+        durationMs: storedEvent.durationMs,
+        evidenceRefs: [...storedEvidenceRefs],
+      };
+      await this.sink(sinkEvent);
     }
   }
 
@@ -435,12 +453,27 @@ export class SanitizedTelemetry implements TelemetryPort {
   }
 
   getEvents(taskId?: string): readonly ActivityEvent[] {
+    const cloneEvent = (ev: ActivityEvent): ActivityEvent => ({
+      eventId: ev.eventId,
+      taskId: ev.taskId,
+      runId: ev.runId,
+      timestamp: ev.timestamp,
+      node: ev.node,
+      actionType: ev.actionType,
+      outcome: ev.outcome,
+      durationMs: ev.durationMs,
+      evidenceRefs: [...ev.evidenceRefs],
+    });
+
     if (taskId) {
-      return [...(this.events.get(taskId) ?? [])];
+      const list = this.events.get(taskId);
+      return list ? list.map(cloneEvent) : [];
     }
     const all: ActivityEvent[] = [];
     for (const list of this.events.values()) {
-      all.push(...list);
+      for (const ev of list) {
+        all.push(cloneEvent(ev));
+      }
     }
     return all;
   }
@@ -461,3 +494,4 @@ export class SanitizedTelemetry implements TelemetryPort {
     this.diagnostics.clear();
   }
 }
+
