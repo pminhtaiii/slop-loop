@@ -49,7 +49,7 @@ node dist/eval/uc03/runner.js --suite uc03 --mode real --config <trusted-config.
 node dist/eval/uc03/compare.js --baseline <run-a.json> --candidate <run-b.json> --output <comparison.json>
 ```
 
-Use actual paths chosen during implementation, replacing angle-bracket arguments. Future toolchain selection must provide the documented build and focused runtime-test invocation before these commands are runnable; T002 records exact commands. The runner exits nonzero for a failed/error/not-run required case, missing limits or unavailable isolation, and rejects production mock composition. It never auto-approves a real human checkpoint. Evaluation fixtures requiring a decision use explicit human/test-driver decisions via the real UC-05 gate, labelled as evaluation input rather than autonomous approval.
+Use actual paths chosen during implementation, replacing angle-bracket arguments. Local development fixtures under `fixtures/` are local-only and not shipped in published repository tracking; task paths like `fixtures/uc03/success/task.json` are local development examples. Future toolchain selection must provide the documented build and focused runtime-test invocation before these commands are runnable; T002 records exact commands. The runner exits nonzero for a failed/error/not-run required case, missing limits or unavailable isolation, and rejects production mock composition. It never auto-approves a real human checkpoint. Evaluation fixtures requiring a decision use explicit human/test-driver decisions via the real UC-05 gate, labelled as evaluation input rather than autonomous approval.
 
 ## Expected validation sequence
 

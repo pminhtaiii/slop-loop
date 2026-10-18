@@ -1,1 +1,0 @@
-"""Calculator tests package."""
