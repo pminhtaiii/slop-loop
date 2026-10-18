@@ -20,18 +20,85 @@ The script preserves these instructions and changes only the managed data below.
     "verification": "C:/coding agent/.agent-work/2026-10-15/dump-space-setup/verification.md; 37 passed, one existing skip",
     "updatedAt": "2026-10-15T09:20:36.102Z",
     "result": "Dump layout and clean-agent-dump skill ready in codex/agent-dump-setup. Guarded nested Git checkout cleanup; context and tests passed. Retain this uncommitted worktree for review.",
-    "checkout": "/home/vercel-sandbox/workspace/repos/github.com/pminhtaiii/slop-loop"
+    "checkout": "D:/UIT/PROJECT/SE373_PROJECT/CODING_AGENT/slop-loop"
   },
   {
     "owner": "coderabbit-8ef9a633",
     "task": "adr-0004-dates",
-    "checkout": "/home/vercel-sandbox/workspace/repos/github.com/pminhtaiii/slop-loop",
+    "checkout": "D:/UIT/PROJECT/SE373_PROJECT/CODING_AGENT/slop-loop",
     "summary": "Verify and correct ADR-0004 approval dates",
     "next": "Coordinator review and evidence recording",
     "status": "completed",
     "verification": "Context updater/check passed: 30 Markdown files, 3 canonical facts; no context policy changes required.",
     "updatedAt": "2026-10-15T17:35:03.190Z",
     "result": "Removed unsupported acceptance and closure claims; verified recording date as 2026-10-15 UTC from commit 2c79794b868dc9cfaceb16abd68cf9e3a9a38ea0. Approval dates remain unverified."
+  },
+  {
+    "owner": "codex-pr-conventions-010",
+    "task": "tooling-pr-conventions",
+    "checkout": "D:\\UIT\\PROJECT\\SE373_PROJECT\\CODING_AGENT\\slop-loop",
+    "role": "coordinator",
+    "summary": "Standardize naming and paired development targets",
+    "next": "Obtain real app list_thread_pull_requests receipt containing public #37 and private #25; import via record-app-state, then rerun finish and preview/archive. This session exposes no app link/list tool. Keep both PRs Draft.",
+    "status": "blocked",
+    "verification": "Implementation/publish complete at 85764a96e48a0489a941406e2da0f28aeee42252; public #37/private #25 development; same tree 5063b6b20b55a734204c81dab83d9476d6522319; private ancestry verified; all 8 CI jobs pass; CodeRabbit completed with no actionable comments (docstring advisory retained); local 590 passed/1 skipped, runtime 230 passed; finish exited 1 for missing app receipt. Evidence: .agent-work/conventions-verification.json",
+    "updatedAt": "2026-10-17T12:27:40.977Z"
+  },
+  {
+    "owner": "codex-uc01-20261017",
+    "task": "uc01-planning",
+    "checkout": "D:\\UIT\\PROJECT\\SE373_PROJECT\\CODING_AGENT\\slop-loop",
+    "role": "coordinator",
+    "summary": "Draft UC-01 SDD artifacts, independent review, ticket proposal and paired PR",
+    "next": "Obtain genuine app list_thread_pull_requests receipt containing public PR45 and private PR33, import with record-app-state, then rerun finish. Keep both Draft. Current-head CodeRabbit re-review is quota limited; prior two Minor findings repaired and resolved.",
+    "status": "blocked",
+    "verification": "Final public HEAD d15fd98a53e0864b775250f6a249d4f7e7bde9e3: CI4/4 pass; all local gates pass, runtime230, node590 pass/1 Windows skip. Local review3 agents clear; CodeRabbit2Minor repaired in1 PR round. 6 paired Issues/12 native edges verified, tasks16 open/P0. Completion blocked solely by unavailable real app receipt.",
+    "updatedAt": "2026-10-17T13:33:09.812Z"
+  },
+  {
+    "owner": "codex-uc01-incremental-20261017",
+    "task": "uc01-incremental-specs",
+    "checkout": "D:\\UIT\\PROJECT\\SE373_PROJECT\\CODING_AGENT\\slop-loop",
+    "role": "coordinator",
+    "summary": "Revise UC01 specs and existing paired Issues for incremental evaluation; publish new paired PRs",
+    "next": "Import genuine app list_thread_pull_requests receipt for new PR48/private36 when the app capability is available; record-app-state then finish. Keep Drafts; monitor remaining private Windows contributor CI and CodeRabbit rate limit. No runtime authorization.",
+    "status": "blocked",
+    "verification": "Publication014 HEAD f76de355727b15c13ed05c5aeeea25a86c546ee6, paired tree8cfe49f446cafd7189dcfc9ce057ffcbb139812a. Public four CI PASS, READY_FOR_HUMAN; private three PASS/one pending. Three independent reviewers final round3 PASS; one Major and one later CodeRabbit Minor fixed. Six Issue pairs verified. Complete refused missing app receipt; no receipt tools available.",
+    "updatedAt": "2026-10-17T15:26:57.890Z"
+  },
+  {
+    "owner": "codex-uc01-t001-20261018",
+    "task": "uc01-t001",
+    "checkout": "D:\\UIT\\PROJECT\\SE373_PROJECT\\CODING_AGENT\\slop-loop",
+    "role": "coordinator",
+    "summary": "Review T001 artifact and consumer-contract agreement",
+    "next": "Repair published and validated; obtain native app receipt for existing PR51/PR39, record-app-state then finish/archive; native linking/list tools remain unavailable here",
+    "status": "blocked",
+    "verification": "Commit ab08ad6: one-row CodeRabbit repair; CLI0 findings;2 subagents no blockers; local gates passed819 tests/1skip; all4 exact-head CI passed; thread resolved; AWAITING_HUMAN_MERGE. Evidence .agent-work/2026-10-18/uc01-t001/repair-1/verification.md",
+    "updatedAt": "2026-10-18T07:50:12.276Z"
+  },
+  {
+    "owner": "codex-uc01-phase2-20261018",
+    "task": "T002-T004",
+    "checkout": "D:\\UIT\\PROJECT\\SE373_PROJECT\\CODING_AGENT\\slop-loop",
+    "role": "coordinator",
+    "summary": "Implement UC-01 Phase 2 contract validators, controlled mocks, and versioned fixtures",
+    "next": "Retry CodeRabbit CLI on the committed diff after the rate-limit window; then publish paired PRs #52/#40, resolve only the two fixed threads after checks pass, and leave both PRs unmerged.",
+    "status": "active",
+    "verification": "Code HEAD 5d62eec: focused UC-01 38 pass; runtime gate typecheck/lint/build/367 tests pass; full node --test 895 pass/1 Windows skip; digest audit 33 public + 33 grading match. Context refresh applied and validated. Final GPT-6.1 Sol Low reviews: no findings. Earlier CodeRabbit review: three valid findings fixed, two requests skipped against actual repo contracts; fresh CLI retry rate-limited.",
+    "updatedAt": "2026-10-18T10:17:30.730Z"
+  },
+  {
+    "owner": "codex-uc01-t002-gpt61sol",
+    "task": "T002",
+    "checkout": "D:\\UIT\\PROJECT\\SE373_PROJECT\\CODING_AGENT\\slop-loop\\.agent-work\\worktrees\\uc01-phase2-t002-gpt61sol",
+    "role": "worker",
+    "summary": "Implement UC-01 contract and evaluation validators",
+    "next": "Coordinator integration and PR publication required",
+    "status": "handed-off",
+    "verification": "",
+    "updatedAt": "2026-10-18T08:20:54.600Z",
+    "result": "Stopped after user clarified the coordinator is the implementer and GPT-6.1 Sol Low should review. Uncommitted draft remains in the registered worktree at src/uc01/contracts.ts and tests/runtime/uc01/contract.test.ts; initial RED/GREEN slices and digest subset were reported passing. Coordinator will inspect and take over; no task status changed."
   }
 ]
 ```
