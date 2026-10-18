@@ -189,7 +189,6 @@ export class CallSpy {
   registerInvocation(context: OperationContext): void { this.invocations.add(context.invocationId); }
 
   recordAttempt(operation: PortOperation, context: OperationContext, result: unknown): void {
-    if (operation === 'guard') this.invocations.add(context.invocationId);
     this.attempts[operation] += 1;
     this.calls.push({ operation, ordinal: this.attempts[operation], requestId: context.requestId, resultKind: resultKind(result) });
   }
@@ -306,9 +305,9 @@ export class ScriptedUc01Ports {
   }
 
   async guard(context: OperationContext, action: GuardAction): Promise<Admission | SharedFailure> {
-    this.calls.registerInvocation(context);
     const invalid = this.contextFailure(context);
     if (invalid) { this.calls.recordAttempt('guard', context, invalid); return invalid; }
+    this.calls.registerInvocation(context);
     if (!/^[a-f0-9]{64}$/u.test(action.inputDigest)) {
       const invalidAction = failure('invalid-input', 'invalid-action-digest'); this.calls.recordAttempt('guard', context, invalidAction); return invalidAction;
     }

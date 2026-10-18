@@ -46,6 +46,27 @@ test('denied, pending, stale and exhausted guards make no downstream model/read/
   }
 });
 
+test('invalid guard context does not consume the task invocation budget', async () => {
+  const invocations = [
+    context({ invocationId: 'invocation-1', requestId: 'request-1' }),
+    context({ invocationId: 'invocation-2', requestId: 'request-2' }),
+    context({ invocationId: 'invocation-3', requestId: 'request-3' }),
+  ];
+  const payload = { role: 'triage' };
+  const ports = new ScriptedUc01Ports({ taskId: 'task', profile: UC01_FIXTURE_PROFILE, now: () => 0,
+    responses: { guard: invocations.map((value, index) => admissionFor(value, 'model', payload, `admission-${index}`)) } });
+  const rejected = await ports.guard(context({ taskId: 'foreign-task', invocationId: 'foreign-invocation' }),
+    { kind: 'model', inputDigest: actionDigest('model', payload) });
+  assert.equal(rejected.kind, 'failure');
+  if (rejected.kind === 'failure') assert.deepEqual([rejected.status, rejected.reasonCode], ['conflict', 'foreign-task']);
+  for (const value of invocations) {
+    const admitted = await ports.guard(value, { kind: 'model', inputDigest: actionDigest('model', payload) });
+    assert.equal(admitted.kind, 'admitted');
+  }
+  assert.equal(ports.calls.snapshot().taskUsage.invocations, 3);
+  assert.equal(ports.calls.snapshot().attempts.guard, 4);
+});
+
 test('admitted model flow reserves, dispatches once and settles even an invalid-output failure in call order', async () => {
   const current = context();
   const request = { role: 'triage' as const, invocation: { invocationId: 'invocation' }, evidence: [], priorQuestions: [], catalog: { id: 'catalog' }, reservationRef: 'reservation' };

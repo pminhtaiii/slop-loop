@@ -45,6 +45,13 @@ test('model and outcome unions enforce references, dimensions, question bounds a
     const result = validateProposal(bad, context);
     assert.equal(result.ok, false); if (!result.ok) assert.equal(result.reasonCode, 'invalid-model-output');
   }
+  const invalidTrustedContext = { ...context, catalog: { ...catalog, destinations: [{ ...catalog.destinations[0], id: 'undetermined' }] } };
+  const invalidProposalWithInvalidContext = validateProposal({ invented: true }, invalidTrustedContext);
+  assert.equal(invalidProposalWithInvalidContext.ok, false);
+  if (!invalidProposalWithInvalidContext.ok) assert.equal(invalidProposalWithInvalidContext.status, 'invalid-input');
+  const invalidResponseWithInvalidContext = validateModelResponse({ kind: 'unknown' }, invalidTrustedContext);
+  assert.equal(invalidResponseWithInvalidContext.ok, false);
+  if (!invalidResponseWithInvalidContext.ok) assert.equal(invalidResponseWithInvalidContext.status, 'invalid-input');
   assert.equal(validateModelResponse({ kind: 'assessment', proposal, usage }, context).ok, true);
   const readResponse = { kind: 'tool-request', request: { kind: 'read', path: 'src/a.ts' }, usage };
   assert.equal(validateModelResponse(readResponse, context).ok, true);

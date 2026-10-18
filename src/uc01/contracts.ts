@@ -232,7 +232,9 @@ function checkProposal(proposal: Proposal, context: TrustedContext, path: string
   return proposal;
 }
 export function validateProposal(value: unknown, trustedContext: unknown): Validation<Proposal> {
-  return validate((v, path) => checkProposal(proposalShape(v, path), contextShape(trustedContext, '$.context'), path), value, 'error');
+  const context = validate(contextShape, trustedContext);
+  if (!context.ok) return context;
+  return validate((v, path) => checkProposal(proposalShape(v, path), context.value, path), value, 'error');
 }
 const failureCheck = enumeration('invalid-input', 'denied', 'pending-approval', 'conflict', 'exhausted', 'timeout', 'uncertain', 'error');
 export type Failure = ReturnType<typeof failureCheck>;
@@ -257,12 +259,14 @@ const modelTool = object({ kind: enumeration('tool-request'), request: requestCh
 const modelFailure = object({ kind: enumeration('failure'), status: failureCheck, reasonCode: text, eventRef: text, usage: usageCheck });
 export type ModelResponse = ReturnType<typeof modelAssessment> | ReturnType<typeof modelTool> | ReturnType<typeof modelFailure>;
 export function validateModelResponse(value: unknown, trustedContext: unknown): Validation<ModelResponse> {
+  const context = validate(contextShape, trustedContext);
+  if (!context.ok) return context;
   return validate((v, path) => {
-    const context = contextShape(trustedContext, '$.context');
     const response = discriminator(v) === 'assessment' ? modelAssessment(v, path) : discriminator(v) === 'tool-request' ? modelTool(v, path) : modelFailure(v, path);
-    if (response.kind === 'assessment') checkProposal(response.proposal, context, path);
-    if (Buffer.byteLength(JSON.stringify(response)) > context.limits.outputBytes) reject(path);
-    if (response.usage.inputTokens > context.limits.inputTokens || response.usage.outputTokens > context.limits.outputTokens || response.usage.costUnits > context.limits.costUnits) reject(path);
+    if (response.kind === 'assessment') checkProposal(response.proposal, context.value, path);
+    if (Buffer.byteLength(JSON.stringify(response)) > context.value.limits.outputBytes) reject(path);
+    if (response.usage.inputTokens > context.value.limits.inputTokens || response.usage.outputTokens > context.value.limits.outputTokens
+      || response.usage.costUnits > context.value.limits.costUnits) reject(path);
     return response;
   }, value, 'error');
 }
