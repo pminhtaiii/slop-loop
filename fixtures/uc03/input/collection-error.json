@@ -5,7 +5,7 @@
   "goal": "Repair test collection error caused by unparseable test fixture",
   "observedBehavior": "Pytest collection aborts with SyntaxError before test execution",
   "expectedBehavior": "Test collection completes successfully and discovers tests",
-  "reproduction": "pytest fixtures/uc03/input/collection_error/test_collection_error.py",
+  "reproduction": "pytest tests/test_collection_error.py",
   "acceptanceCriteria": [
     "Test files parse cleanly without syntax errors during pytest collection"
   ],
@@ -18,7 +18,7 @@
       "executable": "pytest",
       "argv": [
         "-q",
-        "fixtures/uc03/input/collection_error/test_collection_error.py"
+        "tests/test_collection_error.py"
       ],
       "purpose": "reproduction",
       "timeoutMs": 30000,
