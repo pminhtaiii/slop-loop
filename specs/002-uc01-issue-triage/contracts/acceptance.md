@@ -1,6 +1,6 @@
 # Acceptance and Evaluation Matrix: UC-01
 
-**Status**: DRAFT targets, not results. Tests planned in tasks remain unimplemented.
+**Status**: Acceptance targets, not execution results. Local contract/mock/initial-assessment tests exist through T006; later tasks and real integration retain their separate gates. See [tasks](../tasks.md) for the sole implementation ledger and [quickstart](../quickstart.md) for runnable local checks.
 Fixtures use explicit classification IDs `defect` (impairmentAssessment=true), `feature-request` and `question` (false), destination `repair` accepting defect, and finite test-only profiles. These are examples, not application defaults. All C01–C22 families receive versioned input/oracle/grading designs at T002–T004 before feature implementation. Stable variant IDs, execution levels and result semantics follow the proposed [evaluation contract](evaluation.md); this matrix defines acceptance, not a second implementation ledger or executed dataset.
 
 ## Cases

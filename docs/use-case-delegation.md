@@ -1,6 +1,6 @@
 # Use-case Delegation Map
 
-First implementation batch selected by the project owner: **UC-03, UC-04, and UC-05**. UC-01 implementation remains deferred for this batch; Thai now owns its agreed planning and future specification under [ADR-0005](adr/0005-uc01-triage-boundary-and-assessment.md). Use the canonical zero-padded IDs from [the verification matrices](progress-checker-matrices.md#candidate-use-cases-and-knowledge-coverage).
+First implementation batch selected by the project owner: **UC-03, UC-04, and UC-05**. UC-01 subsequently received separate local implementation authorization through T006 on 2026-10-18; Thai owns its assessment boundary under [ADR-0005](adr/0005-uc01-triage-boundary-and-assessment.md). Real integration remains separately gated. Use the canonical zero-padded IDs from [the verification matrices](progress-checker-matrices.md#candidate-use-cases-and-knowledge-coverage).
 
 This page owns colleague assignments, delivery boundaries, and dependencies. The matrices own target evidence; [implementation status](../context/progress_checker.md) owns observed capability status. Approved feature `tasks.md` files remain the only implementation task ledgers. An assignment or merged PR alone does not establish that a UC is verified.
 
@@ -10,12 +10,12 @@ Assignments use the colleague names supplied by the project owner. These rows ar
 
 | UC | Delivery | Owner | Start condition | Feature artifacts |
 |---|---|---|---|---|
-| UC-01 | Evidence-backed issue classification, severity, and backend destination recommendation | Thai | T001 consumer-contract agreement complete; consumes Tai's shared foundation; T002 onward requires separate implementation authorization | Approved baseline [spec](../specs/002-uc01-issue-triage/spec.md), [plan](../specs/002-uc01-issue-triage/plan.md), [tasks](../specs/002-uc01-issue-triage/tasks.md); user-confirmed member approval of consumer signatures, finite fixture profile and path ownership recorded in [decisions](../specs/002-uc01-issue-triage/contracts/decisions.md) on 2026-10-18. ADR-0005 remains the accepted basis; no UC-01 runtime implementation or verification is claimed |
+| UC-01 | Evidence-backed issue classification, severity, and backend destination recommendation | Thai | T001 agreement and T002–T004 foundation complete; T005–T006 separately authorized for controlled initial assessment; T007 onward needs separate authorization | Approved baseline [spec](../specs/002-uc01-issue-triage/spec.md), [plan](../specs/002-uc01-issue-triage/plan.md), [tasks](../specs/002-uc01-issue-triage/tasks.md); scope and user-confirmed consumer/fixture agreement in [decisions](../specs/002-uc01-issue-triage/contracts/decisions.md). Local mock behavior and real-runtime verification remain distinct; real adapters, production configuration and model-quality evaluation are separately gated |
 | UC-03 | Evidence-backed end-to-end bug fix | Tai | Validated bug-task input contract; shared tools, verification, and UC-05 action gate integrated | Phase 1 build setup authorized: [spec](../specs/001-verified-code-repair/spec.md), [plan](../specs/001-verified-code-repair/plan.md), [tasks](../specs/001-verified-code-repair/tasks.md); shared contract agreement confirmed by user, production choices deferred before real execution per [decisions](../specs/001-verified-code-repair/contracts/decisions.md) |
 | UC-04 | Multi-step feature with restart/resume | Thanh Tan | Shared persisted task/step contracts and budget ownership agreed; UC-05 binding contract agreed | Not created; link approved spec, plan, and task ledger here |
 | UC-05 | Bound human approval and safe continuation | Trong Tan | Shared action/policy identity and persisted decision contracts agreed | Not created; link approved spec, plan, and task ledger here |
 
-Other UCs remain unselected for implementation in this batch. UC-01 planning ownership does not expand the authorized implementation batch. This is not a permanent `OUT_OF_SCOPE` decision for the final project.
+Other UCs remain unselected for implementation in this batch. UC-01's subsequent authorization covers only its named local tasks and does not expand other owners' assignments. This is not a permanent `OUT_OF_SCOPE` decision for the final project.
 
 ## Delivery order and shared work
 
@@ -44,7 +44,7 @@ Shared foundation includes the model adapter and structured-output validation, L
 
 **Boundary:** consume Tai's shared read/search interfaces; use controlled fixtures until available. Additional shared capabilities require coordination with Tai. UC-03 owns debugging and repair; UC-04 owns durable recovery; UC-05 owns action approval. Clarification is not approval. Recommend destinations without dispatching work, and integrate with other UCs later through validated contracts.
 
-**Next handoff:** The user approved the existing [spec, plan and task ledger](../specs/002-uc01-issue-triage/plan.md) baseline on 2026-10-18 and authorized T001 documentation/review. The user subsequently confirmed member approval of the reviewed consumer signatures, finite fixture profile and paths in [decisions](../specs/002-uc01-issue-triage/contracts/decisions.md), satisfying T001 agreement. T002 onward requires separate authorization. Current shared model types are bug-specific and real adapters remain external deliveries. Planning publication and contributor CI establish no UC-01 runtime capability.
+**Next handoff:** The user approved the existing [spec, plan and task ledger](../specs/002-uc01-issue-triage/plan.md) and reported member agreement on 2026-10-18; T001–T004 are complete. The user separately authorized Phase 3 T005–T006 for initial intake/assessment through controlled ports on the same local date; see [decisions](../specs/002-uc01-issue-triage/contracts/decisions.md). T007 onward needs separate authorization. Later-answer reassessment and configurable routing remain future tasks. Current shared model types are bug-specific; real adapters, durable accounting/policy, receiving workflow and shared evaluation remain external delivery gates. Contributor CI and mock tests do not establish real provider quality or production readiness.
 
 ## UC-03: End-to-end bug fix
 
