@@ -118,3 +118,7 @@ Per user confirmation on 2026-10-16 (Asia/Saigon), a scope amendment is in effec
 Package-manager amendment: the user explicitly selected pnpm instead of npm and authorized removing the npm-created installation on 2026-10-16 (Asia/Saigon). This supersedes the initial npm selection, not the selected runtime dependencies or production execution gates.
 
 CI release-age repair: pnpm rejected imported @langchain/core 1.2.18 and langsmith 0.11.0 because they were under the default 24-hour minimum release age. Select compatible core 1.2.17 and regenerate the lock under the unchanged 1440-minute policy; no release-age exclusion or trust bypass is permitted.
+
+## Local-Only Fixtures Preference Amendment
+
+On 2026-10-18 (Asia/Saigon), the user explicitly directed: "I don't think we should push the fixtures/ folder". Consequently, test fixtures under `fixtures/` are treated as local-only development artifacts and excluded from the Git index and publication branch via `.gitignore` and index removal (`git rm -r --cached -- fixtures`). Physical fixture files remain preserved in local checkouts for local testing and retained development branches, but are not shipped to upstream repository tracking. Tracked documentation and example references are amended to reflect that fixtures are local-only and not shipped.

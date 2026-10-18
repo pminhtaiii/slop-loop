@@ -627,3 +627,426 @@ test('recordUsage and getRunUsage isolate usage across delimiter-collision task 
   assert.deepEqual(telemetry.getRunUsage('a', 'b:c'), usage2);
   assert.equal(telemetry.getRunUsage('a', 'b:c:d'), undefined);
 });
+
+test('PR49 P1 Finding 1: PEM regex redacts legacy encrypted PEM with hyphenated headers and truncated PEM without end marker', () => {
+  const encryptedPem = [
+    '-----BEGIN RSA PRIVATE KEY-----',
+    'Proc-Type: 4,ENCRYPTED',
+    'DEK-Info: AES-128-CBC,fixture',
+    'RklYVFVSRQ==',
+    '-----END RSA PRIVATE KEY-----',
+  ].join('\n');
+
+  const truncatedPem = [
+    '-----BEGIN PRIVATE KEY-----',
+    'RklYVFVSRQ==',
+  ].join('\n');
+
+  // 1. sanitizeText directly
+  const encryptedResult = sanitizeText(encryptedPem);
+  assert.equal(encryptedResult, '[REDACTED]');
+  assert.equal(encryptedResult.includes('Proc-Type'), false);
+  assert.equal(encryptedResult.includes('DEK-Info'), false);
+  assert.equal(encryptedResult.includes('RklYVFVSRQ=='), false);
+
+  const truncatedResult = sanitizeText(truncatedPem);
+  assert.equal(truncatedResult, '[REDACTED]');
+  assert.equal(truncatedResult.includes('RklYVFVSRQ=='), false);
+
+  const mixedText = `prefix log ${encryptedPem} middle ${truncatedPem}`;
+  const mixedResult = sanitizeText(mixedText);
+  assert.equal(mixedResult, 'prefix log [REDACTED] middle [REDACTED]');
+  assert.equal(mixedResult.includes('RklYVFVSRQ=='), false);
+
+  // 2. recordDiagnostic
+  const telemetry = new SanitizedTelemetry({ maxDiagnosticBytes: 512 });
+  const diagEncrypted = telemetry.recordDiagnostic('task-1', 'run-1', `Diagnostic: ${encryptedPem}`);
+  assert.equal(diagEncrypted.redacted, true);
+  assert.equal(diagEncrypted.sanitizedContent.includes('Proc-Type'), false);
+  assert.equal(diagEncrypted.sanitizedContent.includes('RklYVFVSRQ=='), false);
+  assert.match(diagEncrypted.sanitizedContent, /\[REDACTED\]/);
+
+  const diagTruncated = telemetry.recordDiagnostic('task-1', 'run-1', `Diagnostic: ${truncatedPem}`);
+  assert.equal(diagTruncated.redacted, true);
+  assert.equal(diagTruncated.sanitizedContent.includes('RklYVFVSRQ=='), false);
+  assert.match(diagTruncated.sanitizedContent, /\[REDACTED\]/);
+
+  // 3. isProtectedPayload
+  assert.equal(isProtectedPayload(encryptedPem), true);
+  assert.equal(isProtectedPayload(truncatedPem), true);
+});
+
+test('PR49 P1 Finding 2: generic secret pattern redacts JSON quoted keys, suffixnames, Basic/Bearer/Token auth, and preserves whitespace forms', () => {
+  const regressionCases = [
+    { name: 'JSON double-quoted api_key', raw: '{"api_key":"fixture-value-123"}', forbidden: 'fixture-value-123' },
+    { name: 'JSON single-quoted api_key', raw: "{'api_key':'fixture-value-123'}", forbidden: 'fixture-value-123' },
+    { name: 'JSON uppercase API_KEY', raw: '{"API_KEY":"fixture-value-123"}', forbidden: 'fixture-value-123' },
+    { name: 'JSON camelCase apiKey', raw: '{"apiKey":"fixture-value-123"}', forbidden: 'fixture-value-123' },
+    { name: 'JSON with whitespace', raw: '{ "api_key" : "fixture-value-123" }', forbidden: 'fixture-value-123' },
+    { name: 'Suffixname SECRET_KEY', raw: 'SECRET_KEY=fixture-value-123', forbidden: 'fixture-value-123' },
+    { name: 'Suffixname AWS_SECRET_ACCESS_KEY', raw: 'AWS_SECRET_ACCESS_KEY=fixture-value-456', forbidden: 'fixture-value-456' },
+    { name: 'Multiple suffixnames', raw: 'SECRET_KEY=fixture-value-123 AWS_SECRET_ACCESS_KEY=fixture-value-456', forbidden: 'fixture-value-123' },
+    { name: 'Authorization Basic', raw: 'Authorization: Basic Zml4dHVyZTpwYXNz', forbidden: 'Zml4dHVyZTpwYXNz' },
+    { name: 'Basic standalone', raw: 'Basic Zml4dHVyZTpwYXNz', forbidden: 'Zml4dHVyZTpwYXNz' },
+    { name: 'Authorization Bearer', raw: 'Authorization: Bearer eyJhbGciOi', forbidden: 'eyJhbGciOi' },
+    { name: 'Bearer standalone', raw: 'Bearer eyJhbGciOi', forbidden: 'eyJhbGciOi' },
+    { name: 'Authorization Token', raw: 'Authorization: Token mytoken123', forbidden: 'mytoken123' },
+    { name: 'Token standalone', raw: 'Token mytoken123', forbidden: 'mytoken123' },
+    { name: 'Prior token whitespace form', raw: 'token fixture-value-123', forbidden: 'fixture-value-123' },
+    { name: 'Prior secret whitespace form', raw: 'secret fixture-value-123', forbidden: 'fixture-value-123' },
+    { name: 'Prior password whitespace form', raw: 'password fixture-value-123', forbidden: 'fixture-value-123' },
+  ];
+
+  for (const c of regressionCases) {
+    const sanitized = sanitizeText(c.raw);
+    assert.equal(sanitized.includes(c.forbidden), false, `${c.name} must not leak secret`);
+    assert.match(sanitized, /\[REDACTED\]/, `${c.name} must contain [REDACTED]`);
+    assert.equal(isProtectedPayload(c.raw), true, `${c.name} must be detected as protected payload`);
+  }
+
+  // Diagnostic sanitization
+  const telemetry = new SanitizedTelemetry({ maxDiagnosticBytes: 512 });
+  for (const c of regressionCases) {
+    const diag = telemetry.recordDiagnostic('task-1', 'run-1', `Error log: ${c.raw}`);
+    assert.equal(diag.redacted, true);
+    assert.equal(diag.sanitizedContent.includes(c.forbidden), false);
+    assert.match(diag.sanitizedContent, /\[REDACTED\]/);
+  }
+
+  // Preserves valid non-secret text
+  const cleanJson = '{"name":"agent","count":42,"status":"ok"}';
+  assert.equal(sanitizeText(cleanJson), cleanJson);
+});
+
+test('PR49 P1 Finding 3: emitActivity rejects protected evidenceRef with generic index reason and echoes no raw path or payload', async () => {
+  const sink: ActivityEvent[] = [];
+  const telemetry = new SanitizedTelemetry({
+    sink: (e) => {
+      sink.push(e);
+    },
+  });
+
+  const protectedRefScenarios = [
+    {
+      ref: '.env?MARKER_SECRET_REF',
+      index: 0,
+      refs: ['.env?MARKER_SECRET_REF'],
+      markers: ['MARKER_SECRET_REF', '.env'],
+    },
+    {
+      ref: 'eval/uc03/private/secret.key',
+      index: 1,
+      refs: ['clean-evidence-ref-1', 'eval/uc03/private/secret.key'],
+      markers: ['private', 'secret.key', 'eval/uc03'],
+    },
+    {
+      ref: '/workspace/.env.production?SECRET_TOKEN=xyz',
+      index: 0,
+      refs: ['/workspace/.env.production?SECRET_TOKEN=xyz'],
+      markers: ['SECRET_TOKEN', '.env.production'],
+    },
+  ];
+
+  for (const scenario of protectedRefScenarios) {
+    const event: ActivityEvent = {
+      ...VALID_EVENT,
+      eventId: `evt-reject-${scenario.index}-${Date.now()}`,
+      evidenceRefs: scenario.refs,
+    };
+
+    let caughtError: Error | undefined;
+    await assert.rejects(
+      async () => {
+        try {
+          await telemetry.emitActivity(event);
+        } catch (err) {
+          caughtError = err as Error;
+          throw err;
+        }
+      },
+      (err: Error) => {
+        assert.match(err.message, new RegExp(`^Protected path reference rejected: evidenceRefs\\[${scenario.index}\\] contains protected path$`));
+        // Assert no marker or raw path is leaked in the error message
+        for (const marker of scenario.markers) {
+          assert.equal(err.message.includes(marker), false, `Error must not echo "${marker}"`);
+        }
+        assert.equal(err.message.includes(scenario.ref), false, 'Error must not echo raw ref');
+        // Serialized error contains no marker or raw ref
+        const serialized = JSON.stringify(err.message);
+        for (const marker of scenario.markers) {
+          assert.equal(serialized.includes(marker), false, `Serialized error must not contain "${marker}"`);
+        }
+        return true;
+      }
+    );
+
+    assert.ok(caughtError);
+    assert.equal(sink.length, 0, 'Sink must have zero effects on rejected evidenceRef');
+    assert.equal(telemetry.getEvents().length, 0, 'Stored events must have zero effects on rejected evidenceRef');
+  }
+
+});
+
+test('PR49 P1 end-to-end: emitActivity redacts outcomes and evidenceRefs without leaking markers while preserving valid metadata', async () => {
+  const sink: ActivityEvent[] = [];
+  const telemetry = new SanitizedTelemetry({
+    sink: (e) => {
+      sink.push(e);
+    },
+  });
+
+  const encryptedPem = '-----BEGIN RSA PRIVATE KEY-----\nProc-Type: 4,ENCRYPTED\nDEK-Info: AES-128-CBC,fixture\nRklYVFVSRQ==\n-----END RSA PRIVATE KEY-----';
+  const truncatedPem = '-----BEGIN PRIVATE KEY-----\nRklYVFVSRQ==';
+
+  const complexOutcome = [
+    `Encrypted: ${encryptedPem}`,
+    `Truncated: ${truncatedPem}`,
+    'Config: {"api_key":"fixture-value-123"}',
+    'Env: SECRET_KEY=fixture-value-123 AWS_SECRET_ACCESS_KEY=fixture-value-456',
+    'Auth: Authorization: Basic Zml4dHVyZTpwYXNz',
+    'Whitespace: token fixture-value-123',
+  ].join(' | ');
+
+  const event: ActivityEvent = {
+    eventId: 'evt-all-p1-safe',
+    taskId: 'task-uc03-p1',
+    runId: 'run-p1-001',
+    timestamp: '2026-10-18T10:00:00.000Z',
+    node: 'Verify',
+    actionType: 'run_tests',
+    outcome: complexOutcome,
+    durationMs: 320,
+    evidenceRefs: ['evidence-clean-1', 'evidence-clean-2'],
+  };
+
+  await telemetry.emitActivity(event);
+
+  assert.equal(sink.length, 1);
+  const emitted = sink[0];
+  assert.ok(emitted);
+
+  // Assert original valid metadata is completely unchanged
+  assert.equal(emitted.eventId, 'evt-all-p1-safe');
+  assert.equal(emitted.taskId, 'task-uc03-p1');
+  assert.equal(emitted.runId, 'run-p1-001');
+  assert.equal(emitted.timestamp, '2026-10-18T10:00:00.000Z');
+  assert.equal(emitted.node, 'Verify');
+  assert.equal(emitted.actionType, 'run_tests');
+  assert.equal(emitted.durationMs, 320);
+  assert.deepEqual(emitted.evidenceRefs, ['evidence-clean-1', 'evidence-clean-2']);
+
+  // Assert all secrets/markers are absent from outcome
+  assert.equal(emitted.outcome.includes('Proc-Type'), false);
+  assert.equal(emitted.outcome.includes('DEK-Info'), false);
+  assert.equal(emitted.outcome.includes('RklYVFVSRQ=='), false);
+  assert.equal(emitted.outcome.includes('fixture-value-123'), false);
+  assert.equal(emitted.outcome.includes('fixture-value-456'), false);
+  assert.equal(emitted.outcome.includes('Zml4dHVyZTpwYXNz'), false);
+
+  // Assert stored event matches emitted
+  const stored = telemetry.getEvents('task-uc03-p1');
+  assert.equal(stored.length, 1);
+  assert.deepEqual(stored[0], emitted);
+});
+
+test('PR49 P2 Finding 4305766331: sink callback mutation of event outcome and evidenceRefs does not corrupt stored telemetry (sync and async)', async () => {
+  const telemetrySync = new SanitizedTelemetry({
+    sink: (e) => {
+      // Attempt to mutate outcome and evidenceRefs
+      try {
+        (e as { outcome: string }).outcome = 'INJECTED_SINK_MARKER_OUTCOME';
+      } catch {
+        // reject/frozen effects acceptable
+      }
+      try {
+        (e.evidenceRefs as string[]).push('INJECTED_SINK_MARKER_REF');
+      } catch {
+        // reject/frozen effects acceptable
+      }
+      try {
+        (e.evidenceRefs as string[])[0] = 'INJECTED_SINK_MARKER_REF_0';
+      } catch {
+        // reject/frozen effects acceptable
+      }
+    },
+  });
+
+  const baseEvent: ActivityEvent = {
+    ...VALID_EVENT,
+    eventId: 'evt-sink-alias-01',
+    outcome: 'clean outcome',
+    evidenceRefs: ['evidence-01', 'evidence-02'],
+  };
+
+  await telemetrySync.emitActivity(baseEvent);
+
+  const storedSync = telemetrySync.getEvents(baseEvent.taskId);
+  assert.equal(storedSync.length, 1);
+  assert.equal(storedSync[0]?.outcome, 'clean outcome');
+  assert.deepEqual(storedSync[0]?.evidenceRefs, ['evidence-01', 'evidence-02']);
+  assert.equal(storedSync[0]?.outcome.includes('INJECTED_SINK_MARKER'), false);
+  for (const ref of storedSync[0]?.evidenceRefs ?? []) {
+    assert.equal(ref.includes('INJECTED_SINK_MARKER'), false);
+  }
+
+  // Also check all-events getter
+  const storedSyncAll = telemetrySync.getEvents();
+  assert.equal(storedSyncAll[0]?.outcome, 'clean outcome');
+  assert.deepEqual(storedSyncAll[0]?.evidenceRefs, ['evidence-01', 'evidence-02']);
+
+  // Async sink mutation after emit
+  let asyncResolve!: () => void;
+  const asyncDone = new Promise<void>((resolve) => {
+    asyncResolve = resolve;
+  });
+
+  const telemetryAsync = new SanitizedTelemetry({
+    sink: async (e) => {
+      await new Promise((r) => setTimeout(r, 10));
+      try {
+        (e as { outcome: string }).outcome = 'INJECTED_ASYNC_SINK_MARKER_OUTCOME';
+      } catch {
+        // reject/frozen effects acceptable
+      }
+      try {
+        (e.evidenceRefs as string[]).push('INJECTED_ASYNC_SINK_MARKER_REF');
+      } catch {
+        // reject/frozen effects acceptable
+      }
+      try {
+        (e.evidenceRefs as string[])[0] = 'INJECTED_ASYNC_SINK_MARKER_REF_0';
+      } catch {
+        // reject/frozen effects acceptable
+      }
+      asyncResolve();
+    },
+  });
+
+  await telemetryAsync.emitActivity(baseEvent);
+  await asyncDone;
+
+  const storedAsync = telemetryAsync.getEvents(baseEvent.taskId);
+  assert.equal(storedAsync.length, 1);
+  assert.equal(storedAsync[0]?.outcome, 'clean outcome');
+  assert.deepEqual(storedAsync[0]?.evidenceRefs, ['evidence-01', 'evidence-02']);
+  assert.equal(storedAsync[0]?.outcome.includes('INJECTED_ASYNC_SINK_MARKER'), false);
+  for (const ref of storedAsync[0]?.evidenceRefs ?? []) {
+    assert.equal(ref.includes('INJECTED_ASYNC_SINK_MARKER'), false);
+  }
+});
+
+test('PR49 P2 Finding 4305766336: getter task-specific and all-events caller mutations do not alias or corrupt stored telemetry', async () => {
+  const telemetry = new SanitizedTelemetry();
+  const event: ActivityEvent = {
+    ...VALID_EVENT,
+    eventId: 'evt-getter-alias-01',
+    taskId: 'task-getter-alias',
+    outcome: 'original pristine outcome',
+    evidenceRefs: ['pristine-ref-1', 'pristine-ref-2'],
+  };
+
+  await telemetry.emitActivity(event);
+
+  // 1. Task-specific getter mutation
+  const taskEvents = telemetry.getEvents(event.taskId);
+  assert.equal(taskEvents.length, 1);
+  try {
+    (taskEvents[0] as { outcome: string }).outcome = 'MUTATED_GETTER_TASK_OUTCOME';
+  } catch {
+    // reject/frozen effects acceptable
+  }
+  try {
+    (taskEvents[0]?.evidenceRefs as string[]).push('MUTATED_GETTER_TASK_REF');
+  } catch {
+    // reject/frozen effects acceptable
+  }
+  try {
+    (taskEvents[0]?.evidenceRefs as string[])[0] = 'MUTATED_GETTER_TASK_REF_0';
+  } catch {
+    // reject/frozen effects acceptable
+  }
+
+  // Retrieve fresh copy from task-specific getter and assert intact
+  const retrievedTask = telemetry.getEvents(event.taskId);
+  assert.equal(retrievedTask[0]?.outcome, 'original pristine outcome');
+  assert.deepEqual(retrievedTask[0]?.evidenceRefs, ['pristine-ref-1', 'pristine-ref-2']);
+  assert.equal(retrievedTask[0]?.outcome.includes('MUTATED_GETTER_TASK'), false);
+  for (const ref of retrievedTask[0]?.evidenceRefs ?? []) {
+    assert.equal(ref.includes('MUTATED_GETTER_TASK'), false);
+  }
+
+  // 2. All-events getter mutation
+  const allEvents = telemetry.getEvents();
+  assert.equal(allEvents.length, 1);
+  try {
+    (allEvents[0] as { outcome: string }).outcome = 'MUTATED_ALL_EVENTS_OUTCOME';
+  } catch {
+    // reject/frozen effects acceptable
+  }
+  try {
+    (allEvents[0]?.evidenceRefs as string[]).push('MUTATED_ALL_EVENTS_REF');
+  } catch {
+    // reject/frozen effects acceptable
+  }
+  try {
+    (allEvents[0]?.evidenceRefs as string[])[0] = 'MUTATED_ALL_EVENTS_REF_0';
+  } catch {
+    // reject/frozen effects acceptable
+  }
+
+  // Retrieve fresh copy from all-events getter and task getter and assert intact
+  const retrievedAll = telemetry.getEvents();
+  assert.equal(retrievedAll[0]?.outcome, 'original pristine outcome');
+  assert.deepEqual(retrievedAll[0]?.evidenceRefs, ['pristine-ref-1', 'pristine-ref-2']);
+  assert.equal(retrievedAll[0]?.outcome.includes('MUTATED_ALL_EVENTS'), false);
+  for (const ref of retrievedAll[0]?.evidenceRefs ?? []) {
+    assert.equal(ref.includes('MUTATED_ALL_EVENTS'), false);
+  }
+
+  const retrievedTaskAgain = telemetry.getEvents(event.taskId);
+  assert.equal(retrievedTaskAgain[0]?.outcome, 'original pristine outcome');
+  assert.deepEqual(retrievedTaskAgain[0]?.evidenceRefs, ['pristine-ref-1', 'pristine-ref-2']);
+});
+
+test('PR49 P2 boundary isolation: caller original event and evidenceRefs mutation after emit does not alias stored telemetry or freeze caller', async () => {
+  const telemetry = new SanitizedTelemetry();
+  const callerEvidenceRefs = ['caller-evidence-1', 'caller-evidence-2'];
+  const callerEvent: ActivityEvent = {
+    ...VALID_EVENT,
+    eventId: 'evt-caller-alias-01',
+    taskId: 'task-caller-alias',
+    outcome: 'caller pristine outcome',
+    evidenceRefs: callerEvidenceRefs,
+  };
+
+  assert.equal(Object.isFrozen(callerEvent), false, 'Caller event must start unfrozen');
+  assert.equal(Object.isFrozen(callerEvidenceRefs), false, 'Caller evidenceRefs must start unfrozen');
+
+  await telemetry.emitActivity(callerEvent);
+
+  // Must not freeze caller unexpectedly
+  assert.equal(Object.isFrozen(callerEvent), false, 'Caller event must not be frozen by emitActivity');
+  assert.equal(Object.isFrozen(callerEvidenceRefs), false, 'Caller evidenceRefs must not be frozen by emitActivity');
+
+  // Caller mutates their own original object and array
+  (callerEvent as { outcome: string }).outcome = 'CALLER_MUTATED_OUTCOME_MARKER';
+  callerEvidenceRefs.push('CALLER_MUTATED_REF_MARKER');
+  callerEvidenceRefs[0] = 'CALLER_MUTATED_REF_MARKER_0';
+
+  // Stored telemetry must remain pristine
+  const stored = telemetry.getEvents(callerEvent.taskId);
+  assert.equal(stored.length, 1);
+  assert.equal(stored[0]?.outcome, 'caller pristine outcome');
+  assert.deepEqual(stored[0]?.evidenceRefs, ['caller-evidence-1', 'caller-evidence-2']);
+  assert.equal(stored[0]?.outcome.includes('CALLER_MUTATED'), false);
+  for (const ref of stored[0]?.evidenceRefs ?? []) {
+    assert.equal(ref.includes('CALLER_MUTATED'), false);
+  }
+
+  const allStored = telemetry.getEvents();
+  assert.equal(allStored[0]?.outcome, 'caller pristine outcome');
+  assert.deepEqual(allStored[0]?.evidenceRefs, ['caller-evidence-1', 'caller-evidence-2']);
+});
+
+
+
