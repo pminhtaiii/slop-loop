@@ -352,3 +352,58 @@ test('C15 model-proposed protected path metadata never enters caller output', as
   const result = await new IssueAssessor(h.options).assessIssue(value.invocation, value.context);
   assert.equal(result.status, 'error'); assert.deepEqual(h.settlements, [usage]);
 });
+
+for (const completedAt of [10100, 10101]) {
+  test(`C16 settled assessment at invocation deadline ${completedAt} returns timeout without losing usage`, async () => {
+    const h = harness(); let time = 100; h.options.now = () => time;
+    h.ports.settle = async (_context, _ref, observed) => { h.calls.push('settle'); h.settlements.push(observed); time = completedAt;
+      return { kind: 'settled', accountingRef: 'account' }; };
+    const result = await new IssueAssessor(h.options).assessIssue(h.value.invocation, h.value.context);
+    assert.equal(result.status, 'timeout'); assert.deepEqual(h.settlements, [usage]);
+    assert.equal(h.requests.length, 1); assert.equal(h.bindings.length, 0);
+  });
+}
+
+test('C16 telemetry crossing the invocation deadline cannot publish assessed or needs-info success', async () => {
+  for (const needsInfo of [false, true]) {
+    const value = scenario(); const candidate = { ...proposal(value.context), questions: needsInfo ? [
+      { id: 'users', text: 'Which users are affected?', affects: ['scope' as const], reason: 'Affected users can change severity.' },
+    ] : [] };
+    const h = harness(value, { kind: 'assessment', proposal: candidate, usage }); let time = 100;
+    h.options.now = () => time;
+    h.ports.emitSafeEvent = async () => { time = 10101; return { eventRef: 'safe-event' }; };
+    const result = await new IssueAssessor(h.options).assessIssue(value.invocation, value.context);
+    assert.equal(result.status, 'timeout'); assert.deepEqual(h.settlements, [usage]); assert.equal(h.requests.length, 1);
+  }
+});
+
+test('C16 binding reaching the invocation deadline returns timeout after actual usage is settled', async () => {
+  const value = scenario(); const candidate = { ...proposal(value.context), questions: [
+    { id: 'users', text: 'Which users are affected?', affects: ['scope' as const], reason: 'Affected users can change severity.' },
+  ] };
+  const h = harness(value, { kind: 'assessment', proposal: candidate, usage }); let time = 100;
+  h.options.now = () => time;
+  h.ports.bindContinuation = async () => { time = 10100; return { kind: 'bound', continuationRef: 'continuation' }; };
+  const result = await new IssueAssessor(h.options).assessIssue(value.invocation, value.context);
+  assert.equal(result.status, 'timeout'); assert.deepEqual(h.settlements, [usage]);
+});
+
+test('C17 usage or accounting uncertainty remains authoritative after invocation expiry', async () => {
+  for (const uncertainUsage of [false, true]) {
+    const value = scenario(); const h = harness(value, { kind: 'assessment', proposal: proposal(value.context),
+      usage: uncertainUsage ? { ...usage, state: 'uncertain' } : usage }); let time = 100;
+    h.options.now = () => time;
+    h.ports.settle = async (_context, _ref, observed) => { h.settlements.push(observed); time = 10101;
+      return uncertainUsage ? { kind: 'settled', accountingRef: 'account' } : { kind: 'settled', accountingRef: 'foreign' }; };
+    const result = await new IssueAssessor(h.options).assessIssue(value.invocation, value.context);
+    assert.equal(result.status, 'uncertain'); assert.equal(h.requests.length, 1);
+    assert.equal(h.settlements[0]?.totalTokens, uncertainUsage ? 750 : 30);
+  }
+});
+
+test('C16 known settlement just inside the invocation allowance remains eligible for assessment', async () => {
+  const h = harness(); let time = 100; h.options.now = () => time;
+  h.ports.settle = async () => { time = 10099; return { kind: 'settled', accountingRef: 'account' }; };
+  const result = await new IssueAssessor(h.options).assessIssue(h.value.invocation, h.value.context);
+  assert.equal(result.status, 'assessed'); assert.equal(h.requests.length, 1);
+});

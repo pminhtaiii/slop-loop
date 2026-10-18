@@ -124,6 +124,9 @@ export class IssueAssessor {
     let start = 0; let modelCalls = 0; let toolCalls = 0; let evidenceItems = 0; let questions = 0;
     let configRef = 'unvalidated-config'; let eventId = 'uc01-invalid-input'; let timeout = 1000; let result: Outcome;
     let validFinal: (outcome: Outcome) => boolean = () => true;
+    let invocationDeadline: number | undefined;
+    const successExpired = (outcome: Outcome): boolean => (outcome.status === 'assessed' || outcome.status === 'needs-info')
+      && invocationDeadline !== undefined && clock(now) >= invocationDeadline;
     try {
       start = clock(now);
       const binder = new IntakeBinder(this.dependencies.excerpts);
@@ -149,6 +152,7 @@ export class IssueAssessor {
       let sequence = 0; let inputBytes = 0; let outputBytes = 0;
       const deadline = start + context.limits.wallTimeMs;
       if (!Number.isSafeInteger(deadline)) stop('invalid-input', 'invalid-clock');
+      invocationDeadline = deadline;
       const remaining = (): number => Math.min(timeout, deadline - clock(now));
       const call = (operation: OperationContext, fn: () => Promise<unknown>): Promise<unknown> => bounded(async () => {
         const value = await fn();
@@ -195,6 +199,7 @@ export class IssueAssessor {
           sharedFailure(settled); const settlement = record(settled, ['kind', 'accountingRef']);
           if (settlement.kind !== 'settled' || settlement.accountingRef !== context.accountingRef) stop('uncertain', 'settlement-binding');
         } catch { stop('uncertain', 'settlement-uncertain'); }
+        if (remaining() <= 0) stop('timeout', 'deadline-exceeded');
         const response = validateModelResponse(raw, currentContext);
         if (!response.ok) stop('error', 'invalid-model-output');
         countBytes(raw, 'output');
@@ -219,6 +224,7 @@ export class IssueAssessor {
             const bindingOperation = { ...operation, operationId: bindingId, requestId: bindingId,
               deadlineEpochMs: Math.min(deadline, clock(now) + timeout) };
             const bound = await call(bindingOperation, () => ports.bindContinuation(bindingOperation, assessment));
+            if (remaining() <= 0) stop('timeout', 'deadline-exceeded');
             sharedFailure(bound); const binding = record(bound, ['kind', 'continuationRef']);
             if (binding.kind !== 'bound') stop('error', 'continuation-bind-failed');
             result = { status: 'needs-info', assessment, continuationRef: id(binding.continuationRef), eventRef: 'pending' };
@@ -267,11 +273,14 @@ export class IssueAssessor {
       result = error instanceof Stopped ? failed(error.status, error.code) : failed('error', 'shared-operation-failed');
     }
     try {
+      if (successExpired(result)) result = failed('timeout', 'deadline-exceeded');
       const emitted = await bounded(() => ports.emitSafeEvent({ eventId, type: 'uc01-assessment', outcome: result.status,
         durationMs: Math.max(0, clock(now) - start), counts: { modelCalls, toolCalls, evidenceItems, questions }, configRef }), timeout);
       const event = record(emitted, ['eventRef']);
       const final = { ...result, eventRef: id(event.eventRef) };
-      return validFinal(final) ? final : failed('exhausted', 'output-budget-exhausted', final.eventRef);
+      const valid = validFinal(final);
+      if (successExpired(final)) return failed('timeout', 'deadline-exceeded', final.eventRef);
+      return valid ? final : failed('exhausted', 'output-budget-exhausted', final.eventRef);
     } catch { return failed('error', 'telemetry-unavailable'); }
   }
 }
