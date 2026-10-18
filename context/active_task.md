@@ -12,26 +12,27 @@ The script preserves these instructions and changes only the managed data below.
 ```json
 [
   {
-    "owner": "codex-dump-setup",
-    "task": "agent-dump",
-    "summary": "Set up isolated agent dump workspace and cleanup skill",
-    "next": "Coordinator review and evidence recording",
-    "status": "completed",
-    "verification": "C:/coding agent/.agent-work/2026-10-15/dump-space-setup/verification.md; 37 passed, one existing skip",
-    "updatedAt": "2026-10-15T09:20:36.102Z",
-    "result": "Dump layout and clean-agent-dump skill ready in codex/agent-dump-setup. Guarded nested Git checkout cleanup; context and tests passed. Retain this uncommitted worktree for review.",
-    "checkout": "/home/vercel-sandbox/workspace/repos/github.com/pminhtaiii/slop-loop"
+    "owner": "codex-uc01-phase2-20261018",
+    "task": "T002-T004",
+    "checkout": "D:\\UIT\\PROJECT\\SE373_PROJECT\\CODING_AGENT\\slop-loop",
+    "role": "coordinator",
+    "summary": "Implement UC-01 Phase 2 contract validators, controlled mocks, and versioned fixtures",
+    "next": "Await human merge decision for public PR #52 and submission PR #40; do not merge without explicit instruction. Both original CodeRabbit threads are resolved. The user waived app-link receipt; leave bookkeeping active.",
+    "status": "active",
+    "verification": "UC-01 T002–T004 implementation code is unchanged since source HEAD 5d62eec (catalog binding, guard-slot fix, fixture-oracle correction). Focused tests 38 pass; runtime gate 367 tests pass; full node --test 895 pass/1 Windows skip; digest audit 33 public + 33 grading match. GPT-6.1 Sol Low Standards and Spec reviews: no findings; pinned 12/12 snapshot unchanged. Local CodeRabbit committed review: exit 0, 0 findings across 13 files. Paired PRs #52/#40 are published from this branch; current-head GitHub checks and review state are tracked on PR #52. Both original CodeRabbit threads are resolved. Neither PR merged; user waived app-link receipt.",
+    "updatedAt": "2026-10-18T10:33:32.768Z"
   },
   {
-    "owner": "coderabbit-8ef9a633",
-    "task": "adr-0004-dates",
-    "checkout": "/home/vercel-sandbox/workspace/repos/github.com/pminhtaiii/slop-loop",
-    "summary": "Verify and correct ADR-0004 approval dates",
-    "next": "Coordinator review and evidence recording",
-    "status": "completed",
-    "verification": "Context updater/check passed: 30 Markdown files, 3 canonical facts; no context policy changes required.",
-    "updatedAt": "2026-10-15T17:35:03.190Z",
-    "result": "Removed unsupported acceptance and closure claims; verified recording date as 2026-10-15 UTC from commit 2c79794b868dc9cfaceb16abd68cf9e3a9a38ea0. Approval dates remain unverified."
+    "owner": "codex-uc01-t002-gpt61sol",
+    "task": "T002",
+    "checkout": "D:\\UIT\\PROJECT\\SE373_PROJECT\\CODING_AGENT\\slop-loop\\.agent-work\\worktrees\\uc01-phase2-t002-gpt61sol",
+    "role": "worker",
+    "summary": "Implement UC-01 contract and evaluation validators",
+    "next": "Coordinator integration and PR publication required",
+    "status": "handed-off",
+    "verification": "",
+    "updatedAt": "2026-10-18T08:20:54.600Z",
+    "result": "Stopped after user clarified the coordinator is the implementer and GPT-6.1 Sol Low should review. Uncommitted draft remains in the registered worktree at src/uc01/contracts.ts and tests/runtime/uc01/contract.test.ts; initial RED/GREEN slices and digest subset were reported passing. Coordinator will inspect and take over; no task status changed."
   }
 ]
 ```
