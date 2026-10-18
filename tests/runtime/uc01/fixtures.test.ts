@@ -202,12 +202,18 @@ test('held-out split has five frozen classification anchors and keeps the 80 per
   assert.equal(UC01_HELD_OUT_PLAN.minimumAccuracy, 0.8);
   assert.equal(UC01_HELD_OUT_PLAN.denominator, 'all-required-held-out-classification-cases');
   assert.equal(UC01_HELD_OUT_PLAN.hardGatesIndependent, true);
-  assert.ok(UC01_CASE_SPLIT.heldOut.length >= 5);
+  const heldOutIds = new Set(UC01_CASE_SPLIT.heldOut);
+  const developmentIds = new Set(UC01_CASE_SPLIT.development);
+  const publicCaseIds = new Set(UC01_PUBLIC_CASES.map(record => record.caseId));
+  assert.equal(heldOutIds.size, 5);
+  assert.equal(heldOutIds.size, UC01_CASE_SPLIT.heldOut.length, 'held-out IDs are unique');
+  assert.equal(developmentIds.size, UC01_CASE_SPLIT.development.length, 'development IDs are unique');
+  assert.ok([...heldOutIds].every(caseId => !developmentIds.has(caseId)), 'held-out and development IDs are disjoint');
+  assert.deepEqual(new Set([...heldOutIds, ...developmentIds]), publicCaseIds);
   assert.deepEqual(new Set(UC01_CASE_SPLIT.heldOut), new Set([
     'UC-01:C01:clear-defect', 'UC-01:C07:feature-request', 'UC-01:C06:ambiguous',
     'UC-01:C08:irrelevant', 'UC-01:C15:malicious',
   ]));
-  assert.equal(new Set([...UC01_CASE_SPLIT.heldOut, ...UC01_CASE_SPLIT.development]).size, UC01_PUBLIC_CASES.length);
   for (const caseId of UC01_CASE_SPLIT.heldOut) {
     const record = fixtureCase(caseId);
     assert.deepEqual(record.categories, ['model-quality']);
