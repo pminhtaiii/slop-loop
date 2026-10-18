@@ -54,7 +54,7 @@ export interface DockerProfile {
 }
 
 const SHA256_HEX_REGEX = /^sha256:[a-f0-9]{64}$/;
-const DANGEROUS_TARGET_RE = /(?:docker\.sock|^\/$|\.ssh|\.aws|\.env|eval\/uc03\/private|private\/grading|(?:^|\/)private(?:\/|$))/i;
+const DANGEROUS_TARGET_RE = /(?:docker\.sock|^\/$|\.ssh|\.aws|\.env|\/etc\/shadow|eval\/uc03\/private|private\/grading|(?:^|\/)private(?:$|\/))/i;
 const EMBEDDED_SECRET_PATTERNS: readonly RegExp[] = [
   /MARKER_SECRET[A-Za-z0-9_-]*/i,
   /marker[-_]?secret/i,
@@ -73,6 +73,65 @@ export function computeFileDigest(content: string | Buffer): string {
   return `sha256:${createHash('sha256').update(content).digest('hex')}`;
 }
 
+function validateUserSpecification(userVal: unknown): ValidationError | null {
+  if (typeof userVal !== 'string' || userVal.trim().length === 0) {
+    return { path: 'profile.user', message: 'user must be non-root and non-empty string', code: 'NON_ROOT_USER_REQUIRED' };
+  }
+  const trimmed = userVal.trim();
+  if (trimmed === 'root' || trimmed === '0' || trimmed === '0:0') {
+    return { path: 'profile.user', message: 'user must be non-root', code: 'NON_ROOT_USER_REQUIRED' };
+  }
+
+  const parts = trimmed.split(':');
+  if (parts.length > 2) {
+    return { path: 'profile.user', message: 'user format must be [user|uid][:group|gid]', code: 'INVALID_USER' };
+  }
+
+  const [u, g] = parts;
+  if (!u || u.trim().length === 0) {
+    return { path: 'profile.user', message: 'user format must not have empty user part', code: 'INVALID_USER' };
+  }
+
+  // Validate user/uid part
+  if (u.toLowerCase() === 'root') {
+    return { path: 'profile.user', message: 'user must be non-root', code: 'NON_ROOT_USER_REQUIRED' };
+  }
+  if (/^\d+$/.test(u)) {
+    if (/^0+$/.test(u)) {
+      return { path: 'profile.user', message: 'numeric UID must be non-zero', code: 'NON_ROOT_USER_REQUIRED' };
+    }
+    const uid = Number(u);
+    if (!Number.isSafeInteger(uid) || uid < 1 || uid > 4294967295) {
+      return { path: 'profile.user', message: 'numeric UID is out of safe range', code: 'INVALID_USER' };
+    }
+  } else if (!/^[a-zA-Z_][a-zA-Z0-9_-]{0,31}$/.test(u)) {
+    return { path: 'profile.user', message: `Invalid username format: ${u}`, code: 'INVALID_USER' };
+  }
+
+  // Validate group/gid part if specified
+  if (g !== undefined) {
+    if (g.trim().length === 0) {
+      return { path: 'profile.user', message: 'user format must not have empty group part', code: 'INVALID_USER' };
+    }
+    if (g.toLowerCase() === 'root') {
+      return { path: 'profile.user', message: 'group must be non-root', code: 'NON_ROOT_USER_REQUIRED' };
+    }
+    if (/^\d+$/.test(g)) {
+      if (/^0+$/.test(g)) {
+        return { path: 'profile.user', message: 'numeric GID must be non-zero', code: 'NON_ROOT_USER_REQUIRED' };
+      }
+      const gid = Number(g);
+      if (!Number.isSafeInteger(gid) || gid < 1 || gid > 4294967295) {
+        return { path: 'profile.user', message: 'numeric GID is out of safe range', code: 'INVALID_USER' };
+      }
+    } else if (!/^[a-zA-Z_][a-zA-Z0-9_-]{0,31}$/.test(g)) {
+      return { path: 'profile.user', message: `Invalid group format: ${g}`, code: 'INVALID_USER' };
+    }
+  }
+
+  return null;
+}
+
 export function validateDockerProfile(input: unknown): ValidationResult<DockerProfile> {
   if (typeof input !== 'object' || input === null || Array.isArray(input)) {
     return { ok: false, errors: [{ path: 'profile', message: 'Profile must be an object', code: 'INVALID_TYPE' }] };
@@ -89,21 +148,23 @@ export function validateDockerProfile(input: unknown): ValidationResult<DockerPr
   const imageDigest = typeof obj['imageDigest'] === 'string' ? obj['imageDigest'].trim() : '';
   if (!SHA256_HEX_REGEX.test(imageDigest)) errors.push({ path: 'profile.imageDigest', message: 'imageDigest must be sha256 hex digest', code: 'IMMUTABLE_IMAGE_DIGEST_REQUIRED' });
 
-  const user = typeof obj['user'] === 'string' ? obj['user'].trim() : '';
-  if (!user || user === 'root' || user === '0' || user === '0:0') {
-    errors.push({ path: 'profile.user', message: 'user must be non-root', code: 'NON_ROOT_USER_REQUIRED' });
+  const userError = validateUserSpecification(obj['user']);
+  if (userError) {
+    errors.push(userError);
   }
 
   if (obj['readOnlyRootFilesystem'] !== true) errors.push({ path: 'profile.readOnlyRootFilesystem', message: 'readOnlyRootFilesystem must be true', code: 'READONLY_ROOT_REQUIRED' });
   if (obj['network'] !== 'none') errors.push({ path: 'profile.network', message: 'network must be "none"', code: 'NETWORK_NONE_REQUIRED' });
 
-  const limits = obj['limits'] as Record<string, unknown> | undefined;
-  if (typeof limits !== 'object' || limits === null) {
+  const limits = obj['limits'];
+  if (typeof limits !== 'object' || limits === null || Array.isArray(limits)) {
     errors.push({ path: 'profile.limits', message: 'limits must be an object', code: 'INVALID_TYPE' });
   } else {
+    const lim = limits as Record<string, unknown>;
     for (const k of ['timeoutMs', 'maxMemoryBytes', 'maxCpuCores', 'maxPids'] as const) {
-      if (typeof limits[k] !== 'number' || !Number.isFinite(limits[k]) || (limits[k] as number) <= 0) {
-        errors.push({ path: `profile.limits.${k}`, message: `${k} must be positive number`, code: 'INVALID_LIMIT' });
+      const val = lim[k];
+      if (typeof val !== 'number' || !Number.isSafeInteger(val) || val <= 0) {
+        errors.push({ path: `profile.limits.${k}`, message: `${k} must be a positive safe integer`, code: 'INVALID_LIMIT' });
       }
     }
   }
@@ -114,16 +175,21 @@ export function validateDockerProfile(input: unknown): ValidationResult<DockerPr
     errors.push({ path: 'profile.mounts', message: 'mounts must be an array', code: 'INVALID_TYPE' });
   } else {
     for (let i = 0; i < mounts.length; i++) {
-      const m = mounts[i] as Record<string, unknown>;
-      const target = typeof m['target'] === 'string' ? m['target'].trim() : '';
-      const source = typeof m['source'] === 'string' ? m['source'].trim() : '';
-      const readOnly = m['readOnly'] === true;
+      const m = mounts[i];
+      if (typeof m !== 'object' || m === null || Array.isArray(m)) {
+        errors.push({ path: `profile.mounts[${i}]`, message: 'Mount must be an object', code: 'INVALID_MOUNT' });
+        continue;
+      }
+      const mObj = m as Record<string, unknown>;
+      const target = typeof mObj['target'] === 'string' ? mObj['target'].trim() : '';
+      const source = typeof mObj['source'] === 'string' ? mObj['source'].trim() : '';
+      const readOnly = mObj['readOnly'] === true;
       if (!target || !source) {
         errors.push({ path: `profile.mounts[${i}]`, message: 'Mount requires source and target', code: 'INVALID_MOUNT' });
-      } else if (DANGEROUS_TARGET_RE.test(target)) {
-        errors.push({ path: `profile.mounts[${i}].target`, message: `Forbidden mount target: ${target}`, code: 'DANGEROUS_MOUNT_FORBIDDEN' });
-      } else if (target === '/workspace/repo' && !readOnly) {
-        errors.push({ path: `profile.mounts[${i}].readOnly`, message: 'Mount /workspace/repo must be read-only', code: 'READONLY_REPO_MOUNT_REQUIRED' });
+      } else if (DANGEROUS_TARGET_RE.test(target) || DANGEROUS_TARGET_RE.test(source)) {
+        errors.push({ path: `profile.mounts[${i}]`, message: `Forbidden mount target or source: target=${target}, source=${source}`, code: 'DANGEROUS_MOUNT_FORBIDDEN' });
+      } else if (!readOnly && (target === '/workspace/repo' || source.includes('repo') || source.includes('canonical'))) {
+        errors.push({ path: `profile.mounts[${i}].readOnly`, message: 'Canonical repository volume cannot be mounted writable', code: 'READONLY_REPO_MOUNT_REQUIRED' });
       } else {
         validatedMounts.push({ source, target, readOnly });
       }
@@ -131,7 +197,7 @@ export function validateDockerProfile(input: unknown): ValidationResult<DockerPr
   }
 
   if (errors.length > 0 || !profileId || !image || !limits) return { ok: false, errors };
-  return { ok: true, value: { profileId, image, imageDigest, user, readOnlyRootFilesystem: true, network: 'none', limits: limits as unknown as DockerResourceLimits, mounts: validatedMounts } };
+  return { ok: true, value: { profileId, image, imageDigest, user: (obj['user'] as string).trim(), readOnlyRootFilesystem: true, network: 'none', limits: limits as unknown as DockerResourceLimits, mounts: validatedMounts } };
 }
 
 export interface DockerLifecycleController {
@@ -139,17 +205,6 @@ export interface DockerLifecycleController {
   createVolume(volumeId: string): Promise<void>;
   hasVolume(volumeId: string): Promise<boolean>;
   removeVolume(volumeId: string): Promise<void>;
-}
-
-export class FakeDockerLifecycleController implements DockerLifecycleController {
-  readonly provenance = 'mock' as const;
-  private readonly volumes = new Set<string>();
-  readonly createdVolumes: string[] = [];
-  readonly removedVolumes: string[] = [];
-
-  async createVolume(id: string): Promise<void> { this.volumes.add(id); this.createdVolumes.push(id); }
-  async hasVolume(id: string): Promise<boolean> { return this.volumes.has(id); }
-  async removeVolume(id: string): Promise<void> { this.volumes.delete(id); this.removedVolumes.push(id); }
 }
 
 export interface CreateWorkspaceParams {
@@ -180,18 +235,26 @@ export class DockerWorkspaceManager {
   private readonly canonicalRevisions = new Map<string, string>();
   private readonly activeViews = new Map<string, CommandView>();
 
-  constructor(options?: { controller?: DockerLifecycleController }) {
-    this.controller = options?.controller ?? new FakeDockerLifecycleController();
+  constructor(options: { readonly controller: DockerLifecycleController }) {
+    if (!options || typeof options !== 'object' || !options.controller) {
+      throw new Error('CONTROLLER_REQUIRED: Injected DockerLifecycleController is required');
+    }
+    this.controller = options.controller;
   }
 
   async createWorkspace(params: CreateWorkspaceParams): Promise<TaskWorkspace> {
+    if (!params || typeof params !== 'object') {
+      throw new Error('INVALID_WORKSPACE_PARAMS: params must be an object');
+    }
     const profileRes = validateDockerProfile(params.profile);
     if (!profileRes.ok) throw new Error(`INVALID_DOCKER_PROFILE: ${profileRes.errors.map((e) => e.message).join('; ')}`);
 
+    if (!SHA256_HEX_REGEX.test(params.initialRevisionDigest)) {
+      throw new Error('INVALID_REVISION_DIGEST: initialRevisionDigest must be sha256 hex digest');
+    }
+
     const repoVolumeId = `vol-repo-${params.taskId}-${params.workspaceId}`;
     const scratchVolumeId = `vol-scratch-${params.taskId}-${params.workspaceId}`;
-    await this.controller.createVolume(repoVolumeId);
-    await this.controller.createVolume(scratchVolumeId);
 
     const workspace: TaskWorkspace = {
       taskId: params.taskId,
@@ -204,6 +267,14 @@ export class DockerWorkspaceManager {
     const validWs = validateTaskWorkspace(workspace);
     if (!validWs.ok) throw new Error(`INVALID_TASK_WORKSPACE: ${validWs.errors.map((e) => e.message).join('; ')}`);
 
+    if (this.workspaces.has(params.workspaceId)) {
+      throw new Error(`WORKSPACE_ALREADY_EXISTS: Workspace '${params.workspaceId}' already exists; use resumeWorkspace`);
+    }
+
+    // Allocate volumes only after full parameter, profile, and workspace validation
+    await this.controller.createVolume(repoVolumeId);
+    await this.controller.createVolume(scratchVolumeId);
+
     this.workspaces.set(params.workspaceId, workspace);
     this.canonicalVolumes.set(params.workspaceId, { repoVolumeId, scratchVolumeId });
     this.canonicalRevisions.set(params.workspaceId, params.initialRevisionDigest);
@@ -211,10 +282,17 @@ export class DockerWorkspaceManager {
   }
 
   async resumeWorkspace(params: ResumeWorkspaceParams): Promise<TaskWorkspace> {
+    if (!params || typeof params !== 'object') {
+      throw new Error('INVALID_WORKSPACE_PARAMS: params must be an object');
+    }
     const validWs = validateTaskWorkspace(params.workspace);
     if (!validWs.ok) throw new Error(`INVALID_TASK_WORKSPACE: ${validWs.errors.map((e) => e.message).join('; ')}`);
     const profileRes = validateDockerProfile(params.profile);
     if (!profileRes.ok) throw new Error(`INVALID_DOCKER_PROFILE: ${profileRes.errors.map((e) => e.message).join('; ')}`);
+
+    if (params.expectedRevisionDigest !== undefined && !SHA256_HEX_REGEX.test(params.expectedRevisionDigest)) {
+      throw new Error('INVALID_REVISION_DIGEST: expectedRevisionDigest must be sha256 hex digest');
+    }
 
     if (params.workspace.containerImageDigest !== params.profile.imageDigest) {
       throw new Error(`IMAGE_DIGEST_MISMATCH: ${params.workspace.containerImageDigest} !== ${params.profile.imageDigest}`);

@@ -4,8 +4,8 @@ import {
   type DockerProfile,
   type DockerMountConfig,
   type DockerResourceLimits,
+  type DockerLifecycleController,
   validateDockerProfile,
-  FakeDockerLifecycleController,
   DockerWorkspaceManager,
   computeFileDigest,
   containsProtectedContent,
@@ -14,6 +14,27 @@ import {
   validateCommandView,
   validateTaskWorkspace,
 } from '../../../src/contracts/uc03.ts';
+
+export class FakeDockerLifecycleController implements DockerLifecycleController {
+  readonly provenance = 'mock' as const;
+  private readonly volumes = new Set<string>();
+  readonly createdVolumes: string[] = [];
+  readonly removedVolumes: string[] = [];
+
+  async createVolume(id: string): Promise<void> {
+    this.volumes.add(id);
+    this.createdVolumes.push(id);
+  }
+
+  async hasVolume(id: string): Promise<boolean> {
+    return this.volumes.has(id);
+  }
+
+  async removeVolume(id: string): Promise<void> {
+    this.volumes.delete(id);
+    this.removedVolumes.push(id);
+  }
+}
 
 function createValidProfile(overrides?: Partial<DockerProfile>): DockerProfile {
   return {
@@ -67,6 +88,43 @@ test('DockerProfile validation: rejects root user (root, 0, 0:0, empty)', () => 
   }
 });
 
+test('DockerProfile validation: rejects root UID variants (0:1000, 00:1000, root:1000, 1000:0, 1000:root)', () => {
+  for (const rootVariant of ['0:1000', '00:1000', 'root:1000', '1000:0', '1000:root']) {
+    const res = validateDockerProfile(createValidProfile({ user: rootVariant }));
+    assert.equal(res.ok, false, `Expected ${rootVariant} to be rejected as root variant`);
+    if (!res.ok) {
+      assert.ok(res.errors.some((e) => e.code === 'NON_ROOT_USER_REQUIRED'), `Expected NON_ROOT_USER_REQUIRED for ${rootVariant}`);
+    }
+  }
+});
+
+test('DockerProfile validation: rejects malformed users (:1000, 1000:, 1000:1000:1000, -1:1000, 1000:-1, invalid chars, out of range)', () => {
+  const malformed = [
+    ':1000',
+    '1000:',
+    '1000:1000:1000',
+    '-1:1000',
+    '1000:-1',
+    '1000:invalid@group',
+    'invalid@user:1000',
+    '99999999999999999999:1000',
+  ];
+  for (const badUser of malformed) {
+    const res = validateDockerProfile(createValidProfile({ user: badUser }));
+    assert.equal(res.ok, false, `Expected malformed user ${badUser} to be rejected`);
+    if (!res.ok) {
+      assert.ok(res.errors.some((e) => e.code === 'INVALID_USER'), `Expected INVALID_USER for ${badUser}`);
+    }
+  }
+});
+
+test('DockerProfile validation: accepts valid non-root user specifications', () => {
+  for (const validUser of ['1000:1000', '1000', 'appuser:appgroup', 'appuser', 'user_01:group_01']) {
+    const res = validateDockerProfile(createValidProfile({ user: validUser }));
+    assert.equal(res.ok, true, `Expected user ${validUser} to be valid`);
+  }
+});
+
 test('DockerProfile validation: rejects writable root filesystem', () => {
   const res = validateDockerProfile(createValidProfile({ readOnlyRootFilesystem: false }));
   assert.equal(res.ok, false);
@@ -102,6 +160,10 @@ test('DockerProfile validation: rejects invalid or missing resource limits', () 
     { maxMemoryBytes: -1 },
     { maxCpuCores: 0 },
     { maxPids: 0 },
+    { timeoutMs: 1.5 },
+    { maxMemoryBytes: Number.MAX_SAFE_INTEGER + 1000 },
+    { timeoutMs: NaN },
+    { timeoutMs: Infinity },
   ];
   for (const limitOverride of badLimits) {
     const res = validateDockerProfile(
@@ -113,6 +175,9 @@ test('DockerProfile validation: rejects invalid or missing resource limits', () 
       })
     );
     assert.equal(res.ok, false);
+    if (!res.ok) {
+      assert.ok(res.errors.some((e) => e.code === 'INVALID_LIMIT'));
+    }
   }
 });
 
@@ -135,6 +200,39 @@ test('DockerProfile validation: rejects dangerous mounts (docker socket, root, c
     if (!res.ok) {
       assert.ok(res.errors.some((e) => e.code === 'DANGEROUS_MOUNT_FORBIDDEN'));
     }
+  }
+});
+
+test('DockerProfile validation: rejects dangerous mount sources and writable canonical repository volumes', () => {
+  // Dangerous sources
+  for (const source of ['/var/run/docker.sock', '/run/docker.sock', '/etc/shadow', '.ssh', '.aws', '.env']) {
+    const mounts: DockerMountConfig[] = [
+      { source, target: '/safe', readOnly: true },
+    ];
+    const res = validateDockerProfile(createValidProfile({ mounts }));
+    assert.equal(res.ok, false, `Expected dangerous source ${source} to be rejected`);
+    if (!res.ok) {
+      assert.ok(res.errors.some((e) => e.code === 'DANGEROUS_MOUNT_FORBIDDEN'));
+    }
+  }
+
+  // Canonical repository volume mounted writable at alias
+  const aliasMounts: DockerMountConfig[] = [
+    { source: 'canonical-repo-volume', target: '/workspace/alias', readOnly: false },
+  ];
+  const resAlias = validateDockerProfile(createValidProfile({ mounts: aliasMounts }));
+  assert.equal(resAlias.ok, false);
+  if (!resAlias.ok) {
+    assert.ok(resAlias.errors.some((e) => e.code === 'READONLY_REPO_MOUNT_REQUIRED'));
+  }
+});
+
+test('DockerProfile validation: validates malformed mounts without throwing incidental TypeError', () => {
+  const malformedMounts = [null as unknown as DockerMountConfig, 'string-mount' as unknown as DockerMountConfig, 123 as unknown as DockerMountConfig];
+  const res = validateDockerProfile(createValidProfile({ mounts: malformedMounts }));
+  assert.equal(res.ok, false);
+  if (!res.ok) {
+    assert.ok(res.errors.some((e) => e.code === 'INVALID_MOUNT'));
   }
 });
 
@@ -164,6 +262,109 @@ test('FakeDockerLifecycleController: tracks volume operations and advertises moc
   assert.deepEqual(controller.removedVolumes, ['vol-test']);
 });
 
+test('DockerWorkspaceManager: requires injected DockerLifecycleController and fails if missing or invalid', () => {
+  assert.throws(
+    () => new (DockerWorkspaceManager as unknown as new () => DockerWorkspaceManager)(),
+    { message: /CONTROLLER_REQUIRED/ }
+  );
+  assert.throws(
+    () => new DockerWorkspaceManager({} as unknown as { readonly controller: DockerLifecycleController }),
+    { message: /CONTROLLER_REQUIRED/ }
+  );
+  assert.throws(
+    () => new DockerWorkspaceManager({ controller: null as unknown as DockerLifecycleController }),
+    { message: /CONTROLLER_REQUIRED/ }
+  );
+});
+
+test('DockerWorkspaceManager: validates task, workspace, and revision BEFORE volume effects (zero controller calls on invalid input)', async () => {
+  const controller = new FakeDockerLifecycleController();
+  const manager = new DockerWorkspaceManager({ controller });
+  const profile = createValidProfile();
+  const validRev = 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+
+  // Invalid taskId
+  await assert.rejects(
+    async () => {
+      await manager.createWorkspace({
+        taskId: '',
+        workspaceId: 'ws-test',
+        initialRevisionDigest: validRev,
+        profile,
+      });
+    },
+    { message: /INVALID_TASK_WORKSPACE/ }
+  );
+  assert.equal(controller.createdVolumes.length, 0, 'Zero volumes created on invalid taskId');
+
+  // Invalid workspaceId
+  await assert.rejects(
+    async () => {
+      await manager.createWorkspace({
+        taskId: 'task-test',
+        workspaceId: '',
+        initialRevisionDigest: validRev,
+        profile,
+      });
+    },
+    { message: /INVALID_TASK_WORKSPACE/ }
+  );
+  assert.equal(controller.createdVolumes.length, 0, 'Zero volumes created on invalid workspaceId');
+
+  // Invalid initialRevisionDigest
+  await assert.rejects(
+    async () => {
+      await manager.createWorkspace({
+        taskId: 'task-test',
+        workspaceId: 'ws-test',
+        initialRevisionDigest: 'bad',
+        profile,
+      });
+    },
+    { message: /INVALID_REVISION_DIGEST/ }
+  );
+  assert.equal(controller.createdVolumes.length, 0, 'Zero volumes created on invalid revision digest');
+
+  // Invalid profile
+  const badProfile = createValidProfile({ user: '0:1000' });
+  await assert.rejects(
+    async () => {
+      await manager.createWorkspace({
+        taskId: 'task-test',
+        workspaceId: 'ws-test',
+        initialRevisionDigest: validRev,
+        profile: badProfile,
+      });
+    },
+    { message: /INVALID_DOCKER_PROFILE/ }
+  );
+  assert.equal(controller.createdVolumes.length, 0, 'Zero volumes created on invalid profile');
+
+  // Successful create
+  const ws = await manager.createWorkspace({
+    taskId: 'task-test',
+    workspaceId: 'ws-test',
+    initialRevisionDigest: validRev,
+    profile,
+  });
+  assert.equal(ws.workspaceId, 'ws-test');
+  assert.equal(controller.createdVolumes.length, 2);
+
+  // Reject duplicate workspace creation without creating additional volumes
+  await assert.rejects(
+    async () => {
+      await manager.createWorkspace({
+        taskId: 'task-test',
+        workspaceId: 'ws-test',
+        initialRevisionDigest: validRev,
+        profile,
+      });
+    },
+    { message: /WORKSPACE_ALREADY_EXISTS/ }
+  );
+  assert.equal(controller.createdVolumes.length, 2, 'No new volumes created on duplicate create');
+});
+
 test('DockerWorkspaceManager: createWorkspace validates profile, allocates volumes, returns TaskWorkspace', async () => {
   const controller = new FakeDockerLifecycleController();
   const manager = new DockerWorkspaceManager({ controller });
@@ -172,14 +373,14 @@ test('DockerWorkspaceManager: createWorkspace validates profile, allocates volum
   const workspace = await manager.createWorkspace({
     taskId: 'task-uc03-101',
     workspaceId: 'ws-uc03-101',
-    initialRevisionDigest: 'sha256:initrev1234567890abcdef1234567890abcdef1234567890abcdef12345678',
+    initialRevisionDigest: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
     profile,
   });
 
   assert.equal(workspace.taskId, 'task-uc03-101');
   assert.equal(workspace.workspaceId, 'ws-uc03-101');
   assert.equal(workspace.containerImageDigest, profile.imageDigest);
-  assert.equal(workspace.expectedRepoState, 'sha256:initrev1234567890abcdef1234567890abcdef1234567890abcdef12345678');
+  assert.equal(workspace.expectedRepoState, 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef');
   assert.ok(workspace.repoVolumeId.includes('task-uc03-101'));
   assert.ok(workspace.scratchVolumeId.includes('task-uc03-101'));
 
@@ -200,7 +401,7 @@ test('DockerWorkspaceManager: resumeWorkspace verifies stable volume identities 
   const created = await manager.createWorkspace({
     taskId: 'task-uc03-102',
     workspaceId: 'ws-uc03-102',
-    initialRevisionDigest: 'sha256:initrev1234567890abcdef1234567890abcdef1234567890abcdef12345678',
+    initialRevisionDigest: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
     profile,
   });
 
@@ -238,11 +439,12 @@ test('DockerWorkspaceManager: resumeWorkspace verifies stable volume identities 
 });
 
 test('DockerWorkspaceManager: changed canonical revision invalidates active command views', async () => {
-  const manager = new DockerWorkspaceManager();
+  const controller = new FakeDockerLifecycleController();
+  const manager = new DockerWorkspaceManager({ controller });
   const profile = createValidProfile();
 
-  const rev1 = 'sha256:rev111111111111111111111111111111111111111111111111111111111111';
-  const rev2 = 'sha256:rev222222222222222222222222222222222222222222222222222222222222';
+  const rev1 = 'sha256:0111111111111111111111111111111111111111111111111111111111111111';
+  const rev2 = 'sha256:0222222222222222222222222222222222222222222222222222222222222222';
 
   const ws = await manager.createWorkspace({
     taskId: 'task-uc03-103',
@@ -283,9 +485,10 @@ test('DockerWorkspaceManager: changed canonical revision invalidates active comm
 });
 
 test('DockerWorkspaceManager: command-view admission excludes protected paths and unrequired embedded secrets before copying', async () => {
-  const manager = new DockerWorkspaceManager();
+  const controller = new FakeDockerLifecycleController();
+  const manager = new DockerWorkspaceManager({ controller });
   const profile = createValidProfile();
-  const rev = 'sha256:rev333333333333333333333333333333333333333333333333333333333333';
+  const rev = 'sha256:0333333333333333333333333333333333333333333333333333333333333333';
 
   const ws = await manager.createWorkspace({
     taskId: 'task-uc03-104',
@@ -333,9 +536,10 @@ test('DockerWorkspaceManager: command-view admission excludes protected paths an
 });
 
 test('DockerWorkspaceManager: rejects admission when required file is a protected path (no silent redaction)', async () => {
-  const manager = new DockerWorkspaceManager();
+  const controller = new FakeDockerLifecycleController();
+  const manager = new DockerWorkspaceManager({ controller });
   const profile = createValidProfile();
-  const rev = 'sha256:rev444444444444444444444444444444444444444444444444444444444444';
+  const rev = 'sha256:0444444444444444444444444444444444444444444444444444444444444444';
 
   const ws = await manager.createWorkspace({
     taskId: 'task-uc03-105',
@@ -363,9 +567,10 @@ test('DockerWorkspaceManager: rejects admission when required file is a protecte
 });
 
 test('DockerWorkspaceManager: rejects admission when required file contains embedded secret (no silent redaction)', async () => {
-  const manager = new DockerWorkspaceManager();
+  const controller = new FakeDockerLifecycleController();
+  const manager = new DockerWorkspaceManager({ controller });
   const profile = createValidProfile();
-  const rev = 'sha256:rev555555555555555555555555555555555555555555555555555555555555';
+  const rev = 'sha256:0555555555555555555555555555555555555555555555555555555555555555';
 
   const ws = await manager.createWorkspace({
     taskId: 'task-uc03-106',
@@ -392,9 +597,10 @@ test('DockerWorkspaceManager: rejects admission when required file contains embe
 });
 
 test('DockerWorkspaceManager: rejects escaping paths in canonicalFiles', async () => {
-  const manager = new DockerWorkspaceManager();
+  const controller = new FakeDockerLifecycleController();
+  const manager = new DockerWorkspaceManager({ controller });
   const profile = createValidProfile();
-  const rev = 'sha256:rev666666666666666666666666666666666666666666666666666666666666';
+  const rev = 'sha256:0666666666666666666666666666666666666666666666666666666666666666';
 
   const ws = await manager.createWorkspace({
     taskId: 'task-uc03-107',
