@@ -44,7 +44,7 @@ Shared foundation includes the model adapter and structured-output validation, L
 
 **Boundary:** consume Tai's shared read/search interfaces; use controlled fixtures until available. Additional shared capabilities require coordination with Tai. UC-03 owns debugging and repair; UC-04 owns durable recovery; UC-05 owns action approval. Clarification is not approval. Recommend destinations without dispatching work, and integrate with other UCs later through validated contracts.
 
-**Next handoff:** Thai reviews the DRAFT [spec, plan and task ledger](../specs/002-uc01-issue-triage/plan.md), including schemas, configured classifications/destinations, bounded execution and evaluation cases. Obtain artifact approval and versioned consumer-contract agreement before implementation; current shared model types are bug-specific and real adapters remain external deliveries. Planning publication and contributor CI establish no UC-01 runtime capability.
+**Next handoff:** The user approved the existing [spec, plan and task ledger](../specs/002-uc01-issue-triage/plan.md) baseline on 2026-10-18 and authorized T001 documentation/review. The user subsequently confirmed member approval of the reviewed consumer signatures, finite fixture profile and paths in [decisions](../specs/002-uc01-issue-triage/contracts/decisions.md), satisfying T001 agreement. T002 onward requires separate authorization. Current shared model types are bug-specific and real adapters remain external deliveries. Planning publication and contributor CI establish no UC-01 runtime capability.
 
 ## UC-03: End-to-end bug fix
 

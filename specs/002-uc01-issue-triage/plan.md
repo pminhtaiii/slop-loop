@@ -3,7 +3,7 @@
 **Branch**: `feat/012-uc01-issue-triage-specs` | **Date**: 2026-10-17 | **Spec**: [spec.md](spec.md)
 
 **Input**: Draft specification in `specs/002-uc01-issue-triage/`.
-**Status**: DRAFT proposal. Planning/publication only; no runtime implementation authorization.
+**Status**: Existing baseline approved by the user on 2026-10-18 for T001 documentation/review. Consumer signatures and the numeric fixture profile are approved through user-confirmed member agreement in [decisions](contracts/decisions.md). No runtime implementation authorization.
 
 ## Summary
 
@@ -33,7 +33,7 @@ The [constitution](../../.specify/memory/constitution.md) remains an unratified 
 
 ### Source Code (repository root)
 
-Proposed paths only; none created in this planning change:
+Agreed UC-01 ownership paths; none created by T001:
 
 ```text
 src/uc01/
@@ -50,7 +50,7 @@ tests/runtime/support/uc01/
   fixtures.ts, ports.ts
 ```
 
-**Structure Decision**: Thai owns only UC-01-specific modules/tests. Tai owns `src/contracts/uc03.ts`, `src/foundation/` and shared evaluation infrastructure; Thanh Tan owns `src/persistence/`; Trong Tan owns `src/approvals/`. Proposed path allocation requires agreement before implementation; no shared-file edits are hidden inside Thai's tasks.
+**Structure Decision**: Thai owns only UC-01-specific modules/tests. Tai owns `src/contracts/uc03.ts`, `src/foundation/` and shared evaluation infrastructure; Thanh Tan owns `src/persistence/`; Trong Tan owns `src/approvals/`. Path allocation is approved at T001; no shared-file edits are hidden inside Thai's tasks.
 
 ## Architecture and module boundaries
 
@@ -66,7 +66,7 @@ flowchart LR
 
 UC-01 receives only narrowed read/search capabilities, not a full RepositoryPort with patch/execute methods. Model tool requests are data checked against that narrow capability set; the controller invokes only validated read/search requests. All operation guards and durable reservations are shared. No UC-03 bug workflow is required to run UC-01 fixtures.
 
-The existing executable ModelPort requires UC-03 TaskState/ModelProposal, and RepositoryPort does not expose the full contextual denial envelope UC-01 needs. These cannot be assumed triage-compatible. [Shared interfaces](contracts/interfaces.md) specifies a proposed consumer seam; X-FOUNDATION-AGREEMENT must resolve versioned adapter signatures before any UC-01 mock/runtime implementation. Do not fake a bug TaskState or copy the provider budget implementation. Reuse canonical SourceEvidence where compatible and transform only at an agreed boundary.
+The existing executable ModelPort requires UC-03 TaskState/ModelProposal, and RepositoryPort does not expose the full contextual denial envelope UC-01 needs. These cannot be assumed triage-compatible. [Shared interfaces](contracts/interfaces.md#versioned-consumer-signatures) now supplies `uc01-consumer-v1`, including a separate triage role, guarded read/search, accounting, continuation and additive evidence projection. [Schema](contracts/schema.md#finite-controlled-fixture-profile) supplies the concrete `uc01-fixture-v1` numeric test profile. X-FOUNDATION-AGREEMENT is satisfied for this consumer contract; T002 onward still needs separate implementation authorization and real integrations retain their delivery gates. Do not fake a bug TaskState or copy the provider budget implementation. Preserve canonical SourceEvidence, including boundedExcerpt, and transform only at an agreed boundary.
 
 ## Implementation strategy and execution
 

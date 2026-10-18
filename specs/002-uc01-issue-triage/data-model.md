@@ -1,6 +1,6 @@
 # Data Model: UC-01
 
-**Status**: DRAFT; normative proposed record shapes are in [contracts/schema.md](contracts/schema.md).
+**Status**: Product record shapes approved at T001; shared evaluation registration remains separately gated. Normative shapes are in [contracts/schema.md](contracts/schema.md).
 
 | Entity | Identity / fields | Relationships and invariants |
 |---|---|---|

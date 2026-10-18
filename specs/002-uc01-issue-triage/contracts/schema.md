@@ -1,6 +1,6 @@
 # Proposed Structured Contract: UC-01 draft-v1
 
-**Status**: DRAFT consumer schema; X-FOUNDATION-AGREEMENT pending. This does not modify executable UC-03 0.1.0.
+**Status**: Consumer schema approved at T001 on 2026-10-18 with `uc01-consumer-v1` and `uc01-fixture-v1`; see [approval provenance](decisions.md). The wire version remains `uc01-draft-v1`. This does not modify executable UC-03 0.1.0.
 
 ## Notation and common validation
 
@@ -30,6 +30,22 @@ All identities are Id; repositorySnapshotDigest is Digest. `accountingRef` resol
 `Destination = {id: Id, responsibility: Text, acceptsClassificationIds: Id[]}`. Membership must reference catalog classifications; a recommendation requires responsibility fit, not merely matching classification. Entry IDs must be unique within their catalog list; responsibility text need not be unique and may overlap. Repeated responsibility text alone is valid configuration. If available evidence cannot distinguish compatible destinations, return undetermined and ask clarification when the ambiguity materially changes the route. Empty catalogs are allowed and lead to undetermined. The reserved `undetermined` is not a configurable ID. UC-04 recovery/UC-05 approval capabilities cannot be ordinary destinations; host admission rejects those semantic entries even if relabeled. Allowed destination catalog identity is trusted application configuration, never a model-generated catalog.
 
 `Limits` requires positive finite maxima for invocation wall time, modelCalls, toolCalls, per-call timeout, inputBytes, outputBytes, evidenceItems, searchResults, questions, inputTokens, outputTokens, totalTokens and cost (fixed pricing unit). Config has explicit task/run scope, currency/pricing identity, remaining-accounting refs and conservative per-request billable ceilings. No default numeric values. Reject inconsistent totals or unsupported provider caps; shared guards enforce operation-specific resource bounds. Controller and provider reservations consume the same authoritative budget, not parallel independent counters.
+
+## Finite controlled fixture profile
+
+`uc01-fixture-v1` is the approved T001 test-only profile, never a production default or permission for provider access. Fixtures use mock model/read/search/continuation/accounting/policy ports only. Each fixture explicitly selects this profile; missing or altered profiles fail admission. One synthetic cost unit is a fixture accounting integer, not currency or a provider price.
+
+| Bound | Per invocation/run | Per task across all invocations |
+|---|---|---|
+| Wall time / per-call timeout | 10,000 ms / 1,000 ms | 30,000 ms cumulative elapsed execution |
+| Model calls / read-search calls | 4 / 6 | 8 / 12 |
+| Input / output bytes | 16,384 / 8,192 UTF-8 bytes per call; also bounded to those totals per invocation | 32,768 / 16,384 cumulative bytes |
+| Input / output / total tokens | 2,000 / 1,000 / 3,000 | 4,000 / 2,000 / 6,000 |
+| Synthetic cost units | 3,000 | 6,000 |
+| Evidence items / search results / questions | 16 per registry / 8 per search / 4 per outcome | 48 evidence admissions / 96 returned search results / 12 issued questions cumulatively |
+| Invocations/runs | One invocation per run | 3; rejected/failed invocations consume an invocation slot too |
+
+Each fixture run represents one invocation; both its run and cumulative task ceilings must admit a call. `pricingId = uc01-fixture-token-units-v1`: each input/output token costs one synthetic unit. A model reservation declares at most 500 input + 250 output = 750 total tokens/cost units, and at most 1,000 ms. A read/search result obeys the invocation's remaining byte/item/time/tool ceilings. Task state persists between mocked invocations; creating a new run never resets task usage, and reservations with uncertain usage remain fully charged. Exact-boundary, one-over-boundary and missing/nonfinite-limit vectors belong to T002/T003. Test clocks are injected; these numbers do not authorize real waiting, network, filesystem or command execution.
 
 ## Evidence registry
 
