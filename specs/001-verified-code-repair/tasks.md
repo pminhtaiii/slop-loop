@@ -47,7 +47,7 @@ Tai is accountable for all local tasks, including shared foundation. Named lanes
 
 **Goal**: Validated task to evidence-backed final result. **Independent Test**: C01/C02/C16 through the injected route; real acceptance at T028. The mock milestone alone is not a delivered verified fix.
 
-- [ ] T005 [P] [US1] Prepare public seeded bug and input fixtures in fixtures/uc03/success/ and fixtures/uc03/input/.
+- [X] T005 [P] [US1] Prepare public seeded bug and input fixtures in fixtures/uc03/success/ and fixtures/uc03/input/.
   - **Owner**: Tai / evaluation-fixture lane.
   - **Dependencies**: T004.
   - **Owned Paths**: fixtures/uc03/success/; fixtures/uc03/input/.
@@ -77,7 +77,7 @@ Tai is accountable for all local tasks, including shared foundation. Named lanes
   - **Owned Paths**: src/foundation/reviewer.ts; tests/runtime/unit/reviewer.test.ts.
   - **Acceptance Checks**: Separate role/config, validated findings and real diff line membership, read-only bounded evidence, write/execute rejection and finite iteration reservations. T004 scripted outputs enable tests; reviewer quality and real enforcement need T030. Route all reviewer model calls through the same budgeted ModelPort protocol; reserve reviewer iterations and token/cost ceilings before provider dispatch, settle actual usage and retain unknown charges on interruption. Tests independently assert zero reviewer provider calls with absent/exhausted token/cost or iteration allowances. Model/reviewer telemetry never replenishes the shared task ledger.
 
-- [ ] T010 [P] [US1] Implement sanitized activity and usage event boundary in src/foundation/telemetry.ts.
+- [X] T010 [P] [US1] Implement sanitized activity and usage event boundary in src/foundation/telemetry.ts.
   - **Owner**: Tai / telemetry lane (shared foundation).
   - **Dependencies**: T004.
   - **Owned Paths**: src/foundation/telemetry.ts; tests/runtime/unit/telemetry.test.ts.

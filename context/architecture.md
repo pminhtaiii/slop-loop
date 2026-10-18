@@ -4,6 +4,8 @@ This document describes the intended slop-loop runtime. The canonical contract l
 
 Controlled test-only ports in `tests/runtime/support/uc03/` simulate state, approval, model, repository and reviewer behavior with explicit finite profiles and mock provenance. They do not implement the real adapters or execution boundaries described below.
 
+Phase 3 has integrated public bug/input fixtures under `fixtures/uc03/` and the independently reviewed sanitized telemetry boundary in `src/foundation/telemetry.ts`. Telemetry projects per-run usage, rejects protected identity/reference metadata, and bounds redacted diagnostics; it does not own the cumulative UC-04 budget ledger. Other Phase 3 boundaries remain under implementation and review. These scoped checks do not establish a runnable repair route, real provider dispatch, Docker isolation or durable recovery.
+
 ## Authority and ownership
 
 The system follows `Coding Agent = Model + Harness`: the model reasons and proposes; deterministic runtime code controls, authorizes, executes, and verifies.
