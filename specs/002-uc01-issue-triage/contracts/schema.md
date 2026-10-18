@@ -4,7 +4,7 @@
 
 ## Notation and common validation
 
-Objects below are closed: only listed fields are permitted; all required unless marked `?`. Arrays have finite host-configured cardinality/byte bounds. `Id` is nonempty bounded text; `Digest` is lowercase 64-hex SHA-256; `Text` is bounded admitted text, never a secret. Integers are finite nonnegative safe integers; required limit maxima are positive. All numeric values must be finite. Optional means omitted, never null. Reject duplicate IDs, unknown enums, malformed digests, unsupported schemaVersion, NaN and Infinity. Contract-specific validators are planned, not implemented.
+Objects below are closed: only listed fields are permitted; all required unless marked `?`. Arrays have finite host-configured cardinality/byte bounds. `Id` is nonempty bounded text; `Digest` is lowercase 64-hex SHA-256; `Text` is bounded admitted text, never a secret. Integers are finite nonnegative safe integers; required limit maxima are positive. All numeric values must be finite. Optional means omitted, never null. Reject duplicate IDs, unknown enums, malformed digests, unsupported schemaVersion, NaN and Infinity. Local validators are implemented in `src/uc01/contracts.ts`; validation grants no tool authority or real-integration evidence.
 
 ## Invocation (untrusted caller data)
 

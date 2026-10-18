@@ -1,7 +1,7 @@
 # Tasks: UC-01 Evidence-backed Issue Triage
 
 **Input**: [spec](spec.md), [plan](plan.md), [research](research.md), [data model](data-model.md), [schema](contracts/schema.md), [interfaces](contracts/interfaces.md), [acceptance](contracts/acceptance.md), [evaluation contract](contracts/evaluation.md).
-**Status**: T001 artifact/consumer agreement approved on 2026-10-18, including reviewed signatures, finite fixture profile and path ownership; see [decisions](contracts/decisions.md). T001–T004 are complete after coordinator verification. T002–T004 implementation was separately authorized on 2026-10-18; T005–T016 remain open and require separate authorization.
+**Status**: T001 artifact/consumer agreement approved on 2026-10-18, including reviewed signatures, finite fixture profile and path ownership; see [decisions](contracts/decisions.md). T001–T006 are complete after integrated verification. T002–T004 and Phase 3 T005–T006 implementation were separately authorized on 2026-10-18 (Asia/Bangkok). T007–T016 remain open and require separate authorization; real execution and model-quality gates remain unmet.
 **Tests**: Required controlled contract/behavior/evaluation cases. Follow repository test-first guidance after implementation authorization; collection failures do not constitute behavioral RED.
 **Ledger**: This is the only implementation task-status ledger. Tickets group tasks into verifiable slices, never a competing checklist of task completion.
 
@@ -13,7 +13,7 @@ Keep the original 16 task IDs and six Issue groupings. For each task: prepare na
 
 Sequential T001–T016; story tasks carry [US1], [US2] or [US3]. Thai owns all local tasks; Tai owns shared foundation, Thanh Tan persistence/recovery, Trong Tan approval. External delivery names below are gates, not invented foreign task IDs. Path ownership is agreed at T001; shared delivery and later implementation authority remain separate.
 
-`[P]` marks tasks whose dependencies are complete and whose owned paths are disjoint. T005, T007 and T009 are marked `[P]` at the current ready frontier; parallelism markers do not grant implementation authority.
+`[P]` marks tasks whose dependencies are complete and whose owned paths are disjoint. T007 and T009 are marked `[P]` at the current ready frontier; parallelism markers do not grant implementation authority.
 
 ## Phase 1: Setup and agreement
 
@@ -21,7 +21,7 @@ Sequential T001–T016; story tasks carry [US1], [US2] or [US3]. Thai owns all l
   - **Owner**: Thai; coordinates Tai, Thanh Tan and Trong Tan.
   - **Dependencies**: None internally; A-ARTIFACTS and X-FOUNDATION-AGREEMENT are external exit gates.
   - **Owned Paths**: specs/002-uc01-issue-triage/contracts/decisions.md; specs/002-uc01-issue-triage/contracts/schema.md; specs/002-uc01-issue-triage/contracts/interfaces.md; specs/002-uc01-issue-triage/plan.md (coordinator-only agreement amendments).
-  - **Acceptance Checks**: Record actual approval provenance/version and implementation scope; agree triage model role/signature, evidence locator projection, guarded read/search, accounting/policy/continuation binding, finite fixture profile and path ownership. Keep production choices open until real execution. No shared/runtime changes or fabricated approval. Approval and user-reported member agreement recorded on 2026-10-18; implementation authority remains limited to T001.
+  - **Acceptance Checks**: Record actual approval provenance/version and implementation scope; agree triage model role/signature, evidence locator projection, guarded read/search, accounting/policy/continuation binding, finite fixture profile and path ownership. Keep production choices open until real execution. T001's historical scope was documentation and review, with no shared/runtime changes or fabricated approval. Approval and user-reported member agreement were recorded on 2026-10-18; subsequent T002–T006 implementation authorization is recorded in [decisions](contracts/decisions.md#subsequent-implementation-authorization).
   - **Evaluation & Evidence**: Before: review evaluation-first direction, proposed records, source gaps and level-specific gates. Evidence: actual owner/domain-contract approval only; shared runner approval remains X-EVAL-AGREEMENT, not an invented T001 prerequisite for local tests.
 
 ## Phase 2: Contract validation and controlled mocks
@@ -51,14 +51,14 @@ Sequential T001–T016; story tasks carry [US1], [US2] or [US3]. Thai owns all l
 
 **Goal**: Complete mock-backed input-to-assessment slice. **Independent Test**: C01–C08 through injected ports; no UC-03 workflow dependency.
 
-- [ ] T005 [P] [US1] Bind validated intake and original issue in src/uc01/intake.ts and tests/runtime/uc01/intake.test.ts.
+- [X] T005 [US1] Bind validated intake and original issue in src/uc01/intake.ts and tests/runtime/uc01/intake.test.ts.
   - **Owner**: Thai.
   - **Dependencies**: T002, T003, T004.
   - **Owned Paths**: src/uc01/intake.ts; tests/runtime/uc01/intake.test.ts.
   - **Acceptance Checks**: One issue/repository, trusted config/workspace and original-report digest; supplied evidence stays reporter-origin and protected text is rejected before context use. Invalid/oversized input makes zero constrained calls. Preserve caller issue without rewrite stage. C01,C08,C22 pass.
   - **Evaluation & Evidence**: Before intake code: select C01,C08,C13,C15,C16,C22 intake variants/oracles, including irrelevant/oversized/protected input. Run available input/zero-call/denial checks immediately after code; regress contract/port/fixture suites. Retain mock-level outcomes, revision/config and trace refs; actual containment remains T012.
 
-- [ ] T006 [US1] Implement bounded assessment through shared ports in src/uc01/assess.ts and tests/runtime/uc01/assess.test.ts.
+- [X] T006 [US1] Implement bounded assessment through shared ports in src/uc01/assess.ts and tests/runtime/uc01/assess.test.ts.
   - **Owner**: Thai.
   - **Dependencies**: T005.
   - **Owned Paths**: src/uc01/assess.ts; tests/runtime/uc01/assess.test.ts.
@@ -169,9 +169,10 @@ All edges point toward higher task IDs: no cycle. Redundant explicit contract de
 
 - COMPLETE: T001 records the approved baseline, reviewed consumer contract, finite fixture profile and path ownership with user/member approval provenance.
 - COMPLETE: T002–T004 implement the local contract validators, controlled shared-port mocks, and versioned fixture/grading design; checks and local evidence are recorded for this authorized slice. No live calls or runtime capability are claimed.
-- READY but unauthorized: T005, T007 and T009 have all internal predecessors met and remain subject to separate implementation authorization. T006, T008 and T010–T016 remain gated by unchecked predecessors and any external delivery gates.
+- COMPLETE: T005–T006 implement validated intake and bounded initial assessment through injected controlled ports at source revision `0516312a12157ea3e275fa10862e3e67f07771a6`. The integrated five-suite UC-01 regression passed 84 tests; typecheck and lint passed. Initial material questions obtain trusted binding; destination remains undetermined. This is mock behavior evidence, not real-model accuracy or production readiness.
+- READY but unauthorized: T007 and T009 have all internal predecessors met and remain subject to separate implementation authorization. T008 and T010–T016 remain gated by unchecked predecessors and any external delivery gates.
 - MOCK-capable after agreement: T002–T010 and T014; no real foundation prerequisite. T003 is the explicit mock task, T002 explicit validation; T011–T013 explicit real/receiver integration. T013 may use an agreed receiving contract without dispatch but cannot replace missing X-RECEIVER approval.
-- At the current frontier, T005, T007 and T009 own disjoint files and can be delegated in parallel after separate authorization. After T010, T011/T013/T014 are disjoint if external gates permit.
+- At the current frontier, T007 and T009 own disjoint files and can be delegated in parallel after separate authorization. After T010, T011/T013/T014 are disjoint if external gates permit.
 - T006/T008/T010 all edit assess.ts and are strictly sequenced. Never parallelize them or shared contract amendments with consumers.
 
 ## Implementation Strategy
