@@ -199,7 +199,8 @@ export class CallSpy {
     const invocationLimit = operation === 'model' ? context.limits.modelCalls : context.limits.toolCalls;
     const invocationCalls = operation === 'model' ? usage.modelCalls : usage.toolCalls;
     const taskCalls = operation === 'model' ? this.taskModelCalls : this.taskToolCalls;
-    return this.invocations.size <= this.profile.perTask.invocations && invocationCalls < invocationLimit && taskCalls < taskLimit;
+    const invocationAdmitted = this.invocations.has(context.invocationId) || this.invocations.size < this.profile.perTask.invocations;
+    return invocationAdmitted && invocationCalls < invocationLimit && taskCalls < taskLimit;
   }
 
   recordDispatch(operation: PortDispatch, context: OperationContext): void {
@@ -307,7 +308,6 @@ export class ScriptedUc01Ports {
   async guard(context: OperationContext, action: GuardAction): Promise<Admission | SharedFailure> {
     const invalid = this.contextFailure(context);
     if (invalid) { this.calls.recordAttempt('guard', context, invalid); return invalid; }
-    this.calls.registerInvocation(context);
     if (!/^[a-f0-9]{64}$/u.test(action.inputDigest)) {
       const invalidAction = failure('invalid-input', 'invalid-action-digest'); this.calls.recordAttempt('guard', context, invalidAction); return invalidAction;
     }
@@ -323,6 +323,7 @@ export class ScriptedUc01Ports {
     }
     this.admissions.set(scripted.admissionRef, { requestId: context.requestId, contextDigest: scripted.contextDigest,
       actionKind: action.kind, inputDigest: action.inputDigest, reserved: false, used: false });
+    this.calls.registerInvocation(context);
     this.calls.recordAttempt('guard', context, scripted);
     return structuredClone(scripted);
   }

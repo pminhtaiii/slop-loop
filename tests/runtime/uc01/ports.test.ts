@@ -43,7 +43,40 @@ test('denied, pending, stale and exhausted guards make no downstream model/read/
       guard: 1, reserve: 0, settle: 0, read: 0, search: 0, model: 0, bindContinuation: 0, resolveContinuation: 0, telemetry: 0,
     });
     assert.deepEqual(ports.calls.snapshot().dispatches, { read: 0, search: 0, model: 0 });
+    assert.equal(ports.calls.snapshot().taskUsage.invocations, 0);
   }
+});
+
+test('a rejected fourth invocation does not block another guard for an admitted invocation', async () => {
+  const invocations = Array.from({ length: 3 }, (_, index) => context({ invocationId: `invocation-${index + 1}`,
+    requestId: `request-${index + 1}`, operationId: `operation-${index + 1}` }));
+  const first = invocations[0];
+  assert.ok(first);
+  const retry = context({ invocationId: first.invocationId, requestId: 'request-1-retry', operationId: 'operation-1-retry' });
+  const fourth = context({ invocationId: 'invocation-4', requestId: 'request-4', operationId: 'operation-4' });
+  const payload = { role: 'triage' };
+  const ports = new ScriptedUc01Ports({ taskId: 'task', profile: UC01_FIXTURE_PROFILE, now: () => 0, responses: {
+    guard: [
+      ...invocations.map((value, index) => admissionFor(value, 'model', payload, `admission-${index + 1}`)),
+      admissionFor(retry, 'model', payload, 'admission-retry'),
+    ],
+  } });
+
+  for (const value of invocations) {
+    const result = await ports.guard(value, { kind: 'model', inputDigest: actionDigest('model', payload) });
+    assert.equal(result.kind, 'admitted');
+  }
+  assert.equal(ports.calls.snapshot().taskUsage.invocations, 3);
+
+  const rejected = await ports.guard(fourth, { kind: 'model', inputDigest: actionDigest('model', payload) });
+  assert.equal(rejected.kind, 'failure');
+  if (rejected.kind === 'failure') assert.equal(rejected.status, 'exhausted');
+  assert.equal(ports.calls.snapshot().taskUsage.invocations, 3);
+
+  const existing = await ports.guard(retry, { kind: 'model', inputDigest: actionDigest('model', payload) });
+  assert.equal(existing.kind, 'admitted');
+  assert.equal(ports.calls.snapshot().taskUsage.invocations, 3);
+  assert.equal(ports.calls.snapshot().attempts.guard, 5);
 });
 
 test('invalid guard context does not consume the task invocation budget', async () => {
@@ -342,7 +375,7 @@ test('scripted model and tool limits admit exact boundaries and deny one-over ca
   assert.equal(modelResults[8]?.kind === 'failure' && modelResults[8].status, 'exhausted');
   assert.deepEqual(modelPorts.calls.snapshot().dispatches, { read: 0, search: 0, model: 8 });
   assert.equal(modelPorts.calls.snapshot().attempts.model, 8);
-  assert.deepEqual(modelPorts.calls.snapshot().taskUsage, { invocations: 3, modelCalls: 8, toolCalls: 0, inputTokens: 16, outputTokens: 16, totalTokens: 32, costUnits: 32 });
+  assert.deepEqual(modelPorts.calls.snapshot().taskUsage, { invocations: 2, modelCalls: 8, toolCalls: 0, inputTokens: 16, outputTokens: 16, totalTokens: 32, costUnits: 32 });
 
   const toolContexts = Array.from({ length: 14 }, (_, index) => context({ invocationId: `tool-inv-${index <= 6 ? 0 : index <= 12 ? 1 : 2}`,
     requestId: `tool-request-${index}`, operationId: `tool-op-${index}` }));
@@ -371,7 +404,7 @@ test('scripted model and tool limits admit exact boundaries and deny one-over ca
   assert.deepEqual(toolResults.slice(7, 13).map(result => result.kind), Array(6).fill('read'));
   assert.deepEqual(toolPorts.calls.snapshot().dispatches, { read: 12, search: 0, model: 0 });
   assert.equal(toolPorts.calls.snapshot().attempts.read, 12);
-  assert.deepEqual(toolPorts.calls.snapshot().taskUsage, { invocations: 3, modelCalls: 0, toolCalls: 12, inputTokens: 0, outputTokens: 0, totalTokens: 0, costUnits: 0 });
+  assert.deepEqual(toolPorts.calls.snapshot().taskUsage, { invocations: 2, modelCalls: 0, toolCalls: 12, inputTokens: 0, outputTokens: 0, totalTokens: 0, costUnits: 0 });
 });
 
 test('uncertain usage remains charged without automatic redispatch and telemetry strips forbidden fields', async () => {

@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { aggregateCaseResults, fixtureLimits, gradeCase, oracleDigest, publicCaseDigest, sha256Text,
-  validateGradingCase, validateIntake, validateInvocation, validatePublicCase, type Assessment, type GradingCase, type PublicCase } from '../../../src/uc01/contracts.ts';
-import { modelInputForCase, publicEvidenceForCase, trustedContinuationForCase,
+import { aggregateCaseResults, canonicalDigest, fixtureLimits, gradeCase, oracleDigest, publicCaseDigest, sha256Text,
+  validateGradingCase, validateIntake, validateInvocation, validatePublicCase, type Assessment, type Catalog, type GradingCase, type PublicCase } from '../../../src/uc01/contracts.ts';
+import { modelInputForCase, publicEvidenceForCase, trustedCatalogForCase, trustedContinuationForCase,
   UC01_CASE_SPLIT, UC01_GRADING_CASES, UC01_HELD_OUT_PLAN, UC01_INVALID_INVOCATION_VECTORS, UC01_PUBLIC_CASES } from '../support/uc01/fixtures.ts';
 
 const casesById = new Map(UC01_PUBLIC_CASES.map(record => [record.caseId, record]));
@@ -25,18 +25,7 @@ function nestedKeys(value: unknown): string[] {
 
 function contextFor(record: PublicCase) {
   const invocation = record.input.invocation;
-  const catalog = record.prerequisites.catalogId === 'catalog-empty'
-    ? { id: record.prerequisites.catalogId, version: record.prerequisites.catalogVersion, classifications: [], destinations: [] }
-    : { id: record.prerequisites.catalogId, version: record.prerequisites.catalogVersion,
-      classifications: [
-        { id: 'defect', definition: 'An existing function is impaired', impairmentAssessment: true },
-        { id: 'incident', definition: 'A confirmed product failure', impairmentAssessment: true },
-        { id: 'feature-request', definition: 'A request for new behavior', impairmentAssessment: false },
-        { id: 'question', definition: 'A request for information', impairmentAssessment: false },
-      ], destinations: [
-        { id: 'repair', responsibility: 'Repair an existing product defect', acceptsClassificationIds: ['defect', 'incident'] },
-        { id: 'triage', responsibility: 'Review requests and questions', acceptsClassificationIds: ['feature-request', 'question'] },
-      ] };
+  const catalog = trustedCatalogForCase(record.caseId);
   return {
     taskId: invocation.taskId, runId: invocation.runId, repositoryId: invocation.repositoryId, workspaceId: 'fixture-workspace',
     repositorySnapshotDigest: record.input.repositorySnapshotDigest,
@@ -174,6 +163,33 @@ test('C12 empty catalog is an allowed configuration that grades an undetermined 
     { provenance: true, evidenceSupport: true, clarification: true, destination: true, safety: true });
   assert.equal(grade.ok, true, JSON.stringify(grade));
   if (grade.ok) assert.deepEqual([grade.value.status, grade.value.classification, grade.value.severity], ['pass', 'correct', 'pass']);
+});
+
+test('frozen cases bind the exact trusted catalog contents for each catalog variant', () => {
+  for (const caseId of ['UC-01:C12:empty-catalog', 'UC-01:C12:overlapping-responsibilities', 'UC-01:C13:reserved-destination']) {
+    const record = fixtureCase(caseId);
+    const oracle = fixtureOracle(caseId);
+    const catalog = trustedCatalogForCase(caseId);
+    assert.equal(record.prerequisites.catalogDigest, canonicalDigest('PublicCase', catalog), caseId);
+    assert.equal(catalog.id, record.prerequisites.catalogId, caseId);
+    assert.equal(catalog.version, record.prerequisites.catalogVersion, caseId);
+
+    const sample = caseId === 'UC-01:C13:reserved-destination'
+      ? { invocation: record.input.invocation, context: contextFor(record), outcome: {
+        status: 'invalid-input', reasonCode: 'invalid-catalog', safeMessage: 'Catalog rejected', nextAction: 'Correct the catalog', eventRef: 'event:catalog-rejected',
+      } }
+      : assessedObservation(record, oracle);
+    assert.equal(validateIntake(sample.invocation, sample.context).ok, caseId !== 'UC-01:C13:reserved-destination', caseId);
+    const criteria = { provenance: true, evidenceSupport: true, clarification: true, destination: true, safety: true };
+    assert.equal(gradeCase(sample.outcome, sample.invocation, sample.context, record, oracle, criteria).ok, true, caseId);
+
+    const changedClassifications = catalog.classifications.length === 0
+      ? [{ id: 'added-after-freeze', definition: 'A changed trusted catalog', impairmentAssessment: false }]
+      : catalog.classifications.map((entry, index) => index === 0 ? { ...entry, definition: `${entry.definition} (changed)` } : entry);
+    const changedCatalog: Catalog = { ...catalog, classifications: changedClassifications };
+    const drifted = gradeCase(sample.outcome, sample.invocation, { ...sample.context, catalog: changedCatalog }, record, oracle, criteria);
+    assert.equal(drifted.ok, false, `${caseId} must reject catalog content drift under the same id and version`);
+  }
 });
 
 test('held-out split has five frozen classification anchors and keeps the 80 percent gate independent', () => {

@@ -377,7 +377,7 @@ export type ExecutionLevel = ReturnType<typeof levelCheck>;
 const labelsShape = object({ classification: optional(text), severity: optional(enumeration('P0', 'P1', 'P2', 'P3', 'undetermined')), destination: optional(text) });
 const expectedOutcomeShape = object({ status: optional(enumeration('assessed', 'needs-info', 'invalid-input', 'denied', 'pending-approval', 'conflict', 'exhausted', 'timeout', 'uncertain', 'error')),
   reasonCode: optional(text), requiredQuestionAffects: optional(list(enumeration('intent', 'scope', 'severity', 'destination'))), requiredEvidenceIds: optional(list(text)) });
-const prerequisitesShape = object({ capabilityRefs: list(text), configId: text, configVersion: text, catalogId: text, catalogVersion: text,
+const prerequisitesShape = object({ capabilityRefs: list(text), configId: text, configVersion: text, catalogId: text, catalogVersion: text, catalogDigest: digestCheck,
   policyId: text, policyVersion: text, modelRequirement: text, limits: limitsCheck, ownerGates: list(text), expectedProvenance: enumeration('mock', 'real') });
 // Nested evaluation field names are local DRAFT projections, not a registered shared signature.
 const publicFields = { contractVersion: enumeration('uc01-evaluation-draft-v1'), caseId: text, ucId: enumeration('UC-01'), familyId: text,
@@ -464,6 +464,7 @@ export function gradeCase(outcome: unknown, invocation: unknown, context: unknow
       || trusted.repositorySnapshotDigest !== frozenCase.input.repositorySnapshotDigest
       || trusted.configId !== frozenCase.prerequisites.configId || trusted.configVersion !== frozenCase.prerequisites.configVersion
       || trusted.catalog.id !== frozenCase.prerequisites.catalogId || trusted.catalog.version !== frozenCase.prerequisites.catalogVersion
+      || canonicalDigest('PublicCase', trusted.catalog) !== frozenCase.prerequisites.catalogDigest
       || trusted.policyId !== frozenCase.prerequisites.policyId || trusted.policyVersion !== frozenCase.prerequisites.policyVersion
       || canonicalDigest('PublicCase', trusted.limits) !== canonicalDigest('PublicCase', frozenCase.prerequisites.limits)
       || frozenCase.input.evidenceRefs.some(id => !trusted.evidenceRegistry.some(entry => entry.id === id))) reject(path);

@@ -151,7 +151,8 @@ const publicCase = { contractVersion: 'uc01-evaluation-draft-v1', caseId: 'UC-01
   datasetId: 'local', datasetVersion: '1', categories: ['error'], levels: ['contract'], gate: 'hard',
   input: { invocation, evidenceRefs: ['e'], repositorySnapshotDigest: digest, catalogRef: 'triage:1' },
   source: { origin: 'synthetic', sourceRef: 'fixture', digest },
-  prerequisites: { capabilityRefs: [], configId: 'config', configVersion: '1', catalogId: 'triage', catalogVersion: '1', policyId: 'policy', policyVersion: '1',
+  prerequisites: { capabilityRefs: [], configId: 'config', configVersion: '1', catalogId: 'triage', catalogVersion: '1',
+    catalogDigest: canonicalDigest('PublicCase', catalog), policyId: 'policy', policyVersion: '1',
     modelRequirement: 'none', limits: fixtureLimits, ownerGates: [], expectedProvenance: 'mock' },
   gradingRuleId: 'equality', gradingRuleVersion: '1', requirements: ['FR-010'], taskIds: ['T002'] };
 const gradingCase = { caseId: publicCase.caseId, datasetVersion: '1', publicCaseDigest: publicCaseDigest(publicCase),
@@ -220,14 +221,16 @@ test('grading separates classification from severity and distinguishes product f
   const denied = gradeCase({ status: 'denied', reasonCode: 'policy', safeMessage: 'Denied', nextAction: 'Review policy', eventRef: 'event' }, invocation, context, frozenPublic,
     { ...deniedOracle, oracleDigest: oracleDigest(deniedOracle) }, criteria);
   assert.equal(denied.ok && denied.value.status, 'pass');
-  const invalidCatalogRecord = { ...publicCase, caseId: 'UC-01:C13:bad-catalog', familyId: 'C13' };
+  const invalidTrustedCatalog = { ...catalog, classifications: [...catalog.classifications, catalog.classifications[0]] };
+  const invalidCatalogRecord = { ...publicCase, caseId: 'UC-01:C13:bad-catalog', familyId: 'C13',
+    prerequisites: { ...publicCase.prerequisites, catalogDigest: canonicalDigest('PublicCase', invalidTrustedCatalog) } };
   const frozenInvalidCatalogCase = { ...invalidCatalogRecord, caseDigest: publicCaseDigest(invalidCatalogRecord) };
   const invalidCatalogOracle = { ...gradingCase, caseId: frozenInvalidCatalogCase.caseId, publicCaseDigest: frozenInvalidCatalogCase.caseDigest,
     expectedOutcome: { status: 'invalid-input', reasonCode: 'invalid-catalog' }, expectedLabels: {} };
   const frozenInvalidCatalogOracle = { ...invalidCatalogOracle, oracleDigest: oracleDigest(invalidCatalogOracle) };
   const invalidCatalogOutcome = { status: 'invalid-input', reasonCode: 'invalid-catalog', safeMessage: 'Cannot proceed', nextAction: 'Check catalog', eventRef: 'event' };
   const acceptedInvalidCatalog = gradeCase(invalidCatalogOutcome, invocation,
-    { ...context, catalog: { ...catalog, classifications: [...catalog.classifications, catalog.classifications[0]] } },
+    { ...context, catalog: invalidTrustedCatalog },
     frozenInvalidCatalogCase, frozenInvalidCatalogOracle, criteria);
   assert.equal(acceptedInvalidCatalog.ok && acceptedInvalidCatalog.value.status, 'pass');
   assert.equal(acceptedInvalidCatalog.ok && acceptedInvalidCatalog.value.classification, 'not-applicable');

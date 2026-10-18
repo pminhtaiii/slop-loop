@@ -1,5 +1,5 @@
-import { fixtureLimits, oracleDigest, publicCaseDigest, sha256Text,
-  type Continuation, type Evidence, type GradingCase, type Invocation, type PublicCase } from '../../../../src/uc01/contracts.ts';
+import { canonicalDigest, fixtureLimits, oracleDigest, publicCaseDigest, sha256Text,
+  type Catalog, type Continuation, type Evidence, type GradingCase, type Invocation, type PublicCase } from '../../../../src/uc01/contracts.ts';
 
 const DATASET_ID = 'uc01-evaluation-draft-v1';
 const DATASET_VERSION = '1.0.0-draft.1';
@@ -149,6 +149,34 @@ function deepFreeze<T>(value: T): T {
   return value;
 }
 
+export function trustedCatalogForCase(caseId: string): Catalog {
+  const spec = fixtureSpecs.find(candidate => candidate.caseId === caseId);
+  if (!spec) throw new Error(`No catalog fixture for ${caseId}`);
+  const catalogId = spec.catalogId ?? 'catalog-standard';
+  const classifications = [
+    { id: 'defect', definition: 'An existing function is impaired', impairmentAssessment: true },
+    { id: 'incident', definition: 'A confirmed product failure', impairmentAssessment: true },
+    { id: 'feature-request', definition: 'A request for new behavior', impairmentAssessment: false },
+    { id: 'question', definition: 'A request for information', impairmentAssessment: false },
+  ];
+  const standardDestinations = [
+    { id: 'repair', responsibility: 'Repair an existing product defect', acceptsClassificationIds: ['defect', 'incident'] },
+    { id: 'triage', responsibility: 'Review requests and questions', acceptsClassificationIds: ['feature-request', 'question'] },
+  ];
+  if (catalogId === 'catalog-empty') return deepFreeze({ id: catalogId, version: '1', classifications: [], destinations: [] });
+  if (catalogId === 'catalog-overlapping-responsibilities') {
+    const responsibility = 'Review and route configured product issues';
+    return deepFreeze({ id: catalogId, version: '1', classifications, destinations: [
+      { id: 'repair', responsibility, acceptsClassificationIds: ['defect', 'incident'] },
+      { id: 'triage', responsibility, acceptsClassificationIds: ['defect', 'feature-request', 'question'] },
+    ] });
+  }
+  if (catalogId === 'catalog-reserved-destination') return deepFreeze({ id: catalogId, version: '1', classifications, destinations: [
+    { id: 'undetermined', responsibility: 'Reserved destination rejected by the catalog contract', acceptsClassificationIds: ['defect'] },
+  ] });
+  return deepFreeze({ id: catalogId, version: '1', classifications, destinations: standardDestinations });
+}
+
 function familyOf(caseId: string): string {
   const match = /^UC-01:(C(?:0[1-9]|1[0-9]|2[0-2])):/u.exec(caseId);
   if (!match?.[1]) throw new Error(`Invalid fixture family in ${caseId}`);
@@ -183,6 +211,7 @@ function makePublicCase(spec: FixtureSpec): Readonly<{ record: PublicCase; evide
   const issueId = `issue:${spec.caseId}`;
   const reportDigest = sha256Text(spec.report);
   const taskId = spec.taskId ?? `task:${spec.caseId}`;
+  const catalog = trustedCatalogForCase(spec.caseId);
   const invocationRecord = {
     schemaVersion: 'uc01-draft-v1',
     invocationId: `invocation:${spec.caseId}`,
@@ -237,8 +266,9 @@ function makePublicCase(spec: FixtureSpec): Readonly<{ record: PublicCase; evide
       capabilityRefs: heldOut ? ['model.triage', 'evidence.admission'] : ['controlled-mock.triage', 'evidence.admission'],
       configId: CONFIG_ID,
       configVersion: CONFIG_VERSION,
-      catalogId: spec.catalogId ?? 'catalog-standard',
-      catalogVersion: '1',
+      catalogId: catalog.id,
+      catalogVersion: catalog.version,
+      catalogDigest: canonicalDigest('PublicCase', catalog),
       policyId: spec.policyId ?? POLICY_ID,
       policyVersion: POLICY_VERSION,
       modelRequirement: spec.modelRequirement ?? 'controlled-mock-only-no-live-calls',
