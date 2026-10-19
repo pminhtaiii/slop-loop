@@ -4,6 +4,7 @@ import { fixtureLimits, sha256Text, validateIntake, validateModelResponse, valid
   type Invocation, type Limits, type Outcome, type Question, type Usage } from './contracts.ts';
 import { IntakeBinder, type ExcerptAdmission, type ModelEvidence } from './intake.ts';
 import { bindClarification, projectClarification } from './clarify.ts';
+import { projectRecommendation } from './recommend.ts';
 
 export type OperationContext = Readonly<{ taskId: string; runId: string; invocationId: string; repositoryId: string; workspaceId: string;
   repositorySnapshotDigest: string; configId: string; configVersion: string; policyId: string; policyVersion: string;
@@ -116,7 +117,7 @@ async function bounded(call: () => Promise<unknown>, timeoutMs: number): Promise
   } finally { if (timer !== undefined) clearTimeout(timer); }
 }
 
-/** Controlled assessment and later-answer composition; configured routing remains separate. */
+/** Controlled assessment, clarification and configured recommendation without workflow dispatch. */
 export class IssueAssessor {
   private readonly dependencies: AssessmentDependencies;
   constructor(dependencies: AssessmentDependencies) { this.dependencies = dependencies; }
@@ -229,13 +230,14 @@ export class IssueAssessor {
           stop('error', 'invalid-model-output');
         }
         if (response.value.kind === 'assessment') {
-          if (response.value.proposal.destination.value !== 'undetermined') stop('error', 'destination-not-supported');
-          const projected = projectClarification(response.value.proposal, intake.value, currentContext);
+          const clarified = projectClarification(response.value.proposal, intake.value, currentContext);
+          if (!clarified.ok) stop(clarified.reasonCode === 'question-budget-exhausted' ? 'exhausted' : 'error', clarified.reasonCode);
+          const projected = projectRecommendation(clarified.value, currentContext);
           if (!projected.ok) stop(projected.reasonCode === 'question-budget-exhausted' ? 'exhausted' : 'error', projected.reasonCode);
           const assessment: Assessment = { ...projected.value, assessmentId: `${input.invocationId}:assessment`, issueId: input.issue.id,
             reportDigest: input.issue.reportDigest, repositoryId: context.repositoryId, repositorySnapshotDigest: context.repositorySnapshotDigest,
             catalogId: context.catalog.id, catalogVersion: context.catalog.version, provenance: 'mock',
-            uncertainties: [...new Set([...response.value.proposal.uncertainties, ...researchUncertainties])] };
+            uncertainties: [...new Set([...projected.value.uncertainties, ...researchUncertainties])] };
           questions = assessment.questions.length;
           if (questions) {
             // Validate the complete assessment before making a durable binding request.
