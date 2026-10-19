@@ -87,7 +87,7 @@ Sequential T001–T016; story tasks carry [US1], [US2] or [US3]. Thai owns all l
 
 **Goal**: Supported recommendation without dispatch. **Independent Test**: C07,C12,C13 with prepared valid assessments and varied catalogs.
 
-- [ ] T009 [P] [US3] Implement catalog-constrained recommendation in src/uc01/recommend.ts and tests/runtime/uc01/recommend.test.ts.
+- [X] T009 [P] [US3] Implement catalog-constrained recommendation in src/uc01/recommend.ts and tests/runtime/uc01/recommend.test.ts.
   - **Owner**: Thai.
   - **Dependencies**: T002, T003, T004.
   - **Owned Paths**: src/uc01/recommend.ts; tests/runtime/uc01/recommend.test.ts.
