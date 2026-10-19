@@ -2,7 +2,7 @@
 
 These tables preserve target evidence criteria for the planned slop-loop runtime and evaluation system. They do not report current implementation status. See [`context/progress_checker.md`](../context/progress_checker.md) for repository observations. Listing a capability here does not select it for scope or show that it exists.
 
-`OUT_OF_SCOPE` is a scope decision, not a verification status. The first implementation batch selected UC-03, UC-04, and UC-05; UC-01 later received separate local authorization through T006 on 2026-10-18. Assignments, dependencies, and delivery briefs live in the [delegation map](use-case-delegation.md). The final submitted set remains open. Record scope separately from whether a capability is implemented or verified.
+`OUT_OF_SCOPE` is a scope decision, not a verification status. The first implementation batch selected UC-03, UC-04, and UC-05; UC-01 later received separate local authorization through T010 on 2026-10-19 (Asia/Bangkok). Assignments, dependencies, and delivery briefs live in the [delegation map](use-case-delegation.md). The final submitted set remains open. Record scope separately from whether a capability is implemented or verified.
 
 ## Repository tools and security
 
@@ -112,7 +112,7 @@ Track only skills selected for implementation.
 
 ## Candidate use cases and knowledge coverage
 
-The table below is the use-case catalog. UC-03, UC-04, and UC-05 were selected for the first implementation batch; UC-01 has subsequent local authorization through T006, and the remaining entries are candidates. Selection does not establish implementation readiness or verification.
+The table below is the use-case catalog. UC-03, UC-04, and UC-05 were selected for the first implementation batch; UC-01 has subsequent local authorization through T010, and the remaining entries are candidates. Selection does not establish implementation readiness or verification.
 
 | ID | Candidate use case |
 |---|---|

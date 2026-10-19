@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-17 (Asia/Bangkok)
 
-**Status**: Existing artifact baseline and T001 consumer/fixture agreement approved on 2026-10-18; T001–T008 complete at the controlled local level. The user separately authorized Phase 4 T007–T008 on 2026-10-19 (Asia/Bangkok); see [decisions](contracts/decisions.md). T009 onward and real execution remain separately gated.
+**Status**: Existing artifact baseline and T001 consumer/fixture agreement approved on 2026-10-18; T001–T010 complete at the controlled local level. The user separately authorized Phase 5 T009–T010 on 2026-10-19 (Asia/Bangkok); see [decisions](contracts/decisions.md). T011 onward and real execution remain separately gated.
 
 **Input**: One supplied issue for one selected repository; assess classification, severity, evidence, material unknowns and a configured backend recommendation.
 
@@ -107,5 +107,5 @@ As an integrator, I receive a recommendation from my configured destination cata
 - [ADR-0005](../../docs/adr/0005-uc01-triage-boundary-and-assessment.md) is accepted; consumer contracts/task paths are approved at T001; later delivery gates remain separate.
 - Application supplies authorized repository, catalogs and caller context; issue text never chooses host paths or policy.
 - Classification defaults, provider/model, numeric production limits and deployment interface remain owner decisions. Test examples are not defaults.
-- Technical readiness and permission to implement are separate: T001–T008 are complete under their separate user authorizations, and T009 onward requires separate authorization.
+- Technical readiness and permission to implement are separate: T001–T010 are complete under their separate user authorizations, and T011 onward requires separate authorization.
 - The current user reports leader agreement to evaluation-first incremental delivery; this approves a direction, not the proposed evaluation schema, new authority or runtime implementation. See [evaluation contract](contracts/evaluation.md) and [decision/source gaps](contracts/decisions.md). The two original coursework Markdown documents were not available for independent verification; supplied minima are used explicitly, not presented as independently checked quotations.
