@@ -112,7 +112,7 @@ function validFacts(input: unknown): input is PolicyFacts {
   if (!isData(input) || !record(input, FACT_KEYS)) return false;
   if (!['taskId', 'workspaceId', 'repositoryId', 'continuationRef'].every(key => id(input[key])) ||
     !sha(input['repositoryRevisionDigest']) || !sha(input['registeredActionDigest']) ||
-    !['coder', 'reviewer'].includes(String(input['role']))) return false;
+    (input['role'] !== 'coder' && input['role'] !== 'reviewer')) return false;
   if (!record(input['policyIdentity'], IDENTITY_KEYS) || !Object.values(input['policyIdentity']).every(id)) return false;
   if (!record(input['safety'], SAFETY_KEYS) || !Object.values(input['safety']).every(value => typeof value === 'boolean')) return false;
   const patch = input['patch'];

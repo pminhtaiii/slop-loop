@@ -213,3 +213,11 @@ test('sparse fact arrays and inconsistent fix-plan facts fail closed', () => {
   const action: NormalizedAction = { actionId: 'plan-1', kind: 'approve_fix_plan', planVersion: 1, strategyDigest: digest, diagnosisEvidenceRefs: ['evidence-1'], checkSetDigest: digest };
   assert.equal(policy().value.classify(action, { ...factsFor(action), command: factsFor(command).command }).ok, false);
 });
+
+test('malformed object roles return typed invalid without coercion or throwing', () => {
+  for (const role of [Object.create(null) as unknown, {}, ['coder']]) {
+    assert.deepEqual(policy().value.classify(command, { ...factsFor(command), role }), {
+      ok: false, outcome: 'invalid', reasonCode: 'invalid-trusted-facts',
+    });
+  }
+});
