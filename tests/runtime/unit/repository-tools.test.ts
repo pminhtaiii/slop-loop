@@ -162,7 +162,7 @@ class FakeHostFilesystemPort implements TrustedFilesystemPort {
     return Array.from(entries.values());
   }
 
-  async readTextFile(canonicalPath: string): Promise<string> {
+  async readTextFile(canonicalPath: string, maxBytes?: number): Promise<string> {
     this.readTextFileCalls.push(canonicalPath);
     if (this.onReadTextFile) {
       await this.onReadTextFile(canonicalPath);
@@ -170,6 +170,10 @@ class FakeHostFilesystemPort implements TrustedFilesystemPort {
     const rec = this.files.get(canonicalPath);
     if (!rec) {
       throw new Error(`ENOENT: no such file or directory, open '${canonicalPath}'`);
+    }
+    // Fixtures are already in memory; emulate rejection before returning content.
+    if (maxBytes !== undefined && Buffer.byteLength(rec.content, 'utf-8') > maxBytes) {
+      throw new Error('FILE_TOO_LARGE: Read exceeded byte limit');
     }
     return rec.content;
   }
@@ -775,6 +779,51 @@ describe('ControlledRepositoryTools (Slice T007-a)', () => {
       assert.equal(results.length, 0);
       assert.equal(fsPort.readTextFileCalls.includes('src/oversized.py'), false);
       assert.ok(fsPort.statCalls.includes('src/oversized.py'));
+    });
+
+    it('skips a file that grows beyond maxFileSizeBytes after stat during searchCode', async () => {
+      fsPort.setFile('src/growing.py', 'target');
+      fsPort.setFile('src/within-limit.py', 'target');
+      fsPort.onReadTextFile = (path) => {
+        if (path === 'src/growing.py') fsPort.setFile(path, 'target grows past the limit');
+      };
+      const tools = new ControlledRepositoryTools({
+        guardCapability: guard,
+        fsPort,
+        limits: { maxExcerptBytes: 100, maxResultCount: 10, maxFileSizeBytes: 8 },
+      });
+
+      const results = await tools.searchCode('target');
+
+      assert.deepEqual(results.map((result) => result.path), ['src/within-limit.py']);
+      assert.ok(fsPort.readTextFileCalls.includes('src/growing.py'));
+    });
+
+    it('rejects readFile when UTF-8 content grows beyond maxFileSizeBytes after stat', async () => {
+      fsPort.setFile('src/growing.py', '中');
+      fsPort.onReadTextFile = (path) => {
+        if (path === 'src/growing.py') fsPort.setFile(path, '中文');
+      };
+      const tools = new ControlledRepositoryTools({
+        guardCapability: guard,
+        fsPort,
+        limits: { maxExcerptBytes: 100, maxResultCount: 10, maxFileSizeBytes: 4 },
+      });
+
+      await assert.rejects(() => tools.readFile('src/growing.py'), /FILE_TOO_LARGE/);
+      assert.ok(fsPort.readTextFileCalls.includes('src/growing.py'));
+    });
+
+    it('admits UTF-8 content exactly at maxFileSizeBytes for readFile and searchCode', async () => {
+      fsPort.setFile('src/exact.py', '🙂');
+      const tools = new ControlledRepositoryTools({
+        guardCapability: guard,
+        fsPort,
+        limits: { maxExcerptBytes: 100, maxResultCount: 10, maxFileSizeBytes: 4 },
+      });
+
+      assert.equal((await tools.readFile('src/exact.py')).boundedExcerpt, '🙂');
+      assert.deepEqual((await tools.searchCode('🙂')).map((result) => result.path), ['src/exact.py']);
     });
 
     it('limits searchCode results to maxResultCount and excludes protected files/secrets', async () => {

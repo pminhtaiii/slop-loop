@@ -50,7 +50,14 @@ export interface TrustedFilesystemPort extends PortIdentity {
   lstat(canonicalPath: string): Promise<FileStat>;
   realpath(canonicalPath: string): Promise<string>;
   readDir(canonicalPath: string): Promise<readonly TrustedFilesystemEntry[]>;
-  readTextFile(canonicalPath: string): Promise<string>;
+  /**
+   * If maxBytes is supplied, enforce it on raw bytes from the opened file handle
+   * throughout the read, even if the file grows or is replaced after stat.
+   * Read at most maxBytes + 1 bytes (including an overflow probe), reject with
+   * FILE_TOO_LARGE on overflow, and close the handle on success or failure.
+   * Never load the whole oversized file and then validate or truncate it.
+   */
+  readTextFile(canonicalPath: string, maxBytes?: number): Promise<string>;
   getCurrentRevisionDigest(): Promise<string>;
 }
 
@@ -369,7 +376,7 @@ export class ControlledRepositoryTools implements RepositoryPort {
           throw new Error(`TOCTOU_RESOLUTION_SWAP: Path '${filePath}' resolution changed from '${preCheck.resolvedPath}' to '${immediateCheck.resolvedPath}' before read`);
         }
 
-        const content = await this.fsPort.readTextFile(filePath);
+        const content = await this.fsPort.readTextFile(filePath, this.limits.maxFileSizeBytes);
 
         const postReadRevision = await this.recheckRevision();
         if (postReadRevision !== initialRevision) {
@@ -453,7 +460,7 @@ export class ControlledRepositoryTools implements RepositoryPort {
                   throw new Error(`REVISION_DRIFT: Revision changed from ${initialRevision} to ${preReadRev} before read in searchCode`);
                 }
 
-                const content = await this.fsPort.readTextFile(child);
+                const content = await this.fsPort.readTextFile(child, this.limits.maxFileSizeBytes);
 
                 const postReadRev = await this.recheckRevision();
                 if (postReadRev !== initialRevision) {
