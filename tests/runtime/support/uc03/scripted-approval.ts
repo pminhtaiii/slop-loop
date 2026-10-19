@@ -9,7 +9,7 @@ import {
   computeCanonicalSha256,
   parseApprovalBinding,
   validateApprovalBinding,
-} from '../../../../src/contracts/uc03.ts';
+} from '../../../../src/contracts/foundation/uc03.ts';
 
 export interface ScriptedApprovalPortOptions {
   readonly classifications?: Readonly<Record<string, PermissionClass>> | undefined;

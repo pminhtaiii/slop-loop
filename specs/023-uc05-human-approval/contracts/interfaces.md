@@ -4,7 +4,7 @@
 
 ## Canonical ApprovalPort compatibility
 
-Reuse [canonical contracts](../../../src/contracts/uc03.ts) and [shared interfaces](../../001-verified-code-repair/contracts/interfaces.md). The real task-scoped implementation supplies `classify(action)`, `requestDecision(binding)`, `validateBinding(binding)`, `resolve(decisionId)` and `provenance: real` only when its real dependencies are admitted. It never constructs real provenance around mock dependencies.
+Reuse [canonical contracts](../../../src/contracts/foundation/uc03.ts) and [shared interfaces](../../001-verified-code-repair/contracts/interfaces.md). The real task-scoped implementation supplies `classify(action)`, `requestDecision(binding)`, `validateBinding(binding)`, `resolve(decisionId)` and `provenance: real` only when its real dependencies are admitted. It never constructs real provenance around mock dependencies.
 
 - **classify** validates action and combines it with a fresh host-owned policy/admission context; returns the canonical three permission classes. Invalid/incomplete inputs produce a typed safe input/prerequisite error translated by the shared guard into zero-dispatch denial, not a fourth permission or permissive fallback. Pure classification grants no execution authority.
 - **requestDecision** accepts only a validated pending binding for a registered trusted action/continuation; caller-supplied approved/rejected status cannot insert consent. It atomically creates/resolves an idempotent pending slot through UC-04 and returns its current canonical projection without blocking a process awaiting terminal input. Only the operator channel supplies terminal decisions.

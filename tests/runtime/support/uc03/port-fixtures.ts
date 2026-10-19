@@ -22,7 +22,7 @@ import {
   type ExecutionLimits,
   type BudgetLimits,
   CONTRACT_VERSION,
-} from '../../../../src/contracts/uc03.ts';
+} from '../../../../src/contracts/foundation/uc03.ts';
 
 export function createFixtureExecutionLimits(): ExecutionLimits {
   return {

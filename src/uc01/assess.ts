@@ -1,5 +1,5 @@
 import { isProtectedPathRef, isProtectedPayload } from '../foundation/telemetry.ts';
-import { validateSourceEvidence } from '../contracts/uc03.ts';
+import { validateSourceEvidence } from '../contracts/foundation/uc03.ts';
 import { fixtureLimits, sha256Text, validateIntake, validateModelResponse, validateOutcome, type Assessment, type Catalog, type Failure,
   type Invocation, type Limits, type Outcome, type Question, type Usage } from './contracts.ts';
 import { IntakeBinder, type ExcerptAdmission, type ModelEvidence } from './intake.ts';

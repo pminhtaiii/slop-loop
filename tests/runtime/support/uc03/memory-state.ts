@@ -16,7 +16,7 @@ import {
   validateReservationBundle,
   validateProviderUsage,
   computeCanonicalSha256,
-} from '../../../../src/contracts/uc03.ts';
+} from '../../../../src/contracts/foundation/uc03.ts';
 
 export class StateConflictError extends Error {
   readonly code = 'CAS_CONFLICT' as const;

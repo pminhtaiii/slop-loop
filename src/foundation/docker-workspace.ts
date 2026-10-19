@@ -41,7 +41,7 @@ import {
   validateTaskWorkspace,
   validateExecutionLimits,
   validateNormalizedAction,
-} from '../contracts/uc03.ts';
+} from '../contracts/foundation/uc03.ts';
 
 export interface DockerResourceLimits {
   readonly maxMemoryBytes: number;

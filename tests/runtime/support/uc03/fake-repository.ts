@@ -32,7 +32,7 @@ import {
   validateSourceEvidence,
   validateCheckResult,
   computeCanonicalSha256,
-} from '../../../../src/contracts/uc03.ts';
+} from '../../../../src/contracts/foundation/uc03.ts';
 
 export interface RepositorySnapshot {
   readonly revisionDigest: string;

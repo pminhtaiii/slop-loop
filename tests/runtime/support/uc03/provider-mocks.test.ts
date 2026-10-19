@@ -11,7 +11,7 @@ import {
   type ModelPortResult,
   type ReviewResult,
   type TrustedDiffLines,
-} from '../../../../src/contracts/uc03.ts';
+} from '../../../../src/contracts/foundation/uc03.ts';
 import { ScriptedModelPort } from './scripted-model.ts';
 import { ScriptedReviewerPort } from './scripted-reviewer.ts';
 import { FakeRepositoryPort } from './fake-repository.ts';

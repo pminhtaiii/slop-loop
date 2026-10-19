@@ -6,7 +6,7 @@ import {
   type TelemetryPort,
   isProtectedPath,
   validateActivityEvent,
-} from '../contracts/uc03.ts';
+} from '../contracts/foundation/uc03.ts';
 
 export interface TelemetryOptions {
   readonly provenance?: PortProvenance;

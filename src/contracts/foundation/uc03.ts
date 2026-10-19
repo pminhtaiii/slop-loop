@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 /**
  * UC-03 Verified Code Repair - Canonical v0.1 Contracts and Runtime Validators
  *
- * Owned path: src/contracts/uc03.ts
+ * Owned path: src/contracts/foundation/uc03.ts
  * Feature: specs/001-verified-code-repair
  */
 

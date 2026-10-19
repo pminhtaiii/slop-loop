@@ -14,7 +14,7 @@ import {
   validateSafePresentation,
   validateDecisionEvent,
   validateSafeResult,
-} from '../../../src/approvals/contracts.ts';
+} from '../../../src/contracts/approvals/contracts.ts';
 
 const validTaskControl = {
   schemaVersion: 'uc05-approval/0.1-draft',

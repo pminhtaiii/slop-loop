@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { type ApprovalBindingContext, type ReviewResult, computeCanonicalSha256, validateReviewResult } from '../../../src/contracts/uc03.ts';
+import { type ApprovalBindingContext, type ReviewResult, computeCanonicalSha256, validateReviewResult } from '../../../src/contracts/foundation/uc03.ts';
 import { MemoryStatePort } from '../support/uc03/memory-state.ts';
 import { ScriptedApprovalPort } from '../support/uc03/scripted-approval.ts';
 import { ScriptedModelPort } from '../support/uc03/scripted-model.ts';

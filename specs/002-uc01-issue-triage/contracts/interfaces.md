@@ -1,6 +1,6 @@
 # Shared Consumer Interfaces: UC-01
 
-**Status**: `uc01-consumer-v1` approved at T001 on 2026-10-18 through user-confirmed member agreement in [decisions](decisions.md); implementation and real adapter deliveries remain separate gates. Accepted UC-03 [interfaces](../../001-verified-code-repair/contracts/interfaces.md) and [canonical types](../../../src/contracts/uc03.ts) remain unchanged.
+**Status**: `uc01-consumer-v1` approved at T001 on 2026-10-18 through user-confirmed member agreement in [decisions](decisions.md); implementation and real adapter deliveries remain separate gates. Accepted UC-03 [interfaces](../../001-verified-code-repair/contracts/interfaces.md) and [canonical types](../../../src/contracts/foundation/uc03.ts) remain unchanged.
 
 ## Operations and ownership
 

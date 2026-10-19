@@ -4,7 +4,7 @@ import {
   type ActivityEvent,
   type ProviderUsage,
   isAdmittedForProduction,
-} from '../../../src/contracts/uc03.ts';
+} from '../../../src/contracts/foundation/uc03.ts';
 import {
   SanitizedTelemetry,
   sanitizeText,

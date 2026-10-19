@@ -24,12 +24,12 @@ import type {
   RunCommandAction,
   CheckDefinition,
   CheckResult,
-} from '../contracts/uc03.ts';
+} from '../contracts/foundation/uc03.ts';
 import {
   isCanonicalRelativePath,
   isProtectedPath,
   validateSourceEvidence,
-} from '../contracts/uc03.ts';
+} from '../contracts/foundation/uc03.ts';
 
 export interface FileStat {
   readonly isFile: boolean;

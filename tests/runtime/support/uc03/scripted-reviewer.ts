@@ -27,7 +27,7 @@ import {
   type ReviewResult,
   type DispatchAdmissionContext,
   validateDispatchAdmission,
-} from '../../../../src/contracts/uc03.ts';
+} from '../../../../src/contracts/foundation/uc03.ts';
 
 export interface ReviewerCallRecord {
   readonly task: BugTask;

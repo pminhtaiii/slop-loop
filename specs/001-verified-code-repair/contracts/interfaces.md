@@ -1,6 +1,6 @@
 # Shared Interfaces: UC-03 Contract v0.1
 
-**Status**: T001 records accepted logical contract v0.1 and shared-owner agreement in [decisions](decisions.md). T003 provides the executable schema version `0.1.0` in [canonical contracts](../../../src/contracts/uc03.ts), with conformance vectors in [contract tests](../../../tests/runtime/contract/uc03.test.ts). All later consumers and mocks use these validators; no alternate schemas. Additive changes require contract tests; breaking changes update the version and all consumers before integration. Schema conformance does not establish real adapter, isolation, durability or workflow acceptance.
+**Status**: T001 records accepted logical contract v0.1 and shared-owner agreement in [decisions](decisions.md). T003 provides the executable schema version `0.1.0` in [canonical contracts](../../../src/contracts/foundation/uc03.ts), with conformance vectors in [contract tests](../../../tests/runtime/contract/uc03.test.ts). All later consumers and mocks use these validators; no alternate schemas. Additive changes require contract tests; breaking changes update the version and all consumers before integration. Schema conformance does not establish real adapter, isolation, durability or workflow acceptance.
 
 ## Envelope and validation
 

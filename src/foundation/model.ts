@@ -30,7 +30,7 @@ import {
   validateModelResult,
   validateProviderUsage,
   computeCanonicalSha256,
-} from '../contracts/uc03.ts';
+} from '../contracts/foundation/uc03.ts';
 
 export interface HostModelCaps {
   readonly timeoutMs: number;

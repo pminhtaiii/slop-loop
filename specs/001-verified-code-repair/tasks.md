@@ -29,10 +29,10 @@ Tai is accountable for all local tasks, including shared foundation. Named lanes
 
 ## Phase 2: Foundational (Minimal Development Prerequisites)
 
-- [X] T003 Implement canonical contract validators and conformance vectors in src/contracts/uc03.ts and tests/runtime/contract/uc03.test.ts.
+- [X] T003 Implement canonical contract validators and conformance vectors in src/contracts/foundation/uc03.ts and tests/runtime/contract/uc03.test.ts.
   - **Owner**: Tai / contracts lane; UC-04/UC-05 owners review their ports.
   - **Dependencies**: T001, T002.
-  - **Owned Paths**: src/contracts/uc03.ts; tests/runtime/contract/uc03.test.ts.
+  - **Owned Paths**: src/contracts/foundation/uc03.ts; tests/runtime/contract/uc03.test.ts.
   - **Acceptance Checks**: Behavioral tests reject malformed input/model/review/checkpoint/action data, invalid finite limits, stale digests and invalid transitions; agree envelope/version and typed outcomes from interfaces.md. One schema suite applies unchanged to mocks and real adapters. No persistence or approval implementation here. Include CommandView admission/digest and ProviderRequest role, finite ceilings, pre-dispatch reservation refs, observed/uncertain usage vectors from the revised data model; no provider call may accept a post-call estimate as authority.
 
 - [X] T004 Build controlled port mocks in tests/runtime/support/uc03/ and verify them in tests/runtime/contract/uc03-mocks.test.ts.
@@ -301,7 +301,7 @@ Develop accepted contract mocks once (T004), then run independent story lanes on
 - [X] T035 Preserve Node.js 24 source-test discovery and compiled runtime-test compatibility per FR-013 (partial).
   - **Owner**: Tai / integration lane.
   - **Dependencies**: T003; apply the same import convention to T004 files before final publication.
-  - **Owned Paths**: tsconfig.json; src/contracts/uc03.ts (erasable TypeScript syntax only); tests/runtime/contract/uc03.test.ts; relative imports in T004 support/tests when integrated.
+  - **Owned Paths**: tsconfig.json; src/contracts/foundation/uc03.ts (erasable TypeScript syntax only); tests/runtime/contract/uc03.test.ts; relative imports in T004 support/tests when integrated.
   - **Acceptance Checks**: Reproduce the publication failure from `node --test` discovering TypeScript tests with unresolved `.js` imports. Use source-resolvable relative imports and compiler rewriting for emitted JavaScript, preserving strict checking and dependency versions. Node 24 source discovery and compiled runtime tests both pass without transformation flags or prebuilt source-side JavaScript. This is a Phase 2 test-tooling correction, not authorization for later runtime phases.
 
 ## Phase 2 review corrections
