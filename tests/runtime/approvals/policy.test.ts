@@ -100,7 +100,7 @@ test('dependency, deletion, structural, configuration and configured breadth gat
   const configured = compilePolicy({ ...profile, patchBreadth: { maxFiles: 1, maxAddedDeletedLines: 1 } });
   assert.equal(configured.ok && permission(configured.value.classify(patch, facts)), 'APPROVAL_REQUIRED');
   for (const path of ['pyproject.toml', '.github/workflows/new.yml']) {
-    const action = { ...patch, targetPaths: [path] };
+    const action: NormalizedAction = { ...patch, targetPaths: [path] };
     assert.equal(permission(policy().value.classify(action, { ...factsFor(action), plan: approvedPlan() })), 'APPROVAL_REQUIRED');
   }
 });
@@ -151,7 +151,7 @@ test('shell evaluation and unconfigured interpreters stay forbidden even with co
     { executable: 'python', argv: ['-m', 'other'] }, { executable: 'node', argv: ['unregistered.js'] },
     { executable: 'pytest', argv: ['-q', 'tests/;curl'] }, { executable: 'pytest', argv: ['$(payload)'] },
   ]) {
-    const action = { ...command, ...change };
+    const action: NormalizedAction = { ...command, ...change };
     const facts = factsFor(action);
     assert.equal(permission(policy().value.classify(action, { ...facts, command: { ...facts.command, constrainedCapability: 'host-constrained-test-1' } })), 'FORBIDDEN');
   }
@@ -183,7 +183,7 @@ test('explicit finite configuration and action bounds are enforced and compiled 
 
 test('invalid canonical paths deny safely and validated embedded protected payloads are forbidden', () => {
   for (const targetPaths of [['../outside.py'], ['.env']]) {
-    const action = { ...patch, targetPaths };
+    const action: NormalizedAction = { ...patch, targetPaths };
     assert.deepEqual(policy().value.classify(action, factsFor(action)), { ok: false, outcome: 'prerequisite-denied', reasonCode: 'forbidden-action-input' });
   }
   for (const action of [{ ...patch, patchContent: '+MARKER_SECRET_DO_NOT_DISCLOSE' }, { ...command, argv: ['MARKER_SECRET_DO_NOT_DISCLOSE'] }]) {
@@ -228,7 +228,7 @@ test('configured interpreter tuples cannot authorize attached, combined or long 
     ['node', ['--eval=console.log(1)']], ['node', ['--print=1']],
     ['node', ['-p', '1']], ['node', ['-p1']], ['node', ['-peconsole.log(1)']],
   ] as const) {
-    const action = { ...command, executable, argv };
+    const action: NormalizedAction = { ...command, executable, argv };
     const compiled = compilePolicy({ ...profile, commandRules: [{ ...profile.commandRules[0], executableRef: executable, argvPrefix: argv }] });
     assert.equal(compiled.ok && permission(compiled.value.classify(action, factsFor(action))), 'FORBIDDEN');
   }
