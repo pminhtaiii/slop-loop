@@ -221,3 +221,15 @@ test('malformed object roles return typed invalid without coercion or throwing',
     });
   }
 });
+
+test('configured interpreter tuples cannot authorize attached, combined or long evaluation flags', () => {
+  for (const [executable, argv] of [
+    ['python', ['-cprint(1)']], ['python', ['-Iqcprint(1)']],
+    ['node', ['--eval=console.log(1)']], ['node', ['--print=1']],
+    ['node', ['-p', '1']], ['node', ['-p1']], ['node', ['-peconsole.log(1)']],
+  ] as const) {
+    const action = { ...command, executable, argv };
+    const compiled = compilePolicy({ ...profile, commandRules: [{ ...profile.commandRules[0], executableRef: executable, argvPrefix: argv }] });
+    assert.equal(compiled.ok && permission(compiled.value.classify(action, factsFor(action))), 'FORBIDDEN');
+  }
+});

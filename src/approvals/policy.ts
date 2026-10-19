@@ -205,7 +205,9 @@ export function compilePolicy(profileInput: unknown):
         const executableName = action.value.executable.split(/[\\/]/).at(-1)?.replace(/\.exe$/i, '').toLowerCase() ?? '';
         if (/^(?:sh|bash|dash|zsh|fish|cmd|powershell|pwsh)$/.test(executableName) ||
           argv.some(token => /[;&|<>`$\r\n\u0000-\u001f\u007f]/u.test(token)) ||
-          (/^(?:python[\d.]*|node|deno|bun|ruby|perl|php|lua)$/.test(executableName) && argv.some(token => ['-c', '-e', '--eval', '--print'].includes(token)))) {
+          // Fail closed for attached/grouped short evaluation flags; no shell parsing or execution probe.
+          (/^(?:python[\d.]*|node|deno|bun|ruby|perl|php|lua)$/.test(executableName) &&
+            argv.some(token => /^--(?:eval|print)(?:=|$)/u.test(token) || /^-(?!-)[A-Za-z]*[cep]/u.test(token)))) {
           return { ok: true, permission: 'FORBIDDEN', reasonCode: 'unsafe-command', actionDigest: computeActionDigest(action.value) };
         }
         if (profile.commandRules.some(rule => rule.executableRef === command.executableRef &&
