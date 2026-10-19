@@ -24,6 +24,7 @@
  */
 
 import { createHash } from 'node:crypto';
+import path from 'node:path';
 import {
   type TaskWorkspace,
   type CommandView,
@@ -202,7 +203,11 @@ export function isImmutableEnvKey(key: string): boolean {
   return PRIVATE_IMMUTABLE_CONTAINER_ENV_KEY_SET.has(key.trim());
 }
 
-export const ALLOWED_EXECUTABLES: ReadonlySet<string> = new Set(['pytest', 'python', 'python3']);
+const PRIVATE_ALLOWED_EXECUTABLES: ReadonlySet<string> = new Set(['pytest', 'python', 'python3']);
+
+export const ALLOWED_EXECUTABLES: ReadonlySet<string> = new Set(PRIVATE_ALLOWED_EXECUTABLES);
+
+const DEFAULT_MAX_OUTPUT_BYTES = 1024 * 1024;
 
 const PRIVATE_DEFAULT_CONTAINER_ENV: Readonly<Record<string, string>> = Object.freeze({
   PYTHONPATH: '/workspace/repo',
@@ -1077,13 +1082,14 @@ export class StructuredCommandExecutor {
     if (limits.timeoutMs > trustedProfile.limits.timeoutMs) {
       throw new Error(`RESOURCE_LIMIT_EXCEEDS_PROFILE_CEILING: Command timeoutMs (${limits.timeoutMs}) exceeds profile ceiling (${trustedProfile.limits.timeoutMs})`);
     }
-    if (trustedProfile.limits.maxOutputBytes !== undefined && limits.maxOutputBytes > trustedProfile.limits.maxOutputBytes) {
-      throw new Error(`RESOURCE_LIMIT_EXCEEDS_PROFILE_CEILING: Command maxOutputBytes (${limits.maxOutputBytes}) exceeds profile ceiling (${trustedProfile.limits.maxOutputBytes})`);
+    const maxOutputBytesCeiling = trustedProfile.limits.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
+    if (limits.maxOutputBytes > maxOutputBytesCeiling) {
+      throw new Error(`RESOURCE_LIMIT_EXCEEDS_PROFILE_CEILING: Command maxOutputBytes (${limits.maxOutputBytes}) exceeds profile ceiling (${maxOutputBytesCeiling})`);
     }
 
     // Check allowlisted executable
-    if (!ALLOWED_EXECUTABLES.has(action.executable)) {
-      throw new Error(`DISALLOWED_EXECUTABLE: Executable '${action.executable}' is not in allowed executable set (${Array.from(ALLOWED_EXECUTABLES).join(', ')})`);
+    if (!PRIVATE_ALLOWED_EXECUTABLES.has(action.executable)) {
+      throw new Error(`DISALLOWED_EXECUTABLE: Executable '${action.executable}' is not in allowed executable set (${Array.from(PRIVATE_ALLOWED_EXECUTABLES).join(', ')})`);
     }
 
     // Check argv without shell
@@ -1095,8 +1101,8 @@ export class StructuredCommandExecutor {
     }
 
     // Check working directory
-    const wd = action.workingDirectory;
-    if (wd !== '/workspace/repo' && wd !== '/workspace/scratch' && !wd.startsWith('/workspace/repo/') && !wd.startsWith('/workspace/scratch/')) {
+    const wd = path.posix.normalize(action.workingDirectory);
+    if (!path.posix.isAbsolute(wd) || (wd !== '/workspace/repo' && wd !== '/workspace/scratch' && !wd.startsWith('/workspace/repo/') && !wd.startsWith('/workspace/scratch/'))) {
       throw new Error(`INVALID_WORKING_DIRECTORY: workingDirectory '${wd}' must be within /workspace/repo or /workspace/scratch`);
     }
 
@@ -1152,7 +1158,7 @@ export class StructuredCommandExecutor {
       mounts: planMounts,
       executable: action.executable,
       argv: Object.freeze([...action.argv]),
-      workingDirectory: action.workingDirectory,
+      workingDirectory: wd,
       env: Object.freeze(mergedEnv),
       limits,
     };

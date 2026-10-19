@@ -1690,6 +1690,34 @@ test('StructuredCommandExecutor: ZERO controller dispatch on disallowed executab
   assert.equal(controller.executedPlans.length, 0, 'Zero dispatch across all disallowed executables');
 });
 
+test('StructuredCommandExecutor: exported executable set mutations cannot change admission or diagnostics', async () => {
+  const controller = new FakeDockerLifecycleController();
+  const manager = new DockerWorkspaceManager({ controller });
+  const { ws, profile } = await setupWorkspaceWithAdmittedView(manager, controller);
+  const executor = new StructuredCommandExecutor({ manager, controller, profile });
+  const exportedExecutables = ALLOWED_EXECUTABLES as Set<string>;
+  const originalExecutables = [...exportedExecutables];
+
+  try {
+    exportedExecutables.clear();
+    exportedExecutables.add('sh');
+    await assert.rejects(
+      executor.execute({ workspaceId: ws.workspaceId, executable: 'sh', limits: createValidLimits() }),
+      { message: "DISALLOWED_EXECUTABLE: Executable 'sh' is not in allowed executable set (pytest, python, python3)" }
+    );
+    assert.equal(controller.executedPlans.length, 0);
+
+    for (const executable of ['pytest', 'python', 'python3']) {
+      const result = await executor.execute({ workspaceId: ws.workspaceId, executable, limits: createValidLimits() });
+      assert.equal(result.plan.executable, executable);
+    }
+    assert.equal(controller.executedPlans.length, 3);
+  } finally {
+    exportedExecutables.clear();
+    for (const executable of originalExecutables) exportedExecutables.add(executable);
+  }
+});
+
 test('StructuredCommandExecutor: ZERO controller dispatch on forbidden argv with shell metacharacters', async () => {
   const controller = new FakeDockerLifecycleController();
   const manager = new DockerWorkspaceManager({ controller });
@@ -1790,6 +1818,45 @@ test('StructuredCommandExecutor: ZERO controller dispatch on invalid working dir
   }
 
   assert.equal(controller.executedPlans.length, 0, 'Zero dispatch on invalid workingDirectory');
+});
+
+test('StructuredCommandExecutor: validates normalized working-directory containment and dispatches normalized paths', async () => {
+  const controller = new FakeDockerLifecycleController();
+  const manager = new DockerWorkspaceManager({ controller });
+  const { ws, profile } = await setupWorkspaceWithAdmittedView(manager, controller);
+  const executor = new StructuredCommandExecutor({ manager, controller, profile });
+
+  for (const workingDirectory of [
+    '/workspace/repo/../../etc',
+    '/workspace/scratch/../../etc',
+    '/workspace/repo/subdir/../../../root',
+    '/workspace/scratch/..',
+    '/workspace/repository',
+    '/workspace/scratch-other',
+    'workspace/repo',
+  ]) {
+    await assert.rejects(
+      executor.execute({ workspaceId: ws.workspaceId, executable: 'pytest', workingDirectory, limits: createValidLimits() }),
+      { message: /INVALID_WORKING_DIRECTORY/ }
+    );
+  }
+  assert.equal(controller.executedPlans.length, 0);
+
+  for (const [workingDirectory, expected] of [
+    ['/workspace/repo/tests/..', '/workspace/repo'],
+    ['/workspace/scratch/tmp/..', '/workspace/scratch'],
+    ['/workspace//repo/./tests', '/workspace/repo/tests'],
+    ['/workspace/scratch/tmp/../cache', '/workspace/scratch/cache'],
+    ['/workspace/repo/../scratch/tmp', '/workspace/scratch/tmp'],
+  ] as const) {
+    const result = await executor.execute({
+      workspaceId: ws.workspaceId,
+      action: { actionId: 'act-normalized-wd', kind: 'run_command', executable: 'pytest', argv: [], workingDirectory },
+      limits: createValidLimits(),
+    });
+    assert.equal(result.plan.workingDirectory, expected);
+    assert.equal(controller.executedPlans.at(-1)?.workingDirectory, expected);
+  }
 });
 
 test('StructuredCommandExecutor: ZERO controller dispatch when controller lacks executeContainer method', async () => {
@@ -2069,6 +2136,41 @@ test('StructuredCommandExecutor: ZERO controller dispatch on image digest drift 
     { message: /COMMAND_PROFILE_OVERRIDE_FORBIDDEN/ }
   );
   assert.equal(controller.executedPlans.length, 0, 'Zero dispatch on param profile override attempt');
+});
+
+test('StructuredCommandExecutor: enforces finite output ceilings with omitted and configured profile bounds', async () => {
+  for (const maxOutputBytes of [undefined, 512, 2097152]) {
+    const controller = new FakeDockerLifecycleController();
+    const manager = new DockerWorkspaceManager({ controller });
+    const { ws, profile } = await setupWorkspaceWithAdmittedView(manager, controller);
+    const profileWithOutputBound = {
+      ...profile,
+      limits: {
+        ...profile.limits,
+        ...(maxOutputBytes !== undefined ? { maxOutputBytes } : {}),
+      },
+    };
+    const executor = new StructuredCommandExecutor({ manager, controller, profile: profileWithOutputBound });
+    const ceiling = maxOutputBytes ?? 1048576;
+
+    await assert.rejects(
+      executor.execute({
+        workspaceId: ws.workspaceId,
+        executable: 'pytest',
+        limits: createValidLimits({ maxOutputBytes: ceiling + 1 }),
+      }),
+      { message: new RegExp(`RESOURCE_LIMIT_EXCEEDS_PROFILE_CEILING: Command maxOutputBytes .* exceeds profile ceiling \\(${ceiling}\\)`) }
+    );
+    assert.equal(controller.executedPlans.length, 0);
+
+    const result = await executor.execute({
+      workspaceId: ws.workspaceId,
+      executable: 'pytest',
+      limits: createValidLimits({ maxOutputBytes: ceiling }),
+    });
+    assert.equal(result.plan.limits.maxOutputBytes, ceiling);
+    assert.equal(controller.executedPlans.length, 1);
+  }
 });
 
 test('StructuredCommandExecutor: ZERO controller dispatch when any resource limit exceeds profile ceiling', async () => {
