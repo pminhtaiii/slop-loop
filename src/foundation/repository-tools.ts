@@ -50,7 +50,14 @@ export interface TrustedFilesystemPort extends PortIdentity {
   lstat(canonicalPath: string): Promise<FileStat>;
   realpath(canonicalPath: string): Promise<string>;
   readDir(canonicalPath: string): Promise<readonly TrustedFilesystemEntry[]>;
-  readTextFile(canonicalPath: string): Promise<string>;
+  /**
+   * If maxBytes is supplied, enforce it on raw bytes from the opened file handle
+   * throughout the read, even if the file grows or is replaced after stat.
+   * Read at most maxBytes + 1 bytes (including an overflow probe), reject with
+   * FILE_TOO_LARGE on overflow, and close the handle on success or failure.
+   * Never load the whole oversized file and then validate or truncate it.
+   */
+  readTextFile(canonicalPath: string, maxBytes?: number): Promise<string>;
   getCurrentRevisionDigest(): Promise<string>;
 }
 
@@ -273,7 +280,14 @@ export class ControlledRepositoryTools implements RepositoryPort {
     let boundedExcerpt = content;
     let truncated = false;
     if (Buffer.byteLength(content, 'utf-8') > this.limits.maxExcerptBytes) {
-      boundedExcerpt = Buffer.from(content, 'utf-8').subarray(0, this.limits.maxExcerptBytes).toString('utf-8');
+      const contentBytes = Buffer.from(content, 'utf-8');
+      let excerptLength = this.limits.maxExcerptBytes;
+      let codePointStart = excerptLength - 1;
+      while (codePointStart > 0 && ((contentBytes[codePointStart] ?? 0) & 0b1100_0000) === 0b1000_0000) codePointStart--;
+      const firstCodePointByte = contentBytes[codePointStart] ?? 0;
+      const codePointLength = firstCodePointByte < 0x80 ? 1 : firstCodePointByte < 0xe0 ? 2 : firstCodePointByte < 0xf0 ? 3 : 4;
+      if (codePointStart + codePointLength > excerptLength) excerptLength = codePointStart;
+      boundedExcerpt = contentBytes.subarray(0, excerptLength).toString('utf-8');
       truncated = true;
     }
     const evidence: SourceEvidence = { path: filePath, revisionDigest, boundedExcerpt, resultCount: 1, truncated };
@@ -362,7 +376,7 @@ export class ControlledRepositoryTools implements RepositoryPort {
           throw new Error(`TOCTOU_RESOLUTION_SWAP: Path '${filePath}' resolution changed from '${preCheck.resolvedPath}' to '${immediateCheck.resolvedPath}' before read`);
         }
 
-        const content = await this.fsPort.readTextFile(filePath);
+        const content = await this.fsPort.readTextFile(filePath, this.limits.maxFileSizeBytes);
 
         const postReadRevision = await this.recheckRevision();
         if (postReadRevision !== initialRevision) {
@@ -439,12 +453,14 @@ export class ControlledRepositoryTools implements RepositoryPort {
             } else if (entry.isFile || entry.isSymbolicLink) {
               try {
                 const preCheck = await this.checkPathContainment(child);
+                const stat = await this.fsPort.stat(child);
+                if (stat.isDirectory || (this.limits.maxFileSizeBytes !== undefined && stat.size > this.limits.maxFileSizeBytes)) continue;
                 const preReadRev = await this.recheckRevision();
                 if (preReadRev !== initialRevision) {
                   throw new Error(`REVISION_DRIFT: Revision changed from ${initialRevision} to ${preReadRev} before read in searchCode`);
                 }
 
-                const content = await this.fsPort.readTextFile(child);
+                const content = await this.fsPort.readTextFile(child, this.limits.maxFileSizeBytes);
 
                 const postReadRev = await this.recheckRevision();
                 if (postReadRev !== initialRevision) {
