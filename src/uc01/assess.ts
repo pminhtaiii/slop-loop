@@ -3,6 +3,7 @@ import { validateSourceEvidence } from '../contracts/uc03.ts';
 import { fixtureLimits, sha256Text, validateIntake, validateModelResponse, validateOutcome, type Assessment, type Catalog, type Failure,
   type Invocation, type Limits, type Outcome, type Question, type Usage } from './contracts.ts';
 import { IntakeBinder, type ExcerptAdmission, type ModelEvidence } from './intake.ts';
+import { bindClarification, projectClarification } from './clarify.ts';
 
 export type OperationContext = Readonly<{ taskId: string; runId: string; invocationId: string; repositoryId: string; workspaceId: string;
   repositorySnapshotDigest: string; configId: string; configVersion: string; policyId: string; policyVersion: string;
@@ -23,6 +24,7 @@ export interface AssessmentPorts {
   readEvidence(context: OperationContext, admission: Admission, path: string): Promise<unknown>;
   searchEvidence(context: OperationContext, admission: Admission, query: string): Promise<unknown>;
   bindContinuation(context: OperationContext, assessment: Assessment): Promise<unknown>;
+  resolveContinuation(context: OperationContext, continuationRef: string): Promise<unknown>;
   emitSafeEvent(event: SafeEvent): Promise<unknown>;
 }
 export type AssessmentDependencies = Readonly<{ ports: AssessmentPorts; excerpts: ExcerptAdmission; now: () => number;
@@ -114,7 +116,7 @@ async function bounded(call: () => Promise<unknown>, timeoutMs: number): Promise
   } finally { if (timer !== undefined) clearTimeout(timer); }
 }
 
-/** Initial controlled assessment only; later-answer composition and configured routing are separate tasks. */
+/** Controlled assessment and later-answer composition; configured routing remains separate. */
 export class IssueAssessor {
   private readonly dependencies: AssessmentDependencies;
   constructor(dependencies: AssessmentDependencies) { this.dependencies = dependencies; }
@@ -130,7 +132,7 @@ export class IssueAssessor {
     try {
       start = clock(now);
       const binder = new IntakeBinder(this.dependencies.excerpts);
-      const intake = binder.bind(invocation, trustedContext);
+      const intake = bindClarification(invocation, trustedContext);
       if (!intake.ok) stop(intake.status, intake.reasonCode);
       const { invocation: input, context } = intake.value; let currentContext = context;
       validFinal = outcome => validateOutcome(outcome, input, currentContext).ok;
@@ -141,13 +143,7 @@ export class IssueAssessor {
       const configured = record(ceiling, ['inputTokens', 'outputTokens', 'totalTokens', 'costUnits', 'pricingId']);
       if (configured.inputTokens !== 500 || configured.outputTokens !== 250 || configured.totalTokens !== 750 || configured.costUnits !== 750
         || configured.pricingId !== 'uc01-fixture-token-units-v1') stop('invalid-input', 'invalid-reservation-profile');
-      if (input.continuationRef || input.answers.length || context.continuation) stop('invalid-input', 'continuation-not-supported');
-      const evidence: ModelEvidence[] = context.evidenceRegistry.map(entry => {
-        const admitted = binder.admit(entry, context.limits.inputBytes);
-        if (!admitted.ok) stop(admitted.status, admitted.reasonCode);
-        return admitted.value;
-      });
-      evidenceItems = evidence.length;
+      const evidence: ModelEvidence[] = [];
       const researchUncertainties: string[] = [];
       let sequence = 0; let inputBytes = 0; let outputBytes = 0;
       const deadline = start + context.limits.wallTimeMs;
@@ -159,6 +155,30 @@ export class IssueAssessor {
         if (clock(now) >= operation.deadlineEpochMs) stop('timeout', 'deadline-exceeded');
         return value;
       }, Math.min(remaining(), operation.deadlineEpochMs - clock(now)));
+      if (input.continuationRef) {
+        const continuationRef = input.continuationRef;
+        const resolveId = `${input.invocationId}:resolve`;
+        const resolveOperation: OperationContext = { taskId: context.taskId, runId: context.runId, invocationId: input.invocationId,
+          repositoryId: context.repositoryId, workspaceId: context.workspaceId, repositorySnapshotDigest: context.repositorySnapshotDigest,
+          configId: context.configId, configVersion: context.configVersion, policyId: context.policyId, policyVersion: context.policyVersion,
+          operationId: resolveId, requestId: resolveId, accountingRef: context.accountingRef,
+          deadlineEpochMs: Math.min(deadline, clock(now) + timeout), limits: context.limits };
+        const raw = await call(resolveOperation, () => ports.resolveContinuation(resolveOperation, continuationRef));
+        sharedFailure(raw); const resolved = record(raw, ['kind', 'continuation']);
+        if (resolved.kind !== 'resolved') stop('error', 'invalid-shared-output');
+        const checked = bindClarification(input, { ...context, continuation: resolved.continuation });
+        if (!checked.ok || canonical(checked.value.context.continuation) !== canonical(context.continuation)) stop('conflict', 'continuation-binding');
+      }
+      for (const entry of context.evidenceRegistry) {
+        const admitted = binder.admit(entry, context.limits.inputBytes);
+        if (!admitted.ok) stop(admitted.status, admitted.reasonCode);
+        evidence.push(admitted.value);
+      }
+      evidenceItems = evidence.length;
+      const { continuationRef: controlRef, ...visibleInput } = input;
+      void controlRef; // The opaque storage reference remains outside provider-visible content.
+      // The wire schema permits omission; its mapped TS type represents optional fields as required undefined unions.
+      const modelInput = visibleInput as Invocation;
       const countBytes = (value: unknown, direction: 'input' | 'output'): void => {
         const size = Buffer.byteLength(canonical(value));
         if (direction === 'input') inputBytes += size; else outputBytes += size;
@@ -179,7 +199,7 @@ export class IssueAssessor {
       };
       while (true) {
         if (modelCalls >= context.limits.modelCalls) stop('exhausted', 'call-budget-exhausted');
-        const payload = { role: 'triage' as const, invocation: input, evidence: [...evidence], priorQuestions: [], catalog: context.catalog };
+        const payload = { role: 'triage' as const, invocation: modelInput, evidence: [...evidence], priorQuestions: intake.value.priorQuestions, catalog: context.catalog };
         const { operation, admission } = await guarded('model', payload);
         const reserved = await call(operation, () => ports.reserve(operation, admission, ceiling));
         sharedFailure(reserved); const reservation = record(reserved, ['kind', 'reservationRef', 'requestId']);
@@ -210,7 +230,9 @@ export class IssueAssessor {
         }
         if (response.value.kind === 'assessment') {
           if (response.value.proposal.destination.value !== 'undetermined') stop('error', 'destination-not-supported');
-          const assessment: Assessment = { ...response.value.proposal, assessmentId: `${input.invocationId}:assessment`, issueId: input.issue.id,
+          const projected = projectClarification(response.value.proposal, intake.value, currentContext);
+          if (!projected.ok) stop(projected.reasonCode === 'question-budget-exhausted' ? 'exhausted' : 'error', projected.reasonCode);
+          const assessment: Assessment = { ...projected.value, assessmentId: `${input.invocationId}:assessment`, issueId: input.issue.id,
             reportDigest: input.issue.reportDigest, repositoryId: context.repositoryId, repositorySnapshotDigest: context.repositorySnapshotDigest,
             catalogId: context.catalog.id, catalogVersion: context.catalog.version, provenance: 'mock',
             uncertainties: [...new Set([...response.value.proposal.uncertainties, ...researchUncertainties])] };
