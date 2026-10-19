@@ -2,7 +2,7 @@
 
 **Input**: [spec](spec.md), [plan](plan.md), [research](research.md), [data model](data-model.md), and [contracts](contracts/interfaces.md).
 
-**Status**: Phase 1 / T001 and authorized Phase 2 foundation tasks T002–T004 completed and verified on 2026-10-19 (Asia/Saigon). T005–T022 remain unauthorized and unchecked. Real tasks also need G-PROFILE/G-REAL/G-RESTART as applicable.
+**Status**: Phase 1 / T001 and authorized Phase 2 foundation tasks T002–T004 completed and verified on 2026-10-19 (Asia/Saigon). Phase 3 T005–T007 is separately authorized with all four TDD seams explicitly confirmed by the user; these tasks remain unchecked until integration and verification. T008–T022 remain unauthorized. Real tasks also need G-PROFILE/G-REAL/G-RESTART as applicable.
 
 **Tests**: Required by FR-022 and repository TDD guidance. Write behavioral RED against actual owned SUT exports before implementation; create neutral no-effect skeletons only where needed. Import/type/fixture failures and tests against a mocked SUT are not behavioral RED. Coordinator alone changes checkboxes after integration and required checks. Future source paths below are not implemented by this package.
 
@@ -21,10 +21,10 @@
 
 **Goal**: Stable executable record contracts and all case inputs before feature implementation.
 
-- [x] T002 [P] Add companion record/profile validators test-first in src/approvals/contracts.ts and tests/runtime/approvals/contracts.test.ts.
+- [x] T002 [P] Add companion record/profile validators test-first in src/contracts/approvals/contracts.ts and tests/runtime/approvals/contracts.test.ts.
   - **Owner**: Trong Tan / contracts lane.
   - **Dependencies**: T001.
-  - **Owned Paths**: src/approvals/contracts.ts; tests/runtime/approvals/contracts.test.ts.
+  - **Owned Paths**: src/contracts/approvals/contracts.ts; tests/runtime/approvals/contracts.test.ts.
   - **Acceptance Checks**: Validate all data-model records, safe results, versions/epochs/IDs, unknown fields, finite profiles, pending-only creation and complete trusted identities. Reuse unchanged canonical types/validators. C04/C12/C20/C22 vectors pass; no persistence implementation.
   - **Current Evidence**: Integrated merge `d1452b3fe0191a3d1f26a175834266327b5f37f3` contains only the two owned paths. `node --test tests/runtime/approvals/contracts.test.ts` passed 11/11; `corepack pnpm typecheck`, `corepack pnpm lint`, and `corepack pnpm build` exited 0; `corepack pnpm test:runtime` passed 463/463. Worker recorded a sparse-array behavioral RED before the fix. No persistence or runtime execution capability is claimed.
 

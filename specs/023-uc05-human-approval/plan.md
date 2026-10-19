@@ -54,8 +54,9 @@ Recheck these gates after design changes; a clean planning audit does not satisf
 Proposed owned paths, not files implemented by this plan:
 
 ```text
-src/approvals/
+src/contracts/approvals/
   contracts.ts       # companion records, validation and typed safe outcomes
+src/approvals/
   policy.ts          # deterministic policy compilation/classification
   service.ts         # canonical ApprovalPort implementation
   control.ts         # pause/decision/continuation coordination through ports
