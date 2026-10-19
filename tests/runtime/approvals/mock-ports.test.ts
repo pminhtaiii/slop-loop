@@ -144,6 +144,7 @@ const claimEvent = {
   timestamp: '2026-10-19T10:10:00.000Z',
 } as const;
 
+/** Create a fresh mock store and assert that the shared request fixture pauses its task. */
 function createPendingStore() {
   const store = createMockApprovalStore({ profile, initialControls: [initialControl] });
   const created = store.createPendingAndPause({ expectedControlVersion: 1, submissionKey: 'submission-1', request, event: requestEvent });

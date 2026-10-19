@@ -238,6 +238,7 @@ const TASK_CONTROL_KEYS = [
 const TASK_CONTROL_MODES = ['runnable', 'waiting', 'rejected', 'recovery-blocked', 'ended'] as const;
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,126}$/;
 
+/** Accept plain records with enumerable string data properties, rejecting accessors and exotic prototypes. */
 function isRecord(input: unknown): input is Record<string, unknown> {
   if (typeof input !== 'object' || input === null || Array.isArray(input)) return false;
   try {
@@ -254,6 +255,7 @@ function isRecord(input: unknown): input is Record<string, unknown> {
   }
 }
 
+/** Accept standard arrays within the length cap, rejecting holes, accessors and extra properties. */
 function isBoundedDenseArray(input: unknown, maxLength: number): input is unknown[] {
   if (!Array.isArray(input)) return false;
   try {
@@ -274,10 +276,12 @@ function isBoundedDenseArray(input: unknown, maxLength: number): input is unknow
   }
 }
 
+/** Append a structured validation failure at the supplied field path. */
 function addError(errors: ValidationError[], path: string, code: string, message: string): void {
   errors.push({ path, code, message });
 }
 
+/** Accumulate errors for properties outside the record's explicit schema. */
 function rejectUnknownKeys(
   input: Record<string, unknown>,
   allowed: readonly string[],
@@ -290,30 +294,36 @@ function rejectUnknownKeys(
   }
 }
 
+/** Require a string containing at least one non-whitespace character. */
 function hasNonEmptyString(input: unknown): input is string {
   return typeof input === 'string' && input.trim().length > 0;
 }
 
+/** Recognize bounded identifiers using the approval contract's ASCII vocabulary. */
 function isIdentifier(input: unknown): input is string {
   return typeof input === 'string' && IDENTIFIER_PATTERN.test(input);
 }
 
+/** Accumulate an error when a field is not a bounded contract identifier. */
 function validateId(input: unknown, path: string, errors: ValidationError[]): void {
   if (!isIdentifier(input)) addError(errors, path, 'INVALID_ID', `${path} must be a bounded identifier`);
 }
 
+/** Accumulate an error unless a numeric bound is a positive safe integer. */
 function validatePositiveInteger(input: unknown, path: string, errors: ValidationError[]): void {
   if (typeof input !== 'number' || !Number.isSafeInteger(input) || input < 1) {
     addError(errors, path, 'INVALID_BOUND', `${path} must be a finite positive safe integer`);
   }
 }
 
+/** Require the canonical sha256 prefix followed by 64 lowercase hexadecimal digits. */
 function validateDigest(input: unknown, path: string, errors: ValidationError[]): void {
   if (typeof input !== 'string' || !/^sha256:[0-9a-f]{64}$/.test(input)) {
     addError(errors, path, 'INVALID_DIGEST', `${path} must be a canonical SHA-256 digest`);
   }
 }
 
+/** Validate ISO-8601 timestamps with an explicit timezone and a real calendar date. */
 function validateTimestamp(input: unknown, path: string, errors: ValidationError[]): void {
   const match = typeof input === 'string'
     ? /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?(Z|[+-](\d{2}):(\d{2}))$/.exec(input)
@@ -339,12 +349,14 @@ function validateTimestamp(input: unknown, path: string, errors: ValidationError
   }
 }
 
+/** Reject records whose schema version differs from the current UC-05 draft. */
 function validateSchemaVersion(input: Record<string, unknown>, errors: ValidationError[]): void {
   if (input['schemaVersion'] !== UC05_APPROVAL_SCHEMA_VERSION) {
     addError(errors, 'schemaVersion', 'INVALID_SCHEMA_VERSION', `schemaVersion must equal ${UC05_APPROVAL_SCHEMA_VERSION}`);
   }
 }
 
+/** Validate up to 128 unique identifiers in a dense array, optionally requiring an entry. */
 function validateIdArray(input: unknown, path: string, errors: ValidationError[], allowEmpty = true): void {
   if (!isBoundedDenseArray(input, 128)) {
     addError(errors, path, 'INVALID_TYPE', `${path} must be a bounded dense array`);
@@ -359,10 +371,12 @@ function validateIdArray(input: unknown, path: string, errors: ValidationError[]
   });
 }
 
+/** Create the standard validation failure for a value that is not a plain record. */
 function invalidObject(path: string): ValidationError[] {
   return [{ path, message: `${path} must be a plain object`, code: 'INVALID_TYPE' }];
 }
 
+/** Validate task-control fields and consistency between the hold mode and pending decision references. */
 export function validateApprovalTaskControl(input: unknown): ValidationResult<ApprovalTaskControl> {
   const path = 'approvalTaskControl';
   if (!isRecord(input)) return { ok: false, errors: invalidObject(path) };
@@ -403,6 +417,7 @@ const APPROVAL_REQUEST_KEYS = [
   'actionRef', 'actionDigest', 'presentationDigest', 'createdAt', 'submissionKey',
 ] as const;
 
+/** Validate a new pending request and its identity and digest agreement with the canonical binding. */
 export function validateApprovalRequestRecord(input: unknown): ValidationResult<ApprovalRequestRecord> {
   const path = 'approvalRequestRecord';
   if (!isRecord(input)) return { ok: false, errors: invalidObject(path) };
@@ -447,6 +462,7 @@ const HUMAN_RESOLUTION_KEYS = [
 ] as const;
 const TRUSTED_OPERATOR_KEYS = ['actorId', 'channelRef', 'provenance'] as const;
 
+/** Require explicit actor and channel identifiers with real host provenance. */
 function validateTrustedOperator(input: unknown, errors: ValidationError[]): void {
   if (!isRecord(input)) {
     addError(errors, 'context.trustedOperator', 'MISSING_TRUSTED_IDENTITY', 'trusted operator identity is required');
@@ -458,6 +474,7 @@ function validateTrustedOperator(input: unknown, errors: ValidationError[]): voi
   if (input['provenance'] !== 'real') addError(errors, 'context.trustedOperator.provenance', 'UNTRUSTED_PROVENANCE', 'operator identity must come from a real trusted host channel');
 }
 
+/** Validate one terminal response against the trusted request version and operator channel. */
 function validateHumanResolutionRecord(input: unknown, context: HumanResolutionValidationContext): ValidationResult<HumanResolution> {
   const path = 'humanResolution';
   if (!isRecord(input)) return { ok: false, errors: invalidObject(path) };
@@ -483,10 +500,12 @@ function validateHumanResolutionRecord(input: unknown, context: HumanResolutionV
   return errors.length > 0 ? { ok: false, errors } : { ok: true, value: input as unknown as HumanResolution };
 }
 
+/** Compare every persisted resolution field to distinguish an identical retry from a conflict. */
 function sameResolution(left: HumanResolution, right: HumanResolution): boolean {
   return HUMAN_RESOLUTION_KEYS.every((key) => left[key] === right[key]);
 }
 
+/** Validate a trusted human response, permitting identical retries and rejecting terminal conflicts. */
 export function validateHumanResolution(
   input: unknown,
   context?: HumanResolutionValidationContext
@@ -517,6 +536,7 @@ const BINDING_ASSESSMENT_KEYS = [
   'trustedContextDigest', 'status', 'reasonCodes', 'checkedAt',
 ] as const;
 
+/** Validate assessment reasons and bind the record to the trusted decision, task version, epoch and context digest. */
 export function validateBindingAssessment(
   input: unknown,
   context?: BindingAssessmentValidationContext
@@ -564,6 +584,7 @@ const DEVELOPER_DIRECTION_KEYS = [
   'safeScopeRef', 'responseKey', 'createdAt',
 ] as const;
 
+/** Validate resume, revise or end direction against trusted operator and current task context. */
 export function validateDeveloperDirection(
   input: unknown,
   context?: DeveloperDirectionValidationContext
@@ -601,6 +622,7 @@ const DISPATCH_CLAIM_KEYS = [
   'repositoryStateDigest', 'policyIdentity', 'decisionRefs', 'reservationRefs', 'phase', 'resultRef',
 ] as const;
 
+/** Require the exact policy and configuration identity fields with bounded identifier values. */
 function validatePolicyIdentity(input: unknown, path: string, errors: ValidationError[]): void {
   if (!isRecord(input)) {
     addError(errors, path, 'INVALID_TYPE', `${path} must be an identity object`);
@@ -610,6 +632,7 @@ function validatePolicyIdentity(input: unknown, path: string, errors: Validation
   for (const field of POLICY_IDENTITY_KEYS) validateId(input[field], `${path}.${field}`, errors);
 }
 
+/** Validate claim identity, reservations and lifecycle fields, including required outcome references. */
 export function validateDispatchClaim(input: unknown): ValidationResult<DispatchClaim> {
   const path = 'dispatchClaim';
   if (!isRecord(input)) return { ok: false, errors: invalidObject(path) };
@@ -657,6 +680,7 @@ const UC05_LOCAL_PROFILE_CAPS = Object.freeze({
   maxMutationAttempts: 1,
 });
 
+/** Require nonempty UTF-8 text within the byte cap, excluding control and bidi formatting characters. */
 function validateBoundedText(input: unknown, path: string, errors: ValidationError[], maxBytes: number): void {
   if (
     !hasNonEmptyString(input) ||
@@ -667,6 +691,7 @@ function validateBoundedText(input: unknown, path: string, errors: ValidationErr
   }
 }
 
+/** Validate a positive safe integer and accumulate an error if it exceeds the local profile cap. */
 function validateCappedBound(input: unknown, cap: number, path: string, errors: ValidationError[]): void {
   validatePositiveInteger(input, path, errors);
   if (typeof input === 'number' && Number.isSafeInteger(input) && input > cap) {
@@ -674,6 +699,7 @@ function validateCappedBound(input: unknown, cap: number, path: string, errors: 
   }
 }
 
+/** Validate the test-only uc05-local-v1 profile, enforcing finite caps and explicit safety rules. */
 export function validatePolicyProfile(input: unknown): ValidationResult<PolicyProfile> {
   const path = 'policyProfile';
   if (!isRecord(input)) return { ok: false, errors: invalidObject(path) };
@@ -795,6 +821,7 @@ const SAFE_PRESENTATION_KEYS = [
 const PRESENTATION_ELEMENT_KEYS = ['action', 'necessity', 'targets', 'consequences', 'verificationStatus'] as const;
 const PRESENTATION_PAGE_KEYS = ['pageNumber', 'pageCount', 'pageBytes', 'totalBytes', 'truncated'] as const;
 
+/** Validate decision elements and page metadata against the profile's text, path and byte limits. */
 export function validateSafePresentation(input: unknown, profile: unknown): ValidationResult<SafePresentation> {
   const path = 'safePresentation';
   if (!isRecord(input)) return { ok: false, errors: invalidObject(path) };
@@ -874,6 +901,7 @@ const DECISION_EVENT_TYPES: readonly DecisionEventType[] = [
   'dispatch-claim-created', 'dispatch-effect-observed', 'dispatch-uncertain', 'claim-reconciled',
 ];
 
+/** Validate safe outcome metadata and require paired decision identity and request version fields. */
 export function validateSafeResult(input: unknown): ValidationResult<SafeResult> {
   const path = 'safeResult';
   if (!isRecord(input)) return { ok: false, errors: invalidObject(path) };
@@ -894,6 +922,7 @@ export function validateSafeResult(input: unknown): ValidationResult<SafeResult>
   return errors.length > 0 ? { ok: false, errors } : { ok: true, value: input as unknown as SafeResult };
 }
 
+/** Validate audit event vocabulary, required references and the profile's serialized event byte cap. */
 export function validateDecisionEvent(input: unknown, profile: unknown): ValidationResult<DecisionEvent> {
   const path = 'decisionEvent';
   if (!isRecord(input)) return { ok: false, errors: invalidObject(path) };

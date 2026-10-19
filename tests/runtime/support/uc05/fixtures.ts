@@ -257,10 +257,12 @@ const ZERO_COUNTS: Uc05ExpectedCounts = {
   duplicateResponseDeliveries: 0,
 };
 
+/** Build a complete expected-count record with unspecified counters set to zero. */
 function expectedCounts(overrides: CountOverrides = {}): Uc05ExpectedCounts {
   return { ...ZERO_COUNTS, ...overrides };
 }
 
+/** Describe a scripted scenario and its expected outcome and counters without executing it. */
 function vector(
   id: string,
   changedDimensions: readonly string[],
@@ -317,10 +319,12 @@ const HASH_FIELDS = [
   'criteria', 'check-set', 'artifact',
 ] as const;
 
+/** Derive a deterministic synthetic identity digest using the fixture identity namespace. */
 function stableHash(label: string): string {
   return sha256(`uc05-fixture-identity-v1\n${label}`);
 }
 
+/** Expand a case seed into an immutable, not-run fixture with separate oracle and fixture digests. */
 function seedToFixture(seed: CaseSeed): Uc05CaseFixture {
   const lowerId = seed.caseId.toLowerCase();
   const taskId = `uc05-${lowerId}-task`;
@@ -416,6 +420,7 @@ function seedToFixture(seed: CaseSeed): Uc05CaseFixture {
   return deepFreeze({ ...withoutFixtureDigest, fixtureDigest }) as Uc05CaseFixture;
 }
 
+/** Aggregate each expected counter across a case's scenario vectors. */
 function sumVectorCounts(vectors: readonly Uc05FixtureVector[]): Uc05ExpectedCounts {
   const totals: Record<keyof Uc05ExpectedCounts, number> = { ...ZERO_COUNTS };
   for (const item of vectors) {
@@ -710,14 +715,17 @@ export function getUc05CaseFixture(caseId: string): Uc05CaseFixture | undefined 
     : undefined;
 }
 
+/** Hash canonical JSON with a profile prefix to distinguish fixture and oracle digest domains. */
 function digestObject(profile: string, value: unknown): string {
   return sha256(`${profile}\n${canonicalJson(value)}`);
 }
 
+/** Return the canonical sha256-prefixed hexadecimal digest of UTF-8 text. */
 function sha256(text: string): string {
   return `sha256:${createHash('sha256').update(text, 'utf8').digest('hex')}`;
 }
 
+/** Serialize fixture JSON with sorted object keys, rejecting non-finite numbers and unsupported values. */
 function canonicalJson(value: unknown): string {
   if (value === null || typeof value === 'string' || typeof value === 'boolean') return JSON.stringify(value);
   if (typeof value === 'number') {
@@ -733,6 +741,7 @@ function canonicalJson(value: unknown): string {
   throw new TypeError(`Fixture digest input is not JSON-compatible: ${typeof value}`);
 }
 
+/** Recursively freeze fixture data properties in place and return the original value. */
 function deepFreeze<T>(value: T): T {
   if (value !== null && typeof value === 'object' && !Object.isFrozen(value)) {
     for (const descriptor of Object.values(Object.getOwnPropertyDescriptors(value))) {

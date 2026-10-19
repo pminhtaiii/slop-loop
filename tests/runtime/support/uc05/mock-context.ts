@@ -167,6 +167,7 @@ export function createMockActivityControl(profileInput: unknown): MockActivityCo
   });
 }
 
+/** Require an attempt identifier and contract-valid task control and claim before admission checks. */
 function validAttemptInput(input: unknown): input is {
   readonly attemptId: string;
   readonly control: ApprovalTaskControl;
@@ -179,18 +180,22 @@ function validAttemptInput(input: unknown): input is {
     && validateDispatchClaim(record['claim']).ok;
 }
 
+/** Return an immutable copy of an activity attempt without exposing mutable mock state. */
 function snapshot(attempt: MutableAttempt): MockActivityAttempt {
   return freezeCopy({ ...attempt });
 }
 
+/** Recognize bounded ASCII identifiers for mock tasks and activity attempts. */
 function isIdentifier(input: unknown): input is string {
   return typeof input === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,126}$/u.test(input);
 }
 
+/** Require a positive safe integer for an activity fence epoch. */
 function isPositiveInteger(input: unknown): input is number {
   return typeof input === 'number' && Number.isSafeInteger(input) && input > 0;
 }
 
+/** Clone and recursively freeze activity data to isolate callers from the mock's mutable state. */
 function freezeCopy<T>(value: T): T {
   const copy = structuredClone(value);
   const visit = (item: unknown): void => {

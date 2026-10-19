@@ -497,28 +497,33 @@ export function createMockApprovalStore(input: CreateMockApprovalStoreInput): Mo
     reconcile,
   });
 
+  /** Detect event identity reuse across the mock store's committed audit history. */
   function eventExists(eventId: string): boolean {
     return events.some((event) => event.eventId === eventId);
   }
 }
 
+/** Return a validated audit event, or undefined when it violates the supplied test profile. */
 function validateEvent(input: unknown, profile: PolicyProfile): DecisionEvent | undefined {
   const result = validateDecisionEvent(input, profile);
   return result.ok ? result.value : undefined;
 }
 
+/** Freeze generated task control, throwing if a mock transition violates the contract. */
 function validateGeneratedControl(input: unknown): ApprovalTaskControl {
   const result = validateApprovalTaskControl(input);
   if (!result.ok) throw new Error('mock store attempted to write an invalid task control');
   return freezeCopy(result.value);
 }
 
+/** Freeze a generated claim, throwing if a mock outcome violates the claim contract. */
 function validateGeneratedClaim(input: unknown): DispatchClaim {
   const result = validateDispatchClaim(input);
   if (!result.ok) throw new Error('mock store attempted to write an invalid dispatch claim');
   return freezeCopy(result.value);
 }
 
+/** Construct an immutable mock response, throwing if its safe metadata violates the result contract. */
 function makeResponse<T>(
   control: Pick<ApprovalTaskControl, 'taskId' | 'version'>,
   outcome: SafeResult['outcome'],
@@ -544,18 +549,22 @@ function makeResponse<T>(
   return freezeCopy({ safe: checked.value, value });
 }
 
+/** Narrow mock operation input to a non-null object that is not an array. */
 function isRecord(input: unknown): input is Record<string, unknown> {
   return typeof input === 'object' && input !== null && !Array.isArray(input);
 }
 
+/** Recognize bounded ASCII identifiers used by mock operation inputs. */
 function isIdentifier(input: unknown): input is string {
   return typeof input === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,126}$/u.test(input);
 }
 
+/** Require positive safe integers for mock control and request versions. */
 function isPositiveInteger(input: unknown): input is number {
   return typeof input === 'number' && Number.isSafeInteger(input) && input > 0;
 }
 
+/** Clone and recursively freeze mock data so callers cannot mutate stored state through responses. */
 function freezeCopy<T>(value: T): T {
   const copy = structuredClone(value);
   const visit = (item: unknown): void => {
