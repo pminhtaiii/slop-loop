@@ -227,3 +227,11 @@ test('UTF-8 inspection pages retain all exact patch bytes and refuse oversized c
   assert.throws(() => buildPresentation({ ...patchInput, action: tooBig, binding: { ...binding, normalizedActionDigest: computeActionDigest(tooBig) }, freshness: { ...freshness, currentNormalizedActionDigest: computeActionDigest(tooBig) } }, profile), /unsafe-presentation/);
   assert.throws(() => Reflect.apply(buildPresentation, undefined, [undefined, profile]), error => error instanceof Error && error.message === 'unsafe-presentation');
 });
+
+test('failed pending persistence closes local agent admission instead of trusting a runnable snapshot', async () => {
+  const scenario = setup();
+  scenario.store.failNext('createPendingAndPause');
+  await assert.rejects(scenario.service.requestDecision(binding));
+  await assert.rejects(scenario.service.classify(action));
+  assert.equal(await scenario.service.validateBinding({ ...binding, status: 'approved' }), false);
+});

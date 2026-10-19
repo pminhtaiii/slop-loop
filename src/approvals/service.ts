@@ -57,6 +57,7 @@ export function createApprovalService(options: ApprovalServiceOptions): Approval
   const policy = compiled.value;
   const profile: PolicyProfile = policy.profile;
   const now = options.now ?? (() => new Date().toISOString());
+  let localAdmissionClosed = false;
   const store = (): ApprovalStore => {
     if (!options.store || options.store.provenance !== 'mock') throw new ApprovalServiceError('unavailable');
     return options.store;
@@ -131,6 +132,7 @@ export function createApprovalService(options: ApprovalServiceOptions): Approval
   const service: ApprovalService = {
     provenance: 'mock',
     classify: action => bounded(async () => {
+      if (localAdmissionClosed) throw new ApprovalServiceError('unavailable');
       const current = control();
       if (current.mode !== 'runnable' || current.outstandingClaimRefs.length > 0) throw new ApprovalServiceError('paused');
       const raw = await options.context.loadForAction(options.taskId, action.actionId);
@@ -140,10 +142,11 @@ export function createApprovalService(options: ApprovalServiceOptions): Approval
       const result = policy.classify(action, context.facts);
       if (!result.ok) throw new ApprovalServiceError('invalid');
       const latest = control();
-      if (latest.mode !== 'runnable' || latest.version !== current.version || latest.epoch !== current.epoch) throw new ApprovalServiceError('paused');
+      if (localAdmissionClosed || latest.mode !== 'runnable' || latest.version !== current.version || latest.epoch !== current.epoch) throw new ApprovalServiceError('paused');
       return result.permission;
     }),
     requestDecision: binding => bounded(async assertActive => {
+      if (localAdmissionClosed) throw new ApprovalServiceError('unavailable');
       const checked = parseApprovalBinding(binding);
       if (!checked.ok || binding.status !== 'pending') throw new ApprovalServiceError('invalid');
       const context = await trusted(binding.decisionId, binding);
@@ -169,19 +172,23 @@ export function createApprovalService(options: ApprovalServiceOptions): Approval
       };
       if (!validateApprovalRequestRecord(record).ok) throw new ApprovalServiceError('invalid');
       assertActive();
+      if (localAdmissionClosed) throw new ApprovalServiceError('unavailable');
+      localAdmissionClosed = true;
       const response = store().createPendingAndPause({ expectedControlVersion: current.version, submissionKey: record.submissionKey, request: record,
         event: { schemaVersion: 'uc05-approval/0.1-draft', eventId: computeCanonicalSha256({ type: 'request', taskId: options.taskId, decisionId: record.decisionId }), taskId: options.taskId, runId: context.runId, decisionId: record.decisionId, directionId: null, claimId: null, type: 'approval-request-created', outcome: 'pending', policyRef: context.facts.policyIdentity, safeReasonCode: 'approval-pending', timestamp } });
       if (response.safe.outcome !== 'pending' || !validateSafeResult(response.safe).ok || !isDeepStrictEqual(response.value, record)) throw new ApprovalServiceError(response.safe.outcome === 'conflict' ? 'conflict' : 'unavailable');
       const paused = control();
       if (paused.mode !== 'waiting' || paused.pendingDecisionId !== binding.decisionId || paused.continuationRef !== record.continuationRef) throw new ApprovalServiceError('unavailable');
+      localAdmissionClosed = false;
       return projection(record);
     }),
     validateBinding: binding => bounded(async () => {
+      if (localAdmissionClosed) return false;
       try {
         const view = await checkedView(binding.decisionId);
         const current = control();
         const stored = projection(view.record);
-        return current.mode === 'runnable' && current.outstandingClaimRefs.length === 0 && stored.status === 'approved' && isDeepStrictEqual(binding, stored) && validateApprovalBinding(stored, view.context.freshness).ok;
+        return !localAdmissionClosed && current.mode === 'runnable' && current.outstandingClaimRefs.length === 0 && stored.status === 'approved' && isDeepStrictEqual(binding, stored) && validateApprovalBinding(stored, view.context.freshness).ok;
       } catch { return false; }
     }),
     resolve: decisionId => bounded(async () => projection((await checkedView(decisionId)).record)),
@@ -214,12 +221,15 @@ export function createApprovalService(options: ApprovalServiceOptions): Approval
       };
       if (!validateHumanResolution(terminal, { expectedDecisionId: record.decisionId, expectedRequestVersion: record.requestVersion, trustedOperator: options.operator.identity }).ok) throw new ApprovalServiceError('denied');
       assertActive();
+      const admissionWasClosed = localAdmissionClosed;
+      localAdmissionClosed = true;
       const response = store().resolvePending({ expectedControlVersion: input.taskVersion, expectedRequestVersion: input.requestVersion,
         trustedOperator: options.operator.identity, trustedResponse: terminal,
         event: { schemaVersion: 'uc05-approval/0.1-draft', eventId: terminal.eventId, taskId: options.taskId, runId: context.runId, decisionId: record.decisionId, directionId: null, claimId: null, type: 'human-resolution-recorded', outcome: decision === 'approved' ? 'ok' : 'paused', policyRef: context.facts.policyIdentity, safeReasonCode: terminal.safeReasonCode, timestamp } });
       if (!validateSafeResult(response.safe).ok || response.safe.taskId !== options.taskId || response.safe.decisionId !== record.decisionId || response.safe.requestVersion !== record.requestVersion) throw new ApprovalServiceError('unavailable');
       if (response.safe.outcome === 'ok' || response.safe.outcome === 'paused') {
         if (!isDeepStrictEqual(response.value, terminal) || !isDeepStrictEqual(resolution(record), terminal)) throw new ApprovalServiceError('unavailable');
+        localAdmissionClosed = admissionWasClosed;
       }
       // Store reason strings are never copied to user output, even on infrastructure failures.
       return { ...response.safe, safeReasonCode: response.safe.outcome === 'ok' || response.safe.outcome === 'paused' ? 'decision-recorded' : 'decision-not-recorded' };
