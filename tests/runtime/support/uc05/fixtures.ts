@@ -129,14 +129,14 @@ export interface Uc05FreshnessDimensions {
   readonly repositoryRevisionDigest: string;
   readonly policyId: string;
   readonly policyVersion: string;
-  readonly policyDigest: string;
+  readonly configId: string;
+  readonly configVersion: string;
   readonly actionId: string;
   readonly normalizedActionDigest: string;
   readonly planVersion: number;
   readonly strategyDigest: string;
   readonly baselineRef: string;
   readonly evidenceRefs: readonly string[];
-  readonly evidenceDigest: string;
   readonly criteriaDigest: string;
   readonly checkSetDigest: string;
 }
@@ -190,7 +190,8 @@ export interface Uc05CaseFixture {
     readonly repositoryRevisionDigest: string;
     readonly policyId: string;
     readonly policyVersion: string;
-    readonly policyDigest: string;
+    readonly configId: string;
+    readonly configVersion: string;
     readonly isolationProfileId: string;
     readonly operatorChannel: 'trusted-host-only' | 'unavailable-to-task-code';
     readonly freshness: Uc05FreshnessDimensions;
@@ -312,8 +313,8 @@ interface CaseSeed {
 }
 
 const HASH_FIELDS = [
-  'repository-mapping', 'repository-revision', 'policy', 'action', 'strategy',
-  'evidence', 'criteria', 'check-set', 'artifact',
+  'repository-mapping', 'repository-revision', 'action', 'strategy',
+  'criteria', 'check-set', 'artifact',
 ] as const;
 
 function stableHash(label: string): string {
@@ -335,16 +336,16 @@ function seedToFixture(seed: CaseSeed): Uc05CaseFixture {
     repositoryRevisionDigest: stableHash(`${lowerId}:${HASH_FIELDS[1]}`),
     policyId: 'uc05-fixture-policy',
     policyVersion: '1',
-    policyDigest: stableHash(`${lowerId}:${HASH_FIELDS[2]}`),
+    configId: UC05_FIXTURE_VERSION,
+    configVersion: '1',
     actionId,
-    normalizedActionDigest: stableHash(`${lowerId}:${HASH_FIELDS[3]}`),
+    normalizedActionDigest: stableHash(`${lowerId}:${HASH_FIELDS[2]}`),
     planVersion: seed.planVersion,
-    strategyDigest: stableHash(`${lowerId}:${HASH_FIELDS[4]}`),
+    strategyDigest: stableHash(`${lowerId}:${HASH_FIELDS[3]}`),
     baselineRef: `uc05-${lowerId}-baseline-1`,
     evidenceRefs: [`uc05-${lowerId}-evidence-1`],
-    evidenceDigest: stableHash(`${lowerId}:${HASH_FIELDS[5]}`),
-    criteriaDigest: stableHash(`${lowerId}:${HASH_FIELDS[6]}`),
-    checkSetDigest: stableHash(`${lowerId}:${HASH_FIELDS[7]}`),
+    criteriaDigest: stableHash(`${lowerId}:${HASH_FIELDS[4]}`),
+    checkSetDigest: stableHash(`${lowerId}:${HASH_FIELDS[5]}`),
   };
   const fixtureBody = {
     schemaVersion: UC05_FIXTURE_SCHEMA_VERSION,
@@ -386,7 +387,7 @@ function seedToFixture(seed: CaseSeed): Uc05CaseFixture {
       commandCapability: seed.commandCapability,
       actorProvenance: seed.actorProvenance,
       inputProvenance: seed.inputProvenance,
-      artifactDigest: stableHash(`${lowerId}:${HASH_FIELDS[8]}`),
+      artifactDigest: stableHash(`${lowerId}:${HASH_FIELDS[6]}`),
     },
     trustedContext: {
       taskRole: seed.taskRole,
@@ -394,7 +395,8 @@ function seedToFixture(seed: CaseSeed): Uc05CaseFixture {
       repositoryRevisionDigest: freshness.repositoryRevisionDigest,
       policyId: freshness.policyId,
       policyVersion: freshness.policyVersion,
-      policyDigest: freshness.policyDigest,
+      configId: freshness.configId,
+      configVersion: freshness.configVersion,
       isolationProfileId: UC05_FIXTURE_VERSION,
       operatorChannel: seed.operatorChannel,
       freshness,
@@ -551,9 +553,9 @@ const CASE_SEEDS: readonly CaseSeed[] = [
     scenarioIntent: 'Independent changes to every trusted action and fix-plan binding dimension make the prior approval stale and require a fresh request.',
     requiredLevel: 'real', localPreparationLevel: 'mock', taskRefs: ['T011', 'T012', 'T013', 'T020'], externalGates: EXTERNAL_PLAN,
     initialControlMode: 'waiting', requestState: 'approved', claimState: 'absent', actionKind: 'approve_fix_plan', classification: 'APPROVAL_REQUIRED', effectClass: 'mutation',
-    targetClasses: ['task', 'workspace', 'repository-mapping', 'repository-digest', 'policy', 'action', 'plan-version', 'strategy', 'baseline', 'evidence', 'criteria', 'check-set'], commandCapability: 'exact-current-binding-required', actorProvenance: 'trusted-host', inputProvenance: 'registered', taskRole: 'coder', operatorChannel: 'trusted-host-only',
+    targetClasses: ['task', 'workspace', 'repository-mapping', 'repository-digest', 'policy-id', 'policy-version', 'config-id', 'config-version', 'action', 'plan-version', 'strategy', 'baseline', 'evidence-refs', 'criteria', 'check-set'], commandCapability: 'exact-current-binding-required', actorProvenance: 'trusted-host', inputProvenance: 'registered', taskRole: 'coder', operatorChannel: 'trusted-host-only',
     scriptedOperatorEvents: ['prior-approval-recorded', 'independent-binding-drift', 'renewed-request-required'], failpoints: [], expectedOutcome: 'Each changed freshness dimension independently produces stale denial and a new immutable approval request before dispatch.', planVersion: 1,
-    vectors: ['taskId', 'workspaceId', 'repositoryId-mapping', 'repositoryMappingDigest', 'repositoryRevisionDigest', 'policyIdentity', 'actionId', 'normalizedActionDigest', 'planVersion', 'strategyDigest', 'baselineRef', 'evidenceRefs', 'criteriaDigest', 'checkSetDigest'].map((field) => vector(`drift-${field}`, [`freshness=${field}`], 'stale', 'prior-approval-binding-no-longer-current', { approvalPrompts: 1 }, [], [], 'approve_fix_plan')),
+    vectors: ['taskId', 'workspaceId', 'repositoryId', 'repositoryMappingDigest', 'repositoryRevisionDigest', 'policyId', 'policyVersion', 'configId', 'configVersion', 'actionId', 'normalizedActionDigest', 'planVersion', 'strategyDigest', 'baselineRef', 'evidenceRefs', 'criteriaDigest', 'checkSetDigest'].map((field) => vector(`drift-${field}`, [`freshness=${field}`], 'stale', 'prior-approval-binding-no-longer-current', { approvalPrompts: 1 }, [], [], 'approve_fix_plan')),
   },
   {
     caseId: 'C14', storyRefs: ['US3'], requirementRefs: ['FR-013'], successCriteriaRefs: ['SC-005'],
