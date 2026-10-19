@@ -3,7 +3,7 @@
 **Branch**: `feat/012-uc01-issue-triage-specs` | **Date**: 2026-10-17 | **Spec**: [spec.md](spec.md)
 
 **Input**: Draft specification in `specs/002-uc01-issue-triage/`.
-**Status**: Existing baseline approved by the user on 2026-10-18 for T001 documentation/review. Consumer signatures and the numeric fixture profile are approved through user-confirmed member agreement in [decisions](contracts/decisions.md). No runtime implementation authorization.
+**Status**: Existing baseline and consumer/fixture agreement approved on 2026-10-18. T001–T008 complete at the controlled local level; the user separately authorized T007–T008 on 2026-10-19 (Asia/Bangkok), limited to controlled clarification and later-invocation reassessment. T009 onward and real execution remain separately gated in [decisions](contracts/decisions.md).
 
 ## Summary
 
@@ -23,7 +23,7 @@ Thai owns an assessment boundary for one issue/repository. Validate input and tr
 
 ## Constitution Check
 
-The [constitution](../../.specify/memory/constitution.md) remains an unratified template. Apply AGENTS.md, accepted ADR-0005 and repository policy instead of treating placeholder principles as ratified. Pre-research and post-design gates: scope limited to planning (PASS); shared owners preserved (PASS); production choices explicitly gated (PASS); no UC-03 contract mutation (PASS). Runtime readiness is BLOCKED pending [decisions](contracts/decisions.md), regardless of draft completeness.
+The [constitution](../../.specify/memory/constitution.md) remains an unratified template. Apply AGENTS.md, accepted ADR-0005 and repository policy instead of treating placeholder principles as ratified. The approved consumer agreement preserves shared owners, production gates and the UC-03 contract. Current implementation authority extends through controlled T007–T008 only; real-runtime readiness remains blocked by the external gates in [decisions](contracts/decisions.md).
 
 ## Project Structure
 
@@ -66,11 +66,11 @@ flowchart LR
 
 UC-01 receives only narrowed read/search capabilities, not a full RepositoryPort with patch/execute methods. Model tool requests are data checked against that narrow capability set; the controller invokes only validated read/search requests. All operation guards and durable reservations are shared. No UC-03 bug workflow is required to run UC-01 fixtures.
 
-The existing executable ModelPort requires UC-03 TaskState/ModelProposal, and RepositoryPort does not expose the full contextual denial envelope UC-01 needs. These cannot be assumed triage-compatible. [Shared interfaces](contracts/interfaces.md#versioned-consumer-signatures) now supplies `uc01-consumer-v1`, including a separate triage role, guarded read/search, accounting, continuation and additive evidence projection. [Schema](contracts/schema.md#finite-controlled-fixture-profile) supplies the concrete `uc01-fixture-v1` numeric test profile. X-FOUNDATION-AGREEMENT is satisfied for this consumer contract; T002 onward still needs separate implementation authorization and real integrations retain their delivery gates. Do not fake a bug TaskState or copy the provider budget implementation. Preserve canonical SourceEvidence, including boundedExcerpt, and transform only at an agreed boundary.
+The existing executable ModelPort requires UC-03 TaskState/ModelProposal, and RepositoryPort does not expose the full contextual denial envelope UC-01 needs. These cannot be assumed triage-compatible. [Shared interfaces](contracts/interfaces.md#versioned-consumer-signatures) supplies `uc01-consumer-v1`, including a separate triage role, guarded read/search, accounting, continuation and additive evidence projection. [Schema](contracts/schema.md#finite-controlled-fixture-profile) supplies the concrete `uc01-fixture-v1` numeric test profile. X-FOUNDATION-AGREEMENT is satisfied; T002–T008 are complete under their separate authorizations. T009 onward needs separate authorization, and real integrations retain their delivery gates. Do not fake a bug TaskState or copy the provider budget implementation. Preserve canonical SourceEvidence, including boundedExcerpt, and transform only at an agreed boundary.
 
 ## Implementation strategy and execution
 
-1. Approve the draft and agree consumer contracts/path ownership with shared owners (T001). No implementation starts from this PR.
+1. Record artifact approval and consumer-contract/path agreement with shared owners (T001); implementation requires separate task authorization.
 2. Validate assessment contracts and build controlled fixtures/spies (T002–T004), distinct from real adapters. This makes independent progress possible after contract agreement.
 3. Implement US1 through mocked shared ports (T005–T006); demo classified issue plus evidence-linked severity with zero side effects. This is the first vertical slice and includes setup/foundation prerequisites.
 4. Extend US1 to later-answer clarification (T007–T008), then catalog recommendation cases (T009–T010); retain independently runnable story tests.
@@ -94,7 +94,7 @@ X-EVAL-AGREEMENT approves shared registration/result signatures with Tai; X-EVAL
 - Attack tests cover injected tools, path escape, protected content, stale continuation, malformed citations, absent/exhausted budgets and uncertain provider usage at the first slice capable of observing them, not only T014. Shared guards must prevent effects before denial; mock guard-ordering evidence is separate from real containment evidence.
 - Integration consumes versioned shared adapters with `real` provenance and records immutable revisions/config identities; perform actual UC-04 restart and UC-05 pause/resume acceptance jointly. Clarification itself is a needs-info result, not a durable wait implementation.
 - Compare two equivalent held-out real-model runs with machine-readable metrics, hidden labels outside model/tool context, the user-supplied 80% classification floor and owner-approved remaining thresholds. Retain case failures and completeness separately from aggregate scores. Deterministic schema passes never prove model judgment quality.
-- Planning gates: context checker, runtime baseline validator and full Node suite. Those checks validate existing repository integration only; no UC-01 runtime exists in this change.
+- Repository gates: context checker, runtime validator and full Node suite. These validate repository integration and the exercised local contract/mock behavior; actual provider quality and real-runtime acceptance require the separate delivery/evaluation gates.
 
 ## Dependencies and release gates
 

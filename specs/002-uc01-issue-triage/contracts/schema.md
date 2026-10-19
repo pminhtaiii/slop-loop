@@ -4,7 +4,7 @@
 
 ## Notation and common validation
 
-Objects below are closed: only listed fields are permitted; all required unless marked `?`. Arrays have finite host-configured cardinality/byte bounds. `Id` is nonempty bounded text; `Digest` is lowercase 64-hex SHA-256; `Text` is bounded admitted text, never a secret. Integers are finite nonnegative safe integers; required limit maxima are positive. All numeric values must be finite. Optional means omitted, never null. Reject duplicate IDs, unknown enums, malformed digests, unsupported schemaVersion, NaN and Infinity. Contract-specific validators are planned, not implemented.
+Objects below are closed: only listed fields are permitted; all required unless marked `?`. Arrays have finite host-configured cardinality/byte bounds. `Id` is nonempty bounded text; `Digest` is lowercase 64-hex SHA-256; `Text` is bounded admitted text, never a secret. Integers are finite nonnegative safe integers; required limit maxima are positive. All numeric values must be finite. Optional means omitted, never null. Reject duplicate IDs, unknown enums, malformed digests, unsupported schemaVersion, NaN and Infinity. Local validators are implemented in `src/uc01/contracts.ts`; validation grants no tool authority or real-integration evidence.
 
 ## Invocation (untrusted caller data)
 
@@ -43,7 +43,7 @@ All identities are Id; repositorySnapshotDigest is Digest. `accountingRef` resol
 | Input / output / total tokens | 2,000 / 1,000 / 3,000 | 4,000 / 2,000 / 6,000 |
 | Synthetic cost units | 3,000 | 6,000 |
 | Evidence items / search results / questions | 16 per registry / 8 per search / 4 per outcome | 48 evidence admissions / 96 returned search results / 12 issued questions cumulatively |
-| Invocations/runs | One invocation per run | 3; rejected/failed invocations consume an invocation slot too |
+| Invocations/runs | One invocation per run | 3 admitted invocations; a guard rejection before admission consumes no slot, while failures after admission retain the slot |
 
 Each fixture run represents one invocation; both its run and cumulative task ceilings must admit a call. `pricingId = uc01-fixture-token-units-v1`: each input/output token costs one synthetic unit. A model reservation declares at most 500 input + 250 output = 750 total tokens/cost units, and at most 1,000 ms. A read/search result obeys the invocation's remaining byte/item/time/tool ceilings. Task state persists between mocked invocations; creating a new run never resets task usage, and reservations with uncertain usage remain fully charged. Exact-boundary, one-over-boundary and missing/nonfinite-limit vectors belong to T002/T003. Test clocks are injected; these numbers do not authorize real waiting, network, filesystem or command execution.
 

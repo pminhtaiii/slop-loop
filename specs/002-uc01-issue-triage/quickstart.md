@@ -1,6 +1,6 @@
 # Quickstart: incremental UC-01 verification
 
-**Status**: T001 artifact/consumer agreement approved; subsequent implementation is not authorized. No UC-01 runtime/tests, executable evaluation dataset or shared evaluation runner is implemented by this revision. Future implementation paths have T001 ownership agreement; no new runner command or implementation path is selected.
+**Status**: T001–T008 implement the approved contract, controlled fixtures, validated intake, assessment and later-answer clarification. Phase 4 was separately authorized on 2026-10-19 (Asia/Bangkok); see [decisions](contracts/decisions.md). The controller accepts only the explicit mock fixture profile. T009 onward requires separate authorization; real runtime and shared evaluation remain gated.
 
 ## Existing planning and repository checks
 
@@ -14,22 +14,30 @@ node scripts/ci/check-runtime.mjs
 node --test
 ```
 
-These commands exist now. Assignment/handoff show Thai, approved T001 artifacts, one completed task and 15 unchecked tasks; context checks validate links/facts. Runtime and full Node suites exercise existing bootstrap/UC-03 contracts/mocks/contributor helpers, not UC-01 cases, classification accuracy or project evaluation. Report actual exit status, failures and skipped checks. Existing `pnpm run validate:runtime` is a build/lint/type/test command, not a model evaluation runner.
+Assignment/handoff read the canonical task ledger and current owner/scope; context checks validate links/facts. Runtime and full Node suites include local UC-01 tests alongside bootstrap/UC-03/contributor checks. These exercise controlled behavior, not real classification accuracy or project evaluation. Report actual exit status, failures and skipped checks. Existing `pnpm run validate:runtime` is a build/lint/type/test command, not a model evaluation runner.
 
-## Future authorized slice workflow
+Run the focused implemented slice with:
 
-1. T001 records user-confirmed member approval of domain scope/consumer contracts and the finite fixture profile; keep shared evaluation API/version agreement separately pending with Tai. Directional agreement grants no implementation permission.
+```powershell
+node --test tests/runtime/uc01/*.test.ts
+```
+
+At source `3b4d4f3ada61b0734b221100589101ba537c45e9`, all 123 focused tests passed (84 prior tests and 39 Phase 4 tests). `IntakeBinder` preserves validated caller input and admits exact-digest excerpts through a trusted resolver. `bindClarification` validates same-issue answers and projects immutable prior and unanswered questions; `projectClarification` preserves unanswered material questions and rejects identity reuse or merged overflow. `IssueAssessor.assessIssue` takes explicit injected ports, clock, `uc01-fixture-v1` profile and the approved 500/250/750 token reservation ceiling with synthetic pricing identity. Later calls resolve the opaque continuation and compare its full immutable projection before excerpt admission or constrained activity; model input receives prior questions and admitted answer-origin evidence, while the opaque reference stays outside provider-visible content. Shared task accounting retains prior spending and uncertain reservations across invocation/run IDs. The controller guards bounded read/search and model operations, settles usage, validates assessment/evidence and binds material questions through the caller port. Deadline checks prevent successful results after reconciliation, resolution, binding or telemetry overruns. Clarification supplies no approval; all destinations stay undetermined. No provider, filesystem, persistence, policy or dispatch adapter is selected by this entry point. Behavioral RED/GREEN, case/source/config and merger evidence are retained locally under `.agent-work/2026-10-19/uc01-phase4/`.
+
+## Incremental slice workflow
+
+1. T001 records user-confirmed member approval of domain scope/consumer contracts and the finite fixture profile; keep shared evaluation API/version agreement separately pending with Tai. Each implementation slice requires separate authorization, currently through T008.
 2. T002 designs product/evaluation vectors and grading statuses before validator code. T003 defines bounded mock scripts/call spies; T004 prepares versioned C01–C22 inputs, private expected outcomes/rules and development/held-out split. Validate isolation and case/result identities before feature work.
 3. T005–T006 execute available US1 cases immediately, including irrelevant input, invalid output, injection and budget guards. T007–T008 do the same for clarification/answer injection, then T009–T010 for catalog/routing. Run impacted earlier regressions and capture each result before accepting the slice.
-4. Use the existing Node test mechanism for local UC-01 tests after they exist and are authorized, with the proposed case/rule design and injected ports. Confirm actual test module paths/discovery from the implementation; do not invent a CLI invocation or report an absent suite as passed. This is local test coverage, not a parallel runner.
+4. Use the existing Node test mechanism and the implemented module paths above for local UC-01 tests, with versioned case/rule design and injected ports. This is local test coverage, not a parallel runner. Later-answer reassessment is implemented at the mock level; configured recommendation remains T009–T010.
 5. T011–T013 execute real adapter/restart/policy/receiver checks only with actual owner deliveries, versions and configured authority. Missing components yield not-run records with reasons and retry gates. T014 consolidates earlier safety regression evidence; it never postpones early available attack checks.
 6. T015 uses the corpus/rules designed earlier, approved thresholds and actual model/runner deliveries for two comparable scored runs and shared registration/conformance. T016 reconciles runtime gates and separates UC-01 verdict from project verdict. No context capability promotion without complete required real evidence.
 
 ## Current availability and later run conditions
 
-| Evaluation scope | Status in this planning revision | Condition to execute |
+| Evaluation scope | Current availability | Condition to execute |
 |---|---|---|
-| UC-01 contract/mock behavior | not-run: no UC-01 validators/tests exist | A-ARTIFACTS, agreed domain seam and authorized T002–T010 implementation |
+| UC-01 contract/mock behavior | T002–T008 suites available; 123 focused tests passed at the source revision above | Explicit controlled ports/profile; configured recommendation requires separate T009–T010 authorization |
 | Real adapters / receiver | not-run: required real deliveries absent | X-READ-MODEL, X04-STATE, X05-GATE, X-RECEIVER and A-PRODUCTION; actual versioned integration |
 | Held-out model quality | not-run: no approved corpus/grader/provider run | Prepared T004 data design, A-EVALUATION/A-PRODUCTION, actual model and required integrations |
 | Shared scoped registration | not-run: runner/signatures not delivered/agreed | X-EVAL-AGREEMENT and X-EVAL-RUNNER; actual T015 compatibility evidence |

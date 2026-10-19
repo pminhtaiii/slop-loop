@@ -28,7 +28,7 @@ Proposed `PublicCase` fields are required unless marked optional. Text, collecti
 | levels, gate | Explicit nonempty supported levels; hard or scored grading gate, with scored permitted only for model-quality samples. Contract/behavior/integration/safety invariants are hard. A level-specific variant has its own caseId if input/oracle changes |
 | input | Exactly one product Invocation plus references to admitted public evidence, repository snapshot and catalog fixture; reuse product schema without a competing IssueTicket schema |
 | source | Public/synthetic/reporter fixture origin, authorization/licensing reference when applicable, safe source reference and digest; no fabricated repository provenance |
-| prerequisites | Required capability/version/profile references, configuration/catalog/policy identities, model requirement, finite bounds, shared owner gates and expected provenance per level |
+| prerequisites | Required capability/version/profile references, configuration/catalog/policy identities, canonical `catalogDigest` for the complete trusted catalog contents, model requirement, finite bounds, shared owner gates and expected provenance per level |
 | gradingRuleId, gradingRuleVersion | Stable rule identity/version; rule implementation belongs to the trusted grader, never model instructions |
 | requirements, taskIds | FR/SC references and existing T001–T016 mappings for traceability, not completion state |
 

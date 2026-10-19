@@ -1,12 +1,12 @@
 # Decisions and Authorization: UC-01
 
-**Status**: T001 artifact and consumer-contract agreement approved on 2026-10-18 (Asia/Bangkok). The user confirmed approval by themselves and the other members, including the concrete signatures, fixture profile and commit message. Runtime implementation remains outside this T001-only authorization.
+**Status**: T001 artifact and consumer-contract agreement approved on 2026-10-18 (Asia/Bangkok). T002–T008 subsequently completed under separate authorization at the controlled local level. On 2026-10-19 (Asia/Bangkok), the user authorized Phase 4, T007–T008, for clarification across invocations through controlled shared ports. T009 onward and real execution remain separately gated.
 
 ## T001 approval provenance and approved agreement
 
 On 2026-10-18 (Asia/Bangkok), the user requested implementation of T001 and independent subagent review. In response to the question asking for artifact approval and agreement with Tai, Thanh Tan and Trong Tan over model/read-search/evidence, accounting/policy/continuation, fixture profile and paths, the user replied **“Tôi xác nhận phê duyệt”**. This is the user's confirmation of the existing baseline and reported agreement, not separate messages from those owners. The approved baseline is repository commit `5cf4d14e9af770142fafe75894dfb172fd9fd663`: `spec.md`, `plan.md`, `research.md`, `data-model.md`, `quickstart.md`, `tasks.md`, and `contracts/{schema,interfaces,acceptance,evaluation,decisions}.md` in this feature directory. Approval of the proposed evaluation design does not satisfy the separate shared runner/corpus/real-run gates.
 
-The authorized action in this chat is T001 documentation and review only. T002–T016, real shared adapters, provider calls and production configuration are outside this instruction. No new approval is inferred from technical readiness. The user has reviewed and approved the commit message `docs(uc01): record T001 artifact and consumer-contract agreement`.
+The original T001 instruction authorized documentation and review only. Subsequent task authorization is recorded below; technical readiness alone grants no permission. The user reviewed and approved the T001 commit message `docs(uc01): record T001 artifact and consumer-contract agreement`.
 
 Independent review of the baseline found that its required exact consumer signatures and numeric fixture profile were absent, and that `SourceEvidence.boundedExcerpt` was incorrectly called `excerpt`. Those details were then supplied and independently reviewed as `uc01-consumer-v1-candidate` and `uc01-fixture-v1-candidate`. After the additions and their ADR/context alignment were explained, the user stated: **“Tôi và các thành viên khác đã phê duyệt, message commit cũng đã được phê duyệt. Hãy hoàn thành phần còn lại để kết thúc T001.”** This records member approval as reported by the user, without inventing individual messages. The reviewed candidate content is adopted unchanged as **`uc01-consumer-v1`**, with **`uc01-fixture-v1`**; the product wire discriminator remains `uc01-draft-v1` and no executable UC-03 type is changed. The exact approved signature/profile definitions are retained in this revision of interfaces.md and schema.md.
 
@@ -21,6 +21,12 @@ Independent review of the baseline found that its required exact consumer signat
 
 T001 exit records approval of the artifact baseline plus the reviewed signature/profile amendments, finite mock-only execution and path ownership. The coordinator closes only T001 after the final current-artifact reviews and local checks pass. This is a contract agreement gate, not a requirement for real adapter availability. Production numeric choices, real deliveries, receiver agreement, shared evaluation agreement/runner and scored runs remain separately gated below.
 
+## Subsequent implementation authorization
+
+T002–T004 were separately authorized on 2026-10-18 and completed as the contract/mock/fixture slice recorded in [tasks](../tasks.md). On 2026-10-18 (Asia/Bangkok), the user requested: **“Thực hiện Implement Phase 3: User Story 1 - Evidence-backed assessment (Priority: P1), bao gồm T005-T006 trong specs/002-uc01-issue-triage/tasks.md.”** This authorizes validated intake and bounded initial assessment through injected controlled ports, plus their tests, review, context refresh and contributor publication. It does not authorize T007–T016, real adapters, provider runs, production configuration, dispatch or repair. Initial material questions may obtain a trusted continuation binding; later-answer reassessment remains T007–T008. Only the minimal undetermined destination is in this slice; configured recommendation remains T009–T010.
+
+On 2026-10-19 (Asia/Bangkok), the user requested: **“Thực hiện Implement Phase 4: User Story 2 - Clarification across invocations (Priority: P2). Tương ứng với T007-T008 trong specs/002-uc01-issue-triage/tasks.md”** and noted the local CodeRabbit CLI is available if needed. This separately authorizes question/answer binding and later-invocation reassessment through the approved controlled consumer seams, with tests, independent review, context refresh and contributor publication. It preserves the agreed original-report, evidence-provenance, continuation and cumulative-accounting contracts. It does not authorize T009–T016, real adapters, provider runs, production choices, dispatch, repair or action approval from clarification answers.
+
 ## Accepted basis
 
 [ADR-0005](../../../docs/adr/0005-uc01-triage-boundary-and-assessment.md) records accepted assessment/ownership/severity/clarification/recommendation boundaries. Existing UC-03 [decision record](../../001-verified-code-repair/contracts/decisions.md) and shared contract v0.1/schema 0.1.0 remain unchanged. UC-03 Phase 2 authorization does not authorize UC-01 implementation.
@@ -29,7 +35,7 @@ T001 exit records approval of the artifact baseline plus the reviewed signature/
 
 | Gate | Decision required / evidence | Owner | Blocks |
 |---|---|---|---|
-| A-ARTIFACTS | SATISFIED for T001: baseline and reviewed amendments approved by the user/member confirmation above; scope is T001 documentation and contributor publication | Project owner with Thai | T002 onward requires separate implementation authorization |
+| A-ARTIFACTS | SATISFIED for the approved baseline and reviewed amendments; subsequent implementation authority extends through T007–T008 as recorded above | Project owner with Thai | T009 onward requires separate implementation authorization |
 | X-FOUNDATION-AGREEMENT | SATISFIED by user-reported member approval of `uc01-consumer-v1`, `uc01-fixture-v1`, evidence projection and path ownership above | Thai + Tai; Thanh Tan/Trong Tan for accounting/policy bindings | T001 agreement exit met; mocks still require explicit task implementation authorization |
 | X-READ-MODEL | Real shared read/search and model adapters with guards and actual revisions; no forced bug TaskState | Tai | T011, T012 |
 | X04-STATE | Durable task budgets/reservations/uncertain-use reconciliation and continuation binding; real restart evidence | Thanh Tan | T011, T012 |
