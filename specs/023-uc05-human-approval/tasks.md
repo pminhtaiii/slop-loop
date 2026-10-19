@@ -48,17 +48,19 @@
 
 **Independent Test**: C01–C05/C21–C23 prove expected permission, safe prompt and zero premature effects using the actual service with injected mock dependencies.
 
-- [ ] T005 [US1] Write classification behavioral RED in tests/runtime/approvals/policy.test.ts against src/approvals/policy.ts.
+- [x] T005 [US1] Write classification behavioral RED in tests/runtime/approvals/policy.test.ts against src/approvals/policy.ts.
   - **Owner**: Trong Tan / policy tests.
   - **Dependencies**: T004.
   - **Owned Paths**: tests/runtime/approvals/policy.test.ts; src/approvals/policy.ts.
   - **Acceptance Checks**: Establish loadable no-effect policy skeleton; allowed/required expectations fail behaviorally. Cover full precedence table, forbidden overrides, command argv grammar, unsupported facts and configured breadth; freeze tests/source handoff to T006.
+  - **Current Evidence**: Integrated at `93effc72cf0edf2786d7f6f90c12617a607b6b9f` after independent merger review. Fifteen public-seam behavioral tests exercise the actual classifier; retained RED/GREEN slices include configured command/patch permission, forbidden precedence, finite trusted facts, plan prerequisites, breadth, exact argv rules, immutable policy and malformed-role/attached-eval regressions. Import/type failures are not counted as behavioral RED. Focused policy plus prior foundation suites passed 39/39; required integrated runtime validation passed typecheck, lint, build and 596 compiled tests. Evidence is retained locally under `.agent-work/2026-10-19/uc05-phase3/policy/`; no real enforcement or execution claim.
 
-- [ ] T006 [US1] Implement deterministic in-process policy compilation in src/approvals/policy.ts.
+- [x] T006 [US1] Implement deterministic in-process policy compilation in src/approvals/policy.ts.
   - **Owner**: Trong Tan / policy implementation.
   - **Dependencies**: T005.
   - **Owned Paths**: src/approvals/policy.ts.
   - **Acceptance Checks**: T005 vectors green with no LLM/network/process calls or whole-repo scans. Consume trusted admission facts, canonical exact digests and explicit finite profiles; no shell equivalence claims or permissive defaults.
+  - **Current Evidence**: Same accepted integration and checks as T005. `compilePolicy` validates and freezes an explicit fixture profile; classification consumes action/policy-bound trusted facts and unchanged canonical validators. The closed argv rule matches the complete configured tuple; malformed/unsupported inputs deny with safe typed outcomes, and forbidden/evaluation forms cannot be approved by configuration. No filesystem scan, subprocess, network, model or effect dispatch is introduced. Real isolation, durable adapters and production profiles remain gated; T007 is the next authorized dependency.
 
 - [ ] T007 [US1] Implement initial ApprovalPort service, bounded presentation and decision CLI test-first in src/approvals/service.ts, src/approvals/presentation.ts and src/approvals/cli.ts.
   - **Owner**: Trong Tan / service and operator boundary.
