@@ -70,7 +70,7 @@ tests/runtime/support/uc05/
   fixtures.ts  mock-store.ts  mock-context.ts
 ```
 
-Tai retains `src/contracts/uc03.ts` and `src/foundation/`; Thanh Tan retains `src/persistence/`. UC-05 tasks do not edit these foreign paths. External owners implement their adapters under their own approved ledgers.
+Tai retains `src/contracts/foundation/uc03.ts` and `src/foundation/`; Thanh Tan retains `src/persistence/`. UC-05 tasks do not edit these foreign paths. External owners implement their adapters under their own approved ledgers.
 
 **Structure Decision**: Keep CLI translation, policy and control separate behind small explicit ports; share one authoritative UC-04 control store and one execution guard. [Data model](data-model.md) defines records; [interfaces](contracts/interfaces.md) defines transactions and race behavior.
 

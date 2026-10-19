@@ -18,7 +18,7 @@ import {
   validateHumanResolution,
   validatePolicyProfile,
   validateSafeResult,
-} from '../../../../src/approvals/contracts.ts';
+} from '../../../../src/contracts/approvals/contracts.ts';
 
 export const UC05_MOCK_PROVENANCE = 'mock' as const;
 

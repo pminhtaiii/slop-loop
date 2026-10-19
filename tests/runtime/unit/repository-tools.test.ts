@@ -27,7 +27,7 @@ import {
   type GuardedReadOperation,
   type RepositoryReadLimits,
 } from '../../../src/foundation/repository-tools.ts';
-import { validateSourceEvidence } from '../../../src/contracts/uc03.ts';
+import { validateSourceEvidence } from '../../../src/contracts/foundation/uc03.ts';
 
 interface FakeFileRecord {
   readonly content: string;

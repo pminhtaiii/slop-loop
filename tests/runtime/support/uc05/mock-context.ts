@@ -7,7 +7,7 @@ import {
   validateApprovalTaskControl,
   validateDispatchClaim,
   validatePolicyProfile,
-} from '../../../../src/approvals/contracts.ts';
+} from '../../../../src/contracts/approvals/contracts.ts';
 import { UC05_MOCK_PROVENANCE } from './mock-store.ts';
 
 export type MockEffectClass = 'read' | 'test' | 'mutation';

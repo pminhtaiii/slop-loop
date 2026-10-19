@@ -46,7 +46,7 @@ Phase 2 recheck: the user authorized canonical validators and controlled test-on
 The paths below remain the future product-runtime layout. Phase 1 adds build/lint/CI configuration and a dependency smoke test, rather than these product modules.
 
 ```text
-src/contracts/uc03.ts              # Tai: canonical ports and runtime validators
+src/contracts/foundation/uc03.ts              # Tai: canonical ports and runtime validators
 src/foundation/model.ts            # Tai: model/provider boundary
 src/foundation/docker-workspace.ts # Tai: container lifecycle and executor
 src/foundation/repository-tools.ts # Tai: controlled tools

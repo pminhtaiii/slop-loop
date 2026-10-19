@@ -7,7 +7,7 @@ import {
   type ProviderUsage,
   CONTRACT_VERSION,
   computeCanonicalSha256,
-} from '../../../../src/contracts/uc03.ts';
+} from '../../../../src/contracts/foundation/uc03.ts';
 
 export function createTestBugTask(overrides?: Partial<BugTask>): BugTask {
   return {

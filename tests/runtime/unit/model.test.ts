@@ -5,7 +5,7 @@ import {
   type TaskState,
   type SourceEvidence,
   type ProviderRequest,
-} from '../../../src/contracts/uc03.ts';
+} from '../../../src/contracts/foundation/uc03.ts';
 import {
   HostModelPort,
   computeContextDigest,

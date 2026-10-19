@@ -30,7 +30,7 @@ Sequential T001–T016; story tasks carry [US1], [US2] or [US3]. Thai owns all l
   - **Owner**: Thai.
   - **Dependencies**: T001.
   - **Owned Paths**: src/uc01/contracts.ts; tests/runtime/uc01/contract.test.ts.
-  - **Acceptance Checks**: Behavioral vectors reject malformed/extra fields, invalid catalogs/limits/identity/digests, forged evidence/locators, wrong severity dimensions and model variants. Check all outcome unions and reference consistency against agreed schema; never fork src/contracts/uc03.ts. C13,C14,C22 pass; validation alone authorizes no tool.
+  - **Acceptance Checks**: Behavioral vectors reject malformed/extra fields, invalid catalogs/limits/identity/digests, forged evidence/locators, wrong severity dimensions and model variants. Check all outcome unions and reference consistency against agreed schema; never fork src/contracts/foundation/uc03.ts. C13,C14,C22 pass; validation alone authorizes no tool.
   - **Evaluation & Evidence**: Before validator code: design product/evaluation metadata and deterministic grader vectors for C13,C14,C22 plus case-ID/version/result-state, oracle isolation and aggregation negatives. Include canonical digest projection/encoding vectors from the evaluation contract and correct-class/wrong-severity and wrong-class/correct-severity to separate classification correctness from overall case failure. Run immediately after validators; retain component and overall results, input/oracle/rule digests and code/config. No shared runner or real-model quality claim.
 
 - [X] T003 Create controlled shared-port mocks and call spies in tests/runtime/support/uc01/ports.ts and tests/runtime/uc01/ports.test.ts.

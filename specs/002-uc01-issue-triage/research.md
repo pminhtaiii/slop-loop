@@ -11,7 +11,7 @@
 ## Shared contracts and independent development
 
 **Decision**: Propose a narrow UC-01 consumer seam over shared repository/model/policy/accounting capabilities; agree it before fixtures/mocks. Thai implements no replacement repository, provider transport, ledger or policy engine.
-**Rationale**: Existing [canonical contracts](../../src/contracts/uc03.ts) expose `ModelPort.propose(TaskState, SourceEvidence[], ProviderRequest)` and bug-specific proposals. RepositoryPort exposes more powers than triage needs and its signatures omit explicit per-call policy/budget context. Existing approved [interfaces](../001-verified-code-repair/contracts/interfaces.md) require guards and durable provider reservations; type compatibility cannot be assumed.
+**Rationale**: Existing [canonical contracts](../../src/contracts/foundation/uc03.ts) expose `ModelPort.propose(TaskState, SourceEvidence[], ProviderRequest)` and bug-specific proposals. RepositoryPort exposes more powers than triage needs and its signatures omit explicit per-call policy/budget context. Existing approved [interfaces](../001-verified-code-repair/contracts/interfaces.md) require guards and durable provider reservations; type compatibility cannot be assumed.
 **Alternatives considered**: Fabricating a bug task corrupts semantics; copying ports creates competing foundations; waiting for all real adapters unnecessarily blocks contract-agreed mocks.
 
 ## Validation and provenance

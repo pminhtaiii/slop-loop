@@ -50,7 +50,7 @@ tests/runtime/support/uc01/
   fixtures.ts, ports.ts
 ```
 
-**Structure Decision**: Thai owns only UC-01-specific modules/tests. Tai owns `src/contracts/uc03.ts`, `src/foundation/` and shared evaluation infrastructure; Thanh Tan owns `src/persistence/`; Trong Tan owns `src/approvals/`. Path allocation is approved at T001; no shared-file edits are hidden inside Thai's tasks.
+**Structure Decision**: Thai owns only UC-01-specific modules/tests. Tai owns `src/contracts/foundation/uc03.ts`, `src/foundation/` and shared evaluation infrastructure; Thanh Tan owns `src/persistence/`; Trong Tan owns `src/approvals/`. Path allocation is approved at T001; no shared-file edits are hidden inside Thai's tasks.
 
 ## Architecture and module boundaries
 

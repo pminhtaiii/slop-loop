@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
-import type { SourceEvidence } from '../../../../src/contracts/uc03.ts';
+import type { SourceEvidence } from '../../../../src/contracts/foundation/uc03.ts';
 import { fixtureLimits, sha256Text, type Assessment, type Catalog, type Continuation, type Evidence, type Failure,
   type Invocation, type Limits, type Proposal, type Question, type Usage } from '../../../../src/uc01/contracts.ts';
 

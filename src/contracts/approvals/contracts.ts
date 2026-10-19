@@ -1,5 +1,5 @@
-import type { ApprovalBinding, ValidationError, ValidationResult } from '../contracts/uc03.ts';
-import { parseApprovalBinding } from '../contracts/uc03.ts';
+import type { ApprovalBinding, ValidationError, ValidationResult } from '../foundation/uc03.ts';
+import { parseApprovalBinding } from '../foundation/uc03.ts';
 
 export const UC05_APPROVAL_SCHEMA_VERSION = 'uc05-approval/0.1-draft' as const;
 

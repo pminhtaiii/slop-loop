@@ -29,7 +29,7 @@ import {
   type ExecutionLimits,
   validateCommandView,
   validateTaskWorkspace,
-} from '../../../src/contracts/uc03.ts';
+} from '../../../src/contracts/foundation/uc03.ts';
 
 export const TEST_PROFILE_IMAGE_DIGEST = 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' as const;
 
