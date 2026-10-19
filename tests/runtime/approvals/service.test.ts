@@ -6,7 +6,6 @@ import { computeActionDigest } from '../../../src/contracts/foundation/uc03.ts';
 import { buildPresentation } from '../../../src/approvals/presentation.ts';
 import { createApprovalService } from '../../../src/approvals/service.ts';
 import { createMockApprovalStore } from '../support/uc05/mock-store.ts';
-import { createMockActivityControl } from '../support/uc05/mock-context.ts';
 import type { ApprovalContext } from '../../../src/approvals/service.ts';
 
 const digest = `sha256:${'a'.repeat(64)}`;
@@ -51,14 +50,12 @@ function setup() {
 
 test('canonical service atomically pauses a required request and only stored human consent admits it', async () => {
   const { service, store } = setup();
-  const activity = createMockActivityControl(profile);
   assert.equal(service.provenance, 'mock');
   assert.equal(await service.classify(action), 'APPROVAL_REQUIRED');
   assert.equal((await service.requestDecision(binding)).status, 'pending');
   assert.equal((await service.list('task-1')).control.mode, 'waiting');
   assert.equal(await service.validateBinding({ ...binding, status: 'approved' }), false);
   assert.equal((await service.resolve(binding.decisionId)).status, 'pending');
-  assert.deepEqual(activity.readEffectLog(), []);
   assert.equal(store.readHistory('task-1').value?.resolutions.length, 0);
 });
 
@@ -277,4 +274,58 @@ test('an uncertain decision requires reconciliation whether its commit happened 
     assert.equal(await service.validateBinding({ ...binding, status: 'approved' }), false);
     await assert.rejects(service.classify(action));
   }
+});
+
+test('retrying an earlier approval preserves a later pending request and prior admission state', async () => {
+  for (const admissionClosed of [false, true]) {
+    const { service, store } = setup();
+    await service.requestDecision(binding);
+    const first = await service.show('task-1', 'decision-1');
+    const responseA = { taskId: 'task-1', decisionId: 'decision-1', taskVersion: first.control.version, requestVersion: 1, presentationDigest: first.presentation.presentationDigest, decision: 'approve', responseKey: 'response-a' };
+    const accepted = await service.decide(responseA);
+    assert.equal(accepted.outcome, 'ok');
+    const bindingB = { ...binding, decisionId: 'decision-2' };
+    await service.requestDecision(bindingB);
+    const waiting = await service.show('task-1', 'decision-2');
+    const responseB = { ...responseA, decisionId: 'decision-2', taskVersion: waiting.control.version, presentationDigest: waiting.presentation.presentationDigest, responseKey: 'response-b' };
+    if (admissionClosed) {
+      store.failNext('resolvePending');
+      assert.equal((await service.decide(responseB)).outcome, 'unavailable');
+    }
+    const retried = await service.decide(responseA);
+    assert.equal(retried.outcome, 'ok');
+    assert.equal(retried.eventRef, accepted.eventRef);
+    assert.deepEqual((await service.list('task-1')).control, waiting.control);
+    assert.equal(await service.validateBinding({ ...binding, status: 'approved' }), false);
+    await assert.rejects(service.classify(action));
+    assert.equal((await service.decide(responseB)).outcome, 'ok');
+    assert.equal(await service.validateBinding(await service.resolve('decision-2')), !admissionClosed);
+    assert.equal((await service.resolve('decision-1')).status, 'approved');
+  }
+});
+
+test('provider contexts reject arrays, accessors and incomplete fields before reading untrusted properties', async () => {
+  const scenario = setup();
+  let getterReads = 0;
+  const accessor = (object: object, key: string, value: unknown): object => Object.defineProperty({ ...object }, key, { enumerable: true, get: () => { getterReads += 1; return value; } });
+  const current = scenario.current();
+  const invalid: readonly unknown[] = [
+    Object.assign([], current),
+    accessor(current, 'action', action),
+    { ...current, facts: accessor(current.facts, 'taskId', 'task-1') },
+    { ...current, freshness: accessor(freshness, 'currentTaskId', 'task-1') },
+    { ...current, elements: accessor(elements, 'necessity', elements.necessity) },
+    { ...current, runId: undefined },
+    { ...current, facts: { ...current.facts, repositoryId: undefined } },
+    { ...current, freshness: {} },
+    { ...current, elements: { ...elements, verificationStatus: undefined } },
+  ];
+  for (const raw of invalid) {
+    const service = createApprovalService({ taskId: 'task-1', profile, store: scenario.store, context: { loadForAction: async () => raw, loadForDecision: async () => raw }, operator: scenario.operator });
+    await assert.rejects(service.classify(action), /approval-operation-denied/);
+    await assert.rejects(service.requestDecision(binding), /approval-operation-denied/);
+  }
+  assert.equal(getterReads, 0);
+  assert.equal((await scenario.service.list('task-1')).control.mode, 'runnable');
+  assert.equal(await scenario.service.classify(action), 'APPROVAL_REQUIRED');
 });

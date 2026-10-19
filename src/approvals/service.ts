@@ -3,7 +3,7 @@ import type { ApprovalRequestRecord, ApprovalTaskControl, HumanResolution, Polic
 import type { PolicyFacts } from './policy.ts';
 import type { PresentationBundle, PresentationInput } from './presentation.ts';
 import { isDeepStrictEqual } from 'node:util';
-import { computeActionDigest, computeCanonicalSha256, parseApprovalBinding, validateApprovalBinding } from '../contracts/foundation/uc03.ts';
+import { computeActionDigest, computeCanonicalSha256, parseApprovalBinding, validateApprovalBinding, validateNormalizedAction } from '../contracts/foundation/uc03.ts';
 import { validateApprovalRequestRecord, validateApprovalTaskControl, validateHumanResolution, validateSafeResult } from '../contracts/approvals/contracts.ts';
 import { compilePolicy } from './policy.ts';
 import { buildPresentation } from './presentation.ts';
@@ -82,10 +82,19 @@ export function createApprovalService(options: ApprovalServiceOptions): Approval
     if (response.safe.outcome !== 'ok' || !validateSafeResult(response.safe).ok || !validateApprovalTaskControl(response.value).ok || response.value?.taskId !== options.taskId || containsProtectedContent(JSON.stringify(response.value))) throw new ApprovalServiceError('unavailable');
     return response.value;
   };
+  const admitContext = (raw: unknown): ApprovalContext => {
+    if (!plainContextData(raw) || !dataRecord(raw) || !exactFields(raw, ['action', 'facts', 'freshness', 'runId', 'elements']) ||
+      !identifier(raw['runId']) || !freshnessContext(raw['freshness']) || !decisionElements(raw['elements'])) throw new ApprovalServiceError('invalid');
+    const action = validateNormalizedAction(raw['action']);
+    const facts = raw['facts'];
+    if (!action.ok || !dataRecord(facts) || !policy.classify(action.value, facts).ok) throw new ApprovalServiceError('invalid');
+    const plan = facts['plan'];
+    if (plan !== null && (!dataRecord(plan) || !parseApprovalBinding(plan['binding']).ok || !freshnessContext(plan['context']))) throw new ApprovalServiceError('invalid');
+    // Policy validates every facts field; plan records also passed canonical and freshness validation.
+    return { action: action.value, facts: facts as unknown as PolicyFacts, freshness: raw['freshness'], runId: raw['runId'], elements: raw['elements'] };
+  };
   const trusted = async (decisionId: string, binding: ApprovalBinding): Promise<ApprovalContext> => {
-    const raw = await options.context.loadForDecision(decisionId);
-    if (!raw || typeof raw !== 'object') throw new ApprovalServiceError('invalid');
-    const context = raw as ApprovalContext;
+    const context = admitContext(await options.context.loadForDecision(decisionId));
     const result = policy.classify(context.action, context.facts);
     const current = control();
     if (!result.ok || result.permission === 'FORBIDDEN') throw new ApprovalServiceError(result.ok ? 'denied' : 'invalid');
@@ -135,9 +144,7 @@ export function createApprovalService(options: ApprovalServiceOptions): Approval
       if (localAdmissionClosed) throw new ApprovalServiceError('unavailable');
       const current = control();
       if (current.mode !== 'runnable' || current.outstandingClaimRefs.length > 0) throw new ApprovalServiceError('paused');
-      const raw = await options.context.loadForAction(options.taskId, action.actionId);
-      if (!raw || typeof raw !== 'object') throw new ApprovalServiceError('invalid');
-      const context = raw as ApprovalContext;
+      const context = admitContext(await options.context.loadForAction(options.taskId, action.actionId));
       if (!isDeepStrictEqual(action, context.action) || context.facts.taskId !== options.taskId || context.facts.repositoryId !== current.repositoryId || context.facts.workspaceId !== current.workspaceId) throw new ApprovalServiceError('invalid');
       const result = policy.classify(action, context.facts);
       if (!result.ok) throw new ApprovalServiceError('invalid');
@@ -230,7 +237,7 @@ export function createApprovalService(options: ApprovalServiceOptions): Approval
       if (response.safe.outcome === 'ok' || response.safe.outcome === 'paused') {
         const committed = control();
         if (response.safe.eventRef !== terminal.eventId || response.safe.controlVersion !== committed.version ||
-          committed.mode !== (decision === 'approved' ? 'runnable' : 'rejected') ||
+          (!prior && committed.mode !== (decision === 'approved' ? 'runnable' : 'rejected')) ||
           (response.safe.outcome === 'paused' && decision !== 'rejected') ||
           !isDeepStrictEqual(response.value, terminal) || !isDeepStrictEqual(resolution(record), terminal)) throw new ApprovalServiceError('unavailable');
         localAdmissionClosed = admissionWasClosed;
@@ -249,6 +256,51 @@ export function createApprovalService(options: ApprovalServiceOptions): Approval
 }
 
 function identifier(value: unknown): value is string { return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,126}$/.test(value); }
+
+/** Inspect descriptors recursively before validators or property reads can invoke input getters. */
+function plainContextData(value: unknown, depth = 0): boolean {
+  if (depth > 12) return false;
+  if (value === null || typeof value === 'boolean') return true;
+  if (typeof value === 'string') return value.length <= 65536;
+  if (typeof value === 'number') return Number.isFinite(value);
+  if (typeof value !== 'object') return false;
+  const prototype = Object.getPrototypeOf(value);
+  if (Array.isArray(value) ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null) return false;
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const keys = Reflect.ownKeys(value);
+  if (keys.length > 1024) return false;
+  if (Array.isArray(value) && (keys.length !== value.length + 1 || !Array.from({ length: value.length }, (_, index) => String(index)).every(key => Object.hasOwn(descriptors, key)))) return false;
+  return keys.every(key => {
+    if (Array.isArray(value) && key === 'length') return true;
+    const descriptor = typeof key === 'string' ? descriptors[key] : undefined;
+    return descriptor !== undefined && descriptor.enumerable && 'value' in descriptor && plainContextData(descriptor.value, depth + 1);
+  });
+}
+
+function dataRecord(value: unknown): value is Record<string, unknown> { return value !== null && typeof value === 'object' && !Array.isArray(value); }
+function exactFields(value: Record<string, unknown>, fields: readonly string[]): boolean { return Object.keys(value).length === fields.length && fields.every(field => Object.hasOwn(value, field)); }
+
+function freshnessContext(value: unknown): value is ApprovalBindingContext {
+  if (!dataRecord(value)) return false;
+  const ids = ['currentTaskId', 'currentWorkspaceId', 'currentPolicyId', 'currentPolicyVersion'];
+  const digests = ['currentRepositoryRevisionDigest', 'currentNormalizedActionDigest'];
+  const planDigests = ['currentStrategyDigest', 'currentCriteriaDigest', 'currentCheckSetDigest'];
+  const optional = [...planDigests, 'currentPlanVersion', 'currentBaselineRef', 'currentEvidenceRefs'];
+  const sha = (digest: unknown): boolean => typeof digest === 'string' && /^sha256:[0-9a-f]{64}$/.test(digest);
+  return Object.keys(value).every(key => [...ids, ...digests, ...optional].includes(key)) &&
+    ids.every(key => identifier(value[key])) && digests.every(key => sha(value[key])) &&
+    planDigests.every(key => !Object.hasOwn(value, key) || sha(value[key])) &&
+    (!Object.hasOwn(value, 'currentBaselineRef') || identifier(value['currentBaselineRef'])) &&
+    (!Object.hasOwn(value, 'currentPlanVersion') || typeof value['currentPlanVersion'] === 'number' && Number.isSafeInteger(value['currentPlanVersion']) && value['currentPlanVersion'] > 0) &&
+    (!Object.hasOwn(value, 'currentEvidenceRefs') || Array.isArray(value['currentEvidenceRefs']) && value['currentEvidenceRefs'].length > 0 && value['currentEvidenceRefs'].every(identifier));
+}
+
+function decisionElements(value: unknown): value is PresentationInput['elements'] {
+  if (!dataRecord(value) || !exactFields(value, ['action', 'necessity', 'targets', 'consequences', 'verificationStatus'])) return false;
+  const text = (field: unknown): boolean => typeof field === 'string' && field.trim().length > 0;
+  return ['action', 'necessity', 'consequences', 'verificationStatus'].every(key => text(value[key])) &&
+    Array.isArray(value['targets']) && value['targets'].length > 0 && value['targets'].length <= 32 && value['targets'].every(text);
+}
 
 interface DecisionInput {
   readonly taskId: string; readonly decisionId: string; readonly taskVersion: number; readonly requestVersion: number;
