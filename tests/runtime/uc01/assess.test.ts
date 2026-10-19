@@ -40,6 +40,7 @@ function harness(value = scenario(), answer: unknown = { kind: 'assessment', pro
     async readEvidence(): Promise<unknown> { calls.push('read'); return {}; },
     async searchEvidence(): Promise<unknown> { calls.push('search'); return {}; },
     async bindContinuation(context: OperationContext): Promise<unknown> { bindings.push(context); calls.push('bind'); return { kind: 'bound', continuationRef: 'continuation' }; },
+    async resolveContinuation(): Promise<unknown> { throw new Error('Initial assessment must not resolve continuation'); },
     async emitSafeEvent(): Promise<unknown> { calls.push('event'); return { eventRef: 'safe-event' }; },
   };
   const options = { ports, now: () => 100, profileId: 'uc01-fixture-v1' as const, ceiling: { inputTokens: 500, outputTokens: 250, totalTokens: 750, costUnits: 750, pricingId: 'uc01-fixture-token-units-v1' },
@@ -236,6 +237,7 @@ test('C01 approved ScriptedUc01Ports consumer remains structurally and behaviora
     readEvidence: (context, admission, path) => shared.readEvidence(context, admission, path),
     searchEvidence: (context, admission, query) => shared.searchEvidence(context, admission, query),
     bindContinuation: (context, assessment) => shared.bindContinuation(context, assessment),
+    resolveContinuation: (context, ref) => shared.resolveContinuation(context, ref),
     emitSafeEvent: event => shared.emitSafeEvent(event),
   };
   const result = await new IssueAssessor({ ...h.options, ports }).assessIssue(h.value.invocation, h.value.context);
