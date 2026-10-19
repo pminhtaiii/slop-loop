@@ -235,3 +235,46 @@ test('failed pending persistence closes local agent admission instead of trustin
   await assert.rejects(scenario.service.classify(action));
   assert.equal(await scenario.service.validateBinding({ ...binding, status: 'approved' }), false);
 });
+
+test('a corrupted decision receipt never leaks protected metadata or admits work after an accepted resolution', async () => {
+  for (const change of [{ eventRef: 'MARKER_SECRET_DO_NOT_DISCLOSE' }, { eventRef: 'foreign-event' }, { controlVersion: 99 }]) {
+    const scenario = setup();
+    await scenario.service.requestDecision(binding);
+    const view = await scenario.service.show('task-1', 'decision-1');
+    const store = { ...scenario.store, resolvePending: (input: unknown) => {
+      const response = scenario.store.resolvePending(input);
+      return { ...response, safe: { ...response.safe, ...change } };
+    } };
+    const service = createApprovalService({ taskId: 'task-1', profile, store, context: scenario.context, operator: scenario.operator });
+    const input = { taskId: 'task-1', decisionId: 'decision-1', taskVersion: view.control.version, requestVersion: 1, presentationDigest: view.presentation.presentationDigest, decision: 'approve', responseKey: 'response-1' };
+    await assert.rejects(service.decide(input), error => error instanceof Error && error.message === 'approval-operation-denied');
+    const accepted = await service.resolve('decision-1');
+    assert.equal(accepted.status, 'approved');
+    assert.equal(await service.validateBinding(accepted), false);
+    await assert.rejects(service.classify(action));
+    await assert.rejects(service.decide({ ...input, decision: 'reject' }));
+    assert.deepEqual(await service.resolve('decision-1'), accepted);
+  }
+});
+
+test('an uncertain decision requires reconciliation whether its commit happened or not', async () => {
+  for (const committed of [false, true]) {
+    const scenario = setup();
+    await scenario.service.requestDecision(binding);
+    const view = await scenario.service.show('task-1', 'decision-1');
+    const store = { ...scenario.store, resolvePending: (input: unknown) => {
+      if (!committed) scenario.store.failNext('resolvePending');
+      const response = scenario.store.resolvePending(input);
+      return { ...response, value: null, safe: { ...response.safe, outcome: 'uncertain' as const } };
+    } };
+    const service = createApprovalService({ taskId: 'task-1', profile, store, context: scenario.context, operator: scenario.operator });
+    const response = await service.decide({ taskId: 'task-1', decisionId: 'decision-1', taskVersion: view.control.version, requestVersion: 1, presentationDigest: view.presentation.presentationDigest, decision: 'approve', responseKey: 'response-1' });
+    assert.equal(response.outcome, 'uncertain');
+    assert.equal(response.safeReasonCode, 'decision-reconciliation-required');
+    assert.equal(response.safeNextAction, 'reconcile');
+    assert.equal(response.eventRef, null);
+    assert.equal((await service.resolve('decision-1')).status, committed ? 'approved' : 'pending');
+    assert.equal(await service.validateBinding({ ...binding, status: 'approved' }), false);
+    await assert.rejects(service.classify(action));
+  }
+});

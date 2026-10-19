@@ -16,10 +16,10 @@ function exitCode(outcome: SafeOperationOutcome): number {
   if (outcome === 'unavailable' || outcome === 'uncertain') return 5;
   return 3;
 }
-function result(outcome: SafeOperationOutcome, value?: unknown): CliResult {
+function result(outcome: SafeOperationOutcome, value?: unknown, recordedDecision = false): CliResult {
   const output = JSON.stringify({ schemaVersion: 'uc05-approval/0.1-draft', outcome, safeReasonCode: outcome === 'ok' ? 'approval-cli-recorded' : 'approval-cli-denied', ...(value === undefined ? {} : { value }) });
   if (Buffer.byteLength(output) > 65536 || containsProtectedContent(output)) return result('invalid');
-  return { exitCode: exitCode(outcome), output };
+  return { exitCode: outcome === 'paused' && recordedDecision ? 0 : exitCode(outcome), output };
 }
 /** Structured arguments only; every command names the task and cannot select composition. */
 export async function runApprovalCli(argv: readonly string[], service?: ApprovalService): Promise<CliResult> {
@@ -54,7 +54,7 @@ export async function runApprovalCli(argv: readonly string[], service?: Approval
     if (command === 'inspect') return result('ok', await service.inspect(taskId, decisionId, integer('page')));
     const response = await service.decide({ taskId, decisionId, taskVersion: integer('task-version'), requestVersion: integer('request-version'), presentationDigest: parsed.get('presentation-digest'), decision: parsed.get('decision'), responseKey: parsed.get('response-key') });
     // A recorded rejection exits successfully; its retained task hold is in the safe metadata.
-    return { ...result(response.outcome, response), exitCode: response.outcome === 'paused' && response.safeReasonCode === 'decision-recorded' ? 0 : exitCode(response.outcome) };
+    return result(response.outcome, response, response.safeReasonCode === 'decision-recorded');
   } catch (error) {
     return result(error instanceof ApprovalServiceError ? error.outcome : 'unavailable');
   }

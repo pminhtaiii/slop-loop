@@ -39,7 +39,11 @@ async function fixture(scenario: string) {
     const result = store.loadTaskControl(taskId);
     return { ...result, value: result.value === null ? null : { ...result.value, reasonCode: 'MARKER_SECRET_DO_NOT_DISCLOSE' } };
   } };
-  return { service: scenario === 'no-operator' ? createApprovalService(options) : scenario === 'protected-metadata' ? createApprovalService({ ...options, store: protectedStore, operator }) : service, presentationDigest };
+  const protectedReceiptStore = { ...store, resolvePending: (input: unknown) => {
+    const result = store.resolvePending(input);
+    return { ...result, safe: { ...result.safe, eventRef: 'MARKER_SECRET_DO_NOT_DISCLOSE' } };
+  } };
+  return { service: scenario === 'no-operator' ? createApprovalService(options) : scenario === 'protected-metadata' ? createApprovalService({ ...options, store: protectedStore, operator }) : scenario === 'protected-receipt' ? createApprovalService({ ...options, store: protectedReceiptStore, operator }) : service, presentationDigest };
 }
 
 if (process.argv[2] === 'uc05-cli-test-driver') {
@@ -104,6 +108,17 @@ if (process.argv[2] === 'uc05-cli-test-driver') {
       const response = child(args, 'protected-metadata');
       assert.equal(response.status, 5);
       assert.doesNotMatch(response.stdout + response.stderr, /MARKER_SECRET|DO_NOT_DISCLOSE/);
+    }
+  });
+
+  test('actual subprocess returns a safe failure exit for protected approval and rejection receipts', async () => {
+    const { presentationDigest } = await fixture('normal');
+    for (const decision of ['approve', 'reject']) {
+      const response = child(['decide', '--task', 'task-1', '--request', 'decision-1', '--task-version', '2', '--request-version', '1', '--presentation-digest', presentationDigest, '--decision', decision, '--response-key', 'response-1'], 'protected-receipt');
+      assert.notEqual(response.status, 0, response.stdout + response.stderr);
+      assert.equal(JSON.parse(response.stdout).outcome, 'unavailable');
+      assert.equal(response.status, 5);
+      assert.doesNotMatch(response.stdout + response.stderr, /MARKER_SECRET|DO_NOT_DISCLOSE|decision-not-recorded/);
     }
   });
 }

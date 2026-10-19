@@ -226,13 +226,23 @@ export function createApprovalService(options: ApprovalServiceOptions): Approval
       const response = store().resolvePending({ expectedControlVersion: input.taskVersion, expectedRequestVersion: input.requestVersion,
         trustedOperator: options.operator.identity, trustedResponse: terminal,
         event: { schemaVersion: 'uc05-approval/0.1-draft', eventId: terminal.eventId, taskId: options.taskId, runId: context.runId, decisionId: record.decisionId, directionId: null, claimId: null, type: 'human-resolution-recorded', outcome: decision === 'approved' ? 'ok' : 'paused', policyRef: context.facts.policyIdentity, safeReasonCode: terminal.safeReasonCode, timestamp } });
-      if (!validateSafeResult(response.safe).ok || response.safe.taskId !== options.taskId || response.safe.decisionId !== record.decisionId || response.safe.requestVersion !== record.requestVersion) throw new ApprovalServiceError('unavailable');
+      if (!validateSafeResult(response.safe).ok || containsProtectedContent(JSON.stringify(response.safe)) || response.safe.taskId !== options.taskId || response.safe.decisionId !== record.decisionId || response.safe.requestVersion !== record.requestVersion) throw new ApprovalServiceError('unavailable');
       if (response.safe.outcome === 'ok' || response.safe.outcome === 'paused') {
-        if (!isDeepStrictEqual(response.value, terminal) || !isDeepStrictEqual(resolution(record), terminal)) throw new ApprovalServiceError('unavailable');
+        const committed = control();
+        if (response.safe.eventRef !== terminal.eventId || response.safe.controlVersion !== committed.version ||
+          committed.mode !== (decision === 'approved' ? 'runnable' : 'rejected') ||
+          (response.safe.outcome === 'paused' && decision !== 'rejected') ||
+          !isDeepStrictEqual(response.value, terminal) || !isDeepStrictEqual(resolution(record), terminal)) throw new ApprovalServiceError('unavailable');
         localAdmissionClosed = admissionWasClosed;
       }
-      // Store reason strings are never copied to user output, even on infrastructure failures.
-      return { ...response.safe, safeReasonCode: response.safe.outcome === 'ok' || response.safe.outcome === 'paused' ? 'decision-recorded' : 'decision-not-recorded' };
+      const recorded = response.safe.outcome === 'ok' || response.safe.outcome === 'paused';
+      const uncertain = response.safe.outcome === 'uncertain';
+      // Only validated identities and host-selected reasons/actions cross the store boundary.
+      return { schemaVersion: 'uc05-approval/0.1-draft', outcome: response.safe.outcome,
+        taskId: options.taskId, decisionId: record.decisionId, requestVersion: record.requestVersion,
+        controlVersion: response.safe.controlVersion, eventRef: recorded ? terminal.eventId : null,
+        safeNextAction: recorded ? 'none' : uncertain ? 'reconcile' : 'retry-read',
+        safeReasonCode: recorded ? 'decision-recorded' : uncertain ? 'decision-reconciliation-required' : 'decision-not-recorded' };
     }),
   };
   return Object.freeze(service);
