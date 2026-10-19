@@ -2,7 +2,7 @@
 
 **Branch**: `feat/023-uc05-human-approval-spec` | **Date**: 2026-10-19 (Asia/Saigon) | **Spec**: [spec.md](spec.md)
 
-**Status**: Phase 1 / T001 and authorized Phase 2 foundations T002–T004 are complete locally through integration commit `dbafa8a` on 2026-10-19 (Asia/Saigon). Phase 3 T005–T007 is separately authorized with four user-confirmed TDD seams. T008 onward, production profiles and real runtime integration remain gated. See [decisions](contracts/decisions.md) and the [task ledger](tasks.md).
+**Status**: Separately authorized T001–T007 are complete locally through integration commit `df5615e` on 2026-10-19 (Asia/Saigon). Phase 3 uses four user-confirmed TDD seams with explicit mock store/context and test-only CLI composition. T008 onward, production profiles and real runtime integration remain gated. See [decisions](contracts/decisions.md) and the [task ledger](tasks.md).
 
 ## Summary
 
@@ -51,7 +51,7 @@ Recheck these gates after design changes; a clean planning audit does not satisf
 
 ### Source Code (repository root)
 
-Proposed owned paths, not files implemented by this plan:
+Owned paths across the delivery plan; tasks.md distinguishes implemented local slices from gated future files:
 
 ```text
 src/contracts/approvals/

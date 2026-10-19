@@ -1,6 +1,6 @@
 # Quickstart and Validation Guide: UC-05
 
-**Current state**: Phase 1 / T001 and local foundation tasks T002–T004 are complete. The branch includes companion validators, the C01–C24 test fixture registry, and in-memory mock ports; these establish local test behavior only. The CLI and approval service remain future T005–T021 deliverables, and no production, real-execution or restart capability is established.
+**Current state**: Separately authorized T001–T007 are complete locally through `df5615e`. The branch includes companion validators, the C01–C24 fixture registry, mock ports, deterministic policy and the initial ApprovalPort service with bounded presentation and list/show/inspect/decide CLI. The service has mock provenance; subprocess tests inject an explicit test-only composition. Direct CLI entry has no configured store/operator and returns unavailable. T008 onward remains gated; no production, real-execution or restart capability is established.
 
 ## Validate this planning package now
 
@@ -14,12 +14,13 @@ node scripts/ci/check-context.mjs
 
 Validation must report zero P0/P1 defects. `status` reports automated validation only (`awaiting-independent-reviews`); independent Standards and Testability reports must be evaluated separately before recording a planning quality pass. Implementation still requires [release gates](contracts/decisions.md).
 
-## After Phase 2 local foundations
+## Validate Phase 3 locally
 
-Use the approved Node.js 24/pnpm toolchain and frozen repository dependencies. If dependency setup is required, follow the existing project setup; this guide does not install or change dependencies. After T004, use explicit test-only `uc05-local-v1` profiles and mock-marked ports. After T007, the proposed local checks are:
+Use the approved Node.js 24/pnpm toolchain and frozen repository dependencies. If dependency setup is required, follow the existing project setup; this guide does not install or change dependencies. Use explicit test-only `uc05-local-v1` profiles and mock-marked ports. At T007 integration, the focused command passed 64/64 and runtime validation passed typecheck, lint, build and 621 compiled tests:
 
 ```powershell
-node --test tests/runtime/approvals/contracts.test.ts tests/runtime/approvals/policy.test.ts tests/runtime/approvals/service.test.ts tests/runtime/approvals/cli.test.ts
+node --test tests/runtime/approvals/*.test.ts
+pnpm run validate:runtime
 ```
 
 After each later story, add its exact test files from tasks.md. After T019:

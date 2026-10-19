@@ -1,6 +1,6 @@
 # Trusted Operator CLI: UC-05
 
-**Status**: Logical protocol agreed through T001; see [decisions](decisions.md). It is not an existing executable or project-wide CLI framework. T007/T010 implement this adapter after separate phase authorization; real connection to UC-04 is gated at T020.
+**Status**: Logical protocol agreed through T001; see [decisions](decisions.md). Authorized T007 supplies initial list/show/inspect/decide parsing and actual subprocess tests through explicit mock composition. Direct executable entry is unconfigured and returns unavailable. Control commands remain gated at T010; real connection to UC-04 is gated at T020. This introduces no project-wide CLI framework.
 
 ## Trust and commands
 

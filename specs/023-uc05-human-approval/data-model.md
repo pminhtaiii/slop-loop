@@ -1,10 +1,10 @@
 # Data Model: UC-05
 
-**Status**: Logical companion contract version `uc05-approval/0.1-draft` agreed through the T001 confirmation in [decisions](contracts/decisions.md); no schema migration, database or runtime state is implemented. Canonical UC-03 binding version remains 0.1.0. [Interfaces](contracts/interfaces.md) owns transaction semantics.
+**Status**: Logical companion contract version `uc05-approval/0.1-draft` agreed through the T001 confirmation in [decisions](contracts/decisions.md). T002 supplies validators, T004 test-only in-memory state, and T007 the initial mock-backed consumer; no schema migration, database or durable runtime state is implemented. Canonical UC-03 binding version remains 0.1.0. [Interfaces](contracts/interfaces.md) owns transaction semantics.
 
 ## Records and ownership
 
-All external/persisted input is unknown until validated. Reject unknown execution-affecting fields, non-finite bounds, invalid IDs/digests, missing version/context and incompatible schema versions. Records below are logical fields; exact TypeScript validators are T002 work after agreement.
+All external/persisted input is unknown until validated. Reject unknown execution-affecting fields, non-finite bounds, invalid IDs/digests, missing version/context and incompatible schema versions. Records below are logical fields; T002 implemented their companion TypeScript validators after agreement.
 
 | Record | Required fields | Invariants / owner |
 |---|---|---|

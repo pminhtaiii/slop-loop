@@ -6,7 +6,7 @@
 
 **Created**: 2026-10-19 (Asia/Saigon, UTC+07:00)
 
-**Status**: Requirements and full planning package acknowledged on 2026-10-19 (Asia/Saigon); Phase 1 / T001 and authorized Phase 2 foundations T002–T004 are complete locally at `dbafa8a`. Phase 3 T005–T007 is separately authorized with user-confirmed policy, service, presentation and CLI test seams; see [decisions](contracts/decisions.md). T008 onward and production execution remain gated.
+**Status**: Requirements and full planning package acknowledged on 2026-10-19 (Asia/Saigon); separately authorized T001–T007 are complete locally through `df5615e`. Phase 3 policy, initial service, presentation and CLI use the four user-confirmed test seams and mock dependencies; see [decisions](contracts/decisions.md). T008 onward and production execution remain gated; full UC-05 acceptance is unverified.
 
 **Input**: Specify UC-05 from ADR-0006, the shared UC-03 contracts, repository policy, and the delegation map. Preserve UC-04 persistence and Tai's execution ownership.
 
