@@ -2,7 +2,7 @@
 
 **Branch**: `feat/023-uc05-human-approval-spec` | **Date**: 2026-10-19 (Asia/Saigon) | **Spec**: [spec.md](spec.md)
 
-**Status**: Separately authorized T001–T007 are complete locally through integration commit `df5615e` on 2026-10-19 (Asia/Saigon). Phase 3 uses four user-confirmed TDD seams with explicit mock store/context and test-only CLI composition. T008 onward, production profiles and real runtime integration remain gated. See [decisions](contracts/decisions.md) and the [task ledger](tasks.md).
+**Status**: Separately authorized T001–T007 and the T023 correction of T007 are complete locally through integration commit `2b80b76` on 2026-10-19 (Asia/Saigon). Phase 3 uses four user-confirmed TDD seams with explicit mock store/context and test-only CLI composition. Later story/delivery tasks T008–T022, production profiles and real runtime integration remain gated. See [decisions](contracts/decisions.md) and the [task ledger](tasks.md).
 
 ## Summary
 

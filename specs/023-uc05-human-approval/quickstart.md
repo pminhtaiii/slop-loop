@@ -1,6 +1,6 @@
 # Quickstart and Validation Guide: UC-05
 
-**Current state**: Separately authorized T001–T007 are complete locally through `df5615e`. The branch includes companion validators, the C01–C24 fixture registry, mock ports, deterministic policy and the initial ApprovalPort service with bounded presentation and list/show/inspect/decide CLI. The service has mock provenance; subprocess tests inject an explicit test-only composition. Direct CLI entry has no configured store/operator and returns unavailable. T008 onward remains gated; no production, real-execution or restart capability is established.
+**Current state**: Separately authorized T001–T007 and the T023 correction of T007 are complete locally through `2b80b76`. The branch includes companion validators, the C01–C24 fixture registry, mock ports, deterministic policy and the initial ApprovalPort service with bounded presentation and list/show/inspect/decide CLI. The service has mock provenance; subprocess tests inject an explicit test-only composition. Direct CLI entry has no configured store/operator and returns unavailable. Later story/delivery tasks T008–T022 remain gated; no production, real-execution or restart capability is established.
 
 ## Validate this planning package now
 
@@ -16,7 +16,7 @@ Validation must report zero P0/P1 defects. `status` reports automated validation
 
 ## Validate Phase 3 locally
 
-Use the approved Node.js 24/pnpm toolchain and frozen repository dependencies. If dependency setup is required, follow the existing project setup; this guide does not install or change dependencies. Use explicit test-only `uc05-local-v1` profiles and mock-marked ports. At T007 integration, the focused command passed 64/64 and runtime validation passed typecheck, lint, build and 621 compiled tests:
+Use the approved Node.js 24/pnpm toolchain and frozen repository dependencies. If dependency setup is required, follow the existing project setup; this guide does not install or change dependencies. Use explicit test-only `uc05-local-v1` profiles and mock-marked ports. At corrected T007 integration, the focused command passed 66/66 and runtime validation passed typecheck, lint, build and 623 compiled tests:
 
 ```powershell
 node --test tests/runtime/approvals/*.test.ts
