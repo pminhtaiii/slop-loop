@@ -94,7 +94,7 @@ Sequential T001–T016; story tasks carry [US1], [US2] or [US3]. Thai owns all l
   - **Acceptance Checks**: Accept only configured compatible destination with responsibility rationale or undetermined; empty/ambiguous/unsupported catalogs preserve uncertainty and material questions. Reject approval/recovery capabilities as destinations; tests assert zero dispatch. No duplicate backend or repair task creation. C07,C12,C13 pass.
   - **Evaluation & Evidence**: Before recommendation code: prepare C07,C12-C16,C19,C22 catalog/ambiguity/adversarial variants. Run isolated recommendation, forbidden-capability and no-dispatch checks immediately; regress contract/fixtures. Retain configured-catalog/rule identities and mock outcomes.
 
-- [ ] T010 [US3] Compose recommendation with assessment in src/uc01/assess.ts and tests/runtime/uc01/routing.test.ts.
+- [X] T010 [US3] Compose recommendation with assessment in src/uc01/assess.ts and tests/runtime/uc01/routing.test.ts.
   - **Owner**: Thai.
   - **Dependencies**: T008, T009.
   - **Owned Paths**: src/uc01/assess.ts; tests/runtime/uc01/routing.test.ts.
