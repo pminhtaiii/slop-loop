@@ -1,6 +1,6 @@
 # Decisions and Authorization: UC-01
 
-**Status**: T001 artifact and consumer-contract agreement approved on 2026-10-18 (Asia/Bangkok). T002–T004 subsequently completed under separate authorization. On the same local date, the user authorized Phase 3, T005–T006, through controlled shared ports. T007 onward and real execution remain separately gated.
+**Status**: T001 artifact and consumer-contract agreement approved on 2026-10-18 (Asia/Bangkok). T002–T008 subsequently completed under separate authorization at the controlled local level. On 2026-10-19 (Asia/Bangkok), the user authorized Phase 4, T007–T008, for clarification across invocations through controlled shared ports. T009 onward and real execution remain separately gated.
 
 ## T001 approval provenance and approved agreement
 
@@ -25,6 +25,8 @@ T001 exit records approval of the artifact baseline plus the reviewed signature/
 
 T002–T004 were separately authorized on 2026-10-18 and completed as the contract/mock/fixture slice recorded in [tasks](../tasks.md). On 2026-10-18 (Asia/Bangkok), the user requested: **“Thực hiện Implement Phase 3: User Story 1 - Evidence-backed assessment (Priority: P1), bao gồm T005-T006 trong specs/002-uc01-issue-triage/tasks.md.”** This authorizes validated intake and bounded initial assessment through injected controlled ports, plus their tests, review, context refresh and contributor publication. It does not authorize T007–T016, real adapters, provider runs, production configuration, dispatch or repair. Initial material questions may obtain a trusted continuation binding; later-answer reassessment remains T007–T008. Only the minimal undetermined destination is in this slice; configured recommendation remains T009–T010.
 
+On 2026-10-19 (Asia/Bangkok), the user requested: **“Thực hiện Implement Phase 4: User Story 2 - Clarification across invocations (Priority: P2). Tương ứng với T007-T008 trong specs/002-uc01-issue-triage/tasks.md”** and noted the local CodeRabbit CLI is available if needed. This separately authorizes question/answer binding and later-invocation reassessment through the approved controlled consumer seams, with tests, independent review, context refresh and contributor publication. It preserves the agreed original-report, evidence-provenance, continuation and cumulative-accounting contracts. It does not authorize T009–T016, real adapters, provider runs, production choices, dispatch, repair or action approval from clarification answers.
+
 ## Accepted basis
 
 [ADR-0005](../../../docs/adr/0005-uc01-triage-boundary-and-assessment.md) records accepted assessment/ownership/severity/clarification/recommendation boundaries. Existing UC-03 [decision record](../../001-verified-code-repair/contracts/decisions.md) and shared contract v0.1/schema 0.1.0 remain unchanged. UC-03 Phase 2 authorization does not authorize UC-01 implementation.
@@ -33,7 +35,7 @@ T002–T004 were separately authorized on 2026-10-18 and completed as the contra
 
 | Gate | Decision required / evidence | Owner | Blocks |
 |---|---|---|---|
-| A-ARTIFACTS | SATISFIED for the approved baseline and reviewed amendments; subsequent implementation authority extends through T005–T006 as recorded above | Project owner with Thai | T007 onward requires separate implementation authorization |
+| A-ARTIFACTS | SATISFIED for the approved baseline and reviewed amendments; subsequent implementation authority extends through T007–T008 as recorded above | Project owner with Thai | T009 onward requires separate implementation authorization |
 | X-FOUNDATION-AGREEMENT | SATISFIED by user-reported member approval of `uc01-consumer-v1`, `uc01-fixture-v1`, evidence projection and path ownership above | Thai + Tai; Thanh Tan/Trong Tan for accounting/policy bindings | T001 agreement exit met; mocks still require explicit task implementation authorization |
 | X-READ-MODEL | Real shared read/search and model adapters with guards and actual revisions; no forced bug TaskState | Tai | T011, T012 |
 | X04-STATE | Durable task budgets/reservations/uncertain-use reconciliation and continuation binding; real restart evidence | Thanh Tan | T011, T012 |

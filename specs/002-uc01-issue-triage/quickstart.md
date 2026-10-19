@@ -1,6 +1,6 @@
 # Quickstart: incremental UC-01 verification
 
-**Status**: T001–T006 implement the approved contract, controlled fixtures, validated intake and initial assessment slice. Phase 3 was separately authorized on 2026-10-18 (Asia/Bangkok); see [decisions](contracts/decisions.md). The controller accepts only the explicit mock fixture profile. T007 onward requires separate authorization; real runtime and shared evaluation remain gated.
+**Status**: T001–T008 implement the approved contract, controlled fixtures, validated intake, assessment and later-answer clarification. Phase 4 was separately authorized on 2026-10-19 (Asia/Bangkok); see [decisions](contracts/decisions.md). The controller accepts only the explicit mock fixture profile. T009 onward requires separate authorization; real runtime and shared evaluation remain gated.
 
 ## Existing planning and repository checks
 
@@ -19,17 +19,17 @@ Assignment/handoff read the canonical task ledger and current owner/scope; conte
 Run the focused implemented slice with:
 
 ```powershell
-node --test tests/runtime/uc01/contract.test.ts tests/runtime/uc01/ports.test.ts tests/runtime/uc01/fixtures.test.ts tests/runtime/uc01/intake.test.ts tests/runtime/uc01/assess.test.ts
+node --test tests/runtime/uc01/*.test.ts
 ```
 
-At source `0516312a12157ea3e275fa10862e3e67f07771a6`, all 84 focused tests passed. `IntakeBinder` preserves validated caller input and admits exact-digest excerpts through a trusted resolver. `IssueAssessor.assessIssue` takes explicit injected ports, clock, `uc01-fixture-v1` profile and the approved 500/250/750 token reservation ceiling with synthetic pricing identity. It guards bounded read/search and model operations, settles actual or conservatively reserved usage, validates assessment/evidence, and binds initial questions through the caller port. Deadline checks prevent successful results after reconciliation, binding or telemetry overruns; uncertain accounting remains charged. All destinations stay undetermined. No provider, filesystem, persistence, policy or dispatch adapter is selected by this entry point. Behavioral RED/GREEN and case/source/config evidence are retained locally under `.agent-work/2026-10-18/uc01-phase3/`.
+At source `3b4d4f3ada61b0734b221100589101ba537c45e9`, all 123 focused tests passed (84 prior tests and 39 Phase 4 tests). `IntakeBinder` preserves validated caller input and admits exact-digest excerpts through a trusted resolver. `bindClarification` validates same-issue answers and projects immutable prior and unanswered questions; `projectClarification` preserves unanswered material questions and rejects identity reuse or merged overflow. `IssueAssessor.assessIssue` takes explicit injected ports, clock, `uc01-fixture-v1` profile and the approved 500/250/750 token reservation ceiling with synthetic pricing identity. Later calls resolve the opaque continuation and compare its full immutable projection before excerpt admission or constrained activity; model input receives prior questions and admitted answer-origin evidence, while the opaque reference stays outside provider-visible content. Shared task accounting retains prior spending and uncertain reservations across invocation/run IDs. The controller guards bounded read/search and model operations, settles usage, validates assessment/evidence and binds material questions through the caller port. Deadline checks prevent successful results after reconciliation, resolution, binding or telemetry overruns. Clarification supplies no approval; all destinations stay undetermined. No provider, filesystem, persistence, policy or dispatch adapter is selected by this entry point. Behavioral RED/GREEN, case/source/config and merger evidence are retained locally under `.agent-work/2026-10-19/uc01-phase4/`.
 
 ## Incremental slice workflow
 
-1. T001 records user-confirmed member approval of domain scope/consumer contracts and the finite fixture profile; keep shared evaluation API/version agreement separately pending with Tai. Each implementation slice requires separate authorization, currently through T006.
+1. T001 records user-confirmed member approval of domain scope/consumer contracts and the finite fixture profile; keep shared evaluation API/version agreement separately pending with Tai. Each implementation slice requires separate authorization, currently through T008.
 2. T002 designs product/evaluation vectors and grading statuses before validator code. T003 defines bounded mock scripts/call spies; T004 prepares versioned C01–C22 inputs, private expected outcomes/rules and development/held-out split. Validate isolation and case/result identities before feature work.
 3. T005–T006 execute available US1 cases immediately, including irrelevant input, invalid output, injection and budget guards. T007–T008 do the same for clarification/answer injection, then T009–T010 for catalog/routing. Run impacted earlier regressions and capture each result before accepting the slice.
-4. Use the existing Node test mechanism and the implemented module paths above for local UC-01 tests, with versioned case/rule design and injected ports. This is local test coverage, not a parallel runner. Later-answer reassessment and configured recommendation remain T007–T010.
+4. Use the existing Node test mechanism and the implemented module paths above for local UC-01 tests, with versioned case/rule design and injected ports. This is local test coverage, not a parallel runner. Later-answer reassessment is implemented at the mock level; configured recommendation remains T009–T010.
 5. T011–T013 execute real adapter/restart/policy/receiver checks only with actual owner deliveries, versions and configured authority. Missing components yield not-run records with reasons and retry gates. T014 consolidates earlier safety regression evidence; it never postpones early available attack checks.
 6. T015 uses the corpus/rules designed earlier, approved thresholds and actual model/runner deliveries for two comparable scored runs and shared registration/conformance. T016 reconciles runtime gates and separates UC-01 verdict from project verdict. No context capability promotion without complete required real evidence.
 
@@ -37,7 +37,7 @@ At source `0516312a12157ea3e275fa10862e3e67f07771a6`, all 84 focused tests passe
 
 | Evaluation scope | Current availability | Condition to execute |
 |---|---|---|
-| UC-01 contract/mock behavior | T002–T006 suites available; 84 focused tests passed at the source revision above | Explicit controlled ports/profile; later story suites require separate T007–T010 authorization |
+| UC-01 contract/mock behavior | T002–T008 suites available; 123 focused tests passed at the source revision above | Explicit controlled ports/profile; configured recommendation requires separate T009–T010 authorization |
 | Real adapters / receiver | not-run: required real deliveries absent | X-READ-MODEL, X04-STATE, X05-GATE, X-RECEIVER and A-PRODUCTION; actual versioned integration |
 | Held-out model quality | not-run: no approved corpus/grader/provider run | Prepared T004 data design, A-EVALUATION/A-PRODUCTION, actual model and required integrations |
 | Shared scoped registration | not-run: runner/signatures not delivered/agreed | X-EVAL-AGREEMENT and X-EVAL-RUNNER; actual T015 compatibility evidence |
