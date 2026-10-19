@@ -4,6 +4,8 @@
 
 **Status**: T001–T007 are integrated and verified locally under their separate authorizations on 2026-10-19 (Asia/Saigon). Phase 3 T005–T007 uses all four user-confirmed TDD seams and explicit mock dependencies; accepted source integration is `df5615e0d1b9f71b850673724d8d45091ce37124`. T008–T022 remain unauthorized. Real tasks also need G-PROFILE/G-REAL/G-RESTART as applicable.
 
+Final review found an in-scope T007 retry defect and two standards corrections. T023 below tracks those corrections only; it does not release any later story or real-delivery gate. Phase 3 final review remains pending until this correction is integrated and verified.
+
 **Tests**: Required by FR-022 and repository TDD guidance. Write behavioral RED against actual owned SUT exports before implementation; create neutral no-effect skeletons only where needed. Import/type/fixture failures and tests against a mocked SUT are not behavioral RED. Coordinator alone changes checkboxes after integration and required checks. Unchecked future source paths below remain unimplemented.
 
 ## Phase 1: Setup and shared agreement
@@ -198,3 +200,11 @@ External delivery references are defined in plan.md; they are not foreign T-numb
 The first local MVP is contracts/cases/mocks plus US1's safe service/CLI. It is not production-ready without US2/US3 control and real external composition. Deliver each story through its own focused tests and retain prior regression coverage. After local T019, obtain actual external adapters for T020/T021 instead of implementing a second executor/store. Only observed acceptance plus review can release a scoped X05-GATE handoff.
 
 Phase counts: setup 1; foundations 3; US1 3; US2 3; US3 3; US4 2; US5 3; integration/cross-cutting 4. Total 22 tasks. Planning quality never pre-completes implementation tasks or authorizes phase dispatch.
+
+## Review correction within authorized Phase 3
+
+- [ ] T023 [US1] Correct T007 prior-response retry admission and reviewed validation/test issues in src/approvals/service.ts and tests/runtime/approvals/service.test.ts.
+  - **Owner**: Trong Tan / service and operator boundary.
+  - **Dependencies**: T007.
+  - **Owned Paths**: src/approvals/service.ts; tests/runtime/approvals/service.test.ts.
+  - **Acceptance Checks**: Behavioral RED/GREEN through the confirmed actual-service/mock-store seam: approve A, create pending B, repeat identical response A, preserve B waiting, approve B and retain valid eligible admission. Validate unknown trusted-provider context before type assertions. Replace or remove the disconnected activity-mock assertion with documented justification, retaining all meaningful consent/pause/admission assertions. Independent integration and required runtime gates pass. This is a correction of T007 under FR-012 and the existing four confirmed seams; no T008–T022 capability is authorized.
