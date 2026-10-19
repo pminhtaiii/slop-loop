@@ -280,13 +280,20 @@ test('createPendingAndPause atomically saves the request and fences the task by 
 });
 
 test('replaceStalePending rejects repository or workspace identity changes without writing', () => {
-  for (const replacementOverrides of [{ repositoryId: 'repo-2' }, { workspaceId: 'workspace-2' }]) {
+  for (const replacementOverrides of [
+    { repositoryId: 'repo-2' },
+    {
+      workspaceId: 'workspace-2',
+      binding: { ...request.binding, decisionId: 'decision-2', workspaceId: 'workspace-2' },
+    },
+  ]) {
     const store = createPendingStore();
     const before = store.loadTaskControl('task-1').value;
 
     const result = store.replaceStalePending(staleReplacementInput(replacementOverrides));
 
     assert.equal(result.safe.outcome, 'invalid');
+    assert.equal(result.safe.safeReasonCode, 'request-task-identity-mismatch');
     assert.deepEqual(store.loadTaskControl('task-1').value, before);
     assert.equal(store.readRequest('decision-2').safe.outcome, 'invalid');
     assert.deepEqual(store.readEvents('task-1').value?.map((event) => event.eventId), ['event-request-1']);
