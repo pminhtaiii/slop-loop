@@ -340,6 +340,12 @@ export function createMockApprovalStore(input: CreateMockApprovalStoreInput): Mo
       control.version !== candidate.expectedControlVersion || replacement.decisionId === previous.decisionId || eventExists(staleEvent.eventId) || eventExists(requestEvent.eventId) || requests.has(replacement.decisionId)) {
       return resultFor(control ?? fallbackControl(), 'conflict', 'stale-replacement-context-changed');
     }
+    if (replacement.repositoryId !== control.repositoryId || replacement.workspaceId !== control.workspaceId) {
+      return resultFor(control, 'invalid', 'request-task-identity-mismatch');
+    }
+    if (submissions.has(`${replacement.taskId}:${replacement.submissionKey}`)) {
+      return resultFor(control, 'conflict', 'submission-key-conflict');
+    }
     const failed = storageFailure<ApprovalRequestRecord>('replaceStalePending', control, previous.decisionId, previous.requestVersion);
     if (failed) return failed;
     const nextControl = validateGeneratedControl({
@@ -447,7 +453,14 @@ export function createMockApprovalStore(input: CreateMockApprovalStoreInput): Mo
     const outstandingClaimRefs = candidate.phase === 'observed'
       ? control.outstandingClaimRefs.filter((claimId) => claimId !== claim.claimId)
       : control.outstandingClaimRefs;
-    const nextControl = validateGeneratedControl({ ...control, version: control.version + 1, outstandingClaimRefs });
+    const releasesHold = candidate.phase === 'observed' && outstandingClaimRefs.length === 0 &&
+      control.mode === 'recovery-blocked' && control.pendingDecisionId === null;
+    const nextControl = validateGeneratedControl({
+      ...control,
+      version: control.version + 1,
+      outstandingClaimRefs,
+      ...(releasesHold ? { mode: 'runnable' as const, reasonCode: 'claim-observed' } : {}),
+    });
     claims.set(claim.claimId, nextClaim);
     controls.set(control.taskId, nextControl);
     events.push(freezeCopy(event));
@@ -468,11 +481,13 @@ export function createMockApprovalStore(input: CreateMockApprovalStoreInput): Mo
     const failed = storageFailure<DispatchClaim>('reconcile', control);
     if (failed) return failed;
     const nextClaim = validateGeneratedClaim({ ...claim, phase: 'reconciled', resultRef: candidate.resultRef });
+    const outstandingClaimRefs = control.outstandingClaimRefs.filter((claimId) => claimId !== claim.claimId);
+    const releasesHold = control.mode === 'recovery-blocked' && control.pendingDecisionId === null && outstandingClaimRefs.length === 0;
     const nextControl = validateGeneratedControl({
       ...control,
       version: control.version + 1,
-      outstandingClaimRefs: control.outstandingClaimRefs.filter((claimId) => claimId !== claim.claimId),
-      ...(control.mode === 'recovery-blocked' && control.pendingDecisionId === null ? { mode: 'runnable' as const, reasonCode: 'claim-reconciled' } : {}),
+      outstandingClaimRefs,
+      ...(releasesHold ? { mode: 'runnable' as const, reasonCode: 'claim-reconciled' } : {}),
     });
     claims.set(claim.claimId, nextClaim);
     controls.set(control.taskId, nextControl);

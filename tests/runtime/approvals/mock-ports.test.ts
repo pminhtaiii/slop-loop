@@ -152,6 +152,92 @@ function createPendingStore() {
   return store;
 }
 
+const trustedContextDigest = `sha256:${'e'.repeat(64)}`;
+
+function staleReplacementInput(replacementOverrides: Record<string, unknown> = {}) {
+  const replacement = {
+    ...request,
+    decisionId: 'decision-2',
+    binding: { ...request.binding, decisionId: 'decision-2' },
+    requestVersion: 2,
+    ...replacementOverrides,
+  };
+  return {
+    expectedControlVersion: 2,
+    expectedRequestVersion: 1,
+    trustedContextDigest,
+    assessment: {
+      schemaVersion: 'uc05-approval/0.1-draft',
+      assessmentId: 'assessment-stale-1',
+      decisionId: 'decision-1',
+      checkedTaskVersion: 2,
+      checkedEpoch: 2,
+      trustedContextDigest,
+      status: 'stale',
+      reasonCodes: ['repository-state-changed'],
+      checkedAt: '2026-10-19T10:11:00.000Z',
+    },
+    replacement,
+    events: [
+      {
+        ...requestEvent,
+        eventId: 'event-binding-stale-1',
+        type: 'binding-assessed',
+        outcome: 'ok',
+        safeReasonCode: 'binding-stale',
+      },
+      { ...requestEvent, eventId: 'event-request-2', decisionId: 'decision-2' },
+    ],
+  };
+}
+
+function claimEventFor(claimId: string, eventId: string) {
+  return { ...claimEvent, claimId, eventId };
+}
+
+function claimOutcomeEvent(claimId: string, eventId: string, phase: 'observed' | 'uncertain') {
+  return {
+    ...claimEvent,
+    eventId,
+    claimId,
+    type: phase === 'observed' ? 'dispatch-effect-observed' : 'dispatch-uncertain',
+    outcome: phase === 'observed' ? 'ok' : 'uncertain',
+    safeReasonCode: phase === 'observed' ? 'effect-observed' : 'claim-outcome-uncertain',
+  };
+}
+
+function createTwoClaimPausedStore() {
+  const store = createMockApprovalStore({ profile, initialControls: [initialControl] });
+  assert.equal(store.claimDispatch({ claim, event: claimEvent }).safe.outcome, 'ok');
+  const secondClaim = {
+    ...claim,
+    claimId: 'claim-2',
+    actionId: 'action-2',
+    expectedControlVersion: 2,
+    reservationRefs: ['reservation-2'],
+  };
+  assert.equal(store.claimDispatch({ claim: secondClaim, event: claimEventFor('claim-2', 'event-claim-2') }).safe.outcome, 'ok');
+  assert.equal(store.createPendingAndPause({
+    expectedControlVersion: 3,
+    submissionKey: 'submission-1',
+    request,
+    event: requestEvent,
+  }).safe.outcome, 'pending');
+  return store;
+}
+
+function approveWithOutstandingClaims(store: ReturnType<typeof createMockApprovalStore>, expectedControlVersion: number) {
+  const result = store.resolvePending({
+    expectedControlVersion,
+    expectedRequestVersion: 1,
+    trustedOperator,
+    trustedResponse: resolution,
+    event: resolutionEvent,
+  });
+  assert.equal(result.safe.outcome, 'uncertain');
+  assert.equal(store.loadTaskControl('task-1').value?.mode, 'recovery-blocked');
+}
+
 test('UC05 mock ports load with explicit mock provenance and empty observable history', () => {
   const store = createMockApprovalStore({ profile, initialControls: [initialControl] });
   const activity = createMockActivityControl(profile);
@@ -186,6 +272,51 @@ test('createPendingAndPause atomically saves the request and fences the task by 
   });
   assert.equal(store.readRequest('decision-1').value?.submissionKey, 'submission-1');
   assert.deepEqual(store.readEvents('task-1').value?.map((entry) => entry.eventId), ['event-request-1']);
+});
+
+test('replaceStalePending rejects repository or workspace identity changes without writing', () => {
+  for (const replacementOverrides of [{ repositoryId: 'repo-2' }, { workspaceId: 'workspace-2' }]) {
+    const store = createPendingStore();
+    const before = store.loadTaskControl('task-1').value;
+
+    const result = store.replaceStalePending(staleReplacementInput(replacementOverrides));
+
+    assert.equal(result.safe.outcome, 'invalid');
+    assert.deepEqual(store.loadTaskControl('task-1').value, before);
+    assert.equal(store.readRequest('decision-2').safe.outcome, 'invalid');
+    assert.deepEqual(store.readEvents('task-1').value?.map((event) => event.eventId), ['event-request-1']);
+    assert.equal(store.readHistory('task-1').value?.assessments.length, 0);
+  }
+});
+
+test('replaceStalePending rejects a reused task submission key without overwriting its retry identity', () => {
+  const store = createPendingStore();
+  const before = store.loadTaskControl('task-1').value;
+
+  const result = store.replaceStalePending(staleReplacementInput({ submissionKey: 'submission-1' }));
+
+  assert.equal(result.safe.outcome, 'conflict');
+  assert.deepEqual(store.loadTaskControl('task-1').value, before);
+  assert.equal(store.readRequest('decision-2').safe.outcome, 'invalid');
+  assert.equal(store.readRequest('decision-1').value?.decisionId, 'decision-1');
+  assert.deepEqual(store.readEvents('task-1').value?.map((event) => event.eventId), ['event-request-1']);
+  assert.equal(store.readHistory('task-1').value?.assessments.length, 0);
+});
+
+test('replaceStalePending accepts a fresh request with matching task identity and a new submission key', () => {
+  const store = createPendingStore();
+
+  const result = store.replaceStalePending(staleReplacementInput({ submissionKey: 'submission-2' }));
+
+  assert.equal(result.safe.outcome, 'pending');
+  assert.equal(result.value?.decisionId, 'decision-2');
+  assert.equal(store.loadTaskControl('task-1').value?.pendingDecisionId, 'decision-2');
+  assert.equal(store.readRequest('decision-1').value?.decisionId, 'decision-1');
+  assert.equal(store.readRequest('decision-2').value?.submissionKey, 'submission-2');
+  assert.deepEqual(store.readEvents('task-1').value?.map((event) => event.eventId), [
+    'event-request-1', 'event-binding-stale-1', 'event-request-2',
+  ]);
+  assert.equal(store.readHistory('task-1').value?.assessments.length, 1);
 });
 
 test('failed pending storage leaves no request, event, pause, or epoch change; retries are idempotent', () => {
@@ -390,4 +521,71 @@ test('a claim admitted before pause remains cancellable and uncertain instead of
   assert.equal(recorded.safe.outcome, 'uncertain');
   assert.deepEqual(store.loadTaskControl('task-1').value?.outstandingClaimRefs, ['claim-1']);
   assert.equal(store.readHistory('task-1').value?.claims[0]?.phase, 'uncertain');
+});
+
+test('observed claims keep recovery blocked until the final outstanding claim is observed', () => {
+  const store = createTwoClaimPausedStore();
+  approveWithOutstandingClaims(store, 4);
+
+  const first = store.recordOutcome({
+    claimId: 'claim-1',
+    expectedControlVersion: 5,
+    phase: 'observed',
+    resultRef: 'effect-claim-1',
+    event: claimOutcomeEvent('claim-1', 'event-observed-1', 'observed'),
+  });
+  assert.equal(first.safe.outcome, 'ok');
+  assert.equal(store.loadTaskControl('task-1').value?.mode, 'recovery-blocked');
+  assert.deepEqual(store.loadTaskControl('task-1').value?.outstandingClaimRefs, ['claim-2']);
+
+  const last = store.recordOutcome({
+    claimId: 'claim-2',
+    expectedControlVersion: 6,
+    phase: 'observed',
+    resultRef: 'effect-claim-2',
+    event: claimOutcomeEvent('claim-2', 'event-observed-2', 'observed'),
+  });
+  assert.equal(last.safe.outcome, 'ok');
+  assert.equal(store.loadTaskControl('task-1').value?.mode, 'runnable');
+  assert.deepEqual(store.loadTaskControl('task-1').value?.outstandingClaimRefs, []);
+  assert.equal(store.loadTaskControl('task-1').value?.reasonCode, 'claim-observed');
+});
+
+test('reconciliation keeps recovery blocked until every outstanding claim is reconciled', () => {
+  const store = createTwoClaimPausedStore();
+  assert.equal(store.recordOutcome({
+    claimId: 'claim-1',
+    expectedControlVersion: 4,
+    phase: 'uncertain',
+    resultRef: 'uncertain-claim-1',
+    event: claimOutcomeEvent('claim-1', 'event-uncertain-1', 'uncertain'),
+  }).safe.outcome, 'uncertain');
+  assert.equal(store.recordOutcome({
+    claimId: 'claim-2',
+    expectedControlVersion: 5,
+    phase: 'uncertain',
+    resultRef: 'uncertain-claim-2',
+    event: claimOutcomeEvent('claim-2', 'event-uncertain-2', 'uncertain'),
+  }).safe.outcome, 'uncertain');
+  approveWithOutstandingClaims(store, 6);
+
+  const first = store.reconcile({
+    claimId: 'claim-1',
+    expectedControlVersion: 7,
+    resultRef: 'reconciled-claim-1',
+    event: { ...claimEventFor('claim-1', 'event-reconciled-1'), type: 'claim-reconciled', safeReasonCode: 'claim-reconciled' },
+  });
+  assert.equal(first.safe.outcome, 'ok');
+  assert.equal(store.loadTaskControl('task-1').value?.mode, 'recovery-blocked');
+  assert.deepEqual(store.loadTaskControl('task-1').value?.outstandingClaimRefs, ['claim-2']);
+
+  const last = store.reconcile({
+    claimId: 'claim-2',
+    expectedControlVersion: 8,
+    resultRef: 'reconciled-claim-2',
+    event: { ...claimEventFor('claim-2', 'event-reconciled-2'), type: 'claim-reconciled', safeReasonCode: 'claim-reconciled' },
+  });
+  assert.equal(last.safe.outcome, 'ok');
+  assert.equal(store.loadTaskControl('task-1').value?.mode, 'runnable');
+  assert.deepEqual(store.loadTaskControl('task-1').value?.outstandingClaimRefs, []);
 });
