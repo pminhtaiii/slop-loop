@@ -154,6 +154,7 @@ function createPendingStore() {
 
 const trustedContextDigest = `sha256:${'e'.repeat(64)}`;
 
+/** Build a stale replacement request with override points for identity and idempotency regressions. */
 function staleReplacementInput(replacementOverrides: Record<string, unknown> = {}) {
   const replacement = {
     ...request,
@@ -191,10 +192,12 @@ function staleReplacementInput(replacementOverrides: Record<string, unknown> = {
   };
 }
 
+/** Create an audit event for the specified claim identity. */
 function claimEventFor(claimId: string, eventId: string) {
   return { ...claimEvent, claimId, eventId };
 }
 
+/** Create an observed or uncertain event for a claim outcome transition. */
 function claimOutcomeEvent(claimId: string, eventId: string, phase: 'observed' | 'uncertain') {
   return {
     ...claimEvent,
@@ -206,6 +209,7 @@ function claimOutcomeEvent(claimId: string, eventId: string, phase: 'observed' |
   };
 }
 
+/** Set up two outstanding dispatch claims and pause their task for recovery tests. */
 function createTwoClaimPausedStore() {
   const store = createMockApprovalStore({ profile, initialControls: [initialControl] });
   assert.equal(store.claimDispatch({ claim, event: claimEvent }).safe.outcome, 'ok');
@@ -226,6 +230,7 @@ function createTwoClaimPausedStore() {
   return store;
 }
 
+/** Approve the current pending request while requiring claim reconciliation to retain the hold. */
 function approveWithOutstandingClaims(store: ReturnType<typeof createMockApprovalStore>, expectedControlVersion: number) {
   const result = store.resolvePending({
     expectedControlVersion,
