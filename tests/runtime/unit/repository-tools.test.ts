@@ -614,14 +614,14 @@ describe('ControlledRepositoryTools (Slice T007-a)', () => {
       );
     });
 
-    it('rejects readFile when path resolution swaps between checks (TOCTOU protection)', async () => {
-      fsPort.setFile('src/flapping.py', 'initial safe content');
+    it('rejects an in-workspace path swap before readFile performs IO', async () => {
+      fsPort.setFile('src/flapping.py', 'initial safe content', { realPath: '/workspace/src/flapping.py' });
       let realpathCount = 0;
       fsPort.onRealpath = (p) => {
         if (p === 'src/flapping.py') {
           realpathCount++;
-          if (realpathCount >= 3) {
-            return '/outside/swapped.py';
+          if (realpathCount === 2) {
+            return '/workspace/src/swapped.py';
           }
         }
         return undefined;
@@ -631,12 +631,15 @@ describe('ControlledRepositoryTools (Slice T007-a)', () => {
         guardCapability: guard,
         fsPort,
         limits: defaultLimits,
+        workspaceRoot: '/workspace',
       });
 
       await assert.rejects(
         () => tools.readFile('src/flapping.py'),
-        /TOCTOU_RESOLUTION_SWAP|WORKSPACE_ESCAPE/
+        /TOCTOU_RESOLUTION_SWAP/
       );
+      assert.equal(realpathCount, 2);
+      assert.equal(fsPort.readTextFileCalls.length, 0);
     });
 
     it('rejects readFile and leaks no evidence when revision mutates during awaited readTextFile', async () => {
@@ -743,6 +746,35 @@ describe('ControlledRepositoryTools (Slice T007-a)', () => {
 
       const validation = validateSourceEvidence(evidence, tinyLimit);
       assert.equal(validation.ok, true);
+    });
+
+    it('truncates UTF-8 excerpts at code point boundaries within the byte limit', async () => {
+      fsPort.setFile('src/utf8.py', '🙂中A');
+      const tinyLimit: RepositoryReadLimits = { maxExcerptBytes: 6, maxResultCount: 10 };
+      const tools = new ControlledRepositoryTools({ guardCapability: guard, fsPort, limits: tinyLimit });
+
+      const evidence = await tools.readFile('src/utf8.py');
+
+      assert.equal(evidence.boundedExcerpt, '🙂');
+      assert.equal(evidence.truncated, true);
+      assert.ok(Buffer.byteLength(evidence.boundedExcerpt, 'utf-8') <= tinyLimit.maxExcerptBytes);
+      assert.equal(evidence.boundedExcerpt.includes('\uFFFD'), false);
+      assert.equal(validateSourceEvidence(evidence, tinyLimit).ok, true);
+    });
+
+    it('skips files over maxFileSizeBytes before reading during searchCode', async () => {
+      fsPort.setFile('src/oversized.py', 'target_query exceeds limit');
+      const tools = new ControlledRepositoryTools({
+        guardCapability: guard,
+        fsPort,
+        limits: { maxExcerptBytes: 100, maxResultCount: 10, maxFileSizeBytes: 8 },
+      });
+
+      const results = await tools.searchCode('target_query');
+
+      assert.equal(results.length, 0);
+      assert.equal(fsPort.readTextFileCalls.includes('src/oversized.py'), false);
+      assert.ok(fsPort.statCalls.includes('src/oversized.py'));
     });
 
     it('limits searchCode results to maxResultCount and excludes protected files/secrets', async () => {
