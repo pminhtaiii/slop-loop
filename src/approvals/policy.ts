@@ -1,5 +1,5 @@
 import type { ApprovalBinding, ApprovalBindingContext, PermissionClass } from '../contracts/foundation/uc03.ts';
-import { computeActionDigest, validateApprovalBinding, validateNormalizedAction } from '../contracts/foundation/uc03.ts';
+import { computeActionDigest, parseApprovalBinding, validateApprovalBinding, validateNormalizedAction } from '../contracts/foundation/uc03.ts';
 import type { PolicyIdentity, PolicyProfile } from '../contracts/approvals/contracts.ts';
 import { validatePolicyProfile } from '../contracts/approvals/contracts.ts';
 import { containsProtectedContent } from '../foundation/repository-tools.ts';
@@ -169,7 +169,24 @@ export function compilePolicy(profileInput: unknown):
       if (factsInput.plan?.materialChange && (factsInput.plan.replanSlot === null || factsInput.plan.replanSlot > 3)) {
         return { ok: false, outcome: 'prerequisite-denied', reasonCode: 'material-replan-allowance' };
       }
-      if (action.value.kind === 'approve_fix_plan') return { ok: true, permission: 'APPROVAL_REQUIRED', reasonCode: 'fix-plan-decision', actionDigest: computeActionDigest(action.value) };
+      if (action.value.kind === 'approve_fix_plan') {
+        if (action.value.planVersion > 1) {
+          const plan = factsInput.plan;
+          // Version is not a materiality verdict: unchanged-strategy renewal consumes no new slot.
+          const proposal = plan !== null && Array.isArray(plan.context.currentEvidenceRefs)
+            ? parseApprovalBinding(plan.binding, plan.context) : null;
+          if (proposal === null || !proposal.ok || proposal.value.actionKind !== 'fix_plan' ||
+            proposal.value.taskId !== factsInput.taskId || proposal.value.workspaceId !== factsInput.workspaceId ||
+            proposal.value.repositoryRevisionDigest !== factsInput.repositoryRevisionDigest ||
+            proposal.value.policyId !== factsInput.policyIdentity.policyId || proposal.value.policyVersion !== factsInput.policyIdentity.policyVersion ||
+            proposal.value.normalizedActionDigest !== computeActionDigest(action.value) || proposal.value.planVersion !== action.value.planVersion ||
+            proposal.value.strategyDigest !== action.value.strategyDigest || proposal.value.checkSetDigest !== action.value.checkSetDigest ||
+            JSON.stringify(proposal.value.evidenceRefs) !== JSON.stringify(action.value.diagnosisEvidenceRefs)) {
+            return { ok: false, outcome: 'prerequisite-denied', reasonCode: 'revised-plan-context-required' };
+          }
+        }
+        return { ok: true, permission: 'APPROVAL_REQUIRED', reasonCode: 'fix-plan-decision', actionDigest: computeActionDigest(action.value) };
+      }
       if (action.value.kind === 'apply_patch') {
         if (factsInput.patch === null || factsInput.command !== null) return { ok: false, outcome: 'invalid', reasonCode: 'invalid-trusted-facts' };
         if (factsInput.patch.fileCount < new Set(action.value.targetPaths).size) return { ok: false, outcome: 'invalid', reasonCode: 'incomplete-patch-facts' };

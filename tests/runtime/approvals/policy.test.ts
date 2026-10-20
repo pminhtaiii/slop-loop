@@ -263,3 +263,22 @@ test('unconfigured interpreter aliases cannot gain approval through constrained 
     }, executable);
   }
 });
+
+test('revised plans require complete matched proposal context and trusted materiality before requesting approval', () => {
+  const action: NormalizedAction = { actionId: 'plan-revised', kind: 'approve_fix_plan', planVersion: 2, strategyDigest: digest, diagnosisEvidenceRefs: ['evidence-1'], checkSetDigest: digest };
+  const initial = approvedPlan();
+  const actionDigest = computeActionDigest(action);
+  const plan = { ...initial, materialChange: true, replanSlot: 1,
+    binding: { ...initial.binding, status: 'pending' as const, planVersion: 2, normalizedActionDigest: actionDigest },
+    context: { ...initial.context, currentPlanVersion: 2, currentNormalizedActionDigest: actionDigest },
+  };
+  const facts = { ...factsFor(action), plan };
+  for (const proposal of [null, { ...plan, replanSlot: null }, { ...plan, replanSlot: 4 },
+    { ...plan, context: {} }, { ...plan, context: { ...plan.context, currentEvidenceRefs: null } },
+    { ...plan, binding: { ...plan.binding, normalizedActionDigest: digest }, context: { ...plan.context, currentNormalizedActionDigest: digest } },
+    { ...plan, binding: { ...plan.binding, taskId: 'foreign-task' }, context: { ...plan.context, currentTaskId: 'foreign-task' } },
+    { ...plan, binding: { ...plan.binding, strategyDigest: `sha256:${'b'.repeat(64)}` }, context: { ...plan.context, currentStrategyDigest: `sha256:${'b'.repeat(64)}` } },
+  ]) assert.equal(policy().value.classify(action, { ...facts, plan: proposal }).ok, false);
+  assert.equal(permission(policy().value.classify(action, facts)), 'APPROVAL_REQUIRED');
+  assert.equal(permission(policy().value.classify(action, { ...facts, plan: { ...plan, materialChange: false, replanSlot: null } })), 'APPROVAL_REQUIRED');
+});

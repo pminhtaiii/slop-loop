@@ -1,6 +1,6 @@
 # Classification and Identity Policy: UC-05
 
-**Status**: Logical decision-table contract agreed through the T001 confirmation in [decisions](decisions.md). Mandatory boundaries come from [permissions](../../../context/tools_permissions.md), [runtime policy](../../../context/runtime_policy.md) and [ADR-0006](../../../docs/adr/0006-uc05-cli-and-human-control.md). Configured production values remain owner-selected inputs; no runtime implementation is claimed.
+**Status**: Logical decision-table contract agreed through the T001 confirmation in [decisions](decisions.md). Mandatory boundaries come from [permissions](../../../context/tools_permissions.md), [runtime policy](../../../context/runtime_policy.md) and [ADR-0006](../../../docs/adr/0006-uc05-cli-and-human-control.md). Authorized T005–T007 implement local classification with explicit test profiles and mock trusted facts; configured production values and real enforcement remain gated.
 
 ## Input and authority
 
