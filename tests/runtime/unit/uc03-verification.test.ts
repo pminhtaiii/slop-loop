@@ -1163,6 +1163,28 @@ test('review: mismatched reviewerRoleConfigId in trustedReviewRecord fails admis
   );
 });
 
+test('review: missing trusted status or check-set digest prevents completion', async t => {
+  for (const field of ['status', 'checkSetDigest'] as const) {
+    await t.test(field, () => {
+      const input = createValidCompletionFixture();
+      assert.ok(input.trustedReviewRecord);
+      const incomplete: Record<string, unknown> = { ...input.trustedReviewRecord };
+      if (field === 'status') delete incomplete.status;
+      else delete incomplete.checkSetDigest;
+      const result = evaluateDeterministicCompletion({
+        ...input,
+        // Simulate an incomplete record crossing the runtime boundary.
+        trustedReviewRecord: incomplete as unknown as TrustedReviewRecord,
+      });
+      assert.equal(result.isComplete, false);
+      assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
+      assert.ok(result.reasons.some(reason => reason.includes(
+        field === 'status' ? 'Trusted review record status is not accepted' : 'Trusted review record checkSetDigest mismatch'
+      )), result.reasons.join('; '));
+    });
+  }
+});
+
 test('review: mismatched iterationReservationRef in trustedReviewRecord fails admission', () => {
   const input = createValidCompletionFixture();
   assert.ok(input.trustedReviewRecord);
@@ -1311,6 +1333,35 @@ test('protected tests: pytest node ID selector (tests/foo.py::test_bar) protects
     result.reasons.some((r) => r.includes('test protection violation')),
     `Expected test protection violation for modifying test file when check specified node ID, got: ${result.reasons.join('; ')}`
   );
+});
+
+test('protected tests: pytest invocation and option values determine which paths are protected', () => {
+  const cases = [
+    { executable: 'python3', argv: ['-m', 'pytest', '-k', 'src/filter.py', '--cov-report', 'src/report.py', 'tests/extra.py'], protectedPath: 'tests/extra.py' },
+    { executable: 'pytest', argv: ['--deselect', 'tests/extra.py::test_other'], protectedPath: 'tests/extra.py' },
+    { executable: 'pytest', argv: ['--deselect=tests/extra.py::test_other'], protectedPath: 'tests/extra.py' },
+    { executable: 'python3', argv: ['src/compatibility.py'], protectedPath: undefined },
+  ];
+  for (const check of cases) {
+    const input = createValidCompletionFixture();
+    const template = input.task.requiredChecks[0];
+    assert.ok(template);
+    for (const changedFile of ['tests/extra.py', 'src/filter.py', 'src/report.py', 'src/compatibility.py']) {
+      const result = evaluateDeterministicCompletion({
+        ...input,
+        task: {
+          ...input.task,
+          requiredChecks: [{ ...template, executable: check.executable, argv: check.argv }],
+        },
+        changedFiles: [changedFile],
+      });
+      assert.equal(
+        result.reasons.some(reason => reason.includes('test protection violation')),
+        changedFile === check.protectedPath,
+        `${check.executable} ${check.argv.join(' ')}: ${changedFile}`
+      );
+    }
+  }
 });
 
 test('protected tests: test directory selector (tests/unit) protects files under that directory', () => {

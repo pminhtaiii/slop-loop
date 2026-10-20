@@ -44,6 +44,7 @@ import {
 } from '../contracts/foundation/uc03.ts';
 import {
   extractCheckTestSelectors,
+  resolvePytestInvocation,
   normalizePytestSelector,
   PYTEST_OPTIONS_WITH_ARG,
 } from './selectors.ts';
@@ -567,35 +568,24 @@ export function validateHostSnapshotFacts(
   }
 
   for (const check of requiredChecks) {
-    const isPytest =
-      check.executable === 'pytest' ||
-      check.executable.endsWith('/pytest') ||
-      check.executable.endsWith('\\pytest');
+    const invocation = resolvePytestInvocation(check);
+    if (!invocation) continue;
 
     const argv = check.argv ?? [];
-    for (let i = 0; i < argv.length; i++) {
-      const arg = argv[i];
+    for (let i = invocation.argStart; i < argv.length; i++) {
+      let arg = argv[i];
       if (typeof arg !== 'string') continue;
 
-      if (isPytest && PYTEST_OPTIONS_WITH_ARG.has(arg)) {
+      if (arg === '--deselect') {
+        arg = argv[++i] ?? '';
+      } else if (PYTEST_OPTIONS_WITH_ARG.has(arg)) {
         i++; // skip option argument value
         continue;
-      }
-
-      if (arg.startsWith('-')) {
-        if (arg.startsWith('--test-file=')) {
-          const parsed = normalizePytestSelector(arg);
-          if (!parsed) {
-            return {
-              ok: false,
-              reason: `Invalid or untrusted test selector in required check: '${arg}'`,
-            };
-          }
-        }
+      } else if (arg.startsWith('-') && !arg.startsWith('--test-file=') && !arg.startsWith('--deselect=')) {
         continue;
       }
 
-      // Positional argument: strictly must be a valid, trusted test selector
+      // Positional arguments and explicit selectors must be valid and trusted.
       const parsed = normalizePytestSelector(arg);
       if (!parsed) {
         return {
@@ -1408,8 +1398,7 @@ export async function prepareFixPlanAndApproval(
       }
       const isKnownProvenance =
         ref === validBaseline.evidenceId ||
-        stateRefs.includes(ref) ||
-        (ref.startsWith('uc04://') && ref.includes(`/${validState.taskId}/`));
+        stateRefs.includes(ref);
       if (!isKnownProvenance) {
         return {
           outcome: 'rejected',

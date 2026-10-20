@@ -5,6 +5,38 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runGate } from '../../scripts/agents/workflow-gate.mjs';
 
+test('gate accepts only bounded positive integer environment timeouts', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'workflow-gate-env-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const previous = process.env.WORKFLOW_GATE_TIMEOUT;
+  t.after(() => {
+    if (previous === undefined) delete process.env.WORKFLOW_GATE_TIMEOUT;
+    else process.env.WORKFLOW_GATE_TIMEOUT = previous;
+  });
+  const delays = [];
+  const schedule = globalThis.setTimeout;
+  t.mock.method(globalThis, 'setTimeout', (callback, delay, ...args) => {
+    delays.push(delay);
+    return schedule(callback, 10_000, ...args);
+  });
+  const cases = [
+    [undefined, 600_000], ['', 600_000], ['invalid', 600_000],
+    ['0', 600_000], ['-1', 600_000], ['1.5', 600_000],
+    ['Infinity', 600_000], ['-Infinity', 600_000],
+    ['2147483648', 600_000], ['1e100', 600_000],
+    ['1', 1], ['600000', 600_000], ['2147483647', 2_147_483_647],
+  ];
+  for (const [index, [value, expected]] of cases.entries()) {
+    if (value === undefined) delete process.env.WORKFLOW_GATE_TIMEOUT;
+    else process.env.WORKFLOW_GATE_TIMEOUT = value;
+    await runGate({ name: 'env', args: ['-e', ''], cwd: directory, logPath: join(directory, `${index}.log`), report() {} });
+    assert.equal(delays.at(-1), expected, `environment timeout: ${value}`);
+  }
+  process.env.WORKFLOW_GATE_TIMEOUT = '-1';
+  await runGate({ name: 'explicit', args: ['-e', ''], cwd: directory, logPath: join(directory, 'explicit.log'), timeout: 1234, report() {} });
+  assert.equal(delays.at(-1), 1234, 'explicit timeout takes precedence');
+});
+
 test('gate progress arrives before exit and complete stdout/stderr remains in its log', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'workflow-gate-'));
   t.after(() => rm(directory, { recursive: true, force: true }));

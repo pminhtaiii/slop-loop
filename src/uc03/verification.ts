@@ -44,8 +44,8 @@ export interface TrustedReviewRecord {
   readonly iterationReservationRef: string;
   readonly repoDigest: string;
   readonly diffDigest: string;
-  readonly checkSetDigest?: string | undefined;
-  readonly status?: 'accepted' | 'findings' | 'dismissed' | undefined;
+  readonly checkSetDigest: string;
+  readonly status: 'accepted' | 'findings' | 'dismissed';
 }
 
 export interface CompletionPredicateInput {
@@ -550,14 +550,13 @@ export function evaluateDeterministicCompletion(
           `Trusted review record diff digest mismatch: expected '${currentDiffDigest}', got '${trustedReview.diffDigest}'`
         );
       }
-      if (trustedReview.status !== undefined && trustedReview.status !== 'accepted') {
+      if (trustedReview.status !== 'accepted') {
         reasons.push(
           `Trusted review record status is not accepted: '${trustedReview.status}'`
         );
       }
       if (
         expectedCheckSetDigest &&
-        trustedReview.checkSetDigest !== undefined &&
         trustedReview.checkSetDigest !== expectedCheckSetDigest
       ) {
         reasons.push(

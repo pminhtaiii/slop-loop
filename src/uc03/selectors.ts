@@ -98,6 +98,8 @@ export const PYTEST_OPTIONS_WITH_ARG: ReadonlySet<string> = new Set([
   '-c',
   '-W',
   '-n',
+  '-p',
+  '-r',
   '--override-ini',
   '--rootdir',
   '--import-mode',
@@ -113,7 +115,31 @@ export const PYTEST_OPTIONS_WITH_ARG: ReadonlySet<string> = new Set([
   '--dist',
   '--log-level',
   '--log-file',
+  '--durations',
+  '--durations-min',
+  '--basetemp',
+  '--confcutdir',
+  '--deselect',
+  '--timeout',
+  '--cov-report',
 ]);
+
+/**
+ * Resolves the first pytest argument for direct and Python module invocations.
+ */
+export function resolvePytestInvocation(
+  check: CheckDefinition
+): { readonly argStart: number } | null {
+  const executable = check.executable.split(/[\\/]/).pop();
+  if (executable === 'pytest') return { argStart: 0 };
+  if (
+    (executable === 'python' || executable === 'python3') &&
+    check.argv[0] === '-m' && check.argv[1] === 'pytest'
+  ) {
+    return { argStart: 2 };
+  }
+  return null;
+}
 
 /**
  * Extracts target test selectors from a check definition's argv.
@@ -122,38 +148,27 @@ export const PYTEST_OPTIONS_WITH_ARG: ReadonlySet<string> = new Set([
 export function extractCheckTestSelectors(
   check: CheckDefinition
 ): readonly PytestSelector[] {
-  const isPytest =
-    check.executable === 'pytest' ||
-    check.executable.endsWith('/pytest') ||
-    check.executable.endsWith('\\pytest');
+  const invocation = resolvePytestInvocation(check);
+  if (!invocation) return Object.freeze([]);
 
   const results: PytestSelector[] = [];
   const argv = check.argv ?? [];
 
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i];
+  for (let i = invocation.argStart; i < argv.length; i++) {
+    let arg = argv[i];
     if (typeof arg !== 'string') continue;
 
-    if (isPytest) {
-      if (PYTEST_OPTIONS_WITH_ARG.has(arg)) {
-        i++; // skip next argument value
-        continue;
-      }
-      if (arg.startsWith('-') && !arg.startsWith('--test-file=')) {
-        continue;
-      }
-      const parsed = normalizePytestSelector(arg);
-      if (parsed) {
-        results.push(parsed);
-      }
-    } else {
-      if (arg.startsWith('-') && !arg.startsWith('--test-file=')) {
-        continue;
-      }
-      const parsed = normalizePytestSelector(arg);
-      if (parsed) {
-        results.push(parsed);
-      }
+    if (arg === '--deselect') {
+      arg = argv[++i] ?? '';
+    } else if (PYTEST_OPTIONS_WITH_ARG.has(arg)) {
+      i++; // skip next argument value
+      continue;
+    } else if (arg.startsWith('-') && !arg.startsWith('--test-file=') && !arg.startsWith('--deselect=')) {
+      continue;
+    }
+    const parsed = normalizePytestSelector(arg);
+    if (parsed) {
+      results.push(parsed);
     }
   }
 

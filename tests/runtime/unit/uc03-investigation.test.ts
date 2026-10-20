@@ -1801,12 +1801,15 @@ test('plan preparation: evidence acknowledgement precedes state CAS, checkpoint,
 test('plan preparation: caller evidence refs cannot omit the acknowledged baseline', async () => {
   const task = createFixtureBugTask();
   const candidate = createBaselineCandidate(task);
-  const state = createStateForBaselineCandidate(task, candidate);
+  const callerEvidenceRef = 'uc04://diagnosis/task-calc-001/cause-1';
+  const state = {
+    ...createStateForBaselineCandidate(task, candidate),
+    evidenceRefs: [callerEvidenceRef],
+  };
   const events: string[] = [];
   const statePort = observeStatePort(new MemoryStatePort({ initialTaskState: state }), events);
   const approval = createPendingApprovalPort(events);
   const baselineRef = 'uc04://baseline/task-calc-001/accepted-1';
-  const callerEvidenceRef = 'uc04://diagnosis/task-calc-001/cause-1';
   const evidence = createBaselineEvidenceWriter({ events, evidenceId: baselineRef });
 
   const result = await prepareFixPlanAndApproval(state, candidate, {
@@ -2983,33 +2986,38 @@ test('plan preparation: approved decision with valid host port transitions to Pa
   assert.equal(result.state?.nextAction, 'apply-patch');
 });
 
-test('plan preparation: evidenceRefs with untrusted reference fails provenance check', async () => {
-  const task = createFixtureBugTask();
-  const candidate = createBaselineCandidate(task);
-  const state = createStateForBaselineCandidate(task, candidate);
-  const memoryState = new MemoryStatePort({ initialTaskState: state });
-  const approval = createCustomApprovalPort({ defaultStatus: 'approved' });
-  const evidence = createBaselineEvidenceWriter();
-  const repo = new FakeRepositoryPort({ initialRevision: task.initialRevisionDigest });
+test('plan preparation: evidenceRefs with untrusted reference fails provenance check', async t => {
+  for (const ref of ['untrusted-evidence-ref-without-provenance', 'uc04://diagnosis/task-calc-001/forged']) {
+    await t.test(ref, async () => {
+      const task = createFixtureBugTask();
+      const candidate = createBaselineCandidate(task);
+      const state = createStateForBaselineCandidate(task, candidate);
+      const memoryState = new MemoryStatePort({ initialTaskState: state });
+      const approval = createCustomApprovalPort({ defaultStatus: 'approved' });
+      const evidence = createBaselineEvidenceWriter();
+      const repo = new FakeRepositoryPort({ initialRevision: task.initialRevisionDigest });
 
-  const result = await prepareFixPlanAndApproval(
-    state,
-    candidate,
-    {
-      repository: repo,
-      state: memoryState,
-      approval: approval.port,
-      baselineEvidenceWriter: evidence.writer,
-    },
-    {
-      ...standardPlanDetails,
-      evidenceRefs: ['untrusted-evidence-ref-without-provenance'],
-    }
-  );
+      const result = await prepareFixPlanAndApproval(
+        state,
+        candidate,
+        {
+          repository: repo,
+          state: memoryState,
+          approval: approval.port,
+          baselineEvidenceWriter: evidence.writer,
+        },
+        {
+          ...standardPlanDetails,
+          evidenceRefs: [ref],
+        }
+      );
 
-  assert.equal(result.outcome, 'rejected');
-  assert.match(result.reason ?? '', /Untrusted or missing evidence reference/i);
-  assert.equal(result.state?.node, 'Investigate');
+      assert.equal(result.outcome, 'rejected');
+      assert.match(result.reason ?? '', /Untrusted or missing evidence reference/i);
+      assert.equal(result.state?.node, 'Investigate');
+      assert.equal(approval.requests.length, 0);
+    });
+  }
 });
 
 test('plan preparation: evidenceRefs with valid state provenance are deterministically ordered in plan, action, and binding', async () => {
@@ -3064,6 +3072,81 @@ test('plan preparation: evidenceRefs with valid state provenance are determinist
   assert.deepEqual(result.binding?.evidenceRefs, expectedEvidenceOrder);
   assert.deepEqual(result.state?.plan?.evidenceRefs, expectedEvidenceOrder);
   assert.deepEqual(result.state?.evidenceRefs, ['evidence-prior-z', 'evidence-prior-a', acknowledgedBaselineRef]);
+});
+
+test('investigateBaseline: validates selectors only for direct and module pytest invocations', async t => {
+  const invocations = [
+    { executable: 'pytest', prefix: [] },
+    { executable: '/venv/bin/pytest', prefix: [] },
+    { executable: 'C:\\venv\\Scripts\\pytest', prefix: [] },
+    { executable: 'python', prefix: ['-m', 'pytest'] },
+    { executable: '/usr/bin/python3', prefix: ['-m', 'pytest'] },
+    { executable: 'C:\\Python\\python3', prefix: ['-m', 'pytest'] },
+  ];
+  for (const invocation of invocations) {
+    for (const selector of ['tests/test_calculator.py::test_calc', '../secrets.py', 'tests/missing.py']) {
+      await t.test(`${invocation.executable} ${selector}`, async () => {
+        const reproduction = createFixtureCheckDefinition({
+          executable: invocation.executable,
+          argv: [...invocation.prefix, '-k', 'test_calc or test_other', selector],
+        });
+        const otherChecks = [
+          { executable: 'git', argv: ['diff', '--check'], purpose: 'diff' as const },
+          { executable: 'python3', argv: ['tools/compatibility.py'], purpose: 'compatibility' as const },
+          { executable: 'ruff', argv: ['check', '.'], purpose: 'regression' as const },
+        ].map((check, index) => createFixtureCheckDefinition({ ...check, checkId: `other-${index}` }));
+        const task = createFixtureBugTask({ requiredChecks: [reproduction, ...otherChecks] });
+        const repo = createCanonicalRepositoryStub({
+          onRunTests: check => ({
+            checkId: check.checkId,
+            outcome: check.purpose === 'reproduction' ? 'fail' : 'pass',
+            outputExcerpt: 'ZeroDivisionError: division by zero',
+          }),
+        });
+        const result = await investigateWithTestContext(task, repo.repository, createBoundHostPort(task));
+        if (selector === 'tests/test_calculator.py::test_calc') {
+          assert.equal(result.status, 'reproduced', result.reason);
+        } else {
+          assert.equal(result.status, 'error');
+          assert.match(result.reason ?? '', /Invalid or untrusted test selector|omits a test referenced/i);
+          assert.equal(repo.getRunTestsCalls(), 0);
+        }
+      });
+    }
+  }
+});
+
+test('investigateBaseline: skips pytest option values while validating deselected selectors', async t => {
+  const options = [
+    '-p', 'no:cacheprovider', '-r', 'a', '--durations', '10', '--durations-min', '0.5',
+    '--basetemp', '/tmp/pytest', '--confcutdir', '.', '--timeout', '10',
+    '--cov-report', 'term-missing',
+  ];
+  for (const prefix of [[], ['-m', 'pytest']]) {
+    for (const deselect of [
+      [], ['--deselect', 'tests/test_calculator.py::test_other'],
+      ['--deselect=tests/test_calculator.py::test_other'],
+      ['--deselect', '../secrets.py'], ['--deselect=../secrets.py'],
+      ['--deselect', '.env'], ['--deselect', '--invalid'], ['--deselect'],
+    ]) {
+      await t.test(`${prefix.join(' ')} ${deselect.join(' ')}`, async () => {
+        const check = createFixtureCheckDefinition({
+          executable: prefix.length === 0 ? 'pytest' : 'python3',
+          argv: [...prefix, ...options, 'tests/test_calculator.py', ...deselect],
+        });
+        const task = createFixtureBugTask({ requiredChecks: [check] });
+        const repo = createCanonicalRepositoryStub();
+        const result = await investigateWithTestContext(task, repo.repository, createBoundHostPort(task));
+        if (deselect.length === 0 || deselect.some(arg => arg.includes('tests/test_calculator.py'))) {
+          assert.equal(result.status, 'reproduced', result.reason);
+        } else {
+          assert.equal(result.status, 'error');
+          assert.match(result.reason ?? '', /Invalid or untrusted test selector/i);
+          assert.equal(repo.getRunTestsCalls(), 0);
+        }
+      });
+    }
+  }
 });
 
 test('investigateBaseline: pytest node ID (tests/test_calculator.py::test_calc) is normalized and checked in inventory', async () => {
