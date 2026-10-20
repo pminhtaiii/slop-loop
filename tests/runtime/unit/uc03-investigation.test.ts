@@ -10,6 +10,7 @@ import {
   type RepositoryPort,
   type CheckDefinition,
   type CheckResult,
+  type Baseline,
 } from '../../../src/contracts/foundation/uc03.ts';
 import {
   investigateBaseline,
@@ -1589,6 +1590,33 @@ test('investigation: a thrown required check is recorded and does not omit later
   assert.deepEqual(observedCheckIds, task.requiredChecks.map((check) => check.checkId));
 });
 
+test('plan preparation: persisted Baseline cannot substitute for a complete evidence candidate', async () => {
+  const task = createFixtureBugTask();
+  const candidate = createBaselineCandidate(task);
+  const state = createStateForBaselineCandidate(task, candidate);
+  const baseline: Baseline = {
+    evidenceId: 'persisted-baseline',
+    repositorySnapshotDigest: candidate.repositorySnapshotDigest,
+    checkSetDigest: candidate.checkSetDigest,
+    reproductionFailureSignature: candidate.reproductionFailureSignature,
+    checkResults: candidate.checkResults,
+    testProtectionDigest: candidate.testProtectionDigest,
+  };
+  const ports = {
+    repository: new FakeRepositoryPort({ initialRevision: task.initialRevisionDigest }),
+    state: new MemoryStatePort({ initialTaskState: state }),
+    approval: new ScriptedApprovalPort(),
+  };
+
+  // @ts-expect-error Persisted Baseline lacks the required candidate binding facts.
+  const result = await prepareFixPlanAndApproval(state, baseline, ports);
+
+  assert.equal(result.outcome, 'rejected');
+  assert.match(result.reason ?? '', /candidate fields/i);
+  assert.equal(ports.approval.getRecordedBindings().length, 0);
+  assert.equal((await ports.state.loadTask(state.taskId))?.node, 'Investigate');
+});
+
 test('plan preparation: missing diagnosis fails closed without fabricated default', async () => {
   const task = createFixtureBugTask();
   const baseline = createBaselineCandidate(task);
@@ -3077,9 +3105,15 @@ test('plan preparation: evidenceRefs with valid state provenance are determinist
 test('investigateBaseline: validates selectors only for direct and module pytest invocations', async t => {
   const invocations = [
     { executable: 'pytest', prefix: [] },
+    { executable: 'py.test', prefix: [] },
+    { executable: 'PYTEST.EXE', prefix: [] },
+    { executable: 'C:\\venv\\Scripts\\Py.Test.exe', prefix: [] },
     { executable: '/venv/bin/pytest', prefix: [] },
     { executable: 'C:\\venv\\Scripts\\pytest', prefix: [] },
     { executable: 'python', prefix: ['-m', 'pytest'] },
+    { executable: 'PYTHON.EXE', prefix: ['-m', 'pytest'] },
+    { executable: '/usr/bin/python3.12', prefix: ['-m', 'pytest'] },
+    { executable: 'C:\\Python\\Python3.13.exe', prefix: ['-m', 'pytest'] },
     { executable: '/usr/bin/python3', prefix: ['-m', 'pytest'] },
     { executable: 'C:\\Python\\python3', prefix: ['-m', 'pytest'] },
   ];

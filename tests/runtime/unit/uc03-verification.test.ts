@@ -555,29 +555,31 @@ test('check missing: required check missing entirely from verification results p
   );
 });
 
-test('check phase mismatch: reproduction check with wrong phase fails verification', () => {
-  const input = createValidCompletionFixture();
-  const [first, second] = getTwoVerificationResults(input);
-  const phaseMismatch: CompletionPredicateInput = {
-    ...input,
-    verificationResults: [
-      {
-        ...first,
-        phase: 'regression', // reproduction check must have focused or baseline phase
-      },
-      second,
-    ],
-  };
+for (const phase of ['baseline', 'regression', 'compatibility', 'diff'] as const) {
+  test(`check phase mismatch: reproduction check with ${phase} phase fails verification`, () => {
+    const input = createValidCompletionFixture();
+    const [first, second] = getTwoVerificationResults(input);
+    const phaseMismatch: CompletionPredicateInput = {
+      ...input,
+      verificationResults: [
+        {
+          ...first,
+          phase,
+        },
+        second,
+      ],
+    };
 
-  const result = evaluateDeterministicCompletion(phaseMismatch);
+    const result = evaluateDeterministicCompletion(phaseMismatch);
 
-  assert.equal(result.isComplete, false);
-  assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
-  assert.ok(
-    result.reasons.some((r) => r.toLowerCase().includes('phase')),
-    'reasons must report phase mismatch'
-  );
-});
+    assert.equal(result.isComplete, false);
+    assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
+    assert.ok(
+      result.reasons.some((r) => r.includes("phase mismatch for check 'check-pytest-reproduction': expected 'focused'")),
+      'reasons must report phase mismatch'
+    );
+  });
+}
 
 /* ==================================================================
  * Section 5: Reviewer Acceptance & Findings

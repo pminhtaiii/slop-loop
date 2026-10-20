@@ -1186,7 +1186,7 @@ function validateBaselineEvidenceCandidate(
  */
 export async function prepareFixPlanAndApproval(
   state: TaskState,
-  baseline: BaselineEvidenceCandidate | Baseline,
+  baseline: BaselineEvidenceCandidate,
   ports: InvestigationPorts,
   planDetails?: Partial<FixPlan>
 ): Promise<PlanPreparationResult> {

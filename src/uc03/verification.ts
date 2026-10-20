@@ -374,10 +374,7 @@ export function evaluateDeterministicCompletion(
       let hasPassingResult = false;
       for (const m of matching) {
         if (m.outcome === 'pass') {
-          if (
-            m.phase !== expectedPhase &&
-            !(check.purpose === 'reproduction' && m.phase === 'baseline')
-          ) {
+          if (m.phase !== expectedPhase) {
             reasons.push(
               `Verification result phase mismatch for check '${check.checkId}': expected '${expectedPhase}', got '${m.phase}'`
             );

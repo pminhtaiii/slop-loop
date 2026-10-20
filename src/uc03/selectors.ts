@@ -130,10 +130,12 @@ export const PYTEST_OPTIONS_WITH_ARG: ReadonlySet<string> = new Set([
 export function resolvePytestInvocation(
   check: CheckDefinition
 ): { readonly argStart: number } | null {
-  const executable = check.executable.split(/[\\/]/).pop();
-  if (executable === 'pytest') return { argStart: 0 };
+  const executable = (check.executable?.split(/[\\/]/).pop() ?? '')
+    .toLowerCase()
+    .replace(/\.exe$/, '');
+  if (executable === 'pytest' || executable === 'py.test') return { argStart: 0 };
   if (
-    (executable === 'python' || executable === 'python3') &&
+    /^python(?:\d+(?:\.\d+)*)?$/.test(executable) &&
     check.argv[0] === '-m' && check.argv[1] === 'pytest'
   ) {
     return { argStart: 2 };
