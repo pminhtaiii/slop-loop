@@ -2,7 +2,7 @@
 
 **Input**: [spec](spec.md), [plan](plan.md), [research](research.md), [data model](data-model.md), and [contracts](contracts/interfaces.md).
 
-**Status**: T001–T007 and the T023 correction of T007 are integrated and verified locally under the Phase 3 scope on 2026-10-19 (Asia/Saigon). Phase 3 uses all four user-confirmed TDD seams and explicit mock dependencies; corrected source integration is `2b80b767ecde9897696dbe30fd70970cbb7ea0dc`. T008–T022 remain unauthorized. Real tasks also need G-PROFILE/G-REAL/G-RESTART as applicable.
+**Status**: T001–T010 and the T023/T024 review corrections are integrated and verified locally through source `c390fc6a6b9b8afe57168ca24faa3e443f3dbbae`. Phase 4 T008–T010 and its three TDD seams were separately authorized/confirmed on 2026-10-20 (Asia/Saigon). Source/emitted approval suites each pass 90/90; runtime typecheck/full lint/build and 647 compiled tests pass. Checkboxes below remain the completion ledger. T011–T022 remain unauthorized. Real tasks also need G-PROFILE/G-REAL/G-RESTART as applicable.
 
 Final review found an in-scope T007 retry defect and two standards corrections. T023 below records their accepted correction only; it does not release any later story or real-delivery gate.
 
@@ -77,23 +77,30 @@ Final review found an in-scope T007 retry defect and two standards corrections. 
 
 **Independent Test**: C06–C11/C20 exercise mock scheduler/model/tool activity, explicit operator events and failure races through the actual control module.
 
-- [ ] T008 [US2] Write task-control behavioral RED in tests/runtime/approvals/control.test.ts against src/approvals/control.ts.
+**Planning refinement (2026-10-20)**: See [Phase 4 design](plan.md#phase-4-refinement--t008t010-planning-only), [behavioral scenarios US2.7–US2.12](spec.md) and [local evidence boundary](contracts/acceptance.md#phase-4-local-evidence-boundary). This documentation request does not release runtime work or confirm the proposed TDD seams. T008 → T009 → T010 remain sequential; use one tracer RED then vertical RED/GREEN slices, not a batch of all failing tests.
+
+**Subsequent authorization**: The user separately requested implementation and GitHub push, then confirmed all three Phase 4 seams; see [decisions](contracts/decisions.md#phase-4-implementation-authorization). Execute only T008–T010 with mock dependencies; later phases and real delivery gates remain intact.
+
+- [x] T008 [US2] Write task-control behavioral RED in tests/runtime/approvals/control.test.ts against src/approvals/control.ts.
   - **Owner**: Trong Tan / control tests.
   - **Dependencies**: T007.
   - **Owned Paths**: tests/runtime/approvals/control.test.ts; src/approvals/control.ts.
   - **Acceptance Checks**: Neutral loadable SUT fails valid pause/decision/direction expectations; tests cover all-agent fencing, in-flight cancellation/uncertainty, unrelated tasks, equivalent-ID retries and failed transaction/no runnable gap. Hand source to T009.
+  - **Current Evidence**: Loadable neutral tracer and subsequent public coordinator/service RED/GREEN slices retained locally; corrected candidate independently integrated at `6ec06a68b2d9fa59de52bdc17a6f956bd08f663a`. Source and emitted approval suites each passed 82/82, typecheck/build/scoped lint passed. Representative mock callers exercise the actual coordinator; no real scheduler/executor or durability claim.
 
-- [ ] T009 [US2] Implement pause/rejection/direction coordination through companion ports in src/approvals/control.ts and src/approvals/service.ts.
+- [x] T009 [US2] Implement pause/rejection/direction coordination through companion ports in src/approvals/control.ts and src/approvals/service.ts.
   - **Owner**: Trong Tan / control implementation.
   - **Dependencies**: T008.
-  - **Owned Paths**: src/approvals/control.ts; src/approvals/service.ts.
-  - **Acceptance Checks**: T008 passes; all mutation/control operations obey CAS/idempotency, explicit direction and hold rules. Feedback cannot resume, end cannot discard uncertainty, storage failure cannot grant authority. No duplicate UC-04 transaction engine.
+  - **Owned Paths**: src/approvals/control.ts; src/approvals/service.ts; tests/runtime/approvals/control.test.ts; tests/runtime/support/uc05/mock-store.ts; tests/runtime/approvals/mock-ports.test.ts.
+  - **Acceptance Checks**: T008 tracer passes, then extend one behavioral RED/GREEN slice at a time. All mutation/control operations obey CAS/idempotency, explicit direction and hold rules. Extend only mock-store direction retry conformance and its public-port tests as identified in plan.md; no service-local retry cache or duplicate UC-04 transaction engine. An identical direction retry preserves original receipt and newer holds; a new stale response conflicts. Feedback cannot resume, end cannot discard uncertainty, storage/activity failure cannot grant authority.
+  - **Current Evidence**: Same independently accepted integration `6ec06a6`: five owned paths, 441 reviewable lines. Actual service wires pending/rejection/end to injected mock activity; store-owned direction retry preserves original metadata and later holds. Failure/expiry/uncertainty remains closed, final reload revalidates identity/schema/claims/version/epoch, cancellation never proves rollback. All 82 source/emitted approval checks and typecheck/build/scoped lint passed; detailed local evidence is retained in the Phase 4 implementation session. T010 remains separate; canonical contracts and foreign runtime modules are unchanged.
 
-- [ ] T010 [US2] Add explicit resume/revise/end operator commands and terminal-loss handling in src/approvals/cli.ts and tests/runtime/approvals/cli.test.ts.
+- [x] T010 [US2] Add explicit resume/revise/end operator commands and terminal-loss handling in src/approvals/cli.ts and tests/runtime/approvals/cli.test.ts.
   - **Owner**: Trong Tan / CLI control.
   - **Dependencies**: T009.
   - **Owned Paths**: src/approvals/cli.ts; tests/runtime/approvals/cli.test.ts.
   - **Acceptance Checks**: Test-first real subprocess command/exit vectors; empty/malformed/EOF/Ctrl+C input retains pause; explicit scoped direction never becomes approval. Existing service/policy/CLI regressions remain green; no implicit active-task default.
+  - **Current Evidence**: Candidate `415431e` independently accepted and integrated at `f6edb85ff50a311ad6ac9881ac66b79fdd9077da`; only two owned paths, 152 reviewable lines. CLI 12/12 and full source/emitted approvals each 88/88 pass; typecheck/build/owned lint/whitespace pass. Windows SIGINT/SIGTERM before mutation and after committed end retain parent-observed snapshots from the same mock store, with original rejection preserved and no inferred consent. These are subprocess/mock observations, not postmortem persistence, actual runtime restart or production composition; direct executable remains unavailable.
 
 ## Phase 5: User Story 3 — Exact action and fix-plan binding (Priority: P1)
 
@@ -209,3 +216,14 @@ Original phase counts: setup 1; foundations 3; US1 3; US2 3; US3 3; US4 2; US5 3
   - **Owned Paths**: src/approvals/service.ts; tests/runtime/approvals/service.test.ts.
   - **Acceptance Checks**: Behavioral RED/GREEN through the confirmed actual-service/mock-store seam: approve A, create pending B, repeat identical response A, preserve B waiting, approve B and retain valid eligible admission. Validate unknown trusted-provider context before type assertions. Replace or remove the disconnected activity-mock assertion with documented justification, retaining all meaningful consent/pause/admission assertions. Independent integration and required runtime gates pass. This is a correction of T007 under FR-012 and the existing four confirmed seams; no T008–T022 capability is authorized.
   - **Current Evidence**: Candidate `969336904e335fb5f73b4a086b721713488d921f` independently accepted and integrated at `2b80b767ecde9897696dbe30fd70970cbb7ea0dc`, changing only the two owned paths. Behavioral RED/GREEN proves earlier-response retry preserves the later pending hold and both open/previously closed local admission states; complete plain-data context admission rejects malformed records and accessors without getter calls. Removed only a disconnected activity fixture/assertion that could not observe the service, retaining meaningful consent/pause/history/admission assertions. Integrated source/emitted approval suites passed 66/66 each; required runtime typecheck, full lint, clean build and 623/623 compiled tests passed. Evidence remains local under `.agent-work/2026-10-19/uc05-phase3/service/review-correction/`. No later-story, real adapter, execution or restart capability was added.
+
+## Review correction within authorized Phase 4
+
+Post-publication T008–T009 correction (`3816056`, PR #75): user-authorized review repair restores the previous local admission state after validated `denied`, `conflict`, `invalid` or `stale` direction/decision receipts. `unavailable` and `uncertain` remain fail-closed. Public service/control regression tests reproduced denied-resume-then-approval and decision-conflict-then-approval failures before their respective fixes; outcome matrices retain uncertainty coverage. Source approvals pass 103/103; runtime typecheck, lint, build and 660 compiled tests pass. This changes no contract, seam, later-phase authorization or production/restart gate.
+
+- [x] T024 [US2] Complete positive cancellation/completion evidence for T008–T009 in tests/runtime/approvals/control.test.ts per FR-007/019–021 and US2.11.
+  - **Owner**: Trong Tan / Phase 4 behavioral coverage.
+  - **Dependencies**: T010.
+  - **Owned Paths**: tests/runtime/approvals/control.test.ts.
+  - **Acceptance Checks**: Through actual service/coordinator admission and rejection fencing, observe successful completed and cancelled mock outcomes separately, retaining original rejection and zero further admission without explicit direction. Cancellation success requires a request issued by the SUT and no recorded effect; completed observations never imply rollback. Keep uncertainty/refused-cancellation coverage intact. This closes the verified Phase 4 review evidence gap only; no new runtime capability, test seam, later story, adapter or real restart work is authorized.
+  - **Current Evidence**: Test-only candidate `0acb8c9` independently accepted at `c390fc6a6b9b8afe57168ca24faa3e443f3dbbae`, adding 23 lines to the one owned file. Both new tests passed immediately against existing behavior; no artificial RED or production edit was introduced. Actual service admission/rejection fencing precedes successful completed/cancelled observations, preserving exact rejected control/history and denying current-version admission/classification. Source/emitted approvals each pass 90/90 (control 16/16); typecheck/build/scoped lint/whitespace pass. This resolves the narrow Spec P2 coverage finding only.

@@ -1,13 +1,14 @@
 import type { ApprovalBinding, ApprovalBindingContext, ApprovalPort, NormalizedAction } from '../contracts/foundation/uc03.ts';
-import type { ApprovalRequestRecord, ApprovalTaskControl, HumanResolution, PolicyProfile, SafeResult, TrustedOperatorIdentity } from '../contracts/approvals/contracts.ts';
+import type { ApprovalRequestRecord, ApprovalTaskControl, DecisionEvent, DeveloperDirection, HumanResolution, PolicyProfile, SafeResult, TrustedOperatorIdentity } from '../contracts/approvals/contracts.ts';
 import type { PolicyFacts } from './policy.ts';
 import type { PresentationBundle, PresentationInput } from './presentation.ts';
 import { isDeepStrictEqual } from 'node:util';
 import { computeActionDigest, computeCanonicalSha256, parseApprovalBinding, validateApprovalBinding, validateNormalizedAction } from '../contracts/foundation/uc03.ts';
-import { validateApprovalRequestRecord, validateApprovalTaskControl, validateHumanResolution, validateSafeResult } from '../contracts/approvals/contracts.ts';
+import { validateApprovalRequestRecord, validateApprovalTaskControl, validateDecisionEvent, validateDeveloperDirection, validateHumanResolution, validateSafeResult } from '../contracts/approvals/contracts.ts';
 import { compilePolicy } from './policy.ts';
 import { buildPresentation } from './presentation.ts';
 import { containsProtectedContent } from '../foundation/repository-tools.ts';
+import { createApprovalControl, type ApprovalActivity } from './control.ts';
 
 export interface ApprovalContext {
   readonly action: NormalizedAction;
@@ -21,17 +22,21 @@ export interface ApprovalStore {
   readonly provenance: 'mock';
   loadTaskControl(taskId: string): StoreResponse<ApprovalTaskControl>;
   readRequest(decisionId: string): StoreResponse<ApprovalRequestRecord>;
-  readHistory(taskId: string): StoreResponse<{ readonly resolutions: readonly HumanResolution[] }>;
+  readHistory(taskId: string): StoreResponse<{ readonly resolutions: readonly HumanResolution[]; readonly directions?: readonly DeveloperDirection[] }>;
+  readEvents?(taskId: string): StoreResponse<readonly DecisionEvent[]>;
+  recordDirection?(input: unknown): StoreResponse<DeveloperDirection>;
   createPendingAndPause(input: unknown): StoreResponse<ApprovalRequestRecord>;
   resolvePending(input: unknown): StoreResponse<HumanResolution>;
 }
 export interface ApprovalServiceOptions {
+  readonly activity?: ApprovalActivity;
   readonly taskId: string;
   readonly profile: unknown;
   readonly store?: ApprovalStore;
   readonly context: {
     loadForAction(taskId: string, actionId: string): Promise<unknown>;
     loadForDecision(decisionId: string): Promise<unknown>;
+    loadForTask?(taskId: string): Promise<unknown>;
   };
   readonly operator?: { readonly identity: TrustedOperatorIdentity };
   readonly now?: () => string;
@@ -42,6 +47,8 @@ export interface ApprovalView {
   readonly presentation: PresentationBundle['summary'];
 }
 export interface ApprovalService extends ApprovalPort {
+  admitAttempt(attemptId: string, claim: unknown): boolean;
+  control(input: unknown): Promise<SafeResult>;
   list(taskId: string): Promise<{ readonly control: ApprovalTaskControl; readonly decisionId: string | null }>;
   show(taskId: string, decisionId: string): Promise<ApprovalView>;
   inspect(taskId: string, decisionId: string, page: number): Promise<{ readonly presentationDigest: string; readonly page: number; readonly pageCount: number; readonly content: string }>;
@@ -72,16 +79,21 @@ export function createApprovalService(options: ApprovalServiceOptions): Approval
         timer = setTimeout(() => { expired = true; reject(new ApprovalServiceError('unavailable')); }, profile.operationDeadlineMs);
       })]);
     } catch (error) {
-      if (error instanceof ApprovalServiceError) throw error;
+      if (error instanceof ApprovalServiceError) {
+        if (error.outcome === 'unavailable' || error.outcome === 'uncertain') localAdmissionClosed = true;
+        throw error;
+      }
+      localAdmissionClosed = true;
       throw new ApprovalServiceError('unavailable');
     } finally { expired = true; if (timer !== undefined) clearTimeout(timer); }
   };
   const task = (taskId: string): void => { if (taskId !== options.taskId) throw new ApprovalServiceError('invalid'); };
   const control = (): ApprovalTaskControl => {
     const response = store().loadTaskControl(options.taskId);
-    if (response.safe.outcome !== 'ok' || !validateSafeResult(response.safe).ok || !validateApprovalTaskControl(response.value).ok || response.value?.taskId !== options.taskId || containsProtectedContent(JSON.stringify(response.value))) throw new ApprovalServiceError('unavailable');
+    if (!plainContextData(response) || response.safe.outcome !== 'ok' || !validateSafeResult(response.safe).ok || !validateApprovalTaskControl(response.value).ok || response.value?.taskId !== options.taskId || containsProtectedContent(JSON.stringify(response.value))) throw new ApprovalServiceError('unavailable');
     return response.value;
   };
+  const coordinator = createApprovalControl({ taskId: options.taskId, load: control, ...(options.activity ? { activity: options.activity } : {}) });
   const admitContext = (raw: unknown): ApprovalContext => {
     if (!plainContextData(raw) || !dataRecord(raw) || !exactFields(raw, ['action', 'facts', 'freshness', 'runId', 'elements']) ||
       !identifier(raw['runId']) || !freshnessContext(raw['freshness']) || !decisionElements(raw['elements'])) throw new ApprovalServiceError('invalid');
@@ -139,9 +151,70 @@ export function createApprovalService(options: ApprovalServiceOptions): Approval
     return { record, context, bundle };
   };
   const service: ApprovalService = {
+    admitAttempt: (attemptId, claim) => !localAdmissionClosed && coordinator.admitAttempt(attemptId, claim),
+    control: input => bounded(async assertActive => {
+      if (!options.operator) throw new ApprovalServiceError('denied');
+      if (!directionInput(input)) throw new ApprovalServiceError('invalid');
+      task(input.taskId);
+      const backend = store();
+      if (!backend.recordDirection || !backend.readEvents || !options.activity || !options.context.loadForTask) throw new ApprovalServiceError('unavailable');
+      const history = backend.readHistory(options.taskId);
+      if (!plainContextData(history) || !validateSafeResult(history.safe).ok || history.safe.outcome !== 'ok' || !plainContextData(history.value) || !Array.isArray(history.value?.directions) || history.value.directions.length > 128) throw new ApprovalServiceError('unavailable');
+      const matches = history.value.directions.filter(value => value.responseKey === input.responseKey);
+      if (matches.length > 1) throw new ApprovalServiceError('unavailable');
+      const prior = matches[0];
+      let direction: DeveloperDirection;
+      let event: DecisionEvent;
+      if (prior) {
+        if (!validateDeveloperDirection(prior, { expectedTaskId: options.taskId, expectedVersion: prior.expectedVersion, expectedEpoch: prior.expectedEpoch, trustedOperator: options.operator.identity }).ok || prior.direction !== input.direction || prior.expectedVersion !== input.taskVersion) throw new ApprovalServiceError('conflict');
+        const journal = backend.readEvents(options.taskId);
+        if (!plainContextData(journal) || !validateSafeResult(journal.safe).ok || journal.safe.outcome !== 'ok' || !plainContextData(journal.value) || !Array.isArray(journal.value) || journal.value.length > 512) throw new ApprovalServiceError('unavailable');
+        const events = journal.value.filter(value => value.type === 'developer-direction-recorded' && value.directionId === prior.directionId);
+        const original = events[0];
+        if (events.length !== 1 || !original || !validateDecisionEvent(original, profile).ok || original.taskId !== options.taskId || original.decisionId !== null || original.claimId !== null) throw new ApprovalServiceError('unavailable');
+        direction = prior;
+        event = original;
+      } else {
+        const current = control();
+        if (current.version !== input.taskVersion) throw new ApprovalServiceError('conflict');
+        if ((localAdmissionClosed || coordinator.isClosed()) && input.direction !== 'end') throw new ApprovalServiceError('unavailable');
+        const outstanding = options.activity.inspectOutstanding(options.taskId);
+        if (!plainContextData(outstanding) || !Array.isArray(outstanding) || outstanding.length > 128 || containsProtectedContent(JSON.stringify(outstanding))) throw new ApprovalServiceError('unavailable');
+        if (input.direction !== 'end' && outstanding.length > 0) throw new ApprovalServiceError('uncertain');
+        const context = await options.context.loadForTask(options.taskId);
+        if (!plainContextData(context) || !dataRecord(context) || !exactFields(context, ['taskId', 'repositoryId', 'workspaceId', 'runId', 'safeScopeRef', 'policyIdentity']) ||
+          context['taskId'] !== options.taskId || context['repositoryId'] !== current.repositoryId || context['workspaceId'] !== current.workspaceId || !identifier(context['runId']) || !identifier(context['safeScopeRef']) || !isDeepStrictEqual(context['policyIdentity'], profile.policyIdentity)) throw new ApprovalServiceError('denied');
+        const timestamp = now();
+        const directionId = computeCanonicalSha256({ type: 'direction', taskId: options.taskId, responseKey: input.responseKey });
+        direction = { schemaVersion: 'uc05-approval/0.1-draft', directionId, taskId: options.taskId, expectedVersion: input.taskVersion, expectedEpoch: current.epoch, direction: input.direction, safeScopeRef: context['safeScopeRef'], responseKey: input.responseKey, createdAt: timestamp };
+        event = { schemaVersion: 'uc05-approval/0.1-draft', eventId: computeCanonicalSha256({ type: 'direction-event', directionId }), taskId: options.taskId, runId: context['runId'], decisionId: null, directionId, claimId: null, type: 'developer-direction-recorded', outcome: input.direction === 'end' ? 'paused' : 'ok', policyRef: profile.policyIdentity, safeReasonCode: 'developer-direction-recorded', timestamp };
+      }
+      if (!validateDeveloperDirection(direction, { expectedTaskId: options.taskId, expectedVersion: direction.expectedVersion, expectedEpoch: direction.expectedEpoch, trustedOperator: options.operator.identity }).ok || !validateDecisionEvent(event, profile).ok) throw new ApprovalServiceError('denied');
+      assertActive();
+      const wasClosed = localAdmissionClosed;
+      localAdmissionClosed = true;
+      const response = backend.recordDirection({ expectedControlVersion: input.taskVersion, trustedOperator: options.operator.identity, direction, event });
+      if (!plainContextData(response) || !validateSafeResult(response.safe).ok || containsProtectedContent(JSON.stringify(response.safe)) || response.safe.taskId !== options.taskId) throw new ApprovalServiceError('unavailable');
+      const committed = control();
+      const recorded = response.safe.outcome === 'ok' || response.safe.outcome === 'paused';
+      if (recorded) {
+        const recordedHistory = backend.readHistory(options.taskId);
+        const recordedEvents = backend.readEvents(options.taskId);
+        if (!plainContextData(response.value) || !isDeepStrictEqual(response.value, direction) || response.safe.eventRef !== event.eventId || response.safe.controlVersion !== committed.version ||
+          !plainContextData(recordedHistory) || !validateSafeResult(recordedHistory.safe).ok || recordedHistory.safe.outcome !== 'ok' || !Array.isArray(recordedHistory.value?.directions) || recordedHistory.value.directions.length > 128 || recordedHistory.value.directions.filter(value => isDeepStrictEqual(value, direction)).length !== 1 ||
+          !plainContextData(recordedEvents) || !validateSafeResult(recordedEvents.safe).ok || recordedEvents.safe.outcome !== 'ok' || !Array.isArray(recordedEvents.value) || recordedEvents.value.length > 512 || recordedEvents.value.filter(value => isDeepStrictEqual(value, event)).length !== 1 ||
+          (!prior && committed.mode !== (direction.direction === 'end' ? 'ended' : 'runnable'))) throw new ApprovalServiceError('unavailable');
+        assertActive();
+        if (!prior && direction.direction === 'end') coordinator.fence(committed, true);
+        localAdmissionClosed = wasClosed;
+      } else if (['denied', 'conflict', 'invalid', 'stale'].includes(response.safe.outcome)) {
+        localAdmissionClosed = wasClosed;
+      }
+      return { schemaVersion: 'uc05-approval/0.1-draft', outcome: response.safe.outcome, safeReasonCode: recorded ? 'direction-recorded' : 'direction-not-recorded', taskId: options.taskId, decisionId: null, requestVersion: null, controlVersion: committed.version, eventRef: recorded ? event.eventId : null, safeNextAction: recorded ? 'none' : 'retry-read' };
+    }),
     provenance: 'mock',
     classify: action => bounded(async () => {
-      if (localAdmissionClosed) throw new ApprovalServiceError('unavailable');
+      if (localAdmissionClosed || coordinator.isClosed()) throw new ApprovalServiceError('unavailable');
       const current = control();
       if (current.mode !== 'runnable' || current.outstandingClaimRefs.length > 0) throw new ApprovalServiceError('paused');
       const context = admitContext(await options.context.loadForAction(options.taskId, action.actionId));
@@ -149,11 +222,11 @@ export function createApprovalService(options: ApprovalServiceOptions): Approval
       const result = policy.classify(action, context.facts);
       if (!result.ok) throw new ApprovalServiceError('invalid');
       const latest = control();
-      if (localAdmissionClosed || latest.mode !== 'runnable' || latest.version !== current.version || latest.epoch !== current.epoch) throw new ApprovalServiceError('paused');
+      if (localAdmissionClosed || coordinator.isClosed() || latest.mode !== 'runnable' || latest.version !== current.version || latest.epoch !== current.epoch) throw new ApprovalServiceError('paused');
       return result.permission;
     }),
     requestDecision: binding => bounded(async assertActive => {
-      if (localAdmissionClosed) throw new ApprovalServiceError('unavailable');
+      if (localAdmissionClosed || coordinator.isClosed()) throw new ApprovalServiceError('unavailable');
       const checked = parseApprovalBinding(binding);
       if (!checked.ok || binding.status !== 'pending') throw new ApprovalServiceError('invalid');
       const context = await trusted(binding.decisionId, binding);
@@ -179,23 +252,24 @@ export function createApprovalService(options: ApprovalServiceOptions): Approval
       };
       if (!validateApprovalRequestRecord(record).ok) throw new ApprovalServiceError('invalid');
       assertActive();
-      if (localAdmissionClosed) throw new ApprovalServiceError('unavailable');
+      if (localAdmissionClosed || coordinator.isClosed()) throw new ApprovalServiceError('unavailable');
       localAdmissionClosed = true;
       const response = store().createPendingAndPause({ expectedControlVersion: current.version, submissionKey: record.submissionKey, request: record,
         event: { schemaVersion: 'uc05-approval/0.1-draft', eventId: computeCanonicalSha256({ type: 'request', taskId: options.taskId, decisionId: record.decisionId }), taskId: options.taskId, runId: context.runId, decisionId: record.decisionId, directionId: null, claimId: null, type: 'approval-request-created', outcome: 'pending', policyRef: context.facts.policyIdentity, safeReasonCode: 'approval-pending', timestamp } });
       if (response.safe.outcome !== 'pending' || !validateSafeResult(response.safe).ok || !isDeepStrictEqual(response.value, record)) throw new ApprovalServiceError(response.safe.outcome === 'conflict' ? 'conflict' : 'unavailable');
       const paused = control();
       if (paused.mode !== 'waiting' || paused.pendingDecisionId !== binding.decisionId || paused.continuationRef !== record.continuationRef) throw new ApprovalServiceError('unavailable');
+      coordinator.fence(paused, false);
       localAdmissionClosed = false;
       return projection(record);
     }),
     validateBinding: binding => bounded(async () => {
-      if (localAdmissionClosed) return false;
+      if (localAdmissionClosed || coordinator.isClosed()) return false;
       try {
         const view = await checkedView(binding.decisionId);
         const current = control();
         const stored = projection(view.record);
-        return !localAdmissionClosed && current.mode === 'runnable' && current.outstandingClaimRefs.length === 0 && stored.status === 'approved' && isDeepStrictEqual(binding, stored) && validateApprovalBinding(stored, view.context.freshness).ok;
+        return !localAdmissionClosed && !coordinator.isClosed() && current.mode === 'runnable' && current.outstandingClaimRefs.length === 0 && stored.status === 'approved' && isDeepStrictEqual(binding, stored) && validateApprovalBinding(stored, view.context.freshness).ok;
       } catch { return false; }
     }),
     resolve: decisionId => bounded(async () => projection((await checkedView(decisionId)).record)),
@@ -233,13 +307,16 @@ export function createApprovalService(options: ApprovalServiceOptions): Approval
       const response = store().resolvePending({ expectedControlVersion: input.taskVersion, expectedRequestVersion: input.requestVersion,
         trustedOperator: options.operator.identity, trustedResponse: terminal,
         event: { schemaVersion: 'uc05-approval/0.1-draft', eventId: terminal.eventId, taskId: options.taskId, runId: context.runId, decisionId: record.decisionId, directionId: null, claimId: null, type: 'human-resolution-recorded', outcome: decision === 'approved' ? 'ok' : 'paused', policyRef: context.facts.policyIdentity, safeReasonCode: terminal.safeReasonCode, timestamp } });
-      if (!validateSafeResult(response.safe).ok || containsProtectedContent(JSON.stringify(response.safe)) || response.safe.taskId !== options.taskId || response.safe.decisionId !== record.decisionId || response.safe.requestVersion !== record.requestVersion) throw new ApprovalServiceError('unavailable');
+      if (!plainContextData(response) || !validateSafeResult(response.safe).ok || containsProtectedContent(JSON.stringify(response.safe)) || response.safe.taskId !== options.taskId || response.safe.decisionId !== record.decisionId || response.safe.requestVersion !== record.requestVersion) throw new ApprovalServiceError('unavailable');
       if (response.safe.outcome === 'ok' || response.safe.outcome === 'paused') {
         const committed = control();
         if (response.safe.eventRef !== terminal.eventId || response.safe.controlVersion !== committed.version ||
           (!prior && committed.mode !== (decision === 'approved' ? 'runnable' : 'rejected')) ||
           (response.safe.outcome === 'paused' && decision !== 'rejected') ||
           !isDeepStrictEqual(response.value, terminal) || !isDeepStrictEqual(resolution(record), terminal)) throw new ApprovalServiceError('unavailable');
+        if (!prior && decision === 'rejected') coordinator.fence(committed, true);
+        localAdmissionClosed = admissionWasClosed;
+      } else if (['denied', 'conflict', 'invalid', 'stale'].includes(response.safe.outcome)) {
         localAdmissionClosed = admissionWasClosed;
       }
       const recorded = response.safe.outcome === 'ok' || response.safe.outcome === 'paused';
@@ -256,6 +333,11 @@ export function createApprovalService(options: ApprovalServiceOptions): Approval
 }
 
 function identifier(value: unknown): value is string { return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,126}$/.test(value); }
+
+function directionInput(value: unknown): value is { readonly taskId: string; readonly taskVersion: number; readonly direction: 'resume' | 'revise' | 'end'; readonly responseKey: string } {
+  if (!plainContextData(value) || !dataRecord(value) || !exactFields(value, ['taskId', 'taskVersion', 'direction', 'responseKey'])) return false;
+  return identifier(value['taskId']) && identifier(value['responseKey']) && typeof value['taskVersion'] === 'number' && Number.isSafeInteger(value['taskVersion']) && value['taskVersion'] > 0 && ['resume', 'revise', 'end'].includes(String(value['direction']));
+}
 
 /** Inspect descriptors recursively before validators or property reads can invoke input getters. */
 function plainContextData(value: unknown, depth = 0): boolean {

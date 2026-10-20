@@ -1,6 +1,6 @@
 # Data Model: UC-05
 
-**Status**: Logical companion contract version `uc05-approval/0.1-draft` agreed through the T001 confirmation in [decisions](contracts/decisions.md). T002 supplies validators, T004 test-only in-memory state, and T007 the initial mock-backed consumer; no schema migration, database or durable runtime state is implemented. Canonical UC-03 binding version remains 0.1.0. [Interfaces](contracts/interfaces.md) owns transaction semantics.
+**Status**: Logical companion contract version `uc05-approval/0.1-draft` agreed through the T001 confirmation in [decisions](contracts/decisions.md). T002 supplies validators, T004 test-only in-memory state, and T007/T009/T010 mock-backed service/control/CLI consumers; no schema migration, database or durable runtime state is implemented. Canonical UC-03 binding version remains 0.1.0. [Interfaces](contracts/interfaces.md) owns transaction semantics.
 
 ## Records and ownership
 
