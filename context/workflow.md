@@ -32,14 +32,14 @@ Routine mutations in every checkout update only the ignored shared store, keepin
 ## Workflow pipeline
 
 ```text
-planning loop (plan, tasks, P0/P1 audit) -> build-spec (task graph and TDD) -> speckit-converge -> code-review -> context refresh -> contributor PR/CI
+planning loop (plan, tasks, P0/P1 audit) -> build-spec (task graph and TDD) -> speckit-converge -> code-review (unless the user explicitly opts out) -> context refresh -> contributor PR/CI
 ```
 
-`/build-spec` owns implementation, convergence, and code review for the integrated revision. The contributor PR pilot has standing limited authorization for coordinator commits, feature-branch pushes, and draft PR creation/updates; workers have no remote authority. Follow the [PR and CI workflow](../docs/agents/pr-workflow.md). The pilot uses `development` as the base for both public and private PRs. Follow the [branch and PR conventions](../docs/agents/pr-conventions.md) before creating a new work branch or preparing PR metadata; identifiers are unique across both repositories and historical PRs. A human decides each merge; coordinator execution requires an explicit instruction for that PR and passing required checks. Remote issue changes and deployment remain separately authorized.
+`/build-spec` owns implementation and convergence; post-implementation code review follows the user's instruction. The contributor PR pilot has standing limited authorization for coordinator commits, feature-branch pushes, and draft PR creation/updates; workers have no remote authority. Follow the [PR and CI workflow](../docs/agents/pr-workflow.md). The pilot uses `development` as the base for both public and private PRs. Follow the [branch and PR conventions](../docs/agents/pr-conventions.md) before creating a new work branch or preparing PR metadata; identifiers are unique across both repositories and historical PRs. A human decides each merge; coordinator execution requires an explicit instruction for that PR and passing required checks. Remote issue changes and deployment remain separately authorized.
 
 ## Agent coordination
 
-Keep worker changes scoped to assigned task IDs and owned files. Implementers do not change task checkboxes; only the coordinator marks a task complete after integration and applicable checks pass. Recompute dependencies and the ready task frontier after each accepted integration.
+Only the coordinator dispatches and integrates implementation workers. After one bounded preflight confirms current authorization, checkout and dirty-path state, assignment state, and the ready task frontier, dispatch ready non-overlapping tasks in parallel. Continue investigation only for a concrete authorization, dependency, ownership, or environment blocker. Keep worker changes scoped to assigned task IDs and owned files. Implementers do not change task checkboxes; only the coordinator marks a task complete after integration and applicable checks pass. Recompute dependencies and the ready task frontier after each accepted integration.
 
 Use the task helper to derive context from the canonical ledger:
 
@@ -49,6 +49,16 @@ node scripts/agents/agent-context.mjs task --tasks specs/<feature>/tasks.md --ta
 ```
 
 These commands report task context only; they never change task status.
+
+**Resume from compact evidence:**
+
+Resume with the bounded report:
+
+```powershell
+node scripts/agents/agent-context.mjs resume [--tasks <tasks.md>] [--authorization <repo-relative-path> ...] [--root <checkout>]
+```
+
+The report gives the checkout and revision, local worktree changes, parseable task candidates and dependencies, worker assignments, and explicit verification/evidence pointers. Repeat `--authorization` for additional source pointers. Treat every path as a pointer only; the report does not establish authorization; check current user direction and the governing decision record, and hold the affected task if those sources conflict. Read only the named sources needed for the next action; do not recursively inventory the checkout, session dumps, or old evidence. When a read tool is unavailable, inspect its error and retry once with a supported bounded read of the named canonical source. If that retry fails, record the blocker and stop rather than repeating the unavailable call or expanding the inventory.
 
 Create a managed session directory before coordinated work:
 
@@ -62,7 +72,7 @@ Keep drafts, worker notes, raw logs, and review snapshots in `.agent-work/<date>
 
 ### Task briefs and handoffs
 
-Give each worker one or two ready task IDs (or name the approved maintenance goal), the relevant plan section, owned paths, required outputs, dependencies, observable acceptance criteria, and focused verification commands. Share only the contract and context needed for that assignment.
+Give each worker the unique owner/task IDs registered under the active-task handoff and one or two ready task IDs (or name the approved maintenance goal), the relevant plan section, non-overlapping owned paths, dependencies, required outputs, observable acceptance criteria, and focused verification commands. Share only the contract and context needed for that assignment. Report check results and limits according to [testing guidance](testing.md).
 
 Record a concise handoff with checkout, branch/revision, ledger and next candidate, authorized next step, blockers and verification status, path ownership, worker states, and evidence locations. Refresh worker state before acting on it; a sent message alone does not mean a worker resumed.
 
@@ -93,7 +103,9 @@ Assess the integrated implementation against the approved spec, plan, and task l
 
 ## Step 3: Code review (`/code-review`)
 
-Review the pinned integrated revision against [backend code standards](code_standard.md), other applicable repository conventions, and the originating specification. Resolve blocking findings within the authorized task scope and rerun affected checks, convergence, and review for the changed revision.
+Honor an explicit user request to skip post-implementation review; do not dispatch review agents for that task. This choice does not waive required task tests, acceptance checks, context refresh, or contributor gates. Follow [testing guidance](testing.md) when reporting verification.
+
+When the user has not opted out, review the pinned integrated revision against [backend code standards](code_standard.md), other applicable repository conventions, and the originating specification. Resolve blocking findings within the authorized task scope and rerun affected checks, convergence, and review for the changed revision.
 
 ## Context refresh
 
