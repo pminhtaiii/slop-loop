@@ -587,6 +587,21 @@ export function computeCommandViewDigest(view: Omit<CommandView, 'viewDigest'> |
   return computeCanonicalSha256(rest);
 }
 
+export function computeCheckSetDigest(checks: readonly CheckDefinition[]): string {
+  if (!Array.isArray(checks)) {
+    throw new Error('computeCheckSetDigest requires an array of CheckDefinition');
+  }
+  const sorted = [...checks].sort((a, b) => {
+    if (a.checkId !== b.checkId) {
+      return a.checkId < b.checkId ? -1 : 1;
+    }
+    const aJson = canonicalJsonStringify(a);
+    const bJson = canonicalJsonStringify(b);
+    return aJson < bJson ? -1 : aJson > bJson ? 1 : 0;
+  });
+  return computeCanonicalSha256(sorted);
+}
+
 export function isCanonicalRelativePath(filePath: string): boolean {
   if (typeof filePath !== 'string' || filePath.length === 0) return false;
   if (filePath.includes('\0')) return false;

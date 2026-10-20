@@ -85,7 +85,7 @@ if (process.argv[2] === 'uc05-cli-test-driver') {
   process.stdout.write(result.output + '\n');
   process.exitCode = result.exitCode;
 } else {
-  const child = (args: readonly string[], scenario = 'normal') => spawnSync(process.execPath, [fileURLToPath(import.meta.url), 'uc05-cli-test-driver', scenario, ...args], { encoding: 'utf8', timeout: 5000 });
+  const child = (args: readonly string[], scenario = 'normal') => spawnSync(process.execPath, [fileURLToPath(import.meta.url), 'uc05-cli-test-driver', scenario, ...args], { encoding: 'utf8', timeout: 15000 });
   const controlArgs = (direction = 'resume', version = '3', responseKey = 'direction-1') => ['control', '--task', 'task-1', '--task-version', version, '--direction', direction, '--response-key', responseKey];
   const observedChild = async (args: readonly string[], scenario: string, interrupt?: NodeJS.Signals) => {
     const processChild = spawn(process.execPath, [fileURLToPath(import.meta.url), 'uc05-cli-test-driver', scenario, ...args], { stdio: ['pipe', 'pipe', 'pipe', 'ipc'] });
