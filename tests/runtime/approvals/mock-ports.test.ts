@@ -468,6 +468,15 @@ test('a rejection stays held until an explicit direction, which preserves the te
   assert.equal(store.loadTaskControl('task-1').value?.mode, 'runnable');
   assert.equal(store.readHistory('task-1').value?.resolutions[0]?.decision, 'rejected');
   assert.equal(store.readHistory('task-1').value?.directions[0]?.direction, 'revise');
+  const accepted = { expectedControlVersion: 3, trustedOperator, direction, event: directionEvent };
+  assert.equal(store.recordDirection(accepted).safe.outcome, 'ok');
+  assert.equal(store.createPendingAndPause({ expectedControlVersion: 4, submissionKey: 'submission-2', request: { ...request, decisionId: 'decision-2', submissionKey: 'submission-2', binding: { ...request.binding, decisionId: 'decision-2' } }, event: { ...requestEvent, eventId: 'event-request-2', decisionId: 'decision-2' } }).safe.outcome, 'pending');
+  assert.equal(store.recordDirection(accepted).safe.outcome, 'ok');
+  assert.equal(store.loadTaskControl('task-1').value?.mode, 'waiting');
+  assert.equal(store.readHistory('task-1').value?.directions.length, 1);
+  assert.equal(store.readEvents('task-1').value?.filter(event => event.type === 'developer-direction-recorded').length, 1);
+  for (const change of [{ direction: 'end' }, { expectedVersion: 5 }, { expectedEpoch: 5 }, { safeScopeRef: 'changed' }]) assert.equal(store.recordDirection({ ...accepted, direction: { ...direction, ...change } }).safe.outcome, 'conflict');
+  assert.equal(store.recordDirection({ ...accepted, trustedOperator: { ...trustedOperator, channelRef: 'foreign-channel' } }).safe.outcome, 'conflict');
 });
 
 test('a pause that wins the claim race fences activity admission and leaves the effect log empty', () => {
