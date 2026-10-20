@@ -3,7 +3,7 @@
 **Branch**: `feat/012-uc01-issue-triage-specs` | **Date**: 2026-10-17 | **Spec**: [spec.md](spec.md)
 
 **Input**: Draft specification in `specs/002-uc01-issue-triage/`.
-**Status**: Existing baseline and consumer/fixture agreement approved on 2026-10-18. T001–T010 complete at the controlled local level; the user separately authorized T009–T010 on 2026-10-19 (Asia/Bangkok), limited to controlled configured recommendation and assessment composition. T011 onward and real execution remain separately gated in [decisions](contracts/decisions.md).
+**Status**: Existing baseline and consumer/fixture agreement approved on 2026-10-18. T001–T010 complete at the controlled local level; the user separately authorized T009–T010 on 2026-10-19 (Asia/Bangkok), limited to controlled configured recommendation and assessment composition. T014 safety regression consolidation was separately authorized on 2026-10-20 (Asia/Bangkok) and is complete at the controlled local level; T011–T013, T015–T016 and real execution remain separately gated in [decisions](contracts/decisions.md).
 
 ## Summary
 
@@ -23,7 +23,7 @@ Thai owns an assessment boundary for one issue/repository. Validate input and tr
 
 ## Constitution Check
 
-The [constitution](../../.specify/memory/constitution.md) remains an unratified template. Apply AGENTS.md, accepted ADR-0005 and repository policy instead of treating placeholder principles as ratified. The approved consumer agreement preserves shared owners, production gates and the UC-03 contract. Current implementation authority extends through controlled T009–T010 only; real-runtime readiness remains blocked by the external gates in [decisions](contracts/decisions.md).
+The [constitution](../../.specify/memory/constitution.md) remains an unratified template. Apply AGENTS.md, accepted ADR-0005 and repository policy instead of treating placeholder principles as ratified. The approved consumer agreement preserves shared owners, production gates and the UC-03 contract. Current implementation authority covers completed controlled T001–T010 and separately authorized mock-only T014; real-runtime readiness remains blocked by the external gates in [decisions](contracts/decisions.md).
 
 ## Project Structure
 
@@ -66,7 +66,7 @@ flowchart LR
 
 UC-01 receives only narrowed read/search capabilities, not a full RepositoryPort with patch/execute methods. Model tool requests are data checked against that narrow capability set; the controller invokes only validated read/search requests. All operation guards and durable reservations are shared. No UC-03 bug workflow is required to run UC-01 fixtures.
 
-The existing executable ModelPort requires UC-03 TaskState/ModelProposal, and RepositoryPort does not expose the full contextual denial envelope UC-01 needs. These cannot be assumed triage-compatible. [Shared interfaces](contracts/interfaces.md#versioned-consumer-signatures) supplies `uc01-consumer-v1`, including a separate triage role, guarded read/search, accounting, continuation and additive evidence projection. [Schema](contracts/schema.md#finite-controlled-fixture-profile) supplies the concrete `uc01-fixture-v1` numeric test profile. X-FOUNDATION-AGREEMENT is satisfied; T002–T010 are complete under their separate authorizations. T011 onward needs separate authorization, and real integrations retain their delivery gates. Do not fake a bug TaskState or copy the provider budget implementation. Preserve canonical SourceEvidence, including boundedExcerpt, and transform only at an agreed boundary.
+The existing executable ModelPort requires UC-03 TaskState/ModelProposal, and RepositoryPort does not expose the full contextual denial envelope UC-01 needs. These cannot be assumed triage-compatible. [Shared interfaces](contracts/interfaces.md#versioned-consumer-signatures) supplies `uc01-consumer-v1`, including a separate triage role, guarded read/search, accounting, continuation and additive evidence projection. [Schema](contracts/schema.md#finite-controlled-fixture-profile) supplies the concrete `uc01-fixture-v1` numeric test profile. X-FOUNDATION-AGREEMENT is satisfied; T002–T010 are complete under their separate authorizations. T014 is separately authorized; T011–T013 and T015–T016 need separate authorization, and real integrations retain their delivery gates. Do not fake a bug TaskState or copy the provider budget implementation. Preserve canonical SourceEvidence, including boundedExcerpt, and transform only at an agreed boundary.
 
 ## Implementation strategy and execution
 
