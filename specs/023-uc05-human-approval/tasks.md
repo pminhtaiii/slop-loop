@@ -219,6 +219,8 @@ Original phase counts: setup 1; foundations 3; US1 3; US2 3; US3 3; US4 2; US5 3
 
 ## Review correction within authorized Phase 4
 
+Post-publication T008–T009 correction (`3816056`, PR #75): user-authorized review repair restores the previous local admission state after validated `denied`, `conflict`, `invalid` or `stale` direction/decision receipts. `unavailable` and `uncertain` remain fail-closed. Public service/control regression tests reproduced denied-resume-then-approval and decision-conflict-then-approval failures before their respective fixes; outcome matrices retain uncertainty coverage. Source approvals pass 103/103; runtime typecheck, lint, build and 660 compiled tests pass. This changes no contract, seam, later-phase authorization or production/restart gate.
+
 - [x] T024 [US2] Complete positive cancellation/completion evidence for T008–T009 in tests/runtime/approvals/control.test.ts per FR-007/019–021 and US2.11.
   - **Owner**: Trong Tan / Phase 4 behavioral coverage.
   - **Dependencies**: T010.
