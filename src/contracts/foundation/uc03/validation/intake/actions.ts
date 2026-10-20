@@ -3,6 +3,7 @@
 import { isCanonicalRelativePath, isProtectedPath } from '../../identity.ts';
 import type { ApplyPatchAction, ApprovalBinding, ApprovalBindingContext, ApprovalStatus, ApproveFixPlanAction, NormalizedAction, RunCommandAction, ValidationError, ValidationResult } from '../../types.ts';
 import { isPlainObject, rejectUnknownKeys, validateNonEmptyString, validatePositiveInteger } from '../common.ts';
+import { posix } from 'node:path';
 
 const RUN_COMMAND_ACTION_ALLOWED_KEYS = [
   'actionId',
@@ -111,6 +112,22 @@ export function validateNormalizedAction(input: unknown): ValidationResult<Norma
     }
 
     const workingDirectory = validateNonEmptyString(input['workingDirectory'], 'workingDirectory', errors);
+    if (workingDirectory) {
+      const normalizedWorkingDirectory = posix.resolve('/', workingDirectory);
+      const workspaceRoot = ['/workspace/repo', '/workspace/scratch'].find((root) =>
+        normalizedWorkingDirectory === root || normalizedWorkingDirectory.startsWith(`${root}/`)
+      );
+      if (workspaceRoot) {
+        const relativeWorkingDirectory = posix.relative(workspaceRoot, normalizedWorkingDirectory);
+        if (isProtectedPath(relativeWorkingDirectory)) {
+          errors.push({
+            path: 'workingDirectory',
+            message: `workingDirectory targets protected path: ${workingDirectory}`,
+            code: 'PROTECTED_PATH_FORBIDDEN',
+          });
+        }
+      }
+    }
     let purpose: string | undefined;
     if (input['purpose'] !== undefined) {
       purpose = validateNonEmptyString(input['purpose'], 'purpose', errors);

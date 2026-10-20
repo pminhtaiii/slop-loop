@@ -115,8 +115,7 @@ export function isProtectedPath(filePath: string): boolean {
   if (
     baseName === 'credentials.json' ||
     baseName === 'secrets.json' ||
-    baseName.startsWith('password') ||
-    baseName.startsWith('token')
+    /^(password|passwords|token|tokens)(\.(txt|json|ya?ml|env))?$/.test(baseName)
   ) {
     return true;
   }
@@ -135,12 +134,8 @@ export function isProtectedPath(filePath: string): boolean {
     return true;
   }
   // Hidden evaluation / grading
-  if (
-    target.startsWith('eval/uc03/private/') ||
-    target.includes('private/grading') ||
-    target.includes('/private/') ||
-    target.startsWith('private/')
-  ) {
+  const isPrivateGrading = segments.some((segment, index) => segment === 'private' && segments[index + 1] === 'grading');
+  if (target === 'eval/uc03/private' || target.startsWith('eval/uc03/private/') || isPrivateGrading) {
     return true;
   }
   return false;

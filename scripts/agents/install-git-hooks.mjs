@@ -10,7 +10,13 @@ function runGit(cwd, args, env) {
 }
 
 export function installGitHooks(cwd = process.cwd(), env = process.env) {
-  const rootResult = runGit(cwd, ['rev-parse', '--show-toplevel'], env);
+  let rootResult;
+  try {
+    rootResult = runGit(cwd, ['rev-parse', '--show-toplevel'], env);
+  } catch (error) {
+    if (error?.code === 'ENOENT') return { status: 'outside-git' };
+    throw error;
+  }
   if (rootResult.status !== 0) return { status: 'outside-git' };
   const root = resolve(rootResult.stdout.trim());
   if (!existsSync(resolve(root, '.githooks', 'pre-commit'))) throw new Error('Repository pre-commit hook is missing at .githooks/pre-commit.');

@@ -69,13 +69,7 @@ export function validateBugTask(input: unknown): ValidationResult<BugTask> {
     });
   } else {
     for (let i = 0; i < input['constraints'].length; i++) {
-      if (typeof input['constraints'][i] !== 'string') {
-        errors.push({
-          path: `constraints[${i}]`,
-          message: `constraints[${i}] must be a string`,
-          code: 'INVALID_TYPE',
-        });
-      }
+      validateNonEmptyString(input['constraints'][i], `constraints[${i}]`, errors);
     }
   }
 
