@@ -2,9 +2,11 @@
 
 **Input**: [spec](spec.md), [plan](plan.md), [research](research.md), [data model](data-model.md), and [contracts](contracts/interfaces.md).
 
-**Status**: Phase 1 / T001 and authorized Phase 2 foundation tasks T002–T004 completed and verified on 2026-10-19 (Asia/Saigon). Phase 3 T005–T007 is separately authorized with all four TDD seams explicitly confirmed by the user; T005–T006 are integrated and verified, while T007 remains unchecked until integration and verification. T008–T022 remain unauthorized. Real tasks also need G-PROFILE/G-REAL/G-RESTART as applicable.
+**Status**: T001–T007 and the T023 correction of T007 are integrated and verified locally under the Phase 3 scope on 2026-10-19 (Asia/Saigon). Phase 3 uses all four user-confirmed TDD seams and explicit mock dependencies; corrected source integration is `2b80b767ecde9897696dbe30fd70970cbb7ea0dc`. T008–T022 remain unauthorized. Real tasks also need G-PROFILE/G-REAL/G-RESTART as applicable.
 
-**Tests**: Required by FR-022 and repository TDD guidance. Write behavioral RED against actual owned SUT exports before implementation; create neutral no-effect skeletons only where needed. Import/type/fixture failures and tests against a mocked SUT are not behavioral RED. Coordinator alone changes checkboxes after integration and required checks. Future source paths below are not implemented by this package.
+Final review found an in-scope T007 retry defect and two standards corrections. T023 below records their accepted correction only; it does not release any later story or real-delivery gate.
+
+**Tests**: Required by FR-022 and repository TDD guidance. Write behavioral RED against actual owned SUT exports before implementation; create neutral no-effect skeletons only where needed. Import/type/fixture failures and tests against a mocked SUT are not behavioral RED. Coordinator alone changes checkboxes after integration and required checks. Unchecked future source paths below remain unimplemented.
 
 ## Phase 1: Setup and shared agreement
 
@@ -60,13 +62,14 @@
   - **Dependencies**: T005.
   - **Owned Paths**: src/approvals/policy.ts.
   - **Acceptance Checks**: T005 vectors green with no LLM/network/process calls or whole-repo scans. Consume trusted admission facts, canonical exact digests and explicit finite profiles; no shell equivalence claims or permissive defaults.
-  - **Current Evidence**: Same accepted integration and checks as T005. `compilePolicy` validates and freezes an explicit fixture profile; classification consumes action/policy-bound trusted facts and unchanged canonical validators. The closed argv rule matches the complete configured tuple; malformed/unsupported inputs deny with safe typed outcomes, and forbidden/evaluation forms cannot be approved by configuration. No filesystem scan, subprocess, network, model or effect dispatch is introduced. Real isolation, durable adapters and production profiles remain gated; T007 is the next authorized dependency.
+  - **Current Evidence**: Same initial accepted integration and checks as T005. Follow-up integration `375dda8bd79194c30108c929da598b02bae5b936` requires complete matched trusted proposal context for revised plans, preserving explicit nonmaterial renewal without a new replan charge; policy/foundation checks passed 40/40 and the required runtime gate passed 597 compiled tests. `compilePolicy` validates and freezes an explicit fixture profile; classification consumes action/policy-bound trusted facts and unchanged canonical validators. The closed argv rule matches the complete configured tuple; malformed/unsupported inputs deny with safe typed outcomes, and forbidden/evaluation forms cannot be approved by configuration. No filesystem scan, subprocess, network, model or effect dispatch is introduced. Real isolation, durable adapters and production profiles remain gated.
 
-- [ ] T007 [US1] Implement initial ApprovalPort service, bounded presentation and decision CLI test-first in src/approvals/service.ts, src/approvals/presentation.ts and src/approvals/cli.ts.
+- [x] T007 [US1] Implement initial ApprovalPort service, bounded presentation and decision CLI test-first in src/approvals/service.ts, src/approvals/presentation.ts and src/approvals/cli.ts.
   - **Owner**: Trong Tan / service and operator boundary.
   - **Dependencies**: T006.
   - **Owned Paths**: src/approvals/service.ts; src/approvals/presentation.ts; src/approvals/cli.ts; tests/runtime/approvals/service.test.ts; tests/runtime/approvals/cli.test.ts.
   - **Acceptance Checks**: Preserve all four canonical signatures with injected fresh context/store/operator capability. Actual CLI subprocess parser handles list/show/inspect/decide, versions/digests/response keys, bounded safe presentation, protected-data/terminal-injection rejection and missing store denial. Pending creation closes task admission through the mock contract; no production autoapproval or local fallback store. Safe output is mandatory from this first slice.
+  - **Current Evidence**: Independently accepted candidate `f8782960eb27e94832e224102b526cecb5eeec96` integrated at `df5615e0d1b9f71b850673724d8d45091ce37124`, changing exactly the five owned paths. Source and emitted approval suites each passed 64/64; `node scripts/ci/check-runtime.mjs` passed typecheck, full lint, clean build and 621/621 compiled tests; whitespace checks passed. Public-seam behavioral RED/GREEN covers first pending/pause, exact inspected consent, immutable retries, safe complete UTF-8 pages, actual CLI subprocesses, pause races, delayed-context expiry fences, protected/corrupt store receipts and uncertain commits. Malformed or uncertain mutation receipts close local admission and never assert execution or definite noncommit. Detailed local evidence is retained under `.agent-work/2026-10-19/uc05-phase3/service/` and `service/resume/`. Service/store provenance remains mock; direct CLI entry is unconfigured and returns unavailable. No durable store, production adapter, task-wide executor coordination, real effects or restart evidence is claimed. T008 onward remains gated.
 
 ## Phase 4: User Story 2 — Task-wide wait, rejection and direction (Priority: P1)
 
@@ -196,4 +199,13 @@ External delivery references are defined in plan.md; they are not foreign T-numb
 
 The first local MVP is contracts/cases/mocks plus US1's safe service/CLI. It is not production-ready without US2/US3 control and real external composition. Deliver each story through its own focused tests and retain prior regression coverage. After local T019, obtain actual external adapters for T020/T021 instead of implementing a second executor/store. Only observed acceptance plus review can release a scoped X05-GATE handoff.
 
-Phase counts: setup 1; foundations 3; US1 3; US2 3; US3 3; US4 2; US5 3; integration/cross-cutting 4. Total 22 tasks. Planning quality never pre-completes implementation tasks or authorizes phase dispatch.
+Original phase counts: setup 1; foundations 3; US1 3; US2 3; US3 3; US4 2; US5 3; integration/cross-cutting 4. The 22 original delivery tasks plus one T007 review correction total 23 tasks. Planning quality never pre-completes implementation tasks or authorizes phase dispatch.
+
+## Review correction within authorized Phase 3
+
+- [x] T023 [US1] Correct T007 prior-response retry admission and reviewed validation/test issues in src/approvals/service.ts and tests/runtime/approvals/service.test.ts.
+  - **Owner**: Trong Tan / service and operator boundary.
+  - **Dependencies**: T007.
+  - **Owned Paths**: src/approvals/service.ts; tests/runtime/approvals/service.test.ts.
+  - **Acceptance Checks**: Behavioral RED/GREEN through the confirmed actual-service/mock-store seam: approve A, create pending B, repeat identical response A, preserve B waiting, approve B and retain valid eligible admission. Validate unknown trusted-provider context before type assertions. Replace or remove the disconnected activity-mock assertion with documented justification, retaining all meaningful consent/pause/admission assertions. Independent integration and required runtime gates pass. This is a correction of T007 under FR-012 and the existing four confirmed seams; no T008–T022 capability is authorized.
+  - **Current Evidence**: Candidate `969336904e335fb5f73b4a086b721713488d921f` independently accepted and integrated at `2b80b767ecde9897696dbe30fd70970cbb7ea0dc`, changing only the two owned paths. Behavioral RED/GREEN proves earlier-response retry preserves the later pending hold and both open/previously closed local admission states; complete plain-data context admission rejects malformed records and accessors without getter calls. Removed only a disconnected activity fixture/assertion that could not observe the service, retaining meaningful consent/pause/history/admission assertions. Integrated source/emitted approval suites passed 66/66 each; required runtime typecheck, full lint, clean build and 623/623 compiled tests passed. Evidence remains local under `.agent-work/2026-10-19/uc05-phase3/service/review-correction/`. No later-story, real adapter, execution or restart capability was added.
