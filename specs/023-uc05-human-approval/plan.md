@@ -2,7 +2,7 @@
 
 **Branch**: `feat/023-uc05-human-approval-spec` | **Date**: 2026-10-19 (Asia/Saigon) | **Spec**: [spec.md](spec.md)
 
-**Status**: Separately authorized T001–T013 and T023–T026 corrections are integrated locally through `6d4091c` on 2026-10-20 (Asia/Saigon). All three Phase 5 seams and user-relayed X03-PLAN-CONTEXT agreement are confirmed. Source/emitted approval suites each pass 140/140; runtime typecheck/full lint/build and 894 compiled tests pass. T014–T022, production profiles, real runtime integration and actual restart remain gated. See [decisions](contracts/decisions.md) and the [task ledger](tasks.md).
+**Status**: Separately authorized T001–T013 and T023–T027 corrections are integrated locally through `84be181` on 2026-10-20 (Asia/Saigon). All three Phase 5 seams and user-relayed X03-PLAN-CONTEXT agreement are confirmed. Source/emitted approval suites each pass 142/142; runtime typecheck/full lint/build and 896 compiled tests pass. T014–T022, production profiles, real runtime integration and actual restart remain gated. See [decisions](contracts/decisions.md) and the [task ledger](tasks.md).
 
 ## Summary
 
@@ -39,7 +39,7 @@ The constitution remains an unratified placeholder. Governance comes from [AGENT
 | Shared contracts | Canonical schema 0.1.0 unchanged; companion logical contract agreed; T002 validators and test-only T004 ports are implemented | Real store, production composition and runtime conformance remain gated |
 | Durable control | Proposed UC-04 transactions and shared admission epochs | Real store, scheduler/model/executor composition before integration |
 | Evidence | Local mocks, CLI, real tools and restart have distinct levels | Required cases observed; unrun cases prevent VERIFIED claims |
-| Authorization | T001–T013 authorized in separate phases; shared agreement and Phase 3/4/5 seams confirmed; T023–T025 are scoped corrections | T014–T022 need separate authorization; production execution remains separately gated |
+| Authorization | T001–T013 authorized in separate phases; shared agreement and Phase 3/4/5 seams confirmed; T023–T027 are scoped corrections | T014–T022 need separate authorization; production execution remains separately gated |
 
 Recheck these gates after design changes; a clean planning audit does not satisfy external delivery or authorization gates.
 

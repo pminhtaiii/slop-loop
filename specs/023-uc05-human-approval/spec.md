@@ -6,7 +6,7 @@
 
 **Created**: 2026-10-19 (Asia/Saigon, UTC+07:00)
 
-**Status**: Separately authorized T001–T013 and T023–T026 review corrections are complete locally through `6d4091c`. Phase 5's three seams and user-relayed Tai/X03-PLAN-CONTEXT agreement are recorded in [decisions](contracts/decisions.md). Source/emitted approvals pass 140/140; runtime typecheck, full lint, clean build and 894 compiled tests pass. These establish exercised mock/canonical-consumer behavior; T014–T022, real adapters, production execution and actual restart remain gated. Full UC-05 acceptance is unverified.
+**Status**: Separately authorized T001–T013 and T023–T027 review corrections are complete locally through `84be181`. Phase 5's three seams and user-relayed Tai/X03-PLAN-CONTEXT agreement are recorded in [decisions](contracts/decisions.md). Source/emitted approvals pass 142/142; runtime typecheck, full lint, clean build and 896 compiled tests pass. These establish exercised mock/canonical-consumer behavior; T014–T022, real adapters, production execution and actual restart remain gated. Full UC-05 acceptance is unverified.
 
 **Input**: Specify UC-05 from ADR-0006, the shared UC-03 contracts, repository policy, and the delegation map. Preserve UC-04 persistence and Tai's execution ownership.
 
