@@ -2,7 +2,7 @@
 
 **Input**: [spec](spec.md), [plan](plan.md), [research](research.md), [data model](data-model.md), and [contracts](contracts/interfaces.md).
 
-**Status**: T001–T010 and the T023 correction of T007 are integrated and verified locally through source `f6edb85ff50a311ad6ac9881ac66b79fdd9077da`. Phase 4 T008–T010 and its three TDD seams were separately authorized/confirmed on 2026-10-20 (Asia/Saigon). Source/emitted approval suites each pass 88/88; runtime typecheck/full lint/build and 645 compiled tests pass. Checkboxes below remain the completion ledger. T011–T022 remain unauthorized. Real tasks also need G-PROFILE/G-REAL/G-RESTART as applicable.
+**Status**: T001–T010 and the T023/T024 review corrections are integrated and verified locally through source `c390fc6a6b9b8afe57168ca24faa3e443f3dbbae`. Phase 4 T008–T010 and its three TDD seams were separately authorized/confirmed on 2026-10-20 (Asia/Saigon). Source/emitted approval suites each pass 90/90; runtime typecheck/full lint/build and 647 compiled tests pass. Checkboxes below remain the completion ledger. T011–T022 remain unauthorized. Real tasks also need G-PROFILE/G-REAL/G-RESTART as applicable.
 
 Final review found an in-scope T007 retry defect and two standards corrections. T023 below records their accepted correction only; it does not release any later story or real-delivery gate.
 
@@ -219,8 +219,9 @@ Original phase counts: setup 1; foundations 3; US1 3; US2 3; US3 3; US4 2; US5 3
 
 ## Review correction within authorized Phase 4
 
-- [ ] T024 [US2] Complete positive cancellation/completion evidence for T008–T009 in tests/runtime/approvals/control.test.ts per FR-007/019–021 and US2.11.
+- [x] T024 [US2] Complete positive cancellation/completion evidence for T008–T009 in tests/runtime/approvals/control.test.ts per FR-007/019–021 and US2.11.
   - **Owner**: Trong Tan / Phase 4 behavioral coverage.
   - **Dependencies**: T010.
   - **Owned Paths**: tests/runtime/approvals/control.test.ts.
   - **Acceptance Checks**: Through actual service/coordinator admission and rejection fencing, observe successful completed and cancelled mock outcomes separately, retaining original rejection and zero further admission without explicit direction. Cancellation success requires a request issued by the SUT and no recorded effect; completed observations never imply rollback. Keep uncertainty/refused-cancellation coverage intact. This closes the verified Phase 4 review evidence gap only; no new runtime capability, test seam, later story, adapter or real restart work is authorized.
+  - **Current Evidence**: Test-only candidate `0acb8c9` independently accepted at `c390fc6a6b9b8afe57168ca24faa3e443f3dbbae`, adding 23 lines to the one owned file. Both new tests passed immediately against existing behavior; no artificial RED or production edit was introduced. Actual service admission/rejection fencing precedes successful completed/cancelled observations, preserving exact rejected control/history and denying current-version admission/classification. Source/emitted approvals each pass 90/90 (control 16/16); typecheck/build/scoped lint/whitespace pass. This resolves the narrow Spec P2 coverage finding only.

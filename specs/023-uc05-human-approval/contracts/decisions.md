@@ -35,6 +35,12 @@ Source and emitted approval suites each passed 88/88 with zero failures/skips. `
 
 Behavioral RED/GREEN, independent merger reports and command logs are retained locally under `.agent-work/2026-10-20/uc05-phase4-implementation/`. Full C01–C24 verification, real task-wide scheduler/provider/executor admission, durable transactions/accounting and restart remain unverified. T011–T022 and G-PROFILE/G-REAL/G-RESTART remain gated. Contributor publication/current-head CI/app-link accounting follows its separate workflow; no PR merge is authorized.
 
+## Phase 4 review correction: T024
+
+Independent Standards review of `664f434` had no findings. Spec review found missing positive completed/cancelled callback evidence for C07 and US2.11. T024 adds two tests through the already confirmed control/service seam: both retain the original rejection and deny later admission/classification; completed work retains its recorded effect and cancelled work records none. Existing uncertainty and refused-cancellation cases remain.
+
+The tests were written first and passed existing behavior immediately; no artificial RED or production change was introduced. Candidate `0acb8c9` was independently accepted at `c390fc6a6b9b8afe57168ca24faa3e443f3dbbae`. Source and emitted approval suites each passed 90/90; the control suite passed 16/16. The full runtime gate passed typecheck, lint, build and 647 compiled tests. This is a scoped Phase 4 evidence correction; T011–T022 and production/restart gates remain closed.
+
 ## Agreed design register
 
 | ID | Proposal | Scope / approval state |
@@ -48,7 +54,7 @@ Behavioral RED/GREEN, independent merger reports and command logs are retained l
 
 ## Implementation and real-execution gates
 
-1. **G-AUTH**: Phase 1 / T001, Phase 2 / T002–T004, Phase 3 / T005–T007 and Phase 4 / T008–T010 are authorized by the explicit user instructions recorded here. The three Phase 4 TDD seams are explicitly confirmed. T011 onward requires separate authorization. Contract agreement alone does not release additional work.
+1. **G-AUTH**: Phase 1 / T001, Phase 2 / T002–T004, Phase 3 / T005–T007 and Phase 4 / T008–T010 are authorized by the explicit user instructions recorded here. The three Phase 4 TDD seams are explicitly confirmed. T024 is the scoped Phase 4 review-evidence correction. T011–T022 require separate authorization. Contract agreement alone does not release additional work.
 2. **G-CONTRACT**: Satisfied for the current logical contract/ownership set by the explicit user-relayed agreement above. Companion records, transactions, claim/fence timing, host operator authority, strict plan compatibility and owned paths are agreed; actual adapters and execution evidence are not implied.
 3. **G-PROFILE**: Trusted finite policy/execution/diagnostic/retention and supported-host profiles selected by their owners. Test vector values cannot stand in for production configuration.
 4. **G-REAL**: Real UC-04 store, task-wide provider/scheduler/tool admission, executor containment and claim/reconciliation are delivered with owner ledger/revision evidence. Mock provenance is rejected by production composition.

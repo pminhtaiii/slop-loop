@@ -1,6 +1,6 @@
 # Quickstart and Validation Guide: UC-05
 
-**Current state**: Separately authorized T001–T010 and the T023 correction of T007 are complete locally through `f6edb85`. The branch includes validators, finite fixtures, mock ports, policy, ApprovalPort service/control, bounded presentation and list/show/inspect/decide/control CLI. Source/emitted approvals each passed 88/88; runtime typecheck/full lint/build and 645 compiled tests passed. The service has mock provenance; subprocess tests inject an explicit test-only composition. Direct CLI entry remains unavailable. T011–T022 and production/real-execution/actual restart capability remain gated.
+**Current state**: Separately authorized T001–T010 and the T023/T024 review corrections are complete locally through `c390fc6`. The branch includes validators, finite fixtures, mock ports, policy, ApprovalPort service/control, bounded presentation and list/show/inspect/decide/control CLI. Source/emitted approvals each passed 90/90; runtime typecheck/full lint/build and 647 compiled tests passed. The service has mock provenance; subprocess tests inject an explicit test-only composition. Direct CLI entry remains unavailable. T011–T022 and production/real-execution/actual restart capability remain gated.
 
 ## Validate this planning package now
 
@@ -44,7 +44,7 @@ node --test tests/runtime/approvals/*.test.ts
 node scripts/ci/check-runtime.mjs
 ```
 
-The full focused command passed 88/88 and the runtime gate passed at the source integration above. Windows SIGINT/SIGTERM observations before mutation and after commit retain the same child's last mock-store snapshots in the parent; they establish no postmortem persistence or durable runtime restart. Record actual platform/exit/signal facts and any not-run paths. Direct CLI entry remains unavailable; no production connection is added.
+The full focused command passed 90/90 and the runtime gate passed at the source integration above. Windows SIGINT/SIGTERM observations before mutation and after commit retain the same child's last mock-store snapshots in the parent; they establish no postmortem persistence or durable runtime restart. Record actual platform/exit/signal facts and any not-run paths. Direct CLI entry remains unavailable; no production connection is added.
 
 ## CLI approval/rejection scenarios (after T010/T018)
 

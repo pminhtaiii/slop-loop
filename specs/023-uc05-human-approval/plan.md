@@ -2,7 +2,7 @@
 
 **Branch**: `feat/023-uc05-human-approval-spec` | **Date**: 2026-10-19 (Asia/Saigon) | **Spec**: [spec.md](spec.md)
 
-**Status**: Separately authorized T001–T010 and the T023 correction of T007 are complete locally through source integration `f6edb85` on 2026-10-20 (Asia/Saigon). Phase 4 uses three user-confirmed TDD seams with injected mock store/context/activity and test-only CLI composition. Source/emitted approval suites each passed 88/88; runtime typecheck/full lint/build and 645 compiled tests passed. T011–T022, production profiles, real runtime integration and actual restart remain gated. See [decisions](contracts/decisions.md) and the [task ledger](tasks.md).
+**Status**: Separately authorized T001–T010 and the T023/T024 review corrections are complete locally through source integration `c390fc6` on 2026-10-20 (Asia/Saigon). Phase 4 uses three user-confirmed TDD seams with injected mock store/context/activity and test-only CLI composition. Source/emitted approval suites each passed 90/90; runtime typecheck/full lint/build and 647 compiled tests passed. T011–T022, production profiles, real runtime integration and actual restart remain gated. See [decisions](contracts/decisions.md) and the [task ledger](tasks.md).
 
 ## Summary
 
