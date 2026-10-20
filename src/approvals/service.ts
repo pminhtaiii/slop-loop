@@ -278,7 +278,7 @@ export function createApprovalService(options: ApprovalServiceOptions): Approval
       if (!classification.ok || classification.permission !== 'APPROVAL_REQUIRED') throw new ApprovalServiceError('denied');
       const bundle = presentation(binding, context);
       const prior = store().readRequest(binding.decisionId);
-      if (!validateSafeResult(prior.safe).ok || prior.value === null && (prior.safe.outcome !== 'invalid' || prior.safe.safeReasonCode !== 'unknown-decision')) throw new ApprovalServiceError('unavailable');
+      if (!plainContextData(prior) || !validateSafeResult(prior.safe).ok || prior.value === null && (prior.safe.outcome !== 'invalid' || prior.safe.safeReasonCode !== 'unknown-decision')) throw new ApprovalServiceError('unavailable');
       if (prior.value !== null) {
         const existing = await checkedView(binding.decisionId);
         if (!isDeepStrictEqual(existing.record.binding, binding)) throw new ApprovalServiceError('conflict');

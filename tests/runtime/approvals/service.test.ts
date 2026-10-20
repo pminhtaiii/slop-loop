@@ -95,6 +95,28 @@ test('a store exception is safe and keeps admission closed after the adapter rec
   assert.equal(await service.validateBinding(approved), false);
 });
 
+test('initial request lookup rejects receipt accessors without invoking them and keeps admission closed', async () => {
+  for (const pending of [false, true]) {
+    const scenario = setup();
+    if (pending) await scenario.service.requestDecision(binding);
+    const originalControl = scenario.store.loadTaskControl('task-1');
+    const originalHistory = scenario.store.readHistory('task-1');
+    let getterCalls = 0;
+    let recovered = false;
+    const backend = { ...scenario.store, readRequest: (id: string) => recovered ? scenario.store.readRequest(id) : {
+      get safe(): never { getterCalls += 1; throw new ApprovalServiceError('stale', 'MARKER_SECRET_DO_NOT_DISCLOSE'); }, value: null,
+    } };
+    const service = createApprovalService({ taskId: 'task-1', profile, store: backend, context: scenario.context, operator: scenario.operator });
+    await assert.rejects(service.requestDecision(binding), error => error instanceof ApprovalServiceError && error.outcome === 'unavailable' && error.reasonCode === 'approval-operation-denied');
+    assert.equal(getterCalls, 0);
+    assert.deepEqual(scenario.store.loadTaskControl('task-1'), originalControl);
+    assert.deepEqual(scenario.store.readHistory('task-1'), originalHistory);
+    recovered = true;
+    await assert.rejects(service.classify(action), error => error instanceof ApprovalServiceError && error.outcome === 'unavailable');
+    assert.equal(scenario.store.readRequest('decision-1').value !== null, pending);
+  }
+});
+
 test('activity exceptions cannot expose adapter-selected outcomes or clear task control', async () => {
   const scenario = setup();
   const original = scenario.store.loadTaskControl('task-1');
