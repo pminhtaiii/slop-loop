@@ -70,6 +70,29 @@ test('service pending fences in-flight activity and every caller; rejection requ
   assert.equal((await service.list('task-1')).control.mode, 'rejected');
 });
 
+for (const outcome of ['completed', 'cancelled'] as const) {
+  test(`successful mock ${outcome} observation after actual service stop preserves rejection and denies new admission`, async () => {
+    const scenario = setup();
+    assert.equal(scenario.service.admitAttempt('running', claim()), true);
+    if (outcome === 'completed') assert.equal(scenario.activity.recordEffectAttempt('running', 'read').outcome, 'ok');
+    await reject(scenario);
+    assert.equal(scenario.activity.inspectOutstanding('task-1')[0]?.cancellationRequested, true);
+    const rejected = await scenario.service.list('task-1');
+    assert.equal(rejected.control.mode, 'rejected');
+    const observed = scenario.activity.recordOutcome('running', outcome);
+    assert.equal(observed.outcome, 'ok');
+    assert.equal(observed.value?.state, outcome);
+    assert.equal(scenario.activity.inspectOutstanding('task-1').length, 0);
+    assert.equal(scenario.activity.readEffectLog().length, outcome === 'completed' ? 1 : 0);
+    assert.deepEqual((await scenario.service.list('task-1')).control, rejected.control);
+    assert.equal((await scenario.service.resolve('decision-1')).status, 'rejected');
+    assert.equal(scenario.store.readHistory('task-1').value?.resolutions.length, 1);
+    assert.equal(scenario.service.admitAttempt('after-observation', { ...claim('next'), expectedControlVersion: rejected.control.version, expectedEpoch: rejected.control.epoch }), false);
+    await assert.rejects(scenario.service.classify(action));
+    assert.equal(scenario.activity.readEffectLog().length, outcome === 'completed' ? 1 : 0);
+  });
+}
+
 async function reject(scenario: ReturnType<typeof setup>) {
   await scenario.service.requestDecision(binding);
   const view = await scenario.service.show('task-1', 'decision-1');
