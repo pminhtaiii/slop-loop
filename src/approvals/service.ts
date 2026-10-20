@@ -69,9 +69,30 @@ export function createApprovalService(options: ApprovalServiceOptions): Approval
   const profile: PolicyProfile = policy.profile;
   const now = options.now ?? (() => new Date().toISOString());
   let localAdmissionClosed = false;
+  // An injected callback cannot mint a host-selected outcome or freshness reason.
+  const callPort = <T>(operation: () => T): T => {
+    try { return operation(); }
+    catch { localAdmissionClosed = true; throw new ApprovalServiceError('unavailable'); }
+  };
+  const loadPort = async <T>(operation: () => Promise<T>): Promise<T> => {
+    try { return await operation(); }
+    catch { localAdmissionClosed = true; throw new ApprovalServiceError('unavailable'); }
+  };
   const store = (): ApprovalStore => {
     if (!options.store || options.store.provenance !== 'mock') throw new ApprovalServiceError('unavailable');
-    return options.store;
+    const backend = options.store;
+    const { readEvents, recordDirection, replaceStalePending } = backend;
+    return {
+      provenance: backend.provenance,
+      loadTaskControl: taskId => callPort(() => backend.loadTaskControl(taskId)),
+      readRequest: decisionId => callPort(() => backend.readRequest(decisionId)),
+      readHistory: taskId => callPort(() => backend.readHistory(taskId)),
+      createPendingAndPause: input => callPort(() => backend.createPendingAndPause(input)),
+      resolvePending: input => callPort(() => backend.resolvePending(input)),
+      ...(readEvents ? { readEvents: (taskId: string) => callPort(() => readEvents.call(backend, taskId)) } : {}),
+      ...(recordDirection ? { recordDirection: (input: unknown) => callPort(() => recordDirection.call(backend, input)) } : {}),
+      ...(replaceStalePending ? { replaceStalePending: (input: unknown) => callPort(() => replaceStalePending.call(backend, input)) } : {}),
+    };
   };
   // Every host operation is bounded, including a context provider that never settles.
   const bounded = async <T>(operation: (assertActive: () => void) => Promise<T> | T): Promise<T> => {
@@ -110,7 +131,7 @@ export function createApprovalService(options: ApprovalServiceOptions): Approval
     return { action: action.value, facts: facts as unknown as PolicyFacts, freshness: raw['freshness'], runId: raw['runId'], elements: raw['elements'] };
   };
   const trusted = async (decisionId: string, binding: ApprovalBinding): Promise<ApprovalContext> => {
-    const context = admitContext(await options.context.loadForDecision(decisionId));
+    const context = admitContext(await loadPort(() => options.context.loadForDecision(decisionId)));
     const result = policy.classify(context.action, context.facts);
     const current = control();
     if (!result.ok || result.permission === 'FORBIDDEN') throw new ApprovalServiceError(result.ok ? 'denied' : 'invalid');
@@ -200,13 +221,13 @@ export function createApprovalService(options: ApprovalServiceOptions): Approval
         const current = control();
         if (current.version !== input.taskVersion) throw new ApprovalServiceError('conflict');
         if ((localAdmissionClosed || coordinator.isClosed()) && input.direction !== 'end') throw new ApprovalServiceError('unavailable');
-        const outstanding = options.activity.inspectOutstanding(options.taskId);
+        const outstanding = callPort(() => options.activity?.inspectOutstanding(options.taskId));
         if (!plainContextData(outstanding) || !Array.isArray(outstanding) || outstanding.length > 128 || containsProtectedContent(JSON.stringify(outstanding))) throw new ApprovalServiceError('unavailable');
         if (input.direction !== 'end' && outstanding.length > 0) throw new ApprovalServiceError('uncertain');
-        const context = await options.context.loadForTask(options.taskId);
+        const context = await loadPort(() => options.context.loadForTask?.(options.taskId) ?? Promise.reject());
         if (!plainContextData(context) || !dataRecord(context) || !exactFields(context, ['taskId', 'repositoryId', 'workspaceId', 'runId', 'safeScopeRef', 'policyIdentity']) ||
           context['taskId'] !== options.taskId || context['repositoryId'] !== current.repositoryId || context['workspaceId'] !== current.workspaceId || !identifier(context['runId']) || !identifier(context['safeScopeRef']) || !isDeepStrictEqual(context['policyIdentity'], profile.policyIdentity)) throw new ApprovalServiceError('denied');
-        const timestamp = now();
+        const timestamp = callPort(now);
         const directionId = computeCanonicalSha256({ type: 'direction', taskId: options.taskId, responseKey: input.responseKey });
         direction = { schemaVersion: 'uc05-approval/0.1-draft', directionId, taskId: options.taskId, expectedVersion: input.taskVersion, expectedEpoch: current.epoch, direction: input.direction, safeScopeRef: context['safeScopeRef'], responseKey: input.responseKey, createdAt: timestamp };
         event = { schemaVersion: 'uc05-approval/0.1-draft', eventId: computeCanonicalSha256({ type: 'direction-event', directionId }), taskId: options.taskId, runId: context['runId'], decisionId: null, directionId, claimId: null, type: 'developer-direction-recorded', outcome: input.direction === 'end' ? 'paused' : 'ok', policyRef: profile.policyIdentity, safeReasonCode: 'developer-direction-recorded', timestamp };
@@ -227,7 +248,7 @@ export function createApprovalService(options: ApprovalServiceOptions): Approval
           !plainContextData(recordedEvents) || !validateSafeResult(recordedEvents.safe).ok || recordedEvents.safe.outcome !== 'ok' || !Array.isArray(recordedEvents.value) || recordedEvents.value.length > 512 || recordedEvents.value.filter(value => isDeepStrictEqual(value, event)).length !== 1 ||
           (!prior && committed.mode !== (direction.direction === 'end' ? 'ended' : 'runnable'))) throw new ApprovalServiceError('unavailable');
         assertActive();
-        if (!prior && direction.direction === 'end') coordinator.fence(committed, true);
+        if (!prior && direction.direction === 'end') callPort(() => coordinator.fence(committed, true));
         localAdmissionClosed = wasClosed;
       } else if (['denied', 'conflict', 'invalid', 'stale'].includes(response.safe.outcome)) {
         localAdmissionClosed = wasClosed;
@@ -239,7 +260,7 @@ export function createApprovalService(options: ApprovalServiceOptions): Approval
       if (localAdmissionClosed || coordinator.isClosed()) throw new ApprovalServiceError('unavailable');
       const current = control();
       if (current.mode !== 'runnable' || current.outstandingClaimRefs.length > 0) throw new ApprovalServiceError('paused');
-      const context = admitContext(await options.context.loadForAction(options.taskId, action.actionId));
+      const context = admitContext(await loadPort(() => options.context.loadForAction(options.taskId, action.actionId)));
       if (!isDeepStrictEqual(action, context.action) || context.facts.taskId !== options.taskId || context.facts.repositoryId !== current.repositoryId || context.facts.workspaceId !== current.workspaceId) throw new ApprovalServiceError('invalid');
       const result = policy.classify(action, context.facts);
       if (!result.ok) throw new ApprovalServiceError('invalid');
@@ -274,7 +295,7 @@ export function createApprovalService(options: ApprovalServiceOptions): Approval
         }
         if (!stale) throw new ApprovalServiceError('conflict');
       } else if (current.mode !== 'runnable') throw new ApprovalServiceError('paused');
-      const timestamp = now();
+      const timestamp = callPort(now);
       const record: ApprovalRequestRecord = {
         schemaVersion: 'uc05-approval/0.1-draft', decisionId: binding.decisionId, binding: structuredClone(binding), taskId: options.taskId,
         repositoryId: context.facts.repositoryId, workspaceId: context.facts.workspaceId, createdRunId: context.runId,
@@ -328,7 +349,7 @@ export function createApprovalService(options: ApprovalServiceOptions): Approval
           !plainContextData(history) || !plainContextData(events) || containsProtectedContent(JSON.stringify([history, events])) || !validateSafeResult(history.safe).ok || !events || !validateSafeResult(events.safe).ok || history.safe.outcome !== 'ok' || events.safe.outcome !== 'ok' || history.safe.taskId !== options.taskId || events.safe.taskId !== options.taskId ||
           !isDeepStrictEqual(history.value, { ...replacementEvidence.history, assessments: [...replacementEvidence.history.assessments ?? [], replacementEvidence.assessment] }) || !isDeepStrictEqual(events.value, [...replacementEvidence.events, replacementEvidence.staleEvent, event])) throw new ApprovalServiceError('unavailable');
       }
-      coordinator.fence(paused, false);
+      callPort(() => coordinator.fence(paused, false));
       localAdmissionClosed = false;
       return projection(record);
     }),
@@ -372,7 +393,7 @@ export function createApprovalService(options: ApprovalServiceOptions): Approval
       const decision = input.decision === 'approve' ? 'approved' : 'rejected';
       if (prior && (prior.responseKey !== input.responseKey || prior.decision !== decision)) throw new ApprovalServiceError('conflict');
       if (!prior && (current.version !== input.taskVersion || current.mode !== 'waiting' || current.pendingDecisionId !== record.decisionId)) throw new ApprovalServiceError('conflict');
-      const timestamp = prior?.decidedAt ?? now();
+      const timestamp = prior?.decidedAt ?? callPort(now);
       const terminal: HumanResolution = prior ?? {
         schemaVersion: 'uc05-approval/0.1-draft', decisionId: record.decisionId, responseKey: input.responseKey,
         expectedRequestVersion: record.requestVersion, operatorChannelRef: options.operator.identity.channelRef,
@@ -393,7 +414,7 @@ export function createApprovalService(options: ApprovalServiceOptions): Approval
           (!prior && committed.mode !== (decision === 'approved' ? 'runnable' : 'rejected')) ||
           (response.safe.outcome === 'paused' && decision !== 'rejected') ||
           !isDeepStrictEqual(response.value, terminal) || !isDeepStrictEqual(resolution(record), terminal)) throw new ApprovalServiceError('unavailable');
-        if (!prior && decision === 'rejected') coordinator.fence(committed, true);
+        if (!prior && decision === 'rejected') callPort(() => coordinator.fence(committed, true));
         localAdmissionClosed = admissionWasClosed;
       } else if (['denied', 'conflict', 'invalid', 'stale'].includes(response.safe.outcome)) {
         localAdmissionClosed = admissionWasClosed;

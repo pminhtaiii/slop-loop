@@ -4,7 +4,7 @@ import type { PolicyProfile } from '../../../src/contracts/approvals/contracts.t
 import type { NormalizedAction } from '../../../src/contracts/foundation/uc03.ts';
 import { computeActionDigest } from '../../../src/contracts/foundation/uc03.ts';
 import { buildPresentation } from '../../../src/approvals/presentation.ts';
-import { createApprovalService } from '../../../src/approvals/service.ts';
+import { ApprovalServiceError, createApprovalService } from '../../../src/approvals/service.ts';
 import { createMockApprovalStore } from '../support/uc05/mock-store.ts';
 import { createMockActivityControl } from '../support/uc05/mock-context.ts';
 import type { ApprovalContext } from '../../../src/approvals/service.ts';
@@ -48,6 +48,91 @@ function setup() {
   const service = createApprovalService({ taskId: 'task-1', profile, store, context, operator, now: () => '2026-10-19T00:00:00Z' });
   return { service, store, context, operator, setContext: (value: ApprovalContext) => { current = value; }, current: () => current };
 }
+
+test('a context exception cannot impersonate a deterministic stale binding assessment', async () => {
+  const scenario = setup();
+  await scenario.service.requestDecision(binding);
+  const original = scenario.store.readHistory('task-1');
+  const service = createApprovalService({ taskId: 'task-1', profile, store: scenario.store, operator: scenario.operator,
+    context: { ...scenario.context, loadForDecision: async () => { throw new ApprovalServiceError('stale', 'MARKER_SECRET_DO_NOT_DISCLOSE'); } } });
+  await assert.rejects(service.resolve('decision-1'), error => error instanceof ApprovalServiceError && error.outcome === 'unavailable' && error.reasonCode === 'approval-operation-denied');
+  assert.deepEqual(scenario.store.readHistory('task-1'), original);
+});
+
+test('context failure leaves a pending decision and its immutable assessment history intact', async () => {
+  const scenario = setup();
+  await scenario.service.requestDecision(binding);
+  const original = scenario.store.readHistory('task-1');
+  const waiting = (await scenario.service.list('task-1')).control;
+  const changed = `sha256:${'b'.repeat(64)}`;
+  const current = scenario.current();
+  const renewed = { ...current, freshness: { ...freshness, currentRepositoryRevisionDigest: changed }, facts: { ...current.facts, repositoryRevisionDigest: changed } };
+  const service = createApprovalService({ taskId: 'task-1', profile, store: scenario.store, operator: scenario.operator,
+    context: { loadForAction: async () => renewed, loadForDecision: async id => {
+      if (id === 'decision-1') throw new ApprovalServiceError('stale', 'MARKER_SECRET_DO_NOT_DISCLOSE');
+      return renewed;
+    } } });
+  await assert.rejects(service.requestDecision({ ...binding, decisionId: 'decision-2', repositoryRevisionDigest: changed }), error => error instanceof ApprovalServiceError && error.outcome === 'unavailable' && error.reasonCode === 'approval-operation-denied');
+  assert.deepEqual(scenario.store.readHistory('task-1'), original);
+  assert.deepEqual((await service.list('task-1')).control, waiting);
+  assert.equal(scenario.store.readRequest('decision-2').value, null);
+});
+
+test('a store exception is safe and keeps admission closed after the adapter recovers', async () => {
+  const scenario = setup();
+  await scenario.service.requestDecision(binding);
+  const view = await scenario.service.show('task-1', 'decision-1');
+  await scenario.service.decide({ taskId: 'task-1', decisionId: 'decision-1', taskVersion: view.control.version, requestVersion: 1, presentationDigest: view.presentation.presentationDigest, decision: 'approve', responseKey: 'approved-before-failure' });
+  const approved = await scenario.service.resolve('decision-1');
+  let failed = true;
+  const backend = { ...scenario.store, readRequest: (id: string) => {
+    if (failed) throw new ApprovalServiceError('stale', 'MARKER_SECRET_DO_NOT_DISCLOSE');
+    return scenario.store.readRequest(id);
+  } };
+  const service = createApprovalService({ taskId: 'task-1', profile, store: backend, context: scenario.context, operator: scenario.operator });
+  await assert.rejects(service.resolve('decision-1'), error => error instanceof ApprovalServiceError && error.outcome === 'unavailable' && error.reasonCode === 'approval-operation-denied');
+  failed = false;
+  assert.equal(await service.validateBinding(approved), false);
+});
+
+test('activity exceptions cannot expose adapter-selected outcomes or clear task control', async () => {
+  const scenario = setup();
+  const original = scenario.store.loadTaskControl('task-1');
+  const service = createApprovalService({ taskId: 'task-1', profile, store: scenario.store, operator: scenario.operator,
+    context: { ...scenario.context, loadForTask: async () => ({ taskId: 'task-1', repositoryId: 'repository-1', workspaceId: 'workspace-1', runId: 'run-1', safeScopeRef: 'scope-1', policyIdentity: identity }) },
+    activity: { ...createMockActivityControl(profile), inspectOutstanding: () => { throw new ApprovalServiceError('stale', 'MARKER_SECRET_DO_NOT_DISCLOSE'); } } });
+  await assert.rejects(service.control({ taskId: 'task-1', taskVersion: 1, direction: 'end', responseKey: 'failed-end' }), error => error instanceof ApprovalServiceError && error.outcome === 'unavailable' && error.reasonCode === 'approval-operation-denied');
+  assert.deepEqual(scenario.store.loadTaskControl('task-1'), original);
+  assert.equal(scenario.store.readHistory('task-1').value?.directions.length, 0);
+});
+
+test('clock failure is safe and cannot create a request or retire its predecessor', async () => {
+  const scenario = setup();
+  const original = scenario.store.loadTaskControl('task-1');
+  const service = createApprovalService({ taskId: 'task-1', profile, store: scenario.store, context: scenario.context, operator: scenario.operator,
+    now: () => { throw new ApprovalServiceError('stale', 'MARKER_SECRET_DO_NOT_DISCLOSE'); } });
+  await assert.rejects(service.requestDecision(binding), error => error instanceof ApprovalServiceError && error.outcome === 'unavailable' && error.reasonCode === 'approval-operation-denied');
+  assert.deepEqual(scenario.store.loadTaskControl('task-1'), original);
+  assert.equal(scenario.store.readRequest('decision-1').value, null);
+});
+
+test('action context callbacks cannot supply raw stale outcomes through synchronous throws', async () => {
+  const scenario = setup();
+  const service = createApprovalService({ taskId: 'task-1', profile, store: scenario.store, operator: scenario.operator,
+    context: { ...scenario.context, loadForAction: () => { throw new ApprovalServiceError('stale', 'MARKER_SECRET_DO_NOT_DISCLOSE'); } } });
+  await assert.rejects(service.classify(action), error => error instanceof ApprovalServiceError && error.outcome === 'unavailable' && error.reasonCode === 'approval-operation-denied');
+  assert.equal((await service.list('task-1')).decisionId, null);
+});
+
+test('task context rejection cannot turn an explicit direction into adapter-selected authority', async () => {
+  const scenario = setup();
+  const original = scenario.store.loadTaskControl('task-1');
+  const service = createApprovalService({ taskId: 'task-1', profile, store: scenario.store, operator: scenario.operator, activity: createMockActivityControl(profile),
+    context: { ...scenario.context, loadForTask: async () => { throw new ApprovalServiceError('stale', 'MARKER_SECRET_DO_NOT_DISCLOSE'); } } });
+  await assert.rejects(service.control({ taskId: 'task-1', taskVersion: 1, direction: 'end', responseKey: 'failed-context-end' }), error => error instanceof ApprovalServiceError && error.outcome === 'unavailable' && error.reasonCode === 'approval-operation-denied');
+  assert.deepEqual(scenario.store.loadTaskControl('task-1'), original);
+  assert.equal(scenario.store.readHistory('task-1').value?.directions.length, 0);
+});
 
 test('repository drift projects approved consent stale without rewriting its immutable history', async () => {
   const scenario = setup();
