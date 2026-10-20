@@ -75,6 +75,10 @@ T025 was independently accepted at `1f02efe4ffddbd3d23d872610af8267941f02510`, r
 
 The integrated coordinator gate on the same source passed `node --test tests/runtime/approvals/*.test.ts` (139/139, exit 0) and `node scripts/ci/check-runtime.mjs` (typecheck, full lint, clean build and 893/893 compiled tests, exit 0). Context refresh applies evidence-based architecture/testing/progress edits with the repository updater; target policies, stack, state ownership and ADRs require no design changes. Contributor publication, exact-head CI and app-link accounting remain separate from this local task completion; no merge is authorized.
 
+The pinned Spec review of the first documentation revision found one further P1: initial pending lookup inspected `prior.safe` before admitting the returned envelope. T026 validates that receipt before property access, preventing accessor-thrown stale errors from escaping as raw reasons or leaving admission open. Its behavioral RED/GREEN exercises runnable and waiting states with zero getter invocation and unchanged control/history. Independent integration `6d4091c92a2c4ff8161c1746603035ee398e3dfb` passes seven new/prior reproductions, source/emitted approvals 140/140 and source approval/contracts 315/315. The coordinator runtime gate passes typecheck, full lint, clean build and 894 compiled tests (exit 0). This correction stays within the confirmed service seam and two owned paths; no later task authorization changes.
+
+Standards review noted one optional P2: the evaluator and service retain equivalent bounded-data guards. No hard standards violation was found. The advisory extraction is deferred to keep this delivery's public interface unchanged; current safety vectors cover both guards. The Spec P1 is addressed by T026 and the changed revision receives independent review before publication.
+
 ## Agreed design register
 
 | ID | Proposal | Scope / approval state |

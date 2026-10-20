@@ -1,6 +1,6 @@
 # Quickstart and Validation Guide: UC-05
 
-**Current state**: Separately authorized T001–T013 and T023–T025 corrections are integrated locally through `1f02efe`. Exact binding, immutable stale projections, atomic mock pending replacement, safe port failures and canonical Patch consumer compatibility augment the earlier policy/control/CLI slice. Source/emitted approvals pass 139/139; runtime typecheck/full lint/build and 893 compiled tests pass. The service has mock provenance and direct CLI composition remains unavailable. T014–T022 and production/real-execution/actual restart remain gated.
+**Current state**: Separately authorized T001–T013 and T023–T026 corrections are integrated locally through `6d4091c`. Exact binding, immutable stale projections, atomic mock pending replacement, safe port failures and canonical Patch consumer compatibility augment the earlier policy/control/CLI slice. Source/emitted approvals pass 140/140; runtime typecheck/full lint/build and 894 compiled tests pass. The service has mock provenance and direct CLI composition remains unavailable. T014–T022 and production/real-execution/actual restart remain gated.
 
 ## Validate this planning package now
 
@@ -48,7 +48,7 @@ The full focused command passed 90/90 and the runtime gate passed at the source 
 
 ## Validate Phase 5 locally
 
-Read the [authorization and three seams](contracts/decisions.md#phase-5-implementation-authorization-and-seams). T011–T013 and T025 are integrated; their individual evidence is in tasks.md. Run `node --test tests/runtime/approvals/plan-binding.test.ts tests/runtime/approvals/plan-context.test.ts tests/runtime/approvals/service.test.ts`, then the complete approval suite and `node scripts/ci/check-runtime.mjs`. The integrated source/emitted approval suites pass 139/139 and the runtime gate passes 893 compiled tests, typecheck, lint and build.
+Read the [authorization and three seams](contracts/decisions.md#phase-5-implementation-authorization-and-seams). T011–T013 and T025/T026 are integrated; their individual evidence is in tasks.md. Run `node --test tests/runtime/approvals/plan-binding.test.ts tests/runtime/approvals/plan-context.test.ts tests/runtime/approvals/service.test.ts`, then the complete approval suite and `node scripts/ci/check-runtime.mjs`. The integrated source/emitted approval suites pass 140/140 and the runtime gate passes 894 compiled tests, typecheck, lint and build.
 
 The canonical consumer tests use actual service consent and mock accounting/context. Simulated new-run ledger reload does not prove process restart. Approved stale assessments are derived on reads; only pending replacement uses the existing mock assessment transaction. No real adapter/profile, durable terminal assessment or production composition is supplied.
 

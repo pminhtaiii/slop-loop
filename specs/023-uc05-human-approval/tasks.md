@@ -2,7 +2,7 @@
 
 **Input**: [spec](spec.md), [plan](plan.md), [research](research.md), [data model](data-model.md), and [contracts](contracts/interfaces.md).
 
-**Status**: T001–T013 and T023–T025 review corrections are integrated and verified locally through source `1f02efe4ffddbd3d23d872610af8267941f02510`. Phase 5 authorization, three confirmed seams and user-relayed X03 agreement are recorded in decisions.md. Source/emitted approval suites each pass 139/139; runtime typecheck/full lint/build and 893 compiled tests pass. Checkboxes below remain the completion ledger. T014–T022 remain unauthorized; G-PROFILE/G-REAL/G-RESTART remain gated.
+**Status**: T001–T013 and T023–T026 review corrections are integrated and verified locally through source `6d4091c92a2c4ff8161c1746603035ee398e3dfb`. Phase 5 authorization, three confirmed seams and user-relayed X03 agreement are recorded in decisions.md. Source/emitted approval suites each pass 140/140; runtime typecheck/full lint/build and 894 compiled tests pass. Checkboxes below remain the completion ledger. T014–T022 remain unauthorized; G-PROFILE/G-REAL/G-RESTART remain gated.
 
 Final review found an in-scope T007 retry defect and two standards corrections. T023 below records their accepted correction only; it does not release any later story or real-delivery gate.
 
@@ -209,7 +209,7 @@ External delivery references are defined in plan.md; they are not foreign T-numb
 
 The first local MVP is contracts/cases/mocks plus US1's safe service/CLI. It is not production-ready without US2/US3 control and real external composition. Deliver each story through its own focused tests and retain prior regression coverage. After local T019, obtain actual external adapters for T020/T021 instead of implementing a second executor/store. Only observed acceptance plus review can release a scoped X05-GATE handoff.
 
-Original phase counts: setup 1; foundations 3; US1 3; US2 3; US3 3; US4 2; US5 3; integration/cross-cutting 4. The 22 original delivery tasks plus one T007 review correction total 23 tasks. Planning quality never pre-completes implementation tasks or authorizes phase dispatch.
+Original phase counts: setup 1; foundations 3; US1 3; US2 3; US3 3; US4 2; US5 3; integration/cross-cutting 4. The 22 original delivery tasks plus T023–T026 review corrections total 26 tasks. Planning quality never pre-completes implementation tasks or authorizes phase dispatch.
 
 ## Review correction within authorized Phase 3
 
@@ -239,3 +239,10 @@ Post-publication T008–T009 correction (`3816056`, PR #75): user-authorized rev
   - **Owned Paths**: src/approvals/service.ts; tests/runtime/approvals/service.test.ts.
   - **Acceptance Checks**: Actual service with injected port throwing a service-shaped stale error cannot disclose its protected/raw reason, create a stale assessment or replace a pending request solely from that exception. Validated deterministic freshness still produces safe stale projections. Preserve bounded operation, prior immutable history and fail-closed admission on unavailable/uncertain failures; test-first vertical slices, independent integration and scoped checks. No canonical/store/workflow or T014–T022 expansion.
   - **Current Evidence**: Independently accepted integration `1f02efe4ffddbd3d23d872610af8267941f02510` retains T013 and normalizes injected store/context/activity/clock exceptions to safe unavailable outcomes. Six independent RED/GREEN slices and the related replacement-history regression retain waiting/history and prevent exception-based stale authority. Six independent merger reproductions pass, including the four earlier fixed cases. Combined source approval/contracts 314/314, emitted approvals 139/139, typecheck/build/scoped lint/whitespace pass. Two owned paths, 130 reviewable lines; no canonical/foreign/runtime-composition change.
+
+- [x] T026 [US3] Validate the initial pending-lookup receipt before property access in src/approvals/service.ts and tests/runtime/approvals/service.test.ts per FR-020/US2.10 (contradicts).
+  - **Owner**: Trong Tan / approval receipt boundary.
+  - **Dependencies**: T025.
+  - **Owned Paths**: src/approvals/service.ts; tests/runtime/approvals/service.test.ts.
+  - **Acceptance Checks**: Actual service with readRequest returning accessors must refuse before invoking getters; protected service-shaped stale errors cannot escape through outcome/reason or preserve open admission. Retain pending/history and normalized unavailable failure; behavioral RED/GREEN, prior approval regressions, independent integration and review of the changed revision. No new seam or foreign implementation.
+  - **Current Evidence**: Independent integration `6d4091c92a2c4ff8161c1746603035ee398e3dfb`, two paths and 24 reviewable lines. Public-service RED/GREEN covers runnable and waiting lookup responses: getters remain uninvoked, failure is safe unavailable, history/control stay unchanged and admission remains closed after adapter recovery. Independent new-plus-prior reproductions pass 7/7; source approval/contracts 315/315, source/emitted approvals 140/140, typecheck/build/scoped lint/whitespace pass. This resolves the pinned Spec-review P1 only.
