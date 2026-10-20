@@ -2,7 +2,7 @@
 
 **Branch**: `feat/023-uc05-human-approval-spec` | **Date**: 2026-10-19 (Asia/Saigon) | **Spec**: [spec.md](spec.md)
 
-**Status**: Separately authorized T001–T010 and the T023/T024 review corrections are complete locally through source integration `c390fc6` on 2026-10-20 (Asia/Saigon). Phase 4 uses three user-confirmed TDD seams with injected mock store/context/activity and test-only CLI composition. Source/emitted approval suites each passed 90/90; runtime typecheck/full lint/build and 647 compiled tests passed. T011–T022, production profiles, real runtime integration and actual restart remain gated. See [decisions](contracts/decisions.md) and the [task ledger](tasks.md).
+**Status**: Separately authorized T001–T013 and T023–T027 corrections are integrated locally through `84be181` on 2026-10-20 (Asia/Saigon). All three Phase 5 seams and user-relayed X03-PLAN-CONTEXT agreement are confirmed. Source/emitted approval suites each pass 142/142; runtime typecheck/full lint/build and 896 compiled tests pass. T014–T022, production profiles, real runtime integration and actual restart remain gated. See [decisions](contracts/decisions.md) and the [task ledger](tasks.md).
 
 ## Summary
 
@@ -39,7 +39,7 @@ The constitution remains an unratified placeholder. Governance comes from [AGENT
 | Shared contracts | Canonical schema 0.1.0 unchanged; companion logical contract agreed; T002 validators and test-only T004 ports are implemented | Real store, production composition and runtime conformance remain gated |
 | Durable control | Proposed UC-04 transactions and shared admission epochs | Real store, scheduler/model/executor composition before integration |
 | Evidence | Local mocks, CLI, real tools and restart have distinct levels | Required cases observed; unrun cases prevent VERIFIED claims |
-| Authorization | T001–T010 authorized in separate phases; shared agreement and Phase 3/4 test seams confirmed | T011 onward needs separate authorization; production execution remains separately gated |
+| Authorization | T001–T013 authorized in separate phases; shared agreement and Phase 3/4/5 seams confirmed; T023–T027 are scoped corrections | T014–T022 need separate authorization; production execution remains separately gated |
 
 Recheck these gates after design changes; a clean planning audit does not satisfy external delivery or authorization gates.
 
@@ -136,6 +136,14 @@ Empty/malformed input, EOF and terminal interruption cannot create a direction/d
 The user confirmed all three seams on 2026-10-20 (Asia/Saigon) before test writing, per the [TDD skill](../../.agents/skills/tdd/SKILL.md). T008 established one loadable behavioral RED; T009 completed that tracer and proceeded in vertical RED/GREEN slices. T010 followed accepted T009 and retained a real subprocess behavioral RED before its control parser route. Missing imports, invalid fixtures and tests of a mocked coordinator do not count as behavioral RED. Additional seams still require their own confirmation.
 
 Completion evidence must map C05–C08,C10–C11 and the Phase 4 subset of C20 to actual observations as detailed in [acceptance](contracts/acceptance.md#phase-4-local-evidence-boundary). Run focused control/CLI/mock-port tests, prior approval regressions and the runtime gate after implementation. Real C20 claim serialization, C17–C19 restart, full history/acceptance and T011–T022 remain outside Phase 4; no all-UC verification claim follows.
+
+## Phase 5 authorized local slice — T011–T013
+
+The user authorized T011–T012 and confirmed the public binding-evaluator and actual-service/mock-port seams on 2026-10-20 (Asia/Saigon); see [decisions](contracts/decisions.md#phase-5-implementation-authorization-and-seams). Execute one neutral loadable behavioral RED, then minimal GREEN and successive vertical slices. Reuse canonical approval admission and existing companion store transactions; do not add a schema, budget engine, executor or storage implementation. Task paths and acceptance remain in tasks.md.
+
+The evaluator explains exact action/plan freshness and rejects incomplete trusted context without mutating input consent. The service consumes current trusted context and immutable request/resolution history, projects staleness separately, and requires fresh identities/decisions for renewed approval. Repository drift does not silently rebind a decision or automatically consume a material replan. Tests exercise these public exports with explicit mock store/context/operator dependencies and retain prior refusal/uncertainty, pause and presentation regressions. They do not establish real admission, durability, effects or restart.
+
+The user subsequently confirmed Tai/X03-PLAN-CONTEXT agreement and authorized T013's third seam: actual service binding consumed by canonical `validateStateTransition` into `Patch`, with mock context/accounting. T013 is a separate frontier after accepted T012 and owns only `tests/runtime/approvals/plan-context.test.ts`. It checks exact plan approval, new regression baseline binding, retained three-slot material replan admission/fourth refusal, original baseline preservation during nonmaterial current-state renewal, no path-only prompt and separate risky-action permission. This is user-relayed agreement, not adapter delivery or direct colleague contact; mock availability and review success supply neither. No canonical or UC-03 workflow edit is included; T014–T022 and G-PROFILE/G-REAL/G-RESTART remain gated.
 
 ## External Deliverables (not UC-05 task IDs)
 

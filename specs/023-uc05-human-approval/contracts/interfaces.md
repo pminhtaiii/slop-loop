@@ -1,6 +1,6 @@
 # Interfaces and Execution Protocol: UC-05
 
-**Status**: Logical companion version `uc05-approval/0.1-draft` agreed through the user confirmation in [decisions](decisions.md). Canonical UC-03 0.1.0 remains unchanged. T001–T010 supply validators, mocks, policy/service/control/presentation/CLI with exercised local behavior; they do not establish real adapters. T011 onward requires separate authorization; production composition and durability remain gated.
+**Status**: Logical companion version `uc05-approval/0.1-draft` agreed through the user confirmation in [decisions](decisions.md). Canonical UC-03 0.1.0 remains unchanged. T001–T013 supply validators, mocks, policy/service/control/binding/presentation/CLI and canonical-consumer checks with exercised local behavior. T025/T026 normalize port exceptions and initial receipt inspection without changing this contract. T014–T022 require separate authorization; real adapters, production composition and durability remain gated.
 
 ## Canonical ApprovalPort compatibility
 

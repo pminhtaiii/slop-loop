@@ -2,7 +2,7 @@
 
 **Input**: [spec](spec.md), [plan](plan.md), [research](research.md), [data model](data-model.md), and [contracts](contracts/interfaces.md).
 
-**Status**: T001–T010 and the T023/T024 review corrections are integrated and verified locally through source `c390fc6a6b9b8afe57168ca24faa3e443f3dbbae`. Phase 4 T008–T010 and its three TDD seams were separately authorized/confirmed on 2026-10-20 (Asia/Saigon). Source/emitted approval suites each pass 90/90; runtime typecheck/full lint/build and 647 compiled tests pass. Checkboxes below remain the completion ledger. T011–T022 remain unauthorized. Real tasks also need G-PROFILE/G-REAL/G-RESTART as applicable.
+**Status**: T001–T013 and T023–T027 review corrections are integrated and verified locally through source `84be181f68bf56481e53676ad44bc00dd45f1211`. Phase 5 authorization, three confirmed seams and user-relayed X03 agreement are recorded in decisions.md. Source/emitted approval suites each pass 142/142; runtime typecheck/full lint/build and 896 compiled tests pass. Checkboxes below remain the completion ledger. T014–T022 remain unauthorized; G-PROFILE/G-REAL/G-RESTART remain gated.
 
 Final review found an in-scope T007 retry defect and two standards corrections. T023 below records their accepted correction only; it does not release any later story or real-delivery gate.
 
@@ -108,23 +108,26 @@ Final review found an in-scope T007 retry defect and two standards corrections. 
 
 **Independent Test**: C09/C12–C16/C22 vary each binding dimension and strategy/allowance independently.
 
-- [ ] T011 [US3] Write binding/decision behavioral RED in tests/runtime/approvals/plan-binding.test.ts and tests/runtime/approvals/service.test.ts.
+- [x] T011 [US3] Write binding/decision behavioral RED in tests/runtime/approvals/plan-binding.test.ts and tests/runtime/approvals/service.test.ts.
   - **Owner**: Trong Tan / binding tests.
   - **Dependencies**: T010.
   - **Owned Paths**: tests/runtime/approvals/plan-binding.test.ts; tests/runtime/approvals/service.test.ts; src/approvals/plan-binding.ts.
   - **Acceptance Checks**: Loadable neutral binding SUT, behavioral fresh-approval failure, every canonical freshness field, foreign/raced/duplicate response, immutable rejected/approved history and presentation substitution. No import failures counted as RED; transfer source to T012.
+  - **Current Evidence**: Neutral loadable evaluator behavioral RED and successive public evaluator/service RED/GREEN slices retained locally. Independently accepted integration `ec75ebd6347947d3de2828e0b1e1490585f89d97` passes 127 source/emitted approval checks and 239 combined approval/canonical checks; no import/fixture failure is counted as behavioral RED.
 
-- [ ] T012 [US3] Implement exact binding and stale projections in src/approvals/plan-binding.ts and src/approvals/service.ts.
+- [x] T012 [US3] Implement exact binding and stale projections in src/approvals/plan-binding.ts and src/approvals/service.ts.
   - **Owner**: Trong Tan / binding implementation.
   - **Dependencies**: T011.
   - **Owned Paths**: src/approvals/plan-binding.ts; src/approvals/service.ts.
   - **Acceptance Checks**: T011 passes against canonical admission and journal, fresh IDs for reapproval, no silent repository rebinding. Unknown/missing trusted context false/denied; unchanged strategy charges no replan but concrete repository drift requires fresh approval.
+  - **Current Evidence**: Same independently accepted integration `ec75ebd`: exact canonical freshness, immutable stale/rejected projections, fresh-ID pending replacement through the existing mock transaction, sticky retirement, exact receipt/control/journal validation and definite-refusal latch restoration. Initial candidate failed four independent P1 reproductions; one corrective round passed all four plus source/emitted suites, typecheck/build/scoped lint/whitespace. Four owned paths total 559 reviewable lines. Approved staleness remains a derived read projection because no terminal-assessment write port exists; no durable, real execution or restart claim. T013 follows separately after this acceptance.
 
-- [ ] T013 [US3] Verify UC-03 plan-consumer compatibility in tests/runtime/approvals/plan-context.test.ts.
+- [x] T013 [US3] Verify UC-03 plan-consumer compatibility in tests/runtime/approvals/plan-context.test.ts.
   - **Owner**: Trong Tan with Tai reviewing consumer semantics.
   - **Dependencies**: T012; external X03-PLAN-CONTEXT contract agreement (mock context permitted locally).
   - **Owned Paths**: tests/runtime/approvals/plan-context.test.ts.
   - **Acceptance Checks**: Current canonical Patch transition admits only exact approved plan. New regression baseline is bound correctly, material revisions consume three retained slots/fourth refuses, path-only prompt absent, separate risky-action gate remains. Original baseline evidence stays preserved when a nonmaterial current-state refresh gets a fresh decision. No canonical or UC-03 workflow edits.
+  - **Current Evidence**: After explicit user-relayed Tai/X03 agreement and third-seam confirmation, one-file test candidate `0db810d02a89d6784e24ea0591dfa389eb8fdddf` was independently accepted and integrated (235 added reviewable lines). Five sequential compatibility slices passed existing behavior without manufactured RED: actual service human approval into canonical Patch, wrong/stale bindings refused, baseline/current-state renewal, MemoryStatePort three retained reservations/fourth exhaustion across a simulated new run, and separate risky-action policy. Combined source approval/canonical 244/244, emitted approvals 132/132, typecheck/build/scoped lint/whitespace passed. No canonical/workflow, real accounting, execution or restart claim.
 
 ## Phase 6: User Story 4 — Recovery and continuation admission (Priority: P1)
 
@@ -206,7 +209,7 @@ External delivery references are defined in plan.md; they are not foreign T-numb
 
 The first local MVP is contracts/cases/mocks plus US1's safe service/CLI. It is not production-ready without US2/US3 control and real external composition. Deliver each story through its own focused tests and retain prior regression coverage. After local T019, obtain actual external adapters for T020/T021 instead of implementing a second executor/store. Only observed acceptance plus review can release a scoped X05-GATE handoff.
 
-Original phase counts: setup 1; foundations 3; US1 3; US2 3; US3 3; US4 2; US5 3; integration/cross-cutting 4. The 22 original delivery tasks plus one T007 review correction total 23 tasks. Planning quality never pre-completes implementation tasks or authorizes phase dispatch.
+Original phase counts: setup 1; foundations 3; US1 3; US2 3; US3 3; US4 2; US5 3; integration/cross-cutting 4. The 22 original delivery tasks plus T023–T027 review corrections total 27 tasks. Planning quality never pre-completes implementation tasks or authorizes phase dispatch.
 
 ## Review correction within authorized Phase 3
 
@@ -227,3 +230,26 @@ Post-publication T008–T009 correction (`3816056`, PR #75): user-authorized rev
   - **Owned Paths**: tests/runtime/approvals/control.test.ts.
   - **Acceptance Checks**: Through actual service/coordinator admission and rejection fencing, observe successful completed and cancelled mock outcomes separately, retaining original rejection and zero further admission without explicit direction. Cancellation success requires a request issued by the SUT and no recorded effect; completed observations never imply rollback. Keep uncertainty/refused-cancellation coverage intact. This closes the verified Phase 4 review evidence gap only; no new runtime capability, test seam, later story, adapter or real restart work is authorized.
   - **Current Evidence**: Test-only candidate `0acb8c9` independently accepted at `c390fc6a6b9b8afe57168ca24faa3e443f3dbbae`, adding 23 lines to the one owned file. Both new tests passed immediately against existing behavior; no artificial RED or production edit was introduced. Actual service admission/rejection fencing precedes successful completed/cancelled observations, preserving exact rejected control/history and denying current-version admission/classification. Source/emitted approvals each pass 90/90 (control 16/16); typecheck/build/scoped lint/whitespace pass. This resolves the narrow Spec P2 coverage finding only.
+
+## Phase 9: Convergence and review — Phase 5 binding corrections
+
+- [x] T025 [US3] Prevent injected-port failure text from becoming stale authority or protected output in src/approvals/service.ts and tests/runtime/approvals/service.test.ts per FR-010–011/020 (contradicts).
+  - **Owner**: Trong Tan / approval failure boundary.
+  - **Dependencies**: T012.
+  - **Owned Paths**: src/approvals/service.ts; tests/runtime/approvals/service.test.ts.
+  - **Acceptance Checks**: Actual service with injected port throwing a service-shaped stale error cannot disclose its protected/raw reason, create a stale assessment or replace a pending request solely from that exception. Validated deterministic freshness still produces safe stale projections. Preserve bounded operation, prior immutable history and fail-closed admission on unavailable/uncertain failures; test-first vertical slices, independent integration and scoped checks. No canonical/store/workflow or T014–T022 expansion.
+  - **Current Evidence**: Independently accepted integration `1f02efe4ffddbd3d23d872610af8267941f02510` retains T013 and normalizes injected store/context/activity/clock exceptions to safe unavailable outcomes. Six independent RED/GREEN slices and the related replacement-history regression retain waiting/history and prevent exception-based stale authority. Six independent merger reproductions pass, including the four earlier fixed cases. Combined source approval/contracts 314/314, emitted approvals 139/139, typecheck/build/scoped lint/whitespace pass. Two owned paths, 130 reviewable lines; no canonical/foreign/runtime-composition change.
+
+- [x] T026 [US3] Validate the initial pending-lookup receipt before property access in src/approvals/service.ts and tests/runtime/approvals/service.test.ts per FR-020/US2.10 (contradicts).
+  - **Owner**: Trong Tan / approval receipt boundary.
+  - **Dependencies**: T025.
+  - **Owned Paths**: src/approvals/service.ts; tests/runtime/approvals/service.test.ts.
+  - **Acceptance Checks**: Actual service with readRequest returning accessors must refuse before invoking getters; protected service-shaped stale errors cannot escape through outcome/reason or preserve open admission. Retain pending/history and normalized unavailable failure; behavioral RED/GREEN, prior approval regressions, independent integration and review of the changed revision. No new seam or foreign implementation.
+  - **Current Evidence**: Independent integration `6d4091c92a2c4ff8161c1746603035ee398e3dfb`, two paths and 24 reviewable lines. Public-service RED/GREEN covers runnable and waiting lookup responses: getters remain uninvoked, failure is safe unavailable, history/control stay unchanged and admission remains closed after adapter recovery. Independent new-plus-prior reproductions pass 7/7; source approval/contracts 315/315, source/emitted approvals 140/140, typecheck/build/scoped lint/whitespace pass. This resolves the pinned Spec-review P1 only.
+
+- [x] T027 [US3] Bind a retired request's stale assessment digest to the admitted context that produced its verdict in src/approvals/service.ts and tests/runtime/approvals/service.test.ts per FR-010–011/020 (contradicts).
+  - **Owner**: Trong Tan / exact assessment context.
+  - **Dependencies**: T026.
+  - **Owned Paths**: src/approvals/service.ts; tests/runtime/approvals/service.test.ts.
+  - **Acceptance Checks**: Through the confirmed actual-service/mock-store seam, use different trusted contexts for old and replacement decisions; preserve the exact admitted old context that produced stale reasons and hash it for the old request's assessment. Do not reload a later context or accept exception-supplied authority. Retain request-context stale checks, safe error output, immutable history, waiting transaction and prior failures. Behavioral RED/GREEN, independent integration, affected context consistency and pinned review must pass. Correct the two verified status rows that omitted T026. No new contract, port, seam or later-phase authorization.
+  - **Current Evidence**: Independent integration `84be181f68bf56481e53676ad44bc00dd45f1211`, two owned paths and 78 reviewable lines. Two behavioral RED/GREEN slices and independent repros cover canonical freshness and later request-context drift with distinct per-decision contexts, exactly one old-provider load and safe public errors. A private verdict-to-digest association retains the exact admitted old context; no public signature or context reload is added. New/prior independent repros pass 9/9, source approvals/contracts 317/317, source/emitted approvals 142/142, typecheck/build/scoped lint/whitespace pass. Coordinator runtime gate passes typecheck/full lint/build and 896 compiled tests. The verified status omissions are corrected with context refresh; contributor review/publication remains separate.
