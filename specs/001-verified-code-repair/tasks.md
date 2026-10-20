@@ -95,13 +95,13 @@ Tai is accountable for all local tasks, including shared foundation. Named lanes
   - **Owned Paths**: src/uc03/input.ts.
   - **Acceptance Checks**: Input subset of T011 passes; missing reproduction/criteria/repository asks for information; ambiguity requires confirmation. No UC-01 issue integration or invented expectations. Use accepted validators and T004 task/state fixtures. Take input.ts ownership from completed T011 and replace its neutral skeleton; exercise the actual SUT, not a mock implementation.
 
-- [ ] T013 [US1] Implement adaptive investigation, baseline and plan preparation in src/uc03/investigation.ts.
+- [X] T013 [US1] Implement adaptive investigation, baseline and plan preparation in src/uc03/investigation.ts.
   - **Owner**: Tai / investigation lane.
   - **Dependencies**: T012.
   - **Owned Paths**: src/uc03/investigation.ts.
   - **Acceptance Checks**: T011 baseline/plan subset passes against T004 ports. Persist reproduction/previously passing checks, criteria/check-set and diagnosis/strategy before edits; allow protected-policy-compliant new regression test; approval rejection waits for feedback. Does not implement UC-05 gate or UC-04 store. Take investigation.ts skeleton ownership from completed T011 (through dependency T012); do not modify sibling source paths owned by T012/T014.
 
-- [ ] T014 [P] [US1] Implement verification and deterministic completion predicates in src/uc03/verification.ts.
+- [X] T014 [P] [US1] Implement verification and deterministic completion predicates in src/uc03/verification.ts.
   - **Owner**: Tai / verification lane.
   - **Dependencies**: T011.
   - **Owned Paths**: src/uc03/verification.ts.
