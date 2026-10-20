@@ -224,3 +224,18 @@ test('unrelated task admission remains eligible and a pause committed inside act
   const racing = createApprovalControl({ taskId: 'task-2', load: () => paused ? { ...load(), version: 2, epoch: 2, mode: 'ended' } : load(), activity: { ...activity, admitAttempt: input => { const receipt = activity.admitAttempt(input); paused = true; return receipt; } } });
   assert.equal(racing.admitAttempt('racing', { ...claim('race'), taskId: 'task-2' }), false);
 });
+
+test('final authoritative admission reload must remain valid, task-local and free of outstanding holds', () => {
+  const initial = { schemaVersion: 'uc05-approval/0.1-draft', taskId: 'task-1', repositoryId: 'repository-1', workspaceId: 'workspace-1', version: 1, epoch: 1, mode: 'runnable', pendingDecisionId: null, continuationRef: null, reasonCode: 'ready', outstandingClaimRefs: [] } as const;
+  for (const change of [{ schemaVersion: 'invalid' }, { taskId: 'foreign-task' }, { outstandingClaimRefs: ['new-claim'] }, { repositoryId: 'foreign-repository' }, { workspaceId: 'foreign-workspace' }]) {
+    const activity = createMockActivityControl(profile);
+    let reads = 0;
+    const coordinator = createApprovalControl({ taskId: 'task-1', activity, load: () => {
+      reads += 1;
+      // Simulate an untrusted authoritative port changing its response during admission.
+      return reads === 1 ? initial : Object.assign({}, initial, change);
+    } });
+    assert.equal(coordinator.admitAttempt('racing', claim()), false, JSON.stringify(change));
+    assert.equal(reads, 2);
+  }
+});

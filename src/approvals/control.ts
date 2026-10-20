@@ -42,7 +42,9 @@ export function createApprovalControl(options: {
         const response = options.activity.admitAttempt({ attemptId, claim: claim.value, control: current });
         if (!activityReceipt(response, 'ok') || !attemptRecord(response.value) || response.value['taskId'] !== options.taskId || response.value['attemptId'] !== attemptId || response.value['claimId'] !== claim.value.claimId || response.value['epoch'] !== current.epoch || response.value['state'] !== 'outstanding' || response.value['cancellationRequested'] !== false) { closed = true; return false; }
         const latest = options.load();
-        return !closed && latest.mode === 'runnable' && latest.epoch === current.epoch && latest.version === current.version;
+        return !closed && plainData(latest) && validateApprovalTaskControl(latest).ok && latest.taskId === options.taskId &&
+          latest.repositoryId === current.repositoryId && latest.workspaceId === current.workspaceId && latest.mode === 'runnable' &&
+          latest.outstandingClaimRefs.length === 0 && latest.epoch === current.epoch && latest.version === current.version;
       } catch { closed = true; return false; }
     },
   };
