@@ -27,6 +27,14 @@ The worker path must be a new path inside the designated worktree area. A name c
 
 Keep workers on their assigned task branches. Integrate through the approved feature workflow; creating a dump space does not authorize commits, merges, pushes, or source edits in another checkout.
 
+## Gemini task briefs
+
+Give a Gemini subagent one bounded task with the exact checkout and branch, owned paths, required output, and named acceptance commands. Authorize edits explicitly and name the paths; keep implementation separate from review or grilling. Require a final handoff with changed paths, commands and exit codes, assumptions, and remaining gaps. After one failed tool call, allow one named fallback and ask the worker to report the blocker if that also fails; browse only when the task needs current factual research.
+
+## Repository package manager
+
+Use `pnpm` for repository installs and package scripts. The root `package.json` pins pnpm and its `devEngines.packageManager` check rejects npm install and run commands; contributor and runtime CI also install with pnpm.
+
 ## Retirement
 
 Use the `clean-agent-dump` skill when a run is ready for cleanup. After the shared owner/task handoff is completed, the coordinator reviews the result and attests that workers stopped. Accept the receipt with a verification file outside `.agent-work/` and Git metadata, inside the primary checkout:
