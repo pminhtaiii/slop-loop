@@ -130,7 +130,10 @@ type Harness = ReturnType<typeof harness>;
 function operations(h: Harness): string[] { return h.shared.calls.snapshot().calls.map(call => call.operation); }
 function safeFailure(h: Harness, result: Outcome, status: Outcome['status'], reason?: string, forbidden: readonly string[] = [], priorBindings = 0): void {
   assert.equal(result.status, status); assert.equal('assessment' in result, false);
-  if ('reasonCode' in result && reason) assert.equal(result.reasonCode, reason);
+  if (reason !== undefined) {
+    assert.ok('reasonCode' in result);
+    assert.equal(result.reasonCode, reason);
+  }
   const metadata = JSON.stringify({ result, snapshot: h.shared.calls.snapshot() });
   for (const text of forbidden) assert.equal(metadata.includes(text), false, 'Hostile payload must not enter diagnostics or trace metadata');
   assert.ok(Buffer.byteLength(JSON.stringify(result)) < 1024);
