@@ -14,8 +14,10 @@
     "node": "^24.0.0"
   },
   "scripts": {
+    "prepare": "node scripts/agents/install-git-hooks.mjs",
     "build": "tsc",
     "check:dependency-install": "node scripts/ci/check-dependency-install.mjs",
+    "check:staged-size": "node scripts/ci/check-staged-file-size.mjs",
     "validate:runtime": "node scripts/ci/check-runtime.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",

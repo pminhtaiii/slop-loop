@@ -15,7 +15,11 @@ const manifest = {
   private: true,
   packageManager: projectManifest.packageManager,
   devEngines: projectManifest.devEngines,
-  scripts: { 'check:manager': 'node -e "console.log(\'manager-check-ran\')"' },
+  scripts: {
+    'check:manager': 'node -e "console.log(\'manager-check-ran\')"',
+    lint: 'node -e "console.log(\'lint-ran\')"',
+    test: 'node -e "console.log(\'test-ran\')"',
+  },
 };
 
 assert.match(projectManifest.packageManager, /^pnpm@/);
@@ -38,6 +42,16 @@ function runManager(manager, action = 'run check:manager') {
     : spawnSync(manager, action.split(' '), { cwd: root, env, encoding: 'utf8' });
 }
 
+function runCorepackYarn(action) {
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) {
+    if (key.toLowerCase() === 'npm_config_user_agent') delete env[key];
+  }
+  return process.platform === 'win32'
+    ? spawnSync('cmd.exe', ['/d', '/s', '/c', `corepack yarn ${action}`], { cwd: root, env, encoding: 'utf8', windowsHide: true })
+    : spawnSync('corepack', ['yarn', ...action.split(' ')], { cwd: root, env, encoding: 'utf8' });
+}
+
 test('pnpm can run project scripts under the package manager requirement', () => {
   const result = runManager('pnpm');
   assert.ifError(result.error);
@@ -45,11 +59,15 @@ test('pnpm can run project scripts under the package manager requirement', () =>
   assert.match(result.stdout, /manager-check-ran/);
 });
 
-test('npm is refused before a project script runs', () => {
-  const result = runManager('npm');
-  assert.ifError(result.error);
-  assert.notEqual(result.status, 0, result.stdout);
-  assert.doesNotMatch(result.stdout, /manager-check-ran/);
+test('npm run lint and npm test are refused with the required manager before scripts run', () => {
+  for (const [action, marker] of [['run lint', 'lint-ran'], ['test', 'test-ran']]) {
+    const result = runManager('npm', action);
+    assert.ifError(result.error);
+    assert.notEqual(result.status, 0, result.stdout);
+    assert.match(result.stderr, /devEngines\.packageManager/);
+    assert.match(result.stderr, /pnpm/);
+    assert.doesNotMatch(result.stdout, new RegExp(marker));
+  }
 });
 
 test('pnpm can install with the package manager requirement', () => {
@@ -62,4 +80,18 @@ test('npm install is refused even when lifecycle scripts are ignored', () => {
   const result = runManager('npm', 'install --dry-run --package-lock=false --ignore-scripts --offline');
   assert.ifError(result.error);
   assert.notEqual(result.status, 0, result.stdout);
+});
+
+const corepackAvailable = process.platform === 'win32'
+  ? spawnSync('cmd.exe', ['/d', '/s', '/c', 'corepack --version'], { cwd: root, windowsHide: true }).status === 0
+  : spawnSync('corepack', ['--version'], { cwd: root }).status === 0;
+
+test('Corepack refuses Yarn script and install commands for the pnpm project', { skip: !corepackAvailable }, () => {
+  for (const action of ['run lint', 'install --immutable']) {
+    const result = runCorepackYarn(action);
+    assert.ifError(result.error);
+    assert.notEqual(result.status, 0, result.stdout);
+    assert.match(result.stdout + result.stderr, /configured to use pnpm/i);
+    assert.doesNotMatch(result.stdout + result.stderr, /lint-ran|test-ran/);
+  }
 });
