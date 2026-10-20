@@ -33,7 +33,7 @@
 
 ## Phase 4 local evidence boundary
 
-This is a future observation plan for T008–T010, not an executed result or new case registry. The [Phase 4 plan](../plan.md#phase-4-refinement--t008t010-planning-only) refines the existing cases and proposes seams for user confirmation. Keep all unexercised portions of a case explicit; a local subset does not mark the full case passed.
+This table defines the local observation obligations for T008–T010, not a new case registry or full-case pass. The [Phase 4 plan](../plan.md#phase-4-refinement--t008t010-planning-only) refines the existing cases; its seams were subsequently confirmed by the user. Observed local results are recorded separately in [decisions](decisions.md#phase-4-local-evidence). Keep all unexercised portions of a case explicit; a local subset does not mark the full case passed.
 
 | Cases / task | Required local observations |
 |---|---|

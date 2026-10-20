@@ -6,11 +6,11 @@
 
 **Created**: 2026-10-19 (Asia/Saigon, UTC+07:00)
 
-**Status**: Requirements and full planning package acknowledged on 2026-10-19 (Asia/Saigon); separately authorized T001–T007 and the T023 correction of T007 are complete locally through `2b80b76`. Phase 3 policy, initial service, presentation and CLI use the four user-confirmed test seams and mock dependencies; see [decisions](contracts/decisions.md). Later story/delivery tasks T008–T022 and production execution remain gated; full UC-05 acceptance is unverified.
+**Status**: Separately authorized T001–T010 and the T023 correction of T007 are complete locally through `f6edb85`. Phase 4 uses three user-confirmed seams, injected mock dependencies and actual CLI subprocess checks on 2026-10-20 (Asia/Saigon); see [decisions](contracts/decisions.md). T011–T022, real adapters, production execution and actual runtime restart remain gated; full UC-05 acceptance is unverified.
 
 **Input**: Specify UC-05 from ADR-0006, the shared UC-03 contracts, repository policy, and the delegation map. Preserve UC-04 persistence and Tai's execution ownership.
 
-**Phase 4 refinement (2026-10-20)**: The current request refines US2.7–US2.12 and the linked [Phase 4 plan](plan.md#phase-4-refinement--t008t010-planning-only) for T008–T010. It is documentation only; implementation and proposed new TDD seams remain separate gates recorded in [decisions](contracts/decisions.md#phase-4-specification-request).
+**Phase 4 refinement (2026-10-20)**: The original specification request refined US2.7–US2.12 and the linked [Phase 4 plan](plan.md#phase-4-refinement--t008t010-planning-only). Subsequent explicit implementation/push authorization and confirmation of all three seams are recorded separately in [decisions](contracts/decisions.md#phase-4-implementation-authorization).
 
 ## User Scenarios & Testing *(mandatory)*
 

@@ -2,7 +2,7 @@
 
 **Branch**: `feat/023-uc05-human-approval-spec` | **Date**: 2026-10-19 (Asia/Saigon) | **Spec**: [spec.md](spec.md)
 
-**Status**: Separately authorized T001–T007 and the T023 correction of T007 are complete locally through integration commit `2b80b76` on 2026-10-19 (Asia/Saigon). Phase 3 uses four user-confirmed TDD seams with explicit mock store/context and test-only CLI composition. Later story/delivery tasks T008–T022, production profiles and real runtime integration remain gated. See [decisions](contracts/decisions.md) and the [task ledger](tasks.md).
+**Status**: Separately authorized T001–T010 and the T023 correction of T007 are complete locally through source integration `f6edb85` on 2026-10-20 (Asia/Saigon). Phase 4 uses three user-confirmed TDD seams with injected mock store/context/activity and test-only CLI composition. Source/emitted approval suites each passed 88/88; runtime typecheck/full lint/build and 645 compiled tests passed. T011–T022, production profiles, real runtime integration and actual restart remain gated. See [decisions](contracts/decisions.md) and the [task ledger](tasks.md).
 
 ## Summary
 
@@ -39,7 +39,7 @@ The constitution remains an unratified placeholder. Governance comes from [AGENT
 | Shared contracts | Canonical schema 0.1.0 unchanged; companion logical contract agreed; T002 validators and test-only T004 ports are implemented | Real store, production composition and runtime conformance remain gated |
 | Durable control | Proposed UC-04 transactions and shared admission epochs | Real store, scheduler/model/executor composition before integration |
 | Evidence | Local mocks, CLI, real tools and restart have distinct levels | Required cases observed; unrun cases prevent VERIFIED claims |
-| Authorization | T001–T007 authorized in separate phases; shared agreement and Phase 3 test seams confirmed | T008 onward needs separate authorization; production execution remains separately gated |
+| Authorization | T001–T010 authorized in separate phases; shared agreement and Phase 3/4 test seams confirmed | T011 onward needs separate authorization; production execution remains separately gated |
 
 Recheck these gates after design changes; a clean planning audit does not satisfy external delivery or authorization gates.
 
@@ -87,7 +87,7 @@ Plan coverage remains conservative: canonical v0.1 requires an approved plan at 
 
 ## Phase 4 refinement — T008–T010 (planning only)
 
-The 2026-10-20 request asks for Phase 4 specifications. This section refines US2 / FR-006–009,019–021 and SC-002–003,007 under the existing companion contract; it grants no implementation or new TDD seam approval. See [authorization provenance](contracts/decisions.md#phase-4-specification-request). Task IDs, dependencies and completion remain solely in [tasks](tasks.md).
+The original 2026-10-20 request asked for Phase 4 specifications. This section refines US2 / FR-006–009,019–021 and SC-002–003,007 under the existing companion contract; planning alone granted no implementation or TDD seam approval. The user subsequently authorized implementation/push and confirmed all three seams; see [authorization provenance](contracts/decisions.md#phase-4-implementation-authorization). Task IDs, dependencies and completion remain solely in [tasks](tasks.md).
 
 ### Inspected starting point and ownership
 
@@ -125,7 +125,7 @@ T010 implements the already agreed [control command](contracts/cli.md): `control
 
 Empty/malformed input, EOF and terminal interruption cannot create a direction/decision. If interruption occurs after a valid command committed, retain that commit and re-read status; do not assert rollback or automatically resubmit. Subprocess signal tests must report actual host termination behavior rather than promise a JSON envelope after forced termination. A parent-owned test driver may retain mock state to observe child interruption; it cannot become a production composition selector or durable-store substitute.
 
-### Proposed TDD seams — user confirmation still required
+### Phase 4 TDD seams — subsequently confirmed by the user
 
 | Seam | Observes | Does not establish |
 |---|---|---|
@@ -133,7 +133,7 @@ Empty/malformed input, EOF and terminal interruption cannot create a direction/d
 | Public mock-store direction transaction/history with companion validators | Store-owned CAS, original direction/event identity, identical retry and conflict, preserving newer holds | Production database atomicity, persistence or restart |
 | Actual CLI subprocess calling the real service/control through an explicit test-only host driver | Control arguments, bounded output/exits, empty/invalid input and observable EOF/signal/terminal-loss paths with retained mock pause | OS-wide operator isolation, production store, effects or real runtime restart |
 
-No test is written until the user confirms the proposed seams, per the [TDD skill](../../.agents/skills/tdd/SKILL.md). T008 establishes one loadable behavioral RED at a confirmed seam; T009 completes that tracer and proceeds one RED/GREEN slice at a time. T010 follows T009 and is also test-first. Missing imports, invalid fixtures or tests of a mocked coordinator are not behavioral RED.
+The user confirmed all three seams on 2026-10-20 (Asia/Saigon) before test writing, per the [TDD skill](../../.agents/skills/tdd/SKILL.md). T008 established one loadable behavioral RED; T009 completed that tracer and proceeded in vertical RED/GREEN slices. T010 followed accepted T009 and retained a real subprocess behavioral RED before its control parser route. Missing imports, invalid fixtures and tests of a mocked coordinator do not count as behavioral RED. Additional seams still require their own confirmation.
 
 Completion evidence must map C05–C08,C10–C11 and the Phase 4 subset of C20 to actual observations as detailed in [acceptance](contracts/acceptance.md#phase-4-local-evidence-boundary). Run focused control/CLI/mock-port tests, prior approval regressions and the runtime gate after implementation. Real C20 claim serialization, C17–C19 restart, full history/acceptance and T011–T022 remain outside Phase 4; no all-UC verification claim follows.
 

@@ -2,7 +2,7 @@
 
 **Input**: [spec](spec.md), [plan](plan.md), [research](research.md), [data model](data-model.md), and [contracts](contracts/interfaces.md).
 
-**Status**: T001–T007 and the T023 correction of T007 are integrated and verified locally under the Phase 3 scope on 2026-10-19 (Asia/Saigon). Phase 3 uses all four user-confirmed TDD seams and explicit mock dependencies; corrected source integration is `2b80b767ecde9897696dbe30fd70970cbb7ea0dc`. Phase 4 T008–T010 and its three TDD seams were separately authorized/confirmed on 2026-10-20 (Asia/Saigon); checkboxes below remain the completion ledger. T011–T022 remain unauthorized. Real tasks also need G-PROFILE/G-REAL/G-RESTART as applicable.
+**Status**: T001–T010 and the T023 correction of T007 are integrated and verified locally through source `f6edb85ff50a311ad6ac9881ac66b79fdd9077da`. Phase 4 T008–T010 and its three TDD seams were separately authorized/confirmed on 2026-10-20 (Asia/Saigon). Source/emitted approval suites each pass 88/88; runtime typecheck/full lint/build and 645 compiled tests pass. Checkboxes below remain the completion ledger. T011–T022 remain unauthorized. Real tasks also need G-PROFILE/G-REAL/G-RESTART as applicable.
 
 Final review found an in-scope T007 retry defect and two standards corrections. T023 below records their accepted correction only; it does not release any later story or real-delivery gate.
 
@@ -95,11 +95,12 @@ Final review found an in-scope T007 retry defect and two standards corrections. 
   - **Acceptance Checks**: T008 tracer passes, then extend one behavioral RED/GREEN slice at a time. All mutation/control operations obey CAS/idempotency, explicit direction and hold rules. Extend only mock-store direction retry conformance and its public-port tests as identified in plan.md; no service-local retry cache or duplicate UC-04 transaction engine. An identical direction retry preserves original receipt and newer holds; a new stale response conflicts. Feedback cannot resume, end cannot discard uncertainty, storage/activity failure cannot grant authority.
   - **Current Evidence**: Same independently accepted integration `6ec06a6`: five owned paths, 441 reviewable lines. Actual service wires pending/rejection/end to injected mock activity; store-owned direction retry preserves original metadata and later holds. Failure/expiry/uncertainty remains closed, final reload revalidates identity/schema/claims/version/epoch, cancellation never proves rollback. All 82 source/emitted approval checks and typecheck/build/scoped lint passed; detailed local evidence is retained in the Phase 4 implementation session. T010 remains separate; canonical contracts and foreign runtime modules are unchanged.
 
-- [ ] T010 [US2] Add explicit resume/revise/end operator commands and terminal-loss handling in src/approvals/cli.ts and tests/runtime/approvals/cli.test.ts.
+- [x] T010 [US2] Add explicit resume/revise/end operator commands and terminal-loss handling in src/approvals/cli.ts and tests/runtime/approvals/cli.test.ts.
   - **Owner**: Trong Tan / CLI control.
   - **Dependencies**: T009.
   - **Owned Paths**: src/approvals/cli.ts; tests/runtime/approvals/cli.test.ts.
   - **Acceptance Checks**: Test-first real subprocess command/exit vectors; empty/malformed/EOF/Ctrl+C input retains pause; explicit scoped direction never becomes approval. Existing service/policy/CLI regressions remain green; no implicit active-task default.
+  - **Current Evidence**: Candidate `415431e` independently accepted and integrated at `f6edb85ff50a311ad6ac9881ac66b79fdd9077da`; only two owned paths, 152 reviewable lines. CLI 12/12 and full source/emitted approvals each 88/88 pass; typecheck/build/owned lint/whitespace pass. Windows SIGINT/SIGTERM before mutation and after committed end retain parent-observed snapshots from the same mock store, with original rejection preserved and no inferred consent. These are subprocess/mock observations, not postmortem persistence, actual runtime restart or production composition; direct executable remains unavailable.
 
 ## Phase 5: User Story 3 — Exact action and fix-plan binding (Priority: P1)
 

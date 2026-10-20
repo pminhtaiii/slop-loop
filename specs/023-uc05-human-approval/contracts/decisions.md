@@ -25,6 +25,16 @@ After asking what the three seams mean and receiving the explanation, the user e
 
 Readiness checks found the current branch at fetched development `694adc35d5f17468e9d23b0975f9d307844ddf83` (behind 0), no existing PR for this branch on either publication repository, and only the nine retained reviewed specification edits in the working tree. Existing Phase 3 interpreter guards and published source are preserved.
 
+## Phase 4 local evidence
+
+T008–T010 were independently accepted and integrated locally through `f6edb85ff50a311ad6ac9881ac66b79fdd9077da`. T008/T009 supply actual control/service coordination with explicit mock activity and store-owned direction retry conformance; T010 adds the existing four-selector control command with actual subprocess tests. Representative callers use the public coordinator, which validates current task/repository/workspace, mode, outstanding claims, version and epoch before and after activity admission. Rejection/end request cancellation while retaining uncertainty; identical direction retries recover original metadata, preserve newer holds and never cancel twice. Canonical UC-03 signatures/records, dependency manifests and foreign production modules remain unchanged.
+
+Initial T008/T009 candidate `0615fc9` was rejected before merge: its final reload omitted identity/claim validation. A single corrective RED/GREEN added malformed/foreign/repository/workspace/claim-hold vectors; corrected candidate `0aec43e` was accepted at `6ec06a6`. T010 candidate `415431e` was independently accepted at `f6edb85`. No original task was checked before successful integration and checks.
+
+Source and emitted approval suites each passed 88/88 with zero failures/skips. `node scripts/ci/check-runtime.mjs` passed typecheck, full lint, clean build and 645 compiled tests. Windows actual SIGINT/SIGTERM tests before direction mutation and after committed end observed the requested signal, empty stdout and no watchdog timeout. The parent retains the original child's last IPC snapshots: rejected v3 with zero directions/two events before mutation; ended v4 with one direction/three events after commit, preserving the original rejection. These observations do not establish postmortem store availability, production composition or actual runtime restart. The CLI executable remains unconfigured/unavailable.
+
+Behavioral RED/GREEN, independent merger reports and command logs are retained locally under `.agent-work/2026-10-20/uc05-phase4-implementation/`. Full C01–C24 verification, real task-wide scheduler/provider/executor admission, durable transactions/accounting and restart remain unverified. T011–T022 and G-PROFILE/G-REAL/G-RESTART remain gated. Contributor publication/current-head CI/app-link accounting follows its separate workflow; no PR merge is authorized.
+
 ## Agreed design register
 
 | ID | Proposal | Scope / approval state |

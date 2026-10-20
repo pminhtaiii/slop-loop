@@ -1,6 +1,6 @@
 # Quickstart and Validation Guide: UC-05
 
-**Current state**: Separately authorized T001–T007 and the T023 correction of T007 are complete locally through `2b80b76`. The branch includes companion validators, the C01–C24 fixture registry, mock ports, deterministic policy and the initial ApprovalPort service with bounded presentation and list/show/inspect/decide CLI. The service has mock provenance; subprocess tests inject an explicit test-only composition. Direct CLI entry has no configured store/operator and returns unavailable. Later story/delivery tasks T008–T022 remain gated; no production, real-execution or restart capability is established.
+**Current state**: Separately authorized T001–T010 and the T023 correction of T007 are complete locally through `f6edb85`. The branch includes validators, finite fixtures, mock ports, policy, ApprovalPort service/control, bounded presentation and list/show/inspect/decide/control CLI. Source/emitted approvals each passed 88/88; runtime typecheck/full lint/build and 645 compiled tests passed. The service has mock provenance; subprocess tests inject an explicit test-only composition. Direct CLI entry remains unavailable. T011–T022 and production/real-execution/actual restart capability remain gated.
 
 ## Validate this planning package now
 
@@ -32,11 +32,11 @@ pnpm run validate:runtime
 
 Record command and exit status, fixture/config versions and evidence scope; missing files or import errors are not behavioral RED. Existing canonical UC-03 tests remain unchanged. A runtime bootstrap pass does not establish production approval.
 
-## Phase 4 handoff (specification only)
+## Validate Phase 4 locally
 
-Read the [Phase 4 plan](plan.md#phase-4-refinement--t008t010-planning-only), [local case obligations](contracts/acceptance.md#phase-4-local-evidence-boundary) and [authorization record](contracts/decisions.md#phase-4-specification-request). Confirm the new control, mock-store direction and CLI TDD seams with the user before writing tests. Keep T008 → T009 → T010 sequential and all checkboxes unchanged until implemented and validated.
+Read the [Phase 4 plan](plan.md#phase-4-refinement--t008t010-planning-only), [local case obligations](contracts/acceptance.md#phase-4-local-evidence-boundary) and [authorization record](contracts/decisions.md#phase-4-implementation-authorization). The user confirmed the three seams before implementation; T008 → T009 → T010 were accepted sequentially. Task completion is recorded only in tasks.md.
 
-After implementation is separately authorized and the tests exist, run:
+With the existing approved toolchain/dependencies, run:
 
 ```powershell
 node --test tests/runtime/approvals/control.test.ts tests/runtime/approvals/mock-ports.test.ts tests/runtime/approvals/cli.test.ts
@@ -44,7 +44,7 @@ node --test tests/runtime/approvals/*.test.ts
 node scripts/ci/check-runtime.mjs
 ```
 
-These are future commands, not results from this documentation change. Record platform-specific interruption coverage and any not-run paths. Direct CLI entry remains unavailable; local subprocess checks use explicit test-only host composition and do not establish production connections or durable restart.
+The full focused command passed 88/88 and the runtime gate passed at the source integration above. Windows SIGINT/SIGTERM observations before mutation and after commit retain the same child's last mock-store snapshots in the parent; they establish no postmortem persistence or durable runtime restart. Record actual platform/exit/signal facts and any not-run paths. Direct CLI entry remains unavailable; no production connection is added.
 
 ## CLI approval/rejection scenarios (after T010/T018)
 
