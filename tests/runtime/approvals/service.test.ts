@@ -204,6 +204,20 @@ test('explicit direction after rejection requires a fresh decision and preserves
   assert.deepEqual(scenario.store.readHistory('task-1').value?.resolutions, history);
 });
 
+test('historical rejected projections refuse shape-valid protected request metadata', async () => {
+  const scenario = setup();
+  await scenario.service.requestDecision(binding);
+  const view = await scenario.service.show('task-1', 'decision-1');
+  await scenario.service.decide({ taskId: 'task-1', decisionId: 'decision-1', taskVersion: view.control.version, requestVersion: 1, presentationDigest: view.presentation.presentationDigest, decision: 'reject', responseKey: 'reject' });
+  const store = { ...scenario.store, readRequest: (id: string) => {
+    const response = scenario.store.readRequest(id);
+    return { ...response, value: response.value && { ...response.value, policyId: 'marker-secret', binding: { ...response.value.binding, policyId: 'marker-secret' } } };
+  } };
+  const service = createApprovalService({ taskId: 'task-1', profile, store, context: scenario.context, operator: scenario.operator });
+  await assert.rejects(service.resolve('decision-1'), error => error instanceof Error && error.message === 'approval-operation-denied');
+  assert.equal((await scenario.service.resolve('decision-1')).status, 'rejected');
+});
+
 test('policy configuration and continuation drift invalidate the stored request identity', async () => {
   for (const dimension of ['configId', 'configVersion', 'continuationRef'] as const) {
     const scenario = setup();
@@ -244,6 +258,142 @@ test('failed stale replacement retains the old waiting hold and creates no decis
   assert.equal(scenario.store.readRequest('decision-2').value, null);
   assert.equal(scenario.store.readHistory('task-1').value?.assessments.length, 0);
   assert.equal(scenario.store.readHistory('task-1').value?.resolutions.length, 0);
+});
+
+test('replacement success receipts must exactly identify the committed request control and event', async () => {
+  for (const change of [{ taskId: 'foreign-task' }, { decisionId: 'foreign-decision' }, { requestVersion: 99 }, { controlVersion: 99 }, { eventRef: 'foreign-event' }, { safeNextAction: 'retry-read' }, { eventRef: 'marker-secret' }] as const) {
+    const scenario = setup();
+    await scenario.service.requestDecision(binding);
+    const changed = `sha256:${'b'.repeat(64)}`;
+    scenario.setContext({ ...scenario.current(), freshness: { ...freshness, currentRepositoryRevisionDigest: changed }, facts: { ...scenario.current().facts, repositoryRevisionDigest: changed } });
+    const store = { ...scenario.store, replaceStalePending: (input: unknown) => {
+      const response = scenario.store.replaceStalePending(input);
+      return { ...response, safe: { ...response.safe, ...change } };
+    } };
+    const service = createApprovalService({ taskId: 'task-1', profile, store, context: scenario.context, operator: scenario.operator });
+    await assert.rejects(service.requestDecision({ ...binding, decisionId: 'decision-2', repositoryRevisionDigest: changed }), error => error instanceof Error && error.message === 'approval-operation-denied');
+    const view = await scenario.service.show('task-1', 'decision-2');
+    await scenario.service.decide({ taskId: 'task-1', decisionId: 'decision-2', taskVersion: view.control.version, requestVersion: 1, presentationDigest: view.presentation.presentationDigest, decision: 'approve', responseKey: 'approve-valid-replacement' });
+    assert.equal(await service.validateBinding(await service.resolve('decision-2')), false);
+  }
+});
+
+test('replacement success requires authoritative committed request control assessment and journal evidence', async () => {
+  for (const corruption of ['assessment', 'events', 'request', 'previousRequest', 'controlEpoch', 'controlVersion', 'controlClaims'] as const) {
+    const scenario = setup();
+    await scenario.service.requestDecision(binding);
+    const changed = `sha256:${'b'.repeat(64)}`;
+    scenario.setContext({ ...scenario.current(), freshness: { ...freshness, currentRepositoryRevisionDigest: changed }, facts: { ...scenario.current().facts, repositoryRevisionDigest: changed } });
+    let committed = false;
+    const store = { ...scenario.store,
+      replaceStalePending: (input: unknown) => { const result = scenario.store.replaceStalePending(input); committed = true; return result; },
+      readHistory: (taskId: string) => { const result = scenario.store.readHistory(taskId); return committed && corruption === 'assessment' && result.value ? { ...result, value: { ...result.value, assessments: [] } } : result; },
+      readEvents: (taskId: string) => { const result = scenario.store.readEvents(taskId); return committed && corruption === 'events' ? { ...result, value: [] } : result; },
+      readRequest: (id: string) => {
+        const result = scenario.store.readRequest(id);
+        return committed && result.value && (corruption === 'request' && id === 'decision-2' || corruption === 'previousRequest' && id === 'decision-1') ? { ...result, value: { ...result.value, createdRunId: 'foreign-run' } } : result;
+      },
+      loadTaskControl: (taskId: string) => {
+        const result = scenario.store.loadTaskControl(taskId);
+        if (!committed || !result.value) return result;
+        return { ...result, value: { ...result.value, ...(corruption === 'controlEpoch' ? { epoch: 99 } : {}), ...(corruption === 'controlVersion' ? { version: 99 } : {}), ...(corruption === 'controlClaims' ? { outstandingClaimRefs: ['foreign-claim'] } : {}) } };
+      },
+    };
+    const service = createApprovalService({ taskId: 'task-1', profile, store, context: scenario.context, operator: scenario.operator });
+    await assert.rejects(service.requestDecision({ ...binding, decisionId: 'decision-2', repositoryRevisionDigest: changed }), error => error instanceof Error && error.message === 'approval-operation-denied', corruption);
+    assert.equal((await scenario.service.list('task-1')).control.mode, 'waiting');
+    assert.equal(await service.validateBinding({ ...binding, status: 'approved' }), false);
+  }
+});
+
+test('replacement adapter cannot rewrite the host expected assessment or event through its input references', async () => {
+  const scenario = setup();
+  await scenario.service.requestDecision(binding);
+  const changed = `sha256:${'b'.repeat(64)}`;
+  scenario.setContext({ ...scenario.current(), freshness: { ...freshness, currentRepositoryRevisionDigest: changed }, facts: { ...scenario.current().facts, repositoryRevisionDigest: changed } });
+  const store = { ...scenario.store, replaceStalePending: (input: unknown) => {
+    assert.ok(input && typeof input === 'object' && 'assessment' in input && 'events' in input);
+    const assessment = input.assessment;
+    assert.ok(assessment && typeof assessment === 'object' && 'trustedContextDigest' in assessment);
+    assessment.trustedContextDigest = digest;
+    Object.assign(input, { trustedContextDigest: digest });
+    assert.ok(Array.isArray(input.events) && input.events[1]);
+    Object.assign(input.events[1], { eventId: 'foreign-event' });
+    return scenario.store.replaceStalePending(input);
+  } };
+  const service = createApprovalService({ taskId: 'task-1', profile, store, context: scenario.context, operator: scenario.operator });
+  await assert.rejects(service.requestDecision({ ...binding, decisionId: 'decision-2', repositoryRevisionDigest: changed }));
+});
+
+test('validated definite replacement refusal restores admission without releasing current waiting holds', async () => {
+  for (const outcome of ['denied', 'conflict', 'invalid', 'stale'] as const) {
+    const scenario = setup();
+    await scenario.service.requestDecision(binding);
+    const original = scenario.current();
+    const waiting = (await scenario.service.list('task-1')).control;
+    const changed = `sha256:${'b'.repeat(64)}`;
+    scenario.setContext({ ...original, freshness: { ...freshness, currentRepositoryRevisionDigest: changed }, facts: { ...original.facts, repositoryRevisionDigest: changed } });
+    const store = { ...scenario.store, replaceStalePending: (input: unknown) => {
+      scenario.store.failNext('replaceStalePending');
+      const response = scenario.store.replaceStalePending(input);
+      return { ...response, safe: { ...response.safe, outcome } };
+    } };
+    const service = createApprovalService({ taskId: 'task-1', profile, store, context: scenario.context, operator: scenario.operator });
+    await assert.rejects(service.requestDecision({ ...binding, decisionId: 'decision-2', repositoryRevisionDigest: changed }));
+    assert.deepEqual((await service.list('task-1')).control, waiting);
+    scenario.setContext(original);
+    const view = await service.show('task-1', 'decision-1');
+    const response = { taskId: 'task-1', decisionId: 'decision-1', taskVersion: view.control.version, requestVersion: 1, presentationDigest: view.presentation.presentationDigest, decision: 'approve', responseKey: 'approve-after-refusal' };
+    await service.decide(response);
+    assert.equal(await service.validateBinding(await service.resolve('decision-1')), true, outcome);
+    await service.requestDecision({ ...binding, decisionId: 'decision-3' });
+    const later = (await service.list('task-1')).control;
+    assert.equal(later.mode, 'waiting');
+    assert.equal((await service.decide(response)).outcome, 'ok');
+    assert.deepEqual((await service.list('task-1')).control, later);
+    assert.equal(await service.validateBinding({ ...binding, status: 'approved' }), false);
+  }
+});
+
+test('a refusal receipt hiding a committed replacement remains closed until reconciliation', async () => {
+  const scenario = setup();
+  await scenario.service.requestDecision(binding);
+  const changed = `sha256:${'b'.repeat(64)}`;
+  scenario.setContext({ ...scenario.current(), freshness: { ...freshness, currentRepositoryRevisionDigest: changed }, facts: { ...scenario.current().facts, repositoryRevisionDigest: changed } });
+  const store = { ...scenario.store, replaceStalePending: (input: unknown) => {
+    const response = scenario.store.replaceStalePending(input);
+    return { ...response, value: null, safe: { ...response.safe, outcome: 'conflict' as const, eventRef: null } };
+  } };
+  const service = createApprovalService({ taskId: 'task-1', profile, store, context: scenario.context, operator: scenario.operator });
+  await assert.rejects(service.requestDecision({ ...binding, decisionId: 'decision-2', repositoryRevisionDigest: changed }));
+  const view = await service.show('task-1', 'decision-2');
+  await service.decide({ taskId: 'task-1', decisionId: 'decision-2', taskVersion: view.control.version, requestVersion: 1, presentationDigest: view.presentation.presentationDigest, decision: 'approve', responseKey: 'approve-after-hidden-commit' });
+  assert.equal(await service.validateBinding(await service.resolve('decision-2')), false);
+});
+
+test('unavailable uncertain malformed and thrown replacement results retain closed admission', async () => {
+  for (const failure of ['unavailable', 'uncertain', 'malformed', 'throw'] as const) {
+    const scenario = setup();
+    await scenario.service.requestDecision(binding);
+    const original = scenario.current();
+    const waiting = (await scenario.service.list('task-1')).control;
+    const changed = `sha256:${'b'.repeat(64)}`;
+    scenario.setContext({ ...original, freshness: { ...freshness, currentRepositoryRevisionDigest: changed }, facts: { ...original.facts, repositoryRevisionDigest: changed } });
+    const store = { ...scenario.store, replaceStalePending: (input: unknown) => {
+      scenario.store.failNext('replaceStalePending');
+      const response = scenario.store.replaceStalePending(input);
+      if (failure === 'throw') throw new Error('unsafe-adapter-message');
+      return { ...response, safe: { ...response.safe, outcome: failure === 'malformed' ? 'conflict' as const : failure, ...(failure === 'malformed' ? { controlVersion: 99 } : {}) } };
+    } };
+    const service = createApprovalService({ taskId: 'task-1', profile, store, context: scenario.context, operator: scenario.operator });
+    await assert.rejects(service.requestDecision({ ...binding, decisionId: 'decision-2', repositoryRevisionDigest: changed }), error => error instanceof Error && error.message === 'approval-operation-denied');
+    assert.deepEqual((await service.list('task-1')).control, waiting);
+    assert.equal(scenario.store.readRequest('decision-2').value, null);
+    scenario.setContext(original);
+    const view = await service.show('task-1', 'decision-1');
+    await service.decide({ taskId: 'task-1', decisionId: 'decision-1', taskVersion: view.control.version, requestVersion: 1, presentationDigest: view.presentation.presentationDigest, decision: 'approve', responseKey: 'approve-after-uncertainty' });
+    assert.equal(await service.validateBinding(await service.resolve('decision-1')), false, failure);
+  }
 });
 
 test('canonical service atomically pauses a required request and only stored human consent admits it', async () => {

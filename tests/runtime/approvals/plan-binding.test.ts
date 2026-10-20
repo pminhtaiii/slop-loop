@@ -47,3 +47,9 @@ test('malformed evidence contexts deny freshness rather than granting authority 
     assert.notEqual(evaluatePlanBinding(binding, { ...context, currentEvidenceRefs: evidence }).status, 'valid');
   }
 });
+
+test('freshness context rejects fields outside the canonical vocabulary', () => {
+  for (const field of ['unexpectedAuthority', 'approval', 'constructor']) {
+    assert.deepEqual(evaluatePlanBinding(binding, { ...context, [field]: true }), { status: 'denied', reasonCodes: ['unknown-binding-context-field'] });
+  }
+});

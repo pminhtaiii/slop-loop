@@ -7,9 +7,18 @@ export interface BindingEvaluation {
   readonly reasonCodes: readonly string[];
 }
 
+// Key vocabulary stays exhaustive against the canonical type; admission owns value semantics.
+const contextFields: Readonly<Record<keyof ApprovalBindingContext, true>> = {
+  currentTaskId: true, currentWorkspaceId: true, currentRepositoryRevisionDigest: true,
+  currentPolicyId: true, currentPolicyVersion: true, currentNormalizedActionDigest: true,
+  currentPlanVersion: true, currentStrategyDigest: true, currentBaselineRef: true,
+  currentEvidenceRefs: true, currentCriteriaDigest: true, currentCheckSetDigest: true,
+};
+
 /** Evaluates freshness only; a valid pending/rejected binding is never consent. */
 export function evaluatePlanBinding(binding: unknown, context: unknown): BindingEvaluation {
   if (!plainData(binding) || !plainData(context) || !context || typeof context !== 'object' || Array.isArray(context)) return { status: 'denied', reasonCodes: ['invalid-binding-context'] };
+  if (Object.keys(context).some(key => !Object.hasOwn(contextFields, key))) return { status: 'denied', reasonCodes: ['unknown-binding-context-field'] };
   const parsed = parseApprovalBinding(binding);
   if (!parsed.ok) return { status: 'denied', reasonCodes: ['invalid-binding'] };
   // Descriptor inspection admits only data; canonical admission owns the field semantics.
