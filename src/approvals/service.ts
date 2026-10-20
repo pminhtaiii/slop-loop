@@ -1,14 +1,16 @@
 import type { ApprovalBinding, ApprovalBindingContext, ApprovalPort, NormalizedAction } from '../contracts/foundation/uc03.ts';
-import type { ApprovalRequestRecord, ApprovalTaskControl, DecisionEvent, DeveloperDirection, HumanResolution, PolicyProfile, SafeResult, TrustedOperatorIdentity } from '../contracts/approvals/contracts.ts';
+import type { ApprovalRequestRecord, ApprovalTaskControl, BindingAssessment, DecisionEvent, DeveloperDirection, HumanResolution, PolicyProfile, SafeResult, TrustedOperatorIdentity } from '../contracts/approvals/contracts.ts';
 import type { PolicyFacts } from './policy.ts';
 import type { PresentationBundle, PresentationInput } from './presentation.ts';
 import { isDeepStrictEqual } from 'node:util';
+import { isProxy } from 'node:util/types';
 import { computeActionDigest, computeCanonicalSha256, parseApprovalBinding, validateApprovalBinding, validateNormalizedAction } from '../contracts/foundation/uc03.ts';
-import { validateApprovalRequestRecord, validateApprovalTaskControl, validateDecisionEvent, validateDeveloperDirection, validateHumanResolution, validateSafeResult } from '../contracts/approvals/contracts.ts';
+import { validateApprovalRequestRecord, validateApprovalTaskControl, validateBindingAssessment, validateDecisionEvent, validateDeveloperDirection, validateHumanResolution, validateSafeResult } from '../contracts/approvals/contracts.ts';
 import { compilePolicy } from './policy.ts';
 import { buildPresentation } from './presentation.ts';
 import { containsProtectedContent } from '../foundation/repository-tools.ts';
 import { createApprovalControl, type ApprovalActivity } from './control.ts';
+import { evaluatePlanBinding } from './plan-binding.ts';
 
 export interface ApprovalContext {
   readonly action: NormalizedAction;
@@ -22,10 +24,11 @@ export interface ApprovalStore {
   readonly provenance: 'mock';
   loadTaskControl(taskId: string): StoreResponse<ApprovalTaskControl>;
   readRequest(decisionId: string): StoreResponse<ApprovalRequestRecord>;
-  readHistory(taskId: string): StoreResponse<{ readonly resolutions: readonly HumanResolution[]; readonly directions?: readonly DeveloperDirection[] }>;
+  readHistory(taskId: string): StoreResponse<{ readonly resolutions: readonly HumanResolution[]; readonly directions?: readonly DeveloperDirection[]; readonly assessments?: readonly BindingAssessment[] }>;
   readEvents?(taskId: string): StoreResponse<readonly DecisionEvent[]>;
   recordDirection?(input: unknown): StoreResponse<DeveloperDirection>;
   createPendingAndPause(input: unknown): StoreResponse<ApprovalRequestRecord>;
+  replaceStalePending?(input: unknown): StoreResponse<ApprovalRequestRecord>;
   resolvePending(input: unknown): StoreResponse<HumanResolution>;
 }
 export interface ApprovalServiceOptions {
@@ -56,7 +59,8 @@ export interface ApprovalService extends ApprovalPort {
 }
 export class ApprovalServiceError extends Error {
   readonly outcome: SafeResult['outcome'];
-  constructor(outcome: SafeResult['outcome']) { super('approval-operation-denied'); this.outcome = outcome; }
+  readonly reasonCode: string;
+  constructor(outcome: SafeResult['outcome'], reasonCode = 'approval-operation-denied') { super('approval-operation-denied'); this.outcome = outcome; this.reasonCode = reasonCode; }
 }
 export function createApprovalService(options: ApprovalServiceOptions): ApprovalService {
   const compiled = compilePolicy(options.profile);
@@ -110,6 +114,9 @@ export function createApprovalService(options: ApprovalServiceOptions): Approval
     const result = policy.classify(context.action, context.facts);
     const current = control();
     if (!result.ok || result.permission === 'FORBIDDEN') throw new ApprovalServiceError(result.ok ? 'denied' : 'invalid');
+    const freshness = evaluatePlanBinding(binding, context.freshness);
+    if (freshness.status !== 'valid') throw new ApprovalServiceError(freshness.status === 'stale' ? 'stale' : 'denied', freshness.reasonCodes.join(','));
+    if (current.repositoryId !== context.facts.repositoryId || current.workspaceId !== context.facts.workspaceId) throw new ApprovalServiceError('stale', 'changed-repository-mapping');
     if (!identifier(context.runId) || context.facts.taskId !== options.taskId || current.workspaceId !== context.facts.workspaceId ||
       current.repositoryId !== context.facts.repositoryId || binding.taskId !== options.taskId ||
       !validateApprovalBinding({ ...binding, status: 'approved' }, context.freshness).ok ||
@@ -117,8 +124,8 @@ export function createApprovalService(options: ApprovalServiceOptions): Approval
       context.facts.repositoryRevisionDigest !== binding.repositoryRevisionDigest ||
       context.facts.workspaceId !== binding.workspaceId || context.facts.policyIdentity.policyId !== binding.policyId ||
       context.facts.policyIdentity.policyVersion !== binding.policyVersion ||
-      ((context.action.kind === 'approve_fix_plan') !== (binding.actionKind === 'fix_plan'))) throw new ApprovalServiceError('stale');
-    if (context.action.kind === 'approve_fix_plan' && (context.action.planVersion !== binding.planVersion || context.action.strategyDigest !== binding.strategyDigest || context.action.checkSetDigest !== binding.checkSetDigest || !isDeepStrictEqual(context.action.diagnosisEvidenceRefs, binding.evidenceRefs))) throw new ApprovalServiceError('stale');
+      ((context.action.kind === 'approve_fix_plan') !== (binding.actionKind === 'fix_plan'))) throw new ApprovalServiceError('stale', 'changed-action-context');
+    if (context.action.kind === 'approve_fix_plan' && (context.action.planVersion !== binding.planVersion || context.action.strategyDigest !== binding.strategyDigest || context.action.checkSetDigest !== binding.checkSetDigest || !isDeepStrictEqual(context.action.diagnosisEvidenceRefs, binding.evidenceRefs))) throw new ApprovalServiceError('stale', 'changed-plan-action');
     return context;
   };
   const presentation = (binding: ApprovalBinding, context: ApprovalContext, requestVersion = 1): PresentationBundle => {
@@ -128,12 +135,14 @@ export function createApprovalService(options: ApprovalServiceOptions): Approval
   const request = (decisionId: string): ApprovalRequestRecord => {
     if (!identifier(decisionId)) throw new ApprovalServiceError('invalid');
     const response = store().readRequest(decisionId);
+    if (!plainContextData(response)) throw new ApprovalServiceError('unavailable');
     const checked = validateApprovalRequestRecord(response.value);
     if (!checked.ok || response.safe.outcome !== 'ok' || !validateSafeResult(response.safe).ok || checked.value.taskId !== options.taskId || checked.value.decisionId !== decisionId) throw new ApprovalServiceError('invalid');
     return checked.value;
   };
   const resolution = (record: ApprovalRequestRecord): HumanResolution | undefined => {
     const response = store().readHistory(options.taskId);
+    if (!plainContextData(response)) throw new ApprovalServiceError('unavailable');
     if (response.safe.outcome !== 'ok' || !validateSafeResult(response.safe).ok || !response.value || !Array.isArray(response.value.resolutions) || response.value.resolutions.length > 128) throw new ApprovalServiceError('unavailable');
     const matches = response.value.resolutions.filter(value => value.decisionId === record.decisionId);
     if (matches.length > 1) throw new ApprovalServiceError('unavailable');
@@ -141,11 +150,24 @@ export function createApprovalService(options: ApprovalServiceOptions): Approval
     if (found && (!options.operator || !validateHumanResolution(found, { expectedDecisionId: record.decisionId, expectedRequestVersion: record.requestVersion, trustedOperator: options.operator.identity }).ok)) throw new ApprovalServiceError('denied');
     return found;
   };
-  const projection = (record: ApprovalRequestRecord): ApprovalBinding => ({ ...record.binding, status: resolution(record)?.decision ?? 'pending' });
+  const projection = (record: ApprovalRequestRecord): ApprovalBinding => {
+    const terminal = resolution(record);
+    if (terminal) return { ...record.binding, status: terminal.decision };
+    const history = store().readHistory(options.taskId);
+    if (!plainContextData(history) || !validateSafeResult(history.safe).ok || history.safe.outcome !== 'ok' || !history.value) throw new ApprovalServiceError('unavailable');
+    const assessments = history.value.assessments ?? [];
+    if (!Array.isArray(assessments) || assessments.length > 128) throw new ApprovalServiceError('unavailable');
+    for (const assessment of assessments.filter(value => value.decisionId === record.decisionId)) {
+      // Historical assessments can only deny this identity; current context is still required for admission.
+      if (!validateBindingAssessment(assessment, { expectedDecisionId: record.decisionId, expectedTaskVersion: assessment.checkedTaskVersion, expectedEpoch: assessment.checkedEpoch, trustedContextDigest: assessment.trustedContextDigest }).ok) throw new ApprovalServiceError('unavailable');
+      if (assessment.status !== 'valid') return { ...record.binding, status: 'stale', reason: 'request-replaced' };
+    }
+    return { ...record.binding, status: 'pending' };
+  };
   const checkedView = async (decisionId: string): Promise<{ record: ApprovalRequestRecord; context: ApprovalContext; bundle: PresentationBundle }> => {
     const record = request(decisionId);
     const context = await trusted(decisionId, record.binding);
-    if (record.repositoryId !== context.facts.repositoryId || record.workspaceId !== context.facts.workspaceId || record.continuationRef !== context.facts.continuationRef || record.actionRef !== context.action.actionId || !isDeepStrictEqual({ policyId: record.policyId, policyVersion: record.policyVersion, configId: record.configId, configVersion: record.configVersion }, context.facts.policyIdentity)) throw new ApprovalServiceError('stale');
+    if (record.repositoryId !== context.facts.repositoryId || record.workspaceId !== context.facts.workspaceId || record.continuationRef !== context.facts.continuationRef || record.actionRef !== context.action.actionId || !isDeepStrictEqual({ policyId: record.policyId, policyVersion: record.policyVersion, configId: record.configId, configVersion: record.configVersion }, context.facts.policyIdentity)) throw new ApprovalServiceError('stale', 'changed-request-context');
     const bundle = presentation(record.binding, context, record.requestVersion);
     if (bundle.summary.presentationDigest !== record.presentationDigest) throw new ApprovalServiceError('conflict');
     return { record, context, bundle };
@@ -227,6 +249,7 @@ export function createApprovalService(options: ApprovalServiceOptions): Approval
     }),
     requestDecision: binding => bounded(async assertActive => {
       if (localAdmissionClosed || coordinator.isClosed()) throw new ApprovalServiceError('unavailable');
+      if (!plainContextData(binding)) throw new ApprovalServiceError('invalid');
       const checked = parseApprovalBinding(binding);
       if (!checked.ok || binding.status !== 'pending') throw new ApprovalServiceError('invalid');
       const context = await trusted(binding.decisionId, binding);
@@ -241,7 +264,16 @@ export function createApprovalService(options: ApprovalServiceOptions): Approval
         return projection(existing.record);
       }
       const current = control();
-      if (current.mode !== 'runnable') throw new ApprovalServiceError('paused');
+      let stale: { readonly record: ApprovalRequestRecord; readonly reason: string } | undefined;
+      if (current.mode === 'waiting' && current.pendingDecisionId && store().replaceStalePending) {
+        const pending = request(current.pendingDecisionId);
+        try { await checkedView(pending.decisionId); }
+        catch (error) {
+          if (!(error instanceof ApprovalServiceError) || error.outcome !== 'stale') throw error;
+          stale = { record: pending, reason: error.reasonCode };
+        }
+        if (!stale) throw new ApprovalServiceError('conflict');
+      } else if (current.mode !== 'runnable') throw new ApprovalServiceError('paused');
       const timestamp = now();
       const record: ApprovalRequestRecord = {
         schemaVersion: 'uc05-approval/0.1-draft', decisionId: binding.decisionId, binding: structuredClone(binding), taskId: options.taskId,
@@ -254,8 +286,17 @@ export function createApprovalService(options: ApprovalServiceOptions): Approval
       assertActive();
       if (localAdmissionClosed || coordinator.isClosed()) throw new ApprovalServiceError('unavailable');
       localAdmissionClosed = true;
-      const response = store().createPendingAndPause({ expectedControlVersion: current.version, submissionKey: record.submissionKey, request: record,
-        event: { schemaVersion: 'uc05-approval/0.1-draft', eventId: computeCanonicalSha256({ type: 'request', taskId: options.taskId, decisionId: record.decisionId }), taskId: options.taskId, runId: context.runId, decisionId: record.decisionId, directionId: null, claimId: null, type: 'approval-request-created', outcome: 'pending', policyRef: context.facts.policyIdentity, safeReasonCode: 'approval-pending', timestamp } });
+      const event: DecisionEvent = { schemaVersion: 'uc05-approval/0.1-draft', eventId: computeCanonicalSha256({ type: 'request', taskId: options.taskId, decisionId: record.decisionId }), taskId: options.taskId, runId: context.runId, decisionId: record.decisionId, directionId: null, claimId: null, type: 'approval-request-created', outcome: 'pending', policyRef: context.facts.policyIdentity, safeReasonCode: 'approval-pending', timestamp };
+      let response: StoreResponse<ApprovalRequestRecord>;
+      if (stale) {
+        const trustedContextDigest = computeCanonicalSha256(context);
+        const assessment: BindingAssessment = { schemaVersion: 'uc05-approval/0.1-draft', assessmentId: computeCanonicalSha256({ type: 'assessment', decisionId: stale.record.decisionId, trustedContextDigest, version: current.version }), decisionId: stale.record.decisionId, checkedTaskVersion: current.version, checkedEpoch: current.epoch, trustedContextDigest, status: 'stale', reasonCodes: stale.reason.split(','), checkedAt: timestamp };
+        const backend = store();
+        if (!backend.replaceStalePending) throw new ApprovalServiceError('unavailable');
+        response = backend.replaceStalePending({ expectedControlVersion: current.version, expectedRequestVersion: stale.record.requestVersion, trustedContextDigest, assessment, replacement: record, events: [{ ...event, eventId: assessment.assessmentId, decisionId: stale.record.decisionId, type: 'binding-assessed', outcome: 'stale', safeReasonCode: 'binding-stale' }, event] });
+      } else {
+        response = store().createPendingAndPause({ expectedControlVersion: current.version, submissionKey: record.submissionKey, request: record, event });
+      }
       if (response.safe.outcome !== 'pending' || !validateSafeResult(response.safe).ok || !isDeepStrictEqual(response.value, record)) throw new ApprovalServiceError(response.safe.outcome === 'conflict' ? 'conflict' : 'unavailable');
       const paused = control();
       if (paused.mode !== 'waiting' || paused.pendingDecisionId !== binding.decisionId || paused.continuationRef !== record.continuationRef) throw new ApprovalServiceError('unavailable');
@@ -265,6 +306,7 @@ export function createApprovalService(options: ApprovalServiceOptions): Approval
     }),
     validateBinding: binding => bounded(async () => {
       if (localAdmissionClosed || coordinator.isClosed()) return false;
+      if (!plainContextData(binding) || !parseApprovalBinding(binding).ok) return false;
       try {
         const view = await checkedView(binding.decisionId);
         const current = control();
@@ -272,7 +314,16 @@ export function createApprovalService(options: ApprovalServiceOptions): Approval
         return !localAdmissionClosed && !coordinator.isClosed() && current.mode === 'runnable' && current.outstandingClaimRefs.length === 0 && stored.status === 'approved' && isDeepStrictEqual(binding, stored) && validateApprovalBinding(stored, view.context.freshness).ok;
       } catch { return false; }
     }),
-    resolve: decisionId => bounded(async () => projection((await checkedView(decisionId)).record)),
+    resolve: decisionId => bounded(async () => {
+      const record = request(decisionId);
+      const stored = projection(record);
+      if (stored.status === 'rejected' || stored.status === 'stale') return stored;
+      try { await checkedView(decisionId); return stored; }
+      catch (error) {
+        if (error instanceof ApprovalServiceError && error.outcome === 'stale') return { ...stored, status: 'stale', reason: error.reasonCode };
+        throw error;
+      }
+    }),
     list: taskId => bounded(() => { task(taskId); const current = control(); return { control: current, decisionId: current.pendingDecisionId }; }),
     show: (taskId, decisionId) => bounded(async () => { task(taskId); const view = await checkedView(decisionId); return { control: control(), binding: projection(view.record), presentation: view.bundle.summary }; }),
     inspect: (taskId, decisionId, page) => bounded(async () => {
@@ -345,7 +396,7 @@ function plainContextData(value: unknown, depth = 0): boolean {
   if (value === null || typeof value === 'boolean') return true;
   if (typeof value === 'string') return value.length <= 65536;
   if (typeof value === 'number') return Number.isFinite(value);
-  if (typeof value !== 'object') return false;
+  if (typeof value !== 'object' || isProxy(value)) return false;
   const prototype = Object.getPrototypeOf(value);
   if (Array.isArray(value) ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null) return false;
   const descriptors = Object.getOwnPropertyDescriptors(value);

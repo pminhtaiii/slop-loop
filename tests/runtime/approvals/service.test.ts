@@ -6,6 +6,7 @@ import { computeActionDigest } from '../../../src/contracts/foundation/uc03.ts';
 import { buildPresentation } from '../../../src/approvals/presentation.ts';
 import { createApprovalService } from '../../../src/approvals/service.ts';
 import { createMockApprovalStore } from '../support/uc05/mock-store.ts';
+import { createMockActivityControl } from '../support/uc05/mock-context.ts';
 import type { ApprovalContext } from '../../../src/approvals/service.ts';
 
 const digest = `sha256:${'a'.repeat(64)}`;
@@ -47,6 +48,203 @@ function setup() {
   const service = createApprovalService({ taskId: 'task-1', profile, store, context, operator, now: () => '2026-10-19T00:00:00Z' });
   return { service, store, context, operator, setContext: (value: ApprovalContext) => { current = value; }, current: () => current };
 }
+
+test('repository drift projects approved consent stale without rewriting its immutable history', async () => {
+  const scenario = setup();
+  await scenario.service.requestDecision(binding);
+  const view = await scenario.service.show('task-1', 'decision-1');
+  await scenario.service.decide({ taskId: 'task-1', decisionId: 'decision-1', taskVersion: view.control.version, requestVersion: 1, presentationDigest: view.presentation.presentationDigest, decision: 'approve', responseKey: 'response-1' });
+  const history = scenario.store.readHistory('task-1').value;
+  const original = scenario.store.readRequest('decision-1').value;
+  const changed = `sha256:${'b'.repeat(64)}`;
+  scenario.setContext({ ...scenario.current(), freshness: { ...freshness, currentRepositoryRevisionDigest: changed }, facts: { ...scenario.current().facts, repositoryRevisionDigest: changed } });
+  const projected = await scenario.service.resolve('decision-1');
+  assert.equal(projected.status, 'stale');
+  assert.equal(projected.reason, 'changed-repositoryRevisionDigest');
+  assert.equal(await scenario.service.validateBinding({ ...binding, status: 'approved' }), false);
+  assert.deepEqual(scenario.store.readRequest('decision-1').value, original);
+  assert.deepEqual(scenario.store.readHistory('task-1').value, history);
+  await scenario.service.requestDecision({ ...binding, decisionId: 'decision-2', repositoryRevisionDigest: changed });
+  assert.equal((await scenario.service.list('task-1')).control.pendingDecisionId, 'decision-2');
+  assert.equal((await scenario.service.resolve('decision-2')).status, 'pending');
+  assert.equal((await scenario.service.resolve('decision-1')).status, 'stale');
+});
+
+test('stale pending request is replaced under its waiting hold with a fresh decision and retained assessment', async () => {
+  const scenario = setup();
+  await scenario.service.requestDecision(binding);
+  const oldView = await scenario.service.show('task-1', 'decision-1');
+  const original = scenario.store.readRequest('decision-1').value;
+  const changed = `sha256:${'b'.repeat(64)}`;
+  scenario.setContext({ ...scenario.current(), freshness: { ...freshness, currentRepositoryRevisionDigest: changed }, facts: { ...scenario.current().facts, repositoryRevisionDigest: changed } });
+  await assert.rejects(scenario.service.requestDecision({ ...binding, repositoryRevisionDigest: changed }));
+  const replacement = { ...binding, decisionId: 'decision-2', repositoryRevisionDigest: changed };
+  assert.equal((await scenario.service.requestDecision(replacement)).status, 'pending');
+  const waiting = (await scenario.service.list('task-1')).control;
+  assert.equal(waiting.mode, 'waiting');
+  assert.equal(waiting.pendingDecisionId, 'decision-2');
+  assert.equal(waiting.epoch, oldView.control.epoch + 1);
+  assert.equal((await scenario.service.resolve('decision-1')).status, 'stale');
+  assert.deepEqual(scenario.store.readRequest('decision-1').value, original);
+  assert.equal(scenario.store.readHistory('task-1').value?.assessments[0]?.status, 'stale');
+  assert.equal(scenario.store.readHistory('task-1').value?.resolutions.length, 0);
+  await assert.rejects(scenario.service.decide({ taskId: 'task-1', decisionId: 'decision-1', taskVersion: oldView.control.version, requestVersion: 1, presentationDigest: oldView.presentation.presentationDigest, decision: 'approve', responseKey: 'late-old' }));
+  assert.deepEqual((await scenario.service.list('task-1')).control, waiting);
+  scenario.setContext({ ...scenario.current(), freshness, facts: { ...scenario.current().facts, repositoryRevisionDigest: digest } });
+  assert.equal((await scenario.service.resolve('decision-1')).status, 'stale', 'retired decision stays stale even if repository returns to its original digest');
+});
+
+test('companion repository mapping drift is a concrete stale projection and cannot silently rebind', async () => {
+  const scenario = setup();
+  await scenario.service.requestDecision(binding);
+  scenario.setContext({ ...scenario.current(), facts: { ...scenario.current().facts, repositoryId: 'repository-foreign' } });
+  const stale = await scenario.service.resolve('decision-1');
+  assert.equal(stale.status, 'stale');
+  assert.equal(stale.reason, 'changed-repository-mapping');
+  await assert.rejects(scenario.service.requestDecision({ ...binding, decisionId: 'decision-2' }));
+  assert.equal(scenario.store.readRequest('decision-2').value, null);
+  assert.equal((await scenario.service.list('task-1')).control.pendingDecisionId, 'decision-1');
+});
+
+test('binding arguments cannot run accessors while requesting or validating authority', async () => {
+  const scenario = setup();
+  let reads = 0;
+  const malicious = Object.defineProperty({ ...binding }, 'decisionId', { enumerable: true, get: () => { reads += 1; return 'decision-1'; } });
+  await assert.rejects(scenario.service.requestDecision(malicious));
+  assert.equal(await scenario.service.validateBinding(malicious), false);
+  assert.equal(reads, 0);
+  assert.equal(scenario.store.readRequest('decision-1').value, null);
+});
+
+test('proxy binding arguments deny authority before running reflective traps', async () => {
+  const scenario = setup();
+  let reads = 0;
+  const malicious = new Proxy(binding, { ownKeys: target => { reads += 1; return Reflect.ownKeys(target); } });
+  await assert.rejects(scenario.service.requestDecision(malicious));
+  assert.equal(await scenario.service.validateBinding(malicious), false);
+  assert.equal(reads, 0);
+  assert.equal(scenario.store.readRequest('decision-1').value, null);
+});
+
+test('journal and request accessors are rejected before reading persisted authority', async () => {
+  const scenario = setup();
+  await scenario.service.requestDecision(binding);
+  let reads = 0;
+  for (const operation of ['readRequest', 'readHistory'] as const) {
+    const store = { ...scenario.store, [operation]: () => Object.defineProperty({}, 'value', { enumerable: true, get: () => { reads += 1; throw new Error('untrusted accessor'); } }) };
+    const service = createApprovalService({ taskId: 'task-1', profile, store, context: scenario.context, operator: scenario.operator });
+    await assert.rejects(service.resolve('decision-1'));
+  }
+  assert.equal(reads, 0);
+});
+
+test('actual service projects every exact plan freshness change stale and refuses the original approval', async () => {
+  const scenario = setup();
+  const plan: NormalizedAction = { actionId: 'plan-1', kind: 'approve_fix_plan', planVersion: 1, strategyDigest: digest, diagnosisEvidenceRefs: ['evidence-1'], checkSetDigest: digest };
+  const planFields = { planVersion: 1, strategyDigest: digest, baselineRef: 'baseline-1', evidenceRefs: ['evidence-1'], criteriaDigest: digest, checkSetDigest: digest };
+  const planBinding = { ...binding, ...planFields, actionKind: 'fix_plan' as const, normalizedActionDigest: computeActionDigest(plan) };
+  const planFreshness = { ...freshness, currentNormalizedActionDigest: computeActionDigest(plan), currentPlanVersion: 1, currentStrategyDigest: digest, currentBaselineRef: 'baseline-1', currentEvidenceRefs: ['evidence-1'], currentCriteriaDigest: digest, currentCheckSetDigest: digest };
+  const current = { ...scenario.current(), action: plan, facts: { ...scenario.current().facts, registeredActionDigest: computeActionDigest(plan), command: null }, freshness: planFreshness };
+  scenario.setContext(current);
+  await scenario.service.requestDecision(planBinding);
+  const view = await scenario.service.show('task-1', 'decision-1');
+  await scenario.service.decide({ taskId: 'task-1', decisionId: 'decision-1', taskVersion: view.control.version, requestVersion: 1, presentationDigest: view.presentation.presentationDigest, decision: 'approve', responseKey: 'approve-plan' });
+  const approved = await scenario.service.resolve('decision-1');
+  assert.equal(await scenario.service.validateBinding(approved), true);
+  const history = scenario.store.readHistory('task-1').value;
+  for (const [field, value] of Object.entries(planFreshness)) {
+    const changed = typeof value === 'number' ? 2 : Array.isArray(value) ? ['different-evidence'] : String(value).startsWith('sha256:') ? `sha256:${'b'.repeat(64)}` : 'different';
+    scenario.setContext({ ...current, freshness: { ...planFreshness, [field]: changed } });
+    assert.equal((await scenario.service.resolve('decision-1')).status, 'stale', field);
+    assert.equal(await scenario.service.validateBinding(approved), false, field);
+    assert.deepEqual(scenario.store.readHistory('task-1').value, history);
+  }
+  const changedRevision = `sha256:${'b'.repeat(64)}`;
+  scenario.setContext({ ...current, freshness: { ...planFreshness, currentRepositoryRevisionDigest: changedRevision }, facts: { ...current.facts, repositoryRevisionDigest: changedRevision } });
+  const refreshed = { ...planBinding, decisionId: 'plan-refreshed', repositoryRevisionDigest: changedRevision };
+  await scenario.service.requestDecision(refreshed);
+  const stored = scenario.store.readRequest('plan-refreshed').value?.binding;
+  assert.equal(stored?.planVersion, 1);
+  assert.equal(stored?.strategyDigest, digest);
+  assert.equal(stored?.baselineRef, 'baseline-1');
+  assert.deepEqual(stored?.evidenceRefs, ['evidence-1']);
+  assert.deepEqual(scenario.store.readHistory('task-1').value?.resolutions, history?.resolutions);
+});
+
+test('racing contradictory operator responses preserve one terminal decision and duplicate delivery is harmless', async () => {
+  const scenario = setup();
+  await scenario.service.requestDecision(binding);
+  const view = await scenario.service.show('task-1', 'decision-1');
+  const response = { taskId: 'task-1', decisionId: 'decision-1', taskVersion: view.control.version, requestVersion: 1, presentationDigest: view.presentation.presentationDigest, decision: 'approve', responseKey: 'race' };
+  const outcomes = await Promise.allSettled([scenario.service.decide(response), scenario.service.decide({ ...response, decision: 'reject', responseKey: 'other-race' })]);
+  assert.equal(outcomes.filter(result => result.status === 'fulfilled').length, 1);
+  const history = scenario.store.readHistory('task-1').value;
+  assert.equal(history?.resolutions.length, 1);
+  assert.equal(history?.resolutions[0]?.decision, 'approved');
+  assert.equal((await scenario.service.decide(response)).outcome, 'ok');
+  assert.deepEqual(scenario.store.readHistory('task-1').value, history);
+});
+
+test('explicit direction after rejection requires a fresh decision and preserves rejection across drift', async () => {
+  const scenario = setup();
+  const service = createApprovalService({ taskId: 'task-1', profile, store: scenario.store, context: { ...scenario.context, loadForTask: async () => ({ taskId: 'task-1', repositoryId: 'repository-1', workspaceId: 'workspace-1', runId: 'run-1', safeScopeRef: 'scope-1', policyIdentity: identity }) }, activity: createMockActivityControl(profile), operator: scenario.operator });
+  await service.requestDecision(binding);
+  const view = await service.show('task-1', 'decision-1');
+  await service.decide({ taskId: 'task-1', decisionId: 'decision-1', taskVersion: view.control.version, requestVersion: 1, presentationDigest: view.presentation.presentationDigest, decision: 'reject', responseKey: 'reject' });
+  const history = scenario.store.readHistory('task-1').value?.resolutions;
+  await assert.rejects(service.requestDecision({ ...binding, decisionId: 'decision-2' }));
+  const rejected = (await service.list('task-1')).control;
+  await service.control({ taskId: 'task-1', taskVersion: rejected.version, direction: 'revise', responseKey: 'revise' });
+  const changed = `sha256:${'b'.repeat(64)}`;
+  scenario.setContext({ ...scenario.current(), freshness: { ...freshness, currentRepositoryRevisionDigest: changed }, facts: { ...scenario.current().facts, repositoryRevisionDigest: changed } });
+  assert.equal((await service.resolve('decision-1')).status, 'rejected');
+  await service.requestDecision({ ...binding, decisionId: 'decision-2', repositoryRevisionDigest: changed });
+  assert.equal((await service.resolve('decision-2')).status, 'pending');
+  assert.equal(await service.validateBinding({ ...binding, status: 'approved' }), false);
+  assert.deepEqual(scenario.store.readHistory('task-1').value?.resolutions, history);
+});
+
+test('policy configuration and continuation drift invalidate the stored request identity', async () => {
+  for (const dimension of ['configId', 'configVersion', 'continuationRef'] as const) {
+    const scenario = setup();
+    await scenario.service.requestDecision(binding);
+    const changedIdentity = dimension === 'continuationRef' ? identity : { ...identity, [dimension]: 'changed' };
+    scenario.setContext({ ...scenario.current(), facts: { ...scenario.current().facts, policyIdentity: changedIdentity, continuationRef: dimension === 'continuationRef' ? 'continuation-new' : 'continuation-1' } });
+    const service = createApprovalService({ taskId: 'task-1', profile: { ...profile, policyIdentity: changedIdentity }, store: scenario.store, context: scenario.context, operator: scenario.operator });
+    assert.equal((await service.resolve('decision-1')).status, 'stale', dimension);
+    assert.equal(await service.validateBinding({ ...binding, status: 'approved' }), false);
+    assert.equal(scenario.store.readRequest('decision-1').value?.configId, 'config-1');
+    assert.equal(scenario.store.readRequest('decision-1').value?.configVersion, '1');
+    assert.equal(scenario.store.readRequest('decision-1').value?.continuationRef, 'continuation-1');
+  }
+});
+
+test('missing trusted decision context denies stored approval and fresh request creation', async () => {
+  const scenario = setup();
+  await scenario.service.requestDecision(binding);
+  const view = await scenario.service.show('task-1', 'decision-1');
+  await scenario.service.decide({ taskId: 'task-1', decisionId: 'decision-1', taskVersion: view.control.version, requestVersion: 1, presentationDigest: view.presentation.presentationDigest, decision: 'approve', responseKey: 'response-1' });
+  const service = createApprovalService({ taskId: 'task-1', profile, store: scenario.store, context: { ...scenario.context, loadForDecision: async () => undefined }, operator: scenario.operator });
+  assert.equal(await service.validateBinding({ ...binding, status: 'approved' }), false);
+  await assert.rejects(service.resolve('decision-1'));
+  await assert.rejects(service.requestDecision({ ...binding, decisionId: 'decision-2' }));
+  assert.equal(scenario.store.readRequest('decision-2').value, null);
+  assert.equal(scenario.store.readHistory('task-1').value?.resolutions[0]?.decision, 'approved');
+});
+
+test('failed stale replacement retains the old waiting hold and creates no decision or assessment', async () => {
+  const scenario = setup();
+  await scenario.service.requestDecision(binding);
+  const waiting = (await scenario.service.list('task-1')).control;
+  const changed = `sha256:${'b'.repeat(64)}`;
+  scenario.setContext({ ...scenario.current(), freshness: { ...freshness, currentRepositoryRevisionDigest: changed }, facts: { ...scenario.current().facts, repositoryRevisionDigest: changed } });
+  scenario.store.failNext('replaceStalePending');
+  await assert.rejects(scenario.service.requestDecision({ ...binding, decisionId: 'decision-2', repositoryRevisionDigest: changed }));
+  assert.deepEqual((await scenario.service.list('task-1')).control, waiting);
+  assert.equal(scenario.store.readRequest('decision-2').value, null);
+  assert.equal(scenario.store.readHistory('task-1').value?.assessments.length, 0);
+  assert.equal(scenario.store.readHistory('task-1').value?.resolutions.length, 0);
+});
 
 test('canonical service atomically pauses a required request and only stored human consent admits it', async () => {
   const { service, store } = setup();
