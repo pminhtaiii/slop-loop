@@ -22,7 +22,7 @@
 
 ## Implementation and real-execution gates
 
-1. **G-AUTH**: Phase 1 / T001 and Phase 2 / T002–T004 are authorized by the explicit user instructions above. T005 onward requires separate authorization. Contract agreement alone does not release additional work.
+1. **G-AUTH**: Phase 1 / T001, Phase 2 / T002–T004 and Phase 3 / T005–T007 are authorized by the explicit user instructions recorded here. T008 onward requires separate authorization. Contract agreement alone does not release additional work.
 2. **G-CONTRACT**: Satisfied for the current logical contract/ownership set by the explicit user-relayed agreement above. Companion records, transactions, claim/fence timing, host operator authority, strict plan compatibility and owned paths are agreed; actual adapters and execution evidence are not implied.
 3. **G-PROFILE**: Trusted finite policy/execution/diagnostic/retention and supported-host profiles selected by their owners. Test vector values cannot stand in for production configuration.
 4. **G-REAL**: Real UC-04 store, task-wide provider/scheduler/tool admission, executor containment and claim/reconciliation are delivered with owner ledger/revision evidence. Mock provenance is rejected by production composition.
@@ -60,3 +60,14 @@ The accepted records are [interfaces](interfaces.md), [policy](policy.md), [CLI]
 T002 added companion record/profile validators and public-export tests; T003 added the versioned C01–C24 fixture/oracle registry; T004 added test-only store/context mocks and contract tests after T002 and T003 passed. The accepted logical contract and canonical UC-03 schema remain unchanged. Mock tests establish no persistence, production composition, real execution, or process-restart capability. Keep T005 onward and G-PROFILE/G-REAL/G-RESTART gated. This authorization did not include GitHub Issue updates, remote pushes, PR publication, or merge to a shared branch; task commits and integration remain local.
 
 **Current evidence**: The user explicitly confirmed the public test seams for T002–T004 on 2026-10-19. The seam/preflight notes and worker handoffs are retained in ignored `.agent-work/2026-10-19/uc05-phase2/`. T002 integrated at `d1452b3`, T003 at `ea555f2`, and T004 at `dbafa8a`; the canonical task ledger marks T001–T004 complete and T005–T022 unchecked. Focused checks and the runtime gate passed through T004 (471 runtime tests). The mocks are memory-only and record effect attempts without executing them; production profiles, real adapters and restart behavior remain unverified.
+
+## Phase 3 authorization and seams
+
+On 2026-10-19 (Asia/Saigon), after checking the merged contract-layout commits on both repositories, the user explicitly instructed "rồi giờ code cho phase 3 đi nhé". This releases exactly T005–T007, including the initial CLI and actual CLI subprocess tests with injected test-only dependencies. The user subsequently confirmed "xác nhận cả 4 seam" and requested correction of the old T002 contract path. The four confirmed test seams are:
+
+1. Public compiled-policy classification using an explicit finite profile, canonical action and trusted admission facts; precedence, argv grammar and breadth are observed, not real isolation.
+2. The unchanged four canonical ApprovalPort methods with fresh injected context, mock store and host operator capability; request/pause/decision behavior is observed, not durability.
+3. Public safe presentation and inspection output; five decision elements, digest identity, byte/page bounds and protected-data/terminal-injection rejection.
+4. Actual CLI subprocess list/show/inspect/decide with an explicitly injected test driver; arguments, safe output and exit behavior, without a production store or effect execution.
+
+The source contract locations after merged public PR #71 are `src/contracts/approvals/contracts.ts` and `src/contracts/foundation/uc03.ts`. Runtime modules remain under the T005–T007 owned `src/approvals/` paths. No contract version or accepted companion semantics is changed by the layout correction. T008 onward, production profiles/adapters, durable storage, real effects and restart evidence remain gated. Coordinator publication follows the standing contributor pilot separately; no merge is authorized. Task completion remains exclusively in tasks.md.

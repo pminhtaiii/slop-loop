@@ -2,7 +2,7 @@
 
 **Input**: [spec](spec.md), [plan](plan.md), [research](research.md), [data model](data-model.md), and [contracts](contracts/interfaces.md).
 
-**Status**: Phase 1 / T001 and authorized Phase 2 foundation tasks T002–T004 completed and verified on 2026-10-19 (Asia/Saigon). T005–T022 remain unauthorized and unchecked. Real tasks also need G-PROFILE/G-REAL/G-RESTART as applicable.
+**Status**: Phase 1 / T001 and authorized Phase 2 foundation tasks T002–T004 completed and verified on 2026-10-19 (Asia/Saigon). Phase 3 T005–T007 is separately authorized with all four TDD seams explicitly confirmed by the user; T005–T006 are integrated and verified, while T007 remains unchecked until integration and verification. T008–T022 remain unauthorized. Real tasks also need G-PROFILE/G-REAL/G-RESTART as applicable.
 
 **Tests**: Required by FR-022 and repository TDD guidance. Write behavioral RED against actual owned SUT exports before implementation; create neutral no-effect skeletons only where needed. Import/type/fixture failures and tests against a mocked SUT are not behavioral RED. Coordinator alone changes checkboxes after integration and required checks. Future source paths below are not implemented by this package.
 
@@ -21,10 +21,10 @@
 
 **Goal**: Stable executable record contracts and all case inputs before feature implementation.
 
-- [x] T002 [P] Add companion record/profile validators test-first in src/approvals/contracts.ts and tests/runtime/approvals/contracts.test.ts.
+- [x] T002 [P] Add companion record/profile validators test-first in src/contracts/approvals/contracts.ts and tests/runtime/approvals/contracts.test.ts.
   - **Owner**: Trong Tan / contracts lane.
   - **Dependencies**: T001.
-  - **Owned Paths**: src/approvals/contracts.ts; tests/runtime/approvals/contracts.test.ts.
+  - **Owned Paths**: src/contracts/approvals/contracts.ts; tests/runtime/approvals/contracts.test.ts.
   - **Acceptance Checks**: Validate all data-model records, safe results, versions/epochs/IDs, unknown fields, finite profiles, pending-only creation and complete trusted identities. Reuse unchanged canonical types/validators. C04/C12/C20/C22 vectors pass; no persistence implementation.
   - **Current Evidence**: Integrated merge `d1452b3fe0191a3d1f26a175834266327b5f37f3` contains only the two owned paths. `node --test tests/runtime/approvals/contracts.test.ts` passed 11/11; `corepack pnpm typecheck`, `corepack pnpm lint`, and `corepack pnpm build` exited 0; `corepack pnpm test:runtime` passed 463/463. Worker recorded a sparse-array behavioral RED before the fix. No persistence or runtime execution capability is claimed.
 
@@ -48,17 +48,19 @@
 
 **Independent Test**: C01–C05/C21–C23 prove expected permission, safe prompt and zero premature effects using the actual service with injected mock dependencies.
 
-- [ ] T005 [US1] Write classification behavioral RED in tests/runtime/approvals/policy.test.ts against src/approvals/policy.ts.
+- [x] T005 [US1] Write classification behavioral RED in tests/runtime/approvals/policy.test.ts against src/approvals/policy.ts.
   - **Owner**: Trong Tan / policy tests.
   - **Dependencies**: T004.
   - **Owned Paths**: tests/runtime/approvals/policy.test.ts; src/approvals/policy.ts.
   - **Acceptance Checks**: Establish loadable no-effect policy skeleton; allowed/required expectations fail behaviorally. Cover full precedence table, forbidden overrides, command argv grammar, unsupported facts and configured breadth; freeze tests/source handoff to T006.
+  - **Current Evidence**: Integrated at `93effc72cf0edf2786d7f6f90c12617a607b6b9f` after independent merger review. Fifteen public-seam behavioral tests exercise the actual classifier; retained RED/GREEN slices include configured command/patch permission, forbidden precedence, finite trusted facts, plan prerequisites, breadth, exact argv rules, immutable policy and malformed-role/attached-eval regressions. Import/type failures are not counted as behavioral RED. Focused policy plus prior foundation suites passed 39/39; required integrated runtime validation passed typecheck, lint, build and 596 compiled tests. Evidence is retained locally under `.agent-work/2026-10-19/uc05-phase3/policy/`; no real enforcement or execution claim.
 
-- [ ] T006 [US1] Implement deterministic in-process policy compilation in src/approvals/policy.ts.
+- [x] T006 [US1] Implement deterministic in-process policy compilation in src/approvals/policy.ts.
   - **Owner**: Trong Tan / policy implementation.
   - **Dependencies**: T005.
   - **Owned Paths**: src/approvals/policy.ts.
   - **Acceptance Checks**: T005 vectors green with no LLM/network/process calls or whole-repo scans. Consume trusted admission facts, canonical exact digests and explicit finite profiles; no shell equivalence claims or permissive defaults.
+  - **Current Evidence**: Same accepted integration and checks as T005. `compilePolicy` validates and freezes an explicit fixture profile; classification consumes action/policy-bound trusted facts and unchanged canonical validators. The closed argv rule matches the complete configured tuple; malformed/unsupported inputs deny with safe typed outcomes, and forbidden/evaluation forms cannot be approved by configuration. No filesystem scan, subprocess, network, model or effect dispatch is introduced. Real isolation, durable adapters and production profiles remain gated; T007 is the next authorized dependency.
 
 - [ ] T007 [US1] Implement initial ApprovalPort service, bounded presentation and decision CLI test-first in src/approvals/service.ts, src/approvals/presentation.ts and src/approvals/cli.ts.
   - **Owner**: Trong Tan / service and operator boundary.

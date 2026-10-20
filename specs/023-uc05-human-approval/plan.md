@@ -2,7 +2,7 @@
 
 **Branch**: `feat/023-uc05-human-approval-spec` | **Date**: 2026-10-19 (Asia/Saigon) | **Spec**: [spec.md](spec.md)
 
-**Status**: Phase 1 / T001 and authorized Phase 2 foundations T002–T004 are complete locally through integration commit `dbafa8a` on 2026-10-19 (Asia/Saigon). T005 onward, production profiles and real runtime integration remain gated. See [decisions](contracts/decisions.md) and the [task ledger](tasks.md).
+**Status**: Phase 1 / T001 and authorized Phase 2 foundations T002–T004 are complete locally through integration commit `dbafa8a` on 2026-10-19 (Asia/Saigon). Phase 3 T005–T007 is separately authorized with four user-confirmed TDD seams. T008 onward, production profiles and real runtime integration remain gated. See [decisions](contracts/decisions.md) and the [task ledger](tasks.md).
 
 ## Summary
 
@@ -39,7 +39,7 @@ The constitution remains an unratified placeholder. Governance comes from [AGENT
 | Shared contracts | Canonical schema 0.1.0 unchanged; companion logical contract agreed; T002 validators and test-only T004 ports are implemented | Real store, production composition and runtime conformance remain gated |
 | Durable control | Proposed UC-04 transactions and shared admission epochs | Real store, scheduler/model/executor composition before integration |
 | Evidence | Local mocks, CLI, real tools and restart have distinct levels | Required cases observed; unrun cases prevent VERIFIED claims |
-| Authorization | Phase 1 / T001 and Phase 2 / T002–T004 authorized; shared agreement confirmed | T005 onward needs separate authorization; production execution remains separately gated |
+| Authorization | T001–T007 authorized in separate phases; shared agreement and Phase 3 test seams confirmed | T008 onward needs separate authorization; production execution remains separately gated |
 
 Recheck these gates after design changes; a clean planning audit does not satisfy external delivery or authorization gates.
 
@@ -54,8 +54,9 @@ Recheck these gates after design changes; a clean planning audit does not satisf
 Proposed owned paths, not files implemented by this plan:
 
 ```text
-src/approvals/
+src/contracts/approvals/
   contracts.ts       # companion records, validation and typed safe outcomes
+src/approvals/
   policy.ts          # deterministic policy compilation/classification
   service.ts         # canonical ApprovalPort implementation
   control.ts         # pause/decision/continuation coordination through ports
