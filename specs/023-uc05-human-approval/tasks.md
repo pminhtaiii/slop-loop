@@ -81,17 +81,19 @@ Final review found an in-scope T007 retry defect and two standards corrections. 
 
 **Subsequent authorization**: The user separately requested implementation and GitHub push, then confirmed all three Phase 4 seams; see [decisions](contracts/decisions.md#phase-4-implementation-authorization). Execute only T008–T010 with mock dependencies; later phases and real delivery gates remain intact.
 
-- [ ] T008 [US2] Write task-control behavioral RED in tests/runtime/approvals/control.test.ts against src/approvals/control.ts.
+- [x] T008 [US2] Write task-control behavioral RED in tests/runtime/approvals/control.test.ts against src/approvals/control.ts.
   - **Owner**: Trong Tan / control tests.
   - **Dependencies**: T007.
   - **Owned Paths**: tests/runtime/approvals/control.test.ts; src/approvals/control.ts.
   - **Acceptance Checks**: Neutral loadable SUT fails valid pause/decision/direction expectations; tests cover all-agent fencing, in-flight cancellation/uncertainty, unrelated tasks, equivalent-ID retries and failed transaction/no runnable gap. Hand source to T009.
+  - **Current Evidence**: Loadable neutral tracer and subsequent public coordinator/service RED/GREEN slices retained locally; corrected candidate independently integrated at `6ec06a68b2d9fa59de52bdc17a6f956bd08f663a`. Source and emitted approval suites each passed 82/82, typecheck/build/scoped lint passed. Representative mock callers exercise the actual coordinator; no real scheduler/executor or durability claim.
 
-- [ ] T009 [US2] Implement pause/rejection/direction coordination through companion ports in src/approvals/control.ts and src/approvals/service.ts.
+- [x] T009 [US2] Implement pause/rejection/direction coordination through companion ports in src/approvals/control.ts and src/approvals/service.ts.
   - **Owner**: Trong Tan / control implementation.
   - **Dependencies**: T008.
   - **Owned Paths**: src/approvals/control.ts; src/approvals/service.ts; tests/runtime/approvals/control.test.ts; tests/runtime/support/uc05/mock-store.ts; tests/runtime/approvals/mock-ports.test.ts.
   - **Acceptance Checks**: T008 tracer passes, then extend one behavioral RED/GREEN slice at a time. All mutation/control operations obey CAS/idempotency, explicit direction and hold rules. Extend only mock-store direction retry conformance and its public-port tests as identified in plan.md; no service-local retry cache or duplicate UC-04 transaction engine. An identical direction retry preserves original receipt and newer holds; a new stale response conflicts. Feedback cannot resume, end cannot discard uncertainty, storage/activity failure cannot grant authority.
+  - **Current Evidence**: Same independently accepted integration `6ec06a6`: five owned paths, 441 reviewable lines. Actual service wires pending/rejection/end to injected mock activity; store-owned direction retry preserves original metadata and later holds. Failure/expiry/uncertainty remains closed, final reload revalidates identity/schema/claims/version/epoch, cancellation never proves rollback. All 82 source/emitted approval checks and typecheck/build/scoped lint passed; detailed local evidence is retained in the Phase 4 implementation session. T010 remains separate; canonical contracts and foreign runtime modules are unchanged.
 
 - [ ] T010 [US2] Add explicit resume/revise/end operator commands and terminal-loss handling in src/approvals/cli.ts and tests/runtime/approvals/cli.test.ts.
   - **Owner**: Trong Tan / CLI control.
