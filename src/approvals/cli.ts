@@ -8,6 +8,7 @@ export interface CliResult { readonly exitCode: number; readonly output: string 
 const flags: Readonly<Record<string, readonly string[]>> = {
   list: ['task'], show: ['task', 'request'], inspect: ['task', 'request', 'page'],
   decide: ['task', 'request', 'task-version', 'request-version', 'presentation-digest', 'decision', 'response-key'],
+  control: ['task', 'task-version', 'direction', 'response-key'],
 };
 function exitCode(outcome: SafeOperationOutcome): number {
   if (outcome === 'ok') return 0;
@@ -40,7 +41,7 @@ export async function runApprovalCli(argv: readonly string[], service?: Approval
     const taskId = parsed.get('task') ?? '';
     const decisionId = parsed.get('request') ?? '';
     const id = (value: string): boolean => /^[A-Za-z0-9][A-Za-z0-9._:-]{0,126}$/.test(value);
-    if (!id(taskId) || (command !== 'list' && !id(decisionId))) return result('invalid');
+    if (!id(taskId) || (command !== 'list' && command !== 'control' && !id(decisionId))) return result('invalid');
     const integer = (key: string): number => {
       const value = parsed.get(key) ?? '';
       return /^[1-9][0-9]{0,15}$/.test(value) && Number.isSafeInteger(Number(value)) ? Number(value) : 0;
@@ -49,10 +50,15 @@ export async function runApprovalCli(argv: readonly string[], service?: Approval
     if (command === 'decide' && (integer('task-version') === 0 || integer('request-version') === 0 ||
       !/^sha256:[0-9a-f]{64}$/.test(parsed.get('presentation-digest') ?? '') ||
       !['approve', 'reject'].includes(parsed.get('decision') ?? '') || !id(parsed.get('response-key') ?? ''))) return result('invalid');
+    if (command === 'control' && (integer('task-version') === 0 || !['resume', 'revise', 'end'].includes(parsed.get('direction') ?? '') || !id(parsed.get('response-key') ?? ''))) return result('invalid');
     if (!service) return result('unavailable');
     if (command === 'list') return result('ok', await service.list(taskId));
     if (command === 'show') return result('ok', await service.show(taskId, decisionId));
     if (command === 'inspect') return result('ok', await service.inspect(taskId, decisionId, integer('page')));
+    if (command === 'control') {
+      const response = await service.control({ taskId, taskVersion: integer('task-version'), direction: parsed.get('direction'), responseKey: parsed.get('response-key') });
+      return result(response.outcome, response, response.safeReasonCode === 'direction-recorded');
+    }
     const response = await service.decide({ taskId, decisionId, taskVersion: integer('task-version'), requestVersion: integer('request-version'), presentationDigest: parsed.get('presentation-digest'), decision: parsed.get('decision'), responseKey: parsed.get('response-key') });
     // A recorded rejection exits successfully; its retained task hold is in the safe metadata.
     return result(response.outcome, response, response.safeReasonCode === 'decision-recorded');
