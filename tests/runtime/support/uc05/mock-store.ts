@@ -142,6 +142,7 @@ export function createMockApprovalStore(input: CreateMockApprovalStoreInput): Mo
   const resolutions = new Map<string, HumanResolution>();
   const assessments: BindingAssessment[] = [];
   const directions: DeveloperDirection[] = [];
+  const directionOperators = new Map<string, unknown>();
   const claims = new Map<string, DispatchClaim>();
   const events: DecisionEvent[] = [];
   const failedNext = new Set<MockStoreOperation>();
@@ -372,6 +373,13 @@ export function createMockApprovalStore(input: CreateMockApprovalStoreInput): Mo
     const taskId = typeof rawDirection['taskId'] === 'string' ? rawDirection['taskId'] : '';
     const control = controlFor(taskId);
     if (!control) return resultFor(currentOrUnknown(taskId), 'invalid', 'unknown-task');
+    const prior = directions.find(value => value.taskId === taskId && value.responseKey === rawDirection['responseKey']);
+    if (prior) {
+      const validated = validateDeveloperDirection(rawDirection, { expectedTaskId: taskId, expectedVersion: prior.expectedVersion, expectedEpoch: prior.expectedEpoch, trustedOperator: candidate.trustedOperator });
+      const originalEvent = events.find(event => event.directionId === prior.directionId && event.taskId === taskId && event.type === 'developer-direction-recorded');
+      if (!validated.ok || candidate.expectedControlVersion !== prior.expectedVersion || !isDeepStrictEqual(candidate.trustedOperator, directionOperators.get(prior.directionId)) || !isDeepStrictEqual(rawDirection, prior) || !isDeepStrictEqual(candidate.event, originalEvent)) return resultFor<DeveloperDirection>(control, 'conflict', 'direction-response-conflict');
+      return resultFor(control, prior.direction === 'end' ? 'paused' : 'ok', 'same-direction-idempotent-retry', freezeCopy(prior), null, null, originalEvent?.eventId ?? null);
+    }
     const directionResult = validateDeveloperDirection(rawDirection, {
       expectedTaskId: taskId,
       expectedVersion: control.version,
@@ -401,6 +409,7 @@ export function createMockApprovalStore(input: CreateMockApprovalStoreInput): Mo
       reasonCode: directionResult.value.direction === 'end' ? 'developer-ended' : 'developer-direction-recorded',
     });
     directions.push(freezeCopy(directionResult.value));
+    directionOperators.set(directionResult.value.directionId, freezeCopy(candidate.trustedOperator));
     controls.set(taskId, nextControl);
     events.push(freezeCopy(event));
     return resultFor(nextControl, nextMode === 'ended' ? 'paused' : 'ok', 'developer-direction-recorded', freezeCopy(directionResult.value), null, null, event.eventId);

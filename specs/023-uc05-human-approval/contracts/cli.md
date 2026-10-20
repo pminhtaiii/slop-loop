@@ -1,6 +1,6 @@
 # Trusted Operator CLI: UC-05
 
-**Status**: Logical protocol agreed through T001; see [decisions](decisions.md). Authorized T007 supplies initial list/show/inspect/decide parsing and actual subprocess tests through explicit mock composition. Direct executable entry is unconfigured and returns unavailable. Control commands remain gated at T010; real connection to UC-04 is gated at T020. This introduces no project-wide CLI framework.
+**Status**: Logical protocol agreed through T001; see [decisions](decisions.md). T007 and separately authorized T010 supply list/show/inspect/decide/control parsing and actual subprocess tests through explicit mock composition. Direct executable entry is unconfigured and returns unavailable; real connection to UC-04 remains gated at T020. SIGINT/SIGTERM checks observe parent-retained mock snapshots, not durable runtime restart. This introduces no project-wide CLI framework.
 
 ## Trust and commands
 
@@ -39,3 +39,11 @@ Structured result metadata (if requested by a configured host adapter) contains 
 | 5 | Store unavailable, failed or uncertain; task remains non-runnable pending reconciliation |
 
 No command supports force, autoapprove, ignore-policy, reset-budget or direct tool execution. CLI parser tests use real subprocesses; storage/executor mock tests are labelled as such. T020 validates the host capability boundary and real store; T021 checks process/terminal interruption and durable pause retention.
+
+## Phase 4 control clarification (planning only)
+
+The existing control command has exactly four required selectors: task, task-version, direction and response-key. It has no request selector and must not inherit the decide parser's request requirement. Resume/revise can release only a rejection hold with healthy records and no outstanding claims; waiting, recovery-blocked and ended modes remain blocked. End is accepted from any non-ended mode and preserves unresolved evidence. For a new response, host context supplies the registered safe scope and current epoch for CAS; missing scope is denial, not an implicit active task or caller-provided authority. For a retry, the same four argv selectors identify the accepted direction in authoritative history: validate the original submitted version/direction and reuse its stored scope/epoch and receipt identity, without rebinding to current state.
+
+A recorded or identically confirmed direction exits 0 with `approval-cli-recorded`, including end whose outcome remains paused. Unrecorded paused/conflict/stale outcomes retain exit 3 and `approval-cli-denied`; invalid, denied and unavailable/uncertain retain exits 2, 4 and 5. A duplicate response cannot clear later holds. No command runs repository work or creates approval.
+
+Input remains argv-only. Closed stdin/EOF supplies no response. Before a valid response commits, empty/malformed input, Ctrl+C or terminal loss supplies no consent and retains the pause. After commit, interruption cannot undo the accepted response; an uncertain result requires authoritative readback, not blind retry. Forced termination may provide only an OS signal/exit observation, without a structured envelope. Phase 4 proves these paths only with an explicit subprocess test driver and parent-retained mock state; durable terminal/restart acceptance remains T021.

@@ -1,6 +1,6 @@
 # Quickstart and Validation Guide: UC-05
 
-**Current state**: Separately authorized T001–T007 and the T023 correction of T007 are complete locally through `2b80b76`. The branch includes companion validators, the C01–C24 fixture registry, mock ports, deterministic policy and the initial ApprovalPort service with bounded presentation and list/show/inspect/decide CLI. The service has mock provenance; subprocess tests inject an explicit test-only composition. Direct CLI entry has no configured store/operator and returns unavailable. Later story/delivery tasks T008–T022 remain gated; no production, real-execution or restart capability is established.
+**Current state**: Separately authorized T001–T010 and the T023/T024 review corrections are complete locally through `c390fc6`. The branch includes validators, finite fixtures, mock ports, policy, ApprovalPort service/control, bounded presentation and list/show/inspect/decide/control CLI. Source/emitted approvals each passed 90/90; runtime typecheck/full lint/build and 647 compiled tests passed. The service has mock provenance; subprocess tests inject an explicit test-only composition. Direct CLI entry remains unavailable. T011–T022 and production/real-execution/actual restart capability remain gated.
 
 ## Validate this planning package now
 
@@ -31,6 +31,20 @@ pnpm run validate:runtime
 ```
 
 Record command and exit status, fixture/config versions and evidence scope; missing files or import errors are not behavioral RED. Existing canonical UC-03 tests remain unchanged. A runtime bootstrap pass does not establish production approval.
+
+## Validate Phase 4 locally
+
+Read the [Phase 4 plan](plan.md#phase-4-refinement--t008t010-planning-only), [local case obligations](contracts/acceptance.md#phase-4-local-evidence-boundary) and [authorization record](contracts/decisions.md#phase-4-implementation-authorization). The user confirmed the three seams before implementation; T008 → T009 → T010 were accepted sequentially. Task completion is recorded only in tasks.md.
+
+With the existing approved toolchain/dependencies, run:
+
+```powershell
+node --test tests/runtime/approvals/control.test.ts tests/runtime/approvals/mock-ports.test.ts tests/runtime/approvals/cli.test.ts
+node --test tests/runtime/approvals/*.test.ts
+node scripts/ci/check-runtime.mjs
+```
+
+The full focused command passed 90/90 and the runtime gate passed at the source integration above. Windows SIGINT/SIGTERM observations before mutation and after commit retain the same child's last mock-store snapshots in the parent; they establish no postmortem persistence or durable runtime restart. Record actual platform/exit/signal facts and any not-run paths. Direct CLI entry remains unavailable; no production connection is added.
 
 ## CLI approval/rejection scenarios (after T010/T018)
 
