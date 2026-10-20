@@ -93,6 +93,65 @@ for (const outcome of ['completed', 'cancelled'] as const) {
   });
 }
 
+test('denied resume while approval is pending does not block admission after approval', async () => {
+  const scenario = setup();
+  await scenario.service.requestDecision(binding);
+  const view = await scenario.service.show('task-1', 'decision-1');
+  assert.equal((await scenario.service.control({ taskId: 'task-1', taskVersion: view.control.version, direction: 'resume', responseKey: 'premature-resume' })).outcome, 'denied');
+  assert.equal(scenario.service.admitAttempt('pending', { ...claim('pending'), expectedControlVersion: 2, expectedEpoch: 2 }), false);
+  assert.equal((await scenario.service.decide({ taskId: 'task-1', decisionId: 'decision-1', taskVersion: view.control.version, requestVersion: 1, presentationDigest: view.presentation.presentationDigest, decision: 'approve', responseKey: 'approve' })).outcome, 'ok');
+  const approved = (await scenario.service.list('task-1')).control;
+  assert.equal(approved.mode, 'runnable');
+  assert.equal(approved.version, 3);
+  assert.equal(approved.epoch, 3);
+  assert.equal(scenario.service.admitAttempt('approved', { ...claim('approved'), expectedControlVersion: approved.version, expectedEpoch: approved.epoch }), true);
+});
+
+for (const [outcome, canAdmit] of [['denied', true], ['conflict', true], ['invalid', true], ['stale', true], ['unavailable', false], ['uncertain', false]] as const) {
+  test(`a ${outcome} decision receipt ${canAdmit ? 'permits' : 'blocks'} admission after a successful approval retry`, async () => {
+    let refuse = true;
+    const scenario = setup({ wrapStore: store => ({ ...store, resolvePending: input => {
+      if (!refuse) return store.resolvePending(input);
+      refuse = false;
+      const current = store.loadTaskControl('task-1');
+      return { safe: { ...current.safe, outcome, decisionId: 'decision-1', requestVersion: 1 }, value: null };
+    } }) });
+    await scenario.service.requestDecision(binding);
+    const view = await scenario.service.show('task-1', 'decision-1');
+    const command = { taskId: 'task-1', decisionId: 'decision-1', taskVersion: view.control.version, requestVersion: 1, presentationDigest: view.presentation.presentationDigest, decision: 'approve' as const, responseKey: 'approve' };
+    assert.equal((await scenario.service.decide(command)).outcome, outcome);
+    assert.equal(scenario.store.readHistory('task-1').value?.resolutions.length, 0);
+    assert.equal(scenario.service.admitAttempt('pending', { ...claim('pending'), expectedControlVersion: 2, expectedEpoch: 2 }), false);
+    assert.equal((await scenario.service.decide(command)).outcome, 'ok');
+    const approved = (await scenario.service.list('task-1')).control;
+    assert.equal(scenario.service.admitAttempt('approved', { ...claim('approved'), expectedControlVersion: approved.version, expectedEpoch: approved.epoch }), canAdmit);
+  });
+}
+
+for (const [outcome, canAdmit] of [['denied', true], ['conflict', true], ['invalid', true], ['stale', true], ['unavailable', false], ['uncertain', false]] as const) {
+  test(`a ${outcome} direction receipt ${canAdmit ? 'permits' : 'blocks'} admission after a recorded resume retry`, async () => {
+    let refuse = true;
+    const scenario = setup({ mode: 'rejected', wrapStore: store => ({ ...store, recordDirection: input => {
+      assert.ok(store.recordDirection);
+      if (!refuse) return store.recordDirection(input);
+      refuse = false;
+      return { safe: { ...store.loadTaskControl('task-1').safe, outcome }, value: null };
+    } }) });
+    const command = { taskId: 'task-1', taskVersion: 1, direction: 'resume', responseKey: 'resume' };
+    assert.equal((await scenario.service.control(command)).outcome, outcome);
+    assert.equal(scenario.store.readHistory('task-1').value?.directions.length, 0);
+    if (canAdmit) {
+      assert.equal((await scenario.service.control(command)).outcome, 'ok');
+    } else {
+      const external = createApprovalService({ taskId: 'task-1', profile, store: scenario.store, context: scenario.context, activity: scenario.activity, operator: scenario.operator });
+      assert.equal((await external.control(command)).outcome, 'ok');
+    }
+    const resumed = (await scenario.service.list('task-1')).control;
+    assert.equal(resumed.mode, 'runnable');
+    assert.equal(scenario.service.admitAttempt('resumed', { ...claim('resumed'), expectedControlVersion: resumed.version, expectedEpoch: resumed.epoch }), canAdmit);
+  });
+}
+
 async function reject(scenario: ReturnType<typeof setup>) {
   await scenario.service.requestDecision(binding);
   const view = await scenario.service.show('task-1', 'decision-1');

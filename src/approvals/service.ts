@@ -207,6 +207,8 @@ export function createApprovalService(options: ApprovalServiceOptions): Approval
         assertActive();
         if (!prior && direction.direction === 'end') coordinator.fence(committed, true);
         localAdmissionClosed = wasClosed;
+      } else if (['denied', 'conflict', 'invalid', 'stale'].includes(response.safe.outcome)) {
+        localAdmissionClosed = wasClosed;
       }
       return { schemaVersion: 'uc05-approval/0.1-draft', outcome: response.safe.outcome, safeReasonCode: recorded ? 'direction-recorded' : 'direction-not-recorded', taskId: options.taskId, decisionId: null, requestVersion: null, controlVersion: committed.version, eventRef: recorded ? event.eventId : null, safeNextAction: recorded ? 'none' : 'retry-read' };
     }),
@@ -313,6 +315,8 @@ export function createApprovalService(options: ApprovalServiceOptions): Approval
           (response.safe.outcome === 'paused' && decision !== 'rejected') ||
           !isDeepStrictEqual(response.value, terminal) || !isDeepStrictEqual(resolution(record), terminal)) throw new ApprovalServiceError('unavailable');
         if (!prior && decision === 'rejected') coordinator.fence(committed, true);
+        localAdmissionClosed = admissionWasClosed;
+      } else if (['denied', 'conflict', 'invalid', 'stale'].includes(response.safe.outcome)) {
         localAdmissionClosed = admissionWasClosed;
       }
       const recorded = response.safe.outcome === 'ok' || response.safe.outcome === 'paused';
