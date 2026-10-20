@@ -15,7 +15,7 @@ const featureName = /^feat\/\d{3}-[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const maxRepairs = 3;
 const usage = `Usage: node scripts/agents/pr-workflow.mjs <preflight|publish|status|ready|repair|watch|record-app-state|complete|prepare-next> [--root <checkout>]
 preflight fetches origin/development and reports freshness, naming, dirty paths, and diff size; it never publishes.
-publish requires --body-file <file> and --summary <short summary>; optional --base development.
+publish requires --body-file <file> and --summary <short summary>; optional --base development and --skip-review-request.
 repair requires --reason <diagnosed finding>. At most three repair rounds per PR.
 record-app-state requires --receipt <app list_thread_pull_requests JSON>.
 prepare-next --branch feat/NNN-scope-description creates a fresh unique branch from fetched development after this branch's recorded PR merges; source branches and worktrees are retained.
@@ -78,13 +78,21 @@ const query = `query($owner:String!,$name:String!,$number:Int!){repository(owner
 export async function runWorkflow(args, dependencies = {}) {
   if (args.length === 1 && ['--help', '-h'].includes(args[0])) return { usage };
   const [command, ...rest] = args;
-  const allowed = { preflight: ['root'], 'prepare-next': ['root', 'branch'], publish: ['root', 'base', 'body-file', 'summary'], status: ['root'], 'record-app-state': ['root', 'receipt'], complete: ['root'], ready: ['root'], repair: ['root', 'reason'], watch: ['root'] };
+  const allowed = { preflight: ['root'], 'prepare-next': ['root', 'branch'], publish: ['root', 'base', 'body-file', 'summary', 'skip-review-request'], status: ['root'], 'record-app-state': ['root', 'receipt'], complete: ['root'], ready: ['root'], repair: ['root', 'reason'], watch: ['root'] };
   if (!Object.hasOwn(allowed, command)) throw new Error(usage);
   const values = {};
-  for (let index = 0; index < rest.length; index += 2) {
-    const name = rest[index].slice(2), value = rest[index + 1];
-    if (!rest[index].startsWith('--') || !allowed[command].includes(name) || Object.hasOwn(values, name) || !value || value.startsWith('--')) throw new Error(usage);
+  for (let index = 0; index < rest.length;) {
+    const option = rest[index], name = option.slice(2);
+    if (!option.startsWith('--') || !allowed[command].includes(name) || Object.hasOwn(values, name)) throw new Error(usage);
+    if (name === 'skip-review-request') {
+      values[name] = true;
+      index += 1;
+      continue;
+    }
+    const value = rest[index + 1];
+    if (!value || value.startsWith('--')) throw new Error(usage);
     values[name] = value;
+    index += 2;
   }
   if (command === 'record-app-state' && !values.receipt) throw new Error('record-app-state requires --receipt with the app list_thread_pull_requests result.');
   if (command === 'publish' && !values['body-file'] || command === 'repair' && !values.reason?.trim()) throw new Error(usage);
@@ -231,7 +239,7 @@ export async function runWorkflow(args, dependencies = {}) {
           throw new Error(`Public PR published at ${pr.url}; submission publication incomplete. Retain accounting and rerun publish. ${error.message}`);
         }
       }
-      if (record.requestedReviewHead !== head) {
+      if (!values['skip-review-request'] && record.requestedReviewHead !== head) {
         const request = `@coderabbitai review\n\n<!-- slop-loop-review:${head} -->`;
         const pages = json('api', '--paginate', '--slurp', `repos/${remote}/issues/${pr.number}/comments?per_page=100`);
         if (!pages.flat().some((comment) => comment.body === request)) gh('pr', 'comment', String(pr.number), '--repo', remote, '--body', request);

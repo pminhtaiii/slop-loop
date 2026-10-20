@@ -220,6 +220,25 @@ test('publishing is gated and repeatable; repair count survives new publishes an
   assert.equal(new Set(record.repairRounds.map((round) => round.head)).size, 3);
 });
 
+test('publish can skip only the automatic review request', async (t) => {
+  const f = await checkout(t);
+  const published = await f.run('publish', '--body-file', f.body, '--skip-review-request');
+
+  assert.equal(published.status, 'PUBLISHED');
+  assert.ok(f.calls.some(call => call[0] === process.execPath && call[1].endsWith('check-context.mjs')));
+  assert.ok(f.calls.some(call => call[0] === process.execPath && call[1].endsWith('check-runtime.mjs')));
+  assert.ok(f.calls.some(call => call[0] === process.execPath && call[1] === '--test'));
+  assert.ok(f.calls.some(call => call[0] === 'git' && call[1] === 'push'));
+  assert.ok(f.calls.some(call => call[0] === 'gh' && call[1] === 'pr' && call[2] === 'create' && call.includes('--draft')));
+  assert.equal(f.calls.some(call => call[0] === 'gh' && call[1] === 'pr' && call[2] === 'comment'), false);
+  assert.equal(f.calls.some(call => call[0] === 'gh' && call[1] === 'api' && call.at(-1).includes('/comments?')), false);
+  const recordPath = join(f.root, '.agent-work/pr-workflow/010-tooling-example.json');
+  assert.equal(JSON.parse(await readFile(recordPath, 'utf8')).requestedReviewHead, undefined);
+
+  await f.run('publish', '--body-file', f.body);
+  assert.equal(f.calls.filter(call => call[0] === 'gh' && call[1] === 'pr' && call[2] === 'comment').length, 1, 'the default still requests review on a later publish');
+});
+
 test('preflight reports freshness, dirty paths, naming, and size without publishing', async (t) => {
   const f = await checkout(t);
   const first = await f.run('preflight');
