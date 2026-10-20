@@ -32,6 +32,20 @@ pnpm run validate:runtime
 
 Record command and exit status, fixture/config versions and evidence scope; missing files or import errors are not behavioral RED. Existing canonical UC-03 tests remain unchanged. A runtime bootstrap pass does not establish production approval.
 
+## Phase 4 handoff (specification only)
+
+Read the [Phase 4 plan](plan.md#phase-4-refinement--t008t010-planning-only), [local case obligations](contracts/acceptance.md#phase-4-local-evidence-boundary) and [authorization record](contracts/decisions.md#phase-4-specification-request). Confirm the new control, mock-store direction and CLI TDD seams with the user before writing tests. Keep T008 → T009 → T010 sequential and all checkboxes unchanged until implemented and validated.
+
+After implementation is separately authorized and the tests exist, run:
+
+```powershell
+node --test tests/runtime/approvals/control.test.ts tests/runtime/approvals/mock-ports.test.ts tests/runtime/approvals/cli.test.ts
+node --test tests/runtime/approvals/*.test.ts
+node scripts/ci/check-runtime.mjs
+```
+
+These are future commands, not results from this documentation change. Record platform-specific interruption coverage and any not-run paths. Direct CLI entry remains unavailable; local subprocess checks use explicit test-only host composition and do not establish production connections or durable restart.
+
 ## CLI approval/rejection scenarios (after T010/T018)
 
 Compile through the existing build. Start the trusted host operator composition with an admitted UC-04 store, context provider and operator capability. Without that configured composition the CLI must return unavailable/denied, never create a local fallback store.

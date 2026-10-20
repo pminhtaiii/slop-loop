@@ -10,6 +10,8 @@
 
 **Input**: Specify UC-05 from ADR-0006, the shared UC-03 contracts, repository policy, and the delegation map. Preserve UC-04 persistence and Tai's execution ownership.
 
+**Phase 4 refinement (2026-10-20)**: The current request refines US2.7–US2.12 and the linked [Phase 4 plan](plan.md#phase-4-refinement--t008t010-planning-only) for T008–T010. It is documentation only; implementation and proposed new TDD seams remain separate gates recorded in [decisions](contracts/decisions.md#phase-4-specification-request).
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Decide before a consequential action runs (Priority: P1)
@@ -45,6 +47,12 @@ As a developer, I want waiting and rejection to stop every agent on the affected
 4. **Given** rejection, **When** an agent changes the request ID, tool, spelling, encoding, or command form to retry the same intent without explicit direction, **Then** the task-wide stop prevents the retry. A revised approval-required action needs a fresh request and decision.
 5. **Given** a paused task, **When** the developer explicitly ends it, **Then** do not resume its agents and retain outstanding effect/accounting uncertainty for reconciliation. An unrelated task is not paused merely because this task waits or ends.
 6. **Given** a pending prompt, **When** input is empty, malformed, interrupted, or unavailable because the terminal closes, **Then** infer no approval and preserve the recoverable pause.
+7. **Given** a waiting, recovery-blocked, or ended task, **When** resume or revise is requested, **Then** it cannot clear that state; these directions release only a rejection hold with no outstanding effects or other blocking prerequisites.
+8. **Given** an explicit direction already recorded, **When** the same response is delivered again, **Then** confirm its original identity without adding a direction, changing the latest task state, or repeating cancellation. Reusing its response key for different content conflicts.
+9. **Given** a task/control version changed after inspection, **When** a new direction is submitted against the old version, **Then** refuse the change and retain current control; do not silently retry against a newer version.
+10. **Given** saving a pending request, decision, or direction fails or its outcome is unknown, **When** further work is attempted, **Then** grant no new authority. Retain the stop until authoritative state and outstanding effects can be established; never claim that an uncertain write did not commit.
+11. **Given** an operation finishes or cannot be cancelled after a stop, **When** the harness records its outcome, **Then** preserve completed, cancelled, and uncertain observations without reopening the task. Explicit end retains this evidence and all outstanding accounting.
+12. **Given** a complete explicit response was recorded before terminal loss, **When** the developer checks status again, **Then** report that recorded response and the current task state; terminal loss neither invents a response nor undoes a committed one.
 
 ### User Story 3 - Approve only the intended action and plan (Priority: P1)
 

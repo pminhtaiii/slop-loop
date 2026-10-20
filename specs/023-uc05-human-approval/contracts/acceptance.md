@@ -31,6 +31,24 @@
 | C23 | Required real isolation/profile/adapter absent or platform unsupported: no execution; resource and source/test/protected-data boundaries still enforced after approval | FR-003,016,022 / SC-001,008 | T019 preparation; T020 |
 | C24 | Comparable complete result catalog across two runs; every required case registered, scope/evidence levels explicit, no approval-only completion or missing-as-pass | FR-020–022 / SC-007–008 | T019–T022 |
 
+## Phase 4 local evidence boundary
+
+This is a future observation plan for T008–T010, not an executed result or new case registry. The [Phase 4 plan](../plan.md#phase-4-refinement--t008t010-planning-only) refines the existing cases and proposes seams for user confirmation. Keep all unexercised portions of a case explicit; a local subset does not mark the full case passed.
+
+| Cases / task | Required local observations |
+|---|---|
+| C06 / T008–T009 | Request through actual service/control; representative coder, reviewer, model, tool/read/test and background callers invoke the SUT admission path and record zero new work while waiting/rejected. A distinct unrelated task remains eligible. |
+| C07 / T008–T009 | Start mock in-flight attempts before rejection; observe fence and cancellation request through SUT wiring, then completed/cancelled/uncertain outcomes. No rollback claim, forced cancellation assumption or callback-based resume. |
+| C08 / T008–T010 | Feedback leaves rejection; trusted resume/revise releases only its rejection hold; waiting/recovery-blocked/ended or unresolved claims refuse continuation. End preserves history, claims and accounting references. No direction becomes approval. |
+| C08,C20 / T009–T010 | Public store direction retry returns original direction/event once. Repeat the identical four-selector CLI argv after epoch/scope changes: original metadata is recovered from authoritative history, not regenerated from current context. Changed response body conflicts; new stale-version direction conflicts; original retry after a later pause/end never restores old runnable state. |
+| C10 / T008–T009 | Alternate action/request IDs, tools and equivalent spelling/encoding encounter the same task hold; forbidden operations stay denied after a valid direction. No semantic-equivalence classifier is required. |
+| C20 / T008–T009 | Pending/decision/direction precommit failure, lost or malformed/protected receipt, expiry and activity failure close local admission. Observe no unauthorized dispatch or runnable gap. Preserve actual store state; unknown commit is not reported as definite noncommit. Real claim/pause serialization remains T020/T021. |
+| C05,C11 / T010 | Actual subprocess rejects missing/duplicate/unknown/foreign selectors, empty input and fake operator data; no active-task default. Explicit test driver invokes real control and service, not a fake CLI result. |
+| C11 / T010 | EOF/closed input and supported signal/terminal-loss paths cause no inferred response. Parent-retained mock state distinguishes interruption before submission from a committed response before output loss. Record OS/platform limits; do not count a child recreating its initial fixture as pause-retention evidence. |
+| C08,C11 / T010 | Recorded resume/revise/end and identical retry exit 0 with recorded reason; end remains paused. Unrecorded hold/conflict/stale exits 3; invalid 2, denied 4, unavailable/uncertain 5. Output remains bounded and protected-data-free. |
+
+Retain behavioral RED/GREEN, actual command/exit or signal, source snapshot, fixture/profile identity and observed direction/event/dispatch counts. Activity mocks only record attempts; no real effects are invoked. Phase 4 does not establish real all-agent admission, durable transactions, budget restoration, actual restart, full C09/C12–C19 or C24 acceptance, or completion of T011–T022.
+
 ## Human approval matrix mapping
 
 | Matrix row | Required cases |

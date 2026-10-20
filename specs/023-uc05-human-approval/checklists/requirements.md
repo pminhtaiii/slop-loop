@@ -72,6 +72,13 @@ These mappings specify future evidence obligations; they are not observed runtim
 
 ## Notes
 
+### Phase 4 author review (2026-10-20)
+
+- US2 now has twelve scenarios; the specification has 32 total Given/When/Then scenarios, with the existing 22 FRs and eight SCs preserved.
+- US2.7–US2.12 refine hold eligibility, idempotent direction, stale control, failed/uncertain writes, in-flight outcomes and terminal loss after a committed response. They map to FR-006–009,012,019–021 and SC-002–004,007.
+- Author review retains all sixteen quality checks above: the behavioral spec adds no language/framework/API details or production defaults. Technical design and proposed seams live in plan.md and contracts, separately from user outcomes.
+- The current request is specification-only; proposed Phase 4 seams and implementation remain gated. Planning audit and independent review outcomes are recorded separately in [planning validation](planning-validation.md).
+
 - Marks evaluate written requirements, not implemented behavior, independent review, an approved plan, or runtime test results.
 - Accepted decisions are preserved; pending design/configuration choices remain planning obligations and cannot silently authorize real execution.
 - The first request created the requirements draft only. The subsequent user instruction authorized the linked full planning package; runtime code, issues and PR publication remain outside the current planning work.

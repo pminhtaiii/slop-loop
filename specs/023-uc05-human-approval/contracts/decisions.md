@@ -9,6 +9,22 @@
 - On 2026-10-19 (Asia/Saigon), the user explicitly said "hãy code phase 2 luôn đi". This authorizes only Phase 2 T002–T004: companion validators, the C01–C24 fixture registry and test-only mock ports. T004 follows integrated T002 and T003. T005 onward, production configuration/adapters, actual restart, remote issue changes, publication and merge remain outside this authorization.
 - Accepted product behavior comes from ADR-0004 and ADR-0006; their original dates/ownership remain unchanged. Historical agreement on UC-03 contract v0.1 does not approve this new companion store/control design.
 
+## Phase 4 specification request
+
+On 2026-10-20 (Asia/Saigon), the user first asked "giờ đến code phase 4 nhỉ", then specified the current deliverable: "vậy giờ hãy viết specs cho phase 4 đi". This assignment refines documentation for Phase 4 T008–T010 only. No Phase 4 runtime/test edits or task completion are authorized by this specification request, and the four earlier Phase 3 seams are not reused as approval of new seams.
+
+The refinement adds US2.7–US2.12, the Phase 4 section of plan.md, CLI/evidence clarifications, and explicit T009 ownership of mock-store direction retry conformance and its tests. It preserves canonical UC-03 0.1.0 and companion `uc05-approval/0.1-draft` records, accepted transaction semantics and foreign production ownership. No new shared schema, backend, production profile or real adapter is selected. Proposed public control/store/CLI test seams await user confirmation under the TDD skill before any tests are written; implementation remains a separate next step. G-PROFILE/G-REAL/G-RESTART and T011–T022 remain gated. Planning reviews evaluate quality only.
+
+Read-only preflight confirmed public Phase 3 PR #73 merged at development revision `694adc35d5f17468e9d23b0975f9d307844ddf83`, with all four exact-head CI jobs passing. A fresh documentation branch was prepared from that fetched development tip; no merge was performed by this assignment. Prior phase evidence below remains historical; tasks.md is the only implementation-status ledger.
+
+## Phase 4 implementation authorization
+
+On 2026-10-20 (Asia/Saigon), after the specification handoff, the user explicitly instructed "viết code cho phase 4 rồi push github". This releases exactly T008–T010 and scoped coordinator commits/paired publication under the contributor workflow. The earlier specification-only record is historical. T011–T022, production profiles/adapters, durable storage, real effects, actual restart evidence, Issue lifecycle changes and merge remain outside this instruction.
+
+After asking what the three seams mean and receiving the explanation, the user explicitly answered "đồng ý cả 3" on 2026-10-20 (Asia/Saigon). This confirms the Phase 4 seams in plan.md: actual control/service with injected mock store/activity/context/operator; the public mock-store direction transaction/history; and actual CLI subprocesses using an explicit test-only host driver. No production admission, database/durability, real effect or restart capability is authorized or established by this confirmation. T008–T009 may now proceed in RED/GREEN order, followed by T010.
+
+Readiness checks found the current branch at fetched development `694adc35d5f17468e9d23b0975f9d307844ddf83` (behind 0), no existing PR for this branch on either publication repository, and only the nine retained reviewed specification edits in the working tree. Existing Phase 3 interpreter guards and published source are preserved.
+
 ## Agreed design register
 
 | ID | Proposal | Scope / approval state |
@@ -22,7 +38,7 @@
 
 ## Implementation and real-execution gates
 
-1. **G-AUTH**: Phase 1 / T001, Phase 2 / T002–T004 and Phase 3 / T005–T007 are authorized by the explicit user instructions recorded here. T008 onward requires separate authorization. Contract agreement alone does not release additional work.
+1. **G-AUTH**: Phase 1 / T001, Phase 2 / T002–T004, Phase 3 / T005–T007 and Phase 4 / T008–T010 are authorized by the explicit user instructions recorded here. The three Phase 4 TDD seams are explicitly confirmed. T011 onward requires separate authorization. Contract agreement alone does not release additional work.
 2. **G-CONTRACT**: Satisfied for the current logical contract/ownership set by the explicit user-relayed agreement above. Companion records, transactions, claim/fence timing, host operator authority, strict plan compatibility and owned paths are agreed; actual adapters and execution evidence are not implied.
 3. **G-PROFILE**: Trusted finite policy/execution/diagnostic/retention and supported-host profiles selected by their owners. Test vector values cannot stand in for production configuration.
 4. **G-REAL**: Real UC-04 store, task-wide provider/scheduler/tool admission, executor containment and claim/reconciliation are delivered with owner ledger/revision evidence. Mock provenance is rejected by production composition.

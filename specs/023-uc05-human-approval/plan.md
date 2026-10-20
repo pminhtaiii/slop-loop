@@ -85,6 +85,58 @@ Tai retains `src/contracts/foundation/uc03.ts` and `src/foundation/`; Thanh Tan 
 
 Plan coverage remains conservative: canonical v0.1 requires an approved plan at the current repository digest. A further production patch after any digest change requires a new immutable plan request/decision, even for expected prior edits. An unchanged strategy does not consume a replan; explain the concrete state change. Prefer one coherent bounded patch when practical. Never silently rebind approval, add a covered-evolution ledger, or introduce path-only security prompts. Richer multi-patch coverage would require a separately agreed canonical migration.
 
+## Phase 4 refinement — T008–T010 (planning only)
+
+The 2026-10-20 request asks for Phase 4 specifications. This section refines US2 / FR-006–009,019–021 and SC-002–003,007 under the existing companion contract; it grants no implementation or new TDD seam approval. See [authorization provenance](contracts/decisions.md#phase-4-specification-request). Task IDs, dependencies and completion remain solely in [tasks](tasks.md).
+
+### Inspected starting point and ownership
+
+The starting development revision is `694adc35d5f17468e9d23b0975f9d307844ddf83`, after public Phase 3 PR #73 merged. `service.ts` already commits pending-plus-pause and terminal decisions, reloads control, and closes local admission on failed/uncertain receipts. It has no activity-control dependency or direction method. `cli.ts` supports list/show/inspect/decide only. `control.ts` and its test do not exist yet.
+
+`tests/runtime/support/uc05/mock-context.ts` supplies mock fencing, cancellation and outcome observation. `mock-store.ts` supplies control/epoch, pending/decision transactions and `recordDirection`, but the latter currently rejects retries after the original version changes instead of confirming an identical accepted direction. Phase 4 must make that test double conform to the existing idempotency contract; a UC-05 in-memory response cache would mask the missing store guarantee. This is a test-support extension, not delivery of X04-APPROVAL-STORE.
+
+T008/T009 own the real UC-05 control coordinator and service wiring, plus the explicitly listed test-support changes in tasks.md. Tai retains scheduler/provider/tool callers, canonical contracts and execution; UC-04 retains production transactions, claims and accounting. No foreign production module is edited. The coordinator consumes injected activity/store capabilities and reports typed safe outcomes; it does not create a scheduler, execute effects or implement recovery reconciliation.
+
+### Observable control behavior
+
+| Current control / event | Required result |
+|---|---|
+| Runnable → pending creation | Close local admission before mutation; request, waiting control, epoch and event commit atomically through the store; fence affected activity before reporting the pending request usable. |
+| Waiting → matching approval | Only its waiting hold may clear. Unresolved claims, failed fencing, local uncertainty or another current hold still deny admission; approval never dispatches work. |
+| Waiting → matching rejection | Preserve immutable rejection, fence the whole task, request cancellation where possible, and remain rejected. |
+| Rejected → resume/revise | Trusted explicit direction and current version/epoch required; release rejection only when no other hold/outstanding claim exists. Preserve rejected decision; approval-required work still needs a fresh request. |
+| Waiting/recovery-blocked/ended → resume/revise | Refuse without changing control. Neither direction replaces an approval nor performs reconciliation. |
+| Any non-ended → end | Commit ended control, fence new admissions and request cancellation; preserve request/resolution history, outstanding claims, accounting and observed outcomes. |
+| Same accepted response retried | Confirm the original direction/event once, even when the original version is now stale; inspect current control independently and preserve any later pause/end. Changed content under that response key conflicts. |
+| New response with stale version/epoch | Conflict with zero mutation, no automatic CAS retry and no work admission. |
+| Missing/invalid store state, failed/uncertain commit or activity failure | Close local admission, return sanitized unavailable/uncertain status and retain any already committed control. Never invent a durable recovery-blocked record, rollback, successful cancellation or permission. |
+
+Fencing is task-wide, including coder/reviewer, model calls, tools, reads/tests and background investigation. Test drivers representing these callers must invoke the actual public control admission path for every attempted dispatch; a detached mock that fences itself is insufficient. Re-read authoritative control and compare the observed epoch/version at admission. Serializing real dispatch versus pause remains the external UC-04/Tai transaction described in [interfaces](contracts/interfaces.md); local mocks do not prove distributed race freedom. Unrelated task identities keep their own admission state.
+
+Only the harness may record outcomes, request cancellation and preserve state while paused. An in-flight attempt remains completed/cancelled/uncertain according to observed evidence; cancellation requested is not cancellation confirmed. Ending a task or an outcome callback cannot remove an unresolved claim or restore runnable state. Alternate IDs/tools/spellings remain barred by the task hold without a semantic-equivalence solver.
+
+### Direction identity and CLI translation
+
+Use the existing `DeveloperDirection`, `DecisionEvent`, `SafeResult` and `TrustedOperatorIdentity` validators. Add a host-only direction operation on the UC-05 service/control surface; keep the four canonical ApprovalPort methods unchanged. Validate host authority and explicit command selectors, then look up an accepted direction by task plus response key through authoritative store history before constructing a new direction. For an accepted retry, compare the submitted direction and task-version with the original record, and reuse its original epoch, scope, identity, event and timestamp; do not derive them from current task context. Missing, ambiguous or invalid history grants no retry confirmation. Load current control separately and never restore the original control snapshot.
+
+For a new response key only, load the task's current trusted scope and control, derive safeScopeRef from its registered interrupted/revision scope, and bind the submitted task-version to the loaded epoch for store CAS. Missing/mismatched scope denies the operation; do not accept caller-supplied scope or fabricate an action. The store performs its own accepted-key/content check before new-response CAS validation, confirming an identical retry once and conflicting on changed original version/epoch, direction or scope. This remains correct if another caller commits the response between lookup and submission. A retry receipt never overwrites newer control, repeats cancellation or reopens local admission. Conflicting body/key and foreign operator/task inputs grant no authority. Use the explicit finite profile and one mutation attempt, retaining the existing per-operation expiry fence before every late mutation. Freshness/plan expansion remains T011–T013.
+
+T010 implements the already agreed [control command](contracts/cli.md): `control --task TASK --task-version V --direction resume|revise|end --response-key KEY`. All selectors are explicit. No new interactive stdin grammar, implicit active task, approval alias or production driver is added. Recorded end may return paused while exiting 0 with `approval-cli-recorded`; an unrecorded pause exits 3. Invalid input exits 2, denied authority 4, unavailable/uncertain 5. Existing decide/rejection exits and safe output remain unchanged.
+
+Empty/malformed input, EOF and terminal interruption cannot create a direction/decision. If interruption occurs after a valid command committed, retain that commit and re-read status; do not assert rollback or automatically resubmit. Subprocess signal tests must report actual host termination behavior rather than promise a JSON envelope after forced termination. A parent-owned test driver may retain mock state to observe child interruption; it cannot become a production composition selector or durable-store substitute.
+
+### Proposed TDD seams — user confirmation still required
+
+| Seam | Observes | Does not establish |
+|---|---|---|
+| Public control coordinator wired into the actual service, with injected store/activity/context and host operator | Pending/rejection fencing, admission by representative caller classes, cancellation observations, directions, retries, failed receipts and unrelated-task isolation | Real scheduler/provider integration, production isolation, durable control or atomic real pause/dispatch |
+| Public mock-store direction transaction/history with companion validators | Store-owned CAS, original direction/event identity, identical retry and conflict, preserving newer holds | Production database atomicity, persistence or restart |
+| Actual CLI subprocess calling the real service/control through an explicit test-only host driver | Control arguments, bounded output/exits, empty/invalid input and observable EOF/signal/terminal-loss paths with retained mock pause | OS-wide operator isolation, production store, effects or real runtime restart |
+
+No test is written until the user confirms the proposed seams, per the [TDD skill](../../.agents/skills/tdd/SKILL.md). T008 establishes one loadable behavioral RED at a confirmed seam; T009 completes that tracer and proceeds one RED/GREEN slice at a time. T010 follows T009 and is also test-first. Missing imports, invalid fixtures or tests of a mocked coordinator are not behavioral RED.
+
+Completion evidence must map C05–C08,C10–C11 and the Phase 4 subset of C20 to actual observations as detailed in [acceptance](contracts/acceptance.md#phase-4-local-evidence-boundary). Run focused control/CLI/mock-port tests, prior approval regressions and the runtime gate after implementation. Real C20 claim serialization, C17–C19 restart, full history/acceptance and T011–T022 remain outside Phase 4; no all-UC verification claim follows.
+
 ## External Deliverables (not UC-05 task IDs)
 
 | Reference | Owner | Required capability | Local consumer |

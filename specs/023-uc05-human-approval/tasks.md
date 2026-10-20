@@ -2,7 +2,7 @@
 
 **Input**: [spec](spec.md), [plan](plan.md), [research](research.md), [data model](data-model.md), and [contracts](contracts/interfaces.md).
 
-**Status**: T001–T007 and the T023 correction of T007 are integrated and verified locally under the Phase 3 scope on 2026-10-19 (Asia/Saigon). Phase 3 uses all four user-confirmed TDD seams and explicit mock dependencies; corrected source integration is `2b80b767ecde9897696dbe30fd70970cbb7ea0dc`. T008–T022 remain unauthorized. Real tasks also need G-PROFILE/G-REAL/G-RESTART as applicable.
+**Status**: T001–T007 and the T023 correction of T007 are integrated and verified locally under the Phase 3 scope on 2026-10-19 (Asia/Saigon). Phase 3 uses all four user-confirmed TDD seams and explicit mock dependencies; corrected source integration is `2b80b767ecde9897696dbe30fd70970cbb7ea0dc`. Phase 4 T008–T010 and its three TDD seams were separately authorized/confirmed on 2026-10-20 (Asia/Saigon); checkboxes below remain the completion ledger. T011–T022 remain unauthorized. Real tasks also need G-PROFILE/G-REAL/G-RESTART as applicable.
 
 Final review found an in-scope T007 retry defect and two standards corrections. T023 below records their accepted correction only; it does not release any later story or real-delivery gate.
 
@@ -77,6 +77,10 @@ Final review found an in-scope T007 retry defect and two standards corrections. 
 
 **Independent Test**: C06–C11/C20 exercise mock scheduler/model/tool activity, explicit operator events and failure races through the actual control module.
 
+**Planning refinement (2026-10-20)**: See [Phase 4 design](plan.md#phase-4-refinement--t008t010-planning-only), [behavioral scenarios US2.7–US2.12](spec.md) and [local evidence boundary](contracts/acceptance.md#phase-4-local-evidence-boundary). This documentation request does not release runtime work or confirm the proposed TDD seams. T008 → T009 → T010 remain sequential; use one tracer RED then vertical RED/GREEN slices, not a batch of all failing tests.
+
+**Subsequent authorization**: The user separately requested implementation and GitHub push, then confirmed all three Phase 4 seams; see [decisions](contracts/decisions.md#phase-4-implementation-authorization). Execute only T008–T010 with mock dependencies; later phases and real delivery gates remain intact.
+
 - [ ] T008 [US2] Write task-control behavioral RED in tests/runtime/approvals/control.test.ts against src/approvals/control.ts.
   - **Owner**: Trong Tan / control tests.
   - **Dependencies**: T007.
@@ -86,8 +90,8 @@ Final review found an in-scope T007 retry defect and two standards corrections. 
 - [ ] T009 [US2] Implement pause/rejection/direction coordination through companion ports in src/approvals/control.ts and src/approvals/service.ts.
   - **Owner**: Trong Tan / control implementation.
   - **Dependencies**: T008.
-  - **Owned Paths**: src/approvals/control.ts; src/approvals/service.ts.
-  - **Acceptance Checks**: T008 passes; all mutation/control operations obey CAS/idempotency, explicit direction and hold rules. Feedback cannot resume, end cannot discard uncertainty, storage failure cannot grant authority. No duplicate UC-04 transaction engine.
+  - **Owned Paths**: src/approvals/control.ts; src/approvals/service.ts; tests/runtime/approvals/control.test.ts; tests/runtime/support/uc05/mock-store.ts; tests/runtime/approvals/mock-ports.test.ts.
+  - **Acceptance Checks**: T008 tracer passes, then extend one behavioral RED/GREEN slice at a time. All mutation/control operations obey CAS/idempotency, explicit direction and hold rules. Extend only mock-store direction retry conformance and its public-port tests as identified in plan.md; no service-local retry cache or duplicate UC-04 transaction engine. An identical direction retry preserves original receipt and newer holds; a new stale response conflicts. Feedback cannot resume, end cannot discard uncertainty, storage/activity failure cannot grant authority.
 
 - [ ] T010 [US2] Add explicit resume/revise/end operator commands and terminal-loss handling in src/approvals/cli.ts and tests/runtime/approvals/cli.test.ts.
   - **Owner**: Trong Tan / CLI control.
