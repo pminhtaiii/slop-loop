@@ -79,6 +79,8 @@ if (process.argv[2] === 'uc05-cli-test-driver') {
     const rejected = child(args.map(token => token === 'approve' ? 'reject' : token));
     assert.equal(rejected.status, 0);
     assert.match(rejected.stdout, /paused/);
+    const rejectedOutput: unknown = JSON.parse(rejected.stdout);
+    assert.partialDeepStrictEqual(rejectedOutput, { outcome: 'paused', safeReasonCode: 'approval-cli-recorded' });
   });
 
   test('actual subprocess refuses missing, duplicated, unknown, injected and foreign selectors', () => {

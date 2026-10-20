@@ -17,9 +17,10 @@ function exitCode(outcome: SafeOperationOutcome): number {
   return 3;
 }
 function result(outcome: SafeOperationOutcome, value?: unknown, recordedDecision = false): CliResult {
-  const output = JSON.stringify({ schemaVersion: 'uc05-approval/0.1-draft', outcome, safeReasonCode: outcome === 'ok' ? 'approval-cli-recorded' : 'approval-cli-denied', ...(value === undefined ? {} : { value }) });
+  const recorded = outcome === 'ok' || (outcome === 'paused' && recordedDecision);
+  const output = JSON.stringify({ schemaVersion: 'uc05-approval/0.1-draft', outcome, safeReasonCode: recorded ? 'approval-cli-recorded' : 'approval-cli-denied', ...(value === undefined ? {} : { value }) });
   if (Buffer.byteLength(output) > 65536 || containsProtectedContent(output)) return result('invalid');
-  return { exitCode: outcome === 'paused' && recordedDecision ? 0 : exitCode(outcome), output };
+  return { exitCode: recorded ? 0 : exitCode(outcome), output };
 }
 /** Structured arguments only; every command names the task and cannot select composition. */
 export async function runApprovalCli(argv: readonly string[], service?: ApprovalService): Promise<CliResult> {
