@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { open } from 'node:fs/promises';
 
-export async function runGate({ name, args, cwd, logPath, timeout = 600_000, report = event => console.error(JSON.stringify(event)) }) {
+export async function runGate({ name, args, cwd, logPath, timeout = Number(process.env.WORKFLOW_GATE_TIMEOUT) || 600_000, report = event => console.error(JSON.stringify(event)) }) {
   const log = await open(logPath, 'wx', 0o600);
   const started = Date.now();
   let tail = '', timedOut = false, spawnError, terminationError;

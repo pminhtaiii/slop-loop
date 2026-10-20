@@ -20,6 +20,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   computeCanonicalSha256,
+  computeCheckSetDigest,
   CONTRACT_VERSION,
   validateStateTransition,
   type BugTask,
@@ -35,7 +36,9 @@ import {
   executeVerificationChecks,
   buildCompletionTransitionContext,
   type CompletionPredicateInput,
+  type TrustedReviewRecord,
 } from '../../../src/uc03/verification.ts';
+import { investigateBaseline } from '../../../src/uc03/investigation.ts';
 import { FakeRepositoryPort } from '../support/uc03/fake-repository.ts';
 import {
   createFixtureBugTask,
@@ -76,9 +79,7 @@ function createValidCompletionFixture(): CompletionPredicateInput {
     requiredChecks: [checkReproduction, checkRegression],
   });
 
-  const checkSetDigest = computeCanonicalSha256(
-    task.requiredChecks.map((c) => c.checkId)
-  );
+  const checkSetDigest = computeCheckSetDigest(task.requiredChecks);
 
   const baseline: Baseline = {
     evidenceId: 'baseline-calc-001',
@@ -166,6 +167,16 @@ function createValidCompletionFixture(): CompletionPredicateInput {
     iterationReservationRef: 'res-rev-001',
   };
 
+  const trustedReviewRecord: TrustedReviewRecord = {
+    reviewId: reviewResult.reviewId,
+    reviewerRoleConfigId: reviewResult.reviewerRoleConfigId,
+    iterationReservationRef: reviewResult.iterationReservationRef,
+    repoDigest,
+    diffDigest,
+    checkSetDigest,
+    status: 'accepted',
+  };
+
   return {
     task,
     state,
@@ -177,6 +188,8 @@ function createValidCompletionFixture(): CompletionPredicateInput {
     changedFiles: ['src/calculator.py'],
     originalProtectedTestsDigest: protectedDigest,
     currentProtectedTestsDigest: protectedDigest,
+    authorizedDiffDigest: diffDigest,
+    trustedReviewRecord,
   };
 }
 
@@ -1108,4 +1121,471 @@ test('executeVerificationChecks: throws on invalid inputs', async () => {
     },
     /INVALID_CONTEXT/
   );
+});
+
+/* ==================================================================
+ * Section 8: Independent Reviewer Validation & Integrity (Defect 3)
+ * ================================================================== */
+
+test('review: missing trustedReviewRecord prevents completion and stays IMPLEMENTED_UNVERIFIED', () => {
+  const input = createValidCompletionFixture();
+  const withoutTrustedReview: CompletionPredicateInput = {
+    ...input,
+    trustedReviewRecord: undefined,
+  };
+  const result = evaluateDeterministicCompletion(withoutTrustedReview);
+
+  assert.equal(result.isComplete, false);
+  assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
+  assert.ok(
+    result.reasons.some((r) => r.includes('Independent trustedReviewRecord is required')),
+    `Expected reason for missing trustedReviewRecord, got: ${result.reasons.join('; ')}`
+  );
+});
+
+test('review: mismatched reviewerRoleConfigId in trustedReviewRecord fails admission', () => {
+  const input = createValidCompletionFixture();
+  assert.ok(input.trustedReviewRecord);
+  const tampered: CompletionPredicateInput = {
+    ...input,
+    trustedReviewRecord: {
+      ...input.trustedReviewRecord,
+      reviewerRoleConfigId: 'different-reviewer-role',
+    },
+  };
+  const result = evaluateDeterministicCompletion(tampered);
+
+  assert.equal(result.isComplete, false);
+  assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
+  assert.ok(
+    result.reasons.some((r) => r.includes('Reviewer role config ID mismatch with independent review record')),
+    `Expected reason for reviewerRoleConfigId mismatch, got: ${result.reasons.join('; ')}`
+  );
+});
+
+test('review: mismatched iterationReservationRef in trustedReviewRecord fails admission', () => {
+  const input = createValidCompletionFixture();
+  assert.ok(input.trustedReviewRecord);
+  const tampered: CompletionPredicateInput = {
+    ...input,
+    trustedReviewRecord: {
+      ...input.trustedReviewRecord,
+      iterationReservationRef: 'drifted-reservation-ref',
+    },
+  };
+  const result = evaluateDeterministicCompletion(tampered);
+
+  assert.equal(result.isComplete, false);
+  assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
+  assert.ok(
+    result.reasons.some((r) => r.includes('Review iteration reservation ref mismatch with independent review record')),
+    `Expected reason for iterationReservationRef mismatch, got: ${result.reasons.join('; ')}`
+  );
+});
+
+test('review: missing state.latestReviewRef prevents completion', () => {
+  const input = createValidCompletionFixture();
+  const withoutLatestReviewRef: CompletionPredicateInput = {
+    ...input,
+    state: {
+      ...input.state,
+      latestReviewRef: undefined,
+    },
+  };
+  const result = evaluateDeterministicCompletion(withoutLatestReviewRef);
+
+  assert.equal(result.isComplete, false);
+  assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
+  assert.ok(
+    result.reasons.some((r) => r.includes('State latestReviewRef is required')),
+    `Expected reason for missing state.latestReviewRef, got: ${result.reasons.join('; ')}`
+  );
+});
+
+/* ==================================================================
+ * Section 9: Authorized Diff Digest Integrity (Defect 4)
+ * ================================================================== */
+
+test('authorizedDiff: missing authorizedDiffDigest prevents completion', () => {
+  const input = createValidCompletionFixture();
+  const withoutAuthDiff: CompletionPredicateInput = {
+    ...input,
+    authorizedDiffDigest: undefined,
+    trustedPatchRecord: undefined,
+  };
+  const result = evaluateDeterministicCompletion(withoutAuthDiff);
+
+  assert.equal(result.isComplete, false);
+  assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
+  assert.ok(
+    result.reasons.some((r) => r.includes('Independent authorizedDiffDigest is required')),
+    `Expected reason for missing authorizedDiffDigest, got: ${result.reasons.join('; ')}`
+  );
+});
+
+test('authorizedDiff: authorizedDiffDigest mismatch with currentDiffDigest prevents completion', () => {
+  const input = createValidCompletionFixture();
+  const mismatchedAuthDiff: CompletionPredicateInput = {
+    ...input,
+    authorizedDiffDigest: 'sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff',
+  };
+  const result = evaluateDeterministicCompletion(mismatchedAuthDiff);
+
+  assert.equal(result.isComplete, false);
+  assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
+  assert.ok(
+    result.reasons.some((r) => r.includes('Authorized diff digest mismatch')),
+    `Expected reason for authorizedDiffDigest mismatch, got: ${result.reasons.join('; ')}`
+  );
+});
+
+test('authorizedDiff: buildCompletionTransitionContext uses independent authorizedDiff and trustedReviewRecord', () => {
+  const input = createValidCompletionFixture();
+  const context = buildCompletionTransitionContext(input);
+
+  assert.equal(context.authorizedDiffDigest, input.authorizedDiffDigest);
+  assert.equal(context.reviewerRoleConfigId, input.trustedReviewRecord?.reviewerRoleConfigId);
+  assert.equal(context.reviewIterationReservationRef, input.trustedReviewRecord?.iterationReservationRef);
+  assert.equal(context.checkSetDigest, computeCheckSetDigest(input.task.requiredChecks));
+});
+
+/* ==================================================================
+ * Section 10: Test Result Identity Validation (Defect 6)
+ * ================================================================== */
+
+test('executeVerificationChecks: runner returning mismatched checkId records error outcome', async () => {
+  const input = createValidCompletionFixture();
+  const spoofedRepo = new FakeRepositoryPort({
+    initialRevision: input.currentRepoDigest,
+    testResults: {
+      default: {
+        checkId: 'check-some-other-spoofed-id',
+        outcome: 'pass',
+      },
+    },
+  });
+
+  const results = await executeVerificationChecks(input.task, spoofedRepo, {
+    runId: 'run-verify-1',
+    repoDigest: input.currentRepoDigest,
+    diffDigest: input.currentDiffDigest,
+  });
+
+  assert.equal(results.length, input.task.requiredChecks.length);
+  for (const r of results) {
+    assert.equal(r.outcome, 'error', `Check ${r.testedIds[0]} should have failed closed with error due to mismatched checkId`);
+  }
+});
+
+/* ==================================================================
+ * Section 11: Pytest Node ID & Directory Test Protection (Defect 8)
+ * ================================================================== */
+
+test('protected tests: pytest node ID selector (tests/foo.py::test_bar) protects the underlying test file', () => {
+  const checkWithNodeId: CheckDefinition = {
+    checkId: 'check-pytest-node-id',
+    executable: 'pytest',
+    argv: ['-q', 'tests/test_calculator.py::test_add_positive'],
+    purpose: 'regression',
+    workingDirectory: 'tests',
+    timeoutMs: 30000,
+    maxOutputBytes: 1048576,
+  };
+  const taskWithNodeId = createFixtureBugTask({
+    taskId: 'task-uc03-calc-node-id',
+    repositoryId: 'repo-uc03-calc',
+    requiredChecks: [checkWithNodeId],
+  });
+  const input = createValidCompletionFixture();
+  const inputWithNodeIdCheck: CompletionPredicateInput = {
+    ...input,
+    task: taskWithNodeId,
+    // Attempting to modify tests/test_calculator.py must be caught even though check had ::test_add_positive!
+    changedFiles: ['tests/test_calculator.py'],
+  };
+  const result = evaluateDeterministicCompletion(inputWithNodeIdCheck);
+
+  assert.equal(result.isComplete, false);
+  assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
+  assert.ok(
+    result.reasons.some((r) => r.includes('test protection violation')),
+    `Expected test protection violation for modifying test file when check specified node ID, got: ${result.reasons.join('; ')}`
+  );
+});
+
+test('protected tests: test directory selector (tests/unit) protects files under that directory', () => {
+  const checkWithDir: CheckDefinition = {
+    checkId: 'check-pytest-dir',
+    executable: 'pytest',
+    argv: ['-q', 'tests/unit'],
+    purpose: 'regression',
+    workingDirectory: 'tests',
+    timeoutMs: 30000,
+    maxOutputBytes: 1048576,
+  };
+  const taskWithDir = createFixtureBugTask({
+    taskId: 'task-uc03-calc-dir',
+    repositoryId: 'repo-uc03-calc',
+    requiredChecks: [checkWithDir],
+  });
+  const input = createValidCompletionFixture();
+  const inputWithDirCheck: CompletionPredicateInput = {
+    ...input,
+    task: taskWithDir,
+    // Attempting to modify a file inside tests/unit must be caught as test protection violation!
+    changedFiles: ['tests/unit/test_feature.py'],
+  };
+  const result = evaluateDeterministicCompletion(inputWithDirCheck);
+
+  assert.equal(result.isComplete, false);
+  assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
+  assert.ok(
+    result.reasons.some((r) => r.includes('test protection violation')),
+    `Expected test protection violation for modifying file inside test directory, got: ${result.reasons.join('; ')}`
+  );
+});
+
+/* ==================================================================
+ * Section 12: End-to-End Investigation & Verification Integration
+ * ================================================================== */
+
+test('integration: investigateBaseline output flows directly into evaluateDeterministicCompletion and validateStateTransition without digest overrides', async () => {
+  const repoDigest = 'sha256:111122223333444455556666777788889999aaaabbbbccccddddeeeeffff0000';
+  const diffDigest = 'sha256:aaaabbbbccccddddeeeeffff0000111122223333444455556666777788889999';
+
+  const checkRepro: CheckDefinition = {
+    checkId: 'check-pytest-repro',
+    executable: 'pytest',
+    argv: ['-q', 'tests/test_calculator.py', '-k', 'test_div'],
+    purpose: 'reproduction',
+    workingDirectory: 'tests',
+    timeoutMs: 30000,
+    maxOutputBytes: 1048576,
+  };
+  const checkRegress: CheckDefinition = {
+    checkId: 'check-pytest-regress',
+    executable: 'pytest',
+    argv: ['-q', 'tests/test_calculator.py'],
+    purpose: 'regression',
+    workingDirectory: 'tests',
+    timeoutMs: 30000,
+    maxOutputBytes: 1048576,
+  };
+
+  const task = createFixtureBugTask({
+    taskId: 'task-flow-001',
+    repositoryId: 'repo-flow',
+    requiredChecks: [checkRepro, checkRegress],
+  });
+
+  const testFile = { path: 'tests/test_calculator.py', content: 'def test_calc(): pass\n' };
+  const host = {
+    async loadSnapshot(req: {
+      taskId: string;
+      workspaceId: string;
+      repositoryId: string;
+      expectedRevisionDigest: string;
+      expectedCheckSetDigest: string;
+      expectedTestFiles: readonly string[];
+    }) {
+      return {
+        taskId: req.taskId,
+        workspaceId: req.workspaceId,
+        repositoryId: req.repositoryId,
+        currentRevision: req.expectedRevisionDigest,
+        checkSetDigest: req.expectedCheckSetDigest,
+        expectedTestFiles: req.expectedTestFiles,
+        testFiles: [testFile],
+      };
+    },
+  };
+
+  const initialRepo = new FakeRepositoryPort({
+    initialRevision: task.initialRevisionDigest,
+    testResults: {
+      'check-pytest-repro': { checkId: 'check-pytest-repro', outcome: 'fail', outputExcerpt: 'ZeroDivisionError' },
+      'check-pytest-regress': { checkId: 'check-pytest-regress', outcome: 'pass', outputExcerpt: '1 passed' },
+    },
+  });
+
+  const expectedCheckSetDigest = computeCheckSetDigest(task.requiredChecks);
+  const expectedContext = {
+    taskId: task.taskId,
+    workspaceId: 'workspace-flow-001',
+    repositoryId: task.repositoryId,
+    revisionDigest: task.initialRevisionDigest,
+    criteriaDigest: computeCanonicalSha256(task.acceptanceCriteria),
+    checkSetDigest: expectedCheckSetDigest,
+    expectedTestFiles: ['tests/test_calculator.py'],
+  };
+
+  // 1. Run investigateBaseline
+  const baselineResult = await investigateBaseline(task, initialRepo, host, expectedContext);
+  assert.equal(baselineResult.status, 'reproduced');
+  if (baselineResult.status !== 'reproduced' || !baselineResult.baseline) {
+    throw new Error('Expected baseline to be reproduced with candidate');
+  }
+  const candidate = baselineResult.baseline;
+
+  // 2. Verified checkSetDigest matches computeCheckSetDigest exactly
+  assert.equal(candidate.checkSetDigest, expectedCheckSetDigest);
+
+  const baseline: Baseline = {
+    evidenceId: 'baseline-flow-001',
+    repositorySnapshotDigest: candidate.repositorySnapshotDigest,
+    checkSetDigest: candidate.checkSetDigest,
+    reproductionFailureSignature: candidate.reproductionFailureSignature,
+    checkResults: candidate.checkResults,
+    testProtectionDigest: candidate.testProtectionDigest,
+  };
+
+  const planStrategy = 'Add check in divide';
+  const plan: FixPlan = {
+    planVersion: 1,
+    diagnosis: 'Division by zero',
+    suspectedCauseLocations: ['src/calculator.py:10'],
+    evidenceRefs: [baseline.evidenceId],
+    strategy: planStrategy,
+    scopedChanges: ['src/calculator.py'],
+    checkSetDigest: baseline.checkSetDigest,
+    baselineRef: baseline.evidenceId,
+    strategyDigest: computeCanonicalSha256(planStrategy),
+    decisionRef: 'dec-flow-001',
+  };
+
+  const state: TaskState = {
+    ...createFixtureTaskState(),
+    schemaVersion: CONTRACT_VERSION,
+    taskId: task.taskId,
+    repositoryId: task.repositoryId,
+    repositoryRevisionDigest: repoDigest,
+    requiredCheckIds: task.requiredChecks.map((c) => c.checkId),
+    taskContext: task,
+    node: 'Review',
+    planVersion: 1,
+    plan,
+    changedPaths: ['src/calculator.py'],
+    evidenceRefs: [baseline.evidenceId],
+    activeDecisionId: 'dec-flow-001',
+    latestReviewRef: 'review-flow-001',
+    reviewRefs: ['review-flow-001'],
+  };
+
+  const patchedRepo = new FakeRepositoryPort({
+    initialRevision: repoDigest,
+    testResults: {
+      'check-pytest-repro': { checkId: 'check-pytest-repro', outcome: 'pass' },
+      'check-pytest-regress': { checkId: 'check-pytest-regress', outcome: 'pass' },
+    },
+  });
+
+  const verificationResults = await executeVerificationChecks(task, patchedRepo, {
+    runId: state.runId,
+    repoDigest,
+    diffDigest,
+  });
+
+  const reviewResult: ReviewResult = {
+    reviewId: 'review-flow-001',
+    reviewerRoleConfigId: 'role-reviewer-v1',
+    repoDigest,
+    diffDigest,
+    checkSetDigest: candidate.checkSetDigest,
+    status: 'accepted',
+    findings: [],
+    iterationReservationRef: 'res-flow-001',
+  };
+
+  const trustedReviewRecord: TrustedReviewRecord = {
+    reviewId: reviewResult.reviewId,
+    reviewerRoleConfigId: reviewResult.reviewerRoleConfigId,
+    iterationReservationRef: reviewResult.iterationReservationRef,
+    repoDigest,
+    diffDigest,
+    checkSetDigest: candidate.checkSetDigest,
+    status: 'accepted',
+  };
+
+  const completionInput: CompletionPredicateInput = {
+    task,
+    state,
+    baseline,
+    verificationResults,
+    reviewResult,
+    currentRepoDigest: repoDigest,
+    currentDiffDigest: diffDigest,
+    changedFiles: ['src/calculator.py'],
+    originalProtectedTestsDigest: candidate.testProtectionDigest,
+    currentProtectedTestsDigest: candidate.testProtectionDigest,
+    authorizedDiffDigest: diffDigest,
+    trustedReviewRecord,
+  };
+
+  // 3. Evaluate deterministic completion with zero manual digest adjustments
+  const completionResult = evaluateDeterministicCompletion(completionInput);
+  assert.equal(completionResult.isComplete, true);
+  assert.equal(completionResult.outcome, 'COMPLETED');
+  assert.equal(completionResult.reasons.length, 0);
+
+  // 4. Build trusted completion context
+  const completionContext = buildCompletionTransitionContext(completionInput);
+  assert.equal(completionContext.checkSetDigest, candidate.checkSetDigest);
+  assert.equal(completionContext.authorizedDiffDigest, diffDigest);
+
+  // 5. Test state transition to Deliver node
+  const deliverState: TaskState = {
+    ...state,
+    stateVersion: state.stateVersion + 1,
+    node: 'Deliver',
+    outcome: 'COMPLETED',
+    nextAction: 'ready-for-human-review',
+  };
+
+  const transitionRes = validateStateTransition(state, deliverState, {
+    trusted: {
+      completion: completionContext,
+    },
+  });
+  assert.equal(transitionRes.ok, true, `validateStateTransition should succeed: ${transitionRes.ok ? '' : transitionRes.errors.map(e => e.message).join('; ')}`);
+});
+
+test('regression: changing check argv or executable invalidates stale baseline and prevents completion', () => {
+  const input = createValidCompletionFixture();
+  const firstCheck = input.task.requiredChecks[0];
+  if (!firstCheck) throw new Error('Missing check in test fixture');
+  const modifiedCheck: CheckDefinition = {
+    ...firstCheck,
+    argv: ['-q', '-v', 'tests/test_calculator.py'],
+  };
+  const changedTask: BugTask = {
+    ...input.task,
+    requiredChecks: [modifiedCheck, ...input.task.requiredChecks.slice(1)],
+  };
+  const result = evaluateDeterministicCompletion({
+    ...input,
+    task: changedTask,
+  });
+
+  assert.equal(result.isComplete, false);
+  assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
+  assert.ok(
+    result.reasons.some((r) => r.toLowerCase().includes('checksetdigest')),
+    'Must fail due to checkSetDigest mismatch between stale baseline and changed checks'
+  );
+});
+
+test('regression: trustedReviewRecord checkSetDigest mismatch prevents completion', () => {
+  const input = createValidCompletionFixture();
+  if (!input.trustedReviewRecord) throw new Error('Missing trustedReviewRecord in fixture');
+  const badReviewRecord: TrustedReviewRecord = {
+    ...input.trustedReviewRecord,
+    checkSetDigest: 'sha256:0000000000000000000000000000000000000000000000000000000000000000',
+  };
+  const result = evaluateDeterministicCompletion({
+    ...input,
+    trustedReviewRecord: badReviewRecord,
+  });
+
+  assert.equal(result.isComplete, false);
+  assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
 });

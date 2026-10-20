@@ -18,6 +18,7 @@
 
 import {
   computeCanonicalSha256,
+  computeCheckSetDigest,
   isCanonicalRelativePath,
   isProtectedPath,
   validateVerificationResult,
@@ -35,6 +36,17 @@ import {
   type RepositoryPort,
   type TrustedTransitionContext,
 } from '../contracts/foundation/uc03.ts';
+import { extractCheckTestSelectors } from './selectors.ts';
+
+export interface TrustedReviewRecord {
+  readonly reviewId: string;
+  readonly reviewerRoleConfigId: string;
+  readonly iterationReservationRef: string;
+  readonly repoDigest: string;
+  readonly diffDigest: string;
+  readonly checkSetDigest?: string | undefined;
+  readonly status?: 'accepted' | 'findings' | 'dismissed' | undefined;
+}
 
 export interface CompletionPredicateInput {
   readonly task: BugTask;
@@ -47,6 +59,9 @@ export interface CompletionPredicateInput {
   readonly changedFiles: readonly string[];
   readonly originalProtectedTestsDigest: string;
   readonly currentProtectedTestsDigest: string;
+  readonly trustedReviewRecord?: TrustedReviewRecord | undefined;
+  readonly authorizedDiffDigest?: string | undefined;
+  readonly trustedPatchRecord?: { readonly authorizedDiffDigest: string } | undefined;
 }
 
 export interface CompletionPredicateResult {
@@ -179,12 +194,21 @@ export function evaluateDeterministicCompletion(
     }
   }
 
-  // 2. Digest Presence
+  // 2. Digest Presence and Authorization Integrity
   if (!currentRepoDigest || currentRepoDigest.trim().length === 0) {
     reasons.push('currentRepoDigest must be a non-empty string');
   }
   if (!currentDiffDigest || currentDiffDigest.trim().length === 0) {
     reasons.push('currentDiffDigest must be a non-empty string');
+  }
+  const authorizedDiff =
+    input.authorizedDiffDigest ?? input.trustedPatchRecord?.authorizedDiffDigest;
+  if (!authorizedDiff || authorizedDiff.trim().length === 0) {
+    reasons.push('Independent authorizedDiffDigest is required for completion');
+  } else if (currentDiffDigest && authorizedDiff !== currentDiffDigest) {
+    reasons.push(
+      `Authorized diff digest mismatch: authorized (${authorizedDiff}) does not match current diff digest (${currentDiffDigest})`
+    );
   }
 
   // 3. State Binding and Revision Drift
@@ -222,9 +246,7 @@ export function evaluateDeterministicCompletion(
   } else if (!Array.isArray(rawTask.requiredChecks)) {
     reasons.push('Task requiredChecks must be an array');
   } else {
-    expectedCheckSetDigest = computeCanonicalSha256(
-      rawTask.requiredChecks.map((c) => c.checkId)
-    );
+    expectedCheckSetDigest = computeCheckSetDigest(rawTask.requiredChecks);
   }
 
   if (!rawBaseline) {
@@ -483,7 +505,9 @@ export function evaluateDeterministicCompletion(
       }
     }
 
-    if (rawState?.latestReviewRef && rawReview.reviewId !== rawState.latestReviewRef) {
+    if (!rawState?.latestReviewRef || rawState.latestReviewRef.trim().length === 0) {
+      reasons.push('State latestReviewRef is required for completion');
+    } else if (rawReview.reviewId !== rawState.latestReviewRef) {
       reasons.push(
         `Review ID (${rawReview.reviewId}) does not match state latestReviewRef (${rawState.latestReviewRef})`
       );
@@ -497,25 +521,68 @@ export function evaluateDeterministicCompletion(
       );
     }
 
-    if (
-      rawReview.reviewerRoleConfigId &&
-      rawReview.iterationReservationRef &&
-      rawState &&
-      currentRepoDigest &&
-      currentDiffDigest &&
-      expectedCheckSetDigest
-    ) {
-      const reviewAdmission = validateReviewAdmission(rawReview, {
-        expectedReviewId: rawState.latestReviewRef,
-        expectedRepoDigest: currentRepoDigest,
-        expectedDiffDigest: currentDiffDigest,
-        expectedCheckSetDigest,
-        expectedRoleConfigId: rawReview.reviewerRoleConfigId,
-        expectedIterationReservationRef: rawReview.iterationReservationRef,
-      });
-      if (!reviewAdmission.ok) {
-        for (const err of reviewAdmission.errors) {
-          reasons.push(`Review admission error: ${err.message}`);
+    const trustedReview = input.trustedReviewRecord;
+    if (!trustedReview) {
+      reasons.push('Independent trustedReviewRecord is required for completion');
+    } else {
+      if (trustedReview.reviewId !== rawReview.reviewId) {
+        reasons.push(
+          `Trusted review record reviewId mismatch: expected '${trustedReview.reviewId}', got '${rawReview.reviewId}'`
+        );
+      }
+      if (trustedReview.reviewerRoleConfigId !== rawReview.reviewerRoleConfigId) {
+        reasons.push(
+          `Reviewer role config ID mismatch with independent review record: expected '${trustedReview.reviewerRoleConfigId}', got '${rawReview.reviewerRoleConfigId}'`
+        );
+      }
+      if (trustedReview.iterationReservationRef !== rawReview.iterationReservationRef) {
+        reasons.push(
+          `Review iteration reservation ref mismatch with independent review record: expected '${trustedReview.iterationReservationRef}', got '${rawReview.iterationReservationRef}'`
+        );
+      }
+      if (currentRepoDigest && trustedReview.repoDigest !== currentRepoDigest) {
+        reasons.push(
+          `Trusted review record repository digest mismatch: expected '${currentRepoDigest}', got '${trustedReview.repoDigest}'`
+        );
+      }
+      if (currentDiffDigest && trustedReview.diffDigest !== currentDiffDigest) {
+        reasons.push(
+          `Trusted review record diff digest mismatch: expected '${currentDiffDigest}', got '${trustedReview.diffDigest}'`
+        );
+      }
+      if (trustedReview.status !== undefined && trustedReview.status !== 'accepted') {
+        reasons.push(
+          `Trusted review record status is not accepted: '${trustedReview.status}'`
+        );
+      }
+      if (
+        expectedCheckSetDigest &&
+        trustedReview.checkSetDigest !== undefined &&
+        trustedReview.checkSetDigest !== expectedCheckSetDigest
+      ) {
+        reasons.push(
+          `Trusted review record checkSetDigest mismatch: expected '${expectedCheckSetDigest}', got '${trustedReview.checkSetDigest}'`
+        );
+      }
+
+      if (
+        rawState &&
+        currentRepoDigest &&
+        currentDiffDigest &&
+        expectedCheckSetDigest
+      ) {
+        const reviewAdmission = validateReviewAdmission(rawReview, {
+          expectedReviewId: rawState.latestReviewRef,
+          expectedRepoDigest: currentRepoDigest,
+          expectedDiffDigest: currentDiffDigest,
+          expectedCheckSetDigest,
+          expectedRoleConfigId: trustedReview.reviewerRoleConfigId,
+          expectedIterationReservationRef: trustedReview.iterationReservationRef,
+        });
+        if (!reviewAdmission.ok) {
+          for (const err of reviewAdmission.errors) {
+            reasons.push(`Review admission error: ${err.message}`);
+          }
         }
       }
     }
@@ -526,34 +593,50 @@ export function evaluateDeterministicCompletion(
     reasons.push('changedFiles cannot be empty for COMPLETED outcome');
   }
 
-  const existingTestFiles = new Set<string>();
+  const protectedTestFiles = new Set<string>();
+  const protectedTestDirs = new Set<string>();
   if (rawTask && Array.isArray(rawTask.requiredChecks)) {
     for (const check of rawTask.requiredChecks) {
-      if (Array.isArray(check.argv)) {
-        for (const arg of check.argv) {
-          const token = arg.includes('=') ? (arg.split('=')[1] ?? '') : arg;
-          if (
-            isCanonicalRelativePath(token) &&
-            !token.startsWith('-') &&
-            (token.startsWith('tests/') ||
-              token.endsWith('.py') ||
-              token.endsWith('.ts') ||
-              token.endsWith('.js') ||
-              token.includes('test'))
-          ) {
-            existingTestFiles.add(token);
-          }
+      const selectors = extractCheckTestSelectors(check);
+      for (const sel of selectors) {
+        if (sel.isDirectory) {
+          protectedTestDirs.add(sel.filePath.toLowerCase());
+        } else {
+          protectedTestFiles.add(sel.filePath.toLowerCase());
         }
       }
     }
   }
+
+  const rawBaselineExpected = (rawBaseline as { expectedTestFiles?: unknown })?.expectedTestFiles;
+  if (Array.isArray(rawBaselineExpected)) {
+    for (const exp of rawBaselineExpected) {
+      if (typeof exp === 'string') {
+        protectedTestFiles.add(exp.toLowerCase());
+      }
+    }
+  }
+
+  const isProtectedTestFile = (path: string): boolean => {
+    const norm = path.toLowerCase();
+    if (protectedTestFiles.has(norm)) {
+      return true;
+    }
+    for (const dir of protectedTestDirs) {
+      const dirPrefix = dir + '/';
+      if (norm === dir || norm.startsWith(dirPrefix)) {
+        return true;
+      }
+    }
+    return false;
+  };
 
   for (const file of changedFilesList) {
     if (typeof file !== 'string' || !isCanonicalRelativePath(file)) {
       reasons.push(
         `Changed file '${file}' is not a canonical repository-relative path`
       );
-    } else if (isProtectedPath(file) || existingTestFiles.has(file)) {
+    } else if (isProtectedPath(file) || isProtectedTestFile(file)) {
       reasons.push(
         `Changed file '${file}' attempts to modify a protected path or existing protected test (test protection violation)`
       );
@@ -663,10 +746,15 @@ export async function executeVerificationChecks(
       if (
         checkResult &&
         typeof checkResult === 'object' &&
+        'checkId' in checkResult &&
+        checkResult.checkId === check.checkId &&
         'outcome' in checkResult &&
-        typeof checkResult.outcome === 'string'
+        typeof checkResult.outcome === 'string' &&
+        ['pass', 'fail', 'timeout', 'error', 'not-run'].includes(checkResult.outcome)
       ) {
         outcome = checkResult.outcome as VerificationResult['outcome'];
+      } else {
+        outcome = 'error';
       }
     } catch {
       outcome = 'error';
@@ -714,12 +802,23 @@ export function buildCompletionTransitionContext(
     );
   }
 
-  const expectedCheckSetDigest = computeCanonicalSha256(
-    input.task.requiredChecks.map((c) => c.checkId)
-  );
+  const expectedCheckSetDigest = computeCheckSetDigest(input.task.requiredChecks);
   const criteriaDigest = computeCanonicalSha256(
     input.task.acceptanceCriteria
   );
+
+  const authorizedDiff =
+    input.authorizedDiffDigest ?? input.trustedPatchRecord?.authorizedDiffDigest;
+  if (!authorizedDiff) {
+    throw new Error(
+      'CANNOT_BUILD_COMPLETION_CONTEXT: Missing independent authorizedDiffDigest'
+    );
+  }
+  if (!input.trustedReviewRecord) {
+    throw new Error(
+      'CANNOT_BUILD_COMPLETION_CONTEXT: Missing independent trustedReviewRecord'
+    );
+  }
 
   return {
     taskId: input.task.taskId,
@@ -729,11 +828,11 @@ export function buildCompletionTransitionContext(
     checkSetDigest: expectedCheckSetDigest,
     baselineRef: input.baseline.evidenceId,
     criteriaDigest,
-    authorizedDiffDigest: input.currentDiffDigest,
+    authorizedDiffDigest: authorizedDiff,
     protectedTestsDigest: input.currentProtectedTestsDigest,
     originalProtectedTestsDigest: input.originalProtectedTestsDigest,
-    reviewerRoleConfigId: input.reviewResult.reviewerRoleConfigId,
-    reviewIterationReservationRef: input.reviewResult.iterationReservationRef,
+    reviewerRoleConfigId: input.trustedReviewRecord.reviewerRoleConfigId,
+    reviewIterationReservationRef: input.trustedReviewRecord.iterationReservationRef,
     checks: input.verificationResults,
     review: input.reviewResult,
   };

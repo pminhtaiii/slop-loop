@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   computeCanonicalSha256,
+  computeCheckSetDigest,
   type BugTask,
   type ApprovalBinding,
   type ApprovalPort,
@@ -87,7 +88,7 @@ function createBaselineCandidate(
     reproductionCheckId: reproductionCheck.checkId,
     expectedTestFiles: ['tests/test_calculator.py'],
     repositorySnapshotDigest: task.initialRevisionDigest,
-    checkSetDigest: computeCanonicalSha256(requiredChecks),
+    checkSetDigest: computeCheckSetDigest(requiredChecks),
     reproductionFailureSignature: 'ZeroDivisionError: division by zero',
     checkResults: requiredChecks.map((check) => ({
       checkId: check.checkId,
@@ -97,7 +98,9 @@ function createBaselineCandidate(
         : {}),
       durationMs: 20,
     })),
-    testProtectionDigest: 'sha256:3333333333333333333333333333333333333333333333333333333333333333',
+    testProtectionDigest: computeTestProtectionDigest([
+      { path: 'tests/test_calculator.py', content: 'def test_calc(): pass\n' },
+    ]),
   };
 }
 
@@ -170,12 +173,13 @@ function observeStatePort(port: MemoryStatePort, events: string[]): MemoryStateP
           if (state.node === 'Patch') {
             const tc = (target as unknown as { transitionContexts: Record<number, unknown> }).transitionContexts;
             if (tc && !tc[state.stateVersion] && state.plan) {
+              const evidenceRefs = state.plan.evidenceRefs ?? (state.plan.baselineRef ? [state.plan.baselineRef] : []);
               const action = {
                 actionId: state.activeDecisionId ?? '',
                 kind: 'approve_fix_plan' as const,
                 planVersion: state.plan.planVersion,
                 strategyDigest: state.plan.strategyDigest,
-                diagnosisEvidenceRefs: state.plan.baselineRef ? [state.plan.baselineRef] : [],
+                diagnosisEvidenceRefs: evidenceRefs,
                 checkSetDigest: state.plan.checkSetDigest,
               };
               const actionDigest = computeCanonicalSha256(action);
@@ -191,7 +195,7 @@ function observeStatePort(port: MemoryStatePort, events: string[]): MemoryStateP
                 planVersion: state.plan.planVersion,
                 strategyDigest: state.plan.strategyDigest,
                 baselineRef: state.plan.baselineRef ?? '',
-                evidenceRefs: state.plan.evidenceRefs,
+                evidenceRefs: evidenceRefs,
                 criteriaDigest: computeCanonicalSha256(state.acceptanceCriteria),
                 checkSetDigest: state.plan.checkSetDigest,
                 status: 'approved' as const,
@@ -206,7 +210,7 @@ function observeStatePort(port: MemoryStatePort, events: string[]): MemoryStateP
                 currentPlanVersion: state.plan.planVersion,
                 currentStrategyDigest: state.plan.strategyDigest,
                 currentBaselineRef: state.plan.baselineRef ?? '',
-                currentEvidenceRefs: [state.plan.baselineRef ?? ''],
+                currentEvidenceRefs: evidenceRefs,
                 currentCriteriaDigest: computeCanonicalSha256(state.acceptanceCriteria),
                 currentCheckSetDigest: state.plan.checkSetDigest,
               };
@@ -277,7 +281,7 @@ class FakeTrustedHostPort implements TrustedHostPort {
   ) {
     const checkSetDigest =
       options?.checkSetDigest ??
-      computeCanonicalSha256(task.requiredChecks);
+      computeCheckSetDigest(task.requiredChecks);
     this.currentRevision = currentRevision;
     this.testFiles = testFiles;
     this.options = options;
@@ -334,7 +338,7 @@ function createValidHostPort(
     {
       checkSetDigest:
         options?.checkSetDigest ??
-        computeCanonicalSha256(task.requiredChecks),
+        computeCheckSetDigest(task.requiredChecks),
       expectedTestFiles:
         options?.expectedTestFiles ?? files.map((f) => f.path),
       onSnapshot: options?.onSnapshot,
@@ -353,7 +357,7 @@ function createBoundHostPort(
   const testFiles = options?.testFiles ?? [
     { path: 'tests/test_calculator.py', content: 'def test_calc(): pass\n' },
   ];
-  const checkSetDigest = computeCanonicalSha256(task.requiredChecks);
+  const checkSetDigest = computeCheckSetDigest(task.requiredChecks);
   const expectedTestFiles = testFiles.map((file) => file.path);
   const producerClaims: TrustedHostExpectedContext = {
     taskId: task.taskId,
@@ -392,7 +396,7 @@ function createTrustedAdmissionContext(
     repositoryId: task.repositoryId,
     revisionDigest: task.initialRevisionDigest,
     criteriaDigest: computeCanonicalSha256(task.acceptanceCriteria),
-    checkSetDigest: computeCanonicalSha256(task.requiredChecks),
+    checkSetDigest: computeCheckSetDigest(task.requiredChecks),
     expectedTestFiles: [...expectedTestFiles],
     ...overrides,
   };
@@ -461,7 +465,7 @@ test('investigation authority: producer-controlled context cannot replace indepe
     repositoryId: task.repositoryId,
     revisionDigest: task.initialRevisionDigest,
     criteriaDigest: computeCanonicalSha256(task.acceptanceCriteria),
-    checkSetDigest: computeCanonicalSha256(task.requiredChecks),
+    checkSetDigest: computeCheckSetDigest(task.requiredChecks),
     expectedTestFiles: ['tests/test_calculator.py'],
   };
   const forgedSnapshot: TrustedHostSnapshot = {
@@ -669,7 +673,7 @@ test('investigation authority: stale host snapshot revision mismatch fails close
       },
     ],
     {
-      checkSetDigest: computeCanonicalSha256(task.requiredChecks),
+      checkSetDigest: computeCheckSetDigest(task.requiredChecks),
       expectedTestFiles: ['tests/test_calculator.py'],
     }
   );
@@ -714,7 +718,7 @@ test('investigation authority: incomplete test inventory in required checks argv
       },
     ],
     {
-      checkSetDigest: computeCanonicalSha256(task.requiredChecks),
+      checkSetDigest: computeCheckSetDigest(task.requiredChecks),
       expectedTestFiles: ['tests/test_calculator.py'],
     }
   );
@@ -746,7 +750,7 @@ test('investigation authority: host expected test files list mismatch fails clos
       },
     ],
     {
-      checkSetDigest: computeCanonicalSha256(task.requiredChecks),
+      checkSetDigest: computeCheckSetDigest(task.requiredChecks),
       expectedTestFiles: ['tests/test_calculator.py', 'tests/test_unprovided.py'],
     }
   );
@@ -885,7 +889,7 @@ test('investigation authority: producer mutates retained snapshot object revisio
     workspaceId: 'workspace-uc03-test',
     repositoryId: task.repositoryId,
     currentRevision: task.initialRevisionDigest,
-    checkSetDigest: computeCanonicalSha256(task.requiredChecks),
+    checkSetDigest: computeCheckSetDigest(task.requiredChecks),
     testFiles: [
       {
         path: 'tests/test_calculator.py',
@@ -970,7 +974,7 @@ test('investigation authority: host snapshot omitting expectedTestFiles denies b
             content: 'def test_calc(): pass\n',
           },
         ],
-        checkSetDigest: computeCanonicalSha256(task.requiredChecks),
+        checkSetDigest: computeCheckSetDigest(task.requiredChecks),
       }) as unknown as TrustedHostSnapshot,
   };
 
@@ -1000,7 +1004,7 @@ test('investigation authority: snapshot with argv-only subset that omits another
       workspaceId: 'workspace-uc03-test',
       repositoryId: task.repositoryId,
       currentRevision: task.initialRevisionDigest,
-      checkSetDigest: computeCanonicalSha256(task.requiredChecks),
+      checkSetDigest: computeCheckSetDigest(task.requiredChecks),
       testFiles: [
         {
           path: 'tests/test_calculator.py',
@@ -1038,7 +1042,7 @@ test('investigation authority: duplicate path in expectedTestFiles denies before
       workspaceId: 'workspace-uc03-test',
       repositoryId: task.repositoryId,
       currentRevision: task.initialRevisionDigest,
-      checkSetDigest: computeCanonicalSha256(task.requiredChecks),
+      checkSetDigest: computeCheckSetDigest(task.requiredChecks),
       testFiles: [
         {
           path: 'tests/test_calculator.py',
@@ -1187,7 +1191,7 @@ test('investigation authority: hostile snapshot ownKeys trap fails closed withou
       workspaceId: 'workspace-uc03-test',
       repositoryId: task.repositoryId,
       currentRevision: task.initialRevisionDigest,
-      checkSetDigest: computeCanonicalSha256(task.requiredChecks),
+      checkSetDigest: computeCheckSetDigest(task.requiredChecks),
       expectedTestFiles: ['tests/test_calculator.py'],
       testFiles: [{ path: 'tests/test_calculator.py', content: 'def test_calc(): pass\n' }],
     },
@@ -1224,7 +1228,7 @@ test('investigation authority: hostile snapshot inventory proxy fails closed wit
       workspaceId: 'workspace-uc03-test',
       repositoryId: task.repositoryId,
       currentRevision: task.initialRevisionDigest,
-      checkSetDigest: computeCanonicalSha256(task.requiredChecks),
+      checkSetDigest: computeCheckSetDigest(task.requiredChecks),
       expectedTestFiles: hostileInventory,
       testFiles: [{ path: 'tests/test_calculator.py', content: 'def test_calc(): pass\n' }],
     }),
@@ -1266,7 +1270,7 @@ test('investigation authority: hostile throwing nested getter on snapshot proper
         taskId: task.taskId,
         workspaceId: 'workspace-uc03-test',
         repositoryId: task.repositoryId,
-        checkSetDigest: computeCanonicalSha256(task.requiredChecks),
+        checkSetDigest: computeCheckSetDigest(task.requiredChecks),
         testFiles: [
           {
             path: 'tests/test_calculator.py',
@@ -1314,7 +1318,7 @@ test('investigation authority: hostile Proxy on testFiles entry fails closed wit
       workspaceId: 'workspace-uc03-test',
       repositoryId: task.repositoryId,
       currentRevision: task.initialRevisionDigest,
-      checkSetDigest: computeCanonicalSha256(task.requiredChecks),
+      checkSetDigest: computeCheckSetDigest(task.requiredChecks),
       testFiles: [hostileFile],
       expectedTestFiles: ['tests/test_calculator.py'],
     }),
@@ -1345,7 +1349,7 @@ test('investigation authority: deep raw byte copy preserves test bytes against p
       workspaceId: 'workspace-uc03-test',
       repositoryId: task.repositoryId,
       currentRevision: task.initialRevisionDigest,
-      checkSetDigest: computeCanonicalSha256(task.requiredChecks),
+      checkSetDigest: computeCheckSetDigest(task.requiredChecks),
       testFiles: [
         {
           path: 'tests/test_calculator.py',
@@ -1433,7 +1437,7 @@ test('investigation: admits only the complete explicit required check set', asyn
       }),
     ],
   });
-  const checkSetDigest = computeCanonicalSha256(task.requiredChecks);
+  const checkSetDigest = computeCheckSetDigest(task.requiredChecks);
   const hostPort = createValidHostPort(task, undefined, { checkSetDigest });
   const observedCheckIds: string[] = [];
   const repoStub = createCanonicalRepositoryStub({
@@ -1782,7 +1786,7 @@ test('plan preparation: evidence acknowledgement precedes state CAS, checkpoint,
   assert.deepEqual(request.content.checkResults.map((check) => check.checkId),
     task.requiredChecks.map((check) => check.checkId));
   assert.equal(request.content.repositorySnapshotDigest, task.initialRevisionDigest);
-  assert.equal(request.content.checkSetDigest, computeCanonicalSha256(task.requiredChecks));
+  assert.equal(request.content.checkSetDigest, computeCheckSetDigest(task.requiredChecks));
   assert.equal(request.content.criteriaDigest, computeCanonicalSha256(task.acceptanceCriteria));
   assert.equal(request.content.taskId, state.taskId);
   assert.equal(request.content.workspaceId, state.workspaceId);
@@ -1823,7 +1827,7 @@ test('plan preparation: caller evidence refs cannot omit the acknowledged baseli
   assert.deepEqual(result.plan?.evidenceRefs, [baselineRef, callerEvidenceRef]);
   assert.equal(approval.requests.length, 1);
   assert.equal(approval.requests[0]?.baselineRef, result.plan?.baselineRef);
-  assert.deepEqual(approval.requests[0]?.evidenceRefs, [baselineRef]);
+  assert.deepEqual(approval.requests[0]?.evidenceRefs, [baselineRef, callerEvidenceRef]);
   assert.equal(events.join(','), 'evidence,state-transition,checkpoint,approval');
 });
 
@@ -2017,6 +2021,7 @@ test('plan preparation: valid approved decision transitions to Patch, checkpoint
       state: statePort,
       approval: approval.port,
       baselineEvidenceWriter: evidence.writer,
+      host: createBoundHostPort(task),
     },
     standardPlanDetails
   );
@@ -2075,6 +2080,7 @@ test('plan preparation: approved decision with StatePort transition CAS throw ne
       state: throwingStatePort,
       approval: approval.port,
       baselineEvidenceWriter: evidence.writer,
+      host: createBoundHostPort(task),
     },
     standardPlanDetails
   );
@@ -2130,6 +2136,7 @@ test('plan preparation: approved decision with StatePort checkpoint throw never 
       state: throwingStatePort,
       approval: approval.port,
       baselineEvidenceWriter: evidence.writer,
+      host: createBoundHostPort(task),
     },
     standardPlanDetails
   );
@@ -2853,4 +2860,395 @@ test('plan preparation: approval request throw returns rejected and stays at Awa
   assert.match(result.reason ?? '', /Approval request failed/i);
   assert.equal(result.state?.node, 'AwaitPlan');
   assert.equal(repo.patches.length, 0);
+});
+
+/* ==================================================================
+ * Section 9: Post-Approval Host Snapshot Revalidation & Evidence Provenance
+ * ================================================================== */
+
+test('plan preparation: approved decision with missing host port fails closed before Patch transition', async () => {
+  const task = createFixtureBugTask();
+  const candidate = createBaselineCandidate(task);
+  const state = createStateForBaselineCandidate(task, candidate);
+  const memoryState = new MemoryStatePort({ initialTaskState: state });
+  const approval = createCustomApprovalPort({ defaultStatus: 'approved' });
+  const evidence = createBaselineEvidenceWriter();
+  const repo = new FakeRepositoryPort({ initialRevision: task.initialRevisionDigest });
+
+  const result = await prepareFixPlanAndApproval(
+    state,
+    candidate,
+    {
+      repository: repo,
+      state: memoryState,
+      approval: approval.port,
+      baselineEvidenceWriter: evidence.writer,
+      // Omit host port intentionally!
+    },
+    standardPlanDetails
+  );
+
+  assert.equal(result.outcome, 'rejected');
+  assert.match(result.reason ?? '', /Missing HostPort loadSnapshot capability/i);
+  assert.equal(result.state?.node, 'AwaitPlan');
+  assert.equal(repo.patches.length, 0);
+});
+
+test('plan preparation: approved decision with drifted host snapshot testProtectionDigest fails closed before Patch transition', async () => {
+  const task = createFixtureBugTask();
+  const candidate = createBaselineCandidate(task);
+  const state = createStateForBaselineCandidate(task, candidate);
+  const memoryState = new MemoryStatePort({ initialTaskState: state });
+  const approval = createCustomApprovalPort({ defaultStatus: 'approved' });
+  const evidence = createBaselineEvidenceWriter();
+  const repo = new FakeRepositoryPort({ initialRevision: task.initialRevisionDigest });
+
+  // Host returns drifted test file content!
+  const host: TrustedHostPort = {
+    async loadSnapshot(req) {
+      return {
+        taskId: req.taskId,
+        workspaceId: req.workspaceId,
+        repositoryId: req.repositoryId,
+        currentRevision: req.expectedRevisionDigest,
+        checkSetDigest: req.expectedCheckSetDigest,
+        expectedTestFiles: req.expectedTestFiles,
+        testFiles: req.expectedTestFiles.map((p) => ({
+          path: p,
+          content: 'tampered test content while awaiting approval',
+        })),
+      };
+    },
+  };
+
+  const result = await prepareFixPlanAndApproval(
+    state,
+    candidate,
+    {
+      repository: repo,
+      state: memoryState,
+      approval: approval.port,
+      baselineEvidenceWriter: evidence.writer,
+      host,
+    },
+    standardPlanDetails
+  );
+
+  assert.equal(result.outcome, 'rejected');
+  assert.match(result.reason ?? '', /Host protected test files drift detected/i);
+  assert.equal(result.state?.node, 'AwaitPlan');
+  assert.equal(repo.patches.length, 0);
+});
+
+test('plan preparation: approved decision with valid host port transitions to Patch', async () => {
+  const task = createFixtureBugTask();
+  const candidate = createBaselineCandidate(task);
+  const state = createStateForBaselineCandidate(task, candidate);
+  const statePort = observeStatePort(new MemoryStatePort({ initialTaskState: state }), []);
+  const approval = createCustomApprovalPort({ defaultStatus: 'approved' });
+  const evidence = createBaselineEvidenceWriter();
+  const repo = new FakeRepositoryPort({ initialRevision: task.initialRevisionDigest });
+
+  const host: TrustedHostPort = {
+    async loadSnapshot(req) {
+      return {
+        taskId: req.taskId,
+        workspaceId: req.workspaceId,
+        repositoryId: req.repositoryId,
+        currentRevision: req.expectedRevisionDigest,
+        checkSetDigest: req.expectedCheckSetDigest,
+        expectedTestFiles: req.expectedTestFiles,
+        testFiles: [
+          { path: 'tests/test_calculator.py', content: 'def test_calc(): pass\n' },
+        ],
+      };
+    },
+  };
+
+  const result = await prepareFixPlanAndApproval(
+    state,
+    candidate,
+    {
+      repository: repo,
+      state: statePort,
+      approval: approval.port,
+      baselineEvidenceWriter: evidence.writer,
+      host,
+    },
+    standardPlanDetails
+  );
+
+  assert.equal(result.outcome, 'approved', result.reason);
+  assert.equal(result.state?.node, 'Patch');
+  assert.equal(result.state?.nextAction, 'apply-patch');
+});
+
+test('plan preparation: evidenceRefs with untrusted reference fails provenance check', async () => {
+  const task = createFixtureBugTask();
+  const candidate = createBaselineCandidate(task);
+  const state = createStateForBaselineCandidate(task, candidate);
+  const memoryState = new MemoryStatePort({ initialTaskState: state });
+  const approval = createCustomApprovalPort({ defaultStatus: 'approved' });
+  const evidence = createBaselineEvidenceWriter();
+  const repo = new FakeRepositoryPort({ initialRevision: task.initialRevisionDigest });
+
+  const result = await prepareFixPlanAndApproval(
+    state,
+    candidate,
+    {
+      repository: repo,
+      state: memoryState,
+      approval: approval.port,
+      baselineEvidenceWriter: evidence.writer,
+    },
+    {
+      ...standardPlanDetails,
+      evidenceRefs: ['untrusted-evidence-ref-without-provenance'],
+    }
+  );
+
+  assert.equal(result.outcome, 'rejected');
+  assert.match(result.reason ?? '', /Untrusted or missing evidence reference/i);
+  assert.equal(result.state?.node, 'Investigate');
+});
+
+test('plan preparation: evidenceRefs with valid state provenance are deterministically ordered in plan, action, and binding', async () => {
+  const task = createFixtureBugTask();
+  const candidate = createBaselineCandidate(task);
+  const state: TaskState = {
+    ...createStateForBaselineCandidate(task, candidate),
+    evidenceRefs: ['evidence-prior-z', 'evidence-prior-a'],
+  };
+  const statePort = observeStatePort(new MemoryStatePort({ initialTaskState: state }), []);
+  const approval = createCustomApprovalPort({ defaultStatus: 'approved' });
+  const evidence = createBaselineEvidenceWriter();
+  const repo = new FakeRepositoryPort({ initialRevision: task.initialRevisionDigest });
+
+  const host: TrustedHostPort = {
+    async loadSnapshot(req) {
+      return {
+        taskId: req.taskId,
+        workspaceId: req.workspaceId,
+        repositoryId: req.repositoryId,
+        currentRevision: req.expectedRevisionDigest,
+        checkSetDigest: req.expectedCheckSetDigest,
+        expectedTestFiles: req.expectedTestFiles,
+        testFiles: [
+          { path: 'tests/test_calculator.py', content: 'def test_calc(): pass\n' },
+        ],
+      };
+    },
+  };
+
+  const result = await prepareFixPlanAndApproval(
+    state,
+    candidate,
+    {
+      repository: repo,
+      state: statePort,
+      approval: approval.port,
+      baselineEvidenceWriter: evidence.writer,
+      host,
+    },
+    {
+      ...standardPlanDetails,
+      // Provide extra refs in reverse alphabetical order
+      evidenceRefs: ['evidence-prior-z', 'evidence-prior-a'],
+    }
+  );
+
+  assert.equal(result.outcome, 'approved', result.reason);
+  const acknowledgedBaselineRef = 'uc04://baseline/task-calc-001/1';
+  const expectedEvidenceOrder = [acknowledgedBaselineRef, 'evidence-prior-a', 'evidence-prior-z'];
+  assert.deepEqual(result.plan?.evidenceRefs, expectedEvidenceOrder);
+  assert.deepEqual(result.binding?.evidenceRefs, expectedEvidenceOrder);
+  assert.deepEqual(result.state?.plan?.evidenceRefs, expectedEvidenceOrder);
+  assert.deepEqual(result.state?.evidenceRefs, ['evidence-prior-z', 'evidence-prior-a', acknowledgedBaselineRef]);
+});
+
+test('investigateBaseline: pytest node ID (tests/test_calculator.py::test_calc) is normalized and checked in inventory', async () => {
+  const nodeCheck: CheckDefinition = {
+    checkId: 'check-pytest-repro-node',
+    executable: 'pytest',
+    argv: ['-q', 'tests/test_calculator.py::test_calc'],
+    purpose: 'reproduction',
+    workingDirectory: 'tests',
+    timeoutMs: 30000,
+    maxOutputBytes: 1048576,
+  };
+  const task = createFixtureBugTask({
+    requiredChecks: [nodeCheck],
+  });
+  const repo = new FakeRepositoryPort({
+    initialRevision: task.initialRevisionDigest,
+    testResults: {
+      'check-pytest-repro-node': {
+        checkId: 'check-pytest-repro-node',
+        outcome: 'fail',
+        outputExcerpt: 'AssertionError',
+      },
+    },
+  });
+  const host = createBoundHostPort(task, {
+    testFiles: [{ path: 'tests/test_calculator.py', content: 'def test_calc(): pass\n' }],
+  });
+
+  const result = await investigateWithTestContext(task, repo, host, ['tests/test_calculator.py']);
+  assert.equal(result.status, 'reproduced');
+  assert.ok(result.baseline);
+  assert.equal(result.baseline.requiredChecks[0]?.checkId, 'check-pytest-repro-node');
+});
+
+test('investigateBaseline: path traversal in test selector strictly fails closed', async () => {
+  const traversalCheck: CheckDefinition = {
+    checkId: 'check-traversal',
+    executable: 'pytest',
+    argv: ['-q', 'tests/../secrets.py'],
+    purpose: 'reproduction',
+    workingDirectory: 'tests',
+    timeoutMs: 30000,
+    maxOutputBytes: 1048576,
+  };
+  const task = createFixtureBugTask({
+    requiredChecks: [traversalCheck],
+  });
+  const repo = new FakeRepositoryPort({
+    initialRevision: task.initialRevisionDigest,
+  });
+  const host = createBoundHostPort(task);
+
+  const result = await investigateWithTestContext(task, repo, host);
+  assert.equal(result.status, 'error');
+});
+
+test('testProtectionDigest: uses deterministic code-unit sort ordering covering uppercase/lowercase, punctuation, and Unicode paths', () => {
+  // Test with paths covering uppercase/lowercase, punctuation, and Unicode characters
+  const files: TrustedTestFileSnapshot[] = [
+    { path: 'tests/_init_test.py', content: 'underscore' },
+    { path: 'tests/-k_test.py', content: 'dash' },
+    { path: 'tests/b/test_b.py', content: 'b' },
+    { path: 'tests/Z/test_Z.py', content: 'Z' },
+    { path: 'tests/a/test_a.py', content: 'a' },
+    { path: 'tests/ü_test.py', content: 'unicode-umlaut' },
+    { path: 'tests/日本語_test.py', content: 'unicode-cjk' },
+  ];
+  const digest1 = computeTestProtectionDigest(files);
+  // Permuted order inputs (reverse and shuffled)
+  const digest2 = computeTestProtectionDigest([...files].reverse());
+  const [f0, f1, f2, f3, f4, f5, f6] = files;
+  if (!f0 || !f1 || !f2 || !f3 || !f4 || !f5 || !f6) {
+    throw new Error('Expected 7 files in fixture');
+  }
+  const digest3 = computeTestProtectionDigest([f3, f0, f6, f1, f4, f2, f5]);
+  assert.equal(digest1, digest2, 'computeTestProtectionDigest must be order-invariant across reverse order');
+  assert.equal(digest1, digest3, 'computeTestProtectionDigest must be order-invariant across permutations');
+});
+
+test('computeCheckSetDigest: deterministic code-unit sort ordering invariant across permutations', () => {
+  const check1: CheckDefinition = {
+    checkId: 'check-z-last',
+    executable: 'pytest',
+    argv: ['-q', 'tests/test_z.py'],
+    purpose: 'regression',
+    workingDirectory: 'tests',
+  };
+  const check2: CheckDefinition = {
+    checkId: 'check-a-first',
+    executable: 'pytest',
+    argv: ['-q', 'tests/test_a.py'],
+    purpose: 'reproduction',
+    workingDirectory: 'tests',
+  };
+  const check3: CheckDefinition = {
+    checkId: 'check-m-middle',
+    executable: 'pytest',
+    argv: ['-q', 'tests/test_m.py'],
+    purpose: 'regression',
+    workingDirectory: 'tests',
+  };
+
+  const digestForward = computeCheckSetDigest([check1, check2, check3]);
+  const digestReverse = computeCheckSetDigest([check3, check2, check1]);
+  const digestPermuted = computeCheckSetDigest([check2, check3, check1]);
+
+  assert.equal(digestForward, digestReverse, 'computeCheckSetDigest must return identical hash regardless of array ordering');
+  assert.equal(digestForward, digestPermuted, 'computeCheckSetDigest must be permutation invariant');
+});
+
+test('computeCheckSetDigest: changing check arguments or executable changes checkSetDigest and invalidates stale baseline', () => {
+  const baseCheck: CheckDefinition = {
+    checkId: 'check-test',
+    executable: 'pytest',
+    argv: ['-q', 'tests/test_calculator.py'],
+    purpose: 'reproduction',
+    workingDirectory: 'tests',
+  };
+  const baseDigest = computeCheckSetDigest([baseCheck]);
+
+  const changedArgCheck: CheckDefinition = {
+    ...baseCheck,
+    argv: ['-q', '-v', 'tests/test_calculator.py'],
+  };
+  const changedArgDigest = computeCheckSetDigest([changedArgCheck]);
+  assert.notEqual(baseDigest, changedArgDigest, 'Changed argv must alter checkSetDigest');
+
+  const changedExeCheck: CheckDefinition = {
+    ...baseCheck,
+    executable: 'python -m pytest',
+  };
+  const changedExeDigest = computeCheckSetDigest([changedExeCheck]);
+  assert.notEqual(baseDigest, changedExeDigest, 'Changed executable must alter checkSetDigest');
+
+  const changedPurposeCheck: CheckDefinition = {
+    ...baseCheck,
+    purpose: 'regression',
+  };
+  const changedPurposeDigest = computeCheckSetDigest([changedPurposeCheck]);
+  assert.notEqual(baseDigest, changedPurposeDigest, 'Changed purpose must alter checkSetDigest');
+});
+
+test('investigateBaseline: bare path traversal ".." in test selector strictly fails closed', async () => {
+  const dotDotCheck: CheckDefinition = {
+    checkId: 'check-dotdot',
+    executable: 'pytest',
+    argv: ['-q', '..'],
+    purpose: 'reproduction',
+    workingDirectory: 'tests',
+    timeoutMs: 30000,
+    maxOutputBytes: 1048576,
+  };
+  const task = createFixtureBugTask({
+    requiredChecks: [dotDotCheck],
+  });
+  const repo = new FakeRepositoryPort({
+    initialRevision: task.initialRevisionDigest,
+  });
+  const host = createBoundHostPort(task);
+
+  const result = await investigateWithTestContext(task, repo, host);
+  assert.equal(result.status, 'error');
+  assert.match(result.reason ?? '', /Invalid or untrusted test selector/i);
+});
+
+test('investigateBaseline: positional argument that is not a test selector fails closed', async () => {
+  const nonSelectorCheck: CheckDefinition = {
+    checkId: 'check-non-selector',
+    executable: 'pytest',
+    argv: ['-q', 'unrecognized_token'],
+    purpose: 'reproduction',
+    workingDirectory: 'tests',
+    timeoutMs: 30000,
+    maxOutputBytes: 1048576,
+  };
+  const task = createFixtureBugTask({
+    requiredChecks: [nonSelectorCheck],
+  });
+  const repo = new FakeRepositoryPort({
+    initialRevision: task.initialRevisionDigest,
+  });
+  const host = createBoundHostPort(task);
+
+  const result = await investigateWithTestContext(task, repo, host);
+  assert.equal(result.status, 'error');
+  assert.match(result.reason ?? '', /Invalid or untrusted test selector/i);
 });

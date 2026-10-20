@@ -17,6 +17,7 @@
 import { createHash } from 'node:crypto';
 import {
   computeCanonicalSha256,
+  computeCheckSetDigest,
   isCanonicalRelativePath,
   isProtectedPath,
   validateBugTask,
@@ -34,12 +35,18 @@ import {
   type ApprovalBinding,
   type ApprovalBindingContext,
   type ApproveFixPlanAction,
+  type CheckDefinition,
   type CheckResult,
   type RepositoryPort,
   type StatePort,
   type ApprovalPort,
   type ModelPort,
 } from '../contracts/foundation/uc03.ts';
+import {
+  extractCheckTestSelectors,
+  normalizePytestSelector,
+  PYTEST_OPTIONS_WITH_ARG,
+} from './selectors.ts';
 
 export interface TrustedTestFileSnapshot {
   readonly path: string;
@@ -306,7 +313,7 @@ export function computeTestProtectionDigest(
     });
   }
 
-  const sorted = extractedFiles.sort((a, b) => a.path.localeCompare(b.path));
+  const sorted = extractedFiles.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
   const entries: {
     readonly path: string;
     readonly byteLength: number;
@@ -327,6 +334,322 @@ export function computeTestProtectionDigest(
   }
 
   return computeCanonicalSha256(entries);
+}
+
+export type HostSnapshotValidationResult =
+  | {
+      readonly ok: true;
+      readonly testProtectionDigest: string;
+      readonly detachedTestFiles: readonly TrustedTestFileSnapshot[];
+      readonly reason?: undefined;
+    }
+  | {
+      readonly ok: false;
+      readonly reason: string;
+      readonly testProtectionDigest?: undefined;
+      readonly detachedTestFiles?: undefined;
+    };
+
+export function validateHostSnapshotFacts(
+  rawSnapshot: unknown,
+  expected: TrustedHostExpectedContext,
+  requiredChecks: readonly CheckDefinition[]
+): HostSnapshotValidationResult {
+  if (!rawSnapshot || typeof rawSnapshot !== 'object') {
+    return {
+      ok: false,
+      reason: 'Trusted host authority returned an invalid snapshot',
+    };
+  }
+
+  let snapshotTaskId: unknown;
+  let snapshotWorkspaceId: unknown;
+  let snapshotRepositoryId: unknown;
+  let rawRevision: unknown;
+  let rawSnapshotCheckSetDigest: unknown;
+  let rawSnapshotExpectedTestFiles: unknown;
+  let rawTestFiles: unknown;
+  try {
+    const snapshot = rawSnapshot as Record<string, unknown>;
+    const keys = Reflect.ownKeys(snapshot);
+    if (!keys.includes('checkSetDigest')) {
+      return { ok: false, reason: 'Trusted host snapshot check-set binding is required' };
+    }
+    if (!keys.includes('expectedTestFiles')) {
+      return { ok: false, reason: 'Trusted host snapshot complete inventory binding is required' };
+    }
+    if (
+      !keys.includes('taskId') ||
+      !keys.includes('workspaceId') ||
+      !keys.includes('repositoryId') ||
+      !keys.includes('currentRevision') ||
+      !keys.includes('testFiles')
+    ) {
+      return { ok: false, reason: 'Trusted host snapshot is missing a required context binding' };
+    }
+    snapshotTaskId = snapshot.taskId;
+    snapshotWorkspaceId = snapshot.workspaceId;
+    snapshotRepositoryId = snapshot.repositoryId;
+    rawRevision = snapshot.currentRevision;
+    rawSnapshotCheckSetDigest = snapshot.checkSetDigest;
+    rawSnapshotExpectedTestFiles = snapshot.expectedTestFiles;
+    rawTestFiles = snapshot.testFiles;
+  } catch {
+    return {
+      ok: false,
+      reason: 'Trusted host snapshot access failed during extraction',
+    };
+  }
+
+  if (
+    snapshotTaskId !== expected.taskId ||
+    snapshotWorkspaceId !== expected.workspaceId ||
+    snapshotRepositoryId !== expected.repositoryId
+  ) {
+    return {
+      ok: false,
+      reason: 'Trusted host snapshot task, workspace, or repository binding mismatch',
+    };
+  }
+
+  if (
+    typeof rawRevision !== 'string' ||
+    !/^sha256:[a-f0-9]{64}$/.test(rawRevision) ||
+    rawRevision !== expected.revisionDigest
+  ) {
+    return {
+      ok: false,
+      reason: `Host repository revision drift detected: Trusted host snapshot revision binding mismatch: expected '${expected.revisionDigest}', observed '${typeof rawRevision === 'string' ? rawRevision : String(rawRevision)}'`,
+    };
+  }
+
+  if (
+    typeof rawSnapshotCheckSetDigest !== 'string' ||
+    !/^sha256:[a-f0-9]{64}$/.test(rawSnapshotCheckSetDigest) ||
+    rawSnapshotCheckSetDigest !== expected.checkSetDigest
+  ) {
+    return { ok: false, reason: 'Trusted host snapshot check-set binding mismatch' };
+  }
+
+  const snapshotExpectedPathSet = new Set<string>();
+  let snapshotExpectedTestFileCount = 0;
+  try {
+    if (!Array.isArray(rawSnapshotExpectedTestFiles)) {
+      return { ok: false, reason: 'Trusted host snapshot complete inventory is invalid' };
+    }
+    snapshotExpectedTestFileCount = rawSnapshotExpectedTestFiles.length;
+    if (!Number.isSafeInteger(snapshotExpectedTestFileCount) || snapshotExpectedTestFileCount === 0) {
+      return { ok: false, reason: 'Trusted host snapshot complete inventory is invalid' };
+    }
+    for (let i = 0; i < snapshotExpectedTestFileCount; i++) {
+      const filePath = rawSnapshotExpectedTestFiles[i];
+      if (typeof filePath !== 'string' || !isCanonicalRelativePath(filePath) || isProtectedPath(filePath)) {
+        return { ok: false, reason: 'Trusted host snapshot complete inventory contains an invalid path' };
+      }
+      const key = filePath.toLowerCase();
+      if (snapshotExpectedPathSet.has(key)) {
+        return { ok: false, reason: 'Trusted host snapshot complete inventory contains a duplicate path' };
+      }
+      snapshotExpectedPathSet.add(key);
+    }
+  } catch {
+    return {
+      ok: false,
+      reason: 'Trusted host snapshot inventory access failed during extraction',
+    };
+  }
+
+  if (
+    snapshotExpectedTestFileCount !== expected.expectedTestFiles.length ||
+    expected.expectedTestFiles.some((filePath) => !snapshotExpectedPathSet.has(filePath.toLowerCase()))
+  ) {
+    return {
+      ok: false,
+      reason: 'Trusted host snapshot inventory does not match trusted expected context',
+    };
+  }
+
+  const detachedTestFiles: TrustedTestFileSnapshot[] = [];
+  const authorityPathSet = new Set<string>();
+  let testFileCount = 0;
+
+  try {
+    if (!Array.isArray(rawTestFiles)) {
+      return { ok: false, reason: 'Trusted host test file inventory is invalid' };
+    }
+    testFileCount = rawTestFiles.length;
+    if (!Number.isSafeInteger(testFileCount) || testFileCount === 0) {
+      return { ok: false, reason: 'Trusted host test file inventory is invalid' };
+    }
+    for (let i = 0; i < testFileCount; i++) {
+      const file = rawTestFiles[i];
+      if (!file || typeof file !== 'object') {
+        return { ok: false, reason: 'Trusted host test file entry is invalid' };
+      }
+
+      let filePath: unknown;
+      let fileContent: unknown;
+      try {
+        const entry = file as Record<string, unknown>;
+        const entryKeys = Reflect.ownKeys(entry);
+        if (!entryKeys.includes('path') || !entryKeys.includes('content')) {
+          return { ok: false, reason: 'Trusted host test file entry is incomplete' };
+        }
+        filePath = entry.path;
+        fileContent = entry.content;
+      } catch {
+        return { ok: false, reason: 'Trusted host test file access failed during extraction' };
+      }
+
+      if (
+        typeof filePath !== 'string' ||
+        !isCanonicalRelativePath(filePath) ||
+        isProtectedPath(filePath)
+      ) {
+        return {
+          ok: false,
+          reason: 'Trusted host test file path is invalid',
+        };
+      }
+
+      const pathKey = filePath.toLowerCase();
+      if (authorityPathSet.has(pathKey)) {
+        return { ok: false, reason: 'Trusted host test file inventory contains a duplicate path' };
+      }
+      authorityPathSet.add(pathKey);
+
+      if (fileContent === undefined || fileContent === null) {
+        return { ok: false, reason: 'Trusted host test file content is missing' };
+      }
+
+      let detachedContent: string | Uint8Array;
+      if (typeof fileContent === 'string') {
+        detachedContent = fileContent;
+      } else if (fileContent instanceof Uint8Array || Buffer.isBuffer(fileContent)) {
+        const byteLength = fileContent.byteLength;
+        const byteOffset = fileContent.byteOffset;
+        const backingBuffer = fileContent.buffer;
+        const copy = new Uint8Array(byteLength);
+        copy.set(new Uint8Array(backingBuffer, byteOffset, byteLength));
+        detachedContent = copy;
+      } else {
+        return { ok: false, reason: 'Trusted host test file content must be text or raw bytes' };
+      }
+
+      detachedTestFiles.push(
+        Object.freeze({
+          path: filePath,
+          content: detachedContent,
+        })
+      );
+    }
+  } catch {
+    return {
+      ok: false,
+      reason: 'Trusted host test file inventory access failed during extraction',
+    };
+  }
+
+  if (expected.expectedTestFiles.length !== detachedTestFiles.length) {
+    return {
+      ok: false,
+      reason: 'Trusted host measured test inventory count mismatch with expected context',
+    };
+  }
+
+  for (const ep of expected.expectedTestFiles) {
+    if (!authorityPathSet.has(ep.toLowerCase())) {
+      return {
+        ok: false,
+        reason: 'Trusted host measured test inventory is incomplete',
+      };
+    }
+  }
+
+  for (const check of requiredChecks) {
+    const isPytest =
+      check.executable === 'pytest' ||
+      check.executable.endsWith('/pytest') ||
+      check.executable.endsWith('\\pytest');
+
+    const argv = check.argv ?? [];
+    for (let i = 0; i < argv.length; i++) {
+      const arg = argv[i];
+      if (typeof arg !== 'string') continue;
+
+      if (isPytest && PYTEST_OPTIONS_WITH_ARG.has(arg)) {
+        i++; // skip option argument value
+        continue;
+      }
+
+      if (arg.startsWith('-')) {
+        if (arg.startsWith('--test-file=')) {
+          const parsed = normalizePytestSelector(arg);
+          if (!parsed) {
+            return {
+              ok: false,
+              reason: `Invalid or untrusted test selector in required check: '${arg}'`,
+            };
+          }
+        }
+        continue;
+      }
+
+      // Positional argument: strictly must be a valid, trusted test selector
+      const parsed = normalizePytestSelector(arg);
+      if (!parsed) {
+        return {
+          ok: false,
+          reason: `Invalid or untrusted test selector in required check: '${arg}'`,
+        };
+      }
+    }
+
+    const selectors = extractCheckTestSelectors(check);
+    for (const sel of selectors) {
+      if (sel.isDirectory) {
+        const prefix = sel.filePath.endsWith('/')
+          ? sel.filePath.toLowerCase()
+          : `${sel.filePath.toLowerCase()}/`;
+        let dirHasFiles = false;
+        for (const path of authorityPathSet) {
+          if (path.startsWith(prefix)) {
+            dirHasFiles = true;
+            break;
+          }
+        }
+        if (!dirHasFiles) {
+          return {
+            ok: false,
+            reason: `Trusted host measured test inventory omits a test referenced by directory selector: '${sel.filePath}'`,
+          };
+        }
+      } else {
+        if (!authorityPathSet.has(sel.filePath.toLowerCase())) {
+          return {
+            ok: false,
+            reason: `Trusted host measured test inventory omits a test referenced by the check set: '${sel.filePath}'`,
+          };
+        }
+      }
+    }
+  }
+
+  let testProtectionDigest: string;
+  try {
+    testProtectionDigest = computeTestProtectionDigest(detachedTestFiles);
+  } catch {
+    return {
+      ok: false,
+      reason: 'Trusted host test protection facts could not be digested',
+    };
+  }
+
+  return {
+    ok: true,
+    testProtectionDigest,
+    detachedTestFiles: Object.freeze(detachedTestFiles),
+  };
 }
 
 /**
@@ -368,7 +691,7 @@ export async function investigateBaseline(
   const requiredChecks = validTask.requiredChecks.map((check) =>
     Object.freeze({ ...check, argv: Object.freeze([...check.argv]) })
   );
-  const checkSetDigest = computeCanonicalSha256(requiredChecks);
+  const checkSetDigest = computeCheckSetDigest(requiredChecks);
   const criteriaDigest = computeCanonicalSha256(validTask.acceptanceCriteria);
 
   const reproductionChecks = requiredChecks.filter((check) => check.purpose === 'reproduction');
@@ -545,246 +868,26 @@ export async function investigateBaseline(
     };
   }
 
-  if (!rawSnapshot || typeof rawSnapshot !== 'object') {
+  const snapshotValidation = validateHostSnapshotFacts(
+    rawSnapshot,
+    {
+      taskId: expectedTaskId,
+      workspaceId: expectedWorkspaceId,
+      repositoryId: expectedRepositoryId,
+      revisionDigest: expectedRevisionDigest,
+      criteriaDigest: expectedCriteriaDigest,
+      checkSetDigest: expectedCheckSetDigest,
+      expectedTestFiles: detachedExpectedTestFiles,
+    },
+    requiredChecks
+  );
+  if (!snapshotValidation.ok) {
     return {
       status: 'error',
-      reason: 'Trusted host authority returned an invalid snapshot',
+      reason: snapshotValidation.reason,
     };
   }
-
-  let snapshotTaskId: unknown;
-  let snapshotWorkspaceId: unknown;
-  let snapshotRepositoryId: unknown;
-  let rawRevision: unknown;
-  let rawSnapshotCheckSetDigest: unknown;
-  let rawSnapshotExpectedTestFiles: unknown;
-  let rawTestFiles: unknown;
-  try {
-    const snapshot = rawSnapshot as Record<string, unknown>;
-    const keys = Reflect.ownKeys(snapshot);
-    if (!keys.includes('checkSetDigest')) {
-      return { status: 'error', reason: 'Trusted host snapshot check-set binding is required' };
-    }
-    if (!keys.includes('expectedTestFiles')) {
-      return { status: 'error', reason: 'Trusted host snapshot complete inventory binding is required' };
-    }
-    if (
-      !keys.includes('taskId') ||
-      !keys.includes('workspaceId') ||
-      !keys.includes('repositoryId') ||
-      !keys.includes('currentRevision') ||
-      !keys.includes('testFiles')
-    ) {
-      return { status: 'error', reason: 'Trusted host snapshot is missing a required context binding' };
-    }
-    snapshotTaskId = snapshot.taskId;
-    snapshotWorkspaceId = snapshot.workspaceId;
-    snapshotRepositoryId = snapshot.repositoryId;
-    rawRevision = snapshot.currentRevision;
-    rawSnapshotCheckSetDigest = snapshot.checkSetDigest;
-    rawSnapshotExpectedTestFiles = snapshot.expectedTestFiles;
-    rawTestFiles = snapshot.testFiles;
-  } catch {
-    return {
-      status: 'error',
-      reason: 'Trusted host snapshot access failed during extraction',
-    };
-  }
-
-  if (
-    snapshotTaskId !== expectedTaskId ||
-    snapshotWorkspaceId !== expectedWorkspaceId ||
-    snapshotRepositoryId !== expectedRepositoryId
-  ) {
-    return {
-      status: 'error',
-      reason: 'Trusted host snapshot task, workspace, or repository binding mismatch',
-    };
-  }
-
-  if (
-    typeof rawRevision !== 'string' ||
-    !/^sha256:[a-f0-9]{64}$/.test(rawRevision) ||
-    rawRevision !== expectedRevisionDigest
-  ) {
-    return {
-      status: 'error',
-      reason: 'Trusted host snapshot revision binding mismatch',
-    };
-  }
-  const detachedRevision: string = rawRevision;
-
-  if (
-    typeof rawSnapshotCheckSetDigest !== 'string' ||
-    !/^sha256:[a-f0-9]{64}$/.test(rawSnapshotCheckSetDigest) ||
-    rawSnapshotCheckSetDigest !== expectedCheckSetDigest
-  ) {
-    return { status: 'error', reason: 'Trusted host snapshot check-set binding mismatch' };
-  }
-
-  const snapshotExpectedPathSet = new Set<string>();
-  let snapshotExpectedTestFileCount = 0;
-  try {
-    if (!Array.isArray(rawSnapshotExpectedTestFiles)) {
-      return { status: 'error', reason: 'Trusted host snapshot complete inventory is invalid' };
-    }
-    snapshotExpectedTestFileCount = rawSnapshotExpectedTestFiles.length;
-    if (!Number.isSafeInteger(snapshotExpectedTestFileCount) || snapshotExpectedTestFileCount === 0) {
-      return { status: 'error', reason: 'Trusted host snapshot complete inventory is invalid' };
-    }
-    for (let i = 0; i < snapshotExpectedTestFileCount; i++) {
-      const filePath = rawSnapshotExpectedTestFiles[i];
-      if (typeof filePath !== 'string' || !isCanonicalRelativePath(filePath) || isProtectedPath(filePath)) {
-        return { status: 'error', reason: 'Trusted host snapshot complete inventory contains an invalid path' };
-      }
-      const key = filePath.toLowerCase();
-      if (snapshotExpectedPathSet.has(key)) {
-        return { status: 'error', reason: 'Trusted host snapshot complete inventory contains a duplicate path' };
-      }
-      snapshotExpectedPathSet.add(key);
-    }
-  } catch {
-    return {
-      status: 'error',
-      reason: 'Trusted host snapshot inventory access failed during extraction',
-    };
-  }
-
-  if (
-    snapshotExpectedTestFileCount !== detachedExpectedTestFiles.length ||
-    detachedExpectedTestFiles.some((filePath) => !snapshotExpectedPathSet.has(filePath.toLowerCase()))
-  ) {
-    return {
-      status: 'error',
-      reason: 'Trusted host snapshot inventory does not match trusted expected context',
-    };
-  }
-
-  // Detach each measured path and raw byte sequence before the first test await.
-  const detachedTestFiles: TrustedTestFileSnapshot[] = [];
-  const authorityPathSet = new Set<string>();
-  let testFileCount = 0;
-
-  try {
-    if (!Array.isArray(rawTestFiles)) {
-      return { status: 'error', reason: 'Trusted host test file inventory is invalid' };
-    }
-    testFileCount = rawTestFiles.length;
-    if (!Number.isSafeInteger(testFileCount) || testFileCount === 0) {
-      return { status: 'error', reason: 'Trusted host test file inventory is invalid' };
-    }
-    for (let i = 0; i < testFileCount; i++) {
-      const file = rawTestFiles[i];
-      if (!file || typeof file !== 'object') {
-        return { status: 'error', reason: 'Trusted host test file entry is invalid' };
-      }
-
-      let filePath: unknown;
-      let fileContent: unknown;
-      try {
-        const entry = file as Record<string, unknown>;
-        const entryKeys = Reflect.ownKeys(entry);
-        if (!entryKeys.includes('path') || !entryKeys.includes('content')) {
-          return { status: 'error', reason: 'Trusted host test file entry is incomplete' };
-        }
-        filePath = entry.path;
-        fileContent = entry.content;
-      } catch {
-        return { status: 'error', reason: 'Trusted host test file access failed during extraction' };
-      }
-
-      if (
-        typeof filePath !== 'string' ||
-        !isCanonicalRelativePath(filePath) ||
-        isProtectedPath(filePath)
-      ) {
-        return {
-          status: 'error',
-          reason: 'Trusted host test file path is invalid',
-        };
-      }
-
-      const pathKey = filePath.toLowerCase();
-      if (authorityPathSet.has(pathKey)) {
-        return { status: 'error', reason: 'Trusted host test file inventory contains a duplicate path' };
-      }
-      authorityPathSet.add(pathKey);
-
-      if (fileContent === undefined || fileContent === null) {
-        return { status: 'error', reason: 'Trusted host test file content is missing' };
-      }
-
-      let detachedContent: string | Uint8Array;
-      if (typeof fileContent === 'string') {
-        detachedContent = fileContent;
-      } else if (fileContent instanceof Uint8Array || Buffer.isBuffer(fileContent)) {
-        const byteLength = fileContent.byteLength;
-        const byteOffset = fileContent.byteOffset;
-        const backingBuffer = fileContent.buffer;
-        const copy = new Uint8Array(byteLength);
-        copy.set(new Uint8Array(backingBuffer, byteOffset, byteLength));
-        detachedContent = copy;
-      } else {
-        return { status: 'error', reason: 'Trusted host test file content must be text or raw bytes' };
-      }
-
-      detachedTestFiles.push(
-        Object.freeze({
-          path: filePath,
-          content: detachedContent,
-        })
-      );
-    }
-  } catch {
-    return {
-      status: 'error',
-      reason: 'Trusted host test file inventory access failed during extraction',
-    };
-  }
-  Object.freeze(detachedTestFiles);
-
-  if (detachedExpectedTestFiles.length !== detachedTestFiles.length) {
-    return {
-      status: 'error',
-      reason: 'Trusted host measured test inventory count mismatch with expected context',
-    };
-  }
-
-  for (const ep of detachedExpectedTestFiles) {
-    if (!authorityPathSet.has(ep.toLowerCase())) {
-      return {
-        status: 'error',
-        reason: 'Trusted host measured test inventory is incomplete',
-      };
-    }
-  }
-
-  for (const check of requiredChecks) {
-    for (const arg of check.argv) {
-      if (
-        !arg.startsWith('-') &&
-        isCanonicalRelativePath(arg) &&
-        (arg.startsWith('tests/') || /(?:^|[\\/])test_[^\\/]+\.[a-zA-Z0-9]+$/.test(arg))
-      ) {
-        if (!authorityPathSet.has(arg.toLowerCase())) {
-          return {
-            status: 'error',
-            reason: 'Trusted host measured test inventory omits a test referenced by the check set',
-          };
-        }
-      }
-    }
-  }
-
-  let testProtectionDigest: string;
-  try {
-    testProtectionDigest = computeTestProtectionDigest(detachedTestFiles);
-  } catch {
-    return {
-      status: 'error',
-      reason: 'Trusted host test protection facts could not be digested',
-    };
-  }
+  const testProtectionDigest = snapshotValidation.testProtectionDigest;
 
   // Run every explicitly required check once, even when one result fails or throws.
   const checkResults: CheckResult[] = [];
@@ -890,7 +993,7 @@ export async function investigateBaseline(
 
   const reproductionFailureSignature = reproResult.outputExcerpt ?? 'reproduction-failure';
   const candidateFields = {
-    repositorySnapshotDigest: detachedRevision,
+    repositorySnapshotDigest: expectedRevisionDigest,
     checkSetDigest,
     reproductionFailureSignature,
     checkResults,
@@ -902,7 +1005,7 @@ export async function investigateBaseline(
   };
   const baselineValidation = validateBaselineAdmission(admissionBaseline, {
     expectedEvidenceId: 'pending-baseline-evidence',
-    expectedRepositorySnapshotDigest: detachedRevision,
+    expectedRepositorySnapshotDigest: expectedRevisionDigest,
     expectedCheckSetDigest,
     expectedTestProtectionDigest: testProtectionDigest,
     expectedReproductionCheckId: reproductionCheckId,
@@ -986,7 +1089,7 @@ function validateBaselineEvidenceCandidate(
       .filter((check) => check.checkId !== reproductionCheckId)
       .map((check) => check.checkId);
     const criteriaDigest = computeCanonicalSha256(state.acceptanceCriteria);
-    const checkSetDigest = computeCanonicalSha256(requiredChecks);
+    const checkSetDigest = computeCheckSetDigest(requiredChecks);
     const testFiles = candidate.expectedTestFiles;
     const expectedPathSet = new Set<string>();
 
@@ -1000,7 +1103,7 @@ function validateBaselineEvidenceCandidate(
       computeCanonicalSha256(candidate.acceptanceCriteria) !== criteriaDigest ||
       criteriaDigest !== computeCanonicalSha256(task.acceptanceCriteria) ||
       candidate.criteriaDigest !== criteriaDigest ||
-      computeCanonicalSha256(candidate.requiredChecks) !== checkSetDigest ||
+      computeCheckSetDigest(candidate.requiredChecks) !== checkSetDigest ||
       candidate.checkSetDigest !== checkSetDigest ||
       computeCanonicalSha256(state.requiredCheckIds) !== computeCanonicalSha256(requiredCheckIds) ||
       candidate.reproductionCheckId !== reproductionCheckId ||
@@ -1284,11 +1387,42 @@ export async function prepareFixPlanAndApproval(
   }
   const validBaseline = persistedBaselineValidation.value;
   const requestedEvidenceRefs = planDetails?.evidenceRefs;
-  const evidenceRefs = requestedEvidenceRefs === undefined
-    ? [validBaseline.evidenceId]
-    : Array.isArray(requestedEvidenceRefs)
-      ? [...new Set([validBaseline.evidenceId, ...requestedEvidenceRefs])]
-      : requestedEvidenceRefs;
+  let completeEvidenceRefs: readonly string[];
+  if (requestedEvidenceRefs === undefined) {
+    completeEvidenceRefs = Object.freeze([validBaseline.evidenceId]);
+  } else if (!Array.isArray(requestedEvidenceRefs)) {
+    return {
+      outcome: 'rejected',
+      state: validState,
+      reason: 'Invalid evidence references: planDetails.evidenceRefs must be an array',
+    };
+  } else {
+    const stateRefs = validState.evidenceRefs ?? [];
+    for (const ref of requestedEvidenceRefs) {
+      if (typeof ref !== 'string' || ref.trim().length === 0) {
+        return {
+          outcome: 'rejected',
+          state: validState,
+          reason: 'Invalid evidence reference: reference must be a non-empty string',
+        };
+      }
+      const isKnownProvenance =
+        ref === validBaseline.evidenceId ||
+        stateRefs.includes(ref) ||
+        (ref.startsWith('uc04://') && ref.includes(`/${validState.taskId}/`));
+      if (!isKnownProvenance) {
+        return {
+          outcome: 'rejected',
+          state: validState,
+          reason: `Untrusted or missing evidence reference: '${ref}' has no proven provenance in task state`,
+        };
+      }
+    }
+    const extra = requestedEvidenceRefs
+      .filter((r) => r !== validBaseline.evidenceId)
+      .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    completeEvidenceRefs = Object.freeze([validBaseline.evidenceId, ...new Set(extra)]);
+  }
 
   const checkSetDigest = validBaseline.checkSetDigest;
   const baselineRef = validBaseline.evidenceId;
@@ -1297,7 +1431,7 @@ export async function prepareFixPlanAndApproval(
     planVersion,
     diagnosis,
     suspectedCauseLocations,
-    evidenceRefs,
+    evidenceRefs: completeEvidenceRefs,
     strategy,
     scopedChanges,
     checkSetDigest,
@@ -1316,9 +1450,10 @@ export async function prepareFixPlanAndApproval(
   const fixPlan = planValidation.value;
 
   const existingEvidenceRefs = validState.evidenceRefs ?? [];
-  const updatedEvidenceRefs = existingEvidenceRefs.includes(validBaseline.evidenceId)
-    ? existingEvidenceRefs
-    : [...existingEvidenceRefs, validBaseline.evidenceId];
+  const updatedEvidenceRefs = [
+    ...existingEvidenceRefs,
+    ...completeEvidenceRefs.filter((r) => !existingEvidenceRefs.includes(r)),
+  ];
 
   const awaitPlanCandidate: TaskState = {
     ...validState,
@@ -1360,7 +1495,7 @@ export async function prepareFixPlanAndApproval(
     kind: 'approve_fix_plan',
     planVersion: fixPlan.planVersion,
     strategyDigest: fixPlan.strategyDigest,
-    diagnosisEvidenceRefs: [validBaseline.evidenceId],
+    diagnosisEvidenceRefs: completeEvidenceRefs,
     checkSetDigest: validBaseline.checkSetDigest,
   };
   const actionDigest = computeCanonicalSha256(action);
@@ -1379,7 +1514,7 @@ export async function prepareFixPlanAndApproval(
     planVersion: fixPlan.planVersion,
     strategyDigest: fixPlan.strategyDigest,
     baselineRef: validBaseline.evidenceId,
-    evidenceRefs: [validBaseline.evidenceId],
+    evidenceRefs: completeEvidenceRefs,
     criteriaDigest,
     checkSetDigest: validBaseline.checkSetDigest,
     status: 'pending',
@@ -1509,6 +1644,31 @@ export async function prepareFixPlanAndApproval(
     };
   }
 
+  if (
+    !Array.isArray(reloadedState.plan?.evidenceRefs) ||
+    computeCanonicalSha256(reloadedState.plan.evidenceRefs) !== computeCanonicalSha256(completeEvidenceRefs)
+  ) {
+    return {
+      outcome: 'rejected',
+      plan: fixPlan,
+      state: persistedAwaitPlanState,
+      reason: 'State plan evidence references drift detected while awaiting approval',
+    };
+  }
+
+  if (
+    !Array.isArray(reloadedState.evidenceRefs) ||
+    computeCanonicalSha256(reloadedState.evidenceRefs) !== computeCanonicalSha256(updatedEvidenceRefs)
+  ) {
+    return {
+      outcome: 'rejected',
+      plan: fixPlan,
+      state: persistedAwaitPlanState,
+      reason: 'State evidence references drift detected while awaiting approval',
+    };
+  }
+
+  let revalidatedSnapshotValidation: HostSnapshotValidationResult | null = null;
   const hostPort = ports.host ?? (ports as { hostAuthority?: TrustedHostPort }).hostAuthority;
   if (hostPort && typeof hostPort.loadSnapshot === 'function') {
     let hostSnapshot: TrustedHostSnapshot;
@@ -1531,14 +1691,38 @@ export async function prepareFixPlanAndApproval(
       };
     }
 
-    if (hostSnapshot?.currentRevision !== reloadedState.repositoryRevisionDigest) {
+    const snapshotValidation = validateHostSnapshotFacts(
+      hostSnapshot,
+      {
+        taskId: reloadedState.taskId,
+        workspaceId: reloadedState.workspaceId,
+        repositoryId: reloadedState.repositoryId,
+        revisionDigest: reloadedState.repositoryRevisionDigest,
+        criteriaDigest: criteriaDigest,
+        checkSetDigest: validBaseline.checkSetDigest,
+        expectedTestFiles: validBaselineCandidate.expectedTestFiles,
+      },
+      validBaselineCandidate.requiredChecks
+    );
+    if (!snapshotValidation.ok) {
       return {
         outcome: 'rejected',
         plan: fixPlan,
         state: persistedAwaitPlanState,
-        reason: `Host repository revision drift detected while awaiting approval: expected '${reloadedState.repositoryRevisionDigest}', observed '${hostSnapshot?.currentRevision}'`,
+        reason: snapshotValidation.reason ?? 'Host snapshot validation failed after approval await',
       };
     }
+
+    if (snapshotValidation.testProtectionDigest !== validBaseline.testProtectionDigest) {
+      return {
+        outcome: 'rejected',
+        plan: fixPlan,
+        state: persistedAwaitPlanState,
+        reason: 'Host protected test files drift detected while awaiting approval',
+      };
+    }
+
+    revalidatedSnapshotValidation = snapshotValidation;
   }
 
   let reloadedPolicyId = policyId;
@@ -1602,7 +1786,7 @@ export async function prepareFixPlanAndApproval(
     currentPlanVersion: fixPlan.planVersion,
     currentStrategyDigest: fixPlan.strategyDigest,
     currentBaselineRef: validBaseline.evidenceId,
-    currentEvidenceRefs: [validBaseline.evidenceId],
+    currentEvidenceRefs: completeEvidenceRefs,
     currentCriteriaDigest: criteriaDigest,
     currentCheckSetDigest: validBaseline.checkSetDigest,
   };
@@ -1710,6 +1894,16 @@ export async function prepareFixPlanAndApproval(
   }
 
   if (decision.status === 'approved') {
+    if (!revalidatedSnapshotValidation) {
+      return {
+        outcome: 'rejected',
+        plan: fixPlan,
+        binding: decision,
+        state: persistedAwaitPlanState,
+        reason: 'Missing HostPort loadSnapshot capability: fresh host snapshot revalidation is required before Patch transition',
+      };
+    }
+
     const admission = validateApprovalBinding(decision, freshnessContext);
     if (!admission.ok) {
       return {
@@ -1729,7 +1923,7 @@ export async function prepareFixPlanAndApproval(
       plan: fixPlan,
       planVersion: fixPlan.planVersion,
       activeDecisionId: decision.decisionId,
-      evidenceRefs: fixPlan.evidenceRefs,
+      evidenceRefs: updatedEvidenceRefs,
       ...(persistedAwaitPlanState.budgetLedgers !== undefined
         ? { budgetLedgers: persistedAwaitPlanState.budgetLedgers }
         : { budgetLedgers: [] }),

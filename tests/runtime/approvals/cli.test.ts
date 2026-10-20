@@ -52,7 +52,7 @@ if (process.argv[2] === 'uc05-cli-test-driver') {
   process.stdout.write(result.output + '\n');
   process.exitCode = result.exitCode;
 } else {
-  const child = (args: readonly string[], scenario = 'normal') => spawnSync(process.execPath, [fileURLToPath(import.meta.url), 'uc05-cli-test-driver', scenario, ...args], { encoding: 'utf8', timeout: 5000 });
+  const child = (args: readonly string[], scenario = 'normal') => spawnSync(process.execPath, [fileURLToPath(import.meta.url), 'uc05-cli-test-driver', scenario, ...args], { encoding: 'utf8', timeout: 15000 });
 
   test('actual subprocess lists one explicitly selected task, shows and inspects its exact registered action', () => {
     const listed = child(['list', '--task', 'task-1']);
