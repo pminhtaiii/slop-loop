@@ -227,9 +227,39 @@ test('configured interpreter tuples cannot authorize attached, combined or long 
     ['python', ['-cprint(1)']], ['python', ['-Iqcprint(1)']],
     ['node', ['--eval=console.log(1)']], ['node', ['--print=1']],
     ['node', ['-p', '1']], ['node', ['-p1']], ['node', ['-peconsole.log(1)']],
+    ['pythonw', ['-c', 'print(1)']], ['py', ['-cprint(1)']],
+    ['nodejs', ['--eval=console.log(1)']],
+    ['php', ['-r', 'echo 1']], ['php', ['-recho 1']], ['php', ['-nrecho 1']],
+    ['perl', ['-E', 'say 1']], ['perl', ['-Esay 1']], ['perl', ['-wEsay 1']],
+    ['deno', ['eval', 'console.log(1)']], ['deno', ['--quiet', 'eval', 'console.log(1)']],
+    ['deno', ['--config', 'deno.json', 'eval', 'console.log(1)']],
+    ['node', ['--input-type=module']], ['node', ['--input-type', 'module', '-']],
+    ['nodejs', ['--input-type=commonjs', '-']], ['nodejs', ['--input-type', 'module']],
   ] as const) {
     const action: NormalizedAction = { ...command, executable, argv };
     const compiled = compilePolicy({ ...profile, commandRules: [{ ...profile.commandRules[0], executableRef: executable, argvPrefix: argv }] });
-    assert.equal(compiled.ok && permission(compiled.value.classify(action, factsFor(action))), 'FORBIDDEN');
+    assert.equal(compiled.ok && permission(compiled.value.classify(action, factsFor(action))), 'FORBIDDEN', `${executable} ${argv.join(' ')}`);
+  }
+});
+
+test('configured standalone stdin tokens and unrelated uppercase interpreter flags remain allowed', () => {
+  for (const [executable, argv] of [
+    ['node', ['-']], ['nodejs', ['-']], ['python', ['-']], ['pytest', ['-']],
+    ['python', ['-E', '-m', 'pytest']], ['ruby', ['-E', 'UTF-8', 'script.rb']],
+    ['perl', ['-W', 'script.pl']], ['php', ['-H', 'script.php']],
+  ] as const) {
+    const action: NormalizedAction = { ...command, executable, argv };
+    const compiled = compilePolicy({ ...profile, commandRules: [{ ...profile.commandRules[0], executableRef: executable, argvPrefix: argv }] });
+    assert.equal(compiled.ok && permission(compiled.value.classify(action, factsFor(action))), 'ALLOWED', `${executable} ${argv.join(' ')}`);
+  }
+});
+
+test('unconfigured interpreter aliases cannot gain approval through constrained capabilities', () => {
+  for (const executable of ['pythonw', 'pythonw3.12', 'py', 'nodejs', 'C:\\Python\\PYTHONW.EXE']) {
+    const action: NormalizedAction = { ...command, executable, argv: ['script.py'] };
+    const facts = factsFor(action);
+    assert.deepEqual(policy().value.classify(action, { ...facts, command: { ...facts.command, executableRef: 'interpreter', constrainedCapability: 'host-constrained-test-1' } }), {
+      ok: true, permission: 'FORBIDDEN', reasonCode: 'unconfigured-interpreter', actionDigest: computeActionDigest(action),
+    }, executable);
   }
 });

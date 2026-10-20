@@ -203,11 +203,16 @@ export function compilePolicy(profileInput: unknown):
         // The draft profile has no suffix grammar: its configured tuple is the complete accepted argv.
         const argv = action.value.argv;
         const executableName = action.value.executable.split(/[\\/]/).at(-1)?.replace(/\.exe$/i, '').toLowerCase() ?? '';
+        const isInterpreter = /^(?:pythonw?[\d.]*|py|node|nodejs|deno|bun|ruby|perl|php|lua)$/.test(executableName);
         if (/^(?:sh|bash|dash|zsh|fish|cmd|powershell|pwsh)$/.test(executableName) ||
           argv.some(token => /[;&|<>`$\r\n\u0000-\u001f\u007f]/u.test(token)) ||
           // Fail closed for attached/grouped short evaluation flags; no shell parsing or execution probe.
-          (/^(?:python[\d.]*|node|deno|bun|ruby|perl|php|lua)$/.test(executableName) &&
-            argv.some(token => /^--(?:eval|print)(?:=|$)/u.test(token) || /^-(?!-)[A-Za-z]*[cep]/u.test(token)))) {
+          (isInterpreter &&
+            argv.some(token => /^--(?:eval|print)(?:=|$)/u.test(token) || /^-(?!-)[A-Za-z]*[cep]/u.test(token))) ||
+          (executableName === 'php' && argv.some(token => /^-(?!-)[A-Za-z]*r/u.test(token))) ||
+          (executableName === 'perl' && argv.some(token => /^-(?!-)[A-Za-z]*E/u.test(token))) ||
+          (executableName === 'deno' && argv.includes('eval')) ||
+          (/^(?:node|nodejs)$/.test(executableName) && argv.some(token => /^--input-type(?:=|$)/u.test(token)))) {
           return { ok: true, permission: 'FORBIDDEN', reasonCode: 'unsafe-command', actionDigest: computeActionDigest(action.value) };
         }
         if (profile.commandRules.some(rule => rule.executableRef === command.executableRef &&
@@ -215,7 +220,7 @@ export function compilePolicy(profileInput: unknown):
           rule.argvPrefix.every((token, index) => token === argv[index]))) {
           return { ok: true, permission: 'ALLOWED', reasonCode: 'configured-command', actionDigest: computeActionDigest(action.value) };
         }
-        if (/^(?:python[\d.]*|node|deno|bun|ruby|perl|php|lua)$/.test(executableName)) return { ok: true, permission: 'FORBIDDEN', reasonCode: 'unconfigured-interpreter', actionDigest: computeActionDigest(action.value) };
+        if (isInterpreter) return { ok: true, permission: 'FORBIDDEN', reasonCode: 'unconfigured-interpreter', actionDigest: computeActionDigest(action.value) };
         if (command.constrainedCapability !== null) return { ok: true, permission: 'APPROVAL_REQUIRED', reasonCode: 'constrained-command', actionDigest: computeActionDigest(action.value) };
         return { ok: false, outcome: 'unsupported', reasonCode: 'unsupported-command' };
       }
