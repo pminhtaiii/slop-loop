@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { PolicyProfile } from '../../../src/contracts/approvals/contracts.ts';
 import type { NormalizedAction } from '../../../src/contracts/foundation/uc03.ts';
-import { computeActionDigest } from '../../../src/contracts/foundation/uc03.ts';
+import { computeActionDigest, computeCanonicalSha256 } from '../../../src/contracts/foundation/uc03.ts';
 import { buildPresentation } from '../../../src/approvals/presentation.ts';
 import { ApprovalServiceError, createApprovalService } from '../../../src/approvals/service.ts';
 import { createMockApprovalStore } from '../support/uc05/mock-store.ts';
@@ -199,6 +199,56 @@ test('stale pending request is replaced under its waiting hold with a fresh deci
   assert.deepEqual((await scenario.service.list('task-1')).control, waiting);
   scenario.setContext({ ...scenario.current(), freshness, facts: { ...scenario.current().facts, repositoryRevisionDigest: digest } });
   assert.equal((await scenario.service.resolve('decision-1')).status, 'stale', 'retired decision stays stale even if repository returns to its original digest');
+});
+
+test('replacement assessment identifies the old decision context that actually proved repository drift', async () => {
+  const scenario = setup();
+  await scenario.service.requestDecision(binding);
+  const original = scenario.store.readRequest('decision-1').value;
+  const changed = `sha256:${'b'.repeat(64)}`;
+  const assessed = { ...scenario.current(), runId: 'run-assessed-old', freshness: { ...freshness, currentRepositoryRevisionDigest: changed }, facts: { ...scenario.current().facts, repositoryRevisionDigest: changed } };
+  const replacement = { ...assessed, runId: 'run-replacement' };
+  let oldContext = assessed;
+  const service = createApprovalService({ taskId: 'task-1', profile, store: scenario.store, operator: scenario.operator,
+    context: { loadForAction: async () => replacement, loadForDecision: async id => {
+      if (id !== 'decision-1') return replacement;
+      const current = oldContext;
+      oldContext = { ...assessed, runId: 'run-later-old' };
+      return current;
+    } } });
+  assert.equal((await service.requestDecision({ ...binding, decisionId: 'decision-2', repositoryRevisionDigest: changed })).status, 'pending');
+  const assessment = scenario.store.readHistory('task-1').value?.assessments[0];
+  assert.equal(assessment?.trustedContextDigest, computeCanonicalSha256(assessed));
+  assert.deepEqual(assessment?.reasonCodes, ['changed-repositoryRevisionDigest']);
+  assert.deepEqual(scenario.store.readRequest('decision-1').value, original);
+  assert.equal((await service.list('task-1')).control.pendingDecisionId, 'decision-2');
+});
+
+test('request-context retirement retains its own assessment context without exposing that context in safe errors', async () => {
+  const scenario = setup();
+  await scenario.service.requestDecision(binding);
+  const assessed = { ...scenario.current(), runId: 'run-assessed-request', facts: { ...scenario.current().facts, continuationRef: 'continuation-renewed' } };
+  const replacement = { ...assessed, runId: 'run-replacement' };
+  let oldContext = assessed;
+  const service = createApprovalService({ taskId: 'task-1', profile, store: scenario.store, operator: scenario.operator,
+    context: { loadForAction: async () => replacement, loadForDecision: async id => {
+      if (id !== 'decision-1') return replacement;
+      const current = oldContext;
+      oldContext = { ...assessed, runId: 'run-later-old' };
+      return current;
+    } } });
+  await assert.rejects(service.show('task-1', 'decision-1'), error => {
+    assert.ok(error instanceof ApprovalServiceError);
+    assert.equal(error.outcome, 'stale');
+    assert.equal(error.reasonCode, 'changed-request-context');
+    assert.equal(JSON.stringify(error), '{"outcome":"stale","reasonCode":"changed-request-context"}');
+    return true;
+  });
+  oldContext = assessed;
+  assert.equal((await service.requestDecision({ ...binding, decisionId: 'decision-2' })).status, 'pending');
+  const assessment = scenario.store.readHistory('task-1').value?.assessments[0];
+  assert.equal(assessment?.trustedContextDigest, computeCanonicalSha256(assessed));
+  assert.deepEqual(assessment?.reasonCodes, ['changed-request-context']);
 });
 
 test('companion repository mapping drift is a concrete stale projection and cannot silently rebind', async () => {

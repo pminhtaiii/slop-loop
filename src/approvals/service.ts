@@ -130,14 +130,22 @@ export function createApprovalService(options: ApprovalServiceOptions): Approval
     // Policy validates every facts field; plan records also passed canonical and freshness validation.
     return { action: action.value, facts: facts as unknown as PolicyFacts, freshness: raw['freshness'], runId: raw['runId'], elements: raw['elements'] };
   };
+  // Keep assessment evidence private and tied to the exact service-owned stale verdict.
+  const staleContextDigests = new WeakMap<ApprovalServiceError, string>();
+  const staleError = (reason: string, context: ApprovalContext): ApprovalServiceError => {
+    const error = new ApprovalServiceError('stale', reason);
+    staleContextDigests.set(error, computeCanonicalSha256(context));
+    return error;
+  };
   const trusted = async (decisionId: string, binding: ApprovalBinding): Promise<ApprovalContext> => {
     const context = admitContext(await loadPort(() => options.context.loadForDecision(decisionId)));
     const result = policy.classify(context.action, context.facts);
     const current = control();
     if (!result.ok || result.permission === 'FORBIDDEN') throw new ApprovalServiceError(result.ok ? 'denied' : 'invalid');
     const freshness = evaluatePlanBinding(binding, context.freshness);
-    if (freshness.status !== 'valid') throw new ApprovalServiceError(freshness.status === 'stale' ? 'stale' : 'denied', freshness.reasonCodes.join(','));
-    if (current.repositoryId !== context.facts.repositoryId || current.workspaceId !== context.facts.workspaceId) throw new ApprovalServiceError('stale', 'changed-repository-mapping');
+    if (freshness.status === 'stale') throw staleError(freshness.reasonCodes.join(','), context);
+    if (freshness.status !== 'valid') throw new ApprovalServiceError('denied', freshness.reasonCodes.join(','));
+    if (current.repositoryId !== context.facts.repositoryId || current.workspaceId !== context.facts.workspaceId) throw staleError('changed-repository-mapping', context);
     if (!identifier(context.runId) || context.facts.taskId !== options.taskId || current.workspaceId !== context.facts.workspaceId ||
       current.repositoryId !== context.facts.repositoryId || binding.taskId !== options.taskId ||
       !validateApprovalBinding({ ...binding, status: 'approved' }, context.freshness).ok ||
@@ -145,8 +153,8 @@ export function createApprovalService(options: ApprovalServiceOptions): Approval
       context.facts.repositoryRevisionDigest !== binding.repositoryRevisionDigest ||
       context.facts.workspaceId !== binding.workspaceId || context.facts.policyIdentity.policyId !== binding.policyId ||
       context.facts.policyIdentity.policyVersion !== binding.policyVersion ||
-      ((context.action.kind === 'approve_fix_plan') !== (binding.actionKind === 'fix_plan'))) throw new ApprovalServiceError('stale', 'changed-action-context');
-    if (context.action.kind === 'approve_fix_plan' && (context.action.planVersion !== binding.planVersion || context.action.strategyDigest !== binding.strategyDigest || context.action.checkSetDigest !== binding.checkSetDigest || !isDeepStrictEqual(context.action.diagnosisEvidenceRefs, binding.evidenceRefs))) throw new ApprovalServiceError('stale', 'changed-plan-action');
+      ((context.action.kind === 'approve_fix_plan') !== (binding.actionKind === 'fix_plan'))) throw staleError('changed-action-context', context);
+    if (context.action.kind === 'approve_fix_plan' && (context.action.planVersion !== binding.planVersion || context.action.strategyDigest !== binding.strategyDigest || context.action.checkSetDigest !== binding.checkSetDigest || !isDeepStrictEqual(context.action.diagnosisEvidenceRefs, binding.evidenceRefs))) throw staleError('changed-plan-action', context);
     return context;
   };
   const presentation = (binding: ApprovalBinding, context: ApprovalContext, requestVersion = 1): PresentationBundle => {
@@ -188,7 +196,7 @@ export function createApprovalService(options: ApprovalServiceOptions): Approval
   const checkedView = async (decisionId: string): Promise<{ record: ApprovalRequestRecord; context: ApprovalContext; bundle: PresentationBundle }> => {
     const record = request(decisionId);
     const context = await trusted(decisionId, record.binding);
-    if (record.repositoryId !== context.facts.repositoryId || record.workspaceId !== context.facts.workspaceId || record.continuationRef !== context.facts.continuationRef || record.actionRef !== context.action.actionId || !isDeepStrictEqual({ policyId: record.policyId, policyVersion: record.policyVersion, configId: record.configId, configVersion: record.configVersion }, context.facts.policyIdentity)) throw new ApprovalServiceError('stale', 'changed-request-context');
+    if (record.repositoryId !== context.facts.repositoryId || record.workspaceId !== context.facts.workspaceId || record.continuationRef !== context.facts.continuationRef || record.actionRef !== context.action.actionId || !isDeepStrictEqual({ policyId: record.policyId, policyVersion: record.policyVersion, configId: record.configId, configVersion: record.configVersion }, context.facts.policyIdentity)) throw staleError('changed-request-context', context);
     const bundle = presentation(record.binding, context, record.requestVersion);
     if (bundle.summary.presentationDigest !== record.presentationDigest) throw new ApprovalServiceError('conflict');
     return { record, context, bundle };
@@ -285,13 +293,15 @@ export function createApprovalService(options: ApprovalServiceOptions): Approval
         return projection(existing.record);
       }
       const current = control();
-      let stale: { readonly record: ApprovalRequestRecord; readonly reason: string } | undefined;
+      let stale: { readonly record: ApprovalRequestRecord; readonly reason: string; readonly trustedContextDigest: string } | undefined;
       if (current.mode === 'waiting' && current.pendingDecisionId && store().replaceStalePending) {
         const pending = request(current.pendingDecisionId);
         try { await checkedView(pending.decisionId); }
         catch (error) {
           if (!(error instanceof ApprovalServiceError) || error.outcome !== 'stale') throw error;
-          stale = { record: pending, reason: error.reasonCode };
+          const trustedContextDigest = staleContextDigests.get(error);
+          if (!trustedContextDigest) throw new ApprovalServiceError('unavailable');
+          stale = { record: pending, reason: error.reasonCode, trustedContextDigest };
         }
         if (!stale) throw new ApprovalServiceError('conflict');
       } else if (current.mode !== 'runnable') throw new ApprovalServiceError('paused');
@@ -312,7 +322,7 @@ export function createApprovalService(options: ApprovalServiceOptions): Approval
       let response: StoreResponse<ApprovalRequestRecord>;
       let replacementEvidence: { readonly assessment: BindingAssessment; readonly staleEvent: DecisionEvent; readonly history: NonNullable<ReturnType<ApprovalStore['readHistory']>['value']>; readonly events: readonly DecisionEvent[] } | undefined;
       if (stale) {
-        const trustedContextDigest = computeCanonicalSha256(context);
+        const trustedContextDigest = stale.trustedContextDigest;
         const assessment: BindingAssessment = { schemaVersion: 'uc05-approval/0.1-draft', assessmentId: computeCanonicalSha256({ type: 'assessment', decisionId: stale.record.decisionId, trustedContextDigest, version: current.version }), decisionId: stale.record.decisionId, checkedTaskVersion: current.version, checkedEpoch: current.epoch, trustedContextDigest, status: 'stale', reasonCodes: stale.reason.split(','), checkedAt: timestamp };
         const backend = store();
         if (!backend.replaceStalePending || !backend.readEvents) throw new ApprovalServiceError('unavailable');
