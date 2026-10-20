@@ -72,6 +72,10 @@ A grouping of contributor work and its temporary artifacts. A contributor sessio
 
 A durable recovery point containing the authoritative state needed to resume a product-runtime workflow. A conversation summary alone is not a checkpoint.
 
+## User-requested pause
+
+A person's request to stop progress on one selected product-runtime task until they explicitly resume it. Other tasks continue. The request does not cancel completed work or erase a separate approval or recovery hold.
+
 ## Handoff
 
 A concise account of current work, evidence, blockers, and the next action for a person or another agent. A handoff communicates state; it does not replace authoritative state or approve further actions.

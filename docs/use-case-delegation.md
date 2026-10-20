@@ -58,6 +58,8 @@ Shared foundation includes the model adapter and structured-output validation, L
 
 ## UC-04: Multi-step feature with resume
 
+The owner-confirmed first foundation and task-scoped pause/recovery behavior are in [ADR-0007](adr/0007-uc04-task-pause-and-recovery-foundation.md). The integrated feature workflow and cross-task repository memory remain later UC-04 phases.
+
 **Owns:** durable task/step transitions, checkpoints, restart reconciliation, and feature-workflow continuation, under [state and memory](../context/state_and_memory.md).
 
 **Deliver:** a representative multi-step feature whose goal, constraints, acceptance criteria, completed steps, and cumulative allowances survive process termination. Validate saved repository assumptions before continuing and reconcile uncertain non-idempotent outcomes before retrying.
