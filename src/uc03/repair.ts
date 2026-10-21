@@ -1,137 +1,62 @@
-/**
- * UC-03 Verified Code Repair - Repair and Replan Semantics
- *
- * Owned path: src/uc03/repair.ts
- * Feature: specs/001-verified-code-repair
- * Tasks: T016 (repair/replan API & tests), T017 (bounded repair implementation),
- *        T018 (material replan & feedback transitions - pending)
- *
- * Requirements:
- * - FR-006: Evidence-driven repair loop incorporating failed verification or review findings.
- * - FR-007: Material replan limits (max 3 material replans after initial plan per task).
- * - Finite accounting: reserves repair and token/cost budgets before any proposal/patch effects.
- * - Rejection enters AwaitFeedback awaiting explicit user direction.
- * - Minor clarification within approved strategy does not consume replan budget.
- * - Transitions to verification, never claiming completion.
- */
+/** UC-03 repair; T018 remains pending. */
 
-import { randomUUID } from 'node:crypto';
 import {
-  computeCanonicalSha256,
-  isProtectedPath,
-  validateTaskState,
-  validateVerificationResult,
-  validateReviewResult,
-  type TaskState,
-  type FixPlan,
-  type VerificationResult,
-  type ReviewResult,
-  type StatePort,
-  type RepositoryPort,
-  type ApprovalPort,
-  type ModelPort,
-  type StateTransitionOptions,
-  type ApplyPatchAction,
+  computeCanonicalSha256, computeCheckSetDigest, isProtectedPath, validateApprovalBinding,
+  validateStateTransition, validateTaskState, validateNormalizedAction, validateVerificationResult, validateReviewResult,
+  type TaskState, type FixPlan, type VerificationResult, type ReviewResult, type StatePort,
+  type RepositoryPort, type ApprovalPort, type ModelPort, type StateTransitionOptions,
+  type ApplyPatchAction, type ApproveFixPlanAction, type ApprovalBindingContext,
+  type BudgetLedger, type ExecutionGuard,
 } from '../contracts/foundation/uc03.ts';
 
-export type RepairOutcome =
-  | 'REPAIR_PREPARED'
-  | 'INCOMPLETE'
-  | 'DENIED';
+export type RepairOutcome = 'REPAIR_PREPARED' | 'INCOMPLETE' | 'DENIED';
 
-export interface RepairPatchProposal {
-  readonly diff: string;
-  readonly affectedPaths: readonly string[];
+export interface RepairPatchProposal { readonly diff: string; readonly affectedPaths: readonly string[]; readonly evidenceRefs: readonly string[]; readonly diagnosticRefs: readonly string[] }
+
+export interface TrustedRepairContext {
+  readonly taskId: string; readonly runId: string; readonly workspaceId: string; readonly repositoryId: string; readonly repositoryRevisionDigest: string;
+  readonly baselineRef: string; readonly checkSetDigest: string; readonly diffDigest: string;
+  readonly evidenceRefs: readonly string[]; readonly actionRefs: readonly string[]; readonly diagnosticRefs: readonly string[];
 }
 
 export interface RepairInput {
   readonly taskId: string;
-  readonly failureEvidence:
-    | VerificationResult
-    | ReviewResult
-    | readonly (VerificationResult | ReviewResult)[];
-  readonly repairPatch?: RepairPatchProposal | undefined;
-  readonly actionId?: string | undefined;
+  readonly failureEvidence: VerificationResult | ReviewResult | readonly (VerificationResult | ReviewResult)[];
+  readonly repairPatch?: RepairPatchProposal | undefined; readonly actionId?: string | undefined;
 }
 
 export interface RepairPorts {
-  readonly statePort: StatePort;
-  readonly repositoryPort?: RepositoryPort | undefined;
-  readonly approvalPort?: ApprovalPort | undefined;
-  readonly modelPort?: ModelPort | undefined;
-  readonly trustedTransitionContext?: StateTransitionOptions['trusted'] | undefined;
+  readonly statePort: StatePort; readonly repositoryPort?: RepositoryPort | undefined;
+  readonly executionGuard?: ExecutionGuard | undefined; readonly approvalPort?: ApprovalPort | undefined;
+  readonly modelPort?: ModelPort | undefined; readonly trustedTransitionContext?: StateTransitionOptions['trusted'] | undefined;
+  readonly trustedRepairContext?: TrustedRepairContext | undefined;
 }
 
 export interface RepairResult {
-  readonly outcome: RepairOutcome;
-  readonly state: TaskState;
-  readonly reasons: readonly string[];
-  readonly reservedActionId?: string | undefined;
-  readonly appliedPatchDigest?: string | undefined;
+  readonly outcome: RepairOutcome; readonly state: TaskState | null; readonly reasons: readonly string[];
+  readonly reservedActionId?: string | undefined; readonly appliedPatchDigest?: string | undefined;
 }
 
-export interface PlanMaterialityResult {
-  readonly isMaterial: boolean;
-  readonly changedFields: readonly string[];
-  readonly reason: string;
-}
+export interface PlanMaterialityResult { readonly isMaterial: boolean; readonly changedFields: readonly string[]; readonly reason: string }
 
-export type ReplanOutcome =
-  | 'REPLAN_PREPARED'
-  | 'CLARIFICATION_ACCEPTED'
-  | 'INCOMPLETE'
-  | 'AWAIT_FEEDBACK'
-  | 'DENIED';
+export type ReplanOutcome = 'REPLAN_PREPARED' | 'CLARIFICATION_ACCEPTED' | 'INCOMPLETE' | 'AWAIT_FEEDBACK' | 'DENIED';
 
-export interface ReplanInput {
-  readonly taskId: string;
-  readonly candidatePlan: FixPlan;
-  readonly proposalId: string;
-  readonly reason?: string | undefined;
-}
+export interface ReplanInput { readonly taskId: string; readonly candidatePlan: FixPlan; readonly proposalId: string; readonly reason?: string | undefined }
 
-export interface ReplanPorts {
-  readonly statePort: StatePort;
-  readonly approvalPort?: ApprovalPort | undefined;
-  readonly trustedTransitionContext?: StateTransitionOptions['trusted'] | undefined;
-}
+export interface ReplanPorts { readonly statePort: StatePort; readonly approvalPort?: ApprovalPort | undefined; readonly trustedTransitionContext?: StateTransitionOptions['trusted'] | undefined }
 
-export interface ReplanResult {
-  readonly outcome: ReplanOutcome;
-  readonly state: TaskState;
-  readonly reasons: readonly string[];
-  readonly replanCount: number;
-  readonly isMaterial: boolean;
-}
+export interface ReplanResult { readonly outcome: ReplanOutcome; readonly state: TaskState; readonly reasons: readonly string[]; readonly replanCount: number; readonly isMaterial: boolean }
 
-export interface RejectionInput {
-  readonly taskId: string;
-  readonly rejectionReason: string;
-  readonly decisionId?: string | undefined;
-}
+export interface RejectionInput { readonly taskId: string; readonly rejectionReason: string; readonly decisionId?: string | undefined }
 
-export interface RejectionPorts {
-  readonly statePort: StatePort;
-  readonly trustedTransitionContext?: StateTransitionOptions['trusted'] | undefined;
-}
+export interface RejectionPorts { readonly statePort: StatePort; readonly trustedTransitionContext?: StateTransitionOptions['trusted'] | undefined }
 
-/**
- * Evaluates whether a candidate plan revision constitutes a material strategy shift
- * versus a minor clarification, based strictly on authoritative bound fields.
- *
- * Material changes include:
- * - strategy or strategyDigest change
- * - root-cause diagnosis shift
- * - suspected cause locations change
- * - scoped change boundary change
- */
 export function evaluatePlanMateriality(
   _priorPlan: FixPlan,
   _candidatePlan: FixPlan
 ): PlanMaterialityResult {
   void _priorPlan;
   void _candidatePlan;
-  // Neutral incomplete skeleton for T016 / T018 pending
   return {
     isMaterial: false,
     changedFields: [],
@@ -144,320 +69,238 @@ function isVerificationResult(item: unknown): item is VerificationResult {
 }
 
 function isProtectedPathOrTest(filePath: string): boolean {
-  if (isProtectedPath(filePath)) return true;
   const norm = filePath.toLowerCase().replace(/\\/g, '/');
-  if (norm.startsWith('tests/') || norm.startsWith('test/')) return true;
-  return false;
+  return isProtectedPath(filePath) || norm.startsWith('tests/') || norm.startsWith('test/');
 }
 
 function isReviewResult(item: unknown): item is ReviewResult {
   return typeof item === 'object' && item !== null && 'reviewId' in item && 'findings' in item;
 }
 
-/**
- * Executes a bounded evidence-driven repair attempt.
- *
- * Enforces:
- * 1. Validates fresh failure evidence bound to current task/revision/checks (not replay).
- * 2. Authoritative state load and finite config/ledger verification.
- * 3. Reserves persisted repair allowance before any proposal/patch effects.
- * 4. Bound human plan approval and action policy before production code edits.
- * 5. Transitions state toward verification (Patch node), never claiming COMPLETED.
- */
-export async function executeRepair(
-  input: RepairInput,
-  ports: RepairPorts
-): Promise<RepairResult> {
-  const currentState = await ports.statePort.loadTask(input.taskId);
-  if (!currentState) {
-    return {
-      outcome: 'INCOMPLETE',
-      state: {} as TaskState,
-      reasons: ['task-not-found'],
-    };
-  }
-
-  const stateVal = validateTaskState(currentState);
-  if (!stateVal.ok) {
-    return {
-      outcome: 'INCOMPLETE',
-      state: currentState,
-      reasons: ['invalid-authoritative-task-state'],
-    };
-  }
-
-  // 1. Validate failure evidence
-  const evidenceList = Array.isArray(input.failureEvidence)
-    ? input.failureEvidence
-    : [input.failureEvidence];
-
-  if (evidenceList.length === 0) {
-    return {
-      outcome: 'INCOMPLETE',
-      state: currentState,
-      reasons: ['missing-failure-evidence'],
-    };
-  }
-
-  for (const item of evidenceList) {
-    if (isVerificationResult(item)) {
-      const vVal = validateVerificationResult(item);
-      if (!vVal.ok) {
-        return {
-          outcome: 'INCOMPLETE',
-          state: currentState,
-          reasons: ['invalid-verification-failure-evidence'],
-        };
-      }
-      if (item.outcome === 'pass') {
-        return {
-          outcome: 'INCOMPLETE',
-          state: currentState,
-          reasons: ['not-failure-evidence: verification passed'],
-        };
-      }
-      if (item.taskId && item.taskId !== currentState.taskId) {
-        return {
-          outcome: 'INCOMPLETE',
-          state: currentState,
-          reasons: ['stale-or-unbound-failure-evidence: taskId mismatch'],
-        };
-      }
-      if (item.repoDigest !== currentState.repositoryRevisionDigest) {
-        return {
-          outcome: 'INCOMPLETE',
-          state: currentState,
-          reasons: ['stale-or-unbound-failure-evidence: repository revision drift'],
-        };
-      }
-    } else if (isReviewResult(item)) {
-      const rVal = validateReviewResult(item);
-      if (!rVal.ok) {
-        return {
-          outcome: 'INCOMPLETE',
-          state: currentState,
-          reasons: ['invalid-review-failure-evidence'],
-        };
-      }
-      if (item.status === 'accepted') {
-        return {
-          outcome: 'INCOMPLETE',
-          state: currentState,
-          reasons: ['not-failure-evidence: review accepted'],
-        };
-      }
-      if (item.repoDigest !== currentState.repositoryRevisionDigest) {
-        return {
-          outcome: 'INCOMPLETE',
-          state: currentState,
-          reasons: ['stale-or-unbound-failure-evidence: reviewer repository revision drift'],
-        };
-      }
-    } else {
-      return {
-        outcome: 'INCOMPLETE',
-        state: currentState,
-        reasons: ['unknown-failure-evidence-type'],
-      };
-    }
-  }
-
-  // 2. Authoritative accounting validation
-  const ledgers = currentState.budgetLedgers;
-  if (!ledgers || ledgers.length === 0) {
-    return {
-      outcome: 'INCOMPLETE',
-      state: currentState,
-      reasons: ['missing-budget-ledgers'],
-    };
-  }
-
-  const repairLedger = ledgers.find((l) => l.scope === 'task' && l.kind === 'repair');
-  if (!repairLedger) {
-    return {
-      outcome: 'INCOMPLETE',
-      state: currentState,
-      reasons: ['missing-repair-ledger'],
-    };
-  }
-
-  const tokenLedger = ledgers.find((l) => l.scope === 'task' && l.kind === 'tokens');
-  const costLedger = ledgers.find((l) => l.scope === 'task' && l.kind === 'cost');
-  if (!tokenLedger || !costLedger) {
-    return {
-      outcome: 'INCOMPLETE',
-      state: currentState,
-      reasons: ['missing-token-or-cost-ledger'],
-    };
-  }
-
-  // Check for uncertain provider dispatches requiring host reconciliation before retry
-  const hasUncertain = ledgers.some((l) =>
-    l.reservations.some((r) => r.reservationId.includes('unc') || r.keyedId.includes('unc'))
-  );
-  if (hasUncertain) {
-    return {
-      outcome: 'INCOMPLETE',
-      state: currentState,
-      reasons: ['uncertain-accounting-dispatches'],
-    };
-  }
-
-  // Check if repair budget is exhausted
-  const repairReserved = repairLedger.reservations.reduce((sum, r) => sum + r.amount, 0);
-  if (repairLedger.consumed + repairReserved >= repairLedger.limit) {
-    return {
-      outcome: 'INCOMPLETE',
-      state: currentState,
-      reasons: ['repair-budget-exhausted'],
-    };
-  }
-
-  // Check token or cost exhaustion
-  const tokenReserved = tokenLedger.reservations.reduce((sum, r) => sum + r.amount, 0);
-  const costReserved = costLedger.reservations.reduce((sum, r) => sum + r.amount, 0);
-  if (
-    tokenLedger.consumed + tokenReserved >= tokenLedger.limit ||
-    costLedger.consumed + costReserved >= costLedger.limit
-  ) {
-    return {
-      outcome: 'INCOMPLETE',
-      state: currentState,
-      reasons: ['token-or-cost-budget-exhausted'],
-    };
-  }
-
-  // 3. Plan and policy checks before production edits
-  if (!currentState.plan) {
-    return {
-      outcome: 'INCOMPLETE',
-      state: currentState,
-      reasons: ['missing-approved-plan'],
-    };
-  }
-
-  if (!currentState.plan.decisionRef) {
-    return {
-      outcome: 'INCOMPLETE',
-      state: currentState,
-      reasons: ['missing-plan-decision-ref: plan has not been approved'],
-    };
-  }
-
-  // Verify protected paths before any effects
-  if (input.repairPatch) {
-    for (const path of input.repairPatch.affectedPaths) {
-      if (isProtectedPathOrTest(path)) {
-        return {
-          outcome: 'DENIED',
-          state: currentState,
-          reasons: [`forbidden-protected-path-edit: ${path}`],
-        };
-      }
-    }
-  }
-
-  // 4. Reserve repair allowance BEFORE any proposal or patch effect
-  const actionId = input.actionId ?? `act-repair-${randomUUID().slice(0, 8)}`;
-  try {
-    await ports.statePort.reserve('task', 'repair', 1, actionId);
-  } catch (err: unknown) {
-    return {
-      outcome: 'INCOMPLETE',
-      state: currentState,
-      reasons: ['repair-budget-exhausted', (err as Error).message],
-    };
-  }
-
-  // 5. Apply controlled patch if provided
-  let appliedPatchDigest: string | undefined;
-  if (input.repairPatch && ports.repositoryPort) {
-    const patchAction: ApplyPatchAction = {
-      actionId,
-      kind: 'apply_patch',
-      patchContent: input.repairPatch.diff,
-      targetPaths: [...input.repairPatch.affectedPaths],
-      baseRevisionDigest: currentState.repositoryRevisionDigest,
-    };
-    const patchRes = await ports.repositoryPort.applyPatch(patchAction);
-    if (!patchRes.applied) {
-      return {
-        outcome: 'DENIED',
-        state: currentState,
-        reasons: ['patch-application-failed'],
-      };
-    }
-    appliedPatchDigest = computeCanonicalSha256(input.repairPatch.diff);
-  }
-
-  // 6. Transition state toward verification
-  const nextLedgers =
-    'getLedgers' in ports.statePort && typeof ports.statePort.getLedgers === 'function'
-      ? (ports.statePort.getLedgers() as TaskState['budgetLedgers'])
-      : currentState.budgetLedgers;
-
-  const newEvidenceRefs = [...currentState.evidenceRefs];
-  for (const item of evidenceList) {
-    const ref =
-      'evidenceId' in item
-        ? item.evidenceId
-        : 'reviewId' in item
-          ? item.reviewId
-          : undefined;
-    if (ref && !newEvidenceRefs.includes(ref)) {
-      newEvidenceRefs.push(ref);
-    }
-  }
-
-  const changedPaths = input.repairPatch
-    ? Array.from(new Set([...currentState.changedPaths, ...input.repairPatch.affectedPaths]))
-    : currentState.changedPaths;
-
-  const candidateNextState: TaskState = {
-    ...currentState,
-    stateVersion: currentState.stateVersion + 1,
-    node: 'Patch',
-    nextAction: 'verify-repair-candidate',
-    changedPaths,
-    evidenceRefs: newEvidenceRefs,
-    budgetLedgers: nextLedgers,
-  };
-
-  let transitionedState = candidateNextState;
-  try {
-    transitionedState = await ports.statePort.transition(
-      candidateNextState,
-      currentState.stateVersion
-    );
-  } catch {
-    // If CAS/transition script throws in mock, preserve valid next state candidate
-    transitionedState = candidateNextState;
-  }
-
-  return {
-    outcome: 'REPAIR_PREPARED',
-    state: transitionedState,
-    reasons: [],
-    reservedActionId: actionId,
-    appliedPatchDigest,
-  };
+function failureRefs(items: readonly (VerificationResult | ReviewResult)[]) {
+  const evidence = items.map((item) => isVerificationResult(item) ? item.evidenceId : item.reviewId);
+  const actions = items.map((item) => isVerificationResult(item) ? item.actionId : item.iterationReservationRef);
+  const diagnostics = items.flatMap((item) => isVerificationResult(item) ? item.diagnosticRefs : item.findings.map((finding) => finding.evidenceRef ?? item.reviewId));
+  return { evidence, actions, diagnostics: [...new Set(diagnostics)] };
 }
 
-/**
- * Executes a material replan or minor clarification transition.
- *
- * Enforces:
- * 1. Task-scoped limit of at most 3 material replans after initial plan.
- * 2. Fourth material replan attempt is refused and fails closed (INCOMPLETE).
- * 3. Material replans consume a reserved replan budget slot; minor clarifications do not.
- * 4. Material replans invalidate prior edit authorization and transition to AwaitPlan.
- */
+function refsMatch(actual: unknown, expected: readonly string[]): boolean {
+  return Array.isArray(actual) && actual.length === expected.length && actual.every((ref: unknown, index: number) => typeof ref === 'string' && ref === expected[index]);
+}
+
+type AccountingCheck = { readonly ok: true; readonly repair: BudgetLedger } | { readonly ok: false; readonly reason: string };
+
+function checkAccounting(state: TaskState, actionId?: string, receiptId?: string): AccountingCheck {
+  const task = state.taskContext;
+  const ledgers = state.budgetLedgers;
+  if (!ledgers?.length) return { ok: false, reason: 'missing-budget-ledgers' };
+  if (!task) return { ok: false, reason: 'missing-budget-configuration' };
+  const repair = ledgers.find((entry) => entry.scope === 'task' && entry.kind === 'repair');
+  const tokens = ledgers.find((entry) => entry.scope === 'task' && entry.kind === 'tokens');
+  const cost = ledgers.find((entry) => entry.scope === 'task' && entry.kind === 'cost');
+  if (!repair || !tokens || !cost) return { ok: false, reason: 'missing-budget-ledgers' };
+  for (const [ledger, limit, unit] of [
+    [repair, task.budgetLimits.maxRepairAttempts, 'count'],
+    [tokens, task.budgetLimits.maxTokens, 'count'],
+    [cost, task.budgetLimits.maxCostUsd, 'usd'],
+  ] as const) {
+    if (ledger.configurationId !== task.configId || ledger.limit !== limit || ledger.unit !== unit) {
+      return { ok: false, reason: 'inconsistent-budget-configuration' };
+    }
+    if (ledger.reservations.some((item) => item.amount <= 0)) return { ok: false, reason: 'inconsistent-budget-accounting' };
+    const total = ledger.consumed + ledger.reservations.reduce((sum, item) => sum + item.amount, 0);
+    if (ledger.kind === 'repair' && actionId) {
+      if (total > limit) return { ok: false, reason: 'inconsistent-budget-accounting' };
+      const match = ledger.reservations.filter((item) => item.keyedId === actionId && item.amount === 1 && item.reservationId === receiptId);
+      if (match.length !== 1) return { ok: false, reason: 'repair-reservation-not-authoritative' };
+    } else if (total >= limit) {
+      return { ok: false, reason: ledger.kind === 'repair' ? 'repair-budget-exhausted' : 'token-or-cost-budget-exhausted' };
+    }
+  }
+  if (ledgers.some((entry) => (entry.kind === 'tokens' || entry.kind === 'cost') && entry.reservations.length > 0)) {
+    return { ok: false, reason: 'uncertain-accounting-reservations' };
+  }
+  return { ok: true, repair };
+}
+
+function isPatchResult(value: unknown): value is { readonly applied: true; readonly newRevisionDigest: string } {
+  return typeof value === 'object' && value !== null && !Array.isArray(value) && 'applied' in value && value.applied === true && 'newRevisionDigest' in value && typeof value.newRevisionDigest === 'string' && !!value.newRevisionDigest.trim();
+}
+
+function incomplete(state: TaskState | null, reason: string, actionId?: string, digest?: string): RepairResult {
+  return { outcome: 'INCOMPLETE', state, reasons: [reason], ...(actionId ? { reservedActionId: actionId } : {}), ...(digest ? { appliedPatchDigest: digest } : {}) };
+}
+
+export async function executeRepair(input: RepairInput, ports: RepairPorts): Promise<RepairResult> {
+  let state: TaskState | null;
+  try { state = await ports.statePort.loadTask(input.taskId); }
+  catch { return incomplete(null, 'authoritative-task-state-unavailable'); }
+  if (!state) return incomplete(null, 'task-not-found');
+  if (!validateTaskState(state).ok) return incomplete(state, 'invalid-authoritative-task-state');
+
+  const items = Array.isArray(input.failureEvidence) ? input.failureEvidence : [input.failureEvidence];
+  if (!items.length) return incomplete(state, 'missing-failure-evidence');
+  for (const item of items) {
+    if (isVerificationResult(item)) {
+      if (!validateVerificationResult(item).ok) return incomplete(state, 'invalid-verification-failure-evidence');
+      if (item.outcome !== 'fail') return incomplete(state, 'not-failure-evidence');
+      if (item.taskId !== state.taskId || item.runId !== state.runId || item.repoDigest !== state.repositoryRevisionDigest) {
+        return incomplete(state, 'stale-or-unbound-verification-failure');
+      }
+      if (!item.diffDigest || !item.diagnosticRefs.length) return incomplete(state, 'verification-diagnostics-or-diff-missing');
+    } else if (isReviewResult(item)) {
+      if (!validateReviewResult(item).ok) return incomplete(state, 'invalid-review-failure-evidence');
+      if (item.status === 'accepted') return incomplete(state, 'not-failure-evidence');
+      if (item.status !== 'findings') return incomplete(state, 'review-failure-evidence-not-actionable');
+      if (item.repoDigest !== state.repositoryRevisionDigest) return incomplete(state, 'stale-review-failure-evidence');
+    } else return incomplete(state, 'unknown-failure-evidence-type');
+  }
+
+  const accounting = checkAccounting(state);
+  if (!accounting.ok) return incomplete(state, accounting.reason);
+  const plan = state.plan;
+  const task = state.taskContext;
+  const approval = ports.trustedTransitionContext?.approval;
+  if (!plan?.decisionRef || !task?.requiredChecks.length || !approval || !ports.approvalPort) {
+    return incomplete(state, 'current-approved-plan-unavailable');
+  }
+  const checkSetDigest = computeCheckSetDigest(task.requiredChecks);
+  if (plan.checkSetDigest !== checkSetDigest) return incomplete(state, 'approved-plan-check-set-mismatch');
+  const planAction: ApproveFixPlanAction = {
+    actionId: plan.decisionRef, kind: 'approve_fix_plan', planVersion: state.planVersion,
+    strategyDigest: plan.strategyDigest, diagnosisEvidenceRefs: plan.evidenceRefs, checkSetDigest,
+  };
+  const currentApproval: ApprovalBindingContext = {
+    currentTaskId: state.taskId, currentWorkspaceId: state.workspaceId,
+    currentRepositoryRevisionDigest: state.repositoryRevisionDigest,
+    currentPolicyId: task.configId, currentPolicyVersion: task.configVersion,
+    currentNormalizedActionDigest: computeCanonicalSha256(planAction), currentPlanVersion: state.planVersion,
+    currentStrategyDigest: plan.strategyDigest, currentBaselineRef: plan.baselineRef,
+    currentEvidenceRefs: plan.evidenceRefs, currentCriteriaDigest: computeCanonicalSha256(state.acceptanceCriteria),
+    currentCheckSetDigest: checkSetDigest,
+  };
+  const hostBinding = validateApprovalBinding(approval.binding, approval.freshness);
+  const binding = validateApprovalBinding(approval.binding, currentApproval);
+  if (!hostBinding.ok || !binding.ok || binding.value.status !== 'approved' || binding.value.actionKind !== 'fix_plan' ||
+      binding.value.decisionId !== state.activeDecisionId || binding.value.decisionId !== plan.decisionRef) {
+    return incomplete(state, 'current-plan-approval-missing-or-stale');
+  }
+  try {
+    if (!await ports.approvalPort.validateBinding(binding.value)) return incomplete(state, 'current-plan-approval-not-authoritative');
+  } catch { return incomplete(state, 'current-plan-approval-not-authoritative'); }
+
+  const refs = failureRefs(items);
+  const ctx = ports.trustedRepairContext;
+  const digests = items.map((item) => item.diffDigest);
+  if (state.node !== 'Repair' || !ctx || new Set(refs.evidence).size !== refs.evidence.length ||
+      new Set(refs.actions).size !== refs.actions.length || ctx.taskId !== state.taskId || ctx.runId !== state.runId ||
+      ctx.workspaceId !== state.workspaceId || ctx.repositoryId !== state.repositoryId ||
+      ctx.repositoryRevisionDigest !== state.repositoryRevisionDigest || ctx.baselineRef !== plan.baselineRef ||
+      ctx.checkSetDigest !== checkSetDigest || !ctx.diffDigest.trim() || digests.some((digest) => digest !== ctx.diffDigest) ||
+      !refsMatch(ctx.evidenceRefs, refs.evidence) || !refsMatch(ctx.actionRefs, refs.actions) ||
+      !refsMatch(ctx.diagnosticRefs, refs.diagnostics) ||
+      refs.evidence.some((ref) => !state.evidenceRefs.includes(ref) || state.evidenceRefs.includes(`repair-consumed:${ref}`)) ||
+      [...refs.actions, ...refs.diagnostics].some((ref) => !state.evidenceRefs.includes(ref)) ||
+      (input.repairPatch && (!refsMatch(input.repairPatch.evidenceRefs, refs.evidence) || !refsMatch(input.repairPatch.diagnosticRefs, refs.diagnostics)))) {
+    return incomplete(state, 'current-repair-evidence-binding-unavailable-or-stale');
+  }
+  for (const item of items) {
+    if (isVerificationResult(item)) {
+      const matches = item.testedIds.map((id) => task.requiredChecks.find((check) => check.checkId === id));
+      const phaseMatches = matches.every((check) => check && (check.purpose === 'reproduction' ? 'focused' : check.purpose) === item.phase);
+      if (new Set(item.testedIds).size !== item.testedIds.length || matches.some((check) => !check) || !phaseMatches) {
+        return incomplete(state, 'verification-failure-check-set-mismatch');
+      }
+    } else if (item.checkSetDigest !== checkSetDigest || item.reviewId !== state.latestReviewRef || !state.reviewRefs?.includes(item.reviewId)) {
+      return incomplete(state, 'review-failure-binding-mismatch');
+    }
+  }
+  const proposal = input.repairPatch;
+  if (!proposal || !proposal.diff.trim() || !proposal.affectedPaths.length || new Set(proposal.affectedPaths).size !== proposal.affectedPaths.length) {
+    return incomplete(state, 'repair-proposal-missing-or-invalid');
+  }
+  if (proposal.affectedPaths.some(isProtectedPathOrTest)) return { outcome: 'DENIED', state, reasons: ['forbidden-protected-path-edit'] };
+
+  const actionId = `act-repair-${computeCanonicalSha256({
+    taskId: state.taskId, runId: state.runId, repositoryRevisionDigest: state.repositoryRevisionDigest,
+    baselineRef: plan.baselineRef, checkSetDigest, diffDigest: ctx.diffDigest,
+    evidenceRefs: refs.evidence, actionRefs: refs.actions, diagnosticRefs: refs.diagnostics,
+  })}`;
+  if (input.actionId !== undefined && input.actionId !== actionId) return incomplete(state, 'repair-action-identity-mismatch');
+  if (accounting.repair.reservations.some((entry) => entry.keyedId === actionId) || state.evidenceRefs.includes(`repair-action:${actionId}`)) {
+    return incomplete(state, 'repair-evidence-already-reserved');
+  }
+  if (!ports.executionGuard) return incomplete(state, 'execution-guard-unavailable');
+  const action: ApplyPatchAction = {
+    actionId, kind: 'apply_patch', patchContent: proposal.diff,
+    targetPaths: [...proposal.affectedPaths], baseRevisionDigest: state.repositoryRevisionDigest,
+  };
+  const admittedAction = validateNormalizedAction(action);
+  if (!admittedAction.ok) return incomplete(state, 'invalid-repair-action');
+  try {
+    const permission = await ports.approvalPort.classify(admittedAction.value);
+    if (permission === 'FORBIDDEN') return { outcome: 'DENIED', state, reasons: ['patch-action-forbidden'] };
+    if (permission !== 'ALLOWED') return incomplete(state, 'patch-action-approval-required');
+  } catch { return incomplete(state, 'patch-policy-unavailable'); }
+
+  let receiptId: string;
+  try { receiptId = await ports.statePort.reserve('task', 'repair', 1, actionId); }
+  catch { return incomplete(state, 'repair-reservation-failed'); }
+  if (!receiptId.trim()) return incomplete(state, 'repair-reservation-unconfirmed', actionId);
+  let reserved: TaskState | null;
+  try { reserved = await ports.statePort.loadTask(input.taskId); }
+  catch { return incomplete(state, 'reserved-task-state-unavailable', actionId); }
+  if (!reserved || reserved.stateVersion !== state.stateVersion || reserved.runId !== state.runId ||
+      reserved.repositoryRevisionDigest !== state.repositoryRevisionDigest || !validateTaskState(reserved).ok) {
+    return incomplete(reserved ?? state, 'reserved-task-state-inconsistent', actionId);
+  }
+  const reservedAccounting = checkAccounting(reserved, actionId, receiptId);
+  if (!reservedAccounting.ok) return incomplete(reserved, reservedAccounting.reason, actionId);
+
+  const evidenceRefs = [...new Set([
+    ...reserved.evidenceRefs, ...refs.evidence, ...refs.actions, ...refs.diagnostics,
+    ...refs.evidence.map((ref) => `repair-consumed:${ref}`), `repair-action:${actionId}`,
+  ])];
+  const next: TaskState = {
+    ...reserved, stateVersion: reserved.stateVersion + 1, node: 'Patch',
+    nextAction: 'verify-repair-candidate', evidenceRefs,
+    changedPaths: [...new Set([...reserved.changedPaths, ...proposal.affectedPaths])],
+  };
+  if (!validateStateTransition(state, next, { trusted: ports.trustedTransitionContext }).ok) {
+    return incomplete(reserved, 'repair-transition-prevalidation-failed', actionId);
+  }
+  let effect: Awaited<ReturnType<ExecutionGuard['validateAndExecute']>>;
+  try { effect = await ports.executionGuard.validateAndExecute(admittedAction.value, state); }
+  catch { return incomplete(reserved, 'repair-effect-uncertain', actionId); }
+  if (effect.outcome !== 'success') {
+    return effect.outcome === 'denied'
+      ? { outcome: 'DENIED', state: reserved, reasons: ['patch-action-denied'], reservedActionId: actionId }
+      : incomplete(reserved, 'repair-effect-not-confirmed', actionId);
+  }
+  if (!isPatchResult(effect.result)) return incomplete(reserved, 'repair-effect-result-inconsistent', actionId);
+  const digest = computeCanonicalSha256(proposal.diff);
+  let transitioned: TaskState;
+  try { transitioned = await ports.statePort.transition(next, state.stateVersion); }
+  catch {
+    return incomplete(await safeReload(ports.statePort, input.taskId, reserved), 'repair-transition-not-confirmed', actionId, digest);
+  }
+  if (!validateTaskState(transitioned).ok || transitioned.stateVersion !== next.stateVersion || transitioned.node !== 'Patch' || transitioned.runId !== state.runId) {
+    return incomplete(await safeReload(ports.statePort, input.taskId, reserved), 'repair-transition-result-inconsistent', actionId, digest);
+  }
+  return { outcome: 'REPAIR_PREPARED', state: transitioned, reasons: [], reservedActionId: actionId, appliedPatchDigest: digest };
+}
+
+async function safeReload(statePort: StatePort, taskId: string, fallback: TaskState): Promise<TaskState> {
+  try {
+    const latest = await statePort.loadTask(taskId);
+    return latest && validateTaskState(latest).ok ? latest : fallback;
+  } catch { return fallback; }
+}
 export async function executeReplan(
   input: ReplanInput,
   ports: ReplanPorts
 ): Promise<ReplanResult> {
   const currentState = await ports.statePort.loadTask(input.taskId);
-  // Neutral incomplete skeleton for T016 / T018 pending
   return {
     outcome: 'INCOMPLETE',
     state: currentState ?? ({} as TaskState),
@@ -467,16 +310,11 @@ export async function executeReplan(
   };
 }
 
-/**
- * Handles plan rejection by transitioning to AwaitFeedback and awaiting explicit
- * developer direction without autonomous unsolicited replanning.
- */
 export async function handlePlanRejection(
   input: RejectionInput,
   ports: RejectionPorts
 ): Promise<ReplanResult> {
   const currentState = await ports.statePort.loadTask(input.taskId);
-  // Neutral incomplete skeleton for T016 / T018 pending
   return {
     outcome: 'INCOMPLETE',
     state: currentState ?? ({} as TaskState),

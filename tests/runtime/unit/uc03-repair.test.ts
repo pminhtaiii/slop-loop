@@ -26,8 +26,15 @@ import {
   computeCanonicalSha256,
   computeCheckSetDigest,
   type ApplyPatchAction,
+  type ApprovalBinding,
+  type ApprovalBindingContext,
+  type ApproveFixPlanAction,
   type BugTask,
+  type PermissionClass,
+  type StateTransitionOptions,
   type TaskState,
+  type ExecutionGuard,
+  type NormalizedAction,
   type FixPlan,
   type CheckDefinition,
   type VerificationResult,
@@ -39,14 +46,18 @@ import {
   executeReplan,
   handlePlanRejection,
   evaluatePlanMateriality,
+  type RepairResult,
+  type RepairPatchProposal,
+  type TrustedRepairContext,
 } from '../../../src/uc03/repair.ts';
 import {
   createFixtureBugTask,
   createFixtureTaskState,
   createFixtureCheckDefinition,
 } from '../support/uc03/port-fixtures.ts';
-import { MemoryStatePort } from '../support/uc03/memory-state.ts';
+import { MemoryStatePort, StateConflictError } from '../support/uc03/memory-state.ts';
 import { FakeRepositoryPort } from '../support/uc03/fake-repository.ts';
+import { ScriptedApprovalPort } from '../support/uc03/scripted-approval.ts';
 
 // Inlined deterministic builders conforming to T004
 function createRepairTaskFixture(overrides?: Partial<BugTask>): {
@@ -98,7 +109,11 @@ function createRepairStateFixture(options?: {
   task: BugTask;
   plan: FixPlan;
 } {
-  const { task, checkSetDigest } = createRepairTaskFixture();
+  const repairLimit = options?.repairLimit ?? 2;
+  const defaultTask = createRepairTaskFixture().task;
+  const { task, checkSetDigest } = createRepairTaskFixture({
+    budgetLimits: { ...defaultTask.budgetLimits, maxRepairAttempts: repairLimit },
+  });
   const plan: FixPlan = {
     planVersion: 1,
     diagnosis: 'Calculator.divide fails to check for zero divisor before division',
@@ -114,7 +129,6 @@ function createRepairStateFixture(options?: {
     decisionRef: 'dec-plan-001',
   };
 
-  const repairLimit = options?.repairLimit ?? 2;
   const repairConsumed = options?.repairConsumed ?? 0;
   const tokensConsumed = options?.tokensConsumed ?? 22000;
   const costConsumed = options?.costConsumed ?? 1.1;
@@ -191,6 +205,7 @@ function createRepairStateFixture(options?: {
   const state = createFixtureTaskState({
     taskId: task.taskId,
     stateVersion: 2,
+    runId: 'run-repair-001',
     repositoryId: task.repositoryId,
     repositoryRevisionDigest: task.initialRevisionDigest,
     goal: task.goal,
@@ -204,9 +219,23 @@ function createRepairStateFixture(options?: {
     planVersion: 1,
     replanCount: options?.replanCount ?? 0,
     changedPaths: ['src/calculator.py'],
-    evidenceRefs: ['evi-repro-baseline-001', 'evi-patch-001'],
+    evidenceRefs: [
+      'evi-repro-baseline-001',
+      'evi-patch-001',
+      'evi-diag-patch-fail-001',
+      'act-verify-patch-fail-001',
+      'diag-patch-fail-output',
+      'evi-check-regression-fail-001',
+      'act-verify-regression-001',
+      'diag-regression-fail-output',
+      'rev-finding-001',
+      'res-rev-iter-001',
+    ],
+    reviewRefs: ['rev-finding-001'],
+    latestReviewRef: 'rev-finding-001',
     budgetLedgers: options?.budgetLedgers ?? defaultLedgers,
     plan: options?.hasPlan === false ? undefined : plan,
+    ...(options?.hasPlan === false ? {} : { activeDecisionId: plan.decisionRef }),
     taskContext: task,
   });
 
@@ -266,6 +295,139 @@ function createReviewerFindingEvidence(task: BugTask): ReviewResult {
   };
 }
 
+function createAuthorizedRepairPorts(
+  state: TaskState,
+  patchPermission: PermissionClass = 'ALLOWED',
+  failureEvidence: VerificationResult | ReviewResult = createFailedPatchEvidence(state.taskContext as BugTask)
+): {
+  statePort: MemoryStatePort;
+  approvalPort: ScriptedApprovalPort;
+  trustedTransitionContext: NonNullable<StateTransitionOptions['trusted']>;
+  transitionContexts: Readonly<Record<number, NonNullable<StateTransitionOptions['trusted']>>>;
+  trustedRepairContext: TrustedRepairContext;
+} {
+  const plan = state.plan;
+  const task = state.taskContext;
+  if (!plan?.decisionRef || !task) throw new Error('Repair authorization fixture requires a bound plan and task');
+  const evidenceRefs = [isVerificationEvidence(failureEvidence) ? failureEvidence.evidenceId : failureEvidence.reviewId];
+  const actionRefs = [isVerificationEvidence(failureEvidence) ? failureEvidence.actionId : failureEvidence.iterationReservationRef];
+  const diagnosticRefs = isVerificationEvidence(failureEvidence)
+    ? [...failureEvidence.diagnosticRefs]
+    : [...new Set(failureEvidence.findings.map((finding) => finding.evidenceRef ?? failureEvidence.reviewId))];
+  const authorizedState: TaskState = {
+    ...state,
+    evidenceRefs: [...new Set([...state.evidenceRefs, ...evidenceRefs, ...actionRefs, ...diagnosticRefs])],
+    ...(isVerificationEvidence(failureEvidence)
+      ? {}
+      : {
+          reviewRefs: [...new Set([...(state.reviewRefs ?? []), failureEvidence.reviewId])],
+          latestReviewRef: failureEvidence.reviewId,
+        }),
+  };
+  const action: ApproveFixPlanAction = {
+    actionId: plan.decisionRef,
+    kind: 'approve_fix_plan',
+    planVersion: plan.planVersion,
+    strategyDigest: plan.strategyDigest,
+    diagnosisEvidenceRefs: plan.evidenceRefs,
+    checkSetDigest: plan.checkSetDigest,
+  };
+  const freshness: ApprovalBindingContext = {
+    currentTaskId: authorizedState.taskId,
+    currentWorkspaceId: authorizedState.workspaceId,
+    currentRepositoryRevisionDigest: authorizedState.repositoryRevisionDigest,
+    currentPolicyId: task.configId,
+    currentPolicyVersion: task.configVersion,
+    currentNormalizedActionDigest: computeCanonicalSha256(action),
+    currentPlanVersion: authorizedState.planVersion,
+    currentStrategyDigest: plan.strategyDigest,
+    currentBaselineRef: plan.baselineRef,
+    currentEvidenceRefs: plan.evidenceRefs,
+    currentCriteriaDigest: computeCanonicalSha256(authorizedState.acceptanceCriteria),
+    currentCheckSetDigest: plan.checkSetDigest,
+  };
+  const binding: ApprovalBinding = {
+    decisionId: plan.decisionRef,
+    actionKind: 'fix_plan',
+    normalizedActionDigest: computeCanonicalSha256(action),
+    taskId: authorizedState.taskId,
+    workspaceId: authorizedState.workspaceId,
+    repositoryRevisionDigest: authorizedState.repositoryRevisionDigest,
+    policyId: task.configId,
+    policyVersion: task.configVersion,
+    planVersion: authorizedState.planVersion,
+    strategyDigest: plan.strategyDigest,
+    baselineRef: plan.baselineRef,
+    evidenceRefs: plan.evidenceRefs,
+    criteriaDigest: computeCanonicalSha256(authorizedState.acceptanceCriteria),
+    checkSetDigest: plan.checkSetDigest,
+    status: 'approved',
+  };
+  const trustedTransitionContext = { approval: { binding, freshness } };
+  const transitionContexts = { [state.stateVersion + 1]: trustedTransitionContext };
+  const trustedRepairContext: TrustedRepairContext = {
+    taskId: authorizedState.taskId,
+    runId: authorizedState.runId,
+    workspaceId: authorizedState.workspaceId,
+    repositoryId: authorizedState.repositoryId,
+    repositoryRevisionDigest: authorizedState.repositoryRevisionDigest,
+    baselineRef: plan.baselineRef,
+    checkSetDigest: plan.checkSetDigest,
+    diffDigest: failureEvidence.diffDigest ?? '',
+    evidenceRefs,
+    actionRefs,
+    diagnosticRefs,
+  };
+  return {
+    statePort: new MemoryStatePort({ initialTaskState: authorizedState, transitionContexts }),
+    approvalPort: new ScriptedApprovalPort({
+      classifications: { apply_patch: patchPermission },
+      decisions: [binding],
+      currentContext: freshness,
+    }),
+    trustedTransitionContext,
+    transitionContexts,
+    trustedRepairContext,
+  };
+}
+
+function isVerificationEvidence(
+  evidence: VerificationResult | ReviewResult
+): evidence is VerificationResult {
+  return 'evidenceId' in evidence;
+}
+
+function createRepairProposal(
+  evidence: VerificationResult | ReviewResult,
+  diff: string,
+  affectedPaths: readonly string[]
+): RepairPatchProposal {
+  return {
+    diff,
+    affectedPaths,
+    evidenceRefs: [isVerificationEvidence(evidence) ? evidence.evidenceId : evidence.reviewId],
+    diagnosticRefs: isVerificationEvidence(evidence)
+      ? [...evidence.diagnosticRefs]
+      : [...new Set(evidence.findings.map((finding) => finding.evidenceRef ?? evidence.reviewId))],
+  };
+}
+
+function createExecutionGuard(repositoryPort: FakeRepositoryPort): ExecutionGuard {
+  return {
+    provenance: 'mock',
+    async validateAndExecute(action: NormalizedAction) {
+      if (action.kind !== 'apply_patch') return { outcome: 'denied' };
+      const result = await repositoryPort.applyPatch(action);
+      return { outcome: result.applied ? 'success' : 'denied', result };
+    },
+  };
+}
+
+function repairState(result: RepairResult): TaskState {
+  if (!result.state) throw new Error('Expected an authoritative task state in repair result');
+  return result.state;
+}
+
 // =========================================================================
 // SECTION 1: Bounded Evidence-Driven Repair (T016 / T017)
 // =========================================================================
@@ -273,7 +435,8 @@ function createReviewerFindingEvidence(task: BugTask): ReviewResult {
 test('repair: accepts valid fresh failed patch verification result and extracts diagnostics', async () => {
   const { state, task } = createRepairStateFixture({ repairConsumed: 0 });
   const failureEvidence = createFailedPatchEvidence(task);
-  const statePort = new MemoryStatePort({ initialTaskState: state });
+  const authorization = createAuthorizedRepairPorts(state, 'ALLOWED', failureEvidence);
+  const { statePort, approvalPort, trustedTransitionContext, trustedRepairContext } = authorization;
   const repositoryPort = new FakeRepositoryPort({
     initialFiles: { 'src/calculator.py': 'def divide(a, b): return a / b\n' },
   });
@@ -282,16 +445,17 @@ test('repair: accepts valid fresh failed patch verification result and extracts 
     {
       taskId: task.taskId,
       failureEvidence,
-      repairPatch: {
-        diff: '--- a/src/calculator.py\n+++ b/src/calculator.py\n@@ -1,1 +1,3 @@\n+if b == 0: raise CalculationError("Cannot divide by zero")\n def divide(a, b): return a / b\n',
-        affectedPaths: ['src/calculator.py'],
-      },
+      repairPatch: createRepairProposal(
+        failureEvidence,
+        '--- a/src/calculator.py\n+++ b/src/calculator.py\n@@ -1,1 +1,3 @@\n+if b == 0: raise CalculationError("Cannot divide by zero")\n def divide(a, b): return a / b\n',
+        ['src/calculator.py']
+      ),
     },
-    { statePort, repositoryPort }
+    { statePort, repositoryPort, approvalPort, trustedTransitionContext, trustedRepairContext, executionGuard: createExecutionGuard(repositoryPort) }
   );
 
   assert.equal(res.outcome, 'REPAIR_PREPARED');
-  assert.equal(res.state.node, 'Patch');
+  assert.equal(repairState(res).node, 'Patch');
   assert.ok(res.reservedActionId);
 });
 
@@ -338,7 +502,8 @@ test('repair: rejects passing verification result as failure evidence', async ()
 test('repair: handles focused pass with regression check failure, routing to repair without claiming completion (C05)', async () => {
   const { state, task } = createRepairStateFixture({ repairConsumed: 0 });
   const regressionEvidence = createRegressionFailedEvidence(task);
-  const statePort = new MemoryStatePort({ initialTaskState: state });
+  const authorization = createAuthorizedRepairPorts(state, 'ALLOWED', regressionEvidence);
+  const { statePort, approvalPort, trustedTransitionContext, trustedRepairContext } = authorization;
   const repositoryPort = new FakeRepositoryPort({
     initialFiles: { 'src/calculator.py': 'def divide(a, b): return a / b\n' },
   });
@@ -347,23 +512,21 @@ test('repair: handles focused pass with regression check failure, routing to rep
     {
       taskId: task.taskId,
       failureEvidence: regressionEvidence,
-      repairPatch: {
-        diff: '--- a/src/calculator.py\n+++ b/src/calculator.py\n',
-        affectedPaths: ['src/calculator.py'],
-      },
+      repairPatch: createRepairProposal(regressionEvidence, '--- a/src/calculator.py\n+++ b/src/calculator.py\n', ['src/calculator.py']),
     },
-    { statePort, repositoryPort }
+    { statePort, repositoryPort, approvalPort, trustedTransitionContext, trustedRepairContext, executionGuard: createExecutionGuard(repositoryPort) }
   );
 
   assert.equal(res.outcome, 'REPAIR_PREPARED');
   assert.notEqual(res.outcome, 'COMPLETED');
-  assert.equal(res.state.node, 'Patch');
+  assert.equal(repairState(res).node, 'Patch');
 });
 
 test('repair: incorporates read-only reviewer finding diagnostics into repair context (C14)', async () => {
   const { state, task } = createRepairStateFixture({ repairConsumed: 0 });
   const reviewEvidence = createReviewerFindingEvidence(task);
-  const statePort = new MemoryStatePort({ initialTaskState: state });
+  const authorization = createAuthorizedRepairPorts(state, 'ALLOWED', reviewEvidence);
+  const { statePort, approvalPort, trustedTransitionContext, trustedRepairContext } = authorization;
   const repositoryPort = new FakeRepositoryPort({
     initialFiles: { 'src/calculator.py': 'def divide(a, b): return a / b\n' },
   });
@@ -372,16 +535,13 @@ test('repair: incorporates read-only reviewer finding diagnostics into repair co
     {
       taskId: task.taskId,
       failureEvidence: reviewEvidence,
-      repairPatch: {
-        diff: '--- a/src/calculator.py\n+++ b/src/calculator.py\n',
-        affectedPaths: ['src/calculator.py'],
-      },
+      repairPatch: createRepairProposal(reviewEvidence, '--- a/src/calculator.py\n+++ b/src/calculator.py\n', ['src/calculator.py']),
     },
-    { statePort, repositoryPort }
+    { statePort, repositoryPort, approvalPort, trustedTransitionContext, trustedRepairContext, executionGuard: createExecutionGuard(repositoryPort) }
   );
 
   assert.equal(res.outcome, 'REPAIR_PREPARED');
-  assert.equal(res.state.node, 'Patch');
+  assert.equal(repairState(res).node, 'Patch');
 });
 
 test('repair: rejects reviewer result with status accepted as failure evidence', async () => {
@@ -408,7 +568,8 @@ test('repair: rejects reviewer result with status accepted as failure evidence',
 test('repair: reserves repair budget in statePort BEFORE applying patch or modifying state (C10)', async () => {
   const { state, task } = createRepairStateFixture({ repairConsumed: 0 });
   const failureEvidence = createFailedPatchEvidence(task);
-  const statePort = new MemoryStatePort({ initialTaskState: state });
+  const authorization = createAuthorizedRepairPorts(state, 'ALLOWED', failureEvidence);
+  const { statePort, approvalPort, trustedTransitionContext, trustedRepairContext } = authorization;
   let patchApplied = false;
   const repositoryPort = new FakeRepositoryPort({
     initialFiles: { 'src/calculator.py': 'code\n' },
@@ -431,12 +592,9 @@ test('repair: reserves repair budget in statePort BEFORE applying patch or modif
     {
       taskId: task.taskId,
       failureEvidence,
-      repairPatch: {
-        diff: '--- a/src/calculator.py\n+++ b/src/calculator.py\n',
-        affectedPaths: ['src/calculator.py'],
-      },
+      repairPatch: createRepairProposal(failureEvidence, '--- a/src/calculator.py\n+++ b/src/calculator.py\n', ['src/calculator.py']),
     },
-    { statePort, repositoryPort }
+    { statePort, repositoryPort, approvalPort, trustedTransitionContext, trustedRepairContext, executionGuard: createExecutionGuard(repositoryPort) }
   );
 
   assert.equal(res.outcome, 'REPAIR_PREPARED');
@@ -447,7 +605,8 @@ test('repair: fails closed and applies no patch when repair budget reservation f
   // repairConsumed = 2 with limit = 2 (exhausted)
   const { state, task } = createRepairStateFixture({ repairConsumed: 2, repairLimit: 2 });
   const failureEvidence = createFailedPatchEvidence(task);
-  const statePort = new MemoryStatePort({ initialTaskState: state });
+  const authorization = createAuthorizedRepairPorts(state, 'ALLOWED', failureEvidence);
+  const { statePort, approvalPort, trustedTransitionContext, trustedRepairContext } = authorization;
   let patchApplied = false;
   const repositoryPort = new FakeRepositoryPort({
     initialFiles: { 'src/calculator.py': 'code\n' },
@@ -462,12 +621,9 @@ test('repair: fails closed and applies no patch when repair budget reservation f
     {
       taskId: task.taskId,
       failureEvidence,
-      repairPatch: {
-        diff: '--- a/src/calculator.py\n+++ b/src/calculator.py\n',
-        affectedPaths: ['src/calculator.py'],
-      },
+      repairPatch: createRepairProposal(failureEvidence, '--- a/src/calculator.py\n+++ b/src/calculator.py\n', ['src/calculator.py']),
     },
-    { statePort, repositoryPort }
+    { statePort, repositoryPort, approvalPort, trustedTransitionContext, trustedRepairContext, executionGuard: createExecutionGuard(repositoryPort) }
   );
 
   assert.equal(res.outcome, 'INCOMPLETE');
@@ -531,7 +687,8 @@ test('repair: persistent task budgets retain consumed amounts across simulated r
   // Run 1: starts with repair consumed = 1 / 2
   const { state, task } = createRepairStateFixture({ repairConsumed: 1, repairLimit: 2 });
   const failureEvidence = createFailedPatchEvidence(task);
-  const statePort = new MemoryStatePort({ initialTaskState: state });
+  const authorization = createAuthorizedRepairPorts(state, 'ALLOWED', failureEvidence);
+  const { statePort, approvalPort, trustedTransitionContext, trustedRepairContext } = authorization;
   const repositoryPort = new FakeRepositoryPort({
     initialFiles: { 'src/calculator.py': 'code\n' },
   });
@@ -541,34 +698,33 @@ test('repair: persistent task budgets retain consumed amounts across simulated r
     {
       taskId: task.taskId,
       failureEvidence,
-      actionId: 'act-repair-run1',
-      repairPatch: {
-        diff: '--- a/src/calculator.py\n+++ b/src/calculator.py\n',
-        affectedPaths: ['src/calculator.py'],
-      },
+      repairPatch: createRepairProposal(failureEvidence, '--- a/src/calculator.py\n+++ b/src/calculator.py\n', ['src/calculator.py']),
     },
-    { statePort, repositoryPort }
+    { statePort, repositoryPort, approvalPort, trustedTransitionContext, trustedRepairContext, executionGuard: createExecutionGuard(repositoryPort) }
   );
   assert.equal(res1.outcome, 'REPAIR_PREPARED');
 
   // Simulated Run 2: starts with a new runId, but loads same task ledger (consumed = 2 / 2)
+  const stateAfterRun1 = repairState(res1);
   const stateRun2 = {
-    ...res1.state,
+    ...stateAfterRun1,
+    stateVersion: stateAfterRun1.stateVersion + 1,
+    node: 'Repair' as const,
     runId: 'run-repair-002', // New simulated run
     budgetLedgers: statePort.getLedgers(),
+    evidenceRefs: [...stateAfterRun1.evidenceRefs, 'evi-diag-run2', 'diag-run2'],
   };
-  const statePort2 = new MemoryStatePort({
-    initialTaskState: stateRun2,
-  });
+  const run2Evidence: VerificationResult = { ...failureEvidence, evidenceId: 'evi-diag-run2', runId: 'run-repair-002', diagnosticRefs: ['diag-run2'] };
+  const authorization2 = createAuthorizedRepairPorts(stateRun2, 'ALLOWED', run2Evidence);
+  const { statePort: statePort2, approvalPort: approvalPort2, trustedTransitionContext: context2, trustedRepairContext: repairContext2 } = authorization2;
 
   // Attempt in run 2 must see budget exhausted (2 / 2) and halt with INCOMPLETE!
   const res2 = await executeRepair(
     {
       taskId: task.taskId,
-      failureEvidence,
-      actionId: 'act-repair-run2',
+      failureEvidence: run2Evidence,
     },
-    { statePort: statePort2, repositoryPort }
+    { statePort: statePort2, repositoryPort, approvalPort: approvalPort2, trustedTransitionContext: context2, trustedRepairContext: repairContext2, executionGuard: createExecutionGuard(repositoryPort) }
   );
 
   assert.equal(res2.outcome, 'INCOMPLETE');
@@ -578,7 +734,8 @@ test('repair: persistent task budgets retain consumed amounts across simulated r
 test('repair: patch attempting to modify protected paths (tests, config) is denied', async () => {
   const { state, task } = createRepairStateFixture({ repairConsumed: 0 });
   const failureEvidence = createFailedPatchEvidence(task);
-  const statePort = new MemoryStatePort({ initialTaskState: state });
+  const authorization = createAuthorizedRepairPorts(state, 'ALLOWED', failureEvidence);
+  const { statePort, approvalPort, trustedTransitionContext, trustedRepairContext } = authorization;
   const repositoryPort = new FakeRepositoryPort({
     initialFiles: { 'tests/test_calculator.py': 'tests\n' },
   });
@@ -587,16 +744,39 @@ test('repair: patch attempting to modify protected paths (tests, config) is deni
     {
       taskId: task.taskId,
       failureEvidence,
-      repairPatch: {
-        diff: '--- a/tests/test_calculator.py\n+++ b/tests/test_calculator.py\n',
-        affectedPaths: ['tests/test_calculator.py'], // Protected test file!
-      },
+      repairPatch: createRepairProposal(failureEvidence, '--- a/tests/test_calculator.py\n+++ b/tests/test_calculator.py\n', ['tests/test_calculator.py']),
     },
-    { statePort, repositoryPort }
+    { statePort, repositoryPort, approvalPort, trustedTransitionContext, trustedRepairContext, executionGuard: createExecutionGuard(repositoryPort) }
   );
 
   assert.equal(res.outcome, 'DENIED');
   assert.ok(res.reasons.some((r) => r.includes('protected')));
+});
+
+test('repair: noncanonical patch target is rejected before guarded effects', async () => {
+  const { state, task } = createRepairStateFixture({ repairConsumed: 0 });
+  const failureEvidence = createFailedPatchEvidence(task);
+  const authorization = createAuthorizedRepairPorts(state, 'ALLOWED', failureEvidence);
+  const repositoryPort = new FakeRepositoryPort({ initialFiles: { 'src/calculator.py': 'code\n' } });
+  let patchCalls = 0;
+  repositoryPort.applyPatch = async (patch: ApplyPatchAction) => {
+    void patch;
+    patchCalls += 1;
+    return { applied: true, newRevisionDigest: 'sha256:patched' };
+  };
+
+  const result = await executeRepair(
+    {
+      taskId: task.taskId,
+      failureEvidence,
+      repairPatch: createRepairProposal(failureEvidence, 'patch', ['../outside.py']),
+    },
+    { ...authorization, repositoryPort, executionGuard: createExecutionGuard(repositoryPort) }
+  );
+
+  assert.equal(result.outcome, 'INCOMPLETE');
+  assert.equal(patchCalls, 0);
+  assert.equal(authorization.statePort.getLedgers().find((ledger) => ledger.kind === 'repair')?.reservations.length, 0);
 });
 
 test('repair: unapproved plan or missing plan decisionRef returns INCOMPLETE without applying edits', async () => {
@@ -619,7 +799,8 @@ test('repair: unapproved plan or missing plan decisionRef returns INCOMPLETE wit
 test('repair: successful repair transitions state to Patch node for verification, never claiming COMPLETED', async () => {
   const { state, task } = createRepairStateFixture({ repairConsumed: 0 });
   const failureEvidence = createFailedPatchEvidence(task);
-  const statePort = new MemoryStatePort({ initialTaskState: state });
+  const authorization = createAuthorizedRepairPorts(state, 'ALLOWED', failureEvidence);
+  const { statePort, approvalPort, trustedTransitionContext, trustedRepairContext } = authorization;
   const repositoryPort = new FakeRepositoryPort({
     initialFiles: { 'src/calculator.py': 'code\n' },
   });
@@ -628,17 +809,284 @@ test('repair: successful repair transitions state to Patch node for verification
     {
       taskId: task.taskId,
       failureEvidence,
-      repairPatch: {
-        diff: '--- a/src/calculator.py\n+++ b/src/calculator.py\n',
-        affectedPaths: ['src/calculator.py'],
-      },
+      repairPatch: createRepairProposal(failureEvidence, '--- a/src/calculator.py\n+++ b/src/calculator.py\n', ['src/calculator.py']),
     },
-    { statePort, repositoryPort }
+    { statePort, repositoryPort, approvalPort, trustedTransitionContext, trustedRepairContext, executionGuard: createExecutionGuard(repositoryPort) }
   );
 
   assert.equal(res.outcome, 'REPAIR_PREPARED');
-  assert.notEqual(res.state.outcome, 'COMPLETED', 'Repair must never claim COMPLETED outcome');
-  assert.equal(res.state.node, 'Patch', 'State transitions toward verification via Patch');
+  assert.notEqual(repairState(res).outcome, 'COMPLETED', 'Repair must never claim COMPLETED outcome');
+  assert.equal(repairState(res).node, 'Patch', 'State transitions toward verification via Patch');
+  assert.ok(repairState(res).evidenceRefs.includes('repair-consumed:evi-diag-patch-fail-001'));
+});
+
+test('repair: forbidden current patch policy denies before reservation or repository effects', async () => {
+  const { state, task } = createRepairStateFixture({ repairConsumed: 0 });
+  const failureEvidence = createFailedPatchEvidence(task);
+  const authorization = createAuthorizedRepairPorts(state, 'FORBIDDEN', failureEvidence);
+  const { statePort, approvalPort, trustedTransitionContext, trustedRepairContext } = authorization;
+  const repositoryPort = new FakeRepositoryPort({
+    initialFiles: { 'src/calculator.py': 'code\n' },
+  });
+  let patchCalls = 0;
+  repositoryPort.applyPatch = async (_patch: ApplyPatchAction) => {
+    void _patch;
+    patchCalls += 1;
+    return { applied: true, newRevisionDigest: 'sha256:patched' };
+  };
+  const result = await executeRepair(
+    {
+      taskId: task.taskId,
+      failureEvidence,
+      repairPatch: createRepairProposal(failureEvidence, '--- a/src/calculator.py\n+++ b/src/calculator.py\n', ['src/calculator.py']),
+    },
+    { statePort, repositoryPort, approvalPort, trustedTransitionContext, trustedRepairContext, executionGuard: createExecutionGuard(repositoryPort) }
+  );
+
+  assert.equal(result.outcome, 'DENIED');
+  assert.equal(patchCalls, 0, 'Forbidden patch policy must block the repository effect');
+  assert.equal(
+    statePort.getLedgers().find((ledger) => ledger.kind === 'repair')?.reservations.length,
+    0,
+    'A denied action must not reserve or charge the repair allowance'
+  );
+});
+
+test('repair: bare plan decision reference does not authorize patch effects', async () => {
+  const { state, task } = createRepairStateFixture({ repairConsumed: 0 });
+  const statePort = new MemoryStatePort({ initialTaskState: state });
+  const repositoryPort = new FakeRepositoryPort({
+    initialFiles: { 'src/calculator.py': 'code\n' },
+  });
+  let patchCalls = 0;
+  repositoryPort.applyPatch = async (_patch: ApplyPatchAction) => {
+    void _patch;
+    patchCalls += 1;
+    return { applied: true, newRevisionDigest: 'sha256:patched' };
+  };
+
+  const result = await executeRepair(
+    {
+      taskId: task.taskId,
+      failureEvidence: createFailedPatchEvidence(task),
+      repairPatch: createRepairProposal(createFailedPatchEvidence(task), '--- a/src/calculator.py\n+++ b/src/calculator.py\n', ['src/calculator.py']),
+    },
+    { statePort, repositoryPort, approvalPort: new ScriptedApprovalPort({ classifications: { apply_patch: 'ALLOWED' } }) }
+  );
+
+  assert.equal(result.outcome, 'INCOMPLETE');
+  assert.equal(patchCalls, 0, 'A plan.decisionRef without current trusted approval is not authority');
+  assert.equal(
+    statePort.getLedgers().find((ledger) => ledger.kind === 'repair')?.reservations.length,
+    0,
+    'A missing current plan decision must stop before budget reservation'
+  );
+});
+
+test('repair: approval authority rejection blocks patch and reservation', async () => {
+  const { state, task } = createRepairStateFixture({ repairConsumed: 0 });
+  const failureEvidence = createFailedPatchEvidence(task);
+  const authorization = createAuthorizedRepairPorts(state, 'ALLOWED', failureEvidence);
+  authorization.approvalPort.validateBinding = async (_binding: ApprovalBinding) => {
+    void _binding;
+    return false;
+  };
+  const repositoryPort = new FakeRepositoryPort({ initialFiles: { 'src/calculator.py': 'code\n' } });
+  let patchCalls = 0;
+  repositoryPort.applyPatch = async (patch: ApplyPatchAction) => {
+    void patch;
+    patchCalls += 1;
+    return { applied: true, newRevisionDigest: 'sha256:patched' };
+  };
+
+  const result = await executeRepair(
+    {
+      taskId: task.taskId,
+      failureEvidence,
+      repairPatch: createRepairProposal(failureEvidence, 'patch', ['src/calculator.py']),
+    },
+    { ...authorization, repositoryPort, executionGuard: createExecutionGuard(repositoryPort) }
+  );
+
+  assert.equal(result.outcome, 'INCOMPLETE');
+  assert.equal(patchCalls, 0, 'A port rejection makes a structurally valid decision unusable');
+  assert.equal(authorization.statePort.getLedgers().find((ledger) => ledger.kind === 'repair')?.reservations.length, 0);
+});
+
+test('repair: compare-and-swap failure after a patch is incomplete and cannot replay the reservation', async () => {
+  const { state, task } = createRepairStateFixture({ repairConsumed: 0 });
+  const failureEvidence = createFailedPatchEvidence(task);
+  const authorization = createAuthorizedRepairPorts(state, 'ALLOWED', failureEvidence);
+  const { statePort, approvalPort, trustedTransitionContext, trustedRepairContext } = authorization;
+  statePort.transition = async (_nextState: TaskState, _expectedVersion: number): Promise<TaskState> => {
+    void _nextState;
+    void _expectedVersion;
+    throw new StateConflictError('CAS conflict');
+  };
+  const repositoryPort = new FakeRepositoryPort({
+    initialFiles: { 'src/calculator.py': 'code\n' },
+  });
+  let patchCalls = 0;
+  repositoryPort.applyPatch = async (_patch: ApplyPatchAction) => {
+    void _patch;
+    patchCalls += 1;
+    return { applied: true, newRevisionDigest: 'sha256:patched' };
+  };
+  const input = {
+    taskId: task.taskId,
+    failureEvidence,
+    repairPatch: createRepairProposal(failureEvidence, '--- a/src/calculator.py\n+++ b/src/calculator.py\n', ['src/calculator.py']),
+  } as const;
+
+  const first = await executeRepair(input, { statePort, repositoryPort, approvalPort, trustedTransitionContext, trustedRepairContext, executionGuard: createExecutionGuard(repositoryPort) });
+  const afterFirst = await statePort.loadTask(task.taskId);
+  const second = await executeRepair(input, { statePort, repositoryPort, approvalPort, trustedTransitionContext, trustedRepairContext, executionGuard: createExecutionGuard(repositoryPort) });
+
+  assert.equal(first.outcome, 'INCOMPLETE');
+  assert.equal(repairState(first).node, 'Repair', 'A failed CAS must not fabricate a persisted Patch state');
+  assert.equal(afterFirst?.budgetLedgers?.find((ledger) => ledger.kind === 'repair')?.reservations[0]?.keyedId, first.reservedActionId);
+  assert.equal(second.outcome, 'INCOMPLETE');
+  assert.equal(patchCalls, 1, 'The reserved action cannot be applied again after an uncertain transition');
+});
+
+test('repair: wrong-run or unconfigured-check failure evidence is rejected before patch effects', async () => {
+  const { state, task } = createRepairStateFixture({ repairConsumed: 0 });
+  const repositoryPort = new FakeRepositoryPort({
+    initialFiles: { 'src/calculator.py': 'code\n' },
+  });
+  let patchCalls = 0;
+  repositoryPort.applyPatch = async (_patch: ApplyPatchAction) => {
+    void _patch;
+    patchCalls += 1;
+    return { applied: true, newRevisionDigest: 'sha256:patched' };
+  };
+  const baseEvidence = createFailedPatchEvidence(task);
+
+  for (const failureEvidence of [
+    { ...baseEvidence, runId: 'run-stale-replay' },
+    { ...baseEvidence, evidenceId: 'evi-unconfigured-check', testedIds: ['check-not-required'] },
+  ]) {
+    const evidenceAuthorization = createAuthorizedRepairPorts(state, 'ALLOWED', failureEvidence);
+    const result = await executeRepair(
+      { taskId: task.taskId, failureEvidence, repairPatch: createRepairProposal(failureEvidence, 'patch', ['src/calculator.py']) },
+      { ...evidenceAuthorization, repositoryPort }
+    );
+    assert.equal(result.outcome, 'INCOMPLETE');
+    assert.equal(evidenceAuthorization.statePort.getLedgers().find((ledger) => ledger.kind === 'repair')?.reservations.length, 0);
+  }
+
+  assert.equal(patchCalls, 0, 'Evidence outside the current run/check set cannot authorize a patch');
+});
+
+test('repair: opaque unresolved token/cost reservations block without identifier-name inference', async () => {
+  const { state, task } = createRepairStateFixture({ repairConsumed: 0 });
+  const budgetLedgers = state.budgetLedgers?.map((ledger) =>
+    ledger.kind === 'cost'
+      ? { ...ledger, reservations: [{ reservationId: 'reservation-42', keyedId: 'request-opaque-42', amount: 1 }] }
+      : ledger
+  );
+  const authorizedState = { ...state, budgetLedgers };
+  const failureEvidence = createFailedPatchEvidence(task);
+  const authorization = createAuthorizedRepairPorts(authorizedState, 'ALLOWED', failureEvidence);
+  const { statePort, approvalPort, trustedTransitionContext, trustedRepairContext } = authorization;
+  const repositoryPort = new FakeRepositoryPort({
+    initialFiles: { 'src/calculator.py': 'code\n' },
+  });
+  let patchCalls = 0;
+  repositoryPort.applyPatch = async (_patch: ApplyPatchAction) => {
+    void _patch;
+    patchCalls += 1;
+    return { applied: true, newRevisionDigest: 'sha256:patched' };
+  };
+
+  const result = await executeRepair(
+    {
+      taskId: task.taskId,
+      failureEvidence,
+      repairPatch: createRepairProposal(failureEvidence, 'patch', ['src/calculator.py']),
+    },
+    { statePort, repositoryPort, approvalPort, trustedTransitionContext, trustedRepairContext }
+  );
+
+  assert.equal(result.outcome, 'INCOMPLETE');
+  assert.equal(patchCalls, 0, 'Opaque outstanding accounting must fail closed');
+  assert.equal(statePort.getLedgers().find((ledger) => ledger.kind === 'repair')?.reservations.length, 0);
+});
+
+test('repair: repository effects require the canonical execution guard', async () => {
+  const { state, task } = createRepairStateFixture({ repairConsumed: 0 });
+  const failureEvidence = createFailedPatchEvidence(task);
+  const authorization = createAuthorizedRepairPorts(state, 'ALLOWED', failureEvidence);
+  const { statePort, approvalPort, trustedTransitionContext, trustedRepairContext } = authorization;
+  const repositoryPort = new FakeRepositoryPort({ initialFiles: { 'src/calculator.py': 'code\n' } });
+  let patchCalls = 0;
+  repositoryPort.applyPatch = async (_patch: ApplyPatchAction) => {
+    void _patch;
+    patchCalls += 1;
+    return { applied: true, newRevisionDigest: 'sha256:patched' };
+  };
+
+  const result = await executeRepair(
+    {
+      taskId: task.taskId,
+      failureEvidence,
+      repairPatch: createRepairProposal(failureEvidence, 'patch', ['src/calculator.py']),
+    },
+    { statePort, repositoryPort, approvalPort, trustedTransitionContext, trustedRepairContext }
+  );
+
+  assert.equal(result.outcome, 'INCOMPLETE');
+  assert.equal(patchCalls, 0, 'RepositoryPort alone cannot bypass ExecutionGuard');
+  assert.equal(statePort.getLedgers().find((ledger) => ledger.kind === 'repair')?.reservations.length, 0);
+});
+
+test('repair: mismatched configured repair ledger fails closed before effects', async () => {
+  const { state, task } = createRepairStateFixture({ repairConsumed: 0 });
+  const failureEvidence = createFailedPatchEvidence(task);
+  const repositoryPort = new FakeRepositoryPort({ initialFiles: { 'src/calculator.py': 'code\n' } });
+  let patchCalls = 0;
+  repositoryPort.applyPatch = async (_patch: ApplyPatchAction) => {
+    void _patch;
+    patchCalls += 1;
+    return { applied: true, newRevisionDigest: 'sha256:patched' };
+  };
+
+  for (const invalidLedger of [
+    { configurationId: 'different-config' },
+    { limit: 3 },
+  ]) {
+    const budgetLedgers = state.budgetLedgers?.map((ledger) =>
+      ledger.kind === 'repair' ? { ...ledger, ...invalidLedger } : ledger
+    );
+    const authorization = createAuthorizedRepairPorts({ ...state, budgetLedgers }, 'ALLOWED', failureEvidence);
+    const result = await executeRepair(
+      {
+        taskId: task.taskId,
+        failureEvidence,
+        repairPatch: createRepairProposal(failureEvidence, 'patch', ['src/calculator.py']),
+      },
+      { ...authorization, repositoryPort, executionGuard: createExecutionGuard(repositoryPort) }
+    );
+    assert.equal(result.outcome, 'INCOMPLETE');
+    assert.equal(authorization.statePort.getLedgers().find((ledger) => ledger.kind === 'repair')?.reservations.length, 0);
+  }
+
+  assert.equal(patchCalls, 0);
+});
+
+test('repair: missing patch proposal cannot return REPAIR_PREPARED', async () => {
+  const { state, task } = createRepairStateFixture({ repairConsumed: 0 });
+  const failureEvidence = createFailedPatchEvidence(task);
+  const authorization = createAuthorizedRepairPorts(state, 'ALLOWED', failureEvidence);
+  const { statePort, trustedTransitionContext, trustedRepairContext } = authorization;
+
+  const result = await executeRepair(
+    { taskId: task.taskId, failureEvidence },
+    { ...authorization, trustedTransitionContext, trustedRepairContext }
+  );
+
+  assert.equal(result.outcome, 'INCOMPLETE');
+  assert.equal(statePort.getLedgers().find((ledger) => ledger.kind === 'repair')?.reservations.length, 0);
 });
 
 // =========================================================================
