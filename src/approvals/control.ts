@@ -1,6 +1,8 @@
 import type { ApprovalTaskControl } from '../contracts/approvals/contracts.ts';
 import { validateApprovalTaskControl, validateDispatchClaim } from '../contracts/approvals/contracts.ts';
 import { containsProtectedContent } from '../foundation/repository-tools.ts';
+export { createApprovalContinuation } from './recovery.ts';
+export type { ApprovalContinuation, ApprovalRecoveryOwner, RecoverySnapshot, RecoveryClaimInput } from './recovery.ts';
 
 export interface ApprovalActivity {
   readonly provenance: 'mock';

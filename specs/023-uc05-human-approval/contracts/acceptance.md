@@ -49,6 +49,19 @@ This table defines the local observation obligations for T008–T010, not a new 
 
 Retain behavioral RED/GREEN, actual command/exit or signal, source snapshot, fixture/profile identity and observed direction/event/dispatch counts. Activity mocks only record attempts; no real effects are invoked. Phase 4 does not establish real all-agent admission, durable transactions, budget restoration, actual restart, full C09/C12–C19 or C24 acceptance, or completion of T011–T022.
 
+## Phase 6 local evidence boundary
+
+T014–T015 prepare C17–C20 through actual public service/control exports and injected mock recovery. Reconstructing service/continuation objects from retained in-memory owner state is local simulation; it does not pass any required process-restart or real-integration case.
+
+| Cases | Local observations |
+|---|---|
+| C17 | Waiting/rejected controls, immutable decisions and task identity survive new service instances; no implicit release. |
+| C18,C20 | Approval commit lost response is distinguished from noncommit; exact fresh approval and owner claim/accounting prerequisites are checked. Concurrent pause, stale context, malformed snapshots/receipts or deadline expiry grant no continuation. |
+| C19,C20 | Lost claim response and post-effect uncertain owner records retain their claim/reservations. New consumer/service instances and a new run cannot blindly replay observed/uncertain/reconciled actions or reset prior task spending. |
+| C15,C18–C20 | Canonical in-memory reservation behavior rejects missing/exhausted/unsettled accounting. A valid new run can reserve only the remaining task allowance; no replacement ledger, real executor or rollback is supplied by UC-05. |
+
+The minimal continuation API does not yet provide granular prerequisite diagnostics or the complete history/CLI outcome matrix; those remain T016–T018 obligations. Actual durable transactions, real pause/claim serialization, isolated execution and kill/restore evidence remain T020/T021 and their external gates.
+
 ## Human approval matrix mapping
 
 | Matrix row | Required cases |
