@@ -1,4 +1,4 @@
-import { readJson, repository } from './agent-store.mjs';
+import { readJson, repository, samePath } from './agent-store.mjs';
 import { randomUUID } from 'node:crypto';
 import {
   lstat,
@@ -479,9 +479,10 @@ async function finishSession(checkout, date, id) {
     });
     if (!Array.isArray(assignments) || assignments.some((entry) => !entry || !['active', 'blocked', 'completed', 'handed-off'].includes(entry.status))) throw new Error('Invalid shared task state; retain the session.');
     const session = `${date}/${id}`;
-    const blockers = assignments.filter((entry) => {
-      if (['completed', 'handed-off'].includes(entry.status)) return false;
-      if (entry.session === session) return true;
+    const blockers = [];
+    for (const entry of assignments) {
+      if (['completed', 'handed-off'].includes(entry.status)) continue;
+      if (entry.session === session) { blockers.push(entry); continue; }
       let hasKnownSession = false;
       try {
         const parsed = parseSessionPath(entry.session);
@@ -489,11 +490,9 @@ async function finishSession(checkout, date, id) {
       } catch {
         // Unknown or malformed legacy session identities block conservatively by checkout.
       }
-      if (hasKnownSession) return false;
-      return !entry.checkout || (process.platform === 'win32'
-        ? resolve(entry.checkout).toLowerCase() === checkout.toLowerCase()
-        : resolve(entry.checkout) === checkout);
-    });
+      if (hasKnownSession) continue;
+      if (!entry.checkout || await samePath(entry.checkout, checkout)) blockers.push(entry);
+    }
     if (blockers.length) {
       const details = blockers.map((entry) => `${entry.owner ?? 'unknown'}/${entry.task ?? 'unknown'} [${entry.status}; session=${entry.session ?? 'unknown'}; checkout=${entry.checkout ?? 'unknown'}]`);
       throw new Error(`Cannot finish session ${session}; active assignment blockers: ${details.join(', ')}.`);

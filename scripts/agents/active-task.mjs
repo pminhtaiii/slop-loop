@@ -3,7 +3,7 @@ import { basename, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runWorkflow } from './pr-workflow.mjs';
 import { isDeepStrictEqual } from 'node:util';
-import { atomicWrite, dataDirectory, readJson, repository, withLock } from './agent-store.mjs';
+import { atomicWrite, dataDirectory, readJson, repository, samePath, withLock } from './agent-store.mjs';
 import { captureOwnedHandoff, validateOwnedPaths, validateSessionRef, verifyOwnedHandoff } from './owned-handoff.mjs';
 
 const usage = `Usage:
@@ -245,13 +245,13 @@ async function run(args) {
         for (const field of ['next', 'verification', 'status']) if (values[field]) entry[field] = values[field];
         if (command === 'finish') {
           if (entry.role === 'worker') throw new Error('Workers return results with handoff; the coordinator completes publication.');
-          if (entry.checkout !== repo.root) throw new Error('Finish must run in the assignment checkout.');
+          if (!entry.checkout || !(await samePath(entry.checkout, repo.root))) throw new Error('Finish must run in the assignment checkout.');
           const publication = await runWorkflow(['complete', '--root', repo.root]);
           Object.assign(entry, { status: 'completed', result: values.result, publication: publication.completion, next: 'Human merge decision' });
         }
         if (command === 'handoff' && entry.role !== 'worker') throw new Error('Only registered workers may hand off; coordinators must publish and finish.');
         if (command === 'handoff') {
-          if (entry.checkout !== repo.root) throw new Error('Worker handoff must run in the assignment checkout.');
+          if (!entry.checkout || !(await samePath(entry.checkout, repo.root))) throw new Error('Worker handoff must run in the assignment checkout.');
           const handoffEvidence = entry.ownedPaths?.length
             ? await captureOwnedHandoff(entry)
             : { schemaVersion: 1, status: 'unverified', reason: 'Legacy assignment has no declared owned paths; hashes were not inferred.' };

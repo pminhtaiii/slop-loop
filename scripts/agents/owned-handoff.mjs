@@ -92,8 +92,10 @@ async function worktreeFile(root, path) {
 export async function captureOwnedHandoff(entry) {
   const paths = validateOwnedPaths(entry.ownedPaths);
   if (!paths.length) throw new Error('Verified handoff requires declared owned paths.');
-  const checkout = await realpath(resolve(entry.checkout));
-  if (checkout !== entry.checkout) throw new Error('Assignment checkout identity changed.');
+  const requestedCheckout = resolve(entry.checkout);
+  const checkoutStat = await lstat(requestedCheckout);
+  if (!checkoutStat.isDirectory() || checkoutStat.isSymbolicLink()) throw new Error('Assignment checkout must be a real directory.');
+  const checkout = await realpath(requestedCheckout);
   const currentRepo = await repository(checkout);
   const branch = git(checkout, ['symbolic-ref', '--quiet', 'HEAD'], true);
   const head = git(checkout, ['rev-parse', '--verify', 'HEAD'], true);

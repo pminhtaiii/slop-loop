@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
@@ -83,4 +83,21 @@ test('legacy assignments with unknown session remain conservative blockers', asy
   assert.match(finished.stderr, /malformed-worker\/T005 \[active; session=not-a-session; checkout=/);
   const marker = JSON.parse(await readFile(join(checkout, '.agent-work/2026-10-21/legacy-target/session.json'), 'utf8'));
   assert.equal(marker.status, 'active');
+});
+
+test('legacy assignment checkout aliases still block session finish', async (t) => {
+  const checkout = await fixture(t);
+  startSession(checkout, 'legacy-alias');
+  const aliases = await mkdtemp(join(tmpdir(), 'session-alias-'));
+  t.after(() => rm(aliases, { recursive: true, force: true }));
+  const alias = join(aliases, 'checkout');
+  await symlink(checkout, alias, process.platform === 'win32' ? 'junction' : 'dir');
+  await mkdir(join(checkout, '.agent-work/state'), { recursive: true });
+  await writeFile(join(checkout, '.agent-work/state/active-tasks.json'), JSON.stringify([
+    { owner: 'legacy-worker', task: 'T006', checkout: alias, session: 'unknown', summary: 'Older record', next: 'Recover evidence', status: 'active' },
+  ]));
+
+  const finished = run(sessionCli, checkout, 'finish', '--session', '2026-10-21/legacy-alias');
+  assert.equal(finished.status, 1);
+  assert.match(finished.stderr, /legacy-worker\/T006 \[active; session=unknown; checkout=/);
 });

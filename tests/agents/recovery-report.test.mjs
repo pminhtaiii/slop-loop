@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
@@ -39,12 +39,13 @@ test('recovery report joins assignment, live Git worktree, checkpoint, changes, 
   result = run(reportCli, checkout, '--owner', 'worker', '--task', 'T001');
   assert.equal(result.status, 0, result.stderr);
   const report = JSON.parse(result.stdout);
+  const canonicalCheckout = await realpath(checkout);
   assert.equal(report.assignments.length, 1);
   const assignment = report.assignments[0];
   assert.deepEqual(assignment.assignment, {
-    owner: 'worker', task: 'T001', status: 'active', session: '2026-10-21/session-one', checkout,
+    owner: 'worker', task: 'T001', status: 'active', session: '2026-10-21/session-one', checkout: canonicalCheckout,
   });
-  assert.equal(assignment.worktree.path, checkout);
+  assert.equal(assignment.worktree.path, canonicalCheckout);
   assert.deepEqual(assignment.worktree.stagedPaths, ['staged.txt']);
   assert.equal(assignment.checkpoint.next, 'Run focused tests');
   assert.equal(assignment.checkpoint.sessionMarker.status, 'active');
@@ -58,4 +59,32 @@ test('recovery report is read-only when contributor state is absent', async (t) 
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(JSON.parse(result.stdout).assignments, []);
   await assert.rejects(access(join(checkout, '.agent-work')));
+});
+
+test('recovery report joins legacy checkout and receipt aliases to their worktree', async (t) => {
+  const checkout = await fixture(t);
+  let result = run(sessionCli, checkout, 'start', '--session', 'session-one', '--date', '2026-10-21');
+  assert.equal(result.status, 0, result.stderr);
+  result = run(taskCli, checkout, 'start', '--owner', 'worker', '--task', 'T007', '--session', '2026-10-21/session-one', '--summary', 'Recover feature work', '--next', 'Run focused tests');
+  assert.equal(result.status, 0, result.stderr);
+
+  const aliases = await mkdtemp(join(tmpdir(), 'recovery-alias-'));
+  t.after(() => rm(aliases, { recursive: true, force: true }));
+  const alias = join(aliases, 'checkout');
+  await symlink(checkout, alias, process.platform === 'win32' ? 'junction' : 'dir');
+  const statePath = join(checkout, '.agent-work/state/active-tasks.json');
+  const assignments = JSON.parse(await readFile(statePath, 'utf8'));
+  assignments[0].checkout = alias;
+  await writeFile(statePath, JSON.stringify(assignments));
+  const receiptDirectory = join(checkout, '.agent-work/worktree-receipts');
+  await mkdir(receiptDirectory, { recursive: true });
+  await writeFile(join(receiptDirectory, 'receipt.json'), JSON.stringify({ id: 'alias-receipt', owner: 'worker', task: 'T007', path: alias, status: 'verified' }));
+
+  result = run(reportCli, checkout, '--owner', 'worker', '--task', 'T007');
+  assert.equal(result.status, 0, result.stderr);
+  const assignment = JSON.parse(result.stdout).assignments[0];
+  assert.equal(assignment.assignment.checkout, alias);
+  assert.equal(assignment.worktree.available, true);
+  assert.equal(assignment.worktree.path, await realpath(checkout));
+  assert.deepEqual(assignment.receipt, { id: 'alias-receipt', status: 'verified', pathMatches: true });
 });

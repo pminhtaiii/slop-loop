@@ -1,7 +1,7 @@
 import { lstat, readdir, realpath } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { git, readJson, repository } from './agent-store.mjs';
+import { git, readJson, repository, samePath } from './agent-store.mjs';
 import { validateSessionRef } from './owned-handoff.mjs';
 
 const usage = `Usage: node scripts/agents/recovery-report.mjs [--owner <id>] [--task <id>] [--root <checkout>]`;
@@ -76,27 +76,33 @@ async function receipts(repo) {
   return records;
 }
 
-function listedWorktree(repo, checkout) {
+async function listedWorktree(repo, checkout) {
   if (typeof checkout !== 'string' || !checkout) return null;
-  const path = resolve(checkout);
-  return repo.worktrees.find((entry) => resolve(entry.worktree) === path) ?? null;
+  for (const entry of repo.worktrees) {
+    if (await samePath(entry.worktree, checkout)) return entry;
+  }
+  return null;
 }
 
 function names(root, args) {
   return git(root, args).stdout.split('\0').filter(Boolean);
 }
 
-function receiptFor(records, assignment, checkout) {
-  return records.find((record) => record.owner === assignment.owner && record.task === assignment.task && typeof record.path === 'string' && resolve(record.path) === checkout) ??
-    records.find((record) => record.owner === assignment.owner && record.task === assignment.task) ?? null;
+async function receiptFor(records, assignment, checkout) {
+  if (checkout) {
+    for (const record of records) {
+      if (record.owner === assignment.owner && record.task === assignment.task && typeof record.path === 'string' && await samePath(record.path, checkout)) return record;
+    }
+  }
+  return records.find((record) => record.owner === assignment.owner && record.task === assignment.task) ?? null;
 }
 
-function receiptSummary(receipt, checkout) {
+async function receiptSummary(receipt, checkout) {
   if (!receipt) return null;
   return {
     id: receipt.id ?? null,
     status: receipt.status ?? 'unknown',
-    pathMatches: typeof receipt.path === 'string' && resolve(receipt.path) === checkout,
+    pathMatches: Boolean(checkout && typeof receipt.path === 'string' && await samePath(receipt.path, checkout)),
   };
 }
 
@@ -120,33 +126,34 @@ async function sessionMarker(repo, session) {
 }
 
 async function summarize(repo, assignment, worktreeReceipts) {
-  const actual = listedWorktree(repo, assignment.checkout);
-  const checkout = actual ? resolve(actual.worktree) : null;
-  const receipt = receiptSummary(receiptFor(worktreeReceipts, assignment, checkout ?? ''), checkout);
+  const actual = await listedWorktree(repo, assignment.checkout);
+  const listedPath = actual ? resolve(actual.worktree) : null;
+  const stat = listedPath ? await lstat(listedPath).catch((error) => {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  }) : null;
+  const canonical = stat?.isDirectory() && !stat.isSymbolicLink() ? await realpath(listedPath) : null;
+  const checkout = canonical ?? listedPath;
+  const receipt = await receiptSummary(await receiptFor(worktreeReceipts, assignment, checkout), checkout);
   let worktree = null;
   if (actual) {
-    const stat = await lstat(checkout).catch((error) => {
-      if (error.code === 'ENOENT') return null;
-      throw error;
-    });
-    const canonical = stat?.isDirectory() && !stat.isSymbolicLink() ? await realpath(checkout) : null;
-    if (canonical !== checkout) {
+    if (!canonical) {
       worktree = { path: checkout, available: false, reason: 'Git lists this worktree but its checkout path is missing or redirected.' };
     } else {
-      const top = git(checkout, ['rev-parse', '--show-toplevel'], true);
-      if (top.status !== 0 || resolve(top.stdout.trim()) !== checkout) {
+      const top = git(listedPath, ['rev-parse', '--show-toplevel'], true);
+      if (top.status !== 0 || !(await samePath(top.stdout.trim(), checkout))) {
         worktree = { path: checkout, available: false, reason: 'Git worktree metadata no longer resolves to this checkout.' };
       } else {
-        const head = git(checkout, ['rev-parse', 'HEAD'], true);
-        const branch = git(checkout, ['symbolic-ref', '--quiet', 'HEAD'], true);
+        const head = git(listedPath, ['rev-parse', 'HEAD'], true);
+        const branch = git(listedPath, ['symbolic-ref', '--quiet', 'HEAD'], true);
         worktree = {
           path: checkout,
           available: true,
           branch: branch.status === 0 ? branch.stdout.trim() : null,
           head: head.status === 0 ? head.stdout.trim() : null,
-          stagedPaths: names(checkout, ['diff', '--cached', '--name-only', '-z']),
-          modifiedPaths: names(checkout, ['diff', '--name-only', '-z']),
-          untrackedPaths: names(checkout, ['ls-files', '--others', '--exclude-standard', '-z']),
+          stagedPaths: names(listedPath, ['diff', '--cached', '--name-only', '-z']),
+          modifiedPaths: names(listedPath, ['diff', '--name-only', '-z']),
+          untrackedPaths: names(listedPath, ['ls-files', '--others', '--exclude-standard', '-z']),
         };
       }
     }

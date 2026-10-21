@@ -15,6 +15,22 @@ export function inside(parent, candidate) {
   return path !== '' && path !== '..' && !path.startsWith(`..${sep}`) && !isAbsolute(path);
 }
 
+async function pathIdentity(path) {
+  const absolute = resolve(path);
+  try { return resolve(await realpath(absolute)); }
+  catch (error) {
+    if (!['ENOENT', 'ENOTDIR'].includes(error.code)) throw error;
+    return absolute;
+  }
+}
+
+export async function samePath(left, right) {
+  const [leftPath, rightPath] = await Promise.all([pathIdentity(left), pathIdentity(right)]);
+  return process.platform === 'win32'
+    ? leftPath.toLowerCase() === rightPath.toLowerCase()
+    : leftPath === rightPath;
+}
+
 export async function repository(root) {
   root = await realpath(resolve(root));
   const top = await realpath(git(root, ['rev-parse', '--show-toplevel']).stdout.trim());
