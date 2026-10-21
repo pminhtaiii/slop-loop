@@ -1,6 +1,56 @@
 import { isProxy } from 'node:util/types';
 import type { ApprovalBindingContext } from '../contracts/foundation/uc03.ts';
 import type { PresentationInput } from './presentation.ts';
+import type { ApprovalRequestRecord, BindingAssessment, DecisionEvent, DeveloperDirection, DispatchClaim } from '../contracts/approvals/contracts.ts';
+import { isDeepStrictEqual } from 'node:util';
+import { ApprovalServiceError } from './service-data.ts';
+
+/** Match immutable claim policy to its journal, never to today's possibly changed profile. */
+export function requireClaimEvents(claim: DispatchClaim, events: readonly DecisionEvent[], requests: ReadonlyMap<string, ApprovalRequestRecord>): DecisionEvent {
+  for (const decisionId of claim.decisionRefs) {
+    const request = requests.get(decisionId);
+    if (!request || request.binding.repositoryRevisionDigest !== claim.repositoryStateDigest || !isDeepStrictEqual(claim.policyIdentity, { policyId: request.policyId, policyVersion: request.policyVersion, configId: request.configId, configVersion: request.configVersion })) throw new ApprovalServiceError('unavailable');
+  }
+  const related = events.filter(event => event.claimId === claim.claimId);
+  const created = related[0];
+  const latest = related[related.length - 1];
+  const expected = claim.phase === 'observed' ? 'dispatch-effect-observed' : claim.phase === 'uncertain' ? 'dispatch-uncertain' : claim.phase === 'reconciled' ? 'claim-reconciled' : 'dispatch-claim-created';
+  if (!created || created.type !== 'dispatch-claim-created' || related.filter(event => event.type === 'dispatch-claim-created').length !== 1 || !latest || latest.type !== expected ||
+    !claim.decisionRefs.some(id => requests.get(id)?.actionRef === claim.actionId) ||
+    claim.phase === 'reconciled' && !related.some(event => event.type === 'dispatch-uncertain') ||
+    related.slice(0, -1).some(event => event.type === 'dispatch-effect-observed' || event.type === 'claim-reconciled')) throw new ApprovalServiceError('unavailable');
+  let previous = -Infinity;
+  for (const event of related) {
+    if (!identifier(event.runId) || event.decisionId !== null || event.directionId !== null || !isDeepStrictEqual(event.policyRef, claim.policyIdentity) ||
+      !['dispatch-claim-created', 'dispatch-effect-observed', 'dispatch-uncertain', 'claim-reconciled'].includes(event.type) ||
+      event.outcome !== (event.type === 'dispatch-uncertain' ? 'uncertain' : 'ok') || Date.parse(event.timestamp) < previous) throw new ApprovalServiceError('unavailable');
+    previous = Date.parse(event.timestamp);
+  }
+  return latest;
+}
+
+/** A direction's policy is journal-owned; its record has no policy field to substitute today's profile. */
+export function requireDirectionEvent(direction: DeveloperDirection, events: readonly DecisionEvent[]): DecisionEvent {
+  const matching = events.filter(event => event.type === 'developer-direction-recorded' && event.directionId === direction.directionId);
+  const event = matching[0];
+  if (matching.length !== 1 || !event || !identifier(event.runId) || event.taskId !== direction.taskId || event.timestamp !== direction.createdAt || event.decisionId !== null || event.claimId !== null || event.outcome !== (direction.direction === 'end' ? 'paused' : 'ok') || event.safeReasonCode !== 'developer-direction-recorded') throw new ApprovalServiceError('unavailable');
+  return event;
+}
+
+/** A stale replacement may be assessed under the replacement's newer policy, not the old request's. */
+export function requireAssessmentEvent(assessment: BindingAssessment, events: readonly DecisionEvent[], requests: ReadonlyMap<string, ApprovalRequestRecord>): DecisionEvent {
+  const matching = events.filter(event => event.type === 'binding-assessed' && event.eventId === assessment.assessmentId);
+  const event = matching[0];
+  const original = requests.get(assessment.decisionId);
+  if (matching.length !== 1 || !event || !original || !identifier(event.runId) || event.decisionId !== assessment.decisionId || event.timestamp !== assessment.checkedAt || event.directionId !== null || event.claimId !== null || event.outcome !== (assessment.status === 'valid' ? 'ok' : assessment.status)) throw new ApprovalServiceError('unavailable');
+  // The existing replacement transaction appends assessment then replacement request together.
+  const next = events[events.indexOf(event) + 1];
+  const replacement = next?.type === 'approval-request-created' && next.decisionId !== assessment.decisionId && next.timestamp === event.timestamp && next.runId === event.runId ? requests.get(next.decisionId ?? '') : undefined;
+  if (assessment.status === 'stale' && !replacement) throw new ApprovalServiceError('unavailable');
+  const policy = replacement ?? original;
+  if (!isDeepStrictEqual(event.policyRef, { policyId: policy.policyId, policyVersion: policy.policyVersion, configId: policy.configId, configVersion: policy.configVersion })) throw new ApprovalServiceError('unavailable');
+  return event;
+}
 
 export function identifier(value: unknown): value is string { return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,126}$/.test(value); }
 

@@ -5,7 +5,8 @@ import { validateDecisionEvent, validateDeveloperDirection, validateSafeResult }
 import { containsProtectedContent } from '../foundation/repository-tools.ts';
 import { ApprovalServiceError } from './service-data.ts';
 import type { ApprovalService, ServiceRuntime } from './service-data.ts';
-import { directionInput, plainContextData, dataRecord, exactFields, identifier } from './service-context.ts';
+import { directionInput, plainContextData, dataRecord, exactFields, identifier, requireDirectionEvent } from './service-context.ts';
+import { readApprovalJournal } from './history.ts';
 
 /** Control transitions retain the service's shared admission fence and bounded operation lifetime. */
 export function createServiceControl(runtime: Pick<ServiceRuntime, 'options' | 'profile' | 'store' | 'control' | 'task' | 'callPort' | 'loadPort' | 'coordinator' | 'now' | 'admission' | 'bounded'>): ApprovalService['control'] {
@@ -25,13 +26,8 @@ export function createServiceControl(runtime: Pick<ServiceRuntime, 'options' | '
       let event: DecisionEvent;
       if (prior) {
         if (!validateDeveloperDirection(prior, { expectedTaskId: options.taskId, expectedVersion: prior.expectedVersion, expectedEpoch: prior.expectedEpoch, trustedOperator: options.operator.identity }).ok || prior.direction !== input.direction || prior.expectedVersion !== input.taskVersion) throw new ApprovalServiceError('conflict');
-        const journal = backend.readEvents(options.taskId);
-        if (!plainContextData(journal) || !validateSafeResult(journal.safe).ok || journal.safe.outcome !== 'ok' || !plainContextData(journal.value) || !Array.isArray(journal.value) || journal.value.length > 512) throw new ApprovalServiceError('unavailable');
-        const events = journal.value.filter(value => value.type === 'developer-direction-recorded' && value.directionId === prior.directionId);
-        const original = events[0];
-        if (events.length !== 1 || !original || !validateDecisionEvent(original, profile).ok || original.taskId !== options.taskId || original.decisionId !== null || original.claimId !== null) throw new ApprovalServiceError('unavailable');
         direction = prior;
-        event = original;
+        event = requireDirectionEvent(prior, readApprovalJournal(backend, options.taskId, profile));
       } else {
         const current = control();
         if (current.version !== input.taskVersion) throw new ApprovalServiceError('conflict');

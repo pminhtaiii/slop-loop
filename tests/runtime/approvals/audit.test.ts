@@ -8,6 +8,7 @@ import type { PolicyProfile } from '../../../src/contracts/approvals/contracts.t
 import { computeActionDigest } from '../../../src/contracts/foundation/uc03.ts';
 import { buildPresentation } from '../../../src/approvals/presentation.ts';
 import { SanitizedTelemetry } from '../../../src/foundation/telemetry.ts';
+import { createMockActivityControl } from '../support/uc05/mock-context.ts';
 
 async function entries(service: ApprovalService): Promise<readonly Record<string, unknown>[]> {
   const first = await service.history('task-1', 1);
@@ -317,4 +318,102 @@ test('torn owner snapshots are unavailable and current context failure leaves im
   assert.equal(projected.find(entry => entry['kind'] === 'request')?.['createdAt'], '2026-10-21T00:00:00Z');
   assert.equal(projected.find(entry => entry['kind'] === 'current-assessment')?.['status'], 'unknown');
   assert.equal(JSON.stringify(projected).includes('RAW_'), false);
+});
+
+test('terminal journal provenance is identical for authority and history while later decision runs remain valid', async () => {
+  const scenario = createRecoveryScenario();
+  const service = scenario.service();
+  await service.requestDecision(scenario.binding);
+  scenario.setContext({ ...scenario.current(), runId: 'run-2' });
+  await scenario.decide(service);
+  const committed = scenario.store.readEvents('task-1');
+  for (const mutation of [{ runId: null }, { policyRef: { ...recoveryProfile.policyIdentity, configId: 'foreign-config' } }]) {
+    const backend = { ...scenario.store, readEvents: () => ({ ...committed, value: committed.value?.map(event => event.type === 'human-resolution-recorded' ? { ...event, ...mutation } : event) ?? null }) };
+    const consumer = scenario.service(backend);
+    await assert.rejects(consumer.history('task-1', 1), error => error instanceof ApprovalServiceError && error.outcome === 'unavailable');
+    assert.equal(await consumer.validateBinding({ ...scenario.binding, status: 'approved' }), false);
+  }
+  assert.equal(await service.validateBinding({ ...scenario.binding, status: 'approved' }), true);
+  assert.equal((await entries(service)).find(entry => entry['type'] === 'human-resolution-recorded')?.['runId'], 'run-2');
+});
+
+test('claim journal transitions require linked owner policy non-null runs and matching uncertainty outcomes', async () => {
+  const scenario = createRecoveryScenario();
+  const service = scenario.service();
+  await service.requestDecision(scenario.binding);
+  await scenario.decide(service);
+  await createApprovalContinuation({ taskId: 'task-1', approval: service, recovery: scenario.owner, profile: recoveryProfile }).admit('decision-1');
+  scenario.store.recordOutcome({ claimId: 'claim-1', expectedControlVersion: scenario.store.loadTaskControl('task-1').value?.version, phase: 'uncertain', resultRef: 'result-uncertain', event: scenario.event('dispatch-uncertain', 'claim-1') });
+  const original = scenario.store.readEvents('task-1');
+  for (const mutate of [
+    (event: NonNullable<typeof original.value>[number]) => event.type === 'dispatch-uncertain' ? { ...event, outcome: 'ok' as const } : event,
+    (event: NonNullable<typeof original.value>[number]) => event.type === 'dispatch-claim-created' ? { ...event, policyRef: { ...event.policyRef, policyId: 'foreign-policy' } } : event,
+    (event: NonNullable<typeof original.value>[number]) => event.type === 'dispatch-claim-created' ? { ...event, runId: null } : event,
+    (event: NonNullable<typeof original.value>[number]) => event.type === 'dispatch-uncertain' ? { ...event, decisionId: 'decision-1' } : event,
+  ]) {
+    const backend = { ...scenario.store, readEvents: () => ({ ...original, value: original.value?.map(mutate) ?? null }) };
+    await assert.rejects(scenario.service(backend).history('task-1', 1), error => error instanceof ApprovalServiceError && error.outcome === 'unavailable');
+  }
+});
+
+test('orphan or semantically inconsistent assessment and direction events are not committed history', async () => {
+  const scenario = createRecoveryScenario();
+  const service = scenario.service();
+  await service.requestDecision(scenario.binding);
+  await scenario.decide(service);
+  const original = scenario.store.readEvents('task-1');
+  const base = original.value?.[0];
+  assert.ok(base);
+  const backend = { ...scenario.store, readEvents: () => ({ ...original, value: [...original.value ?? [], { ...base, eventId: 'orphan-assessment', type: 'binding-assessed' as const, outcome: 'stale' as const, safeReasonCode: 'binding-stale' }] }) };
+  assert.equal(await scenario.service(backend).validateBinding({ ...scenario.binding, status: 'approved' }), false);
+  await assert.rejects(scenario.service(backend).history('task-1', 1), error => error instanceof ApprovalServiceError && error.outcome === 'unavailable');
+});
+
+test('one bounded current-detail observation batch preserves immutable history when every provider hangs', { timeout: 4000 }, async () => {
+  const scenario = createRecoveryScenario();
+  const service = scenario.service();
+  await service.requestDecision(scenario.binding);
+  await scenario.decide(service);
+  await service.requestDecision({ ...scenario.binding, decisionId: 'decision-2' });
+  const consumer = createApprovalService({ taskId: 'task-1', profile: recoveryProfile, store: scenario.store,
+    context: { loadForAction: async () => new Promise<never>(() => { /* Simulated permanently unavailable details. */ }), loadForDecision: async () => new Promise<never>(() => { /* Simulated permanently unavailable details. */ }) },
+    operator: { identity: { actorId: 'operator-1', channelRef: 'host-1', provenance: 'real' } } });
+  const page = await consumer.history('task-1', 1);
+  const projected = JSON.parse(page.content) as readonly Record<string, unknown>[];
+  assert.equal(projected.find(entry => entry['kind'] === 'resolution')?.['decision'], 'approved');
+  assert.equal(projected.some(entry => entry['kind'] === 'current-assessment' && entry['status'] === 'unknown'), true);
+});
+
+test('direction retry refuses corrupted journal provenance before acknowledging a recorded response', async () => {
+  const scenario = createRecoveryScenario();
+  const create = (store: ApprovalStore = scenario.store): ApprovalService => createApprovalService({ taskId: 'task-1', profile: recoveryProfile, store, activity: createMockActivityControl(recoveryProfile),
+    context: { loadForAction: async () => scenario.current(), loadForDecision: async () => scenario.current(), loadForTask: async () => ({ taskId: 'task-1', repositoryId: 'repository-1', workspaceId: 'workspace-1', runId: 'run-1', safeScopeRef: 'scope-1', policyIdentity: recoveryProfile.policyIdentity }) },
+    operator: { identity: { actorId: 'operator-1', channelRef: 'host-1', provenance: 'real' } }, now: () => '2026-10-21T00:00:00Z' });
+  const input = { taskId: 'task-1', taskVersion: 1, direction: 'end', responseKey: 'end-1' };
+  assert.equal((await create().control(input)).outcome, 'paused');
+  const original = scenario.store.readEvents('task-1');
+  for (const mutation of [{ runId: null }, { outcome: 'ok' as const }, { timestamp: '2026-10-22T00:00:00Z' }]) {
+    const consumer = create({ ...scenario.store, readEvents: () => ({ ...original, value: original.value?.map(event => ({ ...event, ...mutation })) ?? null }) });
+    await assert.rejects(consumer.control(input), error => error instanceof ApprovalServiceError && error.outcome === 'unavailable');
+    await assert.rejects(consumer.history('task-1', 1), error => error instanceof ApprovalServiceError && error.outcome === 'unavailable');
+  }
+});
+
+test('replacement assessment keeps the newer historical policy and rejects inconsistent reciprocal journal evidence', async () => {
+  const scenario = createRecoveryScenario();
+  await scenario.service().requestDecision(scenario.binding);
+  const policyIdentity = { ...recoveryProfile.policyIdentity, configVersion: '2' };
+  const current = scenario.current();
+  scenario.setContext({ ...current, runId: 'run-2', facts: { ...current.facts, policyIdentity } });
+  const profile = { ...recoveryProfile, policyIdentity };
+  const service = configuredService(scenario, profile);
+  await service.requestDecision({ ...scenario.binding, decisionId: 'decision-2' });
+  const projected = await entries(service);
+  assert.equal(projected.find(entry => entry['kind'] === 'assessment')?.['runId'], 'run-2');
+  assert.equal((projected.find(entry => entry['type'] === 'binding-assessed')?.['policyRef'] as Record<string, unknown>)['configVersion'], '2');
+  const original = scenario.store.readEvents('task-1');
+  for (const mutation of [{ outcome: 'ok' as const }, { policyRef: { ...policyIdentity, configId: 'foreign-config' } }, { policyRef: recoveryProfile.policyIdentity }, { timestamp: '2026-10-22T00:00:00Z' }]) {
+    const backend = { ...scenario.store, readEvents: () => ({ ...original, value: original.value?.map(event => event.type === 'binding-assessed' ? { ...event, ...mutation } : event) ?? null }) };
+    await assert.rejects(configuredService(scenario, profile, backend).history('task-1', 1), error => error instanceof ApprovalServiceError && error.outcome === 'unavailable');
+  }
 });
