@@ -44,7 +44,12 @@ planning loop (plan, tasks, P0/P1 audit) -> build-spec (task graph and TDD) -> s
 
 ## Agent coordination
 
-The coordinator does one bounded preflight, then dispatches one concise brief for each authorized, ready assignment. Workers keep changes within registered task IDs and owned paths and update shared state at meaningful checkpoints. The coordinator waits for a concrete blocker or final handoff, refreshes assignment state, integrates one result at a time, and recomputes the ready frontier. Keep routine progress in the shared assignment rather than chat.
+The coordinator does one bounded preflight, then repeats this loop:
+
+1. Recompute the authorized ready frontier from task dependencies and registered owned paths. Serialize shared-path work and record the dependency or path conflict delaying any assignment.
+2. For T3 dispatch, consult `orchestrator_capabilities` for supported providers, models, and option descriptors. Use native subagents only when they support the selected model and no options are requested or inherited. Otherwise, use `delegate_task` even for same-provider work, pass options through `target.options`, and verify the returned provider, model, and options.
+3. Dispatch every independent authorized assignment in the current frontier concurrently, up to the API batch and concurrency limits, before waiting for any result. Use one batch call when available; otherwise launch independent calls concurrently. When the frontier exceeds capacity, dispatch queued work as slots free. Handle trivial indivisible tasks directly instead of creating a nominal worker.
+4. Workers register exact owned paths, stay within them, and update active-task state at meaningful checkpoints. On a concrete blocker, they mark the assignment blocked with the next action and message the coordinator; when done, they send a final handoff. The coordinator waits for those events instead of polling, refreshes assignment state, integrates one result at a time, then repeats the loop.
 
 Use the task helper to derive context from the canonical ledger:
 
@@ -77,7 +82,7 @@ Keep drafts, worker notes, raw logs, and review snapshots in `.agent-work/<date>
 
 ### Task briefs and handoffs
 
-A concise worker brief names the intended outcome, owned paths, acceptance checks, exclusions, and where to record completion evidence; include registered owner/task IDs, checkout/branch, and links to the relevant plan or contract. Avoid copying repository rules already available by pointer. Workers record progress in active-task state and message only for a concrete blocker or final handoff. The final handoff lists the revision, changed paths, focused commands and results, remaining gaps, and evidence pointers. Workers run focused acceptance checks; the coordinator/publisher integrates one result at a time and runs the full required local gates once on the integrated tree.
+A concise worker brief names the intended outcome, owned paths, acceptance checks, exclusions, and where to record completion evidence; include registered owner/task IDs, checkout/branch, and links to the relevant plan or contract. For parallel work, declare disjoint owned paths and record dependency or path-conflict reasons for any serialization. Avoid copying repository rules already available by pointer. Workers record progress in active-task state and message only for a concrete blocker or final handoff. The final handoff lists the revision, changed paths, focused commands and results, remaining gaps, and evidence pointers. Workers run focused acceptance checks; the coordinator/publisher integrates one result at a time and runs the full required local gates once on the integrated tree.
 
 ### Review snapshots
 
