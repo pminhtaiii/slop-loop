@@ -35,21 +35,21 @@ UC-05 focused checks run with `node --test tests/runtime/approvals/*.test.ts` (1
 
 The planning-workflow regressions cover required artifact types, unique sequential task IDs, invalid dependency graphs, normalized explicit ownership and directory overlap, dependency-ordered shared paths, nested contract inventories, malformed review rejection, and automated-only status. These checks do not certify independent reviews or authorize feature implementation.
 
-The task-context, managed-session, and planning-workflow helpers require Node.js 20 or newer, use Node.js built-ins, and can be tested without installing packages:
+The task-context, managed-session, and planning-workflow helpers require Node.js 20 or newer and use Node.js built-ins, so they can be tested without installing packages. Resume regressions cover status-column preservation, rename pairing, canonical checkout aliases and missing checkout records; task context excludes sibling-task continuation bullets; direct invocation follows path aliases while imports remain inert:
 
 ```powershell
 node --test tests/agents/agent-context.test.mjs tests/agents/agent-work.test.mjs tests/agents/planning-workflow.test.mjs
 ```
 
-Test active-task handoff behavior, preview/apply archival, collision refusal, and archive recovery directly with:
+Test active-task handoff behavior, explicit reassignment to a terminal status, legacy recorded-transfer migration, preview/apply archival, collision refusal, and archive recovery directly with:
 
 ```powershell
-node --test tests/agents/active-task.test.mjs
+node --test tests/agents/active-task.test.mjs tests/agents/active-task-reassignment.test.mjs
 ```
 
-Test worktree retirement eligibility and safe removal in disposable Git repositories with `node --test tests/agents/agent-worktree.test.mjs`. These checks cover preview-only operation, retained branches, unmerged commits, dirty/untracked/ignored data, resumed tasks, changed evidence, and locked or unknown worktrees. Skill evaluations additionally follow [the versioned evidence procedure](workflow.md#skill-evaluation-evidence).
+Test worktree retirement eligibility and safe removal in disposable Git repositories with `node --test tests/agents/agent-worktree.test.mjs`. These checks cover preview-only operation, retained branches, unmerged commits, dirty/untracked/ignored data, resumed tasks, changed evidence, locked or unknown worktrees, and retirement after the successor work is complete or handed off; active or blocked successors remain blockers while reassigned predecessors do not. Skill evaluations additionally follow [the versioned evidence procedure](workflow.md#skill-evaluation-evidence).
 
-For contributor coordination changes, run `pnpm run test:contributors` to cover the full helper suite, including preflight reporting without publication, UC brief extraction without ledger writes, and archive-before-clear safety. Completion regressions also cover active-task finish refusing unpublished work, worker handoff without contributor completion, session closure refusing active work, and PR completion refusing dirty/stale/unlinked/pending/failing revisions. Focused worker checks may target the owned `.test.mjs` files; report partial evidence separately from the full helper-suite result.
+For contributor coordination changes, run `pnpm run test:contributors` to cover the full helper suite, including preflight reporting without publication, UC brief extraction without ledger writes, and archive-before-clear safety. Completion regressions also cover active-task finish refusing unpublished work, worker handoff without contributor completion, session closure refusing active work, reassigned predecessors no longer blocking while active or blocked successors still do, and PR completion refusing dirty/stale/unlinked/pending/failing revisions. Focused worker checks may target the owned `.test.mjs` files; report partial evidence separately from the full helper-suite result.
 
 Run the complete contributor helper test suite with the pinned package manager. It selects each non-runtime helper test once; runtime tests run from emitted files during runtime validation:
 

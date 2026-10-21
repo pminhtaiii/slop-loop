@@ -1,7 +1,4 @@
-import { featureBranch } from './pr-conventions.mjs';
-
 export const sides = ['primary', 'submission'];
-export { featureBranch };
 
 export function command(call, args, repo, timeout = 30_000) {
   const result = call('gh', args, repo.root, timeout);

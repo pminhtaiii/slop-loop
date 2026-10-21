@@ -1,4 +1,4 @@
-import { resolve } from 'node:path';
+import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { fail, resolveRoot, usage } from './agent-context-common.mjs';
 import { assignment, handoff } from './agent-context-assignment.mjs';
@@ -99,7 +99,14 @@ async function main() {
   return verify(root, values.get('--snapshot'));
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+const invokedPath = (() => {
+  try {
+    return process.argv[1] ? realpathSync(process.argv[1]) : null;
+  } catch {
+    return null;
+  }
+})();
+if (invokedPath && invokedPath === realpathSync(fileURLToPath(import.meta.url))) {
   main().catch((error) => {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 1;

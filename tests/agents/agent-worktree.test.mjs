@@ -108,6 +108,35 @@ test('checkout-wide active assignments, changed evidence, and locked worktrees i
   }
 });
 
+test('a reassigned predecessor does not block retirement after its successor finishes', async (t) => {
+  for (const successorStatus of ['completed', 'active', 'blocked']) {
+    const { root, worker } = await fixture(t);
+    register(root, worker);
+    accept(root);
+    await writeFile(join(root, '.agent-work/state/active-tasks.json'), JSON.stringify([
+      {
+        owner: 'interrupted', task: 'T001', checkout: worker, session: '2026-10-15/source',
+        summary: 'Work', next: 'Transferred to successor', status: 'reassigned',
+        reassignments: [{ owner: 'worker', task: 'T001', session: '2026-10-15/successor', reason: 'Recovery', at: '2026-10-15T00:00:00.000Z' }],
+      },
+      {
+        owner: 'worker', task: 'T001', checkout: worker, session: '2026-10-15/successor',
+        summary: 'Work', next: 'Finish verification', status: successorStatus,
+        reassignedFrom: { owner: 'interrupted', task: 'T001', session: '2026-10-15/source' },
+      },
+    ]));
+
+    const result = run(root, 'cleanup', '--id', 'worker');
+    assert.equal(result.status, 0, result.stderr);
+    const report = JSON.parse(result.stdout);
+    if (successorStatus === 'completed') assert.equal(report.eligible, true, JSON.stringify(report));
+    else {
+      assert.equal(report.eligible, false);
+      assert.match(report.reason, /active or blocked assignments/);
+    }
+  }
+});
+
 test('unknown workers and attempts to register the primary checkout are rejected', async (t) => {
   const { root } = await fixture(t);
   let result = run(root, 'cleanup', '--id', 'unknown', '--apply');

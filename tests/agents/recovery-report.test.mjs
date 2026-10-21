@@ -53,6 +53,31 @@ test('recovery report joins assignment, live Git worktree, checkpoint, changes, 
   assert.match(assignment.agent.note, /do not prove an agent is running or stopped/);
 });
 
+test('recovery report accepts reassigned history and reports only the active successor', async (t) => {
+  const checkout = await fixture(t);
+  const stateDirectory = join(checkout, '.agent-work/state');
+  await mkdir(stateDirectory, { recursive: true });
+  await writeFile(join(stateDirectory, 'active-tasks.json'), JSON.stringify([
+    {
+      owner: 'interrupted', task: 'T008', checkout, session: '2026-10-21/source',
+      summary: 'Feature work', next: 'Transferred to successor', status: 'reassigned',
+      reassignments: [{ owner: 'successor', task: 'T008', session: '2026-10-21/successor', reason: 'Recovery', at: '2026-10-21T00:00:00.000Z' }],
+    },
+    {
+      owner: 'successor', task: 'T008', checkout, session: '2026-10-21/successor',
+      summary: 'Feature work', next: 'Run focused checks', status: 'active',
+      reassignedFrom: { owner: 'interrupted', task: 'T008', session: '2026-10-21/source' },
+    },
+  ]));
+
+  const all = run(reportCli, checkout);
+  assert.equal(all.status, 0, all.stderr);
+  assert.deepEqual(JSON.parse(all.stdout).assignments.map((entry) => entry.assignment.owner), ['successor']);
+  const source = run(reportCli, checkout, '--owner', 'interrupted', '--task', 'T008');
+  assert.equal(source.status, 0, source.stderr);
+  assert.deepEqual(JSON.parse(source.stdout).assignments, []);
+});
+
 test('recovery report is read-only when contributor state is absent', async (t) => {
   const checkout = await fixture(t);
   const result = run(reportCli, checkout);

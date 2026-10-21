@@ -60,7 +60,7 @@ async function assignments(repo) {
   if (!directory) return [];
   const statePath = resolve(directory, 'active-tasks.json');
   const entries = await optionalJson(statePath) ?? [];
-  if (!Array.isArray(entries) || entries.some((entry) => !entry || typeof entry.owner !== 'string' || typeof entry.task !== 'string' || !['active', 'blocked', 'completed', 'handed-off'].includes(entry.status))) throw new Error('Invalid shared task state; no recovery report was produced.');
+  if (!Array.isArray(entries) || entries.some((entry) => !entry || typeof entry.owner !== 'string' || typeof entry.task !== 'string' || !['active', 'blocked', 'completed', 'handed-off', 'reassigned'].includes(entry.status))) throw new Error('Invalid shared task state; no recovery report was produced.');
   return entries;
 }
 

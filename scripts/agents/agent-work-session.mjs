@@ -477,11 +477,11 @@ async function finishSession(checkout, date, id) {
       if (error.code !== 'ENOENT') throw error;
       return [];
     });
-    if (!Array.isArray(assignments) || assignments.some((entry) => !entry || !['active', 'blocked', 'completed', 'handed-off'].includes(entry.status))) throw new Error('Invalid shared task state; retain the session.');
+    if (!Array.isArray(assignments) || assignments.some((entry) => !entry || !['active', 'blocked', 'completed', 'handed-off', 'reassigned'].includes(entry.status))) throw new Error('Invalid shared task state; retain the session.');
     const session = `${date}/${id}`;
     const blockers = [];
     for (const entry of assignments) {
-      if (['completed', 'handed-off'].includes(entry.status)) continue;
+      if (['completed', 'handed-off', 'reassigned'].includes(entry.status)) continue;
       if (entry.session === session) { blockers.push(entry); continue; }
       let hasKnownSession = false;
       try {

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { atomicWrite, readJson } from './agent-store.mjs';
-import { command, json } from './paired-issue-api.mjs';
-import { featureBranch, sides } from './paired-issue-api.mjs';
+import { command, json, sides } from './paired-issue-api.mjs';
+import { featureBranch } from './pr-conventions.mjs';
 
 const requiredChecks = [
   'contributor-checks (ubuntu-latest)',

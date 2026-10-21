@@ -68,6 +68,34 @@ test('an assignment in its own session blocks finish and names the exact owner/t
   assert.equal(tasks[0].status, 'active');
 });
 
+test('reassignment retires the source session while active or blocked successor work still blocks', async (t) => {
+  const checkout = await fixture(t);
+  startSession(checkout, 'source');
+  startSession(checkout, 'successor');
+  let result = run(taskCli, checkout, 'start', '--owner', 'interrupted', '--task', 'T007', '--role', 'worker', '--session', '2026-10-21/source', '--summary', 'Continue the feature', '--next', 'Resume from checkpoint', '--owned-path', 'src/feature.ts');
+  assert.equal(result.status, 0, result.stderr);
+  result = run(taskCli, checkout, 'reassign', '--owner', 'interrupted', '--task', 'T007', '--new-owner', 'successor', '--session', '2026-10-21/successor', '--reason', 'Human-directed recovery');
+  assert.equal(result.status, 0, result.stderr);
+
+  result = run(sessionCli, checkout, 'finish', '--session', '2026-10-21/source');
+  assert.equal(result.status, 0, result.stderr);
+
+  result = run(sessionCli, checkout, 'finish', '--session', '2026-10-21/successor');
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /successor\/T007 \[active; session=2026-10-21\/successor; checkout=/);
+
+  result = run(taskCli, checkout, 'update', '--owner', 'successor', '--task', 'T007', '--status', 'blocked');
+  assert.equal(result.status, 0, result.stderr);
+  result = run(sessionCli, checkout, 'finish', '--session', '2026-10-21/successor');
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /successor\/T007 \[blocked; session=2026-10-21\/successor; checkout=/);
+
+  result = run(taskCli, checkout, 'handoff', '--owner', 'successor', '--task', 'T007', '--result', 'Successor work handed off');
+  assert.equal(result.status, 0, result.stderr);
+  result = run(sessionCli, checkout, 'finish', '--session', '2026-10-21/successor');
+  assert.equal(result.status, 0, result.stderr);
+});
+
 test('legacy assignments with unknown session remain conservative blockers', async (t) => {
   const checkout = await fixture(t);
   startSession(checkout, 'legacy-target');

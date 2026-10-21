@@ -14,10 +14,21 @@ export function taskConstraints(parsed, task) {
       parsed.headings.find(
         (heading) => heading.index > task.phase.index && heading.level <= task.phase.level,
       )?.index ?? parsed.lines.length;
+    let owner = null;
     for (let index = task.phase.index + 1; index < end; index += 1) {
-      if (!parsed.visible[index] || /^ {0,3}[-*+]\s+\[[ xX]\]\s+T\d{3}\b/.test(parsed.lines[index]))
+      if (!parsed.visible[index]) continue;
+      const line = parsed.lines[index];
+      const taskLine = line.match(/^ {0,3}[-*+]\s+\[[ xX]\]\s+(T\d{3})\b/);
+      if (taskLine) {
+        owner = taskLine[1];
         continue;
-      add(parsed.lines[index]);
+      }
+      if (/^\s+\S/.test(line)) {
+        if (owner === null || owner === task.id) add(line);
+        continue;
+      }
+      if (line.trim()) owner = null;
+      add(line);
     }
   }
   const dependency = parsed.headings.find((heading) => /dependency graph/i.test(heading.title));

@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto';
 import { withPublicationBody } from './publication-targets.mjs';
-import { command, pages } from './paired-issue-api.mjs';
-import { sides } from './paired-issue-api.mjs';
+import { command, pages, sides } from './paired-issue-api.mjs';
 import { hasLine, privateIdentityAppears } from './paired-issue-resolution.mjs';
 
 export function commentBody(pr, evidence, marker) {

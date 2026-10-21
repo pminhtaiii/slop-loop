@@ -31,34 +31,6 @@ function run(checkout, ...args) {
   });
 }
 
-test('explicit reassignment preserves the original owner and evidence while creating a linked active assignment', async (t) => {
-  const checkout = await fixture(t);
-  run(checkout, 'start', '--role', 'worker', '--owner', 'interrupted', '--task', 'T001', '--session', '2026-10-15/old', '--summary', 'Implement feature', '--next', 'Resume from checkpoint', '--owned-path', 'src/feature.ts');
-  run(checkout, 'update', '--owner', 'interrupted', '--task', 'T001', '--verification', 'First test passed');
-  const result = run(checkout, 'reassign', '--owner', 'interrupted', '--task', 'T001', '--new-owner', 'successor', '--session', '2026-10-15/new', '--reason', 'Human-directed recovery after interruption');
-  assert.equal(result.status, 0, result.stderr);
-  const entries = JSON.parse(run(checkout, 'list').stdout);
-  const original = entries.find((entry) => entry.owner === 'interrupted');
-  const successor = entries.find((entry) => entry.owner === 'successor');
-  assert.equal(original.status, 'blocked');
-  assert.equal(original.session, '2026-10-15/old');
-  assert.equal(original.next, 'Resume from checkpoint');
-  assert.equal(original.verification, 'First test passed');
-  assert.equal(original.reassignments[0].owner, 'successor');
-  assert.equal(successor.status, 'active');
-  assert.equal(successor.session, '2026-10-15/new');
-  assert.equal(successor.checkout, original.checkout);
-  assert.deepEqual(successor.ownedPaths, ['src/feature.ts']);
-  assert.equal(successor.reassignedFrom.owner, 'interrupted');
-  assert.equal(successor.reassignedFrom.task, 'T001');
-  assert.equal(successor.reassignedFrom.session, '2026-10-15/old');
-  assert.equal(successor.reassignedFrom.status, 'active');
-  assert.equal(successor.reassignedFrom.next, 'Resume from checkpoint');
-  assert.equal(successor.reassignedFrom.verification, 'First test passed');
-  assert.equal(successor.reassignedFrom.reason, 'Human-directed recovery after interruption');
-  assert.equal(typeof successor.reassignedFrom.updatedAt, 'string');
-});
-
 test('a worker handoff can be cleared while preserving the permanent file exactly', async (t) => {
   const checkout = await fixture(t);
   const path = join(checkout, 'context/active_task.md');
@@ -188,7 +160,7 @@ test('worker cleanup preserves the parent entry and active or blocked work', asy
   }
   let result = run(checkout, 'clear', '--owner', 'worker', '--task', 'T001');
   assert.equal(result.status, 1);
-  assert.match(result.stderr, /Only completed or handed-off entries/);
+  assert.match(result.stderr, /Only completed, handed-off, or reassigned entries/);
   result = run(checkout, 'update', '--owner', 'worker', '--task', 'T001', '--status', 'blocked', '--next', 'Wait for required input', '--verification', 'Focused check not run');
   assert.equal(result.status, 0, result.stderr);
   const blocked = await readFile(path, 'utf8');

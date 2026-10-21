@@ -1,7 +1,33 @@
 import { lstat, readFile, realpath, stat } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
-import { repository as agentRepository } from './agent-store.mjs';
-import { checkout, fail, git, normalizedRepoPath, parseTasks, repoFile, samePath } from './agent-context-common.mjs';
+import { git as agentStoreGit, repository as agentRepository, samePath as canonicalSamePath } from './agent-store.mjs';
+import { checkout, fail, normalizedRepoPath, parseTasks, repoFile } from './agent-context-common.mjs';
+
+function changedPaths(output) {
+  const records = output.split('\0');
+  const changed = [];
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index];
+    if (!record) continue;
+    const status = record.slice(0, 2);
+    const path = record.slice(3).replace(/[\r\n\t]/g, (character) => ({
+      '\r': '\\r',
+      '\n': '\\n',
+      '\t': '\\t',
+    })[character]);
+    if (status.includes('R') || status.includes('C')) {
+      const original = (records[++index] ?? '').replace(/[\r\n\t]/g, (character) => ({
+        '\r': '\\r',
+        '\n': '\\n',
+        '\t': '\\t',
+      })[character]);
+      changed.push(status + ' ' + original + ' -> ' + path);
+    } else {
+      changed.push(status + ' ' + path);
+    }
+  }
+  return changed;
+}
 
 export function statIfPresent(path) {
   return lstat(path).catch((error) => {
@@ -51,7 +77,7 @@ export async function readWorkerState(root) {
     }
     if (!Array.isArray(entries) || entries.some((entry) =>
       !entry || typeof entry.owner !== 'string' || typeof entry.task !== 'string' ||
-      !['active', 'blocked', 'completed', 'handed-off'].includes(entry.status) ||
+      !['active', 'blocked', 'completed', 'handed-off', 'reassigned'].includes(entry.status) ||
       typeof entry.summary !== 'string' || typeof entry.next !== 'string' ||
       (entry.role !== undefined && !['coordinator', 'worker'].includes(entry.role)))) {
       fail('Shared active-task state has an unsupported shape.');
@@ -101,7 +127,8 @@ export function verificationSummary(text) {
 
 export async function resumeReport(root, tasksInput, authorizationInputs) {
   const current = await checkout(root);
-  const changed = git(root, ['status', '--short', '--untracked-files=all']).split(/\r?\n/).filter(Boolean);
+  const status = agentStoreGit(root, ['status', '--porcelain=v1', '-z', '--untracked-files=all']);
+  const changed = changedPaths(status.stdout);
   let parsed = null;
   let tasksFile = null;
   if (tasksInput) {
@@ -123,15 +150,31 @@ export async function resumeReport(root, tasksInput, authorizationInputs) {
 
   const workerState = await readWorkerState(root);
   const workers = workerState.entries.filter((entry) => entry.role === 'worker');
-  const counts = Object.fromEntries(['active', 'blocked', 'handed-off', 'completed'].map((status) =>
+  const counts = Object.fromEntries(['active', 'blocked', 'handed-off', 'completed', 'reassigned'].map((status) =>
     [status, workers.filter((entry) => entry.status === status).length]));
   const worktreePaths = workerState.worktrees.map((entry) => entry.worktree).filter(Boolean);
   const taskIds = new Set(parsed?.tasks.map((task) => task.id) ?? []);
-  const relevantAssignments = workerState.entries.filter((entry) =>
-    ['active', 'blocked', 'handed-off'].includes(entry.status) &&
-    worktreePaths.some((path) => samePath(path, entry.checkout ?? '')) &&
-    (samePath(root, entry.checkout ?? '') || (entry.role === 'worker' && taskIds.has(entry.task))))
-    .sort((left, right) => String(right.updatedAt ?? '').localeCompare(String(left.updatedAt ?? '')));
+  const relevantAssignments = [];
+  for (const entry of workerState.entries) {
+    if (
+      !['active', 'blocked', 'handed-off'].includes(entry.status) ||
+      typeof entry.checkout !== 'string' ||
+      entry.checkout.length === 0
+    ) continue;
+    let listed = false;
+    for (const path of worktreePaths) {
+      if (await canonicalSamePath(path, entry.checkout)) {
+        listed = true;
+        break;
+      }
+    }
+    if (!listed) continue;
+    if (await canonicalSamePath(root, entry.checkout) || (entry.role === 'worker' && taskIds.has(entry.task))) {
+      relevantAssignments.push(entry);
+    }
+  }
+  relevantAssignments.sort((left, right) =>
+    String(right.updatedAt ?? '').localeCompare(String(left.updatedAt ?? '')));
   const pointers = new Map();
   for (const entry of relevantAssignments) {
     const found = [...new Set([
