@@ -1,6 +1,6 @@
 # Interfaces and Execution Protocol: UC-05
 
-**Status**: Logical companion version `uc05-approval/0.1-draft` agreed through the user confirmation in [decisions](decisions.md). Canonical UC-03 0.1.0 remains unchanged. T001–T013 supply validators, mocks, policy/service/control/binding/presentation/CLI and canonical-consumer checks with exercised local behavior. T025/T026 normalize port exceptions and initial receipt inspection without changing this contract. T014–T022 require separate authorization; real adapters, production composition and durability remain gated.
+**Status**: Logical companion version `uc05-approval/0.1-draft` agreed through the user confirmation in [decisions](decisions.md). Canonical UC-03 0.1.0 remains unchanged. T001–T013 supply validators, mocks, policy/service/control/binding/presentation/CLI and canonical-consumer checks with exercised local behavior. T025/T026 normalize port exceptions and initial receipt inspection without changing this contract. T014–T015 have separate mock-preparation authorization; T016–T022 require separate authorization; real adapters, production composition and durability remain gated.
 
 ## Canonical ApprovalPort compatibility
 
@@ -52,6 +52,16 @@ The linearization point between a dispatch and a new pause is UC-04's serialized
 - Stale approved decisions retain their original resolution and gain an assessment; a fresh required request gets a new identity. Replacing a stale pending request is deterministic harness revalidation only, not permission for a paused agent to investigate or replan.
 - Fix-plan approval uses canonical trusted freshness fields and the current repository digest. Digest drift requires fresh approval even for a nonmaterial follow-up patch; no extra replan charge if strategy/material fields are unchanged. Material changes require trusted UC-03 determination and a charged UC-04 replan slot before renewed approval. No edits under an old strategy binding.
 - Input/control deadlines are finite configuration for each bounded operation, not automatic expiry of the human pause. A CLI invocation may exit pending while the durable task remains waiting indefinitely for explicit human input.
+
+## Phase 6 local continuation consumer
+
+`createApprovalContinuation` is exported from `src/approvals/control.ts`, with implementation in `recovery.ts`. It composes the actual mock-backed approval service with an injected mock-only recovery owner; the four canonical ApprovalPort signatures and companion record versions remain unchanged. Its `admit(decisionId)` method does not execute or grant a generic activity/executor capability.
+
+The owner declares finite `reservationRequirements` (scope, kind, amount), supplies `load(decisionId)` with the retained control/request/action/run/claim journal, and implements `claimDispatch` for the exact approved binding, action, run and expected control version/epoch. UC-05 validates plain data and identities, resolves and validates the current approval through the actual service, reloads before the claim, and verifies the claim/control/reservation receipt plus the retained journal afterward. The receipt must name exactly the required reservations with the admitted run/configuration, one new claim and the expected control transition. Unresolved claims must agree with control references; historical same-action/decision claims deny blind replay across all recorded lifecycle phases.
+
+The owner remains responsible for serialized task control, locked repository/policy freshness and complete accounting at claim admission. The test adapter uses the existing mock store and canonical in-memory reservation port; it conservatively retains charge on a claim race or lost response. Neither the consumer nor this adapter delivers durable atomicity, reconciliation or repository effects. Caller timeouts close local admission and fence later continuation work; an owner call already started can still commit and must remain represented in owner state.
+
+Results are the minimal `claimed`, `blocked` or `unavailable`, with only an admitted claim ID on success. Detailed prerequisite reasons and complete safe audit/CLI projections are still part of T016–T018; these results do not establish full US4/SC-006 or real/restart acceptance. The current composition rejects real/unknown provenance rather than silently supplying a mock replacement.
 
 ## Mock replacement and delivery
 
