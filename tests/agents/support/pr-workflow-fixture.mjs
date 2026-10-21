@@ -32,6 +32,9 @@ export async function checkout(t) {
   git('remote', 'add', 'origin', 'https://github.com/example/project.git');
   await writeFile(join(root, 'change.md'), 'change\n'); git('add', 'change.md'); git('commit', '--quiet', '-m', 'feature');
   await mkdir(join(root, '.agent-work'));
+  // Existing numbered work retains v1 accounting; new-name tests switch to a fresh branch.
+  await mkdir(join(root, '.agent-work/pr-workflow'));
+  await writeFile(join(root, '.agent-work/pr-workflow/010-tooling-example.json'), JSON.stringify({ schemaVersion: 1, repository: 'example/project', branch: 'feat/010-tooling-example', base: 'development', repairRounds: [], conventionVersion: 1 }));
   const body = join(root, '.agent-work/body.md'); await writeFile(body, '## Summary\n\nStandardize tooling.\n\n## Evidence\n\nBefore: legacy behavior; after: verified checks.\n\n## Merge Danger\n\n**Door:** two-way; revert commit.\n\n**Blast Radius:** tooling; integration checks required.');
   const head = git('rev-parse', 'HEAD');
   const e = evidence(); e.head = head; e.pr.headRefOid = head; e.pr.reviews.nodes[0].commit.oid = head;

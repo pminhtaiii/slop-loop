@@ -3,7 +3,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { assertNoTrackedArtifacts } from '../ci/check-tracked-files.mjs';
 import { dataDirectory } from './agent-store.mjs';
-import { assertAvailableNumber, assertNewDescription, assertNewSummary } from './pr-conventions.mjs';
+import { assertAvailableNumber, assertAvailableBranch, assertNewDescription, assertNewSummary } from './pr-conventions.mjs';
 import { inspectSubmissionTarget, publishSubmission } from './submission-pr.mjs';
 import { withPublicationBody } from './publication-targets.mjs';
 import { packageScriptCommand, runGate } from './workflow-gate.mjs';
@@ -25,12 +25,15 @@ export async function publishCommand({ values, record, branch, repo, remote, git
   const initialPr = find();
   if (record.pr && (!initialPr || initialPr.number !== record.pr)) throw new Error('Recorded PR is closed or replaced; start a new feature branch instead of resetting its budget.');
   if (initialPr && !record.pr && !record.publicationStarted) throw new Error('Existing PR has no local accounting; recover its workflow record before publishing.');
-  const newConventions = record.conventionVersion === 1 || !record.pr && !record.publicationStarted;
+  const conventionVersion = record.conventionVersion ?? (!record.pr && !record.publicationStarted ? 2 : undefined);
+  if (conventionVersion !== undefined && ![1, 2].includes(conventionVersion)) throw new Error('Unsupported convention version; retain accounting and inspect before publishing.');
+  const newConventions = conventionVersion !== undefined;
   if (newConventions) {
     if (targets && targets.submission.base !== 'development') throw new Error('New paired work requires submission/development; retain historical main configuration only for existing pairs.');
     assertNewSummary(values.summary);
     assertNewDescription(body);
-    assertAvailableNumber({ branch, targets: targets ?? { primary: { remote: 'origin', repository: remote } }, execute: pairedExecute, root: repo.root, fresh: !record.pr && !record.publicationStarted, hasPr: Boolean(record.pr) });
+    const inventory = conventionVersion === 1 ? assertAvailableNumber : assertAvailableBranch;
+    inventory({ branch, targets: targets ?? { primary: { remote: 'origin', repository: remote } }, execute: pairedExecute, root: repo.root, fresh: !record.pr && !record.publicationStarted, hasPr: Boolean(record.pr) });
   }
   git('fetch', '--no-tags', 'origin', 'refs/heads/development:refs/remotes/origin/development');
   const size = changedLines(git('diff', '--numstat', '--no-renames', 'origin/development...HEAD'));
@@ -64,7 +67,7 @@ export async function publishCommand({ values, record, branch, repo, remote, git
   record.gateLogs = gateLogs;
   delete record.completion;
   record.publicationStarted = true;
-  if (newConventions) record.conventionVersion = 1;
+  if (newConventions) record.conventionVersion = conventionVersion;
   if (targets) record.pairedTargets = targets;
   await save();
   git('push', '--set-upstream', 'origin', `HEAD:refs/heads/${branch}`);

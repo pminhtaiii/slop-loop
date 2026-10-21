@@ -107,14 +107,14 @@ test('closed PRs skip expensive gates and PR changes during gates prevent push',
 test('prepare-next preserves the merged feature and refuses dirty, unmerged or existing targets', async t => {
   const f = await checkout(t);
   await f.run('publish', '--body-file', f.body);
-  const target = 'feat/001-next-work';
+  const target = 'feat/tooling-next-work';
   await assert.rejects(f.run('prepare-next', '--branch', target), /merged/);
   f.e.pr.state = 'MERGED';
   await writeFile(join(f.root, 'dirty.md'), 'keep me');
   await assert.rejects(f.run('prepare-next', '--branch', target), /clean/);
   assert.equal(await readFile(join(f.root, 'dirty.md'), 'utf8'), 'keep me');
   await rm(join(f.root, 'dirty.md'));
-  await assert.rejects(f.run('prepare-next', '--branch', 'feat/010-tooling-example'), /exists|different/);
+  await assert.rejects(f.run('prepare-next', '--branch', 'feat/010-tooling-example'), /scope/);
   const source = f.e.head;
   const result = await f.run('prepare-next', '--branch', target);
   assert.equal(result.branch, target);
@@ -148,7 +148,7 @@ test('publication tracks the remote feature and post-squash preparation survives
   git('push', remote, `${squash}:refs/heads/development`);
   git('push', remote, '--delete', 'feat/010-tooling-example');
   f.e.pr.state = 'MERGED';
-  const result = await runWorkflow(['prepare-next', '--root', f.root, '--branch', 'feat/011-tooling-fresh'], { execute });
+  const result = await runWorkflow(['prepare-next', '--root', f.root, '--branch', 'feat/tooling-fresh'], { execute });
   assert.equal(result.head, squash);
   assert.equal(git('rev-parse', 'feat/010-tooling-example'), source);
   assert.equal(git('status', '--porcelain'), '');

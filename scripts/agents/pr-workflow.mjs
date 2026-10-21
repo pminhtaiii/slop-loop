@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { publishCommand } from './pr-workflow-publish.mjs';
 import { publicationTargets } from './publication-targets.mjs';
 import { verifySubmission } from './submission-pr.mjs';
-import { assertAvailableNumber, assertNewBranch } from './pr-conventions.mjs';
+import { assertAvailableBranch, assertNewBranch } from './pr-conventions.mjs';
 import { assess, changedLines, featureName, validSummary, workflowSummary } from './pr-workflow-status.mjs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,7 +15,7 @@ preflight fetches origin/development and reports freshness, naming, dirty paths,
 publish requires --body-file <file> and --summary <short summary>; optional --base development and --skip-review-request.
 repair requires --reason <diagnosed finding>. At most three repair rounds per PR.
 record-app-state requires --receipt <app list_thread_pull_requests JSON>.
-prepare-next --branch feat/NNN-scope-description creates a fresh unique branch from fetched development after this branch's recorded PR merges; source branches and worktrees are retained.
+prepare-next --branch feat/scope-description creates a fresh unique branch from fetched development after this branch's recorded PR merges; source branches and worktrees are retained.
 complete verifies clean published current-head work, linked PR evidence and passing CI; it never merges.
 watch polls for at most ten minutes, stopping for fixes, human approval, or timeout.
 Configured paired publication also opens a submission PR with the same source tree and separate submission ancestry.
@@ -78,12 +78,12 @@ export async function runWorkflow(args, dependencies = {}) {
     const [behind, ahead] = git('rev-list', '--left-right', '--count', `${base}...${head}`).split(/\s+/).map(Number);
     const dirty = git('status', '--porcelain', '--untracked-files=all');
     const branchValid = featureName.test(branch);
-    const blockers = [!branchValid && 'Use a feat/NNN-description branch.', behind > 0 && 'Branch is behind development; integrate its changes before editing.', dirty && 'Review existing dirty paths before starting another assignment.'].filter(Boolean);
+    const blockers = [!branchValid && 'Use a feat/scope-description branch.', behind > 0 && 'Branch is behind development; integrate its changes before editing.', dirty && 'Review existing dirty paths before starting another assignment.'].filter(Boolean);
     const size = changedLines(git('diff', '--numstat', '--no-renames', `${base}...${head}`));
     if (git('rev-parse', 'HEAD') !== head || git('branch', '--show-current') !== branch) throw new Error('Checkout changed during preflight; rerun it.');
     return { status: blockers.length ? 'BLOCKED' : 'READY_TO_WORK', branch, branchValid, head, base, behind, ahead, dirty, size, blockers };
   }
-  if (!featureName.test(branch)) throw new Error('Use feat/<three-digit-number>-<lowercase-description>; main and development cannot be published.');
+  if (!featureName.test(branch)) throw new Error('Use feat/scope-description; historical three-digit names remain readable; main and development cannot be published.');
   const remote = match[1], [owner, name] = remote.split('/');
   const gh = (...argv) => call('gh', argv);
   const json = (...argv) => JSON.parse(gh(...argv));
@@ -109,7 +109,7 @@ export async function runWorkflow(args, dependencies = {}) {
       const merged = json('pr', 'view', String(record.pr), '--repo', remote, '--json', 'state,headRefName,baseRefName');
       if (merged.state !== 'MERGED' || merged.headRefName !== branch || merged.baseRefName !== 'development') throw new Error('The recorded PR must be merged into development before preparing another branch.');
       if (values.branch === branch || git('branch', '--list', values.branch)) throw new Error('Choose a different branch; target already exists.');
-      assertAvailableNumber({ branch: values.branch, targets: await publicationTargets(repo, pairedExecute) ?? { primary: { remote: 'origin', repository: remote } }, execute: pairedExecute, root: repo.root, fresh: true });
+      assertAvailableBranch({ branch: values.branch, targets: await publicationTargets(repo, pairedExecute) ?? { primary: { remote: 'origin', repository: remote } }, execute: pairedExecute, root: repo.root, fresh: true });
       git('fetch', '--no-tags', 'origin', 'refs/heads/development:refs/remotes/origin/development');
       const base = git('rev-parse', 'origin/development');
       if (git('status', '--porcelain', '--untracked-files=all') || git('branch', '--show-current') !== branch) throw new Error('Checkout changed during preparation.');

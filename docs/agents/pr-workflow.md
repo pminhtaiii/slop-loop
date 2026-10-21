@@ -14,7 +14,7 @@ Every public review PR targets `development`; its configured submission partner 
 
 Before editing an assigned feature checkout, run `node scripts/agents/pr-workflow.mjs preflight`. It fetches `origin/development`, reports ahead/behind counts, branch naming, dirty paths, and committed diff size, and returns `READY_TO_WORK` or `BLOCKED`. Exit 0 means the report succeeded; read its status. Fetch failure stops the report rather than trusting stale refs. It never switches branches, resets files, rebases, pushes, or opens a PR. Resolve a stale base or invalid branch deliberately; inspect dirty files and retain work. When resuming the same assignment, dirty paths may be expected and require review rather than discarding them. A clean preflight is not a CI or merge-readiness result.
 
-Follow the [branch and PR conventions](pr-conventions.md) for new scoped branch names, unique identifiers, action summaries and the three-section body. The pilot base is `development`; parent-branch stacking is outside this pilot. Historical identities remain readable as described there.
+Follow the [branch and PR conventions](pr-conventions.md) for unnumbered scoped branch names, matching PR titles, action summaries and the three-section body. The pilot base is `development`; parent-branch stacking is outside this pilot. Historical identities remain readable as described there.
 
 Keep the change near 1,000 added plus deleted lines against the immediate base (`origin/development`). This is an advisory target. Report reviewable line changes and generated lockfile changes separately, along with their sum and binary file count. If the total is over target, explain why and split the work when it can stand alone. The pilot uses this repository's Node context and test gates; other native project stacks need explicit plan metadata before they are added.
 
@@ -85,7 +85,7 @@ Publication emits JSON gate start/result events on stderr while keeping final JS
 After the recorded feature PR is merged into development, run:
 
 ```powershell
-node scripts/agents/pr-workflow.mjs prepare-next --branch feat/011-tooling-next-description
+node scripts/agents/pr-workflow.mjs prepare-next --branch feat/tooling-next-description
 ```
 
 This fetches development and switches a clean checkout to a new branch at that exact tip, with no development upstream. It retains the original feature branch and workflow record, including squash-merged history. It refuses unmerged/mismatched PRs, dirty checkouts and existing local target branches. A deleted remote feature branch is supported; no reset, worktree removal or cleanup is performed. Commit or otherwise preserve local work before retrying a refusal.

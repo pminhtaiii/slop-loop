@@ -1,9 +1,13 @@
 // Contributor rules: docs/agents/pr-conventions.md. Legacy identity readers stay permissive.
-const scopedBranch = /^feat\/(?!000-)\d{3}-[a-z][a-z0-9]*-[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const numberedBranch = /^feat\/(?!000-)\d{3}-[a-z][a-z0-9]*-[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const scopedBranch = /^feat\/[a-z][a-z0-9]*-[a-z0-9]+(?:-[a-z0-9]+)*$/;
+export const featureBranch = /^feat\/(?:\d{3}-[a-z0-9]+(?:-[a-z0-9]+)*|[a-z][a-z0-9]*-[a-z0-9]+(?:-[a-z0-9]+)*)$/;
 const action = /^(?:add|implement|fix|refactor|standardize|document|update|remove|preserve|prevent|support|configure|migrate|validate|test|improve|tighten|enforce|restore|repair|freeze|gate)\s+\S/;
 
-export function assertNewBranch(branch) {
-  if (!scopedBranch.test(branch ?? '')) throw new Error('New work requires feat/NNN-scope-short-description with a nonzero unique NNN.');
+export function assertNewBranch(branch, version = 2) {
+  if (version === 1) {
+    if (!numberedBranch.test(branch ?? '')) throw new Error('Version 1 work requires feat/NNN-scope-short-description with a nonzero unique NNN.');
+  } else if (!scopedBranch.test(branch ?? '')) throw new Error('New work requires feat/scope-short-description without a numeric prefix.');
 }
 
 export function assertNewDescription(body) {
@@ -29,7 +33,7 @@ export function assertNewDescription(body) {
 
 // Read-only inventory: fetch-independent live heads and paginated PR history include deleted branches.
 export function assertAvailableNumber({ branch, targets, execute, root, fresh = false, hasPr = false }) {
-  assertNewBranch(branch);
+  assertNewBranch(branch, 1);
   if (hasPr) return;
   const call = (binary, args) => execute(binary, args, root, 60_000);
   const names = new Set(call('git', ['for-each-ref', '--format=%(refname:short)', 'refs/heads']).split(/\r?\n/));
@@ -48,6 +52,28 @@ export function assertAvailableNumber({ branch, targets, execute, root, fresh = 
   }
   const number = branch.slice(5, 8);
   if ([...names].some(name => name !== branch && name.startsWith(`feat/${number}-`)) || (fresh && priorPr)) throw new Error(`Feature number ${number} was already used; select a unique NNN.`);
+}
+
+export function assertAvailableBranch({ branch, targets, execute, root, fresh = false, hasPr = false }) {
+  assertNewBranch(branch);
+  if (hasPr) return;
+  const call = (binary, args) => execute(binary, args, root, 60_000);
+  const local = call('git', ['for-each-ref', '--format=%(refname:short)', 'refs/heads']).split(/\r?\n/);
+  if (fresh && local.includes(branch)) {
+    const current = call('git', ['branch', '--show-current']);
+    if (current !== branch) throw new Error('New branch already exists locally.');
+  }
+  for (const target of Object.values(targets)) {
+    const heads = call('git', ['ls-remote', '--heads', target.remote]);
+    for (const line of heads.split(/\r?\n/).filter(Boolean)) {
+      const match = line.match(/^(?:[a-f0-9]{40}|[a-f0-9]{64})\s+refs\/heads\/(.+)$/i);
+      if (!match) throw new Error('Invalid remote branch inventory; cannot verify unique branch name.');
+      if (fresh && match[1] === branch) throw new Error('New branch already exists on a publication remote.');
+    }
+    const pages = JSON.parse(call('gh', ['api', '--paginate', '--slurp', `repos/${target.repository}/pulls?state=all&per_page=100`]));
+    if (!Array.isArray(pages) || pages.some(page => !Array.isArray(page) || page.some(pr => typeof pr.head?.ref !== 'string'))) throw new Error('Incomplete PR history; cannot verify unique branch name.');
+    if (pages.flat().some(pr => pr.head.ref === branch)) throw new Error('Branch name was already used by a PR; select a unique full name or restore its accounting.');
+  }
 }
 
 export function assertNewSummary(summary) {
