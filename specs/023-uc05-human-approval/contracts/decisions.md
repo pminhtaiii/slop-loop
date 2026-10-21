@@ -81,6 +81,14 @@ Public review of PR #77 identified that the pending replacement assessment hashe
 
 Standards review noted one optional P2: the evaluator and service retain equivalent bounded-data guards. No hard standards violation was found. The advisory extraction is deferred to keep this delivery's public interface unchanged; current safety vectors cover both guards. The Spec P1 is addressed by T026 and the changed revision receives independent review before publication.
 
+## Phase 6 implementation authorization and seam
+
+On 2026-10-21 (Asia/Saigon), the user instructed "tiếp tục code phase 6 cho UC5 đi, bỏ qua UC4 đi (xong nghĩa vụ rồi)". This separately authorizes exactly T014–T015, preparing recovery and continuation admission with mock dependencies. The user then confirmed "Đồng ý seam service/control với mock recovery" for actual public ApprovalService/ApprovalControl exports, injected mock UC-04 control/claim/accounting and reconstruction of service instances from retained saved state. This is local simulation, not permission to implement UC-04 storage, claim transactions or reconciliation, real execution, production profiles or actual runtime restart. T016–T022 remain gated.
+
+The later instruction "push 2 repo, tạo PR rồi nhờ coderabbit review luôn" authorizes paired contributor publication and a CodeRabbit request on the public PR, superseding the earlier request to skip CodeRabbit. Human merge authority is retained. Public Phase 5 PR77 and paired PR65 were verified merged before creating `feat/039-uc05-recovery-admission` from fetched development `e7bd78f`.
+
+T014 and T015 execute as coupled behavioral RED/GREEN slices through the confirmed seam. The current generic `admitAttempt` remains task-activity fencing; it cannot establish recovered execution authority. Continuation admission composes actual approval validation with an explicitly injected mock UC-04/executor capability responsible for authoritative claims and cumulative accounting. Claims, reservations and uncertain outcomes remain owner state; service-local flags, new run IDs or elapsed time cannot stand in for that state. Cohesive supporting paths `src/approvals/recovery.ts` and `tests/runtime/support/uc05/mock-recovery.ts` are part of the same T014–T015 local slice, without changing canonical contracts.
+
 ## Agreed design register
 
 | ID | Proposal | Scope / approval state |
@@ -94,7 +102,7 @@ Standards review noted one optional P2: the evaluator and service retain equival
 
 ## Implementation and real-execution gates
 
-1. **G-AUTH**: Phase 1 / T001, Phase 2 / T002–T004, Phase 3 / T005–T007, Phase 4 / T008–T010 and Phase 5 / T011–T013 are authorized by the separate user instructions recorded here. The Phase 3/4 seams and all three Phase 5 seams are explicitly confirmed. T023/T024 are scoped prior-phase review corrections; T025–T027 are scoped Phase 5 corrections. The user separately confirmed X03-PLAN-CONTEXT agreement for T013; T014–T022 require separate authorization. Contract agreement alone does not release additional work.
+1. **G-AUTH**: Phase 1 / T001, Phase 2 / T002–T004, Phase 3 / T005–T007, Phase 4 / T008–T010 and Phase 5 / T011–T013 are authorized by the separate user instructions recorded here. The Phase 3/4 seams and all three Phase 5 seams are explicitly confirmed. T023/T024 are scoped prior-phase review corrections; T025–T027 are scoped Phase 5 corrections. The user separately confirmed X03-PLAN-CONTEXT agreement for T013 and separately authorized T014–T015 with their mock recovery seam on 2026-10-21; T016–T022 require separate authorization. Contract agreement alone does not release additional work.
 2. **G-CONTRACT**: Satisfied for the current logical contract/ownership set by the explicit user-relayed agreement above. Companion records, transactions, claim/fence timing, host operator authority, strict plan compatibility and owned paths are agreed; actual adapters and execution evidence are not implied.
 3. **G-PROFILE**: Trusted finite policy/execution/diagnostic/retention and supported-host profiles selected by their owners. Test vector values cannot stand in for production configuration.
 4. **G-REAL**: Real UC-04 store, task-wide provider/scheduler/tool admission, executor containment and claim/reconciliation are delivered with owner ledger/revision evidence. Mock provenance is rejected by production composition.

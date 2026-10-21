@@ -2,7 +2,7 @@
 
 **Input**: [spec](spec.md), [plan](plan.md), [research](research.md), [data model](data-model.md), and [contracts](contracts/interfaces.md).
 
-**Status**: T001–T013 and T023–T027 review corrections are integrated and verified locally through source `84be181f68bf56481e53676ad44bc00dd45f1211`. Phase 5 authorization, three confirmed seams and user-relayed X03 agreement are recorded in decisions.md. Source/emitted approval suites each pass 142/142; runtime typecheck/full lint/build and 896 compiled tests pass. Checkboxes below remain the completion ledger. T014–T022 remain unauthorized; G-PROFILE/G-REAL/G-RESTART remain gated.
+**Status**: T001–T013 and T023–T027 review corrections are integrated and verified locally through source `84be181f68bf56481e53676ad44bc00dd45f1211`. Phase 5 authorization, three confirmed seams and user-relayed X03 agreement are recorded in decisions.md. Source/emitted approval suites each pass 142/142; runtime typecheck/full lint/build and 896 compiled tests pass. Checkboxes below remain the completion ledger. T014–T015 are separately authorized for mock recovery preparation; T016–T022 remain unauthorized; G-PROFILE/G-REAL/G-RESTART remain gated.
 
 Final review found an in-scope T007 retry defect and two standards corrections. T023 below records their accepted correction only; it does not release any later story or real-delivery gate.
 
@@ -138,13 +138,13 @@ Final review found an in-scope T007 retry defect and two standards corrections. 
 - [ ] T014 [US4] Add recovery/claim behavioral RED in tests/runtime/approvals/restart-admission.test.ts.
   - **Owner**: Trong Tan / recovery consumer tests.
   - **Dependencies**: T013.
-  - **Owned Paths**: tests/runtime/approvals/restart-admission.test.ts.
+  - **Owned Paths**: tests/runtime/approvals/restart-admission.test.ts; tests/runtime/support/uc05/mock-recovery.ts.
   - **Acceptance Checks**: Exercise real control/service exports with mocked UC-04 load/claim semantics. Assertions cover retained waiting/rejection, decision commit uncertainty, concurrent pause/claim, missing accounting, lost response and post-effect uncertainty. Record local simulation scope; no actual restart claim.
 
 - [ ] T015 [US4] Implement recovery-safe continuation coordination in src/approvals/control.ts and src/approvals/service.ts.
   - **Owner**: Trong Tan / recovery consumer implementation.
   - **Dependencies**: T014.
-  - **Owned Paths**: src/approvals/control.ts; src/approvals/service.ts.
+  - **Owned Paths**: src/approvals/control.ts; src/approvals/service.ts; src/approvals/recovery.ts.
   - **Acceptance Checks**: T014 passes with no retry based solely on approved status, timeout, new run or expired process. No UC-04 backend/ledger implementation; no repository execution. Real claim atomicity still external and required by T020/T021.
 
 ## Phase 7: User Story 5 — Safe inspectable history (Priority: P2)
