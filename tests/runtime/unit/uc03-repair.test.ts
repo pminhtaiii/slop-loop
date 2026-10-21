@@ -1347,3 +1347,136 @@ test('replan: plan rejection transitions state to AwaitFeedback and pauses witho
   assert.equal(res.state.node, 'AwaitFeedback');
   assert.ok(res.reasons.some((r) => r.includes('rejected') || r.includes('direction')));
 });
+
+test('replan: task-scoped replanCount persists across simulated new runs without reset (C04, C12)', async () => {
+  const { state, task, plan } = createRepairStateFixture({ replanCount: 2 });
+  assert.equal(state.replanCount, 2);
+  const materialPlan3: FixPlan = {
+    ...plan,
+    strategy: 'Simulated new run material strategy 3',
+    strategyDigest: computeCanonicalSha256('Simulated new run material strategy 3'),
+  };
+  const statePort = new MemoryStatePort({ initialTaskState: state });
+  const res3 = await executeReplan(
+    {
+      taskId: task.taskId,
+      candidatePlan: materialPlan3,
+      proposalId: 'prop-replan-run2-003',
+    },
+    { statePort }
+  );
+  assert.equal(res3.outcome, 'REPLAN_PREPARED');
+  assert.equal(res3.replanCount, 3);
+  assert.equal(res3.state.node, 'AwaitPlan');
+
+  const materialPlan4: FixPlan = {
+    ...plan,
+    strategy: 'Simulated new run material strategy 4',
+    strategyDigest: computeCanonicalSha256('Simulated new run material strategy 4'),
+  };
+  const res4 = await executeReplan(
+    {
+      taskId: task.taskId,
+      candidatePlan: materialPlan4,
+      proposalId: 'prop-replan-run2-004',
+    },
+    { statePort }
+  );
+  assert.equal(res4.outcome, 'INCOMPLETE');
+  assert.equal(res4.replanCount, 3);
+  assert.equal(res4.state.node, 'Incomplete');
+  assert.ok(res4.reasons.some((r) => r.includes('cap') || r.includes('replan')));
+});
+
+test('replan: idempotent replay of an already-reserved proposal does not recharge replan budget', async () => {
+  const { state, task, plan } = createRepairStateFixture({ replanCount: 1 });
+  const existingReservation = {
+    reservationId: 'res-task-replan-prop-replan-replay',
+    keyedId: 'prop-replan-replay',
+    amount: 1,
+  };
+  const stateWithExistingReservation: TaskState = {
+    ...state,
+    budgetLedgers: state.budgetLedgers?.map((l) =>
+      l.scope === 'task' && l.kind === 'replan'
+        ? { ...l, reservations: [...l.reservations, existingReservation], version: l.version + 1 }
+        : l
+    ),
+  };
+  const statePort = new MemoryStatePort({ initialTaskState: stateWithExistingReservation });
+  const materialPlan: FixPlan = {
+    ...plan,
+    strategy: 'Replayed proposal strategy',
+    strategyDigest: computeCanonicalSha256('Replayed proposal strategy'),
+  };
+  const res = await executeReplan(
+    {
+      taskId: task.taskId,
+      candidatePlan: materialPlan,
+      proposalId: 'prop-replan-replay',
+    },
+    { statePort }
+  );
+  assert.equal(res.outcome, 'DENIED');
+  assert.equal(res.replanCount, 1);
+  assert.ok(res.reasons.some((r) => r.includes('replay') || r.includes('denied')));
+});
+
+test('replan: uncertain token or cost accounting reservations fail closed before replan effects', async () => {
+  const { state, task, plan } = createRepairStateFixture({ withUncertainReservation: true });
+  const materialPlan: FixPlan = {
+    ...plan,
+    strategy: 'Strategy under uncertain accounting',
+    strategyDigest: computeCanonicalSha256('Strategy under uncertain accounting'),
+  };
+  const statePort = new MemoryStatePort({ initialTaskState: state });
+  const res = await executeReplan(
+    {
+      taskId: task.taskId,
+      candidatePlan: materialPlan,
+      proposalId: 'prop-replan-uncertain',
+    },
+    { statePort }
+  );
+  assert.equal(res.outcome, 'INCOMPLETE');
+  assert.ok(res.reasons.some((r) => r.includes('uncertain')));
+});
+
+test('replan: missing replan budget ledger fails closed before replan effects', async () => {
+  const { state, task, plan } = createRepairStateFixture();
+  const stateWithoutReplanLedger: TaskState = {
+    ...state,
+    budgetLedgers: state.budgetLedgers?.filter((l) => l.kind !== 'replan'),
+  };
+  const statePort = new MemoryStatePort({ initialTaskState: stateWithoutReplanLedger });
+  const materialPlan: FixPlan = {
+    ...plan,
+    strategy: 'Strategy without replan ledger',
+    strategyDigest: computeCanonicalSha256('Strategy without replan ledger'),
+  };
+  const res = await executeReplan(
+    {
+      taskId: task.taskId,
+      candidatePlan: materialPlan,
+      proposalId: 'prop-replan-no-ledger',
+    },
+    { statePort }
+  );
+  assert.equal(res.outcome, 'INCOMPLETE');
+  assert.ok(res.reasons.some((r) => r.includes('replan') || r.includes('ledger')));
+});
+
+test('replan: rejection in AwaitFeedback requires explicit direction; feedback text alone provides no repair authority', async () => {
+  const { state, task } = createRepairStateFixture({ node: 'AwaitPlan' });
+  const statePort = new MemoryStatePort({ initialTaskState: state });
+  const rejectionRes = await handlePlanRejection(
+    {
+      taskId: task.taskId,
+      rejectionReason: 'Human rejected: do not use try-except; use validation instead',
+    },
+    { statePort }
+  );
+  assert.equal(rejectionRes.outcome, 'AWAIT_FEEDBACK');
+  assert.equal(rejectionRes.state.node, 'AwaitFeedback');
+  assert.equal(rejectionRes.state.activeDecisionId, undefined, 'Rejection must invalidate activeDecisionId');
+});

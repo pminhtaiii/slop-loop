@@ -1,68 +1,18 @@
-/** UC-03 repair; T018 remains pending. */
+/** UC-03 repair; T018 replan and shared types factored into sibling modules. */
 
 import {
   computeCanonicalSha256, computeCheckSetDigest, isProtectedPath, validateApprovalBinding,
   validateStateTransition, validateTaskState, validateNormalizedAction, validateVerificationResult, validateReviewResult,
-  type TaskState, type FixPlan, type VerificationResult, type ReviewResult, type StatePort,
-  type RepositoryPort, type ApprovalPort, type ModelPort, type StateTransitionOptions,
+  type TaskState, type VerificationResult, type ReviewResult, type StatePort,
   type ApplyPatchAction, type ApproveFixPlanAction, type ApprovalBindingContext,
   type BudgetLedger, type ExecutionGuard,
 } from '../contracts/foundation/uc03.ts';
+import type {
+  RepairInput, RepairPorts, RepairResult,
+} from './repair-types.ts';
 
-export type RepairOutcome = 'REPAIR_PREPARED' | 'INCOMPLETE' | 'DENIED';
-
-export interface RepairPatchProposal { readonly diff: string; readonly affectedPaths: readonly string[]; readonly evidenceRefs: readonly string[]; readonly diagnosticRefs: readonly string[] }
-
-export interface TrustedRepairContext {
-  readonly taskId: string; readonly runId: string; readonly workspaceId: string; readonly repositoryId: string; readonly repositoryRevisionDigest: string;
-  readonly baselineRef: string; readonly checkSetDigest: string; readonly diffDigest: string;
-  readonly evidenceRefs: readonly string[]; readonly actionRefs: readonly string[]; readonly diagnosticRefs: readonly string[];
-}
-
-export interface RepairInput {
-  readonly taskId: string;
-  readonly failureEvidence: VerificationResult | ReviewResult | readonly (VerificationResult | ReviewResult)[];
-  readonly repairPatch?: RepairPatchProposal | undefined; readonly actionId?: string | undefined;
-}
-
-export interface RepairPorts {
-  readonly statePort: StatePort; readonly repositoryPort?: RepositoryPort | undefined;
-  readonly executionGuard?: ExecutionGuard | undefined; readonly approvalPort?: ApprovalPort | undefined;
-  readonly modelPort?: ModelPort | undefined; readonly trustedTransitionContext?: StateTransitionOptions['trusted'] | undefined;
-  readonly trustedRepairContext?: TrustedRepairContext | undefined;
-}
-
-export interface RepairResult {
-  readonly outcome: RepairOutcome; readonly state: TaskState | null; readonly reasons: readonly string[];
-  readonly reservedActionId?: string | undefined; readonly appliedPatchDigest?: string | undefined;
-}
-
-export interface PlanMaterialityResult { readonly isMaterial: boolean; readonly changedFields: readonly string[]; readonly reason: string }
-
-export type ReplanOutcome = 'REPLAN_PREPARED' | 'CLARIFICATION_ACCEPTED' | 'INCOMPLETE' | 'AWAIT_FEEDBACK' | 'DENIED';
-
-export interface ReplanInput { readonly taskId: string; readonly candidatePlan: FixPlan; readonly proposalId: string; readonly reason?: string | undefined }
-
-export interface ReplanPorts { readonly statePort: StatePort; readonly approvalPort?: ApprovalPort | undefined; readonly trustedTransitionContext?: StateTransitionOptions['trusted'] | undefined }
-
-export interface ReplanResult { readonly outcome: ReplanOutcome; readonly state: TaskState; readonly reasons: readonly string[]; readonly replanCount: number; readonly isMaterial: boolean }
-
-export interface RejectionInput { readonly taskId: string; readonly rejectionReason: string; readonly decisionId?: string | undefined }
-
-export interface RejectionPorts { readonly statePort: StatePort; readonly trustedTransitionContext?: StateTransitionOptions['trusted'] | undefined }
-
-export function evaluatePlanMateriality(
-  _priorPlan: FixPlan,
-  _candidatePlan: FixPlan
-): PlanMaterialityResult {
-  void _priorPlan;
-  void _candidatePlan;
-  return {
-    isMaterial: false,
-    changedFields: [],
-    reason: 'skeleton-neutral-not-implemented',
-  };
-}
+export * from './repair-types.ts';
+export * from './replan.ts';
 
 function isVerificationResult(item: unknown): item is VerificationResult { return typeof item === 'object' && item !== null && 'testedIds' in item; }
 
@@ -286,30 +236,3 @@ export async function executeRepair(input: RepairInput, ports: RepairPorts): Pro
 }
 
 async function safeReload(statePort: StatePort, taskId: string, fallback: TaskState): Promise<TaskState> { try { const latest = await statePort.loadTask(taskId); return latest && validateTaskState(latest).ok ? latest : fallback; } catch { return fallback; } }
-export async function executeReplan(
-  input: ReplanInput,
-  ports: ReplanPorts
-): Promise<ReplanResult> {
-  const currentState = await ports.statePort.loadTask(input.taskId);
-  return {
-    outcome: 'INCOMPLETE',
-    state: currentState ?? ({} as TaskState),
-    reasons: ['skeleton-neutral-not-implemented'],
-    replanCount: currentState?.replanCount ?? 0,
-    isMaterial: false,
-  };
-}
-
-export async function handlePlanRejection(
-  input: RejectionInput,
-  ports: RejectionPorts
-): Promise<ReplanResult> {
-  const currentState = await ports.statePort.loadTask(input.taskId);
-  return {
-    outcome: 'INCOMPLETE',
-    state: currentState ?? ({} as TaskState),
-    reasons: ['skeleton-neutral-not-implemented'],
-    replanCount: currentState?.replanCount ?? 0,
-    isMaterial: false,
-  };
-}
