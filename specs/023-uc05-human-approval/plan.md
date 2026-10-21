@@ -39,7 +39,7 @@ The constitution remains an unratified placeholder. Governance comes from [AGENT
 | Shared contracts | Canonical schema 0.1.0 unchanged; companion logical contract agreed; T002 validators and test-only T004 ports are implemented | Real store, production composition and runtime conformance remain gated |
 | Durable control | Proposed UC-04 transactions and shared admission epochs | Real store, scheduler/model/executor composition before integration |
 | Evidence | Local mocks, CLI, real tools and restart have distinct levels | Required cases observed; unrun cases prevent VERIFIED claims |
-| Authorization | T001–T013 authorized in separate phases; shared agreement and Phase 3/4/5 seams confirmed; T023–T027 are scoped corrections | T014–T022 need separate authorization; production execution remains separately gated |
+| Authorization | T001–T015 authorized in separate phases; shared agreement and Phase 3/4/5/6 seams confirmed; T023–T027 are scoped corrections | T016–T022 need separate authorization; production execution remains separately gated |
 
 Recheck these gates after design changes; a clean planning audit does not satisfy external delivery or authorization gates.
 
