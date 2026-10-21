@@ -49,7 +49,7 @@ async function taskStates(repo) {
     if (error.code === 'ENOENT') return [];
     throw error;
   });
-  if (!Array.isArray(entries) || entries.some((entry) => !entry || !['active', 'blocked', 'completed'].includes(entry.status))) throw new Error('Invalid shared task state.');
+  if (!Array.isArray(entries) || entries.some((entry) => !entry || !['active', 'blocked', 'completed', 'handed-off'].includes(entry.status))) throw new Error('Invalid shared task state.');
   return entries;
 }
 
@@ -66,7 +66,7 @@ async function eligible(repo, receipt) {
   const current = await worker(repo, receipt.path, receipt.branch);
   if (current.head !== receipt.acceptedHead) throw new Error('Worker HEAD changed after acceptance.');
   const states = await taskStates(repo);
-  if (states.some((entry) => entry.status !== 'completed' && (!entry.checkout || resolve(entry.checkout) === current.path))) throw new Error('Worker has active or blocked assignments, or an unlocated active legacy assignment.');
+  if (states.some((entry) => !['completed', 'handed-off'].includes(entry.status) && (!entry.checkout || resolve(entry.checkout) === current.path))) throw new Error('Worker has active or blocked assignments, or an unlocated active legacy assignment.');
   if (git(current.path, ['status', '--porcelain', '--untracked-files=all', '--ignored']).stdout.trim()) throw new Error('Worker has modified, untracked, or ignored files.');
   if (git(repo.primary, ['merge-base', '--is-ancestor', current.head, receipt.integrationRef], true).status !== 0) throw new Error('Worker tip is not integrated into the recorded integration ref.');
   const retained = await evidence(repo, receipt.evidence.path);
@@ -103,7 +103,7 @@ async function run(args) {
     if (command === 'accept') {
       const current = await worker(repo, receipt.path, receipt.branch);
       const states = await taskStates(repo);
-      if (!states.some((entry) => entry.owner === receipt.owner && entry.task === receipt.task && entry.status === 'completed' && entry.checkout && resolve(entry.checkout) === current.path)) throw new Error('A completed shared handoff matching owner, task, and checkout is required.');
+      if (!states.some((entry) => entry.owner === receipt.owner && entry.task === receipt.task && ['completed', 'handed-off'].includes(entry.status) && entry.checkout && resolve(entry.checkout) === current.path)) throw new Error('A completed shared handoff matching owner, task, and checkout is required.');
       receipt.status = 'accepted';
       receipt.acceptedHead = current.head;
       receipt.evidence = await evidence(repo, values.evidence);

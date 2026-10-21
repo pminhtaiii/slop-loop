@@ -2,7 +2,13 @@ name: Contributor checks
 
 on:
   push:
+    branches: [main, development]
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: contributor-checks-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -17,10 +23,20 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+      - name: Select pinned pnpm version
+        uses: pnpm/setup@c9883cc79df532ad1a7b81bf9ab944ceb090d65c # v2.0.0
+        with:
+          install: false
+      - name: Install dependencies for test discovery
+        run: pnpm install --frozen-lockfile
       - name: Check context consistency
         run: node scripts/ci/check-context.mjs
+      - name: Check tracked files
+        run: node scripts/ci/check-tracked-files.mjs
       - name: Test contributor helpers
-        run: node --test
+        run: pnpm run test:contributors

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { copyFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { access, copyFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const cliSource = resolve(repositoryRoot, 'scripts/agents/agent-context.mjs');
+const storeSource = resolve(repositoryRoot, 'scripts/agents/agent-store.mjs');
 
 function git(root, args) {
   const result = spawnSync('git', args, { cwd: root, encoding: 'utf8', windowsHide: true });
@@ -16,9 +17,10 @@ function git(root, args) {
 }
 
 async function fixture(t) {
-  const root = await mkdtemp(join(tmpdir(), 'agent-context path with spaces-'));
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'agent-context path with spaces-')));
   t.after(async () => rm(root, { recursive: true, force: true }));
   const cliPath = join(root, 'scripts', 'agents', 'agent-context.mjs');
+  const storePath = join(root, 'scripts', 'agents', 'agent-store.mjs');
   const tasksPath = join(root, 'specs', 'feature', 'tasks.md');
   const planPath = join(root, 'specs', 'feature', 'plan.md');
   const tasks = `# Tasks
@@ -71,7 +73,9 @@ This unrelated database note should not be copied into task context.
   await mkdir(dirname(tasksPath), { recursive: true });
   await mkdir(join(root, 'src'), { recursive: true });
   await mkdir(join(root, 'docs'), { recursive: true });
+  await writeFile(join(root, '.gitignore'), '.agent-work/\n', 'utf8');
   await copyFile(cliSource, cliPath);
+  await copyFile(storeSource, storePath);
   await writeFile(tasksPath, tasks, 'utf8');
   await writeFile(planPath, plan, 'utf8');
   await writeFile(join(root, 'src', 'declared file.ts'), 'export const value = 1;\n', 'utf8');
@@ -110,6 +114,8 @@ This unrelated database note should not be copied into task context.
     'add',
     '--',
     'scripts/agents/agent-context.mjs',
+    'scripts/agents/agent-store.mjs',
+    '.gitignore',
     'specs/feature/tasks.md',
     'specs/feature/plan.md',
     'src/declared file.ts',
@@ -130,6 +136,36 @@ function run(fixtureValue, args, cwd = tmpdir()) {
   });
 }
 
+test('assignment derives a UC brief and flags missing planning artifacts without changing tasks', async (t) => {
+  const current = await fixture(t);
+  const path = join(current.root, 'docs/use-case-delegation.md');
+  const source = '# Delegation\n## Assignments\n| UC | Delivery | Owner | Start condition | Feature artifacts |\n|---|---|---|---|---|\n| UC-03 | Bug fix | Tai | Bounded tools and approval gate | Not created |\n## Delivery order and shared work\n### Shared foundation ownership\nTai leads foundation; others own state and approval.\n## UC-03: Bug fix\n**Deliver:** fix a seeded bug.\n**Acceptance handoff:** baseline and regression pass.\n[Testing](../context/testing.md)\n## UC-04: Resume\nUnrelated brief.\n';
+  await writeFile(path, source);
+  let result = run(current, ['assignment', '--uc', 'UC-03']);
+  assert.equal(result.status, 0, result.stderr);
+  let output = JSON.parse(result.stdout);
+  assert.equal(output.owner, 'Tai');
+  assert.equal(output.status, 'NEEDS_PLANNING');
+  assert.match(output.brief, /baseline and regression/);
+  assert.doesNotMatch(output.brief, /Unrelated brief/);
+  assert.ok(output.context.includes('context/testing.md'));
+  assert.match(output.prerequisites, /approval gate/);
+  const linked = source.replace('Not created', '[Spec](spec.md) [Plan](../specs/feature/plan.md) [Tasks](../specs/feature/tasks.md)');
+  await writeFile(path, linked);
+  result = run(current, ['assignment', '--uc', 'UC-03']);
+  output = JSON.parse(result.stdout);
+  assert.equal(output.status, 'REVIEW_REQUIRED', 'file presence must not claim dependency or approval readiness');
+  assert.equal(output.artifacts.length, 3);
+  for (const text of [linked + '\n| UC-03 | Duplicate | Someone | Unknown | Unknown |\n', linked.replace('[Spec](spec.md)', '[Spec](../../../escape.md)')]) {
+    await writeFile(path, text);
+    assert.equal(run(current, ['assignment', '--uc', 'UC-03']).status, 1);
+  }
+  await writeFile(path, source);
+  assert.equal(run(current, ['assignment', '--uc', 'UC-01']).status, 1);
+  assert.equal(run(current, ['assignment', '--uc', 'UC3']).status, 1);
+  assert.equal(git(current.root, ['diff', '--', 'specs/feature/tasks.md']), '');
+});
+
 test('handoff derives canonical counts and workflow pointers from source docs', async (t) => {
   const current = await fixture(t);
   const result = run(current, ['handoff', '--tasks', 'specs/feature/tasks.md']);
@@ -140,6 +176,102 @@ test('handoff derives canonical counts and workflow pointers from source docs', 
   assert.match(result.stdout, /Step 2: Converge -> Step 3: Dual-Axis Code Review -> Step 4:/);
   assert.doesNotMatch(result.stdout, /T099/);
   assert.doesNotMatch(result.stdout, /Stale summary says/);
+});
+
+test('resume reports checkout, ledger frontier, evidence pointers and worker state without writes or granting work', async (t) => {
+  const current = await fixture(t);
+  const tasks = `# Tasks
+
+## Phase 1: Foundation
+- [x] T001 Complete the prerequisite.
+  - **Dependencies**: None.
+- [ ] T002 Ready candidate.
+  - **Dependencies**: T001.
+- [ ] T003 Wait for T002.
+  - **Dependencies**: T002.
+- [ ] T004 Wait for an external gate.
+  - **Dependencies**: X04-STATE.
+- [ ] T005 Missing dependency declaration.
+`;
+  await writeFile(current.tasksPath, tasks, 'utf8');
+  await mkdir(join(current.root, 'specs/feature/contracts'), { recursive: true });
+  await writeFile(join(current.root, 'specs/feature/contracts/decisions.md'), '# Decisions\n', 'utf8');
+  await writeFile(join(current.root, 'docs/authorization.md'), '# Authorization source\n', 'utf8');
+  await writeFile(join(current.root, 'docs/authorization-follow-up.md'), '# Follow-up source\n', 'utf8');
+  const statePath = join(current.root, '.agent-work/state/active-tasks.json');
+  await mkdir(dirname(statePath), { recursive: true });
+  const entries = [
+    {
+      owner: 'worker-ready', task: 'T002', role: 'worker', status: 'active', checkout: current.root,
+      summary: 'Assigned candidate', next: 'Wait for coordinator authorization',
+      verification: `${'Focused pass; '.repeat(40)}full run failed; required check not run; see docs/verification/focused.md`,
+      result: 'https://example.invalid/runs/42', updatedAt: '2026-10-20T10:00:00.000Z',
+    },
+    {
+      owner: 'worker-blocked', task: 'T004', role: 'worker', status: 'blocked', checkout: current.root,
+      summary: 'External dependency', next: 'Wait for X04-STATE', verification: 'Required check not run',
+      updatedAt: '2026-10-20T09:00:00.000Z',
+    },
+    {
+      owner: 'coordinator', task: 'resume-report', role: 'coordinator', status: 'active', checkout: current.root,
+      summary: 'Current coordinator work', next: 'Inspect current state', verification: 'docs/verification/current.md',
+      updatedAt: '2026-10-20T11:00:00.000Z',
+    },
+  ];
+  await writeFile(statePath, `${JSON.stringify(entries, null, 2)}\n`, 'utf8');
+  const stateBefore = await readFile(statePath, 'utf8');
+
+  const result = run(current, [
+    'resume', '--tasks', 'specs/feature/tasks.md',
+    '--authorization', 'docs/authorization.md',
+    '--authorization', 'docs/authorization-follow-up.md',
+  ]);
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(result.stdout.includes(`Checkout: ${current.root}`));
+  assert.match(result.stdout, /Branch: fixture/);
+  assert.match(result.stdout, /HEAD: [0-9a-f]{40}/);
+  assert.match(result.stdout, /T002 \[Phase 1: Foundation\] deps: T001 checked/);
+  assert.match(result.stdout, /T003: T002 open/);
+  assert.match(result.stdout, /T004: X04-STATE unresolved/);
+  assert.match(result.stdout, /T005: dependencies unspecified/);
+  assert.match(result.stdout, /specs\/feature\/contracts\/decisions\.md/);
+  assert.match(result.stdout, /docs\/authorization\.md/);
+  assert.match(result.stdout, /docs\/authorization-follow-up\.md/);
+  assert.match(result.stdout, /no grant is inferred/);
+  assert.match(result.stdout, /worker-ready\/T002 \[active\]/);
+  assert.match(result.stdout, /worker-blocked\/T004 \[blocked\]/);
+  assert.match(result.stdout, /active 1; blocked 1/);
+  assert.match(result.stdout, /full run failed/);
+  assert.match(result.stdout, /required check not run/);
+  assert.match(result.stdout, /Required check not run/);
+  assert.match(result.stdout, /focused\.md/);
+  assert.match(result.stdout, /https:\/\/example\.invalid\/runs\/42/);
+  assert.match(result.stdout, /never authorizes work/);
+  assert.equal(await readFile(statePath, 'utf8'), stateBefore);
+});
+
+test('resume without a ledger or shared state reports the absence without creating state', async (t) => {
+  const current = await fixture(t);
+  const result = run(current, ['resume']);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Task ledger: not supplied/);
+  assert.match(result.stdout, /shared store not present/);
+  await assert.rejects(access(join(current.root, '.agent-work')), { code: 'ENOENT' });
+});
+
+test('resume retries a busy shared store once and leaves its lock untouched', async (t) => {
+  const current = await fixture(t);
+  const stateDirectory = join(current.root, '.agent-work/state');
+  const statePath = join(stateDirectory, 'active-tasks.json');
+  const lockPath = join(stateDirectory, 'active-task.lock');
+  await mkdir(stateDirectory, { recursive: true });
+  await writeFile(statePath, '[]\n', 'utf8');
+  await writeFile(lockPath, 'another writer\n', 'utf8');
+
+  const result = run(current, ['resume']);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /being updated|changed during the read/);
+  assert.equal(await readFile(lockPath, 'utf8'), 'another writer\n');
 });
 
 test('explicit root works when the CLI is dispatched from another checkout', async (t) => {

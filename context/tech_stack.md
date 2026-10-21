@@ -7,29 +7,31 @@ This page records approved implementation choices and keeps undecided choices ex
 | Area | Choice | Scope |
 |---|---|---|
 | slop-loop implementation | TypeScript | Core coding-agent runtime |
+| Runtime toolchain | Node.js 24 LTS, pnpm@12.5.1 | Phase 1 bootstrap; frozen pnpm-lock.yaml |
+| Compiler and build | TypeScript 6.0.3, strict NodeNext ESM | pnpm run typecheck / pnpm run build |
+| Runtime test runner | Node.js built-in test runner | pnpm run test:runtime; compiled TypeScript tests |
+| Mechanical lint | ESLint 10.12.0, typescript-eslint 8.71.2 | pnpm run lint |
 | Workflow orchestration | `@langchain/langgraph` | Retain the official TypeScript implementation as the orchestration library |
 | Initial target repositories | Python with `pytest` | Repositories the runtime will initially operate on |
+| Task execution environment | Docker | Agent loop and trusted harness on host; repository and Python/pytest tooling in task container; host-side tools use Docker execution directly; see [ADR-0003](../docs/adr/0003-docker-task-workspace-boundary.md) |
 
-These choices describe the intended product stack. They do not establish that the runtime or these dependencies are already implemented in this repository.
+Phase 1 provides the strict TypeScript/LangGraph build and a dependency smoke test. Phase 2 canonical validators use TypeScript and Node built-ins without a schema dependency; they do not provide the UC-03 workflow or select a production provider. [pnpm-workspace.yaml](../pnpm-workspace.yaml) makes pnpm's default 24-hour dependency release-age policy explicit. The lock selects compatible core 1.2.17 and LangSmith 0.10.13 after CI rejected the newer imported releases; no age exclusion or trust bypass is configured. Exact direct versions are pinned in [package.json](../package.json) and transitive versions in [pnpm-lock.yaml](../pnpm-lock.yaml). The user confirmed shared-contract agreement, completed Phase 1 bootstrap and authorized Phase 2 canonical validators and test-only mocks; [decisions](../specs/001-verified-code-repair/contracts/decisions.md) retains production release gates.
 
 ## Existing contributor helpers
 
 The repository has Node.js ES module agent helpers under `scripts/agents/` with tests under `tests/agents/`. CI validation scripts and their tests live under `scripts/ci/` and `tests/ci/`. The existing helper test command uses Node's built-in test runner and requires Node.js 20 or newer; see [testing guidance](testing.md).
 
-This is contributor tooling already present in the repository. It does not select the core runtime's Node.js version, package manager, or test framework.
+Contributor helpers retain their existing Node.js commands. The separately selected runtime bootstrap uses the tools listed above; helper test results do not prove runtime behavior.
 
 ## Open decisions
 
 No choice is recorded yet for:
 
-- the Node.js version used to run the TypeScript runtime;
-- the package manager and dependency lockfile;
-- the TypeScript runtime's test framework;
-- build, lint, and formatting tools;
+- formatting tools;
 - a CLI or service framework;
 - the LLM provider and model;
 - the persistence and LangGraph checkpoint backend;
-- the isolation mechanism used to execute repository commands;
+- the concrete Docker isolation configuration;
 - deployment and supported operating environments;
 - the evaluation harness and reporting format.
 

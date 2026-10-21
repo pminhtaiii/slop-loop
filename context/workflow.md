@@ -4,7 +4,7 @@ This workflow governs contributors implementing an approved local Spec Kit featu
 
 ## Input readiness
 
-Before implementation, confirm the selected feature has `spec.md`, `plan.md`, and `tasks.md`, and resolve inconsistencies that block safe execution. Do not regenerate planning artifacts unless the user asks or a concrete gap requires it. `tasks.md` is the only task-status ledger.
+Before starting edits in an assigned feature checkout, run `node scripts/agents/pr-workflow.mjs preflight` and inspect its status, freshness, branch name, and dirty paths. Follow [the PR workflow](../docs/agents/pr-workflow.md#branch-and-size) for blocked reports; preserve existing work. For a selected use case, run `node scripts/agents/agent-context.mjs assignment --uc UC-03` with its canonical ID, then confirm the reported owner, prerequisites, and approved artifacts. `NEEDS_PLANNING` and `REVIEW_REQUIRED` are not implementation authorization. Before implementation, confirm the selected feature has `spec.md`, `plan.md`, and `tasks.md`, and resolve inconsistencies that block safe execution. Follow the [planning workflow](planning.md) to author or update specs, plans, and task breakdowns through its deterministic P0/P1 review loop before implementation authorization. Do not regenerate planning artifacts unless the user asks or a concrete gap requires it. `tasks.md` is the only task-status ledger.
 
 ## Active-task handoff
 
@@ -16,27 +16,30 @@ Use a distinct owner ID for each session or worker and a task ID that identifies
 node scripts/agents/active-task.mjs start --owner <owner-id> --task <task-id> --summary "<assignment>" --next "<next action>"
 node scripts/agents/active-task.mjs update --owner <owner-id> --task <task-id> --next "<next action>" --verification "<verification evidence>"
 node scripts/agents/active-task.mjs update --owner <owner-id> --task <task-id> --status blocked --next "<blocker or resume action>"
+node scripts/agents/active-task.mjs handoff --owner <worker-id> --task <task-id> --result "<worker result for integration>"
 node scripts/agents/active-task.mjs finish --owner <owner-id> --task <task-id> --result "<completed work and evidence>"
-node scripts/agents/active-task.mjs clear --owner <owner-id> --task <task-id>
-node scripts/agents/active-task.mjs list
+New-Item -ItemType Directory -Force docs/verification | Out-Null
+node scripts/agents/active-task.mjs archive --owner <owner-id> --task <task-id> --output docs/verification/<unique-name>.json
+node scripts/agents/active-task.mjs archive --owner <owner-id> --task <task-id> --output docs/verification/<unique-name>.json --apply
+node scripts/agents/active-task.mjs list --compact [--owner <owner-id>] [--task <task-id>] [--status <status>]
 node scripts/agents/active-task.mjs render
 ```
 
-Update the next action at meaningful progress and pause points; include verification when it changes. Mark blocked or interrupted work `blocked` and keep its entry. Set it back to `active` when resuming. A worker must finish its entry before reporting and include its owner and task IDs in the report. `finish` retains the completed handoff for coordinator review. After integrating the result and recording durable evidence and task status, the coordinator clears only that completed owner/task entry. Coordinators follow the same lifecycle for their own entry and leave other owners' entries untouched. Only completed entries can be cleared; clearing removes the one matching managed entry while preserving the file's permanent instructions and data markers. The helper does not commit or push.
+Update the next action at meaningful progress and pause points; include verification when it changes. Mark blocked or interrupted work `blocked` and keep its entry. Set it back to `active` when resuming. Register workers with `start --role worker`; the default role is coordinator and cannot use worker handoff. Workers run `handoff` before reporting and include owner/task IDs; their state is `handed-off`, not contributor completion. Coordinators publish the current clean revision, link the PR in the app, save/import the app list receipt with `pr-workflow.mjs record-app-state --receipt <file>`, then run `finish`. Finish checks the live PR head, retained local gates and app link, all four passing CI jobs and no GitHub merge blocker before marking completed. Unresolved review comments remain visible and advisory for the human merge decision. With `publication-targets.json` configured, [paired publication](../docs/agents/paired-publication.md) also requires the submission PR to match the source snapshot and the app receipt to contain both PR links. Public current-head CI remains the contributor review gate; submission CI is reported separately when inspected. Pending CI remains active under the app watcher; failed or unpublished work stays active/blocked. Contributor completion and final reports require this gate; human merge remains separate. After integrating the result and recording durable evidence and task status, the coordinator runs `archive` in preview mode, reviews the selected completed or handed-off entry and unique output path, then repeats with `--apply`. The helper saves and verifies the entry before clearing only that matching completed handoff. Per the user's local-only evidence preference, keep `docs/verification/` and its archive records ignored; do not force-add them. Create that directory before archiving on a fresh checkout. Track task status in tasks.md and context updates as usual. Tracked documentation may link to immutable historical GitHub evidence or label current local paths as code; it must not require ignored evidence files to exist for CI. Retain active/blocked entries. If interrupted after archive creation, rerun the same command and output; a different or changed entry is refused. Handoff archival is separate from worktree retirement and never deletes a worktree or its evidence. Coordinators follow the same lifecycle for their own entry and leave other owners' entries untouched. Only completed or handed-off entries can be cleared; clearing removes the one matching managed entry while preserving the file's permanent instructions and data markers. The helper does not commit or push.
 
-Mutations in the primary checkout refresh its Markdown view automatically. Worker mutations update only the ignored shared store, keeping tracked worker files clean for retirement. Use `list` to inspect shared work and explicit `render` to refresh the selected checkout's view; review generated entries before committing. Workers do not write another checkout's Markdown file. On first use, the helper imports existing handoffs from registered checkouts, rejecting conflicting legacy entries for reconciliation. Shared writes use one lock across worktrees; a busy lock requires retry after the writer finishes, not automatic reclamation. Use `--root <checkout>` to select the invoking view and `--help` for command syntax.
+Use `active-task.mjs list --compact` to inspect current owner/task/status/next summaries; filter with `--owner`, `--task`, or `--status`. Plain `list` keeps its full JSON output for existing automation. Use `agent-work.mjs list` for managed session summaries and `agent-context.mjs resume` only when task candidates, dependencies, or detailed evidence pointers are needed. Explicit `render` refreshes only the selected checkout's optional Markdown view. Keep rendered assignments out of unrelated PRs and retain durable handoff evidence locally through the archive workflow. Workers do not write another checkout's Markdown file. On first use, the helper imports existing handoffs from registered checkouts and rejects conflicts. Shared writes use one lock across worktrees; retry a busy lock after the writer finishes. Use `--root <checkout>` to select the invoking view and `--help` for syntax.
 
 ## Workflow pipeline
 
 ```text
-build-spec (task graph and TDD) → speckit-converge → code-review → PR/CI (separately authorized)
+planning loop (plan, tasks, P0/P1 audit) -> build-spec (task graph and TDD) -> speckit-converge -> code-review (unless the user explicitly opts out) -> context refresh -> contributor PR/CI
 ```
 
-`/build-spec` owns implementation, convergence, and code review for the integrated revision. PR creation, remote issue changes, CI publishing, and deployment require separate authorization.
+`/build-spec` owns implementation and convergence; post-implementation code review follows the user's instruction. The contributor PR pilot has standing limited authorization for coordinator commits, feature-branch pushes, and draft PR creation/updates; workers have no remote authority. Follow the [PR and CI workflow](../docs/agents/pr-workflow.md). The pilot uses `development` as the base for both public and private PRs. Follow the [branch and PR conventions](../docs/agents/pr-conventions.md) before creating a new work branch or preparing PR metadata; new names omit numeric prefixes, remain unique across both repositories and historical PRs, and prefix their paired PR titles exactly. A human decides each merge; coordinator execution requires an explicit instruction for that PR and passing required checks. Remote issue changes and deployment remain separately authorized.
 
 ## Agent coordination
 
-Keep worker changes scoped to assigned task IDs and owned files. Implementers do not change task checkboxes; only the coordinator marks a task complete after integration and applicable checks pass. Recompute dependencies and the ready task frontier after each accepted integration.
+The coordinator does one bounded preflight, then dispatches one concise brief for each authorized, ready assignment. Workers keep changes within registered task IDs and owned paths and update shared state at meaningful checkpoints. The coordinator waits for a concrete blocker or final handoff, refreshes assignment state, integrates one result at a time, and recomputes the ready frontier. Keep routine progress in the shared assignment rather than chat.
 
 Use the task helper to derive context from the canonical ledger:
 
@@ -47,6 +50,16 @@ node scripts/agents/agent-context.mjs task --tasks specs/<feature>/tasks.md --ta
 
 These commands report task context only; they never change task status.
 
+**Resume from compact evidence:**
+
+Use the compact assignment list first; run the detailed ledger report when task context is needed:
+
+```powershell
+node scripts/agents/agent-context.mjs resume [--tasks <tasks.md>] [--authorization <repo-relative-path> ...] [--root <checkout>]
+```
+
+Use `active-task.mjs list --compact` first for owner/task/status/next; filter with `--owner`, `--task`, or `--status`. Run `agent-context.mjs resume` only when the task frontier, dependencies, authorization pointers, or detailed verification context is needed. The resume report is read-only; its paths are pointers, not authorization. Check current user direction and the governing decision record before acting, then read only sources needed for the next action. If a read fails, inspect the error and retry once with a bounded supported read of that named source; if it fails again, record the blocker and stop.
+
 Create a managed session directory before coordinated work:
 
 ```powershell
@@ -55,13 +68,11 @@ node scripts/agents/agent-work.mjs list [--root <checkout>]
 node scripts/agents/agent-work.mjs finish --session <date>/<session-id> [--root <checkout>]
 ```
 
-Keep drafts, worker notes, raw logs, and review snapshots in `.agent-work/<date>/<session-id>/`. Before creating task worktrees or cleaning a run, follow [the dump workspace guide](../docs/agents/workspace.md): worktrees live separately under `.agent-work/worktrees/`, with machine-readable ownership receipts. Keep approved specs, task ledgers, and concise verification records at their canonical paths. Leave a session active while work may resume. Cleanup previews by default; only explicitly authorized human action may apply cleanup.
+Keep drafts, worker notes, raw logs, and review snapshots in `.agent-work/<date>/<session-id>/`. Before creating task worktrees or cleaning a run, follow [the dump workspace guide](../docs/agents/workspace.md): worktrees live separately under `.agent-work/worktrees/`, with machine-readable ownership receipts. Keep approved specs, task ledgers, and concise verification records at their canonical paths. Leave a session active while work may resume. Session finish refuses active/blocked assignments in its checkout, so session bookkeeping cannot close an unfinished contributor assignment. Cleanup previews by default; only explicitly authorized human action may apply cleanup.
 
 ### Task briefs and handoffs
 
-Give each worker one or two ready task IDs (or name the approved maintenance goal), the relevant plan section, owned paths, required outputs, dependencies, observable acceptance criteria, and focused verification commands. Share only the contract and context needed for that assignment.
-
-Record a concise handoff with checkout, branch/revision, ledger and next candidate, authorized next step, blockers and verification status, path ownership, worker states, and evidence locations. Refresh worker state before acting on it; a sent message alone does not mean a worker resumed.
+A concise worker brief names the intended outcome, owned paths, acceptance checks, exclusions, and where to record completion evidence; include registered owner/task IDs, checkout/branch, and links to the relevant plan or contract. Avoid copying repository rules already available by pointer. Workers record progress in active-task state and message only for a concrete blocker or final handoff. The final handoff lists the revision, changed paths, focused commands and results, remaining gaps, and evidence pointers. Workers run focused acceptance checks; the coordinator/publisher integrates one result at a time and runs the full required local gates once on the integrated tree.
 
 ### Review snapshots
 
@@ -90,7 +101,9 @@ Assess the integrated implementation against the approved spec, plan, and task l
 
 ## Step 3: Code review (`/code-review`)
 
-Review the pinned integrated revision against [backend code standards](code_standard.md), other applicable repository conventions, and the originating specification. Resolve blocking findings within the authorized task scope and rerun affected checks, convergence, and review for the changed revision.
+Honor an explicit user request to skip post-implementation review; do not dispatch review agents for that task. This choice does not waive required task tests, acceptance checks, context refresh, or contributor gates. Follow [testing guidance](testing.md) when reporting verification.
+
+When the user has not opted out, review the pinned integrated revision against [backend code standards](code_standard.md), other applicable repository conventions, and the originating specification. Resolve blocking findings within the authorized task scope and rerun affected checks, convergence, and review for the changed revision.
 
 ## Context refresh
 
@@ -98,5 +111,7 @@ After implementation and verification, update affected context documents from in
 
 ## Step 4: PR and CI (`/pr-feedback-loop`)
 
-This stage is separate from local feature completion and requires explicit user authorization. Run the repository's applicable local gates before publishing changes; report remote CI outcomes and any unrun gates accurately.
+While waiting for a resolving PR review, assess each scoped paired ticket against all acceptance criteria, prepare evidence and preview [paired ticket completion](../docs/agents/paired-publication.md#complete-paired-tickets). Apply only after both resolving PRs merge, their source snapshots match and the public exact-head CI passes. CodeRabbit approval is advisory. Keep partial-close accounting and retry the same stable key; never infer completion from labels, age or CI alone. This issue lifecycle is separate from contributor handoff and human merge authority.
+
+After implementation, refresh affected context before publishing. The approved contributor PR pilot authorizes the coordinator to run the [PR workflow](../docs/agents/pr-workflow.md) for draft creation and updates on `development`; workers do not write remotely. Only `READY_FOR_HUMAN` permits the `ready` command. A human decides each merge; the coordinator may execute it only when explicitly instructed for that PR, after required checks pass, following the linked workflow. Report missing or stale evidence as waiting or blocked, never as ready.
 

@@ -1,5 +1,9 @@
 .env
+node_modules/
 .agent-work/
 .scratch/agent-work.lock
 context/.active-task.lock
 context/.active-task-*.tmp
+dist/
+docs/verification/
+fixtures/

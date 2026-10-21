@@ -1,0 +1,9 @@
+# UC-03 scope and evidence-backed completion
+
+Accepted on 2026-10-15 during the UC-03 design discussion. Start with one localized bug whose incorrect behavior and intended result can be stated clearly. The first slice must demonstrate a complete path from a validated bug task through investigation, baseline reproduction, controlled patching, focused and regression verification, and an evidence-backed report. This is a first slice, not a claim that every UC-03 acceptance case is covered.
+
+Establish acceptance criteria and required checks before editing. When the request leaves materially different interpretations of intended behavior, the agent explains its understanding and asks the user to confirm. Within agreed criteria, the agent may choose implementation details. It makes the smallest coherent fix; improvements outside the requested scope require user permission and must remain unapplied without it.
+
+The agent may propose completion, but the harness determines whether required verification and review evidence satisfies the agreed criteria. Required evidence includes pre-fix reproduction, a passing focused regression test, passing required existing tests without weakening them, and review against acceptance criteria and scope. Missing required evidence means the result is incomplete. Success means the reported bug no longer reproduces under the agreed checks; it does not establish that the entire codebase is free of bugs.
+
+Users receive meaningful live activity, short milestone updates, concise explanations of consequential choices, and a final diff with verification evidence. Detailed technical evidence can be expandable; raw internal chain of thought is not the progress interface. Stop controls are outside this batch and will be discussed separately. Interface technology and streaming transport remain open.

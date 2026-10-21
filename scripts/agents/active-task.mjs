@@ -1,48 +1,88 @@
-import { lstat, readFile } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
+import { lstat, open, readFile, realpath } from 'node:fs/promises';
+import { basename, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { runWorkflow } from './pr-workflow.mjs';
+import { isDeepStrictEqual } from 'node:util';
 import { atomicWrite, dataDirectory, readJson, repository, withLock } from './agent-store.mjs';
 
 const usage = `Usage:
-  node scripts/agents/active-task.mjs start --owner <id> --task <id> --summary <text> --next <text>
+  node scripts/agents/active-task.mjs start --owner <id> --task <id> --summary <text> --next <text> [--role coordinator|worker]
   node scripts/agents/active-task.mjs update --owner <id> --task <id> [--next <text>] [--verification <text>] [--status active|blocked]
+  node scripts/agents/active-task.mjs handoff --owner <id> --task <id> --result <text>
   node scripts/agents/active-task.mjs finish --owner <id> --task <id> --result <text>
   node scripts/agents/active-task.mjs clear --owner <id> --task <id>
+  node scripts/agents/active-task.mjs archive --owner <id> --task <id> --output docs/verification/<name>.json [--apply]
   node scripts/agents/active-task.mjs list
+  node scripts/agents/active-task.mjs list --compact [--owner <id>] [--task <id>] [--status <status>]
   node scripts/agents/active-task.mjs render
 
 All commands accept --root <checkout>. Use a unique owner per session/worker.
-finish retains the result for review; clear removes only that completed entry.
+finish requires a clean published linked PR and passing current-head CI; pending CI stays active.
+handoff returns registered worker results without completing contributor work.
+clear removes only completed or handed-off entries.
+archive previews by default; --apply preserves and verifies a completed handoff before clearing it.
 All worktrees share the primary checkout's .agent-work/state/active-tasks.json.
-Primary mutations refresh Markdown; worker mutations leave tracked views unchanged.
-render explicitly refreshes the selected checkout's view.
+Only render refreshes the selected checkout's Markdown view; other mutations update local shared state only.
 A busy lock is not automatically reclaimed. The permanent template is preserved.`;
 
 function parseArguments(args) {
   const [command, ...options] = args;
   const fields = {
-    start: ['summary', 'next'], update: ['next', 'verification', 'status'],
-    finish: ['result'], clear: [], list: [], render: [],
+    start: ['summary', 'next', 'role'], update: ['next', 'verification', 'status'],
+    finish: ['result'], handoff: ['result'], clear: [], archive: ['output'], list: ['owner', 'task', 'status'], render: [],
   };
   if (!Object.hasOwn(fields, command)) throw new Error(usage);
   const values = {};
-  for (let index = 0; index < options.length; index += 2) {
+  for (let index = 0; index < options.length; index++) {
+    if (options[index] === '--compact' && command === 'list' && !values.compact) { values.compact = true; continue; }
+    if (options[index] === '--apply' && command === 'archive' && !values.apply) { values.apply = true; continue; }
     const name = options[index].slice(2);
     const value = options[index + 1];
     if (!options[index].startsWith('--') || !['root', 'owner', 'task', ...fields[command]].includes(name) || Object.hasOwn(values, name) || !value?.trim() || value.startsWith('--')) {
       throw new Error(`Invalid or duplicate option: ${options[index]}\n${usage}`);
     }
     values[name] = value;
+    index++;
   }
   for (const name of ['list', 'render'].includes(command) ? [] : ['owner', 'task']) {
     if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(values[name] ?? '')) throw new Error(`A valid --${name} ID is required.`);
   }
-  for (const name of command === 'start' ? ['summary', 'next'] : command === 'finish' ? ['result'] : []) {
+  for (const name of command === 'start' ? ['summary', 'next'] : ['finish', 'handoff'].includes(command) ? ['result'] : []) {
     if (!values[name]) throw new Error(`--${name} is required.`);
   }
   if (command === 'update' && !fields.update.some((name) => values[name])) throw new Error('update requires progress, verification, or status.');
-  if (values.status && !['active', 'blocked'].includes(values.status)) throw new Error('Status must be active or blocked.');
+  if (values.role && !['coordinator', 'worker'].includes(values.role)) throw new Error('Role must be coordinator or worker.');
+  if (command === 'update' && values.status && !['active', 'blocked'].includes(values.status)) throw new Error('Status must be active or blocked.');
+  if (command === 'list' && values.status && !['active', 'blocked', 'handed-off', 'completed'].includes(values.status)) {
+    throw new Error('List status must be active, blocked, handed-off, or completed.');
+  }
+  if (command === 'archive' && !values.output) throw new Error('archive requires --output docs/verification/<name>.json.');
   return { command, values };
+}
+
+function listEntries(entries, values) {
+  const current = values.compact && !values.status
+    ? new Set(['active', 'blocked', 'handed-off'])
+    : null;
+  return entries.filter((entry) =>
+    (!current || current.has(entry.status)) &&
+    (!values.owner || entry.owner === values.owner) &&
+    (!values.task || entry.task === values.task) &&
+    (!values.status || entry.status === values.status));
+}
+
+function printCompactEntries(entries) {
+  const shown = entries.slice(0, 12);
+  console.log(`Assignments: ${entries.length}`);
+  if (!shown.length) console.log('  none');
+  for (const entry of shown) {
+    const checkout = entry.checkout ? ` in ${basename(entry.checkout)}` : '';
+    const next = entry.next.replace(/\s+/g, ' ').trim();
+    const summary = next.length > 120 ? `${next.slice(0, 119)}…` : next;
+    console.log(`- ${entry.owner}/${entry.task} [${entry.status}; ${entry.role ?? 'coordinator'}]${checkout} — ${summary}`);
+  }
+  if (entries.length > shown.length) console.log(`  … ${entries.length - shown.length} more; add --owner, --task, or --status to narrow the list`);
+  console.log('Use list without --compact for the complete JSON assignment records.');
 }
 
 function managedEntries(source) {
@@ -58,9 +98,10 @@ function validateEntries(entries) {
   const keys = new Set();
   if (!Array.isArray(entries)) throw new Error('Active-task data must be an array.');
   for (const entry of entries) {
-    if (!entry || typeof entry.owner !== 'string' || typeof entry.task !== 'string' || typeof entry.summary !== 'string' || typeof entry.next !== 'string' || !['active', 'blocked', 'completed'].includes(entry.status)) {
+    if (!entry || typeof entry.owner !== 'string' || typeof entry.task !== 'string' || typeof entry.summary !== 'string' || typeof entry.next !== 'string' || !['active', 'blocked', 'completed', 'handed-off'].includes(entry.status)) {
       throw new Error('Invalid active-task entry; file left unchanged.');
     }
+    if (entry.role !== undefined && !['coordinator', 'worker'].includes(entry.role) || entry.status === 'handed-off' && entry.role !== 'worker') throw new Error('Invalid task role or worker handoff.');
     const key = JSON.stringify([entry.owner, entry.task]);
     if (keys.has(key)) throw new Error('Duplicate active-task ownership; file left unchanged.');
     keys.add(key);
@@ -101,34 +142,76 @@ async function run(args) {
         }
       }
     }
-    if (command === 'list') return console.log(JSON.stringify(entries, null, 2));
+    if (command === 'list') {
+      const selected = listEntries(entries, values);
+      if (values.compact) return printCompactEntries(selected);
+      return console.log(JSON.stringify(selected, null, 2));
+    }
     const index = entries.findIndex((entry) => entry.owner === values.owner && entry.task === values.task);
-    if (command === 'render') {
+    if (command === 'archive') {
+      if (!/^docs\/verification\/[A-Za-z0-9][A-Za-z0-9._-]*\.json$/.test(values.output)) throw new Error('Archive output must be a JSON file directly under docs/verification/.');
+      for (const part of ['docs', 'docs/verification']) {
+        const directory = resolve(repo.root, part);
+        const info = await lstat(directory);
+        if (!info.isDirectory() || info.isSymbolicLink() || await realpath(directory) !== directory) throw new Error('Archive directories must be regular checkout directories, not links.');
+      }
+      const output = resolve(repo.root, values.output);
+      let archive;
+      try { archive = await readJson(output); }
+      catch (error) { if (error.code !== 'ENOENT') throw error; }
+      if (archive) {
+        if (archive.schemaVersion !== 1 || !Array.isArray(archive.entries) || archive.entries.length !== 1) throw new Error('Archive already exists with different content; choose another output.');
+        const saved = validateEntries(archive.entries)[0];
+        if (saved.owner !== values.owner || saved.task !== values.task || !['completed', 'handed-off'].includes(saved.status) || index !== -1 && !isDeepStrictEqual(saved, entries[index])) throw new Error('Archive already exists with different content; retain the handoff.');
+      }
+      if (index === -1) {
+        if (!archive) throw new Error('No entry matches that owner and task.');
+        return console.log(JSON.stringify({ applied: Boolean(values.apply), alreadyArchived: true, output: values.output }));
+      }
+      const entry = entries[index];
+      if (!['completed', 'handed-off'].includes(entry.status)) throw new Error('Only completed or handed-off entries can be archived; retain active or blocked work.');
+      if (!values.apply) return console.log(JSON.stringify({ applied: false, output: values.output, entry }));
+      const expected = { schemaVersion: 1, entries: [entry] };
+      if (!archive) {
+        const handle = await open(output, 'wx', 0o600);
+        try { await handle.writeFile(JSON.stringify(expected, null, 2) + '\n', 'utf8'); await handle.sync(); }
+        finally { await handle.close(); }
+      }
+      if (!isDeepStrictEqual(await readJson(output), expected)) throw new Error('Archive verification failed; handoff retained.');
+      entries.splice(index, 1);
+    } else if (command === 'render') {
       // The shared store is authoritative; rendering changes only this checkout.
     } else if (command === 'start') {
       if (index !== -1) throw new Error('Entry already exists; use update or finish instead of overwriting it.');
-      entries.push({ owner: values.owner, task: values.task, checkout: repo.root, summary: values.summary, next: values.next, status: 'active', verification: '', updatedAt: new Date().toISOString() });
+      entries.push({ owner: values.owner, task: values.task, checkout: repo.root, role: values.role ?? 'coordinator', summary: values.summary, next: values.next, status: 'active', verification: '', updatedAt: new Date().toISOString() });
     } else {
       if (index === -1) throw new Error('No entry matches that owner and task.');
       const entry = entries[index];
       if (command === 'clear') {
-        if (entry.status !== 'completed') throw new Error('Only completed entries can be cleared; retain active or blocked work.');
+        if (!['completed', 'handed-off'].includes(entry.status)) throw new Error('Only completed or handed-off entries can be cleared; retain active or blocked work.');
         entries.splice(index, 1);
       } else {
-        if (entry.status === 'completed') throw new Error('Completed entries are retained for review; clear before starting again.');
+        if (['completed', 'handed-off'].includes(entry.status)) throw new Error('Completed entries are retained for review; clear before starting again.');
         for (const field of ['next', 'verification', 'status']) if (values[field]) entry[field] = values[field];
-        if (command === 'finish') Object.assign(entry, { status: 'completed', result: values.result, next: 'Coordinator review and evidence recording' });
+        if (command === 'finish') {
+          if (entry.role === 'worker') throw new Error('Workers return results with handoff; the coordinator completes publication.');
+          if (entry.checkout !== repo.root) throw new Error('Finish must run in the assignment checkout.');
+          const publication = await runWorkflow(['complete', '--root', repo.root]);
+          Object.assign(entry, { status: 'completed', result: values.result, publication: publication.completion, next: 'Human merge decision' });
+        }
+        if (command === 'handoff' && entry.role !== 'worker') throw new Error('Only registered workers may hand off; coordinators must publish and finish.');
+        if (command === 'handoff') Object.assign(entry, { status: 'handed-off', result: values.result, next: 'Coordinator integration and PR publication required' });
         entry.updatedAt = new Date().toISOString();
       }
     }
     const newline = source.includes('\r\n') ? '\r\n' : '\n';
     const content = source.slice(0, block.index) + block[1] + JSON.stringify(entries, null, 2).replace(/\n/g, newline) + block[3] + source.slice(block.index + block[0].length);
     await atomicWrite(statePath, JSON.stringify(entries, null, 2) + '\n');
-    if (repo.root === repo.primary || command === 'render') {
+    if (command === 'render') {
       try { await atomicWrite(path, content); }
       catch (error) { throw new Error(`Shared state saved, but view refresh failed: ${error.message}`); }
     }
-    console.log(`${command}: ${values.owner}/${values.task}; ${entries.length} assignment(s) retained.`);
+    console.log(command === 'archive' ? JSON.stringify({ applied: true, output: values.output, retained: entries.length }) : `${command}: ${values.owner}/${values.task}; ${entries.length} assignment(s) retained.`);
   });
 }
 
