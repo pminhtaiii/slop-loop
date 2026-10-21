@@ -555,11 +555,10 @@ test('repair: persistent task budgets retain consumed amounts across simulated r
   const stateRun2 = {
     ...res1.state,
     runId: 'run-repair-002', // New simulated run
-    stateVersion: res1.state.stateVersion,
+    budgetLedgers: statePort.getLedgers(),
   };
   const statePort2 = new MemoryStatePort({
     initialTaskState: stateRun2,
-    initialLedgers: statePort.getLedgers(),
   });
 
   // Attempt in run 2 must see budget exhausted (2 / 2) and halt with INCOMPLETE!
