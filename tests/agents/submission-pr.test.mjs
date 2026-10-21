@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { inspectSubmissionTarget, publishSubmission, verifySubmission } from '../../scripts/agents/submission-pr.mjs';
 
-const branch = 'feat/001-example';
+const branch = 'feat/tooling-example';
 const targets = {
   primary: { remote: 'origin', repository: 'example/public', base: 'development' },
   submission: { remote: 'submission', repository: 'course/private', base: 'development' },
@@ -271,7 +271,7 @@ test('invalid branch names are rejected before querying or writing either target
   const f = await fixture(t);
   const input = f.input({ branch: 'main' });
   f.calls.length = 0;
-  await assert.rejects(publishSubmission(input), /feat\/NNN-description/);
+  await assert.rejects(publishSubmission(input), /feat\/scope-description/);
   assert.equal(f.calls.length, 0);
 });
 
@@ -287,7 +287,7 @@ test('historical main records remain verifiable and target migration refuses to 
   const f = await fixture(t);
   const historical = { ...targets, submission: { ...targets.submission, base: 'main' } };
   const first = await publishSubmission(f.input({ targets: historical }));
-  const path = join(f.source, '.agent-work/paired-prs/feat-001-example.json');
+  const path = join(f.source, '.agent-work/paired-prs/feat-tooling-example.json');
   const snapshot = await readFile(path, 'utf8');
   assert.equal(first.base, 'main');
   assert.equal((await verifySubmission({ ...f.input({ targets: historical }), sourceHead: first.sourceHead })).head, first.head);

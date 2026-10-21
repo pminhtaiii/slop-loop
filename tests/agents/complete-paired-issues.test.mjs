@@ -10,7 +10,7 @@ import { runIssueCompletion } from '../../scripts/agents/complete-paired-issues.
 
 const publicRepository = 'example/public';
 const privateRepository = 'course/private';
-const branch = 'feat/001-example';
+const branch = 'feat/tooling-example';
 const publicHead = 'a'.repeat(40);
 const privateHead = 'b'.repeat(40);
 const tree = 'c'.repeat(40);

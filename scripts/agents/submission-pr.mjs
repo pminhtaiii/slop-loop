@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { atomicWrite, dataDirectory, readJson, withLock } from './agent-store.mjs';
 import { githubRepository, withPublicationBody } from './publication-targets.mjs';
 
-const featureBranch = /^feat\/\d{3}-[a-z0-9]+(?:-[a-z0-9]+)*$/;
+import { featureBranch } from './pr-conventions.mjs';
 const gitHash = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i;
 const writablePermissions = new Set(['WRITE', 'MAINTAIN', 'ADMIN']);
 
@@ -20,7 +20,7 @@ function ghJson(execute, repo, ...args) {
 }
 
 function assertBranch(branch) {
-  if (!featureBranch.test(branch ?? '')) throw new Error('Submission publication requires a feat/NNN-description branch.');
+  if (!featureBranch.test(branch ?? '')) throw new Error('Submission publication requires a feat/scope-description branch (historical numbered names remain readable).');
 }
 
 function normalizeTargets(targets) {
