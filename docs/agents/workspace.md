@@ -6,12 +6,14 @@ Use the integration checkout's ignored `.agent-work/` for temporary agent artifa
 
 | Location relative to the integration checkout | Contents |
 |---|---|
-| `.agent-work/<date>/<session-id>/` | Managed session: briefs, notes, logs, snapshots, and worker ownership receipts |
+| `.agent-work/<date>/<session-id>/` | Managed session: briefs, notes, logs, snapshots, worker ownership receipts, and its generated progress view |
 | `.agent-work/worktrees/<unique-worker-id>/` | Registered Git worktree, kept outside deletable session folders |
 | `.agent-work/worktree-receipts/` | Helper-owned ownership, accepted-head, and evidence-hash receipts |
 | `.agent-work/state/` | Shared contributor assignments and lock, used by all linked worktrees |
 
 Start a managed session with the existing `agent-work.mjs` helper described in [the contributor workflow](../../context/workflow.md#agent-coordination), then include that session identity in every new `active-task.mjs start` assignment. Worker assignments also list their exact owned files with repeated `--owned-path <repo-relative-path>` options. Register each worker with `agent-worktree.mjs`; its JSON receipt binds its path, owner/task, branch, base, integration ref, and managed session. Both helpers accept `--root <checkout>`; worktree retirement resolves the primary checkout automatically. Keep briefs and logs in the session, and durable verification outside the deletable dump area. Existing Markdown receipts are historical notes, not automatic cleanup authority.
+
+`agent-work.mjs start` creates or reactivates the selected session marker. After an `active-task.mjs` assignment command, `render --output .agent-work/<date>/<session-id>/progress.md --root <checkout>` initializes or refreshes only that session's generated view. It preserves shared assignments, other session views, and unfinished work. A terminal `render` without `--output` prints a compact list and does not rewrite `context/active_task.md`. Keep [`active_task.md`](../../context/active_task.md) as static navigation and read commands; do not maintain progress rows there. Follow the [active-task handoff](../../context/workflow.md#active-task-handoff) for the register-before-dispatch lifecycle and explicit recovery of unfinished assignments.
 
 Use the contributor workflow's compact reports to inspect session and assignment state before opening detailed records. After an interruption, run `node scripts/agents/recovery-report.mjs [--owner <id>] [--task <id>] [--root <checkout>]` to correlate assignment/checkpoint data with actual Git worktree state, changed paths, and any existing receipt. Its agent status is `unknown` unless a host-level source establishes liveness; an active assignment or session marker alone does not prove that an agent is running. An explicit `active-task.mjs reassign` preserves the source assignment and evidence, then creates a linked successor without completing work or reclaiming locks.
 
