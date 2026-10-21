@@ -1,5 +1,6 @@
 import { execFileSync, spawn } from 'node:child_process';
-import { resolve } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const LIMIT_BYTES = 20_000;
@@ -23,8 +24,8 @@ function parseRawDiff(raw) {
     const oldPath = fields[index++];
     const path = status[0] === 'R' || status[0] === 'C' ? fields[index++] : oldPath;
     if (path === undefined) throw new Error('Git returned an incomplete raw diff record.');
-    if (['A', 'C', 'M', 'R'].includes(status[0]) && (newMode === '100644' || newMode === '100755')) {
-      entries.push({ path, oid, status: status[0] });
+    if (['A', 'C', 'M', 'R', 'T'].includes(status[0]) && (newMode === '100644' || newMode === '100755')) {
+      entries.push({ mode: newMode, path, oid });
     }
   }
   return entries;
@@ -34,13 +35,59 @@ function isExcluded(path) {
   const parts = path.toLowerCase().split('/');
   const basename = parts.at(-1);
   return LOCKFILES.has(basename)
+    || ['tests', 'specs'].includes(parts[0])
     || parts.includes('node_modules')
     || ['dist', 'coverage'].includes(parts[0])
     || /\.(?:generated|g)\.[^.]+$/.test(basename);
 }
 
 function stagedDiff(root) {
-  return git(root, ['diff', '--cached', '--no-ext-diff', '--no-textconv', '--raw', '--no-abbrev', '-z', '--diff-filter=ACMR', '--find-renames', '--find-copies']);
+  return git(root, ['diff', '--cached', '--no-ext-diff', '--no-textconv', '--raw', '--no-abbrev', '-z', '--diff-filter=ACMRT', '--find-renames', '--find-copies']);
+}
+
+function commitId(root, revision) {
+  const oid = git(root, ['rev-parse', '--verify', `${revision}^{commit}`], { encoding: 'utf8' }).trim();
+  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(oid)) throw new Error(`Git returned an invalid commit ID for ${revision}.`);
+  return oid.toLowerCase();
+}
+
+function mergeParentBlobSignatures(root) {
+  const mergeHeadPath = git(root, ['rev-parse', '--git-path', 'MERGE_HEAD'], { encoding: 'utf8' }).replace(/\r?\n$/, '');
+  if (!mergeHeadPath) throw new Error('Git returned an empty MERGE_HEAD path.');
+
+  let mergeHead;
+  try {
+    mergeHead = readFileSync(isAbsolute(mergeHeadPath) ? mergeHeadPath : resolve(root, mergeHeadPath), 'utf8');
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    throw new Error(`Could not read Git MERGE_HEAD: ${error.message}`);
+  }
+
+  const mergeRefs = mergeHead.split(/\r?\n/);
+  if (mergeRefs.at(-1) === '') mergeRefs.pop();
+  if (!mergeRefs.length || mergeRefs.some((ref) => !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(ref))) {
+    throw new Error('Invalid Git MERGE_HEAD: expected commit object IDs.');
+  }
+
+  const parents = [commitId(root, 'HEAD')];
+  for (const ref of mergeRefs) {
+    const resolved = commitId(root, ref);
+    if (resolved !== ref.toLowerCase()) throw new Error(`Invalid Git MERGE_HEAD commit: ${ref}`);
+    parents.push(resolved);
+  }
+
+  const signatures = new Set();
+  for (const parent of parents) {
+    const tree = git(root, ['ls-tree', '-rz', '--full-tree', parent], { maxBuffer: 64 * 1024 * 1024 }).toString('utf8');
+    for (const entry of tree.split('\0')) {
+      if (!entry) continue;
+      const tab = entry.indexOf('\t');
+      const [mode, type, oid] = entry.slice(0, tab).split(' ');
+      if (tab < 0 || !mode || !type || !oid) throw new Error(`Git returned an invalid tree entry for ${parent}.`);
+      if (type === 'blob' && (mode === '100644' || mode === '100755')) signatures.add(`${mode}:${oid}`);
+    }
+  }
+  return signatures;
 }
 
 function objectSizes(root, entries) {
@@ -91,7 +138,12 @@ function parseArgs(args) {
 }
 
 export async function checkStagedFileSize(root) {
-  const entries = parseRawDiff(stagedDiff(root)).filter(({ path }) => !isExcluded(path));
+  const staged = parseRawDiff(stagedDiff(root)).filter(({ path }) => !isExcluded(path));
+  const mergeParents = staged.length ? mergeParentBlobSignatures(root) : null;
+  // Renames and resolutions can change paths; an exact parent mode and blob is the approved identity.
+  const entries = mergeParents
+    ? staged.filter(({ mode, oid }) => !mergeParents.has(`${mode}:${oid}`))
+    : staged;
   const sizes = objectSizes(root, entries);
   const oversized = [];
   for (let index = 0; index < entries.length; index += 1) {
@@ -107,13 +159,13 @@ async function main() {
   const root = resolve(values['--root'] ?? git(process.cwd(), ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim());
   const result = await checkStagedFileSize(root);
   if (result.oversized.length) {
-    console.error(`Staged authored files exceed ${formatNumber(LIMIT_BYTES)} bytes (about 5,000 tokens at bytes/4):`);
+    console.error(`Staged implementation files exceed ${formatNumber(LIMIT_BYTES)} bytes (about 5,000 tokens at bytes/4; top-level tests/ and specs/ are excluded):`);
     for (const file of result.oversized) console.error(`- ${JSON.stringify(file.path)} (${formatNumber(file.size)} bytes)`);
     console.error('Split each file along a cohesive responsibility into smaller modules, keep a small entry point, stage the split, then rerun `pnpm run check:staged-size`.');
     process.exitCode = 1;
     return;
   }
-  console.log(`Staged-file size check passed: ${result.entries} authored regular file(s) eligible; limit ${formatNumber(LIMIT_BYTES)} bytes.`);
+  console.log(`Staged-file size check passed: ${result.entries} eligible implementation file(s); limit ${formatNumber(LIMIT_BYTES)} bytes.`);
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
