@@ -31,7 +31,7 @@ function run(checkout, ...args) {
   });
 }
 
-test('a worker handoff can be cleared while preserving the permanent file exactly', async (t) => {
+test('a worker handoff can be cleared without rewriting a legacy assignment view', async (t) => {
   const checkout = await fixture(t);
   const path = join(checkout, 'context/active_task.md');
   const baseline = await readFile(path, 'utf8');
@@ -45,10 +45,10 @@ test('a worker handoff can be cleared while preserving the permanent file exactl
   assert.equal(await readFile(path, 'utf8'), baseline);
   assert.equal(JSON.parse(run(checkout, 'list').stdout)[0].status, 'handed-off');
   assert.equal(run(checkout, 'render').status, 0);
-  assert.match(await readFile(path, 'utf8'), /Tests passed; evidence recorded/);
+  assert.equal(await readFile(path, 'utf8'), baseline);
   result = run(checkout, 'clear', '--owner', 'parent', '--task', 'tracking');
   assert.equal(result.status, 0, result.stderr);
-  assert.match(await readFile(path, 'utf8'), /Tests passed; evidence recorded/);
+  assert.equal(await readFile(path, 'utf8'), baseline);
   assert.equal(run(checkout, 'render').status, 0);
   assert.equal(await readFile(path, 'utf8'), baseline);
 });
@@ -206,7 +206,7 @@ test('a busy lock is retained and prevents any task-file mutation', async (t) =>
   assert.equal(await readFile(lock, 'utf8'), 'another writer');
 });
 
-test('linked worktrees share assignments without modifying the coordinator view', async (t) => {
+test('linked worktrees share assignments and terminal render leaves the coordinator view alone', async (t) => {
   const checkout = await fixture(t);
   await writeFile(join(checkout, '.gitignore'), '.agent-work/\n');
   for (const args of [
@@ -229,7 +229,9 @@ test('linked worktrees share assignments without modifying the coordinator view'
   assert.equal(await readFile(join(worker, 'context/active_task.md'), 'utf8'), workerView);
   result = run(checkout, 'render');
   assert.equal(result.status, 0, result.stderr);
-  assert.match(await readFile(join(checkout, 'context/active_task.md'), 'utf8'), /Shared assignment/);
+  assert.match(result.stdout, /worker\/T001/);
+  assert.match(result.stdout, /Verify/);
+  assert.equal(await readFile(join(checkout, 'context/active_task.md'), 'utf8'), parentView);
 });
 
 test('overlapping writers either serialize or report busy without losing an assignment', async (t) => {
