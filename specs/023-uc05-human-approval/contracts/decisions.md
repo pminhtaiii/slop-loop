@@ -97,6 +97,16 @@ Behavioral RED/GREEN includes the neutral positive continuation skeleton, malfor
 
 The API reports only `claimed`, `blocked` or `unavailable`, with a claim reference on success. Granular prerequisite explanations and complete safe history/CLI outcomes remain an explicit limitation assigned to T016–T018; full US4/SC-006 acceptance remains unverified. Contributor publication and current-head CI are separate gates; no PR merge is authorized.
 
+## Phase 7 implementation authorization and local seams
+
+On 2026-10-22 (Asia/Saigon), the user explicitly authorized Phase 7 T016–T018 and requested implementation from the current ledger, followed by paired publication without a CodeRabbit request. This releases safe history/projection coverage and CLI outcome/exit behavior only. T019–T022, UC-04 implementation, real adapters, production profiles, durable atomicity, actual process restart, issue closure and PR merge remain outside this instruction.
+
+Public issue #62 and its configured private counterpart #50 were read live and their acceptance criteria agree with this slice. Both planning checklists are complete (13/13 and 16/16), automated planning validation passes, and independent Standards/Architecture and Testability reviews report no P0/P1 blockers. Reports remain local under `.agent-work/2026-10-22/uc05-phase7-history-cli/`. The clean integration branch `feat/uc05-safe-history-cli` starts at fetched development `63250935ea565ffd4f32bea4f26aecf5a0f3d80e`; the helper checked name uniqueness across both repositories and all PR history.
+
+The authorized public service/presentation seams use the actual UC-05 implementations with injected existing mock store/context/operator/activity/recovery owners. Actual CLI subprocesses exercise parsing, safe output and exit codes through an explicit test host. History reads admitted authoritative request/resolution/assessment/claim/event metadata independently of whether present-day action details remain inspectable. Derived classification, freshness and cancellation observations must be distinguished from committed journal events; missing observations remain unknown. Approval, dispatch claims, observed effects and verified completion are separate facts. No new persistence engine, telemetry sink, canonical schema or execution authority is introduced.
+
+The implementation may add a cohesive read-only history projection behind the existing service and explicit task/page CLI selectors, and extract service responsibilities as required by the existing staged-file size gate. These supporting paths belong to T016–T018, preserve the four canonical ApprovalPort signatures, and do not release a successor task. Journal/outbox consistency and idempotency tests establish mock contract behavior only; best-effort telemetry cannot become consent authority. Reconstructing consumers from retained state remains same-process simulation.
+
 ## Agreed design register
 
 | ID | Proposal | Scope / approval state |
