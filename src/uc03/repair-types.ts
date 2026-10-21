@@ -5,6 +5,7 @@
  */
 
 import type {
+  ApprovalBindingContext,
   ApprovalPort,
   ExecutionGuard,
   FixPlan,
@@ -16,6 +17,7 @@ import type {
   TaskState,
   VerificationResult,
 } from '../contracts/foundation/uc03.ts';
+import { computeCanonicalSha256, computeCheckSetDigest } from '../contracts/foundation/uc03.ts';
 
 export type RepairOutcome = 'REPAIR_PREPARED' | 'INCOMPLETE' | 'DENIED';
 
@@ -88,10 +90,22 @@ export interface ReplanInput {
   readonly reason?: string | undefined;
 }
 
+export interface TrustedReplanDirection {
+  readonly directive: 'resume' | 'revise' | 'terminate';
+  readonly taskId: string;
+  readonly workspaceId: string;
+  readonly repositoryRevisionDigest: string;
+  readonly stateVersion: number;
+  readonly planVersion: number;
+  readonly rejectedDecisionId: string;
+  readonly strategyDigest: string;
+}
+
 export interface ReplanPorts {
   readonly statePort: StatePort;
   readonly approvalPort?: ApprovalPort | undefined;
   readonly trustedTransitionContext?: StateTransitionOptions['trusted'] | undefined;
+  readonly trustedDirection?: TrustedReplanDirection | undefined;
 }
 
 export interface ReplanResult {
@@ -105,10 +119,49 @@ export interface ReplanResult {
 export interface RejectionInput {
   readonly taskId: string;
   readonly rejectionReason: string;
-  readonly decisionId?: string | undefined;
+  readonly decisionId: string;
 }
 
 export interface RejectionPorts {
   readonly statePort: StatePort;
+  readonly approvalPort?: ApprovalPort | undefined;
   readonly trustedTransitionContext?: StateTransitionOptions['trusted'] | undefined;
+}
+
+export function validateRejectionInput(input: unknown): input is RejectionInput {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return false;
+  const value = input as Record<string, unknown>;
+  return typeof value.taskId === 'string' && !!value.taskId.trim() &&
+    typeof value.decisionId === 'string' && !!value.decisionId.trim() &&
+    typeof value.rejectionReason === 'string' && !!value.rejectionReason.trim();
+}
+
+export function getRejectionApprovalContext(state: TaskState): ApprovalBindingContext | undefined {
+  const plan = state.plan;
+  const task = state.taskContext;
+  if (!plan?.decisionRef || !task?.requiredChecks.length) return undefined;
+  const checkSetDigest = computeCheckSetDigest(task.requiredChecks);
+  if (plan.checkSetDigest !== checkSetDigest) return undefined;
+  const action = {
+    actionId: plan.decisionRef,
+    kind: 'approve_fix_plan' as const,
+    planVersion: state.planVersion,
+    strategyDigest: plan.strategyDigest,
+    diagnosisEvidenceRefs: plan.evidenceRefs,
+    checkSetDigest,
+  };
+  return {
+    currentTaskId: state.taskId,
+    currentWorkspaceId: state.workspaceId,
+    currentRepositoryRevisionDigest: state.repositoryRevisionDigest,
+    currentPolicyId: task.configId,
+    currentPolicyVersion: task.configVersion,
+    currentNormalizedActionDigest: computeCanonicalSha256(action),
+    currentPlanVersion: state.planVersion,
+    currentStrategyDigest: plan.strategyDigest,
+    currentBaselineRef: plan.baselineRef,
+    currentEvidenceRefs: plan.evidenceRefs,
+    currentCriteriaDigest: computeCanonicalSha256(state.acceptanceCriteria),
+    currentCheckSetDigest: checkSetDigest,
+  };
 }
