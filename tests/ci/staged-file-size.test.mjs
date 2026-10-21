@@ -128,7 +128,7 @@ test('during a merge only exact parent mode and blob pairs pass, including renam
   assert.match(wrongMode.stderr, /mode mismatch\.ts/);
   assert.doesNotMatch(wrongMode.stderr, /incoming parent\.ts|renamed head parent\.ts/);
 
-  git('rm', '--cached', '--quiet', '--', 'mode mismatch.ts');
+  git('rm', '--cached', '--force', '--quiet', '--', 'mode mismatch.ts');
   assert.equal(check().status, 0, 'the exact parent mode and blob pairs stay exempt');
 });
 
