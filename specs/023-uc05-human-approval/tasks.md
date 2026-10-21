@@ -2,7 +2,7 @@
 
 **Input**: [spec](spec.md), [plan](plan.md), [research](research.md), [data model](data-model.md), and [contracts](contracts/interfaces.md).
 
-**Status**: T001–T015 and T023–T027 review corrections are integrated and verified locally through source `41c4215264106fef27a90ae83ee680cd0edbb1aa`. Phase 6 T014–T015 and the service/control mock-recovery seam were separately authorized on 2026-10-21 (Asia/Saigon); see [decisions](contracts/decisions.md). Source/emitted approvals pass 160/160; runtime typecheck/full lint/clean build and 1005 compiled tests pass. Evidence remains mock-only. T016–T022 and G-PROFILE/G-REAL/G-RESTART remain gated; full UC-05 acceptance is unverified. Checkboxes below remain the sole completion ledger.
+**Status**: T001–T015 and T023–T027 review corrections were integrated and verified through prior phases; their evidence is retained below. Phase 7 T016–T018 was separately authorized on 2026-10-22 (Asia/Saigon), see [decisions](contracts/decisions.md). T016–T017 are independently integrated at `51fe5a9a9d756c4d325fcc16711d8e654e6e8f52`: source/emitted approvals each pass 181/181, including 21 audit vectors, and eight independent merger checks pass. T018 remains open and authorized. Evidence remains mock/local only; T019–T022 and G-PROFILE/G-REAL/G-RESTART remain gated. Full UC-05 acceptance is unverified. Checkboxes below remain the sole completion ledger.
 
 Final review found an in-scope T007 retry defect and two standards corrections. T023 below records their accepted correction only; it does not release any later story or real-delivery gate.
 
@@ -155,17 +155,19 @@ Final review found an in-scope T007 retry defect and two standards corrections. 
 
 **Independent Test**: C07/C11/C17–C22 inspect all safe projections and failure paths.
 
-- [ ] T016 [US5] Add exhaustive decision/audit behavioral tests in tests/runtime/approvals/audit.test.ts.
+- [x] T016 [US5] Add exhaustive decision/audit behavioral tests in tests/runtime/approvals/audit.test.ts.
   - **Owner**: Trong Tan / evidence tests.
   - **Dependencies**: T015.
   - **Owned Paths**: tests/runtime/approvals/audit.test.ts.
   - **Acceptance Checks**: Test all classification/decision/cancellation/stale/uncertain/effect outcomes, atomic journal/outbox failure, secret/raw-stream markers, UTF-8/page bounds, ANSI/OSC/bidi controls and over-bound uninspectable details. Tests call actual presentation/service exports, not a fake SUT.
+  - **Current Evidence**: Corrected candidate `d4a265c8c09b9e525543678819ada87cb264429c` was independently accepted and integrated at `51fe5a9a9d756c4d325fcc16711d8e654e6e8f52`. The 21 audit vectors exercise actual service/presentation exports with injected mock owners. Source/emitted approval suites each pass 181/181; eight independent merger reproductions pass, including six corrected journal/detail-availability failures and positive later-run/historical-policy controls. Typecheck, scoped lint, build and whitespace checks pass. RED/GREEN and integrated command logs remain local under `.agent-work/2026-10-22/uc05-phase7-history-cli/`. These checks establish only exercised mock/local behavior, not durable atomicity, real effects, adapters, production profiles or process restart.
 
-- [ ] T017 [US5] Complete safe event/projection behavior in src/approvals/presentation.ts and src/approvals/service.ts.
+- [x] T017 [US5] Complete safe event/projection behavior in src/approvals/presentation.ts and src/approvals/service.ts.
   - **Owner**: Trong Tan / evidence implementation.
   - **Dependencies**: T016.
-  - **Owned Paths**: src/approvals/presentation.ts; src/approvals/service.ts.
+  - **Owned Paths**: src/approvals/presentation.ts; src/approvals/service.ts; src/approvals/history.ts; src/approvals/service-context.ts; src/approvals/service-control.ts; src/approvals/service-data.ts; src/approvals/service-decision.ts; src/approvals/service-request.ts.
   - **Acceptance Checks**: T016 green; durable decision/outbox evidence distinct from best-effort telemetry, metadata-only traces, no protected collection, no approval-only success. Do not alter Tai's telemetry implementation.
+  - **Current Evidence**: Same accepted integration and checks as T016. The read-only `ApprovalService.history(taskId, page)` projects admitted immutable records and journal metadata as complete JSON entries with snapshot digest and UTF-8 page/aggregate envelope bounds. Consent authority and history share reciprocal record/event admission; missing, foreign, duplicate or contradictory evidence fails closed. Current classification/freshness and injected owner activity observations remain explicitly separate from committed events, with unknown facts preserved; approval never establishes verified completion. Stalled current detail providers yield unknown observations without hiding committed history. Necessary cohesive service helpers preserve canonical ApprovalPort signatures, the shared admission/expiry fence and runtime import acyclicity; all eight authored implementation files are below the 20,000-byte staged-file limit. No telemetry, canonical schema, foreign owner implementation or persistence engine was added. T018 remains the next open authorized task; T019 onward remains gated.
 
 - [ ] T018 [US5] Complete CLI safe outcome/exit behavior in src/approvals/cli.ts and tests/runtime/approvals/cli.test.ts.
   - **Owner**: Trong Tan / operator reporting.
