@@ -48,6 +48,36 @@ test('a worker handoff can be cleared while preserving the permanent file exactl
   assert.equal(await readFile(path, 'utf8'), baseline);
 });
 
+test('active-task list keeps full JSON by default and offers compact owner/task/status filters', async (t) => {
+  const checkout = await fixture(t);
+  for (const owner of ['active-worker', 'blocked-worker']) {
+    const result = run(checkout, 'start', '--role', 'worker', '--owner', owner, '--task', 'T001', '--summary', `${owner} assignment`, '--next', 'Run the focused checks');
+    assert.equal(result.status, 0, result.stderr);
+  }
+  assert.equal(run(checkout, 'update', '--owner', 'blocked-worker', '--task', 'T001', '--status', 'blocked').status, 0);
+
+  const full = JSON.parse(run(checkout, 'list').stdout);
+  assert.deepEqual(full.map((entry) => entry.owner), ['active-worker', 'blocked-worker']);
+  assert.equal(full[0].next, 'Run the focused checks');
+
+  let result = run(checkout, 'list', '--compact');
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Assignments: 2/);
+  assert.match(result.stdout, /active-worker\/T001 \[active; worker\]/);
+  assert.match(result.stdout, /blocked-worker\/T001 \[blocked; worker\]/);
+  assert.doesNotMatch(result.stdout, /"verification"/);
+
+  result = run(checkout, 'list', '--compact', '--owner', 'blocked-worker', '--task', 'T001', '--status', 'blocked');
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Assignments: 1/);
+  assert.match(result.stdout, /blocked-worker\/T001 \[blocked; worker\]/);
+  assert.doesNotMatch(result.stdout, /active-worker/);
+
+  result = run(checkout, 'list', '--owner', 'active-worker');
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout).map((entry) => entry.owner), ['active-worker']);
+});
+
 test('archive previews without writes then preserves evidence before targeted clearing and safe retries', async (t) => {
   const checkout = await fixture(t);
   await mkdir(join(checkout, 'docs/verification'), { recursive: true });

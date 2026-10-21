@@ -13,6 +13,8 @@ Use the integration checkout's ignored `.agent-work/` for temporary agent artifa
 
 Start a session with the existing `agent-work.mjs` helper described in [the contributor workflow](../../context/workflow.md#agent-coordination). Register each worker with `agent-worktree.mjs`; its JSON receipt binds its path, owner/task, branch, base, integration ref, and managed session. Both helpers accept `--root <checkout>`; worktree retirement resolves the primary checkout automatically. Keep briefs and logs in the session, and durable verification outside the deletable dump area. Existing Markdown receipts are historical notes, not automatic cleanup authority.
 
+Use the contributor workflow's compact reports to inspect session and assignment state before opening detailed records.
+
 ## Isolated implementation
 
 Confirm the approved integration branch and resolve its current tip before creating a worker. Create the parent `.agent-work/worktrees/` directory if absent, then use:
@@ -29,7 +31,7 @@ Keep workers on their assigned task branches. Integrate through the approved fea
 
 ## Gemini task briefs
 
-Give a Gemini subagent one bounded task with the exact checkout and branch, owned paths, required output, and named acceptance commands. Authorize edits explicitly and name the paths; keep implementation separate from review or grilling. Require a final handoff with changed paths, commands and exit codes, assumptions, and remaining gaps. After one failed tool call, allow one named fallback and ask the worker to report the blocker if that also fails; browse only when the task needs current factual research.
+Use the concise brief and final handoff shape in the [contributor workflow](../../context/workflow.md#task-briefs-and-handoffs), with the exact checkout, branch, and acceptance commands. Keep raw notes in the managed session. After one failed tool call, allow one named fallback and ask the worker to report a blocker if it also fails; browse only when the task needs current factual research.
 
 ## Repository package manager
 

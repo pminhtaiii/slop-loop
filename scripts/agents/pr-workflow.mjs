@@ -1,17 +1,14 @@
 import { spawnSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
-import { runGate } from './workflow-gate.mjs';
-import { publicationTargets, withPublicationBody } from './publication-targets.mjs';
-import { inspectSubmissionTarget, publishSubmission, verifySubmission } from './submission-pr.mjs';
-import { assertNewBranch, assertNewDescription, assertNewSummary, assertAvailableNumber } from './pr-conventions.mjs';
-import { assertNoTrackedArtifacts } from '../ci/check-tracked-files.mjs';
-import { readFile, stat } from 'node:fs/promises';
+import { publishCommand } from './pr-workflow-publish.mjs';
+import { publicationTargets } from './publication-targets.mjs';
+import { verifySubmission } from './submission-pr.mjs';
+import { assertAvailableNumber, assertNewBranch } from './pr-conventions.mjs';
+import { assess, changedLines, featureName, validSummary, workflowSummary } from './pr-workflow-status.mjs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { atomicWrite, dataDirectory, readJson, repository, withLock } from './agent-store.mjs';
+export { assess, changedLines, workflowSummary } from './pr-workflow-status.mjs';
 
-const checksRequired = ['contributor-checks (ubuntu-latest)', 'contributor-checks (windows-latest)', 'runtime-checks (ubuntu-latest)', 'runtime-checks (windows-latest)'];
-const featureName = /^feat\/\d{3}-[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const maxRepairs = 3;
 const usage = `Usage: node scripts/agents/pr-workflow.mjs <preflight|publish|status|ready|repair|watch|record-app-state|complete|prepare-next> [--root <checkout>]
 preflight fetches origin/development and reports freshness, naming, dirty paths, and diff size; it never publishes.
@@ -23,45 +20,6 @@ complete verifies clean published current-head work, linked PR evidence and pass
 watch polls for at most ten minutes, stopping for fixes, human approval, or timeout.
 Configured paired publication also opens a submission PR with the same source tree and separate submission ancestry.
 The helper never merges, force-pushes, or resolves review threads.`;
-
-function validSummary(value) {
-  return typeof value === 'string' && value.length > 0 && value.length <= 80 && value === value.trim() && !/[\r\n]/.test(value);
-}
-
-export function assess({ head, pr, checks }) {
-  const result = { status: 'WAITING_CI', failedChecks: [], unresolved: [] };
-  const titlePrefix = `${pr.headRefName}: `;
-  if (pr.state !== 'OPEN' || pr.headRefOid !== head || !featureName.test(pr.headRefName) || !pr.title.startsWith(titlePrefix) || !validSummary(pr.title.slice(titlePrefix.length)) || pr.baseRefName !== 'development') return { ...result, status: 'BLOCKED', reason: 'PR identity, title, base, state, or current HEAD does not match.' };
-  if (pr.reviews.pageInfo.hasPreviousPage || pr.reviewThreads.pageInfo.hasNextPage) return { ...result, status: 'BLOCKED', reason: 'Review data exceeds the bounded page; inspect manually.' };
-  result.unresolved = pr.reviewThreads.nodes.filter((thread) => !thread.isResolved);
-  if (pr.mergeable === 'CONFLICTING' || pr.mergeStateStatus === 'BEHIND') return { ...result, status: 'BLOCKED', reason: 'Update the feature branch against development and rerun verification.' };
-  const latest = checksRequired.map((name) => checks.filter((check) => check.name === name && check.head_sha === head && check.app?.slug === 'github-actions').sort((a, b) => b.id - a.id)[0]);
-  result.failedChecks = latest.filter((check) => check?.status === 'completed' && check.conclusion !== 'success').map((check) => ({ name: check.name, conclusion: check.conclusion, url: check.details_url }));
-  if (result.failedChecks.length) result.status = 'NEEDS_FIX';
-  else if (pr.mergeable === 'UNKNOWN' || latest.some((check) => !check || check.status !== 'completed')) result.status = 'WAITING_CI';
-  else if (pr.mergeStateStatus === 'BLOCKED' && pr.isDraft === false) return { ...result, status: 'BLOCKED', reason: 'GitHub reports an unmet merge requirement.' };
-  else result.status = pr.isDraft === false ? 'AWAITING_HUMAN_MERGE' : 'READY_FOR_HUMAN';
-  return result;
-}
-
-export function changedLines(numstat) {
-  let reviewable = 0, generated = 0, binaries = 0;
-  for (const line of numstat.trim().split('\n').filter(Boolean)) {
-    const [added, removed, ...path] = line.split('\t');
-    if (added === '-' || removed === '-') { binaries++; continue; }
-    const size = Number(added) + Number(removed);
-    if (/(^|\/)(package-lock\.json|pnpm-lock\.yaml|yarn\.lock)$/.test(path.join('\t'))) generated += size;
-    else reviewable += size;
-  }
-  return { reviewable, generated, binaries, overTarget: reviewable + generated > 1000 };
-}
-
-export function workflowSummary(record) {
-  if (record.usage || !record.schemaVersion) return record;
-  const unresolved = (record.observation?.unresolved ?? []).map(thread => ({ id: thread.id, isOutdated: thread.isOutdated, urls: thread.comments?.nodes.map(comment => comment.url) ?? [] }));
-  const logs = Object.fromEntries(Object.entries(record.gateLogs ?? {}).map(([name, gate]) => [name, { status: gate.status, exitCode: gate.exitCode, log: gate.log, durationMs: gate.durationMs }]));
-  return { status: record.status, branch: record.branch, head: record.head ?? record.publishedHead, pr: record.pr, url: record.url, submission: record.submission, size: record.size, reason: record.reason ?? record.observation?.reason, repairRounds: record.repairRounds.length, failedChecks: record.observation?.failedChecks ?? [], unresolved, logs, localVerifiedHead: record.localVerification?.head };
-}
 
 function execute(binary, args, cwd, timeout = 30_000) {
   const result = spawnSync(binary, args, { cwd, encoding: 'utf8', windowsHide: true, timeout, maxBuffer: 2 * 1024 * 1024 });
@@ -158,96 +116,9 @@ export async function runWorkflow(args, dependencies = {}) {
       git('switch', '--no-track', '-c', values.branch, base);
       return { status: 'READY_TO_WORK', branch: values.branch, head: base, base, preservedBranch: branch, mergedPr: record.pr };
     }
-    if (command === 'publish') {
-      const title = `${branch}: ${values.summary}`;
-      const bodyPath = resolve(values['body-file']);
-      if ((await stat(bodyPath)).size > 65_536) throw new Error('PR body exceeds 65536 bytes.');
-      const body = await readFile(bodyPath, 'utf8');
-      if (!body.trim() || Buffer.byteLength(body) > 65_536) throw new Error('PR body must contain 1–65536 bytes.');
-      if (targets) {
-        const publicContent = `${title}\n${body}`.toLowerCase();
-        const privateRepository = targets.submission.repository.toLowerCase();
-        if (publicContent.includes(privateRepository) || publicContent.includes(encodeURIComponent(privateRepository))) throw new Error('Public PR content must not include the private repository identity.');
-      }
-      if (git('status', '--porcelain', '--untracked-files=all')) throw new Error('Commit the assigned changes before publishing; checkout must be clean.');
-      assertNoTrackedArtifacts(git('ls-files', '-z'));
-      const initialPr = find();
-      if (record.pr && (!initialPr || initialPr.number !== record.pr)) throw new Error('Recorded PR is closed or replaced; start a new feature branch instead of resetting its budget.');
-      if (initialPr && !record.pr && !record.publicationStarted) throw new Error('Existing PR has no local accounting; recover its workflow record before publishing.');
-      const newConventions = record.conventionVersion === 1 || !record.pr && !record.publicationStarted;
-      if (newConventions) {
-        if (targets && targets.submission.base !== 'development') throw new Error('New paired work requires submission/development; retain historical main configuration only for existing pairs.');
-        assertNewSummary(values.summary);
-        assertNewDescription(body);
-        assertAvailableNumber({ branch, targets: targets ?? { primary: { remote: 'origin', repository: remote } }, execute: pairedExecute, root: repo.root, fresh: !record.pr && !record.publicationStarted, hasPr: Boolean(record.pr) });
-      }
-      git('fetch', '--no-tags', 'origin', 'refs/heads/development:refs/remotes/origin/development');
-      const size = changedLines(git('diff', '--numstat', '--no-renames', 'origin/development...HEAD'));
-      if (!size.reviewable && !size.generated && !size.binaries) throw new Error('No changes against development.');
-      const head = git('rev-parse', 'HEAD');
-      if (targets) await inspectSubmissionTarget({ repo, targets, branch, execute: pairedExecute });
-      const gateLogs = {};
-      const gate = async (name, argv) => {
-        if (dependencies.execute) return call(process.execPath, argv, 600_000);
-        const directory = await dataDirectory(repo, 'pr-workflow-logs');
-        try {
-          const result = await runGate({ name, args: argv, cwd: repo.root, logPath: resolve(directory, `${Date.now()}-${randomUUID()}-${name}.log`), report: dependencies.report });
-          gateLogs[name] = result;
-          return result.summary || 'Passed without output.';
-        } catch (error) {
-          if (error.gate) { record.gateLogs = { ...gateLogs, [name]: error.gate }; await save(); }
-          throw error;
-        }
-      };
-      const contextOutput = await gate('context', [resolve(repo.root, 'scripts/ci/check-context.mjs')]);
-      const dependencyChanges = git('diff', '--name-only', record.publishedHead ?? 'origin/development', 'HEAD', '--', 'package.json', '**/package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', '.npmrc', '.pnpmfile.cjs', 'pnpmfile.cjs');
-      const installOutput = dependencyChanges ? await gate('dependencies', [resolve(repo.root, 'scripts/ci/check-dependency-install.mjs')]) : 'Dependency inputs unchanged since the last publication/base.';
-      const runtimeOutput = await gate('runtime', [resolve(repo.root, 'scripts/ci/check-runtime.mjs')]);
-      const testOutput = await gate('tests', ['--test']);
-      if (git('status', '--porcelain', '--untracked-files=all') || git('rev-parse', 'HEAD') !== head || git('branch', '--show-current') !== branch) throw new Error('Checkout changed during local gates; inspect before push.');
-      let pr = find();
-      if (record.pr && (!pr || pr.number !== record.pr)) throw new Error('Recorded PR is closed or replaced; start a new feature branch instead of resetting its budget.');
-      if (pr?.number !== initialPr?.number || pr?.headRefOid !== initialPr?.headRefOid) throw new Error('PR changed during local gates; inspect its current head before publishing.');
-      record.localVerification = { head, context: contextOutput.slice(-2000), runtime: runtimeOutput.slice(-2000), dependencies: installOutput.slice(-2000), tests: testOutput.split('\n').slice(-10).join('\n') };
-      record.gateLogs = gateLogs;
-      delete record.completion;
-      record.publicationStarted = true;
-      if (newConventions) record.conventionVersion = 1;
-      if (targets) record.pairedTargets = targets;
-      await save();
-      git('push', '--set-upstream', 'origin', `HEAD:refs/heads/${branch}`);
-      await withPublicationBody(repo, body, async frozenBodyPath => {
-        if (pr) gh('pr', 'edit', String(pr.number), '--repo', remote, '--title', title, '--body-file', frozenBodyPath);
-        else {
-          gh('pr', 'create', '--repo', remote, '--head', branch, '--base', 'development', '--draft', '--title', title, '--body-file', frozenBodyPath);
-          pr = find();
-          if (!pr) throw new Error('PR created but lookup failed; rerun publish to recover.');
-        }
-      });
-      Object.assign(record, { pr: pr.number, url: pr.url, head, publishedHead: head, size, status: 'PUBLISHED' });
-      await save();
-      if (targets) {
-        try {
-          record.submission = await publishSubmission({ repo, targets, branch, head, title, body, primaryPr: { number: pr.number, url: pr.url }, execute: pairedExecute });
-          delete record.submissionError;
-          delete record.reason;
-          await save();
-        } catch (error) {
-          record.status = 'PARTIAL_PUBLICATION';
-          record.reason = record.submissionError = error.message;
-          await save();
-          throw new Error(`Public PR published at ${pr.url}; submission publication incomplete. Retain accounting and rerun publish. ${error.message}`);
-        }
-      }
-      if (!values['skip-review-request'] && record.requestedReviewHead !== head) {
-        const request = `@coderabbitai review\n\n<!-- slop-loop-review:${head} -->`;
-        const pages = json('api', '--paginate', '--slurp', `repos/${remote}/issues/${pr.number}/comments?per_page=100`);
-        if (!pages.flat().some((comment) => comment.body === request)) gh('pr', 'comment', String(pr.number), '--repo', remote, '--body', request);
-        record.requestedReviewHead = head;
-        await save();
-      }
-      return record;
-    }
+    if (command === 'publish') return publishCommand({
+      values, record, branch, repo, remote, git, find, pairedExecute, targets, dependencies, call, save, gh, json,
+    });
     if (!record.pr && !record.publicationStarted) throw new Error('Missing PR accounting; restore its original record rather than reset the repair budget.');
     if (command === 'record-app-state') {
       const receipt = await readJson(resolve(values.receipt));

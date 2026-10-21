@@ -6,14 +6,21 @@ function defaultTimeout() {
   return Number.isInteger(timeout) && timeout > 0 && timeout <= 2_147_483_647 ? timeout : 600_000;
 }
 
-export async function runGate({ name, args, cwd, logPath, timeout = defaultTimeout(), report = event => console.error(JSON.stringify(event)) }) {
+export function packageScriptCommand(script, platform = process.platform) {
+  if (typeof script !== 'string' || !/^[a-zA-Z0-9:_-]+$/.test(script)) throw new Error('Invalid package script name.');
+  return platform === 'win32'
+    ? { command: 'cmd.exe', args: ['/d', '/s', '/c', `pnpm run ${script}`] }
+    : { command: 'pnpm', args: ['run', script] };
+}
+
+export async function runGate({ name, command = process.execPath, args, cwd, logPath, timeout = defaultTimeout(), report = event => console.error(JSON.stringify(event)) }) {
   const log = await open(logPath, 'wx', 0o600);
   const started = Date.now();
   let tail = '', timedOut = false, spawnError, terminationError;
   let timer;
   try {
     report({ gate: name, status: 'running', log: logPath });
-    const child = spawn(process.execPath, args, { cwd, detached: process.platform !== 'win32', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(command, args, { cwd, detached: process.platform !== 'win32', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
     const capture = async stream => {
       for await (const chunk of stream) {
         await log.write(chunk);
