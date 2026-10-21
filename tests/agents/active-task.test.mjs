@@ -21,6 +21,11 @@ async function fixture(t) {
 }
 
 function run(checkout, ...args) {
+  if (args[0] === 'start') {
+    if (!args.includes('--session')) args.push('--session', '2026-10-15/test');
+    const roleIndex = args.indexOf('--role');
+    if (roleIndex !== -1 && args[roleIndex + 1] === 'worker' && !args.includes('--owned-path')) args.push('--owned-path', 'src/example.ts');
+  }
   return spawnSync(process.execPath, [cli, ...args, '--root', checkout], {
     encoding: 'utf8', windowsHide: true, timeout: 10_000,
   });
@@ -155,7 +160,7 @@ test('worker cleanup preserves the parent entry and active or blocked work', asy
   }
   let result = run(checkout, 'clear', '--owner', 'worker', '--task', 'T001');
   assert.equal(result.status, 1);
-  assert.match(result.stderr, /Only completed or handed-off entries/);
+  assert.match(result.stderr, /Only completed, handed-off, or reassigned entries/);
   result = run(checkout, 'update', '--owner', 'worker', '--task', 'T001', '--status', 'blocked', '--next', 'Wait for required input', '--verification', 'Focused check not run');
   assert.equal(result.status, 0, result.stderr);
   const blocked = await readFile(path, 'utf8');
@@ -231,7 +236,7 @@ test('overlapping writers either serialize or report busy without losing an assi
   const checkout = await fixture(t);
   const execute = promisify(execFile);
   const assignments = ['worker-one', 'worker-two'].map((owner) => [
-    'start', '--role', 'worker', '--owner', owner, '--task', 'T001', '--summary', owner, '--next', 'Verify',
+    'start', '--role', 'worker', '--owner', owner, '--task', 'T001', '--session', `2026-10-15/${owner}`, '--owned-path', 'src/example.ts', '--summary', owner, '--next', 'Verify',
   ]);
   const outcomes = await Promise.all(assignments.map((args) => execute(process.execPath, [cli, ...args, '--root', checkout], {
     windowsHide: true, timeout: 10_000,

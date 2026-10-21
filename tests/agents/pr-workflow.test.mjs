@@ -1,14 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { assess, changedLines, runWorkflow, workflowSummary } from '../../scripts/agents/pr-workflow.mjs';
-import { assertAvailableNumber } from '../../scripts/agents/pr-conventions.mjs';
-import { packageScriptCommand } from '../../scripts/agents/workflow-gate.mjs';
-import { checkout, evidence } from './support/pr-workflow-fixture.mjs';
+import { evidence } from './support/pr-workflow-fixture.mjs';
 
 test('current-head CI allows human review without CodeRabbit approval', () => {
   const e = evidence();

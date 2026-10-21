@@ -16,7 +16,7 @@ async function fixture(t) {
   await writeFile(join(root, 'AGENTS.md'), '# Instructions\n');
   await writeFile(join(root, 'docs/progress-checker-matrices.md'), '# Criteria\n');
   await writeFile(join(root, 'context/contract.json'), JSON.stringify({
-    requiredDocuments: ['context/README.md'], facts: {},
+    requiredDocuments: ['context/README.md'], facts: {}, authorizationReferences: [],
   }));
   await writeFile(join(root, 'AGENTS.md'), '[Context](context/README.md)\n');
   return root;
@@ -48,7 +48,7 @@ test('required documents cannot silently disappear from the context contract', a
   const root = await fixture(t);
   await writeFile(join(root, 'context/README.md'), '# Context\n');
   await writeFile(join(root, 'context/contract.json'), JSON.stringify({
-    requiredDocuments: ['context/README.md', 'context/policy.md'], facts: {},
+    requiredDocuments: ['context/README.md', 'context/policy.md'], facts: {}, authorizationReferences: [],
   }));
   const result = check(root);
   assert.equal(result.status, 1, result.stderr);
@@ -123,6 +123,7 @@ async function stackFixture(t, claim, choice = 'TypeScript') {
   await writeFile(join(root, 'context/contract.json'), JSON.stringify({
     requiredDocuments: ['context/README.md', 'context/tech_stack.md'],
     facts: { 'runtime-language': { source: 'context/tech_stack.md', tableRow: 'Implementation' } },
+    authorizationReferences: [],
   }));
   await writeFile(join(root, 'context/tech_stack.md'), `# Stack\n| Area | Choice | Scope |\n|---|---|---|\n| Implementation | ${choice} | Runtime |\n`);
   await writeFile(join(root, 'context/README.md'), `# Context\n[Stack](tech_stack.md)\n${claim}\n`);
@@ -162,6 +163,69 @@ test('agent instructions must expose the context entry point', async (t) => {
   const result = check(root);
   assert.equal(result.status, 1, result.stderr);
   assert.match(result.stderr, /AGENTS\.md must route to context\/README\.md/);
+});
+
+test('authorization summaries point to the configured source without deriving permission from task status', async (t) => {
+  const root = await fixture(t);
+  await mkdir(join(root, 'docs/uc03'));
+  await writeFile(join(root, 'context/README.md'), '# Context\n');
+  await writeFile(join(root, 'docs/uc03/decisions.md'), '# Recorded decisions\n');
+  await writeFile(join(root, 'docs/uc03/tasks.md'), '- [x] T005 completed\n[Decisions](decisions.md)\n');
+  await writeFile(join(root, 'AGENTS.md'), [
+    '[Context](context/README.md)',
+    '[UC-03 decisions](docs/uc03/decisions.md)',
+    '[UC-03 status](docs/uc03/tasks.md)',
+  ].join('\n'));
+  await writeFile(join(root, 'context/contract.json'), JSON.stringify({
+    requiredDocuments: ['context/README.md'],
+    facts: {},
+    authorizationReferences: [{ id: 'uc03', source: 'docs/uc03/decisions.md', summaries: ['AGENTS.md', 'docs/uc03/tasks.md'] }],
+  }));
+  const result = check(root);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Context checks passed/);
+  assert.doesNotMatch(result.stdout, /authorization|authorized|permission|grant/i);
+});
+
+test('authorization summaries fail when they point to a different recorded source', async (t) => {
+  const root = await fixture(t);
+  await mkdir(join(root, 'docs/uc03'));
+  await writeFile(join(root, 'context/README.md'), '# Context\n');
+  await writeFile(join(root, 'docs/uc03/decisions.md'), '# Earlier record\n');
+  await writeFile(join(root, 'docs/uc03/decisions-current.md'), '# Current record\n');
+  await writeFile(join(root, 'docs/uc03/spec.md'), '[Decisions](decisions.md)\n');
+  await writeFile(join(root, 'AGENTS.md'), [
+    '[Context](context/README.md)',
+    '[UC-03 decisions](docs/uc03/decisions-current.md)',
+    '[UC-03 spec](docs/uc03/spec.md)',
+  ].join('\n'));
+  await writeFile(join(root, 'context/contract.json'), JSON.stringify({
+    requiredDocuments: ['context/README.md'],
+    facts: {},
+    authorizationReferences: [{ id: 'uc03', source: 'docs/uc03/decisions-current.md', summaries: ['AGENTS.md', 'docs/uc03/spec.md'] }],
+  }));
+  const result = check(root);
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /docs\/uc03\/spec\.md: must link to authorization source docs\/uc03\/decisions-current\.md/);
+});
+
+test('authorization source duplication is reported instead of creating a second authority entry', async (t) => {
+  const root = await fixture(t);
+  await mkdir(join(root, 'docs/uc03'));
+  await writeFile(join(root, 'context/README.md'), '# Context\n');
+  await writeFile(join(root, 'docs/uc03/decisions.md'), '# Recorded decisions\n');
+  await writeFile(join(root, 'AGENTS.md'), '[Context](context/README.md)\n[Decisions](docs/uc03/decisions.md)\n');
+  await writeFile(join(root, 'context/contract.json'), JSON.stringify({
+    requiredDocuments: ['context/README.md'],
+    facts: {},
+    authorizationReferences: [
+      { id: 'uc03', source: 'docs/uc03/decisions.md', summaries: ['AGENTS.md'] },
+      { id: 'uc03-duplicate', source: 'docs/uc03/decisions.md', summaries: ['AGENTS.md'] },
+    ],
+  }));
+  const result = check(root);
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /authorization source is referenced more than once: docs\/uc03\/decisions\.md/);
 });
 
 test('duplicate source rows cannot give a fact two authoritative values', async (t) => {

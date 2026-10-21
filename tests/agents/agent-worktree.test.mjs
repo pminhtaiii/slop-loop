@@ -90,19 +90,50 @@ test('modified, untracked, and ignored content each prevent worktree retirement'
   }
 });
 
-test('resumed tasks, changed evidence, and locked worktrees invalidate retirement', async (t) => {
-  for (const mode of ['resumed', 'evidence', 'locked']) {
+test('checkout-wide active assignments, changed evidence, and locked worktrees invalidate retirement', async (t) => {
+  for (const mode of ['resumed', 'unrelated-session', 'evidence', 'locked']) {
     const { root, worker } = await fixture(t);
     register(root, worker);
     accept(root);
     if (mode === 'resumed') await writeFile(join(root, '.agent-work/state/active-tasks.json'), JSON.stringify([{ owner: 'worker', task: 'T001', checkout: worker, status: 'active' }]));
+    if (mode === 'unrelated-session') await writeFile(join(root, '.agent-work/state/active-tasks.json'), JSON.stringify([{ owner: 'another-worker', task: 'T099', checkout: worker, session: '2026-10-21/another-session', status: 'active' }]));
     if (mode === 'evidence') await writeFile(join(root, 'docs/evidence.md'), 'Changed after acceptance\n');
     if (mode === 'locked') git(root, ['worktree', 'lock', worker]);
     const result = run(root, 'cleanup', '--id', 'worker', '--apply');
     assert.equal(result.status, 0, result.stderr);
     assert.equal(JSON.parse(result.stdout).removed, false);
     assert.equal(JSON.parse(result.stdout).eligible, false);
+    if (mode === 'unrelated-session') assert.match(JSON.parse(result.stdout).reason, /active or blocked assignments/);
     await readFile(join(worker, 'docs/evidence.md'));
+  }
+});
+
+test('a reassigned predecessor does not block retirement after its successor finishes', async (t) => {
+  for (const successorStatus of ['completed', 'active', 'blocked']) {
+    const { root, worker } = await fixture(t);
+    register(root, worker);
+    accept(root);
+    await writeFile(join(root, '.agent-work/state/active-tasks.json'), JSON.stringify([
+      {
+        owner: 'interrupted', task: 'T001', checkout: worker, session: '2026-10-15/source',
+        summary: 'Work', next: 'Transferred to successor', status: 'reassigned',
+        reassignments: [{ owner: 'worker', task: 'T001', session: '2026-10-15/successor', reason: 'Recovery', at: '2026-10-15T00:00:00.000Z' }],
+      },
+      {
+        owner: 'worker', task: 'T001', checkout: worker, session: '2026-10-15/successor',
+        summary: 'Work', next: 'Finish verification', status: successorStatus,
+        reassignedFrom: { owner: 'interrupted', task: 'T001', session: '2026-10-15/source' },
+      },
+    ]));
+
+    const result = run(root, 'cleanup', '--id', 'worker');
+    assert.equal(result.status, 0, result.stderr);
+    const report = JSON.parse(result.stdout);
+    if (successorStatus === 'completed') assert.equal(report.eligible, true, JSON.stringify(report));
+    else {
+      assert.equal(report.eligible, false);
+      assert.match(report.reason, /active or blocked assignments/);
+    }
   }
 });
 

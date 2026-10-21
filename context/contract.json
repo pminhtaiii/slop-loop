@@ -29,5 +29,17 @@
       "source": "context/tech_stack.md",
       "tableRow": "Initial target repositories"
     }
-  }
+  },
+  "authorizationReferences": [
+    {
+      "id": "uc03",
+      "source": "specs/001-verified-code-repair/contracts/decisions.md",
+      "summaries": [
+        "AGENTS.md",
+        "specs/001-verified-code-repair/spec.md",
+        "specs/001-verified-code-repair/plan.md",
+        "specs/001-verified-code-repair/quickstart.md"
+      ]
+    }
+  ]
 }

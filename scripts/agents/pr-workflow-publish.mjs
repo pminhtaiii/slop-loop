@@ -91,7 +91,7 @@ export async function publishCommand({ values, record, branch, repo, remote, git
       record.status = 'PARTIAL_PUBLICATION';
       record.reason = record.submissionError = error.message;
       await save();
-      throw new Error(`Public PR published at ${pr.url}; submission publication incomplete. Retain accounting and rerun publish. ${error.message}`);
+      throw new Error(`Public PR published at ${pr.url}; submission publication incomplete. Retain accounting and rerun publish. ${error.message}`, { cause: error });
     }
   }
   if (!values['skip-review-request'] && record.requestedReviewHead !== head) {

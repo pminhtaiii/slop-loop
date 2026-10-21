@@ -38,5 +38,7 @@ jobs:
         run: node scripts/ci/check-context.mjs
       - name: Check tracked files
         run: node scripts/ci/check-tracked-files.mjs
+      - name: Lint repository JavaScript and TypeScript
+        run: pnpm run lint
       - name: Test contributor helpers
         run: pnpm run test:contributors

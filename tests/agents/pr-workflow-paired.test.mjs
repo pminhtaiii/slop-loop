@@ -1,14 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { readFileSync } from 'node:fs';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { assess, changedLines, runWorkflow, workflowSummary } from '../../scripts/agents/pr-workflow.mjs';
-import { assertAvailableNumber } from '../../scripts/agents/pr-conventions.mjs';
-import { packageScriptCommand } from '../../scripts/agents/workflow-gate.mjs';
-import { checkout, evidence } from './support/pr-workflow-fixture.mjs';
+import { runWorkflow } from '../../scripts/agents/pr-workflow.mjs';
+import { checkout } from './support/pr-workflow-fixture.mjs';
 
 test('paired publication resumes after a partial private PR failure and gates completion on both receipt links', async t => {
   const f = await checkout(t);
