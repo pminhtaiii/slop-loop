@@ -21,10 +21,43 @@ async function fixture(t) {
 }
 
 function run(checkout, ...args) {
+  if (args[0] === 'start') {
+    if (!args.includes('--session')) args.push('--session', '2026-10-15/test');
+    const roleIndex = args.indexOf('--role');
+    if (roleIndex !== -1 && args[roleIndex + 1] === 'worker' && !args.includes('--owned-path')) args.push('--owned-path', 'src/example.ts');
+  }
   return spawnSync(process.execPath, [cli, ...args, '--root', checkout], {
     encoding: 'utf8', windowsHide: true, timeout: 10_000,
   });
 }
+
+test('explicit reassignment preserves the original owner and evidence while creating a linked active assignment', async (t) => {
+  const checkout = await fixture(t);
+  run(checkout, 'start', '--role', 'worker', '--owner', 'interrupted', '--task', 'T001', '--session', '2026-10-15/old', '--summary', 'Implement feature', '--next', 'Resume from checkpoint', '--owned-path', 'src/feature.ts');
+  run(checkout, 'update', '--owner', 'interrupted', '--task', 'T001', '--verification', 'First test passed');
+  const result = run(checkout, 'reassign', '--owner', 'interrupted', '--task', 'T001', '--new-owner', 'successor', '--session', '2026-10-15/new', '--reason', 'Human-directed recovery after interruption');
+  assert.equal(result.status, 0, result.stderr);
+  const entries = JSON.parse(run(checkout, 'list').stdout);
+  const original = entries.find((entry) => entry.owner === 'interrupted');
+  const successor = entries.find((entry) => entry.owner === 'successor');
+  assert.equal(original.status, 'blocked');
+  assert.equal(original.session, '2026-10-15/old');
+  assert.equal(original.next, 'Resume from checkpoint');
+  assert.equal(original.verification, 'First test passed');
+  assert.equal(original.reassignments[0].owner, 'successor');
+  assert.equal(successor.status, 'active');
+  assert.equal(successor.session, '2026-10-15/new');
+  assert.equal(successor.checkout, original.checkout);
+  assert.deepEqual(successor.ownedPaths, ['src/feature.ts']);
+  assert.equal(successor.reassignedFrom.owner, 'interrupted');
+  assert.equal(successor.reassignedFrom.task, 'T001');
+  assert.equal(successor.reassignedFrom.session, '2026-10-15/old');
+  assert.equal(successor.reassignedFrom.status, 'active');
+  assert.equal(successor.reassignedFrom.next, 'Resume from checkpoint');
+  assert.equal(successor.reassignedFrom.verification, 'First test passed');
+  assert.equal(successor.reassignedFrom.reason, 'Human-directed recovery after interruption');
+  assert.equal(typeof successor.reassignedFrom.updatedAt, 'string');
+});
 
 test('a worker handoff can be cleared while preserving the permanent file exactly', async (t) => {
   const checkout = await fixture(t);
@@ -231,7 +264,7 @@ test('overlapping writers either serialize or report busy without losing an assi
   const checkout = await fixture(t);
   const execute = promisify(execFile);
   const assignments = ['worker-one', 'worker-two'].map((owner) => [
-    'start', '--role', 'worker', '--owner', owner, '--task', 'T001', '--summary', owner, '--next', 'Verify',
+    'start', '--role', 'worker', '--owner', owner, '--task', 'T001', '--session', `2026-10-15/${owner}`, '--owned-path', 'src/example.ts', '--summary', owner, '--next', 'Verify',
   ]);
   const outcomes = await Promise.all(assignments.map((args) => execute(process.execPath, [cli, ...args, '--root', checkout], {
     windowsHide: true, timeout: 10_000,

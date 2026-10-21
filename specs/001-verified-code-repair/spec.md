@@ -6,7 +6,7 @@
 
 **Created**: 2026-10-16
 
-**Status**: Phase 1 build setup completed; Phase 2 contract validators and controlled mocks (T003–T004) authorized on 2026-10-16 (Asia/Saigon). Shared-owner agreement remains recorded and production choices remain deferred until before real execution. Phase 3 (T005–T014) is authorized on 2026-10-18 (Asia/Saigon); Phase 4 onward and real execution remain outside this request; see [decisions](contracts/decisions.md).
+**Status**: User-recorded authorizations and remaining scope gates are in [decisions](contracts/decisions.md); [tasks](tasks.md) reports implementation progress only and does not confer permission.
 
 **Input**: Specify only UC-03 from approved scope, acceptance criteria, security policy and decisions; enable parallel work with contract-bound mocks without claiming real acceptance.
 

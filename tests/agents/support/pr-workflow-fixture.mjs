@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runWorkflow } from '../../../scripts/agents/pr-workflow.mjs';
@@ -40,7 +39,7 @@ export async function checkout(t) {
   let created = false, failGate = false;
   const comments = [];
   const calls = [];
-  const execute = (binary, args, cwd) => {
+  const execute = (binary, args) => {
     calls.push([binary, ...args]);
     if (binary === process.execPath || binary === packageScriptCommand('test:contributors').command) { if (failGate) throw new Error('Local gate failed'); return 'passed'; }
     if (binary === 'git') {

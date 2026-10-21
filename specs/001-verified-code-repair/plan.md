@@ -3,7 +3,7 @@
 **Branch**: `feat/001-verified-code-repair` | **Date**: 2026-10-16 | **Spec**: [spec.md](spec.md)
 
 **Input**: `/specs/001-verified-code-repair/spec.md`
-**Status**: Phase 1 build setup completed; Phase 2 contract validators and controlled mocks (T003–T004) authorized on 2026-10-16 (Asia/Saigon). User-confirmed shared-owner agreement and deferred production choices remain in force. Phase 3 (T005–T014) is authorized on 2026-10-18 (Asia/Saigon). Phase 4 onward and real runtime acceptance remain outside this request. See [decisions](contracts/decisions.md).
+**Status**: User-recorded authorizations and remaining scope gates are in [decisions](contracts/decisions.md); task status reports implementation progress only and does not confer permission.
 
 ## Summary
 
@@ -23,7 +23,7 @@ Implement a localized bug-fix route through validation, adaptive investigation/r
 
 ## Constitution Check
 
-Governance: `.specify/memory/constitution.md` remains an unratified placeholder template, not an asserted constitution pass. The decision record applies AGENTS.md, context policy and accepted ADRs without ratifying the placeholder. The table below records the original draft gates; user-confirmed contract agreement and the bootstrap amendment released T001/T002, and the subsequent user instruction releases Phase 2 T003/T004. Production choices still gate real execution. Repository instructions, accepted ADR-0001/0002/0003 and current security/state contracts govern this feature. ADR-0004 records accepted approval/replan decisions and closure; T001 records the exact shared binding/accounting agreement. Accepted ADRs alone do not authorize later implementation phases.
+Governance: .specify/memory/constitution.md remains an unratified placeholder template, not an asserted constitution pass. The decision record applies AGENTS.md, context policy and accepted ADRs without ratifying the placeholder. The table below records the original draft gates; user-recorded authorizations and changes to scope are maintained in [decisions](contracts/decisions.md). Production choices still gate real execution as recorded there. Repository instructions, accepted ADR-0001/0002/0003 and current security/state contracts govern this feature. ADR-0004 records accepted approval/replan decisions and closure; T001 records the exact shared binding/accounting agreement. Accepted ADRs alone do not authorize later implementation phases.
 
 | Gate | Draft design assessment | Implementation release condition |
 |---|---|---|
@@ -33,7 +33,7 @@ Governance: `.specify/memory/constitution.md` remains an unratified placeholder 
 | Completion evidence | PASS as design: baseline, final checks and reviewer bound to final state | T028–T033 real integration evidence |
 | Open choices | Drafting can proceed; implementation readiness NOT PASSED | T001 records decisions, finite configurations consistent with accepted ADR-0004; approvals are not inferred from this request |
 
-Phase 2 recheck: the user authorized canonical validators and controlled test-only mocks after Phase 1. Deferred operational choices remain named release gates in contracts/decisions.md. Phase 3 (T005–T014) is now authorized by the user on 2026-10-18 (Asia/Saigon); tasks remain unchecked until integrated evidence passes. Phase 4 onward and real execution remain gated.
+Current user-recorded authorizations and scope gates are in [decisions](contracts/decisions.md). This plan describes design and dependencies; task checkboxes record implementation progress only and do not authorize work.
 
 ## Project Structure
 

@@ -1,6 +1,6 @@
 # Quickstart Validation Guide: UC-03
 
-Phase 1 provides the build toolchain and a LangGraph dependency smoke test. Phase 2 adds canonical contract validation and controlled test-only port mocks; it does not provide the UC-03 runtime runner. The user authorized Phase 2 and confirmed shared contracts on 2026-10-16 (Asia/Saigon); production choices remain required before real execution. See [decisions](contracts/decisions.md).
+Phase 1 provides the build toolchain and a LangGraph dependency smoke test. Phase 2 adds canonical contract validation and controlled test-only port mocks; it does not provide the UC-03 runtime runner. Current authorization and remaining scope gates are recorded in [decisions](contracts/decisions.md). This guide describes phase outputs; task progress does not confer permission.
 
 ## Build setup (available now)
 

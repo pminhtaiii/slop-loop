@@ -33,8 +33,8 @@ function factValue(value) {
 try {
   const root = await realpath(resolve(args[1] ?? resolve(dirname(fileURLToPath(import.meta.url)), '../..')));
   const contract = JSON.parse(await readFile(resolve(root, 'context/contract.json'), 'utf8'));
-  if (!Array.isArray(contract.requiredDocuments) || contract.requiredDocuments.some((file) => typeof file !== 'string') || !contract.facts || typeof contract.facts !== 'object' || Array.isArray(contract.facts)) {
-    throw new Error('context/contract.json requires requiredDocuments and a facts object.');
+  if (!Array.isArray(contract.requiredDocuments) || contract.requiredDocuments.some((file) => typeof file !== 'string') || !contract.facts || typeof contract.facts !== 'object' || Array.isArray(contract.facts) || !Array.isArray(contract.authorizationReferences)) {
+    throw new Error('context/contract.json requires requiredDocuments, a facts object, and an authorizationReferences array.');
   }
   const files = ['AGENTS.md', 'docs/progress-checker-matrices.md'];
   for (const entry of await readdir(resolve(root, 'context'), { withFileTypes: true })) {
@@ -90,6 +90,32 @@ try {
       failures.push(`context/contract.json: fact ${id} needs one source row ${definition.tableRow} in ${definition.source}`);
     } else {
       facts.set(id, factValue(rows[0][2]));
+    }
+  }
+  const authorizationIds = new Set();
+  const authorizationSources = new Set();
+  for (const reference of contract.authorizationReferences) {
+    if (!reference || typeof reference.id !== 'string' || !reference.id || typeof reference.source !== 'string' || !Array.isArray(reference.summaries) || !reference.summaries.length || reference.summaries.some((summary) => typeof summary !== 'string')) {
+      failures.push('context/contract.json: each authorization reference requires an id, source, and summary paths');
+      continue;
+    }
+    if (authorizationIds.has(reference.id)) failures.push(`context/contract.json: duplicate authorization reference id ${reference.id}`);
+    authorizationIds.add(reference.id);
+    if (authorizationSources.has(reference.source)) failures.push(`context/contract.json: authorization source is referenced more than once: ${reference.source}`);
+    authorizationSources.add(reference.source);
+    if (!sources.has(reference.source)) failures.push(`context/contract.json: authorization reference ${reference.id} source must be checked: ${reference.source}`);
+    const summaries = new Set();
+    for (const summary of reference.summaries) {
+      if (summaries.has(summary)) {
+        failures.push(`context/contract.json: authorization reference ${reference.id} repeats summary ${summary}`);
+        continue;
+      }
+      summaries.add(summary);
+      if (!sources.has(summary)) {
+        failures.push(`context/contract.json: authorization reference ${reference.id} summary must be checked: ${summary}`);
+      } else if (!localTargets.get(summary)?.has(reference.source)) {
+        failures.push(`${summary}: must link to authorization source ${reference.source}`);
+      }
     }
   }
   for (const [file, source] of sources) {

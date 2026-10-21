@@ -4,12 +4,15 @@ import { fileURLToPath } from 'node:url';
 import { runWorkflow } from './pr-workflow.mjs';
 import { isDeepStrictEqual } from 'node:util';
 import { atomicWrite, dataDirectory, readJson, repository, withLock } from './agent-store.mjs';
+import { captureOwnedHandoff, validateOwnedPaths, validateSessionRef, verifyOwnedHandoff } from './owned-handoff.mjs';
 
 const usage = `Usage:
-  node scripts/agents/active-task.mjs start --owner <id> --task <id> --summary <text> --next <text> [--role coordinator|worker]
+  node scripts/agents/active-task.mjs start --owner <id> --task <id> --session <date/id> --summary <text> --next <text> [--role coordinator|worker] [--owned-path <path>...]
   node scripts/agents/active-task.mjs update --owner <id> --task <id> [--next <text>] [--verification <text>] [--status active|blocked]
   node scripts/agents/active-task.mjs handoff --owner <id> --task <id> --result <text>
   node scripts/agents/active-task.mjs finish --owner <id> --task <id> --result <text>
+  node scripts/agents/active-task.mjs reassign --owner <old-id> --task <id> --new-owner <id> --session <date/id> --reason <text> [--role coordinator|worker] [--owned-path <path>...]
+  node scripts/agents/active-task.mjs verify-handoff --owner <id> --task <id>
   node scripts/agents/active-task.mjs clear --owner <id> --task <id>
   node scripts/agents/active-task.mjs archive --owner <id> --task <id> --output docs/verification/<name>.json [--apply]
   node scripts/agents/active-task.mjs list
@@ -28,8 +31,9 @@ A busy lock is not automatically reclaimed. The permanent template is preserved.
 function parseArguments(args) {
   const [command, ...options] = args;
   const fields = {
-    start: ['summary', 'next', 'role'], update: ['next', 'verification', 'status'],
+    start: ['summary', 'next', 'role', 'session', 'owned-path'], update: ['next', 'verification', 'status'],
     finish: ['result'], handoff: ['result'], clear: [], archive: ['output'], list: ['owner', 'task', 'status'], render: [],
+    reassign: ['new-owner', 'session', 'reason', 'role', 'owned-path'], 'verify-handoff': [],
   };
   if (!Object.hasOwn(fields, command)) throw new Error(usage);
   const values = {};
@@ -38,10 +42,12 @@ function parseArguments(args) {
     if (options[index] === '--apply' && command === 'archive' && !values.apply) { values.apply = true; continue; }
     const name = options[index].slice(2);
     const value = options[index + 1];
-    if (!options[index].startsWith('--') || !['root', 'owner', 'task', ...fields[command]].includes(name) || Object.hasOwn(values, name) || !value?.trim() || value.startsWith('--')) {
+    const repeatable = name === 'owned-path' && ['start', 'reassign'].includes(command);
+    if (!options[index].startsWith('--') || !['root', 'owner', 'task', ...fields[command]].includes(name) || Object.hasOwn(values, name) && !repeatable || !value?.trim() || value.startsWith('--')) {
       throw new Error(`Invalid or duplicate option: ${options[index]}\n${usage}`);
     }
-    values[name] = value;
+    if (repeatable) (values[name] ??= []).push(value);
+    else values[name] = value;
     index++;
   }
   for (const name of ['list', 'render'].includes(command) ? [] : ['owner', 'task']) {
@@ -50,6 +56,9 @@ function parseArguments(args) {
   for (const name of command === 'start' ? ['summary', 'next'] : ['finish', 'handoff'].includes(command) ? ['result'] : []) {
     if (!values[name]) throw new Error(`--${name} is required.`);
   }
+  if (['start', 'reassign'].includes(command)) validateSessionRef(values.session);
+  if (command === 'reassign' && (!values['new-owner'] || !values.reason)) throw new Error('reassign requires --new-owner and --reason.');
+  if (values['new-owner'] && !/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(values['new-owner'])) throw new Error('A valid --new-owner ID is required.');
   if (command === 'update' && !fields.update.some((name) => values[name])) throw new Error('update requires progress, verification, or status.');
   if (values.role && !['coordinator', 'worker'].includes(values.role)) throw new Error('Role must be coordinator or worker.');
   if (command === 'update' && values.status && !['active', 'blocked'].includes(values.status)) throw new Error('Status must be active or blocked.');
@@ -102,6 +111,8 @@ function validateEntries(entries) {
       throw new Error('Invalid active-task entry; file left unchanged.');
     }
     if (entry.role !== undefined && !['coordinator', 'worker'].includes(entry.role) || entry.status === 'handed-off' && entry.role !== 'worker') throw new Error('Invalid task role or worker handoff.');
+    if (entry.session !== undefined) validateSessionRef(entry.session);
+    if (entry.ownedPaths !== undefined) validateOwnedPaths(entry.ownedPaths);
     const key = JSON.stringify([entry.owner, entry.task]);
     if (keys.has(key)) throw new Error('Duplicate active-task ownership; file left unchanged.');
     keys.add(key);
@@ -132,12 +143,13 @@ async function run(args) {
         const legacyPath = resolve(worktree.worktree, 'context/active_task.md');
         const legacyStat = await lstat(legacyPath).catch((missing) => { if (missing.code !== 'ENOENT') throw missing; });
         if (!legacyStat) continue;
-        if (!legacyStat.isFile() || legacyStat.isSymbolicLink()) throw new Error('Legacy handoff must be a regular file.');
+        if (!legacyStat.isFile() || legacyStat.isSymbolicLink()) throw new Error('Legacy handoff must be a regular file.', { cause: error });
         for (const legacy of managedEntries(await readFile(legacyPath, 'utf8')).entries) {
           const previous = entries.find((entry) => entry.owner === legacy.owner && entry.task === legacy.task);
           if (previous) {
-            const { checkout, ...previousData } = previous;
-            if (JSON.stringify(previousData) !== JSON.stringify(legacy)) throw new Error('Conflicting legacy handoffs; reconcile them before migration.');
+            const previousData = { ...previous };
+            delete previousData.checkout;
+            if (JSON.stringify(previousData) !== JSON.stringify(legacy)) throw new Error('Conflicting legacy handoffs; reconcile them before migration.', { cause: error });
           } else entries.push({ ...legacy, checkout: worktree.worktree });
         }
       }
@@ -148,6 +160,14 @@ async function run(args) {
       return console.log(JSON.stringify(selected, null, 2));
     }
     const index = entries.findIndex((entry) => entry.owner === values.owner && entry.task === values.task);
+    if (command === 'verify-handoff') {
+      if (index === -1) throw new Error('No entry matches that owner and task.');
+      const entry = entries[index];
+      const verification = await verifyOwnedHandoff(entry);
+      console.log(JSON.stringify({ owner: entry.owner, task: entry.task, checkout: entry.checkout ?? null, ...verification }, null, 2));
+      if (!verification.verified) process.exitCode = 1;
+      return;
+    }
     if (command === 'archive') {
       if (!/^docs\/verification\/[A-Za-z0-9][A-Za-z0-9._-]*\.json$/.test(values.output)) throw new Error('Archive output must be a JSON file directly under docs/verification/.');
       for (const part of ['docs', 'docs/verification']) {
@@ -183,7 +203,37 @@ async function run(args) {
       // The shared store is authoritative; rendering changes only this checkout.
     } else if (command === 'start') {
       if (index !== -1) throw new Error('Entry already exists; use update or finish instead of overwriting it.');
-      entries.push({ owner: values.owner, task: values.task, checkout: repo.root, role: values.role ?? 'coordinator', summary: values.summary, next: values.next, status: 'active', verification: '', updatedAt: new Date().toISOString() });
+      const role = values.role ?? 'coordinator';
+      const ownedPaths = validateOwnedPaths(values['owned-path'] ?? []);
+      if (role === 'worker' && !ownedPaths.length) throw new Error('Worker start requires at least one --owned-path.');
+      entries.push({ owner: values.owner, task: values.task, checkout: repo.root, session: values.session, role, summary: values.summary, next: values.next, status: 'active', verification: '', ...(ownedPaths.length ? { ownedPaths } : {}), updatedAt: new Date().toISOString() });
+    } else if (command === 'reassign') {
+      if (index === -1) throw new Error('No entry matches that owner and task.');
+      const source = entries[index];
+      if (!['active', 'blocked'].includes(source.status)) throw new Error('Only active or blocked assignments can be explicitly reassigned.');
+      if (values['new-owner'] === source.owner || entries.some((entry) => entry.owner === values['new-owner'] && entry.task === source.task)) throw new Error('The new owner/task assignment already exists or matches the source.');
+      if (source.session && values.session === source.session) throw new Error('Reassignment requires a distinct session identity.');
+      const inheritedPaths = validateOwnedPaths(source.ownedPaths ?? []);
+      const suppliedPaths = validateOwnedPaths(values['owned-path'] ?? []);
+      if (inheritedPaths.length && suppliedPaths.length && inheritedPaths.join('\0') !== suppliedPaths.join('\0')) throw new Error('Reassignment must retain the source owned paths.');
+      const ownedPaths = inheritedPaths.length ? inheritedPaths : suppliedPaths;
+      const role = values.role ?? source.role ?? 'coordinator';
+      if (role === 'worker' && !ownedPaths.length) throw new Error('Reassigning a worker requires declared --owned-path values for a legacy assignment.');
+      const priorStatus = source.status;
+      const priorUpdatedAt = source.updatedAt;
+      const reassignedAt = new Date().toISOString();
+      const event = { owner: values['new-owner'], task: source.task, session: values.session, reason: values.reason, at: reassignedAt };
+      source.status = 'blocked';
+      source.reassignments = [...(Array.isArray(source.reassignments) ? source.reassignments : []), event];
+      source.updatedAt = reassignedAt;
+      entries.push({
+        owner: values['new-owner'], task: source.task, checkout: source.checkout ?? repo.root,
+        session: values.session, role, summary: source.summary,
+        next: `Resume from checkpoint: ${source.next}. Confirm the source agent's state with the host before acting.`,
+        status: 'active', verification: '', ...(ownedPaths.length ? { ownedPaths } : {}),
+        reassignedFrom: { owner: source.owner, task: source.task, session: source.session ?? null, status: priorStatus, next: source.next, verification: source.verification ?? '', updatedAt: priorUpdatedAt ?? null, reason: values.reason },
+        updatedAt: reassignedAt,
+      });
     } else {
       if (index === -1) throw new Error('No entry matches that owner and task.');
       const entry = entries[index];
@@ -200,7 +250,13 @@ async function run(args) {
           Object.assign(entry, { status: 'completed', result: values.result, publication: publication.completion, next: 'Human merge decision' });
         }
         if (command === 'handoff' && entry.role !== 'worker') throw new Error('Only registered workers may hand off; coordinators must publish and finish.');
-        if (command === 'handoff') Object.assign(entry, { status: 'handed-off', result: values.result, next: 'Coordinator integration and PR publication required' });
+        if (command === 'handoff') {
+          if (entry.checkout !== repo.root) throw new Error('Worker handoff must run in the assignment checkout.');
+          const handoffEvidence = entry.ownedPaths?.length
+            ? await captureOwnedHandoff(entry)
+            : { schemaVersion: 1, status: 'unverified', reason: 'Legacy assignment has no declared owned paths; hashes were not inferred.' };
+          Object.assign(entry, { status: 'handed-off', result: values.result, handoffEvidence, next: 'Coordinator must verify owned paths before integration and publication' });
+        }
         entry.updatedAt = new Date().toISOString();
       }
     }
@@ -209,7 +265,7 @@ async function run(args) {
     await atomicWrite(statePath, JSON.stringify(entries, null, 2) + '\n');
     if (command === 'render') {
       try { await atomicWrite(path, content); }
-      catch (error) { throw new Error(`Shared state saved, but view refresh failed: ${error.message}`); }
+      catch (error) { throw new Error(`Shared state saved, but view refresh failed: ${error.message}`, { cause: error }); }
     }
     console.log(command === 'archive' ? JSON.stringify({ applied: true, output: values.output, retained: entries.length }) : `${command}: ${values.owner}/${values.task}; ${entries.length} assignment(s) retained.`);
   });
