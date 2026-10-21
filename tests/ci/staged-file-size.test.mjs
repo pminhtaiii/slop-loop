@@ -16,8 +16,9 @@ async function repository(t) {
   t.after(() => rm(root, { recursive: true, force: true }));
   const env = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: join(root, 'empty.gitconfig') };
   await writeFile(env.GIT_CONFIG_GLOBAL, '');
+  const runGit = (cwd, ...args) => spawnSync('git', args, { cwd, env, encoding: 'utf8', windowsHide: true });
   const git = (...args) => {
-    const result = spawnSync('git', args, { cwd: root, env, encoding: 'utf8', windowsHide: true });
+    const result = runGit(root, ...args);
     assert.equal(result.status, 0, result.stderr);
     return result.stdout.trim();
   };
@@ -27,7 +28,7 @@ async function repository(t) {
   git('commit', '--quiet', '--allow-empty', '-m', 'baseline');
   const check = (...args) => spawnSync(process.execPath, [checker, '--root', root, ...args], { cwd: root, encoding: 'utf8', windowsHide: true, timeout: 30_000 });
   const commit = () => git('commit', '--quiet', '-m', 'fixture change');
-  return { root, env, git, check, commit };
+  return { root, env, git, runGit, check, commit };
 }
 
 test('the checker uses staged index bytes and allows exactly 20,000 bytes', async (t) => {
@@ -79,6 +80,137 @@ test('known generated outputs, lockfiles, and binary blobs are skipped without e
   assert.match(result.stderr, /src\/contracts\/authored\.ts/);
   for (const path of skipped) assert.doesNotMatch(result.stderr, new RegExp(path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   assert.doesNotMatch(result.stderr, /binary\.dat/);
+});
+
+test('top-level tests and specs are exempt by normalized path while implementation files remain checked', async (t) => {
+  const { root, git, check } = await repository(t);
+  const paths = ['TESTS/foo.test.ts', 'SPECS/foo/spec.md', 'src/foo.ts', 'nested/tests/foo.test.ts'];
+  for (const path of paths) {
+    const file = join(root, path);
+    await mkdir(dirname(file), { recursive: true });
+    await writeFile(file, 'x'.repeat(20_001));
+    git('add', '--', path);
+  }
+
+  const result = check();
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /src\/foo\.ts/);
+  assert.match(result.stderr, /nested\/tests\/foo\.test\.ts/);
+  assert.doesNotMatch(result.stderr, /TESTS\/foo\.test\.ts/);
+  assert.doesNotMatch(result.stderr, /SPECS\/foo\/spec\.md/);
+});
+
+test('during a merge only exact parent mode and blob pairs pass, including renamed paths', async (t) => {
+  const { root, git, check } = await repository(t);
+  const base = git('rev-parse', 'HEAD');
+
+  git('checkout', '--quiet', '-b', 'incoming');
+  await writeFile(join(root, 'incoming parent.ts'), 'i'.repeat(20_001));
+  git('add', '--', 'incoming parent.ts');
+  git('commit', '--quiet', '-m', 'incoming parent');
+
+  git('checkout', '--quiet', '--detach', base);
+  git('checkout', '--quiet', '-b', 'ours');
+  await writeFile(join(root, 'head parent.ts'), 'h'.repeat(20_001));
+  git('add', '--', 'head parent.ts');
+  git('commit', '--quiet', '-m', 'head parent');
+  git('merge', '--no-ff', '--no-commit', 'incoming');
+  git('mv', '--', 'head parent.ts', 'renamed head parent.ts');
+
+  const exactParents = check();
+  assert.equal(exactParents.status, 0, exactParents.stderr);
+
+  await copyFile(join(root, 'incoming parent.ts'), join(root, 'mode mismatch.ts'));
+  git('add', '--', 'mode mismatch.ts');
+  git('update-index', '--chmod=+x', '--', 'mode mismatch.ts');
+  const wrongMode = check();
+  assert.equal(wrongMode.status, 1);
+  assert.match(wrongMode.stderr, /mode mismatch\.ts/);
+  assert.doesNotMatch(wrongMode.stderr, /incoming parent\.ts|renamed head parent\.ts/);
+
+  git('rm', '--cached', '--force', '--quiet', '--', 'mode mismatch.ts');
+  assert.equal(check().status, 0, 'the exact parent mode and blob pairs stay exempt');
+});
+
+test('an oversized edited merge resolution is still checked', async (t) => {
+  const { root, git, runGit, check } = await repository(t);
+  await mkdir(join(root, 'src'));
+  await writeFile(join(root, 'src/merge.ts'), 'base');
+  git('add', '--', 'src/merge.ts');
+  git('commit', '--quiet', '-m', 'base resolution');
+  const base = git('rev-parse', 'HEAD');
+
+  git('checkout', '--quiet', '-b', 'incoming');
+  await writeFile(join(root, 'src/merge.ts'), 'i'.repeat(20_001));
+  git('add', '--', 'src/merge.ts');
+  git('commit', '--quiet', '-m', 'incoming resolution');
+
+  git('checkout', '--quiet', '--detach', base);
+  git('checkout', '--quiet', '-b', 'ours');
+  await writeFile(join(root, 'src/merge.ts'), 'o'.repeat(20_001));
+  git('add', '--', 'src/merge.ts');
+  git('commit', '--quiet', '-m', 'ours resolution');
+  const merge = runGit(root, 'merge', '--no-ff', '--no-commit', 'incoming');
+  assert.equal(merge.status, 1, merge.stdout + merge.stderr);
+  assert.match(merge.stdout + merge.stderr, /CONFLICT/);
+
+  await writeFile(join(root, 'src/merge.ts'), 'r'.repeat(20_001));
+  git('add', '--', 'src/merge.ts');
+  const result = check();
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /src\/merge\.ts/);
+  assert.match(result.stderr, /20,001 bytes/);
+});
+
+test('matching a parent blob outside a merge does not grant an exemption', async (t) => {
+  const { root, git, check } = await repository(t);
+  const contents = 'p'.repeat(20_001);
+  await writeFile(join(root, 'parent.ts'), contents);
+  git('add', '--', 'parent.ts');
+  git('commit', '--quiet', '-m', 'large parent file');
+  await copyFile(join(root, 'parent.ts'), join(root, 'new copy.ts'));
+  git('add', '--', 'new copy.ts');
+
+  const result = check();
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /new copy\.ts/);
+});
+
+test('the checker uses a linked worktree MERGE_HEAD path', async (t) => {
+  const { root, git, runGit } = await repository(t);
+  const base = git('rev-parse', 'HEAD');
+  git('checkout', '--quiet', '-b', 'incoming');
+  await writeFile(join(root, 'large incoming.ts'), 'w'.repeat(20_001));
+  git('add', '--', 'large incoming.ts');
+  git('commit', '--quiet', '-m', 'incoming large file');
+
+  const worktree = join(root, 'linked-worktree');
+  const added = runGit(root, 'worktree', 'add', '--quiet', '--detach', worktree, base);
+  assert.equal(added.status, 0, added.stderr);
+  const merge = runGit(worktree, 'merge', '--no-ff', '--no-commit', 'incoming');
+  assert.equal(merge.status, 0, merge.stdout + merge.stderr);
+
+  const gitPath = runGit(worktree, 'rev-parse', '--git-path', 'MERGE_HEAD');
+  assert.equal(gitPath.status, 0, gitPath.stderr);
+  const mainGitPath = runGit(root, 'rev-parse', '--git-path', 'MERGE_HEAD');
+  assert.equal(mainGitPath.status, 0, mainGitPath.stderr);
+  assert.notEqual(resolve(worktree, gitPath.stdout.trim()), resolve(root, mainGitPath.stdout.trim()));
+  const result = spawnSync(process.execPath, [checker, '--root', worktree], {
+    cwd: worktree, encoding: 'utf8', windowsHide: true, timeout: 30_000,
+  });
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test('malformed MERGE_HEAD refs fail closed', async (t) => {
+  const { root, git, check } = await repository(t);
+  await writeFile(join(root, 'large.ts'), 'm'.repeat(20_001));
+  git('add', '--', 'large.ts');
+  const mergeHeadPath = resolve(root, git('rev-parse', '--git-path', 'MERGE_HEAD'));
+  await writeFile(mergeHeadPath, 'not-a-commit\n');
+
+  const result = check();
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Invalid Git MERGE_HEAD/);
 });
 
 test('renames and copies check their destination; staged deletions are ignored', async (t) => {

@@ -20,6 +20,8 @@ Before authoring, planning, or auditing a feature, follow the [planning workflow
 
 Before implementation and before declaring contributor work complete, follow the [active-task handoff](context/workflow.md#active-task-handoff). Contributor completion requires the published, linked PR gate; worker handoff is separate.
 
+Before delegating parallel contributor work, follow the [agent coordination](context/workflow.md#agent-coordination) policy.
+
 After implementation, follow the [context refresh](context/workflow.md#context-refresh): review affected context documents, prepare evidence-based updates in their existing format, and run `node scripts/agents/update-context.mjs --updates <edits.json> --apply` before handoff.
 
 ## Branch and PR naming
