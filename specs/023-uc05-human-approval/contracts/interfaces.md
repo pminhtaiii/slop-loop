@@ -63,6 +63,12 @@ The owner remains responsible for serialized task control, locked repository/pol
 
 Results are the minimal `claimed`, `blocked` or `unavailable`, with only an admitted claim ID on success. Detailed prerequisite reasons and complete safe audit/CLI projections are still part of T016–T018; these results do not establish full US4/SC-006 or real/restart acceptance. The current composition rejects real/unknown provenance rather than silently supplying a mock replacement.
 
+## Phase 7 read-only history consumer
+
+The authorized T016–T018 slice may expose `ApprovalService.history(taskId, page)` behind explicit CLI task/page selection. It consumes existing `readHistory`, `readEvents` and request metadata from the injected owner, validates their schema and cross-record identity before display, and bounds pages in UTF-8 under the explicit fixture profile. History remains readable independently of current exact-action inspection: immutable human resolution, current binding assessment, continuation/claim and observed outcome are distinct evidence. Derived observations are labelled separately from committed journal events. Missing execution/cancellation evidence remains unknown; no approval-only completion claim is permitted.
+
+Ordinary pending creation and decision success must match authoritative journal evidence as well as their mutation receipts. Lost, malformed or missing journal evidence cannot grant new execution authority; committed consent must not be rewritten to pretend that an uncertain response did not commit. Retrying an accepted response preserves its original event identity. These are consumer checks against mock contract behavior, not proof of durable outbox delivery or storage atomicity. Tai's telemetry implementation, UC-04 persistence and canonical record versions remain unchanged.
+
 ## Mock replacement and delivery
 
 T004 provides mock store/context/activity ports only under `tests/runtime/support/uc05/`; they use the same companion validators, explicit finite profiles and scripted human input. The existing ScriptedApprovalPort remains a UC-03 consumer fixture, not the UC-05 service under test. T020 replaces mocks with X04-APPROVAL-STORE and X03-ADMISSION; T021 proves actual process restart. Real composition rejects mock dependencies and unavailable durable adapters; no silent production mock fallback.
