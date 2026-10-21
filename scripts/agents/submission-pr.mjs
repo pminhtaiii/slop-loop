@@ -2,7 +2,6 @@ import { randomUUID } from 'node:crypto';
 import { atomicWrite, withLock } from './agent-store.mjs';
 import { githubRepository, withPublicationBody } from './publication-targets.mjs';
 import { assertBranch, normalizeTargets, readRecord } from './submission-pr-shared.mjs';
-
 const gitHash = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i;
 const writablePermissions = new Set(['WRITE', 'MAINTAIN', 'ADMIN']);
 

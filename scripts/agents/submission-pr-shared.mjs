@@ -1,10 +1,9 @@
 import { resolve } from 'node:path';
 import { dataDirectory, readJson } from './agent-store.mjs';
-
-const featureBranch = /^feat\/\d{3}-[a-z0-9]+(?:-[a-z0-9]+)*$/;
+import { featureBranch } from './pr-conventions.mjs';
 
 export function assertBranch(branch) {
-  if (!featureBranch.test(branch ?? '')) throw new Error('Submission publication requires a feat/NNN-description branch.');
+  if (!featureBranch.test(branch ?? '')) throw new Error('Submission publication requires a feat/scope-description branch (historical numbered names remain readable).');
 }
 
 export function normalizeTargets(targets) {

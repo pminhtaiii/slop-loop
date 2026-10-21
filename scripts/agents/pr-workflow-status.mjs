@@ -1,5 +1,6 @@
+import { featureBranch as featureName } from './pr-conventions.mjs';
 const checksRequired = ['contributor-checks (ubuntu-latest)', 'contributor-checks (windows-latest)', 'runtime-checks (ubuntu-latest)', 'runtime-checks (windows-latest)'];
-export const featureName = /^feat\/\d{3}-[a-z0-9]+(?:-[a-z0-9]+)*$/;
+export { featureName };
 export function validSummary(value) {
   return typeof value === 'string' && value.length > 0 && value.length <= 80 && value === value.trim() && !/[\r\n]/.test(value);
 }

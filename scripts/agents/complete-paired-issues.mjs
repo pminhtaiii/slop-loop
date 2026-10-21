@@ -5,11 +5,11 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dataDirectory, readJson, repository, withLock } from './agent-store.mjs';
 import { publicationTargets } from './publication-targets.mjs';
-import { command, json, sides, featureBranch } from './paired-issue-api.mjs';
+import { command, json, sides } from './paired-issue-api.mjs';
 import { privateIdentityAppears, resolveIssuePair, validateTarget } from './paired-issue-resolution.mjs';
 import { completionMarker, loadCompletionRecord, mergedSnapshot, parsePullUrl, prIdentity, readSubmissionPr, saveCompletionRecord, validateCompletionRecord, validHash, validPrUrl } from './paired-issue-state.mjs';
 import { issueCommentsState, postComment, sameVerifiedSnapshot } from './paired-issue-comments.mjs';
-
+import { featureBranch } from './pr-conventions.mjs';
 const usage = 'Usage: node scripts/agents/complete-paired-issues.mjs --key <stable-key> --pr <public-PR-URL> --evidence-file <JSON> [--apply] [--root <checkout>]';
 const defaultRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -93,7 +93,7 @@ export async function inspectCurrent(values, evidenceInput, repo, call, targets,
   const fields = 'number,url,state,mergedAt,headRefName,headRefOid,baseRefName,isDraft,isCrossRepository';
   const publicPr = json(call, ['pr', 'view', String(publicUrl.number), '--repo', targets.primary.repository, '--json', fields], repo, 'public PR');
   if (publicPr.number !== publicUrl.number || !validPrUrl(publicPr.url, targets.primary.repository, publicUrl.number) || publicPr.isCrossRepository !== false) throw new Error('The public PR identity is invalid, cross-repository, or changed.');
-  if (!featureBranch.test(publicPr.headRefName ?? '') || publicPr.baseRefName !== 'development' || !validHash(publicPr.headRefOid)) throw new Error('The public PR must use a feat/NNN-description branch and development base.');
+  if (!featureBranch.test(publicPr.headRefName ?? '') || publicPr.baseRefName !== 'development' || !validHash(publicPr.headRefOid)) throw new Error('The public PR must use a feat/scope-description branch (or historical numbered name) and development base.');
   if (!['OPEN', 'CLOSED', 'MERGED'].includes(publicPr.state)) throw new Error('GitHub returned an invalid public PR state.');
   if (publicPr.state === 'MERGED' && (typeof publicPr.mergedAt !== 'string' || !publicPr.mergedAt.trim())) throw new Error('The merged public PR has no mergedAt timestamp.');
   const submissionPr = readSubmissionPr(call, repo, targets.submission, publicPr.headRefName);

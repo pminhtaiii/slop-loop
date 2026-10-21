@@ -1,5 +1,7 @@
+import { featureBranch } from './pr-conventions.mjs';
+
 export const sides = ['primary', 'submission'];
-export const featureBranch = /^feat\/\d{3}-[a-z0-9]+(?:-[a-z0-9]+)*$/;
+export { featureBranch };
 
 export function command(call, args, repo, timeout = 30_000) {
   const result = call('gh', args, repo.root, timeout);
