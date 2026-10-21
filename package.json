@@ -19,9 +19,10 @@
     "check:dependency-install": "node scripts/ci/check-dependency-install.mjs",
     "check:staged-size": "node scripts/ci/check-staged-file-size.mjs",
     "validate:runtime": "node scripts/ci/check-runtime.mjs",
+    "test:contributors": "node scripts/ci/run-contributor-tests.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
-    "test:runtime": "node -e \"const { globSync } = require('node:fs'); const { spawnSync } = require('node:child_process'); const files = globSync('dist/tests/runtime/**/*.test.js'); if (!files.length) { console.error('No runtime tests found'); process.exit(1); } const res = spawnSync(process.execPath, ['--test', ...files], { stdio: 'inherit' }); process.exit(res.status ?? 1);\""
+    "test:runtime": "node scripts/ci/run-runtime-tests.mjs"
   },
   "dependencies": {
     "@langchain/core": "1.2.17",

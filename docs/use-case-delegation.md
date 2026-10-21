@@ -56,6 +56,8 @@ Shared foundation includes the model adapter and structured-output validation, L
 
 **Boundary:** use the shared bug-task input contract and UC-05's action gate; UC-01 is not a prerequisite for this batch. Own the bug-fix route, not independent copies of policy, persistence, or command execution. Tai owns the shared read-only runtime reviewer per the confirmed Phase 1 decision record; contributor CodeRabbit is not the runtime reviewer.
 
+For source lookup, use the [UC-03 validator map](../context/architecture.md#uc-03-contract-validation) to reach the relevant contract modules and tests.
+
 ## UC-04: Multi-step feature with resume
 
 The owner-confirmed first foundation and task-scoped pause/recovery behavior are in [ADR-0007](adr/0007-uc04-task-pause-and-recovery-foundation.md). The integrated feature workflow and cross-task repository memory remain later UC-04 phases.

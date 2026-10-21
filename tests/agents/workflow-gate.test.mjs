@@ -3,7 +3,13 @@ import test from 'node:test';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { runGate } from '../../scripts/agents/workflow-gate.mjs';
+import { packageScriptCommand, runGate } from '../../scripts/agents/workflow-gate.mjs';
+
+test('package script gates run the same pnpm command on Unix and Windows', () => {
+  assert.deepEqual(packageScriptCommand('test:contributors', 'linux'), { command: 'pnpm', args: ['run', 'test:contributors'] });
+  assert.deepEqual(packageScriptCommand('test:contributors', 'win32'), { command: 'cmd.exe', args: ['/d', '/s', '/c', 'pnpm run test:contributors'] });
+  assert.throws(() => packageScriptCommand('test:contributors && whoami', 'linux'), /package script/);
+});
 
 test('gate accepts only bounded positive integer environment timeouts', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'workflow-gate-env-'));

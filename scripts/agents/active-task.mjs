@@ -1,5 +1,5 @@
 import { lstat, open, readFile, realpath } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
+import { basename, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runWorkflow } from './pr-workflow.mjs';
 import { isDeepStrictEqual } from 'node:util';
@@ -13,6 +13,7 @@ const usage = `Usage:
   node scripts/agents/active-task.mjs clear --owner <id> --task <id>
   node scripts/agents/active-task.mjs archive --owner <id> --task <id> --output docs/verification/<name>.json [--apply]
   node scripts/agents/active-task.mjs list
+  node scripts/agents/active-task.mjs list --compact [--owner <id>] [--task <id>] [--status <status>]
   node scripts/agents/active-task.mjs render
 
 All commands accept --root <checkout>. Use a unique owner per session/worker.
@@ -28,11 +29,12 @@ function parseArguments(args) {
   const [command, ...options] = args;
   const fields = {
     start: ['summary', 'next', 'role'], update: ['next', 'verification', 'status'],
-    finish: ['result'], handoff: ['result'], clear: [], archive: ['output'], list: [], render: [],
+    finish: ['result'], handoff: ['result'], clear: [], archive: ['output'], list: ['owner', 'task', 'status'], render: [],
   };
   if (!Object.hasOwn(fields, command)) throw new Error(usage);
   const values = {};
   for (let index = 0; index < options.length; index++) {
+    if (options[index] === '--compact' && command === 'list' && !values.compact) { values.compact = true; continue; }
     if (options[index] === '--apply' && command === 'archive' && !values.apply) { values.apply = true; continue; }
     const name = options[index].slice(2);
     const value = options[index + 1];
@@ -50,9 +52,37 @@ function parseArguments(args) {
   }
   if (command === 'update' && !fields.update.some((name) => values[name])) throw new Error('update requires progress, verification, or status.');
   if (values.role && !['coordinator', 'worker'].includes(values.role)) throw new Error('Role must be coordinator or worker.');
-  if (values.status && !['active', 'blocked'].includes(values.status)) throw new Error('Status must be active or blocked.');
+  if (command === 'update' && values.status && !['active', 'blocked'].includes(values.status)) throw new Error('Status must be active or blocked.');
+  if (command === 'list' && values.status && !['active', 'blocked', 'handed-off', 'completed'].includes(values.status)) {
+    throw new Error('List status must be active, blocked, handed-off, or completed.');
+  }
   if (command === 'archive' && !values.output) throw new Error('archive requires --output docs/verification/<name>.json.');
   return { command, values };
+}
+
+function listEntries(entries, values) {
+  const current = values.compact && !values.status
+    ? new Set(['active', 'blocked', 'handed-off'])
+    : null;
+  return entries.filter((entry) =>
+    (!current || current.has(entry.status)) &&
+    (!values.owner || entry.owner === values.owner) &&
+    (!values.task || entry.task === values.task) &&
+    (!values.status || entry.status === values.status));
+}
+
+function printCompactEntries(entries) {
+  const shown = entries.slice(0, 12);
+  console.log(`Assignments: ${entries.length}`);
+  if (!shown.length) console.log('  none');
+  for (const entry of shown) {
+    const checkout = entry.checkout ? ` in ${basename(entry.checkout)}` : '';
+    const next = entry.next.replace(/\s+/g, ' ').trim();
+    const summary = next.length > 120 ? `${next.slice(0, 119)}…` : next;
+    console.log(`- ${entry.owner}/${entry.task} [${entry.status}; ${entry.role ?? 'coordinator'}]${checkout} — ${summary}`);
+  }
+  if (entries.length > shown.length) console.log(`  … ${entries.length - shown.length} more; add --owner, --task, or --status to narrow the list`);
+  console.log('Use list without --compact for the complete JSON assignment records.');
 }
 
 function managedEntries(source) {
@@ -112,7 +142,11 @@ async function run(args) {
         }
       }
     }
-    if (command === 'list') return console.log(JSON.stringify(entries, null, 2));
+    if (command === 'list') {
+      const selected = listEntries(entries, values);
+      if (values.compact) return printCompactEntries(selected);
+      return console.log(JSON.stringify(selected, null, 2));
+    }
     const index = entries.findIndex((entry) => entry.owner === values.owner && entry.task === values.task);
     if (command === 'archive') {
       if (!/^docs\/verification\/[A-Za-z0-9][A-Za-z0-9._-]*\.json$/.test(values.output)) throw new Error('Archive output must be a JSON file directly under docs/verification/.');

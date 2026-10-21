@@ -39,4 +39,4 @@ jobs:
       - name: Check tracked files
         run: node scripts/ci/check-tracked-files.mjs
       - name: Test contributor helpers
-        run: node --test
+        run: pnpm run test:contributors
