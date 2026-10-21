@@ -14,7 +14,7 @@ Thanh Tan is accountable for local tasks, including proposed persistence paths. 
 
 **Goal**: Obtain actual approval of this proposed extension without repeating accepted behavioral interviews.
 
-- [ ] T001 Record phase authorization, extension/path/seam agreements and release decisions in specs/037-uc04-recovery/contracts/decisions.md.
+- [x] T001 Record phase authorization, extension/path/seam agreements and release decisions in specs/037-uc04-recovery/contracts/decisions.md.
   - **Dependencies**: None; external G-AUTH/G-EXTENSION.
   - **Owned Paths**: specs/037-uc04-recovery/contracts/decisions.md; specs/037-uc04-recovery/contracts/interfaces.md; specs/037-uc04-recovery/data-model.md; specs/037-uc04-recovery/plan.md; specs/037-uc04-recovery/tasks.md; specs/037-uc04-recovery/quickstart.md.
   - **Acceptance Checks**: Preserve inherited canonical/companion contracts; confirm new deliberate-pause sidecar/epoch composition, exact schemas/receipts, public test seams and paths with Thanh Tan/Tai/Trong Tan. Record G-STORE/G-CONTROL/G-PROFILE/G-RETENTION decisions only if actually supplied; amendment names chosen adapter/test paths before T004. No foreign runtime edit or inferred grant.
@@ -23,17 +23,17 @@ Thanh Tan is accountable for local tasks, including proposed persistence paths. 
 
 **Goal**: Shared validated contracts/cases and a selected real transactional authority; no memory-only durability substitute.
 
-- [ ] T002 [P] Implement recovery extension validators test-first in src/persistence/contracts.ts and tests/runtime/uc04/contracts.test.ts.
+- [x] T002 [P] Implement recovery extension validators test-first in src/persistence/contracts.ts and tests/runtime/uc04/contracts.test.ts.
   - **Dependencies**: T001.
   - **Owned Paths**: src/persistence/contracts.ts; tests/runtime/uc04/contracts.test.ts.
   - **Acceptance Checks**: Reuse canonical/UC-05 validators unchanged; R01,R02,R13,R15 reject unknown/unsafe/incompatible fields, invalid/cyclic/foreign predecessor refs, invalid steps/summary/identity/budgets and malformed receipts. No new permission class or foreign schema fork. Cover every proposed extension operation's request/result validation.
 
-- [ ] T003 [P] Register versioned recovery cases and controlled external seams in tests/runtime/support/uc04/scenarios.ts and tests/runtime/support/uc04/controlled-ports.ts.
+- [x] T003 [P] Register versioned recovery cases and controlled external seams in tests/runtime/support/uc04/scenarios.ts and tests/runtime/support/uc04/controlled-ports.ts.
   - **Dependencies**: T001.
   - **Owned Paths**: tests/runtime/support/uc04/scenarios.ts; tests/runtime/support/uc04/controlled-ports.ts.
   - **Acceptance Checks**: R01–R16 registry with fixture/oracle/profile IDs, expected counts, acknowledged failpoints and evidence levels. Only external approval/repository/verification/usage behavior is scripted; UC-04 SUT is real. Mock provenance and protected-data restrictions explicit; no foreign fixture edits or real repository effects. Validate against T002 at T004 join.
 
-- [ ] T004 Implement the transactional facade and selected durable adapter test-first behind src/persistence/store.ts with tests/runtime/uc04/store.test.ts.
+- [x] T004 Implement the transactional facade and selected durable adapter test-first behind src/persistence/store.ts with tests/runtime/uc04/store.test.ts.
   - **Dependencies**: T002, T003; external G-STORE and exact adapter-path plan amendment approved at T001.
   - **Owned Paths**: src/persistence/store.ts; tests/runtime/uc04/store.test.ts.
   - **Acceptance Checks**: Implement load/register/CAS/coherent checkpoint transactions plus primitives used by accounting/control/outcome operations. Pass canonical StatePort conformance without alternate schema. Validate task refs and lost-response idempotency; R01,R02,R08,R13 concurrency/atomic failure/corruption. Actual backend files/migrations/tests require enumerated owned-path amendment before work; this task cannot be completed on a facade/mock alone. A selected durable backend is required but no backend selected here.
@@ -42,12 +42,12 @@ Thanh Tan is accountable for local tasks, including proposed persistence paths. 
 
 **Goal**: Restore coherent progress and determine a safe next action. **Independent Test**: R03,R09,R13 through actual recovery with saved-state inputs; actual restart at T012.
 
-- [ ] T005 [US1] Write recovery behavioral RED against loadable src/persistence/recovery.ts in tests/runtime/uc04/recovery.test.ts.
+- [x] T005 [US1] Write recovery behavioral RED against loadable src/persistence/recovery.ts in tests/runtime/uc04/recovery.test.ts.
   - **Dependencies**: T004.
   - **Owned Paths**: src/persistence/recovery.ts; tests/runtime/uc04/recovery.test.ts.
   - **Acceptance Checks**: One neutral tracer then vertical slices: completed-step retention, predecessor-readiness zero-dispatch/valid-proof positive oracle before/after restore, repository/view drift, apparently complete work with available/unavailable verification, corrupt/missing authority and safe blockers. Test actual UC-04 exports, not a mocked recovery implementation; transfer source/test ownership to T006.
 
-- [ ] T006 [US1] Implement coherent restore and next-action validation in src/persistence/recovery.ts and tests/runtime/uc04/recovery.test.ts.
+- [x] T006 [US1] Implement coherent restore and next-action validation in src/persistence/recovery.ts and tests/runtime/uc04/recovery.test.ts.
   - **Dependencies**: T005.
   - **Owned Paths**: src/persistence/recovery.ts; tests/runtime/uc04/recovery.test.ts.
   - **Acceptance Checks**: R02–R05,R09,R13 through real store primitives and controlled external evidence. Recompute dependency readiness after restore/drift: unfinished/missing/invalidated predecessor proof gives zero dependent claim/dispatch; all valid completed prerequisites allow an eligible attempt while independent work remains possible. Preserve newest authority over stale checkpoint, no unaffected completed-step replay or drift overwrite; invalidate affected evidence/approval via owning seam. Recovery calls injected accounting/control capabilities whose actual implementations arrive at T008/T010; deny unavailable capabilities. Automatic continuation only after every hold/prerequisite clears; simulation remains labeled.
@@ -56,12 +56,12 @@ Thanh Tan is accountable for local tasks, including proposed persistence paths. 
 
 **Goal**: Independent task pause composes with existing approval holds. **Independent Test**: R06–R08 with task A/B, in-flight outcomes and store races; actual process evidence at T012.
 
-- [ ] T007 [US2] Implement deliberate-pause and inherited approval transactions test-first in src/persistence/task-control.ts and tests/runtime/uc04/control.test.ts.
+- [x] T007 [US2] Implement deliberate-pause and inherited approval transactions test-first in src/persistence/task-control.ts and tests/runtime/uc04/control.test.ts.
   - **Dependencies**: T004; external G-CONTROL.
   - **Owned Paths**: src/persistence/task-control.ts; tests/runtime/uc04/control.test.ts.
   - **Acceptance Checks**: Actual UC-04 transactions implement UC-05 load/read/create/resolve/replace/direction contract, preserving immutable identity/history/outbox, one pending winner, stale retirement and duplicate/conflict behavior. Add agreed pause/resume sidecar and shared epoch transaction, no new approval-mode enum. Present paused immediately after accepted control boundary, record bounded outstanding work and decline early resume. No new control CLI without owner amendment.
 
-- [ ] T008 [US2] Complete task-control race and restart-preparation tests in tests/runtime/uc04/control.test.ts and src/persistence/task-control.ts.
+- [x] T008 [US2] Complete task-control race and restart-preparation tests in tests/runtime/uc04/control.test.ts and src/persistence/task-control.ts.
   - **Dependencies**: T007.
   - **Owned Paths**: tests/runtime/uc04/control.test.ts; src/persistence/task-control.ts.
   - **Acceptance Checks**: R06–R08 lost/uncertain receipt, pause/claim winner, duplicated decision/direction after newer pause/end, no runnable gap, unrelated-task progress and separate holds. Approval cannot clear deliberate pause; UC-04 resume cannot release rejection/wait/recovery. Cancellation/outcome callbacks never reopen admission. Scripted external controls remain non-production evidence.
@@ -70,12 +70,12 @@ Thanh Tan is accountable for local tasks, including proposed persistence paths. 
 
 **Goal**: One cumulative ledger and explicit reconciliation. **Independent Test**: R04–R05,R10–R11 with original request/role/config IDs; actual kill windows at T012.
 
-- [ ] T009 [US3] Implement atomic multi-budget reservation and settlement test-first in src/persistence/accounting.ts and tests/runtime/uc04/accounting.test.ts.
+- [x] T009 [US3] Implement atomic multi-budget reservation and settlement test-first in src/persistence/accounting.ts and tests/runtime/uc04/accounting.test.ts.
   - **Dependencies**: T004.
   - **Owned Paths**: src/persistence/accounting.ts; tests/runtime/uc04/accounting.test.ts.
   - **Acceptance Checks**: reserveAll/recordAndSettle use store-owned transactions, full task/run budget sets and exact idempotent receipts; no partial dispatch authority. Independent coder/reviewer token/cost/iteration checks, repair and replan retention, original pricing even on invalid output, config reload no reset; explicit authorized increases retain old history. Missing/inconsistent/exhausted accounting denies before effect.
 
-- [ ] T010 [US3] Add dispatch claims and uncertain-outcome reconciliation in src/persistence/accounting.ts and tests/runtime/uc04/accounting.test.ts.
+- [x] T010 [US3] Add dispatch claims and uncertain-outcome reconciliation in src/persistence/accounting.ts and tests/runtime/uc04/accounting.test.ts.
   - **Dependencies**: T009, T008.
   - **Owned Paths**: src/persistence/accounting.ts; tests/runtime/uc04/accounting.test.ts.
   - **Acceptance Checks**: R04–R05,R08,R10–R11: shared epoch/claim transaction composes approved control protocol; no duplicate attempt from retried receipt. Reconcile confirmed non-dispatch/completion/usage and evidenced idempotency; unknown/over-bound/conflicting outcomes retain charge and block, never timer-release. No provider idempotency assumption, generic feature replan rule or executor implementation.
@@ -84,7 +84,7 @@ Thanh Tan is accountable for local tasks, including proposed persistence paths. 
 
 **Goal**: Inspect authority and compact advisory reasoning. **Independent Test**: R12,R14–R15 through actual projection/validation, with no state mutation by summary.
 
-- [ ] T011 [US4] Implement bounded status/history and compact-summary validation test-first in src/persistence/inspection.ts and tests/runtime/uc04/inspection.test.ts.
+- [x] T011 [US4] Implement bounded status/history and compact-summary validation test-first in src/persistence/inspection.ts and tests/runtime/uc04/inspection.test.ts.
   - **Dependencies**: T006, T008, T010.
   - **Owned Paths**: src/persistence/inspection.ts; tests/runtime/uc04/inspection.test.ts.
   - **Acceptance Checks**: All six fields; explicit empty risks allowed; long history, individual omission/conflict cases, metadata-only history, protected markers/unsafe receipts refused. Show goal/completed/hold/outstanding/next action on request, concise failure notifications, no extra successful restore narration. Preserve completed history; deletion unavailable until separately approved G-RETENTION mechanics/tasks. No memory across tasks.
@@ -93,7 +93,7 @@ Thanh Tan is accountable for local tasks, including proposed persistence paths. 
 
 **Goal**: Prove actual foundation restart before claiming external integration.
 
-- [ ] T012 Prove durable foundation process restart in tests/runtime/uc04/restart.test.ts and tests/runtime/support/uc04/restart-child.ts.
+- [x] T012 Prove durable foundation process restart in tests/runtime/uc04/restart.test.ts and tests/runtime/support/uc04/restart-child.ts.
   - **Dependencies**: T006, T008, T010, T011; external approved G-STORE host/crash/profile contract.
   - **Owned Paths**: tests/runtime/uc04/restart.test.ts; tests/runtime/support/uc04/restart-child.ts; specs/037-uc04-recovery/quickstart.md.
   - **Acceptance Checks**: Real selected store and actual UC-04 modules, controlled external seams only. R01–R16 foundation portions twice, acknowledged kill points, confirmed old PID exit/new process, retained workspace/charge/hold, independent attempt/effect witness, multi-process spend/pause/claim races. Same-process and parent-memory restoration cannot pass. Add exact runnable selected-driver invocation to quickstart; retain raw records ignored. Unsupported cases explicit not-run and block their claim; no power-loss/integrated feature claim.

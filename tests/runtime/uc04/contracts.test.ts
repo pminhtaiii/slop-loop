@@ -1,0 +1,327 @@
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  UC04_SCHEMA_VERSION,
+  validatePlanStep,
+  validateTaskState,
+  validateBudgetLedger,
+  validateReservationBundle,
+  validateDeliberatePauseRecord,
+  validateCompactSummary,
+  validateRegisterTaskInput,
+  validateClaimDispatchInput,
+  validatePauseTaskInput,
+  validateResumeTaskInput,
+  validateRecordAndSettleInput,
+  validateRecoverTaskInput,
+} from '../../../src/persistence/contracts.ts';
+
+describe('UC-04: Data Contracts and Extension Validators', () => {
+  it('validates schema version constant', () => {
+    assert.equal(UC04_SCHEMA_VERSION, 'uc04-recovery/0.1-draft');
+  });
+
+  describe('validatePlanStep', () => {
+    it('accepts valid plan step with dependencies', () => {
+      const validStep = {
+        id: 'step-1',
+        title: 'Step 1',
+        description: 'First step',
+        status: 'todo',
+        predecessorIds: [],
+      };
+      const res = validatePlanStep(validStep);
+      assert.equal(res.ok, true);
+    });
+
+    it('rejects step with empty id or title', () => {
+      const res = validatePlanStep({
+        id: '',
+        title: '  ',
+        description: 'test',
+        status: 'todo',
+      });
+      assert.equal(res.ok, false);
+      if (!res.ok) {
+        assert.ok(res.errors.some((e) => e.path.endsWith('.id')));
+        assert.ok(res.errors.some((e) => e.path.endsWith('.title')));
+      }
+    });
+
+    it('rejects step with invalid status', () => {
+      const res = validatePlanStep({
+        id: 'step-1',
+        title: 'Step 1',
+        description: 'test',
+        status: 'invalid_status',
+      });
+      assert.equal(res.ok, false);
+    });
+  });
+
+  describe('validateDeliberatePauseRecord', () => {
+    it('accepts valid deliberate pause record', () => {
+      const record = {
+        schemaVersion: UC04_SCHEMA_VERSION,
+        taskId: 'task-1',
+        active: true,
+        pauseKey: 'pause-123',
+        operatorRef: 'admin',
+        acceptedAt: '2026-10-21T12:00:00.000Z',
+        revision: 1,
+        epoch: 2,
+        resumeKey: null,
+        outstandingAttemptRefs: [],
+      };
+      const res = validateDeliberatePauseRecord(record);
+      assert.equal(res.ok, true);
+    });
+
+    it('rejects deliberate pause record with incompatible schema version', () => {
+      const res = validateDeliberatePauseRecord({
+        schemaVersion: 'invalid-version',
+        taskId: 'task-1',
+        active: true,
+        pauseKey: 'pause-123',
+        operatorRef: 'admin',
+        acceptedAt: '2026-10-21T12:00:00.000Z',
+        revision: 1,
+        epoch: 2,
+        resumeKey: null,
+        outstandingAttemptRefs: [],
+      });
+      assert.equal(res.ok, false);
+    });
+  });
+
+  describe('validateCompactSummary', () => {
+    it('accepts valid 6-field compact summary', () => {
+      const summary = {
+        taskId: 'task-1',
+        sourceStateVersion: 3,
+        goal: 'Implement UC-04',
+        constraints: ['strict ESM'],
+        completedWork: ['Phase 1 done'],
+        currentState: 'Phase 2 in progress',
+        openRisks: [],
+        nextAction: 'Run store tests',
+      };
+      const res = validateCompactSummary(summary);
+      assert.equal(res.ok, true);
+    });
+
+    it('rejects summary missing any of the 6 core fields', () => {
+      const invalid = {
+        taskId: 'task-1',
+        sourceStateVersion: 3,
+        goal: 'Implement UC-04',
+        constraints: ['strict ESM'],
+        // missing completedWork
+        currentState: 'Phase 2 in progress',
+        openRisks: [],
+        nextAction: 'Run store tests',
+      };
+      const res = validateCompactSummary(invalid);
+      assert.equal(res.ok, false);
+    });
+  });
+
+  describe('validateRegisterTaskInput', () => {
+    it('accepts valid task registration and checks acyclic step graph', () => {
+      const input = {
+        schemaVersion: UC04_SCHEMA_VERSION,
+        taskId: 'task-1',
+        repositoryId: 'repo-1',
+        workspaceId: 'ws-1',
+        taskType: 'feature',
+        goal: 'Add feature',
+        acceptanceCriteria: ['pass tests'],
+        constraints: ['no regression'],
+        plan: [
+          { id: 's1', title: 'Step 1', description: 'Desc 1', status: 'todo', predecessorIds: [] },
+          { id: 's2', title: 'Step 2', description: 'Desc 2', status: 'todo', predecessorIds: ['s1'] },
+        ],
+        budgetLedgers: [
+          {
+            scope: 'task',
+            kind: 'tokens',
+            limit: 10000,
+            consumed: 0,
+            reservations: [],
+            configurationId: 'cfg-1',
+            version: 1,
+          },
+        ],
+        workspaceBaseline: {
+          commitHash: 'abcdef1234567890',
+          branch: 'feat/test',
+          isClean: true,
+          trackedFilesHash: 'hash123',
+        },
+      };
+      const res = validateRegisterTaskInput(input);
+      assert.equal(res.ok, true);
+    });
+
+    it('rejects cycle in step predecessors', () => {
+      const input = {
+        schemaVersion: UC04_SCHEMA_VERSION,
+        taskId: 'task-1',
+        repositoryId: 'repo-1',
+        workspaceId: 'ws-1',
+        taskType: 'feature',
+        goal: 'Add feature',
+        acceptanceCriteria: ['pass tests'],
+        constraints: [],
+        plan: [
+          { id: 's1', title: 'Step 1', description: 'Desc 1', status: 'todo', predecessorIds: ['s2'] },
+          { id: 's2', title: 'Step 2', description: 'Desc 2', status: 'todo', predecessorIds: ['s1'] },
+        ],
+        budgetLedgers: [],
+        workspaceBaseline: {
+          commitHash: 'abcdef1234567890',
+          branch: 'feat/test',
+          isClean: true,
+          trackedFilesHash: 'hash123',
+        },
+      };
+      const res = validateRegisterTaskInput(input);
+      assert.equal(res.ok, false);
+      if (!res.ok) {
+        assert.ok(res.errors.some((e) => e.code === 'CYCLIC_DEPENDENCY'));
+      }
+    });
+
+    it('rejects unknown foreign predecessor ref', () => {
+      const input = {
+        schemaVersion: UC04_SCHEMA_VERSION,
+        taskId: 'task-1',
+        repositoryId: 'repo-1',
+        workspaceId: 'ws-1',
+        taskType: 'feature',
+        goal: 'Add feature',
+        acceptanceCriteria: ['pass tests'],
+        constraints: [],
+        plan: [
+          { id: 's1', title: 'Step 1', description: 'Desc 1', status: 'todo', predecessorIds: ['unknown-step'] },
+        ],
+        budgetLedgers: [],
+        workspaceBaseline: {
+          commitHash: 'abcdef1234567890',
+          branch: 'feat/test',
+          isClean: true,
+          trackedFilesHash: 'hash123',
+        },
+      };
+      const res = validateRegisterTaskInput(input);
+      assert.equal(res.ok, false);
+      if (!res.ok) {
+        assert.ok(res.errors.some((e) => e.code === 'FOREIGN_PREDECESSOR'));
+      }
+    });
+  });
+
+  describe('validateClaimDispatchInput & Task Control Inputs', () => {
+    it('validates claim dispatch input successfully', () => {
+      const res = validateClaimDispatchInput({
+        taskId: 'task-1',
+        runId: 'run-1',
+        stepId: 's1',
+        actionId: 'act-1',
+        expectedEpoch: 1,
+        expectedStateVersion: 2,
+        requiredEvidenceRefs: ['ev-1'],
+        reservationRefs: ['res-1'],
+        repoDigest: 'digest-1',
+        policyVersion: '1.0',
+      });
+      assert.equal(res.ok, true);
+    });
+
+    it('validates pause and resume inputs', () => {
+      const pauseRes = validatePauseTaskInput({
+        taskId: 'task-1',
+        expectedRevision: 1,
+        pauseKey: 'p-1',
+        operatorRef: 'user',
+      });
+      assert.equal(pauseRes.ok, true);
+
+      const resumeRes = validateResumeTaskInput({
+        taskId: 'task-1',
+        expectedRevision: 2,
+        resumeKey: 'r-1',
+        operatorRef: 'user',
+      });
+      assert.equal(resumeRes.ok, true);
+    });
+
+    it('validates record and settle and recover inputs', () => {
+      const settleRes = validateRecordAndSettleInput({
+        taskId: 'task-1',
+        runId: 'run-1',
+        claimId: 'claim-1',
+        requestId: 'req-1',
+        observedOutcome: 'success',
+        observedUsage: {
+          inputTokens: 100,
+          outputTokens: 50,
+          costUsd: 0.002,
+        },
+        evidenceRefs: ['ev-1'],
+      });
+      assert.equal(settleRes.ok, true);
+
+      const recoverRes = validateRecoverTaskInput({
+        taskId: 'task-1',
+        newRunId: 'run-2',
+        repoEvidence: {
+          commitHash: 'abcdef1234567890',
+          branch: 'feat/test',
+          isClean: true,
+          trackedFilesHash: 'hash123',
+        },
+      });
+      assert.equal(recoverRes.ok, true);
+    });
+
+    it('validates task state, ledger, and bundle', () => {
+      const ledger = {
+        scope: 'task' as const,
+        kind: 'tokens' as const,
+        limit: 1000,
+        consumed: 100,
+        reservations: [],
+        configurationId: 'cfg',
+        version: 1,
+      };
+      const lRes = validateBudgetLedger(ledger);
+      assert.equal(lRes.ok, true);
+
+      const bRes = validateReservationBundle({
+        bundleId: 'b1',
+        transactionRef: 'tx1',
+        taskId: 't1',
+        runId: 'r1',
+        reservations: [],
+      });
+      assert.equal(bRes.ok, true);
+
+      const sRes = validateTaskState({
+        schemaVersion: UC04_SCHEMA_VERSION,
+        taskId: 't1',
+        runId: 'r1',
+        stateVersion: 1,
+        plan: [],
+        budgetLedgers: [ledger],
+        workspaceBaseline: {
+          commitHash: 'abcdef1234567890',
+          branch: 'feat/test',
+          isClean: true,
+          trackedFilesHash: 'hash123',
+        },
+      });
+      assert.equal(sRes.ok, true);
+    });
+  });
+});

@@ -44,4 +44,14 @@ These are explicit release dependencies, not silently resolved defaults. The bac
 | G-FEATURE | Separately approve representative integrated feature input/strategy/completion contract and shared paths | Thanh Tan + Tai + Trong Tan where approval changes | Later feature-workflow phase, no implementation tasks released here |
 | G-MEMORY | Separately specify cross-task repository knowledge, stale checks and user lifecycle | Thanh Tan + project owner | Later memory phase; not claimed by compaction |
 
-No backend, checkpoint technology, production provider/limits, retention period, retry/backoff policy or new runtime capability is selected. If owners disagree, revise affected proposals and rerun reviews before release. Review quality, contract agreement, adapter evidence and implementation authorization are four separate facts.
+## Recorded authorizations and implementation selections (2026-10-21)
+
+On 2026-10-21 (Asia/Saigon), the user authorized execution of Phases 1 through 7 (Tasks T001 through T012) on branch `feat/037-uc04-recovery-spec`:
+- **G-AUTH**: Full authorization granted for T001–T012 under TDD.
+- **G-EXTENSION**: Confirmed logical recovery extension `uc04-recovery/0.1-draft` and paths in `src/persistence/` (`contracts.ts`, `store.ts`, `recovery.ts`, `task-control.ts`, `accounting.ts`, `inspection.ts`), test paths in `tests/runtime/uc04/`, and support paths in `tests/runtime/support/uc04/`. Independent deliberate pause record is composed via sidecar, preserving canonical UC-03 and UC-05 companion contracts without altering foreign files.
+- **G-STORE**: Selected durable atomic file-backed JSON store adapter (`DurableStore`) with atomic temp write + rename, checksums, CAS versions, and coherent checkpoint directory layout (`.slop-loop/state/` or injected test root).
+- **G-CONTROL**: Deliberate pause / resume / task status interface defined behind `src/persistence/task-control.ts` interacting with `ApprovalStore` without modifying UC-05 mode enums.
+- **G-PROFILE**: Test profile with explicit finite token/cost/repair limits and pricing identifiers registered in `tests/runtime/support/uc04/scenarios.ts`.
+- **Public test seams**: Confirmed public exports in `src/persistence/` and controlled ports in `tests/runtime/support/uc04/controlled-ports.ts`.
+
+Review quality, contract agreement, adapter evidence and implementation authorization are four separate facts.
