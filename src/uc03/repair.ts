@@ -8,8 +8,9 @@ import {
   type BudgetLedger, type ExecutionGuard,
 } from '../contracts/foundation/uc03.ts';
 import type {
-  RepairInput, RepairPorts, RepairResult,
+  RejectionInput, RejectionPorts, ReplanResult, RepairInput, RepairPorts, RepairResult,
 } from './repair-types.ts';
+import { getRejectionApprovalContext, validateRejectionInput } from './repair-types.ts';
 
 export * from './repair-types.ts';
 export * from './replan.ts';
@@ -235,4 +236,46 @@ export async function executeRepair(input: RepairInput, ports: RepairPorts): Pro
   return { outcome: 'REPAIR_PREPARED', state: transitioned, reasons: [], reservedActionId: actionId, appliedPatchDigest: digest };
 }
 
-async function safeReload(statePort: StatePort, taskId: string, fallback: TaskState): Promise<TaskState> { try { const latest = await statePort.loadTask(taskId); return latest && validateTaskState(latest).ok ? latest : fallback; } catch { return fallback; } }
+function rejectionResult(outcome: ReplanResult['outcome'], state: TaskState, reasons: readonly string[]): ReplanResult {
+  return { outcome, state, reasons, replanCount: state.replanCount, isMaterial: false };
+}
+
+export async function handlePlanRejection(input: RejectionInput, ports: RejectionPorts): Promise<ReplanResult> {
+  if (!validateRejectionInput(input)) return { outcome: 'INCOMPLETE', state: {} as TaskState, reasons: ['invalid-rejection-input'], replanCount: 0, isMaterial: false };
+  let state: TaskState | null;
+  try { state = await ports.statePort.loadTask(input.taskId); }
+  catch { return { outcome: 'INCOMPLETE', state: {} as TaskState, reasons: ['authoritative-task-state-unavailable'], replanCount: 0, isMaterial: false }; }
+  if (!state) return { outcome: 'INCOMPLETE', state: {} as TaskState, reasons: ['task-not-found'], replanCount: 0, isMaterial: false };
+  const approvalPort = ports.approvalPort;
+  if (!validateTaskState(state).ok || state.taskId !== input.taskId || state.node !== 'AwaitPlan' ||
+      !state.plan?.decisionRef || state.activeDecisionId !== state.plan.decisionRef ||
+      state.activeDecisionId !== input.decisionId || !approvalPort) {
+    return rejectionResult('INCOMPLETE', state, ['stored-rejected-plan-decision-required']);
+  }
+  const freshness = getRejectionApprovalContext(state);
+  if (!freshness) return rejectionResult('INCOMPLETE', state, ['current-plan-rejection-binding-unavailable']);
+  let storedDecision: Awaited<ReturnType<typeof approvalPort.resolve>>;
+  try { storedDecision = await approvalPort.resolve(input.decisionId); }
+  catch { return rejectionResult('INCOMPLETE', state, ['stored-plan-decision-unavailable']); }
+  const decision = validateApprovalBinding(storedDecision, freshness);
+  if (!decision.ok || decision.value.status !== 'rejected' || decision.value.actionKind !== 'fix_plan' ||
+      decision.value.decisionId !== state.activeDecisionId || decision.value.decisionId !== input.decisionId) {
+    return rejectionResult('INCOMPLETE', state, ['stored-rejection-does-not-match-current-plan']);
+  }
+
+  const next: TaskState = {
+    ...state, stateVersion: state.stateVersion + 1, node: 'AwaitFeedback',
+    nextAction: 'await-human-feedback-and-direction', activeDecisionId: undefined,
+    approvalDecisionRefs: [...new Set([...(state.approvalDecisionRefs ?? []), decision.value.decisionId])],
+  };
+  if (!validateStateTransition(state, next).ok) return rejectionResult('INCOMPLETE', state, ['rejection-transition-prevalidation-failed']);
+  let saved: TaskState;
+  try { saved = await ports.statePort.transition(next, state.stateVersion); }
+  catch { return rejectionResult('INCOMPLETE', await safeReload(ports.statePort, input.taskId, state), ['rejection-transition-failed']); }
+  if (!validateStateTransition(state, saved).ok || saved.node !== 'AwaitFeedback' || saved.activeDecisionId) {
+    return rejectionResult('INCOMPLETE', await safeReload(ports.statePort, input.taskId, state), ['rejection-transition-result-inconsistent']);
+  }
+  return rejectionResult('AWAIT_FEEDBACK', saved, ['stored-plan-rejection-confirmed', 'explicit-human-direction-required']);
+}
+
+async function safeReload(statePort: StatePort, taskId: string, fallback: TaskState): Promise<TaskState> { try { const latest = await statePort.loadTask(taskId); return latest && latest.taskId === taskId && validateTaskState(latest).ok ? latest : fallback; } catch { return fallback; } }
