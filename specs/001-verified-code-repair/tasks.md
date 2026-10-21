@@ -111,11 +111,12 @@ Tai is accountable for all local tasks, including shared foundation. Named lanes
 
 **Goal**: Evidence-informed repair/replan or honest termination. **Independent Test**: C03–C05/C12 using injected saved-state fixtures without completed US1; real proof T029/T032.
 
-- [ ] T015 [P] [US2] Create repair and replan scenarios in fixtures/uc03/repair/.
+- [X] T015 [P] [US2] Create repair and replan scenarios in fixtures/uc03/repair/.
   - **Owner**: Tai / repair-fixture lane.
   - **Dependencies**: T004.
   - **Owned Paths**: fixtures/uc03/repair/.
   - **Acceptance Checks**: Failed patch then repair, exhausted/absent accounting, focused-pass/regression-fail, reviewer finding, three replans and fourth refusal; explicit finite profiles and versioned saved baseline states. No dependency on US1 implementation or actual UC-04/UC-05.
+  - **Local-only verification (2026-10-21)**: Worker handoff verified at `3fb6fdd`; all 21 repair fixture files match source/destination SHA-256 hashes and remain ignored/untracked. `node fixtures/uc03/repair/validate.mjs` passed 18 entries (14 saved states, three evidence records and four-profile bundle). Static contract checks only; no real execution or UC-04/UC-05 integration evidence.
 
 - [ ] T016 [US2] Create the runnable repair SUT skeleton and failing checks in tests/runtime/unit/uc03-repair.test.ts.
   - **Owner**: Tai / repair-test lane.
