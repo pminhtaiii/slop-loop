@@ -6,7 +6,7 @@
 
 **Created**: 2026-10-19 (Asia/Saigon, UTC+07:00)
 
-**Status**: Separately authorized T001–T013 and T023–T027 review corrections are complete locally through `84be181`. Phase 5's three seams and user-relayed Tai/X03-PLAN-CONTEXT agreement are recorded in [decisions](contracts/decisions.md). Source/emitted approvals pass 142/142; runtime typecheck, full lint, clean build and 896 compiled tests pass. These establish exercised mock/canonical-consumer behavior; T014–T015 are separately authorized for mock recovery preparation; T016–T022, real adapters, production execution and actual restart remain gated. Full UC-05 acceptance is unverified.
+**Status**: T001–T015 and T023–T027 review corrections are integrated and verified locally through source `41c4215264106fef27a90ae83ee680cd0edbb1aa`. Phase 6 T014–T015 and the service/control mock-recovery seam were separately authorized on 2026-10-21 (Asia/Saigon); see [decisions](contracts/decisions.md). Source/emitted approvals pass 160/160; runtime typecheck/full lint/clean build and 1005 compiled tests pass. Evidence remains mock-only. T016–T022 and G-PROFILE/G-REAL/G-RESTART remain gated; full UC-05 acceptance is unverified.
 
 **Input**: Specify UC-05 from ADR-0006, the shared UC-03 contracts, repository policy, and the delegation map. Preserve UC-04 persistence and Tai's execution ownership.
 

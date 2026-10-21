@@ -2,7 +2,7 @@
 
 **Input**: [spec](spec.md), [plan](plan.md), [research](research.md), [data model](data-model.md), and [contracts](contracts/interfaces.md).
 
-**Status**: T001–T013 and T023–T027 review corrections are integrated and verified locally through source `84be181f68bf56481e53676ad44bc00dd45f1211`. Phase 5 authorization, three confirmed seams and user-relayed X03 agreement are recorded in decisions.md. Source/emitted approval suites each pass 142/142; runtime typecheck/full lint/build and 896 compiled tests pass. Checkboxes below remain the completion ledger. T014–T015 are separately authorized for mock recovery preparation; T016–T022 remain unauthorized; G-PROFILE/G-REAL/G-RESTART remain gated.
+**Status**: T001–T015 and T023–T027 review corrections are integrated and verified locally through source `41c4215264106fef27a90ae83ee680cd0edbb1aa`. Phase 6 T014–T015 and the service/control mock-recovery seam were separately authorized on 2026-10-21 (Asia/Saigon); see [decisions](contracts/decisions.md). Source/emitted approvals pass 160/160; runtime typecheck/full lint/clean build and 1005 compiled tests pass. Evidence remains mock-only. T016–T022 and G-PROFILE/G-REAL/G-RESTART remain gated; full UC-05 acceptance is unverified. Checkboxes below remain the sole completion ledger.
 
 Final review found an in-scope T007 retry defect and two standards corrections. T023 below records their accepted correction only; it does not release any later story or real-delivery gate.
 
@@ -135,17 +135,19 @@ Final review found an in-scope T007 retry defect and two standards corrections. 
 
 **Independent Test**: C17–C20 use explicit saved control/claims and mocked interruption profiles to prevent blind replay and reset.
 
-- [ ] T014 [US4] Add recovery/claim behavioral RED in tests/runtime/approvals/restart-admission.test.ts.
+- [x] T014 [US4] Add recovery/claim behavioral RED in tests/runtime/approvals/restart-admission.test.ts.
   - **Owner**: Trong Tan / recovery consumer tests.
   - **Dependencies**: T013.
   - **Owned Paths**: tests/runtime/approvals/restart-admission.test.ts; tests/runtime/support/uc05/mock-recovery.ts.
   - **Acceptance Checks**: Exercise real control/service exports with mocked UC-04 load/claim semantics. Assertions cover retained waiting/rejection, decision commit uncertainty, concurrent pause/claim, missing accounting, lost response and post-effect uncertainty. Record local simulation scope; no actual restart claim.
+  - **Current Evidence**: Accepted candidate `632ddbc` integrated at `41c4215264106fef27a90ae83ee680cd0edbb1aa`. Eighteen behavioral tests use actual service/control exports with retained mock owner state and canonical in-memory reservations; positive, descriptor-failure and missing-claim-fence RED/GREEN slices are retained. Source/emitted approvals pass 160/160; independent merger repros pass 19/19. No actual process restart or repository effect is exercised.
 
-- [ ] T015 [US4] Implement recovery-safe continuation coordination in src/approvals/control.ts and src/approvals/service.ts.
+- [x] T015 [US4] Implement recovery-safe continuation coordination in src/approvals/control.ts and src/approvals/service.ts.
   - **Owner**: Trong Tan / recovery consumer implementation.
   - **Dependencies**: T014.
   - **Owned Paths**: src/approvals/control.ts; src/approvals/service.ts; src/approvals/recovery.ts.
   - **Acceptance Checks**: T014 passes with no retry based solely on approved status, timeout, new run or expired process. No UC-04 backend/ledger implementation; no repository execution. Real claim atomicity still external and required by T020/T021.
+  - **Current Evidence**: Same accepted integration adds `createApprovalContinuation` through control.ts and recovery.ts; existing service and generic activity admission behavior remain unchanged. Exact approved bindings, retained claim/control journal, finite owner reservation requirements and complete receipts gate mock continuation; failures/deadlines cannot authorize late work or blind replay. Integrated typecheck/full lint/clean build and 1005 compiled tests pass. Minimal result diagnostics are limited; full safe projections remain T016–T018. Real atomicity, adapters and restart remain external.
 
 ## Phase 7: User Story 5 — Safe inspectable history (Priority: P2)
 

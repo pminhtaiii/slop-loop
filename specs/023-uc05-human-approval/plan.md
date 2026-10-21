@@ -2,7 +2,7 @@
 
 **Branch**: `feat/023-uc05-human-approval-spec` | **Date**: 2026-10-19 (Asia/Saigon) | **Spec**: [spec.md](spec.md)
 
-**Status**: Separately authorized T001–T013 and T023–T027 corrections are integrated locally through `84be181` on 2026-10-20 (Asia/Saigon). All three Phase 5 seams and user-relayed X03-PLAN-CONTEXT agreement are confirmed. Source/emitted approval suites each pass 142/142; runtime typecheck/full lint/build and 896 compiled tests pass. T014–T015 are separately authorized for mock recovery preparation; T016–T022, production profiles, real runtime integration and actual restart remain gated. See [decisions](contracts/decisions.md) and the [task ledger](tasks.md).
+**Status**: T001–T015 and T023–T027 review corrections are integrated and verified locally through source `41c4215264106fef27a90ae83ee680cd0edbb1aa`. Phase 6 T014–T015 and the service/control mock-recovery seam were separately authorized on 2026-10-21 (Asia/Saigon); see [decisions](contracts/decisions.md). Source/emitted approvals pass 160/160; runtime typecheck/full lint/clean build and 1005 compiled tests pass. Evidence remains mock-only. T016–T022 and G-PROFILE/G-REAL/G-RESTART remain gated; full UC-05 acceptance is unverified.
 
 ## Summary
 
