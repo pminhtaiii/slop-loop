@@ -143,7 +143,7 @@ async function saveTransition(
   fallback: TaskState = prior
 ): Promise<{ readonly state: TaskState; readonly error?: string }> {
   if (!validateStateTransition(prior, next, { trusted: ports.trustedTransitionContext }).ok) {
-    return { state: prior, error: `${reason}-prevalidation-failed` };
+    return { state: await safeReload(ports.statePort, prior.taskId, fallback), error: `${reason}-prevalidation-failed` };
   }
   try {
     const saved = await ports.statePort.transition(next, prior.stateVersion);
@@ -352,13 +352,15 @@ export async function executeReplan(
   const plan = { ...input.candidatePlan, planVersion, decisionRef: undefined };
   const clear = { plan, activeDecisionId: undefined, latestReviewRef: undefined, reviewRefs: [] } as const;
   let prior = state;
+  let accounted = reserved;
   if (state.node !== 'Investigate') {
     const investigate: TaskState = { ...reserved, ...clear, stateVersion: state.stateVersion + 1, node: 'Investigate', nextAction: 'propose-fix-plan', planVersion, replanCount: count };
     const first = await saveTransition(state, investigate, ports, 'replan-transition-to-investigate', reserved);
     if (first.error) return response('INCOMPLETE', first.state, [first.error], true);
     prior = first.state;
+    accounted = first.state;
   }
-  const awaitPlan: TaskState = { ...prior, ...clear, stateVersion: prior.stateVersion + 1, node: 'AwaitPlan', nextAction: 'approve-fix-plan', planVersion, replanCount: count };
-  const saved = await saveTransition(prior, awaitPlan, ports, 'replan-transition-to-await-plan');
+  const awaitPlan: TaskState = { ...accounted, ...clear, stateVersion: prior.stateVersion + 1, node: 'AwaitPlan', nextAction: 'approve-fix-plan', planVersion, replanCount: count };
+  const saved = await saveTransition(prior, awaitPlan, ports, 'replan-transition-to-await-plan', accounted);
   return saved.error ? response('INCOMPLETE', saved.state, [saved.error], true) : response('REPLAN_PREPARED', saved.state, [], true);
 }

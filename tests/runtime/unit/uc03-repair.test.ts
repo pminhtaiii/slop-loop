@@ -1312,6 +1312,125 @@ test('replan: first material replan charges 1 replan slot, increments replanCoun
   assert.equal(res.state.plan?.decisionRef, undefined, 'Prior decisionRef must be invalidated');
 });
 
+test('replan: material change from Investigate returns the persisted charged reservation', async () => {
+  const { state, task, plan } = createRepairStateFixture({ node: 'Investigate' });
+  const proposalId = 'investigate-material-001';
+  const trustedTransitionContext = createReplanTransitionContext(state, proposalId);
+  const memoryState = new MemoryStatePort({
+    initialTaskState: state,
+    transitionContexts: { [state.stateVersion + 1]: trustedTransitionContext },
+  });
+  const statePort = forwardPublicStatePort(memoryState);
+  const materialPlan: FixPlan = {
+    ...plan,
+    strategy: 'Investigate found a different bounded repair strategy',
+    strategyDigest: computeCanonicalSha256('Investigate found a different bounded repair strategy'),
+  };
+
+  const result = await executeReplan(
+    { taskId: task.taskId, candidatePlan: materialPlan, proposalId },
+    { statePort, trustedTransitionContext }
+  );
+  const persisted = await statePort.loadTask(task.taskId);
+
+  assert.equal(result.outcome, 'REPLAN_PREPARED');
+  assert.equal(result.replanCount, 1);
+  assert.equal(result.state.node, 'AwaitPlan');
+  assert.equal(result.state.replanCount, 1);
+  assert.equal(result.state.plan?.decisionRef, undefined);
+  assert.equal(result.state.activeDecisionId, undefined);
+  assert.ok(persisted);
+  assert.equal(persisted.node, 'AwaitPlan');
+  assert.equal(persisted.replanCount, 1);
+  assert.equal(persisted.plan?.decisionRef, undefined);
+  assert.equal(persisted.activeDecisionId, undefined);
+
+  const chargedReservation = {
+    reservationId: createReplanReservation(state, proposalId).reservationId,
+    keyedId: proposalId,
+    amount: 1,
+  };
+  for (const chargedState of [result.state, persisted]) {
+    const ledger = chargedState.budgetLedgers?.find((item) => item.kind === 'replan');
+    assert.ok(ledger);
+    assert.equal(ledger.consumed, 0);
+    assert.deepEqual(ledger.reservations, [chargedReservation]);
+  }
+  const persistedLedger = persisted.budgetLedgers?.find((item) => item.kind === 'replan');
+  assert.deepEqual(result.state.budgetLedgers?.find((item) => item.kind === 'replan'), persistedLedger);
+
+  const replayPlan: FixPlan = {
+    ...materialPlan,
+    strategy: 'Material replay of the reserved Investigate proposal',
+    strategyDigest: computeCanonicalSha256('Material replay of the reserved Investigate proposal'),
+  };
+  const replay = await executeReplan(
+    { taskId: task.taskId, candidatePlan: replayPlan, proposalId },
+    { statePort, trustedTransitionContext }
+  );
+  const nextProposalId = 'investigate-material-002';
+  const nextPlan: FixPlan = {
+    ...materialPlan,
+    strategy: 'A distinct strategy while the revised plan awaits approval',
+    strategyDigest: computeCanonicalSha256('A distinct strategy while the revised plan awaits approval'),
+  };
+  const next = await executeReplan(
+    { taskId: task.taskId, candidatePlan: nextPlan, proposalId: nextProposalId },
+    { statePort, trustedTransitionContext: createReplanTransitionContext(persisted, nextProposalId) }
+  );
+  const afterAttempts = await statePort.loadTask(task.taskId);
+
+  assert.equal(replay.outcome, 'DENIED');
+  assert.equal(next.outcome, 'DENIED');
+  assert.ok(afterAttempts);
+  assert.equal(afterAttempts.replanCount, 1);
+  assert.deepEqual(afterAttempts.budgetLedgers?.find((item) => item.kind === 'replan'), persistedLedger);
+});
+
+test('replan: failed canonical admission returns the reloaded charged reservation', async () => {
+  const { state, task, plan } = createRepairStateFixture({ node: 'Investigate' });
+  const proposalId = 'investigate-admission-failure-001';
+  const trustedTransitionContext = {
+    replanReservation: {
+      ...createReplanReservation(state, proposalId),
+      reservationId: 'different-reservation-receipt',
+    },
+  } satisfies NonNullable<StateTransitionOptions['trusted']>;
+  const memoryState = new MemoryStatePort({ initialTaskState: state });
+  let transitions = 0;
+  const statePort: StatePort = {
+    ...forwardPublicStatePort(memoryState),
+    transition: (next, expectedVersion) => {
+      transitions += 1;
+      return memoryState.transition(next, expectedVersion);
+    },
+  };
+  const candidatePlan: FixPlan = {
+    ...plan,
+    strategy: 'Investigate material plan with rejected reservation admission',
+    strategyDigest: computeCanonicalSha256('Investigate material plan with rejected reservation admission'),
+  };
+
+  const result = await executeReplan(
+    { taskId: task.taskId, candidatePlan, proposalId },
+    { statePort, trustedTransitionContext }
+  );
+  const persisted = await statePort.loadTask(task.taskId);
+
+  assert.equal(result.outcome, 'INCOMPLETE');
+  assert.ok(result.reasons.includes('replan-transition-to-await-plan-prevalidation-failed'));
+  assert.equal(transitions, 0);
+  assert.ok(persisted);
+  assert.equal(result.state.replanCount, 0);
+  assert.equal(persisted.replanCount, 0);
+  const returnedLedger = result.state.budgetLedgers?.find((item) => item.kind === 'replan');
+  const persistedLedger = persisted.budgetLedgers?.find((item) => item.kind === 'replan');
+  assert.ok(returnedLedger);
+  assert.equal(returnedLedger.reservations.length, 1);
+  assert.equal(returnedLedger.reservations[0]?.keyedId, proposalId);
+  assert.deepEqual(returnedLedger, persistedLedger);
+});
+
 test('replan: second material replan charges 1 replan slot, increments replanCount to 2 (C12)', async () => {
   const { state, task, plan } = createRepairStateFixture({ replanCount: 1 });
   const materialPlan: FixPlan = {
