@@ -205,19 +205,18 @@ function checkReplanAccounting(
     const matches = ledgers.filter((ledger) => ledger.scope === 'task' && ledger.kind === kind);
     if (matches.length !== 1) return { ok: false, reason: `missing-or-duplicate-${kind}-budget-ledger` };
     const ledger = matches[0];
-    if (!ledger) return { ok: false, reason: `missing-${kind}-budget-ledger` };
-    if (!validateBudgetLedger(ledger).ok || !Number.isFinite(limit) || limit <= 0 ||
+    if (!ledger || !validateBudgetLedger(ledger).ok || !Number.isFinite(limit) || limit <= 0 ||
         ledger.configurationId !== task.configId || ledger.limit !== limit || ledger.unit !== unit) {
       return { ok: false, reason: `inconsistent-${kind}-budget-configuration` };
     }
     for (const item of ledger.reservations) {
-      if (!Number.isFinite(item.amount) || item.amount <= 0 || seenReservations.has(item.reservationId)) {
+      if (item.amount <= 0 || seenReservations.has(item.reservationId)) {
         return { ok: false, reason: `inconsistent-${kind}-budget-accounting` };
       }
       seenReservations.add(item.reservationId);
     }
     const total = ledger.consumed + ledger.reservations.reduce((sum, item) => sum + item.amount, 0);
-    if (!Number.isFinite(total) || ledger.consumed < 0 || ledger.limit <= 0 || total > ledger.limit) {
+    if (total > ledger.limit) {
       return { ok: false, reason: `inconsistent-${kind}-budget-accounting` };
     }
     checked.push(ledger);
@@ -231,9 +230,10 @@ function checkReplanAccounting(
       replanLedger.limit !== MAX_TASK_REPLANS || replanTotal !== expectedCount) {
     return { ok: false, reason: 'inconsistent-replan-accounting' };
   }
-  if (checked.slice(1).some((ledger) => ledger.reservations.length > 0)) {
-    return { ok: false, reason: 'uncertain-accounting-reservations' };
+  if (checked[1]?.reservations.some((item) => !state.evidenceRefs.includes('repair-action:' + item.keyedId))) {
+    return { ok: false, reason: 'repair-effect-needs-trusted-reconciliation' };
   }
+  if (checked.slice(2).some((ledger) => ledger.reservations.length > 0)) return { ok: false, reason: 'uncertain-accounting-reservations' };
   if (checked.slice(1).some((ledger) => ledger.consumed >= ledger.limit)) {
     return { ok: false, reason: 'task-budget-exhausted' };
   }

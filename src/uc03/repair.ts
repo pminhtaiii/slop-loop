@@ -17,7 +17,11 @@ export * from './replan.ts';
 
 function isVerificationResult(item: unknown): item is VerificationResult { return typeof item === 'object' && item !== null && 'testedIds' in item; }
 
-function isProtectedPathOrTest(filePath: string): boolean { const norm = filePath.toLowerCase().replace(/\\/g, '/'); return isProtectedPath(filePath) || norm.startsWith('tests/') || norm.startsWith('test/'); }
+function isProtectedPathOrTest(filePath: string): boolean {
+  const norm = filePath.toLowerCase().replace(/\\/g, '/');
+  return isProtectedPath(filePath) ||
+    /(^|\/)(test|tests)(\/|$)|(^|\/)(test_[^/]*\.py|[^/]*_test\.py|conftest\.py)$/.test(norm);
+}
 
 function isReviewResult(item: unknown): item is ReviewResult {
   return typeof item === 'object' && item !== null && 'reviewId' in item && 'findings' in item;

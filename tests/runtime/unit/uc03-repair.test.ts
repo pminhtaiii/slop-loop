@@ -51,6 +51,7 @@ import {
   type RepairPatchProposal,
   type TrustedRepairContext,
 } from '../../../src/uc03/repair.ts';
+import { executeVerificationChecks } from '../../../src/uc03/verification.ts';
 import {
   createFixtureBugTask,
   createFixtureTaskState,
@@ -798,6 +799,129 @@ test('repair: patch attempting to modify protected paths (tests, config) is deni
 
   assert.equal(res.outcome, 'DENIED');
   assert.ok(res.reasons.some((r) => r.includes('protected')));
+});
+
+test('repair: protects test paths at any depth and admits ordinary tests_helpers source before guarded effects', async () => {
+  const protectedPaths = [
+    'package/tests/support.py',
+    'src/test/support.txt',
+    'test_root.py',
+    'nested/Test_Fixture.PY',
+    'nested/check_test.py',
+    'pkg/conftest.py',
+    'Project/TeStS/support.txt',
+    'Pkg\\test\\helper.py',
+  ];
+  const observations: {
+    readonly path: string;
+    readonly outcome: string;
+    readonly reserves: number;
+    readonly guardCalls: number;
+    readonly patchCalls: number;
+  }[] = [];
+
+  for (const path of protectedPaths) {
+    const { state, task } = createRepairStateFixture({ repairConsumed: 0 });
+    const failureEvidence = createFailedPatchEvidence(task);
+    const authorization = createAuthorizedRepairPorts(state, 'ALLOWED', failureEvidence);
+    const repositoryPort = new FakeRepositoryPort();
+    const applyPatch = repositoryPort.applyPatch.bind(repositoryPort);
+    let patchCalls = 0;
+    repositoryPort.applyPatch = async (patch) => {
+      patchCalls += 1;
+      return applyPatch(patch);
+    };
+    const forwarded = forwardPublicStatePort(authorization.statePort);
+    let reserves = 0;
+    const statePort: StatePort = {
+      ...forwarded,
+      reserve: async (scope, kind, amount, actionId) => {
+        reserves += 1;
+        return forwarded.reserve(scope, kind, amount, actionId);
+      },
+    };
+    let guardCalls = 0;
+    const baseGuard = createExecutionGuard(repositoryPort);
+    const executionGuard: ExecutionGuard = {
+      provenance: 'mock',
+      validateAndExecute: async (action, state) => {
+        guardCalls += 1;
+        return baseGuard.validateAndExecute(action, state);
+      },
+    };
+
+    const result = await executeRepair(
+      {
+        taskId: task.taskId,
+        failureEvidence,
+        repairPatch: createRepairProposal(failureEvidence, 'path-protection-probe', [path]),
+      },
+      {
+        statePort,
+        repositoryPort,
+        approvalPort: authorization.approvalPort,
+        trustedTransitionContext: authorization.trustedTransitionContext,
+        trustedRepairContext: authorization.trustedRepairContext,
+        executionGuard,
+      }
+    );
+    observations.push({ path, outcome: result.outcome, reserves, guardCalls, patchCalls });
+  }
+
+  assert.deepEqual(
+    observations,
+    protectedPaths.map((path) => ({ path, outcome: 'DENIED', reserves: 0, guardCalls: 0, patchCalls: 0 }))
+  );
+
+  const allowedPath = 'src/tests_helpers/helper.py';
+  const { state: baseState, task } = createRepairStateFixture({ repairConsumed: 0 });
+  assert.ok(baseState.plan);
+  const state: TaskState = {
+    ...baseState,
+    plan: { ...baseState.plan, scopedChanges: [allowedPath] },
+  };
+  const failureEvidence = createFailedPatchEvidence(task);
+  const authorization = createAuthorizedRepairPorts(state, 'ALLOWED', failureEvidence);
+  const repositoryPort = new FakeRepositoryPort({ initialFiles: { [allowedPath]: 'helper\\n' } });
+  const forwarded = forwardPublicStatePort(authorization.statePort);
+  let reserves = 0;
+  const statePort: StatePort = {
+    ...forwarded,
+    reserve: async (scope, kind, amount, actionId) => {
+      reserves += 1;
+      return forwarded.reserve(scope, kind, amount, actionId);
+    },
+  };
+  let guardCalls = 0;
+  const baseGuard = createExecutionGuard(repositoryPort);
+  const executionGuard: ExecutionGuard = {
+    provenance: 'mock',
+    validateAndExecute: async (action, state) => {
+      guardCalls += 1;
+      return baseGuard.validateAndExecute(action, state);
+    },
+  };
+
+  const allowed = await executeRepair(
+    {
+      taskId: task.taskId,
+      failureEvidence,
+      repairPatch: createRepairProposal(failureEvidence, 'ordinary source patch', [allowedPath]),
+    },
+    {
+      statePort,
+      repositoryPort,
+      approvalPort: authorization.approvalPort,
+      trustedTransitionContext: authorization.trustedTransitionContext,
+      trustedRepairContext: authorization.trustedRepairContext,
+      executionGuard,
+    }
+  );
+
+  assert.equal(allowed.outcome, 'REPAIR_PREPARED');
+  assert.equal(reserves, 1);
+  assert.equal(guardCalls, 1);
+  assert.equal(repositoryPort.patches.length, 1);
 });
 
 test('repair: noncanonical patch target is rejected before guarded effects', async () => {
@@ -2173,4 +2297,174 @@ test('replan: transition and reload failures resolve as typed incomplete without
   assert.equal(result?.outcome, 'INCOMPLETE');
   assert.ok(result?.reasons.every((reason) => !reason.includes('raw')));
   assert.equal(result?.state.budgetLedgers?.find((ledger) => ledger.kind === 'replan')?.reservations.length, 1);
+});
+
+test('replan: failed post-repair verification preserves confirmed repair charges and requires reconciliation for unresolved effects', async () => {
+  const { state, task, plan } = createRepairStateFixture({ repairConsumed: 0 });
+  const failureEvidence = createFailedPatchEvidence(task);
+  const authorization = createAuthorizedRepairPorts(state, 'ALLOWED', failureEvidence);
+  const initialState = await authorization.statePort.loadTask(task.taskId);
+  assert.ok(initialState);
+
+  const proposalId = 'replan-after-failed-repair-verification';
+  const trustedReplanContext = createReplanTransitionContext(initialState, proposalId);
+  const memoryStatePort = new MemoryStatePort({
+    initialTaskState: initialState,
+    transitionContexts: {
+      [initialState.stateVersion + 1]: authorization.trustedTransitionContext,
+      [initialState.stateVersion + 4]: trustedReplanContext,
+      [initialState.stateVersion + 5]: trustedReplanContext,
+    },
+  });
+  const forwarded = forwardPublicStatePort(memoryStatePort);
+  const reservationKinds: string[] = [];
+  const statePort: StatePort = {
+    ...forwarded,
+    reserve: async (scope, kind, amount, actionId) => {
+      reservationKinds.push(kind);
+      return forwarded.reserve(scope, kind, amount, actionId);
+    },
+  };
+  const repositoryPort = new FakeRepositoryPort();
+  for (const check of task.requiredChecks) {
+    repositoryPort.setTestResult(check.checkId, {
+      checkId: check.checkId,
+      outcome: 'fail',
+      outputExcerpt: 'controlled post-repair verification failure',
+    });
+  }
+  let patchCalls = 0;
+  const applyPatch = repositoryPort.applyPatch.bind(repositoryPort);
+  repositoryPort.applyPatch = async (patch) => {
+    patchCalls += 1;
+    return applyPatch(patch);
+  };
+  let guardCalls = 0;
+  const baseGuard = createExecutionGuard(repositoryPort);
+  const executionGuard: ExecutionGuard = {
+    provenance: 'mock',
+    validateAndExecute: async (action, state) => {
+      guardCalls += 1;
+      return baseGuard.validateAndExecute(action, state);
+    },
+  };
+
+  const repair = await executeRepair(
+    {
+      taskId: task.taskId,
+      failureEvidence,
+      repairPatch: createRepairProposal(failureEvidence, 'confirmed source repair', ['src/calculator.py']),
+    },
+    {
+      statePort,
+      repositoryPort,
+      approvalPort: authorization.approvalPort,
+      trustedTransitionContext: authorization.trustedTransitionContext,
+      trustedRepairContext: authorization.trustedRepairContext,
+      executionGuard,
+    }
+  );
+  assert.equal(repair.outcome, 'REPAIR_PREPARED');
+  assert.ok(repair.reservedActionId);
+
+  const repairedState = await statePort.loadTask(task.taskId);
+  assert.ok(repairedState);
+  const repairLedgerBefore = repairedState.budgetLedgers?.find((ledger) => ledger.kind === 'repair');
+  assert.ok(repairLedgerBefore);
+  const repairReservationBefore = repairLedgerBefore.reservations[0];
+  assert.ok(repairReservationBefore);
+  assert.equal(repairReservationBefore.keyedId, repair.reservedActionId);
+  assert.ok(repair.appliedPatchDigest);
+
+  const verificationResults = await executeVerificationChecks(task, repositoryPort, {
+    runId: repairedState.runId,
+    repoDigest: repairedState.repositoryRevisionDigest,
+    diffDigest: repair.appliedPatchDigest,
+    actionIdPrefix: 'verify-after-repair',
+  });
+  assert.ok(verificationResults.length > 0);
+  assert.ok(verificationResults.every((result) => result.outcome === 'fail'));
+  const failedVerification = verificationResults[0];
+  assert.ok(failedVerification);
+  assert.equal(failedVerification.repoDigest, repairedState.repositoryRevisionDigest);
+  assert.equal(failedVerification.diffDigest, repair.appliedPatchDigest);
+  const verificationFailedState = await statePort.transition(
+    {
+      ...repairedState,
+      stateVersion: repairedState.stateVersion + 1,
+      node: 'Repair',
+      nextAction: 'repair-after-failed-verification',
+      evidenceRefs: [...new Set([
+        ...repairedState.evidenceRefs,
+        ...verificationResults.flatMap((result) => [result.evidenceId, result.actionId, ...result.diagnosticRefs]),
+      ])],
+    },
+    repairedState.stateVersion
+  );
+
+  const nextStrategy = 'Use the failed post-repair checks to revise the fix strategy';
+  const result = await executeReplan(
+    {
+      taskId: task.taskId,
+      proposalId,
+      candidatePlan: { ...plan, strategy: nextStrategy, strategyDigest: computeCanonicalSha256(nextStrategy) },
+    },
+    { statePort, trustedTransitionContext: trustedReplanContext }
+  );
+
+  assert.equal(result.outcome, 'REPLAN_PREPARED');
+  assert.equal(result.state.node, 'AwaitPlan');
+  assert.equal(result.replanCount, 1);
+  assert.equal(verificationFailedState.node, 'Repair');
+  assert.equal(patchCalls, 1);
+  assert.equal(guardCalls, 1);
+  assert.deepEqual(reservationKinds.filter((kind) => kind === 'repair'), ['repair']);
+  assert.deepEqual(reservationKinds.filter((kind) => kind === 'replan'), ['replan']);
+
+  const finalState = await statePort.loadTask(task.taskId);
+  assert.ok(finalState);
+  const repairLedgerAfter = finalState.budgetLedgers?.find((ledger) => ledger.kind === 'repair');
+  assert.ok(repairLedgerAfter);
+  assert.equal(repairLedgerAfter.consumed, repairLedgerBefore.consumed);
+  assert.deepEqual(repairLedgerAfter.reservations, repairLedgerBefore.reservations);
+
+  const { state: unresolvedBase, task: unresolvedTask, plan: unresolvedPlan } = createRepairStateFixture({ node: 'Repair' });
+  const unresolvedActionId = 'act-repair-unconfirmed-effect';
+  const unresolvedState: TaskState = {
+    ...unresolvedBase,
+    budgetLedgers: unresolvedBase.budgetLedgers?.map((ledger) => ledger.kind === 'repair'
+      ? { ...ledger, reservations: [{ reservationId: 'res-repair-unconfirmed-effect', keyedId: unresolvedActionId, amount: 1 }] }
+      : ledger),
+  };
+  const unresolvedProposalId = 'replan-blocked-by-unresolved-repair-effect';
+  const unresolvedContext = createReplanTransitionContext(unresolvedState, unresolvedProposalId);
+  const unresolvedMemory = new MemoryStatePort({ initialTaskState: unresolvedState });
+  const unresolvedForwarded = forwardPublicStatePort(unresolvedMemory);
+  let unresolvedReservations = 0;
+  let unresolvedTransitions = 0;
+  const unresolvedPort: StatePort = {
+    ...unresolvedForwarded,
+    reserve: async (scope, kind, amount, actionId) => {
+      unresolvedReservations += 1;
+      return unresolvedForwarded.reserve(scope, kind, amount, actionId);
+    },
+    transition: async (next, expectedVersion) => {
+      unresolvedTransitions += 1;
+      return unresolvedForwarded.transition(next, expectedVersion);
+    },
+  };
+  const unresolvedStrategy = 'Do not replan while an unconfirmed repair effect remains';
+  const unresolvedResult = await executeReplan(
+    {
+      taskId: unresolvedTask.taskId,
+      proposalId: unresolvedProposalId,
+      candidatePlan: { ...unresolvedPlan, strategy: unresolvedStrategy, strategyDigest: computeCanonicalSha256(unresolvedStrategy) },
+    },
+    { statePort: unresolvedPort, trustedTransitionContext: unresolvedContext }
+  );
+
+  assert.equal(unresolvedResult.outcome, 'INCOMPLETE');
+  assert.ok(unresolvedResult.reasons.includes('repair-effect-needs-trusted-reconciliation'));
+  assert.equal(unresolvedReservations, 0);
+  assert.equal(unresolvedTransitions, 0);
 });
