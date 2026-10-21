@@ -455,7 +455,7 @@ test('repair: accepts valid fresh failed patch verification result and extracts 
   );
 
   assert.equal(res.outcome, 'REPAIR_PREPARED');
-  assert.equal(repairState(res).node, 'Patch');
+  assert.equal(repairState(res).node, 'Verify');
   assert.ok(res.reservedActionId);
 });
 
@@ -519,7 +519,7 @@ test('repair: handles focused pass with regression check failure, routing to rep
 
   assert.equal(res.outcome, 'REPAIR_PREPARED');
   assert.notEqual(res.outcome, 'COMPLETED');
-  assert.equal(repairState(res).node, 'Patch');
+  assert.equal(repairState(res).node, 'Verify');
 });
 
 test('repair: incorporates read-only reviewer finding diagnostics into repair context (C14)', async () => {
@@ -541,7 +541,7 @@ test('repair: incorporates read-only reviewer finding diagnostics into repair co
   );
 
   assert.equal(res.outcome, 'REPAIR_PREPARED');
-  assert.equal(repairState(res).node, 'Patch');
+  assert.equal(repairState(res).node, 'Verify');
 });
 
 test('repair: rejects reviewer result with status accepted as failure evidence', async () => {
@@ -714,7 +714,7 @@ test('repair: persistent task budgets retain consumed amounts across simulated r
     budgetLedgers: statePort.getLedgers(),
     evidenceRefs: [...stateAfterRun1.evidenceRefs, 'evi-diag-run2', 'diag-run2'],
   };
-  const run2Evidence: VerificationResult = { ...failureEvidence, evidenceId: 'evi-diag-run2', runId: 'run-repair-002', diagnosticRefs: ['diag-run2'] };
+  const run2Evidence: VerificationResult = { ...failureEvidence, evidenceId: 'evi-diag-run2', actionId: 'act-verify-run2', runId: 'run-repair-002', repoDigest: stateAfterRun1.repositoryRevisionDigest, diagnosticRefs: ['diag-run2'] };
   const authorization2 = createAuthorizedRepairPorts(stateRun2, 'ALLOWED', run2Evidence);
   const { statePort: statePort2, approvalPort: approvalPort2, trustedTransitionContext: context2, trustedRepairContext: repairContext2 } = authorization2;
 
@@ -796,7 +796,7 @@ test('repair: unapproved plan or missing plan decisionRef returns INCOMPLETE wit
   assert.ok(res.reasons.some((r) => r.includes('plan')));
 });
 
-test('repair: successful repair transitions state to Patch node for verification, never claiming COMPLETED', async () => {
+test('repair: persists the confirmed post-patch revision and invalidates stale authority', async () => {
   const { state, task } = createRepairStateFixture({ repairConsumed: 0 });
   const failureEvidence = createFailedPatchEvidence(task);
   const authorization = createAuthorizedRepairPorts(state, 'ALLOWED', failureEvidence);
@@ -804,20 +804,81 @@ test('repair: successful repair transitions state to Patch node for verification
   const repositoryPort = new FakeRepositoryPort({
     initialFiles: { 'src/calculator.py': 'code\n' },
   });
+  let confirmedRevision: string | undefined;
+  let patchCalls = 0;
+  const applyPatch = repositoryPort.applyPatch.bind(repositoryPort);
+  repositoryPort.applyPatch = async (patch) => {
+    const result = await applyPatch(patch);
+    patchCalls++;
+    if (result.applied) confirmedRevision = result.newRevisionDigest;
+    return result;
+  };
+  const input = {
+    taskId: task.taskId,
+    failureEvidence,
+    repairPatch: createRepairProposal(failureEvidence, '--- a/src/calculator.py\n+++ b/src/calculator.py\n', ['src/calculator.py']),
+  } as const;
+  const ports = { statePort, repositoryPort, approvalPort, trustedTransitionContext, trustedRepairContext, executionGuard: createExecutionGuard(repositoryPort) };
 
-  const res = await executeRepair(
-    {
-      taskId: task.taskId,
-      failureEvidence,
-      repairPatch: createRepairProposal(failureEvidence, '--- a/src/calculator.py\n+++ b/src/calculator.py\n', ['src/calculator.py']),
-    },
-    { statePort, repositoryPort, approvalPort, trustedTransitionContext, trustedRepairContext, executionGuard: createExecutionGuard(repositoryPort) }
-  );
+  const res = await executeRepair(input, ports);
+  const persisted = await statePort.loadTask(task.taskId);
 
   assert.equal(res.outcome, 'REPAIR_PREPARED');
-  assert.notEqual(repairState(res).outcome, 'COMPLETED', 'Repair must never claim COMPLETED outcome');
-  assert.equal(repairState(res).node, 'Patch', 'State transitions toward verification via Patch');
+  assert.ok(confirmedRevision);
+  assert.match(confirmedRevision, /^sha256:[a-f0-9]{64}$/);
+  assert.equal(persisted?.repositoryRevisionDigest, confirmedRevision);
+  assert.equal(repairState(res).repositoryRevisionDigest, confirmedRevision);
+  assert.deepEqual(repairState(res), persisted);
+  assert.equal(repairState(res).node, 'Verify', 'The prepared patch routes into current-revision verification');
+  assert.equal(repairState(res).activeDecisionId, undefined, 'Pre-patch approval is no longer active');
+  assert.deepEqual(repairState(res).reviewRefs, [], 'Pre-patch reviews are no longer current');
+  assert.equal(repairState(res).latestReviewRef, undefined);
   assert.ok(repairState(res).evidenceRefs.includes('repair-consumed:evi-diag-patch-fail-001'));
+
+  const staleVerification = await executeRepair(input, ports);
+  const staleReview = createReviewerFindingEvidence(task);
+  const staleReviewResult = await executeRepair({
+    ...input,
+    failureEvidence: staleReview,
+    repairPatch: createRepairProposal(staleReview, '--- a/src/calculator.py\n+++ b/src/calculator.py\n', ['src/calculator.py']),
+  }, ports);
+  assert.equal(staleVerification.outcome, 'INCOMPLETE');
+  assert.ok(staleVerification.reasons.includes('stale-or-unbound-verification-failure'));
+  assert.equal(staleReviewResult.outcome, 'INCOMPLETE');
+  assert.ok(staleReviewResult.reasons.includes('stale-review-failure-evidence'));
+  assert.equal(patchCalls, 1, 'Stale pre-patch evidence and approval cannot reapply the patch');
+});
+
+test('repair: malformed post-patch revision stays incomplete and cannot replay', async () => {
+  const { state, task } = createRepairStateFixture({ repairConsumed: 0 });
+  const failureEvidence = createFailedPatchEvidence(task);
+  const authorization = createAuthorizedRepairPorts(state, 'ALLOWED', failureEvidence);
+  const { statePort, approvalPort, trustedTransitionContext, trustedRepairContext } = authorization;
+  const repositoryPort = new FakeRepositoryPort({ initialFiles: { 'src/calculator.py': 'code\n' } });
+  const applyPatch = repositoryPort.applyPatch.bind(repositoryPort);
+  let patchCalls = 0;
+  repositoryPort.applyPatch = async (patch) => {
+    const result = await applyPatch(patch);
+    patchCalls++;
+    return { ...result, newRevisionDigest: 'sha256:post-patch-current' };
+  };
+  const input = {
+    taskId: task.taskId,
+    failureEvidence,
+    repairPatch: createRepairProposal(failureEvidence, '--- a/src/calculator.py\n+++ b/src/calculator.py\n', ['src/calculator.py']),
+  } as const;
+  const ports = { statePort, repositoryPort, approvalPort, trustedTransitionContext, trustedRepairContext, executionGuard: createExecutionGuard(repositoryPort) };
+
+  const first = await executeRepair(input, ports);
+  const persisted = await statePort.loadTask(task.taskId);
+  const second = await executeRepair(input, ports);
+
+  assert.equal(first.outcome, 'INCOMPLETE');
+  assert.ok(first.reasons.includes('repair-effect-result-inconsistent'));
+  assert.equal(persisted?.repositoryRevisionDigest, state.repositoryRevisionDigest);
+  assert.equal(persisted?.budgetLedgers?.find((ledger) => ledger.kind === 'repair')?.reservations[0]?.keyedId, first.reservedActionId);
+  assert.equal(second.outcome, 'INCOMPLETE');
+  assert.equal(patchCalls, 1, 'A malformed confirmed revision remains charged and cannot be replayed');
 });
 
 test('repair: forbidden current patch policy denies before reservation or repository effects', async () => {

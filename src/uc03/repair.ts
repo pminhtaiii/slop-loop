@@ -64,69 +64,47 @@ export function evaluatePlanMateriality(
   };
 }
 
-function isVerificationResult(item: unknown): item is VerificationResult {
-  return typeof item === 'object' && item !== null && 'testedIds' in item;
-}
+function isVerificationResult(item: unknown): item is VerificationResult { return typeof item === 'object' && item !== null && 'testedIds' in item; }
 
-function isProtectedPathOrTest(filePath: string): boolean {
-  const norm = filePath.toLowerCase().replace(/\\/g, '/');
-  return isProtectedPath(filePath) || norm.startsWith('tests/') || norm.startsWith('test/');
-}
+function isProtectedPathOrTest(filePath: string): boolean { const norm = filePath.toLowerCase().replace(/\\/g, '/'); return isProtectedPath(filePath) || norm.startsWith('tests/') || norm.startsWith('test/'); }
 
 function isReviewResult(item: unknown): item is ReviewResult {
   return typeof item === 'object' && item !== null && 'reviewId' in item && 'findings' in item;
 }
-
 function failureRefs(items: readonly (VerificationResult | ReviewResult)[]) {
   const evidence = items.map((item) => isVerificationResult(item) ? item.evidenceId : item.reviewId);
   const actions = items.map((item) => isVerificationResult(item) ? item.actionId : item.iterationReservationRef);
   const diagnostics = items.flatMap((item) => isVerificationResult(item) ? item.diagnosticRefs : item.findings.map((finding) => finding.evidenceRef ?? item.reviewId));
   return { evidence, actions, diagnostics: [...new Set(diagnostics)] };
 }
+function refsMatch(actual: unknown, expected: readonly string[]): boolean { return Array.isArray(actual) && actual.length === expected.length && actual.every((ref: unknown, index: number) => typeof ref === 'string' && ref === expected[index]); }
 
-function refsMatch(actual: unknown, expected: readonly string[]): boolean {
-  return Array.isArray(actual) && actual.length === expected.length && actual.every((ref: unknown, index: number) => typeof ref === 'string' && ref === expected[index]);
-}
+const isSha256 = (value: unknown): value is string => typeof value === 'string' && value.length === 71 && /^sha256:[a-f0-9]{64}$/.test(value);
 
 type AccountingCheck = { readonly ok: true; readonly repair: BudgetLedger } | { readonly ok: false; readonly reason: string };
 
 function checkAccounting(state: TaskState, actionId?: string, receiptId?: string): AccountingCheck {
-  const task = state.taskContext;
-  const ledgers = state.budgetLedgers;
+  const task = state.taskContext, ledgers = state.budgetLedgers;
   if (!ledgers?.length) return { ok: false, reason: 'missing-budget-ledgers' };
   if (!task) return { ok: false, reason: 'missing-budget-configuration' };
-  const repair = ledgers.find((entry) => entry.scope === 'task' && entry.kind === 'repair');
-  const tokens = ledgers.find((entry) => entry.scope === 'task' && entry.kind === 'tokens');
-  const cost = ledgers.find((entry) => entry.scope === 'task' && entry.kind === 'cost');
+  const [repair, tokens, cost] = (['repair', 'tokens', 'cost'] as const).map((kind) => ledgers.find((entry) => entry.scope === 'task' && entry.kind === kind));
   if (!repair || !tokens || !cost) return { ok: false, reason: 'missing-budget-ledgers' };
-  for (const [ledger, limit, unit] of [
-    [repair, task.budgetLimits.maxRepairAttempts, 'count'],
-    [tokens, task.budgetLimits.maxTokens, 'count'],
-    [cost, task.budgetLimits.maxCostUsd, 'usd'],
-  ] as const) {
-    if (ledger.configurationId !== task.configId || ledger.limit !== limit || ledger.unit !== unit) {
-      return { ok: false, reason: 'inconsistent-budget-configuration' };
-    }
+  for (const [ledger, limit, unit] of [[repair, task.budgetLimits.maxRepairAttempts, 'count'], [tokens, task.budgetLimits.maxTokens, 'count'], [cost, task.budgetLimits.maxCostUsd, 'usd']] as const) {
+    if (ledger.configurationId !== task.configId || ledger.limit !== limit || ledger.unit !== unit) return { ok: false, reason: 'inconsistent-budget-configuration' };
     if (ledger.reservations.some((item) => item.amount <= 0)) return { ok: false, reason: 'inconsistent-budget-accounting' };
     const total = ledger.consumed + ledger.reservations.reduce((sum, item) => sum + item.amount, 0);
     if (ledger.kind === 'repair' && actionId) {
       if (total > limit) return { ok: false, reason: 'inconsistent-budget-accounting' };
-      const match = ledger.reservations.filter((item) => item.keyedId === actionId && item.amount === 1 && item.reservationId === receiptId);
-      if (match.length !== 1) return { ok: false, reason: 'repair-reservation-not-authoritative' };
-    } else if (total >= limit) {
-      return { ok: false, reason: ledger.kind === 'repair' ? 'repair-budget-exhausted' : 'token-or-cost-budget-exhausted' };
-    }
+      if (ledger.reservations.filter((item) => item.keyedId === actionId && item.amount === 1 && item.reservationId === receiptId).length !== 1) return { ok: false, reason: 'repair-reservation-not-authoritative' };
+    } else if (total >= limit) return { ok: false, reason: ledger.kind === 'repair' ? 'repair-budget-exhausted' : 'token-or-cost-budget-exhausted' };
   }
-  if (ledgers.some((entry) => (entry.kind === 'tokens' || entry.kind === 'cost') && entry.reservations.length > 0)) {
-    return { ok: false, reason: 'uncertain-accounting-reservations' };
-  }
+  if (ledgers.some((entry) => (entry.kind === 'tokens' || entry.kind === 'cost') && entry.reservations.length > 0)) return { ok: false, reason: 'uncertain-accounting-reservations' };
   return { ok: true, repair };
 }
 
 function isPatchResult(value: unknown): value is { readonly applied: true; readonly newRevisionDigest: string } {
-  return typeof value === 'object' && value !== null && !Array.isArray(value) && 'applied' in value && value.applied === true && 'newRevisionDigest' in value && typeof value.newRevisionDigest === 'string' && !!value.newRevisionDigest.trim();
+  return typeof value === 'object' && value !== null && !Array.isArray(value) && 'applied' in value && value.applied === true && 'newRevisionDigest' in value && isSha256(value.newRevisionDigest);
 }
-
 function incomplete(state: TaskState | null, reason: string, actionId?: string, digest?: string): RepairResult {
   return { outcome: 'INCOMPLETE', state, reasons: [reason], ...(actionId ? { reservedActionId: actionId } : {}), ...(digest ? { appliedPatchDigest: digest } : {}) };
 }
@@ -136,36 +114,38 @@ export async function executeRepair(input: RepairInput, ports: RepairPorts): Pro
   try { state = await ports.statePort.loadTask(input.taskId); }
   catch { return incomplete(null, 'authoritative-task-state-unavailable'); }
   if (!state) return incomplete(null, 'task-not-found');
-  if (!validateTaskState(state).ok) return incomplete(state, 'invalid-authoritative-task-state');
+  const stop = (reason: string, actionId?: string) => incomplete(state, reason, actionId);
+  if (!validateTaskState(state).ok) return stop('invalid-authoritative-task-state');
+  if (!isSha256(state.repositoryRevisionDigest)) return stop('invalid-current-repository-revision');
 
   const items = Array.isArray(input.failureEvidence) ? input.failureEvidence : [input.failureEvidence];
-  if (!items.length) return incomplete(state, 'missing-failure-evidence');
+  if (!items.length) return stop('missing-failure-evidence');
   for (const item of items) {
     if (isVerificationResult(item)) {
-      if (!validateVerificationResult(item).ok) return incomplete(state, 'invalid-verification-failure-evidence');
-      if (item.outcome !== 'fail') return incomplete(state, 'not-failure-evidence');
+      if (!validateVerificationResult(item).ok) return stop('invalid-verification-failure-evidence');
+      if (item.outcome !== 'fail') return stop('not-failure-evidence');
       if (item.taskId !== state.taskId || item.runId !== state.runId || item.repoDigest !== state.repositoryRevisionDigest) {
-        return incomplete(state, 'stale-or-unbound-verification-failure');
+        return stop('stale-or-unbound-verification-failure');
       }
-      if (!item.diffDigest || !item.diagnosticRefs.length) return incomplete(state, 'verification-diagnostics-or-diff-missing');
+      if (!item.diffDigest || !item.diagnosticRefs.length) return stop('verification-diagnostics-or-diff-missing');
     } else if (isReviewResult(item)) {
-      if (!validateReviewResult(item).ok) return incomplete(state, 'invalid-review-failure-evidence');
-      if (item.status === 'accepted') return incomplete(state, 'not-failure-evidence');
-      if (item.status !== 'findings') return incomplete(state, 'review-failure-evidence-not-actionable');
-      if (item.repoDigest !== state.repositoryRevisionDigest) return incomplete(state, 'stale-review-failure-evidence');
-    } else return incomplete(state, 'unknown-failure-evidence-type');
+      if (!validateReviewResult(item).ok) return stop('invalid-review-failure-evidence');
+      if (item.status === 'accepted') return stop('not-failure-evidence');
+      if (item.status !== 'findings') return stop('review-failure-evidence-not-actionable');
+      if (item.repoDigest !== state.repositoryRevisionDigest) return stop('stale-review-failure-evidence');
+    } else return stop('unknown-failure-evidence-type');
   }
 
   const accounting = checkAccounting(state);
-  if (!accounting.ok) return incomplete(state, accounting.reason);
+  if (!accounting.ok) return stop(accounting.reason);
   const plan = state.plan;
   const task = state.taskContext;
   const approval = ports.trustedTransitionContext?.approval;
   if (!plan?.decisionRef || !task?.requiredChecks.length || !approval || !ports.approvalPort) {
-    return incomplete(state, 'current-approved-plan-unavailable');
+    return stop('current-approved-plan-unavailable');
   }
   const checkSetDigest = computeCheckSetDigest(task.requiredChecks);
-  if (plan.checkSetDigest !== checkSetDigest) return incomplete(state, 'approved-plan-check-set-mismatch');
+  if (plan.checkSetDigest !== checkSetDigest) return stop('approved-plan-check-set-mismatch');
   const planAction: ApproveFixPlanAction = {
     actionId: plan.decisionRef, kind: 'approve_fix_plan', planVersion: state.planVersion,
     strategyDigest: plan.strategyDigest, diagnosisEvidenceRefs: plan.evidenceRefs, checkSetDigest,
@@ -183,11 +163,11 @@ export async function executeRepair(input: RepairInput, ports: RepairPorts): Pro
   const binding = validateApprovalBinding(approval.binding, currentApproval);
   if (!hostBinding.ok || !binding.ok || binding.value.status !== 'approved' || binding.value.actionKind !== 'fix_plan' ||
       binding.value.decisionId !== state.activeDecisionId || binding.value.decisionId !== plan.decisionRef) {
-    return incomplete(state, 'current-plan-approval-missing-or-stale');
+    return stop('current-plan-approval-missing-or-stale');
   }
   try {
-    if (!await ports.approvalPort.validateBinding(binding.value)) return incomplete(state, 'current-plan-approval-not-authoritative');
-  } catch { return incomplete(state, 'current-plan-approval-not-authoritative'); }
+    if (!await ports.approvalPort.validateBinding(binding.value)) return stop('current-plan-approval-not-authoritative');
+  } catch { return stop('current-plan-approval-not-authoritative'); }
 
   const refs = failureRefs(items);
   const ctx = ports.trustedRepairContext;
@@ -202,22 +182,22 @@ export async function executeRepair(input: RepairInput, ports: RepairPorts): Pro
       refs.evidence.some((ref) => !state.evidenceRefs.includes(ref) || state.evidenceRefs.includes(`repair-consumed:${ref}`)) ||
       [...refs.actions, ...refs.diagnostics].some((ref) => !state.evidenceRefs.includes(ref)) ||
       (input.repairPatch && (!refsMatch(input.repairPatch.evidenceRefs, refs.evidence) || !refsMatch(input.repairPatch.diagnosticRefs, refs.diagnostics)))) {
-    return incomplete(state, 'current-repair-evidence-binding-unavailable-or-stale');
+    return stop('current-repair-evidence-binding-unavailable-or-stale');
   }
   for (const item of items) {
     if (isVerificationResult(item)) {
       const matches = item.testedIds.map((id) => task.requiredChecks.find((check) => check.checkId === id));
       const phaseMatches = matches.every((check) => check && (check.purpose === 'reproduction' ? 'focused' : check.purpose) === item.phase);
       if (new Set(item.testedIds).size !== item.testedIds.length || matches.some((check) => !check) || !phaseMatches) {
-        return incomplete(state, 'verification-failure-check-set-mismatch');
+        return stop('verification-failure-check-set-mismatch');
       }
     } else if (item.checkSetDigest !== checkSetDigest || item.reviewId !== state.latestReviewRef || !state.reviewRefs?.includes(item.reviewId)) {
-      return incomplete(state, 'review-failure-binding-mismatch');
+      return stop('review-failure-binding-mismatch');
     }
   }
   const proposal = input.repairPatch;
   if (!proposal || !proposal.diff.trim() || !proposal.affectedPaths.length || new Set(proposal.affectedPaths).size !== proposal.affectedPaths.length) {
-    return incomplete(state, 'repair-proposal-missing-or-invalid');
+    return stop('repair-proposal-missing-or-invalid');
   }
   if (proposal.affectedPaths.some(isProtectedPathOrTest)) return { outcome: 'DENIED', state, reasons: ['forbidden-protected-path-edit'] };
 
@@ -226,30 +206,30 @@ export async function executeRepair(input: RepairInput, ports: RepairPorts): Pro
     baselineRef: plan.baselineRef, checkSetDigest, diffDigest: ctx.diffDigest,
     evidenceRefs: refs.evidence, actionRefs: refs.actions, diagnosticRefs: refs.diagnostics,
   })}`;
-  if (input.actionId !== undefined && input.actionId !== actionId) return incomplete(state, 'repair-action-identity-mismatch');
+  if (input.actionId !== undefined && input.actionId !== actionId) return stop('repair-action-identity-mismatch');
   if (accounting.repair.reservations.some((entry) => entry.keyedId === actionId) || state.evidenceRefs.includes(`repair-action:${actionId}`)) {
-    return incomplete(state, 'repair-evidence-already-reserved');
+    return stop('repair-evidence-already-reserved');
   }
-  if (!ports.executionGuard) return incomplete(state, 'execution-guard-unavailable');
+  if (!ports.executionGuard) return stop('execution-guard-unavailable');
   const action: ApplyPatchAction = {
     actionId, kind: 'apply_patch', patchContent: proposal.diff,
     targetPaths: [...proposal.affectedPaths], baseRevisionDigest: state.repositoryRevisionDigest,
   };
   const admittedAction = validateNormalizedAction(action);
-  if (!admittedAction.ok) return incomplete(state, 'invalid-repair-action');
+  if (!admittedAction.ok) return stop('invalid-repair-action');
   try {
     const permission = await ports.approvalPort.classify(admittedAction.value);
     if (permission === 'FORBIDDEN') return { outcome: 'DENIED', state, reasons: ['patch-action-forbidden'] };
-    if (permission !== 'ALLOWED') return incomplete(state, 'patch-action-approval-required');
-  } catch { return incomplete(state, 'patch-policy-unavailable'); }
+    if (permission !== 'ALLOWED') return stop('patch-action-approval-required');
+  } catch { return stop('patch-policy-unavailable'); }
 
   let receiptId: string;
   try { receiptId = await ports.statePort.reserve('task', 'repair', 1, actionId); }
-  catch { return incomplete(state, 'repair-reservation-failed'); }
-  if (!receiptId.trim()) return incomplete(state, 'repair-reservation-unconfirmed', actionId);
+  catch { return stop('repair-reservation-failed'); }
+  if (!receiptId.trim()) return stop('repair-reservation-unconfirmed', actionId);
   let reserved: TaskState | null;
   try { reserved = await ports.statePort.loadTask(input.taskId); }
-  catch { return incomplete(state, 'reserved-task-state-unavailable', actionId); }
+  catch { return stop('reserved-task-state-unavailable', actionId); }
   if (!reserved || reserved.stateVersion !== state.stateVersion || reserved.runId !== state.runId ||
       reserved.repositoryRevisionDigest !== state.repositoryRevisionDigest || !validateTaskState(reserved).ok) {
     return incomplete(reserved ?? state, 'reserved-task-state-inconsistent', actionId);
@@ -278,24 +258,34 @@ export async function executeRepair(input: RepairInput, ports: RepairPorts): Pro
       : incomplete(reserved, 'repair-effect-not-confirmed', actionId);
   }
   if (!isPatchResult(effect.result)) return incomplete(reserved, 'repair-effect-result-inconsistent', actionId);
+  const revision = effect.result.newRevisionDigest;
   const digest = computeCanonicalSha256(proposal.diff);
+  const failPatch = (fallback: TaskState, reason: string) =>
+    safeReload(ports.statePort, input.taskId, fallback).then((latest) => incomplete(latest, reason, actionId, digest));
+  let patched: TaskState;
   let transitioned: TaskState;
-  try { transitioned = await ports.statePort.transition(next, state.stateVersion); }
-  catch {
-    return incomplete(await safeReload(ports.statePort, input.taskId, reserved), 'repair-transition-not-confirmed', actionId, digest);
+  try {
+    patched = await ports.statePort.transition(next, state.stateVersion);
+    if (!validateStateTransition(state, patched, { trusted: ports.trustedTransitionContext }).ok) {
+      return failPatch(reserved, 'repair-transition-result-inconsistent');
+    }
+    const verified: TaskState = {
+      ...patched, stateVersion: patched.stateVersion + 1, node: 'Verify',
+      repositoryRevisionDigest: revision,
+      activeDecisionId: undefined, reviewRefs: [], latestReviewRef: undefined,
+    };
+    transitioned = await ports.statePort.transition(verified, patched.stateVersion);
   }
-  if (!validateTaskState(transitioned).ok || transitioned.stateVersion !== next.stateVersion || transitioned.node !== 'Patch' || transitioned.runId !== state.runId) {
-    return incomplete(await safeReload(ports.statePort, input.taskId, reserved), 'repair-transition-result-inconsistent', actionId, digest);
+  catch {
+    return failPatch(reserved, 'repair-transition-not-confirmed');
+  }
+  if (!validateStateTransition(patched, transitioned).ok || transitioned.repositoryRevisionDigest !== revision || transitioned.activeDecisionId || transitioned.latestReviewRef || transitioned.reviewRefs?.length) {
+    return failPatch(reserved, 'repair-verification-transition-result-inconsistent');
   }
   return { outcome: 'REPAIR_PREPARED', state: transitioned, reasons: [], reservedActionId: actionId, appliedPatchDigest: digest };
 }
 
-async function safeReload(statePort: StatePort, taskId: string, fallback: TaskState): Promise<TaskState> {
-  try {
-    const latest = await statePort.loadTask(taskId);
-    return latest && validateTaskState(latest).ok ? latest : fallback;
-  } catch { return fallback; }
-}
+async function safeReload(statePort: StatePort, taskId: string, fallback: TaskState): Promise<TaskState> { try { const latest = await statePort.loadTask(taskId); return latest && validateTaskState(latest).ok ? latest : fallback; } catch { return fallback; } }
 export async function executeReplan(
   input: ReplanInput,
   ports: ReplanPorts
