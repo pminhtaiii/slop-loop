@@ -60,7 +60,7 @@ function mergeParentBlobSignatures(root) {
     mergeHead = readFileSync(isAbsolute(mergeHeadPath) ? mergeHeadPath : resolve(root, mergeHeadPath), 'utf8');
   } catch (error) {
     if (error.code === 'ENOENT') return null;
-    throw new Error(`Could not read Git MERGE_HEAD: ${error.message}`);
+    throw new Error(`Could not read Git MERGE_HEAD: ${error.message}`, { cause: error });
   }
 
   const mergeRefs = mergeHead.split(/\r?\n/);

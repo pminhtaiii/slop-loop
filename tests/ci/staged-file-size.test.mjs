@@ -177,7 +177,7 @@ test('matching a parent blob outside a merge does not grant an exemption', async
 });
 
 test('the checker uses a linked worktree MERGE_HEAD path', async (t) => {
-  const { root, git, runGit, check } = await repository(t);
+  const { root, git, runGit } = await repository(t);
   const base = git('rev-parse', 'HEAD');
   git('checkout', '--quiet', '-b', 'incoming');
   await writeFile(join(root, 'large incoming.ts'), 'w'.repeat(20_001));
