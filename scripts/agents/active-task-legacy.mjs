@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { lstat, mkdir, open, readFile, realpath } from 'node:fs/promises';
+import { lstat, mkdir, readFile, realpath } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
@@ -55,9 +55,12 @@ export async function backupLegacyViews(store, views) {
       if (!existing.isFile() || existing.isSymbolicLink() || await readFile(path, 'utf8') !== backup) throw new Error('Legacy backup already exists with different content; preserve it and choose another migration path.');
       continue;
     }
-    const handle = await open(path, 'wx', 0o600);
-    try { await handle.writeFile(backup, 'utf8'); await handle.sync(); }
-    finally { await handle.close(); }
+    try { await atomicWrite(path, backup, { exclusive: true }); }
+    catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+      const existing = await lstat(path);
+      if (!existing.isFile() || existing.isSymbolicLink() || await readFile(path, 'utf8') !== backup) throw new Error('Legacy backup already exists with different content; preserve it and choose another migration path.', { cause: error });
+    }
   }
   return legacy.length;
 }

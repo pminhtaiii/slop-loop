@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { lstat, mkdir, open, readFile, realpath, rename, unlink } from 'node:fs/promises';
+import { link, lstat, mkdir, open, readFile, realpath, rename, unlink } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 
 export function git(root, args, allowFailure = false) {
@@ -58,7 +58,7 @@ export async function dataDirectory(repo, name) {
   return directory;
 }
 
-export async function atomicWrite(path, content) {
+export async function atomicWrite(path, content, { exclusive = false } = {}) {
   const existing = await lstat(path).catch((error) => { if (error.code !== 'ENOENT') throw error; });
   if (existing && (!existing.isFile() || existing.isSymbolicLink())) throw new Error('Destination must be a regular file.');
   const temporary = resolve(dirname(path), `.agent-${randomUUID()}.tmp`);
@@ -70,7 +70,8 @@ export async function atomicWrite(path, content) {
     } finally {
       await handle.close();
     }
-    await rename(temporary, path);
+    if (exclusive) await link(temporary, path);
+    else await rename(temporary, path);
   } finally {
     await unlink(temporary).catch((error) => { if (error.code !== 'ENOENT') throw error; });
   }
