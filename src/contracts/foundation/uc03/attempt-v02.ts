@@ -69,19 +69,16 @@ function valExecId(raw: unknown, p: string, errs: ValidationError[]): ExecutorId
 
 const stripDigest = (obj: unknown, f: string): string => {
   if (!isPlainObject(obj)) throw new Error('Requires object');
-  const copy = { ...(obj as Record<string, unknown>) };
-  delete copy[f];
+  const copy: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (k !== f) copy[k] = v;
+  }
   return computeCanonicalSha256(copy);
 };
 
-export const computeClaimClosureDigest = (r: unknown) => stripDigest(r, 'receiptDigest');
-export const computeAttemptOutcomeDigest = computeClaimClosureDigest;
-export const computeReconciliationDigest = (r: unknown) => stripDigest(r, 'reconciliationDigest');
-
-const failClosed = <T>(errs: ValidationError[], path: string): ValidationResult<T> => {
-  addErr(errs, path, 'T039_NEUTRAL_FAIL_CLOSED', 'SUT_NEUTRAL_FAIL_CLOSED');
-  return { ok: false, errors: errs };
-};
+export const computeClaimClosureDigest = (r: unknown): string => stripDigest(r, 'receiptDigest');
+export const computeAttemptOutcomeDigest = (r: unknown): string => stripDigest(r, 'receiptDigest');
+export const computeReconciliationDigest = (r: unknown): string => stripDigest(r, 'reconciliationDigest');
 
 export function validateProtocolVersionProgressionV02(input: unknown): ValidationResult<VersionProgressionV02> {
   const errs: ValidationError[] = [];
@@ -101,7 +98,7 @@ export function validateProtocolVersionProgressionV02(input: unknown): Validatio
   if (kind === 'begin-attempt' && nT !== (isRepairPatch ? pT + 1 : pT)) {
     addErr(errs, 'taskStateVersion', isRepairPatch ? 'Repair must advance task version by 1' : 'Non-repair must preserve task version', isRepairPatch ? 'TASK_VERSION_PROGRESSION_INVALID' : 'TASK_VERSION_MUTATED_ON_NON_REPAIR');
   }
-  return errs.length > 0 ? { ok: false, errors: errs } : failClosed(errs, 'progression');
+  return errs.length > 0 ? { ok: false, errors: errs } : { ok: true, value: input as unknown as VersionProgressionV02 };
 }
 
 export function validateAttemptReceiptV02(input: unknown, ctx?: AttemptValidationContextV02): ValidationResult<AttemptReceiptV02> {
@@ -117,7 +114,7 @@ export function validateAttemptReceiptV02(input: unknown, ctx?: AttemptValidatio
     addErr(errs, 'postBeginTaskStateVersion', 'Task mismatch', 'TASK_VERSION_MISMATCH');
   }
   matchProps(input, ctx as Record<string, unknown> | undefined, { taskId: 'expectedTaskId', claimId: 'expectedClaimId', attemptId: 'expectedAttemptId', epoch: 'expectedEpoch' }, errs);
-  return errs.length > 0 ? { ok: false, errors: errs } : failClosed(errs, 'receipt');
+  return errs.length > 0 ? { ok: false, errors: errs } : { ok: true, value: input as unknown as AttemptReceiptV02 };
 }
 
 export function validateClaimClosureReceiptV02(input: unknown, ctx?: ClaimClosureValidationContextV02): ValidationResult<ClaimClosureReceiptV02> {
@@ -146,7 +143,7 @@ export function validateClaimClosureReceiptV02(input: unknown, ctx?: ClaimClosur
       addErr(errs, 'fencedExecutorIdentity.fencingGeneration', 'Generation too low', 'FENCING_GENERATION_TOO_LOW');
     }
   }
-  return errs.length > 0 ? { ok: false, errors: errs } : failClosed(errs, 'closure');
+  return errs.length > 0 ? { ok: false, errors: errs } : { ok: true, value: input as unknown as ClaimClosureReceiptV02 };
 }
 
 function checkOutcomeCommon(input: Record<string, unknown>, allowed: readonly string[], cross: readonly string[], expKind: SubjectKindV02, ctx: AttemptOutcomeValidationContextV02 | undefined, errs: ValidationError[]): boolean {
@@ -174,7 +171,7 @@ export function validateRepositoryActionOutcomeReceiptV02(input: unknown, ctx?: 
   if (ctx?.expectedActionDigest !== undefined && input['actionDigest'] !== ctx.expectedActionDigest) {
     addErr(errs, 'actionDigest', 'actionDigest mismatch', 'ACTION_DIGEST_MISMATCH');
   }
-  return errs.length > 0 ? { ok: false, errors: errs } : failClosed(errs, 'outcome');
+  return errs.length > 0 ? { ok: false, errors: errs } : { ok: true, value: input as unknown as RepositoryActionOutcomeReceiptV02 };
 }
 
 export function validateProviderRequestOutcomeReceiptV02(input: unknown, ctx?: AttemptOutcomeValidationContextV02): ValidationResult<ProviderRequestOutcomeReceiptV02> {
@@ -188,7 +185,7 @@ export function validateProviderRequestOutcomeReceiptV02(input: unknown, ctx?: A
   if (typeof adm !== 'string' || adm.trim().length === 0) addErr(errs, 'providerAdmissionReceiptRef', 'Missing admission ref', 'REQUIRED_FIELD');
   if (input['budgetRefs'] !== undefined) validateStringArray(input['budgetRefs'], 'budgetRefs', errs);
   matchProps(input, ctx as Record<string, unknown> | undefined, { providerRequestId: 'expectedProviderRequestId', requestContentDigest: 'expectedRequestContentDigest' }, errs);
-  return errs.length > 0 ? { ok: false, errors: errs } : failClosed(errs, 'outcome');
+  return errs.length > 0 ? { ok: false, errors: errs } : { ok: true, value: input as unknown as ProviderRequestOutcomeReceiptV02 };
 }
 
 export function validateAttemptOutcomeReceiptV02(input: unknown, ctx?: AttemptOutcomeValidationContextV02): ValidationResult<AttemptOutcomeReceiptV02> {
@@ -224,7 +221,7 @@ export function validateUncertainAttemptReconciliationReceiptV02(input: unknown,
   if (p && p['outcome'] !== 'uncertain') {
     addErr(errs, 'predecessor.outcome', `Predecessor is "${p['outcome']}"; accepted only for "uncertain"`, 'PREDECESSOR_NOT_UNCERTAIN');
   }
-  return errs.length > 0 ? { ok: false, errors: errs } : failClosed(errs, 'reconciliation');
+  return errs.length > 0 ? { ok: false, errors: errs } : { ok: true, value: input as unknown as UncertainAttemptReconciliationReceiptV02 };
 }
 
 export function validateObservedOutcomeReconciliationReceiptV02(input: unknown, ctx?: AttemptReconciliationValidationContextV02): ValidationResult<ObservedOutcomeReconciliationReceiptV02> {
@@ -238,7 +235,7 @@ export function validateObservedOutcomeReconciliationReceiptV02(input: unknown, 
   if (p && p['outcome'] !== 'observed') {
     addErr(errs, 'predecessor.outcome', `Predecessor is "${p['outcome']}"; accepted only for "observed"`, 'PREDECESSOR_NOT_OBSERVED');
   }
-  return errs.length > 0 ? { ok: false, errors: errs } : failClosed(errs, 'reconciliation');
+  return errs.length > 0 ? { ok: false, errors: errs } : { ok: true, value: input as unknown as ObservedOutcomeReconciliationReceiptV02 };
 }
 
 export function validateAttemptReconciliationReceiptV02(input: unknown, ctx?: AttemptReconciliationValidationContextV02): ValidationResult<AttemptReconciliationReceiptV02> {

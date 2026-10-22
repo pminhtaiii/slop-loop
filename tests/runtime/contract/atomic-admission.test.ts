@@ -741,7 +741,7 @@ function createValidClaimClosureReceipt(): ClaimClosureReceiptV02 {
 }
 
 function createValidRepoOutcomeReceipt(planApplicability: 'approved-plan' | 'pre-plan-diagnostic' = 'approved-plan'): RepositoryActionOutcomeReceiptV02 {
-  const raw: any = {
+  const raw: Record<string, unknown> = {
     receiptId: 'repo-out-001',
     receiptDigest: 'sha256:placeholder',
     claimId: 'claim-001',
@@ -758,11 +758,11 @@ function createValidRepoOutcomeReceipt(planApplicability: 'approved-plan' | 'pre
   return {
     ...raw,
     receiptDigest: computeAttemptOutcomeDigest(raw),
-  };
+  } as unknown as RepositoryActionOutcomeReceiptV02;
 }
 
 function createValidProviderOutcomeReceipt(planApplicability: 'approved-plan' | 'pre-plan-diagnostic' = 'approved-plan', role: 'coder' | 'reviewer' = 'coder'): ProviderRequestOutcomeReceiptV02 {
-  const raw: any = {
+  const raw: Record<string, unknown> = {
     receiptId: 'prov-out-001',
     receiptDigest: 'sha256:placeholder',
     claimId: 'claim-001',
@@ -782,12 +782,11 @@ function createValidProviderOutcomeReceipt(planApplicability: 'approved-plan' | 
   return {
     ...raw,
     receiptDigest: computeAttemptOutcomeDigest(raw),
-  };
+  } as unknown as ProviderRequestOutcomeReceiptV02;
 }
 
 function createValidUncertainReconciliationReceipt(): UncertainAttemptReconciliationReceiptV02 {
-  const predecessor = createValidRepoOutcomeReceipt();
-  (predecessor as any).outcome = 'uncertain';
+  const predecessor = { ...createValidRepoOutcomeReceipt(), outcome: 'uncertain' as const };
   const raw = {
     reconciliationId: 'recon-001',
     reconciliationDigest: 'sha256:placeholder',
@@ -1057,9 +1056,9 @@ test('Negative: provider outcome rejects invalid role', () => {
 });
 
 test('Negative: provider outcome rejects missing admission ref', () => {
-  const receipt = { ...createValidProviderOutcomeReceipt() };
-  delete (receipt as any).providerAdmissionReceiptRef;
-  delete (receipt as any).admissionRef;
+  const receipt: Record<string, unknown> = { ...createValidProviderOutcomeReceipt() };
+  delete receipt['providerAdmissionReceiptRef'];
+  delete receipt['admissionRef'];
   const res = validateProviderRequestOutcomeReceiptV02(receipt);
   assert.equal(res.ok, false, 'Missing admission ref must deny');
 });
