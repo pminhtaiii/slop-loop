@@ -14,6 +14,10 @@ On 2026-10-16 (Asia/Saigon), the user authorized the next phase of the first spe
 
 On 2026-10-18 (Asia/Saigon), the user authorized the next phase of the first specification, Phase 3 (T005–T014), and confirmed creating a fresh branch after pulling current changes. Integration uses `feat/015-uc03-success-boundaries`, based on `origin/development` at `dba1e4cce38d1ee782872aaa08444e9e43e3b9cc`. Implementation uses small Gemini 3.8 Flash High assignments, independent GPT-6.1-Sol low-reasoning review, and Gemini follow-up repairs. This authorizes the specified injected boundaries and fixtures, not real repository execution, production provider selection, or Phase 4 onward. T024/T025/T028 and deferred production choices remain gates before real execution.
 
+## Phase 5 Authorization
+
+On 2026-10-22 (Asia/Saigon), the user authorized Phase 5 (T019–T025) of the first specification and selected a fresh feature branch from fetched `origin/development`, preserving existing local work. Integration uses `feat/uc03-controlled-execution-phase5` from `1c154c2b87694501b47c7013839dfe20c890ce2b`. Implementation uses Gemini 3.8 Flash High, independent GPT-6.1-Sol reviews, and GPT-6-Luna with max reasoning for review corrections. These are contributor models, not production provider selections. T019–T023 can proceed against the accepted controlled contracts. T024–T025 remain dependent on actual X04-STATE/X05-GATE adapters and explicit concrete isolation/platform configuration; this authorization does not fabricate their delivery or waive real-only acceptance. Phase 6 and deferred production choices remain separately gated.
+
 ## Contract v0.1 Baseline Hashes
 The contract v0.1 baseline is commit `04f3747`, consisting of the core specification, shared data model, and shared interfaces. The hashes below identify that baseline, not later authorization-wording amendments in spec.md. All mocks (T004) and future real adapters (T025, T028, T030, T032) must conform strictly to these accepted schemas and interfaces:
 - `specs/001-verified-code-repair/spec.md`:
