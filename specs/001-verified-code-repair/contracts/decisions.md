@@ -22,6 +22,10 @@ On 2026-10-22 (Asia/Saigon), the user authorized Phase 5 (T019–T025) of the fi
 
 On 2026-10-22 (Asia/Saigon), after independent standards and testability reviews found no blocking issues in `612cadd` (integrated as `5af410d`), the user confirmed that Thanh Tan (UC-04) and Trong Tan (UC-05) had agreed to the reviewed [atomic admission amendment](atomic-admission-amendment.md). The user then explicitly approved the design and preparation of scoped implementation tasks. This records user-relayed owner agreement, not direct owner messages or delivered adapters. The approved design assigns durable journal/claims/accounting to UC-04, current policy and approval authority to UC-05, and one admitted effect attempt to the shared guard/executor boundary. Task preparation must preserve the amendment's versioned migration, branch-specific receipts, observed-unsettled recovery and fail-closed requirements. Canonical implementation release remains a separate scoped step after task decomposition and planning review; T022 remains incomplete. Real adapters, production choices, real containment and Phase 6 execution are not released by this approval.
 
+## Admission Implementation Remains Unreleased
+
+After the reviewed task decomposition was integrated at `df03e0a`, the user explicitly selected “Keep this as an approved plan only” when asked to release mock-backed T037–T066 plus T022. The design and task plan remain approved at the planning level; these implementation tasks are not authorized to execute. T022 stays incomplete. Preserve completed T019–T021 and T023, and do not infer an implementation release from the earlier Phase 5 request or owner agreement. Real adapters, Docker acceptance and Phase 6 remain gated.
+
 ## Contract v0.1 Baseline Hashes
 The contract v0.1 baseline is commit `04f3747`, consisting of the core specification, shared data model, and shared interfaces. The hashes below identify that baseline, not later authorization-wording amendments in spec.md. All mocks (T004) and future real adapters (T025, T028, T030, T032) must conform strictly to these accepted schemas and interfaces:
 - `specs/001-verified-code-repair/spec.md`:
