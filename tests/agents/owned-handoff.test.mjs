@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
@@ -139,9 +139,30 @@ test('legacy worker handoff remains unverified without inferred hashes', async (
   const handoff = run('handoff', '--owner', 'legacy', '--task', 'T002', '--result', 'Legacy result retained');
   assert.equal(handoff.status, 0, handoff.stderr);
   const entry = JSON.parse(run('list').stdout)[0];
+  assert.equal(Object.hasOwn(entry, 'binding'), false);
+  assert.equal(Object.hasOwn(entry, 'reservation'), false);
   assert.equal(entry.handoffEvidence.status, 'unverified');
   assert.equal(Object.hasOwn(entry.handoffEvidence, 'files'), false);
   const verification = run('verify-handoff', '--owner', 'legacy', '--task', 'T002');
   assert.equal(verification.status, 1);
   assert.equal(JSON.parse(verification.stdout).status, 'unverified');
+});
+
+test('an unbound reassigned worker cannot use the legacy handoff path', async (t) => {
+  const checkout = await mkdtemp(join(tmpdir(), 'unbound-successor-'));
+  t.after(() => rm(checkout, { recursive: true, force: true }));
+  await mkdir(join(checkout, 'context'));
+  await mkdir(join(checkout, '.agent-work/state'), { recursive: true });
+  await writeFile(join(checkout, 'context/active_task.md'), '# Active task\n<!-- active-task:start -->\n```json\n[]\n```\n<!-- active-task:end -->\n');
+  const path = join(checkout, '.agent-work/state/active-tasks.json');
+  await writeFile(path, JSON.stringify([
+    { owner: 'successor', task: 'T003', checkout, role: 'worker', session: '2026-10-22/successor', summary: 'Continue recovered work', next: 'Bind before handoff', status: 'active', reassignedFrom: { owner: 'legacy', task: 'T003', reason: 'Recovery' } },
+  ]));
+  git(checkout, ['init', '--quiet', '-b', 'main']);
+  const run = (...args) => spawnSync(process.execPath, [cli, ...args, '--root', checkout], { encoding: 'utf8', windowsHide: true, timeout: 10_000 });
+  const before = await readFile(path, 'utf8');
+  const handoff = run('handoff', '--owner', 'successor', '--task', 'T003', '--result', 'Must bind first');
+  assert.equal(handoff.status, 1);
+  assert.match(handoff.stderr, /unbound reassigned|fresh binding/i);
+  assert.equal(await readFile(path, 'utf8'), before, 'rejected successor handoff must not mutate the registry');
 });
