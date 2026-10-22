@@ -78,8 +78,10 @@ export async function pauseForApproval(
     throw new Error(`Invalid paused state: ${val.errors.map((e) => e.message).join(', ')}`);
   }
 
-  await store.saveCheckpoint(pausedState);
-  return pausedState;
+  return await store.withLock(`pause-${state.taskId}`, async () => {
+    await store.saveCheckpoint(pausedState);
+    return pausedState;
+  });
 }
 
 export async function resumeFromApproval(

@@ -81,15 +81,14 @@ export class FeatureWorkflowEngine {
 
       // Settle budget usage if any
       if (result.usage) {
-        budgetTracker.reserve(
-          currentStep.id,
-          [
-            { scope: 'task', kind: 'tokens', amount: result.usage.billableTokens ?? (result.usage.inputTokens + result.usage.outputTokens) },
-            { scope: 'task', kind: 'cost', amount: result.usage.costUsd },
-          ],
-          { taskId: state.taskId, runId: state.runId }
-        );
-        budgetTracker.settle(currentStep.id, result.usage);
+        const items = [
+          { scope: 'task' as const, kind: 'tokens' as const, amount: result.usage.billableTokens ?? (result.usage.inputTokens + result.usage.outputTokens) },
+          { scope: 'task' as const, kind: 'cost' as const, amount: result.usage.costUsd },
+        ].filter((i) => i.amount > 0);
+        if (items.length > 0) {
+          budgetTracker.reserve(currentStep.id, items, { taskId: state.taskId, runId: state.runId });
+          budgetTracker.settle(currentStep.id, result.usage);
+        }
         state = {
           ...state,
           budgetLedgers: budgetTracker.getLedgers(),

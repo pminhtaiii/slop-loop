@@ -226,6 +226,7 @@ export async function reconcileAndResume(
   store: DurableStore,
   options: ReconcileOptions = {}
 ): Promise<TaskState> {
+  return await store.withLock(`pause-${taskId}`, async () => {
   const latestCheckpoint = await store.loadLatestCheckpoint(taskId);
   if (!latestCheckpoint) {
     throw new Error(`No valid checkpoint found to resume task: ${taskId}`);
@@ -314,4 +315,5 @@ export async function reconcileAndResume(
 
   await store.saveCheckpoint(resumedState);
   return resumedState;
+  });
 }
