@@ -122,3 +122,7 @@ CI release-age repair: pnpm rejected imported @langchain/core 1.2.18 and langsmi
 ## Local-Only Fixtures Preference Amendment
 
 On 2026-10-18 (Asia/Saigon), the user explicitly directed: "I don't think we should push the fixtures/ folder". Consequently, test fixtures under `fixtures/` are treated as local-only development artifacts and excluded from the Git index and publication branch via `.gitignore` and index removal (`git rm -r --cached -- fixtures`). Physical fixture files remain preserved in local checkouts for local testing and retained development branches, but are not shipped to upstream repository tracking. Tracked documentation and example references are amended to reflect that fixtures are local-only and not shipped.
+
+## Phase 4 Authorization
+
+On 2026-10-21 (Asia/Saigon), the user authorized the next phase of specification 001 and confirmed a fresh branch from updated origin/development, preserving the original checkout. This releases Phase 4 T015-T018 only on `feat/uc03-bounded-repair`: local-only repair scenarios, runnable behavioral RED checks, bounded repair, and material-replan/feedback transitions using injected controlled ports. Implementation uses Gemini 3.8 Flash High; independent review uses GPT-6.1-Sol; review repairs use GPT-6-Luna with max reasoning. These contributor model choices do not select production providers. Phase 5 onward, real execution, real adapters, production profiles, and actual restart evidence remain gated. Existing Phase 3 task statuses are not changed by this authorization.
