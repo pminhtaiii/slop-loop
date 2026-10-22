@@ -31,7 +31,7 @@ function alternateCase(path) {
 }
 
 async function fixture(t, { originDevelopment = true } = {}) {
-  const directory = await mkdtemp(join(tmpdir(), 'active-task-binding-'));
+  const directory = await realpath(await mkdtemp(join(tmpdir(), 'active-task-binding-')));
   const repo = join(directory, 'repo');
   const origin = join(directory, 'origin.git');
   await mkdir(repo);
