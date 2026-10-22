@@ -9,6 +9,7 @@ import {
   WorkspaceDriftError,
   DependencyNotMetError,
   reconcileAndResume,
+  captureWorkspaceBaseline,
 } from '../../../src/persistence/recovery.ts';
 import {
   UC04_SCHEMA_VERSION,
@@ -179,6 +180,15 @@ describe('UC-04: StepStateMachine & Recovery Reconciliation', () => {
       assert.ok(tokenLedger);
       assert.equal(tokenLedger.consumed, 3000); // 2000 + 1000 settled/charged
       assert.equal(tokenLedger.reservations.length, 0);
+    });
+
+    it('fails closed when captureWorkspaceBaseline encounters non-zero git exit code', async () => {
+      await assert.rejects(
+        async () => {
+          await captureWorkspaceBaseline(tempDir);
+        },
+        /Failed to get git/
+      );
     });
   });
 });

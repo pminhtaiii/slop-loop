@@ -42,8 +42,23 @@ describe('UC-04: BudgetTracker & Durable Accounting', () => {
     ]);
 
     assert.equal(bundle.reservations.length, 2);
+    assert.equal(bundle.taskId, 'active-task');
+    assert.equal(bundle.runId, 'active-run');
+    assert.equal(bundle.transactionRef, 'req-1');
     assert.equal(tracker.getAvailable('task', 'tokens'), 7000);
     assert.equal(tracker.getAvailable('task', 'cost'), 3.5);
+  });
+
+  it('accepts explicit owner taskId and runId on reserve', () => {
+    const tracker = new BudgetTracker(initialLedgers);
+    const bundle = tracker.reserve(
+      'req-owner',
+      [{ scope: 'task', kind: 'tokens', amount: 1000 }],
+      { taskId: 'custom-task', runId: 'custom-run' }
+    );
+    assert.equal(bundle.taskId, 'custom-task');
+    assert.equal(bundle.runId, 'custom-run');
+    assert.equal(bundle.transactionRef, 'req-owner');
   });
 
   it('rejects duplicate reservation keys in a single request', () => {

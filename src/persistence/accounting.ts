@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type {
   BudgetLedger,
   BudgetReservationItem,
@@ -75,7 +76,8 @@ export class BudgetTracker {
 
   reserve(
     requestId: string,
-    items: readonly { scope: 'task' | 'run'; kind: 'tokens' | 'token' | 'cost' | 'repair' | 'reviewer'; amount: number }[]
+    items: readonly { scope: 'task' | 'run'; kind: 'tokens' | 'token' | 'cost' | 'repair' | 'reviewer'; amount: number }[],
+    owner?: { readonly taskId?: string; readonly runId?: string }
   ): ReservationBundle {
     // Pre-validate amounts and detect duplicate keys
     const requestedByKey = new Map<string, number>();
@@ -115,7 +117,7 @@ export class BudgetTracker {
 
     // Phase 2: Atomically apply all reservations
     const bundleItems: ReservationBundleItem[] = [];
-    const bundleId = `bundle-${Date.now()}-${requestId}`;
+    const bundleId = `bundle-${randomUUID()}`;
 
     for (const item of items) {
       const key = `${item.scope}:${item.kind}`;
@@ -155,9 +157,9 @@ export class BudgetTracker {
 
     return {
       bundleId,
-      transactionRef: `tx-${requestId}`,
-      taskId: 'active-task',
-      runId: 'active-run',
+      transactionRef: requestId,
+      taskId: owner?.taskId ?? 'active-task',
+      runId: owner?.runId ?? 'active-run',
       reservations: bundleItems,
     };
   }

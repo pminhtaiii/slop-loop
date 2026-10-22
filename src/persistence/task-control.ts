@@ -88,68 +88,70 @@ export async function resumeFromApproval(
   store: DurableStore,
   options: ResumeApprovalOptions = {}
 ): Promise<TaskState> {
-  const latestCp = await store.loadLatestCheckpoint(taskId);
-  if (!latestCp) {
-    throw new Error(`No checkpoint found for task: ${taskId}`);
-  }
+  return await store.withLock(`pause-${taskId}`, async () => {
+    const latestCp = await store.loadLatestCheckpoint(taskId);
+    if (!latestCp) {
+      throw new Error(`No checkpoint found for task: ${taskId}`);
+    }
 
-  const currentState = latestCp.state;
-  if (currentState.status !== 'waiting_approval') {
-    throw new Error(`Task ${taskId} is not awaiting approval (current status: ${currentState.status})`);
-  }
+    const currentState = latestCp.state;
+    if (currentState.status !== 'waiting_approval') {
+      throw new Error(`Task ${taskId} is not awaiting approval (current status: ${currentState.status})`);
+    }
 
-  const pending = currentState.pendingApproval;
-  if (!pending) {
-    throw new Error(`Task ${taskId} has no pending approval record`);
-  }
+    const pending = currentState.pendingApproval;
+    if (!pending) {
+      throw new Error(`Task ${taskId} has no pending approval record`);
+    }
 
-  if (pending.requestId !== decision.requestId) {
-    throw new Error(`Approval request mismatch: expected ${pending.requestId}, got ${decision.requestId}`);
-  }
+    if (pending.requestId !== decision.requestId) {
+      throw new Error(`Approval request mismatch: expected ${pending.requestId}, got ${decision.requestId}`);
+    }
 
-  // Cryptographic & environment binding check (fail-closed)
-  if (!options.currentCommit || options.currentCommit !== pending.repoCommit) {
-    throw new StaleApprovalBindingError(
-      `Stale approval: git commit mismatch. Approved at ${pending.repoCommit}, current commit is ${options.currentCommit ?? 'undefined'}`
-    );
-  }
+    // Cryptographic & environment binding check (fail-closed)
+    if (!options.currentCommit || options.currentCommit !== pending.repoCommit) {
+      throw new StaleApprovalBindingError(
+        `Stale approval: git commit mismatch. Approved at ${pending.repoCommit}, current commit is ${options.currentCommit ?? 'undefined'}`
+      );
+    }
 
-  if (!options.policyVersion || options.policyVersion !== pending.policyVersion) {
-    throw new StaleApprovalBindingError(
-      `Stale approval: policy version mismatch. Approved under ${pending.policyVersion}, current policy is ${options.policyVersion ?? 'undefined'}`
-    );
-  }
+    if (!options.policyVersion || options.policyVersion !== pending.policyVersion) {
+      throw new StaleApprovalBindingError(
+        `Stale approval: policy version mismatch. Approved under ${pending.policyVersion}, current policy is ${options.policyVersion ?? 'undefined'}`
+      );
+    }
 
-  if (decision.decision === 'rejected') {
-    const rejectionReason = decision.reason ?? 'Action rejected by human reviewer';
-    const rejectedState: TaskState = {
-      ...currentState,
-      status: 'failed',
+    if (decision.decision === 'rejected') {
+      const rejectionReason = decision.reason ?? 'Action rejected by human reviewer';
+      const rejectedState: TaskState = {
+        ...currentState,
+        status: 'failed',
+        stateVersion: currentState.stateVersion + 1,
+        openRisks: [...(currentState.openRisks ?? []), `Approval rejected by ${decision.approvedBy}: ${rejectionReason}`],
+        nextAction: 'Halt: Human approval was rejected',
+      };
+
+      const val = validateTaskState(rejectedState);
+      if (!val.ok) throw new Error(`Invalid rejected state: ${val.errors.map((e) => e.message).join(', ')}`);
+      await store.saveCheckpoint(rejectedState);
+      return rejectedState;
+    }
+
+    // Approved: remove pendingApproval
+    const { pendingApproval: _pending, ...rest } = currentState;
+    void _pending;
+    const resumedState: TaskState = {
+      ...rest,
+      status: 'running',
       stateVersion: currentState.stateVersion + 1,
-      openRisks: [...(currentState.openRisks ?? []), `Approval rejected by ${decision.approvedBy}: ${rejectionReason}`],
-      nextAction: 'Halt: Human approval was rejected',
+      nextAction: `Execute approved action ${pending.actionType}`,
     };
 
-    const val = validateTaskState(rejectedState);
-    if (!val.ok) throw new Error(`Invalid rejected state: ${val.errors.map((e) => e.message).join(', ')}`);
-    await store.saveCheckpoint(rejectedState);
-    return rejectedState;
-  }
-
-  // Approved: remove pendingApproval
-  const { pendingApproval: _pending, ...rest } = currentState;
-  void _pending;
-  const resumedState: TaskState = {
-    ...rest,
-    status: 'running',
-    stateVersion: currentState.stateVersion + 1,
-    nextAction: `Execute approved action ${pending.actionType}`,
-  };
-
-  const val = validateTaskState(resumedState);
-  if (!val.ok) throw new Error(`Invalid resumed state: ${val.errors.map((e) => e.message).join(', ')}`);
-  await store.saveCheckpoint(resumedState);
-  return resumedState;
+    const val = validateTaskState(resumedState);
+    if (!val.ok) throw new Error(`Invalid resumed state: ${val.errors.map((e) => e.message).join(', ')}`);
+    await store.saveCheckpoint(resumedState);
+    return resumedState;
+  });
 }
 
 export async function pauseTask(

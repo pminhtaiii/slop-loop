@@ -388,6 +388,74 @@ describe('UC-04: Data Contracts and Extension Validators', () => {
         },
       });
       assert.equal(sRes.ok, true);
+
+      // Rejects invalid status
+      const badStatusRes = validateTaskState({
+        schemaVersion: UC04_SCHEMA_VERSION,
+        taskId: 't1',
+        runId: 'r1',
+        stateVersion: 1,
+        plan: [],
+        budgetLedgers: [],
+        workspaceBaseline: { commitHash: 'abc', branch: 'b', isClean: true, trackedFilesHash: 'h' },
+        status: 'invalid_status',
+      });
+      assert.equal(badStatusRes.ok, false);
+
+      // Validates plan steps inside plan array
+      const badStepRes = validateTaskState({
+        schemaVersion: UC04_SCHEMA_VERSION,
+        taskId: 't1',
+        runId: 'r1',
+        stateVersion: 1,
+        plan: [{ id: '', title: '', status: 'todo' }],
+        budgetLedgers: [],
+        workspaceBaseline: { commitHash: 'abc', branch: 'b', isClean: true, trackedFilesHash: 'h' },
+      });
+      assert.equal(badStepRes.ok, false);
+
+      // Validates budget ledgers inside budgetLedgers array
+      const badLedgerRes = validateTaskState({
+        schemaVersion: UC04_SCHEMA_VERSION,
+        taskId: 't1',
+        runId: 'r1',
+        stateVersion: 1,
+        plan: [],
+        budgetLedgers: [{ scope: 'invalid', kind: 'tokens', limit: -1 }],
+        workspaceBaseline: { commitHash: 'abc', branch: 'b', isClean: true, trackedFilesHash: 'h' },
+      });
+      assert.equal(badLedgerRes.ok, false);
+
+      // Rejects non-array changedFiles / openRisks
+      const badArraysRes = validateTaskState({
+        schemaVersion: UC04_SCHEMA_VERSION,
+        taskId: 't1',
+        runId: 'r1',
+        stateVersion: 1,
+        plan: [],
+        budgetLedgers: [],
+        workspaceBaseline: { commitHash: 'abc', branch: 'b', isClean: true, trackedFilesHash: 'h' },
+        changedFiles: 'not-an-array',
+        openRisks: 123,
+      });
+      assert.equal(badArraysRes.ok, false);
+
+      // Rejects non-string repositoryId, workspaceId, taskType, goal, nextAction
+      const badStringsRes = validateTaskState({
+        schemaVersion: UC04_SCHEMA_VERSION,
+        taskId: 't1',
+        runId: 'r1',
+        stateVersion: 1,
+        plan: [],
+        budgetLedgers: [],
+        workspaceBaseline: { commitHash: 'abc', branch: 'b', isClean: true, trackedFilesHash: 'h' },
+        repositoryId: '',
+        workspaceId: 123,
+        taskType: '   ',
+        goal: '',
+        nextAction: null,
+      });
+      assert.equal(badStringsRes.ok, false);
     });
   });
 });

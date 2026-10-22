@@ -199,6 +199,9 @@ export async function captureWorkspaceBaseline(repoRoot: string): Promise<Worksp
   const branch = branchRes.status === 0 ? branchRes.stdout.trim() : 'HEAD';
 
   const statusRes = spawnSync('git', ['status', '--porcelain'], { cwd: repoRoot, encoding: 'utf8' });
+  if (statusRes.status !== 0) {
+    throw new Error(`Failed to get git status: ${statusRes.stderr || 'non-zero exit code'}`);
+  }
   const statusOutput = statusRes.stdout.trim();
   const isClean = statusOutput.length === 0;
 

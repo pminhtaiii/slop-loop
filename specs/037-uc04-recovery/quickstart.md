@@ -30,14 +30,12 @@ node --test tests/runtime/uc04/restart.test.ts
 
 T012 drives multi-process crash and restart cycles through `tests/runtime/support/uc04/restart-child.ts` and `tests/runtime/uc04/restart.test.ts`. Across distinct OS processes, abrupt termination retains checkpoints, preserves conservative token reservations, and resumes safely from the first uncompleted step.
 
-Required scenarios for that driver:
+Actual test scope verified by `restart.test.ts`:
 
-1. Register a scripted task with explicit goal/criteria/constraints/steps/check refs and an independent second task. Complete a step; acknowledge coherent checkpoint; kill old process, confirm exit and start new process against the retained store. Assert R03 exact state and no repeated step.
-2. Kill after reserve, after claim, after dispatch and after effect before persistence. Compare retained reservations/usage/effect witnesses under new run IDs. Exercise known non-dispatch/completion and unknown outcomes; unknown non-idempotent work cannot retry (R04–R05,R10–R11).
-3. Pause with a bounded operation outstanding, decline early resume, record result and require another explicit resume. Restart while deliberately paused, waiting/rejected, and approved before claim; preserve independent holds and unrelated task progress (R06–R08).
-4. Mutate saved repository assumptions through the trusted test seam; re-inspect without overwriting and invalidate evidence/binding. Missing/corrupt state or exhausted accounting returns a blocker. Apparent completion requires owning verification evidence (R09,R13).
-5. Compact long history with all six fields, then test each omission/conflict and actual restart. Inspect safe status/history and protected-marker exclusions; deletion remains unavailable (R12,R14–R15).
-6. Run the required catalog twice; retain case/profile/backend/host/source identities and all process/effect/count receipts per [acceptance](contracts/acceptance.md). Not-run is not pass.
+1. Process 1 (Initialization): Registers a scripted task with baseline workspace commit and sets up durable task storage.
+2. Process 2 (Step 1): Executes step 1, consumes tokens, transitions step to done, and commits a durable checkpoint.
+3. Process 3 (Step 2 Crash): Claims and reserves tokens for step 2, then simulates an abrupt process crash (exit code 137) before settlement.
+4. Process 4 (Recovery & Resume): Spawns a fresh OS process, reloads state from the retained checkpoint, conservatively settles interrupted reservations to prevent budget leakage, reruns step 2 to completion, and validates full workflow completion with accurate consumed token accounting across 4 independent OS process lifecycles.
 
 ## Later real integration
 

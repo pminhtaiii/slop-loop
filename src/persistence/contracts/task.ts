@@ -226,11 +226,48 @@ export function validateTaskState(val: unknown, path = 'state'): ValidationResul
   if (val.currentStepIndex !== undefined && (typeof val.currentStepIndex !== 'number' || !Number.isInteger(val.currentStepIndex) || val.currentStepIndex < 0)) {
     errors.push({ path: `${path}.currentStepIndex`, message: 'currentStepIndex must be an integer >= 0', code: 'INVALID_STEP_INDEX' });
   }
+  if (val.status !== undefined) {
+    const validStatuses = ['pending', 'running', 'waiting_approval', 'paused', 'completed', 'failed'];
+    if (typeof val.status !== 'string' || !validStatuses.includes(val.status)) {
+      errors.push({ path: `${path}.status`, message: `status must be one of ${validStatuses.join(', ')}`, code: 'INVALID_STATUS' });
+    }
+  }
   if (!Array.isArray(val.plan)) {
     errors.push({ path: `${path}.plan`, message: 'plan must be an array', code: 'INVALID_PLAN' });
+  } else {
+    for (let i = 0; i < val.plan.length; i++) {
+      const stepRes = validatePlanStep(val.plan[i], `${path}.plan[${i}]`);
+      if (!stepRes.ok) errors.push(...stepRes.errors);
+    }
   }
   if (!Array.isArray(val.budgetLedgers)) {
     errors.push({ path: `${path}.budgetLedgers`, message: 'budgetLedgers must be an array', code: 'INVALID_LEDGERS' });
+  } else {
+    for (let i = 0; i < val.budgetLedgers.length; i++) {
+      const lRes = validateBudgetLedger(val.budgetLedgers[i], `${path}.budgetLedgers[${i}]`);
+      if (!lRes.ok) errors.push(...lRes.errors);
+    }
+  }
+  if (val.changedFiles !== undefined && !Array.isArray(val.changedFiles)) {
+    errors.push({ path: `${path}.changedFiles`, message: 'changedFiles must be an array', code: 'INVALID_CHANGED_FILES' });
+  }
+  if (val.openRisks !== undefined && !Array.isArray(val.openRisks)) {
+    errors.push({ path: `${path}.openRisks`, message: 'openRisks must be an array', code: 'INVALID_OPEN_RISKS' });
+  }
+  if (val.repositoryId !== undefined && (typeof val.repositoryId !== 'string' || !val.repositoryId.trim())) {
+    errors.push({ path: `${path}.repositoryId`, message: 'repositoryId must be a non-empty string', code: 'INVALID_REPOSITORY_ID' });
+  }
+  if (val.workspaceId !== undefined && (typeof val.workspaceId !== 'string' || !val.workspaceId.trim())) {
+    errors.push({ path: `${path}.workspaceId`, message: 'workspaceId must be a non-empty string', code: 'INVALID_WORKSPACE_ID' });
+  }
+  if (val.taskType !== undefined && (typeof val.taskType !== 'string' || !val.taskType.trim())) {
+    errors.push({ path: `${path}.taskType`, message: 'taskType must be a non-empty string', code: 'INVALID_TASK_TYPE' });
+  }
+  if (val.goal !== undefined && (typeof val.goal !== 'string' || !val.goal.trim())) {
+    errors.push({ path: `${path}.goal`, message: 'goal must be a non-empty string', code: 'INVALID_GOAL' });
+  }
+  if (val.nextAction !== undefined && (typeof val.nextAction !== 'string' || !val.nextAction.trim())) {
+    errors.push({ path: `${path}.nextAction`, message: 'nextAction must be a non-empty string', code: 'INVALID_NEXT_ACTION' });
   }
   const wsRes = validateWorkspaceBaseline(val.workspaceBaseline, `${path}.workspaceBaseline`);
   if (!wsRes.ok) errors.push(...wsRes.errors);
