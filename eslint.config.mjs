@@ -51,5 +51,35 @@ export default tseslint.config(
       ],
       'prefer-const': 'error',
     },
+  },
+  {
+    files: ['src/**/*.{js,mjs,cjs,ts,tsx,mts,cts}'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: 'ImportExpression[source.type="Literal"][source.value=/(?:^|\\/)tests\\/runtime\\/support(?:\\/|$)/]',
+          message: 'Production code cannot dynamically import runtime test support.',
+        },
+      ],
+      'no-restricted-properties': [
+        'error',
+        { property: 'transitionContexts', message: 'Production code must use the public StatePort API.' },
+      ],
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [{
+            group: [
+              '**/tests/runtime/support',
+              '**/tests/runtime/support/**',
+              'tests/runtime/support',
+              'tests/runtime/support/**',
+            ],
+            message: 'Production code cannot import runtime test support.',
+          }],
+        },
+      ],
+    },
   }
 );
