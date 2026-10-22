@@ -157,14 +157,14 @@ Tai is accountable for all local tasks, including shared foundation. Named lanes
 - [X] T021 [P] [US3] Create the runnable guard SUT skeleton and failing checks in tests/runtime/contract/execution-guard.test.ts.
   - **Owner**: Tai / gate-test lane.
   - **Dependencies**: T004.
-  - **Owned Paths**: tests/runtime/contract/execution-guard.test.ts; src/foundation/execution-guard.ts (signature-only skeleton ownership until T021 handoff).
-  - **Acceptance Checks**: T004 ports demonstrate zero dispatch before valid config, isolation, reservation and decision; pending/rejected/stale/forbidden handling, exact action identity, CAS conflict and uncertain-effect reconciliation. No UC-05 policy reimplementation. Create the actual guard exports as neutral no-dispatch/incomplete skeletons so tests execute assertions against the real SUT, using T004 only for injected dependencies. No collection/import/type failures count as RED. A valid-action success expectation must fail behaviorally; transfer guard source ownership to dependent T022 only after recording this RED checkpoint.
+  - **Owned Paths**: tests/runtime/contract/execution-guard.test.ts; src/foundation/execution-guard.ts (T021's v0.1 neutral signature-only skeleton; the later additive v0.2 signature scaffold is T059-owned).
+  - **Acceptance Checks**: T004 ports demonstrate zero dispatch before valid config, isolation, reservation and decision; pending/rejected/stale/forbidden handling, exact action identity, CAS conflict and uncertain-effect reconciliation. No UC-05 policy reimplementation. Create the actual guard exports as neutral no-dispatch/incomplete v0.1 skeletons so tests execute assertions against the real SUT, using T004 only for injected dependencies. No collection/import/type failures count as RED. A valid-action success expectation must fail behaviorally. Keep this v0.1 source-compatible skeleton as the baseline for T059's later additive v0.2 signature-only scaffold; T059 hands the source and test paths to T022 only after its own behavioral RED checkpoint.
 
 - [ ] T022 [US3] Compose authoritative execution checks in src/foundation/execution-guard.ts and tests/runtime/contract/execution-guard.test.ts.
   - **Owner**: Tai / execution-integration lane (shared foundation).
   - **Dependencies**: T021, T040, T042, T044, T049, T051, T046, T048, T050, T052, T054, T056, T058, T059.
-  - **Owned Paths**: src/foundation/execution-guard.ts; tests/runtime/contract/execution-guard.test.ts (test ownership transfers T021 -> T059 RED -> T022 GREEN).
-  - **Acceptance Checks**: Keep T021's no-dispatch skeleton until T059 records runnable assertion-only RED. Implement the v0.2 ExecutionGuardV02 surface while keeping the v0.1 ExecutionGuard signature source-compatible through migration. Compose the approved v0.2 context checks from the versioned UC-03 and UC-05 ports; preserve denial and tampered-approvable-digest regressions, and pass amended typed receipt/state/control/context/receiver-handoff assertions. The guard composes but does not repeat UC-04 `beginAttempt` or the receiver-local one-shot consume: `repository-tools.ts` owns the durable repository attempt, `StructuredCommandExecutor.execute` owns the local consume, and the provider ingress in `model.ts` owns its provider attempt and transport-local consume. A valid repository action reaches its supplied receiver once with the same attempt identity; stale or malformed admission causes zero receiver calls and zero state/accounting changes. Use controlled mocks only; no bypass path, local approval store or blanket environment inheritance. Actual adapters and containment remain gated at T024/T025. Each checkpoint keeps typecheck/build green and passes focused source/emitted checks after T059's RED checkpoint.
+  - **Owned Paths**: src/foundation/execution-guard.ts; tests/runtime/contract/execution-guard.test.ts (both paths transfer T021 baseline -> T059 signature/behavioral RED -> T022 GREEN).
+  - **Acceptance Checks**: Keep T021's source-compatible no-dispatch v0.1 skeleton until T059 adds only the typed neutral no-dispatch v0.2 entrypoint/options and records assertion-only RED. After the valid-dispatch expectation fails behaviorally, take both source and test paths from T059 and implement the v0.2 ExecutionGuardV02 surface while keeping the v0.1 ExecutionGuard signature source-compatible through migration. Compose the approved v0.2 context checks from the versioned UC-03 and UC-05 ports; preserve the existing denial and tampered-approvable-digest regressions, and pass amended typed receipt/state/control/context/receiver-handoff assertions. The guard composes but does not repeat UC-04 `beginAttempt` or the receiver-local one-shot consume: `repository-tools.ts` owns the durable repository attempt, `StructuredCommandExecutor.execute` owns the local consume, and the provider ingress in `model.ts` owns its provider attempt and transport-local consume. A valid repository action reaches its supplied receiver once with the same attempt identity; stale or malformed admission causes zero receiver calls and zero state/accounting changes. Use controlled mocks only; no bypass path, local approval store or blanket environment inheritance. Actual adapters and containment remain gated at T024/T025. Each checkpoint keeps typecheck/build green and passes focused source/emitted checks after T059's RED checkpoint.
 
 - [X] T023 [P] [US3] Implement sanitized milestone and final output in src/uc03/report.ts.
   - **Owner**: Tai / delivery lane.
@@ -260,8 +260,8 @@ flowchart TD
     T010 --> T023
     T003 & T004 --> T037 --> T038 --> T039 --> T040 --> T041 --> T042
     T038 & T040 --> T043 --> T044
-    T040 & T042 --> T049 --> T050
-    T040 & T042 & T044 --> T051 --> T052
+    T040 & T042 & T044 & T048 --> T049 --> T050
+    T040 & T042 & T044 & T046 & T048 --> T051 --> T052
     T044 --> T045 --> T046
     T042 & T044 & T046 --> T047 --> T048
     T048 & T050 & T052 --> T053 --> T054
@@ -282,15 +282,15 @@ flowchart TD
     T029 & T030 & T031 & T032 --> T033 --> T034
 ```
 
-The explicit Dependencies fields retain contract prerequisites not repeated in every diagram arrow. Skeleton and shared-file ownership stays sequential: T011 -> T012 -> T013 (investigation.ts), T011 -> T014 (verification.ts), T016 -> T017 -> T018 (repair.ts), and T021 -> T059 -> T022 (execution-guard.ts plus tests/runtime/contract/execution-guard.test.ts). T022 receives the test path only after T059 records assertion-only behavioral RED. Amendment RED/GREEN pairs share source paths only across their declared handoff edge; no checkpoint may leave the full TypeScript build broken. T049/T050 own the repository receiver and Docker controller seam; T051/T052 own the distinct provider ingress. T060/T061 and T062/T063 serialize each consumer source with its own test checkpoint. Coordinator-only quickstart/context/ledger edits remain serial. Shared root config belongs only to T002.
+The explicit Dependencies fields retain contract prerequisites not repeated in every diagram arrow. Skeleton and shared-file ownership stays sequential: T011 -> T012 -> T013 (investigation.ts), T011 -> T014 (verification.ts), T016 -> T017 -> T018 (repair.ts), and T021 -> T059 -> T022 (execution-guard.ts plus tests/runtime/contract/execution-guard.test.ts). T059 owns only the additive typed neutral v0.2 signature surface and behavioral RED; T022 receives both guard paths only after the valid-dispatch assertion fails behaviorally. Amendment RED/GREEN pairs share source paths only across their declared handoff edge; no checkpoint may leave the full TypeScript build broken. T049/T050 own the repository receiver and Docker controller seam; T051/T052 own the distinct provider ingress. T060/T061 and T062/T063 serialize each consumer source with its own test checkpoint. Coordinator-only quickstart/context/ledger edits remain serial. Shared root config belongs only to T002.
 ### Parallel frontiers and examples per story
 
 - After T004: T005–T010, T015, T019 and T021 have disjoint paths and no remaining local dependencies. They can be scheduled together; non-[P] successors are ordered within their lane.
 - US1: once T011 records runnable behavioral RED and hands off its three SUT skeletons, T012 and T014 may run together. T013 follows T012; model/tools/reviewer lanes continue independently. T014 uses fixtures, so it does not wait for investigation implementation.
 - US2: T015 fixture work can run with US1's T005–T010 and US3's T019/T021; T016→T017→T018 is intentionally serial for skeleton/RED-to-implementation ordering and repair.ts ownership handoff. There is no artificial `[P]` within that serial lane.
-- US3: T019/T020 attack preparation runs alongside T021/T022 guard skeleton/RED then implementation, with sequential guard source handoff; T023 starts after T010 and does not wait for US1. T024/T025 wait for real components and external deliveries, while mock workflow work can continue.
+- US3: T019/T020 attack preparation runs alongside T021's v0.1 guard skeleton, followed by T059's additive v0.2 signature/behavioral RED and T022's implementation after both guard paths hand off; T023 starts after T010 and does not wait for US1. T024/T025 wait for real components and external deliveries, while mock workflow work can continue.
 - Evaluation: T027 can run while story implementation proceeds once its fixture/contract inputs exist. After T028, T029/T030/T031/T032 run on separate disposable task workspaces and disjoint evidence/test paths.
-- Atomic admission amendment: T037-T044 build additive v0.2 validators, the test-only journal, and UC-05 receipts. T045->T048 migrate UC-05 policy/control; T049->T050 own the repository receiver and T051->T052 the separate provider ingress. T053->T058 migrate UC-03/UC-05 fixtures and presentation. T059 is the guard RED predecessor of T022; T060->T063 migrate repair, baseline, and verification callers after the guard. T064->T065 performs explicit v0.2 mock cutover only after migration; T066 runs the integrated 21-case matrix. Real adapters, production configuration, containment, and Phase 6 remain gated.
+- Atomic admission amendment: T037-T044 build additive v0.2 validators, the test-only journal, and UC-05 receipts. T045->T048 migrate UC-05 policy/control; T049 (after T040/T042/T044/T048)->T050 owns the repository receiver and T051 (after T040/T042/T044/T046/T048)->T052 owns the separate provider ingress. T053->T058 migrate UC-03/UC-05 fixtures and presentation. T059 adds only the typed neutral v0.2 guard signature and owns both guard paths through behavioral RED; T022 takes both paths for GREEN. T060->T063 migrate repair, baseline, and verification callers after the guard. T064->T065 performs explicit v0.2 mock cutover only after migration; T066 runs the integrated 22-case matrix. Real adapters, production configuration, containment, and Phase 6 remain gated.
 
 `[P]` is relative to these ready frontiers, never a claim that a task with listed unfinished dependencies can start now. Runtime container/test execution is gated separately from writing fixtures or mock tests.
 
@@ -410,7 +410,7 @@ Develop accepted contract mocks once (T004), then run independent story lanes on
 
 - [ ] T049 [US3] Add runnable repository-receiver RED tests and additive fail-closed scaffolding in src/foundation/repository-tools.ts, src/foundation/docker-workspace.ts, and tests/runtime/unit/repository-tools.test.ts.
   - **Owner**: Tai / repository-tools lane, shared foundation.
-  - **Dependencies**: T040, T042.
+  - **Dependencies**: T040, T042, T044, T048.
   - **Owned Paths**: src/foundation/repository-tools.ts; src/foundation/docker-workspace.ts; tests/runtime/unit/repository-tools.test.ts; tests/runtime/unit/docker-workspace.test.ts.
   - **Acceptance Checks**: Add separate compile-safe RepositoryPortV02 receiver entrypoints typed by ports-v02.ts; they fail closed until T050, while the v0.1 RepositoryPort and its implementers remain source-compatible. Tests use spies/barriers on the real methods and require a valid context to reach the controller once; the neutral stub must fail only the positive behavioral assertions. For listDir (repository-tools.ts:299), readFile (:353), and searchCode (:398), assert zero filesystem reads when paused or any claim is open. For applyPatch, runCommand, and runTests, cover missing context, stale writer/view, and the pre-invoke barrier. The tests must target StructuredCommandExecutor.execute through its controller boundary, not only guard callers. Typecheck and build pass.
 
@@ -422,7 +422,7 @@ Develop accepted contract mocks once (T004), then run independent story lanes on
 
 - [ ] T051 [US3] Add runnable provider-ingress RED tests and additive fail-closed scaffolding in src/foundation/model.ts and tests/runtime/unit/model.test.ts.
   - **Owner**: Tai / model lane, shared foundation.
-  - **Dependencies**: T040, T042, T044.
+  - **Dependencies**: T040, T042, T044, T046, T048.
   - **Owned Paths**: src/foundation/model.ts; tests/runtime/unit/model.test.ts.
   - **Acceptance Checks**: Add a separately versioned provider-admission entrypoint without changing the v0.1 provider method signature. Tests inject a valid coder or reviewer ProviderAdmissionReceipt, a controlled state port, and a transport spy. Positive coder/reviewer dispatch assertions fail behaviorally against the neutral stub; missing, stale, duplicate, or cross-role contexts produce zero transport and zero extra reservation. Typecheck and build pass.
 
@@ -468,11 +468,11 @@ Develop accepted contract mocks once (T004), then run independent story lanes on
   - **Owned Paths**: tests/runtime/support/uc05/mock-store.ts; tests/runtime/support/uc05/mock-context.ts; tests/runtime/support/uc05/fixtures.ts; tests/runtime/support/uc05/mock-recovery.ts; tests/runtime/approvals/mock-ports.test.ts.
   - **Acceptance Checks**: Turn T057 green. Forwarding fixtures preserve exact record versions, claim/attempt identities and outcomes; missing context and legacy v0.1 claim IDs have zero effects. All stores remain deterministic in-memory test fixtures and make no durability/restart claim. Typecheck, build, source tests, and emitted tests pass.
 
-- [ ] T059 [US3] Add amended execution-guard behavioral RED assertions in tests/runtime/contract/execution-guard.test.ts.
+- [ ] T059 [US3] Add the typed neutral v0.2 guard signature scaffold and amended behavioral RED assertions in src/foundation/execution-guard.ts and tests/runtime/contract/execution-guard.test.ts.
   - **Owner**: Tai / execution-test lane (shared foundation).
   - **Dependencies**: T021, T040, T042, T044, T046, T048, T050, T052, T054, T056, T058.
-  - **Owned Paths**: tests/runtime/contract/execution-guard.test.ts (transferred from completed T021; T022 receives it after this RED handoff).
-  - **Acceptance Checks**: Preserve the current denial and tampered-approvable-digest regressions. Add runnable positive admission and typed receipt/state/control/context/receiver-handoff assertions against T021's real neutral SUT. A valid expected dispatch must fail as a behavioral assertion; missing imports, type errors, test collection failures, or mocking the SUT do not count as RED. Typecheck and build pass, and source/emitted test runs reach the expected assertions.
+  - **Owned Paths**: src/foundation/execution-guard.ts (signature-only additive v0.2 typed neutral no-dispatch entrypoint/options; keep the v0.1 signature unchanged); tests/runtime/contract/execution-guard.test.ts (both paths transfer to T022 only after this RED checkpoint).
+  - **Acceptance Checks**: Preserve the existing v0.1 denial and tampered-approvable-digest regressions. Add only the typed v0.2 neutral no-dispatch entrypoint/options to the real guard source; do not add guard behavior or dispatch in this RED task. Add runnable positive admission and typed receipt/state/control/context/receiver-handoff assertions against that real neutral SUT. The valid expected dispatch must fail as a behavioral assertion; missing imports, type errors, test collection failures, or mocking the SUT do not count as RED. Keep the v0.1 ExecutionGuard signature source-compatible. Typecheck and build pass, and source/emitted test runs reach the expected assertions. After the valid-dispatch RED is recorded, transfer both source and test paths to T022 for GREEN.
 
 - [ ] T060 [US3] Add repair-consumer behavioral RED assertions in tests/runtime/unit/uc03-repair.test.ts.
   - **Owner**: Tai / repair-test lane.
@@ -510,11 +510,11 @@ Develop accepted contract mocks once (T004), then run independent story lanes on
   - **Owned Paths**: src/contracts/foundation/uc03/cutover-v02.ts; src/contracts/foundation/uc03.ts; src/foundation/execution-guard.ts; src/approvals/recovery.ts; tests/runtime/contract/atomic-admission-cutover.test.ts.
   - **Acceptance Checks**: Turn T064 green only after T038, T040, T042, T044, T046, T048, T050, T052, T054, T056, T058, T061, and T063 pass. The canonical mock composition accepts only explicit v0.2 records and rejects legacy/no-context/raw-claim-ID paths before any effect. Any retained compatibility is separately versioned, test-only and fail-closed; it cannot grant production authority or satisfy v0.2 admission. Existing unresolved v0.1 claims are not backfilled; they stay blocked until UC-04 reconciles them from real evidence. This task does not activate real adapters or Phase 6. Typecheck, build, source tests, and emitted tests pass.
 
-- [ ] T066 [US3] Run the integrated deterministic atomic-admission acceptance matrix in tests/runtime/contract/atomic-admission-matrix.test.ts.
+- [ ] T066 [US3] Run the integrated 22-case deterministic atomic-admission acceptance matrix in tests/runtime/contract/atomic-admission-matrix.test.ts.
   - **Owner**: Tai / integration-test lane.
   - **Dependencies**: T038, T040, T042, T044, T046, T048, T050, T052, T054, T056, T058, T022, T061, T063, T065.
   - **Owned Paths**: tests/runtime/contract/atomic-admission-matrix.test.ts.
-  - **Acceptance Checks**: Exercise all 21 cases from Section 10 with deterministic barriers and assert invocation count, reservation identity/count, digests, task/control versions, holds, open claims, repository revision, and recovery idempotency. Each case already has focused behavioral ownership in the case map below; this task adds integrated cross-boundary flows and does not replace those tests. Source and emitted matrix tests pass. Evidence remains controlled mock-only.
+  - **Acceptance Checks**: Exercise all 22 cases from Section 10 with deterministic barriers and assert invocation count, reservation identity/count, digests, task/control versions, holds, open claims, repository revision, and recovery idempotency. Include the separate uncertain-receipt/final-reconciliation case: a conflicting outcome receipt cannot replace U, only `reconcileUncertain` with the exact uncertain predecessor can finalize it, observed-unsettled recovery keeps its distinct predecessor operation, repeated final reconciliation is idempotent, and stale/conflicting replays leave holds and accounting unchanged. Each case already has focused behavioral ownership in the case map below; this task adds integrated cross-boundary flows and does not replace those tests. Source and emitted matrix tests pass. Evidence remains controlled mock-only.
 
 ### Checkpoint matrix
 
@@ -533,14 +533,14 @@ At every RED and GREEN checkpoint, pnpm run typecheck and pnpm run build must bo
 | T053 -> T054 | node --test tests/runtime/support/uc03/provider-mocks.test.ts tests/runtime/contract/uc03-port-conformance.test.ts | node --test dist/tests/runtime/support/uc03/provider-mocks.test.js dist/tests/runtime/contract/uc03-port-conformance.test.js | T053: behavioral assertion RED; T054: green |
 | T055 -> T056 | node --test tests/runtime/approvals/cli.test.ts | node --test dist/tests/runtime/approvals/cli.test.js | T055: behavioral assertion RED; T056: green |
 | T057 -> T058 | node --test tests/runtime/approvals/mock-ports.test.ts | node --test dist/tests/runtime/approvals/mock-ports.test.js | T057: behavioral assertion RED; T058: green |
-| T059 -> T022 | node --test tests/runtime/contract/execution-guard.test.ts | node --test dist/tests/runtime/contract/execution-guard.test.js | T059: behavioral assertion RED; T022: green |
+| T059 -> T022 | node --test tests/runtime/contract/execution-guard.test.ts | node --test dist/tests/runtime/contract/execution-guard.test.js | T059: typed neutral v0.2 scaffold and behavioral assertion RED; hand off source and tests; T022: green |
 | T060 -> T061 | node --test tests/runtime/unit/uc03-repair.test.ts | node --test dist/tests/runtime/unit/uc03-repair.test.js | T060: behavioral assertion RED; T061: green |
 | T062 -> T063 | node --test tests/runtime/unit/uc03-investigation.test.ts tests/runtime/unit/uc03-verification.test.ts | node --test dist/tests/runtime/unit/uc03-investigation.test.js dist/tests/runtime/unit/uc03-verification.test.js | T062: behavioral assertion RED; T063: green |
 | T064 -> T065 | node --test tests/runtime/contract/atomic-admission-cutover.test.ts | node --test dist/tests/runtime/contract/atomic-admission-cutover.test.js | T064: behavioral assertion RED; T065: green |
-| T066 integrated matrix | node --test tests/runtime/contract/atomic-admission-matrix.test.ts | node --test dist/tests/runtime/contract/atomic-admission-matrix.test.js | Green after every mapped case and cutover checkpoint is accepted |
+| T066 integrated matrix | node --test tests/runtime/contract/atomic-admission-matrix.test.ts | node --test dist/tests/runtime/contract/atomic-admission-matrix.test.js | Green after all 22 mapped cases and the cutover checkpoint are accepted |
 ### Section 10 case ownership map
 
-> T066 repeats these checks in one integrated suite, but each case first has focused source/test ownership at its implementing seam.
+> The table maps all 22 Section 10 cases in order, including the separate uncertain-receipt/final-reconciliation case. T066 repeats these checks in one integrated suite, but each case first has focused source/test ownership at its implementing seam.
 
 | Section 10 case | Focused owner and evidence path |
 |---|---|
@@ -564,7 +564,8 @@ At every RED and GREEN checkpoint, pnpm run typecheck and pnpm run build must bo
 | 18. Observed patch plus task-state conflict | T041-T042 and T060-T061; tests/runtime/contract/atomic-admission-mocks.test.ts, tests/runtime/unit/uc03-repair.test.ts |
 | 19. Provider budget regression | T051/T052; tests/runtime/unit/model.test.ts |
 | 20. Patch workspace gate lifetime | T049/T050; tests/runtime/unit/repository-tools.test.ts, tests/runtime/unit/docker-workspace.test.ts |
-| 21. Version migration and old continuation claim | T043-T044, T047-T048, T055-T056, T064-T065; tests/runtime/approvals/contracts.test.ts, tests/runtime/approvals/control.test.ts, tests/runtime/approvals/cli.test.ts, tests/runtime/contract/atomic-admission-cutover.test.ts |
+| 21. Uncertain receipt vs final reconciliation | T039-T042; tests/runtime/contract/atomic-admission.test.ts, tests/runtime/contract/atomic-admission-mocks.test.ts |
+| 22. Version migration and old continuation receipt | T043-T044, T047-T048, T055-T056, T064-T065; tests/runtime/approvals/contracts.test.ts, tests/runtime/approvals/control.test.ts, tests/runtime/approvals/cli.test.ts, tests/runtime/contract/atomic-admission-cutover.test.ts |
 
 ### Canonical cutover criteria
 

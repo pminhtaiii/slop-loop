@@ -69,7 +69,7 @@ fixtures/uc03/                    # Tai: public prepared Python bug/attack repos
 eval/uc03/private/                # Host-only grading, excluded from agent authority
 ```
 
-**Structure Decision**: Capability modules with injected ports and acyclic dependencies. UC-03 uses contracts; composition wires the real ports only after gates pass. One ready task owns each file; workers receive disjoint paths. T011/T016/T021 own minimal runnable SUT skeletons with their behavioral RED tests, then transfer source ownership to dependent implementation tasks; the skeletons provide signatures and neutral incomplete behavior, not the real implementation. No separate HTTP/gRPC executor. The runtime reviewer is Tai's proposed shared-foundation responsibility, requiring acceptance at T001 rather than treating CodeRabbit as runtime review.
+**Structure Decision**: Capability modules with injected ports and acyclic dependencies. UC-03 uses contracts; composition wires the real ports only after gates pass. One ready task owns each file; workers receive disjoint paths. T011/T016/T021 own minimal runnable SUT skeletons with their behavioral RED tests, then transfer source ownership through each named handoff chain to the implementation task; the skeletons provide signatures and neutral incomplete behavior, not the real implementation. No separate HTTP/gRPC executor. The runtime reviewer is Tai's proposed shared-foundation responsibility, requiring acceptance at T001 rather than treating CodeRabbit as runtime review.
 
 ## Design and Integration Strategy
 
@@ -105,11 +105,11 @@ On 2026-10-22 (Asia/Saigon), the user confirmed user-relayed agreement from Than
 
 1. T037-T040 add v0.2 admission and attempt/outcome validators through separate behavioral RED/GREEN slices.
 2. T041-T042 add only the controlled UC-04 journal mock. T043-T044 add the UC-05 v0.2 receipt types and validators. T045-T048 migrate UC-05 policy/service and control/recovery; T055-T058 migrate presentation/CLI and UC-05 mock fixtures.
-3. T049 -> T050 is the repository receiver slice, including lease lifetime, all three effect paths, and the read/list/search hold checks. T051 -> T052 is the separate model/provider ingress slice.
+3. T049 waits for T040/T042/T044/T048 before the repository receiver RED, then hands the lease lifetime, all three effect paths, and read/list/search hold checks to T050. T051 waits for T040/T042/T044/T046/T048 before the separate model/provider ingress RED, then hands that slice to T052.
 4. T053-T054 migrate every UC-03 test wrapper and fixture, including provider-mocks.test.ts and the existing uc03-port-conformance.test.ts. Positive forwarding preserves attempt identity/outcome; missing context has zero effects.
-5. T059 -> T022 owns the behavioral guard RED/GREEN handoff. T022 explicitly owns execution-guard.test.ts after T021 -> T059, composes the ports without double consumption, and stays unchecked until the amendment predecessors pass.
+5. T021's source-compatible v0.1 neutral guard remains the baseline. T059 owns both guard paths only to add a typed neutral no-dispatch v0.2 entrypoint/options and assertion-only behavioral RED while preserving the existing v0.1 signature and denial/digest regressions. After valid dispatch fails behaviorally, T022 takes both source and test paths for GREEN; it composes the ports without double consumption and stays unchecked until the amendment predecessors pass.
 6. T060-T061 migrate repair and its forwarding test wrapper. T062-T063 migrate baseline investigation and verification.
-7. T064 -> T065 is the explicit v0.2 cutover and legacy-rejection checkpoint. T066 runs the integrated 21-case deterministic matrix after each focused case has its own assigned owner and test path.
+7. T064 -> T065 is the explicit v0.2 cutover and legacy-rejection checkpoint. T066 runs all 22 rows of the Section 10 deterministic matrix after each case has its own focused owner and test path, including the separate uncertain-receipt/final-reconciliation assertions.
 
 #### Release and evidence boundaries
 
