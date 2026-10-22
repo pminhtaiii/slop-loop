@@ -12,7 +12,6 @@ import {
   rejectUnknownKeys,
   validateNonEmptyString,
   validateNonNegativeInteger,
-  validatePositiveInteger,
   validateStringArray,
 } from './validation/common.ts';
 import { protectValidator } from './admission-v02/snapshot.ts';
@@ -21,6 +20,7 @@ import {
   validateProviderRequestOutcomeReceiptV02,
   validateRepositoryActionOutcomeReceiptV02,
 } from './admission-v02/attempt-outcome-v02.ts';
+import { validateExecutorIdentityV02 } from './admission-v02/attempt-outcome-common-v02.ts';
 
 export type VersionProgressionKindV02 = 'claim' | 'begin-attempt';
 export interface VersionDomainSnapshotV02 { taskStateVersion: number; controlVersion: number; epoch: number; }
@@ -32,7 +32,6 @@ export type CanonicalAttemptOutcomeReceiptV02 = AttemptOutcomeReceiptV02;
 export type CanonicalAttemptReconciliationReceiptV02 = AttemptReconciliationReceiptV02;
 export type { AttemptReconciliationValidationContextV02 } from './admission-v02/reconciliation-v02.ts';
 
-const EXEC_KEYS = ['adapterIdentity', 'processIncarnation', 'fencingGeneration', 'payloadDigest'] as const;
 const CLOSURE_KEYS = ['receiptId', 'receiptDigest', 'claimId', 'taskId', 'reason', 'fencedExecutorIdentity', 'unconsumedReservations'] as const;
 const ATT_KEYS = ['attemptId', 'claimId', 'taskId', 'executorIdentity', 'preAttemptTaskStateVersion', 'postBeginTaskStateVersion', 'preAttemptControlVersion', 'postBeginControlVersion', 'epoch', 'status'] as const;
 
@@ -48,13 +47,6 @@ const matchProps = (o: Record<string, unknown>, t: Record<string, unknown> | und
   if (!t) return;
   for (const [k, exp] of Object.entries(m)) if (t[exp] !== undefined && o[k] !== t[exp]) addErr(errs, k, `${k} mismatch`, `${k.toUpperCase()}_MISMATCH`);
 };
-
-function valExecId(raw: unknown, p: string, errs: ValidationError[]): ExecutorIdentityV02 | undefined {
-  if (!isPlainObject(raw)) { addErr(errs, p, `${p} must be object`, 'INVALID_TYPE'); return; }
-  rejectUnknownKeys(raw, EXEC_KEYS, p, errs);
-  reqStrs(raw, ['adapterIdentity', 'processIncarnation', 'payloadDigest'], p, errs);
-  return validatePositiveInteger(raw['fencingGeneration'], `${p}.fencingGeneration`, errs) !== undefined ? (raw as unknown as ExecutorIdentityV02) : undefined;
-}
 
 const stripDigest = (obj: unknown, f: string): string => {
   if (!isPlainObject(obj)) throw new Error('Requires object');
@@ -98,7 +90,7 @@ function validateAttemptReceiptImpl(input: unknown, ctx?: AttemptValidationConte
   if (input['status'] !== 'attempting') addErr(errs, 'status', 'Invalid status', 'INVALID_STATUS');
   const [, pT, nT, pC, nC] = ['epoch', 'preAttemptTaskStateVersion', 'postBeginTaskStateVersion', 'preAttemptControlVersion', 'postBeginControlVersion'].map((k) => validateNonNegativeInteger(input[k], k, errs));
   if (ctx?.isRepairPatch !== undefined && typeof ctx.isRepairPatch !== 'boolean') addErr(errs, 'trustedContext.isRepairPatch', 'Must be a boolean', 'INVALID_REPAIR_PATCH_FLAG');
-  valExecId(input['executorIdentity'], 'executorIdentity', errs);
+  validateExecutorIdentityV02(input['executorIdentity'], 'executorIdentity', errs);
   if (pC !== undefined && nC !== undefined && nC !== pC + 1) addErr(errs, 'postBeginControlVersion', 'Control mismatch', 'CONTROL_VERSION_MISMATCH');
   if (pT !== undefined && nT !== undefined && nT !== (ctx?.isRepairPatch ? pT + 1 : pT)) {
     addErr(errs, 'postBeginTaskStateVersion', 'Task mismatch', 'TASK_VERSION_MISMATCH');
@@ -116,7 +108,7 @@ function validateClaimClosureReceiptImpl(input: unknown, ctx?: ClaimClosureValid
   }
   rejectUnknownKeys(input, CLOSURE_KEYS, 'receipt', errs);
   reqStrs(input, ['receiptId', 'receiptDigest', 'claimId', 'taskId', 'reason'], '', errs);
-  const f = valExecId(input['fencedExecutorIdentity'], 'fencedExecutorIdentity', errs);
+  const f = validateExecutorIdentityV02(input['fencedExecutorIdentity'], 'fencedExecutorIdentity', errs);
   validateStringArray(input['unconsumedReservations'], 'unconsumedReservations', errs);
   const c = ctx?.claim;
   const expectedFence = ctx?.expectedFencedExecutorIdentity;

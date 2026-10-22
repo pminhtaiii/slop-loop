@@ -8,6 +8,7 @@ import {
   PROVIDER_KEYS,
   addErr,
   canonicalEqual,
+  checkActionDecisionBinding,
   checkCommon,
   sha256,
   type AttemptOutcomeValidationContextV02,
@@ -18,6 +19,7 @@ function checkRepository(input: Record<string, unknown>, context: AttemptOutcome
   if (input['subjectKind'] !== 'repository-action') addErr(errors, 'subjectKind', 'Invalid repository outcome subject', 'INVALID_SUBJECT_KIND');
   if (!context || context.trustedAdmission.subjectKind !== 'repository-action') { addErr(errors, 'trustedContext', 'Repository admission is required', 'TRUSTED_CONTEXT_REQUIRED'); return; }
   const admission = context.trustedAdmission as RepositoryAdmissionContextV02;
+  checkActionDecisionBinding(input, admission, errors);
   if (input['planApplicability'] !== admission.planApplicability) addErr(errors, 'planApplicability', 'Plan applicability mismatch', 'PLAN_APPLICABILITY_MISMATCH');
   if (input['actionDigest'] !== admission.actionDigest) addErr(errors, 'actionDigest', 'Action digest mismatch', 'ACTION_DIGEST_MISMATCH');
   const operation = admission.action.kind === 'apply_patch' ? 'apply-patch' : 'run-command';
@@ -74,6 +76,11 @@ function checkProvider(input: Record<string, unknown>, context: AttemptOutcomeVa
   }
   if (input['outcome'] === 'observed' && input['observedUsage'] === undefined) addErr(errors, 'observedUsage', 'Observed provider outcomes require validated usage for settlement', 'OBSERVED_USAGE_REQUIRED');
   const effects = input['proposedEffects'];
+  if (isPlainObject(effects)) {
+    if (!isPlainObject(effects['taskTransition']) || effects['taskTransition']['kind'] !== 'none') addErr(errors, 'proposedEffects.taskTransition', 'Provider outcomes cannot transition repository task state', 'PROVIDER_TASK_TRANSITION_FORBIDDEN');
+    if (!isPlainObject(effects['revision']) || effects['revision']['kind'] !== 'not-applicable') addErr(errors, 'proposedEffects.revision', 'Provider outcomes do not apply to repository revisions', 'PROVIDER_REVISION_NOT_APPLICABLE');
+    if (!Array.isArray(effects['invalidatedEvidence']) || effects['invalidatedEvidence'].length !== 0) addErr(errors, 'proposedEffects.invalidatedEvidence', 'Provider outcomes cannot invalidate repository evidence', 'PROVIDER_EVIDENCE_INVALIDATION_FORBIDDEN');
+  }
   if (isPlainObject(effects) && isPlainObject(effects['accounting'])) {
     const settlement = effects['accounting'];
     if (!canonicalEqual(settlement['reservationRefs'], [admission.requestReservationReceipt, ...admission.budgetRefs])) addErr(errors, 'proposedEffects.accounting.reservationRefs', 'Settlement reservation refs mismatch', 'BUDGET_REFS_MISMATCH');

@@ -75,12 +75,15 @@ interface RepositoryOutcomeBaseV02 extends AttemptOutcomeBaseV02 {
 type RepositoryOutcomePlanV02 =
   | { readonly planApplicability: 'pre-plan-diagnostic'; readonly diagnosticPurpose: string; readonly taskCriteriaDigest: string; readonly checkSetDigest: string; readonly planBindingDigest?: never | undefined; readonly planDecisionRef?: never | undefined }
   | { readonly planApplicability: 'approved-plan'; readonly planBindingDigest: string; readonly planDecisionRef: string; readonly diagnosticPurpose?: string | undefined; readonly taskCriteriaDigest?: string | undefined; readonly checkSetDigest?: string | undefined };
+type ActionDecisionReceiptBindingV02 =
+  | { readonly actionDecisionReceiptRef: string; readonly actionDecisionReceiptDigest: string }
+  | { readonly actionDecisionReceiptRef?: never | undefined; readonly actionDecisionReceiptDigest?: never | undefined };
 type RepositoryOutcomeOperationV02 =
   | { readonly repositoryOperation: 'apply-patch'; readonly outcome: 'observed'; readonly observedResultRevisionDigest: string }
   | { readonly repositoryOperation: 'apply-patch'; readonly outcome: 'uncertain' | 'proven-not-dispatched'; readonly observedResultRevisionDigest?: never | undefined }
   | { readonly repositoryOperation: 'run-command'; readonly outcome: AttemptOutcomeStatusV02; readonly observedResultRevisionDigest?: never | undefined };
 
-export type RepositoryActionOutcomeReceiptV02 = RepositoryOutcomeBaseV02 & RepositoryOutcomePlanV02 & RepositoryOutcomeOperationV02;
+export type RepositoryActionOutcomeReceiptV02 = RepositoryOutcomeBaseV02 & RepositoryOutcomePlanV02 & ActionDecisionReceiptBindingV02 & RepositoryOutcomeOperationV02;
 
 interface ProviderOutcomeBaseV02 extends AttemptOutcomeBaseV02 {
   readonly subjectKind: 'provider-request';
@@ -170,11 +173,11 @@ type ReconciliationOutcomeEvidenceV02 = {
 };
 
 export type UncertainAttemptReconciliationReceiptV02 =
-  | (RepositoryReconciliationBaseV02 & RepositoryReconciliationPlanFieldsV02 & ReconciliationOutcomeEvidenceV02 & { readonly reconciliationKind: 'uncertain-attempt' })
+  | (RepositoryReconciliationBaseV02 & RepositoryReconciliationPlanFieldsV02 & ActionDecisionReceiptBindingV02 & ReconciliationOutcomeEvidenceV02 & { readonly reconciliationKind: 'uncertain-attempt' })
   | (ProviderReconciliationBaseV02 & ProviderReconciliationPlanFieldsV02 & ReconciliationOutcomeEvidenceV02 & { readonly reconciliationKind: 'uncertain-attempt' });
 
 export type ObservedOutcomeReconciliationReceiptV02 =
-  | (RepositoryReconciliationBaseV02 & RepositoryReconciliationPlanFieldsV02 & { readonly reconciliationKind: 'observed-unsettled' })
+  | (RepositoryReconciliationBaseV02 & RepositoryReconciliationPlanFieldsV02 & ActionDecisionReceiptBindingV02 & { readonly reconciliationKind: 'observed-unsettled' })
   | (ProviderReconciliationBaseV02 & ProviderReconciliationPlanFieldsV02 & { readonly reconciliationKind: 'observed-unsettled' });
 
 export type AttemptReconciliationReceiptV02 = UncertainAttemptReconciliationReceiptV02 | ObservedOutcomeReconciliationReceiptV02;

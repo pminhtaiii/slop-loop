@@ -46,6 +46,18 @@ function isText(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
+function validateOptionalAdmissionFields(input: Record<string, unknown>, subject: 'repository-action' | 'provider-request'): ValidationError[] {
+  const errors: ValidationError[] = [];
+  const fields = subject === 'repository-action'
+    ? ['diagnosticPurpose', 'taskCriteriaDigest', 'checkSetDigest', 'testPath', 'checkId']
+    : ['diagnosticPurpose', 'taskCriteriaDigest'];
+  for (const field of fields) if (Object.hasOwn(input, field) && !isText(input[field])) errors.push(err(field, 'INVALID_OPTIONAL_FIELD'));
+  if (Object.hasOwn(input, 'testPath') && typeof input['testPath'] === 'string' && (!isCanonicalRelativePath(input['testPath']) || isProtectedPath(input['testPath']))) errors.push(err('testPath', 'INVALID_TEST_PATH'));
+  if (Object.hasOwn(input, 'checkId') && typeof input['checkId'] === 'string' && !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(input['checkId'])) errors.push(err('checkId', 'INVALID_CHECK_ID'));
+  if (Object.hasOwn(input, 'admissionDigest') && (!isText(input['admissionDigest']) || input['admissionDigest'] !== computeAdmissionDigest(input))) errors.push(err('admissionDigest', 'ADMISSION_DIGEST_MISMATCH'));
+  return errors;
+}
+
 function isPositive(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0;
 }
@@ -190,6 +202,8 @@ export function validateRepositoryAdmissionV02(
   if (!inputCopy.ok || !trustCopy.ok) return immutableResult(unsafeInputResult());
   if (!trustedRepositoryContext(trustCopy.value)) return immutableResult(fail('trustedContext', 'INVALID_TRUSTED_CONTEXT'));
   if (!isRecord(inputCopy.value)) return immutableResult(validateRepositoryAdmissionBodyV02(inputCopy.value));
+  const optionalErrors = validateOptionalAdmissionFields(inputCopy.value, 'repository-action');
+  if (optionalErrors.length) return immutableResult({ ok: false, errors: optionalErrors });
   const result = validateRepositoryAdmissionBodyV02(inputCopy.value);
   if (!result.ok) return immutableResult(result);
   const errors = checkRepositoryBindings(inputCopy.value, trustCopy.value);
@@ -205,6 +219,8 @@ export function validateProviderAdmissionV02(
   if (!inputCopy.ok || !trustCopy.ok) return immutableResult(unsafeInputResult());
   if (!trustedProviderContext(trustCopy.value)) return immutableResult(fail('trustedContext', 'INVALID_TRUSTED_CONTEXT'));
   if (!isRecord(inputCopy.value)) return immutableResult(fail('context', 'INVALID_TYPE'));
+  const optionalErrors = validateOptionalAdmissionFields(inputCopy.value, 'provider-request');
+  if (optionalErrors.length) return immutableResult({ ok: false, errors: optionalErrors });
   const result = validateProviderAdmissionBodyV02(inputCopy.value, trustCopy.value);
   if (!result.ok) return immutableResult(result);
   const errors = checkProviderAdmissionBindingsV02(inputCopy.value, trustCopy.value);

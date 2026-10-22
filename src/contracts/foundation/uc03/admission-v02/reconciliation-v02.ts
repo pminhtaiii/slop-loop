@@ -4,7 +4,7 @@ import { validatePositiveInteger, isPlainObject, rejectUnknownKeys } from '../va
 import { validateProviderUsage } from '../validation/provider/records.ts';
 import { protectValidator } from './snapshot.ts';
 import {
-  COMMON_KEYS, REPO_BRANCH_KEYS, PROVIDER_BRANCH_KEYS, PLAN_KEYS, addErr, canonicalEqual, checkTrustedEvidence,
+  COMMON_KEYS, REPO_BRANCH_KEYS, PROVIDER_BRANCH_KEYS, REC_KEYS, addErr, canonicalEqual, checkTrustedEvidence,
   digestWithout, validateCommon, validateSafeRef, validateSafeRefArray,
   type AttemptReconciliationValidationContextV02,
 } from './reconciliation-common-v02.ts';
@@ -16,8 +16,8 @@ function validateUncertainImpl(input: unknown, context?: AttemptReconciliationVa
   const validContext = validateCommon(input, 'uncertain-attempt', context, errors);
   if (input['disposition'] === 'observed-and-accounted') {
     const allowed = validContext && context.trustedAdmission.subjectKind === 'repository-action'
-      ? [...COMMON_KEYS, ...REPO_BRANCH_KEYS, ...PLAN_KEYS, 'disposition', 'effectEvidenceRef', 'accountingEvidenceRefs', 'observedUsage']
-      : [...COMMON_KEYS, ...PROVIDER_BRANCH_KEYS, ...PLAN_KEYS, 'disposition', 'effectEvidenceRef', 'accountingEvidenceRefs', 'observedUsage'];
+      ? [...COMMON_KEYS, ...REPO_BRANCH_KEYS, ...REC_KEYS, 'disposition', 'effectEvidenceRef', 'accountingEvidenceRefs', 'observedUsage']
+      : [...COMMON_KEYS, ...PROVIDER_BRANCH_KEYS, ...REC_KEYS, 'disposition', 'effectEvidenceRef', 'accountingEvidenceRefs', 'observedUsage'];
     rejectUnknownKeys(input, allowed, 'receipt', errors);
     validateSafeRef(input['effectEvidenceRef'], 'effectEvidenceRef', errors);
     validateSafeRefArray(input['accountingEvidenceRefs'], 'accountingEvidenceRefs', errors);
@@ -37,8 +37,8 @@ function validateUncertainImpl(input: unknown, context?: AttemptReconciliationVa
     } else if (input['observedUsage'] !== undefined) addErr(errors, 'observedUsage', 'Repository reconciliation cannot contain provider usage', 'CROSS_BRANCH_FIELDS_FORBIDDEN');
   } else if (input['disposition'] === 'proven-not-dispatched') {
     const allowed = validContext && context.trustedAdmission.subjectKind === 'repository-action'
-      ? [...COMMON_KEYS, ...REPO_BRANCH_KEYS, ...PLAN_KEYS, 'disposition', 'adapterEvidenceRefs', 'fencedRecipientIdentity', 'fencingGeneration', 'fencingProof']
-      : [...COMMON_KEYS, ...PROVIDER_BRANCH_KEYS, ...PLAN_KEYS, 'disposition', 'adapterEvidenceRefs', 'fencedRecipientIdentity', 'fencingGeneration', 'fencingProof'];
+      ? [...COMMON_KEYS, ...REPO_BRANCH_KEYS, ...REC_KEYS, 'disposition', 'adapterEvidenceRefs', 'fencedRecipientIdentity', 'fencingGeneration', 'fencingProof']
+      : [...COMMON_KEYS, ...PROVIDER_BRANCH_KEYS, ...REC_KEYS, 'disposition', 'adapterEvidenceRefs', 'fencedRecipientIdentity', 'fencingGeneration', 'fencingProof'];
     rejectUnknownKeys(input, allowed, 'receipt', errors);
     validateSafeRefArray(input['adapterEvidenceRefs'], 'adapterEvidenceRefs', errors);
     validateSafeRef(input['fencingProof'], 'fencingProof', errors);
@@ -64,7 +64,7 @@ function validateObservedImpl(input: unknown, context?: AttemptReconciliationVal
   validateCommon(input, 'observed-unsettled', context, errors);
   if (context) {
     const branch = context.trustedAdmission.subjectKind === 'repository-action' ? REPO_BRANCH_KEYS : PROVIDER_BRANCH_KEYS;
-    rejectUnknownKeys(input, [...COMMON_KEYS, ...branch, ...PLAN_KEYS], 'receipt', errors);
+    rejectUnknownKeys(input, [...COMMON_KEYS, ...branch, ...REC_KEYS], 'receipt', errors);
     checkTrustedEvidence(input['evidenceRefs'], context.trustedEvidenceRefs, 'evidenceRefs', errors);
   }
   return errors.length ? { ok: false, errors } : { ok: true, value: input as unknown as ObservedOutcomeReconciliationReceiptV02 };

@@ -229,6 +229,22 @@ function createValidRepositoryApprovedPlanContext(
   return context as unknown as RepositoryAdmissionContextV02;
 }
 
+function createApprovalRequiredRepositoryAdmission(decisionId = 'decision-action-required-001'): RepositoryAdmissionContextV02 {
+  const base = createValidRepositoryApprovedPlanContext();
+  const decision = {
+    decisionId, decisionDigest: computeCanonicalSha256(decisionId), actionDigest: base.actionDigest,
+    evaluationReceiptRef: base.policyEvaluationReceipt.receiptId,
+    decisionAuthorityGeneration: base.policyAuthorityRef.decisionAuthorityGeneration, status: 'approved',
+  };
+  const result = validateRepositoryAdmissionV02({
+    ...base,
+    policyEvaluationReceipt: { ...base.policyEvaluationReceipt, result: 'APPROVAL_REQUIRED' },
+    actionDecisionReceipt: decision,
+  });
+  if (!result.ok) throw new Error(`Approval-required admission fixture is invalid: ${result.errors.map(({ code }) => code).join(',')}`);
+  return result.value;
+}
+
 function createPatchContextWithTargets(
   actionTargets: readonly string[],
   declaredTargets: readonly unknown[],
@@ -837,10 +853,14 @@ function createValidClaimClosureReceipt(): ClaimClosureReceiptV02 {
   };
 }
 
-function createTrustedOutcomeContext(subject: 'repository-action' | 'provider-request', planApplicability: 'approved-plan' | 'pre-plan-diagnostic'): AttemptOutcomeValidationContextV02 {
-  const admission = subject === 'repository-action'
+function createTrustedOutcomeContext(
+  subject: 'repository-action' | 'provider-request',
+  planApplicability: 'approved-plan' | 'pre-plan-diagnostic',
+  admissionOverride?: RepositoryAdmissionContextV02 | ProviderAdmissionContextV02,
+): AttemptOutcomeValidationContextV02 {
+  const admission = admissionOverride ?? (subject === 'repository-action'
     ? planApplicability === 'approved-plan' ? createValidRepositoryApprovedPlanContext() : createValidRepositoryPrePlanDiagnosticContext()
-    : planApplicability === 'approved-plan' ? createValidProviderApprovedPlanContext() : createValidProviderPrePlanDiagnosticContext();
+    : planApplicability === 'approved-plan' ? createValidProviderApprovedPlanContext() : createValidProviderPrePlanDiagnosticContext());
   const admissionReservations = admission.subjectKind === 'repository-action' ? admission.reservationRefs : [admission.requestReservationReceipt, ...admission.budgetRefs];
   const claim: ClaimReceiptV02 = {
     claimId: 'claim-001',
@@ -899,8 +919,11 @@ function createOutcomeEffects(admission: RepositoryAdmissionContextV02 | Provide
   };
 }
 
-function createValidRepoOutcomeReceipt(planApplicability: 'approved-plan' | 'pre-plan-diagnostic' = 'approved-plan'): RepositoryActionOutcomeReceiptV02 {
-  const context = createTrustedOutcomeContext('repository-action', planApplicability);
+function createValidRepoOutcomeReceipt(
+  planApplicability: 'approved-plan' | 'pre-plan-diagnostic' = 'approved-plan',
+  contextOverride?: AttemptOutcomeValidationContextV02,
+): RepositoryActionOutcomeReceiptV02 {
+  const context = contextOverride ?? createTrustedOutcomeContext('repository-action', planApplicability);
   const admission = context.trustedAdmission as RepositoryAdmissionContextV02;
   const isPatch = admission.action.kind === 'apply_patch';
   const revision = computeCanonicalSha256('observed-result-revision');
@@ -927,6 +950,10 @@ function createValidRepoOutcomeReceipt(planApplicability: 'approved-plan' | 'pre
     policyEvaluationReceiptDigest: admission.policyEvaluationReceipt.receiptDigest,
     freshnessContextDigest: admission.policyEvaluationReceipt.freshnessContextDigest,
     ...(isPatch ? { observedResultRevisionDigest: revision } : {}),
+    ...(admission.actionDecisionReceipt ? {
+      actionDecisionReceiptRef: admission.actionDecisionReceipt.decisionId,
+      actionDecisionReceiptDigest: admission.actionDecisionReceipt.decisionDigest,
+    } : {}),
   };
   if (planApplicability === 'approved-plan') {
     raw.planBindingDigest = admission.planBindingDigest;
@@ -942,8 +969,12 @@ function createValidRepoOutcomeReceipt(planApplicability: 'approved-plan' | 'pre
   return { ...raw, receiptDigest: computeAttemptOutcomeDigest(raw) } as unknown as RepositoryActionOutcomeReceiptV02;
 }
 
-function createValidProviderOutcomeReceipt(planApplicability: 'approved-plan' | 'pre-plan-diagnostic' = 'approved-plan', role: 'coder' | 'reviewer' = 'coder'): ProviderRequestOutcomeReceiptV02 {
-  const context = createTrustedOutcomeContext('provider-request', planApplicability);
+function createValidProviderOutcomeReceipt(
+  planApplicability: 'approved-plan' | 'pre-plan-diagnostic' = 'approved-plan',
+  role: 'coder' | 'reviewer' = 'coder',
+  contextOverride?: AttemptOutcomeValidationContextV02,
+): ProviderRequestOutcomeReceiptV02 {
+  const context = contextOverride ?? createTrustedOutcomeContext('provider-request', planApplicability);
   const admission = context.trustedAdmission as ProviderAdmissionContextV02;
   assert.equal(admission.role, role);
   const usage: ProviderUsage = { inputTokens: 1000, outputTokens: 200, billableTokens: 1200, costUsd: 0.02 };
@@ -999,10 +1030,12 @@ function createValidPredecessorOutcome(
   subject: 'repository-action' | 'provider-request' = 'repository-action',
   planApplicability: 'approved-plan' | 'pre-plan-diagnostic' = 'approved-plan',
   role: 'coder' | 'reviewer' = 'coder',
+  admissionOverride?: RepositoryAdmissionContextV02 | ProviderAdmissionContextV02,
 ): AttemptOutcomeReceiptV02 {
+  const context = createTrustedOutcomeContext(subject, planApplicability, admissionOverride);
   const base = subject === 'repository-action'
-    ? createValidRepoOutcomeReceipt(planApplicability)
-    : createValidProviderOutcomeReceipt(planApplicability, role);
+    ? createValidRepoOutcomeReceipt(planApplicability, context)
+    : createValidProviderOutcomeReceipt(planApplicability, role, context);
   const raw = {
     ...base,
     outcome,
@@ -1021,8 +1054,9 @@ function createReconciliationBase(
   predecessor: AttemptOutcomeReceiptV02,
   reconciliationKind: 'uncertain-attempt' | 'observed-unsettled',
   evidenceRefs: readonly { reference: string; digest: string }[],
+  admissionOverride?: RepositoryAdmissionContextV02 | ProviderAdmissionContextV02,
 ): Record<string, unknown> {
-  const context = createTrustedOutcomeContext(predecessor.subjectKind, predecessor.planApplicability);
+  const context = createTrustedOutcomeContext(predecessor.subjectKind, predecessor.planApplicability, admissionOverride);
   const admission = context.trustedAdmission;
   const raw: Record<string, unknown> = {
     reconciliationId: reconciliationKind === 'uncertain-attempt' ? 'recon-001' : 'recon-002',
@@ -1042,6 +1076,10 @@ function createReconciliationBase(
     policyEvaluationReceiptRef: admission.policyEvaluationReceipt.receiptId,
     policyEvaluationReceiptDigest: admission.policyEvaluationReceipt.receiptDigest,
     freshnessContextDigest: admission.policyEvaluationReceipt.freshnessContextDigest,
+    ...(admission.actionDecisionReceipt ? {
+      actionDecisionReceiptRef: admission.actionDecisionReceipt.decisionId,
+      actionDecisionReceiptDigest: admission.actionDecisionReceipt.decisionDigest,
+    } : {}),
   });
   else Object.assign(raw, {
     providerRequestId: admission.providerRequestId,
@@ -1073,15 +1111,16 @@ function createValidUncertainReconciliationReceipt(
   subject: 'repository-action' | 'provider-request' = 'repository-action',
   planApplicability: 'approved-plan' | 'pre-plan-diagnostic' = 'approved-plan',
   role: 'coder' | 'reviewer' = 'coder',
+  admissionOverride?: RepositoryAdmissionContextV02 | ProviderAdmissionContextV02,
 ): UncertainAttemptReconciliationReceiptV02 {
-  const predecessor = createValidPredecessorOutcome('uncertain', subject, planApplicability, role);
-  const context = createTrustedOutcomeContext(subject, planApplicability);
+  const predecessor = createValidPredecessorOutcome('uncertain', subject, planApplicability, role, admissionOverride);
+  const context = createTrustedOutcomeContext(subject, planApplicability, admissionOverride);
   const effectEvidenceRef = { reference: 'effect-evidence-uncertain', digest: computeCanonicalSha256('effect-evidence-uncertain') };
   const accountingEvidenceRefs = [{ reference: 'accounting-evidence-uncertain', digest: computeCanonicalSha256('accounting-evidence-uncertain') }];
   const adapterEvidenceRefs = [{ reference: 'adapter-evidence-nondispatch', digest: computeCanonicalSha256('adapter-evidence-nondispatch') }];
   const fencingProof = { reference: 'fencing-proof-worker', digest: computeCanonicalSha256('fencing-proof-worker') };
   const raw: Record<string, unknown> = {
-    ...createReconciliationBase(predecessor, 'uncertain-attempt', disposition === 'observed-and-accounted' ? [effectEvidenceRef, ...accountingEvidenceRefs] : [...adapterEvidenceRefs, fencingProof]),
+    ...createReconciliationBase(predecessor, 'uncertain-attempt', disposition === 'observed-and-accounted' ? [effectEvidenceRef, ...accountingEvidenceRefs] : [...adapterEvidenceRefs, fencingProof], admissionOverride),
     disposition,
     ...(disposition === 'observed-and-accounted'
       ? { effectEvidenceRef, accountingEvidenceRefs, ...(subject === 'provider-request' && predecessor.subjectKind === 'provider-request' ? { observedUsage: predecessor.observedUsage } : {}) }
@@ -1097,10 +1136,11 @@ function createValidObservedReconciliationReceipt(
   subject: 'repository-action' | 'provider-request' = 'repository-action',
   planApplicability: 'approved-plan' | 'pre-plan-diagnostic' = 'approved-plan',
   role: 'coder' | 'reviewer' = 'coder',
+  admissionOverride?: RepositoryAdmissionContextV02 | ProviderAdmissionContextV02,
 ): ObservedOutcomeReconciliationReceiptV02 {
-  const predecessor = createValidPredecessorOutcome('observed', subject, planApplicability, role);
+  const predecessor = createValidPredecessorOutcome('observed', subject, planApplicability, role, admissionOverride);
   const evidenceRefs = [{ reference: 'evidence-observed-unsettled', digest: computeCanonicalSha256('evidence-observed-unsettled') }];
-  const raw = createReconciliationBase(predecessor, 'observed-unsettled', evidenceRefs);
+  const raw = createReconciliationBase(predecessor, 'observed-unsettled', evidenceRefs, admissionOverride);
   return {
     ...raw,
     reconciliationDigest: computeReconciliationDigest(raw),
@@ -1109,13 +1149,14 @@ function createValidObservedReconciliationReceipt(
 
 function createTrustedReconciliationContext(
   receipt: UncertainAttemptReconciliationReceiptV02 | ObservedOutcomeReconciliationReceiptV02,
-  outcome: 'uncertain' | 'observed'
+  outcome: 'uncertain' | 'observed',
+  admissionOverride?: RepositoryAdmissionContextV02 | ProviderAdmissionContextV02,
 ): AttemptReconciliationValidationContextV02 {
   const role = receipt.subjectKind === 'provider-request' ? receipt.role : 'coder';
-  const predecessor = createValidPredecessorOutcome(outcome, receipt.subjectKind, receipt.planApplicability, role);
+  const predecessor = createValidPredecessorOutcome(outcome, receipt.subjectKind, receipt.planApplicability, role, admissionOverride);
   assert.equal(receipt.predecessorReceiptId, predecessor.receiptId);
   assert.equal(receipt.predecessorReceiptDigest, predecessor.receiptDigest);
-  const base = createTrustedOutcomeContext(receipt.subjectKind, receipt.planApplicability);
+  const base = createTrustedOutcomeContext(receipt.subjectKind, receipt.planApplicability, admissionOverride);
   const raw = receipt as unknown as Record<string, unknown>;
   const disposition = raw['disposition'];
   const proof = disposition === 'proven-not-dispatched' ? {
@@ -1332,11 +1373,55 @@ test('Positive: valid ProviderRequestOutcomeReceiptV02 (pre-plan reviewer) passe
   assert.equal(res.ok, true, 'Valid provider pre-plan reviewer outcome must pass');
 });
 
+test('SPEC-P2-12: approval-required repository outcomes bind their separate action-decision receipt', () => {
+  const admission = createApprovalRequiredRepositoryAdmission();
+  const context = createTrustedOutcomeContext('repository-action', 'approved-plan', admission);
+  const receipt = createValidRepoOutcomeReceipt('approved-plan', context);
+  assert.equal(validateRepositoryActionOutcomeReceiptV02(receipt, context).ok, true, 'Approved action-decision reference and digest must pass');
+
+  const foreignAdmission = createApprovalRequiredRepositoryAdmission('decision-action-foreign-001');
+  const invalidRecords: Record<string, unknown>[] = [];
+  const missing = { ...receipt } as unknown as Record<string, unknown>;
+  delete missing['actionDecisionReceiptRef'];
+  delete missing['actionDecisionReceiptDigest'];
+  invalidRecords.push(missing);
+  const missingRef = { ...receipt } as unknown as Record<string, unknown>;
+  delete missingRef['actionDecisionReceiptRef'];
+  invalidRecords.push(missingRef);
+  const missingDigest = { ...receipt } as unknown as Record<string, unknown>;
+  delete missingDigest['actionDecisionReceiptDigest'];
+  invalidRecords.push(missingDigest);
+  invalidRecords.push({ ...receipt, actionDecisionReceiptRef: 'decision-action-wrong-001' });
+  invalidRecords.push({ ...receipt, actionDecisionReceiptDigest: computeCanonicalSha256('wrong-action-decision') });
+  invalidRecords.push({ ...receipt, actionDecisionReceiptRef: 'decision-action-stale-001', actionDecisionReceiptDigest: computeCanonicalSha256('stale-action-decision') });
+  invalidRecords.push({ ...receipt, actionDecisionReceiptRef: foreignAdmission.actionDecisionReceipt?.decisionId, actionDecisionReceiptDigest: foreignAdmission.actionDecisionReceipt?.decisionDigest });
+  for (const record of invalidRecords) assert.equal(validateRepositoryActionOutcomeReceiptV02(redigestOutcome(record), context).ok, false);
+
+  const allowedContext = createTrustedOutcomeContext('repository-action', 'approved-plan');
+  assert.equal(validateRepositoryActionOutcomeReceiptV02(createValidRepoOutcomeReceipt(), allowedContext).ok, true, 'ALLOWED action outcome keeps decision fields absent');
+  assert.equal(validateRepositoryActionOutcomeReceiptV02(createValidRepoOutcomeReceipt('pre-plan-diagnostic'), createTrustedOutcomeContext('repository-action', 'pre-plan-diagnostic')).ok, true, 'Pre-plan ALLOWED action outcome keeps decision fields absent');
+  assert.equal(validateProviderRequestOutcomeReceiptV02(createValidProviderOutcomeReceipt(), createTrustedOutcomeContext('provider-request', 'approved-plan')).ok, true, 'Provider outcomes keep action-decision fields absent');
+});
+
 test('Positive: validateAttemptOutcomeReceiptV02 tagged union dispatch', () => {
   const repoRes = validateAttemptOutcomeReceiptV02(createValidRepoOutcomeReceipt(), createTrustedOutcomeContext('repository-action', 'approved-plan'));
   const provRes = validateAttemptOutcomeReceiptV02(createValidProviderOutcomeReceipt(), createTrustedOutcomeContext('provider-request', 'approved-plan'));
   assert.equal(repoRes.ok, true);
   assert.equal(provRes.ok, true);
+});
+
+test('SPEC-P1-11: outcomes reject task drift while preserving newer control holds', () => {
+  for (const subject of ['repository-action', 'provider-request'] as const) {
+    const receipt = subject === 'repository-action' ? createValidRepoOutcomeReceipt() : createValidProviderOutcomeReceipt();
+    const validContext = createTrustedOutcomeContext(subject, 'approved-plan');
+    const validate = subject === 'repository-action' ? validateRepositoryActionOutcomeReceiptV02 : validateProviderRequestOutcomeReceiptV02;
+    for (const drift of [1, 10]) {
+      const staleContext = { ...validContext, currentTaskStateVersion: validContext.trustedAttempt.postBeginTaskStateVersion + drift };
+      assert.equal(validate(receipt, staleContext).ok, false, `${subject} outcome must reject task drift of +${drift}`);
+    }
+    const heldContext = { ...validContext, currentControlVersion: validContext.currentControlVersion + 1 };
+    assert.equal(validate(receipt, heldContext).ok, true, `${subject} outcome must preserve a newer control hold`);
+  }
 });
 
 test('Negative: repository outcome rejects provider cross-branch fields', () => {
@@ -1378,6 +1463,54 @@ test('Outcome receipt requires the approved branch-complete admission, authority
   const receipt = createValidRepoOutcomeReceipt('approved-plan');
   const result = validateAttemptOutcomeReceiptV02(receipt);
   assert.equal(result.ok, false, 'A self-digested legacy receipt cannot stand in for trusted admission and settlement facts');
+});
+
+test('SPEC-P1-10: provider outcomes cannot propose repository transition, revision, or evidence effects', () => {
+  const receipt = createValidProviderOutcomeReceipt();
+  const context = createTrustedOutcomeContext('provider-request', 'approved-plan');
+  const changes: readonly [string, Record<string, unknown>][] = [
+    ['task transition', { taskTransition: { kind: 'transition', fromNode: context.trustedAdmission.runnableNode, toNode: 'Verify' } }],
+    ['revision advance', { revision: { kind: 'advance', revisionDigest: computeCanonicalSha256('foreign-provider-revision') } }],
+    ['evidence invalidation', { invalidatedEvidence: [{ reference: 'provider-invalidated-repo-evidence', digest: computeCanonicalSha256('provider-invalidated-repo-evidence') }] }],
+  ];
+  for (const [effectName, effect] of changes) {
+    const candidate = redigestOutcome({ ...receipt, proposedEffects: { ...receipt.proposedEffects, ...effect } });
+    assert.equal(validateProviderRequestOutcomeReceiptV02(candidate, context).ok, false, `Provider ${effectName} must be rejected`);
+  }
+
+  const repositoryContext = createTrustedOutcomeContext('repository-action', 'approved-plan');
+  const repositoryAdmission = repositoryContext.trustedAdmission as RepositoryAdmissionContextV02;
+  const patchReceipt = createValidRepoOutcomeReceipt();
+  assert.equal(repositoryAdmission.action.kind, 'apply_patch');
+  assert.equal(validateRepositoryActionOutcomeReceiptV02(patchReceipt, repositoryContext).ok, true, 'Observed repository patch settlement remains valid');
+});
+
+test('S04: outcome validation checks persisted and receipt executor identities before matching', () => {
+  const receipt = createValidRepoOutcomeReceipt();
+  const context = createTrustedOutcomeContext('repository-action', 'approved-plan');
+  assert.equal(validateRepositoryActionOutcomeReceiptV02(receipt, context).ok, true, 'Valid matching executor identity passes');
+
+  const valid = createValidExecutor();
+  const malformedPrototype = Object.assign(Object.create({}), valid);
+  const invalidExecutors: readonly [string, unknown][] = [
+    ['null', null],
+    ['numeric adapter identity', { ...valid, adapterIdentity: 123 }],
+    ['string fencing generation', { ...valid, fencingGeneration: '1' }],
+    ['numeric payload digest', { ...valid, payloadDigest: 123 }],
+  ];
+  for (const [name, executor] of invalidExecutors) {
+    const badContext = { ...context, trustedAttempt: { ...context.trustedAttempt, executorIdentity: executor as ExecutorIdentityV02 } };
+    const badReceipt = redigestOutcome({ ...receipt, executorIdentity: executor });
+    assert.equal(validateRepositoryActionOutcomeReceiptV02(badReceipt, badContext).ok, false, `Matching malformed ${name} must deny`);
+    assert.equal(validateRepositoryActionOutcomeReceiptV02(receipt, badContext).ok, false, `Malformed persisted ${name} must deny independently`);
+    assert.equal(validateRepositoryActionOutcomeReceiptV02(badReceipt, context).ok, false, `Malformed receipt ${name} must deny independently`);
+  }
+  const malformedContext = { ...context, trustedAttempt: { ...context.trustedAttempt, executorIdentity: malformedPrototype as ExecutorIdentityV02 } };
+  assert.equal(validateRepositoryActionOutcomeReceiptV02(receipt, malformedContext).ok, false, 'Malformed persisted executor prototype must deny');
+  assert.equal(validateRepositoryActionOutcomeReceiptV02({ ...receipt, executorIdentity: malformedPrototype }, context).ok, false, 'Malformed receipt executor prototype must deny');
+
+  const foreign = { ...valid, adapterIdentity: 'adapter-foreign-02', processIncarnation: 'proc-foreign-02' };
+  assert.equal(validateRepositoryActionOutcomeReceiptV02(redigestOutcome({ ...receipt, executorIdentity: foreign }), context).ok, false, 'A structurally valid foreign executor must deny');
 });
 
 test('Outcome validators bind patch result, versions, authority, provider request, and settlement to trusted records', () => {
@@ -1434,6 +1567,40 @@ test('Positive: valid ObservedOutcomeReconciliationReceiptV02 passes', () => {
   assert.equal(res.ok, true, 'Valid observed reconciliation must pass');
 });
 
+test('SPEC-P2-12: repository reconciliations bind required action-decision refs to trusted admission', () => {
+  const admission = createApprovalRequiredRepositoryAdmission();
+  const observed = createValidObservedReconciliationReceipt('repository-action', 'approved-plan', 'coder', admission);
+  const observedContext = createTrustedReconciliationContext(observed, 'observed', admission);
+  assert.equal(validateObservedOutcomeReconciliationReceiptV02(observed, observedContext).ok, true, 'Observed-unsettled reconciliation binds the approved action decision');
+
+  const foreignAdmission = createApprovalRequiredRepositoryAdmission('decision-action-foreign-reconcile-001');
+  const invalidRecords: Record<string, unknown>[] = [];
+  const missing = { ...observed } as unknown as Record<string, unknown>;
+  delete missing['actionDecisionReceiptRef'];
+  delete missing['actionDecisionReceiptDigest'];
+  invalidRecords.push(missing);
+  const missingRef = { ...observed } as unknown as Record<string, unknown>;
+  delete missingRef['actionDecisionReceiptRef'];
+  invalidRecords.push(missingRef);
+  const missingDigest = { ...observed } as unknown as Record<string, unknown>;
+  delete missingDigest['actionDecisionReceiptDigest'];
+  invalidRecords.push(missingDigest);
+  invalidRecords.push({ ...observed, actionDecisionReceiptRef: 'decision-action-wrong-001' });
+  invalidRecords.push({ ...observed, actionDecisionReceiptDigest: computeCanonicalSha256('wrong-action-decision') });
+  invalidRecords.push({ ...observed, actionDecisionReceiptRef: 'decision-action-stale-001', actionDecisionReceiptDigest: computeCanonicalSha256('stale-action-decision') });
+  invalidRecords.push({ ...observed, actionDecisionReceiptRef: foreignAdmission.actionDecisionReceipt?.decisionId, actionDecisionReceiptDigest: foreignAdmission.actionDecisionReceipt?.decisionDigest });
+  for (const record of invalidRecords) assert.equal(validateObservedOutcomeReconciliationReceiptV02(redigestReconciliation(record), observedContext).ok, false);
+
+  const uncertain = createValidUncertainReconciliationReceipt('observed-and-accounted', 'repository-action', 'approved-plan', 'coder', admission);
+  const uncertainContext = createTrustedReconciliationContext(uncertain, 'uncertain', admission);
+  assert.equal(validateUncertainAttemptReconciliationReceiptV02(uncertain, uncertainContext).ok, true, 'Uncertain-attempt reconciliation binds the same decision branch');
+
+  const allowedReceipt = createValidObservedReconciliationReceipt();
+  assert.equal(validateObservedOutcomeReconciliationReceiptV02(allowedReceipt, createTrustedReconciliationContext(allowedReceipt, 'observed')).ok, true, 'ALLOWED reconciliation keeps decision fields absent');
+  const providerReceipt = createValidObservedReconciliationReceipt('provider-request', 'pre-plan-diagnostic', 'reviewer');
+  assert.equal(validateObservedOutcomeReconciliationReceiptV02(providerReceipt, createTrustedReconciliationContext(providerReceipt, 'observed')).ok, true, 'Provider reconciliation keeps action-decision fields absent');
+});
+
 test('Uncertain non-dispatch reconciliation requires independent fencing and safe evidence proofs', () => {
   const receipt = createValidUncertainReconciliationReceipt('proven-not-dispatched');
   if (receipt.disposition !== 'proven-not-dispatched') throw new Error('Fixture must be the proven-not-dispatched branch');
@@ -1475,6 +1642,23 @@ test('Observed reconciliation requires the exact trusted observed-unsettled jour
   assert.equal(validateObservedOutcomeReconciliationReceiptV02(foreignEvidence, context).ok, false, 'Cross-branch evidence must deny');
   const noEvidence = redigestReconciliation({ ...receipt, evidenceRefs: [] });
   assert.equal(validateObservedOutcomeReconciliationReceiptV02(noEvidence, { ...context, trustedEvidenceRefs: [] }).ok, false, 'Observed-unsettled recovery requires trusted evidence refs');
+});
+
+test('SPEC-P1-11: observed reconciliation rejects task drift but preserves newer control holds', () => {
+  for (const subject of ['repository-action', 'provider-request'] as const) {
+    const receipt = createValidObservedReconciliationReceipt(subject);
+    const validContext = createTrustedReconciliationContext(receipt, 'observed');
+    for (const drift of [1, 10]) {
+      const currentTaskStateVersion = validContext.trustedAttempt.postBeginTaskStateVersion + drift;
+      const staleContext = { ...validContext, currentTaskStateVersion };
+      const staleReceipt = redigestReconciliation({ ...receipt, expectedCurrentTaskStateVersion: currentTaskStateVersion });
+      assert.equal(validateObservedOutcomeReconciliationReceiptV02(staleReceipt, staleContext).ok, false, `${subject} reconciliation must reject task drift of +${drift}`);
+    }
+    const currentControlVersion = validContext.currentControlVersion + 1;
+    const heldContext = { ...validContext, currentControlVersion };
+    const heldReceipt = redigestReconciliation({ ...receipt, expectedCurrentControlVersion: currentControlVersion });
+    assert.equal(validateObservedOutcomeReconciliationReceiptV02(heldReceipt, heldContext).ok, true, `${subject} reconciliation must preserve a newer control hold`);
+  }
 });
 
 test('Provider reconciliation binds pre-plan usage and approved request identity to the exact predecessor', () => {
@@ -1940,6 +2124,42 @@ test('Action decision reason must be safe optional text before validation narrow
   assert.equal(validateRepositoryAdmissionV02(makeContext(decision.reason)).ok, true);
   assert.equal(validateRepositoryAdmissionV02(makeContext(123)).ok, false);
   assert.equal(validateRepositoryAdmissionV02(makeContext('unsafe\r\nreason')).ok, false);
+});
+
+test('S10: optional admission metadata is validated before the public boundary narrows it', () => {
+  const repository = createValidRepositoryApprovedPlanContext();
+  const repositoryTrust = trustedRepositoryFixture();
+  const repositoryTrustBefore = structuredClone(repositoryTrust);
+  const invalidRepositoryMetadata: readonly [string, unknown][] = [
+    ['diagnosticPurpose', 123], ['taskCriteriaDigest', 123], ['checkSetDigest', 123], ['testPath', 123], ['checkId', 123], ['admissionDigest', 123],
+    ['diagnosticPurpose', ''], ['taskCriteriaDigest', ''], ['checkSetDigest', ''], ['testPath', 'tests/../src/main.ts'], ['checkId', ''],
+    ['admissionDigest', computeCanonicalSha256('foreign-admission')],
+  ];
+  for (const [field, value] of invalidRepositoryMetadata) {
+    assert.equal(validateRepositoryAdmissionV02({ ...repository, [field]: value }, repositoryTrust).ok, false, `Invalid optional ${field} must deny`);
+  }
+  const validOptionalRepositoryMetadata: Record<string, string> = {
+    diagnosticPurpose: 'approved-plan-followup',
+    taskCriteriaDigest: 'sha256:criteria00000000000000000000000000000000000000000000000000000000',
+    checkSetDigest: 'sha256:checkset00000000000000000000000000000000000000000000000000000000',
+    testPath: 'tests/smoke.test.ts',
+    checkId: 'check-smoke',
+  };
+  for (const [field, value] of Object.entries(validOptionalRepositoryMetadata)) {
+    assert.equal(validateRepositoryAdmissionV02({ ...repository, [field]: value }, repositoryTrust).ok, true, `Valid optional ${field} must pass`);
+  }
+  assert.equal(validateRepositoryAdmissionV02(repository, repositoryTrust).ok, true, 'Absent optional repository fields remain valid');
+  assert.equal(validateRepositoryAdmissionV02({ ...repository, admissionDigest: computeAdmissionDigest(repository) }, repositoryTrust).ok, true, 'Exact supplied repository admission digest is checked without self-inclusion');
+  assert.deepEqual(repositoryTrust, repositoryTrustBefore, 'Validation must not mutate trusted repository facts');
+
+  const provider = createValidProviderApprovedPlanContext();
+  const providerTrust = trustedProviderFixture();
+  const providerTrustBefore = structuredClone(providerTrust);
+  assert.equal(validateProviderAdmissionV02({ ...provider, admissionDigest: 123 }, providerTrust).ok, false, 'Numeric provider admission digest must deny');
+  assert.equal(validateProviderAdmissionV02({ ...provider, admissionDigest: computeCanonicalSha256('foreign-provider-admission') }, providerTrust).ok, false, 'Foreign provider admission digest must deny');
+  assert.equal(validateProviderAdmissionV02({ ...provider, admissionDigest: computeAdmissionDigest(provider) }, providerTrust).ok, true, 'Exact supplied provider admission digest must pass');
+  assert.equal(validateProviderAdmissionV02(provider, providerTrust).ok, true, 'Absent provider admission digest remains valid');
+  assert.deepEqual(providerTrust, providerTrustBefore, 'Validation must not mutate trusted provider facts');
 });
 
 test('Provider admission binds trusted current state, branch authority, and every request ceiling', () => {

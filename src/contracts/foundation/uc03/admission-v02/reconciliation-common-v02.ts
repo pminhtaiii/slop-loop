@@ -46,7 +46,7 @@ export const COMMON_KEYS = [
 ] as const;
 export const REPO_BRANCH_KEYS = ['actionDigest', 'policyAuthorityRef', 'policyEvaluationReceiptRef', 'policyEvaluationReceiptDigest', 'freshnessContextDigest'] as const;
 export const PROVIDER_BRANCH_KEYS = ['providerRequestId', 'requestContentDigest', 'role', 'providerAdmissionReceiptRef', 'providerAdmissionReceiptDigest', 'requestReservationReceiptRef', 'budgetRefs', 'providerIdentity'] as const;
-export const PLAN_KEYS = ['diagnosticPurpose', 'taskCriteriaDigest', 'checkSetDigest', 'planBindingDigest', 'planDecisionRef'] as const;
+export const REC_KEYS = ['diagnosticPurpose', 'taskCriteriaDigest', 'checkSetDigest', 'planBindingDigest', 'planDecisionRef', 'actionDecisionReceiptRef', 'actionDecisionReceiptDigest'] as const;
 const VERSION_KEYS = [
   'taskStateSchemaVersion', 'controlSchemaVersion', 'preClaimTaskStateVersion', 'postClaimTaskStateVersion',
   'postAttemptTaskStateVersion', 'preClaimControlVersion', 'postClaimControlVersion', 'postAttemptControlVersion', 'epoch',
@@ -118,6 +118,7 @@ function expectedBranch(admission: AdmissionContextV02): Record<string, unknown>
       policyEvaluationReceiptRef: admission.policyEvaluationReceipt.receiptId,
       policyEvaluationReceiptDigest: admission.policyEvaluationReceipt.receiptDigest,
       freshnessContextDigest: admission.policyEvaluationReceipt.freshnessContextDigest,
+      ...(admission.policyEvaluationReceipt.result === 'APPROVAL_REQUIRED' && admission.actionDecisionReceipt ? { actionDecisionReceiptRef: admission.actionDecisionReceipt.decisionId, actionDecisionReceiptDigest: admission.actionDecisionReceipt.decisionDigest } : {}),
       ...(admission.planApplicability === 'approved-plan'
         ? { planBindingDigest: admission.planBindingDigest, planDecisionRef: admission.planDecisionRef, ...(admission.diagnosticPurpose !== undefined ? { diagnosticPurpose: admission.diagnosticPurpose } : {}), ...(admission.taskCriteriaDigest !== undefined ? { taskCriteriaDigest: admission.taskCriteriaDigest } : {}), ...(admission.checkSetDigest !== undefined ? { checkSetDigest: admission.checkSetDigest } : {}) }
         : { diagnosticPurpose: admission.diagnosticPurpose, taskCriteriaDigest: admission.taskCriteriaDigest, checkSetDigest: admission.checkSetDigest }),
@@ -146,7 +147,7 @@ function validateTrustedContext(context: AttemptReconciliationValidationContextV
   if (!isPlainObject(admission) || !isPlainObject(claim) || !isPlainObject(attempt) || !isPlainObject(predecessor)) { addErr(errors, 'trustedContext', 'Trusted records must be plain data', 'INVALID_TRUSTED_CONTEXT'); return false; }
   if (context.currentClaimStatus !== context.predecessorJournalStatus) addErr(errors, 'trustedContext.predecessorJournalStatus', 'Predecessor is not the exact current journal status', 'PREDECESSOR_STATUS_MISMATCH');
   for (const [name, value] of Object.entries({ currentTaskStateVersion: context.currentTaskStateVersion, currentControlVersion: context.currentControlVersion, currentEpoch: context.currentEpoch })) validateNonNegativeInteger(value, `trustedContext.${name}`, errors);
-  if (context.currentTaskStateVersion < attempt.postBeginTaskStateVersion || context.currentControlVersion < attempt.postBeginControlVersion || context.currentEpoch !== admission.expectedEpoch) addErr(errors, 'trustedContext', 'Current snapshot is stale or cross-epoch', 'STALE_CURRENT_SNAPSHOT');
+  if (context.currentTaskStateVersion !== attempt.postBeginTaskStateVersion || context.currentControlVersion < attempt.postBeginControlVersion || context.currentEpoch !== admission.expectedEpoch) addErr(errors, 'trustedContext', 'Current snapshot is stale or cross-epoch', 'STALE_CURRENT_SNAPSHOT');
   if (claim.status !== 'claimed' || claim.taskId !== admission.taskId || claim.runId !== admission.runId || claim.subjectKind !== admission.subjectKind || claim.planApplicability !== admission.planApplicability || claim.epoch !== admission.expectedEpoch) addErr(errors, 'trustedContext.claim', 'Current claim does not match admission', 'TRUSTED_CLAIM_MISMATCH');
   const reservations = admission.subjectKind === 'repository-action' ? admission.reservationRefs : [admission.requestReservationReceipt, ...admission.budgetRefs];
   if (!canonicalEqual(claim.reservationRefs, reservations)) addErr(errors, 'trustedContext.claim.reservationRefs', 'Claim reservations do not match admission', 'TRUSTED_CLAIM_RESERVATION_MISMATCH');
@@ -156,7 +157,7 @@ function validateTrustedContext(context: AttemptReconciliationValidationContextV
   const admissionDigest = computeAdmissionDigest(admission as unknown as Record<string, unknown>);
   if (admission.admissionDigest !== undefined && admission.admissionDigest !== admissionDigest) addErr(errors, 'trustedContext.admissionDigest', 'Trusted admission digest is invalid', 'TRUSTED_ADMISSION_DIGEST_INVALID');
   if (predecessor.receiptDigest !== context.predecessorReceiptDigest || digestWithout(predecessor as unknown as Record<string, unknown>, 'receiptDigest') !== predecessor.receiptDigest) addErr(errors, 'trustedContext.predecessorReceiptDigest', 'Trusted immutable predecessor digest is invalid', 'PREDECESSOR_DIGEST_INVALID');
-  if (predecessor.claimId !== claim.claimId || predecessor.claimDigest !== claim.claimDigest || predecessor.attemptId !== attempt.attemptId || !canonicalEqual(predecessor.executorIdentity, attempt.executorIdentity) || predecessor.admissionDigest !== admissionDigest || predecessor.subjectKind !== admission.subjectKind || predecessor.planApplicability !== admission.planApplicability) addErr(errors, 'trustedContext.predecessor', 'Predecessor does not match current claim, attempt, admission, and branch', 'PREDECESSOR_BINDING_MISMATCH');
+  if (predecessor.claimId !== claim.claimId || predecessor.claimDigest !== claim.claimDigest || predecessor.attemptId !== attempt.attemptId || !canonicalEqual(predecessor.executorIdentity, attempt.executorIdentity) || predecessor.admissionDigest !== admissionDigest || predecessor.subjectKind !== admission.subjectKind || predecessor.planApplicability !== admission.planApplicability) addErr(errors, 'trustedContext.predecessor', 'Predecessor identity/branch mismatch', 'PREDECESSOR_BINDING_MISMATCH');
   if (!canonicalEqual(expectedBranch(admission), branchIdentity(predecessor as unknown as Record<string, unknown>, admission.subjectKind))) addErr(errors, 'trustedContext.predecessor', 'Predecessor branch identity does not match the admission', 'PREDECESSOR_BRANCH_MISMATCH');
   if (!safeText(context.trustedAccountingIdentityDigest) || !sha256.test(context.trustedAccountingIdentityDigest)) addErr(errors, 'trustedContext.trustedAccountingIdentityDigest', 'Trusted accounting identity digest is required', 'INVALID_ACCOUNTING_IDENTITY');
   validateSafeRefArray(context.trustedEvidenceRefs, 'trustedContext.trustedEvidenceRefs', errors);
@@ -166,8 +167,8 @@ function validateTrustedContext(context: AttemptReconciliationValidationContextV
 
 function branchIdentity(record: Record<string, unknown>, subjectKind: string): Record<string, unknown> {
   const keys = subjectKind === 'repository-action'
-    ? ['subjectKind', 'planApplicability', 'actionDigest', 'policyAuthorityRef', 'policyEvaluationReceiptRef', 'policyEvaluationReceiptDigest', 'freshnessContextDigest', ...PLAN_KEYS]
-    : ['subjectKind', 'planApplicability', 'providerRequestId', 'requestContentDigest', 'role', 'providerAdmissionReceiptRef', 'providerAdmissionReceiptDigest', 'requestReservationReceiptRef', 'budgetRefs', 'providerIdentity', ...PLAN_KEYS];
+    ? ['subjectKind', 'planApplicability', 'actionDigest', 'policyAuthorityRef', 'policyEvaluationReceiptRef', 'policyEvaluationReceiptDigest', 'freshnessContextDigest', ...REC_KEYS]
+    : ['subjectKind', 'planApplicability', 'providerRequestId', 'requestContentDigest', 'role', 'providerAdmissionReceiptRef', 'providerAdmissionReceiptDigest', 'requestReservationReceiptRef', 'budgetRefs', 'providerIdentity', ...REC_KEYS];
   const output: Record<string, unknown> = {};
   for (const key of keys) if (record[key] !== undefined) output[key] = record[key];
   return output;
@@ -177,7 +178,7 @@ function validateBranchIdentity(input: Record<string, unknown>, context: Attempt
   const admission = context.trustedAdmission;
   const expected = expectedBranch(admission);
   for (const [key, value] of Object.entries(expected)) if (!canonicalEqual(input[key], value)) addErr(errors, key, `Branch field ${key} does not match independent admission`, 'BRANCH_IDENTITY_MISMATCH');
-  for (const key of PLAN_KEYS) {
+  for (const key of REC_KEYS) {
     if (Object.prototype.hasOwnProperty.call(input, key) !== Object.prototype.hasOwnProperty.call(expected, key)) addErr(errors, key, 'Plan field presence does not match the trusted applicability branch', 'PLAN_FIELD_PRESENCE_MISMATCH');
   }
 }

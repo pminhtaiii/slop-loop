@@ -5,11 +5,12 @@ import type {
   AttemptVersionBindingsV02,
   ClaimReceiptV02,
   ExecutorIdentityV02,
+  RepositoryAdmissionContextV02,
   SafeReferenceV02,
 } from '../ports-v02.ts';
 import type { ValidationError } from '../types.ts';
 import { validateProviderUsage } from '../validation/provider/records.ts';
-import { isPlainObject, rejectUnknownKeys, validateNonEmptyString, validateNonNegativeInteger, validateStringArray } from '../validation/common.ts';
+import { isPlainObject, rejectUnknownKeys, validateNonEmptyString, validateNonNegativeInteger, validatePositiveInteger, validateStringArray } from '../validation/common.ts';
 import { computeAdmissionDigest } from '../admission-v02.ts';
 
 export interface AttemptOutcomeValidationContextV02 {
@@ -42,6 +43,7 @@ export const REPO_KEYS = [
   ...BASE_KEYS, 'subjectKind', 'planApplicability', 'diagnosticPurpose', 'taskCriteriaDigest', 'checkSetDigest',
   'planBindingDigest', 'planDecisionRef', 'actionDigest', 'repositoryOperation', 'policyAuthorityRef',
   'policyEvaluationReceiptRef', 'policyEvaluationReceiptDigest', 'freshnessContextDigest', 'observedResultRevisionDigest',
+  'actionDecisionReceiptRef', 'actionDecisionReceiptDigest',
 ] as const;
 export const PROVIDER_KEYS = [
   ...BASE_KEYS, 'subjectKind', 'planApplicability', 'diagnosticPurpose', 'taskCriteriaDigest',
@@ -52,6 +54,7 @@ const VERSION_KEYS = [
   'taskStateSchemaVersion', 'controlSchemaVersion', 'preClaimTaskStateVersion', 'postClaimTaskStateVersion',
   'postAttemptTaskStateVersion', 'preClaimControlVersion', 'postClaimControlVersion', 'postAttemptControlVersion', 'epoch',
 ] as const;
+const EXECUTOR_KEYS = ['adapterIdentity', 'processIncarnation', 'fencingGeneration', 'payloadDigest'] as const;
 const REF_KEYS = ['reference', 'digest'] as const;
 const EFFECT_KEYS = ['taskTransition', 'revision', 'invalidatedEvidence', 'accounting'] as const;
 const SETTLEMENT_KEYS = ['disposition', 'reservationRefs', 'observedUsage'] as const;
@@ -91,6 +94,15 @@ export function canonicalEqual(a: unknown, b: unknown): boolean {
   try { return computeCanonicalSha256(a) === computeCanonicalSha256(b); } catch { return false; }
 }
 
+export function validateExecutorIdentityV02(input: unknown, path: string, errors: ValidationError[]): ExecutorIdentityV02 | undefined {
+  const start = errors.length;
+  if (!isPlainObject(input)) { addErr(errors, path, 'Executor identity must be a plain object', 'INVALID_TYPE'); return; }
+  rejectUnknownKeys(input, EXECUTOR_KEYS, path, errors);
+  for (const key of ['adapterIdentity', 'processIncarnation', 'payloadDigest'] as const) validateNonEmptyString(input[key], `${path}.${key}`, errors);
+  validatePositiveInteger(input['fencingGeneration'], `${path}.fencingGeneration`, errors);
+  return errors.length === start ? input as unknown as ExecutorIdentityV02 : undefined;
+}
+
 function validateVersionBindings(input: unknown, admission: AdmissionContextV02, claim: ClaimReceiptV02, attempt: AttemptOutcomeValidationContextV02['trustedAttempt'], errors: ValidationError[]): void {
   if (!isPlainObject(input)) { addErr(errors, 'versions', 'Version bindings are required', 'INVALID_TYPE'); return; }
   rejectUnknownKeys(input, VERSION_KEYS, 'versions', errors);
@@ -119,7 +131,7 @@ function validateTrustedContext(context: AttemptOutcomeValidationContextV02 | un
   if (!isPlainObject(admission) || !isPlainObject(claim) || !isPlainObject(attempt)) { addErr(errors, 'trustedContext', 'Trusted records must be plain objects', 'INVALID_TRUSTED_CONTEXT'); return false; }
   if (context.currentClaimStatus !== 'attempting' && context.currentClaimStatus !== 'dispatched') addErr(errors, 'trustedContext.currentClaimStatus', 'Outcome requires a currently attempting or dispatched claim', 'INVALID_CLAIM_STATUS');
   for (const [key, value] of Object.entries({ currentTaskStateVersion: context.currentTaskStateVersion, currentControlVersion: context.currentControlVersion, currentEpoch: context.currentEpoch })) validateNonNegativeInteger(value, `trustedContext.${key}`, errors);
-  if (context.currentTaskStateVersion < attempt.postBeginTaskStateVersion || context.currentControlVersion < attempt.postBeginControlVersion || context.currentEpoch !== admission.expectedEpoch) addErr(errors, 'trustedContext', 'Current versions/epoch are stale or cross-epoch', 'STALE_CURRENT_SNAPSHOT');
+  if (context.currentTaskStateVersion !== attempt.postBeginTaskStateVersion || context.currentControlVersion < attempt.postBeginControlVersion || context.currentEpoch !== admission.expectedEpoch) addErr(errors, 'trustedContext', 'Current versions/epoch are stale or cross-epoch', 'STALE_CURRENT_SNAPSHOT');
   if (claim.status !== 'claimed' || claim.taskId !== admission.taskId || claim.runId !== admission.runId || claim.subjectKind !== admission.subjectKind || claim.planApplicability !== admission.planApplicability || claim.epoch !== admission.expectedEpoch) addErr(errors, 'trustedContext.claim', 'Current claim does not match trusted admission', 'TRUSTED_CLAIM_MISMATCH');
   const admissionReservations = admission.subjectKind === 'repository-action' ? admission.reservationRefs : [admission.requestReservationReceipt, ...admission.budgetRefs];
   if (!canonicalEqual(claim.reservationRefs, admissionReservations)) addErr(errors, 'trustedContext.claim.reservationRefs', 'Claim reservations do not match the trusted admission', 'TRUSTED_CLAIM_RESERVATION_MISMATCH');
@@ -141,12 +153,25 @@ export function checkCommon(input: Record<string, unknown>, allowed: readonly st
   const digest = computeAdmissionDigest(admission as unknown as Record<string, unknown>);
   if (input['admissionDigest'] !== digest) addErr(errors, 'admissionDigest', 'Admission digest does not match independently trusted admission', 'ADMISSION_DIGEST_MISMATCH');
   if (input['claimId'] !== claim.claimId || input['claimDigest'] !== claim.claimDigest) addErr(errors, 'claimId', 'Claim identity/digest mismatch', 'CLAIM_BINDING_MISMATCH');
-  if (input['attemptId'] !== attempt.attemptId || !canonicalEqual(input['executorIdentity'], attempt.executorIdentity)) addErr(errors, 'attemptId', 'Attempt identity/executor mismatch', 'ATTEMPT_BINDING_MISMATCH');
+  const trustedExecutor = validateExecutorIdentityV02(attempt.executorIdentity, 'trustedContext.attempt.executorIdentity', errors);
+  const receiptExecutor = validateExecutorIdentityV02(input['executorIdentity'], 'executorIdentity', errors);
+  if (input['attemptId'] !== attempt.attemptId || !trustedExecutor || !receiptExecutor || !canonicalEqual(receiptExecutor, trustedExecutor)) addErr(errors, 'attemptId', 'Attempt identity/executor mismatch', 'ATTEMPT_BINDING_MISMATCH');
   validateVersionBindings(input['versions'], admission, claim, attempt, errors);
   validateSafeRef(input['resultRef'], 'resultRef', errors);
   validateSafeRefArray(input['evidenceRefs'], 'evidenceRefs', errors);
   if (input['outcome'] !== 'observed' && input['outcome'] !== 'proven-not-dispatched' && input['outcome'] !== 'uncertain') addErr(errors, 'outcome', 'Invalid outcome status', 'INVALID_OUTCOME');
   validateEffects(input['proposedEffects'], input['outcome'] as AttemptOutcomeStatusV02, admission, errors);
+}
+
+export function checkActionDecisionBinding(input: Record<string, unknown>, admission: RepositoryAdmissionContextV02, errors: ValidationError[]): void {
+  const decision = admission.actionDecisionReceipt;
+  if (admission.policyEvaluationReceipt.result === 'APPROVAL_REQUIRED') {
+    if (!decision) addErr(errors, 'trustedContext.actionDecisionReceipt', 'Approval-required admission must retain its action decision', 'MISSING_ACTION_DECISION_RECEIPT');
+    if (input['actionDecisionReceiptRef'] !== decision?.decisionId) addErr(errors, 'actionDecisionReceiptRef', 'Action decision reference does not match independent admission', 'ACTION_DECISION_REF_MISMATCH');
+    if (input['actionDecisionReceiptDigest'] !== decision?.decisionDigest) addErr(errors, 'actionDecisionReceiptDigest', 'Action decision digest does not match independent admission', 'ACTION_DECISION_DIGEST_MISMATCH');
+  } else if (Object.hasOwn(input, 'actionDecisionReceiptRef') || Object.hasOwn(input, 'actionDecisionReceiptDigest')) {
+    addErr(errors, 'actionDecisionReceiptRef', 'Action decision fields are only applicable when approval is required', 'ACTION_DECISION_NOT_APPLICABLE');
+  }
 }
 
 function validateEffects(input: unknown, outcome: AttemptOutcomeStatusV02, admission: AdmissionContextV02, errors: ValidationError[]): void {
