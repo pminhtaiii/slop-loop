@@ -18,6 +18,7 @@ import {
   computeCanonicalSha256,
   type RunCommandAction,
   type ApplyPatchAction,
+  type NormalizedAction,
   type ProviderRequest,
 } from '../../../src/contracts/foundation/uc03.ts';
 import {
@@ -146,8 +147,8 @@ function createValidRepositoryApprovedPlanContext(
 function createValidRepositoryPrePlanDiagnosticContext(
   overrides?: Partial<Record<string, unknown>>
 ): RepositoryAdmissionContextV02 {
-  const action = createValidCommandAction();
-  const actionDigest = computeActionDigest(action);
+  const action = (overrides?.action as NormalizedAction | undefined) ?? createValidCommandAction();
+  const actionDigest = (overrides?.actionDigest as string | undefined) ?? computeActionDigest(action);
   const context: Record<string, unknown> = {
     schemaVersion: '0.2.0',
     subjectKind: 'repository-action',
@@ -189,31 +190,35 @@ function createValidRepositoryPrePlanDiagnosticContext(
       decisionAuthorityGeneration: 1,
       result: 'ALLOWED',
     },
-    commandView: {
-      viewId: 'view-cmd-001',
-      viewDigest: 'sha256:viewdigest0000000000000000000000000000000000000000000000000000000',
-      taskId: 'task-calc-001',
-      workspaceId: 'workspace-001',
-      canonicalRevision: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
-      admittedFiles: [
-        {
-          path: 'tests/test_calculator.py',
-          digest: 'sha256:filetest0000000000000000000000000000000000000000000000000000000',
-        },
-      ],
-      exclusionsPolicyVersion: '1.0.0',
-      scratchIdentity: 'scratch-vol-001',
-      mountedReadOnly: true,
-      isolationProfileRef: 'profile-read-only-mount',
-    },
-    finiteBounds: {
-      timeoutMs: 30000,
-      maxOutputBytes: 65536,
-      maxCpuSeconds: 10,
-      maxMemoryBytes: 536870912,
-      maxProcessCount: 5,
-      isolationProfileRef: 'profile-read-only-mount',
-    },
+    ...(action.kind === 'run_command'
+      ? {
+          commandView: {
+            viewId: 'view-cmd-001',
+            viewDigest: 'sha256:viewdigest0000000000000000000000000000000000000000000000000000000',
+            taskId: 'task-calc-001',
+            workspaceId: 'workspace-001',
+            canonicalRevision: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+            admittedFiles: [
+              {
+                path: 'tests/test_calculator.py',
+                digest: 'sha256:filetest0000000000000000000000000000000000000000000000000000000',
+              },
+            ],
+            exclusionsPolicyVersion: '1.0.0',
+            scratchIdentity: 'scratch-vol-001',
+            mountedReadOnly: true,
+            isolationProfileRef: 'profile-read-only-mount',
+          },
+          finiteBounds: {
+            timeoutMs: 30000,
+            maxOutputBytes: 65536,
+            maxCpuSeconds: 10,
+            maxMemoryBytes: 536870912,
+            maxProcessCount: 5,
+            isolationProfileRef: 'profile-read-only-mount',
+          },
+        }
+      : {}),
     reservationRefs: ['res-command-001'],
     ...overrides,
   };
