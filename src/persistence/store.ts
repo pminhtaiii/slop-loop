@@ -66,14 +66,17 @@ export class DurableStore {
       throw err;
     });
 
-    const fileStat = await handle.stat();
+    let fileStat: { ino?: number; dev?: number } | null = null;
     try {
+      fileStat = await handle.stat();
       return await operation();
     } finally {
       await handle.close();
-      const current = await lstat(lockPath).catch(() => null);
-      if (current && current.ino === fileStat.ino && current.dev === fileStat.dev) {
-        await unlink(lockPath).catch(() => undefined);
+      if (fileStat) {
+        const current = await lstat(lockPath).catch(() => null);
+        if (current && current.ino === fileStat.ino && current.dev === fileStat.dev) {
+          await unlink(lockPath).catch(() => undefined);
+        }
       }
     }
   }
@@ -122,6 +125,13 @@ export class DurableStore {
     const val = validateTaskState(task);
     if (!val.ok) {
       throw new Error(`Cannot checkpoint invalid task: ${val.errors.map((e) => e.message).join(', ')}`);
+    }
+
+    const latest = await this.loadLatestCheckpoint(task.taskId);
+    if (latest && task.stateVersion <= latest.stateVersion) {
+      throw new Error(
+        `Non-monotonic stateVersion: task version ${task.stateVersion} is <= latest checkpoint version ${latest.stateVersion}`
+      );
     }
 
     await this.init();

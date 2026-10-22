@@ -12,7 +12,7 @@ import {
   type ApprovalRequestBinding,
 } from '../../../src/persistence/contracts.ts';
 
-describe('UC-04: End-to-End Multi-Step Workflow & Crash Recovery Suite (T013)', () => {
+describe('UC-04: Multi-Step Workflow & Crash Recovery Simulation (Level 1, local controlled)', () => {
   let tempDir: string;
   let store: DurableStore;
 

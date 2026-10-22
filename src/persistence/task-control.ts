@@ -65,20 +65,27 @@ export async function pauseForApproval(
     throw new Error(`Invalid approval request binding: ${reqVal.errors.map((e) => e.message).join(', ')}`);
   }
 
-  const pausedState: TaskState = {
-    ...state,
-    status: 'waiting_approval',
-    pendingApproval: request,
-    stateVersion: state.stateVersion + 1,
-    nextAction: `Awaiting human decision for ${request.actionType} (${request.requestId})`,
-  };
-
-  const val = validateTaskState(pausedState);
-  if (!val.ok) {
-    throw new Error(`Invalid paused state: ${val.errors.map((e) => e.message).join(', ')}`);
-  }
-
   return await store.withLock(`pause-${state.taskId}`, async () => {
+    const latest = await store.loadLatestCheckpoint(state.taskId);
+    if (latest && latest.stateVersion !== state.stateVersion) {
+      throw new Error(
+        `State version mismatch in pauseForApproval: current state has version ${state.stateVersion}, but latest checkpoint has version ${latest.stateVersion}`
+      );
+    }
+
+    const pausedState: TaskState = {
+      ...state,
+      status: 'waiting_approval',
+      pendingApproval: request,
+      stateVersion: state.stateVersion + 1,
+      nextAction: `Awaiting human decision for ${request.actionType} (${request.requestId})`,
+    };
+
+    const val = validateTaskState(pausedState);
+    if (!val.ok) {
+      throw new Error(`Invalid paused state: ${val.errors.map((e) => e.message).join(', ')}`);
+    }
+
     await store.saveCheckpoint(pausedState);
     return pausedState;
   });

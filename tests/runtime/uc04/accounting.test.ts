@@ -61,6 +61,19 @@ describe('UC-04: BudgetTracker & Durable Accounting', () => {
     assert.equal(bundle.transactionRef, 'req-owner');
   });
 
+  it('rejects duplicate active requestId on reserve', () => {
+    const tracker = new BudgetTracker(initialLedgers);
+    tracker.reserve('req-dup-id', [{ scope: 'task', kind: 'tokens', amount: 1000 }]);
+    assert.throws(
+      () => {
+        tracker.reserve('req-dup-id', [{ scope: 'task', kind: 'cost', amount: 1 }]);
+      },
+      {
+        message: /Reservation already exists for requestId: req-dup-id/i,
+      }
+    );
+  });
+
   it('rejects duplicate reservation keys in a single request', () => {
     const tracker = new BudgetTracker(initialLedgers);
     assert.throws(

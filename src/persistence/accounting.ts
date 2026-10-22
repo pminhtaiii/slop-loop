@@ -80,6 +80,12 @@ export class BudgetTracker {
     owner?: { readonly taskId?: string; readonly runId?: string }
   ): ReservationBundle {
     // Pre-validate amounts and detect duplicate keys
+    for (const ledger of this.ledgers.values()) {
+      if (ledger.reservations.some((r) => r.keyedId === requestId)) {
+        throw new Error(`Reservation already exists for requestId: ${requestId}`);
+      }
+    }
+
     const requestedByKey = new Map<string, number>();
     for (const item of items) {
       if (typeof item.amount !== 'number' || !Number.isFinite(item.amount) || item.amount <= 0) {

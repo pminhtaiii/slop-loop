@@ -150,6 +150,25 @@ describe('UC-04: StepStateMachine & Recovery Reconciliation', () => {
       assert.equal(resumed.status, 'running');
     });
 
+    it('preserves waiting_approval status and nextAction during resumption', async () => {
+      const waitingTask: TaskState = {
+        ...sampleTask,
+        status: 'waiting_approval',
+        stateVersion: 5,
+        nextAction: 'Awaiting human decision for migration',
+      };
+      await store.saveCheckpoint(waitingTask);
+
+      const fakeGitInspector = async () => ({ ...baseline });
+      const resumed = await reconcileAndResume(waitingTask.taskId, store, {
+        gitInspector: fakeGitInspector,
+      });
+
+      assert.equal(resumed.status, 'waiting_approval');
+      assert.equal(resumed.nextAction, 'Awaiting human decision for migration');
+      assert.equal(resumed.stateVersion, 6);
+    });
+
     it('rejects resumption when workspace commit hash or dirty status drifts', async () => {
       const driftedGitInspector = async () => ({
         ...baseline,

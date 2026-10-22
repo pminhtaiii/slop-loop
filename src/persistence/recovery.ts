@@ -293,17 +293,32 @@ export async function reconcileAndResume(
 
   const nextStep = savedState.plan[nextStepIdx];
   const isAllDone = savedState.plan.every((s) => s.status === 'done');
-  const nextAction = isAllDone
-    ? 'Task completed'
-    : nextStep
-      ? `Resume from step ${nextStep.title}`
-      : 'Awaiting next action';
+  const isTerminalOrBlocked =
+    savedState.status === 'waiting_approval' || savedState.status === 'failed';
+
+  const status = isTerminalOrBlocked
+    ? savedState.status
+    : isAllDone
+      ? 'completed'
+      : 'running';
+
+  const nextAction = isTerminalOrBlocked
+    ? savedState.nextAction
+    : isAllDone
+      ? 'Task completed'
+      : nextStep
+        ? `Resume from step ${nextStep.title}`
+        : 'Awaiting next action';
+
+  const currentStepIndex = isTerminalOrBlocked
+    ? savedState.currentStepIndex
+    : nextStepIdx;
 
   const resumedState: TaskState = {
     ...savedState,
-    currentStepIndex: nextStepIdx,
+    currentStepIndex,
     budgetLedgers: tracker.getLedgers(),
-    status: isAllDone ? 'completed' : 'running',
+    status,
     stateVersion: savedState.stateVersion + 1,
     nextAction,
   };

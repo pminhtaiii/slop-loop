@@ -71,6 +71,42 @@ describe('UC-04: DurableStore (Persistence & Checkpoints)', () => {
     assert.deepEqual(latest, cp);
   });
 
+  it('rejects checkpoints with non-monotonic stateVersion', async () => {
+    await store.saveCheckpoint(sampleTask); // version 1
+    const duplicateVersionTask: TaskState = {
+      ...sampleTask,
+      stateVersion: 1,
+    };
+    await assert.rejects(
+      async () => {
+        await store.saveCheckpoint(duplicateVersionTask);
+      },
+      {
+        message: /Non-monotonic stateVersion/i,
+      }
+    );
+
+    // Save version 3
+    await store.saveCheckpoint({
+      ...sampleTask,
+      stateVersion: 3,
+    });
+
+    // Try saving version 2 (< 3)
+    const lowerVersionTask: TaskState = {
+      ...sampleTask,
+      stateVersion: 2,
+    };
+    await assert.rejects(
+      async () => {
+        await store.saveCheckpoint(lowerVersionTask);
+      },
+      {
+        message: /Non-monotonic stateVersion/i,
+      }
+    );
+  });
+
   it('sorts checkpoints numerically by stateVersion rather than lexicographically', async () => {
     // Save checkpoint at version 9
     const taskV9: TaskState = {

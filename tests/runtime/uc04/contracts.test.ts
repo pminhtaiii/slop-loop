@@ -14,6 +14,9 @@ import {
   validateResumeTaskInput,
   validateRecordAndSettleInput,
   validateRecoverTaskInput,
+  validateCheckpointRecord,
+  type TaskState,
+  type CheckpointRecord,
 } from '../../../src/persistence/contracts.ts';
 
 describe('UC-04: Data Contracts and Extension Validators', () => {
@@ -45,6 +48,20 @@ describe('UC-04: Data Contracts and Extension Validators', () => {
       if (!res.ok) {
         assert.ok(res.errors.some((e) => e.path.endsWith('.id')));
         assert.ok(res.errors.some((e) => e.path.endsWith('.title')));
+      }
+    });
+
+    it('rejects step with unknown properties', () => {
+      const res = validatePlanStep({
+        id: 'step-1',
+        title: 'Step 1',
+        description: 'test',
+        status: 'todo',
+        unexpectedProp: 123,
+      });
+      assert.equal(res.ok, false);
+      if (!res.ok) {
+        assert.ok(res.errors.some((e) => e.code === 'UNKNOWN_PROPERTY'));
       }
     });
 
@@ -373,12 +390,20 @@ describe('UC-04: Data Contracts and Extension Validators', () => {
       });
       assert.equal(bRes.ok, true);
 
-      const sRes = validateTaskState({
+      const sampleState: TaskState = {
         schemaVersion: UC04_SCHEMA_VERSION,
         taskId: 't1',
         runId: 'r1',
-        stateVersion: 1,
+        repositoryId: 'repo-1',
+        workspaceId: 'ws-1',
+        taskType: 'feature',
+        goal: 'test task',
+        acceptanceCriteria: ['pass'],
+        constraints: [],
         plan: [],
+        currentStepIndex: 0,
+        status: 'running',
+        stateVersion: 1,
         budgetLedgers: [ledger],
         workspaceBaseline: {
           commitHash: 'abcdef1234567890',
@@ -386,76 +411,158 @@ describe('UC-04: Data Contracts and Extension Validators', () => {
           isClean: true,
           trackedFilesHash: 'hash123',
         },
-      });
+        changedFiles: [],
+        openRisks: [],
+        nextAction: 'Ready to proceed',
+      };
+      const sRes = validateTaskState(sampleState);
       assert.equal(sRes.ok, true);
+
+      // Rejects missing required field (e.g. status)
+      const missingStatus = { ...sampleState, status: undefined };
+      assert.equal(validateTaskState(missingStatus).ok, false);
 
       // Rejects invalid status
       const badStatusRes = validateTaskState({
-        schemaVersion: UC04_SCHEMA_VERSION,
-        taskId: 't1',
-        runId: 'r1',
-        stateVersion: 1,
-        plan: [],
-        budgetLedgers: [],
-        workspaceBaseline: { commitHash: 'abc', branch: 'b', isClean: true, trackedFilesHash: 'h' },
-        status: 'invalid_status',
+        ...sampleState,
+        status: 'invalid_status' as unknown as TaskState['status'],
       });
       assert.equal(badStatusRes.ok, false);
 
       // Validates plan steps inside plan array
       const badStepRes = validateTaskState({
-        schemaVersion: UC04_SCHEMA_VERSION,
-        taskId: 't1',
-        runId: 'r1',
-        stateVersion: 1,
-        plan: [{ id: '', title: '', status: 'todo' }],
-        budgetLedgers: [],
-        workspaceBaseline: { commitHash: 'abc', branch: 'b', isClean: true, trackedFilesHash: 'h' },
+        ...sampleState,
+        plan: [{ id: '', title: '', description: '', status: 'todo' }],
       });
       assert.equal(badStepRes.ok, false);
 
       // Validates budget ledgers inside budgetLedgers array
       const badLedgerRes = validateTaskState({
-        schemaVersion: UC04_SCHEMA_VERSION,
-        taskId: 't1',
-        runId: 'r1',
-        stateVersion: 1,
-        plan: [],
-        budgetLedgers: [{ scope: 'invalid', kind: 'tokens', limit: -1 }],
-        workspaceBaseline: { commitHash: 'abc', branch: 'b', isClean: true, trackedFilesHash: 'h' },
+        ...sampleState,
+        budgetLedgers: [{ scope: 'invalid' as unknown as 'task', kind: 'tokens', limit: -1, consumed: 0, reservations: [], configurationId: 'c', version: 1 }],
       });
       assert.equal(badLedgerRes.ok, false);
 
       // Rejects non-array changedFiles / openRisks
       const badArraysRes = validateTaskState({
-        schemaVersion: UC04_SCHEMA_VERSION,
-        taskId: 't1',
-        runId: 'r1',
-        stateVersion: 1,
-        plan: [],
-        budgetLedgers: [],
-        workspaceBaseline: { commitHash: 'abc', branch: 'b', isClean: true, trackedFilesHash: 'h' },
-        changedFiles: 'not-an-array',
-        openRisks: 123,
+        ...sampleState,
+        changedFiles: 'not-an-array' as unknown as string[],
+        openRisks: 123 as unknown as string[],
       });
       assert.equal(badArraysRes.ok, false);
 
       // Rejects non-string repositoryId, workspaceId, taskType, goal, nextAction
       const badStringsRes = validateTaskState({
-        schemaVersion: UC04_SCHEMA_VERSION,
-        taskId: 't1',
-        runId: 'r1',
-        stateVersion: 1,
-        plan: [],
-        budgetLedgers: [],
-        workspaceBaseline: { commitHash: 'abc', branch: 'b', isClean: true, trackedFilesHash: 'h' },
+        ...sampleState,
         repositoryId: '',
-        workspaceId: 123,
-        taskType: '   ',
+        workspaceId: 123 as unknown as string,
+        taskType: '   ' as unknown as 'feature',
         goal: '',
-        nextAction: null,
+        nextAction: null as unknown as string,
       });
       assert.equal(badStringsRes.ok, false);
+    });
+
+    it('rejects budget ledger missing configurationId or with invalid reservation item', () => {
+      const resMissingCfg = validateBudgetLedger({
+        scope: 'task',
+        kind: 'tokens',
+        limit: 1000,
+        consumed: 0,
+        reservations: [],
+        version: 1,
+      });
+      assert.equal(resMissingCfg.ok, false);
+
+      const resBadItem = validateBudgetLedger({
+        scope: 'task',
+        kind: 'tokens',
+        limit: 1000,
+        consumed: 0,
+        reservations: [{ reservationId: '', keyedId: 'k1', amount: -5 }],
+        configurationId: 'cfg-1',
+        version: 1,
+      });
+      assert.equal(resBadItem.ok, false);
+    });
+
+    it('rejects reservation bundle missing taskId, runId, or with invalid item', () => {
+      const resMissingOwner = validateReservationBundle({
+        bundleId: 'b1',
+        transactionRef: 'tx1',
+        reservations: [],
+      });
+      assert.equal(resMissingOwner.ok, false);
+
+      const resBadItem = validateReservationBundle({
+        bundleId: 'b1',
+        transactionRef: 'tx1',
+        taskId: 't1',
+        runId: 'r1',
+        reservations: [
+          {
+            ledgerIdentity: 'task:tokens',
+            scope: 'task',
+            kind: 'tokens',
+            configurationId: 'cfg',
+            version: 1,
+            requestId: 'req-1',
+            amount: -10,
+          },
+        ],
+      });
+      assert.equal(resBadItem.ok, false);
+    });
+
+    it('validates checkpoint envelope coherence against embedded state', () => {
+      const validState: TaskState = {
+        schemaVersion: UC04_SCHEMA_VERSION,
+        taskId: 't-cohere',
+        runId: 'r-cohere',
+        repositoryId: 'repo',
+        workspaceId: 'ws',
+        taskType: 'feature',
+        goal: 'goal',
+        acceptanceCriteria: [],
+        constraints: [],
+        plan: [
+          { id: 's1', title: 'Step 1', description: 'desc', status: 'done' },
+          { id: 's2', title: 'Step 2', description: 'desc', status: 'done' },
+          { id: 's3', title: 'Step 3', description: 'desc', status: 'todo' },
+        ],
+        currentStepIndex: 2,
+        changedFiles: [],
+        openRisks: [],
+        nextAction: 'next',
+        status: 'running',
+        stateVersion: 5,
+        budgetLedgers: [],
+        workspaceBaseline: { commitHash: 'abcdef1234567890', branch: 'feat', isClean: true, trackedFilesHash: 'hash' },
+      };
+
+      const validCp: CheckpointRecord = {
+        checkpointId: 'cp-1',
+        taskId: 't-cohere',
+        runId: 'r-cohere',
+        stepIndex: 2,
+        stateVersion: 5,
+        timestamp: new Date().toISOString(),
+        checksum: 'checksum-123',
+        state: validState,
+      };
+      assert.equal(validateCheckpointRecord(validCp).ok, true);
+
+      // Incoherent taskId
+      const incoherentTask = { ...validCp, taskId: 'different-task' };
+      const resIncoherent = validateCheckpointRecord(incoherentTask);
+      assert.equal(resIncoherent.ok, false);
+      if (!resIncoherent.ok) {
+        assert.ok(resIncoherent.errors.some((e) => e.code === 'INCOHERENT_CHECKPOINT'));
+      }
+
+      // Incoherent stateVersion
+      const incoherentVer = { ...validCp, stateVersion: 99 };
+      assert.equal(validateCheckpointRecord(incoherentVer).ok, false);
     });
   });
 });
