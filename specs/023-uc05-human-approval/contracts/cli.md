@@ -1,6 +1,6 @@
 # Trusted Operator CLI: UC-05
 
-**Status**: Logical protocol agreed through T001; see [decisions](decisions.md). T007 and separately authorized T010 supply list/show/inspect/decide/control parsing and actual subprocess tests through explicit mock composition. Direct executable entry is unconfigured and returns unavailable; real connection to UC-04 remains gated at T020. SIGINT/SIGTERM checks observe parent-retained mock snapshots, not durable runtime restart. This introduces no project-wide CLI framework.
+**Status**: Logical protocol agreed through T001; see [decisions](decisions.md). T007/T010 and separately authorized T018 supply list/show/inspect/history/decide/control parsing and actual subprocess outcome/exit checks through explicit mock composition. History read success confirms inspection only; approval never establishes execution success. Direct executable entry is unconfigured/unavailable; real UC-04 connection remains gated at T020. Signal/IPC snapshots are local mock evidence, not durable runtime restart. No project-wide CLI framework is introduced.
 
 ## Trust and commands
 
@@ -11,6 +11,7 @@ Proposed command entry point after build: `node dist/src/approvals/cli.js`. No p
 | Command / required arguments | Behavior |
 |---|---|
 | list --task TASK | Bounded current request/control metadata; never all tasks by implicit default |
+| history --task TASK --page N | Read a bounded metadata history page for the explicit task; retain immutable decisions when current action details or bindings cannot be inspected |
 | show --task TASK --request DECISION | Five decision elements, binding fingerprint, versions, status and presentation digest |
 | inspect --task TASK --request DECISION --page N | Bounded safely admitted exact command/patch page, stable digest/version; no arbitrary file/artifact path |
 | decide --task TASK --request DECISION --task-version V --request-version R --presentation-digest DIGEST --decision approve or reject --response-key KEY | Submit explicit response to the displayed version; no repository execution; duplicate same response returns original result |
@@ -39,6 +40,12 @@ Structured result metadata (if requested by a configured host adapter) contains 
 | 5 | Store unavailable, failed or uncertain; task remains non-runnable pending reconciliation |
 
 No command supports force, autoapprove, ignore-policy, reset-budget or direct tool execution. CLI parser tests use real subprocesses; storage/executor mock tests are labelled as such. T020 validates the host capability boundary and real store; T021 checks process/terminal interruption and durable pause retention.
+
+## Phase 7 history projection
+
+The separately authorized T016–T018 slice adds the explicit history read command and `ApprovalService.history(taskId, page)`. Its bounded page envelope carries task/page identity, page count, UTF-8 byte accounting and complete metadata content without silent truncation. It uses the injected owner's existing request/history/event reads; no journal mutation, telemetry store or persistence adapter is added. Read success exits 0 even when the page reports an older rejection or current stale binding: it confirms inspection only. The existing show/decision/control operations retain their typed pending, paused, stale, conflict, denied and unavailable/uncertain meanings.
+
+History separates immutable request/resolution and committed event evidence from derived present-day classification/freshness and owner-supplied activity observations. Stable references and timestamps identify the evidence. Missing execution or cancellation observations stay unknown; a dispatch claim or reconciliation reference alone never establishes successful execution or task completion. Stale or unavailable exact action details cannot erase the known human response. No raw command/patch bodies, prompts, tool streams, credentials or protected source are copied into history; permitted exact action details remain behind inspect. Malformed, unsafe, inconsistent or over-bound owner evidence fails closed with a safe prerequisite, without releasing a task hold.
 
 ## Phase 4 control clarification (planning only)
 
