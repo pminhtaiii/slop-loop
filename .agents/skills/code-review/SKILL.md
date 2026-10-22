@@ -10,6 +10,8 @@ Two-axis review of the diff between `HEAD` and a fixed point the user supplies:
 
 Both axes run as **parallel sub-agents** so they don't pollute each other's context, then this skill aggregates their findings.
 
+Reviewers own semantic, spec, and standards findings. The merger owns ancestry, scope, exact ownership, mechanical integration, and replaying recorded focused checks; it consumes verified review reports rather than repeating semantic review.
+
 For issue-backed reviews without explicit local spec and plan paths, the issue tracker should have been provided to you; run `/setup-matt-pocock-skills` if `docs/agents/issue-tracker.md` is missing. Reviews with explicit local spec and plan paths skip tracker setup and lookup.
 
 ## Process
@@ -18,7 +20,7 @@ For issue-backed reviews without explicit local spec and plan paths, the issue t
 
 Whatever the user said is the fixed point — a commit SHA, branch name, tag, `main`, `HEAD~5`, etc. If they didn't specify one, ask for it.
 
-Capture the diff command once: `git diff <fixed-point>...HEAD` (three-dot, so the comparison is against the merge-base). Also note the list of commits via `git log <fixed-point>..HEAD --oneline`.
+Capture the diff command once: `git diff <fixed-point>...HEAD` (three-dot, so the comparison is against the merge-base). Also note the list of commits via `git log <fixed-point>..HEAD --oneline`. Record the immutable base SHA, candidate SHA, and reviewed source snapshot or file hashes for each axis.
 
 Before going further, confirm the fixed point resolves (`git rev-parse <fixed-point>`) and the diff is non-empty. A bad ref or empty diff should fail here — not inside two parallel sub-agents.
 
@@ -54,6 +56,7 @@ Each smell reads *what it is* → *how to fix*; match it against the diff:
 - **Speculative Generality** — abstraction, parameters, or hooks added for needs the spec doesn't have. → delete it; inline back until a real need shows.
 - **Message Chains** — long `a.b().c().d()` navigation the caller shouldn't depend on. → hide the walk behind one method on the first object.
 - **Middle Man** — a class or function that mostly just delegates onward. → cut it, call the real target direct.
+- A public port-only forwarding wrapper required by the repository's boundary contract is intentional, not a Middle Man finding; check input/result forwarding and absence of added policy or effects.
 - **Refused Bequest** — a subclass or implementer that ignores or overrides most of what it inherits. → drop the inheritance, use composition.
 
 ### 4. Spawn both sub-agents in parallel
@@ -76,7 +79,9 @@ If the spec is missing, skip the Spec sub-agent and note this in the final repor
 
 ### 5. Aggregate
 
-Save both axis reports and the aggregate in the active session dump's `reviews` subfolder. Present the two reports under `## Standards` and `## Spec` headings, verbatim or lightly cleaned, and promote concise findings and evidence paths into the canonical verification record when the task maintains one. Do **not** merge or rerank findings — the two axes are deliberately separate (see _Why two axes_).
+Save both axis reports and the aggregate in the active session dump's `reviews` subfolder. Present the reports under `## Standards` and `## Spec` headings, verbatim or lightly cleaned, and promote concise findings and evidence paths into the canonical verification record when the task maintains one. Keep a shared finding ledger with a stable finding ID, reproducer, regression coverage, disposition, and current SHA. Do **not** merge or rerank findings — the two axes are deliberately separate (see _Why two axes_).
+
+Pin each axis report to its base, evaluated candidate SHA, and reviewed input hashes. When a candidate changes, rerun only the axis affected by the changed inputs. Carry forward another axis only after verifying that its reviewed input hashes still match the candidate; record its evaluated SHA and current candidate SHA separately without claiming another review. Update a finding's current SHA only when its evidence is verified against the candidate. Final acceptance may consume only reports whose snapshots and candidate association have been verified. Reuse reports for the same unchanged candidate and inputs.
 
 End with a one-line summary: total findings per axis, and the worst issue _within each axis_ (if any). Don't pick a single winner across axes — that's the reranking the separation exists to prevent.
 

@@ -20,6 +20,8 @@ Organize modules around capabilities, with small public interfaces and acyclic d
 
 Pass dependencies through parameters or constructors so they are visible at call sites and replaceable in focused checks; no dependency injection framework is required. Keep policy decisions in deterministic code; model suggestions and prompts do not replace validation or authorization. See [Architecture](architecture.md) and [Tools and permissions](tools_permissions.md) for ownership and policy boundaries.
 
+A public wrapper that only forwards across a port is an intentional boundary: pass input through, preserve the typed result, and add no policy, persistence, or duplicate effect. On validation or permission refusal, return the typed refusal without changing persisted state or invoking downstream effects.
+
 ## LangGraph workflow code
 
 Define graph state with explicit types and fields needed for transitions, recovery, and verification. Validate node inputs and restored checkpoints at runtime. Nodes return typed partial updates for fields they own; avoid shared-state mutation or silently overwriting unrelated fields. Keep reducers and merge behavior explicit for fields that can receive multiple updates.
