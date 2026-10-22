@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
@@ -16,10 +16,29 @@ function run(root, ...args) {
   return spawnSync(process.execPath, [cli, ...args, '--root', root], { encoding: 'utf8', windowsHide: true, timeout: 15_000 });
 }
 function alternateCase(path) {
-  const index = path.search(/[a-z]/i);
-  if (index === -1) return path;
+  const start = path.indexOf('\\', 2) + 1;
+  const offset = path.slice(start).search(/[a-z]/i);
+  if (offset === -1) return path;
+  const index = start + offset;
   const letter = path[index];
   return path.slice(0, index) + (letter === letter.toLowerCase() ? letter.toUpperCase() : letter.toLowerCase()) + path.slice(index + 1);
+}
+function shortPath(path) {
+  if (process.platform !== 'win32') return null;
+  const typeDefinition = [
+    'using System.Runtime.InteropServices;',
+    'using System.Text;',
+    'public static class NativePathAlias {',
+    '  [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]',
+    '  public static extern uint GetShortPathName(string longPath, StringBuilder shortPath, uint length);',
+    '}',
+  ].join('\n');
+  const command = `Add-Type -TypeDefinition @'\n${typeDefinition}\n'@\n$buffer = New-Object System.Text.StringBuilder(32768)\n[void][NativePathAlias]::GetShortPathName($env:WORKTREE_PATH_FOR_TEST, $buffer, [uint32]$buffer.Capacity)\n$buffer.ToString()`;
+  const result = spawnSync('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', command], {
+    encoding: 'utf8', windowsHide: true, env: { ...process.env, WORKTREE_PATH_FOR_TEST: path },
+  });
+  const candidate = result.status === 0 ? result.stdout.trim() : '';
+  return candidate && candidate.toLowerCase() !== path.toLowerCase() ? candidate : null;
 }
 async function fixture(t, { externalWorker = false } = {}) {
   const directory = await realpath(await mkdtemp(join(tmpdir(), 'agent-worktree-')));
@@ -164,6 +183,37 @@ test('external app-owned registration rejects a case-variant primary path on Win
   assert.equal(result.status, 1, `case-variant primary path unexpectedly registered: ${result.stdout}`);
   assert.match(result.stderr, /invoking and primary checkouts/i);
   await assert.rejects(readFile(join(root, '.agent-work/worktree-receipts/primary-case.json')), { code: 'ENOENT' });
+});
+
+test('registration accepts a valid case-variant worktree path on Windows', async (t) => {
+  if (process.platform !== 'win32') return t.skip('Windows path casing is required for this regression.');
+  const { root, worker } = await fixture(t);
+  const result = run(root, 'register', '--id', 'worker-case', '--path', alternateCase(worker), '--integration-ref', 'main', '--session', '2026-10-15/run', '--owner', 'worker', '--task', 'T001');
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(await readFile(join(root, '.agent-work/worktree-receipts/worker-case.json'), 'utf8')).path.toLowerCase(), (await realpath(worker)).toLowerCase());
+});
+
+test('registration accepts a valid Windows 8.3 short-name worktree path when available', async (t) => {
+  if (process.platform !== 'win32') return t.skip('Windows 8.3 alias not run locally; Windows CI validation is required.');
+  const { root, worker } = await fixture(t);
+  const alias = shortPath(worker);
+  if (!alias) return t.skip('No local 8.3 alias is available; Windows CI validation is required.');
+  const result = run(root, 'register', '--id', 'worker-short', '--path', alias, '--integration-ref', 'main', '--session', '2026-10-15/run', '--owner', 'worker', '--task', 'T001');
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(await readFile(join(root, '.agent-work/worktree-receipts/worker-short.json'), 'utf8')).path.toLowerCase(), (await realpath(worker)).toLowerCase());
+});
+
+test('registration rejects final and intermediate junction paths', async (t) => {
+  for (const kind of ['final', 'intermediate']) {
+    const { root, worker } = await fixture(t);
+    const link = join(root, '.agent-work/worktrees', kind === 'final' ? 'worker-final-link' : 'worker-intermediate-link');
+    const path = kind === 'final' ? link : join(link, 'worktrees', 'worker');
+    await symlink(kind === 'final' ? worker : join(root, '.agent-work'), link, process.platform === 'win32' ? 'junction' : 'dir');
+    const result = run(root, 'register', '--id', `worker-${kind}-link`, '--path', path, '--integration-ref', 'main', '--session', '2026-10-15/run', '--owner', 'worker', '--task', 'T001');
+    assert.equal(result.status, 1, result.stdout);
+    assert.match(result.stderr, /symbolic link|without links/i);
+    await assert.rejects(readFile(join(root, `.agent-work/worktree-receipts/worker-${kind}-link.json`)), { code: 'ENOENT' });
+  }
 });
 
 test('external app-owned worktrees require explicit registration and are never cleaned up by the helper', async (t) => {

@@ -4,6 +4,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { atomicWrite, dataDirectory, git, inside, readJson, repository, samePath, withLock } from './agent-store.mjs';
 import { commonGitDirectory, registeredAssignmentBase } from './active-task-binding.mjs';
+import { realDirectoryWithoutLinks } from './worktree-path.mjs';
 
 const usage = `Usage:
   node scripts/agents/agent-worktree.mjs register --id <id> --path <worker> --integration-ref <branch> --session <date/id> --owner <owner> --task <task> [--external-app-owned]
@@ -40,16 +41,13 @@ function pathKey(path) {
 
 async function worker(repo, path, branch, externalAppOwned = false) {
   const area = await dataDirectory(repo, 'worktrees');
-  path = resolve(path);
+  path = await realDirectoryWithoutLinks(path, 'Worker path');
   const managed = inside(area, path);
   const dump = inside(resolve(repo.primary, '.agent-work'), path);
   if (externalAppOwned ? managed || dump : !managed) throw new Error(externalAppOwned
     ? 'External app-owned workers must be outside the managed .agent-work area.'
     : 'Worker must be inside the managed worktree area; use --external-app-owned for an external app worktree.');
   if (await samePath(path, repo.root) || await samePath(path, repo.primary)) throw new Error('Worker must be outside the invoking and primary checkouts.');
-  const info = await lstat(path);
-  const canonical = await realpath(path);
-  if (!info.isDirectory() || info.isSymbolicLink() || pathKey(canonical) !== pathKey(path)) throw new Error('Worker path must be a real directory without links.');
   const fresh = await repository(repo.primary);
   const record = fresh.worktrees.find((entry) => entry.worktree && pathKey(entry.worktree) === pathKey(path));
   if (!record || !record.branch || Object.hasOwn(record, 'locked') || Object.hasOwn(record, 'prunable')) throw new Error('Worker must be registered, unlocked, and on a branch.');
