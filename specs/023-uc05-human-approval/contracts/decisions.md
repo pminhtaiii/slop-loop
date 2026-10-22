@@ -131,6 +131,10 @@ The updated development base supplies UC-03 mock repair/replan consumers, but st
 
 The pinned T019 Spec review at `22f991c` found one P2 local metadata defect: observed `localLevel` copies the fixture's planned preparation tier, so C02/C21 claim CLI evidence without a linked CLI witness and C23 understates its actual executable observation. T028 records correction of this authorized T019 behavior only. Planned and observed tiers must remain distinct; all required real/restart obligations remain not-run. Standards review found no violations. Revised source, affected validation and independent review are required before publishing T019; this finding does not authorize real adapters or successor integration.
 
+## T028 corrected local evidence checkpoint
+
+T028 was independently accepted at source `391d3ff9e484864f89cecf28133ec413b7607e86`. Actual catalog RED reproduced C02 reporting CLI for a direct policy witness; corrected source/emitted focused checks each pass 2/2, with two fresh 192-check inherited runs per invocation. Planned preparation tiers are recorded separately from observed local tiers derived from explicitly mapped unit/mock/CLI witnesses. C02 reports unit, C21 mock and C23 cli; same-sided observed/planned tier tampering is refused. Parent runtime typecheck/full lint/clean build/1098 compiled tests and contributor 227/227 pass on the corrected source. All 24 rows remain partial, 104 required vectors not-run and fullAcceptance false. No runtime or fixture/oracle change occurred. Revised independent Standards/Spec reviews report zero findings on the corrected source. Updated publication and exact-head CI remain separate at this checkpoint; T020–T022 external prerequisites remain unmet.
+
 ## Agreed design register
 
 | ID | Proposal | Scope / approval state |

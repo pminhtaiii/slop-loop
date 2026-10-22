@@ -1,6 +1,6 @@
 # Interfaces and Execution Protocol: UC-05
 
-**Status**: Logical companion version `uc05-approval/0.1-draft` agreed through T001; see [decisions](decisions.md). T001–T018 and T023–T027 corrections supply validators, mocks, policy/service/control/binding, bounded history/presentation/CLI and canonical-consumer checks. Phase 7 is separately authorized on 2026-10-22 (Asia/Saigon). Canonical UC-03 0.1.0 remains unchanged; Phase 8 T019–T022 is separately authorized on 2026-10-22; T020–T022 retain external dependencies, and real adapters, production composition, durability and actual restart remain unverified.
+**Status**: Logical companion version `uc05-approval/0.1-draft` agreed through T001; see [decisions](decisions.md). T001–T018 and T023–T028 corrections supply validators, mocks, policy/service/control/binding, bounded history/presentation/CLI and canonical-consumer checks. Phase 7 is separately authorized on 2026-10-22 (Asia/Saigon). Canonical UC-03 0.1.0 remains unchanged; Phase 8 T019–T022 is separately authorized on 2026-10-22; T020–T022 retain external dependencies, and real adapters, production composition, durability and actual restart remain unverified.
 
 ## Canonical ApprovalPort compatibility
 
