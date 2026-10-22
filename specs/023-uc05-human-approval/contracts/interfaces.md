@@ -1,6 +1,6 @@
 # Interfaces and Execution Protocol: UC-05
 
-**Status**: Logical companion version `uc05-approval/0.1-draft` agreed through the user confirmation in [decisions](decisions.md). Canonical UC-03 0.1.0 remains unchanged. T001–T013 supply validators, mocks, policy/service/control/binding/presentation/CLI and canonical-consumer checks with exercised local behavior. T025/T026 normalize port exceptions and initial receipt inspection without changing this contract. T014–T015 have separate mock-preparation authorization; T016–T022 require separate authorization; real adapters, production composition and durability remain gated.
+**Status**: Logical companion version `uc05-approval/0.1-draft` agreed through T001; see [decisions](decisions.md). T001–T018 and T023–T028 corrections supply validators, mocks, policy/service/control/binding, bounded history/presentation/CLI and canonical-consumer checks. Phase 7 is separately authorized on 2026-10-22 (Asia/Saigon). Canonical UC-03 0.1.0 remains unchanged; Phase 8 T019–T022 is separately authorized on 2026-10-22; T020–T022 retain external dependencies, and real adapters, production composition, durability and actual restart remain unverified.
 
 ## Canonical ApprovalPort compatibility
 
@@ -61,7 +61,15 @@ The owner declares finite `reservationRequirements` (scope, kind, amount), suppl
 
 The owner remains responsible for serialized task control, locked repository/policy freshness and complete accounting at claim admission. The test adapter uses the existing mock store and canonical in-memory reservation port; it conservatively retains charge on a claim race or lost response. Neither the consumer nor this adapter delivers durable atomicity, reconciliation or repository effects. Caller timeouts close local admission and fence later continuation work; an owner call already started can still commit and must remain represented in owner state.
 
-Results are the minimal `claimed`, `blocked` or `unavailable`, with only an admitted claim ID on success. Detailed prerequisite reasons and complete safe audit/CLI projections are still part of T016–T018; these results do not establish full US4/SC-006 or real/restart acceptance. The current composition rejects real/unknown provenance rather than silently supplying a mock replacement.
+Results remain the minimal `claimed`, `blocked` or `unavailable`, with only an admitted claim ID on success. Phase 7 adds safe history/CLI inspection of available control, request, binding, claim and owner outcome evidence; absent execution/cancellation/accounting observations stay unknown. No granular accounting cause is inferred from missing owner evidence. These results do not establish full US4/SC-006 or real/restart acceptance. The current composition rejects real/unknown provenance rather than silently supplying a mock replacement.
+
+## Phase 7 read-only history consumer
+
+The authorized T016–T018 slice may expose `ApprovalService.history(taskId, page)` behind explicit CLI task/page selection. It consumes existing `readHistory`, `readEvents` and request metadata from the injected owner, validates their schema and cross-record identity before display, and bounds pages in UTF-8 under the explicit fixture profile. History remains readable independently of current exact-action inspection: immutable human resolution, current binding assessment, continuation/claim and observed outcome are distinct evidence. Derived observations are labelled separately from committed journal events. Missing execution/cancellation evidence remains unknown; no approval-only completion claim is permitted.
+
+Ordinary pending creation and decision success must match authoritative journal evidence as well as their mutation receipts. Lost, malformed or missing journal evidence cannot grant new execution authority; committed consent must not be rewritten to pretend that an uncertain response did not commit. Retrying an accepted response preserves its original event identity. These are consumer checks against mock contract behavior, not proof of durable outbox delivery or storage atomicity. Tai's telemetry implementation, UC-04 persistence and canonical record versions remain unchanged.
+
+An optional injected read-only owner callback may supply terminal activity observations because the current outstanding-activity port does not retain completed/cancelled/failed attempts. Admit only a closed, bounded metadata vocabulary with stable observation/task/run/attempt/claim references and timestamps; reject unsafe, foreign or contradictory records. Missing callback/evidence remains unknown. This capability reads owner evidence without storing it, granting authority, modifying Tai's activity owner or creating a telemetry implementation. A completed attempt is distinct from verified action/task success; confirmed cancellation does not establish rollback of earlier effects.
 
 ## Mock replacement and delivery
 
