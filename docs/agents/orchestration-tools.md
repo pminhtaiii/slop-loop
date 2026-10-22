@@ -37,7 +37,7 @@ $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 try {
   $OutputEncoding = $utf8NoBom
   [Console]::OutputEncoding = $utf8NoBom
-  $receiptJson = $handoffJson | node scripts/agents/agent-output.mjs --workspace $workspace --session $session --output 'handoff.json' --log 'worker.log'
+  $receiptJson = $handoffJson | node scripts/agents/agent-output.mjs --workspace $workspace --session $session --output 'handoff.json'
 } finally {
   $OutputEncoding = $oldOutputEncoding
   [Console]::OutputEncoding = $oldConsoleEncoding
@@ -46,7 +46,7 @@ $receipt = $receiptJson | ConvertFrom-Json
 $receipt | Format-List status, output, bytes, exitObservation
 ```
 
-The `--workspace` value must be a Git checkout root. The example sets PowerShell's native pipeline and console encodings to UTF-8 without a BOM for Windows PowerShell 5.1 and PowerShell 7, then restores both settings. PowerShell passes each option value as a separate argument; the JSON travels through stdin, so paths and JSON strings do not need shell interpolation. `handoff.json` is written as UTF-8 without a BOM under `.agent-work/<date>/<session-id>/`. The output must be a single `.json` filename that does not already exist. `--log` names an optional regular file in the same session directory.
+The `--workspace` value must be a Git checkout root. The example sets PowerShell's native pipeline and console encodings to UTF-8 without a BOM for Windows PowerShell 5.1 and PowerShell 7, then restores both settings. PowerShell passes each option value as a separate argument; the JSON travels through stdin, so paths and JSON strings do not need shell interpolation. `handoff.json` is written as UTF-8 without a BOM under `.agent-work/<date>/<session-id>/`. The output must be a single `.json` filename that does not already exist. If passed, `--log` must name an existing regular file in the same session directory.
 
 `exitObservation` is caller-supplied metadata copied to the receipt. A code of `0` does not prove the observed process succeeded: the CLI does not run that process. The CLI's own exit status is `0` only when it writes the handoff and receipt successfully.
 

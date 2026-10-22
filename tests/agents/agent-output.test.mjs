@@ -70,6 +70,36 @@ test('writes structured UTF-8 JSON and returns bounded log tail with caller exit
   assert.doesNotMatch(summary.log.tail, /000:/);
 });
 
+test('reports a missing named log by name before writing handoff output', async (t) => {
+  const { root, sessionDirectory } = await fixture(t);
+
+  const result = run(root, JSON.stringify({ brief: 'valid' }), ['--log', 'missing.log']);
+
+  assert.notEqual(result.status, 0);
+  assert.equal(result.stderr.trim(), 'Log file not found in session: missing.log');
+  assert.equal(result.stdout, '');
+  await assert.rejects(lstat(join(sessionDirectory, 'handoff.json')));
+});
+
+test('drops leading UTF-8 continuation bytes when a bounded tail starts inside a four-byte character', async (t) => {
+  for (const continuationBytes of [1, 2, 3]) {
+    const { root, sessionDirectory } = await fixture(t);
+    const suffix = 'x'.repeat(continuationBytes);
+    const log = `${'🚀'.repeat(5000)}${suffix}`;
+    await writeFile(join(sessionDirectory, 'worker.log'), log, 'utf8');
+
+    const result = run(root, JSON.stringify({ brief: 'valid' }), ['--log', 'worker.log']);
+
+    assert.equal(result.status, 0, result.stderr);
+    const summary = JSON.parse(result.stdout);
+    assert.equal(summary.log.fileBytes, Buffer.byteLength(log, 'utf8'));
+    assert.equal(summary.log.tailLines, 1);
+    assert.ok(Buffer.byteLength(summary.log.tail, 'utf8') <= 16 * 1024);
+    assert.ok(summary.log.tail.endsWith(suffix));
+    assert.doesNotMatch(summary.log.tail, /\uFFFD/);
+  }
+});
+
 test('rejects malformed, BOM-prefixed, invalid UTF-8, and oversized input before creating output', async (t) => {
   const { root, sessionDirectory } = await fixture(t);
   const oversized = Buffer.from(JSON.stringify({ note: 'x'.repeat(256 * 1024) }));

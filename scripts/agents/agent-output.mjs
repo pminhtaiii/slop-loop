@@ -137,13 +137,22 @@ function boundUtf8(text, limit) {
   return bytes.subarray(start).toString('utf8');
 }
 
+async function namedLogIo(file, operation) {
+  try {
+    return await operation();
+  } catch (error) {
+    if (error?.code === 'ENOENT') throw new Error(`Log file not found in session: ${file}`, { cause: error });
+    throw error;
+  }
+}
+
 async function readLogTail(sessionDirectory, file) {
   const path = join(sessionDirectory, file);
   if (!inside(sessionDirectory, path)) throw new Error('Log path escapes its session');
-  const linkStat = await lstat(path);
+  const linkStat = await namedLogIo(file, () => lstat(path));
   if (!linkStat.isFile() || linkStat.isSymbolicLink()) throw new Error('Log must be a regular file');
-  if (!(await samePath(path, await realpath(path)))) throw new Error('Log path resolves outside its session');
-  const handle = await open(path, 'r');
+  if (!(await samePath(path, await namedLogIo(file, () => realpath(path))))) throw new Error('Log path resolves outside its session');
+  const handle = await namedLogIo(file, () => open(path, 'r'));
   try {
     const fileStat = await handle.stat();
     if (!fileStat.isFile() || fileStat.dev !== linkStat.dev || fileStat.ino !== linkStat.ino) {
@@ -154,14 +163,16 @@ async function readLogTail(sessionDirectory, file) {
     const { bytesRead } = buffer.length > 0
       ? await handle.read(buffer, 0, buffer.length, offset)
       : { bytesRead: 0 };
-    let text = new TextDecoder('utf-8').decode(buffer.subarray(0, bytesRead));
+    let start = 0;
+    if (offset > 0) {
+      while (start < bytesRead && (buffer[start] & 0xc0) === 0x80) start += 1;
+    }
+    let text = new TextDecoder('utf-8').decode(buffer.subarray(start, bytesRead));
     let truncated = offset > 0;
     if (offset > 0) {
       const newline = text.search(/[\r\n]/);
       if (newline >= 0) {
         text = text.slice(newline + (text.startsWith('\r\n', newline) ? 2 : 1));
-      } else if (text.startsWith('\uFFFD')) {
-        text = text.slice(1);
       }
     }
     const endsWithNewline = /[\r\n]$/.test(text);

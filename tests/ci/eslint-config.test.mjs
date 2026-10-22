@@ -34,6 +34,18 @@ test('mock-private transition contexts and runtime support imports are restricte
     "import { MemoryStatePort } from '../tests/runtime/support/uc03/memory-state.js'; export { MemoryStatePort };",
     { filePath: 'src/agent-output-lint-fixture.ts' },
   );
+  const privateDynamicImport = await eslint.lintText(
+    "export const load = () => import('../tests/runtime/support/uc03/memory-state.js');",
+    { filePath: 'src/agent-output-private-dynamic-fixture.ts' },
+  );
+  const ordinaryDynamicImport = await eslint.lintText(
+    "export const load = () => import('./public-port.js');",
+    { filePath: 'src/agent-output-ordinary-dynamic-fixture.ts' },
+  );
+  const computedDynamicImport = await eslint.lintText(
+    "const specifier = './public-port.js'; export const load = () => import(specifier);",
+    { filePath: 'src/agent-output-computed-dynamic-fixture.ts' },
+  );
   const publicPort = await eslint.lintText(
     "import type { StatePort } from './contracts/foundation/uc03/ports.js'; export function load(value: unknown) { const port = value as StatePort; return port.loadTask('task-1'); }",
     { filePath: 'src/agent-output-public-fixture.ts' },
@@ -41,6 +53,10 @@ test('mock-private transition contexts and runtime support imports are restricte
   const mockImplementation = await eslint.lintText(
     "import { MemoryStatePort } from '../support/uc03/memory-state.js'; export function createMock() { return new MemoryStatePort({ transitionContexts: {} }); }",
     { filePath: 'tests/runtime/unit/agent-output-mock-fixture.ts' },
+  );
+  const mockDynamicImport = await eslint.lintText(
+    "export const load = () => import('../support/uc03/memory-state.js');",
+    { filePath: 'tests/runtime/unit/agent-output-dynamic-mock-fixture.ts' },
   );
 
   for (const [label, results] of [
@@ -50,10 +66,21 @@ test('mock-private transition contexts and runtime support imports are restricte
     assert.ok(results[0].messages.some((message) => message.ruleId === 'no-restricted-properties'), `${label} should be rejected`);
   }
   assert.ok(privateImport[0].messages.some((message) => message.ruleId === 'no-restricted-imports'), 'source import from runtime support should be rejected');
+  assert.ok(
+    privateDynamicImport[0].messages.some((message) => message.ruleId === 'no-restricted-syntax'),
+    'literal source dynamic import from runtime support should be rejected',
+  );
   for (const [label, results] of [
     ['public StatePort wrapper', publicPort],
     ['mock implementation', mockImplementation],
+    ['ordinary source dynamic import', ordinaryDynamicImport],
+    ['computed source dynamic import', computedDynamicImport],
+    ['test mock dynamic import', mockDynamicImport],
   ]) {
-    assert.equal(results[0].messages.some((message) => ['no-restricted-properties', 'no-restricted-imports'].includes(message.ruleId)), false, `${label} should remain allowed`);
+    assert.equal(results[0].messages.some((message) => [
+      'no-restricted-properties',
+      'no-restricted-imports',
+      'no-restricted-syntax',
+    ].includes(message.ruleId)), false, `${label} should remain allowed`);
   }
 });
