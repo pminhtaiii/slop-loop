@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
@@ -11,7 +11,7 @@ const sessionCli = join(root, 'scripts/agents/agent-work.mjs');
 const taskCli = join(root, 'scripts/agents/active-task.mjs');
 
 async function fixture(t) {
-  const checkout = await mkdtemp(join(tmpdir(), 'session-lifecycle-'));
+  const checkout = await realpath(await mkdtemp(join(tmpdir(), 'session-lifecycle-')));
   t.after(() => rm(checkout, { recursive: true, force: true }));
   await mkdir(join(checkout, 'context'));
   await writeFile(join(checkout, 'context/active_task.md'), '# Active task\n<!-- active-task:start -->\n```json\n[]\n```\n<!-- active-task:end -->\n');
@@ -76,6 +76,16 @@ test('reassignment retires the source session while active or blocked successor 
   assert.equal(result.status, 0, result.stderr);
   result = run(taskCli, checkout, 'reassign', '--owner', 'interrupted', '--task', 'T007', '--new-owner', 'successor', '--session', '2026-10-21/successor', '--reason', 'Human-directed recovery');
   assert.equal(result.status, 0, result.stderr);
+  let tasks = JSON.parse(await readFile(join(checkout, '.agent-work/state/active-tasks.json'), 'utf8'));
+  const predecessor = tasks.find((entry) => entry.owner === 'interrupted');
+  const successor = tasks.find((entry) => entry.owner === 'successor');
+  assert.equal(predecessor.status, 'reassigned');
+  assert.deepEqual(predecessor.binding.identity, { owner: 'interrupted', task: 'T007', session: '2026-10-21/source' });
+  assert.equal(successor.checkout, checkout);
+  assert.deepEqual(successor.binding.identity, { owner: 'successor', task: 'T007', session: '2026-10-21/successor' });
+  assert.equal(successor.binding.base.ref, 'existing-checkout');
+  assert.equal(successor.reservation, undefined, 'reassignment must not copy reservation authority');
+  assert.equal(successor.readiness, undefined, 'reassignment must not copy readiness authority');
 
   result = run(sessionCli, checkout, 'finish', '--session', '2026-10-21/source');
   assert.equal(result.status, 0, result.stderr);
@@ -92,6 +102,8 @@ test('reassignment retires the source session while active or blocked successor 
 
   result = run(taskCli, checkout, 'handoff', '--owner', 'successor', '--task', 'T007', '--result', 'Successor work handed off');
   assert.equal(result.status, 0, result.stderr);
+  tasks = JSON.parse(await readFile(join(checkout, '.agent-work/state/active-tasks.json'), 'utf8'));
+  assert.equal(tasks.find((entry) => entry.owner === 'interrupted').status, 'reassigned', 'predecessor history remains retained');
   result = run(sessionCli, checkout, 'finish', '--session', '2026-10-21/successor');
   assert.equal(result.status, 0, result.stderr);
 });
