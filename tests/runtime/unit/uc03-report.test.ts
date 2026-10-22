@@ -971,6 +971,33 @@ test('report: treats malformed verification results as incomplete evidence', () 
   assert.ok(report.failureReasons.some((reason) => reason.includes('Malformed verification evidence')));
 });
 
+test('report: malformed completion boundary inputs stay incomplete without exposing payloads', () => {
+  const fixture = createValidReportingFixture();
+  const malformedInputs: readonly BuildFinalReportInput[] = [
+    { ...fixture, authorizedDiffDigest: 42 } as unknown as BuildFinalReportInput,
+    {
+      ...fixture,
+      state: { ...fixture.state, latestReviewRef: 42 } as unknown as TaskState,
+    },
+    {
+      ...fixture,
+      task: { ...fixture.task, requiredChecks: [null] } as unknown as BugTask,
+    },
+    {
+      ...fixture,
+      trustedReviewRecord: { ...fixture.trustedReviewRecord, reviewId: 42 } as unknown as TrustedReviewRecord,
+    },
+  ];
+
+  for (const input of malformedInputs) {
+    const report = buildFinalReport(input);
+    assert.equal(report.isComplete, false);
+    assert.equal(report.outcome, 'IMPLEMENTED_UNVERIFIED');
+    assert.equal(report.delivery, undefined);
+    assert.ok(report.failureReasons.includes('Invalid completion evidence input; completion withheld'));
+  }
+});
+
 test('report: combines persisted changes when the supplied inventory is empty', () => {
   const fixture = createValidReportingFixture();
   const report = buildFinalReport({
@@ -1093,6 +1120,38 @@ test('formatReportMarkdown: formats complete report without secrets or raw reaso
   assert.ok(!markdown.includes(secretKey), 'Markdown must not contain secrets');
   assert.ok(!markdown.includes('rawReasoning'), 'Markdown must not mention rawReasoning');
   assert.ok(!markdown.includes('thinking'), 'Markdown must not mention internal thinking');
+});
+
+test('formatReportMarkdown: requires completion to match its delivery and evidence bindings', () => {
+  const fixture = createValidReportingFixture();
+  const incomplete = buildFinalReport({ task: fixture.task, state: fixture.state });
+  const forgedIncomplete = {
+    ...incomplete,
+    outcome: 'COMPLETED',
+    isComplete: true,
+    safeNextAction: 'ready-for-human-review',
+  } as FinalReport;
+  const rejectsInvalidReport = (candidate: FinalReport): void => {
+    assert.throws(() => formatReportMarkdown(candidate),
+      (error: unknown) => error instanceof Error && error.message === 'Invalid report');
+  };
+  rejectsInvalidReport(forgedIncomplete);
+
+  const complete = buildFinalReport(fixture);
+  assert.ok(complete.delivery !== undefined);
+  rejectsInvalidReport({ ...complete, delivery: undefined });
+  rejectsInvalidReport({
+    ...complete,
+    delivery: { ...complete.delivery, taskId: 'stale-task-id' },
+  });
+  rejectsInvalidReport({
+    ...complete,
+    diff: { ...complete.diff, diffDigest: 'sha256:stale-diff-digest' },
+  });
+  rejectsInvalidReport({
+    ...complete,
+    evidence: { ...complete.evidence, evidenceRefs: [] },
+  });
 });
 
 test('formatReportMarkdown: rejects a forged unknown outcome without echoing it', () => {

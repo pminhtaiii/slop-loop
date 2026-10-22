@@ -1,22 +1,9 @@
-/**
- * UC-03 Verified Code Repair - Sanitized Milestone & Final Reporting
- *
- * Owned path: src/uc03/report.ts
- * Feature: specs/001-verified-code-repair
- * Task: T023 (sanitized milestone and final reporting)
- *
- * Requirements:
- * - C16: Milestone and final reports exclude prompts, streams, secrets, and raw reasoning;
- *   bounded redacted diagnostics; per-run and task-level usage/cost retained.
- * - FR-010: Protect credentials, secrets, and harness boundaries from reporting leak.
- * - FR-012: Milestone activity and final diff with outcome, evidence, limitations, and safe next action.
- * - SC-002: Zero unverified or drifted modifications claim COMPLETED status.
- * - SC-004: Every delivered fix links baseline, final checks, review, and diff evidence.
- * - SC-005: Milestone and final reports pass protected-data checks.
- */
-
 import {
   isProtectedPath,
+  validateBaseline,
+  validateBugTask,
+  validateDelivery,
+  validateTaskState,
   type ActivityEvent,
   type Baseline,
   type BugTask,
@@ -162,6 +149,21 @@ export interface FinalReport {
   readonly generatedAt: string;
 }
 
+function hasValidCompletionBoundary(input: BuildFinalReportInput): boolean {
+  try {
+    const review = input.trustedReviewRecord;
+    if (review !== undefined && (!review || typeof review !== 'object' || Array.isArray(review))) return false;
+    const record = review as unknown as Record<string, unknown> | undefined;
+    return validateBugTask(input.task).ok &&
+      validateTaskState(input.state).ok &&
+      validateBaseline(input.baseline).ok &&
+      (input.authorizedDiffDigest === undefined || typeof input.authorizedDiffDigest === 'string') &&
+      (!record || Object.values(record).every((field) => typeof field === 'string'));
+  } catch {
+    return false;
+  }
+}
+
 export function milestoneToActivityEvent(
   milestone: Milestone,
   durationMs = 0
@@ -240,7 +242,7 @@ export function buildFinalReport(input: BuildFinalReportInput): FinalReport {
   if (origProtected) safeMetadata(origProtected, 'originalProtectedTestsDigest', customPatterns);
   if (currProtected) safeMetadata(currProtected, 'currentProtectedTestsDigest', customPatterns);
 
-  const canRunCompletionEvaluation =
+  const hasCompletionEvidence =
     baseline !== undefined &&
     Array.isArray(input.verificationResults) &&
     verifications.valid &&
@@ -251,6 +253,11 @@ export function buildFinalReport(input: BuildFinalReportInput): FinalReport {
     typeof currProtected === 'string' &&
     inventory.consistent &&
     failureReasons.length === 0;
+  const invalidBoundary = hasCompletionEvidence && !hasValidCompletionBoundary(input);
+  if (invalidBoundary) {
+    failureReasons.push('Invalid completion evidence input; completion withheld');
+  }
+  const canRunCompletionEvaluation = hasCompletionEvidence && !invalidBoundary;
 
   if (canRunCompletionEvaluation && baseline && review.result) {
     const predicateInput: CompletionPredicateInput = {
@@ -289,7 +296,7 @@ export function buildFinalReport(input: BuildFinalReportInput): FinalReport {
     delivery = undefined;
     if (canRunCompletionEvaluation && failureReasons.length > 0) {
       finalOutcome = 'IMPLEMENTED_UNVERIFIED';
-    } else if (!canRunCompletionEvaluation) {
+    } else if (!canRunCompletionEvaluation && !invalidBoundary) {
       failureReasons.push('Incomplete verification or review evidence for completion');
     }
   }
@@ -411,6 +418,21 @@ export function formatReportMarkdown(report: FinalReport): string {
     const failureReasons = sanitizedStringList(report.failureReasons, 'failureReasons');
     const limitations = sanitizedStringList(report.limitations, 'limitations');
     const milestones = reportMilestones(report.milestones);
+    if (report.outcome === 'COMPLETED') {
+      const checked = validateDelivery(report.delivery, {
+        expectedTaskId: taskId, expectedRunId: runId, expectedDiffDigest: diffDigest,
+        expectedBaselineRef: baselineRef ?? '', expectedReviewRef: reviewRef ?? '',
+      });
+      const expectedRefs = [baselineRef, ...verificationRefs, reviewRef];
+      const matchesDelivery = checked.ok && checked.value.outcome === 'COMPLETED' &&
+        JSON.stringify(checked.value.changedFiles) === JSON.stringify(changedFiles) &&
+        JSON.stringify(checked.value.verificationRefs) === JSON.stringify(verificationRefs) &&
+        checked.value.safeNextAction === safeNextAction;
+      if (!matchesDelivery || safeNextAction !== 'ready-for-human-review' ||
+        JSON.stringify(report.evidence.evidenceRefs) !== JSON.stringify(expectedRefs)) throw new Error();
+    } else if (report.delivery !== undefined) {
+      throw new Error();
+    }
     const lines: string[] = [
       `# UC-03 Code Repair Report: ${taskId}`,
       `**Run ID**: \`${runId}\` | **Repository**: \`${repositoryId}\``,
