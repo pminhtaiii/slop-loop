@@ -37,7 +37,7 @@ const PROV_ALLOWED = [
   'schemaVersion', 'subjectKind', 'planApplicability',
   'taskStateSchemaVersion', 'expectedTaskStateVersion',
   'controlSchemaVersion', 'expectedControlVersion', 'expectedEpoch',
-  'taskId', 'runId', 'providerRequest', 'providerRequestId', 'role',
+  'taskId', 'runId', 'runnableNode', 'providerRequest', 'providerRequestId', 'role',
   'requestContentDigest', 'providerIdentity', 'providerAdmissionReceipt',
   'requestReservationReceipt', 'budgetRefs', 'finiteBounds', 'admissionDigest',
   'diagnosticPurpose', 'taskCriteriaDigest',
@@ -51,7 +51,7 @@ const REPO_CROSS = [
 
 const PROV_ID_KEYS = ['providerId', 'modelId', 'configId', 'configVersion', 'pricingPolicyId', 'pricingPolicyVersion', 'issuerKeyRef', 'decisionAuthorityGeneration'] as const;
 const PROV_REC_KEYS = ['receiptId', 'receiptDigest', 'providerRequestId', 'role', 'requestContentDigest', 'providerId', 'modelId', 'configId', 'configVersion', 'decisionAuthorityGeneration'] as const;
-const PROV_BOUNDS_KEYS = ['maxInputTokens', 'maxOutputTokens', 'maxCostUsd', 'maxReviewerIterations'] as const;
+const PROV_BOUNDS_KEYS = ['maxInputTokens', 'maxOutputTokens', 'maxBillableTokens', 'maxCostUsd', 'maxReviewerIterations'] as const;
 
 export function computeRequestContentDigest(request: unknown): string {
   if (!isPlainObject(request)) throw new Error('computeRequestContentDigest requires an object');
@@ -116,7 +116,10 @@ export function validateProviderAdmissionV02(
     errs.push({ path: 'planApplicability', message: 'planApplicability must be pre-plan-diagnostic or approved-plan', code: 'INVALID_PLAN_APPLICABILITY' });
   }
 
-  reqStrings(input, ['taskStateSchemaVersion', 'controlSchemaVersion', 'taskId', 'runId', 'requestReservationReceipt'], '', errs);
+  reqStrings(input, ['taskStateSchemaVersion', 'controlSchemaVersion', 'taskId', 'runId', 'runnableNode', 'requestReservationReceipt'], '', errs);
+  if (planApp === 'pre-plan-diagnostic' && input['runnableNode'] !== 'Investigate') {
+    errs.push({ path: 'runnableNode', message: 'Pre-plan provider diagnostics require Investigate', code: 'DIAGNOSTIC_NODE_REQUIRED' });
+  }
   validateNonNegativeInteger(input['expectedTaskStateVersion'], 'expectedTaskStateVersion', errs);
   validateNonNegativeInteger(input['expectedControlVersion'], 'expectedControlVersion', errs);
   validateNonNegativeInteger(input['expectedEpoch'], 'expectedEpoch', errs);
@@ -179,6 +182,8 @@ export function validateProviderAdmissionV02(
     const gen = validatePositiveInteger(rec['decisionAuthorityGeneration'], 'providerAdmissionReceipt.decisionAuthorityGeneration', errs);
     if (rec['role'] !== 'coder' && rec['role'] !== 'reviewer') {
       errs.push({ path: 'providerAdmissionReceipt.role', message: 'role must be coder or reviewer', code: 'INVALID_ROLE' });
+    } else if (rec['role'] !== input['role']) {
+      errs.push({ path: 'providerAdmissionReceipt.role', message: 'role mismatch', code: 'ROLE_MISMATCH' });
     }
     if (validReq && rec['providerRequestId'] && rec['providerRequestId'] !== validReq.providerRequestId) {
       errs.push({ path: 'providerAdmissionReceipt.providerRequestId', message: 'providerRequestId mismatch', code: 'PROVIDER_REQUEST_ID_MISMATCH' });
@@ -203,17 +208,21 @@ export function validateProviderAdmissionV02(
   } else {
     const b = input['finiteBounds'];
     rejectUnknownKeys(b, PROV_BOUNDS_KEYS, 'finiteBounds', errs);
-    const inT = validatePositiveNumber(b['maxInputTokens'], 'finiteBounds.maxInputTokens', errs);
-    const outT = validatePositiveNumber(b['maxOutputTokens'], 'finiteBounds.maxOutputTokens', errs);
+    const inT = validatePositiveInteger(b['maxInputTokens'], 'finiteBounds.maxInputTokens', errs);
+    const outT = validatePositiveInteger(b['maxOutputTokens'], 'finiteBounds.maxOutputTokens', errs);
+    const billableT = validatePositiveInteger(b['maxBillableTokens'], 'finiteBounds.maxBillableTokens', errs);
     const cost = validatePositiveNumber(b['maxCostUsd'], 'finiteBounds.maxCostUsd', errs);
     let iter: number | undefined;
     if (input['role'] === 'reviewer') {
       iter = validatePositiveInteger(b['maxReviewerIterations'], 'finiteBounds.maxReviewerIterations', errs);
+    } else if (b['maxReviewerIterations'] !== undefined) {
+      errs.push({ path: 'finiteBounds.maxReviewerIterations', message: 'Coder requests cannot carry reviewer iteration limits', code: 'ROLE_BOUND_FORBIDDEN' });
     }
-    if (inT !== undefined && outT !== undefined && cost !== undefined) {
+    if (inT !== undefined && outT !== undefined && billableT !== undefined && cost !== undefined) {
       finiteBounds = {
         maxInputTokens: inT,
         maxOutputTokens: outT,
+        maxBillableTokens: billableT,
         maxCostUsd: cost,
         maxReviewerIterations: iter,
       };

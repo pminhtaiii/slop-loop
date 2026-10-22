@@ -44,6 +44,7 @@ import {
   createTestAdmissionTaskStateV02,
   createTestAdmissionTransitionContextsV02,
   createTestAttemptReceiptV02,
+  createTestAttemptOutcomeValidationContextV02,
   createTestClaimClosureReceiptV02,
   createTestClaimReceiptV02,
   createTestExecutorIdentityV02,
@@ -54,6 +55,7 @@ import {
   createTestRepositoryAdmissionContextV02,
   createTestRepositoryAdmissionTrustedContextV02,
   createTestRepositoryOutcomeReceiptV02,
+  createTestReconciliationValidationContextV02,
   createTestTaskState,
   createTestUncertainReconciliationReceiptV02,
 } from '../support/uc03/state-fixtures.ts';
@@ -159,23 +161,7 @@ function assertOutcomeMatchesFlow(
   assert.equal(receipt.subjectKind, context.subjectKind);
   assert.equal(receipt.planApplicability, context.planApplicability);
 
-  const trusted = context.subjectKind === 'repository-action'
-    ? {
-        expectedClaimId: claim.claimId,
-        expectedAttemptId: attempt.attemptId,
-        expectedPlanApplicability: context.planApplicability,
-        expectedActionDigest: context.actionDigest,
-      }
-    : {
-        expectedClaimId: claim.claimId,
-        expectedAttemptId: attempt.attemptId,
-        expectedPlanApplicability: context.planApplicability,
-        expectedRequestContentDigest: context.requestContentDigest,
-        expectedProviderRequestId: context.providerRequestId,
-        expectedRole: context.role,
-        expectedProviderAdmissionReceiptRef: context.providerAdmissionReceipt.receiptId,
-        expectedBudgetRefs: context.budgetRefs,
-      };
+  const trusted = createTestAttemptOutcomeValidationContextV02(claim, attempt, context);
   const validation = validateAttemptOutcomeReceiptV02(receipt, trusted);
   assert.equal(validation.ok, true, `outcome receipt: ${JSON.stringify(validation)}`);
 
@@ -196,6 +182,9 @@ function assertOutcomeMatchesFlow(
 function assertReconciliationMatchesPredecessor(
   receipt: AttemptReconciliationReceiptV02,
   predecessor: AttemptOutcomeReceiptV02,
+  claim: ClaimReceiptV02,
+  attempt: AttemptReceiptV02,
+  context: AdmissionContextV02,
 ): void {
   assertIdentity(receipt.reconciliationId, 'reconciliationId');
   assertDigest(receipt.reconciliationDigest, 'reconciliationDigest');
@@ -205,10 +194,10 @@ function assertReconciliationMatchesPredecessor(
   assert.equal(receipt.attemptId, predecessor.attemptId);
   assert.equal(receipt.subjectKind, predecessor.subjectKind);
   assert.equal(receipt.planApplicability, predecessor.planApplicability);
-  const validation = validateAttemptReconciliationReceiptV02(receipt, {
-    predecessor: predecessor as unknown as Record<string, unknown>,
-    predecessorReceiptDigest: predecessor.receiptDigest,
-  });
+  const validation = validateAttemptReconciliationReceiptV02(
+    receipt,
+    createTestReconciliationValidationContextV02(receipt, predecessor, claim, attempt, context),
+  );
   assert.equal(validation.ok, true, `reconciliation receipt: ${JSON.stringify(validation)}`);
 }
 
@@ -377,15 +366,19 @@ test('Positive vector: observed-unsettled recovery uses a recorded predecessor a
 
   // Patch -> Repair is an allowed task transition and creates a real state conflict
   // after the attempt, before the observed effect receipt is recorded.
-  await flow.port.transition({ ...afterAttempt, stateVersion: afterAttempt.stateVersion + 1, node: 'Repair' }, afterAttempt.stateVersion);
+  const conflictingState = await flow.port.transition({ ...afterAttempt, stateVersion: afterAttempt.stateVersion + 1, node: 'Repair' }, afterAttempt.stateVersion);
   const outcomeReceipt = createTestRepositoryOutcomeReceiptV02(flow.claim, flow.attempt, flow.context);
   assertOutcomeMatchesFlow(outcomeReceipt, flow.claim, flow.attempt, flow.context);
   const recorded = await flow.port.recordOutcome(outcomeReceipt);
   assert.equal(recorded.outcome, 'recorded-unsettled');
   assert.equal(recorded.receiptId, outcomeReceipt.receiptId);
 
-  const reconciliation = createTestObservedReconciliationReceiptV02(outcomeReceipt);
-  assertReconciliationMatchesPredecessor(reconciliation, outcomeReceipt);
+  const reconciliation = createTestObservedReconciliationReceiptV02(outcomeReceipt, flow.claim, flow.attempt, flow.context, {
+    expectedCurrentTaskStateVersion: conflictingState.stateVersion,
+    expectedCurrentControlVersion: flow.attempt.postBeginControlVersion,
+    expectedCurrentEpoch: flow.attempt.epoch,
+  });
+  assertReconciliationMatchesPredecessor(reconciliation, outcomeReceipt, flow.claim, flow.attempt, flow.context);
   const beforeRecovery = await flow.port.loadTask(flow.context.taskId);
   const beforeLedgers = flow.port.getLedgers();
   const result = await flow.port.reconcileObservedOutcome(reconciliation);
@@ -426,8 +419,8 @@ test('Positive vector: reconcileUncertain consumes the exact recorded uncertain 
   assert.equal(recorded.outcome, 'uncertain');
   assert.equal(recorded.receiptId, outcomeReceipt.receiptId);
 
-  const reconciliation = createTestUncertainReconciliationReceiptV02(outcomeReceipt, { disposition: 'observed-and-accounted' });
-  assertReconciliationMatchesPredecessor(reconciliation, outcomeReceipt);
+  const reconciliation = createTestUncertainReconciliationReceiptV02(outcomeReceipt, flow.claim, flow.attempt, flow.context, { disposition: 'observed-and-accounted' });
+  assertReconciliationMatchesPredecessor(reconciliation, outcomeReceipt, flow.claim, flow.attempt, flow.context);
   const result = await flow.port.reconcileUncertain(reconciliation);
 
   assert.equal(result.outcome, 'settled');

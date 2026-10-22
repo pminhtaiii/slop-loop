@@ -1,15 +1,4 @@
-/**
- * UC-03 v0.2.0 Repository Admission Validation.
- *
- * Cohesive helper for validateRepositoryAdmissionV02:
- * - Canonical action digest verification
- * - Command view, admitted files, exclusions, scratch, and finite bounds
- * - Policy authority reference and policy evaluation receipt
- * - Action decision receipt (mandatory when APPROVAL_REQUIRED)
- * - Explicit pre-plan-diagnostic vs approved-plan applicability
- * - Test-only patch enforcement during pre-plan
- * - Strict cross-branch rejection
- */
+/** Validates v0.2 repository admission facts and branch-specific policy bounds. */
 
 import {
   computeActionDigest,
@@ -201,6 +190,10 @@ export function validateRepositoryAdmissionV02(
       const ad = input['actionDecisionReceipt'];
       rejectUnknownKeys(ad, AD_RECEIPT_KEYS, 'actionDecisionReceipt', errs);
       reqStrings(ad, ['decisionId', 'decisionDigest', 'actionDigest', 'evaluationReceiptRef'], 'actionDecisionReceipt', errs);
+      const reason = ad['reason'];
+      if (reason !== undefined && (typeof reason !== 'string' || !reason.trim() || reason.length > 512 || /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/u.test(reason))) {
+        errs.push({ path: 'actionDecisionReceipt.reason', message: 'reason must be bounded safe text', code: 'UNSAFE_TEXT' });
+      }
       const adGen = validatePositiveInteger(ad['decisionAuthorityGeneration'], 'actionDecisionReceipt.decisionAuthorityGeneration', errs);
       if (ad['status'] !== 'approved') errs.push({ path: 'actionDecisionReceipt.status', message: 'status must be approved', code: 'DECISION_NOT_APPROVED' });
       if (input['actionDigest'] && ad['actionDigest'] && ad['actionDigest'] !== input['actionDigest']) {

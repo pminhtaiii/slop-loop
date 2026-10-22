@@ -5,9 +5,6 @@ import type {
   AttemptReconciliationReceiptV02,
   ClaimClosureReceiptV02,
   ExecutorIdentityV02,
-  ProviderRequestOutcomeReceiptV02,
-  RepositoryActionOutcomeReceiptV02,
-  SubjectKindV02,
 } from './ports-v02.ts';
 import type { ValidationError, ValidationResult } from './types.ts';
 import {
@@ -18,15 +15,19 @@ import {
   validatePositiveInteger,
   validateStringArray,
 } from './validation/common.ts';
-import { validateProviderUsage } from './validation/provider/records.ts';
 import { protectValidator } from './admission-v02/snapshot.ts';
+import {
+  validateAttemptOutcomeReceiptV02,
+  validateProviderRequestOutcomeReceiptV02,
+  validateRepositoryActionOutcomeReceiptV02,
+} from './admission-v02/attempt-outcome-v02.ts';
 
 export type VersionProgressionKindV02 = 'claim' | 'begin-attempt';
 export interface VersionDomainSnapshotV02 { taskStateVersion: number; controlVersion: number; epoch: number; }
 export interface VersionProgressionV02 { kind: VersionProgressionKindV02; pre: VersionDomainSnapshotV02; post: VersionDomainSnapshotV02; isRepairPatch?: boolean; }
 export interface ClaimClosureValidationContextV02 { expectedTaskId?: string; expectedClaimId?: string; claim?: Record<string, unknown>; hasCommittedAttempt?: boolean; expectedAdapterIdentity?: string; expectedMinFencingGeneration?: number; expectedFencedExecutorIdentity?: ExecutorIdentityV02; }
 export interface AttemptValidationContextV02 { expectedTaskId?: string; expectedClaimId?: string; expectedAttemptId?: string; expectedEpoch?: number; isRepairPatch?: boolean; }
-export interface AttemptOutcomeValidationContextV02 { expectedClaimId?: string; expectedAttemptId?: string; expectedPlanApplicability?: string; expectedActionDigest?: string; expectedRequestContentDigest?: string; expectedProviderRequestId?: string; expectedRole?: 'coder' | 'reviewer'; expectedProviderAdmissionReceiptRef?: string; expectedBudgetRefs?: readonly string[]; }
+export type { AttemptOutcomeValidationContextV02 } from './admission-v02/attempt-outcome-v02.ts';
 export type CanonicalAttemptOutcomeReceiptV02 = AttemptOutcomeReceiptV02;
 export type CanonicalAttemptReconciliationReceiptV02 = AttemptReconciliationReceiptV02;
 export type { AttemptReconciliationValidationContextV02 } from './admission-v02/reconciliation-v02.ts';
@@ -34,12 +35,6 @@ export type { AttemptReconciliationValidationContextV02 } from './admission-v02/
 const EXEC_KEYS = ['adapterIdentity', 'processIncarnation', 'fencingGeneration', 'payloadDigest'] as const;
 const CLOSURE_KEYS = ['receiptId', 'receiptDigest', 'claimId', 'taskId', 'reason', 'fencedExecutorIdentity', 'unconsumedReservations'] as const;
 const ATT_KEYS = ['attemptId', 'claimId', 'taskId', 'executorIdentity', 'preAttemptTaskStateVersion', 'postBeginTaskStateVersion', 'preAttemptControlVersion', 'postBeginControlVersion', 'epoch', 'status'] as const;
-const S_PLAN = ['planBindingDigest', 'planDecisionRef'] as const;
-const BASE_OUT = ['receiptId', 'receiptDigest', 'claimId', 'attemptId', 'subjectKind', 'planApplicability', ...S_PLAN] as const;
-const REPO_OUT_KEYS = [...BASE_OUT, 'actionDigest', 'outcome', 'observedResultRevisionDigest'] as const;
-const PROV_OUT_KEYS = [...BASE_OUT, 'providerRequestId', 'requestContentDigest', 'role', 'outcome', 'observedUsage', 'providerAdmissionReceiptRef', 'budgetRefs'] as const;
-const PROV_CROSS = ['providerRequestId', 'requestContentDigest', 'role', 'observedUsage', 'providerAdmissionReceiptRef', 'admissionRef', 'budgetRefs', 'providerIdentity'] as const;
-const REPO_CROSS = ['actionDigest', 'observedResultRevisionDigest', 'commandView', 'action'] as const;
 
 const addErr = (errs: ValidationError[], path: string, message: string, code: string) => {
   errs.push({ path, message, code });
@@ -47,11 +42,6 @@ const addErr = (errs: ValidationError[], path: string, message: string, code: st
 
 const reqStrs = (o: Record<string, unknown>, keys: readonly string[], p: string, errs: ValidationError[]) => {
   for (const k of keys) validateNonEmptyString(o[k], p ? `${p}.${k}` : k, errs);
-};
-
-const chkCross = (o: Record<string, unknown>, keys: readonly string[], errs: ValidationError[]): boolean => {
-  for (const k of keys) if (o[k] !== undefined) { addErr(errs, k, `Forbidden: ${k}`, 'CROSS_BRANCH_FIELDS_FORBIDDEN'); return false; }
-  return true;
 };
 
 const matchProps = (o: Record<string, unknown>, t: Record<string, unknown> | undefined, m: Record<string, string>, errs: ValidationError[]) => {
@@ -150,75 +140,14 @@ function validateClaimClosureReceiptImpl(input: unknown, ctx?: ClaimClosureValid
   return errs.length > 0 ? { ok: false, errors: errs } : { ok: true, value: input as unknown as ClaimClosureReceiptV02 };
 }
 
-function checkOutcomeCommon(input: Record<string, unknown>, allowed: readonly string[], cross: readonly string[], expKind: SubjectKindV02, ctx: AttemptOutcomeValidationContextV02 | undefined, errs: ValidationError[]): boolean {
-  if (!chkCross(input, cross, errs)) return false;
-  rejectUnknownKeys(input, allowed, 'receipt', errs);
-  if (input['subjectKind'] !== expKind) addErr(errs, 'subjectKind', `Must be "${expKind}"`, 'INVALID_SUBJECT_KIND');
-  const app = input['planApplicability'];
-  if (app !== 'pre-plan-diagnostic' && app !== 'approved-plan') addErr(errs, 'planApplicability', 'Invalid planApplicability', 'INVALID_PLAN_APPLICABILITY');
-  const outcome = input['outcome'];
-  if (outcome !== 'observed' && outcome !== 'proven-not-dispatched' && outcome !== 'uncertain') addErr(errs, 'outcome', 'Invalid outcome', 'INVALID_OUTCOME');
-  reqStrs(input, ['receiptId', 'receiptDigest', 'claimId', 'attemptId'], '', errs);
-  if (app === 'approved-plan') reqStrs(input, S_PLAN, '', errs);
-  else if (app === 'pre-plan-diagnostic' && (input['planBindingDigest'] !== undefined || input['planDecisionRef'] !== undefined)) {
-    addErr(errs, 'planApplicability', 'Pre-plan cannot have plan fields', 'FABRICATED_PLAN_FIELDS_FORBIDDEN');
-  }
-  matchProps(input, ctx as Record<string, unknown> | undefined, { claimId: 'expectedClaimId', attemptId: 'expectedAttemptId', planApplicability: 'expectedPlanApplicability' }, errs);
-  return errs.length === 0;
-}
-
-function validateRepositoryActionOutcomeReceiptImpl(input: unknown, ctx?: AttemptOutcomeValidationContextV02): ValidationResult<RepositoryActionOutcomeReceiptV02> {
-  const errs: ValidationError[] = [];
-  if (!isPlainObject(input)) return { ok: false, errors: [{ path: 'receipt', message: 'Must be object', code: 'INVALID_TYPE' }] };
-  checkOutcomeCommon(input, REPO_OUT_KEYS, PROV_CROSS, 'repository-action', ctx, errs);
-  validateNonEmptyString(input['actionDigest'], 'actionDigest', errs);
-  if (ctx?.expectedActionDigest !== undefined && input['actionDigest'] !== ctx.expectedActionDigest) {
-    addErr(errs, 'actionDigest', 'actionDigest mismatch', 'ACTION_DIGEST_MISMATCH');
-  }
-  if (input['observedResultRevisionDigest'] !== undefined) validateNonEmptyString(input['observedResultRevisionDigest'], 'observedResultRevisionDigest', errs);
-  return errs.length > 0 ? { ok: false, errors: errs } : { ok: true, value: input as unknown as RepositoryActionOutcomeReceiptV02 };
-}
-
-function validateProviderRequestOutcomeReceiptImpl(input: unknown, ctx?: AttemptOutcomeValidationContextV02): ValidationResult<ProviderRequestOutcomeReceiptV02> {
-  const errs: ValidationError[] = [];
-  if (!isPlainObject(input)) return { ok: false, errors: [{ path: 'receipt', message: 'Must be object', code: 'INVALID_TYPE' }] };
-  checkOutcomeCommon(input, PROV_OUT_KEYS, REPO_CROSS, 'provider-request', ctx, errs);
-  const role = input['role'];
-  if (role !== 'coder' && role !== 'reviewer') addErr(errs, 'role', 'role must be coder/reviewer', 'INVALID_ROLE');
-  else if (ctx?.expectedRole !== undefined && role !== ctx.expectedRole) addErr(errs, 'role', 'role mismatch', 'ROLE_MISMATCH');
-  reqStrs(input, ['providerRequestId', 'requestContentDigest'], '', errs);
-  const adm = validateNonEmptyString(input['providerAdmissionReceiptRef'], 'providerAdmissionReceiptRef', errs);
-  if (input['budgetRefs'] === undefined) addErr(errs, 'budgetRefs', 'Budget references are required', 'MISSING_BUDGET_REFS');
-  else validateStringArray(input['budgetRefs'], 'budgetRefs', errs);
-  if (!ctx?.expectedProviderAdmissionReceiptRef || !ctx.expectedBudgetRefs || ctx.expectedBudgetRefs.length === 0) {
-    addErr(errs, 'trustedContext', 'Trusted provider admission and budget references are required', 'TRUSTED_CONTEXT_REQUIRED');
-  } else {
-    if (new Set(ctx.expectedBudgetRefs).size !== ctx.expectedBudgetRefs.length) addErr(errs, 'trustedContext.expectedBudgetRefs', 'Trusted budget references must be unique', 'INVALID_TRUSTED_CONTEXT');
-    if (adm !== ctx.expectedProviderAdmissionReceiptRef) addErr(errs, 'providerAdmissionReceiptRef', 'Admission receipt reference mismatch', 'PROVIDER_ADMISSION_REF_MISMATCH');
-    if (!Array.isArray(input['budgetRefs']) || input['budgetRefs'].length !== ctx.expectedBudgetRefs.length || !input['budgetRefs'].every((ref, i) => ref === ctx.expectedBudgetRefs?.[i])) {
-      addErr(errs, 'budgetRefs', 'Budget references mismatch', 'BUDGET_REFS_MISMATCH');
-    }
-  }
-  if (input['observedUsage'] !== undefined) {
-    const usage = validateProviderUsage(input['observedUsage']);
-    if (!usage.ok) errs.push(...usage.errors);
-  }
-  matchProps(input, ctx as Record<string, unknown> | undefined, { providerRequestId: 'expectedProviderRequestId', requestContentDigest: 'expectedRequestContentDigest' }, errs);
-  return errs.length > 0 ? { ok: false, errors: errs } : { ok: true, value: input as unknown as ProviderRequestOutcomeReceiptV02 };
-}
-
-function validateAttemptOutcomeReceiptImpl(input: unknown, ctx?: AttemptOutcomeValidationContextV02): ValidationResult<AttemptOutcomeReceiptV02> {
-  if (!isPlainObject(input)) return { ok: false, errors: [{ path: 'receipt', message: 'Must be object', code: 'INVALID_TYPE' }] };
-  const k = input['subjectKind'];
-  return k === 'repository-action' ? validateRepositoryActionOutcomeReceiptImpl(input, ctx) : k === 'provider-request' ? validateProviderRequestOutcomeReceiptImpl(input, ctx) : { ok: false, errors: [{ path: 'subjectKind', message: 'Invalid subjectKind', code: 'INVALID_SUBJECT_KIND' }] };
-}
-
 export const validateProtocolVersionProgressionV02 = protectValidator(validateProtocolVersionProgressionImpl);
 export const validateAttemptReceiptV02 = protectValidator(validateAttemptReceiptImpl);
 export const validateClaimClosureReceiptV02 = protectValidator(validateClaimClosureReceiptImpl);
-export const validateRepositoryActionOutcomeReceiptV02 = protectValidator(validateRepositoryActionOutcomeReceiptImpl);
-export const validateProviderRequestOutcomeReceiptV02 = protectValidator(validateProviderRequestOutcomeReceiptImpl);
-export const validateAttemptOutcomeReceiptV02 = protectValidator(validateAttemptOutcomeReceiptImpl);
+export {
+  validateRepositoryActionOutcomeReceiptV02,
+  validateProviderRequestOutcomeReceiptV02,
+  validateAttemptOutcomeReceiptV02,
+};
 export {
   computeReconciliationDigest,
   validateUncertainAttemptReconciliationReceiptV02,

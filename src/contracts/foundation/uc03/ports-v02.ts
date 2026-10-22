@@ -24,6 +24,7 @@ import type {
   ValidationError,
   AdmittedFile,
 } from './types.ts';
+import type { AttemptOutcomeReceiptV02, AttemptReconciliationReceiptV02 } from './attempt-receipts-v02.ts';
 
 export type { PortIdentity, PortProvenance };
 
@@ -140,15 +141,28 @@ export interface ProviderAdmissionReceiptV02 {
 /** Independent request, role, receipt, and budget facts from the trusted caller. */
 export interface ProviderAdmissionTrustedContextV02 {
   readonly subjectKind: 'provider-request';
+  readonly taskStateSchemaVersion: string;
+  readonly expectedTaskStateVersion: number;
+  readonly controlSchemaVersion: string;
+  readonly expectedControlVersion: number;
+  readonly expectedEpoch: number;
   readonly taskId: string;
   readonly runId: string;
+  readonly runnableNode: string;
+  readonly planApplicability: PlanApplicabilityV02;
+  readonly planBindingDigest?: string | undefined;
+  readonly planDecisionRef?: string | undefined;
+  readonly diagnosticPurpose?: string | undefined;
+  readonly taskCriteriaDigest?: string | undefined;
   readonly role: ProviderRoleV02;
   readonly providerRequestId: string;
   readonly requestContentDigest: string;
   readonly providerAdmissionReceiptRef: string;
   readonly providerAdmissionReceiptDigest: string;
+  readonly requestReservationReceipt: string;
   readonly budgetRefs: readonly string[];
   readonly providerIdentity: ProviderPricingIdentityV02;
+  readonly requestLimits: ProviderRequestLimitsV02;
 }
 
 export type AdmissionTrustedContextV02 =
@@ -172,6 +186,16 @@ export interface PatchFiniteBoundsV02 {
 export interface ProviderFiniteBoundsV02 {
   readonly maxInputTokens: number;
   readonly maxOutputTokens: number;
+  readonly maxBillableTokens: number;
+  readonly maxCostUsd: number;
+  readonly maxReviewerIterations?: number | undefined;
+}
+
+export interface ProviderRequestLimitsV02 {
+  readonly timeoutMs: number;
+  readonly maxInputTokens: number;
+  readonly maxOutputTokens: number;
+  readonly maxBillableTokens: number;
   readonly maxCostUsd: number;
   readonly maxReviewerIterations?: number | undefined;
 }
@@ -260,6 +284,7 @@ export interface ProviderAdmissionBaseContextV02 {
   readonly expectedEpoch: number;
   readonly taskId: string;
   readonly runId: string;
+  readonly runnableNode: string;
   readonly providerRequest: ProviderRequest;
   readonly providerRequestId: string;
   readonly role: ProviderRoleV02;
@@ -356,72 +381,22 @@ export interface ClaimClosureReceiptV02 {
   readonly unconsumedReservations: readonly string[];
 }
 
-export type AttemptOutcomeStatusV02 = 'observed' | 'proven-not-dispatched' | 'uncertain';
-
-export interface RepositoryActionOutcomeReceiptV02 {
-  readonly receiptId: string;
-  readonly receiptDigest: string;
-  readonly claimId: string;
-  readonly attemptId: string;
-  readonly subjectKind: 'repository-action';
-  readonly planApplicability: PlanApplicabilityV02;
-  readonly actionDigest: string;
-  readonly outcome: AttemptOutcomeStatusV02;
-  readonly observedResultRevisionDigest?: string | undefined;
-  readonly planBindingDigest?: string | undefined;
-  readonly planDecisionRef?: string | undefined;
-}
-
-export interface ProviderRequestOutcomeReceiptV02 {
-  readonly receiptId: string;
-  readonly receiptDigest: string;
-  readonly claimId: string;
-  readonly attemptId: string;
-  readonly subjectKind: 'provider-request';
-  readonly planApplicability: PlanApplicabilityV02;
-  readonly providerRequestId: string;
-  readonly requestContentDigest: string;
-  readonly role: ProviderRoleV02;
-  readonly outcome: AttemptOutcomeStatusV02;
-  readonly observedUsage?: ProviderUsage | undefined;
-  readonly providerAdmissionReceiptRef: string;
-  readonly budgetRefs: readonly string[];
-  readonly planBindingDigest?: string | undefined;
-  readonly planDecisionRef?: string | undefined;
-}
-
-export type AttemptOutcomeReceiptV02 =
-  | RepositoryActionOutcomeReceiptV02
-  | ProviderRequestOutcomeReceiptV02;
-
-export interface UncertainAttemptReconciliationReceiptV02 {
-  readonly reconciliationId: string;
-  readonly reconciliationDigest: string;
-  readonly reconciliationKind: 'uncertain-attempt';
-  readonly predecessorReceiptId: string;
-  readonly predecessorReceiptDigest: string;
-  readonly claimId: string;
-  readonly attemptId: string;
-  readonly subjectKind: SubjectKindV02;
-  readonly planApplicability: PlanApplicabilityV02;
-  readonly disposition: 'observed-and-accounted' | 'proven-not-dispatched';
-}
-
-export interface ObservedOutcomeReconciliationReceiptV02 {
-  readonly reconciliationId: string;
-  readonly reconciliationDigest: string;
-  readonly reconciliationKind: 'observed-unsettled';
-  readonly predecessorReceiptId: string;
-  readonly predecessorReceiptDigest: string;
-  readonly claimId: string;
-  readonly attemptId: string;
-  readonly subjectKind: SubjectKindV02;
-  readonly planApplicability: PlanApplicabilityV02;
-}
-
-export type AttemptReconciliationReceiptV02 =
-  | UncertainAttemptReconciliationReceiptV02
-  | ObservedOutcomeReconciliationReceiptV02;
+export type {
+  AttemptOutcomeStatusV02,
+  SafeReferenceV02,
+  AttemptVersionBindingsV02,
+  ProposedRevisionEffectV02,
+  ProposedTaskTransitionV02,
+  ProposedAccountingSettlementV02,
+  ProposedSettlementEffectsV02,
+  RepositoryActionOutcomeReceiptV02,
+  ProviderRequestOutcomeReceiptV02,
+  AttemptOutcomeReceiptV02,
+  ReconciliationKindV02,
+  UncertainAttemptReconciliationReceiptV02,
+  ObservedOutcomeReconciliationReceiptV02,
+  AttemptReconciliationReceiptV02,
+} from './attempt-receipts-v02.ts';
 
 export interface OutcomeRecordResultV02 {
   readonly outcome: 'settled' | 'recorded-unsettled' | 'already-recorded' | 'uncertain';

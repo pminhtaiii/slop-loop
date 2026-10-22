@@ -11,6 +11,7 @@ import {
   computeRequestContentDigest,
   validateProviderAdmissionV02 as validateProviderAdmissionBodyV02,
 } from './admission-v02/provider.ts';
+import { checkProviderAdmissionBindingsV02, isProviderAdmissionTrustedContextV02 } from './admission-v02/trusted-provider.ts';
 import { validateRepositoryAdmissionV02 as validateRepositoryAdmissionBodyV02 } from './admission-v02/repository.ts';
 import { immutableResult, safeSnapshot, unsafeInputResult } from './admission-v02/snapshot.ts';
 import type {
@@ -93,18 +94,7 @@ function trustedRepositoryContext(value: unknown): value is RepositoryAdmissionT
 }
 
 function trustedProviderContext(value: unknown): value is ProviderAdmissionTrustedContextV02 {
-  if (!isRecord(value) || value['subjectKind'] !== 'provider-request') return false;
-  if (!['taskId', 'runId', 'providerRequestId', 'requestContentDigest', 'providerAdmissionReceiptRef', 'providerAdmissionReceiptDigest']
-    .every((key) => isText(value[key]))) return false;
-  if (value['role'] !== 'coder' && value['role'] !== 'reviewer') return false;
-  if (!Array.isArray(value['budgetRefs']) || value['budgetRefs'].length === 0 || !(value['budgetRefs'] as unknown[]).every(isText) || new Set(value['budgetRefs']).size !== value['budgetRefs'].length) return false;
-  const identity = value['providerIdentity'];
-  return isRecord(identity) && ['providerId', 'modelId', 'configId', 'configVersion', 'pricingPolicyId', 'pricingPolicyVersion', 'issuerKeyRef']
-    .every((key) => isText(identity[key])) && isPositiveInteger(identity['decisionAuthorityGeneration']);
-}
-
-function equalArrays(left: unknown, right: unknown): boolean {
-  return Array.isArray(left) && Array.isArray(right) && left.length === right.length && left.every((v, i) => v === right[i]);
+  return isProviderAdmissionTrustedContextV02(value);
 }
 
 function checkRepositoryBindings(
@@ -170,8 +160,10 @@ function checkRepositoryBindings(
     const patch = action as unknown as ApplyPatchAction;
     const targets = input['targetPaths'];
     const actionTargets = patch.targetPaths;
-    const validTargets = Array.isArray(targets) && Array.isArray(actionTargets) && targets.every((p) =>
+    const validTargets = Array.isArray(targets) && Array.isArray(actionTargets) && targets.length > 0 &&
+      targets.length === actionTargets.length && targets.every((p) =>
       typeof p === 'string' && isCanonicalRelativePath(p) && !isProtectedPath(p)) &&
+      actionTargets.every((p) => typeof p === 'string' && isCanonicalRelativePath(p) && !isProtectedPath(p)) &&
       new Set(targets).size === targets.length && new Set(actionTargets).size === actionTargets.length &&
       [...targets].sort().every((p, i) => p === [...actionTargets].sort()[i]);
     if (!validTargets) errors.push(err('targetPaths', 'TARGET_PATHS_MISMATCH'));
@@ -180,34 +172,12 @@ function checkRepositoryBindings(
     const ceilings = trust.executionProfile.patchBounds;
     const patchBytes = new TextEncoder().encode(patch.patchContent).length;
     if (!isPositiveInteger(bounds['maxPatchBytes']) || bounds['maxPatchBytes'] > ceilings.maxPatchBytes || patchBytes > bounds['maxPatchBytes']) errors.push(err('finiteBounds.maxPatchBytes', 'PATCH_BYTE_LIMIT_EXCEEDED'));
-    if (!isPositiveInteger(bounds['maxChangedPaths']) || bounds['maxChangedPaths'] > ceilings.maxChangedPaths || !Array.isArray(targets) || targets.length > bounds['maxChangedPaths']) errors.push(err('finiteBounds.maxChangedPaths', 'PATCH_PATH_LIMIT_EXCEEDED'));
+    if (!isPositiveInteger(bounds['maxChangedPaths']) || bounds['maxChangedPaths'] > ceilings.maxChangedPaths || actionTargets.length > bounds['maxChangedPaths']) errors.push(err('finiteBounds.maxChangedPaths', 'PATCH_PATH_LIMIT_EXCEEDED'));
     if (trust.planApplicability === 'pre-plan-diagnostic') {
       if (trust.runnableNode !== 'Investigate' || !Array.isArray(targets) || !targets.every((p) => trust.allowedDiagnosticTestPaths.includes(p as string)) ||
         !isText(input['testPath']) || !targets.includes(input['testPath'])) errors.push(err('targetPaths', 'TEST_ONLY_PATCH_POLICY_VIOLATION'));
     }
   }
-  return errors;
-}
-
-function checkProviderBindings(input: Record<string, unknown>, trust: ProviderAdmissionTrustedContextV02): ValidationError[] {
-  const errors: ValidationError[] = [];
-  const request = input['providerRequest'] as Record<string, unknown>;
-  const receipt = input['providerAdmissionReceipt'] as Record<string, unknown>;
-  const identity = input['providerIdentity'] as Record<string, unknown>;
-  for (const [field, expected] of Object.entries({
-    taskId: trust.taskId, runId: trust.runId, role: trust.role, providerRequestId: trust.providerRequestId,
-    requestContentDigest: trust.requestContentDigest,
-  })) if (input[field] !== expected) errors.push(err(field, 'TRUSTED_CONTEXT_MISMATCH'));
-  for (const [field, expected] of Object.entries({
-    taskId: trust.taskId, runId: trust.runId, role: trust.role, providerRequestId: trust.providerRequestId,
-  })) if (request[field] !== expected) errors.push(err(`providerRequest.${field}`, 'PROVIDER_REQUEST_BINDING_MISMATCH'));
-  if (request['requestContentDigest'] !== undefined) errors.push(err('providerRequest.requestContentDigest', 'UNKNOWN_PROVIDER_REQUEST_FIELD'));
-  for (const [field, expected] of Object.entries({
-    receiptId: trust.providerAdmissionReceiptRef, receiptDigest: trust.providerAdmissionReceiptDigest,
-    providerRequestId: trust.providerRequestId, role: trust.role, requestContentDigest: trust.requestContentDigest,
-  })) if (receipt[field] !== expected) errors.push(err(`providerAdmissionReceipt.${field}`, 'PROVIDER_RECEIPT_BINDING_MISMATCH'));
-  if (computeCanonicalSha256(identity) !== computeCanonicalSha256(trust.providerIdentity)) errors.push(err('providerIdentity', 'PROVIDER_IDENTITY_MISMATCH'));
-  if (!equalArrays(input['budgetRefs'], trust.budgetRefs)) errors.push(err('budgetRefs', 'BUDGET_REFS_MISMATCH'));
   return errors;
 }
 
@@ -237,7 +207,7 @@ export function validateProviderAdmissionV02(
   if (!isRecord(inputCopy.value)) return immutableResult(fail('context', 'INVALID_TYPE'));
   const result = validateProviderAdmissionBodyV02(inputCopy.value, trustCopy.value);
   if (!result.ok) return immutableResult(result);
-  const errors = checkProviderBindings(inputCopy.value, trustCopy.value);
+  const errors = checkProviderAdmissionBindingsV02(inputCopy.value, trustCopy.value);
   return immutableResult(errors.length > 0 ? { ok: false, errors } : result);
 }
 
