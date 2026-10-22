@@ -127,6 +127,10 @@ T019 was independently accepted and integrated at source `26ade4ea581bdc2ae9ddbe
 
 The updated development base supplies UC-03 mock repair/replan consumers, but still supplies no real ApprovalStore, real shared admission/executor composition, selected production/host profile or actual kill/restore evidence. Phase 8 T019–T022 was separately authorized on 2026-10-22 (Asia/Saigon). T020–T022 remain blocked on external owner delivery and G-PROFILE/G-REAL/G-RESTART; real adapters, production profiles, durable atomicity, real execution and actual restart remain unverified. Full UC-05 acceptance remains unverified. Phase 7 independent Standards/Spec reviews reported zero findings and its paired drafts were published; the same pair will include accepted T019. Final scoped convergence/review, updated publication and exact-head CI remain separate contributor gates at this checkpoint. No issue closure, CodeRabbit request or PR merge is authorized.
 
+## T019 observed-tier review correction
+
+The pinned T019 Spec review at `22f991c` found one P2 local metadata defect: observed `localLevel` copies the fixture's planned preparation tier, so C02/C21 claim CLI evidence without a linked CLI witness and C23 understates its actual executable observation. T028 records correction of this authorized T019 behavior only. Planned and observed tiers must remain distinct; all required real/restart obligations remain not-run. Standards review found no violations. Revised source, affected validation and independent review are required before publishing T019; this finding does not authorize real adapters or successor integration.
+
 ## Agreed design register
 
 | ID | Proposal | Scope / approval state |

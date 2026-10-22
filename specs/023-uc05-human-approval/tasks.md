@@ -215,7 +215,7 @@ External delivery references are defined in plan.md; they are not foreign T-numb
 
 The first local MVP is contracts/cases/mocks plus US1's safe service/CLI. It is not production-ready without US2/US3 control and real external composition. Deliver each story through its own focused tests and retain prior regression coverage. After local T019, obtain actual external adapters for T020/T021 instead of implementing a second executor/store. Only observed acceptance plus review can release a scoped X05-GATE handoff.
 
-Original phase counts: setup 1; foundations 3; US1 3; US2 3; US3 3; US4 2; US5 3; integration/cross-cutting 4. The 22 original delivery tasks plus T023–T027 review corrections total 27 tasks. Planning quality never pre-completes implementation tasks or authorizes phase dispatch.
+Original phase counts: setup 1; foundations 3; US1 3; US2 3; US3 3; US4 2; US5 3; integration/cross-cutting 4. The 22 original delivery tasks plus T023–T028 review corrections total 28 tasks. Planning quality never pre-completes implementation tasks or authorizes phase dispatch.
 
 ## Review correction within authorized Phase 3
 
@@ -259,3 +259,11 @@ Post-publication T008–T009 correction (`3816056`, PR #75): user-authorized rev
   - **Owned Paths**: src/approvals/service.ts; tests/runtime/approvals/service.test.ts.
   - **Acceptance Checks**: Through the confirmed actual-service/mock-store seam, use different trusted contexts for old and replacement decisions; preserve the exact admitted old context that produced stale reasons and hash it for the old request's assessment. Do not reload a later context or accept exception-supplied authority. Retain request-context stale checks, safe error output, immutable history, waiting transaction and prior failures. Behavioral RED/GREEN, independent integration, affected context consistency and pinned review must pass. Correct the two verified status rows that omitted T026. No new contract, port, seam or later-phase authorization.
   - **Current Evidence**: Independent integration `84be181f68bf56481e53676ad44bc00dd45f1211`, two owned paths and 78 reviewable lines. Two behavioral RED/GREEN slices and independent repros cover canonical freshness and later request-context drift with distinct per-decision contexts, exactly one old-provider load and safe public errors. A private verdict-to-digest association retains the exact admitted old context; no public signature or context reload is added. New/prior independent repros pass 9/9, source approvals/contracts 317/317, source/emitted approvals 142/142, typecheck/build/scoped lint/whitespace pass. Coordinator runtime gate passes typecheck/full lint/build and 896 compiled tests. The verified status omissions are corrected with context refresh; contributor review/publication remains separate.
+
+## Review correction within authorized Phase 8
+
+- [ ] T028 Correct observed local evidence tiers in tests/runtime/approvals/acceptance.test.ts per FR-022/SC-008 and T019's result-identity contract.
+  - **Owner**: Trong Tan / local acceptance metadata.
+  - **Dependencies**: T019.
+  - **Owned Paths**: tests/runtime/approvals/acceptance.test.ts.
+  - **Acceptance Checks**: Keep the fixture's planned preparation tier separate from the observed tier of explicitly mapped witnesses. C02 policy, C21 direct service/presentation and C23 actual executable observations report their actual local levels; global unrelated CLI checks cannot promote a row's tier. Behavioral RED/GREEN rejects the previous mislabeled metadata and altered observed tiers. Preserve all 24 partial rows, 104 required real/restart vectors as not-run, unknown effect counts, comparable two-run results and fullAcceptance false. Independent integration, affected checks and revised pinned review pass. This corrects the verified T019 Spec P2 only; no product runtime, fixture/oracle amendment, new seam or T020–T022 implementation is released.
