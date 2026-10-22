@@ -21,11 +21,13 @@ Use the contributor workflow's compact reports to inspect session and assignment
 
 ## Isolated implementation
 
-For a new worker, reserve before dispatch and base its worktree on the SHA fetched from `origin/development`. The reserve command fails when that SHA is missing or differs from the parent checkout, so a stale local `development` or feature tip does not start the worker. T3 may create an app-owned worktree outside the managed directory; bind it only after it appears in Git's worktree inventory.
+For a new worker, fetch `origin/development` to select its full SHA, then reserve before dispatch. `reserve` itself performs one bounded fetch with an explicit `development` to `refs/remotes/origin/development` refspec, then requires that freshly fetched SHA, the supplied SHA, and parent `HEAD` to match exactly. A failed fetch or mismatch writes no reservation. If the remote advances between selecting the SHA and reserving it, select the new SHA and run the preflight again; `reserve` does not retry. A stale local `development` or feature tip cannot start the worker. T3 may create an app-owned worktree outside the managed directory; bind it only after it appears in Git's worktree inventory.
 
 ```powershell
 git -C <parent-checkout> fetch origin development
+if ($LASTEXITCODE -ne 0) { throw "Could not fetch origin/development; stop before reserving or dispatching." }
 $baseSha = git -C <parent-checkout> rev-parse refs/remotes/origin/development
+if ($LASTEXITCODE -ne 0 -or $baseSha -notmatch '^[0-9a-fA-F]{40,64}$') { throw "Could not read a full fetched origin/development SHA; stop before reserving or dispatching." }
 node scripts/agents/active-task.mjs reserve --owner <owner> --task <task> --session <date/session-id> --base-sha $baseSha --owned-path <repo-relative-path> --summary "<assignment>" --next "<next action>" --root <parent-checkout>
 git -C <parent-checkout> worktree add -b <unique-task-branch> <absolute-worker-path> $baseSha
 node scripts/agents/active-task.mjs bind --owner <owner> --task <task> --worktree <absolute-worker-path> --root <parent-checkout>

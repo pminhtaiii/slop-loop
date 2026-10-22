@@ -23,10 +23,12 @@ function taskArgs(owner = 'worker') {
   return ['--owner', owner, '--task', 'binding', '--session', session, '--summary', 'Bind before editing', '--next', 'Verify the worker worktree', '--owned-path', 'owned.txt'];
 }
 
-async function fixture(t, { remoteRef = true } = {}) {
+async function fixture(t, { originDevelopment = true } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'active-task-binding-'));
   const repo = join(directory, 'repo');
+  const origin = join(directory, 'origin.git');
   await mkdir(repo);
+  git(directory, ['init', '--quiet', '--bare', origin]);
   t.after(() => rm(directory, { recursive: true, force: true }));
   git(repo, ['init', '--quiet', '-b', 'development']);
   git(repo, ['config', 'core.autocrlf', 'false']);
@@ -37,10 +39,15 @@ async function fixture(t, { remoteRef = true } = {}) {
   git(repo, ['add', '.']);
   git(repo, ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--quiet', '-m', 'base']);
   const baseSha = git(repo, ['rev-parse', 'HEAD']);
-  if (remoteRef) git(repo, ['update-ref', 'refs/remotes/origin/development', baseSha]);
+  git(repo, ['remote', 'add', 'origin', origin]);
+  if (originDevelopment) {
+    git(repo, ['push', '--quiet', 'origin', 'HEAD:refs/heads/development']);
+    git(origin, ['symbolic-ref', 'HEAD', 'refs/heads/development']);
+    git(repo, ['fetch', '--quiet', '--no-tags', 'origin', '+refs/heads/development:refs/remotes/origin/development']);
+  }
   const worker = join(directory, 't3-app', 'worker');
   await mkdir(dirname(worker), { recursive: true });
-  return { directory, repo, worker, baseSha };
+  return { directory, origin, repo, worker, baseSha };
 }
 
 function reserve(root, baseSha, owner = 'worker') {
@@ -49,6 +56,17 @@ function reserve(root, baseSha, owner = 'worker') {
 
 function stateFile(repo) {
   return join(repo, '.agent-work/state/active-tasks.json');
+}
+
+async function advanceBareDevelopment(directory, origin, fileName) {
+  const peer = join(directory, 'origin-writer');
+  git(directory, ['clone', '--quiet', origin, peer]);
+  await writeFile(join(peer, fileName), 'origin moved ahead\n');
+  git(peer, ['add', fileName]);
+  git(peer, ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--quiet', '-m', 'advance bare origin']);
+  const remoteSha = git(peer, ['rev-parse', 'HEAD']);
+  git(peer, ['push', '--quiet', 'origin', 'HEAD:refs/heads/development']);
+  return remoteSha;
 }
 
 async function state(repo) {
@@ -61,7 +79,7 @@ async function addWorker(repo, worker, baseSha, branch = 'worker') {
 }
 
 test('reserve records only fetched-base provenance, then bind, edit, hand off, and verify through the public CLI', async (t) => {
-  const { repo, worker, baseSha } = await fixture(t);
+  const { directory, origin, repo, worker, baseSha } = await fixture(t);
   let result = reserve(repo, baseSha);
   assert.equal(result.status, 0, result.stderr);
   let entries = await state(repo);
@@ -73,13 +91,8 @@ test('reserve records only fetched-base provenance, then bind, edit, hand off, a
   assert.equal(entries[0].binding, undefined);
   assert.deepEqual(entries[0].reservation.base, { ref: 'refs/remotes/origin/development', sha: baseSha });
 
-  git(repo, ['checkout', '--quiet', '-b', 'remote-advance']);
-  await writeFile(join(repo, 'remote-advance.txt'), 'origin advanced after reservation\n');
-  git(repo, ['add', 'remote-advance.txt']);
-  git(repo, ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--quiet', '-m', 'advance fetched base']);
-  const advancedRemoteSha = git(repo, ['rev-parse', 'HEAD']);
-  git(repo, ['update-ref', 'refs/remotes/origin/development', advancedRemoteSha]);
-  git(repo, ['checkout', '--quiet', 'development']);
+  const advancedRemoteSha = await advanceBareDevelopment(directory, origin, 'remote-advance.txt');
+  assert.equal(git(repo, ['rev-parse', 'refs/remotes/origin/development']), baseSha, 'pushing to the local bare origin must leave the cached tracking ref stale');
   assert.notEqual(advancedRemoteSha, baseSha);
 
   await addWorker(repo, worker, baseSha);
@@ -123,18 +136,12 @@ test('reserve records only fetched-base provenance, then bind, edit, hand off, a
   assert.equal(JSON.parse(result.stdout).verified, true);
 });
 
-test('reserve refuses a stale local branch, a feature commit, an unrelated SHA, or an unavailable fetched ref', async (t) => {
+test('reserve refuses a stale local branch, a feature commit, an unrelated SHA, or an unavailable origin branch', async (t) => {
   for (const mode of ['stale-development', 'feature-commit', 'unrelated-sha', 'missing-fetched-ref']) {
-    const { repo, baseSha } = await fixture(t, { remoteRef: mode !== 'missing-fetched-ref' });
+    const { directory, origin, repo, baseSha } = await fixture(t, { originDevelopment: mode !== 'missing-fetched-ref' });
     let requestedSha = baseSha;
     if (mode === 'stale-development') {
-      git(repo, ['checkout', '--quiet', '-b', 'remote-update']);
-      await writeFile(join(repo, 'new-development.txt'), 'new remote tip\n');
-      git(repo, ['add', 'new-development.txt']);
-      git(repo, ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--quiet', '-m', 'new development tip']);
-      requestedSha = git(repo, ['rev-parse', 'HEAD']);
-      git(repo, ['update-ref', 'refs/remotes/origin/development', requestedSha]);
-      git(repo, ['checkout', '--quiet', 'development']);
+      await advanceBareDevelopment(directory, origin, 'new-development.txt');
       requestedSha = git(repo, ['rev-parse', 'refs/remotes/origin/development']);
     } else if (mode === 'feature-commit') {
       git(repo, ['checkout', '--quiet', '-b', 'feature']);
@@ -155,6 +162,31 @@ test('reserve refuses a stale local branch, a feature commit, an unrelated SHA, 
     assert.match(result.stderr, /origin\/development|fetched base|does not match/i);
     assert.deepEqual(await state(repo).catch((error) => error.code === 'ENOENT' ? [] : Promise.reject(error)), []);
   }
+});
+
+test('reserve fetches a remote advance before comparing the supplied SHA and leaves no stale-base reservation', async (t) => {
+  const { directory, origin, repo, baseSha } = await fixture(t);
+  const remoteSha = await advanceBareDevelopment(directory, origin, 'remote-advance.txt');
+  assert.equal(git(repo, ['rev-parse', 'HEAD']), baseSha);
+  assert.equal(git(repo, ['rev-parse', 'refs/remotes/origin/development']), baseSha);
+
+  const result = reserve(repo, baseSha);
+  assert.equal(result.status, 1, `stale fetched base unexpectedly reserved: ${result.stdout}`);
+  assert.match(result.stderr, /fetched origin\/development|match.*base|fetch/i);
+  assert.equal(git(repo, ['rev-parse', 'refs/remotes/origin/development']), remoteSha, 'reserve must refresh the tracking ref before comparing');
+  assert.deepEqual(await state(repo).catch((error) => error.code === 'ENOENT' ? [] : Promise.reject(error)), []);
+});
+
+test('reserve fails closed when fetch fails even though a valid stale tracking ref exists', async (t) => {
+  const { directory, repo, baseSha } = await fixture(t);
+  git(repo, ['remote', 'set-url', 'origin', join(directory, 'missing-origin.git')]);
+  assert.equal(git(repo, ['rev-parse', 'refs/remotes/origin/development']), baseSha);
+
+  const result = reserve(repo, baseSha);
+  assert.equal(result.status, 1, `reservation unexpectedly survived failed fetch: ${result.stdout}`);
+  assert.match(result.stderr, /fetch.*failed|could not fetch|failed to fetch/i);
+  assert.equal(git(repo, ['rev-parse', 'refs/remotes/origin/development']), baseSha, 'failed fetch must leave the old tracking ref untouched and unusable');
+  assert.deepEqual(await state(repo).catch((error) => error.code === 'ENOENT' ? [] : Promise.reject(error)), []);
 });
 
 test('bind rejects wrong-repository, unregistered, symlinked, and wrong-base worktrees without creating owners', async (t) => {

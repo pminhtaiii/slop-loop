@@ -92,16 +92,21 @@ async function inspectWorktree(repo, requestedPath, { requireBranch = false } = 
 
 export async function reserveBinding(repo, entry, baseSha) {
   if (!commitPattern.test(baseSha ?? '')) throw new Error('reserve requires a full fetched origin/development commit SHA.');
+  try {
+    git(repo.root, ['fetch', '--no-tags', 'origin', `+refs/heads/development:${originDevelopmentBaseRef}`]);
+  } catch {
+    throw new Error('Could not fetch origin/development; reservation was not written.');
+  }
   let currentHead;
   let fetchedHead;
   try {
     currentHead = git(repo.root, ['rev-parse', '--verify', 'HEAD^{commit}']).stdout.trim();
     fetchedHead = git(repo.root, ['rev-parse', '--verify', `${originDevelopmentBaseRef}^{commit}`]).stdout.trim();
   } catch {
-    throw new Error('Fetched origin/development is unavailable; fetch it before reserving work.');
+    throw new Error('Fetched origin/development is unavailable after fetch; reservation was not written.');
   }
   if (currentHead !== baseSha || fetchedHead !== baseSha) {
-    throw new Error('The parent checkout and fetched origin/development must both match the reserved base SHA exactly.');
+    throw new Error('The parent checkout and freshly fetched origin/development must both match the reserved base SHA exactly.');
   }
   return {
     schemaVersion: 1,
