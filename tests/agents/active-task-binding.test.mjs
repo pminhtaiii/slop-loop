@@ -85,6 +85,38 @@ async function addWorker(repo, worker, baseSha, branch = 'worker') {
   return realpath(worker);
 }
 
+async function schemaV1ReservationFixture(t, { bound = false } = {}) {
+  const { directory, repo, baseSha } = await fixture(t);
+  const coordinator = join(directory, 't3-app', 'coordinator');
+  const caller = join(directory, 't3-app', 'caller');
+  const worker = join(directory, 't3-app', 'worker');
+  await addWorker(repo, coordinator, baseSha, 'coordinator');
+  await addWorker(repo, caller, baseSha, 'caller');
+  await addWorker(repo, worker, baseSha, 'worker');
+  assert.equal(reserve(coordinator, baseSha).status, 0);
+
+  const path = stateFile(repo);
+  const entries = await state(repo);
+  const entry = entries[0];
+  entry.reservation.schemaVersion = 1;
+  delete entry.reservation.coordinatorCheckout;
+  delete entry.reservation.primaryCheckout;
+  if (bound) {
+    entry.checkout = await realpath(worker);
+    entry.binding = {
+      schemaVersion: 1,
+      identity: { owner: 'worker', task: 'binding', session },
+      checkout: entry.checkout,
+      repository: await realpath(join(repo, '.git')),
+      branch: 'refs/heads/worker',
+      base: { ...entry.reservation.base },
+      boundAt: new Date().toISOString(),
+    };
+  }
+  await writeFile(path, `${JSON.stringify(entries, null, 2)}\n`);
+  return { repo, caller, coordinator, worker, path };
+}
+
 test('reserve records only fetched-base provenance, then bind, edit, hand off, and verify through the public CLI', async (t) => {
   const { directory, origin, repo, worker, baseSha } = await fixture(t);
   let result = reserve(repo, baseSha);
@@ -177,6 +209,80 @@ test('reserved binding refuses the coordinator checkout even when called from an
     assert.match(result.stderr, /coordinator|primary/i);
     assert.equal(await readFile(stateFile(repo), 'utf8'), before);
   }
+});
+
+test('reserved binding protects a distinct coordinator and primary when called from a third worktree', async (t) => {
+  const { directory, repo, baseSha } = await fixture(t);
+  const coordinator = join(directory, 't3-app', 'coordinator');
+  const caller = join(directory, 't3-app', 'caller');
+  const worker = join(directory, 't3-app', 'worker');
+  await addWorker(repo, coordinator, baseSha, 'coordinator');
+  await addWorker(repo, caller, baseSha, 'caller');
+  await addWorker(repo, worker, baseSha, 'worker');
+  assert.equal(reserve(coordinator, baseSha).status, 0);
+
+  const before = await readFile(stateFile(repo), 'utf8');
+  for (const target of [coordinator, repo]) {
+    const result = invoke(caller, 'bind', '--owner', 'worker', '--task', 'binding', '--worktree', target);
+    assert.equal(result.status, 1, `reserved primary/coordinator unexpectedly bound: ${target}`);
+    assert.match(result.stderr, /coordinator|primary/i);
+    assert.equal(await readFile(stateFile(repo), 'utf8'), before, 'rejected protected-path binding must not mutate the registry');
+  }
+
+  const result = invoke(caller, 'bind', '--owner', 'worker', '--task', 'binding', '--worktree', worker);
+  assert.equal(result.status, 0, result.stderr);
+  const entry = (await state(repo))[0];
+  assert.equal(entry.reservation.coordinatorCheckout, await realpath(coordinator));
+  assert.equal(entry.reservation.primaryCheckout, await realpath(repo));
+  assert.equal(entry.binding.checkout, await realpath(worker));
+  assert.equal(entry.binding.base.sha, baseSha);
+});
+
+test('active schema-v1 reservations fail closed without changing the registry', async (t) => {
+  await t.test('bind cannot claim the old coordinator from a sibling checkout', async (t) => {
+    const { repo, caller, coordinator, path } = await schemaV1ReservationFixture(t);
+    const before = await readFile(path, 'utf8');
+    const result = invoke(caller, 'bind', '--owner', 'worker', '--task', 'binding', '--worktree', coordinator);
+    assert.equal(result.status, 1, 'schema-v1 reservation unexpectedly bound an old coordinator checkout');
+    assert.match(result.stderr, /schema.?v1|unsupported reservation|re-reserv/i);
+    assert.equal(await readFile(path, 'utf8'), before);
+    assert.equal((await state(repo)).length, 1, 'rejected binding must not create a duplicate owner');
+  });
+
+  await t.test('edit-ready rejects a bound v1 reservation without mutation', async (t) => {
+    const { repo, worker, path } = await schemaV1ReservationFixture(t, { bound: true });
+    const before = await readFile(path, 'utf8');
+    const result = invoke(worker, 'edit-ready', '--owner', 'worker', '--task', 'binding');
+    assert.equal(result.status, 1, 'schema-v1 edit-ready unexpectedly succeeded');
+    assert.match(result.stderr, /schema.?v1|unsupported reservation|re-reserv/i);
+    assert.equal(await readFile(path, 'utf8'), before);
+    assert.equal((await state(repo)).length, 1, 'rejected edit-ready must not create a duplicate owner');
+  });
+
+  await t.test('handoff rejects a bound v1 reservation without mutation', async (t) => {
+    const { repo, worker, path } = await schemaV1ReservationFixture(t, { bound: true });
+    const before = await readFile(path, 'utf8');
+    const result = invoke(worker, 'handoff', '--owner', 'worker', '--task', 'binding', '--result', 'Schema-v1 handoff must fail closed');
+    assert.equal(result.status, 1, 'schema-v1 handoff unexpectedly succeeded');
+    assert.match(result.stderr, /schema.?v1|unsupported reservation|re-reserv/i);
+    assert.equal(await readFile(path, 'utf8'), before);
+    assert.equal((await state(repo)).length, 1, 'rejected handoff must not create a duplicate owner');
+  });
+
+  await t.test('terminal v1 assignment remains readable as history', async (t) => {
+    const { repo, path } = await schemaV1ReservationFixture(t, { bound: true });
+    const entries = await state(repo);
+    entries[0].status = 'handed-off';
+    entries[0].result = 'Historical handoff retained';
+    await writeFile(path, `${JSON.stringify(entries, null, 2)}\n`);
+    const before = await readFile(path, 'utf8');
+    const result = invoke(repo, 'list', '--owner', 'worker', '--task', 'binding');
+    assert.equal(result.status, 0, result.stderr);
+    const listed = JSON.parse(result.stdout);
+    assert.equal(listed.length, 1);
+    assert.equal(listed[0].status, 'handed-off');
+    assert.equal(await readFile(path, 'utf8'), before);
+  });
 });
 
 test('reserved work edited before readiness cannot gain a pre-edit receipt or hand off', async (t) => {

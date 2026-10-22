@@ -18,6 +18,12 @@ function sameIdentity(left, right) {
   return isRecord(left) && left.owner === right.owner && left.task === right.task && left.session === right.session;
 }
 
+function rejectUnsupportedReservation(entry) {
+  if (entry.reservation?.schemaVersion === 1 && !['completed', 'handed-off', 'reassigned'].includes(entry.status)) {
+    throw new Error('Unsupported active schema-v1 reservation: the original coordinator checkout and readiness receipt were not recorded. The entry was left unchanged; preserve it and have the coordinator confirm the worker stopped before creating a replacement with a new owner/task. No path will be inferred.');
+  }
+}
+
 function validRepositoryPath(path) {
   return typeof path === 'string' && path.length > 0 && resolve(path) === path;
 }
@@ -46,6 +52,7 @@ function readinessMatches(entry, readiness) {
 }
 
 export function validateBindingMetadata(entry) {
+  rejectUnsupportedReservation(entry);
   if (entry.reservation !== undefined) {
     const reservation = entry.reservation;
     if (!isRecord(reservation) || ![1, 2].includes(reservation.schemaVersion) || !sameIdentity(reservation.identity, identity(entry)) ||
@@ -194,6 +201,7 @@ export async function bindAssignment(entry, repo, worktreePath) {
 }
 
 export function verifyReadinessReceipt(entry) {
+  rejectUnsupportedReservation(entry);
   if (entry.reservation?.schemaVersion !== 2) return null;
   if (!readinessMatches(entry, entry.readiness)) throw new Error('Reserved worker must complete edit-ready with a matching readiness receipt before handoff.');
   return entry.readiness;
