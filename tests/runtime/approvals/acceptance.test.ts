@@ -234,7 +234,7 @@ function compareCatalogs(left: LocalRun, right: LocalRun): { readonly comparable
           row.checks.some(check => check.file === file && check.name === name && check.status === 'pass')
           && run.checks.some(check => check.file === file && check.name === name && check.status === 'pass'));
     })
-    && run.checks.length === 192 && new Set(run.checks.map(check => `${check.file}:${check.name}`)).size === 192
+    && run.checks.length === 193 && new Set(run.checks.map(check => `${check.file}:${check.name}`)).size === 193
     && run.checks.every(check => check.status === 'pass');
   const same = complete(left) && complete(right) && comparable(left.identity, right.identity)
     && left.platform === right.platform && left.toolchain === right.toolchain && left.adapter === right.adapter
@@ -267,7 +267,7 @@ test('complete local catalogs compare without converting required not-run eviden
   const alteredPlan = { ...right, cases: right.cases.map(row => row.caseId === 'C02' ? { ...row, plannedPreparationLevel: 'unit' as const } : row) };
   assert.equal(compareCatalogs(alteredPlan, alteredPlan).comparable, false, 'planned tier remains independently bound to its fixture');
   assert.deepEqual(comparison, { comparable: true, fullAcceptance: false, requiredNotRun: 24 });
-  assert.equal(left.checks.length, 192, 'inherited check inventory changed; review the case mappings');
+  assert.equal(left.checks.length, 193, 'inherited check inventory changed; review the case mappings');
   assert.equal(left.cases.reduce((sum, row) => sum + row.requiredVectors.length, 0), 104);
   assert.equal(left.cases.every(row => row.observedFixtureEffectCounts === null && row.executionOutcome === 'not-observed'), true);
 

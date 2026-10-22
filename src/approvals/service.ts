@@ -161,7 +161,7 @@ export function createApprovalService(options: ApprovalServiceOptions): Approval
         observe: async record => {
           let classification: 'ALLOWED' | 'APPROVAL_REQUIRED' | 'FORBIDDEN' | 'unknown' = 'unknown';
           try {
-            const context = admitContext(await loadPort(() => options.context.loadForDecision(record.decisionId)));
+            const context = admitContext(await options.context.loadForDecision(record.decisionId));
             const classified = policy.classify(context.action, context.facts);
             classification = classified.ok ? classified.permission : 'unknown';
             await checkedView(record.decisionId, context);

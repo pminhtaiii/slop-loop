@@ -320,6 +320,41 @@ test('torn owner snapshots are unavailable and current context failure leaves im
   assert.equal(JSON.stringify(projected).includes('RAW_'), false);
 });
 
+test('failed history detail observation preserves binding validation and attempt admission on the same service', async () => {
+  const scenario = createRecoveryScenario();
+  const activity = createMockActivityControl(recoveryProfile);
+  let detailsUnavailable = false;
+  const service = createApprovalService({ taskId: 'task-1', profile: recoveryProfile, store: scenario.store, activity,
+    context: { loadForAction: async () => scenario.current(), loadForDecision: async () => {
+      if (detailsUnavailable) throw new Error('RAW_PROMPT');
+      return scenario.current();
+    } },
+    operator: { identity: { actorId: 'operator-1', channelRef: 'host-1', provenance: 'real' } }, now: () => '2026-10-21T00:00:00Z' });
+  await service.requestDecision(scenario.binding);
+  await scenario.decide(service);
+  const approved = { ...scenario.binding, status: 'approved' as const };
+  assert.equal(await service.validateBinding(approved), true);
+  const before = await service.list('task-1');
+  detailsUnavailable = true;
+  const projected = await entries(service);
+  assert.equal(projected.find(entry => entry['kind'] === 'resolution')?.['decision'], 'approved');
+  assert.equal(projected.find(entry => entry['kind'] === 'current-assessment')?.['status'], 'unknown');
+  assert.equal(projected.find(entry => entry['kind'] === 'current-assessment')?.['classification'], 'unknown');
+  assert.equal(JSON.stringify(projected).includes('RAW_'), false);
+  detailsUnavailable = false;
+  assert.deepEqual(await service.list('task-1'), before);
+  const valid = await service.validateBinding(approved);
+  const admitted = service.admitAttempt('attempt-after-history', {
+    schemaVersion: 'uc05-approval/0.1-draft', claimId: 'claim-after-history', actionId: scenario.current().action.actionId,
+    taskId: 'task-1', expectedControlVersion: before.control.version, expectedEpoch: before.control.epoch,
+    repositoryStateDigest: approved.repositoryRevisionDigest, policyIdentity: recoveryProfile.policyIdentity,
+    decisionRefs: [approved.decisionId], reservationRefs: ['reservation-1'], phase: 'claimed', resultRef: null,
+  });
+  assert.deepEqual({ valid, admitted }, { valid: true, admitted: true });
+  assert.equal(activity.inspectOutstanding('task-1')[0]?.attemptId, 'attempt-after-history');
+  assert.deepEqual(activity.readEffectLog(), []);
+});
+
 test('terminal journal provenance is identical for authority and history while later decision runs remain valid', async () => {
   const scenario = createRecoveryScenario();
   const service = scenario.service();
