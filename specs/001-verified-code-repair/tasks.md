@@ -348,13 +348,13 @@ Develop accepted contract mocks once (T004), then run independent story lanes on
   - **Owned Paths**: src/contracts/foundation/uc03/admission-v02.ts; src/contracts/foundation/uc03/ports-v02.ts; src/contracts/foundation/uc03.ts; tests/runtime/contract/atomic-admission.test.ts.
   - **Acceptance Checks**: Turn T037's valid-input assertions green. Keep the new v0.2 port declarations additive and leave v0.1 ports.ts signatures unchanged. Compute the canonical action and request-content digests from exact normalized payloads; validate command-view revision, admitted file digests, exclusions version, scratch identity, read-only fact, isolation reference and every applicable finite bound. Validate provider role, provider/config/pricing identity, decision-authority generation and explicit pre-plan-diagnostic versus approved-plan applicability. Reject missing/fabricated branch fields without filling them from another receipt. Typecheck, build, source tests, and emitted tests pass.
 
-- [ ] T039 [US3] Add runnable attempt/outcome-validator RED scaffolding in src/contracts/foundation/uc03/attempt-v02.ts and tests/runtime/contract/atomic-admission.test.ts.
+- [X] T039 [US3] Add runnable attempt/outcome-validator RED scaffolding in src/contracts/foundation/uc03/attempt-v02.ts and tests/runtime/contract/atomic-admission.test.ts.
   - **Owner**: Tai / shared-contracts lane.
   - **Dependencies**: T038.
   - **Owned Paths**: src/contracts/foundation/uc03/attempt-v02.ts; src/contracts/foundation/uc03.ts; tests/runtime/contract/atomic-admission.test.ts.
   - **Acceptance Checks**: Add additive v0.2 types and neutral validator exports for separate task/control version domains, claim closure, AttemptOutcomeReceipt repository/provider branches, and AttemptReconciliationReceipt uncertain/observed-unsettled branches. Add executable assertions for valid branch examples, S0/C0/E0 -> S0/C1/E0 -> attempt progression, missing fields, fabricated pre-plan fields and cross-branch fields. Keep existing v0.1 validators unchanged. RED must be assertion-only; typecheck and build pass.
 
-- [ ] T040 [US3] Implement v0.2 attempt, outcome, and reconciliation validators in src/contracts/foundation/uc03/attempt-v02.ts.
+- [X] T040 [US3] Implement v0.2 attempt, outcome, and reconciliation validators in src/contracts/foundation/uc03/attempt-v02.ts.
   - **Owner**: Tai / shared-contracts lane.
   - **Dependencies**: T039.
   - **Owned Paths**: src/contracts/foundation/uc03/attempt-v02.ts; src/contracts/foundation/uc03.ts; tests/runtime/contract/atomic-admission.test.ts.
