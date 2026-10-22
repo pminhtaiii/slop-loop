@@ -156,25 +156,37 @@ export function isMilestoneKind(value: string): value is MilestoneKind {
 }
 
 export function createMilestone(input: CreateMilestoneInput): Milestone {
-  if (!input || typeof input !== 'object' || !input.taskId || !input.runId || !input.node || !input.kind) {
+  try { return createMilestoneSnapshot(input); } catch {
+    throw new Error('Invalid report milestone');
+  }
+}
+
+function createMilestoneSnapshot(input: CreateMilestoneInput): Milestone {
+  if (!input || typeof input !== 'object') {
     throw new TypeError('Invalid milestone input');
   }
+  const taskId = input.taskId;
+  const runId = input.runId;
+  const node = input.node;
+  const rawKind = input.kind;
+  if (!taskId || !runId || !node || !rawKind) throw new TypeError('Invalid milestone input');
   const customPatterns = input.customSecretPatterns;
   const outcome = input.outcome ?? 'info';
   if (!isMilestoneOutcome(outcome)) throw new Error('Invalid report outcome');
-  const kind = safeMetadata(input.kind, 'kind', customPatterns);
+  const kind = safeMetadata(rawKind, 'kind', customPatterns);
   if (!isMilestoneKind(kind)) throw new Error('Invalid report milestone');
   const maxBytes = reportLimit(input.maxSummaryBytes, DEFAULT_SUMMARY_BYTES, DEFAULT_SUMMARY_BYTES, 'maxSummaryBytes');
   const timestamp = input.timestamp ?? new Date().toISOString();
   const milestoneId = input.milestoneId ?? `ms-${randomUUID()}`;
+  const summary = input.summary;
   return Object.freeze({
     milestoneId: safeMetadata(milestoneId, 'milestoneId', customPatterns),
-    taskId: safeMetadata(input.taskId, 'taskId', customPatterns),
-    runId: safeMetadata(input.runId, 'runId', customPatterns),
+    taskId: safeMetadata(taskId, 'taskId', customPatterns),
+    runId: safeMetadata(runId, 'runId', customPatterns),
     timestamp: safeMetadata(timestamp, 'timestamp', customPatterns),
-    node: safeMetadata(input.node, 'node', customPatterns),
+    node: safeMetadata(node, 'node', customPatterns),
     kind,
-    summary: boundedText(typeof input.summary === 'string' ? input.summary : '', maxBytes, customPatterns),
+    summary: boundedText(typeof summary === 'string' ? summary : '', maxBytes, customPatterns),
     outcome,
     evidenceRefs: safeReferences(input.evidenceRefs, 'evidenceRefs', customPatterns),
     details: sanitizeDetails(input.details, customPatterns),
