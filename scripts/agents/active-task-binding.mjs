@@ -1,6 +1,7 @@
-import { lstat, realpath } from 'node:fs/promises';
+import { realpath } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { git, samePath } from './agent-store.mjs';
+import { realDirectoryWithoutLinks } from './worktree-path.mjs';
 
 export const originDevelopmentBaseRef = 'refs/remotes/origin/development';
 const commitPattern = /^[0-9a-f]{40,64}$/i;
@@ -94,20 +95,8 @@ function pathKey(path) {
   return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
 }
 
-async function realDirectory(path, label) {
-  const requested = resolve(path);
-  const stat = await lstat(requested).catch((error) => {
-    if (error.code === 'ENOENT') throw new Error(`${label} does not exist.`);
-    throw error;
-  });
-  if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error(`${label} must be a real directory, not a symbolic link.`);
-  const canonical = await realpath(requested);
-  if (pathKey(canonical) !== pathKey(requested)) throw new Error(`${label} must not use a symbolic-link path.`);
-  return canonical;
-}
-
 async function inspectWorktree(repo, requestedPath, { requireBranch = false } = {}) {
-  const path = await realDirectory(requestedPath, 'Worker worktree');
+  const path = await realDirectoryWithoutLinks(requestedPath, 'Worker worktree');
   const record = repo.worktrees.find((item) => item.worktree && pathKey(item.worktree) === pathKey(path));
   if (!record || Object.hasOwn(record, 'locked') || Object.hasOwn(record, 'prunable')) throw new Error('Worker must be a registered, unlocked Git worktree in the same repository.');
   const top = await realpath(git(path, ['rev-parse', '--show-toplevel']).stdout.trim());
