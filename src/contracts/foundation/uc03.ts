@@ -13,3 +13,4 @@ export * from './uc03/validation/evidence.ts';
 export * from './uc03/validation/records.ts';
 export * from './uc03/ports-v02.ts';
 export * from './uc03/admission-v02.ts';
+export * from './uc03/attempt-v02.ts';

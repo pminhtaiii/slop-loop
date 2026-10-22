@@ -20,6 +20,25 @@ import {
   type ApplyPatchAction,
   type NormalizedAction,
   type ProviderRequest,
+  computeClaimClosureDigest,
+  computeAttemptOutcomeDigest,
+  computeReconciliationDigest,
+  validateProtocolVersionProgressionV02,
+  validateAttemptReceiptV02,
+  validateClaimClosureReceiptV02,
+  validateRepositoryActionOutcomeReceiptV02,
+  validateProviderRequestOutcomeReceiptV02,
+  validateAttemptOutcomeReceiptV02,
+  validateUncertainAttemptReconciliationReceiptV02,
+  validateObservedOutcomeReconciliationReceiptV02,
+  validateAttemptReconciliationReceiptV02,
+  type AttemptReceiptV02,
+  type ClaimClosureReceiptV02,
+  type ExecutorIdentityV02,
+  type RepositoryActionOutcomeReceiptV02,
+  type ProviderRequestOutcomeReceiptV02,
+  type UncertainAttemptReconciliationReceiptV02,
+  type ObservedOutcomeReconciliationReceiptV02,
 } from '../../../src/contracts/foundation/uc03.ts';
 import {
   computeRequestContentDigest,
@@ -674,4 +693,481 @@ test('No optional legacy context fallback: version 2 requires context', () => {
   assert.equal(validateRepositoryAdmissionV02(undefined).ok, false);
   assert.equal(validateProviderAdmissionV02(undefined).ok, false);
   assert.equal(validateAdmissionV02(undefined).ok, false);
+});
+
+
+// ============================================================================
+// UC-03 v0.2.0 Attempt, Outcome, and Reconciliation Tests (T039 / T040)
+// ============================================================================
+
+function createValidExecutor(): ExecutorIdentityV02 {
+  return {
+    adapterIdentity: 'adapter-worker-01',
+    processIncarnation: 'proc-100',
+    fencingGeneration: 1,
+    payloadDigest: 'sha256:payload00000000000000000000000000000000000000000000000000000000',
+  };
+}
+
+function createValidAttemptReceipt(): AttemptReceiptV02 {
+  return {
+    attemptId: 'att-001',
+    claimId: 'claim-001',
+    taskId: 'task-001',
+    executorIdentity: createValidExecutor(),
+    preAttemptTaskStateVersion: 0,
+    postBeginTaskStateVersion: 0,
+    preAttemptControlVersion: 1,
+    postBeginControlVersion: 2,
+    epoch: 0,
+    status: 'attempting',
+  };
+}
+
+function createValidClaimClosureReceipt(): ClaimClosureReceiptV02 {
+  const raw = {
+    receiptId: 'closure-001',
+    receiptDigest: 'sha256:placeholder',
+    claimId: 'claim-001',
+    taskId: 'task-001',
+    reason: 'worker cancelled before attempt dispatch',
+    fencedExecutorIdentity: createValidExecutor(),
+    unconsumedReservations: ['res-1'],
+  };
+  return {
+    ...raw,
+    receiptDigest: computeClaimClosureDigest(raw),
+  };
+}
+
+function createValidRepoOutcomeReceipt(planApplicability: 'approved-plan' | 'pre-plan-diagnostic' = 'approved-plan'): RepositoryActionOutcomeReceiptV02 {
+  const raw: any = {
+    receiptId: 'repo-out-001',
+    receiptDigest: 'sha256:placeholder',
+    claimId: 'claim-001',
+    attemptId: 'att-001',
+    subjectKind: 'repository-action',
+    planApplicability,
+    actionDigest: 'sha256:act00000000000000000000000000000000000000000000000000000000000000',
+    outcome: 'observed',
+  };
+  if (planApplicability === 'approved-plan') {
+    raw.planBindingDigest = 'sha256:binding000000000000000000000000000000000000000000000000000000';
+    raw.planDecisionRef = 'dec-001';
+  }
+  return {
+    ...raw,
+    receiptDigest: computeAttemptOutcomeDigest(raw),
+  };
+}
+
+function createValidProviderOutcomeReceipt(planApplicability: 'approved-plan' | 'pre-plan-diagnostic' = 'approved-plan', role: 'coder' | 'reviewer' = 'coder'): ProviderRequestOutcomeReceiptV02 {
+  const raw: any = {
+    receiptId: 'prov-out-001',
+    receiptDigest: 'sha256:placeholder',
+    claimId: 'claim-001',
+    attemptId: 'att-001',
+    subjectKind: 'provider-request',
+    planApplicability,
+    providerRequestId: 'req-001',
+    requestContentDigest: 'sha256:reqcontent000000000000000000000000000000000000000000000000000',
+    role,
+    outcome: 'observed',
+    providerAdmissionReceiptRef: 'adm-ref-001',
+  };
+  if (planApplicability === 'approved-plan') {
+    raw.planBindingDigest = 'sha256:binding000000000000000000000000000000000000000000000000000000';
+    raw.planDecisionRef = 'dec-001';
+  }
+  return {
+    ...raw,
+    receiptDigest: computeAttemptOutcomeDigest(raw),
+  };
+}
+
+function createValidUncertainReconciliationReceipt(): UncertainAttemptReconciliationReceiptV02 {
+  const predecessor = createValidRepoOutcomeReceipt();
+  (predecessor as any).outcome = 'uncertain';
+  const raw = {
+    reconciliationId: 'recon-001',
+    reconciliationDigest: 'sha256:placeholder',
+    reconciliationKind: 'uncertain-attempt' as const,
+    predecessorReceiptId: predecessor.receiptId,
+    claimId: predecessor.claimId,
+    attemptId: predecessor.attemptId,
+    subjectKind: predecessor.subjectKind,
+    planApplicability: predecessor.planApplicability,
+    disposition: 'observed-and-accounted' as const,
+  };
+  return {
+    ...raw,
+    reconciliationDigest: computeReconciliationDigest(raw),
+  };
+}
+
+function createValidObservedReconciliationReceipt(): ObservedOutcomeReconciliationReceiptV02 {
+  const predecessor = createValidRepoOutcomeReceipt();
+  const raw = {
+    reconciliationId: 'recon-002',
+    reconciliationDigest: 'sha256:placeholder',
+    reconciliationKind: 'observed-unsettled' as const,
+    predecessorReceiptId: predecessor.receiptId,
+    claimId: predecessor.claimId,
+    attemptId: predecessor.attemptId,
+    subjectKind: predecessor.subjectKind,
+    planApplicability: predecessor.planApplicability,
+  };
+  return {
+    ...raw,
+    reconciliationDigest: computeReconciliationDigest(raw),
+  };
+}
+
+// ----------------------------------------------------------------------------
+// Version Progression Tests
+// ----------------------------------------------------------------------------
+
+test('Positive: protocol version progression claim (S0/C0/E0 -> S0/C1/E0)', () => {
+  const res = validateProtocolVersionProgressionV02({
+    kind: 'claim',
+    pre: { taskStateVersion: 0, controlVersion: 0, epoch: 0 },
+    post: { taskStateVersion: 0, controlVersion: 1, epoch: 0 },
+  });
+  assert.equal(res.ok, true, 'Valid claim progression must pass');
+});
+
+test('Positive: protocol version progression non-repair begin-attempt (S0/C1/E0 -> S0/C2/E0)', () => {
+  const res = validateProtocolVersionProgressionV02({
+    kind: 'begin-attempt',
+    pre: { taskStateVersion: 0, controlVersion: 1, epoch: 0 },
+    post: { taskStateVersion: 0, controlVersion: 2, epoch: 0 },
+    isRepairPatch: false,
+  });
+  assert.equal(res.ok, true, 'Valid non-repair begin-attempt progression must pass');
+});
+
+test('Positive: protocol version progression repair begin-attempt (S0/C1/E0 -> S1/C2/E0)', () => {
+  const res = validateProtocolVersionProgressionV02({
+    kind: 'begin-attempt',
+    pre: { taskStateVersion: 0, controlVersion: 1, epoch: 0 },
+    post: { taskStateVersion: 1, controlVersion: 2, epoch: 0 },
+    isRepairPatch: true,
+  });
+  assert.equal(res.ok, true, 'Valid repair begin-attempt progression must pass');
+});
+
+test('Negative: progression rejects epoch drift (E0 -> E1)', () => {
+  const res = validateProtocolVersionProgressionV02({
+    kind: 'claim',
+    pre: { taskStateVersion: 0, controlVersion: 0, epoch: 0 },
+    post: { taskStateVersion: 0, controlVersion: 1, epoch: 1 },
+  });
+  assert.equal(res.ok, false);
+});
+
+test('Negative: progression rejects control version skip (C0 -> C2)', () => {
+  const res = validateProtocolVersionProgressionV02({
+    kind: 'claim',
+    pre: { taskStateVersion: 0, controlVersion: 0, epoch: 0 },
+    post: { taskStateVersion: 0, controlVersion: 2, epoch: 0 },
+  });
+  assert.equal(res.ok, false);
+});
+
+test('Negative: progression rejects task version mutation on claim (S0 -> S1)', () => {
+  const res = validateProtocolVersionProgressionV02({
+    kind: 'claim',
+    pre: { taskStateVersion: 0, controlVersion: 0, epoch: 0 },
+    post: { taskStateVersion: 1, controlVersion: 1, epoch: 0 },
+  });
+  assert.equal(res.ok, false);
+});
+
+test('Negative: progression rejects task version mutation on non-repair begin-attempt', () => {
+  const res = validateProtocolVersionProgressionV02({
+    kind: 'begin-attempt',
+    pre: { taskStateVersion: 0, controlVersion: 1, epoch: 0 },
+    post: { taskStateVersion: 1, controlVersion: 2, epoch: 0 },
+    isRepairPatch: false,
+  });
+  assert.equal(res.ok, false);
+});
+
+test('Negative: progression rejects task version stagnation on repair begin-attempt', () => {
+  const res = validateProtocolVersionProgressionV02({
+    kind: 'begin-attempt',
+    pre: { taskStateVersion: 0, controlVersion: 1, epoch: 0 },
+    post: { taskStateVersion: 0, controlVersion: 2, epoch: 0 },
+    isRepairPatch: true,
+  });
+  assert.equal(res.ok, false);
+});
+
+// ----------------------------------------------------------------------------
+// Attempt Receipt Tests
+// ----------------------------------------------------------------------------
+
+test('Positive: valid AttemptReceiptV02 passes with matching context', () => {
+  const receipt = createValidAttemptReceipt();
+  const res = validateAttemptReceiptV02(receipt, {
+    expectedTaskId: 'task-001',
+    expectedClaimId: 'claim-001',
+    expectedAttemptId: 'att-001',
+    expectedEpoch: 0,
+    isRepairPatch: false,
+  });
+  assert.equal(res.ok, true, 'Valid attempt receipt must pass');
+});
+
+test('Negative: attempt receipt rejects invalid status', () => {
+  const receipt = { ...createValidAttemptReceipt(), status: 'completed' };
+  const res = validateAttemptReceiptV02(receipt);
+  assert.equal(res.ok, false);
+});
+
+test('Negative: attempt receipt rejects control version non-advancement', () => {
+  const receipt = { ...createValidAttemptReceipt(), postBeginControlVersion: 1 };
+  const res = validateAttemptReceiptV02(receipt);
+  assert.equal(res.ok, false);
+});
+
+test('Negative: attempt receipt rejects context attemptId mismatch', () => {
+  const receipt = createValidAttemptReceipt();
+  const res = validateAttemptReceiptV02(receipt, { expectedAttemptId: 'att-mismatch' });
+  assert.equal(res.ok, false);
+});
+
+// ----------------------------------------------------------------------------
+// Claim Closure Receipt Tests
+// ----------------------------------------------------------------------------
+
+test('Positive: valid ClaimClosureReceiptV02 passes with proof of no attempt', () => {
+  const closure = createValidClaimClosureReceipt();
+  const res = validateClaimClosureReceiptV02(closure, {
+    expectedTaskId: 'task-001',
+    expectedClaimId: 'claim-001',
+    claim: { claimId: 'claim-001', taskId: 'task-001', status: 'claimed' },
+    hasCommittedAttempt: false,
+    expectedAdapterIdentity: 'adapter-worker-01',
+    expectedMinFencingGeneration: 1,
+  });
+  assert.equal(res.ok, true, 'Valid claim closure receipt must pass');
+});
+
+test('Negative: claim closure strictly forbids attemptId', () => {
+  const closure = { ...createValidClaimClosureReceipt(), attemptId: 'att-forbidden' };
+  const res = validateClaimClosureReceiptV02(closure);
+  assert.equal(res.ok, false, 'Claim closure must forbid attemptId');
+});
+
+test('Negative: claim closure rejects cross-branch fields', () => {
+  const closure = { ...createValidClaimClosureReceipt(), actionDigest: 'sha256:act00000000000000000000000000000000000000000000000000000000000000' };
+  const res = validateClaimClosureReceiptV02(closure);
+  assert.equal(res.ok, false, 'Claim closure must forbid cross-branch fields');
+});
+
+test('Negative: claim closure rejects if attempt already committed in context', () => {
+  const closure = createValidClaimClosureReceipt();
+  const res = validateClaimClosureReceiptV02(closure, {
+    hasCommittedAttempt: true,
+  });
+  assert.equal(res.ok, false, 'Proof of no attempt violated');
+});
+
+test('Negative: claim closure rejects fencing generation below minimum', () => {
+  const closure = createValidClaimClosureReceipt();
+  const res = validateClaimClosureReceiptV02(closure, {
+    expectedMinFencingGeneration: 5,
+  });
+  assert.equal(res.ok, false, 'Fencing generation too low must deny');
+});
+
+// ----------------------------------------------------------------------------
+// Attempt Outcome Receipt Tests
+// ----------------------------------------------------------------------------
+
+test('Positive: valid RepositoryActionOutcomeReceiptV02 (approved-plan) passes', () => {
+  const receipt = createValidRepoOutcomeReceipt('approved-plan');
+  const res = validateRepositoryActionOutcomeReceiptV02(receipt, {
+    expectedClaimId: 'claim-001',
+    expectedAttemptId: 'att-001',
+    expectedPlanApplicability: 'approved-plan',
+  });
+  assert.equal(res.ok, true, 'Valid repo outcome (approved-plan) must pass');
+});
+
+test('Positive: valid RepositoryActionOutcomeReceiptV02 (pre-plan-diagnostic) passes', () => {
+  const receipt = createValidRepoOutcomeReceipt('pre-plan-diagnostic');
+  const res = validateRepositoryActionOutcomeReceiptV02(receipt, {
+    expectedClaimId: 'claim-001',
+    expectedAttemptId: 'att-001',
+    expectedPlanApplicability: 'pre-plan-diagnostic',
+  });
+  assert.equal(res.ok, true, 'Valid repo outcome (pre-plan) must pass');
+});
+
+test('Positive: valid ProviderRequestOutcomeReceiptV02 (approved-plan coder) passes', () => {
+  const receipt = createValidProviderOutcomeReceipt('approved-plan', 'coder');
+  const res = validateProviderRequestOutcomeReceiptV02(receipt, {
+    expectedClaimId: 'claim-001',
+    expectedAttemptId: 'att-001',
+    expectedProviderRequestId: 'req-001',
+  });
+  assert.equal(res.ok, true, 'Valid provider outcome must pass');
+});
+
+test('Positive: valid ProviderRequestOutcomeReceiptV02 (pre-plan reviewer) passes', () => {
+  const receipt = createValidProviderOutcomeReceipt('pre-plan-diagnostic', 'reviewer');
+  const res = validateProviderRequestOutcomeReceiptV02(receipt);
+  assert.equal(res.ok, true, 'Valid provider pre-plan reviewer outcome must pass');
+});
+
+test('Positive: validateAttemptOutcomeReceiptV02 tagged union dispatch', () => {
+  const repoRes = validateAttemptOutcomeReceiptV02(createValidRepoOutcomeReceipt());
+  const provRes = validateAttemptOutcomeReceiptV02(createValidProviderOutcomeReceipt());
+  assert.equal(repoRes.ok, true);
+  assert.equal(provRes.ok, true);
+});
+
+test('Negative: repository outcome rejects provider cross-branch fields', () => {
+  const receipt = { ...createValidRepoOutcomeReceipt(), providerRequestId: 'req-cross-branch' };
+  const res = validateRepositoryActionOutcomeReceiptV02(receipt);
+  assert.equal(res.ok, false, 'Provider field forbidden on repository outcome');
+});
+
+test('Negative: pre-plan repository outcome rejects fabricated plan fields', () => {
+  const receipt = {
+    ...createValidRepoOutcomeReceipt('pre-plan-diagnostic'),
+    planBindingDigest: 'sha256:fabricated0000000000000000000000000000000000000000000000000000',
+  };
+  const res = validateRepositoryActionOutcomeReceiptV02(receipt);
+  assert.equal(res.ok, false, 'Pre-plan outcome must reject fabricated plan fields');
+});
+
+test('Negative: provider outcome rejects repository cross-branch fields', () => {
+  const receipt = { ...createValidProviderOutcomeReceipt(), actionDigest: 'sha256:act00000000000000000000000000000000000000000000000000000000000000' };
+  const res = validateProviderRequestOutcomeReceiptV02(receipt);
+  assert.equal(res.ok, false, 'Repository field forbidden on provider outcome');
+});
+
+test('Negative: provider outcome rejects invalid role', () => {
+  const receipt = { ...createValidProviderOutcomeReceipt(), role: 'invalid-role' };
+  const res = validateProviderRequestOutcomeReceiptV02(receipt);
+  assert.equal(res.ok, false, 'Invalid role must deny');
+});
+
+test('Negative: provider outcome rejects missing admission ref', () => {
+  const receipt = { ...createValidProviderOutcomeReceipt() };
+  delete (receipt as any).providerAdmissionReceiptRef;
+  delete (receipt as any).admissionRef;
+  const res = validateProviderRequestOutcomeReceiptV02(receipt);
+  assert.equal(res.ok, false, 'Missing admission ref must deny');
+});
+
+// ----------------------------------------------------------------------------
+// Attempt Reconciliation Receipt Tests
+// ----------------------------------------------------------------------------
+
+test('Positive: valid UncertainAttemptReconciliationReceiptV02 passes', () => {
+  const receipt = createValidUncertainReconciliationReceipt();
+  const res = validateUncertainAttemptReconciliationReceiptV02(receipt, {
+    predecessor: {
+      receiptId: receipt.predecessorReceiptId,
+      claimId: receipt.claimId,
+      attemptId: receipt.attemptId,
+      subjectKind: receipt.subjectKind,
+      planApplicability: receipt.planApplicability,
+      outcome: 'uncertain',
+    },
+  });
+  assert.equal(res.ok, true, 'Valid uncertain reconciliation must pass');
+});
+
+test('Positive: valid ObservedOutcomeReconciliationReceiptV02 passes', () => {
+  const receipt = createValidObservedReconciliationReceipt();
+  const res = validateObservedOutcomeReconciliationReceiptV02(receipt, {
+    predecessor: {
+      receiptId: receipt.predecessorReceiptId,
+      claimId: receipt.claimId,
+      attemptId: receipt.attemptId,
+      subjectKind: receipt.subjectKind,
+      planApplicability: receipt.planApplicability,
+      outcome: 'observed',
+    },
+  });
+  assert.equal(res.ok, true, 'Valid observed reconciliation must pass');
+});
+
+test('Positive: validateAttemptReconciliationReceiptV02 union dispatch', () => {
+  const uncRes = validateAttemptReconciliationReceiptV02(createValidUncertainReconciliationReceipt(), {
+    predecessor: { outcome: 'uncertain', receiptId: 'repo-out-001', claimId: 'claim-001', attemptId: 'att-001', subjectKind: 'repository-action', planApplicability: 'approved-plan' },
+  });
+  const obsRes = validateAttemptReconciliationReceiptV02(createValidObservedReconciliationReceipt(), {
+    predecessor: { outcome: 'observed', receiptId: 'repo-out-001', claimId: 'claim-001', attemptId: 'att-001', subjectKind: 'repository-action', planApplicability: 'approved-plan' },
+  });
+  assert.equal(uncRes.ok, true);
+  assert.equal(obsRes.ok, true);
+});
+
+test('Negative: uncertain reconciliation rejects predecessor with non-uncertain outcome', () => {
+  const receipt = createValidUncertainReconciliationReceipt();
+  const res = validateUncertainAttemptReconciliationReceiptV02(receipt, {
+    predecessor: {
+      receiptId: receipt.predecessorReceiptId,
+      outcome: 'observed', // Must be uncertain!
+    },
+  });
+  assert.equal(res.ok, false, 'Predecessor not uncertain must deny');
+});
+
+test('Negative: observed reconciliation rejects predecessor with non-observed outcome', () => {
+  const receipt = createValidObservedReconciliationReceipt();
+  const res = validateObservedOutcomeReconciliationReceiptV02(receipt, {
+    predecessor: {
+      receiptId: receipt.predecessorReceiptId,
+      outcome: 'uncertain', // Must be observed!
+    },
+  });
+  assert.equal(res.ok, false, 'Predecessor not observed must deny');
+});
+
+test('Negative: observed reconciliation forbids outcome rewrite or disposition', () => {
+  const receipt = { ...createValidObservedReconciliationReceipt(), disposition: 'observed-and-accounted' };
+  const res = validateObservedOutcomeReconciliationReceiptV02(receipt);
+  assert.equal(res.ok, false, 'Observed reconciliation must forbid outcome rewrite');
+});
+
+test('Negative: reconciliation rejects predecessor receipt ID mismatch', () => {
+  const receipt = createValidUncertainReconciliationReceipt();
+  const res = validateUncertainAttemptReconciliationReceiptV02(receipt, {
+    predecessor: {
+      receiptId: 'receipt-mismatch',
+      outcome: 'uncertain',
+    },
+  });
+  assert.equal(res.ok, false, 'Predecessor ID mismatch must deny');
+});
+
+// ----------------------------------------------------------------------------
+// Canonical Digest Helpers Tests
+// ----------------------------------------------------------------------------
+
+test('Canonical digest helpers strip their digest field and produce deterministic sha256', () => {
+  const closure = createValidClaimClosureReceipt();
+  const d1 = computeClaimClosureDigest(closure);
+  const d2 = computeClaimClosureDigest({ ...closure, receiptDigest: 'sha256:different' });
+  assert.equal(d1, d2, 'computeClaimClosureDigest strips receiptDigest');
+  assert.match(d1, /^sha256:[0-9a-f]{64}$/);
+
+  const outcome = createValidRepoOutcomeReceipt();
+  const od1 = computeAttemptOutcomeDigest(outcome);
+  const od2 = computeAttemptOutcomeDigest({ ...outcome, receiptDigest: 'sha256:different' });
+  assert.equal(od1, od2, 'computeAttemptOutcomeDigest strips receiptDigest');
+  assert.match(od1, /^sha256:[0-9a-f]{64}$/);
+
+  const recon = createValidUncertainReconciliationReceipt();
+  const rd1 = computeReconciliationDigest(recon);
+  const rd2 = computeReconciliationDigest({ ...recon, reconciliationDigest: 'sha256:different' });
+  assert.equal(rd1, rd2, 'computeReconciliationDigest strips reconciliationDigest');
+  assert.match(rd1, /^sha256:[0-9a-f]{64}$/);
 });
