@@ -62,6 +62,10 @@ T014–T015 prepare C17–C20 through actual public service/control exports and 
 
 The continuation API retains minimal claimed/blocked/unavailable outcomes. Separately authorized T016–T018 add safe history and CLI projections for available committed evidence and explicit current/owner observations. Unknown cancellation/execution or accounting prerequisites are not invented. Actual durable transactions, real pause/claim serialization, isolated execution and kill/restore evidence remain T020/T021 and their external gates.
 
+## T019 local catalog evidence
+
+The UC-scoped `tests/runtime/approvals/acceptance.test.ts` now accounts for C01–C24 through precise partial scopes and observed named checks from two fresh subprocess runs. All 104 required real/restart vectors remain explicitly not-run; their effect/dispatch counts are unobserved, never copied from expected oracles. Matching local catalogs are comparable without establishing full acceptance. The test records immutable identities, safe command/exit metadata and diagnostic stream digests; raw streams and oracle bodies are excluded. Comparator regressions reject missing/changed identities, cases, vectors or witnesses, failed or missing evidence, approval-only claims and fabricated effects/completion. At integrated source `26ade4ea581bdc2ae9ddbe918850fe4aab725b14`, the full runtime gate passed typecheck, full lint, clean build and 1098 compiled tests; contributor tests passed 227/227 (exit 0). T019 source/emitted focused checks pass 2/2 each; each catalog run observes all 192 inherited approval checks in a fresh subprocess. Phase 8 T019–T022 was separately authorized on 2026-10-22 (Asia/Saigon). T020–T022 remain blocked on external owner delivery and G-PROFILE/G-REAL/G-RESTART; real adapters, production profiles, durable atomicity, real execution and actual restart remain unverified. Full UC-05 acceptance remains unverified.
+
 ## Human approval matrix mapping
 
 | Matrix row | Required cases |
