@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
@@ -11,7 +11,7 @@ const sessionCli = join(root, 'scripts/agents/agent-work.mjs');
 const taskCli = join(root, 'scripts/agents/active-task.mjs');
 
 async function fixture(t) {
-  const checkout = await mkdtemp(join(tmpdir(), 'session-lifecycle-'));
+  const checkout = await realpath(await mkdtemp(join(tmpdir(), 'session-lifecycle-')));
   t.after(() => rm(checkout, { recursive: true, force: true }));
   await mkdir(join(checkout, 'context'));
   await writeFile(join(checkout, 'context/active_task.md'), '# Active task\n<!-- active-task:start -->\n```json\n[]\n```\n<!-- active-task:end -->\n');
