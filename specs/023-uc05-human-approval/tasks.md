@@ -180,11 +180,12 @@ Final review found an in-scope T007 retry defect and two standards corrections. 
 
 **Goal**: Distinguish complete local coverage from real delivery and prove required integrations.
 
-- [ ] T019 Register complete local acceptance and two-run comparison in tests/runtime/approvals/acceptance.test.ts.
+- [x] T019 Register complete local acceptance and two-run comparison in tests/runtime/approvals/acceptance.test.ts.
   - **Owner**: Trong Tan / UC-scoped acceptance.
   - **Dependencies**: T018.
   - **Owned Paths**: tests/runtime/approvals/acceptance.test.ts.
   - **Acceptance Checks**: Every C01–C24 case accounted for with fixture/profile/oracle/source/evidence identity; required real/restart cases report not-run until delivered. No missing-as-pass or mock-as-real; comparable two-run results. This is a UC-scoped test suite, not a replacement shared evaluation runner. Runtime typecheck/lint/build and applicable regressions pass.
+  - **Current Evidence**: Candidate `0a86684da0ac1eeb2bdfa7e669c97ece3cf639b8` was independently accepted and integrated at `26ade4ea581bdc2ae9ddbe918850fe4aab725b14`, adding only the owned test (287 reviewable lines; no generated/binary changes). Source and emitted focused acceptance each pass 2/2; each observes two fresh subprocess runs of the 192 existing approval tests, rather than counting those repeated observations as new tests. All C01–C24 rows retain explicit partial local scopes and fixture/profile/oracle/source/evidence identities; all 104 required real/restart vectors remain not-run, fixture effect counts are unobserved and full acceptance is false. Behavioral RED/GREEN covers changed identity and orphaned global witnesses; twelve independent probes reject missing/error/failed/approval-only evidence, lost vectors, foreign identities and fabricated effect/completion claims. Child commands exclude acceptance itself and reports retain safe metadata without raw streams. On the integrated source, `node scripts/ci/check-runtime.mjs` passed typecheck, full lint, clean build and 1098 compiled tests (including the two new acceptance tests); `pnpm run test:contributors` passed 227/227, both exit 0. Evidence is retained locally under `.agent-work/2026-10-22/uc05-phase8-acceptance/`. T020–T022 remain unchecked with external owner/profile/real/restart prerequisites; no real integration, durable atomicity or process restart is established.
 
 - [ ] T020 Prove real shared admission and approval integration in tests/runtime/approvals/integration.test.ts.
   - **Owner**: Trong Tan approval acceptance; Tai execution/admission; Thanh Tan durable store.
