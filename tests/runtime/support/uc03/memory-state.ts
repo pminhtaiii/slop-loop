@@ -1,5 +1,16 @@
 import {
   type StatePort,
+  type StatePortV02,
+  type AdmissionContextV02,
+  type ClaimReceiptV02,
+  type AttemptReceiptV02,
+  type AttemptOutcomeReceiptV02,
+  type AttemptReconciliationReceiptV02,
+  type ClaimClosureReceiptV02,
+  type OutcomeRecordResultV02,
+  type ReconciliationResultV02,
+  type ClaimClosureResultV02,
+  type ExecutorIdentityV02,
   type StateTransitionOptions,
   type TaskState,
   type ProviderUsage,
@@ -565,5 +576,153 @@ export class MemoryStatePort implements StatePort {
       throw new Error(`Recovered task state invalid: ${val.errors.map((e) => e.message).join(', ')}`);
     }
     return structuredClone(val.value);
+  }
+}
+
+/* ------------------------------------------------------------------
+ * UC-03 v0.2.0 StatePortV02 Neutral RED Scaffolding (T041)
+ * ------------------------------------------------------------------ */
+
+export const NEUTRAL_CLAIM_RECEIPT_V02: ClaimReceiptV02 = Object.freeze({
+  claimId: '',
+  claimDigest: '',
+  taskId: '',
+  runId: '',
+  subjectKind: 'repository-action',
+  planApplicability: 'pre-plan-diagnostic',
+  preClaimTaskStateVersion: 0,
+  preClaimControlVersion: 0,
+  postClaimControlVersion: 0,
+  epoch: 0,
+  status: 'claimed',
+  reservationRefs: Object.freeze([]),
+});
+
+export const NEUTRAL_ATTEMPT_RECEIPT_V02: AttemptReceiptV02 = Object.freeze({
+  attemptId: '',
+  claimId: '',
+  taskId: '',
+  executorIdentity: Object.freeze({
+    adapterIdentity: '',
+    processIncarnation: '',
+    fencingGeneration: 0,
+    payloadDigest: '',
+  }),
+  preAttemptTaskStateVersion: 0,
+  postBeginTaskStateVersion: 0,
+  preAttemptControlVersion: 0,
+  postBeginControlVersion: 0,
+  epoch: 0,
+  status: 'attempting',
+});
+
+export const NEUTRAL_OUTCOME_RECORD_RESULT_V02: OutcomeRecordResultV02 = Object.freeze({
+  outcome: 'uncertain',
+  receiptId: '',
+});
+
+export const NEUTRAL_RECONCILIATION_RESULT_V02: ReconciliationResultV02 = Object.freeze({
+  outcome: 'blocked',
+  receiptId: '',
+});
+
+export const NEUTRAL_CLAIM_CLOSURE_RESULT_V02: ClaimClosureResultV02 = Object.freeze({
+  closed: false,
+  receiptId: '',
+});
+
+export function isNeutralClaimReceiptV02(receipt: ClaimReceiptV02): boolean {
+  return receipt === NEUTRAL_CLAIM_RECEIPT_V02 || receipt.claimId === '' || receipt.claimDigest === '';
+}
+
+export function isNeutralAttemptReceiptV02(receipt: AttemptReceiptV02): boolean {
+  return receipt === NEUTRAL_ATTEMPT_RECEIPT_V02 || receipt.attemptId === '' || receipt.claimId === '';
+}
+
+export function isNeutralOutcomeRecordResultV02(result: OutcomeRecordResultV02): boolean {
+  return result === NEUTRAL_OUTCOME_RECORD_RESULT_V02 || (result.outcome === 'uncertain' && result.receiptId === '');
+}
+
+export function isNeutralReconciliationResultV02(result: ReconciliationResultV02): boolean {
+  return result === NEUTRAL_RECONCILIATION_RESULT_V02 || (result.outcome === 'blocked' && result.receiptId === '');
+}
+
+export function isNeutralClaimClosureResultV02(result: ClaimClosureResultV02): boolean {
+  return result === NEUTRAL_CLAIM_CLOSURE_RESULT_V02 || (!result.closed && result.receiptId === '');
+}
+
+export class MemoryStatePortV02 implements StatePortV02 {
+  readonly provenance: PortProvenance = 'mock';
+  private readonly underlying: MemoryStatePort;
+
+  constructor(options?: MemoryStatePortOptions) {
+    this.underlying = new MemoryStatePort(options);
+  }
+
+  getUnderlying(): MemoryStatePort {
+    return this.underlying;
+  }
+
+  getLedgers(): readonly BudgetLedger[] {
+    return this.underlying.getLedgers();
+  }
+
+  getLedgerIdentities(): readonly string[] {
+    return this.underlying.getLedgerIdentities();
+  }
+
+  getReservationIds(): Readonly<Record<string, string>> {
+    return this.underlying.getReservationIds();
+  }
+
+  getStoredRequests(): readonly ProviderRequest[] {
+    return this.underlying.getStoredRequests();
+  }
+
+  async loadTask(taskId: string): Promise<TaskState | null> {
+    return this.underlying.loadTask(taskId);
+  }
+
+  async transition(state: TaskState, expectedVersion: number): Promise<TaskState> {
+    return this.underlying.transition(state, expectedVersion);
+  }
+
+  async checkpoint(state: TaskState): Promise<void> {
+    return this.underlying.checkpoint(state);
+  }
+
+  async recover(taskId: string): Promise<TaskState> {
+    return this.underlying.recover(taskId);
+  }
+
+  async claim(context: AdmissionContextV02): Promise<ClaimReceiptV02> {
+    void context;
+    return NEUTRAL_CLAIM_RECEIPT_V02;
+  }
+
+  async beginAttempt(claimId: string, executor: ExecutorIdentityV02): Promise<AttemptReceiptV02> {
+    void claimId;
+    void executor;
+    return NEUTRAL_ATTEMPT_RECEIPT_V02;
+  }
+
+  async recordOutcome(receipt: AttemptOutcomeReceiptV02): Promise<OutcomeRecordResultV02> {
+    void receipt;
+    return NEUTRAL_OUTCOME_RECORD_RESULT_V02;
+  }
+
+  async reconcileObservedOutcome(receipt: AttemptReconciliationReceiptV02): Promise<ReconciliationResultV02> {
+    void receipt;
+    return NEUTRAL_RECONCILIATION_RESULT_V02;
+  }
+
+  async reconcileUncertain(receipt: AttemptReconciliationReceiptV02): Promise<ReconciliationResultV02> {
+    void receipt;
+    return NEUTRAL_RECONCILIATION_RESULT_V02;
+  }
+
+  async closeUnattemptedClaim(receipt: ClaimClosureReceiptV02): Promise<ClaimClosureResultV02> {
+    void receipt;
+    return NEUTRAL_CLAIM_CLOSURE_RESULT_V02;
   }
 }
