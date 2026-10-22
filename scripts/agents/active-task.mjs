@@ -5,11 +5,15 @@ import { runWorkflow } from './pr-workflow.mjs';
 import { isDeepStrictEqual } from 'node:util';
 import { atomicWrite, dataDirectory, readJson, repository, samePath, withLock } from './agent-store.mjs';
 import { captureOwnedHandoff, validateOwnedPaths, validateSessionRef, verifyOwnedHandoff } from './owned-handoff.mjs';
+import { bindAssignment, reserveBinding, startBinding, validateBindingMetadata, verifyAssignmentBinding } from './active-task-binding.mjs';
 import { importLegacyViews, migrateLegacyViews, parseLegacyView, readLegacyViews, writeSessionProgress } from './active-task-legacy.mjs';
 import { reassign, retireReassigned } from './active-task-reassignment.mjs';
 
 const usage = `Usage:
   node scripts/agents/active-task.mjs start --owner <id> --task <id> --session <date/id> --summary <text> --next <text> [--role coordinator|worker] [--owned-path <path>...]
+  node scripts/agents/active-task.mjs reserve --owner <id> --task <id> --session <date/id> --base-sha <fetched-origin/development-sha> --summary <text> --next <text> --owned-path <path>...
+  node scripts/agents/active-task.mjs bind --owner <id> --task <id> --worktree <absolute-path> --root <registry-checkout>
+  node scripts/agents/active-task.mjs edit-ready --owner <id> --task <id> --root <bound-worker-checkout>
   node scripts/agents/active-task.mjs update --owner <id> --task <id> [--next <text>] [--verification <text>] [--status active|blocked]
   node scripts/agents/active-task.mjs handoff --owner <id> --task <id> --result <text>
   node scripts/agents/active-task.mjs finish --owner <id> --task <id> --result <text>
@@ -23,20 +27,15 @@ const usage = `Usage:
   node scripts/agents/active-task.mjs list --compact [--owner <id>] [--task <id>] [--status <status>]
   node scripts/agents/active-task.mjs render [--output .agent-work/<date>/<session>/progress.md]
 
-All commands accept --root <checkout>. Use a unique owner per session/worker.
-finish requires a clean published linked PR and passing current-head CI; pending CI stays active.
-handoff returns registered worker results without completing contributor work.
-clear removes only completed, handed-off, or reassigned entries.
-retire-reassigned explicitly migrates a blocked legacy entry with a recorded reassignment; it does not complete the source task.
-archive previews by default; --apply preserves and verifies a terminal entry before clearing it.
-All worktrees share the primary checkout's .agent-work/state/active-tasks.json.
-Legacy marker views are read-only until explicit migration; migration saves ignored snapshots first.
-render prints to the terminal unless --output selects one generated session view. It never changes the tracked page or assignments. A busy lock is not reclaimed.`;
+Use --root <checkout>. reserve requires exact fetched origin/development SHA; bind validates the Git worktree; edit-ready and handoff require binding. start remains in-place.
+finish requires a published linked PR and passing current-head CI. Workers hand off; coordinators publish and finish.
+Archive/clear require terminal state; reassignment preserves history. Busy locks are never reclaimed; legacy migration is explicit.`;
 
 function parseArguments(args) {
   const [command, ...options] = args;
   const fields = {
-    start: ['summary', 'next', 'role', 'session', 'owned-path'], update: ['next', 'verification', 'status'],
+    start: ['summary', 'next', 'role', 'session', 'owned-path'], reserve: ['summary', 'next', 'session', 'owned-path', 'base-sha'],
+    bind: ['worktree'], 'edit-ready': [], update: ['next', 'verification', 'status'],
     finish: ['result'], handoff: ['result'], clear: [], archive: ['output'], list: ['owner', 'task', 'status'], render: ['output'], 'migrate-legacy': [],
     reassign: ['new-owner', 'session', 'reason', 'role', 'owned-path'], 'retire-reassigned': ['reason'], 'verify-handoff': [],
   };
@@ -47,7 +46,7 @@ function parseArguments(args) {
     if (options[index] === '--apply' && command === 'archive' && !values.apply) { values.apply = true; continue; }
     const name = options[index].slice(2);
     const value = options[index + 1];
-    const repeatable = name === 'owned-path' && ['start', 'reassign'].includes(command);
+    const repeatable = name === 'owned-path' && ['start', 'reserve', 'reassign'].includes(command);
     if (!options[index].startsWith('--') || !['root', 'owner', 'task', ...fields[command]].includes(name) || Object.hasOwn(values, name) && !repeatable || !value?.trim() || value.startsWith('--')) {
       throw new Error(`Invalid or duplicate option: ${options[index]}\n${usage}`);
     }
@@ -58,10 +57,13 @@ function parseArguments(args) {
   for (const name of ['list', 'render', 'migrate-legacy'].includes(command) ? [] : ['owner', 'task']) {
     if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(values[name] ?? '')) throw new Error(`A valid --${name} ID is required.`);
   }
-  for (const name of command === 'start' ? ['summary', 'next'] : ['finish', 'handoff'].includes(command) ? ['result'] : []) {
+  for (const name of ['start', 'reserve'].includes(command) ? ['summary', 'next'] : ['finish', 'handoff'].includes(command) ? ['result'] : []) {
     if (!values[name]) throw new Error(`--${name} is required.`);
   }
-  if (['start', 'reassign'].includes(command)) validateSessionRef(values.session);
+  if (['start', 'reserve', 'reassign'].includes(command)) validateSessionRef(values.session);
+  if (command === 'reserve' && (!values['base-sha'] || !/^[0-9a-f]{40,64}$/i.test(values['base-sha']))) throw new Error('reserve requires a full --base-sha from fetched origin/development.');
+  if (command === 'bind' && !values.worktree) throw new Error('bind requires --worktree.');
+  if (['bind', 'edit-ready'].includes(command) && !values.root) throw new Error(`${command} requires --root.`);
   if (command === 'reassign' && (!values['new-owner'] || !values.reason)) throw new Error('reassign requires --new-owner and --reason.');
   if (command === 'retire-reassigned' && !values.reason) throw new Error('retire-reassigned requires --reason.');
   if (values['new-owner'] && !/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(values['new-owner'])) throw new Error('A valid --new-owner ID is required.');
@@ -111,6 +113,7 @@ function validateEntries(entries) {
     if (entry.role !== undefined && !['coordinator', 'worker'].includes(entry.role) || entry.status === 'handed-off' && entry.role !== 'worker') throw new Error('Invalid task role or worker handoff.');
     if (entry.session !== undefined) validateSessionRef(entry.session);
     if (entry.ownedPaths !== undefined) validateOwnedPaths(entry.ownedPaths);
+    validateBindingMetadata(entry);
     const key = JSON.stringify([entry.owner, entry.task]);
     if (keys.has(key)) throw new Error('Duplicate active-task ownership; file left unchanged.');
     keys.add(key);
@@ -144,7 +147,7 @@ async function run(args) {
       stateExists = false;
       entries = importLegacyViews(await readLegacyViews(repo), (view) => parseLegacyView(view, validateEntries), validateEntries);
     }
-    if (!stateExists && entries.length && !['list', 'render', 'verify-handoff'].includes(command) && !(command === 'archive' && !values.apply)) {
+    if (!stateExists && entries.length && !['list', 'render', 'verify-handoff', 'edit-ready'].includes(command) && !(command === 'archive' && !values.apply)) {
       throw new Error('Legacy assignments are read-only until imported; run active-task.mjs migrate-legacy to back them up and initialize shared state.');
     }
     if (command === 'list') {
@@ -153,9 +156,17 @@ async function run(args) {
       return console.log(JSON.stringify(selected, null, 2));
     }
     const index = entries.findIndex((entry) => entry.owner === values.owner && entry.task === values.task);
+    if (command === 'edit-ready') {
+      if (index === -1) throw new Error('No entry matches that owner and task.');
+      const entry = entries[index];
+      if (entry.status !== 'active') throw new Error('Only active worker assignments can become edit-ready.');
+      const binding = await verifyAssignmentBinding(entry, repo, repo.root);
+      return console.log(JSON.stringify({ owner: entry.owner, task: entry.task, ready: true, checkout: binding.checkout, branch: binding.branch, base: binding.base }, null, 2));
+    }
     if (command === 'verify-handoff') {
       if (index === -1) throw new Error('No entry matches that owner and task.');
       const entry = entries[index];
+      await verifyAssignmentBinding(entry, repo);
       const verification = await verifyOwnedHandoff(entry);
       console.log(JSON.stringify({ owner: entry.owner, task: entry.task, checkout: entry.checkout ?? null, ...verification }, null, 2));
       if (!verification.verified) process.exitCode = 1;
@@ -195,13 +206,28 @@ async function run(args) {
     } else if (command === 'render') {
       if (!values.output) return printCompactEntries(entries);
       return console.log(JSON.stringify(await writeSessionProgress(repo.root, values.output, entries, statePath), null, 2));
+    } else if (command === 'reserve') {
+      if (index !== -1) throw new Error('Entry already exists; reserve never relocates or overwrites an assignment.');
+      const ownedPaths = validateOwnedPaths(values['owned-path'] ?? []);
+      if (!ownedPaths.length) throw new Error('reserve requires at least one --owned-path.');
+      const entry = { owner: values.owner, task: values.task, session: values.session, role: 'worker', summary: values.summary, next: values.next, status: 'active', verification: '', ownedPaths, updatedAt: new Date().toISOString() };
+      entry.reservation = await reserveBinding(repo, entry, values['base-sha']);
+      entries.push(entry);
+    } else if (command === 'bind') {
+      if (index === -1) throw new Error('No entry matches that owner and task.');
+      const entry = entries[index];
+      await bindAssignment(entry, repo, values.worktree);
+      entry.updatedAt = new Date().toISOString();
     } else if (command === 'start') {
       if (index !== -1) throw new Error('Entry already exists; use update or finish instead of overwriting it.');
       const role = values.role ?? 'coordinator';
       const ownedPaths = validateOwnedPaths(values['owned-path'] ?? []);
       if (role === 'worker' && !ownedPaths.length) throw new Error('Worker start requires at least one --owned-path.');
-      entries.push({ owner: values.owner, task: values.task, checkout: repo.root, session: values.session, role, summary: values.summary, next: values.next, status: 'active', verification: '', ...(ownedPaths.length ? { ownedPaths } : {}), updatedAt: new Date().toISOString() });
+      const entry = { owner: values.owner, task: values.task, checkout: repo.root, session: values.session, role, summary: values.summary, next: values.next, status: 'active', verification: '', ...(ownedPaths.length ? { ownedPaths } : {}), updatedAt: new Date().toISOString() };
+      if (role === 'worker') entry.binding = await startBinding(repo, entry);
+      entries.push(entry);
     } else if (command === 'reassign') {
+      if (entries[index]?.reservation && !entries[index]?.binding) throw new Error('An unbound reservation cannot be reassigned; bind its actual worktree first.');
       reassign(entries, index, values, repo.root);
     } else if (command === 'retire-reassigned') {
       retireReassigned(entries, index, values);
@@ -222,6 +248,7 @@ async function run(args) {
         }
         if (command === 'handoff' && entry.role !== 'worker') throw new Error('Only registered workers may hand off; coordinators must publish and finish.');
         if (command === 'handoff') {
+          await verifyAssignmentBinding(entry, repo, repo.root);
           if (!entry.checkout || !(await samePath(entry.checkout, repo.root))) throw new Error('Worker handoff must run in the assignment checkout.');
           const handoffEvidence = entry.ownedPaths?.length
             ? await captureOwnedHandoff(entry)

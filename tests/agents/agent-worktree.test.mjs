@@ -15,9 +15,11 @@ function git(root, args) {
 function run(root, ...args) {
   return spawnSync(process.execPath, [cli, ...args, '--root', root], { encoding: 'utf8', windowsHide: true, timeout: 15_000 });
 }
-async function fixture(t) {
-  const root = await realpath(await mkdtemp(join(tmpdir(), 'agent-worktree-')));
-  t.after(() => rm(root, { recursive: true, force: true }));
+async function fixture(t, { externalWorker = false } = {}) {
+  const directory = await realpath(await mkdtemp(join(tmpdir(), 'agent-worktree-')));
+  const root = join(directory, 'repo');
+  await mkdir(root);
+  t.after(() => rm(directory, { recursive: true, force: true }));
   git(root, ['init', '--quiet', '-b', 'main']);
   git(root, ['config', 'core.autocrlf', 'false']);
   await mkdir(join(root, 'docs'));
@@ -25,7 +27,10 @@ async function fixture(t) {
   await writeFile(join(root, '.gitignore'), '.agent-work/\n');
   git(root, ['add', '.']);
   git(root, ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--quiet', '-m', 'fixture']);
-  const worker = join(root, '.agent-work/worktrees/worker');
+  const base = git(root, ['rev-parse', 'HEAD']);
+  git(root, ['update-ref', 'refs/remotes/origin/development', base]);
+  const worker = externalWorker ? join(directory, 't3-app', 'worker') : join(root, '.agent-work/worktrees/worker');
+  await mkdir(dirname(worker), { recursive: true });
   git(root, ['worktree', 'add', '-b', 'worker', worker]);
   await mkdir(join(root, '.agent-work/2026-10-15/run'), { recursive: true });
   await writeFile(join(root, '.agent-work/2026-10-15/run/session.json'), JSON.stringify({
@@ -35,14 +40,14 @@ async function fixture(t) {
   await writeFile(join(root, '.agent-work/state/active-tasks.json'), JSON.stringify([
     { owner: 'worker', task: 'T001', checkout: worker, summary: 'Work', next: 'Review', status: 'completed' },
   ]));
-  return { root, worker };
+  return { root, worker, base };
 }
 function register(root, worker) {
   const result = run(root, 'register', '--id', 'worker', '--path', worker, '--integration-ref', 'main', '--session', '2026-10-15/run', '--owner', 'worker', '--task', 'T001');
   assert.equal(result.status, 0, result.stderr);
 }
-function accept(root) {
-  const result = run(root, 'accept', '--id', 'worker', '--evidence', 'docs/evidence.md', '--workers-stopped');
+function accept(root, id = 'worker') {
+  const result = run(root, 'accept', '--id', id, '--evidence', 'docs/evidence.md', '--workers-stopped');
   assert.equal(result.status, 0, result.stderr);
 }
 
@@ -144,4 +149,51 @@ test('unknown workers and attempts to register the primary checkout are rejected
   result = run(root, 'register', '--id', 'primary', '--path', root, '--integration-ref', 'main', '--session', '2026-10-15/run', '--owner', 'worker', '--task', 'T001');
   assert.equal(result.status, 1);
   assert.match(result.stderr, /inside the managed worktree area/);
+});
+
+test('external app-owned worktrees require explicit registration and are never cleaned up by the helper', async (t) => {
+  const { root, worker, base } = await fixture(t, { externalWorker: true });
+  const statePath = join(root, '.agent-work/state/active-tasks.json');
+  const entries = JSON.parse(await readFile(statePath, 'utf8'));
+  const checkout = await realpath(worker);
+  const repository = await realpath(join(root, '.git'));
+  const identity = { owner: 'worker', task: 'T001', session: '2026-10-15/run' };
+  const originBase = { ref: 'refs/remotes/origin/development', sha: base };
+  entries[0] = {
+    ...entries[0], session: identity.session, checkout,
+    reservation: { schemaVersion: 1, identity, repository, base: originBase },
+    binding: { schemaVersion: 1, identity, checkout, repository, branch: 'refs/heads/worker', base: originBase, boundAt: '2026-10-15T00:00:00.000Z' },
+  };
+  await writeFile(statePath, JSON.stringify(entries));
+  await writeFile(join(worker, 'later.txt'), 'committed after the reserved base\n');
+  git(worker, ['add', 'later.txt']);
+  git(worker, ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--quiet', '-m', 'later worker change']);
+  const head = git(worker, ['rev-parse', 'HEAD']);
+  assert.notEqual(head, base);
+
+  let result = run(root, 'register', '--id', 'external', '--path', worker, '--integration-ref', 'main', '--session', '2026-10-15/run', '--owner', 'worker', '--task', 'T001');
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /managed worktree area|external-app-owned/i);
+
+  result = run(root, 'register', '--id', 'external', '--path', worker, '--integration-ref', 'main', '--session', '2026-10-15/run', '--owner', 'worker', '--task', 'T001', '--external-app-owned');
+  assert.equal(result.status, 0, result.stderr);
+  const receiptPath = join(root, '.agent-work/worktree-receipts/external.json');
+  let receipt = JSON.parse(await readFile(receiptPath, 'utf8'));
+  assert.equal(receipt.externalAppOwned, true);
+  assert.equal(receipt.base, base);
+  assert.equal(receipt.head, head);
+
+  accept(root, 'external');
+  result = run(root, 'cleanup', '--id', 'external');
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).eligible, false);
+  assert.match(JSON.parse(result.stdout).reason, /app-owned|external/i);
+  result = run(root, 'cleanup', '--id', 'external', '--apply');
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).removed, false);
+  assert.match(JSON.parse(result.stdout).reason, /app-owned|external/i);
+  await readFile(join(worker, 'later.txt'));
+  receipt = JSON.parse(await readFile(receiptPath, 'utf8'));
+  assert.equal(receipt.status, 'accepted');
+  assert.match(git(root, ['worktree', 'list', '--porcelain']), /t3-app[\\/]worker/);
 });

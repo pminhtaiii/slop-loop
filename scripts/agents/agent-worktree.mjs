@@ -3,23 +3,24 @@ import { lstat, readFile, realpath } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { atomicWrite, dataDirectory, git, inside, readJson, repository, withLock } from './agent-store.mjs';
+import { commonGitDirectory, registeredAssignmentBase } from './active-task-binding.mjs';
 
 const usage = `Usage:
-  node scripts/agents/agent-worktree.mjs register --id <id> --path <worker> --integration-ref <branch> --session <date/id> --owner <owner> --task <task>
+  node scripts/agents/agent-worktree.mjs register --id <id> --path <worker> --integration-ref <branch> --session <date/id> --owner <owner> --task <task> [--external-app-owned]
   node scripts/agents/agent-worktree.mjs accept --id <id> --evidence <repo-file> --workers-stopped
   node scripts/agents/agent-worktree.mjs cleanup --id <id> [--apply]
-All commands accept --root <checkout>. Cleanup previews by default, retains branches,
-and never force-removes a checkout. accept attests that workers stopped and the handoff was reviewed.`;
+All commands accept --root <checkout>. External app-owned worktrees require the flag and are never removed by this helper.
+Cleanup previews by default, retains branches, and never force-removes a checkout. accept attests that workers stopped and the handoff was reviewed.`;
 
 function argumentsFor(args) {
   const [command, ...rest] = args;
-  const options = { register: ['path', 'integration-ref', 'session', 'owner', 'task'], accept: ['evidence', 'workers-stopped'], cleanup: ['apply'] };
+  const options = { register: ['path', 'integration-ref', 'session', 'owner', 'task', 'external-app-owned'], accept: ['evidence', 'workers-stopped'], cleanup: ['apply'] };
   if (!Object.hasOwn(options, command)) throw new Error(usage);
   const values = {};
   for (let index = 0; index < rest.length; index += 1) {
     const name = rest[index].slice(2);
     if (!rest[index].startsWith('--') || !['root', 'id', ...options[command]].includes(name) || Object.hasOwn(values, name)) throw new Error(usage);
-    if (['apply', 'workers-stopped'].includes(name)) values[name] = true;
+    if (['apply', 'workers-stopped', 'external-app-owned'].includes(name)) values[name] = true;
     else {
       const value = rest[++index];
       if (!value?.trim() || value.startsWith('--')) throw new Error(usage);
@@ -27,20 +28,34 @@ function argumentsFor(args) {
     }
   }
   if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(values.id ?? '')) throw new Error('A bounded --id is required.');
-  if (command !== 'cleanup' && options[command].some((name) => !values[name])) throw new Error(usage);
+  const required = options[command].filter((name) => name !== 'external-app-owned');
+  if (command !== 'cleanup' && required.some((name) => !values[name])) throw new Error(usage);
   return { command, values };
 }
 
-async function worker(repo, path, branch) {
+function pathKey(path) {
+  const normalized = resolve(path);
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+}
+
+async function worker(repo, path, branch, externalAppOwned = false) {
   const area = await dataDirectory(repo, 'worktrees');
   path = resolve(path);
-  if (!inside(area, path) || path === repo.root || path === repo.primary) throw new Error('Worker must be inside the managed worktree area and outside the invoking checkout.');
-  if (!(await lstat(path)).isDirectory() || await realpath(path) !== path) throw new Error('Worker path must be a real directory without links.');
+  const managed = inside(area, path);
+  const dump = inside(resolve(repo.primary, '.agent-work'), path);
+  if (externalAppOwned ? managed || dump : !managed) throw new Error(externalAppOwned
+    ? 'External app-owned workers must be outside the managed .agent-work area.'
+    : 'Worker must be inside the managed worktree area; use --external-app-owned for an external app worktree.');
+  if (path === repo.root || path === repo.primary) throw new Error('Worker must be outside the invoking and primary checkouts.');
+  const info = await lstat(path);
+  const canonical = await realpath(path);
+  if (!info.isDirectory() || info.isSymbolicLink() || pathKey(canonical) !== pathKey(path)) throw new Error('Worker path must be a real directory without links.');
   const fresh = await repository(repo.primary);
-  const record = fresh.worktrees.find((entry) => resolve(entry.worktree) === path);
+  const record = fresh.worktrees.find((entry) => entry.worktree && pathKey(entry.worktree) === pathKey(path));
   if (!record || !record.branch || Object.hasOwn(record, 'locked') || Object.hasOwn(record, 'prunable')) throw new Error('Worker must be registered, unlocked, and on a branch.');
   if (branch && record.branch !== branch) throw new Error('Worker branch changed since registration.');
-  return { path, branch: record.branch, head: git(path, ['rev-parse', 'HEAD']).stdout.trim() };
+  const head = git(path, ['rev-parse', 'HEAD']).stdout.trim();
+  return { path, branch: record.branch, head, repository: await commonGitDirectory(path) };
 }
 
 async function taskStates(repo) {
@@ -63,6 +78,7 @@ async function evidence(repo, path) {
 
 async function eligible(repo, receipt) {
   if (receipt.status !== 'accepted') throw new Error('Handoff has not been accepted with stopped workers.');
+  if (receipt.externalAppOwned) throw new Error('External app-owned worktrees are never eligible for helper cleanup.');
   const current = await worker(repo, receipt.path, receipt.branch);
   if (current.head !== receipt.acceptedHead) throw new Error('Worker HEAD changed after acceptance.');
   const states = await taskStates(repo);
@@ -85,7 +101,7 @@ async function run(args) {
     if (command === 'register') {
       const exists = await lstat(path).catch((error) => { if (error.code !== 'ENOENT') throw error; });
       if (exists) throw new Error('Receipt already exists; retain its ownership history.');
-      const current = await worker(repo, resolve(repo.primary, values.path));
+      const current = await worker(repo, resolve(repo.primary, values.path), undefined, Boolean(values['external-app-owned']));
       const integrationRef = values['integration-ref'].startsWith('refs/heads/') ? values['integration-ref'] : `refs/heads/${values['integration-ref']}`;
       git(repo.primary, ['check-ref-format', integrationRef]);
       git(repo.primary, ['rev-parse', '--verify', '--end-of-options', `${integrationRef}^{commit}`]);
@@ -95,13 +111,17 @@ async function run(args) {
       const session = await readJson(resolve(sessionDirectory, 'session.json'));
       const [date, id] = values.session.split('/');
       if (session.schemaVersion !== 1 || session.workspace !== 'project' || session.date !== date || session.id !== id || !['active', 'finished'].includes(session.status)) throw new Error('Invalid managed session.');
-      await atomicWrite(path, JSON.stringify({ schemaVersion: 1, id: values.id, ...current, base: current.head, integrationRef, session: values.session, owner: values.owner, task: values.task, status: 'registered' }, null, 2) + '\n');
+      const states = await taskStates(repo);
+      const assignment = states.find((entry) => entry.owner === values.owner && entry.task === values.task);
+      if (assignment?.session && assignment.session !== values.session) throw new Error('Worktree receipt session does not match its active-task assignment.');
+      const base = assignment ? await registeredAssignmentBase(assignment, current) : current.head;
+      await atomicWrite(path, JSON.stringify({ schemaVersion: 1, id: values.id, ...current, base, externalAppOwned: Boolean(values['external-app-owned']), integrationRef, session: values.session, owner: values.owner, task: values.task, status: 'registered' }, null, 2) + '\n');
       return console.log(JSON.stringify({ id: values.id, registered: true, path: current.path }));
     }
     const receipt = await readJson(path);
-    if (receipt.schemaVersion !== 1 || receipt.id !== values.id || typeof receipt.path !== 'string' || typeof receipt.branch !== 'string' || !/^refs\/heads\//.test(receipt.integrationRef ?? '')) throw new Error('Invalid ownership receipt.');
+    if (receipt.schemaVersion !== 1 || receipt.id !== values.id || typeof receipt.path !== 'string' || typeof receipt.branch !== 'string' || !/^refs\/heads\//.test(receipt.integrationRef ?? '') || receipt.externalAppOwned !== undefined && typeof receipt.externalAppOwned !== 'boolean') throw new Error('Invalid ownership receipt.');
     if (command === 'accept') {
-      const current = await worker(repo, receipt.path, receipt.branch);
+      const current = await worker(repo, receipt.path, receipt.branch, receipt.externalAppOwned === true);
       const states = await taskStates(repo);
       if (!states.some((entry) => entry.owner === receipt.owner && entry.task === receipt.task && ['completed', 'handed-off'].includes(entry.status) && entry.checkout && resolve(entry.checkout) === current.path)) throw new Error('A completed shared handoff matching owner, task, and checkout is required.');
       receipt.status = 'accepted';

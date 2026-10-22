@@ -2,6 +2,8 @@
 
 Use the integration checkout's ignored `.agent-work/` for temporary agent artifacts. Read this before creating worker worktrees or cleaning a run. This directory is local working storage, not the canonical feature specification or task ledger.
 
+App-owned T3 worktrees outside `.agent-work/worktrees/` require `agent-worktree.mjs register --external-app-owned`. The helper can retain and accept their evidence, but it never removes those worktrees, even after acceptance.
+
 ## Layout and ownership
 
 | Location relative to the integration checkout | Contents |
@@ -11,7 +13,7 @@ Use the integration checkout's ignored `.agent-work/` for temporary agent artifa
 | `.agent-work/worktree-receipts/` | Helper-owned ownership, accepted-head, and evidence-hash receipts |
 | `.agent-work/state/` | Shared contributor assignments and lock, used by all linked worktrees |
 
-Start a managed session with the existing `agent-work.mjs` helper described in [the contributor workflow](../../context/workflow.md#agent-coordination), then include that session identity in every new `active-task.mjs start` assignment. Worker assignments also list their exact owned files with repeated `--owned-path <repo-relative-path>` options. Register each worker with `agent-worktree.mjs`; its JSON receipt binds its path, owner/task, branch, base, integration ref, and managed session. Both helpers accept `--root <checkout>`; worktree retirement resolves the primary checkout automatically. Keep briefs and logs in the session, and durable verification outside the deletable dump area. Existing Markdown receipts are historical notes, not automatic cleanup authority.
+Start a managed session with the existing `agent-work.mjs` helper described in [the contributor workflow](../../context/workflow.md#agent-coordination). Before delegating into a new worktree, fetch `origin/development`, capture its full SHA, and reserve each worker with `active-task.mjs reserve`. Reservation requires that SHA to match both the parent checkout's `HEAD` and `refs/remotes/origin/development`; it records repository/base identity without claiming a worker checkout or HEAD. After T3 creates the worktree, run `bind --worktree <absolute-path>` from the same repository, then run `edit-ready` in that checkout before editing. Binding checks the registered Git worktree, common repository, branch, assignment identity, and exact creation base. Later worker commits and integration merges do not change that saved base. Use `start` for work that continues in an existing checkout. Worker assignments list exact owned files with repeated `--owned-path <repo-relative-path>` options. `agent-worktree.mjs register` receipts retain path, owner/task, branch, creation base, integration ref, and session. Both helpers accept `--root <checkout>`; worktree retirement resolves the primary checkout automatically. Keep briefs and logs in the session, and durable verification outside the deletable dump area. Existing Markdown receipts are historical notes, not automatic cleanup authority.
 
 `agent-work.mjs start` creates or reactivates the selected session marker. After an `active-task.mjs` assignment command, `render --output .agent-work/<date>/<session-id>/progress.md --root <checkout>` initializes or refreshes only that session's generated view. It preserves shared assignments, other session views, and unfinished work. A terminal `render` without `--output` prints a compact list and does not rewrite `context/active_task.md`. Keep [`active_task.md`](../../context/active_task.md) as static navigation and read commands; do not maintain progress rows there. Follow the [active-task handoff](../../context/workflow.md#active-task-handoff) for the register-before-dispatch lifecycle and explicit recovery of unfinished assignments.
 
@@ -19,16 +21,19 @@ Use the contributor workflow's compact reports to inspect session and assignment
 
 ## Isolated implementation
 
-Confirm the approved integration branch and resolve its current tip before creating a worker. Create the parent `.agent-work/worktrees/` directory if absent, then use:
+For a new worker, reserve before dispatch and base its worktree on the SHA fetched from `origin/development`. The reserve command fails when that SHA is missing or differs from the parent checkout, so a stale local `development` or feature tip does not start the worker. T3 may create an app-owned worktree outside the managed directory; bind it only after it appears in Git's worktree inventory.
 
 ```powershell
-git -C <integration-checkout> worktree add -b <unique-task-branch> <absolute-worker-path> <verified-integration-tip>
-git -C <integration-checkout> worktree list --porcelain
-node scripts/agents/agent-worktree.mjs register --id <worker-id> --path <absolute-worker-path> --integration-ref <integration-branch> --session <date/session-id> --owner <owner> --task <task>
-node scripts/agents/active-task.mjs start --owner <owner> --task <task> --role worker --session <date/session-id> --owned-path <repo-relative-path> --summary "<assignment>" --next "<next action>"
+git -C <parent-checkout> fetch origin development
+$baseSha = git -C <parent-checkout> rev-parse refs/remotes/origin/development
+node scripts/agents/active-task.mjs reserve --owner <owner> --task <task> --session <date/session-id> --base-sha $baseSha --owned-path <repo-relative-path> --summary "<assignment>" --next "<next action>" --root <parent-checkout>
+git -C <parent-checkout> worktree add -b <unique-task-branch> <absolute-worker-path> $baseSha
+node scripts/agents/active-task.mjs bind --owner <owner> --task <task> --worktree <absolute-worker-path> --root <parent-checkout>
+node scripts/agents/active-task.mjs edit-ready --owner <owner> --task <task> --root <absolute-worker-path>
+node scripts/agents/agent-worktree.mjs register --id <worker-id> --path <absolute-worker-path> --integration-ref <integration-branch> --session <date/session-id> --owner <owner> --task <task> [--external-app-owned]
 ```
 
-The worker path must be a new path inside the designated worktree area. A name collision stops creation; choose another owner/path instead of replacing an existing checkout. These commands create a separate checkout without switching the integration checkout's branch. Start agents with the worker checkout as their working directory. Existing uncommitted changes are not included automatically; preserve them and explicitly carry only required authorized files when needed.
+An app-owned T3 dispatch starts from the parent commit, so check that the parent commit equals the captured fetched SHA before dispatch. A mismatch fails closed; any exception needs separate user authorization and a recorded reason. A name collision stops worktree creation; choose another worker path instead of replacing an existing checkout. Keep work on the assigned branch. `bind` must run before edits; `edit-ready` rechecks the saved identity. Existing-checkout continuation uses `start` and keeps its current checkout.
 
 Keep workers on their assigned task branches. Integrate through the approved feature workflow; creating a dump space does not authorize commits, merges, pushes, or source edits in another checkout.
 
