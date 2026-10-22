@@ -5,8 +5,8 @@
  * Feature: specs/001-verified-code-repair
  *
  * Acceptance Checks for T020:
- * - Exercises actual Docker and repository foundation modules (DockerWorkspaceManager,
- *   StructuredCommandExecutor, validateDockerProfile) with injected lifecycle controllers.
+ * - Exercises the production TypeScript DockerWorkspaceManager, StructuredCommandExecutor, and
+ *   validateDockerProfile with an injected mock lifecycle controller; this is not Docker evidence.
  * - Asserts denied effects and absence of protected payloads, not just refusal text.
  * - Tests run from a clean checkout without ignored fixtures, inlining minimal synthetic data
  *   and retaining fixture provenance from C:\coding agent\fixtures\uc03\security
@@ -15,10 +15,10 @@
  *   * Command-view mount policy strictly enforces read-only repository view and writable scratch.
  *   * Profile validation rejects writable repository mounts (READONLY_REPO_MOUNT_REQUIRED).
  *   * Profile validation rejects canonical repository volume mounted at scratch.
- *   * Source/test write probes are denied BEFORE modification via read-only command-view mount
- *     (EROFS / permission denial before effects), never accepted merely by post-hoc digest detection.
- *   * Scratch-only writes: temporary and cache writes are confined to scratch; scratch files cannot
- *     be promoted into canonical repository files.
+ *   * Mock plan simulation records source/test write attempts against the read-only command view
+ *     and models EROFS before file mutation; it does not prove kernel containment.
+ *   * Mock plan simulation records scratch writes under the exact scratch volume and a blocked
+ *     promotion attempt; it does not prove real Docker containment or copy-back behavior.
  * - C07 Traversal, Path, & Link Escapes:
  *   * Snapshot entry path traversal (../../, absolute, Windows drives) rejected (WORKSPACE_ESCAPE).
  *   * Link targets pointing outside repository rejected (UNSAFE_LINK_TARGET).
@@ -194,6 +194,10 @@ class FakeIsolationDockerController implements DockerLifecycleController {
     readonly view: CommandView;
     readonly files: Record<string, string | Uint8Array>;
   }[] = [];
+  readonly materializationAttempts: {
+    readonly view: CommandView;
+    readonly files: Record<string, string | Uint8Array>;
+  }[] = [];
   onMaterialize?: (params: MaterializeViewParams) => Promise<void> | void;
 
   readonly executedPlans: DockerContainerPlan[] = [];
@@ -224,12 +228,16 @@ class FakeIsolationDockerController implements DockerLifecycleController {
   }
 
   async materializeView(params: MaterializeViewParams): Promise<void> {
+    this.materializationAttempts.push({
+      view: structuredClone(params.view),
+      files: structuredClone(params.files),
+    });
     if (this.onMaterialize) {
       await this.onMaterialize(params);
     }
     this.materializedViews.push({
-      view: params.view,
-      files: { ...params.files },
+      view: structuredClone(params.view),
+      files: structuredClone(params.files),
     });
   }
 
@@ -312,6 +320,129 @@ async function setupTestEnvironment(options?: {
     workspaceId,
     initialRevision,
     canonicalFiles,
+  };
+}
+
+interface ControllerEffectsSnapshot {
+  readonly createdVolumes: readonly string[];
+  readonly removedVolumes: readonly string[];
+  readonly materializationAttempts: FakeIsolationDockerController['materializationAttempts'];
+  readonly materializedViews: FakeIsolationDockerController['materializedViews'];
+  readonly executedPlans: readonly DockerContainerPlan[];
+  readonly cleanupCalls: number;
+  readonly canonicalSnapshot: CanonicalRepositorySnapshot | undefined;
+}
+
+function captureControllerEffects(controller: FakeIsolationDockerController): ControllerEffectsSnapshot {
+  return {
+    createdVolumes: [...controller.createdVolumes],
+    removedVolumes: [...controller.removedVolumes],
+    materializationAttempts: structuredClone(controller.materializationAttempts),
+    materializedViews: structuredClone(controller.materializedViews),
+    executedPlans: structuredClone(controller.executedPlans),
+    cleanupCalls: controller.cleanupCalls,
+    canonicalSnapshot: controller.snapshotToReturn === undefined
+      ? undefined
+      : structuredClone(controller.snapshotToReturn),
+  };
+}
+
+function assertControllerEffectsUnchanged(
+  controller: FakeIsolationDockerController,
+  before: ControllerEffectsSnapshot,
+): void {
+  assert.deepEqual(controller.createdVolumes, before.createdVolumes, 'Denied operation must not create volumes');
+  assert.deepEqual(controller.removedVolumes, before.removedVolumes, 'Denied operation must not remove volumes');
+  assert.deepEqual(controller.materializationAttempts, before.materializationAttempts, 'Denied operation must not call materializeView');
+  assert.deepEqual(controller.materializedViews, before.materializedViews, 'Denied operation must not materialize a command view');
+  assert.deepEqual(controller.executedPlans, before.executedPlans, 'Denied operation must not dispatch a container plan');
+  assert.equal(controller.cleanupCalls, before.cleanupCalls, 'Denied pre-dispatch operation must not call container cleanup');
+  assert.deepEqual(controller.snapshotToReturn, before.canonicalSnapshot, 'Denied operation must leave mock canonical snapshot unchanged');
+}
+
+async function assertRejectsWithoutControllerEffects(
+  controller: FakeIsolationDockerController,
+  operation: () => Promise<unknown>,
+  errorPredicate: (error: Error) => boolean,
+  message: string,
+): Promise<void> {
+  const before = captureControllerEffects(controller);
+  await assert.rejects(operation, errorPredicate, message);
+  assertControllerEffectsUnchanged(controller, before);
+}
+
+interface MockWriteAttempt {
+  readonly path: string;
+  readonly mountSource: string | null;
+  readonly mountReadOnly: boolean | null;
+  readonly outcome: 'written' | 'denied';
+  readonly error: 'EROFS' | 'ENOENT' | null;
+}
+
+interface MockCommandFilesystem {
+  readonly commandViewFiles: Map<string, string | Uint8Array>;
+  readonly scratchFiles: Map<string, string | Uint8Array>;
+  readonly writeAttempts: MockWriteAttempt[];
+}
+
+function simulateMockContainerWrite(
+  plan: DockerContainerPlan,
+  filesystem: MockCommandFilesystem,
+  path: string,
+  contents: string | Uint8Array,
+): MockWriteAttempt {
+  const mount = plan.mounts.find((candidate) =>
+    path === candidate.target || path.startsWith(candidate.target + '/'));
+  if (!mount) {
+    const denied = { path, mountSource: null, mountReadOnly: null, outcome: 'denied' as const, error: 'ENOENT' as const };
+    filesystem.writeAttempts.push(denied);
+    return denied;
+  }
+  if (mount.readOnly) {
+    const denied = {
+      path,
+      mountSource: mount.source,
+      mountReadOnly: true,
+      outcome: 'denied' as const,
+      error: 'EROFS' as const,
+    };
+    filesystem.writeAttempts.push(denied);
+    return denied;
+  }
+
+  const relativePath = path.slice(mount.target.length).replace(/^\/+/, '');
+  if (mount.target === '/workspace/scratch') {
+    filesystem.scratchFiles.set(mount.source + '/' + relativePath, contents);
+  } else if (mount.target === '/workspace/repo') {
+    filesystem.commandViewFiles.set(relativePath, contents);
+  } else {
+    const denied = {
+      path,
+      mountSource: mount.source,
+      mountReadOnly: false,
+      outcome: 'denied' as const,
+      error: 'ENOENT' as const,
+    };
+    filesystem.writeAttempts.push(denied);
+    return denied;
+  }
+
+  const written = {
+    path,
+    mountSource: mount.source,
+    mountReadOnly: false,
+    outcome: 'written' as const,
+    error: null,
+  };
+  filesystem.writeAttempts.push(written);
+  return written;
+}
+
+function createMockCommandFilesystem(files: Record<string, string | Uint8Array>): MockCommandFilesystem {
+  return {
+    commandViewFiles: new Map(Object.entries(structuredClone(files))),
+    scratchFiles: new Map(),
+    writeAttempts: [],
   };
 }
 
@@ -400,56 +531,22 @@ test('C06: Command execution plan strictly enforces read-only /workspace/repo mo
   assert.equal(scratchMount.readOnly, false, '/workspace/scratch MUST be mounted writable');
 });
 
-test('C06: Source and test write attempts are denied BEFORE modification via read-only mount, not post-hoc digest detection', async () => {
+test('C06: Mock plan simulation denies source and test write attempts before command-view mutation', async () => {
   const { manager, controller, profile, workspaceId, canonicalFiles } = await setupTestEnvironment();
 
   const admittedView = await manager.admitCommandView({ workspaceId });
   assert.equal(admittedView.mountedReadOnly, true, 'Admitted view must declare mountedReadOnly: true');
 
   const executor = manager.createCommandExecutor(profile);
-
-  // Injected controller simulates execution attempt
-  let attemptedWriteToRepo = false;
+  const materialized = controller.materializedViews[0];
+  assert.ok(materialized !== undefined);
+  const canonicalBefore = structuredClone(controller.snapshotToReturn);
+  const commandViewBefore = structuredClone(materialized.files);
+  const mockFilesystem = createMockCommandFilesystem(materialized.files);
   controller.onExecute = (plan) => {
-    // Check kernel/container plan policy before container starts
-    const repoMount = plan.mounts.find((m) => m.target === '/workspace/repo');
-    if (!repoMount || repoMount.readOnly !== true) {
-      attemptedWriteToRepo = true;
-    }
-  };
-
-  await executor.execute({
-    workspaceId,
-    executable: 'pytest',
-    argv: ['-q', 'tests/test_calculator.py', '-k', 'test_probe_direct_source_write'],
-    limits: createStandardLimits(),
-  });
-
-  // Verify prevention occurred BEFORE modification:
-  assert.equal(attemptedWriteToRepo, false, 'Writable repo mount must be prevented before container launch');
-
-  // Verify byte-identical preservation of canonical files:
-  const snapshot = await controller.getCanonicalSnapshot(workspaceId);
-  for (const entry of snapshot.entries) {
-    const originalContent = canonicalFiles.get(entry.path);
-    assert.ok(originalContent !== undefined, `Entry ${entry.path} must exist in canonical state`);
-    assert.equal(entry.content, originalContent, `File ${entry.path} must remain byte-identical`);
-    assert.equal(entry.digest, computeFileDigest(originalContent), `Digest for ${entry.path} must match`);
-  }
-});
-
-test('C06: Scratch-only writes: temporary files can only be written to /workspace/scratch and cannot mutate canonical repo', async () => {
-  const { manager, controller, profile, workspaceId } = await setupTestEnvironment();
-
-  await manager.admitCommandView({ workspaceId });
-  const executor = manager.createCommandExecutor(profile);
-
-  controller.outputToReturn = {
-    exitCode: 0,
-    stdout: 'created /workspace/scratch/trojan.py\n',
-    stderr: '',
-    durationMs: 30,
-    timedOut: false,
+    // Mock-only attack simulation: no pytest or kernel write is performed.
+    simulateMockContainerWrite(plan, mockFilesystem, '/workspace/repo/src/calculator.py', 'tampered source');
+    simulateMockContainerWrite(plan, mockFilesystem, '/workspace/repo/tests/test_calculator.py', 'weakened test');
   };
 
   await executor.execute({
@@ -459,17 +556,110 @@ test('C06: Scratch-only writes: temporary files can only be written to /workspac
     limits: createStandardLimits(),
   });
 
-  const plan = controller.executedPlans[0];
-  assert.ok(plan !== undefined);
+  const repoMount = controller.executedPlans[0]?.mounts.find((mount) => mount.target === '/workspace/repo');
+  assert.deepEqual(mockFilesystem.writeAttempts, [
+    {
+      path: '/workspace/repo/src/calculator.py',
+      mountSource: admittedView.viewId,
+      mountReadOnly: true,
+      outcome: 'denied',
+      error: 'EROFS',
+    },
+    {
+      path: '/workspace/repo/tests/test_calculator.py',
+      mountSource: admittedView.viewId,
+      mountReadOnly: true,
+      outcome: 'denied',
+      error: 'EROFS',
+    },
+  ], 'The fake plan simulator must observe both attempted writes denied by the actual executor plan');
+  assert.equal(repoMount?.readOnly, true);
+  assert.deepEqual(mockFilesystem.commandViewFiles, new Map(Object.entries(commandViewBefore)), 'Denied writes must not mutate simulated command-view files');
+  assert.deepEqual(controller.materializationAttempts[0]?.files, Object.fromEntries(canonicalFiles), 'Materialized source and tests must begin byte-identical to canonical state');
+  assert.deepEqual(controller.snapshotToReturn, canonicalBefore, 'Mock canonical repository snapshot must remain unchanged');
+});
 
-  // Canonical volume is never mapped to the writable scratch mount
-  const scratchMount = plan.mounts.find((m) => m.target === '/workspace/scratch');
-  assert.ok(scratchMount !== undefined);
-  assert.equal(scratchMount.readOnly, false);
-  assert.ok(
-    !scratchMount.source.includes('repo'),
-    'Scratch mount source volume must not reference canonical repository volume'
-  );
+test('C06: Mock plan simulation confines scratch writes and blocks attempted promotion to the canonical source', async () => {
+  const { manager, controller, profile, workspaceId } = await setupTestEnvironment();
+
+  const admittedView = await manager.admitCommandView({ workspaceId });
+  const executor = manager.createCommandExecutor(profile);
+  const materialized = controller.materializedViews[0];
+  assert.ok(materialized !== undefined);
+  const canonicalBefore = structuredClone(controller.snapshotToReturn);
+  const commandViewBefore = structuredClone(materialized.files);
+  const mockFilesystem = createMockCommandFilesystem(materialized.files);
+  const promotionAttempts: {
+    readonly scratchVolumeId: string;
+    readonly source: string;
+    readonly target: string;
+    readonly result: MockWriteAttempt;
+  }[] = [];
+
+  controller.onExecute = (plan) => {
+    const scratchWrite = simulateMockContainerWrite(
+      plan,
+      mockFilesystem,
+      '/workspace/scratch/.pytest_cache/lastfailed',
+      'synthetic cache entry',
+    );
+    const scratchMount = plan.mounts.find((mount) => mount.target === '/workspace/scratch');
+    const promotion = simulateMockContainerWrite(
+      plan,
+      mockFilesystem,
+      '/workspace/repo/src/calculator.py',
+      mockFilesystem.scratchFiles.get(admittedView.scratchIdentity + '/.pytest_cache/lastfailed') ?? '',
+    );
+    promotionAttempts.push({
+      scratchVolumeId: scratchMount?.source ?? '',
+      source: '/workspace/scratch/.pytest_cache/lastfailed',
+      target: '/workspace/repo/src/calculator.py',
+      result: promotion,
+    });
+    assert.equal(scratchWrite.outcome, 'written', 'The mock plan simulator should permit a scratch write');
+  };
+
+  await executor.execute({
+    workspaceId,
+    executable: 'pytest',
+    argv: ['-q', 'tests/test_calculator.py'],
+    limits: createStandardLimits(),
+  });
+
+  assert.deepEqual(mockFilesystem.scratchFiles, new Map([
+    [admittedView.scratchIdentity + '/.pytest_cache/lastfailed', 'synthetic cache entry'],
+  ]), 'Scratch writes must be recorded only under the exact admitted scratch identity');
+  assert.deepEqual(mockFilesystem.writeAttempts, [
+    {
+      path: '/workspace/scratch/.pytest_cache/lastfailed',
+      mountSource: admittedView.scratchIdentity,
+      mountReadOnly: false,
+      outcome: 'written',
+      error: null,
+    },
+    {
+      path: '/workspace/repo/src/calculator.py',
+      mountSource: admittedView.viewId,
+      mountReadOnly: true,
+      outcome: 'denied',
+      error: 'EROFS',
+    },
+  ], 'The actual executor plan must keep scratch writable and the promotion target read-only');
+  assert.deepEqual(promotionAttempts.map((attempt) => ({
+    scratchVolumeId: attempt.scratchVolumeId,
+    source: attempt.source,
+    target: attempt.target,
+    outcome: attempt.result.outcome,
+    error: attempt.result.error,
+  })), [{
+    scratchVolumeId: admittedView.scratchIdentity,
+    source: '/workspace/scratch/.pytest_cache/lastfailed',
+    target: '/workspace/repo/src/calculator.py',
+    outcome: 'denied',
+    error: 'EROFS',
+  }]);
+  assert.deepEqual(mockFilesystem.commandViewFiles, new Map(Object.entries(commandViewBefore)), 'The simulated promotion must not mutate command-view files');
+  assert.deepEqual(controller.snapshotToReturn, canonicalBefore, 'Mock canonical repository snapshot must remain unchanged');
 });
 
 // ============================================================================
@@ -509,14 +699,11 @@ test('C07: admitCommandView rejects snapshot entries with directory traversal or
       profile,
     });
 
-    await assert.rejects(
-      async () => {
-        await manager.admitCommandView({ workspaceId: 'ws-sec-c07' });
-      },
-      (err: Error) => {
-        return err.message.includes('WORKSPACE_ESCAPE');
-      },
-      `Expected WORKSPACE_ESCAPE for path ${badPath}`
+    await assertRejectsWithoutControllerEffects(
+      controller,
+      () => manager.admitCommandView({ workspaceId: 'ws-sec-c07' }),
+      (err: Error) => err.message.includes('WORKSPACE_ESCAPE'),
+      'Expected WORKSPACE_ESCAPE for path ' + badPath,
     );
   }
 });
@@ -555,14 +742,11 @@ test('C07: admitCommandView rejects symlinks pointing outside repository (UNSAFE
       profile,
     });
 
-    await assert.rejects(
-      async () => {
-        await manager.admitCommandView({ workspaceId: 'ws-sec-c07-link' });
-      },
-      (err: Error) => {
-        return err.message.includes('UNSAFE_LINK_TARGET');
-      },
-      `Expected UNSAFE_LINK_TARGET for linkTarget ${badTarget}`
+    await assertRejectsWithoutControllerEffects(
+      controller,
+      () => manager.admitCommandView({ workspaceId: 'ws-sec-c07-link' }),
+      (err: Error) => err.message.includes('UNSAFE_LINK_TARGET'),
+      'Expected UNSAFE_LINK_TARGET for linkTarget ' + badTarget,
     );
   }
 });
@@ -597,20 +781,17 @@ test('C07: admitCommandView rejects symlinks pointing to protected paths (FORBID
       profile,
     });
 
-    await assert.rejects(
-      async () => {
-        await manager.admitCommandView({ workspaceId: 'ws-sec-c07-prot-link' });
-      },
-      (err: Error) => {
-        return err.message.includes('FORBIDDEN_LINK_TARGET');
-      },
-      `Expected FORBIDDEN_LINK_TARGET for target ${protTarget}`
+    await assertRejectsWithoutControllerEffects(
+      controller,
+      () => manager.admitCommandView({ workspaceId: 'ws-sec-c07-prot-link' }),
+      (err: Error) => err.message.includes('FORBIDDEN_LINK_TARGET'),
+      'Expected FORBIDDEN_LINK_TARGET for target ' + protTarget,
     );
   }
 });
 
 test('C07: StructuredCommandExecutor rejects workingDirectory escaping /workspace/repo or /workspace/scratch', async () => {
-  const { manager, profile, workspaceId } = await setupTestEnvironment();
+  const { manager, controller, profile, workspaceId } = await setupTestEnvironment();
   await manager.admitCommandView({ workspaceId });
   const executor = manager.createCommandExecutor(profile);
 
@@ -626,20 +807,17 @@ test('C07: StructuredCommandExecutor rejects workingDirectory escaping /workspac
   ];
 
   for (const badWd of escapeWds) {
-    await assert.rejects(
-      async () => {
-        await executor.execute({
-          workspaceId,
-          executable: 'pytest',
-          argv: ['-q'],
-          workingDirectory: badWd,
-          limits: createStandardLimits(),
-        });
-      },
-      (err: Error) => {
-        return err.message.includes('INVALID_WORKING_DIRECTORY');
-      },
-      `Expected INVALID_WORKING_DIRECTORY for workingDirectory '${badWd}'`
+    await assertRejectsWithoutControllerEffects(
+      controller,
+      () => executor.execute({
+        workspaceId,
+        executable: 'pytest',
+        argv: ['-q'],
+        workingDirectory: badWd,
+        limits: createStandardLimits(),
+      }),
+      (err: Error) => err.message.includes('INVALID_WORKING_DIRECTORY'),
+      'Expected INVALID_WORKING_DIRECTORY for workingDirectory ' + badWd,
     );
   }
 });
@@ -724,12 +902,18 @@ test('C08: admitCommandView excludes protected paths (.env, id_rsa, server.pem, 
   assert.equal(controller.materializedViews.length, 1);
   const materialized = controller.materializedViews[0];
   assert.ok(materialized !== undefined);
+  const materializationAttempt = controller.materializationAttempts[0];
+  assert.ok(materializationAttempt !== undefined);
+  assert.deepEqual(materializationAttempt.files, materialized.files, 'The fake must retain the exact payload passed at the materialization boundary');
   const materializedPaths = Object.keys(materialized.files);
 
   assert.ok(!materializedPaths.includes('.env'), '.env must be excluded from materialized view');
   assert.ok(!materializedPaths.includes('id_rsa'), 'id_rsa must be excluded from materialized view');
   assert.ok(!materializedPaths.includes('server.pem'), 'server.pem must be excluded from materialized view');
   assert.ok(!materializedPaths.includes('credentials.json'), 'credentials.json must be excluded from materialized view');
+  assert.ok(!Object.keys(materializationAttempt.files).some((path) => isProtectedPath(path)), 'No protected path may reach the materialization call');
+  assert.ok(!JSON.stringify(materializationAttempt.files).includes('sk-test-secret-1234567890'), 'No protected payload may reach the materialization call');
+  assert.ok(!JSON.stringify(materializationAttempt.files).includes('MIIEowIBAAKCAQEA'), 'Private-key payload must be absent before materialization');
 });
 
 test('C08: admitCommandView excludes files with synthetic embedded secret markers (API keys, bearer tokens) before materialization', async () => {
@@ -761,9 +945,18 @@ test('C08: admitCommandView excludes files with synthetic embedded secret marker
 
   const materialized = controller.materializedViews[0];
   assert.ok(materialized !== undefined);
+  const materializationAttempt = controller.materializationAttempts[0];
+  assert.ok(materializationAttempt !== undefined);
+  assert.deepEqual(materializationAttempt.files, materialized.files, 'The fake must retain the exact payload passed at the materialization boundary');
   assert.ok(
     !Object.keys(materialized.files).includes('src/unrequired_leaky_service.py'),
     'File with embedded secrets must NOT be materialized in volume'
+  );
+  assert.ok(
+    !Object.keys(materializationAttempt.files).includes('src/unrequired_leaky_service.py') &&
+      !JSON.stringify(materializationAttempt.files).includes('MARKER_SECRET_EMBEDDED_SYNTHETIC_KEY_9876543210') &&
+      !JSON.stringify(materializationAttempt.files).includes('MARKER_SECRET_SYNTHETIC_BEARER_TOKEN_abcdef123456'),
+    'Neither secret path nor payload may reach the materialization call',
   );
 });
 
@@ -773,19 +966,16 @@ test('C08: admitCommandView refuses execution when required file is a protected 
     '.env': 'SECRET=true\n',
   };
 
-  const { manager, workspaceId } = await setupTestEnvironment({
+  const { manager, controller, workspaceId } = await setupTestEnvironment({
     initialFiles,
     requiredFiles: ['src/calculator.py', '.env'], // Requiring a protected path
   });
 
-  await assert.rejects(
-    async () => {
-      await manager.admitCommandView({ workspaceId });
-    },
-    (err: Error) => {
-      return err.message.includes('PROTECTED_PATH_FORBIDDEN');
-    },
-    'Expected PROTECTED_PATH_FORBIDDEN when required file is a protected path'
+  await assertRejectsWithoutControllerEffects(
+    controller,
+    () => manager.admitCommandView({ workspaceId }),
+    (err: Error) => err.message.includes('PROTECTED_PATH_FORBIDDEN'),
+    'Expected PROTECTED_PATH_FORBIDDEN when required file is a protected path',
   );
 });
 
@@ -796,22 +986,17 @@ test('C08: admitCommandView refuses execution when required file contains embedd
     'tests/test_calculator.py': 'def test_dummy(): pass\n',
   };
 
-  const { manager, workspaceId } = await setupTestEnvironment({
+  const { manager, controller, workspaceId } = await setupTestEnvironment({
     initialFiles,
     requiredFiles: ['src/calculator.py', 'src/leaky_auth.py'], // Required check depends on secret-bearing source
   });
 
-  await assert.rejects(
-    async () => {
-      await manager.admitCommandView({ workspaceId });
-    },
-    (err: Error) => {
-      return (
-        err.message.includes('REQUIRED_FILE_CONTAINS_PROTECTED_CONTENT') &&
-        err.message.includes('cannot be silently redacted')
-      );
-    },
-    'Expected REQUIRED_FILE_CONTAINS_PROTECTED_CONTENT without silent redaction'
+  await assertRejectsWithoutControllerEffects(
+    controller,
+    () => manager.admitCommandView({ workspaceId }),
+    (err: Error) => err.message.includes('REQUIRED_FILE_CONTAINS_PROTECTED_CONTENT') &&
+      err.message.includes('cannot be silently redacted'),
+    'Expected REQUIRED_FILE_CONTAINS_PROTECTED_CONTENT without silent redaction',
   );
 });
 
@@ -821,6 +1006,9 @@ test('C08: Admitted required source files in command view are byte-identical to 
   const view = await manager.admitCommandView({ workspaceId });
   const materialized = controller.materializedViews[0];
   assert.ok(materialized !== undefined);
+  const materializationAttempt = controller.materializationAttempts[0];
+  assert.ok(materializationAttempt !== undefined);
+  assert.deepEqual(materializationAttempt.files, Object.fromEntries(canonicalFiles), 'Materialization input must preserve admitted canonical bytes');
 
   for (const admitted of view.admittedFiles) {
     const originalContent = canonicalFiles.get(admitted.path);
@@ -844,7 +1032,7 @@ test('C08: Admitted required source files in command view are byte-identical to 
 });
 
 test('C08: StructuredCommandExecutor rejects environment variables with forbidden secret/credential keys (FORBIDDEN_ENVIRONMENT_VARIABLE)', async () => {
-  const { manager, profile, workspaceId } = await setupTestEnvironment();
+  const { manager, controller, profile, workspaceId } = await setupTestEnvironment();
   await manager.admitCommandView({ workspaceId });
   const executor = manager.createCommandExecutor(profile);
 
@@ -858,8 +1046,8 @@ test('C08: StructuredCommandExecutor rejects environment variables with forbidde
     'AUTH_SECRET',
     'APP_CREDENTIALS',
   ];
-
   for (const key of forbiddenKeys) {
+    const effectsBefore = captureControllerEffects(controller);
     await assert.rejects(
       async () => {
         await executor.execute({
@@ -875,11 +1063,12 @@ test('C08: StructuredCommandExecutor rejects environment variables with forbidde
       },
       `Expected FORBIDDEN_ENVIRONMENT_VARIABLE for env key '${key}'`
     );
+    assertControllerEffectsUnchanged(controller, effectsBefore);
   }
 });
 
 test('C08: StructuredCommandExecutor rejects environment variables whose values contain embedded secrets', async () => {
-  const { manager, profile, workspaceId } = await setupTestEnvironment();
+  const { manager, controller, profile, workspaceId } = await setupTestEnvironment();
   await manager.admitCommandView({ workspaceId });
   const executor = manager.createCommandExecutor(profile);
 
@@ -888,8 +1077,8 @@ test('C08: StructuredCommandExecutor rejects environment variables whose values 
     'sk-ant-api03-0123456789abcdef0123456789',
     '-----BEGIN RSA PRIVATE KEY-----',
   ];
-
   for (const val of secretValues) {
+    const effectsBefore = captureControllerEffects(controller);
     await assert.rejects(
       async () => {
         await executor.execute({
@@ -905,6 +1094,7 @@ test('C08: StructuredCommandExecutor rejects environment variables whose values 
       },
       `Expected FORBIDDEN_ENVIRONMENT_VARIABLE for secret value '${val}'`
     );
+    assertControllerEffectsUnchanged(controller, effectsBefore);
   }
 });
 
@@ -953,6 +1143,7 @@ test('C09: StructuredCommandExecutor rejects disallowed executables before dispa
   const disallowed = ['bash', 'sh', 'curl', 'wget', 'rm', 'cat', 'node', 'eval', 'powershell', 'cmd'];
 
   for (const exe of disallowed) {
+    const effectsBefore = captureControllerEffects(controller);
     assert.equal(ALLOWED_EXECUTABLES.has(exe), false);
     await assert.rejects(
       async () => {
@@ -968,6 +1159,7 @@ test('C09: StructuredCommandExecutor rejects disallowed executables before dispa
       },
       `Expected DISALLOWED_EXECUTABLE for '${exe}'`
     );
+    assertControllerEffectsUnchanged(controller, effectsBefore);
   }
 
   // Assert ZERO controller dispatch occurred
@@ -1022,6 +1214,7 @@ test('C09: StructuredCommandExecutor rejects argv containing shell metacharacter
   ];
 
   for (const badArg of maliciousArgs) {
+    const effectsBefore = captureControllerEffects(controller);
     await assert.rejects(
       async () => {
         await executor.execute({
@@ -1036,13 +1229,14 @@ test('C09: StructuredCommandExecutor rejects argv containing shell metacharacter
       },
       `Expected FORBIDDEN_SHELL_CHARACTERS for argument '${badArg}'`
     );
+    assertControllerEffectsUnchanged(controller, effectsBefore);
   }
 
   assert.equal(controller.executedPlans.length, 0, 'Zero controller dispatch on shell metacharacters');
 });
 
 test('C09: StructuredCommandExecutor rejects loader and interpreter hooks (LOADER_HOOK_FORBIDDEN)', async () => {
-  const { manager, profile, workspaceId } = await setupTestEnvironment();
+  const { manager, controller, profile, workspaceId } = await setupTestEnvironment();
   await manager.admitCommandView({ workspaceId });
   const executor = manager.createCommandExecutor(profile);
 
@@ -1057,6 +1251,7 @@ test('C09: StructuredCommandExecutor rejects loader and interpreter hooks (LOADE
   ];
 
   for (const hook of hooks) {
+    const effectsBefore = captureControllerEffects(controller);
     await assert.rejects(
       async () => {
         await executor.execute({
@@ -1072,15 +1267,17 @@ test('C09: StructuredCommandExecutor rejects loader and interpreter hooks (LOADE
       },
       `Expected LOADER_HOOK_FORBIDDEN for '${hook}'`
     );
+    assertControllerEffectsUnchanged(controller, effectsBefore);
   }
 });
 
 test('C09: StructuredCommandExecutor rejects attempts to override immutable runtime environment', async () => {
-  const { manager, profile, workspaceId } = await setupTestEnvironment();
+  const { manager, controller, profile, workspaceId } = await setupTestEnvironment();
   await manager.admitCommandView({ workspaceId });
   const executor = manager.createCommandExecutor(profile);
 
   for (const imm of IMMUTABLE_CONTAINER_ENV_KEYS) {
+    const effectsBefore = captureControllerEffects(controller);
     await assert.rejects(
       async () => {
         await executor.execute({
@@ -1096,6 +1293,7 @@ test('C09: StructuredCommandExecutor rejects attempts to override immutable runt
       },
       `Expected IMMUTABLE_ENVIRONMENT_OVERRIDE_FORBIDDEN for '${imm}'`
     );
+    assertControllerEffectsUnchanged(controller, effectsBefore);
   }
 });
 
@@ -1224,7 +1422,7 @@ test('C10: Profile validation rejects missing or non-positive resource limits (I
 });
 
 test('C10: StructuredCommandExecutor rejects execution limits exceeding profile ceilings (RESOURCE_LIMIT_EXCEEDS_PROFILE_CEILING)', async () => {
-  const { manager, profile, workspaceId } = await setupTestEnvironment();
+  const { manager, controller, profile, workspaceId } = await setupTestEnvironment();
   await manager.admitCommandView({ workspaceId });
   const executor = manager.createCommandExecutor(profile);
 
@@ -1238,6 +1436,7 @@ test('C10: StructuredCommandExecutor rejects execution limits exceeding profile 
   ];
 
   for (const overLimit of excessiveLimits) {
+    const effectsBefore = captureControllerEffects(controller);
     const standardLimits = createStandardLimits(overLimit);
     assert.ok(validateExecutionLimits(standardLimits).ok);
 
@@ -1255,6 +1454,7 @@ test('C10: StructuredCommandExecutor rejects execution limits exceeding profile 
       },
       `Expected RESOURCE_LIMIT_EXCEEDS_PROFILE_CEILING for limit ${JSON.stringify(overLimit)}`
     );
+    assertControllerEffectsUnchanged(controller, effectsBefore);
   }
 });
 
@@ -1311,7 +1511,7 @@ test('C11: Deterministic workspace volume IDs isolate tasks and prevent cross-ta
 });
 
 test('C11: Workspace resume rejects volume identity mismatch and cross-task identity drift (VOLUME_IDENTITY_MISMATCH)', async () => {
-  const { manager, profile, taskId, workspaceId, initialRevision } = await setupTestEnvironment();
+  const { manager, controller, profile, taskId, workspaceId, initialRevision } = await setupTestEnvironment();
 
   const tamperedWorkspace: TaskWorkspace = {
     taskId,
@@ -1324,18 +1524,14 @@ test('C11: Workspace resume rejects volume identity mismatch and cross-task iden
 
   assert.equal(validateTaskWorkspace(tamperedWorkspace).ok, true);
 
-  await assert.rejects(
-    async () => {
-      await manager.resumeWorkspace({
-        workspace: tamperedWorkspace,
-        profile,
-      });
-    },
-    (err: Error) => {
-      return err.message.includes('VOLUME_IDENTITY_MISMATCH');
-    },
-    'Expected VOLUME_IDENTITY_MISMATCH when resuming with forged volume IDs'
+  const workspaceBefore = manager.getWorkspace(workspaceId);
+  await assertRejectsWithoutControllerEffects(
+    controller,
+    () => manager.resumeWorkspace({ workspace: tamperedWorkspace, profile }),
+    (err: Error) => err.message.includes('VOLUME_IDENTITY_MISMATCH'),
+    'Expected VOLUME_IDENTITY_MISMATCH when resuming with forged volume IDs',
   );
+  assert.deepEqual(manager.getWorkspace(workspaceId), workspaceBefore, 'Rejected resume must preserve the active workspace');
 });
 
 test('C11: Canonical repository volume is NEVER accessible to command execution containers', async () => {
@@ -1376,8 +1572,8 @@ test(
     skip: 'Real Docker containment cases remain not-run pending T024 real adapters, disposable container environment, and X04-STATE/X05-GATE delivery',
   },
   () => {
-    // This case will be executed only under T024 with a live Docker daemon
-    // and Disposable Container Runner asserting actual kernel EROFS denial.
+    // Keep a hard failure behind the skip so enabling this case cannot silently pass without a real probe.
+    assert.fail('REAL_DOCKER_HARNESS_UNAVAILABLE: T024 has not supplied an authorized real adapter, Docker profile, and disposable runner.');
   }
 );
 
@@ -1387,8 +1583,8 @@ test(
     skip: 'Real Docker containment cases remain not-run pending T024 real adapters, disposable container environment, and X04-STATE/X05-GATE delivery',
   },
   () => {
-    // This case will be executed only under T024 with a live Docker daemon
-    // asserting that ../../ traversal and host paths are blocked by container mount namespace.
+    // Keep a hard failure behind the skip so enabling this case cannot silently pass without a real probe.
+    assert.fail('REAL_DOCKER_HARNESS_UNAVAILABLE: T024 has not supplied an authorized real adapter, Docker profile, and disposable runner.');
   }
 );
 
@@ -1398,8 +1594,8 @@ test(
     skip: 'Real Docker containment cases remain not-run pending T024 real adapters, disposable container environment, and X04-STATE/X05-GATE delivery',
   },
   () => {
-    // This case will be executed only under T024 with a live Docker daemon
-    // asserting that live host environment variables are not accessible inside container.
+    // Keep a hard failure behind the skip so enabling this case cannot silently pass without a real probe.
+    assert.fail('REAL_DOCKER_HARNESS_UNAVAILABLE: T024 has not supplied an authorized real adapter, Docker profile, and disposable runner.');
   }
 );
 
@@ -1409,7 +1605,7 @@ test(
     skip: 'Real Docker containment cases remain not-run pending T024 real adapters, disposable container environment, and X04-STATE/X05-GATE delivery',
   },
   () => {
-    // This case will be executed only under T024 with a live Docker daemon
-    // asserting that TCP/UDP socket creation and network requests fail with EPERM/ENETUNREACH.
+    // Keep a hard failure behind the skip so enabling this case cannot silently pass without a real probe.
+    assert.fail('REAL_DOCKER_HARNESS_UNAVAILABLE: T024 has not supplied an authorized real adapter, Docker profile, and disposable runner.');
   }
 );
