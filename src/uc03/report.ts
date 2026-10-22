@@ -30,14 +30,31 @@ import {
 } from '../contracts/foundation/uc03.ts';
 import {
   isProtectedPathRef,
-  sanitizeText,
-  truncateUtf8ToBytes,
+  sanitizeDiagnostic,
 } from '../foundation/telemetry.ts';
 import {
   evaluateDeterministicCompletion,
   type CompletionPredicateInput,
   type TrustedReviewRecord,
 } from './verification.ts';
+
+import {
+  DEFAULT_DIFF_BYTES,
+  DEFAULT_SUMMARY_BYTES,
+  MAX_REPORT_BYTES,
+  MAX_REPORT_ITEMS,
+  boundedText,
+  combineChangedFiles,
+  reportLimit,
+  reportMilestones,
+  reviewSnapshot,
+  safeMetadata,
+  safeReference,
+  safeReferences,
+  sanitizeDetails,
+  sanitizedStringList,
+  verificationSnapshot,
+} from './report/sanitize.ts';
 
 export type MilestoneKind =
   | 'task_started'
@@ -142,47 +159,6 @@ export interface FinalReport {
   readonly generatedAt: string;
 }
 
-const FORBIDDEN_DETAIL_KEYS = new Set([
-  'rawreasoning',
-  'thinking',
-  'prompt',
-  'rawprompt',
-  'stream',
-  'tokenstream',
-  'systemprompt',
-]);
-
-const DEFAULT_SUMMARY_BYTES = 1024;
-const DEFAULT_DIFF_BYTES = 65536;
-const TRUNCATION_SUFFIX = ' ... [TRUNCATED]';
-
-function sanitizeDetails(
-  details: Record<string, unknown> | undefined,
-  customPatterns?: readonly (RegExp | string)[]
-): Record<string, unknown> | undefined {
-  if (!details || typeof details !== 'object') {
-    return undefined;
-  }
-  const result: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(details)) {
-    if (FORBIDDEN_DETAIL_KEYS.has(key.toLowerCase())) {
-      continue;
-    }
-    if (typeof value === 'string') {
-      result[key] = sanitizeText(value, customPatterns);
-    } else if (Array.isArray(value)) {
-      result[key] = value.map((item) =>
-        typeof item === 'string' ? sanitizeText(item, customPatterns) : item
-      );
-    } else if (value && typeof value === 'object') {
-      result[key] = sanitizeDetails(value as Record<string, unknown>, customPatterns);
-    } else {
-      result[key] = value;
-    }
-  }
-  return Object.freeze(result);
-}
-
 export function createMilestone(input: CreateMilestoneInput): Milestone {
   if (!input || typeof input !== 'object') {
     throw new TypeError('input must be an object');
@@ -200,32 +176,21 @@ export function createMilestone(input: CreateMilestoneInput): Milestone {
     throw new TypeError('kind must be a non-empty string');
   }
 
-  const rawSummary = typeof input.summary === 'string' ? input.summary : '';
-  const sanitizedSummary = sanitizeText(rawSummary, input.customSecretPatterns);
-  const maxBytes =
-    typeof input.maxSummaryBytes === 'number' && input.maxSummaryBytes > 0
-      ? input.maxSummaryBytes
-      : DEFAULT_SUMMARY_BYTES;
-
-  let boundedSummary = sanitizedSummary;
-  if (Buffer.byteLength(boundedSummary, 'utf8') > maxBytes) {
-    const targetBytes = Math.max(0, maxBytes - Buffer.byteLength(TRUNCATION_SUFFIX, 'utf8'));
-    const prefix = truncateUtf8ToBytes(boundedSummary, targetBytes);
-    boundedSummary = prefix.length > 0 ? prefix + TRUNCATION_SUFFIX : TRUNCATION_SUFFIX;
-  }
+  const customPatterns = input.customSecretPatterns;
+  const maxBytes = reportLimit(input.maxSummaryBytes, DEFAULT_SUMMARY_BYTES, DEFAULT_SUMMARY_BYTES, 'maxSummaryBytes');
+  const timestamp = input.timestamp ?? new Date().toISOString();
+  const milestoneId = input.milestoneId ?? `ms-${randomUUID()}`;
 
   return Object.freeze({
-    milestoneId: input.milestoneId ?? `ms-${randomUUID()}`,
-    taskId: input.taskId,
-    runId: input.runId,
-    timestamp: input.timestamp ?? new Date().toISOString(),
-    node: input.node,
-    kind: input.kind,
-    summary: boundedSummary,
+    milestoneId: safeMetadata(milestoneId, 'milestoneId', customPatterns),
+    taskId: safeMetadata(input.taskId, 'taskId', customPatterns),
+    runId: safeMetadata(input.runId, 'runId', customPatterns),
+    timestamp: safeMetadata(timestamp, 'timestamp', customPatterns),
+    node: safeMetadata(input.node, 'node', customPatterns),
+    kind: safeMetadata(input.kind, 'kind', customPatterns),
+    summary: boundedText(typeof input.summary === 'string' ? input.summary : '', maxBytes, customPatterns),
     outcome: input.outcome ?? 'info',
-    evidenceRefs: Array.isArray(input.evidenceRefs)
-      ? Object.freeze([...input.evidenceRefs])
-      : Object.freeze([]),
+    evidenceRefs: safeReferences(input.evidenceRefs, 'evidenceRefs', customPatterns),
     details: sanitizeDetails(input.details, input.customSecretPatterns),
   });
 }
@@ -260,15 +225,22 @@ function extractUsage(ledgers: readonly BudgetLedger[] | undefined, stateReplanC
   }[] = [];
 
   if (Array.isArray(ledgers)) {
-    for (const ledger of ledgers) {
+    if (ledgers.length > MAX_REPORT_ITEMS) throw new Error('Report limit exceeded: usage.perLedger');
+    for (const [index, ledger] of ledgers.entries()) {
       if (ledger && typeof ledger === 'object') {
+        const scope = safeMetadata(ledger.scope, `usage.perLedger[${index}].scope`);
+        const kind = safeMetadata(ledger.kind, `usage.perLedger[${index}].kind`);
+        const unit = safeMetadata(ledger.unit, `usage.perLedger[${index}].unit`);
+        if (![ledger.limit, ledger.consumed].every((value) => Number.isFinite(value) && value >= 0)) {
+          throw new Error('Invalid report accounting');
+        }
         perLedger.push(
           Object.freeze({
-            scope: ledger.scope,
-            kind: ledger.kind,
+            scope,
+            kind,
             limit: ledger.limit,
             consumed: ledger.consumed,
-            unit: ledger.unit,
+            unit,
           })
         );
         if (ledger.scope === 'task' && ledger.kind === 'tokens') {
@@ -305,51 +277,68 @@ export function buildFinalReport(input: BuildFinalReportInput): FinalReport {
   }
 
   const customPatterns = input.customSecretPatterns;
+  const taskId = safeMetadata(task.taskId, 'task.taskId', customPatterns);
+  const runId = safeMetadata(state.runId, 'state.runId', customPatterns);
+  const repositoryId = safeMetadata(task.repositoryId, 'task.repositoryId', customPatterns);
+  const diffDigest = input.currentDiffDigest
+    ? safeMetadata(input.currentDiffDigest, 'currentDiffDigest', customPatterns)
+    : '';
+  const currentRepoDigest = input.currentRepoDigest
+    ? safeMetadata(input.currentRepoDigest, 'currentRepoDigest', customPatterns)
+    : '';
+  const baselineRef = input.baseline
+    ? safeReference(input.baseline.evidenceId, 'baseline.evidenceId', customPatterns)
+    : undefined;
+  const inventory = combineChangedFiles(input.changedFiles, state.changedPaths, customPatterns);
+  const changedFiles = inventory.files;
+  const verifications = verificationSnapshot(input.verificationResults, customPatterns);
+  const review = reviewSnapshot(input.reviewResult, customPatterns);
   const failureReasons: string[] = [];
-  const changedFiles = Array.isArray(input.changedFiles)
-    ? [...input.changedFiles]
-    : Array.isArray(state.changedPaths)
-      ? [...state.changedPaths]
-      : [];
-
-  for (const file of changedFiles) {
-    if (isProtectedPath(file) || isProtectedPathRef(file)) {
-      failureReasons.push(`Changed file '${file}' is a protected path or credential file`);
-    }
+  if (changedFiles.some((file) => isProtectedPath(file) || isProtectedPathRef(file))) {
+    failureReasons.push('Changed-file inventory contains a protected path');
+  }
+  if (!inventory.consistent) failureReasons.push('Changed-file inventory does not match persisted task state');
+  if (input.verificationResults !== undefined && !verifications.valid) {
+    failureReasons.push('Malformed verification evidence; completion withheld');
+  }
+  if (input.reviewResult !== undefined && !review.valid) {
+    failureReasons.push('Malformed review evidence; completion withheld');
   }
 
   let isComplete = false;
   let finalOutcome: TaskOutcome;
   let delivery: Delivery | undefined;
-  const fallbackUnverifiedOutcome: TaskOutcome = changedFiles.length > 0
+  const hasModifications = changedFiles.length > 0 || (Array.isArray(state.changedPaths) && state.changedPaths.length > 0);
+  const fallbackUnverifiedOutcome: TaskOutcome = hasModifications
     ? 'IMPLEMENTED_UNVERIFIED'
     : 'INCOMPLETE';
 
   const baseline = input.baseline;
-  const verifications = input.verificationResults;
-  const review = input.reviewResult;
-  const repoDigest = input.currentRepoDigest;
-  const diffDigest = input.currentDiffDigest;
   const origProtected = input.originalProtectedTestsDigest;
   const currProtected = input.currentProtectedTestsDigest;
+  if (origProtected) safeMetadata(origProtected, 'originalProtectedTestsDigest', customPatterns);
+  if (currProtected) safeMetadata(currProtected, 'currentProtectedTestsDigest', customPatterns);
 
   const canRunCompletionEvaluation =
     baseline !== undefined &&
-    Array.isArray(verifications) &&
-    review !== undefined &&
-    typeof repoDigest === 'string' &&
-    typeof diffDigest === 'string' &&
+    Array.isArray(input.verificationResults) &&
+    verifications.valid &&
+    review.valid &&
+    Boolean(currentRepoDigest) &&
+    Boolean(diffDigest) &&
     typeof origProtected === 'string' &&
-    typeof currProtected === 'string';
+    typeof currProtected === 'string' &&
+    inventory.consistent &&
+    failureReasons.length === 0;
 
-  if (canRunCompletionEvaluation && failureReasons.length === 0) {
+  if (canRunCompletionEvaluation && baseline && review.result) {
     const predicateInput: CompletionPredicateInput = {
       task,
       state,
       baseline,
-      verificationResults: verifications,
-      reviewResult: review,
-      currentRepoDigest: repoDigest,
+      verificationResults: verifications.results,
+      reviewResult: review.result,
+      currentRepoDigest,
       currentDiffDigest: diffDigest,
       changedFiles,
       originalProtectedTestsDigest: origProtected,
@@ -390,34 +379,25 @@ export function buildFinalReport(input: BuildFinalReportInput): FinalReport {
   }
 
   if (Array.isArray(input.failureReasons)) {
-    for (const r of input.failureReasons) {
-      if (typeof r === 'string' && r.length > 0) {
-        failureReasons.push(r);
-      }
-    }
+    failureReasons.push(...sanitizedStringList(input.failureReasons, 'failureReasons', customPatterns));
   }
 
-  const sanitizedReasons = failureReasons.map((r) => sanitizeText(r, customPatterns));
-  const rawLimitations = Array.isArray(input.limitations) ? input.limitations : [];
-  const sanitizedLimitations = rawLimitations.map((l) => sanitizeText(l, customPatterns));
+  const sanitizedReasons = Object.freeze(failureReasons.slice(0, MAX_REPORT_ITEMS)
+    .map((reason) => boundedText(reason, DEFAULT_SUMMARY_BYTES, customPatterns)));
+  const sanitizedLimitations = sanitizedStringList(input.limitations, 'limitations', customPatterns);
 
   let patch: string | undefined;
   let truncated = false;
   if (typeof input.patchContent === 'string') {
-    const sanitizedPatch = sanitizeText(input.patchContent, customPatterns);
-    const maxDiffBytes =
-      typeof input.maxDiffBytes === 'number' && input.maxDiffBytes > 0
-        ? input.maxDiffBytes
-        : DEFAULT_DIFF_BYTES;
-
-    if (Buffer.byteLength(sanitizedPatch, 'utf8') > maxDiffBytes) {
-      truncated = true;
-      const targetBytes = Math.max(0, maxDiffBytes - Buffer.byteLength(TRUNCATION_SUFFIX, 'utf8'));
-      const prefix = truncateUtf8ToBytes(sanitizedPatch, targetBytes);
-      patch = prefix.length > 0 ? prefix + TRUNCATION_SUFFIX : TRUNCATION_SUFFIX;
-    } else {
-      patch = sanitizedPatch;
-    }
+    const maxDiffBytes = reportLimit(input.maxDiffBytes, DEFAULT_DIFF_BYTES, DEFAULT_DIFF_BYTES, 'maxDiffBytes');
+    const boundedPatch = sanitizeDiagnostic(input.patchContent, {
+      maxBytes: maxDiffBytes,
+      ...(customPatterns !== undefined ? { customPatterns } : {}),
+    });
+    patch = boundedPatch.sanitizedContent;
+    truncated = boundedPatch.truncated;
+  } else if (input.maxDiffBytes !== undefined) {
+    reportLimit(input.maxDiffBytes, DEFAULT_DIFF_BYTES, DEFAULT_DIFF_BYTES, 'maxDiffBytes');
   }
 
   let safeNextAction = 'investigate-or-abort';
@@ -429,42 +409,46 @@ export function buildFinalReport(input: BuildFinalReportInput): FinalReport {
     safeNextAction = 'await-feedback';
   }
 
-  const verificationRefs = Array.isArray(input.verificationResults)
-    ? input.verificationResults.map((v) => v.evidenceId)
-    : [];
+  const verificationRefs = verifications.refs;
 
   const evidenceRefs = [
-    ...(input.baseline?.evidenceId ? [input.baseline.evidenceId] : []),
+    ...(baselineRef ? [baselineRef] : []),
     ...verificationRefs,
-    ...(input.reviewResult?.reviewId ? [input.reviewResult.reviewId] : []),
+    ...(review.ref ? [review.ref] : []),
   ];
 
-  return Object.freeze({
-    taskId: task.taskId,
-    runId: state.runId,
-    repositoryId: task.repositoryId,
+  const report: FinalReport = Object.freeze({
+    taskId,
+    runId,
+    repositoryId,
     outcome: finalOutcome,
     isComplete,
     diff: Object.freeze({
-      diffDigest: input.currentDiffDigest ?? '',
-      changedFiles: Object.freeze(changedFiles),
+      diffDigest,
+      changedFiles,
       patch,
       truncated: truncated ? true : undefined,
     }),
     evidence: Object.freeze({
-      baselineRef: input.baseline?.evidenceId,
-      verificationRefs: Object.freeze(verificationRefs),
-      reviewRef: input.reviewResult?.reviewId,
+      baselineRef,
+      verificationRefs,
+      reviewRef: review.ref,
       evidenceRefs: Object.freeze(evidenceRefs),
     }),
     limitations: Object.freeze(sanitizedLimitations),
     failureReasons: Object.freeze(sanitizedReasons),
     safeNextAction,
     usage: Object.freeze(extractUsage(state.budgetLedgers, state.replanCount ?? 0)),
-    milestones: Object.freeze(Array.isArray(input.milestones) ? [...input.milestones] : []),
+    milestones: reportMilestones(input.milestones, customPatterns),
     delivery,
     generatedAt: new Date().toISOString(),
   });
+  try {
+    if (Buffer.byteLength(JSON.stringify(report), 'utf8') > MAX_REPORT_BYTES) throw new Error();
+  } catch {
+    throw new Error('Final report exceeds safe output bounds');
+  }
+  return report;
 }
 
 export function formatMilestonesSummary(milestones: readonly Milestone[]): string {

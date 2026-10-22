@@ -355,6 +355,65 @@ test('milestone: sanitizes string values in details object', () => {
   assert.ok(milestone.details.diagnostic.includes('[REDACTED]'));
 });
 
+test('milestone: recursively sanitizes array objects and omits protected keys', () => {
+  const milestone = createMilestone({
+    taskId: 'task-array-detail',
+    runId: 'run-array-detail',
+    node: 'Report',
+    kind: 'task_started',
+    summary: 'Started',
+    details: {
+      items: [{
+        prompt: 'PRIVATE PROMPT',
+        password: 'MARKER_SECRET_nested',
+        keep: 'visible',
+        nested: [{ token: 'MARKER_SECRET_token', keep: 'also visible' }],
+      }],
+    },
+  });
+
+  assert.deepEqual(milestone.details, {
+    items: [{ keep: 'visible', nested: [{ keep: 'also visible' }] }],
+  });
+});
+
+test('milestone: rejects cyclic details with a safe error', () => {
+  const details: Record<string, unknown> = {};
+  details['self'] = details;
+
+  assert.throws(
+    () => createMilestone({
+      taskId: 'task-cyclic-detail',
+      runId: 'run-cyclic-detail',
+      node: 'Report',
+      kind: 'task_started',
+      summary: 'Started',
+      details,
+    }),
+    /Invalid report details/
+  );
+});
+
+test('milestone: bounds nested UTF-8 details and array items', () => {
+  const milestone = createMilestone({
+    taskId: 'task-large-detail',
+    runId: 'run-large-detail',
+    node: 'Report',
+    kind: 'task_started',
+    summary: 'Started',
+    details: {
+      items: Array.from({ length: 1000 }, () => ({ text: '🙂'.repeat(1000) })),
+    },
+  });
+  const serialized = JSON.stringify(milestone.details);
+
+  assert.ok(Buffer.byteLength(serialized, 'utf8') <= 8192);
+  const items = milestone.details?.['items'];
+  assert.ok(Array.isArray(items));
+  assert.ok(items.length <= 128);
+  assert.ok(!serialized.includes('\uFFFD'));
+});
+
 test('milestone: bounds summary byte length cleanly to maxSummaryBytes', () => {
   const longSummary = 'A'.repeat(2000);
   const milestone = createMilestone({
@@ -368,6 +427,30 @@ test('milestone: bounds summary byte length cleanly to maxSummaryBytes', () => {
 
   assert.ok(Buffer.byteLength(milestone.summary, 'utf8') <= 128);
   assert.ok(milestone.summary.includes('... [TRUNCATED]'));
+});
+
+test('milestone: honors one-byte summary limits', () => {
+  const milestone = createMilestone({
+    taskId: 'task-tiny-summary',
+    runId: 'run-tiny-summary',
+    node: 'Report',
+    kind: 'task_started',
+    summary: '🙂'.repeat(10),
+    maxSummaryBytes: 1,
+  });
+
+  assert.ok(Buffer.byteLength(milestone.summary, 'utf8') <= 1);
+});
+
+test('milestone: rejects non-finite summary limits', () => {
+  assert.throws(() => createMilestone({
+    taskId: 'task-infinite-summary',
+    runId: 'run-infinite-summary',
+    node: 'Report',
+    kind: 'task_started',
+    summary: 'summary',
+    maxSummaryBytes: Number.POSITIVE_INFINITY,
+  }), /Invalid report limit: maxSummaryBytes/);
 });
 
 test('milestoneToActivityEvent: converts Milestone to contract ActivityEvent', () => {
@@ -622,6 +705,110 @@ test('report: sanitizes secrets in failure reasons and limitations', () => {
   }
 });
 
+test('report: sanitizes copied milestone summaries in JSON and Markdown', () => {
+  const fixture = createValidReportingFixture();
+  const source = createMilestone({
+    taskId: fixture.task.taskId,
+    runId: fixture.state.runId,
+    node: 'Verification',
+    kind: 'verification_completed',
+    summary: 'safe summary',
+  });
+  const report = buildFinalReport({
+    ...fixture,
+    milestones: [{ ...source, summary: 'Verification included MARKER_SECRET_milestone' }],
+  });
+  const serialized = JSON.stringify(report);
+  const markdown = formatReportMarkdown(report);
+
+  assert.ok(!serialized.includes('MARKER_SECRET_milestone'));
+  assert.ok(!markdown.includes('MARKER_SECRET_milestone'));
+  assert.ok(serialized.includes('[REDACTED]'));
+  assert.ok(markdown.includes('[REDACTED]'));
+});
+
+test('report: rejects protected stable metadata without echoing the value', () => {
+  const fixture = createValidReportingFixture();
+  let caught: unknown;
+  try {
+    buildFinalReport({
+      ...fixture,
+      changedFiles: ['src/MARKER_SECRET_filename.py'],
+    });
+  } catch (error) {
+    caught = error;
+  }
+
+  assert.ok(caught instanceof Error);
+  assert.match(caught.message, /Protected report metadata rejected/);
+  assert.ok(!caught.message.includes('MARKER_SECRET_filename.py'));
+});
+
+test('report: rejects protected milestone evidence references without echoing them', () => {
+  const fixture = createValidReportingFixture();
+  const milestone = createMilestone({
+    taskId: fixture.task.taskId,
+    runId: fixture.state.runId,
+    node: 'Verification',
+    kind: 'verification_completed',
+    summary: 'Checks completed',
+  });
+  let caught: unknown;
+  try {
+    buildFinalReport({
+      ...fixture,
+      milestones: [{ ...milestone, evidenceRefs: ['MARKER_SECRET_evidence_ref'] }],
+    });
+  } catch (error) {
+    caught = error;
+  }
+
+  assert.ok(caught instanceof Error);
+  assert.match(caught.message, /Protected report metadata rejected/);
+  assert.ok(!caught.message.includes('MARKER_SECRET_evidence_ref'));
+});
+
+test('report: rejects oversized limitations and milestone collections', () => {
+  const fixture = createValidReportingFixture();
+  const milestone = createMilestone({
+    taskId: fixture.task.taskId,
+    runId: fixture.state.runId,
+    node: 'Report',
+    kind: 'task_started',
+    summary: 'Started',
+  });
+
+  assert.throws(() => buildFinalReport({
+    ...fixture,
+    limitations: Array.from({ length: 65 }, () => 'bounded limitation'),
+  }), /Protected report metadata rejected: limitations/);
+  assert.throws(() => buildFinalReport({
+    ...fixture,
+    milestones: Array.from({ length: 65 }, () => milestone),
+  }), /Protected report metadata rejected: milestones/);
+});
+
+test('report: rejects serialized output above the aggregate byte bound', () => {
+  const fixture = createValidReportingFixture();
+  const milestone: Milestone = {
+    milestoneId: 'ms-large-output',
+    taskId: fixture.task.taskId,
+    runId: fixture.state.runId,
+    timestamp: '2026-10-22T00:00:00.000Z',
+    node: 'Report',
+    kind: 'task_started',
+    summary: 'Started',
+    outcome: 'info',
+    evidenceRefs: Array.from({ length: 64 }, (_, index) => `ref-${String(index).padStart(2, '0')}-${'x'.repeat(505)}`),
+    details: {},
+  };
+
+  assert.throws(() => buildFinalReport({
+    ...fixture,
+    milestones: Array.from({ length: 64 }, () => milestone),
+  }), /Final report exceeds safe output bounds/);
+});
+
 test('report: sanitizes secrets embedded in patch content', () => {
   const fixture = createValidReportingFixture();
   const embeddedSecret = 'sk-ant-api03-abcdefghijklmnopqrstuvwxyz123456';
@@ -653,6 +840,25 @@ test('report: bounds large patch content to maxDiffBytes cleanly without corrupt
   assert.ok(report.diff.patch.includes('... [TRUNCATED]'));
 });
 
+test('report: honors one-byte patch limits', () => {
+  const report = buildFinalReport({
+    ...createValidReportingFixture(),
+    patchContent: '🙂'.repeat(10),
+    maxDiffBytes: 1,
+  });
+
+  assert.ok(Buffer.byteLength(report.diff.patch ?? '', 'utf8') <= 1);
+  assert.equal(report.diff.truncated, true);
+});
+
+test('report: rejects non-finite patch limits', () => {
+  assert.throws(() => buildFinalReport({
+    ...createValidReportingFixture(),
+    patchContent: 'patch',
+    maxDiffBytes: Number.POSITIVE_INFINITY,
+  }), /Invalid report limit: maxDiffBytes/);
+});
+
 test('report: flags changed protected paths as failure', () => {
   const fixture = createValidReportingFixture();
 
@@ -665,6 +871,46 @@ test('report: flags changed protected paths as failure', () => {
   assert.equal(report.outcome, 'IMPLEMENTED_UNVERIFIED');
   assert.equal(report.delivery, undefined);
   assert.ok(report.failureReasons.some((r) => r.includes('protected path')));
+});
+
+test('report: treats malformed verification results as incomplete evidence', () => {
+  const fixture = createValidReportingFixture();
+  const report = buildFinalReport({
+    ...fixture,
+    verificationResults: [null] as unknown as readonly VerificationResult[],
+  });
+
+  assert.equal(report.isComplete, false);
+  assert.equal(report.outcome, 'IMPLEMENTED_UNVERIFIED');
+  assert.equal(report.delivery, undefined);
+  assert.ok(report.failureReasons.some((reason) => reason.includes('Malformed verification evidence')));
+});
+
+test('report: combines persisted changes when the supplied inventory is empty', () => {
+  const fixture = createValidReportingFixture();
+  const report = buildFinalReport({
+    task: fixture.task,
+    state: { ...fixture.state, changedPaths: ['src/fix.py'] },
+    changedFiles: [],
+  });
+
+  assert.equal(report.outcome, 'IMPLEMENTED_UNVERIFIED');
+  assert.deepEqual(report.diff.changedFiles, ['src/fix.py']);
+  assert.ok(report.failureReasons.some((reason) => reason.includes('inventory')));
+});
+
+test('report: rejects inconsistent changed-file inventories from completion', () => {
+  const fixture = createValidReportingFixture();
+  const report = buildFinalReport({
+    ...fixture,
+    state: { ...fixture.state, changedPaths: ['src/state.py'] },
+    changedFiles: ['src/input.py'],
+  });
+
+  assert.equal(report.isComplete, false);
+  assert.equal(report.outcome, 'IMPLEMENTED_UNVERIFIED');
+  assert.deepEqual([...report.diff.changedFiles].sort(), ['src/input.py', 'src/state.py']);
+  assert.ok(report.failureReasons.some((reason) => reason.includes('inventory')));
 });
 
 /* ==================================================================
