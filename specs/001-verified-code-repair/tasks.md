@@ -336,13 +336,13 @@ Develop accepted contract mocks once (T004), then run independent story lanes on
 
 **Migration rule**: Introduce v0.2 APIs and port shapes additively in a separate versioned module (`ports-v02.ts`); do not add required methods or optional-context overloads to the existing v0.1 `ports.ts` interfaces during migration. Keep all v0.1 source callers and implementers compiling until their versioned successors are ready. Any temporary compatibility path must have its own explicit version and test-only name, fail closed in production composition, and never grant effect authority or satisfy v0.2 production admission. Missing context, v0.1 context, or an old claim ID never authorizes an effect. No implicit production fallback is allowed. The canonical cutover is a distinct final task after every required producer, receiver, fixture, and consumer migration is complete.
 
-- [ ] T037 [US3] Add runnable v0.2 admission-validator RED scaffolding and additive port declarations in src/contracts/foundation/uc03/admission-v02.ts, ports-v02.ts, and tests/runtime/contract/atomic-admission.test.ts.
+- [X] T037 [US3] Add runnable v0.2 admission-validator RED scaffolding and additive port declarations in src/contracts/foundation/uc03/admission-v02.ts, ports-v02.ts, and tests/runtime/contract/atomic-admission.test.ts.
   - **Owner**: Tai / shared-contracts lane.
   - **Dependencies**: T003, T004.
   - **Owned Paths**: src/contracts/foundation/uc03/admission-v02.ts; src/contracts/foundation/uc03/ports-v02.ts; src/contracts/foundation/uc03.ts; tests/runtime/contract/atomic-admission.test.ts.
   - **Acceptance Checks**: Add a separate versioned v0.2 admission API and exported neutral fail-closed validator bodies for repository and provider admission. Add StatePortV02, RepositoryPortV02, ModelPortV02, and ExecutionGuardV02 declarations in ports-v02.ts and export them from the stable barrel. Keep every v0.1 type, ports.ts signature, and validator source-compatible; do not use an optional context overload. Tests import the real scaffold and assert that a valid repository/provider context would be accepted, so the RED is assertion-only; malformed, absent, cross-branch, or unbounded inputs still deny. The source and emitted test runners must collect and reach those assertions. pnpm run typecheck and pnpm run build pass at this checkpoint.
 
-- [ ] T038 [US3] Implement v0.2 action, command-view, and provider-admission validators in src/contracts/foundation/uc03/admission-v02.ts.
+- [X] T038 [US3] Implement v0.2 action, command-view, and provider-admission validators in src/contracts/foundation/uc03/admission-v02.ts.
   - **Owner**: Tai / shared-contracts lane.
   - **Dependencies**: T037.
   - **Owned Paths**: src/contracts/foundation/uc03/admission-v02.ts; src/contracts/foundation/uc03/ports-v02.ts; src/contracts/foundation/uc03.ts; tests/runtime/contract/atomic-admission.test.ts.
