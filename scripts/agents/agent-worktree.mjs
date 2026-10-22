@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { lstat, readFile, realpath } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { atomicWrite, dataDirectory, git, inside, readJson, repository, withLock } from './agent-store.mjs';
+import { atomicWrite, dataDirectory, git, inside, readJson, repository, samePath, withLock } from './agent-store.mjs';
 import { commonGitDirectory, registeredAssignmentBase } from './active-task-binding.mjs';
 
 const usage = `Usage:
@@ -46,7 +46,7 @@ async function worker(repo, path, branch, externalAppOwned = false) {
   if (externalAppOwned ? managed || dump : !managed) throw new Error(externalAppOwned
     ? 'External app-owned workers must be outside the managed .agent-work area.'
     : 'Worker must be inside the managed worktree area; use --external-app-owned for an external app worktree.');
-  if (path === repo.root || path === repo.primary) throw new Error('Worker must be outside the invoking and primary checkouts.');
+  if (await samePath(path, repo.root) || await samePath(path, repo.primary)) throw new Error('Worker must be outside the invoking and primary checkouts.');
   const info = await lstat(path);
   const canonical = await realpath(path);
   if (!info.isDirectory() || info.isSymbolicLink() || pathKey(canonical) !== pathKey(path)) throw new Error('Worker path must be a real directory without links.');

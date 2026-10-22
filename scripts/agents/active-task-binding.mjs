@@ -4,6 +4,7 @@ import { git, samePath } from './agent-store.mjs';
 
 export const originDevelopmentBaseRef = 'refs/remotes/origin/development';
 const commitPattern = /^[0-9a-f]{40,64}$/i;
+const readinessFields = ['base', 'branch', 'checkout', 'identity', 'readyAt', 'repository', 'schemaVersion'];
 
 function isRecord(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -28,12 +29,31 @@ function validBase(base, reservation = false) {
   return base.ref === originDevelopmentBaseRef && typeof base.sha === 'string' && commitPattern.test(base.sha);
 }
 
+function readinessMatches(entry, readiness) {
+  const binding = entry.binding;
+  const reservation = entry.reservation;
+  return isRecord(readiness) && reservation?.schemaVersion === 2 && binding &&
+    Object.keys(readiness).sort().join('\0') === readinessFields.join('\0') &&
+    readiness.schemaVersion === 1 && sameIdentity(readiness.identity, identity(entry)) &&
+    Object.keys(readiness.identity ?? {}).sort().join('\0') === ['owner', 'session', 'task'].join('\0') &&
+    readiness.checkout === binding.checkout && readiness.checkout.length <= 4096 &&
+    readiness.repository === binding.repository && readiness.repository.length <= 4096 &&
+    readiness.branch === binding.branch && typeof readiness.branch === 'string' && readiness.branch.length <= 1024 &&
+    isRecord(readiness.base) && Object.keys(readiness.base).sort().join('\0') === ['ref', 'sha'].join('\0') &&
+    readiness.base.ref === reservation.base.ref && readiness.base.sha === reservation.base.sha &&
+    typeof readiness.readyAt === 'string' && readiness.readyAt.length <= 32 &&
+    Number.isFinite(Date.parse(readiness.readyAt)) && new Date(readiness.readyAt).toISOString() === readiness.readyAt;
+}
+
 export function validateBindingMetadata(entry) {
   if (entry.reservation !== undefined) {
     const reservation = entry.reservation;
-    if (!isRecord(reservation) || reservation.schemaVersion !== 1 || !sameIdentity(reservation.identity, identity(entry)) ||
+    if (!isRecord(reservation) || ![1, 2].includes(reservation.schemaVersion) || !sameIdentity(reservation.identity, identity(entry)) ||
         !validRepositoryPath(reservation.repository) || !validBase(reservation.base, true)) {
       throw new Error('Invalid active-task reservation identity or base.');
+    }
+    if (reservation.schemaVersion === 2 && (!validRepositoryPath(reservation.coordinatorCheckout) || !validRepositoryPath(reservation.primaryCheckout))) {
+      throw new Error('Invalid active-task coordinator checkout identity.');
     }
     if (!entry.binding && (entry.checkout !== undefined || entry.head !== undefined)) throw new Error('An unbound reservation cannot claim a checkout or HEAD.');
   }
@@ -50,6 +70,10 @@ export function validateBindingMetadata(entry) {
     }
   } else if (entry.checkout !== undefined && entry.reservation) {
     throw new Error('An unbound reservation cannot claim a checkout.');
+  }
+  if (entry.readiness !== undefined && !readinessMatches(entry, entry.readiness)) throw new Error('Reserved worker readiness receipt does not match its assignment identity.');
+  if (entry.reservation?.schemaVersion === 2 && entry.status === 'handed-off' && entry.readiness === undefined) {
+    throw new Error('A reserved worker handoff requires a recorded edit-ready receipt.');
   }
 }
 
@@ -109,9 +133,11 @@ export async function reserveBinding(repo, entry, baseSha) {
     throw new Error('The parent checkout and freshly fetched origin/development must both match the reserved base SHA exactly.');
   }
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     identity: identity(entry),
     repository: await commonGitDirectory(repo.root),
+    coordinatorCheckout: await realpath(repo.root),
+    primaryCheckout: await realpath(repo.primary),
     base: { ref: originDevelopmentBaseRef, sha: baseSha },
   };
 }
@@ -135,6 +161,11 @@ export async function bindAssignment(entry, repo, worktreePath) {
   if (entry.binding) throw new Error('Assignment is already bound; retain its worktree identity.');
   const targetPath = resolve(repo.root, worktreePath);
   if (entry.checkout && !(await samePath(entry.checkout, targetPath))) throw new Error('Binding cannot relocate an existing assignment checkout.');
+  const protectedPaths = [repo.primary, entry.reservation?.coordinatorCheckout, entry.reservation?.primaryCheckout,
+    ...(entry.reservation?.schemaVersion === 1 ? [repo.root] : [])].filter(Boolean);
+  if (entry.reservation && (await Promise.all(protectedPaths.map((path) => samePath(targetPath, path)))).some(Boolean)) {
+    throw new Error('Reserved worker must bind a separate worktree outside the coordinator and primary checkouts.');
+  }
   const current = await inspectWorktree(repo, targetPath, { requireBranch: Boolean(entry.reservation) });
   const repository = await commonGitDirectory(repo.root);
   if (current.repository !== repository) throw new Error('Worker worktree belongs to a different Git repository.');
@@ -160,6 +191,34 @@ export async function bindAssignment(entry, repo, worktreePath) {
   entry.checkout = current.path;
   entry.binding = binding;
   return binding;
+}
+
+export function verifyReadinessReceipt(entry) {
+  if (entry.reservation?.schemaVersion !== 2) return null;
+  if (!readinessMatches(entry, entry.readiness)) throw new Error('Reserved worker must complete edit-ready with a matching readiness receipt before handoff.');
+  return entry.readiness;
+}
+
+export async function recordEditReadiness(entry, repo, binding) {
+  binding ??= await verifyAssignmentBinding(entry, repo, repo.root);
+  if (entry.reservation?.schemaVersion !== 2) return null;
+  if (entry.readiness) return verifyReadinessReceipt(entry);
+  const current = await inspectWorktree(repo, binding.checkout, { requireBranch: true });
+  if (current.head !== binding.base.sha || git(current.path, ['status', '--porcelain', '--untracked-files=all']).stdout.trim()) {
+    throw new Error('Edit readiness must be recorded before editing while the worker is clean at its creation base.');
+  }
+  const readiness = {
+    schemaVersion: 1,
+    identity: identity(entry),
+    checkout: binding.checkout,
+    repository: binding.repository,
+    branch: binding.branch,
+    base: { ...binding.base },
+    readyAt: new Date().toISOString(),
+  };
+  if (!readinessMatches(entry, readiness)) throw new Error('Could not create a bounded readiness receipt for this worker identity.');
+  entry.readiness = readiness;
+  return readiness;
 }
 
 export async function verifyAssignmentBinding(entry, repo, currentCheckout) {

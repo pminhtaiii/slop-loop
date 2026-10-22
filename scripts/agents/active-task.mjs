@@ -5,31 +5,25 @@ import { runWorkflow } from './pr-workflow.mjs';
 import { isDeepStrictEqual } from 'node:util';
 import { atomicWrite, dataDirectory, readJson, repository, samePath, withLock } from './agent-store.mjs';
 import { captureOwnedHandoff, validateOwnedPaths, validateSessionRef, verifyOwnedHandoff } from './owned-handoff.mjs';
-import { bindAssignment, reserveBinding, startBinding, validateBindingMetadata, verifyAssignmentBinding } from './active-task-binding.mjs';
+import { bindAssignment, recordEditReadiness, reserveBinding, startBinding, validateBindingMetadata, verifyAssignmentBinding, verifyReadinessReceipt } from './active-task-binding.mjs';
 import { importLegacyViews, migrateLegacyViews, parseLegacyView, readLegacyViews, writeSessionProgress } from './active-task-legacy.mjs';
 import { reassign, retireReassigned } from './active-task-reassignment.mjs';
 
-const usage = `Usage:
-  node scripts/agents/active-task.mjs start --owner <id> --task <id> --session <date/id> --summary <text> --next <text> [--role coordinator|worker] [--owned-path <path>...]
-  node scripts/agents/active-task.mjs reserve --owner <id> --task <id> --session <date/id> --base-sha <fetched-origin/development-sha> --summary <text> --next <text> --owned-path <path>...
-  node scripts/agents/active-task.mjs bind --owner <id> --task <id> --worktree <absolute-path> --root <registry-checkout>
-  node scripts/agents/active-task.mjs edit-ready --owner <id> --task <id> --root <bound-worker-checkout>
-  node scripts/agents/active-task.mjs update --owner <id> --task <id> [--next <text>] [--verification <text>] [--status active|blocked]
-  node scripts/agents/active-task.mjs handoff --owner <id> --task <id> --result <text>
-  node scripts/agents/active-task.mjs finish --owner <id> --task <id> --result <text>
-  node scripts/agents/active-task.mjs reassign --owner <old-id> --task <id> --new-owner <id> --session <date/id> --reason <text> [--role coordinator|worker] [--owned-path <path>...]
-  node scripts/agents/active-task.mjs retire-reassigned --owner <id> --task <id> --reason <text>
-  node scripts/agents/active-task.mjs verify-handoff --owner <id> --task <id>
-  node scripts/agents/active-task.mjs clear --owner <id> --task <id>
-  node scripts/agents/active-task.mjs archive --owner <id> --task <id> --output docs/verification/<name>.json [--apply]
-  node scripts/agents/active-task.mjs migrate-legacy
-  node scripts/agents/active-task.mjs list
-  node scripts/agents/active-task.mjs list --compact [--owner <id>] [--task <id>] [--status <status>]
-  node scripts/agents/active-task.mjs render [--output .agent-work/<date>/<session>/progress.md]
-
-Use --root <checkout>. reserve requires exact fetched origin/development SHA; bind validates the Git worktree; edit-ready and handoff require binding. start remains in-place.
-finish requires a published linked PR and passing current-head CI. Workers hand off; coordinators publish and finish.
-Archive/clear require terminal state; reassignment preserves history. Busy locks are never reclaimed; legacy migration is explicit.`;
+const usage = `Usage: node scripts/agents/active-task.mjs <command> [options]
+Commands:
+  start --owner <id> --task <id> --session <date/id> --summary <text> --next <text> [--role coordinator|worker] [--owned-path <path>...]
+  reserve --owner <id> --task <id> --session <date/id> --base-sha <sha> --summary <text> --next <text> --owned-path <path>...
+  bind --owner <id> --task <id> --worktree <absolute-path>
+  edit-ready|verify-handoff --owner <id> --task <id>
+  update --owner <id> --task <id> [--next <text>] [--verification <text>] [--status active|blocked]
+  handoff|finish --owner <id> --task <id> --result <text>
+  reassign --owner <id> --task <id> --new-owner <id> --session <date/id> --reason <text>
+  retire-reassigned --owner <id> --task <id> --reason <text>
+  clear --owner <id> --task <id>
+  archive --owner <id> --task <id> --output docs/verification/<name>.json [--apply]
+  migrate-legacy|list [--compact]|render [--output .agent-work/<date>/<session>/progress.md]
+All commands accept --root <checkout>. reserve fetches/pins origin/development; bind rejects coordinator paths. Reserved workers require clean pre-edit readiness before handoff; start remains in-place.
+finish requires a published linked PR and passing current-head CI. Archive/clear require terminal state; reassignment preserves history; busy locks are never reclaimed.`;
 
 function parseArguments(args) {
   const [command, ...options] = args;
@@ -161,7 +155,10 @@ async function run(args) {
       const entry = entries[index];
       if (entry.status !== 'active') throw new Error('Only active worker assignments can become edit-ready.');
       const binding = await verifyAssignmentBinding(entry, repo, repo.root);
-      return console.log(JSON.stringify({ owner: entry.owner, task: entry.task, ready: true, checkout: binding.checkout, branch: binding.branch, base: binding.base }, null, 2));
+      const alreadyReady = Boolean(entry.readiness);
+      const readiness = await recordEditReadiness(entry, repo, binding);
+      if (readiness && !alreadyReady) { entry.updatedAt = readiness.readyAt; await atomicWrite(statePath, JSON.stringify(entries, null, 2) + '\n'); }
+      return console.log(JSON.stringify({ owner: entry.owner, task: entry.task, ready: true, checkout: binding.checkout, branch: binding.branch, base: binding.base, ...(readiness ? { readiness } : {}) }, null, 2));
     }
     if (command === 'verify-handoff') {
       if (index === -1) throw new Error('No entry matches that owner and task.');
@@ -249,6 +246,7 @@ async function run(args) {
         if (command === 'handoff' && entry.role !== 'worker') throw new Error('Only registered workers may hand off; coordinators must publish and finish.');
         if (command === 'handoff') {
           await verifyAssignmentBinding(entry, repo, repo.root);
+          verifyReadinessReceipt(entry);
           if (!entry.checkout || !(await samePath(entry.checkout, repo.root))) throw new Error('Worker handoff must run in the assignment checkout.');
           const handoffEvidence = entry.ownedPaths?.length
             ? await captureOwnedHandoff(entry)

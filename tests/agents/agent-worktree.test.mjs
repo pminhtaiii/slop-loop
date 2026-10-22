@@ -15,6 +15,12 @@ function git(root, args) {
 function run(root, ...args) {
   return spawnSync(process.execPath, [cli, ...args, '--root', root], { encoding: 'utf8', windowsHide: true, timeout: 15_000 });
 }
+function alternateCase(path) {
+  const index = path.search(/[a-z]/i);
+  if (index === -1) return path;
+  const letter = path[index];
+  return path.slice(0, index) + (letter === letter.toLowerCase() ? letter.toUpperCase() : letter.toLowerCase()) + path.slice(index + 1);
+}
 async function fixture(t, { externalWorker = false } = {}) {
   const directory = await realpath(await mkdtemp(join(tmpdir(), 'agent-worktree-')));
   const root = join(directory, 'repo');
@@ -149,6 +155,15 @@ test('unknown workers and attempts to register the primary checkout are rejected
   result = run(root, 'register', '--id', 'primary', '--path', root, '--integration-ref', 'main', '--session', '2026-10-15/run', '--owner', 'worker', '--task', 'T001');
   assert.equal(result.status, 1);
   assert.match(result.stderr, /inside the managed worktree area/);
+});
+
+test('external app-owned registration rejects a case-variant primary path on Windows', async (t) => {
+  if (process.platform !== 'win32') return t.skip('Windows path casing is required for this regression.');
+  const { root } = await fixture(t);
+  const result = run(root, 'register', '--id', 'primary-case', '--path', alternateCase(root), '--integration-ref', 'main', '--session', '2026-10-15/run', '--owner', 'worker', '--task', 'T001', '--external-app-owned');
+  assert.equal(result.status, 1, `case-variant primary path unexpectedly registered: ${result.stdout}`);
+  assert.match(result.stderr, /invoking and primary checkouts/i);
+  await assert.rejects(readFile(join(root, '.agent-work/worktree-receipts/primary-case.json')), { code: 'ENOENT' });
 });
 
 test('external app-owned worktrees require explicit registration and are never cleaned up by the helper', async (t) => {
