@@ -107,16 +107,16 @@ export async function resumeFromApproval(
     throw new Error(`Approval request mismatch: expected ${pending.requestId}, got ${decision.requestId}`);
   }
 
-  // Cryptographic & environment binding check
-  if (options.currentCommit && options.currentCommit !== pending.repoCommit) {
+  // Cryptographic & environment binding check (fail-closed)
+  if (!options.currentCommit || options.currentCommit !== pending.repoCommit) {
     throw new StaleApprovalBindingError(
-      `Stale approval: git commit mismatch. Approved at ${pending.repoCommit}, current commit is ${options.currentCommit}`
+      `Stale approval: git commit mismatch. Approved at ${pending.repoCommit}, current commit is ${options.currentCommit ?? 'undefined'}`
     );
   }
 
-  if (options.policyVersion && options.policyVersion !== pending.policyVersion) {
+  if (!options.policyVersion || options.policyVersion !== pending.policyVersion) {
     throw new StaleApprovalBindingError(
-      `Stale approval: policy version mismatch. Approved under ${pending.policyVersion}, current policy is ${options.policyVersion}`
+      `Stale approval: policy version mismatch. Approved under ${pending.policyVersion}, current policy is ${options.policyVersion ?? 'undefined'}`
     );
   }
 

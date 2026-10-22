@@ -71,7 +71,7 @@ describe('UC-04: Durable Foundation Process Restart & Crash Recovery (T012)', ()
     const resumeOut = JSON.parse(resumeRes.stdout.trim());
     assert.equal(resumeOut.status, 'RESUME_COMPLETED_OK');
     assert.equal(resumeOut.finalStatus, 'completed');
-    assert.equal(resumeOut.consumedTokens, 1500); // 500 from step1 + 1000 conservative recovery
+    assert.equal(resumeOut.consumedTokens, 2000); // 500 from step1 + 1000 conservative recovery + 500 rerun
     const pid4 = resumeOut.pid;
 
     // 5. CRITICAL: Prove each step ran in an independent OS process

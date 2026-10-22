@@ -2,7 +2,7 @@
 
 **Input**: [spec](spec.md), [plan](plan.md), [research](research.md), [data model](data-model.md), [interfaces](contracts/interfaces.md), [acceptance](contracts/acceptance.md), [decisions](contracts/decisions.md).
 
-**Status**: All tasks unchecked and unauthorized. This is a conditional future implementation ledger, not work performed by the specification request. Authoring delegation, historical shared agreement and passing planning checks release no task. Each phase needs explicit G-AUTH; new contract/path/test seams need G-EXTENSION. Backend-dependent work must first receive a plan/ledger amendment naming actual selected adapter paths. No runtime paths below are created in this assignment.
+**Status**: T001–T012 authorization is recorded in decisions.md; checkboxes record completion, not authorization. This is a conditional future implementation ledger, not work performed by the specification request. Authoring delegation, historical shared agreement and passing planning checks release no task. Each phase needs explicit G-AUTH; new contract/path/test seams need G-EXTENSION. Backend-dependent work must first receive a plan/ledger amendment naming actual selected adapter paths. No runtime paths below are created in this assignment.
 
 **Tests**: Required by FR-015. After authorization and seam confirmation, use vertical behavioral RED/GREEN through actual owned public exports; neutral loadable scaffolds are permitted only then. Missing imports/type errors are not behavioral RED. Retain prior regressions. Coordinator alone updates completion after integrated evidence; implementation workers do not change checkboxes.
 

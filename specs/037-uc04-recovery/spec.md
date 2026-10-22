@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-21 (Asia/Saigon)
 
-**Status**: Draft planning; no implementation authorized or verified. Thanh Tan owns UC-04. The user relayed his request to help write the spec at 12:28 on this date; this delegates authoring, not new contract agreement. See [decisions](contracts/decisions.md).
+**Status**: T001–T012 are authorized under G-AUTH/G-EXTENSION; implementation and verification remain separate states. Thanh Tan owns UC-04. The user relayed his request to help write the spec at 12:28 on this date; this delegates authoring, not new contract agreement. See [decisions](contracts/decisions.md).
 
 **Input**: Specify durable task/step state, checkpoints, cumulative allowances and safe continuation. First deliver the controlled pause/recovery foundation from ADR-0007; integrated feature workflow and cross-task repository memory remain later phases.
 

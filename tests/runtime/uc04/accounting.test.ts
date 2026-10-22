@@ -46,6 +46,19 @@ describe('UC-04: BudgetTracker & Durable Accounting', () => {
     assert.equal(tracker.getAvailable('task', 'cost'), 3.5);
   });
 
+  it('rejects duplicate reservation keys in a single request', () => {
+    const tracker = new BudgetTracker(initialLedgers);
+    assert.throws(
+      () => {
+        tracker.reserve('req-dup', [
+          { scope: 'task', kind: 'tokens', amount: 500 },
+          { scope: 'task', kind: 'tokens', amount: 300 },
+        ]);
+      },
+      /Duplicate reservation key/i
+    );
+  });
+
   it('throws BudgetExhaustionError when requested amount exceeds available allowance', () => {
     const tracker = new BudgetTracker(initialLedgers);
     assert.throws(

@@ -95,7 +95,9 @@ describe('UC-04: End-to-End Multi-Step Workflow & Crash Recovery Suite (T013)', 
             };
           }
           if (step.id === 'step-2') {
-            throw new Error('SIMULATED CRASH (SIGKILL)');
+            const crash = new Error('SIMULATED CRASH (SIGKILL)');
+            (crash as unknown as { isAbruptCrash: boolean }).isAbruptCrash = true;
+            throw crash;
           }
           return {};
         },
@@ -111,6 +113,7 @@ describe('UC-04: End-to-End Multi-Step Workflow & Crash Recovery Suite (T013)', 
     const checkpointAfterCrash = await store.loadLatestCheckpoint(initialTask.taskId);
     assert.ok(checkpointAfterCrash);
     assert.equal(checkpointAfterCrash.state.plan[0]?.status, 'done');
+    assert.equal(checkpointAfterCrash.state.plan[1]?.status, 'doing');
 
     // Phase 2: Start a brand-new engine instance (representing process restart)
     const engine2 = new FeatureWorkflowEngine(new DurableStore(tempDir));

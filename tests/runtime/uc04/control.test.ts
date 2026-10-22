@@ -132,6 +132,52 @@ describe('UC-04: Task Control, Deliberate Pause & Approval Binding', () => {
       );
     });
 
+    it('rejects approval resumption when currentCommit or policyVersion is omitted (fail-closed)', async () => {
+      await pauseForApproval(sampleTask, sampleApproval, store);
+
+      await assert.rejects(
+        async () => {
+          await resumeFromApproval(
+            sampleTask.taskId,
+            {
+              requestId: 'req-app-1',
+              decision: 'approved',
+              approvedBy: 'lead-dev',
+            },
+            store,
+            {
+              currentCommit: undefined,
+              policyVersion: sampleApproval.policyVersion,
+            }
+          );
+        },
+        (err: unknown) =>
+          err instanceof StaleApprovalBindingError &&
+          /stale approval.*commit mismatch/i.test((err as Error).message)
+      );
+
+      await assert.rejects(
+        async () => {
+          await resumeFromApproval(
+            sampleTask.taskId,
+            {
+              requestId: 'req-app-1',
+              decision: 'approved',
+              approvedBy: 'lead-dev',
+            },
+            store,
+            {
+              currentCommit: sampleApproval.repoCommit,
+              policyVersion: undefined,
+            }
+          );
+        },
+        (err: unknown) =>
+          err instanceof StaleApprovalBindingError &&
+          /stale approval.*policy version mismatch/i.test((err as Error).message)
+      );
+    });
+
     it('handles human rejection by transitioning task status to failed', async () => {
       await pauseForApproval(sampleTask, sampleApproval, store);
 

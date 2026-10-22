@@ -1,3 +1,4 @@
+import type { TaskState, PlanStep, BudgetLedger } from '../../../../src/persistence/contracts.ts';
 import { parseArgs } from 'node:util';
 import { DurableStore } from '../../../../src/persistence/store.ts';
 import { StepStateMachine, reconcileAndResume } from '../../../../src/persistence/recovery.ts';
@@ -84,8 +85,14 @@ async function main() {
         unresolvedReservationAction: 'charge_as_consumed',
       });
 
+      // Explicitly rerun interrupted step-2 work and settle its usage
+      const tracker = new BudgetTracker(resumed.budgetLedgers);
+      tracker.reserve('req-step2-rerun', [{ scope: 'task', kind: 'tokens', amount: 500 }]);
+      tracker.settle('req-step2-rerun', { amount: 500 });
+      let state: TaskState = { ...resumed, budgetLedgers: tracker.getLedgers() };
+
       // Complete step-2
-      let state = machine.completeStep(resumed, 'step-2', { changedFiles: ['src/core.ts'] });
+      state = machine.completeStep(state, 'step-2', { changedFiles: ['src/core.ts'] });
       // Start and complete step-3
       state = machine.startStep(state, 'step-3');
       state = machine.completeStep(state, 'step-3', { evidenceRefs: ['test-ok'] });
@@ -95,8 +102,8 @@ async function main() {
         pid: process.pid,
         status: 'RESUME_COMPLETED_OK',
         finalStatus: state.status,
-        stepStatuses: state.plan.map((s) => ({ id: s.id, status: s.status })),
-        consumedTokens: state.budgetLedgers.find((l) => l.kind === 'tokens')?.consumed,
+        stepStatuses: state.plan.map((s: PlanStep) => ({ id: s.id, status: s.status })),
+        consumedTokens: state.budgetLedgers.find((l: BudgetLedger) => l.kind === 'tokens')?.consumed,
       }));
       break;
     }

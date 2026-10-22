@@ -59,6 +59,43 @@ describe('UC-04: Data Contracts and Extension Validators', () => {
     });
   });
 
+  describe('validateBudgetLedger', () => {
+    it('rejects NaN, Infinity, and fractional version in budget ledger', () => {
+      const nanLedger = {
+        scope: 'task',
+        kind: 'tokens',
+        limit: NaN,
+        consumed: 0,
+        reservations: [],
+        configurationId: 'cfg-1',
+        version: 1,
+      };
+      assert.equal(validateBudgetLedger(nanLedger).ok, false);
+
+      const infLedger = {
+        scope: 'task',
+        kind: 'tokens',
+        limit: Infinity,
+        consumed: 0,
+        reservations: [],
+        configurationId: 'cfg-1',
+        version: 1,
+      };
+      assert.equal(validateBudgetLedger(infLedger).ok, false);
+
+      const fracLedger = {
+        scope: 'task',
+        kind: 'tokens',
+        limit: 1000,
+        consumed: 0,
+        reservations: [],
+        configurationId: 'cfg-1',
+        version: 1.5,
+      };
+      assert.equal(validateBudgetLedger(fracLedger).ok, false);
+    });
+  });
+
   describe('validateDeliberatePauseRecord', () => {
     it('accepts valid deliberate pause record', () => {
       const record = {
@@ -189,6 +226,35 @@ describe('UC-04: Data Contracts and Extension Validators', () => {
       assert.equal(res.ok, false);
       if (!res.ok) {
         assert.ok(res.errors.some((e) => e.code === 'CYCLIC_DEPENDENCY'));
+      }
+    });
+
+    it('rejects duplicate step ID in plan', () => {
+      const input = {
+        schemaVersion: UC04_SCHEMA_VERSION,
+        taskId: 'task-1',
+        repositoryId: 'repo-1',
+        workspaceId: 'ws-1',
+        taskType: 'feature',
+        goal: 'Add feature',
+        acceptanceCriteria: ['pass tests'],
+        constraints: [],
+        plan: [
+          { id: 's1', title: 'Step 1', description: 'Desc 1', status: 'todo', predecessorIds: [] },
+          { id: 's1', title: 'Step 1 dup', description: 'Desc 2', status: 'todo', predecessorIds: [] },
+        ],
+        budgetLedgers: [],
+        workspaceBaseline: {
+          commitHash: 'abcdef1234567890',
+          branch: 'feat/test',
+          isClean: true,
+          trackedFilesHash: 'hash123',
+        },
+      };
+      const res = validateRegisterTaskInput(input);
+      assert.equal(res.ok, false);
+      if (!res.ok) {
+        assert.ok(res.errors.some((e) => e.code === 'DUPLICATE_STEP_ID'));
       }
     });
 

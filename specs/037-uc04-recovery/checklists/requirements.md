@@ -29,4 +29,4 @@
 
 ## Notes
 
-These marks certify specification quality only. All runtime results remain not-run and implementation tasks unchecked. G-AUTH/G-EXTENSION/G-STORE and other [release gates](../contracts/decisions.md) remain unsatisfied. Backend-dependent exact paths require a later approved amendment. Planning review cannot approve on behalf of Thanh Tan/Tai/Trong Tan.
+These marks certify specification quality only. Authorization, runtime results, task completion, and release-gate state are tracked separately in the applicable artifacts and decisions.md. Backend-dependent exact paths require a later approved amendment. Planning review cannot approve on behalf of Thanh Tan/Tai/Trong Tan.

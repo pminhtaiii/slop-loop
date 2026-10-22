@@ -77,23 +77,36 @@ export class BudgetTracker {
     requestId: string,
     items: readonly { scope: 'task' | 'run'; kind: 'tokens' | 'token' | 'cost' | 'repair' | 'reviewer'; amount: number }[]
   ): ReservationBundle {
-    // Phase 1: Pre-flight check all items
+    // Pre-validate amounts and detect duplicate keys
+    const requestedByKey = new Map<string, number>();
     for (const item of items) {
+      if (typeof item.amount !== 'number' || !Number.isFinite(item.amount) || item.amount <= 0) {
+        throw new Error(`Invalid reservation amount: ${item.amount}`);
+      }
       const key = `${item.scope}:${item.kind}`;
+      if (requestedByKey.has(key)) {
+        throw new Error(`Duplicate reservation key in request: ${key}`);
+      }
+      requestedByKey.set(key, item.amount);
+    }
+
+    // Phase 1: Pre-flight check all items
+    for (const [key, requestedAmount] of requestedByKey.entries()) {
       const ledger = this.ledgers.get(key);
       if (!ledger) {
         throw new Error(`Ledger not found for ${key}`);
       }
       const reservedTotal = ledger.reservations.reduce((sum, r) => sum + r.amount, 0);
       const available = ledger.limit - ledger.consumed - reservedTotal;
-      if (available < item.amount) {
+      if (available < requestedAmount) {
+        const [scope = '', kind = ''] = key.split(':');
         throw new BudgetExhaustionError(
-          `Budget exhausted on ${item.scope} ${item.kind}: requested ${item.amount}, available ${available} (limit ${ledger.limit}, consumed ${ledger.consumed})`,
+          `Budget exhausted on ${scope} ${kind}: requested ${requestedAmount}, available ${available} (limit ${ledger.limit}, consumed ${ledger.consumed})`,
           {
-            scope: item.scope,
-            kind: item.kind,
+            scope,
+            kind,
             limit: ledger.limit,
-            requested: item.amount,
+            requested: requestedAmount,
             available,
           }
         );

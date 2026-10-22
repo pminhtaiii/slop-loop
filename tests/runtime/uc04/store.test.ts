@@ -71,6 +71,29 @@ describe('UC-04: DurableStore (Persistence & Checkpoints)', () => {
     assert.deepEqual(latest, cp);
   });
 
+  it('sorts checkpoints numerically by stateVersion rather than lexicographically', async () => {
+    // Save checkpoint at version 9
+    const taskV9: TaskState = {
+      ...sampleTask,
+      stateVersion: 9,
+      currentStepIndex: 0,
+    };
+    await store.saveCheckpoint(taskV9);
+
+    // Save checkpoint at version 10
+    const taskV10: TaskState = {
+      ...sampleTask,
+      stateVersion: 10,
+      currentStepIndex: 1,
+    };
+    await store.saveCheckpoint(taskV10);
+
+    const latest = await store.loadLatestCheckpoint(sampleTask.taskId);
+    assert.ok(latest);
+    assert.equal(latest.stateVersion, 10);
+    assert.equal(latest.state.currentStepIndex, 1);
+  });
+
   it('prevents concurrent mutations using non-reclaimed file locks', async () => {
     let executedInLock = false;
     const result = await store.withLock('custom-op', async () => {

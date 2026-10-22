@@ -180,11 +180,22 @@ export class DurableStore {
     const cpDir = this.getCheckpointDir(taskId);
     try {
       const files = await readdir(cpDir);
-      const jsonFiles = files.filter((f) => f.endsWith('.json')).sort();
+      const jsonFiles = files.filter((f) => f.endsWith('.json'));
       if (jsonFiles.length === 0) return null;
-      const latestFile = jsonFiles[jsonFiles.length - 1];
-      if (!latestFile) return null;
-      const checkpointId = latestFile.replace('.json', '');
+
+      const parsedFiles = jsonFiles.map((file) => {
+        const match = file.match(/^cp-(\d+)-v(\d+)\.json$/);
+        const timestamp = match && match[1] ? Number(match[1]) : 0;
+        const version = match && match[2] ? Number(match[2]) : 0;
+        return { file, timestamp, version };
+      });
+      parsedFiles.sort((a, b) => {
+        if (a.version !== b.version) return a.version - b.version;
+        return a.timestamp - b.timestamp;
+      });
+      const latest = parsedFiles[parsedFiles.length - 1];
+      if (!latest) return null;
+      const checkpointId = latest.file.replace('.json', '');
       return await this.loadCheckpoint(taskId, checkpointId);
     } catch (err: unknown) {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;

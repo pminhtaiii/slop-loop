@@ -4,7 +4,7 @@
 
 **Input**: `specs/037-uc04-recovery/spec.md`
 
-**Status**: Proposed staged design only. All implementation tasks remain unchecked and unauthorized. [Decisions](contracts/decisions.md) distinguishes inherited agreement, authoring delegation, new proposals and unresolved release gates.
+**Status**: T001–T012 are authorized under G-AUTH/G-EXTENSION; task completion remains tracked separately. [Decisions](contracts/decisions.md) distinguishes inherited agreement, authoring delegation, new proposals and unresolved release gates.
 
 ## Summary
 

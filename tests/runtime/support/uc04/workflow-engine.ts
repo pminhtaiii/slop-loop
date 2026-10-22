@@ -65,6 +65,9 @@ export class FeatureWorkflowEngine {
       try {
         result = await stepHandler(currentStep, state);
       } catch (err) {
+        if ((err as { isAbruptCrash?: boolean }).isAbruptCrash) {
+          throw err;
+        }
         state = this.stepMachine.failStep(state, currentStep.id, (err as Error).message);
         await this.store.saveCheckpoint(state);
         return state;

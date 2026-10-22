@@ -2,7 +2,7 @@
 
 ## Current planning validation
 
-Run from `C:/SE373`; these commands exist today and do not execute UC-04:
+Run from the repository root; these commands exist today and do not execute UC-04:
 
 ```powershell
 node scripts/agents/agent-context.mjs assignment --uc UC-04
