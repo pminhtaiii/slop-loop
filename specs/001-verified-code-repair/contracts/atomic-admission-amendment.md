@@ -1,14 +1,15 @@
-# Proposal: Atomic Admission and Durable Effect Attempts for UC-03 / UC-04 / UC-05
+# Atomic Admission and Durable Effect Attempts for UC-03 / UC-04 / UC-05
 
 ## Status and scope
 
-- **Status**: `DRAFT - NOT APPROVED / NOT IMPLEMENTED`.
-- **Purpose**: Prepare a focused cross-use-case contract amendment for owner and user review.
-- **Ownership**: UC-03/shared foundation proposal. UC-04 and UC-05 owner acceptance is pending.
-- **Authorization boundary**: This document does not change an accepted contract, implement T022, update `tasks.md`, or authorize successor work. T022 remains unchecked. Approval of this proposal would still need to be followed by its implementation and acceptance evidence before T022 can be marked complete.
+- **Status**: `APPROVED DESIGN / NOT IMPLEMENTED`.
+- **Purpose**: Cross-use-case contract amendment establishing atomic admission, single-use attempt consumption, and durable outcome recovery.
+- **Ownership**: Shared across UC-03 (trusted executor, workspace lease, and repair accounting), UC-04 (durable task/control journal, reservations, attempt consumption, and outcome recovery), and UC-05 (policy evaluation, decision validity, and provider admission).
+- **User Confirmation and Approval**: On 2026-10-22 (Asia/Saigon), following independent standards and testability reviews of `612cadd` (integrated as `5af410d`), the user confirmed that Thanh Tan (UC-04) and Trong Tan (UC-05) agreed to this reviewed amendment and explicitly approved the design and preparation of scoped implementation tasks. This records user-relayed owner agreement as documented in the parent decision record at [contracts/decisions.md](decisions.md#atomic-admission-amendment-approval-and-task-preparation), not direct owner messages or delivered adapters.
+- **Authorization boundary**: This document approves the architectural design and task decomposition only. It does not authorize runtime implementation, deliver source edits, or complete T022; T022 remains unchecked and incomplete. Runtime implementation release remains a separate scoped step after task decomposition and planning review. Real adapters (`X04-STATE`, `X05-GATE`), production configurations, real container isolation/containment, and Phase 6 execution are not released by this approval.
 - **Scope**: One UC-04-owned durable admission/control journal; UC-05 remains the policy and human-decision authority; UC-03/shared foundation remains the trusted workspace and effect executor. No second persistence engine and no distributed rollback claim.
 
-This proposal does not supersede [UC-03 contract v0.1](interfaces.md), [UC-05 companion contract `uc05-approval/0.1-draft`](../../../specs/023-uc05-human-approval/contracts/interfaces.md), or [ADR-0007](../../../docs/adr/0007-uc04-task-pause-and-recovery-foundation.md) until the required owners and user explicitly accept a versioned amendment.
+This amendment defines the target v0.2.0 contract architecture. It does not supersede [UC-03 contract v0.1](interfaces.md), [UC-05 companion contract `uc05-approval/0.1-draft`](../../../specs/023-uc05-human-approval/contracts/interfaces.md), or [ADR-0007](../../../docs/adr/0007-uc04-task-pause-and-recovery-foundation.md) until its scoped implementation tasks are released, implemented, and verified.
 
 ## 1. Evidence and current boundaries
 
@@ -52,7 +53,7 @@ For repository-action branches, UC-05 evaluates the exact current context and is
 - Task, run, workspace and repository identities; current runnable node/mode; current canonical repository revision; and the complete trusted execution-profile/configuration identity.
 - The current UC-04 policy/config authority reference, matching the exact UC-05 `policyId`, `policyVersion`, `configId` and `configVersion` used for classification, plus the issuer-key reference used to authenticate the receipt.
 - For repository actions, a UC-05 `PolicyEvaluationReceipt` ref/digest bound to the exact action digest, trusted freshness-context digest, policy/config refs, decision-authority generation and result (`ALLOWED`, `APPROVAL_REQUIRED` or `FORBIDDEN`). UC-04 verifies issuer authenticity, branch/digest binding and active refs/generation; UC-05 alone interprets the result. `FORBIDDEN` never admits. `APPROVAL_REQUIRED` also requires an authenticated `ActionDecisionReceipt` bound to this action and evaluation, with a matching active decision-authority generation. For provider requests, the distinct `ProviderAdmissionReceipt` binds its exact request digest and role. UC-05 publishes policy/config/key changes and approval revocations through the UC-04 authority journal; UC-04 compares opaque refs/generations and does not evaluate policy or approval validity.
-- The canonical `actionDigest`, recomputed from the exact normalized action and payload bytes at the trusted boundary.
+- For repository actions, the canonical `actionDigest`, recomputed from the exact normalized action and payload bytes at the trusted boundary; for provider requests, the canonical `requestContentDigest`, recomputed from the immutable `ProviderRequest` envelope at the trusted boundary.
 - On an approved-plan repository-action branch, a distinct `planBindingDigest` and `planDecisionRef`, binding plan version, strategy digest, baseline/evidence refs, criteria digest and check-set digest. They are absent on the pre-plan diagnostic repository-action branch. Provider requests follow their explicit plan-applicability rule above: pre-plan diagnostics bind criteria/purpose, and plan-scoped requests bind the approved plan. Action approval refs remain separate; plan approval cannot stand in for an action decision.
 - For commands and tests, the exact `CommandView` ID/digest, canonical revision, admitted file digests, exclusions-policy version, scratch identity, read-only mount fact and isolation-profile reference. For a controlled patch, the exact base revision, patch digest and target paths.
 - All applicable finite bounds and their trusted profile/config references. A command requires every configured time, output, CPU, memory, process-count and isolation bound. A patch requires its path/breadth and payload bounds. Provider token/cost bounds apply only to the existing provider protocol. No default fills an absent or unlimited bound.
@@ -254,12 +255,15 @@ Prior standards and testability findings are mapped here to the proposed contrac
 | Workspace lease lifetime contradicted the database lock rule | Sections 4 and 6 state that database transactions end before invoke while the patch writer lease spans invocation and outcome settlement. | Hold a competing writer/view builder at invocation and pre-settlement barriers; UC-03/shared foundation confirms the lock adapter can enforce it.
 | Workstream ownership and deterministic race coverage were incomplete | Sections 9-10 enumerate affected owners and suites, with barriers through consume, invoke, settle, checkpoint and reconciliation. | UC-04 owners name their absent adapter paths; owners approve task decomposition before canonical task IDs are created.
 
-Before any canonical implementation task is added, request explicit review decisions from:
+### Design approval record and implementation release gates
 
-- **UC-04**: confirm the single journal/transaction boundary, authority publication, claim closure, uncertain and observed-outcome reconciliation operations, no-expiry fencing rule, exact version progression, accounting-once behavior and closure evidence.
-- **UC-05**: confirm policy/provider receipt variants, current-policy comparison, plan applicability, version progression, pause ordering, immutable decision use and migration of `DispatchClaim`, presentation/CLI records and the Phase 6 continuation consumer.
-- **UC-03/shared foundation**: confirm the workspace lock and immutable-view mechanism, authenticated executor incarnation and durable per-attempt receiver consumption across patch/command/test/provider adapters, plus repair transition/accounting behavior.
-- **User / coordinator**: approve this proposal and authorize the next scoped work separately. Independent standards/testability review and repository link/context checks are a quality gate; they do not imply owner agreement or complete T022.
+On 2026-10-22 (Asia/Saigon), user-relayed review decisions confirmed that UC-04 (Thanh Tan) and UC-05 (Trong Tan) agreed to this amendment, and the user explicitly approved the design and the preparation of scoped implementation tasks T037–T050 (recorded in [contracts/decisions.md](decisions.md#atomic-admission-amendment-approval-and-task-preparation)).
+
+Before runtime implementation tasks are released:
+- **Two independent planning reviews** (Standards & Architecture, Testability & Edge Cases) must evaluate the task decomposition and planning artifacts.
+- **Implementation release**: Runtime implementation release remains a separate, explicit coordinator/user authorization step; task IDs in the ledger confer no implementation permission.
+- **T022 remains incomplete**: T022 is unchecked and will be satisfied only after its predecessor contract and executor tasks are implemented with passing evidence.
+- **External deliverables**: Real adapters (`X04-STATE`, `X05-GATE`), production configuration choices, real container containment (`T024`), and Phase 6 execution (`T026+`) remain gated.
 
 ## References
 

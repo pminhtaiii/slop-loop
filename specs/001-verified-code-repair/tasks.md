@@ -162,9 +162,9 @@ Tai is accountable for all local tasks, including shared foundation. Named lanes
 
 - [ ] T022 [US3] Compose authoritative execution checks in src/foundation/execution-guard.ts.
   - **Owner**: Tai / execution-integration lane (shared foundation).
-  - **Dependencies**: T021.
+  - **Dependencies**: T021, T040, T041, T044, T045, T046.
   - **Owned Paths**: src/foundation/execution-guard.ts.
-  - **Acceptance Checks**: T021 passes; deterministic pre-effect validation and calls to UC-05/UC-04 ports enforce the interfaces.md sequence. Use T004 mocks for local logic only; no bypass path, local approval store or blanket environment inheritance. Actual adapters required T024/T025. Take execution-guard.ts skeleton ownership from completed T021. Deny commands without a fresh admitted read-only view and isolate scratch; enforce controlled-patch versus repository-process authority. Provider requests use T008/T009 host dispatch protocol rather than being misrouted through RepositoryPort.
+  - **Acceptance Checks**: T021 passes; compose deterministic pre-effect validation and calls to UC-05/UC-04 ports using contract v0.2.0 and uc05-approval/0.2-draft. Orchestrate workspace lease acquisition, UC-04 single journal claim creation and beginAttempt CAS before low-level dispatch. Enforce receiver one-shot gate, authenticated incarnation, and fencing generation across patch, command, test, and provider adapters. Dispatch only from the winning gate call; record typed outcome receipt (RepositoryActionOutcomeReceipt vs ProviderRequestOutcomeReceipt) and preserve holds. Use T004/T041 mocks for local logic only; no bypass path, local approval store, or blanket environment inheritance. Actual adapters required at T024/T025. Take execution-guard.ts skeleton ownership from completed T021. Deny commands without a fresh admitted read-only view and isolate scratch; enforce controlled-patch versus repository-process authority. Provider requests use host dispatch protocol rather than being misrouted through RepositoryPort.
 
 - [X] T023 [P] [US3] Implement sanitized milestone and final output in src/uc03/report.ts.
   - **Owner**: Tai / delivery lane.
@@ -251,14 +251,23 @@ External dependencies: **X04-STATE** (Thanh Tan), **X05-GATE** (Trong Tan), **X0
 ```mermaid
 flowchart TD
     T001 --> T002 --> T003 --> T004
-    T004 --> T005 & T006 & T007 & T008 & T009 & T010 & T015 & T019 & T021
+    T004 --> T005 & T006 & T007 & T008 & T009 & T010 & T015 & T019 & T021 & T037
     T005 --> T011
     T011 --> T012 --> T013
     T011 --> T014
     T015 --> T016 --> T017 --> T018
     T019 --> T020
-    T021 --> T022
     T010 --> T023
+    T003 & T004 --> T037 --> T038 --> T039 --> T040 --> T041
+    T038 --> T042 --> T043 --> T044
+    T041 --> T044
+    T040 & T004 --> T045
+    T040 & T041 --> T046
+    T021 & T040 & T041 & T044 & T045 & T046 --> T022
+    T022 & T018 --> T047
+    T022 & T013 & T014 --> T048
+    T041 & T044 & T046 --> T049
+    T022 & T047 & T048 & T049 --> T050
     T006 & T007 & T020 & T022 --> T024
     X04[X04-STATE] --> T024
     X05[X05-GATE] --> T024
@@ -280,6 +289,7 @@ The explicit Dependencies fields also retain transitive/direct contract prerequi
 - US2: T015 fixture work can run with US1's T005–T010 and US3's T019/T021; T016→T017→T018 is intentionally serial for skeleton/RED-to-implementation ordering and repair.ts ownership handoff. There is no artificial `[P]` within that serial lane.
 - US3: T019/T020 attack preparation runs alongside T021/T022 guard skeleton/RED then implementation, with sequential guard source handoff; T023 starts after T010 and does not wait for US1. T024/T025 wait for real components and external deliveries, while mock workflow work can continue.
 - Evaluation: T027 can run while story implementation proceeds once its fixture/contract inputs exist. After T028, T029/T030/T031/T032 run on separate disposable task workspaces and disjoint evidence/test paths.
+- Atomic admission amendment: T037–T040 (canonical v0.2.0 contracts) and T042–T044 (UC-05 v0.2-draft companion) advance concurrently once T038 defines canonical types; T041 provides the controlled UC-04 journal mock; T045 and T046 implement workspace and provider executor gates; T022 composes authoritative guard checks over those predecessors; consumers T047 (repair accounting) and T048 (investigation/verification guarded runTests) integrate after T022; T049 migrates fixtures and T050 executes the full deterministic barrier/race acceptance matrix. Real adapters and Phase 6 remain gated.
 
 `[P]` is relative to these ready frontiers, never a claim that a task with listed unfinished dependencies can start now. Runtime container/test execution is gated separately from writing fixtures or mock tests.
 
@@ -314,3 +324,93 @@ Develop accepted contract mocks once (T004), then run independent story lanes on
   - **Dependencies**: T004.
   - **Owned Paths**: tests/runtime/support/uc03/fake-repository.ts.
   - **Acceptance Checks**: Replace the unnecessary `unknown[]` / `as never` validation-error cast with the canonical `ValidationError[]` type. Preserve behavior and pass strict typecheck plus existing provider/repository vectors; no additional runtime capability.
+
+## Atomic Admission Amendment: Phase 5 Scoped Implementation Tasks
+
+**Scope**: Implementation decomposition for approved atomic admission amendment (contracts/atomic-admission-amendment.md, v0.2.0 / uc05-approval/0.2-draft).
+**Status**: APPROVED DESIGN / NOT IMPLEMENTED. Design approved by user-relayed agreement from Thanh Tan (UC-04) and Trong Tan (UC-05); recorded in contracts/decisions.md. Implementation release is a separate authorization; task IDs confer no implementation permission.
+**Boundaries**: T022 remains incomplete/unchecked; Phase 6 (T026+) and real gates (T024, T025, T028+) remain gated. Controlled mock migration only; no real persistence or kernel containment claimed.
+
+- [ ] T037 [US3] Author behavioral contract test vectors for atomic admission v0.2.0 in tests/runtime/contract/uc03.test.ts and tests/runtime/contract/uc03-port-conformance.test.ts.
+  - **Owner**: Tai / contracts lane (shared foundation).
+  - **Dependencies**: T003, T004.
+  - **Owned Paths**: tests/runtime/contract/uc03.test.ts; tests/runtime/contract/uc03-port-conformance.test.ts.
+  - **Acceptance Checks**: Test-first behavioral assertions define contract v0.2.0 and port conformance expectations without runtime edits. Exercise tagged outcome union AttemptOutcomeReceipt (RepositoryActionOutcomeReceipt vs ProviderRequestOutcomeReceipt) and AttemptReconciliationReceipt (uncertain-attempt vs observed-unsettled). Require explicit planApplicability discriminator (pre-plan-diagnostic vs approved-plan). Assert that repository-action outcome receipts require actionDigest and reject provider request/budget fields; assert approved-plan repository receipts require planBindingDigest and planDecisionRef while pre-plan diagnostic receipts reject them. Assert that provider request outcome receipts require providerRequestId, requestContentDigest, role (coder | reviewer), providerAdmissionReceiptRef, and budget refs, while rejecting repository actionDigest, action-decision fields, and unneeded plan bindings. Reject cross-branch fields, missing required fields, or fabricated digests.
+
+- [ ] T038 [US3] Implement canonical v0.2.0 types, ports, and versioned interfaces in src/contracts/foundation/uc03.ts.
+  - **Owner**: Tai / contracts lane (shared foundation).
+  - **Dependencies**: T037.
+  - **Owned Paths**: src/contracts/foundation/uc03.ts; src/contracts/foundation/uc03/identity.ts; src/contracts/foundation/uc03/types.ts; src/contracts/foundation/uc03/ports.ts.
+  - **Acceptance Checks**: Bump UC-03 canonical schema version from 0.1.0 to 0.2.0. Define separate taskStateSchemaVersion / controlSchemaVersion and expectedEpoch domains. Define tagged union AttemptOutcomeReceipt with branch-matched repository and provider variants. Define AttemptReconciliationReceipt discriminating uncertain-attempt and observed-unsettled. Update StatePort interface to declare recordOutcome, reconcileObservedOutcome, closeUnattemptedClaim, and predecessor-bound reconcileUncertain. Update RepositoryPort signatures to require bound admission context on applyPatch, runCommand, and runTests. Export all v0.2.0 types cleanly through src/contracts/foundation/uc03.ts.
+
+- [ ] T039 [US3] Implement canonical v0.2.0 intake, command-view, and provider validators in src/contracts/foundation/uc03/validation/intake.ts and src/contracts/foundation/uc03/validation/provider.ts.
+  - **Owner**: Tai / contracts lane (shared foundation).
+  - **Dependencies**: T038.
+  - **Owned Paths**: src/contracts/foundation/uc03/validation/intake.ts; src/contracts/foundation/uc03/validation/intake/actions.ts; src/contracts/foundation/uc03/validation/intake/command-view.ts; src/contracts/foundation/uc03/validation/intake/limits.ts; src/contracts/foundation/uc03/validation/intake/task.ts; src/contracts/foundation/uc03/validation/provider.ts; src/contracts/foundation/uc03/validation/provider/admission.ts; src/contracts/foundation/uc03/validation/provider/records.ts; src/contracts/foundation/uc03/validation/provider/request.ts.
+  - **Acceptance Checks**: Validate normalized actions and calculate canonical actionDigest from payload bytes. Validate CommandView parameters: revision digest, admitted file digests, exclusions policy, scratch identity, read-only mount fact, finite time/output/process bounds. Validate ProviderRequest envelope and calculate canonical requestContentDigest excluding mutable dispatch state and observed usage. Validate ProviderAdmissionReceipt covering stable request ID, role, requestContentDigest, provider/pricing config, and decision-authority generation. Enforce discriminator checks for pre-plan diagnostic vs approved-plan branches.
+
+- [ ] T040 [US3] Implement canonical v0.2.0 state, attempt, outcome, and reconciliation validators in src/contracts/foundation/uc03/validation/state.ts and src/contracts/foundation/uc03/validation/records.ts.
+  - **Owner**: Tai / contracts lane (shared foundation).
+  - **Dependencies**: T039.
+  - **Owned Paths**: src/contracts/foundation/uc03/validation/state.ts; src/contracts/foundation/uc03/validation/state/budget.ts; src/contracts/foundation/uc03/validation/state/primitives.ts; src/contracts/foundation/uc03/validation/state/task.ts; src/contracts/foundation/uc03/validation/records.ts; src/contracts/foundation/uc03/validation/transition.ts; src/contracts/foundation/uc03/validation/common.ts; src/contracts/foundation/uc03/validation/evidence.ts; src/contracts/foundation/uc03/validation/evidence/baseline.ts; src/contracts/foundation/uc03/validation/evidence/review.ts; src/contracts/foundation/uc03/validation/evidence/source.ts; src/contracts/foundation/uc03/validation/evidence/verification.ts; tests/runtime/contract/uc03-review-regressions.test.ts.
+  - **Acceptance Checks**: Validate state progression S0/C0/E0 -> claim S0/C1/E0 -> attempt S0/S1 and C1/C2. Validate tagged union AttemptOutcomeReceipt and AttemptReconciliationReceipt variants. Validate ClaimClosureReceipt requiring proof that no attempt was committed and recipient is fenced. Reject cross-branch fields, missing discriminator fields, or attempts to reconcile against a mismatched predecessor. Conformance and regression tests pass in tests/runtime/contract/uc03.test.ts and tests/runtime/contract/uc03-review-regressions.test.ts.
+
+- [ ] T041 [US3] Implement controlled test-only StatePort journal and recovery mock in tests/runtime/support/uc03/memory-state.ts and tests/runtime/contract/uc03-mocks.test.ts.
+  - **Owner**: Tai / test-support lane (coordinating external dependency X04-STATE).
+  - **Dependencies**: T040.
+  - **Owned Paths**: tests/runtime/support/uc03/memory-state.ts; tests/runtime/support/uc03/state-fixtures.ts; tests/runtime/contract/uc03-mocks.test.ts.
+  - **Acceptance Checks**: Implement simulated UC-04 journal operations in MemoryStatePort: atomic claim CAS, beginAttempt single-use attempt consumption, recordOutcome (returning settled on state CAS success, or recorded-unsettled on compatible state conflict), reconcileObservedOutcome, closeUnattemptedClaim, and predecessor-bound reconcileUncertain. Enforce version progression S0/C0/E0 -> S0/C1/E0 -> C2, preserving active holds. Enforce single accounting: repair allowance consumed at beginAttempt without refund; provider reservations attached or created once; zero token/cost charges on repository-only operations. Pass updated mock conformance suite in tests/runtime/contract/uc03-mocks.test.ts. Explicitly mark test-support provenance; make no claims of real database durability or kernel containment.
+
+- [ ] T042 [US3] Implement UC-05 companion contract v0.2-draft in src/contracts/approvals/contracts.ts and tests/runtime/approvals/contracts.test.ts.
+  - **Owner**: Tai / approval-contracts lane (coordinating external dependency X05-GATE).
+  - **Dependencies**: T038.
+  - **Owned Paths**: src/contracts/approvals/contracts.ts; tests/runtime/approvals/contracts.test.ts.
+  - **Acceptance Checks**: Update UC-05 companion contract version to uc05-approval/0.2-draft. Update DispatchClaim to bind canonical action payload digest, separate plan binding, command-view identity, task-state version, and consumed attempt identity. Define PolicyEvaluationReceipt, ActionDecisionReceipt, ProviderAdmissionReceipt (with coder and reviewer roles, explicit plan applicability), and ClaimClosureReceipt. Behavioral contract tests in tests/runtime/approvals/contracts.test.ts reject schema mismatches, missing branch fields, or legacy v0.1 claims.
+
+- [ ] T043 [US3] Migrate UC-05 policy evaluation, service, and plan binding to v0.2-draft in src/approvals/policy.ts and src/approvals/service.ts.
+  - **Owner**: Tai / approval-service lane (coordinating external dependency X05-GATE).
+  - **Dependencies**: T042.
+  - **Owned Paths**: src/approvals/policy.ts; src/approvals/service.ts; src/approvals/plan-binding.ts; tests/runtime/approvals/policy.test.ts; tests/runtime/approvals/service.test.ts; tests/runtime/approvals/plan-binding.test.ts; tests/runtime/approvals/plan-context.test.ts.
+  - **Acceptance Checks**: Policy evaluation returns PolicyEvaluationReceipt with immutable decision reference and authority generation. Service evaluates proposed ProviderRequest subject into ProviderAdmissionReceipt without coercing into NormalizedAction. Enforce explicit plan applicability: pre-plan diagnostic branch binds task criteria/purpose without requiring plan approval; approved-plan branch binds planBindingDigest and planDecisionRef. Pass policy, service, and plan-binding test suites.
+
+- [ ] T044 [US3] Migrate UC-05 authority publication, continuation, presentation, and CLI records in src/approvals/control.ts and src/approvals/recovery.ts.
+  - **Owner**: Tai / approval-control lane (coordinating external dependency X05-GATE).
+  - **Dependencies**: T041, T043.
+  - **Owned Paths**: src/approvals/control.ts; src/approvals/recovery.ts; src/approvals/presentation.ts; src/approvals/cli.ts; tests/runtime/approvals/control.test.ts; tests/runtime/approvals/cli.test.ts; tests/runtime/approvals/restart-admission.test.ts; tests/runtime/approvals/mock-ports.test.ts; tests/runtime/support/uc05/mock-recovery.ts; tests/runtime/support/uc05/mock-store.ts; tests/runtime/support/uc05/mock-context.ts; tests/runtime/support/uc05/fixtures.ts.
+  - **Acceptance Checks**: Publish immutable policy/config and decision authority changes directly into the UC-04 journal before beginAttempt. createApprovalContinuation preserves approval meaning but refuses to treat raw claimId as executor capability. Update SafePresentation and CLI records to conform to uc05-approval/0.2-draft. Migrate UC-05 mock store, context, and recovery test fixtures; pass approval unit and mock suites.
+
+- [ ] T045 [US3] Enforce workspace leases and bound execution context in src/foundation/docker-workspace.ts and src/foundation/repository-tools.ts.
+  - **Owner**: Tai / repository-tools lane (shared foundation).
+  - **Dependencies**: T004, T040.
+  - **Owned Paths**: src/foundation/docker-workspace.ts; src/foundation/repository-tools.ts; tests/runtime/unit/docker-workspace.test.ts; tests/runtime/unit/repository-tools.test.ts.
+  - **Acceptance Checks**: Acquire read lease for immutable command view; acquire exclusive writer lease for patch spanning invocation through outcome recording. Require bound admission context on applyPatch, runCommand, and runTests; verify base revision and patch digest. Lower runTests(check) to canonical guarded run_command action with bound check ID, structured argv, immutable view, and finite limits; prohibit direct unadmitted execution. Verify that workspace gate validates fencing generation and rejects stale actors before launch. Pass unit test suites.
+
+- [ ] T046 [US3] Implement authenticated executor admission and receiver one-shot gate in src/foundation/model.ts.
+  - **Owner**: Tai / model lane (shared foundation).
+  - **Dependencies**: T040, T041.
+  - **Owned Paths**: src/foundation/model.ts; tests/runtime/unit/model.test.ts.
+  - **Acceptance Checks**: Coder and reviewer requests require valid ProviderAdmissionReceipt with role, requestContentDigest, and plan applicability. Obtain task-wide claim and beginAttempt admission with single pre-network reservation in UC-04 journal; disallow duplicate reservations. Authenticated adapter validates incarnation identity and fencing generation, consuming process-local one-shot gate backed by UC-04 durable attempt record. Settle observed billable usage against pricing configuration; retain uncertain charge on timeout or network interruption without blind replay. Pass unit test suite.
+
+- [ ] T047 [US3] Migrate repair consumer to single-owner guard accounting in src/uc03/repair.ts and src/uc03/repair-types.ts.
+  - **Owner**: Tai / repair lane.
+  - **Dependencies**: T018, T022.
+  - **Owned Paths**: src/uc03/repair.ts; src/uc03/repair-types.ts; tests/runtime/unit/uc03-repair.test.ts.
+  - **Acceptance Checks**: Repair passes proposed patch and repair allowance request to execution guard; removes duplicate local reservation and state CAS logic. Guard and UC-04 journal own single reservation, Repair -> Patch persistence, attempt consumption, outcome settlement, revision advance, and Verify transition. Failed or partially applied patch consumes repair attempt without refund; unattempted claim closure releases unconsumed reservation. Material replans and feedback transitions conform to v0.2.0 admission receipts; pass unit tests in tests/runtime/unit/uc03-repair.test.ts.
+
+- [ ] T048 [US3] Route baseline investigation and verification through guarded runTests in src/uc03/investigation.ts and src/uc03/verification.ts.
+  - **Owner**: Tai / investigation-verification lane.
+  - **Dependencies**: T013, T014, T022.
+  - **Owned Paths**: src/uc03/investigation.ts; src/uc03/verification.ts; tests/runtime/unit/uc03-investigation.test.ts; tests/runtime/unit/uc03-verification.test.ts.
+  - **Acceptance Checks**: Investigation executes baseline reproduction and policy-approved test-only regression patches via guarded runTests under the pre-plan diagnostic branch without requiring a plan decision. Production patches remain denied during investigation. Verification routes focused and regression checks through guarded runTests with approved-plan binding. Mutating final state invalidates prior evidence; pass unit tests in tests/runtime/unit/uc03-investigation.test.ts and tests/runtime/unit/uc03-verification.test.ts.
+
+- [ ] T049 [US3] Migrate controlled repository, approval, model, and reviewer mock fixtures in tests/runtime/support/uc03/fake-repository.ts and tests/runtime/support/uc03/port-fixtures.ts.
+  - **Owner**: Tai / test-support lane.
+  - **Dependencies**: T041, T044, T046.
+  - **Owned Paths**: tests/runtime/support/uc03/fake-repository.ts; tests/runtime/support/uc03/port-fixtures.ts; tests/runtime/support/uc03/scripted-approval.ts; tests/runtime/support/uc03/scripted-model.ts; tests/runtime/support/uc03/scripted-reviewer.ts.
+  - **Acceptance Checks**: Update FakeRepositoryPort, ScriptedApprovalPort, ScriptedModelPort, and ScriptedReviewerPort to conform to contract v0.2.0. Support deterministic synchronization barriers (prevalidation, lease acquisition, authority read/publication, claim commit, beginAttempt, receiver consume, pre-invoke, observe, settle, checkpoint, recovery). Support fault injection, authenticated incarnation tracking, and lost responses.
+
+- [ ] T050 [US3] Implement full deterministic race and recovery acceptance suite in tests/runtime/contract/atomic-admission.test.ts.
+  - **Owner**: Tai / integration-test lane.
+  - **Dependencies**: T022, T047, T048, T049.
+  - **Owned Paths**: tests/runtime/contract/atomic-admission.test.ts.
+  - **Acceptance Checks**: Implement and verify all 21 deterministic test cases from Section 10 of atomic-admission-amendment.md: (1) policy publication wins before beginAttempt; (2) beginAttempt wins before policy publication or pause; (3) pause/rejection wins after claim but before beginAttempt (ClaimClosureReceipt closes unattempted claim without attempt ID, releases unconsumed reservations, zero repair attempt consumed); (4) repository writer/view drift wins before beginAttempt; (5) duplicate successful receipt to same executor incarnation (pre-invoke barrier, second sees consumed/status only, restart rejects old attempt); (6) version progression S0/C0/E0 -> S0/C1/E0 -> C2 / S1 with conflict on unrelated mutation; (7) fresh action/run ID while any claim is open denies task-wide; (8) stale/duplicate executor actor after reconciliation rejected by fenced generation; (9) crash or lost response at every boundary (idempotent reload, unknown remains uncertain); (10) settlement failure after patch records observed-unsettled, recovery commits transition once without reexecution; (11) reconcileUncertain accepts only exact uncertain predecessor, reconcileObservedOutcome accepts only exact observed-unsettled predecessor; (12) failed/partial repair attempt charges repair attempt if beginAttempt occurred; (13) pre-plan baseline and test-only regression path succeeds during Investigate without plan decision, production patch denied; (14) provider request/claim race reuses single claim/reservation, fresh competing request denied; (15) provider branch for coder and reviewer validates specific receipts, plan applicability, single pre-network reservation; (16) pre-plan outcome and idempotent settlement: tagged receipt variants, repository requires actionDigest, provider requires requestContentDigest, role, admission ref, budget refs; (17) cross-branch outcome/reconciliation fields rejected without field fabrication; (18) observed patch plus task-state conflict: restart, lost response, duplicate recovery assert one transition, exact revision, one evidence invalidation/charge; (19) provider budget regression: zero repository token/cost entries, unchanged provider accounting; (20) patch workspace gate lifetime: exclusive writer lease spans invoke through outcome settlement, no DB transaction spans invoke; (21) version migration: old claim ID rejected as executor authority. All tests execute under deterministic mock control; mock suite passes do not claim real durability, production adapter delivery, or kernel containment.

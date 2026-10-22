@@ -80,6 +80,30 @@ eval/uc03/private/                # Host-only grading, excluded from agent autho
 5. Command execution uses the read-only, protected-content-excluded views defined in contracts/interfaces.md; a writable task repository is never exposed to pytest. T006/T007/T022 implement the boundary, and T024/T031 prove malicious process reads/writes are denied. T008 and T009 reserve/settle token/cost allowances through UC-04 before every host provider dispatch; T028/T030/T032 cover missing/exhausted budgets and interrupted calls.
 6. Evidence is bound to workspace revision/diff digest and configured checks; production changes make prior verification/review stale. Only a harness completion predicate can emit verified delivery.
 
+### Atomic Admission Amendment Integration (Approved Design / Not Implemented)
+
+On 2026-10-22 (Asia/Saigon), following independent reviews, the user confirmed that Thanh Tan (UC-04) and Trong Tan (UC-05) agreed to the reviewed [atomic admission amendment](contracts/atomic-admission-amendment.md), and explicitly approved the design and preparation of scoped implementation tasks (recorded in [contracts/decisions.md](contracts/decisions.md#atomic-admission-amendment-approval-and-task-preparation)).
+
+- **Contract Version Migration**:
+  - UC-03 canonical contracts and task-state schema migrate from `0.1.0` to `0.2.0` (`src/contracts/foundation/uc03.ts` and related modules).
+  - UC-05 companion contracts migrate from `uc05-approval/0.1-draft` to `uc05-approval/0.2-draft` (`src/contracts/approvals/contracts.ts`).
+  - Producers, validators, consumers, CLI and mock fixtures migrate together; legacy `0.1` continuation receipts or raw claim IDs are rejected as executor authority.
+- **Architectural Seams and Authority**:
+  - **UC-04**: Owns the single durable task/control journal, claim lifecycle (`claimed -> attempting -> dispatched -> outcome-recorded -> settled`), reservations, single-use attempt consumption at `beginAttempt`, outcome journal, and recovery operations (`reconcileObservedOutcome`, `reconcileUncertain`, `closeUnattemptedClaim`). Where actual adapter paths are absent in this repository, canonical contracts and test-only controlled mocks (`MemoryStatePort`) are used; real persistence remains an external dependency (`X04-STATE`).
+  - **UC-05**: Owns policy evaluation, immutable decision validity, and provider admission. Stages immutable policy/config and decision records, then publishes active refs/generations into the UC-04 journal before `beginAttempt`. Issues `PolicyEvaluationReceipt`, `ActionDecisionReceipt`, and distinct `ProviderAdmissionReceipt` (for coder and reviewer roles, with explicit plan applicability).
+  - **UC-03 / Shared Foundation**: Owns the workspace gate (read lease for immutable command views, exclusive writer lease for patches spanning invoke through outcome settlement), authenticated executor incarnation validation, process-local one-shot gate backed by UC-04's durable attempt record, and single-owner repair accounting.
+- **Work Sequence (Decomposed into T037–T050)**:
+  1. **W1 (T037–T040)**: Canonical types, ports, validators, and contract conformance vectors (contract v0.2.0).
+  2. **W2 (T041–T044)**: UC-04 StatePort journal contracts / memory-state mock and UC-05 policy/service/continuation mock migration (`uc05-approval/0.2-draft`).
+  3. **W3 (T045–T046)**: Workspace gate, command-view bounds, and host provider model boundary with receiver one-shot gate.
+  4. **Guard Composition (T022)**: Compose authoritative execution checks in `src/foundation/execution-guard.ts` over the amended contracts.
+  5. **W4 (T047–T048)**: UC-03 consumer migration: single-owner repair accounting and guarded `runTests` in investigation and verification.
+  6. **W5 (T049–T050)**: Mock fixture infrastructure migration and full deterministic barrier/race/recovery test suite (`tests/runtime/contract/atomic-admission.test.ts`).
+- **Release and Authorization Boundaries**:
+  - Task decomposition in `tasks.md` defines scoped worker assignments; task IDs confer no implementation permission.
+  - T022 remains unchecked and incomplete until predecessor contract and executor tasks are implemented and verified.
+  - Phase 6 (`T026+`), real adapters (`X04-STATE`, `X05-GATE`), real container isolation (`T024`), production choices, and real execution remain strictly gated.
+
 ## External Deliverables (not local task IDs)
 
 | ID | Owner | Required contract/evidence | Consumer and mock |
