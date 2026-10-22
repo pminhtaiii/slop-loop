@@ -40,6 +40,7 @@ import {
   formatReportMarkdown,
   formatMilestonesSummary,
   type Milestone,
+  type FinalReport,
   type BuildFinalReportInput,
 } from '../../../src/uc03/report.ts';
 import type { TrustedReviewRecord, CompletionPredicateInput } from '../../../src/uc03/verification.ts';
@@ -353,6 +354,67 @@ test('milestone: sanitizes string values in details object', () => {
   assert.ok(typeof milestone.details.diagnostic === 'string');
   assert.ok(!milestone.details.diagnostic.includes(secret));
   assert.ok(milestone.details.diagnostic.includes('[REDACTED]'));
+});
+
+test('milestone: omits built-in and configured secrets used as detail keys', () => {
+  const builtInSecretKey = `ghp_${'A'.repeat(36)}`;
+  const customSecretKey = 'private-value-123';
+  const milestone = createMilestone({
+    taskId: 'task-101',
+    runId: 'run-101',
+    node: 'Report',
+    kind: 'task_started',
+    summary: 'Started',
+    details: {
+      [builtInSecretKey]: 'built-in key value',
+      [customSecretKey]: 'custom key value',
+      safe: 'visible',
+    },
+    customSecretPatterns: [customSecretKey],
+  });
+
+  assert.deepEqual(milestone.details, { safe: 'visible' });
+  assert.ok(!JSON.stringify(milestone).includes(builtInSecretKey));
+  assert.ok(!JSON.stringify(milestone).includes(customSecretKey));
+});
+
+test('milestone: rejects an unknown outcome value before returning JSON data', () => {
+  const marker = 'MARKER_SECRET_OUTCOME';
+  assert.throws(() => createMilestone({
+    taskId: 'task-102',
+    runId: 'run-102',
+    node: 'Report',
+    kind: 'task_started',
+    summary: 'Started',
+    outcome: marker as unknown as 'info',
+  }), (error: unknown) => error instanceof Error && /Invalid report outcome/.test(error.message) && !error.message.includes(marker));
+});
+
+test('milestoneToActivityEvent: rejects a forged unknown outcome', () => {
+  const marker = 'MARKER_SECRET_OUTCOME';
+  const milestone = createMilestone({
+    taskId: 'task-103',
+    runId: 'run-103',
+    node: 'Report',
+    kind: 'task_started',
+    summary: 'Started',
+  });
+
+  assert.throws(() => milestoneToActivityEvent({ ...milestone, outcome: marker } as unknown as Milestone),
+    (error: unknown) => error instanceof Error && /Invalid report milestone/.test(error.message) && !error.message.includes(marker));
+});
+
+test('formatMilestonesSummary: rejects a forged unknown outcome', () => {
+  const milestone = createMilestone({
+    taskId: 'task-104',
+    runId: 'run-104',
+    node: 'Report',
+    kind: 'task_started',
+    summary: 'Started',
+  });
+
+  assert.throws(() => formatMilestonesSummary([{ ...milestone, outcome: 'MARKER_SECRET_OUTCOME' } as unknown as Milestone]),
+    /Invalid report milestone/);
 });
 
 test('milestone: recursively sanitizes array objects and omits protected keys', () => {
@@ -678,6 +740,29 @@ test('report: refusal of false completion claims when verification failed', () =
   assert.equal(report.delivery, undefined);
 });
 
+test('report: rejects unknown override outcomes before returning JSON data', () => {
+  const fixture = createValidReportingFixture();
+  const marker = 'MARKER_SECRET_OVERRIDE';
+  let error: unknown;
+  let projected = '';
+  try {
+    const report = buildFinalReport({
+      task: fixture.task,
+      state: fixture.state,
+      overrideOutcome: marker as unknown as BuildFinalReportInput['overrideOutcome'],
+    });
+    projected = `${JSON.stringify(report)}\n${formatReportMarkdown(report)}`;
+  } catch (caught) {
+    error = caught;
+  }
+
+  assert.ok(
+    error instanceof Error && /Invalid report outcome/.test(error.message) && !error.message.includes(marker) ||
+      !projected.includes(marker),
+    'The JSON and Markdown projections must reject or omit an invalid outcome safely',
+  );
+});
+
 /* ==================================================================
  * Section 3: Bounded Secret Safety Across Success and Errors (C16)
  * ================================================================== */
@@ -932,6 +1017,50 @@ test('report: aggregates and retains budget accounting per-run and task-level', 
   assert.equal(taskTokens?.limit, 100000);
 });
 
+test('report: rejects malformed usage projections and configured secret metadata', () => {
+  const fixture = createValidReportingFixture();
+  const ledgers = fixture.state.budgetLedgers ?? [];
+  const withLedger = (index: number, update: Partial<BudgetLedger>): TaskState => ({
+    ...fixture.state,
+    budgetLedgers: ledgers.map((ledger, current) => current === index ? { ...ledger, ...update } : ledger),
+  });
+  const withReplanCount = (replanCount: unknown): TaskState => ({
+    ...fixture.state,
+    replanCount,
+  } as unknown as TaskState);
+  const cases: { readonly name: string; readonly input: BuildFinalReportInput; readonly secret?: string }[] = [
+    { name: 'string replan count', input: { ...fixture, state: withReplanCount('MARKER_SECRET_REPLAN') }, secret: 'MARKER_SECRET_REPLAN' },
+    { name: 'fractional replan count', input: { ...fixture, state: withReplanCount(1.5) } },
+    { name: 'over-limit replan count', input: { ...fixture, state: withReplanCount(4) } },
+    { name: 'non-finite replan count', input: { ...fixture, state: withReplanCount(Number.POSITIVE_INFINITY) } },
+    { name: 'fractional token accounting', input: { ...fixture, state: withLedger(0, { consumed: 1.5 }) } },
+    { name: 'non-finite ledger limit', input: { ...fixture, state: withLedger(0, { limit: Number.POSITIVE_INFINITY }) } },
+    { name: 'negative ledger usage', input: { ...fixture, state: withLedger(0, { consumed: -1 }) } },
+    { name: 'unknown ledger scope', input: { ...fixture, state: withLedger(0, { scope: 'session' as BudgetLedger['scope'] }) } },
+    {
+      name: 'custom secret ledger unit',
+      input: { ...fixture, state: withLedger(0, { unit: 'private-value-123' }), customSecretPatterns: ['private-value-123'] },
+      secret: 'private-value-123',
+    },
+    {
+      name: 'custom secret ledger kind',
+      input: { ...fixture, state: withLedger(0, { kind: 'private-value-123' }), customSecretPatterns: ['private-value-123'] },
+      secret: 'private-value-123',
+    },
+    { name: 'over-limit replan ledger', input: { ...fixture, state: withLedger(4, { limit: 4, consumed: 4 }) } },
+  ];
+  const unsafe = cases.flatMap(({ name, input, secret }) => {
+    try {
+      buildFinalReport(input);
+      return [name];
+    } catch (error) {
+      return error instanceof Error && (secret === undefined || !error.message.includes(secret)) ? [] : [name];
+    }
+  });
+
+  assert.deepEqual(unsafe, []);
+});
+
 /* ==================================================================
  * Section 5: Markdown Report & Milestone Summary Formatting
  * ================================================================== */
@@ -964,6 +1093,23 @@ test('formatReportMarkdown: formats complete report without secrets or raw reaso
   assert.ok(!markdown.includes(secretKey), 'Markdown must not contain secrets');
   assert.ok(!markdown.includes('rawReasoning'), 'Markdown must not mention rawReasoning');
   assert.ok(!markdown.includes('thinking'), 'Markdown must not mention internal thinking');
+});
+
+test('formatReportMarkdown: rejects a forged unknown outcome without echoing it', () => {
+  const report = buildFinalReport(createValidReportingFixture());
+  const marker = 'MARKER_SECRET_OVERRIDE';
+
+  assert.throws(() => formatReportMarkdown({ ...report, outcome: marker } as unknown as FinalReport),
+    (error: unknown) => error instanceof Error && /Invalid report outcome/.test(error.message) && !error.message.includes(marker));
+});
+
+test('formatReportMarkdown: rejects malformed usage without echoing it', () => {
+  const report = buildFinalReport(createValidReportingFixture());
+  const marker = 'MARKER_SECRET_REPLAN';
+  const forged = { ...report, usage: { ...report.usage, replanCount: marker } } as unknown as FinalReport;
+
+  assert.throws(() => formatReportMarkdown(forged),
+    (error: unknown) => error instanceof Error && /Invalid report/.test(error.message) && !error.message.includes(marker));
 });
 
 test('formatMilestonesSummary: formats chronological milestone list cleanly', () => {

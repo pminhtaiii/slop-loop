@@ -1,13 +1,16 @@
+import { randomUUID } from 'node:crypto';
 import {
+  TASK_OUTCOMES,
   isProtectedPath,
   type ReviewResult,
+  type TaskOutcome,
   type VerificationResult,
   isCanonicalRelativePath,
   validateReviewResult,
   validateVerificationResult,
 } from '../../contracts/foundation/uc03.ts';
 import { isProtectedPathRef, sanitizeDiagnostic, sanitizeText } from '../../foundation/telemetry.ts';
-import type { Milestone, MilestoneKind } from '../report.ts';
+import type { CreateMilestoneInput, Milestone, MilestoneKind } from '../report.ts';
 
 const FORBIDDEN_DETAIL_KEY = /reasoning|thinking|prompt|stream|secret|password|credential|authorization|api.?key|token/i;
 const MAX_DETAIL_DEPTH = 8;
@@ -31,6 +34,19 @@ export interface ReviewSnapshot {
   readonly result: ReviewResult | undefined;
   readonly valid: boolean;
   readonly ref: string | undefined;
+}
+
+export interface UsageSnapshot {
+  readonly tokensConsumed: number;
+  readonly costUsd: number;
+  readonly replanCount: number;
+  readonly perLedger: readonly {
+    readonly scope: string;
+    readonly kind: string;
+    readonly limit: number;
+    readonly consumed: number;
+    readonly unit: string;
+  }[];
 }
 
 function rejectMetadata(label: string): never {
@@ -97,6 +113,10 @@ export function safeReferences(
   return Object.freeze(refs.map((ref, index) => safeReference(ref, `${label}[${index}]`, customPatterns)));
 }
 
+export function isTaskOutcome(value: unknown): value is TaskOutcome {
+  return TASK_OUTCOMES.includes(value as TaskOutcome);
+}
+
 function sanitizeMilestone(value: unknown, index: number, customPatterns?: readonly (RegExp | string)[]): Milestone {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid report milestone');
   const milestone = value as Record<string, unknown>;
@@ -124,15 +144,107 @@ function sanitizeMilestone(value: unknown, index: number, customPatterns?: reado
   });
 }
 
-function isMilestoneOutcome(value: unknown): value is Milestone['outcome'] {
+export function isMilestoneOutcome(value: unknown): value is Milestone['outcome'] {
   return value === 'success' || value === 'failure' || value === 'pending' || value === 'info';
 }
 
-function isMilestoneKind(value: string): value is MilestoneKind {
+export function isMilestoneKind(value: string): value is MilestoneKind {
   return value === 'task_started' || value === 'investigation_completed' || value === 'plan_proposed' ||
     value === 'plan_approved' || value === 'plan_rejected' || value === 'patch_applied' ||
     value === 'verification_completed' || value === 'review_completed' || value === 'replan_triggered' ||
     value === 'budget_exhausted' || value === 'task_completed' || value === 'task_failed' || value === 'task_interrupted';
+}
+
+export function createMilestone(input: CreateMilestoneInput): Milestone {
+  if (!input || typeof input !== 'object' || !input.taskId || !input.runId || !input.node || !input.kind) {
+    throw new TypeError('Invalid milestone input');
+  }
+  const customPatterns = input.customSecretPatterns;
+  const outcome = input.outcome ?? 'info';
+  if (!isMilestoneOutcome(outcome)) throw new Error('Invalid report outcome');
+  const kind = safeMetadata(input.kind, 'kind', customPatterns);
+  if (!isMilestoneKind(kind)) throw new Error('Invalid report milestone');
+  const maxBytes = reportLimit(input.maxSummaryBytes, DEFAULT_SUMMARY_BYTES, DEFAULT_SUMMARY_BYTES, 'maxSummaryBytes');
+  const timestamp = input.timestamp ?? new Date().toISOString();
+  const milestoneId = input.milestoneId ?? `ms-${randomUUID()}`;
+  return Object.freeze({
+    milestoneId: safeMetadata(milestoneId, 'milestoneId', customPatterns),
+    taskId: safeMetadata(input.taskId, 'taskId', customPatterns),
+    runId: safeMetadata(input.runId, 'runId', customPatterns),
+    timestamp: safeMetadata(timestamp, 'timestamp', customPatterns),
+    node: safeMetadata(input.node, 'node', customPatterns),
+    kind,
+    summary: boundedText(typeof input.summary === 'string' ? input.summary : '', maxBytes, customPatterns),
+    outcome,
+    evidenceRefs: safeReferences(input.evidenceRefs, 'evidenceRefs', customPatterns),
+    details: sanitizeDetails(input.details, customPatterns),
+  });
+}
+
+function usageNumber(value: unknown, integer: boolean): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || (integer && !Number.isSafeInteger(value))) {
+    throw new Error('Invalid report accounting');
+  }
+  return value;
+}
+
+export function usageSnapshot(
+  ledgers: unknown,
+  stateReplanCount: unknown,
+  customPatterns?: readonly (RegExp | string)[]
+): UsageSnapshot {
+  try {
+    let tokensConsumed = 0;
+    let costUsd = 0;
+    let replans = usageNumber(stateReplanCount, true);
+    if (replans > 3) throw new Error('Invalid report accounting');
+    const perLedger: UsageSnapshot['perLedger'][number][] = [];
+    if (ledgers !== undefined) {
+      if (!Array.isArray(ledgers)) throw new Error('Invalid report accounting');
+      if (ledgers.length > MAX_REPORT_ITEMS) throw new Error('Report limit exceeded: usage.perLedger');
+      const entries: readonly unknown[] = ledgers;
+      for (const [index, value] of entries.entries()) {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid report accounting');
+        const ledger = value as Record<string, unknown>;
+        const scope = safeMetadata(ledger['scope'], `usage.perLedger[${index}].scope`, customPatterns);
+        const kind = safeMetadata(ledger['kind'], `usage.perLedger[${index}].kind`, customPatterns);
+        const unit = safeMetadata(ledger['unit'], `usage.perLedger[${index}].unit`, customPatterns);
+        if (scope !== 'task' && scope !== 'run') throw new Error('Invalid report accounting');
+        const integer = kind !== 'cost';
+        const limit = usageNumber(ledger['limit'], integer);
+        const consumed = usageNumber(ledger['consumed'], integer);
+        if (kind === 'replan' && (scope !== 'task' || limit > 3 || consumed > 3)) throw new Error('Invalid report accounting');
+        perLedger.push(Object.freeze({ scope, kind, limit, consumed, unit }));
+        if (scope === 'task' && kind === 'tokens') tokensConsumed = Math.max(tokensConsumed, consumed);
+        if (scope === 'task' && kind === 'cost') costUsd = Math.max(costUsd, consumed);
+        if (kind === 'replan') replans = Math.max(replans, consumed);
+        if (replans > 3) throw new Error('Invalid report accounting');
+      }
+    }
+    return Object.freeze({ tokensConsumed, costUsd, replanCount: replans, perLedger: Object.freeze(perLedger) });
+  } catch {
+    throw new Error('Invalid report accounting');
+  }
+}
+
+export function usageSummarySnapshot(value: unknown): { readonly tokensConsumed: number; readonly costUsd: number; readonly replanCount: number } {
+  try {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error();
+    const usage = value as Record<string, unknown>;
+    const tokensConsumed = usageNumber(usage['tokensConsumed'], true);
+    const costUsd = usageNumber(usage['costUsd'], false);
+    const replanCount = usageNumber(usage['replanCount'], true);
+    if (replanCount > 3) throw new Error();
+    return Object.freeze({ tokensConsumed, costUsd, replanCount });
+  } catch {
+    throw new Error('Invalid report accounting');
+  }
+}
+
+export function safePaths(value: unknown, label: string): readonly string[] {
+  if (!Array.isArray(value) || value.length > MAX_REPORT_ITEMS) return rejectMetadata(label);
+  const paths: readonly unknown[] = value;
+  return Object.freeze(paths.map((path, index) => safePath(path, `${label}[${index}]`)));
 }
 
 export function safePath(value: unknown, label: string, customPatterns?: readonly (RegExp | string)[]): string {
@@ -271,7 +383,7 @@ export function sanitizeDetails(
     const result: Record<string, unknown> = {};
     try {
       for (const [key, value] of Object.entries(details as Record<string, unknown>).slice(0, MAX_DETAIL_ITEMS)) {
-        if (FORBIDDEN_DETAIL_KEY.test(key) || budget.items >= MAX_DETAIL_ITEMS) continue;
+        if (FORBIDDEN_DETAIL_KEY.test(key) || sanitizeText(key, customPatterns) !== key || budget.items >= MAX_DETAIL_ITEMS) continue;
         budget.items++;
         const clean = sanitizeDetailValue(value, customPatterns, seen, depth + 1, budget);
         const candidate = { ...result };
