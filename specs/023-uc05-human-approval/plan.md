@@ -2,7 +2,7 @@
 
 **Branch**: `feat/023-uc05-human-approval-spec` | **Date**: 2026-10-19 (Asia/Saigon) | **Spec**: [spec.md](spec.md)
 
-**Status**: T001–T015 and T023–T027 review corrections are integrated and verified locally through source `41c4215264106fef27a90ae83ee680cd0edbb1aa`. Phase 6 T014–T015 and the service/control mock-recovery seam were separately authorized on 2026-10-21 (Asia/Saigon); see [decisions](contracts/decisions.md). Source/emitted approvals pass 160/160; runtime typecheck/full lint/clean build and 1005 compiled tests pass. Evidence remains mock-only. T016–T022 and G-PROFILE/G-REAL/G-RESTART remain gated; full UC-05 acceptance is unverified.
+**Status**: T001–T018 and T023–T027 review corrections are integrated and verified locally through source `e55370fcb9ca802d97e0f87a4677836fd85cbf9d`. Phase 7 T016–T018 was separately authorized on 2026-10-22 (Asia/Saigon); see [decisions](contracts/decisions.md). Source/emitted approvals pass 192/192; runtime typecheck/full lint/clean build and 1037 compiled tests pass; contributor tests pass 227/227 (exit 0). Evidence remains mock/local; reconstruction from retained in-memory state is not process restart. Phase 8 T019–T022 is separately authorized on 2026-10-22 (Asia/Saigon); T019 is ready, while T020–T022 retain their external prerequisites. Production profiles/adapters, durable atomicity, real execution and actual restart remain unverified; full UC-05 acceptance is unverified.
 
 ## Summary
 
@@ -39,7 +39,7 @@ The constitution remains an unratified placeholder. Governance comes from [AGENT
 | Shared contracts | Canonical schema 0.1.0 unchanged; companion logical contract agreed; T002 validators and test-only T004 ports are implemented | Real store, production composition and runtime conformance remain gated |
 | Durable control | Proposed UC-04 transactions and shared admission epochs | Real store, scheduler/model/executor composition before integration |
 | Evidence | Local mocks, CLI, real tools and restart have distinct levels | Required cases observed; unrun cases prevent VERIFIED claims |
-| Authorization | T001–T015 authorized in separate phases; shared agreement and Phase 3/4/5/6 seams confirmed; T023–T027 are scoped corrections | T016–T022 need separate authorization; production execution remains separately gated |
+| Authorization | T001–T018 authorized in separate phases; shared baseline agreement and local Phase 3–7 seams recorded; T023–T027 are scoped corrections | Phase 8 T019–T022 separately authorized on 2026-10-22; T020–T022 retain external delivery gates; production execution, real adapters and actual restart remain separately gated |
 
 Recheck these gates after design changes; a clean planning audit does not satisfy external delivery or authorization gates.
 

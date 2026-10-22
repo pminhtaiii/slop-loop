@@ -1,6 +1,6 @@
 # Quickstart and Validation Guide: UC-05
 
-**Current state**: Separately authorized T001–T013 and T023–T027 corrections are integrated locally through `84be181`. Exact binding, immutable stale projections, atomic mock pending replacement, safe port failures and canonical Patch consumer compatibility augment the earlier policy/control/CLI slice. Source/emitted approvals pass 142/142; runtime typecheck/full lint/build and 896 compiled tests pass. The service has mock provenance and direct CLI composition remains unavailable. T014–T022 and production/real-execution/actual restart remain gated.
+**Current state**: T001–T018 and T023–T027 corrections are integrated locally through `e55370fcb9ca802d97e0f87a4677836fd85cbf9d`. Read-only safe history and its explicit CLI command retain immutable consent separately from derived current assessments and observed outcomes. Source/emitted approvals pass 192/192; runtime typecheck/full lint/clean build and 1037 compiled tests pass; contributor tests pass 227/227 (exit 0). Direct CLI composition remains unavailable. Evidence remains mock/local; reconstruction from retained in-memory state is not process restart. Phase 8 T019–T022 is separately authorized on 2026-10-22 (Asia/Saigon); T019 is ready, while T020–T022 retain their external prerequisites. Production profiles/adapters, durable atomicity, real execution and actual restart remain unverified; full UC-05 acceptance is unverified.
 
 ## Validate this planning package now
 
@@ -51,6 +51,14 @@ The full focused command passed 90/90 and the runtime gate passed at the source 
 Read the [authorization and three seams](contracts/decisions.md#phase-5-implementation-authorization-and-seams). T011–T013 and T025–T027 are integrated; their individual evidence is in tasks.md. Run `node --test tests/runtime/approvals/plan-binding.test.ts tests/runtime/approvals/plan-context.test.ts tests/runtime/approvals/service.test.ts`, then the complete approval suite and `node scripts/ci/check-runtime.mjs`. The integrated source/emitted approval suites pass 142/142 and the runtime gate passes 896 compiled tests, typecheck, lint and build.
 
 The canonical consumer tests use actual service consent and mock accounting/context. Simulated new-run ledger reload does not prove process restart. Approved stale assessments are derived on reads; only pending replacement uses the existing mock assessment transaction. No real adapter/profile, durable terminal assessment or production composition is supplied.
+
+## Validate Phase 7 locally
+
+Read the [Phase 7 authorization and seams](contracts/decisions.md#phase-7-implementation-authorization-and-local-seams) and [history protocol](contracts/cli.md#phase-7-history-projection). T016–T018 are the local slice; T019–T022 remain gated.
+
+Run `node --test tests/runtime/approvals/audit.test.ts tests/runtime/approvals/cli.test.ts`, the complete source approval suite, then `node scripts/ci/check-runtime.mjs` and `pnpm run test:contributors`. After the clean build, `node --test dist/tests/runtime/approvals/*.test.js` checks emitted approvals.
+
+At source `e55370fcb9ca802d97e0f87a4677836fd85cbf9d`, Source/emitted approvals pass 192/192; runtime typecheck/full lint/clean build and 1037 compiled tests pass; contributor tests pass 227/227 (exit 0). Actual subprocesses use an explicit test host, observe the same child owner state and run no repository effects. History uses complete bounded metadata pages/snapshot identity; optional owner observations and best-effort current details cannot turn approval into success. Direct executable composition stays unavailable. Evidence remains mock/local; reconstruction from retained in-memory state is not process restart. T019–T022, production profiles/adapters, durable atomicity, real execution and actual restart remain gated; full UC-05 acceptance is unverified.
 
 ## CLI approval/rejection scenarios (after T010/T018)
 

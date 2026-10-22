@@ -1,6 +1,6 @@
 # Trusted Operator CLI: UC-05
 
-**Status**: Logical protocol agreed through T001; see [decisions](decisions.md). T007 and separately authorized T010 supply list/show/inspect/decide/control parsing and actual subprocess tests through explicit mock composition. Direct executable entry is unconfigured and returns unavailable; real connection to UC-04 remains gated at T020. SIGINT/SIGTERM checks observe parent-retained mock snapshots, not durable runtime restart. This introduces no project-wide CLI framework.
+**Status**: Logical protocol agreed through T001; see [decisions](decisions.md). T007/T010 and separately authorized T018 supply list/show/inspect/history/decide/control parsing and actual subprocess outcome/exit checks through explicit mock composition. History read success confirms inspection only; approval never establishes execution success. Direct executable entry is unconfigured/unavailable; real UC-04 connection remains gated at T020. Signal/IPC snapshots are local mock evidence, not durable runtime restart. No project-wide CLI framework is introduced.
 
 ## Trust and commands
 

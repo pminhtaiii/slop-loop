@@ -6,7 +6,7 @@
 
 **Created**: 2026-10-19 (Asia/Saigon, UTC+07:00)
 
-**Status**: T001–T015 and T023–T027 review corrections are integrated and verified locally through source `41c4215264106fef27a90ae83ee680cd0edbb1aa`. Phase 6 T014–T015 and the service/control mock-recovery seam were separately authorized on 2026-10-21 (Asia/Saigon); see [decisions](contracts/decisions.md). Source/emitted approvals pass 160/160; runtime typecheck/full lint/clean build and 1005 compiled tests pass. Evidence remains mock-only. T016–T022 and G-PROFILE/G-REAL/G-RESTART remain gated; full UC-05 acceptance is unverified.
+**Status**: T001–T018 and T023–T027 review corrections are integrated and verified locally through source `e55370fcb9ca802d97e0f87a4677836fd85cbf9d`. Phase 7 T016–T018 was separately authorized on 2026-10-22 (Asia/Saigon); see [decisions](contracts/decisions.md). Source/emitted approvals pass 192/192; runtime typecheck/full lint/clean build and 1037 compiled tests pass; contributor tests pass 227/227 (exit 0). Evidence remains mock/local; reconstruction from retained in-memory state is not process restart. Phase 8 T019–T022 is separately authorized on 2026-10-22 (Asia/Saigon); T019 is ready, while T020–T022 retain their external prerequisites. Production profiles/adapters, durable atomicity, real execution and actual restart remain unverified; full UC-05 acceptance is unverified.
 
 **Input**: Specify UC-05 from ADR-0006, the shared UC-03 contracts, repository policy, and the delegation map. Preserve UC-04 persistence and Tai's execution ownership.
 

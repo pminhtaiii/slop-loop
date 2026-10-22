@@ -60,7 +60,7 @@ T014–T015 prepare C17–C20 through actual public service/control exports and 
 | C19,C20 | Lost claim response and post-effect uncertain owner records retain their claim/reservations. New consumer/service instances and a new run cannot blindly replay observed/uncertain/reconciled actions or reset prior task spending. |
 | C15,C18–C20 | Canonical in-memory reservation behavior rejects missing/exhausted/unsettled accounting. A valid new run can reserve only the remaining task allowance; no replacement ledger, real executor or rollback is supplied by UC-05. |
 
-The minimal continuation API does not yet provide granular prerequisite diagnostics or the complete history/CLI outcome matrix; those remain T016–T018 obligations. Actual durable transactions, real pause/claim serialization, isolated execution and kill/restore evidence remain T020/T021 and their external gates.
+The continuation API retains minimal claimed/blocked/unavailable outcomes. Separately authorized T016–T018 add safe history and CLI projections for available committed evidence and explicit current/owner observations. Unknown cancellation/execution or accounting prerequisites are not invented. Actual durable transactions, real pause/claim serialization, isolated execution and kill/restore evidence remain T020/T021 and their external gates.
 
 ## Human approval matrix mapping
 
