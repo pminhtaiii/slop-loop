@@ -17,6 +17,8 @@ For the UC-03 MVP, persisted state must distinguish the current plan, its human 
 
 The test-only `MemoryStatePort` simulates CAS, atomic multi-budget reservations, settlement and interrupted-request reconciliation in memory. Scripted approvals require explicit bound decisions and trusted freshness context. These fixtures provide no durable storage or process-restart evidence; real replacements remain T025/T028/T032. The UC-05 Phase 6 continuation fixture composes this canonical in-memory reservation behavior with retained mock claim/control state; rebuilding consumers preserves prior task charges and uncertain reservations. This remains same-process simulation; durable admission, reconciliation and process-restart proof are not supplied.
 
+The UC-03 Phase 4 repair/replan consumers use the injected StatePort for authoritative reloads, reservations and CAS. Material replans require an explicit trusted reservation-admission context; they do not mutate mock internals or implement UC-04 durability. Rejection direction binds to the paused task and current plan/state; feedback text alone cannot restart replanning. Controlled checks retain charged accounting across simulated invocations and return authoritative charged state after failed admission. Confirmed repair-action charges remain reserved when material replanning begins; a reservation lacking a persisted confirmed-action reference requires trusted reconciliation. Outstanding token/cost reservations still prevent replanning. Actual process recovery remains a later integration gate.
+
 ## Checkpoint and resume
 
 Write checkpoints at meaningful boundaries: plan creation, baseline completion, implementation steps, patch application, verification, approval request or resolution, and review completion.

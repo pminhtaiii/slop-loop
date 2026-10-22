@@ -2,9 +2,9 @@
 
 **Input**: Design documents from `/specs/001-verified-code-repair/`.
 **Prerequisites**: [plan.md](plan.md), [spec.md](spec.md), [research.md](research.md), [data-model.md](data-model.md), [interfaces](contracts/interfaces.md), [acceptance](contracts/acceptance.md).
-**Status**: Phase 1 (T001–T002) completed; Phase 2 (T003–T004) authorized by the user on 2026-10-16 (Asia/Saigon). Shared-owner agreement to current contracts remains recorded, and production choices remain mandatory before real execution. Phase 3 (T005–T014) is authorized by the user on 2026-10-18 (Asia/Saigon); Phase 4 onward and real execution remain separately gated. Completion is recorded only after integrated checks; see [decisions](contracts/decisions.md).
+**Status**: Phase 1 (T001–T002) completed; Phase 2 (T003–T004) authorized by the user on 2026-10-16 (Asia/Saigon). Shared-owner agreement to current contracts remains recorded, and production choices remain mandatory before real execution. Phase 3 (T005–T014) is authorized by the user on 2026-10-18 (Asia/Saigon); Phase 4 (T015–T018) is authorized on 2026-10-21 (Asia/Saigon); Phase 5 onward and real execution remain separately gated. Completion is recorded only after integrated checks; see [decisions](contracts/decisions.md).
 **Tests**: Required by FR-013 and repository test-first guidance. Each implementation task demonstrates its behavioral RED before GREEN; a missing module/collection failure is not a valid behavioral RED. Bootstrap commands are available in quickstart.md; behavioral product-runtime commands remain future work.
-**Phase 1 evidence**: [Initial verification](https://github.com/pminhtaiii/slop-loop/blob/ee5be9b147efb44511b8e65ece375fc904c5f062/docs/verification/2026-10-16-verified-code-repair-phase1.md) records integrated checks and independent review for T001–T002. Current pnpm verification and future evidence outputs under `docs/verification/` are intentionally local-only and must not be force-added. The current request covers Phase 3 T005–T014; T015–T034 remain outside scope.
+**Phase 1 evidence**: [Initial verification](https://github.com/pminhtaiii/slop-loop/blob/ee5be9b147efb44511b8e65ece375fc904c5f062/docs/verification/2026-10-16-verified-code-repair-phase1.md) records integrated checks and independent review for T001–T002. Current pnpm verification and future evidence outputs under `docs/verification/` are intentionally local-only and must not be force-added. The current request covers Phase 4 T015–T018; T019–T034 remain outside scope.
 **Organization**: User-story phases follow Spec Kit; priorities do not override DAG edges or permit delayed safety gates. US3 is P1 despite its section position. Final phase integrates all stories.
 
 ## Format: `[ID] [P?] [Story] Description`
@@ -111,29 +111,32 @@ Tai is accountable for all local tasks, including shared foundation. Named lanes
 
 **Goal**: Evidence-informed repair/replan or honest termination. **Independent Test**: C03–C05/C12 using injected saved-state fixtures without completed US1; real proof T029/T032.
 
-- [ ] T015 [P] [US2] Create repair and replan scenarios in fixtures/uc03/repair/.
+- [X] T015 [P] [US2] Create repair and replan scenarios in fixtures/uc03/repair/.
   - **Owner**: Tai / repair-fixture lane.
   - **Dependencies**: T004.
   - **Owned Paths**: fixtures/uc03/repair/.
   - **Acceptance Checks**: Failed patch then repair, exhausted/absent accounting, focused-pass/regression-fail, reviewer finding, three replans and fourth refusal; explicit finite profiles and versioned saved baseline states. No dependency on US1 implementation or actual UC-04/UC-05.
+  - **Local-only verification (2026-10-21)**: Worker handoff verified at `3fb6fdd`; all 21 repair fixture files match source/destination SHA-256 hashes and remain ignored/untracked. `node fixtures/uc03/repair/validate.mjs` passed 18 entries (14 saved states, three evidence records and four-profile bundle). Static contract checks only; no real execution or UC-04/UC-05 integration evidence.
 
-- [ ] T016 [US2] Create the runnable repair SUT skeleton and failing checks in tests/runtime/unit/uc03-repair.test.ts.
+- [X] T016 [US2] Create the runnable repair SUT skeleton and failing checks in tests/runtime/unit/uc03-repair.test.ts.
   - **Owner**: Tai / repair-test lane.
   - **Dependencies**: T015.
   - **Owned Paths**: tests/runtime/unit/uc03-repair.test.ts; src/uc03/repair.ts (signature-only skeleton ownership until T016 handoff).
   - **Acceptance Checks**: C03–C05/C12 cover failure-evidence propagation, reservation-before-repair, exhaustion, persistent task budgets across simulated runs, user feedback wait, material/minor distinction, no fourth execution and no reset. T004 mocks only; simulation is labelled, not process-restart evidence. Create actual repair/replan exports with neutral incomplete behavior so the test runner loads and reaches assertions against the real SUT; missing-module/type/collection failures and mocking the SUT do not qualify. Record expected assertion RED, then transfer repair.ts ownership to T017 and subsequently T018 in dependency order. Keep genuine implementation in those successors.
 
-- [ ] T017 [US2] Implement bounded evidence-driven repair in src/uc03/repair.ts.
+- [X] T017 [US2] Implement bounded evidence-driven repair in src/uc03/repair.ts.
   - **Owner**: Tai / repair lane.
   - **Dependencies**: T016.
   - **Owned Paths**: src/uc03/repair.ts (repair behavior).
   - **Acceptance Checks**: Repair subset T016 passes with T004 state/repository/reviewer mocks. Require new failure evidence and reserved budget; return typed transition to verification; exhausted/uncertain/missing accounting returns incomplete rather than retry. No local durable ledger. Take repair.ts skeleton ownership from completed T016, then transfer that same file to dependent T018 after repair behavior acceptance.
+  - **Integrated evidence (2026-10-21)**: Accepted mock-only repair at `48611bea`: 26 repair checks pass; persisted guard-confirmed canonical revision routes to Verify and invalidates old active approval/review authority; independent malformed-digest, retained-reservation, replay and both post-effect CAS probes pass. Strict typecheck/lint pass. T016 neutral-skeleton behavioral RED is retained from `eb99ad7`; the unchanged T018 subset collects 11 checks with 3 passing and 8 expected assertion failures. No real execution, durability or restart claim.
 
-- [ ] T018 [US2] Add material replan and feedback transitions to src/uc03/repair.ts.
+- [X] T018 [US2] Add material replan and feedback transitions to src/uc03/repair.ts.
   - **Owner**: Tai / repair lane, sequential after T017 to avoid shared-file writes.
   - **Dependencies**: T017.
-  - **Owned Paths**: src/uc03/repair.ts (plan/replan behavior).
+  - **Owned Paths**: src/uc03/repair.ts; src/uc03/replan.ts; src/uc03/repair-types.ts (plan/replan behavior).
   - **Acceptance Checks**: Remaining T016 scenarios pass: initial plan zero, three unique charged material revisions, fourth refused; renewed UC-05 decision before revised-strategy edits; rejection waits for user feedback; minor adjustment/clarification does not charge. Simulated recovery preserves reservations; real durability awaits T032.
+  - **Integrated evidence (2026-10-21)**: Accepted `63bc871baf03625adabdcd41d69120eaa55311f1` at integration `3f364505`: source/emitted repair suites each pass 57/57; typecheck, lint and build pass. Public StatePort regressions verify charged Investigate-to-AwaitPlan accounting and authoritative reload after failed admission; prior feedback-direction, reservation/replay, finite-ledger and stale-authority checks remain green. Mock-only evidence; no real execution, durability, production adapter or restart claim.
 
 ## Phase 5: User Story 3 - Controlled execution and visible outcomes (Priority: P1)
 
