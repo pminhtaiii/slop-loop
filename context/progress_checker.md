@@ -2,6 +2,8 @@
 
 This page records observed implementation evidence for this repository. A design, plan, issue, or context document is not proof that a runtime capability exists. Detailed target evidence criteria are kept in [`docs/progress-checker-matrices.md`](../docs/progress-checker-matrices.md).
 
+UC-03 Phase 5 has local-only adversarial fixtures (T019), mock isolation assertions (T020), a neutral no-dispatch guard skeleton and behavioral RED checkpoint (T021), and sanitized reporting (T023). The guard implementation T022 remains incomplete: reviews exposed authorization races and a canonical admission contract gap; no reviewed guard implementation is integrated. T024/T025 real containment and approval integration are not run; real adapters, a concrete Docker configuration and a running Linux Docker daemon are absent. Phase 5 authorization does not establish those capabilities. Reporting and isolation evidence is recorded in [testing guidance](testing.md); these partial local results do not complete Phase 5.
+
 ## Status meanings
 
 | Status | Meaning |

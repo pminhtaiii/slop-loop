@@ -142,13 +142,13 @@ Tai is accountable for all local tasks, including shared foundation. Named lanes
 
 **Goal**: Enforced safety from the first real operation and honest visible reports. **Independent Test**: Guard and attack fixtures work without US1/US2 code; actual isolation/policy proof at T024/T025 and T031.
 
-- [ ] T019 [P] [US3] Prepare adversarial repositories and finite-limit profiles in fixtures/uc03/security/.
+- [X] T019 [P] [US3] Prepare adversarial repositories and finite-limit profiles in fixtures/uc03/security/.
   - **Owner**: Tai / security-fixture lane.
   - **Dependencies**: T004.
   - **Owned Paths**: fixtures/uc03/security/.
   - **Acceptance Checks**: C06–C11/C13 vectors cover protected tests, traversal/link/parent escapes, .env/PEM/SSH/embedded secrets, injection/equivalent commands, provider env marker, network/resource attempts, unavailable prepared dependencies and each missing finite bound. Safe disposable sentinel design; no actual malicious execution during fixture creation. Include malicious pytest code attempting direct source/existing-test writes, protected-path and embedded-secret reads, and scratch-to-canonical promotion; distinguish prevention from post-run detection. Use synthetic secret markers only, and include required-source embedded-secret refusal before command-view admission.
 
-- [ ] T020 [US3] Write isolated attack assertions in tests/runtime/security/uc03-isolation.test.ts.
+- [X] T020 [US3] Write isolated attack assertions in tests/runtime/security/uc03-isolation.test.ts.
   - **Owner**: Tai / isolation-test lane.
   - **Dependencies**: T019.
   - **Owned Paths**: tests/runtime/security/uc03-isolation.test.ts.
@@ -166,7 +166,7 @@ Tai is accountable for all local tasks, including shared foundation. Named lanes
   - **Owned Paths**: src/foundation/execution-guard.ts.
   - **Acceptance Checks**: T021 passes; deterministic pre-effect validation and calls to UC-05/UC-04 ports enforce the interfaces.md sequence. Use T004 mocks for local logic only; no bypass path, local approval store or blanket environment inheritance. Actual adapters required T024/T025. Take execution-guard.ts skeleton ownership from completed T021. Deny commands without a fresh admitted read-only view and isolate scratch; enforce controlled-patch versus repository-process authority. Provider requests use T008/T009 host dispatch protocol rather than being misrouted through RepositoryPort.
 
-- [ ] T023 [P] [US3] Implement sanitized milestone and final output in src/uc03/report.ts.
+- [X] T023 [P] [US3] Implement sanitized milestone and final output in src/uc03/report.ts.
   - **Owner**: Tai / delivery lane.
   - **Dependencies**: T004, T010.
   - **Owned Paths**: src/uc03/report.ts; tests/runtime/unit/uc03-report.test.ts.
