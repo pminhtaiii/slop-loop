@@ -26,6 +26,10 @@ On 2026-10-22 (Asia/Saigon), after independent standards and testability reviews
 
 After the reviewed task decomposition was integrated at `df03e0a`, the user explicitly selected “Keep this as an approved plan only” when asked to release mock-backed T037–T066 plus T022. The design and task plan remain approved at the planning level; these implementation tasks are not authorized to execute. T022 stays incomplete. Preserve completed T019–T021 and T023, and do not infer an implementation release from the earlier Phase 5 request or owner agreement. Real adapters, Docker acceptance and Phase 6 remain gated.
 
+## Limited Admission Implementation Release: T037–T041
+
+The user subsequently instructed implementation of the first five amendment tasks. This supersedes the plan-only restriction for T037–T041 only: additive admission scaffolding/validators (T037–T038), attempt/outcome scaffolding/validators (T039–T040), and the test-only StatePortV02 neutral journal scaffold with behavioral RED checks (T041). T042 and later tasks, T022, real adapters, Docker acceptance and Phase 6 remain unreleased. T041 intentionally stops at its valid behavioral RED checkpoint; this is not implementation of the T042 journal. Use Gemini 3.8 Flash High implementation, independent GPT-6.1-Sol review and GPT-6-Luna max reasoning repairs as previously requested. Integration first merged current origin/development at `4e39836`, preserving Phase 5 evidence and incoming UC-05 updates.
+
 ## Contract v0.1 Baseline Hashes
 The contract v0.1 baseline is commit `04f3747`, consisting of the core specification, shared data model, and shared interfaces. The hashes below identify that baseline, not later authorization-wording amendments in spec.md. All mocks (T004) and future real adapters (T025, T028, T030, T032) must conform strictly to these accepted schemas and interfaces:
 - `specs/001-verified-code-repair/spec.md`:
