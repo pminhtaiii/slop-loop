@@ -1,10 +1,15 @@
 import {
   type TaskState,
-  type ExecutorIdentityV02,
+  type FixPlan,
+  type AdmissionContextV02,
   type RepositoryAdmissionContextV02,
   type ProviderAdmissionContextV02,
+  type RepositoryAdmissionTrustedContextV02,
+  type ProviderAdmissionTrustedContextV02,
+  type ExecutorIdentityV02,
   type ClaimReceiptV02,
   type AttemptReceiptV02,
+  type AttemptOutcomeReceiptV02,
   type ClaimClosureReceiptV02,
   type RepositoryActionOutcomeReceiptV02,
   type ProviderRequestOutcomeReceiptV02,
@@ -19,6 +24,7 @@ import {
   type BugTask,
   type BudgetLedger,
   type ApprovalBinding,
+  type StateTransitionOptions,
   type RunCommandAction,
   type ProviderUsage,
   CONTRACT_VERSION,
@@ -205,7 +211,7 @@ export function createTestExecutorIdentityV02(
     adapterIdentity: 'adapter-worker-01',
     processIncarnation: 'proc-100',
     fencingGeneration: 1,
-    payloadDigest: 'sha256:payload00000000000000000000000000000000000000000000000000000000',
+    payloadDigest: computeCanonicalSha256('atomic-admission-test-payload'),
     ...overrides,
   };
 }
@@ -221,7 +227,7 @@ export function createTestProviderRequest(overrides?: Partial<ProviderRequest>):
     modelId: 'model-test-01',
     configId: 'config-coder-v1',
     pricingPolicyId: 'pricing-standard-v1',
-    contextDigest: 'sha256:ctxdigest000000000000000000000000000000000000000000000000000000000',
+    contextDigest: computeCanonicalSha256('provider request context'),
     timeoutMs: 60000,
     maxInputTokens: 8000,
     maxOutputTokens: 2000,
@@ -233,17 +239,177 @@ export function createTestProviderRequest(overrides?: Partial<ProviderRequest>):
   };
 }
 
+const TEST_REPOSITORY_REVISION = 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+
+function createTestAdmissionPlan(task: BugTask, decisionRef: string): FixPlan {
+  const strategy = 'Apply the approved bounded repair';
+  return {
+    planVersion: 1,
+    diagnosis: 'The current implementation needs the approved bounded repair.',
+    suspectedCauseLocations: ['src/calculator.py'],
+    evidenceRefs: ['baseline-admission-v02'],
+    strategy,
+    scopedChanges: ['src/calculator.py'],
+    checkSetDigest: computeCanonicalSha256(task.requiredChecks),
+    baselineRef: task.initialRevisionDigest,
+    strategyDigest: computeCanonicalSha256(strategy),
+    decisionRef,
+  };
+}
+
+function testPlanBindingDigest(task: BugTask, plan: FixPlan): string {
+  return computeCanonicalSha256({
+    taskId: task.taskId,
+    planVersion: plan.planVersion,
+    strategyDigest: plan.strategyDigest,
+    baselineRef: plan.baselineRef,
+    evidenceRefs: plan.evidenceRefs,
+    criteriaDigest: computeCanonicalSha256(task.acceptanceCriteria),
+    checkSetDigest: plan.checkSetDigest,
+    decisionRef: plan.decisionRef,
+  });
+}
+
+export function createTestAdmissionTaskStateV02(context: AdmissionContextV02): TaskState {
+  const taskId = context.taskId;
+  const runId = context.runId;
+  const repositoryContext = context.subjectKind === 'repository-action' ? context : undefined;
+  const providerContext = context.subjectKind === 'provider-request' ? context : undefined;
+  const task = createTestBugTask({
+    taskId,
+    repositoryId: repositoryContext?.repositoryId ?? 'repo-mock-001',
+    initialRevisionDigest: repositoryContext?.canonicalRevision ?? TEST_REPOSITORY_REVISION,
+  });
+  const planDecisionRef = (repositoryContext?.planApplicability === 'approved-plan' || providerContext?.planApplicability === 'approved-plan')
+    ? (repositoryContext?.planDecisionRef ?? providerContext?.planDecisionRef)
+    : undefined;
+  const plan = planDecisionRef ? createTestAdmissionPlan(task, planDecisionRef) : undefined;
+  const node: TaskState['node'] = repositoryContext
+    ? repositoryContext.runnableNode as TaskState['node']
+    : plan ? 'Repair' : 'Investigate';
+  return createTestTaskState({
+    stateVersion: context.expectedTaskStateVersion,
+    taskId,
+    runId,
+    workspaceId: repositoryContext?.workspaceId ?? 'workspace-001',
+    repositoryId: task.repositoryId,
+    repositoryRevisionDigest: task.initialRevisionDigest,
+    goal: task.goal,
+    observedBehavior: task.observedBehavior,
+    expectedBehavior: task.expectedBehavior,
+    reproduction: task.reproduction,
+    acceptanceCriteria: task.acceptanceCriteria,
+    constraints: task.constraints,
+    requiredCheckIds: task.requiredChecks.map((check) => check.checkId),
+    taskContext: task,
+    node,
+    planVersion: plan?.planVersion ?? 1,
+    plan,
+    activeDecisionId: plan?.decisionRef,
+    evidenceRefs: plan?.evidenceRefs ?? [],
+    budgetLedgers: createTestAdmissionLedgers(task.configId),
+  });
+}
+
+export function createTestAdmissionTransitionContextsV02(
+  context: AdmissionContextV02,
+  state: TaskState,
+): Readonly<Record<number, NonNullable<StateTransitionOptions['trusted']>>> {
+  if (context.subjectKind !== 'repository-action' || context.action.kind !== 'apply_patch' ||
+    context.planApplicability !== 'approved-plan' || !state.plan?.decisionRef) return {};
+  const decision = context.planDecisionRef;
+  const policy = context.policyAuthorityRef;
+  const binding = createTestApprovalBinding({
+    decisionId: decision,
+    actionKind: 'fix_plan',
+    normalizedActionDigest: context.planBindingDigest,
+    taskId: state.taskId,
+    workspaceId: state.workspaceId,
+    repositoryRevisionDigest: state.repositoryRevisionDigest,
+    policyId: policy.policyId,
+    policyVersion: policy.policyVersion,
+    planVersion: state.plan.planVersion,
+    strategyDigest: state.plan.strategyDigest,
+    baselineRef: state.plan.baselineRef,
+    evidenceRefs: state.plan.evidenceRefs,
+    criteriaDigest: computeCanonicalSha256(state.acceptanceCriteria),
+    checkSetDigest: state.plan.checkSetDigest,
+    status: 'approved',
+  });
+  const freshness = {
+    currentTaskId: binding.taskId,
+    currentWorkspaceId: binding.workspaceId,
+    currentRepositoryRevisionDigest: binding.repositoryRevisionDigest,
+    currentPolicyId: binding.policyId,
+    currentPolicyVersion: binding.policyVersion,
+    currentNormalizedActionDigest: binding.normalizedActionDigest,
+    currentPlanVersion: binding.planVersion,
+    currentStrategyDigest: binding.strategyDigest,
+    currentBaselineRef: binding.baselineRef,
+    currentEvidenceRefs: binding.evidenceRefs,
+    currentCriteriaDigest: binding.criteriaDigest,
+    currentCheckSetDigest: binding.checkSetDigest,
+  };
+  return { [state.stateVersion + 1]: { approval: { binding, freshness } } };
+}
+
+export function createTestAdmissionLedgers(configId = 'config-uc03-v1'): BudgetLedger[] {
+  return [
+    ...createTestLedgers(configId),
+    {
+      scope: 'task',
+      kind: 'repair',
+      limit: 3,
+      consumed: 0,
+      reservations: [],
+      unit: 'count',
+      configurationId: configId,
+      version: 1,
+    },
+  ];
+}
+
 export function createTestRepositoryAdmissionContextV02(
   overrides?: Partial<Record<string, unknown>>
 ): RepositoryAdmissionContextV02 {
+  const taskId = (overrides?.taskId as string | undefined) ?? 'task-calc-001';
+  const runId = (overrides?.runId as string | undefined) ?? 'run-001';
+  const workspaceId = (overrides?.workspaceId as string | undefined) ?? 'workspace-001';
+  const repositoryId = (overrides?.repositoryId as string | undefined) ?? 'repo-001';
+  const canonicalRevision = (overrides?.canonicalRevision as string | undefined) ?? TEST_REPOSITORY_REVISION;
+  const planDecisionRef = (overrides?.planDecisionRef as string | undefined) ?? 'dec-plan-001';
+  const bugTask = createTestBugTask({ taskId, repositoryId, initialRevisionDigest: canonicalRevision });
+  const plan = createTestAdmissionPlan(bugTask, planDecisionRef);
   const action: NormalizedAction = (overrides?.action as NormalizedAction | undefined) ?? {
     actionId: 'act-patch-001',
     kind: 'apply_patch',
     patchContent: '--- a/src/calculator.py\n+++ b/src/calculator.py\n@@ -1,1 +1,2 @@\n+# fix\n',
     targetPaths: ['src/calculator.py'],
-    baseRevisionDigest: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+    baseRevisionDigest: canonicalRevision,
   };
   const actionDigest = (overrides?.actionDigest as string | undefined) ?? computeActionDigest(action);
+  const policyAuthorityRef = {
+    policyId: 'policy-default',
+    policyVersion: '1.0.0',
+    configId: 'config-default',
+    configVersion: '1.0.0',
+    issuerKeyRef: 'key-authority-001',
+    decisionAuthorityGeneration: 3,
+  };
+  const freshnessContextDigest = computeCanonicalSha256({ taskId, runId, actionDigest, canonicalRevision, policyAuthorityRef });
+  const evaluationReceipt = {
+    receiptId: 'pe-receipt-001',
+    receiptDigest: '',
+    actionDigest,
+    freshnessContextDigest,
+    policyId: policyAuthorityRef.policyId,
+    policyVersion: policyAuthorityRef.policyVersion,
+    configId: policyAuthorityRef.configId,
+    configVersion: policyAuthorityRef.configVersion,
+    decisionAuthorityGeneration: policyAuthorityRef.decisionAuthorityGeneration,
+    result: 'ALLOWED' as const,
+  };
+  evaluationReceipt.receiptDigest = computeCanonicalSha256({ ...evaluationReceipt, receiptDigest: undefined });
   const context: Record<string, unknown> = {
     schemaVersion: '0.2.0',
     subjectKind: 'repository-action',
@@ -253,38 +419,20 @@ export function createTestRepositoryAdmissionContextV02(
     controlSchemaVersion: '0.2.0',
     expectedControlVersion: 2,
     expectedEpoch: 1,
-    taskId: 'task-calc-001',
-    runId: 'run-001',
-    workspaceId: 'workspace-001',
-    repositoryId: 'repo-001',
+    taskId,
+    runId,
+    workspaceId,
+    repositoryId,
     runnableNode: 'Repair',
-    canonicalRevision: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+    canonicalRevision,
     executionProfileId: 'profile-docker-isolated',
     action,
     actionDigest,
-    policyAuthorityRef: {
-      policyId: 'policy-default',
-      policyVersion: '1.0.0',
-      configId: 'config-default',
-      configVersion: '1.0.0',
-      issuerKeyRef: 'key-authority-001',
-      decisionAuthorityGeneration: 3,
-    },
-    policyEvaluationReceipt: {
-      receiptId: 'pe-receipt-001',
-      receiptDigest: 'sha256:pereceiptdigest00000000000000000000000000000000000000000000000000',
-      actionDigest,
-      freshnessContextDigest: 'sha256:freshness00000000000000000000000000000000000000000000000000',
-      policyId: 'policy-default',
-      policyVersion: '1.0.0',
-      configId: 'config-default',
-      configVersion: '1.0.0',
-      decisionAuthorityGeneration: 3,
-      result: 'ALLOWED',
-    },
-    planBindingDigest: 'sha256:planbindingdigest00000000000000000000000000000000000000000000000',
-    planDecisionRef: 'dec-plan-001',
-    baseRevision: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+    policyAuthorityRef,
+    policyEvaluationReceipt: evaluationReceipt,
+    planBindingDigest: testPlanBindingDigest(bugTask, plan),
+    planDecisionRef,
+    baseRevision: canonicalRevision,
     targetPaths: ['src/calculator.py'],
     patchDigest: computeCanonicalSha256(action.kind === 'apply_patch' ? action.patchContent : ''),
     finiteBounds: {
@@ -300,8 +448,44 @@ export function createTestRepositoryAdmissionContextV02(
 export function createTestProviderAdmissionContextV02(
   overrides?: Partial<Record<string, unknown>>
 ): ProviderAdmissionContextV02 {
-  const providerRequest: ProviderRequest = (overrides?.providerRequest as ProviderRequest | undefined) ?? createTestProviderRequest();
-  const requestContentDigest = (overrides?.requestContentDigest as string | undefined) ?? computeRequestContentDigest(providerRequest);
+  const requestOverrides = overrides?.providerRequest as Partial<ProviderRequest> | undefined;
+  const providerRequest: ProviderRequest = createTestProviderRequest({
+    ...(requestOverrides ?? {}),
+    taskId: (overrides?.taskId as string | undefined) ?? requestOverrides?.taskId ?? 'task-calc-001',
+    runId: (overrides?.runId as string | undefined) ?? requestOverrides?.runId ?? 'run-001',
+  });
+  const requestContentDigest = computeRequestContentDigest(providerRequest);
+  const role = providerRequest.role;
+  const bugTask = createTestBugTask({ taskId: providerRequest.taskId });
+  const planDecisionRef = (overrides?.planDecisionRef as string | undefined) ?? 'dec-plan-001';
+  const plan = createTestAdmissionPlan(bugTask, planDecisionRef);
+  const budgetRefs = (overrides?.budgetRefs as readonly string[] | undefined) ?? [
+    `${providerRequest.providerRequestId}-tokens`,
+    `${providerRequest.providerRequestId}-cost`,
+  ];
+  const providerIdentity = {
+    providerId: providerRequest.providerId,
+    modelId: providerRequest.modelId,
+    configId: providerRequest.configId,
+    configVersion: '1.0.0',
+    pricingPolicyId: providerRequest.pricingPolicyId,
+    pricingPolicyVersion: '1.0.0',
+    issuerKeyRef: 'key-authority-provider-001',
+    decisionAuthorityGeneration: 2,
+  };
+  const providerAdmissionReceipt = {
+    receiptId: `par-${providerRequest.providerRequestId}`,
+    receiptDigest: '',
+    providerRequestId: providerRequest.providerRequestId,
+    role,
+    requestContentDigest,
+    providerId: providerIdentity.providerId,
+    modelId: providerIdentity.modelId,
+    configId: providerIdentity.configId,
+    configVersion: providerIdentity.configVersion,
+    decisionAuthorityGeneration: providerIdentity.decisionAuthorityGeneration,
+  };
+  providerAdmissionReceipt.receiptDigest = computeCanonicalSha256({ ...providerAdmissionReceipt, receiptDigest: undefined });
   const context: Record<string, unknown> = {
     schemaVersion: '0.2.0',
     subjectKind: 'provider-request',
@@ -311,54 +495,97 @@ export function createTestProviderAdmissionContextV02(
     controlSchemaVersion: '0.2.0',
     expectedControlVersion: 2,
     expectedEpoch: 1,
-    taskId: 'task-calc-001',
-    runId: 'run-001',
+    taskId: providerRequest.taskId,
+    runId: providerRequest.runId,
     providerRequest,
     providerRequestId: providerRequest.providerRequestId,
-    role: 'coder',
+    role,
     requestContentDigest,
-    providerIdentity: {
-      providerId: 'provider-test',
-      modelId: 'model-test-01',
-      configId: 'config-coder-v1',
-      configVersion: '1.0.0',
-      pricingPolicyId: 'pricing-standard-v1',
-      pricingPolicyVersion: '1.0.0',
-      issuerKeyRef: 'key-authority-001',
-      decisionAuthorityGeneration: 2,
-    },
-    providerAdmissionReceipt: {
-      receiptId: 'par-001',
-      receiptDigest: 'sha256:pardigest00000000000000000000000000000000000000000000000000000000',
-      providerRequestId: providerRequest.providerRequestId,
-      role: 'coder',
-      requestContentDigest,
-      providerId: 'provider-test',
-      modelId: 'model-test-01',
-      configId: 'config-coder-v1',
-      configVersion: '1.0.0',
-      decisionAuthorityGeneration: 2,
-    },
-    requestReservationReceipt: 'res-bundle-001',
-    budgetRefs: ['res-tokens-001', 'res-cost-001'],
+    providerIdentity,
+    providerAdmissionReceipt,
+    requestReservationReceipt: providerRequest.reservationRef,
+    budgetRefs,
     finiteBounds: {
-      maxInputTokens: 10000,
-      maxOutputTokens: 2000,
-      maxCostUsd: 1.0,
+      maxInputTokens: providerRequest.maxInputTokens,
+      maxOutputTokens: providerRequest.maxOutputTokens,
+      maxCostUsd: providerRequest.maxCostUsd,
+      ...(role === 'reviewer' ? { maxReviewerIterations: 3 } : {}),
     },
-    planBindingDigest: 'sha256:planbindingdigest00000000000000000000000000000000000000000000000',
-    planDecisionRef: 'dec-plan-001',
+    planBindingDigest: testPlanBindingDigest(bugTask, plan),
+    planDecisionRef,
     ...overrides,
   };
   return context as unknown as ProviderAdmissionContextV02;
 }
 
+export function createTestRepositoryAdmissionTrustedContextV02(
+  context: RepositoryAdmissionContextV02,
+): RepositoryAdmissionTrustedContextV02 {
+  return {
+    subjectKind: 'repository-action',
+    taskStateSchemaVersion: context.taskStateSchemaVersion,
+    expectedTaskStateVersion: context.expectedTaskStateVersion,
+    controlSchemaVersion: context.controlSchemaVersion,
+    expectedControlVersion: context.expectedControlVersion,
+    expectedEpoch: context.expectedEpoch,
+    taskId: context.taskId,
+    runId: context.runId,
+    workspaceId: context.workspaceId,
+    repositoryId: context.repositoryId,
+    runnableNode: context.runnableNode,
+    canonicalRevision: context.canonicalRevision,
+    executionProfileId: context.executionProfileId,
+    planApplicability: context.planApplicability,
+    planBindingDigest: context.planApplicability === 'approved-plan' ? context.planBindingDigest : undefined,
+    planDecisionRef: context.planApplicability === 'approved-plan' ? context.planDecisionRef : undefined,
+    policyAuthorityRef: context.policyAuthorityRef,
+    policyEvaluationReceiptRef: context.policyEvaluationReceipt.receiptId,
+    policyEvaluationReceiptDigest: context.policyEvaluationReceipt.receiptDigest,
+    freshnessContextDigest: context.policyEvaluationReceipt.freshnessContextDigest,
+    executionProfile: {
+      isolationProfileRef: context.executionProfileId,
+      exclusionsPolicyVersion: 'exclusions-v1',
+      scratchIdentity: 'scratch-admission-v02',
+      commandBounds: {
+        timeoutMs: 30_000,
+        maxOutputBytes: 1_048_576,
+        maxCpuSeconds: 120,
+        maxMemoryBytes: 536_870_912,
+        maxProcessCount: 64,
+      },
+      patchBounds: {
+        maxPatchBytes: 4096,
+        maxChangedPaths: 5,
+      },
+    },
+    allowedDiagnosticChecks: [],
+    allowedDiagnosticTestPaths: [],
+  };
+}
+
+export function createTestProviderAdmissionTrustedContextV02(
+  context: ProviderAdmissionContextV02,
+): ProviderAdmissionTrustedContextV02 {
+  return {
+    subjectKind: 'provider-request',
+    taskId: context.taskId,
+    runId: context.runId,
+    role: context.role,
+    providerRequestId: context.providerRequestId,
+    requestContentDigest: context.requestContentDigest,
+    providerAdmissionReceiptRef: context.providerAdmissionReceipt.receiptId,
+    providerAdmissionReceiptDigest: context.providerAdmissionReceipt.receiptDigest,
+    budgetRefs: context.budgetRefs,
+    providerIdentity: context.providerIdentity,
+  };
+}
+
 export function createTestClaimReceiptV02(
   overrides?: Partial<ClaimReceiptV02>
 ): ClaimReceiptV02 {
-  return {
+  const raw: ClaimReceiptV02 = {
     claimId: 'claim-001',
-    claimDigest: 'sha256:claimdigest00000000000000000000000000000000000000000000000000000',
+    claimDigest: '',
     taskId: 'task-calc-001',
     runId: 'run-001',
     subjectKind: 'repository-action',
@@ -371,6 +598,7 @@ export function createTestClaimReceiptV02(
     reservationRefs: ['res-repair-slot-001'],
     ...overrides,
   };
+  return { ...raw, claimDigest: computeCanonicalSha256({ ...raw, claimDigest: undefined }) };
 }
 
 export function createTestAttemptReceiptV02(
@@ -382,9 +610,9 @@ export function createTestAttemptReceiptV02(
     taskId: 'task-calc-001',
     executorIdentity: createTestExecutorIdentityV02(),
     preAttemptTaskStateVersion: 1,
-    postBeginTaskStateVersion: 1,
-    preAttemptControlVersion: 2,
-    postBeginControlVersion: 3,
+    postBeginTaskStateVersion: 2,
+    preAttemptControlVersion: 3,
+    postBeginControlVersion: 4,
     epoch: 1,
     status: 'attempting',
     ...overrides,
@@ -392,16 +620,18 @@ export function createTestAttemptReceiptV02(
 }
 
 export function createTestClaimClosureReceiptV02(
+  claim?: ClaimReceiptV02,
+  executorIdentity: ExecutorIdentityV02 = createTestExecutorIdentityV02(),
   overrides?: Partial<ClaimClosureReceiptV02>
 ): ClaimClosureReceiptV02 {
   const raw = {
     receiptId: 'closure-001',
     receiptDigest: 'sha256:placeholder',
-    claimId: 'claim-001',
-    taskId: 'task-calc-001',
+    claimId: claim?.claimId ?? 'claim-001',
+    taskId: claim?.taskId ?? 'task-calc-001',
     reason: 'worker cancelled before attempt dispatch',
-    fencedExecutorIdentity: createTestExecutorIdentityV02(),
-    unconsumedReservations: ['res-repair-slot-001'],
+    fencedExecutorIdentity: executorIdentity,
+    unconsumedReservations: claim?.reservationRefs ?? ['res-repair-slot-001'],
     ...overrides,
   };
   return {
@@ -411,19 +641,27 @@ export function createTestClaimClosureReceiptV02(
 }
 
 export function createTestRepositoryOutcomeReceiptV02(
+  claim: ClaimReceiptV02,
+  attempt: AttemptReceiptV02,
+  context: RepositoryAdmissionContextV02,
   overrides?: Partial<RepositoryActionOutcomeReceiptV02>
 ): RepositoryActionOutcomeReceiptV02 {
+  const outcome = overrides?.outcome ?? 'observed';
   const raw: Record<string, unknown> = {
     receiptId: 'repo-out-001',
     receiptDigest: 'sha256:placeholder',
-    claimId: 'claim-001',
-    attemptId: 'att-001',
+    claimId: claim.claimId,
+    attemptId: attempt.attemptId,
     subjectKind: 'repository-action',
-    planApplicability: 'approved-plan',
-    actionDigest: 'sha256:act00000000000000000000000000000000000000000000000000000000000000',
-    outcome: 'observed',
-    planBindingDigest: 'sha256:binding000000000000000000000000000000000000000000000000000000',
-    planDecisionRef: 'dec-001',
+    planApplicability: context.planApplicability,
+    actionDigest: context.actionDigest,
+    outcome,
+    ...(outcome === 'observed' && context.action.kind === 'apply_patch'
+      ? { observedResultRevisionDigest: computeCanonicalSha256({ baseRevision: context.canonicalRevision, actionDigest: context.actionDigest }) }
+      : {}),
+    ...(context.planApplicability === 'approved-plan'
+      ? { planBindingDigest: context.planBindingDigest, planDecisionRef: context.planDecisionRef }
+      : {}),
     ...overrides,
   };
   return {
@@ -433,21 +671,28 @@ export function createTestRepositoryOutcomeReceiptV02(
 }
 
 export function createTestProviderOutcomeReceiptV02(
+  claim: ClaimReceiptV02,
+  attempt: AttemptReceiptV02,
+  context: ProviderAdmissionContextV02,
   overrides?: Partial<ProviderRequestOutcomeReceiptV02>
 ): ProviderRequestOutcomeReceiptV02 {
   const raw: Record<string, unknown> = {
     receiptId: 'prov-out-001',
     receiptDigest: 'sha256:placeholder',
-    claimId: 'claim-001',
-    attemptId: 'att-001',
+    claimId: claim.claimId,
+    attemptId: attempt.attemptId,
     subjectKind: 'provider-request',
-    planApplicability: 'approved-plan',
-    providerRequestId: 'req-prov-001',
-    requestContentDigest: 'sha256:reqcontent000000000000000000000000000000000000000000000000000',
-    role: 'coder',
+    planApplicability: context.planApplicability,
+    providerRequestId: context.providerRequestId,
+    requestContentDigest: context.requestContentDigest,
+    role: context.role,
     outcome: 'observed',
-    planBindingDigest: 'sha256:binding000000000000000000000000000000000000000000000000000000',
-    planDecisionRef: 'dec-001',
+    observedUsage: createTestProviderUsage({ inputTokens: 100, outputTokens: 20, billableTokens: 120, costUsd: 0.003 }),
+    providerAdmissionReceiptRef: context.providerAdmissionReceipt.receiptId,
+    budgetRefs: [...context.budgetRefs],
+    ...(context.planApplicability === 'approved-plan'
+      ? { planBindingDigest: context.planBindingDigest, planDecisionRef: context.planDecisionRef }
+      : {}),
     ...overrides,
   };
   return {
@@ -457,17 +702,20 @@ export function createTestProviderOutcomeReceiptV02(
 }
 
 export function createTestUncertainReconciliationReceiptV02(
+  predecessor: AttemptOutcomeReceiptV02,
   overrides?: Partial<UncertainAttemptReconciliationReceiptV02>
 ): UncertainAttemptReconciliationReceiptV02 {
+  if (predecessor.outcome !== 'uncertain') throw new Error('Uncertain reconciliation requires a recorded uncertain outcome receipt');
   const raw: Record<string, unknown> = {
     reconciliationId: 'recon-001',
     reconciliationDigest: 'sha256:placeholder',
     reconciliationKind: 'uncertain-attempt',
-    predecessorReceiptId: 'repo-out-001',
-    claimId: 'claim-001',
-    attemptId: 'att-001',
-    subjectKind: 'repository-action',
-    planApplicability: 'approved-plan',
+    predecessorReceiptId: predecessor.receiptId,
+    predecessorReceiptDigest: predecessor.receiptDigest,
+    claimId: predecessor.claimId,
+    attemptId: predecessor.attemptId,
+    subjectKind: predecessor.subjectKind,
+    planApplicability: predecessor.planApplicability,
     disposition: 'observed-and-accounted',
     ...overrides,
   };
@@ -478,17 +726,20 @@ export function createTestUncertainReconciliationReceiptV02(
 }
 
 export function createTestObservedReconciliationReceiptV02(
+  predecessor: AttemptOutcomeReceiptV02,
   overrides?: Partial<ObservedOutcomeReconciliationReceiptV02>
 ): ObservedOutcomeReconciliationReceiptV02 {
+  if (predecessor.outcome !== 'observed') throw new Error('Observed reconciliation requires a recorded observed outcome receipt');
   const raw: Record<string, unknown> = {
     reconciliationId: 'recon-002',
     reconciliationDigest: 'sha256:placeholder',
     reconciliationKind: 'observed-unsettled',
-    predecessorReceiptId: 'repo-out-001',
-    claimId: 'claim-001',
-    attemptId: 'att-001',
-    subjectKind: 'repository-action',
-    planApplicability: 'approved-plan',
+    predecessorReceiptId: predecessor.receiptId,
+    predecessorReceiptDigest: predecessor.receiptDigest,
+    claimId: predecessor.claimId,
+    attemptId: predecessor.attemptId,
+    subjectKind: predecessor.subjectKind,
+    planApplicability: predecessor.planApplicability,
     ...overrides,
   };
   return {
