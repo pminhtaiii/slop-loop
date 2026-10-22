@@ -40,7 +40,8 @@ test('two-run comparison refuses changed or missing identity instead of promotin
  * execute all vectors or establish the fixture's real dispatch/effect counters.
  * Expected oracle bodies stay in this test process and never enter child args.
  */
-const witnesses: Readonly<Record<Uc05CaseId, readonly [string, ...string[]]>> = {
+type WitnessSuite = 'contracts' | 'policy' | 'service' | 'control' | 'plan-context' | 'restart-admission' | 'audit' | 'cli' | 'acceptance';
+const witnesses: Readonly<Record<Uc05CaseId, readonly [WitnessSuite, ...string[]]>> = {
   C01: ['policy', 'an exact configured bounded command is allowed without a prompt', 'ordinary authentication source edits need an exact approved plan, then add no path-only prompt'],
   C02: ['policy', 'dependency, deletion, structural, configuration and configured breadth gates survive plan approval'],
   C03: ['policy', 'hard boundaries and reviewer authority cannot be overridden by a configured command', 'shell evaluation and unconfigured interpreters stay forbidden even with constrained capability assertions'],
@@ -65,6 +66,14 @@ const witnesses: Readonly<Record<Uc05CaseId, readonly [string, ...string[]]>> = 
   C22: ['policy', 'missing, malformed, unknown or unbound trusted facts cannot authorize a command'],
   C23: ['cli', 'direct executable has no store or environment-selected test-driver composition'],
   C24: ['acceptance', 'complete local catalogs compare without converting required not-run evidence to pass'],
+};
+
+// These tiers describe the mapped calls, independently of fixture preparation.
+// C24 exercises the pure comparator over observed run metadata in this process;
+// unrelated CLI checks elsewhere in a run cannot elevate a row's local tier.
+const witnessLevels: Readonly<Record<WitnessSuite, 'unit' | 'mock' | 'cli'>> = {
+  contracts: 'unit', policy: 'unit', service: 'mock', control: 'mock', 'plan-context': 'mock',
+  'restart-admission': 'mock', audit: 'mock', cli: 'cli', acceptance: 'unit',
 };
 
 const scopes: Readonly<Record<Uc05CaseId, string>> = {
@@ -107,6 +116,7 @@ interface CaseResult {
   readonly requiredStatus: 'not-run' | 'pass';
   readonly requiredVectors: readonly { readonly id: string; readonly status: 'not-run' }[];
   readonly externalGates: readonly string[];
+  readonly plannedPreparationLevel: Uc05EvidenceLevel;
   readonly localLevel: Uc05EvidenceLevel;
   readonly localScope: string;
   readonly localStatus: 'partial' | 'error' | 'approval-only';
@@ -188,10 +198,10 @@ function observe(runId: string): LocalRun {
       return {
         caseId: fixture.caseId,
         identity: { fixture: `${fixture.fixtureVersion}:${fixture.fixtureDigest}`, profile: identity.profile,
-          oracle: `${fixture.oracle.version}:${fixture.oracle.digest}`, source: before, evidence: hash(JSON.stringify({ file, names, scope: scopes[fixture.caseId], parent: identity.evidence })) },
+          oracle: `${fixture.oracle.version}:${fixture.oracle.digest}`, source: before, evidence: hash(JSON.stringify({ file, names, localLevel: witnessLevels[file], scope: scopes[fixture.caseId], parent: identity.evidence })) },
         requiredLevel: fixture.evidence.requiredLevel, requiredStatus: 'not-run',
         requiredVectors: fixture.oracle.vectors.map(vector => ({ id: vector.id, status: 'not-run' })),
-        externalGates: fixture.evidence.externalGates, localLevel: fixture.evidence.localPreparationLevel,
+        externalGates: fixture.evidence.externalGates, plannedPreparationLevel: fixture.evidence.localPreparationLevel, localLevel: witnessLevels[file],
         localScope: scopes[fixture.caseId], localStatus: child.status === 0 && observed.every(check => check.status === 'pass') ? 'partial' : 'error',
         checks: observed, expectedCountRef: fixture.oracle.digest, observedFixtureEffectCounts: null, executionOutcome: 'not-observed',
       };
@@ -213,7 +223,8 @@ function compareCatalogs(left: LocalRun, right: LocalRun): { readonly comparable
         && row.identity.fixture === `${fixture.fixtureVersion}:${fixture.fixtureDigest}`
         && row.identity.oracle === `${fixture.oracle.version}:${fixture.oracle.digest}`
         && row.identity.profile === run.identity.profile && row.identity.source === run.identity.source
-        && row.requiredLevel === fixture.evidence.requiredLevel && row.localLevel === fixture.evidence.localPreparationLevel
+        && row.requiredLevel === fixture.evidence.requiredLevel && row.plannedPreparationLevel === fixture.evidence.localPreparationLevel
+        && row.localLevel === witnessLevels[file]
         && row.localScope === scopes[id]
         && row.expectedCountRef === fixture.oracle.digest
         && row.observedFixtureEffectCounts === null && row.executionOutcome === 'not-observed'
@@ -243,6 +254,18 @@ test('complete local catalogs compare without converting required not-run eviden
   const comparison = compareCatalogs(left, right);
   // Metadata only: no child stdout/stderr, source bodies or expected oracle bodies.
   t.diagnostic(JSON.stringify({ schemaVersion: 'uc05-local-acceptance/1', runs: [left, right], comparison }));
+  for (const [caseId, expectedLevel] of [['C02', 'unit'], ['C21', 'mock'], ['C23', 'cli']] as const) {
+    assert.equal(left.cases.find(row => row.caseId === caseId)?.localLevel, expectedLevel, `${caseId} must report the mapped observation rather than its planned fixture tier`);
+  }
+  for (const [caseId, planned, observed] of [['C02', 'cli', 'unit'], ['C21', 'cli', 'mock'], ['C23', 'mock', 'cli'], ['C24', 'mock', 'unit']] as const) {
+    assert.equal(left.cases.find(row => row.caseId === caseId)?.plannedPreparationLevel, planned);
+    assert.equal(left.cases.find(row => row.caseId === caseId)?.localLevel, observed);
+    const altered = { ...right, cases: right.cases.map(row => row.caseId === caseId ? { ...row, localLevel: planned } : row) };
+    assert.equal(compareCatalogs(left, altered).comparable, false, 'observed tier cannot be replaced by planned preparation');
+    assert.equal(compareCatalogs(altered, altered).comparable, false, 'matching fabricated observed tiers cannot promote evidence');
+  }
+  const alteredPlan = { ...right, cases: right.cases.map(row => row.caseId === 'C02' ? { ...row, plannedPreparationLevel: 'unit' as const } : row) };
+  assert.equal(compareCatalogs(alteredPlan, alteredPlan).comparable, false, 'planned tier remains independently bound to its fixture');
   assert.deepEqual(comparison, { comparable: true, fullAcceptance: false, requiredNotRun: 24 });
   assert.equal(left.checks.length, 192, 'inherited check inventory changed; review the case mappings');
   assert.equal(left.cases.reduce((sum, row) => sum + row.requiredVectors.length, 0), 104);
