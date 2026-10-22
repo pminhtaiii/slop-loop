@@ -112,8 +112,8 @@ interface CaseResult {
   readonly localStatus: 'partial' | 'error' | 'approval-only';
   readonly checks: readonly Check[];
   readonly expectedCountRef: string;
-  readonly observedFixtureEffectCounts: null;
-  readonly executionOutcome: 'not-observed';
+  readonly observedFixtureEffectCounts: Readonly<Record<string, number>> | null;
+  readonly executionOutcome: 'not-observed' | 'claimed-success';
 }
 interface LocalRun {
   readonly runId: string;
@@ -215,8 +215,13 @@ function compareCatalogs(left: LocalRun, right: LocalRun): { readonly comparable
         && row.identity.profile === run.identity.profile && row.identity.source === run.identity.source
         && row.requiredLevel === fixture.evidence.requiredLevel && row.localLevel === fixture.evidence.localPreparationLevel
         && row.localScope === scopes[id]
+        && row.expectedCountRef === fixture.oracle.digest
+        && row.observedFixtureEffectCounts === null && row.executionOutcome === 'not-observed'
+        && JSON.stringify(row.externalGates) === JSON.stringify(fixture.evidence.externalGates)
         && JSON.stringify(row.requiredVectors) === JSON.stringify(fixture.oracle.vectors.map(vector => ({ id: vector.id, status: 'not-run' })))
-        && row.checks.length === expectedNames.length && expectedNames.every(name => row.checks.some(check => check.file === file && check.name === name && check.status === 'pass'));
+        && row.checks.length === expectedNames.length && expectedNames.every(name =>
+          row.checks.some(check => check.file === file && check.name === name && check.status === 'pass')
+          && run.checks.some(check => check.file === file && check.name === name && check.status === 'pass'));
     })
     && run.checks.length === 192 && new Set(run.checks.map(check => `${check.file}:${check.name}`)).size === 192
     && run.checks.every(check => check.status === 'pass');
@@ -266,4 +271,17 @@ test('complete local catalogs compare without converting required not-run eviden
   assert.equal(compareCatalogs(missingWitness, missingWitness).comparable, false);
   const removedVector = { ...right, cases: right.cases.map(row => row.caseId === 'C17' ? { ...row, requiredVectors: [] } : row) };
   assert.equal(compareCatalogs(removedVector, removedVector).comparable, false);
+  const mappedWitness = right.cases.find(row => row.caseId === 'C13')?.checks[0];
+  assert.ok(mappedWitness);
+  const missingGlobalWitness = { ...right, checks: right.checks.map(check => check.name === mappedWitness.name ? { ...check, name: 'removed-mapped-witness' } : check) };
+  assert.equal(compareCatalogs(missingGlobalWitness, missingGlobalWitness).comparable, false);
+  for (const fabricated of [
+    { expectedCountRef: 'altered-oracle-ref' },
+    { externalGates: [] },
+    { observedFixtureEffectCounts: { unauthorizedEffects: 0 } },
+    { executionOutcome: 'claimed-success' as const },
+  ]) {
+    const altered = { ...right, cases: right.cases.map(row => row.caseId === 'C18' ? { ...row, ...fabricated } : row) };
+    assert.equal(compareCatalogs(altered, altered).comparable, false);
+  }
 });
