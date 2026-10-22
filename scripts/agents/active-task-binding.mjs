@@ -244,6 +244,17 @@ export async function verifyAssignmentBinding(entry, repo, currentCheckout) {
   return binding;
 }
 
+export async function verifyHandoffAssignment(entry, repo, currentCheckout) {
+  if (entry.binding || entry.reservation) return verifyAssignmentBinding(entry, repo, currentCheckout);
+  if (entry.role !== 'worker' || entry.reassignedFrom && entry.status !== 'handed-off') {
+    throw new Error('Unbound reassigned workers cannot hand off; continue them with a fresh binding in the source checkout.');
+  }
+  if (!entry.checkout || !(await samePath(entry.checkout, currentCheckout ?? repo.root))) {
+    throw new Error('Legacy worker handoff must run in its recorded checkout.');
+  }
+  return null;
+}
+
 export async function registeredAssignmentBase(entry, current) {
   validateBindingMetadata(entry);
   const provenance = entry.binding ?? entry.reservation;

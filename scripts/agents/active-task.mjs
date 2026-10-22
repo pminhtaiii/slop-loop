@@ -5,7 +5,7 @@ import { runWorkflow } from './pr-workflow.mjs';
 import { isDeepStrictEqual } from 'node:util';
 import { atomicWrite, dataDirectory, readJson, repository, samePath, withLock } from './agent-store.mjs';
 import { captureOwnedHandoff, validateOwnedPaths, validateSessionRef, verifyOwnedHandoff } from './owned-handoff.mjs';
-import { bindAssignment, recordEditReadiness, reserveBinding, startBinding, validateBindingMetadata, verifyAssignmentBinding, verifyReadinessReceipt } from './active-task-binding.mjs';
+import { bindAssignment, recordEditReadiness, reserveBinding, startBinding, validateBindingMetadata, verifyAssignmentBinding, verifyHandoffAssignment, verifyReadinessReceipt } from './active-task-binding.mjs';
 import { importLegacyViews, migrateLegacyViews, parseLegacyView, readLegacyViews, writeSessionProgress } from './active-task-legacy.mjs';
 import { reassign, retireReassigned } from './active-task-reassignment.mjs';
 
@@ -163,7 +163,7 @@ async function run(args) {
     if (command === 'verify-handoff') {
       if (index === -1) throw new Error('No entry matches that owner and task.');
       const entry = entries[index];
-      await verifyAssignmentBinding(entry, repo);
+      await verifyHandoffAssignment(entry, repo);
       const verification = await verifyOwnedHandoff(entry);
       console.log(JSON.stringify({ owner: entry.owner, task: entry.task, checkout: entry.checkout ?? null, ...verification }, null, 2));
       if (!verification.verified) process.exitCode = 1;
@@ -224,8 +224,7 @@ async function run(args) {
       if (role === 'worker') entry.binding = await startBinding(repo, entry);
       entries.push(entry);
     } else if (command === 'reassign') {
-      if (entries[index]?.reservation && !entries[index]?.binding) throw new Error('An unbound reservation cannot be reassigned; bind its actual worktree first.');
-      reassign(entries, index, values, repo.root);
+      await reassign(entries, index, values, repo);
     } else if (command === 'retire-reassigned') {
       retireReassigned(entries, index, values);
     } else {
@@ -245,12 +244,11 @@ async function run(args) {
         }
         if (command === 'handoff' && entry.role !== 'worker') throw new Error('Only registered workers may hand off; coordinators must publish and finish.');
         if (command === 'handoff') {
-          await verifyAssignmentBinding(entry, repo, repo.root);
+          const binding = await verifyHandoffAssignment(entry, repo, repo.root);
           verifyReadinessReceipt(entry);
-          if (!entry.checkout || !(await samePath(entry.checkout, repo.root))) throw new Error('Worker handoff must run in the assignment checkout.');
-          const handoffEvidence = entry.ownedPaths?.length
+          const handoffEvidence = binding && entry.ownedPaths?.length
             ? await captureOwnedHandoff(entry)
-            : { schemaVersion: 1, status: 'unverified', reason: 'Legacy assignment has no declared owned paths; hashes were not inferred.' };
+            : { schemaVersion: 1, status: 'unverified', reason: 'Legacy handoff has no registered worker identity; hashes were not inferred.' };
           Object.assign(entry, { status: 'handed-off', result: values.result, handoffEvidence, next: 'Coordinator must verify owned paths before integration and publication' });
         }
         entry.updatedAt = new Date().toISOString();

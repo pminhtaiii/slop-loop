@@ -238,6 +238,19 @@ test('reserved binding protects a distinct coordinator and primary when called f
   assert.equal(entry.binding.base.sha, baseSha);
 });
 
+test('reserved assignments cannot be reassigned into an existing-checkout successor', async (t) => {
+  const { repo, worker, baseSha } = await fixture(t);
+  assert.equal(reserve(repo, baseSha).status, 0);
+  await addWorker(repo, worker, baseSha);
+  assert.equal(invoke(repo, 'bind', '--owner', 'worker', '--task', 'binding', '--worktree', worker).status, 0);
+  const before = await readFile(stateFile(repo), 'utf8');
+  const result = invoke(repo, 'reassign', '--owner', 'worker', '--task', 'binding', '--new-owner', 'successor', '--session', '2026-10-22/successor', '--reason', 'Fresh owner required');
+  assert.equal(result.status, 1, 'reserved assignment unexpectedly became an in-place successor');
+  assert.match(result.stderr, /reserved.*cannot be reassigned|fresh reservation/i);
+  assert.equal(await readFile(stateFile(repo), 'utf8'), before, 'rejected reserved reassignment must preserve both registry and history');
+  assert.equal((await state(repo)).length, 1, 'rejected reassignment must not create a ghost successor');
+});
+
 test('active schema-v1 reservations fail closed without changing the registry', async (t) => {
   await t.test('bind cannot claim the old coordinator from a sibling checkout', async (t) => {
     const { repo, caller, coordinator, path } = await schemaV1ReservationFixture(t);
