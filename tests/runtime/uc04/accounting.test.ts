@@ -93,6 +93,34 @@ describe('UC-04: BudgetTracker & Durable Accounting', () => {
     assert.equal(tracker.getAvailable('task', 'cost'), 3.75);
   });
 
+  it('settles specific reservation by reservationId without affecting sibling ledgers', () => {
+    const tracker = new BudgetTracker(initialLedgers);
+    tracker.reserve('req-shared', [
+      { scope: 'task', kind: 'tokens', amount: 1000 },
+      { scope: 'task', kind: 'cost', amount: 0.5 },
+    ]);
+
+    const tokenLedger = tracker.getLedgers().find((l) => l.kind === 'tokens');
+    const costLedger = tracker.getLedgers().find((l) => l.kind === 'cost');
+    assert.ok(tokenLedger && costLedger);
+    const tokenRes = tokenLedger.reservations[0];
+    const costRes = costLedger.reservations[0];
+    assert.ok(tokenRes && costRes);
+
+    // Settle token reservation specifically
+    tracker.settleReservation(tokenRes.reservationId, tokenRes.amount);
+
+    assert.equal(tracker.getConsumed('task', 'tokens'), 1000);
+    assert.equal(tracker.getConsumed('task', 'cost'), 0); // cost not settled yet
+    assert.equal(tracker.getAvailable('task', 'tokens'), 9000);
+    assert.equal(tracker.getAvailable('task', 'cost'), 4.5); // 0.5 still reserved
+
+    // Settle cost reservation specifically
+    tracker.settleReservation(costRes.reservationId, costRes.amount);
+    assert.equal(tracker.getConsumed('task', 'cost'), 0.5);
+    assert.equal(tracker.getAvailable('task', 'cost'), 4.5);
+  });
+
   it('reconciles uncertain interrupted reservation without resetting spent allowance', () => {
     const tracker = new BudgetTracker(initialLedgers);
     tracker.reserve('req-interrupted', [

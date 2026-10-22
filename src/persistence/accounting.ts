@@ -162,6 +162,26 @@ export class BudgetTracker {
     };
   }
 
+  settleReservation(reservationId: string, amount: number): void {
+    if (!Number.isFinite(amount) || amount < 0) {
+      throw new Error(`Invalid settlement amount: ${amount}`);
+    }
+    for (const [key, ledger] of this.ledgers.entries()) {
+      if (!ledger.reservations.some((r) => r.reservationId === reservationId)) continue;
+      const updated: BudgetLedger = {
+        ...ledger,
+        consumed: ledger.consumed + amount,
+        reservations: ledger.reservations.filter((r) => r.reservationId !== reservationId),
+        version: ledger.version + 1,
+      };
+      const val = validateBudgetLedger(updated);
+      if (!val.ok) throw new Error(`Invalid ledger state after settle: ${val.errors.map((e) => e.message).join(', ')}`);
+      this.ledgers.set(key, updated);
+      return;
+    }
+    throw new Error(`No reservation found for reservationId: ${reservationId}`);
+  }
+
   settle(requestId: string, observed: ProviderUsage | { amount: number }): void {
     let matched = 0;
     for (const [key, ledger] of this.ledgers.entries()) {

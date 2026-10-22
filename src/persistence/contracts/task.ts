@@ -153,15 +153,18 @@ export function validateRegisterTaskInput(val: unknown, path = 'input'): Validat
     // Verify predecessor integrity: must be internal and acyclic
     const adj = new Map<string, string[]>();
     for (let i = 0; i < val.plan.length; i++) {
-      const s = val.plan[i] as PlanStep;
-      if (s && s.id) {
-        const preds = s.predecessorIds ?? [];
-        for (const pred of preds) {
-          if (!stepIds.has(pred)) {
+      const s: unknown = val.plan[i];
+      if (isObject(s) && typeof s.id === 'string' && s.id) {
+        const rawPreds = Array.isArray(s.predecessorIds) ? s.predecessorIds : [];
+        const preds: string[] = [];
+        for (const pred of rawPreds) {
+          if (typeof pred !== 'string' || !stepIds.has(pred)) {
             errors.push({ path: `${path}.plan[${i}].predecessorIds`, message: `Unknown predecessor ${pred}`, code: 'FOREIGN_PREDECESSOR' });
+            continue;
           }
+          preds.push(pred);
         }
-        adj.set(s.id, [...preds]);
+        adj.set(s.id, preds);
       }
     }
     // Check cycle using DFS

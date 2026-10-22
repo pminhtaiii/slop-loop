@@ -162,33 +162,35 @@ export async function pauseTask(
     throw new Error(`Invalid PauseTaskInput: ${val.errors.map((e) => e.message).join(', ')}`);
   }
 
-  const existing = await store.loadPauseRecord(input.taskId);
-  if (existing && existing.revision !== input.expectedRevision) {
-    throw new StalePauseRevisionError(
-      `Stale revision in pause request. Expected ${input.expectedRevision}, store has ${existing.revision}`,
-      input.expectedRevision,
-      existing.revision
-    );
-  }
+  return await store.withLock(`pause-${input.taskId}`, async () => {
+    const existing = await store.loadPauseRecord(input.taskId);
+    if (existing && existing.revision !== input.expectedRevision) {
+      throw new StalePauseRevisionError(
+        `Stale revision in pause request. Expected ${input.expectedRevision}, store has ${existing.revision}`,
+        input.expectedRevision,
+        existing.revision
+      );
+    }
 
-  const nextRevision = (existing?.revision ?? 0) + 1;
-  const nextEpoch = (existing?.epoch ?? 0) + 1;
+    const nextRevision = (existing?.revision ?? 0) + 1;
+    const nextEpoch = (existing?.epoch ?? 0) + 1;
 
-  const record: DeliberatePauseRecord = {
-    schemaVersion: UC04_SCHEMA_VERSION,
-    taskId: input.taskId,
-    active: true,
-    pauseKey: input.pauseKey,
-    operatorRef: input.operatorRef,
-    acceptedAt: new Date().toISOString(),
-    revision: nextRevision,
-    epoch: nextEpoch,
-    resumeKey: null,
-    outstandingAttemptRefs: [...currentOutstandingAttempts],
-  };
+    const record: DeliberatePauseRecord = {
+      schemaVersion: UC04_SCHEMA_VERSION,
+      taskId: input.taskId,
+      active: true,
+      pauseKey: input.pauseKey,
+      operatorRef: input.operatorRef,
+      acceptedAt: new Date().toISOString(),
+      revision: nextRevision,
+      epoch: nextEpoch,
+      resumeKey: null,
+      outstandingAttemptRefs: [...currentOutstandingAttempts],
+    };
 
-  await store.savePauseRecord(record);
-  return record;
+    await store.savePauseRecord(record);
+    return record;
+  });
 }
 
 export async function resumeTask(
@@ -200,34 +202,36 @@ export async function resumeTask(
     throw new Error(`Invalid ResumeTaskInput: ${val.errors.map((e) => e.message).join(', ')}`);
   }
 
-  const existing = await store.loadPauseRecord(input.taskId);
-  if (!existing || !existing.active) {
-    throw new Error(`Task ${input.taskId} is not deliberately paused`);
-  }
+  return await store.withLock(`pause-${input.taskId}`, async () => {
+    const existing = await store.loadPauseRecord(input.taskId);
+    if (!existing || !existing.active) {
+      throw new Error(`Task ${input.taskId} is not deliberately paused`);
+    }
 
-  if (existing.revision !== input.expectedRevision) {
-    throw new StalePauseRevisionError(
-      `Stale revision in resume request. Expected ${input.expectedRevision}, store has ${existing.revision}`,
-      input.expectedRevision,
-      existing.revision
-    );
-  }
+    if (existing.revision !== input.expectedRevision) {
+      throw new StalePauseRevisionError(
+        `Stale revision in resume request. Expected ${input.expectedRevision}, store has ${existing.revision}`,
+        input.expectedRevision,
+        existing.revision
+      );
+    }
 
-  // Refuse early resume when outstanding in-flight attempts remain unsettled
-  if (existing.outstandingAttemptRefs.length > 0) {
-    throw new InFlightWorkPendingError(
-      `Cannot resume task ${input.taskId}: in-flight attempts remain unsettled: ${existing.outstandingAttemptRefs.join(', ')}`,
-      existing.outstandingAttemptRefs
-    );
-  }
+    // Refuse early resume when outstanding in-flight attempts remain unsettled
+    if (existing.outstandingAttemptRefs.length > 0) {
+      throw new InFlightWorkPendingError(
+        `Cannot resume task ${input.taskId}: in-flight attempts remain unsettled: ${existing.outstandingAttemptRefs.join(', ')}`,
+        existing.outstandingAttemptRefs
+      );
+    }
 
-  const updated: DeliberatePauseRecord = {
-    ...existing,
-    active: false,
-    resumeKey: input.resumeKey,
-    revision: existing.revision + 1,
-  };
+    const updated: DeliberatePauseRecord = {
+      ...existing,
+      active: false,
+      resumeKey: input.resumeKey,
+      revision: existing.revision + 1,
+    };
 
-  await store.savePauseRecord(updated);
-  return updated;
+    await store.savePauseRecord(updated);
+    return updated;
+  });
 }

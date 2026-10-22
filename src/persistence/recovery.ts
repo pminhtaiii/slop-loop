@@ -266,7 +266,7 @@ export async function reconcileAndResume(
   if (options.unresolvedReservationAction === 'charge_as_consumed') {
     for (const ledger of savedState.budgetLedgers) {
       for (const res of ledger.reservations) {
-        tracker.settle(res.keyedId, { amount: res.amount });
+        tracker.settleReservation(res.reservationId, res.amount);
       }
     }
   }

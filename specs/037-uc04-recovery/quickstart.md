@@ -16,19 +16,19 @@ git diff --check
 
 Assignment can still report `NEEDS_PLANNING` because the delegation map intentionally has no approved UC-04 links. Automated status can say `awaiting-independent-reviews`; it neither certifies reviews nor authorizes implementation. Evaluate each current-artifact independent report with `node scripts/agents/planning-workflow.mjs evaluate-review --review <local-report.md>`. Retain source hashes/report results locally.
 
-## Future foundation validation (unimplemented)
+## Foundation validation (T001–T012)
 
-Prerequisites: explicit task/seam authorization; G-EXTENSION path/schema agreement; G-STORE selected durable adapter with exact adapter paths/host/crash contract added to plan/tasks; G-CONTROL for pause surface; explicit finite safe test profiles. No runtime files or commands below exist as UC-04 evidence today.
-
-After implementing approved tasks, use existing build/test infrastructure:
+Selected persistence adapter: `DurableStore` (`src/persistence/store.ts`) providing atomic file writes, SHA-256 checksum verification, and non-reclaimed file locking per ADR-0007.
+Selected test profile: `test-controlled` operating on isolated directory sandboxes.
+Exact T012 process restart validation command:
 
 ```powershell
 node scripts/ci/check-runtime.mjs
 node --test tests/runtime/uc04/*.test.ts
-node --test dist/tests/runtime/uc04/restart.test.js
+node --test tests/runtime/uc04/restart.test.ts
 ```
 
-The named suites are planned outputs, not commands run in this assignment. T012 must expose its scripted driver through `tests/runtime/support/uc04/restart-child.ts` and document the exact selected store/profile invocation here before claiming runnable durability validation. Do not invent a backend path, environment selector or CLI flag to fill that gap.
+T012 drives multi-process crash and restart cycles through `tests/runtime/support/uc04/restart-child.ts` and `tests/runtime/uc04/restart.test.ts`. Across distinct OS processes, abrupt termination retains checkpoints, preserves conservative token reservations, and resumes safely from the first uncompleted step.
 
 Required scenarios for that driver:
 
