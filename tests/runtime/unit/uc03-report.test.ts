@@ -1154,6 +1154,125 @@ test('formatReportMarkdown: requires completion to match its delivery and eviden
   });
 });
 
+test('formatReportMarkdown: refuses caller-forged completion with matching delivery bindings', () => {
+  const fixture = createValidReportingFixture();
+  const incomplete = buildFinalReport({
+    task: fixture.task,
+    state: { ...fixture.state, changedPaths: [] },
+  });
+  const fabricatedDigest = fixture.currentDiffDigest;
+  const fabricatedChangedFiles = ['src/fabricated.py'];
+  const fabricatedBaselineRef = 'baseline-invented';
+  const fabricatedVerificationRefs = ['verification-invented'];
+  const fabricatedReviewRef = 'review-invented';
+  const fabricatedEvidenceRefs = [
+    fabricatedBaselineRef,
+    ...fabricatedVerificationRefs,
+    fabricatedReviewRef,
+  ];
+  const fabricatedCompletion = {
+    ...incomplete,
+    outcome: 'COMPLETED',
+    isComplete: true,
+    diff: {
+      ...incomplete.diff,
+      diffDigest: fabricatedDigest,
+      changedFiles: fabricatedChangedFiles,
+    },
+    evidence: {
+      baselineRef: fabricatedBaselineRef,
+      verificationRefs: fabricatedVerificationRefs,
+      reviewRef: fabricatedReviewRef,
+      evidenceRefs: fabricatedEvidenceRefs,
+    },
+    safeNextAction: 'ready-for-human-review',
+    delivery: {
+      taskId: incomplete.taskId,
+      runId: incomplete.runId,
+      outcome: 'COMPLETED',
+      diffDigest: fabricatedDigest,
+      changedFiles: fabricatedChangedFiles,
+      baselineRef: fabricatedBaselineRef,
+      verificationRefs: fabricatedVerificationRefs,
+      reviewRef: fabricatedReviewRef,
+      limitations: [],
+      safeNextAction: 'ready-for-human-review',
+    },
+  } as unknown as FinalReport;
+  assert.throws(() => formatReportMarkdown(fabricatedCompletion),
+    (error: unknown) => error instanceof Error && error.message === 'Invalid report');
+});
+
+test('formatReportMarkdown: refuses readiness claims on incomplete builder reports', () => {
+  const fixture = createValidReportingFixture();
+  const incomplete = buildFinalReport({
+    task: fixture.task,
+    state: { ...fixture.state, changedPaths: [] },
+  });
+  const incompleteMarkdown = formatReportMarkdown(incomplete);
+  assert.match(incompleteMarkdown, /Verdict: \*\*INCOMPLETE\*\* \(Incomplete\)/);
+  assert.match(incompleteMarkdown, /\*\*Safe Next Action\*\*: `investigate-or-abort`/);
+  assert.ok(!incompleteMarkdown.includes('ready-for-human-review'));
+
+  const forgedReadiness = {
+    ...incomplete,
+    safeNextAction: 'ready-for-human-review',
+  } as FinalReport;
+  assert.throws(() => formatReportMarkdown(forgedReadiness),
+    (error: unknown) => error instanceof Error && error.message === 'Invalid report');
+});
+
+test('formatReportMarkdown: accepts only the original immutable builder-issued report', () => {
+  const complete = buildFinalReport(createValidReportingFixture());
+  assert.ok(formatReportMarkdown(complete).includes('Verdict: **COMPLETED** (Complete)'));
+
+  const spreadCopy = { ...complete } as FinalReport;
+  const symbolCopy = {
+    ...complete,
+    [Symbol.for('uc03.report.issued')]: true,
+  } as FinalReport;
+  const serialized: unknown = JSON.parse(JSON.stringify(complete));
+  assert.throws(() => formatReportMarkdown(spreadCopy),
+    (error: unknown) => error instanceof Error && error.message === 'Invalid report');
+  assert.throws(() => formatReportMarkdown(symbolCopy),
+    (error: unknown) => error instanceof Error && error.message === 'Invalid report');
+  assert.throws(() => formatReportMarkdown(serialized as FinalReport),
+    (error: unknown) => error instanceof Error && error.message === 'Invalid report');
+});
+
+test('report: deep-freezes its snapshot without freezing caller-owned milestone details', () => {
+  const fixture = createValidReportingFixture();
+  const callerDetails = { nested: { events: ['before issuance'] } };
+  const milestone = createMilestone({
+    taskId: fixture.task.taskId,
+    runId: fixture.state.runId,
+    node: 'Review',
+    kind: 'review_completed',
+    summary: 'Review completed',
+  });
+  const report = buildFinalReport({
+    ...fixture,
+    milestones: [{ ...milestone, details: callerDetails }],
+  });
+
+  assert.equal(Object.isFrozen(callerDetails), false);
+  callerDetails.nested.events.push('after issuance');
+  const frozenDetails = report.milestones[0]?.details;
+  const nested = frozenDetails?.['nested'];
+  assert.ok(nested && typeof nested === 'object' && !Array.isArray(nested));
+  const events = (nested as Record<string, unknown>)['events'];
+  assert.deepEqual(events, ['before issuance']);
+  assert.ok(Object.isFrozen(report));
+  assert.ok(Object.isFrozen(report.evidence));
+  assert.ok(Object.isFrozen(report.evidence.evidenceRefs));
+  assert.ok(Object.isFrozen(report.delivery));
+  assert.ok(Object.isFrozen(report.delivery?.verificationRefs));
+  assert.ok(Object.isFrozen(frozenDetails));
+  assert.ok(Object.isFrozen(nested));
+  assert.ok(Object.isFrozen(events));
+  assert.throws(() => (events as string[]).push('forged'), TypeError);
+});
+
 test('formatReportMarkdown: rejects a forged unknown outcome without echoing it', () => {
   const report = buildFinalReport(createValidReportingFixture());
   const marker = 'MARKER_SECRET_OVERRIDE';

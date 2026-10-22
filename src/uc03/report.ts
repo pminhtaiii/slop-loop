@@ -4,7 +4,6 @@ import {
   validateBugTask,
   validateDelivery,
   validateTaskState,
-  type ActivityEvent,
   type Baseline,
   type BugTask,
   type Delivery,
@@ -45,6 +44,7 @@ import {
 } from './report/sanitize.ts';
 
 export { createMilestone } from './report/sanitize.ts';
+export { formatMilestonesSummary, milestoneToActivityEvent } from './report/milestones.ts';
 
 export type MilestoneKind =
   | 'task_started'
@@ -149,6 +149,16 @@ export interface FinalReport {
   readonly generatedAt: string;
 }
 
+const issuedReports = new WeakSet<FinalReport>();
+
+function freezeReportGraph(value: object): void {
+  // The validated builder snapshot has already passed JSON serialization for the byte bound.
+  for (const child of Object.values(value) as unknown[]) {
+    if (child && typeof child === 'object') freezeReportGraph(child);
+  }
+  Object.freeze(value);
+}
+
 function hasValidCompletionBoundary(input: BuildFinalReportInput): boolean {
   try {
     const review = input.trustedReviewRecord;
@@ -162,25 +172,6 @@ function hasValidCompletionBoundary(input: BuildFinalReportInput): boolean {
   } catch {
     return false;
   }
-}
-
-export function milestoneToActivityEvent(
-  milestone: Milestone,
-  durationMs = 0
-): ActivityEvent {
-  const safeMilestone = reportMilestones([milestone])[0];
-  if (!safeMilestone) throw new Error('Invalid report milestone');
-  return Object.freeze({
-    eventId: safeMilestone.milestoneId,
-    taskId: safeMilestone.taskId,
-    runId: safeMilestone.runId,
-    timestamp: safeMilestone.timestamp,
-    node: safeMilestone.node,
-    actionType: safeMilestone.kind,
-    outcome: safeMilestone.outcome,
-    durationMs: Number.isFinite(durationMs) ? Math.max(0, Math.floor(durationMs)) : 0,
-    evidenceRefs: safeMilestone.evidenceRefs,
-  });
 }
 
 export function buildFinalReport(input: BuildFinalReportInput): FinalReport {
@@ -345,24 +336,24 @@ export function buildFinalReport(input: BuildFinalReportInput): FinalReport {
     ...(review.ref ? [review.ref] : []),
   ];
 
-  const report: FinalReport = Object.freeze({
+  const report: FinalReport = {
     taskId,
     runId,
     repositoryId,
     outcome: finalOutcome,
     isComplete,
-    diff: Object.freeze({
+    diff: {
       diffDigest,
       changedFiles,
       patch,
       truncated: truncated ? true : undefined,
-    }),
-    evidence: Object.freeze({
+    },
+    evidence: {
       baselineRef,
       verificationRefs,
       reviewRef: review.ref,
-      evidenceRefs: Object.freeze(evidenceRefs),
-    }),
+      evidenceRefs,
+    },
     limitations: Object.freeze(sanitizedLimitations),
     failureReasons: Object.freeze(sanitizedReasons),
     safeNextAction,
@@ -370,31 +361,21 @@ export function buildFinalReport(input: BuildFinalReportInput): FinalReport {
     milestones: reportMilestones(input.milestones, customPatterns),
     delivery,
     generatedAt: new Date().toISOString(),
-  });
+  };
   try {
     if (Buffer.byteLength(JSON.stringify(report), 'utf8') > MAX_REPORT_BYTES) throw new Error();
   } catch {
     throw new Error('Final report exceeds safe output bounds');
   }
+  freezeReportGraph(report);
+  issuedReports.add(report);
   return report;
-}
-
-export function formatMilestonesSummary(milestones: readonly Milestone[]): string {
-  const safeMilestones = reportMilestones(milestones);
-  if (safeMilestones.length === 0) {
-    return 'No milestone events recorded.';
-  }
-  return boundedText(safeMilestones
-    .map((m) => {
-      const mark = m.outcome === 'success' ? '✓' : m.outcome === 'failure' ? '✗' : '•';
-      return `[${m.timestamp}] ${mark} [${m.node}] ${m.kind}: ${m.summary}`;
-    })
-    .join('\n'), MAX_REPORT_BYTES);
 }
 
 export function formatReportMarkdown(report: FinalReport): string {
   try {
     if (!report || typeof report !== 'object' || !isTaskOutcome(report.outcome)) throw new Error('Invalid report outcome');
+    if (!issuedReports.has(report) || !Object.isFrozen(report)) throw new Error();
     if (typeof report.isComplete !== 'boolean' || report.isComplete !== (report.outcome === 'COMPLETED') ||
       !report.diff || typeof report.diff !== 'object' || !report.evidence || typeof report.evidence !== 'object') throw new Error();
     const taskId = safeMetadata(report.taskId, 'taskId');
@@ -403,6 +384,7 @@ export function formatReportMarkdown(report: FinalReport): string {
     const generatedAt = safeMetadata(report.generatedAt, 'generatedAt');
     const safeNextAction = safeMetadata(report.safeNextAction, 'safeNextAction');
     if (!['investigate-or-abort', 'ready-for-human-review', 're-verify-or-repair', 'await-feedback'].includes(safeNextAction)) throw new Error();
+    if ((report.outcome === 'COMPLETED') !== (safeNextAction === 'ready-for-human-review')) throw new Error();
     const diffDigest = report.diff.diffDigest === '' ? '' : safeMetadata(report.diff.diffDigest, 'diff.diffDigest');
     const changedFiles = safePaths(report.diff.changedFiles, 'diff.changedFiles');
     const rawPatch = report.diff.patch;
