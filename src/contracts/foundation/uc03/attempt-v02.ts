@@ -5,11 +5,9 @@ import type {
   AttemptReconciliationReceiptV02,
   ClaimClosureReceiptV02,
   ExecutorIdentityV02,
-  ObservedOutcomeReconciliationReceiptV02,
   ProviderRequestOutcomeReceiptV02,
   RepositoryActionOutcomeReceiptV02,
   SubjectKindV02,
-  UncertainAttemptReconciliationReceiptV02,
 } from './ports-v02.ts';
 import type { ValidationError, ValidationResult } from './types.ts';
 import {
@@ -20,16 +18,18 @@ import {
   validatePositiveInteger,
   validateStringArray,
 } from './validation/common.ts';
+import { validateProviderUsage } from './validation/provider/records.ts';
+import { protectValidator } from './admission-v02/snapshot.ts';
 
 export type VersionProgressionKindV02 = 'claim' | 'begin-attempt';
 export interface VersionDomainSnapshotV02 { taskStateVersion: number; controlVersion: number; epoch: number; }
 export interface VersionProgressionV02 { kind: VersionProgressionKindV02; pre: VersionDomainSnapshotV02; post: VersionDomainSnapshotV02; isRepairPatch?: boolean; }
-export interface ClaimClosureValidationContextV02 { expectedTaskId?: string; expectedClaimId?: string; claim?: Record<string, unknown>; hasCommittedAttempt?: boolean; expectedAdapterIdentity?: string; expectedMinFencingGeneration?: number; }
+export interface ClaimClosureValidationContextV02 { expectedTaskId?: string; expectedClaimId?: string; claim?: Record<string, unknown>; hasCommittedAttempt?: boolean; expectedAdapterIdentity?: string; expectedMinFencingGeneration?: number; expectedFencedExecutorIdentity?: ExecutorIdentityV02; }
 export interface AttemptValidationContextV02 { expectedTaskId?: string; expectedClaimId?: string; expectedAttemptId?: string; expectedEpoch?: number; isRepairPatch?: boolean; }
-export interface AttemptOutcomeValidationContextV02 { expectedClaimId?: string; expectedAttemptId?: string; expectedPlanApplicability?: string; expectedActionDigest?: string; expectedRequestContentDigest?: string; expectedProviderRequestId?: string; }
-export interface AttemptReconciliationValidationContextV02 { predecessor: Record<string, unknown>; }
+export interface AttemptOutcomeValidationContextV02 { expectedClaimId?: string; expectedAttemptId?: string; expectedPlanApplicability?: string; expectedActionDigest?: string; expectedRequestContentDigest?: string; expectedProviderRequestId?: string; expectedRole?: 'coder' | 'reviewer'; expectedProviderAdmissionReceiptRef?: string; expectedBudgetRefs?: readonly string[]; }
 export type CanonicalAttemptOutcomeReceiptV02 = AttemptOutcomeReceiptV02;
 export type CanonicalAttemptReconciliationReceiptV02 = AttemptReconciliationReceiptV02;
+export type { AttemptReconciliationValidationContextV02 } from './admission-v02/reconciliation-v02.ts';
 
 const EXEC_KEYS = ['adapterIdentity', 'processIncarnation', 'fencingGeneration', 'payloadDigest'] as const;
 const CLOSURE_KEYS = ['receiptId', 'receiptDigest', 'claimId', 'taskId', 'reason', 'fencedExecutorIdentity', 'unconsumedReservations'] as const;
@@ -37,8 +37,7 @@ const ATT_KEYS = ['attemptId', 'claimId', 'taskId', 'executorIdentity', 'preAtte
 const S_PLAN = ['planBindingDigest', 'planDecisionRef'] as const;
 const BASE_OUT = ['receiptId', 'receiptDigest', 'claimId', 'attemptId', 'subjectKind', 'planApplicability', ...S_PLAN] as const;
 const REPO_OUT_KEYS = [...BASE_OUT, 'actionDigest', 'outcome', 'observedResultRevisionDigest'] as const;
-const PROV_OUT_KEYS = [...BASE_OUT, 'providerRequestId', 'requestContentDigest', 'role', 'outcome', 'observedUsage', 'providerAdmissionReceiptRef', 'admissionRef', 'budgetRefs'] as const;
-const RECON_BASE_KEYS = ['reconciliationId', 'reconciliationDigest', 'reconciliationKind', 'predecessorReceiptId', 'claimId', 'attemptId', 'subjectKind', 'planApplicability'] as const;
+const PROV_OUT_KEYS = [...BASE_OUT, 'providerRequestId', 'requestContentDigest', 'role', 'outcome', 'observedUsage', 'providerAdmissionReceiptRef', 'budgetRefs'] as const;
 const PROV_CROSS = ['providerRequestId', 'requestContentDigest', 'role', 'observedUsage', 'providerAdmissionReceiptRef', 'admissionRef', 'budgetRefs', 'providerIdentity'] as const;
 const REPO_CROSS = ['actionDigest', 'observedResultRevisionDigest', 'commandView', 'action'] as const;
 
@@ -78,9 +77,8 @@ const stripDigest = (obj: unknown, f: string): string => {
 
 export const computeClaimClosureDigest = (r: unknown): string => stripDigest(r, 'receiptDigest');
 export const computeAttemptOutcomeDigest = (r: unknown): string => stripDigest(r, 'receiptDigest');
-export const computeReconciliationDigest = (r: unknown): string => stripDigest(r, 'reconciliationDigest');
 
-export function validateProtocolVersionProgressionV02(input: unknown): ValidationResult<VersionProgressionV02> {
+function validateProtocolVersionProgressionImpl(input: unknown): ValidationResult<VersionProgressionV02> {
   const errs: ValidationError[] = [];
   if (!isPlainObject(input)) return { ok: false, errors: [{ path: 'progression', message: 'Must be object', code: 'INVALID_TYPE' }] };
   const { kind, pre, post, isRepairPatch } = input;
@@ -88,6 +86,7 @@ export function validateProtocolVersionProgressionV02(input: unknown): Validatio
     addErr(errs, 'kind', 'Invalid kind', 'INVALID_PROGRESSION_KIND');
     return { ok: false, errors: errs };
   }
+  if (isRepairPatch !== undefined && typeof isRepairPatch !== 'boolean') addErr(errs, 'isRepairPatch', 'Must be a boolean', 'INVALID_REPAIR_PATCH_FLAG');
   if (!isPlainObject(pre) || !isPlainObject(post)) return { ok: false, errors: [{ path: 'pre/post', message: 'Must be object', code: 'INVALID_TYPE' }] };
   const [pT, pC, pE] = ['taskStateVersion', 'controlVersion', 'epoch'].map((k) => validateNonNegativeInteger(pre[k], `pre.${k}`, errs));
   const [nT, nC, nE] = ['taskStateVersion', 'controlVersion', 'epoch'].map((k) => validateNonNegativeInteger(post[k], `post.${k}`, errs));
@@ -101,13 +100,14 @@ export function validateProtocolVersionProgressionV02(input: unknown): Validatio
   return errs.length > 0 ? { ok: false, errors: errs } : { ok: true, value: input as unknown as VersionProgressionV02 };
 }
 
-export function validateAttemptReceiptV02(input: unknown, ctx?: AttemptValidationContextV02): ValidationResult<AttemptReceiptV02> {
+function validateAttemptReceiptImpl(input: unknown, ctx?: AttemptValidationContextV02): ValidationResult<AttemptReceiptV02> {
   const errs: ValidationError[] = [];
   if (!isPlainObject(input)) return { ok: false, errors: [{ path: 'receipt', message: 'Must be object', code: 'INVALID_TYPE' }] };
   rejectUnknownKeys(input, ATT_KEYS, 'receipt', errs);
   reqStrs(input, ['attemptId', 'claimId', 'taskId'], '', errs);
   if (input['status'] !== 'attempting') addErr(errs, 'status', 'Invalid status', 'INVALID_STATUS');
   const [, pT, nT, pC, nC] = ['epoch', 'preAttemptTaskStateVersion', 'postBeginTaskStateVersion', 'preAttemptControlVersion', 'postBeginControlVersion'].map((k) => validateNonNegativeInteger(input[k], k, errs));
+  if (ctx?.isRepairPatch !== undefined && typeof ctx.isRepairPatch !== 'boolean') addErr(errs, 'trustedContext.isRepairPatch', 'Must be a boolean', 'INVALID_REPAIR_PATCH_FLAG');
   valExecId(input['executorIdentity'], 'executorIdentity', errs);
   if (pC !== undefined && nC !== undefined && nC !== pC + 1) addErr(errs, 'postBeginControlVersion', 'Control mismatch', 'CONTROL_VERSION_MISMATCH');
   if (pT !== undefined && nT !== undefined && nT !== (ctx?.isRepairPatch ? pT + 1 : pT)) {
@@ -117,7 +117,7 @@ export function validateAttemptReceiptV02(input: unknown, ctx?: AttemptValidatio
   return errs.length > 0 ? { ok: false, errors: errs } : { ok: true, value: input as unknown as AttemptReceiptV02 };
 }
 
-export function validateClaimClosureReceiptV02(input: unknown, ctx?: ClaimClosureValidationContextV02): ValidationResult<ClaimClosureReceiptV02> {
+function validateClaimClosureReceiptImpl(input: unknown, ctx?: ClaimClosureValidationContextV02): ValidationResult<ClaimClosureReceiptV02> {
   const errs: ValidationError[] = [];
   if (!isPlainObject(input)) return { ok: false, errors: [{ path: 'receipt', message: 'Must be object', code: 'INVALID_TYPE' }] };
   if (input['attemptId'] !== undefined) return { ok: false, errors: [{ path: 'attemptId', message: 'No attemptId allowed', code: 'CLAIM_CLOSURE_CANNOT_HAVE_ATTEMPT_ID' }] };
@@ -128,20 +128,24 @@ export function validateClaimClosureReceiptV02(input: unknown, ctx?: ClaimClosur
   reqStrs(input, ['receiptId', 'receiptDigest', 'claimId', 'taskId', 'reason'], '', errs);
   const f = valExecId(input['fencedExecutorIdentity'], 'fencedExecutorIdentity', errs);
   validateStringArray(input['unconsumedReservations'], 'unconsumedReservations', errs);
-  if (ctx) {
-    if (ctx.hasCommittedAttempt === true) addErr(errs, 'proofOfNoAttempt', 'Attempt committed', 'PROOF_OF_NO_ATTEMPT_VIOLATION');
-    const c = ctx.claim as Record<string, unknown> | undefined;
-    if (c) {
-      if (c['status'] !== 'claimed') addErr(errs, 'claim.status', `Status is "${c['status']}"`, 'CLAIM_NOT_IN_CLAIMED_STATUS');
-      if (c['hasCommittedAttempt'] === true || c['attemptId'] !== undefined) addErr(errs, 'claim', 'Committed attempt exists', 'CLAIM_ALREADY_COMMITTED_ATTEMPT');
-      matchProps(input, c, { claimId: 'claimId', taskId: 'taskId' }, errs);
-    }
-    if (ctx.expectedAdapterIdentity !== undefined && f && f.adapterIdentity !== ctx.expectedAdapterIdentity) {
-      addErr(errs, 'fencedExecutorIdentity.adapterIdentity', 'Adapter mismatch', 'ADAPTER_IDENTITY_MISMATCH');
-    }
-    if (ctx.expectedMinFencingGeneration !== undefined && f && f.fencingGeneration < ctx.expectedMinFencingGeneration) {
-      addErr(errs, 'fencedExecutorIdentity.fencingGeneration', 'Generation too low', 'FENCING_GENERATION_TOO_LOW');
-    }
+  const c = ctx?.claim;
+  const expectedFence = ctx?.expectedFencedExecutorIdentity;
+  if (!ctx || !ctx.expectedTaskId || !ctx.expectedClaimId || !ctx.claim || ctx.hasCommittedAttempt !== false || !expectedFence) {
+    addErr(errs, 'trustedContext', 'Complete no-attempt and fenced-recipient proof is required', 'TRUSTED_CONTEXT_REQUIRED');
+  }
+  if (ctx?.hasCommittedAttempt !== false) addErr(errs, 'proofOfNoAttempt', 'Trusted proof must establish no committed attempt', 'PROOF_OF_NO_ATTEMPT_VIOLATION');
+  if (!c || typeof c['claimId'] !== 'string' || typeof c['taskId'] !== 'string' || typeof c['claimDigest'] !== 'string' ||
+    c['status'] !== 'claimed' || c['hasCommittedAttempt'] !== false || c['attemptId'] !== undefined) {
+    addErr(errs, 'claim', 'Trusted claim must prove an unattempted claimed state', 'INCOMPLETE_CLAIM_PROOF');
+  } else {
+    matchProps(input, c, { claimId: 'claimId', taskId: 'taskId' }, errs);
+    if (ctx?.expectedClaimId !== c['claimId'] || ctx?.expectedTaskId !== c['taskId']) addErr(errs, 'trustedContext.claim', 'Expected claim identity does not match proof', 'CLAIM_IDENTITY_MISMATCH');
+  }
+  matchProps(input, ctx as Record<string, unknown> | undefined, { claimId: 'expectedClaimId', taskId: 'expectedTaskId' }, errs);
+  if (ctx?.expectedAdapterIdentity !== undefined && f && f.adapterIdentity !== ctx.expectedAdapterIdentity) addErr(errs, 'fencedExecutorIdentity.adapterIdentity', 'Adapter mismatch', 'ADAPTER_IDENTITY_MISMATCH');
+  if (ctx?.expectedMinFencingGeneration !== undefined && f && f.fencingGeneration < ctx.expectedMinFencingGeneration) addErr(errs, 'fencedExecutorIdentity.fencingGeneration', 'Generation too low', 'FENCING_GENERATION_TOO_LOW');
+  if (f && expectedFence && ['adapterIdentity', 'processIncarnation', 'payloadDigest', 'fencingGeneration'].some((key) => f[key as keyof ExecutorIdentityV02] !== expectedFence[key as keyof ExecutorIdentityV02])) {
+    addErr(errs, 'fencedExecutorIdentity', 'Fenced recipient does not match trusted identity and generation', 'FENCED_EXECUTOR_MISMATCH');
   }
   return errs.length > 0 ? { ok: false, errors: errs } : { ok: true, value: input as unknown as ClaimClosureReceiptV02 };
 }
@@ -163,7 +167,7 @@ function checkOutcomeCommon(input: Record<string, unknown>, allowed: readonly st
   return errs.length === 0;
 }
 
-export function validateRepositoryActionOutcomeReceiptV02(input: unknown, ctx?: AttemptOutcomeValidationContextV02): ValidationResult<RepositoryActionOutcomeReceiptV02> {
+function validateRepositoryActionOutcomeReceiptImpl(input: unknown, ctx?: AttemptOutcomeValidationContextV02): ValidationResult<RepositoryActionOutcomeReceiptV02> {
   const errs: ValidationError[] = [];
   if (!isPlainObject(input)) return { ok: false, errors: [{ path: 'receipt', message: 'Must be object', code: 'INVALID_TYPE' }] };
   checkOutcomeCommon(input, REPO_OUT_KEYS, PROV_CROSS, 'repository-action', ctx, errs);
@@ -171,75 +175,53 @@ export function validateRepositoryActionOutcomeReceiptV02(input: unknown, ctx?: 
   if (ctx?.expectedActionDigest !== undefined && input['actionDigest'] !== ctx.expectedActionDigest) {
     addErr(errs, 'actionDigest', 'actionDigest mismatch', 'ACTION_DIGEST_MISMATCH');
   }
+  if (input['observedResultRevisionDigest'] !== undefined) validateNonEmptyString(input['observedResultRevisionDigest'], 'observedResultRevisionDigest', errs);
   return errs.length > 0 ? { ok: false, errors: errs } : { ok: true, value: input as unknown as RepositoryActionOutcomeReceiptV02 };
 }
 
-export function validateProviderRequestOutcomeReceiptV02(input: unknown, ctx?: AttemptOutcomeValidationContextV02): ValidationResult<ProviderRequestOutcomeReceiptV02> {
+function validateProviderRequestOutcomeReceiptImpl(input: unknown, ctx?: AttemptOutcomeValidationContextV02): ValidationResult<ProviderRequestOutcomeReceiptV02> {
   const errs: ValidationError[] = [];
   if (!isPlainObject(input)) return { ok: false, errors: [{ path: 'receipt', message: 'Must be object', code: 'INVALID_TYPE' }] };
   checkOutcomeCommon(input, PROV_OUT_KEYS, REPO_CROSS, 'provider-request', ctx, errs);
   const role = input['role'];
   if (role !== 'coder' && role !== 'reviewer') addErr(errs, 'role', 'role must be coder/reviewer', 'INVALID_ROLE');
+  else if (ctx?.expectedRole !== undefined && role !== ctx.expectedRole) addErr(errs, 'role', 'role mismatch', 'ROLE_MISMATCH');
   reqStrs(input, ['providerRequestId', 'requestContentDigest'], '', errs);
-  const adm = input['providerAdmissionReceiptRef'] ?? input['admissionRef'];
-  if (typeof adm !== 'string' || adm.trim().length === 0) addErr(errs, 'providerAdmissionReceiptRef', 'Missing admission ref', 'REQUIRED_FIELD');
-  if (input['budgetRefs'] !== undefined) validateStringArray(input['budgetRefs'], 'budgetRefs', errs);
+  const adm = validateNonEmptyString(input['providerAdmissionReceiptRef'], 'providerAdmissionReceiptRef', errs);
+  if (input['budgetRefs'] === undefined) addErr(errs, 'budgetRefs', 'Budget references are required', 'MISSING_BUDGET_REFS');
+  else validateStringArray(input['budgetRefs'], 'budgetRefs', errs);
+  if (!ctx?.expectedProviderAdmissionReceiptRef || !ctx.expectedBudgetRefs || ctx.expectedBudgetRefs.length === 0) {
+    addErr(errs, 'trustedContext', 'Trusted provider admission and budget references are required', 'TRUSTED_CONTEXT_REQUIRED');
+  } else {
+    if (new Set(ctx.expectedBudgetRefs).size !== ctx.expectedBudgetRefs.length) addErr(errs, 'trustedContext.expectedBudgetRefs', 'Trusted budget references must be unique', 'INVALID_TRUSTED_CONTEXT');
+    if (adm !== ctx.expectedProviderAdmissionReceiptRef) addErr(errs, 'providerAdmissionReceiptRef', 'Admission receipt reference mismatch', 'PROVIDER_ADMISSION_REF_MISMATCH');
+    if (!Array.isArray(input['budgetRefs']) || input['budgetRefs'].length !== ctx.expectedBudgetRefs.length || !input['budgetRefs'].every((ref, i) => ref === ctx.expectedBudgetRefs?.[i])) {
+      addErr(errs, 'budgetRefs', 'Budget references mismatch', 'BUDGET_REFS_MISMATCH');
+    }
+  }
+  if (input['observedUsage'] !== undefined) {
+    const usage = validateProviderUsage(input['observedUsage']);
+    if (!usage.ok) errs.push(...usage.errors);
+  }
   matchProps(input, ctx as Record<string, unknown> | undefined, { providerRequestId: 'expectedProviderRequestId', requestContentDigest: 'expectedRequestContentDigest' }, errs);
   return errs.length > 0 ? { ok: false, errors: errs } : { ok: true, value: input as unknown as ProviderRequestOutcomeReceiptV02 };
 }
 
-export function validateAttemptOutcomeReceiptV02(input: unknown, ctx?: AttemptOutcomeValidationContextV02): ValidationResult<AttemptOutcomeReceiptV02> {
+function validateAttemptOutcomeReceiptImpl(input: unknown, ctx?: AttemptOutcomeValidationContextV02): ValidationResult<AttemptOutcomeReceiptV02> {
   if (!isPlainObject(input)) return { ok: false, errors: [{ path: 'receipt', message: 'Must be object', code: 'INVALID_TYPE' }] };
   const k = input['subjectKind'];
-  return k === 'repository-action' ? validateRepositoryActionOutcomeReceiptV02(input, ctx) : k === 'provider-request' ? validateProviderRequestOutcomeReceiptV02(input, ctx) : { ok: false, errors: [{ path: 'subjectKind', message: 'Invalid subjectKind', code: 'INVALID_SUBJECT_KIND' }] };
+  return k === 'repository-action' ? validateRepositoryActionOutcomeReceiptImpl(input, ctx) : k === 'provider-request' ? validateProviderRequestOutcomeReceiptImpl(input, ctx) : { ok: false, errors: [{ path: 'subjectKind', message: 'Invalid subjectKind', code: 'INVALID_SUBJECT_KIND' }] };
 }
 
-function checkReconCommon(input: Record<string, unknown>, allowed: readonly string[], expKind: string, ctx: AttemptReconciliationValidationContextV02 | undefined, errs: ValidationError[]): boolean {
-  rejectUnknownKeys(input, allowed, 'receipt', errs);
-  if (input['reconciliationKind'] !== expKind) addErr(errs, 'reconciliationKind', `Must be "${expKind}"`, 'INVALID_RECONCILIATION_KIND');
-  reqStrs(input, ['reconciliationId', 'reconciliationDigest', 'predecessorReceiptId', 'claimId', 'attemptId'], '', errs);
-  const sKind = input['subjectKind'], app = input['planApplicability'];
-  if (sKind !== 'repository-action' && sKind !== 'provider-request') addErr(errs, 'subjectKind', 'Invalid subjectKind', 'INVALID_SUBJECT_KIND');
-  if (app !== 'pre-plan-diagnostic' && app !== 'approved-plan') addErr(errs, 'planApplicability', 'Invalid planApplicability', 'INVALID_PLAN_APPLICABILITY');
-  const p = ctx?.predecessor as Record<string, unknown> | undefined;
-  if (p) {
-    if (input['predecessorReceiptId'] !== p['receiptId']) addErr(errs, 'predecessorReceiptId', 'predecessorReceiptId mismatch', 'PREDECESSORRECEIPTID_MISMATCH');
-    for (const k of ['claimId', 'attemptId', 'subjectKind', 'planApplicability']) {
-      if (p[k] !== undefined && input[k] !== p[k]) addErr(errs, k, `${k} mismatch`, `${k.toUpperCase()}_MISMATCH`);
-    }
-  }
-  return errs.length === 0;
-}
-
-export function validateUncertainAttemptReconciliationReceiptV02(input: unknown, ctx?: AttemptReconciliationValidationContextV02): ValidationResult<UncertainAttemptReconciliationReceiptV02> {
-  const errs: ValidationError[] = [];
-  if (!isPlainObject(input)) return { ok: false, errors: [{ path: 'receipt', message: 'Must be object', code: 'INVALID_TYPE' }] };
-  checkReconCommon(input, [...RECON_BASE_KEYS, 'disposition'], 'uncertain-attempt', ctx, errs);
-  const disp = input['disposition'];
-  if (disp !== 'observed-and-accounted' && disp !== 'proven-not-dispatched') addErr(errs, 'disposition', 'Invalid disposition', 'INVALID_DISPOSITION');
-  const p = ctx?.predecessor as Record<string, unknown> | undefined;
-  if (p && p['outcome'] !== 'uncertain') {
-    addErr(errs, 'predecessor.outcome', `Predecessor is "${p['outcome']}"; accepted only for "uncertain"`, 'PREDECESSOR_NOT_UNCERTAIN');
-  }
-  return errs.length > 0 ? { ok: false, errors: errs } : { ok: true, value: input as unknown as UncertainAttemptReconciliationReceiptV02 };
-}
-
-export function validateObservedOutcomeReconciliationReceiptV02(input: unknown, ctx?: AttemptReconciliationValidationContextV02): ValidationResult<ObservedOutcomeReconciliationReceiptV02> {
-  const errs: ValidationError[] = [];
-  if (!isPlainObject(input)) return { ok: false, errors: [{ path: 'receipt', message: 'Must be object', code: 'INVALID_TYPE' }] };
-  if (input['disposition'] !== undefined || input['outcome'] !== undefined) {
-    return { ok: false, errors: [{ path: 'disposition', message: 'Observed reconciliation cannot rewrite outcome', code: 'OUTCOME_REWRITE_FORBIDDEN' }] };
-  }
-  checkReconCommon(input, RECON_BASE_KEYS, 'observed-unsettled', ctx, errs);
-  const p = ctx?.predecessor as Record<string, unknown> | undefined;
-  if (p && p['outcome'] !== 'observed') {
-    addErr(errs, 'predecessor.outcome', `Predecessor is "${p['outcome']}"; accepted only for "observed"`, 'PREDECESSOR_NOT_OBSERVED');
-  }
-  return errs.length > 0 ? { ok: false, errors: errs } : { ok: true, value: input as unknown as ObservedOutcomeReconciliationReceiptV02 };
-}
-
-export function validateAttemptReconciliationReceiptV02(input: unknown, ctx?: AttemptReconciliationValidationContextV02): ValidationResult<AttemptReconciliationReceiptV02> {
-  if (!isPlainObject(input)) return { ok: false, errors: [{ path: 'receipt', message: 'Must be object', code: 'INVALID_TYPE' }] };
-  const k = input['reconciliationKind'];
-  return k === 'uncertain-attempt' ? validateUncertainAttemptReconciliationReceiptV02(input, ctx) : k === 'observed-unsettled' ? validateObservedOutcomeReconciliationReceiptV02(input, ctx) : { ok: false, errors: [{ path: 'reconciliationKind', message: 'Invalid reconciliationKind', code: 'INVALID_RECONCILIATION_KIND' }] };
-}
+export const validateProtocolVersionProgressionV02 = protectValidator(validateProtocolVersionProgressionImpl);
+export const validateAttemptReceiptV02 = protectValidator(validateAttemptReceiptImpl);
+export const validateClaimClosureReceiptV02 = protectValidator(validateClaimClosureReceiptImpl);
+export const validateRepositoryActionOutcomeReceiptV02 = protectValidator(validateRepositoryActionOutcomeReceiptImpl);
+export const validateProviderRequestOutcomeReceiptV02 = protectValidator(validateProviderRequestOutcomeReceiptImpl);
+export const validateAttemptOutcomeReceiptV02 = protectValidator(validateAttemptOutcomeReceiptImpl);
+export {
+  computeReconciliationDigest,
+  validateUncertainAttemptReconciliationReceiptV02,
+  validateObservedOutcomeReconciliationReceiptV02,
+  validateAttemptReconciliationReceiptV02,
+} from './admission-v02/reconciliation-v02.ts';

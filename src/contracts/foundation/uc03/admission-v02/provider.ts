@@ -14,6 +14,7 @@ import { computeCanonicalSha256 } from '../identity.ts';
 import type {
   ProviderAdmissionContextV02,
   ProviderAdmissionReceiptV02,
+  ProviderAdmissionTrustedContextV02,
   ProviderFiniteBoundsV02,
   ProviderPricingIdentityV02,
 } from '../ports-v02.ts';
@@ -86,7 +87,8 @@ function matchProp(src: Record<string, unknown>, tgt: Record<string, unknown>, f
 }
 
 export function validateProviderAdmissionV02(
-  input: unknown
+  input: unknown,
+  trustedContext: ProviderAdmissionTrustedContextV02,
 ): ValidationResult<ProviderAdmissionContextV02> {
   const errs: ValidationError[] = [];
   if (!isPlainObject(input)) {
@@ -119,7 +121,16 @@ export function validateProviderAdmissionV02(
   validateNonNegativeInteger(input['expectedControlVersion'], 'expectedControlVersion', errs);
   validateNonNegativeInteger(input['expectedEpoch'], 'expectedEpoch', errs);
 
-  const reqRes = validateProviderRequest(input['providerRequest']);
+  const reqRes = validateProviderRequest(input['providerRequest'], {
+    expectedTaskId: trustedContext.taskId,
+    expectedRunId: trustedContext.runId,
+    expectedRole: trustedContext.role,
+    expectedProviderRequestId: trustedContext.providerRequestId,
+    expectedProviderId: trustedContext.providerIdentity.providerId,
+    expectedModelId: trustedContext.providerIdentity.modelId,
+    expectedConfigId: trustedContext.providerIdentity.configId,
+    expectedPricingPolicyId: trustedContext.providerIdentity.pricingPolicyId,
+  });
   let validReq: ProviderRequest | undefined;
   if (!reqRes.ok) errs.push(...reqRes.errors);
   else {

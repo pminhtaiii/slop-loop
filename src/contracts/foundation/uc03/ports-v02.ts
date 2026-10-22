@@ -53,6 +53,56 @@ export interface PolicyEvaluationReceiptV02 {
   readonly result: 'ALLOWED' | 'APPROVAL_REQUIRED' | 'FORBIDDEN';
 }
 
+/** Independent current-state facts supplied by the trusted admission caller. */
+export interface RepositoryAdmissionTrustedContextV02 {
+  readonly subjectKind: 'repository-action';
+  readonly taskStateSchemaVersion: string;
+  readonly expectedTaskStateVersion: number;
+  readonly controlSchemaVersion: string;
+  readonly expectedControlVersion: number;
+  readonly expectedEpoch: number;
+  readonly taskId: string;
+  readonly runId: string;
+  readonly workspaceId: string;
+  readonly repositoryId: string;
+  readonly runnableNode: string;
+  readonly canonicalRevision: string;
+  readonly executionProfileId: string;
+  readonly planApplicability: PlanApplicabilityV02;
+  readonly planBindingDigest?: string | undefined;
+  readonly planDecisionRef?: string | undefined;
+  readonly policyAuthorityRef: PolicyAuthorityRefV02;
+  readonly policyEvaluationReceiptRef: string;
+  readonly policyEvaluationReceiptDigest: string;
+  readonly freshnessContextDigest: string;
+  readonly executionProfile: {
+    readonly isolationProfileRef: string;
+    readonly exclusionsPolicyVersion: string;
+    readonly scratchIdentity: string;
+    readonly commandBounds: {
+      readonly timeoutMs: number;
+      readonly maxOutputBytes: number;
+      readonly maxCpuSeconds: number;
+      readonly maxMemoryBytes: number;
+      readonly maxProcessCount: number;
+    };
+    readonly patchBounds: {
+      readonly maxPatchBytes: number;
+      readonly maxChangedPaths: number;
+    };
+  };
+  readonly commandViewDigest?: string | undefined;
+  readonly allowedDiagnosticChecks: readonly {
+    readonly checkId: string;
+    readonly testPath: string;
+    readonly diagnosticPurpose: string;
+    readonly taskCriteriaDigest: string;
+    readonly checkSetDigest: string;
+    readonly action: RunCommandAction;
+  }[];
+  readonly allowedDiagnosticTestPaths: readonly string[];
+}
+
 export interface ActionDecisionReceiptV02 {
   readonly decisionId: string;
   readonly decisionDigest: string;
@@ -86,6 +136,24 @@ export interface ProviderAdmissionReceiptV02 {
   readonly configVersion: string;
   readonly decisionAuthorityGeneration: number;
 }
+
+/** Independent request, role, receipt, and budget facts from the trusted caller. */
+export interface ProviderAdmissionTrustedContextV02 {
+  readonly subjectKind: 'provider-request';
+  readonly taskId: string;
+  readonly runId: string;
+  readonly role: ProviderRoleV02;
+  readonly providerRequestId: string;
+  readonly requestContentDigest: string;
+  readonly providerAdmissionReceiptRef: string;
+  readonly providerAdmissionReceiptDigest: string;
+  readonly budgetRefs: readonly string[];
+  readonly providerIdentity: ProviderPricingIdentityV02;
+}
+
+export type AdmissionTrustedContextV02 =
+  | RepositoryAdmissionTrustedContextV02
+  | ProviderAdmissionTrustedContextV02;
 
 export interface CommandFiniteBoundsV02 {
   readonly timeoutMs: number;
@@ -316,6 +384,8 @@ export interface ProviderRequestOutcomeReceiptV02 {
   readonly role: ProviderRoleV02;
   readonly outcome: AttemptOutcomeStatusV02;
   readonly observedUsage?: ProviderUsage | undefined;
+  readonly providerAdmissionReceiptRef: string;
+  readonly budgetRefs: readonly string[];
   readonly planBindingDigest?: string | undefined;
   readonly planDecisionRef?: string | undefined;
 }
@@ -329,6 +399,7 @@ export interface UncertainAttemptReconciliationReceiptV02 {
   readonly reconciliationDigest: string;
   readonly reconciliationKind: 'uncertain-attempt';
   readonly predecessorReceiptId: string;
+  readonly predecessorReceiptDigest: string;
   readonly claimId: string;
   readonly attemptId: string;
   readonly subjectKind: SubjectKindV02;
@@ -341,6 +412,7 @@ export interface ObservedOutcomeReconciliationReceiptV02 {
   readonly reconciliationDigest: string;
   readonly reconciliationKind: 'observed-unsettled';
   readonly predecessorReceiptId: string;
+  readonly predecessorReceiptDigest: string;
   readonly claimId: string;
   readonly attemptId: string;
   readonly subjectKind: SubjectKindV02;

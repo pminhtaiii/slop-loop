@@ -43,14 +43,62 @@ import {
 import {
   computeRequestContentDigest,
   computeAdmissionDigest,
-  validateRepositoryAdmissionV02,
-  validateProviderAdmissionV02,
-  validateAdmissionV02,
+  validateRepositoryAdmissionV02 as validateRepositoryAdmissionBoundaryV02,
+  validateProviderAdmissionV02 as validateProviderAdmissionBoundaryV02,
+  validateAdmissionV02 as validateAdmissionBoundaryV02,
 } from '../../../src/contracts/foundation/uc03/admission-v02.ts';
 import type {
   RepositoryAdmissionContextV02,
   ProviderAdmissionContextV02,
 } from '../../../src/contracts/foundation/uc03/ports-v02.ts';
+
+function trustedRepositoryFixture(prePlan = false): Record<string, unknown> {
+  return prePlan ? createTrustedRepositoryFacts({
+    taskStateSchemaVersion: '0.2.0', expectedTaskStateVersion: 0, controlSchemaVersion: '0.2.0',
+    expectedControlVersion: 0, expectedEpoch: 1, runnableNode: 'Investigate',
+    planApplicability: 'pre-plan-diagnostic', planBindingDigest: undefined, planDecisionRef: undefined,
+    policyAuthorityRef: { policyId: 'policy-default', policyVersion: '1.0.0', configId: 'config-default', configVersion: '1.0.0', issuerKeyRef: 'key-authority-001', decisionAuthorityGeneration: 1 },
+    policyEvaluationReceiptRef: 'pe-receipt-diag-001',
+    policyEvaluationReceiptDigest: 'sha256:pediagreceipt0000000000000000000000000000000000000000000000000000',
+    freshnessContextDigest: 'sha256:freshnessdiag0000000000000000000000000000000000000000000000',
+  }) : createTrustedRepositoryFacts();
+}
+
+function validateRepositoryAdmissionV02(input: unknown, trust: unknown = trustedRepositoryFixture()) {
+  return validateRepositoryAdmissionBoundaryV02(input, trust as never);
+}
+
+function trustedProviderFixture(reviewer = false): Record<string, unknown> {
+  const request = reviewer
+    ? createValidProviderRequest({ providerRequestId: 'req-prov-rev-001', role: 'reviewer', purpose: 'investigate_diagnostic' })
+    : createValidProviderRequest();
+  const role = reviewer ? 'reviewer' : 'coder';
+  return {
+    subjectKind: 'provider-request', taskId: 'task-calc-001', runId: 'run-001', role,
+    providerRequestId: request.providerRequestId, requestContentDigest: computeRequestContentDigest(request),
+    providerAdmissionReceiptRef: reviewer ? 'prov-rec-diag-001' : 'prov-rec-001',
+    providerAdmissionReceiptDigest: reviewer
+      ? 'sha256:provrecdiagdigest00000000000000000000000000000000000000000000000'
+      : 'sha256:provrecdigest000000000000000000000000000000000000000000000000000',
+    budgetRefs: reviewer ? ['budget-token-001', 'budget-cost-001', 'budget-reviewer-iter-001'] : ['budget-token-001', 'budget-cost-001'],
+    providerIdentity: {
+      providerId: 'provider-test', modelId: 'model-test-01', configId: 'config-coder-v1', configVersion: '1.0.0',
+      pricingPolicyId: 'pricing-standard-v1', pricingPolicyVersion: '1.0.0', issuerKeyRef: 'key-prov-001', decisionAuthorityGeneration: reviewer ? 1 : 2,
+    },
+  };
+}
+
+function validateProviderAdmissionV02(input: unknown, trust: unknown = trustedProviderFixture()) {
+  return validateProviderAdmissionBoundaryV02(input, trust as never);
+}
+
+function validateAdmissionV02(input: unknown, trust?: unknown) {
+  const subject = typeof input === 'object' && input !== null ? (input as Record<string, unknown>)['subjectKind'] : undefined;
+  const trusted = trust ?? (subject === 'provider-request'
+    ? trustedProviderFixture()
+    : trustedRepositoryFixture());
+  return validateAdmissionBoundaryV02(input, trusted as never);
+}
 
 function createValidPatchAction(): ApplyPatchAction {
   const patchContent = [
@@ -172,6 +220,7 @@ function createValidRepositoryPrePlanDiagnosticContext(
     schemaVersion: '0.2.0',
     subjectKind: 'repository-action',
     planApplicability: 'pre-plan-diagnostic',
+    ...(action.kind === 'run_command' ? { checkId: 'check-pytest-repro', testPath: 'tests/test_calculator.py' } : {}),
     diagnosticPurpose: 'reproduction',
     taskCriteriaDigest: 'sha256:criteria00000000000000000000000000000000000000000000000000000000',
     checkSetDigest: 'sha256:checkset00000000000000000000000000000000000000000000000000000000',
@@ -241,6 +290,12 @@ function createValidRepositoryPrePlanDiagnosticContext(
     reservationRefs: ['res-command-001'],
     ...overrides,
   };
+
+  if (action.kind === 'run_command' && overrides?.commandView === undefined) {
+    const commandView = { ...(context['commandView'] as Record<string, unknown>) };
+    delete commandView['viewDigest'];
+    context['commandView'] = { ...commandView, viewDigest: computeCanonicalSha256(commandView) };
+  }
 
   return context as unknown as RepositoryAdmissionContextV02;
 }
@@ -407,7 +462,7 @@ test('Positive vector: valid repository admission in approved-plan mode (RED in 
 
 test('Positive vector: valid repository admission in pre-plan-diagnostic mode (RED in T037, GREEN in T038)', () => {
   const context = createValidRepositoryPrePlanDiagnosticContext();
-  const res = validateRepositoryAdmissionV02(context);
+  const res = validateRepositoryAdmissionV02(context, trustedRepositoryFixture(true));
   assert.equal(
     res.ok,
     true,
@@ -428,6 +483,7 @@ test('Positive vector: valid repository pre-plan-diagnostic test-only patch (RED
     baseRevision: patchAction.baseRevisionDigest,
     targetPaths: patchAction.targetPaths,
     patchDigest: computeCanonicalSha256(patchAction.patchContent),
+    testPath: 'tests/test_calculator.py',
     commandView: undefined,
     finiteBounds: {
       maxPatchBytes: 4096,
@@ -435,7 +491,7 @@ test('Positive vector: valid repository pre-plan-diagnostic test-only patch (RED
     },
     reservationRefs: ['res-test-patch-001'],
   });
-  const res = validateRepositoryAdmissionV02(context);
+  const res = validateRepositoryAdmissionV02(context, trustedRepositoryFixture(true));
   assert.equal(
     res.ok,
     true,
@@ -463,7 +519,7 @@ test('Positive vector: valid provider admission for coder in approved-plan mode 
 
 test('Positive vector: valid provider admission for reviewer in pre-plan-diagnostic mode (RED in T037, GREEN in T038)', () => {
   const context = createValidProviderPrePlanDiagnosticContext();
-  const res = validateProviderAdmissionV02(context);
+  const res = validateProviderAdmissionV02(context, trustedProviderFixture(true));
   assert.equal(
     res.ok,
     true,
@@ -540,7 +596,7 @@ test('Plan applicability rejection: pre-plan-diagnostic with planBindingDigest d
   const repoContext = createValidRepositoryPrePlanDiagnosticContext({
     planBindingDigest: 'sha256:unexpectedplanbinding000000000000000000000000000000000000',
   });
-  const res = validateRepositoryAdmissionV02(repoContext);
+  const res = validateRepositoryAdmissionV02(repoContext, trustedRepositoryFixture(true));
   assert.equal(res.ok, false, 'pre-plan-diagnostic with planBindingDigest must deny');
 });
 
@@ -565,7 +621,7 @@ test('Pre-plan diagnostic test-only patch: cannot edit production paths', () => 
       maxChangedPaths: 1,
     },
   });
-  const res = validateRepositoryAdmissionV02(repoContext);
+  const res = validateRepositoryAdmissionV02(repoContext, trustedRepositoryFixture(true));
   assert.equal(
     res.ok,
     false,
@@ -609,7 +665,7 @@ test('Finite bounds: unbounded, NaN, negative, or missing limits deny', () => {
       isolationProfileRef: 'profile-01',
     },
   });
-  const res = validateRepositoryAdmissionV02(context);
+  const res = validateRepositoryAdmissionV02(context, trustedRepositoryFixture(true));
   assert.equal(res.ok, false, 'Invalid negative timeout must deny');
 });
 
@@ -628,7 +684,7 @@ test('Command view: read-only fact mountedReadOnly !== true denies', () => {
       isolationProfileRef: 'profile-01',
     },
   });
-  const res = validateRepositoryAdmissionV02(context);
+  const res = validateRepositoryAdmissionV02(context, trustedRepositoryFixture(true));
   assert.equal(res.ok, false, 'mountedReadOnly: false must deny');
 });
 
@@ -647,7 +703,7 @@ test('Command view: protected paths in admittedFiles deny', () => {
       isolationProfileRef: 'profile-01',
     },
   });
-  const res = validateRepositoryAdmissionV02(context);
+  const res = validateRepositoryAdmissionV02(context, trustedRepositoryFixture(true));
   assert.equal(res.ok, false, 'Admitted .env file must deny');
 });
 
@@ -774,6 +830,7 @@ function createValidProviderOutcomeReceipt(planApplicability: 'approved-plan' | 
     role,
     outcome: 'observed',
     providerAdmissionReceiptRef: 'adm-ref-001',
+    budgetRefs: ['budget-token-001', 'budget-cost-001'],
   };
   if (planApplicability === 'approved-plan') {
     raw.planBindingDigest = 'sha256:binding000000000000000000000000000000000000000000000000000000';
@@ -785,13 +842,19 @@ function createValidProviderOutcomeReceipt(planApplicability: 'approved-plan' | 
   } as unknown as ProviderRequestOutcomeReceiptV02;
 }
 
+function createValidPredecessorOutcome(outcome: 'observed' | 'uncertain'): RepositoryActionOutcomeReceiptV02 {
+  const raw = { ...createValidRepoOutcomeReceipt('approved-plan'), outcome, receiptDigest: 'sha256:placeholder' };
+  return { ...raw, receiptDigest: computeAttemptOutcomeDigest(raw) } as RepositoryActionOutcomeReceiptV02;
+}
+
 function createValidUncertainReconciliationReceipt(): UncertainAttemptReconciliationReceiptV02 {
-  const predecessor = { ...createValidRepoOutcomeReceipt(), outcome: 'uncertain' as const };
+  const predecessor = createValidPredecessorOutcome('uncertain');
   const raw = {
     reconciliationId: 'recon-001',
     reconciliationDigest: 'sha256:placeholder',
     reconciliationKind: 'uncertain-attempt' as const,
     predecessorReceiptId: predecessor.receiptId,
+    predecessorReceiptDigest: predecessor.receiptDigest,
     claimId: predecessor.claimId,
     attemptId: predecessor.attemptId,
     subjectKind: predecessor.subjectKind,
@@ -811,6 +874,7 @@ function createValidObservedReconciliationReceipt(): ObservedOutcomeReconciliati
     reconciliationDigest: 'sha256:placeholder',
     reconciliationKind: 'observed-unsettled' as const,
     predecessorReceiptId: predecessor.receiptId,
+    predecessorReceiptDigest: predecessor.receiptDigest,
     claimId: predecessor.claimId,
     attemptId: predecessor.attemptId,
     subjectKind: predecessor.subjectKind,
@@ -819,6 +883,19 @@ function createValidObservedReconciliationReceipt(): ObservedOutcomeReconciliati
   return {
     ...raw,
     reconciliationDigest: computeReconciliationDigest(raw),
+  };
+}
+
+function createTrustedReconciliationContext(
+  receipt: UncertainAttemptReconciliationReceiptV02 | ObservedOutcomeReconciliationReceiptV02,
+  outcome: 'uncertain' | 'observed'
+): { predecessor: Record<string, unknown>; predecessorReceiptDigest: string } {
+  const predecessor = createValidPredecessorOutcome(outcome);
+  assert.equal(receipt.predecessorReceiptId, predecessor.receiptId);
+  assert.equal(receipt.predecessorReceiptDigest, predecessor.receiptDigest);
+  return {
+    predecessor: predecessor as unknown as Record<string, unknown>,
+    predecessorReceiptDigest: predecessor.receiptDigest,
   };
 }
 
@@ -945,10 +1022,11 @@ test('Positive: valid ClaimClosureReceiptV02 passes with proof of no attempt', (
   const res = validateClaimClosureReceiptV02(closure, {
     expectedTaskId: 'task-001',
     expectedClaimId: 'claim-001',
-    claim: { claimId: 'claim-001', taskId: 'task-001', status: 'claimed' },
+    claim: { claimId: 'claim-001', claimDigest: 'sha256:claim-001', taskId: 'task-001', status: 'claimed', hasCommittedAttempt: false },
     hasCommittedAttempt: false,
     expectedAdapterIdentity: 'adapter-worker-01',
     expectedMinFencingGeneration: 1,
+    expectedFencedExecutorIdentity: createValidExecutor(),
   });
   assert.equal(res.ok, true, 'Valid claim closure receipt must pass');
 });
@@ -1011,19 +1089,29 @@ test('Positive: valid ProviderRequestOutcomeReceiptV02 (approved-plan coder) pas
     expectedClaimId: 'claim-001',
     expectedAttemptId: 'att-001',
     expectedProviderRequestId: 'req-001',
+    expectedRole: 'coder',
+    expectedProviderAdmissionReceiptRef: 'adm-ref-001',
+    expectedBudgetRefs: ['budget-token-001', 'budget-cost-001'],
   });
   assert.equal(res.ok, true, 'Valid provider outcome must pass');
 });
 
 test('Positive: valid ProviderRequestOutcomeReceiptV02 (pre-plan reviewer) passes', () => {
   const receipt = createValidProviderOutcomeReceipt('pre-plan-diagnostic', 'reviewer');
-  const res = validateProviderRequestOutcomeReceiptV02(receipt);
+  const res = validateProviderRequestOutcomeReceiptV02(receipt, {
+    expectedClaimId: 'claim-001', expectedAttemptId: 'att-001', expectedProviderRequestId: 'req-001',
+    expectedRole: 'reviewer', expectedProviderAdmissionReceiptRef: 'adm-ref-001',
+    expectedBudgetRefs: ['budget-token-001', 'budget-cost-001'],
+  });
   assert.equal(res.ok, true, 'Valid provider pre-plan reviewer outcome must pass');
 });
 
 test('Positive: validateAttemptOutcomeReceiptV02 tagged union dispatch', () => {
   const repoRes = validateAttemptOutcomeReceiptV02(createValidRepoOutcomeReceipt());
-  const provRes = validateAttemptOutcomeReceiptV02(createValidProviderOutcomeReceipt());
+  const provRes = validateAttemptOutcomeReceiptV02(createValidProviderOutcomeReceipt(), {
+    expectedRole: 'coder', expectedProviderAdmissionReceiptRef: 'adm-ref-001',
+    expectedBudgetRefs: ['budget-token-001', 'budget-cost-001'],
+  });
   assert.equal(repoRes.ok, true);
   assert.equal(provRes.ok, true);
 });
@@ -1070,14 +1158,7 @@ test('Negative: provider outcome rejects missing admission ref', () => {
 test('Positive: valid UncertainAttemptReconciliationReceiptV02 passes', () => {
   const receipt = createValidUncertainReconciliationReceipt();
   const res = validateUncertainAttemptReconciliationReceiptV02(receipt, {
-    predecessor: {
-      receiptId: receipt.predecessorReceiptId,
-      claimId: receipt.claimId,
-      attemptId: receipt.attemptId,
-      subjectKind: receipt.subjectKind,
-      planApplicability: receipt.planApplicability,
-      outcome: 'uncertain',
-    },
+    ...createTrustedReconciliationContext(receipt, 'uncertain'),
   });
   assert.equal(res.ok, true, 'Valid uncertain reconciliation must pass');
 });
@@ -1085,24 +1166,17 @@ test('Positive: valid UncertainAttemptReconciliationReceiptV02 passes', () => {
 test('Positive: valid ObservedOutcomeReconciliationReceiptV02 passes', () => {
   const receipt = createValidObservedReconciliationReceipt();
   const res = validateObservedOutcomeReconciliationReceiptV02(receipt, {
-    predecessor: {
-      receiptId: receipt.predecessorReceiptId,
-      claimId: receipt.claimId,
-      attemptId: receipt.attemptId,
-      subjectKind: receipt.subjectKind,
-      planApplicability: receipt.planApplicability,
-      outcome: 'observed',
-    },
+    ...createTrustedReconciliationContext(receipt, 'observed'),
   });
   assert.equal(res.ok, true, 'Valid observed reconciliation must pass');
 });
 
 test('Positive: validateAttemptReconciliationReceiptV02 union dispatch', () => {
   const uncRes = validateAttemptReconciliationReceiptV02(createValidUncertainReconciliationReceipt(), {
-    predecessor: { outcome: 'uncertain', receiptId: 'repo-out-001', claimId: 'claim-001', attemptId: 'att-001', subjectKind: 'repository-action', planApplicability: 'approved-plan' },
+    ...createTrustedReconciliationContext(createValidUncertainReconciliationReceipt(), 'uncertain'),
   });
   const obsRes = validateAttemptReconciliationReceiptV02(createValidObservedReconciliationReceipt(), {
-    predecessor: { outcome: 'observed', receiptId: 'repo-out-001', claimId: 'claim-001', attemptId: 'att-001', subjectKind: 'repository-action', planApplicability: 'approved-plan' },
+    ...createTrustedReconciliationContext(createValidObservedReconciliationReceipt(), 'observed'),
   });
   assert.equal(uncRes.ok, true);
   assert.equal(obsRes.ok, true);
@@ -1169,4 +1243,399 @@ test('Canonical digest helpers strip their digest field and produce deterministi
   const rd2 = computeReconciliationDigest({ ...recon, reconciliationDigest: 'sha256:different' });
   assert.equal(rd1, rd2, 'computeReconciliationDigest strips reconciliationDigest');
   assert.match(rd1, /^sha256:[0-9a-f]{64}$/);
+});
+
+interface TrustedBoundaryValidationResult {
+  readonly ok: boolean;
+  readonly errors?: readonly { readonly code: string }[];
+}
+
+function callWithTrustedContext(
+  validator: unknown,
+  input: unknown,
+  trustedContext: unknown
+): TrustedBoundaryValidationResult {
+  return (validator as (input: unknown, trustedContext: unknown) => TrustedBoundaryValidationResult)(
+    input,
+    trustedContext
+  );
+}
+
+function createTrustedRepositoryFacts(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    subjectKind: 'repository-action',
+    taskStateSchemaVersion: '0.2.0',
+    expectedTaskStateVersion: 1,
+    controlSchemaVersion: '0.2.0',
+    expectedControlVersion: 2,
+    expectedEpoch: 1,
+    taskId: 'task-calc-001',
+    runId: 'run-001',
+    workspaceId: 'workspace-001',
+    repositoryId: 'repo-001',
+    runnableNode: 'Repair',
+    canonicalRevision: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+    executionProfileId: 'profile-docker-isolated',
+    policyAuthorityRef: {
+      policyId: 'policy-default',
+      policyVersion: '1.0.0',
+      configId: 'config-default',
+      configVersion: '1.0.0',
+      issuerKeyRef: 'key-authority-001',
+      decisionAuthorityGeneration: 3,
+    },
+    policyEvaluationReceiptRef: 'pe-receipt-001',
+    policyEvaluationReceiptDigest: 'sha256:pereceiptdigest00000000000000000000000000000000000000000000000000',
+    freshnessContextDigest: 'sha256:freshness00000000000000000000000000000000000000000000000000',
+    planApplicability: 'approved-plan',
+    planBindingDigest: 'sha256:planbindingdigest00000000000000000000000000000000000000000000000',
+    planDecisionRef: 'dec-plan-001',
+    executionProfile: {
+      isolationProfileRef: 'profile-read-only-mount',
+      exclusionsPolicyVersion: '1.0.0',
+      scratchIdentity: 'scratch-vol-001',
+      commandBounds: {
+        timeoutMs: 30000,
+        maxOutputBytes: 65536,
+        maxCpuSeconds: 10,
+        maxMemoryBytes: 536870912,
+        maxProcessCount: 5,
+      },
+      patchBounds: { maxPatchBytes: 4096, maxChangedPaths: 5 },
+    },
+    commandViewDigest: computeCanonicalSha256({
+      viewId: 'view-cmd-001',
+      taskId: 'task-calc-001',
+      workspaceId: 'workspace-001',
+      canonicalRevision: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+      admittedFiles: [{ path: 'tests/test_calculator.py', digest: 'sha256:filetest0000000000000000000000000000000000000000000000000000000' }],
+      exclusionsPolicyVersion: '1.0.0',
+      scratchIdentity: 'scratch-vol-001',
+      mountedReadOnly: true,
+      isolationProfileRef: 'profile-read-only-mount',
+    }),
+    allowedDiagnosticChecks: [
+      {
+        checkId: 'check-pytest-repro',
+        testPath: 'tests/test_calculator.py',
+        diagnosticPurpose: 'reproduction',
+        taskCriteriaDigest: 'sha256:criteria00000000000000000000000000000000000000000000000000000000',
+        checkSetDigest: 'sha256:checkset00000000000000000000000000000000000000000000000000000000',
+        action: createValidCommandAction(),
+      },
+    ],
+    allowedDiagnosticTestPaths: ['tests/test_calculator.py'],
+    ...overrides,
+  };
+}
+
+function withCanonicalCommandViewDigest(
+  context: RepositoryAdmissionContextV02
+): RepositoryAdmissionContextV02 {
+  const raw = context as unknown as Record<string, unknown>;
+  const view = { ...(raw['commandView'] as Record<string, unknown>) };
+  delete view['viewDigest'];
+  return {
+    ...raw,
+    commandView: { ...view, viewDigest: computeCanonicalSha256(view) },
+  } as unknown as RepositoryAdmissionContextV02;
+}
+
+test('Repository admission binds approval decisions and freshness to trusted facts', () => {
+  const action = createValidPatchAction();
+  const context = createValidRepositoryApprovedPlanContext({
+    policyEvaluationReceipt: {
+      receiptId: 'pe-receipt-001',
+      receiptDigest: 'sha256:pereceiptdigest00000000000000000000000000000000000000000000000000',
+      actionDigest: computeActionDigest(action),
+      freshnessContextDigest: 'sha256:freshness00000000000000000000000000000000000000000000000000',
+      policyId: 'policy-default',
+      policyVersion: '1.0.0',
+      configId: 'config-default',
+      configVersion: '1.0.0',
+      decisionAuthorityGeneration: 3,
+      result: 'APPROVAL_REQUIRED',
+    },
+    actionDecisionReceipt: {
+      decisionId: 'decision-001',
+      decisionDigest: 'sha256:decisiondigest00000000000000000000000000000000000000000000000',
+      actionDigest: computeActionDigest(action),
+      evaluationReceiptRef: 'foreign-evaluation',
+      decisionAuthorityGeneration: 3,
+      status: 'approved',
+    },
+  });
+  const result = callWithTrustedContext(
+    validateRepositoryAdmissionV02,
+    context,
+    createTrustedRepositoryFacts()
+  );
+  const staleFreshness = createValidRepositoryApprovedPlanContext({
+    policyEvaluationReceipt: {
+      ...context.policyEvaluationReceipt,
+      freshnessContextDigest: 'sha256:foreign-freshness',
+    },
+  });
+  const staleResult = callWithTrustedContext(validateRepositoryAdmissionV02, staleFreshness, createTrustedRepositoryFacts());
+
+  assert.equal(result.ok, false, 'Foreign evaluation reference must not authorize an approved action');
+  assert.equal(staleResult.ok, false, 'Stale freshness must not authorize an approved action');
+});
+
+test('Repository command admission binds a recomputed view and complete profile bounds', () => {
+  const base = withCanonicalCommandViewDigest(createValidRepositoryPrePlanDiagnosticContext());
+  const trusted = createTrustedRepositoryFacts({
+    expectedTaskStateVersion: 0,
+    expectedControlVersion: 0,
+    runnableNode: 'Investigate',
+    planApplicability: 'pre-plan-diagnostic',
+    planBindingDigest: undefined,
+    planDecisionRef: undefined,
+    policyAuthorityRef: {
+      policyId: 'policy-default',
+      policyVersion: '1.0.0',
+      configId: 'config-default',
+      configVersion: '1.0.0',
+      issuerKeyRef: 'key-authority-001',
+      decisionAuthorityGeneration: 1,
+    },
+    policyEvaluationReceiptRef: 'pe-receipt-diag-001',
+    policyEvaluationReceiptDigest: 'sha256:pediagreceipt0000000000000000000000000000000000000000000000000000',
+    freshnessContextDigest: 'sha256:freshnessdiag0000000000000000000000000000000000000000000000',
+  });
+  const view = base.commandView as unknown as Record<string, unknown>;
+  const bounds = base.finiteBounds as unknown as Record<string, unknown>;
+  const missingResourceBounds = { ...bounds };
+  delete missingResourceBounds['maxCpuSeconds'];
+  delete missingResourceBounds['maxMemoryBytes'];
+  delete missingResourceBounds['maxProcessCount'];
+  const cases: readonly RepositoryAdmissionContextV02[] = [
+    withCanonicalCommandViewDigest({ ...base, commandView: { ...view, taskId: 'task-foreign' } } as RepositoryAdmissionContextV02),
+    withCanonicalCommandViewDigest({ ...base, commandView: { ...view, workspaceId: 'workspace-foreign' } } as RepositoryAdmissionContextV02),
+    withCanonicalCommandViewDigest({ ...base, commandView: { ...view, exclusionsPolicyVersion: 'policy-foreign' } } as RepositoryAdmissionContextV02),
+    withCanonicalCommandViewDigest({ ...base, commandView: { ...view, scratchIdentity: 'scratch-foreign' } } as RepositoryAdmissionContextV02),
+    withCanonicalCommandViewDigest({ ...base, commandView: { ...view, canonicalRevision: 'sha256:foreign' } } as RepositoryAdmissionContextV02),
+    { ...base, commandView: { ...view, viewDigest: 'sha256:bogus' } } as RepositoryAdmissionContextV02,
+    { ...base, finiteBounds: { ...bounds, isolationProfileRef: 'profile-foreign' } } as RepositoryAdmissionContextV02,
+    { ...base, finiteBounds: missingResourceBounds } as unknown as RepositoryAdmissionContextV02,
+  ];
+
+  const valid = callWithTrustedContext(validateRepositoryAdmissionV02, base, trusted);
+  assert.equal(valid.ok, true, JSON.stringify(valid));
+  for (const context of cases) {
+    assert.equal(
+      callWithTrustedContext(validateRepositoryAdmissionV02, context, trusted).ok,
+      false,
+      'Foreign or incomplete command-view/profile facts must deny'
+    );
+  }
+});
+
+test('Repository patch admission binds exact canonical targets, base revision, and UTF-8 byte ceiling', () => {
+  const valid = createValidRepositoryApprovedPlanContext();
+  const trusted = createTrustedRepositoryFacts();
+  const raw = valid as unknown as Record<string, unknown>;
+  const bytes = new TextEncoder().encode((raw['action'] as ApplyPatchAction).patchContent).length;
+  const cases = [
+    { ...raw, targetPaths: ['123', '../.env'] },
+    { ...raw, targetPaths: ['other.py'] },
+    { ...raw, baseRevision: 'sha256:foreign' },
+    { ...raw, finiteBounds: { maxPatchBytes: bytes - 1, maxChangedPaths: 5 } },
+  ];
+
+  assert.equal(callWithTrustedContext(validateRepositoryAdmissionV02, valid, trusted).ok, true);
+  for (const candidate of cases) {
+    assert.equal(
+      callWithTrustedContext(validateRepositoryAdmissionV02, candidate, trusted).ok,
+      false,
+      'Noncanonical, mismatched, or too-small patch admission must deny'
+    );
+  }
+});
+
+test('Repository patch ceiling counts UTF-8 bytes rather than string code units', () => {
+  const action: ApplyPatchAction = { ...createValidPatchAction(), patchContent: '--- a/src/calculator.py\n+++ b/src/calculator.py\n+é\n' };
+  const bytes = new TextEncoder().encode(action.patchContent).length;
+  const base = {
+    action,
+    actionDigest: computeActionDigest(action),
+    patchDigest: computeCanonicalSha256(action.patchContent),
+    policyEvaluationReceipt: {
+      receiptId: 'pe-receipt-001',
+      receiptDigest: 'sha256:pereceiptdigest00000000000000000000000000000000000000000000000000',
+      actionDigest: computeActionDigest(action),
+      freshnessContextDigest: 'sha256:freshness00000000000000000000000000000000000000000000000000',
+      policyId: 'policy-default', policyVersion: '1.0.0', configId: 'config-default', configVersion: '1.0.0',
+      decisionAuthorityGeneration: 3, result: 'ALLOWED',
+    },
+  };
+  const atByteCeiling = createValidRepositoryApprovedPlanContext({ ...base, finiteBounds: { maxPatchBytes: bytes, maxChangedPaths: 5 } });
+  const belowByteCeiling = createValidRepositoryApprovedPlanContext({ ...base, finiteBounds: { maxPatchBytes: action.patchContent.length, maxChangedPaths: 5 } });
+  assert.equal(validateRepositoryAdmissionV02(atByteCeiling, createTrustedRepositoryFacts()).ok, true);
+  assert.equal(validateRepositoryAdmissionV02(belowByteCeiling, createTrustedRepositoryFacts()).ok, false);
+});
+
+test('Pre-plan command admission requires an exact Investigate diagnostic check binding', () => {
+  const raw = createValidRepositoryPrePlanDiagnosticContext() as unknown as Record<string, unknown>;
+  const trusted = createTrustedRepositoryFacts({
+    taskStateSchemaVersion: '0.2.0',
+    expectedTaskStateVersion: 0,
+    controlSchemaVersion: '0.2.0',
+    expectedControlVersion: 0,
+    expectedEpoch: 1,
+    runnableNode: 'Investigate',
+    planApplicability: 'pre-plan-diagnostic',
+    planBindingDigest: undefined,
+    planDecisionRef: undefined,
+    policyAuthorityRef: {
+      policyId: 'policy-default',
+      policyVersion: '1.0.0',
+      configId: 'config-default',
+      configVersion: '1.0.0',
+      issuerKeyRef: 'key-authority-001',
+      decisionAuthorityGeneration: 1,
+    },
+    policyEvaluationReceiptRef: 'pe-receipt-diag-001',
+    policyEvaluationReceiptDigest: 'sha256:pediagreceipt0000000000000000000000000000000000000000000000000000',
+    freshnessContextDigest: 'sha256:freshnessdiag0000000000000000000000000000000000000000000000',
+  });
+  const allowed = withCanonicalCommandViewDigest({
+    ...raw,
+    checkId: 'check-pytest-repro',
+    testPath: 'tests/test_calculator.py',
+  } as unknown as RepositoryAdmissionContextV02);
+  const denied = [
+    { ...allowed, checkId: undefined },
+    { ...allowed, testPath: undefined },
+    { ...allowed, checkId: 'check-foreign' },
+    { ...allowed, runnableNode: 'Repair' },
+  ];
+
+  assert.equal(callWithTrustedContext(validateRepositoryAdmissionV02, allowed, trusted).ok, true);
+  for (const candidate of denied) {
+    assert.equal(callWithTrustedContext(validateRepositoryAdmissionV02, candidate, trusted).ok, false);
+  }
+});
+
+test('Provider admission binds request, outer context, and admission receipt identities and role', () => {
+  const valid = createValidProviderApprovedPlanContext();
+  const request = valid.providerRequest;
+  const trusted = trustedProviderFixture();
+  const cases = [
+    { ...valid, providerAdmissionReceipt: { ...valid.providerAdmissionReceipt, role: 'reviewer' } },
+    { ...valid, providerRequest: { ...request, taskId: 'task-foreign' } },
+    { ...valid, providerRequest: { ...request, runId: 'run-foreign' } },
+    { ...valid, providerRequest: { ...request, role: 'reviewer' } },
+    { ...valid, taskId: 'task-foreign' },
+    { ...valid, runId: 'run-foreign' },
+    { ...valid, role: 'reviewer' },
+  ];
+
+  assert.equal(callWithTrustedContext(validateProviderAdmissionV02, valid, trusted).ok, true);
+  for (const candidate of cases) {
+    assert.equal(callWithTrustedContext(validateProviderAdmissionV02, candidate, trusted).ok, false);
+  }
+});
+
+test('Claim closure and reconciliation require complete trusted claim and predecessor proofs', () => {
+  const closure = createValidClaimClosureReceipt();
+  const claim = {
+    claimId: 'claim-001', claimDigest: 'sha256:claim', taskId: 'task-001', status: 'claimed',
+    hasCommittedAttempt: false,
+  };
+  const closureContext = {
+    expectedTaskId: 'task-001', expectedClaimId: 'claim-001', claim,
+    hasCommittedAttempt: false,
+    expectedFencedExecutorIdentity: createValidExecutor(),
+  };
+  assert.equal(validateClaimClosureReceiptV02(closure).ok, false);
+  assert.equal(validateClaimClosureReceiptV02(closure, closureContext).ok, true);
+  assert.equal(validateClaimClosureReceiptV02(closure, { ...closureContext, expectedTaskId: 'task-foreign' }).ok, false);
+
+  const reconciliation = createValidObservedReconciliationReceipt();
+  const predecessor = {
+    ...createValidRepoOutcomeReceipt(),
+    receiptId: reconciliation.predecessorReceiptId,
+    outcome: 'observed',
+  };
+  const reconciliationContext = { predecessor, predecessorReceiptDigest: predecessor.receiptDigest };
+  assert.equal(validateObservedOutcomeReconciliationReceiptV02(reconciliation).ok, false);
+  assert.equal(validateObservedOutcomeReconciliationReceiptV02(reconciliation, reconciliationContext).ok, true);
+  assert.equal(validateObservedOutcomeReconciliationReceiptV02(reconciliation, {
+    ...reconciliationContext, predecessor: { ...predecessor, receiptDigest: 'sha256:foreign' },
+  }).ok, false);
+});
+
+test('Attempt validators reject invalid repair flags, revision digest types, and provider usage', () => {
+  const repairFlag = validateProtocolVersionProgressionV02({
+    kind: 'begin-attempt',
+    pre: { taskStateVersion: 0, controlVersion: 1, epoch: 0 },
+    post: { taskStateVersion: 1, controlVersion: 2, epoch: 0 },
+    isRepairPatch: 'false',
+  });
+  const repairContextFlag = validateAttemptReceiptV02(createValidAttemptReceipt(), {
+    isRepairPatch: 'false' as unknown as boolean,
+  });
+  const badRevision = validateRepositoryActionOutcomeReceiptV02({
+    ...createValidRepoOutcomeReceipt(), observedResultRevisionDigest: 123,
+  });
+  const badUsage = validateProviderRequestOutcomeReceiptV02({
+    ...createValidProviderOutcomeReceipt(), observedUsage: { inputTokens: 'invalid', outputTokens: 1, costUsd: 0.1 },
+  });
+  assert.equal(repairFlag.ok, false);
+  assert.equal(repairContextFlag.ok, false);
+  assert.equal(badRevision.ok, false);
+  assert.equal(badUsage.ok, false);
+});
+
+test('Provider outcome requires exact trusted admission and budget references', () => {
+  const valid = createValidProviderOutcomeReceipt();
+  const trusted = {
+    expectedProviderRequestId: 'req-001',
+    expectedRole: 'coder' as const,
+    expectedProviderAdmissionReceiptRef: 'adm-ref-001',
+    expectedBudgetRefs: ['budget-token-001', 'budget-cost-001'],
+  };
+  assert.equal(validateProviderRequestOutcomeReceiptV02(valid, trusted).ok, true);
+  assert.equal(validateProviderRequestOutcomeReceiptV02({ ...valid, budgetRefs: undefined }, trusted).ok, false);
+  assert.equal(validateProviderRequestOutcomeReceiptV02({ ...valid, providerAdmissionReceiptRef: 'foreign-admission' }, trusted).ok, false);
+  assert.equal(validateProviderRequestOutcomeReceiptV02({ ...valid, budgetRefs: ['foreign-budget'] }, trusted).ok, false);
+});
+
+test('Public v0.2 validators contain exotic input exceptions and return detached frozen values', () => {
+  const throwingGetter = Object.defineProperty({}, 'subjectKind', {
+    enumerable: true,
+    get() { throw new Error('PROTECTED_SENTINEL'); },
+  });
+  const getterResult = callWithTrustedContext(validateRepositoryAdmissionV02, throwingGetter, createTrustedRepositoryFacts());
+  assert.equal(getterResult.ok, false);
+
+  const proxy = new Proxy({}, { ownKeys() { throw new Error('PROTECTED_SENTINEL'); } });
+  assert.equal(validateAttemptOutcomeReceiptV02(proxy).ok, false);
+  const cycle: Record<string, unknown> = {};
+  cycle['self'] = cycle;
+  assert.equal(validateAttemptOutcomeReceiptV02(cycle).ok, false);
+
+  const providerInput = createValidProviderApprovedPlanContext();
+  const providerTrust = trustedProviderFixture();
+  const validated = callWithTrustedContext(validateProviderAdmissionV02, providerInput, providerTrust);
+  assert.equal(validated.ok, true);
+  if (validated.ok) {
+    const resultValue = (validated as unknown as { value: ProviderAdmissionContextV02 }).value;
+    assert.notEqual(resultValue.providerIdentity, providerInput.providerIdentity);
+    assert.equal(Object.isFrozen(resultValue.providerIdentity), true);
+    assert.equal(Object.isFrozen(resultValue.providerRequest), true);
+    (providerInput.providerIdentity as unknown as { modelId: string }).modelId = 'changed-after-validation';
+    assert.equal(resultValue.providerIdentity.modelId, 'model-test-01');
+  }
+
+  const attemptInput = createValidRepoOutcomeReceipt();
+  const attemptResult = validateRepositoryActionOutcomeReceiptV02(attemptInput);
+  assert.equal(attemptResult.ok, true);
+  if (attemptResult.ok) {
+    assert.notEqual(attemptResult.value, attemptInput);
+    assert.equal(Object.isFrozen(attemptResult.value), true);
+    (attemptInput as unknown as { receiptId: string }).receiptId = 'changed-after-validation';
+    assert.equal(attemptResult.value.receiptId, 'repo-out-001');
+  }
 });
