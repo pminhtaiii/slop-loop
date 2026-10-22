@@ -160,8 +160,10 @@ export function createApprovalService(options: ApprovalServiceOptions): Approval
       return readApprovalHistory({ taskId, profile, store: store(), control: control(), operator: options.operator?.identity, observations: options.observations, request,
         observe: async record => {
           let classification: 'ALLOWED' | 'APPROVAL_REQUIRED' | 'FORBIDDEN' | 'unknown' = 'unknown';
+          let context: ApprovalContext;
+          try { context = admitContext(await options.context.loadForDecision(record.decisionId)); }
+          catch { return { status: 'unknown', classification, reasonCode: 'current-binding-unavailable-or-ineligible' }; }
           try {
-            const context = admitContext(await options.context.loadForDecision(record.decisionId));
             const classified = policy.classify(context.action, context.facts);
             classification = classified.ok ? classified.permission : 'unknown';
             await checkedView(record.decisionId, context);
