@@ -57,16 +57,39 @@ import type {
   ProviderAdmissionContextV02,
 } from '../../../src/contracts/foundation/uc03/ports-v02.ts';
 
-function trustedRepositoryFixture(prePlan = false): Record<string, unknown> {
-  return prePlan ? createTrustedRepositoryFacts({
+function createPolicyEvaluationReceipt(fields: Record<string, unknown>): Record<string, unknown> {
+  const digestInput = { ...fields, receiptDigest: undefined };
+  return { ...digestInput, receiptDigest: computeCanonicalSha256(digestInput) };
+}
+
+function trustedRepositoryFixture(prePlan = false, context?: RepositoryAdmissionContextV02): Record<string, unknown> {
+  const diagnosticReceipt = createPolicyEvaluationReceipt({
+    receiptId: 'pe-receipt-diag-001',
+    actionDigest: computeActionDigest(createValidCommandAction()),
+    freshnessContextDigest: 'sha256:freshnessdiag0000000000000000000000000000000000000000000000',
+    policyId: 'policy-default', policyVersion: '1.0.0', configId: 'config-default', configVersion: '1.0.0',
+    decisionAuthorityGeneration: 1, result: 'ALLOWED',
+  });
+  const overrides: Record<string, unknown> = prePlan ? {
     taskStateSchemaVersion: '0.2.0', expectedTaskStateVersion: 0, controlSchemaVersion: '0.2.0',
     expectedControlVersion: 0, expectedEpoch: 1, runnableNode: 'Investigate',
     planApplicability: 'pre-plan-diagnostic', planBindingDigest: undefined, planDecisionRef: undefined,
     policyAuthorityRef: { policyId: 'policy-default', policyVersion: '1.0.0', configId: 'config-default', configVersion: '1.0.0', issuerKeyRef: 'key-authority-001', decisionAuthorityGeneration: 1 },
-    policyEvaluationReceiptRef: 'pe-receipt-diag-001',
-    policyEvaluationReceiptDigest: 'sha256:pediagreceipt0000000000000000000000000000000000000000000000000000',
-    freshnessContextDigest: 'sha256:freshnessdiag0000000000000000000000000000000000000000000000',
-  }) : createTrustedRepositoryFacts();
+    policyEvaluationReceiptRef: diagnosticReceipt['receiptId'],
+    policyEvaluationReceiptDigest: diagnosticReceipt['receiptDigest'],
+    freshnessContextDigest: diagnosticReceipt['freshnessContextDigest'],
+  } : {};
+  if (context) {
+    const receipt = context.policyEvaluationReceipt as unknown as Record<string, unknown>;
+    overrides['policyEvaluationReceiptRef'] = receipt['receiptId'];
+    overrides['policyEvaluationReceiptDigest'] = receipt['receiptDigest'];
+    overrides['freshnessContextDigest'] = receipt['freshnessContextDigest'];
+    if (context.actionDecisionReceipt) {
+      overrides['actionDecisionReceiptRef'] = context.actionDecisionReceipt.decisionId;
+      overrides['actionDecisionReceiptDigest'] = context.actionDecisionReceipt.decisionDigest;
+    }
+  }
+  return createTrustedRepositoryFacts(overrides);
 }
 
 function validateRepositoryAdmissionV02(input: unknown, trust: unknown = trustedRepositoryFixture()) {
@@ -201,9 +224,8 @@ function createValidRepositoryApprovedPlanContext(
       issuerKeyRef: 'key-authority-001',
       decisionAuthorityGeneration: 3,
     },
-    policyEvaluationReceipt: {
+    policyEvaluationReceipt: createPolicyEvaluationReceipt({
       receiptId: 'pe-receipt-001',
-      receiptDigest: 'sha256:pereceiptdigest00000000000000000000000000000000000000000000000000',
       actionDigest,
       freshnessContextDigest: 'sha256:freshness00000000000000000000000000000000000000000000000000',
       policyId: 'policy-default',
@@ -212,7 +234,7 @@ function createValidRepositoryApprovedPlanContext(
       configVersion: '1.0.0',
       decisionAuthorityGeneration: 3,
       result: 'ALLOWED',
-    },
+    }),
     planBindingDigest: 'sha256:planbindingdigest00000000000000000000000000000000000000000000000',
     planDecisionRef: 'dec-plan-001',
     baseRevision: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
@@ -236,11 +258,15 @@ function createApprovalRequiredRepositoryAdmission(decisionId = 'decision-action
     evaluationReceiptRef: base.policyEvaluationReceipt.receiptId,
     decisionAuthorityGeneration: base.policyAuthorityRef.decisionAuthorityGeneration, status: 'approved',
   };
-  const result = validateRepositoryAdmissionV02({
+  const context = {
     ...base,
-    policyEvaluationReceipt: { ...base.policyEvaluationReceipt, result: 'APPROVAL_REQUIRED' },
+    policyEvaluationReceipt: createPolicyEvaluationReceipt({
+      ...(base.policyEvaluationReceipt as unknown as Record<string, unknown>),
+      result: 'APPROVAL_REQUIRED',
+    }),
     actionDecisionReceipt: decision,
-  });
+  } as unknown as RepositoryAdmissionContextV02;
+  const result = validateRepositoryAdmissionV02(context, trustedRepositoryFixture(false, context));
   if (!result.ok) throw new Error(`Approval-required admission fixture is invalid: ${result.errors.map(({ code }) => code).join(',')}`);
   return result.value;
 }
@@ -257,10 +283,13 @@ function createPatchContextWithTargets(
     ...base,
     action,
     actionDigest,
-    policyEvaluationReceipt: { ...base.policyEvaluationReceipt, actionDigest },
+    policyEvaluationReceipt: createPolicyEvaluationReceipt({
+      ...(base.policyEvaluationReceipt as unknown as Record<string, unknown>),
+      actionDigest,
+    }),
     targetPaths: declaredTargets as readonly string[],
     finiteBounds: { maxPatchBytes: 4096, maxChangedPaths },
-  } as RepositoryAdmissionContextV02;
+  } as unknown as RepositoryAdmissionContextV02;
 }
 
 function createValidRepositoryPrePlanDiagnosticContext(
@@ -298,9 +327,8 @@ function createValidRepositoryPrePlanDiagnosticContext(
       issuerKeyRef: 'key-authority-001',
       decisionAuthorityGeneration: 1,
     },
-    policyEvaluationReceipt: {
+    policyEvaluationReceipt: createPolicyEvaluationReceipt({
       receiptId: 'pe-receipt-diag-001',
-      receiptDigest: 'sha256:pediagreceipt0000000000000000000000000000000000000000000000000000',
       actionDigest,
       freshnessContextDigest: 'sha256:freshnessdiag0000000000000000000000000000000000000000000000',
       policyId: 'policy-default',
@@ -309,7 +337,7 @@ function createValidRepositoryPrePlanDiagnosticContext(
       configVersion: '1.0.0',
       decisionAuthorityGeneration: 1,
       result: 'ALLOWED',
-    },
+    }),
     ...(action.kind === 'run_command'
       ? {
           commandView: {
@@ -519,7 +547,7 @@ test('Positive vector: valid repository admission in approved-plan mode (RED in 
 
 test('Positive vector: valid repository admission in pre-plan-diagnostic mode (RED in T037, GREEN in T038)', () => {
   const context = createValidRepositoryPrePlanDiagnosticContext();
-  const res = validateRepositoryAdmissionV02(context, trustedRepositoryFixture(true));
+  const res = validateRepositoryAdmissionV02(context, trustedRepositoryFixture(true, context));
   assert.equal(
     res.ok,
     true,
@@ -548,7 +576,7 @@ test('Positive vector: valid repository pre-plan-diagnostic test-only patch (RED
     },
     reservationRefs: ['res-test-patch-001'],
   });
-  const res = validateRepositoryAdmissionV02(context, trustedRepositoryFixture(true));
+  const res = validateRepositoryAdmissionV02(context, trustedRepositoryFixture(true, context));
   assert.equal(
     res.ok,
     true,
@@ -850,6 +878,25 @@ function createValidClaimClosureReceipt(): ClaimClosureReceiptV02 {
   return {
     ...raw,
     receiptDigest: computeClaimClosureDigest(raw),
+  };
+}
+
+function createValidClaimClosureContext(reservationRefs: readonly string[] = ['res-1']) {
+  return {
+    expectedTaskId: 'task-001',
+    expectedClaimId: 'claim-001',
+    claim: {
+      claimId: 'claim-001',
+      claimDigest: 'sha256:claim-001',
+      taskId: 'task-001',
+      status: 'claimed',
+      hasCommittedAttempt: false,
+      reservationRefs: [...reservationRefs],
+    },
+    hasCommittedAttempt: false,
+    expectedAdapterIdentity: 'adapter-worker-01',
+    expectedMinFencingGeneration: 1,
+    expectedFencedExecutorIdentity: createValidExecutor(),
   };
 }
 
@@ -1305,16 +1352,30 @@ test('Negative: attempt receipt rejects context attemptId mismatch', () => {
 
 test('Positive: valid ClaimClosureReceiptV02 passes with proof of no attempt', () => {
   const closure = createValidClaimClosureReceipt();
-  const res = validateClaimClosureReceiptV02(closure, {
-    expectedTaskId: 'task-001',
-    expectedClaimId: 'claim-001',
-    claim: { claimId: 'claim-001', claimDigest: 'sha256:claim-001', taskId: 'task-001', status: 'claimed', hasCommittedAttempt: false },
-    hasCommittedAttempt: false,
-    expectedAdapterIdentity: 'adapter-worker-01',
-    expectedMinFencingGeneration: 1,
-    expectedFencedExecutorIdentity: createValidExecutor(),
-  });
+  const res = validateClaimClosureReceiptV02(closure, createValidClaimClosureContext());
   assert.equal(res.ok, true, 'Valid claim closure receipt must pass');
+});
+
+test('Negative: claim closure rejects a receipt whose content changed without a new digest', () => {
+  const closure = { ...createValidClaimClosureReceipt(), reason: 'changed after signing' };
+  const res = validateClaimClosureReceiptV02(closure, createValidClaimClosureContext());
+  assert.equal(res.ok, false);
+  assert.ok(!res.ok && res.errors.some(({ code }) => code === 'RECEIPT_DIGEST_MISMATCH'));
+});
+
+test('Negative: claim closure reservations must exactly match the trusted claim', () => {
+  const closure = createValidClaimClosureReceipt();
+  const res = validateClaimClosureReceiptV02(closure, createValidClaimClosureContext(['res-foreign']));
+  assert.equal(res.ok, false);
+  assert.ok(!res.ok && res.errors.some(({ code }) => code === 'RESERVATION_REFS_MISMATCH'));
+});
+
+test('Claim closure digest omits an undefined receiptDigest field', () => {
+  const closure = createValidClaimClosureReceipt();
+  const withUndefined = { ...closure, receiptDigest: undefined };
+  const withoutDigest = { ...closure } as Record<string, unknown>;
+  delete withoutDigest['receiptDigest'];
+  assert.equal(computeClaimClosureDigest(withUndefined), computeClaimClosureDigest(withoutDigest));
 });
 
 test('Negative: claim closure strictly forbids attemptId', () => {
@@ -1768,6 +1829,13 @@ function callWithTrustedContext(
 }
 
 function createTrustedRepositoryFacts(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  const defaultReceipt = createPolicyEvaluationReceipt({
+    receiptId: 'pe-receipt-001',
+    actionDigest: computeActionDigest(createValidPatchAction()),
+    freshnessContextDigest: 'sha256:freshness00000000000000000000000000000000000000000000000000',
+    policyId: 'policy-default', policyVersion: '1.0.0', configId: 'config-default', configVersion: '1.0.0',
+    decisionAuthorityGeneration: 3, result: 'ALLOWED',
+  });
   return {
     subjectKind: 'repository-action',
     taskStateSchemaVersion: '0.2.0',
@@ -1791,7 +1859,7 @@ function createTrustedRepositoryFacts(overrides: Record<string, unknown> = {}): 
       decisionAuthorityGeneration: 3,
     },
     policyEvaluationReceiptRef: 'pe-receipt-001',
-    policyEvaluationReceiptDigest: 'sha256:pereceiptdigest00000000000000000000000000000000000000000000000000',
+    policyEvaluationReceiptDigest: defaultReceipt['receiptDigest'],
     freshnessContextDigest: 'sha256:freshness00000000000000000000000000000000000000000000000000',
     planApplicability: 'approved-plan',
     planBindingDigest: 'sha256:planbindingdigest00000000000000000000000000000000000000000000000',
@@ -1850,9 +1918,8 @@ function withCanonicalCommandViewDigest(
 test('Repository admission binds approval decisions and freshness to trusted facts', () => {
   const action = createValidPatchAction();
   const context = createValidRepositoryApprovedPlanContext({
-    policyEvaluationReceipt: {
+    policyEvaluationReceipt: createPolicyEvaluationReceipt({
       receiptId: 'pe-receipt-001',
-      receiptDigest: 'sha256:pereceiptdigest00000000000000000000000000000000000000000000000000',
       actionDigest: computeActionDigest(action),
       freshnessContextDigest: 'sha256:freshness00000000000000000000000000000000000000000000000000',
       policyId: 'policy-default',
@@ -1861,7 +1928,7 @@ test('Repository admission binds approval decisions and freshness to trusted fac
       configVersion: '1.0.0',
       decisionAuthorityGeneration: 3,
       result: 'APPROVAL_REQUIRED',
-    },
+    }),
     actionDecisionReceipt: {
       decisionId: 'decision-001',
       decisionDigest: 'sha256:decisiondigest00000000000000000000000000000000000000000000000',
@@ -1874,18 +1941,77 @@ test('Repository admission binds approval decisions and freshness to trusted fac
   const result = callWithTrustedContext(
     validateRepositoryAdmissionV02,
     context,
-    createTrustedRepositoryFacts()
+    trustedRepositoryFixture(false, context)
   );
   const staleFreshness = createValidRepositoryApprovedPlanContext({
-    policyEvaluationReceipt: {
+    policyEvaluationReceipt: createPolicyEvaluationReceipt({
       ...context.policyEvaluationReceipt,
       freshnessContextDigest: 'sha256:foreign-freshness',
-    },
+    }),
   });
-  const staleResult = callWithTrustedContext(validateRepositoryAdmissionV02, staleFreshness, createTrustedRepositoryFacts());
+  const staleResult = callWithTrustedContext(validateRepositoryAdmissionV02, staleFreshness, trustedRepositoryFixture(false, context));
 
   assert.equal(result.ok, false, 'Foreign evaluation reference must not authorize an approved action');
   assert.equal(staleResult.ok, false, 'Stale freshness must not authorize an approved action');
+});
+
+test('Policy evaluation receipt digest binds its result and omits an undefined digest field', () => {
+  const base = createValidRepositoryApprovedPlanContext();
+  const receipt = base.policyEvaluationReceipt as unknown as Record<string, unknown>;
+  const withUndefined = { ...receipt, receiptDigest: undefined };
+  const withoutDigest = { ...receipt };
+  delete withoutDigest['receiptDigest'];
+  assert.equal(computeCanonicalSha256(withUndefined), computeCanonicalSha256(withoutDigest));
+  assert.equal(receipt['receiptDigest'], computeCanonicalSha256(withoutDigest));
+
+  const decision = {
+    decisionId: 'decision-result-binding-001',
+    decisionDigest: computeCanonicalSha256('decision-result-binding-001'),
+    actionDigest: base.actionDigest,
+    evaluationReceiptRef: base.policyEvaluationReceipt.receiptId,
+    decisionAuthorityGeneration: base.policyAuthorityRef.decisionAuthorityGeneration,
+    status: 'approved',
+  };
+  const changedResult = {
+    ...base,
+    policyEvaluationReceipt: { ...base.policyEvaluationReceipt, result: 'APPROVAL_REQUIRED' },
+    actionDecisionReceipt: decision,
+  } as unknown as RepositoryAdmissionContextV02;
+  const trusted = {
+    ...trustedRepositoryFixture(false, base),
+    actionDecisionReceiptRef: decision.decisionId,
+    actionDecisionReceiptDigest: decision.decisionDigest,
+  };
+  const result = validateRepositoryAdmissionV02(changedResult, trusted);
+  assert.equal(result.ok, false);
+  assert.ok(!result.ok && result.errors.some(({ code }) => code === 'EVALUATION_RECEIPT_DIGEST_MISMATCH'));
+});
+
+test('Approval-required admission binds decision ID, digest, and evaluation receipt to trusted facts', () => {
+  const valid = createApprovalRequiredRepositoryAdmission();
+  const trusted = trustedRepositoryFixture(false, valid);
+  assert.equal(validateRepositoryAdmissionV02(valid, trusted).ok, true);
+
+  const decision = valid.actionDecisionReceipt;
+  assert.ok(decision);
+  for (const actionDecisionReceipt of [
+    { ...decision, decisionId: 'decision-foreign' },
+    { ...decision, decisionDigest: 'sha256:foreign-decision-digest' },
+    { ...decision, evaluationReceiptRef: 'pe-foreign' },
+  ]) {
+    const candidate = { ...valid, actionDecisionReceipt } as RepositoryAdmissionContextV02;
+    assert.equal(validateRepositoryAdmissionV02(candidate, trusted).ok, false);
+  }
+});
+
+test('Approval-required admission rejects trusted context without decision receipt bindings', () => {
+  const valid = createApprovalRequiredRepositoryAdmission();
+  const trusted = trustedRepositoryFixture(false, valid);
+  delete trusted['actionDecisionReceiptRef'];
+  delete trusted['actionDecisionReceiptDigest'];
+  const result = validateRepositoryAdmissionV02(valid, trusted);
+  assert.equal(result.ok, false);
+  assert.ok(!result.ok && result.errors.some(({ code }) => code === 'ACTION_DECISION_BINDING_REQUIRED'));
 });
 
 test('Repository command admission binds a recomputed view and complete profile bounds', () => {
@@ -1906,7 +2032,7 @@ test('Repository command admission binds a recomputed view and complete profile 
       decisionAuthorityGeneration: 1,
     },
     policyEvaluationReceiptRef: 'pe-receipt-diag-001',
-    policyEvaluationReceiptDigest: 'sha256:pediagreceipt0000000000000000000000000000000000000000000000000000',
+    policyEvaluationReceiptDigest: base.policyEvaluationReceipt.receiptDigest,
     freshnessContextDigest: 'sha256:freshnessdiag0000000000000000000000000000000000000000000000',
   });
   const view = base.commandView as unknown as Record<string, unknown>;
@@ -1966,19 +2092,19 @@ test('Repository patch ceiling counts UTF-8 bytes rather than string code units'
     action,
     actionDigest: computeActionDigest(action),
     patchDigest: computeCanonicalSha256(action.patchContent),
-    policyEvaluationReceipt: {
+    policyEvaluationReceipt: createPolicyEvaluationReceipt({
       receiptId: 'pe-receipt-001',
-      receiptDigest: 'sha256:pereceiptdigest00000000000000000000000000000000000000000000000000',
       actionDigest: computeActionDigest(action),
       freshnessContextDigest: 'sha256:freshness00000000000000000000000000000000000000000000000000',
       policyId: 'policy-default', policyVersion: '1.0.0', configId: 'config-default', configVersion: '1.0.0',
       decisionAuthorityGeneration: 3, result: 'ALLOWED',
-    },
+    }),
   };
   const atByteCeiling = createValidRepositoryApprovedPlanContext({ ...base, finiteBounds: { maxPatchBytes: bytes, maxChangedPaths: 5 } });
   const belowByteCeiling = createValidRepositoryApprovedPlanContext({ ...base, finiteBounds: { maxPatchBytes: action.patchContent.length, maxChangedPaths: 5 } });
-  assert.equal(validateRepositoryAdmissionV02(atByteCeiling, createTrustedRepositoryFacts()).ok, true);
-  assert.equal(validateRepositoryAdmissionV02(belowByteCeiling, createTrustedRepositoryFacts()).ok, false);
+  const trusted = trustedRepositoryFixture(false, atByteCeiling);
+  assert.equal(validateRepositoryAdmissionV02(atByteCeiling, trusted).ok, true);
+  assert.equal(validateRepositoryAdmissionV02(belowByteCeiling, trusted).ok, false);
 });
 
 test('Pre-plan command admission requires an exact Investigate diagnostic check binding', () => {
@@ -2002,7 +2128,7 @@ test('Pre-plan command admission requires an exact Investigate diagnostic check 
       decisionAuthorityGeneration: 1,
     },
     policyEvaluationReceiptRef: 'pe-receipt-diag-001',
-    policyEvaluationReceiptDigest: 'sha256:pediagreceipt0000000000000000000000000000000000000000000000000000',
+    policyEvaluationReceiptDigest: (raw['policyEvaluationReceipt'] as Record<string, unknown>)['receiptDigest'],
     freshnessContextDigest: 'sha256:freshnessdiag0000000000000000000000000000000000000000000000',
   });
   const allowed = withCanonicalCommandViewDigest({
@@ -2047,7 +2173,7 @@ test('Claim closure and reconciliation require complete trusted claim and predec
   const closure = createValidClaimClosureReceipt();
   const claim = {
     claimId: 'claim-001', claimDigest: 'sha256:claim', taskId: 'task-001', status: 'claimed',
-    hasCommittedAttempt: false,
+    hasCommittedAttempt: false, reservationRefs: ['res-1'],
   };
   const closureContext = {
     expectedTaskId: 'task-001', expectedClaimId: 'claim-001', claim,
@@ -2101,7 +2227,8 @@ test('Patch admission requires a non-empty exact canonical target set and counts
     createPatchContextWithTargets(['src/a.py', 'src/b.py'], ['src/a.py'], 1),
   ];
   for (const context of rejected) assert.equal(validateRepositoryAdmissionV02(context).ok, false);
-  assert.equal(validateRepositoryAdmissionV02(createPatchContextWithTargets(['src/a.py'], ['src/a.py'])).ok, true);
+  const valid = createPatchContextWithTargets(['src/a.py'], ['src/a.py']);
+  assert.equal(validateRepositoryAdmissionV02(valid, trustedRepositoryFixture(false, valid)).ok, true);
 });
 
 test('Action decision reason must be safe optional text before validation narrows it', () => {
@@ -2117,13 +2244,18 @@ test('Action decision reason must be safe optional text before validation narrow
   };
   const makeContext = (reason: unknown) => ({
     ...base,
-    policyEvaluationReceipt: { ...base.policyEvaluationReceipt, result: 'APPROVAL_REQUIRED' },
+    policyEvaluationReceipt: createPolicyEvaluationReceipt({
+      ...(base.policyEvaluationReceipt as unknown as Record<string, unknown>),
+      result: 'APPROVAL_REQUIRED',
+    }),
     actionDecisionReceipt: { ...decision, reason },
   } as unknown as RepositoryAdmissionContextV02);
 
-  assert.equal(validateRepositoryAdmissionV02(makeContext(decision.reason)).ok, true);
-  assert.equal(validateRepositoryAdmissionV02(makeContext(123)).ok, false);
-  assert.equal(validateRepositoryAdmissionV02(makeContext('unsafe\r\nreason')).ok, false);
+  for (const reason of [decision.reason, 123, 'unsafe\r\nreason']) {
+    const context = makeContext(reason);
+    const result = validateRepositoryAdmissionV02(context, trustedRepositoryFixture(false, context));
+    assert.equal(result.ok, reason === decision.reason);
+  }
 });
 
 test('S10: optional admission metadata is validated before the public boundary narrows it', () => {

@@ -167,14 +167,19 @@ test('ExecutionGuard: declares port provenance and is evaluated by isAdmittedFor
   assert.ok(guard instanceof AuthoritativeExecutionGuard, 'Guard is instance of AuthoritativeExecutionGuard SUT');
 });
 
-test('ExecutionGuard: real provenance requires real injected dependencies for production admission', () => {
-  const { guard, ports } = createTestHarness({ guardProvenance: 'real' });
+test('ExecutionGuard: class instance provenance is recognized without admitting mock dependencies or execution', async () => {
+  const { guard, ports, repositoryPort } = createTestHarness({ guardProvenance: 'real' });
   assert.equal(guard.provenance, 'real');
+  assert.equal(isAdmittedForProduction([guard]), true, 'Own real provenance is recognized on the guard class instance');
   assert.equal(
     isAdmittedForProduction([guard, ports.statePort, ports.approvalPort, ports.repositoryPort]),
     false,
     'Mock dependencies prevent overall production admission even if guard claims real provenance'
   );
+
+  const result = await guard.validateAndExecute(createValidPatchAction(), createFixtureTaskState());
+  assert.equal(result.outcome, 'denied', 'T021 guard remains neutral and no-dispatch');
+  assert.equal(repositoryPort.patches.length, 0, 'Provenance admission does not imply patch execution');
 });
 
 // =========================================================================
@@ -436,7 +441,15 @@ test('CAS conflict: state version transition conflict returns conflict outcome (
 });
 
 test('Uncertain effect: execution timeout/uncertainty returns uncertain-effect outcome (behavioral RED against skeleton)', async () => {
-  const { guard } = createTestHarness();
+  const { guard, repositoryPort } = createTestHarness({
+    commandView: createValidCommandView(),
+    classifications: { 'pytest -q tests/test_calculator.py': 'ALLOWED' },
+  });
+  let invocations = 0;
+  repositoryPort.runCommand = async () => {
+    invocations++;
+    throw new Error('simulated timeout after command handoff; physical outcome is unknown');
+  };
   const cmdAction = createValidCommandAction({
     purpose: 'timeout-simulation',
   });
@@ -449,6 +462,7 @@ test('Uncertain effect: execution timeout/uncertainty returns uncertain-effect o
     'uncertain-effect',
     'Execution timeout or unverified effect must return uncertain-effect outcome to trigger reconciliation'
   );
+  assert.equal(invocations, 1, 'The uncertainty branch is exercised only after a valid admitted command reaches the adapter');
 });
 
 test('Valid action execution: fully authorized patch executes cleanly and returns success (behavioral RED against skeleton)', async () => {

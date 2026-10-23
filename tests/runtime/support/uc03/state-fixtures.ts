@@ -547,6 +547,12 @@ export function createTestRepositoryAdmissionTrustedContextV02(
     policyAuthorityRef: context.policyAuthorityRef,
     policyEvaluationReceiptRef: context.policyEvaluationReceipt.receiptId,
     policyEvaluationReceiptDigest: context.policyEvaluationReceipt.receiptDigest,
+    ...(context.actionDecisionReceipt !== undefined
+      ? {
+          actionDecisionReceiptRef: context.actionDecisionReceipt.decisionId,
+          actionDecisionReceiptDigest: context.actionDecisionReceipt.decisionDigest,
+        }
+      : {}),
     freshnessContextDigest: context.policyEvaluationReceipt.freshnessContextDigest,
     executionProfile: {
       isolationProfileRef: context.executionProfileId,

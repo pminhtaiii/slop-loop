@@ -10,6 +10,7 @@ import {
   validateVerificationResult,
 } from '../../contracts/foundation/uc03.ts';
 import { isProtectedPathRef, sanitizeDiagnostic, sanitizeText } from '../../foundation/telemetry.ts';
+import { safeSnapshot } from '../../contracts/foundation/uc03/admission-v02/snapshot.ts';
 import type { CreateMilestoneInput, Milestone, MilestoneKind } from '../report.ts';
 
 const FORBIDDEN_DETAIL_KEY = /reasoning|thinking|prompt|stream|secret|password|credential|authorization|api.?key|token/i;
@@ -321,9 +322,12 @@ export function verificationSnapshot(
 ): VerificationSnapshot {
   const results: VerificationResult[] = [];
   const refs: string[] = [];
-  if (!Array.isArray(value) || value.length > MAX_REPORT_ITEMS) return { results, refs, valid: false };
+  const snapshot = safeSnapshot(value);
+  if (!snapshot.ok || !Array.isArray(snapshot.value) || snapshot.value.length > MAX_REPORT_ITEMS) {
+    return { results, refs, valid: false };
+  }
   let valid = true;
-  for (const [index, raw] of value.entries()) {
+  for (const [index, raw] of snapshot.value.entries()) {
     const checked = validateVerificationResult(raw);
     if (!checked.ok) {
       valid = false;
@@ -349,15 +353,11 @@ export function reviewSnapshot(
   customPatterns?: readonly (RegExp | string)[],
 ): ReviewSnapshot {
   if (value === undefined) return { result: undefined, valid: false, ref: undefined };
-  const checked = validateReviewResult(value);
+  const snapshot = safeSnapshot(value);
+  if (!snapshot.ok) return { result: undefined, valid: false, ref: undefined };
+  const checked = validateReviewResult(snapshot.value);
   if (!checked.ok) return { result: undefined, valid: false, ref: undefined };
   const review = checked.value;
-  safeReference(review.reviewId, 'reviewResult.reviewId', customPatterns);
-  safeMetadata(review.reviewerRoleConfigId, 'reviewResult.reviewerRoleConfigId', customPatterns);
-  safeMetadata(review.repoDigest, 'reviewResult.repoDigest', customPatterns);
-  safeMetadata(review.diffDigest, 'reviewResult.diffDigest', customPatterns);
-  safeMetadata(review.checkSetDigest, 'reviewResult.checkSetDigest', customPatterns);
-  safeReference(review.iterationReservationRef, 'reviewResult.iterationReservationRef', customPatterns);
   if (review.findings.length > MAX_REPORT_ITEMS) return { result: undefined, valid: false, ref: undefined };
   const findings = review.findings.map((finding, index) => {
     const file = safePath(finding.file, `reviewResult.findings[${index}].file`, customPatterns);

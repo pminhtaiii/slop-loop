@@ -108,8 +108,12 @@ function validateClaimClosureReceiptImpl(input: unknown, ctx?: ClaimClosureValid
   }
   rejectUnknownKeys(input, CLOSURE_KEYS, 'receipt', errs);
   reqStrs(input, ['receiptId', 'receiptDigest', 'claimId', 'taskId', 'reason'], '', errs);
+  if (input['receiptDigest'] !== computeClaimClosureDigest(input)) {
+    addErr(errs, 'receiptDigest', 'Claim closure digest mismatch', 'RECEIPT_DIGEST_MISMATCH');
+  }
   const f = validateExecutorIdentityV02(input['fencedExecutorIdentity'], 'fencedExecutorIdentity', errs);
   validateStringArray(input['unconsumedReservations'], 'unconsumedReservations', errs);
+  const unconsumedReservations = input['unconsumedReservations'];
   const c = ctx?.claim;
   const expectedFence = ctx?.expectedFencedExecutorIdentity;
   if (!ctx || !ctx.expectedTaskId || !ctx.expectedClaimId || !ctx.claim || ctx.hasCommittedAttempt !== false || !expectedFence) {
@@ -122,6 +126,12 @@ function validateClaimClosureReceiptImpl(input: unknown, ctx?: ClaimClosureValid
   } else {
     matchProps(input, c, { claimId: 'claimId', taskId: 'taskId' }, errs);
     if (ctx?.expectedClaimId !== c['claimId'] || ctx?.expectedTaskId !== c['taskId']) addErr(errs, 'trustedContext.claim', 'Expected claim identity does not match proof', 'CLAIM_IDENTITY_MISMATCH');
+    const reservationRefs = c['reservationRefs'];
+    if (!Array.isArray(reservationRefs) || !Array.isArray(unconsumedReservations) ||
+      reservationRefs.length !== unconsumedReservations.length ||
+      reservationRefs.some((ref, index) => ref !== unconsumedReservations[index])) {
+      addErr(errs, 'unconsumedReservations', 'Reservations must exactly match the trusted claim', 'RESERVATION_REFS_MISMATCH');
+    }
   }
   matchProps(input, ctx as Record<string, unknown> | undefined, { claimId: 'expectedClaimId', taskId: 'expectedTaskId' }, errs);
   if (ctx?.expectedAdapterIdentity !== undefined && f && f.adapterIdentity !== ctx.expectedAdapterIdentity) addErr(errs, 'fencedExecutorIdentity.adapterIdentity', 'Adapter mismatch', 'ADAPTER_IDENTITY_MISMATCH');

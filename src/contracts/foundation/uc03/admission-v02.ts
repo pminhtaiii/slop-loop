@@ -75,6 +75,9 @@ function trustedRepositoryContext(value: unknown): value is RepositoryAdmissionT
   ];
   if (!strings.every((key) => isText(value[key]))) return false;
   if (value['commandViewDigest'] !== undefined && !isText(value['commandViewDigest'])) return false;
+  if (value['actionDecisionReceiptRef'] !== undefined && !isText(value['actionDecisionReceiptRef'])) return false;
+  if (value['actionDecisionReceiptDigest'] !== undefined && !isText(value['actionDecisionReceiptDigest'])) return false;
+  if ((value['actionDecisionReceiptRef'] === undefined) !== (value['actionDecisionReceiptDigest'] === undefined)) return false;
   if (!['expectedTaskStateVersion', 'expectedControlVersion', 'expectedEpoch'].every((key) =>
     typeof value[key] === 'number' && Number.isSafeInteger(value[key]) && (value[key] as number) >= 0)) return false;
   if (value['planApplicability'] !== 'approved-plan' && value['planApplicability'] !== 'pre-plan-diagnostic') return false;
@@ -125,10 +128,26 @@ function checkRepositoryBindings(
   if (computeCanonicalSha256(input['policyAuthorityRef']) !== computeCanonicalSha256(trust.policyAuthorityRef)) errors.push(err('policyAuthorityRef', 'POLICY_AUTHORITY_MISMATCH'));
   const receipt = input['policyEvaluationReceipt'] as Record<string, unknown>;
   if (receipt['receiptId'] !== trust.policyEvaluationReceiptRef) errors.push(err('policyEvaluationReceipt.receiptId', 'EVALUATION_RECEIPT_MISMATCH'));
-  if (receipt['receiptDigest'] !== trust.policyEvaluationReceiptDigest) errors.push(err('policyEvaluationReceipt.receiptDigest', 'EVALUATION_RECEIPT_MISMATCH'));
+  const receiptBody = { ...receipt };
+  delete receiptBody['receiptDigest'];
+  if (receipt['receiptDigest'] !== trust.policyEvaluationReceiptDigest ||
+    computeCanonicalSha256(receiptBody) !== trust.policyEvaluationReceiptDigest) {
+    errors.push(err('policyEvaluationReceipt.receiptDigest', 'EVALUATION_RECEIPT_DIGEST_MISMATCH'));
+  }
   if (receipt['freshnessContextDigest'] !== trust.freshnessContextDigest) errors.push(err('policyEvaluationReceipt.freshnessContextDigest', 'FRESHNESS_CONTEXT_MISMATCH'));
   const decision = input['actionDecisionReceipt'];
-  if (isRecord(decision) && decision['evaluationReceiptRef'] !== trust.policyEvaluationReceiptRef) errors.push(err('actionDecisionReceipt.evaluationReceiptRef', 'EVALUATION_RECEIPT_MISMATCH'));
+  if (receipt['result'] === 'APPROVAL_REQUIRED') {
+    if (!isText(trust.actionDecisionReceiptRef) || !isText(trust.actionDecisionReceiptDigest)) {
+      errors.push(err('trustedContext.actionDecisionReceiptRef', 'ACTION_DECISION_BINDING_REQUIRED'));
+    }
+    if (isRecord(decision)) {
+      if (decision['decisionId'] !== trust.actionDecisionReceiptRef) errors.push(err('actionDecisionReceipt.decisionId', 'ACTION_DECISION_MISMATCH'));
+      if (decision['decisionDigest'] !== trust.actionDecisionReceiptDigest) errors.push(err('actionDecisionReceipt.decisionDigest', 'ACTION_DECISION_MISMATCH'));
+      if (decision['evaluationReceiptRef'] !== trust.policyEvaluationReceiptRef) errors.push(err('actionDecisionReceipt.evaluationReceiptRef', 'EVALUATION_RECEIPT_MISMATCH'));
+    }
+  } else if (isRecord(decision) && decision['evaluationReceiptRef'] !== trust.policyEvaluationReceiptRef) {
+    errors.push(err('actionDecisionReceipt.evaluationReceiptRef', 'EVALUATION_RECEIPT_MISMATCH'));
+  }
   if (trust.planApplicability === 'approved-plan') {
     if (input['planBindingDigest'] !== trust.planBindingDigest) errors.push(err('planBindingDigest', 'PLAN_BINDING_MISMATCH'));
     if (input['planDecisionRef'] !== trust.planDecisionRef) errors.push(err('planDecisionRef', 'PLAN_DECISION_MISMATCH'));

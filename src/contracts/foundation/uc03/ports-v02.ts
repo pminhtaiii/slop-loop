@@ -75,6 +75,8 @@ export interface RepositoryAdmissionTrustedContextV02 {
   readonly policyAuthorityRef: PolicyAuthorityRefV02;
   readonly policyEvaluationReceiptRef: string;
   readonly policyEvaluationReceiptDigest: string;
+  readonly actionDecisionReceiptRef?: string | undefined;
+  readonly actionDecisionReceiptDigest?: string | undefined;
   readonly freshnessContextDigest: string;
   readonly executionProfile: {
     readonly isolationProfileRef: string;

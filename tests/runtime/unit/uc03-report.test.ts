@@ -44,6 +44,7 @@ import {
   type BuildFinalReportInput,
   type CreateMilestoneInput,
 } from '../../../src/uc03/report.ts';
+import { reviewSnapshot, verificationSnapshot } from '../../../src/uc03/report/sanitize.ts';
 import type { TrustedReviewRecord, CompletionPredicateInput } from '../../../src/uc03/verification.ts';
 import {
   createFixtureBugTask,
@@ -1155,6 +1156,20 @@ test('formatReportMarkdown: formats complete report without secrets or raw reaso
   assert.ok(!markdown.includes('thinking'), 'Markdown must not mention internal thinking');
 });
 
+test('formatReportMarkdown: diff fence is longer than every embedded backtick run', () => {
+  const fixture = createValidReportingFixture();
+  const embeddedRun = '`'.repeat(4);
+  const report = buildFinalReport({
+    ...fixture,
+    patchContent: `--- a/src/calculator.py\n+++ b/src/calculator.py\n+const marker = ${embeddedRun}inside${embeddedRun};\n`,
+  });
+  const markdown = formatReportMarkdown(report);
+  const longestRun = Math.max(0, ...Array.from(report.diff.patch?.matchAll(/`+/g) ?? [], ([run]) => run.length));
+  const fence = '`'.repeat(Math.max(3, longestRun + 1));
+
+  assert.ok(markdown.includes(`${fence}diff\n${report.diff.patch}\n${fence}`));
+});
+
 test('formatReportMarkdown: requires completion to match its delivery and evidence bindings', () => {
   const fixture = createValidReportingFixture();
   const incomplete = buildFinalReport({ task: fixture.task, state: fixture.state });
@@ -1506,4 +1521,96 @@ test('formatReportMarkdown rejects unissued proxies before reading caller fields
 
   assertSanitizedReportFailure(() => formatReportMarkdown(unissued), 'Invalid report', marker);
   assert.equal(getterReads, 0);
+});
+
+test('verificationSnapshot returns detached results and reference arrays from its input snapshot', () => {
+  const fixture = createValidReportingFixture();
+  const fixtureResult = fixture.verificationResults[0];
+  assert.ok(fixtureResult);
+  const testedIds = [...fixtureResult.testedIds];
+  const diagnosticRefs = ['diag-report-snapshot-001'];
+  const callerResult: VerificationResult = {
+    ...fixtureResult,
+    testedIds,
+    diagnosticRefs,
+  };
+
+  const snapshot = verificationSnapshot([callerResult]);
+  assert.equal(snapshot.valid, true);
+  const snapshotResult = snapshot.results[0];
+  assert.ok(snapshotResult);
+  assert.notEqual(snapshotResult.testedIds, testedIds);
+  assert.notEqual(snapshotResult.diagnosticRefs, diagnosticRefs);
+  testedIds[0] = 'forged-after-snapshot';
+  diagnosticRefs.push('forged-after-snapshot');
+  assert.deepEqual(snapshotResult.testedIds, ['check-pytest-reproduction']);
+  assert.deepEqual(snapshotResult.diagnosticRefs, ['diag-report-snapshot-001']);
+  assert.deepEqual(snapshot.refs, [callerResult.evidenceId]);
+});
+
+test('reviewSnapshot returns detached findings and rejects caller getters and proxies safely', () => {
+  const fixture = createValidReportingFixture();
+  const findings = [{
+    file: 'src/calculator.py',
+    line: 3,
+    side: 'new',
+    severity: 'warning',
+    message: 'original finding',
+    evidenceRef: 'review-evidence-001',
+  }];
+  const callerReview = { ...fixture.reviewResult, status: 'findings', findings } as ReviewResult;
+  const snapshot = reviewSnapshot(callerReview);
+  assert.equal(snapshot.valid, true);
+  const snapshotReview = snapshot.result;
+  const firstFinding = findings[0];
+  assert.ok(snapshotReview);
+  assert.ok(firstFinding);
+  assert.notEqual(snapshotReview.findings, findings);
+  firstFinding.message = 'mutated after snapshot';
+  const snapshotFinding = snapshotReview.findings[0];
+  assert.ok(snapshotFinding);
+  assert.equal(snapshotFinding.message, 'original finding');
+
+  let getterReads = 0;
+  const getterReview = { ...fixture.reviewResult } as ReviewResult;
+  Object.defineProperty(getterReview, 'reviewId', {
+    enumerable: true,
+    get() {
+      getterReads++;
+      throw new Error('caller getter must not escape');
+    },
+  });
+  assert.equal(reviewSnapshot(getterReview).valid, false);
+  assert.equal(getterReads, 0);
+
+  const proxyReview = new Proxy(fixture.reviewResult, {
+    getOwnPropertyDescriptor() {
+      throw new Error('caller proxy must fail closed');
+    },
+  });
+  assert.equal(reviewSnapshot(proxyReview).valid, false);
+});
+
+test('verificationSnapshot fails closed on result getters and proxy traps', () => {
+  const fixture = createValidReportingFixture();
+  let getterReads = 0;
+  const fixtureResult = fixture.verificationResults[0];
+  assert.ok(fixtureResult);
+  const getterResult = { ...fixtureResult } as VerificationResult;
+  Object.defineProperty(getterResult, 'testedIds', {
+    enumerable: true,
+    get() {
+      getterReads++;
+      throw new Error('caller getter must not escape');
+    },
+  });
+  assert.equal(verificationSnapshot([getterResult]).valid, false);
+  assert.equal(getterReads, 0);
+
+  const proxyResult = new Proxy(fixtureResult, {
+    getOwnPropertyDescriptor() {
+      throw new Error('caller proxy must fail closed');
+    },
+  });
+  assert.equal(verificationSnapshot([proxyResult]).valid, false);
 });

@@ -456,7 +456,12 @@ export function formatReportMarkdown(report: FinalReport): string {
     ];
 
     if (patch?.sanitizedContent) {
-      lines.push('```diff', patch.sanitizedContent, '```');
+      let longestBacktickRun = 0;
+      for (const [run] of patch.sanitizedContent.matchAll(/`+/g)) {
+        longestBacktickRun = Math.max(longestBacktickRun, run.length);
+      }
+      const fence = '`'.repeat(Math.max(3, longestBacktickRun + 1));
+      lines.push(`${fence}diff`, patch.sanitizedContent, fence);
       if (report.diff.truncated === true || patch.truncated) {
         lines.push('> *Note: Diff output was truncated to stay within bounded diagnostic limits.*');
       }
