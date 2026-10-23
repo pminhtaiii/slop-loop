@@ -1305,6 +1305,28 @@ export class MemoryStatePortV02 implements StatePortV02 {
     return staged;
   }
 
+  private observedCommandAccountingMatches(
+    claim: StoredClaimRecordV02,
+    predecessor: AttemptOutcomeReceiptV02,
+  ): boolean {
+    if (claim.context.subjectKind !== 'repository-action' || claim.context.action.kind !== 'run_command') return true;
+    if (predecessor.subjectKind !== 'repository-action' || predecessor.repositoryOperation !== 'run-command' ||
+      predecessor.outcome !== 'observed' || predecessor.proposedEffects.accounting.disposition !== 'settle' ||
+      !this.equal(predecessor.proposedEffects.accounting.reservationRefs, claim.receipt.reservationRefs) ||
+      !this.equal(claim.receipt.reservationRefs, claim.context.reservationRefs)) return false;
+
+    const specs = this.repositoryResourceSpecs(claim.context);
+    const initialLedgers = claim.taskSnapshot.budgetLedgers ?? [];
+    if (!specs) return false;
+    return specs.every((spec) => {
+      const initial = initialLedgers.find((ledger) => ledger.scope === spec.scope && ledger.kind === spec.kind);
+      const reserved = initial && this.stageReservation(initial, spec, 'reserve');
+      const expected = reserved && this.stageReservation(reserved, spec, 'settle');
+      const current = this.underlying.getLedgers().find((ledger) => ledger.scope === spec.scope && ledger.kind === spec.kind);
+      return Boolean(expected && current && this.equal(current, expected));
+    });
+  }
+
   private commitLedgers(staged: ReadonlyMap<string, BudgetLedger>): void {
     for (const ledger of staged.values()) this.underlying.internalSetLedger(ledger);
   }
@@ -1603,6 +1625,7 @@ export class MemoryStatePortV02 implements StatePortV02 {
       const evidenceRefs = predecessor.evidenceRefs;
       const validation = validateAttemptReconciliationReceiptV02(receipt, this.reconciliationContext(claim, attempt, predecessor, receipt, task, evidenceRefs));
       if (!validation.ok) return { outcome: 'conflict', receiptId: receipt.reconciliationId };
+      if (!this.observedCommandAccountingMatches(claim, predecessor)) return { outcome: 'conflict', receiptId: receipt.reconciliationId };
 
       const repairPatch = this.isRepairPatch(claim.context);
       const diagnosticPatch = this.isDiagnosticPatch(claim.context);
@@ -1622,13 +1645,6 @@ export class MemoryStatePortV02 implements StatePortV02 {
         return { outcome: 'conflict', receiptId: receipt.reconciliationId };
       }
 
-      let staged = new Map<string, BudgetLedger>();
-      if (claim.context.subjectKind === 'repository-action' && claim.context.action.kind === 'run_command') {
-        const settled = this.stageClaimReservations(claim.context, 'settle');
-        if (!settled) return { outcome: 'conflict', receiptId: receipt.reconciliationId };
-        staged = settled;
-      }
-      this.commitLedgers(staged);
       if (nextTask) this.underlying.internalSetTask({ ...nextTask, budgetLedgers: [...this.underlying.getLedgers()] });
       this.currentControlVersion++;
       claim.status = 'settled';

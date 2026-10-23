@@ -36,7 +36,7 @@ export function validatePolicyEvaluationReceipt(input: unknown): ValidationResul
     addError(errors, `${path}.result`, 'INVALID_RESULT', 'result must be ALLOWED, APPROVAL_REQUIRED, or FORBIDDEN');
   }
 
-  if (typeof input['receiptDigest'] === 'string' && /^sha256:[0-9a-f]{64}$/.test(input['receiptDigest'])) {
+  if (errors.length === 0 && typeof input['receiptDigest'] === 'string' && /^sha256:[0-9a-f]{64}$/.test(input['receiptDigest'])) {
     const computed = computePolicyEvaluationReceiptDigest(input);
     if (input['receiptDigest'] !== computed) {
       addError(errors, `${path}.receiptDigest`, 'RECEIPT_DIGEST_MISMATCH', 'receiptDigest does not match canonical digest');
@@ -76,7 +76,7 @@ export function validateActionDecisionReceipt(input: unknown): ValidationResult<
     addError(errors, `${path}.reason`, 'INVALID_TEXT', 'reason must be a non-empty string');
   }
 
-  if (typeof input['decisionDigest'] === 'string' && /^sha256:[0-9a-f]{64}$/.test(input['decisionDigest'])) {
+  if (errors.length === 0 && typeof input['decisionDigest'] === 'string' && /^sha256:[0-9a-f]{64}$/.test(input['decisionDigest'])) {
     const computed = computeActionDecisionReceiptDigest(input);
     if (input['decisionDigest'] !== computed) {
       addError(errors, `${path}.decisionDigest`, 'DECISION_DIGEST_MISMATCH', 'decisionDigest does not match canonical digest');
@@ -135,7 +135,7 @@ export function validateProviderAdmissionReceipt(input: unknown): ValidationResu
     addError(errors, `${path}.planApplicability`, 'INVALID_PLAN_APPLICABILITY', 'planApplicability must be pre-plan-diagnostic or approved-plan');
   }
 
-  if (typeof input['receiptDigest'] === 'string' && /^sha256:[0-9a-f]{64}$/.test(input['receiptDigest'])) {
+  if (errors.length === 0 && typeof input['receiptDigest'] === 'string' && /^sha256:[0-9a-f]{64}$/.test(input['receiptDigest'])) {
     const computed = computeProviderAdmissionReceiptDigest(input);
     if (input['receiptDigest'] !== computed) {
       addError(errors, `${path}.receiptDigest`, 'RECEIPT_DIGEST_MISMATCH', 'receiptDigest does not match canonical digest');
@@ -240,7 +240,7 @@ export function validateClaimClosureReceipt(input: unknown): ValidationResult<Cl
     });
   }
 
-  if (typeof input['receiptDigest'] === 'string' && /^sha256:[0-9a-f]{64}$/.test(input['receiptDigest'])) {
+  if (errors.length === 0 && typeof input['receiptDigest'] === 'string' && /^sha256:[0-9a-f]{64}$/.test(input['receiptDigest'])) {
     const computed = computeClaimClosureReceiptDigest(input);
     if (input['receiptDigest'] !== computed) {
       addError(errors, `${path}.receiptDigest`, 'RECEIPT_DIGEST_MISMATCH', 'receiptDigest does not match canonical digest');

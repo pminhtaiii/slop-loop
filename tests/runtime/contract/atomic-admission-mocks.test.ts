@@ -1619,6 +1619,125 @@ test('Journal R2: repository command reserves and settles only configured execut
   assert.deepEqual(after.filter((ledger) => ledger.kind === 'tokens' || ledger.kind === 'cost'), tokenCostBefore);
 });
 
+test('Journal R2: observed command recovery settles same-version drift without charging twice', async () => {
+  const context = createTestRepositoryCommandAdmissionContextV02({
+    reservationRefs: ['res-task-cpu-drift-r2', 'res-run-output-drift-r2'],
+  });
+  const initial = createTestAdmissionTaskStateV02(context);
+  const state: TaskState = {
+    ...initial,
+    budgetLedgers: [
+      ...(initial.budgetLedgers ?? []),
+      makeTestLedger('task', 'maxCpuSeconds', 10),
+      makeTestLedger('run', 'maxOutputBytes', 65_536),
+    ],
+  };
+  const port = createPort(context, { initialTaskState: state });
+  const snapshot = async () => ({
+    task: await port.loadTask(context.taskId),
+    journal: port.getJournalSnapshot(),
+    ledgers: port.getLedgers(),
+  });
+  const providerLedgersBefore = port.getLedgers().filter((ledger) => ledger.kind === 'tokens' || ledger.kind === 'cost');
+  const claim = await port.claim(context);
+  assert.equal(isNeutralClaimReceiptV02(claim), false);
+  const actor = createTestExecutorIdentityV02({ payloadDigest: context.actionDigest });
+  const attempt = await port.beginAttempt(claim.claimId, actor);
+  assert.equal(isNeutralAttemptReceiptV02(attempt), false);
+  const afterAttempt = await port.loadTask(context.taskId);
+  assert.ok(afterAttempt);
+
+  const driftNode: TaskState['node'] = context.runnableNode === 'Repair' ? 'Investigate' : 'Repair';
+  port.getUnderlying().internalSetTask({ ...afterAttempt, node: driftNode });
+  const beforeRecord = await port.loadTask(context.taskId);
+  assert.ok(beforeRecord);
+  assert.equal(beforeRecord.stateVersion, attempt.postBeginTaskStateVersion);
+  assert.notEqual(beforeRecord.node, context.runnableNode);
+
+  const outcome = createTestRepositoryOutcomeReceiptV02(claim, attempt, context);
+  assert.equal((await port.recordOutcome(outcome)).outcome, 'recorded-unsettled');
+  const afterRecord = await snapshot();
+  assert.ok(afterRecord.task);
+  assert.equal(afterRecord.task.stateVersion, attempt.postBeginTaskStateVersion);
+  assert.equal(afterRecord.task.node, driftNode);
+  assert.equal(afterRecord.journal.claims.find((item) => item.claimId === claim.claimId)?.status, 'observed-unsettled');
+  assert.equal(afterRecord.journal.attempts.find((item) => item.attemptId === attempt.attemptId)?.status, 'observed-unsettled');
+  assert.equal(afterRecord.journal.activeClaimId, claim.claimId);
+  assert.equal(afterRecord.journal.outcomes.some((item) => item.receiptId === outcome.receiptId && item.outcome === 'observed'), true);
+  assert.deepEqual(afterRecord.ledgers.filter((ledger) => ledger.kind === 'maxCpuSeconds' || ledger.kind === 'maxOutputBytes').map(({ scope, kind, consumed, reservations }) => ({ scope, kind, consumed, reservations })), [
+    { scope: 'task', kind: 'maxCpuSeconds', consumed: 10, reservations: [] },
+    { scope: 'run', kind: 'maxOutputBytes', consumed: 65_536, reservations: [] },
+  ]);
+  assert.deepEqual(afterRecord.ledgers.filter((ledger) => ledger.kind === 'tokens' || ledger.kind === 'cost'), providerLedgersBefore);
+
+  assert.deepEqual(await port.recordOutcome(outcome), { outcome: 'already-recorded', receiptId: outcome.receiptId });
+  assert.deepEqual(await snapshot(), afterRecord, 'outcome replay reports status without changing persisted state');
+
+  const incompatibleRecovery = createTestObservedReconciliationReceiptV02(outcome, claim, attempt, context, {
+    reconciliationId: 'recon-command-incompatible-current-r2',
+    expectedCurrentTaskStateVersion: beforeRecord.stateVersion,
+    expectedCurrentControlVersion: afterRecord.journal.controlVersion,
+  });
+  const beforeIncompatibleRecovery = await snapshot();
+  assert.equal((await port.reconcileObservedOutcome(incompatibleRecovery)).outcome, 'conflict');
+  assert.deepEqual(await snapshot(), beforeIncompatibleRecovery, 'incompatible current task state refuses without effects');
+
+  port.getUnderlying().internalSetTask({ ...beforeRecord, node: afterAttempt.node });
+  assert.equal(await port.setTaskControl(context.taskId, 'paused', 'pause-command-recovery-r2'), true);
+  const compatibleRecovery = createTestObservedReconciliationReceiptV02(outcome, claim, attempt, context, {
+    reconciliationId: 'recon-command-compatible-r2',
+    expectedCurrentTaskStateVersion: attempt.postBeginTaskStateVersion,
+    expectedCurrentControlVersion: port.getJournalSnapshot().controlVersion,
+  });
+
+  const invalidPredecessorBase = {
+    ...compatibleRecovery,
+    reconciliationId: 'recon-command-invalid-predecessor-r2',
+    predecessorReceiptId: 'outcome-command-unrecorded-r2',
+    reconciliationDigest: '',
+  };
+  const invalidPredecessor = {
+    ...invalidPredecessorBase,
+    reconciliationDigest: computeReconciliationDigest(invalidPredecessorBase),
+  } as AttemptReconciliationReceiptV02;
+  const beforeInvalidPredecessor = await snapshot();
+  assert.equal((await port.reconcileObservedOutcome(invalidPredecessor)).outcome, 'conflict');
+  assert.deepEqual(await snapshot(), beforeInvalidPredecessor, 'unknown predecessor refuses without effects');
+
+  const invalidAccountingBase = {
+    ...compatibleRecovery,
+    reconciliationId: 'recon-command-invalid-accounting-r2',
+    accountingIdentityDigest: computeCanonicalSha256('wrong-command-accounting-identity'),
+    reconciliationDigest: '',
+  };
+  const invalidAccounting = {
+    ...invalidAccountingBase,
+    reconciliationDigest: computeReconciliationDigest(invalidAccountingBase),
+  } as AttemptReconciliationReceiptV02;
+  const beforeInvalidAccounting = await snapshot();
+  assert.equal((await port.reconcileObservedOutcome(invalidAccounting)).outcome, 'conflict');
+  assert.deepEqual(await snapshot(), beforeInvalidAccounting, 'untrusted accounting identity refuses without effects');
+
+  const beforeRecovery = await snapshot();
+  const recoveryResult = await port.reconcileObservedOutcome(compatibleRecovery);
+  assert.equal(recoveryResult.outcome, 'settled');
+  const afterRecovery = await snapshot();
+  assert.ok(afterRecovery.task);
+  assert.equal(afterRecovery.task.stateVersion, attempt.postBeginTaskStateVersion);
+  assert.equal(afterRecovery.task.node, afterAttempt.node);
+  assert.equal(afterRecovery.journal.claims.find((item) => item.claimId === claim.claimId)?.status, 'settled');
+  assert.equal(afterRecovery.journal.attempts.find((item) => item.attemptId === attempt.attemptId)?.status, 'settled');
+  assert.equal(afterRecovery.journal.activeClaimId, null);
+  assert.equal(afterRecovery.journal.reconciliations.filter((item) => item.reconciliationId === compatibleRecovery.reconciliationId).length, 1);
+  assert.equal(afterRecovery.journal.mode, 'paused');
+  assert.equal(afterRecovery.journal.holdRef, 'pause-command-recovery-r2');
+  assert.deepEqual(afterRecovery.ledgers, beforeRecovery.ledgers, 'recovery closes the claim without settling command resources again');
+  assert.deepEqual(afterRecovery.ledgers.filter((ledger) => ledger.kind === 'tokens' || ledger.kind === 'cost'), providerLedgersBefore);
+
+  assert.deepEqual(await port.reconcileObservedOutcome(compatibleRecovery), { outcome: 'settled', receiptId: compatibleRecovery.reconciliationId });
+  assert.deepEqual(await snapshot(), afterRecovery, 'exact reconciliation replay is status-only');
+});
+
 test('Journal R2: command resource reservation mismatch refuses without partial ledger changes', async () => {
   const context = createTestRepositoryCommandAdmissionContextV02({ reservationRefs: ['res-task-cpu-mismatch-r2'] });
   const initial = createTestAdmissionTaskStateV02(context);

@@ -775,6 +775,96 @@ test('v0.2 ClaimClosureReceipt validator rejects attemptId, cross-branch fields,
   }
 });
 
+function assertTypedReceiptRejection(
+  validate: (input: unknown) => { ok: boolean; errors?: readonly unknown[] },
+  input: unknown,
+  context: string,
+): void {
+  let result: { ok: boolean; errors?: readonly unknown[] } | undefined;
+  assert.doesNotThrow(() => {
+    result = validate(input);
+  }, `${context}: malformed receipt should return a typed validation result`);
+  assert.equal(result?.ok, false, `${context}: malformed receipt should be rejected`);
+  assert.ok(Array.isArray(result?.errors) && result.errors.length > 0, `${context}: rejection should include validation errors`);
+}
+
+const v02ReceiptValidators = [
+  ['PolicyEvaluationReceipt', validatePolicyEvaluationReceipt, validPolicyEvaluationReceipt],
+  ['ActionDecisionReceipt', validateActionDecisionReceipt, validActionDecisionReceipt],
+  ['ProviderAdmissionReceipt', validateProviderAdmissionReceipt, validProviderAdmissionReceiptCoder],
+  ['ClaimClosureReceipt', validateClaimClosureReceipt, validClaimClosureReceipt],
+] as const;
+
+for (const [name, validate, receipt] of v02ReceiptValidators) {
+  test(`v0.2 ${name} rejects nested accessors before digesting`, () => {
+    let getterReads = 0;
+    const nested: Record<string, unknown> = {};
+    Object.defineProperty(nested, 'poison', {
+      enumerable: true,
+      get() {
+        getterReads += 1;
+        return 'must not be read';
+      },
+    });
+
+    assertTypedReceiptRejection(validate, { ...receipt, malformedExtension: nested }, name);
+    assert.equal(getterReads, 0, `${name}: nested getter must not be invoked`);
+  });
+
+  test(`v0.2 ${name} rejects nested cycles before digesting`, () => {
+    const nested: Record<string, unknown> = {};
+    nested['self'] = nested;
+
+    assertTypedReceiptRejection(validate, { ...receipt, malformedExtension: nested }, name);
+  });
+}
+
+const claimClosureNestedCandidates = [
+  ['fencedExecutorIdentity.adapterIdentity', (value: unknown) => ({
+    ...validClaimClosureReceipt,
+    fencedExecutorIdentity: { ...validClaimClosureReceipt.fencedExecutorIdentity, adapterIdentity: value },
+  })],
+  ['pauseOrDenialEvent.eventKind', (value: unknown) => ({
+    ...validClaimClosureReceipt,
+    pauseOrDenialEvent: { ...validClaimClosureReceipt.pauseOrDenialEvent, eventKind: value },
+  })],
+  ['noAttemptProof.journalRef', (value: unknown) => ({
+    ...validClaimClosureReceipt,
+    noAttemptProof: { ...validClaimClosureReceipt.noAttemptProof, journalRef: value },
+  })],
+  ['reservationDispositions[0].reservationRef', (value: unknown) => ({
+    ...validClaimClosureReceipt,
+    reservationDispositions: [
+      { ...validClaimClosureReceipt.reservationDispositions[0], reservationRef: value },
+      ...validClaimClosureReceipt.reservationDispositions.slice(1),
+    ],
+  })],
+] as const;
+
+for (const [path, makeCandidate] of claimClosureNestedCandidates) {
+  test(`v0.2 ClaimClosureReceipt rejects nested accessor at ${path} before digesting`, () => {
+    let getterReads = 0;
+    const nested: Record<string, unknown> = {};
+    Object.defineProperty(nested, 'poison', {
+      enumerable: true,
+      get() {
+        getterReads += 1;
+        return 'must not be read';
+      },
+    });
+
+    assertTypedReceiptRejection(validateClaimClosureReceipt, makeCandidate(nested), path);
+    assert.equal(getterReads, 0, `${path}: nested getter must not be invoked`);
+  });
+
+  test(`v0.2 ClaimClosureReceipt rejects nested cycle at ${path} before digesting`, () => {
+    const nested: Record<string, unknown> = {};
+    nested['self'] = nested;
+
+    assertTypedReceiptRejection(validateClaimClosureReceipt, makeCandidate(nested), path);
+  });
+}
+
 test('v0.2 DispatchClaimV02 validator accepts repository and provider claims', () => {
   assert.equal(validateDispatchClaimV02(validDispatchClaimV02Repo).ok, true);
   assert.equal(validateDispatchClaimV02(validDispatchClaimV02Provider).ok, true);
