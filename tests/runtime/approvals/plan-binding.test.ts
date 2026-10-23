@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { evaluatePlanBinding } from '../../../src/approvals/plan-binding.ts';
+import {
+  computePlanBindingDigest,
+  evaluatePlanApplicabilityV02,
+  evaluatePlanBinding,
+} from '../../../src/approvals/plan-binding.ts';
 
 const digest = `sha256:${'a'.repeat(64)}`;
 const binding = { decisionId: 'decision-1', actionKind: 'fix_plan', normalizedActionDigest: digest, taskId: 'task-1', workspaceId: 'workspace-1', repositoryRevisionDigest: digest, policyId: 'policy-1', policyVersion: '1', planVersion: 1, strategyDigest: digest, baselineRef: 'baseline-1', evidenceRefs: ['evidence-1'], criteriaDigest: digest, checkSetDigest: digest, status: 'approved' };
@@ -52,4 +56,96 @@ test('freshness context rejects fields outside the canonical vocabulary', () => 
   for (const field of ['unexpectedAuthority', 'approval', 'constructor']) {
     assert.deepEqual(evaluatePlanBinding(binding, { ...context, [field]: true }), { status: 'denied', reasonCodes: ['unknown-binding-context-field'] });
   }
+});
+
+test('computePlanBindingDigest calculates canonical sha256 for approved plan', () => {
+  const planInput = {
+    taskId: 'task-1',
+    planVersion: 1,
+    strategyDigest: digest,
+    baselineRef: 'baseline-1',
+    evidenceRefs: ['evidence-1'],
+    criteriaDigest: digest,
+    checkSetDigest: digest,
+    decisionRef: 'decision-1',
+  };
+  const computed = computePlanBindingDigest(planInput);
+  assert.equal(typeof computed, 'string');
+  assert.match(computed, /^sha256:[0-9a-f]{64}$/);
+});
+
+test('v0.2 plan applicability: pre-plan-diagnostic and approved-plan validation', () => {
+  const planInput = {
+    taskId: 'task-1',
+    planVersion: 1,
+    strategyDigest: digest,
+    baselineRef: 'baseline-1',
+    evidenceRefs: ['evidence-1'],
+    criteriaDigest: digest,
+    checkSetDigest: digest,
+    decisionRef: 'decision-1',
+  };
+  const planDigest = computePlanBindingDigest(planInput);
+
+  // Pre-plan diagnostic valid vector
+  const prePlanValid = {
+    planApplicability: 'pre-plan-diagnostic' as const,
+    taskNode: 'Investigate' as const,
+    diagnosticPurpose: 'reproduction_check',
+    taskCriteriaDigest: digest,
+    checkSetDigest: digest,
+    testPath: 'tests/test_parser.py',
+    checkId: 'parser-reproduction',
+  };
+  const prePlanRes = evaluatePlanApplicabilityV02(prePlanValid);
+  assert.equal(prePlanRes.status, 'valid');
+
+  // Approved-plan valid vector
+  const approvedPlanValid = {
+    planApplicability: 'approved-plan' as const,
+    planBindingDigest: planDigest,
+    planDecisionRef: 'decision-1',
+    planBinding: planInput,
+  };
+  const approvedRes = evaluatePlanApplicabilityV02(approvedPlanValid);
+  assert.equal(approvedRes.status, 'valid');
+});
+
+test('pre-plan diagnostics require the Investigate node and exact criteria/check/path bindings', () => {
+  const valid = {
+    planApplicability: 'pre-plan-diagnostic' as const,
+    taskNode: 'Investigate' as const,
+    diagnosticPurpose: 'reproduction_check',
+    taskCriteriaDigest: digest,
+    checkSetDigest: digest,
+    testPath: 'tests/test_parser.py',
+    checkId: 'parser-reproduction',
+  };
+  for (const invalid of [
+    { ...valid, taskNode: 'Verify' },
+    { ...valid, taskCriteriaDigest: undefined },
+    { ...valid, checkSetDigest: 'missing' },
+    { ...valid, diagnosticPurpose: '' },
+    { ...valid, testPath: '' },
+    { ...valid, checkId: 'bad id' },
+    { ...valid, planBinding: { decisionRef: 'decision-1' } },
+    { ...valid, inventedAuthority: true },
+  ]) assert.equal(evaluatePlanApplicabilityV02(invalid).status, 'denied');
+});
+
+test('approved-plan applicability rejects a foreign decision reference and unknown plan fields', () => {
+  const planInput = {
+    taskId: 'task-1', planVersion: 1, strategyDigest: digest, baselineRef: 'baseline-1',
+    evidenceRefs: ['evidence-1'], criteriaDigest: digest, checkSetDigest: digest, decisionRef: 'decision-1',
+  };
+  const planDigest = computePlanBindingDigest(planInput);
+  const valid = {
+    planApplicability: 'approved-plan' as const,
+    planBindingDigest: planDigest,
+    planDecisionRef: 'decision-1',
+    planBinding: planInput,
+  };
+  assert.equal(evaluatePlanApplicabilityV02({ ...valid, planDecisionRef: 'foreign-decision' }).status, 'denied');
+  assert.equal(evaluatePlanApplicabilityV02({ ...valid, planBinding: { ...planInput, unbound: true } }).status, 'denied');
+  assert.throws(() => computePlanBindingDigest({ ...planInput, unbound: true }));
 });

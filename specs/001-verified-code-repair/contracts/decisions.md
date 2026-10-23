@@ -6,6 +6,18 @@
 - **User Confirmation Provenance**: Confirmed directly by the user on 2026-10-16 in Asia/Saigon. The user confirmed that shared use-case owners (UC-04, UC-05) agreed to the current contract v0.1 definitions, and explicitly approved the bootstrap stack while confirming the scope amendment to defer finite production configuration choices until before real execution.
 - **Scope**: Phase 1 setup (T001 / T002 release). This document satisfies T001. Later implementation phases and real execution remain gated.
 
+## Phase 5 Continuation Authorization — 2026-10-23
+
+On 2026-10-23 (Asia/Saigon), the user requested implementation of Phase 5 of specification 001 beginning from T041. T041 is already complete as an intentional behavioral RED checkpoint. This instruction releases the remaining mock-backed atomic-admission work T042–T066 and T022 on `feat/uc03-controlled-execution-phase5`, following the canonical dependency graph. It supersedes earlier unreleased wording for those tasks only; task completion still requires integrated verification. Implementation uses Gemini 3.8 Flash High, independent reviews use GPT-6.1-Sol, and review repairs use GPT-6-Luna with max reasoning. These contributor model choices do not select production providers. Real-only T024/T025 prerequisites, external adapter delivery, production configuration, actual containment/restart evidence, and Phase 6 remain gated. The existing approved contract and task acceptance criteria define the test seams.
+
+The user subsequently clarified that code review is to run only at the end of the authorized implementation, and authorized GPT-6-Luna with max reasoning for mechanical merger assignments. Intermediate integration uses ownership/handoff verification and focused checks; independent code review remains an end-of-implementation gate.
+
+The user then narrowed this run: complete T047–T048, perform the final reviews and fixes for this run's T042–T048 changes, and stop before T049. Do not start successor implementation in this run. This stopping point does not claim full Phase 5 completion; later mock-backed tasks remain unfinished, and real-execution gates remain intact.
+
+For these final review repairs, the user explicitly limited fixes to P0 and P1 findings and directed that P2 findings be skipped. Record lower-priority findings as deferred rather than expanding this run. Required mechanical commit gates remain applicable.
+
+After the reviewed local stopping point, the user requested a PR. Publication uses the fresh `feat/uc03-atomic-admission-journal` branch from fetched `origin/development`, preserving the prior branch and the reviewed source content. This releases publication of T042–T048 only, not successor implementation. Full publication gates and paired PR/CI accounting remain separate from the focused mock evidence.
+
 ## Phase 2 Authorization
 
 On 2026-10-16 (Asia/Saigon), the user authorized the next phase of the first specification: Phase 2, T003 canonical contract validators/conformance vectors and T004 controlled test-only port mocks. The integration branch is `feat/001-verified-code-repair-phase2`, created from the latest `origin/development`. The user approved using Gemini 3.8 Flash High with scoped repository content for small implementation assignments and requested independent GPT-6.1-Sol low-reasoning reviews. This contributor model selection does not select a production runtime provider. Phase 3 onward, real repository execution, and the deferred production choices remain separately gated. Existing accepted contract semantics and external ownership are unchanged.

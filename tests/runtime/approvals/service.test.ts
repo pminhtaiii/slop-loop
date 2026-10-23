@@ -1,8 +1,10 @@
+import { validatePolicyEvaluationReceipt, validateProviderAdmissionReceipt, validateActionDecisionReceipt, computePolicyEvaluationReceiptDigest } from '../../../src/contracts/approvals/contracts.ts';
+import { computePlanBindingDigest } from '../../../src/approvals/plan-binding.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { PolicyProfile } from '../../../src/contracts/approvals/contracts.ts';
+import type { ActionDecisionReceipt, PolicyProfile, ProviderAdmissionReceipt } from '../../../src/contracts/approvals/contracts.ts';
 import type { NormalizedAction } from '../../../src/contracts/foundation/uc03.ts';
-import { computeActionDigest, computeCanonicalSha256 } from '../../../src/contracts/foundation/uc03.ts';
+import { computeActionDigest, computeCanonicalSha256, computeRequestContentDigest } from '../../../src/contracts/foundation/uc03.ts';
 import { buildPresentation } from '../../../src/approvals/presentation.ts';
 import { ApprovalServiceError, createApprovalService } from '../../../src/approvals/service.ts';
 import { createMockApprovalStore } from '../support/uc05/mock-store.ts';
@@ -25,6 +27,12 @@ const action: NormalizedAction = { actionId: 'action-1', kind: 'run_command', ex
 const binding = { decisionId: 'decision-1', actionKind: 'action' as const, normalizedActionDigest: computeActionDigest(action), taskId: 'task-1', workspaceId: 'workspace-1', repositoryRevisionDigest: digest, policyId: 'policy-1', policyVersion: '1', status: 'pending' as const };
 const freshness = { currentTaskId: 'task-1', currentWorkspaceId: 'workspace-1', currentRepositoryRevisionDigest: digest, currentPolicyId: 'policy-1', currentPolicyVersion: '1', currentNormalizedActionDigest: computeActionDigest(action) };
 const elements = { action: 'Run focused tests', necessity: 'Verify the proposed repair', targets: ['tests/other.py'], consequences: 'Runs isolated tests', verificationStatus: 'Not yet executed' };
+
+function versionedRead<T>(service: object, methodName: string): (id: string) => Promise<T> {
+  const method: unknown = Reflect.get(service, methodName);
+  assert.ok(typeof method === 'function', `${methodName} is available on the v0.2 service`);
+  return id => Reflect.apply(method, service, [id]) as Promise<T>;
+}
 const input = { requestVersion: 1, action, binding, freshness, repositoryId: 'repository-1', continuationRef: 'continuation-1', policyIdentity: identity, elements };
 
 test('presentation binds five elements and complete exact command to the displayed digest', () => {
@@ -37,16 +45,69 @@ test('presentation binds five elements and complete exact command to the display
 
 function setup() {
   const store = createMockApprovalStore({ profile, initialControls: [{ schemaVersion: 'uc05-approval/0.1-draft', taskId: 'task-1', repositoryId: 'repository-1', workspaceId: 'workspace-1', version: 1, epoch: 1, mode: 'runnable', pendingDecisionId: null, continuationRef: null, reasonCode: 'ready', outstandingClaimRefs: [] }] });
-  let current: ApprovalContext = { action, freshness, runId: 'run-1', elements, facts: {
+  let current: ApprovalContext = { action, freshness, runId: 'run-1', elements, facts: ({
     taskId: 'task-1', repositoryId: 'repository-1', workspaceId: 'workspace-1', repositoryRevisionDigest: digest,
     policyIdentity: identity, registeredActionDigest: computeActionDigest(action), continuationRef: 'continuation-1', role: 'coder',
     safety: { workspaceContained: true, protectedContentAbsent: true, hiddenGradingAbsent: true, policyBypassAbsent: true, testsPreserved: true, commandSourceWritesAbsent: true, isolated: true },
     command: { executableRef: 'pytest', resolvedExecutable: 'pytest', workingDirectoryRef: 'repository-root', workingDirectory: '/workspace', constrainedCapability: 'constrained-tests' }, patch: null, plan: null,
-  } };
+    taskStateVersion: 1, taskNode: 'Investigate', planApplicability: 'pre-plan-diagnostic', diagnosticPurpose: 'reproduction_check',
+    taskCriteriaDigest: digest, checkSetDigest: digest, testPath: 'tests/other.py', checkId: 'baseline-tests',
+    planBindingDigest: null, planDecisionRef: null, providerRequest: null, runId: 'run-1',
+  } as unknown as ApprovalContext['facts']) };
   const context = { loadForAction: async () => current, loadForDecision: async () => current };
   const operator = { identity: { actorId: 'operator-1', channelRef: 'host-1', provenance: 'real' as const } };
   const service = createApprovalService({ taskId: 'task-1', profile, store, context, operator, now: () => '2026-10-19T00:00:00Z' });
   return { service, store, context, operator, setContext: (value: ApprovalContext) => { current = value; }, current: () => current };
+}
+
+function providerRequest(role: 'coder' | 'reviewer', applicability: 'pre-plan-diagnostic' | 'approved-plan', id: string) {
+  return {
+    providerRequestId: id, taskId: 'task-1', runId: 'run-1', role,
+    purpose: applicability === 'pre-plan-diagnostic' ? 'reproduction_check' : 'approved_fix_work',
+    providerId: 'provider-1', modelId: 'model-1', configId: identity.configId, pricingPolicyId: 'pricing-1',
+    contextDigest: digest, timeoutMs: 2_000, maxInputTokens: 100, maxOutputTokens: 100, maxBillableTokens: 220,
+    maxCostUsd: 0.25, reservationRef: `reservation-${id}`, dispatchState: 'reserved' as const,
+  };
+}
+
+function providerFacts(current: ApprovalContext, request: ReturnType<typeof providerRequest>, applicability: 'pre-plan-diagnostic' | 'approved-plan') {
+  const prePlan = applicability === 'pre-plan-diagnostic';
+  const bindingPlan = {
+    decisionId: 'plan-decision-1', actionKind: 'fix_plan' as const, normalizedActionDigest: digest,
+    taskId: 'task-1', workspaceId: 'workspace-1', repositoryRevisionDigest: digest, policyId: identity.policyId, policyVersion: identity.policyVersion,
+    status: 'approved' as const, planVersion: 1, strategyDigest: digest, baselineRef: 'baseline-1', evidenceRefs: ['evidence-1'],
+    criteriaDigest: digest, checkSetDigest: digest,
+  };
+  const plan = prePlan ? null : {
+    binding: bindingPlan,
+    context: {
+      currentTaskId: 'task-1', currentWorkspaceId: 'workspace-1', currentRepositoryRevisionDigest: digest,
+      currentPolicyId: identity.policyId, currentPolicyVersion: identity.policyVersion, currentNormalizedActionDigest: digest,
+      currentPlanVersion: 1, currentStrategyDigest: digest, currentBaselineRef: 'baseline-1', currentEvidenceRefs: ['evidence-1'],
+      currentCriteriaDigest: digest, currentCheckSetDigest: digest,
+    },
+    materialChange: false, replanSlot: null,
+  };
+  return {
+    ...current.facts,
+    role: request.role,
+    runId: request.runId,
+    taskNode: prePlan ? 'Investigate' : 'Patch',
+    planApplicability: applicability,
+    diagnosticPurpose: prePlan ? request.purpose : null,
+    taskCriteriaDigest: prePlan ? digest : null,
+    checkSetDigest: digest,
+    testPath: prePlan ? 'tests/other.py' : null,
+    checkId: prePlan ? 'provider-diagnostic' : null,
+    planBindingDigest: plan === null ? null : computePlanBindingDigest({
+      taskId: bindingPlan.taskId, planVersion: bindingPlan.planVersion, strategyDigest: bindingPlan.strategyDigest,
+      baselineRef: bindingPlan.baselineRef, evidenceRefs: bindingPlan.evidenceRefs, criteriaDigest: bindingPlan.criteriaDigest,
+      checkSetDigest: bindingPlan.checkSetDigest, decisionRef: bindingPlan.decisionId,
+    }),
+    planDecisionRef: plan?.binding.decisionId ?? null,
+    plan,
+    providerRequest: request,
+  };
 }
 
 test('a context exception cannot impersonate a deterministic stale binding assessment', async () => {
@@ -833,4 +894,293 @@ test('provider contexts reject arrays, accessors and incomplete fields before re
   assert.equal(getterReads, 0);
   assert.equal((await scenario.service.list('task-1')).control.mode, 'runnable');
   assert.equal(await scenario.service.classify(action), 'APPROVAL_REQUIRED');
+});
+test('v0.2 service: evaluatePolicy issues valid immutable PolicyEvaluationReceipt and respects pause', async () => {
+  const scenario = setup();
+  const beforeControl = scenario.store.loadTaskControl('task-1');
+  const beforeHistory = scenario.store.readHistory('task-1');
+  const callerDigest = `sha256:${'f'.repeat(64)}`;
+  const receipt = await scenario.service.evaluatePolicy(action, { decisionAuthorityGeneration: 999, freshnessContextDigest: callerDigest });
+  assert.equal(receipt.result, 'APPROVAL_REQUIRED');
+  assert.equal(receipt.decisionAuthorityGeneration, scenario.service.decisionAuthorityGeneration);
+  assert.equal(receipt.freshnessContextDigest, computeCanonicalSha256({ action, facts: scenario.current().facts, policyIdentity: identity, decisionAuthorityGeneration: 1 }));
+  assert.notEqual(receipt.freshnessContextDigest, callerDigest);
+  assert.equal(Object.isFrozen(receipt), true);
+  assert.equal(validatePolicyEvaluationReceipt(receipt).ok, true);
+  assert.deepEqual(scenario.store.loadTaskControl('task-1'), beforeControl);
+  assert.deepEqual(scenario.store.readHistory('task-1'), beforeHistory);
+  await scenario.service.requestDecision(binding);
+  await assert.rejects(
+    scenario.service.evaluatePolicy(action),
+    error => error instanceof ApprovalServiceError && error.outcome === 'paused'
+  );
+});
+
+test('v0.2 service: admitProvider binds every role/plan branch to trusted full request facts and service generation', async () => {
+  const scenario = setup();
+  const original = scenario.current();
+  for (const role of ['coder', 'reviewer'] as const) {
+    for (const applicability of ['pre-plan-diagnostic', 'approved-plan'] as const) {
+      const request = providerRequest(role, applicability, `provider-req-${role}-${applicability}`);
+      scenario.setContext({ ...original, facts: providerFacts(original, request, applicability) });
+      const receipt = await scenario.service.admitProvider(request, {
+        decisionAuthorityGeneration: 999,
+        planApplicability: applicability,
+        ...(applicability === 'pre-plan-diagnostic' ? { diagnosticPurpose: request.purpose, taskCriteriaDigest: digest } : {}),
+      });
+      assert.equal(receipt.role, role);
+      assert.equal(receipt.policyId, identity.policyId);
+      assert.equal(receipt.policyVersion, identity.policyVersion);
+      assert.equal(receipt.planApplicability, applicability);
+      assert.equal(receipt.decisionAuthorityGeneration, scenario.service.decisionAuthorityGeneration);
+      assert.equal(receipt.requestContentDigest, computeRequestContentDigest(request));
+      assert.equal(Object.isFrozen(receipt), true);
+      assert.equal(validateProviderAdmissionReceipt(receipt).ok, true);
+    }
+  }
+  scenario.setContext(original);
+  await scenario.service.requestDecision(binding);
+  await assert.rejects(
+    scenario.service.admitProvider(providerRequest('coder', 'approved-plan', 'provider-req-paused')),
+    error => error instanceof ApprovalServiceError && error.outcome === 'paused'
+  );
+});
+
+test('v0.2 service replays the retained provider receipt for the same caller receipt ID', async () => {
+  const scenario = setup();
+  const original = scenario.current();
+  const request = providerRequest('coder', 'pre-plan-diagnostic', 'provider-request-exact-replay');
+  scenario.setContext({ ...original, facts: providerFacts(original, request, 'pre-plan-diagnostic') });
+  const options = {
+    receiptId: 'caller-provider-receipt',
+    planApplicability: 'pre-plan-diagnostic' as const,
+    diagnosticPurpose: request.purpose,
+    taskCriteriaDigest: digest,
+  };
+
+  const first = await scenario.service.admitProvider(request, options);
+  const replay = await scenario.service.admitProvider(request, options);
+  assert.deepEqual(replay, first);
+  assert.equal(replay, first);
+});
+
+test('v0.2 service refuses a changed provider request that reuses a retained receipt ID without changing approval state', async () => {
+  const scenario = setup();
+  const original = scenario.current();
+  const request = providerRequest('reviewer', 'pre-plan-diagnostic', 'provider-request-collision');
+  scenario.setContext({ ...original, facts: providerFacts(original, request, 'pre-plan-diagnostic') });
+  const options = {
+    receiptId: 'caller-provider-receipt-collision',
+    planApplicability: 'pre-plan-diagnostic' as const,
+    diagnosticPurpose: request.purpose,
+    taskCriteriaDigest: digest,
+  };
+  const first = await scenario.service.admitProvider(request, options);
+  const beforeControl = scenario.store.loadTaskControl('task-1');
+  const beforeHistory = scenario.store.readHistory('task-1');
+  const changed = { ...request, contextDigest: `sha256:${'b'.repeat(64)}` };
+  scenario.setContext({ ...original, facts: providerFacts(original, changed, 'pre-plan-diagnostic') });
+
+  await assert.rejects(scenario.service.admitProvider(changed, options), error =>
+    error instanceof ApprovalServiceError && error.outcome === 'conflict'
+  );
+  assert.deepEqual(scenario.store.loadTaskControl('task-1'), beforeControl);
+  assert.deepEqual(scenario.store.readHistory('task-1'), beforeHistory);
+
+  scenario.setContext({ ...original, facts: providerFacts(original, request, 'pre-plan-diagnostic') });
+  const read = versionedRead<ProviderAdmissionReceipt>(scenario.service, 'readProviderAdmissionReceipt');
+  assert.equal(await read(first.receiptId), first);
+});
+
+test('v0.2 provider receipt lookup revalidates current trusted request and authority', async () => {
+  const scenario = setup();
+  const original = scenario.current();
+  const request = providerRequest('coder', 'approved-plan', 'provider-request-freshness');
+  scenario.setContext({ ...original, facts: providerFacts(original, request, 'approved-plan') });
+  const receipt = await scenario.service.admitProvider(request, { planApplicability: 'approved-plan' });
+  const read = versionedRead<ProviderAdmissionReceipt>(scenario.service, 'readProviderAdmissionReceipt');
+  assert.equal(await read(receipt.receiptId), receipt);
+  await assert.rejects(read('never-issued-provider-receipt'), error => error instanceof ApprovalServiceError && error.outcome === 'denied');
+
+  const beforeControl = scenario.store.loadTaskControl('task-1');
+  const beforeHistory = scenario.store.readHistory('task-1');
+  const changed = { ...request, maxInputTokens: request.maxInputTokens + 1 };
+  scenario.setContext({ ...original, facts: providerFacts(original, changed, 'approved-plan') });
+  await assert.rejects(read(receipt.receiptId), error => error instanceof ApprovalServiceError && error.outcome === 'stale');
+  assert.deepEqual(scenario.store.loadTaskControl('task-1'), beforeControl);
+  assert.deepEqual(scenario.store.readHistory('task-1'), beforeHistory);
+
+  scenario.setContext({ ...original, facts: providerFacts(original, request, 'approved-plan') });
+  assert.equal(await read(receipt.receiptId), receipt);
+});
+
+test('v0.2 service: a provider context load failure denies without fabricating trusted safety facts or changing state', async () => {
+  const scenario = setup();
+  const beforeControl = scenario.store.loadTaskControl('task-1');
+  const beforeHistory = scenario.store.readHistory('task-1');
+  const failedContextService = createApprovalService({
+    taskId: 'task-1', profile, store: scenario.store, operator: scenario.operator,
+    context: { ...scenario.context, loadForAction: async () => { throw new Error('provider context unavailable'); } },
+  });
+  await assert.rejects(failedContextService.admitProvider(providerRequest('coder', 'pre-plan-diagnostic', 'provider-req-no-context')),
+    error => error instanceof ApprovalServiceError && error.outcome === 'unavailable');
+  assert.deepEqual(scenario.store.loadTaskControl('task-1'), beforeControl);
+  assert.deepEqual(scenario.store.readHistory('task-1'), beforeHistory);
+});
+
+test('v0.2 service: malformed provider envelopes and accessor options deny before context reads or authority changes', async () => {
+  const scenario = setup();
+  const beforeControl = scenario.store.loadTaskControl('task-1');
+  const beforeHistory = scenario.store.readHistory('task-1');
+  let contextReads = 0;
+  let getterReads = 0;
+  const countingService = createApprovalService({
+    taskId: 'task-1', profile, store: scenario.store, operator: scenario.operator,
+    context: { ...scenario.context, loadForAction: async () => { contextReads += 1; return scenario.current(); } },
+  });
+  const request = providerRequest('coder', 'pre-plan-diagnostic', 'provider-req-invalid');
+  const accessorRequest = Object.defineProperty({ ...request }, 'providerId', { enumerable: true, get: () => { getterReads += 1; return 'provider-1'; } });
+  await assert.rejects(countingService.admitProvider(accessorRequest), error => error instanceof ApprovalServiceError && error.outcome === 'invalid');
+  const accessorOptions = Object.defineProperty({}, 'role', { enumerable: true, get: () => { getterReads += 1; return 'coder'; } });
+  await assert.rejects(countingService.admitProvider(request, accessorOptions as never), error => error instanceof ApprovalServiceError && error.outcome === 'invalid');
+  assert.equal(getterReads, 0);
+  assert.equal(contextReads, 0);
+  assert.deepEqual(scenario.store.loadTaskControl('task-1'), beforeControl);
+  assert.deepEqual(scenario.store.readHistory('task-1'), beforeHistory);
+});
+
+test('v0.2 service: issueActionDecision issues valid ActionDecisionReceipt for approved decision', async () => {
+  const scenario = setup();
+  const evaluation = await scenario.service.evaluatePolicy(action);
+  assert.equal(evaluation.result, 'APPROVAL_REQUIRED');
+  await scenario.service.requestDecision(binding);
+  const view = await scenario.service.show('task-1', 'decision-1');
+  await scenario.service.decide({
+    taskId: 'task-1',
+    decisionId: 'decision-1',
+    taskVersion: view.control.version,
+    requestVersion: 1,
+    presentationDigest: view.presentation.presentationDigest,
+    decision: 'approve',
+    responseKey: 'approve-action-1',
+  });
+  const decisionReceipt = await scenario.service.issueActionDecision('decision-1', evaluation.receiptId);
+  const replay = await scenario.service.issueActionDecision('decision-1', evaluation.receiptId);
+  assert.equal(replay, decisionReceipt);
+  const read = versionedRead<ActionDecisionReceipt>(scenario.service, 'readActionDecisionReceipt');
+  assert.equal(await read('decision-1'), decisionReceipt);
+  assert.equal(decisionReceipt.status, 'approved');
+  assert.equal(decisionReceipt.decisionId, 'decision-1');
+  assert.equal(decisionReceipt.evaluationReceiptRef, evaluation.receiptId);
+  assert.equal(decisionReceipt.actionDigest, computeActionDigest(action));
+  assert.equal(decisionReceipt.decisionAuthorityGeneration, scenario.service.decisionAuthorityGeneration);
+  assert.equal(Object.isFrozen(decisionReceipt), true);
+  assert.equal(validateActionDecisionReceipt(decisionReceipt).ok, true);
+  await assert.rejects(
+    scenario.service.issueActionDecision('nonexistent-decision', evaluation.receiptId),
+    error => error instanceof ApprovalServiceError && (error.outcome === 'unavailable' || error.outcome === 'invalid')
+  );
+});
+
+test('v0.2 action-decision lookup revalidates current approval and policy freshness', async () => {
+  const scenario = setup();
+  const evaluation = await scenario.service.evaluatePolicy(action);
+  await scenario.service.requestDecision(binding);
+  const view = await scenario.service.show('task-1', 'decision-1');
+  await scenario.service.decide({ taskId: 'task-1', decisionId: 'decision-1', taskVersion: view.control.version, requestVersion: 1, presentationDigest: view.presentation.presentationDigest, decision: 'approve', responseKey: 'approve-action-freshness' });
+  const receipt = await scenario.service.issueActionDecision('decision-1', evaluation.receiptId);
+  const read = versionedRead<ActionDecisionReceipt>(scenario.service, 'readActionDecisionReceipt');
+  assert.equal(await read('decision-1'), receipt);
+  await assert.rejects(read('never-issued-action-decision'), error => error instanceof ApprovalServiceError && error.outcome === 'denied');
+
+  const beforeControl = scenario.store.loadTaskControl('task-1');
+  const beforeHistory = scenario.store.readHistory('task-1');
+  const current = scenario.current();
+  scenario.setContext({ ...current, facts: { ...current.facts, taskStateVersion: 2 } as ApprovalContext['facts'] });
+  await assert.rejects(read('decision-1'), error => error instanceof ApprovalServiceError && error.outcome === 'stale');
+  assert.deepEqual(scenario.store.loadTaskControl('task-1'), beforeControl);
+  assert.deepEqual(scenario.store.readHistory('task-1'), beforeHistory);
+
+  scenario.setContext(current);
+  assert.equal(await read('decision-1'), receipt);
+});
+
+test('v0.2 action-decision receipt ID collision refuses a changed valid evaluation without replacing authority', async () => {
+  const scenario = setup();
+  const evaluation = await scenario.service.evaluatePolicy(action);
+  await scenario.service.requestDecision(binding);
+  const view = await scenario.service.show('task-1', 'decision-1');
+  await scenario.service.decide({ taskId: 'task-1', decisionId: 'decision-1', taskVersion: view.control.version, requestVersion: 1, presentationDigest: view.presentation.presentationDigest, decision: 'approve', responseKey: 'approve-action-collision' });
+  const originalReceipt = await scenario.service.issueActionDecision('decision-1', evaluation.receiptId);
+  const beforeControl = scenario.store.loadTaskControl('task-1');
+  const beforeHistory = scenario.store.readHistory('task-1');
+  const alternateEvaluation = await scenario.service.evaluatePolicy(action, { receiptId: 'caller-evaluation-receipt-2' });
+
+  await assert.rejects(scenario.service.issueActionDecision('decision-1', alternateEvaluation.receiptId), error =>
+    error instanceof ApprovalServiceError && error.outcome === 'conflict'
+  );
+  assert.deepEqual(scenario.store.loadTaskControl('task-1'), beforeControl);
+  assert.deepEqual(scenario.store.readHistory('task-1'), beforeHistory);
+  const read = versionedRead<ActionDecisionReceipt>(scenario.service, 'readActionDecisionReceipt');
+  assert.equal(await read('decision-1'), originalReceipt);
+});
+
+test('v0.2 service: issueActionDecision rejects unknown, forged, forbidden and foreign-action evaluations without authority writes', async () => {
+  const scenario = setup();
+  const current = scenario.current();
+  const evaluation = await scenario.service.evaluatePolicy(action);
+  const otherAction: NormalizedAction = { ...action, actionId: 'action-foreign' };
+  scenario.setContext({ ...current, action: otherAction, facts: { ...current.facts, registeredActionDigest: computeActionDigest(otherAction) } });
+  const foreignEvaluation = await scenario.service.evaluatePolicy(otherAction);
+  scenario.setContext({ ...current, facts: { ...current.facts, role: 'reviewer' } });
+  const forbiddenEvaluation = await scenario.service.evaluatePolicy(action);
+  assert.equal(forbiddenEvaluation.result, 'FORBIDDEN');
+  scenario.setContext(current);
+  await scenario.service.requestDecision(binding);
+  const view = await scenario.service.show('task-1', 'decision-1');
+  await scenario.service.decide({ taskId: 'task-1', decisionId: 'decision-1', taskVersion: view.control.version, requestVersion: 1, presentationDigest: view.presentation.presentationDigest, decision: 'approve', responseKey: 'approve-evaluation-refs' });
+  const beforeControl = scenario.store.loadTaskControl('task-1');
+  const beforeHistory = scenario.store.readHistory('task-1');
+  const forged = {
+    ...evaluation,
+    result: 'ALLOWED' as const,
+  };
+  const authenticatedForgery = { ...forged, receiptDigest: computePolicyEvaluationReceiptDigest(forged) };
+  const staleGeneration = { ...evaluation, decisionAuthorityGeneration: 999 };
+  const authenticatedStaleGeneration = { ...staleGeneration, receiptDigest: computePolicyEvaluationReceiptDigest(staleGeneration) };
+  for (const ref of ['never-issued-evaluation', foreignEvaluation.receiptId, forbiddenEvaluation.receiptId]) {
+    await assert.rejects(scenario.service.issueActionDecision('decision-1', ref), error => error instanceof ApprovalServiceError);
+  }
+  await assert.rejects(scenario.service.issueActionDecision('decision-1', authenticatedForgery), error => error instanceof ApprovalServiceError);
+  await assert.rejects(scenario.service.issueActionDecision('decision-1', authenticatedStaleGeneration), error => error instanceof ApprovalServiceError);
+  assert.deepEqual(scenario.store.loadTaskControl('task-1'), beforeControl);
+  assert.deepEqual(scenario.store.readHistory('task-1'), beforeHistory);
+});
+
+test('v0.2 service: action authority is rechecked after the awaited current-context load', async () => {
+  const scenario = setup();
+  const evaluation = await scenario.service.evaluatePolicy(action);
+  await scenario.service.requestDecision(binding);
+  const view = await scenario.service.show('task-1', 'decision-1');
+  await scenario.service.decide({ taskId: 'task-1', decisionId: 'decision-1', taskVersion: view.control.version, requestVersion: 1, presentationDigest: view.presentation.presentationDigest, decision: 'approve', responseKey: 'approve-before-current-authority-change' });
+
+  let endState: { control: unknown; history: unknown } | undefined;
+  const racingService: ReturnType<typeof createApprovalService> = createApprovalService({
+    taskId: 'task-1', profile, store: scenario.store, operator: scenario.operator, activity: createMockActivityControl(profile),
+    context: {
+      ...scenario.context,
+      loadForTask: async () => ({ taskId: 'task-1', repositoryId: 'repository-1', workspaceId: 'workspace-1', runId: 'run-1', safeScopeRef: 'scope-1', policyIdentity: identity }),
+      loadForDecision: async () => {
+        const currentControl = scenario.store.loadTaskControl('task-1').value;
+        assert.ok(currentControl);
+        await racingService.control({ taskId: 'task-1', taskVersion: currentControl.version, direction: 'end', responseKey: 'end-during-evaluation-load' });
+        endState = { control: scenario.store.loadTaskControl('task-1'), history: scenario.store.readHistory('task-1') };
+        return scenario.current();
+      },
+    },
+  });
+  await assert.rejects(racingService.issueActionDecision('decision-1', evaluation.receiptId), error => error instanceof ApprovalServiceError);
+  assert.ok(endState);
+  assert.deepEqual(scenario.store.loadTaskControl('task-1'), endState.control);
+  assert.deepEqual(scenario.store.readHistory('task-1'), endState.history);
 });

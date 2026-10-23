@@ -923,7 +923,7 @@ function createTrustedOutcomeContext(
     status: 'claimed',
     reservationRefs: [...admissionReservations],
   };
-  const patchAttempt = admission.subjectKind === 'repository-action' && admission.action.kind === 'apply_patch';
+  const patchAttempt = admission.subjectKind === 'repository-action' && admission.action.kind === 'apply_patch' && admission.planApplicability === 'approved-plan';
   const attempt = {
     attemptId: 'att-001',
     claimId: claim.claimId,
@@ -949,7 +949,7 @@ function createTrustedOutcomeContext(
 function createOutcomeEffects(admission: RepositoryAdmissionContextV02 | ProviderAdmissionContextV02, outcome: 'observed' | 'proven-not-dispatched' | 'uncertain', isPatch = false, resultRevisionDigest?: string, observedUsage?: ProviderUsage) {
   const references = admission.subjectKind === 'repository-action' ? admission.reservationRefs : [admission.requestReservationReceipt, ...admission.budgetRefs];
   return {
-    taskTransition: outcome === 'observed' && isPatch
+    taskTransition: outcome === 'observed' && isPatch && admission.planApplicability === 'approved-plan'
       ? { kind: 'transition' as const, fromNode: admission.runnableNode === 'Repair' ? 'Patch' : admission.runnableNode, toNode: 'Verify' }
       : { kind: 'none' as const },
     revision: outcome === 'observed' && isPatch && resultRevisionDigest
@@ -1420,6 +1420,33 @@ test('Positive: valid RepositoryActionOutcomeReceiptV02 (pre-plan-diagnostic) pa
   const receipt = createValidRepoOutcomeReceipt('pre-plan-diagnostic');
   const res = validateRepositoryActionOutcomeReceiptV02(receipt, createTrustedOutcomeContext('repository-action', 'pre-plan-diagnostic'));
   assert.equal(res.ok, true, 'Valid repo outcome (pre-plan) must pass');
+});
+
+test('Positive: pre-plan diagnostic test patch keeps attempt version and Investigate state transition', () => {
+  const action = createValidDiagnosticPatchAction();
+  const actionDigest = computeActionDigest(action);
+  const admission = createValidRepositoryPrePlanDiagnosticContext({
+    action,
+    actionDigest,
+    baseRevision: action.baseRevisionDigest,
+    targetPaths: action.targetPaths,
+    patchDigest: computeCanonicalSha256(action.patchContent),
+  });
+  const context = createTrustedOutcomeContext('repository-action', 'pre-plan-diagnostic', admission);
+  const receipt = createValidRepoOutcomeReceipt('pre-plan-diagnostic', context);
+
+  assert.equal(context.trustedAttempt.postBeginTaskStateVersion, context.trustedAttempt.preAttemptTaskStateVersion);
+  assert.deepEqual(receipt.proposedEffects.taskTransition, { kind: 'none' });
+  assert.equal(validateRepositoryActionOutcomeReceiptV02(receipt, context).ok, true);
+
+  const forgedTransition = redigestOutcome({
+    ...receipt,
+    proposedEffects: {
+      ...receipt.proposedEffects,
+      taskTransition: { kind: 'transition', fromNode: 'Investigate', toNode: 'Verify' },
+    },
+  });
+  assert.equal(validateRepositoryActionOutcomeReceiptV02(forgedTransition, context).ok, false);
 });
 
 test('Positive: valid ProviderRequestOutcomeReceiptV02 (approved-plan coder) passes', () => {

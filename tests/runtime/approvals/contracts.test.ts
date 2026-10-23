@@ -14,6 +14,17 @@ import {
   validateSafePresentation,
   validateDecisionEvent,
   validateSafeResult,
+  UC05_APPROVAL_SCHEMA_VERSION_V02,
+  computePolicyEvaluationReceiptDigest,
+  computeActionDecisionReceiptDigest,
+  computeProviderAdmissionReceiptDigest,
+  computeClaimClosureReceiptDigest,
+  computeDispatchClaimDigestV02,
+  validatePolicyEvaluationReceipt,
+  validateActionDecisionReceipt,
+  validateProviderAdmissionReceipt,
+  validateClaimClosureReceipt,
+  validateDispatchClaimV02,
 } from '../../../src/contracts/approvals/contracts.ts';
 
 const validTaskControl = {
@@ -366,4 +377,540 @@ test('SafeResult envelope cannot encode authority, unbounded versions, or raw di
     { ...validSafeResult, decisionId: null, requestVersion: 1 },
   ];
   for (const candidate of invalid) assert.equal(validateSafeResult(candidate).ok, false);
+});
+
+/* =========================================================================
+ * UC-05 v0.2.0 Receipt Tests (T043 RED / T044 GREEN)
+ * ========================================================================= */
+
+function redigestRecord(
+  value: object,
+  digestProperty: string,
+  computeDigest: (receipt: unknown) => string,
+): Record<string, unknown> {
+  const candidate: Record<string, unknown> = { ...value };
+  candidate[digestProperty] = computeDigest(candidate);
+  return candidate;
+}
+
+function omitAndRedigestRecord(
+  value: object,
+  omittedProperty: string,
+  digestProperty: string,
+  computeDigest: (receipt: unknown) => string,
+): Record<string, unknown> {
+  const source: Record<string, unknown> = { ...value };
+  const { [omittedProperty]: omitted, ...candidate } = source;
+  void omitted;
+  candidate[digestProperty] = computeDigest(candidate);
+  return candidate;
+}
+
+const peBase = {
+  schemaVersion: UC05_APPROVAL_SCHEMA_VERSION_V02,
+  receiptId: 'pe-receipt-1',
+  actionDigest: `sha256:${'1'.repeat(64)}`,
+  freshnessContextDigest: `sha256:${'2'.repeat(64)}`,
+  policyId: 'policy-1',
+  policyVersion: '1.0.0',
+  configId: 'config-1',
+  configVersion: '1.0.0',
+  decisionAuthorityGeneration: 1,
+  result: 'ALLOWED',
+};
+const validPolicyEvaluationReceipt = {
+  ...peBase,
+  receiptDigest: computePolicyEvaluationReceiptDigest(peBase),
+};
+
+const adBase = {
+  schemaVersion: UC05_APPROVAL_SCHEMA_VERSION_V02,
+  decisionId: 'decision-ad-1',
+  actionDigest: `sha256:${'1'.repeat(64)}`,
+  evaluationReceiptRef: 'pe-receipt-1',
+  decisionAuthorityGeneration: 1,
+  status: 'approved',
+  reason: 'Approved by security policy',
+};
+const validActionDecisionReceipt = {
+  ...adBase,
+  decisionDigest: computeActionDecisionReceiptDigest(adBase),
+};
+
+const provCoderCommon = {
+  schemaVersion: UC05_APPROVAL_SCHEMA_VERSION_V02,
+  receiptId: 'prov-rec-coder-1',
+  providerRequestId: 'req-coder-1',
+  role: 'coder',
+  requestContentDigest: `sha256:${'3'.repeat(64)}`,
+  providerId: 'provider-test',
+  modelId: 'model-test-01',
+  policyId: 'policy-1',
+  policyVersion: '1.0.0',
+  configId: 'config-coder-v1',
+  configVersion: '1.0.0',
+  decisionAuthorityGeneration: 1,
+};
+const provCoderBase = {
+  ...provCoderCommon,
+  planApplicability: 'approved-plan',
+  planBindingDigest: `sha256:${'4'.repeat(64)}`,
+  planDecisionRef: 'dec-plan-001',
+};
+const validProviderAdmissionReceiptCoder = {
+  ...provCoderBase,
+  receiptDigest: computeProviderAdmissionReceiptDigest(provCoderBase),
+};
+
+const provReviewerCommon = {
+  schemaVersion: UC05_APPROVAL_SCHEMA_VERSION_V02,
+  receiptId: 'prov-rec-rev-1',
+  providerRequestId: 'req-rev-1',
+  role: 'reviewer',
+  requestContentDigest: `sha256:${'5'.repeat(64)}`,
+  providerId: 'provider-test',
+  modelId: 'model-test-01',
+  policyId: 'policy-1',
+  policyVersion: '1.0.0',
+  configId: 'config-rev-v1',
+  configVersion: '1.0.0',
+  decisionAuthorityGeneration: 1,
+};
+const provReviewerBase = {
+  ...provReviewerCommon,
+  planApplicability: 'pre-plan-diagnostic',
+  diagnosticPurpose: 'investigate_diagnostic',
+  taskCriteriaDigest: `sha256:${'6'.repeat(64)}`,
+};
+const validProviderAdmissionReceiptReviewer = {
+  ...provReviewerBase,
+  receiptDigest: computeProviderAdmissionReceiptDigest(provReviewerBase),
+};
+
+const validProviderAdmissionReceiptCoderPrePlan = redigestRecord({
+  ...provCoderCommon,
+  planApplicability: 'pre-plan-diagnostic',
+  diagnosticPurpose: 'baseline_investigation',
+  taskCriteriaDigest: `sha256:${'6'.repeat(64)}`,
+}, 'receiptDigest', computeProviderAdmissionReceiptDigest);
+const validProviderAdmissionReceiptReviewerApprovedPlan = redigestRecord({
+  ...provReviewerCommon,
+  planApplicability: 'approved-plan',
+  planBindingDigest: `sha256:${'4'.repeat(64)}`,
+  planDecisionRef: 'dec-plan-001',
+}, 'receiptDigest', computeProviderAdmissionReceiptDigest);
+
+const closureBase = {
+  schemaVersion: UC05_APPROVAL_SCHEMA_VERSION_V02,
+  receiptId: 'closure-rec-1',
+  claimDigest: `sha256:${'8'.repeat(64)}`,
+  claimId: 'claim-1',
+  taskId: 'task-1',
+  runId: 'run-1',
+  taskStateSchemaVersion: 'uc03-task-state/0.1',
+  expectedTaskStateVersion: 7,
+  controlSchemaVersion: 'uc04-task-control/0.1',
+  expectedControlVersion: 11,
+  expectedEpoch: 3,
+  reason: 'Pause before attempt invocation',
+  pauseOrDenialEvent: {
+    eventKind: 'pause',
+    eventRef: 'pause-event-1',
+    eventDigest: `sha256:${'9'.repeat(64)}`,
+  },
+  fencedExecutorIdentity: {
+    adapterIdentity: 'docker-workspace-1',
+    processIncarnation: 'inc-001',
+    fencingGeneration: 1,
+    payloadDigest: `sha256:${'7'.repeat(64)}`,
+  },
+  noAttemptProof: {
+    journalRef: 'claim-journal-1',
+    journalDigest: `sha256:${'a'.repeat(64)}`,
+    claimPhase: 'claimed',
+  },
+  reservationDispositions: [
+    { reservationRef: 'res-repair-1', disposition: 'released' },
+    { reservationRef: 'res-token-1', disposition: 'released' },
+  ],
+};
+const validClaimClosureReceipt = {
+  ...closureBase,
+  receiptDigest: computeClaimClosureReceiptDigest(closureBase),
+};
+
+const claimV02RepoBase = {
+  schemaVersion: UC05_APPROVAL_SCHEMA_VERSION_V02,
+  claimId: 'claim-v02-repo-1',
+  taskId: 'task-1',
+  runId: 'run-1',
+  subjectKind: 'repository-action',
+  planApplicability: 'approved-plan',
+  taskStateSchemaVersion: 'uc03-task-state/0.1',
+  controlSchemaVersion: 'uc04-task-control/0.1',
+  expectedControlVersion: 1,
+  expectedEpoch: 1,
+  expectedTaskStateVersion: 1,
+  policyIdentity,
+  decisionRefs: ['decision-1'],
+  reservationRefs: ['reservation-1'],
+  phase: 'claimed',
+  resultRef: null,
+  actionId: 'action-1',
+  actionDigest: `sha256:${'8'.repeat(64)}`,
+  repositoryStateDigest: `sha256:${'9'.repeat(64)}`,
+  planBindingDigest: `sha256:${'a'.repeat(64)}`,
+  planDecisionRef: 'decision-1',
+};
+const validDispatchClaimV02Repo = {
+  ...claimV02RepoBase,
+  claimDigest: computeDispatchClaimDigestV02(claimV02RepoBase),
+};
+
+const claimV02ProvBase = {
+  schemaVersion: UC05_APPROVAL_SCHEMA_VERSION_V02,
+  claimId: 'claim-v02-prov-1',
+  taskId: 'task-1',
+  runId: 'run-1',
+  subjectKind: 'provider-request',
+  planApplicability: 'pre-plan-diagnostic',
+  taskStateSchemaVersion: 'uc03-task-state/0.1',
+  controlSchemaVersion: 'uc04-task-control/0.1',
+  expectedControlVersion: 1,
+  expectedEpoch: 1,
+  expectedTaskStateVersion: 0,
+  policyIdentity,
+  decisionRefs: ['decision-1'],
+  reservationRefs: ['reservation-1'],
+  phase: 'claimed',
+  resultRef: null,
+  providerRequestId: 'req-prov-1',
+  requestContentDigest: `sha256:${'b'.repeat(64)}`,
+  role: 'coder',
+  diagnosticPurpose: 'baseline_investigation',
+  taskCriteriaDigest: `sha256:${'c'.repeat(64)}`,
+};
+const validDispatchClaimV02Provider = {
+  ...claimV02ProvBase,
+  claimDigest: computeDispatchClaimDigestV02(claimV02ProvBase),
+};
+
+function omitAndRedigestClaim(value: object, omittedProperty: string): Record<string, unknown> {
+  const source: Record<string, unknown> = { ...value };
+  const { [omittedProperty]: omitted, ...candidate } = source;
+  void omitted;
+  candidate['claimDigest'] = computeDispatchClaimDigestV02(candidate);
+  return candidate;
+}
+
+function omitRecordField(value: object, omittedProperty: string): Record<string, unknown> {
+  const source: Record<string, unknown> = { ...value };
+  const { [omittedProperty]: omitted, ...candidate } = source;
+  void omitted;
+  return candidate;
+}
+
+test('v0.2 PolicyEvaluationReceipt validator accepts valid record', () => {
+  const result = validatePolicyEvaluationReceipt(validPolicyEvaluationReceipt);
+  assert.equal(result.ok, true);
+});
+
+test('v0.2 receipt validators require their explicit schema version even with a recomputed digest', () => {
+  assert.equal(validatePolicyEvaluationReceipt(omitAndRedigestRecord(
+    validPolicyEvaluationReceipt, 'schemaVersion', 'receiptDigest', computePolicyEvaluationReceiptDigest,
+  )).ok, false);
+  assert.equal(validateActionDecisionReceipt(omitAndRedigestRecord(
+    validActionDecisionReceipt, 'schemaVersion', 'decisionDigest', computeActionDecisionReceiptDigest,
+  )).ok, false);
+  assert.equal(validateProviderAdmissionReceipt(omitAndRedigestRecord(
+    validProviderAdmissionReceiptCoder, 'schemaVersion', 'receiptDigest', computeProviderAdmissionReceiptDigest,
+  )).ok, false);
+  assert.equal(validateClaimClosureReceipt(omitAndRedigestRecord(
+    validClaimClosureReceipt, 'schemaVersion', 'receiptDigest', computeClaimClosureReceiptDigest,
+  )).ok, false);
+});
+
+test('v0.2 PolicyEvaluationReceipt validator rejects unknown keys, cross-branch fields, and digest mismatch', () => {
+  const invalid: readonly unknown[] = [
+    { ...validPolicyEvaluationReceipt, extraKey: 'forbidden' },
+    { ...validPolicyEvaluationReceipt, providerRequestId: 'req-1' },
+    { ...validPolicyEvaluationReceipt, role: 'coder' },
+    { ...validPolicyEvaluationReceipt, planBindingDigest: `sha256:${'0'.repeat(64)}` },
+    { ...validPolicyEvaluationReceipt, receiptDigest: `sha256:${'f'.repeat(64)}` },
+    { ...validPolicyEvaluationReceipt, result: 'UNAUTHORIZED' },
+    { ...validPolicyEvaluationReceipt, schemaVersion: 'uc05-approval/0.1-draft' },
+  ];
+  for (const candidate of invalid) {
+    assert.equal(validatePolicyEvaluationReceipt(candidate).ok, false);
+  }
+});
+
+test('v0.2 ActionDecisionReceipt validator accepts valid record', () => {
+  const result = validateActionDecisionReceipt(validActionDecisionReceipt);
+  assert.equal(result.ok, true);
+});
+
+test('v0.2 ActionDecisionReceipt validator rejects non-approved status, cross-branch fields, and digest mismatch', () => {
+  const invalid: readonly unknown[] = [
+    { ...validActionDecisionReceipt, status: 'rejected' },
+    { ...validActionDecisionReceipt, providerRequestId: 'req-1' },
+    { ...validActionDecisionReceipt, decisionDigest: `sha256:${'f'.repeat(64)}` },
+    { ...validActionDecisionReceipt, extraProp: true },
+    { ...validActionDecisionReceipt, schemaVersion: 'uc05-approval/0.1-draft' },
+    redigestRecord({ ...validActionDecisionReceipt, reason: undefined }, 'decisionDigest', computeActionDecisionReceiptDigest),
+  ];
+  for (const candidate of invalid) {
+    assert.equal(validateActionDecisionReceipt(candidate).ok, false);
+  }
+});
+
+test('v0.2 ProviderAdmissionReceipt accepts both roles on both explicit plan branches', () => {
+  assert.equal(validateProviderAdmissionReceipt(validProviderAdmissionReceiptCoder).ok, true);
+  assert.equal(validateProviderAdmissionReceipt(validProviderAdmissionReceiptReviewer).ok, true);
+  assert.equal(validateProviderAdmissionReceipt(validProviderAdmissionReceiptCoderPrePlan).ok, true);
+  assert.equal(validateProviderAdmissionReceipt(validProviderAdmissionReceiptReviewerApprovedPlan).ok, true);
+});
+
+test('v0.2 ProviderAdmissionReceipt requires and digest-binds policy identity on both branches', () => {
+  const receipts = [
+    validProviderAdmissionReceiptCoder,
+    validProviderAdmissionReceiptReviewer,
+    validProviderAdmissionReceiptCoderPrePlan,
+    validProviderAdmissionReceiptReviewerApprovedPlan,
+  ];
+  for (const receipt of receipts) {
+    for (const field of ['policyId', 'policyVersion'] as const) {
+      assert.equal(validateProviderAdmissionReceipt(omitAndRedigestRecord(
+        receipt, field, 'receiptDigest', computeProviderAdmissionReceiptDigest,
+      )).ok, false, `${field} is required`);
+      const malformed = field === 'policyId'
+        ? { ...receipt, policyId: '' }
+        : { ...receipt, policyVersion: '' };
+      assert.equal(validateProviderAdmissionReceipt(redigestRecord(
+        malformed, 'receiptDigest', computeProviderAdmissionReceiptDigest,
+      )).ok, false, `${field} must be a valid identifier`);
+      const changed = field === 'policyId'
+        ? { ...receipt, policyId: 'policy-2' }
+        : { ...receipt, policyVersion: '2.0.0' };
+      assert.equal(validateProviderAdmissionReceipt(changed).ok, false, `${field} is digest-bound`);
+      assert.equal(validateProviderAdmissionReceipt(redigestRecord(
+        changed, 'receiptDigest', computeProviderAdmissionReceiptDigest,
+      )).ok, true, `${field} changes are valid when their digest is recomputed`);
+    }
+  }
+});
+
+test('v0.2 ProviderAdmissionReceipt rejects missing branch and diagnostic bindings with a recomputed digest', () => {
+  const invalid: readonly Record<string, unknown>[] = [
+    omitAndRedigestRecord(validProviderAdmissionReceiptCoder, 'planApplicability', 'receiptDigest', computeProviderAdmissionReceiptDigest),
+    omitAndRedigestRecord(validProviderAdmissionReceiptReviewer, 'diagnosticPurpose', 'receiptDigest', computeProviderAdmissionReceiptDigest),
+    omitAndRedigestRecord(validProviderAdmissionReceiptReviewer, 'taskCriteriaDigest', 'receiptDigest', computeProviderAdmissionReceiptDigest),
+    redigestRecord({ ...validProviderAdmissionReceiptReviewer, diagnosticPurpose: { unsafe: true } }, 'receiptDigest', computeProviderAdmissionReceiptDigest),
+    redigestRecord({ ...validProviderAdmissionReceiptReviewer, taskCriteriaDigest: 42 }, 'receiptDigest', computeProviderAdmissionReceiptDigest),
+    redigestRecord({ ...validProviderAdmissionReceiptReviewer, planBindingDigest: undefined }, 'receiptDigest', computeProviderAdmissionReceiptDigest),
+    redigestRecord({ ...validProviderAdmissionReceiptCoder, diagnosticPurpose: undefined }, 'receiptDigest', computeProviderAdmissionReceiptDigest),
+    omitAndRedigestRecord(validProviderAdmissionReceiptCoder, 'planBindingDigest', 'receiptDigest', computeProviderAdmissionReceiptDigest),
+    omitAndRedigestRecord(validProviderAdmissionReceiptCoder, 'planDecisionRef', 'receiptDigest', computeProviderAdmissionReceiptDigest),
+  ];
+  for (const candidate of invalid) assert.equal(validateProviderAdmissionReceipt(candidate).ok, false);
+});
+
+test('v0.2 ProviderAdmissionReceipt validator rejects repository fields, invalid roles, and plan field violations', () => {
+  const invalid: readonly unknown[] = [
+    { ...validProviderAdmissionReceiptCoder, actionDigest: `sha256:${'0'.repeat(64)}` },
+    { ...validProviderAdmissionReceiptCoder, commandView: 'view-1' },
+    { ...validProviderAdmissionReceiptCoder, role: 'operator' },
+    { ...validProviderAdmissionReceiptReviewer, planBindingDigest: `sha256:${'0'.repeat(64)}` },
+    { ...validProviderAdmissionReceiptCoder, planBindingDigest: undefined, receiptDigest: 'sha256:invalid' },
+    { ...validProviderAdmissionReceiptCoder, schemaVersion: 'uc05-approval/0.1-draft' },
+  ];
+  for (const candidate of invalid) {
+    assert.equal(validateProviderAdmissionReceipt(candidate).ok, false);
+  }
+});
+
+test('v0.2 ClaimClosureReceipt validator accepts valid fenced closure record', () => {
+  const result = validateClaimClosureReceipt(validClaimClosureReceipt);
+  assert.equal(result.ok, true);
+});
+
+test('v0.2 ClaimClosureReceipt binds claim versions, current pause evidence, no-attempt proof, fencing, and each reservation', () => {
+  const invalid = [
+    omitAndRedigestRecord(validClaimClosureReceipt, 'claimDigest', 'receiptDigest', computeClaimClosureReceiptDigest),
+    omitAndRedigestRecord(validClaimClosureReceipt, 'runId', 'receiptDigest', computeClaimClosureReceiptDigest),
+    omitAndRedigestRecord(validClaimClosureReceipt, 'taskStateSchemaVersion', 'receiptDigest', computeClaimClosureReceiptDigest),
+    omitAndRedigestRecord(validClaimClosureReceipt, 'expectedTaskStateVersion', 'receiptDigest', computeClaimClosureReceiptDigest),
+    omitAndRedigestRecord(validClaimClosureReceipt, 'controlSchemaVersion', 'receiptDigest', computeClaimClosureReceiptDigest),
+    omitAndRedigestRecord(validClaimClosureReceipt, 'expectedControlVersion', 'receiptDigest', computeClaimClosureReceiptDigest),
+    omitAndRedigestRecord(validClaimClosureReceipt, 'expectedEpoch', 'receiptDigest', computeClaimClosureReceiptDigest),
+    omitAndRedigestRecord(validClaimClosureReceipt, 'pauseOrDenialEvent', 'receiptDigest', computeClaimClosureReceiptDigest),
+    omitAndRedigestRecord(validClaimClosureReceipt, 'noAttemptProof', 'receiptDigest', computeClaimClosureReceiptDigest),
+    omitAndRedigestRecord(validClaimClosureReceipt, 'reservationDispositions', 'receiptDigest', computeClaimClosureReceiptDigest),
+    redigestRecord({ ...validClaimClosureReceipt, pauseOrDenialEvent: { eventKind: 'pause', eventDigest: closureBase.pauseOrDenialEvent.eventDigest } }, 'receiptDigest', computeClaimClosureReceiptDigest),
+    redigestRecord({ ...validClaimClosureReceipt, pauseOrDenialEvent: { eventKind: 'pause', eventRef: closureBase.pauseOrDenialEvent.eventRef } }, 'receiptDigest', computeClaimClosureReceiptDigest),
+    redigestRecord({ ...validClaimClosureReceipt, noAttemptProof: { journalRef: closureBase.noAttemptProof.journalRef, claimPhase: 'claimed' } }, 'receiptDigest', computeClaimClosureReceiptDigest),
+    redigestRecord({ ...validClaimClosureReceipt, noAttemptProof: { journalDigest: closureBase.noAttemptProof.journalDigest, claimPhase: 'claimed' } }, 'receiptDigest', computeClaimClosureReceiptDigest),
+    redigestRecord({ ...validClaimClosureReceipt, reservationDispositions: [{ disposition: 'released' }] }, 'receiptDigest', computeClaimClosureReceiptDigest),
+    redigestRecord({ ...validClaimClosureReceipt, reservationDispositions: [{ reservationRef: 'res-repair-1' }] }, 'receiptDigest', computeClaimClosureReceiptDigest),
+    redigestRecord({ ...validClaimClosureReceipt, reservationDispositions: [{ reservationRef: 'res-repair-1', disposition: 'retained' }] }, 'receiptDigest', computeClaimClosureReceiptDigest),
+    redigestRecord({ ...validClaimClosureReceipt, reservationDispositions: [] }, 'receiptDigest', computeClaimClosureReceiptDigest),
+    redigestRecord({ ...validClaimClosureReceipt, noAttemptProof: { ...closureBase.noAttemptProof, claimPhase: 'attempting' } }, 'receiptDigest', computeClaimClosureReceiptDigest),
+    redigestRecord({ ...validClaimClosureReceipt, reservationDispositions: [{ reservationRef: 'res-repair-1', disposition: 'consumed' }] }, 'receiptDigest', computeClaimClosureReceiptDigest),
+  ];
+  for (const candidate of invalid) assert.equal(validateClaimClosureReceipt(candidate).ok, false);
+});
+
+test('v0.2 ClaimClosureReceipt validator rejects attemptId, cross-branch fields, and malformed executor identity', () => {
+  const invalid: readonly unknown[] = [
+    { ...validClaimClosureReceipt, attemptId: 'att-1' },
+    { ...validClaimClosureReceipt, actionDigest: `sha256:${'0'.repeat(64)}` },
+    { ...validClaimClosureReceipt, providerRequestId: 'req-1' },
+    { ...validClaimClosureReceipt, outcome: 'observed' },
+    { ...validClaimClosureReceipt, fencedExecutorIdentity: { ...validClaimClosureReceipt.fencedExecutorIdentity, fencingGeneration: 0 } },
+    { ...validClaimClosureReceipt, receiptDigest: `sha256:${'0'.repeat(64)}` },
+    { ...validClaimClosureReceipt, schemaVersion: 'uc05-approval/0.1-draft' },
+  ];
+  for (const candidate of invalid) {
+    assert.equal(validateClaimClosureReceipt(candidate).ok, false);
+  }
+});
+
+function assertTypedReceiptRejection(
+  validate: (input: unknown) => { ok: boolean; errors?: readonly unknown[] },
+  input: unknown,
+  context: string,
+): void {
+  let result: { ok: boolean; errors?: readonly unknown[] } | undefined;
+  assert.doesNotThrow(() => {
+    result = validate(input);
+  }, `${context}: malformed receipt should return a typed validation result`);
+  assert.equal(result?.ok, false, `${context}: malformed receipt should be rejected`);
+  assert.ok(Array.isArray(result?.errors) && result.errors.length > 0, `${context}: rejection should include validation errors`);
+}
+
+const v02ReceiptValidators = [
+  ['PolicyEvaluationReceipt', validatePolicyEvaluationReceipt, validPolicyEvaluationReceipt],
+  ['ActionDecisionReceipt', validateActionDecisionReceipt, validActionDecisionReceipt],
+  ['ProviderAdmissionReceipt', validateProviderAdmissionReceipt, validProviderAdmissionReceiptCoder],
+  ['ClaimClosureReceipt', validateClaimClosureReceipt, validClaimClosureReceipt],
+] as const;
+
+for (const [name, validate, receipt] of v02ReceiptValidators) {
+  test(`v0.2 ${name} rejects nested accessors before digesting`, () => {
+    let getterReads = 0;
+    const nested: Record<string, unknown> = {};
+    Object.defineProperty(nested, 'poison', {
+      enumerable: true,
+      get() {
+        getterReads += 1;
+        return 'must not be read';
+      },
+    });
+
+    assertTypedReceiptRejection(validate, { ...receipt, malformedExtension: nested }, name);
+    assert.equal(getterReads, 0, `${name}: nested getter must not be invoked`);
+  });
+
+  test(`v0.2 ${name} rejects nested cycles before digesting`, () => {
+    const nested: Record<string, unknown> = {};
+    nested['self'] = nested;
+
+    assertTypedReceiptRejection(validate, { ...receipt, malformedExtension: nested }, name);
+  });
+}
+
+const claimClosureNestedCandidates = [
+  ['fencedExecutorIdentity.adapterIdentity', (value: unknown) => ({
+    ...validClaimClosureReceipt,
+    fencedExecutorIdentity: { ...validClaimClosureReceipt.fencedExecutorIdentity, adapterIdentity: value },
+  })],
+  ['pauseOrDenialEvent.eventKind', (value: unknown) => ({
+    ...validClaimClosureReceipt,
+    pauseOrDenialEvent: { ...validClaimClosureReceipt.pauseOrDenialEvent, eventKind: value },
+  })],
+  ['noAttemptProof.journalRef', (value: unknown) => ({
+    ...validClaimClosureReceipt,
+    noAttemptProof: { ...validClaimClosureReceipt.noAttemptProof, journalRef: value },
+  })],
+  ['reservationDispositions[0].reservationRef', (value: unknown) => ({
+    ...validClaimClosureReceipt,
+    reservationDispositions: [
+      { ...validClaimClosureReceipt.reservationDispositions[0], reservationRef: value },
+      ...validClaimClosureReceipt.reservationDispositions.slice(1),
+    ],
+  })],
+] as const;
+
+for (const [path, makeCandidate] of claimClosureNestedCandidates) {
+  test(`v0.2 ClaimClosureReceipt rejects nested accessor at ${path} before digesting`, () => {
+    let getterReads = 0;
+    const nested: Record<string, unknown> = {};
+    Object.defineProperty(nested, 'poison', {
+      enumerable: true,
+      get() {
+        getterReads += 1;
+        return 'must not be read';
+      },
+    });
+
+    assertTypedReceiptRejection(validateClaimClosureReceipt, makeCandidate(nested), path);
+    assert.equal(getterReads, 0, `${path}: nested getter must not be invoked`);
+  });
+
+  test(`v0.2 ClaimClosureReceipt rejects nested cycle at ${path} before digesting`, () => {
+    const nested: Record<string, unknown> = {};
+    nested['self'] = nested;
+
+    assertTypedReceiptRejection(validateClaimClosureReceipt, makeCandidate(nested), path);
+  });
+}
+
+test('v0.2 DispatchClaimV02 validator accepts repository and provider claims', () => {
+  assert.equal(validateDispatchClaimV02(validDispatchClaimV02Repo).ok, true);
+  assert.equal(validateDispatchClaimV02(validDispatchClaimV02Provider).ok, true);
+});
+
+test('v0.2 DispatchClaimV02 requires explicit branch, versions, digest, and attempt identity', () => {
+  const invalid = [
+    omitAndRedigestClaim(validDispatchClaimV02Repo, 'schemaVersion'),
+    omitAndRedigestClaim(validDispatchClaimV02Repo, 'subjectKind'),
+    omitAndRedigestClaim(validDispatchClaimV02Repo, 'planApplicability'),
+    omitRecordField(validDispatchClaimV02Repo, 'claimDigest'),
+    omitAndRedigestClaim(validDispatchClaimV02Repo, 'runId'),
+    omitAndRedigestClaim(validDispatchClaimV02Repo, 'taskStateSchemaVersion'),
+    omitAndRedigestClaim(validDispatchClaimV02Repo, 'expectedTaskStateVersion'),
+    omitAndRedigestClaim(validDispatchClaimV02Repo, 'controlSchemaVersion'),
+    omitAndRedigestClaim(validDispatchClaimV02Repo, 'expectedControlVersion'),
+    omitAndRedigestClaim(validDispatchClaimV02Repo, 'expectedEpoch'),
+    omitAndRedigestClaim(validDispatchClaimV02Repo, 'actionDigest'),
+    redigestRecord({ ...validDispatchClaimV02Repo, phase: 'attempting' }, 'claimDigest', computeDispatchClaimDigestV02),
+    omitAndRedigestClaim(validDispatchClaimV02Provider, 'diagnosticPurpose'),
+    omitAndRedigestClaim(validDispatchClaimV02Provider, 'taskCriteriaDigest'),
+    redigestRecord({ ...validDispatchClaimV02Provider, attemptId: undefined }, 'claimDigest', computeDispatchClaimDigestV02),
+    redigestRecord({ ...validDispatchClaimV02Provider, planBindingDigest: undefined }, 'claimDigest', computeDispatchClaimDigestV02),
+  ];
+  for (const candidate of invalid) assert.equal(validateDispatchClaimV02(candidate).ok, false);
+});
+
+test('v0.2 DispatchClaimV02 validator rejects v0.1 claims, cross-branch fields, and plan applicability violations', () => {
+  // v0.1 claim is rejected by v0.2 validator
+  assert.equal(validateDispatchClaimV02(validClaim).ok, false);
+  // but valid under v0.1 validator
+  assert.equal(validateDispatchClaim(validClaim).ok, true);
+  // v0.2 claim is rejected by v0.1 validator
+  assert.equal(validateDispatchClaim(validDispatchClaimV02Repo).ok, false);
+
+  const invalid: readonly unknown[] = [
+    { ...validDispatchClaimV02Repo, providerRequestId: 'req-1' },
+    { ...validDispatchClaimV02Repo, role: 'coder' },
+    { ...validDispatchClaimV02Provider, actionId: 'act-1' },
+    { ...validDispatchClaimV02Provider, repositoryStateDigest: `sha256:${'0'.repeat(64)}` },
+    { ...validDispatchClaimV02Provider, planBindingDigest: `sha256:${'0'.repeat(64)}` },
+    { ...validDispatchClaimV02Repo, planBindingDigest: undefined },
+    { ...validDispatchClaimV02Repo, phase: 'attempting', attemptId: null },
+    { ...validDispatchClaimV02Repo, phase: 'claimed', attemptId: 'attempt-not-allowed-yet' },
+  ];
+  for (const candidate of invalid) {
+    assert.equal(validateDispatchClaimV02(candidate).ok, false);
+  }
 });
