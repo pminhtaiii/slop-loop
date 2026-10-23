@@ -2,14 +2,15 @@
 
 **Input**: Design documents from `/specs/001-verified-code-repair/`.
 **Prerequisites**: [plan.md](plan.md), [spec.md](spec.md), [research.md](research.md), [data-model.md](data-model.md), [interfaces](contracts/interfaces.md), [acceptance](contracts/acceptance.md).
-**Status**: Phase 1 (T001–T002) completed; Phase 2 (T003–T004) authorized on 2026-10-16 (Asia/Saigon); Phase 3 (T005–T014) authorized on 2026-10-18; Phase 4 (T015–T018) authorized on 2026-10-21; and Phase 5 (T019–T025) authorized on 2026-10-22. Real-only T024–T025 prerequisites and Phase 6 remain gated. The atomic-admission design and task preparation were approved on 2026-10-22; tasks T037–T066 passed two independent planning reviews. The user separately released T037–T041 only, now complete locally through the specified T041 behavioral RED checkpoint; only T042–T066 and T022 remain unreleased. Completion is recorded only after integrated checks; see [decisions](contracts/decisions.md).
+**Status**: Phase 1 (T001–T002) completed; Phase 2 (T003–T004) authorized on 2026-10-16 (Asia/Saigon); Phase 3 (T005–T014) authorized on 2026-10-18; Phase 4 (T015–T018) authorized on 2026-10-21; and Phase 5 (T019–T025) authorized on 2026-10-22. Real-only T024–T025 prerequisites and Phase 6 remain gated. The atomic-admission design and task preparation were approved on 2026-10-22; tasks T037–T066 passed two independent planning reviews. The user released T037–T041 first, now complete locally through the specified T041 behavioral RED checkpoint, then released mock-backed T042–T066 and T022 on 2026-10-23; T042–T048 are checked after integrated focused verification. T049–T066 and T022 remain incomplete. Real gates and Phase 6 remain gated. Completion is recorded only after integrated checks; see [decisions](contracts/decisions.md).
+**2026-10-23 local stopping point**: T042–T048 are integrated in the reviewed working tree. Final combined checks pass 337 source, 337 emitted and 258 compatibility tests, typecheck, scoped lint and build. Independent Standards R4 and Spec R4 have zero open P0/P1 findings; P2 remains deferred. Exact source hashes and reports are retained under `.agent-work/2026-10-23/uc03-phase5-continuation/` (`final-source-snapshot.json`, `final-focused-checks-r4.md`, `reviews/standards-r4.md`, `reviews/spec-r4.md`). The user directed stopping before T049. T049–T066 and T022 remain unfinished; this is local acceptance only, with no contributor publication or full Phase 5 acceptance claim.
 **Tests**: Required by FR-013 and repository test-first guidance. Each implementation task demonstrates its behavioral RED before GREEN; a missing module/collection failure is not a valid behavioral RED. Bootstrap commands are available in quickstart.md; behavioral product-runtime commands remain future work.
 **Phase 1 evidence**: [Initial verification](https://github.com/pminhtaiii/slop-loop/blob/ee5be9b147efb44511b8e65ece375fc904c5f062/docs/verification/2026-10-16-verified-code-repair-phase1.md) records integrated checks and independent review for T001–T002. Current pnpm verification and future evidence outputs under `docs/verification/` are intentionally local-only and must not be force-added. The T019–T025 authorization is historical and does not release T026–T034 or the separate amendment implementation.
 **Organization**: User-story phases follow Spec Kit; priorities do not override DAG edges or permit delayed safety gates. US3 is P1 despite its section position. Final phase integrates all stories.
 
 ## Format: `[ID] [P?] [Story] Description`
 
-The historical IDs T001–T036 retain their statuses. The amendment adds IDs T037–T066; the user separately released T037–T041, completed locally through T041's intentional behavioral RED checkpoint. Only T042–T066 and T022 remain unreleased; T049–T063 remain unchecked. `[P]` means disjoint owned files and parallel eligibility **only at a ready frontier with all listed dependencies already satisfied**; it never bypasses prerequisites. Dependencies below are authoritative edges, not phase-wide barriers. Only checked tasks with integrated verification evidence count as completed dependencies.
+The historical IDs T001–T036 retain their statuses. The amendment adds IDs T037–T066; the user separately released T037–T041, completed locally through T041's intentional behavioral RED checkpoint, then released mock-backed T042–T066 and T022. T042–T048 are locally verified; T049–T066 and T022 remain incomplete, and T049–T063 remain unchecked. `[P]` means disjoint owned files and parallel eligibility **only at a ready frontier with all listed dependencies already satisfied**; it never bypasses prerequisites. Dependencies below are authoritative edges, not phase-wide barriers. Only checked tasks with integrated verification evidence count as completed dependencies.
 
 Tai is accountable for all local tasks, including shared foundation. Named lanes (contracts, tools, model, reviewer, workflow, evaluation) describe possible future delegation under Tai; they do not assign new colleagues. Thanh Tan and Trong Tan own external deliverables only. Parallel opportunities assume Tai delegates disjoint ready work; no worker gets remote authority. Only the coordinator changes checkboxes after integrated evidence passes.
 
@@ -330,7 +331,7 @@ Develop accepted contract mocks once (T004), then run independent story lanes on
 
 **Scope**: Mock-backed implementation decomposition for the approved atomic admission amendment in contracts/atomic-admission-amendment.md, UC-03 0.2.0 and UC-05 uc05-approval/0.2-draft.
 
-**Status**: APPROVED DESIGN / TASK DECOMPOSITION DRAFT / PARTIALLY RELEASED. The design and task preparation were approved as recorded in contracts/decisions.md#atomic-admission-amendment-approval-and-task-preparation and passed two independent planning reviews. The user released T037–T041 only; they are complete locally through T041's intentional behavioral RED checkpoint. T042–T066 and T022 remain unreleased; T049–T063 remain unchecked. Task IDs and dependencies report scope and progress; they do not release successor work.
+**Status**: APPROVED DESIGN / TASK DECOMPOSITION DRAFT / PARTIALLY RELEASED. The design and task preparation were approved as recorded in contracts/decisions.md#atomic-admission-amendment-approval-and-task-preparation and passed two independent planning reviews. The user released T037–T041 first, complete locally through T041's intentional behavioral RED checkpoint, then released mock-backed T042–T066 and T022. T042–T048 are complete locally after focused integration checks; T049–T066 and T022 remain incomplete, and T049–T063 remain unchecked. Task IDs and dependencies report scope and progress; they do not release successor work.
 
 **Boundaries**: T022 remains incomplete and unchecked. Phase 6 (T026+) and real gates (T024, T025, T028+) remain separately gated. No real persistence, production configuration, provider selection, kernel containment, adapter delivery, or Phase 6 execution is claimed.
 
@@ -366,43 +367,43 @@ Develop accepted contract mocks once (T004), then run independent story lanes on
   - **Owned Paths**: tests/runtime/support/uc03/memory-state.ts; tests/runtime/support/uc03/state-fixtures.ts; tests/runtime/contract/atomic-admission-mocks.test.ts.
   - **Acceptance Checks**: Add a separate versioned MemoryStatePortV02 adapter with compile-safe neutral journal methods typed by StatePortV02. Keep MemoryStatePort's existing v0.1 `implements StatePort` contract unchanged. Tests exercise the real v0.2 adapter methods and assert claim CAS, one-use beginAttempt, recordOutcome, reconcileObservedOutcome, closeUnattemptedClaim, and predecessor-bound reconcileUncertain. Positive vectors reach assertions and fail behaviorally; no type/import/collection failure is accepted. Typecheck and build pass.
 
-- [ ] T042 [US3] Implement the separate test-only StatePortV02 journal adapter in tests/runtime/support/uc03/memory-state.ts.
+- [X] T042 [US3] Implement the separate test-only StatePortV02 journal adapter in tests/runtime/support/uc03/memory-state.ts.
   - **Owner**: Tai / test-support lane, coordinating external X04-STATE.
   - **Dependencies**: T041.
   - **Owned Paths**: tests/runtime/support/uc03/memory-state.ts; tests/runtime/support/uc03/state-fixtures.ts; tests/runtime/contract/atomic-admission-mocks.test.ts.
   - **Acceptance Checks**: Turn T041 green using StatePortV02 without expanding the v0.1 StatePort contract. Keep the original MemoryStatePort v0.1 behavior and compile surface available beside the versioned mock. Cover atomic simulated claim CAS, single-use attempt consumption, exact outcome/reconciliation predecessors, preserved current holds, monotone task/control versions, one repair allowance at beginAttempt, one provider reservation, and zero repository provider charges. Duplicate IDs, open claims, stale versions, and unfenced actors deny with zero state/accounting changes. Label evidence test-only; do not claim durable persistence or actual restart. Typecheck, build, source tests, and emitted tests pass.
 
-- [ ] T043 [US3] Add runnable UC-05 v0.2 receipt RED scaffolding in src/contracts/approvals/contracts.ts and tests/runtime/approvals/contracts.test.ts.
+- [X] T043 [US3] Add runnable UC-05 v0.2 receipt RED scaffolding in src/contracts/approvals/contracts.ts and tests/runtime/approvals/contracts.test.ts.
   - **Owner**: Tai / approval-contracts lane, coordinating external X05-GATE.
   - **Dependencies**: T040.
   - **Owned Paths**: src/contracts/approvals/contracts.ts; tests/runtime/approvals/contracts.test.ts.
   - **Acceptance Checks**: Add additive uc05-approval/0.2-draft receipt types and neutral validators beside the still-available v0.1 records. RED tests call those exports and assert acceptance of valid branch-specific receipts plus rejection of missing/cross-branch fields and old v0.1 claims at the v0.2 validator. Existing v0.1 tests continue to compile. Typecheck and build pass; the v0.2 source/emitted test failure is assertion-only.
 
-- [ ] T044 [US3] Implement UC-05 v0.2 receipt validators in src/contracts/approvals/contracts.ts.
+- [X] T044 [US3] Implement UC-05 v0.2 receipt validators in src/contracts/approvals/contracts.ts.
   - **Owner**: Tai / approval-contracts lane, coordinating external X05-GATE.
   - **Dependencies**: T043.
   - **Owned Paths**: src/contracts/approvals/contracts.ts; tests/runtime/approvals/contracts.test.ts.
   - **Acceptance Checks**: Turn T043 green for PolicyEvaluationReceipt, ActionDecisionReceipt, ProviderAdmissionReceipt, ClaimClosureReceipt, and v0.2 DispatchClaim; retain explicit coder/reviewer roles and plan applicability. Old v0.1 claims remain readable only by the old validator and are rejected by v0.2 admission validators. Do not replace or make required the v0.1 schemas before downstream migrations. Typecheck, build, source tests, and emitted tests pass.
 
-- [ ] T045 [US3] Add runnable UC-05 policy/service RED tests and additive v0.2 API scaffolding in src/approvals/policy.ts and tests/runtime/approvals/service.test.ts.
+- [X] T045 [US3] Add runnable UC-05 policy/service RED tests and additive v0.2 API scaffolding in src/approvals/policy.ts and tests/runtime/approvals/service.test.ts.
   - **Owner**: Tai / approval-service lane, coordinating external X05-GATE.
   - **Dependencies**: T044.
   - **Owned Paths**: src/approvals/policy.ts; src/approvals/service.ts; src/approvals/plan-binding.ts; tests/runtime/approvals/policy.test.ts; tests/runtime/approvals/service.test.ts; tests/runtime/approvals/plan-binding.test.ts; tests/runtime/approvals/plan-context.test.ts.
   - **Acceptance Checks**: Add a versioned policy/service surface with neutral fail-closed behavior and runnable tests. Assert immutable current-policy receipts, exact action/plan bindings, a separate provider subject for coder/reviewer, and both pre-plan-diagnostic and approved-plan branches. RED is an assertion failure from the neutral result, never a missing import or required-port type error. Typecheck and build pass.
 
-- [ ] T046 [US3] Implement UC-05 v0.2 policy evaluation, provider admission, and plan binding in src/approvals/policy.ts and src/approvals/service.ts.
+- [X] T046 [US3] Implement UC-05 v0.2 policy evaluation, provider admission, and plan binding in src/approvals/policy.ts and src/approvals/service.ts.
   - **Owner**: Tai / approval-service lane, coordinating external X05-GATE.
   - **Dependencies**: T045.
   - **Owned Paths**: src/approvals/policy.ts; src/approvals/service.ts; src/approvals/plan-binding.ts; tests/runtime/approvals/policy.test.ts; tests/runtime/approvals/service.test.ts; tests/runtime/approvals/plan-binding.test.ts; tests/runtime/approvals/plan-context.test.ts.
   - **Acceptance Checks**: Turn T045 green without interpreting policy in UC-03 or UC-04. Publish immutable, branch-matched receipts with current decision-authority generation; provider requests use their own subject and receipt. Pre-plan diagnostic receipts bind criteria/purpose without a fabricated plan; approved-plan receipts bind the exact plan digest/reference. Typecheck, build, source tests, and emitted tests pass.
 
-- [ ] T047 [US3] Add runnable UC-05 control/recovery RED tests and additive publication scaffolding in src/approvals/control.ts and tests/runtime/approvals/control.test.ts.
+- [X] T047 [US3] Add runnable UC-05 control/recovery RED tests and additive publication scaffolding in src/approvals/control.ts and tests/runtime/approvals/control.test.ts.
   - **Owner**: Tai / approval-control lane, coordinating external X05-GATE.
   - **Dependencies**: T042, T044, T046.
   - **Owned Paths**: src/approvals/control.ts; src/approvals/recovery.ts; tests/runtime/approvals/control.test.ts; tests/runtime/approvals/restart-admission.test.ts.
   - **Acceptance Checks**: Exercise the real control/continuation SUT through neutral v0.2 scaffolding. Assert both policy-publication/beginAttempt race orders, pause/rejection before begin, unattempted claim closure only after fencing, and that createApprovalContinuation returns approval/claim state only. Assert a raw claim ID and an old v0.1 claim never become executor capability. Keep publication an explicit call to the UC-04 journal port; do not add UC-04 persistence to src/approvals/. Typecheck and build pass; RED is assertion-only.
 
-- [ ] T048 [US3] Implement UC-05 v0.2 control publication and admission-only recovery in src/approvals/control.ts and src/approvals/recovery.ts.
+- [X] T048 [US3] Implement UC-05 v0.2 control publication and admission-only recovery in src/approvals/control.ts and src/approvals/recovery.ts.
   - **Owner**: Tai / approval-control lane, coordinating external X05-GATE.
   - **Dependencies**: T047.
   - **Owned Paths**: src/approvals/control.ts; src/approvals/recovery.ts; tests/runtime/approvals/control.test.ts; tests/runtime/approvals/restart-admission.test.ts.

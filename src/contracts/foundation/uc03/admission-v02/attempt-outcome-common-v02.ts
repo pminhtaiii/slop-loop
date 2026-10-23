@@ -136,7 +136,7 @@ function validateTrustedContext(context: AttemptOutcomeValidationContextV02 | un
   const admissionReservations = admission.subjectKind === 'repository-action' ? admission.reservationRefs : [admission.requestReservationReceipt, ...admission.budgetRefs];
   if (!canonicalEqual(claim.reservationRefs, admissionReservations)) addErr(errors, 'trustedContext.claim.reservationRefs', 'Claim reservations do not match the trusted admission', 'TRUSTED_CLAIM_RESERVATION_MISMATCH');
   if (attempt.claimId !== claim.claimId || attempt.taskId !== claim.taskId || attempt.epoch !== claim.epoch || attempt.preAttemptTaskStateVersion !== claim.preClaimTaskStateVersion || attempt.preAttemptControlVersion !== claim.postClaimControlVersion) addErr(errors, 'trustedContext.attempt', 'Current attempt does not descend from the trusted claim', 'TRUSTED_ATTEMPT_MISMATCH');
-  const repairPatch = admission.subjectKind === 'repository-action' && admission.action.kind === 'apply_patch';
+  const repairPatch = admission.subjectKind === 'repository-action' && admission.planApplicability === 'approved-plan' && admission.action.kind === 'apply_patch';
   if (attempt.postBeginTaskStateVersion !== attempt.preAttemptTaskStateVersion + (repairPatch ? 1 : 0) || attempt.postBeginControlVersion !== attempt.preAttemptControlVersion + 1) addErr(errors, 'trustedContext.attempt', 'Trusted attempt versions do not match the admitted branch progression', 'TRUSTED_ATTEMPT_VERSION_MISMATCH');
   const expectedDigest = computeAdmissionDigest(admission as unknown as Record<string, unknown>);
   if (admission.admissionDigest !== undefined && admission.admissionDigest !== expectedDigest) addErr(errors, 'trustedContext.admissionDigest', 'Trusted admission digest is invalid', 'TRUSTED_ADMISSION_DIGEST_INVALID');
@@ -177,6 +177,7 @@ export function checkActionDecisionBinding(input: Record<string, unknown>, admis
 function validateEffects(input: unknown, outcome: AttemptOutcomeStatusV02, admission: AdmissionContextV02, errors: ValidationError[]): void {
   if (!isPlainObject(input)) { addErr(errors, 'proposedEffects', 'Proposed settlement effects are required', 'INVALID_TYPE'); return; }
   rejectUnknownKeys(input, EFFECT_KEYS, 'proposedEffects', errors);
+  const diagnosticPatch = admission.subjectKind === 'repository-action' && admission.planApplicability === 'pre-plan-diagnostic' && admission.action.kind === 'apply_patch';
   const transition = input['taskTransition'];
   if (!isPlainObject(transition)) addErr(errors, 'proposedEffects.taskTransition', 'Task transition is required', 'INVALID_TYPE');
   else if (transition['kind'] === 'none') rejectUnknownKeys(transition, ['kind'], 'proposedEffects.taskTransition', errors);
@@ -186,6 +187,7 @@ function validateEffects(input: unknown, outcome: AttemptOutcomeStatusV02, admis
     validateNonEmptyString(transition['toNode'], 'proposedEffects.taskTransition.toNode', errors);
     const expectedFromNode = admission.subjectKind === 'repository-action' && admission.action.kind === 'apply_patch' && admission.runnableNode === 'Repair' ? 'Patch' : admission.runnableNode;
     if (transition['fromNode'] !== expectedFromNode) addErr(errors, 'proposedEffects.taskTransition.fromNode', 'Transition source does not match the admitted node/attempt boundary', 'TASK_TRANSITION_SOURCE_MISMATCH');
+    if (diagnosticPatch) addErr(errors, 'proposedEffects.taskTransition', 'Pre-plan diagnostic patches preserve Investigate state', 'DIAGNOSTIC_TASK_TRANSITION_FORBIDDEN');
   } else addErr(errors, 'proposedEffects.taskTransition.kind', 'Invalid task transition kind', 'INVALID_TASK_TRANSITION');
   const revision = input['revision'];
   if (!isPlainObject(revision)) addErr(errors, 'proposedEffects.revision', 'Revision effect is required', 'INVALID_TYPE');

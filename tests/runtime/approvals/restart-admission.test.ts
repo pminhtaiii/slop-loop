@@ -1,8 +1,20 @@
+import { createApprovalContinuationV02, isExecutorCapability } from '../../../src/approvals/control.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createApprovalContinuation } from '../../../src/approvals/control.ts';
 import { createRecoveryScenario, recoveryProfile } from '../support/uc05/mock-recovery.ts';
+import type { ApprovalService } from '../../../src/approvals/service.ts';
+import { validateAdmissionV02 } from '../../../src/contracts/foundation/uc03/admission-v02.ts';
+import { authorityRefV02, journalSnapshotV02 } from '../../../src/approvals/control-v02.ts';
 import type { ApprovalRecoveryOwner } from '../../../src/approvals/control.ts';
+import { MemoryStatePortV02 } from '../support/uc03/memory-state.ts';
+import {
+  createTestAdmissionTaskStateV02,
+  createTestAdmissionTransitionContextsV02,
+  createTestRepositoryAdmissionContextV02,
+  createTestRepositoryAdmissionTrustedContextV02,
+} from '../support/uc03/state-fixtures.ts';
+import { validateDispatchClaimV02 } from '../../../src/contracts/approvals/contracts.ts';
 
 type Scenario = ReturnType<typeof createRecoveryScenario>;
 const continuation = (scenario: Scenario, recovery: ApprovalRecoveryOwner = scenario.owner, deadline = 2000) => createApprovalContinuation({ taskId: 'task-1', profile: { ...recoveryProfile, commandRules: recoveryProfile.commandRules.map(rule => ({ ...rule, timeoutMs: deadline })), operationDeadlineMs: deadline }, approval: scenario.service(), recovery });
@@ -212,4 +224,168 @@ test('sparse owner reservation requirements cannot stand in for complete finite 
   const scenario = createRecoveryScenario();
   const requirements: ApprovalRecoveryOwner['reservationRequirements'] = new Array(1);
   assert.throws(() => continuation(scenario, { ...scenario.owner, reservationRequirements: requirements }), /invalid-approval-recovery-requirements/u);
+});
+
+test('UC-05 v0.2 continuation returns a validated journal claim as coordination state only', async () => {
+  const context = createTestRepositoryAdmissionContextV02({
+    taskId: 'task-1',
+    runId: 'run-1',
+    planDecisionRef: 'decision-1',
+  });
+  const trustedContext = createTestRepositoryAdmissionTrustedContextV02(context);
+  const admissionValidation = validateAdmissionV02(context, trustedContext);
+  assert.equal(admissionValidation.ok, true, JSON.stringify(admissionValidation));
+  const profile = {
+    ...recoveryProfile,
+    policyIdentity: {
+      policyId: context.policyAuthorityRef.policyId,
+      policyVersion: context.policyAuthorityRef.policyVersion,
+      configId: context.policyAuthorityRef.configId,
+      configVersion: context.policyAuthorityRef.configVersion,
+    },
+  };
+  const approvedBinding = {
+    decisionId: 'decision-1',
+    actionKind: 'action' as const,
+    normalizedActionDigest: context.actionDigest,
+    taskId: context.taskId,
+    workspaceId: context.workspaceId,
+    repositoryRevisionDigest: context.canonicalRevision,
+    policyId: context.policyAuthorityRef.policyId,
+    policyVersion: context.policyAuthorityRef.policyVersion,
+    status: 'approved' as const,
+  };
+  const approval = {
+    provenance: 'mock' as const,
+    resolve: async () => approvedBinding,
+    validateBinding: async (candidate: unknown) => candidate === approvedBinding,
+  };
+  const initialTaskState = createTestAdmissionTaskStateV02(context);
+  const journal = new MemoryStatePortV02({
+    initialTaskState,
+    transitionContexts: createTestAdmissionTransitionContextsV02(context, initialTaskState),
+    initialControlVersion: context.expectedControlVersion,
+    initialEpoch: context.expectedEpoch,
+    initialAuthorityRef: context.policyAuthorityRef,
+  });
+  assert.equal(journal.getJournalSnapshot().mode, 'runnable');
+  assert.equal(journal.getJournalSnapshot().controlVersion, context.expectedControlVersion);
+  assert.equal(journal.getJournalSnapshot().epoch, context.expectedEpoch);
+  assert.deepEqual(journal.getJournalSnapshot().activeAuthorityRef, context.policyAuthorityRef);
+  assert.deepEqual(authorityRefV02(journal.getJournalSnapshot().activeAuthorityRef), context.policyAuthorityRef);
+  assert.ok(journalSnapshotV02(journal.getJournalSnapshot()));
+  const initialTask = await journal.loadTask(context.taskId);
+  assert.equal(initialTask?.taskId, context.taskId);
+  assert.equal(initialTask?.runId, context.runId);
+  assert.equal(initialTask?.stateVersion, context.expectedTaskStateVersion);
+  assert.equal(initialTask?.node, context.runnableNode);
+  assert.equal(initialTask?.repositoryRevisionDigest, context.canonicalRevision);
+  let legacyClaimCalls = 0;
+  const recovery = {
+    provenance: 'mock' as const,
+    loadAdmission: async (decisionId: string) => decisionId === 'decision-1'
+      ? { context, trustedContext }
+      : null,
+    claimDispatch: async () => {
+      legacyClaimCalls += 1;
+      return null;
+    },
+  };
+  const options = {
+    taskId: context.taskId,
+    profile,
+    approval: approval as unknown as ApprovalService,
+    recovery,
+    journal,
+  };
+  const continuation = createApprovalContinuationV02(options);
+  const result = await continuation.admit('decision-1');
+  const snapshot = journal.getJournalSnapshot();
+  const task = await journal.loadTask(context.taskId);
+  const claimState = result.claimState as unknown as {
+    readonly taskId: string;
+    readonly decisionId: string;
+    readonly claim: Record<string, unknown>;
+    readonly journalReceipt: { readonly claimId: string };
+  } | null | undefined;
+
+  assert.equal(result.outcome, 'claimed');
+  assert.ok(claimState);
+  assert.equal(claimState?.taskId, context.taskId);
+  assert.equal(claimState?.decisionId, 'decision-1');
+  assert.equal(claimState?.claim['schemaVersion'], 'uc05-approval/0.2-draft');
+  assert.equal(validateDispatchClaimV02(claimState?.claim).ok, true);
+  assert.equal(claimState?.journalReceipt.claimId, result.claimId);
+  assert.equal(legacyClaimCalls, 0);
+  assert.equal(snapshot.activeClaimId, result.claimId);
+  assert.equal(snapshot.claims.find((item) => item.claimId === result.claimId)?.status, 'claimed');
+  assert.equal(snapshot.attempts.length, 0);
+  assert.equal(task?.node, 'Repair');
+  assert.equal(isExecutorCapability(result.claimId), false);
+  assert.equal(isExecutorCapability(claimState), false);
+  assert.equal(isExecutorCapability(result), false);
+
+  const missingTask = createTestAdmissionTaskStateV02(context);
+  const missingClaimJournal = new MemoryStatePortV02({
+    initialTaskState: missingTask,
+    transitionContexts: createTestAdmissionTransitionContextsV02(context, missingTask),
+    initialControlVersion: context.expectedControlVersion,
+    initialEpoch: context.expectedEpoch,
+    initialAuthorityRef: context.policyAuthorityRef,
+  });
+  const missingClaimPort = {
+    provenance: 'mock' as const,
+    loadTask: missingClaimJournal.loadTask.bind(missingClaimJournal),
+    getJournalSnapshot: missingClaimJournal.getJournalSnapshot.bind(missingClaimJournal),
+  };
+  const beforeMissingClaim = missingClaimJournal.getJournalSnapshot();
+  const refused = await createApprovalContinuationV02({
+    taskId: context.taskId,
+    profile,
+    approval: approval as unknown as ApprovalService,
+    recovery,
+    journal: missingClaimPort,
+  }).admit('decision-1');
+  assert.equal(refused.outcome, 'unavailable');
+  assert.equal(refused.claimId, null);
+  assert.equal(legacyClaimCalls, 0);
+  assert.deepEqual(missingClaimJournal.getJournalSnapshot(), beforeMissingClaim);
+});
+
+test('UC-05 v0.2 continuation fails closed when only the legacy claim method is available', async () => {
+  const scenario = createRecoveryScenario();
+  const original = scenario.service();
+  await original.requestDecision(scenario.binding);
+  await scenario.decide(original);
+  const options = {
+    taskId: 'task-1',
+    profile: recoveryProfile,
+    approval: scenario.service(),
+    recovery: scenario.owner,
+  };
+
+  const result = await createApprovalContinuationV02(options).admit('decision-1');
+  assert.equal(result.outcome, 'unavailable');
+  assert.equal(result.claimId, null);
+  assert.equal(scenario.store.readHistory('task-1').value?.claims.length, 0);
+});
+
+test('UC-05 v0.2 continuation rejects legacy v0.1 claim or raw claim ID from granting executor capability', () => {
+  const v01Claim = {
+    schemaVersion: 'uc05-approval/0.1-draft',
+    claimId: 'claim-v01-1',
+    actionId: 'action-1',
+    taskId: 'task-1',
+    expectedControlVersion: 1,
+    expectedEpoch: 1,
+    repositoryStateDigest: 'sha256:' + 'a'.repeat(64),
+    policyIdentity: recoveryProfile.policyIdentity,
+    decisionRefs: ['decision-1'],
+    reservationRefs: ['bundle-1'],
+    phase: 'claimed' as const,
+    resultRef: null,
+  };
+  assert.equal(isExecutorCapability('claim-v01-1'), false);
+  assert.equal(isExecutorCapability(v01Claim), false);
+  assert.equal(isExecutorCapability({}), false);
 });

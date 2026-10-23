@@ -464,8 +464,11 @@ export function createTestProviderAdmissionContextV02(
   const planDecisionRef = (overrides?.planDecisionRef as string | undefined) ?? 'dec-plan-001';
   const plan = createTestAdmissionPlan(bugTask, planDecisionRef);
   const budgetRefs = (overrides?.budgetRefs as readonly string[] | undefined) ?? [
-    `${providerRequest.providerRequestId}-tokens`,
-    `${providerRequest.providerRequestId}-cost`,
+    `task-tokens-${providerRequest.providerRequestId}`,
+    `task-cost-${providerRequest.providerRequestId}`,
+    `run-tokens-${providerRequest.providerRequestId}`,
+    `run-cost-${providerRequest.providerRequestId}`,
+    ...(role === 'reviewer' ? [`task-iteration-${providerRequest.providerRequestId}`] : []),
   ];
   const providerIdentity = {
     providerId: providerRequest.providerId,
@@ -554,6 +557,9 @@ export function createTestRepositoryAdmissionTrustedContextV02(
         }
       : {}),
     freshnessContextDigest: context.policyEvaluationReceipt.freshnessContextDigest,
+    ...(context.action.kind === 'run_command' && context.commandView
+      ? { commandViewDigest: context.commandView.viewDigest }
+      : {}),
     executionProfile: {
       isolationProfileRef: context.executionProfileId,
       exclusionsPolicyVersion: 'exclusions-v1',
@@ -570,70 +576,153 @@ export function createTestRepositoryAdmissionTrustedContextV02(
         maxChangedPaths: 5,
       },
     },
-    allowedDiagnosticChecks: [],
-    allowedDiagnosticTestPaths: [],
+    allowedDiagnosticChecks: context.planApplicability === 'pre-plan-diagnostic' && context.action.kind === 'run_command' &&
+      context.checkId && context.testPath && context.diagnosticPurpose && context.taskCriteriaDigest && context.checkSetDigest
+      ? [{
+          checkId: context.checkId,
+          testPath: context.testPath,
+          diagnosticPurpose: context.diagnosticPurpose,
+          taskCriteriaDigest: context.taskCriteriaDigest,
+          checkSetDigest: context.checkSetDigest,
+          action: context.action,
+        }]
+      : [],
+    allowedDiagnosticTestPaths: context.planApplicability === 'pre-plan-diagnostic'
+      ? (context.testPath ? [context.testPath] : [])
+      : [],
   };
+}
+
+export function createTestRepositoryCommandAdmissionContextV02(
+  overrides?: Partial<Record<string, unknown>>,
+): RepositoryAdmissionContextV02 {
+  const action = (overrides?.action as RunCommandAction | undefined) ?? createTestAction({
+    actionId: 'act-command-admission-001',
+    argv: ['-q', 'tests/test_calculator.py'],
+    purpose: 'Run admitted verification',
+  });
+  const reservationRefs = (overrides?.reservationRefs as readonly string[] | undefined) ?? ['res-command-admission-001'];
+  const base = createTestRepositoryAdmissionContextV02({ ...overrides, action, reservationRefs }) as unknown as Record<string, unknown>;
+  const executionProfileId = base['executionProfileId'] as string;
+  const canonicalRevision = base['canonicalRevision'] as string;
+  const finiteBounds = {
+    timeoutMs: 30_000,
+    maxOutputBytes: 65_536,
+    maxCpuSeconds: 10,
+    maxMemoryBytes: 536_870_912,
+    maxProcessCount: 5,
+    isolationProfileRef: executionProfileId,
+  };
+  const commandView = {
+    viewId: 'view-command-admission-001',
+    taskId: base['taskId'] as string,
+    workspaceId: base['workspaceId'] as string,
+    canonicalRevision,
+    admittedFiles: [{ path: 'tests/test_calculator.py', digest: computeCanonicalSha256('test-file') }],
+    exclusionsPolicyVersion: 'exclusions-v1',
+    scratchIdentity: 'scratch-admission-v02',
+    mountedReadOnly: true as const,
+    isolationProfileRef: executionProfileId,
+  };
+  const context = {
+    ...base,
+    baseRevision: undefined,
+    targetPaths: undefined,
+    patchDigest: undefined,
+    finiteBounds,
+    commandView: { ...commandView, viewDigest: computeCanonicalSha256(commandView) },
+  };
+  return context as unknown as RepositoryAdmissionContextV02;
 }
 
 export function createTestProviderAdmissionTrustedContextV02(
   context: ProviderAdmissionContextV02,
 ): ProviderAdmissionTrustedContextV02 {
-  void context;
-  const request = createTestProviderRequest();
-  const task = createTestBugTask({ taskId: request.taskId });
-  const plan = createTestAdmissionPlan(task, 'dec-plan-001');
-  const providerIdentity = {
-    providerId: 'provider-test',
-    modelId: 'model-test-01',
-    configId: 'config-coder-v1',
-    configVersion: '1.0.0',
-    pricingPolicyId: 'pricing-standard-v1',
-    pricingPolicyVersion: '1.0.0',
-    issuerKeyRef: 'key-authority-provider-001',
-    decisionAuthorityGeneration: 2,
-  };
-  const providerAdmissionReceipt = {
-    receiptId: `par-${request.providerRequestId}`,
-    receiptDigest: '',
-    providerRequestId: request.providerRequestId,
-    role: request.role,
-    requestContentDigest: computeRequestContentDigest(request),
-    providerId: providerIdentity.providerId,
-    modelId: providerIdentity.modelId,
-    configId: providerIdentity.configId,
-    configVersion: providerIdentity.configVersion,
-    decisionAuthorityGeneration: providerIdentity.decisionAuthorityGeneration,
-  };
-  providerAdmissionReceipt.receiptDigest = computeCanonicalSha256({ ...providerAdmissionReceipt, receiptDigest: undefined });
+  const request = context.providerRequest;
   return {
     subjectKind: 'provider-request',
-    taskStateSchemaVersion: '0.2.0',
-    expectedTaskStateVersion: 1,
-    controlSchemaVersion: '0.2.0',
-    expectedControlVersion: 2,
-    expectedEpoch: 1,
-    taskId: request.taskId,
-    runId: request.runId,
-    runnableNode: 'Repair',
-    planApplicability: 'approved-plan',
-    planBindingDigest: testPlanBindingDigest(task, plan),
-    planDecisionRef: 'dec-plan-001',
-    role: request.role,
-    providerRequestId: request.providerRequestId,
-    requestContentDigest: computeRequestContentDigest(request),
-    providerAdmissionReceiptRef: providerAdmissionReceipt.receiptId,
-    providerAdmissionReceiptDigest: providerAdmissionReceipt.receiptDigest,
-    requestReservationReceipt: request.reservationRef,
-    budgetRefs: [`${request.providerRequestId}-tokens`, `${request.providerRequestId}-cost`],
-    providerIdentity,
+    taskStateSchemaVersion: context.taskStateSchemaVersion,
+    expectedTaskStateVersion: context.expectedTaskStateVersion,
+    controlSchemaVersion: context.controlSchemaVersion,
+    expectedControlVersion: context.expectedControlVersion,
+    expectedEpoch: context.expectedEpoch,
+    taskId: context.taskId,
+    runId: context.runId,
+    runnableNode: context.runnableNode,
+    planApplicability: context.planApplicability,
+    ...(context.planApplicability === 'approved-plan'
+      ? { planBindingDigest: context.planBindingDigest, planDecisionRef: context.planDecisionRef }
+      : { diagnosticPurpose: context.diagnosticPurpose, taskCriteriaDigest: context.taskCriteriaDigest }),
+    role: context.role,
+    providerRequestId: context.providerRequestId,
+    requestContentDigest: context.requestContentDigest,
+    providerAdmissionReceiptRef: context.providerAdmissionReceipt.receiptId,
+    providerAdmissionReceiptDigest: context.providerAdmissionReceipt.receiptDigest,
+    requestReservationReceipt: context.requestReservationReceipt,
+    budgetRefs: context.budgetRefs,
+    providerIdentity: context.providerIdentity,
     requestLimits: {
       timeoutMs: request.timeoutMs,
-      maxInputTokens: request.maxInputTokens,
-      maxOutputTokens: request.maxOutputTokens,
-      maxBillableTokens: request.maxBillableTokens,
-      maxCostUsd: request.maxCostUsd,
+      maxInputTokens: context.finiteBounds.maxInputTokens,
+      maxOutputTokens: context.finiteBounds.maxOutputTokens,
+      maxBillableTokens: context.finiteBounds.maxBillableTokens,
+      maxCostUsd: context.finiteBounds.maxCostUsd,
+      ...(context.finiteBounds.maxReviewerIterations !== undefined
+        ? { maxReviewerIterations: context.finiteBounds.maxReviewerIterations }
+        : {}),
     },
   };
+}
+
+export function createTestDiagnosticPatchAdmissionContextV02(): RepositoryAdmissionContextV02 {
+  const base = createTestRepositoryAdmissionContextV02({ reservationRefs: ['res-diagnostic-test-001'] }) as unknown as Record<string, unknown>;
+  const action = {
+    actionId: 'act-test-patch-001',
+    kind: 'apply_patch' as const,
+    patchContent: '--- a/tests/test_calculator.py\n+++ b/tests/test_calculator.py\n@@ -1,1 +1,2 @@\n+# regression\n',
+    targetPaths: ['tests/test_calculator.py'],
+    baseRevisionDigest: base['canonicalRevision'] as string,
+  };
+  const actionDigest = computeActionDigest(action);
+  const diagnosticPurpose = 'Add a regression test for the reported behavior';
+  const taskCriteriaDigest = computeCanonicalSha256(['Trailing operator emits syntax error']);
+  const checkSetDigest = computeCanonicalSha256(['check-pytest-repro']);
+  const freshnessContextDigest = computeCanonicalSha256({
+    taskId: base['taskId'],
+    runId: base['runId'],
+    actionDigest,
+    canonicalRevision: base['canonicalRevision'],
+    policyAuthorityRef: base['policyAuthorityRef'],
+  });
+  const receiptBase: Record<string, unknown> = {
+    ...(base['policyEvaluationReceipt'] as Record<string, unknown>),
+    actionDigest,
+    freshnessContextDigest,
+  };
+  delete receiptBase['receiptDigest'];
+  const policyEvaluationReceipt = {
+    ...receiptBase,
+    receiptDigest: computeCanonicalSha256(receiptBase),
+  };
+  delete base['planBindingDigest'];
+  delete base['planDecisionRef'];
+  const context = {
+    ...base,
+    planApplicability: 'pre-plan-diagnostic',
+    runnableNode: 'Investigate',
+    action,
+    actionDigest,
+    diagnosticPurpose,
+    taskCriteriaDigest,
+    checkSetDigest,
+    testPath: 'tests/test_calculator.py',
+    policyEvaluationReceipt,
+    baseRevision: base['canonicalRevision'],
+    targetPaths: ['tests/test_calculator.py'],
+    patchDigest: computeCanonicalSha256(action.patchContent),
+    reservationRefs: ['res-diagnostic-test-001'],
+  };
+  return context as unknown as RepositoryAdmissionContextV02;
 }
 
 export function createTestClaimReceiptV02(
@@ -731,7 +820,7 @@ export function createTestRepositoryOutcomeReceiptV02(
     resultRef: safeRef('result-repo-out-001'),
     evidenceRefs: [safeRef('evidence-repo-out-001')],
     proposedEffects: {
-      taskTransition: outcome === 'observed' && isPatch
+      taskTransition: outcome === 'observed' && isPatch && context.planApplicability === 'approved-plan'
         ? { kind: 'transition', fromNode: 'Patch', toNode: 'Verify' }
         : { kind: 'none' },
       revision: observedResultRevisionDigest
@@ -967,7 +1056,7 @@ export function createTestObservedReconciliationReceiptV02(
   overrides?: Partial<ObservedOutcomeReconciliationReceiptV02>,
 ): ObservedOutcomeReconciliationReceiptV02 {
   if (predecessor.outcome !== 'observed') throw new Error('Observed reconciliation requires a recorded observed outcome receipt');
-  const evidenceRefs = [{ reference: 'evidence-observed-settlement', digest: computeCanonicalSha256('evidence-observed-settlement') }];
+  const evidenceRefs = predecessor.evidenceRefs.map((reference) => structuredClone(reference));
   const raw: Record<string, unknown> = {
     ...reconciliationBase(
       predecessor, claim, attempt, context, 'observed-unsettled', evidenceRefs,

@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { NormalizedAction } from '../../../src/contracts/foundation/uc03.ts';
-import { computeActionDigest } from '../../../src/contracts/foundation/uc03.ts';
+import { computeActionDigest, computeCanonicalSha256, computeRequestContentDigest } from '../../../src/contracts/foundation/uc03.ts';
 import type { PolicyProfile } from '../../../src/contracts/approvals/contracts.ts';
-import { compilePolicy } from '../../../src/approvals/policy.ts';
+import {
+  validatePolicyEvaluationReceipt,
+  validateProviderAdmissionReceipt,
+} from '../../../src/contracts/approvals/contracts.ts';
+import { compilePolicy, evaluatePolicyV02 } from '../../../src/approvals/policy.ts';
 import type { PolicyFacts, PolicyClassification } from '../../../src/approvals/policy.ts';
+import { computePlanBindingDigest } from '../../../src/approvals/plan-binding.ts';
 
 const digest = `sha256:${'a'.repeat(64)}`;
 const identity = { policyId: 'policy-1', policyVersion: '1', configId: 'config-1', configVersion: '1' };
@@ -49,6 +54,78 @@ function factsFor(action: NormalizedAction): PolicyFacts {
     patch: action.kind === 'apply_patch' ? { fileCount: action.targetPaths.length, addedDeletedLines: 2, dependencyChange: false, deletion: false, structuralChange: false, sensitiveConfiguration: false, productionCode: true } : null,
     plan: null,
   };
+}
+
+function planDigest(plan: NonNullable<PolicyFacts['plan']>): string {
+  return computePlanBindingDigest({
+    taskId: plan.binding.taskId,
+    planVersion: plan.binding.planVersion,
+    strategyDigest: plan.binding.strategyDigest,
+    baselineRef: plan.binding.baselineRef,
+    evidenceRefs: plan.binding.evidenceRefs,
+    criteriaDigest: plan.binding.criteriaDigest,
+    checkSetDigest: plan.binding.checkSetDigest,
+    decisionRef: plan.binding.decisionId,
+  });
+}
+
+function factsV02(
+  action: NormalizedAction,
+  applicability: 'pre-plan-diagnostic' | 'approved-plan' = 'pre-plan-diagnostic',
+  extras: Record<string, unknown> = {},
+): Record<string, unknown> {
+  const plan = applicability === 'approved-plan' ? approvedPlan() : null;
+  const prePlan = applicability === 'pre-plan-diagnostic';
+  return {
+    ...factsFor(action),
+    runId: 'run-1',
+    taskStateVersion: 3,
+    taskNode: prePlan ? 'Investigate' : 'Patch',
+    planApplicability: applicability,
+    diagnosticPurpose: prePlan ? 'reproduction_check' : null,
+    taskCriteriaDigest: prePlan ? digest : null,
+    checkSetDigest: prePlan ? digest : plan?.binding.checkSetDigest ?? null,
+    testPath: prePlan ? 'tests/' : null,
+    checkId: prePlan ? 'focused-tests' : null,
+    planBindingDigest: plan === null ? null : planDigest(plan),
+    planDecisionRef: plan?.binding.decisionId ?? null,
+    providerRequest: null,
+    plan,
+    ...extras,
+  };
+}
+
+function providerRequest(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    providerRequestId: 'provider-request-1',
+    taskId: 'task-1',
+    runId: 'run-1',
+    role: 'coder',
+    purpose: 'reproduction_check',
+    providerId: 'provider-1',
+    modelId: 'model-1',
+    configId: identity.configId,
+    pricingPolicyId: 'pricing-1',
+    contextDigest: digest,
+    timeoutMs: 2_000,
+    maxInputTokens: 100,
+    maxOutputTokens: 100,
+    maxBillableTokens: 220,
+    maxCostUsd: 0.25,
+    reservationRef: 'reservation-1',
+    dispatchState: 'reserved',
+    ...overrides,
+  };
+}
+
+function providerFacts(request: Record<string, unknown>, applicability: 'pre-plan-diagnostic' | 'approved-plan'): Record<string, unknown> {
+  return factsV02(command, applicability, {
+    taskId: request['taskId'],
+    runId: request['runId'],
+    role: request['role'],
+    diagnosticPurpose: applicability === 'pre-plan-diagnostic' ? request['purpose'] : null,
+    providerRequest: request,
+  });
 }
 
 function policy(): ReturnType<typeof compilePolicy> & { ok: true } {
@@ -255,7 +332,7 @@ test('configured standalone stdin tokens and unrelated uppercase interpreter fla
 });
 
 test('unconfigured interpreter aliases cannot gain approval through constrained capabilities', () => {
-  for (const executable of ['pythonw', 'pythonw3.12', 'py', 'nodejs', 'C:\\Python\\PYTHONW.EXE']) {
+  for (const executable of ['pythonw', 'pythonw3.12', 'py', 'nodejs', 'C:\\\\Python\\\\PYTHONW.EXE']) {
     const action: NormalizedAction = { ...command, executable, argv: ['script.py'] };
     const facts = factsFor(action);
     assert.deepEqual(policy().value.classify(action, { ...facts, command: { ...facts.command, executableRef: 'interpreter', constrainedCapability: 'host-constrained-test-1' } }), {
@@ -281,4 +358,200 @@ test('revised plans require complete matched proposal context and trusted materi
   ]) assert.equal(policy().value.classify(action, { ...facts, plan: proposal }).ok, false);
   assert.equal(permission(policy().value.classify(action, facts)), 'APPROVAL_REQUIRED');
   assert.equal(permission(policy().value.classify(action, { ...facts, plan: { ...plan, materialChange: false, replanSlot: null } })), 'APPROVAL_REQUIRED');
+});
+
+test('v0.2 policy evaluation: allowed command produces valid immutable PolicyEvaluationReceipt without provider or plan fields', () => {
+  const result = policy().value.evaluatePolicyV02(command, factsV02(command), { decisionAuthorityGeneration: 1 });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.receipt.result, 'ALLOWED');
+  assert.equal(result.receipt.policyId, identity.policyId);
+  assert.equal(result.receipt.policyVersion, identity.policyVersion);
+  assert.equal(result.receipt.configId, identity.configId);
+  assert.equal(result.receipt.configVersion, identity.configVersion);
+  assert.equal(result.receipt.decisionAuthorityGeneration, 1);
+  assert.equal(result.receipt.actionDigest, computeActionDigest(command));
+  assert.equal(Object.isFrozen(result.receipt), true);
+  const validated = validatePolicyEvaluationReceipt(result.receipt);
+  assert.equal(validated.ok, true);
+  // Also verify standalone evaluatePolicyV02 function export
+  const standalone = evaluatePolicyV02(profile, command, factsV02(command), { decisionAuthorityGeneration: 1 });
+  assert.equal(standalone.ok, true);
+});
+
+test('v0.2 policy evaluation: approved plan vs unapproved patch vs forbidden command', () => {
+  // Unapproved patch requires fix plan
+  const unapproved = policy().value.evaluatePolicyV02(patch, factsV02(patch), { decisionAuthorityGeneration: 1 });
+  assert.equal(unapproved.ok, false);
+  if (!unapproved.ok) {
+    assert.equal(unapproved.outcome, 'prerequisite-denied');
+    assert.equal(unapproved.reasonCode, 'invalid-plan-applicability-or-binding');
+  }
+
+  // Approved patch produces ALLOWED receipt
+  const approved = policy().value.evaluatePolicyV02(patch, factsV02(patch, 'approved-plan'), { decisionAuthorityGeneration: 1 });
+  assert.equal(approved.ok, true);
+  if (approved.ok) {
+    assert.equal(approved.receipt.result, 'ALLOWED');
+    assert.equal(validatePolicyEvaluationReceipt(approved.receipt).ok, true);
+  }
+
+  // Risky patch produces APPROVAL_REQUIRED receipt
+  const patchFacts = factsFor(patch).patch;
+  assert.ok(patchFacts);
+  const riskyPatch = { ...factsV02(patch, 'approved-plan'), patch: { ...patchFacts, dependencyChange: true } };
+  const risky = policy().value.evaluatePolicyV02(patch, riskyPatch, { decisionAuthorityGeneration: 1 });
+  assert.equal(risky.ok, true);
+  if (risky.ok) {
+    assert.equal(risky.receipt.result, 'APPROVAL_REQUIRED');
+    assert.equal(validatePolicyEvaluationReceipt(risky.receipt).ok, true);
+  }
+
+  // Hard boundary / reviewer role produces FORBIDDEN receipt
+  const forbiddenFacts = factsV02(command, 'pre-plan-diagnostic', { role: 'reviewer' });
+  const forbidden = policy().value.evaluatePolicyV02(command, forbiddenFacts, { decisionAuthorityGeneration: 1 });
+  assert.equal(forbidden.ok, true);
+  if (forbidden.ok) {
+    assert.equal(forbidden.receipt.result, 'FORBIDDEN');
+    assert.equal(validatePolicyEvaluationReceipt(forbidden.receipt).ok, true);
+  }
+});
+
+test('v0.2 policy evaluation computes freshness from exact current facts and ignores caller digest overrides', () => {
+  const facts = factsV02(command);
+  const result = policy().value.evaluatePolicyV02(command, facts, {
+    decisionAuthorityGeneration: 1,
+    freshnessContextDigest: `sha256:${'f'.repeat(64)}`,
+  });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.receipt.freshnessContextDigest, computeCanonicalSha256({ action: command, facts, policyIdentity: identity, decisionAuthorityGeneration: 1 }));
+  assert.notEqual(result.receipt.freshnessContextDigest, `sha256:${'f'.repeat(64)}`);
+  const changed = policy().value.evaluatePolicyV02(command, { ...facts, taskStateVersion: 4 }, { decisionAuthorityGeneration: 1 });
+  assert.equal(changed.ok, true);
+  if (changed.ok) assert.notEqual(changed.receipt.freshnessContextDigest, result.receipt.freshnessContextDigest);
+});
+
+test('v0.2 provider admission validates the full reserved ProviderRequest for both roles and applicability branches', () => {
+  for (const role of ['coder', 'reviewer'] as const) {
+    for (const applicability of ['pre-plan-diagnostic', 'approved-plan'] as const) {
+      const request = providerRequest({
+        providerRequestId: `request-${role}-${applicability}`,
+        role,
+        purpose: applicability === 'pre-plan-diagnostic' ? 'reproduction_check' : 'approved_fix_work',
+      });
+      const facts = providerFacts(request, applicability);
+      const branchOptions = applicability === 'pre-plan-diagnostic'
+        ? { planApplicability: applicability, diagnosticPurpose: 'reproduction_check', taskCriteriaDigest: digest }
+        : { planApplicability: applicability, planBindingDigest: facts['planBindingDigest'] as string, planDecisionRef: facts['planDecisionRef'] as string };
+      const result = policy().value.evaluateProviderAdmissionV02(request, facts, { decisionAuthorityGeneration: 1, ...branchOptions });
+      assert.equal(result.ok, true, `${role}/${applicability}`);
+      if (!result.ok) continue;
+      assert.equal(result.receipt.role, role);
+      assert.equal(result.receipt.policyId, identity.policyId);
+      assert.equal(result.receipt.policyVersion, identity.policyVersion);
+      assert.equal(result.receipt.planApplicability, applicability);
+      assert.equal(result.receipt.configId, identity.configId);
+      assert.equal(result.receipt.configVersion, identity.configVersion);
+      assert.equal(result.receipt.decisionAuthorityGeneration, 1);
+      assert.equal(result.receipt.requestContentDigest, computeRequestContentDigest(request));
+      assert.equal(Object.isFrozen(result.receipt), true);
+      assert.equal(validateProviderAdmissionReceipt(result.receipt).ok, true);
+    }
+  }
+});
+
+test('v0.2 provider admission refuses absent trusted facts, mismatched identity, malformed envelopes and unbounded limits', () => {
+  const request = providerRequest();
+  const facts = providerFacts(request, 'pre-plan-diagnostic');
+  const options = { decisionAuthorityGeneration: 1, planApplicability: 'pre-plan-diagnostic' as const, diagnosticPurpose: 'reproduction_check', taskCriteriaDigest: digest };
+  const noTimeout = { ...request };
+  delete noTimeout['timeoutMs'];
+  const infiniteCost = { ...request, maxCostUsd: Number.POSITIVE_INFINITY };
+  const exhaustedEnvelope = { ...request, maxBillableTokens: 50 };
+  const dispatched = { ...request, dispatchState: 'dispatched' };
+  const unknownField = { ...request, prompt: 'not part of ProviderRequest' };
+  for (const candidate of [noTimeout, infiniteCost, exhaustedEnvelope, dispatched, unknownField]) {
+    assert.equal(policy().value.evaluateProviderAdmissionV02(candidate, facts, options).ok, false);
+  }
+  assert.equal(policy().value.evaluateProviderAdmissionV02(request, null, options).ok, false);
+  assert.equal(policy().value.evaluateProviderAdmissionV02(request, factsV02(command), options).ok, false);
+  assert.equal(policy().value.evaluateProviderAdmissionV02(request, { ...facts, providerRequest: { ...request, dispatchState: 'dispatched' } }, options).ok, false);
+  assert.equal(policy().value.evaluateProviderAdmissionV02(request, facts, { ...options, role: 'reviewer' }).ok, false);
+  assert.equal(policy().value.evaluateProviderAdmissionV02({ ...request, modelId: 'foreign-model' }, facts, options).ok, false);
+  assert.equal(policy().value.evaluateProviderAdmissionV02(request, { ...facts, policyIdentity: { ...identity, configVersion: 'stale' } }, options).ok, false);
+  assert.equal(policy().value.evaluateProviderAdmissionV02(request, { ...facts, diagnosticPurpose: null }, options).ok, false);
+  assert.equal(policy().value.evaluateProviderAdmissionV02(request, { ...facts, taskNode: 'Patch' }, options).ok, false);
+  assert.equal(policy().value.evaluateProviderAdmissionV02(request, facts, { ...options, taskCriteriaDigest: `sha256:${'b'.repeat(64)}` }).ok, false);
+});
+
+test('v0.2 provider request digest changes with each immutable identity and ceiling field', () => {
+  const original = providerRequest();
+  const baseFacts = providerFacts(original, 'pre-plan-diagnostic');
+  const opts = { decisionAuthorityGeneration: 1, planApplicability: 'pre-plan-diagnostic' as const, diagnosticPurpose: 'reproduction_check', taskCriteriaDigest: digest };
+  const first = policy().value.evaluateProviderAdmissionV02(original, baseFacts, opts);
+  assert.equal(first.ok, true);
+  if (!first.ok) return;
+  const changes: readonly Record<string, unknown>[] = [
+    { providerRequestId: 'provider-request-2' }, { taskId: 'task-2' }, { runId: 'run-2' }, { role: 'reviewer' },
+    { purpose: 'different-purpose' }, { providerId: 'provider-2' }, { modelId: 'model-2' },
+    { pricingPolicyId: 'pricing-2' }, { contextDigest: `sha256:${'b'.repeat(64)}` }, { timeoutMs: 2_001 },
+    { maxInputTokens: 101 }, { maxOutputTokens: 101 }, { maxBillableTokens: 222 }, { maxCostUsd: 0.26 },
+  ];
+  for (const change of changes) {
+    const changed = { ...original, ...change };
+    const res = policy().value.evaluateProviderAdmissionV02(changed, providerFacts(changed, 'pre-plan-diagnostic'), { ...opts, diagnosticPurpose: changed['purpose'] as string });
+    assert.equal(res.ok, true);
+    if (res.ok) assert.notEqual(res.receipt.requestContentDigest, first.receipt.requestContentDigest, Object.keys(change)[0]);
+  }
+  assert.equal(policy().value.evaluateProviderAdmissionV02({ ...original, configId: 'foreign-config' }, providerFacts({ ...original, configId: 'foreign-config' }, 'pre-plan-diagnostic'), opts).ok, false);
+});
+
+test('v0.2 provider reservation is separately matched and excluded from the canonical request-content digest', () => {
+  const request = providerRequest();
+  const facts = providerFacts(request, 'pre-plan-diagnostic');
+  const options = { decisionAuthorityGeneration: 1, planApplicability: 'pre-plan-diagnostic' as const, diagnosticPurpose: 'reproduction_check', taskCriteriaDigest: digest };
+  const issued = policy().value.evaluateProviderAdmissionV02(request, facts, options);
+  assert.equal(issued.ok, true);
+  if (!issued.ok) return;
+
+  const changedReservation = { ...request, reservationRef: 'reservation-2' };
+  assert.equal(computeRequestContentDigest(changedReservation), issued.receipt.requestContentDigest);
+  assert.equal(policy().value.evaluateProviderAdmissionV02(changedReservation, facts, options).ok, false);
+
+  const separatelyBound = policy().value.evaluateProviderAdmissionV02(
+    changedReservation,
+    providerFacts(changedReservation, 'pre-plan-diagnostic'),
+    options,
+  );
+  assert.equal(separatelyBound.ok, true);
+  if (!separatelyBound.ok) return;
+  assert.equal(separatelyBound.receipt.requestContentDigest, issued.receipt.requestContentDigest);
+  assert.equal(separatelyBound.receipt.receiptDigest, issued.receipt.receiptDigest);
+});
+
+test('v0.2 provider admission rejects cross-branch plans and a caller role that disagrees with trusted facts', () => {
+  const request = providerRequest();
+  const facts = providerFacts(request, 'pre-plan-diagnostic');
+  assert.equal(policy().value.evaluateProviderAdmissionV02(request, facts, {
+    decisionAuthorityGeneration: 1, planApplicability: 'approved-plan', planBindingDigest: digest, planDecisionRef: 'foreign-plan',
+  }).ok, false);
+  assert.equal(policy().value.evaluateProviderAdmissionV02(request, { ...facts, providerRequest: { ...request, providerId: 'foreign-provider' } }, {
+    decisionAuthorityGeneration: 1, planApplicability: 'pre-plan-diagnostic', diagnosticPurpose: 'reproduction_check', taskCriteriaDigest: digest,
+  }).ok, false);
+});
+
+test('v0.2 repository policy binds pre-plan diagnostics to Investigate criteria and approved work to the exact current plan', () => {
+  const goodDiagnostic = policy().value.evaluatePolicyV02(command, factsV02(command), { decisionAuthorityGeneration: 1 });
+  assert.equal(goodDiagnostic.ok, true);
+  const wrongNode = policy().value.evaluatePolicyV02(command, factsV02(command, 'pre-plan-diagnostic', { taskNode: 'Verify' }), { decisionAuthorityGeneration: 1 });
+  assert.equal(wrongNode.ok, false);
+  const wrongPath = policy().value.evaluatePolicyV02(command, factsV02(command, 'pre-plan-diagnostic', { testPath: 'tests/other.py' }), { decisionAuthorityGeneration: 1 });
+  assert.equal(wrongPath.ok, false);
+  const approvedFacts = factsV02(patch, 'approved-plan');
+  assert.equal(policy().value.evaluatePolicyV02(patch, approvedFacts, { decisionAuthorityGeneration: 1 }).ok, true);
+  assert.equal(policy().value.evaluatePolicyV02(patch, { ...approvedFacts, planBindingDigest: digest }, { decisionAuthorityGeneration: 1 }).ok, false);
+  assert.equal(policy().value.evaluatePolicyV02(patch, { ...approvedFacts, plan: null }, { decisionAuthorityGeneration: 1 }).ok, false);
+  assert.equal(policy().value.evaluatePolicyV02(patch, approvedFacts, { decisionAuthorityGeneration: 1, planDecisionRef: 'foreign-plan' }).ok, false);
+  assert.equal(policy().value.evaluatePolicyV02(patch, approvedFacts, { decisionAuthorityGeneration: 1, planApplicability: 'pre-plan-diagnostic' }).ok, false);
 });
