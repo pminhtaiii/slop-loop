@@ -1,13 +1,10 @@
+import { safeSnapshot } from '../contracts/foundation/uc03/admission-v02/snapshot.ts';
 /**
- * UC-03 Host Model Boundary (Slice A: T008-a)
+ * UC-03 Host Model Boundary (Slice A: T008-a; Amendment: T051/T052)
  *
- * Implements canonical ModelPort with injected host transport and authoritative
- * admission loader. Evaluates runtime TaskState, SourceEvidence, ProviderRequest,
- * and canonical validateDispatchAdmission against trusted StatePort snapshots.
- *
- * NOTE: This slice assumes an already atomic reserved request. The full
- * reservation and settlement lifecycle is owned by T008-b (partial canonical T008).
- * This module reports partial and does NOT claim full budget protocol ownership.
+ * Implements canonical ModelPort (v0.1) and re-exports versioned ModelPortV02 (v0.2)
+ * with injected host transport, authoritative admission loader, and StatePortV02
+ * journal admission.
  *
  * Owned path: src/foundation/model.ts
  * Feature: specs/001-verified-code-repair
@@ -83,23 +80,13 @@ export interface ContextDigestPayload {
   readonly evidence: readonly SourceEvidence[];
 }
 
-/**
- * Synchronous deep clone utility for creating detached copies of caller data.
- * Does not mutate or freeze caller-owned objects.
- */
 export function deepClone<T>(val: T, seen = new WeakMap<object, unknown>()): T {
-  if (val === null || typeof val !== 'object') {
-    return val;
-  }
-  if (seen.has(val)) {
-    return seen.get(val) as T;
-  }
+  if (val === null || typeof val !== 'object') return val;
+  if (seen.has(val)) return seen.get(val) as T;
   if (Array.isArray(val)) {
     const copyArr: unknown[] = [];
     seen.set(val, copyArr);
-    for (const item of val) {
-      copyArr.push(deepClone(item, seen));
-    }
+    for (const item of val) copyArr.push(deepClone(item, seen));
     return copyArr as unknown as T;
   }
   const copyObj: Record<string, unknown> = {};
@@ -110,23 +97,13 @@ export function deepClone<T>(val: T, seen = new WeakMap<object, unknown>()): T {
   return copyObj as T;
 }
 
-/**
- * Synchronous deep freeze utility for internal snapshots.
- * Recursively freezes own properties and nested objects/arrays.
- */
 export function deepFreeze<T>(val: T, seen = new WeakSet<object>()): Readonly<T> {
-  if (val === null || typeof val !== 'object') {
-    return val;
-  }
-  if (seen.has(val)) {
-    return val;
-  }
+  if (val === null || typeof val !== 'object') return val;
+  if (seen.has(val)) return val;
   seen.add(val);
   Object.freeze(val);
   if (Array.isArray(val)) {
-    for (const item of val) {
-      deepFreeze(item, seen);
-    }
+    for (const item of val) deepFreeze(item, seen);
   } else {
     for (const key of Object.keys(val)) {
       deepFreeze((val as Record<string, unknown>)[key], seen);
@@ -135,10 +112,6 @@ export function deepFreeze<T>(val: T, seen = new WeakSet<object>()): Readonly<T>
   return val;
 }
 
-/**
- * Computes a deterministic canonical digest for the exact state and evidence
- * payload admitted and sent to host transport. Reuses canonical sha256.
- */
 export function computeContextDigest(
   stateOrPayload: TaskState | ContextDigestPayload,
   maybeEvidence?: readonly SourceEvidence[]
@@ -161,7 +134,6 @@ export function computeContextDigest(
     throw new Error('computeContextDigest requires state and evidence');
   }
 
-  // Canonicalize evidence items to guarantee deterministic property ordering
   const canonicalEvidence = evidence.map((e) => ({
     boundedExcerpt: e.boundedExcerpt,
     path: e.path,
@@ -178,9 +150,6 @@ export function computeContextDigest(
 
 export { computeContextDigest as computeModelContextDigest };
 
-/**
- * Detects embedded protected secrets, credential patterns, and marker phrases.
- */
 export function containsProtectedContent(text: string): boolean {
   if (typeof text !== 'string') return false;
   return (
@@ -210,6 +179,219 @@ function isPlainObject(val: unknown): val is Record<string, unknown> {
   return typeof val === 'object' && val !== null && !Array.isArray(val);
 }
 
+export function validateBaseModelInputs(
+  snapshotState: TaskState,
+  snapshotEvidence: readonly SourceEvidence[],
+  snapshotRequest: ProviderRequest,
+  snapshotConfig?: HostProviderConfig
+): { ok: true; contextDigest: string } | { ok: false; outcome: 'invalid'; errors: readonly ValidationError[] } {
+  const stateRes = validateTaskState(snapshotState);
+  if (!stateRes.ok) {
+    return { ok: false, outcome: 'invalid', errors: sanitizeValidationErrors(stateRes.errors) };
+  }
+
+  if (!Array.isArray(snapshotEvidence)) {
+    return {
+      ok: false,
+      outcome: 'invalid',
+      errors: [{ path: 'evidence', message: 'evidence must be an array', code: 'INVALID_TYPE' }],
+    };
+  }
+
+  for (let i = 0; i < snapshotEvidence.length; i++) {
+    const item = snapshotEvidence[i];
+    const evRes = validateSourceEvidence(item, undefined, `evidence[${i}]`);
+    if (!evRes.ok) {
+      return { ok: false, outcome: 'invalid', errors: sanitizeValidationErrors(evRes.errors) };
+    }
+    if (item.revisionDigest !== snapshotState.repositoryRevisionDigest) {
+      return {
+        ok: false,
+        outcome: 'invalid',
+        errors: [
+          {
+            path: `evidence[${i}].revisionDigest`,
+            message: `Evidence revisionDigest ${item.revisionDigest} does not match current state revisionDigest ${snapshotState.repositoryRevisionDigest}`,
+            code: 'STALE_EVIDENCE_REVISION',
+          },
+        ],
+      };
+    }
+    if (containsProtectedContent(item.boundedExcerpt)) {
+      return {
+        ok: false,
+        outcome: 'invalid',
+        errors: [
+          {
+            path: `evidence[${i}].boundedExcerpt`,
+            message: 'Evidence boundedExcerpt contains protected content or embedded secret',
+            code: 'PROTECTED_CONTENT_FORBIDDEN',
+          },
+        ],
+      };
+    }
+  }
+
+  const computedContextDigest = computeContextDigest(snapshotState, snapshotEvidence);
+  const cfg = snapshotConfig;
+  const reqRes = validateProviderRequest(snapshotRequest, {
+    expectedTaskId: snapshotState.taskId,
+    expectedRunId: snapshotState.runId,
+    expectedContextDigest: computedContextDigest,
+    ...(cfg?.providerId !== undefined ? { expectedProviderId: cfg.providerId } : {}),
+    ...(cfg?.modelId !== undefined ? { expectedModelId: cfg.modelId } : {}),
+    ...(cfg?.configId !== undefined ? { expectedConfigId: cfg.configId } : {}),
+    ...(cfg?.pricingPolicyId !== undefined ? { expectedPricingPolicyId: cfg.pricingPolicyId } : {}),
+  });
+  if (!reqRes.ok) {
+    return { ok: false, outcome: 'invalid', errors: sanitizeValidationErrors(reqRes.errors) };
+  }
+
+  return { ok: true, contextDigest: computedContextDigest };
+}
+
+export function buildTransportPayload(
+  snapshotState: TaskState,
+  snapshotEvidence: readonly SourceEvidence[],
+  snapshotRequest: ProviderRequest
+): HostModelTransportPayload {
+  const caps: HostModelCaps = deepFreeze({
+    timeoutMs: snapshotRequest.timeoutMs,
+    maxInputTokens: snapshotRequest.maxInputTokens,
+    maxOutputTokens: snapshotRequest.maxOutputTokens,
+    maxBillableTokens: snapshotRequest.maxBillableTokens,
+    maxCostUsd: snapshotRequest.maxCostUsd,
+  });
+
+  const untrustedEvidenceItems: readonly UntrustedContextItem[] = deepFreeze(
+    snapshotEvidence.map((e) => ({
+      path: e.path,
+      revisionDigest: e.revisionDigest,
+      content: e.boundedExcerpt,
+      isUntrustedRepositoryContent: true as const,
+    }))
+  );
+
+  return deepFreeze({
+    state: snapshotState,
+    evidence: snapshotEvidence,
+    request: snapshotRequest,
+    caps,
+    untrustedContext: {
+      evidenceItems: untrustedEvidenceItems,
+    },
+  });
+}
+
+function checkUsageCaps(
+  snapshotRequest: ProviderRequest,
+  observedUsage: ProviderUsage
+): readonly ValidationError[] {
+  const usageErrors: ValidationError[] = [];
+  if (observedUsage.inputTokens > snapshotRequest.maxInputTokens) {
+    usageErrors.push({
+      path: 'observedUsage.inputTokens',
+      message: `Observed input tokens (${observedUsage.inputTokens}) exceed maxInputTokens (${snapshotRequest.maxInputTokens})`,
+      code: 'USAGE_EXCEEDS_CAPS',
+    });
+  }
+  if (observedUsage.outputTokens > snapshotRequest.maxOutputTokens) {
+    usageErrors.push({
+      path: 'observedUsage.outputTokens',
+      message: `Observed output tokens (${observedUsage.outputTokens}) exceed maxOutputTokens (${snapshotRequest.maxOutputTokens})`,
+      code: 'USAGE_EXCEEDS_CAPS',
+    });
+  }
+  if (observedUsage.costUsd > snapshotRequest.maxCostUsd) {
+    usageErrors.push({
+      path: 'observedUsage.costUsd',
+      message: `Observed cost ($${observedUsage.costUsd}) exceeds maxCostUsd ($${snapshotRequest.maxCostUsd})`,
+      code: 'USAGE_EXCEEDS_CAPS',
+    });
+  }
+  if (
+    observedUsage.billableTokens !== undefined &&
+    observedUsage.billableTokens > snapshotRequest.maxBillableTokens
+  ) {
+    usageErrors.push({
+      path: 'observedUsage.billableTokens',
+      message: `Observed billable tokens (${observedUsage.billableTokens}) exceed maxBillableTokens (${snapshotRequest.maxBillableTokens})`,
+      code: 'USAGE_EXCEEDS_CAPS',
+    });
+  }
+  return usageErrors;
+}
+
+export type ExecutedTransportResult =
+  | { readonly outcome: 'observed'; readonly result: { readonly proposal: unknown; readonly observedUsage: ProviderUsage }; readonly observedUsage: ProviderUsage }
+  | { readonly outcome: 'uncertain'; readonly reason: string; readonly observedUsage?: ProviderUsage | undefined }
+  | { readonly outcome: 'denied'; readonly reason: string }
+  | { readonly outcome: 'invalid'; readonly errors: readonly ValidationError[]; readonly observedUsage?: ProviderUsage | undefined };
+
+export async function executeTransport(
+  transport: HostModelTransport,
+  payload: HostModelTransportPayload,
+  snapshotRequest: ProviderRequest
+): Promise<ExecutedTransportResult> {
+  let rawResult: unknown;
+  try {
+    rawResult = await transport.execute(payload);
+  } catch (err: unknown) {
+    let timeout = false;
+    try {
+      if (typeof err === 'object' && err !== null) {
+        const name = Object.getOwnPropertyDescriptor(err, 'name');
+        const message = Object.getOwnPropertyDescriptor(err, 'message');
+        timeout = (name !== undefined && 'value' in name && name.value === 'TimeoutError')
+          || (message !== undefined && 'value' in message && typeof message.value === 'string'
+            && /timeout|timed out/i.test(message.value));
+      }
+    } catch {
+      // Failed descriptor inspection leaves the rejection unclassified.
+    }
+    return { outcome: 'uncertain', reason: timeout
+      ? 'PROVIDER_TIMEOUT: Model transport request timed out'
+      : 'PROVIDER_ERROR: Model transport request failed' };
+  }
+
+  const snapshot = safeSnapshot(rawResult);
+  if (!snapshot.ok) return { outcome: 'uncertain', reason: 'UNSAFE_PROVIDER_RESPONSE' };
+  rawResult = snapshot.value;
+
+  if (isPlainObject(rawResult)) {
+    if (rawResult['outcome'] === 'uncertain') {
+      const reason = typeof rawResult['reason'] === 'string' ? redactSensitiveData(rawResult['reason']) : 'PROVIDER_UNCERTAIN';
+      return { outcome: 'uncertain', reason };
+    }
+    if (rawResult['outcome'] === 'denied') {
+      const reason = typeof rawResult['reason'] === 'string' ? redactSensitiveData(rawResult['reason']) : 'PROVIDER_DENIED';
+      return { outcome: 'denied', reason };
+    }
+  }
+
+  const modelResultRes = validateModelResult(rawResult);
+  if (!modelResultRes.ok) {
+    let observedUsage: ProviderUsage | undefined;
+    if (isPlainObject(rawResult) && rawResult['observedUsage'] !== undefined) {
+      const usageCheck = validateProviderUsage(rawResult['observedUsage']);
+      if (usageCheck.ok) observedUsage = usageCheck.value;
+    }
+    return {
+      outcome: 'invalid',
+      errors: sanitizeValidationErrors(modelResultRes.errors),
+      ...(observedUsage !== undefined ? { observedUsage } : {}),
+    };
+  }
+
+  const { proposal, observedUsage } = modelResultRes.value;
+  const usageErrors = checkUsageCaps(snapshotRequest, observedUsage);
+  if (usageErrors.length > 0) {
+    return { outcome: 'invalid', errors: usageErrors, observedUsage };
+  }
+
+  return { outcome: 'observed', result: { proposal, observedUsage }, observedUsage };
+}
+
 export class HostModelPort implements ModelPort {
   readonly provenance: PortProvenance = 'real';
   readonly options: HostModelPortOptions;
@@ -223,9 +405,6 @@ export class HostModelPort implements ModelPort {
     evidence: readonly SourceEvidence[],
     request: ProviderRequest
   ): Promise<ModelPortResult> {
-    // 0. Synchronous deep snapshot of ALL caller-owned state, evidence, request
-    // and relevant host configuration before the first await.
-    // Callers' objects are NOT frozen or shallow-cloned.
     const snapshotState = deepFreeze(deepClone(state));
     const snapshotEvidence = deepFreeze(deepClone(evidence));
     const snapshotRequest = deepFreeze(deepClone(request));
@@ -233,88 +412,17 @@ export class HostModelPort implements ModelPort {
       this.options.providerConfig !== undefined
         ? deepFreeze(deepClone(this.options.providerConfig))
         : undefined;
-    const transport = this.options.transport;
-    const admissionLoader = this.options.admissionLoader;
 
-    // 1. Runtime validate TaskState using detached snapshot
-    const stateRes = validateTaskState(snapshotState);
-    if (!stateRes.ok) {
-      return {
-        outcome: 'invalid',
-        errors: sanitizeValidationErrors(stateRes.errors),
-      };
+    const baseValidation = validateBaseModelInputs(snapshotState, snapshotEvidence, snapshotRequest, snapshotConfig);
+    if (!baseValidation.ok) {
+      return { outcome: baseValidation.outcome, errors: baseValidation.errors };
     }
+    const computedContextDigest = baseValidation.contextDigest;
 
-    // 2. Runtime validate approved bounded SourceEvidence with provenance / current revision and protected content checks
-    if (!Array.isArray(snapshotEvidence)) {
-      return {
-        outcome: 'invalid',
-        errors: [{ path: 'evidence', message: 'evidence must be an array', code: 'INVALID_TYPE' }],
-      };
-    }
-
-    for (let i = 0; i < snapshotEvidence.length; i++) {
-      const item = snapshotEvidence[i];
-      const evRes = validateSourceEvidence(item, undefined, `evidence[${i}]`);
-      if (!evRes.ok) {
-        return {
-          outcome: 'invalid',
-          errors: sanitizeValidationErrors(evRes.errors),
-        };
-      }
-      if (item.revisionDigest !== snapshotState.repositoryRevisionDigest) {
-        return {
-          outcome: 'invalid',
-          errors: [
-            {
-              path: `evidence[${i}].revisionDigest`,
-              message: `Evidence revisionDigest ${item.revisionDigest} does not match current state revisionDigest ${snapshotState.repositoryRevisionDigest}`,
-              code: 'STALE_EVIDENCE_REVISION',
-            },
-          ],
-        };
-      }
-      if (containsProtectedContent(item.boundedExcerpt)) {
-        return {
-          outcome: 'invalid',
-          errors: [
-            {
-              path: `evidence[${i}].boundedExcerpt`,
-              message: 'Evidence boundedExcerpt contains protected content or embedded secret',
-              code: 'PROTECTED_CONTENT_FORBIDDEN',
-            },
-          ],
-        };
-      }
-    }
-
-    // 3. Compute canonical digest from EXACT context payload to be sent to host transport
-    const computedContextDigest = computeContextDigest(snapshotState, snapshotEvidence);
-
-    // Runtime validate ProviderRequest identity/role/config/pricing/caps/contextDigest against computedContextDigest
-    const cfg = snapshotConfig;
-    const reqRes = validateProviderRequest(snapshotRequest, {
-      expectedTaskId: snapshotState.taskId,
-      expectedRunId: snapshotState.runId,
-      expectedContextDigest: computedContextDigest,
-      ...(cfg?.providerId !== undefined ? { expectedProviderId: cfg.providerId } : {}),
-      ...(cfg?.modelId !== undefined ? { expectedModelId: cfg.modelId } : {}),
-      ...(cfg?.configId !== undefined ? { expectedConfigId: cfg.configId } : {}),
-      ...(cfg?.pricingPolicyId !== undefined ? { expectedPricingPolicyId: cfg.pricingPolicyId } : {}),
-    });
-    if (!reqRes.ok) {
-      return {
-        outcome: 'invalid',
-        errors: sanitizeValidationErrors(reqRes.errors),
-      };
-    }
-
-    // 4. Canonical validateDispatchAdmission using trusted StatePort snapshot/receipt
     let admissionContext: DispatchAdmissionContext | null | undefined;
     try {
-      // Pass frozen detached clone of request so admission loader cannot alter transported data
       const loaderRequest = deepFreeze(deepClone(snapshotRequest));
-      admissionContext = await admissionLoader(loaderRequest);
+      admissionContext = await this.options.admissionLoader(loaderRequest);
     } catch {
       return {
         outcome: 'denied',
@@ -338,7 +446,6 @@ export class HostModelPort implements ModelPort {
       };
     }
 
-    // Bound context verification: ensure host approved context matches computed exact payload digest
     if (admissionContext.expectedRequest.contextDigest !== computedContextDigest) {
       return {
         outcome: 'denied',
@@ -346,135 +453,25 @@ export class HostModelPort implements ModelPort {
       };
     }
 
-    // 5. Pass envelope enforced token/cost/time caps to host transport; no tool execution ever
-    const caps: HostModelCaps = deepFreeze({
-      timeoutMs: snapshotRequest.timeoutMs,
-      maxInputTokens: snapshotRequest.maxInputTokens,
-      maxOutputTokens: snapshotRequest.maxOutputTokens,
-      maxBillableTokens: snapshotRequest.maxBillableTokens,
-      maxCostUsd: snapshotRequest.maxCostUsd,
-    });
-
-    const untrustedEvidenceItems: readonly UntrustedContextItem[] = deepFreeze(
-      snapshotEvidence.map((e) => ({
-        path: e.path,
-        revisionDigest: e.revisionDigest,
-        content: e.boundedExcerpt,
-        isUntrustedRepositoryContent: true as const,
-      }))
-    );
-
-    const payload: HostModelTransportPayload = deepFreeze({
-      state: snapshotState,
-      evidence: snapshotEvidence,
-      request: snapshotRequest,
-      caps,
-      untrustedContext: {
-        evidenceItems: untrustedEvidenceItems,
-      },
-    });
-
-    // 6. Execute transport and validate raw provider ModelResult/usage
-    let rawResult: unknown;
-    try {
-      rawResult = await transport.execute(payload);
-    } catch (err: unknown) {
-      const errName = err instanceof Error ? err.name : '';
-      const errMsg = err instanceof Error ? err.message : String(err);
-      if (errName === 'TimeoutError' || /timeout|timed out/i.test(errMsg)) {
-        return {
-          outcome: 'uncertain',
-          reason: 'PROVIDER_TIMEOUT: Model transport request timed out',
-        };
-      }
-      return {
-        outcome: 'uncertain',
-        reason: `PROVIDER_ERROR: ${redactSensitiveData(errMsg)}`,
-      };
+    const payload = buildTransportPayload(snapshotState, snapshotEvidence, snapshotRequest);
+    const transportRes = await executeTransport(this.options.transport, payload, snapshotRequest);
+    if (transportRes.outcome === 'observed') {
+      return { outcome: 'observed', result: transportRes.result as Extract<ModelPortResult, { outcome: 'observed' }>['result'] };
     }
-
-    if (isPlainObject(rawResult)) {
-      if (rawResult['outcome'] === 'uncertain') {
-        const reason =
-          typeof rawResult['reason'] === 'string'
-            ? redactSensitiveData(rawResult['reason'])
-            : 'PROVIDER_UNCERTAIN';
-        return { outcome: 'uncertain', reason };
-      }
-      if (rawResult['outcome'] === 'denied') {
-        const reason =
-          typeof rawResult['reason'] === 'string'
-            ? redactSensitiveData(rawResult['reason'])
-            : 'PROVIDER_DENIED';
-        return { outcome: 'denied', reason };
-      }
-    }
-
-    const modelResultRes = validateModelResult(rawResult);
-    if (!modelResultRes.ok) {
-      let observedUsage: ProviderUsage | undefined;
-      if (isPlainObject(rawResult) && rawResult['observedUsage'] !== undefined) {
-        const usageCheck = validateProviderUsage(rawResult['observedUsage']);
-        if (usageCheck.ok) {
-          observedUsage = usageCheck.value;
-        }
-      }
+    if (transportRes.outcome === 'invalid') {
       return {
         outcome: 'invalid',
-        errors: sanitizeValidationErrors(modelResultRes.errors),
-        ...(observedUsage !== undefined ? { observedUsage } : {}),
+        errors: transportRes.errors,
+        ...(transportRes.observedUsage !== undefined ? { observedUsage: transportRes.observedUsage } : {}),
       };
     }
-
-    const { proposal, observedUsage } = modelResultRes.value;
-    const usageErrors: ValidationError[] = [];
-
-    if (observedUsage.inputTokens > snapshotRequest.maxInputTokens) {
-      usageErrors.push({
-        path: 'observedUsage.inputTokens',
-        message: `Observed input tokens (${observedUsage.inputTokens}) exceed maxInputTokens (${snapshotRequest.maxInputTokens})`,
-        code: 'USAGE_EXCEEDS_CAPS',
-      });
-    }
-    if (observedUsage.outputTokens > snapshotRequest.maxOutputTokens) {
-      usageErrors.push({
-        path: 'observedUsage.outputTokens',
-        message: `Observed output tokens (${observedUsage.outputTokens}) exceed maxOutputTokens (${snapshotRequest.maxOutputTokens})`,
-        code: 'USAGE_EXCEEDS_CAPS',
-      });
-    }
-    if (observedUsage.costUsd > snapshotRequest.maxCostUsd) {
-      usageErrors.push({
-        path: 'observedUsage.costUsd',
-        message: `Observed cost ($${observedUsage.costUsd}) exceeds maxCostUsd ($${snapshotRequest.maxCostUsd})`,
-        code: 'USAGE_EXCEEDS_CAPS',
-      });
-    }
-    if (
-      observedUsage.billableTokens !== undefined &&
-      observedUsage.billableTokens > snapshotRequest.maxBillableTokens
-    ) {
-      usageErrors.push({
-        path: 'observedUsage.billableTokens',
-        message: `Observed billable tokens (${observedUsage.billableTokens}) exceed maxBillableTokens (${snapshotRequest.maxBillableTokens})`,
-        code: 'USAGE_EXCEEDS_CAPS',
-      });
-    }
-
-    if (usageErrors.length > 0) {
-      return {
-        outcome: 'invalid',
-        errors: usageErrors,
-        observedUsage,
-      };
-    }
-
-    return {
-      outcome: 'observed',
-      result: {
-        proposal,
-        observedUsage,
-      },
-    };
+    return { outcome: transportRes.outcome, reason: transportRes.reason };
   }
 }
+
+export {
+  HostModelPortV02,
+  buildProviderOutcomeReceipt,
+  type HostModelPortV02Options,
+  type ModelPortV02Result,
+} from './model-v02.ts';

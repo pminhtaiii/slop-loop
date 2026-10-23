@@ -1,3 +1,4 @@
+import { MemoryStatePortV02 } from '../support/uc03/memory-state.ts';
 /**
  * UC-03 Phase 3 - Controlled Repository Tools Unit Tests (Slice A of T007)
  *
@@ -19,6 +20,8 @@ import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   ControlledRepositoryTools,
+  ControlledRepositoryToolsV02,
+  createRepositoryReceiverV02,
   containsProtectedContent,
   type TrustedFilesystemPort,
   type TrustedFilesystemEntry,
@@ -27,7 +30,86 @@ import {
   type GuardedReadOperation,
   type RepositoryReadLimits,
 } from '../../../src/foundation/repository-tools.ts';
-import { validateSourceEvidence } from '../../../src/contracts/foundation/uc03.ts';
+import {
+  validateSourceEvidence,
+  computeActionDigest,
+  computeCanonicalSha256,
+  type RunCommandAction,
+  type ApplyPatchAction,
+  type CheckDefinition,
+} from '../../../src/contracts/foundation/uc03.ts';
+import type {
+  RepositoryPortV02,
+  RepositoryAdmissionContextV02,
+  AdmissionContextV02,
+  StatePortV02,
+  AttemptReceiptV02,
+  ExecutorIdentityV02,
+  ClaimReceiptV02,
+  AttemptOutcomeReceiptV02,
+  AttemptReconciliationReceiptV02,
+  RepositoryActionOutcomeReceiptV02,
+  ClaimClosureReceiptV02,
+  OutcomeRecordResultV02,
+  ReconciliationResultV02,
+  ClaimClosureResultV02,
+  CommandViewV02,
+  CommandFiniteBoundsV02,
+  PatchFiniteBoundsV02,
+} from '../../../src/contracts/foundation/uc03/ports-v02.ts';
+import type { TaskState } from '../../../src/contracts/foundation/uc03/types.ts';
+import type { JournalSnapshotV02 } from '../../../src/approvals/control-v02.ts';
+import {
+  createTestDiagnosticPatchAdmissionContextV02,
+  createTestAdmissionTaskStateV02,
+  createTestObservedReconciliationReceiptV02,
+  createTestReconciliationValidationContextV02,
+  createTestUncertainReconciliationReceiptV02,
+} from '../support/uc03/state-fixtures.ts';
+import {
+  DockerWorkspaceManager,
+  StructuredCommandExecutor,
+} from '../../../src/foundation/docker-workspace.ts';
+import type {
+  CanonicalRepositorySnapshot,
+  ContainerExecutionOutput,
+  DockerContainerPlan,
+  DockerLifecycleController,
+  MaterializeViewParams,
+} from '../../../src/foundation/docker-workspace.ts';
+
+class RepositoryTestDockerController implements DockerLifecycleController {
+  readonly provenance = 'mock' as const;
+  private readonly volumes = new Set<string>();
+  readonly executedPlans: DockerContainerPlan[] = [];
+  snapshotRequests = 0;
+  materializedViews = 0;
+  snapshotToReturn?: CanonicalRepositorySnapshot;
+  outputToReturn?: Partial<ContainerExecutionOutput>;
+
+  async createVolume(id: string): Promise<void> { this.volumes.add(id); }
+  async hasVolume(id: string): Promise<boolean> { return this.volumes.has(id); }
+  async removeVolume(id: string): Promise<void> { this.volumes.delete(id); }
+
+  async getCanonicalSnapshot(workspaceId: string): Promise<CanonicalRepositorySnapshot> {
+    this.snapshotRequests += 1;
+    if (!this.snapshotToReturn) throw new Error(`NO_SNAPSHOT_CONFIGURED: ${workspaceId}`);
+    return this.snapshotToReturn;
+  }
+
+  async materializeView(params: MaterializeViewParams): Promise<void> { void params; this.materializedViews += 1; }
+
+  async executeContainer(plan: DockerContainerPlan): Promise<ContainerExecutionOutput> {
+    this.executedPlans.push(plan);
+    return {
+      exitCode: this.outputToReturn?.exitCode === undefined ? 0 : this.outputToReturn.exitCode,
+      stdout: this.outputToReturn?.stdout ?? '',
+      stderr: this.outputToReturn?.stderr ?? '',
+      durationMs: this.outputToReturn?.durationMs ?? 50,
+      timedOut: this.outputToReturn?.timedOut ?? false,
+    };
+  }
+}
 
 interface FakeFileRecord {
   readonly content: string;
@@ -193,13 +275,50 @@ class FakeGuardCapability implements ExecutionGuardReadCapability {
   allowOperations = true;
   denialReason = 'OPERATION_DENIED_BY_POLICY';
   mediatedOperations: GuardedReadOperation<unknown>[] = [];
+  beforeExecute?: (() => Promise<void>) | undefined;
 
   async mediateRead<T>(operation: GuardedReadOperation<T>): Promise<T> {
     this.mediatedOperations.push(operation as GuardedReadOperation<unknown>);
     if (!this.allowOperations) {
       throw new Error(`GUARD_DENIED: ${this.denialReason}`);
     }
+    await this.beforeExecute?.();
     return await operation.execute();
+  }
+}
+
+function makeJournalSnapshot(overrides: Partial<JournalSnapshotV02> = {}): unknown {
+  return {
+    controlVersion: 2,
+    epoch: 1,
+    mode: 'runnable',
+    holdRef: null,
+    holdEventDigest: null,
+    activeClaimId: null,
+    activeAuthorityRef: null,
+    claims: [],
+    attempts: [],
+    outcomes: [],
+    reconciliations: [],
+    closures: [],
+    authorityPublications: [],
+    controlEventRefs: [],
+    fenceProofs: [],
+    recoveryEvidencePredecessorReceiptIds: [],
+    fencedIncarnations: [],
+    ...overrides,
+  };
+}
+
+class FakeTaskControlPortV02 {
+  snapshot: unknown;
+
+  constructor(snapshot: unknown = makeJournalSnapshot()) {
+    this.snapshot = snapshot;
+  }
+
+  getJournalSnapshot(): unknown {
+    return this.snapshot;
   }
 }
 
@@ -886,6 +1005,1382 @@ describe('ControlledRepositoryTools (Slice T007-a)', () => {
       assert.equal(containsProtectedContent('const key = "-----BEGIN RSA PRIVATE KEY-----"'), true);
       assert.equal(containsProtectedContent('Authorization: Bearer my-access-token-12345'), true);
       assert.equal(containsProtectedContent('def add(a, b): return a + b'), false);
+    });
+  });
+});
+
+/* ------------------------------------------------------------------
+ * UC-03 v0.2.0 Repository Receiver Unit Tests (T049/T050)
+ * ------------------------------------------------------------------ */
+
+class FakeStatePortV02 implements StatePortV02 {
+  readonly provenance = 'mock' as const;
+  claimCalls: AdmissionContextV02[] = [];
+  claimReceipts: ClaimReceiptV02[] = [];
+  private readonly patchClaimIds = new Set<string>();
+  beginAttemptCalls: { claimId: string; executor: ExecutorIdentityV02 }[] = [];
+  attemptReceipts: AttemptReceiptV02[] = [];
+  outcomeReceipts: AttemptOutcomeReceiptV02[] = [];
+  observedReconciliations: AttemptReconciliationReceiptV02[] = [];
+  uncertainReconciliations: AttemptReconciliationReceiptV02[] = [];
+  recordOutcomeHandler?: ((receipt: AttemptOutcomeReceiptV02) => Promise<OutcomeRecordResultV02>) | undefined;
+  observedReconciliationHandler?: ((receipt: AttemptReconciliationReceiptV02) => Promise<ReconciliationResultV02>) | undefined;
+  uncertainReconciliationHandler?: ((receipt: AttemptReconciliationReceiptV02) => Promise<ReconciliationResultV02>) | undefined;
+  attemptToReturn?: AttemptReceiptV02;
+  beforeBeginAttempt?: (() => Promise<void>) | undefined;
+
+  async beginAttempt(claimId: string, executor: ExecutorIdentityV02): Promise<AttemptReceiptV02> {
+    this.beginAttemptCalls.push({ claimId, executor });
+    await this.beforeBeginAttempt?.();
+    if (this.attemptToReturn) {
+      this.attemptReceipts.push(this.attemptToReturn);
+      return this.attemptToReturn;
+    }
+    const isPatch = this.patchClaimIds.has(claimId);
+    const receipt: AttemptReceiptV02 = {
+      attemptId: `att-${claimId}`,
+      claimId,
+      taskId: 'task-test-1',
+      executorIdentity: executor,
+      preAttemptTaskStateVersion: 1,
+      postBeginTaskStateVersion: isPatch ? 2 : 1,
+      preAttemptControlVersion: 2,
+      postBeginControlVersion: 3,
+      epoch: 1,
+      status: 'attempting',
+    };
+    this.attemptReceipts.push(receipt);
+    return receipt;
+  }
+
+  async loadTask(taskId: string): Promise<TaskState | null> { void taskId; return null; }
+  async transition(state: TaskState, expectedVersion: number): Promise<TaskState> { void expectedVersion; return state; }
+  async claim(context: AdmissionContextV02): Promise<ClaimReceiptV02> {
+    if (context.subjectKind !== 'repository-action' ||
+      (context.action.kind !== 'apply_patch' && context.action.kind !== 'run_command')) {
+      throw new Error('unsupported repository action');
+    }
+    this.claimCalls.push(context);
+    const claimId = `claim-${context.action.actionId}`;
+    if (context.action.kind === 'apply_patch') this.patchClaimIds.add(claimId);
+    const unsigned = {
+      claimId,
+      claimDigest: '',
+      taskId: context.taskId,
+      runId: context.runId,
+      subjectKind: context.subjectKind,
+      planApplicability: context.planApplicability,
+      preClaimTaskStateVersion: context.expectedTaskStateVersion,
+      preClaimControlVersion: context.expectedControlVersion,
+      postClaimControlVersion: context.expectedControlVersion + 1,
+      epoch: context.expectedEpoch,
+      status: 'claimed' as const,
+      reservationRefs: [...context.reservationRefs],
+    };
+    const receipt = { ...unsigned, claimDigest: computeCanonicalSha256({ ...unsigned, claimDigest: undefined }) };
+    this.claimReceipts.push(receipt);
+    return receipt;
+  }
+  async recordOutcome(receipt: AttemptOutcomeReceiptV02): Promise<OutcomeRecordResultV02> {
+    this.outcomeReceipts.push(receipt);
+    return await (this.recordOutcomeHandler?.(receipt) ?? Promise.resolve({ outcome: 'settled', receiptId: receipt.receiptId }));
+  }
+  async reconcileObservedOutcome(receipt: AttemptReconciliationReceiptV02): Promise<ReconciliationResultV02> {
+    this.observedReconciliations.push(receipt);
+    if (!this.observedReconciliationHandler) throw new Error('not implemented');
+    return await this.observedReconciliationHandler(receipt);
+  }
+  async reconcileUncertain(receipt: AttemptReconciliationReceiptV02): Promise<ReconciliationResultV02> {
+    this.uncertainReconciliations.push(receipt);
+    if (!this.uncertainReconciliationHandler) throw new Error('not implemented');
+    return await this.uncertainReconciliationHandler(receipt);
+  }
+  async closeUnattemptedClaim(receipt: ClaimClosureReceiptV02): Promise<ClaimClosureResultV02> { void receipt; throw new Error('not implemented'); }
+  async checkpoint(state: TaskState): Promise<void> { void state; }
+  async recover(taskId: string): Promise<TaskState> { void taskId; throw new Error('not implemented'); }
+}
+
+interface TestAdmissionOverrides {
+  readonly action?: RunCommandAction | ApplyPatchAction;
+  readonly actionDigest?: string;
+  readonly commandView?: CommandViewV02;
+  readonly commandBounds?: CommandFiniteBoundsV02;
+  readonly patchBounds?: PatchFiniteBoundsV02;
+  readonly baseRevision?: string;
+  readonly targetPaths?: readonly string[];
+  readonly patchDigest?: string;
+  readonly checkId?: string;
+}
+
+function createTestAdmissionContext(overrides: TestAdmissionOverrides = {}): RepositoryAdmissionContextV02 {
+  const action = overrides.action ?? {
+    actionId: 'act-cmd-1',
+    kind: 'run_command',
+    executable: 'pytest',
+    argv: ['-q'],
+    workingDirectory: '/workspace/repo',
+  };
+  const actionDigest = overrides.actionDigest ?? computeActionDigest(action);
+  const canonicalRevision = action.kind === 'apply_patch'
+    ? (overrides.baseRevision ?? action.baseRevisionDigest)
+    : 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+  const common = {
+      schemaVersion: '0.2.0' as const,
+    subjectKind: 'repository-action' as const,
+    taskStateSchemaVersion: 'uc03-task-state/0.1',
+    expectedTaskStateVersion: 1,
+    controlSchemaVersion: 'uc04-task-control/0.1',
+    expectedControlVersion: 1,
+    expectedEpoch: 1,
+    taskId: 'task-test-1',
+    runId: 'run-1',
+    workspaceId: 'ws-test-1',
+    repositoryId: 'repo-1',
+    runnableNode: action.kind === 'apply_patch' ? 'Repair' : 'Investigate',
+    canonicalRevision,
+    executionProfileId: 'profile-uc03-test',
+    action,
+    actionDigest,
+    policyAuthorityRef: {
+      policyId: 'policy-1',
+      policyVersion: '1',
+      configId: 'config-1',
+      configVersion: '1',
+      issuerKeyRef: 'key-1',
+      decisionAuthorityGeneration: 1,
+    },
+    policyEvaluationReceipt: {
+      receiptId: 'rec-eval-1',
+      receiptDigest: 'sha256:eval1',
+      actionDigest,
+      freshnessContextDigest: 'sha256:fresh1',
+      policyId: 'policy-1',
+      policyVersion: '1',
+      configId: 'config-1',
+      configVersion: '1',
+      decisionAuthorityGeneration: 1,
+      result: 'ALLOWED' as const,
+    },
+    reservationRefs: ['res-1'],
+  };
+
+  if (action.kind === 'apply_patch') {
+    return {
+      ...common,
+      planApplicability: 'approved-plan',
+      planBindingDigest: 'sha256:plan-binding-1',
+      planDecisionRef: 'plan-decision-1',
+      baseRevision: overrides.baseRevision ?? action.baseRevisionDigest,
+      targetPaths: overrides.targetPaths ?? action.targetPaths,
+      patchDigest: overrides.patchDigest ?? computeCanonicalSha256(action.patchContent),
+      finiteBounds: overrides.patchBounds ?? { maxPatchBytes: 65536, maxChangedPaths: 5 },
+    };
+  }
+
+  return {
+    ...common,
+    planApplicability: 'pre-plan-diagnostic',
+    diagnosticPurpose: 'test repro',
+    taskCriteriaDigest: 'sha256:crit1',
+    checkSetDigest: 'sha256:set1',
+    ...(overrides.checkId ? { checkId: overrides.checkId } : {}),
+    commandView: overrides.commandView ?? {
+      viewId: 'view-test-1',
+      viewDigest: 'sha256:view-test-1',
+      taskId: 'task-test-1',
+      workspaceId: 'ws-test-1',
+      canonicalRevision,
+      admittedFiles: [],
+      exclusionsPolicyVersion: '0.1.0',
+      scratchIdentity: 'scratch-1',
+      mountedReadOnly: true,
+      isolationProfileRef: 'profile-uc03-test',
+    },
+    finiteBounds: overrides.commandBounds ?? {
+      timeoutMs: 30000,
+      maxOutputBytes: 65536,
+      maxCpuSeconds: 10,
+      maxMemoryBytes: 536870912,
+      maxProcessCount: 5,
+      isolationProfileRef: 'profile-uc03-test',
+    },
+  };
+}
+
+function createTestPatchRecoveryHandoff() {
+  return {
+    async prepare(input: {
+      readonly admission: RepositoryAdmissionContextV02;
+      readonly claim: ClaimReceiptV02;
+      readonly attempt: AttemptReceiptV02;
+      readonly outcome: RepositoryActionOutcomeReceiptV02;
+    }) {
+      const receipt = input.outcome.outcome === 'observed'
+        ? createTestObservedReconciliationReceiptV02(
+            input.outcome,
+            input.claim,
+            input.attempt,
+            input.admission,
+            { expectedCurrentControlVersion: input.attempt.postBeginControlVersion + 1 },
+          )
+        : createTestUncertainReconciliationReceiptV02(
+            input.outcome,
+            input.claim,
+            input.attempt,
+            input.admission,
+            { disposition: 'proven-not-dispatched' },
+          );
+      return {
+        receipt,
+        validationContext: createTestReconciliationValidationContextV02(
+          receipt,
+          input.outcome,
+          input.claim,
+          input.attempt,
+          input.admission,
+        ),
+      };
+    },
+  };
+}
+
+describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
+  const defaultLimits: RepositoryReadLimits = {
+    maxExcerptBytes: 4096,
+    maxResultCount: 50,
+  };
+  let fsPort: FakeHostFilesystemPort;
+  let guard: FakeGuardCapability;
+  let statePort: FakeStatePortV02;
+  const canonicalRev = 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+
+  beforeEach(() => {
+    fsPort = new FakeHostFilesystemPort();
+    fsPort.setRevision(canonicalRev);
+    guard = new FakeGuardCapability();
+    statePort = new FakeStatePortV02();
+  });
+
+  async function createWorkspaceManager(): Promise<{ readonly manager: DockerWorkspaceManager; readonly controller: RepositoryTestDockerController }> {
+    const controller = new RepositoryTestDockerController();
+    const manager = new DockerWorkspaceManager({ controller });
+    await manager.createWorkspace({
+      taskId: 'task-test-1',
+      workspaceId: 'ws-test-1',
+      initialRevisionDigest: canonicalRev,
+      profile: {
+        profileId: 'profile-uc03-test',
+        image: 'ghcr.io/test:0.1',
+        imageDigest: canonicalRev,
+        user: '1000:1000',
+        readOnlyRootFilesystem: true,
+        network: 'none',
+        limits: { timeoutMs: 30000, maxMemoryBytes: 2147483648, maxCpuCores: 2, maxPids: 256 },
+        mounts: [],
+      },
+    });
+    return { manager, controller };
+  }
+
+  it('diagnostic patch settles once without repair charge and preserves Investigate', async () => {
+    const context = createTestDiagnosticPatchAdmissionContextV02();
+    const initial = createTestAdmissionTaskStateV02(context);
+    const journal = new MemoryStatePortV02({
+      initialTaskState: initial,
+      initialAuthorityRef: context.policyAuthorityRef,
+      initialControlVersion: context.expectedControlVersion,
+      initialEpoch: context.expectedEpoch,
+    });
+    const controller = new RepositoryTestDockerController();
+    const manager = new DockerWorkspaceManager({ controller });
+    await manager.createWorkspace({
+      taskId: context.taskId, workspaceId: context.workspaceId,
+      initialRevisionDigest: context.canonicalRevision,
+      profile: { profileId: 'profile-test', image: 'test', imageDigest: canonicalRev,
+        user: '1000:1000', readOnlyRootFilesystem: true, network: 'none',
+        limits: { timeoutMs: 30000, maxMemoryBytes: 2147483648, maxCpuCores: 2, maxPids: 256 }, mounts: [] },
+    });
+    fsPort.setRevision(context.canonicalRevision);
+    const nextRevision = 'sha256:' + 'a'.repeat(64);
+    let effects = 0;
+    const tools = new ControlledRepositoryTools({
+      guardCapability: guard, fsPort, limits: defaultLimits, statePort: journal,
+      workspaceManager: manager, adapterIdentity: 'diagnostic', processIncarnation: 'diag-1', fencingGeneration: 1,
+      patchRecoveryHandoff: createTestPatchRecoveryHandoff(),
+      patchReceiver: async () => {
+        effects++;
+        fsPort.setRevision(nextRevision);
+        manager.setCanonicalRevision(context.workspaceId, nextRevision);
+        return { applied: true, newRevisionDigest: nextRevision };
+      },
+    });
+    assert.equal(context.action.kind, 'apply_patch');
+    if (context.action.kind !== 'apply_patch') throw new Error('fixture requires patch');
+    assert.deepEqual(await tools.applyPatch(context.action, context), { applied: true, newRevisionDigest: nextRevision });
+    const persisted = await journal.loadTask(context.taskId);
+    assert.equal(persisted?.node, 'Investigate');
+    assert.equal(persisted?.repositoryRevisionDigest, nextRevision);
+    assert.equal(persisted?.budgetLedgers?.find((ledger) => ledger.kind === 'repair')?.consumed, 0);
+    assert.equal(journal.getJournalSnapshot().activeClaimId, null);
+    assert.equal(journal.getJournalSnapshot().outcomes.length, 1);
+    await assert.rejects(() => tools.applyPatch(context.action as ApplyPatchAction, context));
+    assert.equal(effects, 1);
+    assert.equal(journal.getJournalSnapshot().outcomes.length, 1);
+  });
+
+  describe('Patch admission binds the exact caller payload', () => {
+    it('rejects changed content, paths, or base before beginAttempt and patch effects', async () => {
+      const admittedPatch: ApplyPatchAction = {
+        actionId: 'act-bound-patch-1',
+        kind: 'apply_patch',
+        patchContent: '--- a/src/a.py\n+++ b/src/a.py\n',
+        targetPaths: ['src/a.py'],
+        baseRevisionDigest: canonicalRev,
+      };
+      const context = createTestAdmissionContext({
+        action: admittedPatch,
+        actionDigest: computeActionDigest(admittedPatch),
+        baseRevision: canonicalRev,
+      });
+      const changedPayloads: ApplyPatchAction[] = [
+        { ...admittedPatch, patchContent: '--- a/src/a.py\n+++ b/src/a.py\n+changed\n' },
+        { ...admittedPatch, targetPaths: ['src/b.py'] },
+        { ...admittedPatch, baseRevisionDigest: 'sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff' },
+      ];
+      let patchEffects = 0;
+      const tools = new ControlledRepositoryTools({
+        guardCapability: guard,
+        fsPort,
+        limits: defaultLimits,
+        statePort,
+        patchReceiver: async () => {
+          patchEffects += 1;
+          return { applied: true, newRevisionDigest: canonicalRev };
+        },
+      });
+
+      for (const changedPatch of changedPayloads) {
+        await assert.rejects(() => tools.applyPatch(changedPatch, context), /PATCH_ADMISSION_MISMATCH/);
+      }
+
+      assert.equal(statePort.beginAttemptCalls.length, 0);
+      assert.equal(patchEffects, 0);
+    });
+
+    it('requires an actual patch receiver before claiming', async () => {
+      const patch: ApplyPatchAction = {
+        actionId: 'act-gated-patch-1',
+        kind: 'apply_patch',
+        patchContent: '--- a/src/a.py\n+++ b/src/a.py\n',
+        targetPaths: ['src/a.py'],
+        baseRevisionDigest: canonicalRev,
+      };
+      const context = createTestAdmissionContext({ action: patch, actionDigest: computeActionDigest(patch) });
+      const { manager } = await createWorkspaceManager();
+      const noReceiver = new ControlledRepositoryTools({
+        guardCapability: guard,
+        fsPort,
+        limits: defaultLimits,
+        statePort,
+        workspaceManager: manager,
+      });
+
+      await assert.rejects(() => noReceiver.applyPatch(patch, context), /PATCH_RECEIVER_REQUIRED/);
+      assert.equal(statePort.claimCalls.length, 0);
+      assert.equal(statePort.beginAttemptCalls.length, 0);
+    });
+
+    it('requires the exclusive workspace gate before claiming', async () => {
+      const patch: ApplyPatchAction = {
+        actionId: 'act-no-gate-patch-1',
+        kind: 'apply_patch',
+        patchContent: '--- a/src/a.py\n+++ b/src/a.py\n',
+        targetPaths: ['src/a.py'],
+        baseRevisionDigest: canonicalRev,
+      };
+      const context = createTestAdmissionContext({ action: patch, actionDigest: computeActionDigest(patch) });
+      const missingGateState = new FakeStatePortV02();
+      let patchEffects = 0;
+      const noGate = new ControlledRepositoryTools({
+        guardCapability: guard,
+        fsPort,
+        limits: defaultLimits,
+        statePort: missingGateState,
+        patchReceiver: async () => {
+          patchEffects += 1;
+          return { applied: true, newRevisionDigest: canonicalRev };
+        },
+      });
+
+      await assert.rejects(() => noGate.applyPatch(patch, context), /WORKSPACE_GATE_REQUIRED/);
+      assert.equal(missingGateState.claimCalls.length, 0);
+      assert.equal(missingGateState.beginAttemptCalls.length, 0);
+      assert.equal(patchEffects, 0);
+    });
+
+    it('uses detached action and context snapshots across awaited attempt admission', async () => {
+      const targetPaths = ['src/a.py'];
+      const patch: ApplyPatchAction = {
+        actionId: 'act-detached-patch-1',
+        kind: 'apply_patch',
+        patchContent: '--- a/src/a.py\n+++ b/src/a.py\n+original\n',
+        targetPaths,
+        baseRevisionDigest: canonicalRev,
+      };
+      const actionDigest = computeActionDigest(patch);
+      const context = createTestAdmissionContext({ action: patch, actionDigest });
+      const { manager } = await createWorkspaceManager();
+      let continueBeginAttempt: (() => void) | undefined;
+      let beginAttemptStarted: (() => void) | undefined;
+      const began = new Promise<void>((resolve) => { beginAttemptStarted = resolve; });
+      const resume = new Promise<void>((resolve) => { continueBeginAttempt = resolve; });
+      statePort.beforeBeginAttempt = async () => {
+        beginAttemptStarted?.();
+        await resume;
+      };
+      const received: { patch?: ApplyPatchAction; context?: RepositoryAdmissionContextV02 } = {};
+      const tools = new ControlledRepositoryTools({
+        guardCapability: guard,
+        fsPort,
+        limits: defaultLimits,
+        statePort,
+        workspaceManager: manager,
+        adapterIdentity: 'patch-receiver',
+        processIncarnation: 'inc-patch-detached',
+        fencingGeneration: 1,
+        patchRecoveryHandoff: createTestPatchRecoveryHandoff(),
+        patchReceiver: async (admittedPatch, admittedContext) => {
+          received.patch = admittedPatch;
+          received.context = admittedContext;
+          return { applied: true, newRevisionDigest: canonicalRev };
+        },
+      });
+
+      const pending = tools.applyPatch(patch, context);
+      await began;
+      Object.assign(patch, { patchContent: 'mutated-after-admission' });
+      targetPaths[0] = 'src/mutated.py';
+      Object.assign(context, { actionDigest: 'sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff' });
+      continueBeginAttempt?.();
+      await pending;
+
+      assert.equal(received.patch?.patchContent, '--- a/src/a.py\n+++ b/src/a.py\n+original\n');
+      assert.deepEqual(received.patch?.targetPaths, ['src/a.py']);
+      assert.equal(received.context?.actionDigest, actionDigest);
+    });
+
+    it('rejects a duplicate attempt and a fence published during beginAttempt before patch invocation', async () => {
+      const patch: ApplyPatchAction = {
+        actionId: 'act-fenced-patch-1',
+        kind: 'apply_patch',
+        patchContent: '--- a/src/a.py\n+++ b/src/a.py\n',
+        targetPaths: ['src/a.py'],
+        baseRevisionDigest: canonicalRev,
+      };
+      const context = createTestAdmissionContext({ action: patch, actionDigest: computeActionDigest(patch) });
+      const { manager } = await createWorkspaceManager();
+      let patchEffects = 0;
+      const tools = new ControlledRepositoryTools({
+        guardCapability: guard,
+        fsPort,
+        limits: defaultLimits,
+        statePort,
+        workspaceManager: manager,
+        adapterIdentity: 'patch-receiver',
+        processIncarnation: 'inc-patch-1',
+        fencingGeneration: 1,
+        patchRecoveryHandoff: createTestPatchRecoveryHandoff(),
+        patchReceiver: async () => {
+          patchEffects += 1;
+          return { applied: true, newRevisionDigest: canonicalRev };
+        },
+      });
+
+      await tools.applyPatch(patch, context);
+      await assert.rejects(() => tools.applyPatch(patch, context), /DUPLICATE_ATTEMPT/);
+
+      const fencedState = new FakeStatePortV02();
+      let continueBeginAttempt: (() => void) | undefined;
+      let beginAttemptStarted: (() => void) | undefined;
+      const began = new Promise<void>((resolve) => { beginAttemptStarted = resolve; });
+      const resume = new Promise<void>((resolve) => { continueBeginAttempt = resolve; });
+      fencedState.beforeBeginAttempt = async () => {
+        beginAttemptStarted?.();
+        await resume;
+      };
+      let fencedPatchEffects = 0;
+      const fencedTools = new ControlledRepositoryTools({
+        guardCapability: guard,
+        fsPort,
+        limits: defaultLimits,
+        statePort: fencedState,
+        workspaceManager: manager,
+        adapterIdentity: 'patch-receiver',
+        processIncarnation: 'inc-patch-1',
+        fencingGeneration: 1,
+        patchRecoveryHandoff: createTestPatchRecoveryHandoff(),
+        patchReceiver: async () => {
+          fencedPatchEffects += 1;
+          return { applied: true, newRevisionDigest: canonicalRev };
+        },
+      });
+      const pending = fencedTools.applyPatch(patch, context);
+      await began;
+      manager.setFencingGeneration('ws-test-1', 2);
+      continueBeginAttempt?.();
+      await assert.rejects(() => pending, /FENCED_EXECUTOR/);
+      assert.equal(fencedPatchEffects, 0);
+      assert.equal(patchEffects, 1);
+    });
+  });
+
+  describe('Read holds: zero filesystem reads when paused or claim is open', () => {
+    it('produces ZERO filesystem reads in listDir, readFile, and searchCode when task is paused', async () => {
+      fsPort.setFile('src/file.py', 'print(1)');
+      const taskControl = new FakeTaskControlPortV02(makeJournalSnapshot({
+        mode: 'paused',
+        holdRef: 'pause-hold-1',
+        holdEventDigest: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+      }));
+
+      const tools = new ControlledRepositoryTools({
+        guardCapability: guard,
+        fsPort,
+        limits: defaultLimits,
+        statePort,
+        taskControl,
+      });
+
+      await assert.rejects(() => tools.listDir('src'), /TASK_PAUSED_OR_HELD/);
+      await assert.rejects(() => tools.readFile('src/file.py'), /TASK_PAUSED_OR_HELD/);
+      await assert.rejects(() => tools.searchCode('print'), /TASK_PAUSED_OR_HELD/);
+
+      assert.equal(fsPort.statCalls.length, 0, 'Zero stat calls when paused');
+      assert.equal(fsPort.lstatCalls.length, 0, 'Zero lstat calls when paused');
+      assert.equal(fsPort.realpathCalls.length, 0, 'Zero realpath calls when paused');
+      assert.equal(fsPort.readDirCalls.length, 0, 'Zero readDir calls when paused');
+      assert.equal(fsPort.readTextFileCalls.length, 0, 'Zero readTextFile calls when paused');
+    });
+
+    it('produces ZERO filesystem reads in listDir, readFile, and searchCode when any claim is open', async () => {
+      fsPort.setFile('src/file.py', 'print(1)');
+      const taskControl = new FakeTaskControlPortV02(makeJournalSnapshot({
+        claims: [{ claimId: 'claim-open-1', status: 'outcome-recorded', attemptId: 'att-open-1' }],
+      }));
+
+      const tools = new ControlledRepositoryTools({
+        guardCapability: guard,
+        fsPort,
+        limits: defaultLimits,
+        statePort,
+        taskControl,
+      });
+
+      await assert.rejects(() => tools.listDir('src'), /CLAIM_OPEN_READ_DENIED/);
+      await assert.rejects(() => tools.readFile('src/file.py'), /CLAIM_OPEN_READ_DENIED/);
+      await assert.rejects(() => tools.searchCode('print'), /CLAIM_OPEN_READ_DENIED/);
+
+      assert.equal(fsPort.statCalls.length, 0, 'Zero stat calls when claim is open');
+      assert.equal(fsPort.lstatCalls.length, 0, 'Zero lstat calls when claim is open');
+      assert.equal(fsPort.realpathCalls.length, 0, 'Zero realpath calls when claim is open');
+      assert.equal(fsPort.readDirCalls.length, 0, 'Zero readDir calls when claim is open');
+      assert.equal(fsPort.readTextFileCalls.length, 0, 'Zero readTextFile calls when claim is open');
+    });
+
+    it('requires an explicit authoritative task control port when a state port is configured', async () => {
+      fsPort.setFile('src/calc.py', 'def add(a, b): return a + b');
+      const tools = new ControlledRepositoryTools({
+        guardCapability: guard,
+        fsPort,
+        limits: defaultLimits,
+        statePort: new FakeStatePortV02(),
+      });
+
+      await assert.rejects(() => tools.readFile('src/calc.py'), /TASK_CONTROL_REQUIRED/);
+      assert.equal(fsPort.getRevisionCalls, 0);
+      assert.equal(fsPort.statCalls.length, 0);
+      assert.equal(fsPort.realpathCalls.length, 0);
+      assert.equal(fsPort.readTextFileCalls.length, 0);
+    });
+
+    it('rejects malformed task-control snapshots before filesystem IO', async () => {
+      fsPort.setFile('src/calc.py', 'def add(a, b): return a + b');
+      const tools = new ControlledRepositoryTools({
+        guardCapability: guard,
+        fsPort,
+        limits: defaultLimits,
+        statePort: new FakeStatePortV02(),
+        taskControl: new FakeTaskControlPortV02({ mode: 'runnable', holdRef: null }),
+      });
+
+      await assert.rejects(() => tools.readFile('src/calc.py'), /INVALID_TASK_CONTROL_SNAPSHOT/);
+      assert.equal(fsPort.getRevisionCalls, 0);
+      assert.equal(fsPort.statCalls.length, 0);
+      assert.equal(fsPort.realpathCalls.length, 0);
+      assert.equal(fsPort.readTextFileCalls.length, 0);
+    });
+
+    it('rechecks task control at the guarded filesystem handoff', async () => {
+      fsPort.setFile('src/calc.py', 'def add(a, b): return a + b');
+      const taskControl = new FakeTaskControlPortV02();
+      const gate = new FakeGuardCapability();
+      gate.beforeExecute = async () => {
+        taskControl.snapshot = makeJournalSnapshot({
+          mode: 'paused',
+          holdRef: 'pause-at-handoff-1',
+          holdEventDigest: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+        });
+      };
+      const tools = new ControlledRepositoryTools({
+        guardCapability: gate,
+        fsPort,
+        limits: defaultLimits,
+        statePort: new FakeStatePortV02(),
+        taskControl,
+      });
+
+      await assert.rejects(() => tools.readFile('src/calc.py'), /TASK_PAUSED_OR_HELD/);
+      assert.equal(fsPort.getRevisionCalls, 0);
+      assert.equal(fsPort.statCalls.length, 0);
+      assert.equal(fsPort.lstatCalls.length, 0);
+      assert.equal(fsPort.realpathCalls.length, 0);
+      assert.equal(fsPort.readTextFileCalls.length, 0);
+    });
+  });
+
+  describe('Missing admission context fails closed (v0.1 compatibility)', () => {
+    it('fails closed when applyPatch, runCommand, or runTests is called without v0.2 context', async () => {
+      const tools = new ControlledRepositoryTools({
+        guardCapability: guard,
+        fsPort,
+        limits: defaultLimits,
+        statePort,
+      });
+
+      const patch: ApplyPatchAction = { actionId: 'p1', kind: 'apply_patch', patchContent: '', targetPaths: [], baseRevisionDigest: canonicalRev };
+      const command: RunCommandAction = { actionId: 'c1', kind: 'run_command', executable: 'pytest', argv: [], workingDirectory: '/workspace/repo' };
+      const check: CheckDefinition = { checkId: 'chk1', executable: 'pytest', argv: [], purpose: 'reproduction' };
+      await assert.rejects(() => tools.applyPatch(patch), /NOT_IMPLEMENTED/);
+      await assert.rejects(() => tools.runCommand(command), /NOT_IMPLEMENTED/);
+      await assert.rejects(() => tools.runTests(check), /NOT_IMPLEMENTED/);
+    });
+  });
+
+  describe('Section 10 Case 4: Repository writer and view drift before beginAttempt', () => {
+    it('applyPatch: denies with zero beginAttempt and zero patch effects when base revision drifts', async () => {
+      const { manager } = await createWorkspaceManager();
+      let patchEffects = 0;
+      const tools = new ControlledRepositoryTools({
+        guardCapability: guard,
+        fsPort,
+        limits: defaultLimits,
+        statePort,
+        workspaceManager: manager,
+        adapterIdentity: 'patch-receiver',
+        processIncarnation: 'inc-stale-base-1',
+        fencingGeneration: 1,
+        patchRecoveryHandoff: createTestPatchRecoveryHandoff(),
+        patchReceiver: async () => {
+          patchEffects += 1;
+          return { applied: true, newRevisionDigest: canonicalRev };
+        },
+      });
+
+      const patchAction: ApplyPatchAction = {
+        actionId: 'act-patch-drift-1',
+        kind: 'apply_patch',
+        patchContent: '--- a/src/app.py\n+++ b/src/app.py\n',
+        targetPaths: ['src/app.py'],
+        baseRevisionDigest: 'sha256:stale-base-revision-0000000000000000000000000000000000000000',
+      };
+
+      const context = createTestAdmissionContext({
+        action: patchAction,
+        actionDigest: computeActionDigest(patchAction),
+        baseRevision: 'sha256:stale-base-revision-0000000000000000000000000000000000000000',
+      });
+
+      await assert.rejects(
+        () => tools.applyPatch(patchAction, context),
+        /STALE_REVISION_DRIFT/
+      );
+
+      assert.equal(statePort.beginAttemptCalls.length, 0, 'Zero beginAttempt calls on base revision drift');
+      assert.equal(patchEffects, 0, 'Zero patch effects on base revision drift');
+    });
+
+    it('runCommand & runTests: denies with zero beginAttempt and zero controller dispatch when command view drifts', async () => {
+      const controller = new RepositoryTestDockerController();
+      const manager = new DockerWorkspaceManager({ controller });
+      const ws = await manager.createWorkspace({
+        taskId: 'task-test-1',
+        workspaceId: 'ws-test-1',
+        initialRevisionDigest: canonicalRev,
+        profile: {
+          profileId: 'profile-uc03-test',
+          image: 'ghcr.io/test:0.1',
+          imageDigest: canonicalRev,
+          user: '1000:1000',
+          readOnlyRootFilesystem: true,
+          network: 'none',
+          limits: { timeoutMs: 30000, maxMemoryBytes: 2147483648, maxCpuCores: 2, maxPids: 256 },
+          mounts: [],
+        },
+      });
+
+      controller.snapshotToReturn = {
+        canonicalRevisionDigest: canonicalRev,
+        entries: [{ path: 'src/app.py', kind: 'regular', content: 'test', digest: 'sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08' }],
+      };
+      await manager.admitCommandView({ workspaceId: ws.workspaceId });
+
+      const executor = new StructuredCommandExecutor({
+        manager,
+        controller,
+        profile: ws ? {
+          profileId: 'profile-uc03-test',
+          image: 'ghcr.io/test:0.1',
+          imageDigest: canonicalRev,
+          user: '1000:1000',
+          readOnlyRootFilesystem: true,
+          network: 'none',
+          limits: { timeoutMs: 30000, maxMemoryBytes: 2147483648, maxCpuCores: 2, maxPids: 256 },
+          mounts: [],
+        } : undefined,
+      });
+
+      const tools = new ControlledRepositoryTools({
+        guardCapability: guard,
+        fsPort,
+        limits: defaultLimits,
+        statePort,
+        workspaceManager: manager,
+        commandExecutor: executor,
+        trustedCommandResourcePolicy: {
+          isolationProfileRef: 'profile-uc03-test',
+          limits: { timeoutMs: 30000, maxOutputBytes: 65536, maxCpuCores: 2, maxMemoryBytes: 2147483648, maxPids: 256 },
+        },
+      });
+
+      const commandAction: RunCommandAction = {
+        actionId: 'act-cmd-drift-1',
+        kind: 'run_command',
+        executable: 'pytest',
+        argv: ['-q'],
+        workingDirectory: '/workspace/repo',
+      };
+
+      // Context with mismatching commandView digest
+      const context = createTestAdmissionContext({
+        action: commandAction,
+        actionDigest: computeActionDigest(commandAction),
+        checkId: 'chk-drift-1',
+        commandView: {
+          viewId: 'view-mismatch',
+          viewDigest: 'sha256:mismatch-digest-9999999999999999999999999999999999999999999',
+          taskId: 'task-test-1',
+          workspaceId: 'ws-test-1',
+          canonicalRevision: canonicalRev,
+          admittedFiles: [],
+          exclusionsPolicyVersion: '0.1.0',
+          scratchIdentity: 'scratch-1',
+          mountedReadOnly: true,
+          isolationProfileRef: 'profile-uc03-test',
+        },
+      });
+
+      await assert.rejects(
+        () => tools.runCommand(commandAction, context),
+        /STALE_COMMAND_VIEW/
+      );
+      assert.equal(statePort.beginAttemptCalls.length, 0, 'Zero beginAttempt calls on command view drift');
+      assert.equal(controller.executedPlans.length, 0, 'Zero controller executions on command view drift');
+
+      const check: CheckDefinition = { checkId: 'chk-drift-1', executable: 'pytest', argv: ['-q'], workingDirectory: '/workspace/repo', purpose: 'reproduction' };
+      await assert.rejects(
+        () => tools.runTests(check, context),
+        /STALE_COMMAND_VIEW/
+      );
+      assert.equal(statePort.beginAttemptCalls.length, 0, 'Zero beginAttempt calls on runTests view drift');
+      assert.equal(controller.executedPlans.length, 0, 'Zero controller executions on runTests view drift');
+    });
+  });
+
+  describe('Patch settlement keeps the workspace fenced', () => {
+    const nextRevision = 'sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789';
+
+    it('fails closed before beginAttempt when the typed recovery handoff is missing', async () => {
+      const { manager } = await createWorkspaceManager();
+      let patchCalls = 0;
+      const tools = new ControlledRepositoryTools({
+        guardCapability: guard,
+        fsPort,
+        limits: defaultLimits,
+        statePort,
+        workspaceManager: manager,
+        adapterIdentity: 'patch-missing-recovery',
+        processIncarnation: 'inc-patch-missing-recovery',
+        fencingGeneration: 1,
+        patchReceiver: async () => {
+          patchCalls += 1;
+          return { applied: true, newRevisionDigest: canonicalRev };
+        },
+      });
+      const patch: ApplyPatchAction = {
+        actionId: 'act-patch-missing-recovery',
+        kind: 'apply_patch',
+        patchContent: '--- a/src/a.py\n+++ b/src/a.py\n+missing-recovery\n',
+        targetPaths: ['src/a.py'],
+        baseRevisionDigest: canonicalRev,
+      };
+      const context = createTestAdmissionContext({ action: patch, actionDigest: computeActionDigest(patch) });
+
+      await assert.rejects(() => tools.applyPatch(patch, context), /PATCH_RECOVERY_REQUIRED/);
+      assert.equal(statePort.beginAttemptCalls.length, 0, 'missing recovery handoff denies before beginAttempt');
+      assert.equal(patchCalls, 0, 'missing recovery handoff denies before patch dispatch');
+    });
+
+    it('blocks competing writers and view builders until recordOutcome reports settled', async () => {
+      const { manager, controller } = await createWorkspaceManager();
+      controller.snapshotToReturn = {
+        canonicalRevisionDigest: nextRevision,
+        entries: [{ path: 'src/a.py', kind: 'regular', content: 'test', digest: 'sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08' }],
+      };
+      let recordedOutcome: AttemptOutcomeReceiptV02 | undefined;
+      let releaseRecord: (() => void) | undefined;
+      const recordBarrier = new Promise<void>((resolve) => { releaseRecord = resolve; });
+      statePort.recordOutcomeHandler = async (receipt) => {
+        recordedOutcome = receipt;
+        await recordBarrier;
+        return { outcome: 'settled', receiptId: receipt.receiptId };
+      };
+      const tools = new ControlledRepositoryTools({
+        guardCapability: guard,
+        fsPort,
+        limits: defaultLimits,
+        statePort,
+        workspaceManager: manager,
+        adapterIdentity: 'patch-settlement',
+        processIncarnation: 'inc-patch-settlement',
+        fencingGeneration: 1,
+        patchRecoveryHandoff: createTestPatchRecoveryHandoff(),
+        patchReceiver: async () => {
+          fsPort.setRevision(nextRevision);
+          manager.setCanonicalRevision('ws-test-1', nextRevision);
+          return { applied: true, newRevisionDigest: nextRevision };
+        },
+      });
+      const patch: ApplyPatchAction = {
+        actionId: 'act-patch-settlement',
+        kind: 'apply_patch',
+        patchContent: '--- a/src/a.py\n+++ b/src/a.py\n+settled\n',
+        targetPaths: ['src/a.py'],
+        baseRevisionDigest: canonicalRev,
+      };
+      const context = createTestAdmissionContext({ action: patch, actionDigest: computeActionDigest(patch) });
+      const applying = tools.applyPatch(patch, context);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      const enteredSettlement = recordedOutcome !== undefined;
+
+      let writerAcquired = false;
+      const competingWriter = manager.acquireWriteLease('ws-test-1', nextRevision).then((lease) => {
+        writerAcquired = true;
+        return lease;
+      });
+      const viewBuild = manager.admitCommandView({ workspaceId: 'ws-test-1' });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      const blockedBeforeSettlement = !writerAcquired && controller.snapshotRequests === 0;
+      const recordedOutcomeKind = recordedOutcome?.outcome;
+      releaseRecord?.();
+      const applicationResult: unknown = await applying.catch((error: unknown) => error);
+      assert.equal(enteredSettlement, true, 'applyPatch records its observed result before returning');
+      assert.equal(recordedOutcomeKind, 'observed');
+      assert.equal(applicationResult instanceof Error, false, 'settled outcome returns the observed patch result');
+      assert.equal(recordedOutcome?.outcome, 'observed');
+      if (recordedOutcome?.subjectKind === 'repository-action') {
+        assert.equal(recordedOutcome.observedResultRevisionDigest, nextRevision);
+      }
+      assert.equal(blockedBeforeSettlement, true, 'writer and view builder stay behind the unsettled patch lease');
+      const writerLease = await competingWriter;
+      await writerLease.release();
+      await viewBuild;
+      assert.equal(controller.snapshotRequests, 1, 'view builder proceeds after UC-04 settlement');
+    });
+
+    it('keeps the lease after recorded-unsettled and releases only after trusted recovery settles', async () => {
+      const { manager, controller } = await createWorkspaceManager();
+      controller.snapshotToReturn = {
+        canonicalRevisionDigest: nextRevision,
+        entries: [{ path: 'src/a.py', kind: 'regular', content: 'test', digest: 'sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08' }],
+      };
+      statePort.recordOutcomeHandler = async (receipt) => ({ outcome: 'recorded-unsettled', receiptId: receipt.receiptId });
+      let recoveryCalls = 0;
+      statePort.observedReconciliationHandler = async (receipt) => ({
+        outcome: ++recoveryCalls === 1 ? 'blocked' : 'settled',
+        receiptId: receipt.reconciliationId,
+      });
+      const tools = new ControlledRepositoryTools({
+        guardCapability: guard,
+        fsPort,
+        limits: defaultLimits,
+        statePort,
+        workspaceManager: manager,
+        adapterIdentity: 'patch-observed-recovery',
+        processIncarnation: 'inc-patch-observed-recovery',
+        fencingGeneration: 1,
+        patchRecoveryHandoff: createTestPatchRecoveryHandoff(),
+        patchReceiver: async () => {
+          fsPort.setRevision(nextRevision);
+          manager.setCanonicalRevision('ws-test-1', nextRevision);
+          return { applied: true, newRevisionDigest: nextRevision };
+        },
+      });
+      const patch: ApplyPatchAction = {
+        actionId: 'act-patch-observed-recovery',
+        kind: 'apply_patch',
+        patchContent: '--- a/src/a.py\n+++ b/src/a.py\n+observed\n',
+        targetPaths: ['src/a.py'],
+        baseRevisionDigest: canonicalRev,
+      };
+      const context = createTestAdmissionContext({ action: patch, actionDigest: computeActionDigest(patch) });
+      await assert.rejects(() => tools.applyPatch(patch, context), /PATCH_OUTCOME_PENDING/);
+      assert.equal(statePort.outcomeReceipts.at(-1)?.outcome, 'observed');
+
+      let writerAcquired = false;
+      const competingWriter = manager.acquireWriteLease('ws-test-1', nextRevision).then((lease) => {
+        writerAcquired = true;
+        return lease;
+      });
+      const viewBuild = manager.admitCommandView({ workspaceId: 'ws-test-1' });
+      const attempt = statePort.attemptReceipts.at(-1);
+      assert.ok(attempt);
+      const blocked = await tools.recoverPatchOutcome(attempt.attemptId);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(blocked.outcome, 'blocked');
+      assert.equal(writerAcquired, false, 'recorded-unsettled alone does not release the writer lease');
+      assert.equal(controller.snapshotRequests, 0, 'recorded-unsettled alone does not admit a view');
+
+      const settled = await tools.recoverPatchOutcome(attempt.attemptId);
+      assert.equal(settled.outcome, 'settled');
+      const writerLease = await competingWriter;
+      await writerLease.release();
+      await viewBuild;
+      assert.equal(statePort.observedReconciliations.length, 2);
+      assert.equal(controller.snapshotRequests, 1);
+    });
+
+    it('does not treat already-recorded as settlement proof', async () => {
+      const { manager } = await createWorkspaceManager();
+      statePort.recordOutcomeHandler = async (receipt) => ({ outcome: 'already-recorded', receiptId: receipt.receiptId });
+      let recoveryCalls = 0;
+      statePort.observedReconciliationHandler = async (receipt) => ({
+        outcome: ++recoveryCalls === 1 ? 'conflict' : 'settled',
+        receiptId: receipt.reconciliationId,
+      });
+      const tools = new ControlledRepositoryTools({
+        guardCapability: guard,
+        fsPort,
+        limits: defaultLimits,
+        statePort,
+        workspaceManager: manager,
+        adapterIdentity: 'patch-already-recorded',
+        processIncarnation: 'inc-patch-already-recorded',
+        fencingGeneration: 1,
+        patchRecoveryHandoff: createTestPatchRecoveryHandoff(),
+        patchReceiver: async () => ({ applied: true, newRevisionDigest: canonicalRev }),
+      });
+      const patch: ApplyPatchAction = {
+        actionId: 'act-patch-already-recorded',
+        kind: 'apply_patch',
+        patchContent: '--- a/src/a.py\n+++ b/src/a.py\n+already-recorded\n',
+        targetPaths: ['src/a.py'],
+        baseRevisionDigest: canonicalRev,
+      };
+      const context = createTestAdmissionContext({ action: patch, actionDigest: computeActionDigest(patch) });
+      await assert.rejects(() => tools.applyPatch(patch, context), /PATCH_OUTCOME_PENDING/);
+      const attempt = statePort.attemptReceipts.at(-1);
+      assert.ok(attempt);
+      let writerAcquired = false;
+      const competingWriter = manager.acquireWriteLease('ws-test-1', canonicalRev).then((lease) => {
+        writerAcquired = true;
+        return lease;
+      });
+
+      const conflict = await tools.recoverPatchOutcome(attempt.attemptId);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(conflict.outcome, 'conflict');
+      assert.equal(writerAcquired, false, 'already-recorded followed by conflicting recovery remains fenced');
+
+      const settled = await tools.recoverPatchOutcome(attempt.attemptId);
+      assert.equal(settled.outcome, 'settled');
+      const writerLease = await competingWriter;
+      await writerLease.release();
+    });
+
+    it('keeps an uncertain patch fenced until UC-04 confirms fenced recovery', async () => {
+      const { manager, controller } = await createWorkspaceManager();
+      controller.snapshotToReturn = {
+        canonicalRevisionDigest: canonicalRev,
+        entries: [{ path: 'src/a.py', kind: 'regular', content: 'test', digest: 'sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08' }],
+      };
+      statePort.recordOutcomeHandler = async (receipt) => ({ outcome: 'uncertain', receiptId: receipt.receiptId });
+      statePort.uncertainReconciliationHandler = async (receipt) => ({ outcome: 'settled', receiptId: receipt.reconciliationId });
+      const tools = new ControlledRepositoryTools({
+        guardCapability: guard,
+        fsPort,
+        limits: defaultLimits,
+        statePort,
+        workspaceManager: manager,
+        adapterIdentity: 'patch-uncertain-recovery',
+        processIncarnation: 'inc-patch-uncertain-recovery',
+        fencingGeneration: 1,
+        patchRecoveryHandoff: createTestPatchRecoveryHandoff(),
+        patchReceiver: async () => { throw new Error('receiver interrupted after dispatch'); },
+      });
+      const patch: ApplyPatchAction = {
+        actionId: 'act-patch-uncertain-recovery',
+        kind: 'apply_patch',
+        patchContent: '--- a/src/a.py\n+++ b/src/a.py\n+uncertain\n',
+        targetPaths: ['src/a.py'],
+        baseRevisionDigest: canonicalRev,
+      };
+      const context = createTestAdmissionContext({ action: patch, actionDigest: computeActionDigest(patch) });
+      await assert.rejects(() => tools.applyPatch(patch, context), /PATCH_OUTCOME_PENDING/);
+      const attempt = statePort.attemptReceipts.at(-1);
+      assert.ok(attempt);
+      assert.equal(statePort.outcomeReceipts.at(-1)?.outcome, 'uncertain');
+
+      let writerAcquired = false;
+      const competingWriter = manager.acquireWriteLease('ws-test-1', canonicalRev).then((lease) => {
+        writerAcquired = true;
+        return lease;
+      });
+      const viewBuild = manager.admitCommandView({ workspaceId: 'ws-test-1' });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(writerAcquired, false, 'uncertain receiver outcome retains the patch lease');
+      assert.equal(controller.snapshotRequests, 0, 'uncertain receiver outcome blocks view construction');
+
+      const settled = await tools.recoverPatchOutcome(attempt.attemptId);
+      assert.equal(settled.outcome, 'settled');
+      const reconciliation = statePort.uncertainReconciliations.at(-1);
+      assert.ok(reconciliation);
+      assert.equal(reconciliation.reconciliationKind, 'uncertain-attempt');
+      if ('disposition' in reconciliation) assert.equal(reconciliation.disposition, 'proven-not-dispatched');
+      const writerLease = await competingWriter;
+      await writerLease.release();
+      await viewBuild;
+      assert.equal(controller.snapshotRequests, 1);
+    });
+  });
+
+  describe('Positive execution through controller boundary & exact attempt identity forwarding', () => {
+    it('runCommand: acquires workspace read lease, calls beginAttempt once, and dispatches to controller spy', async () => {
+      const controller = new RepositoryTestDockerController();
+      controller.outputToReturn = { exitCode: 0, stdout: 'pytest passed\n', stderr: '', durationMs: 5 };
+
+      const manager = new DockerWorkspaceManager({ controller });
+      const profile = {
+        profileId: 'profile-uc03-test',
+        image: 'ghcr.io/test:0.1',
+        imageDigest: canonicalRev,
+        user: '1000:1000',
+        readOnlyRootFilesystem: true as const,
+        network: 'none' as const,
+        limits: { timeoutMs: 30000, maxMemoryBytes: 2147483648, maxCpuCores: 2, maxPids: 256 },
+        mounts: [],
+      };
+
+      const ws = await manager.createWorkspace({
+        taskId: 'task-test-1',
+        workspaceId: 'ws-test-1',
+        initialRevisionDigest: canonicalRev,
+        profile,
+      });
+
+      controller.snapshotToReturn = {
+        canonicalRevisionDigest: canonicalRev,
+        entries: [{ path: 'src/app.py', kind: 'regular', content: 'test', digest: 'sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08' }],
+      };
+      const view = await manager.admitCommandView({ workspaceId: ws.workspaceId });
+
+      const executor = new StructuredCommandExecutor({
+        manager,
+        controller,
+        profile,
+        adapterIdentity: 'structured-command-executor',
+        processIncarnation: 'inc-repo-receiver-1',
+        fencingGeneration: 1,
+      });
+
+      const tools = new ControlledRepositoryTools({
+        guardCapability: guard,
+        fsPort,
+        limits: defaultLimits,
+        statePort,
+        workspaceManager: manager,
+        commandExecutor: executor,
+        trustedCommandResourcePolicy: {
+          isolationProfileRef: 'profile-uc03-test',
+          limits: { timeoutMs: 30000, maxOutputBytes: 65536, maxCpuCores: 2, maxMemoryBytes: 2147483648, maxPids: 256 },
+        },
+        adapterIdentity: 'structured-command-executor',
+        processIncarnation: 'inc-repo-receiver-1',
+        fencingGeneration: 1,
+      });
+
+      const action: RunCommandAction = {
+        actionId: 'act-cmd-pos-1',
+        kind: 'run_command',
+        executable: 'pytest',
+        argv: ['-q'],
+        workingDirectory: '/workspace/repo',
+      };
+      const actionDigest = computeActionDigest(action);
+
+      const context = createTestAdmissionContext({
+        action,
+        actionDigest,
+        commandBounds: {
+          timeoutMs: 11,
+          maxOutputBytes: 13,
+          maxCpuSeconds: 0.005,
+          maxMemoryBytes: 134217728,
+          maxProcessCount: 3,
+          isolationProfileRef: 'profile-uc03-test',
+        },
+        commandView: {
+          viewId: view.viewId,
+          viewDigest: view.viewDigest,
+          taskId: 'task-test-1',
+          workspaceId: 'ws-test-1',
+          canonicalRevision: canonicalRev,
+          admittedFiles: view.admittedFiles,
+          exclusionsPolicyVersion: '0.1.0',
+          scratchIdentity: 'scratch-1',
+          mountedReadOnly: true,
+          isolationProfileRef: 'profile-uc03-test',
+        },
+      });
+
+      assert.equal(context.commandView?.viewId, view.viewId);
+      assert.equal(context.commandView?.viewDigest, view.viewDigest);
+      assert.equal(context.commandView?.canonicalRevision, view.canonicalRevisionDigest);
+
+      const res = await tools.runCommand(action, context);
+      assert.equal(res.exitCode, 0);
+      assert.equal(res.stdout, 'pytest passed');
+
+      // Verify beginAttempt was called exactly ONCE
+      assert.equal(statePort.beginAttemptCalls.length, 1);
+      assert.equal(statePort.beginAttemptCalls[0]?.claimId, 'claim-act-cmd-pos-1');
+
+      // Verify controller was dispatched exactly ONCE
+      assert.equal(controller.executedPlans.length, 1);
+      assert.equal(controller.executedPlans[0]?.executable, 'pytest');
+      assert.equal(controller.executedPlans[0]?.limits.timeoutMs, 11);
+      assert.equal(controller.executedPlans[0]?.limits.maxOutputBytes, 13);
+      assert.equal(controller.executedPlans[0]?.limits.maxCpuCores, 0.005 * 1000 / 11);
+      assert.equal(controller.executedPlans[0]?.limits.maxMemoryBytes, 134217728);
+      assert.equal(controller.executedPlans[0]?.limits.maxPids, 3);
+
+      const timeoutAction: RunCommandAction = { ...action, actionId: 'act-cmd-timeout-1' };
+      const timeoutContext = createTestAdmissionContext({
+        action: timeoutAction,
+        actionDigest: computeActionDigest(timeoutAction),
+        commandView: context.commandView,
+      });
+      controller.outputToReturn = { exitCode: 0, stdout: '', stderr: '', durationMs: 11, timedOut: true };
+      await assert.rejects(() => tools.runCommand(timeoutAction, timeoutContext), /COMMAND_TIMED_OUT/);
+    });
+
+    it('runTests: calls beginAttempt once and returns CheckResult with execution output', async () => {
+      const controller = new RepositoryTestDockerController();
+      controller.outputToReturn = { exitCode: 0, stdout: '1 passed\n', stderr: '', durationMs: 55 };
+
+      const manager = new DockerWorkspaceManager({ controller });
+      const profile = {
+        profileId: 'profile-uc03-test',
+        image: 'ghcr.io/test:0.1',
+        imageDigest: canonicalRev,
+        user: '1000:1000',
+        readOnlyRootFilesystem: true as const,
+        network: 'none' as const,
+        limits: { timeoutMs: 30000, maxMemoryBytes: 2147483648, maxCpuCores: 2, maxPids: 256 },
+        mounts: [],
+      };
+
+      const ws = await manager.createWorkspace({
+        taskId: 'task-test-1',
+        workspaceId: 'ws-test-1',
+        initialRevisionDigest: canonicalRev,
+        profile,
+      });
+
+      controller.snapshotToReturn = {
+        canonicalRevisionDigest: canonicalRev,
+        entries: [{ path: 'src/app.py', kind: 'regular', content: 'test', digest: 'sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08' }],
+      };
+      const view = await manager.admitCommandView({ workspaceId: ws.workspaceId });
+
+      const executor = new StructuredCommandExecutor({
+        manager,
+        controller,
+        profile,
+        adapterIdentity: 'structured-command-executor',
+        processIncarnation: 'inc-test-runner-1',
+        fencingGeneration: 1,
+      });
+
+      const tools = new ControlledRepositoryTools({
+        guardCapability: guard,
+        fsPort,
+        limits: defaultLimits,
+        statePort,
+        workspaceManager: manager,
+        commandExecutor: executor,
+        trustedCommandResourcePolicy: {
+          isolationProfileRef: 'profile-uc03-test',
+          limits: { timeoutMs: 30000, maxOutputBytes: 65536, maxCpuCores: 2, maxMemoryBytes: 2147483648, maxPids: 256 },
+        },
+        adapterIdentity: 'structured-command-executor',
+        processIncarnation: 'inc-test-runner-1',
+        fencingGeneration: 1,
+      });
+
+      const action: RunCommandAction = {
+        actionId: 'act-test-run-1',
+        kind: 'run_command',
+        executable: 'pytest',
+        argv: ['-q'],
+        workingDirectory: '/workspace/repo',
+      };
+      const actionDigest = computeActionDigest(action);
+
+      const context = createTestAdmissionContext({
+        action,
+        actionDigest,
+        checkId: 'chk-pytest-1',
+        commandView: {
+          viewId: view.viewId,
+          viewDigest: view.viewDigest,
+          taskId: 'task-test-1',
+          workspaceId: 'ws-test-1',
+          canonicalRevision: canonicalRev,
+          admittedFiles: view.admittedFiles,
+          exclusionsPolicyVersion: '0.1.0',
+          scratchIdentity: 'scratch-1',
+          mountedReadOnly: true,
+          isolationProfileRef: 'profile-uc03-test',
+        },
+      });
+
+      const check: CheckDefinition = { checkId: 'chk-pytest-1', executable: 'pytest', argv: ['-q'], workingDirectory: '/workspace/repo', purpose: 'reproduction' };
+      const mismatchedCheck = { ...check, executable: 'python' };
+      await assert.rejects(() => tools.runTests(mismatchedCheck, context), /CHECK_ADMISSION_MISMATCH/);
+      const checkWithoutWorkingDirectory: CheckDefinition = { checkId: check.checkId, executable: check.executable, argv: check.argv, purpose: check.purpose };
+      await assert.rejects(() => tools.runTests(checkWithoutWorkingDirectory, context), /CHECK_ADMISSION_MISMATCH/);
+      assert.equal(statePort.beginAttemptCalls.length, 0);
+      assert.equal(controller.executedPlans.length, 0);
+
+      const checkRes = await tools.runTests(check, context);
+
+      assert.equal(checkRes.checkId, 'chk-pytest-1');
+      assert.equal(checkRes.outcome, 'pass');
+      assert.equal(checkRes.outputExcerpt, '1 passed\n');
+
+      assert.equal(statePort.beginAttemptCalls.length, 1);
+      assert.equal(controller.executedPlans.length, 1);
+
+      const admittedView = context.commandView;
+      assert.ok(admittedView);
+      const reportedZeroTimeoutAction: RunCommandAction = { ...action, actionId: 'act-test-reported-zero-timeout-1' };
+      const reportedZeroTimeoutContext = createTestAdmissionContext({
+        action: reportedZeroTimeoutAction,
+        actionDigest: computeActionDigest(reportedZeroTimeoutAction),
+        checkId: 'chk-reported-zero-timeout-1',
+        commandView: admittedView,
+      });
+      const reportedZeroTimeoutCheck: CheckDefinition = { ...check, checkId: 'chk-reported-zero-timeout-1' };
+      controller.outputToReturn = { exitCode: 0, stdout: 'partial output', stderr: '', durationMs: 55, timedOut: true };
+      const reportedZeroTimeoutResult = await tools.runTests(reportedZeroTimeoutCheck, reportedZeroTimeoutContext);
+      assert.equal(reportedZeroTimeoutResult.outcome, 'timeout');
+
+      const timeoutAction: RunCommandAction = { ...action, actionId: 'act-test-timeout-1' };
+      const timeoutContext = createTestAdmissionContext({
+        action: timeoutAction,
+        actionDigest: computeActionDigest(timeoutAction),
+        checkId: 'chk-timeout-1',
+        commandView: admittedView,
+      });
+      const timeoutCheck: CheckDefinition = { ...check, checkId: 'chk-timeout-1' };
+      controller.outputToReturn = { exitCode: null, stdout: '', stderr: '', durationMs: 55, timedOut: true };
+      const timeoutResult = await tools.runTests(timeoutCheck, timeoutContext);
+      assert.equal(timeoutResult.outcome, 'timeout');
+    });
+
+    it('applyPatch: acquires writer lease, calls beginAttempt once, and executes patch receiver', async () => {
+      let patchReceiverCalled = false;
+      let attemptPassedToPatch: AttemptReceiptV02 | null = null;
+      const { manager } = await createWorkspaceManager();
+
+      const tools = new ControlledRepositoryTools({
+        guardCapability: guard,
+        fsPort,
+        limits: defaultLimits,
+        statePort,
+        workspaceManager: manager,
+        adapterIdentity: 'patch-receiver',
+        processIncarnation: 'inc-patch-1',
+        fencingGeneration: 1,
+        patchRecoveryHandoff: createTestPatchRecoveryHandoff(),
+        patchReceiver: async (_patch, _context, attempt) => {
+          patchReceiverCalled = true;
+          attemptPassedToPatch = attempt;
+          return { applied: true, newRevisionDigest: canonicalRev };
+        },
+      });
+
+      const patchAction: ApplyPatchAction = {
+        actionId: 'act-patch-pos-1',
+        kind: 'apply_patch',
+        patchContent: '--- a/src/app.py\n+++ b/src/app.py\n@@ -1 +1 @@\n-old\n+new\n',
+        targetPaths: ['src/app.py'],
+        baseRevisionDigest: canonicalRev,
+      };
+      const actionDigest = computeActionDigest(patchAction);
+
+      const context = createTestAdmissionContext({
+        action: patchAction,
+        actionDigest,
+        baseRevision: canonicalRev,
+      });
+
+      const res = await tools.applyPatch(patchAction, context);
+
+      assert.equal(res.applied, true);
+      assert.equal(res.newRevisionDigest, canonicalRev);
+      assert.equal(patchReceiverCalled, true);
+      assert.ok(attemptPassedToPatch);
+      assert.equal(statePort.beginAttemptCalls.length, 1);
+      assert.equal(statePort.beginAttemptCalls[0]?.claimId, 'claim-act-patch-pos-1');
+    });
+  });
+
+  describe('ControlledRepositoryToolsV02 and createRepositoryReceiverV02 entrypoints', () => {
+    it('creates compile-safe RepositoryPortV02 receiver instances', () => {
+      const v02Instance: RepositoryPortV02 = new ControlledRepositoryToolsV02({
+        guardCapability: guard,
+        fsPort,
+        limits: defaultLimits,
+      });
+      assert.ok(v02Instance instanceof ControlledRepositoryTools);
+
+      const receiver: RepositoryPortV02 = createRepositoryReceiverV02({
+        guardCapability: guard,
+        fsPort,
+        limits: defaultLimits,
+      });
+      assert.ok(receiver);
     });
   });
 });

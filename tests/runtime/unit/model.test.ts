@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -5,7 +6,20 @@ import {
   type TaskState,
   type SourceEvidence,
   type ProviderRequest,
+  type ProviderAdmissionContextV02,
+  computeCanonicalSha256,
 } from '../../../src/contracts/foundation/uc03.ts';
+import {
+  HostModelPortV02,
+} from '../../../src/foundation/model.ts';
+import {
+  MemoryStatePortV02,
+} from '../support/uc03/memory-state.ts';
+import {
+  createTestAdmissionTaskStateV02,
+  createTestProviderAdmissionContextV02,
+  createTestProviderRequest,
+} from '../support/uc03/state-fixtures.ts';
 import {
   HostModelPort,
   computeContextDigest,
@@ -930,3 +944,779 @@ test('HostModelPort: fail-closed ZERO transport calls when unapproved secret is 
     assert.equal(serialized.includes(secretMarker), false, 'Secret marker must not be leaked');
   }
 });
+
+function authorityForV02(context: ProviderAdmissionContextV02) {
+  return {
+    policyId: context.providerIdentity.pricingPolicyId,
+    policyVersion: context.providerIdentity.pricingPolicyVersion,
+    configId: context.providerIdentity.configId,
+    configVersion: context.providerIdentity.configVersion,
+    issuerKeyRef: context.providerIdentity.issuerKeyRef,
+    decisionAuthorityGeneration: context.providerIdentity.decisionAuthorityGeneration,
+  };
+}
+
+function createValidV02Setup(options?: {
+  role?: 'coder' | 'reviewer';
+  planApplicability?: 'pre-plan-diagnostic' | 'approved-plan';
+  requestId?: string;
+  statePort?: MemoryStatePortV02;
+  transport?: StubTransport;
+}) {
+  const role = options?.role ?? 'coder';
+  const planApplicability = options?.planApplicability ?? 'approved-plan';
+  const requestId = options?.requestId ?? 'req-prov-v02-001';
+
+  const transport = options?.transport ?? new StubTransport();
+  const state = createFixtureTaskState();
+  const evidence = [createFixtureSourceEvidence({ revisionDigest: state.repositoryRevisionDigest })];
+
+  const dummyReq = createTestProviderRequest({
+    providerRequestId: requestId,
+    taskId: state.taskId,
+    runId: state.runId,
+    role,
+    contextDigest: 'sha256:placeholder',
+  });
+
+  const dummyContext = createTestProviderAdmissionContextV02({
+    taskId: state.taskId,
+    runId: state.runId,
+    planApplicability,
+    runnableNode: planApplicability === 'pre-plan-diagnostic' ? 'Investigate' : 'Repair',
+    ...(planApplicability === 'pre-plan-diagnostic'
+      ? {
+          diagnosticPurpose: 'baseline diagnostic',
+          taskCriteriaDigest: computeCanonicalSha256(state.acceptanceCriteria),
+          planBindingDigest: undefined,
+          planDecisionRef: undefined,
+        }
+      : {}),
+    providerRequest: dummyReq,
+  });
+
+  const initialTaskState = createTestAdmissionTaskStateV02(dummyContext);
+  const taskState: TaskState = {
+    ...initialTaskState,
+    repositoryRevisionDigest: state.repositoryRevisionDigest,
+  };
+
+  const contextDigest = computeContextDigest(taskState, evidence);
+
+  const baseRequest = createTestProviderRequest({
+    providerRequestId: requestId,
+    taskId: taskState.taskId,
+    runId: taskState.runId,
+    role,
+    contextDigest,
+  });
+
+  const baseContext = createTestProviderAdmissionContextV02({
+    taskId: taskState.taskId,
+    runId: taskState.runId,
+    planApplicability,
+    runnableNode: planApplicability === 'pre-plan-diagnostic' ? 'Investigate' : 'Repair',
+    ...(planApplicability === 'pre-plan-diagnostic'
+      ? {
+          diagnosticPurpose: 'baseline diagnostic',
+          taskCriteriaDigest: computeCanonicalSha256(taskState.acceptanceCriteria),
+          planBindingDigest: undefined,
+          planDecisionRef: undefined,
+        }
+      : {}),
+    providerRequest: baseRequest,
+  });
+
+  const context: ProviderAdmissionContextV02 = baseContext;
+  const authority = authorityForV02(context);
+  const statePort = options?.statePort ?? new MemoryStatePortV02({
+    initialTaskState: taskState,
+    initialAuthorityRef: authority,
+    initialControlVersion: context.expectedControlVersion,
+    initialEpoch: context.expectedEpoch,
+  });
+
+  const actor = { adapterIdentity: 'test-provider', processIncarnation: randomUUID(), fencingGeneration: 1 };
+  const port = new HostModelPortV02({
+    transport,
+    statePort,
+    executorIdentity: actor,
+    currentExecutorIdentity: () => actor,
+    providerConfig: {
+      providerId: baseRequest.providerId,
+      modelId: baseRequest.modelId,
+      configId: baseRequest.configId,
+      pricingPolicyId: baseRequest.pricingPolicyId,
+    },
+  });
+
+  return { port, transport, statePort, actor, state: taskState, evidence, request: baseRequest, context, contextDigest, authority };
+}
+
+// ----------------------------------------------------------------------------
+// 8. Versioned ModelPortV02 Tests (T051 RED / T052 GREEN)
+// ----------------------------------------------------------------------------
+
+test('HostModelPortV02: mock-backed facade cannot enter production', () => {
+  const { port } = createValidV02Setup();
+  assert.equal(port.provenance, 'mock');
+  assert.equal(isAdmittedForProduction([port]), false);
+});
+
+test('HostModelPortV02: positive coder dispatch succeeds and settles outcome (T052 GREEN)', async () => {
+  const { port, transport, state, evidence, request, context, statePort } = createValidV02Setup({ role: 'coder' });
+
+  const result = await port.propose(state, evidence, request, context);
+
+  assert.equal(transport.callCount, 1);
+  assert.equal(result.outcome, 'observed');
+  const journal = statePort.getJournalSnapshot();
+  assert.equal(journal.outcomes.length, 1);
+  assert.equal(journal.outcomes[0]?.outcome, 'observed');
+});
+
+test('HostModelPortV02: positive reviewer dispatch succeeds and settles outcome (T052 GREEN)', async () => {
+  const { port, transport, state, evidence, request, context, statePort } = createValidV02Setup({ role: 'reviewer' });
+
+  const result = await port.propose(state, evidence, request, context);
+
+  assert.equal(transport.callCount, 1);
+  assert.equal(result.outcome, 'observed');
+  const journal = statePort.getJournalSnapshot();
+  assert.equal(journal.outcomes.length, 1);
+  assert.equal(journal.outcomes[0]?.outcome, 'observed');
+});
+
+test('HostModelPortV02: ZERO transport calls on missing admission context', async () => {
+  const { port, transport, state, evidence, request } = createValidV02Setup();
+
+  const result = await port.propose(state, evidence, request, null as unknown as ProviderAdmissionContextV02);
+
+  assert.equal(transport.callCount, 0, 'Transport must not be called on missing admission context');
+  assert.equal(result.outcome, 'denied');
+});
+
+test('HostModelPortV02: ZERO transport calls on stale evidence revision', async () => {
+  const { port, transport, state, request, context } = createValidV02Setup();
+  const staleEvidence: SourceEvidence[] = [
+    createFixtureSourceEvidence({ revisionDigest: 'sha256:stale-rev-digest' }),
+  ];
+
+  const result = await port.propose(state, staleEvidence, request, context);
+
+  assert.equal(transport.callCount, 0, 'Transport must not be called on stale evidence revision');
+  assert.equal(result.outcome, 'invalid');
+});
+
+test('HostModelPortV02: ZERO transport calls on cross-role context (coder request with reviewer context)', async () => {
+  const coderSetup = createValidV02Setup({ role: 'coder' });
+  const reviewerSetup = createValidV02Setup({ role: 'reviewer' });
+
+  const result = await coderSetup.port.propose(coderSetup.state, coderSetup.evidence, coderSetup.request, reviewerSetup.context);
+
+  assert.equal(coderSetup.transport.callCount, 0, 'Transport must not be called on cross-role context');
+  assert.equal(result.outcome, 'denied');
+  if (result.outcome === 'denied') {
+    assert.match(result.reason ?? '', /ROLE_MISMATCH/);
+  }
+});
+
+test('HostModelPortV02: ZERO transport calls on request ID mismatch', async () => {
+  const { port, transport, state, evidence, request, context } = createValidV02Setup();
+  const mismatchedRequest = { ...request, providerRequestId: 'req-mismatched-id' };
+
+  const result = await port.propose(state, evidence, mismatchedRequest, context);
+
+  assert.equal(transport.callCount, 0, 'Transport must not be called on request ID mismatch');
+  assert.equal(result.outcome, 'denied');
+});
+
+test('HostModelPortV02: ZERO transport calls on request content digest mismatch', async () => {
+  const { port, transport, state, evidence, request, context } = createValidV02Setup();
+  const tamperedContext: ProviderAdmissionContextV02 = {
+    ...context,
+    requestContentDigest: 'sha256:tampered-digest-000000000000000000000000000000000000000000000000',
+  };
+
+  const result = await port.propose(state, evidence, request, tamperedContext);
+
+  assert.equal(transport.callCount, 0, 'Transport must not be called on request content digest mismatch');
+  assert.equal(result.outcome, 'denied');
+});
+
+// ----------------------------------------------------------------------------
+// 9. Section 10 Mapped Seam Checks (Cases 9, 14, 15, 16, 19)
+// ----------------------------------------------------------------------------
+
+test('HostModelPortV02 Section 10 Case 9: crash or timeout records uncertain outcome and hold disposition in journal', async () => {
+  const { port, transport, state, evidence, request, context, statePort } = createValidV02Setup();
+  const timeoutErr = new Error('Transport timed out after 30000ms');
+  timeoutErr.name = 'TimeoutError';
+  transport.throwError = timeoutErr;
+
+  const result = await port.propose(state, evidence, request, context);
+
+  assert.equal(transport.callCount, 1);
+  assert.equal(result.outcome, 'uncertain');
+  const journal = statePort.getJournalSnapshot();
+  assert.equal(journal.outcomes.length, 1);
+  assert.equal(journal.outcomes[0]?.outcome, 'uncertain');
+});
+
+test('HostModelPortV02 Section 10 Case 9: network error records uncertain outcome without leaking secrets', async () => {
+  const { port, transport, state, evidence, request, context, statePort } = createValidV02Setup();
+  const secretKey = 'sk-model-leak-test-9999999999';
+  transport.throwError = new Error(`Connection failed with api_key=${secretKey}`);
+
+  const result = await port.propose(state, evidence, request, context);
+
+  assert.equal(transport.callCount, 1);
+  assert.equal(result.outcome, 'uncertain');
+  assert.equal(result.reason?.includes(secretKey), false, 'Reason must not leak secret');
+  const journal = statePort.getJournalSnapshot();
+  assert.equal(journal.outcomes.length, 1);
+  assert.equal(journal.outcomes[0]?.outcome, 'uncertain');
+});
+
+test('HostModelPortV02 Section 10 Case 14: duplicate request reuses claim and never invokes transport twice', async () => {
+  const { port, transport, state, evidence, request, context } = createValidV02Setup();
+
+  const firstResult = await port.propose(state, evidence, request, context);
+  assert.equal(transport.callCount, 1);
+  assert.equal(firstResult.outcome, 'observed');
+
+  // Second propose call with exact duplicate request reuses result without invoking transport again
+  const secondResult = await port.propose(state, evidence, request, context);
+  assert.equal(transport.callCount, 1, 'Transport must NEVER be called twice for duplicate request');
+  assert.deepEqual(secondResult, firstResult);
+});
+
+test('HostModelPortV02 Section 10 Case 14: competing request denied with zero transport when active claim exists', async () => {
+  const setup1 = createValidV02Setup({ requestId: 'req-competing-001' });
+  const setup2 = createValidV02Setup({ requestId: 'req-competing-002', statePort: setup1.statePort });
+
+  // Start propose 1, claiming the active lease
+  const claim1 = await setup1.statePort.claim(setup1.context);
+  assert.ok(claim1.claimId);
+
+  // Competing request 2 tries to propose while claim 1 is active in statePort
+  const result2 = await setup2.port.propose(setup2.state, setup2.evidence, setup2.request, setup2.context);
+
+  assert.equal(setup2.transport.callCount, 0, 'Transport must not be called on competing request');
+  assert.equal(result2.outcome, 'denied');
+});
+
+test('HostModelPortV02 Section 10 Case 15: provider branch for coder and reviewer both settle cleanly', async () => {
+  const coderSetup = createValidV02Setup({ role: 'coder', requestId: 'req-branch-coder' });
+  const coderResult = await coderSetup.port.propose(coderSetup.state, coderSetup.evidence, coderSetup.request, coderSetup.context);
+  assert.equal(coderSetup.transport.callCount, 1);
+  assert.equal(coderResult.outcome, 'observed');
+  assert.equal(coderSetup.statePort.getJournalSnapshot().outcomes[0]?.outcome, 'observed');
+
+  const reviewerSetup = createValidV02Setup({ role: 'reviewer', requestId: 'req-branch-reviewer' });
+  const reviewerResult = await reviewerSetup.port.propose(reviewerSetup.state, reviewerSetup.evidence, reviewerSetup.request, reviewerSetup.context);
+  assert.equal(reviewerSetup.transport.callCount, 1);
+  assert.equal(reviewerResult.outcome, 'observed');
+  assert.equal(reviewerSetup.statePort.getJournalSnapshot().outcomes[0]?.outcome, 'observed');
+});
+
+test('HostModelPortV02 Section 10 Case 16: pre-plan diagnostic vs approved plan settlement', async () => {
+  const prePlanSetup = createValidV02Setup({ planApplicability: 'pre-plan-diagnostic', requestId: 'req-preplan-001' });
+  const prePlanResult = await prePlanSetup.port.propose(prePlanSetup.state, prePlanSetup.evidence, prePlanSetup.request, prePlanSetup.context);
+  assert.equal(prePlanSetup.transport.callCount, 1);
+  assert.equal(prePlanResult.outcome, 'observed');
+  assert.equal(prePlanSetup.statePort.getJournalSnapshot().outcomes[0]?.outcome, 'observed');
+
+  const approvedPlanSetup = createValidV02Setup({ planApplicability: 'approved-plan', requestId: 'req-approved-001' });
+  const approvedResult = await approvedPlanSetup.port.propose(approvedPlanSetup.state, approvedPlanSetup.evidence, approvedPlanSetup.request, approvedPlanSetup.context);
+  assert.equal(approvedPlanSetup.transport.callCount, 1);
+  assert.equal(approvedResult.outcome, 'observed');
+  assert.equal(approvedPlanSetup.statePort.getJournalSnapshot().outcomes[0]?.outcome, 'observed');
+});
+
+test('HostModelPortV02 Section 10 Case 19: provider budget exhaustion in statePort denies claim with zero transport', async () => {
+  const dummyContext = createTestProviderAdmissionContextV02({
+    providerRequest: createTestProviderRequest({ role: 'coder', contextDigest: 'sha256:placeholder' }),
+  });
+  const baseTaskState = createTestAdmissionTaskStateV02(dummyContext);
+
+  // Exhausted budget: consumed equals limit
+  const exhaustedTaskState: TaskState = {
+    ...baseTaskState,
+    budgetLedgers: (baseTaskState.budgetLedgers ?? []).map((ledger) => ({
+      ...ledger,
+      consumed: ledger.limit,
+      reservations: [],
+    })),
+  };
+
+  const evidence = [createFixtureSourceEvidence({ revisionDigest: exhaustedTaskState.repositoryRevisionDigest })];
+  const contextDigest = computeContextDigest(exhaustedTaskState, evidence);
+
+  const request = createTestProviderRequest({
+    providerRequestId: 'req-budget-exhausted-001',
+    taskId: exhaustedTaskState.taskId,
+    runId: exhaustedTaskState.runId,
+    role: 'coder',
+    contextDigest,
+  });
+
+  const context = createTestProviderAdmissionContextV02({
+    taskId: exhaustedTaskState.taskId,
+    runId: exhaustedTaskState.runId,
+    planApplicability: 'approved-plan',
+    providerRequest: request,
+  });
+
+  const authority = authorityForV02(context);
+  const exhaustedStatePort = new MemoryStatePortV02({
+    initialTaskState: exhaustedTaskState,
+    initialAuthorityRef: authority,
+    initialControlVersion: context.expectedControlVersion,
+    initialEpoch: context.expectedEpoch,
+  });
+
+  const transport = new StubTransport();
+  const port = new HostModelPortV02({
+    transport,
+    statePort: exhaustedStatePort,
+    providerConfig: {
+      providerId: request.providerId,
+      modelId: request.modelId,
+      configId: request.configId,
+      pricingPolicyId: request.pricingPolicyId,
+    },
+  });
+
+  const result = await port.propose(exhaustedTaskState, evidence, request, context);
+
+  assert.equal(transport.callCount, 0, 'Transport must NEVER be called when budget is exhausted');
+  assert.equal(result.outcome, 'denied');
+});
+
+for (const field of ['processIncarnation', 'adapterIdentity', 'payloadDigest', 'fencingGeneration', 'taskId', 'claimId', 'epoch', 'preAttemptControlVersion', 'postBeginTaskStateVersion', 'status']) {
+  test(`HostModelPortV02 authenticates attempt ${field} before transport`, async () => {
+    const s = createValidV02Setup();
+    const begin = s.statePort.beginAttempt.bind(s.statePort);
+    s.statePort.beginAttempt = async (...args) => {
+      const receipt = await begin(...args);
+      if (field in receipt.executorIdentity) {
+        return { ...receipt, executorIdentity: { ...receipt.executorIdentity, [field]: field === 'fencingGeneration' ? 2 : 'foreign' } };
+      }
+      return { ...receipt, [field]: typeof receipt[field as keyof typeof receipt] === 'number' ? 99 : 'foreign' };
+    };
+    const result = await s.port.propose(s.state, s.evidence, s.request, s.context);
+    assert.equal(result.outcome, 'denied');
+    assert.equal(s.transport.callCount, 0);
+    assert.equal(s.statePort.getJournalSnapshot().outcomes.length, 0);
+    assert.equal(s.statePort.getJournalSnapshot().claims[0]?.status, 'attempting');
+  });
+}
+
+test('HostModelPortV02 exact immutable replay rejects changed admission and protects cached output', async () => {
+  const s = createValidV02Setup();
+  const first = await s.port.propose(s.state, s.evidence, s.request, s.context);
+  const before = s.statePort.getJournalSnapshot();
+  const changed = { ...s.context, requestReservationReceipt: 'different-reservation' };
+  const denied = await s.port.propose(s.state, s.evidence, s.request, changed);
+  assert.equal(denied.outcome, 'denied');
+  assert.deepEqual(s.statePort.getJournalSnapshot(), before);
+  try { (first as { outcome: string }).outcome = 'invalid'; } catch { /* immutable result */ }
+  const retry = await s.port.propose(s.state, s.evidence, s.request, s.context);
+  assert.equal(retry.outcome, 'observed');
+  assert.equal(s.transport.callCount, 1);
+  assert.equal(before.claims.length, 1);
+});
+
+for (const mode of ['recorded-unsettled', 'already-recorded', 'uncertain', 'wrong-receipt', 'rejected', 'lost-response'] as const) {
+  test(`HostModelPortV02 pending recording ${mode} preserves immutable recovery and never redispatches`, async () => {
+    const s = createValidV02Setup();
+    const record = s.statePort.recordOutcome.bind(s.statePort);
+    s.statePort.recordOutcome = async (receipt) => {
+      if (mode === 'rejected') return { outcome: 'uncertain', receiptId: 'rejected' };
+      await record(receipt);
+      if (mode === 'lost-response') throw new Error('response lost after commit');
+      return { outcome: mode === 'wrong-receipt' ? 'settled' : mode, receiptId: mode === 'wrong-receipt' ? 'foreign' : receipt.receiptId };
+    };
+    const first = await s.port.propose(s.state, s.evidence, s.request, s.context);
+    assert.equal(first.outcome, 'uncertain');
+    assert.ok('recovery' in first && first.recovery);
+    assert.equal(Object.isFrozen(first.recovery), true);
+    const before = s.statePort.getJournalSnapshot();
+    const retry = await s.port.propose(s.state, s.evidence, s.request, s.context);
+    assert.deepEqual(retry, first);
+    assert.deepEqual(s.statePort.getJournalSnapshot(), before);
+    assert.equal(before.outcomes.length, mode === 'rejected' ? 0 : 1);
+    assert.equal(s.transport.callCount, 1);
+  });
+}
+
+for (const mode of ['malformed-proposal', 'invalid-usage', 'overcap', 'denied', 'unknown'] as const) {
+  test(`HostModelPortV02 post-network ${mode} accounts exactly once in canonical state`, async () => {
+    const s = createValidV02Setup();
+    const usage = { inputTokens: 150, outputTokens: 75, billableTokens: 225, costUsd: 0.005 };
+    s.transport.response = mode === 'malformed-proposal' ? { proposal: {}, observedUsage: usage }
+      : mode === 'invalid-usage' ? { proposal: {}, observedUsage: { ...usage, costUsd: -1 } }
+      : mode === 'overcap' ? { proposal: {}, observedUsage: { ...usage, billableTokens: 9999999 } }
+      : mode === 'denied' ? { outcome: 'denied', reason: 'post-network refusal' } : {};
+    const first = await s.port.propose(s.state, s.evidence, s.request, s.context);
+    assert.equal(first.outcome, mode === 'malformed-proposal' ? 'invalid' : 'uncertain');
+    const journal = s.statePort.getJournalSnapshot();
+    const persisted = await s.statePort.loadTask(s.state.taskId);
+    assert.equal(journal.outcomes.length, 1);
+    assert.equal(journal.outcomes[0]?.outcome, mode === 'malformed-proposal' ? 'observed' : 'uncertain');
+    const ledger = persisted?.budgetLedgers?.find((item) => item.scope === 'task' && item.kind === 'tokens');
+    assert.equal(ledger?.consumed, mode === 'malformed-proposal' ? 225 : 0);
+    assert.equal(ledger?.reservations.length, mode === 'malformed-proposal' ? 0 : 1);
+    for (const scope of ['task', 'run']) {
+      const tokens = persisted?.budgetLedgers?.find((item) => item.scope === scope && item.kind === 'tokens');
+      const cost = persisted?.budgetLedgers?.find((item) => item.scope === scope && item.kind === 'cost');
+      assert.equal(tokens?.consumed, mode === 'malformed-proposal' ? 225 : 0);
+      assert.equal(cost?.consumed, mode === 'malformed-proposal' ? 0.005 : 0);
+      assert.equal(tokens?.reservations[0]?.amount, mode === 'malformed-proposal' ? undefined : 10000);
+      assert.equal(cost?.reservations[0]?.amount, mode === 'malformed-proposal' ? undefined : 0.5);
+    }
+    assert.equal(journal.activeClaimId === null, mode === 'malformed-proposal');
+    if (mode !== 'malformed-proposal') assert.ok(first.recovery);
+    assert.deepEqual(await s.port.propose(s.state, s.evidence, s.request, s.context), first);
+    assert.deepEqual(s.statePort.getJournalSnapshot(), journal);
+    assert.deepEqual(await s.statePort.loadTask(s.state.taskId), persisted);
+    assert.equal(s.transport.callCount, 1);
+  });
+}
+
+for (const field of ['taskId', 'runId', 'subjectKind', 'planApplicability', 'preClaimTaskStateVersion', 'preClaimControlVersion', 'postClaimControlVersion', 'epoch', 'reservationRefs', 'claimDigest', 'status']) {
+  test(`HostModelPortV02 authenticates claim ${field} before begin and transport`, async () => {
+    const s = createValidV02Setup();
+    const claim = s.statePort.claim.bind(s.statePort);
+    s.statePort.claim = async (context) => {
+      const receipt = await claim(context);
+      const wrong = { ...receipt, [field]: field === 'reservationRefs' ? ['foreign'] : typeof receipt[field as keyof typeof receipt] === 'number' ? 99 : 'foreign' };
+      return { ...wrong, claimDigest: field === 'claimDigest' ? 'foreign' : computeCanonicalSha256({ ...wrong, claimDigest: undefined }) };
+    };
+    assert.equal((await s.port.propose(s.state, s.evidence, s.request, s.context)).outcome, 'denied');
+    assert.equal(s.transport.callCount, 0);
+    assert.equal(s.statePort.getJournalSnapshot().attempts.length, 0);
+    assert.equal(s.statePort.getJournalSnapshot().claims[0]?.status, 'claimed');
+  });
+}
+
+test('HostModelPortV02 awaits admission with current fence and detached actor records', async () => {
+  const s = createValidV02Setup();
+  const begin = s.statePort.beginAttempt.bind(s.statePort);
+  s.statePort.beginAttempt = async (...args) => {
+    const receipt = await begin(...args);
+    s.actor.fencingGeneration = 2;
+    return receipt;
+  };
+  assert.equal((await s.port.propose(s.state, s.evidence, s.request, s.context)).outcome, 'denied');
+  assert.equal(s.transport.callCount, 0);
+  assert.equal(s.statePort.getJournalSnapshot().claims[0]?.status, 'attempting');
+});
+
+test('HostModelPortV02 serializes concurrent retries and rejects reconstructed and restarted actors', async () => {
+  const s = createValidV02Setup();
+  let release!: () => void;
+  const barrier = new Promise<void>((resolve) => { release = resolve; });
+  const execute = s.transport.execute.bind(s.transport);
+  s.transport.execute = async (payload) => { const response = await execute(payload); await barrier; return response; };
+  const claim = s.statePort.claim.bind(s.statePort);
+  const begin = s.statePort.beginAttempt.bind(s.statePort);
+  let savedClaim: Awaited<ReturnType<typeof claim>> | undefined;
+  let savedAttempt: Awaited<ReturnType<typeof begin>> | undefined;
+  s.statePort.claim = async (...args) => { savedClaim = await claim(...args); return savedClaim; };
+  s.statePort.beginAttempt = async (...args) => { savedAttempt = await begin(...args); return savedAttempt; };
+  const first = s.port.propose(s.state, s.evidence, s.request, s.context);
+  const duplicate = s.port.propose(s.state, s.evidence, s.request, s.context);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(s.transport.callCount, 1);
+  assert.ok(savedClaim && savedAttempt);
+  const claimed = savedClaim;
+  const attempted = savedAttempt;
+  s.statePort.claim = async () => claimed;
+  s.statePort.beginAttempt = async () => attempted;
+  for (const actor of [s.actor, { ...s.actor, processIncarnation: randomUUID() }]) {
+    const reconstructed = new HostModelPortV02({ ...s.port.options, executorIdentity: actor, currentExecutorIdentity: () => actor });
+    assert.equal((await reconstructed.propose(s.state, s.evidence, s.request, s.context)).outcome, 'denied');
+  }
+  release();
+  assert.deepEqual(await first, await duplicate);
+  assert.equal(s.transport.callCount, 1);
+  assert.equal(s.statePort.getJournalSnapshot().claims.length, 1);
+  assert.equal(s.statePort.getJournalSnapshot().attempts.length, 1);
+  assert.equal(s.statePort.getJournalSnapshot().outcomes.length, 1);
+});
+
+for (const field of ['taskId', 'runId', 'role', 'planDecisionRef', 'providerIdentity', 'providerAdmissionReceipt', 'budgetRefs', 'finiteBounds', 'expectedControlVersion']) {
+  test(`HostModelPortV02 cached replay denies changed ${field} without state effects`, async () => {
+    const s = createValidV02Setup();
+    await s.port.propose(s.state, s.evidence, s.request, s.context);
+    const before = s.statePort.getJournalSnapshot();
+    const changed = { ...s.context, [field]: field === 'budgetRefs' ? ['foreign'] : field === 'expectedControlVersion' ? 99 : 'foreign' };
+    const result = await s.port.propose(s.state, s.evidence, s.request, changed as unknown as ProviderAdmissionContextV02);
+    assert.equal(result.outcome, 'denied');
+    assert.equal(s.transport.callCount, 1);
+    assert.deepEqual(s.statePort.getJournalSnapshot(), before);
+  });
+}
+
+test('HostModelPortV02 detaches provider observation before awaited settlement', async () => {
+  const s = createValidV02Setup();
+  const original = s.transport.response as { proposal: { content: string }; observedUsage: { billableTokens: number } };
+  const record = s.statePort.recordOutcome.bind(s.statePort);
+  s.statePort.recordOutcome = async (receipt) => {
+    original.proposal.content = 'changed after observation';
+    original.observedUsage.billableTokens = 999;
+    return record(receipt);
+  };
+  const result = await s.port.propose(s.state, s.evidence, s.request, s.context);
+  assert.equal(result.outcome, 'observed');
+  assert.equal((result.result as { proposal: { content: string } }).proposal.content, 'Proposed fix for zero division');
+  assert.equal(result.observedUsage?.billableTokens, 225);
+  assert.equal((await s.statePort.loadTask(s.state.taskId))?.budgetLedgers?.find((item) => item.kind === 'tokens')?.consumed, 225);
+});
+
+test('HostModelPortV02 requires explicit trusted actor configuration without changing state', async () => {
+  const s = createValidV02Setup();
+  const port = new HostModelPortV02({ transport: s.transport, statePort: s.statePort });
+  const before = s.statePort.getJournalSnapshot();
+  assert.equal((await port.propose(s.state, s.evidence, s.request, s.context)).outcome, 'denied');
+  assert.deepEqual(s.statePort.getJournalSnapshot(), before);
+  assert.equal(s.transport.callCount, 0);
+});
+
+test('HostModelPortV02 mixed composition stays outside production admission', () => {
+  const s = createValidV02Setup();
+  Object.defineProperty(s.statePort, 'provenance', { value: 'real' });
+  const port = new HostModelPortV02(s.port.options);
+  assert.equal(port.provenance, 'mock');
+  assert.equal(isAdmittedForProduction([port]), false);
+});
+
+test('HostModelPortV02 refuses executable claim records without evaluating accessors', async () => {
+  const s = createValidV02Setup();
+  const claim = s.statePort.claim.bind(s.statePort);
+  let getterCalls = 0;
+  s.statePort.claim = async (...args) => {
+    const receipt = await claim(...args);
+    return Object.defineProperty({ ...receipt }, 'claimId', { enumerable: true, get: () => { getterCalls++; return receipt.claimId; } });
+  };
+  assert.equal((await s.port.propose(s.state, s.evidence, s.request, s.context)).outcome, 'denied');
+  assert.equal(getterCalls, 0);
+  assert.equal(s.transport.callCount, 0);
+  assert.equal(s.statePort.getJournalSnapshot().attempts.length, 0);
+});
+
+
+for (const mode of ['outcome-getter', 'usage-getter', 'nested-getter', 'proxy'] as const) {
+  test(`HostModelPortV02 hostile transport ${mode} retains canonical uncertainty without executing getters`, async () => {
+    const s = createValidV02Setup();
+    let getters = 0;
+    const hostile = Object.defineProperty({}, mode === 'usage-getter' ? 'observedUsage' : 'outcome', {
+      enumerable: true, get() { getters++; throw new Error('MARKER_SECRET unsafe injected object'); },
+    });
+    s.transport.response = mode === 'nested-getter' ? { proposal: hostile, observedUsage: {} }
+      : mode === 'proxy' ? new Proxy({}, { ownKeys() { throw new Error('MARKER_SECRET proxy'); } }) : hostile;
+    const result = await s.port.propose(s.state, s.evidence, s.request, s.context);
+    assert.equal(result.outcome, 'uncertain');
+    assert.ok(result.recovery);
+    assert.equal(getters, 0);
+    assert.equal(JSON.stringify(result).includes('MARKER_SECRET'), false);
+    const { receipt, admission, claim, attempt } = result.recovery;
+    assert.equal(Object.isFrozen(receipt.proposedEffects.accounting.reservationRefs), true);
+    assert.equal(Object.isFrozen(result.recovery), true);
+    assert.equal(receipt.claimId, claim.claimId);
+    assert.equal(receipt.attemptId, attempt.attemptId);
+    assert.deepEqual(receipt.executorIdentity, attempt.executorIdentity);
+    assert.equal(receipt.requestContentDigest, admission.requestContentDigest);
+    assert.deepEqual(receipt.proposedEffects.accounting.reservationRefs,
+      [s.context.requestReservationReceipt, ...s.context.budgetRefs]);
+    const journal = s.statePort.getJournalSnapshot();
+    assert.equal(journal.outcomes.length, 1);
+    assert.deepEqual(journal.outcomes[0], {
+      receiptId: receipt.receiptId, receiptDigest: receipt.receiptDigest,
+      claimId: receipt.claimId, attemptId: receipt.attemptId, outcome: 'uncertain',
+    });
+    assert.equal(journal.claims[0]?.status, 'uncertain');
+    assert.ok(journal.activeClaimId);
+    const persisted = await s.statePort.loadTask(s.state.taskId);
+    for (const scope of ['task', 'run']) {
+      for (const kind of ['tokens', 'cost']) {
+        const ledger = persisted?.budgetLedgers?.find(item => item.scope === scope && item.kind === kind);
+        assert.equal(ledger?.consumed, 0);
+        assert.equal(ledger?.reservations[0]?.amount, kind === 'tokens' ? 10000 : 0.5);
+      }
+    }
+    assert.deepEqual(await s.port.propose(s.state, s.evidence, s.request, s.context), result);
+    assert.deepEqual(s.statePort.getJournalSnapshot(), journal);
+    assert.deepEqual(await s.statePort.loadTask(s.state.taskId), persisted);
+    assert.equal(s.transport.callCount, 1);
+  });
+}
+
+
+for (const mode of ['inherited', 'accessor', 'throwing-accessor', 'proxy'] as const) {
+  test(`HostModelPortV02 hostile settlement ${mode} requires plain own data and recovers exact receipt`, async () => {
+    const s = createValidV02Setup();
+    const record = s.statePort.recordOutcome.bind(s.statePort);
+    let getters = 0;
+    s.statePort.recordOutcome = async (receipt) => {
+      if (mode === 'inherited') return Object.assign(
+        Object.create({ outcome: 'settled', receiptId: receipt.receiptId }), { unrelatedA: 1, unrelatedB: 2 });
+      if (mode === 'proxy') return new Proxy({ outcome: 'settled' as const, receiptId: receipt.receiptId }, {
+        ownKeys() { throw new Error('MARKER_SECRET proxy'); },
+      });
+      return Object.defineProperties({}, {
+        outcome: { enumerable: true, get() {
+          getters++;
+          if (mode === 'throwing-accessor') throw new Error('MARKER_SECRET accessor');
+          return 'settled';
+        } },
+        receiptId: { enumerable: true, get() { getters++; return receipt.receiptId; } },
+      });
+    };
+    const result = await s.port.propose(s.state, s.evidence, s.request, s.context);
+    assert.equal(result.outcome, 'uncertain');
+    assert.equal(getters, 0);
+    assert.ok(result.recovery);
+    assert.equal(JSON.stringify(result).includes('MARKER_SECRET'), false);
+    const { receipt } = result.recovery;
+    assert.equal(receipt.outcome, 'observed');
+    assert.equal(Object.isFrozen(receipt), true);
+    assert.equal(Object.isFrozen(receipt.proposedEffects.accounting), true);
+    const pending = s.statePort.getJournalSnapshot();
+    assert.equal(pending.outcomes.length, 0);
+    assert.equal(pending.claims[0]?.status, 'attempting');
+    assert.ok(pending.activeClaimId);
+    const held = await s.statePort.loadTask(s.state.taskId);
+    for (const scope of ['task', 'run']) {
+      for (const kind of ['tokens', 'cost']) {
+        const ledger = held?.budgetLedgers?.find(item => item.scope === scope && item.kind === kind);
+        assert.equal(ledger?.consumed, 0);
+        assert.equal(ledger?.reservations[0]?.amount, kind === 'tokens' ? 10000 : 0.5);
+      }
+    }
+    assert.deepEqual(await s.port.propose(s.state, s.evidence, s.request, s.context), result);
+    assert.deepEqual(s.statePort.getJournalSnapshot(), pending);
+    assert.deepEqual(await s.statePort.loadTask(s.state.taskId), held);
+    assert.equal((await record(receipt)).outcome, 'settled');
+    const settled = s.statePort.getJournalSnapshot();
+    const persisted = await s.statePort.loadTask(s.state.taskId);
+    assert.equal(settled.outcomes.length, 1);
+    assert.equal(settled.outcomes[0]?.receiptDigest, receipt.receiptDigest);
+    assert.equal(settled.activeClaimId, null);
+    assert.equal(settled.claims[0]?.status, 'settled');
+    for (const scope of ['task', 'run']) {
+      for (const kind of ['tokens', 'cost']) {
+        const ledger = persisted?.budgetLedgers?.find(item => item.scope === scope && item.kind === kind);
+        assert.equal(ledger?.consumed, kind === 'tokens' ? 225 : 0.005);
+        assert.equal(ledger?.reservations.length, 0);
+      }
+    }
+    assert.equal((await record(receipt)).outcome, 'already-recorded');
+    assert.deepEqual(s.statePort.getJournalSnapshot(), settled);
+    assert.deepEqual(await s.statePort.loadTask(s.state.taskId), persisted);
+    assert.deepEqual(await s.port.propose(s.state, s.evidence, s.request, s.context), result);
+    assert.equal(s.transport.callCount, 1);
+    assert.equal(getters, 0);
+  });
+}
+
+test('HostModelPortV02 accepts detached null-prototype settlement data from canonical journal', async () => {
+  const s = createValidV02Setup();
+  const record = s.statePort.recordOutcome.bind(s.statePort);
+  s.statePort.recordOutcome = async receipt => Object.assign(Object.create(null), await record(receipt));
+  assert.equal((await s.port.propose(s.state, s.evidence, s.request, s.context)).outcome, 'observed');
+  assert.equal(s.statePort.getJournalSnapshot().activeClaimId, null);
+  assert.equal(s.statePort.getJournalSnapshot().outcomes.length, 1);
+  assert.equal(s.transport.callCount, 1);
+});
+
+
+for (const mode of ['then-null-rejection', 'error-message-getter', 'coercion-getter', 'rejection-proxy'] as const) {
+  test(`HostModelPortV02 hostile rejection ${mode} retains canonical uncertainty with safe diagnostics`, async () => {
+    const s = createValidV02Setup();
+    let getters = 0;
+    const marker = 'MARKER_SECRET api_key=sk-rejection-credential';
+    if (mode === 'then-null-rejection') {
+      s.transport.response = Object.defineProperty({}, 'then', {
+        get() { getters++; throw Object.create(null); },
+      });
+    } else {
+      const rejection: unknown = mode === 'error-message-getter'
+        ? Object.defineProperty(new Error('transport failed'), 'message', {
+          get() { getters++; throw new Error(marker); },
+        })
+        : mode === 'coercion-getter' ? Object.defineProperty({}, Symbol.toPrimitive, {
+          get() { getters++; throw new Error(marker); },
+        }) : new Proxy({}, {
+          get() { getters++; throw new Error(marker); },
+          getPrototypeOf() { throw new Error(marker); },
+          getOwnPropertyDescriptor() { throw new Error(marker); },
+        });
+      s.transport.execute = async () => { s.transport.callCount++; throw rejection; };
+    }
+    const result = await s.port.propose(s.state, s.evidence, s.request, s.context);
+    assert.equal(result.outcome, 'uncertain');
+    assert.equal(result.reason, 'PROVIDER_OUTCOME_PENDING');
+    assert.ok(result.recovery);
+    assert.equal(getters, mode === 'then-null-rejection' ? 1 : 0);
+    assert.equal(JSON.stringify(result).includes('MARKER_SECRET'), false);
+    assert.equal(JSON.stringify(result).includes('sk-rejection-credential'), false);
+    const { receipt, admission, claim, attempt } = result.recovery;
+    assert.equal(Object.isFrozen(receipt.proposedEffects.accounting.reservationRefs), true);
+    assert.equal(Object.isFrozen(result.recovery), true);
+    assert.equal(receipt.claimId, claim.claimId);
+    assert.equal(receipt.attemptId, attempt.attemptId);
+    assert.deepEqual(receipt.executorIdentity, attempt.executorIdentity);
+    assert.equal(receipt.executorIdentity.adapterIdentity, s.actor.adapterIdentity);
+    assert.equal(receipt.executorIdentity.processIncarnation, s.actor.processIncarnation);
+    assert.equal(receipt.executorIdentity.fencingGeneration, s.actor.fencingGeneration);
+    assert.equal(receipt.providerRequestId, s.request.providerRequestId);
+    assert.equal(receipt.outcome, 'uncertain');
+    assert.equal(receipt.requestContentDigest, admission.requestContentDigest);
+    assert.deepEqual(receipt.proposedEffects.accounting.reservationRefs,
+      [s.context.requestReservationReceipt, ...s.context.budgetRefs]);
+    const journal = s.statePort.getJournalSnapshot();
+    assert.equal(journal.outcomes.length, 1);
+    assert.deepEqual(journal.outcomes[0], {
+      receiptId: receipt.receiptId, receiptDigest: receipt.receiptDigest,
+      claimId: receipt.claimId, attemptId: receipt.attemptId, outcome: 'uncertain',
+    });
+    assert.equal(journal.claims[0]?.status, 'uncertain');
+    assert.equal(journal.activeClaimId, receipt.claimId);
+    const persisted = await s.statePort.loadTask(s.state.taskId);
+    for (const scope of ['task', 'run']) {
+      for (const kind of ['tokens', 'cost']) {
+        const ledger = persisted?.budgetLedgers?.find(item => item.scope === scope && item.kind === kind);
+        assert.equal(ledger?.consumed, 0);
+        assert.equal(ledger?.reservations[0]?.amount, kind === 'tokens' ? 10000 : 0.5);
+      }
+    }
+    assert.deepEqual(await s.port.propose(s.state, s.evidence, s.request, s.context), result);
+    assert.deepEqual(s.statePort.getJournalSnapshot(), journal);
+    assert.deepEqual(await s.statePort.loadTask(s.state.taskId), persisted);
+    assert.equal(s.transport.callCount, 1);
+  });
+}
+
+
+for (const mode of ['own-name', 'own-message', 'name-accessor'] as const) {
+  test(`HostModelPort safely classifies rejection ${mode} with fixed diagnostics`, async () => {
+    const s = createValidSetup();
+    let getters = 0;
+    const rejection = new Error(mode === 'own-message' ? 'Request timed out api_key=sk-rejection-credential' : 'transport failed');
+    if (mode === 'own-name') rejection.name = 'TimeoutError';
+    if (mode === 'name-accessor') Object.defineProperty(rejection, 'name', {
+      get() { getters++; throw new Error('MARKER_SECRET'); },
+    });
+    s.transport.throwError = rejection;
+    const result = await s.port.propose(s.state, s.evidence, s.request);
+    assert.equal(result.outcome, 'uncertain');
+    if (result.outcome === 'uncertain') assert.equal(result.reason, mode === 'name-accessor'
+      ? 'PROVIDER_ERROR: Model transport request failed'
+      : 'PROVIDER_TIMEOUT: Model transport request timed out');
+    assert.equal(getters, 0);
+    assert.equal(s.transport.callCount, 1);
+  });
+}

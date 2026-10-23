@@ -37,36 +37,9 @@ UC-05 Phase 8 T019 local acceptance is implemented in `tests/runtime/approvals/a
 
 UC-03 Phase 4 focused checks run with `node --test tests/runtime/unit/uc03-repair.test.ts`; after a build, the emitted counterpart is `dist/tests/runtime/unit/uc03-repair.test.js`. At source `cf7e18a`, source and emitted focused suites passed 59/59, covering current evidence and approval admission, reservation-before-effect, persisted post-patch revision, typed persistence failures, three charged material replans and fourth refusal, explicit feedback direction, forwarding-port admission, accounting identity and retained reservations from Investigate. PR92 feedback regressions additionally deny nested test directories and Python test filenames before repair effects, and exercise repair to failed verification to material replan while preserving confirmed repair charges. Unresolved repair effects require trusted reconciliation; outstanding token/cost reservations still refuse replanning. These are mock-backed local consumer checks. Local-only scenarios under `fixtures/uc03/repair/` are excluded from publication and are not required by tracked tests. Full integrated runtime/contributor gates and remote CI are reported separately.
 
-UC-03 Phase 5: the reviewed T042–T048 mock-backed candidate has historical focused evidence in `.agent-work/2026-10-23/uc03-phase5-continuation/final-focused-checks-r4.md` and its raw log `final-focused-checks-r4.log`. That record identifies the check target as branch `feat/uc03-controlled-execution-phase5`, HEAD `df3f0ab6b0084362deb67968e50063b3bebc3a46` plus the reviewed working tree and untracked split modules; these results predate the publication attempt at `5b02030be2155d792dd528f707e45b47bfa56bce` and are not a rerun of this documentation correction.
+Historical Standards/Spec R4 had zero P0/P1 findings; P2 remained deferred. Hashes and detailed coverage are retained in `.agent-work/2026-10-23/uc03-phase5-continuation/final-source-snapshot.json`. That run stopped before T049 and excluded its separately failed full publication gate, documented in [status](progress_checker.md).
 
-The focused source suite exited 0 (337 passed, 0 failed/skipped):
-
-```powershell
-node --test --test-isolation=none tests/runtime/contract/atomic-admission.test.ts tests/runtime/contract/atomic-admission-mocks.test.ts tests/runtime/approvals/contracts.test.ts tests/runtime/approvals/policy.test.ts tests/runtime/approvals/service.test.ts tests/runtime/approvals/plan-binding.test.ts tests/runtime/approvals/plan-context.test.ts tests/runtime/approvals/control.test.ts tests/runtime/approvals/restart-admission.test.ts
-```
-
-The same focused suite under `dist/` exited 0 (337 passed, 0 failed/skipped):
-
-```powershell
-node --test --test-isolation=none dist/tests/runtime/contract/atomic-admission.test.js dist/tests/runtime/contract/atomic-admission-mocks.test.js dist/tests/runtime/approvals/contracts.test.js dist/tests/runtime/approvals/policy.test.js dist/tests/runtime/approvals/service.test.js dist/tests/runtime/approvals/plan-binding.test.js dist/tests/runtime/approvals/plan-context.test.js dist/tests/runtime/approvals/control.test.js dist/tests/runtime/approvals/restart-admission.test.js
-```
-
-Targeted v0.1 compatibility checks exited 0 (258 passed, 0 failed/skipped):
-
-```powershell
-node --test --test-isolation=none tests/runtime/contract/uc03-mocks.test.ts tests/runtime/contract/uc03-port-conformance.test.ts tests/runtime/unit/uc03-repair.test.ts tests/runtime/unit/uc03-investigation.test.ts
-```
-
-`pnpm run typecheck` exited 0; `pnpm run build` exited 0. The exact scoped lint invocation below exited 0 with no diagnostics. Its argument set was computed from the historical stopping-point working tree, rather than inferred from the later committed checkout:
-
-```powershell
-$finalLintPaths = @(@(git diff --name-only HEAD -- src tests) + @(git ls-files --others --exclude-standard -- src tests) | Where-Object { $_ -like '*.ts' } | Sort-Object -Unique)
-& pnpm exec eslint @finalLintPaths
-```
-
-The expanded historical argument list was not captured; no static file list is asserted.
-
-Independent Standards R4 and Spec R4 reported zero open P0/P1 findings; P2 remains deferred. The reviewed source hashes remain in `.agent-work/2026-10-23/uc03-phase5-continuation/final-source-snapshot.json`. Coverage includes exact atomic admission/accounting, policy receipt authority, publication/begin races, hold/fence closure retries, and diagnostic observed/uncertain patch settlement. These local mock checks do not establish real effects, durable persistence, actual restart/containment, or full Phase 5 acceptance. They exclude the separately recorded failed publication runtime gate and unrun contributor gate documented in [status](progress_checker.md). Successor implementation remains stopped before T049; T049–T066 and T022 remain incomplete.
+The subsequent T048–T052 request preserved completed T048 and locally accepted T049–T052. Final source and emitted suites each pass 261/261: `node --test tests/runtime/unit/model.test.ts tests/runtime/unit/repository-tools.test.ts tests/runtime/unit/docker-workspace.test.ts`, then the matching three `dist/` JavaScript paths. Typecheck, scoped lint and build pass; exact commands/exits/raw logs are in `.agent-work/2026-10-23/uc03-t048-t052/sol-rejection-fix/checks.json` and its directory. Final Standards/Spec R5 have zero P0/P1/P2 findings; reports are `.agent-work/2026-10-23/uc03-t048-t052/reviews/final-{standards,spec}-r5.md`, with all 19 inputs pinned in `.agent-work/2026-10-23/uc03-t048-t052/final-review-r5-snapshot.json` (HEAD `4cb41234` plus reviewed worktree). A NEW neutral RED replay in `.agent-work/2026-10-23/uc03-t048-t052/sol-final-fixes/` records clean typecheck/build, two positive source/emitted assertion failures and byte-exact GREEN restoration; the original compile-deficient T051 checkpoint remains historical. These controlled-port checks prove no real effects, durable persistence or actual restart. T022/T053–T066 remain incomplete; full publication gates and remote CI are separate.
 
 Orchestration focused checks are documented in [workspace guidance](../docs/agents/workspace.md) and [output tools](../docs/agents/orchestration-tools.md). Binding/active-task/reassignment/worktree/legacy-handoff/session tests passed 53/53 at `9dfef3e`; output/lint tests passed 9 with one unsupported file-symlink skip at `aa9177d`. Path/worktree focused tests passed 16/16 at `61bcc81`, including real Windows 8.3 aliases and junction refusal. Publish remains the sole local full-gate runner.
 
