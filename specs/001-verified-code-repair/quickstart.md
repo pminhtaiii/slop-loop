@@ -38,6 +38,17 @@ T001 records shared-contract confirmation, constitution handling and alignment w
 
 X04-STATE and X05-GATE deliveries must match contract v0.1 (or its explicitly agreed successor), with actual owner-ledger/revision/evidence links. Mock suites may run before they arrive; real execution cannot. T024/T025 gate real operations. Reviewer configuration is separate and read-only.
 
+## Scoped T053?T056 local checks
+
+T053?T056 are complete locally after combined verification at HEAD 8007bbbb09ca1b424a619b155507dcc80b68dd6c plus the ten inputs in `review-r3-snapshot.json`. Source and emitted fixture/conformance/CLI suites each pass 154/154 (121 fixture and 33 CLI); typecheck, focused lint and build pass. Independent Standards R3 and Spec R3 report no unresolved P0/P1/P2 findings and scope-limited convergence. Exact commands, exit statuses and hashes are retained locally under `.agent-work/2026-10-24/uc03-t052-t056/merger-r3/` and `reviews/`. Separate pinned neutral replays record assertion-only source/emitted failures, passing typecheck/build and byte-exact GREEN restoration; historical T053/T055 RED limitations remain explicit. T052 was already complete and preserved. T057 onward and T022 remain incomplete and unreleased by this run; real adapters, production configuration, actual containment/restart, full Phase 5 acceptance and Phase 6 remain gated. Contributor publication and full runtime/contributor/CI gates are separate.
+
+```powershell
+pnpm run typecheck
+node --test tests/runtime/support/uc03/provider-mocks.test.ts tests/runtime/contract/uc03-port-conformance.test.ts tests/runtime/approvals/cli.test.ts
+pnpm run build
+node --test dist/tests/runtime/support/uc03/provider-mocks.test.js dist/tests/runtime/contract/uc03-port-conformance.test.js dist/tests/runtime/approvals/cli.test.js
+```
+
 ## Future command interface (to implement, not existing commands)
 
 T026 provides a thin local adapter; T027 provides these planned portable one-command interfaces after T001 selects the runtime toolchain:
