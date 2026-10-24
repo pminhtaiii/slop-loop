@@ -8,8 +8,10 @@ import type {
   StatePortV02,
   AttemptReceiptV02,
   ClaimReceiptV02,
+  ExecutorIdentityV02,
   RepositoryActionOutcomeReceiptV02,
   AttemptReconciliationReceiptV02,
+  ClaimClosureResultV02,
 } from '../contracts/foundation/uc03/ports-v02.ts';
 import type { AttemptReconciliationValidationContextV02 } from '../contracts/foundation/uc03/attempt-v02.ts';
 import type { DockerWorkspaceManager, StructuredCommandExecutor } from './docker-workspace.ts';
@@ -86,6 +88,17 @@ export interface PatchRecoveryHandoffV02 {
   prepare(request: PatchRecoveryRequestV02): Promise<PatchRecoveryPreparationV02>;
 }
 
+export interface UnattemptedClaimClosureRequestV02 {
+  readonly admission: RepositoryAdmissionContextV02;
+  readonly claim: ClaimReceiptV02;
+  readonly recipientIdentity: ExecutorIdentityV02;
+}
+
+/** Delegates no-attempt closure to the existing UC-05/UC-04 fenced proof boundary. */
+export interface UnattemptedClaimClosureHandoffV02 {
+  closeUnattemptedClaim(request: UnattemptedClaimClosureRequestV02): Promise<ClaimClosureResultV02>;
+}
+
 export interface ControlledRepositoryToolsOptions {
   readonly guardCapability: ExecutionGuardReadCapability;
   readonly fsPort: TrustedFilesystemPort;
@@ -103,6 +116,7 @@ export interface ControlledRepositoryToolsOptions {
   readonly taskControl?: RepositoryTaskControlReadPortV02 | undefined;
   readonly patchReceiver?: ((patch: ApplyPatchAction, context: RepositoryAdmissionContextV02, attempt: AttemptReceiptV02) => Promise<{ readonly applied: boolean; readonly newRevisionDigest: string }>) | undefined;
   readonly patchRecoveryHandoff?: PatchRecoveryHandoffV02 | undefined;
+  readonly unattemptedClaimClosureHandoff?: UnattemptedClaimClosureHandoffV02 | undefined;
   readonly neutralStub?: boolean | undefined;
 }
 

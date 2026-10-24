@@ -149,6 +149,7 @@ export class HostModelPortV02 implements ModelPortV02 {
   readonly provenance: PortProvenance = 'mock';
   readonly options: HostModelPortV02Options;
   private readonly completedRequests = new Map<string, { readonly identity: string; readonly result: Promise<ModelPortV02Result> }>();
+  private readonly requestIdentities = new Map<string, string>();
 
 
   constructor(options: HostModelPortV02Options) {
@@ -206,14 +207,25 @@ export class HostModelPortV02 implements ModelPortV02 {
       return { outcome: 'denied', reason: 'REQUEST_ENVELOPE_MISMATCH' };
     }
     const identity = computeCanonicalSha256({ request: snapshotRequest, admission: snapshotContext });
+    const requestIdentity = computeProviderRequestIdentity(snapshotRequest, snapshotContext);
+    const priorRequestIdentity = this.requestIdentities.get(snapshotRequest.providerRequestId);
+    if (priorRequestIdentity && priorRequestIdentity !== requestIdentity) {
+      return { outcome: 'denied', reason: 'REPLAY_IDENTITY_MISMATCH' };
+    }
     const cached = this.completedRequests.get(snapshotRequest.providerRequestId);
     if (cached) {
       if (cached.identity !== identity) return { outcome: 'denied', reason: 'REPLAY_IDENTITY_MISMATCH' };
       return cached.result;
     }
+    this.requestIdentities.set(snapshotRequest.providerRequestId, requestIdentity);
     // Publish the in-flight entry before admission can yield or reenter this receiver.
-    const result = Promise.resolve().then(() => this.dispatch(snapshotState, snapshotEvidence, snapshotRequest, snapshotContext))
-      .then((value) => deepFreeze(deepClone(value)));
+    let provenPreClaimDenial = false;
+    const result = Promise.resolve()
+      .then(() => this.dispatch(snapshotState, snapshotEvidence, snapshotRequest, snapshotContext, () => { provenPreClaimDenial = true; }))
+      .then((value) => {
+        if (provenPreClaimDenial) this.completedRequests.delete(snapshotRequest.providerRequestId);
+        return deepFreeze(deepClone(value));
+      });
     this.completedRequests.set(snapshotRequest.providerRequestId, { identity, result });
     return result;
   }
@@ -223,11 +235,13 @@ export class HostModelPortV02 implements ModelPortV02 {
     snapshotEvidence: readonly SourceEvidence[],
     snapshotRequest: ProviderRequest,
     snapshotContext: ProviderAdmissionContextV02,
+    markPreClaimDenial: () => void,
   ): Promise<ModelPortV02Result> {
     const configured = this.options.executorIdentity;
     if (!configured?.adapterIdentity?.trim() || !configured.processIncarnation?.trim() ||
       !Number.isSafeInteger(configured.fencingGeneration) || (configured.fencingGeneration ?? 0) <= 0 ||
       !this.options.currentExecutorIdentity) {
+      markPreClaimDenial();
       return { outcome: 'denied', reason: 'EXECUTOR_IDENTITY_REQUIRED: Explicit trusted actor and current fence are required' };
     }
     const executorIdentity: ExecutorIdentityV02 = deepFreeze({
@@ -237,9 +251,16 @@ export class HostModelPortV02 implements ModelPortV02 {
       payloadDigest: snapshotContext.requestContentDigest,
     });
     const isCurrent = () => sameProviderActor(this.options.currentExecutorIdentity?.() ?? {}, executorIdentity);
-    if (!isCurrent()) return { outcome: 'denied', reason: 'FENCED_EXECUTOR' };
-    const claim = providerClaim(await this.options.statePort.claim(snapshotContext), snapshotContext);
-    if (!claim) return { outcome: 'denied', reason: 'CLAIM_DENIED: Mismatched provider claim' };
+    if (!isCurrent()) {
+      markPreClaimDenial();
+      return { outcome: 'denied', reason: 'FENCED_EXECUTOR' };
+    }
+    const claimInput: unknown = await this.options.statePort.claim(snapshotContext);
+    const claim = providerClaim(claimInput, snapshotContext);
+    if (!claim) {
+      if (isNeutralClaimReceipt(claimInput)) markPreClaimDenial();
+      return { outcome: 'denied', reason: 'CLAIM_DENIED: Mismatched provider claim' };
+    }
     if (!isCurrent()) return { outcome: 'denied', reason: 'FENCED_EXECUTOR' };
     const attempt = providerAttempt(await this.options.statePort.beginAttempt(claim.claimId, executorIdentity), claim, executorIdentity);
     if (!attempt) return { outcome: 'denied', reason: 'ATTEMPT_DENIED: Mismatched provider attempt' };
@@ -302,4 +323,28 @@ export class HostModelPortV02 implements ModelPortV02 {
     return { outcome: 'uncertain', reason: 'PROVIDER_OUTCOME_PENDING', recovery };
   }
 
+}
+
+function computeProviderRequestIdentity(
+  request: ProviderRequest,
+  context: ProviderAdmissionContextV02,
+): string {
+  const immutableAdmission = { ...context };
+  Reflect.deleteProperty(immutableAdmission, 'expectedControlVersion');
+  Reflect.deleteProperty(immutableAdmission, 'admissionDigest');
+  return computeCanonicalSha256({ request, admission: immutableAdmission });
+}
+
+function isNeutralClaimReceipt(input: unknown): boolean {
+  const snapshot = safeSnapshot(input);
+  const claimKeys = ['claimId', 'claimDigest', 'taskId', 'runId', 'subjectKind', 'planApplicability',
+    'preClaimTaskStateVersion', 'preClaimControlVersion', 'postClaimControlVersion', 'epoch', 'status', 'reservationRefs'];
+  if (!snapshot.ok || !snapshot.value || typeof snapshot.value !== 'object' || Array.isArray(snapshot.value)) return false;
+  const copy = snapshot.value as Record<string, unknown>;
+  return Object.keys(copy).length === claimKeys.length && claimKeys.every((key) => Object.hasOwn(copy, key)) &&
+    copy['claimId'] === '' && copy['claimDigest'] === '' && copy['taskId'] === '' && copy['runId'] === '' &&
+    copy['subjectKind'] === 'repository-action' && copy['planApplicability'] === 'pre-plan-diagnostic' &&
+    copy['preClaimTaskStateVersion'] === 0 && copy['preClaimControlVersion'] === 0 &&
+    copy['postClaimControlVersion'] === 0 && copy['epoch'] === 0 && copy['status'] === 'claimed' &&
+    Array.isArray(copy['reservationRefs']) && copy['reservationRefs'].length === 0;
 }

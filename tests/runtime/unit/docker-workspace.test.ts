@@ -4166,3 +4166,51 @@ test('DockerWorkspaceManager: stale lease waiters do not strand later readers or
   readerHolder.release();
   assert.deepEqual(await settleBeforeTimeout([staleWrite1, staleWrite2, eligibleWrite]), ['stale', 'stale', 'acquired']);
 });
+
+test('DockerWorkspaceManager: queued readers enter together after a writer releases and still exclude writers', async () => {
+  const controller = new FakeDockerLifecycleController();
+  const manager = new DockerWorkspaceManager({ controller });
+  const profile = createValidProfile();
+  const revision = 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+  const workspace = await manager.createWorkspace({
+    taskId: 'task-parallel-readers',
+    workspaceId: 'ws-parallel-readers',
+    initialRevisionDigest: revision,
+    profile,
+  });
+  const writer = await manager.acquireWriteLease(workspace.workspaceId, revision);
+  let readersAcquired = 0;
+  const readOne = manager.acquireReadLease(workspace.workspaceId, revision).then((lease) => {
+    readersAcquired += 1;
+    return lease;
+  });
+  const readTwo = manager.acquireReadLease(workspace.workspaceId, revision).then((lease) => {
+    readersAcquired += 1;
+    return lease;
+  });
+
+  writer.release();
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const readers = await Promise.race([
+    Promise.all([readOne, readTwo]),
+    new Promise<never>((_, reject) => {
+      timeout = setTimeout(() => reject(new Error('QUEUED_READERS_DID_NOT_ACQUIRE_TOGETHER')), 1_000);
+    }),
+  ]).finally(() => { if (timeout !== undefined) clearTimeout(timeout); });
+
+  assert.equal(readersAcquired, 2, 'both queued readers must acquire before either releases');
+  assert.equal(manager.hasActiveWriterLease(workspace.workspaceId), false);
+  assert.equal(manager.hasActiveReaderLease(workspace.workspaceId), true);
+  let writerAcquired = false;
+  const waitingWriter = manager.acquireWriteLease(workspace.workspaceId, revision).then((lease) => {
+    writerAcquired = true;
+    lease.release();
+  });
+  await Promise.resolve();
+  assert.equal(writerAcquired, false, 'writer remains excluded while either reader is held');
+  readers[0].release();
+  await Promise.resolve();
+  assert.equal(writerAcquired, false, 'writer remains excluded while the second reader is held');
+  readers[1].release();
+  await waitingWriter;
+});

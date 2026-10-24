@@ -1,21 +1,9 @@
 import type { SourceEvidence } from '../contracts/foundation/uc03.ts';
 import { isCanonicalRelativePath, isProtectedPath, validateSourceEvidence } from '../contracts/foundation/uc03.ts';
 import { journalSnapshotV02 } from '../approvals/control-v02.ts';
+import { containsProtectedContent } from './docker-workspace-policy.ts';
 import type { RepositoryReadOperationsOptions, TrustedFilesystemEntry } from './repository-types.ts';
-
-const EMBEDDED_SECRET_PATTERNS: readonly RegExp[] = [
-  /MARKER_SECRET[A-Za-z0-9_-]*/i,
-  /marker[-_]?secret/i,
-  /-----BEGIN[ A-Z0-9_-]+KEY-----/,
-  /Bearer\s+[A-Za-z0-9\-._~+/]+=*/i,
-  /sk-[A-Za-z0-9-_]{20,}/,
-  /(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,}/,
-  /(?:token|secret|password|api[_-]?key|access[_-]?token)[\s:=]+['"][A-Za-z0-9_-]{8,}['"]/i,
-];
-
-export function containsProtectedContent(content: string): boolean {
-  return typeof content === 'string' && content.length > 0 && EMBEDDED_SECRET_PATTERNS.some((re) => re.test(content));
-}
+export { containsProtectedContent };
 
 export class ControlledRepositoryReader {
   private readonly guardCapability: RepositoryReadOperationsOptions['guardCapability'];

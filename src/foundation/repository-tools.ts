@@ -19,6 +19,8 @@ export type {
   PatchRecoveryHandoffV02,
   PatchRecoveryPreparationV02,
   PatchRecoveryRequestV02,
+  UnattemptedClaimClosureHandoffV02,
+  UnattemptedClaimClosureRequestV02,
   RepositoryReadLimits,
   RepositoryTaskControlReadPortV02,
   TrustedFilesystemEntry,
@@ -86,6 +88,10 @@ export class ControlledRepositoryTools implements RepositoryPort, RepositoryPort
   }
   runTests(check: CheckDefinition, context?: RepositoryAdmissionContextV02): Promise<CheckResult> { return this.commands.runTests(check, context); }
   recoverPatchOutcome(attemptId: string): Promise<ReconciliationResultV02> { return this.patches.recoverPatchOutcome(attemptId); }
+  recoverCommandOutcome(attemptId: string): Promise<ReconciliationResultV02> { return this.commands.recoverCommandOutcome(attemptId); }
+  async recoverUnattemptedClaim(claimId: string): Promise<boolean> {
+    return await this.patches.recoverUnattemptedClaim(claimId) || await this.commands.recoverUnattemptedClaim(claimId);
+  }
 
   async inspectDiff(baseRevisionDigest: string): Promise<{ readonly diff: string; readonly diffDigest: string; readonly changedFiles: readonly string[] }> {
     void baseRevisionDigest;

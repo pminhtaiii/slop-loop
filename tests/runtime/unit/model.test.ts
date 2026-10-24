@@ -1206,6 +1206,57 @@ test('HostModelPortV02 Section 10 Case 14: competing request denied with zero tr
   assert.equal(result2.outcome, 'denied');
 });
 
+test('HostModelPortV02 retries only a pre-claim denial after the competing claim settles', async () => {
+  let releaseFirstDispatch!: () => void;
+  let enterFirstDispatch!: () => void;
+  const firstDispatchEntered = new Promise<void>((resolve) => { enterFirstDispatch = resolve; });
+  const firstDispatchBarrier = new Promise<void>((resolve) => { releaseFirstDispatch = resolve; });
+  const firstTransport = new StubTransport();
+  const executeFirst = firstTransport.execute.bind(firstTransport);
+  firstTransport.execute = async (payload) => {
+    enterFirstDispatch();
+    await firstDispatchBarrier;
+    return await executeFirst(payload);
+  };
+
+  const first = createValidV02Setup({ requestId: 'req-active-claim', transport: firstTransport });
+  const firstResultPromise = first.port.propose(first.state, first.evidence, first.request, first.context);
+  await firstDispatchEntered;
+
+  const competing = createValidV02Setup({ requestId: 'req-retry-after-claim', statePort: first.statePort });
+  const beforeDenial = first.statePort.getJournalSnapshot();
+  const ledgersBeforeDenial = first.statePort.getUnderlying().getLedgers();
+  const denied = await competing.port.propose(competing.state, competing.evidence, competing.request, competing.context);
+  assert.equal(denied.outcome, 'denied');
+  assert.match(denied.reason ?? '', /^CLAIM_DENIED:/u);
+  assert.equal(competing.transport.callCount, 0);
+  assert.deepEqual(first.statePort.getJournalSnapshot(), beforeDenial);
+  assert.deepEqual(first.statePort.getUnderlying().getLedgers(), ledgersBeforeDenial);
+
+  releaseFirstDispatch();
+  assert.equal((await firstResultPromise).outcome, 'observed');
+  const refreshedContext = createTestProviderAdmissionContextV02({
+    providerRequest: competing.request,
+    expectedTaskStateVersion: competing.context.expectedTaskStateVersion,
+    expectedControlVersion: first.statePort.getJournalSnapshot().controlVersion,
+    expectedEpoch: competing.context.expectedEpoch,
+    runnableNode: competing.context.runnableNode,
+    planApplicability: competing.context.planApplicability,
+    planBindingDigest: competing.context.planBindingDigest,
+    planDecisionRef: competing.context.planDecisionRef,
+    budgetRefs: competing.context.budgetRefs,
+  });
+  const retried = await competing.port.propose(competing.state, competing.evidence, competing.request, refreshedContext);
+
+  assert.equal(retried.outcome, 'observed');
+  assert.equal(competing.transport.callCount, 1);
+  const journal = first.statePort.getJournalSnapshot();
+  assert.equal(journal.claims.length, 2);
+  assert.equal(journal.attempts.length, 2);
+  assert.equal(journal.outcomes.length, 2);
+  assert.equal(journal.activeClaimId, null);
+});
+
 test('HostModelPortV02 Section 10 Case 15: provider branch for coder and reviewer both settle cleanly', async () => {
   const coderSetup = createValidV02Setup({ role: 'coder', requestId: 'req-branch-coder' });
   const coderResult = await coderSetup.port.propose(coderSetup.state, coderSetup.evidence, coderSetup.request, coderSetup.context);
@@ -1275,11 +1326,15 @@ test('HostModelPortV02 Section 10 Case 19: provider budget exhaustion in statePo
     initialControlVersion: context.expectedControlVersion,
     initialEpoch: context.expectedEpoch,
   });
+  const ledgersBefore = exhaustedStatePort.getUnderlying().getLedgers();
 
   const transport = new StubTransport();
+  const actor = { adapterIdentity: 'test-provider', processIncarnation: randomUUID(), fencingGeneration: 1 };
   const port = new HostModelPortV02({
     transport,
     statePort: exhaustedStatePort,
+    executorIdentity: actor,
+    currentExecutorIdentity: () => actor,
     providerConfig: {
       providerId: request.providerId,
       modelId: request.modelId,
@@ -1292,6 +1347,9 @@ test('HostModelPortV02 Section 10 Case 19: provider budget exhaustion in statePo
 
   assert.equal(transport.callCount, 0, 'Transport must NEVER be called when budget is exhausted');
   assert.equal(result.outcome, 'denied');
+  assert.equal(result.reason, 'CLAIM_DENIED: Mismatched provider claim');
+  assert.equal(exhaustedStatePort.getJournalSnapshot().attempts.length, 0);
+  assert.deepEqual(exhaustedStatePort.getUnderlying().getLedgers(), ledgersBefore);
 });
 
 for (const field of ['processIncarnation', 'adapterIdentity', 'payloadDigest', 'fencingGeneration', 'taskId', 'claimId', 'epoch', 'preAttemptControlVersion', 'postBeginTaskStateVersion', 'status']) {

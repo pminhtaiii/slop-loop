@@ -1,10 +1,10 @@
-import { computeCanonicalSha256 } from '../contracts/foundation/uc03.ts';
 import type { CheckDefinition, CheckResult } from '../contracts/foundation/uc03.ts';
 import { validateAttemptReceiptV02 } from '../contracts/foundation/uc03/attempt-v02.ts';
 import type {
   AttemptReceiptV02,
   ClaimReceiptV02,
   ExecutorIdentityV02,
+  ReconciliationResultV02,
   RepositoryAdmissionContextV02,
   StatePortV02,
 } from '../contracts/foundation/uc03/ports-v02.ts';
@@ -13,6 +13,12 @@ import type { ExecutionLimits, RunCommandAction } from '../contracts/foundation/
 import {
   dockerCommandView,
 } from './repository-admission.ts';
+import {
+  assertCurrentCommandFenceV02,
+  matchesRepositoryAttemptV02,
+  matchesRepositoryIdentityV02,
+  validateRepositoryClaimV02,
+} from './repository-claim-lifecycle.ts';
 import type {
   DockerWorkspaceManager,
   StructuredCommandExecutor,
@@ -25,12 +31,24 @@ import {
   commandExecutionLimits,
   snapshotRepositoryAdmission,
 } from './repository-admission.ts';
+import { ClaimClosurePendingError, RepositoryAttemptStartPendingError, RepositoryClaimLifecycleV02 } from './repository-claim-lifecycle.ts';
+import {
+  createCommandOutcomeReceipt,
+  normalizeCommandResult,
+  RepositoryOutcomeRecoveryV02,
+} from './repository-command-outcome.ts';
 
-const CLAIM_KEYS = [
-  'claimId', 'claimDigest', 'taskId', 'runId', 'subjectKind', 'planApplicability',
-  'preClaimTaskStateVersion', 'preClaimControlVersion', 'postClaimControlVersion',
-  'epoch', 'status', 'reservationRefs',
-] as const;
+const noopCallback = (): void => undefined;
+
+export class CommandOutcomePendingError extends Error {
+  readonly attemptId: string;
+
+  constructor(attemptId: string) {
+    super(`COMMAND_OUTCOME_PENDING: Command attempt '${attemptId}' is held for UC-04 settlement or recovery`);
+    this.name = 'CommandOutcomePendingError';
+    this.attemptId = attemptId;
+  }
+}
 
 export async function beginRepositoryAttempt(
   statePort: StatePortV02,
@@ -54,19 +72,23 @@ export async function beginRepositoryAttemptWithClaim(
   executorIdentity: ExecutorIdentityV02,
   isRepairPatch: boolean,
   beforeBeginAttempt: () => void,
+  onClaim: (claim: ClaimReceiptV02) => void = noopCallback,
+  onBeginAttempt: () => void = noopCallback,
 ): Promise<{ readonly claim: ClaimReceiptV02; readonly attempt: AttemptReceiptV02 }> {
   const claimInput: unknown = await statePort.claim(context);
-  const claim = validateClaim(claimInput, context);
+  const claim = validateRepositoryClaimV02(claimInput, context);
   if (!claim) throw new Error('CLAIM_DENIED: StatePort returned a mismatched repository claim');
 
+  onClaim(claim);
   beforeBeginAttempt();
+  onBeginAttempt();
   const attemptInput: unknown = await statePort.beginAttempt(claim.claimId, executorIdentity);
   const result = validateAttemptReceiptV02(attemptInput, {
     expectedTaskId: context.taskId,
     expectedClaimId: claim.claimId,
     isRepairPatch,
   });
-  if (!result.ok || !matchesAttempt(result.value, claim, executorIdentity)) {
+  if (!result.ok || !matchesRepositoryAttemptV02(result.value, claim, executorIdentity)) {
     throw new Error('BEGIN_ATTEMPT_DENIED: StatePort returned a mismatched attempt receipt');
   }
   return { claim, attempt: result.value };
@@ -107,9 +129,15 @@ export async function executeAdmittedCommand(options: {
   readonly adapterIdentity: string;
   readonly processIncarnation: string;
   readonly fencingGeneration: number;
+  readonly claimLifecycle: RepositoryClaimLifecycleV02;
+  readonly outcomeRecovery: RepositoryOutcomeRecoveryV02;
 }): Promise<StructuredExecutionResult> {
   const { manager, commandExecutor, statePort, context, action } = options;
   const lease = await manager.acquireReadLease(context.workspaceId, context.canonicalRevision);
+  let current: { readonly claim: ClaimReceiptV02; readonly attempt: AttemptReceiptV02 } | undefined;
+  let claimed: ClaimReceiptV02 | undefined;
+  let attemptBeginStarted = false;
+  let keepLease = false;
   try {
     const identity: ExecutorIdentityV02 = {
       adapterIdentity: commandExecutor.getAdapterIdentity(),
@@ -117,7 +145,7 @@ export async function executeAdmittedCommand(options: {
       fencingGeneration: commandExecutor.getFencingGeneration(),
       payloadDigest: context.actionDigest,
     };
-    assertCommandFence(manager, commandExecutor, lease, context.workspaceId, identity,
+    assertCurrentCommandFenceV02(manager, commandExecutor, lease, context.workspaceId, identity,
       options.adapterIdentity, options.processIncarnation, options.fencingGeneration);
 
     const activeView = manager.getActiveCommandView(context.workspaceId);
@@ -129,48 +157,75 @@ export async function executeAdmittedCommand(options: {
       throw new Error('STALE_COMMAND_VIEW: Active command view does not match the admitted view');
     }
 
-    const attempt = await beginRepositoryAttempt(
+    current = await beginRepositoryAttemptWithClaim(
       statePort,
       context,
       identity,
       false,
-      () => assertCommandFence(manager, commandExecutor, lease, context.workspaceId, identity,
+      () => assertCurrentCommandFenceV02(manager, commandExecutor, lease, context.workspaceId, identity,
         options.adapterIdentity, options.processIncarnation, options.fencingGeneration),
+      (claim) => { claimed = claim; },
+      () => { attemptBeginStarted = true; },
     );
-    assertCommandFence(manager, commandExecutor, lease, context.workspaceId, identity,
-      options.adapterIdentity, options.processIncarnation, options.fencingGeneration);
-    return await commandExecutor.execute({
-      workspaceId: context.workspaceId,
-      action,
-      limits: options.limits,
-      view: dockerCommandView(context),
-      attempt,
-      context,
-    });
+    try {
+      assertCurrentCommandFenceV02(manager, commandExecutor, lease, context.workspaceId, identity,
+        options.adapterIdentity, options.processIncarnation, options.fencingGeneration);
+      const result = await commandExecutor.execute({
+        workspaceId: context.workspaceId,
+        action,
+        limits: options.limits,
+        view: dockerCommandView(context),
+        attempt: current.attempt,
+        context,
+      });
+      const normalized = normalizeCommandResult(result);
+      const outcome = createCommandOutcomeReceipt(
+        current.claim,
+        current.attempt,
+        context,
+        normalized ? 'observed' : 'uncertain',
+        normalized ?? undefined,
+      );
+      const recorded = await options.outcomeRecovery.record(lease, context, current.claim, current.attempt, outcome);
+      if (outcome.outcome === 'observed' && recorded.outcome === 'settled') return result;
+      keepLease = true;
+      throw new CommandOutcomePendingError(current.attempt.attemptId);
+    } catch (error: unknown) {
+      if (options.outcomeRecovery.hasPending(current.attempt.attemptId)) {
+        keepLease = true;
+        if (error instanceof CommandOutcomePendingError) throw error;
+        throw new CommandOutcomePendingError(current.attempt.attemptId);
+      }
+      try {
+        const uncertain = createCommandOutcomeReceipt(current.claim, current.attempt, context, 'uncertain');
+        await options.outcomeRecovery.record(lease, context, current.claim, current.attempt, uncertain);
+      } catch {
+        // Keep the lease when execution or outcome recording may have committed without a trusted settlement.
+      }
+      keepLease = true;
+      throw new CommandOutcomePendingError(current.attempt.attemptId);
+    }
+  } catch (error: unknown) {
+    if (!current && claimed) {
+      if (attemptBeginStarted) {
+        keepLease = true;
+        throw new RepositoryAttemptStartPendingError(claimed.claimId);
+      }
+      const closed = await options.claimLifecycle.closeUnattemptedClaim(lease, context, claimed, {
+        adapterIdentity: commandExecutor.getAdapterIdentity(),
+        processIncarnation: commandExecutor.getProcessIncarnation(),
+        fencingGeneration: lease.fencingGeneration,
+        payloadDigest: context.actionDigest,
+      });
+      if (!closed) {
+        keepLease = true;
+        throw new ClaimClosurePendingError(claimed.claimId);
+      }
+    }
+    throw error;
   } finally {
-    await lease.release();
-  }
-}
-
-function assertCommandFence(
-  manager: DockerWorkspaceManager,
-  commandExecutor: StructuredCommandExecutor,
-  lease: WorkspaceLease,
-  workspaceId: string,
-  identity: ExecutorIdentityV02,
-  adapterIdentity: string,
-  processIncarnation: string,
-  receiverGeneration: number,
-): void {
-  const currentGeneration = manager.getFencingGeneration(workspaceId);
-  if (lease.kind !== 'read' || lease.workspaceId !== workspaceId ||
-    !Number.isSafeInteger(currentGeneration) || currentGeneration <= 0 ||
-    lease.fencingGeneration !== currentGeneration || receiverGeneration !== currentGeneration ||
-    commandExecutor.getFencingGeneration() !== currentGeneration ||
-    identity.adapterIdentity !== adapterIdentity || identity.adapterIdentity !== commandExecutor.getAdapterIdentity() ||
-    identity.processIncarnation !== processIncarnation || identity.processIncarnation !== commandExecutor.getProcessIncarnation() ||
-    identity.fencingGeneration !== currentGeneration) {
-    throw new Error('FENCED_EXECUTOR: Command receiver is stale at the invocation boundary');
+    if (!keepLease && (!claimed || !options.claimLifecycle.hasPending(claimed.claimId)) &&
+      (!current || !options.outcomeRecovery.hasPending(current.attempt.attemptId))) await lease.release();
   }
 }
 
@@ -178,70 +233,26 @@ export function matchesAttemptIdentity(
   attempt: AttemptReceiptV02,
   expected: ExecutorIdentityV02,
 ): boolean {
-  return matchesIdentity(attempt.executorIdentity, expected);
+  return matchesRepositoryIdentityV02(attempt.executorIdentity, expected);
 }
 
 export function matchesIdentity(
   actual: ExecutorIdentityV02,
   expected: ExecutorIdentityV02,
 ): boolean {
-  return actual.adapterIdentity === expected.adapterIdentity &&
-    actual.processIncarnation === expected.processIncarnation &&
-    actual.fencingGeneration === expected.fencingGeneration &&
-    actual.payloadDigest === expected.payloadDigest;
-}
-
-function validateClaim(
-  input: unknown,
-  context: RepositoryAdmissionContextV02,
-): ClaimReceiptV02 | null {
-  if (!isPlainRecord(input) || Object.keys(input).length !== CLAIM_KEYS.length ||
-    !CLAIM_KEYS.every((key) => Object.hasOwn(input, key))) return null;
-  if (context.subjectKind !== 'repository-action' ||
-    typeof input['claimId'] !== 'string' || !input['claimId'].trim() ||
-    typeof input['claimDigest'] !== 'string' ||
-    input['taskId'] !== context.taskId || input['runId'] !== context.runId ||
-    input['subjectKind'] !== context.subjectKind || input['planApplicability'] !== context.planApplicability ||
-    input['preClaimTaskStateVersion'] !== context.expectedTaskStateVersion ||
-    input['preClaimControlVersion'] !== context.expectedControlVersion ||
-    input['postClaimControlVersion'] !== context.expectedControlVersion + 1 ||
-    input['epoch'] !== context.expectedEpoch || input['status'] !== 'claimed' ||
-    !sameStrings(input['reservationRefs'], context.reservationRefs) ||
-    input['claimDigest'] !== computeCanonicalSha256({ ...input, claimDigest: undefined })) return null;
-
-  // The exact field and digest checks above establish the canonical receipt shape.
-  return input as unknown as ClaimReceiptV02;
-}
-
-function matchesAttempt(
-  attempt: AttemptReceiptV02,
-  claim: ClaimReceiptV02,
-  executorIdentity: ExecutorIdentityV02,
-): boolean {
-  return attempt.claimId === claim.claimId && attempt.taskId === claim.taskId &&
-    attempt.epoch === claim.epoch && attempt.preAttemptTaskStateVersion === claim.preClaimTaskStateVersion &&
-    attempt.preAttemptControlVersion === claim.postClaimControlVersion &&
-    attempt.postBeginControlVersion === claim.postClaimControlVersion + 1 &&
-    matchesIdentity(attempt.executorIdentity, executorIdentity);
-}
-
-function isPlainRecord(input: unknown): input is Record<string, unknown> {
-  if (input === null || typeof input !== 'object' || Array.isArray(input)) return false;
-  const prototype = Object.getPrototypeOf(input);
-  return prototype === Object.prototype || prototype === null;
-}
-
-function sameStrings(input: unknown, expected: readonly string[]): boolean {
-  return Array.isArray(input) && input.length === expected.length &&
-    input.every((value, index) => value === expected[index]);
+  return matchesRepositoryIdentityV02(actual, expected);
 }
 
 export class RepositoryCommandReceiver {
   private readonly options: ControlledRepositoryToolsOptions;
+  private readonly claimLifecycle: RepositoryClaimLifecycleV02;
+  private readonly outcomeRecovery: RepositoryOutcomeRecoveryV02;
   private fencingGeneration: number;
 
   constructor(options: ControlledRepositoryToolsOptions) {
     this.options = options;
+    this.claimLifecycle = new RepositoryClaimLifecycleV02(options.unattemptedClaimClosureHandoff);
+    this.outcomeRecovery = new RepositoryOutcomeRecoveryV02(options);
     this.fencingGeneration = options.fencingGeneration ?? options.commandExecutor?.getFencingGeneration?.() ?? 0;
   }
 
@@ -262,6 +273,8 @@ export class RepositoryCommandReceiver {
     if (!statePort) throw new Error('STATE_PORT_REQUIRED: StatePortV02 is required for repository receiver execution');
     if (!commandExecutor) throw new Error('COMMAND_EXECUTOR_REQUIRED: StructuredCommandExecutor is required for runCommand');
     if (!trustedCommandResourcePolicy) throw new Error('COMMAND_RESOURCE_POLICY_REQUIRED: Trusted finite command limits are required');
+    if (!this.options.patchRecoveryHandoff) throw new Error('COMMAND_RECOVERY_REQUIRED: A typed UC-04 recovery handoff is required before command admission');
+    this.claimLifecycle.requireClosureCapability();
     const adapterIdentity = this.options.adapterIdentity ?? commandExecutor.getAdapterIdentity?.() ?? '';
     const processIncarnation = this.options.processIncarnation ?? commandExecutor.getProcessIncarnation?.() ?? '';
     if (!adapterIdentity || !processIncarnation || !Number.isSafeInteger(this.fencingGeneration) || this.fencingGeneration <= 0) {
@@ -277,6 +290,8 @@ export class RepositoryCommandReceiver {
       adapterIdentity,
       processIncarnation,
       fencingGeneration: this.fencingGeneration,
+      claimLifecycle: this.claimLifecycle,
+      outcomeRecovery: this.outcomeRecovery,
     });
     if (result.timedOut || result.outcome === 'timeout') throw new Error('COMMAND_TIMED_OUT: Command did not complete within its admitted timeout');
     if (result.exitCode === null || result.outcome === 'error') throw new Error('COMMAND_EXIT_CODE_UNAVAILABLE: Command did not return an observed exit code');
@@ -294,6 +309,8 @@ export class RepositoryCommandReceiver {
     if (!statePort) throw new Error('STATE_PORT_REQUIRED: StatePortV02 is required for repository receiver execution');
     if (!commandExecutor) throw new Error('COMMAND_EXECUTOR_REQUIRED: StructuredCommandExecutor is required for runTests');
     if (!trustedCommandResourcePolicy) throw new Error('COMMAND_RESOURCE_POLICY_REQUIRED: Trusted finite command limits are required');
+    if (!this.options.patchRecoveryHandoff) throw new Error('COMMAND_RECOVERY_REQUIRED: A typed UC-04 recovery handoff is required before command admission');
+    this.claimLifecycle.requireClosureCapability();
     const adapterIdentity = this.options.adapterIdentity ?? commandExecutor.getAdapterIdentity?.() ?? '';
     const processIncarnation = this.options.processIncarnation ?? commandExecutor.getProcessIncarnation?.() ?? '';
     if (!adapterIdentity || !processIncarnation || !Number.isSafeInteger(this.fencingGeneration) || this.fencingGeneration <= 0) {
@@ -309,6 +326,8 @@ export class RepositoryCommandReceiver {
       adapterIdentity,
       processIncarnation,
       fencingGeneration: this.fencingGeneration,
+      claimLifecycle: this.claimLifecycle,
+      outcomeRecovery: this.outcomeRecovery,
     });
     const outcome = result.timedOut || result.outcome === 'timeout'
       ? 'timeout'
@@ -324,4 +343,19 @@ export class RepositoryCommandReceiver {
       durationMs: result.durationMs,
     };
   }
+
+  async recoverCommandOutcome(attemptId: string): Promise<ReconciliationResultV02> {
+    if (!this.outcomeRecovery.hasPending(attemptId)) throw new Error('COMMAND_RECOVERY_NOT_FOUND: No locally held command outcome matches this attempt');
+    return await this.outcomeRecovery.recover(attemptId);
+  }
+
+  recoverUnattemptedClaim(claimId: string): Promise<boolean> {
+    return this.claimLifecycle.recoverUnattemptedClaim(claimId);
+  }
+}
+
+function isPlainRecord(input: unknown): input is Record<string, unknown> {
+  if (input === null || typeof input !== 'object' || Array.isArray(input)) return false;
+  const prototype = Object.getPrototypeOf(input);
+  return prototype === Object.prototype || prototype === null;
 }

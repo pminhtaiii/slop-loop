@@ -18,9 +18,9 @@ export class DockerWorkspaceManager {
   private wakeNextLeaseWaiter(workspaceId: string): void {
     if (this.activeWriterLeases.has(workspaceId)) return;
     const waiters = this.leaseWaiters.get(workspaceId);
-    const next = waiters?.shift();
-    if (waiters?.length === 0) this.leaseWaiters.delete(workspaceId);
-    next?.();
+    if (!waiters) return;
+    this.leaseWaiters.delete(workspaceId);
+    for (const wake of waiters) wake();
   }
 
   constructor(options: { readonly controller: DockerLifecycleController }) {

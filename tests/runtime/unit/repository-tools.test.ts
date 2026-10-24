@@ -29,6 +29,7 @@ import {
   type ExecutionGuardReadCapability,
   type GuardedReadOperation,
   type RepositoryReadLimits,
+  type UnattemptedClaimClosureHandoffV02,
 } from '../../../src/foundation/repository-tools.ts';
 import {
   validateSourceEvidence,
@@ -37,7 +38,15 @@ import {
   type RunCommandAction,
   type ApplyPatchAction,
   type CheckDefinition,
+  type CommandView,
 } from '../../../src/contracts/foundation/uc03.ts';
+import {
+  computeDispatchClaimDigestV02,
+  UC05_APPROVAL_SCHEMA_VERSION_V02,
+  validateDispatchClaimV02,
+} from '../../../src/contracts/approvals/contracts.ts';
+import type { DispatchClaimV02 } from '../../../src/contracts/approvals/contracts.ts';
+import { createApprovalControlV02 } from '../../../src/approvals/control.ts';
 import type {
   RepositoryPortV02,
   RepositoryAdmissionContextV02,
@@ -62,9 +71,12 @@ import type { JournalSnapshotV02 } from '../../../src/approvals/control-v02.ts';
 import {
   createTestDiagnosticPatchAdmissionContextV02,
   createTestAdmissionTaskStateV02,
+  createTestAdmissionTransitionContextsV02,
   createTestObservedReconciliationReceiptV02,
   createTestReconciliationValidationContextV02,
   createTestUncertainReconciliationReceiptV02,
+  createTestRepositoryAdmissionContextV02,
+  createTestRepositoryCommandAdmissionContextV02,
 } from '../support/uc03/state-fixtures.ts';
 import {
   DockerWorkspaceManager,
@@ -76,6 +88,7 @@ import type {
   DockerContainerPlan,
   DockerLifecycleController,
   MaterializeViewParams,
+  StructuredExecutionResult,
 } from '../../../src/foundation/docker-workspace.ts';
 
 class RepositoryTestDockerController implements DockerLifecycleController {
@@ -86,6 +99,7 @@ class RepositoryTestDockerController implements DockerLifecycleController {
   materializedViews = 0;
   snapshotToReturn?: CanonicalRepositorySnapshot;
   outputToReturn?: Partial<ContainerExecutionOutput>;
+  executionFailure?: Error;
 
   async createVolume(id: string): Promise<void> { this.volumes.add(id); }
   async hasVolume(id: string): Promise<boolean> { return this.volumes.has(id); }
@@ -101,6 +115,7 @@ class RepositoryTestDockerController implements DockerLifecycleController {
 
   async executeContainer(plan: DockerContainerPlan): Promise<ContainerExecutionOutput> {
     this.executedPlans.push(plan);
+    if (this.executionFailure) throw this.executionFailure;
     return {
       exitCode: this.outputToReturn?.exitCode === undefined ? 0 : this.outputToReturn.exitCode,
       stdout: this.outputToReturn?.stdout ?? '',
@@ -1207,6 +1222,22 @@ function createTestAdmissionContext(overrides: TestAdmissionOverrides = {}): Rep
   };
 }
 
+function createJournalBackedPatchContext(patch: ApplyPatchAction): RepositoryAdmissionContextV02 {
+  return createTestRepositoryAdmissionContextV02({
+    taskId: 'task-test-1',
+    runId: 'run-1',
+    workspaceId: 'ws-test-1',
+    repositoryId: 'repo-1',
+    canonicalRevision: patch.baseRevisionDigest,
+    executionProfileId: 'profile-uc03-test',
+    action: patch,
+    actionDigest: computeActionDigest(patch),
+    baseRevision: patch.baseRevisionDigest,
+    targetPaths: [...patch.targetPaths],
+    patchDigest: computeCanonicalSha256(patch.patchContent),
+  });
+}
+
 function createTestPatchRecoveryHandoff() {
   return {
     async prepare(input: {
@@ -1242,6 +1273,162 @@ function createTestPatchRecoveryHandoff() {
       };
     },
   };
+}
+
+function createRefusingClaimClosureHandoff(): UnattemptedClaimClosureHandoffV02 {
+  return { async closeUnattemptedClaim() { return { closed: false, receiptId: '' }; } };
+}
+
+function createUnavailableRecoveryHandoff() {
+  return { async prepare() { throw new Error('NO_TRUSTED_RECOVERY_EVIDENCE'); } };
+}
+
+function createJournalBackedClaimClosureHandoff(journal: MemoryStatePortV02): UnattemptedClaimClosureHandoffV02 {
+  return {
+    async closeUnattemptedClaim({ admission, claim, recipientIdentity }) {
+      const eventRef = `pause-${claim.claimId}`;
+      if (!await journal.setTaskControl(admission.taskId, 'paused', eventRef)) return { closed: false, receiptId: '' };
+      const snapshot = journal.getJournalSnapshot();
+      if (!snapshot.holdEventDigest) return { closed: false, receiptId: '' };
+      const result = await createApprovalControlV02({ taskId: admission.taskId, journal }).closeUnattemptedClaim({
+        claim: createDispatchClaimForClosure(admission, claim),
+        journalClaim: claim,
+        recipientIdentity,
+        pauseOrDenialEvent: { eventKind: 'pause', eventRef, eventDigest: snapshot.holdEventDigest },
+      });
+      return { closed: result.closed, receiptId: result.receipt?.receiptId ?? '' };
+    },
+  };
+}
+
+function createDispatchClaimForClosure(
+  context: RepositoryAdmissionContextV02,
+  journalClaim: ClaimReceiptV02,
+): DispatchClaimV02 {
+  const authority = context.policyAuthorityRef;
+  const planFields = context.planApplicability === 'approved-plan'
+    ? { planApplicability: context.planApplicability, planBindingDigest: context.planBindingDigest, planDecisionRef: context.planDecisionRef }
+    : { planApplicability: context.planApplicability, diagnosticPurpose: context.diagnosticPurpose, taskCriteriaDigest: context.taskCriteriaDigest };
+  const unsigned = {
+    schemaVersion: UC05_APPROVAL_SCHEMA_VERSION_V02,
+    claimId: journalClaim.claimId,
+    claimDigest: '',
+    taskId: journalClaim.taskId,
+    runId: journalClaim.runId,
+    taskStateSchemaVersion: context.taskStateSchemaVersion,
+    expectedTaskStateVersion: journalClaim.preClaimTaskStateVersion,
+    controlSchemaVersion: context.controlSchemaVersion,
+    expectedControlVersion: journalClaim.preClaimControlVersion,
+    expectedEpoch: journalClaim.epoch,
+    policyIdentity: {
+      policyId: authority.policyId,
+      policyVersion: authority.policyVersion,
+      configId: authority.configId,
+      configVersion: authority.configVersion,
+    },
+    decisionRefs: context.actionDecisionReceipt
+      ? [context.actionDecisionReceipt.decisionId]
+      : [context.planDecisionRef ?? context.policyEvaluationReceipt.receiptId],
+    reservationRefs: [...journalClaim.reservationRefs],
+    phase: 'claimed' as const,
+    resultRef: null,
+    subjectKind: 'repository-action' as const,
+    actionId: context.action.actionId,
+    actionDigest: context.actionDigest,
+    repositoryStateDigest: context.canonicalRevision,
+    ...planFields,
+  };
+  const candidate = { ...unsigned, claimDigest: computeDispatchClaimDigestV02(unsigned) };
+  const result = validateDispatchClaimV02(candidate);
+  if (!result.ok) throw new Error('test-journal-dispatch-claim-invalid');
+  return result.value;
+}
+
+function createJournalBackedRecoveryHandoff(journal: MemoryStatePortV02) {
+  return {
+    async prepare(input: {
+      readonly admission: RepositoryAdmissionContextV02;
+      readonly claim: ClaimReceiptV02;
+      readonly attempt: AttemptReceiptV02;
+      readonly outcome: RepositoryActionOutcomeReceiptV02;
+    }) {
+      if (input.outcome.outcome !== 'uncertain') throw new Error('unexpected-observed-recovery');
+      const eventRef = `pause-attempt-${input.attempt.attemptId}`;
+      if (!await journal.setTaskControl(input.admission.taskId, 'paused', eventRef)) throw new Error('journal-pause-failed');
+      const fence = await journal.fenceAttemptRecipient(input.claim.claimId, input.attempt.executorIdentity);
+      if (!fence) throw new Error('journal-attempt-fence-failed');
+      const snapshot = journal.getJournalSnapshot();
+      const task = await journal.loadTask(input.admission.taskId);
+      if (!task) throw new Error('journal-task-missing');
+      const receipt = createTestUncertainReconciliationReceiptV02(
+        input.outcome,
+        input.claim,
+        input.attempt,
+        input.admission,
+        {
+          disposition: 'proven-not-dispatched',
+          expectedCurrentTaskStateVersion: task.stateVersion,
+          expectedCurrentControlVersion: snapshot.controlVersion,
+          expectedCurrentEpoch: snapshot.epoch,
+          adapterEvidenceRefs: fence.adapterEvidenceRefs,
+          fencedRecipientIdentity: fence.recipientIdentity,
+          fencingGeneration: fence.fencingGeneration,
+          fencingProof: fence.proofRef,
+          evidenceRefs: [...fence.adapterEvidenceRefs, fence.proofRef],
+        },
+      );
+      return {
+        receipt,
+        validationContext: createTestReconciliationValidationContextV02(
+          receipt,
+          input.outcome,
+          input.claim,
+          input.attempt,
+          input.admission,
+        ),
+      };
+    },
+  };
+}
+
+function createJournalForRepositoryAdmission(context: RepositoryAdmissionContextV02): MemoryStatePortV02 {
+  const initialTaskState = createTestAdmissionTaskStateV02(context);
+  return new MemoryStatePortV02({
+    initialTaskState,
+    transitionContexts: createTestAdmissionTransitionContextsV02(context, initialTaskState),
+    initialControlVersion: context.expectedControlVersion,
+    initialEpoch: context.expectedEpoch,
+    initialAuthorityRef: context.policyAuthorityRef,
+  });
+}
+
+function createJournalForRepositoryCommand(context: RepositoryAdmissionContextV02): MemoryStatePortV02 {
+  if (context.action.kind !== 'run_command' || !context.finiteBounds) throw new Error('command-admission-required');
+  const bounds = context.finiteBounds as CommandFiniteBoundsV02;
+  const task = createTestAdmissionTaskStateV02(context);
+  const resourceKinds = ['timeoutMs', 'maxOutputBytes', 'maxCpuSeconds', 'maxMemoryBytes', 'maxProcessCount'] as const;
+  const resourceLedgers = (['task', 'run'] as const).flatMap((scope) => resourceKinds.map((kind) => {
+    const amount = bounds[kind];
+    if (typeof amount !== 'number' || !Number.isFinite(amount) || amount <= 0) throw new Error(`missing-command-bound:${kind}`);
+    return {
+      scope,
+      kind,
+      limit: amount * 2,
+      consumed: 0,
+      reservations: [],
+      unit: kind === 'maxMemoryBytes' ? 'bytes' : 'count',
+      configurationId: context.policyAuthorityRef.configId,
+      version: 1,
+    };
+  }));
+  const initialTaskState = { ...task, budgetLedgers: [...(task.budgetLedgers ?? []), ...resourceLedgers] };
+  return new MemoryStatePortV02({
+    initialTaskState,
+    transitionContexts: createTestAdmissionTransitionContextsV02(context, initialTaskState),
+    initialControlVersion: context.expectedControlVersion,
+    initialEpoch: context.expectedEpoch,
+    initialAuthorityRef: context.policyAuthorityRef,
+  });
 }
 
 describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
@@ -1282,6 +1469,86 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
     return { manager, controller };
   }
 
+  async function createJournalBackedCommandHarness(actionId: string) {
+    const action: RunCommandAction = {
+      actionId,
+      kind: 'run_command',
+      executable: 'pytest',
+      argv: ['-q'],
+      workingDirectory: '/workspace/repo',
+    };
+    const { manager, controller } = await createWorkspaceManager();
+    fsPort.setFile('src/app.py', 'test');
+    const reservationRefs = (['task', 'run'] as const).flatMap((scope) =>
+      (['timeoutMs', 'maxOutputBytes', 'maxCpuSeconds', 'maxMemoryBytes', 'maxProcessCount'] as const)
+        .map((kind) => `res-${actionId}-${scope}-${kind}`));
+    const baseContext = createTestRepositoryCommandAdmissionContextV02({
+      taskId: 'task-test-1',
+      runId: 'run-1',
+      workspaceId: 'ws-test-1',
+      repositoryId: 'repo-1',
+      canonicalRevision: canonicalRev,
+      executionProfileId: 'profile-uc03-test',
+      action,
+      actionDigest: computeActionDigest(action),
+      checkId: `chk-${actionId}`,
+      reservationRefs,
+    });
+    const commandView = baseContext.commandView;
+    if (!commandView) throw new Error('command-outcome-view-required');
+    const context: RepositoryAdmissionContextV02 = baseContext;
+    const admittedView: CommandView = {
+      viewId: commandView.viewId,
+      viewDigest: commandView.viewDigest,
+      taskId: commandView.taskId,
+      workspaceId: commandView.workspaceId,
+      canonicalRevisionDigest: commandView.canonicalRevision,
+      admittedFiles: commandView.admittedFiles,
+      exclusionsPolicyVersion: commandView.exclusionsPolicyVersion,
+      scratchIdentity: commandView.scratchIdentity,
+      mountedReadOnly: true,
+    };
+    manager.getActiveCommandView = (workspaceId) => workspaceId === context.workspaceId ? admittedView : null;
+    const journal = createJournalForRepositoryCommand(context);
+    const profile = {
+      profileId: 'profile-uc03-test',
+      image: 'ghcr.io/test:0.1',
+      imageDigest: canonicalRev,
+      user: '1000:1000',
+      readOnlyRootFilesystem: true as const,
+      network: 'none' as const,
+      limits: { timeoutMs: 30000, maxMemoryBytes: 2147483648, maxCpuCores: 2, maxPids: 256 },
+      mounts: [],
+    };
+    const executor = new StructuredCommandExecutor({
+      manager,
+      controller,
+      profile,
+      adapterIdentity: 'command-outcome-executor',
+      processIncarnation: `inc-${actionId}`,
+      fencingGeneration: 1,
+    });
+    const tools = new ControlledRepositoryTools({
+      guardCapability: guard,
+      fsPort,
+      limits: defaultLimits,
+      statePort: journal,
+      taskControl: journal,
+      workspaceManager: manager,
+      commandExecutor: executor,
+      trustedCommandResourcePolicy: {
+        isolationProfileRef: 'profile-uc03-test',
+        limits: { timeoutMs: 30000, maxOutputBytes: 65536, maxCpuCores: 2, maxMemoryBytes: 2147483648, maxPids: 256 },
+      },
+      adapterIdentity: 'command-outcome-executor',
+      processIncarnation: `inc-${actionId}`,
+      fencingGeneration: 1,
+      patchRecoveryHandoff: createUnavailableRecoveryHandoff(),
+      unattemptedClaimClosureHandoff: createRefusingClaimClosureHandoff(),
+    });
+    return { action, context, journal, tools, manager, controller, executor };
+  }
+
   it('diagnostic patch settles once without repair charge and preserves Investigate', async () => {
     const context = createTestDiagnosticPatchAdmissionContextV02();
     const initial = createTestAdmissionTaskStateV02(context);
@@ -1307,6 +1574,7 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
       guardCapability: guard, fsPort, limits: defaultLimits, statePort: journal,
       workspaceManager: manager, adapterIdentity: 'diagnostic', processIncarnation: 'diag-1', fencingGeneration: 1,
       patchRecoveryHandoff: createTestPatchRecoveryHandoff(),
+      unattemptedClaimClosureHandoff: createRefusingClaimClosureHandoff(),
       patchReceiver: async () => {
         effects++;
         fsPort.setRevision(nextRevision);
@@ -1449,6 +1717,7 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
         processIncarnation: 'inc-patch-detached',
         fencingGeneration: 1,
         patchRecoveryHandoff: createTestPatchRecoveryHandoff(),
+        unattemptedClaimClosureHandoff: createRefusingClaimClosureHandoff(),
         patchReceiver: async (admittedPatch, admittedContext) => {
           received.patch = admittedPatch;
           received.context = admittedContext;
@@ -1490,6 +1759,7 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
         processIncarnation: 'inc-patch-1',
         fencingGeneration: 1,
         patchRecoveryHandoff: createTestPatchRecoveryHandoff(),
+        unattemptedClaimClosureHandoff: createRefusingClaimClosureHandoff(),
         patchReceiver: async () => {
           patchEffects += 1;
           return { applied: true, newRevisionDigest: canonicalRev };
@@ -1497,7 +1767,9 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
       });
 
       await tools.applyPatch(patch, context);
+      const recordedOutcomesAfterFirstAttempt = statePort.outcomeReceipts.length;
       await assert.rejects(() => tools.applyPatch(patch, context), /DUPLICATE_ATTEMPT/);
+      assert.equal(statePort.outcomeReceipts.length, recordedOutcomesAfterFirstAttempt, 'A duplicate attempt does not rewrite its prior outcome');
 
       const fencedState = new FakeStatePortV02();
       let continueBeginAttempt: (() => void) | undefined;
@@ -1519,6 +1791,7 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
         processIncarnation: 'inc-patch-1',
         fencingGeneration: 1,
         patchRecoveryHandoff: createTestPatchRecoveryHandoff(),
+        unattemptedClaimClosureHandoff: createRefusingClaimClosureHandoff(),
         patchReceiver: async () => {
           fencedPatchEffects += 1;
           return { applied: true, newRevisionDigest: canonicalRev };
@@ -1528,7 +1801,10 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
       await began;
       manager.setFencingGeneration('ws-test-1', 2);
       continueBeginAttempt?.();
-      await assert.rejects(() => pending, /FENCED_EXECUTOR/);
+      await assert.rejects(() => pending, /PATCH_OUTCOME_PENDING/);
+      assert.equal(fencedState.outcomeReceipts.length, 1, 'A begun but fenced attempt records one uncertain outcome');
+      assert.equal(fencedState.outcomeReceipts[0]?.outcome, 'uncertain');
+      assert.equal(fencedState.attemptReceipts.length, 1);
       assert.equal(fencedPatchEffects, 0);
       assert.equal(patchEffects, 1);
     });
@@ -1680,6 +1956,7 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
         processIncarnation: 'inc-stale-base-1',
         fencingGeneration: 1,
         patchRecoveryHandoff: createTestPatchRecoveryHandoff(),
+        unattemptedClaimClosureHandoff: createRefusingClaimClosureHandoff(),
         patchReceiver: async () => {
           patchEffects += 1;
           return { applied: true, newRevisionDigest: canonicalRev };
@@ -1760,6 +2037,8 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
           isolationProfileRef: 'profile-uc03-test',
           limits: { timeoutMs: 30000, maxOutputBytes: 65536, maxCpuCores: 2, maxMemoryBytes: 2147483648, maxPids: 256 },
         },
+        patchRecoveryHandoff: createTestPatchRecoveryHandoff(),
+        unattemptedClaimClosureHandoff: createRefusingClaimClosureHandoff(),
       });
 
       const commandAction: RunCommandAction = {
@@ -1809,6 +2088,119 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
   describe('Patch settlement keeps the workspace fenced', () => {
     const nextRevision = 'sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789';
 
+    it('closes a pre-begin claim only through the journal-backed fenced UC-05 boundary', async () => {
+      const patch: ApplyPatchAction = {
+        actionId: 'act-patch-prebegin-closure',
+        kind: 'apply_patch',
+        patchContent: '--- a/src/a.py\n+++ b/src/a.py\n+prebegin\n',
+        targetPaths: ['src/a.py'],
+        baseRevisionDigest: canonicalRev,
+      };
+      const context = createJournalBackedPatchContext(patch);
+      const journal = createJournalForRepositoryAdmission(context);
+      const { manager } = await createWorkspaceManager();
+      const claim = journal.claim.bind(journal);
+      journal.claim = async (admission) => {
+        const receipt = await claim(admission);
+        manager.setFencingGeneration(context.workspaceId, 2);
+        return receipt;
+      };
+      let patchEffects = 0;
+      const tools = new ControlledRepositoryTools({
+        guardCapability: guard,
+        fsPort,
+        limits: defaultLimits,
+        statePort: journal,
+        workspaceManager: manager,
+        adapterIdentity: 'patch-prebegin-closure',
+        processIncarnation: 'inc-patch-prebegin-closure',
+        fencingGeneration: 1,
+        patchRecoveryHandoff: createTestPatchRecoveryHandoff(),
+        unattemptedClaimClosureHandoff: createJournalBackedClaimClosureHandoff(journal),
+        patchReceiver: async () => {
+          patchEffects += 1;
+          return { applied: true, newRevisionDigest: canonicalRev };
+        },
+      });
+
+      await assert.rejects(() => tools.applyPatch(patch, context), /FENCED_EXECUTOR/);
+      const snapshot = journal.getJournalSnapshot();
+      assert.equal(patchEffects, 0);
+      assert.equal(snapshot.claims[0]?.status, 'closed');
+      assert.equal(snapshot.claims[0]?.attemptId, null);
+      assert.equal(snapshot.attempts.length, 0);
+      assert.equal(snapshot.closures.length, 1);
+      assert.equal(snapshot.activeClaimId, null);
+      assert.equal(snapshot.mode, 'paused');
+      assert.equal(snapshot.fencedIncarnations.includes('patch-prebegin-closure\u0000inc-patch-prebegin-closure'), true);
+      const repair = journal.getLedgers().find((ledger) => ledger.kind === 'repair');
+      assert.equal(repair?.consumed, 0);
+      assert.equal(repair?.reservations.length, 0);
+      const lease = await manager.acquireWriteLease(context.workspaceId, canonicalRev);
+      await lease.release();
+    });
+
+    it('records a post-begin fence failure as uncertain and settles only with journal fence proof', async () => {
+      const patch: ApplyPatchAction = {
+        actionId: 'act-patch-postbegin-fence',
+        kind: 'apply_patch',
+        patchContent: '--- a/src/a.py\n+++ b/src/a.py\n+postbegin\n',
+        targetPaths: ['src/a.py'],
+        baseRevisionDigest: canonicalRev,
+      };
+      const context = createJournalBackedPatchContext(patch);
+      const journal = createJournalForRepositoryAdmission(context);
+      const { manager } = await createWorkspaceManager();
+      const begin = journal.beginAttempt.bind(journal);
+      journal.beginAttempt = async (claimId, executor) => {
+        const attempt = await begin(claimId, executor);
+        manager.setFencingGeneration(context.workspaceId, 2);
+        return attempt;
+      };
+      let patchEffects = 0;
+      const tools = new ControlledRepositoryTools({
+        guardCapability: guard,
+        fsPort,
+        limits: defaultLimits,
+        statePort: journal,
+        workspaceManager: manager,
+        adapterIdentity: 'patch-postbegin-fence',
+        processIncarnation: 'inc-patch-postbegin-fence',
+        fencingGeneration: 1,
+        patchRecoveryHandoff: createJournalBackedRecoveryHandoff(journal),
+        unattemptedClaimClosureHandoff: createRefusingClaimClosureHandoff(),
+        patchReceiver: async () => {
+          patchEffects += 1;
+          return { applied: true, newRevisionDigest: canonicalRev };
+        },
+      });
+
+      const pendingError = await tools.applyPatch(patch, context).then(() => null, (error: unknown) => error);
+      assert.equal(pendingError instanceof Error, true);
+      assert.match((pendingError as Error).message, /PATCH_OUTCOME_PENDING/);
+      const attempt = journal.getJournalSnapshot().attempts[0];
+      assert.ok(attempt);
+      const held = journal.getJournalSnapshot();
+      assert.equal(held.claims[0]?.status, 'uncertain');
+      assert.equal(held.attempts[0]?.status, 'uncertain');
+      assert.equal(held.outcomes[0]?.outcome, 'uncertain');
+      assert.equal(held.activeClaimId, held.claims[0]?.claimId);
+      assert.equal(patchEffects, 0);
+      assert.equal(journal.getLedgers().find((ledger) => ledger.kind === 'repair')?.consumed, 1);
+
+      const settled = await tools.recoverPatchOutcome(attempt.attemptId);
+      const recovered = journal.getJournalSnapshot();
+      assert.equal(settled.outcome, 'settled');
+      assert.equal(recovered.reconciliations.length, 1);
+      assert.equal(recovered.fenceProofs.length, 1);
+      assert.equal(recovered.claims[0]?.status, 'settled');
+      assert.equal(recovered.activeClaimId, null);
+      assert.equal(recovered.mode, 'paused');
+      assert.equal(patchEffects, 0);
+      const lease = await manager.acquireReadLease(context.workspaceId, canonicalRev);
+      await lease.release();
+    });
+
     it('fails closed before beginAttempt when the typed recovery handoff is missing', async () => {
       const { manager } = await createWorkspaceManager();
       let patchCalls = 0;
@@ -1838,6 +2230,26 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
       await assert.rejects(() => tools.applyPatch(patch, context), /PATCH_RECOVERY_REQUIRED/);
       assert.equal(statePort.beginAttemptCalls.length, 0, 'missing recovery handoff denies before beginAttempt');
       assert.equal(patchCalls, 0, 'missing recovery handoff denies before patch dispatch');
+
+      const noClosure = new ControlledRepositoryTools({
+        guardCapability: guard,
+        fsPort,
+        limits: defaultLimits,
+        statePort,
+        workspaceManager: manager,
+        adapterIdentity: 'patch-missing-closure',
+        processIncarnation: 'inc-patch-missing-closure',
+        fencingGeneration: 1,
+        patchRecoveryHandoff: createUnavailableRecoveryHandoff(),
+        patchReceiver: async () => {
+          patchCalls += 1;
+          return { applied: true, newRevisionDigest: canonicalRev };
+        },
+      });
+      await assert.rejects(() => noClosure.applyPatch(patch, context), /CLAIM_CLOSURE_REQUIRED/);
+      assert.equal(statePort.claimCalls.length, 0, 'missing no-attempt closure capability denies before claim admission');
+      assert.equal(statePort.beginAttemptCalls.length, 0);
+      assert.equal(patchCalls, 0);
     });
 
     it('blocks competing writers and view builders until recordOutcome reports settled', async () => {
@@ -1864,6 +2276,7 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
         processIncarnation: 'inc-patch-settlement',
         fencingGeneration: 1,
         patchRecoveryHandoff: createTestPatchRecoveryHandoff(),
+        unattemptedClaimClosureHandoff: createRefusingClaimClosureHandoff(),
         patchReceiver: async () => {
           fsPort.setRevision(nextRevision);
           manager.setCanonicalRevision('ws-test-1', nextRevision);
@@ -1929,6 +2342,7 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
         processIncarnation: 'inc-patch-observed-recovery',
         fencingGeneration: 1,
         patchRecoveryHandoff: createTestPatchRecoveryHandoff(),
+        unattemptedClaimClosureHandoff: createRefusingClaimClosureHandoff(),
         patchReceiver: async () => {
           fsPort.setRevision(nextRevision);
           manager.setCanonicalRevision('ws-test-1', nextRevision);
@@ -1987,6 +2401,7 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
         processIncarnation: 'inc-patch-already-recorded',
         fencingGeneration: 1,
         patchRecoveryHandoff: createTestPatchRecoveryHandoff(),
+        unattemptedClaimClosureHandoff: createRefusingClaimClosureHandoff(),
         patchReceiver: async () => ({ applied: true, newRevisionDigest: canonicalRev }),
       });
       const patch: ApplyPatchAction = {
@@ -2035,6 +2450,7 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
         processIncarnation: 'inc-patch-uncertain-recovery',
         fencingGeneration: 1,
         patchRecoveryHandoff: createTestPatchRecoveryHandoff(),
+        unattemptedClaimClosureHandoff: createRefusingClaimClosureHandoff(),
         patchReceiver: async () => { throw new Error('receiver interrupted after dispatch'); },
       });
       const patch: ApplyPatchAction = {
@@ -2070,6 +2486,100 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
       await writerLease.release();
       await viewBuild;
       assert.equal(controller.snapshotRequests, 1);
+    });
+  });
+
+  describe('Command outcome accounting holds the command lease', () => {
+    it('records canonical run-command outcomes for runCommand and runTests before allowing reads', async () => {
+      const command = await createJournalBackedCommandHarness('act-command-outcome-success');
+      command.controller.outputToReturn = { exitCode: 0, stdout: 'command passed\n', stderr: '', durationMs: 8 };
+      const commandResult = await command.tools.runCommand(command.action, command.context);
+      assert.equal(commandResult.exitCode, 0);
+      assert.equal(command.journal.getJournalSnapshot().outcomes[0]?.outcome, 'observed');
+      assert.equal(command.journal.getJournalSnapshot().claims[0]?.status, 'settled');
+      assert.equal(command.journal.getJournalSnapshot().attempts[0]?.status, 'settled');
+      assert.equal(command.journal.getJournalSnapshot().activeClaimId, null);
+      const commandLedgers = command.journal.getLedgers().filter((ledger) =>
+        ['timeoutMs', 'maxOutputBytes', 'maxCpuSeconds', 'maxMemoryBytes', 'maxProcessCount'].includes(ledger.kind));
+      assert.equal(commandLedgers.length, 10);
+      assert.equal(commandLedgers.every((ledger) => ledger.reservations.length === 0 && ledger.consumed > 0), true);
+      assert.deepEqual(await command.tools.listDir('src'), ['app.py'], 'A settled command allows the next guarded read');
+
+      const tests = await createJournalBackedCommandHarness('act-command-outcome-tests');
+      tests.controller.outputToReturn = { exitCode: 0, stdout: '1 passed\n', stderr: '', durationMs: 12 };
+      const check: CheckDefinition = {
+        checkId: 'chk-act-command-outcome-tests',
+        executable: 'pytest',
+        argv: ['-q'],
+        workingDirectory: '/workspace/repo',
+        purpose: 'reproduction',
+      };
+      const checkResult = await tests.tools.runTests(check, tests.context);
+      assert.equal(checkResult.outcome, 'pass');
+      assert.equal(tests.journal.getJournalSnapshot().outcomes[0]?.outcome, 'observed');
+      assert.equal(tests.journal.getJournalSnapshot().attempts[0]?.status, 'settled');
+      assert.equal(tests.journal.getJournalSnapshot().activeClaimId, null);
+      assert.deepEqual(await tests.tools.listDir('src'), ['app.py'], 'A settled test command allows the next guarded read');
+    });
+
+    it('keeps uncertain executor results, reservations, and leases held for recovery', async () => {
+      const command = await createJournalBackedCommandHarness('act-command-outcome-uncertain');
+      command.controller.executionFailure = new Error('controller lost its response');
+      await assert.rejects(
+        () => command.tools.runCommand(command.action, command.context),
+        /COMMAND_OUTCOME_PENDING/,
+      );
+      const snapshot = command.journal.getJournalSnapshot();
+      assert.equal(snapshot.outcomes[0]?.outcome, 'uncertain');
+      assert.equal(snapshot.claims[0]?.status, 'uncertain');
+      assert.equal(snapshot.attempts[0]?.status, 'uncertain');
+      assert.ok(snapshot.activeClaimId);
+      const heldLedgers = command.journal.getLedgers().filter((ledger) =>
+        ['timeoutMs', 'maxOutputBytes', 'maxCpuSeconds', 'maxMemoryBytes', 'maxProcessCount'].includes(ledger.kind));
+      assert.equal(heldLedgers.reduce((count, ledger) => count + ledger.reservations.length, 0), 10);
+      assert.equal(heldLedgers.every((ledger) => ledger.consumed === 0), true);
+      const attemptId = snapshot.attempts[0]?.attemptId;
+      assert.ok(attemptId);
+
+      await assert.rejects(() => command.tools.recoverCommandOutcome(attemptId), /NO_TRUSTED_RECOVERY_EVIDENCE/);
+      await assert.rejects(() => command.tools.runCommand(command.action, command.context), /CLAIM_DENIED/);
+      assert.equal(command.journal.getJournalSnapshot().attempts.length, 1, 'A retry cannot begin a second attempt');
+      assert.equal(command.controller.executedPlans.length, 1, 'A retry cannot redispatch the ambiguous command');
+
+      let writerAcquired = false;
+      const blockedWriter = command.manager.acquireWriteLease('ws-test-1', canonicalRev).then((lease) => {
+        writerAcquired = true;
+        return lease;
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(writerAcquired, false, 'The uncertain command retains its read lease');
+      await assert.rejects(() => command.tools.recoverCommandOutcome(attemptId), /NO_TRUSTED_RECOVERY_EVIDENCE/);
+      assert.equal(writerAcquired, false, 'Missing proof does not release the lease or reservations');
+      void blockedWriter;
+    });
+
+    it('records an uncertain charge when a possibly dispatched result cannot be normalized', async () => {
+      const command = await createJournalBackedCommandHarness('act-command-outcome-malformed');
+      command.controller.outputToReturn = { exitCode: 0, stdout: 'ran once\n', stderr: '', durationMs: 5 };
+      const execute = command.executor.execute.bind(command.executor);
+      command.executor.execute = async (params) => {
+        const result = await execute(params);
+        return { ...result, stdout: undefined } as unknown as StructuredExecutionResult;
+      };
+
+      await assert.rejects(
+        () => command.tools.runCommand(command.action, command.context),
+        /COMMAND_OUTCOME_PENDING/,
+      );
+      const snapshot = command.journal.getJournalSnapshot();
+      assert.equal(snapshot.outcomes[0]?.outcome, 'uncertain');
+      assert.equal(snapshot.claims[0]?.status, 'uncertain');
+      assert.equal(snapshot.attempts.length, 1);
+      assert.equal(command.controller.executedPlans.length, 1, 'The command effect may have occurred before normalization failed');
+      const ledgers = command.journal.getLedgers().filter((ledger) =>
+        ['timeoutMs', 'maxOutputBytes', 'maxCpuSeconds', 'maxMemoryBytes', 'maxProcessCount'].includes(ledger.kind));
+      assert.equal(ledgers.reduce((count, ledger) => count + ledger.reservations.length, 0), 10);
+      assert.equal(ledgers.every((ledger) => ledger.consumed === 0), true);
     });
   });
 
@@ -2126,6 +2636,8 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
         adapterIdentity: 'structured-command-executor',
         processIncarnation: 'inc-repo-receiver-1',
         fencingGeneration: 1,
+        patchRecoveryHandoff: createUnavailableRecoveryHandoff(),
+        unattemptedClaimClosureHandoff: createRefusingClaimClosureHandoff(),
       });
 
       const action: RunCommandAction = {
@@ -2245,6 +2757,8 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
         adapterIdentity: 'structured-command-executor',
         processIncarnation: 'inc-test-runner-1',
         fencingGeneration: 1,
+        patchRecoveryHandoff: createUnavailableRecoveryHandoff(),
+        unattemptedClaimClosureHandoff: createRefusingClaimClosureHandoff(),
       });
 
       const action: RunCommandAction = {
@@ -2333,6 +2847,7 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
         processIncarnation: 'inc-patch-1',
         fencingGeneration: 1,
         patchRecoveryHandoff: createTestPatchRecoveryHandoff(),
+        unattemptedClaimClosureHandoff: createRefusingClaimClosureHandoff(),
         patchReceiver: async (_patch, _context, attempt) => {
           patchReceiverCalled = true;
           attemptPassedToPatch = attempt;

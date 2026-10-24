@@ -2,14 +2,12 @@ import { computeCanonicalSha256 } from '../contracts/foundation/uc03.ts';
 import { computeAdmissionDigest } from '../contracts/foundation/uc03/admission-v02.ts';
 import {
   computeAttemptOutcomeDigest,
-  validateAttemptReconciliationReceiptV02,
   validateRepositoryActionOutcomeReceiptV02,
 } from '../contracts/foundation/uc03/attempt-v02.ts';
 import type {
   AttemptReceiptV02,
   ClaimReceiptV02,
   ExecutorIdentityV02,
-  OutcomeRecordResultV02,
   ReconciliationResultV02,
   RepositoryActionOutcomeReceiptV02,
   RepositoryAdmissionContextV02,
@@ -19,16 +17,9 @@ import type { ApplyPatchAction } from '../contracts/foundation/uc03/types.ts';
 import type { WorkspaceLease } from './docker-workspace.ts';
 import { bindPatchToAdmission, snapshotRepositoryAdmission } from './repository-admission.ts';
 import { assertCurrentPatchFence, beginRepositoryAttemptWithClaim, isPatchReceiverResult } from './repository-receiver.ts';
-import type { ControlledRepositoryToolsOptions, PatchRecoveryPreparationV02 } from './repository-types.ts';
-
-interface PendingPatchOutcome {
-  readonly lease: WorkspaceLease;
-  readonly context: RepositoryAdmissionContextV02;
-  readonly claim: ClaimReceiptV02;
-  readonly attempt: AttemptReceiptV02;
-  readonly outcome?: RepositoryActionOutcomeReceiptV02 | undefined;
-  recovering: boolean;
-}
+import { ClaimClosurePendingError, RepositoryAttemptStartPendingError, RepositoryClaimLifecycleV02 } from './repository-claim-lifecycle.ts';
+import type { ControlledRepositoryToolsOptions } from './repository-types.ts';
+import { RepositoryOutcomeRecoveryV02 } from './repository-command-outcome.ts';
 
 export class PatchOutcomePendingError extends Error {
   readonly attemptId: string;
@@ -42,12 +33,15 @@ export class PatchOutcomePendingError extends Error {
 
 export class RepositoryPatchReceiver {
   private readonly consumedAttempts = new Set<string>();
-  private readonly pendingOutcomes = new Map<string, PendingPatchOutcome>();
   private readonly options: ControlledRepositoryToolsOptions;
+  private readonly claimLifecycle: RepositoryClaimLifecycleV02;
+  private readonly outcomeRecovery: RepositoryOutcomeRecoveryV02;
   private fencingGeneration: number;
 
   constructor(options: ControlledRepositoryToolsOptions) {
     this.options = options;
+    this.claimLifecycle = new RepositoryClaimLifecycleV02(options.unattemptedClaimClosureHandoff);
+    this.outcomeRecovery = new RepositoryOutcomeRecoveryV02(options);
     this.fencingGeneration = options.fencingGeneration ?? options.commandExecutor?.getFencingGeneration?.() ?? 0;
   }
 
@@ -72,6 +66,7 @@ export class RepositoryPatchReceiver {
     if (!manager) throw new Error('WORKSPACE_GATE_REQUIRED: A workspace manager is required for patch execution');
     if (!statePort) throw new Error('STATE_PORT_REQUIRED: StatePortV02 is required for repository receiver execution');
     if (!recoveryHandoff) throw new Error('PATCH_RECOVERY_REQUIRED: A typed UC-04 recovery handoff is required before patch admission');
+    this.claimLifecycle.requireClosureCapability();
     const adapterIdentity = this.options.adapterIdentity ?? this.options.commandExecutor?.getAdapterIdentity?.() ?? '';
     const processIncarnation = this.options.processIncarnation ?? this.options.commandExecutor?.getProcessIncarnation?.() ?? '';
     if (!adapterIdentity || !processIncarnation || !Number.isSafeInteger(this.fencingGeneration) || this.fencingGeneration <= 0) {
@@ -80,7 +75,10 @@ export class RepositoryPatchReceiver {
 
     const lease = await manager.acquireWriteLease(admittedContext.workspaceId, admitted.baseRevision);
     let current: { readonly claim: ClaimReceiptV02; readonly attempt: AttemptReceiptV02 } | undefined;
-    let dispatchStarted = false;
+    let claimed: ClaimReceiptV02 | undefined;
+    let attemptBeginStarted = false;
+    let duplicateAttempt = false;
+    let keepLease = false;
     try {
       if (lease.canonicalRevision !== admitted.baseRevision || manager.getCanonicalRevision(admittedContext.workspaceId) !== admitted.baseRevision) {
         throw new Error(`STALE_REVISION_DRIFT: Base revision drift under workspace lease: expected '${admitted.baseRevision}'`);
@@ -104,14 +102,15 @@ export class RepositoryPatchReceiver {
         executor,
         admittedContext.planApplicability === 'approved-plan' && admittedContext.runnableNode === 'Repair',
         () => assertCurrentPatchFence(lease, admittedContext.workspaceId, manager.getFencingGeneration(admittedContext.workspaceId), this.fencingGeneration),
+        (claim) => { claimed = claim; },
+        () => { attemptBeginStarted = true; },
       );
       assertCurrentPatchFence(lease, admittedContext.workspaceId, manager.getFencingGeneration(admittedContext.workspaceId), this.fencingGeneration);
       if (this.consumedAttempts.has(current.attempt.attemptId)) {
+        duplicateAttempt = true;
         throw new Error('DUPLICATE_ATTEMPT: Patch attempt was already consumed by this receiver incarnation');
       }
       this.consumedAttempts.add(current.attempt.attemptId);
-      dispatchStarted = true;
-
       const resultInput: unknown = await patchReceiver(admittedPatch, admittedContext, current.attempt);
       if (!isPatchReceiverResult(resultInput) || !resultInput.applied) {
         throw new Error('PATCH_RESULT_UNCERTAIN: Patch receiver did not confirm an applied canonical revision');
@@ -123,52 +122,44 @@ export class RepositoryPatchReceiver {
       const outcome = createPatchOutcomeReceipt(current.claim, current.attempt, admittedContext, 'observed', resultInput.newRevisionDigest);
       return await this.recordOutcome(lease, admittedContext, current.claim, current.attempt, outcome, resultInput);
     } catch (error: unknown) {
-      if (!current || !dispatchStarted || this.pendingOutcomes.has(current.attempt.attemptId)) throw error;
+      if (!current && claimed) {
+        if (attemptBeginStarted) {
+          keepLease = true;
+          throw new RepositoryAttemptStartPendingError(claimed.claimId);
+        }
+        const closed = await this.claimLifecycle.closeUnattemptedClaim(lease, admittedContext, claimed, {
+          adapterIdentity,
+          processIncarnation,
+          fencingGeneration: lease.fencingGeneration,
+          payloadDigest: admittedContext.actionDigest,
+        });
+        if (!closed) {
+          keepLease = true;
+          throw new ClaimClosurePendingError(claimed.claimId);
+        }
+        throw error;
+      }
+      if (!current || duplicateAttempt || this.outcomeRecovery.hasPending(current.attempt.attemptId)) throw error;
       try {
         const outcome = createPatchOutcomeReceipt(current.claim, current.attempt, admittedContext, 'uncertain');
         return await this.recordOutcome(lease, admittedContext, current.claim, current.attempt, outcome);
       } catch (pendingError: unknown) {
-        if (!this.pendingOutcomes.has(current.attempt.attemptId)) {
-          this.hold(lease, admittedContext, current.claim, current.attempt);
-        }
+        if (!this.outcomeRecovery.hasPending(current.attempt.attemptId)) keepLease = true;
         throw pendingError;
       }
     } finally {
-      if (!current || !this.pendingOutcomes.has(current.attempt.attemptId)) await lease.release();
+      if (!keepLease && (!claimed || !this.claimLifecycle.hasPending(claimed.claimId)) &&
+        (!current || !this.outcomeRecovery.hasPending(current.attempt.attemptId))) await lease.release();
     }
   }
 
-  async recoverPatchOutcome(attemptId: string): Promise<ReconciliationResultV02> {
-    const pending = this.pendingOutcomes.get(attemptId);
-    if (!pending) throw new Error('PATCH_RECOVERY_NOT_FOUND: No locally held patch outcome matches this attempt');
-    if (!pending.outcome) throw new Error('PATCH_RECOVERY_EVIDENCE_MISSING: UC-04 outcome receipt is unavailable for recovery');
-    if (pending.recovering) throw new Error('PATCH_RECOVERY_IN_PROGRESS: Patch recovery is already running');
-    const statePort = this.options.statePort;
-    const handoff = this.options.patchRecoveryHandoff;
-    if (!statePort || !handoff) throw new Error('PATCH_RECOVERY_REQUIRED: StatePortV02 and its recovery handoff are required');
+  recoverUnattemptedClaim(claimId: string): Promise<boolean> {
+    return this.claimLifecycle.recoverUnattemptedClaim(claimId);
+  }
 
-    pending.recovering = true;
-    try {
-      const prepared = await handoff.prepare({
-        admission: pending.context,
-        claim: pending.claim,
-        attempt: pending.attempt,
-        outcome: pending.outcome,
-      });
-      this.validateRecoveryPreparation(prepared, pending);
-      const receipt = prepared.receipt;
-      const resultInput: unknown = receipt.reconciliationKind === 'observed-unsettled'
-        ? await statePort.reconcileObservedOutcome(receipt)
-        : await statePort.reconcileUncertain(receipt);
-      const result = validateReconciliationResult(resultInput, receipt.reconciliationId);
-      if (result.outcome === 'settled') {
-        await pending.lease.release();
-        this.pendingOutcomes.delete(attemptId);
-      }
-      return result;
-    } finally {
-      pending.recovering = false;
-    }
+  async recoverPatchOutcome(attemptId: string): Promise<ReconciliationResultV02> {
+    if (!this.outcomeRecovery.hasPending(attemptId)) throw new Error('PATCH_RECOVERY_NOT_FOUND: No locally held patch outcome matches this attempt');
+    return await this.outcomeRecovery.recover(attemptId);
   }
 
   private async recordOutcome(
@@ -179,56 +170,14 @@ export class RepositoryPatchReceiver {
     receipt: RepositoryActionOutcomeReceiptV02,
     result?: { readonly applied: boolean; readonly newRevisionDigest: string },
   ): Promise<{ readonly applied: boolean; readonly newRevisionDigest: string }> {
-    const statePort = this.options.statePort;
-    if (!statePort) throw new Error('STATE_PORT_REQUIRED: StatePortV02 is required for repository receiver execution');
     try {
-      const resultInput: unknown = await statePort.recordOutcome(receipt);
-      const recorded = validateOutcomeRecordResult(resultInput, receipt.receiptId);
+      const recorded = await this.outcomeRecovery.record(lease, context, claim, attempt, receipt);
       if (receipt.outcome === 'observed' && recorded.outcome === 'settled' && result) return result;
-      this.hold(lease, context, claim, attempt, receipt);
       throw new PatchOutcomePendingError(attempt.attemptId);
-    } catch (error: unknown) {
-      if (this.pendingOutcomes.has(attempt.attemptId)) throw error;
-      this.hold(lease, context, claim, attempt, receipt);
+    } catch {
+      if (this.outcomeRecovery.hasPending(attempt.attemptId)) throw new PatchOutcomePendingError(attempt.attemptId);
       throw new PatchOutcomePendingError(attempt.attemptId);
     }
-  }
-
-  private validateRecoveryPreparation(prepared: PatchRecoveryPreparationV02, pending: PendingPatchOutcome): void {
-    if (!prepared || typeof prepared !== 'object' || !prepared.receipt || !prepared.validationContext) {
-      throw new Error('PATCH_RECOVERY_EVIDENCE_INVALID: UC-04 recovery handoff returned incomplete evidence');
-    }
-    const { receipt, validationContext } = prepared;
-    const expectedKind = pending.outcome?.outcome === 'uncertain' ? 'uncertain-attempt' : 'observed-unsettled';
-    const trustedAttempt = validationContext?.trustedAttempt;
-    const trustedClaim = validationContext?.trustedClaim;
-    const trustedPredecessor = validationContext?.trustedPredecessor;
-    if (receipt.reconciliationKind !== expectedKind || receipt.claimId !== pending.claim.claimId ||
-      receipt.attemptId !== pending.attempt.attemptId || receipt.predecessorReceiptId !== pending.outcome?.receiptId ||
-      receipt.predecessorReceiptDigest !== pending.outcome?.receiptDigest ||
-      receipt.subjectKind !== 'repository-action' || receipt.actionDigest !== pending.context.actionDigest ||
-      receipt.admissionDigest !== computeAdmissionDigest(pending.context) ||
-      computeCanonicalSha256(validationContext.trustedAdmission) !== computeCanonicalSha256(pending.context) ||
-      computeCanonicalSha256(validationContext.trustedClaim) !== computeCanonicalSha256(pending.claim) ||
-      computeCanonicalSha256(validationContext.trustedAttempt) !== computeCanonicalSha256(pending.attempt) ||
-      computeCanonicalSha256(validationContext.trustedPredecessor) !== computeCanonicalSha256(pending.outcome) ||
-      trustedClaim?.claimId !== pending.claim.claimId || trustedClaim.claimDigest !== pending.claim.claimDigest ||
-      trustedAttempt?.attemptId !== pending.attempt.attemptId || trustedAttempt.claimId !== pending.claim.claimId ||
-      trustedPredecessor?.receiptId !== pending.outcome?.receiptId || trustedPredecessor.receiptDigest !== pending.outcome?.receiptDigest) {
-      throw new Error('PATCH_RECOVERY_BINDING_MISMATCH: UC-04 recovery facts do not match the held patch attempt');
-    }
-    const validation = validateAttemptReconciliationReceiptV02(receipt, validationContext);
-    if (!validation.ok) throw new Error(`INVALID_PATCH_RECOVERY_RECEIPT: ${validation.errors.map((item) => item.code).join(',')}`);
-  }
-
-  private hold(
-    lease: WorkspaceLease,
-    context: RepositoryAdmissionContextV02,
-    claim: ClaimReceiptV02,
-    attempt: AttemptReceiptV02,
-    outcome?: RepositoryActionOutcomeReceiptV02,
-  ): void {
-    this.pendingOutcomes.set(attempt.attemptId, { lease, context, claim, attempt, outcome, recovering: false });
   }
 }
 
@@ -327,28 +276,4 @@ function createPatchOutcomeReceipt(
   const validation = validateRepositoryActionOutcomeReceiptV02(receipt, validationContext);
   if (!validation.ok) throw new Error(`INVALID_PATCH_OUTCOME_RECEIPT: ${validation.errors.map((item) => item.code).join(',')}`);
   return validation.value;
-}
-
-function validateOutcomeRecordResult(input: unknown, receiptId: string): OutcomeRecordResultV02 {
-  if (!isPlainRecord(input) || Object.keys(input).length !== 2 ||
-    !['settled', 'recorded-unsettled', 'already-recorded', 'uncertain'].includes(String(input['outcome'])) ||
-    input['receiptId'] !== receiptId) {
-    throw new Error('INVALID_OUTCOME_RECORD_RESULT: StatePort returned a mismatched patch outcome result');
-  }
-  return input as unknown as OutcomeRecordResultV02;
-}
-
-function validateReconciliationResult(input: unknown, receiptId: string): ReconciliationResultV02 {
-  if (!isPlainRecord(input) || Object.keys(input).length !== 2 ||
-    (input['outcome'] !== 'settled' && input['outcome'] !== 'blocked' && input['outcome'] !== 'conflict') ||
-    input['receiptId'] !== receiptId) {
-    throw new Error('INVALID_RECONCILIATION_RESULT: StatePort returned a mismatched patch recovery result');
-  }
-  return input as unknown as ReconciliationResultV02;
-}
-
-function isPlainRecord(input: unknown): input is Record<string, unknown> {
-  if (input === null || typeof input !== 'object' || Array.isArray(input)) return false;
-  const prototype = Object.getPrototypeOf(input);
-  return prototype === Object.prototype || prototype === null;
 }
