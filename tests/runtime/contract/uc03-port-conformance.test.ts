@@ -7,6 +7,7 @@ import {
   type NormalizedAction,
   computeCanonicalSha256,
   computeActionDigest,
+  validateRepositoryAdmissionV02,
   validateReviewResult,
   type RepositoryAdmissionContextV02,
   type ProviderAdmissionContextV02,
@@ -16,7 +17,12 @@ import { ScriptedApprovalPort, ScriptedApprovalPortV02 } from '../support/uc03/s
 import { ScriptedModelPort, ScriptedModelPortV02 } from '../support/uc03/scripted-model.ts';
 import { ScriptedReviewerPort, ScriptedReviewerPortV02 } from '../support/uc03/scripted-reviewer.ts';
 import { FakeRepositoryPort, FakeRepositoryPortV02 } from '../support/uc03/fake-repository.ts';
-import { createTestTaskState, createTestApprovalBinding, createTestProviderUsage } from '../support/uc03/state-fixtures.ts';
+import {
+  createTestTaskState,
+  createTestApprovalBinding,
+  createTestProviderUsage,
+  createTestRepositoryAdmissionTrustedContextV02,
+} from '../support/uc03/state-fixtures.ts';
 import {
   createFixtureAdmissionContext,
   createFixtureReviewerRequest,
@@ -281,10 +287,23 @@ for (const scenario of ['missing', 'exhausted', 'malformed', 'stale', 'valid'] a
       assert.equal(res.applied, false);
     } else if (scenario === 'stale') {
       const staleContext = createFixtureRepositoryAdmissionContextV02({
+        action: patch,
         canonicalRevision: 'sha256:stale-rev',
+        baseRevision: patch.baseRevisionDigest,
       });
+      const validation = validateRepositoryAdmissionV02(staleContext, {
+        ...createTestRepositoryAdmissionTrustedContextV02(staleContext),
+        canonicalRevision: port.currentRevision,
+      });
+      assert.equal(staleContext.actionDigest, computeActionDigest(patch));
+      assert.equal(staleContext.baseRevision, patch.baseRevisionDigest);
+      assert.equal(validation.ok, false);
+      if (!validation.ok) assert.deepEqual(validation.errors.map(({ code }) => code), ['REVISION_MISMATCH']);
       const res = await port.applyPatch(patch, staleContext);
       assert.equal(res.applied, false);
+      assert.equal(port.currentRevision, patch.baseRevisionDigest);
+      assert.deepEqual(underlying.patches, []);
+      assert.deepEqual(underlying.v02Calls, []);
     } else {
       // valid
       const res = await port.applyPatch(patch, validContext);
@@ -310,9 +329,20 @@ for (const scenario of ['missing', 'exhausted', 'malformed', 'stale', 'valid'] a
     const evaluation = createCurrentPolicyEvaluation(action, context, auth, 'APPROVAL_REQUIRED');
 
     if (scenario === 'missing') {
-      const port = new ScriptedApprovalPortV02(new ScriptedApprovalPort({ v02Evaluations: [evaluation] }));
+      const decision = createFixtureActionDecisionReceiptV02({
+        decisionId: `decision-${scenario}`,
+        actionDigest: evaluation.actionDigest,
+        evaluationReceiptRef: evaluation.receiptId,
+        decisionAuthorityGeneration: evaluation.decisionAuthorityGeneration,
+      });
+      const port = new ScriptedApprovalPortV02(new ScriptedApprovalPort({
+        v02Evaluations: [evaluation],
+        v02Decisions: [decision],
+      }));
       await assert.rejects(port.evaluatePolicyV02(action, context), /MISSING_CURRENT_AUTHORITY/);
       assert.equal(await port.validateBindingV02(evaluation), false);
+      assert.equal(await port.validateBindingV02(evaluation, auth), false);
+      assert.equal(await port.validateBindingV02(decision, auth), false);
     } else if (scenario === 'exhausted') {
       const port = new ScriptedApprovalPortV02(new ScriptedApprovalPort({ v02AuthorityRef: auth, v02Evaluations: [evaluation] }));
       assert.strictEqual(await port.evaluatePolicyV02(action, context), evaluation);

@@ -43,6 +43,9 @@ export function buildPresentationV02(input: PresentationInputV02, profile: Polic
   }
 
   const raw = input as unknown as Record<string, unknown>;
+  if (Object.hasOwn(raw, 'binding') || Object.hasOwn(raw, 'freshness')) {
+    throw new Error('unsafe-presentation');
+  }
   if (raw['schemaVersion'] !== undefined && raw['schemaVersion'] !== UC05_APPROVAL_SCHEMA_VERSION_V02) {
     throw new Error('unsafe-presentation');
   }

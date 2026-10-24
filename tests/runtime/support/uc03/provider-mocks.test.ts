@@ -9,6 +9,7 @@ import {
   computeAttemptOutcomeDigest,
   computeActionDigest,
   computeRequestContentDigest,
+  validateRepositoryAdmissionV02,
   type ApplyPatchAction,
   type RunCommandAction,
   type ModelPortResult,
@@ -35,6 +36,7 @@ import { ScriptedModelPort, ScriptedModelPortV02 } from './scripted-model.ts';
 import { ScriptedReviewerPort, ScriptedReviewerPortV02 } from './scripted-reviewer.ts';
 import { FakeRepositoryPort, FakeRepositoryPortV02 } from './fake-repository.ts';
 import { ScriptedApprovalPort, ScriptedApprovalPortV02 } from './scripted-approval.ts';
+import { createTestRepositoryAdmissionTrustedContextV02 } from './state-fixtures.ts';
 import {
   createFixtureBugTask,
   createFixtureTaskState,
@@ -999,9 +1001,7 @@ test('FakeRepositoryPortV02 forwards branch-matched patch, command, and test out
 });
 
 test('FakeRepositoryPort (v0.2): missing or stale context causes zero mock effects and zero snapshot mutations', async () => {
-  const underlying = new FakeRepositoryPort();
-  const repo = new FakeRepositoryPortV02(underlying);
-  const initialRevision = repo.currentRevision;
+  const initialRevision = new FakeRepositoryPort().currentRevision;
   const patchAction: ApplyPatchAction = {
     actionId: 'act-patch-stale',
     kind: 'apply_patch',
@@ -1010,9 +1010,22 @@ test('FakeRepositoryPort (v0.2): missing or stale context causes zero mock effec
     baseRevisionDigest: initialRevision,
   };
   const staleContext = createFixtureRepositoryAdmissionContextV02({
-    action: { ...patchAction, baseRevisionDigest: 'sha256:stale-canonical-rev' },
+    action: patchAction,
     canonicalRevision: 'sha256:stale-canonical-rev',
+    baseRevision: initialRevision,
   });
+  const validation = validateRepositoryAdmissionV02(staleContext, {
+    ...createTestRepositoryAdmissionTrustedContextV02(staleContext),
+    canonicalRevision: initialRevision,
+  });
+  assert.equal(staleContext.actionDigest, computeActionDigest(patchAction));
+  assert.equal(staleContext.baseRevision, patchAction.baseRevisionDigest);
+  assert.equal(validation.ok, false);
+  if (!validation.ok) assert.deepEqual(validation.errors.map(({ code }) => code), ['REVISION_MISMATCH']);
+  const journal = createRecordingJournal(staleContext, 'stale-repository-context');
+  const underlying = new FakeRepositoryPort({ statePort: journal.statePort, executorIdentity: journal.executor });
+  const repo = new FakeRepositoryPortV02(underlying);
+  assert.equal(repo.currentRevision, initialRevision);
 
   // Missing context (malformed/empty)
   const missingRes = await repo.applyPatch(patchAction, undefined as unknown as RepositoryAdmissionContextV02);
@@ -1024,6 +1037,10 @@ test('FakeRepositoryPort (v0.2): missing or stale context causes zero mock effec
   assert.equal(staleRes.applied, false);
   assert.equal(repo.currentRevision, initialRevision);
   assert.deepEqual(underlying.patches, []);
+  assert.deepEqual(repo.v02Calls, []);
+  assert.deepEqual(journal.statePort.claimCalls, []);
+  assert.deepEqual(journal.statePort.beginCalls, []);
+  assert.deepEqual(journal.statePort.recordedOutcomes, []);
 });
 
 test('ScriptedApprovalPort (v0.2): preserves exact evaluation and decision receipts on positive forwarding', async () => {
@@ -1406,9 +1423,20 @@ test('ScriptedApprovalPortV02 rejects malformed, cross-identity and stale author
 test('ScriptedApprovalPortV02 does not accept caller authority without configured current authority', async () => {
   const request = createFixtureProviderRequest({ providerRequestId: 'req-provider-authority-unconfigured-095' });
   const authority = createFixturePolicyAuthorityRefV02({ configId: request.configId });
-  const port = new ScriptedApprovalPortV02(new ScriptedApprovalPort());
+  const action: RunCommandAction = {
+    actionId: 'approval-authority-unconfigured', kind: 'run_command', executable: 'pytest', argv: [], workingDirectory: 'tests',
+  };
+  const context = createFixtureRepositoryAdmissionContextV02({ action, policyAuthorityRef: authority });
+  const evaluation = createCurrentPolicyEvaluation(action, context, authority, 'APPROVAL_REQUIRED');
+  const decision = createCurrentDecision(evaluation);
+  const port = new ScriptedApprovalPortV02(new ScriptedApprovalPort({
+    v02Evaluations: [evaluation],
+    v02Decisions: [decision],
+  }));
 
   await assert.rejects(port.issueProviderAdmissionReceiptV02(request, authority), /MISSING_CURRENT_AUTHORITY/);
+  assert.equal(await port.validateBindingV02(evaluation, authority), false);
+  assert.equal(await port.validateBindingV02(decision, authority), false);
 });
 
 test('ScriptedApprovalPortV02 refuses caller authority that differs from configured current authority', async () => {

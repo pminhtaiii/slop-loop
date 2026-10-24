@@ -290,8 +290,9 @@ export class ScriptedApprovalPort implements ApprovalPort {
     receipt: PolicyEvaluationReceiptV02 | ActionDecisionReceiptV02,
     authorityRef?: PolicyAuthorityRefV02
   ): Promise<boolean> {
-    const auth = authorityRef ?? this.v02AuthorityRef;
-    if (!auth || !isValidAuthorityRef(auth) || (this.v02AuthorityRef && !sameAuthority(auth, this.v02AuthorityRef))) return false;
+    const auth = this.v02AuthorityRef;
+    if (!auth || !isValidAuthorityRef(auth) ||
+      (authorityRef !== undefined && (!isValidAuthorityRef(authorityRef) || !sameAuthority(authorityRef, auth)))) return false;
     if ('result' in receipt) {
       const scripted = this.v02Evaluations.get(receipt.receiptId);
       return isValidEvaluationReceipt(receipt) && !!scripted &&

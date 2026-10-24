@@ -615,6 +615,40 @@ if (process.argv[2] === 'uc05-cli-test-driver') {
     assert.equal(repoPreBundle.summary.taskCriteriaDigest, digest);
     assert.equal(validateSafePresentationV02(repoPreBundle.summary, profile).ok, true);
 
+    const maxTargets = Array.from({ length: 32 }, (_, index) => `src/module-${index}.ts`);
+    const boundedBundle = buildPresentationV02({
+      ...validRepoPrePlan,
+      elements: { ...validRepoPrePlan.elements, targets: maxTargets },
+    }, profile);
+    assert.equal(validateSafePresentationV02(boundedBundle.summary, profile).ok, true);
+    assert.deepEqual(boundedBundle.summary.elements.targets, maxTargets);
+
+    const sparseTargets = ['src/one.ts'];
+    sparseTargets.length = 2;
+    const extraKeyTargets = ['src/one.ts'] as string[] & { extra?: string };
+    extraKeyTargets.extra = 'src/two.ts';
+    const invalidTargetSets: readonly unknown[][] = [
+      ['/absolute/private.py'],
+      ['../outside.py'],
+      ['src/../private.py'],
+      ['C:/workspace/private.py'],
+      ['C:\\workspace\\private.py'],
+      ['src\\private.py'],
+      ['.'],
+      ['..'],
+      ['src/./private.py'],
+      [''],
+      sparseTargets,
+      extraKeyTargets,
+      Array.from({ length: 33 }, (_, index) => `src/module-${index}.ts`),
+    ];
+    for (const targets of invalidTargetSets) {
+      const elements: Record<string, unknown> = { ...validRepoPrePlan.elements, targets };
+      const invalidInput = { ...validRepoPrePlan, elements } as unknown as PresentationInputV02;
+      assert.equal(validateSafePresentationV02({ ...repoPreBundle.summary, elements }, profile).ok, false);
+      assert.throws(() => buildPresentationV02(invalidInput, profile), /unsafe-presentation/);
+    }
+
     const repoPlanBundle = buildPresentationV02(validRepoApprovedPlan, profile);
     assert.equal(repoPlanBundle.summary.schemaVersion, UC05_APPROVAL_SCHEMA_VERSION_V02);
     assert.equal(repoPlanBundle.summary.subjectKind, 'repository-action');
@@ -731,6 +765,15 @@ if (process.argv[2] === 'uc05-cli-test-driver') {
     assert.equal(v01Val.ok, false);
     assert.ok(v01Val.errors.some(e => e.code === 'INVALID_SCHEMA_VERSION'));
     assert.throws(() => buildPresentationV02(v01Summary as unknown as PresentationInputV02, profile), /unsafe-presentation/);
+
+    for (const field of ['binding', 'freshness'] as const) {
+      for (const value of [undefined, { callerSupplied: true }]) {
+        assert.throws(() => buildPresentationV02({
+          ...validRepoPrePlan,
+          [field]: value,
+        } as unknown as PresentationInputV02, profile), /unsafe-presentation/);
+      }
+    }
 
     // 5. Deliberate versioned compatibility display retained with no effect authority
     const v01Input = {
@@ -980,6 +1023,22 @@ if (process.argv[2] === 'uc05-cli-test-driver') {
         assert.deepEqual(effects, { mutations: 0, queue: ['pending-control'], accountingEvents: 0, controlVersion: 7 });
       });
     }
+
+    const unsafePathSummary = {
+      ...validPresentation,
+      elements: { ...validPresentation.elements, targets: ['../outside.py'] },
+    };
+    const unsafePathRead = await runWithCollection({
+      schemaVersion: UC05_APPROVAL_SCHEMA_VERSION_V02,
+      items: [unsafePathSummary],
+    });
+    assert.equal(unsafePathRead.response.exitCode, 5);
+    assert.deepEqual(JSON.parse(unsafePathRead.response.output), {
+      schemaVersion: UC05_APPROVAL_SCHEMA_VERSION_V02,
+      outcome: 'unavailable',
+      safeReasonCode: 'approval-cli-denied',
+    });
+    assert.deepEqual(unsafePathRead.effects, { mutations: 0, queue: ['pending-control'], accountingEvents: 0, controlVersion: 7 });
 
     const { response, effects } = await runWithCollection({ schemaVersion: UC05_APPROVAL_SCHEMA_VERSION_V02, items: [validPresentation] });
     assert.equal(response.exitCode, 0);

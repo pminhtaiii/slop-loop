@@ -1,7 +1,8 @@
-import type { ApprovalBinding, ApprovalBindingContext, NormalizedAction, ProviderRequest, ValidationResult } from '../contracts/foundation/uc03.ts';
+import type { NormalizedAction, ProviderRequest, ValidationResult } from '../contracts/foundation/uc03.ts';
 import { isProxy } from 'node:util/types';
 import type { PolicyProfile, ProviderRole, SafePresentation } from '../contracts/approvals/contracts.ts';
 import { UC05_APPROVAL_SCHEMA_VERSION_V02, validatePolicyProfile } from '../contracts/approvals/contracts.ts';
+import { isBoundedDenseArray, SAFE_RELATIVE_PATH_PATTERN } from '../contracts/approvals/contracts-v01-validation.ts';
 import { containsProtectedContent } from '../foundation/repository-tools.ts';
 
 export type PresentationSubjectKindV02 = 'repository-action' | 'provider-request';
@@ -82,14 +83,12 @@ export interface PresentationInputV02Base {
   readonly continuationRef: string;
   readonly policyIdentity: PolicyProfile['policyIdentity'];
   readonly elements: SafePresentation['elements'];
-  readonly freshness?: ApprovalBindingContext;
 }
 
 export interface PresentationInputV02RepositoryActionPrePlan extends PresentationInputV02Base {
   readonly subjectKind: 'repository-action';
   readonly planApplicability: 'pre-plan-diagnostic';
   readonly action: NormalizedAction;
-  readonly binding?: ApprovalBinding;
   readonly diagnosticPurpose: string;
   readonly taskCriteriaDigest: string;
 }
@@ -98,7 +97,6 @@ export interface PresentationInputV02RepositoryActionApprovedPlan extends Presen
   readonly subjectKind: 'repository-action';
   readonly planApplicability: 'approved-plan';
   readonly action: NormalizedAction;
-  readonly binding?: ApprovalBinding;
   readonly planBindingDigest: string;
   readonly planDecisionRef: string;
 }
@@ -281,8 +279,8 @@ export function validateSafePresentationV02(input: unknown, profile: unknown): V
       }
     }
     const targets = elemRec['targets'];
-    if (!Array.isArray(targets) || targets.length === 0 || targets.length > 128 || targets.some(t => typeof t !== 'string' || !t)) {
-      errors.push({ path: `${path}.elements.targets`, code: 'INVALID_TARGETS', message: 'targets must be a nonempty array of strings' });
+    if (!isBoundedDenseArray(targets, 32) || targets.length === 0 || targets.some(target => typeof target !== 'string' || !SAFE_RELATIVE_PATH_PATTERN.test(target))) {
+      errors.push({ path: `${path}.elements.targets`, code: 'INVALID_TARGETS', message: 'targets must be a nonempty bounded array of safe relative paths' });
     }
   }
 
