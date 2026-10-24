@@ -16,6 +16,7 @@ import {
   containsProtectedContent,
   type DockerContainerPlan,
   type ContainerExecutionOutput,
+  type WorkspaceLease,
   StructuredCommandExecutor,
   DockerCommandExecutor,
   ALLOWED_EXECUTABLES,
@@ -27,9 +28,15 @@ import {
   type CommandView,
   type TaskWorkspace,
   type ExecutionLimits,
+  type RunCommandAction,
+  computeActionDigest,
   validateCommandView,
   validateTaskWorkspace,
 } from '../../../src/contracts/foundation/uc03.ts';
+import type {
+  AttemptReceiptV02,
+  ExecutorIdentityV02,
+} from '../../../src/contracts/foundation/uc03/ports-v02.ts';
 
 export const TEST_PROFILE_IMAGE_DIGEST = 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' as const;
 
@@ -3516,4 +3523,694 @@ test('StructuredCommandExecutor & truncateUtf8: lone high and low surrogates can
   assert.equal(resTight.stdout, '\uFFFDa');
   assert.equal(Buffer.byteLength(resTight.stdout, 'utf8'), 4);
   assert.equal(resTight.truncated, true);
+});
+
+/* ------------------------------------------------------------------
+ * UC-03 v0.2.0 Structured Command Executor & Workspace Gate (T049/T050)
+ * ------------------------------------------------------------------ */
+
+test('StructuredCommandExecutor: authenticates adapter identity, process incarnation, and fencing generation at controller boundary', async () => {
+  const controller = new FakeDockerLifecycleController();
+  const manager = new DockerWorkspaceManager({ controller });
+  const profile = createValidProfile();
+  const rev = 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+
+  const ws = await manager.createWorkspace({
+    taskId: 'task-auth-1',
+    workspaceId: 'ws-auth-1',
+    initialRevisionDigest: rev,
+    profile,
+  });
+
+  controller.snapshotToReturn = {
+    canonicalRevisionDigest: rev,
+    entries: [createSnapshotEntry('src/app.py', 'print("hello")\n')],
+  };
+
+  const view = await manager.admitCommandView({ workspaceId: ws.workspaceId });
+
+  const executor = new StructuredCommandExecutor({
+    manager,
+    controller,
+    profile,
+    adapterIdentity: 'structured-command-executor',
+    processIncarnation: 'inc-original-123',
+    fencingGeneration: 2,
+  });
+
+  const action: RunCommandAction = {
+    actionId: 'act-cmd-auth-1',
+    kind: 'run_command',
+    executable: 'pytest',
+    argv: ['-q'],
+    workingDirectory: '/workspace/repo',
+  };
+  const actionDigest = computeActionDigest(action);
+
+  function createAttempt(overrides?: Partial<ExecutorIdentityV02>): AttemptReceiptV02 {
+    return {
+      attemptId: 'att-auth-1',
+      claimId: 'claim-auth-1',
+      taskId: ws.taskId,
+      executorIdentity: {
+        adapterIdentity: 'structured-command-executor',
+        processIncarnation: 'inc-original-123',
+        fencingGeneration: 2,
+        payloadDigest: actionDigest,
+        ...overrides,
+      },
+      preAttemptTaskStateVersion: 1,
+      postBeginTaskStateVersion: 1,
+      preAttemptControlVersion: 1,
+      postBeginControlVersion: 2,
+      epoch: 1,
+      status: 'attempting',
+    };
+  }
+
+  // 1. Adapter identity mismatch -> AUTHENTICATION_FAILED, zero controller dispatch
+  await assert.rejects(
+    async () => {
+      await executor.execute({
+        workspaceId: ws.workspaceId,
+        action,
+        limits: createValidLimits(),
+        view,
+        attempt: createAttempt({ adapterIdentity: 'wrong-adapter' }),
+      });
+    },
+    { message: /AUTHENTICATION_FAILED/ }
+  );
+  assert.equal(controller.executedPlans.length, 0);
+
+  // 2. Process incarnation mismatch (e.g. restart) -> RESTART_INCARNATION_MISMATCH
+  await assert.rejects(
+    async () => {
+      await executor.execute({
+        workspaceId: ws.workspaceId,
+        action,
+        limits: createValidLimits(),
+        view,
+        attempt: createAttempt({ processIncarnation: 'inc-prior-crash-000' }),
+      });
+    },
+    { message: /RESTART_INCARNATION_MISMATCH/ }
+  );
+  assert.equal(controller.executedPlans.length, 0);
+
+  // 3. Stale fencing generation (< executor generation) -> STALE_FENCING_GENERATION
+  await assert.rejects(
+    async () => {
+      await executor.execute({
+        workspaceId: ws.workspaceId,
+        action,
+        limits: createValidLimits(),
+        view,
+        attempt: createAttempt({ fencingGeneration: 1 }), // 1 < 2
+      });
+    },
+    { message: /STALE_FENCING_GENERATION/ }
+  );
+  assert.equal(controller.executedPlans.length, 0);
+
+  // 4. Payload digest mismatch -> PAYLOAD_DIGEST_MISMATCH
+  await assert.rejects(
+    async () => {
+      await executor.execute({
+        workspaceId: ws.workspaceId,
+        action,
+        limits: createValidLimits(),
+        view,
+        attempt: createAttempt({ payloadDigest: 'sha256:wrongdigest' }),
+      });
+    },
+    { message: /PAYLOAD_DIGEST_MISMATCH/ }
+  );
+  assert.equal(controller.executedPlans.length, 0);
+});
+
+test('StructuredCommandExecutor: Section 10 Case 5 duplicate successful receipt to same executor incarnation with pre-invoke barrier', async () => {
+  const controller = new FakeDockerLifecycleController();
+  const manager = new DockerWorkspaceManager({ controller });
+  const profile = createValidProfile();
+  const rev = 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+
+  const ws = await manager.createWorkspace({
+    taskId: 'task-dup-case5',
+    workspaceId: 'ws-dup-case5',
+    initialRevisionDigest: rev,
+    profile,
+  });
+
+  controller.snapshotToReturn = {
+    canonicalRevisionDigest: rev,
+    entries: [createSnapshotEntry('src/app.py', 'print("hello")\n')],
+  };
+
+  const view = await manager.admitCommandView({ workspaceId: ws.workspaceId });
+
+  const executor = new StructuredCommandExecutor({
+    manager,
+    controller,
+    profile,
+    adapterIdentity: 'structured-command-executor',
+    processIncarnation: 'inc-case5-active',
+    fencingGeneration: 1,
+  });
+
+  const action: RunCommandAction = {
+    actionId: 'act-cmd-case5',
+    kind: 'run_command',
+    executable: 'pytest',
+    argv: ['-q'],
+    workingDirectory: '/workspace/repo',
+  };
+  const actionDigest = computeActionDigest(action);
+
+  const attempt: AttemptReceiptV02 = {
+    attemptId: 'att-case5-unique-1',
+    claimId: 'claim-case5-1',
+    taskId: ws.taskId,
+    executorIdentity: {
+      adapterIdentity: 'structured-command-executor',
+      processIncarnation: 'inc-case5-active',
+      fencingGeneration: 1,
+      payloadDigest: actionDigest,
+    },
+    preAttemptTaskStateVersion: 1,
+    postBeginTaskStateVersion: 1,
+    preAttemptControlVersion: 1,
+    postBeginControlVersion: 2,
+    epoch: 1,
+    status: 'attempting',
+  };
+
+  // Barrier to hold first delivery at pre-invoke gate
+  let releaseBarrier!: () => void;
+  const barrierPromise = new Promise<void>((resolve) => {
+    releaseBarrier = resolve;
+  });
+
+  let firstDeliveryStarted = false;
+  const firstDeliveryPromise = executor.execute({
+    workspaceId: ws.workspaceId,
+    action,
+    limits: createValidLimits(),
+    view,
+    attempt,
+    preInvokeBarrier: async () => {
+      firstDeliveryStarted = true;
+      await barrierPromise;
+    },
+  });
+
+  // Wait until first delivery reaches barrier
+  while (!firstDeliveryStarted) {
+    await new Promise((r) => setTimeout(r, 5));
+  }
+
+  // Concurrently deliver identical successful attempt to the same executor incarnation
+  await assert.rejects(
+    async () => {
+      await executor.execute({
+        workspaceId: ws.workspaceId,
+        action,
+        limits: createValidLimits(),
+        view,
+        attempt,
+      });
+    },
+    { message: /DUPLICATE_ATTEMPT_CONSUMED/ }
+  );
+
+  // Release barrier to let first delivery complete
+  releaseBarrier();
+  const result = await firstDeliveryPromise;
+  assert.equal(result.outcome, 'success');
+
+  // Verify exactly ONE controller dispatch
+  assert.equal(controller.executedPlans.length, 1);
+
+  // Subsequent call after first delivery completed is also rejected
+  await assert.rejects(
+    async () => {
+      await executor.execute({
+        workspaceId: ws.workspaceId,
+        action,
+        limits: createValidLimits(),
+        view,
+        attempt,
+      });
+    },
+    { message: /DUPLICATE_ATTEMPT_CONSUMED/ }
+  );
+  assert.equal(controller.executedPlans.length, 1);
+});
+
+test('StructuredCommandExecutor: Section 10 Case 8 stale executor actor after fencing refuses execution', async () => {
+  const controller = new FakeDockerLifecycleController();
+  const manager = new DockerWorkspaceManager({ controller });
+  const profile = createValidProfile();
+  const rev = 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+
+  const ws = await manager.createWorkspace({
+    taskId: 'task-fence-case8',
+    workspaceId: 'ws-fence-case8',
+    initialRevisionDigest: rev,
+    profile,
+  });
+
+  controller.snapshotToReturn = {
+    canonicalRevisionDigest: rev,
+    entries: [createSnapshotEntry('src/app.py', 'print("hello")\n')],
+  };
+
+  const view = await manager.admitCommandView({ workspaceId: ws.workspaceId });
+
+  const executor = new StructuredCommandExecutor({
+    manager,
+    controller,
+    profile,
+    adapterIdentity: 'structured-command-executor',
+    processIncarnation: 'inc-case8-active',
+    fencingGeneration: 1,
+  });
+
+  const action: RunCommandAction = {
+    actionId: 'act-cmd-case8',
+    kind: 'run_command',
+    executable: 'pytest',
+    argv: ['-q'],
+    workingDirectory: '/workspace/repo',
+  };
+  const actionDigest = computeActionDigest(action);
+
+  // Increment/fence generation on executor to 2
+  executor.setFencingGeneration(2);
+
+  const staleAttempt: AttemptReceiptV02 = {
+    attemptId: 'att-case8-stale',
+    claimId: 'claim-case8-stale',
+    taskId: ws.taskId,
+    executorIdentity: {
+      adapterIdentity: 'structured-command-executor',
+      processIncarnation: 'inc-case8-active',
+      fencingGeneration: 1, // Stale generation 1 < 2
+      payloadDigest: actionDigest,
+    },
+    preAttemptTaskStateVersion: 1,
+    postBeginTaskStateVersion: 1,
+    preAttemptControlVersion: 1,
+    postBeginControlVersion: 2,
+    epoch: 1,
+    status: 'attempting',
+  };
+
+  await assert.rejects(
+    async () => {
+      await executor.execute({
+        workspaceId: ws.workspaceId,
+        action,
+        limits: createValidLimits(),
+        view,
+        attempt: staleAttempt,
+      });
+    },
+    { message: /STALE_FENCING_GENERATION/ }
+  );
+
+  assert.equal(controller.executedPlans.length, 0);
+});
+
+test('DockerWorkspaceManager: Section 10 Case 20 patch workspace gate lifetime blocks competing writer and command-view builder', async () => {
+  const controller = new FakeDockerLifecycleController();
+  const manager = new DockerWorkspaceManager({ controller });
+  const profile = createValidProfile();
+  const rev = 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+
+  const ws = await manager.createWorkspace({
+    taskId: 'task-gate-case20',
+    workspaceId: 'ws-gate-case20',
+    initialRevisionDigest: rev,
+    profile,
+  });
+
+  controller.snapshotToReturn = {
+    canonicalRevisionDigest: rev,
+    entries: [createSnapshotEntry('src/app.py', 'print("hello")\n')],
+  };
+
+  // Acquire exclusive writer lease (as a patch would do)
+  const writeLease = await manager.acquireWriteLease(ws.workspaceId, rev);
+  assert.equal(manager.hasActiveWriterLease(ws.workspaceId), true);
+
+  let viewBuildCompleted = false;
+  let competingWriteCompleted = false;
+
+  // 1. Competing view builder (admitCommandView) is blocked while writer lease is held
+  const viewPromise = manager.admitCommandView({ workspaceId: ws.workspaceId }).then((view) => {
+    viewBuildCompleted = true;
+    return view;
+  });
+
+  // 2. Competing writer lease is blocked while writer lease is held
+  const competingWritePromise = manager.acquireWriteLease(ws.workspaceId, rev).then((lease) => {
+    competingWriteCompleted = true;
+    return lease;
+  });
+
+  // Brief tick to ensure async operations have queued
+  await new Promise((r) => setTimeout(r, 20));
+
+  assert.equal(viewBuildCompleted, false, 'Command-view builder must remain blocked while writer lease is active');
+  assert.equal(competingWriteCompleted, false, 'Competing writer lease must remain blocked while writer lease is active');
+
+  // Release the writer lease
+  writeLease.release();
+  assert.equal(manager.hasActiveWriterLease(ws.workspaceId), false);
+
+  // Both should now unblock
+  const [view, competingLease] = await Promise.all([viewPromise, competingWritePromise]);
+  assert.ok(view);
+  assert.ok(competingLease);
+  assert.equal(viewBuildCompleted, true);
+  assert.equal(competingWriteCompleted, true);
+
+  competingLease.release();
+});
+
+test('StructuredCommandExecutor: rejects future and NaN fencing generations before controller dispatch', async () => {
+  const controller = new FakeDockerLifecycleController();
+  const manager = new DockerWorkspaceManager({ controller });
+  const profile = createValidProfile();
+  const rev = 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+  const ws = await manager.createWorkspace({
+    taskId: 'task-invalid-fence',
+    workspaceId: 'ws-invalid-fence',
+    initialRevisionDigest: rev,
+    profile,
+  });
+  manager.setFencingGeneration(ws.workspaceId, 2);
+  assert.throws(() => manager.setFencingGeneration(ws.workspaceId, 1), /STALE_FENCING_GENERATION/);
+  controller.snapshotToReturn = {
+    canonicalRevisionDigest: rev,
+    entries: [createSnapshotEntry('src/app.py', 'print("hello")\n')],
+  };
+  const view = await manager.admitCommandView({ workspaceId: ws.workspaceId });
+  const executor = new StructuredCommandExecutor({ manager, controller, profile, fencingGeneration: 2 });
+  assert.throws(() => executor.setFencingGeneration(1), /STALE_FENCING_GENERATION/);
+  const action: RunCommandAction = {
+    actionId: 'act-invalid-fence',
+    kind: 'run_command',
+    executable: 'pytest',
+    argv: ['-q'],
+    workingDirectory: '/workspace/repo',
+  };
+  const actionDigest = computeActionDigest(action);
+
+  for (const [index, fencingGeneration] of [1, 3, Number.NaN].entries()) {
+    const attempt: AttemptReceiptV02 = {
+      attemptId: `att-invalid-fence-${index}`,
+      claimId: `claim-invalid-fence-${index}`,
+      taskId: ws.taskId,
+      executorIdentity: {
+        adapterIdentity: 'structured-command-executor',
+        processIncarnation: executor.getProcessIncarnation(),
+        fencingGeneration,
+        payloadDigest: actionDigest,
+      },
+      preAttemptTaskStateVersion: 1,
+      postBeginTaskStateVersion: 1,
+      preAttemptControlVersion: 1,
+      postBeginControlVersion: 2,
+      epoch: 1,
+      status: 'attempting',
+    };
+    await assert.rejects(
+      executor.execute({ workspaceId: ws.workspaceId, action, limits: createValidLimits(), view, attempt }),
+      /STALE_FENCING_GENERATION/,
+    );
+    assert.equal(controller.executedPlans.length, 0);
+  }
+});
+
+test('StructuredCommandExecutor: rechecks manager fence and actor identity after the pre-invoke barrier', async () => {
+  const controller = new FakeDockerLifecycleController();
+  const manager = new DockerWorkspaceManager({ controller });
+  const profile = createValidProfile();
+  const rev = 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+  const ws = await manager.createWorkspace({
+    taskId: 'task-fence-barrier',
+    workspaceId: 'ws-fence-barrier',
+    initialRevisionDigest: rev,
+    profile,
+  });
+  controller.snapshotToReturn = {
+    canonicalRevisionDigest: rev,
+    entries: [createSnapshotEntry('src/app.py', 'print("hello")\n')],
+  };
+  const view = await manager.admitCommandView({ workspaceId: ws.workspaceId });
+  const executor = new StructuredCommandExecutor({ manager, controller, profile, fencingGeneration: 1 });
+  const action: RunCommandAction = {
+    actionId: 'act-fence-barrier',
+    kind: 'run_command',
+    executable: 'pytest',
+    argv: ['-q'],
+    workingDirectory: '/workspace/repo',
+  };
+  const attempt: AttemptReceiptV02 = {
+    attemptId: 'att-fence-barrier',
+    claimId: 'claim-fence-barrier',
+    taskId: ws.taskId,
+    executorIdentity: {
+      adapterIdentity: 'structured-command-executor',
+      processIncarnation: executor.getProcessIncarnation(),
+      fencingGeneration: 1,
+      payloadDigest: computeActionDigest(action),
+    },
+    preAttemptTaskStateVersion: 1,
+    postBeginTaskStateVersion: 1,
+    preAttemptControlVersion: 1,
+    postBeginControlVersion: 2,
+    epoch: 1,
+    status: 'attempting',
+  };
+
+  let releaseBarrier!: () => void;
+  const barrier = new Promise<void>((resolve) => { releaseBarrier = resolve; });
+  let markBarrierReached!: () => void;
+  const barrierReached = new Promise<void>((resolve) => { markBarrierReached = resolve; });
+  const execution = executor.execute({
+    workspaceId: ws.workspaceId,
+    action,
+    limits: createValidLimits(),
+    view,
+    attempt,
+    preInvokeBarrier: async () => {
+      markBarrierReached();
+      await barrier;
+    },
+  });
+
+  await barrierReached;
+  manager.setFencingGeneration(ws.workspaceId, 2);
+  executor.setFencingGeneration(2);
+  releaseBarrier();
+
+  await assert.rejects(execution, /STALE_FENCING_GENERATION/);
+  assert.equal(controller.executedPlans.length, 0);
+
+  const restartedExecutor = new StructuredCommandExecutor({
+    manager,
+    controller,
+    profile,
+    processIncarnation: executor.getProcessIncarnation(),
+    fencingGeneration: 2,
+  });
+  const changedAttempt: AttemptReceiptV02 = {
+    ...attempt,
+    attemptId: 'att-fence-barrier-identity',
+    executorIdentity: {
+      ...attempt.executorIdentity,
+      fencingGeneration: 2,
+    },
+  };
+  let releaseIdentityBarrier!: () => void;
+  const identityBarrier = new Promise<void>((resolve) => { releaseIdentityBarrier = resolve; });
+  let markIdentityBarrierReached!: () => void;
+  const identityBarrierReached = new Promise<void>((resolve) => { markIdentityBarrierReached = resolve; });
+  const changedExecution = restartedExecutor.execute({
+    workspaceId: ws.workspaceId,
+    action,
+    limits: createValidLimits(),
+    view,
+    attempt: changedAttempt,
+    preInvokeBarrier: async () => {
+      markIdentityBarrierReached();
+      await identityBarrier;
+    },
+  });
+
+  await identityBarrierReached;
+  Object.assign(changedAttempt.executorIdentity, {
+    processIncarnation: 'inc-restarted',
+    payloadDigest: 'sha256:changed-after-admission',
+  });
+  releaseIdentityBarrier();
+
+  await assert.rejects(changedExecution, /ATTEMPT_IDENTITY_CHANGED/);
+  assert.equal(controller.executedPlans.length, 0);
+});
+
+test('DockerWorkspaceManager: command-view read lease spans materialization and publication', async () => {
+  const controller = new FakeDockerLifecycleController();
+  const manager = new DockerWorkspaceManager({ controller });
+  const profile = createValidProfile();
+  const rev = 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+  const ws = await manager.createWorkspace({
+    taskId: 'task-view-lease',
+    workspaceId: 'ws-view-lease',
+    initialRevisionDigest: rev,
+    profile,
+  });
+  controller.snapshotToReturn = {
+    canonicalRevisionDigest: rev,
+    entries: [createSnapshotEntry('src/app.py', 'print("hello")\n')],
+  };
+
+  let releaseMaterialization!: () => void;
+  const materialization = new Promise<void>((resolve) => { releaseMaterialization = resolve; });
+  let markMaterializationStarted!: () => void;
+  const materializationStarted = new Promise<void>((resolve) => { markMaterializationStarted = resolve; });
+  controller.onMaterialize = async () => {
+    markMaterializationStarted();
+    await materialization;
+  };
+
+  const viewPromise = manager.admitCommandView({ workspaceId: ws.workspaceId });
+  await materializationStarted;
+  assert.equal(manager.hasActiveReaderLease(ws.workspaceId), true);
+
+  let writerAcquired = false;
+  const writerPromise = manager.acquireWriteLease(ws.workspaceId, rev).then((lease) => {
+    writerAcquired = true;
+    return lease;
+  });
+  await Promise.resolve();
+  assert.equal(writerAcquired, false, 'Writer must wait while the view is materializing');
+
+  releaseMaterialization();
+  const [view, writerLease] = await Promise.all([viewPromise, writerPromise]);
+  assert.equal(manager.getActiveCommandView(ws.workspaceId)?.viewId, view.viewId);
+  assert.equal(writerAcquired, true);
+  writerLease.release();
+});
+
+test('DockerWorkspaceManager: stale lease waiters do not strand later readers or writers', async () => {
+  const controller = new FakeDockerLifecycleController();
+  const manager = new DockerWorkspaceManager({ controller });
+  const profile = createValidProfile();
+  const rev0 = 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+  const rev1 = 'sha256:1123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+  const rev2 = 'sha256:2123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+  const ws = await manager.createWorkspace({
+    taskId: 'task-lease-queue',
+    workspaceId: 'ws-lease-queue',
+    initialRevisionDigest: rev0,
+    profile,
+  });
+
+  const settleBeforeTimeout = async (waiters: readonly Promise<string>[]): Promise<readonly string[]> => {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        Promise.all(waiters),
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(() => reject(new Error('LEASE_WAITER_DID_NOT_SETTLE')), 1_000);
+        }),
+      ]);
+    } finally {
+      if (timeout !== undefined) clearTimeout(timeout);
+    }
+  };
+  const rejectStale = (lease: Promise<WorkspaceLease>): Promise<string> => lease.then(
+    (value) => {
+      value.release();
+      return 'unexpected-acquire';
+    },
+    (error: unknown) => {
+      assert.match(String(error), /STALE_REVISION_DRIFT/);
+      return 'stale';
+    },
+  );
+
+  const writerHolder = await manager.acquireWriteLease(ws.workspaceId, rev0);
+  const staleRead1 = rejectStale(manager.acquireReadLease(ws.workspaceId, rev0));
+  const staleRead2 = rejectStale(manager.acquireReadLease(ws.workspaceId, rev0));
+  manager.setCanonicalRevision(ws.workspaceId, rev1);
+  const eligibleRead = manager.acquireReadLease(ws.workspaceId, rev1).then((lease) => {
+    lease.release();
+    return 'acquired';
+  });
+  writerHolder.release();
+  assert.deepEqual(await settleBeforeTimeout([staleRead1, staleRead2, eligibleRead]), ['stale', 'stale', 'acquired']);
+
+  const readerHolder = await manager.acquireReadLease(ws.workspaceId, rev1);
+  const staleWrite1 = rejectStale(manager.acquireWriteLease(ws.workspaceId, rev1));
+  const staleWrite2 = rejectStale(manager.acquireWriteLease(ws.workspaceId, rev1));
+  manager.setCanonicalRevision(ws.workspaceId, rev2);
+  const eligibleWrite = manager.acquireWriteLease(ws.workspaceId, rev2).then((lease) => {
+    lease.release();
+    return 'acquired';
+  });
+  readerHolder.release();
+  assert.deepEqual(await settleBeforeTimeout([staleWrite1, staleWrite2, eligibleWrite]), ['stale', 'stale', 'acquired']);
+});
+
+test('DockerWorkspaceManager: queued readers enter together after a writer releases and still exclude writers', async () => {
+  const controller = new FakeDockerLifecycleController();
+  const manager = new DockerWorkspaceManager({ controller });
+  const profile = createValidProfile();
+  const revision = 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+  const workspace = await manager.createWorkspace({
+    taskId: 'task-parallel-readers',
+    workspaceId: 'ws-parallel-readers',
+    initialRevisionDigest: revision,
+    profile,
+  });
+  const writer = await manager.acquireWriteLease(workspace.workspaceId, revision);
+  let readersAcquired = 0;
+  const readOne = manager.acquireReadLease(workspace.workspaceId, revision).then((lease) => {
+    readersAcquired += 1;
+    return lease;
+  });
+  const readTwo = manager.acquireReadLease(workspace.workspaceId, revision).then((lease) => {
+    readersAcquired += 1;
+    return lease;
+  });
+
+  writer.release();
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const readers = await Promise.race([
+    Promise.all([readOne, readTwo]),
+    new Promise<never>((_, reject) => {
+      timeout = setTimeout(() => reject(new Error('QUEUED_READERS_DID_NOT_ACQUIRE_TOGETHER')), 1_000);
+    }),
+  ]).finally(() => { if (timeout !== undefined) clearTimeout(timeout); });
+
+  assert.equal(readersAcquired, 2, 'both queued readers must acquire before either releases');
+  assert.equal(manager.hasActiveWriterLease(workspace.workspaceId), false);
+  assert.equal(manager.hasActiveReaderLease(workspace.workspaceId), true);
+  let writerAcquired = false;
+  const waitingWriter = manager.acquireWriteLease(workspace.workspaceId, revision).then((lease) => {
+    writerAcquired = true;
+    lease.release();
+  });
+  await Promise.resolve();
+  assert.equal(writerAcquired, false, 'writer remains excluded while either reader is held');
+  readers[0].release();
+  await Promise.resolve();
+  assert.equal(writerAcquired, false, 'writer remains excluded while the second reader is held');
+  readers[1].release();
+  await waitingWriter;
 });
