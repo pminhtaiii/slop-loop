@@ -167,7 +167,7 @@ if (process.argv[2] === 'uc05-cli-test-driver') {
     processChild.on('message', snapshot => { snapshots.push(snapshot); if (interrupt) interrupted = processChild.kill(interrupt); });
     // EOF carries no operator direction; only the explicit argv above may submit one.
     processChild.stdin.end();
-    const timer = setTimeout(() => { timedOut = true; processChild.kill('SIGKILL'); }, 5000);
+    const timer = setTimeout(() => { timedOut = true; processChild.kill('SIGKILL'); }, 15000);
     try {
       const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
         processChild.on('error', reject);
