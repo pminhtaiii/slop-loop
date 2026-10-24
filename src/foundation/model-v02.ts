@@ -223,7 +223,15 @@ export class HostModelPortV02 implements ModelPortV02 {
     const result = Promise.resolve()
       .then(() => this.dispatch(snapshotState, snapshotEvidence, snapshotRequest, snapshotContext, () => { provenPreClaimDenial = true; }))
       .then((value) => {
-        if (provenPreClaimDenial) this.completedRequests.delete(snapshotRequest.providerRequestId);
+        if (provenPreClaimDenial) {
+          const current = this.completedRequests.get(snapshotRequest.providerRequestId);
+          if (current?.identity === identity && current.result === result) {
+            this.completedRequests.delete(snapshotRequest.providerRequestId);
+            if (this.requestIdentities.get(snapshotRequest.providerRequestId) === requestIdentity) {
+              this.requestIdentities.delete(snapshotRequest.providerRequestId);
+            }
+          }
+        }
         return deepFreeze(deepClone(value));
       });
     this.completedRequests.set(snapshotRequest.providerRequestId, { identity, result });

@@ -8,7 +8,7 @@ import type {
   RepositoryAdmissionContextV02,
   StatePortV02,
 } from '../contracts/foundation/uc03/ports-v02.ts';
-import type { ControlledRepositoryToolsOptions } from './repository-types.ts';
+import type { ControlledRepositoryToolsOptions, RepositoryAttemptStartRecoveryResultV02 } from './repository-types.ts';
 import type { ExecutionLimits, RunCommandAction } from '../contracts/foundation/uc03/types.ts';
 import {
   dockerCommandView,
@@ -37,6 +37,7 @@ import {
   normalizeCommandResult,
   RepositoryOutcomeRecoveryV02,
 } from './repository-command-outcome.ts';
+import { RepositoryAttemptStartRecoveryV02 } from './repository-attempt-start-recovery.ts';
 
 const noopCallback = (): void => undefined;
 
@@ -131,11 +132,13 @@ export async function executeAdmittedCommand(options: {
   readonly fencingGeneration: number;
   readonly claimLifecycle: RepositoryClaimLifecycleV02;
   readonly outcomeRecovery: RepositoryOutcomeRecoveryV02;
+  readonly attemptStartRecovery: RepositoryAttemptStartRecoveryV02;
 }): Promise<StructuredExecutionResult> {
   const { manager, commandExecutor, statePort, context, action } = options;
   const lease = await manager.acquireReadLease(context.workspaceId, context.canonicalRevision);
   let current: { readonly claim: ClaimReceiptV02; readonly attempt: AttemptReceiptV02 } | undefined;
   let claimed: ClaimReceiptV02 | undefined;
+  let executorIdentity: ExecutorIdentityV02 | undefined;
   let attemptBeginStarted = false;
   let keepLease = false;
   try {
@@ -145,6 +148,7 @@ export async function executeAdmittedCommand(options: {
       fencingGeneration: commandExecutor.getFencingGeneration(),
       payloadDigest: context.actionDigest,
     };
+    executorIdentity = identity;
     assertCurrentCommandFenceV02(manager, commandExecutor, lease, context.workspaceId, identity,
       options.adapterIdentity, options.processIncarnation, options.fencingGeneration);
 
@@ -209,7 +213,9 @@ export async function executeAdmittedCommand(options: {
     if (!current && claimed) {
       if (attemptBeginStarted) {
         keepLease = true;
-        throw new RepositoryAttemptStartPendingError(claimed.claimId);
+        if (!executorIdentity) throw new Error('ATTEMPT_START_RECOVERY_IDENTITY_MISSING: Attempt start has no captured executor identity');
+        const recoveryId = options.attemptStartRecovery.register(lease, context, claimed, executorIdentity, false);
+        throw new RepositoryAttemptStartPendingError(claimed.claimId, recoveryId);
       }
       const closed = await options.claimLifecycle.closeUnattemptedClaim(lease, context, claimed, {
         adapterIdentity: commandExecutor.getAdapterIdentity(),
@@ -247,12 +253,19 @@ export class RepositoryCommandReceiver {
   private readonly options: ControlledRepositoryToolsOptions;
   private readonly claimLifecycle: RepositoryClaimLifecycleV02;
   private readonly outcomeRecovery: RepositoryOutcomeRecoveryV02;
+  private readonly attemptStartRecovery: RepositoryAttemptStartRecoveryV02;
   private fencingGeneration: number;
 
   constructor(options: ControlledRepositoryToolsOptions) {
     this.options = options;
     this.claimLifecycle = new RepositoryClaimLifecycleV02(options.unattemptedClaimClosureHandoff);
     this.outcomeRecovery = new RepositoryOutcomeRecoveryV02(options);
+    this.attemptStartRecovery = new RepositoryAttemptStartRecoveryV02({
+      statePort: options.statePort,
+      handoff: options.attemptStartRecoveryHandoff,
+      outcomes: this.outcomeRecovery,
+      createUncertainOutcome: (claim, attempt, context) => createCommandOutcomeReceipt(claim, attempt, context, 'uncertain'),
+    });
     this.fencingGeneration = options.fencingGeneration ?? options.commandExecutor?.getFencingGeneration?.() ?? 0;
   }
 
@@ -275,6 +288,7 @@ export class RepositoryCommandReceiver {
     if (!trustedCommandResourcePolicy) throw new Error('COMMAND_RESOURCE_POLICY_REQUIRED: Trusted finite command limits are required');
     if (!this.options.patchRecoveryHandoff) throw new Error('COMMAND_RECOVERY_REQUIRED: A typed UC-04 recovery handoff is required before command admission');
     this.claimLifecycle.requireClosureCapability();
+    this.attemptStartRecovery.requireCapability();
     const adapterIdentity = this.options.adapterIdentity ?? commandExecutor.getAdapterIdentity?.() ?? '';
     const processIncarnation = this.options.processIncarnation ?? commandExecutor.getProcessIncarnation?.() ?? '';
     if (!adapterIdentity || !processIncarnation || !Number.isSafeInteger(this.fencingGeneration) || this.fencingGeneration <= 0) {
@@ -292,6 +306,7 @@ export class RepositoryCommandReceiver {
       fencingGeneration: this.fencingGeneration,
       claimLifecycle: this.claimLifecycle,
       outcomeRecovery: this.outcomeRecovery,
+      attemptStartRecovery: this.attemptStartRecovery,
     });
     if (result.timedOut || result.outcome === 'timeout') throw new Error('COMMAND_TIMED_OUT: Command did not complete within its admitted timeout');
     if (result.exitCode === null || result.outcome === 'error') throw new Error('COMMAND_EXIT_CODE_UNAVAILABLE: Command did not return an observed exit code');
@@ -311,6 +326,7 @@ export class RepositoryCommandReceiver {
     if (!trustedCommandResourcePolicy) throw new Error('COMMAND_RESOURCE_POLICY_REQUIRED: Trusted finite command limits are required');
     if (!this.options.patchRecoveryHandoff) throw new Error('COMMAND_RECOVERY_REQUIRED: A typed UC-04 recovery handoff is required before command admission');
     this.claimLifecycle.requireClosureCapability();
+    this.attemptStartRecovery.requireCapability();
     const adapterIdentity = this.options.adapterIdentity ?? commandExecutor.getAdapterIdentity?.() ?? '';
     const processIncarnation = this.options.processIncarnation ?? commandExecutor.getProcessIncarnation?.() ?? '';
     if (!adapterIdentity || !processIncarnation || !Number.isSafeInteger(this.fencingGeneration) || this.fencingGeneration <= 0) {
@@ -328,6 +344,7 @@ export class RepositoryCommandReceiver {
       fencingGeneration: this.fencingGeneration,
       claimLifecycle: this.claimLifecycle,
       outcomeRecovery: this.outcomeRecovery,
+      attemptStartRecovery: this.attemptStartRecovery,
     });
     const outcome = result.timedOut || result.outcome === 'timeout'
       ? 'timeout'
@@ -351,6 +368,12 @@ export class RepositoryCommandReceiver {
 
   recoverUnattemptedClaim(claimId: string): Promise<boolean> {
     return this.claimLifecycle.recoverUnattemptedClaim(claimId);
+  }
+
+  hasPendingAttemptStart(recoveryId: string): boolean { return this.attemptStartRecovery.hasPending(recoveryId); }
+
+  recoverAttemptStart(recoveryId: string): Promise<RepositoryAttemptStartRecoveryResultV02> {
+    return this.attemptStartRecovery.recover(recoveryId);
   }
 }
 

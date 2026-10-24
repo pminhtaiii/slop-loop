@@ -18,8 +18,9 @@ import type { WorkspaceLease } from './docker-workspace.ts';
 import { bindPatchToAdmission, snapshotRepositoryAdmission } from './repository-admission.ts';
 import { assertCurrentPatchFence, beginRepositoryAttemptWithClaim, isPatchReceiverResult } from './repository-receiver.ts';
 import { ClaimClosurePendingError, RepositoryAttemptStartPendingError, RepositoryClaimLifecycleV02 } from './repository-claim-lifecycle.ts';
-import type { ControlledRepositoryToolsOptions } from './repository-types.ts';
+import type { ControlledRepositoryToolsOptions, RepositoryAttemptStartRecoveryResultV02 } from './repository-types.ts';
 import { RepositoryOutcomeRecoveryV02 } from './repository-command-outcome.ts';
+import { RepositoryAttemptStartRecoveryV02 } from './repository-attempt-start-recovery.ts';
 
 export class PatchOutcomePendingError extends Error {
   readonly attemptId: string;
@@ -36,12 +37,19 @@ export class RepositoryPatchReceiver {
   private readonly options: ControlledRepositoryToolsOptions;
   private readonly claimLifecycle: RepositoryClaimLifecycleV02;
   private readonly outcomeRecovery: RepositoryOutcomeRecoveryV02;
+  private readonly attemptStartRecovery: RepositoryAttemptStartRecoveryV02;
   private fencingGeneration: number;
 
   constructor(options: ControlledRepositoryToolsOptions) {
     this.options = options;
     this.claimLifecycle = new RepositoryClaimLifecycleV02(options.unattemptedClaimClosureHandoff);
     this.outcomeRecovery = new RepositoryOutcomeRecoveryV02(options);
+    this.attemptStartRecovery = new RepositoryAttemptStartRecoveryV02({
+      statePort: options.statePort,
+      handoff: options.attemptStartRecoveryHandoff,
+      outcomes: this.outcomeRecovery,
+      createUncertainOutcome: (claim, attempt, admission) => createPatchOutcomeReceipt(claim, attempt, admission, 'uncertain'),
+    });
     this.fencingGeneration = options.fencingGeneration ?? options.commandExecutor?.getFencingGeneration?.() ?? 0;
   }
 
@@ -67,6 +75,7 @@ export class RepositoryPatchReceiver {
     if (!statePort) throw new Error('STATE_PORT_REQUIRED: StatePortV02 is required for repository receiver execution');
     if (!recoveryHandoff) throw new Error('PATCH_RECOVERY_REQUIRED: A typed UC-04 recovery handoff is required before patch admission');
     this.claimLifecycle.requireClosureCapability();
+    this.attemptStartRecovery.requireCapability();
     const adapterIdentity = this.options.adapterIdentity ?? this.options.commandExecutor?.getAdapterIdentity?.() ?? '';
     const processIncarnation = this.options.processIncarnation ?? this.options.commandExecutor?.getProcessIncarnation?.() ?? '';
     if (!adapterIdentity || !processIncarnation || !Number.isSafeInteger(this.fencingGeneration) || this.fencingGeneration <= 0) {
@@ -76,6 +85,7 @@ export class RepositoryPatchReceiver {
     const lease = await manager.acquireWriteLease(admittedContext.workspaceId, admitted.baseRevision);
     let current: { readonly claim: ClaimReceiptV02; readonly attempt: AttemptReceiptV02 } | undefined;
     let claimed: ClaimReceiptV02 | undefined;
+    let executorIdentity: ExecutorIdentityV02 | undefined;
     let attemptBeginStarted = false;
     let duplicateAttempt = false;
     let keepLease = false;
@@ -96,6 +106,7 @@ export class RepositoryPatchReceiver {
         fencingGeneration: generation,
         payloadDigest: admittedContext.actionDigest,
       };
+      executorIdentity = executor;
       current = await beginRepositoryAttemptWithClaim(
         statePort,
         admittedContext,
@@ -125,7 +136,15 @@ export class RepositoryPatchReceiver {
       if (!current && claimed) {
         if (attemptBeginStarted) {
           keepLease = true;
-          throw new RepositoryAttemptStartPendingError(claimed.claimId);
+          if (!executorIdentity) throw new Error('ATTEMPT_START_RECOVERY_IDENTITY_MISSING: Attempt start has no captured executor identity');
+          const recoveryId = this.attemptStartRecovery.register(
+            lease,
+            admittedContext,
+            claimed,
+            executorIdentity,
+            admittedContext.planApplicability === 'approved-plan' && admittedContext.runnableNode === 'Repair',
+          );
+          throw new RepositoryAttemptStartPendingError(claimed.claimId, recoveryId);
         }
         const closed = await this.claimLifecycle.closeUnattemptedClaim(lease, admittedContext, claimed, {
           adapterIdentity,
@@ -160,6 +179,12 @@ export class RepositoryPatchReceiver {
   async recoverPatchOutcome(attemptId: string): Promise<ReconciliationResultV02> {
     if (!this.outcomeRecovery.hasPending(attemptId)) throw new Error('PATCH_RECOVERY_NOT_FOUND: No locally held patch outcome matches this attempt');
     return await this.outcomeRecovery.recover(attemptId);
+  }
+
+  hasPendingAttemptStart(recoveryId: string): boolean { return this.attemptStartRecovery.hasPending(recoveryId); }
+
+  recoverAttemptStart(recoveryId: string): Promise<RepositoryAttemptStartRecoveryResultV02> {
+    return this.attemptStartRecovery.recover(recoveryId);
   }
 
   private async recordOutcome(

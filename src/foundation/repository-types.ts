@@ -99,6 +99,24 @@ export interface UnattemptedClaimClosureHandoffV02 {
   closeUnattemptedClaim(request: UnattemptedClaimClosureRequestV02): Promise<ClaimClosureResultV02>;
 }
 
+export interface RepositoryAttemptStartRecoveryRequestV02 {
+  readonly recoveryId: string;
+  readonly admission: RepositoryAdmissionContextV02;
+  readonly claim: ClaimReceiptV02;
+  readonly executorIdentity: ExecutorIdentityV02;
+}
+
+/** Queries the trusted UC-04 owner for the committed or fenced no-attempt start state. */
+export interface RepositoryAttemptStartRecoveryHandoffV02 {
+  queryAttemptStart(request: RepositoryAttemptStartRecoveryRequestV02): Promise<unknown>;
+}
+
+export interface RepositoryAttemptStartRecoveryResultV02 {
+  readonly outcome: 'settled' | 'blocked' | 'conflict';
+  readonly recoveryId: string;
+  readonly receiptId?: string | undefined;
+}
+
 export interface ControlledRepositoryToolsOptions {
   readonly guardCapability: ExecutionGuardReadCapability;
   readonly fsPort: TrustedFilesystemPort;
@@ -116,6 +134,7 @@ export interface ControlledRepositoryToolsOptions {
   readonly taskControl?: RepositoryTaskControlReadPortV02 | undefined;
   readonly patchReceiver?: ((patch: ApplyPatchAction, context: RepositoryAdmissionContextV02, attempt: AttemptReceiptV02) => Promise<{ readonly applied: boolean; readonly newRevisionDigest: string }>) | undefined;
   readonly patchRecoveryHandoff?: PatchRecoveryHandoffV02 | undefined;
+  readonly attemptStartRecoveryHandoff?: RepositoryAttemptStartRecoveryHandoffV02 | undefined;
   readonly unattemptedClaimClosureHandoff?: UnattemptedClaimClosureHandoffV02 | undefined;
   readonly neutralStub?: boolean | undefined;
 }

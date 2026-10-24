@@ -1235,9 +1235,21 @@ test('HostModelPortV02 retries only a pre-claim denial after the competing claim
 
   releaseFirstDispatch();
   assert.equal((await firstResultPromise).outcome, 'observed');
+  const taskBeforeRefresh = await first.statePort.loadTask(competing.state.taskId);
+  assert.ok(taskBeforeRefresh);
+  const externallyAdvancedTask = { ...taskBeforeRefresh, stateVersion: taskBeforeRefresh.stateVersion + 1 };
+  first.statePort.getUnderlying().internalSetTask(externallyAdvancedTask);
+  const refreshedState = await first.statePort.loadTask(competing.state.taskId);
+  assert.ok(refreshedState);
+  assert.equal(refreshedState.stateVersion, competing.context.expectedTaskStateVersion + 1);
+  const ledgersBeforeRetry = first.statePort.getUnderlying().getLedgers();
+  const refreshedRequest = {
+    ...competing.request,
+    contextDigest: computeContextDigest(refreshedState, competing.evidence),
+  };
   const refreshedContext = createTestProviderAdmissionContextV02({
-    providerRequest: competing.request,
-    expectedTaskStateVersion: competing.context.expectedTaskStateVersion,
+    providerRequest: refreshedRequest,
+    expectedTaskStateVersion: refreshedState.stateVersion,
     expectedControlVersion: first.statePort.getJournalSnapshot().controlVersion,
     expectedEpoch: competing.context.expectedEpoch,
     runnableNode: competing.context.runnableNode,
@@ -1246,15 +1258,44 @@ test('HostModelPortV02 retries only a pre-claim denial after the competing claim
     planDecisionRef: competing.context.planDecisionRef,
     budgetRefs: competing.context.budgetRefs,
   });
-  const retried = await competing.port.propose(competing.state, competing.evidence, competing.request, refreshedContext);
+  let releaseRetryDispatch!: () => void;
+  let enterRetryDispatch!: () => void;
+  const retryDispatchEntered = new Promise<void>((resolve) => { enterRetryDispatch = resolve; });
+  const retryDispatchBarrier = new Promise<void>((resolve) => { releaseRetryDispatch = resolve; });
+  const executeRetry = competing.transport.execute.bind(competing.transport);
+  competing.transport.execute = async (payload) => {
+    enterRetryDispatch();
+    await retryDispatchBarrier;
+    return await executeRetry(payload);
+  };
+  const retryPromise = competing.port.propose(refreshedState, competing.evidence, refreshedRequest, refreshedContext);
+  await retryDispatchEntered;
+  const journalDuringRetry = first.statePort.getJournalSnapshot();
+  const ledgersDuringRetry = first.statePort.getUnderlying().getLedgers();
+  releaseRetryDispatch();
+  const retried = await retryPromise;
 
-  assert.equal(retried.outcome, 'observed');
+  assert.equal(retried.outcome, 'observed', `fresh task-version admission should retry after pre-claim denial: ${'reason' in retried ? retried.reason : retried.outcome}`);
   assert.equal(competing.transport.callCount, 1);
   const journal = first.statePort.getJournalSnapshot();
   assert.equal(journal.claims.length, 2);
   assert.equal(journal.attempts.length, 2);
   assert.equal(journal.outcomes.length, 2);
   assert.equal(journal.activeClaimId, null);
+  const ledgersAfterRetry = first.statePort.getUnderlying().getLedgers();
+  for (const reservationId of competing.context.budgetRefs) {
+    const during = ledgersDuringRetry.find((ledger) => ledger.reservations.some((item) => item.reservationId === reservationId));
+    assert.ok(during, `Retry reservation ${reservationId} is persisted before dispatch`);
+    const before = ledgersBeforeRetry.find((ledger) => ledger.scope === during.scope && ledger.kind === during.kind);
+    assert.ok(before);
+    const after = ledgersAfterRetry.find((ledger) => ledger.scope === before.scope && ledger.kind === before.kind);
+    assert.ok(after);
+    assert.equal(after.reservations.some((item) => item.reservationId === reservationId), false);
+    assert.ok(after.consumed > before.consumed, `${reservationId} is accounted after retry settlement`);
+  }
+  assert.equal(journalDuringRetry.claims.length, 2);
+  assert.equal(journalDuringRetry.attempts.length, 2);
+  assert.equal(journalDuringRetry.outcomes.length, 1, 'The competing retry is reserved and attempted before transport settles');
 });
 
 test('HostModelPortV02 Section 10 Case 15: provider branch for coder and reviewer both settle cleanly', async () => {

@@ -70,6 +70,7 @@ import type { TaskState } from '../../../src/contracts/foundation/uc03/types.ts'
 import type { JournalSnapshotV02 } from '../../../src/approvals/control-v02.ts';
 import {
   createTestDiagnosticPatchAdmissionContextV02,
+  createTestClaimClosureReceiptV02,
   createTestAdmissionTaskStateV02,
   createTestAdmissionTransitionContextsV02,
   createTestObservedReconciliationReceiptV02,
@@ -1275,6 +1276,67 @@ function createTestPatchRecoveryHandoff() {
   };
 }
 
+interface TestRepositoryRecoveryBehavior {
+  failNextPrepare?: boolean;
+  conflictNextPrepare?: boolean;
+}
+
+function captureJournalAttempts(journal: MemoryStatePortV02, attempts: AttemptReceiptV02[]): void {
+  const begin = journal.beginAttempt.bind(journal);
+  journal.beginAttempt = async (claimId, executor) => {
+    const attempt = await begin(claimId, executor);
+    attempts.push(attempt);
+    return attempt;
+  };
+}
+
+function createJournalBackedAttemptStartRecoveryHandoff(
+  journal: MemoryStatePortV02,
+  attempts: readonly AttemptReceiptV02[],
+) {
+  return {
+    async queryAttemptStart(request: {
+      readonly recoveryId: string;
+      readonly admission: RepositoryAdmissionContextV02;
+      readonly claim: ClaimReceiptV02;
+      readonly executorIdentity: ExecutorIdentityV02;
+    }): Promise<unknown> {
+      const snapshot = journal.getJournalSnapshot();
+      const committed = attempts.find((attempt) => attempt.claimId === request.claim.claimId);
+      if (committed && snapshot.attempts.some((attempt) =>
+        attempt.claimId === request.claim.claimId && attempt.attemptId === committed.attemptId)) {
+        return { outcome: 'committed', attempt: committed };
+      }
+      const claimState = snapshot.claims.find((claim) => claim.claimId === request.claim.claimId);
+      if (!claimState || claimState.status !== 'claimed' || claimState.attemptId !== null ||
+        snapshot.activeClaimId !== request.claim.claimId) return { outcome: 'unknown' };
+      const eventRef = `attempt-start-${request.claim.claimId}`;
+      if (!await journal.setTaskControl(request.admission.taskId, 'paused', eventRef)) return { outcome: 'unknown' };
+      const fence = await journal.fenceClaimRecipient(request.claim.claimId, request.executorIdentity);
+      if (!fence) return { outcome: 'unknown' };
+      return {
+        outcome: 'unattempted',
+        claim: { ...request.claim, hasCommittedAttempt: false },
+        closureReceipt: createTestClaimClosureReceiptV02(request.claim, fence.fencedExecutorIdentity, { reason: eventRef }),
+      };
+    },
+  };
+}
+
+function createUnknownAttemptStartRecoveryHandoff() {
+  return { async queryAttemptStart(): Promise<unknown> { return { outcome: 'unknown' }; } };
+}
+
+async function getAttemptStartRecoveryId(operation: () => Promise<unknown>): Promise<string> {
+  const error = await operation().then(() => null, (caught: unknown) => caught);
+  assert.ok(error instanceof Error, 'Attempt start should surface a pending recovery error');
+  assert.equal(error.name, 'RepositoryAttemptStartPendingError');
+  const recoveryId = (error as Error & { readonly recoveryId?: unknown }).recoveryId;
+  assert.equal(typeof recoveryId, 'string', 'Pending error exposes the safe recovery identity');
+  assert.match(recoveryId as string, /^attempt-start:/u);
+  return recoveryId as string;
+}
+
 function createRefusingClaimClosureHandoff(): UnattemptedClaimClosureHandoffV02 {
   return { async closeUnattemptedClaim() { return { closed: false, receiptId: '' }; } };
 }
@@ -1344,7 +1406,10 @@ function createDispatchClaimForClosure(
   return result.value;
 }
 
-function createJournalBackedRecoveryHandoff(journal: MemoryStatePortV02) {
+function createJournalBackedRecoveryHandoff(
+  journal: MemoryStatePortV02,
+  behavior?: TestRepositoryRecoveryBehavior,
+) {
   return {
     async prepare(input: {
       readonly admission: RepositoryAdmissionContextV02;
@@ -1353,6 +1418,10 @@ function createJournalBackedRecoveryHandoff(journal: MemoryStatePortV02) {
       readonly outcome: RepositoryActionOutcomeReceiptV02;
     }) {
       if (input.outcome.outcome !== 'uncertain') throw new Error('unexpected-observed-recovery');
+      if (behavior?.failNextPrepare) {
+        behavior.failNextPrepare = false;
+        throw new Error('trusted owner has not produced settled recovery evidence');
+      }
       const eventRef = `pause-attempt-${input.attempt.attemptId}`;
       if (!await journal.setTaskControl(input.admission.taskId, 'paused', eventRef)) throw new Error('journal-pause-failed');
       const fence = await journal.fenceAttemptRecipient(input.claim.claimId, input.attempt.executorIdentity);
@@ -1368,7 +1437,7 @@ function createJournalBackedRecoveryHandoff(journal: MemoryStatePortV02) {
         {
           disposition: 'proven-not-dispatched',
           expectedCurrentTaskStateVersion: task.stateVersion,
-          expectedCurrentControlVersion: snapshot.controlVersion,
+          expectedCurrentControlVersion: snapshot.controlVersion + (behavior?.conflictNextPrepare ? 1 : 0),
           expectedCurrentEpoch: snapshot.epoch,
           adapterEvidenceRefs: fence.adapterEvidenceRefs,
           fencedRecipientIdentity: fence.recipientIdentity,
@@ -1469,7 +1538,7 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
     return { manager, controller };
   }
 
-  async function createJournalBackedCommandHarness(actionId: string) {
+  async function createJournalBackedCommandHarness(actionId: string, useTrustedRecovery = false) {
     const action: RunCommandAction = {
       actionId,
       kind: 'run_command',
@@ -1510,6 +1579,10 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
     };
     manager.getActiveCommandView = (workspaceId) => workspaceId === context.workspaceId ? admittedView : null;
     const journal = createJournalForRepositoryCommand(context);
+    const attempts: AttemptReceiptV02[] = [];
+    captureJournalAttempts(journal, attempts);
+    const recoveryBehavior: TestRepositoryRecoveryBehavior = {};
+    const attemptStartRecoveryHandoff = createJournalBackedAttemptStartRecoveryHandoff(journal, attempts);
     const profile = {
       profileId: 'profile-uc03-test',
       image: 'ghcr.io/test:0.1',
@@ -1543,10 +1616,60 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
       adapterIdentity: 'command-outcome-executor',
       processIncarnation: `inc-${actionId}`,
       fencingGeneration: 1,
-      patchRecoveryHandoff: createUnavailableRecoveryHandoff(),
+      patchRecoveryHandoff: useTrustedRecovery
+        ? createJournalBackedRecoveryHandoff(journal, recoveryBehavior)
+        : createUnavailableRecoveryHandoff(),
+      attemptStartRecoveryHandoff,
       unattemptedClaimClosureHandoff: createRefusingClaimClosureHandoff(),
     });
-    return { action, context, journal, tools, manager, controller, executor };
+    return { action, context, journal, tools, manager, controller, executor, attempts, attemptStartRecoveryHandoff, recoveryBehavior };
+  }
+
+  async function createJournalBackedPatchHarness(actionId: string) {
+    const patch: ApplyPatchAction = {
+      actionId,
+      kind: 'apply_patch',
+      patchContent: '--- a/src/app.py\n+++ b/src/app.py\n+changed\n',
+      targetPaths: ['src/app.py'],
+      baseRevisionDigest: canonicalRev,
+    };
+    const context = createTestRepositoryAdmissionContextV02({
+      taskId: 'task-test-1',
+      runId: 'run-1',
+      workspaceId: 'ws-test-1',
+      repositoryId: 'repo-1',
+      canonicalRevision: canonicalRev,
+      action: patch,
+      actionDigest: computeActionDigest(patch),
+      baseRevision: canonicalRev,
+      targetPaths: [...patch.targetPaths],
+      patchDigest: computeCanonicalSha256(patch.patchContent),
+    });
+    const { manager } = await createWorkspaceManager();
+    const journal = createJournalForRepositoryAdmission(context);
+    const attempts: AttemptReceiptV02[] = [];
+    captureJournalAttempts(journal, attempts);
+    const recoveryBehavior: TestRepositoryRecoveryBehavior = {};
+    const attemptStartRecoveryHandoff = createJournalBackedAttemptStartRecoveryHandoff(journal, attempts);
+    let patchCalls = 0;
+    const tools = new ControlledRepositoryTools({
+      guardCapability: guard,
+      fsPort,
+      limits: defaultLimits,
+      statePort: journal,
+      workspaceManager: manager,
+      adapterIdentity: `patch-attempt-start-${actionId}`,
+      processIncarnation: `inc-${actionId}`,
+      fencingGeneration: 1,
+      patchRecoveryHandoff: createJournalBackedRecoveryHandoff(journal, recoveryBehavior),
+      attemptStartRecoveryHandoff,
+      unattemptedClaimClosureHandoff: createRefusingClaimClosureHandoff(),
+      patchReceiver: async () => {
+        patchCalls += 1;
+        return { applied: true, newRevisionDigest: canonicalRev };
+      },
+    });
+    return { patch, context, journal, tools, manager, attempts, recoveryBehavior, patchCalls: () => patchCalls };
   }
 
   it('diagnostic patch settles once without repair charge and preserves Investigate', async () => {
@@ -1574,6 +1697,7 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
       guardCapability: guard, fsPort, limits: defaultLimits, statePort: journal,
       workspaceManager: manager, adapterIdentity: 'diagnostic', processIncarnation: 'diag-1', fencingGeneration: 1,
       patchRecoveryHandoff: createTestPatchRecoveryHandoff(),
+      attemptStartRecoveryHandoff: createUnknownAttemptStartRecoveryHandoff(),
       unattemptedClaimClosureHandoff: createRefusingClaimClosureHandoff(),
       patchReceiver: async () => {
         effects++;
@@ -1717,6 +1841,7 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
         processIncarnation: 'inc-patch-detached',
         fencingGeneration: 1,
         patchRecoveryHandoff: createTestPatchRecoveryHandoff(),
+        attemptStartRecoveryHandoff: createUnknownAttemptStartRecoveryHandoff(),
         unattemptedClaimClosureHandoff: createRefusingClaimClosureHandoff(),
         patchReceiver: async (admittedPatch, admittedContext) => {
           received.patch = admittedPatch;
@@ -1759,6 +1884,7 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
         processIncarnation: 'inc-patch-1',
         fencingGeneration: 1,
         patchRecoveryHandoff: createTestPatchRecoveryHandoff(),
+        attemptStartRecoveryHandoff: createUnknownAttemptStartRecoveryHandoff(),
         unattemptedClaimClosureHandoff: createRefusingClaimClosureHandoff(),
         patchReceiver: async () => {
           patchEffects += 1;
@@ -1791,6 +1917,7 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
         processIncarnation: 'inc-patch-1',
         fencingGeneration: 1,
         patchRecoveryHandoff: createTestPatchRecoveryHandoff(),
+        attemptStartRecoveryHandoff: createUnknownAttemptStartRecoveryHandoff(),
         unattemptedClaimClosureHandoff: createRefusingClaimClosureHandoff(),
         patchReceiver: async () => {
           fencedPatchEffects += 1;
@@ -1956,6 +2083,7 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
         processIncarnation: 'inc-stale-base-1',
         fencingGeneration: 1,
         patchRecoveryHandoff: createTestPatchRecoveryHandoff(),
+        attemptStartRecoveryHandoff: createUnknownAttemptStartRecoveryHandoff(),
         unattemptedClaimClosureHandoff: createRefusingClaimClosureHandoff(),
         patchReceiver: async () => {
           patchEffects += 1;
@@ -2038,6 +2166,7 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
           limits: { timeoutMs: 30000, maxOutputBytes: 65536, maxCpuCores: 2, maxMemoryBytes: 2147483648, maxPids: 256 },
         },
         patchRecoveryHandoff: createTestPatchRecoveryHandoff(),
+        attemptStartRecoveryHandoff: createUnknownAttemptStartRecoveryHandoff(),
         unattemptedClaimClosureHandoff: createRefusingClaimClosureHandoff(),
       });
 
@@ -2116,6 +2245,7 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
         processIncarnation: 'inc-patch-prebegin-closure',
         fencingGeneration: 1,
         patchRecoveryHandoff: createTestPatchRecoveryHandoff(),
+        attemptStartRecoveryHandoff: createUnknownAttemptStartRecoveryHandoff(),
         unattemptedClaimClosureHandoff: createJournalBackedClaimClosureHandoff(journal),
         patchReceiver: async () => {
           patchEffects += 1;
@@ -2168,6 +2298,7 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
         processIncarnation: 'inc-patch-postbegin-fence',
         fencingGeneration: 1,
         patchRecoveryHandoff: createJournalBackedRecoveryHandoff(journal),
+        attemptStartRecoveryHandoff: createUnknownAttemptStartRecoveryHandoff(),
         unattemptedClaimClosureHandoff: createRefusingClaimClosureHandoff(),
         patchReceiver: async () => {
           patchEffects += 1;
@@ -2241,6 +2372,7 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
         processIncarnation: 'inc-patch-missing-closure',
         fencingGeneration: 1,
         patchRecoveryHandoff: createUnavailableRecoveryHandoff(),
+        attemptStartRecoveryHandoff: createUnknownAttemptStartRecoveryHandoff(),
         patchReceiver: async () => {
           patchCalls += 1;
           return { applied: true, newRevisionDigest: canonicalRev };
@@ -2276,6 +2408,7 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
         processIncarnation: 'inc-patch-settlement',
         fencingGeneration: 1,
         patchRecoveryHandoff: createTestPatchRecoveryHandoff(),
+        attemptStartRecoveryHandoff: createUnknownAttemptStartRecoveryHandoff(),
         unattemptedClaimClosureHandoff: createRefusingClaimClosureHandoff(),
         patchReceiver: async () => {
           fsPort.setRevision(nextRevision);
@@ -2342,6 +2475,7 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
         processIncarnation: 'inc-patch-observed-recovery',
         fencingGeneration: 1,
         patchRecoveryHandoff: createTestPatchRecoveryHandoff(),
+        attemptStartRecoveryHandoff: createUnknownAttemptStartRecoveryHandoff(),
         unattemptedClaimClosureHandoff: createRefusingClaimClosureHandoff(),
         patchReceiver: async () => {
           fsPort.setRevision(nextRevision);
@@ -2401,6 +2535,7 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
         processIncarnation: 'inc-patch-already-recorded',
         fencingGeneration: 1,
         patchRecoveryHandoff: createTestPatchRecoveryHandoff(),
+        attemptStartRecoveryHandoff: createUnknownAttemptStartRecoveryHandoff(),
         unattemptedClaimClosureHandoff: createRefusingClaimClosureHandoff(),
         patchReceiver: async () => ({ applied: true, newRevisionDigest: canonicalRev }),
       });
@@ -2450,6 +2585,7 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
         processIncarnation: 'inc-patch-uncertain-recovery',
         fencingGeneration: 1,
         patchRecoveryHandoff: createTestPatchRecoveryHandoff(),
+        attemptStartRecoveryHandoff: createUnknownAttemptStartRecoveryHandoff(),
         unattemptedClaimClosureHandoff: createRefusingClaimClosureHandoff(),
         patchReceiver: async () => { throw new Error('receiver interrupted after dispatch'); },
       });
@@ -2581,6 +2717,230 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
       assert.equal(ledgers.reduce((count, ledger) => count + ledger.reservations.length, 0), 10);
       assert.equal(ledgers.every((ledger) => ledger.consumed === 0), true);
     });
+
+    it('recovers a committed command attempt through the public owner handoff after unknown, blocked, and conflicting replies', async () => {
+      const command = await createJournalBackedCommandHarness('act-command-attempt-start-recovery', true);
+      const acquireReadLease = command.manager.acquireReadLease.bind(command.manager);
+      let leaseReleaseCalls = 0;
+      command.manager.acquireReadLease = async (workspaceId, expectedRevision) => {
+        const lease = await acquireReadLease(workspaceId, expectedRevision);
+        const release = lease.release.bind(lease);
+        lease.release = async () => { leaseReleaseCalls += 1; await release(); };
+        return lease;
+      };
+      const begin = command.journal.beginAttempt.bind(command.journal);
+      command.journal.beginAttempt = async (claimId, identity) => {
+        await begin(claimId, identity);
+        throw new Error('beginAttempt response was lost after journal commit');
+      };
+      const recoveryId = await getAttemptStartRecoveryId(() => command.tools.runCommand(command.action, command.context));
+      const before = command.journal.getJournalSnapshot();
+      assert.equal(before.attempts.length, 1);
+      assert.equal(before.attempts[0]?.status, 'attempting');
+      assert.equal(before.outcomes.length, 0, 'No outcome is recorded until the owner confirms the committed attempt');
+      assert.equal(command.controller.executedPlans.length, 0, 'A beginAttempt response loss never dispatches the command');
+      const reserved = command.journal.getLedgers().filter((ledger) =>
+        ['timeoutMs', 'maxOutputBytes', 'maxCpuSeconds', 'maxMemoryBytes', 'maxProcessCount'].includes(ledger.kind));
+      assert.equal(reserved.reduce((count, ledger) => count + ledger.reservations.length, 0), 10);
+
+      let ownerMode: 'unknown' | 'invalid' | 'trusted' = 'unknown';
+      const query = command.attemptStartRecoveryHandoff.queryAttemptStart.bind(command.attemptStartRecoveryHandoff);
+      command.attemptStartRecoveryHandoff.queryAttemptStart = async (request) => {
+        if (ownerMode === 'unknown') return { outcome: 'unknown' };
+        if (ownerMode === 'invalid') return {
+          outcome: 'committed',
+          attempt: { ...command.attempts[0], claimId: 'another-claim' },
+        };
+        return await query(request);
+      };
+
+      const unknown = await command.tools.recoverAttemptStart(recoveryId);
+      assert.equal(unknown.outcome, 'blocked');
+      const writer = command.manager.acquireWriteLease('ws-test-1', canonicalRev);
+      let writerAcquired = false;
+      const waitingWriter = writer.then((lease) => { writerAcquired = true; return lease; });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(writerAcquired, false, 'Unknown owner state retains the command read lease');
+      assert.equal(command.journal.getJournalSnapshot().attempts[0]?.status, 'attempting');
+      assert.equal(command.journal.getLedgers().filter((ledger) =>
+        ['timeoutMs', 'maxOutputBytes', 'maxCpuSeconds', 'maxMemoryBytes', 'maxProcessCount'].includes(ledger.kind))
+        .reduce((count, ledger) => count + ledger.reservations.length, 0), 10);
+
+      ownerMode = 'invalid';
+      const invalid = await command.tools.recoverAttemptStart(recoveryId);
+      assert.equal(invalid.outcome, 'blocked', 'A mismatched owner attempt receipt cannot become reconciliation evidence');
+      assert.equal(command.journal.getJournalSnapshot().outcomes.length, 0);
+      assert.equal(writerAcquired, false);
+
+      ownerMode = 'trusted';
+      command.recoveryBehavior.failNextPrepare = true;
+      const blocked = await command.tools.recoverAttemptStart(recoveryId);
+      assert.equal(blocked.outcome, 'blocked', 'Missing UC-04 settlement evidence keeps the attempt pending');
+      assert.equal(command.journal.getJournalSnapshot().outcomes[0]?.outcome, 'uncertain');
+      assert.equal(command.journal.getJournalSnapshot().claims[0]?.status, 'uncertain');
+      assert.equal(writerAcquired, false);
+
+      command.recoveryBehavior.conflictNextPrepare = true;
+      const conflict = await command.tools.recoverAttemptStart(recoveryId);
+      assert.equal(conflict.outcome, 'conflict', 'A canonical journal conflict keeps the attempt pending');
+      assert.equal(command.journal.getJournalSnapshot().activeClaimId, command.journal.getJournalSnapshot().claims[0]?.claimId);
+      assert.equal(writerAcquired, false);
+
+      command.recoveryBehavior.conflictNextPrepare = false;
+      const settled = await command.tools.recoverAttemptStart(recoveryId);
+      const recovered = command.journal.getJournalSnapshot();
+      assert.equal(settled.outcome, 'settled');
+      assert.equal(recovered.reconciliations.length, 1);
+      assert.equal(recovered.claims[0]?.status, 'settled');
+      assert.equal(recovered.attempts[0]?.status, 'settled');
+      assert.equal(recovered.activeClaimId, null);
+      assert.equal(recovered.outcomes.length, 1);
+      assert.equal(command.journal.getLedgers().filter((ledger) =>
+        ['timeoutMs', 'maxOutputBytes', 'maxCpuSeconds', 'maxMemoryBytes', 'maxProcessCount'].includes(ledger.kind))
+        .every((ledger) => ledger.reservations.length === 0 && ledger.consumed === 0), true);
+      assert.equal(command.attempts.length, 1, 'Recovery does not retry beginAttempt');
+      assert.equal(command.controller.executedPlans.length, 0, 'Recovery does not dispatch the command');
+      assert.equal(leaseReleaseCalls, 1, 'The command lease is released once after canonical settlement');
+      const writerLease = await waitingWriter;
+      await writerLease.release();
+    });
+
+    it('closes a rejected pre-commit command start only with trusted fenced no-attempt proof', async () => {
+      const command = await createJournalBackedCommandHarness('act-command-attempt-start-rejected');
+      const acquireReadLease = command.manager.acquireReadLease.bind(command.manager);
+      let leaseReleaseCalls = 0;
+      command.manager.acquireReadLease = async (workspaceId, expectedRevision) => {
+        const lease = await acquireReadLease(workspaceId, expectedRevision);
+        const release = lease.release.bind(lease);
+        lease.release = async () => { leaseReleaseCalls += 1; await release(); };
+        return lease;
+      };
+      command.journal.beginAttempt = async () => { throw new Error('beginAttempt explicitly rejected before commit'); };
+      const recoveryId = await getAttemptStartRecoveryId(() => command.tools.runCommand(command.action, command.context));
+      let writerAcquired = false;
+      const waitingWriter = command.manager.acquireWriteLease('ws-test-1', canonicalRev).then((lease) => {
+        writerAcquired = true;
+        return lease;
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      const pending = command.journal.getJournalSnapshot();
+      assert.equal(pending.claims[0]?.status, 'claimed');
+      assert.equal(pending.attempts.length, 0);
+      assert.equal(pending.closures.length, 0);
+      assert.equal(writerAcquired, false);
+      assert.equal(command.controller.executedPlans.length, 0);
+
+      const trustedQuery = command.attemptStartRecoveryHandoff.queryAttemptStart.bind(command.attemptStartRecoveryHandoff);
+      let allowTrustedNoAttemptProof = false;
+      command.attemptStartRecoveryHandoff.queryAttemptStart = async (request) => allowTrustedNoAttemptProof
+        ? await trustedQuery(request)
+        : {
+            outcome: 'unattempted',
+            claim: { ...request.claim, hasCommittedAttempt: false },
+            closureReceipt: createTestClaimClosureReceiptV02(request.claim, request.executorIdentity),
+          };
+      const invalidProof = await command.tools.recoverAttemptStart(recoveryId);
+      assert.equal(invalidProof.outcome, 'blocked', 'An unfenced owner reply cannot close an unattempted claim');
+      assert.equal(command.journal.getJournalSnapshot().closures.length, 0);
+      assert.equal(command.journal.getJournalSnapshot().claims[0]?.status, 'claimed');
+      assert.equal(writerAcquired, false);
+
+      allowTrustedNoAttemptProof = true;
+      const result = await command.tools.recoverAttemptStart(recoveryId);
+      const closed = command.journal.getJournalSnapshot();
+      assert.equal(result.outcome, 'settled');
+      assert.equal(closed.claims[0]?.status, 'closed');
+      assert.equal(closed.attempts.length, 0);
+      assert.equal(closed.closures.length, 1);
+      assert.equal(closed.activeClaimId, null);
+      assert.equal(command.journal.getLedgers().filter((ledger) =>
+        ['timeoutMs', 'maxOutputBytes', 'maxCpuSeconds', 'maxMemoryBytes', 'maxProcessCount'].includes(ledger.kind))
+        .every((ledger) => ledger.reservations.length === 0 && ledger.consumed === 0), true);
+      assert.equal(command.attempts.length, 0, 'Recovery does not retry a rejected beginAttempt');
+      assert.equal(command.controller.executedPlans.length, 0);
+      assert.equal(leaseReleaseCalls, 1, 'The command lease is released once after canonical closure');
+      const writerLease = await waitingWriter;
+      assert.equal(writerAcquired, true);
+      await writerLease.release();
+    });
+
+    it('recovers a malformed committed command receipt without retrying the attempt or dispatch', async () => {
+      const command = await createJournalBackedCommandHarness('act-command-attempt-start-malformed', true);
+      const begin = command.journal.beginAttempt.bind(command.journal);
+      command.journal.beginAttempt = async (claimId, identity) => {
+        const committed = await begin(claimId, identity);
+        return { ...committed, executorIdentity: { ...committed.executorIdentity, payloadDigest: 'sha256:wrong' } };
+      };
+      const recoveryId = await getAttemptStartRecoveryId(() => command.tools.runCommand(command.action, command.context));
+      const pending = command.journal.getJournalSnapshot();
+      assert.equal(pending.attempts.length, 1, 'The malformed response followed a real journal commit');
+      assert.equal(pending.outcomes.length, 0);
+      assert.equal(command.controller.executedPlans.length, 0);
+
+      const result = await command.tools.recoverAttemptStart(recoveryId);
+      const settled = command.journal.getJournalSnapshot();
+      assert.equal(result.outcome, 'settled');
+      assert.equal(settled.attempts[0]?.status, 'settled');
+      assert.equal(settled.claims[0]?.status, 'settled');
+      assert.equal(settled.reconciliations.length, 1);
+      assert.equal(settled.activeClaimId, null);
+      assert.equal(command.attempts.length, 1);
+      assert.equal(command.controller.executedPlans.length, 0);
+      const readerLease = await command.manager.acquireReadLease('ws-test-1', canonicalRev);
+      await readerLease.release();
+    });
+
+    it('holds a patch write lease through beginAttempt response loss until public recovery settles the journal', async () => {
+      const patch = await createJournalBackedPatchHarness('act-patch-attempt-start-lost-response');
+      const acquireWriteLease = patch.manager.acquireWriteLease.bind(patch.manager);
+      let trackOriginalWriteLease = true;
+      let leaseReleaseCalls = 0;
+      patch.manager.acquireWriteLease = async (workspaceId, expectedRevision) => {
+        const lease = await acquireWriteLease(workspaceId, expectedRevision);
+        if (trackOriginalWriteLease) {
+          trackOriginalWriteLease = false;
+          const release = lease.release.bind(lease);
+          lease.release = async () => { leaseReleaseCalls += 1; await release(); };
+        }
+        return lease;
+      };
+      const begin = patch.journal.beginAttempt.bind(patch.journal);
+      patch.journal.beginAttempt = async (claimId, identity) => {
+        await begin(claimId, identity);
+        throw new Error('beginAttempt response was lost after patch claim commit');
+      };
+      const recoveryId = await getAttemptStartRecoveryId(() => patch.tools.applyPatch(patch.patch, patch.context));
+      const pending = patch.journal.getJournalSnapshot();
+      assert.equal(pending.attempts.length, 1);
+      assert.equal(pending.outcomes.length, 0);
+      assert.equal(patch.patchCalls(), 0, 'The patch effect is not invoked while attempt start is unknown');
+
+      let readerAcquired = false;
+      const waitingReader = patch.manager.acquireReadLease('ws-test-1', canonicalRev).then((lease) => {
+        readerAcquired = true;
+        return lease;
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(readerAcquired, false, 'The patch write lease remains held after the original call fails');
+
+      const result = await patch.tools.recoverAttemptStart(recoveryId);
+      const recovered = patch.journal.getJournalSnapshot();
+      assert.equal(result.outcome, 'settled');
+      assert.equal(recovered.outcomes[0]?.outcome, 'uncertain');
+      assert.equal(recovered.reconciliations.length, 1);
+      assert.equal(recovered.claims[0]?.status, 'settled');
+      assert.equal(recovered.attempts[0]?.status, 'settled');
+      assert.equal(recovered.activeClaimId, null);
+      assert.equal(patch.journal.getLedgers().every((ledger) => ledger.reservations.length === 0), true);
+      assert.equal(patch.attempts.length, 1, 'Recovery does not retry beginAttempt');
+      assert.equal(patch.patchCalls(), 0, 'Recovery does not dispatch the patch effect');
+      assert.equal(leaseReleaseCalls, 1, 'The patch lease is released once after canonical settlement');
+      const readerLease = await waitingReader;
+      assert.equal(readerAcquired, true);
+      await readerLease.release();
+      const writerLease = await patch.manager.acquireWriteLease('ws-test-1', canonicalRev);
+      await writerLease.release();
+    });
   });
 
   describe('Positive execution through controller boundary & exact attempt identity forwarding', () => {
@@ -2637,6 +2997,7 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
         processIncarnation: 'inc-repo-receiver-1',
         fencingGeneration: 1,
         patchRecoveryHandoff: createUnavailableRecoveryHandoff(),
+        attemptStartRecoveryHandoff: createUnknownAttemptStartRecoveryHandoff(),
         unattemptedClaimClosureHandoff: createRefusingClaimClosureHandoff(),
       });
 
@@ -2758,6 +3119,7 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
         processIncarnation: 'inc-test-runner-1',
         fencingGeneration: 1,
         patchRecoveryHandoff: createUnavailableRecoveryHandoff(),
+        attemptStartRecoveryHandoff: createUnknownAttemptStartRecoveryHandoff(),
         unattemptedClaimClosureHandoff: createRefusingClaimClosureHandoff(),
       });
 
@@ -2847,6 +3209,7 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
         processIncarnation: 'inc-patch-1',
         fencingGeneration: 1,
         patchRecoveryHandoff: createTestPatchRecoveryHandoff(),
+        attemptStartRecoveryHandoff: createUnknownAttemptStartRecoveryHandoff(),
         unattemptedClaimClosureHandoff: createRefusingClaimClosureHandoff(),
         patchReceiver: async (_patch, _context, attempt) => {
           patchReceiverCalled = true;

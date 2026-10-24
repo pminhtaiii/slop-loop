@@ -143,6 +143,8 @@ interface PendingRepositoryOutcomeV02 {
   readonly attempt: AttemptReceiptV02;
   readonly outcome: RepositoryActionOutcomeReceiptV02;
   recovering: boolean;
+  leaseReleaseAttempted: boolean;
+  settledReceiptId?: string | undefined;
 }
 
 export class RepositoryOutcomeRecoveryV02 {
@@ -175,6 +177,9 @@ export class RepositoryOutcomeRecoveryV02 {
   async recover(attemptId: string): Promise<ReconciliationResultV02> {
     const pending = this.pending.get(attemptId);
     if (!pending) throw new Error('REPOSITORY_OUTCOME_RECOVERY_NOT_FOUND: No locally held repository outcome matches this attempt');
+    if (pending.leaseReleaseAttempted) {
+      return { outcome: 'blocked', receiptId: pending.settledReceiptId ?? pending.outcome.receiptId };
+    }
     if (pending.recovering) throw new Error('REPOSITORY_OUTCOME_RECOVERY_IN_PROGRESS: Recovery is already running');
     const statePort = this.options.statePort;
     const handoff = this.options.patchRecoveryHandoff;
@@ -196,6 +201,8 @@ export class RepositoryOutcomeRecoveryV02 {
         receipt.reconciliationId,
       );
       if (result.outcome === 'settled') {
+        pending.settledReceiptId = result.receiptId;
+        pending.leaseReleaseAttempted = true;
         await pending.lease.release();
         this.pending.delete(attemptId);
       }
@@ -216,7 +223,15 @@ export class RepositoryOutcomeRecoveryV02 {
     if (prior && prior.outcome.receiptDigest !== outcome.receiptDigest) {
       throw new Error('REPOSITORY_OUTCOME_IDENTITY_CONFLICT: A different immutable outcome already owns this attempt');
     }
-    if (!prior) this.pending.set(attempt.attemptId, { lease, context, claim, attempt, outcome, recovering: false });
+    if (!prior) this.pending.set(attempt.attemptId, {
+      lease,
+      context,
+      claim,
+      attempt,
+      outcome,
+      recovering: false,
+      leaseReleaseAttempted: false,
+    });
   }
 }
 

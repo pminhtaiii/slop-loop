@@ -24,11 +24,13 @@ export class ClaimClosurePendingError extends Error {
 
 export class RepositoryAttemptStartPendingError extends Error {
   readonly claimId: string;
+  readonly recoveryId: string;
 
-  constructor(claimId: string) {
+  constructor(claimId: string, recoveryId: string) {
     super(`ATTEMPT_START_PENDING: Claim '${claimId}' may have a committed attempt and remains held`);
     this.name = 'RepositoryAttemptStartPendingError';
     this.claimId = claimId;
+    this.recoveryId = recoveryId;
   }
 }
 

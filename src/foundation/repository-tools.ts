@@ -8,7 +8,7 @@ import type { ApplyPatchAction, CheckDefinition, CheckResult, RunCommandAction }
 import { ControlledRepositoryReader, containsProtectedContent } from './repository-read.ts';
 import { RepositoryCommandReceiver } from './repository-receiver.ts';
 import { RepositoryPatchReceiver } from './repository-outcome.ts';
-import type { ControlledRepositoryToolsOptions } from './repository-types.ts';
+import type { ControlledRepositoryToolsOptions, RepositoryAttemptStartRecoveryResultV02 } from './repository-types.ts';
 
 export type {
   ControlledRepositoryToolsV02Options,
@@ -19,6 +19,9 @@ export type {
   PatchRecoveryHandoffV02,
   PatchRecoveryPreparationV02,
   PatchRecoveryRequestV02,
+  RepositoryAttemptStartRecoveryHandoffV02,
+  RepositoryAttemptStartRecoveryRequestV02,
+  RepositoryAttemptStartRecoveryResultV02,
   UnattemptedClaimClosureHandoffV02,
   UnattemptedClaimClosureRequestV02,
   RepositoryReadLimits,
@@ -89,6 +92,11 @@ export class ControlledRepositoryTools implements RepositoryPort, RepositoryPort
   runTests(check: CheckDefinition, context?: RepositoryAdmissionContextV02): Promise<CheckResult> { return this.commands.runTests(check, context); }
   recoverPatchOutcome(attemptId: string): Promise<ReconciliationResultV02> { return this.patches.recoverPatchOutcome(attemptId); }
   recoverCommandOutcome(attemptId: string): Promise<ReconciliationResultV02> { return this.commands.recoverCommandOutcome(attemptId); }
+  recoverAttemptStart(recoveryId: string): Promise<RepositoryAttemptStartRecoveryResultV02> {
+    if (this.commands.hasPendingAttemptStart(recoveryId)) return this.commands.recoverAttemptStart(recoveryId);
+    if (this.patches.hasPendingAttemptStart(recoveryId)) return this.patches.recoverAttemptStart(recoveryId);
+    throw new Error('ATTEMPT_START_RECOVERY_NOT_FOUND: No retained receiver attempt start matches this recovery identity');
+  }
   async recoverUnattemptedClaim(claimId: string): Promise<boolean> {
     return await this.patches.recoverUnattemptedClaim(claimId) || await this.commands.recoverUnattemptedClaim(claimId);
   }

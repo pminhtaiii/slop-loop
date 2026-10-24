@@ -6,6 +6,10 @@
 - **User Confirmation Provenance**: Confirmed directly by the user on 2026-10-16 in Asia/Saigon. The user confirmed that shared use-case owners (UC-04, UC-05) agreed to the current contract v0.1 definitions, and explicitly approved the bootstrap stack while confirming the scope amendment to defer finite production configuration choices until before real execution.
 - **Scope**: Phase 1 setup (T001 / T002 release). This document satisfies T001. Later implementation phases and real execution remain gated.
 
+## PR97 CodeRabbit Round2 Authorization — 2026-10-24
+
+The user explicitly requested another Luna repair subagent for the remaining issues. Round2 addresses historical evidence labeling, exact-request cache eviction after proven pre-claim denial, and reachable trusted recovery for ambiguous repository attempt starts. Earlier open closure/outcome threads were rechecked against existing regressions. Ponytail and max reasoning apply; no additional review is requested. Prior paired manual-draft publication authority continues with failed gates disclosed. Intentional T022 guard REDs and all real/restart/production, successor and merge gates remain unchanged. Evidence: `.agent-work/2026-10-24/uc03-pr97-coderabbit-r2/worker/finding-ledger.md`.
+
 ## PR97 CodeRabbit Repair Authorization — 2026-10-24
 
 The user explicitly delegated CodeRabbit's reported PR97 issues to Luna. Repair round1 covers six inline findings plus the shared secret-policy nit, including task ownership metadata, queued-reader progress, pre-claim retry caching, trusted patch claim/attempt recovery, command/test outcome recording and the budget-exhaustion test actor. Luna uses max reasoning and ponytail. The prior instruction to skip additional reviews and update the paired manual drafts with known failures disclosed remains in force. No guard RED case is weakened and no T022/successor, real-adapter, production or merge authority is released. Scoped evidence is retained under `.agent-work/2026-10-24/uc03-pr97-coderabbit-r1/`; contributor completion remains subject to required checks.
