@@ -1,3 +1,12 @@
+import {
+  buildPresentationV02,
+  buildPresentationCompatibilityV01,
+  validateSafePresentationV02,
+  type PresentationInputV02,
+} from '../../../src/approvals/presentation.ts';
+import { runApprovalCliV02 } from '../../../src/approvals/cli.ts';
+import { UC05_APPROVAL_SCHEMA_VERSION_V02 } from '../../../src/contracts/approvals/contracts.ts';
+import type { ProviderRequest } from '../../../src/contracts/foundation/uc03.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { spawn, spawnSync } from 'node:child_process';
@@ -5,8 +14,10 @@ import { fileURLToPath } from 'node:url';
 import { createApprovalService } from '../../../src/approvals/service.ts';
 import { runApprovalCli } from '../../../src/approvals/cli.ts';
 import { computeActionDigest } from '../../../src/contracts/foundation/uc03.ts';
+import { computeRequestContentDigest, validateProviderRequest } from '../../../src/contracts/foundation/uc03.ts';
 import { createMockApprovalStore } from '../support/uc05/mock-store.ts';
 import { createMockActivityControl } from '../support/uc05/mock-context.ts';
+import { createFixtureProviderAdmissionContextV02 } from '../support/uc03/port-fixtures.ts';
 import type { PolicyProfile } from '../../../src/contracts/approvals/contracts.ts';
 import type { ApprovalStore } from '../../../src/approvals/service.ts';
 
@@ -517,5 +528,622 @@ if (process.argv[2] === 'uc05-cli-test-driver') {
       assert.equal(response.status, 5);
       assert.doesNotMatch(response.stdout + response.stderr, /MARKER_SECRET|DO_NOT_DISCLOSE|decision-not-recorded/);
     }
+  });
+  test('v0.2 approval presentation and CLI records (T055/T056)', async () => {
+    // 1. Valid current v0.2 presentation records on both branches
+    const validRepoPrePlan: PresentationInputV02 = {
+      subjectKind: 'repository-action',
+      planApplicability: 'pre-plan-diagnostic',
+      requestVersion: 1,
+      decisionId: 'decision-repo-pre',
+      repositoryId: 'repository-1',
+      continuationRef: 'continuation-1',
+      policyIdentity: identity,
+      elements: { action: 'Run tests', necessity: 'Verify diagnostic baseline', targets: ['tests/other.py'], consequences: 'Isolated test run', verificationStatus: 'Not executed' },
+      action: { actionId: 'action-1', kind: 'run_command', executable: 'pytest', argv: ['-q', 'tests/other.py'], workingDirectory: '/workspace' },
+      diagnosticPurpose: 'investigation_reproduction',
+      taskCriteriaDigest: digest,
+    };
+
+    const validRepoApprovedPlan: PresentationInputV02 = {
+      subjectKind: 'repository-action',
+      planApplicability: 'approved-plan',
+      requestVersion: 1,
+      decisionId: 'decision-repo-plan',
+      repositoryId: 'repository-1',
+      continuationRef: 'continuation-1',
+      policyIdentity: identity,
+      elements: { action: 'Apply repair patch', necessity: 'Fix identified defect', targets: ['src/core.ts'], consequences: 'Modifies workspace file', verificationStatus: 'Pending verification' },
+      action: { actionId: 'action-2', kind: 'run_command', executable: 'git', argv: ['apply'], workingDirectory: '/workspace' },
+      planBindingDigest: digest,
+      planDecisionRef: 'decision-plan-1',
+    };
+
+    const providerReq: ProviderRequest = {
+      providerRequestId: 'provider-req-1',
+      taskId: 'task-1',
+      runId: 'run-1',
+      role: 'coder',
+      purpose: 'reproduction_check',
+      providerId: 'provider-1',
+      modelId: 'model-1',
+      configId: 'config-1',
+      pricingPolicyId: 'pricing-1',
+      contextDigest: digest,
+      timeoutMs: 2000,
+      maxInputTokens: 100,
+      maxOutputTokens: 100,
+      maxBillableTokens: 220,
+      maxCostUsd: 0.25,
+      reservationRef: 'reservation-1',
+      dispatchState: 'reserved',
+    };
+
+    const validProviderPrePlan: PresentationInputV02 = {
+      subjectKind: 'provider-request',
+      planApplicability: 'pre-plan-diagnostic',
+      requestVersion: 1,
+      decisionId: 'decision-provider-pre',
+      repositoryId: 'repository-1',
+      continuationRef: 'continuation-1',
+      policyIdentity: identity,
+      elements: { action: 'Model coder diagnostic', necessity: 'Generate reproduction check', targets: ['tests/reproduce.py'], consequences: 'Consumes provider tokens', verificationStatus: 'Not executed' },
+      providerRequest: providerReq,
+      diagnosticPurpose: 'coder_reproduction_diagnostic',
+      taskCriteriaDigest: digest,
+    };
+
+    const validProviderApprovedPlan: PresentationInputV02 = {
+      subjectKind: 'provider-request',
+      planApplicability: 'approved-plan',
+      requestVersion: 1,
+      decisionId: 'decision-provider-plan',
+      repositoryId: 'repository-1',
+      continuationRef: 'continuation-1',
+      policyIdentity: identity,
+      elements: { action: 'Reviewer evaluation', necessity: 'Review proposed repair candidate', targets: ['src/core.ts'], consequences: 'Consumes reviewer tokens', verificationStatus: 'Not executed' },
+      providerRequest: { ...providerReq, providerRequestId: 'provider-req-2', role: 'reviewer', purpose: 'repair_review' },
+      planBindingDigest: digest,
+      planDecisionRef: 'decision-plan-1',
+    };
+
+    const repoPreBundle = buildPresentationV02(validRepoPrePlan, profile);
+    assert.equal(repoPreBundle.summary.schemaVersion, UC05_APPROVAL_SCHEMA_VERSION_V02);
+    assert.equal(repoPreBundle.summary.subjectKind, 'repository-action');
+    assert.equal(repoPreBundle.summary.planApplicability, 'pre-plan-diagnostic');
+    assert.equal(repoPreBundle.summary.diagnosticPurpose, 'investigation_reproduction');
+    assert.equal(repoPreBundle.summary.taskCriteriaDigest, digest);
+    assert.equal(validateSafePresentationV02(repoPreBundle.summary, profile).ok, true);
+
+    const maxTargets = Array.from({ length: 32 }, (_, index) => `src/module-${index}.ts`);
+    const boundedBundle = buildPresentationV02({
+      ...validRepoPrePlan,
+      elements: { ...validRepoPrePlan.elements, targets: maxTargets },
+    }, profile);
+    assert.equal(validateSafePresentationV02(boundedBundle.summary, profile).ok, true);
+    assert.deepEqual(boundedBundle.summary.elements.targets, maxTargets);
+
+    const sparseTargets = ['src/one.ts'];
+    sparseTargets.length = 2;
+    const extraKeyTargets = ['src/one.ts'] as string[] & { extra?: string };
+    extraKeyTargets.extra = 'src/two.ts';
+    const invalidTargetSets: readonly unknown[][] = [
+      ['/absolute/private.py'],
+      ['../outside.py'],
+      ['src/../private.py'],
+      ['C:/workspace/private.py'],
+      ['C:\\workspace\\private.py'],
+      ['src\\private.py'],
+      ['.'],
+      ['..'],
+      ['src/./private.py'],
+      [''],
+      sparseTargets,
+      extraKeyTargets,
+      Array.from({ length: 33 }, (_, index) => `src/module-${index}.ts`),
+    ];
+    for (const targets of invalidTargetSets) {
+      const elements: Record<string, unknown> = { ...validRepoPrePlan.elements, targets };
+      const invalidInput = { ...validRepoPrePlan, elements } as unknown as PresentationInputV02;
+      assert.equal(validateSafePresentationV02({ ...repoPreBundle.summary, elements }, profile).ok, false);
+      assert.throws(() => buildPresentationV02(invalidInput, profile), /unsafe-presentation/);
+    }
+
+    const repoPlanBundle = buildPresentationV02(validRepoApprovedPlan, profile);
+    assert.equal(repoPlanBundle.summary.schemaVersion, UC05_APPROVAL_SCHEMA_VERSION_V02);
+    assert.equal(repoPlanBundle.summary.subjectKind, 'repository-action');
+    assert.equal(repoPlanBundle.summary.planApplicability, 'approved-plan');
+    assert.equal(repoPlanBundle.summary.planBindingDigest, digest);
+    assert.equal(repoPlanBundle.summary.planDecisionRef, 'decision-plan-1');
+    assert.equal(validateSafePresentationV02(repoPlanBundle.summary, profile).ok, true);
+
+    const provPreBundle = buildPresentationV02(validProviderPrePlan, profile);
+    assert.equal(provPreBundle.summary.schemaVersion, UC05_APPROVAL_SCHEMA_VERSION_V02);
+    assert.equal(provPreBundle.summary.subjectKind, 'provider-request');
+    assert.equal(provPreBundle.summary.planApplicability, 'pre-plan-diagnostic');
+    assert.equal(provPreBundle.summary.role, 'coder');
+    assert.equal(validateSafePresentationV02(provPreBundle.summary, profile).ok, true);
+
+    const providerAdmission = createFixtureProviderAdmissionContextV02();
+    const providerWithReceipt = buildPresentationV02({
+      ...validProviderApprovedPlan,
+      providerRequest: providerAdmission.providerRequest,
+    }, profile).summary;
+    assert.equal(validateProviderRequest(providerAdmission.providerRequest).ok, true);
+    if (providerWithReceipt.subjectKind !== 'provider-request') throw new Error('provider presentation branch mismatch');
+    assert.equal(providerWithReceipt.providerRequestId, providerAdmission.providerAdmissionReceipt.providerRequestId);
+    assert.equal(providerWithReceipt.role, providerAdmission.providerAdmissionReceipt.role);
+    assert.equal(providerWithReceipt.requestContentDigest, providerAdmission.providerAdmissionReceipt.requestContentDigest);
+    assert.equal(providerWithReceipt.requestContentDigest, computeRequestContentDigest(providerAdmission.providerRequest));
+    const incompleteProviderRequest = { providerRequestId: 'provider-req-incomplete', role: 'coder' };
+    assert.throws(() => buildPresentationV02({
+      ...validProviderPrePlan,
+      providerRequest: incompleteProviderRequest,
+    } as unknown as PresentationInputV02, profile), /unsafe-presentation/);
+
+    const provPlanBundle = buildPresentationV02(validProviderApprovedPlan, profile);
+    assert.equal(provPlanBundle.summary.schemaVersion, UC05_APPROVAL_SCHEMA_VERSION_V02);
+    assert.equal(provPlanBundle.summary.subjectKind, 'provider-request');
+    assert.equal(provPlanBundle.summary.planApplicability, 'approved-plan');
+    assert.equal(provPlanBundle.summary.role, 'reviewer');
+    assert.equal(validateSafePresentationV02(provPlanBundle.summary, profile).ok, true);
+
+    const protectedSummary = { ...repoPreBundle.summary, elements: { ...repoPreBundle.summary.elements, necessity: 'MARKER_SECRET_DO_NOT_DISCLOSE' } };
+    assert.equal(validateSafePresentationV02(protectedSummary, profile).ok, false);
+    assert.equal(validateSafePresentationV02({ ...repoPreBundle.summary, rawPayload: 'unrecognized' }, profile).ok, false);
+    assert.equal(validateSafePresentationV02({
+      ...repoPreBundle.summary,
+      elements: { ...repoPreBundle.summary.elements, action: '\u001b[31mRun tests' },
+    }, profile).ok, false);
+    assert.equal(validateSafePresentationV02({
+      ...repoPreBundle.summary,
+      elements: { ...repoPreBundle.summary.elements, action: 'x'.repeat(profile.maxPresentationPageBytes + 1) },
+    }, profile).ok, false);
+    assert.equal(validateSafePresentationV02({
+      ...repoPreBundle.summary,
+      page: { ...repoPreBundle.summary.page, pageNumber: 2, pageCount: 1 },
+    }, profile).ok, false);
+
+    let getterReads = 0;
+    const accessorSummary = { ...repoPreBundle.summary };
+    Object.defineProperty(accessorSummary, 'schemaVersion', {
+      enumerable: true,
+      get: () => { getterReads += 1; return UC05_APPROVAL_SCHEMA_VERSION_V02; },
+    });
+    assert.equal(validateSafePresentationV02(accessorSummary, profile).ok, false);
+    assert.equal(getterReads, 0);
+    const proxySummary = new Proxy(repoPreBundle.summary, { get: (target, property, receiver) => Reflect.get(target, property, receiver) });
+    assert.equal(validateSafePresentationV02(proxySummary, profile).ok, false);
+
+    // 2. Missing branch fields reject
+    const missingRepoDiag = { ...validRepoPrePlan, diagnosticPurpose: undefined } as unknown as PresentationInputV02;
+    assert.throws(() => buildPresentationV02(missingRepoDiag, profile), /unsafe-presentation/);
+    assert.equal(validateSafePresentationV02({ ...repoPreBundle.summary, diagnosticPurpose: undefined }, profile).ok, false);
+
+    const missingRepoPlan = { ...validRepoApprovedPlan, planBindingDigest: undefined } as unknown as PresentationInputV02;
+    assert.throws(() => buildPresentationV02(missingRepoPlan, profile), /unsafe-presentation/);
+    assert.equal(validateSafePresentationV02({ ...repoPlanBundle.summary, planBindingDigest: undefined }, profile).ok, false);
+
+    const missingProvRole = { ...validProviderPrePlan, providerRequest: { ...providerReq, role: undefined } } as unknown as PresentationInputV02;
+    assert.throws(() => buildPresentationV02(missingProvRole, profile), /unsafe-presentation/);
+    assert.equal(validateSafePresentationV02({ ...provPreBundle.summary, role: undefined }, profile).ok, false);
+
+    // 3. Cross-branch fields forbidden
+    const repoWithProviderField = { ...validRepoPrePlan, providerRequestId: 'req-1', role: 'coder' } as unknown as PresentationInputV02;
+    assert.throws(() => buildPresentationV02(repoWithProviderField, profile), /unsafe-presentation/);
+    const repoSummaryWithProv = { ...repoPreBundle.summary, providerRequestId: 'req-1' };
+    const repoProvVal = validateSafePresentationV02(repoSummaryWithProv, profile);
+    assert.equal(repoProvVal.ok, false);
+    assert.ok(repoProvVal.errors.some(e => e.code === 'CROSS_BRANCH_FIELDS_FORBIDDEN'));
+
+    const provWithRepoField = { ...validProviderPrePlan, actionId: 'action-1', actionDigest: digest } as unknown as PresentationInputV02;
+    assert.throws(() => buildPresentationV02(provWithRepoField, profile), /unsafe-presentation/);
+    const provSummaryWithRepo = { ...provPreBundle.summary, actionId: 'action-1' };
+    const provRepoVal = validateSafePresentationV02(provSummaryWithRepo, profile);
+    assert.equal(provRepoVal.ok, false);
+    assert.ok(provRepoVal.errors.some(e => e.code === 'CROSS_BRANCH_FIELDS_FORBIDDEN'));
+
+    const prePlanWithPlanDigest = { ...validRepoPrePlan, planBindingDigest: digest, planDecisionRef: 'decision-plan-1' } as unknown as PresentationInputV02;
+    assert.throws(() => buildPresentationV02(prePlanWithPlanDigest, profile), /unsafe-presentation/);
+    const prePlanSummaryWithPlan = { ...repoPreBundle.summary, planBindingDigest: digest };
+    const prePlanVal = validateSafePresentationV02(prePlanSummaryWithPlan, profile);
+    assert.equal(prePlanVal.ok, false);
+    assert.ok(prePlanVal.errors.some(e => e.code === 'CROSS_BRANCH_FIELDS_FORBIDDEN'));
+
+    // 4. Old-version data rejected at the v0.2 boundary
+    const v01Summary = {
+      schemaVersion: 'uc05-approval/0.1-draft',
+      decisionId: 'decision-1',
+      requestVersion: 1,
+      bindingFingerprint: digest,
+      elements: validRepoPrePlan.elements,
+      inspectionRef: 'decision-1',
+      presentationDigest: digest,
+      page: { pageNumber: 1, pageCount: 1, pageBytes: 100, totalBytes: 100, truncated: false },
+    };
+    const v01Val = validateSafePresentationV02(v01Summary, profile);
+    assert.equal(v01Val.ok, false);
+    assert.ok(v01Val.errors.some(e => e.code === 'INVALID_SCHEMA_VERSION'));
+    assert.throws(() => buildPresentationV02(v01Summary as unknown as PresentationInputV02, profile), /unsafe-presentation/);
+
+    for (const field of ['binding', 'freshness'] as const) {
+      for (const value of [undefined, { callerSupplied: true }]) {
+        assert.throws(() => buildPresentationV02({
+          ...validRepoPrePlan,
+          [field]: value,
+        } as unknown as PresentationInputV02, profile), /unsafe-presentation/);
+      }
+    }
+
+    // 5. Deliberate versioned compatibility display retained with no effect authority
+    const v01Input = {
+      requestVersion: 1,
+      binding: { decisionId: 'decision-1', actionKind: 'action' as const, normalizedActionDigest: computeActionDigest(validRepoPrePlan.action), taskId: 'task-1', workspaceId: 'workspace-1', repositoryRevisionDigest: digest, policyId: 'policy-1', policyVersion: '1', status: 'pending' as const },
+      freshness: { currentTaskId: 'task-1', currentWorkspaceId: 'workspace-1', currentRepositoryRevisionDigest: digest, currentPolicyId: 'policy-1', currentPolicyVersion: '1', currentNormalizedActionDigest: computeActionDigest(validRepoPrePlan.action) },
+      action: validRepoPrePlan.action,
+      repositoryId: 'repository-1',
+      continuationRef: 'continuation-1',
+      policyIdentity: identity,
+      elements: validRepoPrePlan.elements,
+    };
+    const compatBundle = buildPresentationCompatibilityV01(v01Input, profile);
+    assert.equal(compatBundle.summary.schemaVersion, 'uc05-approval/0.1-draft');
+
+    const compatShowRes = child(['compat-show', '--task', 'task-1', '--request', 'decision-1']);
+    assert.equal(compatShowRes.status, 0, compatShowRes.stderr);
+    const compatParsed = JSON.parse(compatShowRes.stdout);
+    assert.equal(compatParsed.schemaVersion, 'uc05-approval/0.1-draft');
+    assert.equal(compatParsed.outcome, 'ok');
+
+    // Compatibility mode has no effect authority (compat-decide / compat-control fail as invalid commands)
+    const compatDecide = child(['compat-decide', '--task', 'task-1']);
+    assert.equal(compatDecide.status, 2);
+    const compatControl = child(['compat-control', '--task', 'task-1']);
+    assert.equal(compatControl.status, 2);
+
+    // 6. Versioned CLI views retain every presentation branch and their own mutation boundary.
+    let versionedMutations = 0;
+    const versionedService = {
+      cliSchemaVersion: UC05_APPROVAL_SCHEMA_VERSION_V02,
+      presentationProfileV02: profile,
+      listV02: async () => ({ schemaVersion: UC05_APPROVAL_SCHEMA_VERSION_V02, items: [repoPreBundle.summary, repoPlanBundle.summary, provPreBundle.summary, provPlanBundle.summary] }),
+      historyV02: async () => ({ schemaVersion: UC05_APPROVAL_SCHEMA_VERSION_V02, records: [repoPreBundle.summary, repoPlanBundle.summary, provPreBundle.summary, provPlanBundle.summary] }),
+      showV02: async () => repoPreBundle.summary,
+      inspectV02: async () => provPlanBundle.summary,
+      decideV02: async () => {
+        versionedMutations += 1;
+        return { schemaVersion: UC05_APPROVAL_SCHEMA_VERSION_V02, outcome: 'paused', safeReasonCode: 'decision-recorded' };
+      },
+      controlV02: async () => {
+        versionedMutations += 1;
+        return { schemaVersion: UC05_APPROVAL_SCHEMA_VERSION_V02, outcome: 'paused', safeReasonCode: 'direction-recorded' };
+      },
+    };
+    const versionedReads = [
+      await runApprovalCliV02(['show', '--task', 'task-1', '--request', 'decision-1'], versionedService),
+      await runApprovalCliV02(['list', '--task', 'task-1'], versionedService),
+      await runApprovalCliV02(['history', '--task', 'task-1', '--page', '1'], versionedService),
+      await runApprovalCliV02(['inspect', '--task', 'task-1', '--request', 'decision-1', '--page', '1'], versionedService),
+    ];
+    for (const response of versionedReads) {
+      assert.equal(response.exitCode, 0);
+      const parsed = JSON.parse(response.output);
+      assert.equal(parsed.schemaVersion, UC05_APPROVAL_SCHEMA_VERSION_V02);
+      assert.equal(parsed.outcome, 'ok');
+    }
+    const versionedDecision = await runApprovalCliV02([
+      'decide', '--task', 'task-1', '--request', 'decision-repo-pre', '--task-version', '2', '--request-version', '1',
+      '--presentation-digest', repoPreBundle.summary.presentationDigest, '--decision', 'reject', '--response-key', 'versioned-reject',
+    ], versionedService);
+    const versionedControl = await runApprovalCliV02([
+      'control', '--task', 'task-1', '--task-version', '3', '--direction', 'end', '--response-key', 'versioned-end',
+    ], versionedService);
+    assert.equal(versionedDecision.exitCode, 0);
+    assert.equal(versionedControl.exitCode, 0);
+    assert.equal(versionedMutations, 2);
+  });
+
+  test('v0.2 CLI refuses legacy views and never invokes legacy mutation methods', async () => {
+    const state = await fixture('normal');
+    let legacyMutationCalls = 0;
+    const service = {
+      ...state.service,
+      decide: async (input: unknown) => {
+        legacyMutationCalls += 1;
+        return state.service.decide(input);
+      },
+      control: async (input: unknown) => {
+        legacyMutationCalls += 1;
+        return state.service.control(input);
+      },
+    };
+    const before = state.snapshot('same');
+    const reads: readonly (readonly string[])[] = [
+      ['show', '--task', 'task-1', '--request', 'decision-1'],
+      ['list', '--task', 'task-1'],
+      ['history', '--task', 'task-1', '--page', '1'],
+      ['inspect', '--task', 'task-1', '--request', 'decision-1', '--page', '1'],
+    ];
+
+    for (const args of reads) {
+      const response = await runApprovalCliV02(args, service);
+      const parsed = JSON.parse(response.output) as { schemaVersion?: string; outcome?: string };
+      assert.equal(response.exitCode, 5, args[0]);
+      assert.equal(parsed.schemaVersion, UC05_APPROVAL_SCHEMA_VERSION_V02, args[0]);
+      assert.equal(parsed.outcome, 'unavailable', args[0]);
+    }
+
+    const decisions = [
+      ['decide', '--task', 'task-1', '--request', 'decision-1', '--task-version', '2', '--request-version', '1', '--presentation-digest', state.presentationDigest, '--decision', 'reject', '--response-key', 'legacy-reject'],
+      ['control', '--task', 'task-1', '--task-version', '3', '--direction', 'end', '--response-key', 'legacy-end'],
+    ];
+    for (const args of decisions) {
+      const response = await runApprovalCliV02(args, service);
+      assert.notEqual(response.exitCode, 0, args[0]);
+    }
+
+    assert.equal(legacyMutationCalls, 0);
+    assert.deepEqual(state.snapshot('same'), before);
+  });
+
+  test('v0.2 CLI rejects legacy and cross-branch records from a versioned capability', async () => {
+    const state = await fixture('normal');
+    let legacyMutationCalls = 0;
+    let versionedMutationCalls = 0;
+    const service = {
+      ...state.service,
+      cliSchemaVersion: UC05_APPROVAL_SCHEMA_VERSION_V02,
+      presentationProfileV02: profile,
+      listV02: async (taskId: string) => ({ ...await state.service.list(taskId), schemaVersion: 'uc05-approval/0.1-draft' }),
+      historyV02: async (taskId: string, page: number) => ({ ...await state.service.history(taskId, page), schemaVersion: 'uc05-approval/0.1-draft' }),
+      showV02: async (taskId: string, decisionId: string) => {
+        const view = await state.service.show(taskId, decisionId);
+        return { ...view, schemaVersion: UC05_APPROVAL_SCHEMA_VERSION_V02, presentation: { ...view.presentation, subjectKind: 'provider-request' } };
+      },
+      inspectV02: async (taskId: string, decisionId: string, page: number) => ({
+        ...await state.service.inspect(taskId, decisionId, page),
+        schemaVersion: UC05_APPROVAL_SCHEMA_VERSION_V02,
+        subjectKind: 'provider-request',
+        planApplicability: 'pre-plan-diagnostic',
+      }),
+      decide: async (input: unknown) => {
+        legacyMutationCalls += 1;
+        return state.service.decide(input);
+      },
+      control: async (input: unknown) => {
+        legacyMutationCalls += 1;
+        return state.service.control(input);
+      },
+      decideV02: async () => { versionedMutationCalls += 1; return { outcome: 'ok' }; },
+      controlV02: async () => { versionedMutationCalls += 1; return { outcome: 'ok' }; },
+    };
+    const reads: readonly (readonly string[])[] = [
+      ['show', '--task', 'task-1', '--request', 'decision-1'],
+      ['list', '--task', 'task-1'],
+      ['history', '--task', 'task-1', '--page', '1'],
+      ['inspect', '--task', 'task-1', '--request', 'decision-1', '--page', '1'],
+    ];
+
+    for (const args of reads) {
+      const response = await runApprovalCliV02(args, service);
+      const parsed = JSON.parse(response.output) as { outcome?: string };
+      assert.equal(response.exitCode, 5, args[0]);
+      assert.equal(parsed.outcome, 'unavailable', args[0]);
+    }
+    const mutations = [
+      ['decide', '--task', 'task-1', '--request', 'decision-1', '--task-version', '2', '--request-version', '1', '--presentation-digest', state.presentationDigest, '--decision', 'reject', '--response-key', 'versioned-reject'],
+      ['control', '--task', 'task-1', '--task-version', '3', '--direction', 'end', '--response-key', 'versioned-end'],
+    ];
+    for (const args of mutations) {
+      const response = await runApprovalCliV02(args, service);
+      assert.notEqual(response.exitCode, 0, args[0]);
+    }
+
+    assert.equal(legacyMutationCalls, 0);
+    assert.equal(versionedMutationCalls, 0);
+  });
+
+  test('v0.2 CLI rejects unversioned legacy records inside versioned list and history envelopes', async () => {
+    const service = {
+      cliSchemaVersion: UC05_APPROVAL_SCHEMA_VERSION_V02,
+      presentationProfileV02: profile,
+      listV02: async () => ({ schemaVersion: UC05_APPROVAL_SCHEMA_VERSION_V02, items: [{ decisionId: 'legacy-decision', requestVersion: 1 }] }),
+      historyV02: async () => ({ schemaVersion: UC05_APPROVAL_SCHEMA_VERSION_V02, records: [{ decisionId: 'legacy-decision', eventKind: 'decision-recorded' }] }),
+      showV02: async () => ({ schemaVersion: UC05_APPROVAL_SCHEMA_VERSION_V02 }),
+      inspectV02: async () => ({ schemaVersion: UC05_APPROVAL_SCHEMA_VERSION_V02 }),
+      decideV02: async () => ({ schemaVersion: UC05_APPROVAL_SCHEMA_VERSION_V02, outcome: 'ok' }),
+      controlV02: async () => ({ schemaVersion: UC05_APPROVAL_SCHEMA_VERSION_V02, outcome: 'ok' }),
+    };
+
+    for (const args of [
+      ['list', '--task', 'task-1'],
+      ['history', '--task', 'task-1', '--page', '1'],
+    ]) {
+      const response = await runApprovalCliV02(args, service);
+      assert.equal(response.exitCode, 5, args[0]);
+      assert.equal(JSON.parse(response.output).outcome, 'unavailable', args[0]);
+    }
+  });
+
+  test('v0.2 control preflight validates the versioned list collection before mutation', async t => {
+    const validPresentation = {
+      schemaVersion: UC05_APPROVAL_SCHEMA_VERSION_V02,
+      decisionId: 'decision-1',
+      requestVersion: 1,
+      bindingFingerprint: digest,
+      elements: { action: 'Run tests', necessity: 'Verify the change', targets: ['tests/unit'], consequences: 'Runs focused checks', verificationStatus: 'Not run' },
+      inspectionRef: 'decision-1',
+      presentationDigest: digest,
+      page: { pageNumber: 1, pageCount: 1, pageBytes: 512, totalBytes: 512, truncated: false },
+      subjectKind: 'repository-action',
+      planApplicability: 'pre-plan-diagnostic',
+      actionId: 'action-1',
+      actionDigest: digest,
+      diagnosticPurpose: 'investigation_reproduction',
+      taskCriteriaDigest: digest,
+    };
+    const invalidCollections: readonly (readonly [string, unknown])[] = [
+      ['root-only envelope', { schemaVersion: UC05_APPROVAL_SCHEMA_VERSION_V02, decisionId: 'root-only', requestVersion: 1 }],
+      ['unversioned collection item', { schemaVersion: UC05_APPROVAL_SCHEMA_VERSION_V02, items: [{ decisionId: 'legacy-decision', requestVersion: 1 }] }],
+      ['legacy collection envelope', { schemaVersion: 'uc05-approval/0.1-draft', items: [{ schemaVersion: 'uc05-approval/0.1-draft' }] }],
+      ['cross-branch collection item', { schemaVersion: UC05_APPROVAL_SCHEMA_VERSION_V02, items: [{ ...validPresentation, providerRequestId: 'provider-1' }] }],
+    ];
+    const controlArgs = ['control', '--task', 'task-1', '--task-version', '7', '--direction', 'end', '--response-key', 'end-1'];
+
+    const runWithCollection = async (collection: unknown) => {
+      const effects = { mutations: 0, queue: ['pending-control'], accountingEvents: 0, controlVersion: 7 };
+      const service = {
+        cliSchemaVersion: UC05_APPROVAL_SCHEMA_VERSION_V02,
+        presentationProfileV02: profile,
+        listV02: async () => collection,
+        historyV02: async () => ({ schemaVersion: UC05_APPROVAL_SCHEMA_VERSION_V02, records: [] }),
+        showV02: async () => ({ schemaVersion: UC05_APPROVAL_SCHEMA_VERSION_V02 }),
+        inspectV02: async () => ({ schemaVersion: UC05_APPROVAL_SCHEMA_VERSION_V02 }),
+        decideV02: async () => ({ schemaVersion: UC05_APPROVAL_SCHEMA_VERSION_V02, outcome: 'ok' }),
+        controlV02: async () => {
+          effects.mutations += 1;
+          effects.queue.shift();
+          effects.accountingEvents += 1;
+          effects.controlVersion += 1;
+          return { schemaVersion: UC05_APPROVAL_SCHEMA_VERSION_V02, outcome: 'ok', safeReasonCode: 'direction-recorded' };
+        },
+      };
+      return { response: await runApprovalCliV02(controlArgs, service), effects };
+    };
+
+    for (const [name, collection] of invalidCollections) {
+      await t.test(name, async () => {
+        const { response, effects } = await runWithCollection(collection);
+        assert.equal(response.exitCode, 5);
+        assert.deepEqual(JSON.parse(response.output), {
+          schemaVersion: UC05_APPROVAL_SCHEMA_VERSION_V02,
+          outcome: 'unavailable',
+          safeReasonCode: 'approval-cli-denied',
+        });
+        assert.deepEqual(effects, { mutations: 0, queue: ['pending-control'], accountingEvents: 0, controlVersion: 7 });
+      });
+    }
+
+    const unsafePathSummary = {
+      ...validPresentation,
+      elements: { ...validPresentation.elements, targets: ['../outside.py'] },
+    };
+    const unsafePathRead = await runWithCollection({
+      schemaVersion: UC05_APPROVAL_SCHEMA_VERSION_V02,
+      items: [unsafePathSummary],
+    });
+    assert.equal(unsafePathRead.response.exitCode, 5);
+    assert.deepEqual(JSON.parse(unsafePathRead.response.output), {
+      schemaVersion: UC05_APPROVAL_SCHEMA_VERSION_V02,
+      outcome: 'unavailable',
+      safeReasonCode: 'approval-cli-denied',
+    });
+    assert.deepEqual(unsafePathRead.effects, { mutations: 0, queue: ['pending-control'], accountingEvents: 0, controlVersion: 7 });
+
+    const { response, effects } = await runWithCollection({ schemaVersion: UC05_APPROVAL_SCHEMA_VERSION_V02, items: [validPresentation] });
+    assert.equal(response.exitCode, 0);
+    assert.deepEqual(JSON.parse(response.output), {
+      schemaVersion: UC05_APPROVAL_SCHEMA_VERSION_V02,
+      outcome: 'ok',
+      safeReasonCode: 'approval-cli-recorded',
+      value: { schemaVersion: UC05_APPROVAL_SCHEMA_VERSION_V02, outcome: 'ok', safeReasonCode: 'direction-recorded' },
+    });
+    assert.deepEqual(effects, { mutations: 1, queue: [], accountingEvents: 1, controlVersion: 8 });
+  });
+
+  test('v0.2 presentation rejection metadata is fixed, bounded, and input-independent', () => {
+    const validPresentation = {
+      schemaVersion: UC05_APPROVAL_SCHEMA_VERSION_V02,
+      decisionId: 'decision-1',
+      requestVersion: 1,
+      bindingFingerprint: digest,
+      elements: { action: 'Run tests', necessity: 'Verify the change', targets: ['tests/unit'], consequences: 'Runs focused checks', verificationStatus: 'Not run' },
+      inspectionRef: 'decision-1',
+      presentationDigest: digest,
+      page: { pageNumber: 1, pageCount: 1, pageBytes: 512, totalBytes: 512, truncated: false },
+      subjectKind: 'repository-action',
+      planApplicability: 'pre-plan-diagnostic',
+      actionId: 'action-1',
+      actionDigest: digest,
+      diagnosticPurpose: 'investigation_reproduction',
+      taskCriteriaDigest: digest,
+    };
+    const invalidInput = {
+      ok: false,
+      errors: [{ path: 'safePresentationV02', code: 'INVALID_OBJECT', message: 'expected bounded plain data' }],
+    };
+    const protectedContent = {
+      ok: false,
+      errors: [{ path: 'safePresentationV02', code: 'PROTECTED_CONTENT', message: 'presentation contains protected content' }],
+    };
+
+    assert.equal(validateSafePresentationV02(validPresentation, profile).ok, true);
+    assert.deepEqual(validateSafePresentationV02({ ...validPresentation, schemaVersion: 'MARKER_SECRET_DO_NOT_DISCLOSE' }, profile), protectedContent);
+
+    const protectedKey = { ...validPresentation };
+    Object.defineProperty(protectedKey, 'MARKER_SECRET_DO_NOT_DISCLOSE', { enumerable: true, value: true });
+    assert.deepEqual(validateSafePresentationV02(protectedKey, profile), protectedContent);
+
+    assert.deepEqual(validateSafePresentationV02({ ...validPresentation, schemaVersion: 'unsupported-version' }, profile), {
+      ok: false,
+      errors: [{ path: 'safePresentationV02.schemaVersion', code: 'INVALID_SCHEMA_VERSION', message: 'schemaVersion must match the supported version' }],
+    });
+    assert.deepEqual(validateSafePresentationV02({ ...validPresentation, unexpectedField: 'value' }, profile), {
+      ok: false,
+      errors: [{ path: 'safePresentationV02', code: 'UNKNOWN_FIELD', message: 'presentation contains unknown fields' }],
+    });
+
+    const unsafeKeys = [
+      `\u001b[31mMARKER_SECRET_DO_NOT_DISCLOSE`,
+      `\u009d8;;https://example.invalid\u009cMARKER_SECRET_DO_NOT_DISCLOSE`,
+      `\u202eMARKER_SECRET_DO_NOT_DISCLOSE`,
+      'x'.repeat(65_537),
+      '__proto__', 'constructor', 'prototype',
+    ];
+    for (const key of unsafeKeys) {
+      const input = { ...validPresentation };
+      Object.defineProperty(input, key, { enumerable: true, value: 'rejected-key-value' });
+      const result = validateSafePresentationV02(input, profile);
+      assert.deepEqual(result, invalidInput);
+      const serialized = JSON.stringify(result);
+      assert.ok(Buffer.byteLength(serialized) <= 1024);
+      assert.equal(serialized.includes(key), false);
+      assert.equal(serialized.includes('rejected-key-value'), false);
+    }
+
+    for (const value of ['\u001b[31mvalue', '\u009d8;;https://example.invalid\u009c', '\u202evalue', 'x'.repeat(65_537)]) {
+      const result = validateSafePresentationV02({ ...validPresentation, schemaVersion: value }, profile);
+      assert.deepEqual(result, invalidInput);
+      const serialized = JSON.stringify(result);
+      assert.ok(Buffer.byteLength(serialized) <= 1024);
+      assert.equal(serialized.includes(value), false);
+    }
+
+    const profileDiagnosticKey = 'PROFILE_VALIDATOR_KEY_SHOULD_NOT_ESCAPE';
+    const profileDiagnosticValue = 'PROFILE_VALIDATOR_VALUE_SHOULD_NOT_ESCAPE';
+    const invalidProfile = { ...profile };
+    Object.defineProperty(invalidProfile, profileDiagnosticKey, { enumerable: true, value: profileDiagnosticValue });
+    const profileResult = validateSafePresentationV02(validPresentation, invalidProfile);
+    assert.deepEqual(profileResult, {
+      ok: false,
+      errors: [{ path: 'profile', code: 'INVALID_PROFILE', message: 'presentation profile is invalid' }],
+    });
+    assert.equal(JSON.stringify(profileResult).includes(profileDiagnosticKey), false);
+    assert.equal(JSON.stringify(profileResult).includes(profileDiagnosticValue), false);
+
+    let getterReads = 0;
+    const accessorInput = { ...validPresentation };
+    Object.defineProperty(accessorInput, 'schemaVersion', { enumerable: true, get: () => { getterReads += 1; return UC05_APPROVAL_SCHEMA_VERSION_V02; } });
+    assert.deepEqual(validateSafePresentationV02(accessorInput, profile), invalidInput);
+    assert.equal(getterReads, 0);
+
+    let proxyTrapCalls = 0;
+    const proxyInput = new Proxy(validPresentation, {
+      get: () => { proxyTrapCalls += 1; throw new Error('proxy getter invoked'); },
+      getPrototypeOf: () => { proxyTrapCalls += 1; throw new Error('proxy prototype trap invoked'); },
+      ownKeys: () => { proxyTrapCalls += 1; throw new Error('proxy key trap invoked'); },
+    });
+    assert.deepEqual(validateSafePresentationV02(proxyInput, profile), invalidInput);
+    assert.equal(proxyTrapCalls, 0);
   });
 }

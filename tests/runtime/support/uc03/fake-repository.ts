@@ -4,9 +4,8 @@
  * Owned path: tests/runtime/support/uc03/fake-repository.ts
  * Feature: specs/001-verified-code-repair
  *
- * Deterministic test-only implementation of RepositoryPort for controlled offline testing.
- * Replaced by real Docker workspace lifecycle (T006), controlled repository tools (T007),
- * and authoritative execution guard composition (T022), wired at integration (T028).
+ * Deterministic test-only implementation of RepositoryPort and RepositoryPortV02
+ * for controlled offline testing.
  *
  * Invariants:
  * - Provenance is strictly 'mock'; rejected by isAdmittedForProduction.
@@ -18,6 +17,7 @@
 
 import {
   type RepositoryPort,
+  type RepositoryPortV02,
   type PortProvenance,
   type SourceEvidence,
   type ApplyPatchAction,
@@ -25,14 +25,27 @@ import {
   type CheckDefinition,
   type CheckResult,
   type ValidationError,
+  type RepositoryAdmissionContextV02,
+  type StatePortV02,
+  type ClaimReceiptV02,
+  type AttemptReceiptV02,
+  type AttemptOutcomeReceiptV02,
+  type ExecutorIdentityV02,
   isCanonicalRelativePath,
   isProtectedPath,
   validateNormalizedAction,
   validateCheckDefinition,
   validateSourceEvidence,
   validateCheckResult,
+  validateRepositoryAdmissionV02,
   computeCanonicalSha256,
+  computeActionDigest,
 } from '../../../../src/contracts/foundation/uc03.ts';
+import { computeAttemptOutcomeDigest } from '../../../../src/contracts/foundation/uc03/attempt-v02.ts';
+import {
+  createTestRepositoryAdmissionTrustedContextV02,
+  createTestRepositoryOutcomeReceiptV02,
+} from './state-fixtures.ts';
 
 export interface RepositorySnapshot {
   readonly revisionDigest: string;
@@ -51,15 +64,29 @@ export interface ScriptedDiffResult {
   readonly changedFiles: readonly string[];
 }
 
+export interface FakeRepositoryV02CallRecord {
+  readonly action: 'applyPatch' | 'runCommand' | 'runTests';
+  readonly context: RepositoryAdmissionContextV02;
+  readonly claimId?: string | undefined;
+  readonly attemptId?: string | undefined;
+  readonly claim?: ClaimReceiptV02 | undefined;
+  readonly attempt?: AttemptReceiptV02 | undefined;
+  readonly outcomeReceipt?: AttemptOutcomeReceiptV02 | undefined;
+  readonly outcome: unknown;
+}
+
 export interface FakeRepositoryOptions {
   readonly initialRevision?: string | undefined;
   readonly initialFiles?: Readonly<Record<string, string>> | undefined;
   readonly commandResults?: Readonly<Record<string, ScriptedCommandResult>> | undefined;
   readonly testResults?: Readonly<Record<string, CheckResult>> | undefined;
   readonly diffResults?: Readonly<Record<string, ScriptedDiffResult>> | undefined;
+  readonly statePort?: StatePortV02 | undefined;
+  readonly executorIdentity?: ExecutorIdentityV02 | undefined;
+  readonly defaultAdmissionContext?: RepositoryAdmissionContextV02 | undefined;
 }
 
-export class FakeRepositoryPort implements RepositoryPort {
+export class FakeRepositoryPort implements RepositoryPort, RepositoryPortV02 {
   readonly provenance: PortProvenance = 'mock';
 
   private currentRevisionDigest: string;
@@ -75,6 +102,12 @@ export class FakeRepositoryPort implements RepositoryPort {
   private readSpy: string[] = [];
   private searchSpy: string[] = [];
   private listSpy: string[] = [];
+
+  // v0.2 integration
+  private statePort?: StatePortV02 | undefined;
+  private executorIdentity?: ExecutorIdentityV02 | undefined;
+  private defaultAdmissionContext?: RepositoryAdmissionContextV02 | undefined;
+  private v02CallLog: FakeRepositoryV02CallRecord[] = [];
 
   constructor(options?: FakeRepositoryOptions) {
     const rev =
@@ -101,20 +134,26 @@ export class FakeRepositoryPort implements RepositoryPort {
     this.snapshots.set(rev, initialMap);
 
     if (options?.commandResults) {
-      for (const [k, v] of Object.entries(options.commandResults)) {
-        this.commandResponses.set(k, v);
+      for (const [cmd, res] of Object.entries(options.commandResults)) {
+        this.commandResponses.set(cmd, res);
       }
     }
+
     if (options?.testResults) {
-      for (const [k, v] of Object.entries(options.testResults)) {
-        this.testResponses.set(k, v);
+      for (const [id, res] of Object.entries(options.testResults)) {
+        this.testResponses.set(id, res);
       }
     }
+
     if (options?.diffResults) {
-      for (const [k, v] of Object.entries(options.diffResults)) {
-        this.diffResponses.set(k, v);
+      for (const [r, res] of Object.entries(options.diffResults)) {
+        this.diffResponses.set(r, res);
       }
     }
+
+    this.statePort = options?.statePort;
+    this.executorIdentity = options?.executorIdentity;
+    this.defaultAdmissionContext = options?.defaultAdmissionContext;
   }
 
   get currentRevision(): string {
@@ -143,6 +182,22 @@ export class FakeRepositoryPort implements RepositoryPort {
 
   get lists(): readonly string[] {
     return [...this.listSpy];
+  }
+
+  get v02Calls(): readonly FakeRepositoryV02CallRecord[] {
+    return [...this.v02CallLog];
+  }
+
+  setStatePort(statePort: StatePortV02 | undefined): void {
+    this.statePort = statePort;
+  }
+
+  setDefaultAdmissionContext(context: RepositoryAdmissionContextV02 | undefined): void {
+    this.defaultAdmissionContext = context;
+  }
+
+  setAdmissionContext(context: RepositoryAdmissionContextV02 | undefined): void {
+    this.defaultAdmissionContext = context;
   }
 
   setSnapshot(revisionDigest: string, files: Readonly<Record<string, string>>): void {
@@ -277,11 +332,9 @@ export class FakeRepositoryPort implements RepositoryPort {
     return results;
   }
 
-  async applyPatch(
+  private async applyPatchInternal(
     patch: ApplyPatchAction
   ): Promise<{ readonly applied: boolean; readonly newRevisionDigest: string }> {
-    this.patchSpy.push(patch);
-
     const validation = validateNormalizedAction(patch);
     if (!validation.ok) {
       throw new Error(
@@ -332,11 +385,89 @@ export class FakeRepositoryPort implements RepositoryPort {
     };
   }
 
-  async runCommand(
+  async applyPatch(
+    patch: ApplyPatchAction,
+    context?: RepositoryAdmissionContextV02
+  ): Promise<{ readonly applied: boolean; readonly newRevisionDigest: string }> {
+    this.patchSpy.push(patch);
+
+    const effectiveContext = context ?? this.defaultAdmissionContext;
+    if (effectiveContext !== undefined) {
+      // v0.2 validation
+      if (
+        !effectiveContext ||
+        typeof effectiveContext !== 'object' ||
+        effectiveContext.schemaVersion !== '0.2.0' ||
+        effectiveContext.subjectKind !== 'repository-action'
+      ) {
+        return { applied: false, newRevisionDigest: this.currentRevisionDigest };
+      }
+      if (effectiveContext.policyEvaluationReceipt?.result === 'FORBIDDEN') {
+        return { applied: false, newRevisionDigest: this.currentRevisionDigest };
+      }
+      if (effectiveContext.canonicalRevision !== this.currentRevisionDigest) {
+        return { applied: false, newRevisionDigest: this.currentRevisionDigest };
+      }
+      let claim: ClaimReceiptV02 | undefined;
+      let attempt: AttemptReceiptV02 | undefined;
+      if (this.statePort) {
+        if (!this.executorIdentity) return { applied: false, newRevisionDigest: this.currentRevisionDigest };
+        claim = await this.statePort.claim(effectiveContext);
+        if (!claim.claimId || claim.taskId !== effectiveContext.taskId || claim.runId !== effectiveContext.runId) {
+          return { applied: false, newRevisionDigest: this.currentRevisionDigest };
+        }
+        attempt = await this.statePort.beginAttempt(claim.claimId, this.executorIdentity);
+        if (!attempt.attemptId || attempt.claimId !== claim.claimId) {
+          return { applied: false, newRevisionDigest: this.currentRevisionDigest };
+        }
+      }
+
+      const outcome = await this.applyPatchInternal(patch);
+
+      let outcomeReceipt: AttemptOutcomeReceiptV02 | undefined;
+      if (this.statePort && claim && attempt) {
+        const receipt = createTestRepositoryOutcomeReceiptV02(claim, attempt, effectiveContext, {
+          receiptId: `repository-outcome-${attempt.attemptId}`,
+          ...(outcome.applied
+            ? { observedResultRevisionDigest: outcome.newRevisionDigest }
+            : { outcome: 'uncertain' }),
+        });
+        const rawReceipt = outcome.applied
+          ? {
+              ...receipt,
+              proposedEffects: {
+                ...receipt.proposedEffects,
+                revision: { kind: 'advance' as const, revisionDigest: outcome.newRevisionDigest },
+              },
+            }
+          : receipt;
+        outcomeReceipt = {
+          ...rawReceipt,
+          receiptDigest: computeAttemptOutcomeDigest(rawReceipt),
+        };
+        await this.statePort.recordOutcome(outcomeReceipt);
+      }
+
+      this.v02CallLog.push({
+        action: 'applyPatch',
+        context: effectiveContext,
+        claimId: claim?.claimId,
+        attemptId: attempt?.attemptId,
+        claim,
+        attempt,
+        outcomeReceipt,
+        outcome,
+      });
+
+      return outcome;
+    }
+
+    return this.applyPatchInternal(patch);
+  }
+
+  private async runCommandInternal(
     action: RunCommandAction
   ): Promise<{ readonly exitCode: number; readonly stdout: string; readonly stderr: string }> {
-    this.commandSpy.push(action);
-
     const validation = validateNormalizedAction(action);
     if (!validation.ok) {
       throw new Error(
@@ -358,9 +489,77 @@ export class FakeRepositoryPort implements RepositoryPort {
     throw new Error('SCRIPT_EXHAUSTED: No scripted command response');
   }
 
-  async runTests(check: CheckDefinition): Promise<CheckResult> {
-    this.testSpy.push(check);
+  async runCommand(
+    action: RunCommandAction,
+    context?: RepositoryAdmissionContextV02
+  ): Promise<{ readonly exitCode: number; readonly stdout: string; readonly stderr: string }> {
+    this.commandSpy.push(action);
 
+    const effectiveContext = context ?? this.defaultAdmissionContext;
+    if (effectiveContext !== undefined) {
+      if (
+        !effectiveContext ||
+        typeof effectiveContext !== 'object' ||
+        effectiveContext.schemaVersion !== '0.2.0' ||
+        effectiveContext.subjectKind !== 'repository-action'
+      ) {
+        return { exitCode: 1, stdout: '', stderr: 'INVALID_ADMISSION_CONTEXT' };
+      }
+      if (effectiveContext.policyEvaluationReceipt?.result === 'FORBIDDEN') {
+        return { exitCode: 1, stdout: '', stderr: 'FORBIDDEN_POLICY' };
+      }
+
+      const fullKey = `${action.executable} ${action.argv.join(' ')}`;
+      const scripted =
+        this.commandResponses.get(fullKey) ??
+        this.commandResponses.get(action.executable) ??
+        this.commandResponses.get('default');
+      if (!scripted) {
+        throw new Error('SCRIPT_EXHAUSTED: No scripted command response');
+      }
+
+      let claim: ClaimReceiptV02 | undefined;
+      let attempt: AttemptReceiptV02 | undefined;
+      if (this.statePort) {
+        if (!this.executorIdentity) return { exitCode: 1, stdout: '', stderr: 'MISSING_EXECUTOR_IDENTITY' };
+        claim = await this.statePort.claim(effectiveContext);
+        if (!claim.claimId || claim.taskId !== effectiveContext.taskId || claim.runId !== effectiveContext.runId) {
+          return { exitCode: 1, stdout: '', stderr: 'ADMISSION_CLAIM_REFUSED' };
+        }
+        attempt = await this.statePort.beginAttempt(claim.claimId, this.executorIdentity);
+        if (!attempt.attemptId || attempt.claimId !== claim.claimId) {
+          return { exitCode: 1, stdout: '', stderr: 'ADMISSION_ATTEMPT_REFUSED' };
+        }
+      }
+
+      const outcome = await this.runCommandInternal(action);
+
+      let outcomeReceipt: AttemptOutcomeReceiptV02 | undefined;
+      if (this.statePort && claim && attempt) {
+        outcomeReceipt = createTestRepositoryOutcomeReceiptV02(claim, attempt, effectiveContext, {
+          receiptId: `repository-outcome-${attempt.attemptId}`,
+        });
+        await this.statePort.recordOutcome(outcomeReceipt);
+      }
+
+      this.v02CallLog.push({
+        action: 'runCommand',
+        context: effectiveContext,
+        claimId: claim?.claimId,
+        attemptId: attempt?.attemptId,
+        claim,
+        attempt,
+        outcomeReceipt,
+        outcome,
+      });
+
+      return outcome;
+    }
+
+    return this.runCommandInternal(action);
+  }
+
+  private async runTestsInternal(check: CheckDefinition): Promise<CheckResult> {
     const validationErrors: ValidationError[] = [];
     const valid = validateCheckDefinition(check, 'check', validationErrors);
     if (!valid) {
@@ -380,6 +579,86 @@ export class FakeRepositoryPort implements RepositoryPort {
     }
 
     throw new Error('SCRIPT_EXHAUSTED: No scripted check response');
+  }
+
+  async runTests(
+    check: CheckDefinition,
+    context?: RepositoryAdmissionContextV02
+  ): Promise<CheckResult> {
+    this.testSpy.push(check);
+
+    const effectiveContext = context ?? this.defaultAdmissionContext;
+    if (effectiveContext !== undefined) {
+      if (
+        !effectiveContext ||
+        typeof effectiveContext !== 'object' ||
+        effectiveContext.schemaVersion !== '0.2.0' ||
+        effectiveContext.subjectKind !== 'repository-action'
+      ) {
+        return {
+          checkId: check.checkId,
+          outcome: 'fail',
+          outputExcerpt: 'INVALID_ADMISSION_CONTEXT',
+          durationMs: 0,
+        };
+      }
+      if (effectiveContext.policyEvaluationReceipt?.result === 'FORBIDDEN') {
+        return {
+          checkId: check.checkId,
+          outcome: 'fail',
+          outputExcerpt: 'FORBIDDEN_POLICY',
+          durationMs: 0,
+        };
+      }
+
+      const scripted =
+        this.testResponses.get(check.checkId) ??
+        this.testResponses.get('default');
+      if (!scripted) {
+        throw new Error('SCRIPT_EXHAUSTED: No scripted check response');
+      }
+
+      let claim: ClaimReceiptV02 | undefined;
+      let attempt: AttemptReceiptV02 | undefined;
+      if (this.statePort) {
+        if (!this.executorIdentity) {
+          return { checkId: check.checkId, outcome: 'fail', outputExcerpt: 'MISSING_EXECUTOR_IDENTITY', durationMs: 0 };
+        }
+        claim = await this.statePort.claim(effectiveContext);
+        if (!claim.claimId || claim.taskId !== effectiveContext.taskId || claim.runId !== effectiveContext.runId) {
+          return { checkId: check.checkId, outcome: 'fail', outputExcerpt: 'ADMISSION_CLAIM_REFUSED', durationMs: 0 };
+        }
+        attempt = await this.statePort.beginAttempt(claim.claimId, this.executorIdentity);
+        if (!attempt.attemptId || attempt.claimId !== claim.claimId) {
+          return { checkId: check.checkId, outcome: 'fail', outputExcerpt: 'ADMISSION_ATTEMPT_REFUSED', durationMs: 0 };
+        }
+      }
+
+      const outcome = await this.runTestsInternal(check);
+
+      let outcomeReceipt: AttemptOutcomeReceiptV02 | undefined;
+      if (this.statePort && claim && attempt) {
+        outcomeReceipt = createTestRepositoryOutcomeReceiptV02(claim, attempt, effectiveContext, {
+          receiptId: `repository-outcome-${attempt.attemptId}`,
+        });
+        await this.statePort.recordOutcome(outcomeReceipt);
+      }
+
+      this.v02CallLog.push({
+        action: 'runTests',
+        context: effectiveContext,
+        claimId: claim?.claimId,
+        attemptId: attempt?.attemptId,
+        claim,
+        attempt,
+        outcomeReceipt,
+        outcome,
+      });
+
+      return outcome;
+    }
+
+    return this.runTestsInternal(check);
   }
 
   async inspectDiff(
@@ -411,5 +690,120 @@ export class FakeRepositoryPort implements RepositoryPort {
       diffDigest,
       changedFiles,
     };
+  }
+}
+
+export class FakeRepositoryPortV02 implements RepositoryPortV02 {
+  readonly provenance: PortProvenance = 'mock';
+  private readonly underlying: FakeRepositoryPort;
+
+  constructor(underlying: FakeRepositoryPort) {
+    this.underlying = underlying;
+  }
+
+  get currentRevision(): string {
+    return this.underlying.currentRevision;
+  }
+
+  get commands(): readonly RunCommandAction[] {
+    return this.underlying.commands;
+  }
+
+  get tests(): readonly CheckDefinition[] {
+    return this.underlying.tests;
+  }
+
+  get patches(): readonly ApplyPatchAction[] {
+    return this.underlying.patches;
+  }
+
+  get reads(): readonly string[] {
+    return this.underlying.reads;
+  }
+
+  get searches(): readonly string[] {
+    return this.underlying.searches;
+  }
+
+  get lists(): readonly string[] {
+    return this.underlying.lists;
+  }
+
+  get v02Calls(): readonly FakeRepositoryV02CallRecord[] {
+    return this.underlying.v02Calls;
+  }
+
+  private admits(action: ApplyPatchAction | RunCommandAction, context: RepositoryAdmissionContextV02): boolean {
+    try {
+      const trusted = createTestRepositoryAdmissionTrustedContextV02(context);
+      const validation = validateRepositoryAdmissionV02(context, {
+        ...trusted,
+        canonicalRevision: this.currentRevision,
+      });
+      return validation.ok && computeActionDigest(action) === context.actionDigest;
+    } catch {
+      return false;
+    }
+  }
+
+  listDir(path: string): Promise<readonly string[]> {
+    return this.underlying.listDir(path);
+  }
+
+  readFile(path: string): Promise<SourceEvidence> {
+    return this.underlying.readFile(path);
+  }
+
+  searchCode(query: string): Promise<readonly SourceEvidence[]> {
+    return this.underlying.searchCode(query);
+  }
+
+  applyPatch(
+    patch: ApplyPatchAction,
+    context: RepositoryAdmissionContextV02
+  ): Promise<{ readonly applied: boolean; readonly newRevisionDigest: string }> {
+    if (!context || !this.admits(patch, context)) {
+      return Promise.resolve({ applied: false, newRevisionDigest: this.currentRevision });
+    }
+    return this.underlying.applyPatch(patch, context);
+  }
+
+  runCommand(
+    action: RunCommandAction,
+    context: RepositoryAdmissionContextV02
+  ): Promise<{ readonly exitCode: number; readonly stdout: string; readonly stderr: string }> {
+    if (!context || !this.admits(action, context)) {
+      return Promise.resolve({ exitCode: 1, stdout: '', stderr: context ? 'INVALID_ADMISSION_CONTEXT' : 'MISSING_ADMISSION_CONTEXT' });
+    }
+    return this.underlying.runCommand(action, context);
+  }
+
+  runTests(
+    check: CheckDefinition,
+    context: RepositoryAdmissionContextV02
+  ): Promise<CheckResult> {
+    if (!context || !check.workingDirectory || context.checkId !== check.checkId ||
+      !this.admits({
+        actionId: check.checkId,
+        kind: 'run_command',
+        executable: check.executable,
+        argv: check.argv,
+        workingDirectory: check.workingDirectory,
+        ...(check.purpose !== undefined ? { purpose: check.purpose } : {}),
+      }, context)) {
+      return Promise.resolve({
+        checkId: check.checkId,
+        outcome: 'fail',
+        outputExcerpt: context ? 'INVALID_ADMISSION_CONTEXT' : 'MISSING_ADMISSION_CONTEXT',
+        durationMs: 0,
+      });
+    }
+    return this.underlying.runTests(check, context);
+  }
+
+  inspectDiff(
+    baseRevisionDigest: string
+  ): Promise<{ readonly diff: string; readonly diffDigest: string; readonly changedFiles: readonly string[] }> {
+    return this.underlying.inspectDiff(baseRevisionDigest);
   }
 }
