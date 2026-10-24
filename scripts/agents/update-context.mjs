@@ -89,7 +89,7 @@ async function run(args) {
         if (await readFile(entry.path, 'utf8') !== entry.content) { retained.push(entry.file); continue; }
         await atomicWrite(entry.path, entry.source);
       }
-      throw new Error(`${error.message}\nRestored this run's edits.${retained.length ? ` Concurrent edits retained; inspect: ${retained.join(', ')}` : ''}`);
+      throw new Error(`${error.message}\nRestored this run's edits.${retained.length ? ` Concurrent edits retained; inspect: ${retained.join(', ')}` : ''}`, { cause: error });
     }
   };
   if (options['--apply']) await withLock(resolve(context, '.context-update.lock'), execute);

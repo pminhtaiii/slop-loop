@@ -1,7 +1,6 @@
 /** UC-03 runtime port interfaces and provenance admission. */
 
 import type { ActivityEvent, ApplyPatchAction, ApprovalBinding, BugTask, CheckDefinition, CheckResult, EnvelopeOutcome, NormalizedAction, PermissionClass, ProviderRequest, ProviderUsage, ReservationBundle, ReviewResult, RunCommandAction, SourceEvidence, TaskState, ValidationError } from './types.ts';
-import { isPlainObject } from './validation/common.ts';
 
 export interface ModelProposal {
   readonly proposalId: string;
@@ -51,9 +50,23 @@ export interface PortIdentity {
 }
 
 export function isAdmittedForProduction(ports: readonly unknown[]): boolean {
-  return ports.length > 0 && Array.from(ports).every(port =>
-    isPlainObject(port) && Object.hasOwn(port, 'provenance') && port['provenance'] === 'real'
-  );
+  try {
+    if (!Array.isArray(ports) || ports.length === 0) return false;
+    const indices = Object.getOwnPropertyNames(ports).filter((key) => {
+      const index = Number(key);
+      return Number.isInteger(index) && index >= 0 && index < ports.length && String(index) === key;
+    });
+    return indices.length === ports.length && indices.every((index) => {
+      const slot = Object.getOwnPropertyDescriptor(ports, index);
+      if (slot === undefined || !('value' in slot)) return false;
+      const port = slot.value;
+      if (!port || typeof port !== 'object' || Array.isArray(port)) return false;
+      const provenance = Object.getOwnPropertyDescriptor(port, 'provenance');
+      return provenance !== undefined && 'value' in provenance && provenance.value === 'real';
+    });
+  } catch {
+    return false;
+  }
 }
 
 export interface ModelPort extends PortIdentity {

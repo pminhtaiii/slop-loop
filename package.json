@@ -29,8 +29,10 @@
     "@langchain/langgraph": "1.5.0"
   },
   "devDependencies": {
+    "@eslint/js": "10.0.1",
     "@types/node": "24.19.2",
     "eslint": "10.12.0",
+    "globals": "17.13.0",
     "typescript": "6.0.3",
     "typescript-eslint": "8.71.2"
   }

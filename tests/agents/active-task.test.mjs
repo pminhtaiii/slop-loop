@@ -21,12 +21,17 @@ async function fixture(t) {
 }
 
 function run(checkout, ...args) {
+  if (args[0] === 'start') {
+    if (!args.includes('--session')) args.push('--session', '2026-10-15/test');
+    const roleIndex = args.indexOf('--role');
+    if (roleIndex !== -1 && args[roleIndex + 1] === 'worker' && !args.includes('--owned-path')) args.push('--owned-path', 'src/example.ts');
+  }
   return spawnSync(process.execPath, [cli, ...args, '--root', checkout], {
     encoding: 'utf8', windowsHide: true, timeout: 10_000,
   });
 }
 
-test('a worker handoff can be cleared while preserving the permanent file exactly', async (t) => {
+test('a worker handoff can be cleared without rewriting a legacy assignment view', async (t) => {
   const checkout = await fixture(t);
   const path = join(checkout, 'context/active_task.md');
   const baseline = await readFile(path, 'utf8');
@@ -40,10 +45,10 @@ test('a worker handoff can be cleared while preserving the permanent file exactl
   assert.equal(await readFile(path, 'utf8'), baseline);
   assert.equal(JSON.parse(run(checkout, 'list').stdout)[0].status, 'handed-off');
   assert.equal(run(checkout, 'render').status, 0);
-  assert.match(await readFile(path, 'utf8'), /Tests passed; evidence recorded/);
+  assert.equal(await readFile(path, 'utf8'), baseline);
   result = run(checkout, 'clear', '--owner', 'parent', '--task', 'tracking');
   assert.equal(result.status, 0, result.stderr);
-  assert.match(await readFile(path, 'utf8'), /Tests passed; evidence recorded/);
+  assert.equal(await readFile(path, 'utf8'), baseline);
   assert.equal(run(checkout, 'render').status, 0);
   assert.equal(await readFile(path, 'utf8'), baseline);
 });
@@ -155,7 +160,7 @@ test('worker cleanup preserves the parent entry and active or blocked work', asy
   }
   let result = run(checkout, 'clear', '--owner', 'worker', '--task', 'T001');
   assert.equal(result.status, 1);
-  assert.match(result.stderr, /Only completed or handed-off entries/);
+  assert.match(result.stderr, /Only completed, handed-off, or reassigned entries/);
   result = run(checkout, 'update', '--owner', 'worker', '--task', 'T001', '--status', 'blocked', '--next', 'Wait for required input', '--verification', 'Focused check not run');
   assert.equal(result.status, 0, result.stderr);
   const blocked = await readFile(path, 'utf8');
@@ -201,7 +206,7 @@ test('a busy lock is retained and prevents any task-file mutation', async (t) =>
   assert.equal(await readFile(lock, 'utf8'), 'another writer');
 });
 
-test('linked worktrees share assignments without modifying the coordinator view', async (t) => {
+test('linked worktrees share assignments and terminal render leaves the coordinator view alone', async (t) => {
   const checkout = await fixture(t);
   await writeFile(join(checkout, '.gitignore'), '.agent-work/\n');
   for (const args of [
@@ -224,14 +229,16 @@ test('linked worktrees share assignments without modifying the coordinator view'
   assert.equal(await readFile(join(worker, 'context/active_task.md'), 'utf8'), workerView);
   result = run(checkout, 'render');
   assert.equal(result.status, 0, result.stderr);
-  assert.match(await readFile(join(checkout, 'context/active_task.md'), 'utf8'), /Shared assignment/);
+  assert.match(result.stdout, /worker\/T001/);
+  assert.match(result.stdout, /Verify/);
+  assert.equal(await readFile(join(checkout, 'context/active_task.md'), 'utf8'), parentView);
 });
 
 test('overlapping writers either serialize or report busy without losing an assignment', async (t) => {
   const checkout = await fixture(t);
   const execute = promisify(execFile);
   const assignments = ['worker-one', 'worker-two'].map((owner) => [
-    'start', '--role', 'worker', '--owner', owner, '--task', 'T001', '--summary', owner, '--next', 'Verify',
+    'start', '--role', 'worker', '--owner', owner, '--task', 'T001', '--session', `2026-10-15/${owner}`, '--owned-path', 'src/example.ts', '--summary', owner, '--next', 'Verify',
   ]);
   const outcomes = await Promise.all(assignments.map((args) => execute(process.execPath, [cli, ...args, '--root', checkout], {
     windowsHide: true, timeout: 10_000,

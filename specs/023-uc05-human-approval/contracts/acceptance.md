@@ -49,6 +49,23 @@ This table defines the local observation obligations for T008–T010, not a new 
 
 Retain behavioral RED/GREEN, actual command/exit or signal, source snapshot, fixture/profile identity and observed direction/event/dispatch counts. Activity mocks only record attempts; no real effects are invoked. Phase 4 does not establish real all-agent admission, durable transactions, budget restoration, actual restart, full C09/C12–C19 or C24 acceptance, or completion of T011–T022.
 
+## Phase 6 local evidence boundary
+
+T014–T015 prepare C17–C20 through actual public service/control exports and injected mock recovery. Reconstructing service/continuation objects from retained in-memory owner state is local simulation; it does not pass any required process-restart or real-integration case.
+
+| Cases | Local observations |
+|---|---|
+| C17 | Waiting/rejected controls, immutable decisions and task identity survive new service instances; no implicit release. |
+| C18,C20 | Approval commit lost response is distinguished from noncommit; exact fresh approval and owner claim/accounting prerequisites are checked. Concurrent pause, stale context, malformed snapshots/receipts or deadline expiry grant no continuation. |
+| C19,C20 | Lost claim response and post-effect uncertain owner records retain their claim/reservations. New consumer/service instances and a new run cannot blindly replay observed/uncertain/reconciled actions or reset prior task spending. |
+| C15,C18–C20 | Canonical in-memory reservation behavior rejects missing/exhausted/unsettled accounting. A valid new run can reserve only the remaining task allowance; no replacement ledger, real executor or rollback is supplied by UC-05. |
+
+The continuation API retains minimal claimed/blocked/unavailable outcomes. Separately authorized T016–T018 add safe history and CLI projections for available committed evidence and explicit current/owner observations. Unknown cancellation/execution or accounting prerequisites are not invented. Actual durable transactions, real pause/claim serialization, isolated execution and kill/restore evidence remain T020/T021 and their external gates.
+
+## T019 local catalog evidence
+
+The UC-scoped `tests/runtime/approvals/acceptance.test.ts` now accounts for C01–C24 through precise partial scopes and observed named checks from two fresh subprocess runs. All 104 required real/restart vectors remain explicitly not-run; their effect/dispatch counts are unobserved, never copied from expected oracles. Matching local catalogs are comparable without establishing full acceptance. Planned preparation tiers are recorded separately from observed local tiers derived from explicitly mapped unit/mock/CLI witnesses. The test records immutable identities, safe command/exit metadata and diagnostic stream digests; raw streams and oracle bodies are excluded. Comparator regressions reject missing/changed identities, cases, vectors or witnesses, failed or missing evidence, approval-only claims and fabricated effects/completion. At integrated source `391d3ff9e484864f89cecf28133ec413b7607e86`, the full runtime gate passed typecheck, full lint, clean build and 1098 compiled tests; contributor tests passed 227/227 (exit 0). T019 source/emitted focused checks pass 2/2 each; each catalog run observes all 192 inherited approval checks in a fresh subprocess. Phase 8 T019–T022 was separately authorized on 2026-10-22 (Asia/Saigon). T020–T022 remain blocked on external owner delivery and G-PROFILE/G-REAL/G-RESTART; real adapters, production profiles, durable atomicity, real execution and actual restart remain unverified. Full UC-05 acceptance remains unverified.
+
 ## Human approval matrix mapping
 
 | Matrix row | Required cases |

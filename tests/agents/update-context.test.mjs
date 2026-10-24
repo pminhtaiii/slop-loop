@@ -16,7 +16,7 @@ async function fixture(t) {
   await mkdir(join(root, 'docs'));
   await writeFile(join(root, 'AGENTS.md'), '[Context](context/README.md)\n');
   await writeFile(join(root, 'docs/progress-checker-matrices.md'), '# Criteria\n');
-  await writeFile(join(root, 'context/contract.json'), JSON.stringify({ requiredDocuments: ['context/README.md'], facts: {} }));
+  await writeFile(join(root, 'context/contract.json'), JSON.stringify({ requiredDocuments: ['context/README.md'], facts: {}, authorizationReferences: [] }));
   await writeFile(join(root, 'context/README.md'), '[Architecture](architecture.md)\n[Progress](progress_checker.md)\n');
   const source = '# Architecture\r\n\r\n## Runtime\r\n\r\nPlanned runtime.\r\n';
   await writeFile(join(root, 'context/architecture.md'), source);

@@ -2,7 +2,7 @@
 
 **Input**: [spec](spec.md), [plan](plan.md), [research](research.md), [data model](data-model.md), and [contracts](contracts/interfaces.md).
 
-**Status**: T001–T013 and T023–T027 review corrections are integrated and verified locally through source `84be181f68bf56481e53676ad44bc00dd45f1211`. Phase 5 authorization, three confirmed seams and user-relayed X03 agreement are recorded in decisions.md. Source/emitted approval suites each pass 142/142; runtime typecheck/full lint/build and 896 compiled tests pass. Checkboxes below remain the completion ledger. T014–T022 remain unauthorized; G-PROFILE/G-REAL/G-RESTART remain gated.
+**Status**: T001–T019 and T023–T028 corrections are complete locally under separate phase authorizations; see [decisions](contracts/decisions.md). At integrated source `391d3ff9e484864f89cecf28133ec413b7607e86`, the full runtime gate passed typecheck, full lint, clean build and 1098 compiled tests; contributor tests passed 227/227 (exit 0). T019 source/emitted focused checks pass 2/2 each; each catalog run observes all 192 inherited approval checks in a fresh subprocess. All C01–C24 have explicit partial local evidence; all 104 required real/restart vectors remain not-run and unobserved effect counts remain null. Safe history keeps immutable consent separate from current assessments and observed/unknown execution. Phase 8 T019–T022 was separately authorized on 2026-10-22 (Asia/Saigon). T020–T022 remain blocked on external owner delivery and G-PROFILE/G-REAL/G-RESTART; real adapters, production profiles, durable atomicity, real execution and actual restart remain unverified. Full UC-05 acceptance remains unverified. Checkboxes below remain the sole completion ledger. Planned preparation tiers are recorded separately from observed local tiers derived from explicitly mapped unit/mock/CLI witnesses.
 
 Final review found an in-scope T007 retry defect and two standards corrections. T023 below records their accepted correction only; it does not release any later story or real-delivery gate.
 
@@ -135,17 +135,19 @@ Final review found an in-scope T007 retry defect and two standards corrections. 
 
 **Independent Test**: C17–C20 use explicit saved control/claims and mocked interruption profiles to prevent blind replay and reset.
 
-- [ ] T014 [US4] Add recovery/claim behavioral RED in tests/runtime/approvals/restart-admission.test.ts.
+- [x] T014 [US4] Add recovery/claim behavioral RED in tests/runtime/approvals/restart-admission.test.ts.
   - **Owner**: Trong Tan / recovery consumer tests.
   - **Dependencies**: T013.
-  - **Owned Paths**: tests/runtime/approvals/restart-admission.test.ts.
+  - **Owned Paths**: tests/runtime/approvals/restart-admission.test.ts; tests/runtime/support/uc05/mock-recovery.ts.
   - **Acceptance Checks**: Exercise real control/service exports with mocked UC-04 load/claim semantics. Assertions cover retained waiting/rejection, decision commit uncertainty, concurrent pause/claim, missing accounting, lost response and post-effect uncertainty. Record local simulation scope; no actual restart claim.
+  - **Current Evidence**: Accepted candidate `632ddbc` integrated at `41c4215264106fef27a90ae83ee680cd0edbb1aa`. Eighteen behavioral tests use actual service/control exports with retained mock owner state and canonical in-memory reservations; positive, descriptor-failure and missing-claim-fence RED/GREEN slices are retained. Source/emitted approvals pass 160/160; independent merger repros pass 19/19. No actual process restart or repository effect is exercised.
 
-- [ ] T015 [US4] Implement recovery-safe continuation coordination in src/approvals/control.ts and src/approvals/service.ts.
+- [x] T015 [US4] Implement recovery-safe continuation coordination in src/approvals/control.ts and src/approvals/service.ts.
   - **Owner**: Trong Tan / recovery consumer implementation.
   - **Dependencies**: T014.
-  - **Owned Paths**: src/approvals/control.ts; src/approvals/service.ts.
+  - **Owned Paths**: src/approvals/control.ts; src/approvals/service.ts; src/approvals/recovery.ts.
   - **Acceptance Checks**: T014 passes with no retry based solely on approved status, timeout, new run or expired process. No UC-04 backend/ledger implementation; no repository execution. Real claim atomicity still external and required by T020/T021.
+  - **Current Evidence**: Same accepted integration adds `createApprovalContinuation` through control.ts and recovery.ts; existing service and generic activity admission behavior remain unchanged. Exact approved bindings, retained claim/control journal, finite owner reservation requirements and complete receipts gate mock continuation; failures/deadlines cannot authorize late work or blind replay. Integrated typecheck/full lint/clean build and 1005 compiled tests pass. Minimal result diagnostics are limited; full safe projections remain T016–T018. Real atomicity, adapters and restart remain external.
 
 ## Phase 7: User Story 5 — Safe inspectable history (Priority: P2)
 
@@ -153,39 +155,44 @@ Final review found an in-scope T007 retry defect and two standards corrections. 
 
 **Independent Test**: C07/C11/C17–C22 inspect all safe projections and failure paths.
 
-- [ ] T016 [US5] Add exhaustive decision/audit behavioral tests in tests/runtime/approvals/audit.test.ts.
+- [x] T016 [US5] Add exhaustive decision/audit behavioral tests in tests/runtime/approvals/audit.test.ts.
   - **Owner**: Trong Tan / evidence tests.
   - **Dependencies**: T015.
   - **Owned Paths**: tests/runtime/approvals/audit.test.ts.
   - **Acceptance Checks**: Test all classification/decision/cancellation/stale/uncertain/effect outcomes, atomic journal/outbox failure, secret/raw-stream markers, UTF-8/page bounds, ANSI/OSC/bidi controls and over-bound uninspectable details. Tests call actual presentation/service exports, not a fake SUT.
+  - **Current Evidence**: Corrected candidate `d4a265c8c09b9e525543678819ada87cb264429c` was independently accepted and integrated at `51fe5a9a9d756c4d325fcc16711d8e654e6e8f52`. The 21 audit vectors exercise actual service/presentation exports with injected mock owners. Source/emitted approval suites each pass 181/181; eight independent merger reproductions pass, including six corrected journal/detail-availability failures and positive later-run/historical-policy controls. Typecheck, scoped lint, build and whitespace checks pass. RED/GREEN and integrated command logs remain local under `.agent-work/2026-10-22/uc05-phase7-history-cli/`. These checks establish only exercised mock/local behavior, not durable atomicity, real effects, adapters, production profiles or process restart.
 
-- [ ] T017 [US5] Complete safe event/projection behavior in src/approvals/presentation.ts and src/approvals/service.ts.
+- [x] T017 [US5] Complete safe event/projection behavior in src/approvals/presentation.ts and src/approvals/service.ts.
   - **Owner**: Trong Tan / evidence implementation.
   - **Dependencies**: T016.
-  - **Owned Paths**: src/approvals/presentation.ts; src/approvals/service.ts.
+  - **Owned Paths**: src/approvals/presentation.ts; src/approvals/service.ts; src/approvals/history.ts; src/approvals/service-context.ts; src/approvals/service-control.ts; src/approvals/service-data.ts; src/approvals/service-decision.ts; src/approvals/service-request.ts.
   - **Acceptance Checks**: T016 green; durable decision/outbox evidence distinct from best-effort telemetry, metadata-only traces, no protected collection, no approval-only success. Do not alter Tai's telemetry implementation.
+  - **Current Evidence**: Same accepted integration and checks as T016. The read-only `ApprovalService.history(taskId, page)` projects admitted immutable records and journal metadata as complete JSON entries with snapshot digest and UTF-8 page/aggregate envelope bounds. Consent authority and history share reciprocal record/event admission; missing, foreign, duplicate or contradictory evidence fails closed. Current classification/freshness and injected owner activity observations remain explicitly separate from committed events, with unknown facts preserved; approval never establishes verified completion. Stalled current detail providers yield unknown observations without hiding committed history. Necessary cohesive service helpers preserve canonical ApprovalPort signatures, the shared admission/expiry fence and runtime import acyclicity; all eight authored implementation files are below the 20,000-byte staged-file limit. No telemetry, canonical schema, foreign owner implementation or persistence engine was added. T018 was subsequently accepted as recorded below. The later Phase 8 instruction authorizes T019–T022; real delivery dependencies remain separate.
 
-- [ ] T018 [US5] Complete CLI safe outcome/exit behavior in src/approvals/cli.ts and tests/runtime/approvals/cli.test.ts.
+- [x] T018 [US5] Complete CLI safe outcome/exit behavior in src/approvals/cli.ts and tests/runtime/approvals/cli.test.ts.
   - **Owner**: Trong Tan / operator reporting.
   - **Dependencies**: T017.
   - **Owned Paths**: src/approvals/cli.ts; tests/runtime/approvals/cli.test.ts.
-  - **Acceptance Checks**: Test-first CLI outcome matrix matches contracts, current requests never silently selected, contradictory replies conflict, uncertainty and missing stores remain paused. All existing CLI vectors pass without printing raw artifacts or credentials.
+  - **Acceptance Checks**: Test-first CLI outcome matrix matches contracts, current requests never silently selected, contradictory replies conflict, uncertainty and missing stores remain paused. Explicit `history --task TASK --page N` reads the admitted metadata projection without requiring a current request selector or treating approval as effect success. All existing CLI vectors pass without printing raw artifacts or credentials.
+  - **Current Evidence**: Candidate `55535c2d7f6484d3e57909bae869b7622edf2872` was independently accepted and integrated at `17b1605c48e47ad85c99f6fba2fe9202a51a1413`, changing only the two owned paths (272 reviewable lines; no generated/binary changes). The integrated source approval suite passes 192/192, including 23 actual CLI subprocess tests; five independent merger checks through actual service/CLI exports and the direct executable pass. Scoped lint and whitespace pass; the candidate separately passed typecheck, build and emitted approvals 192/192. Explicit history reads exit 0 for inspectable stale/rejected/unknown metadata; stale detail access remains exit 3, invalid selectors 2, denied authority 4, unavailable/uncertain 5. Tests retain same-child owner snapshots for pagination, immutable retries/newer holds and lost committed responses; local admission remains closed on uncertainty without inventing durable pause records or definite noncommit. Protected/raw/terminal payloads never enter safe output, and direct executable composition remains unavailable. RED/GREEN, handoff and exact command evidence remain local under `.agent-work/2026-10-22/uc05-phase7-history-cli/`. Evidence is mock/local only; the coordinator subsequently passed the full runtime gate (1037 compiled tests), contributor gate (227 tests) and applied the three-document context refresh. Pinned review/convergence and paired publication remain pending at this checkpoint. Phase 8 is subsequently authorized; real/restart dependencies remain unmet.
 
 ## Phase 8: Integration and Cross-Cutting Acceptance
 
 **Goal**: Distinguish complete local coverage from real delivery and prove required integrations.
 
-- [ ] T019 Register complete local acceptance and two-run comparison in tests/runtime/approvals/acceptance.test.ts.
+- [x] T019 Register complete local acceptance and two-run comparison in tests/runtime/approvals/acceptance.test.ts.
   - **Owner**: Trong Tan / UC-scoped acceptance.
   - **Dependencies**: T018.
   - **Owned Paths**: tests/runtime/approvals/acceptance.test.ts.
   - **Acceptance Checks**: Every C01–C24 case accounted for with fixture/profile/oracle/source/evidence identity; required real/restart cases report not-run until delivered. No missing-as-pass or mock-as-real; comparable two-run results. This is a UC-scoped test suite, not a replacement shared evaluation runner. Runtime typecheck/lint/build and applicable regressions pass.
+  - **Current Evidence**: Candidate `0a86684da0ac1eeb2bdfa7e669c97ece3cf639b8` was independently accepted and integrated at `26ade4ea581bdc2ae9ddbe918850fe4aab725b14`, adding only the owned test (287 reviewable lines; no generated/binary changes). Source and emitted focused acceptance each pass 2/2; each observes two fresh subprocess runs of the 192 existing approval tests, rather than counting those repeated observations as new tests. All C01–C24 rows retain explicit partial local scopes and fixture/profile/oracle/source/evidence identities; all 104 required real/restart vectors remain not-run, fixture effect counts are unobserved and full acceptance is false. Behavioral RED/GREEN covers changed identity and orphaned global witnesses; twelve independent probes reject missing/error/failed/approval-only evidence, lost vectors, foreign identities and fabricated effect/completion claims. Child commands exclude acceptance itself and reports retain safe metadata without raw streams. On the integrated source, `node scripts/ci/check-runtime.mjs` passed typecheck, full lint, clean build and 1098 compiled tests (including the two new acceptance tests); `pnpm run test:contributors` passed 227/227, both exit 0. Evidence is retained locally under `.agent-work/2026-10-22/uc05-phase8-acceptance/`. T020–T022 remain unchecked with external owner/profile/real/restart prerequisites; no real integration, durable atomicity or process restart is established.
 
 - [ ] T020 Prove real shared admission and approval integration in tests/runtime/approvals/integration.test.ts.
   - **Owner**: Trong Tan approval acceptance; Tai execution/admission; Thanh Tan durable store.
   - **Dependencies**: T019; external X04-APPROVAL-STORE, X03-ADMISSION, X03-PLAN-CONTEXT and G-PROFILE/G-REAL.
   - **Owned Paths**: tests/runtime/approvals/integration.test.ts; docs/verification/uc05-integration.md.
   - **Acceptance Checks**: Actual store, task-wide model/reviewer/tool/scheduler admission and isolated executor, no gate/store replacement mocks. C01–C16/C20–C23 before-effect denial/pause, operator authority and race claims are proven; instrument actual model admission without claiming live model quality. Record owner ledger/revision/profile/host and all commands. Missing evidence remains not-run, not a fabricated adapter. Evidence file stays ignored.
+  - **Current Evidence**: Latest-owner audit on 2026-10-22 inspected UC-03 `d7f4a1d` (mock repair/replan; real guard/containment/integration still unchecked) and upstream UC-04 `798942d` (file-backed foundation, owner T001–T012 checked, T013–T014 unchecked). Its isolated restart fixture passed 1/1, but its store/control do not export the accepted UC-05 ApprovalStore operations/receipts and the selected profile is test-only. These partial upstream results do not release T020, satisfy shared admission or convert any of the 104 required UC-05 vectors into passes. Exact revisions, missing operations and evidence limits are recorded in [decisions](contracts/decisions.md#latest-upstream-delivery-audit-2026-10-22); no foreign implementation was imported.
 
 - [ ] T021 Prove actual process restart and uncertain effects in tests/runtime/approvals/restart.test.ts.
   - **Owner**: Trong Tan with Thanh Tan recovery and Tai executor.
@@ -209,7 +216,7 @@ External delivery references are defined in plan.md; they are not foreign T-numb
 
 The first local MVP is contracts/cases/mocks plus US1's safe service/CLI. It is not production-ready without US2/US3 control and real external composition. Deliver each story through its own focused tests and retain prior regression coverage. After local T019, obtain actual external adapters for T020/T021 instead of implementing a second executor/store. Only observed acceptance plus review can release a scoped X05-GATE handoff.
 
-Original phase counts: setup 1; foundations 3; US1 3; US2 3; US3 3; US4 2; US5 3; integration/cross-cutting 4. The 22 original delivery tasks plus T023–T027 review corrections total 27 tasks. Planning quality never pre-completes implementation tasks or authorizes phase dispatch.
+Original phase counts: setup 1; foundations 3; US1 3; US2 3; US3 3; US4 2; US5 3; integration/cross-cutting 4. The 22 original delivery tasks plus T023–T028 review corrections total 28 tasks. Planning quality never pre-completes implementation tasks or authorizes phase dispatch.
 
 ## Review correction within authorized Phase 3
 
@@ -253,3 +260,12 @@ Post-publication T008–T009 correction (`3816056`, PR #75): user-authorized rev
   - **Owned Paths**: src/approvals/service.ts; tests/runtime/approvals/service.test.ts.
   - **Acceptance Checks**: Through the confirmed actual-service/mock-store seam, use different trusted contexts for old and replacement decisions; preserve the exact admitted old context that produced stale reasons and hash it for the old request's assessment. Do not reload a later context or accept exception-supplied authority. Retain request-context stale checks, safe error output, immutable history, waiting transaction and prior failures. Behavioral RED/GREEN, independent integration, affected context consistency and pinned review must pass. Correct the two verified status rows that omitted T026. No new contract, port, seam or later-phase authorization.
   - **Current Evidence**: Independent integration `84be181f68bf56481e53676ad44bc00dd45f1211`, two owned paths and 78 reviewable lines. Two behavioral RED/GREEN slices and independent repros cover canonical freshness and later request-context drift with distinct per-decision contexts, exactly one old-provider load and safe public errors. A private verdict-to-digest association retains the exact admitted old context; no public signature or context reload is added. New/prior independent repros pass 9/9, source approvals/contracts 317/317, source/emitted approvals 142/142, typecheck/build/scoped lint/whitespace pass. Coordinator runtime gate passes typecheck/full lint/build and 896 compiled tests. The verified status omissions are corrected with context refresh; contributor review/publication remains separate.
+
+## Review correction within authorized Phase 8
+
+- [x] T028 Correct observed local evidence tiers in tests/runtime/approvals/acceptance.test.ts per FR-022/SC-008 and T019's result-identity contract.
+  - **Owner**: Trong Tan / local acceptance metadata.
+  - **Dependencies**: T019.
+  - **Owned Paths**: tests/runtime/approvals/acceptance.test.ts.
+  - **Acceptance Checks**: Keep the fixture's planned preparation tier separate from the observed tier of explicitly mapped witnesses. C02 policy, C21 direct service/presentation and C23 actual executable observations report their actual local levels; global unrelated CLI checks cannot promote a row's tier. Behavioral RED/GREEN rejects the previous mislabeled metadata and altered observed tiers. Preserve all 24 partial rows, 104 required real/restart vectors as not-run, unknown effect counts, comparable two-run results and fullAcceptance false. Independent integration, affected checks and revised pinned review pass. This corrects the verified T019 Spec P2 only; no product runtime, fixture/oracle amendment, new seam or T020–T022 implementation is released.
+  - **Current Evidence**: Candidate `4b865518e94bcdb61db282ef10b797b1315b8928` was independently accepted and integrated at `391d3ff9e484864f89cecf28133ec413b7607e86`, changing only the owned test (27 added + 4 deleted = 31 reviewable/total lines; no generated/binary changes). `plannedPreparationLevel` retains fixture intent while the closed mapped witness suite determines observed `localLevel` and its evidence identity: C02 unit, C21 mock, C23 cli and C24 unit. Actual two-run metadata first failed the C02 observed-tier assertion before correction; source and emitted focused acceptance then each passed 2/2, each observing two 192/192 inherited runs. Independent probes on both final reports each passed 48 row-tier checks and nine changed/identical tier-tamper refusals. All 24 rows remain partial, all 104 required real/restart vectors not-run, effects unobserved and full acceptance false. Parent gates on source `391d3ff` passed runtime typecheck/full lint/clean build/1098 compiled tests with no skips and 227/227 contributor tests (both exit 0). Revised independent Standards and Spec reviews at `b2869c8187f3640387f55305f51fe66c16bc5b39` each report zero findings/zero blocking; Spec explicitly resolves the P2. Local evidence is retained under `.agent-work/2026-10-22/uc05-phase8-acceptance/worker/t028/`, `merger/t028/` and `reviews/`. T020–T022 remain unchecked with their existing external prerequisites; no real integration, durability or actual restart is established.

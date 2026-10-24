@@ -2,7 +2,7 @@
 
 **Branch**: `feat/023-uc05-human-approval-spec` | **Date**: 2026-10-19 (Asia/Saigon) | **Spec**: [spec.md](spec.md)
 
-**Status**: Separately authorized T001–T013 and T023–T027 corrections are integrated locally through `84be181` on 2026-10-20 (Asia/Saigon). All three Phase 5 seams and user-relayed X03-PLAN-CONTEXT agreement are confirmed. Source/emitted approval suites each pass 142/142; runtime typecheck/full lint/build and 896 compiled tests pass. T014–T022, production profiles, real runtime integration and actual restart remain gated. See [decisions](contracts/decisions.md) and the [task ledger](tasks.md).
+**Status**: T001–T019 and T023–T028 corrections are complete locally under separate phase authorizations; see [decisions](contracts/decisions.md). At integrated source `391d3ff9e484864f89cecf28133ec413b7607e86`, the full runtime gate passed typecheck, full lint, clean build and 1098 compiled tests; contributor tests passed 227/227 (exit 0). T019 source/emitted focused checks pass 2/2 each; each catalog run observes all 192 inherited approval checks in a fresh subprocess. All C01–C24 have explicit partial local evidence; all 104 required real/restart vectors remain not-run and unobserved effect counts remain null. Safe history keeps immutable consent separate from current assessments and observed/unknown execution. Phase 8 T019–T022 was separately authorized on 2026-10-22 (Asia/Saigon). T020–T022 remain blocked on external owner delivery and G-PROFILE/G-REAL/G-RESTART; real adapters, production profiles, durable atomicity, real execution and actual restart remain unverified. Full UC-05 acceptance remains unverified. Planned preparation tiers are recorded separately from observed local tiers derived from explicitly mapped unit/mock/CLI witnesses.
 
 ## Summary
 
@@ -39,7 +39,7 @@ The constitution remains an unratified placeholder. Governance comes from [AGENT
 | Shared contracts | Canonical schema 0.1.0 unchanged; companion logical contract agreed; T002 validators and test-only T004 ports are implemented | Real store, production composition and runtime conformance remain gated |
 | Durable control | Proposed UC-04 transactions and shared admission epochs | Real store, scheduler/model/executor composition before integration |
 | Evidence | Local mocks, CLI, real tools and restart have distinct levels | Required cases observed; unrun cases prevent VERIFIED claims |
-| Authorization | T001–T013 authorized in separate phases; shared agreement and Phase 3/4/5 seams confirmed; T023–T027 are scoped corrections | T014–T022 need separate authorization; production execution remains separately gated |
+| Authorization | T001–T018 authorized in separate phases; shared baseline agreement and local Phase 3–7 seams recorded; T023–T027 are scoped corrections | Phase 8 T019–T022 separately authorized on 2026-10-22; T020–T022 retain external delivery gates; production execution, real adapters and actual restart remain separately gated |
 
 Recheck these gates after design changes; a clean planning audit does not satisfy external delivery or authorization gates.
 
@@ -144,6 +144,12 @@ The user authorized T011–T012 and confirmed the public binding-evaluator and a
 The evaluator explains exact action/plan freshness and rejects incomplete trusted context without mutating input consent. The service consumes current trusted context and immutable request/resolution history, projects staleness separately, and requires fresh identities/decisions for renewed approval. Repository drift does not silently rebind a decision or automatically consume a material replan. Tests exercise these public exports with explicit mock store/context/operator dependencies and retain prior refusal/uncertainty, pause and presentation regressions. They do not establish real admission, durability, effects or restart.
 
 The user subsequently confirmed Tai/X03-PLAN-CONTEXT agreement and authorized T013's third seam: actual service binding consumed by canonical `validateStateTransition` into `Patch`, with mock context/accounting. T013 is a separate frontier after accepted T012 and owns only `tests/runtime/approvals/plan-context.test.ts`. It checks exact plan approval, new regression baseline binding, retained three-slot material replan admission/fourth refusal, original baseline preservation during nonmaterial current-state renewal, no path-only prompt and separate risky-action permission. This is user-relayed agreement, not adapter delivery or direct colleague contact; mock availability and review success supply neither. No canonical or UC-03 workflow edit is included; T014–T022 and G-PROFILE/G-REAL/G-RESTART remain gated.
+
+## Phase 6 authorized local slice — T014–T015
+
+The user separately authorized T014–T015 on 2026-10-21 (Asia/Saigon) and confirmed actual service/control exports with injected mock recovery and reconstruction from retained saved state; see [decisions](contracts/decisions.md#phase-6-implementation-authorization-and-seam). The paired test/implementation slice adds a continuation consumer in `src/approvals/recovery.ts`, exposed through `control.ts`, with a test-only owner adapter in `tests/runtime/support/uc05/mock-recovery.ts`. Generic task-activity admission keeps its existing meaning; continuation additionally requires a current matching human approval, registered interrupted action and authoritative claim/accounting admission.
+
+UC-05 validates the restored snapshot and safe claim receipt and delegates the atomic task/epoch, repository/policy and reservation checks to the injected UC-04/executor capability. A committed or uncertain claim survives new consumer/service instances; approval, timeout and a new run cannot reset it or task-scoped accounting. No execution, durable store, ledger implementation or real restart is supplied. T016–T022 and real-delivery gates remain closed.
 
 ## External Deliverables (not UC-05 task IDs)
 

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { lstat, mkdir, open, readFile, realpath, rename, unlink } from 'node:fs/promises';
+import { link, lstat, mkdir, open, readFile, realpath, rename, unlink } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 
 export function git(root, args, allowFailure = false) {
@@ -13,6 +13,22 @@ export function git(root, args, allowFailure = false) {
 export function inside(parent, candidate) {
   const path = relative(parent, candidate);
   return path !== '' && path !== '..' && !path.startsWith(`..${sep}`) && !isAbsolute(path);
+}
+
+async function pathIdentity(path) {
+  const absolute = resolve(path);
+  try { return resolve(await realpath(absolute)); }
+  catch (error) {
+    if (!['ENOENT', 'ENOTDIR'].includes(error.code)) throw error;
+    return absolute;
+  }
+}
+
+export async function samePath(left, right) {
+  const [leftPath, rightPath] = await Promise.all([pathIdentity(left), pathIdentity(right)]);
+  return process.platform === 'win32'
+    ? leftPath.toLowerCase() === rightPath.toLowerCase()
+    : leftPath === rightPath;
 }
 
 export async function repository(root) {
@@ -42,7 +58,7 @@ export async function dataDirectory(repo, name) {
   return directory;
 }
 
-export async function atomicWrite(path, content) {
+export async function atomicWrite(path, content, { exclusive = false } = {}) {
   const existing = await lstat(path).catch((error) => { if (error.code !== 'ENOENT') throw error; });
   if (existing && (!existing.isFile() || existing.isSymbolicLink())) throw new Error('Destination must be a regular file.');
   const temporary = resolve(dirname(path), `.agent-${randomUUID()}.tmp`);
@@ -54,7 +70,8 @@ export async function atomicWrite(path, content) {
     } finally {
       await handle.close();
     }
-    await rename(temporary, path);
+    if (exclusive) await link(temporary, path);
+    else await rename(temporary, path);
   } finally {
     await unlink(temporary).catch((error) => { if (error.code !== 'ENOENT') throw error; });
   }

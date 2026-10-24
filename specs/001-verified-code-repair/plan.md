@@ -3,7 +3,7 @@
 **Branch**: `feat/001-verified-code-repair` | **Date**: 2026-10-16 | **Spec**: [spec.md](spec.md)
 
 **Input**: `/specs/001-verified-code-repair/spec.md`
-**Status**: Phase 1 build setup completed; Phase 2 contract validators and controlled mocks (T003–T004) authorized on 2026-10-16 (Asia/Saigon). User-confirmed shared-owner agreement and deferred production choices remain in force. Phase 3 (T005–T014) is authorized on 2026-10-18 (Asia/Saigon). Phase 4 onward and real runtime acceptance remain outside this request. See [decisions](contracts/decisions.md).
+**Status**: User-recorded authorizations and remaining scope gates are in [decisions](contracts/decisions.md); task status reports implementation progress only and does not confer permission.
 
 ## Summary
 
@@ -23,7 +23,7 @@ Implement a localized bug-fix route through validation, adaptive investigation/r
 
 ## Constitution Check
 
-Governance: `.specify/memory/constitution.md` remains an unratified placeholder template, not an asserted constitution pass. The decision record applies AGENTS.md, context policy and accepted ADRs without ratifying the placeholder. The table below records the original draft gates; user-confirmed contract agreement and the bootstrap amendment released T001/T002, and the subsequent user instruction releases Phase 2 T003/T004. Production choices still gate real execution. Repository instructions, accepted ADR-0001/0002/0003 and current security/state contracts govern this feature. ADR-0004 records accepted approval/replan decisions and closure; T001 records the exact shared binding/accounting agreement. Accepted ADRs alone do not authorize later implementation phases.
+Governance: .specify/memory/constitution.md remains an unratified placeholder template, not an asserted constitution pass. The decision record applies AGENTS.md, context policy and accepted ADRs without ratifying the placeholder. The table below records the original draft gates; user-recorded authorizations and changes to scope are maintained in [decisions](contracts/decisions.md). Production choices still gate real execution as recorded there. Repository instructions, accepted ADR-0001/0002/0003 and current security/state contracts govern this feature. ADR-0004 records accepted approval/replan decisions and closure; T001 records the exact shared binding/accounting agreement. Accepted ADRs alone do not authorize later implementation phases.
 
 | Gate | Draft design assessment | Implementation release condition |
 |---|---|---|
@@ -33,7 +33,7 @@ Governance: `.specify/memory/constitution.md` remains an unratified placeholder 
 | Completion evidence | PASS as design: baseline, final checks and reviewer bound to final state | T028–T033 real integration evidence |
 | Open choices | Drafting can proceed; implementation readiness NOT PASSED | T001 records decisions, finite configurations consistent with accepted ADR-0004; approvals are not inferred from this request |
 
-Phase 2 recheck: the user authorized canonical validators and controlled test-only mocks after Phase 1. Deferred operational choices remain named release gates in contracts/decisions.md. Phase 3 (T005–T014) is now authorized by the user on 2026-10-18 (Asia/Saigon); tasks remain unchecked until integrated evidence passes. Phase 4 onward and real execution remain gated.
+Current user-recorded authorizations and scope gates are in [decisions](contracts/decisions.md). This plan describes design and dependencies; task checkboxes record implementation progress only and do not authorize work.
 
 ## Project Structure
 
@@ -69,7 +69,7 @@ fixtures/uc03/                    # Tai: public prepared Python bug/attack repos
 eval/uc03/private/                # Host-only grading, excluded from agent authority
 ```
 
-**Structure Decision**: Capability modules with injected ports and acyclic dependencies. UC-03 uses contracts; composition wires the real ports only after gates pass. One ready task owns each file; workers receive disjoint paths. T011/T016/T021 own minimal runnable SUT skeletons with their behavioral RED tests, then transfer source ownership to dependent implementation tasks; the skeletons provide signatures and neutral incomplete behavior, not the real implementation. No separate HTTP/gRPC executor. The runtime reviewer is Tai's proposed shared-foundation responsibility, requiring acceptance at T001 rather than treating CodeRabbit as runtime review.
+**Structure Decision**: Capability modules with injected ports and acyclic dependencies. UC-03 uses contracts; composition wires the real ports only after gates pass. One ready task owns each file; workers receive disjoint paths. T011/T016/T021 own minimal runnable SUT skeletons with their behavioral RED tests, then transfer source ownership through each named handoff chain to the implementation task; the skeletons provide signatures and neutral incomplete behavior, not the real implementation. No separate HTTP/gRPC executor. The runtime reviewer is Tai's proposed shared-foundation responsibility, requiring acceptance at T001 rather than treating CodeRabbit as runtime review.
 
 ## Design and Integration Strategy
 
@@ -79,6 +79,44 @@ eval/uc03/private/                # Host-only grading, excluded from agent autho
 4. T024/T025 verify real Docker security and compose the real action gate before any real UC-03 mutation. T028 replaces all workflow mocks with UC-04/UC-05 adapters and proves a seeded fix. T029/T030/T031 cover real repair/review/attacks; T032 proves process restart and approval together. T033 evaluates/compares two complete runs.
 5. Command execution uses the read-only, protected-content-excluded views defined in contracts/interfaces.md; a writable task repository is never exposed to pytest. T006/T007/T022 implement the boundary, and T024/T031 prove malicious process reads/writes are denied. T008 and T009 reserve/settle token/cost allowances through UC-04 before every host provider dispatch; T028/T030/T032 cover missing/exhausted budgets and interrupted calls.
 6. Evidence is bound to workspace revision/diff digest and configured checks; production changes make prior verification/review stale. Only a harness completion predicate can emit verified delivery.
+
+### Atomic Admission Amendment Integration (Approved Design / Task Preparation Only)
+
+On 2026-10-22 (Asia/Saigon), the user confirmed user-relayed agreement from Thanh Tan (UC-04) and Trong Tan (UC-05), and approved the amendment design plus preparation of scoped implementation tasks, as recorded in contracts/decisions.md#atomic-admission-amendment-approval-and-task-preparation. The task decomposition remains a draft pending two fresh independent planning reviews. This staging clarification does not redesign the approved protocol.
+
+#### Versioned migration and checkpoint order
+
+- UC-03 v0.2.0 and UC-05 uc05-approval/0.2-draft are introduced additively beside v0.1. Put new v0.2 port shapes in `src/contracts/foundation/uc03/ports-v02.ts`; leave the current v0.1 `ports.ts` interfaces and callers source-compatible throughout staged migration. Do not add required methods or optional-context overloads to a v0.1 port.
+- Migrate validators, journal mock, UC-05 records and services, effect receivers, provider ingress, all forwarding fixtures, and UC-03 consumers in the task order in tasks.md. Each RED checkpoint has real neutral SUT exports and remains typecheck/build clean; source and emitted tests must reach behavioral assertions rather than fail at import/type/collection time. Each immediate GREEN successor passes the same focused source/emitted tests.
+- The exact task pair, source command, emitted command, and expected RED/GREEN state are listed in the task ledger's Checkpoint matrix. Full typecheck and build remain green at every checkpoint.
+- Keep legacy v0.1 interfaces source-compatible until migration is complete. A compatibility path, if retained, is separately versioned and test-only; it is fail-closed and cannot confer effect authority or satisfy v0.2 acceptance. No implicit production fallback is permitted.
+- Only the explicit cutover task, after all migrated producers, receivers, fixtures and consumers pass, selects the v0.2 mock composition. This task preparation does not activate real effects, adapters, production profiles, or Phase 6.
+
+#### Authority and invocation ownership
+
+- UC-04 owns the only durable task/control journal, claim lifecycle, reservations, durable attempt consumption, outcome journal, and recovery. The repository MemoryStatePort addition is a deterministic test mock only; actual X04-STATE adapter paths remain external and must be named by that owner before real adapter work.
+- UC-05 retains policy evaluation, approval decisions, and provider admission authority. Its policy/config publication request uses the UC-04 journal boundary; no second journal is added under src/approvals. UC-05 companion records and mock fixtures do not prove an external adapter exists.
+- UC-03/shared foundation owns workspace leases, immutable command views, and the trusted receiver. In repository-tools.ts, applyPatch, runCommand, and runTests call UC-04 beginAttempt once and pass the exact attempt identity forward. StructuredCommandExecutor.execute authenticates the adapter incarnation/fencing generation and consumes the local serialized one-shot immediately before the Docker controller invocation at docker-workspace.ts:1174. It must not call beginAttempt a second time.
+- ModelPortV02 remains a separate provider path: model.ts obtains its own provider-branch claim/attempt and one pre-network reservation, then applies its local receiver gate before transport. Provider work never routes through RepositoryPortV02; the v0.1 ModelPort signature remains source-compatible until cutover.
+- execution-guard.ts composes these boundaries; it does not repeat the durable beginAttempt or receiver-local consume. Read/list/search operations in ControlledRepositoryTools (listDir at line 299, readFile at 353, searchCode at 398) check current task-control admission and produce zero filesystem reads while paused or while any claim is open.
+- UC-03 consumers include both current direct runTests callers in investigation.ts:886 and verification.ts:741. The repair test-only forwardPublicStatePort at uc03-repair.test.ts:262 must transparently forward the v0.2 journal operations and exact results.
+
+#### Scoped task lanes
+
+1. T037-T040 add v0.2 admission and attempt/outcome validators through separate behavioral RED/GREEN slices.
+2. T041-T042 add only the controlled UC-04 journal mock. T043-T044 add the UC-05 v0.2 receipt types and validators. T045-T048 migrate UC-05 policy/service and control/recovery; T055-T058 migrate presentation/CLI and UC-05 mock fixtures.
+3. T049 waits for T040/T042/T044/T048 before the repository receiver RED, then hands the lease lifetime, all three effect paths, and read/list/search hold checks to T050. T051 waits for T040/T042/T044/T046/T048 before the separate model/provider ingress RED, then hands that slice to T052.
+4. T053-T054 migrate every UC-03 test wrapper and fixture, including provider-mocks.test.ts and the existing uc03-port-conformance.test.ts. Positive forwarding preserves attempt identity/outcome; missing context has zero effects.
+5. T021's source-compatible v0.1 neutral guard remains the baseline. T059 owns both guard paths only to add a typed neutral no-dispatch v0.2 entrypoint/options and assertion-only behavioral RED while preserving the existing v0.1 signature and denial/digest regressions. After valid dispatch fails behaviorally, T022 takes both source and test paths for GREEN; it composes the ports without double consumption and stays unchecked until the amendment predecessors pass.
+6. T060-T061 migrate repair and its forwarding test wrapper. T062-T063 migrate baseline investigation and verification.
+7. T064 -> T065 is the explicit v0.2 cutover and legacy-rejection checkpoint. T066 runs all 22 rows of the Section 10 deterministic matrix after each case has its own focused owner and test path, including the separate uncertain-receipt/final-reconciliation assertions.
+
+#### Release and evidence boundaries
+
+- Every task in this amendment remains unchecked and unreleased. Task ownership and completed mock checks report progress only.
+- T022 remains incomplete. The approved amendment and this decomposition do not authorize runtime implementation; a separate scoped release is required.
+- Real X04-STATE/X05-GATE adapters, concrete production configuration, actual container isolation/containment (T024), real restart, and Phase 6 execution (T026+) remain gated.
+- Do not fabricate foreign task IDs, owner delivery, adapter paths, production choices, or real acceptance evidence. Mock-only results establish only the exercised local behavior.
 
 ## External Deliverables (not local task IDs)
 

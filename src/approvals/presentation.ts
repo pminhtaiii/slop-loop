@@ -1,4 +1,5 @@
 import type { ApprovalBinding, ApprovalBindingContext, NormalizedAction } from '../contracts/foundation/uc03.ts';
+import { isProxy } from 'node:util/types';
 import type { PolicyProfile, SafePresentation } from '../contracts/approvals/contracts.ts';
 import { computeActionDigest, computeCanonicalSha256, validateApprovalBinding, validateNormalizedAction } from '../contracts/foundation/uc03.ts';
 import { validatePolicyProfile, validateSafePresentation } from '../contracts/approvals/contracts.ts';
@@ -60,7 +61,7 @@ function safeData(value: unknown, depth = 0): boolean {
   if (typeof value === 'string') return value.length <= 65536 && !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u.test(value);
   if (value === null || typeof value === 'boolean') return true;
   if (typeof value === 'number') return Number.isFinite(value);
-  if (!value || typeof value !== 'object') return false;
+  if (!value || typeof value !== 'object' || isProxy(value)) return false;
   const prototype = Object.getPrototypeOf(value);
   if (Array.isArray(value) ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null) return false;
   const keys = Reflect.ownKeys(value);

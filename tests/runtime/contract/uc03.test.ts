@@ -3015,3 +3015,13 @@ test('production admission denies absent, mock, and invalid provenance without f
     assert.equal(isAdmittedForProduction(ports), false);
   }
 });
+
+test('production admission ignores inherited sparse receiver slots', () => {
+  let inheritedSlotRead = false;
+  const ports: unknown[] = Array<unknown>(1);
+  Object.setPrototypeOf(ports, Object.create(Array.prototype, {
+    0: { get: () => { inheritedSlotRead = true; return { provenance: 'real' }; } },
+  }));
+  assert.equal(isAdmittedForProduction(ports), false);
+  assert.equal(inheritedSlotRead, false);
+});

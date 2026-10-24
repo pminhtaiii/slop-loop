@@ -1,140 +1,11 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { access, copyFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import test from 'node:test';
-import { fileURLToPath } from 'node:url';
-
-const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const cliSource = resolve(repositoryRoot, 'scripts/agents/agent-context.mjs');
-const storeSource = resolve(repositoryRoot, 'scripts/agents/agent-store.mjs');
-
-function git(root, args) {
-  const result = spawnSync('git', args, { cwd: root, encoding: 'utf8', windowsHide: true });
-  assert.equal(result.status, 0, result.stderr);
-  return result.stdout.trim();
-}
-
-async function fixture(t) {
-  const root = await realpath(await mkdtemp(join(tmpdir(), 'agent-context path with spaces-')));
-  t.after(async () => rm(root, { recursive: true, force: true }));
-  const cliPath = join(root, 'scripts', 'agents', 'agent-context.mjs');
-  const storePath = join(root, 'scripts', 'agents', 'agent-store.mjs');
-  const tasksPath = join(root, 'specs', 'feature', 'tasks.md');
-  const planPath = join(root, 'specs', 'feature', 'plan.md');
-  const tasks = `# Tasks
-
-## Phase 1: Setup
-- [X] T001 Completed setup.
-
-## Phase 2: US1 work
-- [ ] T002 Candidate with no completion authority.
-- [ ] T006 [US1] Add fulfillment recovery schema and migration in apps/api/prisma/schema.prisma and apps/api/prisma/migrations/20261007000000_fulfillment_recovery/migration.sql.
-- [ ] T030 [US1] Preserve payment state in apps/web/app/checkout/[intentId]/payment/page.tsx.
-- [ ] T017 [P] [US1] Add create/capture cases in apps/api/src/payment-fulfillment/payment-fulfillment.saga.spec.ts.
-- [ ] T018 [US1] A different task in another file.
-- [ ] T021 [US1] Define gateway contracts in apps/api/src/payment-fulfillment/ports/payment-gateway.port.ts and apps/api/src/payment-fulfillment/ports/fulfillment-gateway.port.ts.
-
-Independent US1 test: unresolved provider outcomes remain pending until observed.
-
-\`\`\`markdown
-- [ ] T099 This fenced sample is not a canonical task.
-\`\`\`
-
-## Dependency Graph
-US1 T017-T032 follows foundation.
-[P] marks separate files without unmet prerequisites; it never authorizes simultaneous edits of the same file.
-`;
-  const plan = `# Plan
-
-## Unrelated section
-Do not include this material in task context.
-
-## Target Structure
-- apps/api/src/payment-fulfillment/{ports/payment-gateway.port.ts,ports/fulfillment-gateway.port.ts,payment-fulfillment.saga.ts}
-- apps/api/src/payment-fulfillment/unrelated.service.ts
-
-## Shared contracts
-The API workflow depends only on PAYMENT_GATEWAY_PORT and FULFILLMENT_GATEWAY_PORT.
-OTHER_PORT is unrelated to the selected task.
-
-## Feature 030 database artifacts
-- apps/api/prisma/schema.prisma
-- apps/api/prisma/migrations/20261007000000_fulfillment_recovery/migration.sql
-- apps/api/prisma/migrations/other_feature/001_seed_data.sql
-This unrelated database note should not be copied into task context.
-
-## Checkout payment route
-- apps/web/app/checkout/[intentId]/payment/page.tsx
-- apps/web/app/checkout/[otherId]/payment/page.tsx
-`;
-  await mkdir(dirname(cliPath), { recursive: true });
-  await mkdir(dirname(tasksPath), { recursive: true });
-  await mkdir(join(root, 'src'), { recursive: true });
-  await mkdir(join(root, 'docs'), { recursive: true });
-  await writeFile(join(root, '.gitignore'), '.agent-work/\n', 'utf8');
-  await copyFile(cliSource, cliPath);
-  await copyFile(storeSource, storePath);
-  await writeFile(tasksPath, tasks, 'utf8');
-  await writeFile(planPath, plan, 'utf8');
-  await writeFile(join(root, 'src', 'declared file.ts'), 'export const value = 1;\n', 'utf8');
-  await writeFile(join(root, 'docs', 'spec.md'), '# Source\n', 'utf8');
-  await writeFile(join(root, 'private.env'), 'secret=fixture-only\n', 'utf8');
-  await writeFile(join(root, 'untracked.txt'), 'not declared\n', 'utf8');
-  await mkdir(join(root, 'context'), { recursive: true });
-  await writeFile(
-    join(root, 'context', 'active-feature.md'),
-    [
-      '# Active Feature',
-      '## Current checkpoint',
-      'Stale summary says T001 is open; task checkboxes are authoritative for counts.',
-      'See [verification record](../specs/feature/verification.md).',
-      '## Older entry',
-      'See [old record](../old.md).',
-    ].join('\n'),
-    'utf8',
-  );
-  await writeFile(
-    join(root, 'context', 'workflow.md'),
-    [
-      '# Workflow',
-      '## Step 2: Converge',
-      '## Step 3: Dual-Axis Code Review',
-      '## Step 4: PR / CI Verification & Convergence',
-    ].join('\n'),
-    'utf8',
-  );
-  await writeFile(join(root, 'context', 'testing.md'), '# Verification gates\n', 'utf8');
-  git(root, ['init']);
-  git(root, ['config', 'user.name', 'Agent Context Tests']);
-  git(root, ['config', 'user.email', 'agent-context@example.invalid']);
-  git(root, ['checkout', '-b', 'fixture']);
-  git(root, [
-    'add',
-    '--',
-    'scripts/agents/agent-context.mjs',
-    'scripts/agents/agent-store.mjs',
-    '.gitignore',
-    'specs/feature/tasks.md',
-    'specs/feature/plan.md',
-    'src/declared file.ts',
-    'docs/spec.md',
-    'context/active-feature.md',
-    'context/workflow.md',
-    'context/testing.md',
-  ]);
-  git(root, ['commit', '-m', 'fixture baseline']);
-  return { root, cliPath, tasksPath, planPath };
-}
-
-function run(fixtureValue, args, cwd = tmpdir()) {
-  return spawnSync(process.execPath, [fixtureValue.cliPath, ...args], {
-    cwd,
-    encoding: 'utf8',
-    windowsHide: true,
-  });
-}
+import { pathToFileURL } from 'node:url';
+import { cliSource, fixture, git, run } from './support/agent-context-fixture.mjs';
 
 test('assignment derives a UC brief and flags missing planning artifacts without changing tasks', async (t) => {
   const current = await fixture(t);
@@ -250,6 +121,56 @@ test('resume reports checkout, ledger frontier, evidence pointers and worker sta
   assert.equal(await readFile(statePath, 'utf8'), stateBefore);
 });
 
+test('resume preserves porcelain status columns and formats staged renames with spaces', async (t) => {
+  const current = await fixture(t);
+  await writeFile(join(current.root, 'docs/spec.md'), '# Unstaged edit\n', 'utf8');
+  git(current.root, ['add', '--', 'untracked.txt']);
+
+  const first = run(current, ['resume'], current.root);
+  assert.equal(first.status, 0, first.stderr);
+  assert.match(first.stdout, /^ {3}M docs\/spec\.md$/m);
+  assert.match(first.stdout, /^ {2}A {2}untracked\.txt$/m);
+
+  git(current.root, ['mv', '--', 'src/declared file.ts', 'src/renamed file.ts']);
+  const renamed = run(current, ['resume'], current.root);
+  assert.equal(renamed.status, 0, renamed.stderr);
+  assert.match(renamed.stdout, /Working tree: 4 changed path\(s\)/);
+  assert.match(renamed.stdout, /^ {2}R {2}src\/declared file\.ts -> src\/renamed file\.ts$/m);
+  assert.doesNotMatch(renamed.stdout, /^ {2}src\/declared file\.ts$/m);
+});
+
+test('resume canonicalizes aliased checkouts, skips missing checkouts, and reports reassigned workers', async (t) => {
+  const current = await fixture(t);
+  const alias = current.root + '-alias';
+  await symlink(current.root, alias, process.platform === 'win32' ? 'junction' : 'dir');
+  t.after(async () => rm(alias, { recursive: true, force: true }));
+
+  const statePath = join(current.root, '.agent-work/state/active-tasks.json');
+  await mkdir(join(current.root, '.agent-work/state'), { recursive: true });
+  const entries = [
+    {
+      owner: 'aliased-worker', task: 'T002', role: 'worker', status: 'handed-off', checkout: alias,
+      summary: 'Assignment recorded through a path alias', next: 'Await review',
+    },
+    {
+      owner: 'missing-checkout', task: 'resume-report', role: 'coordinator', status: 'active',
+      summary: 'Legacy record has no checkout', next: 'Retain as evidence only',
+    },
+    {
+      owner: 'reassigned-worker', task: 'T002', role: 'worker', status: 'reassigned', checkout: current.root,
+      summary: 'Assignment has a terminal reassigned status', next: 'No further work',
+    },
+  ];
+  await writeFile(statePath, JSON.stringify(entries, null, 2) + '\n', 'utf8');
+
+  const result = run(current, ['resume', '--tasks', 'specs/feature/tasks.md'], current.root);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /handed-off 1; completed 0; reassigned 1/);
+  assert.match(result.stdout, /aliased-worker\/T002 \[handed-off\]/);
+  assert.doesNotMatch(result.stdout, /missing-checkout\/resume-report/);
+  assert.doesNotMatch(result.stdout, /reassigned-worker\/T002/);
+});
+
 test('resume without a ledger or shared state reports the absence without creating state', async (t) => {
   const current = await fixture(t);
   const result = run(current, ['resume']);
@@ -285,8 +206,55 @@ test('explicit root works when the CLI is dispatched from another checkout', asy
   assert.ok(result.stdout.includes(`Checkout: ${current.root}`));
 });
 
+test('CLI runs through a path alias and stays inert when imported with an unresolved argv path', async (t) => {
+  const current = await fixture(t);
+  const importer = join(current.root, 'import-agent-context.mjs');
+  await writeFile(
+    importer,
+    'process.argv[1] = "missing-agent-context.mjs";\nawait import(' +
+      JSON.stringify(pathToFileURL(current.cliPath).href) + ');\n',
+    'utf8',
+  );
+  const imported = spawnSync(process.execPath, [importer], {
+    cwd: current.root,
+    encoding: 'utf8',
+    windowsHide: true,
+  });
+  assert.equal(imported.status, 0, imported.stderr);
+  assert.equal(imported.stdout, '');
+
+  let aliasPath;
+  if (process.platform === 'win32') {
+    const separator = current.cliPath.lastIndexOf('\\');
+    const aliasDirectory = current.cliPath.slice(0, separator + 1).replace(/[A-Za-z]/g, (letter) =>
+      letter === letter.toLowerCase() ? letter.toUpperCase() : letter.toLowerCase(),
+    );
+    aliasPath = aliasDirectory + current.cliPath.slice(separator + 1);
+  } else {
+    aliasPath = current.cliPath + '.alias';
+    await symlink(current.cliPath, aliasPath);
+    t.after(async () => rm(aliasPath, { force: true }));
+  }
+  const invoked = spawnSync(process.execPath, [aliasPath, '--help'], {
+    cwd: current.root,
+    encoding: 'utf8',
+    windowsHide: true,
+  });
+  assert.equal(invoked.status, 0, invoked.stderr);
+  assert.equal(invoked.stdout.match(/Usage:/g)?.length, 1);
+});
+
 test('task context is limited to the requested task, its phase notes, matching plan lines, and referenced ports', async (t) => {
   const current = await fixture(t);
+  const taskLedger = await readFile(current.tasksPath, 'utf8');
+  await writeFile(
+    current.tasksPath,
+    taskLedger.replace(
+      '- [ ] T018 [US1] A different task in another file.',
+      '- [ ] T018 [US1] A different task in another file.\n  - **Dependencies**: T017.',
+    ),
+    'utf8',
+  );
   const selected = run(current, [
     'task',
     '--tasks',
@@ -303,11 +271,22 @@ test('task context is limited to the requested task, its phase notes, matching p
     selected.stdout,
     /Independent US1 test: unresolved provider outcomes remain pending/,
   );
+  assert.doesNotMatch(selected.stdout, /\*\*Dependencies\*\*: T017/);
   assert.match(selected.stdout, /US1 T017-T032 follows foundation/);
   assert.match(selected.stdout, /payment-fulfillment\.saga\.ts/);
   assert.doesNotMatch(selected.stdout, /A different task in another file/);
   assert.doesNotMatch(selected.stdout, /Do not include this material/);
   assert.doesNotMatch(selected.stdout, /unrelated\.service\.ts/);
+
+  const dependencyOwner = run(current, [
+    'task',
+    '--tasks',
+    'specs/feature/tasks.md',
+    '--task',
+    'T018',
+  ]);
+  assert.equal(dependencyOwner.status, 0, dependencyOwner.stderr);
+  assert.match(dependencyOwner.stdout, /\*\*Dependencies\*\*: T017/);
 
   const database = run(current, [
     'task',
