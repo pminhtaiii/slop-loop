@@ -143,7 +143,6 @@ interface PendingRepositoryOutcomeV02 {
   readonly attempt: AttemptReceiptV02;
   readonly outcome: RepositoryActionOutcomeReceiptV02;
   recovering: boolean;
-  leaseReleaseAttempted: boolean;
   settledReceiptId?: string | undefined;
 }
 
@@ -177,15 +176,17 @@ export class RepositoryOutcomeRecoveryV02 {
   async recover(attemptId: string): Promise<ReconciliationResultV02> {
     const pending = this.pending.get(attemptId);
     if (!pending) throw new Error('REPOSITORY_OUTCOME_RECOVERY_NOT_FOUND: No locally held repository outcome matches this attempt');
-    if (pending.leaseReleaseAttempted) {
-      return { outcome: 'blocked', receiptId: pending.settledReceiptId ?? pending.outcome.receiptId };
-    }
     if (pending.recovering) throw new Error('REPOSITORY_OUTCOME_RECOVERY_IN_PROGRESS: Recovery is already running');
     const statePort = this.options.statePort;
     const handoff = this.options.patchRecoveryHandoff;
     if (!statePort || !handoff) throw new Error('REPOSITORY_OUTCOME_RECOVERY_REQUIRED: StatePortV02 and its UC-04 recovery handoff are required');
     pending.recovering = true;
     try {
+      if (pending.settledReceiptId !== undefined) {
+        await pending.lease.release();
+        this.pending.delete(attemptId);
+        return { outcome: 'settled', receiptId: pending.settledReceiptId };
+      }
       const prepared = await handoff.prepare({
         admission: pending.context,
         claim: pending.claim,
@@ -202,7 +203,6 @@ export class RepositoryOutcomeRecoveryV02 {
       );
       if (result.outcome === 'settled') {
         pending.settledReceiptId = result.receiptId;
-        pending.leaseReleaseAttempted = true;
         await pending.lease.release();
         this.pending.delete(attemptId);
       }
@@ -230,7 +230,6 @@ export class RepositoryOutcomeRecoveryV02 {
       attempt,
       outcome,
       recovering: false,
-      leaseReleaseAttempted: false,
     });
   }
 }

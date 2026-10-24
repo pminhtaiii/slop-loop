@@ -2864,6 +2864,105 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
       await writerLease.release();
     });
 
+    it('retries a failed lease release after closing an unattempted command claim', async () => {
+      const command = await createJournalBackedCommandHarness('act-command-closure-release-retry');
+      const acquireReadLease = command.manager.acquireReadLease.bind(command.manager);
+      let leaseReleaseCalls = 0;
+      command.manager.acquireReadLease = async (workspaceId, expectedRevision) => {
+        const lease = await acquireReadLease(workspaceId, expectedRevision);
+        const release = lease.release.bind(lease);
+        lease.release = async () => {
+          if (++leaseReleaseCalls === 1) throw new Error('lease release failed');
+          await release();
+        };
+        return lease;
+      };
+      command.journal.beginAttempt = async () => { throw new Error('beginAttempt rejected before commit'); };
+      const recoveryId = await getAttemptStartRecoveryId(() => command.tools.runCommand(command.action, command.context));
+      assert.equal((await command.tools.recoverAttemptStart(recoveryId)).outcome, 'blocked');
+      const closed = command.journal.getJournalSnapshot();
+      const ledgers = command.journal.getLedgers();
+      assert.equal(closed.claims[0]?.status, 'closed');
+      assert.equal(closed.closures.length, 1);
+      assert.equal(leaseReleaseCalls, 1);
+      let writerAcquired = false;
+      const waitingWriter = command.manager.acquireWriteLease('ws-test-1', canonicalRev).then((lease) => {
+        writerAcquired = true;
+        return lease;
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(writerAcquired, false, 'The failed release retains the lease');
+
+      const result = await command.tools.recoverAttemptStart(recoveryId);
+      assert.deepEqual(result, { outcome: 'settled', recoveryId, receiptId: closed.closures[0]?.receiptId });
+      assert.equal(leaseReleaseCalls, 2);
+      assert.deepEqual(command.journal.getJournalSnapshot(), closed, 'Retry preserves the closed journal');
+      assert.deepEqual(command.journal.getLedgers(), ledgers, 'Retry does not repeat reservation refunds');
+      assert.equal(command.controller.executedPlans.length, 0);
+      assert.throws(() => command.tools.recoverAttemptStart(recoveryId), /ATTEMPT_START_RECOVERY_NOT_FOUND/);
+      const writerLease = await waitingWriter;
+      assert.equal(writerAcquired, true);
+      await writerLease.release();
+    });
+
+    it('retries a failed lease release after outcome settlement without repeating reconciliation', async () => {
+      const command = await createJournalBackedCommandHarness('act-command-outcome-release-retry', true);
+      const acquireReadLease = command.manager.acquireReadLease.bind(command.manager);
+      const releaseStarted = Promise.withResolvers<undefined>();
+      const finishRelease = Promise.withResolvers<undefined>();
+      let leaseAcquisitions = 0;
+      let leaseReleaseCalls = 0;
+      command.manager.acquireReadLease = async (workspaceId, expectedRevision) => {
+        const lease = await acquireReadLease(workspaceId, expectedRevision);
+        if (++leaseAcquisitions !== 1) return lease;
+        const release = lease.release.bind(lease);
+        lease.release = async () => {
+          if (++leaseReleaseCalls === 1) throw new Error('lease release failed');
+          releaseStarted.resolve(undefined);
+          await finishRelease.promise;
+          await release();
+        };
+        return lease;
+      };
+      command.controller.executionFailure = new Error('controller lost its response');
+      await assert.rejects(() => command.tools.runCommand(command.action, command.context), /COMMAND_OUTCOME_PENDING/);
+      const attemptId = command.attempts[0]?.attemptId;
+      assert.ok(attemptId);
+      await assert.rejects(() => command.tools.recoverCommandOutcome(attemptId), /lease release failed/);
+      const settled = command.journal.getJournalSnapshot();
+      const ledgers = command.journal.getLedgers();
+      assert.equal(settled.claims[0]?.status, 'settled');
+      assert.equal(settled.reconciliations.length, 1);
+      let writerAcquired = false;
+      const waitingWriter = command.manager.acquireWriteLease('ws-test-1', canonicalRev).then((lease) => {
+        writerAcquired = true;
+        return lease;
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(writerAcquired, false);
+
+      command.recoveryBehavior.failNextPrepare = true;
+      const retry = command.tools.recoverCommandOutcome(attemptId);
+      await Promise.race([releaseStarted.promise, retry]);
+      try {
+        assert.equal(leaseReleaseCalls, 2, 'The settled outcome retries only lease release');
+        await assert.rejects(() => command.tools.recoverCommandOutcome(attemptId), /REPOSITORY_OUTCOME_RECOVERY_IN_PROGRESS/);
+        assert.equal(leaseReleaseCalls, 2, 'Concurrent recovery cannot release the lease twice');
+        assert.equal(writerAcquired, false, 'The lease stays held until release completes');
+      } finally {
+        finishRelease.resolve(undefined);
+      }
+      assert.deepEqual(await retry, { outcome: 'settled', receiptId: settled.reconciliations[0]?.reconciliationId });
+      assert.equal(command.recoveryBehavior.failNextPrepare, true, 'Retry does not request new recovery evidence');
+      assert.deepEqual(command.journal.getJournalSnapshot(), settled);
+      assert.deepEqual(command.journal.getLedgers(), ledgers, 'Retry does not settle accounting twice');
+      assert.equal(command.controller.executedPlans.length, 1);
+      await assert.rejects(() => command.tools.recoverCommandOutcome(attemptId), /COMMAND_RECOVERY_NOT_FOUND/);
+      const writerLease = await waitingWriter;
+      assert.equal(writerAcquired, true);
+      await writerLease.release();
+    });
+
     it('recovers a malformed committed command receipt without retrying the attempt or dispatch', async () => {
       const command = await createJournalBackedCommandHarness('act-command-attempt-start-malformed', true);
       const begin = command.journal.beginAttempt.bind(command.journal);

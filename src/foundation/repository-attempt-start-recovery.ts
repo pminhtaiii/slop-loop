@@ -206,8 +206,8 @@ export class RepositoryAttemptStartRecoveryV02 {
         return { outcome: 'blocked', recoveryId: pending.recoveryId };
       }
       if (result['closed'] !== true) return { outcome: 'conflict', recoveryId: pending.recoveryId, receiptId: receipt.receiptId };
-      pending.leaseReleaseAttempted = true;
       await pending.lease.release();
+      pending.leaseReleaseAttempted = true;
       this.pending.delete(pending.recoveryId);
       return { outcome: 'settled', recoveryId: pending.recoveryId, receiptId: receipt.receiptId };
     } catch {
