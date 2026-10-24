@@ -6,6 +6,13 @@ import { isProxy } from 'node:util/types';
 import { validateApprovalRequestRecord, validateApprovalTaskControl, validateDispatchClaim, validatePolicyProfile, validateSafeResult } from '../contracts/approvals/contracts.ts';
 import { computeActionDigest, validateNormalizedAction, validateReservationBundle } from '../contracts/foundation/uc03.ts';
 import { containsProtectedContent } from '../foundation/repository-tools.ts';
+
+/** Coordination evidence only: a claim ID or claim record never grants executor or generic activity authority. */
+export function isExecutorCapability(_value: unknown): boolean {
+  void _value;
+  return false;
+}
+
 /** A retained owner snapshot; none of these fields are authority until admitted. */
 export interface RecoverySnapshot { readonly control: unknown; readonly request: unknown; readonly action: unknown; readonly runId: unknown; readonly claims: unknown }
 export interface RecoveryClaimInput { readonly taskId: string; readonly binding: ApprovalBinding; readonly action: NormalizedAction; readonly runId: string; readonly expectedControlVersion: number; readonly expectedEpoch: number }
@@ -16,8 +23,10 @@ export interface ApprovalRecoveryOwner {
   load(decisionId: string): Promise<unknown>;
   claimDispatch(input: RecoveryClaimInput): Promise<unknown>;
 }
+
 /** Mock coordination evidence only. A claim ID never grants executor or generic activity authority. */
 export interface ApprovalContinuation { admit(decisionId: string): Promise<{ readonly outcome: 'claimed' | 'blocked' | 'unavailable'; readonly claimId: string | null }> }
+
 export function createApprovalContinuation(options: { readonly taskId: string; readonly profile: unknown; readonly approval: ApprovalService; readonly recovery: ApprovalRecoveryOwner }): ApprovalContinuation {
   const checked = safeData(options.profile) ? validatePolicyProfile(options.profile) : null;
   if (!checked?.ok || !identifier(options.taskId)) throw new Error('invalid-approval-recovery-profile');
@@ -135,3 +144,6 @@ function plainData(value: unknown, depth = 0): boolean {
     return descriptor !== undefined && 'value' in descriptor && (descriptor.enumerable || Array.isArray(value) && key === 'length') && plainData(descriptor.value, depth + 1);
   });
 }
+
+export { createApprovalContinuationV02 } from './recovery-v02.ts';
+export type { ApprovalContinuationV02, ApprovalContinuationResultV02 } from './recovery-v02.ts';

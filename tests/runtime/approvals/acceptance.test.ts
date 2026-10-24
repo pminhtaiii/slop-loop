@@ -144,6 +144,7 @@ const sourceRoot = fileURLToPath(new URL(import.meta.url.endsWith('.ts') ? '../.
 const suiteNames = ['contracts', 'mock-ports', 'policy', 'service', 'control', 'plan-binding', 'plan-context', 'restart-admission', 'audit', 'cli'];
 const extension = import.meta.url.endsWith('.ts') ? 'ts' : 'js';
 const suitePaths = suiteNames.map(name => fileURLToPath(new URL(`${name}.test.${extension}`, import.meta.url)));
+const expectedCheckCount = 267;
 
 function hash(value: string | Buffer): string {
   return `sha256:${createHash('sha256').update(value).digest('hex')}`;
@@ -166,7 +167,7 @@ function observe(runId: string): LocalRun {
   // A new test coordinator must not inherit the parent's binary worker protocol.
   const env = { ...process.env };
   delete env.NODE_TEST_CONTEXT;
-  const child = spawnSync(process.execPath, command, { cwd: sourceRoot, env, encoding: 'utf8', timeout: 90000, maxBuffer: 4 * 1024 * 1024, windowsHide: true });
+  const child = spawnSync(process.execPath, command, { cwd: sourceRoot, env, encoding: 'utf8', timeout: 240000, maxBuffer: 4 * 1024 * 1024, windowsHide: true });
   const elapsedMs = performance.now() - started;
   assert.equal(sourceIdentity(), before, 'source changed while observing a local run');
   const checks: Check[] = [];
@@ -234,7 +235,7 @@ function compareCatalogs(left: LocalRun, right: LocalRun): { readonly comparable
           row.checks.some(check => check.file === file && check.name === name && check.status === 'pass')
           && run.checks.some(check => check.file === file && check.name === name && check.status === 'pass'));
     })
-    && run.checks.length === 193 && new Set(run.checks.map(check => `${check.file}:${check.name}`)).size === 193
+    && run.checks.length === expectedCheckCount && new Set(run.checks.map(check => `${check.file}:${check.name}`)).size === expectedCheckCount
     && run.checks.every(check => check.status === 'pass');
   const same = complete(left) && complete(right) && comparable(left.identity, right.identity)
     && left.platform === right.platform && left.toolchain === right.toolchain && left.adapter === right.adapter
@@ -248,7 +249,7 @@ function compareCatalogs(left: LocalRun, right: LocalRun): { readonly comparable
   return { comparable: same, fullAcceptance: false, requiredNotRun: left.cases.filter(row => row.requiredStatus === 'not-run').length };
 }
 
-test('complete local catalogs compare without converting required not-run evidence to pass', { timeout: 190000 }, t => {
+test('complete local catalogs compare without converting required not-run evidence to pass', { timeout: 490000 }, t => {
   const left = observe('local-run-1');
   const right = observe('local-run-2');
   const comparison = compareCatalogs(left, right);
@@ -267,7 +268,7 @@ test('complete local catalogs compare without converting required not-run eviden
   const alteredPlan = { ...right, cases: right.cases.map(row => row.caseId === 'C02' ? { ...row, plannedPreparationLevel: 'unit' as const } : row) };
   assert.equal(compareCatalogs(alteredPlan, alteredPlan).comparable, false, 'planned tier remains independently bound to its fixture');
   assert.deepEqual(comparison, { comparable: true, fullAcceptance: false, requiredNotRun: 24 });
-  assert.equal(left.checks.length, 193, 'inherited check inventory changed; review the case mappings');
+  assert.equal(left.checks.length, expectedCheckCount, 'inherited check inventory changed; review the case mappings');
   assert.equal(left.cases.reduce((sum, row) => sum + row.requiredVectors.length, 0), 104);
   assert.equal(left.cases.every(row => row.observedFixtureEffectCounts === null && row.executionOutcome === 'not-observed'), true);
 

@@ -1,0 +1,1616 @@
+/**
+ * UC-03 Verified Code Repair - Unit Tests for Sanitized Milestone & Final Reporting
+ *
+ * Owned path: tests/runtime/unit/uc03-report.test.ts
+ * Feature: specs/001-verified-code-repair
+ * Task: T023 (sanitized milestone and final reporting)
+ *
+ * Requirements & Acceptance:
+ * - C16: Milestones and final report exclude prompts, streams, secrets, and raw reasoning;
+ *   per-run and task-level usage/cost retained; bounded redacted diagnostics.
+ * - FR-010: Protect credentials, secrets, and harness boundaries from reporting leak.
+ * - FR-012: Provide milestone activity and final diff with actual outcome, baseline/check/review
+ *   evidence, limitations, and safe next action.
+ * - SC-002: Zero unverified or drifted modifications claim COMPLETED status.
+ * - SC-004: Every delivered fix links baseline, final checks, review, and diff evidence.
+ * - SC-005: Milestone and final reports pass protected-data checks.
+ */
+
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import {
+  computeCanonicalSha256,
+  computeCheckSetDigest,
+  CONTRACT_VERSION,
+  validateActivityEvent,
+  validateDelivery,
+  type BugTask,
+  type TaskState,
+  type Baseline,
+  type VerificationResult,
+  type ReviewResult,
+  type CheckDefinition,
+  type FixPlan,
+  type BudgetLedger,
+} from '../../../src/contracts/foundation/uc03.ts';
+import {
+  createMilestone,
+  milestoneToActivityEvent,
+  buildFinalReport,
+  formatReportMarkdown,
+  formatMilestonesSummary,
+  type Milestone,
+  type FinalReport,
+  type BuildFinalReportInput,
+  type CreateMilestoneInput,
+} from '../../../src/uc03/report.ts';
+import { reviewSnapshot, verificationSnapshot } from '../../../src/uc03/report/sanitize.ts';
+import type { TrustedReviewRecord, CompletionPredicateInput } from '../../../src/uc03/verification.ts';
+import {
+  createFixtureBugTask,
+  createFixtureTaskState,
+} from '../support/uc03/port-fixtures.ts';
+
+function createValidReportingFixture(): CompletionPredicateInput {
+  const repoDigest =
+    'sha256:111122223333444455556666777788889999aaaabbbbccccddddeeeeffff0000';
+  const diffDigest =
+    'sha256:aaaabbbbccccddddeeeeffff0000111122223333444455556666777788889999';
+  const protectedDigest = computeCanonicalSha256(
+    'protected:tests/test_calculator.py'
+  );
+
+  const checkReproduction: CheckDefinition = {
+    checkId: 'check-pytest-reproduction',
+    executable: 'pytest',
+    argv: ['-q', 'tests/test_calculator.py', '-k', 'test_divide_zero'],
+    purpose: 'reproduction',
+    workingDirectory: 'tests',
+    timeoutMs: 30000,
+    maxOutputBytes: 1048576,
+  };
+  const checkRegression: CheckDefinition = {
+    checkId: 'check-pytest-regression',
+    executable: 'pytest',
+    argv: ['-q', 'tests/test_calculator.py'],
+    purpose: 'regression',
+    workingDirectory: 'tests',
+    timeoutMs: 30000,
+    maxOutputBytes: 1048576,
+  };
+
+  const task: BugTask = createFixtureBugTask({
+    taskId: 'task-uc03-calc-001',
+    repositoryId: 'repo-uc03-calc',
+    requiredChecks: [checkReproduction, checkRegression],
+  });
+
+  const checkSetDigest = computeCheckSetDigest(task.requiredChecks);
+
+  const baseline: Baseline = {
+    evidenceId: 'baseline-calc-001',
+    repositorySnapshotDigest: task.initialRevisionDigest,
+    checkSetDigest,
+    reproductionFailureSignature: 'ZeroDivisionError: division by zero',
+    checkResults: [
+      { checkId: 'check-pytest-reproduction', outcome: 'fail', durationMs: 40 },
+      { checkId: 'check-pytest-regression', outcome: 'pass', durationMs: 55 },
+    ],
+    testProtectionDigest: protectedDigest,
+  };
+
+  const planStrategy =
+    'Add guard check in Calculator.divide to raise CalculationError on zero denominator';
+  const plan: FixPlan = {
+    planVersion: 1,
+    diagnosis:
+      'Calculator.divide raises unhandled ZeroDivisionError when denominator is zero',
+    suspectedCauseLocations: ['src/calculator.py:12'],
+    evidenceRefs: [baseline.evidenceId],
+    strategy: planStrategy,
+    scopedChanges: ['src/calculator.py'],
+    checkSetDigest,
+    baselineRef: baseline.evidenceId,
+    strategyDigest: computeCanonicalSha256(planStrategy),
+    decisionRef: 'dec-calc-001',
+  };
+
+  const ledgers: BudgetLedger[] = [
+    {
+      scope: 'task',
+      kind: 'tokens',
+      limit: 100000,
+      consumed: 12500,
+      reservations: [],
+      unit: 'count',
+      configurationId: task.configId,
+      version: 1,
+    },
+    {
+      scope: 'task',
+      kind: 'cost',
+      limit: 5.0,
+      consumed: 0.25,
+      reservations: [],
+      unit: 'usd',
+      configurationId: task.configId,
+      version: 1,
+    },
+    {
+      scope: 'run',
+      kind: 'tokens',
+      limit: 50000,
+      consumed: 12500,
+      reservations: [],
+      unit: 'count',
+      configurationId: task.configId,
+      version: 1,
+    },
+    {
+      scope: 'run',
+      kind: 'cost',
+      limit: 2.0,
+      consumed: 0.25,
+      reservations: [],
+      unit: 'usd',
+      configurationId: task.configId,
+      version: 1,
+    },
+    {
+      scope: 'task',
+      kind: 'replan',
+      limit: 3,
+      consumed: 1,
+      reservations: [],
+      unit: 'count',
+      configurationId: task.configId,
+      version: 1,
+    },
+  ];
+
+  const state: TaskState = {
+    ...createFixtureTaskState(),
+    schemaVersion: CONTRACT_VERSION,
+    taskId: task.taskId,
+    repositoryId: task.repositoryId,
+    repositoryRevisionDigest: repoDigest,
+    requiredCheckIds: task.requiredChecks.map((c) => c.checkId),
+    taskContext: task,
+    node: 'Review',
+    planVersion: 1,
+    plan,
+    replanCount: 1,
+    changedPaths: ['src/calculator.py'],
+    evidenceRefs: [baseline.evidenceId],
+    budgetLedgers: ledgers,
+    activeDecisionId: 'dec-calc-001',
+    latestReviewRef: 'review-calc-001',
+    reviewRefs: ['review-calc-001'],
+  };
+
+  const verificationResults: readonly VerificationResult[] = [
+    {
+      evidenceId: 'verif-focused-001',
+      taskId: task.taskId,
+      runId: state.runId,
+      actionId: 'action-pytest-focused',
+      phase: 'focused',
+      repoDigest,
+      diffDigest,
+      commandIdentity: 'pytest -q tests/test_calculator.py -k test_divide_zero',
+      outcome: 'pass',
+      testedIds: ['check-pytest-reproduction'],
+      diagnosticRefs: [],
+    },
+    {
+      evidenceId: 'verif-regression-001',
+      taskId: task.taskId,
+      runId: state.runId,
+      actionId: 'action-pytest-regression',
+      phase: 'regression',
+      repoDigest,
+      diffDigest,
+      commandIdentity: 'pytest -q tests/test_calculator.py',
+      outcome: 'pass',
+      testedIds: ['check-pytest-regression'],
+      diagnosticRefs: [],
+    },
+  ];
+
+  const reviewResult: ReviewResult = {
+    reviewId: 'review-calc-001',
+    reviewerRoleConfigId: 'reviewer-config-v1',
+    repoDigest,
+    diffDigest,
+    checkSetDigest,
+    status: 'accepted',
+    findings: [],
+    iterationReservationRef: 'res-rev-001',
+  };
+
+  const trustedReviewRecord: TrustedReviewRecord = {
+    reviewId: reviewResult.reviewId,
+    reviewerRoleConfigId: reviewResult.reviewerRoleConfigId,
+    iterationReservationRef: reviewResult.iterationReservationRef,
+    repoDigest,
+    diffDigest,
+    checkSetDigest,
+    status: 'accepted',
+  };
+
+  return {
+    task,
+    state,
+    baseline,
+    verificationResults,
+    reviewResult,
+    currentRepoDigest: repoDigest,
+    currentDiffDigest: diffDigest,
+    changedFiles: ['src/calculator.py'],
+    originalProtectedTestsDigest: protectedDigest,
+    currentProtectedTestsDigest: protectedDigest,
+    authorizedDiffDigest: diffDigest,
+    trustedReviewRecord,
+  };
+}
+
+function createMarkedError(marker: string, message = marker): Error {
+  const error = new Error(message, { cause: marker });
+  Object.defineProperty(error, 'payload', { value: marker, enumerable: true });
+  return error;
+}
+
+function assertSanitizedReportFailure(
+  action: () => unknown,
+  message: string,
+  marker: string,
+  suppliedError?: Error,
+): Error {
+  let escaped: unknown;
+  try {
+    action();
+  } catch (error) {
+    escaped = error;
+  }
+
+  assert.ok(escaped instanceof Error);
+  assert.equal(escaped.message, message);
+  assert.equal(Object.hasOwn(escaped, 'cause'), false);
+  assert.deepEqual(Object.getOwnPropertyNames(escaped).sort(), ['message', 'stack']);
+  const fields = [escaped.message, escaped.stack ?? '', ...Reflect.ownKeys(escaped).map((key) => {
+    const value = (escaped as unknown as Record<PropertyKey, unknown>)[key];
+    return `${String(key)}:${String(value)}`;
+  })].join('\n');
+  assert.ok(!fields.includes(marker), 'normalized error must not expose caller data');
+  if (suppliedError) assert.notEqual(escaped, suppliedError);
+  return escaped;
+}
+
+/* ==================================================================
+ * Section 1: Milestone Creation and Sanitization (C16)
+ * ================================================================== */
+
+test('milestone: creates valid milestone with sanitized summary and metadata', () => {
+  const milestone = createMilestone({
+    taskId: 'task-001',
+    runId: 'run-001',
+    node: 'Investigate',
+    kind: 'investigation_completed',
+    summary: 'Investigation reproduced bug with status code 500',
+    outcome: 'success',
+    evidenceRefs: ['evidence-001'],
+  });
+
+  assert.equal(milestone.taskId, 'task-001');
+  assert.equal(milestone.runId, 'run-001');
+  assert.equal(milestone.node, 'Investigate');
+  assert.equal(milestone.kind, 'investigation_completed');
+  assert.equal(milestone.summary, 'Investigation reproduced bug with status code 500');
+  assert.equal(milestone.outcome, 'success');
+  assert.deepEqual(milestone.evidenceRefs, ['evidence-001']);
+  assert.ok(milestone.milestoneId.startsWith('ms-'));
+  assert.ok(Date.parse(milestone.timestamp) > 0);
+});
+
+test('milestone: sanitizes secrets in summary using builtin secret patterns', () => {
+  const secretKey = 'sk-123456789012345678901234567890';
+  const marker = 'MARKER_SECRET_AUTH_TOKEN_99';
+  const rawSummary = `Reproduced with api_key: "${secretKey}" and header ${marker}`;
+
+  const milestone = createMilestone({
+    taskId: 'task-001',
+    runId: 'run-001',
+    node: 'Validate',
+    kind: 'task_started',
+    summary: rawSummary,
+  });
+
+  assert.ok(!milestone.summary.includes(secretKey), 'secret key must be redacted');
+  assert.ok(!milestone.summary.includes(marker), 'marker secret must be redacted');
+  assert.ok(milestone.summary.includes('[REDACTED]'), 'redacted placeholder must appear');
+});
+
+test('milestone: sanitizes custom secret patterns in summary', () => {
+  const customSecret = 'SUPER_INTERNAL_PASSWORD_XYZ';
+  const milestone = createMilestone({
+    taskId: 'task-001',
+    runId: 'run-001',
+    node: 'Repair',
+    kind: 'patch_applied',
+    summary: `Applied patch with credential ${customSecret}`,
+    customSecretPatterns: [customSecret],
+  });
+
+  assert.ok(!milestone.summary.includes(customSecret));
+  assert.ok(milestone.summary.includes('[REDACTED]'));
+});
+
+test('milestone: strips forbidden raw reasoning, prompts, and streams from details', () => {
+  const milestone = createMilestone({
+    taskId: 'task-001',
+    runId: 'run-001',
+    node: 'Investigate',
+    kind: 'plan_proposed',
+    summary: 'Plan proposed for calculator divide fix',
+    details: {
+      strategyName: 'defensive-guard',
+      rawReasoning: 'Internal model reasoning: I think the user wants us to bypass security...',
+      thinking: 'Deep chain-of-thought tokens here...',
+      prompt: 'System: You are an expert programmer...',
+      stream: 'Chunk 1, Chunk 2, raw token stream...',
+      safeNote: 'Valid note about diagnosis',
+    },
+  });
+
+  assert.ok(milestone.details !== undefined);
+  assert.equal(milestone.details.strategyName, 'defensive-guard');
+  assert.equal(milestone.details.safeNote, 'Valid note about diagnosis');
+  assert.equal(milestone.details.rawReasoning, undefined, 'rawReasoning must be stripped');
+  assert.equal(milestone.details.thinking, undefined, 'thinking must be stripped');
+  assert.equal(milestone.details.prompt, undefined, 'prompt must be stripped');
+  assert.equal(milestone.details.stream, undefined, 'stream must be stripped');
+});
+
+test('milestone: sanitizes string values in details object', () => {
+  const secret = 'sk-proj-999999999999999999999999';
+  const milestone = createMilestone({
+    taskId: 'task-001',
+    runId: 'run-001',
+    node: 'Repair',
+    kind: 'patch_applied',
+    summary: 'Patch applied',
+    details: {
+      diagnostic: `Failed with token ${secret}`,
+    },
+  });
+
+  assert.ok(milestone.details !== undefined);
+  assert.ok(typeof milestone.details.diagnostic === 'string');
+  assert.ok(!milestone.details.diagnostic.includes(secret));
+  assert.ok(milestone.details.diagnostic.includes('[REDACTED]'));
+});
+
+test('milestone: omits built-in and configured secrets used as detail keys', () => {
+  const builtInSecretKey = `ghp_${'A'.repeat(36)}`;
+  const customSecretKey = 'private-value-123';
+  const milestone = createMilestone({
+    taskId: 'task-101',
+    runId: 'run-101',
+    node: 'Report',
+    kind: 'task_started',
+    summary: 'Started',
+    details: {
+      [builtInSecretKey]: 'built-in key value',
+      [customSecretKey]: 'custom key value',
+      safe: 'visible',
+    },
+    customSecretPatterns: [customSecretKey],
+  });
+
+  assert.deepEqual(milestone.details, { safe: 'visible' });
+  assert.ok(!JSON.stringify(milestone).includes(builtInSecretKey));
+  assert.ok(!JSON.stringify(milestone).includes(customSecretKey));
+});
+
+test('milestone: rejects an unknown outcome value before returning JSON data', () => {
+  const marker = 'MARKER_SECRET_OUTCOME';
+  assert.throws(() => createMilestone({
+    taskId: 'task-102',
+    runId: 'run-102',
+    node: 'Report',
+    kind: 'task_started',
+    summary: 'Started',
+    outcome: marker as unknown as 'info',
+  }), (error: unknown) => error instanceof Error && error.message === 'Invalid report milestone' && !error.message.includes(marker));
+});
+
+test('milestoneToActivityEvent: rejects a forged unknown outcome', () => {
+  const marker = 'MARKER_SECRET_OUTCOME';
+  const milestone = createMilestone({
+    taskId: 'task-103',
+    runId: 'run-103',
+    node: 'Report',
+    kind: 'task_started',
+    summary: 'Started',
+  });
+
+  assert.throws(() => milestoneToActivityEvent({ ...milestone, outcome: marker } as unknown as Milestone),
+    (error: unknown) => error instanceof Error && /Invalid report milestone/.test(error.message) && !error.message.includes(marker));
+});
+
+test('formatMilestonesSummary: rejects a forged unknown outcome', () => {
+  const milestone = createMilestone({
+    taskId: 'task-104',
+    runId: 'run-104',
+    node: 'Report',
+    kind: 'task_started',
+    summary: 'Started',
+  });
+
+  assert.throws(() => formatMilestonesSummary([{ ...milestone, outcome: 'MARKER_SECRET_OUTCOME' } as unknown as Milestone]),
+    /Invalid report milestone/);
+});
+
+test('milestone: recursively sanitizes array objects and omits protected keys', () => {
+  const milestone = createMilestone({
+    taskId: 'task-array-detail',
+    runId: 'run-array-detail',
+    node: 'Report',
+    kind: 'task_started',
+    summary: 'Started',
+    details: {
+      items: [{
+        prompt: 'PRIVATE PROMPT',
+        password: 'MARKER_SECRET_nested',
+        keep: 'visible',
+        nested: [{ token: 'MARKER_SECRET_token', keep: 'also visible' }],
+      }],
+    },
+  });
+
+  assert.deepEqual(milestone.details, {
+    items: [{ keep: 'visible', nested: [{ keep: 'also visible' }] }],
+  });
+});
+
+test('milestone: rejects cyclic details with a safe error', () => {
+  const details: Record<string, unknown> = {};
+  details['self'] = details;
+
+  assert.throws(
+    () => createMilestone({
+      taskId: 'task-cyclic-detail',
+      runId: 'run-cyclic-detail',
+      node: 'Report',
+      kind: 'task_started',
+      summary: 'Started',
+      details,
+    }),
+    /Invalid report milestone/
+  );
+});
+
+test('milestone: bounds nested UTF-8 details and array items', () => {
+  const milestone = createMilestone({
+    taskId: 'task-large-detail',
+    runId: 'run-large-detail',
+    node: 'Report',
+    kind: 'task_started',
+    summary: 'Started',
+    details: {
+      items: Array.from({ length: 1000 }, () => ({ text: '🙂'.repeat(1000) })),
+    },
+  });
+  const serialized = JSON.stringify(milestone.details);
+
+  assert.ok(Buffer.byteLength(serialized, 'utf8') <= 8192);
+  const items = milestone.details?.['items'];
+  assert.ok(Array.isArray(items));
+  assert.ok(items.length <= 128);
+  assert.ok(!serialized.includes('\uFFFD'));
+});
+
+test('milestone: bounds summary byte length cleanly to maxSummaryBytes', () => {
+  const longSummary = 'A'.repeat(2000);
+  const milestone = createMilestone({
+    taskId: 'task-001',
+    runId: 'run-001',
+    node: 'Verification',
+    kind: 'verification_completed',
+    summary: longSummary,
+    maxSummaryBytes: 128,
+  });
+
+  assert.ok(Buffer.byteLength(milestone.summary, 'utf8') <= 128);
+  assert.ok(milestone.summary.includes('... [TRUNCATED]'));
+});
+
+test('milestone: honors one-byte summary limits', () => {
+  const milestone = createMilestone({
+    taskId: 'task-tiny-summary',
+    runId: 'run-tiny-summary',
+    node: 'Report',
+    kind: 'task_started',
+    summary: '🙂'.repeat(10),
+    maxSummaryBytes: 1,
+  });
+
+  assert.ok(Buffer.byteLength(milestone.summary, 'utf8') <= 1);
+});
+
+test('milestone: rejects non-finite summary limits', () => {
+  assert.throws(() => createMilestone({
+    taskId: 'task-infinite-summary',
+    runId: 'run-infinite-summary',
+    node: 'Report',
+    kind: 'task_started',
+    summary: 'summary',
+    maxSummaryBytes: Number.POSITIVE_INFINITY,
+  }), /Invalid report milestone/);
+});
+
+test('milestoneToActivityEvent: converts Milestone to contract ActivityEvent', () => {
+  const milestone = createMilestone({
+    taskId: 'task-001',
+    runId: 'run-001',
+    node: 'Verification',
+    kind: 'verification_completed',
+    summary: 'Verification complete',
+    outcome: 'success',
+    evidenceRefs: ['verif-001'],
+  });
+
+  const event = milestoneToActivityEvent(milestone, 150);
+  const validation = validateActivityEvent(event);
+
+  assert.equal(validation.ok, true, 'ActivityEvent must pass contract validation');
+  assert.equal(event.taskId, 'task-001');
+  assert.equal(event.runId, 'run-001');
+  assert.equal(event.node, 'Verification');
+  assert.equal(event.outcome, 'success');
+  assert.equal(event.durationMs, 150);
+  assert.deepEqual(event.evidenceRefs, ['verif-001']);
+});
+
+/* ==================================================================
+ * Section 2: Deterministic Honest Final Reporting (T004 States)
+ * ================================================================== */
+
+test('report: generates COMPLETED final report with valid delivery on verified state', () => {
+  const fixture = createValidReportingFixture();
+  const reportInput: BuildFinalReportInput = {
+    ...fixture,
+    patchContent: '--- a/src/calculator.py\n+++ b/src/calculator.py\n@@ -12,2 +12,4 @@\n+    if b == 0:\n+        raise CalculationError("division by zero")\n',
+    milestones: [
+      createMilestone({
+        taskId: fixture.task.taskId,
+        runId: fixture.state.runId,
+        node: 'Investigate',
+        kind: 'investigation_completed',
+        summary: 'Baseline reproduced zero division error',
+      }),
+      createMilestone({
+        taskId: fixture.task.taskId,
+        runId: fixture.state.runId,
+        node: 'Verification',
+        kind: 'verification_completed',
+        summary: 'Focused and regression checks passed',
+      }),
+    ],
+  };
+
+  const report = buildFinalReport(reportInput);
+
+  assert.equal(report.isComplete, true);
+  assert.equal(report.outcome, 'COMPLETED');
+  assert.equal(report.taskId, fixture.task.taskId);
+  assert.equal(report.runId, fixture.state.runId);
+  assert.equal(report.repositoryId, fixture.task.repositoryId);
+  assert.equal(report.diff.diffDigest, fixture.currentDiffDigest);
+  assert.deepEqual(report.diff.changedFiles, ['src/calculator.py']);
+  assert.ok(report.diff.patch !== undefined);
+  assert.equal(report.evidence.baselineRef, fixture.baseline.evidenceId);
+  assert.deepEqual(report.evidence.verificationRefs, ['verif-focused-001', 'verif-regression-001']);
+  assert.equal(report.evidence.reviewRef, fixture.reviewResult.reviewId);
+  assert.equal(report.failureReasons.length, 0);
+  assert.equal(report.safeNextAction, 'ready-for-human-review');
+
+  // Verify delivery record compliance
+  assert.ok(report.delivery !== undefined);
+  const deliveryValidation = validateDelivery(report.delivery);
+  assert.equal(deliveryValidation.ok, true);
+
+  // Verify usage retention
+  assert.equal(report.usage.tokensConsumed, 12500);
+  assert.equal(report.usage.costUsd, 0.25);
+  assert.equal(report.usage.replanCount, 1);
+  assert.equal(report.milestones.length, 2);
+});
+
+test('report: check failure results in IMPLEMENTED_UNVERIFIED and no delivery record', () => {
+  const fixture = createValidReportingFixture();
+  const failedVerification: VerificationResult = {
+    evidenceId: 'verif-focused-failed',
+    taskId: fixture.task.taskId,
+    runId: fixture.state.runId,
+    actionId: 'action-pytest-focused',
+    phase: 'focused',
+    repoDigest: fixture.currentRepoDigest,
+    diffDigest: fixture.currentDiffDigest,
+    commandIdentity: 'pytest -q tests/test_calculator.py -k test_divide_zero',
+    outcome: 'fail',
+    testedIds: ['check-pytest-reproduction'],
+    diagnosticRefs: ['diag-fail-001'],
+  };
+
+  const regCheck = fixture.verificationResults[1];
+  assert.ok(regCheck !== undefined);
+  const report = buildFinalReport({
+    ...fixture,
+    verificationResults: [failedVerification, regCheck],
+  });
+
+  assert.equal(report.isComplete, false);
+  assert.equal(report.outcome, 'IMPLEMENTED_UNVERIFIED');
+  assert.equal(report.delivery, undefined);
+  assert.ok(report.failureReasons.length > 0);
+  assert.ok(report.failureReasons.some((r) => r.includes('failed')));
+  assert.notEqual(report.safeNextAction, 'ready-for-human-review');
+});
+
+test('report: review findings result in IMPLEMENTED_UNVERIFIED and no delivery record', () => {
+  const fixture = createValidReportingFixture();
+  const findingsReview: ReviewResult = {
+    ...fixture.reviewResult,
+    status: 'findings',
+    findings: [
+      {
+        side: 'new',
+        file: 'src/calculator.py',
+        line: 14,
+        severity: 'error',
+        message: 'CalculationError is not defined or imported',
+      },
+    ],
+  };
+
+  assert.ok(fixture.trustedReviewRecord !== undefined);
+  const report = buildFinalReport({
+    ...fixture,
+    reviewResult: findingsReview,
+    trustedReviewRecord: {
+      ...fixture.trustedReviewRecord,
+      status: 'findings',
+    },
+  });
+
+  assert.equal(report.isComplete, false);
+  assert.equal(report.outcome, 'IMPLEMENTED_UNVERIFIED');
+  assert.equal(report.delivery, undefined);
+  assert.ok(report.failureReasons.some((r) => r.includes('CalculationError is not defined')));
+});
+
+test('report: digest drift results in IMPLEMENTED_UNVERIFIED and no delivery record', () => {
+  const fixture = createValidReportingFixture();
+  const driftedRepoDigest = 'sha256:9999999999999999999999999999999999999999999999999999999999999999';
+
+  const report = buildFinalReport({
+    ...fixture,
+    currentRepoDigest: driftedRepoDigest,
+  });
+
+  assert.equal(report.isComplete, false);
+  assert.equal(report.outcome, 'IMPLEMENTED_UNVERIFIED');
+  assert.equal(report.delivery, undefined);
+  assert.ok(report.failureReasons.some((r) => r.includes('drift')));
+});
+
+test('report: protected test modification results in IMPLEMENTED_UNVERIFIED and test protection violation', () => {
+  const fixture = createValidReportingFixture();
+  const tamperedProtectedDigest = computeCanonicalSha256('tampered-protected-tests');
+
+  const report = buildFinalReport({
+    ...fixture,
+    currentProtectedTestsDigest: tamperedProtectedDigest,
+  });
+
+  assert.equal(report.isComplete, false);
+  assert.equal(report.outcome, 'IMPLEMENTED_UNVERIFIED');
+  assert.equal(report.delivery, undefined);
+  assert.ok(report.failureReasons.some((r) => r.includes('Protected tests')));
+});
+
+test('report: incomplete without modifications yields INCOMPLETE outcome', () => {
+  const fixture = createValidReportingFixture();
+  const unmodifiedState: TaskState = {
+    ...fixture.state,
+    changedPaths: [],
+    plan: undefined,
+  };
+
+  const report = buildFinalReport({
+    task: fixture.task,
+    state: unmodifiedState,
+    baseline: fixture.baseline,
+    changedFiles: [],
+    currentRepoDigest: fixture.task.initialRevisionDigest,
+    currentDiffDigest: '',
+  });
+
+  assert.equal(report.isComplete, false);
+  assert.equal(report.outcome, 'INCOMPLETE');
+  assert.equal(report.delivery, undefined);
+  assert.ok(report.failureReasons.length > 0);
+});
+
+test('report: refusal of false completion claims when verification failed', () => {
+  const fixture = createValidReportingFixture();
+  const failedVerification: VerificationResult = {
+    evidenceId: 'verif-focused-failed',
+    taskId: fixture.task.taskId,
+    runId: fixture.state.runId,
+    actionId: 'action-pytest-focused',
+    phase: 'focused',
+    repoDigest: fixture.currentRepoDigest,
+    diffDigest: fixture.currentDiffDigest,
+    commandIdentity: 'pytest -q tests/test_calculator.py -k test_divide_zero',
+    outcome: 'fail',
+    testedIds: ['check-pytest-reproduction'],
+    diagnosticRefs: ['diag-fail-001'],
+  };
+
+  const regCheck = fixture.verificationResults[1];
+  assert.ok(regCheck !== undefined);
+  // Attempt to pass overrideOutcome: 'COMPLETED' despite failure
+  const report = buildFinalReport({
+    ...fixture,
+    verificationResults: [failedVerification, regCheck],
+    overrideOutcome: 'COMPLETED',
+  });
+
+  assert.notEqual(report.outcome, 'COMPLETED', 'buildFinalReport must refuse false COMPLETED outcome');
+  assert.equal(report.outcome, 'IMPLEMENTED_UNVERIFIED');
+  assert.equal(report.isComplete, false);
+  assert.equal(report.delivery, undefined);
+});
+
+test('report: rejects unknown override outcomes before returning JSON data', () => {
+  const fixture = createValidReportingFixture();
+  const marker = 'MARKER_SECRET_OVERRIDE';
+  let error: unknown;
+  let projected = '';
+  try {
+    const report = buildFinalReport({
+      task: fixture.task,
+      state: fixture.state,
+      overrideOutcome: marker as unknown as BuildFinalReportInput['overrideOutcome'],
+    });
+    projected = `${JSON.stringify(report)}\n${formatReportMarkdown(report)}`;
+  } catch (caught) {
+    error = caught;
+  }
+
+  assert.ok(
+    error instanceof Error && error.message === 'Invalid report' && !error.message.includes(marker) ||
+      !projected.includes(marker),
+    'The JSON and Markdown projections must reject or omit an invalid outcome safely',
+  );
+});
+
+/* ==================================================================
+ * Section 3: Bounded Secret Safety Across Success and Errors (C16)
+ * ================================================================== */
+
+test('report: sanitizes secrets in failure reasons and limitations', () => {
+  const fixture = createValidReportingFixture();
+  const secretToken = 'sk-123456789012345678901234567890';
+  const customSecret = 'SUPER_SECRET_CONN_STR_123';
+
+  const report = buildFinalReport({
+    ...fixture,
+    failureReasons: [`Connection failed with secret token: ${secretToken}`],
+    limitations: [`External server auth header ${customSecret} unavailable`],
+    customSecretPatterns: [customSecret],
+    overrideOutcome: 'FAILED',
+  });
+
+  for (const reason of report.failureReasons) {
+    assert.ok(!reason.includes(secretToken));
+    assert.ok(reason.includes('[REDACTED]'));
+  }
+  for (const lim of report.limitations) {
+    assert.ok(!lim.includes(customSecret));
+    assert.ok(lim.includes('[REDACTED]'));
+  }
+});
+
+test('report: sanitizes copied milestone summaries in JSON and Markdown', () => {
+  const fixture = createValidReportingFixture();
+  const source = createMilestone({
+    taskId: fixture.task.taskId,
+    runId: fixture.state.runId,
+    node: 'Verification',
+    kind: 'verification_completed',
+    summary: 'safe summary',
+  });
+  const report = buildFinalReport({
+    ...fixture,
+    milestones: [{ ...source, summary: 'Verification included MARKER_SECRET_milestone' }],
+  });
+  const serialized = JSON.stringify(report);
+  const markdown = formatReportMarkdown(report);
+
+  assert.ok(!serialized.includes('MARKER_SECRET_milestone'));
+  assert.ok(!markdown.includes('MARKER_SECRET_milestone'));
+  assert.ok(serialized.includes('[REDACTED]'));
+  assert.ok(markdown.includes('[REDACTED]'));
+});
+
+test('report: rejects protected stable metadata without echoing the value', () => {
+  const fixture = createValidReportingFixture();
+  let caught: unknown;
+  try {
+    buildFinalReport({
+      ...fixture,
+      changedFiles: ['src/MARKER_SECRET_filename.py'],
+    });
+  } catch (error) {
+    caught = error;
+  }
+
+  assert.ok(caught instanceof Error);
+  assert.equal(caught.message, 'Invalid report');
+  assert.ok(!caught.message.includes('MARKER_SECRET_filename.py'));
+});
+
+test('report: rejects protected milestone evidence references without echoing them', () => {
+  const fixture = createValidReportingFixture();
+  const milestone = createMilestone({
+    taskId: fixture.task.taskId,
+    runId: fixture.state.runId,
+    node: 'Verification',
+    kind: 'verification_completed',
+    summary: 'Checks completed',
+  });
+  let caught: unknown;
+  try {
+    buildFinalReport({
+      ...fixture,
+      milestones: [{ ...milestone, evidenceRefs: ['MARKER_SECRET_evidence_ref'] }],
+    });
+  } catch (error) {
+    caught = error;
+  }
+
+  assert.ok(caught instanceof Error);
+  assert.equal(caught.message, 'Invalid report');
+  assert.ok(!caught.message.includes('MARKER_SECRET_evidence_ref'));
+});
+
+test('report: rejects oversized limitations and milestone collections', () => {
+  const fixture = createValidReportingFixture();
+  const milestone = createMilestone({
+    taskId: fixture.task.taskId,
+    runId: fixture.state.runId,
+    node: 'Report',
+    kind: 'task_started',
+    summary: 'Started',
+  });
+
+  assert.throws(() => buildFinalReport({
+    ...fixture,
+    limitations: Array.from({ length: 65 }, () => 'bounded limitation'),
+  }), /Invalid report/);
+  assert.throws(() => buildFinalReport({
+    ...fixture,
+    milestones: Array.from({ length: 65 }, () => milestone),
+  }), /Invalid report/);
+});
+
+test('report: rejects serialized output above the aggregate byte bound', () => {
+  const fixture = createValidReportingFixture();
+  const milestone: Milestone = {
+    milestoneId: 'ms-large-output',
+    taskId: fixture.task.taskId,
+    runId: fixture.state.runId,
+    timestamp: '2026-10-22T00:00:00.000Z',
+    node: 'Report',
+    kind: 'task_started',
+    summary: 'Started',
+    outcome: 'info',
+    evidenceRefs: Array.from({ length: 64 }, (_, index) => `ref-${String(index).padStart(2, '0')}-${'x'.repeat(505)}`),
+    details: {},
+  };
+
+  assert.throws(() => buildFinalReport({
+    ...fixture,
+    milestones: Array.from({ length: 64 }, () => milestone),
+  }), /Invalid report/);
+});
+
+test('report: sanitizes secrets embedded in patch content', () => {
+  const fixture = createValidReportingFixture();
+  const embeddedSecret = 'sk-ant-api03-abcdefghijklmnopqrstuvwxyz123456';
+  const rawPatch = `--- a/src/config.py\n+++ b/src/config.py\n@@ -1,2 +1,3 @@\n+API_KEY = "${embeddedSecret}"\n`;
+
+  const report = buildFinalReport({
+    ...fixture,
+    patchContent: rawPatch,
+  });
+
+  assert.ok(report.diff.patch !== undefined);
+  assert.ok(!report.diff.patch.includes(embeddedSecret), 'Patch must not leak embedded secrets');
+  assert.ok(report.diff.patch.includes('[REDACTED]'));
+});
+
+test('report: bounds large patch content to maxDiffBytes cleanly without corruption', () => {
+  const fixture = createValidReportingFixture();
+  const hugePatch = '--- a/src/big.py\n+++ b/src/big.py\n' + '+ line of code content\n'.repeat(500);
+
+  const report = buildFinalReport({
+    ...fixture,
+    patchContent: hugePatch,
+    maxDiffBytes: 256,
+  });
+
+  assert.ok(report.diff.patch !== undefined);
+  assert.ok(Buffer.byteLength(report.diff.patch, 'utf8') <= 256);
+  assert.equal(report.diff.truncated, true);
+  assert.ok(report.diff.patch.includes('... [TRUNCATED]'));
+});
+
+test('report: honors one-byte patch limits', () => {
+  const report = buildFinalReport({
+    ...createValidReportingFixture(),
+    patchContent: '🙂'.repeat(10),
+    maxDiffBytes: 1,
+  });
+
+  assert.ok(Buffer.byteLength(report.diff.patch ?? '', 'utf8') <= 1);
+  assert.equal(report.diff.truncated, true);
+});
+
+test('report: rejects non-finite patch limits', () => {
+  assert.throws(() => buildFinalReport({
+    ...createValidReportingFixture(),
+    patchContent: 'patch',
+    maxDiffBytes: Number.POSITIVE_INFINITY,
+  }), /Invalid report/);
+});
+
+test('report: flags changed protected paths as failure', () => {
+  const fixture = createValidReportingFixture();
+
+  const report = buildFinalReport({
+    ...fixture,
+    changedFiles: ['.env', 'src/calculator.py'],
+  });
+
+  assert.equal(report.isComplete, false);
+  assert.equal(report.outcome, 'IMPLEMENTED_UNVERIFIED');
+  assert.equal(report.delivery, undefined);
+  assert.ok(report.failureReasons.some((r) => r.includes('protected path')));
+});
+
+test('report: treats malformed verification results as incomplete evidence', () => {
+  const fixture = createValidReportingFixture();
+  const report = buildFinalReport({
+    ...fixture,
+    verificationResults: [null] as unknown as readonly VerificationResult[],
+  });
+
+  assert.equal(report.isComplete, false);
+  assert.equal(report.outcome, 'IMPLEMENTED_UNVERIFIED');
+  assert.equal(report.delivery, undefined);
+  assert.ok(report.failureReasons.some((reason) => reason.includes('Malformed verification evidence')));
+});
+
+test('report: malformed completion boundary inputs stay incomplete without exposing payloads', () => {
+  const fixture = createValidReportingFixture();
+  const malformedInputs: readonly BuildFinalReportInput[] = [
+    { ...fixture, authorizedDiffDigest: 42 } as unknown as BuildFinalReportInput,
+    {
+      ...fixture,
+      state: { ...fixture.state, latestReviewRef: 42 } as unknown as TaskState,
+    },
+    {
+      ...fixture,
+      task: { ...fixture.task, requiredChecks: [null] } as unknown as BugTask,
+    },
+    {
+      ...fixture,
+      trustedReviewRecord: { ...fixture.trustedReviewRecord, reviewId: 42 } as unknown as TrustedReviewRecord,
+    },
+  ];
+
+  for (const input of malformedInputs) {
+    const report = buildFinalReport(input);
+    assert.equal(report.isComplete, false);
+    assert.equal(report.outcome, 'IMPLEMENTED_UNVERIFIED');
+    assert.equal(report.delivery, undefined);
+    assert.ok(report.failureReasons.includes('Invalid completion evidence input; completion withheld'));
+  }
+});
+
+test('report: combines persisted changes when the supplied inventory is empty', () => {
+  const fixture = createValidReportingFixture();
+  const report = buildFinalReport({
+    task: fixture.task,
+    state: { ...fixture.state, changedPaths: ['src/fix.py'] },
+    changedFiles: [],
+  });
+
+  assert.equal(report.outcome, 'IMPLEMENTED_UNVERIFIED');
+  assert.deepEqual(report.diff.changedFiles, ['src/fix.py']);
+  assert.ok(report.failureReasons.some((reason) => reason.includes('inventory')));
+});
+
+test('report: rejects inconsistent changed-file inventories from completion', () => {
+  const fixture = createValidReportingFixture();
+  const report = buildFinalReport({
+    ...fixture,
+    state: { ...fixture.state, changedPaths: ['src/state.py'] },
+    changedFiles: ['src/input.py'],
+  });
+
+  assert.equal(report.isComplete, false);
+  assert.equal(report.outcome, 'IMPLEMENTED_UNVERIFIED');
+  assert.deepEqual([...report.diff.changedFiles].sort(), ['src/input.py', 'src/state.py']);
+  assert.ok(report.failureReasons.some((reason) => reason.includes('inventory')));
+});
+
+/* ==================================================================
+ * Section 4: Resource Usage and Accounting Retention (C16)
+ * ================================================================== */
+
+test('report: aggregates and retains budget accounting per-run and task-level', () => {
+  const fixture = createValidReportingFixture();
+  const report = buildFinalReport(fixture);
+
+  assert.equal(report.usage.tokensConsumed, 12500);
+  assert.equal(report.usage.costUsd, 0.25);
+  assert.equal(report.usage.replanCount, 1);
+  assert.equal(report.usage.perLedger.length, 5);
+
+  const taskTokens = report.usage.perLedger.find((l) => l.scope === 'task' && l.kind === 'tokens');
+  assert.ok(taskTokens !== undefined);
+  assert.equal(taskTokens?.consumed, 12500);
+  assert.equal(taskTokens?.limit, 100000);
+});
+
+test('report: rejects malformed usage projections and configured secret metadata', () => {
+  const fixture = createValidReportingFixture();
+  const ledgers = fixture.state.budgetLedgers ?? [];
+  const withLedger = (index: number, update: Partial<BudgetLedger>): TaskState => ({
+    ...fixture.state,
+    budgetLedgers: ledgers.map((ledger, current) => current === index ? { ...ledger, ...update } : ledger),
+  });
+  const withReplanCount = (replanCount: unknown): TaskState => ({
+    ...fixture.state,
+    replanCount,
+  } as unknown as TaskState);
+  const cases: { readonly name: string; readonly input: BuildFinalReportInput; readonly secret?: string }[] = [
+    { name: 'string replan count', input: { ...fixture, state: withReplanCount('MARKER_SECRET_REPLAN') }, secret: 'MARKER_SECRET_REPLAN' },
+    { name: 'fractional replan count', input: { ...fixture, state: withReplanCount(1.5) } },
+    { name: 'over-limit replan count', input: { ...fixture, state: withReplanCount(4) } },
+    { name: 'non-finite replan count', input: { ...fixture, state: withReplanCount(Number.POSITIVE_INFINITY) } },
+    { name: 'fractional token accounting', input: { ...fixture, state: withLedger(0, { consumed: 1.5 }) } },
+    { name: 'non-finite ledger limit', input: { ...fixture, state: withLedger(0, { limit: Number.POSITIVE_INFINITY }) } },
+    { name: 'negative ledger usage', input: { ...fixture, state: withLedger(0, { consumed: -1 }) } },
+    { name: 'unknown ledger scope', input: { ...fixture, state: withLedger(0, { scope: 'session' as BudgetLedger['scope'] }) } },
+    {
+      name: 'custom secret ledger unit',
+      input: { ...fixture, state: withLedger(0, { unit: 'private-value-123' }), customSecretPatterns: ['private-value-123'] },
+      secret: 'private-value-123',
+    },
+    {
+      name: 'custom secret ledger kind',
+      input: { ...fixture, state: withLedger(0, { kind: 'private-value-123' }), customSecretPatterns: ['private-value-123'] },
+      secret: 'private-value-123',
+    },
+    { name: 'over-limit replan ledger', input: { ...fixture, state: withLedger(4, { limit: 4, consumed: 4 }) } },
+  ];
+  const unsafe = cases.flatMap(({ name, input, secret }) => {
+    try {
+      buildFinalReport(input);
+      return [name];
+    } catch (error) {
+      return error instanceof Error && (secret === undefined || !error.message.includes(secret)) ? [] : [name];
+    }
+  });
+
+  assert.deepEqual(unsafe, []);
+});
+
+/* ==================================================================
+ * Section 5: Markdown Report & Milestone Summary Formatting
+ * ================================================================== */
+
+test('formatReportMarkdown: formats complete report without secrets or raw reasoning', () => {
+  const fixture = createValidReportingFixture();
+  const secretKey = 'sk-123456789012345678901234567890';
+  const report = buildFinalReport({
+    ...fixture,
+    patchContent: '--- a/src/calculator.py\n+++ b/src/calculator.py\n@@ -12,2 +12,4 @@\n+    if b == 0:\n+        raise CalculationError("division by zero")\n',
+    limitations: [`Tested on local mock environment with key ${secretKey}`],
+    milestones: [
+      createMilestone({
+        taskId: fixture.task.taskId,
+        runId: fixture.state.runId,
+        node: 'Investigate',
+        kind: 'investigation_completed',
+        summary: 'Investigation reproduced bug',
+      }),
+    ],
+  });
+
+  const markdown = formatReportMarkdown(report);
+
+  assert.ok(markdown.includes('# UC-03 Code Repair Report'));
+  assert.ok(markdown.includes(report.taskId));
+  assert.ok(markdown.includes('COMPLETED'));
+  assert.ok(markdown.includes('src/calculator.py'));
+  assert.ok(markdown.includes('ready-for-human-review'));
+  assert.ok(!markdown.includes(secretKey), 'Markdown must not contain secrets');
+  assert.ok(!markdown.includes('rawReasoning'), 'Markdown must not mention rawReasoning');
+  assert.ok(!markdown.includes('thinking'), 'Markdown must not mention internal thinking');
+});
+
+test('formatReportMarkdown: diff fence is longer than every embedded backtick run', () => {
+  const fixture = createValidReportingFixture();
+  const embeddedRun = '`'.repeat(4);
+  const report = buildFinalReport({
+    ...fixture,
+    patchContent: `--- a/src/calculator.py\n+++ b/src/calculator.py\n+const marker = ${embeddedRun}inside${embeddedRun};\n`,
+  });
+  const markdown = formatReportMarkdown(report);
+  const longestRun = Math.max(0, ...Array.from(report.diff.patch?.matchAll(/`+/g) ?? [], ([run]) => run.length));
+  const fence = '`'.repeat(Math.max(3, longestRun + 1));
+
+  assert.ok(markdown.includes(`${fence}diff\n${report.diff.patch}\n${fence}`));
+});
+
+test('formatReportMarkdown: requires completion to match its delivery and evidence bindings', () => {
+  const fixture = createValidReportingFixture();
+  const incomplete = buildFinalReport({ task: fixture.task, state: fixture.state });
+  const forgedIncomplete = {
+    ...incomplete,
+    outcome: 'COMPLETED',
+    isComplete: true,
+    safeNextAction: 'ready-for-human-review',
+  } as FinalReport;
+  const rejectsInvalidReport = (candidate: FinalReport): void => {
+    assert.throws(() => formatReportMarkdown(candidate),
+      (error: unknown) => error instanceof Error && error.message === 'Invalid report');
+  };
+  rejectsInvalidReport(forgedIncomplete);
+
+  const complete = buildFinalReport(fixture);
+  assert.ok(complete.delivery !== undefined);
+  rejectsInvalidReport({ ...complete, delivery: undefined });
+  rejectsInvalidReport({
+    ...complete,
+    delivery: { ...complete.delivery, taskId: 'stale-task-id' },
+  });
+  rejectsInvalidReport({
+    ...complete,
+    diff: { ...complete.diff, diffDigest: 'sha256:stale-diff-digest' },
+  });
+  rejectsInvalidReport({
+    ...complete,
+    evidence: { ...complete.evidence, evidenceRefs: [] },
+  });
+});
+
+test('formatReportMarkdown: refuses caller-forged completion with matching delivery bindings', () => {
+  const fixture = createValidReportingFixture();
+  const incomplete = buildFinalReport({
+    task: fixture.task,
+    state: { ...fixture.state, changedPaths: [] },
+  });
+  const fabricatedDigest = fixture.currentDiffDigest;
+  const fabricatedChangedFiles = ['src/fabricated.py'];
+  const fabricatedBaselineRef = 'baseline-invented';
+  const fabricatedVerificationRefs = ['verification-invented'];
+  const fabricatedReviewRef = 'review-invented';
+  const fabricatedEvidenceRefs = [
+    fabricatedBaselineRef,
+    ...fabricatedVerificationRefs,
+    fabricatedReviewRef,
+  ];
+  const fabricatedCompletion = {
+    ...incomplete,
+    outcome: 'COMPLETED',
+    isComplete: true,
+    diff: {
+      ...incomplete.diff,
+      diffDigest: fabricatedDigest,
+      changedFiles: fabricatedChangedFiles,
+    },
+    evidence: {
+      baselineRef: fabricatedBaselineRef,
+      verificationRefs: fabricatedVerificationRefs,
+      reviewRef: fabricatedReviewRef,
+      evidenceRefs: fabricatedEvidenceRefs,
+    },
+    safeNextAction: 'ready-for-human-review',
+    delivery: {
+      taskId: incomplete.taskId,
+      runId: incomplete.runId,
+      outcome: 'COMPLETED',
+      diffDigest: fabricatedDigest,
+      changedFiles: fabricatedChangedFiles,
+      baselineRef: fabricatedBaselineRef,
+      verificationRefs: fabricatedVerificationRefs,
+      reviewRef: fabricatedReviewRef,
+      limitations: [],
+      safeNextAction: 'ready-for-human-review',
+    },
+  } as unknown as FinalReport;
+  assert.throws(() => formatReportMarkdown(fabricatedCompletion),
+    (error: unknown) => error instanceof Error && error.message === 'Invalid report');
+});
+
+test('formatReportMarkdown: refuses readiness claims on incomplete builder reports', () => {
+  const fixture = createValidReportingFixture();
+  const incomplete = buildFinalReport({
+    task: fixture.task,
+    state: { ...fixture.state, changedPaths: [] },
+  });
+  const incompleteMarkdown = formatReportMarkdown(incomplete);
+  assert.match(incompleteMarkdown, /Verdict: \*\*INCOMPLETE\*\* \(Incomplete\)/);
+  assert.match(incompleteMarkdown, /\*\*Safe Next Action\*\*: `investigate-or-abort`/);
+  assert.ok(!incompleteMarkdown.includes('ready-for-human-review'));
+
+  const forgedReadiness = {
+    ...incomplete,
+    safeNextAction: 'ready-for-human-review',
+  } as FinalReport;
+  assert.throws(() => formatReportMarkdown(forgedReadiness),
+    (error: unknown) => error instanceof Error && error.message === 'Invalid report');
+});
+
+test('formatReportMarkdown: accepts only the original immutable builder-issued report', () => {
+  const complete = buildFinalReport(createValidReportingFixture());
+  assert.ok(formatReportMarkdown(complete).includes('Verdict: **COMPLETED** (Complete)'));
+
+  const spreadCopy = { ...complete } as FinalReport;
+  const symbolCopy = {
+    ...complete,
+    [Symbol.for('uc03.report.issued')]: true,
+  } as FinalReport;
+  const prototypeCopy = Object.create(complete) as FinalReport;
+  const serialized: unknown = JSON.parse(JSON.stringify(complete));
+  assert.throws(() => formatReportMarkdown(spreadCopy),
+    (error: unknown) => error instanceof Error && error.message === 'Invalid report');
+  assert.throws(() => formatReportMarkdown(symbolCopy),
+    (error: unknown) => error instanceof Error && error.message === 'Invalid report');
+  assert.throws(() => formatReportMarkdown(prototypeCopy),
+    (error: unknown) => error instanceof Error && error.message === 'Invalid report');
+  assert.throws(() => formatReportMarkdown(serialized as FinalReport),
+    (error: unknown) => error instanceof Error && error.message === 'Invalid report');
+});
+
+test('report: deep-freezes its snapshot without freezing caller-owned milestone details', () => {
+  const fixture = createValidReportingFixture();
+  const callerDetails = { nested: { events: ['before issuance'] } };
+  const milestone = createMilestone({
+    taskId: fixture.task.taskId,
+    runId: fixture.state.runId,
+    node: 'Review',
+    kind: 'review_completed',
+    summary: 'Review completed',
+  });
+  const report = buildFinalReport({
+    ...fixture,
+    milestones: [{ ...milestone, details: callerDetails }],
+  });
+
+  assert.equal(Object.isFrozen(callerDetails), false);
+  callerDetails.nested.events.push('after issuance');
+  const frozenDetails = report.milestones[0]?.details;
+  const nested = frozenDetails?.['nested'];
+  assert.ok(nested && typeof nested === 'object' && !Array.isArray(nested));
+  const events = (nested as Record<string, unknown>)['events'];
+  assert.deepEqual(events, ['before issuance']);
+  assert.ok(Object.isFrozen(report));
+  assert.ok(Object.isFrozen(report.evidence));
+  assert.ok(Object.isFrozen(report.evidence.evidenceRefs));
+  assert.ok(Object.isFrozen(report.delivery));
+  assert.ok(Object.isFrozen(report.delivery?.verificationRefs));
+  assert.ok(Object.isFrozen(frozenDetails));
+  assert.ok(Object.isFrozen(nested));
+  assert.ok(Object.isFrozen(events));
+  assert.throws(() => (events as string[]).push('forged'), TypeError);
+});
+
+test('formatReportMarkdown: rejects a forged unknown outcome without echoing it', () => {
+  const report = buildFinalReport(createValidReportingFixture());
+  const marker = 'MARKER_SECRET_OVERRIDE';
+
+  assert.throws(() => formatReportMarkdown({ ...report, outcome: marker } as unknown as FinalReport),
+    (error: unknown) => error instanceof Error && error.message === 'Invalid report' && !error.message.includes(marker));
+});
+
+test('formatReportMarkdown: rejects malformed usage without echoing it', () => {
+  const report = buildFinalReport(createValidReportingFixture());
+  const marker = 'MARKER_SECRET_REPLAN';
+  const forged = { ...report, usage: { ...report.usage, replanCount: marker } } as unknown as FinalReport;
+
+  assert.throws(() => formatReportMarkdown(forged),
+    (error: unknown) => error instanceof Error && /Invalid report/.test(error.message) && !error.message.includes(marker));
+});
+
+test('formatMilestonesSummary: formats chronological milestone list cleanly', () => {
+  const milestones: Milestone[] = [
+    createMilestone({
+      taskId: 'task-001',
+      runId: 'run-001',
+      node: 'Validate',
+      kind: 'task_started',
+      summary: 'Task started and validated',
+      outcome: 'info',
+    }),
+    createMilestone({
+      taskId: 'task-001',
+      runId: 'run-001',
+      node: 'Investigate',
+      kind: 'investigation_completed',
+      summary: 'Baseline reproduction passed',
+      outcome: 'success',
+    }),
+  ];
+
+  const summary = formatMilestonesSummary(milestones);
+  assert.ok(summary.includes('task_started'));
+  assert.ok(summary.includes('investigation_completed'));
+  assert.ok(summary.includes('Baseline reproduction passed'));
+});
+
+test('report entry points normalize exceptions from caller-owned getters and proxies', () => {
+  const fixture = createValidReportingFixture();
+
+  const getterMarker = 'MARKER_SECRET_GETTER';
+  const getterError = createMarkedError(getterMarker, 'Invalid report outcome');
+  const getterInput = { ...fixture } as BuildFinalReportInput;
+  Object.defineProperty(getterInput, 'overrideOutcome', {
+    enumerable: true,
+    get() {
+      throw getterError;
+    },
+  });
+  assertSanitizedReportFailure(() => buildFinalReport(getterInput), 'Invalid report', getterMarker, getterError);
+
+  const proxyMarker = 'MARKER_SECRET_PROXY';
+  const proxyError = createMarkedError(proxyMarker);
+  const proxyInput = new Proxy({}, {
+    get() {
+      throw proxyError;
+    },
+  }) as BuildFinalReportInput;
+  assertSanitizedReportFailure(() => buildFinalReport(proxyInput), 'Invalid report', proxyMarker, proxyError);
+
+  const evidenceMarker = 'MARKER_SECRET_EVIDENCE';
+  const evidenceError = createMarkedError(evidenceMarker);
+  const baseline = new Proxy(fixture.baseline, {
+    get(target, property, receiver) {
+      if (property === 'evidenceId') throw evidenceError;
+      return Reflect.get(target, property, receiver);
+    },
+  });
+  assertSanitizedReportFailure(
+    () => buildFinalReport({ ...fixture, baseline }),
+    'Invalid report',
+    evidenceMarker,
+    evidenceError,
+  );
+});
+
+test('report builders read caller-owned top-level getters once', () => {
+  const fixture = createValidReportingFixture();
+  let outcomeReads = 0;
+  const reportInput = { ...fixture } as BuildFinalReportInput;
+  Object.defineProperty(reportInput, 'overrideOutcome', {
+    enumerable: true,
+    get() {
+      outcomeReads++;
+      return 'COMPLETED';
+    },
+  });
+  assert.equal(buildFinalReport(reportInput).outcome, 'COMPLETED');
+  assert.equal(outcomeReads, 1);
+
+  let taskIdReads = 0;
+  let summaryReads = 0;
+  const milestoneInput = {
+    runId: 'run-report-getter',
+    node: 'Report',
+    kind: 'task_started',
+  } as CreateMilestoneInput;
+  Object.defineProperties(milestoneInput, {
+    taskId: {
+      enumerable: true,
+      get() {
+        taskIdReads++;
+        return 'task-report-getter';
+      },
+    },
+    summary: {
+      enumerable: true,
+      get() {
+        summaryReads++;
+        return 'Started';
+      },
+    },
+  });
+  assert.equal(createMilestone(milestoneInput).summary, 'Started');
+  assert.equal(taskIdReads, 1);
+  assert.equal(summaryReads, 1);
+});
+
+test('createMilestone normalizes exceptions from nested caller-owned details', () => {
+  const marker = 'MARKER_SECRET_DETAIL';
+  const suppliedError = createMarkedError(marker);
+  const details = Object.defineProperty({}, 'nested', {
+    enumerable: true,
+    get() {
+      throw suppliedError;
+    },
+  });
+
+  assertSanitizedReportFailure(() => createMilestone({
+    taskId: 'task-report-error',
+    runId: 'run-report-error',
+    node: 'Report',
+    kind: 'task_started',
+    summary: 'Started',
+    details,
+  }), 'Invalid report milestone', marker, suppliedError);
+});
+
+test('milestoneToActivityEvent and formatMilestonesSummary normalize caller proxy exceptions', () => {
+  const milestone = createMilestone({
+    taskId: 'task-report-error',
+    runId: 'run-report-error',
+    node: 'Report',
+    kind: 'task_started',
+    summary: 'Started',
+  });
+
+  const eventMarker = 'MARKER_SECRET_MILESTONE';
+  const eventError = createMarkedError(eventMarker);
+  const unsafeMilestone = new Proxy(milestone, {
+    get(target, property, receiver) {
+      if (property === 'outcome') throw eventError;
+      return Reflect.get(target, property, receiver);
+    },
+  });
+  assertSanitizedReportFailure(
+    () => milestoneToActivityEvent(unsafeMilestone),
+    'Invalid report milestone',
+    eventMarker,
+    eventError,
+  );
+
+  const summaryMarker = 'MARKER_SECRET_SUMMARY';
+  const summaryError = createMarkedError(summaryMarker);
+  const unsafeMilestones = new Proxy([milestone], {
+    get(target, property, receiver) {
+      if (property === 'length') throw summaryError;
+      return Reflect.get(target, property, receiver);
+    },
+  });
+  assertSanitizedReportFailure(
+    () => formatMilestonesSummary(unsafeMilestones),
+    'Invalid report milestone',
+    summaryMarker,
+    summaryError,
+  );
+});
+
+test('formatReportMarkdown rejects unissued proxies before reading caller fields', () => {
+  let getterReads = 0;
+  const marker = 'MARKER_SECRET_UNISSUED_REPORT';
+  const suppliedError = createMarkedError(marker);
+  const unissued = new Proxy({}, {
+    get() {
+      getterReads++;
+      throw suppliedError;
+    },
+  }) as FinalReport;
+
+  assertSanitizedReportFailure(() => formatReportMarkdown(unissued), 'Invalid report', marker);
+  assert.equal(getterReads, 0);
+});
+
+test('verificationSnapshot returns detached results and reference arrays from its input snapshot', () => {
+  const fixture = createValidReportingFixture();
+  const fixtureResult = fixture.verificationResults[0];
+  assert.ok(fixtureResult);
+  const testedIds = [...fixtureResult.testedIds];
+  const diagnosticRefs = ['diag-report-snapshot-001'];
+  const callerResult: VerificationResult = {
+    ...fixtureResult,
+    testedIds,
+    diagnosticRefs,
+  };
+
+  const snapshot = verificationSnapshot([callerResult]);
+  assert.equal(snapshot.valid, true);
+  const snapshotResult = snapshot.results[0];
+  assert.ok(snapshotResult);
+  assert.notEqual(snapshotResult.testedIds, testedIds);
+  assert.notEqual(snapshotResult.diagnosticRefs, diagnosticRefs);
+  testedIds[0] = 'forged-after-snapshot';
+  diagnosticRefs.push('forged-after-snapshot');
+  assert.deepEqual(snapshotResult.testedIds, ['check-pytest-reproduction']);
+  assert.deepEqual(snapshotResult.diagnosticRefs, ['diag-report-snapshot-001']);
+  assert.deepEqual(snapshot.refs, [callerResult.evidenceId]);
+});
+
+test('reviewSnapshot returns detached findings and rejects caller getters and proxies safely', () => {
+  const fixture = createValidReportingFixture();
+  const findings = [{
+    file: 'src/calculator.py',
+    line: 3,
+    side: 'new',
+    severity: 'warning',
+    message: 'original finding',
+    evidenceRef: 'review-evidence-001',
+  }];
+  const callerReview = { ...fixture.reviewResult, status: 'findings', findings } as ReviewResult;
+  const snapshot = reviewSnapshot(callerReview);
+  assert.equal(snapshot.valid, true);
+  const snapshotReview = snapshot.result;
+  const firstFinding = findings[0];
+  assert.ok(snapshotReview);
+  assert.ok(firstFinding);
+  assert.notEqual(snapshotReview.findings, findings);
+  firstFinding.message = 'mutated after snapshot';
+  const snapshotFinding = snapshotReview.findings[0];
+  assert.ok(snapshotFinding);
+  assert.equal(snapshotFinding.message, 'original finding');
+
+  let getterReads = 0;
+  const getterReview = { ...fixture.reviewResult } as ReviewResult;
+  Object.defineProperty(getterReview, 'reviewId', {
+    enumerable: true,
+    get() {
+      getterReads++;
+      throw new Error('caller getter must not escape');
+    },
+  });
+  assert.equal(reviewSnapshot(getterReview).valid, false);
+  assert.equal(getterReads, 0);
+
+  const proxyReview = new Proxy(fixture.reviewResult, {
+    getOwnPropertyDescriptor() {
+      throw new Error('caller proxy must fail closed');
+    },
+  });
+  assert.equal(reviewSnapshot(proxyReview).valid, false);
+});
+
+test('verificationSnapshot fails closed on result getters and proxy traps', () => {
+  const fixture = createValidReportingFixture();
+  let getterReads = 0;
+  const fixtureResult = fixture.verificationResults[0];
+  assert.ok(fixtureResult);
+  const getterResult = { ...fixtureResult } as VerificationResult;
+  Object.defineProperty(getterResult, 'testedIds', {
+    enumerable: true,
+    get() {
+      getterReads++;
+      throw new Error('caller getter must not escape');
+    },
+  });
+  assert.equal(verificationSnapshot([getterResult]).valid, false);
+  assert.equal(getterReads, 0);
+
+  const proxyResult = new Proxy(fixtureResult, {
+    getOwnPropertyDescriptor() {
+      throw new Error('caller proxy must fail closed');
+    },
+  });
+  assert.equal(verificationSnapshot([proxyResult]).valid, false);
+});
