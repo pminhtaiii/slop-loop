@@ -12,12 +12,15 @@ import {
   type RepositoryAdmissionContextV02,
   type ProviderAdmissionContextV02,
 } from '../../../src/contracts/foundation/uc03.ts';
-import { MemoryStatePort } from '../support/uc03/memory-state.ts';
+import { MemoryStatePort, MemoryStatePortV02 } from '../support/uc03/memory-state.ts';
 import { ScriptedApprovalPort, ScriptedApprovalPortV02 } from '../support/uc03/scripted-approval.ts';
 import { ScriptedModelPort, ScriptedModelPortV02 } from '../support/uc03/scripted-model.ts';
 import { ScriptedReviewerPort, ScriptedReviewerPortV02 } from '../support/uc03/scripted-reviewer.ts';
 import { FakeRepositoryPort, FakeRepositoryPortV02 } from '../support/uc03/fake-repository.ts';
 import {
+  createTestRepositoryAdmissionContextV02,
+  createTestAdmissionTaskStateV02,
+  createTestExecutorIdentityV02,
   createTestTaskState,
   createTestApprovalBinding,
   createTestProviderUsage,
@@ -253,14 +256,13 @@ for (const scenario of ['missing', 'exhausted', 'malformed', 'stale', 'valid'] a
       targetPaths: ['src/calculator.py'],
       baseRevisionDigest: port.currentRevision,
     };
-    const validContext = createFixtureRepositoryAdmissionContextV02({
+    const validContext = createTestRepositoryAdmissionContextV02({
       action: patch,
       canonicalRevision: port.currentRevision,
     });
 
     if (scenario === 'missing') {
-      const res = await port.applyPatch(patch, {} as unknown as RepositoryAdmissionContextV02);
-      assert.equal(res.applied, false);
+      await assert.rejects(() => port.applyPatch(patch, {} as unknown as RepositoryAdmissionContextV02));
       assert.deepEqual(underlying.patches, []);
     } else if (scenario === 'exhausted') {
       const check = createFixtureCheckDefinition({ checkId: 'unscripted' });
@@ -283,8 +285,7 @@ for (const scenario of ['missing', 'exhausted', 'malformed', 'stale', 'valid'] a
       );
     } else if (scenario === 'malformed') {
       const malformedContext = { ...validContext, schemaVersion: '0.1.0' } as unknown as RepositoryAdmissionContextV02;
-      const res = await port.applyPatch(patch, malformedContext);
-      assert.equal(res.applied, false);
+      await assert.rejects(() => port.applyPatch(patch, malformedContext));
     } else if (scenario === 'stale') {
       const staleContext = createFixtureRepositoryAdmissionContextV02({
         action: patch,
@@ -299,14 +300,18 @@ for (const scenario of ['missing', 'exhausted', 'malformed', 'stale', 'valid'] a
       assert.equal(staleContext.baseRevision, patch.baseRevisionDigest);
       assert.equal(validation.ok, false);
       if (!validation.ok) assert.deepEqual(validation.errors.map(({ code }) => code), ['REVISION_MISMATCH']);
-      const res = await port.applyPatch(patch, staleContext);
-      assert.equal(res.applied, false);
+      await assert.rejects(() => port.applyPatch(patch, staleContext));
       assert.equal(port.currentRevision, patch.baseRevisionDigest);
       assert.deepEqual(underlying.patches, []);
       assert.deepEqual(underlying.v02Calls, []);
     } else {
       // valid
+      underlying.setStatePort(new MemoryStatePortV02({ initialTaskState: createTestAdmissionTaskStateV02(validContext),
+        initialControlVersion: validContext.expectedControlVersion, initialEpoch: validContext.expectedEpoch,
+        initialAuthorityRef: validContext.policyAuthorityRef }));
+      underlying.setExecutorIdentity(createTestExecutorIdentityV02({ payloadDigest: validContext.actionDigest }));
       const res = await port.applyPatch(patch, validContext);
+      assert.equal(res.executionReceipt.settlement.outcome, 'settled');
       assert.equal(res.applied, true);
       assert.equal(underlying.patches.length, 1);
     }

@@ -1708,7 +1708,11 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
     });
     assert.equal(context.action.kind, 'apply_patch');
     if (context.action.kind !== 'apply_patch') throw new Error('fixture requires patch');
-    assert.deepEqual(await tools.applyPatch(context.action, context), { applied: true, newRevisionDigest: nextRevision });
+    const result = await tools.applyPatch(context.action, context);
+    assert.equal(result.applied, true);
+    assert.equal(result.newRevisionDigest, nextRevision);
+    assert.equal(result.executionReceipt.settlement.outcome, 'settled');
+    assert.equal(result.executionReceipt.outcome.observedResultRevisionDigest, nextRevision);
     const persisted = await journal.loadTask(context.taskId);
     assert.equal(persisted?.node, 'Investigate');
     assert.equal(persisted?.repositoryRevisionDigest, nextRevision);
@@ -2631,6 +2635,9 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
       command.controller.outputToReturn = { exitCode: 0, stdout: 'command passed\n', stderr: '', durationMs: 8 };
       const commandResult = await command.tools.runCommand(command.action, command.context);
       assert.equal(commandResult.exitCode, 0);
+      assert.equal(commandResult.executionReceipt.attempt.attemptId, command.journal.getJournalSnapshot().attempts[0]?.attemptId);
+      assert.equal(commandResult.executionReceipt.settlement.receiptId, commandResult.executionReceipt.outcome.receiptId);
+      assert.equal(commandResult.executionReceipt.outcome.outcome, 'observed');
       assert.equal(command.journal.getJournalSnapshot().outcomes[0]?.outcome, 'observed');
       assert.equal(command.journal.getJournalSnapshot().claims[0]?.status, 'settled');
       assert.equal(command.journal.getJournalSnapshot().attempts[0]?.status, 'settled');

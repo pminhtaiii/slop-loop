@@ -1,6 +1,8 @@
 import type { CheckDefinition, CheckResult } from '../contracts/foundation/uc03.ts';
 import { validateAttemptReceiptV02 } from '../contracts/foundation/uc03/attempt-v02.ts';
 import type {
+  RepositoryCommandResultV02,
+  RepositoryExecutionReceiptV02,
   AttemptReceiptV02,
   ClaimReceiptV02,
   ExecutorIdentityV02,
@@ -92,7 +94,7 @@ export async function beginRepositoryAttemptWithClaim(
   if (!result.ok || !matchesRepositoryAttemptV02(result.value, claim, executorIdentity)) {
     throw new Error('BEGIN_ATTEMPT_DENIED: StatePort returned a mismatched attempt receipt');
   }
-  return { claim, attempt: result.value };
+  return { claim, attempt: attemptInput as AttemptReceiptV02 };
 }
 
 export function assertCurrentPatchFence(
@@ -133,7 +135,7 @@ export async function executeAdmittedCommand(options: {
   readonly claimLifecycle: RepositoryClaimLifecycleV02;
   readonly outcomeRecovery: RepositoryOutcomeRecoveryV02;
   readonly attemptStartRecovery: RepositoryAttemptStartRecoveryV02;
-}): Promise<StructuredExecutionResult> {
+}): Promise<StructuredExecutionResult & { readonly executionReceipt: RepositoryExecutionReceiptV02 }> {
   const { manager, commandExecutor, statePort, context, action } = options;
   const lease = await manager.acquireReadLease(context.workspaceId, context.canonicalRevision);
   let current: { readonly claim: ClaimReceiptV02; readonly attempt: AttemptReceiptV02 } | undefined;
@@ -191,7 +193,7 @@ export async function executeAdmittedCommand(options: {
         normalized ?? undefined,
       );
       const recorded = await options.outcomeRecovery.record(lease, context, current.claim, current.attempt, outcome);
-      if (outcome.outcome === 'observed' && recorded.outcome === 'settled') return result;
+      if (outcome.outcome === 'observed' && recorded.outcome === 'settled') return { ...result, executionReceipt: { claim: current.claim, attempt: current.attempt, outcome, settlement: recorded as typeof recorded & { readonly outcome: 'settled' } } };
       keepLease = true;
       throw new CommandOutcomePendingError(current.attempt.attemptId);
     } catch (error: unknown) {
@@ -277,7 +279,7 @@ export class RepositoryCommandReceiver {
   async runCommand(
     action: RunCommandAction,
     context?: RepositoryAdmissionContextV02,
-  ): Promise<{ readonly exitCode: number; readonly stdout: string; readonly stderr: string }> {
+  ): Promise<RepositoryCommandResultV02> {
     if (!context) throw new Error('NOT_IMPLEMENTED: runCommand without v0.2 context is not implemented in v0.1 compatibility slice');
     const admitted = bindCommandToAdmission(action, snapshotRepositoryAdmission(context, 'run_command'));
     if (this.options.neutralStub) throw new Error('NEUTRAL_RECEIVER_STUB: Positive execution not implemented in T049 neutral stub');
@@ -310,7 +312,7 @@ export class RepositoryCommandReceiver {
     });
     if (result.timedOut || result.outcome === 'timeout') throw new Error('COMMAND_TIMED_OUT: Command did not complete within its admitted timeout');
     if (result.exitCode === null || result.outcome === 'error') throw new Error('COMMAND_EXIT_CODE_UNAVAILABLE: Command did not return an observed exit code');
-    return { exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr };
+    return { ...result, exitCode: result.exitCode };
   }
 
   async runTests(check: CheckDefinition, context?: RepositoryAdmissionContextV02): Promise<CheckResult> {

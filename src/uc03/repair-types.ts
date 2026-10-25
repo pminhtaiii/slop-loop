@@ -1,23 +1,32 @@
 /**
  * UC-03 repair and replan types and interfaces.
  * Feature: specs/001-verified-code-repair
- * Tasks: T016, T017, T018
+ * Tasks: T016, T017, T018, T061
  */
 
 import type {
   ApprovalBindingContext,
   ApprovalPort,
   ExecutionGuard,
+  ExecutionGuardV02,
   FixPlan,
   ModelPort,
   RepositoryPort,
+  RepositoryPortV02,
   ReviewResult,
   StatePort,
+  StatePortV02,
   StateTransitionOptions,
   TaskState,
   VerificationResult,
+  RepositoryAdmissionContextV02,
+  BudgetLedger,
 } from '../contracts/foundation/uc03.ts';
-import { computeCanonicalSha256, computeCheckSetDigest } from '../contracts/foundation/uc03.ts';
+import {
+  computeCanonicalSha256,
+  computeCheckSetDigest,
+  isProtectedPath,
+} from '../contracts/foundation/uc03.ts';
 
 export type RepairOutcome = 'REPAIR_PREPARED' | 'INCOMPLETE' | 'DENIED';
 
@@ -40,6 +49,7 @@ export interface TrustedRepairContext {
   readonly evidenceRefs: readonly string[];
   readonly actionRefs: readonly string[];
   readonly diagnosticRefs: readonly string[];
+  readonly admissionContext?: RepositoryAdmissionContextV02 | undefined;
 }
 
 export interface RepairInput {
@@ -50,16 +60,18 @@ export interface RepairInput {
     | readonly (VerificationResult | ReviewResult)[];
   readonly repairPatch?: RepairPatchProposal | undefined;
   readonly actionId?: string | undefined;
+  readonly admissionContext?: RepositoryAdmissionContextV02 | undefined;
 }
 
 export interface RepairPorts {
-  readonly statePort: StatePort;
-  readonly repositoryPort?: RepositoryPort | undefined;
-  readonly executionGuard?: ExecutionGuard | undefined;
+  readonly statePort: StatePort | StatePortV02;
+  readonly repositoryPort?: RepositoryPort | RepositoryPortV02 | undefined;
+  readonly executionGuard?: ExecutionGuard | ExecutionGuardV02 | undefined;
   readonly approvalPort?: ApprovalPort | undefined;
   readonly modelPort?: ModelPort | undefined;
   readonly trustedTransitionContext?: StateTransitionOptions['trusted'] | undefined;
   readonly trustedRepairContext?: TrustedRepairContext | undefined;
+  readonly admissionContext?: RepositoryAdmissionContextV02 | undefined;
 }
 
 export interface RepairResult {
@@ -164,4 +176,78 @@ export function getRejectionApprovalContext(state: TaskState): ApprovalBindingCo
     currentCriteriaDigest: computeCanonicalSha256(state.acceptanceCriteria),
     currentCheckSetDigest: checkSetDigest,
   };
+}
+
+export function isStatePortV02(port: unknown): port is StatePortV02 {
+  return (
+    typeof port === 'object' &&
+    port !== null &&
+    'claim' in port &&
+    typeof (port as Record<string, unknown>).claim === 'function'
+  );
+}
+
+export function isVerificationResult(item: unknown): item is VerificationResult {
+  return typeof item === 'object' && item !== null && 'testedIds' in item;
+}
+
+export function isProtectedPathOrTest(filePath: string): boolean {
+  const norm = filePath.toLowerCase().replace(/\\/g, '/');
+  return isProtectedPath(filePath) ||
+    /(^|\/)(test|tests)(\/|$)|(^|\/)(test_[^/]*\.py|[^/]*_test\.py|conftest\.py)$/.test(norm);
+}
+
+export function isReviewResult(item: unknown): item is ReviewResult {
+  return typeof item === 'object' && item !== null && 'reviewId' in item && 'findings' in item;
+}
+
+export function failureRefs(items: readonly (VerificationResult | ReviewResult)[]): {
+  evidence: string[];
+  actions: string[];
+  diagnostics: string[];
+} {
+  const evidence = items.map((item) => isVerificationResult(item) ? item.evidenceId : item.reviewId);
+  const actions = items.map((item) => isVerificationResult(item) ? item.actionId : item.iterationReservationRef);
+  const diagnostics = items.flatMap((item) => isVerificationResult(item) ? item.diagnosticRefs : item.findings.map((finding) => finding.evidenceRef ?? item.reviewId));
+  return { evidence, actions, diagnostics: [...new Set(diagnostics)] };
+}
+
+export function refsMatch(actual: unknown, expected: readonly string[]): boolean {
+  return Array.isArray(actual) && actual.length === expected.length && actual.every((ref: unknown, index: number) => typeof ref === 'string' && ref === expected[index]);
+}
+
+export const isSha256 = (value: unknown): value is string =>
+  typeof value === 'string' && value.length === 71 && /^sha256:[a-f0-9]{64}$/.test(value);
+
+export type AccountingCheck = { readonly ok: true; readonly repair: BudgetLedger } | { readonly ok: false; readonly reason: string };
+
+export function checkAccounting(state: TaskState, actionId?: string, receiptId?: string): AccountingCheck {
+  const task = state.taskContext, ledgers = state.budgetLedgers;
+  if (!ledgers?.length) return { ok: false, reason: 'missing-budget-ledgers' };
+  if (!task) return { ok: false, reason: 'missing-budget-configuration' };
+  const [repair, tokens, cost] = (['repair', 'tokens', 'cost'] as const).map((kind) => ledgers.find((entry) => entry.scope === 'task' && entry.kind === kind));
+  if (!repair || !tokens || !cost) return { ok: false, reason: 'missing-budget-ledgers' };
+  for (const [ledger, limit, unit] of [[repair, task.budgetLimits.maxRepairAttempts, 'count'], [tokens, task.budgetLimits.maxTokens, 'count'], [cost, task.budgetLimits.maxCostUsd, 'usd']] as const) {
+    if (ledger.configurationId !== task.configId || ledger.limit !== limit || ledger.unit !== unit) return { ok: false, reason: 'inconsistent-budget-configuration' };
+    if (ledger.reservations.some((item) => item.amount <= 0)) return { ok: false, reason: 'inconsistent-budget-accounting' };
+    const total = ledger.consumed + ledger.reservations.reduce((sum, item) => sum + item.amount, 0);
+    if (ledger.kind === 'repair' && actionId) {
+      if (total > limit) return { ok: false, reason: 'inconsistent-budget-accounting' };
+      if (ledger.reservations.filter((item) => item.keyedId === actionId && item.amount === 1 && item.reservationId === receiptId).length !== 1) return { ok: false, reason: 'repair-reservation-not-authoritative' };
+    } else if (total >= limit) return { ok: false, reason: ledger.kind === 'repair' ? 'repair-budget-exhausted' : 'token-or-cost-budget-exhausted' };
+  }
+  if (ledgers.some((entry) => (entry.kind === 'tokens' || entry.kind === 'cost') && entry.reservations.length > 0)) return { ok: false, reason: 'uncertain-accounting-reservations' };
+  return { ok: true, repair };
+}
+
+export function isPatchResult(value: unknown): value is { readonly applied: true; readonly newRevisionDigest: string } {
+  return typeof value === 'object' && value !== null && !Array.isArray(value) && 'applied' in value && (value as { applied: unknown }).applied === true && 'newRevisionDigest' in value && isSha256((value as { newRevisionDigest: unknown }).newRevisionDigest);
+}
+
+/** The guard and journal validate supplied owner authority; repair never creates it. */
+export function resolveRepairAdmissionContext(
+  ports: RepairPorts,
+  ctx?: TrustedRepairContext | undefined,
+): RepositoryAdmissionContextV02 | undefined {
+  return ports.admissionContext ?? ctx?.admissionContext;
 }

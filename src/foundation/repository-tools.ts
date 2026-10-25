@@ -1,5 +1,7 @@
 import type { PortProvenance, RepositoryPort, SourceEvidence } from '../contracts/foundation/uc03.ts';
 import type {
+  RepositoryPatchResultV02,
+  RepositoryCommandResultV02,
   RepositoryPortV02,
   RepositoryAdmissionContextV02,
   ReconciliationResultV02,
@@ -83,9 +85,13 @@ export class ControlledRepositoryTools implements RepositoryPort, RepositoryPort
   listDir(dirPath: string): Promise<readonly string[]> { return this.reader.listDir(dirPath); }
   readFile(filePath: string): Promise<SourceEvidence> { return this.reader.readFile(filePath); }
   searchCode(query: string): Promise<readonly SourceEvidence[]> { return this.reader.searchCode(query); }
+  applyPatch(patch: ApplyPatchAction, context: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02>;
+  applyPatch(patch: ApplyPatchAction): ReturnType<RepositoryPort['applyPatch']>;
   applyPatch(patch: ApplyPatchAction, context?: RepositoryAdmissionContextV02): Promise<{ readonly applied: boolean; readonly newRevisionDigest: string }> {
     return this.patches.applyPatch(patch, context);
   }
+  runCommand(action: RunCommandAction, context: RepositoryAdmissionContextV02): Promise<RepositoryCommandResultV02>;
+  runCommand(action: RunCommandAction): ReturnType<RepositoryPort['runCommand']>;
   runCommand(action: RunCommandAction, context?: RepositoryAdmissionContextV02): Promise<{ readonly exitCode: number; readonly stdout: string; readonly stderr: string }> {
     return this.commands.runCommand(action, context);
   }

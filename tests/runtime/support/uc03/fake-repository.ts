@@ -16,6 +16,9 @@
  */
 
 import {
+  type RepositoryPatchResultV02,
+  type RepositoryCommandResultV02,
+  type OutcomeRecordResultV02,
   type RepositoryPort,
   type RepositoryPortV02,
   type PortProvenance,
@@ -41,6 +44,8 @@ import {
   computeCanonicalSha256,
   computeActionDigest,
 } from '../../../../src/contracts/foundation/uc03.ts';
+import { createCommandOutcomeReceipt, normalizeCommandResult, validateOutcomeRecordResult } from '../../../../src/foundation/repository-command-outcome.ts';
+import { beginRepositoryAttemptWithClaim } from '../../../../src/foundation/repository-receiver.ts';
 import { computeAttemptOutcomeDigest } from '../../../../src/contracts/foundation/uc03/attempt-v02.ts';
 import {
   createTestRepositoryAdmissionTrustedContextV02,
@@ -186,6 +191,10 @@ export class FakeRepositoryPort implements RepositoryPort, RepositoryPortV02 {
 
   get v02Calls(): readonly FakeRepositoryV02CallRecord[] {
     return [...this.v02CallLog];
+  }
+
+  setExecutorIdentity(identity: ExecutorIdentityV02): void {
+    this.executorIdentity = identity;
   }
 
   setStatePort(statePort: StatePortV02 | undefined): void {
@@ -385,10 +394,12 @@ export class FakeRepositoryPort implements RepositoryPort, RepositoryPortV02 {
     };
   }
 
+  applyPatch(patch: ApplyPatchAction, context: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02>;
+  applyPatch(patch: ApplyPatchAction): ReturnType<RepositoryPort['applyPatch']>;
   async applyPatch(
     patch: ApplyPatchAction,
     context?: RepositoryAdmissionContextV02
-  ): Promise<{ readonly applied: boolean; readonly newRevisionDigest: string }> {
+  ): Promise<RepositoryPatchResultV02 | { readonly applied: boolean; readonly newRevisionDigest: string }> {
     this.patchSpy.push(patch);
 
     const effectiveContext = context ?? this.defaultAdmissionContext;
@@ -400,31 +411,23 @@ export class FakeRepositoryPort implements RepositoryPort, RepositoryPortV02 {
         effectiveContext.schemaVersion !== '0.2.0' ||
         effectiveContext.subjectKind !== 'repository-action'
       ) {
-        return { applied: false, newRevisionDigest: this.currentRevisionDigest };
+        throw new Error('REPOSITORY_ADMISSION_REFUSED');
       }
       if (effectiveContext.policyEvaluationReceipt?.result === 'FORBIDDEN') {
-        return { applied: false, newRevisionDigest: this.currentRevisionDigest };
+        throw new Error('REPOSITORY_ADMISSION_REFUSED');
       }
       if (effectiveContext.canonicalRevision !== this.currentRevisionDigest) {
-        return { applied: false, newRevisionDigest: this.currentRevisionDigest };
+        throw new Error('REPOSITORY_ADMISSION_REFUSED');
       }
-      let claim: ClaimReceiptV02 | undefined;
-      let attempt: AttemptReceiptV02 | undefined;
-      if (this.statePort) {
-        if (!this.executorIdentity) return { applied: false, newRevisionDigest: this.currentRevisionDigest };
-        claim = await this.statePort.claim(effectiveContext);
-        if (!claim.claimId || claim.taskId !== effectiveContext.taskId || claim.runId !== effectiveContext.runId) {
-          return { applied: false, newRevisionDigest: this.currentRevisionDigest };
-        }
-        attempt = await this.statePort.beginAttempt(claim.claimId, this.executorIdentity);
-        if (!attempt.attemptId || attempt.claimId !== claim.claimId) {
-          return { applied: false, newRevisionDigest: this.currentRevisionDigest };
-        }
-      }
-
+      if (!this.statePort || !this.executorIdentity) throw new Error('STATE_PORT_REQUIRED');
+      const { claim, attempt } = await beginRepositoryAttemptWithClaim(
+        this.statePort, effectiveContext, this.executorIdentity,
+        effectiveContext.action.kind === 'apply_patch' && effectiveContext.runnableNode === 'Repair', () => undefined,
+      );
       const outcome = await this.applyPatchInternal(patch);
 
       let outcomeReceipt: AttemptOutcomeReceiptV02 | undefined;
+      let settlement: OutcomeRecordResultV02 | undefined;
       if (this.statePort && claim && attempt) {
         const receipt = createTestRepositoryOutcomeReceiptV02(claim, attempt, effectiveContext, {
           receiptId: `repository-outcome-${attempt.attemptId}`,
@@ -445,8 +448,15 @@ export class FakeRepositoryPort implements RepositoryPort, RepositoryPortV02 {
           ...rawReceipt,
           receiptDigest: computeAttemptOutcomeDigest(rawReceipt),
         };
-        await this.statePort.recordOutcome(outcomeReceipt);
+        settlement = validateOutcomeRecordResult(await this.statePort.recordOutcome(outcomeReceipt), outcomeReceipt.receiptId);
       }
+
+      if (!outcomeReceipt || outcomeReceipt.subjectKind !== 'repository-action' || outcomeReceipt.outcome !== 'observed' ||
+        !settlement || settlement.outcome !== 'settled' || settlement.receiptId !== outcomeReceipt.receiptId) {
+        throw new Error('REPOSITORY_OUTCOME_PENDING');
+      }
+      const executionResult = { ...outcome, executionReceipt: { claim, attempt, outcome: outcomeReceipt,
+        settlement: settlement as OutcomeRecordResultV02 & { readonly outcome: 'settled' } } };
 
       this.v02CallLog.push({
         action: 'applyPatch',
@@ -456,10 +466,10 @@ export class FakeRepositoryPort implements RepositoryPort, RepositoryPortV02 {
         claim,
         attempt,
         outcomeReceipt,
-        outcome,
+        outcome: executionResult,
       });
 
-      return outcome;
+      return executionResult;
     }
 
     return this.applyPatchInternal(patch);
@@ -489,10 +499,12 @@ export class FakeRepositoryPort implements RepositoryPort, RepositoryPortV02 {
     throw new Error('SCRIPT_EXHAUSTED: No scripted command response');
   }
 
+  runCommand(action: RunCommandAction, context: RepositoryAdmissionContextV02): Promise<RepositoryCommandResultV02>;
+  runCommand(action: RunCommandAction): ReturnType<RepositoryPort['runCommand']>;
   async runCommand(
     action: RunCommandAction,
     context?: RepositoryAdmissionContextV02
-  ): Promise<{ readonly exitCode: number; readonly stdout: string; readonly stderr: string }> {
+  ): Promise<RepositoryCommandResultV02 | { readonly exitCode: number; readonly stdout: string; readonly stderr: string }> {
     this.commandSpy.push(action);
 
     const effectiveContext = context ?? this.defaultAdmissionContext;
@@ -503,10 +515,10 @@ export class FakeRepositoryPort implements RepositoryPort, RepositoryPortV02 {
         effectiveContext.schemaVersion !== '0.2.0' ||
         effectiveContext.subjectKind !== 'repository-action'
       ) {
-        return { exitCode: 1, stdout: '', stderr: 'INVALID_ADMISSION_CONTEXT' };
+        throw new Error('INVALID_ADMISSION_CONTEXT');
       }
       if (effectiveContext.policyEvaluationReceipt?.result === 'FORBIDDEN') {
-        return { exitCode: 1, stdout: '', stderr: 'FORBIDDEN_POLICY' };
+        throw new Error('FORBIDDEN_POLICY');
       }
 
       const fullKey = `${action.executable} ${action.argv.join(' ')}`;
@@ -518,29 +530,30 @@ export class FakeRepositoryPort implements RepositoryPort, RepositoryPortV02 {
         throw new Error('SCRIPT_EXHAUSTED: No scripted command response');
       }
 
-      let claim: ClaimReceiptV02 | undefined;
-      let attempt: AttemptReceiptV02 | undefined;
-      if (this.statePort) {
-        if (!this.executorIdentity) return { exitCode: 1, stdout: '', stderr: 'MISSING_EXECUTOR_IDENTITY' };
-        claim = await this.statePort.claim(effectiveContext);
-        if (!claim.claimId || claim.taskId !== effectiveContext.taskId || claim.runId !== effectiveContext.runId) {
-          return { exitCode: 1, stdout: '', stderr: 'ADMISSION_CLAIM_REFUSED' };
-        }
-        attempt = await this.statePort.beginAttempt(claim.claimId, this.executorIdentity);
-        if (!attempt.attemptId || attempt.claimId !== claim.claimId) {
-          return { exitCode: 1, stdout: '', stderr: 'ADMISSION_ATTEMPT_REFUSED' };
-        }
-      }
-
-      const outcome = await this.runCommandInternal(action);
+      if (!this.statePort || !this.executorIdentity) throw new Error('STATE_PORT_REQUIRED');
+      const { claim, attempt } = await beginRepositoryAttemptWithClaim(
+        this.statePort, effectiveContext, this.executorIdentity,
+        effectiveContext.action.kind === 'apply_patch' && effectiveContext.runnableNode === 'Repair', () => undefined,
+      );
+      const scriptedResult = await this.runCommandInternal(action);
+      const outcome = { ...scriptedResult, plan: {}, durationMs: 0, timedOut: false,
+        outcome: scriptedResult.exitCode === 0 ? 'success' as const : 'failure' as const, truncated: false };
 
       let outcomeReceipt: AttemptOutcomeReceiptV02 | undefined;
+      let settlement: OutcomeRecordResultV02 | undefined;
       if (this.statePort && claim && attempt) {
-        outcomeReceipt = createTestRepositoryOutcomeReceiptV02(claim, attempt, effectiveContext, {
-          receiptId: `repository-outcome-${attempt.attemptId}`,
-        });
-        await this.statePort.recordOutcome(outcomeReceipt);
+        const normalized = normalizeCommandResult(outcome);
+        if (!normalized) throw new Error('INVALID_COMMAND_RESULT');
+        outcomeReceipt = createCommandOutcomeReceipt(claim, attempt, effectiveContext, 'observed', normalized);
+        settlement = validateOutcomeRecordResult(await this.statePort.recordOutcome(outcomeReceipt), outcomeReceipt.receiptId);
       }
+
+      if (!outcomeReceipt || outcomeReceipt.subjectKind !== 'repository-action' || outcomeReceipt.outcome !== 'observed' ||
+        !settlement || settlement.outcome !== 'settled' || settlement.receiptId !== outcomeReceipt.receiptId) {
+        throw new Error('REPOSITORY_OUTCOME_PENDING');
+      }
+      const executionResult = { ...outcome, executionReceipt: { claim, attempt, outcome: outcomeReceipt,
+        settlement: settlement as OutcomeRecordResultV02 & { readonly outcome: 'settled' } } };
 
       this.v02CallLog.push({
         action: 'runCommand',
@@ -550,10 +563,10 @@ export class FakeRepositoryPort implements RepositoryPort, RepositoryPortV02 {
         claim,
         attempt,
         outcomeReceipt,
-        outcome,
+        outcome: executionResult,
       });
 
-      return outcome;
+      return executionResult;
     }
 
     return this.runCommandInternal(action);
@@ -618,6 +631,7 @@ export class FakeRepositoryPort implements RepositoryPort, RepositoryPortV02 {
         throw new Error('SCRIPT_EXHAUSTED: No scripted check response');
       }
 
+      if (!this.statePort || !this.executorIdentity) throw new Error('STATE_PORT_REQUIRED');
       let claim: ClaimReceiptV02 | undefined;
       let attempt: AttemptReceiptV02 | undefined;
       if (this.statePort) {
@@ -641,7 +655,8 @@ export class FakeRepositoryPort implements RepositoryPort, RepositoryPortV02 {
         outcomeReceipt = createTestRepositoryOutcomeReceiptV02(claim, attempt, effectiveContext, {
           receiptId: `repository-outcome-${attempt.attemptId}`,
         });
-        await this.statePort.recordOutcome(outcomeReceipt);
+        const recorded = validateOutcomeRecordResult(await this.statePort.recordOutcome(outcomeReceipt), outcomeReceipt.receiptId);
+        if (recorded.outcome !== 'settled' || recorded.receiptId !== outcomeReceipt.receiptId) throw new Error('REPOSITORY_OUTCOME_PENDING');
       }
 
       this.v02CallLog.push({
@@ -761,9 +776,9 @@ export class FakeRepositoryPortV02 implements RepositoryPortV02 {
   applyPatch(
     patch: ApplyPatchAction,
     context: RepositoryAdmissionContextV02
-  ): Promise<{ readonly applied: boolean; readonly newRevisionDigest: string }> {
+  ): Promise<RepositoryPatchResultV02> {
     if (!context || !this.admits(patch, context)) {
-      return Promise.resolve({ applied: false, newRevisionDigest: this.currentRevision });
+      return Promise.reject(new Error('INVALID_ADMISSION_CONTEXT'));
     }
     return this.underlying.applyPatch(patch, context);
   }
@@ -771,9 +786,9 @@ export class FakeRepositoryPortV02 implements RepositoryPortV02 {
   runCommand(
     action: RunCommandAction,
     context: RepositoryAdmissionContextV02
-  ): Promise<{ readonly exitCode: number; readonly stdout: string; readonly stderr: string }> {
+  ): Promise<RepositoryCommandResultV02> {
     if (!context || !this.admits(action, context)) {
-      return Promise.resolve({ exitCode: 1, stdout: '', stderr: context ? 'INVALID_ADMISSION_CONTEXT' : 'MISSING_ADMISSION_CONTEXT' });
+      return Promise.reject(new Error(context ? 'INVALID_ADMISSION_CONTEXT' : 'MISSING_ADMISSION_CONTEXT'));
     }
     return this.underlying.runCommand(action, context);
   }

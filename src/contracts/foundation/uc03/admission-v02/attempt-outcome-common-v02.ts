@@ -103,7 +103,7 @@ export function validateExecutorIdentityV02(input: unknown, path: string, errors
   return errors.length === start ? input as unknown as ExecutorIdentityV02 : undefined;
 }
 
-function validateVersionBindings(input: unknown, admission: AdmissionContextV02, claim: ClaimReceiptV02, attempt: AttemptOutcomeValidationContextV02['trustedAttempt'], errors: ValidationError[]): void {
+export function validateVersionBindings(input: unknown, admission: AdmissionContextV02, claim: ClaimReceiptV02, attempt: AttemptOutcomeValidationContextV02['trustedAttempt'], errors: ValidationError[]): void {
   if (!isPlainObject(input)) { addErr(errors, 'versions', 'Version bindings are required', 'INVALID_TYPE'); return; }
   rejectUnknownKeys(input, VERSION_KEYS, 'versions', errors);
   const expected: AttemptVersionBindingsV02 = {
@@ -174,7 +174,7 @@ export function checkActionDecisionBinding(input: Record<string, unknown>, admis
   }
 }
 
-function validateEffects(input: unknown, outcome: AttemptOutcomeStatusV02, admission: AdmissionContextV02, errors: ValidationError[]): void {
+export function validateEffects(input: unknown, outcome: AttemptOutcomeStatusV02, admission: AdmissionContextV02, errors: ValidationError[]): void {
   if (!isPlainObject(input)) { addErr(errors, 'proposedEffects', 'Proposed settlement effects are required', 'INVALID_TYPE'); return; }
   rejectUnknownKeys(input, EFFECT_KEYS, 'proposedEffects', errors);
   const diagnosticPatch = admission.subjectKind === 'repository-action' && admission.planApplicability === 'pre-plan-diagnostic' && admission.action.kind === 'apply_patch';

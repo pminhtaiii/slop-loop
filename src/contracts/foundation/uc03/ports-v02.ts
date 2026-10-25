@@ -24,7 +24,7 @@ import type {
   ValidationError,
   AdmittedFile,
 } from './types.ts';
-import type { AttemptOutcomeReceiptV02, AttemptReconciliationReceiptV02 } from './attempt-receipts-v02.ts';
+import type { RepositoryActionOutcomeReceiptV02, AttemptOutcomeReceiptV02, AttemptReconciliationReceiptV02 } from './attempt-receipts-v02.ts';
 
 export type { PortIdentity, PortProvenance };
 
@@ -432,6 +432,29 @@ export interface StatePortV02 extends PortIdentity {
   recover(taskId: string): Promise<TaskState>;
 }
 
+/** Exact receiver handoff, issued only after an observed outcome is settled. */
+export interface RepositoryExecutionReceiptV02 {
+  readonly claim: ClaimReceiptV02;
+  readonly attempt: AttemptReceiptV02;
+  readonly outcome: RepositoryActionOutcomeReceiptV02;
+  readonly settlement: OutcomeRecordResultV02 & { readonly outcome: 'settled' };
+}
+
+// eslint-disable-next-line @typescript-eslint/consistent-type-definitions -- Approved canonical result alias.
+export type RepositoryPatchResultV02 = {
+  readonly applied: boolean;
+  readonly newRevisionDigest: string;
+  readonly executionReceipt: RepositoryExecutionReceiptV02;
+};
+
+// eslint-disable-next-line @typescript-eslint/consistent-type-definitions -- Approved canonical result alias.
+export type RepositoryCommandResultV02 = {
+  readonly exitCode: number;
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly executionReceipt: RepositoryExecutionReceiptV02;
+};
+
 export interface RepositoryPortV02 extends PortIdentity {
   listDir(path: string): Promise<readonly string[]>;
   readFile(path: string): Promise<SourceEvidence>;
@@ -439,11 +462,11 @@ export interface RepositoryPortV02 extends PortIdentity {
   applyPatch(
     patch: ApplyPatchAction,
     context: RepositoryAdmissionContextV02
-  ): Promise<{ readonly applied: boolean; readonly newRevisionDigest: string }>;
+  ): Promise<RepositoryPatchResultV02>;
   runCommand(
     action: RunCommandAction,
     context: RepositoryAdmissionContextV02
-  ): Promise<{ readonly exitCode: number; readonly stdout: string; readonly stderr: string }>;
+  ): Promise<RepositoryCommandResultV02>;
   runTests(
     check: CheckDefinition,
     context: RepositoryAdmissionContextV02

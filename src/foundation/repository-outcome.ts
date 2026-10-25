@@ -5,6 +5,7 @@ import {
   validateRepositoryActionOutcomeReceiptV02,
 } from '../contracts/foundation/uc03/attempt-v02.ts';
 import type {
+  RepositoryPatchResultV02,
   AttemptReceiptV02,
   ClaimReceiptV02,
   ExecutorIdentityV02,
@@ -60,7 +61,7 @@ export class RepositoryPatchReceiver {
   async applyPatch(
     patch: ApplyPatchAction,
     context?: RepositoryAdmissionContextV02,
-  ): Promise<{ readonly applied: boolean; readonly newRevisionDigest: string }> {
+  ): Promise<RepositoryPatchResultV02> {
     if (!context) throw new Error('NOT_IMPLEMENTED: applyPatch without v0.2 context is not implemented in v0.1 compatibility slice');
     const admitted = bindPatchToAdmission(patch, snapshotRepositoryAdmission(context, 'apply_patch'));
     const admittedContext = admitted.context;
@@ -194,10 +195,10 @@ export class RepositoryPatchReceiver {
     attempt: AttemptReceiptV02,
     receipt: RepositoryActionOutcomeReceiptV02,
     result?: { readonly applied: boolean; readonly newRevisionDigest: string },
-  ): Promise<{ readonly applied: boolean; readonly newRevisionDigest: string }> {
+  ): Promise<RepositoryPatchResultV02> {
     try {
       const recorded = await this.outcomeRecovery.record(lease, context, claim, attempt, receipt);
-      if (receipt.outcome === 'observed' && recorded.outcome === 'settled' && result) return result;
+      if (receipt.outcome === 'observed' && recorded.outcome === 'settled' && result) return { ...result, executionReceipt: { claim, attempt, outcome: receipt, settlement: recorded as typeof recorded & { readonly outcome: 'settled' } } };
       throw new PatchOutcomePendingError(attempt.attemptId);
     } catch {
       if (this.outcomeRecovery.hasPending(attempt.attemptId)) throw new PatchOutcomePendingError(attempt.attemptId);

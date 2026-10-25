@@ -826,7 +826,7 @@ export function createTestRepositoryOutcomeReceiptV02(
       revision: observedResultRevisionDigest
         ? { kind: 'advance', revisionDigest: observedResultRevisionDigest }
         : { kind: 'preserve' },
-      invalidatedEvidence: outcome === 'observed' && isPatch ? [safeRef('evidence-prior-baseline')] : [],
+      invalidatedEvidence: [],
       accounting: {
         disposition: outcome === 'observed' ? 'settle' : outcome === 'uncertain' ? 'hold' : 'release-unused',
         reservationRefs,
