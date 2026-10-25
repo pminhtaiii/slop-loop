@@ -34,8 +34,13 @@ import {
   type Delivery,
   type TaskOutcome,
   type RepositoryPort,
+  type RepositoryPortV02,
+  type StatePortV02,
+  type ExecutionGuardV02,
+  type RepositoryAdmissionContextV02,
   type TrustedTransitionContext,
 } from '../contracts/foundation/uc03.ts';
+import { validateRepositoryAdmissionV02 as validateRepositoryAdmissionRecordV02 } from '../contracts/foundation/uc03/admission-v02/repository.ts';
 import { extractCheckTestSelectors } from './selectors.ts';
 
 export interface TrustedReviewRecord {
@@ -76,6 +81,9 @@ export interface VerificationExecutionContext {
   readonly repoDigest: string;
   readonly diffDigest?: string | undefined;
   readonly actionIdPrefix?: string | undefined;
+  readonly admissionContext?: RepositoryAdmissionContextV02 | undefined;
+  readonly executionGuard?: ExecutionGuardV02 | undefined;
+  readonly statePort?: StatePortV02 | undefined;
 }
 
 /**
@@ -708,7 +716,7 @@ export function evaluateDeterministicCompletion(
  */
 export async function executeVerificationChecks(
   task: BugTask,
-  repository: RepositoryPort,
+  repository: RepositoryPort | RepositoryPortV02,
   context: VerificationExecutionContext
 ): Promise<readonly VerificationResult[]> {
   if (!task || !Array.isArray(task.requiredChecks)) {
@@ -719,6 +727,113 @@ export async function executeVerificationChecks(
   }
   if (!context || typeof context !== 'object' || !context.runId || !context.repoDigest) {
     throw new Error('INVALID_CONTEXT: VerificationExecutionContext requires runId and repoDigest');
+  }
+
+  const rawAdmission = context.admissionContext;
+  const rawStatePort = context.statePort ?? (repository as { statePort?: unknown })?.statePort;
+  const isV02 = Boolean(
+    rawAdmission !== undefined ||
+    context.executionGuard !== undefined ||
+    (rawStatePort !== undefined && (repository as { executionGuardApiVersion?: string })?.executionGuardApiVersion === '0.2.0')
+  );
+
+  let admissionDenied = false;
+  let admission: RepositoryAdmissionContextV02 | undefined;
+
+  if (isV02) {
+    if (!rawAdmission || typeof rawAdmission !== 'object') {
+      admissionDenied = true;
+      
+    } else {
+      const valAdmission = validateRepositoryAdmissionRecordV02(rawAdmission as RepositoryAdmissionContextV02);
+      if (!valAdmission.ok) {
+        admissionDenied = true;
+      } else {
+        admission = valAdmission.value;
+      }
+    }
+
+    if (!admissionDenied && admission) {
+      const checkSetDigest = computeCheckSetDigest(task.requiredChecks);
+      const criteriaDigest = computeCanonicalSha256(task.acceptanceCriteria);
+      if (
+        admission.planApplicability !== 'approved-plan' ||
+        admission.runnableNode !== 'Verify' ||
+        !admission.planDecisionRef ||
+        !admission.planBindingDigest ||
+        admission.taskId !== task.taskId ||
+        admission.runId !== context.runId ||
+        admission.canonicalRevision !== context.repoDigest ||
+        (admission.checkSetDigest && admission.checkSetDigest !== checkSetDigest) ||
+        (admission.taskCriteriaDigest && admission.taskCriteriaDigest !== criteriaDigest)
+      ) {
+        admissionDenied = true;
+        
+      }
+    }
+
+    if (!admissionDenied && rawStatePort && typeof rawStatePort === 'object') {
+      const journal = rawStatePort as Record<string, unknown>;
+      if (typeof journal.getJournalSnapshot === 'function') {
+        const snap = (journal.getJournalSnapshot as () => { mode?: string; activeClaimId?: string | null })() as {
+          mode?: string;
+          activeClaimId?: string | null;
+        };
+        if (snap?.mode && snap.mode !== 'runnable') {
+          admissionDenied = true;
+          
+        }
+        if (snap?.activeClaimId !== null && snap?.activeClaimId !== undefined) {
+          admissionDenied = true;
+          
+        }
+      }
+      if (!admissionDenied && typeof journal.loadTask === 'function') {
+        try {
+          const loaded = await (journal.loadTask as (id: string) => Promise<TaskState | null>)(task.taskId);
+          if (!loaded) {
+            admissionDenied = true;
+            
+          } else if ((loaded as { mode?: string }).mode && (loaded as { mode?: string }).mode !== 'runnable') {
+            admissionDenied = true;
+            
+          } else if (loaded.repositoryRevisionDigest !== context.repoDigest) {
+            admissionDenied = true;
+            
+          }
+        } catch {
+          admissionDenied = true;
+          
+        }
+      }
+    }
+
+    if (admissionDenied) {
+      return Object.freeze(task.requiredChecks.map((check) => {
+        const phase = check.purpose === 'reproduction' ? 'focused' : check.purpose;
+        const prefix = context.actionIdPrefix ?? 'action-verify';
+        const actionId = `${prefix}-${check.checkId}`;
+        const evidenceId = `evidence-verif-${check.checkId}-${computeCanonicalSha256([
+          context.runId,
+          check.checkId,
+          context.repoDigest,
+          context.diffDigest ?? '',
+        ])}`;
+        return {
+          evidenceId,
+          taskId: task.taskId,
+          runId: context.runId,
+          actionId,
+          phase,
+          repoDigest: context.repoDigest,
+          ...(context.diffDigest !== undefined ? { diffDigest: context.diffDigest } : {}),
+          commandIdentity: `${check.executable} ${check.argv.join(' ')}`,
+          outcome: 'error' as const,
+          testedIds: [check.checkId],
+          diagnosticRefs: [],
+        };
+      }));
+    }
   }
 
   const results: VerificationResult[] = [];
@@ -738,7 +853,34 @@ export async function executeVerificationChecks(
     let outcome: VerificationResult['outcome'] = 'error';
 
     try {
-      const checkResult = await repository.runTests(check);
+      let checkResult: unknown;
+      if (isV02 && admission) {
+        const checkCtx: RepositoryAdmissionContextV02 = check.checkId === admission.checkId
+          ? admission
+          : {
+              ...admission,
+              checkId: check.checkId,
+              action: {
+                actionId: `${prefix}-${check.checkId}`,
+                kind: 'run_command',
+                executable: check.executable,
+                argv: [...check.argv],
+                workingDirectory: check.workingDirectory ?? 'tests',
+                purpose: check.purpose,
+              },
+              actionDigest: computeCanonicalSha256({
+                actionId: `${prefix}-${check.checkId}`,
+                kind: 'run_command',
+                executable: check.executable,
+                argv: [...check.argv],
+                workingDirectory: check.workingDirectory ?? 'tests',
+                purpose: check.purpose,
+              }),
+            };
+        checkResult = await (repository as RepositoryPortV02).runTests(check, checkCtx);
+      } else {
+        checkResult = await (repository as RepositoryPort).runTests(check);
+      }
       if (
         checkResult &&
         typeof checkResult === 'object' &&
@@ -754,6 +896,13 @@ export async function executeVerificationChecks(
       }
     } catch {
       outcome = 'error';
+    }
+
+    if (isV02) {
+      const repoAny = repository as { currentRevisionDigest?: string };
+      if (repoAny.currentRevisionDigest && repoAny.currentRevisionDigest !== context.repoDigest) {
+        outcome = 'error';
+      }
     }
 
     const verificationResult: VerificationResult = {

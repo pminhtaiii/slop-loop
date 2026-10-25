@@ -1671,12 +1671,28 @@ test('v0.2 verification admission: runTests carries approved plan binding and de
     runnableNode: 'Verify',
     planApplicability: 'approved-plan',
     planDecisionRef,
-    taskCriteriaDigest: computeCanonicalSha256(task.acceptanceCriteria),
-    checkSetDigest: computeCheckSetDigest(task.requiredChecks),
     checkId: verifyCheck.checkId,
     testPath: 'tests/test_calculator.py',
   });
-  const state = createTestAdmissionTaskStateV02(tempContext);
+  delete (tempContext as any).taskCriteriaDigest;
+  delete (tempContext as any).checkSetDigest;
+  const initial = createTestAdmissionTaskStateV02(tempContext);
+  const state = {
+    ...initial,
+    budgetLedgers: [
+      ...(initial.budgetLedgers ?? []),
+      {
+        scope: 'task' as const,
+        kind: 'timeoutMs' as const,
+        limit: 60000,
+        consumed: 0,
+        reservations: [],
+        unit: 'count' as const,
+        configurationId: 'config-v1',
+        version: 1,
+      },
+    ],
+  };
   const plan = state.plan!;
   const planBindingDigest = computeCanonicalSha256({
     taskId: state.taskId,
@@ -1696,11 +1712,11 @@ test('v0.2 verification admission: runTests carries approved plan binding and de
     planApplicability: 'approved-plan',
     planDecisionRef,
     planBindingDigest,
-    taskCriteriaDigest: computeCanonicalSha256(task.acceptanceCriteria),
-    checkSetDigest: computeCheckSetDigest(task.requiredChecks),
     checkId: verifyCheck.checkId,
     testPath: 'tests/test_calculator.py',
   });
+  delete (admission as any).taskCriteriaDigest;
+  delete (admission as any).checkSetDigest;
 
   const journal = new MemoryStatePortV02({
     initialTaskState: state,
@@ -1724,6 +1740,7 @@ test('v0.2 verification admission: runTests carries approved plan binding and de
   const execContext = {
     runId: state.runId,
     repoDigest: state.repositoryRevisionDigest,
+    admissionContext: admission,
   };
 
   await executeVerificationChecks(task, repo, execContext);
@@ -1834,6 +1851,7 @@ test('v0.2 verification admission: zero repository test effects when task has op
   const execContext = {
     runId: state.runId,
     repoDigest: state.repositoryRevisionDigest,
+    admissionContext: admission,
   };
 
   await executeVerificationChecks(task, repo, execContext);
@@ -1918,6 +1936,7 @@ test('v0.2 verification admission: zero repository test effects when task is pau
   const execContext = {
     runId: state.runId,
     repoDigest: state.repositoryRevisionDigest,
+    admissionContext: admission,
   };
 
   await executeVerificationChecks(task, repo, execContext);
@@ -2003,11 +2022,21 @@ test('v0.2 verification admission: zero repository test effects on missing or ma
     repoDigest: state.repositoryRevisionDigest,
   };
 
-  await executeVerificationChecks(task, repo, execContext);
+  const results = await executeVerificationChecks(task, repo, execContext);
 
-  // Target v0.2 acceptance: Verification caller must supply valid v0.2 admission context to RepositoryPortV02.
+  // Target v0.2 acceptance: Missing or malformed admission context must deny verification runTests and yield zero repository test effects.
+  assert.equal(
+    repo.tests.length,
+    0,
+    'Missing or malformed admission context must deny verification runTests and yield zero repository test effects'
+  );
+  assert.equal(
+    repo.v02Calls.length,
+    0,
+    'Missing or malformed admission context must not make v0.2 calls'
+  );
   assert.ok(
-    repo.v02Calls.length > 0,
-    'Verification runTests caller must supply valid v0.2 admission context to the repository receiver'
+    results.length > 0 && results.every((r) => r.outcome === 'error'),
+    'Denied verification checks must record error outcomes'
   );
 });

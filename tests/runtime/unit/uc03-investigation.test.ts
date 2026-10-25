@@ -3403,7 +3403,23 @@ test('v0.2 baseline admission: pre-plan diagnostic runTests admitted without pla
     planBindingDigest: undefined,
     planDecisionRef: undefined,
   });
-  const state = createTestAdmissionTaskStateV02(admission);
+  const initial = createTestAdmissionTaskStateV02(admission);
+  const state = {
+    ...initial,
+    budgetLedgers: [
+      ...(initial.budgetLedgers ?? []),
+      {
+        scope: 'task' as const,
+        kind: 'timeoutMs' as const,
+        limit: 60000,
+        consumed: 0,
+        reservations: [],
+        unit: 'count' as const,
+        configurationId: 'config-v1',
+        version: 1,
+      },
+    ],
+  };
   const journal = new MemoryStatePortV02({
     initialTaskState: state,
     initialControlVersion: admission.expectedControlVersion,
@@ -3424,7 +3440,9 @@ test('v0.2 baseline admission: pre-plan diagnostic runTests admitted without pla
     },
   });
   const hostPort = createBoundHostPort(task);
-  const trustedContext = createTrustedAdmissionContext(task);
+  const trustedContext = createTrustedAdmissionContext(task, ['tests/test_calculator.py'], {
+    admissionContext: admission,
+  });
 
   await investigateBaseline(task, repo, hostPort, trustedContext);
 
@@ -3506,7 +3524,9 @@ test('v0.2 baseline admission: zero repository test effects when task has open c
     },
   });
   const hostPort = createBoundHostPort(task);
-  const trustedContext = createTrustedAdmissionContext(task);
+  const trustedContext = createTrustedAdmissionContext(task, ['tests/test_calculator.py'], {
+    admissionContext: admission,
+  });
 
   await investigateBaseline(task, repo, hostPort, trustedContext);
 
@@ -3564,7 +3584,9 @@ test('v0.2 baseline admission: zero repository test effects when task is paused 
     },
   });
   const hostPort = createBoundHostPort(task);
-  const trustedContext = createTrustedAdmissionContext(task);
+  const trustedContext = createTrustedAdmissionContext(task, ['tests/test_calculator.py'], {
+    admissionContext: admission,
+  });
 
   await investigateBaseline(task, repo, hostPort, trustedContext);
 
@@ -3623,11 +3645,18 @@ test('v0.2 baseline admission: zero repository test effects on missing or malfor
   const hostPort = createBoundHostPort(task);
   const trustedContext = createTrustedAdmissionContext(task);
 
-  await investigateBaseline(task, repo, hostPort, trustedContext);
+  const result = await investigateBaseline(task, repo, hostPort, trustedContext);
 
-  // Target v0.2 acceptance: Baseline caller must supply valid v0.2 admission context to RepositoryPortV02.
-  assert.ok(
-    repo.v02Calls.length > 0,
-    'Baseline runTests caller must supply valid v0.2 admission context to the repository receiver'
+  // Target v0.2 acceptance: Missing or malformed admission context must deny baseline runTests and yield zero repository test effects.
+  assert.equal(
+    repo.tests.length,
+    0,
+    'Missing or malformed admission context must deny baseline runTests and yield zero repository test effects'
   );
+  assert.equal(
+    repo.v02Calls.length,
+    0,
+    'Missing or malformed admission context must not make v0.2 calls'
+  );
+  assert.equal(result.status, 'error', 'Missing or malformed admission context must fail investigation');
 });

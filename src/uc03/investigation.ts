@@ -38,10 +38,15 @@ import {
   type CheckDefinition,
   type CheckResult,
   type RepositoryPort,
+  type RepositoryPortV02,
   type StatePort,
+  type StatePortV02,
+  type ExecutionGuardV02,
+  type RepositoryAdmissionContextV02,
   type ApprovalPort,
   type ModelPort,
 } from '../contracts/foundation/uc03.ts';
+import { validateRepositoryAdmissionV02 as validateRepositoryAdmissionRecordV02 } from '../contracts/foundation/uc03/admission-v02/repository.ts';
 import {
   extractCheckTestSelectors,
   resolvePytestInvocation,
@@ -78,6 +83,9 @@ export interface TrustedHostExpectedContext {
   readonly criteriaDigest: string;
   readonly checkSetDigest: string;
   readonly expectedTestFiles: readonly string[];
+  readonly admissionContext?: RepositoryAdmissionContextV02 | undefined;
+  readonly executionGuard?: ExecutionGuardV02 | undefined;
+  readonly statePort?: StatePortV02 | undefined;
 }
 
 /** Snapshot claims from the producer; each binding is checked against injected admission facts. */
@@ -651,17 +659,17 @@ export function validateHostSnapshotFacts(
  */
 export function investigateBaseline(
   task: BugTask,
-  repository: RepositoryPort
+  repository: RepositoryPort | RepositoryPortV02
 ): Promise<BaselineInvestigationResult>;
 export function investigateBaseline(
   task: BugTask,
-  repository: RepositoryPort,
+  repository: RepositoryPort | RepositoryPortV02,
   hostAuthority: TrustedHostPort,
   trustedExpectedContext: TrustedHostExpectedContext
 ): Promise<BaselineInvestigationResult>;
 export async function investigateBaseline(
   task: BugTask,
-  repository: RepositoryPort,
+  repository: RepositoryPort | RepositoryPortV02,
   hostAuthority?: TrustedHostPort,
   trustedExpectedContext?: TrustedHostExpectedContext
 ): Promise<BaselineInvestigationResult> {
@@ -879,11 +887,121 @@ export async function investigateBaseline(
   }
   const testProtectionDigest = snapshotValidation.testProtectionDigest;
 
+  // Check if v0.2 guarded atomic admission is active
+  const contextAdmission = (rawExpectedContext as Record<string, unknown> | undefined)?.admissionContext;
+  const rawStatePort = (rawExpectedContext as Record<string, unknown> | undefined)?.statePort ??
+    (repository as { statePort?: unknown })?.statePort;
+  const isV02 = Boolean(
+    contextAdmission !== undefined ||
+    (rawExpectedContext as Record<string, unknown> | undefined)?.executionGuard !== undefined ||
+    (rawStatePort !== undefined && (repository as { executionGuardApiVersion?: string })?.executionGuardApiVersion === '0.2.0')
+  );
+
+  let admission: RepositoryAdmissionContextV02 | undefined;
+  if (isV02) {
+    if (!contextAdmission || typeof contextAdmission !== 'object') {
+      return {
+        status: 'error',
+        reason: 'ADMISSION_DENIED: Missing or malformed admission context',
+      };
+    }
+    const valAdmission = validateRepositoryAdmissionRecordV02(contextAdmission as RepositoryAdmissionContextV02);
+    if (!valAdmission.ok) {
+      return {
+        status: 'error',
+        reason: `ADMISSION_DENIED: ${valAdmission.errors.map((e) => e.message).join('; ')}`,
+      };
+    }
+    admission = valAdmission.value;
+
+    if (
+      admission.planApplicability !== 'pre-plan-diagnostic' ||
+      admission.runnableNode !== 'Investigate' ||
+      admission.planDecisionRef !== undefined ||
+      admission.planBindingDigest !== undefined ||
+      admission.taskCriteriaDigest !== criteriaDigest ||
+      admission.checkSetDigest !== checkSetDigest ||
+      admission.taskId !== expectedTaskId ||
+      admission.canonicalRevision !== expectedRevisionDigest
+    ) {
+      return {
+        status: 'error',
+        reason: 'ADMISSION_DENIED: Baseline pre-plan diagnostic admission mismatch',
+      };
+    }
+
+    if (rawStatePort && typeof rawStatePort === 'object') {
+      const journal = rawStatePort as Record<string, unknown>;
+      if (typeof journal.getJournalSnapshot === 'function') {
+        const snap = (journal.getJournalSnapshot as () => { mode?: string; activeClaimId?: string | null })() as {
+          mode?: string;
+          activeClaimId?: string | null;
+        };
+        if (snap?.mode && snap.mode !== 'runnable') {
+          return {
+            status: 'error',
+            reason: 'TASK_PAUSED: Task is paused',
+          };
+        }
+        if (snap?.activeClaimId !== null && snap?.activeClaimId !== undefined) {
+          return {
+            status: 'error',
+            reason: 'CLAIM_ACTIVE: Task has an active open claim',
+          };
+        }
+      }
+      if (typeof journal.loadTask === 'function') {
+        try {
+          const loaded = await (journal.loadTask as (id: string) => Promise<TaskState | null>)(expectedTaskId);
+          if (!loaded) {
+            return { status: 'error', reason: 'STATE_UNAVAILABLE: Task not found' };
+          }
+          const loadedMode = (loaded as { mode?: string }).mode;
+          if (loadedMode && loadedMode !== 'runnable') {
+            return { status: 'error', reason: 'TASK_PAUSED: Task is paused' };
+          }
+          if (loaded.repositoryRevisionDigest !== expectedRevisionDigest) {
+            return { status: 'error', reason: 'REVISION_DRIFT: Authoritative repository revision has drifted' };
+          }
+        } catch {
+          return { status: 'error', reason: 'STATE_UNAVAILABLE: Authoritative task state unavailable' };
+        }
+      }
+    }
+  }
+
   // Run every explicitly required check once, even when one result fails or throws.
   const checkResults: CheckResult[] = [];
   for (const check of requiredChecks) {
     try {
-      const rawResult: unknown = await repository.runTests(check);
+      let rawResult: unknown;
+      if (isV02 && admission) {
+        const checkCtx: RepositoryAdmissionContextV02 = check.checkId === admission.checkId
+          ? admission
+          : {
+              ...admission,
+              checkId: check.checkId,
+              action: {
+                actionId: check.checkId,
+                kind: 'run_command',
+                executable: check.executable,
+                argv: [...check.argv],
+                workingDirectory: check.workingDirectory ?? 'tests',
+                purpose: check.purpose,
+              },
+              actionDigest: computeCanonicalSha256({
+                actionId: check.checkId,
+                kind: 'run_command',
+                executable: check.executable,
+                argv: [...check.argv],
+                workingDirectory: check.workingDirectory ?? 'tests',
+                purpose: check.purpose,
+              }),
+            };
+        rawResult = await (repository as RepositoryPortV02).runTests(check, checkCtx);
+      } else {
+        rawResult = await (repository as RepositoryPort).runTests(check);
+      }
       if (!rawResult || typeof rawResult !== 'object') {
         checkResults.push({
           checkId: check.checkId,
@@ -924,6 +1042,16 @@ export async function investigateBaseline(
         outcome: 'error',
         outputExcerpt: `Required check execution threw: ${err instanceof Error ? err.message : String(err)}`,
       });
+    }
+  }
+
+  if (isV02) {
+    const repoAny = repository as { currentRevisionDigest?: string };
+    if (repoAny.currentRevisionDigest && repoAny.currentRevisionDigest !== expectedRevisionDigest) {
+      return {
+        status: 'error',
+        reason: 'REVISION_DRIFT: Repository mutated during investigation',
+      };
     }
   }
 
