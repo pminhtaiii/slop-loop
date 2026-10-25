@@ -28,7 +28,12 @@ import {
   createFixtureTaskState,
 } from '../support/uc03/port-fixtures.ts';
 import { FakeRepositoryPort } from '../support/uc03/fake-repository.ts';
-import { MemoryStatePort } from '../support/uc03/memory-state.ts';
+import { MemoryStatePort, MemoryStatePortV02 } from '../support/uc03/memory-state.ts';
+import {
+  createTestExecutorIdentityV02,
+  createTestRepositoryCommandAdmissionContextV02,
+  createTestAdmissionTaskStateV02,
+} from '../support/uc03/state-fixtures.ts';
 import { ScriptedApprovalPort } from '../support/uc03/scripted-approval.ts';
 
 interface CompleteBaselineCandidate {
@@ -3368,4 +3373,261 @@ test('investigateBaseline: positional argument that is not a test selector fails
   const result = await investigateWithTestContext(task, repo, host);
   assert.equal(result.status, 'error');
   assert.match(result.reason ?? '', /Invalid or untrusted test selector/i);
+});
+
+// =========================================================================
+// SECTION: v0.2 Atomic Admission & Guarded Baseline Runs (T062 Behavioral RED)
+// =========================================================================
+
+test('v0.2 baseline admission: pre-plan diagnostic runTests admitted without plan decision (behavioral RED against pre-migration baseline caller)', async () => {
+  const task = createFixtureBugTask();
+  const reproCheck = task.requiredChecks.find((c) => c.purpose === 'reproduction')!;
+  const action = {
+    actionId: reproCheck.checkId,
+    kind: 'run_command' as const,
+    executable: reproCheck.executable,
+    argv: [...reproCheck.argv],
+    workingDirectory: reproCheck.workingDirectory ?? 'tests',
+    purpose: reproCheck.purpose,
+  };
+  const admission = createTestRepositoryCommandAdmissionContextV02({
+    action,
+    reservationRefs: ['res-command-001'],
+    runnableNode: 'Investigate',
+    planApplicability: 'pre-plan-diagnostic',
+    diagnosticPurpose: reproCheck.purpose,
+    taskCriteriaDigest: computeCanonicalSha256(task.acceptanceCriteria),
+    checkSetDigest: computeCheckSetDigest(task.requiredChecks),
+    checkId: reproCheck.checkId,
+    testPath: 'tests/test_calculator.py',
+    planBindingDigest: undefined,
+    planDecisionRef: undefined,
+  });
+  const state = createTestAdmissionTaskStateV02(admission);
+  const journal = new MemoryStatePortV02({
+    initialTaskState: state,
+    initialControlVersion: admission.expectedControlVersion,
+    initialEpoch: admission.expectedEpoch,
+    initialAuthorityRef: admission.policyAuthorityRef,
+  });
+
+  const repo = new FakeRepositoryPort({
+    statePort: journal,
+    executorIdentity: createTestExecutorIdentityV02({ payloadDigest: admission.actionDigest }),
+    testResults: {
+      default: {
+        checkId: reproCheck.checkId,
+        outcome: 'fail',
+        outputExcerpt: 'ZeroDivisionError: division by zero',
+        durationMs: 40,
+      },
+    },
+  });
+  const hostPort = createBoundHostPort(task);
+  const trustedContext = createTrustedAdmissionContext(task);
+
+  await investigateBaseline(task, repo, hostPort, trustedContext);
+
+  // Target v0.2 acceptance: Baseline runTests must be admitted through a StatePortV02 journal claim
+  // and record an authoritative outcome receipt.
+  const snapshot = journal.getJournalSnapshot();
+  assert.ok(snapshot.claims.length > 0, 'Baseline runTests must be admitted through a StatePortV02 journal claim');
+  assert.ok(snapshot.outcomes.length > 0, 'Authoritative outcome receipt must be recorded in StatePortV02 journal');
+  assert.equal(snapshot.outcomes[0]?.outcome, 'observed', 'Outcome receipt must record observed check outcome');
+  assert.ok(repo.v02Calls.length > 0, 'Receiver must record an admitted v0.2 call');
+  const v02Call = repo.v02Calls[0];
+  assert.equal(v02Call?.context.planApplicability, 'pre-plan-diagnostic', 'Context must carry pre-plan-diagnostic applicability');
+  assert.equal(v02Call?.claim?.planApplicability, 'pre-plan-diagnostic', 'Claim must carry pre-plan-diagnostic applicability');
+});
+
+test('v0.2 baseline admission: zero repository test effects when task has open claim (behavioral RED against pre-migration baseline caller)', async () => {
+  const task = createFixtureBugTask();
+  const reproCheck = task.requiredChecks.find((c) => c.purpose === 'reproduction')!;
+  const action = {
+    actionId: reproCheck.checkId,
+    kind: 'run_command' as const,
+    executable: reproCheck.executable,
+    argv: [...reproCheck.argv],
+    workingDirectory: reproCheck.workingDirectory ?? 'tests',
+    purpose: reproCheck.purpose,
+  };
+  const admission = createTestRepositoryCommandAdmissionContextV02({
+    action,
+    reservationRefs: ['res-command-001'],
+    runnableNode: 'Investigate',
+    planApplicability: 'pre-plan-diagnostic',
+    diagnosticPurpose: reproCheck.purpose,
+    taskCriteriaDigest: computeCanonicalSha256(task.acceptanceCriteria),
+    checkSetDigest: computeCheckSetDigest(task.requiredChecks),
+    checkId: reproCheck.checkId,
+    testPath: 'tests/test_calculator.py',
+    planBindingDigest: undefined,
+    planDecisionRef: undefined,
+  });
+  const initial = createTestAdmissionTaskStateV02(admission);
+  const state = {
+    ...initial,
+    budgetLedgers: [
+      ...(initial.budgetLedgers ?? []),
+      {
+        scope: 'task' as const,
+        kind: 'timeoutMs' as const,
+        limit: 60000,
+        consumed: 0,
+        reservations: [],
+        unit: 'count' as const,
+        configurationId: 'config-v1',
+        version: 1,
+      },
+    ],
+  };
+  const journal = new MemoryStatePortV02({
+    initialTaskState: state,
+    initialControlVersion: admission.expectedControlVersion,
+    initialEpoch: admission.expectedEpoch,
+    initialAuthorityRef: admission.policyAuthorityRef,
+  });
+
+  // Open an unresolved claim on the task
+  const openClaim = await journal.claim(admission);
+  assert.ok(openClaim.claimId, 'Open claim must have valid claimId');
+  assert.equal(journal.getJournalSnapshot().activeClaimId, openClaim.claimId);
+
+  const repo = new FakeRepositoryPort({
+    statePort: journal,
+    executorIdentity: createTestExecutorIdentityV02({ payloadDigest: admission.actionDigest }),
+    testResults: {
+      default: {
+        checkId: reproCheck.checkId,
+        outcome: 'fail',
+        outputExcerpt: 'ZeroDivisionError: division by zero',
+        durationMs: 40,
+      },
+    },
+  });
+  const hostPort = createBoundHostPort(task);
+  const trustedContext = createTrustedAdmissionContext(task);
+
+  await investigateBaseline(task, repo, hostPort, trustedContext);
+
+  // Target v0.2 acceptance: An open claim blocks any new runTests effect and yields zero repository test effects.
+  assert.equal(
+    repo.tests.length,
+    0,
+    'Open claim must block baseline runTests and yield zero repository test effects'
+  );
+});
+
+test('v0.2 baseline admission: zero repository test effects when task is paused (behavioral RED against pre-migration baseline caller)', async () => {
+  const task = createFixtureBugTask();
+  const reproCheck = task.requiredChecks.find((c) => c.purpose === 'reproduction')!;
+  const action = {
+    actionId: reproCheck.checkId,
+    kind: 'run_command' as const,
+    executable: reproCheck.executable,
+    argv: [...reproCheck.argv],
+    workingDirectory: reproCheck.workingDirectory ?? 'tests',
+    purpose: reproCheck.purpose,
+  };
+  const admission = createTestRepositoryCommandAdmissionContextV02({
+    action,
+    reservationRefs: ['res-command-001'],
+    runnableNode: 'Investigate',
+    planApplicability: 'pre-plan-diagnostic',
+    diagnosticPurpose: reproCheck.purpose,
+    taskCriteriaDigest: computeCanonicalSha256(task.acceptanceCriteria),
+    checkSetDigest: computeCheckSetDigest(task.requiredChecks),
+    checkId: reproCheck.checkId,
+    testPath: 'tests/test_calculator.py',
+    planBindingDigest: undefined,
+    planDecisionRef: undefined,
+  });
+  const state = createTestAdmissionTaskStateV02(admission);
+  const journal = new MemoryStatePortV02({
+    initialTaskState: state,
+    initialControlVersion: admission.expectedControlVersion,
+    initialEpoch: admission.expectedEpoch,
+    initialMode: 'paused',
+    initialAuthorityRef: admission.policyAuthorityRef,
+  });
+
+  const repo = new FakeRepositoryPort({
+    statePort: journal,
+    executorIdentity: createTestExecutorIdentityV02({ payloadDigest: admission.actionDigest }),
+    testResults: {
+      default: {
+        checkId: reproCheck.checkId,
+        outcome: 'fail',
+        outputExcerpt: 'ZeroDivisionError: division by zero',
+        durationMs: 40,
+      },
+    },
+  });
+  const hostPort = createBoundHostPort(task);
+  const trustedContext = createTrustedAdmissionContext(task);
+
+  await investigateBaseline(task, repo, hostPort, trustedContext);
+
+  // Target v0.2 acceptance: Paused task must block baseline runTests and yield zero repository test effects.
+  assert.equal(
+    repo.tests.length,
+    0,
+    'Paused task must block baseline runTests and yield zero repository test effects'
+  );
+});
+
+test('v0.2 baseline admission: zero repository test effects on missing or malformed admission context (behavioral RED against pre-migration baseline caller)', async () => {
+  const task = createFixtureBugTask();
+  const reproCheck = task.requiredChecks.find((c) => c.purpose === 'reproduction')!;
+  const action = {
+    actionId: reproCheck.checkId,
+    kind: 'run_command' as const,
+    executable: reproCheck.executable,
+    argv: [...reproCheck.argv],
+    workingDirectory: reproCheck.workingDirectory ?? 'tests',
+    purpose: reproCheck.purpose,
+  };
+  const admission = createTestRepositoryCommandAdmissionContextV02({
+    action,
+    reservationRefs: ['res-command-001'],
+    runnableNode: 'Investigate',
+    planApplicability: 'pre-plan-diagnostic',
+    diagnosticPurpose: reproCheck.purpose,
+    taskCriteriaDigest: computeCanonicalSha256(task.acceptanceCriteria),
+    checkSetDigest: computeCheckSetDigest(task.requiredChecks),
+    checkId: reproCheck.checkId,
+    testPath: 'tests/test_calculator.py',
+    planBindingDigest: undefined,
+    planDecisionRef: undefined,
+  });
+  const state = createTestAdmissionTaskStateV02(admission);
+  const journal = new MemoryStatePortV02({
+    initialTaskState: state,
+    initialControlVersion: admission.expectedControlVersion,
+    initialEpoch: admission.expectedEpoch,
+    initialAuthorityRef: admission.policyAuthorityRef,
+  });
+
+  const repo = new FakeRepositoryPort({
+    statePort: journal,
+    executorIdentity: createTestExecutorIdentityV02({ payloadDigest: admission.actionDigest }),
+    testResults: {
+      default: {
+        checkId: reproCheck.checkId,
+        outcome: 'fail',
+        outputExcerpt: 'ZeroDivisionError: division by zero',
+        durationMs: 40,
+      },
+    },
+  });
+  const hostPort = createBoundHostPort(task);
+  const trustedContext = createTrustedAdmissionContext(task);
+
+  await investigateBaseline(task, repo, hostPort, trustedContext);
+
+  // Target v0.2 acceptance: Baseline caller must supply valid v0.2 admission context to RepositoryPortV02.
+  assert.ok(
+    repo.v02Calls.length > 0,
+    'Baseline runTests caller must supply valid v0.2 admission context to the repository receiver'
+  );
 });

@@ -40,6 +40,12 @@ import {
 } from '../../../src/uc03/verification.ts';
 import { investigateBaseline } from '../../../src/uc03/investigation.ts';
 import { FakeRepositoryPort } from '../support/uc03/fake-repository.ts';
+import { MemoryStatePortV02 } from '../support/uc03/memory-state.ts';
+import {
+  createTestExecutorIdentityV02,
+  createTestRepositoryCommandAdmissionContextV02,
+  createTestAdmissionTaskStateV02,
+} from '../support/uc03/state-fixtures.ts';
 import {
   createFixtureBugTask,
   createFixtureTaskState,
@@ -1641,4 +1647,367 @@ test('regression: trustedReviewRecord checkSetDigest mismatch prevents completio
 
   assert.equal(result.isComplete, false);
   assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
+});
+
+// =========================================================================
+// SECTION: v0.2 Atomic Admission & Guarded Verification Runs (T062 Behavioral RED)
+// =========================================================================
+
+test('v0.2 verification admission: runTests carries approved plan binding and decisionRef (behavioral RED against pre-migration verification caller)', async () => {
+  const task = createFixtureBugTask();
+  const verifyCheck = task.requiredChecks[0]!;
+  const action = {
+    actionId: 'action-verify-' + verifyCheck.checkId,
+    kind: 'run_command' as const,
+    executable: verifyCheck.executable,
+    argv: [...verifyCheck.argv],
+    workingDirectory: verifyCheck.workingDirectory ?? 'tests',
+    purpose: verifyCheck.purpose,
+  };
+  const planDecisionRef = 'dec-approved-plan-001';
+  const tempContext = createTestRepositoryCommandAdmissionContextV02({
+    action,
+    reservationRefs: ['res-verify-001'],
+    runnableNode: 'Verify',
+    planApplicability: 'approved-plan',
+    planDecisionRef,
+    taskCriteriaDigest: computeCanonicalSha256(task.acceptanceCriteria),
+    checkSetDigest: computeCheckSetDigest(task.requiredChecks),
+    checkId: verifyCheck.checkId,
+    testPath: 'tests/test_calculator.py',
+  });
+  const state = createTestAdmissionTaskStateV02(tempContext);
+  const plan = state.plan!;
+  const planBindingDigest = computeCanonicalSha256({
+    taskId: state.taskId,
+    planVersion: plan.planVersion,
+    strategyDigest: plan.strategyDigest,
+    baselineRef: plan.baselineRef,
+    evidenceRefs: plan.evidenceRefs,
+    criteriaDigest: computeCanonicalSha256(state.acceptanceCriteria),
+    checkSetDigest: plan.checkSetDigest,
+    decisionRef: plan.decisionRef,
+  });
+
+  const admission = createTestRepositoryCommandAdmissionContextV02({
+    action,
+    reservationRefs: ['res-verify-001'],
+    runnableNode: 'Verify',
+    planApplicability: 'approved-plan',
+    planDecisionRef,
+    planBindingDigest,
+    taskCriteriaDigest: computeCanonicalSha256(task.acceptanceCriteria),
+    checkSetDigest: computeCheckSetDigest(task.requiredChecks),
+    checkId: verifyCheck.checkId,
+    testPath: 'tests/test_calculator.py',
+  });
+
+  const journal = new MemoryStatePortV02({
+    initialTaskState: state,
+    initialControlVersion: admission.expectedControlVersion,
+    initialEpoch: admission.expectedEpoch,
+    initialAuthorityRef: admission.policyAuthorityRef,
+  });
+
+  const repo = new FakeRepositoryPort({
+    statePort: journal,
+    executorIdentity: createTestExecutorIdentityV02({ payloadDigest: admission.actionDigest }),
+    testResults: {
+      default: {
+        checkId: verifyCheck.checkId,
+        outcome: 'pass',
+        durationMs: 25,
+      },
+    },
+  });
+
+  const execContext = {
+    runId: state.runId,
+    repoDigest: state.repositoryRevisionDigest,
+  };
+
+  await executeVerificationChecks(task, repo, execContext);
+
+  // Target v0.2 acceptance: Verification runTests must carry the approved-plan binding and decisionRef,
+  // recording its observed outcome receipt in the StatePortV02 journal.
+  const snapshot = journal.getJournalSnapshot();
+  assert.ok(snapshot.claims.length > 0, 'Verification runTests must be admitted through a StatePortV02 journal claim');
+  assert.ok(snapshot.outcomes.length > 0, 'Authoritative outcome receipt must be recorded in StatePortV02 journal');
+  assert.equal(snapshot.outcomes[0]?.outcome, 'observed', 'Outcome receipt must record observed check outcome');
+  assert.ok(repo.v02Calls.length > 0, 'Receiver must record an admitted v0.2 call');
+  const v02Call = repo.v02Calls[0];
+  assert.equal(v02Call?.context.planApplicability, 'approved-plan', 'Context must carry approved-plan applicability');
+  assert.equal(v02Call?.context.planDecisionRef, planDecisionRef, 'Context must bind the approved plan decisionRef');
+  assert.equal(v02Call?.claim?.planApplicability, 'approved-plan', 'Claim must carry approved-plan applicability');
+});
+
+test('v0.2 verification admission: zero repository test effects when task has open claim (behavioral RED against pre-migration verification caller)', async () => {
+  const task = createFixtureBugTask();
+  const verifyCheck = task.requiredChecks[0]!;
+  const action = {
+    actionId: 'action-verify-' + verifyCheck.checkId,
+    kind: 'run_command' as const,
+    executable: verifyCheck.executable,
+    argv: [...verifyCheck.argv],
+    workingDirectory: verifyCheck.workingDirectory ?? 'tests',
+    purpose: verifyCheck.purpose,
+  };
+  const planDecisionRef = 'dec-approved-plan-001';
+  const tempContext = createTestRepositoryCommandAdmissionContextV02({
+    action,
+    reservationRefs: ['res-verify-001'],
+    runnableNode: 'Verify',
+    planApplicability: 'approved-plan',
+    planDecisionRef,
+    taskCriteriaDigest: computeCanonicalSha256(task.acceptanceCriteria),
+    checkSetDigest: computeCheckSetDigest(task.requiredChecks),
+    checkId: verifyCheck.checkId,
+    testPath: 'tests/test_calculator.py',
+  });
+  const initial = createTestAdmissionTaskStateV02(tempContext);
+  const plan = initial.plan!;
+  const planBindingDigest = computeCanonicalSha256({
+    taskId: initial.taskId,
+    planVersion: plan.planVersion,
+    strategyDigest: plan.strategyDigest,
+    baselineRef: plan.baselineRef,
+    evidenceRefs: plan.evidenceRefs,
+    criteriaDigest: computeCanonicalSha256(initial.acceptanceCriteria),
+    checkSetDigest: plan.checkSetDigest,
+    decisionRef: plan.decisionRef,
+  });
+
+  const admission = createTestRepositoryCommandAdmissionContextV02({
+    action,
+    reservationRefs: ['res-verify-001'],
+    runnableNode: 'Verify',
+    planApplicability: 'approved-plan',
+    planDecisionRef,
+    planBindingDigest,
+    taskCriteriaDigest: computeCanonicalSha256(task.acceptanceCriteria),
+    checkSetDigest: computeCheckSetDigest(task.requiredChecks),
+    checkId: verifyCheck.checkId,
+    testPath: 'tests/test_calculator.py',
+  });
+
+  const state = {
+    ...initial,
+    budgetLedgers: [
+      ...(initial.budgetLedgers ?? []),
+      {
+        scope: 'task' as const,
+        kind: 'timeoutMs' as const,
+        limit: 60000,
+        consumed: 0,
+        reservations: [],
+        unit: 'count' as const,
+        configurationId: 'config-v1',
+        version: 1,
+      },
+    ],
+  };
+
+  const journal = new MemoryStatePortV02({
+    initialTaskState: state,
+    initialControlVersion: admission.expectedControlVersion,
+    initialEpoch: admission.expectedEpoch,
+    initialAuthorityRef: admission.policyAuthorityRef,
+  });
+
+  // Open an unresolved claim on the task
+  const openClaim = await journal.claim(admission);
+  assert.ok(openClaim.claimId, 'Open claim must have valid claimId');
+  assert.equal(journal.getJournalSnapshot().activeClaimId, openClaim.claimId);
+
+  const repo = new FakeRepositoryPort({
+    statePort: journal,
+    executorIdentity: createTestExecutorIdentityV02({ payloadDigest: admission.actionDigest }),
+    testResults: {
+      default: {
+        checkId: verifyCheck.checkId,
+        outcome: 'pass',
+        durationMs: 25,
+      },
+    },
+  });
+
+  const execContext = {
+    runId: state.runId,
+    repoDigest: state.repositoryRevisionDigest,
+  };
+
+  await executeVerificationChecks(task, repo, execContext);
+
+  // Target v0.2 acceptance: An open claim blocks any new runTests effect and yields zero repository test effects.
+  assert.equal(
+    repo.tests.length,
+    0,
+    'Open claim must block verification runTests and yield zero repository test effects'
+  );
+});
+
+test('v0.2 verification admission: zero repository test effects when task is paused (behavioral RED against pre-migration verification caller)', async () => {
+  const task = createFixtureBugTask();
+  const verifyCheck = task.requiredChecks[0]!;
+  const action = {
+    actionId: 'action-verify-' + verifyCheck.checkId,
+    kind: 'run_command' as const,
+    executable: verifyCheck.executable,
+    argv: [...verifyCheck.argv],
+    workingDirectory: verifyCheck.workingDirectory ?? 'tests',
+    purpose: verifyCheck.purpose,
+  };
+  const planDecisionRef = 'dec-approved-plan-001';
+  const tempContext = createTestRepositoryCommandAdmissionContextV02({
+    action,
+    reservationRefs: ['res-verify-001'],
+    runnableNode: 'Verify',
+    planApplicability: 'approved-plan',
+    planDecisionRef,
+    taskCriteriaDigest: computeCanonicalSha256(task.acceptanceCriteria),
+    checkSetDigest: computeCheckSetDigest(task.requiredChecks),
+    checkId: verifyCheck.checkId,
+    testPath: 'tests/test_calculator.py',
+  });
+  const state = createTestAdmissionTaskStateV02(tempContext);
+  const plan = state.plan!;
+  const planBindingDigest = computeCanonicalSha256({
+    taskId: state.taskId,
+    planVersion: plan.planVersion,
+    strategyDigest: plan.strategyDigest,
+    baselineRef: plan.baselineRef,
+    evidenceRefs: plan.evidenceRefs,
+    criteriaDigest: computeCanonicalSha256(state.acceptanceCriteria),
+    checkSetDigest: plan.checkSetDigest,
+    decisionRef: plan.decisionRef,
+  });
+
+  const admission = createTestRepositoryCommandAdmissionContextV02({
+    action,
+    reservationRefs: ['res-verify-001'],
+    runnableNode: 'Verify',
+    planApplicability: 'approved-plan',
+    planDecisionRef,
+    planBindingDigest,
+    taskCriteriaDigest: computeCanonicalSha256(task.acceptanceCriteria),
+    checkSetDigest: computeCheckSetDigest(task.requiredChecks),
+    checkId: verifyCheck.checkId,
+    testPath: 'tests/test_calculator.py',
+  });
+
+  const journal = new MemoryStatePortV02({
+    initialTaskState: state,
+    initialControlVersion: admission.expectedControlVersion,
+    initialEpoch: admission.expectedEpoch,
+    initialMode: 'paused',
+    initialAuthorityRef: admission.policyAuthorityRef,
+  });
+
+  const repo = new FakeRepositoryPort({
+    statePort: journal,
+    executorIdentity: createTestExecutorIdentityV02({ payloadDigest: admission.actionDigest }),
+    testResults: {
+      default: {
+        checkId: verifyCheck.checkId,
+        outcome: 'pass',
+        durationMs: 25,
+      },
+    },
+  });
+
+  const execContext = {
+    runId: state.runId,
+    repoDigest: state.repositoryRevisionDigest,
+  };
+
+  await executeVerificationChecks(task, repo, execContext);
+
+  // Target v0.2 acceptance: Paused task must block verification runTests and yield zero repository test effects.
+  assert.equal(
+    repo.tests.length,
+    0,
+    'Paused task must block verification runTests and yield zero repository test effects'
+  );
+});
+
+test('v0.2 verification admission: zero repository test effects on missing or malformed admission context (behavioral RED against pre-migration verification caller)', async () => {
+  const task = createFixtureBugTask();
+  const verifyCheck = task.requiredChecks[0]!;
+  const action = {
+    actionId: 'action-verify-' + verifyCheck.checkId,
+    kind: 'run_command' as const,
+    executable: verifyCheck.executable,
+    argv: [...verifyCheck.argv],
+    workingDirectory: verifyCheck.workingDirectory ?? 'tests',
+    purpose: verifyCheck.purpose,
+  };
+  const planDecisionRef = 'dec-approved-plan-001';
+  const tempContext = createTestRepositoryCommandAdmissionContextV02({
+    action,
+    reservationRefs: ['res-verify-001'],
+    runnableNode: 'Verify',
+    planApplicability: 'approved-plan',
+    planDecisionRef,
+    taskCriteriaDigest: computeCanonicalSha256(task.acceptanceCriteria),
+    checkSetDigest: computeCheckSetDigest(task.requiredChecks),
+    checkId: verifyCheck.checkId,
+    testPath: 'tests/test_calculator.py',
+  });
+  const state = createTestAdmissionTaskStateV02(tempContext);
+  const plan = state.plan!;
+  const planBindingDigest = computeCanonicalSha256({
+    taskId: state.taskId,
+    planVersion: plan.planVersion,
+    strategyDigest: plan.strategyDigest,
+    baselineRef: plan.baselineRef,
+    evidenceRefs: plan.evidenceRefs,
+    criteriaDigest: computeCanonicalSha256(state.acceptanceCriteria),
+    checkSetDigest: plan.checkSetDigest,
+    decisionRef: plan.decisionRef,
+  });
+
+  const admission = createTestRepositoryCommandAdmissionContextV02({
+    action,
+    reservationRefs: ['res-verify-001'],
+    runnableNode: 'Verify',
+    planApplicability: 'approved-plan',
+    planDecisionRef,
+    planBindingDigest,
+    taskCriteriaDigest: computeCanonicalSha256(task.acceptanceCriteria),
+    checkSetDigest: computeCheckSetDigest(task.requiredChecks),
+    checkId: verifyCheck.checkId,
+    testPath: 'tests/test_calculator.py',
+  });
+
+  const journal = new MemoryStatePortV02({
+    initialTaskState: state,
+    initialControlVersion: admission.expectedControlVersion,
+    initialEpoch: admission.expectedEpoch,
+    initialAuthorityRef: admission.policyAuthorityRef,
+  });
+
+  const repo = new FakeRepositoryPort({
+    statePort: journal,
+    executorIdentity: createTestExecutorIdentityV02({ payloadDigest: admission.actionDigest }),
+    testResults: {
+      default: {
+        checkId: verifyCheck.checkId,
+        outcome: 'pass',
+        durationMs: 25,
+      },
+    },
+  });
+
+  const execContext = {
+    runId: state.runId,
+    repoDigest: state.repositoryRevisionDigest,
+  };
+
+  await executeVerificationChecks(task, repo, execContext);
+
+  // Target v0.2 acceptance: Verification caller must supply valid v0.2 admission context to RepositoryPortV02.
+  assert.ok(
+    repo.v02Calls.length > 0,
+    'Verification runTests caller must supply valid v0.2 admission context to the repository receiver'
+  );
 });
