@@ -93,6 +93,7 @@ export interface FakeRepositoryOptions {
 
 export class FakeRepositoryPort implements RepositoryPort, RepositoryPortV02 {
   readonly provenance: PortProvenance = 'mock';
+  readonly executionGuardApiVersion = '0.2.0' as const;
 
   private currentRevisionDigest: string;
   private snapshots = new Map<string, Map<string, string>>();
@@ -710,6 +711,7 @@ export class FakeRepositoryPort implements RepositoryPort, RepositoryPortV02 {
 
 export class FakeRepositoryPortV02 implements RepositoryPortV02 {
   readonly provenance: PortProvenance = 'mock';
+  readonly executionGuardApiVersion = '0.2.0' as const;
   private readonly underlying: FakeRepositoryPort;
 
   constructor(underlying: FakeRepositoryPort) {

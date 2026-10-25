@@ -82,10 +82,20 @@ export interface ExecutionGuardResult {
  * ------------------------------------------------------------------ */
 
 export interface ExecutionGuardPortsV02 {
-  readonly statePort: StatePortV02;
+  readonly statePort: ExecutionGuardStatePortV02;
   readonly approvalPort?: ApprovalPort | undefined;
-  readonly repositoryPort: RepositoryPortV02;
+  readonly repositoryPort: ExecutionGuardRepositoryPortV02;
   readonly telemetryPort?: TelemetryPort | undefined;
+}
+
+/** Guard-local adapter marker only; it does not grant admission or approval authority. */
+export interface ExecutionGuardStatePortV02 extends StatePortV02 {
+  readonly executionGuardApiVersion: '0.2.0';
+}
+
+/** Guard-local adapter marker only; it does not grant admission or approval authority. */
+export interface ExecutionGuardRepositoryPortV02 extends RepositoryPortV02 {
+  readonly executionGuardApiVersion: '0.2.0';
 }
 
 export interface ExecutionGuardConfigV02 {
@@ -99,37 +109,106 @@ export interface ExecutionGuardOptionsV02 {
   readonly config?: ExecutionGuardConfigV02 | undefined;
 }
 
+interface ExecutionGuardOptionsFor<
+  TPorts extends ExecutionGuardPorts | ExecutionGuardPortsV02,
+> {
+  readonly ports: TPorts;
+  readonly config?: ExecutionGuardConfig | ExecutionGuardConfigV02 | undefined;
+};
+
+const STATE_PORT_V02_METHODS = [
+  'loadTask', 'transition', 'claim', 'beginAttempt', 'recordOutcome',
+  'reconcileObservedOutcome', 'reconcileUncertain', 'closeUnattemptedClaim', 'checkpoint', 'recover',
+] as const;
+const REPOSITORY_PORT_V02_METHODS = [
+  'listDir', 'readFile', 'searchCode', 'applyPatch', 'runCommand', 'runTests', 'inspectDiff',
+] as const;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function hasGuardV02Marker(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  try {
+    const marker = Object.getOwnPropertyDescriptor(value, 'executionGuardApiVersion');
+    return marker !== undefined && 'value' in marker && marker.value === '0.2.0';
+  } catch {
+    return false;
+  }
+}
+
+function hasMethod(value: unknown, name: string): boolean {
+  if (!isRecord(value)) return false;
+  try {
+    let current: object | null = value;
+    while (current) {
+      const descriptor = Object.getOwnPropertyDescriptor(current, name);
+      if (descriptor !== undefined) return 'value' in descriptor && typeof descriptor.value === 'function';
+      current = Object.getPrototypeOf(current);
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+function hasGuardV02Port(value: unknown, methods: readonly string[]): boolean {
+  // The marker selects the adapter version; these descriptors only validate completeness without invoking ports.
+  return hasGuardV02Marker(value) && methods.every((method) => hasMethod(value, method));
+}
+
+function isExecutionGuardPortsV02(value: unknown): value is ExecutionGuardPortsV02 {
+  if (!isRecord(value)) return false;
+  try {
+    const state = Object.getOwnPropertyDescriptor(value, 'statePort');
+    const repository = Object.getOwnPropertyDescriptor(value, 'repositoryPort');
+    return state !== undefined && 'value' in state &&
+      repository !== undefined && 'value' in repository &&
+      hasGuardV02Port(state.value, STATE_PORT_V02_METHODS) &&
+      hasGuardV02Port(repository.value, REPOSITORY_PORT_V02_METHODS);
+  } catch {
+    return false;
+  }
+}
+
 /* ------------------------------------------------------------------
  * ExecutionGuard / ExecutionGuardV02 Implementations
  * ------------------------------------------------------------------ */
 
-export class AuthoritativeExecutionGuard implements ExecutionGuard, ExecutionGuardV02 {
+export class AuthoritativeExecutionGuard<
+  TPorts extends ExecutionGuardPorts | ExecutionGuardPortsV02 = ExecutionGuardPorts,
+> implements ExecutionGuard {
   readonly provenance: PortProvenance;
-  readonly ports: ExecutionGuardPorts | ExecutionGuardPortsV02;
+  readonly ports: TPorts;
   readonly config?: ExecutionGuardConfig | ExecutionGuardConfigV02 | undefined;
 
-  constructor(options: ExecutionGuardOptions | ExecutionGuardOptionsV02) {
+  constructor(options: ExecutionGuardOptionsFor<TPorts>) {
     this.provenance = options.config?.provenance ?? 'mock';
     this.ports = options.ports;
     this.config = options.config;
   }
 
   async validateAndExecute(
-    action: NormalizedAction,
-    state: TaskState,
+    _action: NormalizedAction,
+    _state: TaskState,
     context?: RepositoryAdmissionContextV02
   ): Promise<ExecutionGuardResultV02> {
-    if (context !== undefined) {
-      return this.validateAndExecuteV02(action, state, context);
-    }
-    return { outcome: 'denied', reason: 'ADMISSION_CONTEXT_REQUIRED: Admission context is required; v0.1 compatibility is no-dispatch' };
+    return context === undefined
+      ? { outcome: 'denied', reason: 'ADMISSION_CONTEXT_REQUIRED: Admission context is required; v0.1 compatibility is no-dispatch' }
+      : { outcome: 'denied', reason: 'V02_GUARD_REQUIRED: v0.1 guard is no-dispatch for v0.2 admission' };
   }
 
-  private async validateAndExecuteV02(
+  protected async validateAndExecuteV02(
+    this: AuthoritativeExecutionGuard<ExecutionGuardPortsV02>,
     action: NormalizedAction,
     state: TaskState,
     context: RepositoryAdmissionContextV02
   ): Promise<ExecutionGuardResultV02> {
+    if (!isExecutionGuardPortsV02(this.ports)) {
+      return { outcome: 'denied', reason: 'PORT_VERSION_MISMATCH: Guard requires marked v0.2 state and repository adapters' };
+    }
+
     const validAction = validateNormalizedAction(action);
     if (!validAction.ok) {
       return {
@@ -327,12 +406,12 @@ export class AuthoritativeExecutionGuard implements ExecutionGuard, ExecutionGua
     try {
       let res: unknown;
       if (action.kind === 'apply_patch') {
-        res = await (this.ports.repositoryPort as RepositoryPortV02).applyPatch(
+        res = await this.ports.repositoryPort.applyPatch(
           action as ApplyPatchAction,
           context
         );
       } else if (action.kind === 'run_command') {
-        res = await (this.ports.repositoryPort as RepositoryPortV02).runCommand(
+        res = await this.ports.repositoryPort.runCommand(
           action as RunCommandAction,
           context
         );
@@ -382,15 +461,25 @@ export class AuthoritativeExecutionGuard implements ExecutionGuard, ExecutionGua
 }
 
 export class AuthoritativeExecutionGuardV02
-  extends AuthoritativeExecutionGuard
+  extends AuthoritativeExecutionGuard<ExecutionGuardPortsV02>
   implements ExecutionGuardV02
 {
   declare readonly ports: ExecutionGuardPortsV02;
   declare readonly config?: ExecutionGuardConfigV02 | undefined;
+
+  override async validateAndExecute(
+    action: NormalizedAction,
+    state: TaskState,
+    context?: RepositoryAdmissionContextV02
+  ): Promise<ExecutionGuardResultV02> {
+    return context === undefined
+      ? { outcome: 'denied', reason: 'ADMISSION_CONTEXT_REQUIRED: Admission context is required; v0.2 dispatch is no-dispatch without context' }
+      : this.validateAndExecuteV02(action, state, context);
+  }
 }
 
 export function createExecutionGuard(
-  options: ExecutionGuardOptions | ExecutionGuardOptionsV02
+  options: ExecutionGuardOptions
 ): AuthoritativeExecutionGuard {
   return new AuthoritativeExecutionGuard(options);
 }

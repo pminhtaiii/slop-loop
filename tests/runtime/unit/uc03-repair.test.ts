@@ -74,6 +74,7 @@ import {
 } from '../support/uc03/state-fixtures.ts';
 import {
   createExecutionGuardV02,
+  type ExecutionGuardStatePortV02,
 } from '../../../src/foundation/execution-guard.ts';
 import { FakeRepositoryPort } from '../support/uc03/fake-repository.ts';
 import { ControlledRepositoryTools, type TrustedFilesystemPort } from '../../../src/foundation/repository-tools.ts';
@@ -279,28 +280,26 @@ function createReplanTransitionContext(state: TaskState, proposalId: string): No
 }
 
 function isStatePortV02(port: unknown): port is StatePortV02 {
-  return (
-    typeof port === 'object' &&
-    port !== null &&
-    'claim' in port &&
-    typeof (port as Record<string, unknown>).claim === 'function'
-  );
+  if (typeof port !== 'object' || port === null || Array.isArray(port)) return false;
+  const marker = Object.getOwnPropertyDescriptor(port, 'executionGuardApiVersion');
+  return marker !== undefined && 'value' in marker && marker.value === '0.2.0';
 }
 
-function forwardPublicStatePort(statePort: MemoryStatePortV02): StatePort & StatePortV02;
-function forwardPublicStatePort(statePort: StatePortV02): StatePortV02;
+function forwardPublicStatePort(statePort: MemoryStatePortV02): StatePort & ExecutionGuardStatePortV02;
+function forwardPublicStatePort(statePort: StatePortV02): ExecutionGuardStatePortV02;
 function forwardPublicStatePort(statePort: StatePort): StatePort;
 function forwardPublicStatePort(
   statePort: StatePort | StatePortV02
-): StatePort | StatePortV02 {
+): StatePort | ExecutionGuardStatePortV02 {
   if (isStatePortV02(statePort)) {
     const v02Port = statePort;
     const underlying =
       typeof (statePort as unknown as { getUnderlying?: () => StatePort }).getUnderlying === 'function'
         ? (statePort as unknown as { getUnderlying: () => StatePort }).getUnderlying()
         : undefined;
-    const forwardedV02: StatePortV02 = {
+    const forwardedV02: ExecutionGuardStatePortV02 = {
       provenance: v02Port.provenance,
+      executionGuardApiVersion: '0.2.0',
       loadTask: (taskId) => v02Port.loadTask(taskId),
       transition: (state, expectedVersion) => v02Port.transition(state, expectedVersion),
       claim: (context) => v02Port.claim(context),

@@ -1,4 +1,5 @@
 import type { PortProvenance, RepositoryPort, SourceEvidence } from '../contracts/foundation/uc03.ts';
+import type { ExecutionGuardRepositoryPortV02 } from './execution-guard.ts';
 import type {
   RepositoryPatchResultV02,
   RepositoryCommandResultV02,
@@ -33,8 +34,9 @@ export type {
 } from './repository-types.ts';
 export { containsProtectedContent };
 
-export class ControlledRepositoryTools implements RepositoryPort, RepositoryPortV02 {
+export class ControlledRepositoryTools implements RepositoryPort, ExecutionGuardRepositoryPortV02 {
   readonly provenance: PortProvenance;
+  readonly executionGuardApiVersion = '0.2.0' as const;
   private readonly reader: ControlledRepositoryReader;
   private readonly commands: RepositoryCommandReceiver;
   private readonly patches: RepositoryPatchReceiver;
@@ -115,6 +117,6 @@ export class ControlledRepositoryTools implements RepositoryPort, RepositoryPort
 
 export class ControlledRepositoryToolsV02 extends ControlledRepositoryTools implements RepositoryPortV02 {}
 
-export function createRepositoryReceiverV02(options: ControlledRepositoryToolsOptions): RepositoryPortV02 {
+export function createRepositoryReceiverV02(options: ControlledRepositoryToolsOptions): ExecutionGuardRepositoryPortV02 {
   return new ControlledRepositoryTools(options);
 }

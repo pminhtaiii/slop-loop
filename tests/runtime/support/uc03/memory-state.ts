@@ -780,6 +780,7 @@ export interface MemoryStatePortV02Options extends MemoryStatePortOptions {
 
 export class MemoryStatePortV02 implements StatePortV02 {
   readonly provenance: PortProvenance = 'mock';
+  readonly executionGuardApiVersion = '0.2.0' as const;
   private readonly underlying: MemoryStatePort;
   private readonly neutral: boolean;
   private currentControlVersion: number;

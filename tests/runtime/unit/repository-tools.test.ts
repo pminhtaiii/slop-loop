@@ -3358,6 +3358,7 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
         limits: defaultLimits,
       });
       assert.ok(v02Instance instanceof ControlledRepositoryTools);
+      assert.equal(Object.getOwnPropertyDescriptor(v02Instance, 'executionGuardApiVersion')?.value, '0.2.0');
 
       const receiver: RepositoryPortV02 = createRepositoryReceiverV02({
         guardCapability: guard,
@@ -3365,6 +3366,7 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
         limits: defaultLimits,
       });
       assert.ok(receiver);
+      assert.equal(Object.getOwnPropertyDescriptor(receiver, 'executionGuardApiVersion')?.value, '0.2.0');
     });
   });
 });

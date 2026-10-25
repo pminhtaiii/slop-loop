@@ -34,6 +34,7 @@ import {
   type ApprovalBinding,
   type CommandView,
   type RepositoryAdmissionContextV02,
+  type RepositoryPort,
   type RepositoryPortV02,
   type RepositoryPatchResultV02,
   type RepositoryCommandResultV02,
@@ -64,6 +65,8 @@ import {
   AuthoritativeExecutionGuardV02,
   type ExecutionGuardPorts,
   type ExecutionGuardOptions,
+  type ExecutionGuardStatePortV02,
+  type ExecutionGuardRepositoryPortV02,
   type ExecutionGuardPortsV02,
   type ExecutionGuardOptionsV02,
 } from '../../../src/foundation/execution-guard.ts';
@@ -221,9 +224,10 @@ function forwardStatePortV02(
   port: StatePortV02,
   calls: V02PortCalls,
   loadTask: StatePortV02['loadTask'] = (taskId) => port.loadTask(taskId)
-): StatePortV02 {
+): ExecutionGuardStatePortV02 {
   return {
     provenance: port.provenance,
+    executionGuardApiVersion: '0.2.0',
     loadTask: (taskId) => {
       calls.loadTask++;
       return loadTask(taskId);
@@ -246,9 +250,13 @@ function forwardStatePortV02(
   };
 }
 
-function forwardRepositoryPortV02(port: RepositoryPortV02, calls: V02PortCalls): RepositoryPortV02 {
+function forwardRepositoryPortV02(
+  port: RepositoryPortV02,
+  calls: V02PortCalls
+): ExecutionGuardRepositoryPortV02 {
   return {
     provenance: port.provenance,
+    executionGuardApiVersion: '0.2.0',
     listDir: (path) => port.listDir(path),
     readFile: (path) => port.readFile(path),
     searchCode: (query) => port.searchCode(query),
@@ -264,6 +272,26 @@ function forwardRepositoryPortV02(port: RepositoryPortV02, calls: V02PortCalls):
       calls.tests++;
       return port.runTests(check, context);
     },
+    inspectDiff: (revision) => port.inspectDiff(revision),
+  };
+}
+
+function createV01RepositorySpy(
+  port: RepositoryPort,
+  revisionDigest: string,
+  onPatch: () => void
+): RepositoryPort {
+  return {
+    provenance: port.provenance,
+    listDir: (path) => port.listDir(path),
+    readFile: (path) => port.readFile(path),
+    searchCode: (query) => port.searchCode(query),
+    applyPatch: async () => {
+      onPatch();
+      return { applied: true, newRevisionDigest: revisionDigest };
+    },
+    runCommand: async (action) => port.runCommand(action),
+    runTests: (check) => port.runTests(check),
     inspectDiff: (revision) => port.inspectDiff(revision),
   };
 }
@@ -1004,4 +1032,132 @@ test('v0.2 real receiver: redigested successor handoff is uncertain after one se
   assert.equal(settledJournal?.outcomes.length, 1);
   const persisted = await h.statePort.loadTask(context.taskId);
   assert.equal(persisted?.budgetLedgers?.find((ledger) => ledger.kind === 'repair')?.consumed, 1);
+});
+
+test('v0.1 guard refuses a valid v0.2 context before state or receiver calls', async () => {
+  const action = createValidPatchAction();
+  const context = createTestRepositoryAdmissionContextV02({ action });
+  const { taskState } = createTestHarnessV02({ context });
+  const h = createTestHarness({ initialTaskState: taskState });
+  const loadTask = h.statePort.loadTask.bind(h.statePort);
+  const before = await loadTask(taskState.taskId);
+  let stateCalls = 0;
+  let receiverCalls = 0;
+  h.statePort.loadTask = async (taskId) => {
+    stateCalls++;
+    return loadTask(taskId);
+  };
+  const ports: ExecutionGuardPorts = {
+    ...h.ports,
+    repositoryPort: createV01RepositorySpy(
+      h.repositoryPort,
+      taskState.repositoryRevisionDigest,
+      () => { receiverCalls++; }
+    ),
+  };
+  const guard = createExecutionGuard({ ports });
+
+  const result = await guard.validateAndExecute(action, taskState, context);
+
+  assert.deepEqual({ stateCalls, receiverCalls }, { stateCalls: 0, receiverCalls: 0 });
+  assert.equal(result.outcome, 'denied');
+  assert.deepEqual(await loadTask(taskState.taskId), before, 'Refusal leaves persisted task state unchanged');
+});
+
+test('v0.2 guard refuses an unmarked v0.1 repository before state or receiver calls', async () => {
+  const action = createValidPatchAction();
+  const context = createTestRepositoryAdmissionContextV02({ action });
+  const h = createTestHarnessV02({ context });
+  const beforeTask = await h.statePort.loadTask(h.taskState.taskId);
+  const beforeJournal = h.statePort.getJournalSnapshot();
+  const legacy = createTestHarness({ initialTaskState: h.taskState }).repositoryPort;
+  let receiverCalls = 0;
+  const unmarkedRepositoryPort = createV01RepositorySpy(
+    legacy,
+    h.taskState.repositoryRevisionDigest,
+    () => { receiverCalls++; }
+  );
+  const ports: ExecutionGuardPortsV02 = {
+    ...h.ports,
+    repositoryPort: unmarkedRepositoryPort as unknown as ExecutionGuardPortsV02['repositoryPort'],
+  };
+
+  const guard = createExecutionGuardV02({ ports });
+  const result = await guard.validateAndExecute(action, h.taskState, context);
+
+  assert.equal(receiverCalls, 0, 'Unmarked v0.1 receiver must not be invoked');
+  assert.deepEqual(h.portCalls, { loadTask: 0, claim: 0, beginAttempt: 0, patches: 0, commands: 0, tests: 0 });
+  assert.equal(result.outcome, 'denied');
+  assert.deepEqual(await h.statePort.loadTask(h.taskState.taskId), beforeTask);
+  assert.deepEqual(h.statePort.getJournalSnapshot(), beforeJournal);
+});
+
+test('v0.2 guard refuses an unmarked v0.1 state port before state or receiver calls', async () => {
+  const action = createValidPatchAction();
+  const context = createTestRepositoryAdmissionContextV02({ action });
+  const h = createTestHarnessV02({ context });
+  const beforeTask = await h.statePort.loadTask(h.taskState.taskId);
+  const beforeJournal = h.statePort.getJournalSnapshot();
+  const legacy = createTestHarness({ initialTaskState: h.taskState });
+  const loadTask = legacy.statePort.loadTask.bind(legacy.statePort);
+  let stateCalls = 0;
+  legacy.statePort.loadTask = async (taskId) => {
+    stateCalls++;
+    return loadTask(taskId);
+  };
+  const ports: ExecutionGuardPortsV02 = {
+    ...h.ports,
+    statePort: legacy.statePort as unknown as ExecutionGuardPortsV02['statePort'],
+  };
+
+  const guard = createExecutionGuardV02({ ports });
+  const result = await guard.validateAndExecute(action, h.taskState, context);
+
+  assert.deepEqual({ stateCalls, ...h.portCalls }, {
+    stateCalls: 0, loadTask: 0, claim: 0, beginAttempt: 0, patches: 0, commands: 0, tests: 0,
+  });
+  assert.equal(result.outcome, 'denied');
+  assert.deepEqual(await h.statePort.loadTask(h.taskState.taskId), beforeTask);
+  assert.deepEqual(h.statePort.getJournalSnapshot(), beforeJournal);
+});
+
+test('v0.2 guard with missing context refuses before any port call or mutation', async () => {
+  const action = createValidPatchAction();
+  const context = createTestRepositoryAdmissionContextV02({ action });
+  const h = createTestHarnessV02({ context });
+  const beforeTask = await h.statePort.loadTask(h.taskState.taskId);
+  const beforeJournal = h.statePort.getJournalSnapshot();
+
+  const result = await h.guard.validateAndExecute(action, h.taskState);
+
+  assert.equal(result.outcome, 'denied');
+  assert.deepEqual(h.portCalls, { loadTask: 0, claim: 0, beginAttempt: 0, patches: 0, commands: 0, tests: 0 });
+  assert.deepEqual(await h.statePort.loadTask(h.taskState.taskId), beforeTask);
+  assert.deepEqual(h.statePort.getJournalSnapshot(), beforeJournal);
+});
+
+test('v0.2 guard refuses malformed marked ports before any port call or mutation', async () => {
+  const action = createValidPatchAction();
+  const context = createTestRepositoryAdmissionContextV02({ action });
+  for (const malformed of ['state', 'repository'] as const) {
+    const h = createTestHarnessV02({ context });
+    const beforeTask = await h.statePort.loadTask(h.taskState.taskId);
+    const beforeJournal = h.statePort.getJournalSnapshot();
+    const ports: ExecutionGuardPortsV02 = malformed === 'state'
+      ? {
+          ...h.ports,
+          statePort: { ...h.ports.statePort, claim: undefined } as unknown as ExecutionGuardPortsV02['statePort'],
+        }
+      : {
+          ...h.ports,
+          repositoryPort: { ...h.ports.repositoryPort, applyPatch: undefined } as unknown as ExecutionGuardPortsV02['repositoryPort'],
+        };
+
+    const result = await createExecutionGuardV02({ ports }).validateAndExecute(action, h.taskState, context);
+
+    assert.equal(result.outcome, 'denied');
+    assert.deepEqual(h.portCalls, { loadTask: 0, claim: 0, beginAttempt: 0, patches: 0, commands: 0, tests: 0 });
+    assert.deepEqual(await h.statePort.loadTask(h.taskState.taskId), beforeTask);
+    assert.deepEqual(h.statePort.getJournalSnapshot(), beforeJournal);
+  }
 });
