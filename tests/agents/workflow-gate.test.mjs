@@ -26,10 +26,10 @@ test('gate accepts only bounded positive integer environment timeouts', async t 
     return schedule(callback, 10_000, ...args);
   });
   const cases = [
-    [undefined, 600_000], ['', 600_000], ['invalid', 600_000],
-    ['0', 600_000], ['-1', 600_000], ['1.5', 600_000],
-    ['Infinity', 600_000], ['-Infinity', 600_000],
-    ['2147483648', 600_000], ['1e100', 600_000],
+    [undefined, 1_200_000], ['', 1_200_000], ['invalid', 1_200_000],
+    ['0', 1_200_000], ['-1', 1_200_000], ['1.5', 1_200_000],
+    ['Infinity', 1_200_000], ['-Infinity', 1_200_000],
+    ['2147483648', 1_200_000], ['1e100', 1_200_000],
     ['1', 1], ['600000', 600_000], ['2147483647', 2_147_483_647],
   ];
   for (const [index, [value, expected]] of cases.entries()) {

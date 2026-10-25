@@ -955,7 +955,13 @@ test('FakeRepositoryPortV02 forwards branch-matched patch, command, and test out
     action: patchAction,
     canonicalRevision: initialRevision,
   });
+  const patchJournal = createRecordingJournal(patchContext, 'forward-patch');
+  underlying.setStatePort(patchJournal.statePort);
+  underlying.setExecutorIdentity(patchJournal.executor);
   const patchRes = await repo.applyPatch(patchAction, patchContext);
+  assert.strictEqual(patchRes.executionReceipt.claim, patchJournal.claim);
+  assert.strictEqual(patchRes.executionReceipt.attempt, patchJournal.attempt);
+  assert.strictEqual(patchRes.executionReceipt.settlement, patchJournal.statePort.recordedOutcomeResults[0]);
   assert.equal(patchRes.applied, true);
   assert.notEqual(patchRes.newRevisionDigest, initialRevision);
   assert.equal(repo.currentRevision, patchRes.newRevisionDigest);
@@ -973,7 +979,11 @@ test('FakeRepositoryPortV02 forwards branch-matched patch, command, and test out
     action: commandAction,
     canonicalRevision: repo.currentRevision,
   });
+  const commandJournal = createRecordingJournal(commandContext, 'forward-command');
+  underlying.setStatePort(commandJournal.statePort);
+  underlying.setExecutorIdentity(commandJournal.executor);
   const cmdRes = await repo.runCommand(commandAction, commandContext);
+  assert.strictEqual(cmdRes.executionReceipt.outcome, commandJournal.statePort.recordedOutcomes[0]);
   assert.equal(cmdRes.exitCode, 0);
   assert.equal(cmdRes.stdout, 'cmd ok');
 
@@ -996,6 +1006,9 @@ test('FakeRepositoryPortV02 forwards branch-matched patch, command, and test out
     canonicalRevision: repo.currentRevision,
     checkId: check.checkId,
   });
+  const testJournal = createRecordingJournal(testContext, 'forward-tests');
+  underlying.setStatePort(testJournal.statePort);
+  underlying.setExecutorIdentity(testJournal.executor);
   const testRes = await repo.runTests(check, testContext);
   assert.equal(testRes.outcome, 'pass');
 });
@@ -1028,13 +1041,11 @@ test('FakeRepositoryPort (v0.2): missing or stale context causes zero mock effec
   assert.equal(repo.currentRevision, initialRevision);
 
   // Missing context (malformed/empty)
-  const missingRes = await repo.applyPatch(patchAction, undefined as unknown as RepositoryAdmissionContextV02);
-  assert.equal(missingRes.applied, false);
+  await assert.rejects(() => repo.applyPatch(patchAction, undefined as unknown as RepositoryAdmissionContextV02));
   assert.equal(repo.currentRevision, initialRevision);
 
   // Stale context
-  const staleRes = await repo.applyPatch(patchAction, staleContext);
-  assert.equal(staleRes.applied, false);
+  await assert.rejects(() => repo.applyPatch(patchAction, staleContext));
   assert.equal(repo.currentRevision, initialRevision);
   assert.deepEqual(underlying.patches, []);
   assert.deepEqual(repo.v02Calls, []);
@@ -1146,8 +1157,8 @@ test('FakeRepositoryPortV02 requires context before forwarding any repository ef
   const check = { ...createFixtureCheckDefinition(), checkId: 'check-missing-context' };
   const missing = undefined as unknown as RepositoryAdmissionContextV02;
 
-  assert.equal((await port.applyPatch(patch, missing)).applied, false);
-  assert.notEqual((await port.runCommand(command, missing)).exitCode, 0);
+  await assert.rejects(() => port.applyPatch(patch, missing));
+  await assert.rejects(() => port.runCommand(command, missing));
   assert.notEqual((await port.runTests(check, missing)).outcome, 'pass');
   assert.equal(port.currentRevision, revision);
   assert.deepEqual(underlying.patches, []);
@@ -1166,8 +1177,7 @@ test('FakeRepositoryPortV02 refuses changed payload and stale revision before ef
   const changedPatch = { ...admittedPatch, patchContent: '+changed after admission' };
   const context = createFixtureRepositoryAdmissionContextV02({ action: admittedPatch, canonicalRevision: revision });
 
-  const refused = await port.applyPatch(changedPatch, context);
-  assert.equal(refused.applied, false);
+  await assert.rejects(() => port.applyPatch(changedPatch, context));
   assert.equal(port.currentRevision, revision);
   assert.deepEqual(underlying.patches, []);
 });
@@ -1181,15 +1191,17 @@ test('FakeRepositoryPortV02 binds command and test payloads before forwarding', 
   };
   const commandContext = createFixtureRepositoryCommandAdmissionContextV02({ action: command, canonicalRevision: commandPort.currentRevision });
   const changedCommand = { ...command, argv: ['-q', 'tests/test_other.py'] };
-  const refusedCommand = await commandPort.runCommand(changedCommand, commandContext);
-  assert.notEqual(refusedCommand.exitCode, 0);
+  await assert.rejects(() => commandPort.runCommand(changedCommand, commandContext));
   assert.deepEqual(commandUnderlying.commands, []);
   const staleCommandContext = createFixtureRepositoryCommandAdmissionContextV02({
     action: command,
     canonicalRevision: 'sha256:stale-command-revision',
   });
-  assert.notEqual((await commandPort.runCommand(command, staleCommandContext)).exitCode, 0);
+  await assert.rejects(() => commandPort.runCommand(command, staleCommandContext));
   assert.deepEqual(commandUnderlying.commands, []);
+  const commandJournal = createRecordingJournal(commandContext, 'bound-command');
+  commandUnderlying.setStatePort(commandJournal.statePort);
+  commandUnderlying.setExecutorIdentity(commandJournal.executor);
   const admittedCommand = await commandPort.runCommand(command, commandContext);
   assert.equal(admittedCommand.stdout, 'only admitted command');
   assert.deepEqual(commandUnderlying.commands, [command]);
@@ -1217,6 +1229,9 @@ test('FakeRepositoryPortV02 binds command and test payloads before forwarding', 
   });
   assert.equal((await testPort.runTests(check, staleCheckContext)).outcome, 'fail');
   assert.deepEqual(testUnderlying.tests, []);
+  const testJournal = createRecordingJournal(checkContext, 'bound-tests');
+  testUnderlying.setStatePort(testJournal.statePort);
+  testUnderlying.setExecutorIdentity(testJournal.executor);
   assert.equal((await testPort.runTests(check, checkContext)).outcome, 'pass');
   assert.deepEqual(testUnderlying.tests, [check]);
 });
@@ -1562,3 +1577,33 @@ test('v0.2 model uncertainty holds reservations without fabricated usage', async
   assert.equal(journal.statePort.recordedOutcomes.length, 1);
   assert.equal(journal.statePort.recordedOutcomeResults[0]?.outcome, 'uncertain');
 });
+
+for (const status of ['recorded-unsettled', 'already-recorded', 'uncertain', 'foreign-id', 'lost-response'] as const) {
+  for (const kind of ['patch', 'command'] as const) {
+    test(`Fake repository ${kind} refuses settled success on ${status} without retry`, async () => {
+      const underlying = new FakeRepositoryPort({ commandResults: { default: { exitCode: 0, stdout: 'ok', stderr: '' } } });
+      const action: ApplyPatchAction | RunCommandAction = kind === 'patch'
+        ? { actionId: `patch-${status}`, kind: 'apply_patch', patchContent: '+once', targetPaths: ['src/calculator.py'], baseRevisionDigest: underlying.currentRevision }
+        : { actionId: `command-${status}`, kind: 'run_command', executable: 'pytest', argv: [], workingDirectory: 'tests' };
+      const context = action.kind === 'apply_patch'
+        ? createFixtureRepositoryAdmissionContextV02({ action, canonicalRevision: underlying.currentRevision })
+        : createFixtureRepositoryCommandAdmissionContextV02({ action, canonicalRevision: underlying.currentRevision });
+      const journal = createRecordingJournal(context, `${kind}-${status}`);
+      let records = 0;
+      journal.statePort.recordOutcome = async (receipt) => {
+        records++;
+        if (status === 'lost-response') throw new Error('lost settlement response');
+        return { outcome: status === 'foreign-id' ? 'settled' : status, receiptId: status === 'foreign-id' ? 'foreign' : receipt.receiptId };
+      };
+      underlying.setStatePort(journal.statePort);
+      underlying.setExecutorIdentity(journal.executor);
+      const port = new FakeRepositoryPortV02(underlying);
+      await assert.rejects(() => action.kind === 'apply_patch' ? port.applyPatch(action, context) : port.runCommand(action, context));
+      assert.equal(journal.statePort.claimCalls.length, 1);
+      assert.equal(journal.statePort.beginCalls.length, 1);
+      assert.equal(records, 1);
+      assert.equal(kind === 'patch' ? underlying.patches.length : underlying.commands.length, 1);
+      if (kind === 'patch') assert.notEqual(underlying.currentRevision, context.canonicalRevision, 'Consumed patch is not undone or reapplied on settlement failure');
+    });
+  }
+}

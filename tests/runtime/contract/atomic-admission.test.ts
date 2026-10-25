@@ -1,3 +1,4 @@
+import { validateRepositoryExecutionReceiptV02 } from '../../../src/contracts/foundation/uc03/attempt-v02.ts';
 /**
  * UC-03 v0.2.0 Atomic Admission Contract Tests (T037 / T038).
  *
@@ -2461,5 +2462,45 @@ test('Public v0.2 validators contain exotic input exceptions and return detached
     assert.equal(Object.isFrozen(attemptResult.value), true);
     (attemptInput as unknown as { receiptId: string }).receiptId = 'changed-after-validation';
     assert.equal(attemptResult.value.receiptId, 'repo-out-001');
+  }
+});
+
+test('Settled repository handoff validates independent admission without invented current journal status', () => {
+  for (const branch of ['approved-plan', 'pre-plan-diagnostic'] as const) {
+    const context = createTrustedOutcomeContext('repository-action', branch);
+    const admission = context.trustedAdmission as RepositoryAdmissionContextV02;
+    const claimRaw = { ...context.trustedClaim, claimDigest: undefined };
+    const claim = { ...context.trustedClaim, claimDigest: computeCanonicalSha256(claimRaw) };
+    const attempt: AttemptReceiptV02 = { ...context.trustedAttempt, status: 'attempting',
+      executorIdentity: { ...context.trustedAttempt.executorIdentity, payloadDigest: admission.actionDigest } };
+    const rawOutcome = createValidRepoOutcomeReceipt(branch, { ...context, trustedClaim: claim, trustedAttempt: attempt });
+    const outcome = redigestOutcome({ ...rawOutcome, proposedEffects: { ...rawOutcome.proposedEffects, invalidatedEvidence: [] } });
+    const bundle = { claim, attempt, outcome, settlement: { outcome: 'settled', receiptId: outcome.receiptId } };
+    assert.equal(validateRepositoryExecutionReceiptV02(bundle, admission).ok, true);
+    assert.equal(validateRepositoryExecutionReceiptV02(bundle).ok, false, 'Independent admission is mandatory');
+    for (const taskTransition of [
+      { kind: 'transition', fromNode: branch === 'approved-plan' ? 'Patch' : 'Investigate', toNode: 'Completed' },
+      ...(branch === 'approved-plan' ? [{ kind: 'none' }] : [{ kind: 'transition', fromNode: 'Investigate', toNode: 'Verify' }]),
+    ]) assert.equal(validateRepositoryExecutionReceiptV02({ ...bundle, outcome: redigestOutcome({ ...outcome,
+      proposedEffects: { ...rawOutcome.proposedEffects, invalidatedEvidence: [], taskTransition },
+    }) }, admission).ok, false);
+    assert.equal(validateRepositoryExecutionReceiptV02({ ...bundle, outcome: redigestOutcome({ ...outcome,
+      proposedEffects: { ...rawOutcome.proposedEffects, invalidatedEvidence: [{ reference: 'foreign-evidence', digest: computeCanonicalSha256('foreign') }] },
+    }) }, admission).ok, false);
+
+    for (const changed of [
+      { ...bundle, extra: true },
+      { ...bundle, claim: { ...claim, runId: 'foreign-run' } },
+      { ...bundle, attempt: { ...attempt, extra: true } },
+      { ...bundle, attempt: { ...attempt, preAttemptControlVersion: 99 } },
+      { ...bundle, settlement: { outcome: 'already-recorded', receiptId: outcome.receiptId } },
+      { ...bundle, settlement: { outcome: 'recorded-unsettled', receiptId: outcome.receiptId } },
+      { ...bundle, settlement: { outcome: 'uncertain', receiptId: outcome.receiptId } },
+      { ...bundle, settlement: { outcome: 'settled', receiptId: 'foreign' } },
+      { ...bundle, outcome: redigestOutcome({ ...outcome, providerRequestId: 'foreign-provider' }) },
+      { ...bundle, outcome: redigestOutcome({ ...outcome, planDecisionRef: 'foreign-plan' }) },
+      { ...bundle, outcome: redigestOutcome({ ...outcome, actionDecisionReceiptRef: 'foreign-decision' }) },
+      { ...bundle, outcome: redigestOutcome({ ...outcome, receiptId: '' }) },
+    ]) assert.equal(validateRepositoryExecutionReceiptV02(changed, admission).ok, false);
   }
 });

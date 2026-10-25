@@ -1,5 +1,8 @@
 import { computeCanonicalSha256 } from './identity.ts';
+import { computeAdmissionDigest } from './admission-v02.ts';
 import type {
+  RepositoryAdmissionContextV02,
+  RepositoryExecutionReceiptV02,
   AttemptOutcomeReceiptV02,
   AttemptReceiptV02,
   AttemptReconciliationReceiptV02,
@@ -20,7 +23,7 @@ import {
   validateProviderRequestOutcomeReceiptV02,
   validateRepositoryActionOutcomeReceiptV02,
 } from './admission-v02/attempt-outcome-v02.ts';
-import { validateExecutorIdentityV02 } from './admission-v02/attempt-outcome-common-v02.ts';
+import { REPO_KEYS, canonicalEqual, validateVersionBindings, validateEffects, validateSafeRef, validateSafeRefArray, checkActionDecisionBinding, validateExecutorIdentityV02 } from './admission-v02/attempt-outcome-common-v02.ts';
 
 export type VersionProgressionKindV02 = 'claim' | 'begin-attempt';
 export interface VersionDomainSnapshotV02 { taskStateVersion: number; controlVersion: number; epoch: number; }
@@ -156,3 +159,79 @@ export {
   validateObservedOutcomeReconciliationReceiptV02,
   validateAttemptReconciliationReceiptV02,
 } from './admission-v02/reconciliation-v02.ts';
+
+/** Post-settlement binding checks only; does not assert current durable journal state. */
+export const validateRepositoryExecutionReceiptV02 = protectValidator(function (
+  input: unknown,
+  admission?: RepositoryAdmissionContextV02,
+): ValidationResult<RepositoryExecutionReceiptV02> {
+  const errors: ValidationError[] = [];
+  const fail = (): ValidationResult<RepositoryExecutionReceiptV02> => ({ ok: false, errors: [{ path: 'executionReceipt', message: 'Invalid settled repository handoff', code: 'INVALID_EXECUTION_RECEIPT' }, ...errors] });
+  if (!admission || !isPlainObject(input)) return fail();
+  rejectUnknownKeys(input, ['claim', 'attempt', 'outcome', 'settlement'], 'executionReceipt', errors);
+  const claim = input['claim'];
+  if (!isPlainObject(claim)) return fail();
+  const claimKeys = ['claimId', 'claimDigest', 'taskId', 'runId', 'subjectKind', 'planApplicability', 'preClaimTaskStateVersion', 'preClaimControlVersion', 'postClaimControlVersion', 'epoch', 'status', 'reservationRefs'];
+  rejectUnknownKeys(claim, claimKeys, 'claim', errors);
+  reqStrs(claim, ['claimId', 'claimDigest'], 'claim', errors);
+  const expectedClaim = {
+    taskId: admission.taskId, runId: admission.runId, subjectKind: admission.subjectKind,
+    planApplicability: admission.planApplicability, preClaimTaskStateVersion: admission.expectedTaskStateVersion,
+    preClaimControlVersion: admission.expectedControlVersion, postClaimControlVersion: admission.expectedControlVersion + 1,
+    epoch: admission.expectedEpoch, status: 'claimed', reservationRefs: admission.reservationRefs,
+  };
+  if (Object.entries(expectedClaim).some(([key, value]) => !canonicalEqual(claim[key], value)) ||
+    claim['claimDigest'] !== computeCanonicalSha256({ ...claim, claimDigest: undefined })) return fail();
+  const attemptResult = validateAttemptReceiptV02(input['attempt'], {
+    expectedTaskId: admission.taskId, expectedClaimId: String(claim['claimId']), expectedEpoch: admission.expectedEpoch,
+    isRepairPatch: admission.action.kind === 'apply_patch' && admission.runnableNode === 'Repair',
+  });
+  if (!attemptResult.ok) return fail();
+  const attempt = attemptResult.value;
+  if (attempt.preAttemptTaskStateVersion !== claim['preClaimTaskStateVersion'] ||
+    attempt.preAttemptControlVersion !== claim['postClaimControlVersion'] ||
+    attempt.executorIdentity.payloadDigest !== admission.actionDigest) return fail();
+  const outcome = input['outcome'];
+  const settlement = input['settlement'];
+  if (!isPlainObject(outcome) || !isPlainObject(settlement)) return fail();
+  rejectUnknownKeys(outcome, REPO_KEYS, 'outcome', errors);
+  rejectUnknownKeys(settlement, ['outcome', 'receiptId'], 'settlement', errors);
+  reqStrs(outcome, ['receiptId', 'receiptDigest'], 'outcome', errors);
+  if (outcome['receiptDigest'] !== computeAttemptOutcomeDigest(outcome) || outcome['outcome'] !== 'observed' ||
+    settlement['outcome'] !== 'settled' || settlement['receiptId'] !== outcome['receiptId']) return fail();
+  const expectedOutcome = {
+    claimId: claim['claimId'], claimDigest: claim['claimDigest'], attemptId: attempt.attemptId,
+    executorIdentity: attempt.executorIdentity, admissionDigest: computeAdmissionDigest(admission),
+    subjectKind: 'repository-action', actionDigest: admission.actionDigest, planApplicability: admission.planApplicability,
+    repositoryOperation: admission.action.kind === 'apply_patch' ? 'apply-patch' : 'run-command',
+    policyAuthorityRef: admission.policyAuthorityRef, policyEvaluationReceiptRef: admission.policyEvaluationReceipt.receiptId,
+    policyEvaluationReceiptDigest: admission.policyEvaluationReceipt.receiptDigest,
+    freshnessContextDigest: admission.policyEvaluationReceipt.freshnessContextDigest,
+  };
+  if (Object.entries(expectedOutcome).some(([key, value]) => !canonicalEqual(outcome[key], value))) return fail();
+  for (const key of ['planBindingDigest', 'planDecisionRef', 'diagnosticPurpose', 'taskCriteriaDigest', 'checkSetDigest'] as const) {
+    if (Object.hasOwn(outcome, key) !== (admission[key] !== undefined) || outcome[key] !== admission[key]) return fail();
+  }
+  checkActionDecisionBinding(outcome, admission, errors);
+  // Claim shape and admission bindings were checked above, without pretending it is still current.
+  const trustedClaim = claim as unknown as RepositoryExecutionReceiptV02['claim'];
+  validateVersionBindings(outcome['versions'], admission, trustedClaim, attempt, errors);
+  validateSafeRef(outcome['resultRef'], 'resultRef', errors);
+  validateSafeRefArray(outcome['evidenceRefs'], 'evidenceRefs', errors);
+  validateEffects(outcome['proposedEffects'], 'observed', admission, errors);
+  const effects = outcome['proposedEffects'];
+  if (!isPlainObject(effects) || !isPlainObject(effects['accounting']) ||
+    !canonicalEqual(effects['accounting']['reservationRefs'], admission.reservationRefs) ||
+    Object.hasOwn(effects['accounting'], 'observedUsage') || !isPlainObject(effects['revision'])) return fail();
+  const expectedTransition = admission.action.kind === 'apply_patch' && admission.planApplicability === 'approved-plan'
+    ? { kind: 'transition', fromNode: 'Patch', toNode: 'Verify' }
+    : { kind: 'none' };
+  // Admission grants no named evidence invalidation; owners invalidate revision-bound state at settlement.
+  if (!canonicalEqual(effects['taskTransition'], expectedTransition) ||
+    !canonicalEqual(effects['invalidatedEvidence'], [])) return fail();
+  if (admission.action.kind === 'apply_patch') {
+    if (typeof outcome['observedResultRevisionDigest'] !== 'string' || !/^sha256:[a-f0-9]{64}$/u.test(outcome['observedResultRevisionDigest']) ||
+      effects['revision']['kind'] !== 'advance' || effects['revision']['revisionDigest'] !== outcome['observedResultRevisionDigest']) return fail();
+  } else if (Object.hasOwn(outcome, 'observedResultRevisionDigest') || effects['revision']['kind'] !== 'preserve') return fail();
+  return errors.length ? fail() : { ok: true, value: input as unknown as RepositoryExecutionReceiptV02 };
+});

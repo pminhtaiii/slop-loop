@@ -3,7 +3,7 @@ import { open } from 'node:fs/promises';
 
 function defaultTimeout() {
   const timeout = Number(process.env.WORKFLOW_GATE_TIMEOUT);
-  return Number.isInteger(timeout) && timeout > 0 && timeout <= 2_147_483_647 ? timeout : 600_000;
+  return Number.isInteger(timeout) && timeout > 0 && timeout <= 2_147_483_647 ? timeout : 1_200_000;
 }
 
 export function packageScriptCommand(script, platform = process.platform) {

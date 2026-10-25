@@ -897,7 +897,12 @@ test('Journal R3: observed diagnostic patch settles revision and exact invalidat
   const attempt = await port.beginAttempt(claim.claimId, executor);
   assert.equal(isNeutralAttemptReceiptV02(attempt), false);
   assert.equal(attempt.postBeginTaskStateVersion, attempt.preAttemptTaskStateVersion);
-  const outcome = createTestRepositoryOutcomeReceiptV02(claim, attempt, context);
+  const baseOutcome = createTestRepositoryOutcomeReceiptV02(claim, attempt, context);
+  const outcome = createTestRepositoryOutcomeReceiptV02(claim, attempt, context, {
+    proposedEffects: { ...baseOutcome.proposedEffects, invalidatedEvidence: [
+      { reference: 'evidence-prior-baseline', digest: computeCanonicalSha256('evidence-prior-baseline') },
+    ] },
+  });
   assert.deepEqual(outcome.proposedEffects.taskTransition, { kind: 'none' });
 
   const result = await port.recordOutcome(outcome);
@@ -1773,7 +1778,12 @@ test('Journal R2: observed patch settlement atomically invalidates only proposed
   const claim = await port.claim(context);
   const actor = createTestExecutorIdentityV02({ payloadDigest: context.actionDigest });
   const attempt = await port.beginAttempt(claim.claimId, actor);
-  const outcome = createTestRepositoryOutcomeReceiptV02(claim, attempt, context);
+  const baseOutcome = createTestRepositoryOutcomeReceiptV02(claim, attempt, context);
+  const outcome = createTestRepositoryOutcomeReceiptV02(claim, attempt, context, {
+    proposedEffects: { ...baseOutcome.proposedEffects, invalidatedEvidence: [
+      { reference: 'evidence-prior-baseline', digest: computeCanonicalSha256('evidence-prior-baseline') },
+    ] },
+  });
   assert.equal((await port.recordOutcome(outcome)).outcome, 'settled');
   const settledTask = await port.loadTask(context.taskId);
   assert.ok(settledTask);
@@ -1809,7 +1819,12 @@ test('Journal R2: observed-unsettled patch recovery applies the same exact inval
   const afterAttempt = await port.loadTask(context.taskId);
   assert.ok(afterAttempt);
   port.getUnderlying().internalSetTask({ ...afterAttempt, node: 'Repair' });
-  const outcome = createTestRepositoryOutcomeReceiptV02(claim, attempt, context);
+  const baseOutcome = createTestRepositoryOutcomeReceiptV02(claim, attempt, context);
+  const outcome = createTestRepositoryOutcomeReceiptV02(claim, attempt, context, {
+    proposedEffects: { ...baseOutcome.proposedEffects, invalidatedEvidence: [
+      { reference: 'evidence-prior-baseline', digest: computeCanonicalSha256('evidence-prior-baseline') },
+    ] },
+  });
   assert.equal((await port.recordOutcome(outcome)).outcome, 'recorded-unsettled');
   assert.equal(outcome.subjectKind, 'repository-action');
   if (outcome.subjectKind !== 'repository-action' || !outcome.observedResultRevisionDigest) throw new Error('patch outcome requires an observed revision');
