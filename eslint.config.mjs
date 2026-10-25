@@ -61,10 +61,19 @@ export default tseslint.config(
           selector: 'ImportExpression[source.type="Literal"][source.value=/(?:^|\\/)tests\\/runtime\\/support(?:\\/|$)/]',
           message: 'Production code cannot dynamically import runtime test support.',
         },
+        {
+          selector: 'Property[parent.type="ObjectPattern"][key.name="v02Calls"]',
+          message: 'Production code cannot inspect mock-private call history.',
+        },
+        {
+          selector: 'Property[parent.type="ObjectPattern"][computed=true][key.type="Literal"][key.value="v02Calls"]',
+          message: 'Production code cannot inspect mock-private call history.',
+        },
       ],
       'no-restricted-properties': [
         'error',
         { property: 'transitionContexts', message: 'Production code must use the public StatePort API.' },
+        { property: 'v02Calls', message: 'Production code cannot inspect mock-private call history.' },
       ],
       'no-restricted-imports': [
         'error',

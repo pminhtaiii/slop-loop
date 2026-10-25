@@ -20,7 +20,7 @@ Organize modules around capabilities, with small public interfaces and acyclic d
 
 Pass dependencies through parameters or constructors so they are visible at call sites and replaceable in focused checks; no dependency injection framework is required. Keep policy decisions in deterministic code; model suggestions and prompts do not replace validation or authorization. See [Architecture](architecture.md) and [Tools and permissions](tools_permissions.md) for ownership and policy boundaries.
 
-A public wrapper that only forwards across a port is an intentional boundary: pass input through, preserve the typed result, and add no policy, persistence, or duplicate effect. On validation or permission refusal, return the typed refusal without changing persisted state or invoking downstream effects.
+A public wrapper that only forwards across a port is an intentional boundary: pass input through, preserve the typed result, and add no policy, persistence, or duplicate effect. ESLint mechanically rejects transitionContexts and v02Calls mock-private access and tests/runtime/support imports only under src/; typed production methods such as getJournalSnapshot remain valid through their declared contract. On validation or permission refusal, return the typed refusal without changing persisted state or invoking downstream effects.
 
 ## LangGraph workflow code
 

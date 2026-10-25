@@ -18,7 +18,7 @@ Two GitHub operations cannot be atomic. If publication stops after one target su
 
 After CodeRabbit or another contributor commits fixes to the public feature branch, pull those changes into the public checkout, verify them, and rerun publication to update the submission snapshot. This is explicit command-driven synchronization; opening a PR directly in GitHub does not run the helper.
 
-Link both returned PR URLs in the app and import a receipt containing both through `record-app-state`. The completion gate checks the public current-head CI and both matching published PR identities. It does not claim the submission repository's CI passed without inspecting it. Public review comments remain advisory under the [PR workflow](pr-workflow.md).
+Link both returned PR URLs in the app and import a receipt containing both through `record-app-state`. The completion gate uses public current-head CI as the readiness authority and checks both published PR identities. Submission identity, branch/tree synchronization, and merge state are still required for paired-ticket completion; submission CI is informational and does not drive public readiness, repair, or watch. The gate does not claim submission CI passed without inspecting it. Public review comments remain advisory under the [PR workflow](pr-workflow.md).
 
 ## Target transition
 
@@ -42,7 +42,7 @@ The ticket helper validates both repository roles, write access and issue availa
 
 ### Complete paired tickets
 
-During CodeRabbit review of a resolving PR, verify every acceptance criterion on both issues for the stable key, prepare evidence, and preview the completion command. An open PR is still waiting: apply only after both paired resolving PRs are merged, using the same source tree and confirming all four contributor/runtime CI jobs pass for the public PR's exact head. CodeRabbit approval is not required, and labels, age, or CI success alone do not establish that acceptance criteria are met.
+During review of a resolving PR, verify every acceptance criterion on both issues for the stable key and prepare an evidence file. Put the stable key, public resolving-PR URL, evidence path, and preview status in the completion handoff. An open PR is still waiting: apply only after both resolving PRs are merged with matching source trees and the public PR's exact-head CI passes. Submission identity/tree/sync/merge remain required; its CI is informational. No label, age, merge, closing keyword, or CI result establishes acceptance, and CodeRabbit approval is not required.
 
 The evidence file has this shape:
 
@@ -65,6 +65,16 @@ node scripts/agents/complete-paired-issues.mjs --key <stable-key> --pr <public-P
 Without `--apply`, the command previews and makes no remote changes. The explicit `--pr` URL and evidence file record the agent's assertion that every criterion is satisfied. Applying adds an idempotent audit comment to each exact paired issue, linking it to that repository's resolving PR, then closes both issues. If one close succeeds and the other fails, retain ignored `.agent-work/paired-issue-completion/` and `.agent-work/paired-issues/` records and retry the same command. Completion targets only the exact stable-key pair; it does not delete or reopen issues or promote labels. This explicit cleanup is separate from ticket publication, which preserves closed state and does not synchronize issue state.
 
 Read the JSON `status`, not just the exit code: `READY_TO_COMPLETE` is an eligible preview, `COMPLETED` confirms both issues are closed, and `WAITING_*` or `BLOCKED` leaves cleanup pending. Evidence may be revised before apply begins; retain the same evidence when recovering an interrupted apply.
+
+### Post-merge follow-up
+
+After a merge, use the read-only follow-up command to inspect local paired-issue records and the public resolving PR:
+
+```powershell
+node scripts/agents/paired-issue-followup.mjs --pr <public-PR-URL> [--key <stable-key> ...] [--evidence-file <JSON>] [--root <checkout>]
+```
+
+Pass `--key` to associate that stable key with this PR for the probe; the association is a caller assertion to verify, not proof of acceptance. Without keys, the helper lists locally recorded pairs and does not infer resolution from `Closes` references. `--evidence-file` requires exactly one explicit key and runs a preview only; the report may offer an `applyCommand` only when the completion helper reports `READY_TO_COMPLETE`. The follow-up never closes issues. Verify every criterion yourself, then run the exact previewed completion command with explicit `--apply` for that key; never apply across all candidates or infer acceptance from merge, CI, labels, or issue association alone.
 
 Changed acceptance criteria, resolving PR identity or evidence after an apply begins requires inspection and reconciliation. Preserve the records instead of deleting them to force a new attempt.
 
