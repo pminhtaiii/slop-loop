@@ -20,11 +20,27 @@ test('progress parser handles split UTF-8 chunks and bounded safe labels', () =>
   // eslint-disable-next-line no-control-regex
   assert.doesNotMatch(events[0].currentTest, /[\r\n\x00-\x1f\x7f]/);
   assert.equal(events[0].currentFile, 'fixture.test.mjs');
-  if (process.platform === 'win32') {
-    const crossDrive = createGateProgressParser();
-    const crossDriveLine = gateTestProgressLine('test:start', 'cross drive', 'D:\\private\\fixture.test.mjs', 'C:\\repo');
-    assert.equal(crossDrive.write(Buffer.from(crossDriveLine))[0].currentFile, 'fixture.test.mjs');
+});
+
+test('outside absolute file paths from POSIX, Windows drives, and UNC roots emit only the basename', () => {
+  const files = [
+    '/outside/fixture.test.mjs',
+    'C:\\outside\\fixture.test.mjs',
+    '\\\\server\\share\\outside\\fixture.test.mjs',
+  ];
+
+  for (const file of files) {
+    const parser = createGateProgressParser();
+    const line = gateTestProgressLine('test:start', 'path test', file, process.cwd());
+    const events = [...parser.write(Buffer.from(line)), ...parser.end()];
+    assert.equal(events.length, 1);
+    assert.equal(events[0].currentFile, 'fixture.test.mjs');
   }
+
+  const relativeLine = gateTestProgressLine('test:start', 'nested relative path', 'tests/agents/nested/fixture.test.mjs', process.cwd());
+  const relativeParser = createGateProgressParser();
+  const relativeEvents = [...relativeParser.write(Buffer.from(relativeLine)), ...relativeParser.end()];
+  assert.equal(relativeEvents[0].currentFile, 'tests/agents/nested/fixture.test.mjs');
 });
 
 test('malformed, oversized, unrelated, and unsupported progress lines are ignored', () => {

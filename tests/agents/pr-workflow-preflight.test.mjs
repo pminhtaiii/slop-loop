@@ -6,6 +6,10 @@ import { join } from 'node:path';
 import { runWorkflow } from '../../scripts/agents/pr-workflow.mjs';
 import { checkout } from './support/pr-workflow-fixture.mjs';
 
+const assertNoPublicationWrites = calls => assert.equal(calls.some(call =>
+  call[0] === 'git' && call[1] === 'push'
+  || call[0] === 'gh' && call[1] === 'pr' && ['create', 'edit', 'comment'].includes(call[2])), false);
+
 test('preflight reports freshness, dirty paths, naming, and size without publishing', async (t) => {
   const f = await checkout(t);
   const first = await f.run('preflight');
@@ -79,8 +83,9 @@ test('closed PRs skip expensive gates and PR changes during gates prevent push',
   await f.run('publish', '--body-file', f.body);
   f.e.pr.state = 'MERGED';
   f.calls.length = 0;
-  await assert.rejects(f.run('publish', '--body-file', f.body), /closed or replaced/);
-  assert.equal(f.calls.some(call => call[0] === process.execPath || call[1] === 'push'), false);
+  await assert.rejects(f.run('publish', '--body-file', f.body), { message: 'Recorded PR is closed or replaced; start a new feature branch instead of resetting its budget.' });
+  assertNoPublicationWrites(f.calls);
+  assert.equal(f.calls.some(call => call[0] === process.execPath), false);
   f.e.pr.state = 'OPEN';
   for (const change of ['closed', 'head']) {
     f.calls.length = 0;
@@ -94,8 +99,44 @@ test('closed PRs skip expensive gates and PR changes during gates prevent push',
         }
         return output;
       },
-    }), /closed or replaced|changed during local gates/);
-    assert.equal(f.calls.some(call => call[1] === 'push' || call[0] === 'gh' && ['edit', 'create'].includes(call[2])), false);
+    }), { message: change === 'closed'
+      ? 'Recorded PR is closed or replaced; start a new feature branch instead of resetting its budget.'
+      : 'PR changed before publishing; inspect its current head.' });
+    assertNoPublicationWrites(f.calls);
+    f.e.pr.state = 'OPEN'; f.e.pr.headRefOid = oldHead;
+  }
+});
+
+test('push-only rechecks closed and changed PR identity before publication writes', async t => {
+  const f = await checkout(t);
+  await f.run('publish', '--body-file', f.body);
+  f.e.pr.state = 'MERGED';
+  f.calls.length = 0;
+  await assert.rejects(f.run('publish', '--body-file', f.body, '--mode', 'push-only', '--reason', 'User requested push-only publication.'), { message: 'Recorded PR is closed or replaced; start a new feature branch instead of resetting its budget.' });
+  assertNoPublicationWrites(f.calls);
+  assert.equal(f.calls.some(call => call[0] === process.execPath), false);
+
+  f.e.pr.state = 'OPEN';
+  const oldHead = f.e.pr.headRefOid;
+  for (const change of ['closed', 'head']) {
+    f.calls.length = 0;
+    let cleanStatusCalls = 0;
+    const rejection = runWorkflow(['publish', '--body-file', f.body, '--summary', 'add the example workflow', '--mode', 'push-only', '--reason', 'User requested push-only publication.', '--root', f.root], {
+      execute(binary, args, cwd, timeout) {
+        const output = f.execute(binary, args, cwd, timeout);
+        // With local gates skipped, the second clean check is the pre-push identity boundary.
+        if (binary === 'git' && args[0] === 'status' && args.includes('--porcelain') && ++cleanStatusCalls === 2) {
+          if (change === 'closed') f.e.pr.state = 'MERGED';
+          else f.e.pr.headRefOid = 'external-commit';
+        }
+        return output;
+      },
+    });
+    await assert.rejects(rejection, { message: change === 'closed'
+      ? 'Recorded PR is closed or replaced; start a new feature branch instead of resetting its budget.'
+      : 'PR changed before publishing; inspect its current head.' });
+    assertNoPublicationWrites(f.calls);
+    assert.equal(f.calls.some(call => call[0] === process.execPath), false);
     f.e.pr.state = 'OPEN'; f.e.pr.headRefOid = oldHead;
   }
 });

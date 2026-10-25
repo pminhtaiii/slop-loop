@@ -1,5 +1,5 @@
 import { StringDecoder } from 'node:string_decoder';
-import { basename, isAbsolute, relative } from 'node:path';
+import { basename, isAbsolute, relative, win32 } from 'node:path';
 
 export const PROGRESS_PREFIX = '@@workflow-gate-progress ';
 export const MAX_TEST_LABEL_LENGTH = 160;
@@ -16,8 +16,10 @@ function safeLabel(value) {
 
 function safeFile(value, cwd) {
   if (typeof value !== 'string' || !value) return null;
+  const normalizedValue = value.replaceAll('\\', '/');
   let file = relative(cwd, value).replaceAll('\\', '/');
-  if (!file || file === '..' || file.startsWith('../') || isAbsolute(file)) file = basename(value);
+  const foreignWindowsAbsolute = win32.isAbsolute(value) && !isAbsolute(value);
+  if (!file || file === '..' || file.startsWith('../') || isAbsolute(file) || foreignWindowsAbsolute) file = basename(normalizedValue);
   return safeLabel(file);
 }
 
