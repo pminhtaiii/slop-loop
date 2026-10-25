@@ -30,6 +30,8 @@ Call `publish` as soon as the first coherent, scoped revision is ready; the full
 node scripts/agents/pr-workflow.mjs publish --base development --body-file <file> --summary "<short summary>" [--skip-review-request] [--root <checkout>]
 ```
 
+Full local gates are the default. Use `--mode push-only --reason "<caller rationale>"` only when the caller explicitly selects that mode; the reason records provenance and is not an authorization receipt. Push-only publication preserves `localVerifiedHead` separately from `publishedHead`. Read `localGateStatus` (`passed`, `skipped`, or `not-verified`) with the current public CI status; missing local gates for the published head are not a fresh full-gate pass.
+
 Refresh the body after each repair so its summary and evidence describe the latest head. `publish` is the authorized remote-write path for this pilot.
 
 After publishing a new head, the helper requests CodeRabbit with `@coderabbitai review`. Pass `--skip-review-request` when the user requests publication without an automatic review request; this does not change the gates, paired draft PRs, or readiness requirements. By default, a head-specific marker and retained accounting prevent duplicate requests when the same publication is resumed. This also works when CodeRabbit skips automatic reviews for the repository. Review service rate limits or missing bot approval do not block readiness.
@@ -38,14 +40,14 @@ The GitHub Actions workflow named **Contributor checks** runs context consistenc
 
 ## Check readiness
 
-`status` compares local HEAD with the open PR head and inspects checks and review data for that SHA. Read the returned JSON `status` field; exit code 0 means the observation ran, not that CI or review passed. Readiness requires all four current-head GitHub Actions matrix checks (`contributor-checks (ubuntu-latest)`, `contributor-checks (windows-latest)`, `runtime-checks (ubuntu-latest)` and `runtime-checks (windows-latest)`) to pass and no non-draft GitHub merge blocker. Unresolved conversations remain visible in `unresolved` for human assessment; they do not alone change readiness to `NEEDS_FIX`. CodeRabbit review decisions are advisory; missing or stale CI stays waiting or blocked.
+`status` compares local HEAD with the public open PR head and inspects checks and review data for that SHA. Read the returned JSON `status` field; exit code 0 means the observation ran, not that CI or review passed. Readiness requires all four current-head public GitHub Actions matrix checks (`contributor-checks (ubuntu-latest)`, `contributor-checks (windows-latest)`, `runtime-checks (ubuntu-latest)` and `runtime-checks (windows-latest)`) to pass and no non-draft GitHub merge blocker. Unresolved conversations remain visible in `unresolved` for human assessment; they do not alone change readiness to `NEEDS_FIX`. CodeRabbit review decisions are advisory; missing or stale public CI stays waiting or blocked. In paired publication, submission PR identity, source-tree synchronization, and merge state are checked separately; submission CI is informational and does not drive public readiness or automatic repair/watch behavior.
 
 ```powershell
 node scripts/agents/pr-workflow.mjs status [--root <checkout>]
 node scripts/agents/pr-workflow.mjs watch [--root <checkout>]
 ```
 
-`watch` polls every 15 seconds for at most ten minutes, then returns `TIMED_OUT` with state retained. The compatibility command `node .agents/skills/pr-feedback-loop/scripts/inspect-ci.mjs` delegates to `status`; it has no repository-specific or latest-run fallback.
+`watch` observes the public PR every 15 seconds for at most ten minutes, then returns `TIMED_OUT` with state retained. It is not a submission-CI watcher. The compatibility command `node .agents/skills/pr-feedback-loop/scripts/inspect-ci.mjs` delegates to `status`; it has no repository-specific or latest-run fallback.
 
 Use `ready` when status is `READY_FOR_HUMAN`. That command rechecks the PR and moves a draft to ready for review, recording `AWAITING_HUMAN_MERGE`; it never merges. Repeating it for an already eligible non-draft PR is safe; subsequent status reports retain `AWAITING_HUMAN_MERGE`. The state name records the human decision boundary; it does not prohibit coordinator execution of a merge explicitly authorized for this PR. The helper itself has no merge command. When authorized, use `gh pr merge <number> --squash --match-head-commit <verified-sha>` after rechecking readiness; otherwise stop for the human decision. Keep auto-merge disabled.
 
@@ -55,7 +57,7 @@ node scripts/agents/pr-workflow.mjs ready [--root <checkout>]
 
 ## Enforce completion
 
-`active-task.mjs finish` calls `pr-workflow.mjs complete` before changing the assignment to completed. Completion requires a clean checkout, current local publication and verification evidence, a live matching open PR against development, an app-link receipt, all four current-head CI jobs passing and no GitHub merge blocker. Advisory comments remain part of the human merge decision. Unpublished, dirty, stale, unlinked or failing work stays active/blocked. Pending CI also stays active; hand monitoring to the app watcher and finish after checks pass. A final status report is not contributor completion, and merging is not required.
+`active-task.mjs finish` calls `pr-workflow.mjs complete` before changing the assignment to completed. Completion requires a clean checkout, current local publication and verification evidence, a live matching open PR against development, an app-link receipt, all four current-head public CI jobs passing and no GitHub merge blocker. Advisory comments remain part of the human merge decision. Unpublished, dirty, stale, unlinked or failing work stays active/blocked. Pending CI also stays active; hand monitoring to the app watcher and finish after checks pass. A final status report is not contributor completion, and merging is not required. If the user selects local-only work or no push, use the worker handoff and report local evidence without claiming this PR completion gate passed.
 
 After linking the PR, save the app's `list_thread_pull_requests` result as ignored local JSON. Import that result rather than a handwritten link claim:
 
@@ -82,7 +84,7 @@ Shared workflow records live in the primary checkout's ignored `.agent-work/pr-w
 
 ## Gate logs and post-merge preparation
 
-Local publication gates default to a finite 20-minute watchdog; a bounded positive integer WORKFLOW_GATE_TIMEOUT overrides it for that invocation. CI job limits are configured independently. Publication emits JSON gate start/result events on stderr while keeping final JSON on stdout. Complete stdout/stderr and exit/timeout metadata are retained in `.agent-work/pr-workflow-logs/`; `logs` in the compact result points to them. Routine results report head, PR, gates, blockers and advisory thread URLs without replaying command output or comment bodies. Full records remain in `.agent-work/pr-workflow/`.
+Local publication gates default to a finite 20-minute watchdog; a bounded positive integer WORKFLOW_GATE_TIMEOUT overrides it for that invocation. CI job limits are configured independently. Publication emits compact JSON gate events on stderr while keeping final JSON on stdout. When test progress reporting is enabled, statuses are `running`, `progress`, `heartbeat`, `passed`, `failed`, or `timed-out`, with `startedAt`, `lastProgressAt`, `elapsedMs`, `timeoutMs`, `currentTest`, `currentFile`, and `log`; `testEvent` appears on progress records and `exitCode` on the terminal record. Test labels are capped at 160 characters and at most 500 test events are emitted. `WORKFLOW_GATE_PROGRESS` is unset normally; the contributor-test gate sets it to `1`. Heartbeat runs every 30 seconds and is liveness only, so it neither proves a test passed nor resets the watchdog. The terminal gate status and exit code determine the result. Complete stdout/stderr and exit/timeout metadata are retained in `.agent-work/pr-workflow-logs/`; `logs` in the compact result points to them. Routine results report head, PR, gates, blockers and advisory thread URLs without replaying command output or comment bodies. Full records remain in `.agent-work/pr-workflow/`.
 
 After the recorded feature PR is merged into development, run:
 

@@ -10,6 +10,7 @@ import { packageScriptCommand, runGate } from './workflow-gate.mjs';
 import { changedLines } from './pr-workflow-status.mjs';
 
 export async function publishCommand({ values, record, branch, repo, remote, git, find, pairedExecute, targets, dependencies, call, save, gh, json }) {
+  const { mode, reason } = values.publication;
   const title = `${branch}: ${values.summary}`;
   const bodyPath = resolve(values['body-file']);
   if ((await stat(bodyPath)).size > 65_536) throw new Error('PR body exceeds 65536 bytes.');
@@ -36,41 +37,56 @@ export async function publishCommand({ values, record, branch, repo, remote, git
     inventory({ branch, targets: targets ?? { primary: { remote: 'origin', repository: remote } }, execute: pairedExecute, root: repo.root, fresh: !record.pr && !record.publicationStarted, hasPr: Boolean(record.pr) });
   }
   git('fetch', '--no-tags', 'origin', 'refs/heads/development:refs/remotes/origin/development');
-  const size = changedLines(git('diff', '--numstat', '--no-renames', 'origin/development...HEAD'));
-  if (!size.reviewable && !size.generated && !size.binaries) throw new Error('No changes against development.');
   const head = git('rev-parse', 'HEAD');
+  const [behind] = git('rev-list', '--left-right', '--count', `origin/development...${head}`).split(/\s+/).map(Number);
+  if (behind > 0) throw new Error('Branch is behind development; integrate its changes before publishing.');
+  const size = changedLines(git('diff', '--numstat', '--no-renames', `origin/development...${head}`));
+  if (!size.reviewable && !size.generated && !size.binaries) throw new Error('No changes against development.');
   if (targets) await inspectSubmissionTarget({ repo, targets, branch, execute: pairedExecute });
-  const gateLogs = {};
-  const gate = async (name, argv, command = process.execPath) => {
-    if (dependencies.execute) return call(command, argv, 600_000);
-    const directory = await dataDirectory(repo, 'pr-workflow-logs');
-    try {
-      const result = await runGate({ name, command, args: argv, cwd: repo.root, logPath: resolve(directory, `${Date.now()}-${randomUUID()}-${name}.log`), report: dependencies.report });
-      gateLogs[name] = result;
-      return result.summary || 'Passed without output.';
-    } catch (error) {
-      if (error.gate) { record.gateLogs = { ...gateLogs, [name]: error.gate }; await save(); }
-      throw error;
-    }
-  };
-  const contextOutput = await gate('context', [resolve(repo.root, 'scripts/ci/check-context.mjs')]);
-  const dependencyChanges = git('diff', '--name-only', record.publishedHead ?? 'origin/development', 'HEAD', '--', 'package.json', '**/package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', '.npmrc', '.pnpmfile.cjs', 'pnpmfile.cjs');
-  const installOutput = dependencyChanges ? await gate('dependencies', [resolve(repo.root, 'scripts/ci/check-dependency-install.mjs')]) : 'Dependency inputs unchanged since the last publication/base.';
-  const runtimeOutput = await gate('runtime', [resolve(repo.root, 'scripts/ci/check-runtime.mjs')]);
-  const contributorTests = packageScriptCommand('test:contributors');
-  const testOutput = await gate('tests', contributorTests.args, contributorTests.command);
-  if (git('status', '--porcelain', '--untracked-files=all') || git('rev-parse', 'HEAD') !== head || git('branch', '--show-current') !== branch) throw new Error('Checkout changed during local gates; inspect before push.');
+  if (record.localVerifiedHead === undefined && record.localVerification?.head) record.localVerifiedHead = record.localVerification.head;
+  let localVerification;
+  if (mode === 'full') {
+    const gateLogs = {};
+    const gate = async (name, argv, command = process.execPath) => {
+      if (dependencies.execute) return call(command, argv, 600_000);
+      const directory = await dataDirectory(repo, 'pr-workflow-logs');
+      try {
+        const result = await runGate({ name, command, args: argv, cwd: repo.root, logPath: resolve(directory, `${Date.now()}-${randomUUID()}-${name}.log`), report: dependencies.report });
+        gateLogs[name] = result;
+        return result.summary || 'Passed without output.';
+      } catch (error) {
+        if (error.gate) { record.gateLogs = { ...gateLogs, [name]: error.gate }; await save(); }
+        throw error;
+      }
+    };
+    const contextOutput = await gate('context', [resolve(repo.root, 'scripts/ci/check-context.mjs')]);
+    const dependencyChanges = git('diff', '--name-only', record.publishedHead ?? 'origin/development', 'HEAD', '--', 'package.json', '**/package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', '.npmrc', '.pnpmfile.cjs', 'pnpmfile.cjs');
+    const installOutput = dependencyChanges ? await gate('dependencies', [resolve(repo.root, 'scripts/ci/check-dependency-install.mjs')]) : 'Dependency inputs unchanged since the last publication/base.';
+    const runtimeOutput = await gate('runtime', [resolve(repo.root, 'scripts/ci/check-runtime.mjs')]);
+    const contributorTests = packageScriptCommand('test:contributors');
+    const testOutput = await gate('tests', contributorTests.args, contributorTests.command);
+    localVerification = { head, context: contextOutput.slice(-2000), runtime: runtimeOutput.slice(-2000), dependencies: installOutput.slice(-2000), tests: testOutput.split('\n').slice(-10).join('\n') };
+    record.gateLogs = gateLogs;
+  }
+  if (git('status', '--porcelain', '--untracked-files=all') || git('rev-parse', 'HEAD') !== head || git('branch', '--show-current') !== branch) throw new Error('Checkout changed before push; inspect before publishing.');
   let pr = find();
   if (record.pr && (!pr || pr.number !== record.pr)) throw new Error('Recorded PR is closed or replaced; start a new feature branch instead of resetting its budget.');
-  if (pr?.number !== initialPr?.number || pr?.headRefOid !== initialPr?.headRefOid) throw new Error('PR changed during local gates; inspect its current head before publishing.');
-  record.localVerification = { head, context: contextOutput.slice(-2000), runtime: runtimeOutput.slice(-2000), dependencies: installOutput.slice(-2000), tests: testOutput.split('\n').slice(-10).join('\n') };
-  record.gateLogs = gateLogs;
+  if (pr?.number !== initialPr?.number || pr?.headRefOid !== initialPr?.headRefOid) throw new Error('PR changed before publishing; inspect its current head.');
+  if (localVerification) {
+    record.localVerification = localVerification;
+    record.localVerifiedHead = head;
+  }
+  record.publicationMode = mode;
+  if (reason) record.publicationReason = reason;
+  else delete record.publicationReason;
   delete record.completion;
   record.publicationStarted = true;
   if (newConventions) record.conventionVersion = conventionVersion;
   if (targets) record.pairedTargets = targets;
   await save();
   git('push', '--set-upstream', 'origin', `HEAD:refs/heads/${branch}`);
+  record.publishedHead = head;
+  await save();
   await withPublicationBody(repo, body, async frozenBodyPath => {
     if (pr) gh('pr', 'edit', String(pr.number), '--repo', remote, '--title', title, '--body-file', frozenBodyPath);
     else {
