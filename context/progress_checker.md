@@ -4,7 +4,7 @@ This page records observed implementation evidence for this repository. A design
 
 UC-03 Phase 5 remains mock-only; the feature [task ledger](../specs/001-verified-code-repair/tasks.md) and [decision record](../specs/001-verified-code-repair/contracts/decisions.md) own task status and authorization. Real adapters, production behavior, containment/restart, and full Phase 5/6 acceptance remain gated. See [architecture](architecture.md) and [testing guidance](testing.md) for evidence boundaries.
 
-Use the task ledger and linked evidence for current UC-03 completion and authorization; T062-T066 remain unchecked. Published and historical candidate results do not establish current local or remote readiness.
+Use the task ledger and linked evidence for current UC-03 completion and authorization. T062 is checked at its integrated assertion-only behavioral RED checkpoint: at candidate `1e1ef452c914ca934af09f31c2b4134cf62b095e` (worker commit `885d007b5837990d3846b9628182eba57ab064fc`), `pnpm run typecheck` and `pnpm run build` exit 0; source and emitted focused suites each report 197/205 passing with the same eight intended assertion failures. Evidence: `.agent-work/2026-10-25/uc03-t062-t066-preflight/t062-integration-evidence.md`. T063-T066 remain unchecked. Full runtime/contributor gates, publication, and CI have not passed for this candidate. Published and historical candidate results do not establish current local or remote readiness.
 
 Historical PR97 review and gate results are indexed in [testing guidance](testing.md); they do not establish current readiness or real/production/restart acceptance.
 
