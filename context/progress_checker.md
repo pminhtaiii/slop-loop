@@ -4,7 +4,7 @@ This page records observed implementation evidence for this repository. A design
 
 UC-03 Phase 5 remains mock-only. T019-T023 cover fixtures/guard/reporting, T042-T052 the journal and mock repository/provider receivers, and T022/T057-T061 are complete locally after the approved receipt amendment. Real adapters, production behavior, containment/restart and full Phase 5 acceptance remain gated. See [architecture](architecture.md) and [testing guidance](testing.md) for boundaries and evidence.
 
-T053-T061 are locally complete per the [task ledger](../specs/001-verified-code-repair/tasks.md). Current T022/T057-T061 design and evidence are in [architecture](architecture.md) and [testing guidance](testing.md); final R3 reviews found no P0/P1/P2 against the pinned candidate. T062-T066 remain unchecked. No current full runtime/contributor gate, publication or CI pass is claimed.
+T053-T061 are locally complete per the [task ledger](../specs/001-verified-code-repair/tasks.md). Current T022/T057-T061 design and evidence are in [architecture](architecture.md) and [testing guidance](testing.md); final R3 reviews found no P0/P1/P2 against the pinned candidate. T062-T066 remain unchecked. Published c28c221 passes local gates and all four public CI jobs. PR100 round-one guard/timeout repairs pass focused checks and independent reviews; updated publication/CI remain pending.
 
 PR97 CodeRabbit round1/round2 results are historical; see [testing guidance](testing.md) for focused counts, four intentional T022 REDs and the incomplete round2 contributor gate. Those checkpoints predate the current candidate; no readiness or real/production/restart acceptance follows from them.
 

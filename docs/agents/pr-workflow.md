@@ -82,7 +82,7 @@ Shared workflow records live in the primary checkout's ignored `.agent-work/pr-w
 
 ## Gate logs and post-merge preparation
 
-Publication emits JSON gate start/result events on stderr while keeping final JSON on stdout. Complete stdout/stderr and exit/timeout metadata are retained in `.agent-work/pr-workflow-logs/`; `logs` in the compact result points to them. Routine results report head, PR, gates, blockers and advisory thread URLs without replaying command output or comment bodies. Full records remain in `.agent-work/pr-workflow/`.
+Local publication gates default to a finite 20-minute watchdog; a bounded positive integer WORKFLOW_GATE_TIMEOUT overrides it for that invocation. CI job limits are configured independently. Publication emits JSON gate start/result events on stderr while keeping final JSON on stdout. Complete stdout/stderr and exit/timeout metadata are retained in `.agent-work/pr-workflow-logs/`; `logs` in the compact result points to them. Routine results report head, PR, gates, blockers and advisory thread URLs without replaying command output or comment bodies. Full records remain in `.agent-work/pr-workflow/`.
 
 After the recorded feature PR is merged into development, run:
 
