@@ -164,8 +164,8 @@ export async function runIssueFollowup(args, dependencies = {}) {
       items.push(item);
       continue;
     }
-    if (state === 'RECOVER_PARTIAL') item.status = 'RECOVER_PARTIAL';
-    else if (!explicitKeys && association !== 'RETAINED') item.status = 'MISSING_ASSOCIATION';
+    if (!explicitKeys && association !== 'RETAINED') item.status = 'MISSING_ASSOCIATION';
+    else if (state === 'RECOVER_PARTIAL') item.status = 'RECOVER_PARTIAL';
     else item.status = 'MISSING_EVIDENCE';
 
     item.previewCommand = completionCommand(key, publicUrl.url, values['evidence-file'], values.root);

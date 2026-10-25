@@ -72,6 +72,28 @@ test('push-only skips local gates, retains prior verification, repair history, a
   assert.equal(push.some(arg => ['main', 'development'].includes(arg)), false);
 });
 
+for (const priorVerification of [false, true]) {
+  test(`full publication checks dependencies after push-only with prior verification ${priorVerification}`, async t => {
+    const f = await checkout(t);
+    if (priorVerification) await f.run('publish', '--body-file', f.body, '--skip-review-request');
+    await writeFile(join(f.root, 'package.json'), '{"private":true}\n');
+    git(f.root, 'add', 'package.json');
+    git(f.root, 'commit', '--quiet', '-m', 'change dependency inputs');
+    await f.run('publish', '--body-file', f.body, '--mode', 'push-only', '--reason', 'User requested publication.', '--skip-review-request');
+    await f.advance();
+    const pushes = () => f.calls.filter(call => call[0] === 'git' && call[1] === 'push').length;
+    const before = pushes();
+
+    await assert.rejects(runWorkflow(['publish', '--body-file', f.body, '--summary', 'gate unverified dependencies', '--root', f.root], {
+      execute(binary, args, cwd, timeout) {
+        if (binary === process.execPath && args[0].endsWith('check-dependency-install.mjs')) throw new Error('Release age rejected');
+        return f.execute(binary, args, cwd, timeout);
+      },
+    }), /Release age rejected/);
+    assert.equal(pushes(), before);
+  });
+}
+
 test('push-only keeps body and clean-checkout guards before writes', async t => {
   const f = await checkout(t);
   await writeFile(join(f.root, 'uncommitted.md'), 'dirty\n');

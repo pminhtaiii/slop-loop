@@ -60,8 +60,8 @@ export async function publishCommand({ values, record, branch, repo, remote, git
       }
     };
     const contextOutput = await gate('context', [resolve(repo.root, 'scripts/ci/check-context.mjs')]);
-    const dependencyChanges = git('diff', '--name-only', record.publishedHead ?? 'origin/development', 'HEAD', '--', 'package.json', '**/package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', '.npmrc', '.pnpmfile.cjs', 'pnpmfile.cjs');
-    const installOutput = dependencyChanges ? await gate('dependencies', [resolve(repo.root, 'scripts/ci/check-dependency-install.mjs')]) : 'Dependency inputs unchanged since the last publication/base.';
+    const dependencyChanges = git('diff', '--name-only', record.localVerifiedHead ?? 'origin/development', 'HEAD', '--', 'package.json', '**/package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', '.npmrc', '.pnpmfile.cjs', 'pnpmfile.cjs');
+    const installOutput = dependencyChanges ? await gate('dependencies', [resolve(repo.root, 'scripts/ci/check-dependency-install.mjs')]) : 'Dependency inputs unchanged since the last locally verified head/base.';
     const runtimeOutput = await gate('runtime', [resolve(repo.root, 'scripts/ci/check-runtime.mjs')]);
     const contributorTests = packageScriptCommand('test:contributors');
     const testOutput = await gate('tests', contributorTests.args, contributorTests.command);

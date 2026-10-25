@@ -38,6 +38,25 @@ test('unassociated local keys report paired issue state and exact preview comman
   assert.deepEqual(f.writes, []);
 });
 
+test('unassociated partial closure requires association while an explicit key permits recovery', async t => {
+  const f = await fixture(t);
+  await savePairRecord(f);
+  f.publicIssue.state = 'closed';
+
+  const discovered = await runIssueFollowup(['--pr', f.prs.primary.url, '--root', f.root], { execute: f.execute });
+
+  assert.equal(discovered.items[0].status, 'MISSING_ASSOCIATION');
+  assert.equal(discovered.items[0].association, 'NOT_ASSERTED');
+  assert.equal(discovered.items[0].completionState, 'RECOVER_PARTIAL');
+  assert.match(discovered.items[0].nextStep, /Confirm that this public PR resolves this stable key/);
+
+  const explicit = await runIssueFollowup(['--pr', f.prs.primary.url, '--key', 'localized-bug', '--root', f.root], { execute: f.execute });
+
+  assert.equal(explicit.items[0].status, 'RECOVER_PARTIAL');
+  assert.equal(explicit.items[0].association, 'EXPLICIT');
+  assert.deepEqual(f.writes, []);
+});
+
 test('explicit key without evidence requests evidence and never previews or writes', async t => {
   const f = await fixture(t);
   await savePairRecord(f);
