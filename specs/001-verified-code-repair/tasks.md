@@ -497,11 +497,12 @@ Develop accepted contract mocks once (T004), then run independent story lanes on
   - **Acceptance Checks**: Add behavioral assertions for the two existing direct callers (investigation.ts:886 and verification.ts:741). Baseline runTests must be admitted under the pre-plan diagnostic branch without a plan decision; verification must carry the approved-plan binding. Missing context, pause, or an open claim yields zero repository/test effects. RED must be assertion-only while v0.2 APIs remain additive. Typecheck and build pass.
   - **Verification Evidence**: Integrated at `885d007b5837990d3846b9628182eba57ab064fc`; see `.agent-work/2026-10-25/uc03-t062-t066-preflight/t062-integration-evidence.md`.
 
-- [ ] T063 [US3] Route baseline investigation and verification through guarded v0.2 runTests in src/uc03/investigation.ts and src/uc03/verification.ts.
+- [X] T063 [US3] Route baseline investigation and verification through guarded v0.2 runTests in src/uc03/investigation.ts and src/uc03/verification.ts.
   - **Owner**: Tai / investigation-verification lane.
   - **Dependencies**: T062.
   - **Owned Paths**: src/uc03/investigation.ts; src/uc03/verification.ts; tests/runtime/unit/uc03-investigation.test.ts; tests/runtime/unit/uc03-verification.test.ts.
   - **Acceptance Checks**: Turn T062 green. Both callers use ExecutionGuardV02 and RepositoryPortV02; no direct v0.1 repository.runTests(check) call can launch work on the v0.2 path. Preserve the branch distinction: baseline diagnostics require no fabricated plan, while verification requires the current approved plan. Missing/malformed context denies before invocation; later repository mutation invalidates prior evidence. Typecheck, build, source tests, and emitted tests pass.
+  - **Verification Evidence**: Mechanically integrated at `663c4d97fb63abbfbe5032bdadac878d512bc477`; handoff hashes and exact owned paths verified. Merger replay: typecheck/build exit 0; source and emitted unit suites each 205/205; source port conformance 44/44. See `.agent-work/2026-10-25/uc03-t062-t066-preflight/t063-green-evidence.md`.
 
 - [ ] T064 [US3] Add runnable canonical-cutover RED tests and a fail-closed versioned selector in src/contracts/foundation/uc03/cutover-v02.ts and tests/runtime/contract/atomic-admission-cutover.test.ts.
   - **Owner**: Tai / shared-foundation integration lane.
