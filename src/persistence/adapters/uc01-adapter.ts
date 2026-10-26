@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { BudgetTracker } from '../accounting.ts';
 import type { DurableStore } from '../store.ts';
 import type { TaskState } from '../contracts.ts';
@@ -163,7 +164,7 @@ export class UC01AccountingAdapter {
     ];
 
     const stepIndex = basePlan.findIndex((p) => p.id === stepName);
-    const stepDigest = typeof stepData === 'string' ? stepData : `evidence-${stepName}-${Date.now()}`;
+    const stepDigest = typeof stepData === 'string' ? stepData : `sha256:${createHash('sha256').update(JSON.stringify(stepData ?? {})).digest('hex')}`;
     const updatedPlan = basePlan.map((p, idx) => {
       if (p.id === stepName) {
         return {
@@ -173,7 +174,7 @@ export class UC01AccountingAdapter {
           completedAt: new Date().toISOString(),
         };
       }
-      if (idx === stepIndex + 1 && p.status === 'todo') {
+      if (stepIndex >= 0 && idx === stepIndex + 1 && p.status === 'todo') {
         return {
           ...p,
           status: 'doing' as const,

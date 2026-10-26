@@ -26,7 +26,8 @@ export class UC03ReplanExhaustionError extends Error {
 export class UC03AccountingAdapter {
   private readonly budgetTracker: BudgetTracker;
   readonly durableStore?: DurableStore | undefined;
-  private replanCount = 0;
+  private replanCountsByTask = new Map<string, number>();
+  private totalReplans = 0;
 
   constructor(budgetTracker: BudgetTracker, durableStore?: DurableStore) {
     this.budgetTracker = budgetTracker;
@@ -88,12 +89,13 @@ export class UC03AccountingAdapter {
     estimatedTokens: number,
     currentReplanCount?: number
   ): Promise<UC03ReservationResult> {
-    const count = currentReplanCount ?? this.replanCount;
+    const taskCount = this.replanCountsByTask.get(taskId) ?? 0;
+    const count = Math.max(taskCount, currentReplanCount ?? 0);
     if (count >= 3) {
       throw new UC03ReplanExhaustionError('Replan limit reached: maximum 3 replans permitted');
     }
 
-    const requestId = `replan-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const requestId = `replan-${taskId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     this.budgetTracker.reserve(
       requestId,
       [
@@ -102,7 +104,8 @@ export class UC03AccountingAdapter {
       ],
       { taskId, runId }
     );
-    this.replanCount = count + 1;
+    this.totalReplans++;
+    this.replanCountsByTask.set(taskId, count + 1);
 
     return {
       reservationId: requestId,
@@ -128,7 +131,7 @@ export class UC03AccountingAdapter {
       consumedTokens: this.budgetTracker.getConsumed('task', 'tokens'),
       consumedCost: this.budgetTracker.getConsumed('task', 'cost'),
       consumedRepair: this.budgetTracker.getConsumed('task', 'repair'),
-      consumedReplan: this.replanCount,
+      consumedReplan: this.totalReplans,
     };
   }
 
