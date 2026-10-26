@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -297,7 +297,7 @@ test('UC-04 / UC-05: DurableApprovalStore Adapter', async (t) => {
     assert.equal(invalidEventRes.safe.safeReasonCode, 'invalid-event');
   });
 
-  await t.test('ensures idempotent resolution retry with matching responseKey', () => {
+  await t.test('rejects a repeated resolution once the task is no longer waiting', () => {
     const store = new DurableApprovalStore({ storageDir: tempDir });
     const res2 = store.resolvePending({
       expectedRequestVersion: 1,
@@ -316,5 +316,97 @@ test('UC-04 / UC-05: DurableApprovalStore Adapter', async (t) => {
     });
 
     assert.equal(res2.safe.outcome, 'conflict');
+    assert.equal(res2.safe.safeReasonCode, 'task-not-waiting');
+  });
+
+  await t.test('ensures idempotent resolution retry with matching responseKey while waiting', () => {
+    const store = new DurableApprovalStore({ storageDir: tempDir });
+    const localTaskId = 'task-idempotent-retry';
+    const localDecisionId = 'dec-idempotent-retry';
+    store.createPendingAndPause({
+      taskId: localTaskId,
+      request: {
+        ...sampleRequest,
+        taskId: localTaskId,
+        decisionId: localDecisionId,
+        binding: { ...sampleRequest.binding, taskId: localTaskId, decisionId: localDecisionId },
+      },
+      binding: { ...sampleRequest.binding, taskId: localTaskId, decisionId: localDecisionId },
+    });
+
+    const trustedResponse = {
+      schemaVersion: 'uc05-approval/0.1-draft' as const,
+      decisionId: localDecisionId,
+      responseKey: 'resp-matched-key',
+      expectedRequestVersion: 1,
+      operatorChannelRef: 'channel-local',
+      decision: 'approved' as const,
+      safeReasonCode: 'developer-approved',
+      decidedAt: '2026-10-26T07:08:00.000Z',
+      eventId: 'ev-idempotent-matched',
+    };
+
+    const firstRes = store.resolvePending({
+      expectedRequestVersion: 1,
+      trustedOperator,
+      trustedResponse,
+    });
+    assert.equal(firstRes.safe.outcome, 'ok');
+
+    // Reset control to waiting with pendingDecisionId to verify idempotent matching-key path
+    const controlPath = join(tempDir, 'tasks', localTaskId, 'approvals', 'control.json');
+    const control = JSON.parse(readFileSync(controlPath, 'utf8'));
+    control.mode = 'waiting';
+    control.pendingDecisionId = localDecisionId;
+    control.continuationRef = 'cont-1';
+    control.reasonCode = 'waiting-approval';
+    writeFileSync(controlPath, JSON.stringify(control, null, 2), 'utf8');
+
+    const retryRes = store.resolvePending({
+      // debug
+
+      expectedRequestVersion: 1,
+      trustedOperator,
+      trustedResponse,
+    });
+    assert.equal(retryRes.safe.outcome, 'ok');
+    assert.equal(retryRes.safe.safeReasonCode, 'already-resolved');
+  });
+
+  await t.test('denies appendEvent when event taskId does not match target task', () => {
+    const store = new DurableApprovalStore({ storageDir: tempDir });
+    const res = store.appendEvent('task-mismatch-target', {
+      schemaVersion: 'uc05-approval/0.1-draft',
+      eventId: 'event-mismatch-1',
+      taskId: 'task-other-id',
+      runId: 'run-1',
+      decisionId,
+      directionId: null,
+      claimId: null,
+      type: 'human-resolution-recorded',
+      outcome: 'ok',
+      policyRef: {
+        policyId: 'policy-1',
+        policyVersion: '1.0.0',
+        configId: 'config-1',
+        configVersion: '1.0.0',
+      },
+      safeReasonCode: 'developer-approved',
+      timestamp: '2026-10-26T07:00:00.000Z',
+    });
+    assert.equal(res.ok, false);
+    assert.equal(res.error, 'denied');
+    assert.equal(res.reason, 'task-id-mismatch');
+  });
+
+  await t.test('throws when invalid policy profile is supplied', () => {
+    assert.throws(
+      () => new DurableApprovalStore({ storageDir: tempDir, profile: null }),
+      /Invalid policy profile/
+    );
+    assert.throws(
+      () => new DurableApprovalStore({ storageDir: tempDir, profile: '' }),
+      /Invalid policy profile/
+    );
   });
 });

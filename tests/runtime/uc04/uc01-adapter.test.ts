@@ -159,4 +159,25 @@ test('UC-04 / UC-01: Accounting & Recovery Adapter', async (t) => {
     assert.ok(latestCheckpoint);
     assert.equal(latestCheckpoint.stateVersion, 2);
   });
+
+  await t.test('saveCheckpoint rejects invalid stepData with validation error', async () => {
+    const budgetTracker = new BudgetTracker(initialLedgers);
+    const store = new DurableStore(tempDir);
+    const adapter = new UC01AccountingAdapter(budgetTracker, store);
+
+    await assert.rejects(
+      async () => {
+        await adapter.saveCheckpoint(taskId, 'intake', undefined);
+      },
+      /Invalid stepData/
+    );
+    const circular: Record<string, unknown> = {};
+    circular['self'] = circular;
+    await assert.rejects(
+      async () => {
+        await adapter.saveCheckpoint(taskId, 'intake', circular);
+      },
+      /Invalid stepData/
+    );
+  });
 });

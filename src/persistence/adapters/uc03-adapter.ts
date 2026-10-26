@@ -23,12 +23,14 @@ export class UC03ReplanExhaustionError extends Error {
   }
 }
 
+/** Accounting and recovery adapter connecting UC-03 repair workflows with UC-04 persistence. */
 export class UC03AccountingAdapter {
   private readonly budgetTracker: BudgetTracker;
   readonly durableStore?: DurableStore | undefined;
   private replanCountsByTask = new Map<string, number>();
   private totalReplans = 0;
 
+  /** Initializes UC03AccountingAdapter with BudgetTracker and optional DurableStore. */
   constructor(budgetTracker: BudgetTracker, durableStore?: DurableStore) {
     this.budgetTracker = budgetTracker;
     this.durableStore = durableStore;
@@ -44,6 +46,7 @@ export class UC03AccountingAdapter {
     return parsed !== null && parsed === taskId;
   }
 
+  /** Reserves tokens and cost allowance for an investigation phase. */
   async reserveInvestigation(
     taskId: string,
     runId: string,
@@ -68,6 +71,7 @@ export class UC03AccountingAdapter {
     };
   }
 
+  /** Reserves tokens, cost, and a repair attempt allowance for a code repair attempt. */
   async reserveRepairAttempt(
     taskId: string,
     runId: string,
@@ -93,12 +97,18 @@ export class UC03AccountingAdapter {
     };
   }
 
+  /** Reserves a replan allowance, enforcing maximum 3 replans boundary. */
   async reserveReplan(
     taskId: string,
     runId: string,
     estimatedTokens: number,
     currentReplanCount: number
   ): Promise<UC03ReservationResult> {
+    if (!Number.isSafeInteger(currentReplanCount) || currentReplanCount < 0) {
+      throw new RangeError(
+        `currentReplanCount must be a non-negative safe integer; received ${currentReplanCount}`
+      );
+    }
     const taskCount = this.replanCountsByTask.get(taskId) ?? 0;
     const count = Math.max(taskCount, currentReplanCount);
     if (count >= 3) {
@@ -125,6 +135,7 @@ export class UC03AccountingAdapter {
     };
   }
 
+  /** Settles an attempt against actual provider usage, falling back to reservation ceilings. */
   async settleAttempt(
     reservationId: string,
     observedUsage: { readonly tokens?: number; readonly cost?: number }
@@ -149,18 +160,19 @@ export class UC03AccountingAdapter {
       costUsd: observedUsage.cost ?? reservedCost ?? 0,
     });
 
+    const task = this.parseTaskId(reservationId);
+    const taskReplans = task ? (this.replanCountsByTask.get(task) ?? 0) : this.totalReplans;
+
     return {
       reservationId,
       consumedTokens: this.budgetTracker.getConsumed('task', 'tokens'),
       consumedCost: this.budgetTracker.getConsumed('task', 'cost'),
       consumedRepair: this.budgetTracker.getConsumed('task', 'repair'),
-      consumedReplan: (() => {
-      const task = this.parseTaskId(reservationId);
-      return task ? (this.replanCountsByTask.get(task) ?? 0) : this.totalReplans;
-    })(),
+      consumedReplan: taskReplans,
     };
   }
 
+  /** Handles interrupted or timed-out call by retaining allowance to prevent blind retry. */
   handleInterruptedCall(taskId: string, _runId: string, reservationId: string): void {
     for (const ledger of this.budgetTracker.getLedgers()) {
       const copy = [...ledger.reservations];
@@ -175,6 +187,7 @@ export class UC03AccountingAdapter {
     }
   }
 
+  /** Reconciles all pending reservations for a given task owner. */
   reconcileTaskBudgets(taskId: string, runId: string): {
     readonly taskId: string;
     readonly runId: string;

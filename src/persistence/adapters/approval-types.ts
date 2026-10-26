@@ -1,5 +1,14 @@
 import { dirname, join } from 'node:path';
-import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  closeSync,
+  existsSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  renameSync,
+  rmSync,
+  writeSync,
+} from 'node:fs';
 import type { StoreResponse } from '../../approvals/service-data.ts';
 import {
   type ApprovalRequestRecord,
@@ -65,6 +74,7 @@ export interface StorePayload {
   readonly events?: readonly unknown[];
 }
 
+/** Constructs a success StoreResponse envelope. */
 export function makeResponse<T>(
   c: Pick<ApprovalTaskControl, 'taskId' | 'version'>,
   outcome: SafeOperationOutcome,
@@ -88,6 +98,7 @@ export function makeResponse<T>(
   return { safe, value };
 }
 
+/** Constructs a failure StoreResponse envelope. */
 export const makeFailure = <T>(
   taskId: string,
   v: number,
@@ -97,12 +108,17 @@ export const makeFailure = <T>(
   rV: number | null = null
 ): StoreResponse<T> => makeResponse<T>({ taskId, version: v }, o, code, null, dId, rV);
 
+/** Validates that an identifier does not traverse directory bounds. */
 export const isSafeId = (id: string): boolean =>
   typeof id === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(id) && !id.includes('..');
 
+/** Resolves the approvals directory for a task. */
 export const taskDir = (storageDir: string, taskId: string): string => join(storageDir, 'tasks', taskId, 'approvals');
+
+/** Resolves the storage directory for a decision. */
 export const decisionDir = (storageDir: string, dId: string): string => join(storageDir, 'decisions', dId);
 
+/** Generates initial default ApprovalTaskControl for a newly observed task. */
 export function makeInitialControl(taskId: string): ApprovalTaskControl {
   return {
     schemaVersion: UC05_APPROVAL_SCHEMA_VERSION,
@@ -119,6 +135,7 @@ export function makeInitialControl(taskId: string): ApprovalTaskControl {
   };
 }
 
+/** Safely parses persisted task history into structured records. */
 export function parseStoredHistory(raw: unknown, taskId: string): StoreResponse<StoredHistory> {
   if (!raw || typeof raw !== 'object') return makeFailure<StoredHistory>(taskId, 1, 'unavailable', 'read-error');
   const checkArr = (v: unknown) => {
@@ -134,18 +151,37 @@ export function parseStoredHistory(raw: unknown, taskId: string): StoreResponse<
   });
 }
 
+/** Atomically writes JSON to disk with fsync durability for POSIX reliability. */
 export function writeJsonAtomic(path: string, data: unknown): void {
-  mkdirSync(dirname(path), { recursive: true });
+  const dir = dirname(path);
+  mkdirSync(dir, { recursive: true });
   const tmp = `${path}.${Date.now()}.${Math.random().toString(36).slice(2, 6)}.tmp`;
   try {
-    writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf8');
+    const fd = openSync(tmp, 'w');
+    try {
+      writeSync(fd, Buffer.from(JSON.stringify(data, null, 2), 'utf8'));
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
     renameSync(tmp, path);
+    try {
+      const dirFd = openSync(dir, 'r');
+      try {
+        fsyncSync(dirFd);
+      } finally {
+        closeSync(dirFd);
+      }
+    } catch {
+      // Ignore directory fsync errors on platforms where unsupported
+    }
   } catch (err: unknown) {
     rmSync(tmp, { force: true });
     throw err;
   }
 }
 
+/** Evaluates preconditions before applying a human resolution. */
 export function checkResolvePreconditions(
   currentControl: ApprovalTaskControl,
   request: ApprovalRequestRecord,
@@ -159,6 +195,7 @@ export function checkResolvePreconditions(
   return null;
 }
 
+/** Evaluates preconditions before recording developer direction. */
 export function checkDirectionPreconditions(
   currentControl: ApprovalTaskControl,
   payload: StorePayload
@@ -169,6 +206,7 @@ export function checkDirectionPreconditions(
   return null;
 }
 
+/** Evaluates preconditions before replacing a stale pending approval request. */
 export function checkReplacePreconditions(
   currentControl: ApprovalTaskControl,
   replacement: ApprovalRequestRecord,

@@ -37,20 +37,31 @@ import {
   writeJsonAtomic,
 } from './approval-types.ts';
 
+/** Durable file-backed approval store adapter implementing UC-05 contracts. */
 export class DurableApprovalStore implements ApprovalStore {
   readonly provenance = 'mock' as const;
   private readonly storageDir: string;
   readonly durableStore?: DurableStore | undefined;
   readonly profile: PolicyProfile;
 
+  /** Initializes DurableApprovalStore with isolated directory and policy profile. */
   constructor(options: DurableApprovalStoreOptions) {
     this.storageDir = options.storageDir;
     this.durableStore = options.durableStore;
-    const profRes = options.profile ? validatePolicyProfile(options.profile) : null;
-    this.profile = profRes && profRes.ok ? profRes.value : DEFAULT_POLICY_PROFILE;
+    if (options.profile === undefined) {
+      this.profile = DEFAULT_POLICY_PROFILE;
+    } else {
+      const profRes = validatePolicyProfile(options.profile);
+      if (!profRes.ok) {
+        const msg = profRes.errors.map((e) => e.message).join('; ');
+        throw new Error(`Invalid policy profile: ${msg}`);
+      }
+      this.profile = profRes.value;
+    }
     mkdirSync(this.storageDir, { recursive: true });
   }
 
+  /** Loads or initializes task control metadata. */
   loadTaskControl(taskId: string): StoreResponse<ApprovalTaskControl> {
     if (!isSafeId(taskId)) return makeFailure<ApprovalTaskControl>('unknown', 1, 'denied', 'invalid-id');
     const filePath = join(taskDir(this.storageDir, taskId), 'control.json');
@@ -70,6 +81,7 @@ export class DurableApprovalStore implements ApprovalStore {
     }
   }
 
+  /** Reads an approval request record by decisionId. */
   readRequest(decisionId: string): StoreResponse<ApprovalRequestRecord> {
     if (!isSafeId(decisionId)) return makeFailure<ApprovalRequestRecord>('unknown', 1, 'denied', 'invalid-id', decisionId);
     const filePath = join(decisionDir(this.storageDir, decisionId), 'request.json');
@@ -86,6 +98,7 @@ export class DurableApprovalStore implements ApprovalStore {
     }
   }
 
+  /** Reads resolution and direction history for a task. */
   readHistory(taskId: string): StoreResponse<StoredHistory> {
     if (!isSafeId(taskId)) return makeFailure<StoredHistory>('unknown', 1, 'denied', 'invalid-id');
     const filePath = join(taskDir(this.storageDir, taskId), 'history.json');
@@ -101,6 +114,7 @@ export class DurableApprovalStore implements ApprovalStore {
     }
   }
 
+  /** Reads decision events for a task. */
   readEvents(taskId: string): StoreResponse<readonly DecisionEvent[]> {
     if (!isSafeId(taskId)) return makeFailure<readonly DecisionEvent[]>('unknown', 1, 'denied', 'invalid-id');
     const filePath = join(taskDir(this.storageDir, taskId), 'events.json');
@@ -115,6 +129,7 @@ export class DurableApprovalStore implements ApprovalStore {
     }
   }
 
+  /** Creates a pending approval request and transitions task to waiting mode. */
   createPendingAndPause(input: unknown): StoreResponse<ApprovalRequestRecord> {
     if (!input || typeof input !== 'object') return makeFailure<ApprovalRequestRecord>('unknown', 1, 'denied', 'invalid-input');
 
@@ -168,6 +183,7 @@ export class DurableApprovalStore implements ApprovalStore {
     return makeResponse(updatedControl, 'ok', 'pending-created', request, request.decisionId, request.requestVersion);
   }
 
+  /** Resolves a pending decision with trusted operator decision. */
   resolvePending(input: unknown): StoreResponse<HumanResolution> {
     if (!input || typeof input !== 'object') return makeFailure<HumanResolution>('unknown', 1, 'denied', 'invalid-input');
 
@@ -236,9 +252,10 @@ export class DurableApprovalStore implements ApprovalStore {
 
     writeJsonAtomic(join(taskDir(this.storageDir, request.taskId), 'control.json'), updatedControl);
 
-    return makeResponse(updatedControl, 'ok', 'pending-resolved', resolution, decisionId, request.requestVersion);
+    return makeResponse(updatedControl, 'ok', priorResolution !== undefined ? 'already-resolved' : 'pending-resolved', resolution, decisionId, request.requestVersion);
   }
 
+  /** Records an operator direction to pause, resume, or end task execution. */
   recordDirection(input: unknown): StoreResponse<DeveloperDirection> {
     if (!input || typeof input !== 'object') return makeFailure<DeveloperDirection>('unknown', 1, 'denied', 'invalid-input');
 
@@ -305,6 +322,7 @@ export class DurableApprovalStore implements ApprovalStore {
     return makeResponse(updatedControl, 'ok', 'direction-recorded', direction);
   }
 
+  /** Replaces a stale pending approval request with a refreshed request. */
   replaceStalePending(input: unknown): StoreResponse<ApprovalRequestRecord> {
     if (!input || typeof input !== 'object') return makeFailure<ApprovalRequestRecord>('unknown', 1, 'denied', 'invalid-input');
 
@@ -368,10 +386,14 @@ export class DurableApprovalStore implements ApprovalStore {
     return makeResponse(updatedControl, 'ok', 'stale-pending-replaced', replacement, replacement.decisionId, replacement.requestVersion);
   }
 
-  private appendEvent(taskId: string, event: unknown): EventAppendResult {
+  /** Appends a decision event to the task audit log. */
+  appendEvent(taskId: string, event: unknown): EventAppendResult {
     if (event === undefined) return { ok: true, status: 'skipped' };
     const valid = validateDecisionEvent(event, this.profile);
     if (!valid.ok) return { ok: false, error: 'denied', reason: 'invalid-event' };
+    if (valid.value.taskId !== taskId) {
+      return { ok: false, error: 'denied', reason: 'task-id-mismatch' };
+    }
 
     const res = this.readEvents(taskId);
     if (res.safe.outcome !== 'ok' || !res.value) {

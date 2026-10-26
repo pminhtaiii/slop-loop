@@ -197,4 +197,30 @@ test('UC-04 / UC-03: Accounting & Recovery Adapter', async (t) => {
     const settle2 = await adapter.settleAttempt(replan2.reservationId, { tokens: 100 });
     assert.equal(settle2.consumedReplan, 1);
   });
+
+  await t.test('reserveReplan rejects invalid currentReplanCount with RangeError', async () => {
+    const budgetTracker = new BudgetTracker(initialLedgers);
+    const store = new DurableStore(tempDir);
+    const adapter = new UC03AccountingAdapter(budgetTracker, store);
+
+    await assert.rejects(
+      async () => {
+        await adapter.reserveReplan('task-1', 'run-1', 100, -1);
+      },
+      (err: Error) => {
+        assert.ok(err instanceof RangeError);
+        assert.match(err.message, /non-negative safe integer/);
+        return true;
+      }
+    );
+    await assert.rejects(
+      async () => {
+        await adapter.reserveReplan('task-1', 'run-1', 100, 1.5);
+      },
+      (err: Error) => {
+        assert.ok(err instanceof RangeError);
+        return true;
+      }
+    );
+  });
 });

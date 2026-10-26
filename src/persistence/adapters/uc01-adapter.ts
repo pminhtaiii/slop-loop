@@ -52,15 +52,42 @@ export interface UC01ReconciliationSummary {
   readonly blindReplayPrevented: true;
 }
 
+/** Validates and digests step payload into a SHA-256 evidence reference. */
+export function computeStepDigest(stepData: unknown): string {
+  if (typeof stepData === 'string') {
+    if (/^sha256:[0-9a-f]{64}$/i.test(stepData)) {
+      return stepData;
+    }
+    return `sha256:${createHash('sha256').update(stepData).digest('hex')}`;
+  }
+  if (stepData === undefined) {
+    throw new Error('Invalid stepData: stepData cannot be undefined');
+  }
+  let serialized: string;
+  try {
+    const s = JSON.stringify(stepData);
+    if (s === undefined) {
+      throw new Error('Invalid stepData: serialization produced undefined');
+    }
+    serialized = s;
+  } catch (err) {
+    throw new Error(`Invalid stepData: JSON serialization failed: ${(err as Error).message}`);
+  }
+  return `sha256:${createHash('sha256').update(serialized).digest('hex')}`;
+}
+
+/** Accounting and recovery adapter connecting UC-01 triage with UC-04 persistence. */
 export class UC01AccountingAdapter {
   private readonly budgetTracker: BudgetTracker;
   private readonly durableStore?: DurableStore | undefined;
 
+  /** Initializes UC01AccountingAdapter with BudgetTracker and optional DurableStore. */
   constructor(budgetTracker: BudgetTracker, durableStore?: DurableStore) {
     this.budgetTracker = budgetTracker;
     this.durableStore = durableStore;
   }
 
+  /** Reserves token and cost budget for a UC-01 triage operation. */
   async reserve(context: UC01OperationContext, ceiling: UC01Ceiling): Promise<UC01ReserveResult> {
     const availableTokens = this.budgetTracker.getAvailable('task', 'tokens');
     if (availableTokens < ceiling.totalTokens) {
@@ -95,6 +122,7 @@ export class UC01AccountingAdapter {
     }
   }
 
+  /** Settles actual token and cost usage against a reserved ceiling. */
   async settle(
     context: UC01OperationContext,
     reservationRef: string,
@@ -126,6 +154,7 @@ export class UC01AccountingAdapter {
     };
   }
 
+  /** Reconciles unconfirmed call reservations without duplicate spend. */
   reconcileAfterInterrupt(taskId: string, runId: string): UC01ReconciliationSummary {
     let uncertainCount = 0;
     for (const ledger of this.budgetTracker.getLedgers()) {
@@ -146,6 +175,7 @@ export class UC01AccountingAdapter {
     };
   }
 
+  /** Persists task checkpoint with step progress and budget state. */
   async saveCheckpoint(
     taskId: string,
     stepName: 'intake' | 'clarify' | 'assess' | 'recommend',
@@ -164,9 +194,7 @@ export class UC01AccountingAdapter {
     ];
 
     const stepIndex = basePlan.findIndex((p) => p.id === stepName);
-    const stepDigest = typeof stepData === 'string' && /^sha256:[0-9a-f]{64}$/i.test(stepData)
-      ? stepData
-      : `sha256:${createHash('sha256').update(typeof stepData === 'string' ? stepData : JSON.stringify(stepData ?? {})).digest('hex')}`;
+    const stepDigest = computeStepDigest(stepData);
     const updatedPlan = basePlan.map((p, idx) => {
       if (p.id === stepName) {
         return {
