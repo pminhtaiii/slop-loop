@@ -1994,7 +1994,9 @@ test('Section 10 Case 10: Settlement failure after patch records observed-unsett
   });
   const originalObservedReconcile = lostRecoveryHarness.journal.reconcileObservedOutcome.bind(lostRecoveryHarness.journal);
   let loseRecoveryResponse = true;
+  const submittedRecoveryReceipts: AttemptReconciliationReceiptV02[] = [];
   lostRecoveryHarness.journal.reconcileObservedOutcome = async (receipt) => {
+    submittedRecoveryReceipts.push(receipt);
     const result = await originalObservedReconcile(receipt);
     if (loseRecoveryResponse && result.outcome === 'settled') {
       loseRecoveryResponse = false;
@@ -2011,21 +2013,47 @@ test('Section 10 Case 10: Settlement failure after patch records observed-unsett
   assert.equal(committedRecoverySnapshot.attempts[0]?.status, 'settled');
   assert.equal(committedRecoverySnapshot.claims[0]?.status, 'settled');
   assert.equal(committedRecoverySnapshot.activeClaimId, null);
+  assert.equal(committedRecoverySnapshot.reconciliations.length, 1);
+  assert.equal(committedRecoverySnapshot.reconciliations[0]?.reconciliationId, submittedRecoveryReceipts[0]?.reconciliationId);
+  assert.equal(committedRecoverySnapshot.reconciliations[0]?.receiptDigest, submittedRecoveryReceipts[0]?.reconciliationDigest);
+  assert.equal(committedRecoverySnapshot.mode, 'paused');
+  assert.equal(committedRecoverySnapshot.holdRef, 'pause-lost-observed-recovery-010');
   assert.equal((await lostRecoveryHarness.journal.loadTask(lostRecoveryHarness.context.taskId))?.node, 'Verify');
   assert.equal(lostRecoveryHarness.journal.getLedgers().find((ledger) => ledger.kind === 'repair')?.consumed, 1);
   assert.equal(lostRecoveryHarness.effectCount, 1);
   assert.equal(lostRecoveryHarness.manager.hasActiveWriterLease(lostRecoveryHarness.context.workspaceId), true,
     'The local receiver keeps its workspace lease after the recovery commit reply is lost');
-  await assert.rejects(
-    () => lostRecoveryHarness.tools.recoverPatchOutcome(lostRecoveryAttempt.attemptId),
-    /STALE_CURRENT_SNAPSHOT/,
-    'A recovery retry prepares current versions and cannot replay its lost committed receipt',
-  );
+  const retriedRecovery = await lostRecoveryHarness.tools.recoverPatchOutcome(lostRecoveryAttempt.attemptId);
+  assert.deepEqual(retriedRecovery, {
+    outcome: 'settled',
+    receiptId: submittedRecoveryReceipts[0]?.reconciliationId,
+  });
+  assert.equal(submittedRecoveryReceipts.length, 2);
+  assert.deepEqual(submittedRecoveryReceipts[1], submittedRecoveryReceipts[0],
+    'A lost commit reply is retried with the exact same reconciliation receipt');
+  assert.equal(lostRecoveryHarness.recoveryReceipts.length, 1,
+    'A committed recovery retry does not prepare a new receipt from the settled snapshot');
   assert.deepEqual(lostRecoveryHarness.journal.getJournalSnapshot(), committedRecoverySnapshot);
   assert.deepEqual(lostRecoveryHarness.journal.getLedgers(), committedRecoveryLedgers);
   assert.equal(lostRecoveryHarness.journal.getLedgers().find((ledger) => ledger.kind === 'repair')?.consumed, 1);
-  assert.equal(lostRecoveryHarness.manager.hasActiveWriterLease(lostRecoveryHarness.context.workspaceId), true,
-    'The unrecoverable lost recovery reply retains the workspace writer lease');
+  assert.equal(lostRecoveryHarness.manager.hasActiveWriterLease(lostRecoveryHarness.context.workspaceId), false,
+    'The writer lease is released only after replay confirms settlement');
+  assert.equal(lostRecoveryHarness.effectCount, 1);
+  const settledTask = await lostRecoveryHarness.journal.loadTask(lostRecoveryHarness.context.taskId);
+  assert.ok(settledTask);
+  assert.equal(settledTask.node, 'Verify');
+  assert.equal(settledTask.stateVersion, lostRecoveryStateAtAttempt!.stateVersion + 1,
+    'Recovery finalizes Patch to Verify exactly once');
+  await assert.rejects(
+    () => lostRecoveryHarness.tools.recoverPatchOutcome(lostRecoveryAttempt.attemptId),
+    /PATCH_RECOVERY_NOT_FOUND/,
+    'A repeated final tool recovery cannot finalize the task or charge again',
+  );
+  assert.deepEqual(await lostRecoveryHarness.journal.reconcileObservedOutcome(submittedRecoveryReceipts[0]!), {
+    outcome: 'settled', receiptId: submittedRecoveryReceipts[0]!.reconciliationId,
+  }, 'A duplicate final reconciliation reply remains idempotent');
+  assert.deepEqual(lostRecoveryHarness.journal.getJournalSnapshot(), committedRecoverySnapshot);
+  assert.deepEqual(lostRecoveryHarness.journal.getLedgers(), committedRecoveryLedgers);
   assert.equal(lostRecoveryHarness.effectCount, 1);
 });
 
