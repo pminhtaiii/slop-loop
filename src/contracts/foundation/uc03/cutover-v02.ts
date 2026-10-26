@@ -17,6 +17,7 @@
 import type { TaskState } from './types.ts';
 import type { StatePortV02, RepositoryPortV02 } from './ports-v02.ts';
 import { isPlainObject } from './validation/common.ts';
+import { validateRepositoryAdmissionV02 } from './admission-v02/repository.ts';
 
 export const CANONICAL_V02_SCHEMA_VERSION = '0.2.0' as const;
 
@@ -52,6 +53,8 @@ export function getMissingMigrationCheckpoints(checkpoints?: Iterable<string>): 
 export type CutoverRejectionCode =
   | 'MISSING_ADMISSION_CONTEXT'
   | 'LEGACY_V01_CONTEXT_REJECTED'
+  | 'INVALID_ADMISSION_CONTEXT'
+  | 'V02_COMPOSITION_REQUIRED'
   | 'RAW_OLD_CLAIM_ID_REJECTED'
   | 'OPEN_CLAIM_BLOCKS_ADMISSION'
   | 'MISSING_MIGRATION_CHECKPOINTS'
@@ -127,15 +130,32 @@ function hasOpenClaim(options: VersionedAdmissionSelectionOptions): boolean {
   return false;
 }
 
+function hasVersionedPort(value: unknown, methods: readonly string[]): boolean {
+  if (!isPlainObject(value)) return false;
+  try {
+    const marker = Object.getOwnPropertyDescriptor(value, 'executionGuardApiVersion');
+    if (marker === undefined || !('value' in marker) || marker.value !== '0.2.0') return false;
+    return methods.every((method) => {
+      let current: object | null = value;
+      while (current) {
+        const descriptor = Object.getOwnPropertyDescriptor(current, method);
+        if (descriptor !== undefined) return 'value' in descriptor && typeof descriptor.value === 'function';
+        current = Object.getPrototypeOf(current);
+      }
+      return false;
+    });
+  } catch {
+    return false;
+  }
+}
+
 export function selectVersionedAdmission(
   options: VersionedAdmissionSelectionOptions
 ): VersionedAdmissionDecision {
   // 1. Raw old claim ID check
   if (
     options.rawClaimId !== undefined ||
-    (isPlainObject(options.context) &&
-      'claimId' in options.context &&
-      !('schemaVersion' in options.context && options.context.schemaVersion === CANONICAL_V02_SCHEMA_VERSION))
+    (isPlainObject(options.context) && 'claimId' in options.context)
   ) {
     return {
       admitted: false,
@@ -185,6 +205,28 @@ export function selectVersionedAdmission(
     };
   }
 
+  const contextValidation = validateRepositoryAdmissionV02(options.context);
+  if (!contextValidation.ok) {
+    return {
+      admitted: false,
+      reason: 'Admission context is not a complete, valid v0.2 repository record',
+      code: 'INVALID_ADMISSION_CONTEXT',
+      zeroEffects: true,
+    };
+  }
+
+  if (
+    !hasVersionedPort(options.statePort, ['loadTask', 'claim', 'beginAttempt', 'recordOutcome']) ||
+    !hasVersionedPort(options.repositoryPort, ['applyPatch', 'runCommand', 'runTests'])
+  ) {
+    return {
+      admitted: false,
+      reason: 'Canonical selection requires explicit v0.2 state and repository ports; effects still require ExecutionGuardV02',
+      code: 'V02_COMPOSITION_REQUIRED',
+      zeroEffects: true,
+    };
+  }
+
   // 4. Open claim check
   if (hasOpenClaim(options)) {
     return {
@@ -222,9 +264,9 @@ export function selectVersionedAdmission(
   return {
     admitted: true,
     selectedVersion: '0.2.0',
-    reason: 'Canonical v0.2 atomic admission cutover admitted for controlled mock composition',
+    reason: 'Canonical v0.2 contract selected; effects still require ExecutionGuardV02 with validated context and ports',
     code: 'CANONICAL_V02_ADMITTED',
-    zeroEffects: false,
+    zeroEffects: true,
   };
 }
 
@@ -242,57 +284,8 @@ export class VersionedCutoverSelectorV02 {
   select(options: VersionedAdmissionSelectionOptions): VersionedAdmissionDecision {
     return selectVersionedAdmission({
       ...options,
-      neutral: options.neutral ?? this.neutral,
+      neutral: this.neutral,
     });
-  }
-
-  async executeIfAdmitted<T>(
-    options: VersionedAdmissionSelectionOptions,
-    action: () => Promise<T>
-  ): Promise<{ readonly admitted: boolean; readonly result?: T | undefined; readonly decision: VersionedAdmissionDecision }> {
-    const decision = this.select(options);
-    if (!decision.admitted) {
-      return { admitted: false, decision };
-    }
-    const result = await action();
-    return { admitted: true, result, decision };
-  }
-
-  async executeGuardedAction<TResult>(options: {
-    readonly guard: {
-      validateAndExecute(
-        action: unknown,
-        state: unknown,
-        context?: unknown
-      ): Promise<TResult>;
-    };
-    readonly action: unknown;
-    readonly taskState: unknown;
-    readonly context: unknown;
-    readonly checkpoints?: Iterable<string> | undefined;
-    readonly statePort?: unknown;
-    readonly repositoryPort?: unknown;
-  }): Promise<{
-    readonly admitted: boolean;
-    readonly result?: TResult | undefined;
-    readonly decision: VersionedAdmissionDecision;
-  }> {
-    const decision = this.select({
-      context: options.context,
-      taskState: options.taskState,
-      checkpoints: options.checkpoints ?? REQUIRED_MIGRATION_CHECKPOINTS,
-      statePort: options.statePort,
-      repositoryPort: options.repositoryPort,
-    });
-    if (!decision.admitted) {
-      return { admitted: false, decision };
-    }
-    const result = await options.guard.validateAndExecute(
-      options.action,
-      options.taskState,
-      options.context
-    );
-    return { admitted: true, result, decision };
   }
 }
 

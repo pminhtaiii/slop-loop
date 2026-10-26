@@ -22,6 +22,7 @@ import assert from 'node:assert/strict';
 import {
   type TaskState,
   type AdmissionContextV02,
+  type RepositoryAdmissionContextV02,
   type ClaimReceiptV02,
   isAdmittedForProduction,
   validateAdmissionV02,
@@ -163,20 +164,8 @@ test('Zero effects: missing or empty admission context is rejected fail-closed',
     assert.equal(decision.code, 'MISSING_ADMISSION_CONTEXT');
     assert.equal(decision.zeroEffects, true);
 
-    let executed = false;
-    const executionResult = await selector.executeIfAdmitted(
-      {
-        context: emptyContext,
-        checkpoints: REQUIRED_MIGRATION_CHECKPOINTS,
-      },
-      async () => {
-        executed = true;
-        return 'executed';
-      }
-    );
-
-    assert.equal(executed, false, 'Action must not execute on missing context');
-    assert.equal(executionResult.admitted, false);
+    assert.equal(Reflect.get(selector, 'executeIfAdmitted'), undefined);
+    assert.equal(Reflect.get(selector, 'executeGuardedAction'), undefined);
     assert.equal(repo.commands.length, 0);
     assert.equal(repo.patches.length, 0);
     assert.equal(repo.tests.length, 0);
@@ -341,27 +330,33 @@ test('Positive cutover: fully migrated v0.2 mock composition reaches canonical a
     'Canonical cutover must select version 0.2.0'
   );
   assert.equal(decision.code, 'CANONICAL_V02_ADMITTED');
-  assert.equal(decision.zeroEffects, false);
+  assert.equal(decision.zeroEffects, true, 'Selection has no effect authority');
 
-  let executed = false;
-  const execution = await selector.executeIfAdmitted(
-    {
-      context,
-      checkpoints: REQUIRED_MIGRATION_CHECKPOINTS,
-      statePort: port,
-      repositoryPort: repo,
-    },
-    async () => {
-      executed = true;
-      return 'admitted-execution-ok';
-    }
-  );
-  assert.equal(executed, true);
-  assert.equal(execution.admitted, true);
-  assert.equal(execution.result, 'admitted-execution-ok');
+  const forgedLabel = selector.select({
+    context: { schemaVersion: '0.2.0' },
+    checkpoints: REQUIRED_MIGRATION_CHECKPOINTS,
+  });
+  assert.equal(forgedLabel.admitted, false, 'A schema label alone is not a v0.2 admission record');
+  assert.equal(forgedLabel.code, 'INVALID_ADMISSION_CONTEXT');
+  assert.equal(forgedLabel.zeroEffects, true);
+
+  const missingPorts = selector.select({
+    context,
+    checkpoints: REQUIRED_MIGRATION_CHECKPOINTS,
+  });
+  assert.equal(missingPorts.admitted, false, 'A valid record without versioned public ports cannot select canonical execution');
+  assert.equal(missingPorts.code, 'V02_COMPOSITION_REQUIRED');
+  assert.equal(missingPorts.zeroEffects, true);
+  assert.equal(port.getJournalSnapshot().claims.length, 0);
+  assert.equal(repo.patches.length, 0);
+  assert.equal(repo.commands.length, 0);
+  assert.equal(repo.tests.length, 0);
+
+  assert.equal(Reflect.get(selector, 'executeIfAdmitted'), undefined);
+  assert.equal(Reflect.get(selector, 'executeGuardedAction'), undefined);
 });
 
-test('Actual effect boundary: executeGuardedAction dispatches to repository only when canonically admitted, and halts with zero effects on negative vectors', async () => {
+test('Actual effect boundary: canonical execution goes through ExecutionGuardV02 with explicit context and ports', async () => {
   const selector = new VersionedCutoverSelectorV02();
   const context = createTestRepositoryAdmissionContextV02();
   const port = createPort(context);
@@ -370,62 +365,36 @@ test('Actual effect boundary: executeGuardedAction dispatches to repository only
     executorIdentity: createTestExecutorIdentityV02({ payloadDigest: context.actionDigest }),
   });
 
-  const adaptedStatePort = Object.assign(Object.create(port), { executionGuardApiVersion: '0.2.0' as const });
-  const adaptedRepositoryPort = Object.assign(Object.create(repo), { executionGuardApiVersion: '0.2.0' as const });
-
   const guard = createExecutionGuardV02({
     ports: {
-      statePort: adaptedStatePort,
-      repositoryPort: adaptedRepositoryPort,
+      statePort: port,
+      repositoryPort: repo,
     },
   });
 
   const initialTaskState = createTestAdmissionTaskStateV02(context);
 
   // 1. Positive admission executes through the actual ExecutionGuardV02
-  const positiveResult = await selector.executeGuardedAction({
-    guard,
-    action: context.action,
-    taskState: initialTaskState,
-    context,
-    checkpoints: REQUIRED_MIGRATION_CHECKPOINTS,
-    statePort: port,
-    repositoryPort: repo,
-  });
-
-  assert.equal(positiveResult.admitted, true);
-  assert.equal((positiveResult.result as { outcome: string })?.outcome, 'success');
+  const selection = selector.select({ context, checkpoints: REQUIRED_MIGRATION_CHECKPOINTS, statePort: port, repositoryPort: repo });
+  assert.equal(selection.admitted, true);
+  const positiveResult = await guard.validateAndExecute(context.action, initialTaskState, context);
+  assert.equal(positiveResult.outcome, 'success');
   assert.equal(repo.patches.length, 1, 'Admitted action executed exactly once via repositoryPort');
 
-  // 2. Negative vector (missing checkpoints) rejects before guard dispatch
-  const missingResult = await selector.executeGuardedAction({
-    guard,
-    action: context.action,
-    taskState: initialTaskState,
-    context,
-    checkpoints: ['T038'], // Missing other 12 checkpoints
-    statePort: port,
-    repositoryPort: repo,
-  });
+  // Migration checkpoints select a contract version; they cannot execute an effect.
+  const missing = selector.select({ context, checkpoints: ['T038'], statePort: port, repositoryPort: repo });
+  assert.equal(missing.admitted, false);
+  assert.equal(missing.code, 'MISSING_MIGRATION_CHECKPOINTS');
+  assert.equal(repo.patches.length, 1, 'Selection does not dispatch another patch');
 
-  assert.equal(missingResult.admitted, false);
-  assert.equal(missingResult.decision.code, 'MISSING_MIGRATION_CHECKPOINTS');
-  assert.equal(repo.patches.length, 1, 'No additional patch dispatch on missing checkpoints');
-
-  // 3. Negative vector (legacy v0.1 context) rejects before guard dispatch
-  const legacyResult = await selector.executeGuardedAction({
-    guard,
-    action: context.action,
-    taskState: initialTaskState,
-    context: { schemaVersion: '0.1.0' },
-    checkpoints: REQUIRED_MIGRATION_CHECKPOINTS,
-    statePort: port,
-    repositoryPort: repo,
-  });
-
-  assert.equal(legacyResult.admitted, false);
-  assert.equal(legacyResult.decision.code, 'LEGACY_V01_CONTEXT_REJECTED');
-  assert.equal(repo.patches.length, 1, 'No additional patch dispatch on legacy context');
+  // The public guard itself rejects legacy/forged contexts before receiver calls.
+  const legacyResult = await guard.validateAndExecute(
+    context.action,
+    initialTaskState,
+    { schemaVersion: '0.1.0' } as unknown as RepositoryAdmissionContextV02,
+  );
+  assert.equal(legacyResult.outcome, 'denied');
+  assert.equal(repo.patches.length, 1, 'Legacy context does not reach the receiver');
 });
 
 test('Retained compatibility: neutral selector remains separately versioned test-only fail-closed with zero effects', async () => {
@@ -449,22 +418,8 @@ test('Retained compatibility: neutral selector remains separately versioned test
   assert.equal(decision.neutral, true);
   assert.equal(decision.zeroEffects, true);
 
-  let executed = false;
-  const executionResult = await neutralSelector.executeIfAdmitted(
-    {
-      context,
-      checkpoints: REQUIRED_MIGRATION_CHECKPOINTS,
-      statePort: port,
-      repositoryPort: repo,
-    },
-    async () => {
-      executed = true;
-      return 'must-not-run';
-    }
-  );
-
-  assert.equal(executed, false);
-  assert.equal(executionResult.admitted, false);
+  assert.equal(Reflect.get(neutralSelector, 'executeIfAdmitted'), undefined);
+  assert.equal(Reflect.get(neutralSelector, 'executeGuardedAction'), undefined);
   assert.equal(repo.patches.length, 0);
   assert.equal(repo.commands.length, 0);
   assert.equal(port.getJournalSnapshot().claims.length, 0);
