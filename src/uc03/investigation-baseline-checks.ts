@@ -10,6 +10,7 @@ import type {
   StatePortV02,
   TaskState,
 } from '../contracts/foundation/uc03.ts';
+import type { TrustedHostExpectedContext } from './investigation-types.ts';
 
 function computeGuardedTaskStateDigest(state: TaskState): string {
   const stateWithoutAccounting = { ...state };
@@ -40,7 +41,9 @@ export async function runBaselineChecks(input: {
     requiredChecks,
   } = input;
   // Check if v0.2 guarded atomic admission is active
-  const contextAdmission = (rawExpectedContext as Record<string, unknown> | undefined)?.admissionContext;
+  const expectedContext = rawExpectedContext as TrustedHostExpectedContext | undefined;
+  const contextAdmission = expectedContext?.admissionContext;
+  const admissionContextForCheck = expectedContext?.admissionContextForCheck;
   const rawStatePort = (rawExpectedContext as Record<string, unknown> | undefined)?.statePort ??
     (repository as { statePort?: unknown })?.statePort;
   const rawExecutionGuard = (rawExpectedContext as Record<string, unknown> | undefined)?.executionGuard;
@@ -50,6 +53,7 @@ export async function runBaselineChecks(input: {
     : undefined;
   const isV02 = Boolean(
     contextAdmission !== undefined ||
+    admissionContextForCheck !== undefined ||
     rawExecutionGuard !== undefined ||
     (rawStatePort !== undefined && (repository as { executionGuardApiVersion?: string })?.executionGuardApiVersion === '0.2.0')
   );
@@ -57,35 +61,40 @@ export async function runBaselineChecks(input: {
   let admission: RepositoryAdmissionContextV02 | undefined;
   let initialGuardStateDigest: string | undefined;
   if (isV02) {
-    if (!contextAdmission || typeof contextAdmission !== 'object') {
-      return {
-        status: 'error',
-        reason: 'ADMISSION_DENIED: Missing or malformed admission context',
-      };
+    if (admissionContextForCheck !== undefined && typeof admissionContextForCheck !== 'function') {
+      return { status: 'error', reason: 'ADMISSION_DENIED: Invalid admission context supplier' };
     }
-    const valAdmission = validateRepositoryAdmissionRecordV02(contextAdmission as RepositoryAdmissionContextV02);
-    if (!valAdmission.ok) {
-      return {
-        status: 'error',
-        reason: `ADMISSION_DENIED: ${valAdmission.errors.map((e) => e.message).join('; ')}`,
-      };
-    }
-    admission = valAdmission.value;
+    if (!admissionContextForCheck) {
+      if (!contextAdmission || typeof contextAdmission !== 'object') {
+        return {
+          status: 'error',
+          reason: 'ADMISSION_DENIED: Missing or malformed admission context',
+        };
+      }
+      const valAdmission = validateRepositoryAdmissionRecordV02(contextAdmission as RepositoryAdmissionContextV02);
+      if (!valAdmission.ok) {
+        return {
+          status: 'error',
+          reason: `ADMISSION_DENIED: ${valAdmission.errors.map((e) => e.message).join('; ')}`,
+        };
+      }
+      admission = valAdmission.value;
 
-    if (
-      admission.planApplicability !== 'pre-plan-diagnostic' ||
-      admission.runnableNode !== 'Investigate' ||
-      admission.planDecisionRef !== undefined ||
-      admission.planBindingDigest !== undefined ||
-      admission.taskCriteriaDigest !== criteriaDigest ||
-      admission.checkSetDigest !== checkSetDigest ||
-      admission.taskId !== expectedTaskId ||
-      admission.canonicalRevision !== expectedRevisionDigest
-    ) {
-      return {
-        status: 'error',
-        reason: 'ADMISSION_DENIED: Baseline pre-plan diagnostic admission mismatch',
-      };
+      if (
+        admission.planApplicability !== 'pre-plan-diagnostic' ||
+        admission.runnableNode !== 'Investigate' ||
+        admission.planDecisionRef !== undefined ||
+        admission.planBindingDigest !== undefined ||
+        admission.taskCriteriaDigest !== criteriaDigest ||
+        admission.checkSetDigest !== checkSetDigest ||
+        admission.taskId !== expectedTaskId ||
+        admission.canonicalRevision !== expectedRevisionDigest
+      ) {
+        return {
+          status: 'error',
+          reason: 'ADMISSION_DENIED: Baseline pre-plan diagnostic admission mismatch',
+        };
+      }
     }
 
     if (!executionGuard) {
@@ -137,29 +146,7 @@ export async function runBaselineChecks(input: {
   for (const check of requiredChecks) {
     try {
       let rawResult: unknown;
-      if (isV02 && admission) {
-        const checkCtx: RepositoryAdmissionContextV02 = check.checkId === admission.checkId
-          ? admission
-          : {
-              ...admission,
-              checkId: check.checkId,
-              action: {
-                actionId: check.checkId,
-                kind: 'run_command',
-                executable: check.executable,
-                argv: [...check.argv],
-                workingDirectory: check.workingDirectory ?? 'tests',
-                purpose: check.purpose,
-              },
-              actionDigest: computeCanonicalSha256({
-                actionId: check.checkId,
-                kind: 'run_command',
-                executable: check.executable,
-                argv: [...check.argv],
-                workingDirectory: check.workingDirectory ?? 'tests',
-                purpose: check.purpose,
-              }),
-            };
+      if (isV02) {
         const expectedAction = {
           actionId: check.checkId,
           kind: 'run_command' as const,
@@ -168,13 +155,7 @@ export async function runBaselineChecks(input: {
           workingDirectory: check.workingDirectory ?? 'tests',
           purpose: check.purpose,
         };
-        if (computeCanonicalSha256(checkCtx.action) !== computeCanonicalSha256(expectedAction)) {
-          rawResult = {
-            checkId: check.checkId,
-            outcome: 'error',
-            outputExcerpt: 'ADMISSION_DENIED: Baseline admission action does not match the required check',
-          };
-        } else if (!executionGuard || !rawStatePort || typeof rawStatePort !== 'object') {
+        if (!executionGuard || !rawStatePort || typeof rawStatePort !== 'object') {
           rawResult = {
             checkId: check.checkId,
             outcome: 'error',
@@ -190,39 +171,81 @@ export async function runBaselineChecks(input: {
               outputExcerpt: 'STATE_UNAVAILABLE: Authoritative task state unavailable or invalid',
             };
           } else {
-            const guardResult = await executionGuard.validateAndExecute(checkCtx.action, currentState, checkCtx);
-            if (guardResult.outcome !== 'success') {
+            const suppliedAdmission = admissionContextForCheck
+              ? await admissionContextForCheck({ check, action: expectedAction, currentState })
+              : admission;
+            if (!suppliedAdmission || typeof suppliedAdmission !== 'object') {
               rawResult = {
                 checkId: check.checkId,
                 outcome: 'error',
-                outputExcerpt: `ExecutionGuardV02 ${guardResult.outcome}: ${(guardResult.reason ?? '').slice(0, 512)}`,
-              };
-            } else if (!guardResult.result || typeof guardResult.result !== 'object') {
-              rawResult = {
-                checkId: check.checkId,
-                outcome: 'error',
-                outputExcerpt: 'ExecutionGuardV02 success omitted the observed command result',
+                outputExcerpt: 'ADMISSION_DENIED: Missing admission context for required check',
               };
             } else {
-              const commandResult = guardResult.result as Record<string, unknown>;
-              const exitCode = commandResult.exitCode;
-              const stdout = commandResult.stdout;
-              const stderr = commandResult.stderr;
-              if (!Number.isSafeInteger(exitCode) || typeof stdout !== 'string' || typeof stderr !== 'string') {
+              const validation = validateRepositoryAdmissionRecordV02(suppliedAdmission);
+              if (!validation.ok) {
                 rawResult = {
                   checkId: check.checkId,
                   outcome: 'error',
-                  outputExcerpt: 'ExecutionGuardV02 success returned an invalid command result',
+                  outputExcerpt: 'ADMISSION_DENIED: Invalid admission context for required check',
                 };
               } else {
-                rawResult = {
-                  checkId: check.checkId,
-                  outcome: exitCode === 0 ? 'pass' : 'fail',
-                  outputExcerpt: stdout || stderr,
-                  ...(typeof commandResult.durationMs === 'number' && Number.isFinite(commandResult.durationMs)
-                    ? { durationMs: commandResult.durationMs }
-                    : {}),
-                };
+                const checkCtx = validation.value;
+                if (
+                  checkCtx.planApplicability !== 'pre-plan-diagnostic' ||
+                  checkCtx.runnableNode !== 'Investigate' ||
+                  checkCtx.planDecisionRef !== undefined ||
+                  checkCtx.planBindingDigest !== undefined ||
+                  checkCtx.taskCriteriaDigest !== criteriaDigest ||
+                  checkCtx.checkSetDigest !== checkSetDigest ||
+                  checkCtx.taskId !== expectedTaskId ||
+                  checkCtx.runId !== currentState.runId ||
+                  checkCtx.canonicalRevision !== expectedRevisionDigest ||
+                  checkCtx.checkId !== check.checkId ||
+                  checkCtx.diagnosticPurpose !== check.purpose ||
+                  computeCanonicalSha256(checkCtx.action) !== computeCanonicalSha256(expectedAction)
+                ) {
+                  rawResult = {
+                    checkId: check.checkId,
+                    outcome: 'error',
+                    outputExcerpt: 'ADMISSION_DENIED: Baseline pre-plan diagnostic admission mismatch',
+                  };
+                } else {
+                  const guardResult = await executionGuard.validateAndExecute(checkCtx.action, currentState, checkCtx);
+                  if (guardResult.outcome !== 'success') {
+                    rawResult = {
+                      checkId: check.checkId,
+                      outcome: 'error',
+                      outputExcerpt: `ExecutionGuardV02 ${guardResult.outcome}: ${(guardResult.reason ?? '').slice(0, 512)}`,
+                    };
+                  } else if (!guardResult.result || typeof guardResult.result !== 'object') {
+                    rawResult = {
+                      checkId: check.checkId,
+                      outcome: 'error',
+                      outputExcerpt: 'ExecutionGuardV02 success omitted the observed command result',
+                    };
+                  } else {
+                    const commandResult = guardResult.result as Record<string, unknown>;
+                    const exitCode = commandResult.exitCode;
+                    const stdout = commandResult.stdout;
+                    const stderr = commandResult.stderr;
+                    if (!Number.isSafeInteger(exitCode) || typeof stdout !== 'string' || typeof stderr !== 'string') {
+                      rawResult = {
+                        checkId: check.checkId,
+                        outcome: 'error',
+                        outputExcerpt: 'ExecutionGuardV02 success returned an invalid command result',
+                      };
+                    } else {
+                      rawResult = {
+                        checkId: check.checkId,
+                        outcome: exitCode === 0 ? 'pass' : 'fail',
+                        outputExcerpt: stdout || stderr,
+                        ...(typeof commandResult.durationMs === 'number' && Number.isFinite(commandResult.durationMs)
+                          ? { durationMs: commandResult.durationMs }
+                          : {}),
+                      };
+                    }
+                  }
+                }
               }
             }
           }

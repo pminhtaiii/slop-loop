@@ -38,9 +38,11 @@ export async function executeVerificationChecks(
   }
 
   const rawAdmission = context.admissionContext;
+  const admissionContextForCheck = context.admissionContextForCheck;
   const rawStatePort = context.statePort ?? (repository as { statePort?: unknown })?.statePort;
   const isV02 = Boolean(
     rawAdmission !== undefined ||
+    admissionContextForCheck !== undefined ||
     context.executionGuard !== undefined ||
     (rawStatePort !== undefined && (repository as { executionGuardApiVersion?: string })?.executionGuardApiVersion === '0.2.0')
   );
@@ -51,16 +53,21 @@ export async function executeVerificationChecks(
   let initialGuardStateDigest: string | undefined;
 
   if (isV02) {
-    if (!rawAdmission || typeof rawAdmission !== 'object') {
+    if (admissionContextForCheck !== undefined && typeof admissionContextForCheck !== 'function') {
       admissionDenied = true;
-      admissionDenialRef = 'missing-admission-context';
-    } else {
-      const valAdmission = validateRepositoryAdmissionRecordV02(rawAdmission as RepositoryAdmissionContextV02);
-      if (!valAdmission.ok) {
+      admissionDenialRef = 'invalid-admission-supplier';
+    } else if (!admissionContextForCheck) {
+      if (!rawAdmission || typeof rawAdmission !== 'object') {
         admissionDenied = true;
-        admissionDenialRef = 'invalid-admission-context';
+        admissionDenialRef = 'missing-admission-context';
       } else {
-        admission = valAdmission.value;
+        const valAdmission = validateRepositoryAdmissionRecordV02(rawAdmission as RepositoryAdmissionContextV02);
+        if (!valAdmission.ok) {
+          admissionDenied = true;
+          admissionDenialRef = 'invalid-admission-context';
+        } else {
+          admission = valAdmission.value;
+        }
       }
     }
 
@@ -179,29 +186,7 @@ export async function executeVerificationChecks(
 
     try {
       let checkResult: unknown;
-      if (isV02 && admission) {
-        const checkCtx: RepositoryAdmissionContextV02 = check.checkId === admission.checkId
-          ? admission
-          : {
-              ...admission,
-              checkId: check.checkId,
-              action: {
-                actionId: `${prefix}-${check.checkId}`,
-                kind: 'run_command',
-                executable: check.executable,
-                argv: [...check.argv],
-                workingDirectory: check.workingDirectory ?? 'tests',
-                purpose: check.purpose,
-              },
-              actionDigest: computeCanonicalSha256({
-                actionId: `${prefix}-${check.checkId}`,
-                kind: 'run_command',
-                executable: check.executable,
-                argv: [...check.argv],
-                workingDirectory: check.workingDirectory ?? 'tests',
-                purpose: check.purpose,
-              }),
-            };
+      if (isV02) {
         const expectedAction = {
           actionId: `${prefix}-${check.checkId}`,
           kind: 'run_command' as const,
@@ -210,10 +195,7 @@ export async function executeVerificationChecks(
           workingDirectory: check.workingDirectory ?? 'tests',
           purpose: check.purpose,
         };
-        if (computeCanonicalSha256(checkCtx.action) !== computeCanonicalSha256(expectedAction)) {
-          outcome = 'error';
-          diagnosticRefs = ['admission-action-mismatch'];
-        } else if (!context.executionGuard || !rawStatePort || typeof rawStatePort !== 'object') {
+        if (!context.executionGuard || !rawStatePort || typeof rawStatePort !== 'object') {
           outcome = 'error';
           diagnosticRefs = ['guard-or-state-port-unavailable'];
         } else {
@@ -223,19 +205,53 @@ export async function executeVerificationChecks(
             outcome = 'error';
             diagnosticRefs = ['authoritative-state-unavailable'];
           } else {
-            const guardResult = await context.executionGuard.validateAndExecute(checkCtx.action, currentState, checkCtx);
-            diagnosticRefs = [`execution-guard:${guardResult.outcome}`];
-            if (guardResult.outcome === 'success' && guardResult.result && typeof guardResult.result === 'object') {
-              const commandResult = guardResult.result as Record<string, unknown>;
-              if (Number.isSafeInteger(commandResult.exitCode) && typeof commandResult.stdout === 'string' &&
-                typeof commandResult.stderr === 'string') {
-                outcome = commandResult.exitCode === 0 ? 'pass' : 'fail';
-              } else {
-                outcome = 'error';
-                diagnosticRefs.push('invalid-observed-command-result');
-              }
-            } else {
+            const suppliedAdmission = admissionContextForCheck
+              ? await admissionContextForCheck({ check, action: expectedAction, currentState })
+              : admission;
+            if (!suppliedAdmission || typeof suppliedAdmission !== 'object') {
               outcome = 'error';
+              diagnosticRefs = ['missing-admission-context'];
+            } else {
+              const validated = validateRepositoryAdmissionRecordV02(suppliedAdmission);
+              if (!validated.ok) {
+                outcome = 'error';
+                diagnosticRefs = ['invalid-admission-context'];
+              } else {
+                const checkCtx = validated.value;
+                const checkSetDigest = computeCheckSetDigest(task.requiredChecks);
+                const criteriaDigest = computeCanonicalSha256(task.acceptanceCriteria);
+                if (
+                  checkCtx.planApplicability !== 'approved-plan' ||
+                  checkCtx.runnableNode !== 'Verify' ||
+                  !checkCtx.planDecisionRef ||
+                  !checkCtx.planBindingDigest ||
+                  checkCtx.taskId !== task.taskId ||
+                  checkCtx.runId !== context.runId ||
+                  checkCtx.canonicalRevision !== context.repoDigest ||
+                  checkCtx.checkId !== check.checkId ||
+                  (checkCtx.checkSetDigest && checkCtx.checkSetDigest !== checkSetDigest) ||
+                  (checkCtx.taskCriteriaDigest && checkCtx.taskCriteriaDigest !== criteriaDigest) ||
+                  computeCanonicalSha256(checkCtx.action) !== computeCanonicalSha256(expectedAction)
+                ) {
+                  outcome = 'error';
+                  diagnosticRefs = ['admission-context-mismatch'];
+                } else {
+                  const guardResult = await context.executionGuard.validateAndExecute(checkCtx.action, currentState, checkCtx);
+                  diagnosticRefs = [`execution-guard:${guardResult.outcome}`];
+                  if (guardResult.outcome === 'success' && guardResult.result && typeof guardResult.result === 'object') {
+                    const commandResult = guardResult.result as Record<string, unknown>;
+                    if (Number.isSafeInteger(commandResult.exitCode) && typeof commandResult.stdout === 'string' &&
+                      typeof commandResult.stderr === 'string') {
+                      outcome = commandResult.exitCode === 0 ? 'pass' : 'fail';
+                    } else {
+                      outcome = 'error';
+                      diagnosticRefs.push('invalid-observed-command-result');
+                    }
+                  } else {
+                    outcome = 'error';
+                  }
+                }
+              }
             }
           }
         }

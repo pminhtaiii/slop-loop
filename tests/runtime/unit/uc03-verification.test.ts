@@ -32,6 +32,7 @@ import {
   type FixPlan,
   type RepositoryAdmissionContextV02,
 } from '../../../src/contracts/foundation/uc03.ts';
+import { computeAdmissionDigest } from '../../../src/contracts/foundation/uc03/admission-v02.ts';
 import {
   evaluateDeterministicCompletion,
   executeVerificationChecks,
@@ -2238,4 +2239,165 @@ test('v0.2 verification admission: authoritative task mutation after guarded exe
   assert.ok(results[0]?.diagnosticRefs.includes('execution-guard:success'));
   assert.ok(results[0]?.diagnosticRefs.includes('authoritative-state-drift'));
   assert.equal(fixture.journal.getJournalSnapshot().outcomes.length, 1, 'The receiver settles the effect before state drift invalidates its evidence');
+});
+
+test('v0.2 verification admission: each required check uses its own current authority', async (t) => {
+  const createFixture = (withSecondAdmission: boolean) => {
+    const originalTask = createFixtureBugTask();
+    const first = originalTask.requiredChecks[0]!;
+    const second: CheckDefinition = { ...first, checkId: 'check-second-regression', purpose: 'regression' };
+    const task: BugTask = { ...originalTask, requiredChecks: [first, second] };
+    const actionFor = (check: CheckDefinition) => ({
+      actionId: `action-verify-${check.checkId}`,
+      kind: 'run_command' as const,
+      executable: check.executable,
+      argv: [...check.argv],
+      workingDirectory: check.workingDirectory ?? 'tests',
+      purpose: check.purpose,
+    });
+    const planDecisionRef = 'dec-approved-plan-001';
+    const initialAdmission = createTestRepositoryCommandAdmissionContextV02({
+      action: actionFor(first),
+      reservationRefs: ['res-verify-initial'],
+      runnableNode: 'Verify',
+      planApplicability: 'approved-plan',
+      planDecisionRef,
+      checkId: first.checkId,
+      testPath: 'tests/test_calculator.py',
+    });
+    const initial = createTestAdmissionTaskStateV02(initialAdmission);
+    const state: TaskState = {
+      ...initial,
+      budgetLedgers: [
+        ...(initial.budgetLedgers ?? []),
+        {
+          scope: 'task', kind: 'timeoutMs', limit: 60000, consumed: 0,
+          reservations: [], unit: 'count', configurationId: 'config-v1', version: 1,
+        },
+      ],
+    };
+    const plan = state.plan!;
+    const planBindingDigest = computeCanonicalSha256({
+      taskId: state.taskId,
+      planVersion: plan.planVersion,
+      strategyDigest: plan.strategyDigest,
+      baselineRef: plan.baselineRef,
+      evidenceRefs: plan.evidenceRefs,
+      criteriaDigest: computeCanonicalSha256(state.acceptanceCriteria),
+      checkSetDigest: plan.checkSetDigest,
+      decisionRef: plan.decisionRef,
+    });
+    const journal = new MemoryStatePortV02({
+      initialTaskState: state,
+      initialControlVersion: initialAdmission.expectedControlVersion,
+      initialEpoch: initialAdmission.expectedEpoch,
+      initialAuthorityRef: initialAdmission.policyAuthorityRef,
+    });
+    const repo = new FakeRepositoryPort({
+      statePort: journal,
+      executorIdentity: createTestExecutorIdentityV02({ payloadDigest: initialAdmission.actionDigest }),
+      commandResults: { default: { exitCode: 0, stdout: '1 passed', stderr: '' } },
+    });
+    const executionGuard = createExecutionGuardV02({ ports: { statePort: journal, repositoryPort: repo } });
+    const admissions: RepositoryAdmissionContextV02[] = [];
+    const requestedCheckIds: string[] = [];
+    const admissionContextForCheck = ({
+      check,
+      action,
+      currentState,
+    }: {
+      readonly check: CheckDefinition;
+      readonly action: RepositoryAdmissionContextV02['action'];
+      readonly currentState: TaskState;
+    }): RepositoryAdmissionContextV02 | undefined => {
+      requestedCheckIds.push(check.checkId);
+      if (!withSecondAdmission && check.checkId === second.checkId) return undefined;
+      const snapshot = journal.getJournalSnapshot();
+      const raw = createTestRepositoryCommandAdmissionContextV02({
+        action,
+        reservationRefs: [`res-verify-${check.checkId}`],
+        runnableNode: 'Verify',
+        planApplicability: 'approved-plan',
+        planDecisionRef,
+        planBindingDigest,
+        taskCriteriaDigest: computeCanonicalSha256(task.acceptanceCriteria),
+        checkSetDigest: computeCheckSetDigest(task.requiredChecks),
+        checkId: check.checkId,
+        testPath: 'tests/test_calculator.py',
+        expectedTaskStateVersion: currentState.stateVersion,
+        expectedControlVersion: snapshot.controlVersion,
+        expectedEpoch: snapshot.epoch,
+      });
+      const rawPolicyReceipt = {
+        ...raw.policyEvaluationReceipt,
+        receiptId: `policy-verify-${check.checkId}`,
+        receiptDigest: '',
+      };
+      const policyEvaluationReceipt = {
+        ...rawPolicyReceipt,
+        receiptDigest: computeCanonicalSha256({ ...rawPolicyReceipt, receiptDigest: undefined }),
+      };
+      const withPolicyReceipt = { ...raw, policyEvaluationReceipt };
+      const admission = {
+        ...withPolicyReceipt,
+        admissionDigest: computeAdmissionDigest(withPolicyReceipt),
+      } as RepositoryAdmissionContextV02;
+      admissions.push(admission);
+      repo.setExecutorIdentity(createTestExecutorIdentityV02({ payloadDigest: admission.actionDigest }));
+      return admission;
+    };
+    const context = {
+      runId: state.runId,
+      repoDigest: state.repositoryRevisionDigest,
+      admissionContext: initialAdmission,
+      admissionContextForCheck,
+      executionGuard,
+      statePort: journal,
+    };
+    return { task, context, journal, repo, admissions, requestedCheckIds };
+  };
+
+  await t.test('two required checks each settle under a distinct current admission', async () => {
+    const fixture = createFixture(true);
+    const results = await executeVerificationChecks(fixture.task, fixture.repo, fixture.context);
+    const calls = fixture.repo.v02Calls;
+    const snapshot = fixture.journal.getJournalSnapshot();
+
+    assert.deepEqual(fixture.requestedCheckIds, ['check-pytest-reproduction', 'check-second-regression']);
+    assert.deepEqual(results.map((result) => result.outcome), ['pass', 'pass']);
+    assert.equal(fixture.repo.commands.length, 2);
+    assert.equal(calls.length, 2);
+    assert.equal(snapshot.claims.length, 2);
+    assert.equal(snapshot.attempts.length, 2);
+    assert.equal(snapshot.outcomes.length, 2);
+    assert.notEqual(calls[0]?.context.policyEvaluationReceipt.receiptId, calls[1]?.context.policyEvaluationReceipt.receiptId);
+    assert.notEqual(calls[0]?.context.policyEvaluationReceipt.receiptDigest, calls[1]?.context.policyEvaluationReceipt.receiptDigest);
+    assert.notEqual(calls[0]?.outcomeReceipt?.admissionDigest, calls[1]?.outcomeReceipt?.admissionDigest);
+    assert.notDeepEqual(calls[0]?.context.reservationRefs, calls[1]?.context.reservationRefs);
+    assert.ok((calls[1]?.context.expectedControlVersion ?? 0) > (calls[0]?.context.expectedControlVersion ?? 0));
+    for (const [index, call] of calls.entries()) {
+      assert.equal(call.context.expectedTaskStateVersion, call.claim?.preClaimTaskStateVersion);
+      assert.equal(call.claim?.preClaimControlVersion, call.context.expectedControlVersion);
+      assert.deepEqual(call.claim?.reservationRefs, call.context.reservationRefs);
+      assert.equal(call.attempt?.preAttemptControlVersion, (call.context.expectedControlVersion ?? 0) + 1);
+      assert.equal(call.attempt?.preAttemptTaskStateVersion, call.context.expectedTaskStateVersion);
+      assert.equal(call.attempt?.attemptId, snapshot.attempts[index]?.attemptId);
+      assert.equal(call.outcomeReceipt?.admissionDigest, call.context.admissionDigest);
+    }
+    assert.notEqual(snapshot.attempts[0]?.attemptId, snapshot.attempts[1]?.attemptId);
+  });
+
+  await t.test('a missing second admission prevents the second receiver effect', async () => {
+    const fixture = createFixture(false);
+    const results = await executeVerificationChecks(fixture.task, fixture.repo, fixture.context);
+    const snapshot = fixture.journal.getJournalSnapshot();
+
+    assert.deepEqual(fixture.requestedCheckIds, ['check-pytest-reproduction', 'check-second-regression']);
+    assert.deepEqual(results.map((result) => result.outcome), ['pass', 'error']);
+    assert.equal(fixture.repo.commands.length, 1);
+    assert.equal(fixture.repo.v02Calls.length, 1);
+    assert.equal(snapshot.claims.length, 1);
+    assert.equal(snapshot.attempts.length, 1);
+    assert.equal(snapshot.outcomes.length, 1);
+  });
 });

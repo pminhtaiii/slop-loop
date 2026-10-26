@@ -3,6 +3,7 @@ import type {
   ApprovalPort,
   Baseline,
   BugTask,
+  CheckDefinition,
   ExecutionGuardV02,
   FixPlan,
   ModelPort,
@@ -43,6 +44,12 @@ export interface TrustedHostExpectedContext {
   readonly checkSetDigest: string;
   readonly expectedTestFiles: readonly string[];
   readonly admissionContext?: RepositoryAdmissionContextV02 | undefined;
+  /** Resolves current owner-issued policy and journal authority for the exact check action. */
+  readonly admissionContextForCheck?: (request: {
+    readonly check: CheckDefinition;
+    readonly action: RepositoryAdmissionContextV02['action'];
+    readonly currentState: TaskState;
+  }) => Promise<RepositoryAdmissionContextV02 | undefined> | RepositoryAdmissionContextV02 | undefined;
   readonly executionGuard?: ExecutionGuardV02 | undefined;
   readonly statePort?: StatePortV02 | undefined;
 }

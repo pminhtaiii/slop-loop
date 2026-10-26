@@ -1,6 +1,7 @@
 import type {
   Baseline,
   BugTask,
+  CheckDefinition,
   Delivery,
   ExecutionGuardV02,
   RepositoryAdmissionContextV02,
@@ -50,6 +51,12 @@ export interface VerificationExecutionContext {
   readonly diffDigest?: string | undefined;
   readonly actionIdPrefix?: string | undefined;
   readonly admissionContext?: RepositoryAdmissionContextV02 | undefined;
+  /** Resolves current owner-issued policy and journal authority for the exact check action. */
+  readonly admissionContextForCheck?: (request: {
+    readonly check: CheckDefinition;
+    readonly action: RepositoryAdmissionContextV02['action'];
+    readonly currentState: TaskState;
+  }) => Promise<RepositoryAdmissionContextV02 | undefined> | RepositoryAdmissionContextV02 | undefined;
   readonly executionGuard?: ExecutionGuardV02 | undefined;
   readonly statePort?: StatePortV02 | undefined;
 }
