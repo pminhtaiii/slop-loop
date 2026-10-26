@@ -2521,6 +2521,76 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
       assert.equal(controller.snapshotRequests, 1);
     });
 
+    it('replays the exact observed-recovery receipt after a committed reply is lost', async () => {
+      const { manager } = await createWorkspaceManager();
+      statePort.recordOutcomeHandler = async (receipt) => ({ outcome: 'recorded-unsettled', receiptId: receipt.receiptId });
+      let committedReceipt: AttemptReconciliationReceiptV02 | undefined;
+      statePort.observedReconciliationHandler = async (receipt) => {
+        if (!committedReceipt) {
+          committedReceipt = structuredClone(receipt);
+          throw new Error('observed recovery response lost after journal commit');
+        }
+        if (computeCanonicalSha256(receipt) !== computeCanonicalSha256(committedReceipt)) {
+          return { outcome: 'conflict', receiptId: receipt.reconciliationId };
+        }
+        return { outcome: 'settled', receiptId: receipt.reconciliationId };
+      };
+      const recoveryHandoff = createTestPatchRecoveryHandoff();
+      let prepareCalls = 0;
+      const patch: ApplyPatchAction = {
+        actionId: 'act-patch-observed-recovery-lost-reply',
+        kind: 'apply_patch',
+        patchContent: '--- a/src/a.py\n+++ b/src/a.py\n+observed\n',
+        targetPaths: ['src/a.py'],
+        baseRevisionDigest: canonicalRev,
+      };
+      const context = createTestAdmissionContext({ action: patch, actionDigest: computeActionDigest(patch) });
+      let patchEffects = 0;
+      const tools = new ControlledRepositoryTools({
+        guardCapability: guard,
+        fsPort,
+        limits: defaultLimits,
+        statePort,
+        workspaceManager: manager,
+        adapterIdentity: 'patch-observed-recovery-lost-reply',
+        processIncarnation: 'inc-patch-observed-recovery-lost-reply',
+        fencingGeneration: 1,
+        patchRecoveryHandoff: {
+          async prepare(input) {
+            prepareCalls += 1;
+            return await recoveryHandoff.prepare(input);
+          },
+        },
+        attemptStartRecoveryHandoff: createUnknownAttemptStartRecoveryHandoff(),
+        unattemptedClaimClosureHandoff: createRefusingClaimClosureHandoff(),
+        patchReceiver: async () => {
+          patchEffects += 1;
+          return { applied: true, newRevisionDigest: canonicalRev };
+        },
+      });
+      await assert.rejects(() => tools.applyPatch(patch, context), /PATCH_OUTCOME_PENDING/);
+      const attempt = statePort.attemptReceipts.at(-1);
+      assert.ok(attempt);
+      const firstRecoveryError = await tools.recoverPatchOutcome(attempt.attemptId).catch((error: unknown) => error);
+      assert.match((firstRecoveryError as Error).message, /observed recovery response lost after journal commit/);
+      assert.equal(manager.hasActiveWriterLease(context.workspaceId), true,
+        'The workspace writer lease remains held after the owner commit reply is lost');
+
+      const settled = await tools.recoverPatchOutcome(attempt.attemptId);
+      assert.deepEqual(settled, { outcome: 'settled', receiptId: committedReceipt?.reconciliationId });
+      assert.equal(statePort.observedReconciliations.length, 2);
+      assert.deepEqual(statePort.observedReconciliations[1], statePort.observedReconciliations[0],
+        'The public recovery operation replays the same validated receipt');
+      assert.equal(statePort.observedReconciliations[1]?.reconciliationId, committedReceipt?.reconciliationId);
+      assert.equal(statePort.observedReconciliations[1]?.reconciliationDigest, committedReceipt?.reconciliationDigest);
+      assert.equal(prepareCalls, 1, 'The receiver reuses the validated receipt after an ambiguous owner reply');
+      assert.equal(statePort.beginAttemptCalls.length, 1);
+      assert.equal(patchEffects, 1, 'Recovery replay does not dispatch the patch twice');
+      assert.equal(manager.hasActiveWriterLease(context.workspaceId), false,
+        'The workspace writer lease releases after the replay confirms settlement');
+      await assert.rejects(() => tools.recoverPatchOutcome(attempt.attemptId), /PATCH_RECOVERY_NOT_FOUND/);
+    });
+
     it('does not treat already-recorded as settlement proof', async () => {
       const { manager } = await createWorkspaceManager();
       statePort.recordOutcomeHandler = async (receipt) => ({ outcome: 'already-recorded', receiptId: receipt.receiptId });
