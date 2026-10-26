@@ -67,7 +67,8 @@ function createGuardedVerificationFixture(options?: {
   readonly executionGuard: ReturnType<typeof createExecutionGuardV02>;
 } {
   const task = createFixtureBugTask();
-  const check = task.requiredChecks[0]!;
+  const check = task.requiredChecks[0];
+  assert.ok(check, 'fixture must include a required check');
   const action = {
     actionId: `action-verify-${check.checkId}`,
     kind: 'run_command' as const,
@@ -89,7 +90,8 @@ function createGuardedVerificationFixture(options?: {
     testPath: 'tests/test_calculator.py',
   });
   const initial = createTestAdmissionTaskStateV02(tempContext);
-  const plan = initial.plan!;
+  const plan = initial.plan;
+  assert.ok(plan, 'fixture state must include an approved plan');
   const planBindingDigest = computeCanonicalSha256({
     taskId: initial.taskId,
     planVersion: plan.planVersion,
@@ -1757,7 +1759,8 @@ test('regression: trustedReviewRecord checkSetDigest mismatch prevents completio
 
 test('v0.2 verification admission: guarded command carries approved plan binding and decisionRef', async () => {
   const task = createFixtureBugTask();
-  const verifyCheck = task.requiredChecks[0]!;
+  const verifyCheck = task.requiredChecks[0];
+  assert.ok(verifyCheck, 'fixture must include a required check');
   const action = {
     actionId: 'action-verify-' + verifyCheck.checkId,
     kind: 'run_command' as const,
@@ -1776,8 +1779,8 @@ test('v0.2 verification admission: guarded command carries approved plan binding
     checkId: verifyCheck.checkId,
     testPath: 'tests/test_calculator.py',
   });
-  delete (tempContext as any).taskCriteriaDigest;
-  delete (tempContext as any).checkSetDigest;
+  assert.equal(Reflect.deleteProperty(tempContext, 'taskCriteriaDigest'), true);
+  assert.equal(Reflect.deleteProperty(tempContext, 'checkSetDigest'), true);
   const initial = createTestAdmissionTaskStateV02(tempContext);
   const state = {
     ...initial,
@@ -1795,7 +1798,8 @@ test('v0.2 verification admission: guarded command carries approved plan binding
       },
     ],
   };
-  const plan = state.plan!;
+  const plan = state.plan;
+  assert.ok(plan, 'Task state must include an approved plan');
   const planBindingDigest = computeCanonicalSha256({
     taskId: state.taskId,
     planVersion: plan.planVersion,
@@ -1817,8 +1821,8 @@ test('v0.2 verification admission: guarded command carries approved plan binding
     checkId: verifyCheck.checkId,
     testPath: 'tests/test_calculator.py',
   });
-  delete (admission as any).taskCriteriaDigest;
-  delete (admission as any).checkSetDigest;
+  assert.equal(Reflect.deleteProperty(admission, 'taskCriteriaDigest'), true);
+  assert.equal(Reflect.deleteProperty(admission, 'checkSetDigest'), true);
 
   const journal = new MemoryStatePortV02({
     initialTaskState: state,
@@ -1872,7 +1876,8 @@ test('v0.2 verification admission: guarded command carries approved plan binding
 
 test('v0.2 verification admission: zero repository command effects when task has open claim', async () => {
   const task = createFixtureBugTask();
-  const verifyCheck = task.requiredChecks[0]!;
+  const verifyCheck = task.requiredChecks[0];
+  assert.ok(verifyCheck, 'fixture must include a required check');
   const action = {
     actionId: 'action-verify-' + verifyCheck.checkId,
     kind: 'run_command' as const,
@@ -1894,7 +1899,8 @@ test('v0.2 verification admission: zero repository command effects when task has
     testPath: 'tests/test_calculator.py',
   });
   const initial = createTestAdmissionTaskStateV02(tempContext);
-  const plan = initial.plan!;
+  const plan = initial.plan;
+  assert.ok(plan, 'fixture state must include an approved plan');
   const planBindingDigest = computeCanonicalSha256({
     taskId: initial.taskId,
     planVersion: plan.planVersion,
@@ -1985,7 +1991,8 @@ test('v0.2 verification admission: zero repository command effects when task has
 
 test('v0.2 verification admission: zero repository command effects when task is paused', async () => {
   const task = createFixtureBugTask();
-  const verifyCheck = task.requiredChecks[0]!;
+  const verifyCheck = task.requiredChecks[0];
+  assert.ok(verifyCheck, 'fixture must include a required check');
   const action = {
     actionId: 'action-verify-' + verifyCheck.checkId,
     kind: 'run_command' as const,
@@ -2007,7 +2014,8 @@ test('v0.2 verification admission: zero repository command effects when task is 
     testPath: 'tests/test_calculator.py',
   });
   const state = createTestAdmissionTaskStateV02(tempContext);
-  const plan = state.plan!;
+  const plan = state.plan;
+  assert.ok(plan, 'Task state must include an approved plan');
   const planBindingDigest = computeCanonicalSha256({
     taskId: state.taskId,
     planVersion: plan.planVersion,
@@ -2075,7 +2083,8 @@ test('v0.2 verification admission: zero repository command effects when task is 
 
 test('v0.2 verification admission: zero repository command effects on missing or malformed admission context', async () => {
   const task = createFixtureBugTask();
-  const verifyCheck = task.requiredChecks[0]!;
+  const verifyCheck = task.requiredChecks[0];
+  assert.ok(verifyCheck, 'fixture must include a required check');
   const action = {
     actionId: 'action-verify-' + verifyCheck.checkId,
     kind: 'run_command' as const,
@@ -2097,7 +2106,8 @@ test('v0.2 verification admission: zero repository command effects on missing or
     testPath: 'tests/test_calculator.py',
   });
   const state = createTestAdmissionTaskStateV02(tempContext);
-  const plan = state.plan!;
+  const plan = state.plan;
+  assert.ok(plan, 'Task state must include an approved plan');
   const planBindingDigest = computeCanonicalSha256({
     taskId: state.taskId,
     planVersion: plan.planVersion,
@@ -2171,11 +2181,11 @@ test('v0.2 verification admission: zero repository command effects on missing or
 });
 
 test('v0.2 verification admission: missing or stale view, stale state, and stale approved plan fail closed before repository effects', async (t) => {
-  const cases: Array<{
+  const cases: {
     readonly name: string;
     readonly alterAdmission?: (admission: RepositoryAdmissionContextV02) => void;
     readonly alterState?: (state: TaskState) => TaskState;
-  }> = [
+  }[] = [
     {
       name: 'missing command view',
       alterAdmission: (admission) => { delete (admission as unknown as Record<string, unknown>).commandView; },
@@ -2244,7 +2254,8 @@ test('v0.2 verification admission: authoritative task mutation after guarded exe
 test('v0.2 verification admission: each required check uses its own current authority', async (t) => {
   const createFixture = (withSecondAdmission: boolean) => {
     const originalTask = createFixtureBugTask();
-    const first = originalTask.requiredChecks[0]!;
+    const first = originalTask.requiredChecks[0];
+    assert.ok(first, 'fixture must include a required check');
     const second: CheckDefinition = { ...first, checkId: 'check-second-regression', purpose: 'regression' };
     const task: BugTask = { ...originalTask, requiredChecks: [first, second] };
     const actionFor = (check: CheckDefinition) => ({
@@ -2276,7 +2287,8 @@ test('v0.2 verification admission: each required check uses its own current auth
         },
       ],
     };
-    const plan = state.plan!;
+    const plan = state.plan;
+    assert.ok(plan, 'Task state must include an approved plan');
     const planBindingDigest = computeCanonicalSha256({
       taskId: state.taskId,
       planVersion: plan.planVersion,

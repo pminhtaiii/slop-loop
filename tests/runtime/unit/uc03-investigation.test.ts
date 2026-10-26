@@ -423,7 +423,8 @@ function createGuardedBaselineFixture(options?: {
   readonly expectedContext: TrustedHostExpectedContext;
 } {
   const task = createFixtureBugTask();
-  const reproCheck = task.requiredChecks.find((check) => check.purpose === 'reproduction')!;
+  const reproCheck = task.requiredChecks.find((check) => check.purpose === 'reproduction');
+  assert.ok(reproCheck, 'fixture must include a reproduction check');
   const action = {
     actionId: reproCheck.checkId,
     kind: 'run_command' as const,
@@ -3472,7 +3473,8 @@ test('investigateBaseline: positional argument that is not a test selector fails
 
 test('v0.2 baseline admission: pre-plan diagnostic command is guarded without a plan decision', async () => {
   const task = createFixtureBugTask();
-  const reproCheck = task.requiredChecks.find((c) => c.purpose === 'reproduction')!;
+  const reproCheck = task.requiredChecks.find((c) => c.purpose === 'reproduction');
+  assert.ok(reproCheck, 'fixture must include a reproduction check');
   const action = {
     actionId: reproCheck.checkId,
     kind: 'run_command' as const,
@@ -3559,7 +3561,8 @@ test('v0.2 baseline admission: pre-plan diagnostic command is guarded without a 
 
 test('v0.2 baseline admission: zero repository command effects when task has open claim', async () => {
   const task = createFixtureBugTask();
-  const reproCheck = task.requiredChecks.find((c) => c.purpose === 'reproduction')!;
+  const reproCheck = task.requiredChecks.find((c) => c.purpose === 'reproduction');
+  assert.ok(reproCheck, 'fixture must include a reproduction check');
   const action = {
     actionId: reproCheck.checkId,
     kind: 'run_command' as const,
@@ -3645,7 +3648,8 @@ test('v0.2 baseline admission: zero repository command effects when task has ope
 
 test('v0.2 baseline admission: zero repository command effects when task is paused', async () => {
   const task = createFixtureBugTask();
-  const reproCheck = task.requiredChecks.find((c) => c.purpose === 'reproduction')!;
+  const reproCheck = task.requiredChecks.find((c) => c.purpose === 'reproduction');
+  assert.ok(reproCheck, 'fixture must include a reproduction check');
   const action = {
     actionId: reproCheck.checkId,
     kind: 'run_command' as const,
@@ -3710,7 +3714,8 @@ test('v0.2 baseline admission: zero repository command effects when task is paus
 
 test('v0.2 baseline admission: zero repository command effects on missing or malformed admission context', async () => {
   const task = createFixtureBugTask();
-  const reproCheck = task.requiredChecks.find((c) => c.purpose === 'reproduction')!;
+  const reproCheck = task.requiredChecks.find((c) => c.purpose === 'reproduction');
+  assert.ok(reproCheck, 'fixture must include a reproduction check');
   const action = {
     actionId: reproCheck.checkId,
     kind: 'run_command' as const,
@@ -3778,11 +3783,11 @@ test('v0.2 baseline admission: zero repository command effects on missing or mal
 });
 
 test('v0.2 baseline admission: missing or stale command views, stale state, and lingering plan fail closed before repository effects', async (t) => {
-  const cases: Array<{
+  const cases: {
     readonly name: string;
     readonly alterAdmission?: (admission: RepositoryAdmissionContextV02) => void;
     readonly alterState?: (state: TaskState, task: BugTask) => TaskState;
-  }> = [
+  }[] = [
     {
       name: 'missing command view',
       alterAdmission: (admission) => { delete (admission as unknown as Record<string, unknown>).commandView; },
@@ -3804,7 +3809,8 @@ test('v0.2 baseline admission: missing or stale command views, stale state, and 
     {
       name: 'pre-plan state with a lingering plan',
       alterState: (state, task) => {
-        const check = task.requiredChecks.find((entry) => entry.purpose === 'reproduction')!;
+        const check = task.requiredChecks.find((entry) => entry.purpose === 'reproduction');
+        assert.ok(check, 'fixture must include a reproduction check');
         const action = {
           actionId: check.checkId,
           kind: 'run_command' as const,
@@ -3866,7 +3872,8 @@ test('v0.2 baseline admission: authoritative task mutation after guarded executi
 test('v0.2 baseline admission: each required check uses its own current authority', async (t) => {
   const createFixture = (withSecondAdmission: boolean) => {
     const originalTask = createFixtureBugTask();
-    const first = originalTask.requiredChecks.find((check) => check.purpose === 'reproduction')!;
+    const first = originalTask.requiredChecks.find((check) => check.purpose === 'reproduction');
+    assert.ok(first, 'fixture must include a reproduction check');
     const second: CheckDefinition = {
       ...first,
       checkId: 'check-second-regression',
