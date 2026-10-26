@@ -40,7 +40,7 @@ export class UC03AccountingAdapter {
     estimatedTokens: number,
     estimatedCost = 1
   ): Promise<UC03ReservationResult> {
-    const requestId = `inv-${taskId}-${Date.now()}`;
+    const requestId = `inv-${taskId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     this.budgetTracker.reserve(
       requestId,
       [
@@ -64,7 +64,7 @@ export class UC03AccountingAdapter {
     estimatedTokens: number,
     estimatedCost = 1
   ): Promise<UC03ReservationResult> {
-    const requestId = `repair-${taskId}-${Date.now()}`;
+    const requestId = `repair-${taskId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     this.budgetTracker.reserve(
       requestId,
       [
