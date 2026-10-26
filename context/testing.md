@@ -38,7 +38,7 @@ UC-05 Phase 8 evidence and remaining external prerequisites are tracked in the [
 
 UC-03 Phase 4 repair/replan evidence is tracked in the [task ledger](../specs/001-verified-code-repair/tasks.md) and [implementation status](progress_checker.md). Focused mock-backed checks establish only exercised behavior; real execution, adapters, durable accounting, process restart, and full phase acceptance remain gated.
 
-Earlier UC-03 worker and gate runs are archived under .agent-work/2026-10-23/ and .agent-work/2026-10-24/; use the task ledger and linked evidence for current status. Historical or intentionally red runs do not establish current readiness or real/production/restart acceptance.
+Earlier UC-03 worker and gate runs are archived under .agent-work/2026-10-23/ and .agent-work/2026-10-24/; use the task ledger and linked evidence for current status. For the user-authorized 2026-10-26 T062-T066 mechanical merger, typecheck and build exited 0; source and emitted atomic-admission matrix tests each passed 23/23 at candidate `ea83d165973365b2ea2193741211e054bbcd6f70`. This is 22 Section 10 mock cases plus a mock-provenance check; evidence is `.agent-work/2026-10-25/uc03-t062-t066-preflight/t066-merger-replay.md`. The results establish only exercised mock behavior; independent review, real adapters, production configuration, durable persistence, actual containment/restart, and full Phase 5 acceptance remain pending or gated. Historical or intentionally red runs do not establish current readiness or real/production/restart acceptance.
 
 
 
