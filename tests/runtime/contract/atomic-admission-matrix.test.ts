@@ -60,6 +60,7 @@ import {
   type CommandView,
   type ExecutionLimits,
   type BugTask,
+  type ExecutorIdentityV02,
 } from '../../../src/contracts/foundation/uc03.ts';
 import {
   createApprovalControlV02,
@@ -67,6 +68,7 @@ import {
   createApprovalContinuationV02,
 } from '../../../src/approvals/control.ts';
 import { buildPresentationV02 } from '../../../src/approvals/presentation.ts';
+import type { ApprovalService } from '../../../src/approvals/service.ts';
 import { runApprovalCliV02 } from '../../../src/approvals/cli.ts';
 import {
   UC05_APPROVAL_SCHEMA_VERSION_V02,
@@ -295,7 +297,7 @@ async function createIntegratedPatchHarness(options?: {
     async closeUnattemptedClaim(input: {
       readonly admission: RepositoryAdmissionContextV02;
       readonly claim: ClaimReceiptV02;
-      readonly recipientIdentity: import('../../../src/contracts/foundation/uc03.ts').ExecutorIdentityV02;
+      readonly recipientIdentity: ExecutorIdentityV02;
     }) {
       let snapshot = journal.getJournalSnapshot();
       if (snapshot.mode === 'runnable') {
@@ -537,7 +539,7 @@ async function createIntegratedCommandHarness(options?: {
     async closeUnattemptedClaim(input: {
       readonly admission: RepositoryAdmissionContextV02;
       readonly claim: ClaimReceiptV02;
-      readonly recipientIdentity: import('../../../src/contracts/foundation/uc03.ts').ExecutorIdentityV02;
+      readonly recipientIdentity: ExecutorIdentityV02;
     }) {
       const eventRef = `matrix-unattempted-${input.claim.claimId}`;
       if (!await journal.setTaskControl(input.admission.taskId, 'paused', eventRef)) return { closed: false, receiptId: '' };
@@ -681,7 +683,9 @@ class MockDockerLifecycleController implements DockerLifecycleController {
     return this.executionOutputs[invocationIndex] ?? this.executionOutput;
   }
 
-  async cleanup(): Promise<void> {}
+  cleanup(): Promise<void> {
+    return Promise.resolve();
+  }
 }
 
 function createSnapshotEntry(path: string, content: string): CanonicalSnapshotEntry {
@@ -845,14 +849,14 @@ function createMatrixAttemptStartRecoveryHandoff(
   claimClosures: ClaimClosureReceiptV02[],
   beforeUnattemptedFence?: () => Promise<void>,
 ) {
-  const queriedIdentities: import('../../../src/contracts/foundation/uc03.ts').ExecutorIdentityV02[] = [];
+  const queriedIdentities: ExecutorIdentityV02[] = [];
   return {
     queriedIdentities,
     async queryAttemptStart(request: {
       readonly recoveryId: string;
       readonly admission: RepositoryAdmissionContextV02;
       readonly claim: ClaimReceiptV02;
-      readonly executorIdentity: import('../../../src/contracts/foundation/uc03.ts').ExecutorIdentityV02;
+      readonly executorIdentity: ExecutorIdentityV02;
     }): Promise<unknown> {
       queriedIdentities.push(structuredClone(request.executorIdentity));
       const snapshot = journal.getJournalSnapshot();
@@ -1115,7 +1119,9 @@ test('Section 10 Case 1: Policy/config publication before beginAttempt leaves ol
   const result = await guarded;
   assert.equal(result.outcome, 'uncertain-effect');
   assert.equal(harness.recoveryIds.length, 1);
-  const recovery = harness.tools.recoverAttemptStart(harness.recoveryIds[0]!);
+  const recoveryId = harness.recoveryIds[0];
+  assert.ok(recoveryId !== undefined);
+  const recovery = harness.tools.recoverAttemptStart(recoveryId);
   await closureReady.wait();
   const beforeFence = harness.journal.getJournalSnapshot();
   assert.equal(beforeFence.claims[0]?.status, 'claimed');
@@ -1136,8 +1142,10 @@ test('Section 10 Case 1: Policy/config publication before beginAttempt leaves ol
   assert.equal(snapshot.claims[0]?.status, 'closed');
   assert.equal(snapshot.fenceProofs.length, 1);
   assert.deepEqual(harness.claimClosures.map((receipt) => receipt.unconsumedReservations), [claim.reservationRefs]);
-  assert.equal('attemptId' in harness.claimClosures[0]!, false, 'Unattempted closure carries no attempt identity');
-  assert.equal(harness.claimClosures[0]?.reason, snapshot.holdRef);
+  const closure = harness.claimClosures[0];
+  assert.ok(closure);
+  assert.equal('attemptId' in closure, false, 'Unattempted closure carries no attempt identity');
+  assert.equal(closure.reason, snapshot.holdRef);
   const oldActor = harness.attemptStartQueries[0];
   assert.ok(oldActor);
   assert.ok(snapshot.fencedIncarnations.length === 1, 'The owner fences the old actor before releasing its reservation');
@@ -1267,7 +1275,9 @@ test('Section 10 Case 3: Pause and rejection after claim deny begin, then close 
     const result = await guarded;
     assert.equal(result.outcome, 'uncertain-effect');
     assert.equal(harness.recoveryIds.length, 1);
-    const recovery = harness.tools.recoverAttemptStart(harness.recoveryIds[0]!);
+    const recoveryId = harness.recoveryIds[0];
+    assert.ok(recoveryId !== undefined);
+    const recovery = harness.tools.recoverAttemptStart(recoveryId);
     await closureReady.wait();
 
     const beforeFence = harness.journal.getJournalSnapshot();
@@ -1296,7 +1306,9 @@ test('Section 10 Case 3: Pause and rejection after claim deny begin, then close 
     assert.deepEqual(closure.unconsumedReservations, claim.reservationRefs);
     assert.equal('attemptId' in closure, false);
     assert.equal(closure.reason, holdRef);
-    assert.equal(closure.fencedExecutorIdentity.fencingGeneration, harness.attemptStartQueries[0]?.fencingGeneration! + 1);
+    const attemptStartQuery = harness.attemptStartQueries[0];
+    assert.ok(attemptStartQuery);
+    assert.equal(closure.fencedExecutorIdentity.fencingGeneration, attemptStartQuery.fencingGeneration + 1);
     const repairLedger = harness.journal.getLedgers().find((ledger) => ledger.kind === 'repair');
     assert.equal(repairLedger?.consumed, 0, 'No repair allowance is consumed without a beginAttempt receipt');
     assert.deepEqual(repairLedger?.reservations, []);
@@ -1673,8 +1685,7 @@ test('Section 10 Case 7: Fresh action/run ID is denied task-wide while any claim
   );
   assert.equal(isNeutralClaimReceiptV02(freshClaim3), true, 'Deny fresh claim while uncertain');
 
-  let unsettled!: Awaited<ReturnType<typeof createIntegratedPatchHarness>>;
-  unsettled = await createIntegratedPatchHarness({
+  const unsettled: Awaited<ReturnType<typeof createIntegratedPatchHarness>> = await createIntegratedPatchHarness({
     beforePatch: async ({ apply }) => {
       const effect = apply();
       const current = await unsettled.journal.loadTask(unsettled.context.taskId);
@@ -1707,9 +1718,8 @@ test('Section 10 Case 7: Fresh action/run ID is denied task-wide while any claim
 // ---------------------------------------------------------------------------
 
 test('Section 10 Case 8: Stale executor actor after fencing refuses execution', async () => {
-  let harness!: Awaited<ReturnType<typeof createIntegratedCommandHarness>>;
   let stateAtAttempt: TaskState | undefined;
-  harness = await createIntegratedCommandHarness({
+  const harness: Awaited<ReturnType<typeof createIntegratedCommandHarness>> = await createIntegratedCommandHarness({
     beforeExecute: async () => {
       stateAtAttempt = await harness.journal.loadTask(harness.context.taskId) ?? undefined;
       assert.ok(stateAtAttempt);
@@ -1731,7 +1741,8 @@ test('Section 10 Case 8: Stale executor actor after fencing refuses execution', 
   assert.equal(harness.journal.getJournalSnapshot().holdRef, recoveryHold);
   assert.equal(harness.journal.getJournalSnapshot().activeClaimId, openClaim.claimId);
 
-  harness.journal.getUnderlying().internalSetTask(stateAtAttempt!);
+  assert.ok(stateAtAttempt);
+  harness.journal.getUnderlying().internalSetTask(stateAtAttempt);
   const recovered = await harness.tools.recoverCommandOutcome(attempt.attemptId);
   assert.equal(recovered.outcome, 'settled', 'Recovery settles the exact observed predecessor before fencing the old actor');
   assert.equal(harness.journal.getJournalSnapshot().attempts[0]?.status, 'settled');
@@ -1756,8 +1767,7 @@ test('Section 10 Case 8: Stale executor actor after fencing refuses execution', 
 // ---------------------------------------------------------------------------
 
 test('Section 10 Case 9: Crash or lost response rereads journal state; replaying outcome is idempotent with no blind retry', async () => {
-  let harness!: Awaited<ReturnType<typeof createIntegratedPatchHarness>>;
-  harness = await createIntegratedPatchHarness({
+  const harness: Awaited<ReturnType<typeof createIntegratedPatchHarness>> = await createIntegratedPatchHarness({
     uncertainEvidence: 'observed-patch',
     beforePatch: async ({ apply }) => {
       apply();
@@ -1825,19 +1835,23 @@ test('Section 10 Case 9: Crash or lost response rereads journal state; replaying
   assert.equal(lostBegin.receiverCallCount, 0, 'No patch launch follows an unconfirmed beginAttempt response');
   assert.equal(lostBegin.journal.getJournalSnapshot().attempts[0]?.status, 'attempting');
   assert.equal(lostBegin.journal.getJournalSnapshot().claims[0]?.status, 'attempting');
-  assert.equal(lostBegin.journal.getJournalSnapshot().activeClaimId, lostBegin.claims[0]?.claimId);
+  const lostBeginClaim = lostBegin.claims[0];
+  assert.ok(lostBeginClaim);
+  const lostBeginRecoveryId = lostBegin.recoveryIds[0];
+  assert.ok(lostBeginRecoveryId !== undefined);
+  assert.equal(lostBegin.journal.getJournalSnapshot().activeClaimId, lostBeginClaim.claimId);
   const newActor = createTestExecutorIdentityV02({
     payloadDigest: lostBegin.context.actionDigest,
     processIncarnation: 'matrix-after-begin-loss',
   });
-  assert.equal(isNeutralAttemptReceiptV02(await lostBegin.journal.beginAttempt(lostBegin.claims[0]!.claimId, newActor)), true,
+  assert.equal(isNeutralAttemptReceiptV02(await lostBegin.journal.beginAttempt(lostBeginClaim.claimId, newActor)), true,
     'A restarted actor cannot mint a second attempt from the still-active claim');
   const restartedReceiver = await createIntegratedPatchHarness({
     context: lostBegin.context,
     statePort: lostBegin.journal,
   });
   assert.throws(
-    () => restartedReceiver.tools.recoverAttemptStart(lostBegin.recoveryIds[0]!),
+    () => restartedReceiver.tools.recoverAttemptStart(lostBeginRecoveryId),
     /ATTEMPT_START_RECOVERY_NOT_FOUND/,
     'The retained StatePort does not restore the first receiver incarnation’s pending recovery identity',
   );
@@ -1877,9 +1891,8 @@ test('Section 10 Case 9: Crash or lost response rereads journal state; replaying
 // ---------------------------------------------------------------------------
 
 test('Section 10 Case 10: Settlement failure after patch records observed-unsettled and reconciles once without second patch', async () => {
-  let harness!: Awaited<ReturnType<typeof createIntegratedPatchHarness>>;
   let stateAtAttempt: TaskState | undefined;
-  harness = await createIntegratedPatchHarness({
+  const harness: Awaited<ReturnType<typeof createIntegratedPatchHarness>> = await createIntegratedPatchHarness({
     beforePatch: async ({ apply }) => {
       const effect = apply();
       stateAtAttempt = await harness.journal.loadTask(harness.context.taskId) ?? undefined;
@@ -1968,9 +1981,8 @@ test('Section 10 Case 10: Settlement failure after patch records observed-unsett
   }, 'Exact observed reconciliation replay is idempotent');
   assert.equal(harness.journal.getLedgers().find((ledger) => ledger.kind === 'repair')?.consumed, 1);
 
-  let lostRecoveryHarness!: Awaited<ReturnType<typeof createIntegratedPatchHarness>>;
   let lostRecoveryStateAtAttempt: TaskState | undefined;
-  lostRecoveryHarness = await createIntegratedPatchHarness({
+  const lostRecoveryHarness: Awaited<ReturnType<typeof createIntegratedPatchHarness>> = await createIntegratedPatchHarness({
     beforePatch: async ({ apply }) => {
       const effect = apply();
       lostRecoveryStateAtAttempt = await lostRecoveryHarness.journal.loadTask(lostRecoveryHarness.context.taskId) ?? undefined;
@@ -1982,6 +1994,8 @@ test('Section 10 Case 10: Settlement failure after patch records observed-unsett
   assert.equal((await lostRecoveryHarness.guard.validateAndExecute(
     lostRecoveryHarness.patch, lostRecoveryHarness.initialTaskState, lostRecoveryHarness.context,
   )).outcome, 'uncertain-effect');
+  const lostRecoveryTaskAtAttempt = lostRecoveryStateAtAttempt;
+  assert.ok(lostRecoveryTaskAtAttempt);
   const lostRecoveryAttempt = lostRecoveryHarness.attempts[0];
   assert.ok(lostRecoveryAttempt);
   assert.equal(lostRecoveryHarness.journal.getJournalSnapshot().attempts[0]?.status, 'observed-unsettled');
@@ -1989,7 +2003,7 @@ test('Section 10 Case 10: Settlement failure after patch records observed-unsett
     lostRecoveryHarness.context.taskId, 'paused', 'pause-lost-observed-recovery-010',
   ), true);
   lostRecoveryHarness.journal.getUnderlying().internalSetTask({
-    ...lostRecoveryStateAtAttempt!,
+    ...lostRecoveryTaskAtAttempt,
     repositoryRevisionDigest: lostRecoveryHarness.currentRevision,
   });
   const originalObservedReconcile = lostRecoveryHarness.journal.reconcileObservedOutcome.bind(lostRecoveryHarness.journal);
@@ -2042,15 +2056,17 @@ test('Section 10 Case 10: Settlement failure after patch records observed-unsett
   const settledTask = await lostRecoveryHarness.journal.loadTask(lostRecoveryHarness.context.taskId);
   assert.ok(settledTask);
   assert.equal(settledTask.node, 'Verify');
-  assert.equal(settledTask.stateVersion, lostRecoveryStateAtAttempt!.stateVersion + 1,
+  assert.equal(settledTask.stateVersion, lostRecoveryTaskAtAttempt.stateVersion + 1,
     'Recovery finalizes Patch to Verify exactly once');
   await assert.rejects(
     () => lostRecoveryHarness.tools.recoverPatchOutcome(lostRecoveryAttempt.attemptId),
     /PATCH_RECOVERY_NOT_FOUND/,
     'A repeated final tool recovery cannot finalize the task or charge again',
   );
-  assert.deepEqual(await lostRecoveryHarness.journal.reconcileObservedOutcome(submittedRecoveryReceipts[0]!), {
-    outcome: 'settled', receiptId: submittedRecoveryReceipts[0]!.reconciliationId,
+  const submittedRecoveryReceipt = submittedRecoveryReceipts[0];
+  assert.ok(submittedRecoveryReceipt);
+  assert.deepEqual(await lostRecoveryHarness.journal.reconcileObservedOutcome(submittedRecoveryReceipt), {
+    outcome: 'settled', receiptId: submittedRecoveryReceipt.reconciliationId,
   }, 'A duplicate final reconciliation reply remains idempotent');
   assert.deepEqual(lostRecoveryHarness.journal.getJournalSnapshot(), committedRecoverySnapshot);
   assert.deepEqual(lostRecoveryHarness.journal.getLedgers(), committedRecoveryLedgers);
@@ -2231,8 +2247,10 @@ test('Section 10 Case 12: Failed or partial repair attempt charges repair allowa
 
 test('Section 10 Case 13: Pre-plan baseline runTests succeeds without plan decision; production patch without plan binding denies', async () => {
   const fixtureTask = createFixtureBugTask();
+  const primaryRequiredCheck = fixtureTask.requiredChecks[0];
+  assert.ok(primaryRequiredCheck);
   const additionalBaselineCheck = {
-    ...fixtureTask.requiredChecks[0]!,
+    ...primaryRequiredCheck,
     checkId: 'check-baseline-regression-013',
     purpose: 'regression' as const,
     workingDirectory: '/workspace/repo/tests',
@@ -2246,7 +2264,8 @@ test('Section 10 Case 13: Pre-plan baseline runTests succeeds without plan decis
       additionalBaselineCheck,
     ],
   };
-  const reproCheck = task.requiredChecks.find((c) => c.purpose === 'reproduction')!;
+  const reproCheck = task.requiredChecks.find((c) => c.purpose === 'reproduction');
+  assert.ok(reproCheck);
   const action = {
     actionId: reproCheck.checkId,
     kind: 'run_command' as const,
@@ -2346,7 +2365,10 @@ test('Section 10 Case 13: Pre-plan baseline runTests succeeds without plan decis
   assert.equal(new Set(baselineCheckAdmissions.map((admission) => admission.actionDigest)).size, task.requiredChecks.length);
   assert.deepEqual(commandHarness.claims.map((claim) => claim.reservationRefs),
     baselineCheckAdmissions.map((admission) => admission.reservationRefs));
-  assert.ok(commandHarness.outcomes.every((outcome, index) => outcome.admissionDigest === computeAdmissionDigest(baselineCheckAdmissions[index]!)));
+  assert.ok(commandHarness.outcomes.every((outcome, index) => {
+    const admission = baselineCheckAdmissions[index];
+    return admission !== undefined && outcome.admissionDigest === computeAdmissionDigest(admission);
+  }));
   const baselineTaskAfter = await commandHarness.journal.loadTask(task.taskId);
   assert.ok(baselineTaskAfter);
   assert.equal(baselineTaskAfter.stateVersion, commandHarness.initialTaskState.stateVersion,
@@ -2414,6 +2436,7 @@ test('Section 10 Case 13: Pre-plan baseline runTests succeeds without plan decis
     receiptDigest: undefined,
   };
   const { receiptDigest: _priorPatchReceiptDigest, ...patchPolicyReceiptUnsigned } = patchPolicyReceiptBase;
+  void _priorPatchReceiptDigest;
   const patchAdmissionBase = {
     ...diagnosticPatchBase,
     taskId: currentBeforeTestPatch.taskId,
@@ -2923,8 +2946,9 @@ test('Section 10 Case 17: Cross-branch and fabricated fields are rejected fail-c
   const providerStateBeforeInvalidVectors = provider.statePort.getJournalSnapshot();
   const providerLedgersBeforeInvalidVectors = provider.statePort.getLedgers();
   const malformedProvider = (remove: readonly string[], add: Readonly<Record<string, unknown>> = {}) => {
-    const raw = structuredClone(providerReceipt) as unknown as Record<string, unknown>;
-    for (const field of remove) delete raw[field];
+    const raw: Record<string, unknown> = Object.fromEntries(
+      Object.entries(structuredClone(providerReceipt)).filter(([field]) => !remove.includes(field)),
+    );
     Object.assign(raw, add);
     raw['receiptDigest'] = computeAttemptOutcomeDigest({ ...raw, receiptDigest: undefined });
     return raw as unknown as AttemptOutcomeReceiptV02;
@@ -2959,9 +2983,8 @@ test('Section 10 Case 17: Cross-branch and fabricated fields are rejected fail-c
 // ---------------------------------------------------------------------------
 
 test('Section 10 Case 18: Observed patch plus task-state conflict reconciles from stored receipt with monotone versions', async () => {
-  let integrated!: Awaited<ReturnType<typeof createIntegratedPatchHarness>>;
   let taskAtAttempt: TaskState | undefined;
-  integrated = await createIntegratedPatchHarness({
+  const integrated: Awaited<ReturnType<typeof createIntegratedPatchHarness>> = await createIntegratedPatchHarness({
     beforePatch: async ({ apply }) => {
       const effect = apply();
       taskAtAttempt = await integrated.journal.loadTask(integrated.context.taskId) ?? undefined;
@@ -2985,7 +3008,9 @@ test('Section 10 Case 18: Observed patch plus task-state conflict reconciles fro
   const conflictTaskVersion = conflictedTask.stateVersion;
   const conflictControlVersion = integrated.journal.getJournalSnapshot().controlVersion;
   integrated.journal.getUnderlying().internalSetTask({ ...taskAtAttempt, repositoryRevisionDigest: integrated.currentRevision });
-  const recovered = await integrated.tools.recoverPatchOutcome(integrated.attempts[0]!.attemptId);
+  const integratedAttempt = integrated.attempts[0];
+  assert.ok(integratedAttempt);
+  const recovered = await integrated.tools.recoverPatchOutcome(integratedAttempt.attemptId);
   assert.equal(recovered.outcome, 'settled');
   const recoveredTask = await integrated.journal.loadTask(integrated.context.taskId);
   assert.ok(recoveredTask);
@@ -3035,8 +3060,7 @@ test('Section 10 Case 18: Observed patch plus task-state conflict reconciles fro
   assert.equal(finalTask.node, 'Verify');
   assert.equal(finalTask.repositoryRevisionDigest, outcomeReceipt.observedResultRevisionDigest);
 
-  let incompatible!: Awaited<ReturnType<typeof createIntegratedPatchHarness>>;
-  incompatible = await createIntegratedPatchHarness({
+  const incompatible: Awaited<ReturnType<typeof createIntegratedPatchHarness>> = await createIntegratedPatchHarness({
     beforePatch: async ({ apply }) => {
       const effect = apply();
       const current = await incompatible.journal.loadTask(incompatible.context.taskId);
@@ -3207,8 +3231,7 @@ test('Section 10 Case 19: Repository actions create zero provider token/cost ent
 test('Section 10 Case 20: Patch workspace gate lifetime blocks competing writer and command-view builder until settlement', async () => {
   const receiverEntered = createBarrier();
   const releaseReceiver = createBarrier();
-  let harness!: Awaited<ReturnType<typeof createIntegratedPatchHarness>>;
-  harness = await createIntegratedPatchHarness({
+  const harness: Awaited<ReturnType<typeof createIntegratedPatchHarness>> = await createIntegratedPatchHarness({
     beforePatch: async ({ apply }) => {
       receiverEntered.signal();
       await releaseReceiver.wait();
@@ -3349,8 +3372,10 @@ test('Section 10 Case 20: Patch workspace gate lifetime blocks competing writer 
   assert.equal(fencedRecovery.manager.hasActiveWriterLease(fencedRecovery.context.workspaceId), true,
     'The workspace gate stays held during fenced recovery');
   assert.equal(fencedRecovery.journal.getLedgers().find((ledger) => ledger.kind === 'repair')?.consumed, 1);
+  const fencedClaim = fencedRecovery.claims[0];
+  assert.ok(fencedClaim);
   assert.equal(isNeutralAttemptReceiptV02(await fencedRecovery.journal.beginAttempt(
-    fencedRecovery.claims[0]!.claimId, fencedAttempt.executorIdentity,
+    fencedClaim.claimId, fencedAttempt.executorIdentity,
   )), true, 'The fenced old actor cannot mint a new attempt during reconciliation');
   let recoveryWriterCompleted = false;
   const recoveryWriter = fencedRecovery.manager.acquireWriteLease(
@@ -3708,7 +3733,7 @@ test('Section 10 Case 22: Version migration cutover admits explicit v0.2 records
   const continuation = createApprovalContinuationV02({
     taskId: continuedContext.taskId,
     profile: continuedProfile,
-    approval: continuedApproval as unknown as import('../../../src/approvals/service.ts').ApprovalService,
+    approval: continuedApproval as unknown as ApprovalService,
     recovery: {
       provenance: 'mock',
       loadAdmission: async (candidateDecisionId: string) => candidateDecisionId === decisionId
