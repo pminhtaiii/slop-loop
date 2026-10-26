@@ -11,6 +11,7 @@ import {
   type CheckDefinition,
   type CheckResult,
   type Baseline,
+  type RepositoryAdmissionContextV02,
 } from '../../../src/contracts/foundation/uc03.ts';
 import {
   investigateBaseline,
@@ -22,6 +23,7 @@ import {
   type TrustedTestFileSnapshot,
   type InvestigationConfigPort,
 } from '../../../src/uc03/investigation.ts';
+import { createExecutionGuardV02 } from '../../../src/foundation/execution-guard.ts';
 import {
   createFixtureBugTask,
   createFixtureCheckDefinition,
@@ -405,6 +407,94 @@ function createTrustedAdmissionContext(
     checkSetDigest: computeCheckSetDigest(task.requiredChecks),
     expectedTestFiles: [...expectedTestFiles],
     ...overrides,
+  };
+}
+
+function createGuardedBaselineFixture(options?: {
+  readonly alterAdmission?: ((admission: RepositoryAdmissionContextV02) => void) | undefined;
+  readonly alterState?: ((state: TaskState, task: BugTask) => TaskState) | undefined;
+  readonly mutateAfterExecution?: boolean | undefined;
+}): {
+  readonly task: BugTask;
+  readonly journal: MemoryStatePortV02;
+  readonly repo: FakeRepositoryPort;
+  readonly hostAuthority: TrustedHostPort;
+  readonly expectedContext: TrustedHostExpectedContext;
+} {
+  const task = createFixtureBugTask();
+  const reproCheck = task.requiredChecks.find((check) => check.purpose === 'reproduction')!;
+  const action = {
+    actionId: reproCheck.checkId,
+    kind: 'run_command' as const,
+    executable: reproCheck.executable,
+    argv: [...reproCheck.argv],
+    workingDirectory: reproCheck.workingDirectory ?? 'tests',
+    purpose: reproCheck.purpose,
+  };
+  const admission = createTestRepositoryCommandAdmissionContextV02({
+    action,
+    reservationRefs: ['res-command-001'],
+    runnableNode: 'Investigate',
+    planApplicability: 'pre-plan-diagnostic',
+    diagnosticPurpose: reproCheck.purpose,
+    taskCriteriaDigest: computeCanonicalSha256(task.acceptanceCriteria),
+    checkSetDigest: computeCheckSetDigest(task.requiredChecks),
+    checkId: reproCheck.checkId,
+    testPath: 'tests/test_calculator.py',
+    planBindingDigest: undefined,
+    planDecisionRef: undefined,
+  });
+  options?.alterAdmission?.(admission);
+  const initialState = createTestAdmissionTaskStateV02(admission);
+  const stateWithAccounting = {
+    ...initialState,
+    budgetLedgers: [
+      ...(initialState.budgetLedgers ?? []),
+      {
+        scope: 'task' as const,
+        kind: 'timeoutMs' as const,
+        limit: 60000,
+        consumed: 0,
+        reservations: [],
+        unit: 'count' as const,
+        configurationId: 'config-v1',
+        version: 1,
+      },
+    ],
+  };
+  const state = options?.alterState?.(stateWithAccounting, task) ?? stateWithAccounting;
+  const journal = new MemoryStatePortV02({
+    initialTaskState: state,
+    initialControlVersion: admission.expectedControlVersion,
+    initialEpoch: admission.expectedEpoch,
+    initialAuthorityRef: admission.policyAuthorityRef,
+  });
+  const repo = new FakeRepositoryPort({
+    statePort: journal,
+    executorIdentity: createTestExecutorIdentityV02({ payloadDigest: admission.actionDigest }),
+    commandResults: {
+      default: { exitCode: 1, stdout: 'ZeroDivisionError: division by zero', stderr: '' },
+    },
+  });
+  const executionGuard = createExecutionGuardV02({ ports: { statePort: journal, repositoryPort: repo } });
+  if (options?.mutateAfterExecution) {
+    const execute = executionGuard.validateAndExecute.bind(executionGuard);
+    executionGuard.validateAndExecute = async (guardAction, guardState, guardContext) => {
+      const result = await execute(guardAction, guardState, guardContext);
+      journal.getUnderlying().internalSetTask({ ...guardState, nextAction: 'changed after guarded execution' });
+      return result;
+    };
+  }
+  return {
+    task,
+    journal,
+    repo,
+    hostAuthority: createBoundHostPort(task),
+    expectedContext: createTrustedAdmissionContext(task, ['tests/test_calculator.py'], {
+      admissionContext: admission,
+      executionGuard,
+      statePort: journal,
+    }),
   };
 }
 
@@ -3379,7 +3469,7 @@ test('investigateBaseline: positional argument that is not a test selector fails
 // SECTION: v0.2 Atomic Admission & Guarded Baseline Runs (T062 Behavioral RED)
 // =========================================================================
 
-test('v0.2 baseline admission: pre-plan diagnostic runTests admitted without plan decision (behavioral RED against pre-migration baseline caller)', async () => {
+test('v0.2 baseline admission: pre-plan diagnostic command is guarded without a plan decision', async () => {
   const task = createFixtureBugTask();
   const reproCheck = task.requiredChecks.find((c) => c.purpose === 'reproduction')!;
   const action = {
@@ -3430,35 +3520,43 @@ test('v0.2 baseline admission: pre-plan diagnostic runTests admitted without pla
   const repo = new FakeRepositoryPort({
     statePort: journal,
     executorIdentity: createTestExecutorIdentityV02({ payloadDigest: admission.actionDigest }),
-    testResults: {
+    commandResults: {
       default: {
-        checkId: reproCheck.checkId,
-        outcome: 'fail',
-        outputExcerpt: 'ZeroDivisionError: division by zero',
-        durationMs: 40,
+        exitCode: 1,
+        stdout: 'ZeroDivisionError: division by zero',
+        stderr: '',
       },
     },
   });
+  const executionGuard = createExecutionGuardV02({ ports: { statePort: journal, repositoryPort: repo } });
   const hostPort = createBoundHostPort(task);
   const trustedContext = createTrustedAdmissionContext(task, ['tests/test_calculator.py'], {
     admissionContext: admission,
+    executionGuard,
+    statePort: journal,
   });
 
-  await investigateBaseline(task, repo, hostPort, trustedContext);
+  const result = await investigateBaseline(task, repo, hostPort, trustedContext);
 
-  // Target v0.2 acceptance: Baseline runTests must be admitted through a StatePortV02 journal claim
+  assert.equal(repo.tests.length, 0, 'The v0.2 consumer must not call RepositoryPortV02.runTests directly');
+  assert.equal(repo.commands.length, 1, 'The admitted check must reach the guard-owned command receiver once');
+  assert.equal(result.status, 'reproduced', result.reason);
+
+  // Target v0.2 acceptance: The baseline command must be admitted through a StatePortV02 journal claim
   // and record an authoritative outcome receipt.
   const snapshot = journal.getJournalSnapshot();
-  assert.ok(snapshot.claims.length > 0, 'Baseline runTests must be admitted through a StatePortV02 journal claim');
-  assert.ok(snapshot.outcomes.length > 0, 'Authoritative outcome receipt must be recorded in StatePortV02 journal');
+  assert.equal(snapshot.claims.length, 1, 'The receiver must create exactly one journal claim');
+  assert.equal(snapshot.attempts.length, 1, 'The receiver must begin exactly one attempt');
+  assert.equal(snapshot.outcomes.length, 1, 'The receiver must settle exactly one outcome');
   assert.equal(snapshot.outcomes[0]?.outcome, 'observed', 'Outcome receipt must record observed check outcome');
-  assert.ok(repo.v02Calls.length > 0, 'Receiver must record an admitted v0.2 call');
+  assert.equal(repo.v02Calls.length, 1, 'Receiver must record one admitted v0.2 call');
   const v02Call = repo.v02Calls[0];
   assert.equal(v02Call?.context.planApplicability, 'pre-plan-diagnostic', 'Context must carry pre-plan-diagnostic applicability');
   assert.equal(v02Call?.claim?.planApplicability, 'pre-plan-diagnostic', 'Claim must carry pre-plan-diagnostic applicability');
+  assert.equal(v02Call?.context.planDecisionRef, undefined, 'Pre-plan diagnostics must not fabricate a plan decision');
 });
 
-test('v0.2 baseline admission: zero repository test effects when task has open claim (behavioral RED against pre-migration baseline caller)', async () => {
+test('v0.2 baseline admission: zero repository command effects when task has open claim', async () => {
   const task = createFixtureBugTask();
   const reproCheck = task.requiredChecks.find((c) => c.purpose === 'reproduction')!;
   const action = {
@@ -3523,9 +3621,12 @@ test('v0.2 baseline admission: zero repository test effects when task has open c
       },
     },
   });
+  const executionGuard = createExecutionGuardV02({ ports: { statePort: journal, repositoryPort: repo } });
   const hostPort = createBoundHostPort(task);
   const trustedContext = createTrustedAdmissionContext(task, ['tests/test_calculator.py'], {
     admissionContext: admission,
+    executionGuard,
+    statePort: journal,
   });
 
   await investigateBaseline(task, repo, hostPort, trustedContext);
@@ -3534,11 +3635,14 @@ test('v0.2 baseline admission: zero repository test effects when task has open c
   assert.equal(
     repo.tests.length,
     0,
-    'Open claim must block baseline runTests and yield zero repository test effects'
+    'Open claim must block the baseline command and yield zero repository test effects'
   );
+  assert.equal(repo.commands.length, 0, 'Open claims must not reach the command receiver');
+  assert.equal(journal.getJournalSnapshot().attempts.length, 0, 'Open claims must not begin an attempt');
+  assert.equal(journal.getJournalSnapshot().outcomes.length, 0, 'Open claims must not record an outcome');
 });
 
-test('v0.2 baseline admission: zero repository test effects when task is paused (behavioral RED against pre-migration baseline caller)', async () => {
+test('v0.2 baseline admission: zero repository command effects when task is paused', async () => {
   const task = createFixtureBugTask();
   const reproCheck = task.requiredChecks.find((c) => c.purpose === 'reproduction')!;
   const action = {
@@ -3583,22 +3687,27 @@ test('v0.2 baseline admission: zero repository test effects when task is paused 
       },
     },
   });
+  const executionGuard = createExecutionGuardV02({ ports: { statePort: journal, repositoryPort: repo } });
   const hostPort = createBoundHostPort(task);
   const trustedContext = createTrustedAdmissionContext(task, ['tests/test_calculator.py'], {
     admissionContext: admission,
+    executionGuard,
+    statePort: journal,
   });
 
   await investigateBaseline(task, repo, hostPort, trustedContext);
 
-  // Target v0.2 acceptance: Paused task must block baseline runTests and yield zero repository test effects.
+  // Target v0.2 acceptance: Paused task must block the baseline command and yield zero repository test effects.
   assert.equal(
     repo.tests.length,
     0,
-    'Paused task must block baseline runTests and yield zero repository test effects'
+    'Paused task must block the baseline command and yield zero repository test effects'
   );
+  assert.equal(repo.commands.length, 0, 'Paused tasks must not reach the command receiver');
+  assert.equal(journal.getJournalSnapshot().claims.length, 0, 'Paused tasks must not create a claim');
 });
 
-test('v0.2 baseline admission: zero repository test effects on missing or malformed admission context (behavioral RED against pre-migration baseline caller)', async () => {
+test('v0.2 baseline admission: zero repository command effects on missing or malformed admission context', async () => {
   const task = createFixtureBugTask();
   const reproCheck = task.requiredChecks.find((c) => c.purpose === 'reproduction')!;
   const action = {
@@ -3642,21 +3751,113 @@ test('v0.2 baseline admission: zero repository test effects on missing or malfor
       },
     },
   });
+  const executionGuard = createExecutionGuardV02({ ports: { statePort: journal, repositoryPort: repo } });
   const hostPort = createBoundHostPort(task);
-  const trustedContext = createTrustedAdmissionContext(task);
+  const trustedContext = createTrustedAdmissionContext(task, ['tests/test_calculator.py'], {
+    executionGuard,
+    statePort: journal,
+  });
 
   const result = await investigateBaseline(task, repo, hostPort, trustedContext);
 
-  // Target v0.2 acceptance: Missing or malformed admission context must deny baseline runTests and yield zero repository test effects.
+  // Target v0.2 acceptance: Missing or malformed admission context must deny the baseline command and yield zero repository test effects.
   assert.equal(
     repo.tests.length,
     0,
-    'Missing or malformed admission context must deny baseline runTests and yield zero repository test effects'
+    'Missing or malformed admission context must deny the baseline command and yield zero repository test effects'
   );
   assert.equal(
     repo.v02Calls.length,
     0,
     'Missing or malformed admission context must not make v0.2 calls'
   );
+  assert.equal(repo.commands.length, 0, 'Missing admission context must not reach the command receiver');
+  assert.equal(journal.getJournalSnapshot().claims.length, 0, 'Missing admission context must not create a claim');
   assert.equal(result.status, 'error', 'Missing or malformed admission context must fail investigation');
+});
+
+test('v0.2 baseline admission: missing or stale command views, stale state, and lingering plan fail closed before repository effects', async (t) => {
+  const cases: Array<{
+    readonly name: string;
+    readonly alterAdmission?: (admission: RepositoryAdmissionContextV02) => void;
+    readonly alterState?: (state: TaskState, task: BugTask) => TaskState;
+  }> = [
+    {
+      name: 'missing command view',
+      alterAdmission: (admission) => { delete (admission as unknown as Record<string, unknown>).commandView; },
+    },
+    {
+      name: 'stale command view revision',
+      alterAdmission: (admission) => {
+        const context = admission as unknown as Record<string, unknown>;
+        context.commandView = {
+          ...(context.commandView as Record<string, unknown>),
+          canonicalRevision: 'sha256:0000000000000000000000000000000000000000000000000000000000000000',
+        };
+      },
+    },
+    {
+      name: 'stale task state version',
+      alterState: (state) => ({ ...state, stateVersion: state.stateVersion + 1 }),
+    },
+    {
+      name: 'pre-plan state with a lingering plan',
+      alterState: (state, task) => {
+        const check = task.requiredChecks.find((entry) => entry.purpose === 'reproduction')!;
+        const action = {
+          actionId: check.checkId,
+          kind: 'run_command' as const,
+          executable: check.executable,
+          argv: [...check.argv],
+          workingDirectory: check.workingDirectory ?? 'tests',
+          purpose: check.purpose,
+        };
+        const approved = createTestRepositoryCommandAdmissionContextV02({
+          action,
+          runnableNode: 'Investigate',
+          planApplicability: 'approved-plan',
+          planDecisionRef: 'dec-stale-plan-001',
+          reservationRefs: ['res-stale-plan-001'],
+        });
+        const stale = createTestAdmissionTaskStateV02(approved);
+        return { ...state, plan: stale.plan, activeDecisionId: stale.activeDecisionId };
+      },
+    },
+  ];
+
+  for (const scenario of cases) {
+    await t.test(scenario.name, async () => {
+      const fixture = createGuardedBaselineFixture(scenario);
+      const result = await investigateBaseline(
+        fixture.task,
+        fixture.repo,
+        fixture.hostAuthority,
+        fixture.expectedContext
+      );
+      const snapshot = fixture.journal.getJournalSnapshot();
+      assert.equal(result.status, 'error');
+      assert.equal(fixture.repo.tests.length, 0);
+      assert.equal(fixture.repo.commands.length, 0);
+      assert.equal(fixture.repo.v02Calls.length, 0);
+      assert.equal(snapshot.claims.length, 0);
+      assert.equal(snapshot.attempts.length, 0);
+      assert.equal(snapshot.outcomes.length, 0);
+    });
+  }
+});
+
+test('v0.2 baseline admission: authoritative task mutation after guarded execution invalidates the baseline', async () => {
+  const fixture = createGuardedBaselineFixture({ mutateAfterExecution: true });
+  const result = await investigateBaseline(
+    fixture.task,
+    fixture.repo,
+    fixture.hostAuthority,
+    fixture.expectedContext
+  );
+
+  assert.equal(fixture.repo.commands.length, 1, 'The authorized command executes through the receiver once');
+  assert.equal(fixture.repo.tests.length, 0, 'The v0.2 caller must not use runTests');
+  assert.equal(result.status, 'error');
+  assert.match(result.reason ?? '', /task state changed during investigation/i);
+  assert.equal(fixture.journal.getJournalSnapshot().outcomes.length, 1, 'The receiver settles the effect before the later state mutation invalidates its evidence');
 });

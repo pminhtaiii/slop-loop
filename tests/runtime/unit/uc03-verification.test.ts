@@ -30,6 +30,7 @@ import {
   type ReviewResult,
   type CheckDefinition,
   type FixPlan,
+  type RepositoryAdmissionContextV02,
 } from '../../../src/contracts/foundation/uc03.ts';
 import {
   evaluateDeterministicCompletion,
@@ -39,6 +40,7 @@ import {
   type TrustedReviewRecord,
 } from '../../../src/uc03/verification.ts';
 import { investigateBaseline } from '../../../src/uc03/investigation.ts';
+import { createExecutionGuardV02 } from '../../../src/foundation/execution-guard.ts';
 import { FakeRepositoryPort } from '../support/uc03/fake-repository.ts';
 import { MemoryStatePortV02 } from '../support/uc03/memory-state.ts';
 import {
@@ -50,6 +52,105 @@ import {
   createFixtureBugTask,
   createFixtureTaskState,
 } from '../support/uc03/port-fixtures.ts';
+
+function createGuardedVerificationFixture(options?: {
+  readonly alterAdmission?: ((admission: RepositoryAdmissionContextV02) => void) | undefined;
+  readonly alterState?: ((state: TaskState) => TaskState) | undefined;
+  readonly mutateAfterExecution?: boolean | undefined;
+}): {
+  readonly task: BugTask;
+  readonly state: TaskState;
+  readonly journal: MemoryStatePortV02;
+  readonly repo: FakeRepositoryPort;
+  readonly admission: RepositoryAdmissionContextV02;
+  readonly executionGuard: ReturnType<typeof createExecutionGuardV02>;
+} {
+  const task = createFixtureBugTask();
+  const check = task.requiredChecks[0]!;
+  const action = {
+    actionId: `action-verify-${check.checkId}`,
+    kind: 'run_command' as const,
+    executable: check.executable,
+    argv: [...check.argv],
+    workingDirectory: check.workingDirectory ?? 'tests',
+    purpose: check.purpose,
+  };
+  const planDecisionRef = 'dec-approved-plan-001';
+  const tempContext = createTestRepositoryCommandAdmissionContextV02({
+    action,
+    reservationRefs: ['res-verify-001'],
+    runnableNode: 'Verify',
+    planApplicability: 'approved-plan',
+    planDecisionRef,
+    taskCriteriaDigest: computeCanonicalSha256(task.acceptanceCriteria),
+    checkSetDigest: computeCheckSetDigest(task.requiredChecks),
+    checkId: check.checkId,
+    testPath: 'tests/test_calculator.py',
+  });
+  const initial = createTestAdmissionTaskStateV02(tempContext);
+  const plan = initial.plan!;
+  const planBindingDigest = computeCanonicalSha256({
+    taskId: initial.taskId,
+    planVersion: plan.planVersion,
+    strategyDigest: plan.strategyDigest,
+    baselineRef: plan.baselineRef,
+    evidenceRefs: plan.evidenceRefs,
+    criteriaDigest: computeCanonicalSha256(initial.acceptanceCriteria),
+    checkSetDigest: plan.checkSetDigest,
+    decisionRef: plan.decisionRef,
+  });
+  const admission = createTestRepositoryCommandAdmissionContextV02({
+    action,
+    reservationRefs: ['res-verify-001'],
+    runnableNode: 'Verify',
+    planApplicability: 'approved-plan',
+    planDecisionRef,
+    planBindingDigest,
+    taskCriteriaDigest: computeCanonicalSha256(task.acceptanceCriteria),
+    checkSetDigest: computeCheckSetDigest(task.requiredChecks),
+    checkId: check.checkId,
+    testPath: 'tests/test_calculator.py',
+  });
+  options?.alterAdmission?.(admission);
+  const stateWithAccounting = {
+    ...initial,
+    budgetLedgers: [
+      ...(initial.budgetLedgers ?? []),
+      {
+        scope: 'task' as const,
+        kind: 'timeoutMs' as const,
+        limit: 60000,
+        consumed: 0,
+        reservations: [],
+        unit: 'count' as const,
+        configurationId: 'config-v1',
+        version: 1,
+      },
+    ],
+  };
+  const state = options?.alterState?.(stateWithAccounting) ?? stateWithAccounting;
+  const journal = new MemoryStatePortV02({
+    initialTaskState: state,
+    initialControlVersion: admission.expectedControlVersion,
+    initialEpoch: admission.expectedEpoch,
+    initialAuthorityRef: admission.policyAuthorityRef,
+  });
+  const repo = new FakeRepositoryPort({
+    statePort: journal,
+    executorIdentity: createTestExecutorIdentityV02({ payloadDigest: admission.actionDigest }),
+    commandResults: { default: { exitCode: 0, stdout: '1 passed', stderr: '' } },
+  });
+  const executionGuard = createExecutionGuardV02({ ports: { statePort: journal, repositoryPort: repo } });
+  if (options?.mutateAfterExecution) {
+    const execute = executionGuard.validateAndExecute.bind(executionGuard);
+    executionGuard.validateAndExecute = async (guardAction, guardState, guardContext) => {
+      const result = await execute(guardAction, guardState, guardContext);
+      journal.getUnderlying().internalSetTask({ ...guardState, nextAction: 'changed after guarded verification' });
+      return result;
+    };
+  }
+  return { task, state, journal, repo, admission, executionGuard };
+}
 
 function createValidCompletionFixture(): CompletionPredicateInput {
   const repoDigest =
@@ -1653,7 +1754,7 @@ test('regression: trustedReviewRecord checkSetDigest mismatch prevents completio
 // SECTION: v0.2 Atomic Admission & Guarded Verification Runs (T062 Behavioral RED)
 // =========================================================================
 
-test('v0.2 verification admission: runTests carries approved plan binding and decisionRef (behavioral RED against pre-migration verification caller)', async () => {
+test('v0.2 verification admission: guarded command carries approved plan binding and decisionRef', async () => {
   const task = createFixtureBugTask();
   const verifyCheck = task.requiredChecks[0]!;
   const action = {
@@ -1728,37 +1829,47 @@ test('v0.2 verification admission: runTests carries approved plan binding and de
   const repo = new FakeRepositoryPort({
     statePort: journal,
     executorIdentity: createTestExecutorIdentityV02({ payloadDigest: admission.actionDigest }),
-    testResults: {
+    commandResults: {
       default: {
-        checkId: verifyCheck.checkId,
-        outcome: 'pass',
-        durationMs: 25,
+        exitCode: 0,
+        stdout: '1 passed',
+        stderr: '',
       },
     },
   });
+  const executionGuard = createExecutionGuardV02({ ports: { statePort: journal, repositoryPort: repo } });
 
   const execContext = {
     runId: state.runId,
     repoDigest: state.repositoryRevisionDigest,
     admissionContext: admission,
+    executionGuard,
+    statePort: journal,
   };
 
-  await executeVerificationChecks(task, repo, execContext);
+  const results = await executeVerificationChecks(task, repo, execContext);
 
-  // Target v0.2 acceptance: Verification runTests must carry the approved-plan binding and decisionRef,
+  assert.equal(repo.tests.length, 0, 'The v0.2 consumer must not call RepositoryPortV02.runTests directly');
+  assert.equal(repo.commands.length, 1, `The approved check must reach the guard-owned command receiver once: ${JSON.stringify(results)}`);
+  assert.equal(results.length, 1);
+  assert.equal(results[0]?.outcome, 'pass');
+  assert.deepEqual(results[0]?.diagnosticRefs, ['execution-guard:success']);
+
+  // Target v0.2 acceptance: Verification command must carry the approved-plan binding and decisionRef,
   // recording its observed outcome receipt in the StatePortV02 journal.
   const snapshot = journal.getJournalSnapshot();
-  assert.ok(snapshot.claims.length > 0, 'Verification runTests must be admitted through a StatePortV02 journal claim');
-  assert.ok(snapshot.outcomes.length > 0, 'Authoritative outcome receipt must be recorded in StatePortV02 journal');
+  assert.equal(snapshot.claims.length, 1, 'The receiver must create exactly one journal claim');
+  assert.equal(snapshot.attempts.length, 1, 'The receiver must begin exactly one attempt');
+  assert.equal(snapshot.outcomes.length, 1, 'The receiver must settle exactly one outcome');
   assert.equal(snapshot.outcomes[0]?.outcome, 'observed', 'Outcome receipt must record observed check outcome');
-  assert.ok(repo.v02Calls.length > 0, 'Receiver must record an admitted v0.2 call');
+  assert.equal(repo.v02Calls.length, 1, 'Receiver must record one admitted v0.2 call');
   const v02Call = repo.v02Calls[0];
   assert.equal(v02Call?.context.planApplicability, 'approved-plan', 'Context must carry approved-plan applicability');
   assert.equal(v02Call?.context.planDecisionRef, planDecisionRef, 'Context must bind the approved plan decisionRef');
   assert.equal(v02Call?.claim?.planApplicability, 'approved-plan', 'Claim must carry approved-plan applicability');
 });
 
-test('v0.2 verification admission: zero repository test effects when task has open claim (behavioral RED against pre-migration verification caller)', async () => {
+test('v0.2 verification admission: zero repository command effects when task has open claim', async () => {
   const task = createFixtureBugTask();
   const verifyCheck = task.requiredChecks[0]!;
   const action = {
@@ -1847,11 +1958,14 @@ test('v0.2 verification admission: zero repository test effects when task has op
       },
     },
   });
+  const executionGuard = createExecutionGuardV02({ ports: { statePort: journal, repositoryPort: repo } });
 
   const execContext = {
     runId: state.runId,
     repoDigest: state.repositoryRevisionDigest,
     admissionContext: admission,
+    executionGuard,
+    statePort: journal,
   };
 
   await executeVerificationChecks(task, repo, execContext);
@@ -1860,11 +1974,15 @@ test('v0.2 verification admission: zero repository test effects when task has op
   assert.equal(
     repo.tests.length,
     0,
-    'Open claim must block verification runTests and yield zero repository test effects'
+    'Open claim must block the verification command and yield zero repository test effects'
   );
+  assert.equal(repo.commands.length, 0, 'Open claims must not reach the command receiver');
+  assert.equal(journal.getJournalSnapshot().claims.length, 1, 'No second claim may be created for an open claim');
+  assert.equal(journal.getJournalSnapshot().attempts.length, 0, 'Open claims must not begin an attempt');
+  assert.equal(journal.getJournalSnapshot().outcomes.length, 0, 'Open claims must not record an outcome');
 });
 
-test('v0.2 verification admission: zero repository test effects when task is paused (behavioral RED against pre-migration verification caller)', async () => {
+test('v0.2 verification admission: zero repository command effects when task is paused', async () => {
   const task = createFixtureBugTask();
   const verifyCheck = task.requiredChecks[0]!;
   const action = {
@@ -1932,24 +2050,29 @@ test('v0.2 verification admission: zero repository test effects when task is pau
       },
     },
   });
+  const executionGuard = createExecutionGuardV02({ ports: { statePort: journal, repositoryPort: repo } });
 
   const execContext = {
     runId: state.runId,
     repoDigest: state.repositoryRevisionDigest,
     admissionContext: admission,
+    executionGuard,
+    statePort: journal,
   };
 
   await executeVerificationChecks(task, repo, execContext);
 
-  // Target v0.2 acceptance: Paused task must block verification runTests and yield zero repository test effects.
+  // Target v0.2 acceptance: Paused task must block the verification command and yield zero repository test effects.
   assert.equal(
     repo.tests.length,
     0,
-    'Paused task must block verification runTests and yield zero repository test effects'
+    'Paused task must block the verification command and yield zero repository test effects'
   );
+  assert.equal(repo.commands.length, 0, 'Paused tasks must not reach the command receiver');
+  assert.equal(journal.getJournalSnapshot().claims.length, 0, 'Paused tasks must not create a claim');
 });
 
-test('v0.2 verification admission: zero repository test effects on missing or malformed admission context (behavioral RED against pre-migration verification caller)', async () => {
+test('v0.2 verification admission: zero repository command effects on missing or malformed admission context', async () => {
   const task = createFixtureBugTask();
   const verifyCheck = task.requiredChecks[0]!;
   const action = {
@@ -2016,27 +2139,103 @@ test('v0.2 verification admission: zero repository test effects on missing or ma
       },
     },
   });
+  const executionGuard = createExecutionGuardV02({ ports: { statePort: journal, repositoryPort: repo } });
 
   const execContext = {
     runId: state.runId,
     repoDigest: state.repositoryRevisionDigest,
+    executionGuard,
+    statePort: journal,
   };
 
   const results = await executeVerificationChecks(task, repo, execContext);
 
-  // Target v0.2 acceptance: Missing or malformed admission context must deny verification runTests and yield zero repository test effects.
+  // Target v0.2 acceptance: Missing or malformed admission context must deny the verification command and yield zero repository test effects.
   assert.equal(
     repo.tests.length,
     0,
-    'Missing or malformed admission context must deny verification runTests and yield zero repository test effects'
+    'Missing or malformed admission context must deny the verification command and yield zero repository test effects'
   );
   assert.equal(
     repo.v02Calls.length,
     0,
     'Missing or malformed admission context must not make v0.2 calls'
   );
+  assert.equal(repo.commands.length, 0, 'Missing admission context must not reach the command receiver');
+  assert.equal(journal.getJournalSnapshot().claims.length, 0, 'Missing admission context must not create a claim');
   assert.ok(
     results.length > 0 && results.every((r) => r.outcome === 'error'),
     'Denied verification checks must record error outcomes'
   );
+});
+
+test('v0.2 verification admission: missing or stale view, stale state, and stale approved plan fail closed before repository effects', async (t) => {
+  const cases: Array<{
+    readonly name: string;
+    readonly alterAdmission?: (admission: RepositoryAdmissionContextV02) => void;
+    readonly alterState?: (state: TaskState) => TaskState;
+  }> = [
+    {
+      name: 'missing command view',
+      alterAdmission: (admission) => { delete (admission as unknown as Record<string, unknown>).commandView; },
+    },
+    {
+      name: 'stale command view revision',
+      alterAdmission: (admission) => {
+        const context = admission as unknown as Record<string, unknown>;
+        context.commandView = {
+          ...(context.commandView as Record<string, unknown>),
+          canonicalRevision: 'sha256:0000000000000000000000000000000000000000000000000000000000000000',
+        };
+      },
+    },
+    {
+      name: 'stale task state version',
+      alterState: (state) => ({ ...state, stateVersion: state.stateVersion + 1 }),
+    },
+    {
+      name: 'stale approved plan decision',
+      alterState: (state) => ({ ...state, activeDecisionId: 'dec-stale-plan-002' }),
+    },
+  ];
+
+  for (const scenario of cases) {
+    await t.test(scenario.name, async () => {
+      const fixture = createGuardedVerificationFixture(scenario);
+      const results = await executeVerificationChecks(fixture.task, fixture.repo, {
+        runId: fixture.state.runId,
+        repoDigest: fixture.state.repositoryRevisionDigest,
+        admissionContext: fixture.admission,
+        executionGuard: fixture.executionGuard,
+        statePort: fixture.journal,
+      });
+      const snapshot = fixture.journal.getJournalSnapshot();
+      assert.ok(results.length > 0 && results.every((result) => result.outcome === 'error'));
+      assert.equal(fixture.repo.tests.length, 0);
+      assert.equal(fixture.repo.commands.length, 0);
+      assert.equal(fixture.repo.v02Calls.length, 0);
+      assert.equal(snapshot.claims.length, 0);
+      assert.equal(snapshot.attempts.length, 0);
+      assert.equal(snapshot.outcomes.length, 0);
+    });
+  }
+});
+
+test('v0.2 verification admission: authoritative task mutation after guarded execution invalidates verification evidence', async () => {
+  const fixture = createGuardedVerificationFixture({ mutateAfterExecution: true });
+  const results = await executeVerificationChecks(fixture.task, fixture.repo, {
+    runId: fixture.state.runId,
+    repoDigest: fixture.state.repositoryRevisionDigest,
+    admissionContext: fixture.admission,
+    executionGuard: fixture.executionGuard,
+    statePort: fixture.journal,
+  });
+
+  assert.equal(fixture.repo.commands.length, 1, 'The approved command executes through the receiver once');
+  assert.equal(fixture.repo.tests.length, 0, 'The v0.2 caller must not use runTests');
+  assert.equal(results.length, 1);
+  assert.equal(results[0]?.outcome, 'error');
+  assert.ok(results[0]?.diagnosticRefs.includes('execution-guard:success'));
+  assert.ok(results[0]?.diagnosticRefs.includes('authoritative-state-drift'));
+  assert.equal(fixture.journal.getJournalSnapshot().outcomes.length, 1, 'The receiver settles the effect before state drift invalidates its evidence');
 });
