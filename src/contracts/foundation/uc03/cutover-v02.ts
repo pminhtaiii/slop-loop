@@ -7,11 +7,11 @@
  *
  * T064: Neutral fail-closed versioned selector and canonical-cutover RED contract.
  *       Rejects missing context, v0.1 legacy context, raw old claim IDs, open claims,
- *       and missing migration checkpoints with zero effects. Positive fully migrated
- *       v0.2 mock compositions reach the neutral selector and fail behaviorally
- *       pending T065 cutover activation.
+ *       and missing migration checkpoints with zero effects.
  *
- * T065 (Deferred): Explicit canonical v0.2 cutover activation and legacy rejection.
+ * T065: Explicit canonical v0.2 cutover activation and legacy rejection.
+ *       Canonical mock composition admits explicit v0.2 records only.
+ *       Retains separately versioned test-only neutral selector fail-closed.
  */
 
 import type { TaskState } from './types.ts';
@@ -55,7 +55,8 @@ export type CutoverRejectionCode =
   | 'RAW_OLD_CLAIM_ID_REJECTED'
   | 'OPEN_CLAIM_BLOCKS_ADMISSION'
   | 'MISSING_MIGRATION_CHECKPOINTS'
-  | 'NEUTRAL_CUTOVER_PENDING_T065';
+  | 'NEUTRAL_CUTOVER_PENDING_T065'
+  | 'CANONICAL_V02_ADMITTED';
 
 export interface VersionedAdmissionDecision {
   readonly admitted: boolean;
@@ -63,7 +64,7 @@ export interface VersionedAdmissionDecision {
   readonly reason: string;
   readonly code: CutoverRejectionCode;
   readonly missingCheckpoints?: readonly MigrationCheckpointId[] | undefined;
-  readonly zeroEffects: true;
+  readonly zeroEffects: boolean;
   readonly neutral?: boolean | undefined;
 }
 
@@ -74,6 +75,7 @@ export interface VersionedAdmissionSelectionOptions {
   readonly rawClaimId?: string | undefined;
   readonly statePort?: StatePortV02 | unknown;
   readonly repositoryPort?: RepositoryPortV02 | unknown;
+  readonly neutral?: boolean | undefined;
 }
 
 function hasOpenClaim(options: VersionedAdmissionSelectionOptions): boolean {
@@ -93,10 +95,33 @@ function hasOpenClaim(options: VersionedAdmissionSelectionOptions): boolean {
     }
   }
   if (options.statePort && typeof options.statePort === 'object') {
-    const sp = options.statePort as { getJournalSnapshot?: () => { activeClaimId?: string | null } };
+    const sp = options.statePort as {
+      getJournalSnapshot?: () => {
+        activeClaimId?: string | null;
+        holdRef?: string | null;
+        mode?: string;
+        claims?: readonly { status: string }[];
+      };
+    };
     if (typeof sp.getJournalSnapshot === 'function') {
       const snap = sp.getJournalSnapshot();
-      if (snap && snap.activeClaimId != null) return true;
+      if (snap) {
+        if (snap.activeClaimId != null) return true;
+        if (snap.holdRef != null) return true;
+        if (snap.mode && snap.mode !== 'runnable') return true;
+        if (
+          Array.isArray(snap.claims) &&
+          snap.claims.some(
+            (c) =>
+              c.status === 'claimed' ||
+              c.status === 'attempting' ||
+              c.status === 'uncertain' ||
+              c.status === 'observed-unsettled'
+          )
+        ) {
+          return true;
+        }
+      }
     }
   }
   return false;
@@ -141,7 +166,8 @@ export function selectVersionedAdmission(
       sv === '0.1.0' ||
       sv === 'uc05-approval/0.1-draft' ||
       sv === '0.1' ||
-      (typeof sv === 'string' && sv.startsWith('0.1'))
+      (typeof sv === 'string' && sv.startsWith('0.1')) ||
+      sv !== CANONICAL_V02_SCHEMA_VERSION
     ) {
       return {
         admitted: false,
@@ -150,6 +176,13 @@ export function selectVersionedAdmission(
         zeroEffects: true,
       };
     }
+  } else {
+    return {
+      admitted: false,
+      reason: 'Admission context must be an object; unadmitted requests produce zero effects',
+      code: 'MISSING_ADMISSION_CONTEXT',
+      zeroEffects: true,
+    };
   }
 
   // 4. Open claim check
@@ -174,13 +207,24 @@ export function selectVersionedAdmission(
     };
   }
 
-  // 6. Positive composition reaches neutral fail-closed selector (T064 RED)
+  // 6. Neutral selector check (retained for test compatibility)
+  if (options.neutral === true) {
+    return {
+      admitted: false,
+      reason: 'Neutral fail-closed versioned selector pending T065 canonical cutover activation',
+      code: 'NEUTRAL_CUTOVER_PENDING_T065',
+      zeroEffects: true,
+      neutral: true,
+    };
+  }
+
+  // 7. Canonical v0.2 atomic admission cutover admitted
   return {
-    admitted: false,
-    reason: 'Neutral fail-closed versioned selector pending T065 canonical cutover activation',
-    code: 'NEUTRAL_CUTOVER_PENDING_T065',
-    zeroEffects: true,
-    neutral: true,
+    admitted: true,
+    selectedVersion: '0.2.0',
+    reason: 'Canonical v0.2 atomic admission cutover admitted for controlled mock composition',
+    code: 'CANONICAL_V02_ADMITTED',
+    zeroEffects: false,
   };
 }
 
@@ -188,10 +232,18 @@ export const selectAtomicAdmissionContract = selectVersionedAdmission;
 
 export class VersionedCutoverSelectorV02 {
   readonly apiVersion = '0.2.0' as const;
-  readonly neutral = true as const;
+  readonly provenance = 'mock' as const;
+  readonly neutral: boolean;
+
+  constructor(options?: { readonly neutral?: boolean }) {
+    this.neutral = options?.neutral ?? false;
+  }
 
   select(options: VersionedAdmissionSelectionOptions): VersionedAdmissionDecision {
-    return selectVersionedAdmission(options);
+    return selectVersionedAdmission({
+      ...options,
+      neutral: options.neutral ?? this.neutral,
+    });
   }
 
   async executeIfAdmitted<T>(
@@ -205,8 +257,49 @@ export class VersionedCutoverSelectorV02 {
     const result = await action();
     return { admitted: true, result, decision };
   }
+
+  async executeGuardedAction<TResult>(options: {
+    readonly guard: {
+      validateAndExecute(
+        action: unknown,
+        state: unknown,
+        context?: unknown
+      ): Promise<TResult>;
+    };
+    readonly action: unknown;
+    readonly taskState: unknown;
+    readonly context: unknown;
+    readonly checkpoints?: Iterable<string> | undefined;
+    readonly statePort?: unknown;
+    readonly repositoryPort?: unknown;
+  }): Promise<{
+    readonly admitted: boolean;
+    readonly result?: TResult | undefined;
+    readonly decision: VersionedAdmissionDecision;
+  }> {
+    const decision = this.select({
+      context: options.context,
+      taskState: options.taskState,
+      checkpoints: options.checkpoints ?? REQUIRED_MIGRATION_CHECKPOINTS,
+      statePort: options.statePort,
+      repositoryPort: options.repositoryPort,
+    });
+    if (!decision.admitted) {
+      return { admitted: false, decision };
+    }
+    const result = await options.guard.validateAndExecute(
+      options.action,
+      options.taskState,
+      options.context
+    );
+    return { admitted: true, result, decision };
+  }
 }
 
 export function createNeutralCutoverSelectorV02(): VersionedCutoverSelectorV02 {
-  return new VersionedCutoverSelectorV02();
+  return new VersionedCutoverSelectorV02({ neutral: true });
+}
+
+export function createCanonicalCutoverSelectorV02(): VersionedCutoverSelectorV02 {
+  return new VersionedCutoverSelectorV02({ neutral: false });
 }

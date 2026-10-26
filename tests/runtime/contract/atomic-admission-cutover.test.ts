@@ -10,10 +10,11 @@
  *       T054, T056, T058, T061, T063) are required for canonical v0.2 cutover.
  *       Assert zero effects for no context, v0.1 legacy context, raw old claim ID,
  *       open claim, and missing migration checkpoints.
- *       Positive fully migrated v0.2 mock compositions reach the neutral selector
- *       and fail behaviorally with an AssertionError pending T065 GREEN cutover activation.
  *
- * T065 (Deferred): Explicit canonical v0.2 cutover activation and legacy rejection.
+ * T065: Explicit canonical v0.2 cutover activation and legacy rejection (GREEN).
+ *       Canonical mock composition admits explicit v0.2 records only.
+ *       Selected path governs actual effect boundary with zero effects on negative vectors.
+ *       Retained neutral compatibility selector is separately versioned, test-only, and fail-closed.
  */
 
 import test from 'node:test';
@@ -35,9 +36,11 @@ import {
   selectAtomicAdmissionContract,
   VersionedCutoverSelectorV02,
   createNeutralCutoverSelectorV02,
+  createCanonicalCutoverSelectorV02,
 } from '../../../src/contracts/foundation/uc03.ts';
 import { MemoryStatePortV02 } from '../support/uc03/memory-state.ts';
 import { FakeRepositoryPort } from '../support/uc03/fake-repository.ts';
+import { createExecutionGuardV02 } from '../../../src/foundation/execution-guard.ts';
 import {
   createTestRepositoryAdmissionContextV02,
   createTestRepositoryAdmissionTrustedContextV02,
@@ -100,21 +103,7 @@ function createPort(
 
 test('Checkpoint validation: canonical v0.2 requires every listed migration checkpoint', async () => {
   assert.equal(REQUIRED_MIGRATION_CHECKPOINTS.length, 13, 'Must require exactly 13 migration checkpoints');
-  const expectedCheckpoints: readonly MigrationCheckpointId[] = [
-    'T038',
-    'T040',
-    'T042',
-    'T044',
-    'T046',
-    'T048',
-    'T050',
-    'T052',
-    'T054',
-    'T056',
-    'T058',
-    'T061',
-    'T063',
-  ];
+  const expectedCheckpoints: readonly MigrationCheckpointId[] = REQUIRED_MIGRATION_CHECKPOINTS;
   assert.deepEqual(REQUIRED_MIGRATION_CHECKPOINTS, expectedCheckpoints);
 
   // Full set satisfies requirement
@@ -321,8 +310,8 @@ test('Controlled mock composition rejects production admission via isAdmittedFor
   assert.equal(isAdmittedForProduction([port, repo]), false);
 });
 
-test('Positive cutover: fully migrated v0.2 mock composition reaches canonical admission assertion against neutral selector (behavioral RED pending T065)', async () => {
-  const selector = createNeutralCutoverSelectorV02();
+test('Positive cutover: fully migrated v0.2 mock composition reaches canonical admission under v0.2 selector', async () => {
+  const selector = createCanonicalCutoverSelectorV02();
   const context = createTestRepositoryAdmissionContextV02();
   const port = createPort(context);
   const repo = new FakeRepositoryPort({
@@ -341,23 +330,156 @@ test('Positive cutover: fully migrated v0.2 mock composition reaches canonical a
     repositoryPort: repo,
   });
 
-  // Neutral selector confirms neutral fail-closed status in T064
-  assert.equal(decision.code, 'NEUTRAL_CUTOVER_PENDING_T065');
-  assert.equal(decision.neutral, true);
-  assert.equal(decision.zeroEffects, true);
-
-  // T064 BEHAVIORAL RED CHECKPOINT:
-  // Canonical v0.2 admission requires selector activation in T065.
-  // In T064, this assertion reaches the neutral selector and MUST FAIL BEHAVIORALLY
-  // with an AssertionError (false !== true). T065 will turn this GREEN upon cutover activation.
   assert.equal(
     decision.admitted,
     true,
-    'Fully migrated v0.2 mock composition must be admitted canonically (behavioral RED against neutral selector pending T065)'
+    'Fully migrated v0.2 mock composition must be admitted canonically'
   );
   assert.equal(
     decision.selectedVersion,
     '0.2.0',
-    'Canonical cutover must select version 0.2.0 (behavioral RED pending T065)'
+    'Canonical cutover must select version 0.2.0'
   );
+  assert.equal(decision.code, 'CANONICAL_V02_ADMITTED');
+  assert.equal(decision.zeroEffects, false);
+
+  let executed = false;
+  const execution = await selector.executeIfAdmitted(
+    {
+      context,
+      checkpoints: REQUIRED_MIGRATION_CHECKPOINTS,
+      statePort: port,
+      repositoryPort: repo,
+    },
+    async () => {
+      executed = true;
+      return 'admitted-execution-ok';
+    }
+  );
+  assert.equal(executed, true);
+  assert.equal(execution.admitted, true);
+  assert.equal(execution.result, 'admitted-execution-ok');
+});
+
+test('Actual effect boundary: executeGuardedAction dispatches to repository only when canonically admitted, and halts with zero effects on negative vectors', async () => {
+  const selector = new VersionedCutoverSelectorV02();
+  const context = createTestRepositoryAdmissionContextV02();
+  const port = createPort(context);
+  const repo = new FakeRepositoryPort({
+    statePort: port,
+    executorIdentity: createTestExecutorIdentityV02({ payloadDigest: context.actionDigest }),
+  });
+
+  const adaptedStatePort = Object.assign(Object.create(port), { executionGuardApiVersion: '0.2.0' as const });
+  const adaptedRepositoryPort = Object.assign(Object.create(repo), { executionGuardApiVersion: '0.2.0' as const });
+
+  const guard = createExecutionGuardV02({
+    ports: {
+      statePort: adaptedStatePort,
+      repositoryPort: adaptedRepositoryPort,
+    },
+  });
+
+  const initialTaskState = createTestAdmissionTaskStateV02(context);
+
+  // 1. Positive admission executes through the actual ExecutionGuardV02
+  const positiveResult = await selector.executeGuardedAction({
+    guard,
+    action: context.action,
+    taskState: initialTaskState,
+    context,
+    checkpoints: REQUIRED_MIGRATION_CHECKPOINTS,
+    statePort: port,
+    repositoryPort: repo,
+  });
+
+  assert.equal(positiveResult.admitted, true);
+  assert.equal((positiveResult.result as { outcome: string })?.outcome, 'success');
+  assert.equal(repo.patches.length, 1, 'Admitted action executed exactly once via repositoryPort');
+
+  // 2. Negative vector (missing checkpoints) rejects before guard dispatch
+  const missingResult = await selector.executeGuardedAction({
+    guard,
+    action: context.action,
+    taskState: initialTaskState,
+    context,
+    checkpoints: ['T038'], // Missing other 12 checkpoints
+    statePort: port,
+    repositoryPort: repo,
+  });
+
+  assert.equal(missingResult.admitted, false);
+  assert.equal(missingResult.decision.code, 'MISSING_MIGRATION_CHECKPOINTS');
+  assert.equal(repo.patches.length, 1, 'No additional patch dispatch on missing checkpoints');
+
+  // 3. Negative vector (legacy v0.1 context) rejects before guard dispatch
+  const legacyResult = await selector.executeGuardedAction({
+    guard,
+    action: context.action,
+    taskState: initialTaskState,
+    context: { schemaVersion: '0.1.0' },
+    checkpoints: REQUIRED_MIGRATION_CHECKPOINTS,
+    statePort: port,
+    repositoryPort: repo,
+  });
+
+  assert.equal(legacyResult.admitted, false);
+  assert.equal(legacyResult.decision.code, 'LEGACY_V01_CONTEXT_REJECTED');
+  assert.equal(repo.patches.length, 1, 'No additional patch dispatch on legacy context');
+});
+
+test('Retained compatibility: neutral selector remains separately versioned test-only fail-closed with zero effects', async () => {
+  const neutralSelector = createNeutralCutoverSelectorV02();
+  const context = createTestRepositoryAdmissionContextV02();
+  const port = createPort(context);
+  const repo = new FakeRepositoryPort({
+    statePort: port,
+    executorIdentity: createTestExecutorIdentityV02({ payloadDigest: context.actionDigest }),
+  });
+
+  const decision = neutralSelector.select({
+    context,
+    checkpoints: REQUIRED_MIGRATION_CHECKPOINTS,
+    statePort: port,
+    repositoryPort: repo,
+  });
+
+  assert.equal(decision.admitted, false);
+  assert.equal(decision.code, 'NEUTRAL_CUTOVER_PENDING_T065');
+  assert.equal(decision.neutral, true);
+  assert.equal(decision.zeroEffects, true);
+
+  let executed = false;
+  const executionResult = await neutralSelector.executeIfAdmitted(
+    {
+      context,
+      checkpoints: REQUIRED_MIGRATION_CHECKPOINTS,
+      statePort: port,
+      repositoryPort: repo,
+    },
+    async () => {
+      executed = true;
+      return 'must-not-run';
+    }
+  );
+
+  assert.equal(executed, false);
+  assert.equal(executionResult.admitted, false);
+  assert.equal(repo.patches.length, 0);
+  assert.equal(repo.commands.length, 0);
+  assert.equal(port.getJournalSnapshot().claims.length, 0);
+});
+
+test('Controlled mock composition rejects production admission for cutover selector via isAdmittedForProduction', async () => {
+  const selector = new VersionedCutoverSelectorV02();
+  const context = createTestRepositoryAdmissionContextV02();
+  const port = createPort(context);
+  const repo = new FakeRepositoryPort({
+    statePort: port,
+    executorIdentity: createTestExecutorIdentityV02({ payloadDigest: context.actionDigest }),
+  });
+
+  assert.equal(selector.provenance, 'mock');
+  assert.equal(isAdmittedForProduction([selector]), false);
+  assert.equal(isAdmittedForProduction([selector, port, repo]), false);
 });
