@@ -159,7 +159,15 @@ export function writeJsonAtomic(path: string, data: unknown): void {
   try {
     const fd = openSync(tmp, 'w');
     try {
-      writeSync(fd, Buffer.from(JSON.stringify(data, null, 2), 'utf8'));
+      const buf = Buffer.from(JSON.stringify(data, null, 2), 'utf8');
+      let offset = 0;
+      while (offset < buf.length) {
+        const written = writeSync(fd, buf, offset, buf.length - offset, null);
+        if (written <= 0) {
+          throw new Error(`Failed to write complete buffer to ${tmp}`);
+        }
+        offset += written;
+      }
       fsyncSync(fd);
     } finally {
       closeSync(fd);
