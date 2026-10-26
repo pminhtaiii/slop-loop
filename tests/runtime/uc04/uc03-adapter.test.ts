@@ -168,4 +168,33 @@ test('UC-04 / UC-03: Accounting & Recovery Adapter', async (t) => {
     assert.ok(remainingRes);
     assert.equal(remainingRes.amount, 300);
   });
+
+  await t.test('belongsToTask isolates task prefixes and scopes replan counts', async () => {
+    const budgetTracker = new BudgetTracker(initialLedgers);
+    const store = new DurableStore(tempDir);
+    const adapter = new UC03AccountingAdapter(budgetTracker, store);
+
+    const res1 = await adapter.reserveInvestigation('task-1', 'run-1', 400, 1);
+    const res2 = await adapter.reserveInvestigation('task-1-x', 'run-2', 600, 1);
+    assert.ok(res1.reservationId);
+    assert.ok(res2.reservationId);
+
+    // Reconcile task-1 should not touch task-1-x
+    const reconciled = adapter.reconcileTaskBudgets('task-1', 'run-1');
+    assert.equal(reconciled.totalTokensConsumed, 400);
+
+    const tokensLedger = budgetTracker.getLedgers().find((l) => l.kind === 'tokens');
+    const remainingRes = tokensLedger?.reservations.find((r) => r.keyedId === res2.reservationId);
+    assert.ok(remainingRes);
+    assert.equal(remainingRes.amount, 600);
+
+    // Reserve and settle replan for task-1 and task-1-x to verify isolated replan counts
+    const replan1 = await adapter.reserveReplan('task-1', 'run-1', 100, 0);
+    const settle1 = await adapter.settleAttempt(replan1.reservationId, { tokens: 100 });
+    assert.equal(settle1.consumedReplan, 1);
+
+    const replan2 = await adapter.reserveReplan('task-1-x', 'run-2', 100, 0);
+    const settle2 = await adapter.settleAttempt(replan2.reservationId, { tokens: 100 });
+    assert.equal(settle2.consumedReplan, 1);
+  });
 });

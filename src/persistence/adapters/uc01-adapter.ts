@@ -164,7 +164,9 @@ export class UC01AccountingAdapter {
     ];
 
     const stepIndex = basePlan.findIndex((p) => p.id === stepName);
-    const stepDigest = typeof stepData === 'string' ? stepData : `sha256:${createHash('sha256').update(JSON.stringify(stepData ?? {})).digest('hex')}`;
+    const stepDigest = typeof stepData === 'string' && /^sha256:[0-9a-f]{64}$/i.test(stepData)
+      ? stepData
+      : `sha256:${createHash('sha256').update(typeof stepData === 'string' ? stepData : JSON.stringify(stepData ?? {})).digest('hex')}`;
     const updatedPlan = basePlan.map((p, idx) => {
       if (p.id === stepName) {
         return {

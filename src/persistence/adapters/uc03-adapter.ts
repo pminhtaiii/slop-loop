@@ -34,13 +34,14 @@ export class UC03AccountingAdapter {
     this.durableStore = durableStore;
   }
 
+  private parseTaskId(keyedId: string): string | null {
+    const m = /^(?:inv|repair|replan)-(.+)-\d+-[a-z0-9]+$/.exec(keyedId);
+    return m !== null && m[1] !== undefined ? m[1] : null;
+  }
+
   private belongsToTask(keyedId: string, taskId: string): boolean {
-    return (
-      keyedId.startsWith(`inv-${taskId}-`) ||
-      keyedId.startsWith(`repair-${taskId}-`) ||
-      keyedId.startsWith(`replan-${taskId}-`) ||
-      keyedId.includes(`-${taskId}-`)
-    );
+    const parsed = this.parseTaskId(keyedId);
+    return parsed !== null && parsed === taskId;
   }
 
   async reserveInvestigation(
@@ -153,7 +154,10 @@ export class UC03AccountingAdapter {
       consumedTokens: this.budgetTracker.getConsumed('task', 'tokens'),
       consumedCost: this.budgetTracker.getConsumed('task', 'cost'),
       consumedRepair: this.budgetTracker.getConsumed('task', 'repair'),
-      consumedReplan: this.totalReplans,
+      consumedReplan: (() => {
+      const task = this.parseTaskId(reservationId);
+      return task ? (this.replanCountsByTask.get(task) ?? 0) : this.totalReplans;
+    })(),
     };
   }
 
