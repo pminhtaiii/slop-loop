@@ -1,5 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import type { ApprovalStore, StoreResponse } from '../../approvals/service-data.ts';
 import {
   type ApprovalRequestRecord,
@@ -7,55 +8,55 @@ import {
   type DecisionEvent,
   type DeveloperDirection,
   type HumanResolution,
-  UC05_APPROVAL_SCHEMA_VERSION,
+  type PolicyProfile,
   validateApprovalRequestRecord,
   validateApprovalTaskControl,
+  validateDecisionEvent,
   validateDeveloperDirection,
   validateHumanResolution,
+  validatePolicyProfile,
 } from '../../contracts/approvals/contracts.ts';
 import type { DurableStore } from '../store.ts';
 
 import {
+  DEFAULT_POLICY_PROFILE,
   type DurableApprovalStoreOptions,
+  type EventAppendResult,
   type StoredHistory,
   type StorePayload,
+  checkDirectionPreconditions,
+  checkReplacePreconditions,
+  checkResolvePreconditions,
+  decisionDir,
   isSafeId,
   makeFailure,
+  makeInitialControl,
   makeResponse,
+  parseStoredHistory,
+  taskDir,
+  writeJsonAtomic,
 } from './approval-types.ts';
 
 export class DurableApprovalStore implements ApprovalStore {
   readonly provenance = 'mock' as const;
   private readonly storageDir: string;
   readonly durableStore?: DurableStore | undefined;
+  readonly profile: PolicyProfile;
 
   constructor(options: DurableApprovalStoreOptions) {
     this.storageDir = options.storageDir;
     this.durableStore = options.durableStore;
+    const profRes = options.profile ? validatePolicyProfile(options.profile) : null;
+    this.profile = profRes && profRes.ok ? profRes.value : DEFAULT_POLICY_PROFILE;
     mkdirSync(this.storageDir, { recursive: true });
   }
 
-  private taskDir = (taskId: string) => join(this.storageDir, 'tasks', taskId, 'approvals');
-  private decisionDir = (dId: string) => join(this.storageDir, 'decisions', dId);
-
   loadTaskControl(taskId: string): StoreResponse<ApprovalTaskControl> {
     if (!isSafeId(taskId)) return makeFailure<ApprovalTaskControl>('unknown', 1, 'denied', 'invalid-id');
-    const filePath = join(this.taskDir(taskId), 'control.json');
+    const filePath = join(taskDir(this.storageDir, taskId), 'control.json');
     if (!existsSync(filePath)) {
-      const defaultControl: ApprovalTaskControl = {
-        schemaVersion: UC05_APPROVAL_SCHEMA_VERSION,
-        taskId,
-        repositoryId: 'default-repo',
-        workspaceId: 'default-ws',
-        version: 1,
-        epoch: 1,
-        mode: 'runnable',
-        pendingDecisionId: null,
-        continuationRef: null,
-        reasonCode: 'initial-runnable',
-        outstandingClaimRefs: [],
-      };
-      this.writeJson(filePath, defaultControl);
+      const defaultControl = makeInitialControl(taskId);
+      writeJsonAtomic(filePath, defaultControl);
       return makeResponse(defaultControl, 'ok', 'initial-control-created', defaultControl);
     }
 
@@ -71,7 +72,7 @@ export class DurableApprovalStore implements ApprovalStore {
 
   readRequest(decisionId: string): StoreResponse<ApprovalRequestRecord> {
     if (!isSafeId(decisionId)) return makeFailure<ApprovalRequestRecord>('unknown', 1, 'denied', 'invalid-id', decisionId);
-    const filePath = join(this.decisionDir(decisionId), 'request.json');
+    const filePath = join(decisionDir(this.storageDir, decisionId), 'request.json');
     if (!existsSync(filePath)) return makeFailure<ApprovalRequestRecord>('unknown', 1, 'denied', 'request-not-found', decisionId);
 
     try {
@@ -87,25 +88,14 @@ export class DurableApprovalStore implements ApprovalStore {
 
   readHistory(taskId: string): StoreResponse<StoredHistory> {
     if (!isSafeId(taskId)) return makeFailure<StoredHistory>('unknown', 1, 'denied', 'invalid-id');
-    const filePath = join(this.taskDir(taskId), 'history.json');
+    const filePath = join(taskDir(this.storageDir, taskId), 'history.json');
     if (!existsSync(filePath)) {
       return makeResponse({ taskId, version: 1 }, 'ok', 'empty-history', { resolutions: [], directions: [], assessments: [], claims: [] });
     }
 
     try {
       const raw = JSON.parse(readFileSync(filePath, 'utf8'));
-      if (!raw || typeof raw !== 'object') return makeFailure<StoredHistory>(taskId, 1, 'unavailable', 'read-error');
-      const checkArr = (v: unknown) => {
-        if (v === undefined) return [];
-        if (!Array.isArray(v)) throw new Error('malformed');
-        return v;
-      };
-      return makeResponse({ taskId, version: 1 }, 'ok', 'history-loaded', {
-        resolutions: checkArr((raw as Record<string, unknown>).resolutions),
-        directions: checkArr((raw as Record<string, unknown>).directions),
-        assessments: checkArr((raw as Record<string, unknown>).assessments),
-        claims: checkArr((raw as Record<string, unknown>).claims),
-      });
+      return parseStoredHistory(raw, taskId);
     } catch {
       return makeFailure<StoredHistory>(taskId, 1, 'unavailable', 'read-error');
     }
@@ -113,7 +103,7 @@ export class DurableApprovalStore implements ApprovalStore {
 
   readEvents(taskId: string): StoreResponse<readonly DecisionEvent[]> {
     if (!isSafeId(taskId)) return makeFailure<readonly DecisionEvent[]>('unknown', 1, 'denied', 'invalid-id');
-    const filePath = join(this.taskDir(taskId), 'events.json');
+    const filePath = join(taskDir(this.storageDir, taskId), 'events.json');
     if (!existsSync(filePath)) return makeResponse({ taskId, version: 1 }, 'ok', 'empty-events', []);
 
     try {
@@ -146,7 +136,8 @@ export class DurableApprovalStore implements ApprovalStore {
     if (currentControl.mode !== 'runnable') {
       return makeFailure<ApprovalRequestRecord>(request.taskId, currentControl.version, 'conflict', 'task-not-runnable', request.decisionId);
     }
-    if (existsSync(join(this.decisionDir(request.decisionId), 'request.json'))) {
+    const decPath = decisionDir(this.storageDir, request.decisionId);
+    if (existsSync(join(decPath, 'request.json'))) {
       return makeFailure<ApprovalRequestRecord>(request.taskId, currentControl.version, 'conflict', 'decision-id-in-use', request.decisionId);
     }
 
@@ -160,12 +151,19 @@ export class DurableApprovalStore implements ApprovalStore {
       reasonCode: 'waiting-approval',
     };
 
-    this.writeJson(join(this.decisionDir(request.decisionId), 'request.json'), request);
-    if (!this.appendEvent(request.taskId, payload.event)) {
-      rmSync(join(this.decisionDir(request.decisionId), 'request.json'), { force: true });
-      return makeFailure<ApprovalRequestRecord>(request.taskId, currentControl.version, 'unavailable', 'events-unavailable', request.decisionId);
+    const reqPath = join(decPath, 'request.json');
+    try {
+      writeJsonAtomic(reqPath, request);
+      const evRes = this.appendEvent(request.taskId, payload.event);
+      if (!evRes.ok) {
+        rmSync(reqPath, { force: true });
+        return makeFailure<ApprovalRequestRecord>(request.taskId, currentControl.version, evRes.error, evRes.reason, request.decisionId);
+      }
+      writeJsonAtomic(join(taskDir(this.storageDir, request.taskId), 'control.json'), updatedControl);
+    } catch {
+      rmSync(reqPath, { force: true });
+      return makeFailure<ApprovalRequestRecord>(request.taskId, currentControl.version, 'unavailable', 'storage-error', request.decisionId);
     }
-    this.writeJson(join(this.taskDir(request.taskId), 'control.json'), updatedControl);
 
     return makeResponse(updatedControl, 'ok', 'pending-created', request, request.decisionId, request.requestVersion);
   }
@@ -190,20 +188,10 @@ export class DurableApprovalStore implements ApprovalStore {
     }
     const currentControl = currentControlRes.value;
 
-    if (currentControl.mode !== 'waiting') {
-      return makeFailure<HumanResolution>(request.taskId, currentControl.version, 'conflict', 'task-not-waiting', decisionId);
-    }
-    if (currentControl.pendingDecisionId !== request.decisionId) {
-      return makeFailure<HumanResolution>(request.taskId, currentControl.version, 'conflict', 'decision-not-pending', decisionId);
-    }
-    if (payload.expectedControlVersion !== undefined && currentControl.version !== payload.expectedControlVersion) {
-      return makeFailure<HumanResolution>(request.taskId, currentControl.version, 'conflict', 'version-conflict', decisionId);
-    }
-    if (payload.expectedRequestVersion !== undefined && payload.expectedRequestVersion !== request.requestVersion) {
-      return makeFailure<HumanResolution>(request.taskId, currentControl.version, 'conflict', 'request-version-conflict', decisionId, request.requestVersion);
-    }
-    if (!payload.trustedOperator) {
-      return makeFailure<HumanResolution>(request.taskId, currentControl.version, 'denied', 'missing-trusted-operator', decisionId);
+    const preErr = checkResolvePreconditions(currentControl, request, payload);
+    if (preErr) {
+      const outcome = preErr === 'missing-trusted-operator' ? 'denied' : 'conflict';
+      return makeFailure<HumanResolution>(request.taskId, currentControl.version, outcome, preErr, decisionId, request.requestVersion);
     }
 
     const validResponse = validateHumanResolution(payload.trustedResponse, {
@@ -219,6 +207,11 @@ export class DurableApprovalStore implements ApprovalStore {
       return makeFailure<HumanResolution>(request.taskId, currentControl.version, 'unavailable', 'history-unavailable', decisionId);
     }
 
+    const priorResolution = historyRes.value.resolutions.find((r) => r.decisionId === resolution.decisionId);
+    if (priorResolution !== undefined && priorResolution.responseKey !== resolution.responseKey) {
+      return makeFailure<HumanResolution>(request.taskId, currentControl.version, 'conflict', 'decision-not-pending', decisionId);
+    }
+
     const nextMode = resolution.decision === 'approved' ? 'runnable' : 'rejected';
     const updatedControl: ApprovalTaskControl = {
       ...currentControl,
@@ -230,14 +223,18 @@ export class DurableApprovalStore implements ApprovalStore {
       reasonCode: resolution.decision === 'approved' ? 'developer-approved' : 'developer-rejected',
     };
 
-    if (!this.appendEvent(request.taskId, payload.event)) {
-      return makeFailure<HumanResolution>(request.taskId, currentControl.version, 'unavailable', 'events-unavailable', decisionId);
+    if (priorResolution === undefined) {
+      const evRes = this.appendEvent(request.taskId, payload.event);
+      if (!evRes.ok) {
+        return makeFailure<HumanResolution>(request.taskId, currentControl.version, evRes.error, evRes.reason, decisionId);
+      }
+      writeJsonAtomic(join(taskDir(this.storageDir, request.taskId), 'history.json'), {
+        ...historyRes.value,
+        resolutions: [...historyRes.value.resolutions, resolution],
+      });
     }
-    this.writeJson(join(this.taskDir(request.taskId), 'history.json'), {
-      ...historyRes.value,
-      resolutions: [...historyRes.value.resolutions, resolution],
-    });
-    this.writeJson(join(this.taskDir(request.taskId), 'control.json'), updatedControl);
+
+    writeJsonAtomic(join(taskDir(this.storageDir, request.taskId), 'control.json'), updatedControl);
 
     return makeResponse(updatedControl, 'ok', 'pending-resolved', resolution, decisionId, request.requestVersion);
   }
@@ -256,13 +253,11 @@ export class DurableApprovalStore implements ApprovalStore {
     }
     const currentControl = currentControlRes.value;
 
-    if (currentControl.mode === 'ended' || currentControl.mode === 'rejected') {
-      return makeFailure<DeveloperDirection>(taskId, currentControl.version, 'conflict', 'task-terminal');
+    const preErr = checkDirectionPreconditions(currentControl, payload);
+    if (preErr) {
+      const outcome = preErr === 'missing-trusted-operator' ? 'denied' : 'conflict';
+      return makeFailure<DeveloperDirection>(taskId, currentControl.version, outcome, preErr);
     }
-    if (payload.expectedControlVersion !== undefined && currentControl.version !== payload.expectedControlVersion) {
-      return makeFailure<DeveloperDirection>(taskId, currentControl.version, 'conflict', 'version-conflict');
-    }
-    if (!payload.trustedOperator) return makeFailure<DeveloperDirection>(taskId, currentControl.version, 'denied', 'missing-trusted-operator');
 
     const validDir = validateDeveloperDirection(payload.direction, {
       expectedTaskId: taskId,
@@ -278,6 +273,11 @@ export class DurableApprovalStore implements ApprovalStore {
       return makeFailure<DeveloperDirection>(taskId, currentControl.version, 'unavailable', 'history-unavailable');
     }
 
+    const priorDirection = historyRes.value.directions.find((d) => d.directionId === direction.directionId);
+    if (priorDirection !== undefined && priorDirection.responseKey !== direction.responseKey) {
+      return makeFailure<DeveloperDirection>(direction.taskId, currentControl.version, 'conflict', 'invalid-direction');
+    }
+
     const nextMode = direction.direction === 'end' ? 'ended' : 'runnable';
     const updatedControl: ApprovalTaskControl = {
       ...currentControl,
@@ -289,14 +289,18 @@ export class DurableApprovalStore implements ApprovalStore {
       reasonCode: `direction-${direction.direction}`,
     };
 
-    if (!this.appendEvent(direction.taskId, payload.event)) {
-      return makeFailure<DeveloperDirection>(direction.taskId, currentControl.version, 'unavailable', 'events-unavailable');
+    if (priorDirection === undefined) {
+      const evRes = this.appendEvent(direction.taskId, payload.event);
+      if (!evRes.ok) {
+        return makeFailure<DeveloperDirection>(direction.taskId, currentControl.version, evRes.error, evRes.reason);
+      }
+      writeJsonAtomic(join(taskDir(this.storageDir, direction.taskId), 'history.json'), {
+        ...historyRes.value,
+        directions: [...historyRes.value.directions, direction],
+      });
     }
-    this.writeJson(join(this.taskDir(direction.taskId), 'history.json'), {
-      ...historyRes.value,
-      directions: [...historyRes.value.directions, direction],
-    });
-    this.writeJson(join(this.taskDir(direction.taskId), 'control.json'), updatedControl);
+
+    writeJsonAtomic(join(taskDir(this.storageDir, direction.taskId), 'control.json'), updatedControl);
 
     return makeResponse(updatedControl, 'ok', 'direction-recorded', direction);
   }
@@ -316,17 +320,21 @@ export class DurableApprovalStore implements ApprovalStore {
     }
     const currentControl = controlRes.value;
 
-    if (currentControl.mode !== 'waiting' || currentControl.pendingDecisionId === null) {
-      return makeFailure<ApprovalRequestRecord>(replacement.taskId, currentControl.version, 'conflict', 'no-pending-decision', replacement.decisionId);
+    const preErr = checkReplacePreconditions(currentControl, replacement, this.storageDir, payload);
+    if (preErr) {
+      return makeFailure<ApprovalRequestRecord>(replacement.taskId, currentControl.version, 'conflict', preErr, replacement.decisionId);
     }
-    if (
-      replacement.decisionId === currentControl.pendingDecisionId ||
-      existsSync(join(this.decisionDir(replacement.decisionId), 'request.json'))
-    ) {
-      return makeFailure<ApprovalRequestRecord>(replacement.taskId, currentControl.version, 'conflict', 'decision-id-in-use', replacement.decisionId);
-    }
-    if (payload.expectedControlVersion !== undefined && currentControl.version !== payload.expectedControlVersion) {
-      return makeFailure<ApprovalRequestRecord>(replacement.taskId, currentControl.version, 'conflict', 'version-conflict', replacement.decisionId);
+
+    if (payload.events !== undefined) {
+      if (!Array.isArray(payload.events)) {
+        return makeFailure<ApprovalRequestRecord>(replacement.taskId, currentControl.version, 'denied', 'invalid-events', replacement.decisionId);
+      }
+      for (const ev of payload.events) {
+        const valid = validateDecisionEvent(ev, this.profile);
+        if (!valid.ok) {
+          return makeFailure<ApprovalRequestRecord>(replacement.taskId, currentControl.version, 'denied', 'invalid-event', replacement.decisionId);
+        }
+      }
     }
 
     const updatedControl: ApprovalTaskControl = {
@@ -339,34 +347,45 @@ export class DurableApprovalStore implements ApprovalStore {
       reasonCode: 'stale-pending-replaced',
     };
 
-    this.writeJson(join(this.decisionDir(replacement.decisionId), 'request.json'), replacement);
-    if (Array.isArray(payload.events)) {
-      const eventsRes = this.readEvents(replacement.taskId);
-      if (eventsRes.safe.outcome !== 'ok' || !eventsRes.value) {
-        rmSync(join(this.decisionDir(replacement.decisionId), 'request.json'), { force: true });
-        return makeFailure<ApprovalRequestRecord>(replacement.taskId, currentControl.version, 'unavailable', 'events-unavailable', replacement.decisionId);
+    const repFile = join(decisionDir(this.storageDir, replacement.decisionId), 'request.json');
+    try {
+      writeJsonAtomic(repFile, replacement);
+      if (Array.isArray(payload.events)) {
+        for (const ev of payload.events) {
+          const evRes = this.appendEvent(replacement.taskId, ev);
+          if (!evRes.ok) {
+            rmSync(repFile, { force: true });
+            return makeFailure<ApprovalRequestRecord>(replacement.taskId, currentControl.version, evRes.error, evRes.reason, replacement.decisionId);
+          }
+        }
       }
-      const validEvents = payload.events.filter((e): e is DecisionEvent => Boolean(e && typeof e === 'object'));
-      this.writeJson(join(this.taskDir(replacement.taskId), 'events.json'), [...eventsRes.value, ...validEvents]);
+      writeJsonAtomic(join(taskDir(this.storageDir, replacement.taskId), 'control.json'), updatedControl);
+    } catch {
+      rmSync(repFile, { force: true });
+      return makeFailure<ApprovalRequestRecord>(replacement.taskId, currentControl.version, 'unavailable', 'storage-error', replacement.decisionId);
     }
-
-    this.writeJson(join(this.taskDir(replacement.taskId), 'control.json'), updatedControl);
 
     return makeResponse(updatedControl, 'ok', 'stale-pending-replaced', replacement, replacement.decisionId, replacement.requestVersion);
   }
 
-  private appendEvent(taskId: string, event: unknown): boolean {
-    if (!event || typeof event !== 'object') return true;
-    const res = this.readEvents(taskId);
-    if (res.safe.outcome !== 'ok' || !res.value) return false;
-    this.writeJson(join(this.taskDir(taskId), 'events.json'), [...res.value, event as DecisionEvent]);
-    return true;
-  }
+  private appendEvent(taskId: string, event: unknown): EventAppendResult {
+    if (event === undefined) return { ok: true, status: 'skipped' };
+    const valid = validateDecisionEvent(event, this.profile);
+    if (!valid.ok) return { ok: false, error: 'denied', reason: 'invalid-event' };
 
-  private writeJson(path: string, data: unknown): void {
-    mkdirSync(dirname(path), { recursive: true });
-    const tmp = `${path}.${Date.now()}.${Math.random().toString(36).slice(2, 6)}.tmp`;
-    writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf8');
-    renameSync(tmp, path);
+    const res = this.readEvents(taskId);
+    if (res.safe.outcome !== 'ok' || !res.value) {
+      return { ok: false, error: 'unavailable', reason: 'events-unavailable' };
+    }
+
+    const existing = res.value.find((e) => e.eventId === valid.value.eventId);
+    if (existing !== undefined) {
+      return isDeepStrictEqual(existing, valid.value)
+        ? { ok: true, status: 'idempotent' }
+        : { ok: false, error: 'conflict', reason: 'event-conflict' };
+    }
+
+    writeJsonAtomic(join(taskDir(this.storageDir, taskId), 'events.json'), [...res.value, valid.value]);
+    return { ok: true, status: 'appended' };
   }
 }

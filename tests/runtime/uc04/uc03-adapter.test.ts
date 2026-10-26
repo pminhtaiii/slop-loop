@@ -133,4 +133,39 @@ test('UC-04 / UC-03: Accounting & Recovery Adapter', async (t) => {
     // Tokens were retained as consumed; available is 4000
     assert.equal(budgetTracker.getAvailable('task', 'tokens'), 4000);
   });
+
+  await t.test('settleAttempt falls back to reservation ceiling when usage is omitted', async () => {
+    const budgetTracker = new BudgetTracker(initialLedgers);
+    const store = new DurableStore(tempDir);
+    const adapter = new UC03AccountingAdapter(budgetTracker, store);
+
+    const res = await adapter.reserveInvestigation(taskId, runId, 750, 4);
+    assert.ok(res.reservationId);
+
+    // Caller omits tokens and cost
+    const settleRes = await adapter.settleAttempt(res.reservationId, {});
+    assert.equal(settleRes.consumedTokens, 750);
+    assert.equal(settleRes.consumedCost, 4);
+  });
+
+  await t.test('reconcileTaskBudgets filters reservations by task owner', async () => {
+    const budgetTracker = new BudgetTracker(initialLedgers);
+    const store = new DurableStore(tempDir);
+    const adapter = new UC03AccountingAdapter(budgetTracker, store);
+
+    const res1 = await adapter.reserveInvestigation('task-A', 'run-A', 500, 1);
+    const res2 = await adapter.reserveInvestigation('task-B', 'run-B', 300, 1);
+    assert.ok(res1.reservationId);
+    assert.ok(res2.reservationId);
+
+    // Reconcile task-A only
+    const reconciledA = adapter.reconcileTaskBudgets('task-A', 'run-A');
+    assert.equal(reconciledA.totalTokensConsumed, 500);
+
+    // task-B reservation should still be pending in the ledger
+    const tokensLedger = budgetTracker.getLedgers().find((l) => l.kind === 'tokens');
+    const remainingRes = tokensLedger?.reservations.find((r) => r.keyedId === res2.reservationId);
+    assert.ok(remainingRes);
+    assert.equal(remainingRes.amount, 300);
+  });
 });

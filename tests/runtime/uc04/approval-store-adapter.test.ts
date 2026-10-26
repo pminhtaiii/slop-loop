@@ -274,4 +274,47 @@ test('UC-04 / UC-05: DurableApprovalStore Adapter', async (t) => {
 
     assert.equal(conflictRes.safe.outcome, 'conflict');
   });
+
+  await t.test('rejects malformed decision event in pending creation', () => {
+    const store = new DurableApprovalStore({ storageDir: tempDir });
+    const invalidEventRes = store.createPendingAndPause({
+      expectedControlVersion: 1,
+      submissionKey: 'submission-invalid-ev',
+      request: {
+        ...sampleRequest,
+        taskId: 'task-malformed-ev',
+        decisionId: 'decision-invalid-ev',
+        binding: {
+          ...sampleRequest.binding,
+          taskId: 'task-malformed-ev',
+          decisionId: 'decision-invalid-ev',
+        },
+      },
+      event: { invalid: 'event-shape' },
+    });
+
+    assert.equal(invalidEventRes.safe.outcome, 'denied');
+    assert.equal(invalidEventRes.safe.safeReasonCode, 'invalid-event');
+  });
+
+  await t.test('ensures idempotent resolution retry with matching responseKey', () => {
+    const store = new DurableApprovalStore({ storageDir: tempDir });
+    const res2 = store.resolvePending({
+      expectedRequestVersion: 1,
+      trustedOperator,
+      trustedResponse: {
+        schemaVersion: 'uc05-approval/0.1-draft',
+        decisionId,
+        responseKey: 'resp-different-key',
+        expectedRequestVersion: 1,
+        operatorChannelRef: 'channel-local',
+        decision: 'approved',
+        safeReasonCode: 'developer-approved',
+        decidedAt: '2026-10-26T07:08:00.000Z',
+        eventId: 'ev-idempotent-1',
+      },
+    });
+
+    assert.equal(res2.safe.outcome, 'conflict');
+  });
 });

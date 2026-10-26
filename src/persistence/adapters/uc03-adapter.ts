@@ -34,6 +34,15 @@ export class UC03AccountingAdapter {
     this.durableStore = durableStore;
   }
 
+  private belongsToTask(keyedId: string, taskId: string): boolean {
+    return (
+      keyedId.startsWith(`inv-${taskId}-`) ||
+      keyedId.startsWith(`repair-${taskId}-`) ||
+      keyedId.startsWith(`replan-${taskId}-`) ||
+      keyedId.includes(`-${taskId}-`)
+    );
+  }
+
   async reserveInvestigation(
     taskId: string,
     runId: string,
@@ -87,10 +96,10 @@ export class UC03AccountingAdapter {
     taskId: string,
     runId: string,
     estimatedTokens: number,
-    currentReplanCount?: number
+    currentReplanCount: number
   ): Promise<UC03ReservationResult> {
     const taskCount = this.replanCountsByTask.get(taskId) ?? 0;
-    const count = Math.max(taskCount, currentReplanCount ?? 0);
+    const count = Math.max(taskCount, currentReplanCount);
     if (count >= 3) {
       throw new UC03ReplanExhaustionError('Replan limit reached: maximum 3 replans permitted');
     }
@@ -119,11 +128,24 @@ export class UC03AccountingAdapter {
     reservationId: string,
     observedUsage: { readonly tokens?: number; readonly cost?: number }
   ): Promise<UC03SettleResult> {
+    const reservedAmount = (kinds: readonly string[]): number | undefined => {
+      for (const ledger of this.budgetTracker.getLedgers()) {
+        if (!kinds.includes(ledger.kind)) continue;
+        const match = ledger.reservations.find(
+          (r) => r.keyedId === reservationId || r.reservationId === reservationId
+        );
+        if (match) return match.amount;
+      }
+      return undefined;
+    };
+    const reservedTokens = reservedAmount(['tokens', 'token']);
+    const reservedCost = reservedAmount(['cost']);
+
     this.budgetTracker.settle(reservationId, {
-      inputTokens: observedUsage.tokens ?? 0,
+      inputTokens: observedUsage.tokens ?? reservedTokens ?? 0,
       outputTokens: 0,
-      billableTokens: observedUsage.tokens ?? 0,
-      costUsd: observedUsage.cost ?? 0,
+      billableTokens: observedUsage.tokens ?? reservedTokens ?? 0,
+      costUsd: observedUsage.cost ?? reservedCost ?? 0,
     });
 
     return {
@@ -135,12 +157,13 @@ export class UC03AccountingAdapter {
     };
   }
 
-  handleInterruptedCall(_taskId: string, _runId: string, reservationId: string): void {
+  handleInterruptedCall(taskId: string, _runId: string, reservationId: string): void {
     for (const ledger of this.budgetTracker.getLedgers()) {
       const copy = [...ledger.reservations];
       const match = copy.find(
         (r) =>
-          (r.keyedId === reservationId || r.reservationId === reservationId)
+          (r.keyedId === reservationId || r.reservationId === reservationId) &&
+          this.belongsToTask(r.keyedId, taskId)
       );
       if (match) {
         this.budgetTracker.settleReservation(match.reservationId, match.amount);
@@ -158,7 +181,7 @@ export class UC03AccountingAdapter {
     for (const ledger of this.budgetTracker.getLedgers()) {
       const copy = [...ledger.reservations];
       for (const res of copy) {
-        {
+        if (this.belongsToTask(res.keyedId, taskId)) {
           this.budgetTracker.settleReservation(res.reservationId, res.amount);
         }
       }
