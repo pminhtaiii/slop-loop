@@ -132,13 +132,12 @@ export class UC03AccountingAdapter {
     };
   }
 
-  handleInterruptedCall(taskId: string, _runId: string, reservationId: string): void {
+  handleInterruptedCall(_taskId: string, _runId: string, reservationId: string): void {
     for (const ledger of this.budgetTracker.getLedgers()) {
       const copy = [...ledger.reservations];
       const match = copy.find(
         (r) =>
-          (r.keyedId === reservationId || r.reservationId === reservationId) &&
-          true
+          (r.keyedId === reservationId || r.reservationId === reservationId)
       );
       if (match) {
         this.budgetTracker.settleReservation(match.reservationId, match.amount);
