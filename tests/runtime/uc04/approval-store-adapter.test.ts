@@ -1,14 +1,15 @@
-import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { DurableApprovalStore } from '../../../src/persistence/adapters/approval-store-adapter.ts';
+import { join } from 'node:path';
+import { test } from 'node:test';
 import type {
   ApprovalRequestRecord,
-  HumanResolution,
   DecisionEvent,
+  DeveloperDirection,
+  HumanResolution,
 } from '../../../src/contracts/approvals/contracts.ts';
+import { DurableApprovalStore } from '../../../src/persistence/adapters/approval-store-adapter.ts';
 
 const actionDigest = `sha256:${'a'.repeat(64)}`;
 const presentationDigest = `sha256:${'b'.repeat(64)}`;
@@ -75,6 +76,12 @@ test('UC-04 / UC-05: DurableApprovalStore Adapter', async (t) => {
     timestamp: '2026-10-26T07:00:01.000Z',
   };
 
+  const trustedOperator = {
+    actorId: 'developer-local',
+    channelRef: 'channel-local',
+    provenance: 'real' as const,
+  };
+
   await t.test('loads initial task control and creates pending approval', () => {
     const store = new DurableApprovalStore({ storageDir: tempDir });
     const initial = store.loadTaskControl(taskId);
@@ -118,6 +125,31 @@ test('UC-04 / UC-05: DurableApprovalStore Adapter', async (t) => {
     assert.equal(eventsRes.value?.[0]?.eventId, 'event-1');
   });
 
+  await t.test('rejects resolution without trusted operator', () => {
+    const store = new DurableApprovalStore({ storageDir: tempDir });
+
+    const resolution: HumanResolution = {
+      schemaVersion: 'uc05-approval/0.1-draft',
+      decisionId,
+      responseKey: 'response-no-op',
+      expectedRequestVersion: 1,
+      operatorChannelRef: 'channel-local',
+      decision: 'approved',
+      safeReasonCode: 'developer-approved',
+      decidedAt: '2026-10-26T07:05:00.000Z',
+      eventId: 'event-resolution-0',
+    };
+
+    const res = store.resolvePending({
+      expectedControlVersion: 2,
+      expectedRequestVersion: 1,
+      trustedResponse: resolution,
+    });
+
+    assert.equal(res.safe.outcome, 'denied');
+    assert.equal(res.safe.safeReasonCode, 'missing-trusted-operator');
+  });
+
   await t.test('resolves pending approval and resumes task to runnable', () => {
     const store = new DurableApprovalStore({ storageDir: tempDir });
 
@@ -137,6 +169,7 @@ test('UC-04 / UC-05: DurableApprovalStore Adapter', async (t) => {
       expectedControlVersion: 2,
       expectedRequestVersion: 1,
       trustedResponse: resolution,
+      trustedOperator,
       event: {
         schemaVersion: 'uc05-approval/0.1-draft',
         eventId: 'event-resolution-1',
@@ -171,11 +204,61 @@ test('UC-04 / UC-05: DurableApprovalStore Adapter', async (t) => {
     assert.equal(history.value?.resolutions[0]?.decision, 'approved');
   });
 
+  await t.test('prevents replay resolution when task is no longer waiting', () => {
+    const store = new DurableApprovalStore({ storageDir: tempDir });
+
+    const resolution: HumanResolution = {
+      schemaVersion: 'uc05-approval/0.1-draft',
+      decisionId,
+      responseKey: 'response-replay',
+      expectedRequestVersion: 1,
+      operatorChannelRef: 'channel-local',
+      decision: 'approved',
+      safeReasonCode: 'developer-approved',
+      decidedAt: '2026-10-26T07:06:00.000Z',
+      eventId: 'event-replay-1',
+    };
+
+    const res = store.resolvePending({
+      trustedResponse: resolution,
+      trustedOperator,
+    });
+
+    assert.equal(res.safe.outcome, 'conflict');
+    assert.equal(res.safe.safeReasonCode, 'task-not-waiting');
+  });
+
+  await t.test('records developer direction with operator identity', () => {
+    const store = new DurableApprovalStore({ storageDir: tempDir });
+
+    const direction: DeveloperDirection = {
+      schemaVersion: 'uc05-approval/0.1-draft',
+      directionId: 'dir-1',
+      taskId,
+      expectedVersion: 3,
+      expectedEpoch: 3,
+      direction: 'resume',
+      safeScopeRef: 'scope-1',
+      responseKey: 'response-key-1',
+      createdAt: '2026-10-26T07:07:00.000Z',
+    };
+
+    const dirRes = store.recordDirection({
+      direction,
+      trustedOperator,
+    });
+
+    assert.equal(dirRes.safe.outcome, 'ok');
+    const control = store.loadTaskControl(taskId);
+    assert.equal(control.value?.mode, 'runnable');
+  });
+
   await t.test('detects version conflict safely', () => {
     const store = new DurableApprovalStore({ storageDir: tempDir });
     const conflictRes = store.resolvePending({
-      expectedControlVersion: 999, // Stale version
+      expectedControlVersion: 999,
       expectedRequestVersion: 1,
+      trustedOperator,
       trustedResponse: {
         schemaVersion: 'uc05-approval/0.1-draft',
         decisionId,

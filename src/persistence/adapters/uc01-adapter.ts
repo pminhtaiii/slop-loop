@@ -99,11 +99,23 @@ export class UC01AccountingAdapter {
     reservationRef: string,
     observed: UC01Usage
   ): Promise<UC01SettleResult> {
-    this.budgetTracker.settle(reservationRef, {
-      inputTokens: observed.inputTokens,
-      outputTokens: observed.outputTokens,
-      costUsd: observed.costUnits,
-    });
+    if (observed.state === 'uncertain') {
+      for (const ledger of this.budgetTracker.getLedgers()) {
+        const match = ledger.reservations.find(
+          (r) => r.reservationId === reservationRef || r.keyedId === reservationRef
+        );
+        if (match) {
+          this.budgetTracker.settleReservation(match.reservationId, match.amount);
+        }
+      }
+    } else {
+      this.budgetTracker.settle(reservationRef, {
+        inputTokens: observed.inputTokens,
+        outputTokens: observed.outputTokens,
+        billableTokens: observed.inputTokens + observed.outputTokens,
+        costUsd: observed.costUnits,
+      });
+    }
 
     return {
       kind: 'settled',
@@ -116,7 +128,8 @@ export class UC01AccountingAdapter {
   reconcileAfterInterrupt(taskId: string, runId: string): UC01ReconciliationSummary {
     let uncertainCount = 0;
     for (const ledger of this.budgetTracker.getLedgers()) {
-      for (const res of ledger.reservations) {
+      const copy = [...ledger.reservations];
+      for (const res of copy) {
         this.budgetTracker.settleReservation(res.reservationId, res.amount);
         uncertainCount++;
       }
@@ -135,7 +148,7 @@ export class UC01AccountingAdapter {
   async saveCheckpoint(
     taskId: string,
     stepName: 'intake' | 'clarify' | 'assess' | 'recommend',
-    stepData: unknown
+    stepData?: unknown
   ): Promise<void> {
     if (!this.durableStore) return;
 
@@ -150,12 +163,13 @@ export class UC01AccountingAdapter {
     ];
 
     const stepIndex = basePlan.findIndex((p) => p.id === stepName);
+    const stepDigest = typeof stepData === 'string' ? stepData : `evidence-${stepName}-${Date.now()}`;
     const updatedPlan = basePlan.map((p, idx) => {
       if (p.id === stepName) {
         return {
           ...p,
           status: 'done' as const,
-          evidenceRefs: [JSON.stringify(stepData)],
+          evidenceRefs: [stepDigest],
           completedAt: new Date().toISOString(),
         };
       }
@@ -169,31 +183,40 @@ export class UC01AccountingAdapter {
       return p;
     });
 
-    const nextState: TaskState = {
-      schemaVersion: UC04_SCHEMA_VERSION,
-      taskId,
-      runId: existing?.runId ?? `run-${Date.now()}`,
-      repositoryId: existing?.repositoryId ?? 'repo-default',
-      workspaceId: existing?.workspaceId ?? 'workspace-default',
-      taskType: 'feature',
-      goal: 'Issue Triage and Assessment',
-      acceptanceCriteria: ['Classify issue', 'Assess evidence', 'Recommend destination'],
-      constraints: ['Respect token limits', 'Preserve accounting on interrupt'],
-      plan: updatedPlan,
-      currentStepIndex: stepIndex >= 0 ? stepIndex : 0,
-      changedFiles: [],
-      openRisks: [],
-      nextAction: `Completed step ${stepName}`,
-      status: 'running',
-      stateVersion: nextVersion,
-      budgetLedgers: this.budgetTracker.getLedgers(),
-      workspaceBaseline: existing?.workspaceBaseline ?? {
-        commitHash: 'abcdef1234567890',
-        branch: 'development',
-        isClean: true,
-        trackedFilesHash: 'hash-baseline',
-      },
-    };
+    const nextState: TaskState = existing
+      ? {
+          ...existing,
+          plan: updatedPlan,
+          currentStepIndex: stepIndex >= 0 ? stepIndex : existing.currentStepIndex,
+          nextAction: `Completed step ${stepName}`,
+          stateVersion: nextVersion,
+          budgetLedgers: this.budgetTracker.getLedgers(),
+        }
+      : {
+          schemaVersion: UC04_SCHEMA_VERSION,
+          taskId,
+          runId: `run-${Date.now()}`,
+          repositoryId: 'repo-default',
+          workspaceId: 'workspace-default',
+          taskType: 'feature',
+          goal: 'Issue Triage and Assessment',
+          acceptanceCriteria: ['Classify issue', 'Assess evidence', 'Recommend destination'],
+          constraints: ['Respect token limits', 'Preserve accounting on interrupt'],
+          plan: updatedPlan,
+          currentStepIndex: stepIndex >= 0 ? stepIndex : 0,
+          changedFiles: [],
+          openRisks: [],
+          nextAction: `Completed step ${stepName}`,
+          status: 'running',
+          stateVersion: nextVersion,
+          budgetLedgers: this.budgetTracker.getLedgers(),
+          workspaceBaseline: {
+            commitHash: '0000000000000000000000000000000000000000',
+            branch: 'development',
+            isClean: true,
+            trackedFilesHash: 'hash-baseline',
+          },
+        };
 
     await this.durableStore.saveCheckpoint(nextState);
   }

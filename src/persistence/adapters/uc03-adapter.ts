@@ -26,6 +26,7 @@ export class UC03ReplanExhaustionError extends Error {
 export class UC03AccountingAdapter {
   private readonly budgetTracker: BudgetTracker;
   readonly durableStore?: DurableStore | undefined;
+  private replanCount = 0;
 
   constructor(budgetTracker: BudgetTracker, durableStore?: DurableStore) {
     this.budgetTracker = budgetTracker;
@@ -85,15 +86,14 @@ export class UC03AccountingAdapter {
     taskId: string,
     runId: string,
     estimatedTokens: number,
-    currentReplanCount: number
+    currentReplanCount?: number
   ): Promise<UC03ReservationResult> {
-    if (currentReplanCount >= 3) {
-      throw new UC03ReplanExhaustionError(
-        `Cannot reserve replan: task ${taskId} has already reached the maximum 3 replans`
-      );
+    const count = currentReplanCount ?? this.replanCount;
+    if (count >= 3) {
+      throw new UC03ReplanExhaustionError('Replan limit reached: maximum 3 replans permitted');
     }
 
-    const requestId = `replan-${taskId}-${Date.now()}`;
+    const requestId = `replan-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     this.budgetTracker.reserve(
       requestId,
       [
@@ -102,6 +102,7 @@ export class UC03AccountingAdapter {
       ],
       { taskId, runId }
     );
+    this.replanCount = count + 1;
 
     return {
       reservationId: requestId,
@@ -127,13 +128,18 @@ export class UC03AccountingAdapter {
       consumedTokens: this.budgetTracker.getConsumed('task', 'tokens'),
       consumedCost: this.budgetTracker.getConsumed('task', 'cost'),
       consumedRepair: this.budgetTracker.getConsumed('task', 'repair'),
-      consumedReplan: this.budgetTracker.getConsumed('task', 'reviewer'),
+      consumedReplan: this.replanCount,
     };
   }
 
-  handleInterruptedCall(_taskId: string, _runId: string, reservationId: string): void {
+  handleInterruptedCall(taskId: string, _runId: string, reservationId: string): void {
     for (const ledger of this.budgetTracker.getLedgers()) {
-      const match = ledger.reservations.find((r) => r.keyedId === reservationId);
+      const copy = [...ledger.reservations];
+      const match = copy.find(
+        (r) =>
+          (r.keyedId === reservationId || r.reservationId === reservationId) &&
+          true
+      );
       if (match) {
         this.budgetTracker.settleReservation(match.reservationId, match.amount);
       }
@@ -148,8 +154,11 @@ export class UC03AccountingAdapter {
     readonly totalRepairConsumed: number;
   } {
     for (const ledger of this.budgetTracker.getLedgers()) {
-      for (const res of ledger.reservations) {
-        this.budgetTracker.settleReservation(res.reservationId, res.amount);
+      const copy = [...ledger.reservations];
+      for (const res of copy) {
+        {
+          this.budgetTracker.settleReservation(res.reservationId, res.amount);
+        }
       }
     }
 
