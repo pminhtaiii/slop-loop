@@ -39,6 +39,11 @@ import {
 } from '../support/uc03/state-fixtures.ts';
 import { ScriptedApprovalPort } from '../support/uc03/scripted-approval.ts';
 
+function asLegacyV01RepositoryPort(repository: FakeRepositoryPort): FakeRepositoryPort {
+  Object.defineProperty(repository, 'executionGuardApiVersion', { value: undefined });
+  return repository;
+}
+
 interface CompleteBaselineCandidate {
   readonly taskId: string;
   readonly workspaceId: string;
@@ -1505,7 +1510,7 @@ test('investigation: requires explicit reproduction purpose and refuses substrin
 test('investigation: works with FakeRepositoryPort when explicit TrustedHostPort is injected', async () => {
   const task = createFixtureBugTask();
   const hostPort = createValidHostPort(task);
-  const repo = new FakeRepositoryPort({ initialRevision: task.initialRevisionDigest });
+  const repo = asLegacyV01RepositoryPort(new FakeRepositoryPort({ initialRevision: task.initialRevisionDigest }));
   repo.setTestResult('check-pytest-reproduction', {
     checkId: 'check-pytest-reproduction',
     outcome: 'fail',
@@ -3293,7 +3298,7 @@ test('investigateBaseline: pytest node ID (tests/test_calculator.py::test_calc) 
   const task = createFixtureBugTask({
     requiredChecks: [nodeCheck],
   });
-  const repo = new FakeRepositoryPort({
+  const repo = asLegacyV01RepositoryPort(new FakeRepositoryPort({
     initialRevision: task.initialRevisionDigest,
     testResults: {
       'check-pytest-repro-node': {
@@ -3302,7 +3307,7 @@ test('investigateBaseline: pytest node ID (tests/test_calculator.py::test_calc) 
         outputExcerpt: 'AssertionError',
       },
     },
-  });
+  }));
   const host = createBoundHostPort(task, {
     testFiles: [{ path: 'tests/test_calculator.py', content: 'def test_calc(): pass\n' }],
   });
@@ -3557,6 +3562,19 @@ test('v0.2 baseline admission: pre-plan diagnostic command is guarded without a 
   assert.equal(v02Call?.context.planApplicability, 'pre-plan-diagnostic', 'Context must carry pre-plan-diagnostic applicability');
   assert.equal(v02Call?.claim?.planApplicability, 'pre-plan-diagnostic', 'Claim must carry pre-plan-diagnostic applicability');
   assert.equal(v02Call?.context.planDecisionRef, undefined, 'Pre-plan diagnostics must not fabricate a plan decision');
+});
+
+test('v0.2 baseline admission: repository marker alone denies fallback without admission, guard, or state', async () => {
+  const task = createFixtureBugTask();
+  const repo = new FakeRepositoryPort();
+
+  const result = await investigateWithTestContext(task, repo, createBoundHostPort(task));
+
+  assert.equal(repo.tests.length, 0, 'A v0.2 marker must prevent legacy RepositoryPort.runTests calls');
+  assert.equal(result.status, 'error');
+  assert.match(result.reason ?? '', /ADMISSION_DENIED: Missing or malformed admission context/);
+  assert.equal(repo.commands.length, 0, 'Missing authority must not reach the command receiver');
+  assert.equal(repo.v02Calls.length, 0, 'Missing authority must not create a v0.2 receiver call');
 });
 
 test('v0.2 baseline admission: zero repository command effects when task has open claim', async () => {

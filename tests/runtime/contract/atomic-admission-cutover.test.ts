@@ -104,7 +104,10 @@ function createPort(
 
 test('Checkpoint validation: canonical v0.2 requires every listed migration checkpoint', async () => {
   assert.equal(REQUIRED_MIGRATION_CHECKPOINTS.length, 13, 'Must require exactly 13 migration checkpoints');
-  const expectedCheckpoints: readonly MigrationCheckpointId[] = REQUIRED_MIGRATION_CHECKPOINTS;
+  const expectedCheckpoints: readonly MigrationCheckpointId[] = [
+    'T038', 'T040', 'T042', 'T044', 'T046', 'T048', 'T050',
+    'T052', 'T054', 'T056', 'T058', 'T061', 'T063',
+  ];
   assert.deepEqual(REQUIRED_MIGRATION_CHECKPOINTS, expectedCheckpoints);
 
   // Full set satisfies requirement

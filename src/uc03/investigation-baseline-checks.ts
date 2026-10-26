@@ -55,7 +55,7 @@ export async function runBaselineChecks(input: {
     contextAdmission !== undefined ||
     admissionContextForCheck !== undefined ||
     rawExecutionGuard !== undefined ||
-    (rawStatePort !== undefined && (repository as { executionGuardApiVersion?: string })?.executionGuardApiVersion === '0.2.0')
+    (repository as { executionGuardApiVersion?: string })?.executionGuardApiVersion === '0.2.0'
   );
 
   let admission: RepositoryAdmissionContextV02 | undefined;

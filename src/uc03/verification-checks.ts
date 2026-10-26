@@ -44,7 +44,7 @@ export async function executeVerificationChecks(
     rawAdmission !== undefined ||
     admissionContextForCheck !== undefined ||
     context.executionGuard !== undefined ||
-    (rawStatePort !== undefined && (repository as { executionGuardApiVersion?: string })?.executionGuardApiVersion === '0.2.0')
+    (repository as { executionGuardApiVersion?: string })?.executionGuardApiVersion === '0.2.0'
   );
 
   let admissionDenied = false;
