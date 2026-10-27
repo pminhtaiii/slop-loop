@@ -5,8 +5,6 @@ import {
   validateBugTask,
   validateTaskState,
   validateFixPlan,
-  validateRepositoryAdmissionV02,
-  validateRepositoryExecutionReceiptV02,
   type BugTask,
   type ApprovalBinding,
   type ProviderAdmissionContextV02,
@@ -21,6 +19,7 @@ import { evaluatePlanMateriality, executeReplan } from './repair.ts';
 import { createMilestone, type Milestone, type MilestoneKind } from './report.ts';
 import type { UC03GraphConfig, UC03GraphNode, UC03GraphPorts, UC03GraphState } from './graph-types.ts';
 import type { TrustedHostExpectedContext } from './investigation.ts';
+export { validSettledPatchEvidence } from './graph-patch-ancestry.ts';
 
 export type GraphInputValidation =
   | { readonly ok: true; readonly state: TaskState }
@@ -331,31 +330,6 @@ export function currentPlanBindingDigest(task: BugTask, state: TaskState): strin
     checkSetDigest: plan.checkSetDigest,
     decisionRef: plan.decisionRef,
   });
-}
-
-export function validSettledPatchEvidence(
-  state: UC03GraphState,
-  task: BugTask,
-  persisted: TaskState,
-): boolean {
-  const source = state.patchAdmission;
-  const receipt = state.patchReceipt;
-  if (!source || !receipt || !persisted.plan?.decisionRef ||
-      !persisted.plan.baselineRef || state.state?.plan?.baselineRef !== persisted.plan.baselineRef ||
-      (state.baseline !== undefined && (state.baseline.repositorySnapshotDigest !== task.initialRevisionDigest || state.baseline.evidenceId !== persisted.plan.baselineRef)) ||
-      (persisted.activeDecisionId !== undefined && persisted.activeDecisionId !== persisted.plan.decisionRef)) return false;
-  const admission = validateRepositoryAdmissionV02(source.context, source.trustedContext);
-  const execution = validateRepositoryExecutionReceiptV02(receipt, source.context);
-  if (!admission.ok || !execution.ok || admission.value.action.kind !== 'apply_patch') return false;
-  return admission.value.taskId === persisted.taskId && admission.value.runId === persisted.runId &&
-    admission.value.workspaceId === persisted.workspaceId && admission.value.repositoryId === persisted.repositoryId &&
-    (admission.value.runnableNode === 'Patch' || admission.value.runnableNode === 'Repair') &&
-    admission.value.expectedTaskStateVersion + 2 <= persisted.stateVersion &&
-    admission.value.planDecisionRef === persisted.plan.decisionRef &&
-    admission.value.planBindingDigest === currentPlanBindingDigest(task, persisted) &&
-    execution.value.attempt.postBeginTaskStateVersion === admission.value.expectedTaskStateVersion + 1 &&
-    execution.value.outcome.repositoryOperation === 'apply-patch' &&
-    execution.value.outcome.observedResultRevisionDigest === persisted.repositoryRevisionDigest;
 }
 
 export function validDiffInfo(value: unknown): value is { readonly diff: string; readonly diffDigest: string; readonly changedFiles: readonly string[] } {

@@ -15,3 +15,5 @@ export * from './uc03/ports-v02.ts';
 export * from './uc03/admission-v02.ts';
 export * from './uc03/attempt-v02.ts';
 export * from './uc03/cutover-v02.ts';
+export * from './uc03/verification-authority-v02.ts';
+export * from './uc03/verification-authority-validation-v02.ts';

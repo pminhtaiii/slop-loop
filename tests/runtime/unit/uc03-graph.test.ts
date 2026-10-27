@@ -22,10 +22,12 @@ import {
   type ApprovalBindingContext,
   type ApprovalBinding,
   type ApprovalPort,
+  type ContextualApprovalVerifierV02,
   type BugTask,
   type ClaimReceiptV02,
   type FixPlan,
   type ProviderAdmissionContextV02,
+  type RepositoryAdmissionContextV02,
   type ProviderRequest,
   type ProviderPricingIdentityV02,
   type PolicyAuthorityRefV02,
@@ -35,6 +37,7 @@ import {
   type TaskState,
   type VerificationResult,
   validateStateTransition,
+  validateRepositoryAdmissionV02,
 } from '../../../src/contracts/foundation/uc03.ts';
 import {
   runUC03Graph,
@@ -67,6 +70,7 @@ import {
 } from '../support/uc03/state-fixtures.ts';
 import { FakeRepositoryPort } from '../support/uc03/fake-repository.ts';
 import { MemoryStatePortV02 } from '../support/uc03/memory-state.ts';
+import { ScriptedApprovalPort } from '../support/uc03/scripted-approval.ts';
 import { ScriptedModelPort } from '../support/uc03/scripted-model.ts';
 import type {
   TrustedHostPort,
@@ -107,11 +111,12 @@ function createMockHostAuthority(
 }
 
 function createMockBaselineEvidenceWriter(onPersist?: (request: BaselineEvidenceWriteRequest) => void): BaselineEvidenceWriter {
+  const records = new Map<string, { readonly content: BaselineEvidenceWriteRequest['content']; readonly acknowledgement: BaselineEvidenceAcknowledgement }>();
   return {
     async persistBaselineEvidence(request: BaselineEvidenceWriteRequest): Promise<BaselineEvidenceAcknowledgement> {
       onPersist?.(request);
       const { content } = request;
-      return {
+      const acknowledgement: BaselineEvidenceAcknowledgement = {
         evidenceId: `uc04://baseline/${content.taskId}/1`,
         taskId: content.taskId,
         workspaceId: content.workspaceId,
@@ -126,12 +131,26 @@ function createMockBaselineEvidenceWriter(onPersist?: (request: BaselineEvidence
         expectedTestFiles: content.expectedTestFiles,
         requiredCheckIds: content.requiredChecks.map((c) => c.checkId),
       };
+      records.set(`${content.taskId}\0${content.workspaceId}\0${content.repositoryId}\0${acknowledgement.evidenceId}`, {
+        content: structuredClone(content), acknowledgement: structuredClone(acknowledgement),
+      });
+      return acknowledgement;
+    },
+    async loadBaselineEvidence(taskId, workspaceId, repositoryId, evidenceId) {
+      const record = records.get(`${taskId}\0${workspaceId}\0${repositoryId}\0${evidenceId}`);
+      return record ? structuredClone(record) : null;
     },
   };
 }
 
 interface ControllableApprovalPort extends ApprovalPort {
   setDecision(d: 'approved' | 'pending' | 'rejected'): void;
+}
+
+interface ContextualControllableApprovalPort extends ControllableApprovalPort, ContextualApprovalVerifierV02 {
+  scriptDecision(binding: ApprovalBinding, generation?: number): void;
+  getRecordedBindings(): readonly ApprovalBinding[];
+  setV02AuthorityRef(authority: PolicyAuthorityRefV02 | undefined): void;
 }
 
 function createControllableApprovalPort(
@@ -166,6 +185,29 @@ function createControllableApprovalPort(
         ...(currentDecision === 'rejected' ? { reason: 'explicit rejection' } : {}),
       };
     },
+  };
+}
+
+function createContextualApprovalPort(
+  initialBinding: ApprovalBinding,
+  currentContext: ApprovalBindingContext,
+  authorityRef: PolicyAuthorityRefV02,
+): ContextualControllableApprovalPort {
+  const issuer = new ScriptedApprovalPort({ decisions: [initialBinding], currentContext, v02AuthorityRef: authorityRef });
+  return {
+    provenance: 'mock',
+    setDecision(status) {
+      const current = issuer.getRecordedBindings().at(-1) ?? initialBinding;
+      issuer.scriptDecision({ ...current, status });
+    },
+    classify: (action) => issuer.classify(action),
+    requestDecision: (binding) => issuer.requestDecision(binding),
+    validateBinding: (binding) => issuer.validateBinding(binding),
+    resolve: (decisionId) => issuer.resolve(decisionId),
+    scriptDecision: (binding, generation) => issuer.scriptDecision(binding, generation),
+    getRecordedBindings: () => issuer.getRecordedBindings(),
+    setV02AuthorityRef: (authority) => issuer.setV02AuthorityRef(authority),
+    resolvePlanDecisionInContext: (decisionId, context) => issuer.resolvePlanDecisionInContext(decisionId, context),
   };
 }
 
@@ -258,7 +300,9 @@ function createGraphState(input: {
   };
 }
 
-function createPlanApprovalContext(task: BugTask): Readonly<Record<number, NonNullable<StateTransitionOptions['trusted']>>> {
+function createPlanApprovalContext(task: BugTask): Readonly<Record<number, NonNullable<StateTransitionOptions['trusted']> & {
+  readonly approval?: { readonly binding: ApprovalBinding; readonly freshness: ApprovalBindingContext };
+}>> {
   const state = createGraphTaskState(task);
   const baselineRef = `uc04://baseline/${task.taskId}/1`;
   const evidenceRefs = [baselineRef];
@@ -366,6 +410,8 @@ function createMockPatchAdmissionResolver(repositoryPort: FakeRepositoryPort, st
     readonly targetPaths: readonly string[];
     readonly actionId?: string | undefined;
   }) => {
+    const authority = await statePort.readVerificationAuthoritySnapshot(state.taskId);
+    if (!authority) return undefined;
     if (state.node === 'Patch') repositoryPort.setCommandResult('pytest -q tests/test_calculator.py -k test_divide_zero', { exitCode: 0, stdout: '1 passed', stderr: '' });
     const action = {
       actionId: actionId ?? `patch-${state.taskId}-${state.stateVersion}`,
@@ -384,6 +430,10 @@ function createMockPatchAdmissionResolver(repositoryPort: FakeRepositoryPort, st
       expectedTaskStateVersion: state.stateVersion,
       expectedControlVersion: journal.controlVersion,
       expectedEpoch: journal.epoch,
+      policyAuthorityRef: {
+        ...authority.policyIdentity,
+        decisionAuthorityGeneration: authority.decisionAuthorityGeneration,
+      },
       action,
       planDecisionRef: state.plan?.decisionRef,
       planBindingDigest: createPlanBindingDigest(task, state),
@@ -402,12 +452,16 @@ function createMockReviewerAdmissionResolver(statePort: MemoryStatePortV02) {
     readonly state: TaskState;
     readonly diff: { readonly diff: string; readonly diffDigest: string; readonly changedFiles: readonly string[] };
   }) => {
+    const ownerAuthority = await statePort.readVerificationAuthoritySnapshot(task.taskId);
+    if (!ownerAuthority) return undefined;
     const request = createTestProviderRequest({
       providerRequestId: `provider-${task.taskId}-${state.stateVersion}`,
       taskId: task.taskId,
       runId: state.runId,
       role: 'reviewer',
       purpose: 'final-review',
+      configId: ownerAuthority.policyIdentity.configId,
+      pricingPolicyId: ownerAuthority.policyIdentity.policyId,
       contextDigest: diff.diffDigest,
       reservationRef: `review-allowance:${task.taskId}:${state.stateVersion}`,
     });
@@ -415,11 +469,11 @@ function createMockReviewerAdmissionResolver(statePort: MemoryStatePortV02) {
       providerId: request.providerId,
       modelId: request.modelId,
       configId: request.configId,
-      configVersion: '1.0.0',
-      pricingPolicyId: request.pricingPolicyId,
-      pricingPolicyVersion: '1.0.0',
-      issuerKeyRef: 'key-authority-provider-001',
-      decisionAuthorityGeneration: 4,
+      configVersion: ownerAuthority.policyIdentity.configVersion,
+      pricingPolicyId: ownerAuthority.policyIdentity.policyId,
+      pricingPolicyVersion: ownerAuthority.policyIdentity.policyVersion,
+      issuerKeyRef: ownerAuthority.policyIdentity.issuerKeyRef,
+      decisionAuthorityGeneration: ownerAuthority.decisionAuthorityGeneration,
     };
     const providerAdmissionReceipt = createFixtureProviderAdmissionReceiptV02({
       providerRequestId: request.providerRequestId,
@@ -431,16 +485,6 @@ function createMockReviewerAdmissionResolver(statePort: MemoryStatePortV02) {
       configVersion: providerIdentity.configVersion,
       decisionAuthorityGeneration: providerIdentity.decisionAuthorityGeneration,
     });
-    const authorityRef: PolicyAuthorityRefV02 = {
-      policyId: providerIdentity.pricingPolicyId,
-      policyVersion: providerIdentity.pricingPolicyVersion,
-      configId: providerIdentity.configId,
-      configVersion: providerIdentity.configVersion,
-      issuerKeyRef: providerIdentity.issuerKeyRef,
-      decisionAuthorityGeneration: providerIdentity.decisionAuthorityGeneration,
-    };
-    const publication = await statePort.publishAuthority({ authorityRef });
-    if (publication.status !== 'published') return undefined;
     const journal = statePort.getJournalSnapshot();
     const context = createTestProviderAdmissionContextV02({
       providerRequest: request,
@@ -473,6 +517,8 @@ function createTestSetup(overrides?: {
   initialDecision?: 'approved' | 'pending' | 'rejected';
   initialReviewStatus?: 'accepted' | 'findings';
   transitionContexts?: Readonly<Record<number, NonNullable<StateTransitionOptions['trusted']>>>;
+  contextualApprovalIssuer?: boolean;
+  wrapContextualApprovalVerifier?: (issuer: ContextualControllableApprovalPort) => ContextualApprovalVerifierV02;
 }) {
   const checkRepro = createFixtureCheckDefinition({
     checkId: 'check-pytest-reproduction',
@@ -493,9 +539,26 @@ function createTestSetup(overrides?: {
   });
 
   const transitionContexts = { ...createPlanApprovalContext(task), ...(overrides?.transitionContexts ?? {}) };
+  const authorityRef = createFixturePolicyAuthorityRefV02({
+    policyId: task.configId, policyVersion: task.configVersion,
+    configId: task.configId, configVersion: task.configVersion,
+    decisionAuthorityGeneration: 3,
+  });
+  const initialPlanApproval = createPlanApprovalContext(task)[3]?.approval;
+  const contextualApprovalPort = overrides?.contextualApprovalIssuer && initialPlanApproval
+    ? createContextualApprovalPort(
+      { ...initialPlanApproval.binding, status: overrides.initialDecision ?? 'approved' },
+      initialPlanApproval.freshness,
+      authorityRef,
+    )
+    : undefined;
+  const contextualVerifier = contextualApprovalPort
+    ? overrides?.wrapContextualApprovalVerifier?.(contextualApprovalPort) ?? contextualApprovalPort
+    : undefined;
   const statePort = new MemoryStatePortV02({
     transitionContexts,
-    initialAuthorityRef: createFixturePolicyAuthorityRefV02({ decisionAuthorityGeneration: 3 }),
+    initialAuthorityRef: authorityRef,
+    ...(contextualVerifier ? { verificationApprovalVerifier: contextualVerifier } : {}),
   });
 
   const repositoryPort = new FakeRepositoryPort({
@@ -525,13 +588,14 @@ function createTestSetup(overrides?: {
   repositoryPort.setStatePort(statePort);
   const ownerSettledRepositoryPort = createGraphRepositoryPort(repositoryPort, statePort);
 
-  const approvalPort = createControllableApprovalPort(overrides?.initialDecision ?? 'approved');
+  const approvalPort: ControllableApprovalPort = contextualApprovalPort ?? createControllableApprovalPort(overrides?.initialDecision ?? 'approved');
   const modelPort = new ScriptedModelPort();
   const reviewerPort = createControllableReviewerPort(repositoryPort, statePort, overrides?.initialReviewStatus ?? 'accepted');
   const executionGuard = createExecutionGuardV02({ ports: { statePort, repositoryPort: ownerSettledRepositoryPort, approvalPort } });
   const hostAuthority = createMockHostAuthority();
   let baselineEvidenceRequest: BaselineEvidenceWriteRequest | undefined;
   const baselineEvidenceWriter = createMockBaselineEvidenceWriter((request) => { baselineEvidenceRequest = request; });
+  const verificationAdmissions: RepositoryAdmissionContextV02[] = [];
 
   // Verification results for post-patch
   repositoryPort.setTestResult('check-pytest-reproduction', {
@@ -557,7 +621,9 @@ function createTestSetup(overrides?: {
     expectedTestFiles: ['tests/test_calculator.py'],
     executionGuard,
     statePort,
-    admissionContextForCheck: ({ check, action, currentState }) => {
+    admissionContextForCheck: async ({ check, action, currentState }) => {
+      const ownerAuthority = await statePort.readVerificationAuthoritySnapshot(currentState.taskId);
+      if (!ownerAuthority) return undefined;
       const isVerify = currentState.node === 'Verify';
       const journal = statePort.getJournalSnapshot();
       const planBindingDigest = isVerify ? createPlanBindingDigest(task, currentState) : undefined;
@@ -570,18 +636,23 @@ function createTestSetup(overrides?: {
         expectedTaskStateVersion: currentState.stateVersion,
         expectedControlVersion: journal.controlVersion,
         expectedEpoch: journal.epoch,
+        policyAuthorityRef: {
+          ...ownerAuthority.policyIdentity,
+          decisionAuthorityGeneration: ownerAuthority.decisionAuthorityGeneration,
+        },
         action,
         reservationRefs: createResourceReservationRefs(action.actionId),
         runnableNode: isVerify ? 'Verify' : 'Investigate',
         planApplicability: isVerify ? 'approved-plan' : 'pre-plan-diagnostic',
-        diagnosticPurpose: isVerify ? undefined : check.purpose,
         taskCriteriaDigest: computeCanonicalSha256(task.acceptanceCriteria),
         checkSetDigest: computeCheckSetDigest(task.requiredChecks),
         checkId: check.checkId,
         testPath: 'tests/test_calculator.py',
-        planBindingDigest,
-        planDecisionRef: isVerify ? currentState.plan?.decisionRef : undefined,
+        ...(isVerify
+          ? { planBindingDigest, planDecisionRef: currentState.plan?.decisionRef }
+          : { planBindingDigest: undefined, planDecisionRef: undefined, diagnosticPurpose: check.purpose }),
       });
+      if (isVerify) verificationAdmissions.push(context);
       repositoryPort.setExecutorIdentity(createFixtureExecutorIdentityV02({ payloadDigest: computeActionDigest(action) }));
       return context;
     },
@@ -604,6 +675,9 @@ function createTestSetup(overrides?: {
     statePort,
     repositoryPort,
     approvalPort,
+    authorityRef,
+    verificationAdmissions,
+    verificationApprovalPort: contextualApprovalPort,
     modelPort,
     reviewerPort,
     hostAuthority,
@@ -851,9 +925,17 @@ test('Mock route delivers only after baseline, owner-settled patch, current chec
     setup: ReturnType<typeof createTestSetup>,
     trustedTransitionContext?: NonNullable<StateTransitionOptions['trusted']>,
     onReview?: (result: ReviewResult, request: ProviderRequest) => void,
+    resumeState?: TaskState,
+    onOpenVerifyClaim?: (
+      state: TaskState,
+      rerun: (resume: TaskState) => ReturnType<typeof runUC03Graph>,
+      reviewerCalls: number,
+    ) => Promise<void>,
   ) => {
-    await seedGraphTaskState(setup.statePort, createGraphTaskState(setup.task));
+    if (!resumeState) await seedGraphTaskState(setup.statePort, createGraphTaskState(setup.task));
     const guardReasons: string[] = [];
+    const approvalStages: string[] = [];
+    let reviewedOwnerState: TaskState | undefined;
     const execute = setup.executionGuard.validateAndExecute.bind(setup.executionGuard);
     setup.executionGuard.validateAndExecute = async (...args) => {
       const effect = await execute(...args);
@@ -864,6 +946,7 @@ test('Mock route delivers only after baseline, owner-settled patch, current chec
     let reviewerCalls = 0;
     setup.reviewerPort.review = async (task, diff, evidence, request, admission, claim) => {
       reviewerCalls += 1;
+      reviewedOwnerState = await setup.statePort.loadTask(task.taskId) ?? undefined;
       const result = await review(task, diff, evidence, request, admission, claim);
       onReview?.(result, request);
       return result;
@@ -873,29 +956,119 @@ test('Mock route delivers only after baseline, owner-settled patch, current chec
       outputExcerpt: 'FAILED tests/test_calculator.py::test_divide_zero - ZeroDivisionError: division by zero', durationMs: 150,
     });
     setup.repositoryPort.setTestResult('check-pytest-regression', { checkId: 'check-pytest-regression', outcome: 'pass', outputExcerpt: '1 passed', durationMs: 100 });
-    const result = await runUC03Graph(setup.task, setup.ports, {
+    const routeConfig = {
       mode: 'development', trustedExpectedContext: setup.trustedExpectedContext, planDetails: ROUTE_PLAN_DETAILS,
       admissionContext: createMockPatchAdmissionResolver(setup.repositoryPort, setup.statePort),
       reviewerAdmission: createMockReviewerAdmissionResolver(setup.statePort), patchContent, targetPaths: ['src/calculator.py'],
       ...(trustedTransitionContext ? { trustedTransitionContext } : {}),
-    });
-    return { result, reviewerCalls, guardReasons };
+    } as const;
+    if (onOpenVerifyClaim) {
+      const beginAttempt = setup.statePort.beginAttempt.bind(setup.statePort);
+      let nestedRunStarted = false;
+      setup.statePort.beginAttempt = async (...args) => {
+        const attempt = await beginAttempt(...args);
+        const current = await setup.statePort.loadTask(setup.task.taskId);
+        if (!nestedRunStarted && current?.node === 'Verify' && setup.statePort.getJournalSnapshot().activeClaimId) {
+          nestedRunStarted = true;
+          await onOpenVerifyClaim(current, (resume) => runUC03Graph(setup.task, setup.ports, routeConfig, resume), reviewerCalls);
+        }
+        return attempt;
+      };
+    }
+    let result = await runUC03Graph(setup.task, setup.ports, routeConfig, resumeState);
+    if (setup.verificationApprovalPort) {
+      approvalStages.push(result.outcome);
+      if (result.outcome === 'pending-approval' && result.state) {
+        const pendingState = result.state;
+        const beforeAncestry = await setup.statePort.readSettledPatchAncestry({
+          taskId: pendingState.taskId,
+          runId: pendingState.runId,
+          resultingRepositoryRevisionDigest: pendingState.repositoryRevisionDigest,
+        });
+        const beforeReceiptDigest = beforeAncestry
+          ? computeCanonicalSha256({
+            admissionContext: beforeAncestry.admissionContext, claim: beforeAncestry.claim,
+            attempt: beforeAncestry.attempt, outcome: beforeAncestry.outcome, settlement: beforeAncestry.settlement,
+          })
+          : '';
+        const d1 = setup.verificationApprovalPort.getRecordedBindings().find((binding) => binding.decisionId.startsWith('dec-verify-'));
+        const snapshot = await setup.statePort.readVerificationAuthoritySnapshot(pendingState.taskId);
+        if (d1 && snapshot) {
+          const nextAuthority = {
+            ...setup.authorityRef,
+            decisionAuthorityGeneration: snapshot.decisionAuthorityGeneration + 1,
+          };
+          const publication = await setup.statePort.publishAuthority({ authorityRef: nextAuthority });
+          if (publication.status === 'published') {
+            setup.verificationApprovalPort.scriptDecision({ ...d1, status: 'approved' }, nextAuthority.decisionAuthorityGeneration);
+            const resumed = await runUC03Graph(setup.task, setup.ports, routeConfig, pendingState);
+            approvalStages.push(resumed.outcome);
+            result = resumed;
+          } else {
+            approvalStages.push(`publication-${publication.status}`);
+          }
+        } else {
+          approvalStages.push('missing-d1-or-snapshot');
+        }
+        const afterAncestry = await setup.statePort.readSettledPatchAncestry({
+          taskId: pendingState.taskId,
+          runId: pendingState.runId,
+          resultingRepositoryRevisionDigest: pendingState.repositoryRevisionDigest,
+        });
+        const afterReceiptDigest = afterAncestry
+          ? computeCanonicalSha256({
+            admissionContext: afterAncestry.admissionContext, claim: afterAncestry.claim,
+            attempt: afterAncestry.attempt, outcome: afterAncestry.outcome, settlement: afterAncestry.settlement,
+          })
+          : '';
+        return { result, reviewerCalls, guardReasons, approvalStages, reviewedOwnerState, patchReceiptUnchanged: !!beforeReceiptDigest && beforeReceiptDigest === afterReceiptDigest };
+      }
+    }
+    return { result, reviewerCalls, guardReasons, approvalStages, reviewedOwnerState, patchReceiptUnchanged: false };
   };
 
   // A first source run captures the mock owners' actual baseline, checks, patch revision, and review record.
-  const probe = createTestSetup();
+  const probe = createTestSetup({ contextualApprovalIssuer: true });
+  const probeInitialState = createGraphTaskState(probe.task);
+  await seedGraphTaskState(probe.statePort, probeInitialState);
+  const baselineCheck = probe.task.requiredChecks[0];
+  assert.ok(baselineCheck);
+  const baselineAdmission = await probe.trustedExpectedContext.admissionContextForCheck?.({
+    check: baselineCheck,
+    action: {
+      actionId: baselineCheck.checkId, kind: 'run_command', executable: baselineCheck.executable,
+      argv: [...baselineCheck.argv], workingDirectory: baselineCheck.workingDirectory ?? 'tests', purpose: baselineCheck.purpose,
+    },
+    currentState: probeInitialState,
+  });
+  const baselineAdmissionValidation = baselineAdmission
+    ? validateRepositoryAdmissionV02(baselineAdmission, createTestRepositoryAdmissionTrustedContextV02(baselineAdmission))
+    : undefined;
   let observedReview: ReviewResult | undefined;
   let observedRequest: ProviderRequest | undefined;
-  const probeRun = await runPassingMockRoute(probe, undefined, (review, request) => { observedReview = review; observedRequest = request; });
-  assert.equal(probeRun.result.outcome, 'IMPLEMENTED_UNVERIFIED');
+  const probeRun = await runPassingMockRoute(probe, undefined, (review, request) => { observedReview = review; observedRequest = request; }, probeInitialState);
+  assert.equal(probeRun.result.outcome, 'IMPLEMENTED_UNVERIFIED', JSON.stringify({
+    reasons: probeRun.result.reasons,
+    approvalStages: probeRun.approvalStages,
+    state: probeRun.result.state,
+    guardReasons: probeRun.guardReasons,
+    baselineAdmissionValidation,
+  }));
   const probeState = probeRun.result.state;
   const baselineWrite = probe.baselineEvidenceRequest;
   assert.ok(baselineWrite, 'Mock route did not persist its baseline evidence');
   assert.ok(probeState, 'Mock route did not retain the owner task state');
-  assert.ok(observedReview && observedRequest, `Mock route did not reach independently accounted review: ${probeRun.guardReasons.join('; ') || probeRun.result.reasons.join('; ')}`);
+  assert.ok(observedReview && observedRequest, `Mock route did not reach independently accounted review: ${JSON.stringify({
+    guardReasons: probeRun.guardReasons,
+    resultReasons: probeRun.result.reasons,
+    verificationAdmissions: probe.verificationAdmissions.map((context) => validateRepositoryAdmissionV02(
+      context,
+      createTestRepositoryAdmissionTrustedContextV02(context),
+    )),
+  })}`);
   const ownerReview = observedReview;
   const ownerRequest = observedRequest;
-  assert.equal(probeState.node, 'Repair');
+  assert.equal(probeState.node, 'Review');
   const baseline: Baseline = {
     evidenceId: `uc04://baseline/${probe.task.taskId}/1`,
     repositorySnapshotDigest: baselineWrite.content.repositorySnapshotDigest,
@@ -930,10 +1103,10 @@ test('Mock route delivers only after baseline, owner-settled patch, current chec
       review: ownerReview,
     },
   };
-  const deliveryExpectedVersion = probeState.stateVersion - 1;
-  const setup = createTestSetup({ transitionContexts: { [deliveryExpectedVersion]: deliveryTrustedContext } });
+  const deliveryStateVersion = probeState.stateVersion + 1;
+  const setup = createTestSetup({ contextualApprovalIssuer: true, transitionContexts: { [deliveryStateVersion]: deliveryTrustedContext } });
   const { task, statePort, repositoryPort } = setup;
-  const { result, reviewerCalls } = await runPassingMockRoute(setup, deliveryTrustedContext);
+  const { result, reviewerCalls, approvalStages, reviewedOwnerState, patchReceiptUnchanged } = await runPassingMockRoute(setup, deliveryTrustedContext);
 
   assert.equal(result.outcome, 'COMPLETED', result.reasons.join('; '));
   assert.ok(result.state !== null);
@@ -946,16 +1119,74 @@ test('Mock route delivers only after baseline, owner-settled patch, current chec
   assert.ok(result.finalReport.evidence.reviewRef);
   assert.equal(result.finalReport.delivery?.outcome, 'COMPLETED');
   assert.deepEqual(await statePort.loadTask(task.taskId), result.state);
-  assert.equal(result.state.plan?.decisionRef, ROUTE_PLAN_DETAILS.decisionRef);
+  assert.ok(setup.verificationApprovalPort);
+  const verificationDecision = setup.verificationApprovalPort.getRecordedBindings().find((binding) => binding.decisionId.startsWith('dec-verify-'));
+  assert.ok(verificationDecision);
+  assert.notEqual(verificationDecision.decisionId, ROUTE_PLAN_DETAILS.decisionRef);
+  assert.equal(result.state.plan?.decisionRef, verificationDecision.decisionId);
+  assert.equal(result.state.activeDecisionId, undefined);
+  assert.equal(reviewedOwnerState?.plan?.decisionRef, verificationDecision.decisionId);
+  assert.equal(reviewedOwnerState?.activeDecisionId, verificationDecision.decisionId);
+  assert.deepEqual(approvalStages, ['pending-approval', 'COMPLETED']);
+  assert.equal(patchReceiptUnchanged, true);
+  assert.equal(setup.verificationAdmissions.length, task.requiredChecks.length);
+  assert.deepEqual(
+    setup.verificationAdmissions.map((admission) => admission.subjectKind === 'repository-action' && admission.planApplicability === 'approved-plan' ? admission.checkId : undefined).sort(),
+    task.requiredChecks.map((check) => check.checkId).sort(),
+  );
+  assert.ok(setup.verificationAdmissions.every((admission) => admission.subjectKind === 'repository-action' &&
+    admission.planApplicability === 'approved-plan' && admission.runnableNode === 'Verify' &&
+    admission.planDecisionRef === verificationDecision.decisionId));
   assert.equal(result.state.plan?.baselineRef, result.finalReport.evidence.baselineRef);
   assert.notEqual(result.state.repositoryRevisionDigest, task.initialRevisionDigest);
   assert.equal(repositoryPort.patches.length, 1);
-  assert.equal(repositoryPort.commands.length, task.requiredChecks.length);
+  assert.equal(repositoryPort.commands.length, task.requiredChecks.length * 2);
+  for (const check of task.requiredChecks) {
+    assert.equal(repositoryPort.commands.filter((command) => command.actionId === check.checkId).length, 1);
+  }
   assert.equal(reviewerCalls, 1);
   assert.equal(statePort.getLedgers().find((ledger) => ledger.scope === 'task' && ledger.kind === 'repair')?.consumed, 1);
+  assert.equal(result.state.replanCount, 0);
   assert.equal(statePort.getLedgers().find((ledger) => ledger.scope === 'task' && ledger.kind === 'iteration')?.consumed, 1);
-  assert.equal(statePort.getJournalSnapshot().attempts.length, 1 + task.requiredChecks.length + 1);
+  assert.equal(statePort.getJournalSnapshot().attempts.length, 1 + task.requiredChecks.length * 2 + 1);
   assert.ok(result.milestones.some((milestone) => milestone.kind === 'task_completed'));
+
+  const staleD0Setup = createTestSetup({
+    contextualApprovalIssuer: true,
+    wrapContextualApprovalVerifier: (issuer) => ({
+      async resolvePlanDecisionInContext(decisionId, context) {
+        if (context.purpose === 'historical-patch') return { outcome: 'stale', reasonCode: 'STALE_D0_TEST_RECORD' };
+        return issuer.resolvePlanDecisionInContext(decisionId, context);
+      },
+    }),
+  });
+  const staleD0Run = await runPassingMockRoute(staleD0Setup);
+  assert.notEqual(staleD0Run.result.outcome, 'COMPLETED');
+  assert.equal(staleD0Run.result.state?.node, 'Verify');
+  assert.equal(staleD0Run.result.state?.plan?.decisionRef, ROUTE_PLAN_DETAILS.decisionRef);
+  assert.equal(staleD0Run.result.state?.activeDecisionId, undefined);
+  assert.equal(staleD0Setup.verificationApprovalPort?.getRecordedBindings().filter((binding) => binding.decisionId.startsWith('dec-verify-')).length, 0);
+  assert.equal(staleD0Setup.verificationAdmissions.length, 0);
+  assert.equal(staleD0Setup.repositoryPort.commands.length, staleD0Setup.task.requiredChecks.length);
+  assert.equal(staleD0Setup.repositoryPort.patches.length, 1);
+  assert.equal(staleD0Run.reviewerCalls, 0);
+
+  const openClaimSetup = createTestSetup({ contextualApprovalIssuer: true });
+  let concurrentResult: Awaited<ReturnType<typeof runUC03Graph>> | undefined;
+  await runPassingMockRoute(openClaimSetup, undefined, undefined, undefined, async (current, rerun, reviewerCalls) => {
+    const journal = openClaimSetup.statePort.getJournalSnapshot();
+    const commandCount = openClaimSetup.repositoryPort.commands.length;
+    assert.ok(journal.activeClaimId);
+    concurrentResult = await rerun(current);
+    assert.notEqual(concurrentResult.outcome, 'COMPLETED');
+    assert.equal(openClaimSetup.repositoryPort.commands.length, commandCount);
+    assert.equal(openClaimSetup.statePort.getJournalSnapshot().activeClaimId, journal.activeClaimId);
+    assert.equal(reviewerCalls, 0);
+  });
+  assert.ok(concurrentResult);
+  assert.equal(openClaimSetup.verificationAdmissions.length, openClaimSetup.task.requiredChecks.length);
+  assert.equal(openClaimSetup.repositoryPort.patches.length, 1);
+  assert.equal(openClaimSetup.verificationApprovalPort?.getRecordedBindings().filter((binding) => binding.decisionId.startsWith('dec-verify-')).length, 1);
 });
 
 /* ------------------------------------------------------------------
@@ -963,8 +1194,8 @@ test('Mock route delivers only after baseline, owner-settled patch, current chec
  * ------------------------------------------------------------------ */
 
 test('Pending plan approval: pauses at AwaitPlan and resumes when approved', async () => {
-  const { task, ports, statePort, approvalPort, repositoryPort, reviewerPort, trustedExpectedContext } =
-    createTestSetup({ initialDecision: 'pending' });
+  const setup = createTestSetup({ initialDecision: 'pending', contextualApprovalIssuer: true });
+  const { task, ports, statePort, repositoryPort, reviewerPort, trustedExpectedContext } = setup;
   await seedGraphTaskState(statePort, createGraphTaskState(task));
   let diffReads = 0;
   let reviewerCalls = 0;
@@ -989,8 +1220,15 @@ test('Pending plan approval: pauses at AwaitPlan and resumes when approved', asy
   assert.equal(diffReads, 0);
   assert.equal(reviewerCalls, 0);
 
-  // Now simulate human approval and post-patch test pass
-  approvalPort.setDecision('approved');
+  // Publish the explicit D0 approval at a new owner generation, then resume from the owner TaskState.
+  assert.ok(setup.verificationApprovalPort);
+  const d0 = setup.verificationApprovalPort.getRecordedBindings().find((binding) => binding.decisionId === ROUTE_PLAN_DETAILS.decisionRef);
+  const initialAuthority = await statePort.readVerificationAuthoritySnapshot(task.taskId);
+  assert.ok(d0 && initialAuthority);
+  const d0Authority = { ...setup.authorityRef, decisionAuthorityGeneration: initialAuthority.decisionAuthorityGeneration + 1 };
+  assert.equal((await statePort.publishAuthority({ authorityRef: d0Authority })).status, 'published');
+  setup.verificationApprovalPort.setV02AuthorityRef(d0Authority);
+  setup.verificationApprovalPort.scriptDecision({ ...d0, status: 'approved' }, d0Authority.decisionAuthorityGeneration);
   repositoryPort.setTestResult('check-pytest-reproduction', {
     checkId: 'check-pytest-reproduction',
     outcome: 'pass',
@@ -999,7 +1237,7 @@ test('Pending plan approval: pauses at AwaitPlan and resumes when approved', asy
   });
 
   // Second run: resume from restored state
-  const resumedResult = await runUC03Graph(
+  const pendingVerification = await runUC03Graph(
     task,
     ports,
     {
@@ -1015,17 +1253,41 @@ test('Pending plan approval: pauses at AwaitPlan and resumes when approved', asy
     pausedResult.state
   );
 
-  assert.equal(resumedResult.outcome, 'IMPLEMENTED_UNVERIFIED', `${resumedResult.reasons.join('; ')}; state=${resumedResult.state?.node ?? 'none'}`);
-  assert.equal(resumedResult.state?.node, 'Repair');
-  assert.deepEqual(await statePort.loadTask(task.taskId), resumedResult.state);
-  assert.ok(resumedResult.state && resumedResult.state.stateVersion > pausedResult.state.stateVersion);
-  assert.ok(resumedResult.state?.evidenceRefs.includes('execution-guard:denied'));
-  assert.notEqual(resumedResult.state?.repositoryRevisionDigest, task.initialRevisionDigest);
+  assert.equal(pendingVerification.outcome, 'pending-approval');
+  assert.equal(pendingVerification.state?.node, 'Verify');
+  assert.deepEqual(await statePort.loadTask(task.taskId), pendingVerification.state);
+  assert.ok(pendingVerification.state && pendingVerification.state.stateVersion > pausedResult.state.stateVersion);
+  assert.notEqual(pendingVerification.state?.repositoryRevisionDigest, task.initialRevisionDigest);
   assert.equal(repositoryPort.patches.length, 1);
   assert.equal(repositoryPort.commands.length, 2);
-  assert.equal(diffReads, 1);
+  assert.equal(diffReads, 0);
   assert.equal(reviewerCalls, 0);
-  assert.equal(statePort.getJournalSnapshot().authorityPublications.length, 0);
+  const d1 = setup.verificationApprovalPort.getRecordedBindings().find((binding) => binding.decisionId.startsWith('dec-verify-'));
+  const verificationAuthority = await statePort.readVerificationAuthoritySnapshot(task.taskId);
+  assert.ok(d1 && verificationAuthority);
+  const d1Authority = { ...setup.authorityRef, decisionAuthorityGeneration: verificationAuthority.decisionAuthorityGeneration + 1 };
+  assert.equal((await statePort.publishAuthority({ authorityRef: d1Authority })).status, 'published');
+  setup.verificationApprovalPort.setV02AuthorityRef(d1Authority);
+  setup.verificationApprovalPort.scriptDecision({ ...d1, status: 'approved' }, d1Authority.decisionAuthorityGeneration);
+  const resumedResult = await runUC03Graph(task, ports, {
+    mode: 'development',
+    trustedExpectedContext,
+    planDetails: ROUTE_PLAN_DETAILS,
+    admissionContext: createMockPatchAdmissionResolver(repositoryPort, statePort),
+    reviewerAdmission: createMockReviewerAdmissionResolver(statePort),
+    patchContent:
+      '--- a/src/calculator.py\n+++ b/src/calculator.py\n@@ -1 +1,2 @@\n-def divide(a, b): return a / b\n+def divide(a, b):\n+    if b == 0: raise CalculationError("zero denominator")\n+    return a / b\n',
+    targetPaths: ['src/calculator.py'],
+  }, pendingVerification.state ?? undefined);
+
+  assert.equal(resumedResult.outcome, 'IMPLEMENTED_UNVERIFIED', `${resumedResult.reasons.join('; ')}; state=${resumedResult.state?.node ?? 'none'}`);
+  assert.equal(resumedResult.state?.node, 'Review');
+  assert.deepEqual(await statePort.loadTask(task.taskId), resumedResult.state);
+  assert.equal(repositoryPort.patches.length, 1);
+  assert.equal(repositoryPort.commands.length, 4);
+  assert.equal(diffReads, 2);
+  assert.equal(reviewerCalls, 1);
+  assert.equal(statePort.getJournalSnapshot().authorityPublications.length, 2);
 });
 
 /* ------------------------------------------------------------------

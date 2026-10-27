@@ -6,7 +6,9 @@ import {
   type BugTask,
   type TaskState,
 } from '../contracts/foundation/uc03.ts';
-import { createInvestigateNode, createPatchNode, createRepairNode, createVerifyNode } from './graph-nodes.ts';
+import { createInvestigateNode, createPatchNode, createRepairNode } from './graph-nodes.ts';
+import { createVerifyNode } from './graph-verify.ts';
+import { restoreVerificationEvidence } from './graph-patch-ancestry.ts';
 import {
   addMilestone,
   createAwaitFeedbackNode,
@@ -80,6 +82,22 @@ function createWorkflowApp(ports: UC03GraphPorts, config?: UC03GraphConfig) {
       if (authoritative.node === 'NeedsInfo') {
         return { state: authoritative, terminalOutcome: 'needs-info' as const, reasons: ['Task is paused for required information'] };
       }
+      if (authoritative.node === 'Verify' && (!state.baseline || !state.patchAdmission || !state.patchReceipt)) {
+        const trusted = trustedExpectedContext(config, state.task, authoritative);
+        const restored = trusted?.statePort
+          ? await restoreVerificationEvidence(state.task, authoritative, trusted.statePort, ports.baselineEvidenceWriter, trusted.expectedTestFiles)
+          : undefined;
+        if (!restored) {
+          return { state: authoritative, terminalOutcome: 'INCOMPLETE' as const, reasons: ['TaskState-only verification resume lacks owner-retained baseline and settled patch evidence'] };
+        }
+        return {
+          state: authoritative,
+          baseline: restored.baseline,
+          patchAdmission: restored.admission,
+          patchReceipt: restored.receipt,
+          milestones: starting ? nodes.taskStarted(authoritative, state.milestones ?? []) : state.milestones,
+        };
+      }
       const milestones = starting ? nodes.taskStarted(authoritative, state.milestones ?? []) : state.milestones;
       return { state: authoritative, milestones };
     })
@@ -117,6 +135,7 @@ function createWorkflowApp(ports: UC03GraphPorts, config?: UC03GraphConfig) {
     return routeFromPersistedNode(state.state?.node, 'Incomplete');
   });
   workflow.addConditionalEdges('Verify', (state: UC03GraphState) => {
+    if (state.terminalOutcome === 'pending-approval') return END;
     if (state.terminalOutcome) return 'Incomplete';
     return routeFromPersistedNode(state.state?.node, 'Incomplete');
   });

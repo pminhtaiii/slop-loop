@@ -18,6 +18,8 @@ import type { evaluateDeterministicCompletion, CompletionPredicateInput, Trusted
 import { buildFinalReport, type FinalReport } from './report.ts';
 import { samePaths } from './graph-validation.ts';
 import type { UC03GraphState, UC03RepositoryAdmission } from './graph-types.ts';
+import { loadVerifiedPatchAncestry } from './graph-patch-ancestry.ts';
+import { currentPlanApprovalIsCurrent } from './post-patch-verification-authority.ts';
 
 type TrustedCompletion = NonNullable<NonNullable<StateTransitionOptions['trusted']>['completion']>;
 
@@ -56,19 +58,26 @@ export async function loadCompletionPredicateInput(args: {
   const admissionValidation = validateRepositoryAdmissionV02(patchAdmission.context, patchAdmission.trustedContext);
   const receiptValidation = validateRepositoryExecutionReceiptV02(patchReceipt, patchAdmission.context);
   const plan = state.plan;
+  const owner = trustedExpectedContext.statePort;
+  const ancestry = owner ? await loadVerifiedPatchAncestry(task, state, owner) : undefined;
+  const currentDecisionId = plan?.decisionRef;
   const patchAncestry = admissionValidation.ok &&
     (admissionValidation.value.runnableNode === 'Patch' || admissionValidation.value.runnableNode === 'Repair');
   if (!admissionValidation.ok || !receiptValidation.ok || !plan || !plan.decisionRef ||
       (state.activeDecisionId !== undefined && state.activeDecisionId !== plan.decisionRef) ||
+      !owner || !ancestry || !currentDecisionId ||
+      computeCanonicalSha256(patchAdmission) !== computeCanonicalSha256(ancestry.admission) ||
+      computeCanonicalSha256(patchReceipt) !== computeCanonicalSha256(ancestry.receipt) ||
+      !await currentPlanApprovalIsCurrent(task, state, owner, currentDecisionId) ||
       admissionValidation.value.planApplicability !== 'approved-plan' ||
       admissionValidation.value.action.kind !== 'apply_patch' ||
       admissionValidation.value.taskId !== state.taskId || admissionValidation.value.runId !== state.runId ||
       admissionValidation.value.workspaceId !== state.workspaceId || admissionValidation.value.repositoryId !== state.repositoryId ||
-      !patchAncestry || admissionValidation.value.planDecisionRef !== plan.decisionRef ||
+      !patchAncestry || admissionValidation.value.planDecisionRef !== ancestry.originalDecisionId ||
       baseline.repositorySnapshotDigest !== task.initialRevisionDigest || baseline.evidenceId !== plan.baselineRef ||
       (admissionValidation.value.runnableNode === 'Patch' && admissionValidation.value.canonicalRevision !== baseline.repositorySnapshotDigest) ||
       admissionValidation.value.expectedTaskStateVersion + 2 > state.stateVersion ||
-      admissionValidation.value.planBindingDigest !== currentPlanBindingDigest(task, state) ||
+      admissionValidation.value.planBindingDigest !== currentPlanBindingDigest(task, ancestry.originalTaskState) ||
       !samePaths(admissionValidation.value.action.targetPaths, diffInfo.changedFiles) ||
       receiptValidation.value.outcome.repositoryOperation !== 'apply-patch' ||
       receiptValidation.value.outcome.observedResultRevisionDigest !== state.repositoryRevisionDigest) {

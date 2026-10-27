@@ -9,6 +9,9 @@ import {
   type ActionDecisionReceiptV02,
   type ProviderAdmissionReceiptV02,
   type PolicyAuthorityRefV02,
+  type ContextualApprovalVerifierV02,
+  type VerificationApprovalContextV02,
+  type VerificationApprovalResolutionV02,
   type RepositoryAdmissionContextV02,
   type ProviderRequest,
   validateNormalizedAction,
@@ -18,6 +21,7 @@ import {
   validateProviderRequest,
   parseApprovalBinding,
   validateApprovalBinding,
+  isVerificationApprovalContextV02,
 } from '../../../../src/contracts/foundation/uc03.ts';
 
 export interface ScriptedApprovalPortOptions {
@@ -30,12 +34,15 @@ export interface ScriptedApprovalPortOptions {
   readonly v02ProviderAdmissionReceipts?: readonly ProviderAdmissionReceiptV02[] | undefined;
 }
 
-export class ScriptedApprovalPort implements ApprovalPort {
+export class ScriptedApprovalPort implements ApprovalPort, ContextualApprovalVerifierV02 {
   readonly provenance: PortProvenance = 'mock';
 
   private readonly attemptedActions: NormalizedAction[] = [];
   private readonly recordedBindings: ApprovalBinding[] = [];
   private readonly scriptedDecisions = new Map<string, ApprovalBinding>();
+  private readonly requestBindings = new Map<string, ApprovalBinding>();
+  private readonly contextualDecisionHistory = new Map<string, Map<number, ApprovalBinding>>();
+  private readonly decisionIssuerKeys = new Map<string, string>();
   private readonly classifications = new Map<string, PermissionClass>();
   private readonly forbiddenDigests = new Set<string>();
   private readonly rejectedDecisions = new Set<string>();
@@ -48,6 +55,7 @@ export class ScriptedApprovalPort implements ApprovalPort {
   private readonly v02ProviderAdmissionReceipts: ProviderAdmissionReceiptV02[] = [];
 
   constructor(options?: ScriptedApprovalPortOptions) {
+    this.v02AuthorityRef = options?.v02AuthorityRef;
     if (options?.classifications) {
       for (const [key, perm] of Object.entries(options.classifications)) {
         this.classifications.set(key, perm);
@@ -63,6 +71,7 @@ export class ScriptedApprovalPort implements ApprovalPort {
         const prior = this.scriptedDecisions.get(parsed.value.decisionId);
         if (prior) throw new Error('Duplicate decision identity');
         this.scriptedDecisions.set(parsed.value.decisionId, structuredClone(parsed.value));
+        this.recordContextualStatus(parsed.value, this.v02AuthorityRef?.decisionAuthorityGeneration ?? 1);
         if (parsed.value.status === 'rejected') {
           this.rejectedDecisions.add(parsed.value.decisionId);
         }
@@ -73,7 +82,6 @@ export class ScriptedApprovalPort implements ApprovalPort {
       this.defaultContext = structuredClone(options.currentContext);
     }
 
-    this.v02AuthorityRef = options?.v02AuthorityRef;
     for (const receipt of options?.v02Evaluations ?? []) this.scriptEvaluationV02(receipt);
     for (const receipt of options?.v02Decisions ?? []) this.scriptDecisionV02(receipt);
     for (const receipt of options?.v02ProviderAdmissionReceipts ?? []) this.scriptProviderAdmissionReceiptV02(receipt);
@@ -121,14 +129,16 @@ export class ScriptedApprovalPort implements ApprovalPort {
     this.classifications.set(actionIdOrKind, permission);
   }
 
-  scriptDecision(binding: ApprovalBinding): void {
+  scriptDecision(binding: ApprovalBinding, decisionAuthorityGeneration = this.v02AuthorityRef?.decisionAuthorityGeneration ?? 1): void {
     const parsed = parseApprovalBinding(binding);
     if (!parsed.ok) {
       throw new Error(`Invalid scripted decision: ${parsed.errors.map((e) => e.message).join(', ')}`);
     }
     const prior = this.scriptedDecisions.get(parsed.value.decisionId);
     if (prior && !this.sameIdentity(prior, parsed.value)) throw new Error('Conflicting decision identity');
+    if (prior?.status === 'rejected' && parsed.value.status === 'approved') throw new Error('Rejected decision identity is terminal');
     this.scriptedDecisions.set(parsed.value.decisionId, structuredClone(parsed.value));
+    this.recordContextualStatus(parsed.value, decisionAuthorityGeneration);
     if (parsed.value.status === 'approved') {
       this.rejectedDecisions.delete(parsed.value.decisionId);
     } else if (parsed.value.status === 'rejected') {
@@ -176,9 +186,18 @@ export class ScriptedApprovalPort implements ApprovalPort {
     }
 
     const recorded = structuredClone(parsed.value);
-    this.recordedBindings.push(recorded);
+    const priorRequest = this.requestBindings.get(recorded.decisionId);
+    if (priorRequest && !this.sameIdentity(priorRequest, recorded)) throw new Error('Conflicting request for decision identity');
+    if (!priorRequest) {
+      this.requestBindings.set(recorded.decisionId, recorded);
+      this.recordedBindings.push(recorded);
+    }
 
-    const scripted = this.scriptedDecisions.get(recorded.decisionId);
+    let scripted = this.scriptedDecisions.get(recorded.decisionId);
+    if (!scripted && recorded.decisionId.startsWith('dec-verify-')) {
+      this.scriptDecision({ ...recorded, status: 'pending' });
+      scripted = this.scriptedDecisions.get(recorded.decisionId);
+    }
     if (!scripted || !this.sameIdentity(scripted, recorded)) throw new Error('Unscripted or conflicting decision identity');
     if (this.forbiddenDigests.has(scripted.normalizedActionDigest)) throw new Error('Forbidden action');
     const result = structuredClone(scripted);
@@ -212,6 +231,49 @@ export class ScriptedApprovalPort implements ApprovalPort {
     const ai = Object.fromEntries(Object.entries(a).filter(([key]) => key !== 'status' && key !== 'reason'));
     const bi = Object.fromEntries(Object.entries(b).filter(([key]) => key !== 'status' && key !== 'reason'));
     return computeCanonicalSha256(ai) === computeCanonicalSha256(bi);
+  }
+
+  private recordContextualStatus(binding: ApprovalBinding, generation: number): void {
+    if (!this.v02AuthorityRef || !Number.isSafeInteger(generation) || generation < 1) return;
+    const history = this.contextualDecisionHistory.get(binding.decisionId) ?? new Map<number, ApprovalBinding>();
+    const prior = history.get(generation);
+    if (prior && (!this.sameIdentity(prior, binding) || prior.status !== binding.status)) throw new Error('Conflicting contextual decision generation');
+    history.set(generation, structuredClone(binding));
+    this.contextualDecisionHistory.set(binding.decisionId, history);
+    this.decisionIssuerKeys.set(binding.decisionId, this.v02AuthorityRef.issuerKeyRef);
+  }
+
+  async resolvePlanDecisionInContext(
+    decisionId: string,
+    context: VerificationApprovalContextV02,
+  ): Promise<VerificationApprovalResolutionV02> {
+    if (!isVerificationApprovalContextV02(context)) return { outcome: 'denied', reasonCode: 'INVALID_CONTEXT' };
+    const binding = this.contextualDecisionHistory.get(decisionId)?.get(context.expectedDecisionAuthorityGeneration);
+    if (!binding) return { outcome: 'stale', reasonCode: 'DECISION_GENERATION_UNAVAILABLE' };
+    if (this.decisionIssuerKeys.get(decisionId) !== context.expectedIssuerKeyRef) return { outcome: 'denied', reasonCode: 'WRONG_ISSUER' };
+    if (!this.sameIdentity(this.scriptedDecisions.get(decisionId) ?? binding, binding)) return { outcome: 'denied', reasonCode: 'DECISION_IDENTITY_CONFLICT' };
+    const validation = validateApprovalBinding(binding, context.approvalContext);
+    if (!validation.ok || !this.bindingMatchesContext(binding, context)) return { outcome: 'denied', reasonCode: 'APPROVAL_CONTEXT_MISMATCH' };
+    return {
+      outcome: 'resolved', decisionId, binding: structuredClone(binding),
+      issuerKeyRef: context.expectedIssuerKeyRef,
+      decisionAuthorityGeneration: context.expectedDecisionAuthorityGeneration,
+      contextDigest: computeCanonicalSha256(context),
+    };
+  }
+
+  private bindingMatchesContext(binding: ApprovalBinding, context: VerificationApprovalContextV02): boolean {
+    const freshness = context.approvalContext;
+    return binding.decisionId === this.scriptedDecisions.get(binding.decisionId)?.decisionId &&
+      binding.actionKind === 'fix_plan' && binding.taskId === freshness.currentTaskId &&
+      binding.workspaceId === freshness.currentWorkspaceId &&
+      binding.repositoryRevisionDigest === freshness.currentRepositoryRevisionDigest &&
+      binding.policyId === freshness.currentPolicyId && binding.policyVersion === freshness.currentPolicyVersion &&
+      binding.normalizedActionDigest === freshness.currentNormalizedActionDigest &&
+      binding.planVersion === freshness.currentPlanVersion && binding.strategyDigest === freshness.currentStrategyDigest &&
+      binding.baselineRef === freshness.currentBaselineRef &&
+      computeCanonicalSha256(binding.evidenceRefs ?? []) === computeCanonicalSha256(freshness.currentEvidenceRefs) &&
+      binding.criteriaDigest === freshness.currentCriteriaDigest && binding.checkSetDigest === freshness.currentCheckSetDigest;
   }
 
   async resolve(decisionId: string): Promise<ApprovalBinding> {

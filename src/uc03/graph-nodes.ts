@@ -8,15 +8,14 @@ import {
   investigateBaseline,
   prepareFixPlanAndApproval,
 } from './investigation.ts';
-import { executeVerificationChecks } from './verification.ts';
 import { createRepairActionId, createTrustedRepairContext, executeRepair } from './repair.ts';
 import type { UC03GraphConfig, UC03GraphNode, UC03GraphPorts, UC03GraphState } from './graph-types.ts';
 
 import {
   addMilestone, currentPlanBindingDigest, loadCurrentOwnerState, patchResult,
-  reloadAuthoritativeState, requiredChecksPassed, resolveExecutionGuard,
+  reloadAuthoritativeState, resolveExecutionGuard,
   samePaths, transitionState, trustedExpectedContext, trustedOwnerStateMatches,
-  validDiffInfo, validSettledPatchEvidence,
+  validSettledPatchEvidence,
 } from './graph-validation.ts';
 
 export function createInvestigateNode(ports: UC03GraphPorts, config?: UC03GraphConfig): UC03GraphNode {
@@ -172,58 +171,6 @@ export function createPatchNode(ports: UC03GraphPorts, config?: UC03GraphConfig)
         patchAdmission: admission,
         patchReceipt: execution.value,
         milestones: addMilestone(state.milestones ?? [], persisted.state.taskId, persisted.state.runId, 'Patch', 'patch_applied', 'Patch applied and settled by the v0.2 owner protocol', 'success'),
-      };
-    };
-}
-
-export function createVerifyNode(ports: UC03GraphPorts, config?: UC03GraphConfig): UC03GraphNode {
-  return async (state: UC03GraphState) => {
-      if (!state.task || !state.state || state.state.node !== 'Verify') return { terminalOutcome: 'INCOMPLETE' as const };
-      const current = await reloadAuthoritativeState(state.state, ports.statePort);
-      if (!current.ok) return { state: state.state, terminalOutcome: 'INCOMPLETE' as const, reasons: [current.reason] };
-      if (!validSettledPatchEvidence(state, state.task, current.state)) {
-        return { state: current.state, terminalOutcome: 'INCOMPLETE' as const, reasons: ['Verification requires the current persisted patch admission and settlement receipt'] };
-      }
-      const trusted = trustedExpectedContext(config, state.task, current.state);
-      const guard = resolveExecutionGuard(ports, config);
-      if (!trusted || !guard) return { state: current.state, terminalOutcome: 'INCOMPLETE' as const, reasons: ['Verification requires current v0.2 host admission'] };
-      if (!await trustedOwnerStateMatches(trusted, current.state)) return { state: current.state, terminalOutcome: 'INCOMPLETE' as const, reasons: ['Trusted host and route ports do not share current owner task state'] };
-      const diffInfo = await ports.repositoryPort.inspectDiff(state.task.initialRevisionDigest);
-      if (!validDiffInfo(diffInfo)) return { state: current.state, terminalOutcome: 'INCOMPLETE' as const, reasons: ['Current repository diff response is invalid'] };
-      const results = await executeVerificationChecks(state.task, ports.repositoryPort, {
-        runId: current.state.runId,
-        repoDigest: current.state.repositoryRevisionDigest,
-        diffDigest: diffInfo.diffDigest,
-        ...(trusted.admissionContextForCheck ? { admissionContextForCheck: trusted.admissionContextForCheck } : {}),
-        executionGuard: guard,
-        statePort: trusted.statePort,
-      });
-      const postChecks = await reloadAuthoritativeState(current.state, ports.statePort, { allowAccountingChange: true });
-      if (!postChecks.ok) return { state: current.state, terminalOutcome: 'IMPLEMENTED_UNVERIFIED' as const, reasons: [postChecks.reason] };
-      const passing = requiredChecksPassed(state.task, postChecks.state, diffInfo.diffDigest, results);
-      const nextNode = passing ? 'Review' : 'Repair';
-      const next: TaskState = {
-        ...postChecks.state,
-        stateVersion: postChecks.state.stateVersion + 1,
-        node: nextNode,
-        changedPaths: [...new Set([...postChecks.state.changedPaths, ...diffInfo.changedFiles])],
-        evidenceRefs: [...new Set([
-          ...postChecks.state.evidenceRefs,
-          ...results.flatMap((result) => [result.evidenceId, result.actionId, ...result.diagnosticRefs]),
-        ])],
-        nextAction: passing ? 'request-review' : 'repair-failing-checks',
-      };
-      const persisted = await transitionState(ports.statePort, next, postChecks.state.stateVersion);
-      const milestones = addMilestone(
-        state.milestones ?? [], persisted.taskId, persisted.runId, 'Verify', 'verification_completed',
-        passing ? 'All verification checks passed' : 'Required verification did not pass', passing ? 'success' : 'failure',
-        results.map((result) => result.evidenceId),
-      );
-      return {
-        state: persisted,
-        verificationResults: results,
-        ...(passing ? {} : { failureEvidence: results.filter((result) => result.outcome !== 'pass') }),
-        milestones,
       };
     };
 }

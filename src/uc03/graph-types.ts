@@ -10,6 +10,8 @@ import {
 } from '../contracts/foundation/uc03.ts';
 import { evaluateDeterministicCompletion } from './verification.ts';
 import { loadCompletionPredicateInput, reportForPredicate } from './graph-completion.ts';
+import { loadVerifiedPatchAncestry } from './graph-patch-ancestry.ts';
+import { currentPlanApprovalIsCurrent } from './post-patch-verification-authority.ts';
 import {
   addMilestone,
   reloadAuthoritativeState,
@@ -19,7 +21,6 @@ import {
   trustedExpectedContext,
   trustedOwnerStateMatches,
   validDiffInfo,
-  validSettledPatchEvidence,
 } from './graph-validation.ts';
 import { buildFinalReport } from './report.ts';
 import type {
@@ -178,15 +179,22 @@ export function createReviewNode(ports: UC03GraphPorts, config?: UC03GraphConfig
       const current = await reloadAuthoritativeState(state.state, ports.statePort);
       if (!current.ok) return { state: state.state, terminalOutcome: 'INCOMPLETE' as const, reasons: [current.reason] };
       const admissionSource = config?.reviewerAdmission;
-      if (!state.baseline || !state.verificationResults?.length || !admissionSource ||
-          !validSettledPatchEvidence(state, state.task, current.state)) {
+      if (!state.baseline || !state.verificationResults?.length || !admissionSource) {
         return { state: current.state, terminalOutcome: 'IMPLEMENTED_UNVERIFIED' as const, reasons: ['Review requires persisted baseline/check evidence and owner-issued provider admission'] };
+      }
+      const trusted = trustedExpectedContext(config, state.task, current.state);
+      const owner = trusted?.statePort;
+      const decisionId = current.state.plan?.decisionRef;
+      const ancestry = owner ? await loadVerifiedPatchAncestry(state.task, current.state, owner) : undefined;
+      if (!owner || !ancestry || !decisionId ||
+          (state.patchAdmission && computeCanonicalSha256(state.patchAdmission) !== computeCanonicalSha256(ancestry.admission)) ||
+          (state.patchReceipt && computeCanonicalSha256(state.patchReceipt) !== computeCanonicalSha256(ancestry.receipt)) ||
+          !await currentPlanApprovalIsCurrent(state.task, current.state, owner, decisionId)) {
+        return { state: current.state, terminalOutcome: 'IMPLEMENTED_UNVERIFIED' as const, reasons: ['Review requires current issuer-approved D1 and owner-validated D0 patch ancestry'] };
       }
       const diffInfo = await ports.repositoryPort.inspectDiff(state.task.initialRevisionDigest);
       if (!validDiffInfo(diffInfo)) return { state: current.state, terminalOutcome: 'IMPLEMENTED_UNVERIFIED' as const, reasons: ['Current repository diff response is invalid'] };
-      const trusted = trustedExpectedContext(config, state.task, current.state);
       if (!trusted) return { state: current.state, terminalOutcome: 'IMPLEMENTED_UNVERIFIED' as const, reasons: ['Reviewer requires the current owner StatePortV02 boundary'] };
-      if (!trusted.statePort) return { state: current.state, terminalOutcome: 'IMPLEMENTED_UNVERIFIED' as const, reasons: ['Reviewer requires the current owner StatePortV02 boundary'] };
       if (!await trustedOwnerStateMatches(trusted, current.state)) return { state: current.state, terminalOutcome: 'IMPLEMENTED_UNVERIFIED' as const, reasons: ['Trusted reviewer and route ports do not share current owner task state'] };
       const reviewAdmission = typeof admissionSource === 'function'
         ? await admissionSource({ task: state.task, state: current.state, diff: diffInfo })
@@ -276,6 +284,7 @@ export function createReviewNode(ports: UC03GraphPorts, config?: UC03GraphConfig
         ...ownerState,
         stateVersion: ownerState.stateVersion + 1,
         node: 'Deliver',
+        activeDecisionId: undefined,
         latestReviewRef: result.reviewId,
         reviewRefs,
         outcome: 'COMPLETED',
