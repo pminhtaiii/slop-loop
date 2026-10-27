@@ -17,6 +17,8 @@ import {
   isPatchResult, checkAccounting, resolveRepairAdmissionContext, isStatePortV02,
   createRepairActionId,
 } from './repair-types.ts';
+import { currentPlanApprovalIsCurrent } from './post-patch-verification-authority.ts';
+import { loadVerifiedPatchAncestry } from './graph-patch-ancestry.ts';
 
 export * from './repair-types.ts';
 export * from './replan.ts';
@@ -57,35 +59,51 @@ export async function executeRepair(input: RepairInput, ports: RepairPorts): Pro
   const plan = state.plan;
   const task = state.taskContext;
   const approval = ports.trustedTransitionContext?.approval;
-  if (!plan?.decisionRef || !task?.requiredChecks.length || !approval || !ports.approvalPort) {
+  if (!plan?.decisionRef || !task?.requiredChecks.length || !ports.approvalPort || state.activeDecisionId !== plan.decisionRef) {
     return stop('current-approved-plan-unavailable');
   }
   const checkSetDigest = computeCheckSetDigest(task.requiredChecks);
   if (plan.checkSetDigest !== checkSetDigest) return stop('approved-plan-check-set-mismatch');
-  const planAction: ApproveFixPlanAction = {
-    actionId: plan.decisionRef, kind: 'approve_fix_plan', planVersion: state.planVersion,
-    strategyDigest: plan.strategyDigest, diagnosisEvidenceRefs: plan.evidenceRefs, checkSetDigest,
-  };
-  const currentApproval: ApprovalBindingContext = {
-    currentTaskId: state.taskId, currentWorkspaceId: state.workspaceId,
-    // Plan approval authorizes the bounded strategy against its original baseline.
-    // The exact Repair admission below separately binds this attempt to today's revision.
-    currentRepositoryRevisionDigest: task.initialRevisionDigest,
-    currentPolicyId: task.configId, currentPolicyVersion: task.configVersion,
-    currentNormalizedActionDigest: computeCanonicalSha256(planAction), currentPlanVersion: state.planVersion,
-    currentStrategyDigest: plan.strategyDigest, currentBaselineRef: plan.baselineRef,
-    currentEvidenceRefs: plan.evidenceRefs, currentCriteriaDigest: computeCanonicalSha256(state.acceptanceCriteria),
-    currentCheckSetDigest: checkSetDigest,
-  };
-  const hostBinding = validateApprovalBinding(approval.binding, approval.freshness);
-  const binding = validateApprovalBinding(approval.binding, currentApproval);
-  if (!hostBinding.ok || !binding.ok || binding.value.status !== 'approved' || binding.value.actionKind !== 'fix_plan' ||
-      binding.value.decisionId !== state.activeDecisionId || binding.value.decisionId !== plan.decisionRef) {
+  const ownerV02 = isStatePortV02(ports.statePort) ? ports.statePort : undefined;
+  const requiresCurrentApproval = ownerV02 !== undefined &&
+    (plan.decisionRef.startsWith('dec-verify-') || state.repositoryRevisionDigest !== task.initialRevisionDigest);
+  const hasCurrentPostPatchApproval = requiresCurrentApproval && ownerV02 !== undefined &&
+    await currentPlanApprovalIsCurrent(task, state, ownerV02, plan.decisionRef);
+  let isOriginalD0 = false;
+  if (!hasCurrentPostPatchApproval && ownerV02 && state.repositoryRevisionDigest !== task.initialRevisionDigest) {
+    try {
+      isOriginalD0 = (await loadVerifiedPatchAncestry(task, state, ownerV02))?.originalDecisionId === plan.decisionRef;
+    } catch { return stop('current-plan-approval-missing-or-stale'); }
+  }
+  if (requiresCurrentApproval && !hasCurrentPostPatchApproval && !isOriginalD0) {
     return stop('current-plan-approval-missing-or-stale');
   }
-  try {
-    if (!await ports.approvalPort.validateBinding(binding.value)) return stop('current-plan-approval-not-authoritative');
-  } catch { return stop('current-plan-approval-not-authoritative'); }
+  if (!hasCurrentPostPatchApproval) {
+    if (!approval) return stop('current-approved-plan-unavailable');
+    const planAction: ApproveFixPlanAction = {
+      actionId: plan.decisionRef, kind: 'approve_fix_plan', planVersion: state.planVersion,
+      strategyDigest: plan.strategyDigest, diagnosisEvidenceRefs: plan.evidenceRefs, checkSetDigest,
+    };
+    const currentApproval: ApprovalBindingContext = {
+      currentTaskId: state.taskId, currentWorkspaceId: state.workspaceId,
+      // D0 stays tied to baseline.
+      currentRepositoryRevisionDigest: task.initialRevisionDigest,
+      currentPolicyId: task.configId, currentPolicyVersion: task.configVersion,
+      currentNormalizedActionDigest: computeCanonicalSha256(planAction), currentPlanVersion: state.planVersion,
+      currentStrategyDigest: plan.strategyDigest, currentBaselineRef: plan.baselineRef,
+      currentEvidenceRefs: plan.evidenceRefs, currentCriteriaDigest: computeCanonicalSha256(state.acceptanceCriteria),
+      currentCheckSetDigest: checkSetDigest,
+    };
+    const hostBinding = validateApprovalBinding(approval.binding, approval.freshness);
+    const binding = validateApprovalBinding(approval.binding, currentApproval);
+    if (!hostBinding.ok || !binding.ok || binding.value.status !== 'approved' || binding.value.actionKind !== 'fix_plan' ||
+        binding.value.decisionId !== state.activeDecisionId || binding.value.decisionId !== plan.decisionRef) {
+      return stop('current-plan-approval-missing-or-stale');
+    }
+    try {
+      if (!await ports.approvalPort.validateBinding(binding.value)) return stop('current-plan-approval-not-authoritative');
+    } catch { return stop('current-plan-approval-not-authoritative'); }
+  }
 
   const refs = failureRefs(items);
   const ctx = ports.trustedRepairContext;

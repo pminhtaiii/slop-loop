@@ -51,7 +51,7 @@ node --test dist/tests/runtime/support/uc03/provider-mocks.test.js dist/tests/ru
 
 ## Local command interfaces and remaining gates
 
-The local T026 adapter and T027 evaluation/comparison entry points exist after `pnpm run build`. T026's positive route remains blocked by post-patch Verify authority and replan baseline binding. The evaluator can write mock infrastructure reports; no configured case driver yields required not-run results and nonzero exit. Real mode currently refuses before dispatch. These commands do not establish accepted real execution:
+The local T026 adapter and T027 evaluation/comparison entry points exist after `pnpm run build`. T026's positive mock route passes; material-replan baseline/renewed approval, post-review accounting and subset-repair cumulative-diff gaps keep T026 unaccepted. The evaluator can write mock infrastructure reports; no configured case driver yields required not-run results and nonzero exit. Real mode currently refuses before dispatch. These commands do not establish accepted real execution:
 
 ```powershell
 node dist/src/cli/uc03.js --task fixtures/uc03/success/task.json --config <trusted-config.json> --output <report.json>

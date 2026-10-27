@@ -102,7 +102,7 @@ export function createVerifyNode(ports: UC03GraphPorts, config?: UC03GraphConfig
           baseline,
           patchAdmission: ancestry.admission,
           patchReceipt: ancestry.receipt,
-          terminalOutcome: 'pending-approval' as const,
+          terminalOutcome: 'INCOMPLETE' as const,
           reasons: ['Fresh post-patch verification approval was rejected and the owner placed the task on hold'],
         };
       }

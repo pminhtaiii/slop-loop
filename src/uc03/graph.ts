@@ -316,7 +316,7 @@ export function createIncompleteNode(_ports: UC03GraphPorts, config?: UC03GraphC
         const outcome = state.terminalOutcome === 'IMPLEMENTED_UNVERIFIED' ? 'IMPLEMENTED_UNVERIFIED' as const : 'INCOMPLETE' as const;
         return { terminalOutcome: outcome, reasons: state.reasons ?? [] };
       }
-      const outcome = state.terminalOutcome === 'IMPLEMENTED_UNVERIFIED' || state.state.outcome === 'IMPLEMENTED_UNVERIFIED' || state.state.changedPaths.length > 0
+      const outcome = state.terminalOutcome === 'INCOMPLETE' ? 'INCOMPLETE' : state.terminalOutcome === 'IMPLEMENTED_UNVERIFIED' || state.state.outcome === 'IMPLEMENTED_UNVERIFIED' || state.state.changedPaths.length > 0
         ? 'IMPLEMENTED_UNVERIFIED'
         : 'INCOMPLETE';
       const report = buildFinalReport({

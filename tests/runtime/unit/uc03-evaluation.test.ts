@@ -135,7 +135,7 @@ function createFakeDriver(overrides?: Partial<Record<string, Partial<CaseResult>
         caseId: spec.caseId,
         useCase: 'UC-03',
         contractVersion: '0.1.0',
-        taskId: `task-${spec.caseId.toLowerCase()}`,
+        taskId: override?.taskId ?? `task-${spec.caseId.toLowerCase()}`,
         runId: `run-${spec.caseId.toLowerCase()}`,
         mode: context.mode,
         status,
@@ -758,6 +758,35 @@ test('compare: detects regressions and returns exit code 1', async () => {
   assert.equal(c01Delta.transition, 'regressed');
 });
 
+test('compare: driver error to pass is an improvement in runner-produced reports', async () => {
+  const successfulDriver = createFakeDriver();
+  const errorDriver: EvaluationDriver = {
+    async executeCase(spec, context) {
+      if (spec.caseId === 'C01') throw new Error('simulated driver error');
+      return successfulDriver.executeCase(spec, context);
+    },
+  };
+  const baseline = await runEvaluation({ mode: 'mock', manifestPath: MANIFEST_PATH, driver: errorDriver });
+  const candidate = await runEvaluation({ mode: 'mock', manifestPath: MANIFEST_PATH, driver: successfulDriver });
+
+  assert.equal(baseline.cases[0]?.status, 'error');
+  assert.equal(baseline.cases[0]?.taskId, null);
+  assert.equal(candidate.cases[0]?.status, 'pass');
+  assert.notEqual(candidate.cases[0]?.taskId, null);
+
+  const comparison = compareEvaluations(baseline, candidate);
+  const c01Delta = comparison.cases.find((result) => result.caseId === 'C01');
+  assert.equal(comparison.summary.improvementsCount, 1);
+  assert.equal(c01Delta?.transition, 'improved');
+
+  const regression = compareEvaluations(candidate, baseline);
+  const reverseC01Delta = regression.cases.find((result) => result.caseId === 'C01');
+  assert.equal(regression.verdict, 'REGRESSED');
+  assert.equal(regression.exitCode, 1);
+  assert.equal(regression.summary.regressionsCount, 1);
+  assert.equal(reverseC01Delta?.transition, 'regressed');
+});
+
 test('compare: reports improvements while required not-run cases keep the result incomplete', async () => {
   const baselineDriver = createFakeDriver({
     C03: { status: 'fail', actualOutcome: 'FAILED' },
@@ -781,6 +810,28 @@ test('compare: reports improvements while required not-run cases keep the result
   assert.equal(c03Delta.transition, 'improved');
 });
 
+test('compare: not-run and result transitions retain nonzero required-failure behavior', async () => {
+  const notRun = await runEvaluation({ mode: 'mock', manifestPath: MANIFEST_PATH, cases: ['C01'] });
+  const result = await runEvaluation({ mode: 'mock', manifestPath: MANIFEST_PATH, cases: ['C01'], driver: createFakeDriver() });
+
+  assert.equal(notRun.cases[0]?.status, 'not-run');
+  assert.equal(notRun.cases[0]?.taskId, null);
+  assert.equal(result.cases[0]?.status, 'pass');
+  assert.notEqual(result.cases[0]?.taskId, null);
+
+  const improvement = compareEvaluations(notRun, result);
+  const improvedC01 = improvement.cases.find((item) => item.caseId === 'C01');
+  assert.equal(improvement.verdict, 'INCOMPLETE');
+  assert.equal(improvement.exitCode, 1);
+  assert.equal(improvedC01?.transition, 'improved');
+
+  const regression = compareEvaluations(result, notRun);
+  const regressedC01 = regression.cases.find((item) => item.caseId === 'C01');
+  assert.equal(regression.verdict, 'REGRESSED');
+  assert.equal(regression.exitCode, 1);
+  assert.equal(regressedC01?.transition, 'regressed');
+});
+
 test('compare: rejects malformed reports before reading case metrics', async () => {
   const validReport = await runEvaluation({ mode: 'mock', manifestPath: MANIFEST_PATH, driver: createFakeDriver() });
   const mismatchedSuite: unknown = { ...validReport, suite: 'uc01' };
@@ -802,12 +853,11 @@ test('compare: refuses reports with different configuration or execution modes',
       digests: { ...result.digests, configDigest: alternateConfigDigest },
     })),
   };
-  const incompatibleTask = {
-    ...baseline,
-    cases: baseline.cases.map((result, index) =>
-      index === 0 ? { ...result, taskId: 'task-different-c01' } : result
-    ),
-  };
+  const incompatibleTask = await runEvaluation({
+    mode: 'mock',
+    manifestPath: MANIFEST_PATH,
+    driver: createFakeDriver({ C01: { taskId: 'task-different-c01' } }),
+  });
   const realRun = await runEvaluation({ mode: 'real', manifestPath: MANIFEST_PATH });
 
   assert.throws(() => compareEvaluations(baseline, incompatibleConfig), /Incomparable/);

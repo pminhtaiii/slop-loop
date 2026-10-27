@@ -1290,6 +1290,161 @@ test('Pending plan approval: pauses at AwaitPlan and resumes when approved', asy
   assert.equal(statePort.getJournalSnapshot().authorityPublications.length, 2);
 });
 
+test('Current post-patch D1 routes failed checks through owner-admitted Repair', async () => {
+  const setup = createTestSetup({ contextualApprovalIssuer: true });
+  const { task, ports, statePort, repositoryPort, trustedExpectedContext } = setup;
+  await seedGraphTaskState(statePort, createGraphTaskState(task));
+  const patchContent = 'add the approved zero denominator guard';
+  const baseAdmission = createMockPatchAdmissionResolver(repositoryPort, statePort);
+  const initialConfig = {
+    mode: 'development' as const,
+    trustedExpectedContext,
+    planDetails: ROUTE_PLAN_DETAILS,
+    admissionContext: baseAdmission,
+    reviewerAdmission: createMockReviewerAdmissionResolver(statePort),
+    patchContent,
+    targetPaths: ['src/calculator.py'],
+  };
+
+  const pending = await runUC03Graph(task, ports, initialConfig);
+  assert.equal(pending.outcome, 'pending-approval');
+  assert.equal(pending.state?.node, 'Verify');
+  assert.ok(pending.state);
+  assert.notEqual(pending.state.repositoryRevisionDigest, task.initialRevisionDigest);
+
+  const d1 = setup.verificationApprovalPort?.getRecordedBindings().find((binding) => binding.decisionId.startsWith('dec-verify-'));
+  const currentAuthority = await statePort.readVerificationAuthoritySnapshot(task.taskId);
+  assert.ok(d1 && currentAuthority);
+  const d1Authority = { ...setup.authorityRef, decisionAuthorityGeneration: currentAuthority.decisionAuthorityGeneration + 1 };
+  assert.equal((await statePort.publishAuthority({ authorityRef: d1Authority })).status, 'published');
+  setup.verificationApprovalPort?.setV02AuthorityRef(d1Authority);
+  setup.verificationApprovalPort?.scriptDecision({ ...d1, status: 'approved' }, d1Authority.decisionAuthorityGeneration);
+  const classifyRepair = setup.approvalPort.classify.bind(setup.approvalPort);
+  setup.approvalPort.classify = async (action) => action.kind === 'apply_patch' ? 'ALLOWED' : classifyRepair(action);
+
+  const regression = task.requiredChecks.find((check) => check.purpose === 'regression');
+  assert.ok(regression);
+  const diffInfo = await repositoryPort.inspectDiff(task.initialRevisionDigest);
+  const failureEvidenceId = `evidence-verif-${regression.checkId}-${computeCanonicalSha256([
+    pending.state.runId, regression.checkId, pending.state.repositoryRevisionDigest, diffInfo.diffDigest,
+  ])}`;
+  repositoryPort.setCommandResult(`${regression.executable} ${regression.argv.join(' ')}`, {
+    exitCode: 1,
+    stdout: 'regression check failed after D1 approval',
+    stderr: '',
+  });
+  const repairPatch = {
+    diff: 'apply the owner-admitted correction after the regression failure',
+    affectedPaths: ['src/calculator.py'],
+    evidenceRefs: [failureEvidenceId],
+    diagnosticRefs: ['execution-guard:success'],
+  };
+  const repairAdmissions: RepositoryAdmissionContextV02[] = [];
+  const observingAdmission = async (request: Parameters<typeof baseAdmission>[0]) => {
+    const resolved = await baseAdmission(request);
+    if (request.state.node === 'Repair' && resolved) repairAdmissions.push(resolved.context);
+    return resolved;
+  };
+  let reviewerCalls = 0;
+  const originalReview = setup.reviewerPort.review.bind(setup.reviewerPort);
+  setup.reviewerPort.review = async (...args) => {
+    reviewerCalls += 1;
+    return originalReview(...args);
+  };
+  const repairLedgerBefore = statePort.getLedgers().find((ledger) => ledger.scope === 'task' && ledger.kind === 'repair')?.consumed ?? 0;
+  const resumed = await runUC03Graph(task, ports, {
+    ...initialConfig,
+    admissionContext: observingAdmission,
+    repairPatch,
+  }, pending.state);
+
+  assert.notEqual(resumed.outcome, 'COMPLETED');
+  assert.equal(repairAdmissions.length, 1);
+  const repairAdmission = repairAdmissions[0];
+  assert.ok(repairAdmission);
+  assert.equal(repairAdmission.runnableNode, 'Repair');
+  assert.equal(repairAdmission.planDecisionRef, d1.decisionId);
+  assert.equal(repairAdmission.canonicalRevision, pending.state.repositoryRevisionDigest);
+  assert.equal(repositoryPort.patches.length, 2, `${resumed.outcome}: ${resumed.reasons.join('; ')}`);
+  const persistedAfterRepair = await statePort.loadTask(task.taskId);
+  assert.ok(persistedAfterRepair);
+  assert.equal(persistedAfterRepair.repositoryRevisionDigest, repositoryPort.currentRevision);
+  assert.notEqual(persistedAfterRepair.repositoryRevisionDigest, pending.state.repositoryRevisionDigest);
+  assert.deepEqual(resumed.state, persistedAfterRepair);
+  assert.equal(statePort.getLedgers().find((ledger) => ledger.scope === 'task' && ledger.kind === 'repair')?.consumed, repairLedgerBefore + 1);
+  assert.equal(reviewerCalls, 0);
+  assert.equal(resumed.state?.node, 'Verify');
+});
+
+test('Rejected current post-patch D1 reports INCOMPLETE and preserves the owner hold', async () => {
+  const setup = createTestSetup({ contextualApprovalIssuer: true });
+  const { task, ports, statePort, repositoryPort, trustedExpectedContext } = setup;
+  await seedGraphTaskState(statePort, createGraphTaskState(task));
+  const admissionContext = createMockPatchAdmissionResolver(repositoryPort, statePort);
+  const config = {
+    mode: 'development' as const,
+    trustedExpectedContext,
+    planDetails: ROUTE_PLAN_DETAILS,
+    admissionContext,
+    reviewerAdmission: createMockReviewerAdmissionResolver(statePort),
+    patchContent: 'add the approved zero denominator guard',
+    targetPaths: ['src/calculator.py'],
+  };
+  let reviewerCalls = 0;
+  const originalReview = setup.reviewerPort.review.bind(setup.reviewerPort);
+  setup.reviewerPort.review = async (...args) => {
+    reviewerCalls += 1;
+    return originalReview(...args);
+  };
+
+  const pending = await runUC03Graph(task, ports, config);
+  assert.equal(pending.outcome, 'pending-approval');
+  assert.equal(pending.state?.node, 'Verify');
+  assert.ok(pending.state);
+  assert.deepEqual(await statePort.loadTask(task.taskId), pending.state);
+  const d1 = setup.verificationApprovalPort?.getRecordedBindings().find((binding) => binding.decisionId.startsWith('dec-verify-'));
+  const currentAuthority = await statePort.readVerificationAuthoritySnapshot(task.taskId);
+  assert.ok(d1 && currentAuthority);
+  const d1Authority = { ...setup.authorityRef, decisionAuthorityGeneration: currentAuthority.decisionAuthorityGeneration + 1 };
+  assert.equal((await statePort.publishAuthority({ authorityRef: d1Authority })).status, 'published');
+  setup.verificationApprovalPort?.setV02AuthorityRef(d1Authority);
+  setup.verificationApprovalPort?.scriptDecision({ ...d1, status: 'rejected', reason: 'owner rejected verification approval' }, d1Authority.decisionAuthorityGeneration);
+
+  const beforeJournal = statePort.getJournalSnapshot();
+  const beforeLedgers = statePort.getLedgers();
+  const beforeCommands = repositoryPort.commands.length;
+  const beforePatches = repositoryPort.patches.length;
+  let diffReads = 0;
+  const inspectDiff = repositoryPort.inspectDiff.bind(repositoryPort);
+  repositoryPort.inspectDiff = async (...args) => {
+    diffReads += 1;
+    return inspectDiff(...args);
+  };
+  const rejected = await runUC03Graph(task, ports, config, pending.state);
+  const afterJournal = statePort.getJournalSnapshot();
+  const persisted = await statePort.loadTask(task.taskId);
+
+  assert.equal(rejected.outcome, 'INCOMPLETE');
+  assert.equal(rejected.finalReport?.outcome, 'INCOMPLETE');
+  assert.equal(rejected.finalReport?.isComplete, false);
+  assert.ok(rejected.reasons.some((reason) => reason.includes('approval was rejected')));
+  assert.deepEqual(rejected.state, persisted);
+  assert.deepEqual(persisted, pending.state, 'rejection must not mutate persisted TaskState');
+  assert.equal(afterJournal.mode, 'rejected');
+  assert.ok(afterJournal.holdRef?.startsWith('verification-rejected-'));
+  assert.equal(afterJournal.controlVersion, beforeJournal.controlVersion + 1);
+  assert.equal(afterJournal.epoch, beforeJournal.epoch);
+  assert.equal(afterJournal.activeAuthorityRef?.decisionAuthorityGeneration, beforeJournal.activeAuthorityRef?.decisionAuthorityGeneration);
+  assert.deepEqual(afterJournal.claims, beforeJournal.claims);
+  assert.deepEqual(afterJournal.attempts, beforeJournal.attempts);
+  assert.deepEqual(afterJournal.outcomes, beforeJournal.outcomes);
+  assert.deepEqual(statePort.getLedgers(), beforeLedgers);
+  assert.equal(repositoryPort.commands.length, beforeCommands);
+  assert.equal(repositoryPort.patches.length, beforePatches);
+  assert.equal(diffReads, 0);
+  assert.equal(reviewerCalls, 0);
+});
+
 /* ------------------------------------------------------------------
  * 4. Plan Rejection & Human Feedback
  * ------------------------------------------------------------------ */

@@ -82,7 +82,9 @@ export function compareEvaluations(
       !candidateCase ||
       baseCase.caseId !== candidateCase.caseId ||
       baseCase.expectedOutcome !== candidateCase.expectedOutcome ||
-      baseCase.taskId !== candidateCase.taskId
+      (baseCase.taskId !== null &&
+        candidateCase.taskId !== null &&
+        baseCase.taskId !== candidateCase.taskId)
     ) {
       throw new Error('Incomparable evaluation reports');
     }
