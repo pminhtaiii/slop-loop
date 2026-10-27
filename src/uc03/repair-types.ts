@@ -19,6 +19,7 @@ import type {
   StateTransitionOptions,
   TaskState,
   VerificationResult,
+  RepositoryExecutionReceiptV02,
   RepositoryAdmissionContextV02,
   BudgetLedger,
 } from '../contracts/foundation/uc03.ts';
@@ -80,6 +81,8 @@ export interface RepairResult {
   readonly reasons: readonly string[];
   readonly reservedActionId?: string | undefined;
   readonly appliedPatchDigest?: string | undefined;
+  /** Exact receipt returned by the owner-settled v0.2 repository effect. */
+  readonly executionReceipt?: RepositoryExecutionReceiptV02 | undefined;
 }
 
 export interface PlanMaterialityResult {
@@ -212,6 +215,35 @@ export function failureRefs(items: readonly (VerificationResult | ReviewResult)[
   return { evidence, actions, diagnostics: [...new Set(diagnostics)] };
 }
 
+export function createTrustedRepairContext(
+  state: TaskState,
+  items: readonly (VerificationResult | ReviewResult)[],
+  admissionContext: RepositoryAdmissionContextV02,
+): TrustedRepairContext | undefined {
+  const plan = state.plan, task = state.taskContext;
+  if (!plan?.baselineRef || !task || state.node !== 'Repair' || !items.length) return undefined;
+  const refs = failureRefs(items), diffDigest = items[0]?.diffDigest;
+  if (!diffDigest || items.some((item) => item.diffDigest !== diffDigest) || !refs.diagnostics.length) return undefined;
+  return {
+    taskId: state.taskId, runId: state.runId, workspaceId: state.workspaceId, repositoryId: state.repositoryId,
+    repositoryRevisionDigest: state.repositoryRevisionDigest, baselineRef: plan.baselineRef,
+    checkSetDigest: computeCheckSetDigest(task.requiredChecks), diffDigest,
+    evidenceRefs: refs.evidence, actionRefs: refs.actions, diagnosticRefs: refs.diagnostics, admissionContext,
+  };
+}
+
+export function createRepairActionId(state: TaskState, items: readonly (VerificationResult | ReviewResult)[]): string | undefined {
+  const plan = state.plan, task = state.taskContext;
+  if (!plan?.baselineRef || !task || !items.length) return undefined;
+  const refs = failureRefs(items), diffDigest = items[0]?.diffDigest;
+  if (!diffDigest || items.some((item) => item.diffDigest !== diffDigest)) return undefined;
+  return `act-repair-${computeCanonicalSha256({
+    taskId: state.taskId, runId: state.runId, repositoryRevisionDigest: state.repositoryRevisionDigest,
+    baselineRef: plan.baselineRef, checkSetDigest: computeCheckSetDigest(task.requiredChecks), diffDigest,
+    evidenceRefs: refs.evidence, actionRefs: refs.actions, diagnosticRefs: refs.diagnostics,
+  })}`;
+}
+
 export function refsMatch(actual: unknown, expected: readonly string[]): boolean {
   return Array.isArray(actual) && actual.length === expected.length && actual.every((ref: unknown, index: number) => typeof ref === 'string' && ref === expected[index]);
 }
@@ -240,8 +272,22 @@ export function checkAccounting(state: TaskState, actionId?: string, receiptId?:
   return { ok: true, repair };
 }
 
-export function isPatchResult(value: unknown): value is { readonly applied: true; readonly newRevisionDigest: string } {
-  return typeof value === 'object' && value !== null && !Array.isArray(value) && 'applied' in value && (value as { applied: unknown }).applied === true && 'newRevisionDigest' in value && isSha256((value as { newRevisionDigest: unknown }).newRevisionDigest);
+export function isPatchResult(value: unknown): value is {
+  readonly applied: true;
+  readonly newRevisionDigest: string;
+  readonly executionReceipt?: unknown;
+} {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  try {
+    const applied = Object.getOwnPropertyDescriptor(value, 'applied');
+    const revision = Object.getOwnPropertyDescriptor(value, 'newRevisionDigest');
+    const receipt = Object.getOwnPropertyDescriptor(value, 'executionReceipt');
+    return applied !== undefined && 'value' in applied && applied.value === true &&
+      revision !== undefined && 'value' in revision && isSha256(revision.value) &&
+      (receipt === undefined || 'value' in receipt);
+  } catch {
+    return false;
+  }
 }
 
 /** The guard and journal validate supplied owner authority; repair never creates it. */

@@ -30,6 +30,11 @@ export interface VersionDomainSnapshotV02 { taskStateVersion: number; controlVer
 export interface VersionProgressionV02 { kind: VersionProgressionKindV02; pre: VersionDomainSnapshotV02; post: VersionDomainSnapshotV02; isRepairPatch?: boolean; }
 export interface ClaimClosureValidationContextV02 { expectedTaskId?: string; expectedClaimId?: string; claim?: Record<string, unknown>; hasCommittedAttempt?: boolean; expectedAdapterIdentity?: string; expectedMinFencingGeneration?: number; expectedFencedExecutorIdentity?: ExecutorIdentityV02; }
 export interface AttemptValidationContextV02 { expectedTaskId?: string; expectedClaimId?: string; expectedAttemptId?: string; expectedEpoch?: number; isRepairPatch?: boolean; }
+export function isApprovedPlanPatchV02(
+  admission: Pick<RepositoryAdmissionContextV02, 'action' | 'planApplicability'>,
+): boolean {
+  return admission.action.kind === 'apply_patch' && admission.planApplicability === 'approved-plan';
+}
 export type { AttemptOutcomeValidationContextV02 } from './admission-v02/attempt-outcome-v02.ts';
 export type CanonicalAttemptOutcomeReceiptV02 = AttemptOutcomeReceiptV02;
 export type CanonicalAttemptReconciliationReceiptV02 = AttemptReconciliationReceiptV02;
@@ -184,7 +189,7 @@ export const validateRepositoryExecutionReceiptV02 = protectValidator(function (
     claim['claimDigest'] !== computeCanonicalSha256({ ...claim, claimDigest: undefined })) return fail();
   const attemptResult = validateAttemptReceiptV02(input['attempt'], {
     expectedTaskId: admission.taskId, expectedClaimId: String(claim['claimId']), expectedEpoch: admission.expectedEpoch,
-    isRepairPatch: admission.action.kind === 'apply_patch' && admission.runnableNode === 'Repair',
+    isRepairPatch: isApprovedPlanPatchV02(admission),
   });
   if (!attemptResult.ok) return fail();
   const attempt = attemptResult.value;

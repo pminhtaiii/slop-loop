@@ -29,6 +29,7 @@ import {
   type ApprovalBinding,
   type StateTransitionOptions,
   type RunCommandAction,
+  type PolicyAuthorityRefV02,
   type ProviderUsage,
   CONTRACT_VERSION,
   computeCanonicalSha256,
@@ -373,8 +374,12 @@ export function createTestAdmissionLedgers(configId = 'config-uc03-v1'): BudgetL
   ];
 }
 
+type RepositoryAdmissionFixtureOptions = Partial<Record<string, unknown>> & {
+  readonly policyAuthorityRef?: PolicyAuthorityRefV02;
+};
+
 export function createTestRepositoryAdmissionContextV02(
-  overrides?: Partial<Record<string, unknown>>
+  overrides?: RepositoryAdmissionFixtureOptions
 ): RepositoryAdmissionContextV02 {
   const taskId = (overrides?.taskId as string | undefined) ?? 'task-calc-001';
   const runId = (overrides?.runId as string | undefined) ?? 'run-001';
@@ -392,7 +397,7 @@ export function createTestRepositoryAdmissionContextV02(
     baseRevisionDigest: canonicalRevision,
   };
   const actionDigest = (overrides?.actionDigest as string | undefined) ?? computeActionDigest(action);
-  const policyAuthorityRef = {
+  const policyAuthorityRef = overrides?.policyAuthorityRef ?? {
     policyId: 'policy-default',
     policyVersion: '1.0.0',
     configId: 'config-default',
@@ -594,7 +599,7 @@ export function createTestRepositoryAdmissionTrustedContextV02(
 }
 
 export function createTestRepositoryCommandAdmissionContextV02(
-  overrides?: Partial<Record<string, unknown>>,
+  overrides?: RepositoryAdmissionFixtureOptions,
 ): RepositoryAdmissionContextV02 {
   const action = (overrides?.action as RunCommandAction | undefined) ?? createTestAction({
     actionId: 'act-command-admission-001',

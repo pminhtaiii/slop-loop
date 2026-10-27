@@ -6,6 +6,7 @@ import {
   validateModelProposal,
   validateModelResult,
   computeCanonicalSha256,
+  computeCheckSetDigest,
   computeAttemptOutcomeDigest,
   computeActionDigest,
   computeRequestContentDigest,
@@ -13,6 +14,8 @@ import {
   type ApplyPatchAction,
   type RunCommandAction,
   type ModelPortResult,
+  type ApprovalBinding,
+  type VerificationApprovalContextV02,
   type ReviewResult,
   type TrustedDiffLines,
   type ProviderAdmissionContextV02,
@@ -30,13 +33,15 @@ import {
   type OutcomeRecordResultV02,
   type ReconciliationResultV02,
   type ClaimClosureResultV02,
+  type RecordVerificationApprovalRequestV02,
   type TaskState,
 } from '../../../../src/contracts/foundation/uc03.ts';
 import { ScriptedModelPort, ScriptedModelPortV02 } from './scripted-model.ts';
 import { ScriptedReviewerPort, ScriptedReviewerPortV02 } from './scripted-reviewer.ts';
 import { FakeRepositoryPort, FakeRepositoryPortV02 } from './fake-repository.ts';
 import { ScriptedApprovalPort, ScriptedApprovalPortV02 } from './scripted-approval.ts';
-import { createTestRepositoryAdmissionTrustedContextV02 } from './state-fixtures.ts';
+import { MemoryStatePortV02 } from './memory-state.ts';
+import { createTestRepositoryAdmissionTrustedContextV02, createTestApprovalBinding } from './state-fixtures.ts';
 import {
   createFixtureBugTask,
   createFixtureTaskState,
@@ -65,10 +70,34 @@ class RecordingStatePortV02 implements StatePortV02 {
   readonly recordedOutcomeResults: OutcomeRecordResultV02[] = [];
   readonly claimReceipt: ClaimReceiptV02;
   readonly attemptReceipt: AttemptReceiptV02;
+  readonly readVerificationAuthoritySnapshot?: NonNullable<StatePortV02['readVerificationAuthoritySnapshot']>;
+  readonly recordVerificationApproval?: NonNullable<StatePortV02['recordVerificationApproval']>;
+  readonly resolvePlanDecisionInContext?: NonNullable<StatePortV02['resolvePlanDecisionInContext']>;
+  readonly readSettledPatchAncestry?: NonNullable<StatePortV02['readSettledPatchAncestry']>;
 
-  constructor(claimReceipt: ClaimReceiptV02, attemptReceipt: AttemptReceiptV02) {
+  constructor(claimReceipt: ClaimReceiptV02, attemptReceipt: AttemptReceiptV02, forward?: StatePortV02) {
     this.claimReceipt = claimReceipt;
     this.attemptReceipt = attemptReceipt;
+    if (forward?.readVerificationAuthoritySnapshot) {
+      Object.defineProperty(this, 'readVerificationAuthoritySnapshot', {
+        value: forward.readVerificationAuthoritySnapshot.bind(forward),
+      });
+    }
+    if (forward?.recordVerificationApproval) {
+      Object.defineProperty(this, 'recordVerificationApproval', {
+        value: forward.recordVerificationApproval.bind(forward),
+      });
+    }
+    if (forward?.resolvePlanDecisionInContext) {
+      Object.defineProperty(this, 'resolvePlanDecisionInContext', {
+        value: forward.resolvePlanDecisionInContext.bind(forward),
+      });
+    }
+    if (forward?.readSettledPatchAncestry) {
+      Object.defineProperty(this, 'readSettledPatchAncestry', {
+        value: forward.readSettledPatchAncestry.bind(forward),
+      });
+    }
   }
 
   async loadTask(taskId: string): Promise<TaskState | null> { void taskId; return null; }
@@ -1093,6 +1122,141 @@ test('ScriptedApprovalPort (v0.2): stale authority generation rejects binding va
 
   const valid = await approval.validateBindingV02(evaluation, staleAuth);
   assert.equal(valid, false);
+});
+
+test('ScriptedApprovalPort public contextual issuer coalesces one D1 request and resolves a published status generation', async () => {
+  const task = createFixtureBugTask();
+  const state = createFixtureTaskState();
+  const authority = createFixturePolicyAuthorityRefV02({ decisionAuthorityGeneration: 3 });
+  const decisionId = 'dec-verify-provider-mocks-001';
+  const baselineRef = `uc04://baseline/${task.taskId}/1`;
+  const evidenceRefs = [baselineRef];
+  const checkSetDigest = computeCheckSetDigest(task.requiredChecks);
+  const action = {
+    actionId: decisionId,
+    kind: 'approve_fix_plan' as const,
+    planVersion: state.planVersion,
+    strategyDigest: computeCanonicalSha256('contextual strategy'),
+    diagnosisEvidenceRefs: evidenceRefs,
+    checkSetDigest,
+  };
+  const normalizedActionDigest = computeCanonicalSha256(action);
+  const binding: ApprovalBinding = createTestApprovalBinding({
+    decisionId,
+    actionKind: 'fix_plan',
+    normalizedActionDigest,
+    taskId: task.taskId,
+    workspaceId: state.workspaceId,
+    repositoryRevisionDigest: computeCanonicalSha256('settled repository revision'),
+    policyId: authority.policyId,
+    policyVersion: authority.policyVersion,
+    planVersion: state.planVersion,
+    strategyDigest: action.strategyDigest,
+    baselineRef,
+    evidenceRefs,
+    criteriaDigest: computeCanonicalSha256(task.acceptanceCriteria),
+    checkSetDigest,
+    status: 'pending',
+  });
+  const contextAtGeneration = (generation: number): VerificationApprovalContextV02 => ({
+    purpose: 'current-verification',
+    expectedIssuerKeyRef: authority.issuerKeyRef,
+    expectedDecisionAuthorityGeneration: generation,
+    approvalContext: {
+      currentTaskId: task.taskId,
+      currentWorkspaceId: state.workspaceId,
+      currentRepositoryRevisionDigest: binding.repositoryRevisionDigest,
+      currentPolicyId: authority.policyId,
+      currentPolicyVersion: authority.policyVersion,
+      currentNormalizedActionDigest: normalizedActionDigest,
+      currentPlanVersion: state.planVersion,
+      currentStrategyDigest: action.strategyDigest,
+      currentBaselineRef: baselineRef,
+      currentEvidenceRefs: evidenceRefs,
+      currentCriteriaDigest: computeCanonicalSha256(task.acceptanceCriteria),
+      currentCheckSetDigest: checkSetDigest,
+    },
+  });
+  const port = new ScriptedApprovalPort({ v02AuthorityRef: authority });
+  const first = await port.requestDecision(binding);
+  const repeated = await port.requestDecision(binding);
+  assert.equal(first.decisionId, decisionId);
+  assert.equal(first.status, 'pending');
+  assert.deepEqual(repeated, first);
+  assert.equal(port.getRecordedBindings().filter((entry) => entry.decisionId === decisionId).length, 1);
+
+  port.scriptDecision({ ...binding, status: 'approved' }, authority.decisionAuthorityGeneration + 1);
+  const earlier = await port.resolvePlanDecisionInContext(decisionId, contextAtGeneration(authority.decisionAuthorityGeneration));
+  assert.equal(earlier.outcome, 'resolved');
+  if (earlier.outcome !== 'resolved') assert.fail('expected the prior pending D1 generation to remain resolvable');
+  assert.equal(earlier.binding.status, 'pending');
+  const resolved = await port.resolvePlanDecisionInContext(decisionId, contextAtGeneration(authority.decisionAuthorityGeneration + 1));
+  assert.equal(resolved.outcome, 'resolved');
+  if (resolved.outcome !== 'resolved') assert.fail('expected the public contextual issuer to resolve D1');
+  assert.equal(resolved.binding.status, 'approved');
+  assert.equal(resolved.decisionAuthorityGeneration, authority.decisionAuthorityGeneration + 1);
+  await assert.rejects(() => port.requestDecision({ ...binding, strategyDigest: computeCanonicalSha256('changed strategy') }), /Conflicting request/);
+  assert.equal(port.getRecordedBindings().filter((entry) => entry.decisionId === decisionId).length, 1);
+});
+
+test('RecordingStatePortV02 transparently forwards optional verification authority operations', async () => {
+  const taskState = createFixtureTaskState();
+  const authority = createFixturePolicyAuthorityRefV02({ decisionAuthorityGeneration: 3 });
+  const owner = new MemoryStatePortV02({ initialTaskState: taskState, initialAuthorityRef: authority });
+  const context = createFixtureRepositoryCommandAdmissionContextV02();
+  const journal = createRecordingJournal(context, 'optional-authority-forwarding');
+  const forwarded = new RecordingStatePortV02(journal.claim, journal.attempt, owner);
+
+  assert.deepEqual(
+    await forwarded.readVerificationAuthoritySnapshot?.(taskState.taskId),
+    await owner.readVerificationAuthoritySnapshot(taskState.taskId),
+  );
+  const invalidRequest: RecordVerificationApprovalRequestV02 = {
+    taskId: '', runId: '', workspaceId: '', repositoryId: '', originalDecisionId: '', decisionId: '',
+    expectedStateVersion: -1, expectedRepositoryRevisionDigest: '', expectedPlanVersion: 0,
+    expectedPlanMaterialDigest: '', expectedControlVersion: -1, expectedEpoch: -1,
+    expectedDecisionAuthorityGeneration: 0,
+    policyIdentity: { policyId: '', policyVersion: '', configId: '', configVersion: '', issuerKeyRef: '' },
+    requestIdentity: '',
+  };
+  assert.deepEqual(
+    await forwarded.recordVerificationApproval?.(invalidRequest),
+    await owner.recordVerificationApproval(invalidRequest),
+  );
+  const contextual: VerificationApprovalContextV02 = {
+    purpose: 'current-verification',
+    expectedIssuerKeyRef: authority.issuerKeyRef,
+    expectedDecisionAuthorityGeneration: authority.decisionAuthorityGeneration,
+    approvalContext: {
+      currentTaskId: taskState.taskId,
+      currentWorkspaceId: taskState.workspaceId,
+      currentRepositoryRevisionDigest: taskState.repositoryRevisionDigest,
+      currentPolicyId: authority.policyId,
+      currentPolicyVersion: authority.policyVersion,
+      currentNormalizedActionDigest: computeCanonicalSha256('context-action'),
+      currentPlanVersion: taskState.planVersion,
+      currentStrategyDigest: computeCanonicalSha256('context-strategy'),
+      currentBaselineRef: 'baseline-forwarding',
+      currentEvidenceRefs: ['baseline-forwarding'],
+      currentCriteriaDigest: computeCanonicalSha256(taskState.acceptanceCriteria),
+      currentCheckSetDigest: computeCanonicalSha256(taskState.requiredCheckIds),
+    },
+  };
+  assert.deepEqual(
+    await forwarded.resolvePlanDecisionInContext?.('decision-forwarding', contextual),
+    await owner.resolvePlanDecisionInContext('decision-forwarding', contextual),
+  );
+  const ancestryRequest = {
+    taskId: taskState.taskId,
+    runId: taskState.runId,
+    resultingRepositoryRevisionDigest: taskState.repositoryRevisionDigest,
+  };
+  assert.equal(await forwarded.readSettledPatchAncestry?.(ancestryRequest), null);
+  assert.equal(await owner.readSettledPatchAncestry(ancestryRequest), null);
+  assert.equal(journal.statePort.readVerificationAuthoritySnapshot, undefined);
+  assert.equal(journal.statePort.recordVerificationApproval, undefined);
+  assert.equal(journal.statePort.resolvePlanDecisionInContext, undefined);
+  assert.equal(journal.statePort.readSettledPatchAncestry, undefined);
 });
 
 test('ScriptedModelPortV02 refuses a changed request before consuming its scripted success', async () => {

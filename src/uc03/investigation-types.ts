@@ -118,6 +118,13 @@ export interface BaselineEvidenceWriter {
   persistBaselineEvidence(
     request: BaselineEvidenceWriteRequest
   ): Promise<BaselineEvidenceAcknowledgement>;
+  /** Optional owner lookup used to restore TaskState-only graph continuations. */
+  loadBaselineEvidence?(
+    taskId: string,
+    workspaceId: string,
+    repositoryId: string,
+    evidenceId: string,
+  ): Promise<{ readonly content: BaselineEvidenceCandidate; readonly acknowledgement: BaselineEvidenceAcknowledgement } | null>;
 }
 
 export interface BaselineInvestigationResult {

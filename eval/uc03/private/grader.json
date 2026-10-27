@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "graderSuite": "uc03-private-grading",
+  "version": "0.1.0",
+  "configurationOnly": true,
+  "executionStatus": "not-run",
+  "isolationStatus": "not-established",
+  "hostExecutionAllowed": false,
+  "hiddenChecks": [
+    {
+      "checkId": "grade-c17-hidden-reproduction",
+      "targetCaseId": "C17",
+      "executionStatus": "not-run"
+    }
+  ]
+}
