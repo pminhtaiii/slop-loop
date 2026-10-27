@@ -298,10 +298,7 @@ function forwardPublicStatePort(
 ): StatePort | ExecutionGuardStatePortV02 {
   if (isStatePortV02(statePort)) {
     const v02Port = statePort;
-    const underlying =
-      typeof (statePort as unknown as { getUnderlying?: () => StatePort }).getUnderlying === 'function'
-        ? (statePort as unknown as { getUnderlying: () => StatePort }).getUnderlying()
-        : undefined;
+    const underlying = statePort instanceof MemoryStatePortV02 ? statePort.getUnderlying() : undefined;
     const forwardedV02: ExecutionGuardStatePortV02 = {
       provenance: v02Port.provenance,
       executionGuardApiVersion: '0.2.0',

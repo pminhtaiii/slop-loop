@@ -3,6 +3,7 @@
 import {
   computeCanonicalSha256, computeCheckSetDigest, validateApprovalBinding,
   validateStateTransition, validateTaskState, validateNormalizedAction, validateVerificationResult, validateReviewResult,
+  validateRepositoryExecutionReceiptV02,
   type TaskState, type StatePort, type StatePortV02,
   type ApplyPatchAction, type ApproveFixPlanAction, type ApprovalBindingContext,
   type ExecutionGuard, type ExecutionGuardV02,
@@ -14,6 +15,7 @@ import {
   getRejectionApprovalContext, validateRejectionInput, isProtectedPathOrTest,
   isVerificationResult, isReviewResult, failureRefs, refsMatch, isSha256,
   isPatchResult, checkAccounting, resolveRepairAdmissionContext, isStatePortV02,
+  createRepairActionId,
 } from './repair-types.ts';
 
 export * from './repair-types.ts';
@@ -66,7 +68,9 @@ export async function executeRepair(input: RepairInput, ports: RepairPorts): Pro
   };
   const currentApproval: ApprovalBindingContext = {
     currentTaskId: state.taskId, currentWorkspaceId: state.workspaceId,
-    currentRepositoryRevisionDigest: state.repositoryRevisionDigest,
+    // Plan approval authorizes the bounded strategy against its original baseline.
+    // The exact Repair admission below separately binds this attempt to today's revision.
+    currentRepositoryRevisionDigest: task.initialRevisionDigest,
     currentPolicyId: task.configId, currentPolicyVersion: task.configVersion,
     currentNormalizedActionDigest: computeCanonicalSha256(planAction), currentPlanVersion: state.planVersion,
     currentStrategyDigest: plan.strategyDigest, currentBaselineRef: plan.baselineRef,
@@ -115,11 +119,8 @@ export async function executeRepair(input: RepairInput, ports: RepairPorts): Pro
   }
   if (proposal.affectedPaths.some(isProtectedPathOrTest)) return { outcome: 'DENIED', state, reasons: ['forbidden-protected-path-edit'] };
 
-  const actionId = `act-repair-${computeCanonicalSha256({
-    taskId: state.taskId, runId: state.runId, repositoryRevisionDigest: state.repositoryRevisionDigest,
-    baselineRef: plan.baselineRef, checkSetDigest, diffDigest: ctx.diffDigest,
-    evidenceRefs: refs.evidence, actionRefs: refs.actions, diagnosticRefs: refs.diagnostics,
-  })}`;
+  const actionId = createRepairActionId(state, items);
+  if (!actionId) return stop('repair-action-identity-unavailable');
   if (input.actionId !== undefined && input.actionId !== actionId) return stop('repair-action-identity-mismatch');
   if (accounting.repair.reservations.some((entry) => entry.keyedId === actionId) || state.evidenceRefs.includes(`repair-action:${actionId}`)) {
     return stop('repair-evidence-already-reserved');
@@ -168,6 +169,16 @@ export async function executeRepair(input: RepairInput, ports: RepairPorts): Pro
       return incomplete(latest ?? state, 'repair-verification-transition-result-inconsistent', actionId);
     }
 
+    const patch = isPatchResult(effect.result) ? effect.result : undefined;
+    const settled = patch?.executionReceipt === undefined || !admissionContext
+      ? undefined
+      : validateRepositoryExecutionReceiptV02(patch.executionReceipt, admissionContext);
+    if (!patch || !settled?.ok || settled.value.outcome.repositoryOperation !== 'apply-patch' ||
+        settled.value.outcome.observedResultRevisionDigest !== patch.newRevisionDigest ||
+        latest.repositoryRevisionDigest !== patch.newRevisionDigest) {
+      return incomplete(latest, 'repair-owner-settlement-receipt-unavailable-or-stale', actionId);
+    }
+
     const digest = computeCanonicalSha256(proposal.diff);
     return {
       outcome: 'REPAIR_PREPARED',
@@ -175,6 +186,7 @@ export async function executeRepair(input: RepairInput, ports: RepairPorts): Pro
       reasons: [],
       reservedActionId: actionId,
       appliedPatchDigest: digest,
+      executionReceipt: settled.value,
     };
   }
 

@@ -184,7 +184,7 @@ export const validateRepositoryExecutionReceiptV02 = protectValidator(function (
     claim['claimDigest'] !== computeCanonicalSha256({ ...claim, claimDigest: undefined })) return fail();
   const attemptResult = validateAttemptReceiptV02(input['attempt'], {
     expectedTaskId: admission.taskId, expectedClaimId: String(claim['claimId']), expectedEpoch: admission.expectedEpoch,
-    isRepairPatch: admission.action.kind === 'apply_patch' && admission.runnableNode === 'Repair',
+    isRepairPatch: admission.action.kind === 'apply_patch' && admission.planApplicability === 'approved-plan',
   });
   if (!attemptResult.ok) return fail();
   const attempt = attemptResult.value;
