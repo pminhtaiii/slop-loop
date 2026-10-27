@@ -301,6 +301,52 @@ test('rejection establishes one owner hold and a pause blocks a current approval
   assert.equal(computeCanonicalSha256(pausedState), computeCanonicalSha256(paused.state));
 });
 
+test('legacy scripted updates remain available while a contextual D1 rejection stays terminal across generations', async () => {
+  const fixture = createOwnerFixture({ verifier: true });
+  const pending = await requestD1(fixture);
+  const legacyRejected: ApprovalBinding = { ...pending.binding, status: 'rejected', reason: 'Rejected legacy decision' };
+  const legacyApproved: ApprovalBinding = { ...pending.binding, status: 'approved' };
+  const legacy = new ScriptedApprovalPort({ decisions: [legacyRejected] });
+  legacy.scriptDecision(legacyApproved);
+  assert.equal((await legacy.resolve(legacyApproved.decisionId)).status, 'approved');
+  assert.equal(await legacy.validateBinding(legacyApproved, pending.context.approvalContext), true);
+
+  const rejectedGeneration = fixture.authorityRef.decisionAuthorityGeneration + 1;
+  assert.equal((await fixture.owner.publishAuthority({
+    authorityRef: { ...fixture.authorityRef, decisionAuthorityGeneration: rejectedGeneration },
+  })).status, 'published');
+  fixture.issuer.scriptDecision({ ...pending.binding, status: 'rejected', reason: 'Rejected D1' }, rejectedGeneration);
+  const rejected = await fixture.owner.resolvePlanDecisionInContext(pending.request.decisionId, {
+    ...pending.context,
+    expectedDecisionAuthorityGeneration: rejectedGeneration,
+  });
+  assert.equal(rejected.outcome, 'resolved');
+  if (rejected.outcome !== 'resolved') assert.fail('expected rejected D1 to resolve at its published generation');
+  assert.equal(rejected.binding.status, 'rejected');
+
+  const laterGeneration = rejectedGeneration + 1;
+  assert.equal((await fixture.owner.publishAuthority({
+    authorityRef: { ...fixture.authorityRef, decisionAuthorityGeneration: laterGeneration },
+  })).status, 'published');
+  fixture.issuer.scriptDecision({ ...pending.binding, status: 'approved' }, laterGeneration);
+  const afterRejectedUpdate = await fixture.owner.resolvePlanDecisionInContext(pending.request.decisionId, {
+    ...pending.context,
+    expectedDecisionAuthorityGeneration: laterGeneration,
+  });
+  assert.equal(afterRejectedUpdate.outcome, 'resolved');
+  if (afterRejectedUpdate.outcome !== 'resolved') assert.fail('expected contextual resolution to retain the terminal rejection');
+  assert.equal(afterRejectedUpdate.binding.status, 'rejected');
+
+  const state = await fixture.owner.loadTask(fixture.task.taskId);
+  const snapshot = await fixture.owner.readVerificationAuthoritySnapshot(fixture.task.taskId);
+  assert.ok(state && snapshot);
+  const current = prepareVerificationApproval(fixture.task, state, snapshot, D0);
+  assert.ok(current);
+  const ownerResult = await fixture.owner.recordVerificationApproval(current.request);
+  assert.equal(ownerResult.outcome, 'rejected');
+  assert.deepEqual(await fixture.owner.loadTask(fixture.task.taskId), state);
+});
+
 test('owner rejects stale CAS fences and changed task, repository, policy, revision, or plan identity without mutation', async () => {
   const fixture = createOwnerFixture({ verifier: true });
   const prepared = await requestD1(fixture);

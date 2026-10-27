@@ -136,9 +136,8 @@ export class ScriptedApprovalPort implements ApprovalPort, ContextualApprovalVer
     }
     const prior = this.scriptedDecisions.get(parsed.value.decisionId);
     if (prior && !this.sameIdentity(prior, parsed.value)) throw new Error('Conflicting decision identity');
-    if (prior?.status === 'rejected' && parsed.value.status === 'approved') throw new Error('Rejected decision identity is terminal');
-    this.scriptedDecisions.set(parsed.value.decisionId, structuredClone(parsed.value));
     this.recordContextualStatus(parsed.value, decisionAuthorityGeneration);
+    this.scriptedDecisions.set(parsed.value.decisionId, structuredClone(parsed.value));
     if (parsed.value.status === 'approved') {
       this.rejectedDecisions.delete(parsed.value.decisionId);
     } else if (parsed.value.status === 'rejected') {
@@ -236,9 +235,12 @@ export class ScriptedApprovalPort implements ApprovalPort, ContextualApprovalVer
   private recordContextualStatus(binding: ApprovalBinding, generation: number): void {
     if (!this.v02AuthorityRef || !Number.isSafeInteger(generation) || generation < 1) return;
     const history = this.contextualDecisionHistory.get(binding.decisionId) ?? new Map<number, ApprovalBinding>();
+    const terminalRejection = [...history.values()].find((record) => record.status === 'rejected');
+    // Rejected D1 stays terminal in contextual history even when legacy scripting updates its mutable record.
+    const contextualBinding = terminalRejection && binding.status !== 'rejected' ? terminalRejection : binding;
     const prior = history.get(generation);
-    if (prior && (!this.sameIdentity(prior, binding) || prior.status !== binding.status)) throw new Error('Conflicting contextual decision generation');
-    history.set(generation, structuredClone(binding));
+    if (prior && (!this.sameIdentity(prior, contextualBinding) || prior.status !== contextualBinding.status)) throw new Error('Conflicting contextual decision generation');
+    history.set(generation, structuredClone(contextualBinding));
     this.contextualDecisionHistory.set(binding.decisionId, history);
     this.decisionIssuerKeys.set(binding.decisionId, this.v02AuthorityRef.issuerKeyRef);
   }
