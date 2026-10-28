@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-17 (Asia/Bangkok)
 
-**Status**: Existing artifact baseline and T001 consumer/fixture agreement approved on 2026-10-18; T001–T010 complete at the controlled local level. The user separately authorized Phase 5 T009–T010 on 2026-10-19 (Asia/Bangkok); see [decisions](contracts/decisions.md). T014 safety regression consolidation was separately authorized on 2026-10-20 (Asia/Bangkok) and is complete at the controlled local level. T011–T013, T015–T016 and real execution remain separately gated.
+**Status**: Existing artifact baseline and T001 consumer/fixture agreement approved on 2026-10-18; T001–T010 complete at the controlled local level. The user separately authorized Phase 5 T009–T010 on 2026-10-19 (Asia/Bangkok); see [decisions](contracts/decisions.md). T014 safety regression consolidation was separately authorized on 2026-10-20 (Asia/Bangkok) and is complete at the controlled local level. T013 is separately authorized on 2026-10-28 for the versioned UC-03 receiver contract; T011/T012, T015/T016 and real execution remain separately gated.
 
 **Input**: One supplied issue for one selected repository; assess classification, severity, evidence, material unknowns and a configured backend recommendation.
 
@@ -109,3 +109,9 @@ As an integrator, I receive a recommendation from my configured destination cata
 - Classification defaults, provider/model, numeric production limits and deployment interface remain owner decisions. Test examples are not defaults.
 - Technical readiness and permission to implement are separate: T001–T010 are complete under their separate user authorizations, and T014 was separately authorized on 2026-10-20; T011–T013 and T015–T016 require separate authorization.
 - The current user reports leader agreement to evaluation-first incremental delivery; this approves a direction, not the proposed evaluation schema, new authority or runtime implementation. See [evaluation contract](contracts/evaluation.md) and [decision/source gaps](contracts/decisions.md). The two original coursework Markdown documents were not available for independent verification; supplied minima are used explicitly, not presented as independently checked quotations.
+
+## Scoped receiver amendment — 2026-10-28
+
+On 2026-10-28 (Asia/Bangkok), the user reported Tai had delegated full implementation and technical decisions within UC-03 T011 → T012 → UC-01 T013, including required specification/contract amendments. This releases only that sequential batch, its tests, independent review, context refresh and contributor publication. It supersedes earlier unreleased wording only for these tasks. No real LLM/provider, UC-04/UC-05 implementation, dispatch, automatic repair, production choices or other successor work is authorized.
+
+T013 may exercise the actual delivered UC-03 receiver using the additive [uc01-uc03-receiver-v1 contract](../001-verified-code-repair/contracts/uc01-receiver.md). FR-008/FR-009 boundaries remain: UC-01 recommends only; caller-supplied reproduction/criteria and UC-03 intake decide admissibility. C21 proves receiver compatibility independently of unavailable real shared adapters and without changing frozen model-evaluation cases.

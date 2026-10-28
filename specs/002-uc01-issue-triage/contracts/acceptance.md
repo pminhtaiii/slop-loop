@@ -1,6 +1,6 @@
 # Acceptance and Evaluation Matrix: UC-01
 
-**Status**: Acceptance targets, not execution results. Local contract/mock/assessment/clarification/recommendation tests exist through T010. T014 safety consolidation was separately authorized on 2026-10-20; T011–T013, T015–T016 and real integration retain their separate gates. See [tasks](../tasks.md) for the sole implementation ledger and [quickstart](../quickstart.md) for runnable local checks.
+**Status**: Acceptance targets, not execution results. Local contract/mock/assessment/clarification/recommendation tests exist through T010. T014 safety consolidation was separately authorized on 2026-10-20; T013 is separately authorized on 2026-10-28 for versioned receiver compatibility; T011/T012, T015/T016 and real integration retain their separate gates. See [tasks](../tasks.md) for the sole implementation ledger and [quickstart](../quickstart.md) for runnable local checks.
 Fixtures use explicit classification IDs `defect` (impairmentAssessment=true), `feature-request` and `question` (false), destination `repair` accepting defect, and finite test-only profiles. These are examples, not application defaults. All C01–C22 families receive versioned input/oracle/grading designs at T002–T004 before feature implementation. Stable variant IDs, execution levels and result semantics follow the proposed [evaluation contract](evaluation.md); this matrix defines acceptance, not a second implementation ledger or executed dataset.
 
 ## Cases
@@ -60,3 +60,7 @@ Proposed shared-interface variants under C20/C22 test duplicate/foreign UC IDs, 
 ## Coverage
 
 US1: C01–C08,C14–C17,C19,C22. US2: C06,C09–C11,C15,C18,C19. US3: C07,C12–C16,C19,C21,C22. Cross-cutting: C15–C20. SC-001–SC-005 use deterministic assertions; SC-006 requires actual held-out T015 and real integration evidence. FR-015/SC-007 map to every slice's schedule; FR-016/SC-007 map to T002–T004 contract vectors and T015 actual shared registration. Cases are acceptance definitions, not a second task-status ledger.
+
+## C21 receiver acceptance amendment — 2026-10-28
+
+T013 is separately authorized under the [delegated receiver agreement](decisions.md#receiver-agreement-and-scoped-authorization--2026-10-28). C21 must run against the delivered [uc01-uc03-receiver-v1](../../001-verified-code-repair/contracts/uc01-receiver.md), with actual IssueAssessor-to-receiver flow and explicit missing reproduction/criteria results, complete caller task acceptance, unresolved material questions, unsupported/malformed/version/configuration input, binding conflicts and zero dispatch/repair. Preserve mock assessment provenance; actual receiver invocation establishes local receiver compatibility only. Real shared-adapter T011/T012 and model-quality T015 remain unrun and gated.

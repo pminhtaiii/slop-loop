@@ -1,6 +1,6 @@
 # Quickstart: incremental UC-01 verification
 
-**Status**: T001–T010 implement approved contracts, controlled fixtures, intake, assessment, later-answer clarification and configured recommendation. Phase 5 was separately authorized on 2026-10-19 (Asia/Bangkok); see [decisions](contracts/decisions.md). The controller accepts only the explicit mock fixture profile. T014 safety regression consolidation was separately authorized on 2026-10-20 (Asia/Bangkok) and is complete at the controlled local level; T011–T013, T015–T016 and real runtime/shared evaluation remain separately gated.
+**Status**: T001–T010 implement approved contracts, controlled fixtures, intake, assessment, later-answer clarification and configured recommendation. Phase 5 was separately authorized on 2026-10-19 (Asia/Bangkok); see [decisions](contracts/decisions.md). The controller accepts only the explicit mock fixture profile. T014 safety regression consolidation was separately authorized on 2026-10-20 (Asia/Bangkok) and is complete at the controlled local level; T013 was separately authorized on 2026-10-28 for actual UC-03 receiver compatibility under uc01-uc03-receiver-v1. T011/T012, T015/T016 and real runtime/shared evaluation remain separately gated.
 
 ## Existing planning and repository checks
 
@@ -34,7 +34,7 @@ At T014 source `6aa8727ee671f7ebd225cb9ece82a7faca934f6b`, run `node --test test
 2. T002 designs product/evaluation vectors and grading statuses before validator code. T003 defines bounded mock scripts/call spies; T004 prepares versioned C01–C22 inputs, private expected outcomes/rules and development/held-out split. Validate isolation and case/result identities before feature work.
 3. T005–T006 execute available US1 cases immediately, including irrelevant input, invalid output, injection and budget guards. T007–T008 do the same for clarification/answer injection, then T009–T010 for catalog/routing. Run impacted earlier regressions and capture each result before accepting the slice.
 4. Use the existing Node test mechanism and the implemented module paths above for local UC-01 tests, with versioned case/rule design and injected ports. This is local test coverage, not a parallel runner. Later-answer reassessment is implemented at the mock level; configured recommendation is implemented at the same controlled level.
-5. T011–T013 execute real adapter/restart/policy/receiver checks only with actual owner deliveries, versions and configured authority. Missing components yield not-run records with reasons and retry gates. T014 consolidates earlier safety regression evidence; it never postpones early available attack checks.
+5. T011/T012 execute real adapter/restart/policy checks only with actual owner deliveries, versions and configured authority. T013 separately exercises actual UC-03 intake under uc01-uc03-receiver-v1 after UC-03 T011/T012, without provider access or dispatch. Missing components yield not-run records with reasons and retry gates. T014 consolidates earlier safety regression evidence; it never postpones early available attack checks.
 6. T015 uses the corpus/rules designed earlier, approved thresholds and actual model/runner deliveries for two comparable scored runs and shared registration/conformance. T016 reconciles runtime gates and separates UC-01 verdict from project verdict. No context capability promotion without complete required real evidence.
 
 ## Current availability and later run conditions
@@ -42,7 +42,8 @@ At T014 source `6aa8727ee671f7ebd225cb9ece82a7faca934f6b`, run `node --test test
 | Evaluation scope | Current availability | Condition to execute |
 |---|---|---|
 | UC-01 contract/mock behavior | T002–T010 and T014 suites available; 238 focused tests passed at the T014 source revision above | Explicit controlled ports/profile; real delivery and production gates remain separate |
-| Real adapters / receiver | not-run: required real deliveries absent | X-READ-MODEL, X04-STATE, X05-GATE, X-RECEIVER and A-PRODUCTION; actual versioned integration |
+| Real shared adapters | not-run: required real deliveries absent | X-READ-MODEL, X04-STATE, X05-GATE and A-PRODUCTION; actual versioned integration |
+| UC-03 receiver compatibility | C21 source/emitted 14/14 pass against actual intake | uc01-uc03-receiver-v1; upstream mock provenance retained; no dispatch |
 | Held-out model quality | not-run: no approved corpus/grader/provider run | Prepared T004 data design, A-EVALUATION/A-PRODUCTION, actual model and required integrations |
 | Shared scoped registration | not-run: runner/signatures not delivered/agreed | X-EVAL-AGREEMENT and X-EVAL-RUNNER; actual T015 compatibility evidence |
 | Whole project / one-command entry point | not-run: no runner or approved required-UC/case manifest | Tai's real runner, confirmed course-wide requirements and all required UC registrations/deliveries |
@@ -54,3 +55,10 @@ This availability table is not a task ledger or execution result. Missing checks
 Use [evaluation records](contracts/evaluation.md) for case/dataset/rule IDs, code/subject/config identities, provenance, pass/fail/error/not-run and safe trace/evidence refs. Preserve failures and unknown usage; raw prompts/secrets/gold labels stay out of public artifacts. Real runs record actual latency/tokens/cost or explicit unknowns, never mock zeros presented as measurements. Keep equivalent corpus/oracle/config identities for before/after comparison and report intentional treatment changes.
 
 The same case definitions must later register through Tai's approved seam. Prove UC-01-only selection, no global ID collisions, required-project coverage, isolated result namespaces and non-passing overall status for required UC failures/missing work. No actual shared command is documented until Tai/leader selects and delivers it. See [decisions](contracts/decisions.md) for pending sources, approvals and delivery gates.
+
+
+## Scoped T013 receiver compatibility — 2026-10-28
+
+The [receiver contract](../001-verified-code-repair/contracts/uc01-receiver.md) is delivered by UC-03 T012. Run `node --test tests/runtime/uc01/receiver.test.ts` and its emitted counterpart after build: both pass 14/14. C21 uses the actual IssueAssessor and receiver, preserving the original report/recommendation and mock provenance. Caller reproduction, expectations, criteria, checks, budgets and identity are never generated from an assessment; unresolved material questions remain needs-info. Configured IDs, source/version checks, identity/snapshot/config binding and zero downstream effects are exercised.
+
+The integrated source/emitted regression passes 587/587. [UC-03 scoped evidence](../001-verified-code-repair/quickstart.md#scoped-supplied-task-intake-and-receiver-evidence--2026-10-28) records RED/GREEN and limitations. X-RECEIVER agreement and actual delivery/check evidence are established for uc01-uc03-receiver-v1; task acceptance remains in the sole ledger. T011/T012 real shared-adapter integration, restart and T015/T016 model/shared evaluation remain separately gated.
