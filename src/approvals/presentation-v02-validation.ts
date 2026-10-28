@@ -2,7 +2,7 @@ import type { NormalizedAction, ProviderRequest, ValidationResult } from '../con
 import { isProxy } from 'node:util/types';
 import type { PolicyProfile, ProviderRole, SafePresentation } from '../contracts/approvals/contracts.ts';
 import { UC05_APPROVAL_SCHEMA_VERSION_V02, validatePolicyProfile } from '../contracts/approvals/contracts.ts';
-import { isBoundedDenseArray, SAFE_RELATIVE_PATH_PATTERN } from '../contracts/approvals/contracts-v01-validation.ts';
+import { isBoundedDenseArray, SAFE_RELATIVE_PATH_PATTERN } from '../contracts/approvals/v01/validation.ts';
 import { containsProtectedContent } from '../foundation/repository-tools.ts';
 
 export type PresentationSubjectKindV02 = 'repository-action' | 'provider-request';

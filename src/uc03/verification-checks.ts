@@ -4,7 +4,7 @@ import {
   validateTaskState,
   validateVerificationResult,
 } from '../contracts/foundation/uc03.ts';
-import { validateRepositoryAdmissionV02 as validateRepositoryAdmissionRecordV02 } from '../contracts/foundation/uc03/admission-v02/repository.ts';
+import { validateRepositoryAdmissionV02 as validateRepositoryAdmissionRecordV02 } from '../contracts/foundation/uc03/v02/admission/repository.ts';
 import type {
   BugTask,
   RepositoryAdmissionContextV02,

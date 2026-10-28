@@ -4,7 +4,6 @@ import {
   TASK_NODES,
   validateBugTask,
   validateTaskState,
-  validateFixPlan,
   type BugTask,
   type ApprovalBinding,
   type ProviderAdmissionContextV02,
@@ -15,9 +14,8 @@ import {
 } from '../contracts/foundation/uc03.ts';
 import type { ExecutionGuardV02 } from '../foundation/execution-guard.ts';
 import { extractCheckTestSelectors } from './selectors.ts';
-import { evaluatePlanMateriality, executeReplan } from './repair.ts';
 import { createMilestone, type Milestone, type MilestoneKind } from './report.ts';
-import type { UC03GraphConfig, UC03GraphNode, UC03GraphPorts, UC03GraphState } from './graph-types.ts';
+import type { UC03GraphConfig, UC03GraphPorts } from './graph-types.ts';
 import type { TrustedHostExpectedContext } from './investigation.ts';
 export { validSettledPatchEvidence } from './graph-patch-ancestry.ts';
 
@@ -66,45 +64,12 @@ export async function validateGraphInput(
 
   if (suppliedState !== undefined) {
     const suppliedValidation = validateTaskState(suppliedState);
-    if (!suppliedValidation.ok || !samePersistedState(suppliedValidation.ok ? suppliedValidation.value : suppliedState, current)) {
+    if (!suppliedValidation.ok || !samePersistedTransition(suppliedValidation.ok ? suppliedValidation.value : suppliedState, current)) {
       return { ok: false, state: null, outcome: 'INCOMPLETE', reasons: ['Restored task state is stale or does not match authoritative owner state'] };
     }
   }
 
   return { ok: true, state: currentValidation.value };
-}
-
-export async function reloadAuthoritativeState(
-  expected: TaskState,
-  statePort: StatePort,
-  options: { readonly allowAccountingChange?: boolean | undefined } = {},
-): Promise<{ readonly ok: true; readonly state: TaskState } | { readonly ok: false; readonly reason: string }> {
-  let current: TaskState | null;
-  try {
-    current = await statePort.loadTask(expected.taskId);
-  } catch {
-    return { ok: false, reason: 'Authoritative task state could not be reloaded' };
-  }
-  if (!current || !validateTaskState(current).ok || !samePersistedState(current, expected, options.allowAccountingChange ?? false)) {
-    return { ok: false, reason: 'Task state changed or is invalid before the next workflow effect' };
-  }
-  return { ok: true, state: current };
-}
-
-export async function loadCurrentOwnerState(
-  task: BugTask,
-  statePort: StatePort,
-): Promise<{ readonly ok: true; readonly state: TaskState } | { readonly ok: false; readonly reason: string }> {
-  let current: TaskState | null;
-  try {
-    current = await statePort.loadTask(task.taskId);
-  } catch {
-    return { ok: false, reason: 'Authoritative task state could not be loaded after an uncertain effect' };
-  }
-  if (!current || !validateTaskState(current).ok || !taskStateMatchesTask(current, task)) {
-    return { ok: false, reason: 'Owner state after an uncertain effect is missing, invalid, or belongs to another task' };
-  }
-  return { ok: true, state: current };
 }
 
 export function taskStateMatchesTask(state: TaskState, task: BugTask): boolean {
@@ -125,20 +90,6 @@ export function taskStateMatchesTask(state: TaskState, task: BugTask): boolean {
   }
 }
 
-function samePersistedState(left: TaskState, right: TaskState, allowAccountingChange = false): boolean {
-  try {
-    const comparable = (state: TaskState) => {
-      const { budgetLedgers, ...taskState } = state;
-      return allowAccountingChange ? taskState : { ...taskState, budgetLedgers: budgetLedgers ?? [] };
-    };
-    const leftComparable = comparable(left);
-    const rightComparable = comparable(right);
-    return computeCanonicalSha256(leftComparable) === computeCanonicalSha256(rightComparable);
-  } catch {
-    return false;
-  }
-}
-
 export function addMilestone(
   milestones: readonly Milestone[],
   taskId: string,
@@ -150,18 +101,6 @@ export function addMilestone(
   evidenceRefs: readonly string[] = [],
 ): readonly Milestone[] {
   return [...milestones, createMilestone({ taskId, runId, node, kind, summary, outcome, evidenceRefs })];
-}
-
-export async function transitionState(port: StatePort, next: TaskState, previousVersion: number): Promise<TaskState> {
-  if (next.stateVersion !== previousVersion + 1) throw new Error('State transition version does not follow the expected owner version');
-  const returned = await port.transition(next, previousVersion);
-  const reloaded = await reloadAuthoritativeState(returned, port);
-  if (!reloaded.ok) throw new Error(reloaded.reason);
-  const persisted = reloaded.state;
-  if (!samePersistedTransition(persisted, next)) {
-    throw new Error('StatePort returned a transition that differs from its persisted owner state');
-  }
-  return persisted;
 }
 
 export function resolveExpectedTestFiles(task: BugTask): readonly string[] {
@@ -227,53 +166,6 @@ export function decisionMatchesState(binding: ApprovalBinding, state: TaskState)
     binding.baselineRef === plan.baselineRef && binding.checkSetDigest === plan.checkSetDigest &&
     binding.criteriaDigest === computeCanonicalSha256(state.acceptanceCriteria) &&
     computeCanonicalSha256(binding.evidenceRefs ?? []) === computeCanonicalSha256(plan.evidenceRefs);
-}
-
-export function directionMatchesState(
-  direction: NonNullable<UC03GraphConfig['trustedDirection']>,
-  state: TaskState,
-): boolean {
-  return direction.taskId === state.taskId && direction.workspaceId === state.workspaceId &&
-    direction.repositoryRevisionDigest === state.repositoryRevisionDigest && direction.stateVersion === state.stateVersion &&
-    direction.planVersion === state.planVersion && direction.rejectedDecisionId === state.plan?.decisionRef &&
-    direction.strategyDigest === state.plan?.strategyDigest;
-}
-
-export function createAwaitFeedbackNode(ports: UC03GraphPorts, config?: UC03GraphConfig): UC03GraphNode {
-  return async (state: UC03GraphState) => {
-    if (!state.task || !state.state || state.state.node !== 'AwaitFeedback') return { terminalOutcome: 'INCOMPLETE' as const, reasons: ['AwaitFeedback requires authoritative paused state'] };
-    const current = await reloadAuthoritativeState(state.state, ports.statePort);
-    if (!current.ok) return { state: state.state, terminalOutcome: 'INCOMPLETE' as const, reasons: [current.reason] };
-    const direction = config?.trustedDirection;
-    if (!direction) return { state: current.state, terminalOutcome: 'needs-info' as const };
-    if (!directionMatchesState(direction, current.state)) return { state: current.state, terminalOutcome: 'INCOMPLETE' as const, reasons: ['Trusted feedback direction is stale or does not bind the current owner state'] };
-    if (direction.directive === 'terminate') {
-      const next: TaskState = { ...current.state, stateVersion: current.state.stateVersion + 1, node: 'Incomplete', outcome: 'INCOMPLETE', nextAction: 'human-directed-termination' };
-      return { state: await transitionState(ports.statePort, next, current.state.stateVersion), terminalOutcome: 'INCOMPLETE' as const };
-    }
-    const candidate = config?.revisedPlan;
-    if (direction.directive !== 'revise' || !current.state.plan || !candidate) {
-      return { state: current.state, terminalOutcome: 'needs-info' as const, reasons: ['Human revise direction and explicit candidate plan are required'] };
-    }
-    if (!validateFixPlan(candidate).ok || !evaluatePlanMateriality(current.state.plan, candidate).changedFields.length) {
-      return { state: current.state, terminalOutcome: 'INCOMPLETE' as const, reasons: ['Revised plan must be valid and change a bound plan field'] };
-    }
-    const proposalId = `replan-${computeCanonicalSha256([current.state.taskId, current.state.runId, current.state.stateVersion, candidate]).slice(7)}`;
-    const replanned = await executeReplan(
-      { taskId: current.state.taskId, proposalId, candidatePlan: candidate },
-      { statePort: ports.statePort, approvalPort: ports.approvalPort, trustedDirection: direction, trustedTransitionContext: config?.trustedTransitionContext },
-    );
-    if (!replanned.state || !['REPLAN_PREPARED', 'CLARIFICATION_ACCEPTED'].includes(replanned.outcome)) {
-      const latest = await reloadAuthoritativeState(current.state, ports.statePort);
-      return { state: latest.ok ? latest.state : current.state, terminalOutcome: replanned.outcome === 'AWAIT_FEEDBACK' ? 'needs-info' as const : 'INCOMPLETE' as const, reasons: replanned.reasons };
-    }
-    const persisted = await reloadAuthoritativeState(replanned.state, ports.statePort);
-    if (!persisted.ok) return { state: current.state, terminalOutcome: 'INCOMPLETE' as const, reasons: [persisted.reason] };
-    const milestones = replanned.isMaterial
-      ? addMilestone(state.milestones ?? [], state.state.taskId, state.state.runId, 'AwaitFeedback', 'replan_triggered', 'Material replan initiated', 'info')
-      : state.milestones;
-    return { state: persisted.state, milestones };
-  };
 }
 
 export function samePersistedTransition(left: TaskState, right: TaskState): boolean {

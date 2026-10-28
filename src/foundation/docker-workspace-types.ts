@@ -1,5 +1,5 @@
 import type { CommandView, ExecutionLimits, RunCommandAction, TaskWorkspace } from '../contracts/foundation/uc03.ts';
-import type { AttemptReceiptV02, RepositoryAdmissionContextV02 } from '../contracts/foundation/uc03/ports-v02.ts';
+import type { AttemptReceiptV02, RepositoryAdmissionContextV02 } from '../contracts/foundation/uc03/v02/ports.ts';
 
 export interface DockerResourceLimits {
   readonly maxMemoryBytes: number;

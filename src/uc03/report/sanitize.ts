@@ -10,7 +10,7 @@ import {
   validateVerificationResult,
 } from '../../contracts/foundation/uc03.ts';
 import { isProtectedPathRef, sanitizeDiagnostic, sanitizeText } from '../../foundation/telemetry.ts';
-import { safeSnapshot } from '../../contracts/foundation/uc03/admission-v02/snapshot.ts';
+import { safeSnapshot } from '../../contracts/foundation/uc03/v02/admission/snapshot.ts';
 import type { CreateMilestoneInput, Milestone, MilestoneKind } from '../report.ts';
 
 const FORBIDDEN_DETAIL_KEY = /reasoning|thinking|prompt|stream|secret|password|credential|authorization|api.?key|token/i;

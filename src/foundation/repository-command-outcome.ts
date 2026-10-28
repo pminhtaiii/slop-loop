@@ -1,10 +1,10 @@
 import { computeCanonicalSha256 } from '../contracts/foundation/uc03.ts';
-import { computeAdmissionDigest } from '../contracts/foundation/uc03/admission-v02.ts';
+import { computeAdmissionDigest } from '../contracts/foundation/uc03/v02/admission.ts';
 import {
   computeAttemptOutcomeDigest,
   validateAttemptReconciliationReceiptV02,
   validateRepositoryActionOutcomeReceiptV02,
-} from '../contracts/foundation/uc03/attempt-v02.ts';
+} from '../contracts/foundation/uc03/v02/attempt.ts';
 import type {
   AttemptReceiptV02,
   AttemptReconciliationReceiptV02,
@@ -13,8 +13,8 @@ import type {
   ReconciliationResultV02,
   RepositoryActionOutcomeReceiptV02,
   RepositoryAdmissionContextV02,
-} from '../contracts/foundation/uc03/ports-v02.ts';
-import type { AttemptOutcomeValidationContextV02, AttemptReconciliationValidationContextV02 } from '../contracts/foundation/uc03/attempt-v02.ts';
+} from '../contracts/foundation/uc03/v02/ports.ts';
+import type { AttemptOutcomeValidationContextV02, AttemptReconciliationValidationContextV02 } from '../contracts/foundation/uc03/v02/attempt.ts';
 import type { StructuredExecutionResult, WorkspaceLease } from './docker-workspace.ts';
 import type { ControlledRepositoryToolsOptions, PatchRecoveryPreparationV02 } from './repository-types.ts';
 

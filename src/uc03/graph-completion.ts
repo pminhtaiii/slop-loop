@@ -17,7 +17,8 @@ import { extractCheckTestSelectors } from './selectors.ts';
 import type { evaluateDeterministicCompletion, CompletionPredicateInput, TrustedReviewRecord } from './verification.ts';
 import { buildFinalReport, type FinalReport } from './report.ts';
 import { samePaths } from './graph-validation.ts';
-import type { UC03GraphState, UC03RepositoryAdmission } from './graph-types.ts';
+import type { UC03GraphState } from './graph-state.ts';
+import type { UC03RepositoryAdmission } from './graph-types.ts';
 import { loadVerifiedPatchAncestry } from './graph-patch-ancestry.ts';
 import { currentPlanApprovalIsCurrent } from './post-patch-verification-authority.ts';
 

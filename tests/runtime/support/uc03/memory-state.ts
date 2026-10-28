@@ -58,12 +58,12 @@ import type {
   AdmissionTrustedContextV02,
   PolicyAuthorityRefV02,
   SafeReferenceV02,
-} from '../../../../src/contracts/foundation/uc03/ports-v02.ts';
+} from '../../../../src/contracts/foundation/uc03/v02/ports.ts';
 import type {
   AttemptOutcomeValidationContextV02,
   AttemptReconciliationValidationContextV02,
   ClaimClosureValidationContextV02,
-} from '../../../../src/contracts/foundation/uc03/attempt-v02.ts';
+} from '../../../../src/contracts/foundation/uc03/v02/attempt.ts';
 import {
   createTestProviderAdmissionTrustedContextV02,
   createTestRepositoryAdmissionTrustedContextV02,

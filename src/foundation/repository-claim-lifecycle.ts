@@ -1,6 +1,6 @@
-import type { ClaimReceiptV02, ExecutorIdentityV02, RepositoryAdmissionContextV02 } from '../contracts/foundation/uc03/ports-v02.ts';
+import type { ClaimReceiptV02, ExecutorIdentityV02, RepositoryAdmissionContextV02 } from '../contracts/foundation/uc03/v02/ports.ts';
 import { computeCanonicalSha256 } from '../contracts/foundation/uc03.ts';
-import type { AttemptReceiptV02 } from '../contracts/foundation/uc03/ports-v02.ts';
+import type { AttemptReceiptV02 } from '../contracts/foundation/uc03/v02/ports.ts';
 import type { DockerWorkspaceManager, StructuredCommandExecutor, WorkspaceLease } from './docker-workspace.ts';
 import type { UnattemptedClaimClosureHandoffV02 } from './repository-types.ts';
 

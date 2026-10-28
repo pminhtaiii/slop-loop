@@ -1,10 +1,10 @@
 import { computeCanonicalSha256 } from '../contracts/foundation/uc03.ts';
-import { computeAdmissionDigest } from '../contracts/foundation/uc03/admission-v02.ts';
+import { computeAdmissionDigest } from '../contracts/foundation/uc03/v02/admission.ts';
 import {
   computeAttemptOutcomeDigest,
   isApprovedPlanPatchV02,
   validateRepositoryActionOutcomeReceiptV02,
-} from '../contracts/foundation/uc03/attempt-v02.ts';
+} from '../contracts/foundation/uc03/v02/attempt.ts';
 import type {
   RepositoryPatchResultV02,
   AttemptReceiptV02,
@@ -13,9 +13,9 @@ import type {
   ReconciliationResultV02,
   RepositoryActionOutcomeReceiptV02,
   RepositoryAdmissionContextV02,
-} from '../contracts/foundation/uc03/ports-v02.ts';
-import type { AttemptOutcomeValidationContextV02 } from '../contracts/foundation/uc03/attempt-v02.ts';
-import type { ApplyPatchAction } from '../contracts/foundation/uc03/types.ts';
+} from '../contracts/foundation/uc03/v02/ports.ts';
+import type { AttemptOutcomeValidationContextV02 } from '../contracts/foundation/uc03/v02/attempt.ts';
+import type { ApplyPatchAction } from '../contracts/foundation/uc03/v01/types.ts';
 import type { WorkspaceLease } from './docker-workspace.ts';
 import { bindPatchToAdmission, snapshotRepositoryAdmission } from './repository-admission.ts';
 import { assertCurrentPatchFence, beginRepositoryAttemptWithClaim, isPatchReceiverResult } from './repository-receiver.ts';
