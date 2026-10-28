@@ -35,7 +35,7 @@ import {
   computeCanonicalSha256,
   computeAdmissionDigest,
 } from '../../../../src/contracts/foundation/uc03.ts';
-import { computeRequestContentDigest } from '../../../../src/contracts/foundation/uc03/admission-v02.ts';
+import { computeRequestContentDigest } from '../../../../src/contracts/foundation/uc03/v02/admission.ts';
 export function createTestBugTask(overrides?: Partial<BugTask>): BugTask {
   return {
     taskId: 'task-uc03-test-001',

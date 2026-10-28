@@ -65,8 +65,8 @@ import type {
   CommandViewV02,
   CommandFiniteBoundsV02,
   PatchFiniteBoundsV02,
-} from '../../../src/contracts/foundation/uc03/ports-v02.ts';
-import type { TaskState } from '../../../src/contracts/foundation/uc03/types.ts';
+} from '../../../src/contracts/foundation/uc03/v02/ports.ts';
+import type { TaskState } from '../../../src/contracts/foundation/uc03/v01/types.ts';
 import type { JournalSnapshotV02 } from '../../../src/approvals/control-v02.ts';
 import {
   createTestDiagnosticPatchAdmissionContextV02,

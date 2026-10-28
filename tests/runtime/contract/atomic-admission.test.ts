@@ -1,4 +1,4 @@
-import { validateRepositoryExecutionReceiptV02 } from '../../../src/contracts/foundation/uc03/attempt-v02.ts';
+import { validateRepositoryExecutionReceiptV02 } from '../../../src/contracts/foundation/uc03/v02/attempt.ts';
 /**
  * UC-03 v0.2.0 Atomic Admission Contract Tests (T037 / T038).
  *
@@ -52,11 +52,11 @@ import {
   validateRepositoryAdmissionV02 as validateRepositoryAdmissionBoundaryV02,
   validateProviderAdmissionV02 as validateProviderAdmissionBoundaryV02,
   validateAdmissionV02 as validateAdmissionBoundaryV02,
-} from '../../../src/contracts/foundation/uc03/admission-v02.ts';
+} from '../../../src/contracts/foundation/uc03/v02/admission.ts';
 import type {
   RepositoryAdmissionContextV02,
   ProviderAdmissionContextV02,
-} from '../../../src/contracts/foundation/uc03/ports-v02.ts';
+} from '../../../src/contracts/foundation/uc03/v02/ports.ts';
 
 function createPolicyEvaluationReceipt(fields: Record<string, unknown>): Record<string, unknown> {
   const digestInput = { ...fields, receiptDigest: undefined };

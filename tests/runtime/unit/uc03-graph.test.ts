@@ -44,7 +44,8 @@ import {
   type UC03GraphPorts,
   type UC03GraphState,
 } from '../../../src/uc03/graph.ts';
-import { createAwaitFeedbackNode, validSettledPatchEvidence } from '../../../src/uc03/graph-validation.ts';
+import { createAwaitFeedbackNode } from '../../../src/uc03/graph-feedback.ts';
+import { validSettledPatchEvidence } from '../../../src/uc03/graph-validation.ts';
 import { createRepairNode } from '../../../src/uc03/graph-nodes.ts';
 import {
   runUC03Cli,
@@ -83,8 +84,7 @@ import type {
 } from '../../../src/uc03/investigation.ts';
 import { computeTestProtectionDigest } from '../../../src/uc03/investigation.ts';
 import { createExecutionGuardV02 } from '../../../src/foundation/execution-guard.ts';
-import { transitionState } from '../../../src/uc03/graph-validation.ts';
-import { validReviewerClaim } from '../../../src/uc03/graph-types.ts';
+import { transitionState } from '../../../src/uc03/graph-transitions.ts';
 
 function createMockHostAuthority(
   expectedTestFileContent = 'def test_divide(): pass\n'
@@ -737,41 +737,6 @@ test('Route exceptions return a fixed safe reason and do not expose exception te
   assert.equal(repositoryPort.commands.length, 0);
 });
 
-test('Reviewer dispatch claim must bind the current owner version and exact allowance refs', () => {
-  const task = createFixtureBugTask();
-  const state = createGraphTaskState(task);
-  const request = createTestProviderRequest({
-    taskId: state.taskId,
-    runId: state.runId,
-    role: 'reviewer',
-    reservationRef: 'owner-review-reservation',
-  });
-  const budgetRefs = ['task-token-reservation', 'run-token-reservation', 'review-iteration-reservation'];
-  const admission = createTestProviderAdmissionContextV02({
-    taskId: state.taskId,
-    runId: state.runId,
-    providerRequest: request,
-    runnableNode: 'Review',
-    role: 'reviewer',
-    expectedTaskStateVersion: state.stateVersion,
-    requestReservationReceipt: request.reservationRef,
-    budgetRefs,
-  });
-  const claim = createTestClaimReceiptV02({
-    claimId: 'owner-review-claim',
-    taskId: state.taskId,
-    runId: state.runId,
-    subjectKind: 'provider-request',
-    planApplicability: 'approved-plan',
-    preClaimTaskStateVersion: state.stateVersion,
-    reservationRefs: [request.reservationRef, ...budgetRefs],
-  });
-
-  assert.equal(validReviewerClaim(claim, admission, state), true);
-  assert.equal(validReviewerClaim(createTestClaimReceiptV02({ ...claim, reservationRefs: ['other-reservation'] }), admission, state), false);
-  assert.equal(validReviewerClaim(createTestClaimReceiptV02({ ...claim, preClaimTaskStateVersion: state.stateVersion + 1 }), admission, state), false);
-});
-
 test('Rejected approval CAS halts before the graph enters Patch', async () => {
   const { task, ports, statePort, approvalPort, repositoryPort, reviewerPort, trustedExpectedContext } = createTestSetup({ initialDecision: 'pending' });
   await seedGraphTaskState(statePort, createGraphTaskState(task));
@@ -1150,6 +1115,35 @@ test('Mock route delivers only after baseline, owner-settled patch, current chec
   assert.equal(statePort.getLedgers().find((ledger) => ledger.scope === 'task' && ledger.kind === 'iteration')?.consumed, 1);
   assert.equal(statePort.getJournalSnapshot().attempts.length, 1 + task.requiredChecks.length * 2 + 1);
   assert.ok(result.milestones.some((milestone) => milestone.kind === 'task_completed'));
+
+  // Exercise private claim checks through the workflow, with no reviewer dispatch or owner mutation.
+  for (const mismatch of ['reservationRefs', 'preClaimTaskStateVersion'] as const) {
+    const refused = createTestSetup({ contextualApprovalIssuer: true });
+    const claim = refused.statePort.claim.bind(refused.statePort);
+    const before: { state?: TaskState; journal?: ReturnType<MemoryStatePortV02['getJournalSnapshot']> } = {};
+    refused.statePort.claim = async (admission) => {
+      if (admission.subjectKind !== 'provider-request' || admission.role !== 'reviewer') return claim(admission);
+      const owner = await refused.statePort.loadTask(refused.task.taskId);
+      assert.ok(owner);
+      before.state = owner;
+      before.journal = refused.statePort.getJournalSnapshot();
+      return createTestClaimReceiptV02({
+        taskId: owner.taskId, runId: owner.runId, subjectKind: 'provider-request',
+        planApplicability: 'approved-plan',
+        preClaimTaskStateVersion: owner.stateVersion + (mismatch === 'preClaimTaskStateVersion' ? 1 : 0),
+        reservationRefs: mismatch === 'reservationRefs'
+          ? ['other-reservation']
+          : [admission.requestReservationReceipt, ...admission.budgetRefs],
+      });
+    };
+    const refusal = await runPassingMockRoute(refused, deliveryTrustedContext);
+    assert.equal(refusal.reviewerCalls, 0, mismatch);
+    assert.equal(refusal.result.outcome, 'IMPLEMENTED_UNVERIFIED', mismatch);
+    assert.ok(refusal.result.reasons.some(reason => reason.includes('Owner budget protocol refused')), mismatch);
+    assert.ok(before.state && before.journal, 'Route must reach the reviewer claim seam');
+    assert.deepEqual(await refused.statePort.loadTask(refused.task.taskId), before.state, mismatch);
+    assert.deepEqual(refused.statePort.getJournalSnapshot(), before.journal, mismatch);
+  }
 
   const staleD0Setup = createTestSetup({
     contextualApprovalIssuer: true,

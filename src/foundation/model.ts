@@ -1,4 +1,4 @@
-import { safeSnapshot } from '../contracts/foundation/uc03/admission-v02/snapshot.ts';
+import { safeSnapshot } from '../contracts/foundation/uc03/v02/admission/snapshot.ts';
 /**
  * UC-03 Host Model Boundary (Slice A: T008-a; Amendment: T051/T052)
  *

@@ -1,4 +1,4 @@
-import { validateRepositoryExecutionReceiptV02 } from '../contracts/foundation/uc03/attempt-v02.ts';
+import { validateRepositoryExecutionReceiptV02 } from '../contracts/foundation/uc03/v02/attempt.ts';
 import { validateRepositoryClaimV02 } from './repository-claim-lifecycle.ts';
 import { normalizeCommandResult } from './repository-command-outcome.ts';
 /**
@@ -43,7 +43,7 @@ import {
   validateNormalizedAction,
   validateTaskState,
 } from '../contracts/foundation/uc03.ts';
-import { validateRepositoryAdmissionV02 as validateRepositoryAdmissionRecordV02 } from '../contracts/foundation/uc03/admission-v02/repository.ts';
+import { validateRepositoryAdmissionV02 as validateRepositoryAdmissionRecordV02 } from '../contracts/foundation/uc03/v02/admission/repository.ts';
 
 export type {
   ExecutionGuardV02,

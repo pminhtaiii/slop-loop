@@ -13,8 +13,8 @@ import type { BudgetLedger } from '../../../src/contracts/foundation/uc03.ts';
 import {
   validateAttemptReceiptV02,
   validateRepositoryExecutionReceiptV02,
-} from '../../../src/contracts/foundation/uc03/attempt-v02.ts';
-import type { RepositoryAdmissionContextV02 } from '../../../src/contracts/foundation/uc03/ports-v02.ts';
+} from '../../../src/contracts/foundation/uc03/v02/attempt.ts';
+import type { RepositoryAdmissionContextV02 } from '../../../src/contracts/foundation/uc03/v02/ports.ts';
 import { beginRepositoryAttemptWithClaim } from '../../../src/foundation/repository-receiver.ts';
 import { MemoryStatePortV02 } from '../support/uc03/memory-state.ts';
 import {

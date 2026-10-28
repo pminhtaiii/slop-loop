@@ -86,7 +86,7 @@ On 2026-10-22 (Asia/Saigon), the user confirmed user-relayed agreement from Than
 
 #### Versioned migration and checkpoint order
 
-- UC-03 v0.2.0 and UC-05 uc05-approval/0.2-draft are introduced additively beside v0.1. Put new v0.2 port shapes in `src/contracts/foundation/uc03/ports-v02.ts`; leave the current v0.1 `ports.ts` interfaces and callers source-compatible throughout staged migration. Do not add required methods or optional-context overloads to a v0.1 port.
+- UC-03 v0.2.0 and UC-05 uc05-approval/0.2-draft are introduced additively beside v0.1. Put new v0.2 port shapes in `src/contracts/foundation/uc03/v02/ports.ts`; leave the current v0.1 `ports.ts` interfaces and callers source-compatible throughout staged migration. Do not add required methods or optional-context overloads to a v0.1 port.
 - Migrate validators, journal mock, UC-05 records and services, effect receivers, provider ingress, all forwarding fixtures, and UC-03 consumers in the task order in tasks.md. Each RED checkpoint has real neutral SUT exports and remains typecheck/build clean; source and emitted tests must reach behavioral assertions rather than fail at import/type/collection time. Each immediate GREEN successor passes the same focused source/emitted tests.
 - The exact task pair, source command, emitted command, and expected RED/GREEN state are listed in the task ledger's Checkpoint matrix. Full typecheck and build remain green at every checkpoint.
 - Keep legacy v0.1 interfaces source-compatible until migration is complete. A compatibility path, if retained, is separately versioned and test-only; it is fail-closed and cannot confer effect authority or satisfy v0.2 acceptance. No implicit production fallback is permitted.

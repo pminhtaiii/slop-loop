@@ -1,5 +1,5 @@
 import type { ApprovalContinuationV02 } from '../../../../src/approvals/recovery-v02.ts';
-import type { AttemptOutcomeReceiptV02, AttemptReconciliationReceiptV02, ClaimClosureReceiptV02 } from '../../../../src/contracts/foundation/uc03/ports-v02.ts';
+import type { AttemptOutcomeReceiptV02, AttemptReconciliationReceiptV02, ClaimClosureReceiptV02 } from '../../../../src/contracts/foundation/uc03/v02/ports.ts';
 import type { MemoryStatePortV02 } from '../uc03/memory-state.ts';
 import { isDeepStrictEqual } from 'node:util';
 import {

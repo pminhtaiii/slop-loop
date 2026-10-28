@@ -342,28 +342,28 @@ Develop accepted contract mocks once (T004), then run independent story lanes on
 
 **Migration rule**: Introduce v0.2 APIs and port shapes additively in a separate versioned module (`ports-v02.ts`); do not add required methods or optional-context overloads to the existing v0.1 `ports.ts` interfaces during migration. Keep all v0.1 source callers and implementers compiling until their versioned successors are ready. Any temporary compatibility path must have its own explicit version and test-only name, fail closed in production composition, and never grant effect authority or satisfy v0.2 production admission. Missing context, v0.1 context, or an old claim ID never authorizes an effect. No implicit production fallback is allowed. The canonical cutover is a distinct final task after every required producer, receiver, fixture, and consumer migration is complete.
 
-- [X] T037 [US3] Add runnable v0.2 admission-validator RED scaffolding and additive port declarations in src/contracts/foundation/uc03/admission-v02.ts, ports-v02.ts, and tests/runtime/contract/atomic-admission.test.ts.
+- [X] T037 [US3] Add runnable v0.2 admission-validator RED scaffolding and additive port declarations in src/contracts/foundation/uc03/v02/admission.ts, ports-v02.ts, and tests/runtime/contract/atomic-admission.test.ts.
   - **Owner**: Tai / shared-contracts lane.
   - **Dependencies**: T003, T004.
-  - **Owned Paths**: src/contracts/foundation/uc03/admission-v02.ts; src/contracts/foundation/uc03/ports-v02.ts; src/contracts/foundation/uc03.ts; tests/runtime/contract/atomic-admission.test.ts.
+  - **Owned Paths**: src/contracts/foundation/uc03/v02/admission.ts; src/contracts/foundation/uc03/v02/ports.ts; src/contracts/foundation/uc03.ts; tests/runtime/contract/atomic-admission.test.ts.
   - **Acceptance Checks**: Add a separate versioned v0.2 admission API and exported neutral fail-closed validator bodies for repository and provider admission. Add StatePortV02, RepositoryPortV02, ModelPortV02, and ExecutionGuardV02 declarations in ports-v02.ts and export them from the stable barrel. Keep every v0.1 type, ports.ts signature, and validator source-compatible; do not use an optional context overload. Tests import the real scaffold and assert that a valid repository/provider context would be accepted, so the RED is assertion-only; malformed, absent, cross-branch, or unbounded inputs still deny. The source and emitted test runners must collect and reach those assertions. pnpm run typecheck and pnpm run build pass at this checkpoint.
 
-- [X] T038 [US3] Implement v0.2 action, command-view, and provider-admission validators in src/contracts/foundation/uc03/admission-v02.ts.
+- [X] T038 [US3] Implement v0.2 action, command-view, and provider-admission validators in src/contracts/foundation/uc03/v02/admission.ts.
   - **Owner**: Tai / shared-contracts lane.
   - **Dependencies**: T037.
-  - **Owned Paths**: src/contracts/foundation/uc03/admission-v02.ts; src/contracts/foundation/uc03/ports-v02.ts; src/contracts/foundation/uc03.ts; tests/runtime/contract/atomic-admission.test.ts.
+  - **Owned Paths**: src/contracts/foundation/uc03/v02/admission.ts; src/contracts/foundation/uc03/v02/ports.ts; src/contracts/foundation/uc03.ts; tests/runtime/contract/atomic-admission.test.ts.
   - **Acceptance Checks**: Turn T037's valid-input assertions green. Keep the new v0.2 port declarations additive and leave v0.1 ports.ts signatures unchanged. Compute the canonical action and request-content digests from exact normalized payloads; validate command-view revision, admitted file digests, exclusions version, scratch identity, read-only fact, isolation reference and every applicable finite bound. Validate provider role, provider/config/pricing identity, decision-authority generation and explicit pre-plan-diagnostic versus approved-plan applicability. Reject missing/fabricated branch fields without filling them from another receipt. Typecheck, build, source tests, and emitted tests pass.
 
-- [X] T039 [US3] Add runnable attempt/outcome-validator RED scaffolding in src/contracts/foundation/uc03/attempt-v02.ts and tests/runtime/contract/atomic-admission.test.ts.
+- [X] T039 [US3] Add runnable attempt/outcome-validator RED scaffolding in src/contracts/foundation/uc03/v02/attempt.ts and tests/runtime/contract/atomic-admission.test.ts.
   - **Owner**: Tai / shared-contracts lane.
   - **Dependencies**: T038.
-  - **Owned Paths**: src/contracts/foundation/uc03/attempt-v02.ts; src/contracts/foundation/uc03.ts; tests/runtime/contract/atomic-admission.test.ts.
+  - **Owned Paths**: src/contracts/foundation/uc03/v02/attempt.ts; src/contracts/foundation/uc03.ts; tests/runtime/contract/atomic-admission.test.ts.
   - **Acceptance Checks**: Add additive v0.2 types and neutral validator exports for separate task/control version domains, claim closure, AttemptOutcomeReceipt repository/provider branches, and AttemptReconciliationReceipt uncertain/observed-unsettled branches. Add executable assertions for valid branch examples, S0/C0/E0 -> S0/C1/E0 -> attempt progression, missing fields, fabricated pre-plan fields and cross-branch fields. Keep existing v0.1 validators unchanged. RED must be assertion-only; typecheck and build pass.
 
-- [X] T040 [US3] Implement v0.2 attempt, outcome, and reconciliation validators in src/contracts/foundation/uc03/attempt-v02.ts.
+- [X] T040 [US3] Implement v0.2 attempt, outcome, and reconciliation validators in src/contracts/foundation/uc03/v02/attempt.ts.
   - **Owner**: Tai / shared-contracts lane.
   - **Dependencies**: T039.
-  - **Owned Paths**: src/contracts/foundation/uc03/attempt-v02.ts; src/contracts/foundation/uc03.ts; tests/runtime/contract/atomic-admission.test.ts.
+  - **Owned Paths**: src/contracts/foundation/uc03/v02/attempt.ts; src/contracts/foundation/uc03.ts; tests/runtime/contract/atomic-admission.test.ts.
   - **Acceptance Checks**: Turn T039's valid branch and progression assertions green. Validate ClaimClosureReceipt only with proof of no committed attempt and a fenced recipient. Validate exact predecessor identity for uncertain and observed-unsettled reconciliation. Validate protocol-owned task/control increments and reject stale task/control versions. Repository receipts require actionDigest; provider receipts require request ID/content digest, role, admission ref and budget refs. Typecheck, build, source tests, and emitted tests pass.
 
 - [X] T041 [US3] Add runnable test-only StatePortV02 journal RED scaffolding in tests/runtime/support/uc03/memory-state.ts and tests/runtime/contract/atomic-admission-mocks.test.ts.
@@ -506,17 +506,17 @@ Develop accepted contract mocks once (T004), then run independent story lanes on
   - **Acceptance Checks**: Turn T062 green. Both callers use ExecutionGuardV02 and RepositoryPortV02; no direct v0.1 repository.runTests(check) call can launch work on the v0.2 path. Preserve the branch distinction: baseline diagnostics require no fabricated plan, while verification requires the current approved plan. Missing/malformed context denies before invocation; later repository mutation invalidates prior evidence. Typecheck, build, source tests, and emitted tests pass.
   - **Verification Evidence**: Mechanically integrated at `663c4d97fb63abbfbe5032bdadac878d512bc477`; handoff hashes and exact owned paths verified. Latest SPEC-R2-004 correction integrated at `8e49ce4867528177c4d391a61ba7a9c05413ee88` after the six-path handoff verified at `cdba4fe5a0d06079e410ffbc528a7574afbe9f92`. Worker reports source/emitted consumer tests 223/223 each and exact six-path typecheck/emitted build pass. It supplies existing current v0.2 admission per check and adds no receipt schema. Evidence: `.agent-work/2026-10-26/uc03-t062-t066-merger/uc03-t063-multicheck-fix-20261026/finding-ledger.md`.
 
-- [X] T064 [US3] Add runnable canonical-cutover RED tests and a fail-closed versioned selector in src/contracts/foundation/uc03/cutover-v02.ts and tests/runtime/contract/atomic-admission-cutover.test.ts.
+- [X] T064 [US3] Add runnable canonical-cutover RED tests and a fail-closed versioned selector in src/contracts/foundation/uc03/v02/cutover.ts and tests/runtime/contract/atomic-admission-cutover.test.ts.
   - **Owner**: Tai / shared-foundation integration lane.
   - **Dependencies**: T022, T048, T054, T056, T058, T061, T063.
-  - **Owned Paths**: src/contracts/foundation/uc03/cutover-v02.ts; src/contracts/foundation/uc03.ts; tests/runtime/contract/atomic-admission-cutover.test.ts.
+  - **Owned Paths**: src/contracts/foundation/uc03/v02/cutover.ts; src/contracts/foundation/uc03.ts; tests/runtime/contract/atomic-admission-cutover.test.ts.
   - **Acceptance Checks**: Add a neutral fail-closed selector whose tests require canonical v0.2 admission only after every listed migration checkpoint is present. Assert zero effects for no context, v0.1 context, old claim ID, open claim, or missing migration checkpoint. The valid fully migrated v0.2 mock composition must reach a behavioral assertion against the neutral selector. Typecheck and build pass; RED is assertion-only.
   - **Verification Evidence**: Accepted at integrated commit 39bc2bd8ea9aa01d0a7e5985e0270e4d718816c9 (parent 379f32ab491a0ca93bb975fbd700c0690112d4c9). Handoff hashes and exact owned paths verified; typecheck/build exit 0; source and emitted T064 tests each report 6 passed and one intended positive-admission assertion failure. Current prerequisite source/emitted replay passes for T038/T040, T042, T044, T046, T048, T050, T052, T054, T056, T058, T061, T063, and T022. Evidence: .agent-work/2026-10-25/uc03-t062-t066-preflight/merger-t064-t065-preflight/t064-integration-evidence.md.
 
-- [X] T065 [US3] Perform explicit v0.2 canonical cutover and legacy rejection in src/contracts/foundation/uc03/cutover-v02.ts and src/foundation/execution-guard.ts.
+- [X] T065 [US3] Perform explicit v0.2 canonical cutover and legacy rejection in src/contracts/foundation/uc03/v02/cutover.ts and src/foundation/execution-guard.ts.
   - **Owner**: Tai / shared-foundation integration lane.
   - **Dependencies**: T064.
-  - **Owned Paths**: src/contracts/foundation/uc03/cutover-v02.ts; src/contracts/foundation/uc03.ts; src/foundation/execution-guard.ts; src/approvals/recovery.ts; tests/runtime/contract/atomic-admission-cutover.test.ts.
+  - **Owned Paths**: src/contracts/foundation/uc03/v02/cutover.ts; src/contracts/foundation/uc03.ts; src/foundation/execution-guard.ts; src/approvals/recovery.ts; tests/runtime/contract/atomic-admission-cutover.test.ts.
   - **Acceptance Checks**: Turn T064 green only after T038, T040, T042, T044, T046, T048, T050, T052, T054, T056, T058, T061, and T063 pass. The canonical mock composition accepts only explicit v0.2 records and rejects legacy/no-context/raw-claim-ID paths before any effect. Any retained compatibility is separately versioned, test-only and fail-closed; it cannot grant production authority or satisfy v0.2 admission. Existing unresolved v0.1 claims are not backfilled; they stay blocked until UC-04 reconciles them from real evidence. This task does not activate real adapters or Phase 6. Typecheck, build, source tests, and emitted tests pass.
   - **Verification Evidence**: Mechanically accepted at `f75122634c24fc64d67eb48b74ffaa01d9c55c71`; handoff, direct-parent ancestry, clean checkout, assigned-path scope, and diff checks verified. Merger replay: typecheck/build exit 0; cutover source/emitted 10/10, guard 63/63, restart 21/21, repair 71/71, investigation/verification 205/205. Logs and limits: `.agent-work/2026-10-25/uc03-t062-t066-preflight/t065-merger-replay.md`.
 

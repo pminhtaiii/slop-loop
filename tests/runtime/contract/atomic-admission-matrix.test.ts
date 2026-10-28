@@ -79,7 +79,7 @@ import {
 import type {
   AttemptReconciliationReceiptV02,
   PolicyAuthorityRefV02,
-} from '../../../src/contracts/foundation/uc03/ports-v02.ts';
+} from '../../../src/contracts/foundation/uc03/v02/ports.ts';
 import {
   MemoryStatePortV02,
   isNeutralClaimReceiptV02,

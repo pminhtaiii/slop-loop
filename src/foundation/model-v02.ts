@@ -1,5 +1,5 @@
-import { safeSnapshot } from '../contracts/foundation/uc03/admission-v02/snapshot.ts';
-import { validateProviderRequestOutcomeReceiptV02 } from '../contracts/foundation/uc03/attempt-v02.ts';
+import { safeSnapshot } from '../contracts/foundation/uc03/v02/admission/snapshot.ts';
+import { validateProviderRequestOutcomeReceiptV02 } from '../contracts/foundation/uc03/v02/attempt.ts';
 import { providerClaim, providerAttempt, sameProviderActor } from './provider-admission.ts';
 /**
  * UC-03 Host Model Ingress v0.2 (Amendment: T051/T052)

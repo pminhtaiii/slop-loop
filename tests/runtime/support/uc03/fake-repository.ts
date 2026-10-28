@@ -46,7 +46,7 @@ import {
 } from '../../../../src/contracts/foundation/uc03.ts';
 import { createCommandOutcomeReceipt, normalizeCommandResult, validateOutcomeRecordResult } from '../../../../src/foundation/repository-command-outcome.ts';
 import { beginRepositoryAttemptWithClaim } from '../../../../src/foundation/repository-receiver.ts';
-import { computeAttemptOutcomeDigest } from '../../../../src/contracts/foundation/uc03/attempt-v02.ts';
+import { computeAttemptOutcomeDigest } from '../../../../src/contracts/foundation/uc03/v02/attempt.ts';
 import {
   createTestRepositoryAdmissionTrustedContextV02,
   createTestRepositoryOutcomeReceiptV02,
