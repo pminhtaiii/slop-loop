@@ -1,64 +1,120 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { type ApprovalBindingContext, type ReviewResult, computeCanonicalSha256, validateReviewResult } from '../../../src/contracts/foundation/uc03.ts';
-import { MemoryStatePort } from '../support/uc03/memory-state.ts';
-import { ScriptedApprovalPort } from '../support/uc03/scripted-approval.ts';
-import { ScriptedModelPort } from '../support/uc03/scripted-model.ts';
-import { ScriptedReviewerPort } from '../support/uc03/scripted-reviewer.ts';
-import { FakeRepositoryPort } from '../support/uc03/fake-repository.ts';
-import { createTestTaskState, createTestApprovalBinding, createTestProviderUsage } from '../support/uc03/state-fixtures.ts';
-import { createFixtureAdmissionContext, createFixtureReviewerRequest, createFixtureTaskState, createFixtureBugTask, createFixtureCheckDefinition } from '../support/uc03/port-fixtures.ts';
+import {
+  type ApprovalBindingContext,
+  type ReviewResult,
+  type ApplyPatchAction,
+  type NormalizedAction,
+  computeCanonicalSha256,
+  computeActionDigest,
+  validateRepositoryAdmissionV02,
+  validateReviewResult,
+  isVerificationAuthoritySnapshotV02,
+  isVerificationApprovalContextV02,
+  type RepositoryAdmissionContextV02,
+  type ProviderAdmissionContextV02,
+  type RecordVerificationApprovalRequestV02,
+  type VerificationApprovalContextV02,
+} from '../../../src/contracts/foundation/uc03.ts';
+import { MemoryStatePort, MemoryStatePortV02 } from '../support/uc03/memory-state.ts';
+import { ScriptedApprovalPort, ScriptedApprovalPortV02 } from '../support/uc03/scripted-approval.ts';
+import { ScriptedModelPort, ScriptedModelPortV02 } from '../support/uc03/scripted-model.ts';
+import { ScriptedReviewerPort, ScriptedReviewerPortV02 } from '../support/uc03/scripted-reviewer.ts';
+import { FakeRepositoryPort, FakeRepositoryPortV02 } from '../support/uc03/fake-repository.ts';
+import {
+  createTestRepositoryAdmissionContextV02,
+  createTestAdmissionTaskStateV02,
+  createTestExecutorIdentityV02,
+  createTestTaskState,
+  createTestApprovalBinding,
+  createTestProviderUsage,
+  createTestRepositoryAdmissionTrustedContextV02,
+} from '../support/uc03/state-fixtures.ts';
+import {
+  createFixtureAdmissionContext,
+  createFixtureReviewerRequest,
+  createFixtureProviderRequest,
+  createFixtureTaskState,
+  createFixtureBugTask,
+  createFixtureCheckDefinition,
+  createFixtureProviderAdmissionContextV02,
+  createFixtureRepositoryAdmissionContextV02,
+  createFixturePolicyAuthorityRefV02,
+  createFixturePolicyEvaluationReceiptV02,
+  createFixtureActionDecisionReceiptV02,
+  createFixtureRepositoryCommandAdmissionContextV02,
+} from '../support/uc03/port-fixtures.ts';
+
+// ============================================================================
+// v0.1 Compatibility Port Conformance Tests
+// ============================================================================
 
 type Scenario = 'missing' | 'exhausted' | 'malformed' | 'stale' | 'valid';
 interface Profile { readonly name: string; readonly cases: Partial<Record<Scenario, () => Promise<void>>> }
 
 const binding = createTestApprovalBinding({ status: 'approved' });
-const freshness: ApprovalBindingContext = { currentTaskId: binding.taskId, currentWorkspaceId: binding.workspaceId, currentRepositoryRevisionDigest: binding.repositoryRevisionDigest, currentPolicyId: binding.policyId, currentPolicyVersion: binding.policyVersion, currentNormalizedActionDigest: binding.normalizedActionDigest };
-const profiles: readonly Profile[] = [
-  { name: 'state', cases: {
-    missing: async () => { await assert.rejects(new MemoryStatePort().recover('missing'), /No checkpoint/); },
-    exhausted: async () => { const state = createTestTaskState(); const port = new MemoryStatePort({ initialTaskState: state }); await assert.rejects(port.reserve('task', 'replan', 4, 'over-limit')); },
-    malformed: async () => { const state = createTestTaskState(); await assert.rejects(new MemoryStatePort().transition({ ...state, stateVersion: NaN }, 0)); },
-    stale: async () => {
-      const state = createTestTaskState(); const port = new MemoryStatePort({ initialTaskState: state });
-      await port.transition({ ...state, stateVersion: 2, node: 'Investigate' }, 1);
-      await assert.rejects(port.transition({ ...state, stateVersion: 2, node: 'Investigate' }, 1));
-      assert.equal((await port.recover(state.taskId)).stateVersion, 1, 'uncheckpointed live state is not recovery evidence');
+const freshness: ApprovalBindingContext = {
+  currentTaskId: binding.taskId,
+  currentWorkspaceId: binding.workspaceId,
+  currentRepositoryRevisionDigest: binding.repositoryRevisionDigest,
+  currentPolicyId: binding.policyId,
+  currentPolicyVersion: binding.policyVersion,
+  currentNormalizedActionDigest: binding.normalizedActionDigest,
+};
+
+const v01Profiles: readonly Profile[] = [
+  {
+    name: 'state',
+    cases: {
+      missing: async () => { await assert.rejects(new MemoryStatePort().recover('missing'), /No checkpoint/); },
+      exhausted: async () => { const state = createTestTaskState(); const port = new MemoryStatePort({ initialTaskState: state }); await assert.rejects(port.reserve('task', 'replan', 4, 'over-limit')); },
+      malformed: async () => { const state = createTestTaskState(); await assert.rejects(new MemoryStatePort().transition({ ...state, stateVersion: NaN }, 0)); },
+      stale: async () => {
+        const state = createTestTaskState(); const port = new MemoryStatePort({ initialTaskState: state });
+        await port.transition({ ...state, stateVersion: 2, node: 'Investigate' }, 1);
+        await assert.rejects(port.transition({ ...state, stateVersion: 2, node: 'Investigate' }, 1));
+        assert.equal((await port.recover(state.taskId)).stateVersion, 1, 'uncheckpointed live state is not recovery evidence');
+      },
+      valid: async () => {
+        const state = createTestTaskState();
+        const reservation = { proposalId: 'strategy', taskId: state.taskId, configurationId: state.taskContext?.configId ?? '', priorCount: 0, nextCount: 1, reservationId: 'res-task-replan-strategy' };
+        const port = new MemoryStatePort({ initialTaskState: state, transitionContexts: { 2: { replanReservation: reservation } } });
+        await port.reserve('task', 'tokens', 100, 'provider');
+        await port.settle('provider', createTestProviderUsage({ inputTokens: 1, outputTokens: 0, billableTokens: 1 }));
+        await port.reserve('task', 'replan', 1, 'strategy');
+        const loaded = await port.loadTask(state.taskId); assert.ok(loaded);
+        const next = { ...loaded, stateVersion: 2, node: 'Investigate' as const, replanCount: 1, planVersion: 2 };
+        await port.transition(next, 1); await port.checkpoint(next);
+        assert.equal((await port.recover(state.taskId)).budgetLedgers?.find(l => l.scope === 'task' && l.kind === 'tokens')?.consumed, 1);
+        await assert.rejects(port.transition(next, 1), /CAS/);
+        await assert.rejects(port.checkpoint(state));
+      },
     },
-    valid: async () => {
-      const state = createTestTaskState();
-      const reservation = { proposalId: 'strategy', taskId: state.taskId, configurationId: state.taskContext?.configId ?? '', priorCount: 0, nextCount: 1, reservationId: 'res-task-replan-strategy' };
-      const port = new MemoryStatePort({ initialTaskState: state, transitionContexts: { 2: { replanReservation: reservation } } });
-      await port.reserve('task', 'tokens', 100, 'provider');
-      await port.settle('provider', createTestProviderUsage({ inputTokens: 1, outputTokens: 0, billableTokens: 1 }));
-      await port.reserve('task', 'replan', 1, 'strategy');
-      const loaded = await port.loadTask(state.taskId); assert.ok(loaded);
-      const next = { ...loaded, stateVersion: 2, node: 'Investigate' as const, replanCount: 1, planVersion: 2 };
-      await port.transition(next, 1); await port.checkpoint(next);
-      assert.equal((await port.recover(state.taskId)).budgetLedgers?.find(l => l.scope === 'task' && l.kind === 'tokens')?.consumed, 1);
-      await assert.rejects(port.transition(next, 1), /CAS/);
-      await assert.rejects(port.checkpoint(state));
+  },
+  {
+    name: 'approval',
+    cases: {
+      missing: async () => { await assert.rejects(new ScriptedApprovalPort().requestDecision(binding), /Unscripted/); },
+      malformed: async () => { assert.throws(() => new ScriptedApprovalPort({ decisions: [{ ...binding, decisionId: '' }] })); },
+      stale: async () => { const port = new ScriptedApprovalPort({ decisions: [binding] }); assert.equal(await port.validateBinding(binding, { ...freshness, currentPolicyVersion: 'stale' }), false); },
+      valid: async () => { const port = new ScriptedApprovalPort({ decisions: [binding], currentContext: freshness }); assert.equal(await port.validateBinding(await port.requestDecision(binding)), true); },
     },
-  } },
-  // Decisions are identity-keyed, not consumable queues: exhaustion does not apply.
-  { name: 'approval', cases: {
-    missing: async () => { await assert.rejects(new ScriptedApprovalPort().requestDecision(binding), /Unscripted/); },
-    malformed: async () => { assert.throws(() => new ScriptedApprovalPort({ decisions: [{ ...binding, decisionId: '' }] })); },
-    stale: async () => { const port = new ScriptedApprovalPort({ decisions: [binding] }); assert.equal(await port.validateBinding(binding, { ...freshness, currentPolicyVersion: 'stale' }), false); },
-    valid: async () => { const port = new ScriptedApprovalPort({ decisions: [binding], currentContext: freshness }); assert.equal(await port.validateBinding(await port.requestDecision(binding)), true); },
-  } },
-  { name: 'repository', cases: {
-    missing: async () => { await assert.rejects(new FakeRepositoryPort().runTests(createFixtureCheckDefinition()), /SCRIPT_EXHAUSTED/); },
-    exhausted: async () => { const port = new FakeRepositoryPort(); const check = createFixtureCheckDefinition(); port.setTestResult(check.checkId, { checkId: check.checkId, outcome: 'pass', durationMs: 1 }); await port.runTests(check); await assert.rejects(port.runTests({ ...check, checkId: 'not-scripted' }), /SCRIPT_EXHAUSTED/); },
-    malformed: async () => { const port = new FakeRepositoryPort({ testResults: { default: { checkId: 'check', outcome: 'pass', durationMs: -1 } } }); await assert.rejects(port.runTests(createFixtureCheckDefinition()), /INVALID_CHECK_RESULT/); },
-    stale: async () => { const port = new FakeRepositoryPort(); const before = port.currentRevision; const result = await port.applyPatch({ actionId: 'patch', kind: 'apply_patch', baseRevisionDigest: 'sha256:stale', targetPaths: ['src/a.py'], patchContent: 'change' }); assert.equal(result.applied, false); assert.equal(port.currentRevision, before); },
-    valid: async () => { const check = createFixtureCheckDefinition(); const port = new FakeRepositoryPort({ testResults: { [check.checkId]: { checkId: check.checkId, outcome: 'pass', durationMs: 1 } } }); assert.equal((await port.runTests(check)).outcome, 'pass'); },
-  } },
+  },
+  {
+    name: 'repository',
+    cases: {
+      missing: async () => { await assert.rejects(new FakeRepositoryPort().runTests(createFixtureCheckDefinition()), /SCRIPT_EXHAUSTED/); },
+      exhausted: async () => { const port = new FakeRepositoryPort(); const check = createFixtureCheckDefinition(); port.setTestResult(check.checkId, { checkId: check.checkId, outcome: 'pass', durationMs: 1 }); await port.runTests(check); await assert.rejects(port.runTests({ ...check, checkId: 'not-scripted' }), /SCRIPT_EXHAUSTED/); },
+      malformed: async () => { const port = new FakeRepositoryPort({ testResults: { default: { checkId: 'check', outcome: 'pass', durationMs: -1 } } }); await assert.rejects(port.runTests(createFixtureCheckDefinition()), /INVALID_CHECK_RESULT/); },
+      stale: async () => { const port = new FakeRepositoryPort(); const before = port.currentRevision; const result = await port.applyPatch({ actionId: 'patch', kind: 'apply_patch', baseRevisionDigest: 'sha256:stale', targetPaths: ['src/a.py'], patchContent: 'change' }); assert.equal(result.applied, false); assert.equal(port.currentRevision, before); },
+      valid: async () => { const check = createFixtureCheckDefinition(); const port = new FakeRepositoryPort({ testResults: { [check.checkId]: { checkId: check.checkId, outcome: 'pass', durationMs: 1 } } }); assert.equal((await port.runTests(check)).outcome, 'pass'); },
+    },
+  },
 ];
 
 for (const role of ['coder', 'reviewer'] as const) {
   for (const scenario of ['missing', 'exhausted', 'malformed', 'stale', 'valid'] as const) {
-    test(`port conformance: ${role} / ${scenario}`, async () => {
+    test(`[v0.1 compatibility] port conformance: ${role} / ${scenario}`, async () => {
       const { context, request } = createFixtureAdmissionContext(role === 'reviewer' ? { request: createFixtureReviewerRequest() } : undefined);
       if (role === 'coder') {
         const port = new ScriptedModelPort({ admissionContext: context });
@@ -86,6 +142,318 @@ for (const role of ['coder', 'reviewer'] as const) {
     });
   }
 }
-for (const profile of profiles) {
-  for (const [scenario, run] of Object.entries(profile.cases)) test(`port conformance: ${profile.name} / ${scenario}`, run);
+
+for (const profile of v01Profiles) {
+  for (const [scenario, run] of Object.entries(profile.cases)) {
+    test(`[v0.1 compatibility] port conformance: ${profile.name} / ${scenario}`, run);
+  }
+}
+
+// ============================================================================
+// v0.2 Port Conformance Matrix Tests (T053 / T054)
+// ============================================================================
+
+test('v0.2 state authority capabilities are additive and fail closed when issuer evidence is unavailable', async () => {
+  const state = createFixtureTaskState();
+  const authority = createFixturePolicyAuthorityRefV02();
+  const owner = new MemoryStatePortV02({ initialTaskState: state, initialAuthorityRef: authority });
+  const snapshot = await owner.readVerificationAuthoritySnapshot(state.taskId);
+  assert.ok(snapshot);
+  assert.equal(isVerificationAuthoritySnapshotV02(snapshot), true);
+  assert.equal(isVerificationAuthoritySnapshotV02({ ...snapshot, extra: true }), false);
+
+  const context: VerificationApprovalContextV02 = {
+    purpose: 'current-verification',
+    expectedIssuerKeyRef: authority.issuerKeyRef,
+    expectedDecisionAuthorityGeneration: authority.decisionAuthorityGeneration,
+    approvalContext: {
+      currentTaskId: state.taskId,
+      currentWorkspaceId: state.workspaceId,
+      currentRepositoryRevisionDigest: state.repositoryRevisionDigest,
+      currentPolicyId: authority.policyId,
+      currentPolicyVersion: authority.policyVersion,
+      currentNormalizedActionDigest: computeCanonicalSha256('port-conformance-action'),
+      currentPlanVersion: state.planVersion,
+      currentStrategyDigest: computeCanonicalSha256('port-conformance-strategy'),
+      currentBaselineRef: 'baseline-port-conformance',
+      currentEvidenceRefs: ['baseline-port-conformance'],
+      currentCriteriaDigest: computeCanonicalSha256(state.acceptanceCriteria),
+      currentCheckSetDigest: computeCanonicalSha256(state.requiredCheckIds),
+    },
+  };
+  assert.equal(isVerificationApprovalContextV02(context), true);
+  const resolution = await owner.resolvePlanDecisionInContext('decision-without-issuer', context);
+  assert.deepEqual(resolution, { outcome: 'unavailable', reasonCode: 'MISSING_CONTEXTUAL_ISSUER' });
+  assert.equal(await owner.readSettledPatchAncestry({
+    taskId: state.taskId,
+    runId: state.runId,
+    resultingRepositoryRevisionDigest: state.repositoryRevisionDigest,
+  }), null);
+
+  const invalidRequest: RecordVerificationApprovalRequestV02 = {
+    taskId: '', runId: '', workspaceId: '', repositoryId: '', originalDecisionId: '', decisionId: '',
+    expectedStateVersion: -1, expectedRepositoryRevisionDigest: '', expectedPlanVersion: 0,
+    expectedPlanMaterialDigest: '', expectedControlVersion: -1, expectedEpoch: -1,
+    expectedDecisionAuthorityGeneration: 0,
+    policyIdentity: { policyId: '', policyVersion: '', configId: '', configVersion: '', issuerKeyRef: '' },
+    requestIdentity: '',
+  };
+  const before = await owner.loadTask(state.taskId);
+  assert.equal((await owner.recordVerificationApproval(invalidRequest)).outcome, 'conflict');
+  assert.deepEqual(await owner.loadTask(state.taskId), before);
+  assert.equal('readVerificationAuthoritySnapshot' in new MemoryStatePort(), false);
+});
+
+for (const scenario of ['missing', 'exhausted', 'malformed', 'stale', 'valid'] as const) {
+  test(`v0.2 port conformance: coder / ${scenario}`, async () => {
+    const port = new ScriptedModelPortV02(new ScriptedModelPort());
+    const request = createFixtureProviderRequest();
+    const state = createFixtureTaskState();
+    const validContext = createFixtureProviderAdmissionContextV02({ providerRequest: request });
+
+    if (scenario === 'missing') {
+      const res = await port.propose(state, [], request, undefined as unknown as ProviderAdmissionContextV02);
+      assert.equal(res.outcome, 'denied');
+      assert.equal(port.simulatedDispatches, 0);
+    } else if (scenario === 'exhausted') {
+      // Empty response queue
+      const res = await port.propose(state, [], request, validContext);
+      assert.equal(res.outcome, 'denied');
+      assert.match(res.reason ?? '', /SCRIPT_EXHAUSTED/);
+    } else if (scenario === 'malformed') {
+      const malformedContext = { ...validContext, schemaVersion: 'invalid-version' } as unknown as ProviderAdmissionContextV02;
+      const res = await port.propose(state, [], request, malformedContext);
+      assert.equal(res.outcome, 'denied');
+      assert.equal(port.simulatedDispatches, 0);
+    } else if (scenario === 'stale') {
+      const staleContext = createFixtureProviderAdmissionContextV02({
+        providerRequest: createFixtureProviderRequest({ providerRequestId: 'other-id' }),
+      });
+      const res = await port.propose(state, [], request, staleContext);
+      assert.equal(res.outcome, 'denied');
+      assert.equal(port.simulatedDispatches, 0);
+    } else {
+      // valid
+      port.queueResponse({
+        outcome: 'observed',
+        result: { proposal: { proposalId: 'p1', content: 'fix' }, observedUsage: createTestProviderUsage() },
+      });
+      const res = await port.propose(state, [], request, validContext);
+      assert.equal(res.outcome, 'observed');
+      assert.equal(port.simulatedDispatches, 1);
+    }
+  });
+
+  test(`v0.2 port conformance: reviewer / ${scenario}`, async () => {
+    const port = new ScriptedReviewerPortV02(new ScriptedReviewerPort());
+    const request = createFixtureReviewerRequest();
+    const task = createFixtureBugTask();
+    const diff = 'diff content';
+    const validContext = createFixtureProviderAdmissionContextV02({
+      providerRequest: request,
+      role: 'reviewer',
+    });
+
+    if (scenario === 'missing') {
+      await assert.rejects(
+        async () => port.review(task, diff, [], request, undefined as unknown as ProviderAdmissionContextV02),
+        /MISSING_ADMISSION_CONTEXT/
+      );
+      assert.equal(port.simulatedDispatches, 0);
+    } else if (scenario === 'exhausted') {
+      // No scripted response queued
+      await assert.rejects(
+        async () => port.review(task, diff, [], request, validContext),
+        /SCRIPT_EXHAUSTED/
+      );
+    } else if (scenario === 'malformed') {
+      const malformedContext = { ...validContext, schemaVersion: 'bad' } as unknown as ProviderAdmissionContextV02;
+      await assert.rejects(
+        async () => port.review(task, diff, [], request, malformedContext),
+        /INVALID_ADMISSION_CONTEXT/
+      );
+      assert.equal(port.simulatedDispatches, 0);
+    } else if (scenario === 'stale') {
+      const staleContext = createFixtureProviderAdmissionContextV02({
+        providerRequest: createFixtureReviewerRequest({ providerRequestId: 'mismatched-id' }),
+        role: 'reviewer',
+      });
+      await assert.rejects(
+        async () => port.review(task, diff, [], request, staleContext),
+        /CONTEXT_IDENTITY_MISMATCH/
+      );
+      assert.equal(port.simulatedDispatches, 0);
+    } else {
+      // valid
+      port.queueResponse({
+        reviewId: 'rev-01',
+        reviewerRoleConfigId: request.configId,
+        repoDigest: task.initialRevisionDigest,
+        diffDigest: computeCanonicalSha256(diff),
+        checkSetDigest: computeCanonicalSha256([]),
+        status: 'accepted',
+        findings: [],
+        iterationReservationRef: request.reservationRef,
+      });
+      const res = await port.review(task, diff, [], request, validContext);
+      assert.equal(res.status, 'accepted');
+      assert.equal(port.simulatedDispatches, 1);
+    }
+  });
+
+  test(`v0.2 port conformance: repository / ${scenario}`, async () => {
+    const underlying = new FakeRepositoryPort();
+    const port = new FakeRepositoryPortV02(underlying);
+    const patch: ApplyPatchAction = {
+      actionId: 'patch-conf',
+      kind: 'apply_patch',
+      patchContent: '+change',
+      targetPaths: ['src/calculator.py'],
+      baseRevisionDigest: port.currentRevision,
+    };
+    const validContext = createTestRepositoryAdmissionContextV02({
+      action: patch,
+      canonicalRevision: port.currentRevision,
+    });
+
+    if (scenario === 'missing') {
+      await assert.rejects(() => port.applyPatch(patch, {} as unknown as RepositoryAdmissionContextV02));
+      assert.deepEqual(underlying.patches, []);
+    } else if (scenario === 'exhausted') {
+      const check = createFixtureCheckDefinition({ checkId: 'unscripted' });
+      const action: NormalizedAction = {
+        actionId: check.checkId,
+        kind: 'run_command',
+        executable: check.executable,
+        argv: check.argv,
+        workingDirectory: check.workingDirectory ?? '',
+        ...(check.purpose !== undefined ? { purpose: check.purpose } : {}),
+      };
+      const commandContext = createFixtureRepositoryCommandAdmissionContextV02({
+        action,
+        canonicalRevision: port.currentRevision,
+        checkId: check.checkId,
+      });
+      await assert.rejects(
+        async () => port.runTests(check, commandContext),
+        /SCRIPT_EXHAUSTED/
+      );
+    } else if (scenario === 'malformed') {
+      const malformedContext = { ...validContext, schemaVersion: '0.1.0' } as unknown as RepositoryAdmissionContextV02;
+      await assert.rejects(() => port.applyPatch(patch, malformedContext));
+    } else if (scenario === 'stale') {
+      const staleContext = createFixtureRepositoryAdmissionContextV02({
+        action: patch,
+        canonicalRevision: 'sha256:stale-rev',
+        baseRevision: patch.baseRevisionDigest,
+      });
+      const validation = validateRepositoryAdmissionV02(staleContext, {
+        ...createTestRepositoryAdmissionTrustedContextV02(staleContext),
+        canonicalRevision: port.currentRevision,
+      });
+      assert.equal(staleContext.actionDigest, computeActionDigest(patch));
+      assert.equal(staleContext.baseRevision, patch.baseRevisionDigest);
+      assert.equal(validation.ok, false);
+      if (!validation.ok) assert.deepEqual(validation.errors.map(({ code }) => code), ['REVISION_MISMATCH']);
+      await assert.rejects(() => port.applyPatch(patch, staleContext));
+      assert.equal(port.currentRevision, patch.baseRevisionDigest);
+      assert.deepEqual(underlying.patches, []);
+      assert.deepEqual(underlying.v02Calls, []);
+    } else {
+      // valid
+      underlying.setStatePort(new MemoryStatePortV02({ initialTaskState: createTestAdmissionTaskStateV02(validContext),
+        initialControlVersion: validContext.expectedControlVersion, initialEpoch: validContext.expectedEpoch,
+        initialAuthorityRef: validContext.policyAuthorityRef }));
+      underlying.setExecutorIdentity(createTestExecutorIdentityV02({ payloadDigest: validContext.actionDigest }));
+      const res = await port.applyPatch(patch, validContext);
+      assert.equal(res.executionReceipt.settlement.outcome, 'settled');
+      assert.equal(res.applied, true);
+      assert.equal(underlying.patches.length, 1);
+    }
+  });
+
+  test(`v0.2 port conformance: approval / ${scenario}`, async () => {
+    const action: NormalizedAction = {
+      actionId: `approval-${scenario}`,
+      kind: 'run_command',
+      executable: 'pytest',
+      argv: [],
+      workingDirectory: 'tests',
+    };
+    const auth = createFixturePolicyAuthorityRefV02({ decisionAuthorityGeneration: 1 });
+    const context = createFixtureRepositoryCommandAdmissionContextV02({
+      action,
+      canonicalRevision: 'sha256:current-policy-revision',
+      policyAuthorityRef: auth,
+    });
+    const evaluation = createCurrentPolicyEvaluation(action, context, auth, 'APPROVAL_REQUIRED');
+
+    if (scenario === 'missing') {
+      const decision = createFixtureActionDecisionReceiptV02({
+        decisionId: `decision-${scenario}`,
+        actionDigest: evaluation.actionDigest,
+        evaluationReceiptRef: evaluation.receiptId,
+        decisionAuthorityGeneration: evaluation.decisionAuthorityGeneration,
+      });
+      const port = new ScriptedApprovalPortV02(new ScriptedApprovalPort({
+        v02Evaluations: [evaluation],
+        v02Decisions: [decision],
+      }));
+      await assert.rejects(port.evaluatePolicyV02(action, context), /MISSING_CURRENT_AUTHORITY/);
+      assert.equal(await port.validateBindingV02(evaluation), false);
+      assert.equal(await port.validateBindingV02(evaluation, auth), false);
+      assert.equal(await port.validateBindingV02(decision, auth), false);
+    } else if (scenario === 'exhausted') {
+      const port = new ScriptedApprovalPortV02(new ScriptedApprovalPort({ v02AuthorityRef: auth, v02Evaluations: [evaluation] }));
+      assert.strictEqual(await port.evaluatePolicyV02(action, context), evaluation);
+      await assert.rejects(port.requestDecisionV02(evaluation), /UNSCRIPTED_CURRENT_DECISION/);
+    } else if (scenario === 'malformed') {
+      const port = new ScriptedApprovalPortV02(new ScriptedApprovalPort({ v02AuthorityRef: auth, v02Evaluations: [evaluation] }));
+      const malformed = { ...evaluation, receiptDigest: 'sha256:malformed' };
+      assert.equal(await port.validateBindingV02(malformed, auth), false);
+    } else if (scenario === 'stale') {
+      const staleAuth = createFixturePolicyAuthorityRefV02({ decisionAuthorityGeneration: 2 });
+      const port = new ScriptedApprovalPortV02(new ScriptedApprovalPort({ v02AuthorityRef: auth, v02Evaluations: [evaluation] }));
+      assert.equal(await port.validateBindingV02(evaluation, staleAuth), false);
+    } else {
+      const decision = createFixtureActionDecisionReceiptV02({
+        decisionId: `decision-${scenario}`,
+        actionDigest: evaluation.actionDigest,
+        evaluationReceiptRef: evaluation.receiptId,
+        decisionAuthorityGeneration: evaluation.decisionAuthorityGeneration,
+      });
+      const port = new ScriptedApprovalPortV02(new ScriptedApprovalPort({
+        v02AuthorityRef: auth,
+        v02Evaluations: [evaluation],
+        v02Decisions: [decision],
+      }));
+      assert.strictEqual(await port.evaluatePolicyV02(action, context), evaluation);
+      assert.strictEqual(await port.requestDecisionV02(evaluation), decision);
+      assert.equal(await port.validateBindingV02(decision, auth), true);
+    }
+  });
+}
+
+function createCurrentPolicyEvaluation(
+  action: NormalizedAction,
+  context: RepositoryAdmissionContextV02,
+  authority: ReturnType<typeof createFixturePolicyAuthorityRefV02>,
+  result: 'ALLOWED' | 'APPROVAL_REQUIRED' | 'FORBIDDEN',
+) {
+  const actionDigest = computeActionDigest(action);
+  return createFixturePolicyEvaluationReceiptV02({
+    receiptId: `policy-${action.actionId}`,
+    actionDigest,
+    freshnessContextDigest: computeCanonicalSha256({
+      actionDigest,
+      canonicalRevision: context.canonicalRevision,
+      policyAuthorityRef: authority,
+    }),
+    policyId: authority.policyId,
+    policyVersion: authority.policyVersion,
+    configId: authority.configId,
+    configVersion: authority.configVersion,
+    decisionAuthorityGeneration: authority.decisionAuthorityGeneration,
+    result,
+  });
 }

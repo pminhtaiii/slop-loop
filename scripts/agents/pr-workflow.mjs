@@ -4,6 +4,7 @@ import { publicationTargets } from './publication-targets.mjs';
 import { verifySubmission } from './submission-pr.mjs';
 import { assertAvailableBranch, assertNewBranch } from './pr-conventions.mjs';
 import { assess, changedLines, featureName, validSummary, workflowSummary } from './pr-workflow-status.mjs';
+import { hasLocalVerification, localGateStatus, publicationMode } from './pr-workflow-push-only.mjs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { atomicWrite, dataDirectory, readJson, repository, withLock } from './agent-store.mjs';
@@ -12,7 +13,7 @@ export { assess, changedLines, workflowSummary } from './pr-workflow-status.mjs'
 const maxRepairs = 3;
 const usage = `Usage: node scripts/agents/pr-workflow.mjs <preflight|publish|status|ready|repair|watch|record-app-state|complete|prepare-next> [--root <checkout>]
 preflight fetches origin/development and reports freshness, naming, dirty paths, and diff size; it never publishes.
-publish requires --body-file <file> and --summary <short summary>; optional --base development and --skip-review-request.
+publish requires --body-file <file> and --summary <short summary>; defaults to --mode full. --mode push-only --reason <rationale> skips local gates; its reason is provenance, not an authorization receipt.
 repair requires --reason <diagnosed finding>. At most three repair rounds per PR.
 record-app-state requires --receipt <app list_thread_pull_requests JSON>.
 prepare-next --branch feat/scope-description creates a fresh unique branch from fetched development after this branch's recorded PR merges; source branches and worktrees are retained.
@@ -36,7 +37,7 @@ const query = `query($owner:String!,$name:String!,$number:Int!){repository(owner
 export async function runWorkflow(args, dependencies = {}) {
   if (args.length === 1 && ['--help', '-h'].includes(args[0])) return { usage };
   const [command, ...rest] = args;
-  const allowed = { preflight: ['root'], 'prepare-next': ['root', 'branch'], publish: ['root', 'base', 'body-file', 'summary', 'skip-review-request'], status: ['root'], 'record-app-state': ['root', 'receipt'], complete: ['root'], ready: ['root'], repair: ['root', 'reason'], watch: ['root'] };
+  const allowed = { preflight: ['root'], 'prepare-next': ['root', 'branch'], publish: ['root', 'base', 'body-file', 'summary', 'skip-review-request', 'mode', 'reason'], status: ['root'], 'record-app-state': ['root', 'receipt'], complete: ['root'], ready: ['root'], repair: ['root', 'reason'], watch: ['root'] };
   if (!Object.hasOwn(allowed, command)) throw new Error(usage);
   const values = {};
   for (let index = 0; index < rest.length;) {
@@ -55,6 +56,7 @@ export async function runWorkflow(args, dependencies = {}) {
   if (command === 'record-app-state' && !values.receipt) throw new Error('record-app-state requires --receipt with the app list_thread_pull_requests result.');
   if (command === 'publish' && !values['body-file'] || command === 'repair' && !values.reason?.trim()) throw new Error(usage);
   if (command === 'publish' && !validSummary(values.summary)) throw new Error('Provide --summary with 1–80 characters on one line, without surrounding whitespace.');
+  if (command === 'publish') values.publication = publicationMode(values);
   if (values.base && values.base !== 'development') throw new Error('The pilot only publishes to development.');
   if (command === 'prepare-next') assertNewBranch(values.branch);
   const now = dependencies.now ?? (() => Math.floor(performance.now()));
@@ -164,12 +166,13 @@ export async function runWorkflow(args, dependencies = {}) {
     }
     if (command === 'complete') {
       if (git('status', '--porcelain', '--untracked-files=all')) throw new Error('Completion requires a clean checkout.');
-      if (record.publishedHead !== head || record.localVerification?.head !== head || !['context', 'runtime', 'dependencies', 'tests'].every((gate) => typeof record.localVerification?.[gate] === 'string' && record.localVerification[gate].trim())) throw new Error('Completion requires the current head to be published and locally verified.');
+      if (record.publishedHead !== head) throw new Error('Completion requires the published current head; publish the current branch head first.');
+      if (record.publicationMode !== 'push-only' && !hasLocalVerification(record, head)) throw new Error('Completion requires the current head to be locally verified.');
       if (record.appLink?.url !== pr.url || record.appLink?.number !== pr.number || record.appLink?.repository !== remote) throw new Error('Completion requires an app receipt for the linked PR; run record-app-state.');
       if (targets && record.submissionAppLink?.url !== record.submission?.url) throw new Error('Completion requires an app receipt for both linked PRs.');
       if (!['READY_FOR_HUMAN', 'AWAITING_HUMAN_MERGE'].includes(record.status)) throw new Error(`Completion blocked: ${record.status}. Keep the assignment active/blocked and hand pending CI to the app watcher.`);
       if (git('rev-parse', 'HEAD') !== head) throw new Error('Checkout changed during completion verification.');
-      record.completion = { head, url: pr.url, pr: pr.number, ci: 'passed', appLink: record.appLink, submission: record.submission, submissionAppLink: record.submissionAppLink, verifiedAt: new Date().toISOString() };
+      record.completion = { head, url: pr.url, pr: pr.number, ci: 'passed', localGates: localGateStatus(record, head), publicationMode: record.publicationMode ?? 'full', publicationReason: record.publicationReason, appLink: record.appLink, submission: record.submission, submissionAppLink: record.submissionAppLink, verifiedAt: new Date().toISOString() };
     }
     if (command === 'ready') {
       if (!['READY_FOR_HUMAN', 'AWAITING_HUMAN_MERGE'].includes(record.status)) throw new Error(`Not ready: ${record.status}.`);

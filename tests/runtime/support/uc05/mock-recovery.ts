@@ -6,9 +6,15 @@ import { isDeepStrictEqual } from 'node:util';
 import { createApprovalService } from '../../../../src/approvals/service.ts';
 import { computeActionDigest, validateApprovalBinding } from '../../../../src/contracts/foundation/uc03.ts';
 import { compilePolicy } from '../../../../src/approvals/policy.ts';
-import { MemoryStatePort } from '../uc03/memory-state.ts';
+import { MemoryStatePort, MemoryStatePortV02 } from '../uc03/memory-state.ts';
+import { createTestAdmissionTaskStateV02, createTestAdmissionTransitionContextsV02, createTestRepositoryAdmissionContextV02, createTestRepositoryAdmissionTrustedContextV02 } from '../uc03/state-fixtures.ts';
 import { createTestLedgers } from '../uc03/state-fixtures.ts';
-import { createMockApprovalStore } from './mock-store.ts';
+import { createMockApprovalStoreV01Compatibility, createMockApprovalStoreV02, type MockApprovalStoreV02 } from './mock-store.ts';
+import { createApprovalContinuationV02, type ApprovalContinuationV02 } from '../../../../src/approvals/recovery-v02.ts';
+import type {
+  RepositoryAdmissionContextV02,
+  RepositoryAdmissionTrustedContextV02,
+} from '../../../../src/contracts/foundation/uc03/v02/ports.ts';
 
 const digest = `sha256:${'a'.repeat(64)}`;
 const identity = { policyId: 'policy-1', policyVersion: '1', configId: 'config-1', configVersion: '1' };
@@ -22,9 +28,13 @@ export const recoveryProfile: PolicyProfile = {
   diagnosticRules: { maxBytes: 1024, redactSecrets: true, allowRawArtifacts: false, retainUnresolvedDecisions: true },
 };
 
+export const recoveryProfileV02: PolicyProfile = {
+  ...recoveryProfile,
+};
+
 /** Same-process retained-state simulation only; not a durable UC-04 adapter. */
 export interface RecoveryScenario {
-  readonly store: ReturnType<typeof createMockApprovalStore>;
+  readonly store: ReturnType<typeof createMockApprovalStoreV01Compatibility>;
   readonly owner: ApprovalRecoveryOwner;
   readonly binding: ApprovalBinding;
   readonly accounting: MemoryStatePort;
@@ -44,7 +54,7 @@ export function createRecoveryScenario(options: { readonly accounting?: 'missing
     facts: { taskId: 'task-1', repositoryId: 'repository-1', workspaceId: 'workspace-1', repositoryRevisionDigest: digest, policyIdentity: identity, registeredActionDigest: computeActionDigest(action), continuationRef: 'continuation-1', role: 'coder',
       safety: { workspaceContained: true, protectedContentAbsent: true, hiddenGradingAbsent: true, policyBypassAbsent: true, testsPreserved: true, commandSourceWritesAbsent: true, isolated: true },
       command: { executableRef: 'pytest', resolvedExecutable: 'pytest', workingDirectoryRef: 'repository-root', workingDirectory: '/workspace', constrainedCapability: 'constrained-tests' }, patch: null, plan: null } };
-  const store = createMockApprovalStore({ profile: recoveryProfile, initialControls: [{ schemaVersion: 'uc05-approval/0.1-draft', taskId: 'task-1', repositoryId: 'repository-1', workspaceId: 'workspace-1', version: 1, epoch: 1, mode: 'runnable', pendingDecisionId: null, continuationRef: null, reasonCode: 'ready', outstandingClaimRefs: [] }] });
+  const store = createMockApprovalStoreV01Compatibility({ profile: recoveryProfile, initialControls: [{ schemaVersion: 'uc05-approval/0.1-draft', taskId: 'task-1', repositoryId: 'repository-1', workspaceId: 'workspace-1', version: 1, epoch: 1, mode: 'runnable', pendingDecisionId: null, continuationRef: null, reasonCode: 'ready', outstandingClaimRefs: [] }] });
   const ledgers = createTestLedgers('config-1').filter(ledger => options.accounting !== 'missing' || ledger.scope !== 'task' || ledger.kind !== 'cost')
     .map(ledger => options.accounting === 'exhausted' && ledger.scope === 'task' && ledger.kind === 'tokens' ? { ...ledger, consumed: ledger.limit } : ledger);
   const accounting = new MemoryStatePort({ initialLedgers: ledgers, currentTaskId: 'task-1', currentRunId: options.accountingRunId ?? 'run-1' });
@@ -91,4 +101,105 @@ export function createRecoveryScenario(options: { readonly accounting?: 'missing
     setContext: (value: ApprovalContext) => { current = value; },
     beforeClaim: (value: () => Promise<void>) => { beforeClaim = value; },
     loseClaimResponse: () => { lostClaimResponse = true; } };
+}
+
+/** Neutral v0.2 recovery scenario fixture scaffold for T057/T058 testing. */
+export interface RecoveryScenarioV02 {
+  readonly admission: {
+    readonly context: RepositoryAdmissionContextV02;
+    readonly trustedContext: RepositoryAdmissionTrustedContextV02;
+  };
+  readonly continuation: ApprovalContinuationV02;
+  readonly store: MockApprovalStoreV02;
+  readonly recoveryPort: {
+    readonly provenance: 'mock';
+    loadAdmission(decisionId: string): Promise<unknown>;
+  };
+  readonly journalPort: MemoryStatePortV02;
+  currentContext(): unknown;
+  setContext(value: unknown): void;
+}
+
+export function createRecoveryScenarioV02(options: {
+  readonly initialContext?: unknown;
+} = {}): RecoveryScenarioV02 {
+  const defaultContext = createTestRepositoryAdmissionContextV02({
+    taskId: 'task-1',
+    runId: 'run-1',
+    planDecisionRef: 'decision-1',
+  });
+  const defaultTrustedContext = createTestRepositoryAdmissionTrustedContextV02(defaultContext);
+
+  let currentContext: unknown = options.initialContext !== undefined
+    ? options.initialContext
+    : { context: defaultContext, trustedContext: defaultTrustedContext };
+
+  const profile: PolicyProfile = {
+    ...recoveryProfileV02,
+    policyIdentity: {
+      policyId: defaultContext.policyAuthorityRef.policyId,
+      policyVersion: defaultContext.policyAuthorityRef.policyVersion,
+      configId: defaultContext.policyAuthorityRef.configId,
+      configVersion: defaultContext.policyAuthorityRef.configVersion,
+    },
+  };
+
+  const recoveryPort = {
+    provenance: 'mock' as const,
+    loadAdmission: async (decisionId: string) => {
+      if (decisionId === 'decision-1') {
+        return currentContext;
+      }
+      return null;
+    },
+  };
+
+  const initialTaskState = createTestAdmissionTaskStateV02(defaultContext);
+  const journalPort = new MemoryStatePortV02({
+    initialTaskState,
+    transitionContexts: createTestAdmissionTransitionContextsV02(defaultContext, initialTaskState),
+    initialControlVersion: defaultContext.expectedControlVersion,
+    initialEpoch: defaultContext.expectedEpoch,
+    initialAuthorityRef: defaultContext.policyAuthorityRef,
+  });
+
+  const approvedBinding = {
+    decisionId: 'decision-1',
+    actionKind: 'action' as const,
+    normalizedActionDigest: defaultContext.actionDigest,
+    taskId: defaultContext.taskId,
+    workspaceId: defaultContext.workspaceId,
+    repositoryRevisionDigest: defaultContext.canonicalRevision,
+    policyId: defaultContext.policyAuthorityRef.policyId,
+    policyVersion: defaultContext.policyAuthorityRef.policyVersion,
+    status: 'approved' as const,
+  };
+
+  const approval: ApprovalService = {
+    ...createRecoveryScenario().service(),
+    provenance: 'mock' as const,
+    resolve: async (decisionId: string) => {
+      if (decisionId !== 'decision-1') throw new Error('unknown-mock-decision');
+      return approvedBinding;
+    },
+    validateBinding: async (binding: unknown) => isDeepStrictEqual(binding, approvedBinding),
+  };
+
+  const continuation = createApprovalContinuationV02({
+    taskId: 'task-1',
+    profile,
+    approval,
+    recovery: recoveryPort,
+    journal: journalPort,
+  });
+
+  return {
+    admission: { context: defaultContext, trustedContext: defaultTrustedContext },
+    continuation,
+    store: createMockApprovalStoreV02({ continuation, journal: journalPort }),
+    recoveryPort,
+    journalPort,
+    currentContext: () => currentContext,
+    setContext: (value: unknown) => { currentContext = value; },
+  };
 }

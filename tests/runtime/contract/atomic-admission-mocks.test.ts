@@ -17,6 +17,7 @@ import {
   validateAttemptReconciliationReceiptV02,
   validateBudgetLedger,
   validateClaimClosureReceiptV02,
+  validateRepositoryExecutionReceiptV02,
   validateTaskState,
   computeAttemptOutcomeDigest,
   computeReconciliationDigest,
@@ -46,6 +47,8 @@ import {
   isNeutralReconciliationResultV02,
   isNeutralClaimClosureResultV02,
 } from '../support/uc03/memory-state.ts';
+import { FakeRepositoryPort } from '../support/uc03/fake-repository.ts';
+import { createGraphRepositoryPort } from '../support/uc03/graph-fixtures.ts';
 import {
   createTestAdmissionTaskStateV02,
   createTestDiagnosticPatchAdmissionContextV02,
@@ -363,6 +366,64 @@ test('Positive vector: single-use beginAttempt returns the claimed attempt ident
   assert.deepEqual(flow.port.getLedgers(), beforeLedgers);
 });
 
+test('Journal: simulated lost Patch beginAttempt response leaves the claim open and blocks replay', async () => {
+  const context = createTestRepositoryAdmissionContextV02({ runnableNode: 'Patch' });
+  const flow = await claimRepositoryFlow(context);
+  const executor = createTestExecutorIdentityV02({ payloadDigest: context.actionDigest });
+  await flow.port.beginAttempt(flow.claim.claimId, executor);
+  const afterFirst = {
+    task: await flow.port.loadTask(context.taskId),
+    ledgers: flow.port.getLedgers(),
+    snapshot: flow.port.getJournalSnapshot(),
+  };
+
+  const replay = await flow.port.beginAttempt(flow.claim.claimId, executor);
+
+  assert.equal(isNeutralAttemptReceiptV02(replay), true);
+  assert.deepEqual(await flow.port.loadTask(context.taskId), afterFirst.task);
+  assert.deepEqual(flow.port.getLedgers(), afterFirst.ledgers);
+  assert.deepEqual(flow.port.getJournalSnapshot(), afterFirst.snapshot);
+  assert.equal(afterFirst.snapshot.claims.find((item) => item.claimId === flow.claim.claimId)?.status, 'attempting');
+  assert.equal(afterFirst.task?.stateVersion, context.expectedTaskStateVersion + 1);
+  assert.equal(afterFirst.task?.node, 'Patch');
+  const repairLedger = afterFirst.ledgers.find((ledger) => ledger.scope === 'task' && ledger.kind === 'repair');
+  assert.ok(repairLedger);
+  assert.equal(repairLedger.consumed, 1);
+  assert.deepEqual(repairLedger.reservations, []);
+});
+
+test('Journal: failed initial Patch keeps one consumed allowance and cannot invoke again', async () => {
+  const context = createTestRepositoryAdmissionContextV02({ runnableNode: 'Patch' });
+  if (context.action.kind !== 'apply_patch') throw new Error('Expected approved patch admission');
+  const port = createPort(context);
+  const failedRevision = 'sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff';
+  const repository = new FakeRepositoryPort({ initialRevision: failedRevision });
+  const receiver = createGraphRepositoryPort(repository, port);
+  await assert.rejects(receiver.applyPatch(context.action, context));
+  const afterFailure = {
+    task: await port.loadTask(context.taskId),
+    ledgers: port.getLedgers(),
+    snapshot: port.getJournalSnapshot(),
+  };
+
+  assert.equal(repository.patches.length, 1);
+  assert.equal(repository.currentRevision, failedRevision);
+  const activeClaim = afterFailure.snapshot.claims.find((item) => item.claimId === afterFailure.snapshot.activeClaimId);
+  assert.ok(activeClaim);
+  assert.equal(activeClaim.status, 'attempting');
+  assert.equal(afterFailure.task?.stateVersion, context.expectedTaskStateVersion + 1);
+  const repairLedger = afterFailure.ledgers.find((ledger) => ledger.scope === 'task' && ledger.kind === 'repair');
+  assert.ok(repairLedger);
+  assert.equal(repairLedger.consumed, 1);
+  assert.deepEqual(repairLedger.reservations, []);
+
+  await assert.rejects(receiver.applyPatch(context.action, context));
+  assert.equal(repository.patches.length, 1);
+  assert.deepEqual(await port.loadTask(context.taskId), afterFailure.task);
+  assert.deepEqual(port.getLedgers(), afterFailure.ledgers);
+  assert.deepEqual(port.getJournalSnapshot(), afterFailure.snapshot);
+});
+
 test('Positive vector: recordOutcome for observed repository action binds the actual attempt (RED in T041, GREEN in T042)', async () => {
   const flow = await beginRepositoryAttempt();
   const beforeProviderLedgers = providerLedgers(flow.port);
@@ -374,6 +435,49 @@ test('Positive vector: recordOutcome for observed repository action binds the ac
   assert.equal(result.outcome, 'settled');
   assert.equal(result.receiptId, outcomeReceipt.receiptId);
   assert.deepEqual(providerLedgers(flow.port), beforeProviderLedgers, 'repository-only action does not charge provider token/cost ledgers');
+});
+
+test('Owner-generated approved Patch and Repair handoffs validate the consumed allowance versions', async () => {
+  for (const runnableNode of ['Patch', 'Repair'] as const) {
+    const context = createTestRepositoryAdmissionContextV02({ runnableNode });
+    if (context.action.kind !== 'apply_patch') throw new Error('Expected approved patch admission');
+    const initialTaskState = createTestAdmissionTaskStateV02(context);
+    const statePort = new MemoryStatePortV02({
+      initialTaskState,
+      initialControlVersion: context.expectedControlVersion,
+      initialEpoch: context.expectedEpoch,
+      initialAuthorityRef: context.policyAuthorityRef,
+    });
+    const repository = new FakeRepositoryPort({
+      initialRevision: context.canonicalRevision,
+      initialFiles: { 'src/calculator.py': 'def calculate(): pass\n' },
+    });
+    const effect = await createGraphRepositoryPort(repository, statePort).applyPatch(context.action, context);
+    const receipt = effect.executionReceipt;
+
+    assert.equal(receipt.attempt.preAttemptTaskStateVersion, context.expectedTaskStateVersion);
+    assert.equal(receipt.attempt.postBeginTaskStateVersion, receipt.attempt.preAttemptTaskStateVersion + 1);
+    assert.equal(validateRepositoryExecutionReceiptV02(receipt, context).ok, true);
+    const settledTask = await statePort.loadTask(context.taskId);
+    assert.ok(settledTask);
+    assert.equal(settledTask.stateVersion, receipt.attempt.postBeginTaskStateVersion + 1);
+    assert.equal(settledTask.node, 'Verify');
+    const repairLedger = statePort.getLedgers().find((ledger) => ledger.scope === 'task' && ledger.kind === 'repair');
+    assert.ok(repairLedger);
+    assert.equal(repairLedger.consumed, 1);
+    assert.deepEqual(repairLedger.reservations, []);
+    assert.equal(repository.patches.length, 1);
+
+    for (const postBeginTaskStateVersion of [
+      receipt.attempt.preAttemptTaskStateVersion,
+      receipt.attempt.postBeginTaskStateVersion + 1,
+    ]) {
+      assert.equal(validateRepositoryExecutionReceiptV02({
+        ...receipt,
+        attempt: { ...receipt.attempt, postBeginTaskStateVersion },
+      }, context).ok, false);
+    }
+  }
 });
 
 test('Positive vector: recordOutcome for observed provider request binds role and reservations (RED in T041, GREEN in T042)', async () => {
@@ -648,7 +752,7 @@ test('Extended Acceptance: closeUnattemptedClaim denies when an attempt has alre
 });
 
 test('Extended Acceptance: reconcileUncertain denies when predecessor is not uncertain', async () => {
-  const flow = await beginRepositoryAttempt();
+  const flow = await beginRepositoryAttempt(createTestRepositoryAdmissionContextV02({ runnableNode: 'Patch' }));
   const observedReceipt = createTestRepositoryOutcomeReceiptV02(flow.claim, flow.attempt, flow.context, { outcome: 'observed' });
   await flow.port.recordOutcome(observedReceipt);
 
@@ -897,7 +1001,12 @@ test('Journal R3: observed diagnostic patch settles revision and exact invalidat
   const attempt = await port.beginAttempt(claim.claimId, executor);
   assert.equal(isNeutralAttemptReceiptV02(attempt), false);
   assert.equal(attempt.postBeginTaskStateVersion, attempt.preAttemptTaskStateVersion);
-  const outcome = createTestRepositoryOutcomeReceiptV02(claim, attempt, context);
+  const baseOutcome = createTestRepositoryOutcomeReceiptV02(claim, attempt, context);
+  const outcome = createTestRepositoryOutcomeReceiptV02(claim, attempt, context, {
+    proposedEffects: { ...baseOutcome.proposedEffects, invalidatedEvidence: [
+      { reference: 'evidence-prior-baseline', digest: computeCanonicalSha256('evidence-prior-baseline') },
+    ] },
+  });
   assert.deepEqual(outcome.proposedEffects.taskTransition, { kind: 'none' });
 
   const result = await port.recordOutcome(outcome);
@@ -1306,7 +1415,8 @@ test('Journal regressions: beginAttempt winning before publication remains one a
 });
 
 test('Journal regressions: pause denies begin and fenced no-attempt closure releases only live reservations', async () => {
-  const context = createTestRepositoryAdmissionContextV02();
+  const context = createTestRepositoryAdmissionContextV02({ runnableNode: 'Patch' });
+  if (context.action.kind !== 'apply_patch') throw new Error('Expected approved patch admission');
   const port = createPort(context);
   const claim = await port.claim(context);
   const actor = createTestExecutorIdentityV02({ payloadDigest: context.actionDigest });
@@ -1345,6 +1455,11 @@ test('Journal regressions: pause denies begin and fenced no-attempt closure rele
   assert.equal((await port.closeUnattemptedClaim(conflictingClosure)).closed, false);
   assert.equal(port.getJournalSnapshot().mode, 'paused');
   assert.equal(port.getJournalSnapshot().claims.find((item) => item.claimId === claim.claimId)?.status, 'closed');
+
+  const repository = new FakeRepositoryPort({ initialRevision: context.canonicalRevision });
+  const receiver = createGraphRepositoryPort(repository, port);
+  await assert.rejects(receiver.applyPatch(context.action, context));
+  assert.equal(repository.patches.length, 0, 'Fenced pre-attempt closure prevents repository invocation');
 });
 
 test('Journal regressions: begin winning a queued pause admits once and prevents no-attempt closure', async () => {
@@ -1759,7 +1874,7 @@ test('Journal R2: command resource reservation mismatch refuses without partial 
 });
 
 test('Journal R2: observed patch settlement atomically invalidates only proposed evidence and stale review authority', async () => {
-  const context = createTestRepositoryAdmissionContextV02();
+  const context = createTestRepositoryAdmissionContextV02({ runnableNode: 'Patch' });
   const initial = createTestAdmissionTaskStateV02(context);
   const state: TaskState = {
     ...initial,
@@ -1773,7 +1888,12 @@ test('Journal R2: observed patch settlement atomically invalidates only proposed
   const claim = await port.claim(context);
   const actor = createTestExecutorIdentityV02({ payloadDigest: context.actionDigest });
   const attempt = await port.beginAttempt(claim.claimId, actor);
-  const outcome = createTestRepositoryOutcomeReceiptV02(claim, attempt, context);
+  const baseOutcome = createTestRepositoryOutcomeReceiptV02(claim, attempt, context);
+  const outcome = createTestRepositoryOutcomeReceiptV02(claim, attempt, context, {
+    proposedEffects: { ...baseOutcome.proposedEffects, invalidatedEvidence: [
+      { reference: 'evidence-prior-baseline', digest: computeCanonicalSha256('evidence-prior-baseline') },
+    ] },
+  });
   assert.equal((await port.recordOutcome(outcome)).outcome, 'settled');
   const settledTask = await port.loadTask(context.taskId);
   assert.ok(settledTask);
@@ -1792,7 +1912,7 @@ test('Journal R2: observed patch settlement atomically invalidates only proposed
 });
 
 test('Journal R2: observed-unsettled patch recovery applies the same exact invalidations once', async () => {
-  const context = createTestRepositoryAdmissionContextV02();
+  const context = createTestRepositoryAdmissionContextV02({ runnableNode: 'Patch' });
   const initial = createTestAdmissionTaskStateV02(context);
   const state: TaskState = {
     ...initial,
@@ -1809,8 +1929,17 @@ test('Journal R2: observed-unsettled patch recovery applies the same exact inval
   const afterAttempt = await port.loadTask(context.taskId);
   assert.ok(afterAttempt);
   port.getUnderlying().internalSetTask({ ...afterAttempt, node: 'Repair' });
-  const outcome = createTestRepositoryOutcomeReceiptV02(claim, attempt, context);
+  const baseOutcome = createTestRepositoryOutcomeReceiptV02(claim, attempt, context);
+  const outcome = createTestRepositoryOutcomeReceiptV02(claim, attempt, context, {
+    proposedEffects: { ...baseOutcome.proposedEffects, invalidatedEvidence: [
+      { reference: 'evidence-prior-baseline', digest: computeCanonicalSha256('evidence-prior-baseline') },
+    ] },
+  });
   assert.equal((await port.recordOutcome(outcome)).outcome, 'recorded-unsettled');
+  const repairAfterRecord = port.getLedgers().find((ledger) => ledger.scope === 'task' && ledger.kind === 'repair');
+  assert.ok(repairAfterRecord);
+  assert.equal(repairAfterRecord.consumed, 1);
+  assert.deepEqual(await port.recordOutcome(outcome), { outcome: 'already-recorded', receiptId: outcome.receiptId });
   assert.equal(outcome.subjectKind, 'repository-action');
   if (outcome.subjectKind !== 'repository-action' || !outcome.observedResultRevisionDigest) throw new Error('patch outcome requires an observed revision');
   port.getUnderlying().internalSetTask({ ...afterAttempt, repositoryRevisionDigest: outcome.observedResultRevisionDigest });
@@ -1837,8 +1966,8 @@ test('Journal R2: observed-unsettled patch recovery applies the same exact inval
   assert.deepEqual(port.getJournalSnapshot(), settledSnapshot);
 });
 
-test('Journal R2: uncertain repair recovery requires a persisted fence and evidence-backed revision', async () => {
-  const context = createTestRepositoryAdmissionContextV02();
+test('Journal R2: uncertain initial Patch recovery requires a persisted fence and evidence-backed revision', async () => {
+  const context = createTestRepositoryAdmissionContextV02({ runnableNode: 'Patch' });
   const initial = createTestAdmissionTaskStateV02(context);
   const state: TaskState = {
     ...initial,
@@ -1854,6 +1983,9 @@ test('Journal R2: uncertain repair recovery requires a persisted fence and evide
   const attempt = await port.beginAttempt(claim.claimId, actor);
   const uncertain = createTestRepositoryOutcomeReceiptV02(claim, attempt, context, { outcome: 'uncertain' });
   assert.equal((await port.recordOutcome(uncertain)).outcome, 'uncertain');
+  const repairAfterUncertain = port.getLedgers().find((ledger) => ledger.scope === 'task' && ledger.kind === 'repair');
+  assert.ok(repairAfterUncertain);
+  assert.equal(repairAfterUncertain.consumed, 1);
 
   const accountingEvidenceRefs = [{ reference: 'evidence-accounted-revision-r2', digest: computeCanonicalSha256('accounted-revision-r2') }];
   const observedRevisionDigest = computeCanonicalSha256('observed-revision-r2');

@@ -1,7 +1,7 @@
-import { safeSnapshot } from '../contracts/foundation/uc03/admission-v02/snapshot.ts';
+import { safeSnapshot } from '../contracts/foundation/uc03/v02/admission/snapshot.ts';
 import { computeCanonicalSha256 } from '../contracts/foundation/uc03.ts';
-import { validateAttemptReceiptV02 } from '../contracts/foundation/uc03/attempt-v02.ts';
-import type { ClaimReceiptV02, AttemptReceiptV02, ProviderAdmissionContextV02, ExecutorIdentityV02 } from '../contracts/foundation/uc03/ports-v02.ts';
+import { validateAttemptReceiptV02 } from '../contracts/foundation/uc03/v02/attempt.ts';
+import type { ClaimReceiptV02, AttemptReceiptV02, ProviderAdmissionContextV02, ExecutorIdentityV02 } from '../contracts/foundation/uc03/v02/ports.ts';
 import { deepClone, deepFreeze } from './model.ts';
 
 const claimKeys = ['claimId', 'claimDigest', 'taskId', 'runId', 'subjectKind', 'planApplicability',

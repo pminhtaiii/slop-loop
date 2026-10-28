@@ -1,10 +1,13 @@
 import type { PortProvenance, RepositoryPort, SourceEvidence } from '../contracts/foundation/uc03.ts';
+import type { ExecutionGuardRepositoryPortV02 } from './execution-guard.ts';
 import type {
+  RepositoryPatchResultV02,
+  RepositoryCommandResultV02,
   RepositoryPortV02,
   RepositoryAdmissionContextV02,
   ReconciliationResultV02,
-} from '../contracts/foundation/uc03/ports-v02.ts';
-import type { ApplyPatchAction, CheckDefinition, CheckResult, RunCommandAction } from '../contracts/foundation/uc03/types.ts';
+} from '../contracts/foundation/uc03/v02/ports.ts';
+import type { ApplyPatchAction, CheckDefinition, CheckResult, RunCommandAction } from '../contracts/foundation/uc03/v01/types.ts';
 import { ControlledRepositoryReader, containsProtectedContent } from './repository-read.ts';
 import { RepositoryCommandReceiver } from './repository-receiver.ts';
 import { RepositoryPatchReceiver } from './repository-outcome.ts';
@@ -31,8 +34,9 @@ export type {
 } from './repository-types.ts';
 export { containsProtectedContent };
 
-export class ControlledRepositoryTools implements RepositoryPort, RepositoryPortV02 {
+export class ControlledRepositoryTools implements RepositoryPort, ExecutionGuardRepositoryPortV02 {
   readonly provenance: PortProvenance;
+  readonly executionGuardApiVersion = '0.2.0' as const;
   private readonly reader: ControlledRepositoryReader;
   private readonly commands: RepositoryCommandReceiver;
   private readonly patches: RepositoryPatchReceiver;
@@ -83,9 +87,13 @@ export class ControlledRepositoryTools implements RepositoryPort, RepositoryPort
   listDir(dirPath: string): Promise<readonly string[]> { return this.reader.listDir(dirPath); }
   readFile(filePath: string): Promise<SourceEvidence> { return this.reader.readFile(filePath); }
   searchCode(query: string): Promise<readonly SourceEvidence[]> { return this.reader.searchCode(query); }
+  applyPatch(patch: ApplyPatchAction, context: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02>;
+  applyPatch(patch: ApplyPatchAction): ReturnType<RepositoryPort['applyPatch']>;
   applyPatch(patch: ApplyPatchAction, context?: RepositoryAdmissionContextV02): Promise<{ readonly applied: boolean; readonly newRevisionDigest: string }> {
     return this.patches.applyPatch(patch, context);
   }
+  runCommand(action: RunCommandAction, context: RepositoryAdmissionContextV02): Promise<RepositoryCommandResultV02>;
+  runCommand(action: RunCommandAction): ReturnType<RepositoryPort['runCommand']>;
   runCommand(action: RunCommandAction, context?: RepositoryAdmissionContextV02): Promise<{ readonly exitCode: number; readonly stdout: string; readonly stderr: string }> {
     return this.commands.runCommand(action, context);
   }
@@ -109,6 +117,6 @@ export class ControlledRepositoryTools implements RepositoryPort, RepositoryPort
 
 export class ControlledRepositoryToolsV02 extends ControlledRepositoryTools implements RepositoryPortV02 {}
 
-export function createRepositoryReceiverV02(options: ControlledRepositoryToolsOptions): RepositoryPortV02 {
+export function createRepositoryReceiverV02(options: ControlledRepositoryToolsOptions): ExecutionGuardRepositoryPortV02 {
   return new ControlledRepositoryTools(options);
 }

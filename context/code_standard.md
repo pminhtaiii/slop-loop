@@ -16,11 +16,11 @@ Validate configuration, model output, tool arguments, persisted state, and provi
 
 ## Module and runtime boundaries
 
-Organize modules around capabilities, with small public interfaces and acyclic dependencies. CLI and HTTP adapters parse input, call a use case, and translate typed outcomes into process exits or protocol responses. Keep workflow and domain decisions in control modules; put tool execution, persistence, and provider IO behind separate boundaries. Do not assume an HTTP framework or health endpoint exists.
+Organize modules around capabilities, with small public interfaces and acyclic dependencies. Name files for the behavior they own: type declarations and state reducers stay separate from workflow execution. Foundation and approval contracts use `v01/` and `v02/` folders behind the stable `src/contracts/foundation/uc03.ts` and `src/contracts/approvals/contracts.ts` entries, avoiding repeated contract/version prefixes in private filenames. Keep schema identifiers and exported names stable during file reorganization. CLI and HTTP adapters parse input, call a use case, and translate typed outcomes into process exits or protocol responses. Keep workflow and domain decisions in control modules; put tool execution, persistence, and provider IO behind separate boundaries. Do not assume an HTTP framework or health endpoint exists.
 
 Pass dependencies through parameters or constructors so they are visible at call sites and replaceable in focused checks; no dependency injection framework is required. Keep policy decisions in deterministic code; model suggestions and prompts do not replace validation or authorization. See [Architecture](architecture.md) and [Tools and permissions](tools_permissions.md) for ownership and policy boundaries.
 
-A public wrapper that only forwards across a port is an intentional boundary: pass input through, preserve the typed result, and add no policy, persistence, or duplicate effect. On validation or permission refusal, return the typed refusal without changing persisted state or invoking downstream effects.
+A public wrapper that only forwards across a port is an intentional boundary: pass input through, preserve the typed result, and add no policy, persistence, or duplicate effect. ESLint mechanically rejects transitionContexts and v02Calls mock-private access and tests/runtime/support imports only under src/; typed production methods such as getJournalSnapshot remain valid through their declared contract. On validation or permission refusal, return the typed refusal without changing persisted state or invoking downstream effects.
 
 ## LangGraph workflow code
 

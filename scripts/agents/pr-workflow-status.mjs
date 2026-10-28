@@ -1,4 +1,5 @@
 import { featureBranch as featureName } from './pr-conventions.mjs';
+import { localGateStatus, localVerifiedHead } from './pr-workflow-push-only.mjs';
 const checksRequired = ['contributor-checks (ubuntu-latest)', 'contributor-checks (windows-latest)', 'runtime-checks (ubuntu-latest)', 'runtime-checks (windows-latest)'];
 export { featureName };
 export function validSummary(value) {
@@ -37,5 +38,6 @@ export function workflowSummary(record) {
   if (record.usage || !record.schemaVersion) return record;
   const unresolved = (record.observation?.unresolved ?? []).map(thread => ({ id: thread.id, isOutdated: thread.isOutdated, urls: thread.comments?.nodes.map(comment => comment.url) ?? [] }));
   const logs = Object.fromEntries(Object.entries(record.gateLogs ?? {}).map(([name, gate]) => [name, { status: gate.status, exitCode: gate.exitCode, log: gate.log, durationMs: gate.durationMs }]));
-  return { status: record.status, branch: record.branch, head: record.head ?? record.publishedHead, pr: record.pr, url: record.url, submission: record.submission, size: record.size, reason: record.reason ?? record.observation?.reason, repairRounds: record.repairRounds.length, failedChecks: record.observation?.failedChecks ?? [], unresolved, logs, localVerifiedHead: record.localVerification?.head };
+  const head = record.head ?? record.publishedHead;
+  return { status: record.status, branch: record.branch, head, publishedHead: record.publishedHead, pr: record.pr, url: record.url, submission: record.submission, size: record.size, reason: record.reason ?? record.observation?.reason, publicationMode: record.publicationMode ?? 'full', publicationReason: record.publicationReason, repairRounds: record.repairRounds.length, failedChecks: record.observation?.failedChecks ?? [], unresolved, logs, localVerifiedHead: localVerifiedHead(record), localGateStatus: localGateStatus(record, head) };
 }

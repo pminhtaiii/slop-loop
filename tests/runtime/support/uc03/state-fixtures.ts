@@ -29,12 +29,13 @@ import {
   type ApprovalBinding,
   type StateTransitionOptions,
   type RunCommandAction,
+  type PolicyAuthorityRefV02,
   type ProviderUsage,
   CONTRACT_VERSION,
   computeCanonicalSha256,
   computeAdmissionDigest,
 } from '../../../../src/contracts/foundation/uc03.ts';
-import { computeRequestContentDigest } from '../../../../src/contracts/foundation/uc03/admission-v02.ts';
+import { computeRequestContentDigest } from '../../../../src/contracts/foundation/uc03/v02/admission.ts';
 export function createTestBugTask(overrides?: Partial<BugTask>): BugTask {
   return {
     taskId: 'task-uc03-test-001',
@@ -373,8 +374,12 @@ export function createTestAdmissionLedgers(configId = 'config-uc03-v1'): BudgetL
   ];
 }
 
+type RepositoryAdmissionFixtureOptions = Partial<Record<string, unknown>> & {
+  readonly policyAuthorityRef?: PolicyAuthorityRefV02;
+};
+
 export function createTestRepositoryAdmissionContextV02(
-  overrides?: Partial<Record<string, unknown>>
+  overrides?: RepositoryAdmissionFixtureOptions
 ): RepositoryAdmissionContextV02 {
   const taskId = (overrides?.taskId as string | undefined) ?? 'task-calc-001';
   const runId = (overrides?.runId as string | undefined) ?? 'run-001';
@@ -392,7 +397,7 @@ export function createTestRepositoryAdmissionContextV02(
     baseRevisionDigest: canonicalRevision,
   };
   const actionDigest = (overrides?.actionDigest as string | undefined) ?? computeActionDigest(action);
-  const policyAuthorityRef = {
+  const policyAuthorityRef = overrides?.policyAuthorityRef ?? {
     policyId: 'policy-default',
     policyVersion: '1.0.0',
     configId: 'config-default',
@@ -594,7 +599,7 @@ export function createTestRepositoryAdmissionTrustedContextV02(
 }
 
 export function createTestRepositoryCommandAdmissionContextV02(
-  overrides?: Partial<Record<string, unknown>>,
+  overrides?: RepositoryAdmissionFixtureOptions,
 ): RepositoryAdmissionContextV02 {
   const action = (overrides?.action as RunCommandAction | undefined) ?? createTestAction({
     actionId: 'act-command-admission-001',
@@ -826,7 +831,7 @@ export function createTestRepositoryOutcomeReceiptV02(
       revision: observedResultRevisionDigest
         ? { kind: 'advance', revisionDigest: observedResultRevisionDigest }
         : { kind: 'preserve' },
-      invalidatedEvidence: outcome === 'observed' && isPatch ? [safeRef('evidence-prior-baseline')] : [],
+      invalidatedEvidence: [],
       accounting: {
         disposition: outcome === 'observed' ? 'settle' : outcome === 'uncertain' ? 'hold' : 'release-unused',
         reservationRefs,

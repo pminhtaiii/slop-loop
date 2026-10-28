@@ -14,6 +14,22 @@
  */
 
 import { createHash } from 'node:crypto';
+import type {
+  PolicyEvaluationReceiptV02,
+  ActionDecisionReceiptV02,
+  ProviderAdmissionReceiptV02,
+  DispatchClaimV02,
+  ClaimClosureReceiptV02,
+} from '../../../../src/contracts/approvals/contracts.ts';
+import {
+  UC05_APPROVAL_SCHEMA_VERSION_V02,
+  computePolicyEvaluationReceiptDigest,
+  computeActionDecisionReceiptDigest,
+  computeProviderAdmissionReceiptDigest,
+  computeDispatchClaimDigestV02,
+  computeClaimClosureReceiptDigest,
+} from '../../../../src/contracts/approvals/contracts.ts';
+
 
 export const UC05_FIXTURE_SCHEMA_VERSION = 'uc05-case-fixture/1' as const;
 export const UC05_FIXTURE_VERSION = 'uc05-local-v1' as const;
@@ -750,4 +766,211 @@ function deepFreeze<T>(value: T): T {
     Object.freeze(value);
   }
   return value;
+}
+
+/* ------------------------------------------------------------------
+ * UC-05 v0.2.0 Fixture Scaffolds (T057)
+ * ------------------------------------------------------------------ */
+
+export const UC05_FIXTURE_SCHEMA_VERSION_V02 = 'uc05-case-fixture/2' as const;
+
+export function createFixturePolicyEvaluationReceiptV02(overrides?: Partial<PolicyEvaluationReceiptV02>): PolicyEvaluationReceiptV02 {
+  const receiptId = overrides?.receiptId ?? 'eval-receipt-v02-001';
+  const actionDigest = overrides?.actionDigest ?? stableHash('action-v02-default');
+  const freshnessContextDigest = overrides?.freshnessContextDigest ?? stableHash('freshness-v02-default');
+  const policyId = overrides?.policyId ?? 'policy-1';
+  const policyVersion = overrides?.policyVersion ?? '1.0.0';
+  const configId = overrides?.configId ?? 'config-1';
+  const configVersion = overrides?.configVersion ?? '1.0.0';
+  const decisionAuthorityGeneration = overrides?.decisionAuthorityGeneration ?? 1;
+  const result = overrides?.result ?? 'ALLOWED';
+
+  const body = {
+    schemaVersion: UC05_APPROVAL_SCHEMA_VERSION_V02,
+    receiptId,
+    actionDigest,
+    freshnessContextDigest,
+    policyId,
+    policyVersion,
+    configId,
+    configVersion,
+    decisionAuthorityGeneration,
+    result,
+  };
+  const receiptDigest = overrides?.receiptDigest ?? computePolicyEvaluationReceiptDigest(body);
+  return deepFreeze({ ...body, receiptDigest }) as PolicyEvaluationReceiptV02;
+}
+
+export function createFixtureActionDecisionReceiptV02(overrides?: Partial<ActionDecisionReceiptV02>): ActionDecisionReceiptV02 {
+  const decisionId = overrides?.decisionId ?? 'decision-v02-001';
+  const actionDigest = overrides?.actionDigest ?? stableHash('action-v02-default');
+  const evaluationReceiptRef = overrides?.evaluationReceiptRef ?? 'eval-receipt-v02-001';
+  const decisionAuthorityGeneration = overrides?.decisionAuthorityGeneration ?? 1;
+  const status = 'approved' as const;
+  const reason = overrides?.reason ?? 'Approved by authorized operator';
+
+  const body = {
+    schemaVersion: UC05_APPROVAL_SCHEMA_VERSION_V02,
+    decisionId,
+    actionDigest,
+    evaluationReceiptRef,
+    decisionAuthorityGeneration,
+    status,
+    ...(reason !== undefined ? { reason } : {}),
+  };
+  const decisionDigest = overrides?.decisionDigest ?? computeActionDecisionReceiptDigest(body);
+  return deepFreeze({ ...body, decisionDigest }) as ActionDecisionReceiptV02;
+}
+
+export function createFixtureProviderAdmissionReceiptV02(overrides?: Partial<ProviderAdmissionReceiptV02>): ProviderAdmissionReceiptV02 {
+  const receiptId = overrides?.receiptId ?? 'prov-receipt-v02-001';
+  const providerRequestId = overrides?.providerRequestId ?? 'req-v02-001';
+  const role = overrides?.role ?? 'coder';
+  const policyId = overrides?.policyId ?? 'policy-1';
+  const policyVersion = overrides?.policyVersion ?? '1.0.0';
+  const requestContentDigest = overrides?.requestContentDigest ?? stableHash('req-content-v02-default');
+  const providerId = overrides?.providerId ?? 'provider-mock';
+  const modelId = overrides?.modelId ?? 'model-mock';
+  const configId = overrides?.configId ?? 'config-1';
+  const configVersion = overrides?.configVersion ?? '1.0.0';
+  const decisionAuthorityGeneration = overrides?.decisionAuthorityGeneration ?? 1;
+  const planApplicability = overrides?.planApplicability ?? 'pre-plan-diagnostic';
+
+  const base = {
+    schemaVersion: UC05_APPROVAL_SCHEMA_VERSION_V02,
+    receiptId,
+    providerRequestId,
+    role,
+    policyId,
+    policyVersion,
+    requestContentDigest,
+    providerId,
+    modelId,
+    configId,
+    configVersion,
+    decisionAuthorityGeneration,
+  };
+
+  const candidate = planApplicability === 'pre-plan-diagnostic'
+    ? {
+      ...base,
+      receiptDigest: '',
+      planApplicability: 'pre-plan-diagnostic' as const,
+      diagnosticPurpose: overrides?.diagnosticPurpose ?? 'Initial baseline reproduction',
+      taskCriteriaDigest: overrides?.taskCriteriaDigest ?? stableHash('criteria-v02-default'),
+    }
+    : {
+      ...base,
+      receiptDigest: '',
+      planApplicability: 'approved-plan' as const,
+      planBindingDigest: overrides?.planBindingDigest ?? stableHash('plan-binding-v02-default'),
+      planDecisionRef: overrides?.planDecisionRef ?? 'decision-plan-v02-001',
+    };
+
+  const receiptDigest = overrides?.receiptDigest ?? computeProviderAdmissionReceiptDigest(candidate);
+  return deepFreeze({ ...candidate, receiptDigest }) as ProviderAdmissionReceiptV02;
+}
+
+export function createFixtureDispatchClaimV02(overrides?: Partial<DispatchClaimV02>): DispatchClaimV02 {
+  const claimId = overrides?.claimId ?? 'claim-v02-001';
+  const taskId = overrides?.taskId ?? 'task-1';
+  const runId = overrides?.runId ?? 'run-1';
+  const taskStateSchemaVersion = overrides?.taskStateSchemaVersion ?? '0.2.0';
+  const expectedTaskStateVersion = overrides?.expectedTaskStateVersion ?? 1;
+  const controlSchemaVersion = overrides?.controlSchemaVersion ?? 'uc05-approval/0.2-draft';
+  const expectedControlVersion = overrides?.expectedControlVersion ?? 1;
+  const expectedEpoch = overrides?.expectedEpoch ?? 1;
+  const policyIdentity = overrides?.policyIdentity ?? { policyId: 'policy-1', policyVersion: '1.0.0', configId: 'config-1', configVersion: '1.0.0' };
+  const decisionRefs = overrides?.decisionRefs ?? ['decision-v02-001'];
+  const reservationRefs = overrides?.reservationRefs ?? ['res-v02-001'];
+  const phase = overrides?.phase ?? 'claimed';
+  const actionId = (overrides as { actionId?: string })?.actionId ?? 'action-v02-001';
+  const actionDigest = (overrides as { actionDigest?: string })?.actionDigest ?? stableHash('action-v02-default');
+  const repositoryStateDigest = (overrides as { repositoryStateDigest?: string })?.repositoryStateDigest ?? stableHash('repo-state-v02-default');
+
+  const base = {
+    schemaVersion: UC05_APPROVAL_SCHEMA_VERSION_V02,
+    claimId,
+    taskId,
+    runId,
+    taskStateSchemaVersion,
+    expectedTaskStateVersion,
+    controlSchemaVersion,
+    expectedControlVersion,
+    expectedEpoch,
+    policyIdentity,
+    decisionRefs,
+    reservationRefs,
+    subjectKind: 'repository-action' as const,
+    planApplicability: 'pre-plan-diagnostic' as const,
+    actionId,
+    actionDigest,
+    repositoryStateDigest,
+    diagnosticPurpose: 'Baseline repro',
+    taskCriteriaDigest: stableHash('criteria-v02-default'),
+  };
+
+  const withPhase = phase === 'claimed'
+    ? { ...base, phase: 'claimed' as const, resultRef: null }
+    : phase === 'attempting'
+    ? { ...base, phase: 'attempting' as const, attemptId: (overrides as { attemptId?: string })?.attemptId ?? 'attempt-v02-001', resultRef: null }
+    : { ...base, phase: phase as 'dispatched' | 'outcome-recorded' | 'settled' | 'uncertain' | 'observed-unsettled', attemptId: (overrides as { attemptId?: string })?.attemptId ?? 'attempt-v02-001', resultRef: (overrides as { resultRef?: string })?.resultRef ?? 'result-v02-001' };
+
+  const claimDigest = overrides?.claimDigest ?? computeDispatchClaimDigestV02(withPhase as DispatchClaimV02);
+  return deepFreeze({ ...withPhase, claimDigest }) as DispatchClaimV02;
+}
+
+export function createFixtureClaimClosureReceiptV02(overrides?: Partial<ClaimClosureReceiptV02>): ClaimClosureReceiptV02 {
+  const receiptId = overrides?.receiptId ?? 'closure-v02-001';
+  const claimId = overrides?.claimId ?? 'claim-v02-001';
+  const claimDigest = overrides?.claimDigest ?? stableHash('claim-v02-digest');
+  const taskId = overrides?.taskId ?? 'task-1';
+  const runId = overrides?.runId ?? 'run-1';
+  const taskStateSchemaVersion = '0.2.0';
+  const expectedTaskStateVersion = overrides?.expectedTaskStateVersion ?? 1;
+  const controlSchemaVersion = 'uc05-approval/0.2-draft';
+  const expectedControlVersion = overrides?.expectedControlVersion ?? 1;
+  const expectedEpoch = overrides?.expectedEpoch ?? 1;
+  const reason = overrides?.reason ?? 'Task paused before beginAttempt';
+  const pauseOrDenialEvent = overrides?.pauseOrDenialEvent ?? {
+    eventKind: 'pause' as const,
+    eventRef: 'event-pause-001',
+    eventDigest: stableHash('event-pause-digest'),
+  };
+  const fencedExecutorIdentity = overrides?.fencedExecutorIdentity ?? {
+    adapterIdentity: 'executor-adapter-001',
+    processIncarnation: 'process-incarnation-001',
+    fencingGeneration: 1,
+    payloadDigest: stableHash('action-v02-default'),
+  };
+  const noAttemptProof = overrides?.noAttemptProof ?? {
+    journalRef: 'journal-001',
+    journalDigest: stableHash('journal-digest'),
+    claimPhase: 'claimed' as const,
+  };
+  const reservationDispositions = overrides?.reservationDispositions ?? [{
+    reservationRef: 'res-v02-001',
+    disposition: 'released' as const,
+  }];
+
+  const body = {
+    schemaVersion: UC05_APPROVAL_SCHEMA_VERSION_V02,
+    receiptId,
+    claimId,
+    claimDigest,
+    taskId,
+    runId,
+    taskStateSchemaVersion,
+    expectedTaskStateVersion,
+    controlSchemaVersion,
+    expectedControlVersion,
+    expectedEpoch,
+    reason,
+    pauseOrDenialEvent,
+    fencedExecutorIdentity,
+    noAttemptProof,
+    reservationDispositions,
+  };
+  const receiptDigest = overrides?.receiptDigest ?? computeClaimClosureReceiptDigest(body);
+  return deepFreeze({ ...body, receiptDigest }) as ClaimClosureReceiptV02;
 }

@@ -1,3 +1,6 @@
+import type { ApprovalContinuationV02 } from '../../../../src/approvals/recovery-v02.ts';
+import type { AttemptOutcomeReceiptV02, AttemptReconciliationReceiptV02, ClaimClosureReceiptV02 } from '../../../../src/contracts/foundation/uc03/v02/ports.ts';
+import type { MemoryStatePortV02 } from '../uc03/memory-state.ts';
 import { isDeepStrictEqual } from 'node:util';
 import {
   type ApprovalRequestRecord,
@@ -117,8 +120,8 @@ interface ReconcileInput {
 }
 
 /**
- * Creates an in-memory UC-05 test double. Its explicit mock provenance must
- * never be adapted as a real ApprovalStorePort; it performs no durable I/O.
+ * Creates the explicit v0.1 compatibility test double. Its mock provenance
+ * never authorizes v0.2 effects or production admission, and it performs no durable I/O.
  */
 export function createMockApprovalStore(input: CreateMockApprovalStoreInput): MockApprovalStore {
   const profileResult = validatePolicyProfile(input.profile);
@@ -527,6 +530,37 @@ export function createMockApprovalStore(input: CreateMockApprovalStoreInput): Mo
   }
 }
 
+/** Explicit v0.1 test compatibility; never a v0.2 admission owner. */
+export const createMockApprovalStoreV01Compatibility = createMockApprovalStore;
+
+/** Forward to the actual in-memory UC-05 continuation and UC-04 journal owners. */
+export function createMockApprovalStoreV02(input: {
+  readonly continuation: ApprovalContinuationV02;
+  readonly journal: MemoryStatePortV02;
+}): MockApprovalStoreV02 {
+  return Object.freeze({
+    provenance: UC05_MOCK_PROVENANCE,
+    claimDispatchV02: (decisionId: string) => input.continuation.admit(decisionId),
+    recordOutcomeV02: (receipt: AttemptOutcomeReceiptV02) => input.journal.recordOutcome(receipt),
+    closeUnattemptedClaimV02: (receipt: ClaimClosureReceiptV02) => input.journal.closeUnattemptedClaim(receipt),
+    reconcileObservedOutcomeV02: (receipt: AttemptReconciliationReceiptV02) => input.journal.reconcileObservedOutcome(receipt),
+    reconcileUncertainV02: (receipt: AttemptReconciliationReceiptV02) => input.journal.reconcileUncertain(receipt),
+    publishAuthorityV02: (options: Parameters<MemoryStatePortV02['publishAuthority']>[0]) => input.journal.publishAuthority(options),
+    readHistoryV02: () => input.journal.getJournalSnapshot(),
+  });
+}
+
+export interface MockApprovalStoreV02 {
+  readonly provenance: typeof UC05_MOCK_PROVENANCE;
+  claimDispatchV02(decisionId: string): ReturnType<ApprovalContinuationV02['admit']>;
+  recordOutcomeV02(receipt: AttemptOutcomeReceiptV02): ReturnType<MemoryStatePortV02['recordOutcome']>;
+  closeUnattemptedClaimV02(receipt: ClaimClosureReceiptV02): ReturnType<MemoryStatePortV02['closeUnattemptedClaim']>;
+  reconcileObservedOutcomeV02(receipt: AttemptReconciliationReceiptV02): ReturnType<MemoryStatePortV02['reconcileObservedOutcome']>;
+  reconcileUncertainV02(receipt: AttemptReconciliationReceiptV02): ReturnType<MemoryStatePortV02['reconcileUncertain']>;
+  publishAuthorityV02(options: Parameters<MemoryStatePortV02['publishAuthority']>[0]): ReturnType<MemoryStatePortV02['publishAuthority']>;
+  readHistoryV02(): ReturnType<MemoryStatePortV02['getJournalSnapshot']>;
+}
+
 /** Return a validated audit event, or undefined when it violates the supplied test profile. */
 function validateEvent(input: unknown, profile: PolicyProfile): DecisionEvent | undefined {
   const result = validateDecisionEvent(input, profile);
@@ -553,9 +587,9 @@ function makeResponse<T>(
   outcome: SafeResult['outcome'],
   safeReasonCode: string,
   value: T | null,
-  decisionId: string | null,
-  requestVersion: number | null,
-  eventRef: string | null,
+  decisionId: string | null = null,
+  requestVersion: number | null = null,
+  eventRef: string | null = null,
 ): MockPortResponse<T> {
   const candidate: SafeResult = {
     schemaVersion: 'uc05-approval/0.1-draft',

@@ -1,65 +1,28 @@
 /** UC-03 repair; T018 replan and shared types factored into sibling modules. */
 
 import {
-  computeCanonicalSha256, computeCheckSetDigest, isProtectedPath, validateApprovalBinding,
+  computeCanonicalSha256, computeCheckSetDigest, validateApprovalBinding,
   validateStateTransition, validateTaskState, validateNormalizedAction, validateVerificationResult, validateReviewResult,
-  type TaskState, type VerificationResult, type ReviewResult, type StatePort,
+  validateRepositoryExecutionReceiptV02,
+  type TaskState, type StatePort, type StatePortV02,
   type ApplyPatchAction, type ApproveFixPlanAction, type ApprovalBindingContext,
-  type BudgetLedger, type ExecutionGuard,
+  type ExecutionGuard, type ExecutionGuardV02,
 } from '../contracts/foundation/uc03.ts';
 import type {
   RejectionInput, RejectionPorts, ReplanResult, RepairInput, RepairPorts, RepairResult,
 } from './repair-types.ts';
-import { getRejectionApprovalContext, validateRejectionInput } from './repair-types.ts';
+import {
+  getRejectionApprovalContext, validateRejectionInput, isProtectedPathOrTest,
+  isVerificationResult, isReviewResult, failureRefs, refsMatch, isSha256,
+  isPatchResult, checkAccounting, resolveRepairAdmissionContext, isStatePortV02,
+  createRepairActionId,
+} from './repair-types.ts';
+import { currentPlanApprovalIsCurrent } from './post-patch-verification-authority.ts';
+import { loadVerifiedPatchAncestry } from './graph-patch-ancestry.ts';
 
 export * from './repair-types.ts';
 export * from './replan.ts';
 
-function isVerificationResult(item: unknown): item is VerificationResult { return typeof item === 'object' && item !== null && 'testedIds' in item; }
-
-function isProtectedPathOrTest(filePath: string): boolean {
-  const norm = filePath.toLowerCase().replace(/\\/g, '/');
-  return isProtectedPath(filePath) ||
-    /(^|\/)(test|tests)(\/|$)|(^|\/)(test_[^/]*\.py|[^/]*_test\.py|conftest\.py)$/.test(norm);
-}
-
-function isReviewResult(item: unknown): item is ReviewResult {
-  return typeof item === 'object' && item !== null && 'reviewId' in item && 'findings' in item;
-}
-function failureRefs(items: readonly (VerificationResult | ReviewResult)[]) {
-  const evidence = items.map((item) => isVerificationResult(item) ? item.evidenceId : item.reviewId);
-  const actions = items.map((item) => isVerificationResult(item) ? item.actionId : item.iterationReservationRef);
-  const diagnostics = items.flatMap((item) => isVerificationResult(item) ? item.diagnosticRefs : item.findings.map((finding) => finding.evidenceRef ?? item.reviewId));
-  return { evidence, actions, diagnostics: [...new Set(diagnostics)] };
-}
-function refsMatch(actual: unknown, expected: readonly string[]): boolean { return Array.isArray(actual) && actual.length === expected.length && actual.every((ref: unknown, index: number) => typeof ref === 'string' && ref === expected[index]); }
-
-const isSha256 = (value: unknown): value is string => typeof value === 'string' && value.length === 71 && /^sha256:[a-f0-9]{64}$/.test(value);
-
-type AccountingCheck = { readonly ok: true; readonly repair: BudgetLedger } | { readonly ok: false; readonly reason: string };
-
-function checkAccounting(state: TaskState, actionId?: string, receiptId?: string): AccountingCheck {
-  const task = state.taskContext, ledgers = state.budgetLedgers;
-  if (!ledgers?.length) return { ok: false, reason: 'missing-budget-ledgers' };
-  if (!task) return { ok: false, reason: 'missing-budget-configuration' };
-  const [repair, tokens, cost] = (['repair', 'tokens', 'cost'] as const).map((kind) => ledgers.find((entry) => entry.scope === 'task' && entry.kind === kind));
-  if (!repair || !tokens || !cost) return { ok: false, reason: 'missing-budget-ledgers' };
-  for (const [ledger, limit, unit] of [[repair, task.budgetLimits.maxRepairAttempts, 'count'], [tokens, task.budgetLimits.maxTokens, 'count'], [cost, task.budgetLimits.maxCostUsd, 'usd']] as const) {
-    if (ledger.configurationId !== task.configId || ledger.limit !== limit || ledger.unit !== unit) return { ok: false, reason: 'inconsistent-budget-configuration' };
-    if (ledger.reservations.some((item) => item.amount <= 0)) return { ok: false, reason: 'inconsistent-budget-accounting' };
-    const total = ledger.consumed + ledger.reservations.reduce((sum, item) => sum + item.amount, 0);
-    if (ledger.kind === 'repair' && actionId) {
-      if (total > limit) return { ok: false, reason: 'inconsistent-budget-accounting' };
-      if (ledger.reservations.filter((item) => item.keyedId === actionId && item.amount === 1 && item.reservationId === receiptId).length !== 1) return { ok: false, reason: 'repair-reservation-not-authoritative' };
-    } else if (total >= limit) return { ok: false, reason: ledger.kind === 'repair' ? 'repair-budget-exhausted' : 'token-or-cost-budget-exhausted' };
-  }
-  if (ledgers.some((entry) => (entry.kind === 'tokens' || entry.kind === 'cost') && entry.reservations.length > 0)) return { ok: false, reason: 'uncertain-accounting-reservations' };
-  return { ok: true, repair };
-}
-
-function isPatchResult(value: unknown): value is { readonly applied: true; readonly newRevisionDigest: string } {
-  return typeof value === 'object' && value !== null && !Array.isArray(value) && 'applied' in value && value.applied === true && 'newRevisionDigest' in value && isSha256(value.newRevisionDigest);
-}
 function incomplete(state: TaskState | null, reason: string, actionId?: string, digest?: string): RepairResult {
   return { outcome: 'INCOMPLETE', state, reasons: [reason], ...(actionId ? { reservedActionId: actionId } : {}), ...(digest ? { appliedPatchDigest: digest } : {}) };
 }
@@ -96,33 +59,51 @@ export async function executeRepair(input: RepairInput, ports: RepairPorts): Pro
   const plan = state.plan;
   const task = state.taskContext;
   const approval = ports.trustedTransitionContext?.approval;
-  if (!plan?.decisionRef || !task?.requiredChecks.length || !approval || !ports.approvalPort) {
+  if (!plan?.decisionRef || !task?.requiredChecks.length || !ports.approvalPort || state.activeDecisionId !== plan.decisionRef) {
     return stop('current-approved-plan-unavailable');
   }
   const checkSetDigest = computeCheckSetDigest(task.requiredChecks);
   if (plan.checkSetDigest !== checkSetDigest) return stop('approved-plan-check-set-mismatch');
-  const planAction: ApproveFixPlanAction = {
-    actionId: plan.decisionRef, kind: 'approve_fix_plan', planVersion: state.planVersion,
-    strategyDigest: plan.strategyDigest, diagnosisEvidenceRefs: plan.evidenceRefs, checkSetDigest,
-  };
-  const currentApproval: ApprovalBindingContext = {
-    currentTaskId: state.taskId, currentWorkspaceId: state.workspaceId,
-    currentRepositoryRevisionDigest: state.repositoryRevisionDigest,
-    currentPolicyId: task.configId, currentPolicyVersion: task.configVersion,
-    currentNormalizedActionDigest: computeCanonicalSha256(planAction), currentPlanVersion: state.planVersion,
-    currentStrategyDigest: plan.strategyDigest, currentBaselineRef: plan.baselineRef,
-    currentEvidenceRefs: plan.evidenceRefs, currentCriteriaDigest: computeCanonicalSha256(state.acceptanceCriteria),
-    currentCheckSetDigest: checkSetDigest,
-  };
-  const hostBinding = validateApprovalBinding(approval.binding, approval.freshness);
-  const binding = validateApprovalBinding(approval.binding, currentApproval);
-  if (!hostBinding.ok || !binding.ok || binding.value.status !== 'approved' || binding.value.actionKind !== 'fix_plan' ||
-      binding.value.decisionId !== state.activeDecisionId || binding.value.decisionId !== plan.decisionRef) {
+  const ownerV02 = isStatePortV02(ports.statePort) ? ports.statePort : undefined;
+  const requiresCurrentApproval = ownerV02 !== undefined &&
+    (plan.decisionRef.startsWith('dec-verify-') || state.repositoryRevisionDigest !== task.initialRevisionDigest);
+  const hasCurrentPostPatchApproval = requiresCurrentApproval && ownerV02 !== undefined &&
+    await currentPlanApprovalIsCurrent(task, state, ownerV02, plan.decisionRef);
+  let isOriginalD0 = false;
+  if (!hasCurrentPostPatchApproval && ownerV02 && state.repositoryRevisionDigest !== task.initialRevisionDigest) {
+    try {
+      isOriginalD0 = (await loadVerifiedPatchAncestry(task, state, ownerV02))?.originalDecisionId === plan.decisionRef;
+    } catch { return stop('current-plan-approval-missing-or-stale'); }
+  }
+  if (requiresCurrentApproval && !hasCurrentPostPatchApproval && !isOriginalD0) {
     return stop('current-plan-approval-missing-or-stale');
   }
-  try {
-    if (!await ports.approvalPort.validateBinding(binding.value)) return stop('current-plan-approval-not-authoritative');
-  } catch { return stop('current-plan-approval-not-authoritative'); }
+  if (!hasCurrentPostPatchApproval) {
+    if (!approval) return stop('current-approved-plan-unavailable');
+    const planAction: ApproveFixPlanAction = {
+      actionId: plan.decisionRef, kind: 'approve_fix_plan', planVersion: state.planVersion,
+      strategyDigest: plan.strategyDigest, diagnosisEvidenceRefs: plan.evidenceRefs, checkSetDigest,
+    };
+    const currentApproval: ApprovalBindingContext = {
+      currentTaskId: state.taskId, currentWorkspaceId: state.workspaceId,
+      // D0 stays tied to baseline.
+      currentRepositoryRevisionDigest: task.initialRevisionDigest,
+      currentPolicyId: task.configId, currentPolicyVersion: task.configVersion,
+      currentNormalizedActionDigest: computeCanonicalSha256(planAction), currentPlanVersion: state.planVersion,
+      currentStrategyDigest: plan.strategyDigest, currentBaselineRef: plan.baselineRef,
+      currentEvidenceRefs: plan.evidenceRefs, currentCriteriaDigest: computeCanonicalSha256(state.acceptanceCriteria),
+      currentCheckSetDigest: checkSetDigest,
+    };
+    const hostBinding = validateApprovalBinding(approval.binding, approval.freshness);
+    const binding = validateApprovalBinding(approval.binding, currentApproval);
+    if (!hostBinding.ok || !binding.ok || binding.value.status !== 'approved' || binding.value.actionKind !== 'fix_plan' ||
+        binding.value.decisionId !== state.activeDecisionId || binding.value.decisionId !== plan.decisionRef) {
+      return stop('current-plan-approval-missing-or-stale');
+    }
+    try {
+      if (!await ports.approvalPort.validateBinding(binding.value)) return stop('current-plan-approval-not-authoritative');
+    } catch { return stop('current-plan-approval-not-authoritative'); }
+  }
 
   const refs = failureRefs(items);
   const ctx = ports.trustedRepairContext;
@@ -156,11 +137,8 @@ export async function executeRepair(input: RepairInput, ports: RepairPorts): Pro
   }
   if (proposal.affectedPaths.some(isProtectedPathOrTest)) return { outcome: 'DENIED', state, reasons: ['forbidden-protected-path-edit'] };
 
-  const actionId = `act-repair-${computeCanonicalSha256({
-    taskId: state.taskId, runId: state.runId, repositoryRevisionDigest: state.repositoryRevisionDigest,
-    baselineRef: plan.baselineRef, checkSetDigest, diffDigest: ctx.diffDigest,
-    evidenceRefs: refs.evidence, actionRefs: refs.actions, diagnosticRefs: refs.diagnostics,
-  })}`;
+  const actionId = createRepairActionId(state, items);
+  if (!actionId) return stop('repair-action-identity-unavailable');
   if (input.actionId !== undefined && input.actionId !== actionId) return stop('repair-action-identity-mismatch');
   if (accounting.repair.reservations.some((entry) => entry.keyedId === actionId) || state.evidenceRefs.includes(`repair-action:${actionId}`)) {
     return stop('repair-evidence-already-reserved');
@@ -178,8 +156,61 @@ export async function executeRepair(input: RepairInput, ports: RepairPorts): Pro
     if (permission !== 'ALLOWED') return stop('patch-action-approval-required');
   } catch { return stop('patch-policy-unavailable'); }
 
+  // Check if v0.2 atomic admission is active
+  const admissionContext = resolveRepairAdmissionContext(ports, ctx);
+  if (isStatePortV02(ports.statePort) && !admissionContext) return stop('repair-admission-context-required');
+  if (admissionContext && !isStatePortV02(ports.statePort)) return stop('repair-admission-version-mismatch');
+  if (admissionContext && isStatePortV02(ports.statePort)) {
+    let effect: Awaited<ReturnType<ExecutionGuard['validateAndExecute']>>;
+    try {
+      effect = await (ports.executionGuard as ExecutionGuardV02).validateAndExecute(admittedAction.value, state, admissionContext);
+    } catch {
+      return incomplete(state, 'repair-effect-uncertain', actionId);
+    }
+
+    if (effect.outcome !== 'success') {
+      const latest = await safeReload(ports.statePort, input.taskId, state);
+      const reason = (effect as { reason?: string }).reason;
+      return effect.outcome === 'denied'
+        ? { outcome: 'DENIED', state: latest, reasons: [reason ?? 'patch-action-denied'], reservedActionId: actionId }
+        : incomplete(latest, reason ?? 'repair-effect-not-confirmed', actionId);
+    }
+
+    let latest: TaskState | null;
+    try {
+      latest = await ports.statePort.loadTask(input.taskId);
+    } catch {
+      return incomplete(state, 'authoritative-task-state-unavailable', actionId);
+    }
+
+    if (!latest || latest.node !== 'Verify' || !validateTaskState(latest).ok) {
+      return incomplete(latest ?? state, 'repair-verification-transition-result-inconsistent', actionId);
+    }
+
+    const patch = isPatchResult(effect.result) ? effect.result : undefined;
+    const settled = patch?.executionReceipt === undefined || !admissionContext
+      ? undefined
+      : validateRepositoryExecutionReceiptV02(patch.executionReceipt, admissionContext);
+    if (!patch || !settled?.ok || settled.value.outcome.repositoryOperation !== 'apply-patch' ||
+        settled.value.outcome.observedResultRevisionDigest !== patch.newRevisionDigest ||
+        latest.repositoryRevisionDigest !== patch.newRevisionDigest) {
+      return incomplete(latest, 'repair-owner-settlement-receipt-unavailable-or-stale', actionId);
+    }
+
+    const digest = computeCanonicalSha256(proposal.diff);
+    return {
+      outcome: 'REPAIR_PREPARED',
+      state: latest,
+      reasons: [],
+      reservedActionId: actionId,
+      appliedPatchDigest: digest,
+      executionReceipt: settled.value,
+    };
+  }
+
+  // Legacy v0.1 reservation and state CAS flow
   let receiptId: string;
-  try { receiptId = await ports.statePort.reserve('task', 'repair', 1, actionId); }
+  try { receiptId = await (ports.statePort as StatePort).reserve('task', 'repair', 1, actionId); }
   catch { return stop('repair-reservation-failed'); }
   if (!receiptId.trim()) return stop('repair-reservation-unconfirmed', actionId);
   let reserved: TaskState | null;
@@ -205,7 +236,7 @@ export async function executeRepair(input: RepairInput, ports: RepairPorts): Pro
     return incomplete(reserved, 'repair-transition-prevalidation-failed', actionId);
   }
   let effect: Awaited<ReturnType<ExecutionGuard['validateAndExecute']>>;
-  try { effect = await ports.executionGuard.validateAndExecute(admittedAction.value, state); }
+  try { effect = await (ports.executionGuard as ExecutionGuard).validateAndExecute(admittedAction.value, state); }
   catch { return incomplete(reserved, 'repair-effect-uncertain', actionId); }
   if (effect.outcome !== 'success') {
     return effect.outcome === 'denied'
@@ -220,7 +251,7 @@ export async function executeRepair(input: RepairInput, ports: RepairPorts): Pro
   let patched: TaskState;
   let transitioned: TaskState;
   try {
-    patched = await ports.statePort.transition(next, state.stateVersion);
+    patched = await (ports.statePort as StatePort).transition(next, state.stateVersion);
     if (!validateStateTransition(state, patched, { trusted: ports.trustedTransitionContext }).ok) {
       return failPatch(reserved, 'repair-transition-result-inconsistent');
     }
@@ -229,7 +260,7 @@ export async function executeRepair(input: RepairInput, ports: RepairPorts): Pro
       repositoryRevisionDigest: revision,
       activeDecisionId: undefined, reviewRefs: [], latestReviewRef: undefined,
     };
-    transitioned = await ports.statePort.transition(verified, patched.stateVersion);
+    transitioned = await (ports.statePort as StatePort).transition(verified, patched.stateVersion);
   }
   catch {
     return failPatch(reserved, 'repair-transition-not-confirmed');
@@ -282,4 +313,4 @@ export async function handlePlanRejection(input: RejectionInput, ports: Rejectio
   return rejectionResult('AWAIT_FEEDBACK', saved, ['stored-plan-rejection-confirmed', 'explicit-human-direction-required']);
 }
 
-async function safeReload(statePort: StatePort, taskId: string, fallback: TaskState): Promise<TaskState> { try { const latest = await statePort.loadTask(taskId); return latest && latest.taskId === taskId && validateTaskState(latest).ok ? latest : fallback; } catch { return fallback; } }
+async function safeReload(statePort: StatePort | StatePortV02, taskId: string, fallback: TaskState): Promise<TaskState> { try { const latest = await statePort.loadTask(taskId); return latest && latest.taskId === taskId && validateTaskState(latest).ok ? latest : fallback; } catch { return fallback; } }

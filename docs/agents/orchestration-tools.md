@@ -58,6 +58,17 @@ The `--workspace` value must be a Git checkout root. The example sets PowerShell
 
 Malformed or oversized JSON is rejected before any output write. Existing files, linked session directories, and invalid output names are refused. Log text is returned as UTF-8 text with file size, retained byte and line counts, and a truncation flag; the CLI does not return a base64 or full log copy.
 
+## Batch readiness
+
+Use `agent-context.mjs batch` to report a read-only dependency frontier and `review-ready` to check whether an integrated task batch is ready for its single end-of-batch review:
+
+```powershell
+node scripts/agents/agent-context.mjs batch --tasks <tasks.md> --scope T057-T061 [--scope T063] [--authorized T057] [--session <id>] [--root <checkout>]
+node scripts/agents/agent-context.mjs review-ready --tasks <tasks.md> --scope T057-T061 [--scope T063] [--authorized T057] [--session <id>] [--no-review] [--root <checkout>]
+```
+
+Scopes accept canonical task IDs or inclusive ranges. A dependency-ready frontier does not grant authorization: only IDs supplied with `--authorized` are reported as caller-provided. `review-ready` blocks on unchecked closure tasks, unknown or external prerequisites, active or blocked scoped workers, unintegrated handoffs, and path conflicts. With `--no-review`, `review.status` is `skipped`, `review.reviewed` is `false`, and `review.acceptanceCertified` is `false`; it records an opted-out review, not a review pass or acceptance certificate.
+
 ## Source boundary lint
 
-ESLint applies two restrictions only to files under `src/`: access to the mock-private `transitionContexts` property, including dot and computed-string access, and imports from `tests/runtime/support`. Runtime test support remains available to tests. The public `StatePort` methods and ordinary `unknown` casts remain usable.
+ESLint applies source-only restrictions under `src/`: access to mock-private `transitionContexts` and `v02Calls`, including computed-string and destructuring access, and imports from `tests/runtime/support`. Runtime test support remains available to tests. Typed production methods such as `getJournalSnapshot` and ordinary `unknown` casts remain usable through their declared contracts.

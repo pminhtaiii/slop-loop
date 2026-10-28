@@ -1,0 +1,42 @@
+# Proposed approved-patch attempt accounting clarification
+
+Status: user-selected local mock rule on 2026-10-27 (Asia/Saigon); cross-owner contract acceptance remains unconfirmed. The user selected every approved patch consuming one allowance and directed continuation with a report afterward. This authorizes the narrow local implementation below without supplying external owner signoff. T026 remains incomplete until its checks and independent reviews pass. No real integration or production authority is established here.
+
+## Concrete blocker
+
+An owner-generated approved-plan `apply_patch` admitted from `runnableNode: Patch` consumes an allowance and advances task version at `beginAttempt` in the current controlled UC-04 mock. Its settled receipt is rejected by `validateRepositoryExecutionReceiptV02`, which expects that advance only for `runnableNode: Repair`. The isolated public-seam reproduction fails deterministically; its local evidence is `docs/verification/uc03-route-patch-diagnosis.md` and `.agent-work/2026-10-26/uc03-route-evaluation/uc03-route-patch-repro.mts`. These paths are local evidence, not shipped acceptance prerequisites.
+
+The atomic admission amendment defines repair consumption and `Repair -> Patch`, but does not explicitly define whether the first approved patch already at `Patch` belongs to that allowance. The receiver receipt handoff requires approved patch settlement to `Verify`; it does not resolve this begin-attempt distinction. UC-04 owns accounting and state progression; UC-05 retains policy/decision authority; UC-03 consumes their exact records.
+
+## Selected local rule; external acceptance pending
+
+Every repository-action `apply_patch` with `planApplicability: approved-plan` consumes exactly one existing task-scoped patch/repair attempt allowance, including the first approved patch at `Patch`. This is a clarification of the allowance predicate, not an extra reservation or allowance reset. The user selected this local rule explicitly; the current mock owner's broad predicate alone is not evidence of approval or external agreement.
+
+| Admitted branch | Claim | Successful beginAttempt | Observed settled result |
+|---|---|---|---|
+| Approved patch from Patch | Reserve one existing allowance; task version S0 unchanged | Consume once; task version S0 + 1; node remains Patch | Advance task version once again; exact observed revision and invalidation; node Verify |
+| Approved patch from Repair | Reserve one existing allowance; task version S0 unchanged | Consume once; task version S0 + 1; Repair -> Patch | Advance task version once again; exact observed revision and invalidation; node Verify |
+| Pre-plan diagnostic test patch | Existing diagnostic resources only; no repair allowance | Preserve task version and Investigate node | Preserve diagnostic task-state semantics; record exact resulting revision through the existing protocol |
+| Command/test/provider attempt | Existing branch-specific resources | Preserve task version at beginAttempt | Existing branch-specific settlement |
+
+Control-version progression, exact claim/attempt identity, executor fencing, pause ordering, uncertain/observed-unsettled recovery and no-blind-replay rules remain those of the atomic admission amendment. Failed/partial/uncertain attempted approved patches consume once without automatic refund. Unattempted claims close only with the existing fenced proof. Plan and action decisions remain separate; this rule grants neither approval nor effect authority.
+
+## Alternative requiring a different implementation
+
+If owners choose to exclude the first Patch from repair allowances, preserve its task version at beginAttempt and reserve only its independently defined repository-operation resources. The initial patch still settles Patch -> Verify. Split the broad owner/outcome-validator predicates into approved-patch settlement versus repair-attempt accounting, update all affected reservation/attempt/recovery paths, and specify which finite allowance bounds initial patch attempts. Do not implement this alternative without that resource decision; do not borrow the repair allowance implicitly.
+
+## Conditional implementation scope
+
+The accounting correction owns `src/contracts/foundation/uc03/v02/attempt.ts` and `tests/runtime/contract/atomic-admission.test.ts`: align the settled handoff predicate with the selected approved-plan apply_patch rule while retaining strict versions. Focused initial-Patch recovery assertions may use `tests/runtime/contract/atomic-admission-mocks.test.ts` and the existing public mock owner; do not change its authority or invent receipts.
+
+The separately assigned T026 route correction owns `src/uc03/graph.ts`, `graph-nodes.ts`, `graph-types.ts`, `graph-completion.ts`, `graph-validation.ts`, `src/cli/uc03.ts`, `tests/runtime/unit/uc03-graph.test.ts`, and `tests/runtime/support/uc03/graph-fixtures.ts`. Supply the existing trusted repair context, retain the exact latest guard-issued settled repair admission/receipt through a transparent typed handoff, preserve the original baseline separately, and validate the correct Patch or Repair ancestry. Expose a validated revised candidate plan under explicit human direction instead of comparing the old plan to itself. Sanitize boundary exceptions. These consumer corrections are acceptance dependencies of T026, separate from the two-path accounting predicate change. An additive exact-result handoff may change `src/uc03/repair.ts`, `src/uc03/repair-types.ts`, and `tests/runtime/unit/uc03-repair.test.ts` only if existing public guard results cannot be forwarded without it; keep existing callers source-compatible and never add a second reservation or state CAS.
+
+No shared foundation port signature, production adapter, durable backend or real-container profile is selected. Other paths require assignment before edits. The accounting worker and route worker have disjoint ownership; route completion waits for the accounting handoff.
+
+Required regressions: first Patch consumes exactly one allowance and has the selected version/node progression; Repair consumes exactly once; stale/duplicate receipts cannot advance or dispatch again; command/provider task-version mutation stays rejected; diagnostic patch keeps its distinct semantics; exhausted allowance yields zero patch invocation. Initial-Patch failed/partial attempts retain one charge without refund; begin-response loss leaves an open claim with no replay; fenced pre-attempt closure has zero invocation; observed-unsettled/lost-settlement-response and uncertain reconciliation require exact predecessors, preserve holds and monotone versions, and repeated recovery cannot reapply or recharge. Reuse public journal tests; actual restart remains separately gated. The graph must then demonstrate baseline, approval, patch, verification, independently accounted review and honest completion, plus pending/feedback and a repair using fresh receipt/revision/check/review evidence. A material changed candidate consumes one replan allowance and requires renewed approval before patch; minor clarification and fourth-replan refusal remain separate. Assert both persisted accounting/state and returned outcomes, with zero dispatch on missing/stale/exhausted authority. A test expecting the known failure is not positive-route acceptance.
+
+Run typecheck, build, focused source and matching emitted contract/graph suites, then the independent Standards and Spec reviews. Keep T026 unchecked until its full acceptance passes. Refresh affected context through the context updater; publish through the contributor gates. T024/T025/T028 still need their real prerequisites, and no successor task is released.
+
+## Decision and quality gate
+
+The user selected the broad rule and directed continuation on 2026-10-27; record that local-only direction and exact scope in `decisions.md`. External owner agreement is unconfirmed, not user-relayed signoff. Real/shared-owner acceptance remains pending. The two R2 reviews found the accounting matrix coherent; the Spec review's missing-route-scope P1 is addressed by the separate exact assignments above, and both recovery-test advisories are included explicitly. Revalidate and review this narrow correction to the plan before source implementation. Preserve the safe IMPLEMENTED_UNVERIFIED outcome until the selected rule has a validated actual owner receipt; never synthesize successful evidence.

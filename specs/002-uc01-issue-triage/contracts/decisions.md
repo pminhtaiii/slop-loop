@@ -1,6 +1,6 @@
 # Decisions and Authorization: UC-01
 
-**Status**: T001 artifact and consumer-contract agreement approved on 2026-10-18 (Asia/Bangkok). T002–T010 completed under separate authorization at the controlled local level. On 2026-10-19 (Asia/Bangkok), the user authorized Phase 5, T009–T010, for configured recommendation through controlled shared ports. T014 was separately authorized on 2026-10-20 (Asia/Bangkok); T011–T013, T015–T016 and real execution remain separately gated.
+**Status**: T001 artifact and consumer-contract agreement approved on 2026-10-18 (Asia/Bangkok). T002–T010 completed under separate authorization at the controlled local level. On 2026-10-19 (Asia/Bangkok), the user authorized Phase 5, T009–T010, for configured recommendation through controlled shared ports. T014 was separately authorized on 2026-10-20 (Asia/Bangkok); T013 is separately authorized on 2026-10-28 for versioned receiver compatibility after UC-03 T011/T012; T011/T012, T015/T016 and real execution remain separately gated.
 
 ## T001 approval provenance and approved agreement
 
@@ -39,12 +39,12 @@ On 2026-10-20 (Asia/Bangkok), the user requested: **“Thực hiện Implement T
 
 | Gate | Decision required / evidence | Owner | Blocks |
 |---|---|---|---|
-| A-ARTIFACTS | SATISFIED for the approved baseline and reviewed amendments; subsequent implementation authority covers T002–T010 and mock-only T014 as recorded above | Project owner with Thai | T011–T013 and T015–T016 require separate implementation authorization |
+| A-ARTIFACTS | SATISFIED for the approved baseline and reviewed amendments; subsequent implementation authority covers T002–T010 and mock-only T014 as recorded above | Project owner with Thai | T013 authorized on 2026-10-28 for the receiver only; T011/T012 and T015/T016 retain separate implementation gates |
 | X-FOUNDATION-AGREEMENT | SATISFIED by user-reported member approval of `uc01-consumer-v1`, `uc01-fixture-v1`, evidence projection and path ownership above | Thai + Tai; Thanh Tan/Trong Tan for accounting/policy bindings | T001 agreement exit met; mocks still require explicit task implementation authorization |
 | X-READ-MODEL | Real shared read/search and model adapters with guards and actual revisions; no forced bug TaskState | Tai | T011, T012 |
 | X04-STATE | Durable task budgets/reservations/uncertain-use reconciliation and continuation binding; real restart evidence | Thanh Tan | T011, T012 |
 | X05-GATE | Policy classification, bound pause/resume/denial for shared actions | Trong Tan | T011, T012 |
-| X-RECEIVER | Receiving owner agrees assessment projection and admission requirements; no dispatch from UC-01 | Receiving workflow owner + Thai | T013 only; not fixture recommendation |
+| X-RECEIVER | SATISFIED for uc01-uc03-receiver-v1: delegated agreement, actual UC-03 T012 and C21 source/emitted 14/14; see quickstart | Receiving workflow owner + Thai via user-reported delegation | T013 only; no dispatch or real-provider acceptance |
 | A-PRODUCTION | Provider/model, catalog defaults, finite numeric limits/pricing, deployment and isolation config approved | Project owner + shared owners | Any real constrained operation |
 | A-EVALUATION | Approve frozen held-out corpus/labels/rules, isolation, comparability plan, remaining quality/latency thresholds and real-run authorization; retain user-supplied >=80% classification floor | Thai + project owner; Tai harness | T015 exit / runtime acceptance, not early local case design |
 | X-EVAL-AGREEMENT | Approve versioned case/result/registration/grading/aggregation and isolation seam from evaluation.md; reconcile other UC versions and project manifest ownership | Tai + Thai; leader for project scope | T015 shared registration; not earlier authorized local contract/mock checks |
@@ -68,3 +68,9 @@ The two original Markdown course documents about SE373 assessment and Coding Age
 ## Existing Issue identities
 
 The six public Issues retain mappings and native blockers: [#39](https://github.com/pminhtaiii/slop-loop/issues/39) T001–T006; [#40](https://github.com/pminhtaiii/slop-loop/issues/40) T007–T008 blocked by #39; [#41](https://github.com/pminhtaiii/slop-loop/issues/41) T009/T010/T014 blocked by #40; [#42](https://github.com/pminhtaiii/slop-loop/issues/42) T011–T012 blocked by #41; [#43](https://github.com/pminhtaiii/slop-loop/issues/43) T013 blocked by #41; [#44](https://github.com/pminhtaiii/slop-loop/issues/44) T015–T016 blocked by #42/#43. Stable keys, in that order: uc01-evidence-assessment, uc01-later-clarification, uc01-safe-destination, uc01-real-shared-integration, uc01-receiver-compatibility, uc01-evaluation-acceptance. Private identities stay in ignored paired-publication receipts. Revise acceptance/evidence obligations in place on both sides; keep needs-triage and all implementation criteria unchecked. No shared-owner work is duplicated as a new Issue.
+
+## Receiver agreement and scoped authorization — 2026-10-28
+
+On 2026-10-28 (Asia/Bangkok), the user reported Tai had delegated full implementation and technical decisions within UC-03 T011 → T012 → UC-01 T013, including required specification/contract amendments. This releases only that sequential batch, its tests, independent review, context refresh and contributor publication. It supersedes earlier unreleased wording only for these tasks. No real LLM/provider, UC-04/UC-05 implementation, dispatch, automatic repair, production choices or other successor work is authorized.
+
+The user-reported delegation supplies receiving-owner technical agreement for [uc01-uc03-receiver-v1](../../001-verified-code-repair/contracts/uc01-receiver.md). X-RECEIVER agreement is established for that version; delivery and C21 checks are established by actual UC-03 intake and 14/14 source/emitted compatibility tests recorded in [quickstart](../quickstart.md). This is actual receiver compatibility against controlled assessment inputs, not real-model or real shared-adapter acceptance. T011/T012, T015/T016 and all their real-delivery/evaluation prerequisites remain gated.

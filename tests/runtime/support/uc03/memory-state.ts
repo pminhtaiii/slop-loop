@@ -14,6 +14,18 @@ import {
   type StateTransitionOptions,
   type TaskState,
   type TaskNode,
+  type ApprovalBinding,
+  type RepositoryExecutionReceiptV02,
+  type ContextualApprovalVerifierV02,
+  type VerificationApprovalContextV02,
+  type VerificationApprovalResolutionV02,
+  type CompleteApprovalBindingContextV02,
+  type VerificationAuthoritySnapshotV02,
+  type VerificationPolicyIdentityV02,
+  type RecordVerificationApprovalRequestV02,
+  type RecordVerificationApprovalResultV02,
+  type SettledPatchAncestryRequestV02,
+  type SettledPatchAncestryV02,
   type ProviderUsage,
   type ReservationBundle,
   type ReservationBundleItem,
@@ -34,21 +46,40 @@ import {
   validateAttemptOutcomeReceiptV02,
   validateAttemptReconciliationReceiptV02,
   validateClaimClosureReceiptV02,
+  validateApprovalBinding,
+  validateRepositoryAdmissionV02,
+  validateRepositoryExecutionReceiptV02,
+  isVerificationApprovalContextV02,
+  isVerificationApprovalResolutionV02,
+  isRecordVerificationApprovalRequestV02,
+  isVerificationAuthoritySnapshotV02,
 } from '../../../../src/contracts/foundation/uc03.ts';
 import type {
   AdmissionTrustedContextV02,
   PolicyAuthorityRefV02,
   SafeReferenceV02,
-} from '../../../../src/contracts/foundation/uc03/ports-v02.ts';
+} from '../../../../src/contracts/foundation/uc03/v02/ports.ts';
 import type {
   AttemptOutcomeValidationContextV02,
   AttemptReconciliationValidationContextV02,
   ClaimClosureValidationContextV02,
-} from '../../../../src/contracts/foundation/uc03/attempt-v02.ts';
+} from '../../../../src/contracts/foundation/uc03/v02/attempt.ts';
 import {
   createTestProviderAdmissionTrustedContextV02,
   createTestRepositoryAdmissionTrustedContextV02,
 } from './state-fixtures.ts';
+
+function bindingMatchesContext(binding: ApprovalBinding, context: CompleteApprovalBindingContextV02): boolean {
+  return binding.actionKind === 'fix_plan' && binding.taskId === context.currentTaskId &&
+    binding.workspaceId === context.currentWorkspaceId &&
+    binding.repositoryRevisionDigest === context.currentRepositoryRevisionDigest &&
+    binding.policyId === context.currentPolicyId && binding.policyVersion === context.currentPolicyVersion &&
+    binding.normalizedActionDigest === context.currentNormalizedActionDigest &&
+    binding.planVersion === context.currentPlanVersion && binding.strategyDigest === context.currentStrategyDigest &&
+    binding.baselineRef === context.currentBaselineRef &&
+    computeCanonicalSha256(binding.evidenceRefs ?? []) === computeCanonicalSha256(context.currentEvidenceRefs) &&
+    binding.criteriaDigest === context.currentCriteriaDigest && binding.checkSetDigest === context.currentCheckSetDigest;
+}
 
 export class StateConflictError extends Error {
   readonly code = 'CAS_CONFLICT' as const;
@@ -686,8 +717,10 @@ interface StoredClaimRecordV02 {
   readonly context: AdmissionContextV02;
   readonly taskSnapshot: TaskState;
   readonly authorityRef: PolicyAuthorityRefV02;
+  readonly trustedAdmissionContext: AdmissionTrustedContextV02;
   status: 'claimed' | 'attempting' | 'dispatched' | 'outcome-recorded' | 'settled' | 'uncertain' | 'observed-unsettled' | 'closed';
   attemptId?: string | undefined;
+  settlementResult?: OutcomeRecordResultV02 & { readonly outcome: 'settled' } | undefined;
 }
 
 interface StoredAttemptRecordV02 {
@@ -771,15 +804,22 @@ interface MemoryReservationSpecV02 {
   readonly keyedId: string;
 }
 
+type VerificationApprovalReplayScopeV02 = Pick<
+  RecordVerificationApprovalRequestV02,
+  'workspaceId' | 'repositoryId' | 'expectedPlanVersion'
+>;
+
 export interface MemoryStatePortV02Options extends MemoryStatePortOptions {
   readonly initialControlVersion?: number | undefined;
   readonly initialEpoch?: number | undefined;
   readonly initialMode?: MemoryTaskControlModeV02 | undefined;
   readonly initialAuthorityRef?: PolicyAuthorityRefV02 | undefined;
+  readonly verificationApprovalVerifier?: ContextualApprovalVerifierV02 | undefined;
 }
 
 export class MemoryStatePortV02 implements StatePortV02 {
   readonly provenance: PortProvenance = 'mock';
+  readonly executionGuardApiVersion = '0.2.0' as const;
   private readonly underlying: MemoryStatePort;
   private readonly neutral: boolean;
   private currentControlVersion: number;
@@ -787,6 +827,15 @@ export class MemoryStatePortV02 implements StatePortV02 {
   private mode: MemoryTaskControlModeV02;
   private holdRef: string | null;
   private activeAuthorityRef: PolicyAuthorityRefV02 | null;
+  private readonly verificationApprovalVerifier?: ContextualApprovalVerifierV02 | undefined;
+  private readonly verificationApprovalOperations = new Map<string, {
+    readonly scope: VerificationApprovalReplayScopeV02;
+    readonly operation: Promise<RecordVerificationApprovalResultV02>;
+  }>();
+  private readonly verificationApprovalResults = new Map<string, {
+    readonly scope: VerificationApprovalReplayScopeV02;
+    readonly result: RecordVerificationApprovalResultV02;
+  }>();
   private readonly claims = new Map<string, StoredClaimRecordV02>();
   private activeClaimId?: string | undefined;
   private readonly attempts = new Map<string, StoredAttemptRecordV02>();
@@ -810,6 +859,7 @@ export class MemoryStatePortV02 implements StatePortV02 {
     this.mode = options?.initialMode ?? 'runnable';
     this.holdRef = this.mode === 'runnable' ? null : 'initial-hold';
     this.activeAuthorityRef = options?.initialAuthorityRef ? structuredClone(options.initialAuthorityRef) : null;
+    this.verificationApprovalVerifier = options?.verificationApprovalVerifier;
     if (this.holdRef) {
       const initialTask = options?.initialTaskState;
       this.controlEvents.set(this.holdRef, this.controlEvent(
@@ -1394,6 +1444,261 @@ export class MemoryStatePortV02 implements StatePortV02 {
     return this.underlying.loadTask(taskId);
   }
 
+  async readVerificationAuthoritySnapshot(taskId: string): Promise<VerificationAuthoritySnapshotV02 | null> {
+    return this.exclusive(async () => {
+      const task = await this.underlying.loadTask(taskId);
+      const authority = this.activeAuthorityRef;
+      if (this.neutral || !task || !authority || !this.validAuthority(authority) || !task.repositoryRevisionDigest) return null;
+      const snapshot: VerificationAuthoritySnapshotV02 = {
+        taskId: task.taskId, runId: task.runId, stateVersion: task.stateVersion,
+        repositoryRevisionDigest: task.repositoryRevisionDigest,
+        controlVersion: this.currentControlVersion, epoch: this.currentEpoch,
+        decisionAuthorityGeneration: authority.decisionAuthorityGeneration,
+        policyIdentity: this.policyIdentity(authority), controlMode: this.mode,
+        holdRef: this.holdRef, activeClaimId: this.activeClaimId ?? null,
+      };
+      return isVerificationAuthoritySnapshotV02(snapshot) ? structuredClone(snapshot) : null;
+    });
+  }
+
+  async resolvePlanDecisionInContext(
+    decisionId: string,
+    context: VerificationApprovalContextV02,
+  ): Promise<VerificationApprovalResolutionV02> {
+    const issuer = this.verificationApprovalVerifier;
+    if (!issuer || typeof issuer.resolvePlanDecisionInContext !== 'function') return { outcome: 'unavailable', reasonCode: 'MISSING_CONTEXTUAL_ISSUER' };
+    let contextSnapshot: VerificationApprovalContextV02;
+    try { contextSnapshot = structuredClone(context); } catch { return { outcome: 'denied', reasonCode: 'INVALID_CONTEXT' }; }
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$/u.test(decisionId) || !isVerificationApprovalContextV02(contextSnapshot)) {
+      return { outcome: 'denied', reasonCode: 'INVALID_CONTEXT' };
+    }
+    const ownerMatch = await this.exclusive(async () => this.contextMatchesOwner(decisionId, contextSnapshot));
+    if (!ownerMatch) return { outcome: 'stale', reasonCode: 'OWNER_CONTEXT_CHANGED' };
+    let result: unknown;
+    try { result = await issuer.resolvePlanDecisionInContext(decisionId, contextSnapshot); }
+    catch { return { outcome: 'unavailable', reasonCode: 'ISSUER_LOOKUP_FAILED' }; }
+    if (!isVerificationApprovalResolutionV02(result)) return { outcome: 'denied', reasonCode: 'INVALID_ISSUER_RESULT' };
+    if (result.outcome !== 'resolved') return result;
+    const validation = validateApprovalBinding(result.binding, contextSnapshot.approvalContext);
+    if (result.decisionId !== decisionId || result.binding.decisionId !== decisionId ||
+        result.issuerKeyRef !== contextSnapshot.expectedIssuerKeyRef ||
+        result.decisionAuthorityGeneration !== contextSnapshot.expectedDecisionAuthorityGeneration ||
+        result.contextDigest !== computeCanonicalSha256(contextSnapshot) || !validation.ok ||
+        !bindingMatchesContext(result.binding, contextSnapshot.approvalContext)) {
+      return { outcome: 'denied', reasonCode: 'ISSUER_CONTEXT_MISMATCH' };
+    }
+    return structuredClone(result);
+  }
+
+  async recordVerificationApproval(request: RecordVerificationApprovalRequestV02): Promise<RecordVerificationApprovalResultV02> {
+    let snapshot: RecordVerificationApprovalRequestV02;
+    try { snapshot = structuredClone(request); } catch { return { outcome: 'conflict', requestIdentity: '', reasonCode: 'INVALID_REQUEST' }; }
+    if (!isRecordVerificationApprovalRequestV02(snapshot)) return { outcome: 'conflict', requestIdentity: '', reasonCode: 'INVALID_REQUEST' };
+    const scope: VerificationApprovalReplayScopeV02 = {
+      workspaceId: snapshot.workspaceId,
+      repositoryId: snapshot.repositoryId,
+      expectedPlanVersion: snapshot.expectedPlanVersion,
+    };
+    const sameScope = (candidate: VerificationApprovalReplayScopeV02) =>
+      candidate.workspaceId === scope.workspaceId && candidate.repositoryId === scope.repositoryId &&
+      candidate.expectedPlanVersion === scope.expectedPlanVersion;
+    const scopeConflict: RecordVerificationApprovalResultV02 = {
+      outcome: 'conflict', requestIdentity: snapshot.requestIdentity, reasonCode: 'REQUEST_SCOPE_MISMATCH',
+    };
+    const replay = this.verificationApprovalResults.get(snapshot.requestIdentity);
+    if (replay) return sameScope(replay.scope) ? structuredClone(replay.result) : scopeConflict;
+    const inFlight = this.verificationApprovalOperations.get(snapshot.requestIdentity);
+    if (inFlight) return sameScope(inFlight.scope) ? structuredClone(await inFlight.operation) : scopeConflict;
+    const operation = this.recordVerificationApprovalCore(snapshot);
+    const entry = { scope, operation };
+    this.verificationApprovalOperations.set(snapshot.requestIdentity, entry);
+    try {
+      const result = await operation;
+      if (result.outcome === 'approved' || result.outcome === 'rejected') {
+        this.verificationApprovalResults.set(snapshot.requestIdentity, { scope, result: structuredClone(result) });
+      }
+      return structuredClone(result);
+    } finally {
+      if (this.verificationApprovalOperations.get(snapshot.requestIdentity) === entry) this.verificationApprovalOperations.delete(snapshot.requestIdentity);
+    }
+  }
+
+  async readSettledPatchAncestry(request: SettledPatchAncestryRequestV02): Promise<SettledPatchAncestryV02 | null> {
+    let query: SettledPatchAncestryRequestV02;
+    try { query = structuredClone(request); } catch { return null; }
+    if (!query.taskId || !query.runId || !/^sha256:[0-9a-f]{64}$/u.test(query.resultingRepositoryRevisionDigest)) return null;
+    return this.exclusive(async () => {
+      if (this.neutral) return null;
+      const matches: SettledPatchAncestryV02[] = [];
+      for (const claim of this.claims.values()) {
+        if (claim.status !== 'settled' || !claim.attemptId || claim.receipt.taskId !== query.taskId || claim.receipt.runId !== query.runId ||
+            claim.context.subjectKind !== 'repository-action' || claim.context.runnableNode !== 'Patch' ||
+            claim.context.planApplicability !== 'approved-plan' || claim.context.action.kind !== 'apply_patch' ||
+            claim.trustedAdmissionContext.subjectKind !== 'repository-action' || !claim.settlementResult) continue;
+        const attempt = this.attempts.get(claim.attemptId);
+        const outcome = attempt?.outcomeReceiptId ? this.outcomeReceipts.get(attempt.outcomeReceiptId) : undefined;
+        if (!attempt || attempt.status !== 'settled' || !outcome || outcome.subjectKind !== 'repository-action' || outcome.outcome !== 'observed' ||
+            outcome.observedResultRevisionDigest !== query.resultingRepositoryRevisionDigest ||
+            outcome.claimId !== claim.receipt.claimId || outcome.attemptId !== attempt.receipt.attemptId ||
+            claim.settlementResult.receiptId !== outcome.receiptId) continue;
+        const admission = validateRepositoryAdmissionV02(claim.context, claim.trustedAdmissionContext);
+        const execution: RepositoryExecutionReceiptV02 = {
+          claim: claim.receipt, attempt: attempt.receipt, outcome,
+          settlement: claim.settlementResult,
+        };
+        if (!admission.ok || !validateRepositoryExecutionReceiptV02(execution, claim.context).ok) continue;
+        matches.push({
+          admissionContext: structuredClone(claim.context),
+          trustedAdmissionContext: structuredClone(claim.trustedAdmissionContext),
+          claim: structuredClone(claim.receipt), attempt: structuredClone(attempt.receipt),
+          outcome: structuredClone(outcome), settlement: structuredClone(claim.settlementResult),
+          originalTaskState: structuredClone(claim.taskSnapshot),
+          originalAuthorityRef: structuredClone(claim.authorityRef),
+        });
+      }
+      return matches.length === 1 ? structuredClone(matches[0] ?? null) : null;
+    });
+  }
+
+  private async recordVerificationApprovalCore(request: RecordVerificationApprovalRequestV02): Promise<RecordVerificationApprovalResultV02> {
+    const first = await this.exclusive(async () => this.verificationApprovalRequestState(request));
+    if (first.outcome !== 'ready') return first.result;
+    const context = this.approvalContext(request.decisionId, 'current-verification', first.state, first.authority);
+    const resolution = await this.resolvePlanDecisionInContext(request.decisionId, context);
+    if (resolution.outcome !== 'resolved') {
+      return { outcome: resolution.outcome === 'unavailable' ? 'unavailable' : 'stale', requestIdentity: request.requestIdentity, reasonCode: resolution.reasonCode };
+    }
+    return this.exclusive(async () => {
+      const latest = await this.verificationApprovalRequestState(request);
+      if (latest.outcome === 'failed') return latest.result;
+      if (!this.equal(first.state, latest.state)) return { outcome: 'stale', requestIdentity: request.requestIdentity, reasonCode: 'OWNER_CAS_CHANGED' };
+      const status = resolution.binding.status;
+      if (status === 'pending') return this.approvalResult('pending', request, latest.state);
+      if (status === 'rejected') {
+        const holdRef = `verification-rejected-${request.requestIdentity.slice('sha256:'.length)}`;
+        this.mode = 'rejected';
+        this.holdRef = holdRef;
+        this.currentControlVersion++;
+        this.controlEvents.set(holdRef, this.controlEvent(holdRef, latest.state.taskId, latest.state.runId, latest.state.stateVersion, 'rejected', this.currentControlVersion, this.currentEpoch));
+        return this.approvalResult('rejected', request, latest.state);
+      }
+      if (status !== 'approved') return { outcome: 'stale', requestIdentity: request.requestIdentity, reasonCode: 'INVALID_ISSUER_STATUS' };
+      const plan = latest.state.plan;
+      if (!plan) return { outcome: 'stale', requestIdentity: request.requestIdentity, reasonCode: 'PLAN_MISSING' };
+      const decisionRefs = latest.state.approvalDecisionRefs ?? [];
+      if (decisionRefs.includes(request.decisionId)) return { outcome: 'conflict', requestIdentity: request.requestIdentity, reasonCode: 'DECISION_ID_ALREADY_USED' };
+      const candidate: TaskState = {
+        ...latest.state,
+        stateVersion: latest.state.stateVersion + 1,
+        plan: { ...plan, decisionRef: request.decisionId },
+        activeDecisionId: request.decisionId,
+        approvalDecisionRefs: [...decisionRefs, request.decisionId],
+      };
+      if (!validateTaskState(candidate).ok) return { outcome: 'conflict', requestIdentity: request.requestIdentity, reasonCode: 'INVALID_APPROVED_STATE' };
+      this.underlying.internalSetTask(candidate);
+      this.currentControlVersion++;
+      return this.approvalResult('approved', request, candidate);
+    });
+  }
+
+  private async verificationApprovalRequestState(request: RecordVerificationApprovalRequestV02): Promise<
+    | { readonly outcome: 'ready'; readonly state: TaskState; readonly authority: PolicyAuthorityRefV02 }
+    | { readonly outcome: 'failed'; readonly result: Extract<RecordVerificationApprovalResultV02, { readonly reasonCode: string }> }
+  > {
+    const state = await this.underlying.loadTask(request.taskId);
+    const authority = this.activeAuthorityRef;
+    const fail = (outcome: 'stale' | 'blocked' | 'unavailable' | 'conflict', reasonCode: string) => ({
+      outcome: 'failed' as const,
+      result: { outcome, requestIdentity: request.requestIdentity, reasonCode } as Extract<RecordVerificationApprovalResultV02, { readonly reasonCode: string }>,
+    });
+    if (!state || !authority) return fail('unavailable', 'OWNER_STATE_UNAVAILABLE');
+    const plan = state.plan;
+    if (state.node !== 'Verify' || !plan || plan.decisionRef !== request.originalDecisionId || state.activeDecisionId !== undefined) return fail('stale', 'VERIFY_STATE_MISMATCH');
+    if (state.taskId !== request.taskId || state.runId !== request.runId || state.workspaceId !== request.workspaceId || state.repositoryId !== request.repositoryId ||
+        state.stateVersion !== request.expectedStateVersion || state.repositoryRevisionDigest !== request.expectedRepositoryRevisionDigest ||
+        state.planVersion !== request.expectedPlanVersion || !this.equal(this.planMaterialDigest(state), request.expectedPlanMaterialDigest) ||
+        this.currentControlVersion !== request.expectedControlVersion || this.currentEpoch !== request.expectedEpoch ||
+        authority.decisionAuthorityGeneration !== request.expectedDecisionAuthorityGeneration ||
+        !this.equal(this.policyIdentity(authority), request.policyIdentity) || !this.equal(request.policyIdentity, this.policyIdentity(authority))) return fail('stale', 'OWNER_CAS_MISMATCH');
+    if (request.decisionId === request.originalDecisionId || (state.approvalDecisionRefs ?? []).includes(request.decisionId)) return fail('conflict', 'DECISION_ID_ALREADY_USED');
+    if (this.mode !== 'runnable' || this.holdRef || this.activeClaimId) return fail('blocked', 'OWNER_CONTROL_BLOCKED');
+    return { outcome: 'ready', state, authority };
+  }
+
+  private approvalResult(status: 'pending' | 'rejected' | 'approved', request: RecordVerificationApprovalRequestV02, state: TaskState): RecordVerificationApprovalResultV02 {
+    return {
+      outcome: status, requestIdentity: request.requestIdentity, decisionId: request.decisionId,
+      state: structuredClone(state), controlVersion: this.currentControlVersion,
+      epoch: this.currentEpoch, decisionAuthorityGeneration: this.activeAuthorityRef?.decisionAuthorityGeneration ?? 0,
+    };
+  }
+
+  private async contextMatchesOwner(decisionId: string, context: VerificationApprovalContextV02): Promise<boolean> {
+    if (!this.verificationApprovalVerifier) return false;
+    const expectedGeneration = context.expectedDecisionAuthorityGeneration;
+    if (context.purpose === 'historical-patch') {
+      const matches = [...this.claims.values()].filter((claim) => claim.receipt.taskId === context.approvalContext.currentTaskId &&
+        claim.context.subjectKind === 'repository-action' && claim.context.runnableNode === 'Patch' &&
+        claim.context.planApplicability === 'approved-plan' && claim.taskSnapshot.plan?.decisionRef === decisionId &&
+        claim.authorityRef.decisionAuthorityGeneration === expectedGeneration && claim.authorityRef.issuerKeyRef === context.expectedIssuerKeyRef &&
+        claim.status === 'settled' && claim.settlementResult?.outcome === 'settled');
+      if (matches.length !== 1) return false;
+      const original = matches[0]?.taskSnapshot;
+      const authority = matches[0]?.authorityRef;
+      return !!original && !!authority && this.equal(this.approvalContext(decisionId, 'historical-patch', original, authority), context);
+    }
+    const task = await this.underlying.loadTask(context.approvalContext.currentTaskId);
+    const authority = this.activeAuthorityRef;
+    if (!task || !authority || authority.decisionAuthorityGeneration !== expectedGeneration || authority.issuerKeyRef !== context.expectedIssuerKeyRef ||
+        !decisionId.startsWith('dec-verify-') || !task.plan) return false;
+    const pendingBeforeRebind = task.node === 'Verify' && task.activeDecisionId === undefined;
+    const currentPointer = task.plan.decisionRef === decisionId && (task.activeDecisionId === undefined || task.activeDecisionId === decisionId);
+    if (!pendingBeforeRebind && !currentPointer) return false;
+    return this.equal(this.approvalContext(decisionId, 'current-verification', task, authority), context);
+  }
+
+  private approvalContext(decisionId: string, purpose: VerificationApprovalContextV02['purpose'], task: TaskState, authority: PolicyAuthorityRefV02): VerificationApprovalContextV02 {
+    const plan = task.plan;
+    if (!plan) throw new Error('Plan is required for contextual verification approval');
+    const action = {
+      actionId: decisionId, kind: 'approve_fix_plan' as const, planVersion: plan.planVersion,
+      strategyDigest: plan.strategyDigest, diagnosisEvidenceRefs: plan.evidenceRefs, checkSetDigest: plan.checkSetDigest,
+    };
+    const approvalContext: CompleteApprovalBindingContextV02 = {
+      currentTaskId: task.taskId, currentWorkspaceId: task.workspaceId,
+      currentRepositoryRevisionDigest: task.repositoryRevisionDigest,
+      currentPolicyId: authority.policyId, currentPolicyVersion: authority.policyVersion,
+      currentNormalizedActionDigest: computeCanonicalSha256(action), currentPlanVersion: plan.planVersion,
+      currentStrategyDigest: plan.strategyDigest, currentBaselineRef: plan.baselineRef,
+      currentEvidenceRefs: [...plan.evidenceRefs], currentCriteriaDigest: computeCanonicalSha256(task.acceptanceCriteria),
+      currentCheckSetDigest: plan.checkSetDigest,
+    };
+    return {
+      purpose, expectedIssuerKeyRef: authority.issuerKeyRef,
+      expectedDecisionAuthorityGeneration: authority.decisionAuthorityGeneration, approvalContext,
+    };
+  }
+
+  private planMaterialDigest(task: TaskState): string {
+    const plan = task.plan;
+    if (!plan) return '';
+    return computeCanonicalSha256({
+      taskId: task.taskId,
+      planVersion: plan.planVersion, diagnosis: plan.diagnosis,
+      suspectedCauseLocations: plan.suspectedCauseLocations, evidenceRefs: plan.evidenceRefs,
+      strategy: plan.strategy, scopedChanges: plan.scopedChanges, checkSetDigest: plan.checkSetDigest,
+      baselineRef: plan.baselineRef, strategyDigest: plan.strategyDigest,
+      criteriaDigest: computeCanonicalSha256(task.acceptanceCriteria),
+    });
+  }
+
+  private policyIdentity(authority: PolicyAuthorityRefV02): VerificationPolicyIdentityV02 {
+    return {
+      policyId: authority.policyId, policyVersion: authority.policyVersion,
+      configId: authority.configId, configVersion: authority.configVersion, issuerKeyRef: authority.issuerKeyRef,
+    };
+  }
+
   async transition(state: TaskState, expectedVersion: number): Promise<TaskState> {
     const snapshot = structuredClone(state);
     return this.exclusive(() => this.underlying.transition(snapshot, expectedVersion));
@@ -1449,7 +1754,7 @@ export class MemoryStatePortV02 implements StatePortV02 {
       this.currentControlVersion = postClaimControlVersion;
       this.claims.set(claimId, {
         receipt: structuredClone(claimReceipt), context: structuredClone(context), taskSnapshot: structuredClone(task),
-        authorityRef: structuredClone(authorityRef), status: 'claimed',
+        authorityRef: structuredClone(authorityRef), trustedAdmissionContext: structuredClone(this.trustedAdmission(context)), status: 'claimed',
       });
       this.activeClaimId = claimId;
       return structuredClone(claimReceipt);
@@ -1601,7 +1906,9 @@ export class MemoryStatePortV02 implements StatePortV02 {
       attempt.status = 'settled';
       this.currentControlVersion++;
       if (this.activeClaimId === receipt.claimId) this.activeClaimId = undefined;
-      return { outcome: 'settled', receiptId: receipt.receiptId };
+      const settlement: OutcomeRecordResultV02 & { readonly outcome: 'settled' } = { outcome: 'settled', receiptId: receipt.receiptId };
+      claim.settlementResult = structuredClone(settlement);
+      return structuredClone(settlement);
     });
   }
 

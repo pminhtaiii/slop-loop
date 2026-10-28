@@ -12,6 +12,8 @@ Both axes run as **parallel sub-agents** so they don't pollute each other's cont
 
 Reviewers own semantic, spec, and standards findings. The merger owns ancestry, scope, exact ownership, mechanical integration, and replaying recorded focused checks; it consumes verified review reports rather than repeating semantic review.
 
+For a selected implementation batch, review once after every selected task is implemented and mechanically integrated; do not dispatch a review per task. During implementation, use RED/GREEN focused checks and mechanical integration. If findings require fixes, review the completed correction batch after its focused checks, unless the user opted out. Reviewers must challenge ownership and trust boundaries adversarially: identify who owns state, authorization, and evidence; probe stale or forged identity, missing prerequisites, refusal-before-effect, and out-of-scope paths. Cite the rule and evidence for each finding. ESLint already enforces the source-only `transitionContexts` and `v02Calls` mock-private access restrictions plus `tests/runtime/support` import restrictions; skip those mechanical findings and do not extend them into a name-based ban on typed production APIs such as `getJournalSnapshot`.
+
 For issue-backed reviews without explicit local spec and plan paths, the issue tracker should have been provided to you; run `/setup-matt-pocock-skills` if `docs/agents/issue-tracker.md` is missing. Reviews with explicit local spec and plan paths skip tracker setup and lookup.
 
 ## Process

@@ -1,19 +1,20 @@
 import { computeCanonicalSha256 } from '../contracts/foundation/uc03.ts';
-import { computeAdmissionDigest } from '../contracts/foundation/uc03/admission-v02.ts';
+import { computeAdmissionDigest } from '../contracts/foundation/uc03/v02/admission.ts';
 import {
   computeAttemptOutcomeDigest,
   validateAttemptReconciliationReceiptV02,
   validateRepositoryActionOutcomeReceiptV02,
-} from '../contracts/foundation/uc03/attempt-v02.ts';
+} from '../contracts/foundation/uc03/v02/attempt.ts';
 import type {
   AttemptReceiptV02,
+  AttemptReconciliationReceiptV02,
   ClaimReceiptV02,
   OutcomeRecordResultV02,
   ReconciliationResultV02,
   RepositoryActionOutcomeReceiptV02,
   RepositoryAdmissionContextV02,
-} from '../contracts/foundation/uc03/ports-v02.ts';
-import type { AttemptOutcomeValidationContextV02, AttemptReconciliationValidationContextV02 } from '../contracts/foundation/uc03/attempt-v02.ts';
+} from '../contracts/foundation/uc03/v02/ports.ts';
+import type { AttemptOutcomeValidationContextV02, AttemptReconciliationValidationContextV02 } from '../contracts/foundation/uc03/v02/attempt.ts';
 import type { StructuredExecutionResult, WorkspaceLease } from './docker-workspace.ts';
 import type { ControlledRepositoryToolsOptions, PatchRecoveryPreparationV02 } from './repository-types.ts';
 
@@ -143,6 +144,7 @@ interface PendingRepositoryOutcomeV02 {
   readonly attempt: AttemptReceiptV02;
   readonly outcome: RepositoryActionOutcomeReceiptV02;
   recovering: boolean;
+  reconciliationReceipt?: AttemptReconciliationReceiptV02 | undefined;
   settledReceiptId?: string | undefined;
 }
 
@@ -187,14 +189,19 @@ export class RepositoryOutcomeRecoveryV02 {
         this.pending.delete(attemptId);
         return { outcome: 'settled', receiptId: pending.settledReceiptId };
       }
-      const prepared = await handoff.prepare({
-        admission: pending.context,
-        claim: pending.claim,
-        attempt: pending.attempt,
-        outcome: pending.outcome,
-      });
-      validateRecoveryPreparation(prepared, pending);
-      const receipt = prepared.receipt;
+      let receipt = pending.reconciliationReceipt;
+      if (!receipt) {
+        const prepared = await handoff.prepare({
+          admission: pending.context,
+          claim: pending.claim,
+          attempt: pending.attempt,
+          outcome: pending.outcome,
+        });
+        validateRecoveryPreparation(prepared, pending);
+        receipt = prepared.receipt;
+        // A thrown owner reply is ambiguous: its journal may already have committed this exact receipt.
+        if (receipt.reconciliationKind === 'observed-unsettled') pending.reconciliationReceipt = receipt;
+      }
       const result = validateReconciliationResult(
         receipt.reconciliationKind === 'observed-unsettled'
           ? await statePort.reconcileObservedOutcome(receipt)
@@ -205,6 +212,8 @@ export class RepositoryOutcomeRecoveryV02 {
         pending.settledReceiptId = result.receiptId;
         await pending.lease.release();
         this.pending.delete(attemptId);
+      } else if (receipt.reconciliationKind === 'observed-unsettled') {
+        pending.reconciliationReceipt = undefined;
       }
       return result;
     } finally {

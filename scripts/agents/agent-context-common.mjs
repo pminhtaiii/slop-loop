@@ -9,6 +9,8 @@ export const usage = `Usage:
   node scripts/agents/agent-context.mjs handoff --tasks <tasks.md> [--root <checkout>]
   node scripts/agents/agent-context.mjs resume [--tasks <tasks.md>] [--authorization <path> ...] [--root <checkout>]
   node scripts/agents/agent-context.mjs task --tasks <tasks.md> --task T017 [--plan <plan.md>] [--root <checkout>]
+  node scripts/agents/agent-context.mjs batch --tasks <tasks.md> --scope T057-T061 [--scope T063] [--authorized T057] [--session <id>] [--root <checkout>]
+  node scripts/agents/agent-context.mjs review-ready --tasks <tasks.md> --scope T057-T061 [--scope T063] [--authorized T057] [--session <id>] [--no-review] [--root <checkout>]
   node scripts/agents/agent-context.mjs snapshot --files <repo-relative-file...> [--root <checkout>]
   node scripts/agents/agent-context.mjs verify --snapshot <snapshot.json> [--root <checkout>]
   node scripts/agents/agent-context.mjs --help`;

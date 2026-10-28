@@ -3,7 +3,7 @@ import {
   isExecutorCapability,
   type UC04JournalPortV02,
 } from '../../../src/approvals/control.ts';
-import type { PolicyAuthorityRefV02 } from '../../../src/contracts/foundation/uc03/ports-v02.ts';
+import type { PolicyAuthorityRefV02 } from '../../../src/contracts/foundation/uc03/v02/ports.ts';
 import {
   UC05_APPROVAL_SCHEMA_VERSION_V02,
   computeDispatchClaimDigestV02,

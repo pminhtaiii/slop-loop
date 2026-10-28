@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { validateAttemptReceiptV02, validateClaimClosureReceiptV02 } from '../contracts/foundation/uc03/attempt-v02.ts';
+import { validateAttemptReceiptV02, validateClaimClosureReceiptV02 } from '../contracts/foundation/uc03/v02/attempt.ts';
 import type {
   AttemptReceiptV02,
   ClaimClosureReceiptV02,
@@ -9,7 +9,7 @@ import type {
   RepositoryActionOutcomeReceiptV02,
   RepositoryAdmissionContextV02,
   StatePortV02,
-} from '../contracts/foundation/uc03/ports-v02.ts';
+} from '../contracts/foundation/uc03/v02/ports.ts';
 import type { WorkspaceLease } from './docker-workspace.ts';
 import { matchesRepositoryAttemptV02 } from './repository-claim-lifecycle.ts';
 import type { RepositoryOutcomeRecoveryV02 } from './repository-command-outcome.ts';

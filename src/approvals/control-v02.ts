@@ -9,7 +9,7 @@ import type {
   ExecutorIdentityV02,
   PolicyAuthorityRefV02,
   SafeReferenceV02,
-} from '../contracts/foundation/uc03/ports-v02.ts';
+} from '../contracts/foundation/uc03/v02/ports.ts';
 
 export interface AuthorityPublicationOptionsV02 {
   readonly authorityRef: PolicyAuthorityRefV02;

@@ -113,3 +113,9 @@ As a developer, I see meaningful activity and approval requests while repository
 - Required runtime review does not select all of UC-06. Generic triage, MCP coverage, runtime skill loading, stop controls, deployment and a full UI are outside this feature. Contributor skills/CodeRabbit do not prove runtime capabilities.
 - Except the replan cap, required finite limit values remain explicit trusted inputs with no permissive defaults. Tests may use explicit finite fixture configurations.
 - Placeholder constitution, open stack choices and shared signoff are implementation-readiness gates, not authorization to invent decisions or widen scope.
+
+## Scoped intake amendment — 2026-10-28
+
+On 2026-10-28 (Asia/Bangkok), the user reported Tai had delegated full implementation and technical decisions within UC-03 T011 → T012 → UC-01 T013, including required specification/contract amendments. This releases only that sequential batch, its tests, independent review, context refresh and contributor publication. It supersedes earlier unreleased wording only for these tasks. No real LLM/provider, UC-04/UC-05 implementation, dispatch, automatic repair, production choices or other successor work is authorized.
+
+FR-001 now also permits an explicitly supplied UC-01 assessment as advisory source metadata through [uc01-uc03-receiver-v1](contracts/uc01-receiver.md). A caller still supplies reproduction, expected behavior, criteria and all other BugTask fields; no assessment creates an executable task or verified diagnosis. Complete/missing/ambiguous input, stale identity/configuration and unsupported recommendations have distinct safe outcomes. Acceptance remains pure intake, not automated issue dispatch or end-to-end repair.

@@ -1,7 +1,7 @@
 /** Canonical identity, repository path, and protected-path rules. */
 
 import { createHash } from 'node:crypto';
-import type { CheckDefinition, CommandView, NormalizedAction } from './types.ts';
+import type { CheckDefinition, CommandView, NormalizedAction } from './v01/types.ts';
 
 export function canonicalJsonStringify(val: unknown): string {
   if (val === null || typeof val !== 'object') {

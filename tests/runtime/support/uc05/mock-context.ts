@@ -1,3 +1,8 @@
+import { journalClaimV02 } from '../../../../src/approvals/control-v02.ts';
+import type { AttemptReceiptV02, ClaimReceiptV02, ExecutorIdentityV02, RepositoryAdmissionContextV02, RepositoryAdmissionTrustedContextV02 } from '../../../../src/contracts/foundation/uc03/v02/ports.ts';
+import { validateAdmissionV02 } from '../../../../src/contracts/foundation/uc03/v02/admission.ts';
+import { validateAttemptReceiptV02 } from '../../../../src/contracts/foundation/uc03/v02/attempt.ts';
+import { type MemoryStatePortV02, NEUTRAL_ATTEMPT_RECEIPT_V02, isNeutralAttemptReceiptV02 } from '../uc03/memory-state.ts';
 import { isDeepStrictEqual } from 'node:util';
 import {
   type ApprovalTaskControl,
@@ -205,4 +210,62 @@ function freezeCopy<T>(value: T): T {
   };
   visit(copy);
   return copy;
+}
+
+export interface MockEffectAttemptV02 {
+  readonly attemptReceipt: AttemptReceiptV02;
+  readonly admissionContext: RepositoryAdmissionContextV02;
+  readonly trustedContext: RepositoryAdmissionTrustedContextV02;
+  readonly effectClass: MockEffectClass;
+}
+
+export interface MockActivityControlV02 {
+  readonly provenance: typeof UC05_MOCK_PROVENANCE;
+  admitAttemptV02(admissionReceipt: ClaimReceiptV02, executor: ExecutorIdentityV02, context: RepositoryAdmissionContextV02, trusted: RepositoryAdmissionTrustedContextV02): Promise<AttemptReceiptV02>;
+  recordEffectAttemptV02(receipt: AttemptReceiptV02, effectClass: MockEffectClass, context: RepositoryAdmissionContextV02, trusted: RepositoryAdmissionTrustedContextV02): Promise<MockActivityResponse<MockEffectAttemptV02>>;
+  readEffectLogV02(): readonly MockEffectAttemptV02[];
+}
+
+/** Same-process receipt tracking only; the canonical journal owns attempt consumption. */
+export function createMockActivityControlV02(profileInput: unknown, journal: MemoryStatePortV02): MockActivityControlV02 {
+  if (!validatePolicyProfile(profileInput).ok) throw new TypeError('invalid-mock-activity-profile');
+  const admitted = new Map<string, { readonly receipt: AttemptReceiptV02; readonly context: RepositoryAdmissionContextV02; readonly trusted: RepositoryAdmissionTrustedContextV02 }>();
+  const effects: MockEffectAttemptV02[] = [];
+  return Object.freeze({
+    provenance: UC05_MOCK_PROVENANCE,
+    admitAttemptV02: async (admissionReceipt, executor, context, trusted) => {
+      const checked = validateAdmissionV02(context, trusted);
+      if (!checked.ok || checked.value.subjectKind !== 'repository-action' || executor?.payloadDigest !== checked.value.actionDigest) return NEUTRAL_ATTEMPT_RECEIPT_V02;
+      const claim = journalClaimV02(admissionReceipt);
+      if (!claim || claim.taskId !== context.taskId || claim.runId !== context.runId || claim.subjectKind !== context.subjectKind ||
+        claim.planApplicability !== context.planApplicability || claim.preClaimTaskStateVersion !== context.expectedTaskStateVersion ||
+        claim.preClaimControlVersion !== context.expectedControlVersion || claim.epoch !== context.expectedEpoch ||
+        !isDeepStrictEqual(claim.reservationRefs, context.reservationRefs)) return NEUTRAL_ATTEMPT_RECEIPT_V02;
+      const inputs = freezeCopy({ context, trusted });
+      const receipt = await journal.beginAttempt(claim.claimId, executor);
+      if (!isNeutralAttemptReceiptV02(receipt)) admitted.set(receipt.attemptId, freezeCopy({ receipt, ...inputs }));
+      return receipt;
+    },
+    recordEffectAttemptV02: async (receipt, effectClass, context, trusted) => {
+      const denied: MockActivityResponse<MockEffectAttemptV02> = { outcome: 'conflict', safeReasonCode: 'invalid-or-stale-effect-context', value: null };
+      const checked = validateAdmissionV02(context, trusted);
+      if (!checked.ok || checked.value.subjectKind !== 'repository-action' || !validateAttemptReceiptV02(receipt, { isRepairPatch: context.action.kind === 'apply_patch' && context.runnableNode === 'Repair' }).ok) return denied;
+      const retained = admitted.get(receipt.attemptId);
+      if (!retained || !isDeepStrictEqual(receipt, retained.receipt) || !isDeepStrictEqual(context, retained.context) || !isDeepStrictEqual(trusted, retained.trusted) ||
+        !['read', 'test', 'mutation'].includes(effectClass) || effects.some(effect => effect.attemptReceipt.attemptId === receipt.attemptId)) return denied;
+      receipt = retained.receipt;
+      context = retained.context;
+      trusted = retained.trusted;
+      const task = await journal.loadTask(receipt.taskId);
+      const current = journal.getJournalSnapshot();
+      if (effects.some(effect => effect.attemptReceipt.attemptId === receipt.attemptId) || !task || task.stateVersion !== receipt.postBeginTaskStateVersion || task.repositoryRevisionDigest !== context.canonicalRevision ||
+        current.mode !== 'runnable' || current.holdRef !== null || current.controlVersion !== receipt.postBeginControlVersion || current.epoch !== receipt.epoch ||
+        current.activeClaimId !== receipt.claimId || !isDeepStrictEqual(current.activeAuthorityRef, context.policyAuthorityRef) ||
+        !current.attempts.some(attempt => attempt.attemptId === receipt.attemptId && attempt.claimId === receipt.claimId && attempt.status === 'attempting')) return denied;
+      const effect = freezeCopy({ attemptReceipt: receipt, admissionContext: context, trustedContext: trusted, effectClass });
+      effects.push(effect);
+      return freezeCopy({ outcome: 'ok', safeReasonCode: 'effect-recorded-test-only', value: effect });
+    },
+    readEffectLogV02: () => freezeCopy(effects),
+  } satisfies MockActivityControlV02);
 }

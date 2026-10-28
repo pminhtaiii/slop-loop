@@ -1,19 +1,21 @@
 import { computeCanonicalSha256 } from '../contracts/foundation/uc03.ts';
-import { computeAdmissionDigest } from '../contracts/foundation/uc03/admission-v02.ts';
+import { computeAdmissionDigest } from '../contracts/foundation/uc03/v02/admission.ts';
 import {
   computeAttemptOutcomeDigest,
+  isApprovedPlanPatchV02,
   validateRepositoryActionOutcomeReceiptV02,
-} from '../contracts/foundation/uc03/attempt-v02.ts';
+} from '../contracts/foundation/uc03/v02/attempt.ts';
 import type {
+  RepositoryPatchResultV02,
   AttemptReceiptV02,
   ClaimReceiptV02,
   ExecutorIdentityV02,
   ReconciliationResultV02,
   RepositoryActionOutcomeReceiptV02,
   RepositoryAdmissionContextV02,
-} from '../contracts/foundation/uc03/ports-v02.ts';
-import type { AttemptOutcomeValidationContextV02 } from '../contracts/foundation/uc03/attempt-v02.ts';
-import type { ApplyPatchAction } from '../contracts/foundation/uc03/types.ts';
+} from '../contracts/foundation/uc03/v02/ports.ts';
+import type { AttemptOutcomeValidationContextV02 } from '../contracts/foundation/uc03/v02/attempt.ts';
+import type { ApplyPatchAction } from '../contracts/foundation/uc03/v01/types.ts';
 import type { WorkspaceLease } from './docker-workspace.ts';
 import { bindPatchToAdmission, snapshotRepositoryAdmission } from './repository-admission.ts';
 import { assertCurrentPatchFence, beginRepositoryAttemptWithClaim, isPatchReceiverResult } from './repository-receiver.ts';
@@ -60,7 +62,7 @@ export class RepositoryPatchReceiver {
   async applyPatch(
     patch: ApplyPatchAction,
     context?: RepositoryAdmissionContextV02,
-  ): Promise<{ readonly applied: boolean; readonly newRevisionDigest: string }> {
+  ): Promise<RepositoryPatchResultV02> {
     if (!context) throw new Error('NOT_IMPLEMENTED: applyPatch without v0.2 context is not implemented in v0.1 compatibility slice');
     const admitted = bindPatchToAdmission(patch, snapshotRepositoryAdmission(context, 'apply_patch'));
     const admittedContext = admitted.context;
@@ -111,7 +113,7 @@ export class RepositoryPatchReceiver {
         statePort,
         admittedContext,
         executor,
-        admittedContext.planApplicability === 'approved-plan' && admittedContext.runnableNode === 'Repair',
+        isApprovedPlanPatchV02(admittedContext),
         () => assertCurrentPatchFence(lease, admittedContext.workspaceId, manager.getFencingGeneration(admittedContext.workspaceId), this.fencingGeneration),
         (claim) => { claimed = claim; },
         () => { attemptBeginStarted = true; },
@@ -142,7 +144,7 @@ export class RepositoryPatchReceiver {
             admittedContext,
             claimed,
             executorIdentity,
-            admittedContext.planApplicability === 'approved-plan' && admittedContext.runnableNode === 'Repair',
+            isApprovedPlanPatchV02(admittedContext),
           );
           throw new RepositoryAttemptStartPendingError(claimed.claimId, recoveryId);
         }
@@ -194,10 +196,10 @@ export class RepositoryPatchReceiver {
     attempt: AttemptReceiptV02,
     receipt: RepositoryActionOutcomeReceiptV02,
     result?: { readonly applied: boolean; readonly newRevisionDigest: string },
-  ): Promise<{ readonly applied: boolean; readonly newRevisionDigest: string }> {
+  ): Promise<RepositoryPatchResultV02> {
     try {
       const recorded = await this.outcomeRecovery.record(lease, context, claim, attempt, receipt);
-      if (receipt.outcome === 'observed' && recorded.outcome === 'settled' && result) return result;
+      if (receipt.outcome === 'observed' && recorded.outcome === 'settled' && result) return { ...result, executionReceipt: { claim, attempt, outcome: receipt, settlement: recorded as typeof recorded & { readonly outcome: 'settled' } } };
       throw new PatchOutcomePendingError(attempt.attemptId);
     } catch {
       if (this.outcomeRecovery.hasPending(attempt.attemptId)) throw new PatchOutcomePendingError(attempt.attemptId);

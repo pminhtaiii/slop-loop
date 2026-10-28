@@ -86,7 +86,7 @@ On 2026-10-22 (Asia/Saigon), the user confirmed user-relayed agreement from Than
 
 #### Versioned migration and checkpoint order
 
-- UC-03 v0.2.0 and UC-05 uc05-approval/0.2-draft are introduced additively beside v0.1. Put new v0.2 port shapes in `src/contracts/foundation/uc03/ports-v02.ts`; leave the current v0.1 `ports.ts` interfaces and callers source-compatible throughout staged migration. Do not add required methods or optional-context overloads to a v0.1 port.
+- UC-03 v0.2.0 and UC-05 uc05-approval/0.2-draft are introduced additively beside v0.1. Put new v0.2 port shapes in `src/contracts/foundation/uc03/v02/ports.ts`; leave the current v0.1 `ports.ts` interfaces and callers source-compatible throughout staged migration. Do not add required methods or optional-context overloads to a v0.1 port.
 - Migrate validators, journal mock, UC-05 records and services, effect receivers, provider ingress, all forwarding fixtures, and UC-03 consumers in the task order in tasks.md. Each RED checkpoint has real neutral SUT exports and remains typecheck/build clean; source and emitted tests must reach behavioral assertions rather than fail at import/type/collection time. Each immediate GREEN successor passes the same focused source/emitted tests.
 - The exact task pair, source command, emitted command, and expected RED/GREEN state are listed in the task ledger's Checkpoint matrix. Full typecheck and build remain green at every checkpoint.
 - Keep legacy v0.1 interfaces source-compatible until migration is complete. A compatibility path, if retained, is separately versioned and test-only; it is fail-closed and cannot confer effect authority or satisfy v0.2 acceptance. No implicit production fallback is permitted.
@@ -133,3 +133,9 @@ IDs are delivery references, not fabricated UC-04/UC-05 task numbers. Link their
 No additional service or runtime-policy exception. The user-approved amendment permits bootstrap while production choices remain release gates; the placeholder constitution is not implicitly ratified. Keep numeric budgets configurable and fail closed; a finite test profile is not a production default.
 
 Publication only: [Post-SDD handoff](https://github.com/pminhtaiii/slop-loop/blob/ee5be9b147efb44511b8e65ece375fc904c5f062/docs/verification/2026-10-16-uc03-post-sdd.md) records transfer to review branch 007 while preserving feature directory 005 and all T001–T034 IDs. No Specify, Plan or Tasks generation was rerun. This historical handoff predates the user-requested rename to feature 001 and Phase 1 authorization recorded above.
+
+## Targeted receiver plan — 2026-10-28
+
+On 2026-10-28 (Asia/Bangkok), the user reported Tai had delegated full implementation and technical decisions within UC-03 T011 → T012 → UC-01 T013, including required specification/contract amendments. This releases only that sequential batch, its tests, independent review, context refresh and contributor publication. It supersedes earlier unreleased wording only for these tasks. No real LLM/provider, UC-04/UC-05 implementation, dispatch, automatic repair, production choices or other successor work is authorized.
+
+Implement the additive [receiver contract](contracts/uc01-receiver.md) in src/uc03/input.ts with cohesive input-types.ts, input-data.ts and input-uc01.ts helpers. Reuse canonical validateBugTask and UC-01 validateIntake/validateOutcome; no new dependencies or alternate state/approval adapters. T011 preserves existing investigation/verification and runs their regressions while establishing neutral intake RED; T012 makes direct intake GREEN; UC-01 T013 then validates the actual delivered receiver without dispatch. Existing graph execution admission is deliberately separate from pure intake.
