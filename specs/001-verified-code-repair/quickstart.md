@@ -49,18 +49,18 @@ pnpm run build
 node --test dist/tests/runtime/support/uc03/provider-mocks.test.js dist/tests/runtime/contract/uc03-port-conformance.test.js dist/tests/runtime/approvals/cli.test.js
 ```
 
-## Future command interface (to implement, not existing commands)
+## Local command interfaces and remaining gates
 
-T026 provides a thin local adapter; T027 provides these planned portable one-command interfaces after T001 selects the runtime toolchain:
+The local T026 adapter and T027 evaluation/comparison entry points exist after `pnpm run build`. T026's positive mock route passes; material-replan baseline/renewed approval, post-review accounting and subset-repair cumulative-diff gaps keep T026 unaccepted. The evaluator can write mock infrastructure reports; no configured case driver yields required not-run results and nonzero exit. Real mode currently refuses before dispatch. These commands do not establish accepted real execution:
 
 ```powershell
-node dist/cli/uc03.js --task fixtures/uc03/success/task.json --config <trusted-config.json> --output <report.json>
+node dist/src/cli/uc03.js --task fixtures/uc03/success/task.json --config <trusted-config.json> --output <report.json>
 node dist/eval/uc03/runner.js --suite uc03 --mode real --config <trusted-config.json> --output <run-a.json>
 node dist/eval/uc03/runner.js --suite uc03 --mode real --config <trusted-config.json> --output <run-b.json>
 node dist/eval/uc03/compare.js --baseline <run-a.json> --candidate <run-b.json> --output <comparison.json>
 ```
 
-Use actual paths chosen during implementation, replacing angle-bracket arguments. Local development fixtures under `fixtures/` are local-only and not shipped in published repository tracking; task paths like `fixtures/uc03/success/task.json` are local development examples. Future toolchain selection must provide the documented build and focused runtime-test invocation before these commands are runnable; T002 records exact commands. The runner exits nonzero for a failed/error/not-run required case, missing limits or unavailable isolation, and rejects production mock composition. It never auto-approves a real human checkpoint. Evaluation fixtures requiring a decision use explicit human/test-driver decisions via the real UC-05 gate, labelled as evaluation input rather than autonomous approval.
+Replace angle-bracket arguments with local paths. Local development fixtures under `fixtures/` are local-only and not shipped in published repository tracking; task paths like `fixtures/uc03/success/task.json` are local development examples. T002 records the selected toolchain. The runner exits nonzero for a failed/error/not-run required case, missing limits or unavailable isolation, and refuses real mode until real composition is supplied. The mock-only isolated-grading seam binds a final snapshot, profile and executor to an independent admission; fake executor checks remain infrastructure evidence, C17 remains not-run, and isRealVerified remains false. No checkpoint is automatically approved. Real evaluation still needs explicit human/test-driver decisions through the real UC-05 gate and the accepted T024 isolation profile.
 
 ## Expected validation sequence
 
@@ -72,3 +72,29 @@ Use actual paths chosen during implementation, replacing angle-bracket arguments
 6. Run all C01–C17 twice and compare structured case outcomes/metrics. Any required not-run/failure/error remains explicit and prevents verified completion. Inspect sanitized live activity and final report, plus host-private independent grading evidence.
 
 Record exact commands, exit codes, runtime/fixture/config/image digests, external adapter revisions and evidence references. See [acceptance contract](contracts/acceptance.md) for case assertions and [interfaces](contracts/interfaces.md) for ports/mocks. Mock success, contributor tests or a merged PR alone never establish UC-03 acceptance.
+
+
+## Scoped supplied-task intake and receiver evidence — 2026-10-28
+
+Authorization: [decisions](contracts/decisions.md). Contract: [uc01-uc03-receiver-v1](contracts/uc01-receiver.md), delivered by [input.ts](../../src/uc03/input.ts). Base: bc725b08bfd1256cde30ebb478774e4470f8ec39. Canonical BugTask/UC-01 validators are reused. This is pure intake and actual local receiver compatibility; upstream assessment provenance remains mock.
+
+| Obligation | Observed scoped evidence |
+|---|---|
+| T011 / C01,C02,C16 | Three complete/missing/ambiguous-input assertions failed against runnable neutral intake in source/emitted tests; typecheck/build passed. Existing investigation/verification implementations and regressions were preserved. |
+| T012 direct intake | Source/emitted 25/25 pass: explicit caller task, missing fields, ambiguity, no invented limits/checks/criteria, detached output and bounded safe diagnostics. |
+| T013 / C21 / X-RECEIVER | Source/emitted 14/14 exercise actual IssueAssessor → receiver: complete/missing caller details, unresolved questions, configured IDs, provenance, version/configuration validation and stale identity/snapshot binding, without dispatch. |
+| Data-only refusal | Proxy probe was RED (accepted input, three traps), then GREEN (refusal, zero traps). Accessors, prototypes, cycles, sparse arrays and depth/value/byte limits are refused. |
+| Integrated regression | Source/emitted selected suites each pass 587/587, no skips/failures. Investigation/verification sources remain byte-identical to base. |
+| Local quality | Direct compiler typecheck/build and focused six-file ESLint pass. Missing declared lint dependencies restored with frozen-lockfile installation; no manifest/lock changes. Full publication gates and current-head public CI remain separate checks. |
+
+Commands exercised (exit 0 except intended RED checkpoints):
+
+~~~powershell
+node node_modules/typescript/bin/tsc --noEmit
+node node_modules/typescript/bin/tsc
+node --test tests/runtime/unit/uc03-success.test.ts tests/runtime/uc01/receiver.test.ts
+node --test dist/tests/runtime/unit/uc03-success.test.js dist/tests/runtime/uc01/receiver.test.js
+node --test tests/runtime/uc01/*.test.ts tests/runtime/unit/uc03-success.test.ts tests/runtime/unit/uc03-investigation.test.ts tests/runtime/unit/uc03-verification.test.ts tests/runtime/unit/telemetry.test.ts tests/runtime/unit/uc03-report.test.ts
+~~~
+
+The last command also passed with emitted counterparts. Local ignored evidence is retained in `.agent-work/2026-10-28/uc03-triage-receiver/`: neutral snapshot/RED logs, GREEN logs, mechanical acceptance/hashes and independent review reports. Tracked tests plus the published revision are reproducible; ignored files are not CI prerequisites. Intake grants neither baseline evidence nor action/plan approval. Real providers/adapters, UC-04/UC-05, actual containment/restart, automatic repair/dispatch and broader UC-03 acceptance remain outside this slice.

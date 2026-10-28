@@ -2,6 +2,7 @@ import { computeCanonicalSha256 } from '../contracts/foundation/uc03.ts';
 import { computeAdmissionDigest } from '../contracts/foundation/uc03/admission-v02.ts';
 import {
   computeAttemptOutcomeDigest,
+  isApprovedPlanPatchV02,
   validateRepositoryActionOutcomeReceiptV02,
 } from '../contracts/foundation/uc03/attempt-v02.ts';
 import type {
@@ -112,7 +113,7 @@ export class RepositoryPatchReceiver {
         statePort,
         admittedContext,
         executor,
-        admittedContext.planApplicability === 'approved-plan' && admittedContext.runnableNode === 'Repair',
+        isApprovedPlanPatchV02(admittedContext),
         () => assertCurrentPatchFence(lease, admittedContext.workspaceId, manager.getFencingGeneration(admittedContext.workspaceId), this.fencingGeneration),
         (claim) => { claimed = claim; },
         () => { attemptBeginStarted = true; },
@@ -143,7 +144,7 @@ export class RepositoryPatchReceiver {
             admittedContext,
             claimed,
             executorIdentity,
-            admittedContext.planApplicability === 'approved-plan' && admittedContext.runnableNode === 'Repair',
+            isApprovedPlanPatchV02(admittedContext),
           );
           throw new RepositoryAttemptStartPendingError(claimed.claimId, recoveryId);
         }

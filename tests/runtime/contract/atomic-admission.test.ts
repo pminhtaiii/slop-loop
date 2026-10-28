@@ -2466,8 +2466,13 @@ test('Public v0.2 validators contain exotic input exceptions and return detached
 });
 
 test('Settled repository handoff validates independent admission without invented current journal status', () => {
-  for (const branch of ['approved-plan', 'pre-plan-diagnostic'] as const) {
-    const context = createTrustedOutcomeContext('repository-action', branch);
+  const branches = [
+    { branch: 'approved-plan', admission: createValidRepositoryApprovedPlanContext({ runnableNode: 'Repair' }) },
+    { branch: 'approved-plan', admission: createValidRepositoryApprovedPlanContext({ runnableNode: 'Patch' }) },
+    { branch: 'pre-plan-diagnostic', admission: createValidRepositoryPrePlanDiagnosticContext() },
+  ] as const;
+  for (const { branch, admission: trustedAdmission } of branches) {
+    const context = createTrustedOutcomeContext('repository-action', branch, trustedAdmission);
     const admission = context.trustedAdmission as RepositoryAdmissionContextV02;
     const claimRaw = { ...context.trustedClaim, claimDigest: undefined };
     const claim = { ...context.trustedClaim, claimDigest: computeCanonicalSha256(claimRaw) };
@@ -2493,6 +2498,12 @@ test('Settled repository handoff validates independent admission without invente
       { ...bundle, claim: { ...claim, runId: 'foreign-run' } },
       { ...bundle, attempt: { ...attempt, extra: true } },
       { ...bundle, attempt: { ...attempt, preAttemptControlVersion: 99 } },
+      ...(branch === 'approved-plan'
+        ? [
+            { ...bundle, attempt: { ...attempt, postBeginTaskStateVersion: attempt.preAttemptTaskStateVersion } },
+            { ...bundle, attempt: { ...attempt, postBeginTaskStateVersion: attempt.preAttemptTaskStateVersion + 2 } },
+          ]
+        : [{ ...bundle, attempt: { ...attempt, postBeginTaskStateVersion: attempt.preAttemptTaskStateVersion + 1 } }]),
       { ...bundle, settlement: { outcome: 'already-recorded', receiptId: outcome.receiptId } },
       { ...bundle, settlement: { outcome: 'recorded-unsettled', receiptId: outcome.receiptId } },
       { ...bundle, settlement: { outcome: 'uncertain', receiptId: outcome.receiptId } },

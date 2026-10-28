@@ -20,6 +20,7 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
+    "resolveJsonModule": true,
     "skipLibCheck": true,
     "declaration": true,
     "sourceMap": true,
@@ -28,6 +29,7 @@
   },
   "include": [
     "src/**/*.ts",
+    "eval/**/*.ts",
     "tests/runtime/**/*.ts"
   ]
 }

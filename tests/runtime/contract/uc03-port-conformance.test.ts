@@ -9,8 +9,12 @@ import {
   computeActionDigest,
   validateRepositoryAdmissionV02,
   validateReviewResult,
+  isVerificationAuthoritySnapshotV02,
+  isVerificationApprovalContextV02,
   type RepositoryAdmissionContextV02,
   type ProviderAdmissionContextV02,
+  type RecordVerificationApprovalRequestV02,
+  type VerificationApprovalContextV02,
 } from '../../../src/contracts/foundation/uc03.ts';
 import { MemoryStatePort, MemoryStatePortV02 } from '../support/uc03/memory-state.ts';
 import { ScriptedApprovalPort, ScriptedApprovalPortV02 } from '../support/uc03/scripted-approval.ts';
@@ -148,6 +152,57 @@ for (const profile of v01Profiles) {
 // ============================================================================
 // v0.2 Port Conformance Matrix Tests (T053 / T054)
 // ============================================================================
+
+test('v0.2 state authority capabilities are additive and fail closed when issuer evidence is unavailable', async () => {
+  const state = createFixtureTaskState();
+  const authority = createFixturePolicyAuthorityRefV02();
+  const owner = new MemoryStatePortV02({ initialTaskState: state, initialAuthorityRef: authority });
+  const snapshot = await owner.readVerificationAuthoritySnapshot(state.taskId);
+  assert.ok(snapshot);
+  assert.equal(isVerificationAuthoritySnapshotV02(snapshot), true);
+  assert.equal(isVerificationAuthoritySnapshotV02({ ...snapshot, extra: true }), false);
+
+  const context: VerificationApprovalContextV02 = {
+    purpose: 'current-verification',
+    expectedIssuerKeyRef: authority.issuerKeyRef,
+    expectedDecisionAuthorityGeneration: authority.decisionAuthorityGeneration,
+    approvalContext: {
+      currentTaskId: state.taskId,
+      currentWorkspaceId: state.workspaceId,
+      currentRepositoryRevisionDigest: state.repositoryRevisionDigest,
+      currentPolicyId: authority.policyId,
+      currentPolicyVersion: authority.policyVersion,
+      currentNormalizedActionDigest: computeCanonicalSha256('port-conformance-action'),
+      currentPlanVersion: state.planVersion,
+      currentStrategyDigest: computeCanonicalSha256('port-conformance-strategy'),
+      currentBaselineRef: 'baseline-port-conformance',
+      currentEvidenceRefs: ['baseline-port-conformance'],
+      currentCriteriaDigest: computeCanonicalSha256(state.acceptanceCriteria),
+      currentCheckSetDigest: computeCanonicalSha256(state.requiredCheckIds),
+    },
+  };
+  assert.equal(isVerificationApprovalContextV02(context), true);
+  const resolution = await owner.resolvePlanDecisionInContext('decision-without-issuer', context);
+  assert.deepEqual(resolution, { outcome: 'unavailable', reasonCode: 'MISSING_CONTEXTUAL_ISSUER' });
+  assert.equal(await owner.readSettledPatchAncestry({
+    taskId: state.taskId,
+    runId: state.runId,
+    resultingRepositoryRevisionDigest: state.repositoryRevisionDigest,
+  }), null);
+
+  const invalidRequest: RecordVerificationApprovalRequestV02 = {
+    taskId: '', runId: '', workspaceId: '', repositoryId: '', originalDecisionId: '', decisionId: '',
+    expectedStateVersion: -1, expectedRepositoryRevisionDigest: '', expectedPlanVersion: 0,
+    expectedPlanMaterialDigest: '', expectedControlVersion: -1, expectedEpoch: -1,
+    expectedDecisionAuthorityGeneration: 0,
+    policyIdentity: { policyId: '', policyVersion: '', configId: '', configVersion: '', issuerKeyRef: '' },
+    requestIdentity: '',
+  };
+  const before = await owner.loadTask(state.taskId);
+  assert.equal((await owner.recordVerificationApproval(invalidRequest)).outcome, 'conflict');
+  assert.deepEqual(await owner.loadTask(state.taskId), before);
+  assert.equal('readVerificationAuthoritySnapshot' in new MemoryStatePort(), false);
+});
 
 for (const scenario of ['missing', 'exhausted', 'malformed', 'stale', 'valid'] as const) {
   test(`v0.2 port conformance: coder / ${scenario}`, async () => {
