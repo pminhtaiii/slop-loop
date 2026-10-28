@@ -1,5 +1,5 @@
 import type { CheckDefinition, CheckResult } from '../contracts/foundation/uc03.ts';
-import { isApprovedPlanPatchV02, validateAttemptReceiptV02 } from '../contracts/foundation/uc03/attempt-v02.ts';
+import { isApprovedPlanPatchV02, validateAttemptReceiptV02 } from '../contracts/foundation/uc03/v02/attempt.ts';
 import type {
   RepositoryCommandResultV02,
   RepositoryExecutionReceiptV02,
@@ -9,9 +9,9 @@ import type {
   ReconciliationResultV02,
   RepositoryAdmissionContextV02,
   StatePortV02,
-} from '../contracts/foundation/uc03/ports-v02.ts';
+} from '../contracts/foundation/uc03/v02/ports.ts';
 import type { ControlledRepositoryToolsOptions, RepositoryAttemptStartRecoveryResultV02 } from './repository-types.ts';
-import type { ExecutionLimits, RunCommandAction } from '../contracts/foundation/uc03/types.ts';
+import type { ExecutionLimits, RunCommandAction } from '../contracts/foundation/uc03/v01/types.ts';
 import {
   dockerCommandView,
 } from './repository-admission.ts';

@@ -1,7 +1,7 @@
 import { journalClaimV02 } from '../../../../src/approvals/control-v02.ts';
-import type { AttemptReceiptV02, ClaimReceiptV02, ExecutorIdentityV02, RepositoryAdmissionContextV02, RepositoryAdmissionTrustedContextV02 } from '../../../../src/contracts/foundation/uc03/ports-v02.ts';
-import { validateAdmissionV02 } from '../../../../src/contracts/foundation/uc03/admission-v02.ts';
-import { validateAttemptReceiptV02 } from '../../../../src/contracts/foundation/uc03/attempt-v02.ts';
+import type { AttemptReceiptV02, ClaimReceiptV02, ExecutorIdentityV02, RepositoryAdmissionContextV02, RepositoryAdmissionTrustedContextV02 } from '../../../../src/contracts/foundation/uc03/v02/ports.ts';
+import { validateAdmissionV02 } from '../../../../src/contracts/foundation/uc03/v02/admission.ts';
+import { validateAttemptReceiptV02 } from '../../../../src/contracts/foundation/uc03/v02/attempt.ts';
 import { type MemoryStatePortV02, NEUTRAL_ATTEMPT_RECEIPT_V02, isNeutralAttemptReceiptV02 } from '../uc03/memory-state.ts';
 import { isDeepStrictEqual } from 'node:util';
 import {

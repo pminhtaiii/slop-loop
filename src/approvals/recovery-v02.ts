@@ -1,13 +1,13 @@
 import { isDeepStrictEqual } from 'node:util';
 import type { ApprovalBinding } from '../contracts/foundation/uc03.ts';
 import { computeCanonicalSha256, validateTaskState } from '../contracts/foundation/uc03.ts';
-import { validateAdmissionV02 } from '../contracts/foundation/uc03/admission-v02.ts';
+import { validateAdmissionV02 } from '../contracts/foundation/uc03/v02/admission.ts';
 import type {
   AdmissionContextV02,
   AdmissionTrustedContextV02,
   ClaimReceiptV02,
   PolicyAuthorityRefV02,
-} from '../contracts/foundation/uc03/ports-v02.ts';
+} from '../contracts/foundation/uc03/v02/ports.ts';
 import type { DispatchClaimV02 } from '../contracts/approvals/contracts.ts';
 import {
   UC05_APPROVAL_SCHEMA_VERSION_V02,

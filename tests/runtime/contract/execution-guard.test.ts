@@ -1,6 +1,6 @@
 import { ControlledRepositoryTools, type TrustedFilesystemPort } from '../../../src/foundation/repository-tools.ts';
 import { DockerWorkspaceManager } from '../../../src/foundation/docker-workspace.ts';
-import { computeAttemptOutcomeDigest } from '../../../src/contracts/foundation/uc03/attempt-v02.ts';
+import { computeAttemptOutcomeDigest } from '../../../src/contracts/foundation/uc03/v02/attempt.ts';
 /**
  * UC-03 Phase 5 - Authoritative Execution Guard Contract Tests (T021 / T059 / T022)
  *

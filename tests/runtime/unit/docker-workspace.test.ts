@@ -36,7 +36,7 @@ import {
 import type {
   AttemptReceiptV02,
   ExecutorIdentityV02,
-} from '../../../src/contracts/foundation/uc03/ports-v02.ts';
+} from '../../../src/contracts/foundation/uc03/v02/ports.ts';
 
 export const TEST_PROFILE_IMAGE_DIGEST = 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' as const;
 

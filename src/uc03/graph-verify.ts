@@ -1,16 +1,9 @@
 import { computeCanonicalSha256, computeCheckSetDigest, type TaskState } from '../contracts/foundation/uc03.ts';
 import { executeVerificationChecks } from './verification.ts';
-import type { UC03GraphConfig, UC03GraphNode, UC03GraphPorts, UC03GraphState } from './graph-types.ts';
-import {
-  addMilestone,
-  reloadAuthoritativeState,
-  requiredChecksPassed,
-  resolveExecutionGuard,
-  transitionState,
-  trustedExpectedContext,
-  trustedOwnerStateMatches,
-  validDiffInfo,
-} from './graph-validation.ts';
+import type { UC03GraphConfig, UC03GraphPorts } from './graph-types.ts';
+import type { UC03GraphNode, UC03GraphState } from './graph-state.ts';
+import { addMilestone, requiredChecksPassed, resolveExecutionGuard, trustedExpectedContext, trustedOwnerStateMatches, validDiffInfo } from './graph-validation.ts';
+import { reloadAuthoritativeState, transitionState } from './graph-transitions.ts';
 import { loadVerifiedPatchAncestry, restoreVerificationEvidence } from './graph-patch-ancestry.ts';
 import {
   currentPlanApprovalIsCurrent,

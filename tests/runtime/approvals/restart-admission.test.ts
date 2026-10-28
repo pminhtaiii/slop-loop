@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import { createApprovalContinuation } from '../../../src/approvals/control.ts';
 import { createRecoveryScenario, recoveryProfile } from '../support/uc05/mock-recovery.ts';
 import type { ApprovalService } from '../../../src/approvals/service.ts';
-import { validateAdmissionV02 } from '../../../src/contracts/foundation/uc03/admission-v02.ts';
+import { validateAdmissionV02 } from '../../../src/contracts/foundation/uc03/v02/admission.ts';
 import { authorityRefV02, journalSnapshotV02 } from '../../../src/approvals/control-v02.ts';
 import type { ApprovalRecoveryOwner } from '../../../src/approvals/control.ts';
 import { MemoryStatePortV02 } from '../support/uc03/memory-state.ts';

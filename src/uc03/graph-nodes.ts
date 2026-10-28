@@ -9,14 +9,11 @@ import {
   prepareFixPlanAndApproval,
 } from './investigation.ts';
 import { createRepairActionId, createTrustedRepairContext, executeRepair } from './repair.ts';
-import type { UC03GraphConfig, UC03GraphNode, UC03GraphPorts, UC03GraphState } from './graph-types.ts';
+import type { UC03GraphConfig, UC03GraphPorts } from './graph-types.ts';
+import type { UC03GraphNode, UC03GraphState } from './graph-state.ts';
 
-import {
-  addMilestone, currentPlanBindingDigest, loadCurrentOwnerState, patchResult,
-  reloadAuthoritativeState, resolveExecutionGuard,
-  samePaths, transitionState, trustedExpectedContext, trustedOwnerStateMatches,
-  validSettledPatchEvidence,
-} from './graph-validation.ts';
+import { addMilestone, currentPlanBindingDigest, patchResult, resolveExecutionGuard, samePaths, trustedExpectedContext, trustedOwnerStateMatches, validSettledPatchEvidence } from './graph-validation.ts';
+import { loadCurrentOwnerState, reloadAuthoritativeState, transitionState } from './graph-transitions.ts';
 
 export function createInvestigateNode(ports: UC03GraphPorts, config?: UC03GraphConfig): UC03GraphNode {
   return async (state: UC03GraphState) => {

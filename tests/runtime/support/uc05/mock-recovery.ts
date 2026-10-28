@@ -14,7 +14,7 @@ import { createApprovalContinuationV02, type ApprovalContinuationV02 } from '../
 import type {
   RepositoryAdmissionContextV02,
   RepositoryAdmissionTrustedContextV02,
-} from '../../../../src/contracts/foundation/uc03/ports-v02.ts';
+} from '../../../../src/contracts/foundation/uc03/v02/ports.ts';
 
 const digest = `sha256:${'a'.repeat(64)}`;
 const identity = { policyId: 'policy-1', policyVersion: '1', configId: 'config-1', configVersion: '1' };

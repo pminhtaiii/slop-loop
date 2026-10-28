@@ -18,7 +18,7 @@ The initial `docs-v1` policy admits added or modified non-executable regular Mar
 
 Read JSON `status`, `eligible`, `reasons`, and `snapshot`; exit 0 alone is not eligibility. `ELIGIBLE_PREVIEW` always has `mergeEnabled: false`. `MANUAL_REVIEW` identifies unsupported changes, `WAITING_EVIDENCE` identifies missing/pending evidence, and `BLOCKED` identifies invalid, failed or changed observations. Reports include short explanations and keep private repository names/URLs out of output. Missing immutable public base/head objects require normal preparation outside this read-only command.
 
-The [feature contract](../../specs/038-paired-merge-eligibility/contracts/eligibility.md) defines exact limits and prerequisites. Controlled tests use `node --test tests/agents/paired-merge-eligibility.test.mjs`; they establish exercised local behavior only. Automatic merge execution, partial-merge recovery, refactoring/module-graph analysis, coverage and mutation comparisons remain outside this first scope. The human merge rule above still applies, and a saved preview grants no future action authority.
+The [feature contract](../../specs/005-paired-merge-eligibility/contracts/eligibility.md) defines exact limits and prerequisites. Controlled tests use `node --test tests/agents/paired-merge-eligibility.test.mjs`; they establish exercised local behavior only. Automatic merge execution, partial-merge recovery, refactoring/module-graph analysis, coverage and mutation comparisons remain outside this first scope. The human merge rule above still applies, and a saved preview grants no future action authority.
 
 ## Branch and size
 

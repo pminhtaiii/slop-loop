@@ -13,11 +13,11 @@ import {
   computeClaimClosureDigest,
   validateClaimClosureReceiptV02,
   type ClaimClosureValidationContextV02,
-} from '../contracts/foundation/uc03/attempt-v02.ts';
+} from '../contracts/foundation/uc03/v02/attempt.ts';
 import type {
   ClaimClosureReceiptV02 as JournalClaimClosureReceiptV02,
   ClaimReceiptV02 as JournalClaimReceiptV02,
-} from '../contracts/foundation/uc03/ports-v02.ts';
+} from '../contracts/foundation/uc03/v02/ports.ts';
 import { containsProtectedContent } from '../foundation/repository-tools.ts';
 export {
   createApprovalContinuation,

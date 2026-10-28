@@ -32,7 +32,7 @@ import {
   type FixPlan,
   type RepositoryAdmissionContextV02,
 } from '../../../src/contracts/foundation/uc03.ts';
-import { computeAdmissionDigest } from '../../../src/contracts/foundation/uc03/admission-v02.ts';
+import { computeAdmissionDigest } from '../../../src/contracts/foundation/uc03/v02/admission.ts';
 import {
   evaluateDeterministicCompletion,
   executeVerificationChecks,

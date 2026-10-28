@@ -15,7 +15,7 @@ import { validateBaselineEvidenceCandidate } from './investigation-baseline-evid
 import { baselineEvidenceAcknowledgementMatches } from './investigation-snapshot.ts';
 import type { BaselineEvidenceWriteRequest, BaselineEvidenceWriter } from './investigation-types.ts';
 import type { UC03RepositoryAdmission } from './graph-types.ts';
-import type { UC03GraphState } from './graph-types.ts';
+import type { UC03GraphState } from './graph-state.ts';
 import { createVerificationApprovalContext, currentApprovalMatches, expectedPlanMaterialDigest } from './post-patch-verification-authority.ts';
 
 export interface VerifiedPatchAncestry {

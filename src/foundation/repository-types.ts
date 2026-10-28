@@ -12,8 +12,8 @@ import type {
   RepositoryActionOutcomeReceiptV02,
   AttemptReconciliationReceiptV02,
   ClaimClosureResultV02,
-} from '../contracts/foundation/uc03/ports-v02.ts';
-import type { AttemptReconciliationValidationContextV02 } from '../contracts/foundation/uc03/attempt-v02.ts';
+} from '../contracts/foundation/uc03/v02/ports.ts';
+import type { AttemptReconciliationValidationContextV02 } from '../contracts/foundation/uc03/v02/attempt.ts';
 import type { DockerWorkspaceManager, StructuredCommandExecutor } from './docker-workspace.ts';
 import type { RepositoryCommandResourcePolicy } from './repository-admission.ts';
 

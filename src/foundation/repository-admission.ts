@@ -3,15 +3,15 @@ import {
   computeCanonicalSha256,
   validateNormalizedAction,
 } from '../contracts/foundation/uc03.ts';
-import { validateRepositoryAdmissionV02 } from '../contracts/foundation/uc03/admission-v02/repository.ts';
+import { validateRepositoryAdmissionV02 } from '../contracts/foundation/uc03/v02/admission/repository.ts';
 import {
   validateExecutionLimits,
 } from '../contracts/foundation/uc03.ts';
-import type { ApplyPatchAction, CheckDefinition, CommandView, ExecutionLimits, RunCommandAction, ValidationError } from '../contracts/foundation/uc03/types.ts';
-import { validateCheckDefinition } from '../contracts/foundation/uc03/validation/intake/limits.ts';
+import type { ApplyPatchAction, CheckDefinition, CommandView, ExecutionLimits, RunCommandAction, ValidationError } from '../contracts/foundation/uc03/v01/types.ts';
+import { validateCheckDefinition } from '../contracts/foundation/uc03/v01/validation/intake/limits.ts';
 import type {
   RepositoryAdmissionContextV02,
-} from '../contracts/foundation/uc03/ports-v02.ts';
+} from '../contracts/foundation/uc03/v02/ports.ts';
 
 export interface BoundPatchAdmission {
   readonly context: RepositoryAdmissionContextV02;

@@ -41,7 +41,7 @@ The verifier resolves its own issuer records by decisionId, validates ownership/
 
 The graph uses this PUBLIC contextual method for both D0 ancestry and D1 current checks/completion, rather than invoking a ScriptedApprovalPort-only overload. The mock issuer may use its own internal record store to implement the method; runtime source never accesses that store or its private context setters. Add same-issuer D0/D1 success, wrong/substituted issuer/context/generation, missing-capability and pending/rejected regressions through the public interface.
 
-Keep these types in `src/contracts/foundation/uc03/verification-authority-v02.ts` (new) if needed to stay under the source-size limit. Export them through the existing `ports-v02.ts`/`uc03.ts` public facades. Assign `tests/runtime/support/uc03/scripted-approval.ts`, `provider-mocks.test.ts`, `uc03-port-conformance.test.ts`, owner/graph composition and new focused authority tests to implement/forward this exact capability. Existing wire records and the four v0.1 method signatures are untouched.
+Keep these types in `src/contracts/foundation/uc03/v02/verification-authority.ts` (new) if needed to stay under the source-size limit. Export them through the existing `ports-v02.ts`/`uc03.ts` public facades. Assign `tests/runtime/support/uc03/scripted-approval.ts`, `provider-mocks.test.ts`, `uc03-port-conformance.test.ts`, owner/graph composition and new focused authority tests to implement/forward this exact capability. Existing wire records and the four v0.1 method signatures are untouched.
 
 ## Optional v0.2 owner contract
 
@@ -83,7 +83,7 @@ For D1, current actions use the existing planDecisionRef=D1 and planBindingDiges
 
 | Paths | Required changes |
 |---|---|
-| src/contracts/foundation/uc03/ports-v02.ts, src/contracts/foundation/uc03/verification-authority-v02.ts (new), src/contracts/foundation/uc03.ts | Add/export the explicit optional contextual issuer verifier, authority snapshot, recordVerificationApproval request/result, and read-only settled patch ancestry types. Do not change generic state transitions or add TaskState/schema fields. |
+| src/contracts/foundation/uc03/v02/ports.ts, src/contracts/foundation/uc03/v02/verification-authority.ts (new), src/contracts/foundation/uc03.ts | Add/export the explicit optional contextual issuer verifier, authority snapshot, recordVerificationApproval request/result, and read-only settled patch ancestry types. Do not change generic state transitions or add TaskState/schema fields. |
 | src/uc03/investigation-types.ts | Add the optional baseline evidence read capability needed for TaskState-only resume; retain existing write behavior. |
 | src/uc03/graph-validation.ts | Separate original D0 patch ancestry validation from current D1 validation. Recompute digests only against owner-loaded original state and require independent issuer validation. Track all callers of validSettledPatchEvidence. |
 | src/uc03/graph-completion.ts | Validate actual D0 issuer/patch ancestry and current D1 approval separately before accepting completion. Preserve host snapshot, diff, check, review, and accounting requirements. |
