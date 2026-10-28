@@ -25,6 +25,15 @@ import type {
   AdmittedFile,
 } from './types.ts';
 import type { RepositoryActionOutcomeReceiptV02, AttemptOutcomeReceiptV02, AttemptReconciliationReceiptV02 } from './attempt-receipts-v02.ts';
+import type {
+  RecordVerificationApprovalRequestV02,
+  RecordVerificationApprovalResultV02,
+  SettledPatchAncestryRequestV02,
+  SettledPatchAncestryV02,
+  VerificationApprovalContextV02,
+  VerificationApprovalResolutionV02,
+  VerificationAuthoritySnapshotV02,
+} from './verification-authority-v02.ts';
 
 export type { PortIdentity, PortProvenance };
 
@@ -430,7 +439,15 @@ export interface StatePortV02 extends PortIdentity {
   closeUnattemptedClaim(receipt: ClaimClosureReceiptV02): Promise<ClaimClosureResultV02>;
   checkpoint(state: TaskState): Promise<void>;
   recover(taskId: string): Promise<TaskState>;
+  /** Optional verification-only authority operations. Missing methods fail closed. */
+  readVerificationAuthoritySnapshot?(taskId: string): Promise<VerificationAuthoritySnapshotV02 | null>;
+  recordVerificationApproval?(request: RecordVerificationApprovalRequestV02): Promise<RecordVerificationApprovalResultV02>;
+  resolvePlanDecisionInContext?(decisionId: string, context: VerificationApprovalContextV02): Promise<VerificationApprovalResolutionV02>;
+  readSettledPatchAncestry?(request: SettledPatchAncestryRequestV02): Promise<SettledPatchAncestryV02 | null>;
 }
+
+/** Public owner composition may expose this issuer capability independently. */
+export type { ContextualApprovalVerifierV02 } from './verification-authority-v02.ts';
 
 /** Exact receiver handoff, issued only after an observed outcome is settled. */
 export interface RepositoryExecutionReceiptV02 {

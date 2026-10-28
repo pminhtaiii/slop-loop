@@ -49,18 +49,18 @@ pnpm run build
 node --test dist/tests/runtime/support/uc03/provider-mocks.test.js dist/tests/runtime/contract/uc03-port-conformance.test.js dist/tests/runtime/approvals/cli.test.js
 ```
 
-## Future command interface (to implement, not existing commands)
+## Local command interfaces and remaining gates
 
-T026 provides a thin local adapter; T027 provides these planned portable one-command interfaces after T001 selects the runtime toolchain:
+The local T026 adapter and T027 evaluation/comparison entry points exist after `pnpm run build`. T026's positive mock route passes; material-replan baseline/renewed approval, post-review accounting and subset-repair cumulative-diff gaps keep T026 unaccepted. The evaluator can write mock infrastructure reports; no configured case driver yields required not-run results and nonzero exit. Real mode currently refuses before dispatch. These commands do not establish accepted real execution:
 
 ```powershell
-node dist/cli/uc03.js --task fixtures/uc03/success/task.json --config <trusted-config.json> --output <report.json>
+node dist/src/cli/uc03.js --task fixtures/uc03/success/task.json --config <trusted-config.json> --output <report.json>
 node dist/eval/uc03/runner.js --suite uc03 --mode real --config <trusted-config.json> --output <run-a.json>
 node dist/eval/uc03/runner.js --suite uc03 --mode real --config <trusted-config.json> --output <run-b.json>
 node dist/eval/uc03/compare.js --baseline <run-a.json> --candidate <run-b.json> --output <comparison.json>
 ```
 
-Use actual paths chosen during implementation, replacing angle-bracket arguments. Local development fixtures under `fixtures/` are local-only and not shipped in published repository tracking; task paths like `fixtures/uc03/success/task.json` are local development examples. Future toolchain selection must provide the documented build and focused runtime-test invocation before these commands are runnable; T002 records exact commands. The runner exits nonzero for a failed/error/not-run required case, missing limits or unavailable isolation, and rejects production mock composition. It never auto-approves a real human checkpoint. Evaluation fixtures requiring a decision use explicit human/test-driver decisions via the real UC-05 gate, labelled as evaluation input rather than autonomous approval.
+Replace angle-bracket arguments with local paths. Local development fixtures under `fixtures/` are local-only and not shipped in published repository tracking; task paths like `fixtures/uc03/success/task.json` are local development examples. T002 records the selected toolchain. The runner exits nonzero for a failed/error/not-run required case, missing limits or unavailable isolation, and refuses real mode until real composition is supplied. The mock-only isolated-grading seam binds a final snapshot, profile and executor to an independent admission; fake executor checks remain infrastructure evidence, C17 remains not-run, and isRealVerified remains false. No checkpoint is automatically approved. Real evaluation still needs explicit human/test-driver decisions through the real UC-05 gate and the accepted T024 isolation profile.
 
 ## Expected validation sequence
 

@@ -1,5 +1,5 @@
 import type { CheckDefinition, CheckResult } from '../contracts/foundation/uc03.ts';
-import { validateAttemptReceiptV02 } from '../contracts/foundation/uc03/attempt-v02.ts';
+import { isApprovedPlanPatchV02, validateAttemptReceiptV02 } from '../contracts/foundation/uc03/attempt-v02.ts';
 import type {
   RepositoryCommandResultV02,
   RepositoryExecutionReceiptV02,
@@ -57,23 +57,24 @@ export async function beginRepositoryAttempt(
   statePort: StatePortV02,
   context: RepositoryAdmissionContextV02,
   executorIdentity: ExecutorIdentityV02,
-  isRepairPatch: boolean,
+  _isRepairPatch: boolean,
   beforeBeginAttempt: () => void,
 ): Promise<AttemptReceiptV02> {
   return (await beginRepositoryAttemptWithClaim(
     statePort,
     context,
     executorIdentity,
-    isRepairPatch,
+    _isRepairPatch,
     beforeBeginAttempt,
   )).attempt;
 }
 
+/** Retain the legacy flag for existing callers; the admission defines progression. */
 export async function beginRepositoryAttemptWithClaim(
   statePort: StatePortV02,
   context: RepositoryAdmissionContextV02,
   executorIdentity: ExecutorIdentityV02,
-  isRepairPatch: boolean,
+  _isRepairPatch: boolean,
   beforeBeginAttempt: () => void,
   onClaim: (claim: ClaimReceiptV02) => void = noopCallback,
   onBeginAttempt: () => void = noopCallback,
@@ -89,7 +90,7 @@ export async function beginRepositoryAttemptWithClaim(
   const result = validateAttemptReceiptV02(attemptInput, {
     expectedTaskId: context.taskId,
     expectedClaimId: claim.claimId,
-    isRepairPatch,
+    isRepairPatch: isApprovedPlanPatchV02(context),
   });
   if (!result.ok || !matchesRepositoryAttemptV02(result.value, claim, executorIdentity)) {
     throw new Error('BEGIN_ATTEMPT_DENIED: StatePort returned a mismatched attempt receipt');
