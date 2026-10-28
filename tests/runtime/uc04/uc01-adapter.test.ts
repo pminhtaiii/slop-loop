@@ -1,0 +1,183 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { BudgetTracker } from '../../../src/persistence/accounting.ts';
+import { DurableStore } from '../../../src/persistence/store.ts';
+import { UC01AccountingAdapter } from '../../../src/persistence/adapters/uc01-adapter.ts';
+import type { BudgetLedger } from '../../../src/persistence/contracts.ts';
+
+test('UC-04 / UC-01: Accounting & Recovery Adapter', async (t) => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'uc01-adapter-test-'));
+
+  t.after(() => {
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  const taskId = 'task-uc01-triage';
+  const runId = 'run-1';
+
+  const initialLedgers: BudgetLedger[] = [
+    {
+      scope: 'task',
+      kind: 'tokens',
+      limit: 1000,
+      consumed: 0,
+      reservations: [],
+      configurationId: 'cfg-tokens',
+      version: 1,
+    },
+    {
+      scope: 'task',
+      kind: 'cost',
+      limit: 10,
+      consumed: 0,
+      reservations: [],
+      configurationId: 'cfg-cost',
+      version: 1,
+    },
+  ];
+
+  await t.test('reserves and settles tokens normally for LLM assessment', async () => {
+    const budgetTracker = new BudgetTracker(initialLedgers);
+    const store = new DurableStore(tempDir);
+    const adapter = new UC01AccountingAdapter(budgetTracker, store);
+
+    const context = {
+      taskId,
+      runId,
+      requestId: 'req-assess-1',
+      accountingRef: 'account-1',
+    };
+
+    const ceiling = {
+      inputTokens: 300,
+      outputTokens: 200,
+      totalTokens: 500,
+      costUnits: 1,
+      pricingId: 'pricing-1',
+    };
+
+    const reserveResult = await adapter.reserve(context, ceiling);
+    assert.equal(reserveResult.ok, true);
+    assert.ok(reserveResult.reservationRef);
+
+    // Tokens are now reserved (available should be 500)
+    assert.equal(budgetTracker.getAvailable('task', 'tokens'), 500);
+
+    const ref = reserveResult.reservationRef ?? 'ref';
+    // Settle observed usage (say, exactly 500 tokens used)
+    const settleResult = await adapter.settle(context, ref, {
+      inputTokens: 300,
+      outputTokens: 200,
+      totalTokens: 500,
+      costUnits: 1,
+      state: 'settled',
+      reservationRef: ref,
+    });
+
+    assert.equal(settleResult.kind, 'settled');
+    assert.equal(settleResult.consumedTokens, 500);
+    assert.equal(settleResult.consumedCost, 1);
+    assert.equal(budgetTracker.getConsumed('task', 'tokens'), 500);
+    assert.equal(budgetTracker.getAvailable('task', 'tokens'), 500);
+  });
+
+  await t.test(
+    'reconciliation after interruption: preserves 500 tokens used and prevents blind replay',
+    async () => {
+      // Scenario: Fresh task with 1,000 token limit
+      const budgetTracker = new BudgetTracker(initialLedgers);
+      const store = new DurableStore(tempDir);
+      const adapter = new UC01AccountingAdapter(budgetTracker, store);
+
+      const context = {
+        taskId,
+        runId,
+        requestId: 'req-interrupted-call',
+        accountingRef: 'account-1',
+      };
+
+      const ceiling = {
+        inputTokens: 300,
+        outputTokens: 200,
+        totalTokens: 500,
+        costUnits: 1,
+        pricingId: 'pricing-1',
+      };
+
+      // 1. LLM call reserves 500 tokens and 1 cost unit
+      const reserveResult = await adapter.reserve(context, ceiling);
+      assert.equal(reserveResult.ok, true);
+
+      // 2. CRASH happens! Process is interrupted before settle is called.
+      // 3. On restart / recovery: reconcileAfterInterrupt is called
+      const summary = adapter.reconcileAfterInterrupt(taskId, runId);
+
+      // 4. Verify: Agent does NOT forget the 500 tokens consumed!
+      assert.equal(summary.preservedConsumedTokens, 500);
+      assert.equal(summary.preservedConsumedCost, 1);
+      assert.equal(summary.uncertainReservationsRetained, 2); // token + cost reservations
+      assert.equal(summary.blindReplayPrevented, true);
+
+      // Consumed amount remains at least 500
+      assert.equal(budgetTracker.getConsumed('task', 'tokens'), 500);
+      // Available allowance is reduced to 500
+      assert.equal(budgetTracker.getAvailable('task', 'tokens'), 500);
+
+      // Attempting to request 600 tokens now will fail due to budget exhaustion
+      const excessiveCeiling = {
+        inputTokens: 400,
+        outputTokens: 200,
+        totalTokens: 600,
+        costUnits: 1,
+        pricingId: 'pricing-1',
+      };
+      const deniedResult = await adapter.reserve(context, excessiveCeiling);
+      assert.equal(deniedResult.ok, false);
+      assert.equal(deniedResult.reasonCode, 'call-budget-exhausted');
+    }
+  );
+
+  await t.test('saves step checkpoints to durable store', async () => {
+    const budgetTracker = new BudgetTracker(initialLedgers);
+    const store = new DurableStore(tempDir);
+    const adapter = new UC01AccountingAdapter(budgetTracker, store);
+
+    await adapter.saveCheckpoint(taskId, 'intake', { issueId: 'ISSUE-100', title: 'Bug in auth' });
+    await adapter.saveCheckpoint(taskId, 'clarify', { clarified: true, questions: [] });
+
+    const state = await store.loadTask(taskId);
+    assert.ok(state);
+    assert.equal(state.taskId, taskId);
+    assert.equal(state.plan[0]?.status, 'done');
+    assert.equal(state.plan[1]?.status, 'done');
+    assert.equal(state.plan[2]?.status, 'doing');
+
+    const latestCheckpoint = await store.loadLatestCheckpoint(taskId);
+    assert.ok(latestCheckpoint);
+    assert.equal(latestCheckpoint.stateVersion, 2);
+  });
+
+  await t.test('saveCheckpoint rejects invalid stepData with validation error', async () => {
+    const budgetTracker = new BudgetTracker(initialLedgers);
+    const store = new DurableStore(tempDir);
+    const adapter = new UC01AccountingAdapter(budgetTracker, store);
+
+    await assert.rejects(
+      async () => {
+        await adapter.saveCheckpoint(taskId, 'intake', undefined);
+      },
+      /Invalid stepData/
+    );
+    const circular: Record<string, unknown> = {};
+    circular['self'] = circular;
+    await assert.rejects(
+      async () => {
+        await adapter.saveCheckpoint(taskId, 'intake', circular);
+      },
+      /Invalid stepData/
+    );
+  });
+});
