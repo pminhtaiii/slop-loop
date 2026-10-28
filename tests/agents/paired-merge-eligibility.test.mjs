@@ -61,7 +61,7 @@ async function fixture(t, { path = 'docs/user/overview.md', content = 'Readable 
       assert.equal(options.env.GIT_NO_LAZY_FETCH, '1'); assert.equal(options.env.GIT_OPTIONAL_LOCKS, '0');
       assert.equal(options.env.GIT_NO_REPLACE_OBJECTS, '1');
       assert.deepEqual(args.slice(0, 2), ['-c', 'core.fsmonitor=false']);
-      const readable = ['rev-parse', 'symbolic-ref', 'status', 'merge-base', 'diff', 'cat-file'].includes(args[2]) || args[2] === 'worktree' && args[3] === 'list' || args[2] === 'remote' && args[3] === 'get-url';
+      const readable = ['rev-parse', 'rev-list', 'symbolic-ref', 'status', 'merge-base', 'diff', 'cat-file'].includes(args[2]) || args[2] === 'worktree' && args[3] === 'list' || args[2] === 'remote' && args[3] === 'get-url';
       if (!readable) mutationAttempts++;
       assert.ok(readable, 'Git mutations are forbidden');
       const result = spawnSync(binary, args, { ...options, cwd, timeout, windowsHide: true });
@@ -173,7 +173,7 @@ test('both PRs must preserve their exact identities, states and source tree', as
   const f = await fixture(t);
   for (const side of ['primary', 'submission']) {
     const original = structuredClone(f.state[side]);
-    for (const delta of [{ draft: true }, { state: 'closed' }, { mergeable: null }, { mergeable_state: 'behind' }, { number: 99 }, { head: { ...original.head, sha: f.base } }, { head: { ...original.head, repo: { full_name: 'attacker/fork' } } }]) {
+    for (const delta of [{ draft: true }, { state: 'closed' }, { mergeable: false }, { mergeable: undefined }, { mergeable_state: 'behind' }, { number: 99 }, { head: { ...original.head, sha: f.base } }, { head: { ...original.head, repo: { full_name: 'attacker/fork' } } }]) {
       f.state[side] = { ...original, ...delta };
       assert.equal((await f.run()).status, 'BLOCKED');
     }
@@ -334,4 +334,35 @@ test('a retained BOM byte change invalidates evidence even when decoded JSON is 
   const report = await f.run();
   assert.equal(report.reasons[0].code, 'EVIDENCE_CHANGED');
   assert.equal(report.snapshot.observedOnly, true);
+});
+
+test('pending mergeability waits while known conflicts and malformed mergeability block', async t => {
+  const f = await fixture(t);
+  for (const side of ['primary', 'submission']) {
+    const original = structuredClone(f.state[side]);
+    for (const delta of [{ mergeable: null }, { mergeable: null, mergeable_state: 'unknown' }, { mergeable_state: 'unknown' }]) {
+      f.state[side] = { ...original, ...delta };
+      assert.equal((await f.run()).status, 'WAITING_EVIDENCE');
+    }
+    for (const delta of [{ mergeable: false }, { mergeable: undefined }, { mergeable_state: undefined }, { mergeable: null, mergeable_state: 'behind' }]) {
+      f.state[side] = { ...original, ...delta };
+      assert.equal((await f.run()).status, 'BLOCKED');
+    }
+    f.state[side] = original;
+  }
+  assert.equal((await f.run()).eligible, true);
+});
+
+test('complete disconnected public history blocks while shallow history waits', async t => {
+  const f = await fixture(t);
+  const unrelated = f.git('commit-tree', f.tree, '-m', 'unrelated development base');
+  f.state.primary.base.sha = unrelated;
+  const disconnected = await f.run();
+  assert.equal(disconnected.status, 'BLOCKED');
+  assert.equal(disconnected.reasons[0].code, 'STALE_BASE');
+  f.state.primary.base.sha = f.base;
+  await writeFile(join(f.root, '.git/shallow'), `${f.head}\n`);
+  const before = await files(f.root), shallow = await f.run();
+  assert.equal(shallow.status, 'WAITING_EVIDENCE');
+  assert.deepEqual(await files(f.root), before);
 });

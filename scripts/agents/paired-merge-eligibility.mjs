@@ -25,6 +25,7 @@ const explanations = {
   PAIR_ACCOUNTING: 'Retained public and submission accounting is incomplete or inconsistent.',
   PR_IDENTITY: 'A live PR does not match its exact retained repository, branch or revision.',
   PR_NOT_READY: 'Both PRs must be open, non-draft and cleanly mergeable.',
+  MERGEABILITY_PENDING: 'GitHub has not finished determining whether the PR can be merged.',
   PR_METADATA: 'Live PR metadata differs from the retained publication.',
   PAIR_MARKER: 'The submission PR is missing its retained publication marker.',
   TREE_IDENTITY: 'Live PR source trees do not match the retained public source tree.',
@@ -33,6 +34,7 @@ const explanations = {
   FAILED_CHECK: 'A required public check failed for the exact candidate revision.',
   PENDING_CHECKS: 'Required public checks have not all completed successfully.',
   MISSING_OBJECTS: 'The exact public base and head objects must already exist locally.',
+  INCOMPLETE_HISTORY: 'Complete local public history is required to establish base ancestry.',
   STALE_BASE: 'The public head does not include the currently observed development base.',
   SUBMISSION_BASE: 'The submission head does not include its currently observed development base.',
   LOCAL_TREE_IDENTITY: 'The local immutable source tree differs from live publication evidence.',
@@ -89,7 +91,12 @@ function checkObservation(pages, head) {
 function classify(call, git, base, head, tree) {
   try { git('cat-file', '-e', `${base}^{commit}`); git('cat-file', '-e', `${head}^{commit}`); }
   catch { throw new Refusal('MISSING_OBJECTS', 'WAITING_EVIDENCE'); }
-  requireEvidence(git('merge-base', base, head) === base, 'STALE_BASE');
+  const shallow = git('rev-parse', '--is-shallow-repository');
+  requireEvidence(['true', 'false'].includes(shallow), 'INVALID_EVIDENCE');
+  requireEvidence(shallow === 'false', 'INCOMPLETE_HISTORY', 'WAITING_EVIDENCE');
+  const excluded = git('rev-list', '--max-count=1', base, '--not', head);
+  requireEvidence(excluded === '' || hash(excluded), 'INVALID_EVIDENCE');
+  requireEvidence(excluded === '', 'STALE_BASE');
   requireEvidence(git('rev-parse', `${head}^{tree}`) === tree, 'LOCAL_TREE_IDENTITY');
   const raw = decode(call('git', ['diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--no-abbrev', '--raw', '-z', base, head]));
   const fields = raw.split('\0');
@@ -171,7 +178,10 @@ export async function runEligibility(args, dependencies = {}) {
         const url = `https://github.com/${repository}/pull/${number}`;
         const pr = json(`repos/${repository}/pulls/${number}`);
         requireEvidence(pr.number === number && pr.html_url?.toLowerCase() === url && (side === 'primary' ? workflow.url : pair.prUrl)?.toLowerCase() === url && pr.head?.ref === branch && pr.head.sha === expectedHead && pr.head.repo?.full_name?.toLowerCase() === repository && pr.base?.ref === 'development' && hash(pr.base.sha) && pr.base.repo?.full_name?.toLowerCase() === repository, 'PR_IDENTITY');
-        requireEvidence(pr.state === 'open' && pr.draft === false && pr.mergeable === true && pr.mergeable_state === 'clean', 'PR_NOT_READY');
+        const mergeStates = ['clean', 'unknown', 'dirty', 'behind', 'blocked', 'draft', 'unstable', 'has_hooks'];
+        requireEvidence(pr.state === 'open' && pr.draft === false && [true, false, null].includes(pr.mergeable) && mergeStates.includes(pr.mergeable_state), 'PR_NOT_READY');
+        requireEvidence(pr.mergeable !== false && ['clean', 'unknown'].includes(pr.mergeable_state), 'PR_NOT_READY');
+        requireEvidence(pr.mergeable !== null && pr.mergeable_state !== 'unknown', 'MERGEABILITY_PENDING', 'WAITING_EVIDENCE');
         requireEvidence(pr.title === pair.title && typeof pr.title === 'string' && pr.title.startsWith(`${branch}: `), 'PR_METADATA');
         if (side === 'submission') requireEvidence(typeof pr.body === 'string' && pr.body.includes(pair.marker), 'PAIR_MARKER');
         const commit = json(`repos/${repository}/git/commits/${expectedHead}`);
