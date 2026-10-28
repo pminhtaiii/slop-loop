@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { spawnSync } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
 import { mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -45,7 +46,7 @@ async function fixture(t, { path = 'docs/user/overview.md', content = 'Readable 
   const targets = { primary: { remote: 'origin', repository: 'example/public', base: 'development' }, submission: { remote: 'submission', repository: 'secret/coursework', base: 'development' } };
   const marker = '<!-- paired-submission:fixture -->';
   const title = `${branch}: document the overview`;
-  const workflow = { schemaVersion: 1, repository: 'example/public', branch, base: 'development', publishedHead: head, pr: 1, url: 'https://github.com/example/public/pull/1', pairedTargets: targets, repairRounds: [], submission: { number: 2, head: mirror } };
+  const workflow = { schemaVersion: 1, repository: 'example/public', branch, base: 'development', publishedHead: head, pr: 1, url: 'https://github.com/example/public/pull/1', pairedTargets: targets, repairRounds: [], submission: { repository: 'secret/coursework', number: 2, url: 'https://github.com/secret/coursework/pull/2', branch, base: 'development', head: mirror, sourceHead: head, sourceTree: tree, isDraft: false } };
   const pair = { schemaVersion: 1, targets, repository: 'secret/coursework', branch, base: 'development', mainBase: base, sourceHead: head, sourceTree: tree, mirrorHead: mirror, previousMirrorHead: null, phase: 'complete', marker, title, body: `Public review PR: ${workflow.url}\n${marker}`, prNumber: 2, prUrl: 'https://github.com/secret/coursework/pull/2' };
   const record = join(root, '.agent-work/paired-prs/feat-tooling-preview.json');
   await mkdir(dirname(record), { recursive: true });
@@ -54,7 +55,7 @@ async function fixture(t, { path = 'docs/user/overview.md', content = 'Readable 
   await writeFile(join(root, '.agent-work/pr-workflow/tooling-preview.json'), JSON.stringify(workflow));
   const pr = (repository, number, sha) => ({ number, html_url: `https://github.com/${repository}/pull/${number}`, state: 'open', draft: false, title, body: pair.body, mergeable: true, mergeable_state: 'clean', head: { ref: branch, sha, repo: { full_name: repository } }, base: { ref: 'development', sha: base, repo: { full_name: repository } } });
   const state = { primary: pr('example/public', 1, head), submission: pr('secret/coursework', 2, mirror), pages: [{ total_count: 4, check_runs: required.map((name, i) => ({ id: i + 1, name, head_sha: head, status: 'completed', conclusion: 'success', app: { slug: 'github-actions' } })) }] };
-  let ghReads = 0, mutationAttempts = 0;
+  let ghReads = 0, observations = 0, mutationAttempts = 0;
   const execute = (binary, args, cwd, timeout, options) => {
     if (binary === 'git') {
       assert.equal(options.env.GIT_NO_LAZY_FETCH, '1'); assert.equal(options.env.GIT_OPTIONAL_LOCKS, '0');
@@ -74,13 +75,17 @@ async function fixture(t, { path = 'docs/user/overview.md', content = 'Readable 
     ghReads++;
     state.onRead?.(ghReads);
     const endpoint = args.at(-1);
-    if (endpoint.endsWith('/check-runs?per_page=100')) return JSON.stringify(state.pages);
+    if (endpoint === 'repos/example/public' && ++observations === 2) state.beforeFinal?.();
+    if (state.unavailable?.(endpoint)) throw new Error('https://github.com/secret/coursework read unavailable');
+    if (state.malformed?.(endpoint)) return '{not valid JSON';
+    if (endpoint.endsWith('/check-runs?per_page=100')) { state.afterChecks?.(); return JSON.stringify(state.pages); }
     if (endpoint.endsWith('/pulls/1')) return JSON.stringify(state.primary);
     if (endpoint.endsWith('/pulls/2')) return JSON.stringify(state.submission);
     if (endpoint.includes('/git/commits/')) return JSON.stringify({ sha: endpoint.split('/').at(-1), tree: { sha: state.tree ?? tree } });
+    if (endpoint.includes('/compare/')) return JSON.stringify(state.comparison ?? { base_commit: { sha: state.submission.base.sha }, merge_base_commit: { sha: state.submission.base.sha }, status: 'ahead', ahead_by: 1, behind_by: 0 });
     return JSON.stringify({ full_name: endpoint.endsWith('example/public') ? 'example/public' : 'secret/coursework', private: !endpoint.endsWith('example/public'), visibility: state.visibility ?? (endpoint.endsWith('example/public') ? 'public' : 'private') });
   };
-  const run = async () => { const report = await runEligibility(['--root', root], { execute }); assert.equal(mutationAttempts, 0, 'Preview attempted a mutation'); return report; };
+  const run = async () => { observations = 0; const report = await runEligibility(['--root', root], { execute }); assert.equal(mutationAttempts, 0, 'Preview attempted a mutation'); return report; };
   return { root, git, head, base, mirror, tree, state, pair, record, execute, run };
 }
 
@@ -181,7 +186,7 @@ test('both PRs must preserve their exact identities, states and source tree', as
 test('final base and check rerun changes invalidate an otherwise eligible observation', async t => {
   for (const mutate of [f => { f.state.submission.base.sha = 'a'.repeat(40); }, f => { const runs = f.state.pages[0].check_runs; runs.push({ ...runs[0], id: 99 }); f.state.pages[0].total_count++; }]) {
     const f = await fixture(t);
-    f.state.onRead = reads => { if (reads === 8) mutate(f); };
+    f.state.beforeFinal = () => mutate(f);
     const report = await f.run();
     assert.equal(report.status, 'BLOCKED');
     assert.equal(report.reasons[0].code, 'EVIDENCE_CHANGED');
@@ -243,6 +248,90 @@ test('unknown invocation is rejected before commands and raw command errors rema
   for (const args of [['--apply'], ['merge'], ['--root', 'x', '--root', 'y']]) await assert.rejects(runEligibility(args, { execute() { assert.fail('No command expected'); } }), /Usage/);
   const f = await fixture(t);
   const report = await runEligibility(['--root', f.root], { execute() { throw new Error('https://github.com/secret/coursework private failure'); } });
-  assert.equal(report.status, 'BLOCKED');
+  assert.equal(report.status, 'WAITING_EVIDENCE');
   assert.doesNotMatch(JSON.stringify(report), /secret|coursework|private failure/);
+});
+
+test('C1 controls require manual review and preserve the observed public-safe snapshot', async t => {
+  const f = await fixture(t, { content: 'Text\u0085control\n' });
+  const before = await files(f.root), report = await f.run();
+  assert.equal(report.status, 'MANUAL_REVIEW');
+  assert.equal(report.reasons[0].code, 'TEXT_CONTENT');
+  assert.equal(report.snapshot.publicHead, f.head);
+  assert.equal(report.snapshot.submissionHead, f.mirror);
+  assert.equal(report.snapshot.observedOnly, true);
+  assert.doesNotMatch(JSON.stringify(report), /secret|coursework/);
+  assert.deepEqual(await files(f.root), before);
+});
+
+test('every cached workflow submission identity and provenance field must match', async t => {
+  const f = await fixture(t), path = join(f.root, '.agent-work/pr-workflow/tooling-preview.json');
+  const original = JSON.parse(await readFile(path, 'utf8'));
+  for (const key of ['repository', 'number', 'url', 'branch', 'base', 'head', 'sourceHead', 'sourceTree']) {
+    const changed = structuredClone(original);
+    changed.submission[key] = key === 'number' ? 99 : 'wrong';
+    await writeFile(path, JSON.stringify(changed));
+    assert.equal((await f.run()).reasons[0].code, 'PAIR_ACCOUNTING', key);
+  }
+});
+
+test('unavailable reads wait while malformed remote data blocks', async t => {
+  const f = await fixture(t);
+  f.state.unavailable = endpoint => endpoint.endsWith('/pulls/2');
+  assert.equal((await f.run()).status, 'WAITING_EVIDENCE');
+  f.state.unavailable = undefined;
+  f.state.malformed = endpoint => endpoint.endsWith('/pulls/2');
+  assert.equal((await f.run()).status, 'BLOCKED');
+});
+
+test('a clean submission PR still requires exact live base ancestry', async t => {
+  const f = await fixture(t);
+  f.state.comparison = { base_commit: { sha: f.base }, merge_base_commit: { sha: f.head }, status: 'diverged', ahead_by: 1, behind_by: 1 };
+  assert.equal((await f.run()).reasons[0].code, 'SUBMISSION_BASE');
+  f.state.comparison = { base_commit: { sha: f.base }, merge_base_commit: { sha: f.base }, status: 'ahead', ahead_by: 1, behind_by: 0 };
+  assert.equal((await f.run()).eligible, true);
+  for (const delta of [{ ahead_by: '1' }, { behind_by: -1 }, { base_commit: { sha: f.head } }, { status: 'identical', ahead_by: 0 }]) {
+    const valid = structuredClone(f.state.comparison);
+    f.state.comparison = { ...valid, ...delta };
+    assert.equal((await f.run()).status, 'BLOCKED');
+    f.state.comparison = valid;
+  }
+  f.state.beforeFinal = () => { f.state.comparison.ahead_by = 2; };
+  assert.equal((await f.run()).reasons[0].code, 'EVIDENCE_CHANGED');
+  f.state.beforeFinal = () => { f.state.unavailable = endpoint => endpoint.includes('/compare/'); };
+  const unavailable = await f.run();
+  assert.equal(unavailable.status, 'WAITING_EVIDENCE');
+  assert.equal(unavailable.snapshot.observedOnly, true);
+});
+
+test('mixed-case retained repositories and canonical URLs retain eligibility', async t => {
+  const f = await fixture(t), path = join(f.root, '.agent-work/pr-workflow/tooling-preview.json');
+  const workflow = JSON.parse(await readFile(path, 'utf8'));
+  for (const record of [workflow, f.pair]) {
+    const targets = record.pairedTargets ?? record.targets;
+    targets.primary.repository = 'Example/Public'; targets.submission.repository = 'Secret/Coursework';
+  }
+  workflow.repository = 'Example/Public'; workflow.url = 'https://github.com/Example/Public/pull/1';
+  workflow.submission.repository = 'Secret/Coursework'; workflow.submission.url = 'https://github.com/Secret/Coursework/pull/2';
+  f.pair.repository = 'Secret/Coursework'; f.pair.prUrl = workflow.submission.url;
+  await writeFile(path, JSON.stringify(workflow)); await writeFile(f.record, JSON.stringify(f.pair));
+  assert.equal((await f.run()).eligible, true);
+});
+
+test('invalid UTF-8 in unused retained metadata cannot be admitted through replacement decoding', async t => {
+  const f = await fixture(t);
+  const bytes = Buffer.concat([Buffer.from(`${JSON.stringify(f.pair).slice(0, -1)},"unused":"`), Buffer.from([0x80]), Buffer.from('"}')]);
+  await writeFile(f.record, bytes);
+  const before = await files(f.root);
+  assert.equal((await f.run()).status, 'BLOCKED');
+  assert.deepEqual(await files(f.root), before);
+});
+
+test('a retained BOM byte change invalidates evidence even when decoded JSON is unchanged', async t => {
+  const f = await fixture(t), original = await readFile(f.record);
+  let changed = false;
+  f.state.afterChecks = () => { if (!changed) { changed = true; writeFileSync(f.record, Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), original])); } };
+  const report = await f.run();
+  assert.equal(report.reasons[0].code, 'EVIDENCE_CHANGED');
+  assert.equal(report.snapshot.observedOnly, true);
 });

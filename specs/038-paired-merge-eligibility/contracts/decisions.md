@@ -14,4 +14,6 @@ On 2026-10-28, automated planning validation passed. Independent Luna/max standa
 
 ## Evidence limits
 
+Integrated review of candidate `4cd956f` found remaining in-contract validation/reporting gaps. T004 records their correction without expanding user scope. The eligibility contract now makes the already-required submission freshness proof explicit through an exact live base/head read-only comparison; clean GitHub mergeability alone is insufficient. The correction batch must pass focused checks and renewed independent Standards/Spec review before publication.
+
 Local fixtures can establish only the exercised policy and read-only behavior. Live reads can establish the observed pair at that instant; neither establishes semantic prose correctness or future readiness. Partial paired-merge recovery belongs to the later execution design and is not implemented here.

@@ -29,10 +29,17 @@ The existing paired publication records and four public CI job names are prerequ
   - **Owned Paths**: `docs/agents/pr-workflow.md`, `context/workflow.md`, `specs/038-paired-merge-eligibility/quickstart.md`
   - **Dependencies**: T002
 
+## Phase 5: Integrated Review Corrections
+
+- [x] T004 [US1] Resolve integrated review findings in `scripts/agents/paired-merge-eligibility.mjs` and `tests/agents/paired-merge-eligibility.test.mjs`: C1 controls, full cached submission identity, unavailable-read status, manual observation snapshots, live submission base ancestry, case-insensitive target identity and byte-exact retained records.
+  - **Owned Paths**: `scripts/agents/paired-merge-eligibility.mjs`, `tests/agents/paired-merge-eligibility.test.mjs`
+  - **Dependencies**: T003
+
 ## Dependencies & Execution Order
 
 T002 follows T001
 T003 follows T002
+T004 follows T003
 
 All implementation tasks are serialized; no parallel file ownership is claimed. Independent planning reviewers and the final standards/spec reviewers may run concurrently as read-only work against a pinned snapshot.
 
@@ -43,3 +50,5 @@ US1 is the MVP and the entire authorized implementation scope. Use one vertical 
 ## Implementation Verification
 
 On 2026-10-28 (Asia/Saigon), the merger verified the worker's owned-path handoff at base `17f2fbb5b3e78cae2def4f837bd7efd6c2fd26b4`; source and test hashes matched, with no source changes needed in the shared checkout. The worker retained tracer-bullet and eligibility RED/GREEN evidence, a 12/12 suite pass, and a final 4/4 affected-case pass. Merger replay of `node --test tests/agents/paired-merge-eligibility.test.mjs` exited 0: 13/13 tests passed, no skips or failures. `git diff --check` exited 0. Worker scoped ESLint and both `node --check` commands also exited 0. These controlled fixtures establish only exercised dry-run behavior; live GitHub eligibility, full publication gates and final independent review are separate.
+
+Mechanical acceptance of T004 was recorded on 2026-10-28 at base `4cd956fc69f7220c50bc516c50955ed0151dd9fb`, with handoff verification and exact source/test hashes unchanged (`cc46b72f462a2c00321e1d7d3cdafe707e92b1c996cb7343e4a09d3164a8fc97` / `f56e916da2e38254f97e2c4c420c0ee1bff2ec995034bdc678d4a5d1ff730e76`). Merger replay of `node --test --test-name-pattern='synchronized prose-only|C1 controls|every cached workflow|unavailable reads|clean submission PR|mixed-case retained|invalid UTF-8|retained BOM byte' tests/agents/paired-merge-eligibility.test.mjs` exited 0: all 8 selected tests passed with no failures. `git diff --check` exited 0. The worker's earlier 18/18 full-suite pass predates the final byte-exact record correction; its affected 5/5 and BOM-race 1/1 passes plus this merger replay apply to the final source hash. No current-hash full-suite, live pair eligibility, publication-gate or final independent-review pass is inferred from the earlier run.

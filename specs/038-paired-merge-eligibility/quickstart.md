@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-Use the repository-pinned Node runtime, Git, authenticated `gh` read access to both configured repositories, a clean published checkout, retained workflow/pair records and the exact live public base/head objects. Both PRs must target development. The integrated focused suite passed 13/13 on 2026-10-28; the task ledger records commands and evidence limits.
+Use the repository-pinned Node runtime, Git, authenticated `gh` read access to both configured repositories, a clean published checkout, retained workflow/pair records and the exact live public base/head objects. Both PRs must target development. The initial integrated candidate passed 13/13 on 2026-10-28; the task ledger records subsequent correction checks and their revision-specific evidence limits.
 
 ## Focused validation
 

@@ -10,6 +10,8 @@ const usage = 'Usage: node scripts/agents/paired-merge-eligibility.mjs [--root <
 const required = ['contributor-checks (ubuntu-latest)', 'contributor-checks (windows-latest)', 'runtime-checks (ubuntu-latest)', 'runtime-checks (windows-latest)'];
 const hash = value => typeof value === 'string' && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(value);
 const decode = value => new TextDecoder('utf-8', { fatal: true }).decode(value);
+const lower = value => typeof value === 'string' ? value.toLowerCase() : value;
+const canonicalTargets = value => Object.fromEntries(['primary', 'submission'].map(side => [side, { ...value?.[side], repository: lower(value?.[side]?.repository) }]));
 const explanations = {
   MISSING_EVIDENCE: 'Required configuration or retained publication accounting is missing.',
   READ_FAILED: 'A bounded evidence read could not be completed.',
@@ -32,6 +34,7 @@ const explanations = {
   PENDING_CHECKS: 'Required public checks have not all completed successfully.',
   MISSING_OBJECTS: 'The exact public base and head objects must already exist locally.',
   STALE_BASE: 'The public head does not include the currently observed development base.',
+  SUBMISSION_BASE: 'The submission head does not include its currently observed development base.',
   LOCAL_TREE_IDENTITY: 'The local immutable source tree differs from live publication evidence.',
   EVIDENCE_CHANGED: 'Bound evidence changed during inspection; run a fresh preview.',
   CHANGE_COUNT: 'The change must contain between one and one hundred documentation paths.',
@@ -54,7 +57,7 @@ class Refusal extends Error {
 function requireEvidence(condition, code, status) { if (!condition) throw new Refusal(code, status); }
 function execute(binary, args, cwd, timeout, options) {
   const result = spawnSync(binary, args, { ...options, cwd, timeout, windowsHide: true, shell: false });
-  if (result.error || result.status !== 0) throw new Refusal('READ_FAILED');
+  if (result.error || result.status !== 0) throw new Refusal('READ_FAILED', 'WAITING_EVIDENCE');
   return result.stdout;
 }
 async function regular(root, components) {
@@ -67,7 +70,9 @@ async function regular(root, components) {
     requireEvidence(!info.isSymbolicLink() && await realpath(path) === path, 'LINKED_EVIDENCE');
     requireEvidence(i === components.length - 1 ? info.isFile() && info.size <= 2 * 1024 * 1024 : info.isDirectory(), 'INVALID_EVIDENCE');
   }
-  return readFile(path, 'utf8');
+  const bytes = await readFile(path);
+  requireEvidence(bytes.length <= 2 * 1024 * 1024, 'INVALID_EVIDENCE');
+  return bytes;
 }
 
 function checkObservation(pages, head) {
@@ -107,7 +112,7 @@ function classify(call, git, base, head, tree) {
       requireEvidence(bytes.length === size, 'BLOB_SIZE');
       let content;
       try { content = decode(bytes); } catch { throw new Refusal('TEXT_ENCODING', 'MANUAL_REVIEW'); }
-      requireEvidence(!Array.from(content).some(char => { const code = char.charCodeAt(0); return code === 127 || code < 32 && ![9, 10, 13].includes(code); }), 'TEXT_CONTENT', 'MANUAL_REVIEW');
+      requireEvidence(!Array.from(content).some(char => { const code = char.charCodeAt(0); return code >= 127 && code <= 159 || code < 32 && ![9, 10, 13].includes(code); }), 'TEXT_CONTENT', 'MANUAL_REVIEW');
       requireEvidence(!/```|~~~|<|^(?: {4}|\t)/m.test(content), 'PROSE_CONTENT', 'MANUAL_REVIEW');
     }
   }
@@ -117,11 +122,14 @@ export async function runEligibility(args, dependencies = {}) {
   if (args.length === 1 && ['--help', '-h'].includes(args[0])) return { usage };
   if (args.length && (args.length !== 2 || args[0] !== '--root' || !args[1] || args[1].startsWith('--'))) throw new Error(usage);
   const report = (status, code, snapshot) => ({ schemaVersion: 1, policy: 'docs-v1', status, eligible: status === 'ELIGIBLE_PREVIEW', mergeEnabled: false, reasons: code ? [{ code, explanation: explanations[code] ?? 'Required evidence could not be validated.' }] : [], ...(snapshot && { snapshot }) });
+  let snapshot;
   try {
     const root = await realpath(args[1] ?? resolve(dirname(fileURLToPath(import.meta.url)), '../..'));
     const call = (binary, argv) => {
       const options = { shell: false, maxBuffer: 2 * 1024 * 1024, env: { ...process.env, GIT_NO_LAZY_FETCH: '1', GIT_OPTIONAL_LOCKS: '0', GIT_NO_REPLACE_OBJECTS: '1', GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1', GH_NO_EXTENSION_UPDATE_NOTIFIER: '1' } };
-      const value = (dependencies.execute ?? execute)(binary, binary === 'git' ? ['-c', 'core.fsmonitor=false', ...argv] : argv, root, 60_000, options);
+      let value;
+      try { value = (dependencies.execute ?? execute)(binary, binary === 'git' ? ['-c', 'core.fsmonitor=false', ...argv] : argv, root, 60_000, options); }
+      catch (error) { if (error instanceof Refusal) throw error; throw new Refusal('READ_FAILED', 'WAITING_EVIDENCE'); }
       const buffer = Buffer.isBuffer(value) ? value : Buffer.from(value);
       requireEvidence(buffer.length <= options.maxBuffer, 'OUTPUT_LIMIT');
       return buffer;
@@ -141,7 +149,7 @@ export async function runEligibility(args, dependencies = {}) {
       const configBytes = await regular(root, ['publication-targets.json']);
       const workflowBytes = await regular(primary, ['.agent-work', 'pr-workflow', `${branch.slice(5)}.json`]);
       const pairBytes = await regular(primary, ['.agent-work', 'paired-prs', `${branch.replaceAll('/', '-')}.json`]);
-      const config = JSON.parse(configBytes), workflow = JSON.parse(workflowBytes), pair = JSON.parse(pairBytes);
+      const config = JSON.parse(decode(configBytes)), workflow = JSON.parse(decode(workflowBytes)), pair = JSON.parse(decode(pairBytes));
       requireEvidence(config.schemaVersion === 1 && config.submission?.remote === 'submission' && config.submission.base === 'development', 'TARGET_IDENTITY');
       const targets = {}, visibility = {};
       for (const [side, remote] of [['primary', 'origin'], ['submission', 'submission']]) {
@@ -152,9 +160,10 @@ export async function runEligibility(args, dependencies = {}) {
         visibility[side] = info.visibility;
       }
       requireEvidence(targets.primary.repository !== targets.submission.repository, 'TARGET_IDENTITY');
-      requireEvidence(workflow.schemaVersion === 1 && workflow.repository?.toLowerCase() === targets.primary.repository && workflow.branch === branch && workflow.base === 'development' && workflow.publishedHead === head && Number.isSafeInteger(workflow.pr) && workflow.pr > 0 && isDeepStrictEqual(workflow.pairedTargets, targets), 'PUBLIC_ACCOUNTING');
-      requireEvidence(pair.schemaVersion === 1 && pair.branch === branch && pair.base === 'development' && pair.repository?.toLowerCase() === targets.submission.repository && isDeepStrictEqual(pair.targets, targets) && pair.phase === 'complete' && pair.sourceHead === head && hash(pair.sourceTree) && hash(pair.mirrorHead) && hash(pair.mainBase) && Number.isSafeInteger(pair.prNumber) && pair.prNumber > 0 && typeof pair.marker === 'string' && /^<!-- paired-submission:[A-Za-z0-9-]+ -->$/.test(pair.marker), 'PAIR_ACCOUNTING');
-      requireEvidence(workflow.submission?.number === pair.prNumber && workflow.submission.head === pair.mirrorHead, 'PAIR_ACCOUNTING');
+      requireEvidence(workflow.schemaVersion === 1 && lower(workflow.repository) === targets.primary.repository && workflow.branch === branch && workflow.base === 'development' && workflow.publishedHead === head && Number.isSafeInteger(workflow.pr) && workflow.pr > 0 && isDeepStrictEqual(canonicalTargets(workflow.pairedTargets), targets), 'PUBLIC_ACCOUNTING');
+      requireEvidence(pair.schemaVersion === 1 && pair.branch === branch && pair.base === 'development' && lower(pair.repository) === targets.submission.repository && isDeepStrictEqual(canonicalTargets(pair.targets), targets) && pair.phase === 'complete' && pair.sourceHead === head && hash(pair.sourceTree) && hash(pair.mirrorHead) && hash(pair.mainBase) && Number.isSafeInteger(pair.prNumber) && pair.prNumber > 0 && typeof pair.marker === 'string' && /^<!-- paired-submission:[A-Za-z0-9-]+ -->$/.test(pair.marker), 'PAIR_ACCOUNTING');
+      const cached = { repository: targets.submission.repository, number: pair.prNumber, url: `https://github.com/${targets.submission.repository}/pull/${pair.prNumber}`, branch, base: 'development', head: pair.mirrorHead, sourceHead: head, sourceTree: pair.sourceTree };
+      requireEvidence(Object.entries(cached).every(([key, value]) => (['repository', 'url'].includes(key) ? lower(workflow.submission?.[key]) : workflow.submission?.[key]) === value), 'PAIR_ACCOUNTING');
       const prs = {}, trees = {};
       for (const side of ['primary', 'submission']) {
         const repository = targets[side].repository, number = side === 'primary' ? workflow.pr : pair.prNumber;
@@ -170,17 +179,21 @@ export async function runEligibility(args, dependencies = {}) {
         prs[side] = { number, head: expectedHead, base: pr.base.sha, state: pr.state, draft: pr.draft, mergeable: pr.mergeable, mergeState: pr.mergeable_state, title: pr.title, marker: side === 'submission' ? pair.marker : undefined };
         trees[side] = commit.tree.sha;
       }
+      const comparison = json(`repos/${targets.submission.repository}/compare/${prs.submission.base}...${prs.submission.head}`);
+      requireEvidence(comparison.base_commit?.sha === prs.submission.base && comparison.merge_base_commit?.sha === prs.submission.base && ['ahead', 'identical'].includes(comparison.status) && comparison.behind_by === 0 && Number.isSafeInteger(comparison.ahead_by) && (comparison.status === 'ahead' ? comparison.ahead_by > 0 && prs.submission.head !== prs.submission.base : comparison.ahead_by === 0 && prs.submission.head === prs.submission.base), 'SUBMISSION_BASE');
+      const ancestry = { base: comparison.base_commit.sha, mergeBase: comparison.merge_base_commit.sha, status: comparison.status, ahead: comparison.ahead_by, behind: comparison.behind_by };
       const pages = JSON.parse(decode(call('gh', ['api', '--paginate', '--slurp', '--method', 'GET', `repos/${targets.primary.repository}/commits/${head}/check-runs?per_page=100`])));
       const checks = checkObservation(pages, head);
-      return { head, targets, visibility, configBytes, workflowBytes, pairBytes, prs, trees, checks };
+      return { head, targets, visibility, configBytes, workflowBytes, pairBytes, prs, trees, ancestry, checks };
     };
     const initial = await observe();
+    snapshot = { observedOnly: true, publicHead: initial.head, submissionHead: initial.prs.submission.head, publicBase: initial.prs.primary.base, submissionBase: initial.prs.submission.base, tree: initial.trees.primary, checks: initial.checks, publicUrl: `https://github.com/${initial.targets.primary.repository}/pull/${initial.prs.primary.number}`, submissionNumber: initial.prs.submission.number };
     classify(call, git, initial.prs.primary.base, initial.head, initial.trees.primary);
     const final = await observe();
     requireEvidence(isDeepStrictEqual(initial, final), 'EVIDENCE_CHANGED');
-    return report('ELIGIBLE_PREVIEW', undefined, { publicHead: initial.head, submissionHead: initial.prs.submission.head, publicBase: initial.prs.primary.base, submissionBase: initial.prs.submission.base, tree: initial.trees.primary, checks: initial.checks, publicUrl: `https://github.com/${initial.targets.primary.repository}/pull/${initial.prs.primary.number}`, submissionNumber: initial.prs.submission.number });
+    return report('ELIGIBLE_PREVIEW', undefined, snapshot);
   } catch (error) {
-    return report(error instanceof Refusal ? error.status : 'BLOCKED', error instanceof Refusal ? error.message : 'INVALID_OR_UNAVAILABLE_EVIDENCE');
+    return report(error instanceof Refusal ? error.status : 'BLOCKED', error instanceof Refusal ? error.message : 'INVALID_OR_UNAVAILABLE_EVIDENCE', snapshot);
   }
 }
 
