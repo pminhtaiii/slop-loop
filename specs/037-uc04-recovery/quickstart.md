@@ -37,6 +37,16 @@ Actual test scope verified by `restart.test.ts`:
 3. Process 3 (Step 2 Crash): Claims and reserves tokens for step 2, then simulates an abrupt process crash (exit code 137) before settlement.
 4. Process 4 (Recovery & Resume): Spawns a fresh OS process, reloads state from the retained checkpoint, conservatively settles interrupted reservations to prevent budget leakage, reruns step 2 to completion, and validates full workflow completion with accurate consumed token accounting across 4 independent OS process lifecycles.
 
-## Later real integration
+## Shared recovery integration (T013)
 
-T013 requires actual X05-GATE and X03-ADMISSION revisions and profiles. Repeat the approval/claim/effect/drift/restart cases with real shared boundaries. Controlled foundation results cannot satisfy this gate. Integrated feature workflow and cross-task memory are still later G-FEATURE/G-MEMORY work; no hidden production fallback or automatic approval is allowed.
+Implemented shared persistence and recovery adapters in `src/persistence/adapters/`:
+- `DurableApprovalStore`: Implements UC-05 `ApprovalStorePort` backed by `DurableStore`.
+- `AccountingRecoveryAdapter`: Implements UC-01 durable token accounting and recovery checkpointer.
+- `RepairAccountingAdapter`: Implements UC-03 repair/replan budget tracking and limits (ADR-0004).
+
+Run integration suite:
+```powershell
+node --test tests/runtime/uc04/integration.test.ts
+node --test tests/runtime/uc04/*.test.ts
+```
+All 88 runtime tests pass cleanly. Integrated feature workflow and cross-task memory remain later G-FEATURE/G-MEMORY scope.

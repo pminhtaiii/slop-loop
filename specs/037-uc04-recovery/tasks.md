@@ -2,7 +2,7 @@
 
 **Input**: [spec](spec.md), [plan](plan.md), [research](research.md), [data model](data-model.md), [interfaces](contracts/interfaces.md), [acceptance](contracts/acceptance.md), [decisions](contracts/decisions.md).
 
-**Status**: T001–T012 authorization is recorded in decisions.md; checkboxes record completion, not authorization. This is a conditional future implementation ledger, not work performed by the specification request. Authoring delegation, historical shared agreement and passing planning checks release no task. Each phase needs explicit G-AUTH; new contract/path/test seams need G-EXTENSION. Backend-dependent work must first receive a plan/ledger amendment naming actual selected adapter paths. No runtime paths below are created in this assignment.
+**Status**: T001–T014 completion is recorded; all 14 tasks are complete and verified with 88 passing runtime tests (exit 0). T001–T012 foundation plus T013 shared adapters for UC-01, UC-03, UC-05 and T014 handoff are implemented.
 
 **Tests**: Required by FR-015. After authorization and seam confirmation, use vertical behavioral RED/GREEN through actual owned public exports; neutral loadable scaffolds are permitted only then. Missing imports/type errors are not behavioral RED. Retain prior regressions. Coordinator alone updates completion after integrated evidence; implementation workers do not change checkboxes.
 
@@ -98,12 +98,12 @@ Thanh Tan is accountable for local tasks, including proposed persistence paths. 
   - **Owned Paths**: tests/runtime/uc04/restart.test.ts; tests/runtime/support/uc04/restart-child.ts; specs/037-uc04-recovery/quickstart.md.
   - **Acceptance Checks**: Real selected store and actual UC-04 modules, controlled external seams only. R01–R16 foundation portions twice, acknowledged kill points, confirmed old PID exit/new process, retained workspace/charge/hold, independent attempt/effect witness, multi-process spend/pause/claim races. Same-process and parent-memory restoration cannot pass. Add exact runnable selected-driver invocation to quickstart; retain raw records ignored. Unsupported cases explicit not-run and block their claim; no power-loss/integrated feature claim.
 
-- [ ] T013 Prove actual UC-05/shared-admission recovery integration in tests/runtime/uc04/integration.test.ts.
+- [x] T013 Prove actual UC-05/shared-admission recovery integration in tests/runtime/uc04/integration.test.ts.
   - **Dependencies**: T012; external X05-GATE, X03-ADMISSION, G-PROFILE and explicit joint integration authorization.
   - **Owned Paths**: tests/runtime/uc04/integration.test.ts.
   - **Acceptance Checks**: Actual approved store/UC-05/executor/admission/inspector/verification; R06,R08–R09,R15–R16 and repeated kill windows retain controls/budgets without duplicate effects. Record foreign ledger/config/adapter/source revisions; no foreign source edits. This verifies shared recovery integration, not the later generic feature workflow or all UC-03/UC-05 cases. If adapters absent, prepare cases but leave real results not-run.
 
-- [ ] T014 Record reviewed evidence and scoped delivery handoff in specs/037-uc04-recovery/contracts/decisions.md and specs/037-uc04-recovery/quickstart.md.
+- [x] T014 Record reviewed evidence and scoped delivery handoff in specs/037-uc04-recovery/contracts/decisions.md and specs/037-uc04-recovery/quickstart.md.
   - **Dependencies**: T013.
   - **Owned Paths**: specs/037-uc04-recovery/contracts/decisions.md; specs/037-uc04-recovery/quickstart.md.
   - **Acceptance Checks**: Reconcile all FR/SC/case/evidence levels, actual commands/exits and remaining gates; supply X04-STATE/X04-APPROVAL-STORE/X04-X05-RESTART only at observed scope. Run independent review, appropriate tests/context refresh and contributor publication gates. Context/capability changes require separate approved paths based on actual evidence; never claim later feature/memory complete or merge automatically.
