@@ -80,7 +80,7 @@ test('managed gates report bounded test progress and clean their heartbeat timer
   });
 
   const line = '@@workflow-gate-progress ' + JSON.stringify({ type: 'test:start', test: 'fixture test', file: 'tests/fake.test.mjs' }) + '\n';
-  const script = `if(process.env.WORKFLOW_GATE_PROGRESS!=='1')process.exitCode=5;const b=Buffer.from(${JSON.stringify(line)});process.stdout.write('visible stdout\\n');process.stderr.write('visible stderr\\n');process.stderr.write(b.subarray(0,11));setTimeout(()=>process.stderr.write(b.subarray(11)),5);setTimeout(()=>{},45);`;
+  const script = `if(process.env.WORKFLOW_GATE_PROGRESS!=='1')process.exitCode=5;const b=Buffer.from(${JSON.stringify(line)});process.stderr.write('visible stderr\\n');setTimeout(()=>process.stdout.write('visible stdout\\n'),20);process.stderr.write(b.subarray(0,11));setTimeout(()=>process.stderr.write(b.subarray(11)),5);setTimeout(()=>{},45);`;
   const logPath = join(directory, 'managed.log');
   const result = await runGate({ name: 'tests', args: ['-e', script], cwd: directory, logPath, timeout: 5000, report: event => events.push(event) });
 
@@ -104,7 +104,10 @@ test('managed gates report bounded test progress and clean their heartbeat timer
   assert.equal(events.at(-1).lastProgressAt, progress.lastProgressAt);
   assert.ok(events.at(-1).elapsedMs >= progress.elapsedMs);
   assert.doesNotMatch(JSON.stringify(events), /visible stdout|visible stderr/);
-  assert.match(await readFile(logPath, 'utf8'), /visible stdout[\s\S]*visible stderr/);
+  // Pipe scheduling permits either arrival order; require both visible outputs.
+  const log = await readFile(logPath, 'utf8');
+  assert.match(log, /visible stdout/);
+  assert.match(log, /visible stderr/);
 });
 
 test('progress heartbeats do not extend the finite gate watchdog', async t => {
