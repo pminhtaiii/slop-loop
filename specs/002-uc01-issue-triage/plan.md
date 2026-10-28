@@ -3,7 +3,7 @@
 **Branch**: `feat/012-uc01-issue-triage-specs` | **Date**: 2026-10-17 | **Spec**: [spec.md](spec.md)
 
 **Input**: Draft specification in `specs/002-uc01-issue-triage/`.
-**Status**: Existing baseline and consumer/fixture agreement approved on 2026-10-18. T001–T010 complete at the controlled local level; the user separately authorized T009–T010 on 2026-10-19 (Asia/Bangkok), limited to controlled configured recommendation and assessment composition. T014 safety regression consolidation was separately authorized on 2026-10-20 (Asia/Bangkok) and is complete at the controlled local level; T011–T013, T015–T016 and real execution remain separately gated in [decisions](contracts/decisions.md).
+**Status**: Existing baseline and consumer/fixture agreement approved on 2026-10-18. T001–T010 complete at the controlled local level; the user separately authorized T009–T010 on 2026-10-19 (Asia/Bangkok), limited to controlled configured recommendation and assessment composition. T014 safety regression consolidation was separately authorized on 2026-10-20 (Asia/Bangkok) and is complete at the controlled local level; T013 is separately authorized on 2026-10-28 for receiver compatibility; T011/T012, T015/T016 and real execution remain separately gated in [decisions](contracts/decisions.md).
 
 ## Summary
 
@@ -66,7 +66,7 @@ flowchart LR
 
 UC-01 receives only narrowed read/search capabilities, not a full RepositoryPort with patch/execute methods. Model tool requests are data checked against that narrow capability set; the controller invokes only validated read/search requests. All operation guards and durable reservations are shared. No UC-03 bug workflow is required to run UC-01 fixtures.
 
-The existing executable ModelPort requires UC-03 TaskState/ModelProposal, and RepositoryPort does not expose the full contextual denial envelope UC-01 needs. These cannot be assumed triage-compatible. [Shared interfaces](contracts/interfaces.md#versioned-consumer-signatures) supplies `uc01-consumer-v1`, including a separate triage role, guarded read/search, accounting, continuation and additive evidence projection. [Schema](contracts/schema.md#finite-controlled-fixture-profile) supplies the concrete `uc01-fixture-v1` numeric test profile. X-FOUNDATION-AGREEMENT is satisfied; T002–T010 are complete under their separate authorizations. T014 is separately authorized; T011–T013 and T015–T016 need separate authorization, and real integrations retain their delivery gates. Do not fake a bug TaskState or copy the provider budget implementation. Preserve canonical SourceEvidence, including boundedExcerpt, and transform only at an agreed boundary.
+The existing executable ModelPort requires UC-03 TaskState/ModelProposal, and RepositoryPort does not expose the full contextual denial envelope UC-01 needs. These cannot be assumed triage-compatible. [Shared interfaces](contracts/interfaces.md#versioned-consumer-signatures) supplies `uc01-consumer-v1`, including a separate triage role, guarded read/search, accounting, continuation and additive evidence projection. [Schema](contracts/schema.md#finite-controlled-fixture-profile) supplies the concrete `uc01-fixture-v1` numeric test profile. X-FOUNDATION-AGREEMENT is satisfied; T002–T010 are complete under their separate authorizations. T014 is separately authorized. T013 is authorized on 2026-10-28 under the additive receiver agreement; T011/T012 and T015/T016 retain separate authorization and real-delivery gates. Do not fake a bug TaskState or copy the provider budget implementation. Preserve canonical SourceEvidence, including boundedExcerpt, and transform only at an agreed boundary.
 
 ## Implementation strategy and execution
 
@@ -103,3 +103,9 @@ See [tasks.md](tasks.md) for internal DAG and [decisions](contracts/decisions.md
 ## Complexity Tracking
 
 No governance exception proposed. Narrow consumer seams are necessary because existing bug-specific types are incompatible with triage; shared adapters remain owned by their current owners.
+
+## Targeted receiver compatibility plan — 2026-10-28
+
+On 2026-10-28 (Asia/Bangkok), the user reported Tai had delegated full implementation and technical decisions within UC-03 T011 → T012 → UC-01 T013, including required specification/contract amendments. This releases only that sequential batch, its tests, independent review, context refresh and contributor publication. It supersedes earlier unreleased wording only for these tasks. No real LLM/provider, UC-04/UC-05 implementation, dispatch, automatic repair, production choices or other successor work is authorized.
+
+Use [uc01-uc03-receiver-v1](../001-verified-code-repair/contracts/uc01-receiver.md) after UC-03 T012 delivery. tests/runtime/uc01/receiver.test.ts calls IssueAssessor through controlled shared ports and the actual receiver, then covers missing caller fields, material questions, configured route/classification IDs, malformed versions, stale task/repository/snapshot/configuration bindings, provenance and zero effects. This completes only receiver compatibility; real foundation, durable restart and held-out evaluation remain separate.
