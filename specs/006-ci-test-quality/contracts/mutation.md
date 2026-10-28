@@ -1,0 +1,23 @@
+# Mutation Experiment and Test-Improvement Contract
+
+## Manual experiment
+
+Initial profile `telemetry` mutates `src/foundation/telemetry.ts` and runs `tests/runtime/unit/telemetry.test.ts` directly on Node 24 using pinned StrykerJS 10.1.1. The profile is a fixed choice, not arbitrary shell, paths or remote commands. Record whole-module scope separately from the earlier excerpt experiment. Tests, dependencies and generated output are not mutation targets.
+
+`.github/workflows/mutation-report.yml` has only `workflow_dispatch`. It checks out the dispatch-selected revision with read-only permissions/non-persisted credentials, performs the frozen policy-compliant install, and runs `scripts/ci/run-mutation.mjs --profile telemetry`. Neither normal workflows, publish hooks nor required-check lists invoke it. Dependencies and reports are ignored appropriately; preserve the repo's release-age and install gates.
+
+The runner uses explicit configuration (`command` runner, coverage analysis off, incremental reuse off, reporting-only threshold), one or two workers and measured timeout allowances. Start from the calibrated pilot's 10000ms allowance/factor 3, then justify changes with unchanged-test evidence. Limit the job to 20 minutes and child execution to less than that, terminate its process tree on expiry, and return incomplete failure. The dry run and baseline must pass; inspect at least one known observable mutation's assertion failure before relying on subsequent counts. No source mutation may remain in the checkout.
+
+Produce a fresh unique ignored artifact directory per execution with a manifest: source revision/tree; source/test/config and lock hashes; profile/scope; tool/Node versions; settings; commands/exit statuses; start/end/duration; result counts; experiment status; artifact hashes. Completed reports include Stryker JSON/HTML and a sanitized summary. Completion requires schema-valid fresh artifacts from this execution, unchanged admitted input hashes before/after, matching profile/source identity, zero pending mutants, and nonnegative integral status counts summing consistently to generated mutants. Keep invalid/ignored outcomes separate; reject unknown statuses, inconsistent totals and stale/mismatched JSON/HTML pairs. Hash both reports into the manifest; do not reuse prior-run files to satisfy a missing artifact. Failure retains available diagnostic metadata, explicitly marked partial; failures never become an apparently complete score. Report incompleteness when required artifacts are absent or identities disagree.
+
+Exit 0 means a completed reporting experiment, regardless of survivors or score. Setup/baseline/instrumentation/worker/overall-timeout/artifact failures return nonzero. Individual mutant timeouts remain a separate reported result requiring interpretation. The runner does not invent no-coverage or assertion-kill knowledge that the command runner cannot expose.
+
+## Survivor remediation
+
+**Do not chase every survivor or force 100%.** First integrate an independently justified exact-byte-limit preservation test at `sanitizeDiagnostic`. Then select a bounded batch at the existing sanitizer/truncation public boundaries. Review findings using source hash, location, operator and replacement, not historical IDs alone. Record each selected finding as meaningful, equivalent/redundant, harness-related or explicitly unresolved/out of scope.
+
+A meaningful finding needs a new public-behavior assertion that passes on the original candidate and fails by assertion against that exact mutant. Expected values derive from the intended contract. Keep the injected mutant isolated/restored; a compile/startup failure is not this witness. Preserve existing assertions and runtime behavior. Unexpected implementation bugs or new public boundaries need their applicable scope decision before broadening the change.
+
+Equivalent explanations must identify unchanged observable behavior within the supported contract. Harness problems require unchanged-test calibration/rerun. Do not silently exclude a finding to raise the score. Report untouched/unreviewed survivors explicitly, without requiring the entire historical set to be adjudicated in one batch.
+
+Keep detailed disposition ledgers and exact-mutant witnesses in the implementing session's ignored artifacts, with pointers in task acceptance notes. Before/after numerical comparisons require matching scope, operators, exclusions and settings. A focused four-mutant success cannot be reported as a new whole-module score; whole-module results cannot be compared directly to the earlier excerpt's 61.71%.
