@@ -55,3 +55,9 @@ On 2026-10-21 (Asia/Saigon), the user authorized execution of Phases 1 through 7
 - **Public test seams**: Confirmed public exports in `src/persistence/` and controlled ports in `tests/runtime/support/uc04/controlled-ports.ts`.
 
 Review quality, contract agreement, adapter evidence and implementation authorization are four separate facts.
+
+## Recorded shared adapter implementation and integration (2026-10-28)
+
+On 2026-10-28 (Asia/Saigon), Phase 7 Tasks T013 and T014 were completed on branch `feat/uc04-shared-adapters` and integrated:
+- **T013 (Shared Adapters & Recovery Integration)**: Implemented `src/persistence/adapters/` providing `DurableApprovalStore` for UC-05, `AccountingRecoveryAdapter` for UC-01 intake, and `RepairAccountingAdapter` for UC-03 repair/replan tracking. Multi-step workflow and recovery integration was proven in `tests/runtime/uc04/integration.test.ts`. Full test suite passes 88/88 tests.
+- **T014 (Handoff & Evidence Records)**: Scoped recovery handoff recorded; all 14 UC-04 tasks marked complete. Contributor quality gates, context checks, and test runner pass cleanly.
