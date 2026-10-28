@@ -1,10 +1,11 @@
 import { spawnSync } from 'node:child_process';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { lstat, readFile, realpath } from 'node:fs/promises';
+import { lstat, realpath } from 'node:fs/promises';
 import { isDeepStrictEqual } from 'node:util';
 import { featureBranch } from './pr-conventions.mjs';
 import { githubRepository } from './publication-targets.mjs';
+import { readBoundedEvidence } from './paired-merge-evidence.mjs';
 
 const usage = 'Usage: node scripts/agents/paired-merge-eligibility.mjs [--root <checkout>]';
 const required = ['contributor-checks (ubuntu-latest)', 'contributor-checks (windows-latest)', 'runtime-checks (ubuntu-latest)', 'runtime-checks (windows-latest)'];
@@ -63,17 +64,20 @@ function execute(binary, args, cwd, timeout, options) {
   return result.stdout;
 }
 async function regular(root, components) {
-  let path = root;
+  let path = root, expected;
   for (let i = 0; i < components.length; i++) {
     path = resolve(path, components[i]);
     let info;
-    try { info = await lstat(path); }
+    try { info = await lstat(path, { bigint: true }); }
     catch (error) { if (error.code === 'ENOENT') throw new Refusal('MISSING_EVIDENCE', 'WAITING_EVIDENCE'); throw error; }
     requireEvidence(!info.isSymbolicLink() && await realpath(path) === path, 'LINKED_EVIDENCE');
-    requireEvidence(i === components.length - 1 ? info.isFile() && info.size <= 2 * 1024 * 1024 : info.isDirectory(), 'INVALID_EVIDENCE');
+    requireEvidence(i === components.length - 1 ? info.isFile() && info.size <= 2n * 1024n * 1024n : info.isDirectory(), 'INVALID_EVIDENCE');
+    if (i === components.length - 1) expected = info;
   }
-  const bytes = await readFile(path);
-  requireEvidence(bytes.length <= 2 * 1024 * 1024, 'INVALID_EVIDENCE');
+  let bytes;
+  try { bytes = await readBoundedEvidence(path, expected, 2 * 1024 * 1024); }
+  catch (error) { if (error.code === 'ENOENT') throw new Refusal('MISSING_EVIDENCE', 'WAITING_EVIDENCE'); throw error; }
+  requireEvidence(Buffer.isBuffer(bytes), 'INVALID_EVIDENCE');
   return bytes;
 }
 
@@ -158,10 +162,12 @@ export async function runEligibility(args, dependencies = {}) {
       const pairBytes = await regular(primary, ['.agent-work', 'paired-prs', `${branch.replaceAll('/', '-')}.json`]);
       const config = JSON.parse(decode(configBytes)), workflow = JSON.parse(decode(workflowBytes)), pair = JSON.parse(decode(pairBytes));
       requireEvidence(config.schemaVersion === 1 && config.submission?.remote === 'submission' && config.submission.base === 'development', 'TARGET_IDENTITY');
-      const targets = {}, visibility = {};
+      const targets = {}, remoteUrls = {}, visibility = {};
       for (const [side, remote] of [['primary', 'origin'], ['submission', 'submission']]) {
-        const repository = githubRepository(git('remote', 'get-url', remote)).toLowerCase();
+        const effectiveUrl = git('remote', 'get-url', remote);
+        const repository = githubRepository(effectiveUrl).toLowerCase();
         targets[side] = { remote, repository, base: 'development' };
+        remoteUrls[side] = effectiveUrl;
         const info = json(`repos/${repository}`);
         requireEvidence(info.full_name?.toLowerCase() === repository && info.private === (side === 'submission') && info.visibility === (side === 'submission' ? 'private' : 'public'), 'REPOSITORY_VISIBILITY');
         visibility[side] = info.visibility;
@@ -194,7 +200,7 @@ export async function runEligibility(args, dependencies = {}) {
       const ancestry = { base: comparison.base_commit.sha, mergeBase: comparison.merge_base_commit.sha, status: comparison.status, ahead: comparison.ahead_by, behind: comparison.behind_by };
       const pages = JSON.parse(decode(call('gh', ['api', '--paginate', '--slurp', '--method', 'GET', `repos/${targets.primary.repository}/commits/${head}/check-runs?per_page=100`])));
       const checks = checkObservation(pages, head);
-      return { head, targets, visibility, configBytes, workflowBytes, pairBytes, prs, trees, ancestry, checks };
+      return { head, targets, remoteUrls, visibility, configBytes, workflowBytes, pairBytes, prs, trees, ancestry, checks };
     };
     const initial = await observe();
     snapshot = { observedOnly: true, publicHead: initial.head, submissionHead: initial.prs.submission.head, publicBase: initial.prs.primary.base, submissionBase: initial.prs.submission.base, tree: initial.trees.primary, checks: initial.checks, publicUrl: `https://github.com/${initial.targets.primary.repository}/pull/${initial.prs.primary.number}`, submissionNumber: initial.prs.submission.number };

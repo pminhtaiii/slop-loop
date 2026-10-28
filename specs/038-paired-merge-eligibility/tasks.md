@@ -39,12 +39,17 @@ The existing paired publication records and four public CI job names are prerequ
   - **Owned Paths**: `scripts/agents/paired-merge-eligibility.mjs`, `tests/agents/paired-merge-eligibility.test.mjs`
   - **Dependencies**: T004
 
+- [x] T006 [US1] Repair CodeRabbit findings with bounded descriptor-based evidence reads and effective remote URL reobservation in `scripts/agents/paired-merge-eligibility.mjs`, cohesive reader helper `scripts/agents/paired-merge-evidence.mjs` if needed for the source-size limit, and regression fixtures in `tests/agents/paired-merge-eligibility.test.mjs`.
+  - **Owned Paths**: `scripts/agents/paired-merge-eligibility.mjs`, `scripts/agents/paired-merge-evidence.mjs`, `tests/agents/paired-merge-eligibility.test.mjs`
+  - **Dependencies**: T005
+
 ## Dependencies & Execution Order
 
 T002 follows T001
 T003 follows T002
 T004 follows T003
 T005 follows T004
+T006 follows T005
 
 All implementation tasks are serialized; no parallel file ownership is claimed. Independent planning reviewers and the final standards/spec reviewers may run concurrently as read-only work against a pinned snapshot.
 
@@ -59,3 +64,5 @@ On 2026-10-28 (Asia/Saigon), the merger verified the worker's owned-path handoff
 Mechanical acceptance of T004 was recorded on 2026-10-28 at base `4cd956fc69f7220c50bc516c50955ed0151dd9fb`, with handoff verification and exact source/test hashes unchanged (`cc46b72f462a2c00321e1d7d3cdafe707e92b1c996cb7343e4a09d3164a8fc97` / `f56e916da2e38254f97e2c4c420c0ee1bff2ec995034bdc678d4a5d1ff730e76`). Merger replay of `node --test --test-name-pattern='synchronized prose-only|C1 controls|every cached workflow|unavailable reads|clean submission PR|mixed-case retained|invalid UTF-8|retained BOM byte' tests/agents/paired-merge-eligibility.test.mjs` exited 0: all 8 selected tests passed with no failures. `git diff --check` exited 0. The worker's earlier 18/18 full-suite pass predates the final byte-exact record correction; its affected 5/5 and BOM-race 1/1 passes plus this merger replay apply to the final source hash. No current-hash full-suite, live pair eligibility, publication-gate or final independent-review pass is inferred from the earlier run.
 
 Mechanical acceptance of T005 was recorded on 2026-10-28 at base `f8525b67f9d4f92e1dbc73dfc4810e14353c910c`, with handoff verification and unchanged source/test hashes (`802e953d816e1e28d5a9d5cbb281d6061c28c239d074fdd6b0c04ba95c55b71f` / `c4b3470e80b3e7ac30691650b6c70f6caf7f7d6f1e293588aa2b466fad57d71d`). Merger replay of `node --test --test-name-pattern='pending mergeability waits|complete disconnected public history' tests/agents/paired-merge-eligibility.test.mjs` exited 0: both selected status regressions passed with no failures. `git diff --check` exited 0. The worker separately reported 4/4 focused positive and known-conflict/status checks. No whole-suite or live-pair pass is claimed for this narrow correction; final review and publication gates remain separate.
+
+Mechanical acceptance of T006 was recorded on 2026-10-28 at base `5a7b2c143579020c531d6a6a37b6ccb9022b100f`, with verified handoff and unchanged Git blob hashes for main/helper/tests (`197d8f5f00c14483df85c1e127cb0760eac7659e` / `fc59d5dc9f1397b90bb43c8637a25f7d62724ae2` / `98efe88917b118ea64f4aa437fcc28a2fd7e618b`). Merger replay of `node --test --test-name-pattern='effective remote URL changes|retained evidence reads stay bounded|retained publication evidence rejects linked' tests/agents/paired-merge-eligibility.test.mjs` exited 0: 4 passes, no failures and 1 skipped linked-file subtest because this environment does not permit file-link creation. The linked-parent directory case passed. The URL-change and bounded growth/descriptor-close cases passed on this candidate; `git diff --check` exited 0. No whole-suite, file-symlink execution or live-pair pass is claimed from this narrow replay; final review and publication gates remain separate.

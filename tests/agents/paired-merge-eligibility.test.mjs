@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { spawnSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
-import { mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
+import fsPromises from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -334,6 +335,105 @@ test('a retained BOM byte change invalidates evidence even when decoded JSON is 
   const report = await f.run();
   assert.equal(report.reasons[0].code, 'EVIDENCE_CHANGED');
   assert.equal(report.snapshot.observedOnly, true);
+});
+
+test('effective remote URL changes invalidate eligibility without exposing private URL values', async t => {
+  for (const [remote, url] of [['origin', 'git@github.com:example/public.git'], ['submission', 'git@github.com:secret/coursework.git']]) {
+    const f = await fixture(t);
+    let changed = false;
+    f.state.afterChecks = () => {
+      if (changed) return;
+      changed = true;
+      f.git('remote', 'set-url', remote, url);
+    };
+    const report = await f.run();
+    assert.equal(changed, true);
+    assert.equal(report.status, 'BLOCKED');
+    assert.equal(report.eligible, false);
+    assert.equal(report.reasons[0].code, 'EVIDENCE_CHANGED');
+    assert.doesNotMatch(JSON.stringify(report), /secret|coursework|git@/);
+  }
+});
+
+test('retained evidence reads stay bounded when an opened file grows and close on refusal', async t => {
+  const f = await fixture(t), limit = 2 * 1024 * 1024;
+  const evidencePath = f.record, original = await readFile(f.record);
+  const oversizedBytes = Buffer.alloc(limit + 1);
+  await writeFile(evidencePath, oversizedBytes);
+  const oversized = await f.run();
+  assert.equal(oversized.status, 'BLOCKED');
+  assert.equal(oversized.reasons[0].code, 'INVALID_EVIDENCE');
+  assert.deepEqual(await readFile(evidencePath), oversizedBytes);
+  await writeFile(evidencePath, original);
+  let grew = false, opened = 0, bytesRead = 0, closes = 0, afterGrowth;
+  const originalOpen = fsPromises.open.bind(fsPromises);
+  t.mock.method(fsPromises, 'open', async (path, flags, ...args) => {
+    const handle = await originalOpen(path, flags, ...args);
+    if (opened++) return handle;
+    return {
+      stat: async (...statArgs) => {
+        const info = await handle.stat(...statArgs);
+        if (!grew) {
+          grew = true;
+          const writer = await originalOpen(path, 'a');
+          await writer.writeFile(Buffer.alloc(limit + 1));
+          await writer.close();
+          afterGrowth = await files(f.root);
+        }
+        return info;
+      },
+      read: async (...readArgs) => {
+        const result = await handle.read(...readArgs);
+        bytesRead += result.bytesRead;
+        return result;
+      },
+      close: async () => { closes++; return handle.close(); },
+    };
+  });
+  const report = await f.run();
+  assert.equal(report.status, 'BLOCKED');
+  assert.equal(report.eligible, false);
+  assert.equal(grew, true);
+  assert.equal(opened, 1);
+  assert.ok(bytesRead > 0 && bytesRead <= limit + 1, `read ${bytesRead} bytes`);
+  assert.equal(closes, 1);
+  assert.deepEqual(await files(f.root), afterGrowth);
+});
+
+test('retained publication evidence rejects linked parents and file paths', async t => {
+  const f = await fixture(t);
+  const createLink = async (target, path, type) => {
+    try { await symlink(target, path, type); return true; }
+    catch (error) { if (['EPERM', 'EACCES', 'ENOTSUP'].includes(error.code)) return false; throw error; }
+  };
+  await t.test('linked parent directory', async t => {
+    const directory = dirname(f.record), moved = `${directory}-target`;
+    await rename(directory, moved);
+    const linked = await createLink(moved, directory, process.platform === 'win32' ? 'junction' : 'dir');
+    if (!linked) { await rename(moved, directory); t.skip('This environment does not permit creating directory links.'); return; }
+    try {
+      const report = await f.run();
+      assert.equal(report.status, 'BLOCKED');
+      assert.equal(report.reasons[0].code, 'LINKED_EVIDENCE');
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+      await rename(moved, directory);
+    }
+  });
+  await t.test('linked evidence file', async t => {
+    const moved = `${f.record}-target`;
+    await rename(f.record, moved);
+    const linked = await createLink(moved, f.record, 'file');
+    if (!linked) { await rename(moved, f.record); t.skip('This environment does not permit creating file links.'); return; }
+    try {
+      const report = await f.run();
+      assert.equal(report.status, 'BLOCKED');
+      assert.equal(report.reasons[0].code, 'LINKED_EVIDENCE');
+    } finally {
+      await rm(f.record, { force: true });
+      await rename(moved, f.record);
+    }
+  });
 });
 
 test('pending mergeability waits while known conflicts and malformed mergeability block', async t => {
