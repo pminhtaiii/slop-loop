@@ -34,28 +34,37 @@ export function receiveUc01Assessment(input: unknown): IntakeResult {
   if (!config) return { status: 'invalid-input', reasonCode: 'invalid-receiver-config', path: 'receiverConfig' };
   const parsed = validateOutcome(value['outcome'], intake.value.invocation, intake.value.context);
   if (!parsed.ok) return { status: 'invalid-input', reasonCode: 'invalid-source-outcome', path: 'outcome' };
+  const result = validateTaskData(value['suppliedBugTask']);
+  if (result.status !== 'accepted' && result.status !== 'needs-info') return result;
+  const supplied = value['suppliedBugTask'];
+  const taskBindings = isInputRecord(supplied) ? supplied : {};
+  const bindings = [
+    ['taskId', intake.value.invocation.taskId],
+    ['repositoryId', intake.value.context.repositoryId],
+    ['configId', intake.value.context.configId],
+    ['configVersion', intake.value.context.configVersion],
+  ] as const;
+  for (const [path, expected] of bindings) {
+    const candidate = taskBindings[path];
+    if (typeof candidate === 'string' && candidate.trim() && candidate.trim() !== expected) {
+      return { status: 'conflict', reasonCode: 'task-binding-mismatch', path };
+    }
+  }
+  const revision = taskBindings['initialRevisionDigest'];
+  if (typeof revision === 'string' && revision.trim()) {
+    const digest = /^(?:sha256:)?([a-f0-9]{64})$/u.exec(revision.trim())?.[1];
+    if (!digest) return { status: 'invalid-input', reasonCode: 'invalid-revision-digest', path: 'initialRevisionDigest' };
+    if (digest !== intake.value.context.repositorySnapshotDigest) return { status: 'conflict', reasonCode: 'task-binding-mismatch', path: 'initialRevisionDigest' };
+  }
   const outcome = parsed.value;
-  if (outcome.status === 'needs-info') return { status: 'needs-info', fields: [], questionIds: outcome.assessment.questions.map(question => question.id) };
+  if (outcome.status === 'needs-info') return { status: 'needs-info', fields: result.status === 'needs-info' ? result.fields : [], questionIds: outcome.assessment.questions.map(question => question.id) };
   if (outcome.status !== 'assessed') return { status: 'not-applicable', reasonCode: 'source-not-assessed', path: 'outcome' };
   const assessment = outcome.assessment;
   if (assessment.destination.value !== config.destinationId || !config.defectClassificationIds.includes(assessment.classification.value)) {
     return { status: 'not-applicable', reasonCode: 'unsupported-route', path: 'outcome' };
   }
-  const result = validateTaskData(value['suppliedBugTask']);
   if (result.status !== 'accepted') return result;
   const task = result.task;
-  const bindings = [
-    ['taskId', task.taskId, intake.value.invocation.taskId],
-    ['repositoryId', task.repositoryId, intake.value.context.repositoryId],
-    ['configId', task.configId, intake.value.context.configId],
-    ['configVersion', task.configVersion, intake.value.context.configVersion],
-  ] as const;
-  for (const [path, candidate, expected] of bindings) {
-    if (candidate !== expected) return { status: 'conflict', reasonCode: 'task-binding-mismatch', path };
-  }
-  const digest = /^(?:sha256:)?([a-f0-9]{64})$/u.exec(task.initialRevisionDigest)?.[1];
-  if (!digest) return { status: 'invalid-input', reasonCode: 'invalid-revision-digest', path: 'initialRevisionDigest' };
-  if (digest !== assessment.repositorySnapshotDigest) return { status: 'conflict', reasonCode: 'task-binding-mismatch', path: 'initialRevisionDigest' };
   return { status: 'accepted', task, source: {
     contractVersion: RECEIVER_CONTRACT_VERSION, assessmentId: assessment.assessmentId, issueId: assessment.issueId,
     reportDigest: assessment.reportDigest, catalogId: assessment.catalogId, catalogVersion: assessment.catalogVersion, provenance: assessment.provenance,

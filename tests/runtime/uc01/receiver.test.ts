@@ -208,3 +208,68 @@ test('C21 assessment alone never supplies reproduction, expectations, budgets or
   for (const path of ['taskId', 'repositoryId', 'reproduction', 'expectedBehavior', 'acceptanceCriteria', 'requiredChecks', 'limits', 'budgetLimits']) assert.ok(result.fields.includes(path));
   assert.equal('task' in result, false);
 });
+
+
+test('C21 validates malformed supplied task before unresolved UC01 questions', async () => {
+  const h = await assessment((context, value) => ({ context, value: { ...value,
+    questions: [{ id: 'confirm-intent', text: 'Confirm intended behavior.', affects: ['intent'], reason: 'Intent is material.' }] } }));
+  assert.equal(h.input.outcome.status, 'needs-info');
+  const input = { ...h.input, suppliedBugTask: { ...h.input.suppliedBugTask, expectedBehavior: 42 } };
+  const before = structuredClone(input); const calls = [...h.calls];
+  assert.deepEqual(receiveUc01Assessment(input), { status: 'invalid-input', reasonCode: 'invalid-task', path: 'expectedBehavior' });
+  assert.deepEqual(input, before); assert.deepEqual(h.calls, calls);
+});
+
+
+test('C21 rejects foreign task bindings before unresolved UC01 questions', async () => {
+  const h = await assessment((context, value) => ({ context, value: { ...value,
+    questions: [{ id: 'confirm-intent', text: 'Confirm intended behavior.', affects: ['intent'], reason: 'Intent is material.' }] } }));
+  assert.equal(h.input.outcome.status, 'needs-info');
+  const input = { ...h.input, suppliedBugTask: { ...h.input.suppliedBugTask, taskId: 'foreign-task' } };
+  const before = structuredClone(input); const calls = [...h.calls];
+  assert.deepEqual(receiveUc01Assessment(input), { status: 'conflict', reasonCode: 'task-binding-mismatch', path: 'taskId' });
+  assert.deepEqual(input, before); assert.deepEqual(h.calls, calls);
+});
+
+
+test('C21 partial valid task retains missing fields alongside unresolved questions', async () => {
+  const h = await assessment((context, value) => ({ context, value: { ...value,
+    questions: [{ id: 'confirm-intent', text: 'Confirm intended behavior.', affects: ['intent'], reason: 'Intent is material.' }] } }));
+  const input = { ...h.input, suppliedBugTask: { taskId: h.input.context.taskId } };
+  const before = structuredClone(input); const calls = [...h.calls];
+  const result = receiveUc01Assessment(input);
+  assert.equal(result.status, 'needs-info');
+  if (result.status !== 'needs-info') assert.fail('Both kinds of missing information must be preserved');
+  assert.ok(result.fields.includes('reproduction')); assert.ok(result.fields.includes('expectedBehavior'));
+  assert.deepEqual(result.questionIds, ['confirm-intent']); assert.equal('task' in result, false);
+  assert.deepEqual(input, before); assert.deepEqual(h.calls, calls);
+});
+
+
+for (const source of ['needs-info', 'unsupported-route', 'failure'] as const) {
+  test('C21 validates supplied tasks and present bindings before ' + source, async () => {
+    const h = await assessment((context, value) => ({ context, value: source === 'needs-info' ? { ...value,
+      questions: [{ id: 'confirm-intent', text: 'Confirm intended behavior.', affects: ['intent'], reason: 'Intent is material.' }] }
+      : source === 'unsupported-route' ? { ...value, classification: { ...value.classification, value: 'feature-request' },
+        destination: { ...value.destination, value: 'triage' } } : value }));
+    const outcome = source === 'failure' ? { status: 'denied', reasonCode: 'policy-denied', safeMessage: 'Denied', nextAction: 'Stop', eventRef: 'event' } : h.input.outcome;
+    const input = { ...h.input, outcome }; const calls = [...h.calls];
+    for (const task of [{ ...input.suppliedBugTask, expectedBehavior: 42 }, { expectedBehavior: 42 }]) {
+      const candidate = { ...input, suppliedBugTask: task }; const before = structuredClone(candidate);
+      assert.deepEqual(receiveUc01Assessment(candidate), { status: 'invalid-input', reasonCode: 'invalid-task', path: 'expectedBehavior' });
+      assert.deepEqual(candidate, before);
+    }
+    for (const [path, value] of [['taskId', 'foreign-task'], ['repositoryId', 'foreign-repository'], ['configId', 'foreign-config'],
+      ['configVersion', 'foreign-version'], ['initialRevisionDigest', 'sha256:' + 'a'.repeat(64)]] as const) {
+      for (const task of [{ ...input.suppliedBugTask, [path]: value }, { [path]: value }]) {
+        const candidate = { ...input, suppliedBugTask: task }; const before = structuredClone(candidate);
+        const result = receiveUc01Assessment(candidate);
+        assert.deepEqual(result, { status: 'conflict', reasonCode: 'task-binding-mismatch', path });
+        assert.equal('task' in result, false); assert.deepEqual(candidate, before);
+      }
+    }
+    const invalidDigest = receiveUc01Assessment({ ...input, suppliedBugTask: { initialRevisionDigest: 'invalid-digest' } });
+    assert.deepEqual(invalidDigest, { status: 'invalid-input', reasonCode: 'invalid-revision-digest', path: 'initialRevisionDigest' });
+    assert.deepEqual(h.calls, calls);
+  });
+}

@@ -24,7 +24,7 @@ test('C02 material ambiguity requires later confirmation without reflecting ques
   assert.equal('task' in result, false);
 });
 
-for (const field of ['repositoryId', 'expectedBehavior', 'goal', 'limits', 'budgetLimits', 'requiredChecks', 'constraints', 'configId', 'configVersion']) {
+for (const field of ['repositoryId', 'observedBehavior', 'expectedBehavior', 'goal', 'limits', 'budgetLimits', 'requiredChecks', 'constraints', 'configId', 'configVersion']) {
   test('C02 missing ' + field + ' requests explicit caller information', () => {
     const task = Object.fromEntries(Object.entries(createFixtureBugTask()).filter(([key]) => key !== field));
     const result = receiveBugTask({ task });
