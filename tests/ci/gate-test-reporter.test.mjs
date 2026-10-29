@@ -14,18 +14,18 @@ test('contributor runner adds progress only when WORKFLOW_GATE_PROGRESS is exact
   const previousResults = process.env.TEST_RESULTS_FILE;
   try {
     delete process.env.WORKFLOW_GATE_PROGRESS;
-    // Machine-readable results are unconditional; only the progress reporters are gated.
-    const results = ['--test-reporter=junit', '--test-reporter-destination=contributor-test-results.xml'];
+    // The human reporter and machine-readable results are unconditional; only progress is gated.
+    const results = ['--test-reporter=spec', '--test-reporter-destination=stdout', '--test-reporter=junit', '--test-reporter-destination=contributor-test-results.xml'];
     assert.deepEqual(contributorTestArgs(files), ['--test', ...results, ...files]);
     process.env.WORKFLOW_GATE_PROGRESS = 'true';
     assert.deepEqual(contributorTestArgs(files), ['--test', ...results, ...files]);
     process.env.TEST_RESULTS_FILE = 'custom-results.xml';
-    assert.deepEqual(contributorTestArgs(files), ['--test', '--test-reporter=junit', '--test-reporter-destination=custom-results.xml', ...files]);
+    assert.deepEqual(contributorTestArgs(files), ['--test', ...results.slice(0, 3), '--test-reporter-destination=custom-results.xml', ...files]);
     delete process.env.TEST_RESULTS_FILE;
     process.env.WORKFLOW_GATE_PROGRESS = '1';
     const managed = contributorTestArgs(files);
     assert.deepEqual(managed.slice(-1), files);
-    assert.ok(managed.includes('--test-reporter=spec'));
+    assert.ok(managed.includes('--test-reporter=spec'), 'human output survives a failing lane');
     assert.ok(managed.includes('--test-reporter-destination=stdout'));
     const reporter = managed.find(value => value.startsWith('--test-reporter=file:'));
     assert.ok(reporter);

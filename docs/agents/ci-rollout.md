@@ -134,4 +134,6 @@ a feature branch is not availability evidence.
 
 | 2026-10-29 | A1 | re-cut onto fresh `feat/tooling-contributor-ci-split` from `origin/development`: `tests/ci/workflow-contracts.test.mjs` failed because its line scanner split on `\n` while `core.autocrlf` writes the workflow files as CRLF; now `/\r?\n/` like the other scanners. `tests/ci/*.test.mjs` 76 pass +1 env skip | local gate |
 
+| 2026-10-29 | A1 | first CI run of PR #122 failed `Test contributor helpers` on both ubuntu jobs. Cause: T006 made the JUnit reporter unconditional but left it the *only* reporter when `WORKFLOW_GATE_PROGRESS` was unset, so the lane wrote no human-readable output to stdout. The `contributor runner executes through a symlink` regression asserts on that text and silently skips on Windows (`File symlinks unavailable`), so the local pass could not see it. `contributorTestArgs` now pairs `spec`→stdout unconditionally with `junit`→file, matching `run-runtime-tests.mjs`; regression asserts the `spec` destination. `tests/ci/*.test.mjs` 76 pass +1 env skip | CI run 40816365325; local gate |
+
 Not yet observed, and not claimed by any row above: real CI execution of the staged jobs, any branch-protection change, ci-v2 activation, or removal of the transitional jobs.

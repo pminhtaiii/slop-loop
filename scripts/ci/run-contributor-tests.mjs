@@ -9,14 +9,15 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const DEFAULT_RESULTS_FILE = 'contributor-test-results.xml';
 
 export function contributorTestArgs(files, progress = process.env.WORKFLOW_GATE_PROGRESS === '1', resultsFile = process.env.TEST_RESULTS_FILE || DEFAULT_RESULTS_FILE) {
-  const args = ['--test'];
+  // The human reporter is unconditional: CI logs and the symlink/failure regressions read it.
+  const reporters = [['spec', 'stdout']];
   if (progress) {
     const reporter = pathToFileURL(resolve(dirname(fileURLToPath(import.meta.url)), 'gate-test-reporter.mjs')).href;
-    args.push('--test-reporter=spec', `--test-reporter=${reporter}`, '--test-reporter-destination=stdout', '--test-reporter-destination=stderr');
+    reporters.push([reporter, 'stderr']);
   }
   // Machine-readable results survive a failing lane; elapsed durations are the JUnit time attributes.
-  if (resultsFile) args.push('--test-reporter=junit', `--test-reporter-destination=${resultsFile}`);
-  return [...args, ...files];
+  if (resultsFile) reporters.push(['junit', resultsFile]);
+  return ['--test', ...reporters.flatMap(([name, destination]) => [`--test-reporter=${name}`, `--test-reporter-destination=${destination}`]), ...files];
 }
 
 export function runContributorTests() {
