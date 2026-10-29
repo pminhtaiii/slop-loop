@@ -128,10 +128,16 @@ test('the build lanes reuse the clean-build-only mode and the runtime lane consu
   assert.match(build.block.join('\n'), /^ {12}(?:tests\/runtime|dist\/tests\/runtime)$/m, 'artifact carries source and emitted tests');
   assert.match(build.block.join('\n'), /if-no-files-found: error/);
 
-  // A lane that only received the emitted test tree cannot import the compiled source those tests
-  // import, so the compiled source must ship and be part of the verified manifest.
-  assert.match(build.block.join('\n'), /^ {12}dist\/src$/m, 'artifact carries the compiled source the emitted tests import');
-  assert.ok(ARTIFACT_PATHS.includes('dist/src'), 'the manifest covers the compiled source');
+  // A lane that only received the emitted test tree cannot import the compiled code those tests
+  // import, so every emitted top-level tree besides `tests` must ship and be in the verified manifest.
+  // Deriving this from the build output is what catches a new emitted root, which a fixed list missed.
+  const compiled = readdirSync(new URL('../../dist', import.meta.url), { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && entry.name !== 'tests')
+    .map((entry) => `dist/${entry.name}`);
+  for (const path of compiled) {
+    assert.match(build.block.join('\n'), new RegExp(`^ {12}${path}$`, 'm'), `artifact carries ${path} that emitted tests import`);
+    assert.ok(ARTIFACT_PATHS.includes(path), `the manifest covers ${path}`);
+  }
 
   const runtime = WORKFLOWS.find((file) => file.job('runtime-tests')).job('runtime-tests');
   assert.match(runtime.block.join('\n'), /^ {4}needs: build$/m, 'runtime tests depend on the build lane');

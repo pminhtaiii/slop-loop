@@ -6,9 +6,10 @@ import { fileURLToPath } from 'node:url';
 // Binds a build artifact to (repositoryId, runId, runAttempt, head, OS) plus a hash manifest, so a
 // dependent lane can refuse a download from another run, attempt, OS, repository or source.
 export const IDENTITY_FILE = 'artifact-identity.json';
-// `dist/src` is required too: emitted tests import the compiled source, so a lane receiving only the
-// emitted test tree would fail with ERR_MODULE_NOT_FOUND instead of running.
-export const ARTIFACT_PATHS = Object.freeze(['tests/runtime', 'dist/tests/runtime', 'dist/src']);
+// `dist/src` and `dist/eval` are required too: emitted tests import the compiled source and the
+// evaluation runner, so a lane receiving only the emitted test tree would fail with
+// ERR_MODULE_NOT_FOUND instead of running.
+export const ARTIFACT_PATHS = Object.freeze(['tests/runtime', 'dist/tests/runtime', 'dist/src', 'dist/eval']);
 const SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 
 const positive = (value, field) => {

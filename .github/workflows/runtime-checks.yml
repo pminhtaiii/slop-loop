@@ -94,6 +94,7 @@ jobs:
             tests/runtime
             dist/tests/runtime
             dist/src
+            dist/eval
           if-no-files-found: error
           retention-days: 7
 
