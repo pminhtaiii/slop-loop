@@ -8,8 +8,9 @@ import { ARTIFACT_PATHS } from '../../scripts/ci/artifact-identity.mjs';
 // at two-space indent and the `uses:`/`run:` lines inside each job. Upgrade to a real parser when a
 // contract needs structure beyond that (nested maps, anchors, flow sequences).
 function workflow(path) {
+  // A checkout with core.autocrlf writes CRLF, so split on either ending before matching exact lines.
   const text = readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8');
-  const lines = text.split('\n');
+  const lines = text.split(/\r?\n/);
   const at = lines.findIndex((line) => line === 'jobs:');
   assert.ok(at >= 0, `${path} declares jobs`);
   const jobs = new Map();
