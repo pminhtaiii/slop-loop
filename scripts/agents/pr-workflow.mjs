@@ -5,6 +5,7 @@ import { verifySubmission } from './submission-pr.mjs';
 import { assertAvailableBranch, assertNewBranch } from './pr-conventions.mjs';
 import { assess, changedLines, featureName, validSummary, workflowSummary } from './pr-workflow-status.mjs';
 import { hasLocalVerification, localGateStatus, publicationMode } from './pr-workflow-push-only.mjs';
+import { POLICIES } from '../ci/required-checks.mjs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { atomicWrite, dataDirectory, readJson, repository, withLock } from './agent-store.mjs';
@@ -96,6 +97,9 @@ export async function runWorkflow(args, dependencies = {}) {
     try { record = await readJson(path); }
     catch (error) { if (error.code !== 'ENOENT') throw error; record = { schemaVersion: 1, repository: remote, branch, base: 'development', repairRounds: [] }; }
     if (record.schemaVersion !== 1 || record.repository !== remote || record.branch !== branch || record.base !== 'development' || !Array.isArray(record.repairRounds)) throw new Error('Invalid or mismatched PR workflow record.');
+    // A retained policy name is evidence of what was required when this record was published; an
+    // unrecognised one means the record or the policy registry changed under it.
+    if (record.checkPolicy !== undefined && !Object.hasOwn(POLICIES, record.checkPolicy)) throw new Error(`Retained PR workflow record names an unknown check policy: ${String(record.checkPolicy)}`);
     const pairedExecute = (binary, argv, cwd, timeout) => call(binary, argv, timeout);
     const targets = command === 'prepare-next' ? null : await publicationTargets(repo, pairedExecute);
     if (command !== 'prepare-next' && record.pairedTargets && JSON.stringify(record.pairedTargets) !== JSON.stringify(targets)) throw new Error('Paired publication targets changed; restore their configuration and retained accounting.');

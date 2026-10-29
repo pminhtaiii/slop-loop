@@ -2,13 +2,12 @@ import { createHash } from 'node:crypto';
 import { atomicWrite, readJson } from './agent-store.mjs';
 import { command, json, sides } from './paired-issue-api.mjs';
 import { featureBranch } from './pr-conventions.mjs';
+import { ACTIVE_POLICY_ID, createPolicyState, selectLatest } from '../ci/required-checks.mjs';
 
-const requiredChecks = [
-  'contributor-checks (ubuntu-latest)',
-  'contributor-checks (windows-latest)',
-  'runtime-checks (ubuntu-latest)',
-  'runtime-checks (windows-latest)',
-];
+// Stage A1: only the active policy is required, so an unbound merged head fails closed to the
+// current names instead of being granted an older policy. No historical path is added here because
+// this consumer never fetches the repository/head/tree identity a binding would have to match.
+const activePolicy = createPolicyState(ACTIVE_POLICY_ID).policy;
 
 export function parsePullUrl(url, repositoryName) {
   let parsed;
@@ -96,20 +95,17 @@ export function readCheckRuns(call, repo, repositoryName, head) {
 }
 
 export function assessChecks(call, repo, repositoryName, head) {
-  const checks = readCheckRuns(call, repo, repositoryName, head);
-  const latest = requiredChecks.map((name) => checks
-    .filter((check) => check?.name === name && check.head_sha?.toLowerCase() === head.toLowerCase() && check.app?.slug === 'github-actions')
-    .sort((left, right) => Number(right.id) - Number(left.id))[0]);
-  const signatures = latest.map((check) => check ? {
+  const latest = selectLatest({ policy: activePolicy, head, checks: readCheckRuns(call, repo, repositoryName, head) });
+  const signatures = latest.map(({ check }) => check ? {
     name: check.name,
     head: check.head_sha,
     status: check.status,
     conclusion: check.conclusion,
     app: check.app.slug,
   } : null);
-  if (latest.some((check) => !check || !Number.isSafeInteger(check.id) || check.id < 1)) return { status: 'WAITING_CI', checks: signatures };
-  if (latest.some((check) => check.status === 'completed' && check.conclusion !== 'success')) return { status: 'BLOCKED', checks: signatures, reason: 'A required exact-head GitHub Actions check failed.' };
-  if (latest.some((check) => check.status !== 'completed' || check.conclusion !== 'success')) return { status: 'WAITING_CI', checks: signatures };
+  if (latest.some(({ check }) => !check || !Number.isSafeInteger(check.id) || check.id < 1)) return { status: 'WAITING_CI', checks: signatures };
+  if (latest.some(({ check }) => check.status === 'completed' && check.conclusion !== 'success')) return { status: 'BLOCKED', checks: signatures, reason: 'A required exact-head GitHub Actions check failed.' };
+  if (latest.some(({ check }) => check.status !== 'completed' || check.conclusion !== 'success')) return { status: 'WAITING_CI', checks: signatures };
   return { status: 'READY', checks: signatures };
 }
 

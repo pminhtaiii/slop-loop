@@ -8,10 +8,18 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runEligibility } from '../../scripts/agents/paired-merge-eligibility.mjs';
+import { POLICIES, createPolicyState, evaluateRequired, resolvePolicy } from '../../scripts/ci/required-checks.mjs';
 
 const source = new URL('../../scripts/agents/paired-merge-eligibility.mjs', import.meta.url);
 const branch = 'feat/tooling-preview';
-const required = ['contributor-checks (ubuntu-latest)', 'contributor-checks (windows-latest)', 'runtime-checks (ubuntu-latest)', 'runtime-checks (windows-latest)'];
+// Literal oracle on purpose: deriving these from createPolicyState(ACTIVE_POLICY_ID) would repeat
+// the production expression and stop this fixture from detecting a wrongly-activated policy.
+const required = [
+  'contributor-checks (ubuntu-latest)',
+  'contributor-checks (windows-latest)',
+  'runtime-checks (ubuntu-latest)',
+  'runtime-checks (windows-latest)',
+];
 
 async function fixture(t, { path = 'docs/user/overview.md', content = 'Readable prose.\n', before, operation } = {}) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'paired-preview-')));
@@ -55,7 +63,7 @@ async function fixture(t, { path = 'docs/user/overview.md', content = 'Readable 
   await writeFile(record, JSON.stringify(pair));
   await writeFile(join(root, '.agent-work/pr-workflow/tooling-preview.json'), JSON.stringify(workflow));
   const pr = (repository, number, sha) => ({ number, html_url: `https://github.com/${repository}/pull/${number}`, state: 'open', draft: false, title, body: pair.body, mergeable: true, mergeable_state: 'clean', head: { ref: branch, sha, repo: { full_name: repository } }, base: { ref: 'development', sha: base, repo: { full_name: repository } } });
-  const state = { primary: pr('example/public', 1, head), submission: pr('secret/coursework', 2, mirror), pages: [{ total_count: 4, check_runs: required.map((name, i) => ({ id: i + 1, name, head_sha: head, status: 'completed', conclusion: 'success', app: { slug: 'github-actions' } })) }] };
+  const state = { primary: pr('example/public', 1, head), submission: pr('secret/coursework', 2, mirror), pages: [{ total_count: required.length, check_runs: required.map((name, i) => ({ id: i + 1, name, head_sha: head, status: 'completed', conclusion: 'success', app: { slug: 'github-actions' } })) }] };
   let ghReads = 0, observations = 0, mutationAttempts = 0;
   const execute = (binary, args, cwd, timeout, options) => {
     if (binary === 'git') {
@@ -149,11 +157,11 @@ test('tooling, governance and executable examples require manual review', async 
 test('required checks are selected across complete pages and newer failures supersede success', async t => {
   const f = await fixture(t);
   const checks = f.state.pages[0].check_runs;
-  f.state.pages = [{ total_count: 4, check_runs: checks.slice(0, 3) }, { total_count: 4, check_runs: checks.slice(3) }];
+  f.state.pages = [{ total_count: required.length, check_runs: checks.slice(0, -1) }, { total_count: required.length, check_runs: checks.slice(-1) }];
   assert.equal((await f.run()).eligible, true);
-  f.state.pages = [{ total_count: 5, check_runs: checks }, { total_count: 5, check_runs: [{ ...checks[0], id: 9, conclusion: 'failure' }] }];
+  f.state.pages = [{ total_count: required.length + 1, check_runs: checks }, { total_count: required.length + 1, check_runs: [{ ...checks[0], id: 9, conclusion: 'failure' }] }];
   assert.equal((await f.run()).reasons[0].code, 'FAILED_CHECK');
-  f.state.pages = [{ total_count: 5, check_runs: checks }];
+  f.state.pages = [{ total_count: required.length + 1, check_runs: checks }];
   assert.equal((await f.run()).reasons[0].code, 'CHECK_PAGINATION');
   f.state.pages = [null];
   assert.equal((await f.run()).eligible, false);
@@ -168,6 +176,37 @@ test('missing, stale, spoofed or pending public checks never establish eligibili
     assert.equal(report.status, 'WAITING_EVIDENCE');
     assert.equal(report.eligible, false);
   }
+});
+
+test('skipped and failed required checks keep the eligibility vocabulary', async t => {
+  const f = await fixture(t), checks = structuredClone(f.state.pages[0].check_runs);
+  for (const [conclusion, code, status] of [['skipped', 'FAILED_CHECK', 'BLOCKED'], ['failure', 'FAILED_CHECK', 'BLOCKED']]) {
+    const runs = structuredClone(checks);
+    runs[0].conclusion = conclusion;
+    f.state.pages = [{ total_count: runs.length, check_runs: runs }];
+    const report = await f.run();
+    assert.equal(report.status, status, conclusion);
+    assert.equal(report.reasons[0].code, code, conclusion);
+    assert.equal(report.eligible, false);
+    assert.equal(report.mergeEnabled, false);
+  }
+  f.state.pages = [{ total_count: checks.length + 1, check_runs: [...checks, { ...checks[0], id: 99, conclusion: 'skipped' }] }];
+  assert.equal((await f.run()).reasons[0].code, 'FAILED_CHECK', 'the latest run per name decides');
+});
+
+test('a ci-v2 selection resolves only the ci-v2 required names through the pure selector', () => {
+  const v2 = resolvePolicy(createPolicyState('ci-v2'), { policyId: 'ci-v2' });
+  assert.equal(v2.historical, false);
+  assert.deepEqual([...v2.policy.required], [...POLICIES['ci-v2'].required]);
+  assert.deepEqual(required, [...POLICIES['ci-v1'].required], 'production eligibility stays on ci-v1');
+  assert.notDeepEqual(required, [...v2.policy.required]);
+
+  const head = 'a'.repeat(40);
+  const oldRuns = required.map((name, id) => ({ id: id + 1, name, head_sha: head, status: 'completed', conclusion: 'success', app: { slug: 'github-actions' } }));
+  const newRuns = POLICIES['ci-v2'].required.map((name, id) => ({ id: id + 1, name, head_sha: head, status: 'completed', conclusion: 'success', app: { slug: 'github-actions' } }));
+  assert.equal(evaluateRequired({ policy: POLICIES['ci-v2'], head, checks: oldRuns }).status, 'WAITING');
+  assert.equal(evaluateRequired({ policy: POLICIES['ci-v1'], head, checks: newRuns }).status, 'WAITING');
+  assert.equal(evaluateRequired({ policy: POLICIES['ci-v2'], head, checks: newRuns }).status, 'READY');
 });
 
 test('both PRs must preserve their exact identities, states and source tree', async t => {

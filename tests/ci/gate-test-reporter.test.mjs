@@ -11,23 +11,32 @@ import { PROGRESS_PREFIX } from '../../scripts/agents/workflow-gate-progress.mjs
 test('contributor runner adds progress only when WORKFLOW_GATE_PROGRESS is exactly 1', () => {
   const files = ['tests/fake.test.mjs'];
   const previous = process.env.WORKFLOW_GATE_PROGRESS;
+  const previousResults = process.env.TEST_RESULTS_FILE;
   try {
     delete process.env.WORKFLOW_GATE_PROGRESS;
-    assert.deepEqual(contributorTestArgs(files), ['--test', ...files]);
+    // The human reporter and machine-readable results are unconditional; only progress is gated.
+    const results = ['--test-reporter=spec', '--test-reporter-destination=stdout', '--test-reporter=junit', '--test-reporter-destination=contributor-test-results.xml'];
+    assert.deepEqual(contributorTestArgs(files), ['--test', ...results, ...files]);
     process.env.WORKFLOW_GATE_PROGRESS = 'true';
-    assert.deepEqual(contributorTestArgs(files), ['--test', ...files]);
+    assert.deepEqual(contributorTestArgs(files), ['--test', ...results, ...files]);
+    process.env.TEST_RESULTS_FILE = 'custom-results.xml';
+    assert.deepEqual(contributorTestArgs(files), ['--test', ...results.slice(0, 3), '--test-reporter-destination=custom-results.xml', ...files]);
+    delete process.env.TEST_RESULTS_FILE;
     process.env.WORKFLOW_GATE_PROGRESS = '1';
     const managed = contributorTestArgs(files);
     assert.deepEqual(managed.slice(-1), files);
-    assert.ok(managed.includes('--test-reporter=spec'));
+    assert.ok(managed.includes('--test-reporter=spec'), 'human output survives a failing lane');
     assert.ok(managed.includes('--test-reporter-destination=stdout'));
     const reporter = managed.find(value => value.startsWith('--test-reporter=file:'));
     assert.ok(reporter);
     assert.ok(fileURLToPath(reporter.slice('--test-reporter='.length)).replaceAll('\\', '/').endsWith('scripts/ci/gate-test-reporter.mjs'));
     assert.ok(managed.includes('--test-reporter-destination=stderr'));
+    assert.ok(managed.includes('--test-reporter=junit'), 'results survive a failing lane even with progress on');
   } finally {
     if (previous === undefined) delete process.env.WORKFLOW_GATE_PROGRESS;
     else process.env.WORKFLOW_GATE_PROGRESS = previous;
+    if (previousResults === undefined) delete process.env.TEST_RESULTS_FILE;
+    else process.env.TEST_RESULTS_FILE = previousResults;
   }
 });
 

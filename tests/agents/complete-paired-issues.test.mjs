@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import test from 'node:test';
 import { join } from 'node:path';
 import { runIssueCompletion } from '../../scripts/agents/complete-paired-issues.mjs';
-import { branch, completionMarkerFor, fixture, markerFor, mergePair, privateRepository, publicRepository } from './support/complete-paired-issues-fixture.mjs';
+import { POLICIES, evaluateRequired, parseHistoricalBindings } from '../../scripts/ci/required-checks.mjs';
+import { branch, completionMarkerFor, fixture, markerFor, mergePair, privateRepository, publicHead, publicRepository, requiredChecks } from './support/complete-paired-issues-fixture.mjs';
 
 test('an open paired resolving PR returns WAITING_PR without remote writes', async t => {
   const f = await fixture(t);
@@ -144,6 +145,13 @@ test('failing, spoofed, or incomplete exact-head checks and mismatched source tr
   assert.equal(failure.status, 'BLOCKED');
   assert.deepEqual(failed.writes, []);
 
+  const skipped = await fixture(t);
+  mergePair(skipped);
+  skipped.checks[0].conclusion = 'skipped';
+  const skip = await runIssueCompletion([...skipped.args, '--apply'], { execute: skipped.execute });
+  assert.equal(skip.status, 'BLOCKED');
+  assert.deepEqual(skipped.writes, []);
+
   const spoofed = await fixture(t);
   mergePair(spoofed);
   for (const check of spoofed.checks) check.app.slug = 'other-app';
@@ -151,12 +159,38 @@ test('failing, spoofed, or incomplete exact-head checks and mismatched source tr
   assert.equal(spoof.status, 'WAITING_CI');
   assert.deepEqual(spoofed.writes, []);
 
+  const stale = await fixture(t);
+  mergePair(stale);
+  for (const check of stale.checks) check.head_sha = 'f'.repeat(40);
+  const staleReport = await runIssueCompletion([...stale.args, '--apply'], { execute: stale.execute });
+  assert.equal(staleReport.status, 'WAITING_CI');
+  assert.deepEqual(stale.writes, []);
+
   const mismatch = await fixture(t, { treeMismatch: true });
   mergePair(mismatch);
   const treeResult = await runIssueCompletion([...mismatch.args, '--apply'], { execute: mismatch.execute });
   assert.equal(treeResult.status, 'BLOCKED');
   assert.match(treeResult.reason, /trees/i);
   assert.deepEqual(mismatch.writes, []);
+});
+
+test('merged completion uses only the active policy and never a ci-v2 or unbound historical name set', async t => {
+  assert.deepEqual(parseHistoricalBindings(await readFile(new URL('../../config/legacy-ci-heads.json', import.meta.url), 'utf8')), [], 'no audited binding can grant an older policy');
+  assert.deepEqual([...requiredChecks], [...POLICIES['ci-v1'].required]);
+
+  const v2 = await fixture(t);
+  mergePair(v2);
+  v2.checks.splice(0, v2.checks.length, ...POLICIES['ci-v2'].required.map((name, id) => ({ id: id + 1, name, head_sha: publicHead, status: 'completed', conclusion: 'success', app: { slug: 'github-actions' } })));
+  const wrongPolicy = await runIssueCompletion([...v2.args, '--apply'], { execute: v2.execute });
+  assert.equal(wrongPolicy.status, 'WAITING_CI', 'ci-v2 names do not satisfy the active ci-v1 policy');
+  assert.deepEqual(v2.writes, []);
+
+  const head = publicHead;
+  const oldRuns = requiredChecks.map((name, id) => ({ id: id + 1, name, head_sha: head, status: 'completed', conclusion: 'success', app: { slug: 'github-actions' } }));
+  const newRuns = POLICIES['ci-v2'].required.map((name, id) => ({ id: id + 1, name, head_sha: head, status: 'completed', conclusion: 'success', app: { slug: 'github-actions' } }));
+  assert.equal(evaluateRequired({ policy: POLICIES['ci-v2'], head, checks: oldRuns }).status, 'WAITING');
+  assert.equal(evaluateRequired({ policy: POLICIES['ci-v1'], head, checks: newRuns }).status, 'WAITING');
+  assert.equal(evaluateRequired({ policy: POLICIES['ci-v2'], head, checks: newRuns }).status, 'READY');
 });
 
 test('cross-repository PRs, duplicate submission PRs, and changed PR identity are refused', async t => {

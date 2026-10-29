@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { ACTIVE_POLICY_ID, createPolicyState } from '../../../scripts/ci/required-checks.mjs';
 
 export const publicRepository = 'example/public';
 export const privateRepository = 'course/private';
@@ -12,12 +13,7 @@ export const branch = 'feat/tooling-example';
 export const publicHead = 'a'.repeat(40);
 export const privateHead = 'b'.repeat(40);
 export const tree = 'c'.repeat(40);
-export const requiredChecks = [
-  'contributor-checks (ubuntu-latest)',
-  'contributor-checks (windows-latest)',
-  'runtime-checks (ubuntu-latest)',
-  'runtime-checks (windows-latest)',
-];
+export const requiredChecks = createPolicyState(ACTIVE_POLICY_ID).policy.required;
 
 function git(cwd, ...args) {
   const result = spawnSync('git', args, { cwd, encoding: 'utf8', windowsHide: true });

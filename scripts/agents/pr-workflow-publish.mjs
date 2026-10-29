@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { assertNoTrackedArtifacts } from '../ci/check-tracked-files.mjs';
+import { ACTIVE_POLICY_ID } from '../ci/required-checks.mjs';
 import { dataDirectory } from './agent-store.mjs';
 import { assertAvailableNumber, assertAvailableBranch, assertNewDescription, assertNewSummary } from './pr-conventions.mjs';
 import { inspectSubmissionTarget, publishSubmission } from './submission-pr.mjs';
@@ -86,6 +87,7 @@ export async function publishCommand({ values, record, branch, repo, remote, git
   await save();
   git('push', '--set-upstream', 'origin', `HEAD:refs/heads/${branch}`);
   record.publishedHead = head;
+  record.checkPolicy = ACTIVE_POLICY_ID;
   await save();
   await withPublicationBody(repo, body, async frozenBodyPath => {
     if (pr) gh('pr', 'edit', String(pr.number), '--repo', remote, '--title', title, '--body-file', frozenBodyPath);
