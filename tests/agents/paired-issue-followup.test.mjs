@@ -5,7 +5,13 @@ import { join } from 'node:path';
 import { runIssueFollowup } from '../../scripts/agents/paired-issue-followup.mjs';
 import { runIssueCompletion } from '../../scripts/agents/complete-paired-issues.mjs';
 import { completionMarker } from '../../scripts/agents/paired-issue-state.mjs';
+import { ACTIVE_POLICY_ID, POLICIES, createPolicyState } from '../../scripts/ci/required-checks.mjs';
 import { fixture, markerFor, mergePair, privateRepository, publicRepository, requiredChecks } from './support/complete-paired-issues-fixture.mjs';
+
+test('fixture required checks derive from the active shared policy', () => {
+  assert.deepEqual([...requiredChecks], [...createPolicyState(ACTIVE_POLICY_ID).policy.required]);
+  assert.deepEqual([...requiredChecks], [...POLICIES['ci-v1'].required], 'production remains on ci-v1');
+});
 
 async function savePairRecord(f, key = 'localized-bug') {
   const directory = join(f.root, '.agent-work', 'paired-issues');

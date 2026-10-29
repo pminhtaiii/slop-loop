@@ -5,14 +5,21 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runWorkflow } from '../../../scripts/agents/pr-workflow.mjs';
 import { packageScriptCommand } from '../../../scripts/agents/workflow-gate.mjs';
+import { ACTIVE_POLICY_ID, createPolicyState } from '../../../scripts/ci/required-checks.mjs';
+
+export const requiredChecks = createPolicyState(ACTIVE_POLICY_ID).policy.required;
+
+// A canonical 40-character hex id: the consumers validate the head shape, so a placeholder like 'abc'
+// would be refused before any selection ran.
+const HEAD = 'a'.repeat(40);
 
 export function evidence() {
   return {
-    head: 'abc',
-    pr: { state: 'OPEN', headRefOid: 'abc', headRefName: 'feat/010-tooling-example', title: 'feat/010-tooling-example: add the example workflow', baseRefName: 'development', reviewDecision: 'APPROVED',
-      reviews: { pageInfo: { hasPreviousPage: false }, nodes: [{ author: { login: 'coderabbitai', __typename: 'Bot' }, state: 'APPROVED', commit: { oid: 'abc' } }] },
+    head: HEAD,
+    pr: { state: 'OPEN', headRefOid: HEAD, headRefName: 'feat/010-tooling-example', title: 'feat/010-tooling-example: add the example workflow', baseRefName: 'development', reviewDecision: 'APPROVED',
+      reviews: { pageInfo: { hasPreviousPage: false }, nodes: [{ author: { login: 'coderabbitai', __typename: 'Bot' }, state: 'APPROVED', commit: { oid: HEAD } }] },
       reviewThreads: { pageInfo: { hasNextPage: false }, nodes: [] } },
-    checks: ['contributor-checks (ubuntu-latest)', 'contributor-checks (windows-latest)', 'runtime-checks (ubuntu-latest)', 'runtime-checks (windows-latest)'].map((name, id) => ({ id, name, head_sha: 'abc', status: 'completed', conclusion: 'success', app: { slug: 'github-actions' } })),
+    checks: requiredChecks.map((name, id) => ({ id, name, head_sha: HEAD, status: 'completed', conclusion: 'success', app: { slug: 'github-actions' } })),
   };
 }
 

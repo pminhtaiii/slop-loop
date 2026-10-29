@@ -13,7 +13,15 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # Canonical candidate identity for every staged lane. H is the checked-out candidate, B is the
+  # event base and M is the generated merge SHA; they are recorded separately and never assumed equal.
+  HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+  BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+  MERGE_SHA: ${{ github.sha }}
+
 jobs:
+  # Transitional: retained unchanged until Stage C removes it after remote read-back.
   contributor-checks:
     strategy:
       fail-fast: false
@@ -42,3 +50,135 @@ jobs:
         run: pnpm run lint
       - name: Test contributor helpers
         run: pnpm run test:contributors
+
+  # Staged in Stage A1: appears, is not yet required. ci-v2 becomes current at Stage A2.
+  static-lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.HEAD_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Select pinned pnpm version
+        uses: pnpm/setup@c9883cc79df532ad1a7b81bf9ab944ceb090d65c # v2.0.0
+        with:
+          install: false
+      - name: Verify the checked-out head is the candidate
+        shell: bash
+        run: |
+          actual="$(git rev-parse HEAD)"
+          if [ "$actual" != "$HEAD_SHA" ]; then
+            echo "Checked out $actual but the candidate head is $HEAD_SHA" >&2
+            exit 1
+          fi
+          echo "head=$HEAD_SHA base=${BASE_SHA:-none} merge=${MERGE_SHA:-none} os=${{ runner.os }}" >> "$GITHUB_STEP_SUMMARY"
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Lint repository JavaScript and TypeScript
+        run: pnpm run lint
+
+  static-types:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.HEAD_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Select pinned pnpm version
+        uses: pnpm/setup@c9883cc79df532ad1a7b81bf9ab944ceb090d65c # v2.0.0
+        with:
+          install: false
+      - name: Verify the checked-out head is the candidate
+        shell: bash
+        run: |
+          actual="$(git rev-parse HEAD)"
+          if [ "$actual" != "$HEAD_SHA" ]; then
+            echo "Checked out $actual but the candidate head is $HEAD_SHA" >&2
+            exit 1
+          fi
+          echo "head=$HEAD_SHA base=${BASE_SHA:-none} merge=${MERGE_SHA:-none} os=${{ runner.os }}" >> "$GITHUB_STEP_SUMMARY"
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck repository JavaScript and TypeScript
+        run: pnpm run typecheck
+
+  repository-policy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.HEAD_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Select pinned pnpm version
+        uses: pnpm/setup@c9883cc79df532ad1a7b81bf9ab944ceb090d65c # v2.0.0
+        with:
+          install: false
+      - name: Verify the checked-out head is the candidate
+        shell: bash
+        run: |
+          actual="$(git rev-parse HEAD)"
+          if [ "$actual" != "$HEAD_SHA" ]; then
+            echo "Checked out $actual but the candidate head is $HEAD_SHA" >&2
+            exit 1
+          fi
+          echo "head=$HEAD_SHA base=${BASE_SHA:-none} merge=${MERGE_SHA:-none} os=${{ runner.os }}" >> "$GITHUB_STEP_SUMMARY"
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Check context consistency
+        run: node scripts/ci/check-context.mjs
+      - name: Check tracked files
+        run: node scripts/ci/check-tracked-files.mjs
+
+  contributor-tooling-tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.HEAD_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Select pinned pnpm version
+        uses: pnpm/setup@c9883cc79df532ad1a7b81bf9ab944ceb090d65c # v2.0.0
+        with:
+          install: false
+      - name: Verify the checked-out head is the candidate
+        shell: bash
+        run: |
+          actual="$(git rev-parse HEAD)"
+          if [ "$actual" != "$HEAD_SHA" ]; then
+            echo "Checked out $actual but the candidate head is $HEAD_SHA" >&2
+            exit 1
+          fi
+          echo "head=$HEAD_SHA base=${BASE_SHA:-none} merge=${MERGE_SHA:-none} os=${{ runner.os }}" >> "$GITHUB_STEP_SUMMARY"
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      # The complete contributor selector runs here independently of the build lane.
+      - name: Test contributor helpers
+        run: pnpm run test:contributors
+      - name: Retain machine-readable results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: contributor-tooling-results-${{ matrix.os }}
+          path: contributor-test-results.xml
+          if-no-files-found: warn
+          retention-days: 7

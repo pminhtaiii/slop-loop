@@ -47,7 +47,7 @@ test('failed, missing, skipped, spoofed, or superseded CI cannot be accepted', (
   e.checks[0].app.slug = 'github-actions';
   e.checks[0].head_sha = 'old';
   assert.equal(assess(e).status, 'WAITING_CI');
-  e.checks[0].head_sha = 'abc';
+  e.checks[0].head_sha = e.head;
   e.checks.push({ ...e.checks[0], id: 99, status: 'in_progress', conclusion: null });
   assert.equal(assess(e).status, 'WAITING_CI');
 });
