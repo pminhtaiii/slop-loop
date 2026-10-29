@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -391,6 +391,39 @@ test('snapshot creation checks out the admitted head in isolation', async (t) =>
   assert.equal(status.stdout.trim(), head);
   removeSnapshot({ root, directory });
   assert.notEqual(spawnSync('git', ['-C', directory, 'rev-parse', 'HEAD'], { encoding: 'utf8', windowsHide: true }).status, 0);
+});
+
+test('snapshot creation removes a symbolic-link .gitleaksignore without changing its target', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'gitleaks-linked-ignore-'));
+  const outside = await mkdtemp(join(tmpdir(), 'gitleaks-linked-tree-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  t.after(() => rm(outside, { recursive: true, force: true }));
+  const git = (...args) => {
+    const result = spawnSync('git', args, { cwd: root, encoding: 'utf8', windowsHide: true });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout.trim();
+  };
+  await writeFile(join(root, 'ignore.txt'), 'deadbeef\n');
+  try {
+    await symlink('ignore.txt', join(root, '.gitleaksignore'), 'file');
+  } catch (error) {
+    if (['EPERM', 'EACCES', 'ENOSYS'].includes(error.code)) return t.skip('File symlinks unavailable on this host');
+    throw error;
+  }
+  git('init', '--quiet');
+  git('config', 'core.symlinks', 'true');
+  git('add', 'ignore.txt', '.gitleaksignore');
+  git('-c', 'user.email=test@example.invalid', '-c', 'user.name=test', 'commit', '--quiet', '-m', 'linked ignore');
+  const directory = join(outside, 'tree');
+  try {
+    createSnapshot({ root, head: git('rev-parse', 'HEAD'), directory });
+    await assert.rejects(lstat(join(directory, '.gitleaksignore')), { code: 'ENOENT' });
+    assert.equal(readFileSync(join(directory, 'ignore.txt'), 'utf8'), 'deadbeef\n');
+    assert.ok((await lstat(join(root, '.gitleaksignore'))).isSymbolicLink(), 'the source link is untouched');
+    assert.equal(readFileSync(join(root, 'ignore.txt'), 'utf8'), 'deadbeef\n');
+  } finally {
+    removeSnapshot({ root, directory });
+  }
 });
 
 // The base of a pull_request scan is the base branch tip, so a PR branch that is behind has a valid

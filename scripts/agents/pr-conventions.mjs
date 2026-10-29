@@ -13,8 +13,8 @@ export function assertNewBranch(branch, version = 2) {
 // CodeRabbit appends an auto-generated summary (with a "## Summary by CodeRabbit" heading) to the
 // live body after every review, re-running this check with no code change. Recognise it by its
 // comment markers rather than heading text, and drop only the block so a mid-body block leaves later
-// sections intact. An unclosed block runs to the end of the body, so it cannot smuggle a heading into
-// the canonical list. Fenced copies of the markers stay literal content.
+// sections intact. An unclosed block is rejected before section analysis. Fenced copies of the
+// markers stay literal content.
 const generatedStart = /^<!-- This is an auto-generated comment:.* coderabbit\.ai -->$/;
 const generatedEnd = /^<!-- end of auto-generated comment:.* coderabbit\.ai -->$/;
 
@@ -32,6 +32,7 @@ export function assertNewDescription(body) {
     if (generatedStart.test(line)) { generated = true; continue; }
     lines.push(line);
   }
+  if (generated) throw new Error('PR description contains an unclosed auto-generated block.');
   const text = lines.join('\n');
   const sections = [...text.matchAll(/^## (.+)$/gm)];
   if (sections.map(s => s[1]).join('|') !== 'Summary|Evidence|Merge Danger' || sections.some((s, i) => !text.slice(s.index + s[0].length, sections[i + 1]?.index).trim())) {

@@ -222,7 +222,7 @@ export function createSnapshot({ root, head, directory }) {
   // candidate that adds one would suppress its own findings. The snapshot is a throwaway detached
   // worktree, so deleting from it changes nothing in the candidate's repository.
   for (const entry of readdirSync(directory, { recursive: true, withFileTypes: true })) {
-    if (entry.isFile() && entry.name === '.gitleaksignore') rmSync(join(entry.parentPath, entry.name), { force: true });
+    if ((entry.isFile() || entry.isSymbolicLink()) && entry.name === '.gitleaksignore') rmSync(join(entry.parentPath, entry.name), { force: true });
   }
   return directory;
 }

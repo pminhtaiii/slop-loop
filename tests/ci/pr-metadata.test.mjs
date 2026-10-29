@@ -98,14 +98,21 @@ test('the CodeRabbit auto-generated tail is dropped before section analysis', ()
 
 test('generated-block and remaining section rules still refuse', () => {
   assert.match(refusal(() => assertPrMetadata(metadata({ body: CR_BLOCK }), { convention: 2 })), /body/);
-  // An unclosed start marker runs to the end of the body, so headings inside it are never real
-  // sections and a fake duplicate '## Summary' behind the marker cannot stand in for one.
+  // An unclosed generated block cannot supply the required sections.
   const unclosed = `Just prose, no sections.\n\n${CR_START}\n\n## Summary\n\nfake\n\n## Evidence\n\nfake\n\n## Merge Danger\n\n**Door:** revert.\n\n**Blast Radius:** tooling.\n\n## Summary\n\nfake duplicate`;
   assert.match(refusal(() => assertPrMetadata(metadata({ body: unclosed }), { convention: 2 })), /body/);
   const fenced = `${BODY}\n\n\`\`\`\n${CR_START}\n## Summary\nreordered\n${CR_END}\n\`\`\``;
   assert.doesNotThrow(() => assertPrMetadata(metadata({ body: fenced }), { convention: 2 }), 'a fenced copy is literal content, not a real tail');
   const fourth = `${BODY}\n\n## Notes\n\nextra section`;
   assert.match(refusal(() => assertPrMetadata(metadata({ body: fourth }), { convention: 2 })), /body/);
+});
+
+test('an unclosed generated block after valid sections is refused', () => {
+  for (const tail of [CR_START, `${CR_START}\n\n## Notes\n\nextra section`]) {
+    const body = `${BODY}\n\n${tail}`;
+    assert.throws(() => assertNewDescription(body), /unclosed/i);
+    assert.match(refusal(() => assertPrMetadata(metadata({ body }), { convention: 2 })), /body.*unclosed/i);
+  }
 });
 
 test('no refusal echoes the submitted title or body text', () => {
