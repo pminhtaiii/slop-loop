@@ -165,7 +165,9 @@ jobs:
           elif [ -n "$BASE_SHA_INPUT" ]; then
             args+=(--before "$BASE_SHA_INPUT")
           fi
-          node scripts/ci/scan-secrets.mjs "${args[@]}"
+          # Reviewed exemptions are fingerprinted to exact synthetic findings and live in the PR diff,
+          # so a candidate cannot add a finding without also adding a visible, reviewable exemption.
+          node scripts/ci/scan-secrets.mjs "${args[@]}" --exemptions config/secret-scan-exemptions.json
 
   contributor-tooling-tests:
     strategy:

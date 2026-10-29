@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
@@ -196,6 +196,62 @@ test('bounded capture rejects an oversized report and maps timeouts to execution
   }).args;
   assert.ok(args.includes('--redact=100'));
   assert.throws(() => readReport(join(directory, 'absent.json'), 1024), /could not be read/);
+});
+
+// A `dir` scan reports the snapshot prefix in every File; reporting it would leak a random temp path
+// and make every reviewed exemption unmatchable. A path outside the snapshot fails closed.
+test('reports snapshot-relative paths and rejects a path that escapes the snapshot', () => {
+  const snapshot = '/tmp/gitleaks-scan-7Qcz38/tree';
+  const parse = (file) => parseFindings({ status: 1, report: report([finding({ File: file })]) }, snapshot);
+  assert.deepEqual(parse(`${snapshot}/src/x.ts`).map((item) => item.path), ['src/x.ts']);
+  assert.deepEqual(parse('src/x.ts').map((item) => item.path), ['src/x.ts'], 'a git scan is already repo-relative');
+  for (const escaped of [`${snapshot}/../outside.ts`, '/etc/passwd', 'a/../../b.ts']) {
+    assert.throws(() => parse(escaped), /malformed output/, `refuses ${escaped}`);
+  }
+  // Redaction still wins over the path rejection: the secret never reaches the message.
+  assert.throws(
+    () => parseFindings({ status: 1, report: report([finding({ File: `/etc/${SYNTHETIC_SECRET}` })]) }, snapshot),
+    (error) => /redact/i.test(error.message) && !error.message.includes(SYNTHETIC_SECRET),
+  );
+});
+
+// The shipped exemption list is candidate-controlled by design: a PR adding a secret also adds an
+// visible exemption line to its own diff. This pins it to the reviewed synthetic findings, so a
+// blanket allowlist or a drifted path cannot sneak through.
+test('shipped exemptions validate and clear exactly the reviewed synthetic findings', () => {
+  const shipped = JSON.parse(readFileSync(resolve('config/secret-scan-exemptions.json'), 'utf8'));
+  const reviewed = [
+    ['generic-api-key', 'src/contracts/foundation/uc03/v02/admission/attempt-outcome.ts', 33],
+    ['generic-api-key', 'src/contracts/foundation/uc03/v02/admission/attempt-outcome.ts', 68],
+    ['generic-api-key', 'tests/runtime/uc01/assess.test.ts', 195],
+    ['generic-api-key', 'tests/runtime/uc01/intake.test.ts', 23],
+    ['generic-api-key', 'tests/runtime/unit/docker-workspace.test.ts', 882],
+    ['generic-api-key', 'tests/runtime/unit/docker-workspace.test.ts', 886],
+    ['generic-api-key', 'tests/runtime/unit/docker-workspace.test.ts', 1176],
+    ['generic-api-key', 'tests/runtime/unit/docker-workspace.test.ts', 1775],
+    ['github-pat', 'tests/runtime/unit/docker-workspace.test.ts', 1177],
+    ['github-pat', 'tests/runtime/unit/docker-workspace.test.ts', 1774],
+    ['private-key', 'tests/runtime/unit/telemetry.test.ts', 633],
+    ['generic-api-key', 'tests/runtime/unit/telemetry.test.ts', 343],
+    ['generic-api-key', 'tests/runtime/unit/uc03-report.test.ts', 316],
+    ['generic-api-key', 'tests/runtime/unit/uc03-report.test.ts', 806],
+    ['generic-api-key', 'tests/runtime/unit/uc03-report.test.ts', 1131],
+    ['generic-api-key', 'tests/runtime/unit/model.test.ts', 439],
+    ['generic-api-key', 'tests/runtime/unit/model.test.ts', 524],
+    ['generic-api-key', 'tests/runtime/security/uc03-isolation.test.ts', 876],
+    ['github-pat', 'tests/runtime/security/uc03-isolation.test.ts', 879],
+    ['generic-api-key', 'tests/runtime/unit/repository-tools.test.ts', 624],
+  ];
+  const findings = reviewed.map(([ruleId, path, line]) => ({ ruleId, path, line, commit: '' }));
+  // applyExemptions validates every entry (exact path, reason, commit) and rejects duplicates.
+  assert.deepEqual(applyExemptions(findings, shipped), []);
+  assert.deepEqual(
+    shipped.map((entry) => [entry.ruleId, entry.path, entry.line]),
+    reviewed,
+    'the shipped list covers exactly the reviewed findings, no blanket allowlist',
+  );
+  const nearby = applyExemptions([...findings, { ruleId: 'generic-api-key', path: 'tests/runtime/unit/docker-workspace.test.ts', line: 883, commit: '' }], shipped);
+  assert.deepEqual(nearby.map((item) => item.line), [883], 'a nearby unlisted finding still fails');
 });
 
 test('exemptions bind exact synthetic findings and never cover nearby unapproved ones', () => {

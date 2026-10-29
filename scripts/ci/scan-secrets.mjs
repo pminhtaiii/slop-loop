@@ -2,7 +2,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // Adapter around one pinned Gitleaks CLI release. Everything here reports only rule id, path, line
@@ -124,7 +124,20 @@ export function scanOnce({ kind, snapshot, range, binary, workdir, reportDir = w
   return { status: outcome.status, report: outcome.report, args };
 }
 
-function summary(finding) {
+// A `dir` scan prefixes every File with the snapshot argument while a `git` scan reports repo-relative
+// paths, so the snapshot is stripped before reporting. A path that still leaves the scanned snapshot is
+// a scanner anomaly, not an exemptable finding, so it fails closed.
+function snapshotPath(path, snapshot) {
+  if (typeof snapshot === 'string' && snapshot) {
+    for (const separator of ['/', '\\']) {
+      if (path.startsWith(snapshot + separator)) { path = path.slice(snapshot.length + 1); break; }
+    }
+  }
+  if (!path || isAbsolute(path) || path.startsWith('/') || path.includes('..') || !PRINTABLE.test(path)) throw new Error('Gitleaks produced malformed output; refusing to report it.');
+  return path;
+}
+
+function summary(finding, snapshot) {
   const ruleId = finding?.RuleID;
   const path = finding?.File;
   const line = finding?.StartLine;
@@ -133,14 +146,15 @@ function summary(finding) {
   const leak = typeof secret === 'string' && secret.length > 0 && [ruleId, path, commit, finding?.Description].some((value) => typeof value === 'string' && value.includes(secret));
   if (leak) throw new Error('Gitleaks output failed redaction; refusing to report it.');
   if (typeof ruleId !== 'string' || !RULE_ID.test(ruleId)) throw new Error('Gitleaks produced malformed output; refusing to report it.');
-  if (typeof path !== 'string' || !PRINTABLE.test(path)) throw new Error('Gitleaks produced malformed output; refusing to report it.');
+  if (typeof path !== 'string') throw new Error('Gitleaks produced malformed output; refusing to report it.');
+  const reported = snapshotPath(path, snapshot);
   if (!Number.isInteger(line) || line < 1 || line > 1_000_000) throw new Error('Gitleaks produced malformed output; refusing to report it.');
   if (typeof commit !== 'string' || (commit !== '' && !COMMIT.test(commit))) throw new Error('Gitleaks produced malformed output; refusing to report it.');
-  return { ruleId, path, line, commit };
+  return { ruleId, path: reported, line, commit };
 }
 
 // Exit 0 is clean, exit 1 means the report holds findings; anything else is an execution failure.
-export function parseFindings({ status, report }) {
+export function parseFindings({ status, report }, snapshot) {
   if (status !== 0 && status !== 1) throw new Error(`Gitleaks exited with non-report exit status ${String(status)}.`);
   if (typeof report !== 'string') throw new Error('Gitleaks did not produce a report.');
   let parsed;
@@ -150,7 +164,7 @@ export function parseFindings({ status, report }) {
     throw new Error('Gitleaks produced malformed output; refusing to report it.');
   }
   if (!Array.isArray(parsed)) throw new Error('Gitleaks produced malformed output; refusing to report it.');
-  return parsed.map(summary);
+  return parsed.map((finding) => summary(finding, snapshot));
 }
 
 const keyOf = (finding) => `${finding.ruleId}\0${finding.path}\0${finding.line}\0${finding.commit}`;
@@ -183,8 +197,8 @@ export function applyExemptions(findings, exemptions = []) {
 
 export function runSecretScan({ plan, snapshot, scan, exemptions = [] }) {
   const findings = [];
-  findings.push(...parseFindings(scan({ kind: 'tree', snapshot })));
-  for (const range of plan.ranges) findings.push(...parseFindings(scan({ kind: 'range', snapshot, range })));
+  findings.push(...parseFindings(scan({ kind: 'tree', snapshot }), snapshot));
+  for (const range of plan.ranges) findings.push(...parseFindings(scan({ kind: 'range', snapshot, range }), snapshot));
   const unique = [...new Map(findings.map((finding) => [keyOf(finding), finding])).values()];
   return { mode: plan.mode, findings: applyExemptions(unique, exemptions) };
 }

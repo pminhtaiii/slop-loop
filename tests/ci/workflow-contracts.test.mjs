@@ -211,13 +211,13 @@ test('staged candidate lanes check out and verify H while recording distinct B a
     const installAt = lines.findIndex((line) => /^\s*- name: Install dependencies$/.test(line));
     if (installAt >= 0) assert.ok(verifyAt >= 0 && verifyAt < installAt, `${job.id} verifies the head before installing`);
   }
-  // The metadata lane must read the payload as data and must never check out or execute candidate
-  // code. It still checks out a tree — the validator and its audited binding list — but from the base
-  // revision, because a PR that edits the validator to `process.exit(0)` would otherwise certify itself.
+  // The metadata lane must read the payload as data and must never execute candidate code. It does
+  // check out the head tree now, but only as the bootstrap fallback for the PR that introduces the
+  // validator; the base copy is preferred whenever it exists, so an editing PR cannot certify itself.
   const metadata = WORKFLOWS.find((file) => file.job('pr-metadata')).job('pr-metadata');
   const metadataBlock = metadata.block.join('\n');
   assert.match(metadataBlock, /^ {10}ref: \$\{\{ github\.event\.pull_request\.base\.sha \}\}$/m, 'the metadata lane checks out the base revision');
-  assert.doesNotMatch(metadataBlock, /ref: \$\{\{ env\.HEAD_SHA \}\}/, 'the metadata lane never checks out the candidate head');
+  assert.doesNotMatch(metadataBlock, /ref: \$\{\{ env\.HEAD_SHA \}\}/, 'the metadata lane never checks out the candidate head through the shared env binding');
   assert.doesNotMatch(metadataBlock, /pnpm install|pnpm run|node --test/, 'metadata runs no candidate code');
   assert.match(metadataBlock, /EVENT_PATH: \$\{\{ github\.event_path \}\}/, 'the event payload arrives as a path, never as shell text');
   for (const file of WORKFLOWS.filter((candidate) => !candidate.path.endsWith('pr-metadata.yml'))) {
@@ -225,6 +225,16 @@ test('staged candidate lanes check out and verify H while recording distinct B a
     assert.match(file.header, /^ {2}BASE_SHA: \$\{\{ github\.event\.pull_request\.base\.sha \|\| github\.event\.before \}\}$/m, `${file.path} binds B separately`);
     assert.match(file.header, /^ {2}MERGE_SHA: \$\{\{ github\.sha \}\}$/m, `${file.path} binds M separately`);
   }
+});
+
+test('the metadata lane grades with the base copy and falls back to the head copy only when absent', () => {
+  // Pinning alone deadlocks the introducing PR: its base tree has no validator, and ci-v2 requires
+  // this job. Both revisions are checked out; the base copy wins whenever it exists.
+  const metadata = WORKFLOWS.find((file) => file.job('pr-metadata')).job('pr-metadata');
+  const block = metadata.block.join('\n');
+  assert.match(block, /^ {10}ref: \$\{\{ github\.event\.pull_request\.base\.sha \}\}\n {10}path: base$/m, 'the base revision is checked out as the preferred grader');
+  assert.match(block, /^ {10}ref: \$\{\{ github\.event\.pull_request\.head\.sha \}\}\n {10}path: candidate$/m, 'the head revision is checked out as the bootstrap fallback');
+  assert.match(block, /^ {8}run: root=base; \[ -f base\/scripts\/ci\/check-pr-metadata\.mjs \] \|\| root=candidate; cd "\$root" && node scripts\/ci\/check-pr-metadata\.mjs "\$EVENT_PATH"$/m, 'presence selects the base copy, else the head copy, then runs the literal command');
 });
 
 test('artifact identity inputs come from the run context, never a candidate-supplied value', () => {

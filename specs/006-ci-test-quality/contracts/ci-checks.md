@@ -36,7 +36,13 @@ For a push use H=`github.sha`, with the verified before SHA as range provenance.
 
 The metadata workflow uses `pull_request` events opened/reopened/synchronize/edited/ready_for_review/converted_to_draft, read-only permissions and non-persisted checkout credentials. Event JSON is data, never interpolated shell code. It checks drafts too; draft status remains a separate human-readiness state, not a reason to skip validation. Its concurrency group is separate so metadata edits do not cancel behavioral jobs. Do not use privileged target-event execution of candidate code. The workflow still checks out a tree,
 because the validator and its audited historical-binding list live there, but the checkout is pinned to
-`github.event.pull_request.base.sha`: the grader must not be the candidate's own edited copy.
+`github.event.pull_request.base.sha`: the grader must not be the candidate's own edited copy. Both
+revisions are checked out and the base copy is preferred on presence, because the introducing PR's base
+tree has no validator at all and would otherwise deadlock against the policy that requires this job.
+Residual risk: a PR that edits the validator is still graded by the base copy, and a PR that deletes it
+is also graded by the base copy, so deletion cannot pass unnoticed; the only re-entry into the bootstrap
+fallback is delete-then-re-add, and `REQUIRED_COMMANDS` in `tests/ci/workflow-contracts.test.mjs`
+already fails any PR whose `pr-metadata` job stops running the validator.
 
 Readiness fetches current title, body, base, head ref/SHA and applicable convention identity and validates them live, including while same-head edited-event checks queue. Malformed, missing or failed metadata reads remain non-ready. Reuse the established title/description rules rather than introducing a new naming scheme. Existing bounded pagination and latest-rerun rules remain enforced.
 

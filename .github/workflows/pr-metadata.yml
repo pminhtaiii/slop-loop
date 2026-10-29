@@ -21,9 +21,21 @@ jobs:
       # Only the validator and its audited config are needed, and both come from the base revision:
       # the candidate's metadata lives in the event payload, so a PR that edits this validator to
       # `process.exit(0)` must not be the copy that grades itself.
+      #
+      # Bootstrap window: the base tree is the grader for every PR that already contains the
+      # validator — an editing PR included, and a deleting PR too, since the base copy still exists.
+      # Only the single PR that introduces the validator has no base copy, and only that PR is graded
+      # by its own head copy, once. Re-entering that window needs delete-then-re-add, which the
+      # REQUIRED_COMMANDS contract in tests/ci/workflow-contracts.test.mjs already rejects.
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: candidate
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
@@ -33,4 +45,4 @@ jobs:
         env:
           # The event payload arrives as a file path, never as interpolated shell text.
           EVENT_PATH: ${{ github.event_path }}
-        run: node scripts/ci/check-pr-metadata.mjs "$EVENT_PATH"
+        run: root=base; [ -f base/scripts/ci/check-pr-metadata.mjs ] || root=candidate; cd "$root" && node scripts/ci/check-pr-metadata.mjs "$EVENT_PATH"
