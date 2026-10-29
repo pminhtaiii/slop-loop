@@ -130,10 +130,13 @@ test('the build lanes reuse the clean-build-only mode and the runtime lane consu
 
   // A lane that only received the emitted test tree cannot import the compiled code those tests
   // import, so every emitted top-level tree besides `tests` must ship and be in the verified manifest.
-  // Deriving this from the build output is what catches a new emitted root, which a fixed list missed.
-  const compiled = readdirSync(new URL('../../dist', import.meta.url), { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && entry.name !== 'tests')
-    .map((entry) => `dist/${entry.name}`);
+  // Deriving this from tsconfig rather than a fixed list is what catches a new source root; it also
+  // works in lanes that never build.
+  const tsconfig = JSON.parse(readFileSync(new URL('../../tsconfig.json', import.meta.url), 'utf8'));
+  const compiled = [...new Set(tsconfig.include.map((entry) => entry.split('/')[0]))]
+    .filter((name) => name !== 'tests')
+    .map((name) => `dist/${name}`);
+  assert.ok(compiled.length, 'tsconfig declares at least one compiled source root');
   for (const path of compiled) {
     assert.match(build.block.join('\n'), new RegExp(`^ {12}${path}$`, 'm'), `artifact carries ${path} that emitted tests import`);
     assert.ok(ARTIFACT_PATHS.includes(path), `the manifest covers ${path}`);
