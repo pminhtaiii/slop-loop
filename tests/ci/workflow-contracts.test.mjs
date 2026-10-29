@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import test from 'node:test';
 import { ACTIVE_POLICY_ID, CHECK_JOBS, MUTATION_CHECK_NAME, POLICIES } from '../../scripts/ci/required-checks.mjs';
 import { ARTIFACT_PATHS } from '../../scripts/ci/artifact-identity.mjs';
@@ -102,6 +102,16 @@ test('the four transitional old jobs are retained with their original command', 
 
 // A required check that a job does not actually perform is a green light over nothing. `run.length > 0`
 // is satisfied by `echo`, so each gate names the exact command that must be present.
+// Splitting on the shell separators and requiring a segment to *start* with the command rejects
+// `echo node scripts/...` while still finding a validator after `&&`, in a `run: |` body, or inline.
+// Comment lines are dropped: a commented-out command is documentation, not a gate.
+function runsCommand(lines, command) {
+  return lines
+    .filter((line) => !/^\s*#/.test(line))
+    .flatMap((line) => line.split(/\s*(?:&&|\|\||;|\|)\s*/))
+    .map((segment) => segment.trim().replace(/^(?:- )?run: /, ''))
+    .some((segment) => segment.startsWith(command));
+}
 const REQUIRED_COMMANDS = {
   'static-lint': ['pnpm run lint'],
   'static-types': ['pnpm run typecheck'],
@@ -131,12 +141,21 @@ test('every active policy name has a runnable counterpart in its declared workfl
     // `declared.run` alone cannot see it.
     const commands = REQUIRED_COMMANDS[job];
     assert.ok(commands, `${job} declares the commands it must run`);
-    const executable = declared.block.filter((line) => !/^\s*#/.test(line)).join('\n');
     for (const command of commands) {
-      assert.ok(executable.includes(command), `${path}:${job} must run ${command}`);
+      assert.ok(runsCommand(declared.block, command), `${path}:${job} must run ${command}`);
     }
   }
   assert.deepEqual(Object.keys(REQUIRED_COMMANDS).sort(), [...new Set(active.map((name) => CHECK_JOBS[name].job))].sort(), 'every required job has a documented command set');
+});
+
+test('the command matcher refuses a mention and accepts a command position', () => {
+  assert.equal(runsCommand(['        run: echo node scripts/ci/check-context.mjs'], 'node scripts/ci/check-context.mjs'), false, 'echoing a command does not run it');
+  assert.equal(runsCommand(['        # run: node scripts/ci/check-context.mjs'], 'node scripts/ci/check-context.mjs'), false, 'a commented command is documentation');
+  // The real metadata invocation puts the validator after `&&`, mid-line.
+  const compound = ['        run: root=base; [ -f base/scripts/ci/check-pr-metadata.mjs ] || root=candidate; cd "$root" && node scripts/ci/check-pr-metadata.mjs "$EVENT_PATH"'];
+  assert.equal(runsCommand(compound, 'node scripts/ci/check-pr-metadata.mjs'), true);
+  // A `run: |` body line at arbitrary indent counts.
+  assert.equal(runsCommand(['          node scripts/ci/scan-secrets.mjs --exemptions x.json'], 'node scripts/ci/scan-secrets.mjs'), true);
 });
 
 test('staged non-required jobs are inventoried by exact name and are not prematurely required', () => {
@@ -235,6 +254,9 @@ test('the metadata lane grades with the base copy and falls back to the head cop
   assert.match(block, /^ {10}ref: \$\{\{ github\.event\.pull_request\.base\.sha \}\}\n {10}path: base$/m, 'the base revision is checked out as the preferred grader');
   assert.match(block, /^ {10}ref: \$\{\{ github\.event\.pull_request\.head\.sha \}\}\n {10}path: candidate$/m, 'the head revision is checked out as the bootstrap fallback');
   assert.match(block, /^ {8}run: root=base; \[ -f base\/scripts\/ci\/check-pr-metadata\.mjs \] \|\| root=candidate; cd "\$root" && node scripts\/ci\/check-pr-metadata\.mjs "\$EVENT_PATH"$/m, 'presence selects the base copy, else the head copy, then runs the literal command');
+  // The fallback exists only for the introducing PR: once this change merges, the path must be present
+  // or every later run has no validator at all, and the unreachable fallback branch hides that.
+  assert.ok(existsSync(new URL('../../scripts/ci/check-pr-metadata.mjs', import.meta.url)), 'the working tree ships the validator the fallback runs');
 });
 
 test('artifact identity inputs come from the run context, never a candidate-supplied value', () => {

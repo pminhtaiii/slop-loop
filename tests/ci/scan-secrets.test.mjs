@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
@@ -19,6 +19,7 @@ import {
   planScanRanges,
   readReport,
   removeSnapshot,
+  revisionExists,
   runSecretScan,
   scanArgs,
   scanOnce,
@@ -37,6 +38,8 @@ const finding = (overrides = {}) => ({
   ...overrides,
 });
 const report = (findings) => JSON.stringify(findings);
+// The trusted inputs main() writes beside the scanned tree; only their identity matters here.
+const trusted = { configPath: 'workspace/gitleaks.toml', ignorePath: 'workspace/gitleaks-ignore' };
 
 test('refuses any Gitleaks binary that is not exactly the pinned version', () => {
   assert.equal(GITLEAKS_VERSION, '8.30.1');
@@ -103,19 +106,69 @@ test('plans a complete tree scan with an admitted range or an explicit unavailab
   }
   assert.deepEqual(planScanRanges({ event: 'push', head, before: '' }), { mode: 'tree-only-with-range-unavailable', ranges: [] });
   assert.throws(() => planScanRanges({ event: 'pull_request', head }), /revision/i);
-  assert.throws(() => planScanRanges({ event: 'pull_request', head, base: '0'.repeat(40), available: () => false }), /unavailable/);
+  // A zero base is validated as a revision before the probe, so it fails closed as unsafe, not unavailable.
+  assert.throws(() => planScanRanges({ event: 'pull_request', head, base: '0'.repeat(40), available: () => false }), /revision/i);
+});
+
+// The availability probe hands its argument to git argv, so an unsafe base must be rejected before the
+// probe ever sees it rather than trusted to a caller that might shell out.
+test('planScanRanges validates a pull-request base before probing availability', () => {
+  const head = 'c'.repeat(40);
+  const probed = [];
+  const available = (rev) => { probed.push(rev); return true; };
+  for (const unsafe of ['--upload-pack=evil', 'main..--output', 'HEAD^', 'x; rm -rf /', '$(id)']) {
+    assert.throws(() => planScanRanges({ event: 'pull_request', head, base: unsafe, available }), /revision/i);
+  }
+  assert.deepEqual(probed, [], 'no unvalidated value reached the probe');
+  assert.deepEqual(planScanRanges({ event: 'pull_request', head, base: 'd'.repeat(40), available }), {
+    mode: 'tree-plus-range',
+    ranges: [{ from: 'd'.repeat(40), to: head }],
+  });
+  assert.deepEqual(probed, ['d'.repeat(40)]);
 });
 
 test('builds structural arguments with full redaction and never a shell string', () => {
-  const args = scanArgs({ snapshot: 'snapshot', from: 'a'.repeat(40), to: 'b'.repeat(40), reportPath: 'report.json' });
+  const trusted = { configPath: 'workspace/gitleaks.toml', ignorePath: 'workspace/gitleaks-ignore' };
+  const args = scanArgs({ snapshot: 'snapshot', from: 'a'.repeat(40), to: 'b'.repeat(40), reportPath: 'report.json', ...trusted });
   assert.ok(args.includes('--redact=100'));
   assert.ok(args.every((arg) => typeof arg === 'string' && !/[\r\n]/.test(arg)));
   assert.ok(args.includes(`${'a'.repeat(40)}..${'b'.repeat(40)}`));
   assert.deepEqual(args.slice(0, 2), ['git', 'snapshot']);
-  const tree = scanArgs({ snapshot: 'snapshot', reportPath: 'report.json' });
+  const tree = scanArgs({ snapshot: 'snapshot', reportPath: 'report.json', ...trusted });
   assert.deepEqual(tree.slice(0, 2), ['dir', 'snapshot']);
   assert.ok(!tree.includes('--log-opts'));
   assert.ok(tree.includes('--redact=100'));
+});
+
+// The candidate controls the checked-out tree, so it controls a .gitleaks.toml, a .gitleaksignore and
+// inline allow comments. Each of those alone used to turn a real finding green; the three flags are the
+// only thing standing between the candidate and its own required lane.
+test('always pins the trusted config, ignore path and inline-allow refusal in both scan forms', () => {
+  const configPath = join(tmpdir(), 'gitleaks-scan-trusted', 'gitleaks.toml');
+  const ignorePath = join(tmpdir(), 'gitleaks-scan-trusted', 'gitleaks-ignore');
+  for (const range of [{}, { from: 'a'.repeat(40), to: 'b'.repeat(40) }]) {
+    const args = scanArgs({ snapshot: 'snapshot', reportPath: 'report.json', configPath, ignorePath, ...range });
+    assert.equal(args[args.indexOf('--config') + 1], configPath);
+    assert.equal(args[args.indexOf('--gitleaks-ignore-path') + 1], ignorePath);
+    assert.ok(args.includes('--ignore-gitleaks-allow'));
+    assert.equal(args.filter((arg) => arg === '--config').length, 1);
+    assert.equal(args.filter((arg) => arg === '--ignore-gitleaks-allow').length, 1);
+  }
+});
+
+// The public arg list has no candidate-controlled slot, so there is no spelling that drops a flag:
+// only omission of the trusted parameter is left, and that refuses instead of running unpinned.
+test('refuses to build a scan argv without the trusted config and ignore inputs', () => {
+  const reportPath = 'report.json';
+  for (const missing of [
+    {},
+    { configPath: 'workspace/gitleaks.toml' },
+    { ignorePath: 'workspace/gitleaks-ignore' },
+    { configPath: '', ignorePath: 'workspace/gitleaks-ignore' },
+    { configPath: 'workspace/gitleaks.toml', ignorePath: '' },
+  ]) {
+    assert.throws(() => scanArgs({ snapshot: 'snapshot', reportPath, ...missing }), /trusted Gitleaks config and ignore path/);
+  }
 });
 
 test('reports unchanged-tree, added-then-deleted and clean scans with allowlisted findings only', () => {
@@ -180,11 +233,11 @@ test('bounded capture rejects an oversized report and maps timeouts to execution
   assert.throws(() => readReport(path, 1), /bounded size limit/);
   const timeout = Object.assign(new Error('spawnSync ETIMEDOUT'), { code: 'ETIMEDOUT' });
   assert.throws(
-    () => scanOnce({ kind: 'tree', snapshot: 'snapshot', binary: 'gitleaks', workdir: directory, execute: () => { throw timeout; } }),
+    () => scanOnce({ kind: 'tree', snapshot: 'snapshot', binary: 'gitleaks', workdir: directory, ...trusted, execute: () => { throw timeout; } }),
     /timed out/,
   );
   assert.throws(
-    () => scanOnce({ kind: 'tree', snapshot: 'snapshot', binary: 'gitleaks', workdir: directory, execute: () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); } }),
+    () => scanOnce({ kind: 'tree', snapshot: 'snapshot', binary: 'gitleaks', workdir: directory, ...trusted, execute: () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); } }),
     /could not be executed/,
   );
   const args = scanOnce({
@@ -192,9 +245,12 @@ test('bounded capture rejects an oversized report and maps timeouts to execution
     snapshot: 'snapshot',
     binary: 'gitleaks',
     workdir: directory,
+    ...trusted,
     execute: ({ reportPath }) => { writeFileSync(reportPath, '[]'); return { status: 0, report: readReport(reportPath) }; },
   }).args;
   assert.ok(args.includes('--redact=100'));
+  assert.equal(args[args.indexOf('--config') + 1], trusted.configPath, 'scanOnce forwards the trusted config');
+  assert.equal(args[args.indexOf('--gitleaks-ignore-path') + 1], trusted.ignorePath, 'scanOnce forwards the trusted ignore path');
   assert.throws(() => readReport(join(directory, 'absent.json'), 1024), /could not be read/);
 });
 
@@ -300,7 +356,7 @@ test('the workflow argv keeps push and pull-request revisions distinct', () => {
 test('tree and range scans never share a report path', () => {
   const directory = join(tmpdir(), 'scan-report-names');
   const paths = ['tree', 'range'].map((kind) => {
-    const { args } = scanOnce({ kind, snapshot: 'snapshot', reportDir: directory, binary: 'gitleaks', workdir: directory, execute: () => ({ status: 0, report: '[]' }) });
+    const { args } = scanOnce({ kind, snapshot: 'snapshot', reportDir: directory, binary: 'gitleaks', workdir: directory, ...trusted, execute: () => ({ status: 0, report: '[]' }) });
     return args[args.indexOf('--report-path') + 1];
   });
   assert.equal(new Set(paths).size, 2, 'a stale tree report cannot be read as a range report');
@@ -320,14 +376,47 @@ test('snapshot creation checks out the admitted head in isolation', async (t) =>
   await writeFile(join(root, 'unchanged.txt'), 'SENTINEL\n');
   git('add', 'unchanged.txt');
   git('-c', 'user.email=test@example.invalid', '-c', 'user.name=test', 'commit', '--quiet', '-m', 'add');
+  // A candidate .gitleaksignore is read by Gitleaks even with --gitleaks-ignore-path, so the snapshot
+  // must not carry one; the source checkout keeps it because the snapshot is a throwaway worktree.
+  await writeFile(join(root, '.gitleaksignore'), 'deadbeef\n');
+  git('add', '.gitleaksignore');
+  git('-c', 'user.email=test@example.invalid', '-c', 'user.name=test', 'commit', '--quiet', '-m', 'ignore');
   const head = git('rev-parse', 'HEAD');
   const directory = join(outside, 'tree');
   createSnapshot({ root, head, directory });
+  assert.equal(existsSync(join(directory, '.gitleaksignore')), false, 'a checked-out ignore file is removed');
+  assert.equal(existsSync(join(root, '.gitleaksignore')), true, 'the candidate checkout itself is untouched');
   const status = spawnSync('git', ['-C', directory, 'rev-parse', 'HEAD'], { encoding: 'utf8', windowsHide: true });
   assert.equal(status.status, 0, status.stderr);
   assert.equal(status.stdout.trim(), head);
   removeSnapshot({ root, directory });
   assert.notEqual(spawnSync('git', ['-C', directory, 'rev-parse', 'HEAD'], { encoding: 'utf8', windowsHide: true }).status, 0);
+});
+
+// The base of a pull_request scan is the base branch tip, so a PR branch that is behind has a valid
+// base..head range without an ancestor relationship. Existence is the only property that matters.
+test('revisionExists accepts a real commit that is not an ancestor and rejects an unknown sha', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'gitleaks-revision-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const git = (...args) => {
+    const result = spawnSync('git', args, { cwd: root, encoding: 'utf8', windowsHide: true });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout.trim();
+  };
+  const commit = (message) => {
+    git('-c', 'user.email=test@example.invalid', '-c', 'user.name=test', 'commit', '--allow-empty', '--quiet', '-m', message);
+    return git('rev-parse', 'HEAD');
+  };
+  git('init', '--quiet');
+  const shared = commit('shared');
+  const head = commit('head');
+  git('checkout', '--quiet', '-b', 'diverged', shared);
+  const other = commit('other');
+  assert.equal(revisionExists(root, head), true);
+  assert.equal(revisionExists(root, other), true);
+  assert.equal(spawnSync('git', ['merge-base', '--is-ancestor', other, head], { cwd: root, windowsHide: true }).status, 1, 'the two revisions really diverged');
+  assert.equal(revisionExists(root, 'f'.repeat(40)), false);
+  assert.equal(revisionExists(root, 'nope'), false);
 });
 
 test('CLI refuses usage errors and an unexecutable local binary before scanning', async (t) => {

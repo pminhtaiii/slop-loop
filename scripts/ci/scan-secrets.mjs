@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -70,8 +70,10 @@ export function planScanRanges({ event, head, base, before, available = () => tr
   const target = revision(head, 'head');
   if (event === 'pull_request') {
     if (typeof base !== 'string' || !base) throw new Error('A pull request scan requires an admitted base revision.');
-    if (ZERO.test(base) || !available(base)) throw new Error('The admitted base revision is unavailable; the pull request range cannot be scanned.');
-    return { mode: 'tree-plus-range', ranges: [{ from: revision(base, 'base'), to: target }] };
+    // Validate before any probe: the availability callback hands the value to git argv.
+    const from = revision(base, 'base');
+    if (ZERO.test(from) || !available(from)) throw new Error('The admitted base revision is unavailable; the pull request range cannot be scanned.');
+    return { mode: 'tree-plus-range', ranges: [{ from, to: target }] };
   }
   if (typeof before !== 'string' || !before || ZERO.test(before)) return { mode: 'tree-only-with-range-unavailable', ranges: [] };
   const from = revision(before, 'before');
@@ -86,8 +88,14 @@ function revision(value, field) {
   return value;
 }
 
-export function scanArgs({ snapshot, from, to, reportPath }) {
-  const common = ['--report-format', 'json', '--report-path', reportPath, '--redact=100', '--no-banner', '--exit-code', '1'];
+export function scanArgs({ snapshot, from, to, reportPath, configPath, ignorePath }) {
+  // The config and ignore inputs are trusted workspace paths, never candidate content. A missing value
+  // would silently restore the candidate-controlled defaults (its .gitleaks.toml, allow comments), so it
+  // fails closed instead of omitting the flag.
+  for (const path of [configPath, ignorePath]) {
+    if (typeof path !== 'string' || !path) throw new Error('A trusted Gitleaks config and ignore path are required.');
+  }
+  const common = ['--config', configPath, '--gitleaks-ignore-path', ignorePath, '--ignore-gitleaks-allow', '--report-format', 'json', '--report-path', reportPath, '--redact=100', '--no-banner', '--exit-code', '1'];
   return from && to ? ['git', snapshot, '--log-opts', `${from}..${to}`, ...common] : ['dir', snapshot, ...common];
 }
 
@@ -108,11 +116,11 @@ function defaultExecute({ binary, args, cwd, reportPath }) {
   return { status: result.status, report: existsSync(reportPath) ? readReport(reportPath) : undefined, args };
 }
 
-export function scanOnce({ kind, snapshot, range, binary, workdir, reportDir = workdir, execute }) {
+export function scanOnce({ kind, snapshot, range, binary, workdir, reportDir = workdir, configPath, ignorePath, execute }) {
   // The report name is derived from the scan kind, not passed in: both scans share one workspace, and
   // a caller that reused one name would let a failed range scan read the tree scan's stale report.
   const reportPath = join(reportDir, `${kind}.json`);
-  const args = scanArgs({ snapshot, from: range?.from, to: range?.to, reportPath });
+  const args = scanArgs({ snapshot, from: range?.from, to: range?.to, reportPath, configPath, ignorePath });
   let outcome;
   try {
     outcome = (execute ?? defaultExecute)({ binary, args, cwd: workdir, reportPath });
@@ -210,6 +218,12 @@ function git(root, args, options = {}) {
 // The scan reads an isolated checkout of the admitted head, not the author's working tree.
 export function createSnapshot({ root, head, directory }) {
   git(root, ['worktree', 'add', '--detach', directory, revision(head, 'head')]);
+  // A checked-out .gitleaksignore is read by Gitleaks regardless of --gitleaks-ignore-path, so a
+  // candidate that adds one would suppress its own findings. The snapshot is a throwaway detached
+  // worktree, so deleting from it changes nothing in the candidate's repository.
+  for (const entry of readdirSync(directory, { recursive: true, withFileTypes: true })) {
+    if (entry.isFile() && entry.name === '.gitleaksignore') rmSync(join(entry.parentPath, entry.name), { force: true });
+  }
   return directory;
 }
 
@@ -264,16 +278,23 @@ async function main(argv) {
     head: args.head,
     base: args.base,
     before: args.before,
-    available: (rev) => rangeExists(root, rev, args.head),
+    available: (rev) => revisionExists(root, rev),
   });
   const exemptions = args.exemptions ? JSON.parse(readFileSync(args.exemptions, 'utf8')) : [];
   if (!Array.isArray(exemptions)) throw new Error('Reviewed exemptions must be a JSON array.');
   const workspace = mkdtempSync(join(tmpdir(), 'gitleaks-scan-'));
   const directory = join(workspace, 'tree');
   try {
+    // Trusted scanner inputs live beside the tree, never inside it: the tree is the candidate snapshot.
+    // Extending the default config reproduces the default rule set, so the flags only take away the
+    // candidate's ability to override rules, ignore findings or allow them inline.
+    const configPath = join(workspace, 'gitleaks.toml');
+    writeFileSync(configPath, '[extend]\nuseDefault = true\n');
+    const ignorePath = join(workspace, 'gitleaks-ignore');
+    writeFileSync(ignorePath, '');
     createSnapshot({ root, head: args.head, directory });
     // Reports live outside the scanned tree so analyzer output cannot become candidate content.
-    const scan = (spec) => scanOnce({ ...spec, binary, workdir: directory, reportDir: workspace });
+    const scan = (spec) => scanOnce({ ...spec, binary, workdir: directory, reportDir: workspace, configPath, ignorePath });
     const result = runSecretScan({ plan, snapshot: directory, scan, exemptions });
     console.log(JSON.stringify(result));
     if (result.findings.length) process.exitCode = 1;
@@ -295,9 +316,11 @@ function pinnedLocalBinary(path) {
   return path;
 }
 
-function rangeExists(root, from, to) {
+export function revisionExists(root, from) {
+  // Existence, not ancestry: on a pull_request event BASE_SHA is the base branch tip, so a PR branch
+  // that is behind has a valid base..head range without being a descendant of the base.
   try {
-    git(root, ['merge-base', '--is-ancestor', from, to]);
+    git(root, ['cat-file', '-e', `${from}^{commit}`]);
     return true;
   } catch {
     return false;

@@ -5,13 +5,16 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { assertPrMetadata, historicalBinding } from '../../scripts/agents/pr-conventions.mjs';
+import { assertNewDescription, assertPrMetadata, historicalBinding } from '../../scripts/agents/pr-conventions.mjs';
 import { checkPrMetadata, eventMetadata } from '../../scripts/ci/check-pr-metadata.mjs';
 import { parseHistoricalBindings } from '../../scripts/ci/required-checks.mjs';
 
 const source = new URL('../../scripts/ci/check-pr-metadata.mjs', import.meta.url);
 const branch = 'feat/tooling-pr-metadata';
 const BODY = '## Summary\n\nStandardize the metadata check.\n\n## Evidence\n\nBefore: none; after: focused tests.\n\n## Merge Danger\n\n**Door:** revert the commit.\n\n**Blast Radius:** contributor tooling only.';
+const CR_START = '<!-- This is an auto-generated comment: release notes by coderabbit.ai -->';
+const CR_END = '<!-- end of auto-generated comment: release notes by coderabbit.ai -->';
+const CR_BLOCK = `${CR_START}\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\nThe change standardizes the metadata check.\n\n${CR_END}`;
 const metadata = (overrides = {}) => ({ branch, base: 'development', title: `${branch}: add the metadata check`, body: BODY, ...overrides });
 const refusal = (run) => {
   try { run(); } catch (error) { return error.message; }
@@ -84,6 +87,25 @@ test('canonical branch, title and body failures are refused', () => {
   // Version 1 keeps numbered branches and the same title/body rules.
   const numbered = { branch: 'feat/042-tooling-metadata', base: 'development', title: 'feat/042-tooling-metadata: add the metadata check', body: 'plain text' };
   assert.match(refusal(() => assertPrMetadata(numbered, { convention: 1 })), /body/);
+});
+
+test('the CodeRabbit auto-generated tail is dropped before section analysis', () => {
+  assert.doesNotThrow(() => assertPrMetadata(metadata({ body: `${BODY}\n\n${CR_BLOCK}` }), { convention: 2 }));
+  assert.doesNotThrow(() => assertNewDescription(`${BODY}\n\n${CR_BLOCK}`), 'the pure description path accepts the tail too');
+  // Only the block is dropped: a mid-body block leaves the canonical sections after it.
+  assert.doesNotThrow(() => assertPrMetadata(metadata({ body: `${CR_BLOCK}\n\n${BODY}` }), { convention: 2 }));
+});
+
+test('generated-block and remaining section rules still refuse', () => {
+  assert.match(refusal(() => assertPrMetadata(metadata({ body: CR_BLOCK }), { convention: 2 })), /body/);
+  // An unclosed start marker runs to the end of the body, so headings inside it are never real
+  // sections and a fake duplicate '## Summary' behind the marker cannot stand in for one.
+  const unclosed = `Just prose, no sections.\n\n${CR_START}\n\n## Summary\n\nfake\n\n## Evidence\n\nfake\n\n## Merge Danger\n\n**Door:** revert.\n\n**Blast Radius:** tooling.\n\n## Summary\n\nfake duplicate`;
+  assert.match(refusal(() => assertPrMetadata(metadata({ body: unclosed }), { convention: 2 })), /body/);
+  const fenced = `${BODY}\n\n\`\`\`\n${CR_START}\n## Summary\nreordered\n${CR_END}\n\`\`\``;
+  assert.doesNotThrow(() => assertPrMetadata(metadata({ body: fenced }), { convention: 2 }), 'a fenced copy is literal content, not a real tail');
+  const fourth = `${BODY}\n\n## Notes\n\nextra section`;
+  assert.match(refusal(() => assertPrMetadata(metadata({ body: fourth }), { convention: 2 })), /body/);
 });
 
 test('no refusal echoes the submitted title or body text', () => {

@@ -10,8 +10,16 @@ export function assertNewBranch(branch, version = 2) {
   } else if (!scopedBranch.test(branch ?? '')) throw new Error('New work requires feat/scope-short-description without a numeric prefix.');
 }
 
+// CodeRabbit appends an auto-generated summary (with a "## Summary by CodeRabbit" heading) to the
+// live body after every review, re-running this check with no code change. Recognise it by its
+// comment markers rather than heading text, and drop only the block so a mid-body block leaves later
+// sections intact. An unclosed block runs to the end of the body, so it cannot smuggle a heading into
+// the canonical list. Fenced copies of the markers stay literal content.
+const generatedStart = /^<!-- This is an auto-generated comment:.* coderabbit\.ai -->$/;
+const generatedEnd = /^<!-- end of auto-generated comment:.* coderabbit\.ai -->$/;
+
 export function assertNewDescription(body) {
-  let fence;
+  let fence, generated;
   const lines = [];
   for (const line of body.replace(/\r\n/g, '\n').split('\n')) {
     const marker = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
@@ -20,6 +28,8 @@ export function assertNewDescription(body) {
       continue;
     }
     if (marker) { fence = marker[1]; continue; }
+    if (generated) { if (generatedEnd.test(line)) generated = false; continue; }
+    if (generatedStart.test(line)) { generated = true; continue; }
     lines.push(line);
   }
   const text = lines.join('\n');

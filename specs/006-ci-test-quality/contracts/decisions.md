@@ -38,6 +38,15 @@ was a behaviour-preserving correction to a file already owned by T007–T019 (`c
 a live setting, a mutation gate or a new scope, so no separate decision is needed. Its evidence is
 local-gate only and is recorded in `tasks.md` T019 and the `ci-rollout.md` evidence log.
 
+The second review-and-repair round on the same day also falls inside this authorization, on the same
+terms. Its one behavioural change is in `scripts/agents/pr-conventions.mjs`, which `T007` already owns:
+the description contract now ignores a review bot's generated block, identified by its own comment
+markers, so a machine-appended summary cannot fail the required `pr-metadata` lane. The three canonical
+sections and every refusal rule are unchanged; only the bot's own block is exempt, and a human adding a
+fourth section or writing the same heading without the markers is still refused. The remaining repairs
+are corrections to `scan-secrets.mjs`, `quickstart.md` and `tests/ci/workflow-contracts.test.mjs`. No
+required check, live setting, mutation gate or scope was added, and no remote fact was observed.
+
 ## Gates
 
 1. Automated planning validation plus current-artifact independent standards/architecture and testability reviews with no unresolved P0/P1 findings.
