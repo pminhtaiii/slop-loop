@@ -49,7 +49,7 @@ pnpm run build
 node --test dist/tests/runtime/unit/telemetry.test.js
 ```
 
-Verify a clean 17-byte diagnostic at limit 17 retains exact content/byteCount and `truncated:false`. In an isolated workspace, exercise the corresponding `>` to `>=` mutation: the new assertion must fail, then the original candidate must pass after restoration. Re-run only the chosen mutation slice first; record fingerprints and settings. Record every reviewed disposition and remaining unreviewed scope. No runtime source change or artificial assertion is required to distinguish equivalent changes.
+Verify the exact-16-byte suffix boundary added to `bounded redacted diagnostics enforces byte bounds INCLUDING suffix and safe UTF-8 split`: at `maxBytes: 16` the marker stands alone as `... [TRUNCATED]` with `byteCount: 15`. In an isolated workspace, exercise one of the mutations that boundary pins (197 or 199): the new assertion must fail, then the original candidate must pass after restoration. Re-run only the chosen mutation slice first; record fingerprints and settings. Record every reviewed disposition and remaining unreviewed scope. A mutant the 1,139-input differential grid shows equivalent — 193, for instance — is disposed of by that evidence, not by an artificial assertion.
 
 ## Rollout acceptance
 

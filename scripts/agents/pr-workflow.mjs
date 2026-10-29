@@ -30,7 +30,7 @@ function execute(binary, args, cwd, timeout = 30_000) {
 }
 
 const query = `query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){
-  number url title state isDraft headRefName headRefOid baseRefName mergeable mergeStateStatus reviewDecision
+  number url title body state isDraft headRefName headRefOid baseRefName mergeable mergeStateStatus reviewDecision
   reviews(last:100){pageInfo{hasPreviousPage} nodes{author{login __typename} state commit{oid}}}
   reviewThreads(first:100){pageInfo{hasNextPage} nodes{id isResolved isOutdated comments(first:1){nodes{url body}}}}
 }}}`;
@@ -144,10 +144,18 @@ export async function runWorkflow(args, dependencies = {}) {
     const prRef = find();
     if (!prRef) throw new Error('No open feature PR; use publish first.');
     if (record.pr && record.pr !== prRef.number) throw new Error('PR identity changed; inspect the retained record.');
-    const pr = json('api', 'graphql', '-f', `query=${query}`, '-F', `owner=${owner}`, '-F', `name=${name}`, '-F', `number=${prRef.number}`).data.repository.pullRequest;
     const head = git('rev-parse', 'HEAD');
+    let pr;
+    // A missing, malformed or failed live read is non-ready: readiness cannot be inferred from an
+    // older same-head CI result, so the retained record is marked BLOCKED before the read is reported.
+    try { pr = json('api', 'graphql', '-f', `query=${query}`, '-F', `owner=${owner}`, '-F', `name=${name}`, '-F', `number=${prRef.number}`).data.repository.pullRequest; }
+    catch {
+      Object.assign(record, { status: 'BLOCKED', reason: 'Live PR metadata could not be read; readiness is unavailable.' });
+      await save();
+      throw new Error(record.reason);
+    }
     const pages = json('api', '--paginate', '--slurp', `repos/${remote}/commits/${head}/check-runs?per_page=100`);
-    const result = assess({ head, pr, checks: pages.flatMap((page) => page.check_runs) });
+    const result = assess({ head, pr, checks: pages.flatMap((page) => page.check_runs), convention: record.conventionVersion });
     Object.assign(record, { pr: pr.number, url: pr.url, head, status: result.status, observation: result });
     delete record.reason;
     if (targets) {

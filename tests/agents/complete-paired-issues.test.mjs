@@ -4,7 +4,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import test from 'node:test';
 import { join } from 'node:path';
 import { runIssueCompletion } from '../../scripts/agents/complete-paired-issues.mjs';
-import { POLICIES, evaluateRequired, parseHistoricalBindings } from '../../scripts/ci/required-checks.mjs';
+import { ACTIVE_POLICY_ID, POLICIES, evaluateRequired, parseHistoricalBindings } from '../../scripts/ci/required-checks.mjs';
 import { branch, completionMarkerFor, fixture, markerFor, mergePair, privateRepository, publicHead, publicRepository, requiredChecks } from './support/complete-paired-issues-fixture.mjs';
 
 test('an open paired resolving PR returns WAITING_PR without remote writes', async t => {
@@ -174,20 +174,21 @@ test('failing, spoofed, or incomplete exact-head checks and mismatched source tr
   assert.deepEqual(mismatch.writes, []);
 });
 
-test('merged completion uses only the active policy and never a ci-v2 or unbound historical name set', async t => {
+test('merged completion uses only the active policy and never a ci-v1 or unbound historical name set', async t => {
   assert.deepEqual(parseHistoricalBindings(await readFile(new URL('../../config/legacy-ci-heads.json', import.meta.url), 'utf8')), [], 'no audited binding can grant an older policy');
-  assert.deepEqual([...requiredChecks], [...POLICIES['ci-v1'].required]);
+  assert.equal(ACTIVE_POLICY_ID, 'ci-v2', 'Stage A2 makes the ten ci-v2 names current');
+  assert.deepEqual([...requiredChecks], [...POLICIES['ci-v2'].required]);
 
-  const v2 = await fixture(t);
-  mergePair(v2);
-  v2.checks.splice(0, v2.checks.length, ...POLICIES['ci-v2'].required.map((name, id) => ({ id: id + 1, name, head_sha: publicHead, status: 'completed', conclusion: 'success', app: { slug: 'github-actions' } })));
-  const wrongPolicy = await runIssueCompletion([...v2.args, '--apply'], { execute: v2.execute });
-  assert.equal(wrongPolicy.status, 'WAITING_CI', 'ci-v2 names do not satisfy the active ci-v1 policy');
-  assert.deepEqual(v2.writes, []);
+  const v1 = await fixture(t);
+  mergePair(v1);
+  v1.checks.splice(0, v1.checks.length, ...POLICIES['ci-v1'].required.map((name, id) => ({ id: id + 1, name, head_sha: publicHead, status: 'completed', conclusion: 'success', app: { slug: 'github-actions' } })));
+  const wrongPolicy = await runIssueCompletion([...v1.args, '--apply'], { execute: v1.execute });
+  assert.equal(wrongPolicy.status, 'WAITING_CI', 'ci-v1 names do not satisfy the active ci-v2 policy');
+  assert.deepEqual(v1.writes, []);
 
   const head = publicHead;
-  const oldRuns = requiredChecks.map((name, id) => ({ id: id + 1, name, head_sha: head, status: 'completed', conclusion: 'success', app: { slug: 'github-actions' } }));
-  const newRuns = POLICIES['ci-v2'].required.map((name, id) => ({ id: id + 1, name, head_sha: head, status: 'completed', conclusion: 'success', app: { slug: 'github-actions' } }));
+  const oldRuns = POLICIES['ci-v1'].required.map((name, id) => ({ id: id + 1, name, head_sha: head, status: 'completed', conclusion: 'success', app: { slug: 'github-actions' } }));
+  const newRuns = requiredChecks.map((name, id) => ({ id: id + 1, name, head_sha: head, status: 'completed', conclusion: 'success', app: { slug: 'github-actions' } }));
   assert.equal(evaluateRequired({ policy: POLICIES['ci-v2'], head, checks: oldRuns }).status, 'WAITING');
   assert.equal(evaluateRequired({ policy: POLICIES['ci-v1'], head, checks: newRuns }).status, 'WAITING');
   assert.equal(evaluateRequired({ policy: POLICIES['ci-v2'], head, checks: newRuns }).status, 'READY');

@@ -8,6 +8,44 @@ import { workflowSummary } from '../../scripts/agents/pr-workflow-status.mjs';
 import { ACTIVE_POLICY_ID, POLICIES, createPolicyState, evaluateRequired, resolvePolicy } from '../../scripts/ci/required-checks.mjs';
 import { checkout, evidence, requiredChecks } from './support/pr-workflow-fixture.mjs';
 
+const scoped = (overrides = {}) => {
+  const e = evidence(), branch = 'feat/tooling-example';
+  Object.assign(e.pr, { headRefName: branch, title: `${branch}: add the example workflow` }, overrides);
+  return { ...e, convention: 2 };
+};
+
+test('a body-only edit at an unchanged head cannot ride an older passing same-head check', () => {
+  const green = scoped();
+  assert.equal(assess(green).status, 'READY_FOR_HUMAN', 'the valid candidate is unaffected');
+  for (const body of ['plain text', '## Summary\n\nchange\n\n## Evidence\n\nchecks\n\n## Merge Danger\n\n**Door:** revert.\n\n**Blast Radius:** tooling.\n\n## Summary\n\nsecond']) {
+    const edited = scoped({ body });
+    edited.checks = green.checks.map((check) => ({ ...check }));
+    const result = assess(edited);
+    assert.equal(result.status, 'BLOCKED', body.slice(0, 20));
+    assert.doesNotMatch(result.reason, /plain text|change|revert/, 'the reason names the field and rule, never the body');
+  }
+  assert.equal(assess(scoped({ body: undefined })).status, 'BLOCKED', 'a missing live body is not a skip');
+  assert.equal(assess(scoped({ isDraft: true })).status, 'READY_FOR_HUMAN', 'a validated draft stays a separate human state');
+});
+
+test('status refuses live metadata edited after the passing same-head check and unreadable metadata', async (t) => {
+  const f = await checkout(t);
+  await f.run('publish', '--body-file', f.body);
+  assert.equal((await f.run('status')).status, 'READY_FOR_HUMAN');
+  f.e.pr.body = 'plain text';
+  assert.equal((await f.run('status')).status, 'BLOCKED', 'green checks on the same head do not admit an edited body');
+  f.e.pr.body = '## Summary\n\nStandardize tooling.\n\n## Evidence\n\nVerified.\n\n## Merge Danger\n\n**Door:** revert.\n\n**Blast Radius:** tooling.';
+  assert.equal((await f.run('status')).status, 'READY_FOR_HUMAN');
+  await assert.rejects(runWorkflow(['status', '--root', f.root], {
+    execute(binary, args, cwd, timeout) {
+      if (binary === 'gh' && args[0] === 'api' && args[1] === 'graphql') throw new Error('simulated metadata read failure');
+      return f.execute(binary, args, cwd, timeout);
+    },
+  }), /metadata could not be read/);
+  const record = JSON.parse(await readFile(join(f.root, '.agent-work/pr-workflow/010-tooling-example.json'), 'utf8'));
+  assert.equal(record.status, 'BLOCKED', 'a failed metadata read stays non-ready');
+});
+
 test('bot review decisions are advisory while GitHub merge blockers remain enforced', () => {
   const e = evidence();
   e.pr.reviewDecision = 'REVIEW_REQUIRED';
@@ -56,7 +94,7 @@ test('watch caps every observation and sleep to the remaining ten-minute deadlin
 
 test('runtime CI must pass on the current head before readiness', () => {
   // Literal names keep this a real oracle rather than a restatement of the production selector.
-  for (const name of ['runtime-checks (ubuntu-latest)', 'runtime-checks (windows-latest)']) {
+  for (const name of ['runtime-tests (ubuntu-latest)', 'runtime-tests (windows-latest)']) {
     for (const state of ['missing', 'failure', 'pending', 'stale']) {
       const e = evidence();
       const check = e.checks.find((item) => item.name === name);
@@ -133,7 +171,7 @@ test('retained publication accounting records the active check policy without ch
   await f.run('publish', '--body-file', f.body);
   const record = JSON.parse(await readFile(join(f.root, '.agent-work/pr-workflow/010-tooling-example.json'), 'utf8'));
   assert.equal(record.checkPolicy, ACTIVE_POLICY_ID);
-  assert.equal(ACTIVE_POLICY_ID, 'ci-v1', 'Stage A1 keeps ci-v1 current; ci-v2 is not activated by a consumer');
+  assert.equal(ACTIVE_POLICY_ID, 'ci-v2', 'Stage A2 keeps ci-v2 current; a consumer never changes the policy');
   // The retained policy must be readable, not merely stored.
   assert.equal(workflowSummary(record).checkPolicy, ACTIVE_POLICY_ID);
 
@@ -143,12 +181,19 @@ test('retained publication accounting records the active check policy without ch
   await assert.rejects(f.run('status'), /unknown check policy/i);
 });
 
-test('a ci-v2 selection resolves the ten ci-v2 names through the pure selector only', () => {
+test('a ci-v2 selection resolves the ten ci-v2 names and demotes ci-v1 to an audited binding', () => {
   const v2 = resolvePolicy(createPolicyState('ci-v2'), { policyId: 'ci-v2' });
   assert.equal(v2.historical, false);
   assert.deepEqual([...v2.policy.required], [...POLICIES['ci-v2'].required]);
   assert.equal(v2.policy.required.length, 10);
-  assert.deepEqual([...createPolicyState(ACTIVE_POLICY_ID).policy.required], [...POLICIES['ci-v1'].required], 'production readiness still selects ci-v1');
+  // Literal names, not a recomputation of createPolicyState: an oracle that recomputes the state it is
+  // checking cannot detect a wrong activation.
+  assert.equal(ACTIVE_POLICY_ID, 'ci-v2', 'production readiness selects ci-v2');
+  assert.ok(v2.policy.required.includes('pr-metadata'), 'the activation add is still required');
+  assert.ok(!v2.policy.required.includes('contributor-checks (ubuntu-latest)'), 'no legacy name survives into ci-v2');
+  // After the switch ci-v1 is historical-only: no merged binding means no ci-v1 assessment at all.
+  assert.deepEqual([...createPolicyState(ACTIVE_POLICY_ID).historical], ['ci-v1']);
+  assert.throws(() => resolvePolicy(createPolicyState(ACTIVE_POLICY_ID), { policyId: 'ci-v1', pr: { state: 'OPEN' } }), /merged pull request/);
 });
 
 test('ci-v2 and ci-v1 names never satisfy each other, in the selector or the consumer', () => {
@@ -162,9 +207,13 @@ test('ci-v2 and ci-v1 names never satisfy each other, in the selector or the con
   assert.equal(againstNew.status, 'WAITING');
   assert.deepEqual(againstNew.missing, [...POLICIES['ci-v2'].required]);
 
+  // The consumer selects ci-v2, so ci-v1 names alone leave every current requirement missing.
   const e = evidence();
-  e.checks = newRuns.map((check) => ({ ...check, head_sha: e.head }));
+  e.checks = oldRuns.map((check) => ({ ...check, head_sha: e.head }));
   assert.equal(assess(e).status, 'WAITING_CI');
+  // And a ci-v2 head is the one that reads as ready.
+  e.checks = newRuns.map((check) => ({ ...check, head_sha: e.head }));
+  assert.equal(assess(e).status, 'READY_FOR_HUMAN');
 });
 
 test('the consumer refuses missing, failed, skipped, foreign-app and foreign-head required checks', () => {

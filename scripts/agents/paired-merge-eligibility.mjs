@@ -3,7 +3,7 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { lstat, realpath } from 'node:fs/promises';
 import { isDeepStrictEqual } from 'node:util';
-import { featureBranch } from './pr-conventions.mjs';
+import { assertPrMetadata, featureBranch } from './pr-conventions.mjs';
 import { githubRepository } from './publication-targets.mjs';
 import { readBoundedEvidence } from './paired-merge-evidence.mjs';
 import { ACTIVE_POLICY_ID, createPolicyState, selectLatest } from '../ci/required-checks.mjs';
@@ -190,6 +190,8 @@ export async function runEligibility(args, dependencies = {}) {
         requireEvidence(pr.mergeable !== false && ['clean', 'unknown'].includes(pr.mergeable_state), 'PR_NOT_READY');
         requireEvidence(pr.mergeable !== null && pr.mergeable_state !== 'unknown', 'MERGEABILITY_PENDING', 'WAITING_EVIDENCE');
         requireEvidence(pr.title === pair.title && typeof pr.title === 'string' && pr.title.startsWith(`${branch}: `), 'PR_METADATA');
+        // Live title/body edits after a same-head pass are refused.
+        try { assertPrMetadata({ ...pr, branch, base: pr.base.ref }, { convention: workflow.conventionVersion }); } catch { throw new Refusal('PR_METADATA'); }
         if (side === 'submission') requireEvidence(typeof pr.body === 'string' && pr.body.includes(pair.marker), 'PAIR_MARKER');
         const commit = json(`repos/${repository}/git/commits/${expectedHead}`);
         requireEvidence(commit.sha === expectedHead && hash(commit.tree?.sha) && commit.tree.sha === pair.sourceTree, 'TREE_IDENTITY');

@@ -14,6 +14,30 @@ The associated contracts define ten directly required new check names, a staged 
 
 The original experiment is retained locally at `.agent-work/2026-10-28/mutation-ci-trial/observations.md`. Its final excerpt baseline is 222 mutants: 136 killed, 85 survived and one timeout, 61.71%. The earlier 66.67% run was inflated by timing noise. The exact-limit assertion exists only in the disposable pilot. None of these results establishes whole-module, whole-repository or production-runtime quality.
 
+## Implementation authorization — 2026-10-29 (Asia/Bangkok)
+
+The user explicitly asked for the remaining implementation phases of this feature to be implemented, and
+for the already-implemented Phase 1–3 work to be marked complete. This is the gate-2 user approval for a
+bounded implementation batch:
+
+- Released: T007–T019 (Phases 4–6 and the documentation/integration task) as local source, test and
+  workflow-file changes, including the single reviewed `ci-v2` activation in `scripts/ci/required-checks.mjs`.
+- Not released: T020, T021, T023 and therefore T022/T024 dependants require live observation, an
+  explicitly authorized operator protection change, or default-branch promotion. They remain unchecked.
+- Not released by this approval: any remote setting change, any default-branch push or promotion, any
+  merge, a pre-PR hook, a numeric mutation gate, automatic mutation on PR/push, or broader runtime work.
+
+Stage A1 (T001–T006) was implemented and its leaves merged into PR #122 evidence rows; those rows are
+local-gate evidence only. Marking a task complete records implemented source and exercised local
+behavior; it does not assert a live CI or remote-protection observation.
+
+The 2026-10-29 review-and-repair batch on the same branch falls inside this authorization. Every repair
+was a behaviour-preserving correction to a file already owned by T007–T019 (`check-tracked-files.mjs`,
+`check-env-examples.mjs`, `scan-secrets.mjs`, `pr-conventions.mjs`, `pr-metadata.yml`, `run-mutation.mjs`,
+`tests/runtime/unit/telemetry.test.ts` and their tests and contract prose); none added a required check,
+a live setting, a mutation gate or a new scope, so no separate decision is needed. Its evidence is
+local-gate only and is recorded in `tasks.md` T019 and the `ci-rollout.md` evidence log.
+
 ## Gates
 
 1. Automated planning validation plus current-artifact independent standards/architecture and testability reviews with no unresolved P0/P1 findings.

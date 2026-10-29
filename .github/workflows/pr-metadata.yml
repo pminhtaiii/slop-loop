@@ -1,0 +1,36 @@
+name: PR metadata
+
+# Metadata validation runs on its own event list and its own concurrency group, so an edit to a
+# title or body never cancels the behavioral lanes and a code push never cancels a metadata recheck.
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, edited, ready_for_review, converted_to_draft]
+
+concurrency:
+  group: pr-metadata-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  pr-metadata:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # Only the validator and its audited config are needed, and both come from the base revision:
+      # the candidate's metadata lives in the event payload, so a PR that edits this validator to
+      # `process.exit(0)` must not be the copy that grades itself.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Validate pull request metadata
+        shell: bash
+        env:
+          # The event payload arrives as a file path, never as interpolated shell text.
+          EVENT_PATH: ${{ github.event_path }}
+        run: node scripts/ci/check-pr-metadata.mjs "$EVENT_PATH"

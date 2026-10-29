@@ -4,7 +4,7 @@ import { command, json, sides } from './paired-issue-api.mjs';
 import { featureBranch } from './pr-conventions.mjs';
 import { ACTIVE_POLICY_ID, createPolicyState, selectLatest } from '../ci/required-checks.mjs';
 
-// Stage A1: only the active policy is required, so an unbound merged head fails closed to the
+// Stage A2: only the active policy is required, so an unbound merged head fails closed to the
 // current names instead of being granted an older policy. No historical path is added here because
 // this consumer never fetches the repository/head/tree identity a binding would have to match.
 const activePolicy = createPolicyState(ACTIVE_POLICY_ID).policy;

@@ -29,9 +29,10 @@ export const POLICIES = Object.freeze({
   ]),
 });
 
-// Stage A2 flips this single constant in the same reviewed change that adds the last ci-v2
-// counterpart. `ci-v1` remains selectable afterwards only through an exact historical binding.
-export const ACTIVE_POLICY_ID = 'ci-v1';
+// Stage A2: every ci-v2 counterpart is now executable, so this is the single reviewed source switch
+// that makes it the current policy. `ci-v1` is historical-only from here and is selectable solely
+// through an exact audited binding in `config/legacy-ci-heads.json`.
+export const ACTIVE_POLICY_ID = 'ci-v2';
 
 const POLICY_ORDER = Object.freeze(Object.keys(POLICIES));
 // Only a policy that has already been required can be bound to an immutable merged head, so the
@@ -83,19 +84,19 @@ export function createPolicyState(policyId, bindings = []) {
 // Git object ids are case-insensitive hex; comparing case-sensitively would make an upper-case
 // binding unmatchable against the lower-case ids GitHub API responses normally carry.
 const folded = (value) => typeof value === 'string' ? value.toLowerCase() : value;
-const sameIdentity = (entry, pr) => IDENTITY_FIELDS.every((field) => folded(entry[field]) === folded(pr[field]));
+// Every identity field must be present on both sides and agree: a field missing from both is not a
+// match, it is an identity that was never audited.
+const sameIdentity = (entry, pr) => IDENTITY_FIELDS.every((field) => entry[field] !== undefined && entry[field] !== null && pr[field] !== undefined && pr[field] !== null && folded(entry[field]) === folded(pr[field]));
 
-export function resolvePolicy(state, { policyId, binding, pr } = {}) {
+// The binding is always looked up in the audited list; a caller cannot supply one. Accepting a binding
+// argument would let a caller pass identity copied from the pull request it is trying to satisfy.
+export function resolvePolicy(state, { policyId, pr } = {}) {
   const policy = policyFor(policyId);
   if (policy.id === state.policy.id) return { historical: false, policy };
   if (!state.historical.includes(policy.id)) throw new Error(`Check policy ${policy.id} is not active.`);
   if (pr?.state !== 'MERGED') throw new Error('A historical check policy requires a merged pull request.');
-  const candidate = binding
-    ?? state.bindings.find((entry) => entry.policy === policy.id && sameIdentity(entry, pr));
+  const candidate = state.bindings.find((entry) => entry.policy === policy.id && sameIdentity(entry, pr));
   if (!candidate) throw new Error('No audited binding supplies the historical binding identity for this pull request.');
-  if (candidate.policy !== policy.id || !sameIdentity(candidate, pr)) {
-    throw new Error('Historical binding identity does not match this merged pull request.');
-  }
   return { historical: true, policy, binding: candidate };
 }
 

@@ -5,12 +5,21 @@ import { join } from 'node:path';
 import { runIssueFollowup } from '../../scripts/agents/paired-issue-followup.mjs';
 import { runIssueCompletion } from '../../scripts/agents/complete-paired-issues.mjs';
 import { completionMarker } from '../../scripts/agents/paired-issue-state.mjs';
-import { ACTIVE_POLICY_ID, POLICIES, createPolicyState } from '../../scripts/ci/required-checks.mjs';
+import { ACTIVE_POLICY_ID, POLICIES } from '../../scripts/ci/required-checks.mjs';
 import { fixture, markerFor, mergePair, privateRepository, publicRepository, requiredChecks } from './support/complete-paired-issues-fixture.mjs';
 
 test('fixture required checks derive from the active shared policy', () => {
-  assert.deepEqual([...requiredChecks], [...createPolicyState(ACTIVE_POLICY_ID).policy.required]);
-  assert.deepEqual([...requiredChecks], [...POLICIES['ci-v1'].required], 'production remains on ci-v1');
+  // An oracle that recomputes createPolicyState(ACTIVE_POLICY_ID) could not detect a wrong activation,
+  // so the expected names are literal and ci-v1 is asserted unequal.
+  const TEN = [
+    'static-lint', 'static-types', 'repository-policy', 'pr-metadata',
+    'build (ubuntu-latest)', 'build (windows-latest)',
+    'contributor-tooling-tests (ubuntu-latest)', 'contributor-tooling-tests (windows-latest)',
+    'runtime-tests (ubuntu-latest)', 'runtime-tests (windows-latest)',
+  ];
+  assert.equal(ACTIVE_POLICY_ID, 'ci-v2', 'Stage A2 makes the ten ci-v2 names current');
+  assert.deepEqual([...requiredChecks], TEN, 'the fixture mirrors the ten current names');
+  assert.notDeepEqual([...requiredChecks], [...POLICIES['ci-v1'].required], 'the four legacy names are not current');
 });
 
 async function savePairRecord(f, key = 'localized-bug') {
@@ -127,7 +136,7 @@ test('open PRs wait and failed exact-head checks are not eligible for apply', as
   assert.deepEqual(failed.writes, []);
 });
 
-test('merged paired PRs with all four successful public exact-head checks are preview eligible only', async t => {
+test('merged paired PRs with all ten successful public exact-head checks are preview eligible only', async t => {
   const f = await fixture(t);
   await savePairRecord(f);
   mergePair(f);
