@@ -34,7 +34,9 @@ const passing = { execute: async () => ({}), grade: async () => ({ status: 'pass
 test('existing runner selects frozen UC-01 dataset and reports unavailable execution without fabricated pass', async () => {
   const registration = registerUC01Evaluation(UC01_PUBLIC_CASES, UC01_GRADING_CASES);
   const caseIds = registration.cases.filter(item => item.levels.includes('contract')).map(item => item.caseId);
-  const report = await runEvaluation(request([registration], [selected(registration, caseIds)]));
+  const options: unknown = request([registration], [selected(registration, caseIds)]);
+  const report = await runEvaluation(options);
+  assert.ok('results' in report);
   assert.equal(report.contractVersion, 'shared-evaluation-v1');
   assert.equal(report.exitCode, 1);
   assert.equal(report.acceptance, 'incomplete');

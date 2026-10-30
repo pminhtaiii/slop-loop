@@ -114,7 +114,8 @@ function driverContext(context: EvaluationCaseContext): EvaluationDriverContext 
 }
 
 export function runEvaluation(options: SharedEvaluationOptions): Promise<SharedEvaluationReport>;
-export function runEvaluation(options: unknown): Promise<EvaluationReport>;
+export function runEvaluation(options: RunEvaluationOptions): Promise<EvaluationReport>;
+export function runEvaluation(options: unknown): Promise<EvaluationReport | SharedEvaluationReport>;
 export async function runEvaluation(options: unknown): Promise<EvaluationReport | SharedEvaluationReport> {
   if (options && typeof options === 'object'
     && Object.getOwnPropertyDescriptor(options, 'contractVersion')?.value === SHARED_EVALUATION_VERSION) {
@@ -204,6 +205,7 @@ export async function main(): Promise<void> {
       ...(cases !== undefined ? { cases } : {}),
     };
     const report = await runEvaluation(request);
+    if (!('summary' in report)) throw new Error('Legacy evaluation report required');
     console.log(`UC-03 Evaluation [${report.mode.toUpperCase()}]: Verdict = ${report.verdict}, ExitCode = ${report.exitCode}`);
     console.log(`Cases: ${report.summary.passedCases}/${report.summary.totalCases} passed, ${report.summary.requiredFailuresOrNotRun} required failures/not-run`);
     process.exitCode = report.exitCode;
