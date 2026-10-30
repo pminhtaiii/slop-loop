@@ -51,7 +51,7 @@ jobs:
       - name: Test contributor helpers
         run: pnpm run test:contributors
 
-  # Staged in Stage A1: appears, is not yet required. ci-v2 becomes current at Stage A2.
+  # Canonical ci-v3 checks; legacy jobs above remain until protection migration.
   static-lint:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -173,7 +173,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:

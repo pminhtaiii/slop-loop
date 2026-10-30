@@ -124,10 +124,10 @@ const REQUIRED_COMMANDS = {
 
 test('every active policy name has a runnable counterpart in its declared workflow job', () => {
   const active = POLICIES[ACTIVE_POLICY_ID].required;
-  // Stage A2 is complete: all ten counterparts must be executable, including the separate metadata
+  // Ubuntu-only activation: all seven counterparts must be executable, including the separate metadata
   // workflow. A missing one is a required check that could never report.
-  assert.equal(ACTIVE_POLICY_ID, 'ci-v2');
-  assert.equal(active.length, 10);
+  assert.equal(ACTIVE_POLICY_ID, 'ci-v3');
+  assert.equal(active.length, 7);
   for (const name of active) {
     const { workflow: path, job } = CHECK_JOBS[name];
     const file = WORKFLOWS.find((candidate) => candidate.path === path);
@@ -165,7 +165,10 @@ test('staged non-required jobs are inventoried by exact name and are not prematu
     for (const id of file.jobs.keys()) {
       const names = Object.entries(CHECK_JOBS).filter(([, job]) => job.workflow === file.path && job.job === id).map(([name]) => name);
       if (!names.length) continue;
-      for (const name of names) if (!active.has(name)) staged.push(name);
+      for (const name of names) {
+        if (name.includes('(windows-latest)') && !file.job(id).block.some((line) => line.includes('os: [ubuntu-latest, windows-latest]'))) continue;
+        if (!active.has(name)) staged.push(name);
+      }
     }
   }
   // After activation nothing known is left unrequired; the transitional old jobs are deliberately
@@ -179,8 +182,8 @@ test('staged non-required jobs are inventoried by exact name and are not prematu
     const names = Object.values(CHECK_JOBS).filter((job) => job.job === id).map((job) => job);
     assert.ok(names.length > 0, `${id} is named by the policy`);
   }
-  for (const name of ['static-lint', 'static-types', 'repository-policy', 'pr-metadata', 'build (ubuntu-latest)', 'build (windows-latest)', 'contributor-tooling-tests (ubuntu-latest)', 'contributor-tooling-tests (windows-latest)', 'runtime-tests (ubuntu-latest)', 'runtime-tests (windows-latest)']) {
-    assert.equal(active.has(name), true, `${name} is required while ci-v2 is current`);
+  for (const name of ['static-lint', 'static-types', 'repository-policy', 'pr-metadata', 'build (ubuntu-latest)', 'contributor-tooling-tests (ubuntu-latest)', 'runtime-tests (ubuntu-latest)']) {
+    assert.equal(active.has(name), true, `${name} is required while ci-v3 is current`);
   }
 });
 
@@ -289,4 +292,14 @@ test('no staged lane introduces a shard count or an aggregate required gate', ()
   }
   // Stage A2 requires this file to exist; before activation the same assertion rejected its presence.
   assert.equal(readdirSync(new URL('../../.github/workflows', import.meta.url)).includes('pr-metadata.yml'), true, 'the metadata workflow exists once it is required');
+});
+
+// A historical job mapping must never accidentally restore a canonical Windows runner.
+test('canonical build and complete test inventories run only on Ubuntu', () => {
+  for (const id of ['build', 'runtime-tests', 'contributor-tooling-tests']) {
+    const job = WORKFLOWS.find((file) => file.job(id)).job(id);
+    assert.match(job.block.join('\n'), /^ {8}os: \[ubuntu-latest\]$/m, id);
+    assert.match(job.block.join('\n'), /^ {4}runs-on: \$\{\{ matrix\.os \}\}$/m, id);
+    assert.doesNotMatch(job.block.join('\n'), /windows-latest/, id);
+  }
 });

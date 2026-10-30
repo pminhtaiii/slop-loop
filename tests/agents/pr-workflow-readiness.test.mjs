@@ -94,7 +94,7 @@ test('watch caps every observation and sleep to the remaining ten-minute deadlin
 
 test('runtime CI must pass on the current head before readiness', () => {
   // Literal names keep this a real oracle rather than a restatement of the production selector.
-  for (const name of ['runtime-tests (ubuntu-latest)', 'runtime-tests (windows-latest)']) {
+  for (const name of ['runtime-tests (ubuntu-latest)']) {
     for (const state of ['missing', 'failure', 'pending', 'stale']) {
       const e = evidence();
       const check = e.checks.find((item) => item.name === name);
@@ -171,7 +171,7 @@ test('retained publication accounting records the active check policy without ch
   await f.run('publish', '--body-file', f.body);
   const record = JSON.parse(await readFile(join(f.root, '.agent-work/pr-workflow/010-tooling-example.json'), 'utf8'));
   assert.equal(record.checkPolicy, ACTIVE_POLICY_ID);
-  assert.equal(ACTIVE_POLICY_ID, 'ci-v2', 'Stage A2 keeps ci-v2 current; a consumer never changes the policy');
+  assert.equal(ACTIVE_POLICY_ID, 'ci-v3', 'Ubuntu-only activation keeps ci-v3 current; a consumer never changes the policy');
   // The retained policy must be readable, not merely stored.
   assert.equal(workflowSummary(record).checkPolicy, ACTIVE_POLICY_ID);
 
@@ -181,37 +181,37 @@ test('retained publication accounting records the active check policy without ch
   await assert.rejects(f.run('status'), /unknown check policy/i);
 });
 
-test('a ci-v2 selection resolves the ten ci-v2 names and demotes ci-v1 to an audited binding', () => {
-  const v2 = resolvePolicy(createPolicyState('ci-v2'), { policyId: 'ci-v2' });
+test('a ci-v3 selection resolves the seven ci-v3 names and demotes ci-v1 to an audited binding', () => {
+  const v2 = resolvePolicy(createPolicyState('ci-v3'), { policyId: 'ci-v3' });
   assert.equal(v2.historical, false);
-  assert.deepEqual([...v2.policy.required], [...POLICIES['ci-v2'].required]);
-  assert.equal(v2.policy.required.length, 10);
+  assert.deepEqual([...v2.policy.required], [...POLICIES['ci-v3'].required]);
+  assert.equal(v2.policy.required.length, 7);
   // Literal names, not a recomputation of createPolicyState: an oracle that recomputes the state it is
   // checking cannot detect a wrong activation.
-  assert.equal(ACTIVE_POLICY_ID, 'ci-v2', 'production readiness selects ci-v2');
+  assert.equal(ACTIVE_POLICY_ID, 'ci-v3', 'production readiness selects ci-v3');
   assert.ok(v2.policy.required.includes('pr-metadata'), 'the activation add is still required');
-  assert.ok(!v2.policy.required.includes('contributor-checks (ubuntu-latest)'), 'no legacy name survives into ci-v2');
+  assert.ok(!v2.policy.required.includes('contributor-checks (ubuntu-latest)'), 'no legacy name survives into ci-v3');
   // After the switch ci-v1 is historical-only: no merged binding means no ci-v1 assessment at all.
-  assert.deepEqual([...createPolicyState(ACTIVE_POLICY_ID).historical], ['ci-v1']);
+  assert.deepEqual([...createPolicyState(ACTIVE_POLICY_ID).historical], ['ci-v1', 'ci-v2']);
   assert.throws(() => resolvePolicy(createPolicyState(ACTIVE_POLICY_ID), { policyId: 'ci-v1', pr: { state: 'OPEN' } }), /merged pull request/);
 });
 
-test('ci-v2 and ci-v1 names never satisfy each other, in the selector or the consumer', () => {
+test('ci-v3 and ci-v1 names never satisfy each other, in the selector or the consumer', () => {
   const head = 'a'.repeat(40);
   const runs = (names) => names.map((name, id) => ({ id: id + 1, name, head_sha: head, status: 'completed', conclusion: 'success', app: { slug: 'github-actions' } }));
-  const oldRuns = runs(POLICIES['ci-v1'].required), newRuns = runs(POLICIES['ci-v2'].required);
+  const oldRuns = runs(POLICIES['ci-v1'].required), newRuns = runs(POLICIES['ci-v3'].required);
   const againstOld = evaluateRequired({ policy: POLICIES['ci-v1'], head, checks: newRuns });
   assert.equal(againstOld.status, 'WAITING');
   assert.deepEqual(againstOld.missing, [...POLICIES['ci-v1'].required]);
-  const againstNew = evaluateRequired({ policy: POLICIES['ci-v2'], head, checks: oldRuns });
+  const againstNew = evaluateRequired({ policy: POLICIES['ci-v3'], head, checks: oldRuns });
   assert.equal(againstNew.status, 'WAITING');
-  assert.deepEqual(againstNew.missing, [...POLICIES['ci-v2'].required]);
+  assert.deepEqual(againstNew.missing, [...POLICIES['ci-v3'].required]);
 
-  // The consumer selects ci-v2, so ci-v1 names alone leave every current requirement missing.
+  // The consumer selects ci-v3, so ci-v1 names alone leave every current requirement missing.
   const e = evidence();
   e.checks = oldRuns.map((check) => ({ ...check, head_sha: e.head }));
   assert.equal(assess(e).status, 'WAITING_CI');
-  // And a ci-v2 head is the one that reads as ready.
+  // And a ci-v3 head is the one that reads as ready.
   e.checks = newRuns.map((check) => ({ ...check, head_sha: e.head }));
   assert.equal(assess(e).status, 'READY_FOR_HUMAN');
 });

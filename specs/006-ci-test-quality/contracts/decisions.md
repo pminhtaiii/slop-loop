@@ -1,5 +1,15 @@
 # Scope and Authorization
 
+## Ubuntu-only replacement — 2026-10-30 (Asia/Saigon)
+
+The user requested CI consolidation and selected Ubuntu-only CI. The bounded
+[Ubuntu-only amendment](ubuntu-only.md) supersedes the earlier requirement to
+retain both OS lanes. Source implementation and ordinary contributor publication
+are released after independent targeted design review. Live protection changes,
+legacy-job removal before verified migration, and merges remain gated.
+
+Targeted design gate: automated planning validation passed; independent standards/architecture and testability reviews found zero P0/P1 issues against the amendment. This releases its source stage only.
+
 ## Confirmed direction — 2026-10-28 (Asia/Saigon)
 
 The user selected Stryker, requested an initial telemetry experiment, and agreed to separate named CI responsibilities while retaining both OS behavioral lanes. Subsequent answers explicitly withdrew pre-PR mutation enforcement, selected direct required jobs with a shared names list, allowed only `.env.example` as an environment example, and chose a manual/report-only mutation CI pilot. The user then requested the planning workflow and specifications for CI changes and mutation-guided test improvements.

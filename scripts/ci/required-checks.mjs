@@ -27,12 +27,19 @@ export const POLICIES = Object.freeze({
     'runtime-tests (ubuntu-latest)',
     'runtime-tests (windows-latest)',
   ]),
+  'ci-v3': immutable('ci-v3', [
+    'static-lint',
+    'static-types',
+    'repository-policy',
+    'pr-metadata',
+    'build (ubuntu-latest)',
+    'contributor-tooling-tests (ubuntu-latest)',
+    'runtime-tests (ubuntu-latest)',
+  ]),
 });
 
-// Stage A2: every ci-v2 counterpart is now executable, so this is the single reviewed source switch
-// that makes it the current policy. `ci-v1` is historical-only from here and is selectable solely
-// through an exact audited binding in `config/legacy-ci-heads.json`.
-export const ACTIVE_POLICY_ID = 'ci-v2';
+// Ubuntu-only replacement; ci-v1 and ci-v2 remain immutable historical policies.
+export const ACTIVE_POLICY_ID = 'ci-v3';
 
 const POLICY_ORDER = Object.freeze(Object.keys(POLICIES));
 // Only a policy that has already been required can be bound to an immutable merged head, so the

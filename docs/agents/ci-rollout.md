@@ -1,5 +1,27 @@
 # Contributor CI Rollout Checklist
 
+## Ubuntu-only replacement — 2026-10-30
+
+The user selected Ubuntu-only CI; see the [bounded amendment](../../specs/006-ci-test-quality/contracts/ubuntu-only.md).
+The current source policy is `ci-v3` with seven direct checks: `static-lint`,
+`static-types`, `repository-policy`, `pr-metadata`, `build (ubuntu-latest)`,
+`contributor-tooling-tests (ubuntu-latest)` and `runtime-tests (ubuntu-latest)`.
+Canonical build/test matrices now contain Ubuntu only. Complete inventories,
+validators and revision-bound artifacts remain. Both older policy lists remain
+immutable; historical use requires an exact audited merged identity.
+
+Live development protection was re-read on 2026-10-30 and still requires the two
+legacy contributor names, app ID 15368, strict updates and admin enforcement.
+Thus both legacy matrix jobs remain unchanged until an explicitly authorized
+operator replaces those requirements with all seven ci-v3 names, reads back the
+settings and verifies a fresh candidate. Only then may a separate cleanup remove
+both legacy matrix jobs. **Windows still runs in this transition; Ubuntu-only
+rollout is not complete.** No live setting change or merge is authorized here.
+
+The stages and observations below describe the earlier ci-v2 rollout and remain
+historical evidence; the amendment governs the new replacement.
+
+
 This document owns the staged rollout record for the split contributor CI described in
 [`specs/006-ci-test-quality`](../../specs/006-ci-test-quality/spec.md). It records an inventory and
 prepared steps. It does not change live settings, and a recorded step is not evidence that its

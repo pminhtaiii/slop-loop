@@ -44,12 +44,12 @@ jobs:
       - name: Validate runtime from a clean build
         run: pnpm run validate:runtime
 
-  # Staged in Stage A1: appears, is not yet required. Emits the artifact the runtime lane consumes.
+  # Canonical Ubuntu build emits the artifact the runtime lane consumes.
   build:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
@@ -98,13 +98,13 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  # Staged in Stage A1: downloads only its own OS artifact and refuses any other identity.
+  # Canonical Ubuntu runtime lane refuses artifacts with a different run identity.
   runtime-tests:
     needs: build
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
