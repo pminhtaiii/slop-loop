@@ -4,6 +4,10 @@
 
 ## Operations and ownership
 
+The [2026-10-30 delegated amendment](decisions.md#delegated-t011t015-authority--2026-10-30) adopts `uc01-composition-v1` with consumer-v1 signatures unchanged. `composeIssueAssessor` selects separately registered policy/accounting/model/repository/continuation/telemetry/excerpt components. Admission requires real provenance, consumer-v1 compatibility, pinned revision and capability evidence, and rejects explicitly mock or production-ineligible objects even when a registry label asserts real. Bound methods and a frozen production profile retain the selected dependency identities; every invocation rechecks task/run/workspace/repository/snapshot/config/policy/accounting, catalog digest and finite limits. Production integer cost units use `ceil((inputTokens * inputRate + outputTokens * outputRate) / denominator)` with explicit positive safe-integer rates; arithmetic overflow, inconsistent pricing or missing usage retains the full ceiling as uncertain. No implicit production numeric defaults exist.
+
+`src/uc01/shared-adapters.ts` projects delivered UC-04 accounting envelopes and canonical Foundation source evidence at explicit validated boundaries. The accounting projection is not production eligible: the delivered adapter reserves only task-scoped in-memory ledgers and does not durably record reservation-before-dispatch or bind task/run restart receipts. SourceEvidence alone cannot establish line spans/file digest; a separately supplied verified locator is mandatory. UC-05 canonical provider roles do not admit triage; UC-01 must not invent a bug TaskState or reinterpret clarification as action approval.
+
 | Consumer operation | Proposed request / response | Owner / requirements |
 |---|---|---|
 | assessIssue | Invocation + separate TrustedContext -> Outcome ([schema](schema.md)) | Thai; validates, composes narrow shared capabilities and returns results; no transport selected |

@@ -2,6 +2,9 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
+import { runRegisteredEvaluation, SHARED_EVALUATION_VERSION, type SharedEvaluationOptions, type SharedEvaluationReport } from '../shared.ts';
+export { registerEvaluation, SHARED_EVALUATION_VERSION } from '../shared.ts';
+export type { SharedEvaluationOptions, SharedEvaluationReport, RegisteredEvaluation, SharedSelection, SharedCaseResult } from '../shared.ts';
 import defaultManifest from './manifest.json' with { type: 'json' };
 import {
   computeSha256,
@@ -110,7 +113,14 @@ function driverContext(context: EvaluationCaseContext): EvaluationDriverContext 
   return { ...context, suite: 'uc03' };
 }
 
-export async function runEvaluation(options: unknown): Promise<EvaluationReport> {
+export function runEvaluation(options: SharedEvaluationOptions): Promise<SharedEvaluationReport>;
+export function runEvaluation(options: RunEvaluationOptions): Promise<EvaluationReport>;
+export function runEvaluation(options: unknown): Promise<EvaluationReport | SharedEvaluationReport>;
+export async function runEvaluation(options: unknown): Promise<EvaluationReport | SharedEvaluationReport> {
+  if (options && typeof options === 'object'
+    && Object.getOwnPropertyDescriptor(options, 'contractVersion')?.value === SHARED_EVALUATION_VERSION) {
+    return runRegisteredEvaluation(options);
+  }
   const request = validateEvaluationOptions(options);
   const parsedManifest: unknown = (() => {
     try {
@@ -195,6 +205,7 @@ export async function main(): Promise<void> {
       ...(cases !== undefined ? { cases } : {}),
     };
     const report = await runEvaluation(request);
+    if (!('summary' in report)) throw new Error('Legacy evaluation report required');
     console.log(`UC-03 Evaluation [${report.mode.toUpperCase()}]: Verdict = ${report.verdict}, ExitCode = ${report.exitCode}`);
     console.log(`Cases: ${report.summary.passedCases}/${report.summary.totalCases} passed, ${report.summary.requiredFailuresOrNotRun} required failures/not-run`);
     process.exitCode = report.exitCode;

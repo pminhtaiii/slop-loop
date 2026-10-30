@@ -1,0 +1,32 @@
+import type { ExecutionLevel, Json } from '../src/uc01/contracts.ts';
+
+export const SHARED_EVALUATION_VERSION = 'shared-evaluation-v1';
+export type SharedCase = Readonly<{ caseId: string; caseDigest: string; levels: readonly ExecutionLevel[];
+  gate: 'hard' | 'scored'; classificationScored: boolean; attack: boolean; digestProfile: 'canonical-json-v1' | 'uc01-evaluation-sha256-v1'; payload: Json }>;
+export type RegisteredEvaluation = Readonly<{ contractVersion: typeof SHARED_EVALUATION_VERSION; ucId: string;
+  datasetId: string; datasetVersion: string; datasetDigest: string; adapterVersion: string; graderVersion: string;
+  provenance: 'mock' | 'real'; cases: readonly SharedCase[] }>;
+export type SharedExecutionContext = Readonly<{ runId: string; attemptId: string; ucId: string; caseId: string;
+  level: ExecutionLevel; provenance: 'mock'; isolationKey: string }>;
+export type SharedGrade = Readonly<{ status: 'pass' | 'fail'; classification: 'correct' | 'incorrect' | 'not-observed' | 'not-applicable';
+  safety: boolean; oracleDigest: string; components: Readonly<Record<string, 'pass' | 'fail' | 'not-observed' | 'not-applicable'>> }>;
+export type EvaluationCallbacks = Readonly<{
+  execute: (payload: Json, context: SharedExecutionContext) => Promise<unknown>;
+  grade: (caseId: string, observation: unknown) => Promise<unknown>;
+}>;
+export type SharedSelection = Readonly<{ ucId: string; datasetId: string; datasetVersion: string; level: ExecutionLevel;
+  caseIds: readonly string[]; requiredCases: number; requiredAttacks: number; configDigest: string }>;
+export type SharedEvaluationOptions = Readonly<{ contractVersion: typeof SHARED_EVALUATION_VERSION;
+  scope: 'uc' | 'project'; mode: 'mock' | 'real'; runId: string; attemptId: string; codeRevision: string; perCaseTimeoutMs: number;
+  registrations: readonly RegisteredEvaluation[]; selections: readonly SharedSelection[] }>;
+export type SharedCaseResult = Readonly<{ ucId: string; datasetId: string; datasetVersion: string; datasetDigest: string | null;
+  caseId: string; caseDigest: string | null; level: ExecutionLevel; runId: string; attemptId: string;
+  provenance: 'mock' | 'real'; status: 'pass' | 'fail' | 'error' | 'not-run'; reasonCode: string;
+  classification: SharedGrade['classification']; safety: boolean | null; oracleDigest: string | null;
+  durationMs: number | null; isolationKey: string; adapterVersion: string | null; graderVersion: string | null;
+  components: SharedGrade['components']; usage: null; usageState: 'not-applicable'; codeRevision: string; configDigest: string }>;
+export type SharedEvaluationReport = Readonly<{ contractVersion: typeof SHARED_EVALUATION_VERSION; scope: 'uc' | 'project';
+  mode: 'mock' | 'real'; results: readonly SharedCaseResult[]; acceptance: 'pass' | 'fail' | 'incomplete'; exitCode: 0 | 1;
+  groups: readonly Readonly<{ ucId: string; level: ExecutionLevel; hardGate: 'pass' | 'fail' | 'incomplete';
+    quality: Readonly<{ correct: number; total: number; accuracy: number | null; verdict: 'pass' | 'fail' | 'not-applicable' }>;
+    completeness: 'complete' | 'incomplete'; acceptance: 'pass' | 'fail' | 'incomplete' }>[] }>;
