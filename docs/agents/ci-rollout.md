@@ -20,22 +20,36 @@ on `feat/tooling-claude-skills-entrypoint`. Local env files were not read;
 | --- | --- | --- | --- |
 | `contributor-checks.yml` | `contributor-checks` (matrix ubuntu/windows) | `contributor-checks (ubuntu-latest)`, `contributor-checks (windows-latest)` | transitional old job |
 | `runtime-checks.yml` | `runtime-checks` (matrix ubuntu/windows) | `runtime-checks (ubuntu-latest)`, `runtime-checks (windows-latest)` | transitional old job |
-| `contributor-checks.yml` | `static-lint` | `static-lint` | staged, not required |
-| `contributor-checks.yml` | `static-types` | `static-types` | staged, not required |
-| `contributor-checks.yml` | `repository-policy` | `repository-policy` | staged, not required |
-| `contributor-checks.yml` | `contributor-tooling-tests` (matrix ubuntu/windows) | `contributor-tooling-tests (ubuntu-latest)`, `contributor-tooling-tests (windows-latest)` | staged, not required |
-| `runtime-checks.yml` | `build` (matrix ubuntu/windows) | `build (ubuntu-latest)`, `build (windows-latest)` | staged, not required |
-| `runtime-checks.yml` | `runtime-tests` (matrix ubuntu/windows) | `runtime-tests (ubuntu-latest)`, `runtime-tests (windows-latest)` | staged, not required |
+| `contributor-checks.yml` | `static-lint` | `static-lint` | required under `ci-v2` |
+| `contributor-checks.yml` | `static-types` | `static-types` | required under `ci-v2` |
+| `contributor-checks.yml` | `repository-policy` | `repository-policy` | required under `ci-v2` |
+| `pr-metadata.yml` | `pr-metadata` | `pr-metadata` | required under `ci-v2` |
+| `contributor-checks.yml` | `contributor-tooling-tests` (matrix ubuntu/windows) | `contributor-tooling-tests (ubuntu-latest)`, `contributor-tooling-tests (windows-latest)` | required under `ci-v2` |
+| `runtime-checks.yml` | `build` (matrix ubuntu/windows) | `build (ubuntu-latest)`, `build (windows-latest)` | required under `ci-v2` |
+| `runtime-checks.yml` | `runtime-tests` (matrix ubuntu/windows) | `runtime-tests (ubuntu-latest)`, `runtime-tests (windows-latest)` | required under `ci-v2` |
 
-Both workflows trigger on `push` to `main`/`development`, every `pull_request`, and
+Required state is a **source** statement: `scripts/ci/required-checks.mjs` names these ten under the
+active `ci-v2` policy. Whether a given remote branch protection rule enforces them is a separate,
+unobserved question — see Stage B.
+
+Both code workflows trigger on `push` to `main`/`development`, every `pull_request`, and
 `workflow_dispatch`, with `fail-fast: false`, finite `timeout-minutes`, `contents: read`, and
 `persist-credentials: false`. Each duplicate `pnpm run lint`; the contributor job also runs context,
-tracked-file and contributor-test steps, and the runtime job runs the full clean runtime gate.
-Staged candidate jobs add `ref: ${{ env.HEAD_SHA }}` with a `git rev-parse HEAD` equality check and
-echo the distinct base and merge SHAs to the step summary; the transitional jobs keep their original
-default checkout. `build` compiles with `--clean-build-only` and uploads
-`artifact-identity.json` plus `tests/runtime` and `dist/tests/runtime`; `runtime-tests` downloads only
-its own OS artifact and runs `scripts/ci/artifact-identity.mjs verify` before the emitted inventory.
+tracked-file, environment-example, secret-scan and contributor-test steps, and the runtime job runs
+the full clean runtime gate. Staged candidate jobs add `ref: ${{ env.HEAD_SHA }}` with a
+`git rev-parse HEAD` equality check and echo the distinct base and merge SHAs to the step summary; the
+transitional jobs keep their original default checkout. `build` compiles with `--clean-build-only` and
+uploads `artifact-identity.json` plus `tests/runtime`, `dist/tests/runtime`, `dist/src` and `dist/eval`;
+`runtime-tests` downloads only its own OS artifact and runs `scripts/ci/artifact-identity.mjs verify`
+before the emitted inventory.
+
+`pr-metadata.yml` observes only `pull_request` events (`opened`, `reopened`, `synchronize`, `edited`,
+`ready_for_review`, `converted_to_draft`) in its own concurrency group, so a title or body edit never
+cancels a behavioral lane. It validates the event payload as data and checks out both base and candidate
+revisions. The base revision's validator and audited binding list are preferred when present, so edits
+to the candidate validator do not grade themselves. The introducing PR is a bootstrap exception: when
+the base has no validator, the lane executes the candidate copy. Drafts are validated too; draft state
+stays a human-readiness question, not a skip.
 
 ### Remote protection observation (read-only, 2026-10-28)
 
@@ -72,7 +86,7 @@ paired tickets remain open. At this revision no open public issue body reference
 and no retained completion record binds an open pair, so the audited binding list starts empty.
 Populate it when a specific merged resolving head is claimed, using the method above.
 
-## Stage A1 — preparation (this batch)
+## Stage A1 — preparation (superseded by A2)
 
 - Shared policy module, historical binding config and focused regressions exist.
 - `ci-v1` stays the sole active current policy; all four old names remain required and unchanged.
@@ -84,18 +98,20 @@ Populate it when a specific merged resolving head is claimed, using the method a
   runtime suites. Count those separately from any new lane; exactly-once applies only inside a new
   canonical lane.
 
-## Stage A2 — atomic activation
+## Stage A2 — atomic activation (source switch applied)
 
-Prerequisite: every one of the ten ci-v2 counterparts and both validators exist
-(`static-lint`, `static-types`, `repository-policy`, `pr-metadata`, and the ubuntu/windows pairs of
-`build`, `contributor-tooling-tests`, `runtime-tests`).
+Prerequisite: every one of the ten ci-v2 counterparts and both validators exist. All ten do.
 
-1. Switch `ACTIVE_POLICY_ID` in `scripts/ci/required-checks.mjs` to `ci-v2` in the same reviewed change
-   that adds the last missing counterpart.
-2. Cross-file tests must then require every ci-v2 counterpart and reject an absent `pr-metadata`.
-3. Keep all four old jobs running. There is no old-or-new acceptance: current candidates must satisfy
-   ci-v2 locally and the old remote requirements independently.
-4. Record both old and new executions and their intentional duplicate suite cost here.
+1. `ACTIVE_POLICY_ID` in `scripts/ci/required-checks.mjs` is now `ci-v2`, in the same reviewed change
+   that adds the last missing counterpart (`pr-metadata`).
+2. Cross-file tests now require every ci-v2 counterpart and reject an absent `pr-metadata`.
+3. All four old jobs keep running. There is no old-or-new acceptance: current candidates must satisfy
+   ci-v2 and any still-configured remote requirement independently.
+4. Duplicate suite cost during this overlap is intentional and counted separately from a canonical
+   lane's exactly-once inventory.
+
+This stage changes source only. It does not change any remote protection rule, so **remote enforcement
+of the ten names is not claimed** until Stage B is observed.
 
 ## Stage B — operator protection migration (external gate)
 
@@ -111,12 +127,6 @@ Requires explicit authorization for that specific remote change. Not authorized 
 Only after Stage B read-back proves none of the four old names is remotely required: remove the
 transitional jobs, update `tests/ci/workflow-contracts.test.mjs`, and keep the historical `ci-v1`
 binding selection so immutable merged heads stay assessable.
-
-## Manual mutation workflow availability (separate gate)
-
-`mutation-report.yml` is not required and runs no job on PR/push events. Dispatch is available only
-after the file exists on the repository default branch through ordinary approved promotion. A file on
-a feature branch is not availability evidence.
 
 ## Evidence log
 
@@ -134,5 +144,11 @@ a feature branch is not availability evidence.
 | 2026-10-29 | A1 | re-cut onto fresh `feat/tooling-contributor-ci-split` from `origin/development`: `tests/ci/workflow-contracts.test.mjs` failed because its line scanner split on `\n` while `core.autocrlf` writes the workflow files as CRLF; now `/\r?\n/` like the other scanners. `tests/ci/*.test.mjs` 76 pass +1 env skip | local gate |
 | 2026-10-29 | A1 | second CI run of PR #122 failed only the staged runtime-tests (windows-latest) job: ERR_MODULE_NOT_FOUND for `dist/eval/uc03/runner.js`. The artifact shipped `dist/src` but not `dist/eval`, and the manifest listed both by hand, so nothing checked for a new emitted root. Both now include `dist/eval`, and `workflow-contracts.test.mjs` derives the required trees from the build output instead of a fixed list (verified RED without the workflow line). | CI run 40819019728 |
 | 2026-10-29 | A1 | first CI run of PR #122 failed `Test contributor helpers` on all four contributor jobs (ubuntu and windows). Cause: T006 made the JUnit reporter unconditional but left it the *only* reporter when `WORKFLOW_GATE_PROGRESS` was unset, so the lane wrote no human-readable output to stdout. The `contributor runner executes through a symlink` regression asserts on that text and silently skips on Windows (`File symlinks unavailable`), so the local pass could not see it. `contributorTestArgs` now pairs `spec`→stdout unconditionally with `junit`→file, matching `run-runtime-tests.mjs`; regression asserts the `spec` destination. `tests/ci/*.test.mjs` 76 pass +1 env skip | CI run 40816365325; local gate |
+| 2026-10-29 | A2 | `pr-metadata.yml` added (pull_request events only, own concurrency group, event payload as data, base-revision checkout only — later corrected below) and `repository-policy` extended with the environment-example and secret-scan steps; `ACTIVE_POLICY_ID` switched to `ci-v2` in the same change. Cross-file tests now require all ten names and reject an absent metadata workflow. **No remote protection rule was read or changed.** | local gate: `node --test tests/ci/*.test.mjs` 116 pass +1 env skip; `node --test tests/ci/required-checks.test.mjs` 12/12 |
+| 2026-10-29 | A2 | independent review of the integrated batch found the following, all repaired with regressions: `workflow-contracts.test.mjs` accepted any non-empty `run:`, so a deleted or `echo skipped` validator still passed — a `REQUIRED_COMMANDS` table now names each required job's exact command(s); `pr-metadata.yml` checked out the default candidate merge commit, so a PR could self-certify by editing `check-pr-metadata.mjs` — the checkout is now `github.event.pull_request.base.sha`, and the `ci-checks.md`/rollout prose that claimed "no candidate checkout" was corrected (a base tree *is* checked out); `check-env-examples.mjs` echoed candidate-controlled paths into diagnostics and allocated a blob's real size — it now substitutes `<unprintable path>` and caps an over-limit blob at `MAX_BYTES + 1`; `pr-conventions.mjs` `validSummary` refused only CR/LF — it now refuses every C0 control character and DEL. Earlier same-batch repairs also confirmed present: deny-by-default `.env` classification in `check-tracked-files.mjs`, binding-free `resolvePolicy` with both-sided identity fields, and the current-convention default in `check-pr-metadata.mjs`. **No remote protection rule was read or changed, and no CI run backs this row.** | local gate: `node --test tests/ci/*.test.mjs` 106 pass +1 env skip |
+| 2026-10-29 | A2 | the first real run of PR #123 exposed a deadlock, not a flake: `pr-metadata` pinned its checkout to the base SHA, but that base tree has no `scripts/ci/check-pr-metadata.mjs`, so `Cannot find module` failed every run while ci-v2 requires the job. The fix checks out both base and head and prefers the base copy on presence; only the introducing PR is graded by its own copy. `tests/ci/workflow-contracts.test.mjs` now asserts both checkouts and the presence selection. **Local-gate evidence only: no observed remote CI success, and Stage B is not claimed.** | local gate: `node --test tests/ci/workflow-contracts.test.mjs` 10/10; `node --test tests/ci/*.test.mjs` |
 
-Not yet observed, and not claimed by any row above: real CI execution of the staged jobs, any branch-protection change, ci-v2 activation, or removal of the transitional jobs.
+| 2026-10-30 | A2 | PR #123 at `3dffcbf` ran all ten ci-v2 checks: Windows contributor tests failed on a fixture's LF/CRLF assumption; the other nine required checks passed. Pinning the fixture repository's `core.autocrlf=false` preserves its exact-byte assertions. Independent review also identified missing historical-policy selection in merged-ticket completion and stale metadata-bootstrap prose. Completion now selects ci-v1 only from an exact audited binding matched to live public repository/PR/head identities and the source-head tree; unbound heads retain ci-v2. | CI run 40919239719; local `node --test tests/ci/scan-secrets.test.mjs`: 18 pass, 1 host symlink skip; `node --test tests/agents/complete-paired-issues.test.mjs tests/agents/paired-issue-followup.test.mjs`: 38/38; the bound historical preview was RED before integration and GREEN after |
+
+Not yet established by this log: a complete successful exact-head CI result for the repaired revision,
+any branch-protection change, remote enforcement of the ci-v2 names, or removal of transitional jobs.

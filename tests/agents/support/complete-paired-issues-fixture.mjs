@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ACTIVE_POLICY_ID, createPolicyState } from '../../../scripts/ci/required-checks.mjs';
@@ -30,6 +30,8 @@ export async function fixture(t, options = {}) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'complete-paired-issues-')));
   t.after(() => rm(root, { recursive: true, force: true }));
   git(root, 'init', '--initial-branch=main');
+  await mkdir(join(root, 'config'));
+  await writeFile(join(root, 'config', 'legacy-ci-heads.json'), JSON.stringify({ schemaVersion: 1, entries: options.historicalBindings ?? [] }));
   await writeFile(join(root, 'publication-targets.json'), JSON.stringify({
     schemaVersion: 1,
     submission: { remote: 'submission', base: 'development' },
@@ -138,6 +140,17 @@ export async function fixture(t, options = {}) {
       throw new Error(`unexpected paginated endpoint: ${endpoint}`);
     }
     if (args[0] === 'api' && args[1]?.startsWith('repos/')) {
+      if (args[1] === `repos/${publicRepository}/pulls/${prs.primary.number}`) {
+        return JSON.stringify({
+          number: prs.primary.number,
+          html_url: prs.primary.url,
+          state: prs.primary.state === 'OPEN' ? 'open' : 'closed',
+          merged_at: prs.primary.mergedAt,
+          base: { ref: prs.primary.baseRefName, repo: { id: 101, full_name: publicRepository } },
+          head: { ref: prs.primary.headRefName, sha: prs.primary.headRefOid, repo: { id: 101, full_name: publicRepository } },
+          ...options.publicPull,
+        });
+      }
       const commit = args[1].match(/^repos\/([^/]+\/[^/]+)\/git\/commits\/([^/]+)$/);
       if (commit) return JSON.stringify({ sha: commit[2], tree: { sha: commit[1] === privateRepository && options.treeMismatch ? 'd'.repeat(40) : tree } });
     }

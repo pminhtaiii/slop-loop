@@ -8,17 +8,23 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runEligibility } from '../../scripts/agents/paired-merge-eligibility.mjs';
-import { POLICIES, createPolicyState, evaluateRequired, resolvePolicy } from '../../scripts/ci/required-checks.mjs';
+import { ACTIVE_POLICY_ID, POLICIES, createPolicyState, evaluateRequired, resolvePolicy } from '../../scripts/ci/required-checks.mjs';
 
 const source = new URL('../../scripts/agents/paired-merge-eligibility.mjs', import.meta.url);
 const branch = 'feat/tooling-preview';
 // Literal oracle on purpose: deriving these from createPolicyState(ACTIVE_POLICY_ID) would repeat
 // the production expression and stop this fixture from detecting a wrongly-activated policy.
 const required = [
-  'contributor-checks (ubuntu-latest)',
-  'contributor-checks (windows-latest)',
-  'runtime-checks (ubuntu-latest)',
-  'runtime-checks (windows-latest)',
+  'static-lint',
+  'static-types',
+  'repository-policy',
+  'pr-metadata',
+  'build (ubuntu-latest)',
+  'build (windows-latest)',
+  'contributor-tooling-tests (ubuntu-latest)',
+  'contributor-tooling-tests (windows-latest)',
+  'runtime-tests (ubuntu-latest)',
+  'runtime-tests (windows-latest)',
 ];
 
 async function fixture(t, { path = 'docs/user/overview.md', content = 'Readable prose.\n', before, operation } = {}) {
@@ -159,7 +165,7 @@ test('required checks are selected across complete pages and newer failures supe
   const checks = f.state.pages[0].check_runs;
   f.state.pages = [{ total_count: required.length, check_runs: checks.slice(0, -1) }, { total_count: required.length, check_runs: checks.slice(-1) }];
   assert.equal((await f.run()).eligible, true);
-  f.state.pages = [{ total_count: required.length + 1, check_runs: checks }, { total_count: required.length + 1, check_runs: [{ ...checks[0], id: 9, conclusion: 'failure' }] }];
+  f.state.pages = [{ total_count: required.length + 1, check_runs: checks }, { total_count: required.length + 1, check_runs: [{ ...checks[0], id: 999, conclusion: 'failure' }] }];
   assert.equal((await f.run()).reasons[0].code, 'FAILED_CHECK');
   f.state.pages = [{ total_count: required.length + 1, check_runs: checks }];
   assert.equal((await f.run()).reasons[0].code, 'CHECK_PAGINATION');
@@ -198,15 +204,43 @@ test('a ci-v2 selection resolves only the ci-v2 required names through the pure 
   const v2 = resolvePolicy(createPolicyState('ci-v2'), { policyId: 'ci-v2' });
   assert.equal(v2.historical, false);
   assert.deepEqual([...v2.policy.required], [...POLICIES['ci-v2'].required]);
-  assert.deepEqual(required, [...POLICIES['ci-v1'].required], 'production eligibility stays on ci-v1');
-  assert.notDeepEqual(required, [...v2.policy.required]);
+  assert.deepEqual(required, [...POLICIES['ci-v2'].required], 'production eligibility stays on ci-v2');
+  // After the switch ci-v1 is historical-only and unreachable without an audited merged binding.
+  assert.deepEqual([...createPolicyState(ACTIVE_POLICY_ID).historical], ['ci-v1']);
+  assert.throws(() => resolvePolicy(createPolicyState(ACTIVE_POLICY_ID), { policyId: 'ci-v1', pr: { state: 'OPEN' } }), /merged pull request/);
 
   const head = 'a'.repeat(40);
-  const oldRuns = required.map((name, id) => ({ id: id + 1, name, head_sha: head, status: 'completed', conclusion: 'success', app: { slug: 'github-actions' } }));
+  const oldRuns = POLICIES['ci-v1'].required.map((name, id) => ({ id: id + 1, name, head_sha: head, status: 'completed', conclusion: 'success', app: { slug: 'github-actions' } }));
   const newRuns = POLICIES['ci-v2'].required.map((name, id) => ({ id: id + 1, name, head_sha: head, status: 'completed', conclusion: 'success', app: { slug: 'github-actions' } }));
   assert.equal(evaluateRequired({ policy: POLICIES['ci-v2'], head, checks: oldRuns }).status, 'WAITING');
   assert.equal(evaluateRequired({ policy: POLICIES['ci-v1'], head, checks: newRuns }).status, 'WAITING');
   assert.equal(evaluateRequired({ policy: POLICIES['ci-v2'], head, checks: newRuns }).status, 'READY');
+});
+
+test('live metadata edited after a passing same-head check is refused, and read failures stay non-ready', async t => {
+  const f = await fixture(t);
+  // Bind green checks to whichever policy is current, so this test observes metadata rather than activation.
+  const active = createPolicyState(ACTIVE_POLICY_ID).policy.required;
+  f.state.pages = [{ total_count: active.length, check_runs: active.map((name, id) => ({ id: id + 1, name, head_sha: f.head, status: 'completed', conclusion: 'success', app: { slug: 'github-actions' } })) }];
+  const path = join(f.root, '.agent-work/pr-workflow/tooling-preview.json');
+  const workflow = JSON.parse(await readFile(path, 'utf8'));
+  await writeFile(path, JSON.stringify({ ...workflow, conventionVersion: 2 }));
+  const body = '## Summary\n\nDocument the overview.\n\n## Evidence\n\nBefore: none; after: preview.\n\n## Merge Danger\n\n**Door:** revert the commit.\n\n**Blast Radius:** documentation only.';
+  f.state.primary.body = body;
+  f.state.submission.body = `${body}\n\nPublic review PR: ${workflow.url}\n\n${f.pair.marker}`;
+  assert.notEqual((await f.run()).reasons[0]?.code, 'PR_METADATA', 'the canonical candidate is unaffected');
+
+  f.state.primary.body = 'plain text';
+  const edited = await f.run();
+  assert.equal(edited.reasons[0].code, 'PR_METADATA', 'a body-only edit cannot ride green same-head checks');
+  assert.equal(edited.eligible, false);
+  f.state.primary.body = body;
+  assert.notEqual((await f.run()).reasons[0]?.code, 'PR_METADATA', 'restoring the canonical body restores eligibility');
+
+  f.state.unavailable = endpoint => endpoint.endsWith('/pulls/1');
+  const readFailure = await f.run();
+  assert.equal(readFailure.status, 'WAITING_EVIDENCE', 'an unreadable live PR read is never eligible');
+  assert.equal(readFailure.eligible, false);
 });
 
 test('both PRs must preserve their exact identities, states and source tree', async t => {

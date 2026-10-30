@@ -34,7 +34,15 @@ For a PR event define H=`pull_request.head.sha`, B=`pull_request.base.sha`, and 
 
 For a push use H=`github.sha`, with the verified before SHA as range provenance. For manual dispatch H is the resolved selected ref commit and must equal the verified checkout SHA. The emitted artifact identity is `(repositoryId, runId, runAttempt, H, OS)` plus file hashes; B/M remain distinct optional event provenance. A failed-jobs-only rerun without a matching current-attempt build artifact fails closed and requires rerunning the dependent build/test set, rather than silently using the preceding attempt. Fixtures must use distinct H/B/M and attempts, and reject a checkout/artifact of M when H was selected. Strict up-to-date branch protection and live merge-readiness checks remain necessary: these jobs establish H behavior, not an unobserved future merge result.
 
-The metadata workflow uses `pull_request` events opened/reopened/synchronize/edited/ready_for_review/converted_to_draft, read-only permissions and non-persisted checkout credentials. Event JSON is data, never interpolated shell code. It checks drafts too; draft status remains a separate human-readiness state, not a reason to skip validation. Its concurrency group is separate so metadata edits do not cancel behavioral jobs. Do not use privileged target-event execution of candidate code.
+The metadata workflow uses `pull_request` events opened/reopened/synchronize/edited/ready_for_review/converted_to_draft, read-only permissions and non-persisted checkout credentials. Event JSON is data, never interpolated shell code. It checks drafts too; draft status remains a separate human-readiness state, not a reason to skip validation. Its concurrency group is separate so metadata edits do not cancel behavioral jobs. Do not use privileged target-event execution of candidate code. The workflow still checks out a tree,
+because the validator and its audited historical-binding list live there, but the checkout is pinned to
+`github.event.pull_request.base.sha`: the grader must not be the candidate's own edited copy. Both
+revisions are checked out and the base copy is preferred on presence, because the introducing PR's base
+tree has no validator at all and would otherwise deadlock against the policy that requires this job.
+Residual risk: a PR that edits the validator is still graded by the base copy, and a PR that deletes it
+is also graded by the base copy, so deletion cannot pass unnoticed; the only re-entry into the bootstrap
+fallback is delete-then-re-add, and `REQUIRED_COMMANDS` in `tests/ci/workflow-contracts.test.mjs`
+already fails any PR whose `pr-metadata` job stops running the validator.
 
 Readiness fetches current title, body, base, head ref/SHA and applicable convention identity and validates them live, including while same-head edited-event checks queue. Malformed, missing or failed metadata reads remain non-ready. Reuse the established title/description rules rather than introducing a new naming scheme. Existing bounded pagination and latest-rerun rules remain enforced.
 

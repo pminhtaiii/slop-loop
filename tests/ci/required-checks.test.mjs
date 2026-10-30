@@ -71,28 +71,32 @@ test('each policy owns one immutable ordered name list and no aggregate or mutat
   assert.throws(() => { POLICIES['ci-v2'].required.push('extra'); });
 });
 
-test('stage A1 keeps ci-v1 as the only active current policy', () => {
-  assert.equal(ACTIVE_POLICY_ID, 'ci-v1', 'Stage A2 flips this constant in one reviewed change');
+test('stage A2 makes ci-v2 the only active current policy and ci-v1 historical', () => {
+  assert.equal(ACTIVE_POLICY_ID, 'ci-v2', 'the activation switch is this single reviewed constant');
   const state = createPolicyState(ACTIVE_POLICY_ID);
-  assert.deepEqual([...state.policy.required], OLD);
-  assert.equal(state.historical.length, 0);
+  assert.deepEqual([...state.policy.required], NEW);
+  assert.deepEqual([...state.historical], ['ci-v1'], 'ci-v1 stays assessable only through a binding');
   assert.throws(() => createPolicyState('ci-v9'), /Unknown check policy/);
   assert.throws(() => createPolicyState(undefined), /Unknown check policy/);
+  // The mutation report is never required; all ten required names and the report are distinct jobs.
+  assert.equal(NEW.includes(MUTATION_CHECK_NAME), false);
 });
 
 test('the active policy is a constant, not a value read from the environment or PR input', () => {
-  assert.equal(ACTIVE_POLICY_ID, 'ci-v1');
+  assert.equal(ACTIVE_POLICY_ID, 'ci-v2');
   for (const name of ['CHECK_POLICY', 'CI_POLICY', 'ACTIVE_POLICY_ID', 'GITHUB_BASE_REF', 'GITHUB_HEAD_REF']) {
-    process.env[name] = 'ci-v2';
+    process.env[name] = 'ci-v1';
     try {
-      assert.deepEqual([...createPolicyState(ACTIVE_POLICY_ID).policy.required], OLD, `${name} must not select a policy`);
+      assert.deepEqual([...createPolicyState(ACTIVE_POLICY_ID).policy.required], NEW, `${name} must not select a policy`);
       assert.ok(ACTIVE_POLICY_ID in POLICIES);
     } finally {
       delete process.env[name];
     }
   }
-  // resolvePolicy takes the policy as an argument, so a PR object cannot smuggle one in.
-  assert.throws(() => resolvePolicy(createPolicyState('ci-v1'), { policyId: 'ci-v2', pr: mergedPr() }), /not active/);
+  // resolvePolicy takes the policy as an argument and reads bindings only from the audited state, so a
+  // PR object can smuggle in neither a policy nor the binding that would justify one.
+  assert.throws(() => resolvePolicy(createPolicyState('ci-v2'), { policyId: 'ci-v1', pr: mergedPr() }), /audited binding/i);
+  assert.throws(() => resolvePolicy(createPolicyState('ci-v2'), { policyId: 'ci-v1', pr: mergedPr({ binding: binding() }) }), /audited binding/i, 'a binding smuggled through the PR is ignored');
 });
 
 test('an inactive policy is refused rather than silently substituted', () => {
@@ -106,19 +110,19 @@ test('an inactive policy is refused rather than silently substituted', () => {
 });
 
 test('after activation an open head cannot select ci-v1 while an exact merged head can', () => {
-  const state = createPolicyState('ci-v2');
+  const state = createPolicyState('ci-v2', [binding()]);
   assert.deepEqual([...state.policy.required], NEW);
   assert.deepEqual([...state.historical], ['ci-v1']);
 
   assert.equal(resolvePolicy(state, { policyId: 'ci-v2' }).historical, false);
   assert.equal(resolvePolicy(state, { policyId: 'ci-v2', pr: mergedPr() }).historical, false, 'current policy ignores historical identity');
 
-  const exact = resolvePolicy(state, { policyId: 'ci-v1', binding: binding(), pr: mergedPr() });
+  const exact = resolvePolicy(state, { policyId: 'ci-v1', pr: mergedPr() });
   assert.equal(exact.historical, true);
   assert.deepEqual([...exact.policy.required], OLD);
 
   for (const stateName of ['OPEN', 'CLOSED']) {
-    assert.throws(() => resolvePolicy(state, { policyId: 'ci-v1', binding: binding(), pr: mergedPr({ state: stateName }) }), /merged/i, stateName);
+    assert.throws(() => resolvePolicy(state, { policyId: 'ci-v1', pr: mergedPr({ state: stateName }) }), /merged/i, stateName);
   }
   const substitutions = {
     repositoryId: 999,
@@ -128,16 +132,27 @@ test('after activation an open head cannot select ci-v1 while an exact merged he
     tree: sha('d'),
   };
   for (const [field, value] of Object.entries(substitutions)) {
-    assert.throws(() => resolvePolicy(state, { policyId: 'ci-v1', binding: binding(), pr: mergedPr({ [field]: value }) }), /identity/i, field);
+    assert.throws(() => resolvePolicy(state, { policyId: 'ci-v1', pr: mergedPr({ [field]: value }) }), /identity/i, field);
   }
-  assert.throws(() => resolvePolicy(state, { policyId: 'ci-v1', pr: mergedPr() }), /identity/i);
-  assert.throws(() => resolvePolicy(state, { policyId: 'ci-v1', binding: binding() }), /merged/i);
+  assert.throws(() => resolvePolicy(createPolicyState('ci-v2'), { policyId: 'ci-v1', pr: mergedPr() }), /audited binding/i, 'an empty audited list admits no historical policy');
+  assert.throws(() => resolvePolicy(state, { policyId: 'ci-v1' }), /merged/i);
+});
+
+test('an identity field missing on both sides is not a match', () => {
+  // Comparing folded(undefined) === folded(undefined) would make an unaudited pairing look equal, so a
+  // binding that names no identity must not admit a pull request that names none either.
+  const state = createPolicyState('ci-v2', [{ policy: 'ci-v1' }]);
+  assert.throws(
+    () => resolvePolicy(state, { policyId: 'ci-v1', pr: { state: 'MERGED' } }),
+    /audited binding/i,
+    'two absences are an unaudited identity, not a matching one',
+  );
 });
 
 test('an upper-case binding matches the same identity in either case', () => {
-  const state = createPolicyState('ci-v2');
   const upper = binding({ head: sha('a').toUpperCase(), tree: sha('b').toUpperCase() });
-  const resolved = resolvePolicy(state, { policyId: 'ci-v1', binding: upper, pr: mergedPr() });
+  const state = createPolicyState('ci-v2', [upper]);
+  const resolved = resolvePolicy(state, { policyId: 'ci-v1', pr: mergedPr() });
   assert.equal(resolved.historical, true, 'hex case is not identity');
   assert.deepEqual(parseHistoricalBindings(config([upper])), [upper], 'stored values keep their supplied case');
 });

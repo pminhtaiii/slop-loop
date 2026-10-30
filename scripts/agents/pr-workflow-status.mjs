@@ -1,15 +1,15 @@
-import { featureBranch as featureName } from './pr-conventions.mjs';
+import { assertPrMetadata, featureBranch as featureName, validSummary } from './pr-conventions.mjs';
 import { localGateStatus, localVerifiedHead } from './pr-workflow-push-only.mjs';
 import { ACTIVE_POLICY_ID, createPolicyState, selectLatest } from '../ci/required-checks.mjs';
-export { featureName };
-export function validSummary(value) {
-  return typeof value === 'string' && value.length > 0 && value.length <= 80 && value === value.trim() && !/[\r\n]/.test(value);
-}
+export { featureName, validSummary };
 
-export function assess({ head, pr, checks }) {
+export function assess({ head, pr, checks, convention }) {
   const result = { status: 'WAITING_CI', failedChecks: [], unresolved: [] };
-  const titlePrefix = `${pr.headRefName}: `;
-  if (pr.state !== 'OPEN' || pr.headRefOid !== head || !featureName.test(pr.headRefName) || !pr.title.startsWith(titlePrefix) || !validSummary(pr.title.slice(titlePrefix.length)) || pr.baseRefName !== 'development') return { ...result, status: 'BLOCKED', reason: 'PR identity, title, base, state, or current HEAD does not match.' };
+  if (!pr || typeof pr !== 'object' || Array.isArray(pr) || pr.state !== 'OPEN' || pr.headRefOid !== head) return { ...result, status: 'BLOCKED', reason: 'PR identity, title, base, state, or current HEAD does not match.' };
+  // Live metadata is revalidated on every observation, so a body-only edit cannot ride an older
+  // passing same-head check. The retained convention decides the rules; unversioned records stay readable.
+  try { assertPrMetadata({ branch: pr.headRefName, base: pr.baseRefName, title: pr.title, body: pr.body }, { convention }); }
+  catch (error) { return { ...result, status: 'BLOCKED', reason: `Live PR metadata is invalid: ${error.message}` }; }
   if (pr.reviews.pageInfo.hasPreviousPage || pr.reviewThreads.pageInfo.hasNextPage) return { ...result, status: 'BLOCKED', reason: 'Review data exceeds the bounded page; inspect manually.' };
   result.unresolved = pr.reviewThreads.nodes.filter((thread) => !thread.isResolved);
   if (pr.mergeable === 'CONFLICTING' || pr.mergeStateStatus === 'BEHIND') return { ...result, status: 'BLOCKED', reason: 'Update the feature branch against development and rerun verification.' };

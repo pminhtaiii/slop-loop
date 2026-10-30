@@ -118,6 +118,9 @@ jobs:
         with:
           ref: ${{ env.HEAD_SHA }}
           persist-credentials: false
+          # The admitted base commit must exist locally for the range scan to be admissible; a shallow
+          # checkout would make every pull-request scan refuse rather than scan.
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -140,6 +143,31 @@ jobs:
         run: node scripts/ci/check-context.mjs
       - name: Check tracked files
         run: node scripts/ci/check-tracked-files.mjs
+      # Environment examples may document keys but may only hold approved placeholders. Diagnostics
+      # name the path, line and rule, never the observed value.
+      - name: Validate environment examples
+        run: node scripts/ci/check-env-examples.mjs
+      # Pinned Gitleaks release over the admitted Git range. Only rule id, path, line and commit may
+      # reach the summary; raw matches and scanner output never leave the adapter. The event name and
+      # head come from the run context, never from candidate-supplied input.
+      - name: Scan candidate content for secrets
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_SHA_INPUT: ${{ env.HEAD_SHA }}
+          BASE_SHA_INPUT: ${{ env.BASE_SHA }}
+        run: |
+          args=(--event "$EVENT_NAME" --head "$HEAD_SHA_INPUT")
+          # A pull-request scan needs the merge base; a push scan needs the pre-push revision, which is
+          # the only range that catches a secret added in one commit and deleted in the next.
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            if [ -n "$BASE_SHA_INPUT" ]; then args+=(--base "$BASE_SHA_INPUT"); fi
+          elif [ -n "$BASE_SHA_INPUT" ]; then
+            args+=(--before "$BASE_SHA_INPUT")
+          fi
+          # Reviewed exemptions are fingerprinted to exact synthetic findings and live in the PR diff,
+          # so a candidate cannot add a finding without also adding a visible, reviewable exemption.
+          node scripts/ci/scan-secrets.mjs "${args[@]}" --exemptions config/secret-scan-exemptions.json
 
   contributor-tooling-tests:
     strategy:

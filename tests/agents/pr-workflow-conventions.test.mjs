@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { assess, runWorkflow } from '../../scripts/agents/pr-workflow.mjs';
-import { assertAvailableNumber } from '../../scripts/agents/pr-conventions.mjs';
+import { assertAvailableNumber, validSummary } from '../../scripts/agents/pr-conventions.mjs';
 import { checkout } from './support/pr-workflow-fixture.mjs';
 
 test('new publication requires a scope before gates or writes', async t => {
@@ -13,6 +13,17 @@ test('new publication requires a scope before gates or writes', async t => {
   assert.equal(result.status, 0);
   await assert.rejects(f.run('publish', '--body-file', f.body), /scope/);
   assert.equal(f.calls.some(c => c[1] === 'push'), false);
+});
+
+test('a summary that carries a control character is refused', () => {
+  // A summary lands in a commit message, a PR title and terminal output; any control character, not
+  // just a line break, could rewrite the line it appears on.
+  for (const bad of ['add\u0007 tooling', 'add\u001b[2Ktooling', 'add\ttooling', '\u0000add tooling', 'add tooling\u007f']) {
+    assert.equal(validSummary(bad), false, `${JSON.stringify(bad)} must be refused`);
+  }
+  for (const good of ['add tooling', 'standardize branch naming', 'fix the ünicode summary']) {
+    assert.equal(validSummary(good), true, `${JSON.stringify(good)} must be admitted`);
+  }
 });
 
 test('invalid new branch forms and incomplete history are refused before gates or writes', async t => {

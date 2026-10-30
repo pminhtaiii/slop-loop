@@ -13,10 +13,12 @@ export const requiredChecks = createPolicyState(ACTIVE_POLICY_ID).policy.require
 // would be refused before any selection ran.
 const HEAD = 'a'.repeat(40);
 
+export const BODY = '## Summary\n\nStandardize tooling.\n\n## Evidence\n\nBefore: legacy behavior; after: verified checks.\n\n## Merge Danger\n\n**Door:** two-way; revert commit.\n\n**Blast Radius:** tooling; integration checks required.';
+
 export function evidence() {
   return {
     head: HEAD,
-    pr: { state: 'OPEN', headRefOid: HEAD, headRefName: 'feat/010-tooling-example', title: 'feat/010-tooling-example: add the example workflow', baseRefName: 'development', reviewDecision: 'APPROVED',
+    pr: { state: 'OPEN', headRefOid: HEAD, headRefName: 'feat/010-tooling-example', title: 'feat/010-tooling-example: add the example workflow', body: BODY, baseRefName: 'development', reviewDecision: 'APPROVED',
       reviews: { pageInfo: { hasPreviousPage: false }, nodes: [{ author: { login: 'coderabbitai', __typename: 'Bot' }, state: 'APPROVED', commit: { oid: HEAD } }] },
       reviewThreads: { pageInfo: { hasNextPage: false }, nodes: [] } },
     checks: requiredChecks.map((name, id) => ({ id, name, head_sha: HEAD, status: 'completed', conclusion: 'success', app: { slug: 'github-actions' } })),
@@ -41,7 +43,7 @@ export async function checkout(t) {
   // Existing numbered work retains v1 accounting; new-name tests switch to a fresh branch.
   await mkdir(join(root, '.agent-work/pr-workflow'));
   await writeFile(join(root, '.agent-work/pr-workflow/010-tooling-example.json'), JSON.stringify({ schemaVersion: 1, repository: 'example/project', branch: 'feat/010-tooling-example', base: 'development', repairRounds: [], conventionVersion: 1 }));
-  const body = join(root, '.agent-work/body.md'); await writeFile(body, '## Summary\n\nStandardize tooling.\n\n## Evidence\n\nBefore: legacy behavior; after: verified checks.\n\n## Merge Danger\n\n**Door:** two-way; revert commit.\n\n**Blast Radius:** tooling; integration checks required.');
+  const body = join(root, '.agent-work/body.md'); await writeFile(body, BODY);
   const head = git('rev-parse', 'HEAD');
   const e = evidence(); e.head = head; e.pr.headRefOid = head; e.pr.reviews.nodes[0].commit.oid = head;
   for (const check of e.checks) check.head_sha = head;
