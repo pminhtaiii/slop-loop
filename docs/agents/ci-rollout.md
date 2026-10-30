@@ -1,5 +1,9 @@
 # Contributor CI Rollout Checklist
 
+## Dependency-install check added to CI - 2026-10-31
+
+`repository-policy` now runs `check-dependency-install.mjs`, the last local gate with no CI counterpart, so push-only publication defers verification rather than dropping it. No remote run backs this.
+
 ## Merge-gating narrowed to four checks - 2026-10-30
 
 The user asked that only static analysis and PR metadata be required for merging.
