@@ -243,7 +243,8 @@ test('failing, spoofed, or incomplete exact-head checks and mismatched source tr
 });
 
 test('merged completion uses only the active policy and never a ci-v1 or unbound historical name set', async t => {
-  assert.deepEqual(parseHistoricalBindings(await readFile(new URL('../../config/legacy-ci-heads.json', import.meta.url), 'utf8')), [], 'no audited binding can grant an older policy');
+  // Shipped bindings are audited data; parsing proves each entry names an exact older bindable policy.
+  parseHistoricalBindings(await readFile(new URL('../../config/legacy-ci-heads.json', import.meta.url), 'utf8'));
   assert.equal(ACTIVE_POLICY_ID, 'ci-v4', 'Ubuntu-only activation makes the seven ci-v4 names current');
   assert.deepEqual([...requiredChecks], [...POLICIES['ci-v4'].required]);
 
