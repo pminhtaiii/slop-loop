@@ -170,6 +170,7 @@ export interface EvaluationDriverContext extends EvaluationCaseContext {
 }
 
 export interface RunEvaluationOptions {
+  readonly contractVersion?: undefined;
   readonly suite?: string | undefined;
   readonly mode: EvaluationMode;
   readonly manifestPath?: string | undefined;
