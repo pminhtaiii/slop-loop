@@ -8,6 +8,7 @@ import { findIssue, issueMarker, validateIssueRecord } from './paired-issue-reso
 import { completionMarker, parsePullUrl, validHash, validPrUrl, validateCompletionRecord } from './paired-issue-state.mjs';
 import { sides } from './paired-issue-api.mjs';
 import { featureBranch } from './pr-conventions.mjs';
+import { loadIssueProject, projectItem } from './issue-project.mjs';
 
 const usage = 'Usage: node scripts/agents/paired-issue-followup.mjs --pr <public-PR-URL> [--key <stable-key> ...] [--evidence-file <JSON>] [--root <checkout>]';
 const defaultRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -128,6 +129,7 @@ export async function runIssueFollowup(args, dependencies = {}) {
   const call = (binary, argv, cwd, timeout) => (dependencies.execute ?? execute)(binary, argv, cwd, timeout);
   const targets = await publicationTargets(repo, call);
   if (!targets) throw new Error('Paired issue followup requires publication-targets.json.');
+  const project = await loadIssueProject(repo, call);
   const publicUrl = parsePullUrl(values.pr, targets.primary.repository);
   const explicitKeys = values.keys.length > 0;
   const keys = explicitKeys ? values.keys : await localKeys(repo);
@@ -143,7 +145,8 @@ export async function runIssueFollowup(args, dependencies = {}) {
     const issueNumbers = Object.fromEntries(sides.map(side => [side, pair.issues[side].number]));
     const retained = await readCompletion(repo, targets, pair, key, publicUrl);
     const association = retained ? retained.matchesPublicPr ? 'RETAINED' : 'MISMATCH' : explicitKeys ? 'EXPLICIT' : 'NOT_ASSERTED';
-    const state = completionState(retained?.record, issues);
+    let state = completionState(retained?.record, issues);
+    if (state === 'COMPLETED' && project && projectItem(repo, call, project, pair.issues[project.side].url)?.fieldValueByName?.optionId !== project.doneId) state = 'PROJECT_PENDING';
     const item = {
       key,
       status: 'MISSING_ASSOCIATION',
@@ -165,7 +168,7 @@ export async function runIssueFollowup(args, dependencies = {}) {
       continue;
     }
     if (!explicitKeys && association !== 'RETAINED') item.status = 'MISSING_ASSOCIATION';
-    else if (state === 'RECOVER_PARTIAL') item.status = 'RECOVER_PARTIAL';
+    else if (['RECOVER_PARTIAL', 'PROJECT_PENDING'].includes(state)) item.status = state;
     else item.status = 'MISSING_EVIDENCE';
 
     item.previewCommand = completionCommand(key, publicUrl.url, values['evidence-file'], values.root);

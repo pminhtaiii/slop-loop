@@ -10,6 +10,7 @@ import { privateIdentityAppears, resolveIssuePair, validateTarget } from './pair
 import { completionMarker, loadCompletionRecord, mergedSnapshot, parsePullUrl, prIdentity, readSubmissionPr, saveCompletionRecord, validateCompletionRecord, validHash, validPrUrl } from './paired-issue-state.mjs';
 import { issueCommentsState, postComment, sameVerifiedSnapshot } from './paired-issue-comments.mjs';
 import { featureBranch } from './pr-conventions.mjs';
+import { loadIssueProject, projectItem, syncProjectItem } from './issue-project.mjs';
 const usage = 'Usage: node scripts/agents/complete-paired-issues.mjs --key <stable-key> --pr <public-PR-URL> --evidence-file <JSON> [--apply] [--root <checkout>]';
 const defaultRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -89,6 +90,7 @@ export async function inspectCurrent(values, evidenceInput, repo, call, targets,
     validateTarget(side, targets[side], metadata);
   }
   const pair = await resolveIssuePair(call, repo, values, targets);
+  if (values.expectedIssueBodies && sides.some(side => pair.issues[side].bodySha256 !== values.expectedIssueBodies[side])) throw new Error('Ticket acceptance changed since automatic completion was queued; verify new evidence.');
   const publicUrl = parsePullUrl(values.pr, targets.primary.repository);
   const fields = 'number,url,state,mergedAt,headRefName,headRefOid,baseRefName,isDraft,isCrossRepository';
   const publicPr = json(call, ['pr', 'view', String(publicUrl.number), '--repo', targets.primary.repository, '--json', fields], repo, 'public PR');
@@ -120,12 +122,16 @@ export function snapshotMatches(record, verified) {
 
 export async function runIssueCompletion(args, dependencies = {}) {
   const values = parseArgs(args);
+  values.expectedIssueBodies = dependencies.expectedIssueBodies;
   if (values.help) return { usage };
   const evidenceInput = await readEvidence(values['evidence-file']);
+  if (dependencies.expectedEvidenceSha256 !== undefined && evidenceInput.sha256 !== dependencies.expectedEvidenceSha256) throw new Error('Queued acceptance evidence changed; verify new evidence.');
+  if (values.expectedIssueBodies !== undefined && sides.some(side => !/^[a-f0-9]{64}$/.test(values.expectedIssueBodies?.[side] ?? ''))) throw new Error('Missing or invalid queued acceptance bindings.');
   const repo = await repository(values.root ?? defaultRoot);
   const call = (binary, argv, cwd, timeout) => (dependencies.execute ?? execute)(binary, argv, cwd, timeout);
   const targets = await publicationTargets(repo, call);
   if (!targets) throw new Error('Paired issue completion requires publication-targets.json.');
+  const project = await loadIssueProject(repo, call, dependencies.expectedProjectSha256);
   const keyDirectory = await dataDirectory(repo, 'paired-issue-completion');
   const recordPath = resolve(keyDirectory, `${values.key}.json`);
   const lockPath = resolve(keyDirectory, `${values.key}.lock`);
@@ -151,10 +157,12 @@ export async function runIssueCompletion(args, dependencies = {}) {
       record.verified = current.verified;
       await saveCompletionRecord(recordPath, record);
       const closed = sides.every((side) => current.pair.issues[side].state === 'closed');
-      return { status: closed ? 'COMPLETED' : 'READY_TO_COMPLETE', key: values.key, public: current.publicPr.url, submission: current.submissionPr.url };
+      const done = !project || projectItem(repo, call, project, current.pair.issues[project.side].url)?.fieldValueByName?.optionId === project.doneId;
+      return { status: closed && done ? 'COMPLETED' : 'READY_TO_COMPLETE', key: values.key, public: current.publicPr.url, submission: current.submissionPr.url };
     }
 
     if (sides.every((side) => current.pair.issues[side].state === 'closed')) {
+      if (project) syncProjectItem(repo, call, project, current.pair.issues[project.side].url, true);
       record.verified = current.verified;
       for (const side of sides) record.progress[side].closed = true;
       await saveCompletionRecord(recordPath, record);
@@ -222,6 +230,7 @@ export async function runIssueCompletion(args, dependencies = {}) {
       throw new Error('GitHub did not close both exact paired issues; rerun completion to recover.');
     }
     for (const side of sides) record.progress[side].closed = true;
+    if (project) syncProjectItem(repo, call, project, finalPair.issues[project.side].url, true);
     await saveCompletionRecord(recordPath, record);
     return { status: 'COMPLETED', key: values.key, public: current.publicPr.url, submission: current.submissionPr.url };
   });

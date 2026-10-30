@@ -7,6 +7,22 @@ import { runIssueCompletion } from '../../scripts/agents/complete-paired-issues.
 import { completionMarker } from '../../scripts/agents/paired-issue-state.mjs';
 import { ACTIVE_POLICY_ID, POLICIES } from '../../scripts/ci/required-checks.mjs';
 import { fixture, markerFor, mergePair, privateRepository, publicRepository, requiredChecks } from './support/complete-paired-issues-fixture.mjs';
+import { projectFixture } from './support/issue-project-fixture.mjs';
+
+test('closed issues with failed Project Done update remain pending in follow-up', async t => {
+  const f = await fixture(t, { loseCloseResponse: false });
+  const p = await projectFixture(f.root, f.execute);
+  mergePair(f);
+  await savePairRecord(f);
+  p.state.failEdit = true;
+  await assert.rejects(runIssueCompletion([...f.args, '--apply'], { execute: p.execute }), /project edit failed/);
+  const args = ['--pr', f.prs.primary.url, '--key', 'localized-bug', '--root', f.root];
+  assert.equal((await runIssueFollowup(args, { execute: p.execute })).items[0].status, 'PROJECT_PENDING');
+  const preview = await runIssueFollowup([...args, '--evidence-file', f.evidenceFile], { execute: p.execute });
+  assert.equal(preview.items[0].status, 'READY_TO_COMPLETE');
+  assert.match(preview.items[0].applyCommand, /--apply/);
+  assert.deepEqual(p.state.writes, ['add']);
+});
 
 test('fixture required checks derive from the active shared policy', () => {
   // An oracle that recomputes createPolicyState(ACTIVE_POLICY_ID) could not detect a wrong activation,

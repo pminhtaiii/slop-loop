@@ -38,7 +38,7 @@ node scripts/agents/paired-issues.mjs publish --key localized-bug --title "Repai
 
 Use the same key for later title/body updates. The default label is `needs-triage`; `--label` accepts the [canonical triage labels](triage-labels.md). Missing requested labels may be created, while existing label metadata is preserved. Issue numbers can differ between repositories; use the returned URLs rather than assuming a shared number.
 
-The ticket helper validates both repository roles, write access and issue availability before writes. Opaque identity markers and ignored `.agent-work/paired-issues/` receipts support retries after partial writes or lost create responses. Duplicate markers or mismatched identities stop publication for inspection. Closed tickets remain closed; comments, assignees and issue state are not automatically synchronized.
+The ticket helper validates both repository roles, write access and issue availability before writes. Opaque identity markers and ignored `.agent-work/paired-issues/` receipts support retries after partial writes or lost create responses. Duplicate markers or mismatched identities stop publication for inspection. With `issue-project.json`, publication assigns both issues to the authenticated human and adds the configured side to the exact Project; updating membership preserves its status. Closed tickets remain closed; comments and issue state are not automatically synchronized by publication. GitHub operations use `gh` only.
 
 ### Complete paired tickets
 
@@ -65,6 +65,21 @@ node scripts/agents/complete-paired-issues.mjs --key <stable-key> --pr <public-P
 Without `--apply`, the command previews and makes no remote changes. The explicit `--pr` URL and evidence file record the agent's assertion that every criterion is satisfied. Applying adds an idempotent audit comment to each exact paired issue, linking it to that repository's resolving PR, then closes both issues. If one close succeeds and the other fails, retain ignored `.agent-work/paired-issue-completion/` and `.agent-work/paired-issues/` records and retry the same command. Completion targets only the exact stable-key pair; it does not delete or reopen issues or promote labels. This explicit cleanup is separate from ticket publication, which preserves closed state and does not synchronize issue state.
 
 Read the JSON `status`, not just the exit code: `READY_TO_COMPLETE` is an eligible preview, `COMPLETED` confirms both issues are closed, and `WAITING_*` or `BLOCKED` leaves cleanup pending. Evidence may be revised before apply begins; retain the same evidence when recovering an interrupted apply.
+
+With `issue-project.json`, `COMPLETED` also requires the configured item to have the configured Done status. Apply repairs a missing membership or pending project status after both issues close. A lost response or project failure leaves cleanup pending; rerun with the same key, PR and evidence. Preview makes no project writes. Project identity and the status field/option are checked before issue closure; issue acceptance, paired merge and public CI gates remain unchanged.
+
+### Automatic completion
+
+After the implementing agent verifies every acceptance criterion, start a retained local completion job during PR review:
+
+```powershell
+node scripts/agents/issue-completion-job.mjs start --key <stable-key> --pr <public-PR-URL> --evidence-file <evidence.json>
+node scripts/agents/issue-completion-job.mjs status --key <stable-key>
+```
+
+Starting explicitly attests acceptance and authorizes apply for that exact pair once the existing merge/tree/CI gates pass. The job copies and hashes the evidence, binds both issue bodies and project configuration, and checks once per minute. It never merges PRs. Changed acceptance, evidence, project configuration, refusals or command errors stop it as `BLOCKED`; it retries only waiting PR/CI states. Retain `.agent-work/issue-completion-jobs/` and the existing completion/publication receipts. Handoffs include the key, PR, evidence path, job record and status.
+
+The detached process runs on the local machine; it survives a finished chat but needs the checkout, GitHub credentials and machine to remain available. After interruption inspect status/logs and any retained locks before `resume --key <stable-key>`. Resume keeps the original evidence and bindings; it does not authorize revised acceptance. Repeating start for the same key/PR/evidence returns the existing job rather than creating a duplicate. Automatic completion is separate from human merge authority and contributor PR handoff.
 
 ### Post-merge follow-up
 
