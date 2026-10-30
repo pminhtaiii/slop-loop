@@ -2,6 +2,9 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
+import { runRegisteredEvaluation, SHARED_EVALUATION_VERSION, type SharedEvaluationOptions, type SharedEvaluationReport } from '../shared.ts';
+export { registerEvaluation, SHARED_EVALUATION_VERSION } from '../shared.ts';
+export type { SharedEvaluationOptions, SharedEvaluationReport, RegisteredEvaluation, SharedSelection, SharedCaseResult } from '../shared.ts';
 import defaultManifest from './manifest.json' with { type: 'json' };
 import {
   computeSha256,
@@ -110,7 +113,13 @@ function driverContext(context: EvaluationCaseContext): EvaluationDriverContext 
   return { ...context, suite: 'uc03' };
 }
 
-export async function runEvaluation(options: unknown): Promise<EvaluationReport> {
+export function runEvaluation(options: SharedEvaluationOptions): Promise<SharedEvaluationReport>;
+export function runEvaluation(options: unknown): Promise<EvaluationReport>;
+export async function runEvaluation(options: unknown): Promise<EvaluationReport | SharedEvaluationReport> {
+  if (options && typeof options === 'object'
+    && Object.getOwnPropertyDescriptor(options, 'contractVersion')?.value === SHARED_EVALUATION_VERSION) {
+    return runRegisteredEvaluation(options);
+  }
   const request = validateEvaluationOptions(options);
   const parsedManifest: unknown = (() => {
     try {

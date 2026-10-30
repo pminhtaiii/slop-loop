@@ -2,6 +2,20 @@
 
 **Status**: T001–T010 implement approved contracts, controlled fixtures, intake, assessment, later-answer clarification and configured recommendation. Phase 5 was separately authorized on 2026-10-19 (Asia/Bangkok); see [decisions](contracts/decisions.md). The controller accepts only the explicit mock fixture profile. T014 safety regression consolidation was separately authorized on 2026-10-20 (Asia/Bangkok) and is complete at the controlled local level; T013 was separately authorized on 2026-10-28 for actual UC-03 receiver compatibility under uc01-uc03-receiver-v1. T011/T012, T015/T016 and real runtime/shared evaluation remain separately gated.
 
+## Delegated T011/T015 integration — 2026-10-30
+
+Base: fetched `development` at `0f8a9094d6ec2b69855f4b215bfed4a806cfd64b`. The user reported Tai's full technical delegation for these tasks; [decisions](contracts/decisions.md#delegated-t011t015-authority--2026-10-30) supersedes the historical status above for this scope.
+
+Implemented `uc01-composition-v1` on unchanged `uc01-consumer-v1` signatures, an explicit `uc01-production-v1` profile, bound dependency revisions/capabilities and invocation identities/catalog/limits, integer rational pricing, real evidence/output provenance and cumulative invocation usage checks. Missing/mock/incompatible dependencies refuse before constrained calls. The actual UC04 adapter's envelopes are projected without promoting its task-only in-memory accounting to durable admission. Canonical Foundation source evidence requires an independently supplied verified locator/excerpt receipt.
+
+The existing `eval/uc03/runner.ts` now accepts `shared-evaluation-v1` registrations and scoped/project selections. `eval/uc01/registration.ts` consumes the unchanged native case/oracle records, keeps grading private and propagates pass/fail/error/not-run without another runner. The frozen dataset stays `uc01-evaluation-draft-v1` / `1.0.0-draft.2` with digest profile `uc01-evaluation-sha256-v1`.
+
+Focused verification: C20 composition/controller 64/64; shared projections 10/10; new and legacy evaluation 53/53. Typecheck, whole-repository lint and build passed. Combined emitted UC01, UC03 evaluation and UC04 adapter regression passed 390/390 after review corrections. Behavioral RED evidence includes production path initially denied, catalog drift/cumulative allowance, C13 mapping, late grading, hostile discriminator coercion and frozen native/oracle identity regressions before correction. Local logs and reviewed snapshots are retained under `.agent-work/2026-10-30/uc01-real-eval/`; these ignored files are not CI prerequisites.
+
+Shared conformance exposed a C13 reserved-destination reason mapping gap: the frozen oracle requires `invalid-catalog`. The assessor now maps catalog-validation failures to that reason while retaining `invalid-input` status and rejecting before constrained calls. The actual C13 result passes its unchanged oracle; generic failing-case tests still verify failure propagation. No full dataset or model-quality success is claimed.
+
+T011/T015 remain unchecked. Current concrete prerequisites are actual compatible triage provider/policy deliveries (canonical Foundation/UC05 roles/actions do not support triage/read/search), UC04 durable task/run reservation-before-dispatch plus continuation/restart binding, trusted real delivery/configuration receipts, and admitted real execution/private grading isolation. No bug TaskState, locator, approval or restart result is fabricated. Two real-model comparisons and owner-required whole-project runtime acceptance remain not-run. Retry requires those actual owner deliveries/configurations and finite approved execution. T012/T016 and automatic dispatch are outside this implementation scope.
+
 ## Existing planning and repository checks
 
 From the repository root in PowerShell:
