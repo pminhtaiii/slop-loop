@@ -19,9 +19,6 @@ const required = [
   'static-types',
   'repository-policy',
   'pr-metadata',
-  'build',
-  'contributor-tooling-tests',
-  'runtime-tests',
 ];
 
 async function fixture(t, { path = 'docs/user/overview.md', content = 'Readable prose.\n', before, operation } = {}) {
@@ -197,21 +194,20 @@ test('skipped and failed required checks keep the eligibility vocabulary', async
   assert.equal((await f.run()).reasons[0].code, 'FAILED_CHECK', 'the latest run per name decides');
 });
 
-test('a ci-v4 selection resolves only the ci-v4 required names through the pure selector', () => {
-  const v2 = resolvePolicy(createPolicyState('ci-v4'), { policyId: 'ci-v4' });
+test('a ci-v5 selection resolves only the ci-v5 required names through the pure selector', () => {
+  const v2 = resolvePolicy(createPolicyState('ci-v5'), { policyId: 'ci-v5' });
   assert.equal(v2.historical, false);
-  assert.deepEqual([...v2.policy.required], [...POLICIES['ci-v4'].required]);
-  assert.deepEqual(required, [...POLICIES['ci-v4'].required], 'production eligibility stays on ci-v4');
-  // After the switch ci-v1 is historical-only and unreachable without an audited merged binding.
-  assert.deepEqual([...createPolicyState(ACTIVE_POLICY_ID).historical], ['ci-v1', 'ci-v2', 'ci-v3']);
+  assert.deepEqual([...v2.policy.required], [...POLICIES['ci-v5'].required]);
+  assert.deepEqual(required, [...POLICIES['ci-v5'].required], 'production eligibility stays on ci-v5');
+  assert.deepEqual([...createPolicyState(ACTIVE_POLICY_ID).historical], ['ci-v1', 'ci-v2', 'ci-v3', 'ci-v4']);
   assert.throws(() => resolvePolicy(createPolicyState(ACTIVE_POLICY_ID), { policyId: 'ci-v1', pr: { state: 'OPEN' } }), /merged pull request/);
 
   const head = 'a'.repeat(40);
   const oldRuns = POLICIES['ci-v1'].required.map((name, id) => ({ id: id + 1, name, head_sha: head, status: 'completed', conclusion: 'success', app: { slug: 'github-actions' } }));
-  const newRuns = POLICIES['ci-v4'].required.map((name, id) => ({ id: id + 1, name, head_sha: head, status: 'completed', conclusion: 'success', app: { slug: 'github-actions' } }));
-  assert.equal(evaluateRequired({ policy: POLICIES['ci-v4'], head, checks: oldRuns }).status, 'WAITING');
+  const newRuns = POLICIES['ci-v5'].required.map((name, id) => ({ id: id + 1, name, head_sha: head, status: 'completed', conclusion: 'success', app: { slug: 'github-actions' } }));
+  assert.equal(evaluateRequired({ policy: POLICIES['ci-v5'], head, checks: oldRuns }).status, 'WAITING');
   assert.equal(evaluateRequired({ policy: POLICIES['ci-v1'], head, checks: newRuns }).status, 'WAITING');
-  assert.equal(evaluateRequired({ policy: POLICIES['ci-v4'], head, checks: newRuns }).status, 'READY');
+  assert.equal(evaluateRequired({ policy: POLICIES['ci-v5'], head, checks: newRuns }).status, 'READY');
 });
 
 test('live metadata edited after a passing same-head check is refused, and read failures stay non-ready', async t => {

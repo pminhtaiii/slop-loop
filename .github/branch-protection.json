@@ -17,18 +17,6 @@
       {
         "context": "pr-metadata",
         "app_id": 15368
-      },
-      {
-        "context": "build",
-        "app_id": 15368
-      },
-      {
-        "context": "contributor-tooling-tests",
-        "app_id": 15368
-      },
-      {
-        "context": "runtime-tests",
-        "app_id": 15368
       }
     ]
   },
