@@ -5,6 +5,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { atomicWrite, dataDirectory, readJson, repository, withLock } from './agent-store.mjs';
 import { publicationTargets } from './publication-targets.mjs';
+import { authenticatedAssignee, loadIssueProject, syncProjectItem } from './issue-project.mjs';
 
 const labels = {
   'needs-triage': { color: 'fbca04', description: 'Maintainer needs to evaluate this issue.' },
@@ -156,6 +157,8 @@ export async function runPairedIssues(args, dependencies = {}) {
   const targetExecute = (binary, argv, cwd, timeout) => (dependencies.execute ?? execute)(binary, argv, cwd, timeout);
   const targets = await publicationTargets(repo, targetExecute);
   if (!targets) throw new Error('Paired issue publication requires publication-targets.json.');
+  const project = await loadIssueProject(repo, targetExecute);
+  const assignee = project ? authenticatedAssignee(repo, targetExecute) : null;
   if (containsPrivateIdentity(body, targets.submission.repository) || containsPrivateIdentity(values.title, targets.submission.repository)) {
     throw new Error('Public issue content must not include the private repository identity.');
   }
@@ -223,6 +226,17 @@ export async function runPairedIssues(args, dependencies = {}) {
 
     const primary = await publishOne('primary', joinedBody(body, [], marker));
     const submission = await publishOne('submission', joinedBody(body, ['Public counterpart: ' + primary.url], marker));
+    if (project) {
+      for (const side of sides) {
+        const receipt = record.receipts[side];
+        call('gh', ['issue', 'edit', String(receipt.number), '--repo', targets[side].repository, '--add-assignee', assignee]);
+        const assigned = json(call('gh', ['issue', 'view', String(receipt.number), '--repo', targets[side].repository, '--json', 'assignees']), 'issue assignees');
+        if (!assigned.assignees?.some(user => user.login?.toLowerCase() === assignee.toLowerCase())) throw new Error('Ticket assignee was not confirmed; retry publication.');
+      }
+      const item = syncProjectItem(repo, targetExecute, project, record.receipts[project.side].url);
+      record.project = { ...project, assignee, itemId: item.id };
+      await atomicWrite(recordPath, JSON.stringify(record, null, 2) + '\n');
+    }
     return {
       status: 'PUBLISHED',
       key: values.key,
