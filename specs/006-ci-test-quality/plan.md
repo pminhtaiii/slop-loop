@@ -1,5 +1,8 @@
 # Implementation Plan: Contributor CI and Mutation-Guided Test Quality
 
+Current OS scope: the [2026-10-30 Ubuntu-only amendment](contracts/ubuntu-only.md) supersedes the dual-OS design below for the bounded replacement. Earlier task evidence remains historical.
+
+
 **Branch**: Existing checkout, preserved | **Date**: 2026-10-28 (Asia/Saigon) | **Spec**: [spec.md](spec.md)
 **Input**: [Feature specification](spec.md). Planning-only authorization: [decisions](contracts/decisions.md).
 

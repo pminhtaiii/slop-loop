@@ -31,6 +31,13 @@ const NEW = [
   'runtime-tests (windows-latest)',
 ];
 
+const THIRD = [
+  'static-lint', 'static-types', 'repository-policy', 'pr-metadata',
+  'build (ubuntu-latest)', 'contributor-tooling-tests (ubuntu-latest)', 'runtime-tests (ubuntu-latest)',
+];
+
+const CURRENT = ['static-lint', 'static-types', 'repository-policy', 'pr-metadata', 'build', 'contributor-tooling-tests', 'runtime-tests'];
+
 const sha = (char) => char.repeat(40);
 const mergeSha = (char) => char.repeat(64);
 
@@ -65,17 +72,19 @@ function config(entries) {
 test('each policy owns one immutable ordered name list and no aggregate or mutation gate', () => {
   assert.deepEqual([...POLICIES['ci-v1'].required], OLD);
   assert.deepEqual([...POLICIES['ci-v2'].required], NEW);
+  assert.deepEqual([...POLICIES['ci-v3'].required], THIRD);
+  assert.deepEqual([...POLICIES['ci-v4'].required], CURRENT);
   assert.equal(new Set(NEW).size, NEW.length);
   assert.equal(Object.values(POLICIES).some((policy) => policy.required.includes(MUTATION_CHECK_NAME)), false);
   assert.equal(Object.isFrozen(POLICIES['ci-v2'].required), true);
   assert.throws(() => { POLICIES['ci-v2'].required.push('extra'); });
 });
 
-test('stage A2 makes ci-v2 the only active current policy and ci-v1 historical', () => {
-  assert.equal(ACTIVE_POLICY_ID, 'ci-v2', 'the activation switch is this single reviewed constant');
+test('Ubuntu-only ci-v4 is current and all prior policies are historical', () => {
+  assert.equal(ACTIVE_POLICY_ID, 'ci-v4', 'the activation switch is this single reviewed constant');
   const state = createPolicyState(ACTIVE_POLICY_ID);
-  assert.deepEqual([...state.policy.required], NEW);
-  assert.deepEqual([...state.historical], ['ci-v1'], 'ci-v1 stays assessable only through a binding');
+  assert.deepEqual([...state.policy.required], CURRENT);
+  assert.deepEqual([...state.historical], ['ci-v1', 'ci-v2', 'ci-v3'], 'ci-v1 stays assessable only through a binding');
   assert.throws(() => createPolicyState('ci-v9'), /Unknown check policy/);
   assert.throws(() => createPolicyState(undefined), /Unknown check policy/);
   // The mutation report is never required; all ten required names and the report are distinct jobs.
@@ -83,11 +92,11 @@ test('stage A2 makes ci-v2 the only active current policy and ci-v1 historical',
 });
 
 test('the active policy is a constant, not a value read from the environment or PR input', () => {
-  assert.equal(ACTIVE_POLICY_ID, 'ci-v2');
+  assert.equal(ACTIVE_POLICY_ID, 'ci-v4');
   for (const name of ['CHECK_POLICY', 'CI_POLICY', 'ACTIVE_POLICY_ID', 'GITHUB_BASE_REF', 'GITHUB_HEAD_REF']) {
     process.env[name] = 'ci-v1';
     try {
-      assert.deepEqual([...createPolicyState(ACTIVE_POLICY_ID).policy.required], NEW, `${name} must not select a policy`);
+      assert.deepEqual([...createPolicyState(ACTIVE_POLICY_ID).policy.required], CURRENT, `${name} must not select a policy`);
       assert.ok(ACTIVE_POLICY_ID in POLICIES);
     } finally {
       delete process.env[name];
@@ -102,7 +111,7 @@ test('the active policy is a constant, not a value read from the environment or 
 test('an inactive policy is refused rather than silently substituted', () => {
   const state = createPolicyState('ci-v1');
   assert.throws(() => resolvePolicy(state, { policyId: 'ci-v2' }), /not active/);
-  assert.throws(() => resolvePolicy(state, { policyId: 'ci-v3' }), /Unknown check policy/);
+  assert.throws(() => resolvePolicy(state, { policyId: 'ci-v4' }), /not active/);
   assert.throws(() => resolvePolicy(state, {}), /Unknown check policy/);
   const current = resolvePolicy(state, { policyId: 'ci-v1' });
   assert.equal(current.historical, false);
@@ -170,7 +179,7 @@ test('historical bindings reject wildcards, duplicates, unknown policies and unk
   for (const entry of wildcards) assert.throws(() => parseHistoricalBindings(config([entry])), /wildcard|identity|invalid/i, JSON.stringify(entry));
 
   assert.throws(() => parseHistoricalBindings(config([binding(), binding({ number: 117 })])), /duplicate/i);
-  assert.throws(() => parseHistoricalBindings(config([binding({ policy: 'ci-v2' })])), /policy/i);
+  assert.throws(() => parseHistoricalBindings(config([binding({ policy: 'ci-v4' })])), /policy/i);
   assert.throws(() => parseHistoricalBindings(config([binding({ convention: 3 })])), /convention/i);
   assert.throws(() => parseHistoricalBindings(config([binding({ extra: 1 })])), /unknown/i);
   assert.throws(() => parseHistoricalBindings(config([binding({ head: sha('a').slice(0, 39) })])), /identity/i);
@@ -257,4 +266,35 @@ test('input is validated before assessment and never mutated', () => {
   assert.throws(() => evaluateRequired({ policy, head: sha('a'), checks: {} }), /array/i);
   assert.throws(() => evaluateRequired({ policy: 'ci-v1', head: sha('a'), checks }), /policy/i);
   assert.throws(() => evaluateRequired({ policy, head: sha('a'), checks: [null] }), /check/i);
+});
+
+test('ci-v4 admits each immutable historical policy only for exact merged bindings', () => {
+  for (const policyId of ['ci-v1', 'ci-v2', 'ci-v3']) {
+    const entry = binding({ policy: policyId });
+    assert.deepEqual(parseHistoricalBindings(config([entry])), [entry]);
+    const state = createPolicyState(ACTIVE_POLICY_ID, [entry]);
+    assert.equal(resolvePolicy(state, { policyId, pr: mergedPr() }).historical, true);
+    assert.throws(() => resolvePolicy(state, { policyId, pr: mergedPr({ state: 'OPEN' }) }), /merged/i);
+    assert.throws(() => resolvePolicy(createPolicyState(ACTIVE_POLICY_ID), { policyId, pr: mergedPr() }), /audited binding/i);
+    assert.throws(() => resolvePolicy(state, { policyId, pr: mergedPr({ head: sha('c') }) }), /audited binding/i);
+  }
+  assert.ok(Object.isFrozen(POLICIES['ci-v4'].required));
+});
+
+test('each ci-v4 responsibility fails closed without a latest trusted exact-head success', () => {
+  const policy = POLICIES['ci-v4'];
+  const checks = CURRENT.map((name, id) => run(name, { id: id + 1 }));
+  assert.equal(evaluateRequired({ policy, head: sha('a'), checks }).status, 'READY');
+  for (const name of CURRENT) {
+    const rest = checks.filter((check) => check.name !== name);
+    assert.equal(evaluateRequired({ policy, head: sha('a'), checks: rest }).status, 'WAITING', name);
+    for (const overrides of [
+      { status: 'in_progress', conclusion: null }, { conclusion: 'skipped' },
+      { conclusion: 'cancelled' }, { conclusion: 'failure' },
+      { head_sha: sha('c') }, { app: { slug: 'foreign-app' } },
+    ]) {
+      assert.notEqual(evaluateRequired({ policy, head: sha('a'), checks: [...rest, run(name, overrides)] }).status, 'READY', name);
+    }
+    assert.equal(evaluateRequired({ policy, head: sha('a'), checks: [...checks, run(name, { id: 99, conclusion: 'failure' })] }).status, 'FAILED', name);
+  }
 });

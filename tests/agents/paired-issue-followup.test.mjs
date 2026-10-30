@@ -11,14 +11,14 @@ import { fixture, markerFor, mergePair, privateRepository, publicRepository, req
 test('fixture required checks derive from the active shared policy', () => {
   // An oracle that recomputes createPolicyState(ACTIVE_POLICY_ID) could not detect a wrong activation,
   // so the expected names are literal and ci-v1 is asserted unequal.
-  const TEN = [
+  const SEVEN = [
     'static-lint', 'static-types', 'repository-policy', 'pr-metadata',
-    'build (ubuntu-latest)', 'build (windows-latest)',
-    'contributor-tooling-tests (ubuntu-latest)', 'contributor-tooling-tests (windows-latest)',
-    'runtime-tests (ubuntu-latest)', 'runtime-tests (windows-latest)',
+    'build',
+    'contributor-tooling-tests',
+    'runtime-tests',
   ];
-  assert.equal(ACTIVE_POLICY_ID, 'ci-v2', 'Stage A2 makes the ten ci-v2 names current');
-  assert.deepEqual([...requiredChecks], TEN, 'the fixture mirrors the ten current names');
+  assert.equal(ACTIVE_POLICY_ID, 'ci-v4', 'Ubuntu-only activation makes the seven ci-v4 names current');
+  assert.deepEqual([...requiredChecks], SEVEN, 'the fixture mirrors the seven current names');
   assert.notDeepEqual([...requiredChecks], [...POLICIES['ci-v1'].required], 'the four legacy names are not current');
 });
 
@@ -136,7 +136,7 @@ test('open PRs wait and failed exact-head checks are not eligible for apply', as
   assert.deepEqual(failed.writes, []);
 });
 
-test('merged paired PRs with all ten successful public exact-head checks are preview eligible only', async t => {
+test('merged paired PRs with all seven successful public exact-head checks are preview eligible only', async t => {
   const f = await fixture(t);
   await savePairRecord(f);
   mergePair(f);

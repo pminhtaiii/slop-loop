@@ -1,5 +1,8 @@
 # CI Check and Migration Contract
 
+Current OS scope: the [2026-10-30 Ubuntu-only amendment](ubuntu-only.md) supersedes the dual-OS design below for the bounded replacement. Earlier task evidence remains historical.
+
+
 ## Current policy
 
 The planned current policy ID is `ci-v2`. Its exact direct check names are:

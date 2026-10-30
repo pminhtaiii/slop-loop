@@ -2,8 +2,34 @@
   "required_status_checks": {
     "strict": true,
     "checks": [
-      { "context": "contributor-checks (ubuntu-latest)", "app_id": 15368 },
-      { "context": "contributor-checks (windows-latest)", "app_id": 15368 }
+      {
+        "context": "static-lint",
+        "app_id": 15368
+      },
+      {
+        "context": "static-types",
+        "app_id": 15368
+      },
+      {
+        "context": "repository-policy",
+        "app_id": 15368
+      },
+      {
+        "context": "pr-metadata",
+        "app_id": 15368
+      },
+      {
+        "context": "build",
+        "app_id": 15368
+      },
+      {
+        "context": "contributor-tooling-tests",
+        "app_id": 15368
+      },
+      {
+        "context": "runtime-tests",
+        "app_id": 15368
+      }
     ]
   },
   "enforce_admins": true,

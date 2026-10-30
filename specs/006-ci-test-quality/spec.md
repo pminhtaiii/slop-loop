@@ -1,5 +1,8 @@
 # Feature Specification: Contributor CI and Mutation-Guided Test Quality
 
+Current OS scope: the [2026-10-30 Ubuntu-only amendment](contracts/ubuntu-only.md) supersedes the dual-OS design below for the bounded replacement. Earlier task evidence remains historical.
+
+
 **Feature Branch**: Planning in the existing checkout; implementation branches follow repository naming rules.
 **Created**: 2026-10-28 (Asia/Saigon)
 **Status**: Planning quality gate passed; implementation approval pending.

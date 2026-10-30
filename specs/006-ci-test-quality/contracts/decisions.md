@@ -1,5 +1,28 @@
 # Scope and Authorization
 
+## Ubuntu-only replacement — 2026-10-30 (Asia/Saigon)
+
+Follow-up authorization: the user explicitly approved the proposed development
+protection update and selected removal of redundant jobs **and** OS name suffixes.
+The [final cleanup contract](ubuntu-only.md#final-cleanup-and-stable-names--2026-10-30-asiasaigon)
+releases this bounded source cleanup and exact ci-v4 protection-name migration
+after its checks pass. All other protections and human merge authority remain.
+
+Observed rollout: PR #126 head `c68832a` passed all seven exact-head ci-v4 checks.
+The approved final required-name migration was applied and full protection read-back
+preserved every unrelated setting. Fresh hosted reruns retain the same source head;
+see the [rollout evidence](../../../docs/agents/ci-rollout.md#ubuntu-only-replacement--2026-10-30).
+The user explicitly selected push-only publication without local publication gates;
+current-head full local verification remains skipped. No merge was authorized.
+
+The user requested CI consolidation and selected Ubuntu-only CI. The bounded
+[Ubuntu-only amendment](ubuntu-only.md) supersedes the earlier requirement to
+retain both OS lanes. Source implementation and ordinary contributor publication
+are released after independent targeted design review. Live protection changes,
+legacy-job removal before verified migration, and merges remain gated.
+
+Targeted design gate: automated planning validation passed; independent standards/architecture and testability reviews found zero P0/P1 issues against the amendment. This releases its source stage only.
+
 ## Confirmed direction — 2026-10-28 (Asia/Saigon)
 
 The user selected Stryker, requested an initial telemetry experiment, and agreed to separate named CI responsibilities while retaining both OS behavioral lanes. Subsequent answers explicitly withdrew pre-PR mutation enforcement, selected direct required jobs with a shared names list, allowed only `.env.example` as an environment example, and chose a manual/report-only mutation CI pilot. The user then requested the planning workflow and specifications for CI changes and mutation-guided test improvements.

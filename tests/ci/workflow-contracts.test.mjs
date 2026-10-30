@@ -40,12 +40,6 @@ const WORKFLOWS = [
 ];
 const all = (predicate) => WORKFLOWS.flatMap((file) => [...file.jobs.values()].filter(predicate));
 
-// The two matrix jobs that existed before this feature; Stage C removes them after remote read-back.
-const TRANSITIONAL = [
-  ['contributor-checks', '.github/workflows/contributor-checks.yml'],
-  ['runtime-checks', '.github/workflows/runtime-checks.yml'],
-];
-
 test('every workflow keeps its triggers, finite limits, read-only permissions and pinned actions', () => {
   for (const file of WORKFLOWS) {
     assert.match(file.header, /^on:$/m, file.path);
@@ -79,25 +73,15 @@ test('every workflow keeps its triggers, finite limits, read-only permissions an
       assert.doesNotMatch(block, /\$\{\{\s*secrets\.|write-all|contents: write/, `${file.path}:${job.id} has no privileged access`);
     }
 
-    for (const job of file.jobs.values()) {
-      if (!job.block.some((line) => /^ {6}matrix:$/.test(line))) continue;
-      assert.match(job.block.join('\n'), /fail-fast: false/, `${file.path}:${job.id} keeps both OS lanes`);
-    }
   }
 });
 
-test('the four transitional old jobs are retained with their original command', () => {
-  const expected = [
-    ['contributor-checks', ['node scripts/ci/check-context.mjs', 'node scripts/ci/check-tracked-files.mjs', 'pnpm run lint', 'pnpm run test:contributors']],
-    ['runtime-checks', ['pnpm run validate:runtime']],
-  ];
-  for (const [id, commands] of expected) {
-    const file = WORKFLOWS.find((candidate) => candidate.job(id));
-    assert.ok(file, `${id} is retained`);
-    assert.match(file.job(id).block.join('\n'), /matrix:\s*\n\s*os: \[ubuntu-latest, windows-latest\]/, `${id} keeps both OS lanes`);
-    for (const command of commands) assert.ok(file.job(id).run.includes(command), `${id} still runs ${command}`);
+test('obsolete contributor and runtime matrix jobs are absent', () => {
+  for (const file of WORKFLOWS) {
+    assert.equal(file.jobs.has('contributor-checks'), false);
+    assert.equal(file.jobs.has('runtime-checks'), false);
+    assert.doesNotMatch(file.text, /windows-latest|matrix\.os|strategy:/);
   }
-  assert.deepEqual(TRANSITIONAL.map(([id]) => id), ['contributor-checks', 'runtime-checks']);
 });
 
 // A required check that a job does not actually perform is a green light over nothing. `run.length > 0`
@@ -124,10 +108,10 @@ const REQUIRED_COMMANDS = {
 
 test('every active policy name has a runnable counterpart in its declared workflow job', () => {
   const active = POLICIES[ACTIVE_POLICY_ID].required;
-  // Stage A2 is complete: all ten counterparts must be executable, including the separate metadata
+  // Ubuntu-only activation: all seven counterparts must be executable, including the separate metadata
   // workflow. A missing one is a required check that could never report.
-  assert.equal(ACTIVE_POLICY_ID, 'ci-v2');
-  assert.equal(active.length, 10);
+  assert.equal(ACTIVE_POLICY_ID, 'ci-v4');
+  assert.equal(active.length, 7);
   for (const name of active) {
     const { workflow: path, job } = CHECK_JOBS[name];
     const file = WORKFLOWS.find((candidate) => candidate.path === path);
@@ -158,30 +142,19 @@ test('the command matcher refuses a mention and accepts a command position', () 
   assert.equal(runsCommand(['          node scripts/ci/scan-secrets.mjs --exemptions x.json'], 'node scripts/ci/scan-secrets.mjs'), true);
 });
 
-test('staged non-required jobs are inventoried by exact name and are not prematurely required', () => {
-  const active = new Set(POLICIES[ACTIVE_POLICY_ID].required);
-  const staged = [];
-  for (const file of WORKFLOWS) {
-    for (const id of file.jobs.keys()) {
-      const names = Object.entries(CHECK_JOBS).filter(([, job]) => job.workflow === file.path && job.job === id).map(([name]) => name);
-      if (!names.length) continue;
-      for (const name of names) if (!active.has(name)) staged.push(name);
-    }
+test('the seven bare required names match all emitted jobs and the protection mirror', () => {
+  const expected = ['static-lint', 'static-types', 'repository-policy', 'pr-metadata', 'build', 'contributor-tooling-tests', 'runtime-tests'];
+  assert.deepEqual([...POLICIES[ACTIVE_POLICY_ID].required], expected);
+  assert.deepEqual(WORKFLOWS.flatMap((file) => [...file.jobs.keys()]).sort(), [...expected].sort());
+  const mirror = JSON.parse(readFileSync(new URL('../../.github/branch-protection.json', import.meta.url), 'utf8'));
+  assert.equal(mirror.required_status_checks.strict, true);
+  assert.equal(mirror.enforce_admins, true);
+  assert.deepEqual(mirror.required_status_checks.checks, expected.map((context) => ({ context, app_id: 15368 })));
+  for (const file of WORKFLOWS) for (const job of file.jobs.values()) {
+    assert.match(job.block.join('\n'), /^ {4}runs-on: ubuntu-latest$/m, job.id);
+    assert.doesNotMatch(job.block.join('\n'), /^ {4}name:/m, 'job IDs are the exact bare check names');
   }
-  // After activation nothing known is left unrequired; the transitional old jobs are deliberately
-  // still running but are not part of any policy, so they never appear here.
-  assert.deepEqual([...new Set(staged)].sort(), ['contributor-checks (ubuntu-latest)', 'contributor-checks (windows-latest)', 'runtime-checks (ubuntu-latest)', 'runtime-checks (windows-latest)']);
   assert.equal(Object.values(POLICIES).some((policy) => policy.required.includes(MUTATION_CHECK_NAME)), false);
-  assert.notEqual(active.has('pr-metadata'), false, 'pr-metadata is required once its workflow exists');
-  // Matrix jobs are required per OS name, so the bare job id is never itself a required name.
-  for (const id of ['static-lint', 'static-types', 'repository-policy', 'build', 'runtime-tests', 'contributor-tooling-tests']) {
-    assert.ok(WORKFLOWS.some((file) => file.job(id)), `${id} exists`);
-    const names = Object.values(CHECK_JOBS).filter((job) => job.job === id).map((job) => job);
-    assert.ok(names.length > 0, `${id} is named by the policy`);
-  }
-  for (const name of ['static-lint', 'static-types', 'repository-policy', 'pr-metadata', 'build (ubuntu-latest)', 'build (windows-latest)', 'contributor-tooling-tests (ubuntu-latest)', 'contributor-tooling-tests (windows-latest)', 'runtime-tests (ubuntu-latest)', 'runtime-tests (windows-latest)']) {
-    assert.equal(active.has(name), true, `${name} is required while ci-v2 is current`);
-  }
 });
 
 test('the build lanes reuse the clean-build-only mode and the runtime lane consumes its artifact', () => {
@@ -208,7 +181,7 @@ test('the build lanes reuse the clean-build-only mode and the runtime lane consu
 
   const runtime = WORKFLOWS.find((file) => file.job('runtime-tests')).job('runtime-tests');
   assert.match(runtime.block.join('\n'), /^ {4}needs: build$/m, 'runtime tests depend on the build lane');
-  assert.match(runtime.block.join('\n'), /name: runtime-build-\$\{\{ matrix\.os \}\}/, 'only the matching OS artifact is downloaded');
+  assert.match(runtime.block.join('\n'), /name: runtime-build-ubuntu-latest/, 'only the matching OS artifact is downloaded');
   assert.ok(runtime.run.includes('node scripts/ci/artifact-identity.mjs verify'), 'identity is verified before the lane runs');
   assert.ok(runtime.run.includes('pnpm run test:runtime'), 'the complete emitted inventory runs');
   assert.equal(runtime.run.some((command) => command.includes('validate:runtime')), false, 'no clean rebuild replaces the verified artifact');
@@ -216,8 +189,8 @@ test('the build lanes reuse the clean-build-only mode and the runtime lane consu
 
 test('staged candidate lanes check out and verify H while recording distinct B and M', () => {
   // The metadata lane consumes its event payload instead of a working tree, so it is not a
-  // candidate-code lane; every other non-transitional job must bind and verify H.
-  const staged = all((job) => !TRANSITIONAL.some(([id]) => id === job.id) && job.id !== 'pr-metadata');
+  // candidate-code lane; every other job must bind and verify H.
+  const staged = all((job) => job.id !== 'pr-metadata');
   assert.ok(staged.length >= 6);
   for (const job of staged) {
     const block = job.block.join('\n');
@@ -266,7 +239,7 @@ test('artifact identity inputs come from the run context, never a candidate-supp
     for (const [name, value] of [['REPOSITORY_ID', 'github.repository_id'], ['RUN_ID', 'github.run_id'], ['RUN_ATTEMPT', 'github.run_attempt']]) {
       assert.match(block, new RegExp(`^ {10}${name}: \\$\\{\\{ ${value.replace('.', '\\.')} \\}\\}$`, 'm'), `${id} binds ${name} to ${value}`);
     }
-    assert.match(block, /^ {10}RUNNER_OS_LABEL: \$\{\{ matrix\.os \}\}$/m, `${id} binds the OS label`);
+    assert.match(block, /^ {10}RUNNER_OS_LABEL: ubuntu-latest$/m, `${id} binds the OS label`);
     assert.doesNotMatch(block, /RUNNER_OS_LABEL: \$\{\{ (?:env|inputs)\./, `${id} never takes the OS label from candidate input`);
   }
 });
@@ -278,7 +251,7 @@ test('new lanes retain machine-readable results even when the lane fails', () =>
     assert.match(block, /if: always\(\)/, `${id} uploads results on failure`);
     assert.match(block, new RegExp(`^ {10}path: ${results.replace('.', '\\.')}$`, 'm'), `${id} retains ${results}`);
     assert.match(block, /if-no-files-found: warn/, `${id} makes a missing results file visible instead of silent`);
-    assert.match(block, /name: \S+-results-\$\{\{ matrix\.os \}\}/, `${id} separates results per OS`);
+    assert.match(block, /name: \S+-results-ubuntu-latest/, `${id} separates results per OS`);
   }
 });
 
@@ -289,4 +262,13 @@ test('no staged lane introduces a shard count or an aggregate required gate', ()
   }
   // Stage A2 requires this file to exist; before activation the same assertion rejected its presence.
   assert.equal(readdirSync(new URL('../../.github/workflows', import.meta.url)).includes('pr-metadata.yml'), true, 'the metadata workflow exists once it is required');
+});
+
+// A historical job mapping must never accidentally restore a canonical Windows runner.
+test('canonical build and complete test inventories run only on Ubuntu', () => {
+  for (const id of ['build', 'runtime-tests', 'contributor-tooling-tests']) {
+    const job = WORKFLOWS.find((file) => file.job(id)).job(id);
+    assert.match(job.block.join('\n'), /^ {4}runs-on: ubuntu-latest$/m, id);
+    assert.doesNotMatch(job.block.join('\n'), /windows-latest/, id);
+  }
 });

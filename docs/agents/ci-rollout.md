@@ -1,5 +1,47 @@
 # Contributor CI Rollout Checklist
 
+## Ubuntu-only replacement — 2026-10-30
+
+The user selected Ubuntu-only CI; see the [bounded amendment](../../specs/006-ci-test-quality/contracts/ubuntu-only.md).
+The current source policy is `ci-v4` with seven direct, OS-independent check names:
+`static-lint`, `static-types`, `repository-policy`, `pr-metadata`, `build`,
+`contributor-tooling-tests` and `runtime-tests`. All jobs run on Ubuntu. The two
+legacy matrix jobs, including duplicate Ubuntu tests, are removed in the final
+cleanup source batch. Complete inventories, validators and revision-bound
+artifacts remain; all three earlier policy lists remain immutable for audited
+merged identities.
+
+The user explicitly approved the seven-check protection migration and then chose
+removal of both old jobs and OS suffixes. Development protection was migrated to
+ci-v3 with app ID 15368, strict updates and all other settings unchanged. Read-back
+matched the exact names; fresh checks on PR #126 head `fa5dee8` passed after
+migration ([contributor attempt 2](https://github.com/pminhtaiii/slop-loop/actions/runs/40997729035/attempts/2),
+[runtime attempt 2](https://github.com/pminhtaiii/slop-loop/actions/runs/40997729126/attempts/2)).
+This satisfies the prerequisite for legacy cleanup. Detailed before/after JSON
+and exact-head evidence are retained locally under
+`.agent-work/2026-10-30/ubuntu-only-ci/`.
+
+After all seven exact-head ci-v4 checks passed on PR #126 head `c68832a`, the
+explicitly approved final migration replaced the OS-qualified requirements with
+the seven bare names listed above. Full protection read-back matched the requested
+GitHub Actions app bindings and preserved every other protection field. Fresh
+verification uses [contributor attempt 2](https://github.com/pminhtaiii/slop-loop/actions/runs/41041094293/attempts/2),
+[runtime attempt 2](https://github.com/pminhtaiii/slop-loop/actions/runs/41041094461/attempts/2)
+and the metadata rerun at that same head. Detailed evidence is retained locally
+as `protection-v4-before.json`, `protection-v4-after.json` and
+`ci-v4-post-migration-check-runs.json` in the session folder above.
+
+The cleanup was published in user-requested push-only mode: current-head full
+local publication gates were skipped, with the in-flight local runtime gate
+cancelled; focused checks and independent reviews remain separately recorded.
+Hosted CI still applies. No merge is authorized or performed. The workflow files
+reach development only through the ordinary human merge decision; the feature
+PR's Ubuntu-only execution does not establish an unobserved development push run.
+
+The stages and observations below describe the earlier ci-v2 rollout and remain
+historical evidence; the amendment governs the new replacement.
+
+
 This document owns the staged rollout record for the split contributor CI described in
 [`specs/006-ci-test-quality`](../../specs/006-ci-test-quality/spec.md). It records an inventory and
 prepared steps. It does not change live settings, and a recorded step is not evidence that its

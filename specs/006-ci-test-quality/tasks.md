@@ -1,5 +1,8 @@
 # Tasks: Contributor CI and Mutation-Guided Test Quality
 
+Current OS scope: the [2026-10-30 Ubuntu-only amendment](contracts/ubuntu-only.md) supersedes the dual-OS design below for the bounded replacement. Earlier task evidence remains historical.
+
+
 **Input**: [spec](spec.md), [plan](plan.md), [research](research.md), [data model](data-model.md) and [contracts](contracts/decisions.md).
 **Authorization**: Planning only. All implementation tasks remain unchecked; [decisions](contracts/decisions.md) controls release. External rollout gates are not satisfied by passing local tests.
 **Tests**: Required behavioral RED/GREEN slices. A task that changes behavior writes its focused test first, implements that slice, and records exact commands/statuses; do not bulk-write all tests before implementations.
