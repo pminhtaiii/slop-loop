@@ -78,6 +78,10 @@ node scripts/agents/active-task.mjs finish --owner <owner> --task <task> --resul
 
 The receipt is local workflow accounting, not a signed security credential. The helper verifies publication and CI live through GitHub; repository tools cannot intercept an arbitrary assistant final response. AGENTS and the build workflow route completion through this gate. Register workers explicitly with `active-task.mjs start --role worker --session <date/session-id>` and declare their exact files with `--owned-path`; they return `handed-off` results with `handoff`, without completing the coordinator's assignment or gaining remote authority. Coordinators run `verify-handoff` before integrating or publishing worker changes; legacy handoffs without owned paths remain unverified. Coordinator roles cannot use worker handoff. Archive/retirement accepts reviewed worker handoffs separately from published contributor completion. Session finish checks active/blocked assignments for the matching session, while legacy unknown-session records block conservatively when their checkout matches or is unknown. Worktree retirement remains checkout-wide, so assignments in other sessions still prevent deletion.
 
+## Yield and resume
+
+Use the [background publication runner](publication-jobs.md) to start full gates, retain a job ID and yield the agent turn. Resume from its durable result; waiting keeps the assignment active and does not imply contributor completion.
+
 ## Repair current-head findings
 
 For feedback disputing a decision's date or approval status, check the original user confirmation and its stated timezone before editing the record. A commit timestamp dates the commit, not the decision; UTC and the user's local calendar date may differ. Preserve confirmed decisions, record the timezone and evidence, and mark only genuinely missing evidence as unverified.
