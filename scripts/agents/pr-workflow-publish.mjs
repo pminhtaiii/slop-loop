@@ -39,6 +39,7 @@ export async function publishCommand({ values, record, branch, repo, remote, git
   }
   git('fetch', '--no-tags', 'origin', 'refs/heads/development:refs/remotes/origin/development');
   const head = git('rev-parse', 'HEAD');
+  if (dependencies.expectedCandidate && (head !== dependencies.expectedCandidate.head || branch !== dependencies.expectedCandidate.branch || git('branch', '--show-current') !== dependencies.expectedCandidate.branch)) throw new Error('Checkout changed since job launch; publication refused before gates.');
   const [behind] = git('rev-list', '--left-right', '--count', `origin/development...${head}`).split(/\s+/).map(Number);
   if (behind > 0) throw new Error('Branch is behind development; integrate its changes before publishing.');
   const size = changedLines(git('diff', '--numstat', '--no-renames', `origin/development...${head}`));

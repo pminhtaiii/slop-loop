@@ -6,6 +6,8 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { publicationJob, runPublicationJob } from '../../scripts/agents/publication-job.mjs';
+import { runWorkflow } from '../../scripts/agents/pr-workflow.mjs';
+import { checkout } from './support/pr-workflow-fixture.mjs';
 
 async function fixture(t) {
   const root = await mkdtemp(resolve(tmpdir(), 'publication-job-'));
@@ -34,8 +36,9 @@ test('retained job freezes body and candidate; duplicate starts cannot launch an
   await assert.rejects(f.start(), /unfinished/);
   await writeFile(resolve(f.root, 'body.md'), 'edited after launch');
   let calls = 0;
-  const result = await runPublicationJob(f.root, job.id, { workflow: async args => {
+  const result = await runPublicationJob(f.root, job.id, { workflow: async (args, options) => {
     calls++;
+    assert.deepEqual(options.expectedCandidate, { head: job.head, branch: job.branch });
     assert.equal(args[0], 'publish');
     assert.ok(args.includes('--skip-review-request'));
     assert.ok(!args.includes('--mode'));
@@ -46,6 +49,29 @@ test('retained job freezes body and candidate; duplicate starts cannot launch an
   assert.equal(result.status, 'SUCCEEDED');
   assert.equal((await f.status(job.id)).result.publishedHead, job.head);
   await assert.rejects(runPublicationJob(f.root, job.id), /state mismatch/);
+});
+
+test('candidate change during initial live reads refuses before gates or remote writes', async t => {
+  const f = await checkout(t);
+  const expectedCandidate = { head: f.e.head, branch: f.e.pr.headRefName };
+  let changed = false;
+  const execute = (binary, args) => {
+    if (!changed && binary === 'gh' && args[0] === 'pr' && args[1] === 'list') {
+      changed = true;
+      const result = spawnSync('git', ['commit', '--allow-empty', '-m', 'concurrent change'], { cwd: f.root, encoding: 'utf8', windowsHide: true });
+      assert.equal(result.status, 0, result.stderr);
+    }
+    return f.execute(binary, args);
+  };
+  await assert.rejects(runWorkflow(['publish', '--root', f.root, '--body-file', f.body, '--summary', 'add example'], { execute, expectedCandidate }), /Checkout changed since job launch/);
+  assert.equal(changed, true);
+  assert.equal(f.calls.some(([binary, ...args]) => binary === process.execPath || binary === 'git' && args[0] === 'push' || binary === 'gh' && ['create', 'edit', 'comment'].includes(args[1])), false);
+});
+
+test('oversized body is refused before launching a job', async t => {
+  const f = await fixture(t);
+  await writeFile(resolve(f.root, 'body.md'), Buffer.alloc(65_537, 65));
+  await assert.rejects(f.start(), /65536 bytes/);
 });
 
 test('changed candidate refuses publication before any workflow effect', async t => {

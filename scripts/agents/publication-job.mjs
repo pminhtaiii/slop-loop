@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { closeSync, openSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { open } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,6 +15,23 @@ const jobId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const unfinished = new Set(['STARTING', 'RUNNING']);
 const write = (path, value) => atomicWrite(path, `${JSON.stringify(value, null, 2)}\n`);
 const identity = root => ({ branch: git(root, ['symbolic-ref', '--quiet', '--short', 'HEAD']).stdout.trim(), head: git(root, ['rev-parse', 'HEAD']).stdout.trim() });
+
+async function readBody(path) {
+  const handle = await open(path, 'r');
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile() || !stat.size || stat.size > 65_536) throw new Error('PR body must contain 1–65536 bytes.');
+    const bytes = Buffer.alloc(65_537);
+    let length = 0;
+    while (length < bytes.length) {
+      const { bytesRead } = await handle.read(bytes, length, bytes.length - length, null);
+      if (!bytesRead) break;
+      length += bytesRead;
+    }
+    if (!length || length > 65_536) throw new Error('PR body must contain 1–65536 bytes.');
+    return bytes.subarray(0, length).toString('utf8');
+  } finally { await handle.close(); }
+}
 
 export async function launchDetached(command, args, { cwd, log }) {
   const fd = openSync(log, 'ax', 0o600);
@@ -41,7 +58,7 @@ export async function runPublicationJob(root, id, dependencies = {}) {
       await write(path, record);
       const args = ['publish', '--root', repo.root, '--base', 'development', '--body-file', record.bodyFile, '--summary', record.summary];
       if (record.skipReviewRequest) args.push('--skip-review-request');
-      record.result = workflowSummary(await (dependencies.workflow ?? runWorkflow)(args));
+      record.result = workflowSummary(await (dependencies.workflow ?? runWorkflow)(args, { expectedCandidate: { head: record.head, branch: record.branch } }));
       record.status = 'SUCCEEDED';
     } catch (error) {
       record.status = 'FAILED'; record.error = error.message.slice(0, 2000);
@@ -74,8 +91,7 @@ export async function publicationJob(args, dependencies = {}) {
   const current = identity(repo.root);
   assertNewBranch(current.branch); assertNewSummary(values.summary);
   if (git(repo.root, ['status', '--porcelain', '--untracked-files=all']).stdout.trim()) throw new Error('Commit scoped changes before starting publication.');
-  const body = await readFile(resolve(values['body-file']));
-  if (!body.length || body.length > 65_536) throw new Error('PR body must contain 1–65536 bytes.');
+  const body = await readBody(resolve(values['body-file']));
   const key = createHash('sha256').update(current.branch).digest('hex');
   const latest = resolve(directory, `${key}.latest.json`);
   return withLock(`${latest}.lock`, async () => {
@@ -90,7 +106,7 @@ export async function publicationJob(args, dependencies = {}) {
     const path = resolve(directory, `${id}.json`);
     const bodyFile = resolve(directory, `${id}.body.md`);
     const log = resolve(directory, `${id}.log`);
-    await atomicWrite(bodyFile, body.toString('utf8'), { exclusive: true });
+    await atomicWrite(bodyFile, body, { exclusive: true });
     const record = { id, status: 'STARTING', root: repo.root, ...current, bodyFile, summary: values.summary, skipReviewRequest: Boolean(values['skip-review-request']), log, startedAt: new Date().toISOString() };
     await write(path, record);
     await write(latest, { id });
