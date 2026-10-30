@@ -412,6 +412,7 @@ test('snapshot creation removes a symbolic-link .gitleaksignore without changing
   }
   git('init', '--quiet');
   git('config', 'core.symlinks', 'true');
+  git('config', 'core.autocrlf', 'false');
   git('add', 'ignore.txt', '.gitleaksignore');
   git('-c', 'user.email=test@example.invalid', '-c', 'user.name=test', 'commit', '--quiet', '-m', 'linked ignore');
   const directory = join(outside, 'tree');
