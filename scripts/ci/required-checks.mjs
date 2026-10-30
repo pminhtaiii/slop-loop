@@ -36,10 +36,19 @@ export const POLICIES = Object.freeze({
     'contributor-tooling-tests (ubuntu-latest)',
     'runtime-tests (ubuntu-latest)',
   ]),
+  'ci-v4': immutable('ci-v4', [
+    'static-lint',
+    'static-types',
+    'repository-policy',
+    'pr-metadata',
+    'build',
+    'contributor-tooling-tests',
+    'runtime-tests',
+  ]),
 });
 
-// Ubuntu-only replacement; ci-v1 and ci-v2 remain immutable historical policies.
-export const ACTIVE_POLICY_ID = 'ci-v3';
+// Stable Ubuntu-only names; all earlier policy lists remain immutable for historical bindings.
+export const ACTIVE_POLICY_ID = 'ci-v4';
 
 const POLICY_ORDER = Object.freeze(Object.keys(POLICIES));
 // Only a policy that has already been required can be bound to an immutable merged head, so the
@@ -62,6 +71,9 @@ export const CHECK_JOBS = Object.freeze(Object.fromEntries([
   ['static-types', { workflow: WORKFLOWS.contributor, job: 'static-types' }],
   ['repository-policy', { workflow: WORKFLOWS.contributor, job: 'repository-policy' }],
   ['pr-metadata', { workflow: WORKFLOWS.prMetadata, job: 'pr-metadata' }],
+  ['build', { workflow: WORKFLOWS.runtime, job: 'build' }],
+  ['contributor-tooling-tests', { workflow: WORKFLOWS.contributor, job: 'contributor-tooling-tests' }],
+  ['runtime-tests', { workflow: WORKFLOWS.runtime, job: 'runtime-tests' }],
   ['build (ubuntu-latest)', { workflow: WORKFLOWS.runtime, job: 'build' }],
   ['build (windows-latest)', { workflow: WORKFLOWS.runtime, job: 'build' }],
   ['contributor-tooling-tests (ubuntu-latest)', { workflow: WORKFLOWS.contributor, job: 'contributor-tooling-tests' }],

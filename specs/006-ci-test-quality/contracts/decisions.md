@@ -2,6 +2,12 @@
 
 ## Ubuntu-only replacement — 2026-10-30 (Asia/Saigon)
 
+Follow-up authorization: the user explicitly approved the proposed development
+protection update and selected removal of redundant jobs **and** OS name suffixes.
+The [final cleanup contract](ubuntu-only.md#final-cleanup-and-stable-names--2026-10-30-asiasaigon)
+releases this bounded source cleanup and exact ci-v4 protection-name migration
+after its checks pass. All other protections and human merge authority remain.
+
 The user requested CI consolidation and selected Ubuntu-only CI. The bounded
 [Ubuntu-only amendment](ubuntu-only.md) supersedes the earlier requirement to
 retain both OS lanes. Source implementation and ordinary contributor publication

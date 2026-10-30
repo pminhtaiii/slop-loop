@@ -21,37 +21,7 @@ env:
   MERGE_SHA: ${{ github.sha }}
 
 jobs:
-  # Transitional: retained unchanged until Stage C removes it after remote read-back.
-  contributor-checks:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-      - name: Select pinned pnpm version
-        uses: pnpm/setup@c9883cc79df532ad1a7b81bf9ab944ceb090d65c # v2.0.0
-        with:
-          install: false
-      - name: Install dependencies for test discovery
-        run: pnpm install --frozen-lockfile
-      - name: Check context consistency
-        run: node scripts/ci/check-context.mjs
-      - name: Check tracked files
-        run: node scripts/ci/check-tracked-files.mjs
-      - name: Lint repository JavaScript and TypeScript
-        run: pnpm run lint
-      - name: Test contributor helpers
-        run: pnpm run test:contributors
-
-  # Canonical ci-v3 checks; legacy jobs above remain until protection migration.
+  # Canonical Ubuntu checks with stable OS-independent check names.
   static-lint:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -170,11 +140,7 @@ jobs:
           node scripts/ci/scan-secrets.mjs "${args[@]}" --exemptions config/secret-scan-exemptions.json
 
   contributor-tooling-tests:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -206,7 +172,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: contributor-tooling-results-${{ matrix.os }}
+          name: contributor-tooling-results-ubuntu-latest
           path: contributor-test-results.xml
           if-no-files-found: warn
           retention-days: 7

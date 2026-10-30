@@ -20,37 +20,9 @@ env:
   MERGE_SHA: ${{ github.sha }}
 
 jobs:
-  # Transitional: retained unchanged until Stage C removes it after remote read-back.
-  runtime-checks:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-      - name: Select pinned pnpm version
-        uses: pnpm/setup@c9883cc79df532ad1a7b81bf9ab944ceb090d65c # v2.0.0
-        with:
-          install: false
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-      - name: Validate runtime from a clean build
-        run: pnpm run validate:runtime
-
   # Canonical Ubuntu build emits the artifact the runtime lane consumes.
   build:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -84,11 +56,11 @@ jobs:
           REPOSITORY_ID: ${{ github.repository_id }}
           RUN_ID: ${{ github.run_id }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
-          RUNNER_OS_LABEL: ${{ matrix.os }}
+          RUNNER_OS_LABEL: ubuntu-latest
         run: node scripts/ci/artifact-identity.mjs write
       - uses: actions/upload-artifact@v4
         with:
-          name: runtime-build-${{ matrix.os }}
+          name: runtime-build-ubuntu-latest
           path: |
             artifact-identity.json
             tests/runtime
@@ -101,11 +73,7 @@ jobs:
   # Canonical Ubuntu runtime lane refuses artifacts with a different run identity.
   runtime-tests:
     needs: build
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -131,7 +99,7 @@ jobs:
       # A failed-jobs-only rerun without a current-attempt build fails closed here.
       - uses: actions/download-artifact@v4
         with:
-          name: runtime-build-${{ matrix.os }}
+          name: runtime-build-ubuntu-latest
           path: .
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -141,7 +109,7 @@ jobs:
           REPOSITORY_ID: ${{ github.repository_id }}
           RUN_ID: ${{ github.run_id }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
-          RUNNER_OS_LABEL: ${{ matrix.os }}
+          RUNNER_OS_LABEL: ubuntu-latest
         run: node scripts/ci/artifact-identity.mjs verify
       - name: Run the complete emitted runtime inventory
         run: pnpm run test:runtime
@@ -149,7 +117,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: runtime-results-${{ matrix.os }}
+          name: runtime-results-ubuntu-latest
           path: runtime-test-results.xml
           if-no-files-found: warn
           retention-days: 7

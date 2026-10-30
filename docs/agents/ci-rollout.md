@@ -3,20 +3,31 @@
 ## Ubuntu-only replacement — 2026-10-30
 
 The user selected Ubuntu-only CI; see the [bounded amendment](../../specs/006-ci-test-quality/contracts/ubuntu-only.md).
-The current source policy is `ci-v3` with seven direct checks: `static-lint`,
-`static-types`, `repository-policy`, `pr-metadata`, `build (ubuntu-latest)`,
-`contributor-tooling-tests (ubuntu-latest)` and `runtime-tests (ubuntu-latest)`.
-Canonical build/test matrices now contain Ubuntu only. Complete inventories,
-validators and revision-bound artifacts remain. Both older policy lists remain
-immutable; historical use requires an exact audited merged identity.
+The current source policy is `ci-v4` with seven direct, OS-independent check names:
+`static-lint`, `static-types`, `repository-policy`, `pr-metadata`, `build`,
+`contributor-tooling-tests` and `runtime-tests`. All jobs run on Ubuntu. The two
+legacy matrix jobs, including duplicate Ubuntu tests, are removed in the final
+cleanup source batch. Complete inventories, validators and revision-bound
+artifacts remain; all three earlier policy lists remain immutable for audited
+merged identities.
 
-Live development protection was re-read on 2026-10-30 and still requires the two
-legacy contributor names, app ID 15368, strict updates and admin enforcement.
-Thus both legacy matrix jobs remain unchanged until an explicitly authorized
-operator replaces those requirements with all seven ci-v3 names, reads back the
-settings and verifies a fresh candidate. Only then may a separate cleanup remove
-both legacy matrix jobs. **Windows still runs in this transition; Ubuntu-only
-rollout is not complete.** No live setting change or merge is authorized here.
+The user explicitly approved the seven-check protection migration and then chose
+removal of both old jobs and OS suffixes. Development protection was migrated to
+ci-v3 with app ID 15368, strict updates and all other settings unchanged. Read-back
+matched the exact names; fresh checks on PR #126 head `fa5dee8` passed after
+migration ([contributor attempt 2](https://github.com/pminhtaiii/slop-loop/actions/runs/40997729035/attempts/2),
+[runtime attempt 2](https://github.com/pminhtaiii/slop-loop/actions/runs/40997729126/attempts/2)).
+This satisfies the prerequisite for legacy cleanup. Detailed before/after JSON
+and exact-head evidence are retained locally under
+`.agent-work/2026-10-30/ubuntu-only-ci/`.
+
+Live requirements still use the ci-v3 OS-qualified names until all seven renamed
+ci-v4 checks pass on the cleanup candidate. The three absent old names deliberately
+block merge during that transition. The approved operator then replaces them with
+ci-v4, reads back unchanged protections and verifies fresh exact-head checks. No
+merge is authorized or performed. The workflow files reach development only through
+the ordinary human merge decision; this source cleanup alone does not establish
+live branch-wide Ubuntu-only execution.
 
 The stages and observations below describe the earlier ci-v2 rollout and remain
 historical evidence; the amendment governs the new replacement.

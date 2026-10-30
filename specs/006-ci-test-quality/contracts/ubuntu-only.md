@@ -1,5 +1,40 @@
 # Ubuntu-only CI amendment
 
+## Final cleanup and stable names — 2026-10-30 (Asia/Saigon)
+
+The user explicitly approved the seven-check protection migration and then chose
+to remove both redundant old jobs and OS suffixes from the remaining check names.
+This final cleanup supersedes the staged source details below. It is a separately
+reviewed batch updating PR #126; no merge is authorized.
+
+The ci-v3 protection migration was applied and read back with all other settings
+unchanged. Fresh exact-head runs on `fa5dee813ab31dc5eedcffb29db92541d478be31`
+passed the shared seven-check evaluation after migration. Retained local evidence
+is under `.agent-work/2026-10-30/ubuntu-only-ci/`; hosted source workflow attempts:
+[contributor](https://github.com/pminhtaiii/slop-loop/actions/runs/40997729035/attempts/2)
+and [runtime](https://github.com/pminhtaiii/slop-loop/actions/runs/40997729126/attempts/2).
+
+- Remove the two legacy matrix jobs entirely, including their Ubuntu duplicates.
+- Replace singleton canonical matrices with `runs-on: ubuntu-latest`. Job IDs
+  produce bare `build`, `contributor-tooling-tests` and `runtime-tests` names;
+  the other four names stay unchanged. Preserve all commands and artifact identity,
+  using explicit Ubuntu artifact labels rather than the removed matrix expression.
+- Add immutable ci-v4 with those seven bare names and activate it. Preserve all
+  three earlier policy lists; historical ci-v3 remains exact merged-binding only.
+- Update workflow/policy/consumer regressions, source protection mirror and current
+  documentation. Do not mark original ci-v2 rollout tasks complete by inference.
+- Keep live ci-v3 protection while publishing the renamed candidate. Its three
+  absent suffixed requirements intentionally block merging during this transition.
+  After all seven exact-head ci-v4 checks pass, replace required names with ci-v4,
+  preserving all other settings. Read back and observe fresh exact-head checks.
+  This sequence never admits a candidate using missing or failed checks.
+
+Acceptance: the seven direct responsibilities still execute complete inventories;
+no workflow declares a Windows runner, old duplicate job, or OS-qualified check;
+artifact identity still binds repository/run/attempt/head/OS; all historical lists
+and downgrade refusals remain tested. Run focused contracts, context refresh,
+independent review and ordinary publication gates for this cleanup batch.
+
 ## Scope and authorization
 
 On 2026-10-30 (Asia/Saigon), the user selected Ubuntu-only CI. This supersedes

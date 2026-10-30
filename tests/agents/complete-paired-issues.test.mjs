@@ -244,22 +244,22 @@ test('failing, spoofed, or incomplete exact-head checks and mismatched source tr
 
 test('merged completion uses only the active policy and never a ci-v1 or unbound historical name set', async t => {
   assert.deepEqual(parseHistoricalBindings(await readFile(new URL('../../config/legacy-ci-heads.json', import.meta.url), 'utf8')), [], 'no audited binding can grant an older policy');
-  assert.equal(ACTIVE_POLICY_ID, 'ci-v3', 'Ubuntu-only activation makes the seven ci-v3 names current');
-  assert.deepEqual([...requiredChecks], [...POLICIES['ci-v3'].required]);
+  assert.equal(ACTIVE_POLICY_ID, 'ci-v4', 'Ubuntu-only activation makes the seven ci-v4 names current');
+  assert.deepEqual([...requiredChecks], [...POLICIES['ci-v4'].required]);
 
   const v1 = await fixture(t);
   mergePair(v1);
   v1.checks.splice(0, v1.checks.length, ...POLICIES['ci-v1'].required.map((name, id) => ({ id: id + 1, name, head_sha: publicHead, status: 'completed', conclusion: 'success', app: { slug: 'github-actions' } })));
   const wrongPolicy = await runIssueCompletion([...v1.args, '--apply'], { execute: v1.execute });
-  assert.equal(wrongPolicy.status, 'WAITING_CI', 'ci-v1 names do not satisfy the active ci-v3 policy');
+  assert.equal(wrongPolicy.status, 'WAITING_CI', 'ci-v1 names do not satisfy the active ci-v4 policy');
   assert.deepEqual(v1.writes, []);
 
   const head = publicHead;
   const oldRuns = POLICIES['ci-v1'].required.map((name, id) => ({ id: id + 1, name, head_sha: head, status: 'completed', conclusion: 'success', app: { slug: 'github-actions' } }));
   const newRuns = requiredChecks.map((name, id) => ({ id: id + 1, name, head_sha: head, status: 'completed', conclusion: 'success', app: { slug: 'github-actions' } }));
-  assert.equal(evaluateRequired({ policy: POLICIES['ci-v3'], head, checks: oldRuns }).status, 'WAITING');
+  assert.equal(evaluateRequired({ policy: POLICIES['ci-v4'], head, checks: oldRuns }).status, 'WAITING');
   assert.equal(evaluateRequired({ policy: POLICIES['ci-v1'], head, checks: newRuns }).status, 'WAITING');
-  assert.equal(evaluateRequired({ policy: POLICIES['ci-v3'], head, checks: newRuns }).status, 'READY');
+  assert.equal(evaluateRequired({ policy: POLICIES['ci-v4'], head, checks: newRuns }).status, 'READY');
 });
 
 test('cross-repository PRs, duplicate submission PRs, and changed PR identity are refused', async t => {

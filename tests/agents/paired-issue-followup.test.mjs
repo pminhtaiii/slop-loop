@@ -13,11 +13,11 @@ test('fixture required checks derive from the active shared policy', () => {
   // so the expected names are literal and ci-v1 is asserted unequal.
   const SEVEN = [
     'static-lint', 'static-types', 'repository-policy', 'pr-metadata',
-    'build (ubuntu-latest)',
-    'contributor-tooling-tests (ubuntu-latest)',
-    'runtime-tests (ubuntu-latest)',
+    'build',
+    'contributor-tooling-tests',
+    'runtime-tests',
   ];
-  assert.equal(ACTIVE_POLICY_ID, 'ci-v3', 'Ubuntu-only activation makes the seven ci-v3 names current');
+  assert.equal(ACTIVE_POLICY_ID, 'ci-v4', 'Ubuntu-only activation makes the seven ci-v4 names current');
   assert.deepEqual([...requiredChecks], SEVEN, 'the fixture mirrors the seven current names');
   assert.notDeepEqual([...requiredChecks], [...POLICIES['ci-v1'].required], 'the four legacy names are not current');
 });
