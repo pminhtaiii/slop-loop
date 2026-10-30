@@ -8,6 +8,13 @@ The [final cleanup contract](ubuntu-only.md#final-cleanup-and-stable-names--2026
 releases this bounded source cleanup and exact ci-v4 protection-name migration
 after its checks pass. All other protections and human merge authority remain.
 
+Observed rollout: PR #126 head `c68832a` passed all seven exact-head ci-v4 checks.
+The approved final required-name migration was applied and full protection read-back
+preserved every unrelated setting. Fresh hosted reruns retain the same source head;
+see the [rollout evidence](../../../docs/agents/ci-rollout.md#ubuntu-only-replacement--2026-10-30).
+The user explicitly selected push-only publication without local publication gates;
+current-head full local verification remains skipped. No merge was authorized.
+
 The user requested CI consolidation and selected Ubuntu-only CI. The bounded
 [Ubuntu-only amendment](ubuntu-only.md) supersedes the earlier requirement to
 retain both OS lanes. Source implementation and ordinary contributor publication

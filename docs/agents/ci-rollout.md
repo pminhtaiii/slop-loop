@@ -21,13 +21,22 @@ This satisfies the prerequisite for legacy cleanup. Detailed before/after JSON
 and exact-head evidence are retained locally under
 `.agent-work/2026-10-30/ubuntu-only-ci/`.
 
-Live requirements still use the ci-v3 OS-qualified names until all seven renamed
-ci-v4 checks pass on the cleanup candidate. The three absent old names deliberately
-block merge during that transition. The approved operator then replaces them with
-ci-v4, reads back unchanged protections and verifies fresh exact-head checks. No
-merge is authorized or performed. The workflow files reach development only through
-the ordinary human merge decision; this source cleanup alone does not establish
-live branch-wide Ubuntu-only execution.
+After all seven exact-head ci-v4 checks passed on PR #126 head `c68832a`, the
+explicitly approved final migration replaced the OS-qualified requirements with
+the seven bare names listed above. Full protection read-back matched the requested
+GitHub Actions app bindings and preserved every other protection field. Fresh
+verification uses [contributor attempt 2](https://github.com/pminhtaiii/slop-loop/actions/runs/41041094293/attempts/2),
+[runtime attempt 2](https://github.com/pminhtaiii/slop-loop/actions/runs/41041094461/attempts/2)
+and the metadata rerun at that same head. Detailed evidence is retained locally
+as `protection-v4-before.json`, `protection-v4-after.json` and
+`ci-v4-post-migration-check-runs.json` in the session folder above.
+
+The cleanup was published in user-requested push-only mode: current-head full
+local publication gates were skipped, with the in-flight local runtime gate
+cancelled; focused checks and independent reviews remain separately recorded.
+Hosted CI still applies. No merge is authorized or performed. The workflow files
+reach development only through the ordinary human merge decision; the feature
+PR's Ubuntu-only execution does not establish an unobserved development push run.
 
 The stages and observations below describe the earlier ci-v2 rollout and remain
 historical evidence; the amendment governs the new replacement.
