@@ -7,6 +7,74 @@ import { runIssueCompletion } from '../../scripts/agents/complete-paired-issues.
 import { ACTIVE_POLICY_ID, POLICIES, evaluateRequired, parseHistoricalBindings } from '../../scripts/ci/required-checks.mjs';
 import { branch, completionMarkerFor, fixture, markerFor, mergePair, privateRepository, publicHead, publicRepository, requiredChecks } from './support/complete-paired-issues-fixture.mjs';
 
+const historicalBinding = { repositoryId: 101, headRepositoryId: 101, number: 7, head: publicHead, tree: 'c'.repeat(40), policy: 'ci-v1' };
+
+function useHistoricalChecks(f) {
+  f.checks.splice(0, f.checks.length, ...POLICIES['ci-v1'].required.map((name, id) => ({ id: id + 1, name, head_sha: publicHead, status: 'completed', conclusion: 'success', app: { slug: 'github-actions' } })));
+}
+
+test('an audited historical merged pair uses its bound policy and preserves preview/apply safeguards', async t => {
+  const f = await fixture(t, { historicalBindings: [historicalBinding], loseCloseResponse: false });
+  mergePair(f);
+  useHistoricalChecks(f);
+  assert.equal((await runIssueCompletion(f.args, { execute: f.execute })).status, 'READY_TO_COMPLETE');
+  assert.deepEqual(f.writes, []);
+  assert.equal((await runIssueCompletion([...f.args, '--apply'], { execute: f.execute })).status, 'COMPLETED');
+  assert.equal(f.publicIssue.state, 'closed');
+  assert.equal(f.privateIssue.state, 'closed');
+});
+
+test('historical completion refuses every substituted binding field before remote writes', async t => {
+  for (const [field, value] of Object.entries({ repositoryId: 102, headRepositoryId: 102, number: 8, head: 'd'.repeat(40), tree: 'd'.repeat(40) })) {
+    await t.test(field, async t => {
+      const f = await fixture(t, { historicalBindings: [{ ...historicalBinding, [field]: value }] });
+      mergePair(f);
+      useHistoricalChecks(f);
+      assert.equal((await runIssueCompletion([...f.args, '--apply'], { execute: f.execute })).status, 'WAITING_CI');
+      assert.deepEqual(f.writes, []);
+      assert.equal(f.publicIssue.state, 'open');
+      assert.equal(f.privateIssue.state, 'open');
+    });
+  }
+});
+
+test('historical completion requires live merged identity and never falls back between check policies', async t => {
+  for (const state of ['OPEN', 'CLOSED']) {
+    const f = await fixture(t, { historicalBindings: [historicalBinding] });
+    mergePair(f);
+    f.prs.primary.state = state;
+    useHistoricalChecks(f);
+    const result = await runIssueCompletion([...f.args, '--apply'], { execute: f.execute });
+    assert.equal(result.status, state === 'OPEN' ? 'WAITING_PR' : 'BLOCKED');
+    assert.deepEqual(f.writes, []);
+  }
+  const changed = await fixture(t, { historicalBindings: [historicalBinding], publicPull: { merged_at: null } });
+  mergePair(changed);
+  useHistoricalChecks(changed);
+  await assert.rejects(runIssueCompletion([...changed.args, '--apply'], { execute: changed.execute }), /binding identity changed or is not merged/);
+  assert.deepEqual(changed.writes, []);
+
+  const currentOnly = await fixture(t, { historicalBindings: [historicalBinding] });
+  mergePair(currentOnly);
+  assert.equal((await runIssueCompletion([...currentOnly.args, '--apply'], { execute: currentOnly.execute })).status, 'WAITING_CI');
+  assert.deepEqual(currentOnly.writes, []);
+});
+
+test('historical completion still refuses stale, foreign-app and latest failed checks without effects', async t => {
+  for (const kind of ['stale', 'foreign', 'failed-rerun']) {
+    const f = await fixture(t, { historicalBindings: [historicalBinding] });
+    mergePair(f);
+    useHistoricalChecks(f);
+    if (kind === 'stale') for (const check of f.checks) check.head_sha = 'd'.repeat(40);
+    if (kind === 'foreign') for (const check of f.checks) check.app.slug = 'other-app';
+    if (kind === 'failed-rerun') f.checks.push({ ...f.checks[0], id: 100, conclusion: 'failure' });
+    assert.equal((await runIssueCompletion([...f.args, '--apply'], { execute: f.execute })).status, kind === 'failed-rerun' ? 'BLOCKED' : 'WAITING_CI');
+    assert.deepEqual(f.writes, []);
+    assert.equal(f.publicIssue.state, 'open');
+    assert.equal(f.privateIssue.state, 'open');
+  }
+});
+
 test('an open paired resolving PR returns WAITING_PR without remote writes', async t => {
   const f = await fixture(t);
   const open = await runIssueCompletion(f.args, { execute: f.execute });

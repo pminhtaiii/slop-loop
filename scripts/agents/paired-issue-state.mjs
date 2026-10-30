@@ -1,12 +1,11 @@
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { atomicWrite, readJson } from './agent-store.mjs';
 import { command, json, sides } from './paired-issue-api.mjs';
 import { featureBranch } from './pr-conventions.mjs';
-import { ACTIVE_POLICY_ID, createPolicyState, selectLatest } from '../ci/required-checks.mjs';
+import { ACTIVE_POLICY_ID, createPolicyState, parseHistoricalBindings, resolvePolicy, selectLatest } from '../ci/required-checks.mjs';
 
-// Stage A2: only the active policy is required, so an unbound merged head fails closed to the
-// current names instead of being granted an older policy. No historical path is added here because
-// this consumer never fetches the repository/head/tree identity a binding would have to match.
 const activePolicy = createPolicyState(ACTIVE_POLICY_ID).policy;
 
 export function parsePullUrl(url, repositoryName) {
@@ -94,8 +93,8 @@ export function readCheckRuns(call, repo, repositoryName, head) {
   return responses.flatMap((page) => page.check_runs);
 }
 
-export function assessChecks(call, repo, repositoryName, head) {
-  const latest = selectLatest({ policy: activePolicy, head, checks: readCheckRuns(call, repo, repositoryName, head) });
+export function assessChecks(call, repo, repositoryName, head, policy = activePolicy) {
+  const latest = selectLatest({ policy, head, checks: readCheckRuns(call, repo, repositoryName, head) });
   const signatures = latest.map(({ check }) => check ? {
     name: check.name,
     head: check.head_sha,
@@ -116,9 +115,28 @@ export function readCommitTree(call, repo, repositoryName, head) {
 }
 
 export function mergedSnapshot(call, repo, targets, publicPr, submissionPr) {
-  const checks = assessChecks(call, repo, targets.primary.repository, publicPr.headRefOid);
+  const repositoryName = targets.primary.repository;
+  const bindings = parseHistoricalBindings(readFileSync(resolve(repo.root, 'config/legacy-ci-heads.json'), 'utf8'));
+  const state = createPolicyState(ACTIVE_POLICY_ID, bindings);
+  const publicTree = readCommitTree(call, repo, repositoryName, publicPr.headRefOid);
+  let policy = state.policy;
+  if (bindings.some(entry => entry.number === publicPr.number && entry.head.toLowerCase() === publicPr.headRefOid.toLowerCase())) {
+    const observed = json(call, ['api', `repos/${repositoryName}/pulls/${publicPr.number}`], repo, 'public PR binding identity');
+    if (publicPr.state !== 'MERGED' || observed.number !== publicPr.number || !validPrUrl(observed.html_url, repositoryName, publicPr.number)
+      || observed.state !== 'closed' || observed.merged_at !== publicPr.mergedAt || !observed.merged_at
+      || observed.base?.ref !== publicPr.baseRefName || observed.head?.ref !== publicPr.headRefName
+      || observed.head?.sha?.toLowerCase() !== publicPr.headRefOid.toLowerCase()
+      || observed.base?.repo?.full_name?.toLowerCase() !== repositoryName.toLowerCase()
+      || observed.head?.repo?.full_name?.toLowerCase() !== repositoryName.toLowerCase()) {
+      throw new Error('The public PR binding identity changed or is not merged.');
+    }
+    const identity = { repositoryId: observed.base.repo.id, headRepositoryId: observed.head.repo.id, number: observed.number, head: observed.head.sha, tree: publicTree, state: 'MERGED' };
+    const binding = bindings.find(entry => entry.repositoryId === identity.repositoryId && entry.headRepositoryId === identity.headRepositoryId
+      && entry.number === identity.number && entry.head.toLowerCase() === identity.head.toLowerCase() && entry.tree.toLowerCase() === identity.tree);
+    policy = resolvePolicy(state, { policyId: binding?.policy ?? ACTIVE_POLICY_ID, pr: identity }).policy;
+  }
+  const checks = assessChecks(call, repo, repositoryName, publicPr.headRefOid, policy);
   if (checks.status !== 'READY') return { ...checks };
-  const publicTree = readCommitTree(call, repo, targets.primary.repository, publicPr.headRefOid);
   const submissionTree = readCommitTree(call, repo, targets.submission.repository, submissionPr.headRefOid);
   if (publicTree !== submissionTree) return { status: 'BLOCKED', reason: 'The public and submission PR heads have different Git trees.' };
   return {

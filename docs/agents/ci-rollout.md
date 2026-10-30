@@ -45,10 +45,11 @@ before the emitted inventory.
 
 `pr-metadata.yml` observes only `pull_request` events (`opened`, `reopened`, `synchronize`, `edited`,
 `ready_for_review`, `converted_to_draft`) in its own concurrency group, so a title or body edit never
-cancels a behavioral lane. It validates the event payload as data and executes no candidate code: the
-checkout is pinned to `github.event.pull_request.base.sha`, so the validator and its audited binding list
-are the base revision's copies and a PR cannot certify itself by editing the script. Drafts are validated
-too; draft state stays a human-readiness question, not a skip.
+cancels a behavioral lane. It validates the event payload as data and checks out both base and candidate
+revisions. The base revision's validator and audited binding list are preferred when present, so edits
+to the candidate validator do not grade themselves. The introducing PR is a bootstrap exception: when
+the base has no validator, the lane executes the candidate copy. Drafts are validated too; draft state
+stays a human-readiness question, not a skip.
 
 ### Remote protection observation (read-only, 2026-10-28)
 
@@ -147,5 +148,7 @@ binding selection so immutable merged heads stay assessable.
 | 2026-10-29 | A2 | independent review of the integrated batch found the following, all repaired with regressions: `workflow-contracts.test.mjs` accepted any non-empty `run:`, so a deleted or `echo skipped` validator still passed — a `REQUIRED_COMMANDS` table now names each required job's exact command(s); `pr-metadata.yml` checked out the default candidate merge commit, so a PR could self-certify by editing `check-pr-metadata.mjs` — the checkout is now `github.event.pull_request.base.sha`, and the `ci-checks.md`/rollout prose that claimed "no candidate checkout" was corrected (a base tree *is* checked out); `check-env-examples.mjs` echoed candidate-controlled paths into diagnostics and allocated a blob's real size — it now substitutes `<unprintable path>` and caps an over-limit blob at `MAX_BYTES + 1`; `pr-conventions.mjs` `validSummary` refused only CR/LF — it now refuses every C0 control character and DEL. Earlier same-batch repairs also confirmed present: deny-by-default `.env` classification in `check-tracked-files.mjs`, binding-free `resolvePolicy` with both-sided identity fields, and the current-convention default in `check-pr-metadata.mjs`. **No remote protection rule was read or changed, and no CI run backs this row.** | local gate: `node --test tests/ci/*.test.mjs` 106 pass +1 env skip |
 | 2026-10-29 | A2 | the first real run of PR #123 exposed a deadlock, not a flake: `pr-metadata` pinned its checkout to the base SHA, but that base tree has no `scripts/ci/check-pr-metadata.mjs`, so `Cannot find module` failed every run while ci-v2 requires the job. The fix checks out both base and head and prefers the base copy on presence; only the introducing PR is graded by its own copy. `tests/ci/workflow-contracts.test.mjs` now asserts both checkouts and the presence selection. **Local-gate evidence only: no observed remote CI success, and Stage B is not claimed.** | local gate: `node --test tests/ci/workflow-contracts.test.mjs` 10/10; `node --test tests/ci/*.test.mjs` |
 
-Not yet observed, and not claimed by any row above: real CI execution of the staged jobs, any
-branch-protection change, remote enforcement of the ci-v2 names, or removal of the transitional jobs.
+| 2026-10-30 | A2 | PR #123 at `3dffcbf` ran all ten ci-v2 checks: Windows contributor tests failed on a fixture's LF/CRLF assumption; the other nine required checks passed. Pinning the fixture repository's `core.autocrlf=false` preserves its exact-byte assertions. Independent review also identified missing historical-policy selection in merged-ticket completion and stale metadata-bootstrap prose. Completion now selects ci-v1 only from an exact audited binding matched to live public repository/PR/head identities and the source-head tree; unbound heads retain ci-v2. | CI run 40919239719; local `node --test tests/ci/scan-secrets.test.mjs`: 18 pass, 1 host symlink skip; `node --test tests/agents/complete-paired-issues.test.mjs tests/agents/paired-issue-followup.test.mjs`: 38/38; the bound historical preview was RED before integration and GREEN after |
+
+Not yet established by this log: a complete successful exact-head CI result for the repaired revision,
+any branch-protection change, remote enforcement of the ci-v2 names, or removal of transitional jobs.
