@@ -106,30 +106,23 @@ const REQUIRED_COMMANDS = {
   'contributor-tooling-tests': ['pnpm run test:contributors'],
 };
 
-test('every active policy name has a runnable counterpart in its declared workflow job', () => {
-  const active = POLICIES[ACTIVE_POLICY_ID].required;
-  // Ubuntu-only activation: all seven counterparts must be executable, including the separate metadata
-  // workflow. A missing one is a required check that could never report.
-  assert.equal(ACTIVE_POLICY_ID, 'ci-v4');
-  assert.equal(active.length, 7);
-  for (const name of active) {
+test('every policy name has a runnable counterpart in its declared workflow job', () => {
+  assert.equal(ACTIVE_POLICY_ID, 'ci-v5');
+  assert.equal(POLICIES[ACTIVE_POLICY_ID].required.length, 4);
+  for (const name of POLICIES[ACTIVE_POLICY_ID].required) {
     const { workflow: path, job } = CHECK_JOBS[name];
     const file = WORKFLOWS.find((candidate) => candidate.path === path);
     assert.ok(file, `${name} names an existing workflow ${path}`);
-    const declared = file.job(job);
-    assert.ok(declared, `${name} is produced by ${path}:${job}`);
-    assert.ok(declared.run.length > 0, `${path}:${job} runs at least one command`);
-    // The gate must actually run its validator, not merely some command. Both inline `run:` and
-    // `run: |` bodies count, so the whole job is searched with comment lines removed — a commented-out
-    // command is documentation, not a gate. The scan-secrets invocation is a block body, which is why
-    // `declared.run` alone cannot see it.
-    const commands = REQUIRED_COMMANDS[job];
-    assert.ok(commands, `${job} declares the commands it must run`);
-    for (const command of commands) {
-      assert.ok(runsCommand(declared.block, command), `${path}:${job} must run ${command}`);
+    assert.ok(file.job(job), `${name} is produced by ${path}:${job}`);
+  }
+  for (const job of WORKFLOWS.flatMap((file) => [...file.jobs.keys()])) {
+    assert.ok(REQUIRED_COMMANDS[job], `${job} declares the commands it must run`);
+    const declared = WORKFLOWS.find((file) => file.job(job)).job(job);
+    assert.ok(declared.run.length > 0, `${job} runs at least one command`);
+    for (const command of REQUIRED_COMMANDS[job]) {
+      assert.ok(runsCommand(declared.block, command), `${job} must run ${command}`);
     }
   }
-  assert.deepEqual(Object.keys(REQUIRED_COMMANDS).sort(), [...new Set(active.map((name) => CHECK_JOBS[name].job))].sort(), 'every required job has a documented command set');
 });
 
 test('the command matcher refuses a mention and accepts a command position', () => {
@@ -144,12 +137,12 @@ test('the command matcher refuses a mention and accepts a command position', () 
 
 test('the seven bare required names match all emitted jobs and the protection mirror', () => {
   const expected = ['static-lint', 'static-types', 'repository-policy', 'pr-metadata', 'build', 'contributor-tooling-tests', 'runtime-tests'];
-  assert.deepEqual([...POLICIES[ACTIVE_POLICY_ID].required], expected);
+  assert.deepEqual([...POLICIES['ci-v4'].required], expected);
   assert.deepEqual(WORKFLOWS.flatMap((file) => [...file.jobs.keys()]).sort(), [...expected].sort());
   const mirror = JSON.parse(readFileSync(new URL('../../.github/branch-protection.json', import.meta.url), 'utf8'));
   assert.equal(mirror.required_status_checks.strict, true);
   assert.equal(mirror.enforce_admins, true);
-  assert.deepEqual(mirror.required_status_checks.checks, expected.map((context) => ({ context, app_id: 15368 })));
+  assert.deepEqual(mirror.required_status_checks.checks, [...POLICIES[ACTIVE_POLICY_ID].required].map((context) => ({ context, app_id: 15368 })));
   for (const file of WORKFLOWS) for (const job of file.jobs.values()) {
     assert.match(job.block.join('\n'), /^ {4}runs-on: ubuntu-latest$/m, job.id);
     assert.doesNotMatch(job.block.join('\n'), /^ {4}name:/m, 'job IDs are the exact bare check names');

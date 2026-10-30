@@ -1,9 +1,25 @@
 # Contributor CI Rollout Checklist
 
+## Merge-gating narrowed to four checks - 2026-10-30
+
+The user asked that only static analysis and PR metadata be required for merging.
+Source now activates `ci-v5`, whose four names are `static-lint`,
+`static-types`, `repository-policy` and `pr-metadata`. The `build`,
+`contributor-tooling-tests` and `runtime-tests` lanes keep running and keep
+being validated by `tests/ci/workflow-contracts.test.mjs`, but they no longer
+gate a merge. `ci-v4` stays immutable so merged heads assessed under it remain
+reproducible, and `.github/branch-protection.json` mirrors the four `ci-v5`
+names.
+
+The live development protection rule still requires the seven `ci-v4` names.
+Moving it to the four `ci-v5` names is a separate, explicitly authorized
+external change with read-back; this batch makes no remote change and claims
+no remote enforcement.
+
 ## Ubuntu-only replacement — 2026-10-30
 
 The user selected Ubuntu-only CI; see the [bounded amendment](../../specs/006-ci-test-quality/contracts/ubuntu-only.md).
-The current source policy is `ci-v4` with seven direct, OS-independent check names:
+The policy in force for that rollout was `ci-v4` with seven direct, OS-independent check names:
 `static-lint`, `static-types`, `repository-policy`, `pr-metadata`, `build`,
 `contributor-tooling-tests` and `runtime-tests`. All jobs run on Ubuntu. The two
 legacy matrix jobs, including duplicate Ubuntu tests, are removed in the final

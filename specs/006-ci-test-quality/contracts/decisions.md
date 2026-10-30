@@ -1,5 +1,24 @@
 # Scope and Authorization
 
+## Merge-gating narrowed to four checks — 2026-10-30 (Asia/Saigon)
+
+The user asked that only static analysis and PR metadata be required for merging.
+This releases one bounded source change: an immutable `ci-v5` policy of
+`static-lint`, `static-types`, `repository-policy` and `pr-metadata`, its
+activation, the matching `.github/branch-protection.json` mirror, and the
+consumer/test updates that follow the active policy.
+
+The `build`, `contributor-tooling-tests` and `runtime-tests` lanes keep running,
+keep their command contracts, and stay visible in the evidence; they no longer
+gate a merge or a contributor completion. `ci-v4` stays immutable so merged heads
+assessed under it remain reproducible, and historical policies stay bindable only
+through audited merged identities.
+
+Not released: any live branch-protection change, any merge, and any removal of
+the three non-gating lanes. Gate 4 still governs the remote migration. Until a
+human authorizes and reads back that change, development protection continues to
+require the seven `ci-v4` names.
+
 ## Ubuntu-only replacement — 2026-10-30 (Asia/Saigon)
 
 Follow-up authorization: the user explicitly approved the proposed development

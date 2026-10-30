@@ -45,10 +45,16 @@ export const POLICIES = Object.freeze({
     'contributor-tooling-tests',
     'runtime-tests',
   ]),
+  'ci-v5': immutable('ci-v5', [
+    'static-lint',
+    'static-types',
+    'repository-policy',
+    'pr-metadata',
+  ]),
 });
 
 // Stable Ubuntu-only names; all earlier policy lists remain immutable for historical bindings.
-export const ACTIVE_POLICY_ID = 'ci-v4';
+export const ACTIVE_POLICY_ID = 'ci-v5';
 
 const POLICY_ORDER = Object.freeze(Object.keys(POLICIES));
 // Only a policy that has already been required can be bound to an immutable merged head, so the
