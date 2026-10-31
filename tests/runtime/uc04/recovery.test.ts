@@ -1,8 +1,9 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { DurableStore } from '../../../src/persistence/store.ts';
 import {
   StepStateMachine,
@@ -15,6 +16,7 @@ import {
   UC04_SCHEMA_VERSION,
   type TaskState,
   type WorkspaceBaseline,
+  type VerificationRecord,
 } from '../../../src/persistence/contracts.ts';
 
 describe('UC-04: StepStateMachine & Recovery Reconciliation', () => {
@@ -46,6 +48,7 @@ describe('UC-04: StepStateMachine & Recovery Reconciliation', () => {
         status: 'done',
         completedAt: new Date().toISOString(),
         changedFiles: ['file1.ts'],
+        evidenceRefs: ['changed:file1.ts'],
         predecessorIds: [],
       },
       {
@@ -75,12 +78,54 @@ describe('UC-04: StepStateMachine & Recovery Reconciliation', () => {
         kind: 'tokens',
         limit: 10000,
         consumed: 2000,
-        reservations: [{ reservationId: 'res-old', keyedId: 'req-interrupted', amount: 1000 }],
+        reservations: [],
         configurationId: 'cfg-1',
         version: 2,
       },
     ],
     workspaceBaseline: baseline,
+  };
+
+  const withReservation = (stateVersion: number, taskId = sampleTask.taskId): TaskState => ({
+    ...sampleTask,
+    taskId,
+    stateVersion,
+    budgetLedgers: [
+      {
+        scope: 'task',
+        kind: 'tokens',
+        limit: 10000,
+        consumed: 2000,
+        reservations: [{ reservationId: 'res-1', keyedId: 'req-interrupted', amount: 1000 }],
+        configurationId: 'cfg-1',
+        version: 2,
+      },
+    ],
+  });
+
+  const finalStepTask: TaskState = {
+    ...sampleTask,
+    stateVersion: 4,
+    currentStepIndex: 2,
+    status: 'running',
+    plan: [
+      { id: 'a', title: 'A', description: 'A', status: 'done', completedAt: new Date().toISOString(), predecessorIds: [], evidenceRefs: ['changed:a'] },
+      { id: 'b', title: 'B', description: 'B', status: 'done', completedAt: new Date().toISOString(), predecessorIds: ['a'], evidenceRefs: ['changed:b'] },
+      { id: 'c', title: 'C', description: 'C', status: 'todo', predecessorIds: ['b'] },
+    ],
+  };
+
+  const allDoneTask: TaskState = {
+    ...finalStepTask,
+    plan: finalStepTask.plan.map((s) =>
+      s.id === 'c' ? { ...s, status: 'done' as const, evidenceRefs: ['changed:c'] } : s
+    ),
+  };
+
+  const verified: VerificationRecord = {
+    status: 'verified',
+    evidenceRefs: ['tests:pass'],
+    checkedAt: new Date().toISOString(),
   };
 
   beforeEach(async () => {
@@ -96,7 +141,7 @@ describe('UC-04: StepStateMachine & Recovery Reconciliation', () => {
   describe('StepStateMachine', () => {
     const machine = new StepStateMachine();
 
-    it('starts step when predecessors are satisfied', () => {
+    it('starts step when predecessors are satisfied with evidence', () => {
       const started = machine.startStep(sampleTask, 'step-2');
       assert.equal(started.plan[1]?.status, 'doing');
       assert.equal(started.status, 'running');
@@ -110,15 +155,59 @@ describe('UC-04: StepStateMachine & Recovery Reconciliation', () => {
       );
     });
 
+    it('refuses a dependent when the done predecessor has no evidence', () => {
+      const unevidenced: TaskState = {
+        ...sampleTask,
+        plan: sampleTask.plan.map((s) => (s.id === 'step-1' ? { ...s, evidenceRefs: undefined } : s)),
+      };
+      assert.throws(
+        () => machine.startStep(unevidenced, 'step-2'),
+        (err: unknown) => err instanceof DependencyNotMetError && (err as DependencyNotMetError).missingPredecessors.includes('step-1')
+      );
+    });
+
+    it('refuses a dependent when the predecessor omits a required evidence id', () => {
+      const incomplete: TaskState = {
+        ...sampleTask,
+        plan: sampleTask.plan.map((s) =>
+          s.id === 'step-1' ? { ...s, evidenceRefs: ['changed:file1.ts'], requiredEvidenceRefs: ['tests:unit'] } : s
+        ),
+      };
+      assert.throws(
+        () => machine.startStep(incomplete, 'step-2'),
+        (err: unknown) => err instanceof DependencyNotMetError && (err as DependencyNotMetError).missingPredecessors.includes('step-1')
+      );
+    });
+
     it('completes step and advances currentStepIndex', () => {
       const started = machine.startStep(sampleTask, 'step-2');
       const completed = machine.completeStep(started, 'step-2', {
         changedFiles: ['file2.ts'],
+        evidenceRefs: ['changed:file2.ts'],
       });
 
       assert.equal(completed.plan[1]?.status, 'done');
       assert.deepEqual(completed.changedFiles, ['file1.ts', 'file2.ts']);
       assert.equal(completed.currentStepIndex, 2);
+      assert.equal(completed.status, 'running');
+    });
+
+    it('withholds completed status from the final step without verification', () => {
+      const machine2 = new StepStateMachine();
+      let state = machine2.startStep(finalStepTask, 'c');
+      state = machine.completeStep(state, 'c', { evidenceRefs: ['changed:c'] });
+      assert.equal(state.plan.every((s) => s.status === 'done'), true);
+      assert.notEqual(state.status, 'completed');
+      assert.match(state.nextAction, /verification/i);
+    });
+
+    it('grants completed status when the final step is verified', () => {
+      const state = machine.completeStep(machine.startStep(finalStepTask, 'c'), 'c', {
+        evidenceRefs: ['changed:c'],
+        verification: verified,
+      });
+      assert.equal(state.status, 'completed');
+      assert.deepEqual(state.verification, verified);
     });
 
     it('fails step and records error in openRisks', () => {
@@ -132,11 +221,11 @@ describe('UC-04: StepStateMachine & Recovery Reconciliation', () => {
   });
 
   describe('reconcileAndResume', () => {
-    it('resumes task from latest checkpoint and identifies next step without re-executing completed step', async () => {
-      const fakeGitInspector = async () => ({ ...baseline });
+    const matchingInspector = async (): Promise<WorkspaceBaseline> => ({ ...baseline });
 
+    it('resumes task from latest checkpoint and identifies next step without re-executing completed step', async () => {
       const resumed = await reconcileAndResume(sampleTask.taskId, store, {
-        gitInspector: fakeGitInspector,
+        gitInspector: matchingInspector,
       });
 
       assert.equal(resumed.taskId, sampleTask.taskId);
@@ -159,9 +248,8 @@ describe('UC-04: StepStateMachine & Recovery Reconciliation', () => {
       };
       await store.saveCheckpoint(waitingTask);
 
-      const fakeGitInspector = async () => ({ ...baseline });
       const resumed = await reconcileAndResume(waitingTask.taskId, store, {
-        gitInspector: fakeGitInspector,
+        gitInspector: matchingInspector,
       });
 
       assert.equal(resumed.status, 'waiting_approval');
@@ -169,16 +257,48 @@ describe('UC-04: StepStateMachine & Recovery Reconciliation', () => {
       assert.equal(resumed.stateVersion, 6);
     });
 
-    it('rejects resumption when workspace commit hash or dirty status drifts', async () => {
-      const driftedGitInspector = async () => ({
-        ...baseline,
-        commitHash: 'different-commit-hash-000000000000000000',
+    it('prefers a newer persisted task over an older checkpoint snapshot', async () => {
+      const newerTask: TaskState = {
+        ...sampleTask,
+        stateVersion: 3,
+        currentStepIndex: 2,
+        changedFiles: ['file1.ts', 'file2.ts'],
+        budgetLedgers: [
+          {
+            scope: 'task',
+            kind: 'tokens',
+            limit: 10000,
+            consumed: 2500,
+            reservations: [],
+            configurationId: 'cfg-1',
+            version: 3,
+          },
+        ],
+        plan: sampleTask.plan.map((s) =>
+          s.id === 'step-2'
+            ? { ...s, status: 'done' as const, completedAt: new Date().toISOString(), evidenceRefs: ['changed:file2.ts'] }
+            : s
+        ),
+      };
+      await store.saveTask(newerTask);
+
+      const resumed = await reconcileAndResume(sampleTask.taskId, store, {
+        gitInspector: matchingInspector,
       });
 
+      assert.deepEqual(resumed.changedFiles, ['file1.ts', 'file2.ts']);
+      assert.equal(resumed.plan[1]?.status, 'done');
+      assert.equal(resumed.currentStepIndex, 2);
+      assert.equal(resumed.stateVersion, 4);
+      const tokenLedger = resumed.budgetLedgers.find((l) => l.kind === 'tokens');
+      assert.equal(tokenLedger?.consumed, 2500);
+    });
+
+    it('rejects resumption when workspace commit hash drifts', async () => {
       await assert.rejects(
         async () => {
           await reconcileAndResume(sampleTask.taskId, store, {
-            gitInspector: driftedGitInspector,
+            gitInspector: async () => ({ ...baseline, commitHash: 'different-commit-hash-000000000000000000' }),
           });
         },
         (err: unknown) =>
@@ -187,18 +307,173 @@ describe('UC-04: StepStateMachine & Recovery Reconciliation', () => {
       );
     });
 
-    it('reconciles interrupted reservations so budgets remain safely charged', async () => {
-      const fakeGitInspector = async () => ({ ...baseline });
+    it('rejects resumption when a dirty workspace changes content to different dirty content', async () => {
+      await store.saveCheckpoint({
+        ...withReservation(3),
+        workspaceBaseline: { ...baseline, isClean: false, trackedFilesHash: 'dirty-a' },
+      });
+
+      await assert.rejects(
+        async () => {
+          await reconcileAndResume(sampleTask.taskId, store, {
+            gitInspector: async () => ({ ...baseline, isClean: false, trackedFilesHash: 'dirty-b' }),
+          });
+        },
+        (err: unknown) => err instanceof WorkspaceDriftError && /tracked file content mismatch/i.test((err as Error).message)
+      );
+    });
+
+    it('rejects resumption when the branch drifts', async () => {
+      await assert.rejects(
+        async () => {
+          await reconcileAndResume(sampleTask.taskId, store, {
+            gitInspector: async () => ({ ...baseline, branch: 'other-branch' }),
+          });
+        },
+        (err: unknown) => err instanceof WorkspaceDriftError && /branch mismatch/i.test((err as Error).message)
+      );
+    });
+
+    it('suspends instead of resuming while a reservation has no outcome evidence', async () => {
+      await store.saveCheckpoint(withReservation(3));
 
       const resumed = await reconcileAndResume(sampleTask.taskId, store, {
-        gitInspector: fakeGitInspector,
+        gitInspector: matchingInspector,
+      });
+
+      assert.notEqual(resumed.status, 'running');
+      const tokenLedger = resumed.budgetLedgers.find((l) => l.kind === 'tokens');
+      assert.ok(tokenLedger);
+      assert.equal(tokenLedger.reservations.length, 1);
+      assert.equal(tokenLedger.reservations[0]?.keyedId, 'req-interrupted');
+
+      const claims = await store.loadDispatchClaims(sampleTask.taskId);
+      assert.ok(claims.length > 0);
+      assert.equal(claims.some((c) => c.phase === 'uncertain'), true);
+    });
+
+    it('keeps a reservation held when charge_as_consumed has no positive evidence', async () => {
+      await store.saveCheckpoint(withReservation(3));
+
+      const resumed = await reconcileAndResume(sampleTask.taskId, store, {
+        gitInspector: matchingInspector,
         unresolvedReservationAction: 'charge_as_consumed',
       });
 
+      assert.notEqual(resumed.status, 'running');
       const tokenLedger = resumed.budgetLedgers.find((l) => l.kind === 'tokens');
-      assert.ok(tokenLedger);
-      assert.equal(tokenLedger.consumed, 3000); // 2000 + 1000 settled/charged
-      assert.equal(tokenLedger.reservations.length, 0);
+      assert.equal(tokenLedger?.consumed, 2000);
+      assert.equal(tokenLedger?.reservations.length, 1);
+    });
+
+    it('releases a reservation when the effect is confirmed not dispatched', async () => {
+      await store.saveCheckpoint(withReservation(3));
+
+      const resumed = await reconcileAndResume(sampleTask.taskId, store, {
+        gitInspector: matchingInspector,
+        confirmedOutcomes: [{ requestId: 'req-interrupted', outcome: 'not_dispatched', evidenceRef: 'receipt:none' }],
+      });
+
+      assert.equal(resumed.status, 'running');
+      const tokenLedger = resumed.budgetLedgers.find((l) => l.kind === 'tokens');
+      assert.equal(tokenLedger?.consumed, 2000);
+      assert.equal(tokenLedger?.reservations.length, 0);
+    });
+
+    it('charges an observed effect as consumed under charge_as_consumed', async () => {
+      await store.saveCheckpoint(withReservation(3));
+
+      const resumed = await reconcileAndResume(sampleTask.taskId, store, {
+        gitInspector: matchingInspector,
+        unresolvedReservationAction: 'charge_as_consumed',
+        confirmedOutcomes: [{ requestId: 'req-interrupted', outcome: 'effect_observed', evidenceRef: 'receipt:usage' }],
+      });
+
+      assert.equal(resumed.status, 'running');
+      const tokenLedger = resumed.budgetLedgers.find((l) => l.kind === 'tokens');
+      assert.equal(tokenLedger?.consumed, 3000);
+      assert.equal(tokenLedger?.reservations.length, 0);
+    });
+
+    it('refuses to resume when a dispatch claim state version is ahead', async () => {
+      await store.saveDispatchClaim({
+        claimId: 'claim-ahead',
+        taskId: sampleTask.taskId,
+        runId: sampleTask.runId,
+        stepId: 'step-2',
+        actionId: 'req-ahead',
+        epoch: 1,
+        stateVersion: 999,
+        phase: 'uncertain',
+        reservationRefs: [],
+        createdAt: new Date().toISOString(),
+      });
+
+      const resumed = await reconcileAndResume(sampleTask.taskId, store, {
+        gitInspector: matchingInspector,
+      });
+
+      assert.notEqual(resumed.status, 'running');
+      assert.match(resumed.nextAction, /mismatch/i);
+    });
+
+    it('withholds completed status when verification is unavailable', async () => {
+      await store.saveCheckpoint(allDoneTask);
+
+      const resumed = await reconcileAndResume(sampleTask.taskId, store, {
+        gitInspector: matchingInspector,
+      });
+
+      assert.notEqual(resumed.status, 'completed');
+      assert.equal(resumed.plan.every((s) => s.status === 'done'), true);
+      assert.match(resumed.nextAction, /verification/i);
+    });
+
+    it('withholds completed status when verification failed', async () => {
+      await store.saveCheckpoint(allDoneTask);
+
+      const resumed = await reconcileAndResume(sampleTask.taskId, store, {
+        gitInspector: matchingInspector,
+        verification: async () => ({ status: 'failed', evidenceRefs: ['tests:fail'], checkedAt: new Date().toISOString() }),
+      });
+
+      assert.notEqual(resumed.status, 'completed');
+      assert.equal(resumed.verification?.status, 'failed');
+      assert.match(resumed.nextAction, /verification/i);
+    });
+
+    it('grants completed status only when verification is verified with evidence', async () => {
+      await store.saveCheckpoint(allDoneTask);
+
+      const resumed = await reconcileAndResume(sampleTask.taskId, store, {
+        gitInspector: matchingInspector,
+        verification: async () => verified,
+      });
+
+      assert.equal(resumed.status, 'completed');
+      assert.deepEqual(resumed.verification, verified);
+    });
+
+    it('revalidates predecessor evidence against restored state', async () => {
+      await store.saveCheckpoint({
+        ...sampleTask,
+        stateVersion: 3,
+        plan: sampleTask.plan.map((s) =>
+          s.id === 'step-1'
+            ? { ...s, evidenceRefs: ['changed:file1.ts'], requiredEvidenceRefs: ['tests:unit'] }
+            : s
+        ),
+      });
+
+      const resumed = await reconcileAndResume(sampleTask.taskId, store, {
+        gitInspector: matchingInspector,
+      });
+
+      assert.throws(
+        () => new StepStateMachine().startStep(resumed, 'step-2'),
+        (err: unknown) =>
+          err instanceof DependencyNotMetError && (err as DependencyNotMetError).missingPredecessors.includes('step-1')
+      );
     });
 
     it('fails closed when captureWorkspaceBaseline encounters non-zero git exit code', async () => {
@@ -208,6 +483,38 @@ describe('UC-04: StepStateMachine & Recovery Reconciliation', () => {
         },
         /Failed to get git/
       );
+    });
+  });
+
+  describe('captureWorkspaceBaseline content hashing', () => {
+    it('distinguishes different contents of an already-modified tracked file', async () => {
+      const gitAvailable = spawnSync('git', ['--version'], { encoding: 'utf8' }).status === 0;
+      if (!gitAvailable) return;
+
+      const repo = await mkdtemp(join(tmpdir(), 'slop-rec-git-'));
+      try {
+        const git = (args: string[]): void => {
+          const res = spawnSync('git', args, { cwd: repo, encoding: 'utf8' });
+          assert.equal(res.status, 0, `git ${args.join(' ')} failed: ${res.stderr}`);
+        };
+        git(['init', '-q']);
+        git(['config', 'user.email', 'test@example.com']);
+        git(['config', 'user.name', 'Test']);
+        await writeFile(join(repo, 'a.txt'), 'first\n', 'utf8');
+        git(['add', 'a.txt']);
+        git(['commit', '-q', '-m', 'init']);
+
+        await writeFile(join(repo, 'a.txt'), 'dirty-one\n', 'utf8');
+        const first = await captureWorkspaceBaseline(repo);
+        await writeFile(join(repo, 'a.txt'), 'dirty-two\n', 'utf8');
+        const second = await captureWorkspaceBaseline(repo);
+
+        assert.equal(first.isClean, false);
+        assert.equal(second.isClean, false);
+        assert.notEqual(first.trackedFilesHash, second.trackedFilesHash);
+      } finally {
+        await rm(repo, { recursive: true, force: true });
+      }
     });
   });
 });

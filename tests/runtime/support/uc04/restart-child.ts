@@ -51,7 +51,7 @@ async function main() {
       state = machine.completeStep(
         { ...state, budgetLedgers: tracker.getLedgers() },
         'step-1',
-        { changedFiles: ['src/init.ts'] }
+        { changedFiles: ['src/init.ts'], evidenceRefs: ['changed:src/init.ts'] }
       );
       await store.saveCheckpoint(state);
 
@@ -83,6 +83,13 @@ async function main() {
       const resumed = await reconcileAndResume(taskId, store, {
         gitInspector: async () => ({ ...baselineWorkspace }),
         unresolvedReservationAction: 'charge_as_consumed',
+        confirmedOutcomes: [
+          {
+            requestId: 'req-crash-step2',
+            outcome: 'effect_observed',
+            evidenceRef: 'crash:step2-dispatch-was-in-flight',
+          },
+        ],
       });
 
       // Explicitly rerun interrupted step-2 work and settle its usage
@@ -92,10 +99,16 @@ async function main() {
       let state: TaskState = { ...resumed, budgetLedgers: tracker.getLedgers() };
 
       // Complete step-2
-      state = machine.completeStep(state, 'step-2', { changedFiles: ['src/core.ts'] });
+      state = machine.completeStep(state, 'step-2', {
+        changedFiles: ['src/core.ts'],
+        evidenceRefs: ['changed:src/core.ts'],
+      });
       // Start and complete step-3
       state = machine.startStep(state, 'step-3');
-      state = machine.completeStep(state, 'step-3', { evidenceRefs: ['test-ok'] });
+      state = machine.completeStep(state, 'step-3', {
+        evidenceRefs: ['test-ok'],
+        verification: { status: 'verified', evidenceRefs: ['test-ok'], checkedAt: new Date().toISOString() },
+      });
       await store.saveCheckpoint(state);
 
       console.log(JSON.stringify({

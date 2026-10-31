@@ -1,6 +1,14 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import type { TaskState, PlanStep, WorkspaceBaseline } from './contracts.ts';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import type {
+  TaskState,
+  PlanStep,
+  WorkspaceBaseline,
+  VerificationRecord,
+  BudgetLedger,
+} from './contracts.ts';
 import type { DurableStore } from './store.ts';
 import { BudgetTracker } from './accounting.ts';
 import { validateTaskState } from './contracts.ts';
@@ -32,6 +40,15 @@ export class DependencyNotMetError extends Error {
 export interface StepCompletionOptions {
   readonly changedFiles?: readonly string[] | undefined;
   readonly evidenceRefs?: readonly string[] | undefined;
+  readonly verification?: VerificationRecord | undefined;
+}
+
+export type VerificationCapability = (state: TaskState) => VerificationRecord | Promise<VerificationRecord>;
+
+export interface ConfirmedOutcome {
+  readonly requestId: string;
+  readonly outcome: 'effect_observed' | 'not_dispatched';
+  readonly evidenceRef: string;
 }
 
 export class StepStateMachine {
@@ -43,6 +60,12 @@ export class StepStateMachine {
     for (const predId of step.predecessorIds) {
       const predStep = state.plan.find((s) => s.id === predId);
       if (!predStep || predStep.status !== 'done') {
+        unsatisfied.push(predId);
+        continue;
+      }
+      const evidence = predStep.evidenceRefs ?? [];
+      const required = predStep.requiredEvidenceRefs ?? [];
+      if (evidence.length === 0 || !required.every((id) => evidence.includes(id))) {
         unsatisfied.push(predId);
       }
     }
@@ -64,7 +87,6 @@ export class StepStateMachine {
       throw new Error(`Cannot start step ${stepId} with status done`);
     }
 
-    // Check DAG predecessor readiness
     const depCheck = this.checkPredecessors(state, currentStep);
     if (!depCheck.ready) {
       throw new DependencyNotMetError(stepId, depCheck.unsatisfied);
@@ -123,7 +145,10 @@ export class StepStateMachine {
       new Set([...state.changedFiles, ...(options.changedFiles ?? [])])
     );
 
+    const verification = options.verification;
+    const isVerified = verification?.status === 'verified' && verification.evidenceRefs.length > 0;
     const isAllDone = newPlan.every((s) => s.status === 'done');
+
     let nextStepIndex = stepIdx;
     if (!isAllDone) {
       const nextIdx = newPlan.findIndex((s) => s.status === 'todo');
@@ -131,8 +156,11 @@ export class StepStateMachine {
     }
 
     const nextStep = newPlan[nextStepIndex];
+    const status: TaskState['status'] = isAllDone ? (isVerified ? 'completed' : 'paused') : 'running';
     const nextAction = isAllDone
-      ? 'Task completed'
+      ? isVerified
+        ? 'Task completed'
+        : `Verification required before completion (status: ${verification?.status ?? 'unavailable'})`
       : nextStep
         ? `Proceed with step ${nextStep.title}`
         : 'Awaiting next action';
@@ -142,9 +170,10 @@ export class StepStateMachine {
       plan: newPlan,
       changedFiles: allChangedFiles,
       currentStepIndex: nextStepIndex,
-      status: isAllDone ? 'completed' : 'running',
+      status,
       stateVersion: state.stateVersion + 1,
       nextAction,
+      ...(verification ? { verification } : {}),
     };
 
     const val = validateTaskState(nextState);
@@ -198,20 +227,37 @@ export async function captureWorkspaceBaseline(repoRoot: string): Promise<Worksp
   const branchRes = spawnSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' });
   const branch = branchRes.status === 0 ? branchRes.stdout.trim() : 'HEAD';
 
-  const statusRes = spawnSync('git', ['status', '--porcelain'], { cwd: repoRoot, encoding: 'utf8' });
+  const statusRes = spawnSync('git', ['status', '--porcelain', '-uall'], { cwd: repoRoot, encoding: 'utf8' });
   if (statusRes.status !== 0) {
     throw new Error(`Failed to get git status: ${statusRes.stderr || 'non-zero exit code'}`);
   }
-  const statusOutput = statusRes.stdout.trim();
-  const isClean = statusOutput.length === 0;
+  const statusLines = statusRes.stdout.split(/\r?\n/).filter((line) => line.length > 0);
+  const isClean = statusLines.length === 0;
 
-  const filesHash = createHash('sha256').update(statusOutput || commitHash).digest('hex');
+  const contentHash = createHash('sha256');
+  if (isClean) {
+    contentHash.update(commitHash);
+  } else {
+    for (const line of statusLines) {
+      const code = line.slice(0, 2);
+      const rawPath = line.slice(3);
+      const targetPath = rawPath.includes(' -> ') ? rawPath.slice(rawPath.lastIndexOf(' -> ') + 4) : rawPath;
+      const filePath = targetPath.startsWith('"') && targetPath.endsWith('"') ? targetPath.slice(1, -1) : targetPath;
+      contentHash.update(code).update('\0').update(filePath).update('\0');
+      try {
+        contentHash.update(await readFile(join(repoRoot, filePath)));
+      } catch {
+        contentHash.update('<unreadable>');
+      }
+      contentHash.update('\0');
+    }
+  }
 
   return {
     commitHash,
     branch,
     isClean,
-    trackedFilesHash: filesHash,
+    trackedFilesHash: contentHash.digest('hex'),
   };
 }
 
@@ -219,6 +265,39 @@ export interface ReconcileOptions {
   readonly repoRoot?: string;
   readonly gitInspector?: (repoRoot: string) => Promise<WorkspaceBaseline>;
   readonly unresolvedReservationAction?: 'charge_as_consumed' | 'retain_as_uncertain';
+  readonly verification?: VerificationCapability;
+  readonly confirmedOutcomes?: readonly ConfirmedOutcome[];
+}
+
+function attemptStepId(state: TaskState): string {
+  const step =
+    state.plan.find((s) => s.status === 'doing') ??
+    state.plan.find((s) => s.status !== 'done') ??
+    state.plan[0];
+  return step?.id ?? 'unknown-step';
+}
+
+function suspendedState(state: TaskState, ledgers: readonly BudgetLedger[], reason: string): TaskState {
+  return {
+    ...state,
+    budgetLedgers: [...ledgers],
+    status: 'paused',
+    nextAction: reason,
+  };
+}
+
+async function resolveVerification(
+  state: TaskState,
+  capability: VerificationCapability | undefined
+): Promise<VerificationRecord> {
+  const persisted = state.verification;
+  if (persisted && persisted.status === 'verified' && persisted.evidenceRefs.length > 0) {
+    return persisted;
+  }
+  if (!capability) {
+    return { status: 'unavailable', evidenceRefs: [], checkedAt: new Date().toISOString() };
+  }
+  return await capability(state);
 }
 
 export async function reconcileAndResume(
@@ -227,108 +306,218 @@ export async function reconcileAndResume(
   options: ReconcileOptions = {}
 ): Promise<TaskState> {
   return await store.withLock(`pause-${taskId}`, async () => {
-  const latestCheckpoint = await store.loadLatestCheckpoint(taskId);
-  if (!latestCheckpoint) {
-    throw new Error(`No valid checkpoint found to resume task: ${taskId}`);
-  }
+    const latestCheckpoint = await store.loadLatestCheckpoint(taskId);
+    if (!latestCheckpoint) {
+      throw new Error(`No valid checkpoint found to resume task: ${taskId}`);
+    }
 
-  const savedState = latestCheckpoint.state;
+    const persistedTask = await store.loadTask(taskId);
+    const savedState =
+      persistedTask && persistedTask.stateVersion > latestCheckpoint.state.stateVersion
+        ? persistedTask
+        : latestCheckpoint.state;
 
-  // 1. Check if deliberately paused
-  const pauseRecord = await store.loadPauseRecord(taskId);
-  if (pauseRecord?.active) {
-    const pausedState: TaskState = {
-      ...savedState,
-      status: 'paused',
-      nextAction: `Task is deliberately paused by operator (${pauseRecord.operatorRef}). Explicit resume required.`,
-    };
-    return pausedState;
-  }
+    const pauseRecord = await store.loadPauseRecord(taskId);
+    if (pauseRecord?.active) {      const pausedState: TaskState = {
+        ...savedState,
+        status: 'paused',
+        nextAction: `Task is deliberately paused by operator (${pauseRecord.operatorRef}). Explicit resume required.`,
+      };
+      return pausedState;
+    }
 
-  // 2. Inspect and validate workspace assumptions
-  const inspector = options.gitInspector ?? captureWorkspaceBaseline;
-  const currentWorkspace = await inspector(options.repoRoot ?? process.cwd());
+    const inspector = options.gitInspector ?? captureWorkspaceBaseline;
+    const currentWorkspace = await inspector(options.repoRoot ?? process.cwd());
+    const expectedWorkspace = savedState.workspaceBaseline;
 
-  if (currentWorkspace.commitHash !== savedState.workspaceBaseline.commitHash) {
-    throw new WorkspaceDriftError(
-      `Workspace drift detected: commit mismatch. Expected ${savedState.workspaceBaseline.commitHash}, got ${currentWorkspace.commitHash}`,
-      currentWorkspace,
-      savedState.workspaceBaseline
+    if (currentWorkspace.commitHash !== expectedWorkspace.commitHash) {
+      throw new WorkspaceDriftError(
+        `Workspace drift detected: commit mismatch. Expected ${expectedWorkspace.commitHash}, got ${currentWorkspace.commitHash}`,
+        currentWorkspace,
+        expectedWorkspace
+      );
+    }
+
+    if (currentWorkspace.branch !== expectedWorkspace.branch) {
+      throw new WorkspaceDriftError(
+        `Workspace drift detected: branch mismatch. Expected ${expectedWorkspace.branch}, got ${currentWorkspace.branch}`,
+        currentWorkspace,
+        expectedWorkspace
+      );
+    }
+
+    if (expectedWorkspace.isClean && !currentWorkspace.isClean) {
+      throw new WorkspaceDriftError(
+        'Workspace drift detected: repository was clean when checkpointed but is now dirty',
+        currentWorkspace,
+        expectedWorkspace
+      );
+    }
+
+    if (currentWorkspace.trackedFilesHash !== expectedWorkspace.trackedFilesHash) {
+      throw new WorkspaceDriftError(
+        'Workspace drift detected: tracked file content mismatch',
+        currentWorkspace,
+        expectedWorkspace
+      );
+    }
+
+    const currentEpoch = pauseRecord?.epoch ?? 1;
+    const existingClaims = await store.loadDispatchClaims(taskId);
+    const unsettledClaims = existingClaims.filter((c) => c.phase !== 'reconciled');
+    const mismatchedClaims = unsettledClaims.filter(
+      (c) => c.epoch !== currentEpoch || c.stateVersion > savedState.stateVersion
     );
-  }
 
-  if (savedState.workspaceBaseline.isClean && !currentWorkspace.isClean) {
-    throw new WorkspaceDriftError(
-      'Workspace drift detected: repository was clean when checkpointed but is now dirty',
-      currentWorkspace,
-      savedState.workspaceBaseline
-    );
-  }
+    if (mismatchedClaims.length > 0) {
+      return suspendedState(
+        savedState,
+        savedState.budgetLedgers,
+        `Recovery refused: dispatch claim epoch or state version mismatch (${mismatchedClaims
+          .map((c) => c.claimId)
+          .join(', ')}); explicit reconciliation required`
+      );
+    }
 
-  // 3. Reconcile budget reservations
-  const tracker = new BudgetTracker(savedState.budgetLedgers);
-  if (options.unresolvedReservationAction === 'charge_as_consumed') {
+    const outcomeByRequest = new Map<string, ConfirmedOutcome>();
+    for (const outcome of options.confirmedOutcomes ?? []) {
+      if (outcome.evidenceRef.trim()) outcomeByRequest.set(outcome.requestId, outcome);
+    }
+
+    const tracker = new BudgetTracker(savedState.budgetLedgers);
+    const released = new Set<string>();
+    const resolvedReservationIds = new Set<string>();
+
     for (const ledger of savedState.budgetLedgers) {
-      for (const res of ledger.reservations) {
-        tracker.settleReservation(res.reservationId, res.amount);
+      for (const reservation of ledger.reservations) {
+        const outcome = outcomeByRequest.get(reservation.keyedId);
+        if (!outcome) continue;
+        if (outcome.outcome === 'not_dispatched') {
+          released.add(reservation.reservationId);
+          resolvedReservationIds.add(reservation.reservationId);
+        } else if (options.unresolvedReservationAction === 'charge_as_consumed') {
+          tracker.settleReservation(reservation.reservationId, reservation.amount);
+          resolvedReservationIds.add(reservation.reservationId);
+        }
       }
     }
-  }
 
-  // 4. Find next actionable step respecting DAG dependencies
-  const machine = new StepStateMachine();
-  let nextStepIdx = savedState.plan.findIndex((s) => s.status !== 'done');
-  if (nextStepIdx === -1) {
-    nextStepIdx = Math.max(0, savedState.plan.length - 1);
-  } else {
-    // If the found step has unmet predecessors, check if another step is eligible
-    const step = savedState.plan[nextStepIdx];
-    if (step && !machine.checkPredecessors(savedState, step).ready) {
-      const readyIdx = savedState.plan.findIndex(
-        (s) => s.status === 'todo' && machine.checkPredecessors(savedState, s).ready
-      );
-      if (readyIdx !== -1) nextStepIdx = readyIdx;
+    let ledgers = tracker.getLedgers();
+    if (released.size > 0) {
+      ledgers = ledgers.map((l) => ({
+        ...l,
+        reservations: l.reservations.filter((r) => !released.has(r.reservationId)),
+      }));
     }
-  }
 
-  const nextStep = savedState.plan[nextStepIdx];
-  const isAllDone = savedState.plan.every((s) => s.status === 'done');
-  const isTerminalOrBlocked =
-    savedState.status === 'waiting_approval' || savedState.status === 'failed';
+    const unresolved = ledgers.flatMap((l) => l.reservations);
 
-  const status = isTerminalOrBlocked
-    ? savedState.status
-    : isAllDone
-      ? 'completed'
-      : 'running';
+    if (unresolved.length > 0) {
+      const now = new Date().toISOString();
+      const stepId = attemptStepId(savedState);
+      for (const reservation of unresolved) {
+        const claimId = `rec-${createHash('sha256').update(reservation.reservationId).digest('hex').slice(0, 16)}`;
+        const alreadyClaimed = existingClaims.some(
+          (c) => c.claimId === claimId || c.reservationRefs.includes(reservation.reservationId)
+        );
+        if (alreadyClaimed) continue;
+        await store.saveDispatchClaim({
+          claimId,
+          taskId,
+          runId: savedState.runId,
+          stepId,
+          actionId: reservation.keyedId,
+          epoch: currentEpoch,
+          stateVersion: savedState.stateVersion,
+          phase: 'uncertain',
+          reservationRefs: [reservation.reservationId],
+          createdAt: now,
+        });
+      }
+      return suspendedState(
+        savedState,
+        ledgers,
+        `Recovery suspended: unresolved reservation(s) ${unresolved
+          .map((r) => r.keyedId)
+          .join(', ')} require outcome evidence before resuming`
+      );
+    }
 
-  const nextAction = isTerminalOrBlocked
-    ? savedState.nextAction
-    : isAllDone
-      ? 'Task completed'
-      : nextStep
-        ? `Resume from step ${nextStep.title}`
-        : 'Awaiting next action';
+    const remainingClaims = unsettledClaims.filter(
+      (c) => !c.reservationRefs.some((ref) => resolvedReservationIds.has(ref))
+    );
 
-  const currentStepIndex = isTerminalOrBlocked
-    ? savedState.currentStepIndex
-    : nextStepIdx;
+    if (remainingClaims.length > 0) {
+      return suspendedState(
+        savedState,
+        ledgers,
+        `Recovery suspended: unsettled dispatch claim(s) ${remainingClaims
+          .map((c) => c.claimId)
+          .join(', ')} require outcome evidence before resuming`
+      );
+    }
 
-  const resumedState: TaskState = {
-    ...savedState,
-    currentStepIndex,
-    budgetLedgers: tracker.getLedgers(),
-    status,
-    stateVersion: savedState.stateVersion + 1,
-    nextAction,
-  };
+    for (const claim of unsettledClaims) {
+      if (!claim.reservationRefs.some((ref) => resolvedReservationIds.has(ref))) continue;
+      await store.saveDispatchClaim({ ...claim, phase: 'reconciled', settledAt: new Date().toISOString() });
+    }
 
-  const val = validateTaskState(resumedState);
-  if (!val.ok) {
-    throw new Error(`Resumed state validation failed: ${val.errors.map((e) => e.message).join(', ')}`);
-  }
+    const machine = new StepStateMachine();
+    let nextStepIdx = savedState.plan.findIndex((s) => s.status !== 'done');
+    if (nextStepIdx === -1) {
+      nextStepIdx = Math.max(0, savedState.plan.length - 1);
+    } else {
+      const step = savedState.plan[nextStepIdx];
+      if (step && !machine.checkPredecessors(savedState, step).ready) {
+        const readyIdx = savedState.plan.findIndex(
+          (s) => s.status === 'todo' && machine.checkPredecessors(savedState, s).ready
+        );
+        if (readyIdx !== -1) nextStepIdx = readyIdx;
+      }
+    }
 
-  await store.saveCheckpoint(resumedState);
-  return resumedState;
+    const nextStep = savedState.plan[nextStepIdx];
+    const isAllDone = savedState.plan.every((s) => s.status === 'done');
+    const isTerminalOrBlocked =
+      savedState.status === 'waiting_approval' || savedState.status === 'failed';
+
+    let verification: VerificationRecord | undefined;
+    let status: TaskState['status'];
+    let nextAction: string;
+
+    if (isTerminalOrBlocked) {
+      status = savedState.status;
+      nextAction = savedState.nextAction;
+    } else if (isAllDone) {
+      verification = await resolveVerification(savedState, options.verification);
+      const isVerified = verification.status === 'verified' && verification.evidenceRefs.length > 0;
+      status = isVerified ? 'completed' : 'paused';
+      nextAction = isVerified
+        ? 'Task completed'
+        : `Verification required before completion (status: ${verification.status})`;
+    } else {
+      status = 'running';
+      nextAction = nextStep ? `Resume from step ${nextStep.title}` : 'Awaiting next action';
+    }
+
+    const currentStepIndex = isTerminalOrBlocked ? savedState.currentStepIndex : nextStepIdx;
+
+    const resumedState: TaskState = {
+      ...savedState,
+      currentStepIndex,
+      budgetLedgers: ledgers,
+      status,
+      stateVersion: savedState.stateVersion + 1,
+      nextAction,
+      ...(verification ? { verification } : {}),
+    };
+
+    const val = validateTaskState(resumedState);
+    if (!val.ok) {
+      throw new Error(`Resumed state validation failed: ${val.errors.map((e) => e.message).join(', ')}`);
+    }
+
+    await store.saveCheckpoint(resumedState);
+    return resumedState;
   });
 }

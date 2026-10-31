@@ -33,7 +33,7 @@ describe('UC-04: Task Control, Deliberate Pause & Approval Binding', () => {
     acceptanceCriteria: ['Approved and executed'],
     constraints: [],
     plan: [
-      { id: 's-1', title: 'Preparation', description: 'Prep files', status: 'done', predecessorIds: [] },
+      { id: 's-1', title: 'Preparation', description: 'Prep files', status: 'done', predecessorIds: [], evidenceRefs: ['changed:schema.sql'] },
       { id: 's-2', title: 'Apply Migration', description: 'Risky SQL change', status: 'todo', predecessorIds: ['s-1'] },
     ],
     currentStepIndex: 1,

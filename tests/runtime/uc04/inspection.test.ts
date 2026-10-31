@@ -36,6 +36,7 @@ describe('UC-04: Inspection & Safe Context Compaction', () => {
         status: 'done',
         completedAt: '2026-10-21T10:00:00.000Z',
         changedFiles: ['spec.md'],
+        evidenceRefs: ['changed:spec.md'],
         predecessorIds: [],
       },
       {

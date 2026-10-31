@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -397,6 +397,118 @@ test('UC-04 / UC-05: DurableApprovalStore Adapter', async (t) => {
     assert.equal(res.ok, false);
     assert.equal(res.error, 'denied');
     assert.equal(res.reason, 'task-id-mismatch');
+  });
+
+  const listTree = (root: string): readonly string[] =>
+    existsSync(root)
+      ? readdirSync(root, { recursive: true, encoding: 'utf8' }).map((path) => path.replaceAll('\\', '/')).sort()
+      : [];
+
+  const writeStoredEvents = (storageDir: string, ownerTaskId: string, events: readonly unknown[]): void => {
+    const dir = join(storageDir, 'tasks', ownerTaskId, 'approvals');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'events.json'), JSON.stringify(events), 'utf8');
+  };
+
+  await t.test('refused first direction writes nothing for a missing operator', () => {
+    const freshDir = mkdtempSync(join(tmpdir(), 'uc05-approval-refused-direction-'));
+    try {
+      const store = new DurableApprovalStore({ storageDir: freshDir });
+      const before = listTree(freshDir);
+      const res = store.recordDirection({ direction: { taskId: 'new-task' } });
+      assert.equal(res.safe.outcome, 'denied');
+      assert.equal(res.safe.safeReasonCode, 'missing-trusted-operator');
+      assert.deepEqual(listTree(freshDir), before);
+      assert.equal(existsSync(join(freshDir, 'tasks', 'new-task', 'approvals', 'control.json')), false);
+    } finally {
+      rmSync(freshDir, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('refused traversal direction writes nothing', () => {
+    const freshDir = mkdtempSync(join(tmpdir(), 'uc05-approval-traversal-direction-'));
+    try {
+      const store = new DurableApprovalStore({ storageDir: join(freshDir, 'store') });
+      const before = listTree(freshDir);
+      const res = store.recordDirection({ direction: { taskId: '../../escape' } });
+      assert.equal(res.safe.outcome, 'denied');
+      assert.equal(res.safe.safeReasonCode, 'invalid-id');
+      assert.deepEqual(listTree(freshDir), before);
+      assert.equal(existsSync(join(freshDir, 'escape')), false);
+    } finally {
+      rmSync(freshDir, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('successful first direction still creates control', () => {
+    const freshDir = mkdtempSync(join(tmpdir(), 'uc05-approval-first-direction-'));
+    try {
+      const store = new DurableApprovalStore({ storageDir: freshDir });
+      const firstTaskId = 'first-direction-task';
+      const res = store.recordDirection({
+        direction: {
+          schemaVersion: 'uc05-approval/0.1-draft',
+          directionId: 'dir-first',
+          taskId: firstTaskId,
+          expectedVersion: 1,
+          expectedEpoch: 1,
+          direction: 'resume',
+          safeScopeRef: 'scope-1',
+          responseKey: 'response-key-first',
+          createdAt: '2026-10-26T07:09:00.000Z',
+        },
+        trustedOperator,
+      });
+      assert.equal(res.safe.outcome, 'ok');
+      assert.equal(res.safe.safeReasonCode, 'direction-recorded');
+      assert.equal(existsSync(join(freshDir, 'tasks', firstTaskId, 'approvals', 'control.json')), true);
+      assert.equal(store.loadTaskControl(firstTaskId).value?.mode, 'runnable');
+    } finally {
+      rmSync(freshDir, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('refuses a forged persisted event array', () => {
+    const store = new DurableApprovalStore({ storageDir: tempDir });
+    writeStoredEvents(tempDir, 'event-task', [
+      {
+        eventId: 'forged',
+        taskId: 'another-task',
+        rawPrompt: 'protected-marker',
+      },
+    ]);
+    const res = store.readEvents('event-task');
+    assert.notEqual(res.safe.outcome, 'ok');
+    assert.equal(res.value, null);
+    const serialized = JSON.stringify(res);
+    assert.equal(serialized.includes('protected-marker'), false);
+    assert.equal(serialized.includes('another-task'), false);
+  });
+
+  await t.test('refuses a cross-task but structurally valid persisted event', () => {
+    const store = new DurableApprovalStore({ storageDir: tempDir });
+    writeStoredEvents(tempDir, 'event-task', [{ ...sampleEvent, eventId: 'event-foreign', taskId: 'other-task' }]);
+    const res = store.readEvents('event-task');
+    assert.equal(res.safe.outcome, 'denied');
+    assert.equal(res.safe.safeReasonCode, 'task-id-mismatch');
+    assert.equal(res.value, null);
+
+    const append = store.appendEvent('event-task', { ...sampleEvent, eventId: 'event-own' });
+    assert.equal(append.ok, false);
+    assert.equal(store.readEvents('event-task').value, null);
+  });
+
+  await t.test('accepts a validated same-task event array', () => {
+    const store = new DurableApprovalStore({ storageDir: tempDir });
+    writeStoredEvents(tempDir, 'event-task', [{ ...sampleEvent, eventId: 'event-stored', taskId: 'event-task' }]);
+    const res = store.readEvents('event-task');
+    assert.equal(res.safe.outcome, 'ok');
+    assert.equal(res.safe.safeReasonCode, 'events-loaded');
+    assert.deepEqual(res.value?.map((ev) => ev.eventId), ['event-stored']);
+
+    const append = store.appendEvent('event-task', { ...sampleEvent, eventId: 'event-new', taskId: 'event-task' });
+    assert.deepEqual(append, { ok: true, status: 'appended' });
+    assert.deepEqual(store.readEvents('event-task').value?.map((ev) => ev.eventId), ['event-stored', 'event-new']);
   });
 
   await t.test('throws when invalid policy profile is supplied', () => {

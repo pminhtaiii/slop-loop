@@ -1,12 +1,31 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { lstat, mkdir, open, readFile, readdir, rename, unlink } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
-import type { TaskState, CheckpointRecord, DeliberatePauseRecord } from './contracts.ts';
+import { lstat, mkdir, open, readFile, readdir, realpath, rename, unlink } from 'node:fs/promises';
+import { dirname, join, resolve, sep } from 'node:path';
+import type {
+  TaskState,
+  CheckpointRecord,
+  DeliberatePauseRecord,
+  BudgetJournalRecord,
+  DispatchClaimRecord,
+} from './contracts.ts';
 import {
   validateTaskState,
   validateCheckpointRecord,
   validateDeliberatePauseRecord,
+  validateBudgetJournalRecord,
+  validateDispatchClaimRecord,
 } from './contracts.ts';
+
+const SAFE_STORAGE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
+export function isSafeStorageId(id: unknown): id is string {
+  return typeof id === 'string' && SAFE_STORAGE_ID.test(id) && !id.includes('..');
+}
+
+function requireSafeId(id: unknown, label: string): string {
+  if (!isSafeStorageId(id)) throw new Error(`Unsafe ${label}: ${String(id)}`);
+  return id;
+}
 
 export function computeStateChecksum(val: unknown): string {
   const json = JSON.stringify(val);
@@ -40,6 +59,8 @@ export class DurableStore {
   readonly checkpointDir: string;
   readonly pauseDir: string;
   readonly lockDir: string;
+  readonly journalDir: string;
+  readonly claimDir: string;
 
   constructor(baseDir: string) {
     this.baseDir = resolve(baseDir);
@@ -47,6 +68,8 @@ export class DurableStore {
     this.checkpointDir = join(this.baseDir, 'checkpoints');
     this.pauseDir = join(this.baseDir, 'pauses');
     this.lockDir = join(this.baseDir, 'locks');
+    this.journalDir = join(this.baseDir, 'journals');
+    this.claimDir = join(this.baseDir, 'claims');
   }
 
   async init(): Promise<void> {
@@ -54,9 +77,23 @@ export class DurableStore {
     await mkdir(this.checkpointDir, { recursive: true });
     await mkdir(this.pauseDir, { recursive: true });
     await mkdir(this.lockDir, { recursive: true });
+    await mkdir(this.journalDir, { recursive: true });
+    await mkdir(this.claimDir, { recursive: true });
+    await this.assertContained();
+  }
+
+  private async assertContained(): Promise<void> {
+    const base = await realpath(this.baseDir);
+    for (const dir of [this.stateDir, this.checkpointDir, this.pauseDir, this.lockDir, this.journalDir, this.claimDir]) {
+      const real = await realpath(dir);
+      if (real !== base && !real.startsWith(base + sep)) {
+        throw new Error(`Storage directory escapes base directory: ${dir}`);
+      }
+    }
   }
 
   async withLock<T>(resourceId: string, operation: () => Promise<T>): Promise<T> {
+    requireSafeId(resourceId, 'lock resource id');
     await mkdir(this.lockDir, { recursive: true });
     const lockPath = join(this.lockDir, `${resourceId}.lock`);
     const handle = await open(lockPath, 'wx').catch((err: unknown) => {
@@ -82,19 +119,27 @@ export class DurableStore {
   }
 
   getTaskPath(taskId: string): string {
-    return join(this.stateDir, `${taskId}.json`);
+    return join(this.stateDir, `${requireSafeId(taskId, 'task id')}.json`);
   }
 
   getCheckpointDir(taskId: string): string {
-    return join(this.checkpointDir, taskId);
+    return join(this.checkpointDir, requireSafeId(taskId, 'task id'));
   }
 
   getCheckpointPath(taskId: string, checkpointId: string): string {
-    return join(this.getCheckpointDir(taskId), `${checkpointId}.json`);
+    return join(this.getCheckpointDir(taskId), `${requireSafeId(checkpointId, 'checkpoint id')}.json`);
   }
 
   getPauseRecordPath(taskId: string): string {
-    return join(this.pauseDir, `${taskId}.json`);
+    return join(this.pauseDir, `${requireSafeId(taskId, 'task id')}.json`);
+  }
+
+  getBudgetJournalPath(taskId: string): string {
+    return join(this.journalDir, `${requireSafeId(taskId, 'task id')}.json`);
+  }
+
+  getClaimPath(taskId: string, claimId: string): string {
+    return join(this.claimDir, requireSafeId(taskId, 'task id'), `${requireSafeId(claimId, 'claim id')}.json`);
   }
 
   async saveTask(task: TaskState): Promise<void> {
@@ -235,5 +280,60 @@ export class DurableStore {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
       throw err;
     }
+  }
+
+  async saveBudgetJournal(record: BudgetJournalRecord): Promise<void> {
+    const val = validateBudgetJournalRecord(record);
+    if (!val.ok) {
+      throw new Error(`Invalid BudgetJournalRecord: ${val.errors.map((e) => e.message).join(', ')}`);
+    }
+    await this.init();
+    await atomicWrite(this.getBudgetJournalPath(record.taskId), JSON.stringify(record, null, 2));
+  }
+
+  async loadBudgetJournal(taskId: string): Promise<BudgetJournalRecord | null> {
+    const journalPath = this.getBudgetJournalPath(taskId);
+    try {
+      const data = await readFile(journalPath, 'utf8');
+      const parsed: unknown = JSON.parse(data);
+      const val = validateBudgetJournalRecord(parsed);
+      if (!val.ok) throw new Error(`Corrupted BudgetJournalRecord: ${val.errors.map((e) => e.message).join(', ')}`);
+      return val.value;
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw err;
+    }
+  }
+
+  async saveDispatchClaim(record: DispatchClaimRecord): Promise<void> {
+    const val = validateDispatchClaimRecord(record);
+    if (!val.ok) {
+      throw new Error(`Invalid DispatchClaimRecord: ${val.errors.map((e) => e.message).join(', ')}`);
+    }
+    await this.init();
+    const claimPath = this.getClaimPath(record.taskId, record.claimId);
+    await mkdir(dirname(claimPath), { recursive: true });
+    await atomicWrite(claimPath, JSON.stringify(record, null, 2));
+  }
+
+  async loadDispatchClaims(taskId: string): Promise<DispatchClaimRecord[]> {
+    const claimDir = join(this.claimDir, requireSafeId(taskId, 'task id'));
+    let files: string[];
+    try {
+      files = await readdir(claimDir);
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
+      throw err;
+    }
+    const records: DispatchClaimRecord[] = [];
+    for (const file of files.filter((f) => f.endsWith('.json')).sort()) {
+      const data = await readFile(join(claimDir, file), 'utf8');
+      const parsed: unknown = JSON.parse(data);
+      const val = validateDispatchClaimRecord(parsed);
+      if (!val.ok) throw new Error(`Corrupted DispatchClaimRecord: ${val.errors.map((e) => e.message).join(', ')}`);
+      records.push(val.value);
+    }
+    records.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.claimId.localeCompare(b.claimId));
+    return records;
   }
 }

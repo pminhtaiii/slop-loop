@@ -3,33 +3,16 @@ import {
   type BudgetLedger,
   type ReservationBundle,
   type DeliberatePauseRecord,
+  type DispatchClaimRecord,
+  type BudgetJournalRecord,
+  type VerificationRecord,
   type ApprovalRequestBinding,
   type CheckpointRecord,
-  type ClaimDispatchInput,
-  type PauseTaskInput,
-  type ResumeTaskInput,
-  type RecordAndSettleInput,
-  type RecoverTaskInput,
   type ValidationResult,
   type ValidationError,
 } from './types.ts';
-import { validateTaskState, validateWorkspaceBaseline } from './task.ts';
-
-function isObject(val: unknown): val is Record<string, unknown> {
-  return typeof val === 'object' && val !== null && !Array.isArray(val);
-}
-
-function checkStr(errors: ValidationError[], val: unknown, path: string, message: string, code: string): void {
-  if (typeof val !== 'string' || !val.trim()) errors.push({ path, message, code });
-}
-
-function checkNum(errors: ValidationError[], val: unknown, path: string, message: string, code: string, min = 0): void {
-  if (typeof val !== 'number' || !Number.isFinite(val) || val < min) errors.push({ path, message, code });
-}
-
-function checkInt(errors: ValidationError[], val: unknown, path: string, message: string, code: string, min = 1): void {
-  if (typeof val !== 'number' || !Number.isInteger(val) || val < min) errors.push({ path, message, code });
-}
+import { isObject, checkStr, checkNum, checkInt, checkStringArray } from './validation.ts';
+import { validateTaskState } from './task.ts';
 
 export function validateBudgetLedger(val: unknown, path = 'ledger'): ValidationResult<BudgetLedger> {
   const errors: ValidationError[] = [];
@@ -180,89 +163,63 @@ export function validateCheckpointRecord(val: unknown, path = 'checkpoint'): Val
   return { ok: true, value: val as unknown as CheckpointRecord };
 }
 
-export function validateClaimDispatchInput(val: unknown, path = 'claim'): ValidationResult<ClaimDispatchInput> {
+export function validateVerificationRecord(val: unknown, path = 'verification'): ValidationResult<VerificationRecord> {
   const errors: ValidationError[] = [];
   if (!isObject(val)) return { ok: false, errors: [{ path, message: `${path} must be an object`, code: 'INVALID_TYPE' }] };
 
-  checkStr(errors, val.taskId, `${path}.taskId`, 'taskId required', 'INVALID_TASK_ID');
-  checkStr(errors, val.runId, `${path}.runId`, 'runId required', 'INVALID_RUN_ID');
-  checkStr(errors, val.stepId, `${path}.stepId`, 'stepId required', 'INVALID_STEP_ID');
-  checkStr(errors, val.actionId, `${path}.actionId`, 'actionId required', 'INVALID_ACTION_ID');
-  checkInt(errors, val.expectedEpoch, `${path}.expectedEpoch`, 'expectedEpoch >= 1', 'INVALID_EPOCH');
-  checkInt(errors, val.expectedStateVersion, `${path}.expectedStateVersion`, 'expectedStateVersion >= 1', 'INVALID_VERSION');
-  if (!Array.isArray(val.requiredEvidenceRefs)) errors.push({ path: `${path}.requiredEvidenceRefs`, message: 'must be array', code: 'INVALID_REFS' });
-  if (!Array.isArray(val.reservationRefs)) errors.push({ path: `${path}.reservationRefs`, message: 'must be array', code: 'INVALID_REFS' });
-  checkStr(errors, val.repoDigest, `${path}.repoDigest`, 'repoDigest required', 'INVALID_DIGEST');
-  checkStr(errors, val.policyVersion, `${path}.policyVersion`, 'policyVersion required', 'INVALID_VERSION');
-
-  if (errors.length > 0) return { ok: false, errors };
-  return { ok: true, value: val as unknown as ClaimDispatchInput };
-}
-
-export function validatePauseTaskInput(val: unknown, path = 'pause'): ValidationResult<PauseTaskInput> {
-  const errors: ValidationError[] = [];
-  if (!isObject(val)) return { ok: false, errors: [{ path, message: `${path} must be object`, code: 'INVALID_TYPE' }] };
-
-  checkStr(errors, val.taskId, `${path}.taskId`, 'taskId required', 'INVALID_TASK_ID');
-  checkInt(errors, val.expectedRevision, `${path}.expectedRevision`, 'expectedRevision >= 1', 'INVALID_REVISION');
-  checkStr(errors, val.pauseKey, `${path}.pauseKey`, 'pauseKey required', 'INVALID_PAUSE_KEY');
-  checkStr(errors, val.operatorRef, `${path}.operatorRef`, 'operatorRef required', 'INVALID_OPERATOR_REF');
-
-  if (errors.length > 0) return { ok: false, errors };
-  return { ok: true, value: val as unknown as PauseTaskInput };
-}
-
-export function validateResumeTaskInput(val: unknown, path = 'resume'): ValidationResult<ResumeTaskInput> {
-  const errors: ValidationError[] = [];
-  if (!isObject(val)) return { ok: false, errors: [{ path, message: `${path} must be object`, code: 'INVALID_TYPE' }] };
-
-  checkStr(errors, val.taskId, `${path}.taskId`, 'taskId required', 'INVALID_TASK_ID');
-  checkInt(errors, val.expectedRevision, `${path}.expectedRevision`, 'expectedRevision >= 1', 'INVALID_REVISION');
-  checkStr(errors, val.resumeKey, `${path}.resumeKey`, 'resumeKey required', 'INVALID_RESUME_KEY');
-  checkStr(errors, val.operatorRef, `${path}.operatorRef`, 'operatorRef required', 'INVALID_OPERATOR_REF');
-
-  if (errors.length > 0) return { ok: false, errors };
-  return { ok: true, value: val as unknown as ResumeTaskInput };
-}
-
-export function validateRecordAndSettleInput(val: unknown, path = 'settle'): ValidationResult<RecordAndSettleInput> {
-  const errors: ValidationError[] = [];
-  if (!isObject(val)) return { ok: false, errors: [{ path, message: `${path} must be object`, code: 'INVALID_TYPE' }] };
-
-  checkStr(errors, val.taskId, `${path}.taskId`, 'taskId required', 'INVALID_TASK_ID');
-  checkStr(errors, val.runId, `${path}.runId`, 'runId required', 'INVALID_RUN_ID');
-  checkStr(errors, val.claimId, `${path}.claimId`, 'claimId required', 'INVALID_CLAIM_ID');
-  checkStr(errors, val.requestId, `${path}.requestId`, 'requestId required', 'INVALID_REQUEST_ID');
-
-  if (!['success', 'failure', 'uncertain'].includes(val.observedOutcome as string)) {
-    errors.push({ path: `${path}.observedOutcome`, message: 'outcome must be success, failure, or uncertain', code: 'INVALID_OUTCOME' });
+  if (val.status !== 'verified' && val.status !== 'failed' && val.status !== 'unavailable') {
+    errors.push({ path: `${path}.status`, message: 'verification status must be verified, failed, or unavailable', code: 'INVALID_VERIFICATION_STATUS' });
   }
-  if (!isObject(val.observedUsage)) {
-    errors.push({ path: `${path}.observedUsage`, message: 'observedUsage required', code: 'INVALID_USAGE' });
+  checkStringArray(errors, val.evidenceRefs, `${path}.evidenceRefs`, 'evidenceRefs', 'INVALID_REFS');
+  checkStr(errors, val.checkedAt, `${path}.checkedAt`, 'checkedAt must be a non-empty string', 'INVALID_TIMESTAMP');
+
+  if (errors.length > 0) return { ok: false, errors };
+  return { ok: true, value: val as unknown as VerificationRecord };
+}
+
+export function validateBudgetJournalRecord(val: unknown, path = 'budgetJournal'): ValidationResult<BudgetJournalRecord> {
+  const errors: ValidationError[] = [];
+  if (!isObject(val)) return { ok: false, errors: [{ path, message: `${path} must be an object`, code: 'INVALID_TYPE' }] };
+
+  if (val.schemaVersion !== UC04_SCHEMA_VERSION) {
+    errors.push({ path: `${path}.schemaVersion`, message: `Expected schema version ${UC04_SCHEMA_VERSION}`, code: 'INCOMPATIBLE_VERSION' });
+  }
+  checkStr(errors, val.taskId, `${path}.taskId`, 'taskId must be a non-empty string', 'INVALID_TASK_ID');
+  checkStr(errors, val.runId, `${path}.runId`, 'runId must be a non-empty string', 'INVALID_RUN_ID');
+  checkStr(errors, val.updatedAt, `${path}.updatedAt`, 'updatedAt must be a non-empty string', 'INVALID_TIMESTAMP');
+
+  if (!Array.isArray(val.ledgers)) {
+    errors.push({ path: `${path}.ledgers`, message: 'ledgers must be an array', code: 'INVALID_LEDGERS' });
   } else {
-    const u = val.observedUsage;
-    checkNum(errors, u.inputTokens, `${path}.observedUsage.inputTokens`, 'inputTokens must be a non-negative finite number', 'INVALID_USAGE');
-    checkNum(errors, u.outputTokens, `${path}.observedUsage.outputTokens`, 'outputTokens must be a non-negative finite number', 'INVALID_USAGE');
-    checkNum(errors, u.costUsd, `${path}.observedUsage.costUsd`, 'costUsd must be a non-negative finite number', 'INVALID_USAGE');
-    if (u.billableTokens !== undefined) {
-      checkNum(errors, u.billableTokens, `${path}.observedUsage.billableTokens`, 'billableTokens must be a non-negative finite number', 'INVALID_USAGE');
+    for (let i = 0; i < val.ledgers.length; i++) {
+      const lRes = validateBudgetLedger(val.ledgers[i], `${path}.ledgers[${i}]`);
+      if (!lRes.ok) errors.push(...lRes.errors);
     }
   }
-  if (!Array.isArray(val.evidenceRefs)) errors.push({ path: `${path}.evidenceRefs`, message: 'evidenceRefs must be array', code: 'INVALID_REFS' });
+  checkInt(errors, val.replanCount, `${path}.replanCount`, 'replanCount must be a non-negative integer', 'INVALID_REPLAN_COUNT', 0);
 
   if (errors.length > 0) return { ok: false, errors };
-  return { ok: true, value: val as unknown as RecordAndSettleInput };
+  return { ok: true, value: val as unknown as BudgetJournalRecord };
 }
 
-export function validateRecoverTaskInput(val: unknown, path = 'recover'): ValidationResult<RecoverTaskInput> {
+export function validateDispatchClaimRecord(val: unknown, path = 'dispatchClaim'): ValidationResult<DispatchClaimRecord> {
   const errors: ValidationError[] = [];
-  if (!isObject(val)) return { ok: false, errors: [{ path, message: `${path} must be object`, code: 'INVALID_TYPE' }] };
+  if (!isObject(val)) return { ok: false, errors: [{ path, message: `${path} must be an object`, code: 'INVALID_TYPE' }] };
 
-  checkStr(errors, val.taskId, `${path}.taskId`, 'taskId required', 'INVALID_TASK_ID');
-  checkStr(errors, val.newRunId, `${path}.newRunId`, 'newRunId required', 'INVALID_RUN_ID');
-  const wsRes = validateWorkspaceBaseline(val.repoEvidence, `${path}.repoEvidence`);
-  if (!wsRes.ok) errors.push(...wsRes.errors);
+  checkStr(errors, val.claimId, `${path}.claimId`, 'claimId must be a non-empty string', 'INVALID_CLAIM_ID');
+  checkStr(errors, val.taskId, `${path}.taskId`, 'taskId must be a non-empty string', 'INVALID_TASK_ID');
+  checkStr(errors, val.runId, `${path}.runId`, 'runId must be a non-empty string', 'INVALID_RUN_ID');
+  checkStr(errors, val.stepId, `${path}.stepId`, 'stepId must be a non-empty string', 'INVALID_STEP_ID');
+  checkStr(errors, val.actionId, `${path}.actionId`, 'actionId must be a non-empty string', 'INVALID_ACTION_ID');
+  checkStr(errors, val.createdAt, `${path}.createdAt`, 'createdAt must be a non-empty string', 'INVALID_TIMESTAMP');
+  checkInt(errors, val.epoch, `${path}.epoch`, 'epoch must be a non-negative integer', 'INVALID_EPOCH', 0);
+  checkInt(errors, val.stateVersion, `${path}.stateVersion`, 'stateVersion must be an integer >= 1', 'INVALID_STATE_VERSION', 1);
+  if (!['claimed', 'dispatched', 'observed', 'uncertain', 'reconciled'].includes(val.phase as string)) {
+    errors.push({ path: `${path}.phase`, message: 'phase must be claimed, dispatched, observed, uncertain, or reconciled', code: 'INVALID_PHASE' });
+  }
+  checkStringArray(errors, val.reservationRefs, `${path}.reservationRefs`, 'reservationRefs', 'INVALID_REFS');
 
   if (errors.length > 0) return { ok: false, errors };
-  return { ok: true, value: val as unknown as RecoverTaskInput };
+  return { ok: true, value: val as unknown as DispatchClaimRecord };
 }
+

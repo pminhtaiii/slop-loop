@@ -30,9 +30,13 @@ export class BudgetExhaustionError extends Error {
 }
 
 export class BudgetTracker {
-  private ledgers: Map<string, BudgetLedger>;
+  private ledgers = new Map<string, BudgetLedger>();
 
   constructor(ledgers: readonly BudgetLedger[]) {
+    this.replaceLedgers(ledgers);
+  }
+
+  replaceLedgers(ledgers: readonly BudgetLedger[]): void {
     this.ledgers = new Map();
     for (const l of ledgers) {
       const key = `${l.scope}:${l.kind}`;

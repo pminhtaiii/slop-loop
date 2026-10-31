@@ -26,6 +26,7 @@ export interface PlanStep {
   readonly startedAt?: string | undefined;
   readonly completedAt?: string | undefined;
   readonly evidenceRefs?: readonly string[] | undefined;
+  readonly requiredEvidenceRefs?: readonly string[] | undefined;
   readonly error?: string | undefined;
   readonly changedFiles?: readonly string[] | undefined;
 }
@@ -106,6 +107,23 @@ export interface DispatchClaimRecord {
   readonly outcomeEvidence?: unknown | undefined;
 }
 
+export interface BudgetJournalRecord {
+  readonly schemaVersion: typeof UC04_SCHEMA_VERSION;
+  readonly taskId: string;
+  readonly runId: string;
+  readonly ledgers: readonly BudgetLedger[];
+  readonly replanCount: number;
+  readonly updatedAt: string;
+}
+
+export type VerificationOutcome = 'verified' | 'failed' | 'unavailable';
+
+export interface VerificationRecord {
+  readonly status: VerificationOutcome;
+  readonly evidenceRefs: readonly string[];
+  readonly checkedAt: string;
+}
+
 export interface CompactSummary {
   readonly taskId: string;
   readonly sourceStateVersion: number;
@@ -148,6 +166,7 @@ export interface TaskState {
   readonly workspaceBaseline: WorkspaceBaseline;
   readonly changedFiles: readonly string[];
   readonly openRisks: readonly string[];
+  readonly verification?: VerificationRecord | undefined;
   readonly nextAction: string;
   readonly pendingApproval?: ApprovalRequestBinding | undefined;
 }

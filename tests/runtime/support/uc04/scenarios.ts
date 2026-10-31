@@ -125,7 +125,13 @@ export const RECOVERY_SCENARIOS: readonly RecoveryScenario[] = [
         currentStepIndex: 1,
         plan: task.plan.map((s, idx) =>
           idx === 0
-            ? { ...s, status: 'done' as const, completedAt: '2026-10-21T12:00:00.000Z', changedFiles: ['src/init.ts'] }
+            ? {
+                ...s,
+                status: 'done' as const,
+                completedAt: '2026-10-21T12:00:00.000Z',
+                changedFiles: ['src/init.ts'],
+                evidenceRefs: ['changed:src/init.ts'],
+              }
             : { ...s, status: 'todo' as const }
         ),
         changedFiles: ['src/init.ts'],

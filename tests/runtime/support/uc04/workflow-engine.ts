@@ -3,6 +3,7 @@ import type {
   PlanStep,
   ProviderUsage,
   ApprovalRequestBinding,
+  VerificationRecord,
 } from '../../../../src/persistence/contracts.ts';
 import type { DurableStore } from '../../../../src/persistence/store.ts';
 import { StepStateMachine, reconcileAndResume, type ReconcileOptions } from '../../../../src/persistence/recovery.ts';
@@ -48,10 +49,15 @@ export class FeatureWorkflowEngine {
       // If already done, skip (defense in depth)
       if (currentStep.status === 'done') {
         const nextIdx = state.plan.findIndex((s) => s.status === 'todo');
+        const persisted = state.verification;
+        const certified =
+          state.plan.every((s) => s.status === 'done') &&
+          persisted?.status === 'verified' &&
+          persisted.evidenceRefs.length > 0;
         state = {
           ...state,
           currentStepIndex: nextIdx !== -1 ? nextIdx : state.plan.length,
-          status: state.plan.every((s) => s.status === 'done') ? 'completed' : 'running',
+          status: certified ? 'completed' : state.status,
         };
         continue;
       }
@@ -96,9 +102,22 @@ export class FeatureWorkflowEngine {
       }
 
       // 3. Complete Step
+      const evidenceRefs = result.verificationRef
+        ? [result.verificationRef]
+        : (result.changedFiles ?? []).map((f) => `changed:${f}`);
+      const isFinalStep = state.plan.filter((s) => s.status !== 'done').length <= 1;
+      const persisted = state.verification;
+      const verification: VerificationRecord | undefined = isFinalStep
+        ? persisted?.status === 'verified' && persisted.evidenceRefs.length > 0
+          ? persisted
+          : options.verification
+            ? await options.verification(state)
+            : { status: 'unavailable', evidenceRefs: [], checkedAt: new Date().toISOString() }
+        : undefined;
       state = this.stepMachine.completeStep(state, currentStep.id, {
         changedFiles: result.changedFiles,
-        evidenceRefs: result.verificationRef ? [result.verificationRef] : undefined,
+        evidenceRefs: evidenceRefs.length > 0 ? evidenceRefs : [`executed:${currentStep.id}`],
+        verification,
       });
       await this.store.saveCheckpoint(state);
     }

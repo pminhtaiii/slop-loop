@@ -1,5 +1,7 @@
 import type { BudgetTracker } from '../accounting.ts';
 import type { DurableStore } from '../store.ts';
+import type { BudgetJournalRecord, BudgetLedger } from '../contracts.ts';
+import { UC04_SCHEMA_VERSION } from '../contracts.ts';
 
 export interface UC03ReservationResult {
   readonly reservationId: string;
@@ -28,6 +30,8 @@ export class UC03AccountingAdapter {
   private readonly budgetTracker: BudgetTracker;
   readonly durableStore?: DurableStore | undefined;
   private replanCountsByTask = new Map<string, number>();
+  private runIdsByTask = new Map<string, string>();
+  private restoredTasks = new Set<string>();
   private totalReplans = 0;
 
   /** Initializes UC03AccountingAdapter with BudgetTracker and optional DurableStore. */
@@ -46,6 +50,46 @@ export class UC03AccountingAdapter {
     return parsed !== null && parsed === taskId;
   }
 
+  private async restore(taskId: string, callerCount: number): Promise<number> {
+    if (this.durableStore && !this.restoredTasks.has(taskId)) {
+      this.restoredTasks.add(taskId);
+      const journal = await this.durableStore.loadBudgetJournal(taskId);
+      if (journal) {
+        this.budgetTracker.replaceLedgers(journal.ledgers);
+        this.runIdsByTask.set(taskId, journal.runId);
+        this.replanCountsByTask.set(taskId, journal.replanCount);
+        this.totalReplans = Math.max(this.totalReplans, journal.replanCount);
+      }
+    }
+    const count = Math.max(this.replanCountsByTask.get(taskId) ?? 0, callerCount);
+    this.replanCountsByTask.set(taskId, count);
+    return count;
+  }
+
+  private async commit(
+    taskId: string,
+    runId: string,
+    replanCount: number,
+    before: readonly BudgetLedger[]
+  ): Promise<void> {
+    if (!this.durableStore) return;
+    this.runIdsByTask.set(taskId, runId);
+    const record: BudgetJournalRecord = {
+      schemaVersion: UC04_SCHEMA_VERSION,
+      taskId,
+      runId,
+      ledgers: this.budgetTracker.getLedgers(),
+      replanCount,
+      updatedAt: new Date().toISOString(),
+    };
+    try {
+      await this.durableStore.saveBudgetJournal(record);
+    } catch (err) {
+      this.budgetTracker.replaceLedgers(before);
+      throw err;
+    }
+  }
+
   /** Reserves tokens and cost allowance for an investigation phase. */
   async reserveInvestigation(
     taskId: string,
@@ -54,6 +98,8 @@ export class UC03AccountingAdapter {
     estimatedCost = 1
   ): Promise<UC03ReservationResult> {
     const requestId = `inv-${taskId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const replans = await this.restore(taskId, 0);
+    const before = this.budgetTracker.getLedgers();
     this.budgetTracker.reserve(
       requestId,
       [
@@ -62,6 +108,7 @@ export class UC03AccountingAdapter {
       ],
       { taskId, runId }
     );
+    await this.commit(taskId, runId, replans, before);
 
     return {
       reservationId: requestId,
@@ -79,6 +126,8 @@ export class UC03AccountingAdapter {
     estimatedCost = 1
   ): Promise<UC03ReservationResult> {
     const requestId = `repair-${taskId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const replans = await this.restore(taskId, 0);
+    const before = this.budgetTracker.getLedgers();
     this.budgetTracker.reserve(
       requestId,
       [
@@ -88,6 +137,7 @@ export class UC03AccountingAdapter {
       ],
       { taskId, runId }
     );
+    await this.commit(taskId, runId, replans, before);
 
     return {
       reservationId: requestId,
@@ -109,13 +159,13 @@ export class UC03AccountingAdapter {
         `currentReplanCount must be a non-negative safe integer; received ${currentReplanCount}`
       );
     }
-    const taskCount = this.replanCountsByTask.get(taskId) ?? 0;
-    const count = Math.max(taskCount, currentReplanCount);
+    const count = await this.restore(taskId, currentReplanCount);
     if (count >= 3) {
       throw new UC03ReplanExhaustionError('Replan limit reached: maximum 3 replans permitted');
     }
 
     const requestId = `replan-${taskId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const before = this.budgetTracker.getLedgers();
     this.budgetTracker.reserve(
       requestId,
       [
@@ -124,8 +174,9 @@ export class UC03AccountingAdapter {
       ],
       { taskId, runId }
     );
-    this.totalReplans++;
+    await this.commit(taskId, runId, count + 1, before);
     this.replanCountsByTask.set(taskId, count + 1);
+    this.totalReplans++;
 
     return {
       reservationId: requestId,
@@ -140,8 +191,11 @@ export class UC03AccountingAdapter {
     reservationId: string,
     observedUsage: { readonly tokens?: number; readonly cost?: number }
   ): Promise<UC03SettleResult> {
+    const task = this.parseTaskId(reservationId);
+    const replans = task === null ? this.totalReplans : await this.restore(task, 0);
+    const before = this.budgetTracker.getLedgers();
     const reservedAmount = (kinds: readonly string[]): number | undefined => {
-      for (const ledger of this.budgetTracker.getLedgers()) {
+      for (const ledger of before) {
         if (!kinds.includes(ledger.kind)) continue;
         const match = ledger.reservations.find(
           (r) => r.keyedId === reservationId || r.reservationId === reservationId
@@ -159,50 +213,58 @@ export class UC03AccountingAdapter {
       billableTokens: observedUsage.tokens ?? reservedTokens ?? 0,
       costUsd: observedUsage.cost ?? reservedCost ?? 0,
     });
-
-    const task = this.parseTaskId(reservationId);
-    const taskReplans = task ? (this.replanCountsByTask.get(task) ?? 0) : this.totalReplans;
+    if (task !== null) {
+      await this.commit(task, this.runIdsByTask.get(task) ?? 'active-run', replans, before);
+    }
 
     return {
       reservationId,
       consumedTokens: this.budgetTracker.getConsumed('task', 'tokens'),
       consumedCost: this.budgetTracker.getConsumed('task', 'cost'),
       consumedRepair: this.budgetTracker.getConsumed('task', 'repair'),
-      consumedReplan: taskReplans,
+      consumedReplan: task === null ? this.totalReplans : replans,
     };
   }
 
   /** Handles interrupted or timed-out call by retaining allowance to prevent blind retry. */
-  handleInterruptedCall(taskId: string, _runId: string, reservationId: string): void {
-    for (const ledger of this.budgetTracker.getLedgers()) {
-      const copy = [...ledger.reservations];
-      const match = copy.find(
+  async handleInterruptedCall(taskId: string, runId: string, reservationId: string): Promise<void> {
+    const replans = await this.restore(taskId, 0);
+    const before = this.budgetTracker.getLedgers();
+    let settled = false;
+    for (const ledger of before) {
+      const match = ledger.reservations.find(
         (r) =>
           (r.keyedId === reservationId || r.reservationId === reservationId) &&
           this.belongsToTask(r.keyedId, taskId)
       );
       if (match) {
         this.budgetTracker.settleReservation(match.reservationId, match.amount);
+        settled = true;
       }
     }
+    if (settled) await this.commit(taskId, runId, replans, before);
   }
 
   /** Reconciles all pending reservations for a given task owner. */
-  reconcileTaskBudgets(taskId: string, runId: string): {
+  async reconcileTaskBudgets(taskId: string, runId: string): Promise<{
     readonly taskId: string;
     readonly runId: string;
     readonly totalTokensConsumed: number;
     readonly totalCostConsumed: number;
     readonly totalRepairConsumed: number;
-  } {
-    for (const ledger of this.budgetTracker.getLedgers()) {
-      const copy = [...ledger.reservations];
-      for (const res of copy) {
+  }> {
+    const replans = await this.restore(taskId, 0);
+    const before = this.budgetTracker.getLedgers();
+    let settled = false;
+    for (const ledger of before) {
+      for (const res of ledger.reservations) {
         if (this.belongsToTask(res.keyedId, taskId)) {
           this.budgetTracker.settleReservation(res.reservationId, res.amount);
+          settled = true;
         }
       }
     }
+    if (settled) await this.commit(taskId, runId, replans, before);
 
     return {
       taskId,
