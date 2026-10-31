@@ -4,6 +4,15 @@ This document describes current contributor testing guidance and the helper test
 
 Use the repository's established test and quality commands. Read `AGENTS.md`, project documentation, and the feature plan for applicable requirements; do not assume a test framework or invent project-wide commands.
 
+## What to test
+
+- Prioritize critical functionality: core business logic, authentication, important API endpoints, database operations, and essential user workflows.
+- Focus on high-risk areas: where a failure would have the greatest impact.
+- Keep testing minimal: write only meaningful tests that catch realistic bugs; avoid excessive coverage, redundant tests, and trivial assertions.
+- Choose the test level: prefer fast unit and integration tests; add E2E tests only for essential user journeys.
+- Avoid overengineering: use existing tools and conventions; do not add unnecessary frameworks, mocks, or complex test infrastructure.
+- Verify and report: run the relevant tests, fix discovered issues, and summarize what was tested, what passed, and what remains risky.
+
 ## Test-first implementation
 
 - For code changes, use the repository's `tdd` skill and write or update focused behavioral tests before implementation.
@@ -44,12 +53,6 @@ UC-03 Phase 4 repair/replan evidence is tracked in the [task ledger](../specs/00
 
 Earlier UC-03 worker and gate runs are archived under .agent-work/2026-10-23/ and .agent-work/2026-10-24/; use the task ledger and linked evidence for current status. For the user-authorized 2026-10-26 T062-T066 local merger, the T063 per-check admission correction was integrated at `8e49ce4867528177c4d391a61ba7a9c05413ee88` after its six-path handoff was verified; its worker reports 223/223 source/emitted consumer tests and scoped typecheck/build pass, but the correction has not received a new independent review. The matrix-only T066 update was integrated at `0109aaa1dff382b03eee5fbb3a0549809019942a`. The observed-recovery lost-reply repair handoff matched all three owned-path hashes at that same base and was integrated in `63fa4468a7939f9ed8ae278f1aae785876b8dca0`. Coordinator replay: `pnpm run typecheck` and `pnpm run build` exited 0; `node --test tests/runtime/unit/uc03-investigation.test.ts tests/runtime/unit/uc03-verification.test.ts tests/runtime/unit/repository-tools.test.ts tests/runtime/unit/model.test.ts tests/runtime/contract/atomic-admission-matrix.test.ts` exited 0 (432/432); the matching emitted five-file suite exited 0 (432/432); `git diff --check` and the normal staged-size hook passed. Case 10 now replays the exact observed-recovery receipt after a committed response is lost. This repairs one in-contract mock path only. Spec R2 finding SPEC-R1-003 remains open, so T066 is unchecked and matrix acceptance is not claimed; fresh-receiver recovery, trusted invalidation refs/digests, dispatched-state visibility, public checkpoint/fencing evidence, and other audited Section 10 cases remain gaps. See `.agent-work/2026-10-26/uc03-t062-t066-merger/targeted-gap-diagnosis-r3.md`. No R3 review, full runtime/contributor suite, CI, publication or remote write was run. Real adapters, production configuration, durable persistence, actual containment/restart, and full Phase 5 acceptance remain gated. Historical or intentionally red runs do not establish current readiness or real/production/restart acceptance.
 
-
-
-
-
-
-
 Use the task ledger and [implementation status](progress_checker.md) for current UC-03 task state and authorization. Candidate-specific review and test evidence belongs to its pinned snapshot; earlier runs do not establish current readiness. Real adapters/configuration, durable persistence, containment/restart, and full Phase 5/6 remain gated.
 
 The 2026-10-25 contributor-tooling maintenance handoffs and focused checks are under .agent-work/2026-10-25/retro-workflow/; they do not establish full runtime/contributor verification, review, publication, or remote readiness. See [workspace guidance](../docs/agents/workspace.md) and [orchestration tools](../docs/agents/orchestration-tools.md) for current workflow behavior.
@@ -73,9 +76,6 @@ node --test tests/agents/active-task.test.mjs tests/agents/active-task-reassignm
 Test worktree retirement eligibility and safe removal in disposable Git repositories with `node --test tests/agents/agent-worktree.test.mjs`. These checks cover preview-only operation, retained branches, unmerged commits, dirty/untracked/ignored data, resumed tasks, changed evidence, locked or unknown worktrees, and retirement after the successor work is complete or handed off; active or blocked successors remain blockers while reassigned predecessors do not. Skill evaluations additionally follow [the versioned evidence procedure](workflow.md#skill-evaluation-evidence).
 
 The publication contributor gate covers preflight reporting without publication, UC brief extraction without ledger writes, archive-before-clear safety, and completion refusals for unpublished, dirty, stale, unlinked, pending, or failing revisions. Workers, merger, and reviewers run focused tests for their owned behavior and report partial evidence separately from the publication gate.
-
-The publication gate selects each non-runtime helper test once; runtime tests run from emitted files during runtime validation. Workers, merger, and reviewers use focused checks; the full command is listed in the publication workflow above.
-
 ## Context consistency check
 
 After changing [the context contract](contract.json), `AGENTS.md`, `context/*.md`, the matrices, or referenced agent documentation, run the consistency check. It follows local inline links transitively into Markdown documents from the existing roots, visits cycles once, and enforces checkout containment for every checked link. It checks that required documents exist, declared fact sources resolve to one table row, every context Markdown page is linked from `context/README.md`, `AGENTS.md` links to that README, local inline Markdown file links resolve, and explicitly marked fact claims match their source rows. It also checks authorizationReferences: every configured summary links to its designated source document. These pointer checks do not interpret decision contents or infer permission from task progress. It ignores external URLs, heading-only links, and examples in fenced code blocks. It cannot detect conflicts in unmarked prose, so review related documents for semantic consistency.
