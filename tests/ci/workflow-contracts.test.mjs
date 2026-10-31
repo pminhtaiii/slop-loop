@@ -99,7 +99,7 @@ function runsCommand(lines, command) {
 const REQUIRED_COMMANDS = {
   'static-lint': ['pnpm run lint'],
   'static-types': ['pnpm run typecheck'],
-  'repository-policy': ['node scripts/ci/check-context.mjs', 'node scripts/ci/check-tracked-files.mjs', 'node scripts/ci/check-env-examples.mjs', 'node scripts/ci/scan-secrets.mjs'],
+  'repository-policy': ['node scripts/ci/check-context.mjs', 'node scripts/ci/check-tracked-files.mjs', 'node scripts/ci/check-env-examples.mjs', 'node scripts/ci/check-dependency-install.mjs', 'node scripts/ci/scan-secrets.mjs'],
   'pr-metadata': ['node scripts/ci/check-pr-metadata.mjs'],
   'build': ['node scripts/ci/check-runtime.mjs --clean-build-only'],
   'runtime-tests': ['node scripts/ci/artifact-identity.mjs verify', 'pnpm run test:runtime'],

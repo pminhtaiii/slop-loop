@@ -46,7 +46,7 @@ Refresh the body after each repair so its summary and evidence describe the late
 
 After publishing a new head, the helper requests CodeRabbit with `@coderabbitai review`. Pass `--skip-review-request` when the user requests publication without an automatic review request; this does not change the gates, paired draft PRs, or readiness requirements. By default, a head-specific marker and retained accounting prevent duplicate requests when the same publication is resumed. This also works when CodeRabbit skips automatic reviews for the repository. Review service rate limits or missing bot approval do not block readiness.
 
-The GitHub Actions workflow named **Contributor checks** runs context consistency and `pnpm run test:contributors` on Linux and Windows. Runtime CI runs `pnpm run validate:runtime`, which checks that every runtime source test has one emitted counterpart before executing the compiled suite. These jobs validate contributor tooling and documentation; they do not establish that the planned product runtime is implemented.
+The GitHub Actions workflow named **Contributor checks** runs context consistency, dependency install and `pnpm run test:contributors` on Ubuntu. Runtime CI runs `pnpm run validate:runtime`, which checks that every runtime source test has one emitted counterpart before executing the compiled suite. These jobs validate contributor tooling and documentation; they do not establish that the planned product runtime is implemented.
 
 ## Check readiness
 

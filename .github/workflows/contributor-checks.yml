@@ -113,6 +113,11 @@ jobs:
         run: node scripts/ci/check-context.mjs
       - name: Check tracked files
         run: node scripts/ci/check-tracked-files.mjs
+      # A frozen install into a fresh metadata cache is the only gate that enforces the release-age
+      # policy; the warm-cache install in every other lane cannot observe it. Keeping it here means a
+      # push-only publication skips no coverage.
+      - name: Verify dependency install and lockfile policy
+        run: node scripts/ci/check-dependency-install.mjs
       # Environment examples may document keys but may only hold approved placeholders. Diagnostics
       # name the path, line and rule, never the observed value.
       - name: Validate environment examples
