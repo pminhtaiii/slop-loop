@@ -375,6 +375,13 @@ export async function reconcileAndResume(
     }
 
     const unresolved = ledgers.flatMap((l) => l.reservations);
+    const isResolvedClaim = (claim: typeof unsettledClaims[number]): boolean =>
+      claim.reservationRefs.length > 0 && claim.reservationRefs.every((ref) => resolvedReservationIds.has(ref));
+    const reconcileResolvedClaims = async (): Promise<void> => {
+      for (const claim of unsettledClaims.filter(isResolvedClaim)) {
+        await store.saveDispatchClaim({ ...claim, phase: 'reconciled', settledAt: new Date().toISOString() });
+      }
+    };
 
     if (unresolved.length > 0) {
       const now = new Date().toISOString();
@@ -399,6 +406,7 @@ export async function reconcileAndResume(
         });
       }
       await persistJournal(ledgers);
+      await reconcileResolvedClaims();
       return await suspend(
         ledgers,
         `Recovery suspended: unresolved reservation(s) ${unresolved
@@ -407,12 +415,11 @@ export async function reconcileAndResume(
       );
     }
 
-    const remainingClaims = unsettledClaims.filter(
-      (c) => !c.reservationRefs.some((ref) => resolvedReservationIds.has(ref))
-    );
+    const remainingClaims = unsettledClaims.filter((claim) => !isResolvedClaim(claim));
 
     if (remainingClaims.length > 0) {
       await persistJournal(ledgers);
+      await reconcileResolvedClaims();
       return await suspend(
         ledgers,
         `Recovery suspended: unsettled dispatch claim(s) ${remainingClaims
@@ -421,10 +428,8 @@ export async function reconcileAndResume(
       );
     }
 
-    for (const claim of unsettledClaims) {
-      if (!claim.reservationRefs.some((ref) => resolvedReservationIds.has(ref))) continue;
-      await store.saveDispatchClaim({ ...claim, phase: 'reconciled', settledAt: new Date().toISOString() });
-    }
+    await persistJournal(ledgers);
+    await reconcileResolvedClaims();
 
     const machine = new StepStateMachine();
     let nextStepIdx = savedState.plan.findIndex((s) => s.status !== 'done');

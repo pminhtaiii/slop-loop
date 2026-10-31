@@ -1,4 +1,4 @@
-import type { BudgetTracker } from '../accounting.ts';
+import type { BudgetTracker, BudgetTrackerSnapshot } from '../accounting.ts';
 import type { DurableStore } from '../store.ts';
 import type { BudgetJournalRecord, BudgetLedger } from '../contracts.ts';
 import { UC04_SCHEMA_VERSION } from '../contracts.ts';
@@ -51,11 +51,11 @@ export class UC03AccountingAdapter {
   }
 
   private async restore(taskId: string, callerCount: number): Promise<number> {
-    if (this.durableStore && !this.restoredTasks.has(taskId)) {
-      const journal = await this.durableStore.loadBudgetJournal(taskId);
+    if (!this.restoredTasks.has(taskId)) {
+      const journal = await this.durableStore?.loadBudgetJournal(taskId);
+      this.budgetTracker.restoreTask(taskId, journal?.ledgers);
       this.restoredTasks.add(taskId);
       if (journal) {
-        this.budgetTracker.replaceLedgers(journal.ledgers);
         this.runIdsByTask.set(taskId, journal.runId);
         this.replanCountsByTask.set(taskId, journal.replanCount);
         this.totalReplans = Math.max(this.totalReplans, journal.replanCount);
@@ -67,17 +67,14 @@ export class UC03AccountingAdapter {
   }
 
   private ownedLedgers(taskId: string): BudgetLedger[] {
-    return this.budgetTracker.getLedgers().map((ledger) => ({
-      ...ledger,
-      reservations: ledger.reservations.filter((reservation) => this.parseTaskId(reservation.keyedId) === taskId),
-    }));
+    return this.budgetTracker.getTaskLedgers(taskId);
   }
 
   private async commit(
     taskId: string,
     runId: string,
     replanCount: number,
-    before: readonly BudgetLedger[]
+    before: BudgetTrackerSnapshot
   ): Promise<void> {
     if (!this.durableStore) return;
     this.runIdsByTask.set(taskId, runId);
@@ -92,7 +89,7 @@ export class UC03AccountingAdapter {
     try {
       await this.durableStore.saveBudgetJournal(record);
     } catch (err) {
-      this.budgetTracker.replaceLedgers(before);
+      this.budgetTracker.restoreSnapshot(before);
       throw err;
     }
   }
@@ -106,7 +103,7 @@ export class UC03AccountingAdapter {
   ): Promise<UC03ReservationResult> {
     const requestId = `inv-${taskId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const replans = await this.restore(taskId, 0);
-    const before = this.budgetTracker.getLedgers();
+    const before = this.budgetTracker.snapshot();
     this.budgetTracker.reserve(
       requestId,
       [
@@ -134,7 +131,7 @@ export class UC03AccountingAdapter {
   ): Promise<UC03ReservationResult> {
     const requestId = `repair-${taskId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const replans = await this.restore(taskId, 0);
-    const before = this.budgetTracker.getLedgers();
+    const before = this.budgetTracker.snapshot();
     this.budgetTracker.reserve(
       requestId,
       [
@@ -172,7 +169,7 @@ export class UC03AccountingAdapter {
     }
 
     const requestId = `replan-${taskId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-    const before = this.budgetTracker.getLedgers();
+    const before = this.budgetTracker.snapshot();
     this.budgetTracker.reserve(
       requestId,
       [
@@ -200,9 +197,9 @@ export class UC03AccountingAdapter {
   ): Promise<UC03SettleResult> {
     const task = this.parseTaskId(reservationId);
     const replans = task === null ? this.totalReplans : await this.restore(task, 0);
-    const before = this.budgetTracker.getLedgers();
+    const before = this.budgetTracker.snapshot();
     const reservedAmount = (kinds: readonly string[]): number | undefined => {
-      for (const ledger of before) {
+      for (const ledger of before.ledgers) {
         if (!kinds.includes(ledger.kind)) continue;
         const match = ledger.reservations.find(
           (r) => r.keyedId === reservationId || r.reservationId === reservationId
@@ -227,9 +224,9 @@ export class UC03AccountingAdapter {
 
     return {
       reservationId,
-      consumedTokens: this.budgetTracker.getConsumed('task', 'tokens'),
-      consumedCost: this.budgetTracker.getConsumed('task', 'cost'),
-      consumedRepair: this.budgetTracker.getConsumed('task', 'repair'),
+      consumedTokens: task === null ? this.budgetTracker.getConsumed('task', 'tokens') : this.budgetTracker.getTaskConsumed(task, 'task', 'tokens'),
+      consumedCost: task === null ? this.budgetTracker.getConsumed('task', 'cost') : this.budgetTracker.getTaskConsumed(task, 'task', 'cost'),
+      consumedRepair: task === null ? this.budgetTracker.getConsumed('task', 'repair') : this.budgetTracker.getTaskConsumed(task, 'task', 'repair'),
       consumedReplan: task === null ? this.totalReplans : replans,
     };
   }
@@ -237,9 +234,9 @@ export class UC03AccountingAdapter {
   /** Handles interrupted or timed-out call by retaining allowance to prevent blind retry. */
   async handleInterruptedCall(taskId: string, runId: string, reservationId: string): Promise<void> {
     const replans = await this.restore(taskId, 0);
-    const before = this.budgetTracker.getLedgers();
+    const before = this.budgetTracker.snapshot();
     let settled = false;
-    for (const ledger of before) {
+    for (const ledger of before.ledgers) {
       const match = ledger.reservations.find(
         (r) =>
           (r.keyedId === reservationId || r.reservationId === reservationId) &&
@@ -262,9 +259,9 @@ export class UC03AccountingAdapter {
     readonly totalRepairConsumed: number;
   }> {
     const replans = await this.restore(taskId, 0);
-    const before = this.budgetTracker.getLedgers();
+    const before = this.budgetTracker.snapshot();
     let settled = false;
-    for (const ledger of before) {
+    for (const ledger of before.ledgers) {
       for (const res of ledger.reservations) {
         if (this.belongsToTask(res.keyedId, taskId)) {
           this.budgetTracker.settleReservation(res.reservationId, res.amount);
@@ -277,9 +274,9 @@ export class UC03AccountingAdapter {
     return {
       taskId,
       runId,
-      totalTokensConsumed: this.budgetTracker.getConsumed('task', 'tokens'),
-      totalCostConsumed: this.budgetTracker.getConsumed('task', 'cost'),
-      totalRepairConsumed: this.budgetTracker.getConsumed('task', 'repair'),
+      totalTokensConsumed: this.budgetTracker.getTaskConsumed(taskId, 'task', 'tokens'),
+      totalCostConsumed: this.budgetTracker.getTaskConsumed(taskId, 'task', 'cost'),
+      totalRepairConsumed: this.budgetTracker.getTaskConsumed(taskId, 'task', 'repair'),
     };
   }
 }

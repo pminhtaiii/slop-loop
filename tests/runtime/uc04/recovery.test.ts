@@ -395,6 +395,32 @@ describe('UC-04: StepStateMachine & Recovery Reconciliation', () => {
       assert.equal(tokenLedger?.reservations.length, 0);
     });
 
+    for (const mode of ['unresolved-reservation', 'unsettled-claim', 'normal'] as const) {
+      it(`reconciles only fully resolved claims on the ${mode} path`, async () => {
+        const state = withReservation(3);
+        const extra = { reservationId: 'res-2', keyedId: 'req-other', amount: 100 };
+        await store.saveCheckpoint({ ...state, budgetLedgers: state.budgetLedgers.map((l) => ({
+          ...l, reservations: mode === 'unresolved-reservation' ? [...l.reservations, extra] : l.reservations,
+        })) });
+        const claim = {
+          taskId: sampleTask.taskId, runId: sampleTask.runId, stepId: 'step-2', actionId: 'req-interrupted',
+          epoch: 1, stateVersion: 3, phase: 'dispatched' as const, createdAt: new Date().toISOString(),
+        };
+        await store.saveDispatchClaim({ ...claim, claimId: 'resolved-claim', reservationRefs: ['res-1'] });
+        if (mode !== 'normal') {
+          await store.saveDispatchClaim({ ...claim, claimId: 'partial-claim', reservationRefs: ['res-1', 'res-2'] });
+        }
+        const resumed = await reconcileAndResume(sampleTask.taskId, store, {
+          gitInspector: matchingInspector,
+          confirmedOutcomes: [{ requestId: 'req-interrupted', outcome: 'not_dispatched', evidenceRef: 'receipt:none' }],
+        });
+        assert.equal(resumed.status, mode === 'normal' ? 'running' : 'paused');
+        const claims = await store.loadDispatchClaims(sampleTask.taskId);
+        assert.equal(claims.find((c) => c.claimId === 'resolved-claim')?.phase, 'reconciled');
+        if (mode !== 'normal') assert.equal(claims.find((c) => c.claimId === 'partial-claim')?.phase, 'dispatched');
+      });
+    }
+
     it('refuses to resume when a dispatch claim state version is ahead', async () => {
       await store.saveDispatchClaim({
         claimId: 'claim-ahead',

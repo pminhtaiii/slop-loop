@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { BudgetTracker } from '../accounting.ts';
+import type { BudgetTracker, BudgetTrackerSnapshot } from '../accounting.ts';
 import type { DurableStore } from '../store.ts';
 import type { BudgetLedger, BudgetReservationItem, TaskState } from '../contracts.ts';
 import { UC04_SCHEMA_VERSION } from '../contracts.ts';
@@ -95,11 +95,11 @@ export class UC01AccountingAdapter {
   }
 
   private async restore(taskId: string): Promise<void> {
-    if (!this.durableStore || this.restoredTasks.has(taskId)) return;
-    const journal = await this.durableStore.loadBudgetJournal(taskId);
+    if (this.restoredTasks.has(taskId)) return;
+    const journal = await this.durableStore?.loadBudgetJournal(taskId);
+    this.budgetTracker.restoreTask(taskId, journal?.ledgers);
     this.restoredTasks.add(taskId);
     if (journal) {
-      this.budgetTracker.replaceLedgers(journal.ledgers);
       this.runIdsByTask.set(taskId, journal.runId);
       this.replansByTask.set(taskId, journal.replanCount);
       for (const ledger of journal.ledgers) {
@@ -115,13 +115,10 @@ export class UC01AccountingAdapter {
   }
 
   private ownedLedgers(taskId: string): BudgetLedger[] {
-    return this.budgetTracker.getLedgers().map((ledger) => ({
-      ...ledger,
-      reservations: ledger.reservations.filter((reservation) => this.taskOf(reservation) === taskId),
-    }));
+    return this.budgetTracker.getTaskLedgers(taskId);
   }
 
-  private async commit(taskId: string, runId: string, before: readonly BudgetLedger[]): Promise<void> {
+  private async commit(taskId: string, runId: string, before: BudgetTrackerSnapshot): Promise<void> {
     if (!this.durableStore) return;
     this.runIdsByTask.set(taskId, runId);
     try {
@@ -134,7 +131,7 @@ export class UC01AccountingAdapter {
         updatedAt: new Date().toISOString(),
       });
     } catch (err) {
-      this.budgetTracker.replaceLedgers(before);
+      this.budgetTracker.restoreSnapshot(before);
       throw err;
     }
   }
@@ -151,7 +148,7 @@ export class UC01AccountingAdapter {
       };
     }
 
-    const before = this.budgetTracker.getLedgers();
+    const before = this.budgetTracker.snapshot();
     try {
       this.budgetTracker.reserve(
         context.requestId,
@@ -195,9 +192,9 @@ export class UC01AccountingAdapter {
     observed: UC01Usage
   ): Promise<UC01SettleResult> {
     await this.restore(context.taskId);
-    const before = this.budgetTracker.getLedgers();
+    const before = this.budgetTracker.snapshot();
     if (observed.state === 'uncertain') {
-      for (const ledger of before) {
+      for (const ledger of before.ledgers) {
         const match = ledger.reservations.find(
           (r) => r.reservationId === reservationRef || r.keyedId === reservationRef
         );
@@ -221,17 +218,17 @@ export class UC01AccountingAdapter {
     return {
       kind: 'settled',
       accountingRef: context.accountingRef,
-      consumedTokens: this.budgetTracker.getConsumed('task', 'tokens'),
-      consumedCost: this.budgetTracker.getConsumed('task', 'cost'),
+      consumedTokens: this.budgetTracker.getTaskConsumed(context.taskId, 'task', 'tokens'),
+      consumedCost: this.budgetTracker.getTaskConsumed(context.taskId, 'task', 'cost'),
     };
   }
 
   /** Reconciles unconfirmed call reservations without duplicate spend. */
   async reconcileAfterInterrupt(taskId: string, runId: string): Promise<UC01ReconciliationSummary> {
     await this.restore(taskId);
-    const before = this.budgetTracker.getLedgers();
+    const before = this.budgetTracker.snapshot();
     let uncertainCount = 0;
-    for (const ledger of before) {
+    for (const ledger of before.ledgers) {
       for (const res of ledger.reservations) {
         if (this.taskOf(res) !== taskId) continue;
         this.budgetTracker.settleReservation(res.reservationId, res.amount);
@@ -243,8 +240,8 @@ export class UC01AccountingAdapter {
     return {
       taskId,
       runId,
-      preservedConsumedTokens: this.budgetTracker.getConsumed('task', 'tokens'),
-      preservedConsumedCost: this.budgetTracker.getConsumed('task', 'cost'),
+      preservedConsumedTokens: this.budgetTracker.getTaskConsumed(taskId, 'task', 'tokens'),
+      preservedConsumedCost: this.budgetTracker.getTaskConsumed(taskId, 'task', 'cost'),
       uncertainReservationsRetained: uncertainCount,
       blindReplayPrevented: true,
     };
@@ -258,6 +255,7 @@ export class UC01AccountingAdapter {
   ): Promise<void> {
     if (!this.durableStore) return;
 
+    await this.restore(taskId);
     const existing = await this.durableStore.loadTask(taskId);
     const nextVersion = (existing?.stateVersion ?? 0) + 1;
     const ledgers = this.ownedLedgers(taskId);
