@@ -201,4 +201,20 @@ describe('UC-04: BudgetTracker & Durable Accounting', () => {
     assert.equal(claim.phase, 'claimed');
     assert.equal(claim.stepId, 'step-1');
   });
+
+  it('replaces ledger authority in place from a journal snapshot', () => {
+    const tracker = new BudgetTracker(initialLedgers);
+    tracker.reserve('req-lost', [{ scope: 'task', kind: 'tokens', amount: 1000 }]);
+    tracker.settle('req-lost', { inputTokens: 600, outputTokens: 0, costUsd: 0 });
+
+    tracker.replaceLedgers(initialLedgers);
+    assert.equal(tracker.getConsumed('task', 'tokens'), 0);
+    assert.equal(tracker.getAvailable('task', 'tokens'), 10000);
+
+    tracker.replaceLedgers(tracker.getLedgers().map((l) =>
+      l.kind === 'tokens' ? { ...l, consumed: 2500 } : l));
+    assert.equal(tracker.getConsumed('task', 'tokens'), 2500);
+    assert.equal(tracker.getAvailable('task', 'tokens'), 7500);
+    assert.equal(tracker.getLedger('task', 'cost')?.limit, 5);
+  });
 });

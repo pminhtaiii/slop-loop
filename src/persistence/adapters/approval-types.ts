@@ -23,6 +23,7 @@ import {
   UC05_APPROVAL_SCHEMA_VERSION,
 } from '../../contracts/approvals/contracts.ts';
 import type { DurableStore } from '../store.ts';
+import { isSafeStorageId } from '../store.ts';
 
 export interface DurableApprovalStoreOptions {
   readonly storageDir: string;
@@ -109,8 +110,7 @@ export const makeFailure = <T>(
 ): StoreResponse<T> => makeResponse<T>({ taskId, version: v }, o, code, null, dId, rV);
 
 /** Validates that an identifier does not traverse directory bounds. */
-export const isSafeId = (id: string): boolean =>
-  typeof id === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(id) && !id.includes('..');
+export const isSafeId = (id: string): boolean => isSafeStorageId(id);
 
 /** Resolves the approvals directory for a task. */
 export const taskDir = (storageDir: string, taskId: string): string => join(storageDir, 'tasks', taskId, 'approvals');

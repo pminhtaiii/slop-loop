@@ -2,7 +2,14 @@
 
 **Input**: [spec](spec.md), [plan](plan.md), [research](research.md), [data model](data-model.md), [interfaces](contracts/interfaces.md), [acceptance](contracts/acceptance.md), [decisions](contracts/decisions.md).
 
-**Status**: T001–T014 completion is recorded; all 14 tasks are complete and verified with 88 passing runtime tests (exit 0). T001–T012 foundation plus T013 shared adapters for UC-01, UC-03, UC-05 and T014 handoff are implemented.
+**Status**: T001–T014 are implemented. Completion evidence is per task; it is not acceptance of UC-04 as a whole.
+
+Correction batch at 7c6b19a closes the nine findings from the 2026-10-31 review (STD-001–003, SPEC-001–006). Focused UC-04 evidence is 140 passing tests (exit 0), the UC-01 cross-suite check 356 passing, and the full runtime lane 2,106 passing with 0 failing and 4 pre-existing skips. This is mock and focused evidence only: it does not certify kill-window behavior, real provider effects, production durability, concurrency, or full UC-04 acceptance.
+
+An independent re-review of that batch (`.agent-work/2026-10-31/01a19066-3109-7cb3-9e58-dd04ba36a166/reviews/findings.md`) found the nine original findings only partially fixed on the composed path and raised twenty-one further findings (STD-C-001–010, SPEC-C-001–011). The follow-up batch addressed them, and focused UC-04 evidence is 165 passing tests (exit 0). Two limits bound what may be claimed. SPEC-C-006 remains open: journal writes are unlocked full-snapshot overwrites, so concurrent adapters can erase each other's reservations. The original cross-task contamination fix (SPEC-C-007) had itself replaced a per-call leak with a per-task leak: every adapter `commit` wrote the shared tracker's whole ledger set into the task's own journal, so a second task's journal carried the first task's reservations and charged them on rebuild. That is now filtered by reservation owner on both adapters, with recovery leaving an unchanged journal untouched. Until SPEC-C-006 is closed, no claim of multi-process safety or of exactly-once task accounting is supported.
+
+T013's `tests/runtime/uc04/integration.test.ts` is a Level 1 local simulation whose "crash" is an in-process thrown error; it is not restart evidence under `contracts/acceptance.md`. T012's `tests/runtime/uc04/restart.test.ts` is genuine Level 2 evidence (4 distinct PIDs, exit 137).
+
 
 **Tests**: Required by FR-015. After authorization and seam confirmation, use vertical behavioral RED/GREEN through actual owned public exports; neutral loadable scaffolds are permitted only then. Missing imports/type errors are not behavioral RED. Retain prior regressions. Coordinator alone updates completion after integrated evidence; implementation workers do not change checkboxes.
 

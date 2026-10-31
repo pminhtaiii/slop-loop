@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto';
-import type { BudgetTracker } from '../accounting.ts';
+import type { BudgetTracker, BudgetTrackerSnapshot } from '../accounting.ts';
 import type { DurableStore } from '../store.ts';
-import type { TaskState } from '../contracts.ts';
+import type { BudgetLedger, BudgetReservationItem, TaskState } from '../contracts.ts';
 import { UC04_SCHEMA_VERSION } from '../contracts.ts';
+import { captureWorkspaceBaseline } from '../recovery.ts';
 
 export interface UC01Ceiling {
   readonly inputTokens: number;
@@ -80,15 +81,64 @@ export function computeStepDigest(stepData: unknown): string {
 export class UC01AccountingAdapter {
   private readonly budgetTracker: BudgetTracker;
   private readonly durableStore?: DurableStore | undefined;
+  private readonly repoRoot: string;
+  private readonly restoredTasks = new Set<string>();
+  private readonly runIdsByTask = new Map<string, string>();
+  private readonly replansByTask = new Map<string, number>();
+  private readonly ownersById = new Map<string, string>();
 
   /** Initializes UC01AccountingAdapter with BudgetTracker and optional DurableStore. */
-  constructor(budgetTracker: BudgetTracker, durableStore?: DurableStore) {
+  constructor(budgetTracker: BudgetTracker, durableStore?: DurableStore, repoRoot?: string) {
     this.budgetTracker = budgetTracker;
     this.durableStore = durableStore;
+    this.repoRoot = repoRoot ?? process.cwd();
+  }
+
+  private async restore(taskId: string): Promise<void> {
+    if (this.restoredTasks.has(taskId)) return;
+    const journal = await this.durableStore?.loadBudgetJournal(taskId);
+    this.budgetTracker.restoreTask(taskId, journal?.ledgers);
+    this.restoredTasks.add(taskId);
+    if (journal) {
+      this.runIdsByTask.set(taskId, journal.runId);
+      this.replansByTask.set(taskId, journal.replanCount);
+      for (const ledger of journal.ledgers) {
+        for (const res of ledger.reservations) {
+          this.ownersById.set(res.keyedId, journal.taskId);
+        }
+      }
+    }
+  }
+
+  private taskOf(reservation: BudgetReservationItem): string | undefined {
+    return this.ownersById.get(reservation.keyedId);
+  }
+
+  private ownedLedgers(taskId: string): BudgetLedger[] {
+    return this.budgetTracker.getTaskLedgers(taskId);
+  }
+
+  private async commit(taskId: string, runId: string, before: BudgetTrackerSnapshot): Promise<void> {
+    if (!this.durableStore) return;
+    this.runIdsByTask.set(taskId, runId);
+    try {
+      await this.durableStore.saveBudgetJournal({
+        schemaVersion: UC04_SCHEMA_VERSION,
+        taskId,
+        runId,
+        ledgers: this.ownedLedgers(taskId),
+        replanCount: this.replansByTask.get(taskId) ?? 0,
+        updatedAt: new Date().toISOString(),
+      });
+    } catch (err) {
+      this.budgetTracker.restoreSnapshot(before);
+      throw err;
+    }
   }
 
   /** Reserves token and cost budget for a UC-01 triage operation. */
   async reserve(context: UC01OperationContext, ceiling: UC01Ceiling): Promise<UC01ReserveResult> {
+    await this.restore(context.taskId);
     const availableTokens = this.budgetTracker.getAvailable('task', 'tokens');
     if (availableTokens < ceiling.totalTokens) {
       return {
@@ -98,6 +148,7 @@ export class UC01AccountingAdapter {
       };
     }
 
+    const before = this.budgetTracker.snapshot();
     try {
       this.budgetTracker.reserve(
         context.requestId,
@@ -107,12 +158,7 @@ export class UC01AccountingAdapter {
         ],
         { taskId: context.taskId, runId: context.runId }
       );
-
-      return {
-        ok: true,
-        reservationRef: context.requestId,
-        accountingRef: context.accountingRef,
-      };
+      this.ownersById.set(context.requestId, context.taskId);
     } catch {
       return {
         ok: false,
@@ -120,6 +166,23 @@ export class UC01AccountingAdapter {
         reasonCode: 'reservation-failed',
       };
     }
+
+    try {
+      await this.commit(context.taskId, context.runId, before);
+    } catch {
+      this.ownersById.delete(context.requestId);
+      return {
+        ok: false,
+        accountingRef: context.accountingRef,
+        reasonCode: 'reservation-failed',
+      };
+    }
+
+    return {
+      ok: true,
+      reservationRef: context.requestId,
+      accountingRef: context.accountingRef,
+    };
   }
 
   /** Settles actual token and cost usage against a reserved ceiling. */
@@ -128,13 +191,18 @@ export class UC01AccountingAdapter {
     reservationRef: string,
     observed: UC01Usage
   ): Promise<UC01SettleResult> {
+    await this.restore(context.taskId);
+    const before = this.budgetTracker.snapshot();
     if (observed.state === 'uncertain') {
-      for (const ledger of this.budgetTracker.getLedgers()) {
+      for (const ledger of before.ledgers) {
         const match = ledger.reservations.find(
           (r) => r.reservationId === reservationRef || r.keyedId === reservationRef
         );
         if (match) {
-          this.budgetTracker.settleReservation(match.reservationId, match.amount);
+          const owner = this.taskOf(match);
+          if (owner === context.taskId || (owner === undefined && reservationRef === context.requestId)) {
+            this.budgetTracker.settleReservation(match.reservationId, match.amount);
+          }
         }
       }
     } else {
@@ -145,31 +213,35 @@ export class UC01AccountingAdapter {
         costUsd: observed.costUnits,
       });
     }
+    await this.commit(context.taskId, context.runId, before);
 
     return {
       kind: 'settled',
       accountingRef: context.accountingRef,
-      consumedTokens: this.budgetTracker.getConsumed('task', 'tokens'),
-      consumedCost: this.budgetTracker.getConsumed('task', 'cost'),
+      consumedTokens: this.budgetTracker.getTaskConsumed(context.taskId, 'task', 'tokens'),
+      consumedCost: this.budgetTracker.getTaskConsumed(context.taskId, 'task', 'cost'),
     };
   }
 
   /** Reconciles unconfirmed call reservations without duplicate spend. */
-  reconcileAfterInterrupt(taskId: string, runId: string): UC01ReconciliationSummary {
+  async reconcileAfterInterrupt(taskId: string, runId: string): Promise<UC01ReconciliationSummary> {
+    await this.restore(taskId);
+    const before = this.budgetTracker.snapshot();
     let uncertainCount = 0;
-    for (const ledger of this.budgetTracker.getLedgers()) {
-      const copy = [...ledger.reservations];
-      for (const res of copy) {
+    for (const ledger of before.ledgers) {
+      for (const res of ledger.reservations) {
+        if (this.taskOf(res) !== taskId) continue;
         this.budgetTracker.settleReservation(res.reservationId, res.amount);
         uncertainCount++;
       }
     }
+    await this.commit(taskId, runId, before);
 
     return {
       taskId,
       runId,
-      preservedConsumedTokens: this.budgetTracker.getConsumed('task', 'tokens'),
-      preservedConsumedCost: this.budgetTracker.getConsumed('task', 'cost'),
+      preservedConsumedTokens: this.budgetTracker.getTaskConsumed(taskId, 'task', 'tokens'),
+      preservedConsumedCost: this.budgetTracker.getTaskConsumed(taskId, 'task', 'cost'),
       uncertainReservationsRetained: uncertainCount,
       blindReplayPrevented: true,
     };
@@ -183,8 +255,10 @@ export class UC01AccountingAdapter {
   ): Promise<void> {
     if (!this.durableStore) return;
 
+    await this.restore(taskId);
     const existing = await this.durableStore.loadTask(taskId);
     const nextVersion = (existing?.stateVersion ?? 0) + 1;
+    const ledgers = this.ownedLedgers(taskId);
 
     const basePlan = existing?.plan ?? [
       { id: 'intake', title: 'Issue Intake', description: 'Intake', status: 'todo' as const },
@@ -214,6 +288,8 @@ export class UC01AccountingAdapter {
       return p;
     });
 
+    const baseline = existing?.workspaceBaseline ?? (await captureWorkspaceBaseline(this.repoRoot));
+
     const nextState: TaskState = existing
       ? {
           ...existing,
@@ -221,7 +297,7 @@ export class UC01AccountingAdapter {
           currentStepIndex: stepIndex >= 0 ? stepIndex : existing.currentStepIndex,
           nextAction: `Completed step ${stepName}`,
           stateVersion: nextVersion,
-          budgetLedgers: this.budgetTracker.getLedgers(),
+          budgetLedgers: ledgers,
         }
       : {
           schemaVersion: UC04_SCHEMA_VERSION,
@@ -240,13 +316,8 @@ export class UC01AccountingAdapter {
           nextAction: `Completed step ${stepName}`,
           status: 'running',
           stateVersion: nextVersion,
-          budgetLedgers: this.budgetTracker.getLedgers(),
-          workspaceBaseline: {
-            commitHash: '0000000000000000000000000000000000000000',
-            branch: 'development',
-            isClean: true,
-            trackedFilesHash: 'hash-baseline',
-          },
+          budgetLedgers: ledgers,
+          workspaceBaseline: baseline,
         };
 
     await this.durableStore.saveCheckpoint(nextState);

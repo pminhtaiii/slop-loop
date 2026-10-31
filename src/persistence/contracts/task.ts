@@ -9,38 +9,8 @@ import {
   type ValidationResult,
   type ValidationError,
 } from './types.ts';
-import { validateBudgetLedger, validateApprovalRequestBinding } from './control.ts';
-
-function isObject(val: unknown): val is Record<string, unknown> {
-  return typeof val === 'object' && val !== null && !Array.isArray(val);
-}
-
-function checkStr(errors: ValidationError[], val: unknown, path: string, message: string, code: string): void {
-  if (typeof val !== 'string' || !val.trim()) errors.push({ path, message, code });
-}
-
-function checkStringArray(
-  errors: ValidationError[],
-  arr: unknown,
-  path: string,
-  name: string,
-  code: string,
-  allowEmpty = true
-): void {
-  if (!Array.isArray(arr)) {
-    errors.push({ path, message: `${name} must be an array`, code });
-    return;
-  }
-  if (!allowEmpty && arr.length === 0) {
-    errors.push({ path, message: `${name} must not be empty`, code });
-    return;
-  }
-  for (let i = 0; i < arr.length; i++) {
-    if (typeof arr[i] !== 'string' || !arr[i].trim()) {
-      errors.push({ path: `${path}[${i}]`, message: `${name} items must be non-empty strings`, code });
-    }
-  }
-}
+import { validateBudgetLedger, validateApprovalRequestBinding, validateVerificationRecord } from './control.ts';
+import { isObject, checkStr, checkStringArray } from './validation.ts';
 
 const ALLOWED_STEP_KEYS = new Set([
   'id',
@@ -51,6 +21,7 @@ const ALLOWED_STEP_KEYS = new Set([
   'startedAt',
   'completedAt',
   'evidenceRefs',
+  'requiredEvidenceRefs',
   'error',
   'changedFiles',
 ]);
@@ -98,6 +69,15 @@ export function validatePlanStep(val: unknown, path = 'step'): ValidationResult<
   }
   if (val.evidenceRefs !== undefined) {
     checkStringArray(errors, val.evidenceRefs, `${path}.evidenceRefs`, 'evidenceRefs', 'INVALID_REFS', true);
+  }
+  if (val.requiredEvidenceRefs !== undefined) {
+    checkStringArray(errors, val.requiredEvidenceRefs, `${path}.requiredEvidenceRefs`, 'requiredEvidenceRefs', 'INVALID_REQUIRED_EVIDENCE', true);
+  }
+  if (val.status === 'done') {
+    const evidence = Array.isArray(val.evidenceRefs) ? val.evidenceRefs : [];
+    if (evidence.length === 0) {
+      errors.push({ path: `${path}.evidenceRefs`, message: 'A done step must record at least one evidence reference', code: 'MISSING_COMPLETION_EVIDENCE' });
+    }
   }
   if (val.changedFiles !== undefined) {
     checkStringArray(errors, val.changedFiles, `${path}.changedFiles`, 'changedFiles', 'INVALID_FILES', true);
@@ -279,6 +259,22 @@ export function validateTaskState(val: unknown, path = 'state'): ValidationResul
   const validStatuses = ['pending', 'running', 'waiting_approval', 'paused', 'completed', 'failed'];
   if (typeof val.status !== 'string' || !validStatuses.includes(val.status)) {
     errors.push({ path: `${path}.status`, message: `status must be one of ${validStatuses.join(', ')}`, code: 'INVALID_STATUS' });
+  }
+
+  if (val.verification !== undefined) {
+    const verRes = validateVerificationRecord(val.verification, `${path}.verification`);
+    if (!verRes.ok) errors.push(...verRes.errors);
+  }
+
+  if (val.status === 'completed') {
+    if (Array.isArray(val.plan) && !val.plan.every((step: unknown) => isObject(step) && step.status === 'done')) {
+      errors.push({ path: `${path}.status`, message: 'A completed task requires every plan step to be done', code: 'INCOMPLETE_COMPLETION' });
+    }
+    const verified = isObject(val.verification) && val.verification.status === 'verified' &&
+      Array.isArray(val.verification.evidenceRefs) && val.verification.evidenceRefs.length > 0;
+    if (!verified) {
+      errors.push({ path: `${path}.verification`, message: 'A completed task requires a verified verification record with evidence', code: 'INCOMPLETE_COMPLETION' });
+    }
   }
 
   if (typeof val.stateVersion !== 'number' || !Number.isInteger(val.stateVersion) || val.stateVersion < 1) {

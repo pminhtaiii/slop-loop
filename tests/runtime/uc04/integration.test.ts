@@ -138,7 +138,14 @@ describe('UC-04: Multi-Step Workflow & Crash Recovery Simulation (Level 1, local
         }
         return {};
       },
-      { gitInspector: async () => ({ ...baseline }) }
+      {
+        gitInspector: async () => ({ ...baseline }),
+        verification: async () => ({
+          status: 'verified',
+          evidenceRefs: ['tests:all'],
+          checkedAt: new Date().toISOString(),
+        }),
+      }
     );
 
     // CRITICAL ASSERTION: Step 1 was NEVER re-executed!
@@ -212,7 +219,14 @@ describe('UC-04: Multi-Step Workflow & Crash Recovery Simulation (Level 1, local
         }
         return {};
       },
-      { gitInspector: async () => ({ ...baseline }) }
+      {
+        gitInspector: async () => ({ ...baseline }),
+        verification: async () => ({
+          status: 'verified',
+          evidenceRefs: ['tests:all'],
+          checkedAt: new Date().toISOString(),
+        }),
+      }
     );
 
     assert.equal(finishedState.status, 'completed');

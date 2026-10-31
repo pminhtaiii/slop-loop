@@ -15,6 +15,8 @@ import {
   validateRecordAndSettleInput,
   validateRecoverTaskInput,
   validateCheckpointRecord,
+  validateBudgetJournalRecord,
+  validateDispatchClaimRecord,
   type TaskState,
   type CheckpointRecord,
 } from '../../../src/persistence/contracts.ts';
@@ -73,6 +75,62 @@ describe('UC-04: Data Contracts and Extension Validators', () => {
         status: 'invalid_status',
       });
       assert.equal(res.ok, false);
+    });
+
+    it('rejects a done step without evidence references', () => {
+      const res = validatePlanStep({
+        id: 'step-1',
+        title: 'Step 1',
+        description: 'test',
+        status: 'done',
+      });
+      assert.equal(res.ok, false);
+      if (!res.ok) {
+        assert.ok(res.errors.some((e) => e.code === 'MISSING_COMPLETION_EVIDENCE' && e.path.endsWith('.evidenceRefs')));
+      }
+
+      const emptyRes = validatePlanStep({
+        id: 'step-1',
+        title: 'Step 1',
+        description: 'test',
+        status: 'done',
+        evidenceRefs: [],
+      });
+      assert.equal(emptyRes.ok, false);
+    });
+
+    it('accepts a done step with one evidence reference', () => {
+      const res = validatePlanStep({
+        id: 'step-1',
+        title: 'Step 1',
+        description: 'test',
+        status: 'done',
+        evidenceRefs: ['test-ok'],
+      });
+      assert.equal(res.ok, true);
+    });
+
+    it('validates requiredEvidenceRefs as a string array', () => {
+      const res = validatePlanStep({
+        id: 'step-1',
+        title: 'Step 1',
+        description: 'test',
+        status: 'todo',
+        requiredEvidenceRefs: ['test-ok'],
+      });
+      assert.equal(res.ok, true);
+
+      const badRes = validatePlanStep({
+        id: 'step-1',
+        title: 'Step 1',
+        description: 'test',
+        status: 'todo',
+        requiredEvidenceRefs: [123],
+      });
+      assert.equal(badRes.ok, false);
+      if (!badRes.ok) {
+        assert.ok(badRes.errors.some((e) => e.code === 'INVALID_REQUIRED_EVIDENCE'));
+      }
     });
   });
 
@@ -526,8 +584,8 @@ describe('UC-04: Data Contracts and Extension Validators', () => {
         acceptanceCriteria: [],
         constraints: [],
         plan: [
-          { id: 's1', title: 'Step 1', description: 'desc', status: 'done' },
-          { id: 's2', title: 'Step 2', description: 'desc', status: 'done' },
+          { id: 's1', title: 'Step 1', description: 'desc', status: 'done', evidenceRefs: ['ev-1'] },
+          { id: 's2', title: 'Step 2', description: 'desc', status: 'done', evidenceRefs: ['ev-2'] },
           { id: 's3', title: 'Step 3', description: 'desc', status: 'todo' },
         ],
         currentStepIndex: 2,
@@ -563,6 +621,151 @@ describe('UC-04: Data Contracts and Extension Validators', () => {
       // Incoherent stateVersion
       const incoherentVer = { ...validCp, stateVersion: 99 };
       assert.equal(validateCheckpointRecord(incoherentVer).ok, false);
+    });
+  });
+
+  describe('completion evidence and verification outcome', () => {
+    const baseState = (): TaskState => ({
+      schemaVersion: UC04_SCHEMA_VERSION,
+      taskId: 't-complete',
+      runId: 'r-complete',
+      repositoryId: 'repo-1',
+      workspaceId: 'ws-1',
+      taskType: 'feature',
+      goal: 'complete the task',
+      acceptanceCriteria: ['pass'],
+      constraints: [],
+      plan: [{ id: 's1', title: 'Step 1', description: 'desc', status: 'done', evidenceRefs: ['ev-1'] }],
+      currentStepIndex: 1,
+      status: 'completed',
+      stateVersion: 4,
+      budgetLedgers: [],
+      workspaceBaseline: {
+        commitHash: 'abcdef1234567890',
+        branch: 'feat/test',
+        isClean: true,
+        trackedFilesHash: 'hash123',
+      },
+      changedFiles: [],
+      openRisks: [],
+      nextAction: 'Done',
+    });
+
+    it('rejects a completed task with a non-done plan step', () => {
+      const state = baseState();
+      const res = validateTaskState({
+        ...state,
+        plan: [
+          { id: 's1', title: 'Step 1', description: 'desc', status: 'done', evidenceRefs: ['ev-1'] },
+          { id: 's2', title: 'Step 2', description: 'desc', status: 'todo' },
+        ],
+        verification: { status: 'verified', evidenceRefs: ['test-ok'], checkedAt: '2026-10-21T12:00:00.000Z' },
+      });
+      assert.equal(res.ok, false);
+      if (!res.ok) {
+        assert.ok(res.errors.some((e) => e.code === 'INCOMPLETE_COMPLETION' && e.path.endsWith('.status')));
+      }
+    });
+
+    it('rejects a completed task without a verification record', () => {
+      const res = validateTaskState(baseState());
+      assert.equal(res.ok, false);
+      if (!res.ok) {
+        assert.ok(res.errors.some((e) => e.code === 'INCOMPLETE_COMPLETION' && e.path.endsWith('.verification')));
+      }
+    });
+
+    it('rejects a completed task whose verification is unavailable', () => {
+      const res = validateTaskState({
+        ...baseState(),
+        verification: { status: 'unavailable', evidenceRefs: [], checkedAt: '2026-10-21T12:00:00.000Z' },
+      });
+      assert.equal(res.ok, false);
+      if (!res.ok) {
+        assert.ok(res.errors.some((e) => e.code === 'INCOMPLETE_COMPLETION' && e.path.endsWith('.verification')));
+      }
+    });
+
+    it('accepts a completed task with verified evidence', () => {
+      const res = validateTaskState({
+        ...baseState(),
+        verification: { status: 'verified', evidenceRefs: ['test-ok'], checkedAt: '2026-10-21T12:00:00.000Z' },
+      });
+      assert.equal(res.ok, true);
+    });
+
+    it('rejects a verification record with an invalid status', () => {
+      const res = validateTaskState({
+        ...baseState(),
+        verification: { status: 'trust-me', evidenceRefs: ['test-ok'], checkedAt: '2026-10-21T12:00:00.000Z' },
+      });
+      assert.equal(res.ok, false);
+      if (!res.ok) {
+        assert.ok(res.errors.some((e) => e.path.endsWith('.verification.status') && e.code === 'INVALID_VERIFICATION_STATUS'));
+      }
+    });
+  });
+
+  describe('validateBudgetJournalRecord', () => {
+    const validJournal = {
+      schemaVersion: UC04_SCHEMA_VERSION,
+      taskId: 'task-1',
+      runId: 'run-1',
+      ledgers: [
+        {
+          scope: 'task',
+          kind: 'tokens',
+          limit: 1000,
+          consumed: 100,
+          reservations: [],
+          configurationId: 'cfg-1',
+          version: 1,
+        },
+      ],
+      replanCount: 0,
+      updatedAt: '2026-10-31T00:00:00.000Z',
+    };
+
+    it('accepts a valid budget journal record', () => {
+      assert.equal(validateBudgetJournalRecord(validJournal).ok, true);
+    });
+
+    it('rejects a budget journal with a negative replanCount or bad ledger', () => {
+      assert.equal(validateBudgetJournalRecord({ ...validJournal, replanCount: -1 }).ok, false);
+      assert.equal(validateBudgetJournalRecord({ ...validJournal, ledgers: [{ scope: 'nope' }] }).ok, false);
+      assert.equal(validateBudgetJournalRecord({ ...validJournal, taskId: '' }).ok, false);
+    });
+  });
+
+  describe('validateDispatchClaimRecord', () => {
+    const validClaim = {
+      claimId: 'claim-1',
+      taskId: 'task-1',
+      runId: 'run-1',
+      stepId: 's1',
+      actionId: 'act-1',
+      epoch: 0,
+      stateVersion: 1,
+      phase: 'claimed',
+      reservationRefs: ['res-1'],
+      createdAt: '2026-10-31T00:00:00.000Z',
+    };
+
+    it('accepts a valid dispatch claim record', () => {
+      assert.equal(validateDispatchClaimRecord(validClaim).ok, true);
+    });
+
+    it('rejects a dispatch claim with a bad phase, negative epoch, or missing claimId', () => {
+      assert.equal(validateDispatchClaimRecord({ ...validClaim, phase: 'unknown-phase' }).ok, false);
+      assert.equal(validateDispatchClaimRecord({ ...validClaim, phase: 'reconciled' }).ok, true);
+      assert.equal(validateDispatchClaimRecord({ ...validClaim, epoch: -1 }).ok, false);
+      const missingClaimId: Record<string, unknown> = { ...validClaim };
+      delete missingClaimId.claimId;
+      const res = validateDispatchClaimRecord(missingClaimId);
+      assert.equal(res.ok, false);
+      if (!res.ok) {
+        assert.ok(res.errors.some((e) => e.path.endsWith('.claimId')));
+      }
     });
   });
 });
