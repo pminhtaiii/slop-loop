@@ -4,6 +4,9 @@
 
 **Status**: T001–T014 completion is recorded; all 14 tasks are complete and verified with 88 passing runtime tests (exit 0). T001–T012 foundation plus T013 shared adapters for UC-01, UC-03, UC-05 and T014 handoff are implemented.
 
+Correction batch at 7c6b19a closes the nine findings from the 2026-10-31 review (STD-001–003, SPEC-001–006). Focused UC-04 evidence is now 140 passing tests (exit 0), the UC-01 cross-suite check 356 passing, and the full runtime lane 2,106 passing with 0 failing and 4 pre-existing skips. This is mock and focused evidence only: it does not certify kill-window behavior, real provider effects, production durability, or full UC-04 acceptance, and the corrected candidate has not yet received an independent re-review.
+
+
 **Tests**: Required by FR-015. After authorization and seam confirmation, use vertical behavioral RED/GREEN through actual owned public exports; neutral loadable scaffolds are permitted only then. Missing imports/type errors are not behavioral RED. Retain prior regressions. Coordinator alone updates completion after integrated evidence; implementation workers do not change checkboxes.
 
 ## Format: `[ID] [P?] [Story] Description`

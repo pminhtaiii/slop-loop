@@ -61,3 +61,15 @@ Review quality, contract agreement, adapter evidence and implementation authoriz
 On 2026-10-28 (Asia/Saigon), Phase 7 Tasks T013 and T014 were completed on branch `feat/uc04-shared-adapters` and integrated:
 - **T013 (Shared Adapters & Recovery Integration)**: Implemented `src/persistence/adapters/` providing `DurableApprovalStore` for UC-05, `AccountingRecoveryAdapter` for UC-01 intake, and `RepairAccountingAdapter` for UC-03 repair/replan tracking. Multi-step workflow and recovery integration was proven in `tests/runtime/uc04/integration.test.ts`. Full test suite passes 88/88 tests.
 - **T014 (Handoff & Evidence Records)**: Scoped recovery handoff recorded; all 14 UC-04 tasks marked complete. Contributor quality gates, context checks, and test runner pass cleanly.
+
+## Recorded review corrections (2026-10-31)
+
+The 2026-10-31 independent review of the integrated foundation and shared adapters raised nine findings (STD-001–003, SPEC-001–006) against candidate `d07ea86`. The user instructed corrections under the existing G-EXTENSION and G-STORE selections; no new gate was opened and no gate above is marked satisfied by this work.
+
+Corrections landed as `7c6b19a` on `feat/uc04-recovery-hardening`, inside the already-confirmed `src/persistence/` and `tests/runtime/uc04/` paths:
+- Unsafe storage identifiers are rejected before IO, with canonical containment checked at store initialization. `approval-events.ts`, `contracts/control-inputs.ts` and `contracts/validation.ts` were added to keep each implementation file under the repository size gate; no new capability was introduced by the split.
+- Operator refusals no longer create control state, and persisted decision events are validated and bound to the requested task.
+- Reservations persist through a budget journal before acknowledgement; the replan high-water mark is restored so reconstruction refuses a fourth replan.
+- Recovery prefers newer persisted state over a stale checkpoint, requires predecessor evidence (revalidated after restore), compares branch and content digests, holds unresolved reservations behind a durable uncertain claim, and certifies completion only from a verified outcome.
+
+Evidence tier: mock and focused only. Focused UC-04 tests 140 passing, the UC-01 cross-suite check 356 passing, and the full runtime lane 2,106 passing with 0 failing and 4 pre-existing skips at `7c6b19a`. No kill-window, real provider, shared-admission or production durability evidence was produced. `charge_as_consumed` still depends on caller-supplied `confirmedOutcomes`, and recovery has no epoch allocator. These corrections do not certify full UC-04 acceptance, do not release Phase 5 successor work, and do not establish X03-ADMISSION, X05-GATE or G-FEATURE.
