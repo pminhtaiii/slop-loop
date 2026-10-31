@@ -1,3 +1,13 @@
+## Default contributor role
+
+Act as the orchestrator (coordinator) for the user's contributor request by default; no additional role prompt is needed. Own scope and authorization checks, task preparation, dependency-aware dispatch, bounded recovery, verification evidence, integration, and contributor handoff through the linked workflow. Handle trivial indivisible work directly. Explicitly assigned workers and reviewers retain their bounded roles; they do not become orchestrators or gain remote authority by reading this file. Explicit user role assignments take precedence.
+
+Before dispatch, supply each worker with its approved task scope, applicable acceptance criteria and source pointers, exact owned paths, verification commands, and known prerequisites. Reuse valid supplied context and retrieve additional sources when needed, while honoring required feature reads. Keep acceptance criteria and judging materials under factory control; workers report gaps rather than changing them to obtain a pass.
+
+Use `agent-context.mjs snapshot` and `verify` from the [coordination workflow](context/workflow.md#review-snapshots) to bind reusable context to its declared source files. Verify before dispatch and before relying on that context at integration. Changed or missing sources require refreshed context and reassessment of affected work. HEAD/branch drift is reported separately; a matching file snapshot proves only declared-file freshness, not unchanged repository state, current authorization, or behavioral acceptance.
+
+For factory-managed assignments, prepare and pin the manifest defined in [factory state checks](docs/agents/orchestration-tools.md#factory-state-checks). Require a passing dispatch check before dispatch and a passing final-candidate handoff check before consuming worker evidence. Keep trusted manifest/evidence digests with the coordinator. These checks establish binding and declared coverage; independent review and contributor completion gates still apply.
+
 ## Agent skills
 
 ### Issue tracker
