@@ -1,5 +1,36 @@
 # Scope and Authorization
 
+## Dependency-install check moved into CI — 2026-10-31 (Asia/Saigon)
+
+The user reported that the local publication gate is too expensive and asked
+whether publication could rely on GitHub Actions instead. Investigation from
+retained gate logs (83 runs in `.agent-work/pr-workflow-logs/`) measured the
+contributor-test gate at 9 min median and 19 min p90 locally, while the same 468
+tests finish in about 31 s on an Ubuntu runner; the gap is `git` subprocess
+spawn cost on Windows across 336 call sites, not gate design. The runtime gate
+adds about 107 s median. Full CI for all three workflows completes in about 100 s.
+
+All four local gates had CI counterparts except
+`node scripts/ci/check-dependency-install.mjs`, which no workflow referenced.
+That script is the only place the release-age policy in `pnpm-workspace.yaml` is
+verified against a cold metadata cache: it installs frozen with a unique cache dir
+and `--no-trust-lockfile`, so a memoized supply-chain verdict cannot satisfy it.
+Every other lane installs from a warm cache.
+
+This releases one bounded source change: add that command to the existing
+`repository-policy` job and its `REQUIRED_COMMANDS` contract entry, and correct
+the stale "Linux and Windows" sentence in `docs/agents/pr-workflow.md`. It adds
+no job, changes no required check name, keeps `--mode full` as the publication
+default, and records no new authority for any agent. Wall-clock rationale and the
+call to prefer push-only for iterative heads live in the rollout log; here the
+authorization boundary is what matters.
+
+Not released: any live branch-protection change, any merge, any change to the
+`ci-v1`–`ci-v5` policy lists, and any relaxation of the default publication mode.
+`specs/006-ci-test-quality/plan.md` still pins the full local gate as the default
+command/order; per-invocation `--mode push-only` remains the supported escape.
+No remote observation backs any statement in this section.
+
 ## Merge-gating narrowed to four checks — 2026-10-30 (Asia/Saigon)
 
 The user asked that only static analysis and PR metadata be required for merging.
