@@ -10,7 +10,6 @@ import {
   type PolicyProfile,
   validateApprovalRequestRecord,
   validateApprovalTaskControl,
-  validateDecisionEvent,
   validateDeveloperDirection,
   validateHumanResolution,
   validatePolicyProfile,
@@ -35,7 +34,7 @@ import {
   taskDir,
   writeJsonAtomic,
 } from './approval-types.ts';
-import { appendEvent, readEvents } from './approval-events.ts';
+import { appendEvent, appendEvents, readEvents } from './approval-events.ts';
 
 /** Durable file-backed approval store adapter implementing UC-05 contracts. */
 export class DurableApprovalStore implements ApprovalStore {
@@ -130,7 +129,7 @@ export class DurableApprovalStore implements ApprovalStore {
 
   /** Reads decision events for a task. */
   readEvents(taskId: string): StoreResponse<readonly DecisionEvent[]> {
-    return readEvents(this.storageDir, taskId, this.profile);
+    return readEvents(this.storageDir, taskId);
   }
 
   /** Creates a pending approval request and transitions task to waiting mode. */
@@ -143,11 +142,15 @@ export class DurableApprovalStore implements ApprovalStore {
     if (!validReq.ok) return makeFailure<ApprovalRequestRecord>('unknown', 1, 'denied', 'invalid-request');
     const request = validReq.value;
 
-    const currentControlRes = this.loadTaskControl(request.taskId);
-    if (currentControlRes.safe.outcome !== 'ok' || !currentControlRes.value) {
+    const currentControlRes = this.readTaskControl(request.taskId);
+    let currentControl: ApprovalTaskControl;
+    if (currentControlRes.safe.outcome === 'ok' && currentControlRes.value) {
+      currentControl = currentControlRes.value;
+    } else if (currentControlRes.safe.safeReasonCode === 'control-not-found') {
+      currentControl = makeInitialControl(request.taskId);
+    } else {
       return makeFailure<ApprovalRequestRecord>(request.taskId, 1, 'denied', 'control-unavailable');
     }
-    const currentControl = currentControlRes.value;
 
     if (payload.expectedControlVersion !== undefined && currentControl.version !== payload.expectedControlVersion) {
       return makeFailure<ApprovalRequestRecord>(request.taskId, currentControl.version, 'conflict', 'version-conflict', request.decisionId);
@@ -352,16 +355,8 @@ export class DurableApprovalStore implements ApprovalStore {
       return makeFailure<ApprovalRequestRecord>(replacement.taskId, currentControl.version, 'conflict', preErr, replacement.decisionId);
     }
 
-    if (payload.events !== undefined) {
-      if (!Array.isArray(payload.events)) {
-        return makeFailure<ApprovalRequestRecord>(replacement.taskId, currentControl.version, 'denied', 'invalid-events', replacement.decisionId);
-      }
-      for (const ev of payload.events) {
-        const valid = validateDecisionEvent(ev, this.profile);
-        if (!valid.ok) {
-          return makeFailure<ApprovalRequestRecord>(replacement.taskId, currentControl.version, 'denied', 'invalid-event', replacement.decisionId);
-        }
-      }
+    if (payload.events !== undefined && !Array.isArray(payload.events)) {
+      return makeFailure<ApprovalRequestRecord>(replacement.taskId, currentControl.version, 'denied', 'invalid-events', replacement.decisionId);
     }
 
     const updatedControl: ApprovalTaskControl = {
@@ -377,14 +372,10 @@ export class DurableApprovalStore implements ApprovalStore {
     const repFile = join(decisionDir(this.storageDir, replacement.decisionId), 'request.json');
     try {
       writeJsonAtomic(repFile, replacement);
-      if (Array.isArray(payload.events)) {
-        for (const ev of payload.events) {
-          const evRes = this.appendEvent(replacement.taskId, ev);
-          if (!evRes.ok) {
-            rmSync(repFile, { force: true });
-            return makeFailure<ApprovalRequestRecord>(replacement.taskId, currentControl.version, evRes.error, evRes.reason, replacement.decisionId);
-          }
-        }
+      const evRes = this.appendEvents(replacement.taskId, payload.events);
+      if (!evRes.ok) {
+        rmSync(repFile, { force: true });
+        return makeFailure<ApprovalRequestRecord>(replacement.taskId, currentControl.version, evRes.error, evRes.reason, replacement.decisionId);
       }
       writeJsonAtomic(join(taskDir(this.storageDir, replacement.taskId), 'control.json'), updatedControl);
     } catch {
@@ -398,5 +389,9 @@ export class DurableApprovalStore implements ApprovalStore {
   /** Appends a decision event to the task audit log. */
   appendEvent(taskId: string, event: unknown): EventAppendResult {
     return appendEvent(this.storageDir, taskId, event, this.profile);
+  }
+
+  appendEvents(taskId: string, events: readonly unknown[] | undefined): EventAppendResult {
+    return appendEvents(this.storageDir, taskId, events, this.profile);
   }
 }

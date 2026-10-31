@@ -1,8 +1,8 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readdir, rm, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { DurableStore, isSafeStorageId } from '../../../src/persistence/store.ts';
 import {
   UC04_SCHEMA_VERSION,
@@ -337,5 +337,157 @@ describe('UC-04: DurableStore (Persistence & Checkpoints)', () => {
     const claims = await store.loadDispatchClaims(sampleTask.taskId);
     assert.deepEqual(claims.map((c) => c.claimId), ['claim-a', 'claim-b']);
     assert.deepEqual(await store.loadDispatchClaims('unknown-task'), []);
+  });
+
+  it('refuses a lock whose directory escapes the base through a link', async () => {
+    const outside = await mkdtemp(join(tmpdir(), 'slop-store-outside-'));
+    try {
+      await store.init();
+      await rm(store.lockDir, { recursive: true, force: true });
+      await symlink(outside, store.lockDir, 'junction');
+
+      await assert.rejects(
+        async () => {
+          await store.withLock('resource-1', async () => 'ran');
+        },
+        { message: /escapes base directory/ }
+      );
+      assert.deepEqual(await readdir(outside), []);
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses to write a checkpoint whose task directory escapes the base through a link', async () => {
+    const outside = await mkdtemp(join(tmpdir(), 'slop-store-outside-'));
+    try {
+      await store.init();
+      await symlink(outside, join(store.checkpointDir, sampleTask.taskId), 'junction');
+
+      await assert.rejects(
+        async () => {
+          await store.saveCheckpoint(sampleTask);
+        },
+        { message: /escapes base directory/ }
+      );
+      assert.deepEqual(await readdir(outside), []);
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses to write a dispatch claim whose task directory escapes the base through a link', async () => {
+    const outside = await mkdtemp(join(tmpdir(), 'slop-store-outside-'));
+    try {
+      await store.init();
+      await symlink(outside, join(store.claimDir, sampleTask.taskId), 'junction');
+
+      await assert.rejects(
+        async () => {
+          await store.saveDispatchClaim({
+            claimId: 'claim-1',
+            taskId: sampleTask.taskId,
+            runId: 'run-1',
+            stepId: 's-1',
+            actionId: 'action-1',
+            epoch: 1,
+            stateVersion: 1,
+            phase: 'claimed',
+            reservationRefs: ['res-1'],
+            createdAt: '2026-10-31T00:00:00.000Z',
+          });
+        },
+        { message: /escapes base directory/ }
+      );
+      assert.deepEqual(await readdir(outside), []);
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses to read a task whose directory escapes the base through a link', async () => {
+    const outside = await mkdtemp(join(tmpdir(), 'slop-store-outside-'));
+    try {
+      await store.init();
+      await writeFile(join(outside, `${sampleTask.taskId}.json`), JSON.stringify(sampleTask), 'utf8');
+      await rm(store.stateDir, { recursive: true, force: true });
+      await symlink(outside, store.stateDir, 'junction');
+
+      await assert.rejects(
+        async () => {
+          await store.loadTask(sampleTask.taskId);
+        },
+        { message: /escapes base directory/ }
+      );
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a task record stored under another task id', async () => {
+    await store.saveTask(sampleTask);
+    const foreignPath = store.getTaskPath('task-other-01');
+    await writeFile(foreignPath, JSON.stringify(sampleTask), 'utf8');
+
+    await assert.rejects(
+      async () => {
+        await store.loadTask('task-other-01');
+      },
+      { message: /Task record mismatch: expected task-other-01, found task-test-01/ }
+    );
+  });
+
+  it('refuses a budget journal, pause record or claim stored under another task id', async () => {
+    const pause: DeliberatePauseRecord = {
+      schemaVersion: UC04_SCHEMA_VERSION,
+      taskId: sampleTask.taskId,
+      active: true,
+      pauseKey: 'pause-key-1',
+      operatorRef: 'operator-1',
+      acceptedAt: new Date().toISOString(),
+      revision: 1,
+      epoch: 1,
+      resumeKey: null,
+      outstandingAttemptRefs: [],
+    };
+    const journal: BudgetJournalRecord = {
+      schemaVersion: UC04_SCHEMA_VERSION,
+      taskId: sampleTask.taskId,
+      runId: sampleTask.runId,
+      ledgers: [],
+      replanCount: 0,
+      updatedAt: new Date().toISOString(),
+    };
+    const claim: DispatchClaimRecord = {
+      claimId: 'claim-1',
+      taskId: sampleTask.taskId,
+      runId: sampleTask.runId,
+      stepId: 's-1',
+      actionId: 'act-1',
+      epoch: 1,
+      stateVersion: 1,
+      phase: 'claimed',
+      reservationRefs: [],
+      createdAt: new Date().toISOString(),
+    };
+
+    await store.savePauseRecord(pause);
+    await store.saveBudgetJournal(journal);
+    await store.saveDispatchClaim(claim);
+    await writeFile(store.getPauseRecordPath('task-other-01'), JSON.stringify(pause), 'utf8');
+    await writeFile(store.getBudgetJournalPath('task-other-01'), JSON.stringify(journal), 'utf8');
+    const claimPath = store.getClaimPath('task-other-01', 'claim-1');
+    await mkdir(dirname(claimPath), { recursive: true });
+    await writeFile(claimPath, JSON.stringify(claim), 'utf8');
+
+    await assert.rejects(async () => store.loadPauseRecord('task-other-01'), {
+      message: /Pause record mismatch/,
+    });
+    await assert.rejects(async () => store.loadBudgetJournal('task-other-01'), {
+      message: /Budget journal mismatch/,
+    });
+    await assert.rejects(async () => store.loadDispatchClaims('task-other-01'), {
+      message: /Dispatch claim mismatch/,
+    });
   });
 });

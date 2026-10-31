@@ -1,23 +1,38 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { BudgetTracker } from '../../../src/persistence/accounting.ts';
 import { DurableStore } from '../../../src/persistence/store.ts';
 import { UC01AccountingAdapter } from '../../../src/persistence/adapters/uc01-adapter.ts';
+import { captureWorkspaceBaseline, reconcileAndResume } from '../../../src/persistence/recovery.ts';
 import type { BudgetLedger } from '../../../src/persistence/contracts.ts';
 
 test('UC-04 / UC-01: Accounting & Recovery Adapter', async (t) => {
   const stores: DurableStore[] = [];
+  const repos: string[] = [];
   const newStore = (): DurableStore => {
     const store = new DurableStore(mkdtempSync(join(tmpdir(), 'uc01-adapter-test-')));
     stores.push(store);
     return store;
   };
+  const newRepo = (): string => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'uc01-adapter-repo-'));
+    repos.push(repoRoot);
+    execFileSync('git', ['init', '-b', 'task-branch'], { cwd: repoRoot, stdio: 'ignore' });
+    execFileSync(
+      'git',
+      ['-c', 'user.email=uc04@example.com', '-c', 'user.name=uc04', 'commit', '--allow-empty', '-m', 'init'],
+      { cwd: repoRoot, stdio: 'ignore' }
+    );
+    return repoRoot;
+  };
 
   t.after(() => {
     for (const store of stores) rmSync(store.baseDir, { recursive: true, force: true });
+    for (const repo of repos) rmSync(repo, { recursive: true, force: true });
   });
 
   const taskId = 'task-uc01-triage';
@@ -264,5 +279,110 @@ test('UC-04 / UC-01: Accounting & Recovery Adapter', async (t) => {
     assert.equal(journal.ledgers.find((l) => l.kind === 'tokens')?.consumed, summary.preservedConsumedTokens);
     assert.equal(journal.ledgers.find((l) => l.kind === 'cost')?.consumed, summary.preservedConsumedCost);
     assert.equal(journal.ledgers.find((l) => l.kind === 'tokens')?.reservations.length, 0);
+  });
+
+  await t.test('reconciliation charges only the calling task and leaves foreign reservations held', async () => {
+    const budgetTracker = new BudgetTracker(initialLedgers);
+    const store = newStore();
+    const adapter = new UC01AccountingAdapter(budgetTracker, store);
+    const ceiling = { inputTokens: 300, outputTokens: 200, totalTokens: 500, costUnits: 1, pricingId: 'pricing-1' };
+
+    const reservedA = await adapter.reserve(
+      { taskId: 'task-a', runId: 'run-a', requestId: 'req-a', accountingRef: 'account-a' },
+      ceiling
+    );
+    assert.equal(reservedA.ok, true);
+
+    const summaryB = await adapter.reconcileAfterInterrupt('task-b', 'run-b');
+    assert.equal(summaryB.preservedConsumedTokens, 0);
+    assert.equal(summaryB.preservedConsumedCost, 0);
+    assert.equal(summaryB.uncertainReservationsRetained, 0);
+
+    const journalB = await store.loadBudgetJournal('task-b');
+    assert.ok(journalB);
+    assert.equal(journalB.ledgers.find((l) => l.kind === 'tokens')?.consumed, 0);
+
+    const summaryA = await adapter.reconcileAfterInterrupt('task-a', 'run-a');
+    assert.equal(summaryA.preservedConsumedTokens, 500);
+    assert.equal(summaryA.preservedConsumedCost, 1);
+    assert.equal(summaryA.uncertainReservationsRetained, 2);
+
+    const journalA = await store.loadBudgetJournal('task-a');
+    assert.ok(journalA);
+    assert.equal(journalA.ledgers.find((l) => l.kind === 'tokens')?.consumed, 500);
+  });
+
+  await t.test('a task journal holds only its own reservations after another task reserves', async () => {
+    const budgetTracker = new BudgetTracker(initialLedgers);
+    const store = newStore();
+    const adapter = new UC01AccountingAdapter(budgetTracker, store);
+    const ceiling = { inputTokens: 300, outputTokens: 200, totalTokens: 500, costUnits: 1, pricingId: 'pricing-1' };
+
+    await adapter.reserve(
+      { taskId: 'task-a', runId: 'run-a', requestId: 'req-a', accountingRef: 'account-a' },
+      ceiling
+    );
+    await adapter.reserve(
+      { taskId: 'task-b', runId: 'run-b', requestId: 'req-b', accountingRef: 'account-b' },
+      ceiling
+    );
+
+    const journalB = await store.loadBudgetJournal('task-b');
+    assert.ok(journalB);
+    const keyedB = journalB.ledgers.flatMap((l) => l.reservations.map((r) => r.keyedId));
+    assert.deepEqual(keyedB.sort(), ['req-b', 'req-b']);
+
+    const rebuilt = new UC01AccountingAdapter(new BudgetTracker(initialLedgers), store);
+    const summaryB = await rebuilt.reconcileAfterInterrupt('task-b', 'run-b');
+    assert.equal(summaryB.preservedConsumedTokens, 500);
+    assert.equal(summaryB.uncertainReservationsRetained, 2);
+
+    const summaryA = await rebuilt.reconcileAfterInterrupt('task-a', 'run-a');
+    assert.equal(summaryA.preservedConsumedTokens, 500);
+    assert.equal(summaryA.uncertainReservationsRetained, 2);
+  });
+
+  await t.test('recovery leaves the journal untouched when reconciliation changes nothing', async () => {
+    const repoRoot = newRepo();
+    const budgetTracker = new BudgetTracker(initialLedgers);
+    const store = newStore();
+    const adapter = new UC01AccountingAdapter(budgetTracker, store, repoRoot);
+    const ceiling = { inputTokens: 300, outputTokens: 200, totalTokens: 500, costUnits: 1, pricingId: 'pricing-1' };
+
+    await adapter.reserve(
+      { taskId, runId, requestId: 'req-1', accountingRef: 'account-1' },
+      ceiling
+    );
+    await adapter.saveCheckpoint(taskId, 'intake', { issueId: 'ISSUE-300' });
+    const before = await store.loadBudgetJournal(taskId);
+    assert.ok(before);
+
+    const resumed = await reconcileAndResume(taskId, store, { repoRoot });
+    assert.equal(resumed.status, 'paused');
+
+    const after = await store.loadBudgetJournal(taskId);
+    assert.ok(after);
+    assert.equal(after.runId, before.runId);
+    assert.equal(after.replanCount, before.replanCount);
+    assert.deepEqual(after.ledgers, before.ledgers);
+  });
+
+  await t.test('a new checkpoint records the real workspace baseline and resumes', async () => {
+    const repoRoot = newRepo();
+    const budgetTracker = new BudgetTracker(initialLedgers);
+    const store = newStore();
+    const adapter = new UC01AccountingAdapter(budgetTracker, store, repoRoot);
+
+    await adapter.saveCheckpoint(taskId, 'intake', { issueId: 'ISSUE-200' });
+
+    const expected = await captureWorkspaceBaseline(repoRoot);
+    const state = await store.loadTask(taskId);
+    assert.ok(state);
+    assert.deepEqual(state.workspaceBaseline, expected);
+    assert.equal(expected.branch, 'task-branch');
+
+    const resumed = await reconcileAndResume(taskId, store, { repoRoot });
+    assert.equal(resumed.taskId, taskId);
+    assert.ok(resumed.stateVersion > state.stateVersion);
   });
 });

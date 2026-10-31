@@ -153,6 +153,25 @@ test('UC-04 / UC-03: Accounting & Recovery Adapter', async (t) => {
     assert.equal(settleRes.consumedCost, 4);
   });
 
+  await t.test('a task journal holds only its own reservations after another task reserves', async () => {
+    const budgetTracker = new BudgetTracker(initialLedgers);
+    const store = newStore();
+    const adapter = new UC03AccountingAdapter(budgetTracker, store);
+
+    const resA = await adapter.reserveInvestigation('task-A', 'run-A', 500, 1);
+    const resB = await adapter.reserveInvestigation('task-B', 'run-B', 300, 1);
+
+    const journalB = await store.loadBudgetJournal('task-B');
+    assert.ok(journalB);
+    const keyedB = journalB.ledgers.flatMap((l) => l.reservations.map((r) => r.keyedId));
+    assert.ok(keyedB.every((keyed) => keyed === resB.reservationId));
+    assert.equal(keyedB.includes(resA.reservationId), false);
+
+    const rebuilt = new UC03AccountingAdapter(new BudgetTracker(initialLedgers), store);
+    const reconciledB = await rebuilt.reconcileTaskBudgets('task-B', 'run-B');
+    assert.equal(reconciledB.totalTokensConsumed, 300);
+  });
+
   await t.test('reconcileTaskBudgets filters reservations by task owner', async () => {
     const budgetTracker = new BudgetTracker(initialLedgers);
     const store = newStore();
@@ -403,5 +422,31 @@ test('UC-04 / UC-03: Accounting & Recovery Adapter', async (t) => {
     assert.equal(afterReconcile.ledgers.find((l) => l.kind === 'tokens')?.consumed, reconciled.totalTokensConsumed);
     assert.equal(afterReconcile.ledgers.find((l) => l.kind === 'cost')?.consumed, reconciled.totalCostConsumed);
     assert.equal(afterReconcile.ledgers.find((l) => l.kind === 'repair')?.consumed, reconciled.totalRepairConsumed);
+  });
+
+  await t.test('settling via a fresh instance keeps the journal run identity', async () => {
+    const store = newStore();
+    const tracker = new BudgetTracker(initialLedgers);
+    const first = new UC03AccountingAdapter(tracker, store);
+    const res = await first.reserveInvestigation(taskId, runId, 1000, 2);
+
+    const rebuilt = new UC03AccountingAdapter(new BudgetTracker(tracker.getLedgers()), store);
+    await rebuilt.settleAttempt(res.reservationId, { tokens: 800 });
+
+    const journal = await store.loadBudgetJournal(taskId);
+    assert.ok(journal);
+    assert.equal(journal.runId, runId);
+  });
+
+  await t.test('settling an unknown task without a journal writes no journal', async () => {
+    const budgetTracker = new BudgetTracker(initialLedgers);
+    const store = newStore();
+
+    const held = await new UC03AccountingAdapter(budgetTracker).reserveInvestigation('task-ghost', 'run-ghost', 100, 1);
+    const rebuilt = new UC03AccountingAdapter(budgetTracker, store);
+    const settled = await rebuilt.settleAttempt(held.reservationId, { tokens: 100, cost: 1 });
+
+    assert.equal(settled.consumedTokens, 100);
+    assert.equal(await store.loadBudgetJournal('task-ghost'), null);
   });
 });

@@ -454,6 +454,157 @@ describe('UC-04: StepStateMachine & Recovery Reconciliation', () => {
       assert.deepEqual(resumed.verification, verified);
     });
 
+    it('merges reservations that exist only in the budget journal before deciding to resume', async () => {
+      await store.saveCheckpoint({ ...sampleTask, stateVersion: 3 });
+      await store.saveBudgetJournal({
+        schemaVersion: UC04_SCHEMA_VERSION,
+        taskId: sampleTask.taskId,
+        runId: sampleTask.runId,
+        ledgers: [
+          {
+            scope: 'task',
+            kind: 'tokens',
+            limit: 10000,
+            consumed: 2000,
+            reservations: [{ reservationId: 'res-journal', keyedId: 'req-journal', amount: 700 }],
+            configurationId: 'cfg-1',
+            version: 4,
+          },
+        ],
+        replanCount: 2,
+        updatedAt: new Date().toISOString(),
+      });
+
+      const resumed = await reconcileAndResume(sampleTask.taskId, store, {
+        gitInspector: matchingInspector,
+      });
+
+      assert.notEqual(resumed.status, 'running');
+      const tokenLedger = resumed.budgetLedgers.find((l) => l.kind === 'tokens');
+      assert.equal(tokenLedger?.reservations.length, 1);
+      assert.equal(tokenLedger?.reservations[0]?.keyedId, 'req-journal');
+      assert.equal(tokenLedger?.version, 4);
+      const journal = await store.loadBudgetJournal(sampleTask.taskId);
+      assert.equal(journal?.replanCount, 2);
+    });
+
+    it('persists reconciled ledgers back to the budget journal', async () => {
+      await store.saveBudgetJournal({
+        schemaVersion: UC04_SCHEMA_VERSION,
+        taskId: sampleTask.taskId,
+        runId: sampleTask.runId,
+        ledgers: [
+          {
+            scope: 'task',
+            kind: 'tokens',
+            limit: 10000,
+            consumed: 2000,
+            reservations: [{ reservationId: 'res-journal', keyedId: 'req-journal', amount: 700 }],
+            configurationId: 'cfg-1',
+            version: 3,
+          },
+        ],
+        replanCount: 1,
+        updatedAt: new Date().toISOString(),
+      });
+
+      const resumed = await reconcileAndResume(sampleTask.taskId, store, {
+        gitInspector: matchingInspector,
+        confirmedOutcomes: [{ requestId: 'req-journal', outcome: 'not_dispatched', evidenceRef: 'receipt:none' }],
+      });
+
+      assert.equal(resumed.status, 'running');
+      const journal = await store.loadBudgetJournal(sampleTask.taskId);
+      const tokenLedger = journal?.ledgers.find((l) => l.kind === 'tokens');
+      assert.equal(tokenLedger?.reservations.length, 0);
+      assert.equal(tokenLedger?.consumed, 2000);
+      assert.equal(journal?.runId, sampleTask.runId);
+      assert.equal(journal?.replanCount, 1);
+    });
+
+    it('persists the suspended state as the latest checkpoint', async () => {
+      await store.saveCheckpoint(withReservation(3));
+
+      const resumed = await reconcileAndResume(sampleTask.taskId, store, {
+        gitInspector: matchingInspector,
+      });
+
+      assert.equal(resumed.status, 'paused');
+      assert.equal(resumed.stateVersion, 4);
+      const latest = await store.loadLatestCheckpoint(sampleTask.taskId);
+      assert.equal(latest?.state.status, 'paused');
+      assert.equal(latest?.stateVersion, resumed.stateVersion);
+    });
+
+    it('consults the supplied verification capability before a persisted verified record', async () => {
+      await store.saveCheckpoint({ ...allDoneTask, verification: verified });
+
+      const resumed = await reconcileAndResume(sampleTask.taskId, store, {
+        gitInspector: matchingInspector,
+        verification: async () => ({ status: 'failed', evidenceRefs: ['tests:fail'], checkedAt: new Date().toISOString() }),
+      });
+
+      assert.notEqual(resumed.status, 'completed');
+      assert.equal(resumed.verification?.status, 'failed');
+      assert.match(resumed.nextAction, /verification/i);
+    });
+
+    it('ignores confirmed outcomes that bind to no known claim or reservation', async () => {
+      await store.saveCheckpoint(withReservation(3));
+
+      const resumed = await reconcileAndResume(sampleTask.taskId, store, {
+        gitInspector: matchingInspector,
+        confirmedOutcomes: [{ requestId: 'req-ghost', outcome: 'not_dispatched', evidenceRef: 'receipt:ghost' }],
+      });
+
+      assert.notEqual(resumed.status, 'running');
+      const tokenLedger = resumed.budgetLedgers.find((l) => l.kind === 'tokens');
+      assert.equal(tokenLedger?.reservations.length, 1);
+      assert.equal(tokenLedger?.consumed, 2000);
+    });
+
+    it('binds a confirmed outcome through a dispatch claim reservation reference', async () => {
+      await store.saveCheckpoint(withReservation(3));
+      await store.saveDispatchClaim({
+        claimId: 'claim-bound',
+        taskId: sampleTask.taskId,
+        runId: sampleTask.runId,
+        stepId: 'step-2',
+        actionId: 'req-interrupted',
+        epoch: 1,
+        stateVersion: 3,
+        phase: 'dispatched',
+        reservationRefs: ['res-1'],
+        createdAt: new Date().toISOString(),
+      });
+
+      const resumed = await reconcileAndResume(sampleTask.taskId, store, {
+        gitInspector: matchingInspector,
+        confirmedOutcomes: [{ requestId: 'res-1', outcome: 'not_dispatched', evidenceRef: 'receipt:none' }],
+      });
+
+      assert.equal(resumed.status, 'running');
+      const tokenLedger = resumed.budgetLedgers.find((l) => l.kind === 'tokens');
+      assert.equal(tokenLedger?.reservations.length, 0);
+    });
+
+    it('suspends instead of reporting resume when the chosen step is blocked with no ready alternative', async () => {
+      await store.saveCheckpoint({
+        ...sampleTask,
+        stateVersion: 3,
+        plan: sampleTask.plan.map((s) => (s.id === 'step-1' ? { ...s, requiredEvidenceRefs: ['tests:unit'] } : s)),
+      });
+
+      const resumed = await reconcileAndResume(sampleTask.taskId, store, {
+        gitInspector: matchingInspector,
+      });
+
+      assert.equal(resumed.status, 'paused');
+      assert.match(resumed.nextAction, /Recovery blocked: step step-2 requires predecessor evidence from step-1/);
+      const latest = await store.loadLatestCheckpoint(sampleTask.taskId);
+      assert.equal(latest?.state.status, 'paused');
+    });
+
     it('revalidates predecessor evidence against restored state', async () => {
       await store.saveCheckpoint({
         ...sampleTask,
@@ -487,6 +638,43 @@ describe('UC-04: StepStateMachine & Recovery Reconciliation', () => {
   });
 
   describe('captureWorkspaceBaseline content hashing', () => {
+    it('hashes real content for non-ASCII paths and rename targets', async () => {
+      const gitAvailable = spawnSync('git', ['--version'], { encoding: 'utf8' }).status === 0;
+      if (!gitAvailable) return;
+
+      const repo = await mkdtemp(join(tmpdir(), 'slop-rec-git-'));
+      try {
+        const git = (args: string[]): void => {
+          const res = spawnSync('git', args, { cwd: repo, encoding: 'utf8' });
+          assert.equal(res.status, 0, `git ${args.join(' ')} failed: ${res.stderr}`);
+        };
+        git(['init', '-q']);
+        git(['config', 'user.email', 'test@example.com']);
+        git(['config', 'user.name', 'Test']);
+        git(['config', 'core.precomposeunicode', 'false']);
+        await writeFile(join(repo, 'naïve-文件.txt'), 'first\n', 'utf8');
+        await writeFile(join(repo, 'a.txt'), 'first\n', 'utf8');
+        git(['add', '.']);
+        git(['commit', '-q', '-m', 'init']);
+
+        await writeFile(join(repo, 'naïve-文件.txt'), 'dirty-one\n', 'utf8');
+        const first = await captureWorkspaceBaseline(repo);
+        await writeFile(join(repo, 'naïve-文件.txt'), 'dirty-two\n', 'utf8');
+        const second = await captureWorkspaceBaseline(repo);
+        assert.notEqual(first.trackedFilesHash, second.trackedFilesHash);
+
+        git(['checkout', '--', 'naïve-文件.txt']);
+        git(['mv', 'a.txt', 'réna med.txt']);
+        await writeFile(join(repo, 'réna med.txt'), 'renamed-one\n', 'utf8');
+        const renamedFirst = await captureWorkspaceBaseline(repo);
+        await writeFile(join(repo, 'réna med.txt'), 'renamed-two\n', 'utf8');
+        const renamedSecond = await captureWorkspaceBaseline(repo);
+        assert.notEqual(renamedFirst.trackedFilesHash, renamedSecond.trackedFilesHash);
+      } finally {
+        await rm(repo, { recursive: true, force: true });
+      }
+    });
+
     it('distinguishes different contents of an already-modified tracked file', async () => {
       const gitAvailable = spawnSync('git', ['--version'], { encoding: 'utf8' }).status === 0;
       if (!gitAvailable) return;

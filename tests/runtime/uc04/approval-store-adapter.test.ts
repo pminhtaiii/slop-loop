@@ -10,10 +10,13 @@ import type {
   HumanResolution,
 } from '../../../src/contracts/approvals/contracts.ts';
 import { DurableApprovalStore } from '../../../src/persistence/adapters/approval-store-adapter.ts';
+import { DEFAULT_POLICY_PROFILE } from '../../../src/persistence/adapters/approval-types.ts';
 
 const actionDigest = `sha256:${'a'.repeat(64)}`;
 const presentationDigest = `sha256:${'b'.repeat(64)}`;
 const repoDigest = `sha256:${'d'.repeat(64)}`;
+const policyRef = { policyId: 'policy-1', policyVersion: '1.0.0', configId: 'config-1', configVersion: '1.0.0' };
+const trustedOperator = { actorId: 'developer-local', channelRef: 'channel-local', provenance: 'real' as const };
 
 test('UC-04 / UC-05: DurableApprovalStore Adapter', async (t) => {
   const tempDir = mkdtempSync(join(tmpdir(), 'uc05-approval-store-test-'));
@@ -55,6 +58,17 @@ test('UC-04 / UC-05: DurableApprovalStore Adapter', async (t) => {
       status: 'pending',
     },
   };
+  const requestFor = (
+    localTaskId: string,
+    localDecisionId: string,
+    extra: Partial<ApprovalRequestRecord> = {}
+  ): ApprovalRequestRecord => ({
+    ...sampleRequest,
+    ...extra,
+    taskId: localTaskId,
+    decisionId: localDecisionId,
+    binding: { ...sampleRequest.binding, taskId: localTaskId, decisionId: localDecisionId },
+  });
 
   const sampleEvent: DecisionEvent = {
     schemaVersion: 'uc05-approval/0.1-draft',
@@ -66,20 +80,43 @@ test('UC-04 / UC-05: DurableApprovalStore Adapter', async (t) => {
     claimId: null,
     type: 'approval-request-created',
     outcome: 'pending',
-    policyRef: {
-      policyId: 'policy-1',
-      policyVersion: '1.0.0',
-      configId: 'config-1',
-      configVersion: '1.0.0',
-    },
+    policyRef,
     safeReasonCode: 'approval-requested',
     timestamp: '2026-10-26T07:00:01.000Z',
   };
 
-  const trustedOperator = {
-    actorId: 'developer-local',
-    channelRef: 'channel-local',
-    provenance: 'real' as const,
+  const eventOf = (overrides: Partial<DecisionEvent>): DecisionEvent => ({ ...sampleEvent, ...overrides });
+
+  const resolutionOf = (responseKey: string, eventId: string): HumanResolution => ({
+    schemaVersion: 'uc05-approval/0.1-draft',
+    decisionId,
+    responseKey,
+    expectedRequestVersion: 1,
+    operatorChannelRef: 'channel-local',
+    decision: 'approved',
+    safeReasonCode: 'developer-approved',
+    decidedAt: '2026-10-26T07:05:00.000Z',
+    eventId,
+  });
+
+  const listTree = (root: string): readonly string[] =>
+    existsSync(root)
+      ? readdirSync(root, { recursive: true, encoding: 'utf8' }).map((path) => path.replaceAll('\\', '/')).sort()
+      : [];
+
+  const writeStoredEvents = (storageDir: string, ownerTaskId: string, events: readonly unknown[]): void => {
+    const dir = join(storageDir, 'tasks', ownerTaskId, 'approvals');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'events.json'), JSON.stringify(events), 'utf8');
+  };
+
+  const withFreshStore = (prefix: string, run: (dir: string, store: DurableApprovalStore) => void): void => {
+    const dir = mkdtempSync(join(tmpdir(), prefix));
+    try {
+      run(dir, new DurableApprovalStore({ storageDir: dir }));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   };
 
   await t.test('loads initial task control and creates pending approval', () => {
@@ -127,23 +164,10 @@ test('UC-04 / UC-05: DurableApprovalStore Adapter', async (t) => {
 
   await t.test('rejects resolution without trusted operator', () => {
     const store = new DurableApprovalStore({ storageDir: tempDir });
-
-    const resolution: HumanResolution = {
-      schemaVersion: 'uc05-approval/0.1-draft',
-      decisionId,
-      responseKey: 'response-no-op',
-      expectedRequestVersion: 1,
-      operatorChannelRef: 'channel-local',
-      decision: 'approved',
-      safeReasonCode: 'developer-approved',
-      decidedAt: '2026-10-26T07:05:00.000Z',
-      eventId: 'event-resolution-0',
-    };
-
     const res = store.resolvePending({
       expectedControlVersion: 2,
       expectedRequestVersion: 1,
-      trustedResponse: resolution,
+      trustedResponse: resolutionOf('response-no-op', 'event-resolution-0'),
     });
 
     assert.equal(res.safe.outcome, 'denied');
@@ -152,43 +176,20 @@ test('UC-04 / UC-05: DurableApprovalStore Adapter', async (t) => {
 
   await t.test('resolves pending approval and resumes task to runnable', () => {
     const store = new DurableApprovalStore({ storageDir: tempDir });
-
-    const resolution: HumanResolution = {
-      schemaVersion: 'uc05-approval/0.1-draft',
-      decisionId,
-      responseKey: 'response-1',
-      expectedRequestVersion: 1,
-      operatorChannelRef: 'channel-local',
-      decision: 'approved',
-      safeReasonCode: 'developer-approved',
-      decidedAt: '2026-10-26T07:05:00.000Z',
-      eventId: 'event-resolution-1',
-    };
+    const resolution = resolutionOf('response-1', 'event-resolution-1');
 
     const resolveRes = store.resolvePending({
       expectedControlVersion: 2,
       expectedRequestVersion: 1,
       trustedResponse: resolution,
       trustedOperator,
-      event: {
-        schemaVersion: 'uc05-approval/0.1-draft',
+      event: eventOf({
         eventId: 'event-resolution-1',
-        taskId,
-        runId: 'run-1',
-        decisionId,
-        directionId: null,
-        claimId: null,
         type: 'human-resolution-recorded',
         outcome: 'ok',
-        policyRef: {
-          policyId: 'policy-1',
-          policyVersion: '1.0.0',
-          configId: 'config-1',
-          configVersion: '1.0.0',
-        },
         safeReasonCode: 'developer-approved',
         timestamp: '2026-10-26T07:05:01.000Z',
-      },
+      }),
     });
 
     assert.equal(resolveRes.safe.outcome, 'ok');
@@ -206,21 +207,8 @@ test('UC-04 / UC-05: DurableApprovalStore Adapter', async (t) => {
 
   await t.test('prevents replay resolution when task is no longer waiting', () => {
     const store = new DurableApprovalStore({ storageDir: tempDir });
-
-    const resolution: HumanResolution = {
-      schemaVersion: 'uc05-approval/0.1-draft',
-      decisionId,
-      responseKey: 'response-replay',
-      expectedRequestVersion: 1,
-      operatorChannelRef: 'channel-local',
-      decision: 'approved',
-      safeReasonCode: 'developer-approved',
-      decidedAt: '2026-10-26T07:06:00.000Z',
-      eventId: 'event-replay-1',
-    };
-
     const res = store.resolvePending({
-      trustedResponse: resolution,
+      trustedResponse: resolutionOf('response-replay', 'event-replay-1'),
       trustedOperator,
     });
 
@@ -230,7 +218,6 @@ test('UC-04 / UC-05: DurableApprovalStore Adapter', async (t) => {
 
   await t.test('records developer direction with operator identity', () => {
     const store = new DurableApprovalStore({ storageDir: tempDir });
-
     const direction: DeveloperDirection = {
       schemaVersion: 'uc05-approval/0.1-draft',
       directionId: 'dir-1',
@@ -243,10 +230,7 @@ test('UC-04 / UC-05: DurableApprovalStore Adapter', async (t) => {
       createdAt: '2026-10-26T07:07:00.000Z',
     };
 
-    const dirRes = store.recordDirection({
-      direction,
-      trustedOperator,
-    });
+    const dirRes = store.recordDirection({ direction, trustedOperator });
 
     assert.equal(dirRes.safe.outcome, 'ok');
     const control = store.loadTaskControl(taskId);
@@ -259,17 +243,7 @@ test('UC-04 / UC-05: DurableApprovalStore Adapter', async (t) => {
       expectedControlVersion: 999,
       expectedRequestVersion: 1,
       trustedOperator,
-      trustedResponse: {
-        schemaVersion: 'uc05-approval/0.1-draft',
-        decisionId,
-        responseKey: 'response-conflict',
-        expectedRequestVersion: 1,
-        operatorChannelRef: 'channel-local',
-        decision: 'approved',
-        safeReasonCode: 'developer-approved',
-        decidedAt: '2026-10-26T07:06:00.000Z',
-        eventId: 'event-conflict-1',
-      },
+      trustedResponse: resolutionOf('response-conflict', 'event-conflict-1'),
     });
 
     assert.equal(conflictRes.safe.outcome, 'conflict');
@@ -280,16 +254,7 @@ test('UC-04 / UC-05: DurableApprovalStore Adapter', async (t) => {
     const invalidEventRes = store.createPendingAndPause({
       expectedControlVersion: 1,
       submissionKey: 'submission-invalid-ev',
-      request: {
-        ...sampleRequest,
-        taskId: 'task-malformed-ev',
-        decisionId: 'decision-invalid-ev',
-        binding: {
-          ...sampleRequest.binding,
-          taskId: 'task-malformed-ev',
-          decisionId: 'decision-invalid-ev',
-        },
-      },
+      request: requestFor('task-malformed-ev', 'decision-invalid-ev'),
       event: { invalid: 'event-shape' },
     });
 
@@ -302,17 +267,7 @@ test('UC-04 / UC-05: DurableApprovalStore Adapter', async (t) => {
     const res2 = store.resolvePending({
       expectedRequestVersion: 1,
       trustedOperator,
-      trustedResponse: {
-        schemaVersion: 'uc05-approval/0.1-draft',
-        decisionId,
-        responseKey: 'resp-different-key',
-        expectedRequestVersion: 1,
-        operatorChannelRef: 'channel-local',
-        decision: 'approved',
-        safeReasonCode: 'developer-approved',
-        decidedAt: '2026-10-26T07:08:00.000Z',
-        eventId: 'ev-idempotent-1',
-      },
+      trustedResponse: resolutionOf('resp-different-key', 'ev-idempotent-1'),
     });
 
     assert.equal(res2.safe.outcome, 'conflict');
@@ -325,13 +280,8 @@ test('UC-04 / UC-05: DurableApprovalStore Adapter', async (t) => {
     const localDecisionId = 'dec-idempotent-retry';
     store.createPendingAndPause({
       taskId: localTaskId,
-      request: {
-        ...sampleRequest,
-        taskId: localTaskId,
-        decisionId: localDecisionId,
-        binding: { ...sampleRequest.binding, taskId: localTaskId, decisionId: localDecisionId },
-      },
-      binding: { ...sampleRequest.binding, taskId: localTaskId, decisionId: localDecisionId },
+      request: requestFor(localTaskId, localDecisionId),
+      binding: requestFor(localTaskId, localDecisionId).binding,
     });
 
     const trustedResponse = {
@@ -346,14 +296,9 @@ test('UC-04 / UC-05: DurableApprovalStore Adapter', async (t) => {
       eventId: 'ev-idempotent-matched',
     };
 
-    const firstRes = store.resolvePending({
-      expectedRequestVersion: 1,
-      trustedOperator,
-      trustedResponse,
-    });
+    const firstRes = store.resolvePending({ expectedRequestVersion: 1, trustedOperator, trustedResponse });
     assert.equal(firstRes.safe.outcome, 'ok');
 
-    // Reset control to waiting with pendingDecisionId to verify idempotent matching-key path
     const controlPath = join(tempDir, 'tasks', localTaskId, 'approvals', 'control.json');
     const control = JSON.parse(readFileSync(controlPath, 'utf8'));
     control.mode = 'waiting';
@@ -362,13 +307,7 @@ test('UC-04 / UC-05: DurableApprovalStore Adapter', async (t) => {
     control.reasonCode = 'waiting-approval';
     writeFileSync(controlPath, JSON.stringify(control, null, 2), 'utf8');
 
-    const retryRes = store.resolvePending({
-      // debug
-
-      expectedRequestVersion: 1,
-      trustedOperator,
-      trustedResponse,
-    });
+    const retryRes = store.resolvePending({ expectedRequestVersion: 1, trustedOperator, trustedResponse });
     assert.equal(retryRes.safe.outcome, 'ok');
     assert.equal(retryRes.safe.safeReasonCode, 'already-resolved');
   });
@@ -376,21 +315,11 @@ test('UC-04 / UC-05: DurableApprovalStore Adapter', async (t) => {
   await t.test('denies appendEvent when event taskId does not match target task', () => {
     const store = new DurableApprovalStore({ storageDir: tempDir });
     const res = store.appendEvent('task-mismatch-target', {
-      schemaVersion: 'uc05-approval/0.1-draft',
+      ...sampleEvent,
       eventId: 'event-mismatch-1',
       taskId: 'task-other-id',
-      runId: 'run-1',
-      decisionId,
-      directionId: null,
-      claimId: null,
       type: 'human-resolution-recorded',
       outcome: 'ok',
-      policyRef: {
-        policyId: 'policy-1',
-        policyVersion: '1.0.0',
-        configId: 'config-1',
-        configVersion: '1.0.0',
-      },
       safeReasonCode: 'developer-approved',
       timestamp: '2026-10-26T07:00:00.000Z',
     });
@@ -399,41 +328,25 @@ test('UC-04 / UC-05: DurableApprovalStore Adapter', async (t) => {
     assert.equal(res.reason, 'task-id-mismatch');
   });
 
-  const listTree = (root: string): readonly string[] =>
-    existsSync(root)
-      ? readdirSync(root, { recursive: true, encoding: 'utf8' }).map((path) => path.replaceAll('\\', '/')).sort()
-      : [];
-
-  const writeStoredEvents = (storageDir: string, ownerTaskId: string, events: readonly unknown[]): void => {
-    const dir = join(storageDir, 'tasks', ownerTaskId, 'approvals');
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, 'events.json'), JSON.stringify(events), 'utf8');
-  };
-
   await t.test('refused first direction writes nothing for a missing operator', () => {
-    const freshDir = mkdtempSync(join(tmpdir(), 'uc05-approval-refused-direction-'));
-    try {
-      const store = new DurableApprovalStore({ storageDir: freshDir });
-      const before = listTree(freshDir);
+    withFreshStore('uc05-approval-refused-direction-', (dir, store) => {
+      const before = listTree(dir);
       const res = store.recordDirection({ direction: { taskId: 'new-task' } });
       assert.equal(res.safe.outcome, 'denied');
       assert.equal(res.safe.safeReasonCode, 'missing-trusted-operator');
-      assert.deepEqual(listTree(freshDir), before);
-      assert.equal(existsSync(join(freshDir, 'tasks', 'new-task', 'approvals', 'control.json')), false);
-    } finally {
-      rmSync(freshDir, { recursive: true, force: true });
-    }
+      assert.deepEqual(listTree(dir), before);
+      assert.equal(existsSync(join(dir, 'tasks', 'new-task', 'approvals', 'control.json')), false);
+    });
   });
 
   await t.test('refused traversal direction writes nothing', () => {
-    const freshDir = mkdtempSync(join(tmpdir(), 'uc05-approval-traversal-direction-'));
+    const freshDir = mkdtempSync(join(tmpdir(), 'uc05-approval-traversal-'));
     try {
       const store = new DurableApprovalStore({ storageDir: join(freshDir, 'store') });
-      const before = listTree(freshDir);
       const res = store.recordDirection({ direction: { taskId: '../../escape' } });
       assert.equal(res.safe.outcome, 'denied');
       assert.equal(res.safe.safeReasonCode, 'invalid-id');
-      assert.deepEqual(listTree(freshDir), before);
+      assert.deepEqual(listTree(freshDir), ['store']);
       assert.equal(existsSync(join(freshDir, 'escape')), false);
     } finally {
       rmSync(freshDir, { recursive: true, force: true });
@@ -441,9 +354,7 @@ test('UC-04 / UC-05: DurableApprovalStore Adapter', async (t) => {
   });
 
   await t.test('successful first direction still creates control', () => {
-    const freshDir = mkdtempSync(join(tmpdir(), 'uc05-approval-first-direction-'));
-    try {
-      const store = new DurableApprovalStore({ storageDir: freshDir });
+    withFreshStore('uc05-approval-first-direction-', (dir, store) => {
       const firstTaskId = 'first-direction-task';
       const res = store.recordDirection({
         direction: {
@@ -461,11 +372,9 @@ test('UC-04 / UC-05: DurableApprovalStore Adapter', async (t) => {
       });
       assert.equal(res.safe.outcome, 'ok');
       assert.equal(res.safe.safeReasonCode, 'direction-recorded');
-      assert.equal(existsSync(join(freshDir, 'tasks', firstTaskId, 'approvals', 'control.json')), true);
+      assert.equal(existsSync(join(dir, 'tasks', firstTaskId, 'approvals', 'control.json')), true);
       assert.equal(store.loadTaskControl(firstTaskId).value?.mode, 'runnable');
-    } finally {
-      rmSync(freshDir, { recursive: true, force: true });
-    }
+    });
   });
 
   await t.test('refuses a forged persisted event array', () => {
@@ -487,28 +396,88 @@ test('UC-04 / UC-05: DurableApprovalStore Adapter', async (t) => {
 
   await t.test('refuses a cross-task but structurally valid persisted event', () => {
     const store = new DurableApprovalStore({ storageDir: tempDir });
-    writeStoredEvents(tempDir, 'event-task', [{ ...sampleEvent, eventId: 'event-foreign', taskId: 'other-task' }]);
+    writeStoredEvents(tempDir, 'event-task', [eventOf({ eventId: 'event-foreign', taskId: 'other-task' })]);
     const res = store.readEvents('event-task');
     assert.equal(res.safe.outcome, 'denied');
     assert.equal(res.safe.safeReasonCode, 'task-id-mismatch');
     assert.equal(res.value, null);
 
-    const append = store.appendEvent('event-task', { ...sampleEvent, eventId: 'event-own' });
+    const append = store.appendEvent('event-task', eventOf({ eventId: 'event-own' }));
     assert.equal(append.ok, false);
     assert.equal(store.readEvents('event-task').value, null);
   });
 
   await t.test('accepts a validated same-task event array', () => {
     const store = new DurableApprovalStore({ storageDir: tempDir });
-    writeStoredEvents(tempDir, 'event-task', [{ ...sampleEvent, eventId: 'event-stored', taskId: 'event-task' }]);
+    writeStoredEvents(tempDir, 'event-task', [eventOf({ eventId: 'event-stored', taskId: 'event-task' })]);
     const res = store.readEvents('event-task');
     assert.equal(res.safe.outcome, 'ok');
     assert.equal(res.safe.safeReasonCode, 'events-loaded');
     assert.deepEqual(res.value?.map((ev) => ev.eventId), ['event-stored']);
 
-    const append = store.appendEvent('event-task', { ...sampleEvent, eventId: 'event-new', taskId: 'event-task' });
-    assert.deepEqual(append, { ok: true, status: 'appended' });
+    assert.deepEqual(store.appendEvent('event-task', eventOf({ eventId: 'event-new', taskId: 'event-task' })), { ok: true, status: 'appended' });
     assert.deepEqual(store.readEvents('event-task').value?.map((ev) => ev.eventId), ['event-stored', 'event-new']);
+  });
+
+  await t.test('refused first pending creation leaves no control file', () => {
+    withFreshStore('uc05-approval-refused-pending-', (dir, store) => {
+      const res = store.createPendingAndPause({ expectedControlVersion: 99, request: sampleRequest, event: sampleEvent });
+      assert.equal(res.safe.outcome, 'conflict');
+      assert.equal(res.safe.safeReasonCode, 'version-conflict');
+      assert.deepEqual(listTree(dir), []);
+    });
+  });
+
+  await t.test('first pending creation continues control from the created default', () => {
+    withFreshStore('uc05-approval-first-pending-', (_dir, store) => {
+      const res = store.createPendingAndPause({ request: sampleRequest, event: sampleEvent });
+      assert.equal(res.safe.outcome, 'ok');
+      assert.equal(res.safe.safeReasonCode, 'pending-created');
+      const control = store.loadTaskControl(taskId).value;
+      assert.deepEqual([control?.mode, control?.version, control?.pendingDecisionId], ['waiting', 2, decisionId]);
+    });
+  });
+
+  await t.test('refused replacement event batch appends none of its events', () => {
+    withFreshStore('uc05-approval-atomic-events-', (dir, store) => {
+      const task = 'task-atomic-events';
+      const pending = 'decision-atomic-events';
+      store.createPendingAndPause({
+        request: requestFor(task, pending),
+        event: eventOf({ eventId: 'event-existing', taskId: task, decisionId: pending }),
+      });
+
+      const res = store.replaceStalePending({
+        replacement: requestFor(task, 'decision-replacement', { continuationRef: 'continuation-2' }),
+        events: [
+          eventOf({ eventId: 'event-batch-new', taskId: task, decisionId: 'decision-replacement' }),
+          eventOf({ eventId: 'event-existing', taskId: task, decisionId: pending, safeReasonCode: 'different-reason' }),
+        ],
+      });
+
+      assert.equal(res.safe.outcome, 'conflict');
+      assert.equal(res.safe.safeReasonCode, 'event-conflict');
+      assert.deepEqual(store.readEvents(task).value?.map((ev) => ev.eventId), ['event-existing']);
+      assert.equal(existsSync(join(dir, 'decisions', 'decision-replacement', 'request.json')), false);
+    });
+  });
+
+  await t.test('stored events survive a tightened profile and new events still append', () => {
+    withFreshStore('uc05-approval-profile-tightened-', (dir) => {
+      const task = 'task-tight-profile';
+      writeStoredEvents(dir, task, [eventOf({ eventId: 'event-stored-large', taskId: task, runId: 'r'.repeat(120) })]);
+      const store = new DurableApprovalStore({
+        storageDir: dir,
+        profile: { ...DEFAULT_POLICY_PROFILE, maxEventBytes: 450, diagnosticRules: { ...DEFAULT_POLICY_PROFILE.diagnosticRules, maxBytes: 450 } },
+      });
+
+      const readRes = store.readEvents(task);
+      assert.equal(readRes.safe.safeReasonCode, 'events-loaded');
+      assert.deepEqual(readRes.value?.map((ev) => ev.eventId), ['event-stored-large']);
+
+      assert.deepEqual(store.appendEvent(task, eventOf({ eventId: 'event-small', taskId: task })), { ok: true, status: 'appended' });
+      assert.deepEqual(store.readEvents(task).value?.map((ev) => ev.eventId), ['event-stored-large', 'event-small']);
+    });
   });
 
   await t.test('throws when invalid policy profile is supplied', () => {

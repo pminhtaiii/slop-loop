@@ -8,12 +8,13 @@ import {
   validateDecisionEvent,
 } from '../../contracts/approvals/contracts.ts';
 import type { EventAppendResult } from './approval-types.ts';
-import { isSafeId, makeFailure, makeResponse, taskDir, writeJsonAtomic } from './approval-types.ts';
+import { DEFAULT_POLICY_PROFILE, isSafeId, makeFailure, makeResponse, taskDir, writeJsonAtomic } from './approval-types.ts';
+
+const validateStoredEvent = (input: unknown) => validateDecisionEvent(input, DEFAULT_POLICY_PROFILE);
 
 export function readEvents(
   storageDir: string,
-  taskId: string,
-  profile: PolicyProfile
+  taskId: string
 ): StoreResponse<readonly DecisionEvent[]> {
   if (!isSafeId(taskId)) return makeFailure<readonly DecisionEvent[]>('unknown', 1, 'denied', 'invalid-id');
   const filePath = join(taskDir(storageDir, taskId), 'events.json');
@@ -24,7 +25,7 @@ export function readEvents(
     if (!Array.isArray(raw)) return makeFailure<readonly DecisionEvent[]>(taskId, 1, 'unavailable', 'read-error');
     const validated: DecisionEvent[] = [];
     for (const ev of raw) {
-      const res = validateDecisionEvent(ev, profile);
+      const res = validateStoredEvent(ev);
       if (!res.ok) return makeFailure<readonly DecisionEvent[]>(taskId, 1, 'denied', 'invalid-stored-event');
       if (res.value.taskId !== taskId) return makeFailure<readonly DecisionEvent[]>(taskId, 1, 'denied', 'task-id-mismatch');
       validated.push(res.value);
@@ -35,31 +36,51 @@ export function readEvents(
   }
 }
 
+export function appendEvents(
+  storageDir: string,
+  taskId: string,
+  events: readonly unknown[] | undefined,
+  profile: PolicyProfile
+): EventAppendResult {
+  if (events === undefined) return { ok: true, status: 'skipped' };
+  const accepted: DecisionEvent[] = [];
+  for (const event of events) {
+    const valid = validateDecisionEvent(event, profile);
+    if (!valid.ok) return { ok: false, error: 'denied', reason: 'invalid-event' };
+    if (valid.value.taskId !== taskId) {
+      return { ok: false, error: 'denied', reason: 'task-id-mismatch' };
+    }
+    accepted.push(valid.value);
+  }
+  if (accepted.length === 0) return { ok: true, status: 'skipped' };
+
+  const res = readEvents(storageDir, taskId);
+  if (res.safe.outcome !== 'ok' || !res.value) {
+    return { ok: false, error: 'unavailable', reason: 'events-unavailable' };
+  }
+
+  const merged = [...res.value];
+  let changed = false;
+  let idempotent = false;
+  for (const event of accepted) {
+    const existing = merged.find((entry) => entry.eventId === event.eventId);
+    if (existing === undefined) {
+      merged.push(event);
+      changed = true;
+    } else if (isDeepStrictEqual(existing, event)) idempotent = true;
+    else return { ok: false, error: 'conflict', reason: 'event-conflict' };
+  }
+  if (!changed) return { ok: true, status: idempotent ? 'idempotent' : 'skipped' };
+
+  writeJsonAtomic(join(taskDir(storageDir, taskId), 'events.json'), merged);
+  return { ok: true, status: 'appended' };
+}
+
 export function appendEvent(
   storageDir: string,
   taskId: string,
   event: unknown,
   profile: PolicyProfile
 ): EventAppendResult {
-  if (event === undefined) return { ok: true, status: 'skipped' };
-  const valid = validateDecisionEvent(event, profile);
-  if (!valid.ok) return { ok: false, error: 'denied', reason: 'invalid-event' };
-  if (valid.value.taskId !== taskId) {
-    return { ok: false, error: 'denied', reason: 'task-id-mismatch' };
-  }
-
-  const res = readEvents(storageDir, taskId, profile);
-  if (res.safe.outcome !== 'ok' || !res.value) {
-    return { ok: false, error: 'unavailable', reason: 'events-unavailable' };
-  }
-
-  const existing = res.value.find((e) => e.eventId === valid.value.eventId);
-  if (existing !== undefined) {
-    return isDeepStrictEqual(existing, valid.value)
-      ? { ok: true, status: 'idempotent' }
-      : { ok: false, error: 'conflict', reason: 'event-conflict' };
-  }
-
-  writeJsonAtomic(join(taskDir(storageDir, taskId), 'events.json'), [...res.value, valid.value]);
-  return { ok: true, status: 'appended' };
+  return appendEvents(storageDir, taskId, event === undefined ? undefined : [event], profile);
 }

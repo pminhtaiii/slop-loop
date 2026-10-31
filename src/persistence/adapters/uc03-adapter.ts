@@ -52,8 +52,8 @@ export class UC03AccountingAdapter {
 
   private async restore(taskId: string, callerCount: number): Promise<number> {
     if (this.durableStore && !this.restoredTasks.has(taskId)) {
-      this.restoredTasks.add(taskId);
       const journal = await this.durableStore.loadBudgetJournal(taskId);
+      this.restoredTasks.add(taskId);
       if (journal) {
         this.budgetTracker.replaceLedgers(journal.ledgers);
         this.runIdsByTask.set(taskId, journal.runId);
@@ -64,6 +64,13 @@ export class UC03AccountingAdapter {
     const count = Math.max(this.replanCountsByTask.get(taskId) ?? 0, callerCount);
     this.replanCountsByTask.set(taskId, count);
     return count;
+  }
+
+  private ownedLedgers(taskId: string): BudgetLedger[] {
+    return this.budgetTracker.getLedgers().map((ledger) => ({
+      ...ledger,
+      reservations: ledger.reservations.filter((reservation) => this.parseTaskId(reservation.keyedId) === taskId),
+    }));
   }
 
   private async commit(
@@ -78,7 +85,7 @@ export class UC03AccountingAdapter {
       schemaVersion: UC04_SCHEMA_VERSION,
       taskId,
       runId,
-      ledgers: this.budgetTracker.getLedgers(),
+      ledgers: this.ownedLedgers(taskId),
       replanCount,
       updatedAt: new Date().toISOString(),
     };
@@ -213,8 +220,9 @@ export class UC03AccountingAdapter {
       billableTokens: observedUsage.tokens ?? reservedTokens ?? 0,
       costUsd: observedUsage.cost ?? reservedCost ?? 0,
     });
-    if (task !== null) {
-      await this.commit(task, this.runIdsByTask.get(task) ?? 'active-run', replans, before);
+    const runId = task === null ? undefined : this.runIdsByTask.get(task);
+    if (task !== null && runId !== undefined) {
+      await this.commit(task, runId, replans, before);
     }
 
     return {

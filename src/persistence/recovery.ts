@@ -1,17 +1,21 @@
-import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import type {
   TaskState,
   PlanStep,
   WorkspaceBaseline,
   VerificationRecord,
   BudgetLedger,
+  BudgetReservationItem,
 } from './contracts.ts';
 import type { DurableStore } from './store.ts';
 import { BudgetTracker } from './accounting.ts';
-import { validateTaskState } from './contracts.ts';
+import { validateTaskState, UC04_SCHEMA_VERSION } from './contracts.ts';
+import { captureWorkspaceBaseline } from './workspace-baseline.ts';
+import { attemptStepId, findOutcome, ledgerDigest, mergeLedgers, suspendedState } from './recovery-ledgers.ts';
+
+export { captureWorkspaceBaseline };
+
+const errorText = (errors: readonly { readonly message: string }[]): string => errors.map((e) => e.message).join(', ');
 
 export class WorkspaceDriftError extends Error {
   readonly current: WorkspaceBaseline;
@@ -111,7 +115,7 @@ export class StepStateMachine {
     };
 
     const val = validateTaskState(nextState);
-    if (!val.ok) throw new Error(`Invalid transition: ${val.errors.map((e) => e.message).join(', ')}`);
+    if (!val.ok) throw new Error(`Invalid transition: ${errorText(val.errors)}`);
     return val.value;
   }
 
@@ -177,7 +181,7 @@ export class StepStateMachine {
     };
 
     const val = validateTaskState(nextState);
-    if (!val.ok) throw new Error(`Invalid transition: ${val.errors.map((e) => e.message).join(', ')}`);
+    if (!val.ok) throw new Error(`Invalid transition: ${errorText(val.errors)}`);
     return val.value;
   }
 
@@ -212,53 +216,9 @@ export class StepStateMachine {
     };
 
     const val = validateTaskState(nextState);
-    if (!val.ok) throw new Error(`Invalid transition: ${val.errors.map((e) => e.message).join(', ')}`);
+    if (!val.ok) throw new Error(`Invalid transition: ${errorText(val.errors)}`);
     return val.value;
   }
-}
-
-export async function captureWorkspaceBaseline(repoRoot: string): Promise<WorkspaceBaseline> {
-  const revParse = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' });
-  if (revParse.status !== 0) {
-    throw new Error(`Failed to get git commit: ${revParse.stderr}`);
-  }
-  const commitHash = revParse.stdout.trim();
-
-  const branchRes = spawnSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' });
-  const branch = branchRes.status === 0 ? branchRes.stdout.trim() : 'HEAD';
-
-  const statusRes = spawnSync('git', ['status', '--porcelain', '-uall'], { cwd: repoRoot, encoding: 'utf8' });
-  if (statusRes.status !== 0) {
-    throw new Error(`Failed to get git status: ${statusRes.stderr || 'non-zero exit code'}`);
-  }
-  const statusLines = statusRes.stdout.split(/\r?\n/).filter((line) => line.length > 0);
-  const isClean = statusLines.length === 0;
-
-  const contentHash = createHash('sha256');
-  if (isClean) {
-    contentHash.update(commitHash);
-  } else {
-    for (const line of statusLines) {
-      const code = line.slice(0, 2);
-      const rawPath = line.slice(3);
-      const targetPath = rawPath.includes(' -> ') ? rawPath.slice(rawPath.lastIndexOf(' -> ') + 4) : rawPath;
-      const filePath = targetPath.startsWith('"') && targetPath.endsWith('"') ? targetPath.slice(1, -1) : targetPath;
-      contentHash.update(code).update('\0').update(filePath).update('\0');
-      try {
-        contentHash.update(await readFile(join(repoRoot, filePath)));
-      } catch {
-        contentHash.update('<unreadable>');
-      }
-      contentHash.update('\0');
-    }
-  }
-
-  return {
-    commitHash,
-    branch,
-    isClean,
-    trackedFilesHash: contentHash.digest('hex'),
-  };
 }
 
 export interface ReconcileOptions {
@@ -269,35 +229,14 @@ export interface ReconcileOptions {
   readonly confirmedOutcomes?: readonly ConfirmedOutcome[];
 }
 
-function attemptStepId(state: TaskState): string {
-  const step =
-    state.plan.find((s) => s.status === 'doing') ??
-    state.plan.find((s) => s.status !== 'done') ??
-    state.plan[0];
-  return step?.id ?? 'unknown-step';
-}
-
-function suspendedState(state: TaskState, ledgers: readonly BudgetLedger[], reason: string): TaskState {
-  return {
-    ...state,
-    budgetLedgers: [...ledgers],
-    status: 'paused',
-    nextAction: reason,
-  };
-}
-
 async function resolveVerification(
   state: TaskState,
   capability: VerificationCapability | undefined
 ): Promise<VerificationRecord> {
+  if (capability) return await capability(state);
   const persisted = state.verification;
-  if (persisted && persisted.status === 'verified' && persisted.evidenceRefs.length > 0) {
-    return persisted;
-  }
-  if (!capability) {
-    return { status: 'unavailable', evidenceRefs: [], checkedAt: new Date().toISOString() };
-  }
-  return await capability(state);
+  if (persisted?.status === 'verified' && persisted.evidenceRefs.length > 0) return persisted;
+  return { status: 'unavailable', evidenceRefs: [], checkedAt: new Date().toISOString() };
 }
 
 export async function reconcileAndResume(
@@ -318,13 +257,36 @@ export async function reconcileAndResume(
         : latestCheckpoint.state;
 
     const pauseRecord = await store.loadPauseRecord(taskId);
-    if (pauseRecord?.active) {      const pausedState: TaskState = {
+    if (pauseRecord?.active) {
+      const pausedState: TaskState = {
         ...savedState,
         status: 'paused',
         nextAction: `Task is deliberately paused by operator (${pauseRecord.operatorRef}). Explicit resume required.`,
       };
       return pausedState;
     }
+
+    const journal = await store.loadBudgetJournal(taskId);
+    const baseLedgers = mergeLedgers(journal?.ledgers ?? [], savedState.budgetLedgers);
+    const journalDigest = ledgerDigest(journal?.ledgers ?? []);
+    const persistJournal = async (ledgers: readonly BudgetLedger[]): Promise<void> => {
+      if (ledgerDigest(ledgers) === journalDigest) return;
+      await store.saveBudgetJournal({
+        schemaVersion: UC04_SCHEMA_VERSION,
+        taskId,
+        runId: journal?.runId ?? savedState.runId,
+        ledgers,
+        replanCount: journal?.replanCount ?? 0,
+        updatedAt: new Date().toISOString(),
+      });
+    };
+    const suspend = async (ledgers: readonly BudgetLedger[], reason: string): Promise<TaskState> => {
+      const suspended = suspendedState(savedState, ledgers, reason);
+      const val = validateTaskState(suspended);
+      if (!val.ok) throw new Error(`Suspended state validation failed: ${errorText(val.errors)}`);
+      await store.saveCheckpoint(suspended);
+      return suspended;
+    };
 
     const inspector = options.gitInspector ?? captureWorkspaceBaseline;
     const currentWorkspace = await inspector(options.repoRoot ?? process.cwd());
@@ -370,9 +332,8 @@ export async function reconcileAndResume(
     );
 
     if (mismatchedClaims.length > 0) {
-      return suspendedState(
-        savedState,
-        savedState.budgetLedgers,
+      return await suspend(
+        baseLedgers,
         `Recovery refused: dispatch claim epoch or state version mismatch (${mismatchedClaims
           .map((c) => c.claimId)
           .join(', ')}); explicit reconciliation required`
@@ -384,13 +345,16 @@ export async function reconcileAndResume(
       if (outcome.evidenceRef.trim()) outcomeByRequest.set(outcome.requestId, outcome);
     }
 
-    const tracker = new BudgetTracker(savedState.budgetLedgers);
+    const outcomeFor = (reservation: BudgetReservationItem): ConfirmedOutcome | undefined =>
+      findOutcome(reservation, outcomeByRequest);
+
+    const tracker = new BudgetTracker(baseLedgers);
     const released = new Set<string>();
     const resolvedReservationIds = new Set<string>();
 
-    for (const ledger of savedState.budgetLedgers) {
+    for (const ledger of baseLedgers) {
       for (const reservation of ledger.reservations) {
-        const outcome = outcomeByRequest.get(reservation.keyedId);
+        const outcome = outcomeFor(reservation);
         if (!outcome) continue;
         if (outcome.outcome === 'not_dispatched') {
           released.add(reservation.reservationId);
@@ -434,8 +398,8 @@ export async function reconcileAndResume(
           createdAt: now,
         });
       }
-      return suspendedState(
-        savedState,
+      await persistJournal(ledgers);
+      return await suspend(
         ledgers,
         `Recovery suspended: unresolved reservation(s) ${unresolved
           .map((r) => r.keyedId)
@@ -448,8 +412,8 @@ export async function reconcileAndResume(
     );
 
     if (remainingClaims.length > 0) {
-      return suspendedState(
-        savedState,
+      await persistJournal(ledgers);
+      return await suspend(
         ledgers,
         `Recovery suspended: unsettled dispatch claim(s) ${remainingClaims
           .map((c) => c.claimId)
@@ -464,22 +428,34 @@ export async function reconcileAndResume(
 
     const machine = new StepStateMachine();
     let nextStepIdx = savedState.plan.findIndex((s) => s.status !== 'done');
+    let blocked: { readonly id: string; readonly missing: readonly string[] } | undefined;
     if (nextStepIdx === -1) {
       nextStepIdx = Math.max(0, savedState.plan.length - 1);
     } else {
       const step = savedState.plan[nextStepIdx];
-      if (step && !machine.checkPredecessors(savedState, step).ready) {
+      const check = step ? machine.checkPredecessors(savedState, step) : { ready: true, unsatisfied: [] };
+      if (step && !check.ready) {
         const readyIdx = savedState.plan.findIndex(
           (s) => s.status === 'todo' && machine.checkPredecessors(savedState, s).ready
         );
         if (readyIdx !== -1) nextStepIdx = readyIdx;
+        else blocked = { id: step.id, missing: check.unsatisfied };
       }
+    }
+
+    const isTerminalOrBlocked =
+      savedState.status === 'waiting_approval' || savedState.status === 'failed';
+
+    if (blocked && !isTerminalOrBlocked) {
+      await persistJournal(ledgers);
+      return await suspend(
+        ledgers,
+        `Recovery blocked: step ${blocked.id} requires predecessor evidence from ${blocked.missing.join(', ')}`
+      );
     }
 
     const nextStep = savedState.plan[nextStepIdx];
     const isAllDone = savedState.plan.every((s) => s.status === 'done');
-    const isTerminalOrBlocked =
-      savedState.status === 'waiting_approval' || savedState.status === 'failed';
 
     let verification: VerificationRecord | undefined;
     let status: TaskState['status'];
@@ -514,10 +490,11 @@ export async function reconcileAndResume(
 
     const val = validateTaskState(resumedState);
     if (!val.ok) {
-      throw new Error(`Resumed state validation failed: ${val.errors.map((e) => e.message).join(', ')}`);
+      throw new Error(`Resumed state validation failed: ${errorText(val.errors)}`);
     }
 
     await store.saveCheckpoint(resumedState);
+    await persistJournal(ledgers);
     return resumedState;
   });
 }

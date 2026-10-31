@@ -16,9 +16,20 @@ export function checkInt(errors: ValidationError[], val: unknown, path: string, 
   if (typeof val !== 'number' || !Number.isInteger(val) || val < min) errors.push({ path, message, code });
 }
 
-export function checkStringArray(errors: ValidationError[], arr: unknown, path: string, name: string, code: string): void {
+export function checkStringArray(
+  errors: ValidationError[],
+  arr: unknown,
+  path: string,
+  name: string,
+  code: string,
+  allowEmpty = true
+): void {
   if (!Array.isArray(arr)) {
     errors.push({ path, message: `${name} must be an array`, code });
+    return;
+  }
+  if (!allowEmpty && arr.length === 0) {
+    errors.push({ path, message: `${name} must not be empty`, code });
     return;
   }
   for (let i = 0; i < arr.length; i++) {

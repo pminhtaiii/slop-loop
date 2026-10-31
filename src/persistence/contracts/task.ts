@@ -10,37 +10,7 @@ import {
   type ValidationError,
 } from './types.ts';
 import { validateBudgetLedger, validateApprovalRequestBinding, validateVerificationRecord } from './control.ts';
-
-function isObject(val: unknown): val is Record<string, unknown> {
-  return typeof val === 'object' && val !== null && !Array.isArray(val);
-}
-
-function checkStr(errors: ValidationError[], val: unknown, path: string, message: string, code: string): void {
-  if (typeof val !== 'string' || !val.trim()) errors.push({ path, message, code });
-}
-
-function checkStringArray(
-  errors: ValidationError[],
-  arr: unknown,
-  path: string,
-  name: string,
-  code: string,
-  allowEmpty = true
-): void {
-  if (!Array.isArray(arr)) {
-    errors.push({ path, message: `${name} must be an array`, code });
-    return;
-  }
-  if (!allowEmpty && arr.length === 0) {
-    errors.push({ path, message: `${name} must not be empty`, code });
-    return;
-  }
-  for (let i = 0; i < arr.length; i++) {
-    if (typeof arr[i] !== 'string' || !arr[i].trim()) {
-      errors.push({ path: `${path}[${i}]`, message: `${name} items must be non-empty strings`, code });
-    }
-  }
-}
+import { isObject, checkStr, checkStringArray } from './validation.ts';
 
 const ALLOWED_STEP_KEYS = new Set([
   'id',
