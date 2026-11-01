@@ -69,6 +69,30 @@ node scripts/agents/agent-context.mjs review-ready --tasks <tasks.md> --scope T0
 
 Scopes accept canonical task IDs or inclusive ranges. A dependency-ready frontier does not grant authorization: only IDs supplied with `--authorized` are reported as caller-provided. `review-ready` blocks on unchecked closure tasks, unknown or external prerequisites, active or blocked scoped workers, unintegrated handoffs, and path conflicts. With `--no-review`, `review.status` is `skipped`, `review.reviewed` is `false`, and `review.acceptanceCertified` is `false`; it records an opted-out review, not a review pass or acceptance certificate.
 
+## Contributor preparation
+
+Before starting a new worker or editing a follow-up to a published change, run `node scripts/agents/contributor-prepare.mjs --root <checkout>`. Its compact report combines checkout freshness, live PR state, role/assignment observations, context pointers and observed executable availability. Host model and sandbox capabilities remain unknown unless supplied by the host; the report does not infer them from repository files.
+
+`READY` permits the next scoped action. `BLOCKED` preserves the checkout and registry. `NEEDS_NEXT_BRANCH` identifies a merged PR and points to the existing `pr-workflow.mjs prepare-next` operation; supplying `--next-branch <feat/scope-description>` makes that next command concrete. Closed or unknown PR state requires diagnosis rather than treating the branch as fresh. The default report does not edit the worktree or assignment registry; its existing preflight fetch updates remote-tracking metadata and requires Git fetch access.
+
+For new existing-checkout workers, use the registration path after the coordinator has selected the intended checkout:
+
+```powershell
+node scripts/agents/contributor-prepare.mjs --register --root <checkout> --owner <worker> --task <task> --session <date/session> --summary "<scope>" --next "<next action>" --owned-path <path> --factory-managed
+```
+
+Registration calls the existing worker-start lifecycle only after a ready report and a current live-PR/branch/HEAD recheck, passing expected branch/head and cleanliness guards into the registry write boundary. Blocked or merged-branch preparation creates no assignment and performs no branch move. Reserve/bind remains the required path for new worktrees; preparation does not replace its receipts. Finish preparation before dispatching workers, and keep their bound checkout/branch fixed until handoff or explicit recovery.
+
+## Focused verification receipts
+
+Capture focused evidence on its first execution with `node scripts/agents/focused-check.mjs run --root <checkout> --receipt <session-relative-file.json> --input <source-path> -- <command> <args>`. Supply the receipt as a repository-relative path under the ignored managed session, for example `.agent-work/<date>/<session>/checks.json`; declare all relevant input/configuration files with repeated `--input`. Use the same arguments with `verify` instead of `run` to check retained evidence without executing the command again.
+
+The runner retains actual output, exit status, command arguments, candidate/input fingerprints and an allowlisted execution-environment identity. Receipts contain no raw environment-variable dump. Successful unchanged receipts may be reused at focused verification/review boundaries; changed inputs, candidate, command, environment, receipt or output artifacts require a new run. Undeclared external state and semantic correctness remain outside that reuse claim. Failed or skipped results cannot establish successful verification.
+
+Use existing evidence when its bindings remain applicable instead of rerunning a command only to save its output. These focused receipts never bypass required full publication gates or independent CI.
+
+The context contract's `requiredSkillStages` entries bind a required skill path to a named workflow heading. The context checker requires a real link inside that heading's section; a navigation-only link elsewhere or a fenced example does not satisfy the requirement. The configured `verify-task` mapping keeps pre-handoff verification discoverable at its execution stage.
+
 ## Factory state checks
 
 Use `node scripts/agents/factory-state.mjs capture --root <checkout>` to capture a candidate fingerprint. It returns `schemaVersion`, `candidateSha256`, and `candidate`, binding HEAD, branch, index modes/blob IDs, and worktree bytes for tracked and non-ignored untracked files. Unsupported linked, submodule or unmerged entries block capture. Save output and other run artifacts in the ignored managed session so creating evidence does not change the candidate.
@@ -87,6 +111,17 @@ For handoff, evidence schema v1 contains `identity`, `manifestSha256`, `candidat
 Implementation changes invalidate the dispatch candidate. Before handoff, the coordinator captures the final candidate and pins its manifest, preserving the approved criteria and authorization boundaries; the worker then supplies evidence for that final binding. Refresh affected evidence after further changes. A pass establishes declared binding and coverage only: caller-supplied commands, exit statuses, tiers and reports are not independent execution attestations or semantic acceptance. Independent review and contributor publication remain separate.
 
 The check command prints JSON `status: "pass"` with exit 0, or `status: "blocked"` and reasons with nonzero exit. It executes no evidence commands and grants no merge authority. Controlled fixtures run with `node --test tests/agents/factory-state.test.mjs`.
+
+### Enforced factory handoff
+
+Opt worker assignments into factory verification with `--factory-managed` when starting or reserving them. After verification of the final candidate, the coordinator pins the manifest and evidence on that assignment:
+
+```powershell
+node scripts/agents/active-task.mjs pin-factory-handoff --owner <worker> --task <task> --manifest <manifest.json> --evidence <evidence.json> --root <checkout>
+node scripts/agents/active-task.mjs handoff --owner <worker> --task <task> --result "<scoped result>" --root <checkout>
+```
+
+Pinning retains regular-file references and their digests under the registered assignment. Handoff consumes those saved pins; worker-supplied replacement criteria are not accepted through the handoff command. Missing pins or changed candidate, authorization, criteria or evidence block the marked assignment before its handoff state changes. Existing binding, readiness and owned-path checks still apply. Unmarked legacy assignments retain their existing lifecycle. Pinning is a trusted local coordinator operation, not operating-system isolation from an actor who can rewrite shared state. Reassigned workers keep the factory requirement but need fresh pins for their new identity.
 
 ## Source boundary lint
 

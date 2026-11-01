@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import test from 'node:test';
@@ -27,6 +27,193 @@ function check(root) {
     encoding: 'utf8', windowsHide: true, timeout: 10_000,
   });
 }
+
+async function skillFixture(t, workflow) {
+  const root = await fixture(t);
+  await mkdir(join(root, '.agents/skills/verify-task'), { recursive: true });
+  await writeFile(join(root, '.agents/skills/verify-task/SKILL.md'), '# Verify task\n');
+  await writeFile(join(root, 'context/README.md'), '[Workflow](workflow.md)\n');
+  await writeFile(join(root, 'context/workflow.md'), workflow);
+  await writeFile(join(root, 'context/contract.json'), JSON.stringify({
+    requiredDocuments: ['context/README.md'],
+    facts: {},
+    authorizationReferences: [],
+    requiredSkillStages: [{
+      skill: 'verify-task',
+      stage: 'Task briefs and handoffs',
+      path: '.agents/skills/verify-task/SKILL.md',
+    }],
+  }));
+  return root;
+}
+
+test('required skill wiring must appear in the declared workflow stage', async (t) => {
+  const root = await skillFixture(t, [
+    '# Workflow',
+    '### Task briefs and handoffs',
+    'No skill link is declared here.',
+    '',
+  ].join('\n'));
+  const result = check(root);
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /context\/workflow\.md.*verify-task.*Task briefs and handoffs/);
+});
+
+test('a required skill link in another workflow stage does not satisfy the mapping', async (t) => {
+  const root = await skillFixture(t, [
+    '# Workflow',
+    '### Before editing',
+    '[verify-task](../.agents/skills/verify-task/SKILL.md)',
+    '### Task briefs and handoffs',
+    'The skill is not linked in this stage.',
+    '',
+  ].join('\n'));
+  const result = check(root);
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /required skill verify-task must link .* within stage Task briefs and handoffs/);
+});
+
+test('fenced workflow examples cannot supply the required stage or skill link', async (t) => {
+  for (const workflow of [
+    [
+      '# Workflow',
+      '### Task briefs and handoffs',
+      '```markdown',
+      '[verify-task](../.agents/skills/verify-task/SKILL.md)',
+      '```',
+    ].join('\n'),
+    [
+      '# Workflow',
+      '```markdown',
+      '### Task briefs and handoffs',
+      '[verify-task](../.agents/skills/verify-task/SKILL.md)',
+      '```',
+    ].join('\n'),
+  ]) {
+    const root = await skillFixture(t, workflow);
+    const result = check(root);
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /context\/workflow\.md.*verify-task/);
+  }
+});
+
+test('skill links in nested workflow sections count only before the next peer stage', async (t) => {
+  const nested = await skillFixture(t, [
+    '# Workflow',
+    '### Task briefs and handoffs',
+    '#### Worker handoff',
+    '[verify-task](../.agents/skills/verify-task/SKILL.md)',
+    '### Publication',
+    '',
+  ].join('\n'));
+  assert.equal(check(nested).status, 0);
+
+  const afterBoundary = await skillFixture(t, [
+    '# Workflow',
+    '### Task briefs and handoffs',
+    'The skill is not linked in this stage.',
+    '### Publication',
+    '[verify-task](../.agents/skills/verify-task/SKILL.md)',
+    '',
+  ].join('\n'));
+  const result = check(afterBoundary);
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /required skill verify-task must link .* within stage Task briefs and handoffs/);
+});
+
+test('missing required skill files fail even when their workflow link is present', async (t) => {
+  const root = await skillFixture(t, [
+    '# Workflow',
+    '### Task briefs and handoffs',
+    '[verify-task](../.agents/skills/verify-task/SKILL.md)',
+    '',
+  ].join('\n'));
+  await rm(join(root, '.agents/skills/verify-task/SKILL.md'));
+  const result = check(root);
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /SKILL\.md.*ENOENT/);
+});
+
+test('malformed required skill mappings fail instead of being skipped', async (t) => {
+  const root = await skillFixture(t, '# Workflow\n### Task briefs and handoffs\n');
+  const contractPath = join(root, 'context/contract.json');
+  const contract = JSON.parse(await readFile(contractPath, 'utf8'));
+  contract.requiredSkillStages[0].path = '';
+  await writeFile(contractPath, JSON.stringify(contract));
+  const result = check(root);
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /each required skill stage requires a skill, stage, and path/);
+});
+
+test('skill links and stage headings inside HTML comments do not satisfy the stage mapping', async (t) => {
+  const commented = await skillFixture(t, [
+    '# Workflow',
+    '### Task briefs and handoffs',
+    '<!--',
+    '[verify-task](../.agents/skills/verify-task/SKILL.md)',
+    '-->',
+    '',
+  ].join('\n'));
+  const commentedResult = check(commented);
+  assert.equal(commentedResult.status, 1, commentedResult.stderr);
+  assert.match(commentedResult.stderr, /context\/workflow\.md.*verify-task.*Task briefs and handoffs/);
+
+  const visible = await skillFixture(t, [
+    '# Workflow',
+    '### Task briefs and handoffs',
+    '[verify-task](../.agents/skills/verify-task/SKILL.md)',
+    '',
+  ].join('\n'));
+  assert.equal(check(visible).status, 0);
+
+  const commentedStage = await skillFixture(t, [
+    '# Workflow',
+    '<!--',
+    '### Task briefs and handoffs',
+    '-->',
+    '### Publication',
+    '[verify-task](../.agents/skills/verify-task/SKILL.md)',
+    '',
+  ].join('\n'));
+  const stageResult = check(commentedStage);
+  assert.equal(stageResult.status, 1, stageResult.stderr);
+  assert.match(stageResult.stderr, /Task briefs and handoffs must have one matching heading/);
+});
+
+test('HTML comment masking preserves reported link line numbers', async (t) => {
+  const root = await fixture(t);
+  await writeFile(join(root, 'context/README.md'), [
+    '# Routing',
+    '<!--',
+    '[Hidden](missing-hidden.md)',
+    '-->',
+    '[Visible](missing.md)',
+  ].join('\n'));
+  const result = check(root);
+  assert.equal(result.status, 1, result.stderr);
+  assert.doesNotMatch(result.stderr, /missing-hidden/);
+  assert.match(result.stderr, /context\/README\.md:5: missing\.md/);
+});
+
+test('code fences and HTML comments do not mask one another', async (t) => {
+  for (const readme of [
+    ['# Routing', '<!--', '```md', '-->', '[Visible](missing.md)'].join('\n'),
+    ['# Routing', '```md', '<!--', '```', '[Visible](missing.md)'].join('\n'),
+  ]) {
+    const root = await fixture(t);
+    await writeFile(join(root, 'context/README.md'), readme);
+    const result = check(root);
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /context\/README\.md:5: missing\.md/);
+  }
+});
+
+test('an unterminated HTML comment masks to the end without throwing', async (t) => {
+  const root = await fixture(t);
+  await writeFile(join(root, 'context/README.md'), '# Routing\n<!-- note\n[Visible](missing.md)\n');
+  const result = check(root);
+  assert.equal(result.status, 0, result.stderr);
+});
 
 test('valid context links pass without fetching external links', async (t) => {
   const root = await fixture(t);
