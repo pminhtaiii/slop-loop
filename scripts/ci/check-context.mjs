@@ -26,6 +26,47 @@ function maskCode(source) {
   }).join('\n');
 }
 
+// Masks fenced code and HTML comments together: separate passes would let a fence inside a
+// comment (or a comment marker inside a fence) leak into nearby prose. Length and newlines are preserved.
+function maskProse(source) {
+  let fence;
+  let comment = false;
+  return source.split('\n').map((line) => {
+    const marker = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+    if (fence) {
+      if (marker && marker[1][0] === fence[0] && marker[1].length >= fence.length && !marker[2].trim()) {
+        fence = undefined;
+      }
+      return line.replace(/./g, ' ');
+    }
+    if (!comment && marker) {
+      fence = marker[1];
+      return line.replace(/./g, ' ');
+    }
+    let masked = '';
+    let index = 0;
+    while (index < line.length) {
+      if (comment) {
+        const end = line.indexOf('-->', index);
+        const stop = end === -1 ? line.length : end + 3;
+        masked += ' '.repeat(stop - index);
+        index = stop;
+        if (end !== -1) comment = false;
+      } else {
+        const start = line.indexOf('<!--', index);
+        if (start === -1) {
+          masked += line.slice(index);
+          break;
+        }
+        masked += `${line.slice(index, start)}    `;
+        index = start + 4;
+        comment = true;
+      }
+    }
+    return masked;
+  }).join('\n');
+}
+
 function factValue(value) {
   return value.replace(/`/g, '').trim();
 }
@@ -50,7 +91,7 @@ try {
   }
   for (const file of files) {
     const source = sources.get(file);
-    const prose = maskCode(source).replace(/(`+).*?\1/g, (code) => ' '.repeat(code.length));
+    const prose = maskProse(source).replace(/(`+).*?\1/g, (code) => ' '.repeat(code.length));
     localTargets.set(file, new Set());
     localTargetLines.set(file, []);
     // shortcut: supports inline links used by context; add reference-link support when adopted.
@@ -104,7 +145,7 @@ try {
       failures.push(`context/workflow.md: required skill ${requirement.skill} workflow document is missing`);
       continue;
     }
-    const headings = maskCode(workflow)
+    const headings = maskProse(workflow)
       .replace(/(`+).*?\1/g, (code) => ' '.repeat(code.length))
       .split('\n')
       .flatMap((line, index) => {

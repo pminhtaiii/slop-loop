@@ -145,6 +145,76 @@ test('malformed required skill mappings fail instead of being skipped', async (t
   assert.match(result.stderr, /each required skill stage requires a skill, stage, and path/);
 });
 
+test('skill links and stage headings inside HTML comments do not satisfy the stage mapping', async (t) => {
+  const commented = await skillFixture(t, [
+    '# Workflow',
+    '### Task briefs and handoffs',
+    '<!--',
+    '[verify-task](../.agents/skills/verify-task/SKILL.md)',
+    '-->',
+    '',
+  ].join('\n'));
+  const commentedResult = check(commented);
+  assert.equal(commentedResult.status, 1, commentedResult.stderr);
+  assert.match(commentedResult.stderr, /context\/workflow\.md.*verify-task.*Task briefs and handoffs/);
+
+  const visible = await skillFixture(t, [
+    '# Workflow',
+    '### Task briefs and handoffs',
+    '[verify-task](../.agents/skills/verify-task/SKILL.md)',
+    '',
+  ].join('\n'));
+  assert.equal(check(visible).status, 0);
+
+  const commentedStage = await skillFixture(t, [
+    '# Workflow',
+    '<!--',
+    '### Task briefs and handoffs',
+    '-->',
+    '### Publication',
+    '[verify-task](../.agents/skills/verify-task/SKILL.md)',
+    '',
+  ].join('\n'));
+  const stageResult = check(commentedStage);
+  assert.equal(stageResult.status, 1, stageResult.stderr);
+  assert.match(stageResult.stderr, /Task briefs and handoffs must have one matching heading/);
+});
+
+test('HTML comment masking preserves reported link line numbers', async (t) => {
+  const root = await fixture(t);
+  await writeFile(join(root, 'context/README.md'), [
+    '# Routing',
+    '<!--',
+    '[Hidden](missing-hidden.md)',
+    '-->',
+    '[Visible](missing.md)',
+  ].join('\n'));
+  const result = check(root);
+  assert.equal(result.status, 1, result.stderr);
+  assert.doesNotMatch(result.stderr, /missing-hidden/);
+  assert.match(result.stderr, /context\/README\.md:5: missing\.md/);
+});
+
+test('code fences and HTML comments do not mask one another', async (t) => {
+  for (const readme of [
+    ['# Routing', '<!--', '```md', '-->', '[Visible](missing.md)'].join('\n'),
+    ['# Routing', '```md', '<!--', '```', '[Visible](missing.md)'].join('\n'),
+  ]) {
+    const root = await fixture(t);
+    await writeFile(join(root, 'context/README.md'), readme);
+    const result = check(root);
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /context\/README\.md:5: missing\.md/);
+  }
+});
+
+test('an unterminated HTML comment masks to the end without throwing', async (t) => {
+  const root = await fixture(t);
+  await writeFile(join(root, 'context/README.md'), '# Routing\n<!-- note\n[Visible](missing.md)\n');
+  const result = check(root);
+  assert.equal(result.status, 0, result.stderr);
+});
+
 test('valid context links pass without fetching external links', async (t) => {
   const root = await fixture(t);
   await writeFile(join(root, 'context/README.md'), [
