@@ -52,9 +52,9 @@ async function retainedProgress(path) {
       const text = value => {
         if (typeof value !== 'string') return null;
         // Retained logs are untrusted text; keep status output to one bounded line.
-        // eslint-disable-next-line no-control-regex
         return (
           value
+            // eslint-disable-next-line no-control-regex
             .replace(/[\x00-\x1f\x7f-\x9f]/g, ' ')
             .replace(/\s+/g, ' ')
             .trim()

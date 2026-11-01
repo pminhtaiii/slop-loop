@@ -311,39 +311,42 @@ test('reports snapshot-relative paths and rejects a path that escapes the snapsh
 test('shipped exemptions validate and clear exactly the reviewed synthetic findings', () => {
   const shipped = JSON.parse(readFileSync(resolve('config/secret-scan-exemptions.json'), 'utf8'));
   const reviewed = [
-    ['generic-api-key', 'src/contracts/foundation/uc03/v02/admission/attempt-outcome.ts', 33],
-    ['generic-api-key', 'src/contracts/foundation/uc03/v02/admission/attempt-outcome.ts', 68],
-    ['generic-api-key', 'tests/runtime/uc01/assess.test.ts', 195],
-    ['generic-api-key', 'tests/runtime/uc01/intake.test.ts', 23],
-    ['generic-api-key', 'tests/runtime/unit/docker-workspace.test.ts', 882],
-    ['generic-api-key', 'tests/runtime/unit/docker-workspace.test.ts', 886],
-    ['generic-api-key', 'tests/runtime/unit/docker-workspace.test.ts', 1176],
-    ['generic-api-key', 'tests/runtime/unit/docker-workspace.test.ts', 1775],
-    ['github-pat', 'tests/runtime/unit/docker-workspace.test.ts', 1177],
-    ['github-pat', 'tests/runtime/unit/docker-workspace.test.ts', 1774],
-    ['private-key', 'tests/runtime/unit/telemetry.test.ts', 633],
-    ['generic-api-key', 'tests/runtime/unit/telemetry.test.ts', 343],
-    ['generic-api-key', 'tests/runtime/unit/uc03-report.test.ts', 316],
-    ['generic-api-key', 'tests/runtime/unit/uc03-report.test.ts', 806],
-    ['generic-api-key', 'tests/runtime/unit/uc03-report.test.ts', 1131],
-    ['generic-api-key', 'tests/runtime/unit/model.test.ts', 439],
-    ['generic-api-key', 'tests/runtime/unit/model.test.ts', 524],
-    ['generic-api-key', 'tests/runtime/security/uc03-isolation.test.ts', 876],
-    ['github-pat', 'tests/runtime/security/uc03-isolation.test.ts', 879],
-    ['generic-api-key', 'tests/runtime/unit/repository-tools.test.ts', 624],
+    ['generic-api-key', 'src/contracts/foundation/uc03/v02/admission/attempt-outcome.ts', 34, ''],
+    ['generic-api-key', 'src/contracts/foundation/uc03/v02/admission/attempt-outcome.ts', 83, ''],
+    ['generic-api-key', 'tests/runtime/uc01/assess.test.ts', 315, ''],
+    ['generic-api-key', 'tests/runtime/uc01/intake.test.ts', 34, ''],
+    ['generic-api-key', 'tests/runtime/unit/docker-workspace.test.ts', 847, ''],
+    ['generic-api-key', 'tests/runtime/unit/docker-workspace.test.ts', 851, ''],
+    ['generic-api-key', 'tests/runtime/unit/docker-workspace.test.ts', 1123, ''],
+    ['generic-api-key', 'tests/runtime/unit/docker-workspace.test.ts', 1711, ''],
+    ['github-pat', 'tests/runtime/unit/docker-workspace.test.ts', 1124, ''],
+    ['github-pat', 'tests/runtime/unit/docker-workspace.test.ts', 1710, ''],
+    ['private-key', 'tests/runtime/unit/telemetry.test.ts', 569, ''],
+    ['generic-api-key', 'tests/runtime/unit/telemetry.test.ts', 298, ''],
+    ['generic-api-key', 'tests/runtime/unit/uc03-report.test.ts', 306, ''],
+    ['generic-api-key', 'tests/runtime/unit/uc03-report.test.ts', 807, ''],
+    ['generic-api-key', 'tests/runtime/unit/uc03-report.test.ts', 1149, ''],
+    ['generic-api-key', 'tests/runtime/unit/model.test.ts', 424, ''],
+    ['generic-api-key', 'tests/runtime/unit/model.test.ts', 509, ''],
+    ['generic-api-key', 'tests/runtime/security/uc03-isolation.test.ts', 837, ''],
+    ['github-pat', 'tests/runtime/security/uc03-isolation.test.ts', 840, ''],
+    ['generic-api-key', 'tests/runtime/unit/repository-tools.test.ts', 596, ''],
+    ['generic-api-key', 'src/contracts/foundation/uc03/v02/admission/attempt-outcome.ts', 34, '54f61997dda7fdce3d745dfec41893f1e6705dfb'],
+    ['generic-api-key', 'src/contracts/foundation/uc03/v02/admission/attempt-outcome.ts', 83, '54f61997dda7fdce3d745dfec41893f1e6705dfb'],
+    ['private-key', 'tests/runtime/unit/telemetry.test.ts', 569, '54f61997dda7fdce3d745dfec41893f1e6705dfb'],
   ];
-  const findings = reviewed.map(([ruleId, path, line]) => ({ ruleId, path, line, commit: '' }));
+  const findings = reviewed.map(([ruleId, path, line, commit]) => ({ ruleId, path, line, commit }));
   // applyExemptions validates every entry (exact path, reason, commit) and rejects duplicates.
   assert.deepEqual(applyExemptions(findings, shipped), []);
   assert.deepEqual(
-    shipped.map(entry => [entry.ruleId, entry.path, entry.line]),
+    shipped.map(entry => [entry.ruleId, entry.path, entry.line, entry.commit]),
     reviewed,
     'the shipped list covers exactly the reviewed findings, no blanket allowlist',
   );
-  const nearby = applyExemptions([...findings, { ruleId: 'generic-api-key', path: 'tests/runtime/unit/docker-workspace.test.ts', line: 883, commit: '' }], shipped);
+  const nearby = applyExemptions([...findings, { ruleId: 'generic-api-key', path: 'tests/runtime/unit/docker-workspace.test.ts', line: 848, commit: '' }], shipped);
   assert.deepEqual(
     nearby.map(item => item.line),
-    [883],
+    [848],
     'a nearby unlisted finding still fails',
   );
 });
