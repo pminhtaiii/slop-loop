@@ -41,16 +41,9 @@ import {
   computeCanonicalSha256,
   computeRequestContentDigest,
 } from '../../../../src/contracts/foundation/uc03.ts';
-import {
-  createTestProviderAdmissionTrustedContextV02,
-  createTestProviderOutcomeReceiptV02,
-} from './state-fixtures.ts';
+import { createTestProviderAdmissionTrustedContextV02, createTestProviderOutcomeReceiptV02 } from './state-fixtures.ts';
 
-function createProviderOutcomeEffects(
-  context: ProviderAdmissionContextV02,
-  outcome: 'observed' | 'uncertain',
-  observedUsage?: ProviderUsage,
-): ProposedSettlementEffectsV02 {
+function createProviderOutcomeEffects(context: ProviderAdmissionContextV02, outcome: 'observed' | 'uncertain', observedUsage?: ProviderUsage): ProposedSettlementEffectsV02 {
   return {
     taskTransition: { kind: 'none' },
     revision: { kind: 'not-applicable' },
@@ -170,23 +163,13 @@ export class ScriptedModelPort implements ModelPort, ModelPortV02 {
     this.v02CallLog = [];
   }
 
-  async propose(
-    state: TaskState,
-    evidence: readonly SourceEvidence[],
-    request: ProviderRequest,
-    context?: ProviderAdmissionContextV02
-  ): Promise<ModelPortResult> {
+  async propose(state: TaskState, evidence: readonly SourceEvidence[], request: ProviderRequest, context?: ProviderAdmissionContextV02): Promise<ModelPortResult> {
     this.attemptedCount++;
 
     const effectiveV02 = context ?? this.defaultAdmissionContextV02;
     if (effectiveV02 !== undefined) {
       // v0.2 validation
-      if (
-        !effectiveV02 ||
-        typeof effectiveV02 !== 'object' ||
-        effectiveV02.schemaVersion !== '0.2.0' ||
-        effectiveV02.subjectKind !== 'provider-request'
-      ) {
+      if (!effectiveV02 || typeof effectiveV02 !== 'object' || effectiveV02.schemaVersion !== '0.2.0' || effectiveV02.subjectKind !== 'provider-request') {
         const denied: ModelPortDenied = {
           outcome: 'denied',
           reason: 'INVALID_ADMISSION_CONTEXT: Expected valid v0.2 ProviderAdmissionContextV02',
@@ -194,15 +177,14 @@ export class ScriptedModelPort implements ModelPort, ModelPortV02 {
         this.callLog.push({ state, evidence, request, admitted: false, result: denied });
         return denied;
       }
-      const contextValidation = validateProviderAdmissionV02(
-        effectiveV02,
-        createTestProviderAdmissionTrustedContextV02(effectiveV02),
-      );
-      if (!contextValidation.ok ||
+      const contextValidation = validateProviderAdmissionV02(effectiveV02, createTestProviderAdmissionTrustedContextV02(effectiveV02));
+      if (
+        !contextValidation.ok ||
         effectiveV02.providerRequestId !== request.providerRequestId ||
         effectiveV02.role !== request.role ||
         computeRequestContentDigest(request) !== effectiveV02.requestContentDigest ||
-        computeCanonicalSha256(request) !== computeCanonicalSha256(effectiveV02.providerRequest)) {
+        computeCanonicalSha256(request) !== computeCanonicalSha256(effectiveV02.providerRequest)
+      ) {
         const denied: ModelPortDenied = {
           outcome: 'denied',
           reason: 'CONTEXT_IDENTITY_MISMATCH: Request payload does not match current admission context',
@@ -210,10 +192,7 @@ export class ScriptedModelPort implements ModelPort, ModelPortV02 {
         this.callLog.push({ state, evidence, request, admitted: false, result: denied });
         return denied;
       }
-      if (
-        effectiveV02.providerAdmissionReceipt?.role !== request.role ||
-        effectiveV02.providerAdmissionReceipt?.providerRequestId !== request.providerRequestId
-      ) {
+      if (effectiveV02.providerAdmissionReceipt?.role !== request.role || effectiveV02.providerAdmissionReceipt?.providerRequestId !== request.providerRequestId) {
         const denied: ModelPortDenied = {
           outcome: 'denied',
           reason: 'RECEIPT_ROLE_MISMATCH: Provider admission receipt role or request ID mismatch',
@@ -250,9 +229,7 @@ export class ScriptedModelPort implements ModelPort, ModelPortV02 {
         }
       }
 
-      const nextResult = this.responseFactory
-        ? this.responseFactory(request)
-        : this.scriptedResponses.shift() as ModelPortResult;
+      const nextResult = this.responseFactory ? this.responseFactory(request) : (this.scriptedResponses.shift() as ModelPortResult);
       this.dispatchCount++;
 
       let outcomeReceipt: AttemptOutcomeReceiptV02 | undefined;
@@ -298,8 +275,7 @@ export class ScriptedModelPort implements ModelPort, ModelPortV02 {
     if (!admissionContext) {
       const denied: ModelPortDenied = {
         outcome: 'denied',
-        reason:
-          'UNTRUSTED_DISPATCH_AUTHORIZATION: Dispatch admission requires trusted validated context (a bare reservation ref cannot authorize dispatch)',
+        reason: 'UNTRUSTED_DISPATCH_AUTHORIZATION: Dispatch admission requires trusted validated context (a bare reservation ref cannot authorize dispatch)',
       };
       this.callLog.push({ state, evidence, request, admitted: false, result: denied });
       return denied;
@@ -309,7 +285,7 @@ export class ScriptedModelPort implements ModelPort, ModelPortV02 {
     if (!admissionRes.ok) {
       const denied: ModelPortDenied = {
         outcome: 'denied',
-        reason: admissionRes.errors.map((e) => `${e.code}: ${e.message}`).join('; '),
+        reason: admissionRes.errors.map(e => `${e.code}: ${e.message}`).join('; '),
       };
       this.callLog.push({ state, evidence, request, admitted: false, result: denied });
       return denied;
@@ -365,12 +341,7 @@ export class ScriptedModelPortV02 implements ModelPortV02 {
     this.underlying.queueResponses(responses);
   }
 
-  propose(
-    state: TaskState,
-    evidence: readonly SourceEvidence[],
-    request: ProviderRequest,
-    context: ProviderAdmissionContextV02
-  ): Promise<ModelPortResult> {
+  propose(state: TaskState, evidence: readonly SourceEvidence[], request: ProviderRequest, context: ProviderAdmissionContextV02): Promise<ModelPortResult> {
     if (!context) {
       return Promise.resolve({
         outcome: 'denied',

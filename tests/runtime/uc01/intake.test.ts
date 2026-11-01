@@ -7,11 +7,22 @@ import { fixtureLimits, sha256Text, type TrustedContext } from '../../../src/uc0
 const record = UC01_PUBLIC_CASES.find(entry => entry.caseId === 'UC-01:C02:all-users-locked-out');
 assert.ok(record);
 const invocation = record.input.invocation;
-const context: TrustedContext = { taskId: invocation.taskId, runId: invocation.runId, repositoryId: invocation.repositoryId,
-  workspaceId: 'workspace', repositorySnapshotDigest: record.input.repositorySnapshotDigest,
-  configId: 'uc01-fixture-v1', configVersion: '1', policyId: 'fixture-policy-no-dispatch', policyVersion: '1',
-  catalog: trustedCatalogForCase(record.caseId), limits: fixtureLimits, accountingRef: 'account',
-  evidenceRegistry: publicEvidenceForCase(record.caseId), continuation: undefined };
+const context: TrustedContext = {
+  taskId: invocation.taskId,
+  runId: invocation.runId,
+  repositoryId: invocation.repositoryId,
+  workspaceId: 'workspace',
+  repositorySnapshotDigest: record.input.repositorySnapshotDigest,
+  configId: 'uc01-fixture-v1',
+  configVersion: '1',
+  policyId: 'fixture-policy-no-dispatch',
+  policyVersion: '1',
+  catalog: trustedCatalogForCase(record.caseId),
+  limits: fixtureLimits,
+  accountingRef: 'account',
+  evidenceRegistry: publicEvidenceForCase(record.caseId),
+  continuation: undefined,
+};
 
 test('C02 binds exactly the original report and application-selected repository', () => {
   const result = new IntakeBinder().bind(invocation, context);
@@ -31,8 +42,16 @@ test('C15 protected report is rejected before admitted context can be used', () 
 test('C08 a supplied source-shaped snippet remains reporter origin with its own exact digest', () => {
   const content = 'src/session.ts:1 claims every login fails; supplied text has not been read from the repository.';
   const supplied = { id: 'snippet', sourceRef: 'reporter-snippet', content, digest: sha256Text(content) };
-  const entry = { id: 'snippet', kind: 'reporter' as const, sourceRef: supplied.sourceRef, contentDigest: supplied.digest,
-    safeExcerptRef: 'snippet-reference', provenance: 'mock' as const, repository: undefined, questionId: undefined };
+  const entry = {
+    id: 'snippet',
+    kind: 'reporter' as const,
+    sourceRef: supplied.sourceRef,
+    contentDigest: supplied.digest,
+    safeExcerptRef: 'snippet-reference',
+    provenance: 'mock' as const,
+    repository: undefined,
+    questionId: undefined,
+  };
   const trusted = { ...context, evidenceRegistry: [...context.evidenceRegistry, entry] };
   const result = new IntakeBinder({ resolveExcerpt: () => content }).bind({ ...invocation, suppliedEvidence: [supplied] }, trusted);
   assert.equal(result.ok, true);
@@ -48,14 +67,24 @@ test('C22 changed report digest, extra issue and empty report fail input admissi
     { ...invocation, issue: { ...invocation.issue, reportDigest: '0'.repeat(64) } },
     { ...invocation, issues: [invocation.issue] },
     { ...invocation, issue: { ...invocation.issue, originalReport: '', reportDigest: sha256Text('') } },
-  ]) assert.equal(new IntakeBinder().bind(input, context).ok, false);
+  ])
+    assert.equal(new IntakeBinder().bind(input, context).ok, false);
 });
 
 test('C15 protected path metadata is rejected before excerpt admission or model context', () => {
-  const repository = { id: 'repository-metadata', kind: 'repository', sourceRef: 'source', contentDigest: invocation.issue.reportDigest,
-    safeExcerptRef: 'safe-reference', provenance: 'mock', repository: { repositoryId: context.repositoryId,
-      snapshotDigest: context.repositorySnapshotDigest, path: '.env', fileDigest: 'b'.repeat(64), startLine: 1, endLine: 1 } };
-  for (const trusted of [{ ...context, evidenceRegistry: [...context.evidenceRegistry, repository] }, { ...context, configId: '.env' }]) {
+  const repository = {
+    id: 'repository-metadata',
+    kind: 'repository',
+    sourceRef: 'source',
+    contentDigest: invocation.issue.reportDigest,
+    safeExcerptRef: 'safe-reference',
+    provenance: 'mock',
+    repository: { repositoryId: context.repositoryId, snapshotDigest: context.repositorySnapshotDigest, path: '.env', fileDigest: 'b'.repeat(64), startLine: 1, endLine: 1 },
+  };
+  for (const trusted of [
+    { ...context, evidenceRegistry: [...context.evidenceRegistry, repository] },
+    { ...context, configId: '.env' },
+  ]) {
     const result = new IntakeBinder().bind(invocation, trusted);
     assert.equal(result.ok, false);
     if (!result.ok) assert.equal(result.reasonCode, 'protected-content');

@@ -6,7 +6,10 @@ import { pathToFileURL } from 'node:url';
 import { containsProtectedContent } from '../foundation/repository-tools.ts';
 import { isBoundedSafeDataV02, validateSafePresentationV02 } from './presentation.ts';
 
-export interface CliResult { readonly exitCode: number; readonly output: string }
+export interface CliResult {
+  readonly exitCode: number;
+  readonly output: string;
+}
 
 export interface ApprovalCliServiceV02 {
   readonly cliSchemaVersion: typeof UC05_APPROVAL_SCHEMA_VERSION_V02;
@@ -20,16 +23,17 @@ export interface ApprovalCliServiceV02 {
 }
 
 const flags: Readonly<Record<string, readonly string[]>> = {
-  list: ['task'], history: ['task', 'page'], show: ['task', 'request'], inspect: ['task', 'request', 'page'],
+  list: ['task'],
+  history: ['task', 'page'],
+  show: ['task', 'request'],
+  inspect: ['task', 'request', 'page'],
   decide: ['task', 'request', 'task-version', 'request-version', 'presentation-digest', 'decision', 'response-key'],
   control: ['task', 'task-version', 'direction', 'response-key'],
   'compat-show': ['task', 'request'],
   'compat-inspect': ['task', 'request', 'page'],
   'compat-history': ['task', 'page'],
 };
-const SAFE_OUTCOMES: readonly SafeOperationOutcome[] = [
-  'ok', 'pending', 'paused', 'denied', 'invalid', 'conflict', 'stale', 'unavailable', 'uncertain',
-];
+const SAFE_OUTCOMES: readonly SafeOperationOutcome[] = ['ok', 'pending', 'paused', 'denied', 'invalid', 'conflict', 'stale', 'unavailable', 'uncertain'];
 type CliSchemaVersion = 'uc05-approval/0.1-draft' | typeof UC05_APPROVAL_SCHEMA_VERSION_V02;
 interface ParsedArguments {
   readonly command: string;
@@ -56,7 +60,11 @@ function result(outcome: SafeOperationOutcome, value?: unknown, recordedDecision
 }
 
 function parseArguments(argv: readonly string[], schemaVersion: CliSchemaVersion, allowCompatibility: boolean): ParseResult {
-  if (!Array.isArray(argv) || argv.length > 15 || !argv.every(value => typeof value === 'string' && value.length <= 256 && !/[\u0000-\u0020\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u.test(value))) {
+  if (
+    !Array.isArray(argv) ||
+    argv.length > 15 ||
+    !argv.every(value => typeof value === 'string' && value.length <= 256 && !/[\u0000-\u0020\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u.test(value))
+  ) {
     return { ok: false, response: result('invalid', undefined, false, schemaVersion) };
   }
   const command = argv[0];
@@ -87,9 +95,14 @@ function parseArguments(argv: readonly string[], schemaVersion: CliSchemaVersion
   if ((command === 'inspect' || command === 'compat-inspect' || command === 'history' || command === 'compat-history') && integer('page') === 0) {
     return { ok: false, response: result('invalid', undefined, false, schemaVersion) };
   }
-  if (command === 'decide' && (integer('task-version') === 0 || integer('request-version') === 0 ||
-    !/^sha256:[0-9a-f]{64}$/.test(parsed.get('presentation-digest') ?? '') ||
-    !['approve', 'reject'].includes(parsed.get('decision') ?? '') || !id(parsed.get('response-key') ?? ''))) {
+  if (
+    command === 'decide' &&
+    (integer('task-version') === 0 ||
+      integer('request-version') === 0 ||
+      !/^sha256:[0-9a-f]{64}$/.test(parsed.get('presentation-digest') ?? '') ||
+      !['approve', 'reject'].includes(parsed.get('decision') ?? '') ||
+      !id(parsed.get('response-key') ?? ''))
+  ) {
     return { ok: false, response: result('invalid', undefined, false, schemaVersion) };
   }
   if (command === 'control' && (integer('task-version') === 0 || !['resume', 'revise', 'end'].includes(parsed.get('direction') ?? '') || !id(parsed.get('response-key') ?? ''))) {
@@ -102,8 +115,10 @@ function approvalCliServiceV02(service: ApprovalService | ApprovalCliServiceV02 
   if (!service || typeof service !== 'object') return false;
   try {
     const candidate = service as unknown as Record<string, unknown>;
-    return candidate['cliSchemaVersion'] === UC05_APPROVAL_SCHEMA_VERSION_V02 &&
-      ['listV02', 'historyV02', 'showV02', 'inspectV02', 'decideV02', 'controlV02'].every(key => typeof candidate[key] === 'function');
+    return (
+      candidate['cliSchemaVersion'] === UC05_APPROVAL_SCHEMA_VERSION_V02 &&
+      ['listV02', 'historyV02', 'showV02', 'inspectV02', 'decideV02', 'controlV02'].every(key => typeof candidate[key] === 'function')
+    );
   } catch {
     return false;
   }
@@ -122,7 +137,11 @@ function validVersionedCliReadV02(value: unknown, profile: unknown, requirePrese
       if (malformed) return;
       if (typeof current === 'string') {
         if (field === 'content') {
-          try { visit(JSON.parse(current)); } catch { /* A non-JSON detail page remains opaque text. */ }
+          try {
+            visit(JSON.parse(current));
+          } catch {
+            /* A non-JSON detail page remains opaque text. */
+          }
         }
         return;
       }
@@ -154,19 +173,21 @@ function validVersionedCliReadV02(value: unknown, profile: unknown, requirePrese
 function validVersionedCollectionV02(value: unknown, profile: unknown, collection: 'items' | 'records'): boolean {
   if (!validVersionedCliReadV02(value, profile, false)) return false;
   const entries = (value as Record<string, unknown>)[collection];
-  return Array.isArray(entries) && entries.every(entry => {
-    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return false;
-    const record = entry as Record<string, unknown>;
-    return record['schemaVersion'] === UC05_APPROVAL_SCHEMA_VERSION_V02 && validVersionedCliReadV02(record, profile, false);
-  });
+  return (
+    Array.isArray(entries) &&
+    entries.every(entry => {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return false;
+      const record = entry as Record<string, unknown>;
+      return record['schemaVersion'] === UC05_APPROVAL_SCHEMA_VERSION_V02 && validVersionedCliReadV02(record, profile, false);
+    })
+  );
 }
 
 function versionedMutationResultV02(value: unknown): { readonly outcome: SafeOperationOutcome; readonly safeReasonCode?: string } | undefined {
   if (!isBoundedSafeDataV02(value) || !value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   try {
     const record = value as Record<string, unknown>;
-    if (record['schemaVersion'] !== UC05_APPROVAL_SCHEMA_VERSION_V02 ||
-      !SAFE_OUTCOMES.includes(record['outcome'] as SafeOperationOutcome)) return undefined;
+    if (record['schemaVersion'] !== UC05_APPROVAL_SCHEMA_VERSION_V02 || !SAFE_OUTCOMES.includes(record['outcome'] as SafeOperationOutcome)) return undefined;
     const serialized = JSON.stringify(value);
     if (Buffer.byteLength(serialized) > 65536 || containsProtectedContent(serialized)) return undefined;
     return { outcome: record['outcome'] as SafeOperationOutcome, ...(typeof record['safeReasonCode'] === 'string' ? { safeReasonCode: record['safeReasonCode'] } : {}) };
@@ -193,7 +214,15 @@ export async function runApprovalCli(argv: readonly string[], service?: Approval
       const response = await service.control({ taskId, taskVersion: integer('task-version'), direction: args.get('direction'), responseKey: args.get('response-key') });
       return result(response.outcome, response, response.safeReasonCode === 'direction-recorded');
     }
-    const response = await service.decide({ taskId, decisionId, taskVersion: integer('task-version'), requestVersion: integer('request-version'), presentationDigest: args.get('presentation-digest'), decision: args.get('decision'), responseKey: args.get('response-key') });
+    const response = await service.decide({
+      taskId,
+      decisionId,
+      taskVersion: integer('task-version'),
+      requestVersion: integer('request-version'),
+      presentationDigest: args.get('presentation-digest'),
+      decision: args.get('decision'),
+      responseKey: args.get('response-key'),
+    });
     return result(response.outcome, response, response.safeReasonCode === 'decision-recorded');
   } catch (error) {
     return result(error instanceof ApprovalServiceError ? error.outcome : 'unavailable');
@@ -210,47 +239,48 @@ export async function runApprovalCliV02(argv: readonly string[], service?: Appro
     if (!approvalCliServiceV02(service)) return result('unavailable', undefined, false, schemaVersion);
     const profile = service.presentationProfileV02;
     if (command === 'list' || command === 'history') {
-      const value = command === 'list'
-        ? await service.listV02(taskId)
-        : await service.historyV02(taskId, integer('page'));
-      return validVersionedCollectionV02(value, profile, command === 'list' ? 'items' : 'records')
-        ? result('ok', value, false, schemaVersion)
-        : result('unavailable', undefined, false, schemaVersion);
+      const value = command === 'list' ? await service.listV02(taskId) : await service.historyV02(taskId, integer('page'));
+      return validVersionedCollectionV02(value, profile, command === 'list' ? 'items' : 'records') ? result('ok', value, false, schemaVersion) : result('unavailable', undefined, false, schemaVersion);
     }
     if (command === 'show' || command === 'inspect') {
-      const value = command === 'show'
-        ? await service.showV02(taskId, decisionId)
-        : await service.inspectV02(taskId, decisionId, integer('page'));
-      return validVersionedCliReadV02(value, profile, true)
-        ? result('ok', value, false, schemaVersion)
-        : result('unavailable', undefined, false, schemaVersion);
+      const value = command === 'show' ? await service.showV02(taskId, decisionId) : await service.inspectV02(taskId, decisionId, integer('page'));
+      return validVersionedCliReadV02(value, profile, true) ? result('ok', value, false, schemaVersion) : result('unavailable', undefined, false, schemaVersion);
     }
     if (command === 'decide') {
       const view = await service.showV02(taskId, decisionId);
       const checked = validateSafePresentationV02(view, profile);
-      if (!checked.ok || !validVersionedCliReadV02(view, profile, true) || checked.value.decisionId !== decisionId ||
-        checked.value.requestVersion !== integer('request-version') || checked.value.presentationDigest !== args.get('presentation-digest')) {
+      if (
+        !checked.ok ||
+        !validVersionedCliReadV02(view, profile, true) ||
+        checked.value.decisionId !== decisionId ||
+        checked.value.requestVersion !== integer('request-version') ||
+        checked.value.presentationDigest !== args.get('presentation-digest')
+      ) {
         return result('unavailable', undefined, false, schemaVersion);
       }
       const response = await service.decideV02({
-        taskId, decisionId, taskVersion: integer('task-version'), requestVersion: integer('request-version'),
-        presentationDigest: args.get('presentation-digest'), decision: args.get('decision'), responseKey: args.get('response-key'),
+        taskId,
+        decisionId,
+        taskVersion: integer('task-version'),
+        requestVersion: integer('request-version'),
+        presentationDigest: args.get('presentation-digest'),
+        decision: args.get('decision'),
+        responseKey: args.get('response-key'),
       });
       const outcome = versionedMutationResultV02(response);
-      return outcome
-        ? result(outcome.outcome, response, outcome.safeReasonCode === 'decision-recorded', schemaVersion)
-        : result('unavailable', undefined, false, schemaVersion);
+      return outcome ? result(outcome.outcome, response, outcome.safeReasonCode === 'decision-recorded', schemaVersion) : result('unavailable', undefined, false, schemaVersion);
     }
     if (command === 'control') {
       const current = await service.listV02(taskId);
       if (!validVersionedCollectionV02(current, profile, 'items')) return result('unavailable', undefined, false, schemaVersion);
       const response = await service.controlV02({
-        taskId, taskVersion: integer('task-version'), direction: args.get('direction'), responseKey: args.get('response-key'),
+        taskId,
+        taskVersion: integer('task-version'),
+        direction: args.get('direction'),
+        responseKey: args.get('response-key'),
       });
       const outcome = versionedMutationResultV02(response);
-      return outcome
-        ? result(outcome.outcome, response, outcome.safeReasonCode === 'direction-recorded', schemaVersion)
-        : result('unavailable', undefined, false, schemaVersion);
+      return outcome ? result(outcome.outcome, response, outcome.safeReasonCode === 'direction-recorded', schemaVersion) : result('unavailable', undefined, false, schemaVersion);
     }
     return result('invalid', undefined, false, schemaVersion);
   } catch (error) {

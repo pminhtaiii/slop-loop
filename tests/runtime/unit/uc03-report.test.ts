@@ -46,19 +46,12 @@ import {
 } from '../../../src/uc03/report.ts';
 import { reviewSnapshot, verificationSnapshot } from '../../../src/uc03/report/sanitize.ts';
 import type { TrustedReviewRecord, CompletionPredicateInput } from '../../../src/uc03/verification.ts';
-import {
-  createFixtureBugTask,
-  createFixtureTaskState,
-} from '../support/uc03/port-fixtures.ts';
+import { createFixtureBugTask, createFixtureTaskState } from '../support/uc03/port-fixtures.ts';
 
 function createValidReportingFixture(): CompletionPredicateInput {
-  const repoDigest =
-    'sha256:111122223333444455556666777788889999aaaabbbbccccddddeeeeffff0000';
-  const diffDigest =
-    'sha256:aaaabbbbccccddddeeeeffff0000111122223333444455556666777788889999';
-  const protectedDigest = computeCanonicalSha256(
-    'protected:tests/test_calculator.py'
-  );
+  const repoDigest = 'sha256:111122223333444455556666777788889999aaaabbbbccccddddeeeeffff0000';
+  const diffDigest = 'sha256:aaaabbbbccccddddeeeeffff0000111122223333444455556666777788889999';
+  const protectedDigest = computeCanonicalSha256('protected:tests/test_calculator.py');
 
   const checkReproduction: CheckDefinition = {
     checkId: 'check-pytest-reproduction',
@@ -99,12 +92,10 @@ function createValidReportingFixture(): CompletionPredicateInput {
     testProtectionDigest: protectedDigest,
   };
 
-  const planStrategy =
-    'Add guard check in Calculator.divide to raise CalculationError on zero denominator';
+  const planStrategy = 'Add guard check in Calculator.divide to raise CalculationError on zero denominator';
   const plan: FixPlan = {
     planVersion: 1,
-    diagnosis:
-      'Calculator.divide raises unhandled ZeroDivisionError when denominator is zero',
+    diagnosis: 'Calculator.divide raises unhandled ZeroDivisionError when denominator is zero',
     suspectedCauseLocations: ['src/calculator.py:12'],
     evidenceRefs: [baseline.evidenceId],
     strategy: planStrategy,
@@ -174,7 +165,7 @@ function createValidReportingFixture(): CompletionPredicateInput {
     taskId: task.taskId,
     repositoryId: task.repositoryId,
     repositoryRevisionDigest: repoDigest,
-    requiredCheckIds: task.requiredChecks.map((c) => c.checkId),
+    requiredCheckIds: task.requiredChecks.map(c => c.checkId),
     taskContext: task,
     node: 'Review',
     planVersion: 1,
@@ -260,12 +251,7 @@ function createMarkedError(marker: string, message = marker): Error {
   return error;
 }
 
-function assertSanitizedReportFailure(
-  action: () => unknown,
-  message: string,
-  marker: string,
-  suppliedError?: Error,
-): Error {
+function assertSanitizedReportFailure(action: () => unknown, message: string, marker: string, suppliedError?: Error): Error {
   let escaped: unknown;
   try {
     action();
@@ -277,10 +263,14 @@ function assertSanitizedReportFailure(
   assert.equal(escaped.message, message);
   assert.equal(Object.hasOwn(escaped, 'cause'), false);
   assert.deepEqual(Object.getOwnPropertyNames(escaped).sort(), ['message', 'stack']);
-  const fields = [escaped.message, escaped.stack ?? '', ...Reflect.ownKeys(escaped).map((key) => {
-    const value = (escaped as unknown as Record<PropertyKey, unknown>)[key];
-    return `${String(key)}:${String(value)}`;
-  })].join('\n');
+  const fields = [
+    escaped.message,
+    escaped.stack ?? '',
+    ...Reflect.ownKeys(escaped).map(key => {
+      const value = (escaped as unknown as Record<PropertyKey, unknown>)[key];
+      return `${String(key)}:${String(value)}`;
+    }),
+  ].join('\n');
   assert.ok(!fields.includes(marker), 'normalized error must not expose caller data');
   if (suppliedError) assert.notEqual(escaped, suppliedError);
   return escaped;
@@ -414,14 +404,18 @@ test('milestone: omits built-in and configured secrets used as detail keys', () 
 
 test('milestone: rejects an unknown outcome value before returning JSON data', () => {
   const marker = 'MARKER_SECRET_OUTCOME';
-  assert.throws(() => createMilestone({
-    taskId: 'task-102',
-    runId: 'run-102',
-    node: 'Report',
-    kind: 'task_started',
-    summary: 'Started',
-    outcome: marker as unknown as 'info',
-  }), (error: unknown) => error instanceof Error && error.message === 'Invalid report milestone' && !error.message.includes(marker));
+  assert.throws(
+    () =>
+      createMilestone({
+        taskId: 'task-102',
+        runId: 'run-102',
+        node: 'Report',
+        kind: 'task_started',
+        summary: 'Started',
+        outcome: marker as unknown as 'info',
+      }),
+    (error: unknown) => error instanceof Error && error.message === 'Invalid report milestone' && !error.message.includes(marker),
+  );
 });
 
 test('milestoneToActivityEvent: rejects a forged unknown outcome', () => {
@@ -434,8 +428,10 @@ test('milestoneToActivityEvent: rejects a forged unknown outcome', () => {
     summary: 'Started',
   });
 
-  assert.throws(() => milestoneToActivityEvent({ ...milestone, outcome: marker } as unknown as Milestone),
-    (error: unknown) => error instanceof Error && /Invalid report milestone/.test(error.message) && !error.message.includes(marker));
+  assert.throws(
+    () => milestoneToActivityEvent({ ...milestone, outcome: marker } as unknown as Milestone),
+    (error: unknown) => error instanceof Error && /Invalid report milestone/.test(error.message) && !error.message.includes(marker),
+  );
 });
 
 test('formatMilestonesSummary: rejects a forged unknown outcome', () => {
@@ -447,8 +443,7 @@ test('formatMilestonesSummary: rejects a forged unknown outcome', () => {
     summary: 'Started',
   });
 
-  assert.throws(() => formatMilestonesSummary([{ ...milestone, outcome: 'MARKER_SECRET_OUTCOME' } as unknown as Milestone]),
-    /Invalid report milestone/);
+  assert.throws(() => formatMilestonesSummary([{ ...milestone, outcome: 'MARKER_SECRET_OUTCOME' } as unknown as Milestone]), /Invalid report milestone/);
 });
 
 test('milestone: recursively sanitizes array objects and omits protected keys', () => {
@@ -459,12 +454,14 @@ test('milestone: recursively sanitizes array objects and omits protected keys', 
     kind: 'task_started',
     summary: 'Started',
     details: {
-      items: [{
-        prompt: 'PRIVATE PROMPT',
-        password: 'MARKER_SECRET_nested',
-        keep: 'visible',
-        nested: [{ token: 'MARKER_SECRET_token', keep: 'also visible' }],
-      }],
+      items: [
+        {
+          prompt: 'PRIVATE PROMPT',
+          password: 'MARKER_SECRET_nested',
+          keep: 'visible',
+          nested: [{ token: 'MARKER_SECRET_token', keep: 'also visible' }],
+        },
+      ],
     },
   });
 
@@ -478,15 +475,16 @@ test('milestone: rejects cyclic details with a safe error', () => {
   details['self'] = details;
 
   assert.throws(
-    () => createMilestone({
-      taskId: 'task-cyclic-detail',
-      runId: 'run-cyclic-detail',
-      node: 'Report',
-      kind: 'task_started',
-      summary: 'Started',
-      details,
-    }),
-    /Invalid report milestone/
+    () =>
+      createMilestone({
+        taskId: 'task-cyclic-detail',
+        runId: 'run-cyclic-detail',
+        node: 'Report',
+        kind: 'task_started',
+        summary: 'Started',
+        details,
+      }),
+    /Invalid report milestone/,
   );
 });
 
@@ -539,14 +537,18 @@ test('milestone: honors one-byte summary limits', () => {
 });
 
 test('milestone: rejects non-finite summary limits', () => {
-  assert.throws(() => createMilestone({
-    taskId: 'task-infinite-summary',
-    runId: 'run-infinite-summary',
-    node: 'Report',
-    kind: 'task_started',
-    summary: 'summary',
-    maxSummaryBytes: Number.POSITIVE_INFINITY,
-  }), /Invalid report milestone/);
+  assert.throws(
+    () =>
+      createMilestone({
+        taskId: 'task-infinite-summary',
+        runId: 'run-infinite-summary',
+        node: 'Report',
+        kind: 'task_started',
+        summary: 'summary',
+        maxSummaryBytes: Number.POSITIVE_INFINITY,
+      }),
+    /Invalid report milestone/,
+  );
 });
 
 test('milestoneToActivityEvent: converts Milestone to contract ActivityEvent', () => {
@@ -654,7 +656,7 @@ test('report: check failure results in IMPLEMENTED_UNVERIFIED and no delivery re
   assert.equal(report.outcome, 'IMPLEMENTED_UNVERIFIED');
   assert.equal(report.delivery, undefined);
   assert.ok(report.failureReasons.length > 0);
-  assert.ok(report.failureReasons.some((r) => r.includes('failed')));
+  assert.ok(report.failureReasons.some(r => r.includes('failed')));
   assert.notEqual(report.safeNextAction, 'ready-for-human-review');
 });
 
@@ -687,7 +689,7 @@ test('report: review findings result in IMPLEMENTED_UNVERIFIED and no delivery r
   assert.equal(report.isComplete, false);
   assert.equal(report.outcome, 'IMPLEMENTED_UNVERIFIED');
   assert.equal(report.delivery, undefined);
-  assert.ok(report.failureReasons.some((r) => r.includes('CalculationError is not defined')));
+  assert.ok(report.failureReasons.some(r => r.includes('CalculationError is not defined')));
 });
 
 test('report: digest drift results in IMPLEMENTED_UNVERIFIED and no delivery record', () => {
@@ -702,7 +704,7 @@ test('report: digest drift results in IMPLEMENTED_UNVERIFIED and no delivery rec
   assert.equal(report.isComplete, false);
   assert.equal(report.outcome, 'IMPLEMENTED_UNVERIFIED');
   assert.equal(report.delivery, undefined);
-  assert.ok(report.failureReasons.some((r) => r.includes('drift')));
+  assert.ok(report.failureReasons.some(r => r.includes('drift')));
 });
 
 test('report: protected test modification results in IMPLEMENTED_UNVERIFIED and test protection violation', () => {
@@ -717,7 +719,7 @@ test('report: protected test modification results in IMPLEMENTED_UNVERIFIED and 
   assert.equal(report.isComplete, false);
   assert.equal(report.outcome, 'IMPLEMENTED_UNVERIFIED');
   assert.equal(report.delivery, undefined);
-  assert.ok(report.failureReasons.some((r) => r.includes('Protected tests')));
+  assert.ok(report.failureReasons.some(r => r.includes('Protected tests')));
 });
 
 test('report: incomplete without modifications yields INCOMPLETE outcome', () => {
@@ -791,8 +793,7 @@ test('report: rejects unknown override outcomes before returning JSON data', () 
   }
 
   assert.ok(
-    error instanceof Error && error.message === 'Invalid report' && !error.message.includes(marker) ||
-      !projected.includes(marker),
+    (error instanceof Error && error.message === 'Invalid report' && !error.message.includes(marker)) || !projected.includes(marker),
     'The JSON and Markdown projections must reject or omit an invalid outcome safely',
   );
 });
@@ -897,14 +898,22 @@ test('report: rejects oversized limitations and milestone collections', () => {
     summary: 'Started',
   });
 
-  assert.throws(() => buildFinalReport({
-    ...fixture,
-    limitations: Array.from({ length: 65 }, () => 'bounded limitation'),
-  }), /Invalid report/);
-  assert.throws(() => buildFinalReport({
-    ...fixture,
-    milestones: Array.from({ length: 65 }, () => milestone),
-  }), /Invalid report/);
+  assert.throws(
+    () =>
+      buildFinalReport({
+        ...fixture,
+        limitations: Array.from({ length: 65 }, () => 'bounded limitation'),
+      }),
+    /Invalid report/,
+  );
+  assert.throws(
+    () =>
+      buildFinalReport({
+        ...fixture,
+        milestones: Array.from({ length: 65 }, () => milestone),
+      }),
+    /Invalid report/,
+  );
 });
 
 test('report: rejects serialized output above the aggregate byte bound', () => {
@@ -922,10 +931,14 @@ test('report: rejects serialized output above the aggregate byte bound', () => {
     details: {},
   };
 
-  assert.throws(() => buildFinalReport({
-    ...fixture,
-    milestones: Array.from({ length: 64 }, () => milestone),
-  }), /Invalid report/);
+  assert.throws(
+    () =>
+      buildFinalReport({
+        ...fixture,
+        milestones: Array.from({ length: 64 }, () => milestone),
+      }),
+    /Invalid report/,
+  );
 });
 
 test('report: sanitizes secrets embedded in patch content', () => {
@@ -971,11 +984,15 @@ test('report: honors one-byte patch limits', () => {
 });
 
 test('report: rejects non-finite patch limits', () => {
-  assert.throws(() => buildFinalReport({
-    ...createValidReportingFixture(),
-    patchContent: 'patch',
-    maxDiffBytes: Number.POSITIVE_INFINITY,
-  }), /Invalid report/);
+  assert.throws(
+    () =>
+      buildFinalReport({
+        ...createValidReportingFixture(),
+        patchContent: 'patch',
+        maxDiffBytes: Number.POSITIVE_INFINITY,
+      }),
+    /Invalid report/,
+  );
 });
 
 test('report: flags changed protected paths as failure', () => {
@@ -989,7 +1006,7 @@ test('report: flags changed protected paths as failure', () => {
   assert.equal(report.isComplete, false);
   assert.equal(report.outcome, 'IMPLEMENTED_UNVERIFIED');
   assert.equal(report.delivery, undefined);
-  assert.ok(report.failureReasons.some((r) => r.includes('protected path')));
+  assert.ok(report.failureReasons.some(r => r.includes('protected path')));
 });
 
 test('report: treats malformed verification results as incomplete evidence', () => {
@@ -1002,7 +1019,7 @@ test('report: treats malformed verification results as incomplete evidence', () 
   assert.equal(report.isComplete, false);
   assert.equal(report.outcome, 'IMPLEMENTED_UNVERIFIED');
   assert.equal(report.delivery, undefined);
-  assert.ok(report.failureReasons.some((reason) => reason.includes('Malformed verification evidence')));
+  assert.ok(report.failureReasons.some(reason => reason.includes('Malformed verification evidence')));
 });
 
 test('report: malformed completion boundary inputs stay incomplete without exposing payloads', () => {
@@ -1042,7 +1059,7 @@ test('report: combines persisted changes when the supplied inventory is empty', 
 
   assert.equal(report.outcome, 'IMPLEMENTED_UNVERIFIED');
   assert.deepEqual(report.diff.changedFiles, ['src/fix.py']);
-  assert.ok(report.failureReasons.some((reason) => reason.includes('inventory')));
+  assert.ok(report.failureReasons.some(reason => reason.includes('inventory')));
 });
 
 test('report: rejects inconsistent changed-file inventories from completion', () => {
@@ -1056,7 +1073,7 @@ test('report: rejects inconsistent changed-file inventories from completion', ()
   assert.equal(report.isComplete, false);
   assert.equal(report.outcome, 'IMPLEMENTED_UNVERIFIED');
   assert.deepEqual([...report.diff.changedFiles].sort(), ['src/input.py', 'src/state.py']);
-  assert.ok(report.failureReasons.some((reason) => reason.includes('inventory')));
+  assert.ok(report.failureReasons.some(reason => reason.includes('inventory')));
 });
 
 /* ==================================================================
@@ -1072,7 +1089,7 @@ test('report: aggregates and retains budget accounting per-run and task-level', 
   assert.equal(report.usage.replanCount, 1);
   assert.equal(report.usage.perLedger.length, 5);
 
-  const taskTokens = report.usage.perLedger.find((l) => l.scope === 'task' && l.kind === 'tokens');
+  const taskTokens = report.usage.perLedger.find(l => l.scope === 'task' && l.kind === 'tokens');
   assert.ok(taskTokens !== undefined);
   assert.equal(taskTokens?.consumed, 12500);
   assert.equal(taskTokens?.limit, 100000);
@@ -1083,12 +1100,13 @@ test('report: rejects malformed usage projections and configured secret metadata
   const ledgers = fixture.state.budgetLedgers ?? [];
   const withLedger = (index: number, update: Partial<BudgetLedger>): TaskState => ({
     ...fixture.state,
-    budgetLedgers: ledgers.map((ledger, current) => current === index ? { ...ledger, ...update } : ledger),
+    budgetLedgers: ledgers.map((ledger, current) => (current === index ? { ...ledger, ...update } : ledger)),
   });
-  const withReplanCount = (replanCount: unknown): TaskState => ({
-    ...fixture.state,
-    replanCount,
-  } as unknown as TaskState);
+  const withReplanCount = (replanCount: unknown): TaskState =>
+    ({
+      ...fixture.state,
+      replanCount,
+    }) as unknown as TaskState;
   const cases: { readonly name: string; readonly input: BuildFinalReportInput; readonly secret?: string }[] = [
     { name: 'string replan count', input: { ...fixture, state: withReplanCount('MARKER_SECRET_REPLAN') }, secret: 'MARKER_SECRET_REPLAN' },
     { name: 'fractional replan count', input: { ...fixture, state: withReplanCount(1.5) } },
@@ -1180,8 +1198,10 @@ test('formatReportMarkdown: requires completion to match its delivery and eviden
     safeNextAction: 'ready-for-human-review',
   } as FinalReport;
   const rejectsInvalidReport = (candidate: FinalReport): void => {
-    assert.throws(() => formatReportMarkdown(candidate),
-      (error: unknown) => error instanceof Error && error.message === 'Invalid report');
+    assert.throws(
+      () => formatReportMarkdown(candidate),
+      (error: unknown) => error instanceof Error && error.message === 'Invalid report',
+    );
   };
   rejectsInvalidReport(forgedIncomplete);
 
@@ -1213,11 +1233,7 @@ test('formatReportMarkdown: refuses caller-forged completion with matching deliv
   const fabricatedBaselineRef = 'baseline-invented';
   const fabricatedVerificationRefs = ['verification-invented'];
   const fabricatedReviewRef = 'review-invented';
-  const fabricatedEvidenceRefs = [
-    fabricatedBaselineRef,
-    ...fabricatedVerificationRefs,
-    fabricatedReviewRef,
-  ];
+  const fabricatedEvidenceRefs = [fabricatedBaselineRef, ...fabricatedVerificationRefs, fabricatedReviewRef];
   const fabricatedCompletion = {
     ...incomplete,
     outcome: 'COMPLETED',
@@ -1247,8 +1263,10 @@ test('formatReportMarkdown: refuses caller-forged completion with matching deliv
       safeNextAction: 'ready-for-human-review',
     },
   } as unknown as FinalReport;
-  assert.throws(() => formatReportMarkdown(fabricatedCompletion),
-    (error: unknown) => error instanceof Error && error.message === 'Invalid report');
+  assert.throws(
+    () => formatReportMarkdown(fabricatedCompletion),
+    (error: unknown) => error instanceof Error && error.message === 'Invalid report',
+  );
 });
 
 test('formatReportMarkdown: refuses readiness claims on incomplete builder reports', () => {
@@ -1266,8 +1284,10 @@ test('formatReportMarkdown: refuses readiness claims on incomplete builder repor
     ...incomplete,
     safeNextAction: 'ready-for-human-review',
   } as FinalReport;
-  assert.throws(() => formatReportMarkdown(forgedReadiness),
-    (error: unknown) => error instanceof Error && error.message === 'Invalid report');
+  assert.throws(
+    () => formatReportMarkdown(forgedReadiness),
+    (error: unknown) => error instanceof Error && error.message === 'Invalid report',
+  );
 });
 
 test('formatReportMarkdown: accepts only the original immutable builder-issued report', () => {
@@ -1281,14 +1301,22 @@ test('formatReportMarkdown: accepts only the original immutable builder-issued r
   } as FinalReport;
   const prototypeCopy = Object.create(complete) as FinalReport;
   const serialized: unknown = JSON.parse(JSON.stringify(complete));
-  assert.throws(() => formatReportMarkdown(spreadCopy),
-    (error: unknown) => error instanceof Error && error.message === 'Invalid report');
-  assert.throws(() => formatReportMarkdown(symbolCopy),
-    (error: unknown) => error instanceof Error && error.message === 'Invalid report');
-  assert.throws(() => formatReportMarkdown(prototypeCopy),
-    (error: unknown) => error instanceof Error && error.message === 'Invalid report');
-  assert.throws(() => formatReportMarkdown(serialized as FinalReport),
-    (error: unknown) => error instanceof Error && error.message === 'Invalid report');
+  assert.throws(
+    () => formatReportMarkdown(spreadCopy),
+    (error: unknown) => error instanceof Error && error.message === 'Invalid report',
+  );
+  assert.throws(
+    () => formatReportMarkdown(symbolCopy),
+    (error: unknown) => error instanceof Error && error.message === 'Invalid report',
+  );
+  assert.throws(
+    () => formatReportMarkdown(prototypeCopy),
+    (error: unknown) => error instanceof Error && error.message === 'Invalid report',
+  );
+  assert.throws(
+    () => formatReportMarkdown(serialized as FinalReport),
+    (error: unknown) => error instanceof Error && error.message === 'Invalid report',
+  );
 });
 
 test('report: deep-freezes its snapshot without freezing caller-owned milestone details', () => {
@@ -1328,8 +1356,10 @@ test('formatReportMarkdown: rejects a forged unknown outcome without echoing it'
   const report = buildFinalReport(createValidReportingFixture());
   const marker = 'MARKER_SECRET_OVERRIDE';
 
-  assert.throws(() => formatReportMarkdown({ ...report, outcome: marker } as unknown as FinalReport),
-    (error: unknown) => error instanceof Error && error.message === 'Invalid report' && !error.message.includes(marker));
+  assert.throws(
+    () => formatReportMarkdown({ ...report, outcome: marker } as unknown as FinalReport),
+    (error: unknown) => error instanceof Error && error.message === 'Invalid report' && !error.message.includes(marker),
+  );
 });
 
 test('formatReportMarkdown: rejects malformed usage without echoing it', () => {
@@ -1337,8 +1367,10 @@ test('formatReportMarkdown: rejects malformed usage without echoing it', () => {
   const marker = 'MARKER_SECRET_REPLAN';
   const forged = { ...report, usage: { ...report.usage, replanCount: marker } } as unknown as FinalReport;
 
-  assert.throws(() => formatReportMarkdown(forged),
-    (error: unknown) => error instanceof Error && /Invalid report/.test(error.message) && !error.message.includes(marker));
+  assert.throws(
+    () => formatReportMarkdown(forged),
+    (error: unknown) => error instanceof Error && /Invalid report/.test(error.message) && !error.message.includes(marker),
+  );
 });
 
 test('formatMilestonesSummary: formats chronological milestone list cleanly', () => {
@@ -1383,11 +1415,14 @@ test('report entry points normalize exceptions from caller-owned getters and pro
 
   const proxyMarker = 'MARKER_SECRET_PROXY';
   const proxyError = createMarkedError(proxyMarker);
-  const proxyInput = new Proxy({}, {
-    get() {
-      throw proxyError;
+  const proxyInput = new Proxy(
+    {},
+    {
+      get() {
+        throw proxyError;
+      },
     },
-  }) as BuildFinalReportInput;
+  ) as BuildFinalReportInput;
   assertSanitizedReportFailure(() => buildFinalReport(proxyInput), 'Invalid report', proxyMarker, proxyError);
 
   const evidenceMarker = 'MARKER_SECRET_EVIDENCE';
@@ -1398,12 +1433,7 @@ test('report entry points normalize exceptions from caller-owned getters and pro
       return Reflect.get(target, property, receiver);
     },
   });
-  assertSanitizedReportFailure(
-    () => buildFinalReport({ ...fixture, baseline }),
-    'Invalid report',
-    evidenceMarker,
-    evidenceError,
-  );
+  assertSanitizedReportFailure(() => buildFinalReport({ ...fixture, baseline }), 'Invalid report', evidenceMarker, evidenceError);
 });
 
 test('report builders read caller-owned top-level getters once', () => {
@@ -1458,14 +1488,20 @@ test('createMilestone normalizes exceptions from nested caller-owned details', (
     },
   });
 
-  assertSanitizedReportFailure(() => createMilestone({
-    taskId: 'task-report-error',
-    runId: 'run-report-error',
-    node: 'Report',
-    kind: 'task_started',
-    summary: 'Started',
-    details,
-  }), 'Invalid report milestone', marker, suppliedError);
+  assertSanitizedReportFailure(
+    () =>
+      createMilestone({
+        taskId: 'task-report-error',
+        runId: 'run-report-error',
+        node: 'Report',
+        kind: 'task_started',
+        summary: 'Started',
+        details,
+      }),
+    'Invalid report milestone',
+    marker,
+    suppliedError,
+  );
 });
 
 test('milestoneToActivityEvent and formatMilestonesSummary normalize caller proxy exceptions', () => {
@@ -1485,12 +1521,7 @@ test('milestoneToActivityEvent and formatMilestonesSummary normalize caller prox
       return Reflect.get(target, property, receiver);
     },
   });
-  assertSanitizedReportFailure(
-    () => milestoneToActivityEvent(unsafeMilestone),
-    'Invalid report milestone',
-    eventMarker,
-    eventError,
-  );
+  assertSanitizedReportFailure(() => milestoneToActivityEvent(unsafeMilestone), 'Invalid report milestone', eventMarker, eventError);
 
   const summaryMarker = 'MARKER_SECRET_SUMMARY';
   const summaryError = createMarkedError(summaryMarker);
@@ -1500,24 +1531,22 @@ test('milestoneToActivityEvent and formatMilestonesSummary normalize caller prox
       return Reflect.get(target, property, receiver);
     },
   });
-  assertSanitizedReportFailure(
-    () => formatMilestonesSummary(unsafeMilestones),
-    'Invalid report milestone',
-    summaryMarker,
-    summaryError,
-  );
+  assertSanitizedReportFailure(() => formatMilestonesSummary(unsafeMilestones), 'Invalid report milestone', summaryMarker, summaryError);
 });
 
 test('formatReportMarkdown rejects unissued proxies before reading caller fields', () => {
   let getterReads = 0;
   const marker = 'MARKER_SECRET_UNISSUED_REPORT';
   const suppliedError = createMarkedError(marker);
-  const unissued = new Proxy({}, {
-    get() {
-      getterReads++;
-      throw suppliedError;
+  const unissued = new Proxy(
+    {},
+    {
+      get() {
+        getterReads++;
+        throw suppliedError;
+      },
     },
-  }) as FinalReport;
+  ) as FinalReport;
 
   assertSanitizedReportFailure(() => formatReportMarkdown(unissued), 'Invalid report', marker);
   assert.equal(getterReads, 0);
@@ -1550,14 +1579,16 @@ test('verificationSnapshot returns detached results and reference arrays from it
 
 test('reviewSnapshot returns detached findings and rejects caller getters and proxies safely', () => {
   const fixture = createValidReportingFixture();
-  const findings = [{
-    file: 'src/calculator.py',
-    line: 3,
-    side: 'new',
-    severity: 'warning',
-    message: 'original finding',
-    evidenceRef: 'review-evidence-001',
-  }];
+  const findings = [
+    {
+      file: 'src/calculator.py',
+      line: 3,
+      side: 'new',
+      severity: 'warning',
+      message: 'original finding',
+      evidenceRef: 'review-evidence-001',
+    },
+  ];
   const callerReview = { ...fixture.reviewResult, status: 'findings', findings } as ReviewResult;
   const snapshot = reviewSnapshot(callerReview);
   assert.equal(snapshot.valid, true);

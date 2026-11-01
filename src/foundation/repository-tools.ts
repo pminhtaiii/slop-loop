@@ -1,12 +1,6 @@
 import type { PortProvenance, RepositoryPort, SourceEvidence } from '../contracts/foundation/uc03.ts';
 import type { ExecutionGuardRepositoryPortV02 } from './execution-guard.ts';
-import type {
-  RepositoryPatchResultV02,
-  RepositoryCommandResultV02,
-  RepositoryPortV02,
-  RepositoryAdmissionContextV02,
-  ReconciliationResultV02,
-} from '../contracts/foundation/uc03/v02/ports.ts';
+import type { RepositoryPatchResultV02, RepositoryCommandResultV02, RepositoryPortV02, RepositoryAdmissionContextV02, ReconciliationResultV02 } from '../contracts/foundation/uc03/v02/ports.ts';
 import type { ApplyPatchAction, CheckDefinition, CheckResult, RunCommandAction } from '../contracts/foundation/uc03/v01/types.ts';
 import { ControlledRepositoryReader, containsProtectedContent } from './repository-read.ts';
 import { RepositoryCommandReceiver } from './repository-receiver.ts';
@@ -71,9 +65,15 @@ export class ControlledRepositoryTools implements RepositoryPort, ExecutionGuard
     this.fencingGeneration = options.fencingGeneration ?? options.commandExecutor?.getFencingGeneration?.() ?? 0;
   }
 
-  getAdapterIdentity(): string { return this.adapterIdentity; }
-  getProcessIncarnation(): string { return this.processIncarnation; }
-  getFencingGeneration(): number { return this.fencingGeneration; }
+  getAdapterIdentity(): string {
+    return this.adapterIdentity;
+  }
+  getProcessIncarnation(): string {
+    return this.processIncarnation;
+  }
+  getFencingGeneration(): number {
+    return this.fencingGeneration;
+  }
 
   setFencingGeneration(generation: number): void {
     if (!Number.isSafeInteger(generation) || generation <= 0) {
@@ -84,9 +84,15 @@ export class ControlledRepositoryTools implements RepositoryPort, ExecutionGuard
     this.patches.setFencingGeneration(generation);
   }
 
-  listDir(dirPath: string): Promise<readonly string[]> { return this.reader.listDir(dirPath); }
-  readFile(filePath: string): Promise<SourceEvidence> { return this.reader.readFile(filePath); }
-  searchCode(query: string): Promise<readonly SourceEvidence[]> { return this.reader.searchCode(query); }
+  listDir(dirPath: string): Promise<readonly string[]> {
+    return this.reader.listDir(dirPath);
+  }
+  readFile(filePath: string): Promise<SourceEvidence> {
+    return this.reader.readFile(filePath);
+  }
+  searchCode(query: string): Promise<readonly SourceEvidence[]> {
+    return this.reader.searchCode(query);
+  }
   applyPatch(patch: ApplyPatchAction, context: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02>;
   applyPatch(patch: ApplyPatchAction): ReturnType<RepositoryPort['applyPatch']>;
   applyPatch(patch: ApplyPatchAction, context?: RepositoryAdmissionContextV02): Promise<{ readonly applied: boolean; readonly newRevisionDigest: string }> {
@@ -97,16 +103,22 @@ export class ControlledRepositoryTools implements RepositoryPort, ExecutionGuard
   runCommand(action: RunCommandAction, context?: RepositoryAdmissionContextV02): Promise<{ readonly exitCode: number; readonly stdout: string; readonly stderr: string }> {
     return this.commands.runCommand(action, context);
   }
-  runTests(check: CheckDefinition, context?: RepositoryAdmissionContextV02): Promise<CheckResult> { return this.commands.runTests(check, context); }
-  recoverPatchOutcome(attemptId: string): Promise<ReconciliationResultV02> { return this.patches.recoverPatchOutcome(attemptId); }
-  recoverCommandOutcome(attemptId: string): Promise<ReconciliationResultV02> { return this.commands.recoverCommandOutcome(attemptId); }
+  runTests(check: CheckDefinition, context?: RepositoryAdmissionContextV02): Promise<CheckResult> {
+    return this.commands.runTests(check, context);
+  }
+  recoverPatchOutcome(attemptId: string): Promise<ReconciliationResultV02> {
+    return this.patches.recoverPatchOutcome(attemptId);
+  }
+  recoverCommandOutcome(attemptId: string): Promise<ReconciliationResultV02> {
+    return this.commands.recoverCommandOutcome(attemptId);
+  }
   recoverAttemptStart(recoveryId: string): Promise<RepositoryAttemptStartRecoveryResultV02> {
     if (this.commands.hasPendingAttemptStart(recoveryId)) return this.commands.recoverAttemptStart(recoveryId);
     if (this.patches.hasPendingAttemptStart(recoveryId)) return this.patches.recoverAttemptStart(recoveryId);
     throw new Error('ATTEMPT_START_RECOVERY_NOT_FOUND: No retained receiver attempt start matches this recovery identity');
   }
   async recoverUnattemptedClaim(claimId: string): Promise<boolean> {
-    return await this.patches.recoverUnattemptedClaim(claimId) || await this.commands.recoverUnattemptedClaim(claimId);
+    return (await this.patches.recoverUnattemptedClaim(claimId)) || (await this.commands.recoverUnattemptedClaim(claimId));
   }
 
   async inspectDiff(baseRevisionDigest: string): Promise<{ readonly diff: string; readonly diffDigest: string; readonly changedFiles: readonly string[] }> {

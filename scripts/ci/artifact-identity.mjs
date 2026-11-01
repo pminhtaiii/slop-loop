@@ -59,13 +59,16 @@ function walk(root, relative) {
   return files;
 }
 
-const digest = (root, path) => createHash('sha256').update(readFileSync(join(root, path))).digest('hex');
+const digest = (root, path) =>
+  createHash('sha256')
+    .update(readFileSync(join(root, path)))
+    .digest('hex');
 
 // Every file this lane ships, in a stable order, keyed by its artifact-relative path.
 export function manifestOf(root, paths = ARTIFACT_PATHS) {
-  const files = paths.flatMap((path) => walk(root, path)).sort();
+  const files = paths.flatMap(path => walk(root, path)).sort();
   if (!files.length) throw new Error(`No artifact files found under ${paths.join(', ')}.`);
-  return files.map((path) => ({ path, sha256: digest(root, path) }));
+  return files.map(path => ({ path, sha256: digest(root, path) }));
 }
 
 export function writeIdentity({ root, env = process.env, paths = ARTIFACT_PATHS }) {
@@ -77,7 +80,7 @@ export function writeIdentity({ root, env = process.env, paths = ARTIFACT_PATHS 
 
 function sameIdentity(recorded, expected) {
   const keys = new Set([...Object.keys(recorded), ...Object.keys(expected)]);
-  return [...keys].every((key) => recorded[key] === expected[key]);
+  return [...keys].every(key => recorded[key] === expected[key]);
 }
 
 export function verifyIdentity({ root, env = process.env, paths = ARTIFACT_PATHS }) {
@@ -95,11 +98,11 @@ export function verifyIdentity({ root, env = process.env, paths = ARTIFACT_PATHS
     throw new Error(`Artifact identity does not match this run: recorded ${JSON.stringify(recorded.identity)}, expected ${JSON.stringify(expected)}.`);
   }
   const actual = manifestOf(root, paths);
-  const recordedByPath = new Map(recorded.files.map((file) => [file.path, file.sha256]));
+  const recordedByPath = new Map(recorded.files.map(file => [file.path, file.sha256]));
   if (recordedByPath.size !== recorded.files.length) throw new Error('Artifact manifest lists a duplicate path.');
-  const missing = [...recordedByPath.keys()].filter((path) => !actual.some((file) => file.path === path));
-  const orphan = actual.filter((file) => !recordedByPath.has(file.path)).map((file) => file.path);
-  const tampered = actual.filter((file) => recordedByPath.has(file.path) && recordedByPath.get(file.path) !== file.sha256).map((file) => file.path);
+  const missing = [...recordedByPath.keys()].filter(path => !actual.some(file => file.path === path));
+  const orphan = actual.filter(file => !recordedByPath.has(file.path)).map(file => file.path);
+  const tampered = actual.filter(file => recordedByPath.has(file.path) && recordedByPath.get(file.path) !== file.sha256).map(file => file.path);
   if (missing.length || orphan.length || tampered.length) {
     throw new Error(`Artifact integrity failed; missing: ${missing.join(', ') || 'none'}; orphan: ${orphan.join(', ') || 'none'}; tampered: ${tampered.join(', ') || 'none'}.`);
   }
@@ -122,9 +125,7 @@ if (process.argv[1] && realpathSync(resolve(process.argv[1])) === realpathSync(f
   try {
     const { command, dir } = parseArtifactArgs(process.argv.slice(2));
     const root = resolve(dir);
-    const { identity, files } = command === 'write'
-      ? writeIdentity({ root })
-      : { identity: verifyIdentity({ root }), files: [] };
+    const { identity, files } = command === 'write' ? writeIdentity({ root }) : { identity: verifyIdentity({ root }), files: [] };
     console.log(`${command === 'write' ? 'Wrote' : 'Verified'} artifact identity for ${files.length || 'recorded'} file(s): ${JSON.stringify(identity)}`);
   } catch (error) {
     console.error(error.message);

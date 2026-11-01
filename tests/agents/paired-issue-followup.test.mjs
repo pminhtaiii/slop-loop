@@ -27,9 +27,7 @@ test('closed issues with failed Project Done update remain pending in follow-up'
 test('fixture required checks derive from the active shared policy', () => {
   // An oracle that recomputes createPolicyState(ACTIVE_POLICY_ID) could not detect a wrong activation,
   // so the expected names are literal and ci-v1 is asserted unequal.
-  const SEVEN = [
-    'static-lint', 'static-types', 'repository-policy', 'pr-metadata', 'build', 'contributor-tooling-tests', 'runtime-tests',
-  ];
+  const SEVEN = ['static-lint', 'static-types', 'repository-policy', 'pr-metadata', 'build', 'contributor-tooling-tests', 'runtime-tests'];
   assert.equal(ACTIVE_POLICY_ID, 'ci-v5', 'Narrowed gating makes the four ci-v5 names current');
   assert.deepEqual([...requiredChecks], [...POLICIES[ACTIVE_POLICY_ID].required], 'the fixture mirrors the current names');
   assert.notDeepEqual([...requiredChecks], SEVEN, 'the build and test lanes no longer gate a merge');
@@ -39,16 +37,19 @@ test('fixture required checks derive from the active shared policy', () => {
 async function savePairRecord(f, key = 'localized-bug') {
   const directory = join(f.root, '.agent-work', 'paired-issues');
   await mkdir(directory, { recursive: true });
-  await writeFile(join(directory, `${key}.json`), JSON.stringify({
-    schemaVersion: 1,
-    key,
-    marker: markerFor(key),
-    targets: { primary: publicRepository, submission: privateRepository },
-    receipts: {
-      primary: { number: f.publicIssue.number, url: f.publicIssue.html_url },
-      submission: { number: f.privateIssue.number, url: f.privateIssue.html_url },
-    },
-  }));
+  await writeFile(
+    join(directory, `${key}.json`),
+    JSON.stringify({
+      schemaVersion: 1,
+      key,
+      marker: markerFor(key),
+      targets: { primary: publicRepository, submission: privateRepository },
+      receipts: {
+        primary: { number: f.publicIssue.number, url: f.publicIssue.html_url },
+        submission: { number: f.privateIssue.number, url: f.privateIssue.html_url },
+      },
+    }),
+  );
 }
 
 test('unassociated local keys report paired issue state and exact preview command without writes', async t => {
@@ -105,12 +106,7 @@ test('explicit evidence invokes only the existing preview and exact public CI ga
   mergePair(f);
   f.checks.pop();
 
-  const result = await runIssueFollowup([
-    '--pr', f.prs.primary.url,
-    '--key', 'localized-bug',
-    '--evidence-file', f.evidenceFile,
-    '--root', f.root,
-  ], { execute: f.execute });
+  const result = await runIssueFollowup(['--pr', f.prs.primary.url, '--key', 'localized-bug', '--evidence-file', f.evidenceFile, '--root', f.root], { execute: f.execute });
 
   assert.equal(result.items[0].status, 'WAITING_CI');
   assert.equal(result.items[0].previewStatus, 'WAITING_CI');
@@ -124,12 +120,7 @@ test('explicit evidence invokes only the existing preview and exact public CI ga
 test('open PRs wait and failed exact-head checks are not eligible for apply', async t => {
   const open = await fixture(t);
   await savePairRecord(open);
-  const waiting = await runIssueFollowup([
-    '--pr', open.prs.primary.url,
-    '--key', 'localized-bug',
-    '--evidence-file', open.evidenceFile,
-    '--root', open.root,
-  ], { execute: open.execute });
+  const waiting = await runIssueFollowup(['--pr', open.prs.primary.url, '--key', 'localized-bug', '--evidence-file', open.evidenceFile, '--root', open.root], { execute: open.execute });
   assert.equal(waiting.items[0].status, 'WAITING_PR');
   assert.equal(waiting.items[0].applyCommand, undefined);
   assert.deepEqual(open.writes, []);
@@ -138,12 +129,7 @@ test('open PRs wait and failed exact-head checks are not eligible for apply', as
   await savePairRecord(failed);
   mergePair(failed);
   failed.checks[0].conclusion = 'failure';
-  const blocked = await runIssueFollowup([
-    '--pr', failed.prs.primary.url,
-    '--key', 'localized-bug',
-    '--evidence-file', failed.evidenceFile,
-    '--root', failed.root,
-  ], { execute: failed.execute });
+  const blocked = await runIssueFollowup(['--pr', failed.prs.primary.url, '--key', 'localized-bug', '--evidence-file', failed.evidenceFile, '--root', failed.root], { execute: failed.execute });
   assert.equal(blocked.items[0].status, 'NOT_MET');
   assert.equal(blocked.items[0].previewStatus, 'BLOCKED');
   assert.equal(blocked.items[0].applyCommand, undefined);
@@ -155,12 +141,7 @@ test('merged paired PRs with all current successful public exact-head checks are
   await savePairRecord(f);
   mergePair(f);
 
-  const result = await runIssueFollowup([
-    '--pr', f.prs.primary.url,
-    '--key', 'localized-bug',
-    '--evidence-file', f.evidenceFile,
-    '--root', f.root,
-  ], { execute: f.execute });
+  const result = await runIssueFollowup(['--pr', f.prs.primary.url, '--key', 'localized-bug', '--evidence-file', f.evidenceFile, '--root', f.root], { execute: f.execute });
 
   assert.equal(result.items[0].status, 'READY_TO_COMPLETE');
   assert.equal(result.items[0].previewStatus, 'READY_TO_COMPLETE');
@@ -184,12 +165,7 @@ test('partial issue closure is surfaced for recovery and does not repeat remote 
   await writeFile(completionPath, JSON.stringify(completion));
   f.publicIssue.state = 'closed';
 
-  const result = await runIssueFollowup([
-    '--pr', f.prs.primary.url,
-    '--key', 'localized-bug',
-    '--evidence-file', f.evidenceFile,
-    '--root', f.root,
-  ], { execute: f.execute });
+  const result = await runIssueFollowup(['--pr', f.prs.primary.url, '--key', 'localized-bug', '--evidence-file', f.evidenceFile, '--root', f.root], { execute: f.execute });
 
   assert.equal(result.items[0].status, 'RECOVER_PARTIAL');
   assert.equal(result.items[0].previewStatus, 'READY_TO_COMPLETE');
@@ -204,30 +180,28 @@ test('a retained different PR association is not retargeted or previewed', async
   await savePairRecord(f);
   const completionDirectory = join(f.root, '.agent-work', 'paired-issue-completion');
   await mkdir(completionDirectory, { recursive: true });
-  await writeFile(join(completionDirectory, 'localized-bug.json'), JSON.stringify({
-    schemaVersion: 1,
-    key: 'localized-bug',
-    issueMarker: markerFor('localized-bug'),
-    completionMarker: completionMarker(publicRepository, 'localized-bug'),
-    targets: { primary: publicRepository, submission: privateRepository },
-    issues: {
-      primary: { number: 11, url: f.publicIssue.html_url },
-      submission: { number: 23, url: f.privateIssue.html_url },
-    },
-    resolvingPr: {
-      primary: { repository: publicRepository, number: 7, url: f.prs.primary.url, branch: 'feat/tooling-example', base: 'development' },
-      submission: { repository: privateRepository, number: 9, url: f.prs.submission.url, branch: 'feat/tooling-example', base: 'development' },
-    },
-    evidenceSha256: 'a'.repeat(64),
-    progress: { primary: {}, submission: {} },
-  }));
+  await writeFile(
+    join(completionDirectory, 'localized-bug.json'),
+    JSON.stringify({
+      schemaVersion: 1,
+      key: 'localized-bug',
+      issueMarker: markerFor('localized-bug'),
+      completionMarker: completionMarker(publicRepository, 'localized-bug'),
+      targets: { primary: publicRepository, submission: privateRepository },
+      issues: {
+        primary: { number: 11, url: f.publicIssue.html_url },
+        submission: { number: 23, url: f.privateIssue.html_url },
+      },
+      resolvingPr: {
+        primary: { repository: publicRepository, number: 7, url: f.prs.primary.url, branch: 'feat/tooling-example', base: 'development' },
+        submission: { repository: privateRepository, number: 9, url: f.prs.submission.url, branch: 'feat/tooling-example', base: 'development' },
+      },
+      evidenceSha256: 'a'.repeat(64),
+      progress: { primary: {}, submission: {} },
+    }),
+  );
 
-  const result = await runIssueFollowup([
-    '--pr', 'https://github.com/example/public/pull/8',
-    '--key', 'localized-bug',
-    '--evidence-file', f.evidenceFile,
-    '--root', f.root,
-  ], { execute: f.execute });
+  const result = await runIssueFollowup(['--pr', 'https://github.com/example/public/pull/8', '--key', 'localized-bug', '--evidence-file', f.evidenceFile, '--root', f.root], { execute: f.execute });
 
   assert.equal(result.items[0].status, 'ASSOCIATION_MISMATCH');
   assert.equal(result.items[0].previewStatus, undefined);
@@ -240,10 +214,7 @@ test('unknown keys are not invented and evidence cannot be applied to discovered
   const empty = await runIssueFollowup(['--pr', f.prs.primary.url, '--root', f.root], { execute: f.execute });
   assert.equal(empty.status, 'NO_CANDIDATES');
   assert.deepEqual(empty.items, []);
-  await assert.rejects(
-    runIssueFollowup(['--pr', f.prs.primary.url, '--evidence-file', f.evidenceFile, '--root', f.root], { execute: f.execute }),
-    /one explicit --key/,
-  );
+  await assert.rejects(runIssueFollowup(['--pr', f.prs.primary.url, '--evidence-file', f.evidenceFile, '--root', f.root], { execute: f.execute }), /one explicit --key/);
   await savePairRecord(f);
   const unknown = await runIssueFollowup(['--pr', f.prs.primary.url, '--key', 'missing-ticket', '--root', f.root], { execute: f.execute });
   assert.equal(unknown.items[0].status, 'MISSING_ASSOCIATION');
@@ -257,11 +228,9 @@ test('malformed evidence remains rejected by the existing completion helper', as
   await savePairRecord(f);
   await writeFile(f.evidenceFile, '{"schemaVersion":1,"summary":"Missing acceptance entries","acceptance":[]}');
 
-  await assert.rejects(runIssueFollowup([
-    '--pr', f.prs.primary.url,
-    '--key', 'localized-bug',
-    '--evidence-file', f.evidenceFile,
-    '--root', f.root,
-  ], { execute: f.execute }), /at least one acceptance entry/i);
+  await assert.rejects(
+    runIssueFollowup(['--pr', f.prs.primary.url, '--key', 'localized-bug', '--evidence-file', f.evidenceFile, '--root', f.root], { execute: f.execute }),
+    /at least one acceptance entry/i,
+  );
   assert.deepEqual(f.writes, []);
 });

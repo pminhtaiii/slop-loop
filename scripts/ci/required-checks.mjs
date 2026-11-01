@@ -9,12 +9,7 @@ export const GITHUB_ACTIONS_APP_ID = 15368;
 const immutable = (id, required) => Object.freeze({ id, required: Object.freeze(required) });
 
 export const POLICIES = Object.freeze({
-  'ci-v1': immutable('ci-v1', [
-    'contributor-checks (ubuntu-latest)',
-    'contributor-checks (windows-latest)',
-    'runtime-checks (ubuntu-latest)',
-    'runtime-checks (windows-latest)',
-  ]),
+  'ci-v1': immutable('ci-v1', ['contributor-checks (ubuntu-latest)', 'contributor-checks (windows-latest)', 'runtime-checks (ubuntu-latest)', 'runtime-checks (windows-latest)']),
   'ci-v2': immutable('ci-v2', [
     'static-lint',
     'static-types',
@@ -36,21 +31,8 @@ export const POLICIES = Object.freeze({
     'contributor-tooling-tests (ubuntu-latest)',
     'runtime-tests (ubuntu-latest)',
   ]),
-  'ci-v4': immutable('ci-v4', [
-    'static-lint',
-    'static-types',
-    'repository-policy',
-    'pr-metadata',
-    'build',
-    'contributor-tooling-tests',
-    'runtime-tests',
-  ]),
-  'ci-v5': immutable('ci-v5', [
-    'static-lint',
-    'static-types',
-    'repository-policy',
-    'pr-metadata',
-  ]),
+  'ci-v4': immutable('ci-v4', ['static-lint', 'static-types', 'repository-policy', 'pr-metadata', 'build', 'contributor-tooling-tests', 'runtime-tests']),
+  'ci-v5': immutable('ci-v5', ['static-lint', 'static-types', 'repository-policy', 'pr-metadata']),
 });
 
 // Stable Ubuntu-only names; all earlier policy lists remain immutable for historical bindings.
@@ -68,25 +50,29 @@ const WORKFLOWS = {
 };
 
 // Where each required name comes from, so a contract test can prove a runnable counterpart exists.
-export const CHECK_JOBS = Object.freeze(Object.fromEntries([
-  [POLICIES['ci-v1'].required[0], { workflow: WORKFLOWS.contributor, job: 'contributor-checks' }],
-  [POLICIES['ci-v1'].required[1], { workflow: WORKFLOWS.contributor, job: 'contributor-checks' }],
-  [POLICIES['ci-v1'].required[2], { workflow: WORKFLOWS.runtime, job: 'runtime-checks' }],
-  [POLICIES['ci-v1'].required[3], { workflow: WORKFLOWS.runtime, job: 'runtime-checks' }],
-  ['static-lint', { workflow: WORKFLOWS.contributor, job: 'static-lint' }],
-  ['static-types', { workflow: WORKFLOWS.contributor, job: 'static-types' }],
-  ['repository-policy', { workflow: WORKFLOWS.contributor, job: 'repository-policy' }],
-  ['pr-metadata', { workflow: WORKFLOWS.prMetadata, job: 'pr-metadata' }],
-  ['build', { workflow: WORKFLOWS.runtime, job: 'build' }],
-  ['contributor-tooling-tests', { workflow: WORKFLOWS.contributor, job: 'contributor-tooling-tests' }],
-  ['runtime-tests', { workflow: WORKFLOWS.runtime, job: 'runtime-tests' }],
-  ['build (ubuntu-latest)', { workflow: WORKFLOWS.runtime, job: 'build' }],
-  ['build (windows-latest)', { workflow: WORKFLOWS.runtime, job: 'build' }],
-  ['contributor-tooling-tests (ubuntu-latest)', { workflow: WORKFLOWS.contributor, job: 'contributor-tooling-tests' }],
-  ['contributor-tooling-tests (windows-latest)', { workflow: WORKFLOWS.contributor, job: 'contributor-tooling-tests' }],
-  ['runtime-tests (ubuntu-latest)', { workflow: WORKFLOWS.runtime, job: 'runtime-tests' }],
-  ['runtime-tests (windows-latest)', { workflow: WORKFLOWS.runtime, job: 'runtime-tests' }],
-].map(([name, job]) => [name, Object.freeze(job)])));
+export const CHECK_JOBS = Object.freeze(
+  Object.fromEntries(
+    [
+      [POLICIES['ci-v1'].required[0], { workflow: WORKFLOWS.contributor, job: 'contributor-checks' }],
+      [POLICIES['ci-v1'].required[1], { workflow: WORKFLOWS.contributor, job: 'contributor-checks' }],
+      [POLICIES['ci-v1'].required[2], { workflow: WORKFLOWS.runtime, job: 'runtime-checks' }],
+      [POLICIES['ci-v1'].required[3], { workflow: WORKFLOWS.runtime, job: 'runtime-checks' }],
+      ['static-lint', { workflow: WORKFLOWS.contributor, job: 'static-lint' }],
+      ['static-types', { workflow: WORKFLOWS.contributor, job: 'static-types' }],
+      ['repository-policy', { workflow: WORKFLOWS.contributor, job: 'repository-policy' }],
+      ['pr-metadata', { workflow: WORKFLOWS.prMetadata, job: 'pr-metadata' }],
+      ['build', { workflow: WORKFLOWS.runtime, job: 'build' }],
+      ['contributor-tooling-tests', { workflow: WORKFLOWS.contributor, job: 'contributor-tooling-tests' }],
+      ['runtime-tests', { workflow: WORKFLOWS.runtime, job: 'runtime-tests' }],
+      ['build (ubuntu-latest)', { workflow: WORKFLOWS.runtime, job: 'build' }],
+      ['build (windows-latest)', { workflow: WORKFLOWS.runtime, job: 'build' }],
+      ['contributor-tooling-tests (ubuntu-latest)', { workflow: WORKFLOWS.contributor, job: 'contributor-tooling-tests' }],
+      ['contributor-tooling-tests (windows-latest)', { workflow: WORKFLOWS.contributor, job: 'contributor-tooling-tests' }],
+      ['runtime-tests (ubuntu-latest)', { workflow: WORKFLOWS.runtime, job: 'runtime-tests' }],
+      ['runtime-tests (windows-latest)', { workflow: WORKFLOWS.runtime, job: 'runtime-tests' }],
+    ].map(([name, job]) => [name, Object.freeze(job)]),
+  ),
+);
 
 const SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i;
 const WILDCARD = /[*?]/;
@@ -108,10 +94,11 @@ export function createPolicyState(policyId, bindings = []) {
 
 // Git object ids are case-insensitive hex; comparing case-sensitively would make an upper-case
 // binding unmatchable against the lower-case ids GitHub API responses normally carry.
-const folded = (value) => typeof value === 'string' ? value.toLowerCase() : value;
+const folded = value => (typeof value === 'string' ? value.toLowerCase() : value);
 // Every identity field must be present on both sides and agree: a field missing from both is not a
 // match, it is an identity that was never audited.
-const sameIdentity = (entry, pr) => IDENTITY_FIELDS.every((field) => entry[field] !== undefined && entry[field] !== null && pr[field] !== undefined && pr[field] !== null && folded(entry[field]) === folded(pr[field]));
+const sameIdentity = (entry, pr) =>
+  IDENTITY_FIELDS.every(field => entry[field] !== undefined && entry[field] !== null && pr[field] !== undefined && pr[field] !== null && folded(entry[field]) === folded(pr[field]));
 
 // The binding is always looked up in the audited list; a caller cannot supply one. Accepting a binding
 // argument would let a caller pass identity copied from the pull request it is trying to satisfy.
@@ -120,7 +107,7 @@ export function resolvePolicy(state, { policyId, pr } = {}) {
   if (policy.id === state.policy.id) return { historical: false, policy };
   if (!state.historical.includes(policy.id)) throw new Error(`Check policy ${policy.id} is not active.`);
   if (pr?.state !== 'MERGED') throw new Error('A historical check policy requires a merged pull request.');
-  const candidate = state.bindings.find((entry) => entry.policy === policy.id && sameIdentity(entry, pr));
+  const candidate = state.bindings.find(entry => entry.policy === policy.id && sameIdentity(entry, pr));
   if (!candidate) throw new Error('No audited binding supplies the historical binding identity for this pull request.');
   return { historical: true, policy, binding: candidate };
 }
@@ -190,7 +177,7 @@ export function parseHistoricalBindings(text) {
   return entries;
 }
 
-const isGithubActions = (check) => check?.app?.slug === 'github-actions';
+const isGithubActions = check => check?.app?.slug === 'github-actions';
 
 // Latest exact-head GitHub Actions run for each required name, in policy order. This is the shared
 // selection every consumer translates into its own vocabulary; without it each consumer re-implements
@@ -200,16 +187,14 @@ export function selectLatest({ policy, head, checks, appId } = {}) {
   if (typeof head !== 'string' || !SHA.test(head)) throw new Error('A canonical 40- or 64-character head SHA is needed.');
   if (!Array.isArray(checks)) throw new Error('Check runs must be supplied as an array.');
 
-  const observed = checks.filter((check) => {
+  const observed = checks.filter(check => {
     if (!check || typeof check.name !== 'string') throw new Error('Each check run needs a name and numeric id.');
-    return folded(check.head_sha) === folded(head)
-      && isGithubActions(check)
-      && (appId === undefined || check.app?.id === appId);
+    return folded(check.head_sha) === folded(head) && isGithubActions(check) && (appId === undefined || check.app?.id === appId);
   });
 
-  return policy.required.map((name) => ({
+  return policy.required.map(name => ({
     name,
-    check: observed.filter((check) => check.name === name).sort((a, b) => Number(b.id) - Number(a.id))[0],
+    check: observed.filter(check => check.name === name).sort((a, b) => Number(b.id) - Number(a.id))[0],
   }));
 }
 

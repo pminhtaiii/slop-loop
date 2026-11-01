@@ -1,30 +1,10 @@
-import {
-  computeCheckSetDigest,
-  isCanonicalRelativePath,
-  isProtectedPath,
-  validateDelivery,
-  validateVerificationAdmission,
-  validateVerificationResult,
-} from '../contracts/foundation/uc03.ts';
+import { computeCheckSetDigest, isCanonicalRelativePath, isProtectedPath, validateDelivery, validateVerificationAdmission, validateVerificationResult } from '../contracts/foundation/uc03.ts';
 import { extractCheckTestSelectors } from './selectors.ts';
 import { completionReviewReasons } from './verification-review.ts';
-import type {
-  BugTask,
-  Baseline,
-  Delivery,
-  ReviewResult,
-  TaskOutcome,
-  TaskState,
-  VerificationResult,
-} from '../contracts/foundation/uc03.ts';
-import type {
-  CompletionPredicateInput,
-  CompletionPredicateResult,
-} from './verification-types.ts';
+import type { BugTask, Baseline, Delivery, ReviewResult, TaskOutcome, TaskState, VerificationResult } from '../contracts/foundation/uc03.ts';
+import type { CompletionPredicateInput, CompletionPredicateResult } from './verification-types.ts';
 
-export function evaluateDeterministicCompletion(
-  input: CompletionPredicateInput
-): CompletionPredicateResult {
+export function evaluateDeterministicCompletion(input: CompletionPredicateInput): CompletionPredicateResult {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
     return {
       isComplete: false,
@@ -49,25 +29,13 @@ export function evaluateDeterministicCompletion(
     rawTask = input.task;
     rawState = input.state;
     rawBaseline = input.baseline;
-    rawVerifications = Array.isArray(input.verificationResults)
-      ? [...input.verificationResults]
-      : [];
+    rawVerifications = Array.isArray(input.verificationResults) ? [...input.verificationResults] : [];
     rawReview = input.reviewResult;
-    currentRepoDigest =
-      typeof input.currentRepoDigest === 'string' ? input.currentRepoDigest : '';
-    currentDiffDigest =
-      typeof input.currentDiffDigest === 'string' ? input.currentDiffDigest : '';
-    changedFilesList = Array.isArray(input.changedFiles)
-      ? [...input.changedFiles]
-      : [];
-    originalProtectedTestsDigest =
-      typeof input.originalProtectedTestsDigest === 'string'
-        ? input.originalProtectedTestsDigest
-        : '';
-    currentProtectedTestsDigest =
-      typeof input.currentProtectedTestsDigest === 'string'
-        ? input.currentProtectedTestsDigest
-        : '';
+    currentRepoDigest = typeof input.currentRepoDigest === 'string' ? input.currentRepoDigest : '';
+    currentDiffDigest = typeof input.currentDiffDigest === 'string' ? input.currentDiffDigest : '';
+    changedFilesList = Array.isArray(input.changedFiles) ? [...input.changedFiles] : [];
+    originalProtectedTestsDigest = typeof input.originalProtectedTestsDigest === 'string' ? input.originalProtectedTestsDigest : '';
+    currentProtectedTestsDigest = typeof input.currentProtectedTestsDigest === 'string' ? input.currentProtectedTestsDigest : '';
   } catch {
     return {
       isComplete: false,
@@ -78,43 +46,24 @@ export function evaluateDeterministicCompletion(
 
   // Determine whether repository changes were made or recorded
   const hasChangedFiles = changedFilesList.length > 0;
-  const hasStateChangedPaths =
-    rawState !== undefined &&
-    Array.isArray(rawState.changedPaths) &&
-    rawState.changedPaths.length > 0;
+  const hasStateChangedPaths = rawState !== undefined && Array.isArray(rawState.changedPaths) && rawState.changedPaths.length > 0;
   const hasModifications = hasChangedFiles || hasStateChangedPaths;
-  const failureOutcome: TaskOutcome = hasModifications
-    ? 'IMPLEMENTED_UNVERIFIED'
-    : 'INCOMPLETE';
+  const failureOutcome: TaskOutcome = hasModifications ? 'IMPLEMENTED_UNVERIFIED' : 'INCOMPLETE';
 
   const reasons: string[] = [];
 
   // 1. Protected Tests Digest Integrity
   if (!originalProtectedTestsDigest || !currentProtectedTestsDigest) {
-    reasons.push(
-      'Protected tests digest missing: both original and current digests are required'
-    );
+    reasons.push('Protected tests digest missing: both original and current digests are required');
   } else if (originalProtectedTestsDigest !== currentProtectedTestsDigest) {
-    reasons.push(
-      `Protected tests digest modified or tampered: original digest (${originalProtectedTestsDigest}) does not match current digest (${currentProtectedTestsDigest})`
-    );
+    reasons.push(`Protected tests digest modified or tampered: original digest (${originalProtectedTestsDigest}) does not match current digest (${currentProtectedTestsDigest})`);
   }
 
   if (rawBaseline) {
-    if (
-      typeof rawBaseline.testProtectionDigest !== 'string' ||
-      rawBaseline.testProtectionDigest.trim().length === 0
-    ) {
-      reasons.push(
-        'Protected tests baseline testProtectionDigest missing or invalid'
-      );
-    } else if (
-      originalProtectedTestsDigest &&
-      rawBaseline.testProtectionDigest !== originalProtectedTestsDigest
-    ) {
-      reasons.push(
-        `Protected tests baseline digest mismatch: expected ${originalProtectedTestsDigest}, got ${rawBaseline.testProtectionDigest}`
-      );
+    if (typeof rawBaseline.testProtectionDigest !== 'string' || rawBaseline.testProtectionDigest.trim().length === 0) {
+      reasons.push('Protected tests baseline testProtectionDigest missing or invalid');
+    } else if (originalProtectedTestsDigest && rawBaseline.testProtectionDigest !== originalProtectedTestsDigest) {
+      reasons.push(`Protected tests baseline digest mismatch: expected ${originalProtectedTestsDigest}, got ${rawBaseline.testProtectionDigest}`);
     }
   }
 
@@ -125,41 +74,25 @@ export function evaluateDeterministicCompletion(
   if (!currentDiffDigest || currentDiffDigest.trim().length === 0) {
     reasons.push('currentDiffDigest must be a non-empty string');
   }
-  const authorizedDiff =
-    input.authorizedDiffDigest ?? input.trustedPatchRecord?.authorizedDiffDigest;
+  const authorizedDiff = input.authorizedDiffDigest ?? input.trustedPatchRecord?.authorizedDiffDigest;
   if (!authorizedDiff || authorizedDiff.trim().length === 0) {
     reasons.push('Independent authorizedDiffDigest is required for completion');
   } else if (currentDiffDigest && authorizedDiff !== currentDiffDigest) {
-    reasons.push(
-      `Authorized diff digest mismatch: authorized (${authorizedDiff}) does not match current diff digest (${currentDiffDigest})`
-    );
+    reasons.push(`Authorized diff digest mismatch: authorized (${authorizedDiff}) does not match current diff digest (${currentDiffDigest})`);
   }
 
   // 3. State Binding and Revision Drift
   if (!rawState) {
     reasons.push('Missing required task state');
   } else {
-    if (
-      currentRepoDigest &&
-      rawState.repositoryRevisionDigest !== currentRepoDigest
-    ) {
-      reasons.push(
-        `Repository revision digest drift: state revision (${rawState.repositoryRevisionDigest}) differs from current repository digest (${currentRepoDigest})`
-      );
+    if (currentRepoDigest && rawState.repositoryRevisionDigest !== currentRepoDigest) {
+      reasons.push(`Repository revision digest drift: state revision (${rawState.repositoryRevisionDigest}) differs from current repository digest (${currentRepoDigest})`);
     }
     if (rawTask && rawState.taskId !== rawTask.taskId) {
-      reasons.push(
-        `State taskId (${rawState.taskId}) does not match task taskId (${rawTask.taskId})`
-      );
+      reasons.push(`State taskId (${rawState.taskId}) does not match task taskId (${rawTask.taskId})`);
     }
-    if (
-      rawState.taskContext &&
-      rawTask &&
-      rawState.taskContext.taskId !== rawTask.taskId
-    ) {
-      reasons.push(
-        `State taskContext taskId (${rawState.taskContext.taskId}) does not match task taskId (${rawTask.taskId})`
-      );
+    if (rawState.taskContext && rawTask && rawState.taskContext.taskId !== rawTask.taskId) {
+      reasons.push(`State taskContext taskId (${rawState.taskContext.taskId}) does not match task taskId (${rawTask.taskId})`);
     }
   }
 
@@ -176,49 +109,26 @@ export function evaluateDeterministicCompletion(
   if (!rawBaseline) {
     reasons.push('Missing required baseline evidence');
   } else {
-    if (
-      typeof rawBaseline.evidenceId !== 'string' ||
-      rawBaseline.evidenceId.trim().length === 0
-    ) {
+    if (typeof rawBaseline.evidenceId !== 'string' || rawBaseline.evidenceId.trim().length === 0) {
       reasons.push('Baseline evidenceId must be a non-empty string');
     }
-    if (
-      expectedCheckSetDigest &&
-      rawBaseline.checkSetDigest !== expectedCheckSetDigest
-    ) {
-      reasons.push(
-        `Baseline checkSetDigest mismatch: expected ${expectedCheckSetDigest}, got ${rawBaseline.checkSetDigest}`
-      );
+    if (expectedCheckSetDigest && rawBaseline.checkSetDigest !== expectedCheckSetDigest) {
+      reasons.push(`Baseline checkSetDigest mismatch: expected ${expectedCheckSetDigest}, got ${rawBaseline.checkSetDigest}`);
     }
     if (rawState) {
       if (!rawState.plan) {
         reasons.push('Missing required fix plan in task state');
       } else {
-        if (
-          rawBaseline.evidenceId &&
-          rawState.plan.baselineRef !== rawBaseline.evidenceId
-        ) {
-          reasons.push(
-            `Plan baselineRef (${rawState.plan.baselineRef}) does not match baseline evidenceId (${rawBaseline.evidenceId})`
-          );
+        if (rawBaseline.evidenceId && rawState.plan.baselineRef !== rawBaseline.evidenceId) {
+          reasons.push(`Plan baselineRef (${rawState.plan.baselineRef}) does not match baseline evidenceId (${rawBaseline.evidenceId})`);
         }
-        if (
-          expectedCheckSetDigest &&
-          rawState.plan.checkSetDigest !== expectedCheckSetDigest
-        ) {
-          reasons.push(
-            `Plan checkSetDigest (${rawState.plan.checkSetDigest}) does not match expected checkSetDigest (${expectedCheckSetDigest})`
-          );
+        if (expectedCheckSetDigest && rawState.plan.checkSetDigest !== expectedCheckSetDigest) {
+          reasons.push(`Plan checkSetDigest (${rawState.plan.checkSetDigest}) does not match expected checkSetDigest (${expectedCheckSetDigest})`);
         }
       }
       if (rawBaseline.evidenceId) {
-        if (
-          !Array.isArray(rawState.evidenceRefs) ||
-          !rawState.evidenceRefs.includes(rawBaseline.evidenceId)
-        ) {
-          reasons.push(
-            `State evidenceRefs does not include baseline evidenceId (${rawBaseline.evidenceId})`
-          );
+        if (!Array.isArray(rawState.evidenceRefs) || !rawState.evidenceRefs.includes(rawBaseline.evidenceId)) {
+          reasons.push(`State evidenceRefs does not include baseline evidenceId (${rawBaseline.evidenceId})`);
         }
       }
     }
@@ -226,9 +136,7 @@ export function evaluateDeterministicCompletion(
 
   // 5. Verification Results Validation and Digest Drift
   if (!Array.isArray(rawVerifications) || rawVerifications.length === 0) {
-    reasons.push(
-      'verificationResults must be a non-empty array of VerificationResult records'
-    );
+    reasons.push('verificationResults must be a non-empty array of VerificationResult records');
   } else {
     for (let i = 0; i < rawVerifications.length; i++) {
       const v = rawVerifications[i];
@@ -238,35 +146,23 @@ export function evaluateDeterministicCompletion(
       }
       const vShape = validateVerificationResult(v, `verificationResults[${i}]`);
       if (!vShape.ok) {
-        reasons.push(
-          `Verification result schema error: ${vShape.errors.map((e) => e.message).join('; ')}`
-        );
+        reasons.push(`Verification result schema error: ${vShape.errors.map(e => e.message).join('; ')}`);
         continue;
       }
       if (rawTask && v.taskId !== rawTask.taskId) {
-        reasons.push(
-          `Verification result ${v.evidenceId} taskId mismatch: expected ${rawTask.taskId}, got ${v.taskId}`
-        );
+        reasons.push(`Verification result ${v.evidenceId} taskId mismatch: expected ${rawTask.taskId}, got ${v.taskId}`);
       }
       if (rawState && v.runId !== rawState.runId) {
-        reasons.push(
-          `Verification result ${v.evidenceId} runId mismatch: expected ${rawState.runId}, got ${v.runId}`
-        );
+        reasons.push(`Verification result ${v.evidenceId} runId mismatch: expected ${rawState.runId}, got ${v.runId}`);
       }
       if (currentRepoDigest && v.repoDigest !== currentRepoDigest) {
-        reasons.push(
-          `Verification result ${v.evidenceId} repository digest drift: expected ${currentRepoDigest}, got ${v.repoDigest}`
-        );
+        reasons.push(`Verification result ${v.evidenceId} repository digest drift: expected ${currentRepoDigest}, got ${v.repoDigest}`);
       }
       if (currentDiffDigest) {
         if (v.diffDigest === undefined || v.diffDigest.trim().length === 0) {
-          reasons.push(
-            `Verification result ${v.evidenceId} missing diff digest for candidate modification: expected ${currentDiffDigest}`
-          );
+          reasons.push(`Verification result ${v.evidenceId} missing diff digest for candidate modification: expected ${currentDiffDigest}`);
         } else if (v.diffDigest !== currentDiffDigest) {
-          reasons.push(
-            `Verification result ${v.evidenceId} diff digest drift: expected ${currentDiffDigest}, got ${v.diffDigest}`
-          );
+          reasons.push(`Verification result ${v.evidenceId} diff digest drift: expected ${currentDiffDigest}, got ${v.diffDigest}`);
         }
       }
     }
@@ -275,23 +171,20 @@ export function evaluateDeterministicCompletion(
   // 6. Required Checks Coverage
   if (rawTask && Array.isArray(rawTask.requiredChecks)) {
     for (const check of rawTask.requiredChecks) {
-      const expectedPhase =
-        check.purpose === 'reproduction' ? 'focused' : check.purpose;
+      const expectedPhase = check.purpose === 'reproduction' ? 'focused' : check.purpose;
       const matching = rawVerifications.filter(
-        (v) =>
+        v =>
           v &&
           Array.isArray(v.testedIds) &&
           v.testedIds.includes(check.checkId) &&
           (!currentRepoDigest || v.repoDigest === currentRepoDigest) &&
           (!currentDiffDigest || v.diffDigest === currentDiffDigest) &&
           (!rawTask || v.taskId === rawTask.taskId) &&
-          (!rawState || v.runId === rawState.runId)
+          (!rawState || v.runId === rawState.runId),
       );
 
       if (matching.length === 0) {
-        reasons.push(
-          `Missing verification result for required check '${check.checkId}' (check not run on current state)`
-        );
+        reasons.push(`Missing verification result for required check '${check.checkId}' (check not run on current state)`);
         continue;
       }
 
@@ -299,9 +192,7 @@ export function evaluateDeterministicCompletion(
       for (const m of matching) {
         if (m.outcome === 'pass') {
           if (m.phase !== expectedPhase) {
-            reasons.push(
-              `Verification result phase mismatch for check '${check.checkId}': expected '${expectedPhase}', got '${m.phase}'`
-            );
+            reasons.push(`Verification result phase mismatch for check '${check.checkId}': expected '${expectedPhase}', got '${m.phase}'`);
           } else {
             if (rawTask && rawState && currentRepoDigest) {
               const admission = validateVerificationAdmission(m, {
@@ -313,9 +204,7 @@ export function evaluateDeterministicCompletion(
                 requiredPhase: expectedPhase,
               });
               if (!admission.ok) {
-                reasons.push(
-                  `Verification admission failed for check '${check.checkId}': ${admission.errors.map((e) => e.message).join('; ')}`
-                );
+                reasons.push(`Verification admission failed for check '${check.checkId}': ${admission.errors.map(e => e.message).join('; ')}`);
               } else {
                 hasPassingResult = true;
               }
@@ -324,47 +213,35 @@ export function evaluateDeterministicCompletion(
             }
           }
         } else if (m.outcome === 'timeout') {
-          reasons.push(
-            `Required check '${check.checkId}' timed out (timeout)`
-          );
+          reasons.push(`Required check '${check.checkId}' timed out (timeout)`);
         } else if (m.outcome === 'not-run') {
           reasons.push(`Required check '${check.checkId}' was not run`);
         } else if (m.outcome === 'error') {
-          reasons.push(
-            `Required check '${check.checkId}' failed with environment error`
-          );
+          reasons.push(`Required check '${check.checkId}' failed with environment error`);
         } else if (m.outcome === 'fail') {
-          const checkLabel =
-            check.purpose === 'regression' ? 'regression check' : 'check';
+          const checkLabel = check.purpose === 'regression' ? 'regression check' : 'check';
           reasons.push(`Required ${checkLabel} '${check.checkId}' failed`);
         } else {
-          reasons.push(
-            `Required check '${check.checkId}' outcome is '${m.outcome}'`
-          );
+          reasons.push(`Required check '${check.checkId}' outcome is '${m.outcome}'`);
         }
       }
 
-      if (
-        !hasPassingResult &&
-        !matching.some((m) =>
-          ['timeout', 'not-run', 'error', 'fail'].includes(m.outcome)
-        )
-      ) {
-        reasons.push(
-          `Required check '${check.checkId}' did not pass verification on current state`
-        );
+      if (!hasPassingResult && !matching.some(m => ['timeout', 'not-run', 'error', 'fail'].includes(m.outcome))) {
+        reasons.push(`Required check '${check.checkId}' did not pass verification on current state`);
       }
     }
   }
 
-  reasons.push(...completionReviewReasons({
-    input,
-    rawState,
-    rawReview,
-    currentRepoDigest,
-    currentDiffDigest,
-    expectedCheckSetDigest,
-  }));
+  reasons.push(
+    ...completionReviewReasons({
+      input,
+      rawState,
+      rawReview,
+      currentRepoDigest,
+      currentDiffDigest,
+      expectedCheckSetDigest,
+    }),
+  );
 
   // 8. Changed Files & Path Protection Validation
   if (reasons.length === 0 && changedFilesList.length === 0) {
@@ -411,13 +288,9 @@ export function evaluateDeterministicCompletion(
 
   for (const file of changedFilesList) {
     if (typeof file !== 'string' || !isCanonicalRelativePath(file)) {
-      reasons.push(
-        `Changed file '${file}' is not a canonical repository-relative path`
-      );
+      reasons.push(`Changed file '${file}' is not a canonical repository-relative path`);
     } else if (isProtectedPath(file) || isProtectedTestFile(file)) {
-      reasons.push(
-        `Changed file '${file}' attempts to modify a protected path or existing protected test (test protection violation)`
-      );
+      reasons.push(`Changed file '${file}' attempts to modify a protected path or existing protected test (test protection violation)`);
     }
   }
 
@@ -452,7 +325,7 @@ export function evaluateDeterministicCompletion(
     diffDigest: currentDiffDigest,
     changedFiles: Object.freeze([...changedFilesList]),
     baselineRef: validBaseline.evidenceId,
-    verificationRefs: Object.freeze(rawVerifications.map((v) => v.evidenceId)),
+    verificationRefs: Object.freeze(rawVerifications.map(v => v.evidenceId)),
     reviewRef: validReview.reviewId,
     limitations: Object.freeze([]),
     safeNextAction: 'ready-for-human-review',
@@ -470,9 +343,7 @@ export function evaluateDeterministicCompletion(
       isComplete: false,
       outcome: failureOutcome,
       delivery: undefined,
-      reasons: Object.freeze(
-        deliveryValidation.errors.map((e) => e.message)
-      ),
+      reasons: Object.freeze(deliveryValidation.errors.map(e => e.message)),
     };
   }
 

@@ -115,8 +115,7 @@ async function main() {
   if (args.mode === 'assignment') return assignment(root, values.get('--uc'));
   if (args.mode === 'handoff') return handoff(root, values.get('--tasks'));
   if (args.mode === 'resume') return resumeReport(root, values.get('--tasks'), args.authorization);
-  if (args.mode === 'task')
-    return taskContext(root, values.get('--tasks'), values.get('--task'), values.get('--plan'));
+  if (args.mode === 'task') return taskContext(root, values.get('--tasks'), values.get('--task'), values.get('--plan'));
   if (args.mode === 'batch' || args.mode === 'review-ready') {
     const { batchContext } = await import('./agent-context-batch.mjs');
     return batchContext(root, values.get('--tasks'), args.scopes, args.authorized, {
@@ -137,7 +136,7 @@ const invokedPath = (() => {
   }
 })();
 if (invokedPath && invokedPath === realpathSync(fileURLToPath(import.meta.url))) {
-  main().catch((error) => {
+  main().catch(error => {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 1;
   });

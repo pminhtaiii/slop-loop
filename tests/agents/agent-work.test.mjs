@@ -1,19 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import {
-  lstat,
-  mkdir,
-  mkdtemp,
-  open,
-  readFile,
-  realpath,
-  readdir,
-  rename,
-  rm,
-  symlink,
-  unlink,
-  writeFile,
-} from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, open, readFile, realpath, readdir, rename, rm, symlink, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
@@ -51,9 +38,7 @@ function sessionPath(root, selectedDate = date, id = sessionId) {
 }
 
 async function marker(root, selectedDate = date, id = sessionId) {
-  return JSON.parse(
-    await readFile(join(sessionPath(root, selectedDate, id), 'session.json'), 'utf8'),
-  );
+  return JSON.parse(await readFile(join(sessionPath(root, selectedDate, id), 'session.json'), 'utf8'));
 }
 
 async function start(root, id = sessionId, selectedDate = date) {
@@ -96,7 +81,7 @@ async function linkFile(t, target, linkPath) {
   }
 }
 
-test('start, finish, list, and reactivation preserve session content and metadata', async (t) => {
+test('start, finish, list, and reactivation preserve session content and metadata', async t => {
   const root = await fixture(t);
   await start(root);
   const created = await marker(root);
@@ -118,14 +103,7 @@ test('start, finish, list, and reactivation preserve session content and metadat
   );
   assert.equal(typeof created.startedAt, 'string');
   assert.equal('finishedAt' in created, false);
-  assert.deepEqual(Object.keys(created).sort(), [
-    'date',
-    'id',
-    'schemaVersion',
-    'startedAt',
-    'status',
-    'workspace',
-  ]);
+  assert.deepEqual(Object.keys(created).sort(), ['date', 'id', 'schemaVersion', 'startedAt', 'status', 'workspace']);
 
   const firstStart = created.startedAt;
   const idempotent = await start(root);
@@ -133,25 +111,13 @@ test('start, finish, list, and reactivation preserve session content and metadat
   assert.equal((await marker(root)).startedAt, firstStart);
 
   await writeFile(join(sessionPath(root), 'notes.md'), 'keep this work\n', 'utf8');
-  await writeFile(
-    join(sessionPath(root), 'session.json'),
-    JSON.stringify({ ...created, startedAt: '2020-01-01T00:00:00.000Z' }),
-    'utf8',
-  );
+  await writeFile(join(sessionPath(root), 'session.json'), JSON.stringify({ ...created, startedAt: '2020-01-01T00:00:00.000Z' }), 'utf8');
   await finish(root);
   const completed = await marker(root);
   assert.equal(completed.status, 'finished');
   assert.equal(typeof completed.finishedAt, 'string');
   assert.equal(completed.startedAt, '2020-01-01T00:00:00.000Z');
-  assert.deepEqual(Object.keys(completed).sort(), [
-    'date',
-    'finishedAt',
-    'id',
-    'schemaVersion',
-    'startedAt',
-    'status',
-    'workspace',
-  ]);
+  assert.deepEqual(Object.keys(completed).sort(), ['date', 'finishedAt', 'id', 'schemaVersion', 'startedAt', 'status', 'workspace']);
 
   const listed = run(root, ['list']);
   assert.equal(listed.status, 0, listed.stderr);
@@ -165,7 +131,7 @@ test('start, finish, list, and reactivation preserve session content and metadat
   assert.equal(await readFile(join(sessionPath(root), 'notes.md'), 'utf8'), 'keep this work\n');
 });
 
-test('start defaults to the current Asia/Saigon calendar date', async (t) => {
+test('start defaults to the current Asia/Saigon calendar date', async t => {
   const root = await fixture(t);
   const result = run(root, ['start', '--session', sessionId]);
   assert.equal(result.status, 0, result.stderr);
@@ -175,20 +141,16 @@ test('start defaults to the current Asia/Saigon calendar date', async (t) => {
     month: '2-digit',
     day: '2-digit',
   }).formatToParts(new Date());
-  const expectedDate = `${parts.find((part) => part.type === 'year')?.value}-${parts.find((part) => part.type === 'month')?.value}-${parts.find((part) => part.type === 'day')?.value}`;
+  const expectedDate = `${parts.find(part => part.type === 'year')?.value}-${parts.find(part => part.type === 'month')?.value}-${parts.find(part => part.type === 'day')?.value}`;
   assert.equal((await marker(root, expectedDate)).date, expectedDate);
 });
 
-test('cleanup previews without mutating and apply deletes only valid finished sessions', async (t) => {
+test('cleanup previews without mutating and apply deletes only valid finished sessions', async t => {
   const root = await fixture(t);
   await start(root, 'finished');
   await finish(root, date, 'finished');
   await start(root, 'active');
-  await writeFile(
-    join(sessionPath(root, date, 'finished'), 'notes.md'),
-    'private log content\n',
-    'utf8',
-  );
+  await writeFile(join(sessionPath(root, date, 'finished'), 'notes.md'), 'private log content\n', 'utf8');
   await writeFile(join(sessionPath(root, date, 'active'), 'notes.md'), 'active notes\n', 'utf8');
 
   const malformedPath = sessionPath(root, date, 'malformed');
@@ -198,10 +160,7 @@ test('cleanup previews without mutating and apply deletes only valid finished se
   await mkdir(unknownPath, { recursive: true });
   await writeFile(join(unknownPath, 'keep.txt'), 'unknown\n', 'utf8');
 
-  const finishedMarkerBefore = await readFile(
-    join(sessionPath(root, date, 'finished'), 'session.json'),
-    'utf8',
-  );
+  const finishedMarkerBefore = await readFile(join(sessionPath(root, date, 'finished'), 'session.json'), 'utf8');
   const runtimeLockPath = join(root, '.scratch', 'api-task.lock');
   await writeFile(runtimeLockPath, 'other operation lock\n', 'utf8');
   const scratchEntriesBefore = (await readdir(join(root, '.scratch'))).sort();
@@ -212,29 +171,20 @@ test('cleanup previews without mutating and apply deletes only valid finished se
   assert.match(preview.stdout, /retained: active session/);
   assert.match(preview.stdout, /retained: invalid session marker/);
   assert.doesNotMatch(preview.stdout, /private log content/);
-  assert.equal(
-    await readFile(join(sessionPath(root, date, 'finished'), 'session.json'), 'utf8'),
-    finishedMarkerBefore,
-  );
-  assert.equal(
-    await readFile(join(sessionPath(root, date, 'finished'), 'notes.md'), 'utf8'),
-    'private log content\n',
-  );
+  assert.equal(await readFile(join(sessionPath(root, date, 'finished'), 'session.json'), 'utf8'), finishedMarkerBefore);
+  assert.equal(await readFile(join(sessionPath(root, date, 'finished'), 'notes.md'), 'utf8'), 'private log content\n');
   assert.deepEqual((await readdir(join(root, '.scratch'))).sort(), scratchEntriesBefore);
   assert.equal(await readFile(runtimeLockPath, 'utf8'), 'other operation lock\n');
 
   const applied = run(root, ['cleanup', '--apply']);
   assert.equal(applied.status, 0, applied.stderr);
   await assert.rejects(lstat(sessionPath(root, date, 'finished')));
-  assert.equal(
-    await readFile(join(sessionPath(root, date, 'active'), 'notes.md'), 'utf8'),
-    'active notes\n',
-  );
+  assert.equal(await readFile(join(sessionPath(root, date, 'active'), 'notes.md'), 'utf8'), 'active notes\n');
   assert.equal(await readFile(join(unknownPath, 'keep.txt'), 'utf8'), 'unknown\n');
   assert.equal(await readFile(join(malformedPath, 'session.json'), 'utf8'), '{');
 });
 
-test('cleanup can target one finished session and leaves other finished sessions intact', async (t) => {
+test('cleanup can target one finished session and leaves other finished sessions intact', async t => {
   const root = await fixture(t);
   await start(root, 'first');
   await finish(root, date, 'first');
@@ -247,7 +197,7 @@ test('cleanup can target one finished session and leaves other finished sessions
   assert.equal((await marker(root, date, 'second')).status, 'finished');
 });
 
-test('invalid identifiers, dates, session paths, and non-Git roots are rejected', async (t) => {
+test('invalid identifiers, dates, session paths, and non-Git roots are rejected', async t => {
   const root = await fixture(t);
   for (const id of ['../escape', '..', 'CON', 'COM1', 'bad/name', 'bad\\name', 'trailing.']) {
     const result = run(root, ['start', '--session', id, '--date', date]);
@@ -264,22 +214,18 @@ test('invalid identifiers, dates, session paths, and non-Git roots are rejected'
   t.after(async () => rm(wrongRoot, { recursive: true, force: true }));
   const sentinel = join(wrongRoot, 'user-data.txt');
   await writeFile(sentinel, 'preserve this file\n', 'utf8');
-  const rejectedRoot = spawnSync(
-    process.execPath,
-    [cliPath, 'cleanup', '--apply', '--root', wrongRoot],
-    {
-      cwd: repositoryRoot,
-      encoding: 'utf8',
-      windowsHide: true,
-    },
-  );
+  const rejectedRoot = spawnSync(process.execPath, [cliPath, 'cleanup', '--apply', '--root', wrongRoot], {
+    cwd: repositoryRoot,
+    encoding: 'utf8',
+    windowsHide: true,
+  });
   assert.notEqual(rejectedRoot.status, 0);
   assert.match(rejectedRoot.stderr, /not a Git checkout/i);
   assert.equal(await readFile(sentinel, 'utf8'), 'preserve this file\n');
   await assert.rejects(lstat(join(wrongRoot, '.agent-work')));
 });
 
-test('start preserves pre-existing unmarked directories instead of claiming them', async (t) => {
+test('start preserves pre-existing unmarked directories instead of claiming them', async t => {
   const root = await fixture(t);
   const path = sessionPath(root);
   await mkdir(path, { recursive: true });
@@ -291,7 +237,7 @@ test('start preserves pre-existing unmarked directories instead of claiming them
   await assert.rejects(lstat(join(path, 'session.json')));
 });
 
-test('an existing operation lock is never reclaimed and unrelated runtime locks survive cleanup', async (t) => {
+test('an existing operation lock is never reclaimed and unrelated runtime locks survive cleanup', async t => {
   const root = await fixture(t);
   const path = sessionPath(root);
   await mkdir(path, { recursive: true });
@@ -314,44 +260,28 @@ test('an existing operation lock is never reclaimed and unrelated runtime locks 
   assert.match(startResult.stderr, /operation lock is already held/i);
   const cleanupResult = run(root, ['cleanup', '--apply']);
   assert.notEqual(cleanupResult.status, 0);
-  assert.equal(
-    await readFile(join(root, '.scratch', 'agent-work.lock'), 'utf8'),
-    'stale but unverified lock\n',
-  );
-  assert.equal(
-    await readFile(join(root, '.scratch', 'api-task.lock'), 'utf8'),
-    'owned by another tool\n',
-  );
+  assert.equal(await readFile(join(root, '.scratch', 'agent-work.lock'), 'utf8'), 'stale but unverified lock\n');
+  assert.equal(await readFile(join(root, '.scratch', 'api-task.lock'), 'utf8'), 'owned by another tool\n');
   assert.equal((await marker(root)).status, 'finished');
 });
 
-test('failed lock writes and syncs remove only the lock file created by that attempt', async (t) => {
+test('failed lock writes and syncs remove only the lock file created by that attempt', async t => {
   for (const phase of ['write', 'sync']) {
-    await t.test(`${phase} failure releases its own lock`, async (subtest) => {
+    await t.test(`${phase} failure releases its own lock`, async subtest => {
       const root = await fixture(subtest);
       const lockPath = join(root, '.scratch', 'agent-work.lock');
       const failingOpen = async (path, flags, mode) => {
         const handle = await open(path, flags, mode);
         return {
-          stat: (options) => handle.stat(options),
-          writeFile: (contents, encoding) =>
-            phase === 'write'
-              ? Promise.reject(new Error('simulated lock write failure'))
-              : handle.writeFile(contents, encoding),
-          sync: () =>
-            phase === 'sync'
-              ? Promise.reject(new Error('simulated lock sync failure'))
-              : handle.sync(),
+          stat: options => handle.stat(options),
+          writeFile: (contents, encoding) => (phase === 'write' ? Promise.reject(new Error('simulated lock write failure')) : handle.writeFile(contents, encoding)),
+          sync: () => (phase === 'sync' ? Promise.reject(new Error('simulated lock sync failure')) : handle.sync()),
           close: () => handle.close(),
         };
       };
 
       await assert.rejects(
-        withOperationLock(
-          root,
-          async () => assert.fail('lock operation must not run'),
-          failingOpen,
-        ),
+        withOperationLock(root, async () => assert.fail('lock operation must not run'), failingOpen),
         new RegExp(`simulated lock ${phase} failure`),
       );
       await assert.rejects(lstat(lockPath));
@@ -363,7 +293,7 @@ test('failed lock writes and syncs remove only the lock file created by that att
   }
 });
 
-test('failed lock initialization preserves a replacement owner lock', async (t) => {
+test('failed lock initialization preserves a replacement owner lock', async t => {
   const root = await fixture(t);
   const lockPath = join(root, '.scratch', 'agent-work.lock');
   const replacementPath = `${lockPath}.replacement`;
@@ -372,7 +302,7 @@ test('failed lock initialization preserves a replacement owner lock', async (t) 
     const handle = await open(path, flags, mode);
     await writeFile(replacementPath, replacementContents, { flag: 'wx' });
     return {
-      stat: (options) => handle.stat(options),
+      stat: options => handle.stat(options),
       writeFile: async () => {
         await handle.close();
         await unlink(path);
@@ -396,7 +326,7 @@ test('failed lock initialization preserves a replacement owner lock', async (t) 
   assert.equal(await readFile(lockPath, 'utf8'), replacementContents);
 });
 
-test('cleanup retains sessions with nested and manifest links without following their targets', async (t) => {
+test('cleanup retains sessions with nested and manifest links without following their targets', async t => {
   const root = await fixture(t);
   await start(root);
   await finish(root);
@@ -414,7 +344,7 @@ test('cleanup retains sessions with nested and manifest links without following 
   assert.equal(await readFile(sentinelPath, 'utf8'), 'outside data\n');
 });
 
-test('cleanup rejects a linked managed root and retains linked date or session directories', async (t) => {
+test('cleanup rejects a linked managed root and retains linked date or session directories', async t => {
   const root = await fixture(t);
   const outside = await mkdtemp(join(tmpdir(), 'agent-work external tree-'));
   t.after(async () => rm(outside, { recursive: true, force: true }));
@@ -434,7 +364,7 @@ test('cleanup rejects a linked managed root and retains linked date or session d
   assert.equal(await readFile(sentinelPath, 'utf8'), 'outside data\n');
 });
 
-test('cleanup retains a linked session directory without following its target', async (t) => {
+test('cleanup retains a linked session directory without following its target', async t => {
   const root = await fixture(t);
   await mkdir(join(root, '.agent-work', date), { recursive: true });
   const outside = await mkdtemp(join(tmpdir(), 'agent-work linked session target-'));
@@ -449,7 +379,7 @@ test('cleanup retains a linked session directory without following its target', 
   assert.equal(await readFile(sentinelPath, 'utf8'), 'outside session data\n');
 });
 
-test('cleanup retains a linked marker without following its target', async (t) => {
+test('cleanup retains a linked marker without following its target', async t => {
   const root = await fixture(t);
   await start(root);
   await finish(root);
@@ -469,7 +399,7 @@ test('cleanup retains a linked marker without following its target', async (t) =
   await lstat(path);
 });
 
-test('session cleanup retains nested Git checkouts and the separate worktree area', async (t) => {
+test('session cleanup retains nested Git checkouts and the separate worktree area', async t => {
   const root = await fixture(t);
   await start(root);
   await finish(root);
@@ -486,7 +416,7 @@ test('session cleanup retains nested Git checkouts and the separate worktree are
   assert.equal(await readFile(join(worktrees, 'keep.txt'), 'utf8'), 'separate agent checkout\n');
 });
 
-test('session finish retains active contributor work until completion or worker handoff', async (t) => {
+test('session finish retains active contributor work until completion or worker handoff', async t => {
   const root = await fixture(t);
   await start(root);
   await mkdir(join(root, '.agent-work/state'), { recursive: true });

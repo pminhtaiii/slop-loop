@@ -4,16 +4,7 @@ import type { EnvelopeOutcome, FixPlan, PlanStep, PlanStepStatus, TaskEnvelope, 
 import { CONTRACT_VERSION, ENVELOPE_OUTCOMES, PLAN_STEP_STATUSES, TASK_NODES, TASK_OUTCOMES } from '../../types.ts';
 import { isPlainObject, rejectUnknownKeys, validateNonEmptyString, validateNonNegativeInteger, validatePositiveInteger } from '../common.ts';
 
-const TASK_ENVELOPE_ALLOWED_KEYS = [
-  'schemaVersion',
-  'requestId',
-  'taskId',
-  'runId',
-  'workspaceId',
-  'expectedStateVersion',
-  'repositoryRevisionDigest',
-  'trustedConfigId',
-] as const;
+const TASK_ENVELOPE_ALLOWED_KEYS = ['schemaVersion', 'requestId', 'taskId', 'runId', 'workspaceId', 'expectedStateVersion', 'repositoryRevisionDigest', 'trustedConfigId'] as const;
 
 export function validateTaskEnvelope(input: unknown): ValidationResult<TaskEnvelope> {
   if (!isPlainObject(input)) {
@@ -39,16 +30,8 @@ export function validateTaskEnvelope(input: unknown): ValidationResult<TaskEnvel
   const taskId = validateNonEmptyString(input['taskId'], 'taskId', errors);
   const runId = validateNonEmptyString(input['runId'], 'runId', errors);
   const workspaceId = validateNonEmptyString(input['workspaceId'], 'workspaceId', errors);
-  const expectedStateVersion = validateNonNegativeInteger(
-    input['expectedStateVersion'],
-    'expectedStateVersion',
-    errors
-  );
-  const repositoryRevisionDigest = validateNonEmptyString(
-    input['repositoryRevisionDigest'],
-    'repositoryRevisionDigest',
-    errors
-  );
+  const expectedStateVersion = validateNonNegativeInteger(input['expectedStateVersion'], 'expectedStateVersion', errors);
+  const repositoryRevisionDigest = validateNonEmptyString(input['repositoryRevisionDigest'], 'repositoryRevisionDigest', errors);
   const trustedConfigId = validateNonEmptyString(input['trustedConfigId'], 'trustedConfigId', errors);
 
   if (
@@ -153,13 +136,7 @@ export function validateEnvelopeOutcome(input: unknown): ValidationResult<Envelo
   return { ok: true, value: input as EnvelopeOutcome };
 }
 
-const PLAN_STEP_ALLOWED_KEYS = [
-  'stepId',
-  'description',
-  'status',
-  'actionRefs',
-  'evidenceRefs',
-] as const;
+const PLAN_STEP_ALLOWED_KEYS = ['stepId', 'description', 'status', 'actionRefs', 'evidenceRefs'] as const;
 
 export function validatePlanStep(input: unknown, path = 'planStep'): ValidationResult<PlanStep> {
   if (!isPlainObject(input)) {
@@ -220,14 +197,7 @@ export function validatePlanStep(input: unknown, path = 'planStep'): ValidationR
     }
   }
 
-  if (
-    errors.length > 0 ||
-    !stepId ||
-    !description ||
-    !PLAN_STEP_STATUSES.includes(status) ||
-    !Array.isArray(input['actionRefs']) ||
-    !Array.isArray(input['evidenceRefs'])
-  ) {
+  if (errors.length > 0 || !stepId || !description || !PLAN_STEP_STATUSES.includes(status) || !Array.isArray(input['actionRefs']) || !Array.isArray(input['evidenceRefs'])) {
     return { ok: false, errors };
   }
 

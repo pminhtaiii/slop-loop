@@ -12,19 +12,7 @@ import {
 import { validateBudgetLedger, validateApprovalRequestBinding, validateVerificationRecord } from './control.ts';
 import { isObject, checkStr, checkStringArray } from './validation.ts';
 
-const ALLOWED_STEP_KEYS = new Set([
-  'id',
-  'title',
-  'description',
-  'status',
-  'predecessorIds',
-  'startedAt',
-  'completedAt',
-  'evidenceRefs',
-  'requiredEvidenceRefs',
-  'error',
-  'changedFiles',
-]);
+const ALLOWED_STEP_KEYS = new Set(['id', 'title', 'description', 'status', 'predecessorIds', 'startedAt', 'completedAt', 'evidenceRefs', 'requiredEvidenceRefs', 'error', 'changedFiles']);
 
 export function validateStepStatus(status: unknown, path = 'status'): ValidationResult<StepStatus> {
   if (status === 'todo' || status === 'doing' || status === 'done' || status === 'failed') {
@@ -105,13 +93,7 @@ export function validateWorkspaceBaseline(val: unknown, path = 'workspace'): Val
   return { ok: true, value: val as unknown as WorkspaceBaseline };
 }
 
-export function validatePlanIntegrity(
-  plan: unknown,
-  errors: ValidationError[],
-  path: string,
-  requireInitialTodo = false,
-  allowEmpty = false
-): void {
+export function validatePlanIntegrity(plan: unknown, errors: ValidationError[], path: string, requireInitialTodo = false, allowEmpty = false): void {
   if (!Array.isArray(plan)) {
     errors.push({ path, message: 'plan must be an array', code: 'INVALID_PLAN' });
     return;
@@ -270,8 +252,7 @@ export function validateTaskState(val: unknown, path = 'state'): ValidationResul
     if (Array.isArray(val.plan) && !val.plan.every((step: unknown) => isObject(step) && step.status === 'done')) {
       errors.push({ path: `${path}.status`, message: 'A completed task requires every plan step to be done', code: 'INCOMPLETE_COMPLETION' });
     }
-    const verified = isObject(val.verification) && val.verification.status === 'verified' &&
-      Array.isArray(val.verification.evidenceRefs) && val.verification.evidenceRefs.length > 0;
+    const verified = isObject(val.verification) && val.verification.status === 'verified' && Array.isArray(val.verification.evidenceRefs) && val.verification.evidenceRefs.length > 0;
     if (!verified) {
       errors.push({ path: `${path}.verification`, message: 'A completed task requires a verified verification record with evidence', code: 'INCOMPLETE_COMPLETION' });
     }

@@ -12,15 +12,25 @@ function defaultTimeout() {
 
 export function packageScriptCommand(script, platform = process.platform) {
   if (typeof script !== 'string' || !/^[a-zA-Z0-9:_-]+$/.test(script)) throw new Error('Invalid package script name.');
-  return platform === 'win32'
-    ? { command: 'cmd.exe', args: ['/d', '/s', '/c', `pnpm run ${script}`] }
-    : { command: 'pnpm', args: ['run', script] };
+  return platform === 'win32' ? { command: 'cmd.exe', args: ['/d', '/s', '/c', `pnpm run ${script}`] } : { command: 'pnpm', args: ['run', script] };
 }
 
-export async function runGate({ name, command = process.execPath, args, cwd, logPath, timeout = defaultTimeout(), progress = name === 'tests', report = event => console.error(JSON.stringify(event)) }) {
+export async function runGate({
+  name,
+  command = process.execPath,
+  args,
+  cwd,
+  logPath,
+  timeout = defaultTimeout(),
+  progress = name === 'tests',
+  report = event => console.error(JSON.stringify(event)),
+}) {
   const log = await open(logPath, 'wx', 0o600);
   const started = Date.now();
-  let tail = '', timedOut = false, spawnError, terminationError;
+  let tail = '',
+    timedOut = false,
+    spawnError,
+    terminationError;
   let timer, heartbeat;
   const progressEnabled = progress === true;
   const progressParser = progressEnabled ? createGateProgressParser() : null;
@@ -53,7 +63,13 @@ export async function runGate({ name, command = process.execPath, args, cwd, log
   };
   try {
     report(progressEnabled ? progressEvent('running', started) : { gate: name, status: 'running', log: logPath });
-    const child = spawn(command, args, { cwd, detached: process.platform !== 'win32', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], ...(progressEnabled ? { env: { ...process.env, WORKFLOW_GATE_PROGRESS: '1' } } : {}) });
+    const child = spawn(command, args, {
+      cwd,
+      detached: process.platform !== 'win32',
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      ...(progressEnabled ? { env: { ...process.env, WORKFLOW_GATE_PROGRESS: '1' } } : {}),
+    });
     const capture = async (stream, parseProgress = false) => {
       for await (const chunk of stream) {
         await log.write(chunk);
@@ -63,7 +79,9 @@ export async function runGate({ name, command = process.execPath, args, cwd, log
       if (parseProgress) acceptProgress(progressParser.end());
     };
     const closed = new Promise(resolve => {
-      child.on('error', error => { spawnError = error; });
+      child.on('error', error => {
+        spawnError = error;
+      });
       child.on('close', (exitCode, signal) => resolve({ exitCode, signal }));
     });
     timer = setTimeout(() => {
@@ -72,15 +90,33 @@ export async function runGate({ name, command = process.execPath, args, cwd, log
       // Gates own this process tree; nested pnpm/test commands must stop with it.
       if (process.platform === 'win32') {
         const stopped = spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, encoding: 'utf8', timeout: 10_000 });
-        if (stopped.error || stopped.status !== 0) { terminationError = stopped.error?.message ?? stopped.stderr; child.kill(); }
+        if (stopped.error || stopped.status !== 0) {
+          terminationError = stopped.error?.message ?? stopped.stderr;
+          child.kill();
+        }
       } else {
-        try { process.kill(-child.pid, 'SIGKILL'); }
-        catch (error) { if (error.code !== 'ESRCH') { terminationError = error.message; child.kill('SIGKILL'); } }
+        try {
+          process.kill(-child.pid, 'SIGKILL');
+        } catch (error) {
+          if (error.code !== 'ESRCH') {
+            terminationError = error.message;
+            child.kill('SIGKILL');
+          }
+        }
       }
     }, timeout);
     if (progressEnabled) heartbeat = setInterval(() => report(progressEvent('heartbeat')), PROGRESS_INTERVAL_MS);
     const [exit] = await Promise.all([closed, capture(child.stdout), capture(child.stderr, progressEnabled)]);
-    const result = { name, status: timedOut ? 'timed-out' : spawnError || exit.exitCode !== 0 ? 'failed' : 'passed', ...exit, log: logPath, durationMs: Date.now() - started, summary: tail.trim(), terminationError, ...(progressEnabled ? progressFields() : {}) };
+    const result = {
+      name,
+      status: timedOut ? 'timed-out' : spawnError || exit.exitCode !== 0 ? 'failed' : 'passed',
+      ...exit,
+      log: logPath,
+      durationMs: Date.now() - started,
+      summary: tail.trim(),
+      terminationError,
+      ...(progressEnabled ? progressFields() : {}),
+    };
     if (spawnError) await log.write(`\n${spawnError.stack ?? spawnError.message}\n`);
     await log.write(`\n[gate-result] ${JSON.stringify({ ...result, summary: undefined })}\n`);
     report({ gate: name, status: result.status, exitCode: result.exitCode, log: logPath, ...(progressEnabled ? progressFields() : {}) });

@@ -7,7 +7,7 @@ import test from 'node:test';
 
 const activeTaskCli = resolve('scripts/agents/active-task.mjs');
 const factoryStateCli = resolve('scripts/agents/factory-state.mjs');
-const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
+const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 
 function run(root, script, ...args) {
   const result = spawnSync(process.execPath, [script, ...args, '--root', root], { cwd: root, encoding: 'utf8', windowsHide: true, timeout: 30_000 });
@@ -35,7 +35,26 @@ async function fixture(t, { factoryManaged = true, start = true } = {}) {
   git(root, 'add', '.');
   git(root, 'commit', '-m', 'fixture');
   if (start) {
-    const started = run(root, activeTaskCli, 'start', '--owner', 'worker', '--task', 'task', '--session', '2026-10-31/test', '--role', 'worker', '--summary', 'fixture', '--next', 'test', '--owned-path', 'code.txt', ...(factoryManaged ? ['--factory-managed'] : []));
+    const started = run(
+      root,
+      activeTaskCli,
+      'start',
+      '--owner',
+      'worker',
+      '--task',
+      'task',
+      '--session',
+      '2026-10-31/test',
+      '--role',
+      'worker',
+      '--summary',
+      'fixture',
+      '--next',
+      'test',
+      '--owned-path',
+      'code.txt',
+      ...(factoryManaged ? ['--factory-managed'] : []),
+    );
     assert.equal(started.status, 0, started.stderr);
   }
   const session = join(root, '.agent-work', '2026-10-31', 'test');
@@ -65,7 +84,14 @@ async function makeBundle(f) {
     identity,
     manifestSha256: hash(manifestBytes),
     candidateSha256: captured.candidateSha256,
-    criteria: [{ id: 'criterion-1', status: 'passed', tier: 'local', checks: [{ id: 'check-1', status: 'passed', command: 'node --test', exitCode: 0, artifacts: [{ path: '.agent-work/2026-10-31/test/log.txt', sha256: hash(artifactBytes) }] }] }],
+    criteria: [
+      {
+        id: 'criterion-1',
+        status: 'passed',
+        tier: 'local',
+        checks: [{ id: 'check-1', status: 'passed', command: 'node --test', exitCode: 0, artifacts: [{ path: '.agent-work/2026-10-31/test/log.txt', sha256: hash(artifactBytes) }] }],
+      },
+    ],
   };
   await writeFile(evidenceFile, JSON.stringify(evidence));
   return { manifestFile, evidenceFile, evidence };
@@ -79,7 +105,7 @@ function handoff(root, ...args) {
   return run(root, activeTaskCli, 'handoff', '--owner', 'worker', '--task', 'task', '--result', 'Checks recorded', ...args);
 }
 
-test('factory-managed handoff blocks when the coordinator has not pinned evidence', async (t) => {
+test('factory-managed handoff blocks when the coordinator has not pinned evidence', async t => {
   const f = await fixture(t);
   const before = await readFile(f.state, 'utf8');
   const result = run(f.root, activeTaskCli, 'handoff', '--owner', 'worker', '--task', 'task', '--result', 'Checks recorded');
@@ -88,7 +114,7 @@ test('factory-managed handoff blocks when the coordinator has not pinned evidenc
   assert.equal(await readFile(f.state, 'utf8'), before);
 });
 
-test('coordinator can pin complete evidence and a worker cannot replace its judging materials at handoff', async (t) => {
+test('coordinator can pin complete evidence and a worker cannot replace its judging materials at handoff', async t => {
   const f = await fixture(t);
   const bundle = await makeBundle(f);
   const pinned = pin(f.root, bundle);
@@ -109,7 +135,7 @@ test('coordinator can pin complete evidence and a worker cannot replace its judg
   assert.equal(JSON.parse(await readFile(f.state, 'utf8'))[0].status, 'handed-off');
 });
 
-test('incomplete evidence cannot be pinned, and stale candidate or evidence blocks without registry mutation', async (t) => {
+test('incomplete evidence cannot be pinned, and stale candidate or evidence blocks without registry mutation', async t => {
   const f = await fixture(t);
   const bundle = await makeBundle(f);
   bundle.evidence.criteria[0].checks = [];
@@ -120,7 +146,9 @@ test('incomplete evidence cannot be pinned, and stale candidate or evidence bloc
   assert.match(incomplete.stderr, /Evidence checks mismatch/);
   assert.equal(await readFile(f.state, 'utf8'), before);
 
-  bundle.evidence.criteria[0].checks = [{ id: 'check-1', status: 'passed', command: 'node --test', exitCode: 0, artifacts: [{ path: '.agent-work/2026-10-31/test/log.txt', sha256: hash('focused check output') }] }];
+  bundle.evidence.criteria[0].checks = [
+    { id: 'check-1', status: 'passed', command: 'node --test', exitCode: 0, artifacts: [{ path: '.agent-work/2026-10-31/test/log.txt', sha256: hash('focused check output') }] },
+  ];
   await writeFile(bundle.evidenceFile, JSON.stringify(bundle.evidence));
   const completePin = pin(f.root, bundle);
   assert.equal(completePin.status, 0, completePin.stderr);
@@ -140,19 +168,33 @@ test('incomplete evidence cannot be pinned, and stale candidate or evidence bloc
   assert.equal(await readFile(f.state, 'utf8'), pinnedState);
 });
 
-test('legacy workers retain the existing handoff path', async (t) => {
+test('legacy workers retain the existing handoff path', async t => {
   const f = await fixture(t, { factoryManaged: false });
   const completed = handoff(f.root);
   assert.equal(completed.status, 0, completed.stderr);
   assert.equal(JSON.parse(await readFile(f.state, 'utf8'))[0].status, 'handed-off');
 });
 
-test('reassignment preserves factory opt-in but drops identity-bound final pins', async (t) => {
+test('reassignment preserves factory opt-in but drops identity-bound final pins', async t => {
   const f = await fixture(t);
   const bundle = await makeBundle(f);
   const pinned = pin(f.root, bundle);
   assert.equal(pinned.status, 0, pinned.stderr);
-  const reassigned = run(f.root, activeTaskCli, 'reassign', '--owner', 'worker', '--task', 'task', '--new-owner', 'successor', '--session', '2026-10-31/successor', '--reason', 'Continue the registered work');
+  const reassigned = run(
+    f.root,
+    activeTaskCli,
+    'reassign',
+    '--owner',
+    'worker',
+    '--task',
+    'task',
+    '--new-owner',
+    'successor',
+    '--session',
+    '2026-10-31/successor',
+    '--reason',
+    'Continue the registered work',
+  );
   assert.equal(reassigned.status, 0, reassigned.stderr);
   const [source, successor] = JSON.parse(await readFile(f.state, 'utf8'));
   assert.equal(source.status, 'reassigned');
@@ -160,7 +202,7 @@ test('reassignment preserves factory opt-in but drops identity-bound final pins'
   assert.equal(Object.hasOwn(successor, 'factoryHandoff'), false);
 });
 
-test('malformed factory markers and pins are rejected by the CLI without rewriting the registry', async (t) => {
+test('malformed factory markers and pins are rejected by the CLI without rewriting the registry', async t => {
   const f = await fixture(t);
   const original = JSON.parse(await readFile(f.state, 'utf8'));
   original[0].factoryManaged = 'true';
@@ -181,9 +223,9 @@ test('malformed factory markers and pins are rejected by the CLI without rewriti
   assert.equal(await readFile(f.state, 'utf8'), malformedPinState);
 });
 
-test('guarded start refuses checkout identity drift before writing an assignment', async (t) => {
+test('guarded start refuses checkout identity drift before writing an assignment', async t => {
   for (const drift of ['branch', 'head', 'dirty']) {
-    await t.test(drift, async (st) => {
+    await t.test(drift, async st => {
       const f = await fixture(st, { start: false });
       const expectedBranch = git(f.root, 'branch', '--show-current');
       const expectedHead = git(f.root, 'rev-parse', 'HEAD');
@@ -195,7 +237,31 @@ test('guarded start refuses checkout identity drift before writing an assignment
       }
       if (drift === 'dirty') await writeFile(join(f.root, 'code.txt'), 'dirty after preflight');
 
-      const result = run(f.root, activeTaskCli, 'start', '--owner', 'worker', '--task', 'task', '--session', '2026-11-01/test', '--role', 'worker', '--summary', 'guarded start', '--next', 'test expected identity', '--owned-path', 'code.txt', '--factory-managed', '--expected-branch', expectedBranch, '--expected-head', expectedHead, '--require-clean');
+      const result = run(
+        f.root,
+        activeTaskCli,
+        'start',
+        '--owner',
+        'worker',
+        '--task',
+        'task',
+        '--session',
+        '2026-11-01/test',
+        '--role',
+        'worker',
+        '--summary',
+        'guarded start',
+        '--next',
+        'test expected identity',
+        '--owned-path',
+        'code.txt',
+        '--factory-managed',
+        '--expected-branch',
+        expectedBranch,
+        '--expected-head',
+        expectedHead,
+        '--require-clean',
+      );
       assert.equal(result.status, 1);
       assert.match(result.stderr, drift === 'branch' ? /--expected-branch/i : drift === 'head' ? /--expected-head/i : /clean checkout/i);
       await assert.rejects(readFile(f.state), { code: 'ENOENT' });

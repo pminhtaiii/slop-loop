@@ -134,14 +134,8 @@ function createValidBugTask(): BugTask {
     observedBehavior: 'Calling Calculator.divide(10, 0) raises unhandled ZeroDivisionError',
     expectedBehavior: 'Calling Calculator.divide(10, 0) raises custom CalculationError with clear message',
     reproduction: 'python -m pytest tests/test_calculator.py -k test_divide_zero',
-    acceptanceCriteria: [
-      'Calculator.divide(x, 0) raises CalculationError',
-      'Existing arithmetic operations remain unchanged',
-    ],
-    constraints: [
-      'Do not modify external public API signatures',
-      'No third-party math dependencies',
-    ],
+    acceptanceCriteria: ['Calculator.divide(x, 0) raises CalculationError', 'Existing arithmetic operations remain unchanged'],
+    constraints: ['Do not modify external public API signatures', 'No third-party math dependencies'],
     requiredChecks: [createValidCheck()],
     limits: createValidLimits(),
     budgetLimits: createValidBudgetLimits(),
@@ -173,20 +167,10 @@ test('BugTask validation: rejects non-object inputs', (): void => {
 });
 
 test('BugTask validation: rejects missing or empty mandatory string fields', (): void => {
-  const fields: readonly (keyof BugTask)[] = [
-    'taskId',
-    'repositoryId',
-    'initialRevisionDigest',
-    'goal',
-    'observedBehavior',
-    'expectedBehavior',
-    'reproduction',
-  ];
+  const fields: readonly (keyof BugTask)[] = ['taskId', 'repositoryId', 'initialRevisionDigest', 'goal', 'observedBehavior', 'expectedBehavior', 'reproduction'];
 
   for (const field of fields) {
-    const base = Object.fromEntries(
-      Object.entries(createValidBugTask()).filter(([k]) => k !== field)
-    );
+    const base = Object.fromEntries(Object.entries(createValidBugTask()).filter(([k]) => k !== field));
     const missingRes = validateBugTask(base);
     assert.equal(missingRes.ok, false, `Expected missing ${field} to fail`);
 
@@ -201,7 +185,7 @@ test('BugTask validation: rejects empty acceptanceCriteria', (): void => {
   const res = validateBugTask(base);
   assert.equal(res.ok, false);
   if (!res.ok) {
-    assert.ok(res.errors.some((e) => e.path === 'acceptanceCriteria'));
+    assert.ok(res.errors.some(e => e.path === 'acceptanceCriteria'));
   }
 });
 
@@ -210,7 +194,7 @@ test('BugTask validation: rejects empty requiredChecks', (): void => {
   const res = validateBugTask(base);
   assert.equal(res.ok, false);
   if (!res.ok) {
-    assert.ok(res.errors.some((e) => e.path === 'requiredChecks'));
+    assert.ok(res.errors.some(e => e.path === 'requiredChecks'));
   }
 });
 
@@ -225,7 +209,7 @@ test('BugTask validation: rejects malformed requiredChecks', (): void => {
   const res = validateBugTask(base);
   assert.equal(res.ok, false);
   if (!res.ok) {
-    assert.ok(res.errors.some((e) => e.path.startsWith('requiredChecks[0]')));
+    assert.ok(res.errors.some(e => e.path.startsWith('requiredChecks[0]')));
   }
 });
 
@@ -309,7 +293,7 @@ test('BudgetLimits validation: rejects replan count exceeding 3 (ADR-0004 & FR-0
   const res = validateBudgetLimits(overCap);
   assert.equal(res.ok, false);
   if (!res.ok) {
-    assert.ok(res.errors.some((e) => e.code === 'REPLAN_CAP_EXCEEDED'));
+    assert.ok(res.errors.some(e => e.code === 'REPLAN_CAP_EXCEEDED'));
   }
 
   const hugeReplan = { maxReplanCount: 100 };
@@ -518,7 +502,7 @@ test('ApprovalBinding validation: rejects fix_plan binding missing planVersion o
   const res = validateApprovalBinding(missingPlanFields);
   assert.equal(res.ok, false);
   if (!res.ok) {
-    assert.ok(res.errors.some((e) => e.code === 'MISSING_PLAN_FIELD'));
+    assert.ok(res.errors.some(e => e.code === 'MISSING_PLAN_FIELD'));
   }
 });
 
@@ -577,22 +561,12 @@ test('CommandView validation: rejects when mountedReadOnly is false or missing',
   const res = validateCommandView(writableView);
   assert.equal(res.ok, false);
   if (!res.ok) {
-    assert.ok(res.errors.some((e) => e.code === 'READONLY_REQUIRED'));
+    assert.ok(res.errors.some(e => e.code === 'READONLY_REQUIRED'));
   }
 });
 
 test('CommandView validation: rejects when protected files are in admittedFiles (FR-009, FR-010, C08)', (): void => {
-  const forbiddenNames = [
-    '.env',
-    '.env.local',
-    'id_rsa',
-    'id_ed25519',
-    'secret.pem',
-    'deploy.key',
-    'credentials.json',
-    '.git/config',
-    'certs/privkey.pem',
-  ];
+  const forbiddenNames = ['.env', '.env.local', 'id_rsa', 'id_ed25519', 'secret.pem', 'deploy.key', 'credentials.json', '.git/config', 'certs/privkey.pem'];
 
   for (const forbiddenPath of forbiddenNames) {
     const badView = {
@@ -605,7 +579,7 @@ test('CommandView validation: rejects when protected files are in admittedFiles 
     const res = validateCommandView(badView);
     assert.equal(res.ok, false, `Expected admitting ${forbiddenPath} to fail`);
     if (!res.ok) {
-      assert.ok(res.errors.some((e) => e.code === 'PROTECTED_DATA_ADMITTED'));
+      assert.ok(res.errors.some(e => e.code === 'PROTECTED_DATA_ADMITTED'));
     }
   }
 });
@@ -613,9 +587,7 @@ test('CommandView validation: rejects when protected files are in admittedFiles 
 test('CommandView validation: rejects escaping paths in admittedFiles', (): void => {
   const escapingView = {
     ...createValidCommandView(),
-    admittedFiles: [
-      { path: '../outside.py', digest: 'sha256:file1' },
-    ],
+    admittedFiles: [{ path: '../outside.py', digest: 'sha256:file1' }],
   };
   assert.equal(validateCommandView(escapingView).ok, false);
 });
@@ -627,7 +599,7 @@ test('CommandView validation: detects stale view when currentCanonicalRevisionDi
   });
   assert.equal(res.ok, false);
   if (!res.ok) {
-    assert.ok(res.errors.some((e) => e.code === 'STALE_COMMAND_VIEW'));
+    assert.ok(res.errors.some(e => e.code === 'STALE_COMMAND_VIEW'));
   }
 
   // Matches
@@ -764,24 +736,12 @@ test('TaskEnvelope validation: rejects unknown execution-affecting properties', 
   const res = validateTaskEnvelope(extraProp);
   assert.equal(res.ok, false);
   if (!res.ok) {
-    assert.ok(res.errors.some((e) => e.code === 'UNKNOWN_PROPERTY'));
+    assert.ok(res.errors.some(e => e.code === 'UNKNOWN_PROPERTY'));
   }
 });
 
 test('TaskNode validation: accepts all 11 canonical node enum values', (): void => {
-  const nodes: readonly TaskNode[] = [
-    'Validate',
-    'NeedsInfo',
-    'Investigate',
-    'AwaitPlan',
-    'AwaitFeedback',
-    'Patch',
-    'Verify',
-    'Review',
-    'Repair',
-    'Deliver',
-    'Incomplete',
-  ];
+  const nodes: readonly TaskNode[] = ['Validate', 'NeedsInfo', 'Investigate', 'AwaitPlan', 'AwaitFeedback', 'Patch', 'Verify', 'Review', 'Repair', 'Deliver', 'Incomplete'];
   for (const node of nodes) {
     const res = validateTaskNode(node);
     assert.equal(res.ok, true, `Expected node ${node} to be valid`);
@@ -808,17 +768,7 @@ test('TaskOutcome and EnvelopeOutcome validation: validates canonical outcomes',
   assert.equal(validateTaskOutcome('INVALID').ok, false);
 
   // EnvelopeOutcome
-  const validEnvelopeOutcomes: readonly EnvelopeOutcome[] = [
-    'success',
-    'needs-info',
-    'pending-approval',
-    'denied',
-    'conflict',
-    'exhausted',
-    'timeout',
-    'error',
-    'uncertain-effect',
-  ];
+  const validEnvelopeOutcomes: readonly EnvelopeOutcome[] = ['success', 'needs-info', 'pending-approval', 'denied', 'conflict', 'exhausted', 'timeout', 'error', 'uncertain-effect'];
   for (const out of validEnvelopeOutcomes) {
     assert.equal(validateEnvelopeOutcome(out).ok, true);
   }
@@ -843,7 +793,7 @@ test('PlanStep validation: accepts valid step and rejects invalid status or unkn
   const unknownRes = validatePlanStep(unknownKey);
   assert.equal(unknownRes.ok, false);
   if (!unknownRes.ok) {
-    assert.ok(unknownRes.errors.some((e) => e.code === 'UNKNOWN_PROPERTY'));
+    assert.ok(unknownRes.errors.some(e => e.code === 'UNKNOWN_PROPERTY'));
   }
 });
 
@@ -873,7 +823,7 @@ test('FixPlan validation: accepts valid complete FixPlan and rejects missing req
   const unknownRes = validateFixPlan(unknownKey);
   assert.equal(unknownRes.ok, false);
   if (!unknownRes.ok) {
-    assert.ok(unknownRes.errors.some((e) => e.code === 'UNKNOWN_PROPERTY'));
+    assert.ok(unknownRes.errors.some(e => e.code === 'UNKNOWN_PROPERTY'));
   }
 });
 
@@ -941,7 +891,7 @@ test('TaskState validation: rejects missing repository binding or invalid replan
   const overCapRes = validateTaskState(overCap);
   assert.equal(overCapRes.ok, false);
   if (!overCapRes.ok) {
-    assert.ok(overCapRes.errors.some((e) => e.code === 'REPLAN_CAP_EXCEEDED'));
+    assert.ok(overCapRes.errors.some(e => e.code === 'REPLAN_CAP_EXCEEDED'));
   }
 
   // Negative replanCount
@@ -958,7 +908,7 @@ test('TaskState validation: enforces node-appropriate terminal outcomes', (): vo
   const resNonTerm = validateTaskState(nonTerminalWithOutcome);
   assert.equal(resNonTerm.ok, false);
   if (!resNonTerm.ok) {
-    assert.ok(resNonTerm.errors.some((e) => e.code === 'NON_TERMINAL_OUTCOME_SET'));
+    assert.ok(resNonTerm.errors.some(e => e.code === 'NON_TERMINAL_OUTCOME_SET'));
   }
 
   // Deliver node requires COMPLETED or IMPLEMENTED_UNVERIFIED
@@ -1014,7 +964,7 @@ test('TaskState validation: rejects unknown execution-affecting properties (incl
   const res1 = validateTaskState(unknownTop);
   assert.equal(res1.ok, false);
   if (!res1.ok) {
-    assert.ok(res1.errors.some((e) => e.code === 'UNKNOWN_PROPERTY'));
+    assert.ok(res1.errors.some(e => e.code === 'UNKNOWN_PROPERTY'));
   }
 
   const unknownNestedPlan = {
@@ -1027,7 +977,7 @@ test('TaskState validation: rejects unknown execution-affecting properties (incl
   const res2 = validateTaskState(unknownNestedPlan);
   assert.equal(res2.ok, false);
   if (!res2.ok) {
-    assert.ok(res2.errors.some((e) => e.code === 'UNKNOWN_PROPERTY'));
+    assert.ok(res2.errors.some(e => e.code === 'UNKNOWN_PROPERTY'));
   }
 });
 
@@ -1178,7 +1128,7 @@ test('validateStateTransition: rejects invalid transitions not in data-model dia
   const res1 = validateStateTransition(sValidate, sPatch);
   assert.equal(res1.ok, false);
   if (!res1.ok) {
-    assert.ok(res1.errors.some((e) => e.code === 'INVALID_NODE_TRANSITION'));
+    assert.ok(res1.errors.some(e => e.code === 'INVALID_NODE_TRANSITION'));
   }
 
   // Investigate -> Patch (bypassing AwaitPlan approval)
@@ -1218,7 +1168,7 @@ test('validateStateTransition: rejects transition out of terminal nodes (Deliver
   const res = validateStateTransition(sDeliver, sNext);
   assert.equal(res.ok, false);
   if (!res.ok) {
-    assert.ok(res.errors.some((e) => e.code === 'TERMINAL_NODE_CANNOT_TRANSITION'));
+    assert.ok(res.errors.some(e => e.code === 'TERMINAL_NODE_CANNOT_TRANSITION'));
   }
 });
 
@@ -1281,7 +1231,7 @@ test('validateStateTransition: enforces maximum 3 material replans and prohibits
   const res1 = validateStateTransition(sRepair, fourthReplan);
   assert.equal(res1.ok, false);
   if (!res1.ok) {
-    assert.ok(res1.errors.some((e) => e.code === 'REPLAN_CAP_EXCEEDED'));
+    assert.ok(res1.errors.some(e => e.code === 'REPLAN_CAP_EXCEEDED'));
   }
 
   // replan count decrease (replenishment attempt) must fail
@@ -1294,7 +1244,7 @@ test('validateStateTransition: enforces maximum 3 material replans and prohibits
   const res2 = validateStateTransition(sRepair, replenishedReplan);
   assert.equal(res2.ok, false);
   if (!res2.ok) {
-    assert.ok(res2.errors.some((e) => e.code === 'REPLAN_COUNT_DECREASED'));
+    assert.ok(res2.errors.some(e => e.code === 'REPLAN_COUNT_DECREASED'));
   }
 });
 
@@ -1309,7 +1259,7 @@ test('validateStateTransition: enforces required plan before entering AwaitPlan'
   const res = validateStateTransition(sInvestigate, sAwaitPlanNoPlan);
   assert.equal(res.ok, false);
   if (!res.ok) {
-    assert.ok(res.errors.some((e) => e.code === 'MISSING_PLAN'));
+    assert.ok(res.errors.some(e => e.code === 'MISSING_PLAN'));
   }
 });
 
@@ -1386,14 +1336,10 @@ test('T003 Defect 1 Regression: BudgetLimits requires all finite limits and acce
 });
 
 test('T003 Defect 1 Regression: BugTask requires configId and configVersion', (): void => {
-  const taskNoConfigId = Object.fromEntries(
-    Object.entries(createValidBugTask()).filter(([k]) => k !== 'configId')
-  );
+  const taskNoConfigId = Object.fromEntries(Object.entries(createValidBugTask()).filter(([k]) => k !== 'configId'));
   assert.equal(validateBugTask(taskNoConfigId).ok, false, 'Expected missing configId to fail');
 
-  const taskNoConfigVer = Object.fromEntries(
-    Object.entries(createValidBugTask()).filter(([k]) => k !== 'configVersion')
-  );
+  const taskNoConfigVer = Object.fromEntries(Object.entries(createValidBugTask()).filter(([k]) => k !== 'configVersion'));
   assert.equal(validateBugTask(taskNoConfigVer).ok, false, 'Expected missing configVersion to fail');
 });
 
@@ -1422,15 +1368,7 @@ test('T003 Defect 2 Regression: apply_patch preserves patchContent byte-for-byte
 
 // Defect 3: Relative path normalization and protected path rejection
 test('T003 Defect 3 Regression: rejects non-canonical relative path aliases (./ prefix, trailing slashes, NUL bytes, traversal endings)', (): void => {
-  const badPaths = [
-    './src/calculator.py',
-    'src/calculator.py/',
-    'src/\0calculator.py',
-    'src/..',
-    'src/./calculator.py',
-    'src//calculator.py',
-    '/workspace/calculator.py',
-  ];
+  const badPaths = ['./src/calculator.py', 'src/calculator.py/', 'src/\0calculator.py', 'src/..', 'src/./calculator.py', 'src//calculator.py', '/workspace/calculator.py'];
 
   assert.equal(isCanonicalRelativePath('src/calculator.py'), true);
   for (const badPath of badPaths) {
@@ -1448,15 +1386,7 @@ test('T003 Defect 3 Regression: rejects non-canonical relative path aliases (./ 
 });
 
 test('T003 Defect 3 Regression: rejects protected agent files (.agents, .codex, AGENTS.md, CLAUDE.md, .git) and private grading', (): void => {
-  const protectedPaths = [
-    '.agents/skills/tool.md',
-    '.codex/instructions.md',
-    'AGENTS.md',
-    'CLAUDE.md',
-    '.git/HEAD',
-    'eval/uc03/private/rubric.json',
-    'tests/private/grading/secret.py',
-  ];
+  const protectedPaths = ['.agents/skills/tool.md', '.codex/instructions.md', 'AGENTS.md', 'CLAUDE.md', '.git/HEAD', 'eval/uc03/private/rubric.json', 'tests/private/grading/secret.py'];
 
   assert.equal(isProtectedPath('src/calculator.py'), false);
   for (const p of protectedPaths) {
@@ -1471,7 +1401,7 @@ test('T003 Defect 3 Regression: rejects protected agent files (.agents, .codex, 
     const res = validateCommandView(view);
     assert.equal(res.ok, false, `Expected protected path ${p} to be rejected`);
     if (!res.ok) {
-      assert.ok(res.errors.some((e) => e.code === 'PROTECTED_DATA_ADMITTED'));
+      assert.ok(res.errors.some(e => e.code === 'PROTECTED_DATA_ADMITTED'));
     }
   }
 });
@@ -1490,7 +1420,7 @@ test('T003 Defect 4 Regression: per-object allowlists reject unknown fields recu
   const resCmd = validateNormalizedAction(cmdWithShell);
   assert.equal(resCmd.ok, false, 'run_command with shell property must be rejected');
   if (!resCmd.ok) {
-    assert.ok(resCmd.errors.some((e) => e.code === 'UNKNOWN_PROPERTY'));
+    assert.ok(resCmd.errors.some(e => e.code === 'UNKNOWN_PROPERTY'));
   }
 
   // CheckDefinition unknown properties
@@ -1501,19 +1431,17 @@ test('T003 Defect 4 Regression: per-object allowlists reject unknown fields recu
   const errorsCheck: ValidationError[] = [];
   const resCheck = validateCheckDefinition(checkWithUnknown, 'check', errorsCheck);
   assert.equal(resCheck, undefined);
-  assert.ok(errorsCheck.some((e) => e.code === 'UNKNOWN_PROPERTY'));
+  assert.ok(errorsCheck.some(e => e.code === 'UNKNOWN_PROPERTY'));
 
   // AdmittedFile unknown properties in CommandView
   const viewWithAdmittedUnknown = {
     ...createValidCommandView(),
-    admittedFiles: [
-      { path: 'src/calculator.py', digest: 'sha256:file1', unadmittedFlag: true },
-    ],
+    admittedFiles: [{ path: 'src/calculator.py', digest: 'sha256:file1', unadmittedFlag: true }],
   };
   const resView = validateCommandView(viewWithAdmittedUnknown);
   assert.equal(resView.ok, false);
   if (!resView.ok) {
-    assert.ok(resView.errors.some((e) => e.code === 'UNKNOWN_PROPERTY'));
+    assert.ok(resView.errors.some(e => e.code === 'UNKNOWN_PROPERTY'));
   }
 
   // ExecutionLimits unknown property
@@ -1591,7 +1519,7 @@ test('T003 Defect 6 Regression: ApprovalBinding includes fix-plan identities and
   const staleRes = validateApprovalBinding(validFixPlanBinding, context);
   assert.equal(staleRes.ok, false, 'Validation must fail against stale trusted context');
   if (!staleRes.ok) {
-    assert.ok(staleRes.errors.some((e) => e.code === 'STALE_APPROVAL_BINDING'));
+    assert.ok(staleRes.errors.some(e => e.code === 'STALE_APPROVAL_BINDING'));
   }
 });
 
@@ -1643,7 +1571,7 @@ test('T003 Defect 6 Regression: validateCommandView verifies view digest and rej
   const res = validateCommandView(view, contextWithTrustedEvidence);
   assert.equal(res.ok, false, 'Unevidenced file admission must be rejected when trusted evidence context is supplied');
   if (!res.ok) {
-    assert.ok(res.errors.some((e) => e.code === 'UNTRUSTED_FILE_ADMISSION'));
+    assert.ok(res.errors.some(e => e.code === 'UNTRUSTED_FILE_ADMISSION'));
   }
 });
 
@@ -1761,7 +1689,7 @@ function createMatchingLedgers(role: 'coder' | 'reviewer' = 'coder'): BudgetLedg
       scope: 'task',
       kind: 'cost',
       limit: 5.0,
-      consumed: 0.10,
+      consumed: 0.1,
       reservations: [{ reservationId: 'bundle-001:ledger-task-cost', keyedId: 'req-prov-001', amount: 0.15 }],
       unit: 'usd',
       configurationId: 'config-uc03-v1',
@@ -1857,7 +1785,7 @@ test('ProviderUsage validation: rejects unknown properties', (): void => {
   const res = validateProviderUsage(withUnknown);
   assert.equal(res.ok, false);
   if (!res.ok) {
-    assert.ok(res.errors.some((e) => e.code === 'UNKNOWN_PROPERTY'));
+    assert.ok(res.errors.some(e => e.code === 'UNKNOWN_PROPERTY'));
   }
 });
 
@@ -1871,7 +1799,7 @@ test('ProviderUsage validation: rejects billableTokens less than sum of input an
   const res = validateProviderUsage(invalidOverhead);
   assert.equal(res.ok, false);
   if (!res.ok) {
-    assert.ok(res.errors.some((e) => e.code === 'INVALID_BILLABLE_TOKENS'));
+    assert.ok(res.errors.some(e => e.code === 'INVALID_BILLABLE_TOKENS'));
   }
 });
 
@@ -1901,7 +1829,7 @@ test('ModelProposal validation: accepts valid proposal with actions and rejects 
   const resUnknown = validateModelProposal(unknownProp);
   assert.equal(resUnknown.ok, false);
   if (!resUnknown.ok) {
-    assert.ok(resUnknown.errors.some((e) => e.code === 'UNKNOWN_PROPERTY'));
+    assert.ok(resUnknown.errors.some(e => e.code === 'UNKNOWN_PROPERTY'));
   }
 });
 
@@ -1922,7 +1850,7 @@ test('ModelProposal validation: recursively rejects invalid actions (forbidden c
   const res = validateModelProposal(badActionProposal);
   assert.equal(res.ok, false);
   if (!res.ok) {
-    assert.ok(res.errors.some((e) => e.code === 'WORKSPACE_ESCAPE'));
+    assert.ok(res.errors.some(e => e.code === 'WORKSPACE_ESCAPE'));
   }
 });
 
@@ -2006,7 +1934,7 @@ test('ProviderRequest validation: enforces maxBillableTokens >= maxInputTokens +
   const res = validateProviderRequest(insufficientBillable);
   assert.equal(res.ok, false);
   if (!res.ok) {
-    assert.ok(res.errors.some((e) => e.code === 'INVALID_BILLABLE_CEILING'));
+    assert.ok(res.errors.some(e => e.code === 'INVALID_BILLABLE_CEILING'));
   }
 });
 
@@ -2090,7 +2018,7 @@ test('ProviderRequest validation: checks trusted expected request identity conte
   const resBadRole = validateProviderRequest(req, badRoleCtx);
   assert.equal(resBadRole.ok, false);
   if (!resBadRole.ok) {
-    assert.ok(resBadRole.errors.some((e) => e.code === 'REQUEST_IDENTITY_MISMATCH'));
+    assert.ok(resBadRole.errors.some(e => e.code === 'REQUEST_IDENTITY_MISMATCH'));
   }
 
   // Mismatch in context digest
@@ -2195,7 +2123,7 @@ test('validateDispatchAdmission: rejects bare ref or missing context (untrusted 
   const resBare = validateDispatchAdmission(req, {});
   assert.equal(resBare.ok, false);
   if (!resBare.ok) {
-    assert.ok(resBare.errors.some((e) => e.code === 'ABSENT_RESERVATION_BUNDLE' || e.code === 'UNTRUSTED_DISPATCH_AUTHORIZATION'));
+    assert.ok(resBare.errors.some(e => e.code === 'ABSENT_RESERVATION_BUNDLE' || e.code === 'UNTRUSTED_DISPATCH_AUTHORIZATION'));
   }
 });
 
@@ -2215,7 +2143,7 @@ test('validateDispatchAdmission: rejects telemetry estimate (bare ref or telemet
   assert.equal(res.ok, false);
   assert.equal(isAdmittedForDispatch(req, contextWithTelemetry), false);
   if (!res.ok) {
-    assert.ok(res.errors.some((e) => e.code === 'TELEMETRY_ESTIMATE_CANNOT_AUTHORIZE'));
+    assert.ok(res.errors.some(e => e.code === 'TELEMETRY_ESTIMATE_CANNOT_AUTHORIZE'));
   }
 });
 
@@ -2227,14 +2155,14 @@ test('validateDispatchAdmission: rejects partial reservation bundle (missing run
   // Missing run cost reservation
   const partialBundle: ReservationBundle = {
     ...bundle,
-    reservations: bundle.reservations.filter((r) => !(r.scope === 'run' && r.kind === 'cost')),
+    reservations: bundle.reservations.filter(r => !(r.scope === 'run' && r.kind === 'cost')),
   };
 
   const res = validateDispatchAdmission(req, { ...trustedProviderContext(req.role), reservationBundle: partialBundle, ledgers });
   assert.equal(res.ok, false);
   assert.equal(isAdmittedForDispatch(req, { ...trustedProviderContext(req.role), reservationBundle: partialBundle, ledgers }), false);
   if (!res.ok) {
-    assert.ok(res.errors.some((e) => e.code === 'PARTIAL_RESERVATION'));
+    assert.ok(res.errors.some(e => e.code === 'PARTIAL_RESERVATION'));
   }
 
   // Reviewer role missing iteration reservation
@@ -2249,7 +2177,7 @@ test('validateDispatchAdmission: rejects partial reservation bundle (missing run
   });
   assert.equal(resReviewer.ok, false);
   if (!resReviewer.ok) {
-    assert.ok(resReviewer.errors.some((e) => e.code === 'PARTIAL_RESERVATION'));
+    assert.ok(resReviewer.errors.some(e => e.code === 'PARTIAL_RESERVATION'));
   }
 });
 
@@ -2259,7 +2187,7 @@ test('validateDispatchAdmission: rejects exhausted budget (ledger limit exceeded
   const ledgers = createMatchingLedgers('coder');
 
   // Exhausted task cost ledger (consumed 4.95 out of 5.0, requesting 0.15 exceeds limit 5.0)
-  const exhaustedLedgers = ledgers.map((l) => {
+  const exhaustedLedgers = ledgers.map(l => {
     if (l.scope === 'task' && l.kind === 'cost') {
       return {
         ...l,
@@ -2274,7 +2202,7 @@ test('validateDispatchAdmission: rejects exhausted budget (ledger limit exceeded
   assert.equal(res.ok, false);
   assert.equal(isAdmittedForDispatch(req, { ...trustedProviderContext(req.role), reservationBundle: bundle, ledgers: exhaustedLedgers }), false);
   if (!res.ok) {
-    assert.ok(res.errors.some((e) => e.code === 'BUDGET_EXHAUSTED'));
+    assert.ok(res.errors.some(e => e.code === 'BUDGET_EXHAUSTED'));
   }
 });
 
@@ -2290,7 +2218,7 @@ test('validateDispatchAdmission: rejects mismatched task, run, or request IDs', 
   // Bundle for different request
   const badReqBundle: ReservationBundle = {
     ...bundle,
-    reservations: bundle.reservations.map((r) => ({ ...r, requestId: 'different-req-id' })),
+    reservations: bundle.reservations.map(r => ({ ...r, requestId: 'different-req-id' })),
   };
   assert.equal(validateDispatchAdmission(req, { reservationBundle: badReqBundle, ledgers }).ok, false);
 });
@@ -2308,7 +2236,7 @@ test('validateDispatchAdmission: rejects uncertain request (uncertain retains ch
   assert.equal(res.ok, false);
   assert.equal(isAdmittedForDispatch(uncertainReq, { reservationBundle: bundle, ledgers }), false);
   if (!res.ok) {
-    assert.ok(res.errors.some((e) => e.code === 'UNCERTAIN_CANNOT_REPLAY' || e.code === 'INVALID_DISPATCH_STATE'));
+    assert.ok(res.errors.some(e => e.code === 'UNCERTAIN_CANNOT_REPLAY' || e.code === 'INVALID_DISPATCH_STATE'));
   }
 });
 
@@ -2374,7 +2302,6 @@ test('ModelPort and observed usage accounting: observed malformed-response usage
   assert.equal(invalidOutcome.observedUsage?.costUsd, 0.05);
 });
 
-
 test('repair: state arrays and original context fail closed', () => {
   const state = createValidTaskState();
   for (const key of ['acceptanceCriteria', 'constraints', 'requiredCheckIds', 'changedPaths', 'evidenceRefs', 'approvalDecisionRefs', 'reviewRefs', 'risks']) {
@@ -2392,12 +2319,41 @@ test('repair: sensitive transitions require trusted authorization', () => {
 });
 
 function freshContext(binding: ApprovalBinding): ApprovalBindingContext {
-  return { currentTaskId: binding.taskId, currentWorkspaceId: binding.workspaceId, currentRepositoryRevisionDigest: binding.repositoryRevisionDigest, currentPolicyId: binding.policyId, currentPolicyVersion: binding.policyVersion, currentNormalizedActionDigest: binding.normalizedActionDigest, currentPlanVersion: binding.planVersion, currentStrategyDigest: binding.strategyDigest, currentBaselineRef: binding.baselineRef, currentEvidenceRefs: binding.evidenceRefs, currentCriteriaDigest: binding.criteriaDigest, currentCheckSetDigest: binding.checkSetDigest };
+  return {
+    currentTaskId: binding.taskId,
+    currentWorkspaceId: binding.workspaceId,
+    currentRepositoryRevisionDigest: binding.repositoryRevisionDigest,
+    currentPolicyId: binding.policyId,
+    currentPolicyVersion: binding.policyVersion,
+    currentNormalizedActionDigest: binding.normalizedActionDigest,
+    currentPlanVersion: binding.planVersion,
+    currentStrategyDigest: binding.strategyDigest,
+    currentBaselineRef: binding.baselineRef,
+    currentEvidenceRefs: binding.evidenceRefs,
+    currentCriteriaDigest: binding.criteriaDigest,
+    currentCheckSetDigest: binding.checkSetDigest,
+  };
 }
 
 function approvedPlan(state: TaskState): ApprovalBinding {
   const plan = state.plan ?? createValidFixPlan();
-  return { decisionId: 'dec-plan-001', actionKind: 'fix_plan', status: 'approved', normalizedActionDigest: 'sha256:action', taskId: state.taskId, workspaceId: state.workspaceId, repositoryRevisionDigest: state.repositoryRevisionDigest, policyId: 'policy', policyVersion: '1', planVersion: plan.planVersion, strategyDigest: plan.strategyDigest, baselineRef: plan.baselineRef, evidenceRefs: plan.evidenceRefs, criteriaDigest: computeCanonicalSha256(state.acceptanceCriteria), checkSetDigest: plan.checkSetDigest };
+  return {
+    decisionId: 'dec-plan-001',
+    actionKind: 'fix_plan',
+    status: 'approved',
+    normalizedActionDigest: 'sha256:action',
+    taskId: state.taskId,
+    workspaceId: state.workspaceId,
+    repositoryRevisionDigest: state.repositoryRevisionDigest,
+    policyId: 'policy',
+    policyVersion: '1',
+    planVersion: plan.planVersion,
+    strategyDigest: plan.strategyDigest,
+    baselineRef: plan.baselineRef,
+    evidenceRefs: plan.evidenceRefs,
+    criteriaDigest: computeCanonicalSha256(state.acceptanceCriteria),
+    checkSetDigest: plan.checkSetDigest,
+  };
 }
 
 test('repair: approved admission requires all current freshness fields', () => {
@@ -2417,7 +2373,8 @@ test('repair: fresh approved exact plan admits editing and rejects rejected or s
   const binding = approvedPlan(next);
   const options = { trusted: { approval: { binding, freshness: freshContext(binding) } } };
   assert.equal(validateStateTransition(prior, next, options).ok, true);
-  for (const status of ['pending', 'rejected', 'stale']) assert.equal(validateStateTransition(prior, next, { trusted: { approval: { binding: { ...binding, status }, freshness: freshContext(binding) } } }).ok, false);
+  for (const status of ['pending', 'rejected', 'stale'])
+    assert.equal(validateStateTransition(prior, next, { trusted: { approval: { binding: { ...binding, status }, freshness: freshContext(binding) } } }).ok, false);
   assert.equal(validateStateTransition(prior, next, { trusted: { approval: { binding, freshness: { ...freshContext(binding), currentPolicyVersion: 'changed' } } } }).ok, false);
 });
 
@@ -2432,8 +2389,18 @@ test('repair: original task/config and charged accounting survive transitions', 
 
 test('repair: material strategy requires a new version and charged task reservation', () => {
   const prior = { ...createValidTaskState('Repair'), plan: createValidFixPlan(), budgetLedgers: [createValidBudgetLedger()] };
-  const next: TaskState = { ...prior, stateVersion: 2, node: 'Investigate', planVersion: 2, plan: undefined, replanCount: 1, budgetLedgers: [{ ...createValidBudgetLedger(), version: 2, reservations: [{ reservationId: 'slot', keyedId: 'proposal', amount: 1 }] }] };
-  const options = { trusted: { replanReservation: { proposalId: 'proposal', taskId: next.taskId, configurationId: createValidBugTask().configId, priorCount: 0, nextCount: 1, reservationId: 'slot' } } };
+  const next: TaskState = {
+    ...prior,
+    stateVersion: 2,
+    node: 'Investigate',
+    planVersion: 2,
+    plan: undefined,
+    replanCount: 1,
+    budgetLedgers: [{ ...createValidBudgetLedger(), version: 2, reservations: [{ reservationId: 'slot', keyedId: 'proposal', amount: 1 }] }],
+  };
+  const options = {
+    trusted: { replanReservation: { proposalId: 'proposal', taskId: next.taskId, configurationId: createValidBugTask().configId, priorCount: 0, nextCount: 1, reservationId: 'slot' } },
+  };
   assert.equal(validateStateTransition(prior, next, options).ok, true);
   assert.equal(validateStateTransition(prior, { ...next, replanCount: 0 }, options).ok, false);
   assert.equal(validateStateTransition(prior, { ...next, budgetLedgers: [] }, options).ok, false);
@@ -2443,9 +2410,35 @@ test('repair: material strategy requires a new version and charged task reservat
 test('repair: deterministic completion binds every required check and current review', () => {
   const prior: TaskState = { ...createValidTaskState('Review'), plan: createValidFixPlan() };
   const next: TaskState = { ...prior, stateVersion: 2, node: 'Deliver', outcome: 'COMPLETED', latestReviewRef: 'review', reviewRefs: ['review'] };
-  const completion = { taskId: next.taskId, runId: next.runId, repositoryRevisionDigest: next.repositoryRevisionDigest, diffDigest: 'diff', authorizedDiffDigest: 'diff', baselineRef: createValidFixPlan().baselineRef, checkSetDigest: createValidFixPlan().checkSetDigest, criteriaDigest: computeCanonicalSha256(next.acceptanceCriteria), protectedTestsDigest: 'protected', originalProtectedTestsDigest: 'protected', checks: [{ checkId: createValidCheck().checkId, outcome: 'pass' as const, repositoryRevisionDigest: next.repositoryRevisionDigest, diffDigest: 'diff' }], review: { reviewId: 'review', status: 'accepted' as const, repositoryRevisionDigest: next.repositoryRevisionDigest, diffDigest: 'diff', checkSetDigest: createValidFixPlan().checkSetDigest, roleConfigId: 'read-only-reviewer' } };
+  const completion = {
+    taskId: next.taskId,
+    runId: next.runId,
+    repositoryRevisionDigest: next.repositoryRevisionDigest,
+    diffDigest: 'diff',
+    authorizedDiffDigest: 'diff',
+    baselineRef: createValidFixPlan().baselineRef,
+    checkSetDigest: createValidFixPlan().checkSetDigest,
+    criteriaDigest: computeCanonicalSha256(next.acceptanceCriteria),
+    protectedTestsDigest: 'protected',
+    originalProtectedTestsDigest: 'protected',
+    checks: [{ checkId: createValidCheck().checkId, outcome: 'pass' as const, repositoryRevisionDigest: next.repositoryRevisionDigest, diffDigest: 'diff' }],
+    review: {
+      reviewId: 'review',
+      status: 'accepted' as const,
+      repositoryRevisionDigest: next.repositoryRevisionDigest,
+      diffDigest: 'diff',
+      checkSetDigest: createValidFixPlan().checkSetDigest,
+      roleConfigId: 'read-only-reviewer',
+    },
+  };
   assert.equal(validateStateTransition(prior, next, { trusted: { completion } }).ok, true);
-  for (const altered of [{ ...completion, checks: [] }, { ...completion, authorizedDiffDigest: 'other' }, { ...completion, protectedTestsDigest: 'changed' }, { ...completion, repositoryRevisionDigest: 'stale' }, { ...completion, review: { ...completion.review, diffDigest: 'stale' } }]) {
+  for (const altered of [
+    { ...completion, checks: [] },
+    { ...completion, authorizedDiffDigest: 'other' },
+    { ...completion, protectedTestsDigest: 'changed' },
+    { ...completion, repositoryRevisionDigest: 'stale' },
+    { ...completion, review: { ...completion.review, diffDigest: 'stale' } },
+  ]) {
     assert.equal(validateStateTransition(prior, next, { trusted: { completion: altered } }).ok, false);
   }
 });
@@ -2501,7 +2494,10 @@ test('provider repair: reviewer requires task iteration and configured run itera
   const req = createValidProviderRequest('reviewer');
   const context = trustedProviderContext('reviewer');
   assert.equal(validateDispatchAdmission(req, context).ok, true);
-  const runOnly = { ...context, reservationBundle: { ...context.reservationBundle, reservations: context.reservationBundle.reservations.map(item => item.kind === 'iteration' ? { ...item, scope: 'run' } : item) } };
+  const runOnly = {
+    ...context,
+    reservationBundle: { ...context.reservationBundle, reservations: context.reservationBundle.reservations.map(item => (item.kind === 'iteration' ? { ...item, scope: 'run' } : item)) },
+  };
   assert.equal(validateDispatchAdmission(req, runOnly).ok, false);
   assert.equal(validateDispatchAdmission(req, { ...context, requireRunReviewIteration: true }).ok, false);
   const taskIteration = context.reservationBundle.reservations[4];
@@ -2510,14 +2506,17 @@ test('provider repair: reviewer requires task iteration and configured run itera
   assert.ok(taskLedger);
   const item = { ...taskIteration, scope: 'run' as const, ledgerIdentity: 'ledger-run-iteration' };
   const ledger = { ...taskLedger, scope: 'run' as const, reservations: [{ reservationId: 'run-iteration', keyedId: req.providerRequestId, amount: 1 }] };
-  assert.equal(validateDispatchAdmission(req, {
-    ...context,
-    requireRunReviewIteration: true,
-    reservationBundle: { ...context.reservationBundle, reservations: [...context.reservationBundle.reservations, item] },
-    ledgers: [...context.ledgers, ledger],
-    ledgerIdentities: [...context.ledgerIdentities, item.ledgerIdentity],
-    reservationIds: { ...context.reservationIds, [item.ledgerIdentity]: 'run-iteration' },
-  }).ok, true);
+  assert.equal(
+    validateDispatchAdmission(req, {
+      ...context,
+      requireRunReviewIteration: true,
+      reservationBundle: { ...context.reservationBundle, reservations: [...context.reservationBundle.reservations, item] },
+      ledgers: [...context.ledgers, ledger],
+      ledgerIdentities: [...context.ledgerIdentities, item.ledgerIdentity],
+      reservationIds: { ...context.reservationIds, [item.ledgerIdentity]: 'run-iteration' },
+    }).ok,
+    true,
+  );
 });
 
 test('provider repair: counts and versions are safe integers and sums stay exact', () => {
@@ -2528,19 +2527,26 @@ test('provider repair: counts and versions are safe integers and sums stay exact
   assert.equal(validateProviderUsage({ inputTokens: Number.MAX_SAFE_INTEGER, outputTokens: 1, costUsd: 0 }).ok, false);
   const context = trustedProviderContext();
   for (const amount of [2.5, 2 ** 53]) {
-    assert.equal(validateReservationBundle({ ...context.reservationBundle, reservations: context.reservationBundle.reservations.map(item => item.kind === 'tokens' ? { ...item, amount } : item) }).ok, false);
+    assert.equal(
+      validateReservationBundle({ ...context.reservationBundle, reservations: context.reservationBundle.reservations.map(item => (item.kind === 'tokens' ? { ...item, amount } : item)) }).ok,
+      false,
+    );
   }
   assert.equal(validateReservationBundle({ ...context.reservationBundle, reservations: context.reservationBundle.reservations.map(item => ({ ...item, version: 2 ** 53 })) }).ok, false);
   assert.equal(validateBudgetLedger({ ...createMatchingLedgers()[0], consumed: Number.MAX_SAFE_INTEGER, limit: Number.MAX_SAFE_INTEGER }).ok, false);
   assert.equal(validateBudgetLedger({ ...createMatchingLedgers()[0], reservations: [{ reservationId: 'fraction', keyedId: 'fraction', amount: 2.5 }] }).ok, false);
   const reviewer = createValidReservationBundle('reviewer');
-  assert.equal(validateReservationBundle({ ...reviewer, reservations: reviewer.reservations.map(item => item.kind === 'iteration' ? { ...item, amount: 1.5 } : item) }).ok, false);
+  assert.equal(validateReservationBundle({ ...reviewer, reservations: reviewer.reservations.map(item => (item.kind === 'iteration' ? { ...item, amount: 1.5 } : item)) }).ok, false);
 });
-
 
 test('state repair: feedback cannot erase strategy identity to evade replan charges', () => {
   for (const replanCount of [0, 3]) {
-    const prior: TaskState = { ...createValidTaskState('AwaitFeedback'), plan: createValidFixPlan(), replanCount, budgetLedgers: [{ ...createValidBudgetLedger(), consumed: replanCount, reservations: [] }] };
+    const prior: TaskState = {
+      ...createValidTaskState('AwaitFeedback'),
+      plan: createValidFixPlan(),
+      replanCount,
+      budgetLedgers: [{ ...createValidBudgetLedger(), consumed: replanCount, reservations: [] }],
+    };
     const erased: TaskState = { ...prior, stateVersion: 2, node: 'Investigate', plan: undefined };
     assert.equal(validateStateTransition(prior, erased).ok, false);
     const retained: TaskState = { ...prior, stateVersion: 2, node: 'Investigate' };
@@ -2571,10 +2577,7 @@ function createValidBaseline(): Baseline {
     repositorySnapshotDigest: 'sha256:baseline-snapshot-1111111111111111111111111111111111111111111111111111111111111111',
     checkSetDigest: 'sha256:check-set-2222222222222222222222222222222222222222222222222222222222222222',
     reproductionFailureSignature: 'FAILED test_calculator.py::test_division_by_zero',
-    checkResults: [
-      createValidCheckResult('fail'),
-      { checkId: 'check-pytest-passing-1', outcome: 'pass', outputExcerpt: 'PASSED test_addition', durationMs: 200 },
-    ],
+    checkResults: [createValidCheckResult('fail'), { checkId: 'check-pytest-passing-1', outcome: 'pass', outputExcerpt: 'PASSED test_addition', durationMs: 200 }],
     testProtectionDigest: 'sha256:test-protection-3333333333333333333333333333333333333333333333333333333333333333',
   };
 }
@@ -2721,20 +2724,14 @@ test('Baseline admission: distinguishes expected reproduction and passing checks
 
   const reproPassed = {
     ...base,
-    checkResults: [
-      { checkId: 'check-pytest-repro', outcome: 'pass' as const, outputExcerpt: 'PASSED' },
-      base.checkResults[1] ?? createValidCheckResult(),
-    ],
+    checkResults: [{ checkId: 'check-pytest-repro', outcome: 'pass' as const, outputExcerpt: 'PASSED' }, base.checkResults[1] ?? createValidCheckResult()],
   };
   assert.equal(validateBaselineAdmission(reproPassed, context).ok, false);
 
   for (const envOutcome of ['error', 'timeout', 'not-run'] as const) {
     const envFailed = {
       ...base,
-      checkResults: [
-        { checkId: 'check-pytest-repro', outcome: envOutcome, outputExcerpt: 'ENV ERROR' },
-        base.checkResults[1] ?? createValidCheckResult(),
-      ],
+      checkResults: [{ checkId: 'check-pytest-repro', outcome: envOutcome, outputExcerpt: 'ENV ERROR' }, base.checkResults[1] ?? createValidCheckResult()],
     };
     assert.equal(validateBaselineAdmission(envFailed, context).ok, false, envOutcome);
   }
@@ -2742,10 +2739,7 @@ test('Baseline admission: distinguishes expected reproduction and passing checks
   for (const badOutcome of ['fail', 'error', 'timeout', 'not-run'] as const) {
     const passingFailed = {
       ...base,
-      checkResults: [
-        base.checkResults[0] ?? createValidCheckResult(),
-        { checkId: 'check-pytest-passing-1', outcome: badOutcome, outputExcerpt: 'FAILED' },
-      ],
+      checkResults: [base.checkResults[0] ?? createValidCheckResult(), { checkId: 'check-pytest-passing-1', outcome: badOutcome, outputExcerpt: 'FAILED' }],
     };
     assert.equal(validateBaselineAdmission(passingFailed, context).ok, false, `passing check: ${badOutcome}`);
   }
@@ -2929,7 +2923,8 @@ test('Completion compatibility: validateStateTransition accepts validated Verifi
   const next: TaskState = { ...prior, stateVersion: 2, node: 'Deliver', outcome: 'COMPLETED', latestReviewRef: 'review-001', reviewRefs: ['review-001'] };
   const verification: VerificationResult = {
     ...createValidVerificationResult('pass'),
-    taskId: next.taskId, runId: next.runId,
+    taskId: next.taskId,
+    runId: next.runId,
     repoDigest: next.repositoryRevisionDigest,
     testedIds: ['check-pytest-focused'],
   };
@@ -2966,33 +2961,76 @@ test('Completion compatibility: validateStateTransition accepts validated Verifi
   assert.equal(validateStateTransition(prior, next, { trusted: { completion: { ...completion, reviewIterationReservationRef: 'other' } } }).ok, false);
 });
 
-
 test('Evidence schemas reject every missing required exported field', () => {
   const cases: [Record<string, unknown>, (input: unknown) => { ok: boolean }, string[]][] = [
-    [createValidBaseline() as unknown as Record<string, unknown>, validateBaseline, ['evidenceId','repositorySnapshotDigest','checkSetDigest','reproductionFailureSignature','checkResults','testProtectionDigest']],
-    [createValidVerificationResult('pass') as unknown as Record<string, unknown>, validateVerificationResult, ['evidenceId','taskId','runId','actionId','phase','repoDigest','commandIdentity','outcome','testedIds','diagnosticRefs']],
-    [createValidSourceEvidence() as unknown as Record<string, unknown>, validateSourceEvidence, ['path','revisionDigest','boundedExcerpt','resultCount','truncated']],
-    [createValidReviewResult('accepted') as unknown as Record<string, unknown>, validateReviewResult, ['reviewId','reviewerRoleConfigId','repoDigest','diffDigest','checkSetDigest','status','findings','iterationReservationRef']],
-    [createValidActivityEvent() as unknown as Record<string, unknown>, validateActivityEvent, ['eventId','taskId','runId','timestamp','node','actionType','outcome','durationMs','evidenceRefs']],
-    [createValidTaskWorkspace() as unknown as Record<string, unknown>, validateTaskWorkspace, ['taskId','workspaceId','containerImageDigest','repoVolumeId','scratchVolumeId','expectedRepoState']],
-    [createValidDelivery() as unknown as Record<string, unknown>, validateDelivery, ['taskId','runId','outcome','diffDigest','changedFiles','baselineRef','verificationRefs','reviewRef','limitations','safeNextAction']],
+    [
+      createValidBaseline() as unknown as Record<string, unknown>,
+      validateBaseline,
+      ['evidenceId', 'repositorySnapshotDigest', 'checkSetDigest', 'reproductionFailureSignature', 'checkResults', 'testProtectionDigest'],
+    ],
+    [
+      createValidVerificationResult('pass') as unknown as Record<string, unknown>,
+      validateVerificationResult,
+      ['evidenceId', 'taskId', 'runId', 'actionId', 'phase', 'repoDigest', 'commandIdentity', 'outcome', 'testedIds', 'diagnosticRefs'],
+    ],
+    [createValidSourceEvidence() as unknown as Record<string, unknown>, validateSourceEvidence, ['path', 'revisionDigest', 'boundedExcerpt', 'resultCount', 'truncated']],
+    [
+      createValidReviewResult('accepted') as unknown as Record<string, unknown>,
+      validateReviewResult,
+      ['reviewId', 'reviewerRoleConfigId', 'repoDigest', 'diffDigest', 'checkSetDigest', 'status', 'findings', 'iterationReservationRef'],
+    ],
+    [
+      createValidActivityEvent() as unknown as Record<string, unknown>,
+      validateActivityEvent,
+      ['eventId', 'taskId', 'runId', 'timestamp', 'node', 'actionType', 'outcome', 'durationMs', 'evidenceRefs'],
+    ],
+    [
+      createValidTaskWorkspace() as unknown as Record<string, unknown>,
+      validateTaskWorkspace,
+      ['taskId', 'workspaceId', 'containerImageDigest', 'repoVolumeId', 'scratchVolumeId', 'expectedRepoState'],
+    ],
+    [
+      createValidDelivery() as unknown as Record<string, unknown>,
+      validateDelivery,
+      ['taskId', 'runId', 'outcome', 'diffDigest', 'changedFiles', 'baselineRef', 'verificationRefs', 'reviewRef', 'limitations', 'safeNextAction'],
+    ],
   ];
   cases.push(
-    [createValidRun() as unknown as Record<string, unknown>, validateRun, ['runId','taskId','startTime']],
-    [createValidReviewFinding('error') as unknown as Record<string, unknown>, validateReviewFinding, ['file','line','side','severity','message']],
-    [{ checkId: 'focused', outcome: 'pass' }, validateCheckResult, ['checkId','outcome']],
+    [createValidRun() as unknown as Record<string, unknown>, validateRun, ['runId', 'taskId', 'startTime']],
+    [createValidReviewFinding('error') as unknown as Record<string, unknown>, validateReviewFinding, ['file', 'line', 'side', 'severity', 'message']],
+    [{ checkId: 'focused', outcome: 'pass' }, validateCheckResult, ['checkId', 'outcome']],
   );
-  for (const [record, validate, fields] of cases) for (const field of fields) {
-    const omitted = Object.fromEntries(Object.entries(record).filter(([key]) => key !== field));
-    assert.equal(validate(omitted).ok, false, field);
-  }
+  for (const [record, validate, fields] of cases)
+    for (const field of fields) {
+      const omitted = Object.fromEntries(Object.entries(record).filter(([key]) => key !== field));
+      assert.equal(validate(omitted).ok, false, field);
+    }
 });
 
 test('Evidence admission honors advertised identity expectations', () => {
   const b = createValidBaseline();
-  assert.equal(validateBaselineAdmission(b, { expectedEvidenceId: 'other', expectedRepositorySnapshotDigest: b.repositorySnapshotDigest, expectedCheckSetDigest: b.checkSetDigest, expectedTestProtectionDigest: b.testProtectionDigest, expectedReproductionCheckId: b.checkResults[0]?.checkId ?? 'missing', expectedPassingCheckIds: [] }).ok, false);
+  assert.equal(
+    validateBaselineAdmission(b, {
+      expectedEvidenceId: 'other',
+      expectedRepositorySnapshotDigest: b.repositorySnapshotDigest,
+      expectedCheckSetDigest: b.checkSetDigest,
+      expectedTestProtectionDigest: b.testProtectionDigest,
+      expectedReproductionCheckId: b.checkResults[0]?.checkId ?? 'missing',
+      expectedPassingCheckIds: [],
+    }).ok,
+    false,
+  );
   const r = createValidReviewResult('accepted');
-  assert.equal(validateReviewAdmission(r, { expectedReviewId: 'other', expectedRepoDigest: r.repoDigest, expectedDiffDigest: r.diffDigest, expectedCheckSetDigest: r.checkSetDigest, expectedRoleConfigId: r.reviewerRoleConfigId }).ok, false);
+  assert.equal(
+    validateReviewAdmission(r, {
+      expectedReviewId: 'other',
+      expectedRepoDigest: r.repoDigest,
+      expectedDiffDigest: r.diffDigest,
+      expectedCheckSetDigest: r.checkSetDigest,
+      expectedRoleConfigId: r.reviewerRoleConfigId,
+    }).ok,
+    false,
+  );
   const d = createValidDelivery();
   for (const context of [{ expectedDiffDigest: 'other' }, { expectedBaselineRef: 'other' }, { expectedReviewRef: 'other' }]) assert.equal(validateDelivery(d, context).ok, false);
   assert.equal(validateActivityEvent({ ...createValidActivityEvent(), durationMs: Number.MAX_SAFE_INTEGER + 1 }).ok, false);
@@ -3005,11 +3043,19 @@ test('production admission accepts ports with explicit real provenance', () => {
 
 test('production admission denies absent, mock, and invalid provenance without fallback', () => {
   const deniedLists: readonly (readonly unknown[])[] = [
-    [], [{}], [null], [undefined], [{ provenance: 'mock' }],
-    [{ provenance: undefined }], [{ provenance: '' }], [{ provenance: 'REAL' }],
+    [],
+    [{}],
+    [null],
+    [undefined],
+    [{ provenance: 'mock' }],
+    [{ provenance: undefined }],
+    [{ provenance: '' }],
+    [{ provenance: 'REAL' }],
     [{ provenance: 'real' }, { provenance: 'mock' }],
-    [{ provenance: 'real' }, {}], [Object.create({ provenance: 'real' })],
-    [Object.assign([], { provenance: 'real' })], Array<unknown>(1),
+    [{ provenance: 'real' }, {}],
+    [Object.create({ provenance: 'real' })],
+    [Object.assign([], { provenance: 'real' })],
+    Array<unknown>(1),
   ];
   for (const ports of deniedLists) {
     assert.equal(isAdmittedForProduction(ports), false);
@@ -3019,9 +3065,17 @@ test('production admission denies absent, mock, and invalid provenance without f
 test('production admission ignores inherited sparse receiver slots', () => {
   let inheritedSlotRead = false;
   const ports: unknown[] = Array<unknown>(1);
-  Object.setPrototypeOf(ports, Object.create(Array.prototype, {
-    0: { get: () => { inheritedSlotRead = true; return { provenance: 'real' }; } },
-  }));
+  Object.setPrototypeOf(
+    ports,
+    Object.create(Array.prototype, {
+      0: {
+        get: () => {
+          inheritedSlotRead = true;
+          return { provenance: 'real' };
+        },
+      },
+    }),
+  );
   assert.equal(isAdmittedForProduction(ports), false);
   assert.equal(inheritedSlotRead, false);
 });

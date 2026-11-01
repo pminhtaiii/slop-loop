@@ -1,30 +1,17 @@
 import { createHash } from 'node:crypto';
-import {
-  computeCanonicalSha256,
-  isCanonicalRelativePath,
-  isProtectedPath,
-} from '../contracts/foundation/uc03.ts';
+import { computeCanonicalSha256, isCanonicalRelativePath, isProtectedPath } from '../contracts/foundation/uc03.ts';
 import { extractCheckTestSelectors, normalizePytestSelector, PYTEST_OPTIONS_WITH_ARG, resolvePytestInvocation } from './selectors.ts';
 import type { CheckDefinition } from '../contracts/foundation/uc03.ts';
-import type {
-  BaselineEvidenceAcknowledgement,
-  BaselineEvidenceWriteRequest,
-  TrustedHostExpectedContext,
-  TrustedTestFileSnapshot,
-} from './investigation-types.ts';
+import type { BaselineEvidenceAcknowledgement, BaselineEvidenceWriteRequest, TrustedHostExpectedContext, TrustedTestFileSnapshot } from './investigation-types.ts';
 
-const COLLECTION_ERROR_PATTERN =
-  /syntaxerror|collectionerror|collection error|failed to collect|import error|importerror|modulenotfounderror/i;
+const COLLECTION_ERROR_PATTERN = /syntaxerror|collectionerror|collection error|failed to collect|import error|importerror|modulenotfounderror/i;
 
 export function isCollectionOrSyntaxError(outputExcerpt?: string): boolean {
   if (!outputExcerpt) return false;
   return COLLECTION_ERROR_PATTERN.test(outputExcerpt);
 }
 
-export function baselineEvidenceAcknowledgementMatches(
-  acknowledgement: unknown,
-  request: BaselineEvidenceWriteRequest
-): acknowledgement is BaselineEvidenceAcknowledgement {
+export function baselineEvidenceAcknowledgementMatches(acknowledgement: unknown, request: BaselineEvidenceWriteRequest): acknowledgement is BaselineEvidenceAcknowledgement {
   try {
     if (!acknowledgement || typeof acknowledgement !== 'object' || Array.isArray(acknowledgement)) {
       return false;
@@ -61,21 +48,16 @@ export function baselineEvidenceAcknowledgementMatches(
       ack.checkSetDigest === content.checkSetDigest &&
       ack.testProtectionDigest === content.testProtectionDigest &&
       ack.reproductionCheckId === content.reproductionCheckId &&
-      computeCanonicalSha256(ack.expectedPassingCheckIds) ===
-        computeCanonicalSha256(content.expectedPassingCheckIds) &&
-      computeCanonicalSha256(ack.expectedTestFiles) ===
-        computeCanonicalSha256(content.expectedTestFiles) &&
-      computeCanonicalSha256(ack.requiredCheckIds) ===
-        computeCanonicalSha256(content.requiredChecks.map((check) => check.checkId))
+      computeCanonicalSha256(ack.expectedPassingCheckIds) === computeCanonicalSha256(content.expectedPassingCheckIds) &&
+      computeCanonicalSha256(ack.expectedTestFiles) === computeCanonicalSha256(content.expectedTestFiles) &&
+      computeCanonicalSha256(ack.requiredCheckIds) === computeCanonicalSha256(content.requiredChecks.map(check => check.checkId))
     );
   } catch {
     return false;
   }
 }
 
-export function computeTestProtectionDigest(
-  testFiles: readonly TrustedTestFileSnapshot[]
-): string {
+export function computeTestProtectionDigest(testFiles: readonly TrustedTestFileSnapshot[]): string {
   if (!Array.isArray(testFiles) || testFiles.length === 0) {
     throw new Error('TEST_PROTECTION_EMPTY: No test files provided for test protection authority');
   }
@@ -98,14 +80,8 @@ export function computeTestProtectionDigest(
       throw new Error('TEST_PROTECTION_ACCESSOR_ERROR: Failed to read test file property');
     }
 
-    if (
-      typeof filePath !== 'string' ||
-      !isCanonicalRelativePath(filePath) ||
-      isProtectedPath(filePath)
-    ) {
-      throw new Error(
-        `TEST_PROTECTION_INVALID_PATH: Invalid test file path '${typeof filePath === 'string' ? filePath : ''}'`
-      );
+    if (typeof filePath !== 'string' || !isCanonicalRelativePath(filePath) || isProtectedPath(filePath)) {
+      throw new Error(`TEST_PROTECTION_INVALID_PATH: Invalid test file path '${typeof filePath === 'string' ? filePath : ''}'`);
     }
     const canonicalPath = String(filePath);
     const lower = canonicalPath.toLowerCase();
@@ -125,16 +101,10 @@ export function computeTestProtectionDigest(
       rawBytes = Buffer.from(fileContent, 'utf8');
       tag = 'text';
     } else if (fileContent instanceof Uint8Array || Buffer.isBuffer(fileContent)) {
-      rawBytes = Buffer.from(
-        fileContent.buffer,
-        fileContent.byteOffset,
-        fileContent.byteLength
-      );
+      rawBytes = Buffer.from(fileContent.buffer, fileContent.byteOffset, fileContent.byteLength);
       tag = 'binary';
     } else {
-      throw new Error(
-        `TEST_PROTECTION_INVALID_CONTENT: Content for '${canonicalPath}' must be string or Uint8Array`
-      );
+      throw new Error(`TEST_PROTECTION_INVALID_CONTENT: Content for '${canonicalPath}' must be string or Uint8Array`);
     }
 
     extractedFiles.push({
@@ -181,11 +151,7 @@ export type HostSnapshotValidationResult =
       readonly detachedTestFiles?: undefined;
     };
 
-export function validateHostSnapshotFacts(
-  rawSnapshot: unknown,
-  expected: TrustedHostExpectedContext,
-  requiredChecks: readonly CheckDefinition[]
-): HostSnapshotValidationResult {
+export function validateHostSnapshotFacts(rawSnapshot: unknown, expected: TrustedHostExpectedContext, requiredChecks: readonly CheckDefinition[]): HostSnapshotValidationResult {
   if (!rawSnapshot || typeof rawSnapshot !== 'object') {
     return {
       ok: false,
@@ -209,13 +175,7 @@ export function validateHostSnapshotFacts(
     if (!keys.includes('expectedTestFiles')) {
       return { ok: false, reason: 'Trusted host snapshot complete inventory binding is required' };
     }
-    if (
-      !keys.includes('taskId') ||
-      !keys.includes('workspaceId') ||
-      !keys.includes('repositoryId') ||
-      !keys.includes('currentRevision') ||
-      !keys.includes('testFiles')
-    ) {
+    if (!keys.includes('taskId') || !keys.includes('workspaceId') || !keys.includes('repositoryId') || !keys.includes('currentRevision') || !keys.includes('testFiles')) {
       return { ok: false, reason: 'Trusted host snapshot is missing a required context binding' };
     }
     snapshotTaskId = snapshot.taskId;
@@ -232,33 +192,21 @@ export function validateHostSnapshotFacts(
     };
   }
 
-  if (
-    snapshotTaskId !== expected.taskId ||
-    snapshotWorkspaceId !== expected.workspaceId ||
-    snapshotRepositoryId !== expected.repositoryId
-  ) {
+  if (snapshotTaskId !== expected.taskId || snapshotWorkspaceId !== expected.workspaceId || snapshotRepositoryId !== expected.repositoryId) {
     return {
       ok: false,
       reason: 'Trusted host snapshot task, workspace, or repository binding mismatch',
     };
   }
 
-  if (
-    typeof rawRevision !== 'string' ||
-    !/^sha256:[a-f0-9]{64}$/.test(rawRevision) ||
-    rawRevision !== expected.revisionDigest
-  ) {
+  if (typeof rawRevision !== 'string' || !/^sha256:[a-f0-9]{64}$/.test(rawRevision) || rawRevision !== expected.revisionDigest) {
     return {
       ok: false,
       reason: `Host repository revision drift detected: Trusted host snapshot revision binding mismatch: expected '${expected.revisionDigest}', observed '${typeof rawRevision === 'string' ? rawRevision : String(rawRevision)}'`,
     };
   }
 
-  if (
-    typeof rawSnapshotCheckSetDigest !== 'string' ||
-    !/^sha256:[a-f0-9]{64}$/.test(rawSnapshotCheckSetDigest) ||
-    rawSnapshotCheckSetDigest !== expected.checkSetDigest
-  ) {
+  if (typeof rawSnapshotCheckSetDigest !== 'string' || !/^sha256:[a-f0-9]{64}$/.test(rawSnapshotCheckSetDigest) || rawSnapshotCheckSetDigest !== expected.checkSetDigest) {
     return { ok: false, reason: 'Trusted host snapshot check-set binding mismatch' };
   }
 
@@ -290,10 +238,7 @@ export function validateHostSnapshotFacts(
     };
   }
 
-  if (
-    snapshotExpectedTestFileCount !== expected.expectedTestFiles.length ||
-    expected.expectedTestFiles.some((filePath) => !snapshotExpectedPathSet.has(filePath.toLowerCase()))
-  ) {
+  if (snapshotExpectedTestFileCount !== expected.expectedTestFiles.length || expected.expectedTestFiles.some(filePath => !snapshotExpectedPathSet.has(filePath.toLowerCase()))) {
     return {
       ok: false,
       reason: 'Trusted host snapshot inventory does not match trusted expected context',
@@ -332,11 +277,7 @@ export function validateHostSnapshotFacts(
         return { ok: false, reason: 'Trusted host test file access failed during extraction' };
       }
 
-      if (
-        typeof filePath !== 'string' ||
-        !isCanonicalRelativePath(filePath) ||
-        isProtectedPath(filePath)
-      ) {
+      if (typeof filePath !== 'string' || !isCanonicalRelativePath(filePath) || isProtectedPath(filePath)) {
         return {
           ok: false,
           reason: 'Trusted host test file path is invalid',
@@ -371,7 +312,7 @@ export function validateHostSnapshotFacts(
         Object.freeze({
           path: filePath,
           content: detachedContent,
-        })
+        }),
       );
     }
   } catch {
@@ -428,9 +369,7 @@ export function validateHostSnapshotFacts(
     const selectors = extractCheckTestSelectors(check);
     for (const sel of selectors) {
       if (sel.isDirectory) {
-        const prefix = sel.filePath.endsWith('/')
-          ? sel.filePath.toLowerCase()
-          : `${sel.filePath.toLowerCase()}/`;
+        const prefix = sel.filePath.endsWith('/') ? sel.filePath.toLowerCase() : `${sel.filePath.toLowerCase()}/`;
         let dirHasFiles = false;
         for (const path of authorityPathSet) {
           if (path.startsWith(prefix)) {

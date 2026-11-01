@@ -48,11 +48,7 @@ async function main() {
       tracker.settle('req-step1', { inputTokens: 400, outputTokens: 100, costUsd: 0.01 });
 
       // Complete step-1
-      state = machine.completeStep(
-        { ...state, budgetLedgers: tracker.getLedgers() },
-        'step-1',
-        { changedFiles: ['src/init.ts'], evidenceRefs: ['changed:src/init.ts'] }
-      );
+      state = machine.completeStep({ ...state, budgetLedgers: tracker.getLedgers() }, 'step-1', { changedFiles: ['src/init.ts'], evidenceRefs: ['changed:src/init.ts'] });
       await store.saveCheckpoint(state);
 
       console.log(JSON.stringify({ pid: process.pid, status: 'STEP1_OK', currentStepIndex: state.currentStepIndex }));
@@ -111,13 +107,15 @@ async function main() {
       });
       await store.saveCheckpoint(state);
 
-      console.log(JSON.stringify({
-        pid: process.pid,
-        status: 'RESUME_COMPLETED_OK',
-        finalStatus: state.status,
-        stepStatuses: state.plan.map((s: PlanStep) => ({ id: s.id, status: s.status })),
-        consumedTokens: state.budgetLedgers.find((l: BudgetLedger) => l.kind === 'tokens')?.consumed,
-      }));
+      console.log(
+        JSON.stringify({
+          pid: process.pid,
+          status: 'RESUME_COMPLETED_OK',
+          finalStatus: state.status,
+          stepStatuses: state.plan.map((s: PlanStep) => ({ id: s.id, status: s.status })),
+          consumedTokens: state.budgetLedgers.find((l: BudgetLedger) => l.kind === 'tokens')?.consumed,
+        }),
+      );
       break;
     }
 
@@ -127,7 +125,7 @@ async function main() {
   }
 }
 
-main().catch((err) => {
+main().catch(err => {
   console.error(err);
   process.exit(1);
 });

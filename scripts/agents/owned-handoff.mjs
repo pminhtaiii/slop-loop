@@ -18,19 +18,23 @@ export function validateSessionRef(value) {
 
 export function validateOwnedPaths(paths = []) {
   if (!Array.isArray(paths)) throw new Error('Owned paths must be supplied as repeated --owned-path options.');
-  const normalized = paths.map((path) => {
-    const hasControlCharacter = typeof path === 'string' && [...path].some((character) => {
-      const code = character.charCodeAt(0);
-      return code < 0x20 || code === 0x7f;
-    });
+  const normalized = paths.map(path => {
+    const hasControlCharacter =
+      typeof path === 'string' &&
+      [...path].some(character => {
+        const code = character.charCodeAt(0);
+        return code < 0x20 || code === 0x7f;
+      });
     if (typeof path !== 'string' || !path || path.startsWith('/') || path.includes('\\') || path.includes(':') || hasControlCharacter) {
       throw new Error(`Unsafe owned path: ${String(path)}.`);
     }
     const segments = path.split('/');
-    if (segments.some((part) => {
-      const windowsBase = part.split('.')[0].replace(/[ .]+$/, '');
-      return !part || part === '.' || part === '..' || ['.git', '.agent-work'].includes(part.toLowerCase()) || reservedWindowsNamePattern.test(windowsBase);
-    })) {
+    if (
+      segments.some(part => {
+        const windowsBase = part.split('.')[0].replace(/[ .]+$/, '');
+        return !part || part === '.' || part === '..' || ['.git', '.agent-work'].includes(part.toLowerCase()) || reservedWindowsNamePattern.test(windowsBase);
+      })
+    ) {
       throw new Error(`Unsafe owned path: ${path}.`);
     }
     return path;
@@ -60,7 +64,7 @@ function indexMatchesWorktree(index, worktree) {
 
 function indexEntries(root) {
   const records = gitBuffer(root, ['ls-files', '--stage', '-z']).toString('utf8').split('\0').filter(Boolean);
-  return records.map((record) => {
+  return records.map(record => {
     const separator = record.indexOf('\t');
     if (separator < 0) throw new Error('Git returned a malformed index entry.');
     const [mode, oid, stage] = record.slice(0, separator).split(' ');
@@ -74,7 +78,7 @@ async function worktreeFile(root, path) {
   let current = root;
   for (let index = 0; index < parts.length; index += 1) {
     current = join(current, parts[index]);
-    const stat = await lstat(current).catch((error) => {
+    const stat = await lstat(current).catch(error => {
       if (error.code === 'ENOENT') return null;
       throw error;
     });
@@ -103,7 +107,7 @@ export async function captureOwnedHandoff(entry) {
   const files = [];
   for (const path of paths) {
     const staged = [];
-    for (const record of index.filter((item) => item.path === path)) {
+    for (const record of index.filter(item => item.path === path)) {
       const bytes = gitBuffer(checkout, ['cat-file', 'blob', record.oid]);
       staged.push({ mode: record.mode, stage: record.stage, sha256: sha256(bytes) });
     }
@@ -129,9 +133,12 @@ export async function verifyOwnedHandoff(entry) {
   const expected = entry.handoffEvidence;
   if (!expected || expected.status !== 'verified') return { verified: false, status: 'unverified', reason: 'Legacy handoff has no verified owned-path snapshot.' };
   let paths;
-  try { paths = validateOwnedPaths(entry.ownedPaths); }
-  catch (error) { return { verified: false, status: 'invalid', reason: error.message }; }
-  if (!paths.length || !Array.isArray(expected.files) || expected.files.map((file) => file.path).join('\0') !== paths.join('\0')) {
+  try {
+    paths = validateOwnedPaths(entry.ownedPaths);
+  } catch (error) {
+    return { verified: false, status: 'invalid', reason: error.message };
+  }
+  if (!paths.length || !Array.isArray(expected.files) || expected.files.map(file => file.path).join('\0') !== paths.join('\0')) {
     return { verified: false, status: 'invalid', reason: 'Handoff paths do not match the assignment ownership list.' };
   }
   let actual;
@@ -140,8 +147,8 @@ export async function verifyOwnedHandoff(entry) {
   } catch (error) {
     return { verified: false, status: 'changed', reason: error.message };
   }
-  const identityChanged = ['checkout', 'gitDirectory', 'branch'].some((field) => expected.identity?.[field] !== actual.identity[field]);
-  const expectedFiles = new Map(expected.files.map((file) => [file.path, file]));
+  const identityChanged = ['checkout', 'gitDirectory', 'branch'].some(field => expected.identity?.[field] !== actual.identity[field]);
+  const expectedFiles = new Map(expected.files.map(file => [file.path, file]));
   const acceptedStagingPaths = [];
   const changedPaths = [];
   for (const file of actual.files) {

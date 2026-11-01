@@ -4,8 +4,18 @@ import { addError, invalidObject, isRecord, rejectUnknownKeys, validateDigest, v
 
 const POLICY_IDENTITY_KEYS = ['policyId', 'policyVersion', 'configId', 'configVersion'] as const;
 const DISPATCH_CLAIM_KEYS = [
-  'schemaVersion', 'claimId', 'actionId', 'taskId', 'expectedControlVersion', 'expectedEpoch',
-  'repositoryStateDigest', 'policyIdentity', 'decisionRefs', 'reservationRefs', 'phase', 'resultRef',
+  'schemaVersion',
+  'claimId',
+  'actionId',
+  'taskId',
+  'expectedControlVersion',
+  'expectedEpoch',
+  'repositoryStateDigest',
+  'policyIdentity',
+  'decisionRefs',
+  'reservationRefs',
+  'phase',
+  'resultRef',
 ] as const;
 
 /** Require the exact policy and configuration identity fields with bounded identifier values. */
@@ -33,7 +43,7 @@ export function validateDispatchClaim(input: unknown): ValidationResult<Dispatch
   validateIdArray(input['decisionRefs'], `${path}.decisionRefs`, errors);
   validateIdArray(input['reservationRefs'], `${path}.reservationRefs`, errors, false);
   const phases = ['claimed', 'dispatched', 'observed', 'uncertain', 'reconciled'] as const;
-  if (!phases.includes(input['phase'] as typeof phases[number])) addError(errors, `${path}.phase`, 'INVALID_PHASE', 'claim phase is not in the safe lifecycle vocabulary');
+  if (!phases.includes(input['phase'] as (typeof phases)[number])) addError(errors, `${path}.phase`, 'INVALID_PHASE', 'claim phase is not in the safe lifecycle vocabulary');
   if (input['resultRef'] !== null) validateId(input['resultRef'], `${path}.resultRef`, errors);
   if (['observed', 'uncertain', 'reconciled'].includes(String(input['phase'])) && input['resultRef'] === null) {
     addError(errors, `${path}.resultRef`, 'MISSING_RESULT_REFERENCE', 'post-dispatch claim phases require a result or reconciliation reference');

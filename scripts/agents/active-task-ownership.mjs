@@ -15,7 +15,7 @@ function pathKey(path) {
 
 function normalizedPaths(paths) {
   const result = validateOwnedPaths(paths);
-  if (result.length > maxPathsPerExtension || result.some((path) => path.length > maxPathLength)) {
+  if (result.length > maxPathsPerExtension || result.some(path => path.length > maxPathLength)) {
     throw new Error(`An ownership extension may add at most ${maxPathsPerExtension} paths of at most ${maxPathLength} characters each.`);
   }
   const keys = result.map(pathKey);
@@ -48,9 +48,15 @@ export function validateOwnershipExtensions(entry) {
       throw new Error('Invalid ownership extension history; file left unchanged.');
     }
     const paths = normalizedPaths(record.paths);
-    if (!paths.length || paths.join('\0') !== record.paths.join('\0') || typeof record.reason !== 'string' ||
-        record.reason !== normalizedReason(record.reason) || typeof record.at !== 'string' ||
-        !Number.isFinite(Date.parse(record.at)) || new Date(record.at).toISOString() !== record.at) {
+    if (
+      !paths.length ||
+      paths.join('\0') !== record.paths.join('\0') ||
+      typeof record.reason !== 'string' ||
+      record.reason !== normalizedReason(record.reason) ||
+      typeof record.at !== 'string' ||
+      !Number.isFinite(Date.parse(record.at)) ||
+      new Date(record.at).toISOString() !== record.at
+    ) {
       throw new Error('Invalid ownership extension history; file left unchanged.');
     }
     for (const path of paths) {
@@ -68,8 +74,9 @@ async function verifyNewPaths(repo, paths) {
     for (let index = 0; index < parts.length; index += 1) {
       current = resolve(current, parts[index]);
       let info;
-      try { info = await lstat(current); }
-      catch (error) {
+      try {
+        info = await lstat(current);
+      } catch (error) {
         if (error.code === 'ENOENT') break;
         throw error;
       }
@@ -87,13 +94,13 @@ async function sharesRepository(entry, repository) {
   for (const checkout of checkouts) {
     try {
       const common = await commonGitDirectory(checkout);
-      if (actual && !await samePath(actual, common)) return true;
+      if (actual && !(await samePath(actual, common))) return true;
       actual = common;
     } catch {
       continue;
     }
   }
-  if (actual) return recorded && !await samePath(actual, recorded) ? true : await samePath(actual, repository);
+  if (actual) return recorded && !(await samePath(actual, recorded)) ? true : await samePath(actual, repository);
   if (checkouts.length) return true;
   return recorded ? samePath(recorded, repository) : true;
 }
@@ -104,7 +111,7 @@ export async function addOwnedPaths(entries, entry, repo, requested, reasonInput
   validateSessionRef(entry.session);
   if (entry.handoffEvidence !== undefined) throw new Error('An assignment with handoff evidence cannot extend its owned paths.');
   const binding = await verifyAssignmentBinding(entry, repo, repo.root);
-  if (binding.identity.session !== entry.session || !await samePath(binding.checkout, repo.root)) {
+  if (binding.identity.session !== entry.session || !(await samePath(binding.checkout, repo.root))) {
     throw new Error('Owned path extension must run in the assignment checkout with its matching session binding.');
   }
 
@@ -116,15 +123,15 @@ export async function addOwnedPaths(entries, entry, repo, requested, reasonInput
   const ownedPaths = validateOwnedPaths(entry.ownedPaths ?? []);
   const owned = new Set(ownedPaths.map(pathKey));
   const history = entry.ownershipExtensions ?? [];
-  const prior = history.find((record) => samePathSet(record.paths, paths) && record.reason === reason);
-  if (prior && paths.every((path) => owned.has(pathKey(path)))) return { added: false, paths, at: prior.at };
-  if (paths.some((path) => owned.has(pathKey(path)))) throw new Error('One or more paths are already owned; no ownership was changed.');
+  const prior = history.find(record => samePathSet(record.paths, paths) && record.reason === reason);
+  if (prior && paths.every(path => owned.has(pathKey(path)))) return { added: false, paths, at: prior.at };
+  if (paths.some(path => owned.has(pathKey(path)))) throw new Error('One or more paths are already owned; no ownership was changed.');
   if (history.length >= maxExtensions) throw new Error(`Ownership extension history is full (${maxExtensions}); no ownership was changed.`);
 
   const repository = await commonGitDirectory(repo.root);
   for (const other of entries) {
     if (other === entry || !['active', 'blocked'].includes(other.status)) continue;
-    if (!await sharesRepository(other, repository)) continue;
+    if (!(await sharesRepository(other, repository))) continue;
     const otherPaths = other.ownedPaths;
     const statusOnlyCoordinator = (other.role ?? 'coordinator') === 'coordinator' && !other.reservation;
     if (!Array.isArray(otherPaths) || !otherPaths.length) {
@@ -132,11 +139,13 @@ export async function addOwnedPaths(entries, entry, repo, requested, reasonInput
       throw new Error(`Cannot extend ownership while ${other.owner}/${other.task} has unknown owned paths in this repository.`);
     }
     const otherOwned = validateOwnedPaths(otherPaths);
-    const overlap = paths.some((path) => otherOwned.some((otherPath) => {
-      const left = pathKey(path);
-      const right = pathKey(otherPath);
-      return left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
-    }));
+    const overlap = paths.some(path =>
+      otherOwned.some(otherPath => {
+        const left = pathKey(path);
+        const right = pathKey(otherPath);
+        return left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
+      }),
+    );
     if (overlap) throw new Error(`Owned path conflicts with active assignment ${other.owner}/${other.task}; no ownership was changed.`);
   }
 

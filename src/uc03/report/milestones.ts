@@ -26,10 +26,15 @@ export function formatMilestonesSummary(milestones: readonly Milestone[]): strin
   try {
     const safeMilestones = reportMilestones(milestones);
     if (safeMilestones.length === 0) return 'No milestone events recorded.';
-    return boundedText(safeMilestones.map((milestone) => {
-      const mark = milestone.outcome === 'success' ? '✓' : milestone.outcome === 'failure' ? '✗' : '•';
-      return `[${milestone.timestamp}] ${mark} [${milestone.node}] ${milestone.kind}: ${milestone.summary}`;
-    }).join('\n'), MAX_REPORT_BYTES);
+    return boundedText(
+      safeMilestones
+        .map(milestone => {
+          const mark = milestone.outcome === 'success' ? '✓' : milestone.outcome === 'failure' ? '✗' : '•';
+          return `[${milestone.timestamp}] ${mark} [${milestone.node}] ${milestone.kind}: ${milestone.summary}`;
+        })
+        .join('\n'),
+      MAX_REPORT_BYTES,
+    );
   } catch {
     throw new Error('Invalid report milestone');
   }

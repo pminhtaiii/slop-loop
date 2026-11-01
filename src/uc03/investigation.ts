@@ -1,7 +1,4 @@
-export {
-  computeTestProtectionDigest,
-  validateHostSnapshotFacts,
-} from './investigation-snapshot.ts';
+export { computeTestProtectionDigest, validateHostSnapshotFacts } from './investigation-snapshot.ts';
 export { investigateBaseline } from './investigation-baseline.ts';
 export { prepareFixPlanAndApproval } from './investigation-plan.ts';
 export type {

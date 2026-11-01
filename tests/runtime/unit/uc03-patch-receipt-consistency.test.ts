@@ -1,19 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  ControlledRepositoryTools,
-  type ExecutionGuardReadCapability,
-  type TrustedFilesystemPort,
-} from '../../../src/foundation/repository-tools.ts';
-import {
-  DockerWorkspaceManager,
-  type DockerLifecycleController,
-} from '../../../src/foundation/docker-workspace.ts';
+import { ControlledRepositoryTools, type ExecutionGuardReadCapability, type TrustedFilesystemPort } from '../../../src/foundation/repository-tools.ts';
+import { DockerWorkspaceManager, type DockerLifecycleController } from '../../../src/foundation/docker-workspace.ts';
 import type { BudgetLedger } from '../../../src/contracts/foundation/uc03.ts';
-import {
-  validateAttemptReceiptV02,
-  validateRepositoryExecutionReceiptV02,
-} from '../../../src/contracts/foundation/uc03/v02/attempt.ts';
+import { validateAttemptReceiptV02, validateRepositoryExecutionReceiptV02 } from '../../../src/contracts/foundation/uc03/v02/attempt.ts';
 import type { RepositoryAdmissionContextV02 } from '../../../src/contracts/foundation/uc03/v02/ports.ts';
 import { beginRepositoryAttemptWithClaim } from '../../../src/foundation/repository-receiver.ts';
 import { MemoryStatePortV02 } from '../support/uc03/memory-state.ts';
@@ -31,21 +21,41 @@ const nextRevision = `sha256:${'a'.repeat(64)}`;
 class PatchTestFilesystem implements TrustedFilesystemPort {
   readonly provenance = 'mock' as const;
   constructor(private revision: string) {}
-  setRevision(revision: string): void { this.revision = revision; }
-  async stat() { return { isFile: false, isDirectory: false, isSymbolicLink: false, size: 0 }; }
-  async lstat() { return { isFile: false, isDirectory: false, isSymbolicLink: false, size: 0 }; }
-  async realpath(path: string): Promise<string> { return path; }
-  async readDir() { return []; }
-  async readTextFile(): Promise<string> { return ''; }
-  async getCurrentRevisionDigest(): Promise<string> { return this.revision; }
+  setRevision(revision: string): void {
+    this.revision = revision;
+  }
+  async stat() {
+    return { isFile: false, isDirectory: false, isSymbolicLink: false, size: 0 };
+  }
+  async lstat() {
+    return { isFile: false, isDirectory: false, isSymbolicLink: false, size: 0 };
+  }
+  async realpath(path: string): Promise<string> {
+    return path;
+  }
+  async readDir() {
+    return [];
+  }
+  async readTextFile(): Promise<string> {
+    return '';
+  }
+  async getCurrentRevisionDigest(): Promise<string> {
+    return this.revision;
+  }
 }
 
 class PatchTestDockerController implements DockerLifecycleController {
   readonly provenance = 'mock' as const;
   private readonly volumes = new Set<string>();
-  async createVolume(id: string): Promise<void> { this.volumes.add(id); }
-  async hasVolume(id: string): Promise<boolean> { return this.volumes.has(id); }
-  async removeVolume(id: string): Promise<void> { this.volumes.delete(id); }
+  async createVolume(id: string): Promise<void> {
+    this.volumes.add(id);
+  }
+  async hasVolume(id: string): Promise<boolean> {
+    return this.volumes.has(id);
+  }
+  async removeVolume(id: string): Promise<void> {
+    this.volumes.delete(id);
+  }
 }
 
 async function unexpectedRecovery(): Promise<never> {
@@ -87,7 +97,7 @@ async function applyPatchThroughReceiver(context: RepositoryAdmissionContextV02)
     capabilityId: 'cap-patch-receipt-test',
     workspaceId: context.workspaceId,
     taskId: context.taskId,
-    mediateRead: async (operation) => await operation.execute(),
+    mediateRead: async operation => await operation.execute(),
   };
   const tools = new ControlledRepositoryTools({
     guardCapability: guard,
@@ -138,11 +148,18 @@ for (const runnableNode of ['Patch', 'Repair'] as const) {
     const settled = await statePort.loadTask(context.taskId);
     assert.equal(settled?.stateVersion, taskState.stateVersion + 2);
     assert.equal(settled?.node, 'Verify');
-    assert.equal(settled?.budgetLedgers?.find((ledger) => ledger.scope === 'task' && ledger.kind === 'repair')?.consumed, 1);
-    assert.equal(validateRepositoryExecutionReceiptV02({
-      ...receipt,
-      attempt: { ...receipt.attempt, postBeginTaskStateVersion: taskState.stateVersion },
-    }, context).ok, false, 'A stale attempt version is rejected');
+    assert.equal(settled?.budgetLedgers?.find(ledger => ledger.scope === 'task' && ledger.kind === 'repair')?.consumed, 1);
+    assert.equal(
+      validateRepositoryExecutionReceiptV02(
+        {
+          ...receipt,
+          attempt: { ...receipt.attempt, postBeginTaskStateVersion: taskState.stateVersion },
+        },
+        context,
+      ).ok,
+      false,
+      'A stale attempt version is rejected',
+    );
   });
 }
 
@@ -157,7 +174,7 @@ test('diagnostic patch preserves begin version and repair allowance', async () =
   const settled = await statePort.loadTask(context.taskId);
   assert.equal(settled?.stateVersion, taskState.stateVersion + 1);
   assert.equal(settled?.node, 'Investigate');
-  assert.equal(settled?.budgetLedgers?.find((ledger) => ledger.scope === 'task' && ledger.kind === 'repair')?.consumed, 0);
+  assert.equal(settled?.budgetLedgers?.find(ledger => ledger.scope === 'task' && ledger.kind === 'repair')?.consumed, 0);
 });
 
 test('non-patch begin attempt preserves task version', async () => {
@@ -171,11 +188,7 @@ test('non-patch begin attempt preserves task version', async () => {
   const initialTaskState = createTestAdmissionTaskStateV02(context);
   const taskState = {
     ...initialTaskState,
-    budgetLedgers: [
-      ...(initialTaskState.budgetLedgers ?? []),
-      resourceLedger('task', 'maxCpuSeconds', 10, 'config-uc03-v1'),
-      resourceLedger('run', 'maxOutputBytes', 65_536, 'config-uc03-v1'),
-    ],
+    budgetLedgers: [...(initialTaskState.budgetLedgers ?? []), resourceLedger('task', 'maxCpuSeconds', 10, 'config-uc03-v1'), resourceLedger('run', 'maxOutputBytes', 65_536, 'config-uc03-v1')],
   };
   const statePort = new MemoryStatePortV02({
     initialTaskState: taskState,
@@ -189,5 +202,5 @@ test('non-patch begin attempt preserves task version', async () => {
   assert.equal(attempt.preAttemptTaskStateVersion, taskState.stateVersion);
   assert.equal(attempt.postBeginTaskStateVersion, taskState.stateVersion);
   assert.equal((await statePort.loadTask(context.taskId))?.stateVersion, taskState.stateVersion);
-  assert.equal(statePort.getLedgers().find((ledger) => ledger.scope === 'task' && ledger.kind === 'repair')?.consumed, 0);
+  assert.equal(statePort.getLedgers().find(ledger => ledger.scope === 'task' && ledger.kind === 'repair')?.consumed, 0);
 });

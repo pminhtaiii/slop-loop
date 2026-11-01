@@ -1,14 +1,6 @@
 import { readJson, repository, samePath } from './agent-store.mjs';
 import { randomUUID } from 'node:crypto';
-import {
-  lstat,
-  mkdir,
-  open,
-  readFile,
-  realpath,
-  rename,
-  unlink,
-} from 'node:fs/promises';
+import { lstat, mkdir, open, readFile, realpath, rename, unlink } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -45,12 +37,7 @@ function isObject(value) {
 
 function isInside(parentPath, childPath) {
   const childRelativePath = relative(parentPath, childPath);
-  return (
-    childRelativePath !== '' &&
-    childRelativePath !== '..' &&
-    !childRelativePath.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`) &&
-    !isAbsolute(childRelativePath)
-  );
+  return childRelativePath !== '' && childRelativePath !== '..' && !childRelativePath.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`) && !isAbsolute(childRelativePath);
 }
 
 function assertContained(parentPath, childPath, description) {
@@ -72,11 +59,7 @@ function validateDate(value, label = 'date') {
 }
 
 function validateId(value) {
-  if (
-    typeof value !== 'string' ||
-    !idPattern.test(value) ||
-    reservedWindowsNamePattern.test(value)
-  ) {
+  if (typeof value !== 'string' || !idPattern.test(value) || reservedWindowsNamePattern.test(value)) {
     throw new Error(`Invalid session ID: ${String(value)}`);
   }
   return value;
@@ -100,7 +83,7 @@ function defaultDate() {
     month: '2-digit',
     day: '2-digit',
   }).formatToParts(new Date());
-  const part = (name) => parts.find((entry) => entry.type === name)?.value;
+  const part = name => parts.find(entry => entry.type === name)?.value;
   return validateDate(`${part('year')}-${part('month')}-${part('day')}`);
 }
 
@@ -124,11 +107,7 @@ function parseArguments(argv) {
     if (!['--session', '--date', '--root'].includes(argument)) {
       throw new Error(`Unknown option or positional argument: ${argument}`);
     }
-    if (
-      (argument === '--session' && !['start', 'finish', 'cleanup'].includes(command)) ||
-      (argument === '--date' && command !== 'start') ||
-      (argument === '--root' && options.root !== undefined)
-    ) {
+    if ((argument === '--session' && !['start', 'finish', 'cleanup'].includes(command)) || (argument === '--date' && command !== 'start') || (argument === '--root' && options.root !== undefined)) {
       throw new Error(`Option ${argument} is not valid for ${command}`);
     }
     const value = argv[index + 1];
@@ -198,10 +177,7 @@ async function resolveCheckout(rootOption) {
   if (result.error) throw new Error(`Could not verify Git checkout: ${result.error.message}`);
   if (result.status !== 0) throw new Error(`Checkout root is not a Git checkout: ${checkout}`);
   const gitRoot = await realpath(result.stdout.trim());
-  const sameRoot =
-    process.platform === 'win32'
-      ? resolve(gitRoot).toLowerCase() === resolve(checkout).toLowerCase()
-      : resolve(gitRoot) === resolve(checkout);
+  const sameRoot = process.platform === 'win32' ? resolve(gitRoot).toLowerCase() === resolve(checkout).toLowerCase() : resolve(gitRoot) === resolve(checkout);
   if (!sameRoot) throw new Error(`Checkout root must be the Git root: ${checkout}`);
   return checkout;
 }
@@ -249,26 +225,11 @@ function isIsoTimestamp(value) {
 }
 
 function validateManifest(value, date, id) {
-  const allowedKeys = new Set([
-    'schemaVersion',
-    'workspace',
-    'date',
-    'id',
-    'status',
-    'startedAt',
-    'finishedAt',
-  ]);
-  if (!isObject(value) || Object.keys(value).some((key) => !allowedKeys.has(key))) {
+  const allowedKeys = new Set(['schemaVersion', 'workspace', 'date', 'id', 'status', 'startedAt', 'finishedAt']);
+  if (!isObject(value) || Object.keys(value).some(key => !allowedKeys.has(key))) {
     throw new Error('invalid session marker');
   }
-  if (
-    value.schemaVersion !== 1 ||
-    value.workspace !== workspaceName ||
-    value.date !== date ||
-    value.id !== id ||
-    !['active', 'finished'].includes(value.status) ||
-    !isIsoTimestamp(value.startedAt)
-  ) {
+  if (value.schemaVersion !== 1 || value.workspace !== workspaceName || value.date !== date || value.id !== id || !['active', 'finished'].includes(value.status) || !isIsoTimestamp(value.startedAt)) {
     throw new Error('invalid session marker');
   }
   if (value.status === 'finished') {
@@ -317,13 +278,7 @@ async function removeFailedLockIfOwned(lockPath, ownedIdentity) {
   if (resolve(await realpath(scratchPath)) !== resolve(scratchPath)) return false;
 
   const currentStat = await statOrNull(lockPath, { bigint: true });
-  if (
-    !currentStat ||
-    currentStat.isSymbolicLink() ||
-    !currentStat.isFile() ||
-    currentStat.dev !== ownedIdentity.dev ||
-    currentStat.ino !== ownedIdentity.ino
-  ) {
+  if (!currentStat || currentStat.isSymbolicLink() || !currentStat.isFile() || currentStat.dev !== ownedIdentity.dev || currentStat.ino !== ownedIdentity.ino) {
     return false;
   }
   await unlink(lockPath);
@@ -367,16 +322,10 @@ async function acquireLock(checkout, openFile) {
       }
     }
     if (error && typeof error === 'object' && 'code' in error && error.code === 'EEXIST') {
-      throw new Error(
-        'Operation lock is already held; stale locks are never reclaimed automatically',
-        { cause: error },
-      );
+      throw new Error('Operation lock is already held; stale locks are never reclaimed automatically', { cause: error });
     }
     if (removalError) {
-      const message =
-        removalError && typeof removalError === 'object' && 'message' in removalError
-          ? removalError.message
-          : String(removalError);
+      const message = removalError && typeof removalError === 'object' && 'message' in removalError ? removalError.message : String(removalError);
       throw new Error(`Could not safely remove the failed operation lock: ${message}`, {
         cause: error,
       });
@@ -473,16 +422,20 @@ async function finishSession(checkout, date, id) {
       return;
     }
     const repo = await repository(checkout);
-    const assignments = await readJson(join(repo.primary, '.agent-work/state/active-tasks.json')).catch((error) => {
+    const assignments = await readJson(join(repo.primary, '.agent-work/state/active-tasks.json')).catch(error => {
       if (error.code !== 'ENOENT') throw error;
       return [];
     });
-    if (!Array.isArray(assignments) || assignments.some((entry) => !entry || !['active', 'blocked', 'completed', 'handed-off', 'reassigned'].includes(entry.status))) throw new Error('Invalid shared task state; retain the session.');
+    if (!Array.isArray(assignments) || assignments.some(entry => !entry || !['active', 'blocked', 'completed', 'handed-off', 'reassigned'].includes(entry.status)))
+      throw new Error('Invalid shared task state; retain the session.');
     const session = `${date}/${id}`;
     const blockers = [];
     for (const entry of assignments) {
       if (['completed', 'handed-off', 'reassigned'].includes(entry.status)) continue;
-      if (entry.session === session) { blockers.push(entry); continue; }
+      if (entry.session === session) {
+        blockers.push(entry);
+        continue;
+      }
       let hasKnownSession = false;
       try {
         const parsed = parseSessionPath(entry.session);
@@ -491,10 +444,10 @@ async function finishSession(checkout, date, id) {
         // Unknown or malformed legacy session identities block conservatively by checkout.
       }
       if (hasKnownSession) continue;
-      if (!entry.checkout || await samePath(entry.checkout, checkout)) blockers.push(entry);
+      if (!entry.checkout || (await samePath(entry.checkout, checkout))) blockers.push(entry);
     }
     if (blockers.length) {
-      const details = blockers.map((entry) => `${entry.owner ?? 'unknown'}/${entry.task ?? 'unknown'} [${entry.status}; session=${entry.session ?? 'unknown'}; checkout=${entry.checkout ?? 'unknown'}]`);
+      const details = blockers.map(entry => `${entry.owner ?? 'unknown'}/${entry.task ?? 'unknown'} [${entry.status}; session=${entry.session ?? 'unknown'}; checkout=${entry.checkout ?? 'unknown'}]`);
       throw new Error(`Cannot finish session ${session}; active assignment blockers: ${details.join(', ')}.`);
     }
     await writeManifest(sessionDirectory, {
@@ -505,7 +458,6 @@ async function finishSession(checkout, date, id) {
     writeOutput(`Finished ${date}/${id}`);
   });
 }
-
 
 export {
   usage,

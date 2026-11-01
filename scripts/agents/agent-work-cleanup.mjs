@@ -110,11 +110,7 @@ async function discoverSessions(checkout) {
         );
         continue;
       }
-      if (
-        !sessionStat?.isDirectory() ||
-        !idPattern.test(sessionName) ||
-        reservedWindowsNamePattern.test(sessionName)
-      ) {
+      if (!sessionStat?.isDirectory() || !idPattern.test(sessionName) || reservedWindowsNamePattern.test(sessionName)) {
         records.push(
           sessionRecord(`${name}/${sessionName}`, {
             reason: 'unrecognized session entry',
@@ -146,14 +142,10 @@ function formatRecords(checkout, records, mode) {
     }
   }
   if (mode !== 'list') {
-    const eligible = records.filter((record) => record.eligible).length;
+    const eligible = records.filter(record => record.eligible).length;
     const retained = records.length - eligible;
-    const deleted = records.filter((record) => record.status === 'deleted').length;
-    writeOutput(
-      mode === 'apply'
-        ? `Summary: ${deleted} deleted; ${retained} retained.`
-        : `Summary: ${eligible} eligible; ${retained} retained.`,
-    );
+    const deleted = records.filter(record => record.status === 'deleted').length;
+    writeOutput(mode === 'apply' ? `Summary: ${deleted} deleted; ${retained} retained.` : `Summary: ${eligible} eligible; ${retained} retained.`);
   }
 }
 
@@ -176,10 +168,7 @@ async function deleteFinishedSession(checkout, managedRoot, record) {
   const realManagedRoot = await realpath(currentRoot);
   const realSessionDirectory = await realpath(directory);
   assertContained(realManagedRoot, realSessionDirectory, 'Resolved session directory');
-  if (
-    resolve(realManagedRoot) !== resolve(currentRoot) ||
-    resolve(realSessionDirectory) !== resolve(directory)
-  ) {
+  if (resolve(realManagedRoot) !== resolve(currentRoot) || resolve(realSessionDirectory) !== resolve(directory)) {
     throw new Error('Resolved session path changed before cleanup');
   }
   const unsafeEntry = await firstUnsafeEntry(directory);
@@ -199,7 +188,7 @@ async function cleanupSessions(checkout, target, apply) {
     let records = discovered;
     if (target) {
       const label = `${target.date}/${target.id}`;
-      records = records.filter((record) => record.label === label);
+      records = records.filter(record => record.label === label);
       if (records.length === 0) {
         records = [
           sessionRecord(label, {
@@ -224,6 +213,5 @@ async function cleanupSessions(checkout, target, apply) {
   if (apply) return withOperationLock(checkout, run);
   return run();
 }
-
 
 export { listSessions, cleanupSessions };

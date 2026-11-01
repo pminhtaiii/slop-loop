@@ -26,20 +26,52 @@ function run(checkout, ...args) {
     if (roleIndex !== -1 && args[roleIndex + 1] === 'worker' && !args.includes('--owned-path')) args.push('--owned-path', 'src/example.ts');
   }
   return spawnSync(process.execPath, [cli, ...args, '--root', checkout], {
-    encoding: 'utf8', windowsHide: true, timeout: 10_000,
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: 10_000,
   });
 }
 
-test('explicit reassignment preserves the original owner and evidence while creating a linked active assignment', async (t) => {
+test('explicit reassignment preserves the original owner and evidence while creating a linked active assignment', async t => {
   const checkout = await fixture(t);
   await mkdir(join(checkout, 'docs/verification'), { recursive: true });
-  run(checkout, 'start', '--role', 'worker', '--owner', 'interrupted', '--task', 'T001', '--session', '2026-10-15/old', '--summary', 'Implement feature', '--next', 'Resume from checkpoint', '--owned-path', 'src/feature.ts');
+  run(
+    checkout,
+    'start',
+    '--role',
+    'worker',
+    '--owner',
+    'interrupted',
+    '--task',
+    'T001',
+    '--session',
+    '2026-10-15/old',
+    '--summary',
+    'Implement feature',
+    '--next',
+    'Resume from checkpoint',
+    '--owned-path',
+    'src/feature.ts',
+  );
   run(checkout, 'update', '--owner', 'interrupted', '--task', 'T001', '--verification', 'First test passed');
-  const result = run(checkout, 'reassign', '--owner', 'interrupted', '--task', 'T001', '--new-owner', 'successor', '--session', '2026-10-15/new', '--reason', 'Human-directed recovery after interruption');
+  const result = run(
+    checkout,
+    'reassign',
+    '--owner',
+    'interrupted',
+    '--task',
+    'T001',
+    '--new-owner',
+    'successor',
+    '--session',
+    '2026-10-15/new',
+    '--reason',
+    'Human-directed recovery after interruption',
+  );
   assert.equal(result.status, 0, result.stderr);
   const entries = JSON.parse(run(checkout, 'list').stdout);
-  const original = entries.find((entry) => entry.owner === 'interrupted');
-  const successor = entries.find((entry) => entry.owner === 'successor');
+  const original = entries.find(entry => entry.owner === 'interrupted');
+  const successor = entries.find(entry => entry.owner === 'successor');
   assert.equal(original.status, 'reassigned');
   assert.equal(original.session, '2026-10-15/old');
   assert.equal(original.next, 'Resume from checkpoint');
@@ -64,7 +96,10 @@ test('explicit reassignment preserves the original owner and evidence while crea
   assert.doesNotMatch(compact.stdout, /interrupted/);
   const reassigned = run(checkout, 'list', '--status', 'reassigned');
   assert.equal(reassigned.status, 0, reassigned.stderr);
-  assert.deepEqual(JSON.parse(reassigned.stdout).map((entry) => entry.owner), ['interrupted']);
+  assert.deepEqual(
+    JSON.parse(reassigned.stdout).map(entry => entry.owner),
+    ['interrupted'],
+  );
 
   const archiveArgs = ['archive', '--owner', 'interrupted', '--task', 'T001', '--output', 'docs/verification/reassigned.json'];
   const preview = run(checkout, ...archiveArgs);
@@ -82,24 +117,44 @@ test('explicit reassignment preserves the original owner and evidence while crea
   assert.equal(retainedSuccessor.reassignedFrom.task, archivedSource.task);
 });
 
-test('legacy blocked reassignment retires only through an explicit reason and keeps transfer evidence', async (t) => {
+test('legacy blocked reassignment retires only through an explicit reason and keeps transfer evidence', async t => {
   const checkout = await fixture(t);
   await mkdir(join(checkout, '.agent-work/state'), { recursive: true });
   const source = {
-    owner: 'interrupted', task: 'T001', checkout, session: '2026-10-15/old', role: 'worker',
-    summary: 'Implement feature', next: 'Resume from checkpoint', verification: 'First test passed',
-    ownedPaths: ['src/feature.ts'], status: 'blocked',
+    owner: 'interrupted',
+    task: 'T001',
+    checkout,
+    session: '2026-10-15/old',
+    role: 'worker',
+    summary: 'Implement feature',
+    next: 'Resume from checkpoint',
+    verification: 'First test passed',
+    ownedPaths: ['src/feature.ts'],
+    status: 'blocked',
     reassignments: [{ owner: 'successor', task: 'T001', session: '2026-10-15/new', reason: 'Human-directed recovery', at: '2026-10-15T10:00:00.000Z' }],
   };
   const successor = {
-    owner: 'successor', task: 'T001', checkout, session: '2026-10-15/new', role: 'worker',
-    summary: 'Implement feature', next: 'Resume from checkpoint', verification: '',
-    ownedPaths: ['src/feature.ts'], status: 'active',
+    owner: 'successor',
+    task: 'T001',
+    checkout,
+    session: '2026-10-15/new',
+    role: 'worker',
+    summary: 'Implement feature',
+    next: 'Resume from checkpoint',
+    verification: '',
+    ownedPaths: ['src/feature.ts'],
+    status: 'active',
     reassignedFrom: { owner: 'interrupted', task: 'T001', session: '2026-10-15/old' },
   };
   const ordinaryBlocked = {
-    owner: 'blocked', task: 'T002', checkout, session: '2026-10-15/blocked', role: 'worker',
-    summary: 'Separate work', next: 'Wait for input', status: 'blocked',
+    owner: 'blocked',
+    task: 'T002',
+    checkout,
+    session: '2026-10-15/blocked',
+    role: 'worker',
+    summary: 'Separate work',
+    next: 'Wait for input',
+    status: 'blocked',
   };
   const statePath = join(checkout, '.agent-work/state/active-tasks.json');
   await writeFile(statePath, JSON.stringify([source, successor, ordinaryBlocked]));
@@ -117,11 +172,11 @@ test('legacy blocked reassignment retires only through an explicit reason and ke
   const result = run(checkout, 'retire-reassigned', '--owner', 'interrupted', '--task', 'T001', '--reason', 'Confirm the recorded transfer is the recovery path');
   assert.equal(result.status, 0, result.stderr);
   const entries = JSON.parse(await readFile(statePath, 'utf8'));
-  const retired = entries.find((entry) => entry.owner === 'interrupted');
+  const retired = entries.find(entry => entry.owner === 'interrupted');
   assert.equal(retired.status, 'reassigned');
   assert.deepEqual(retired.reassignments, source.reassignments);
   assert.equal(retired.reassignmentRetirement.reason, 'Confirm the recorded transfer is the recovery path');
   assert.equal(retired.result, undefined);
-  assert.equal(entries.find((entry) => entry.owner === 'successor').status, 'active');
-  assert.equal(entries.find((entry) => entry.owner === 'blocked').status, 'blocked');
+  assert.equal(entries.find(entry => entry.owner === 'successor').status, 'active');
+  assert.equal(entries.find(entry => entry.owner === 'blocked').status, 'blocked');
 });

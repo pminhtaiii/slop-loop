@@ -22,7 +22,7 @@ function parse(args) {
 }
 
 async function optionalJson(path) {
-  const stat = await lstat(path).catch((error) => {
+  const stat = await lstat(path).catch(error => {
     if (error.code === 'ENOENT') return null;
     throw error;
   });
@@ -33,12 +33,12 @@ async function optionalJson(path) {
 
 async function agentRoot(repo) {
   const directory = resolve(repo.primary, '.agent-work');
-  const stat = await lstat(directory).catch((error) => {
+  const stat = await lstat(directory).catch(error => {
     if (error.code === 'ENOENT') return null;
     throw error;
   });
   if (!stat) return null;
-  if (!stat.isDirectory() || stat.isSymbolicLink() || await realpath(directory) !== directory) throw new Error('Managed agent root must be a real directory.');
+  if (!stat.isDirectory() || stat.isSymbolicLink() || (await realpath(directory)) !== directory) throw new Error('Managed agent root must be a real directory.');
   return directory;
 }
 
@@ -46,12 +46,12 @@ async function agentDataDirectory(repo, name) {
   const root = await agentRoot(repo);
   if (!root) return null;
   const directory = resolve(root, name);
-  const stat = await lstat(directory).catch((error) => {
+  const stat = await lstat(directory).catch(error => {
     if (error.code === 'ENOENT') return null;
     throw error;
   });
   if (!stat) return null;
-  if (!stat.isDirectory() || stat.isSymbolicLink() || await realpath(directory) !== directory) throw new Error(`Managed ${name} directory must be a real directory.`);
+  if (!stat.isDirectory() || stat.isSymbolicLink() || (await realpath(directory)) !== directory) throw new Error(`Managed ${name} directory must be a real directory.`);
   return directory;
 }
 
@@ -59,8 +59,12 @@ async function assignments(repo) {
   const directory = await agentDataDirectory(repo, 'state');
   if (!directory) return [];
   const statePath = resolve(directory, 'active-tasks.json');
-  const entries = await optionalJson(statePath) ?? [];
-  if (!Array.isArray(entries) || entries.some((entry) => !entry || typeof entry.owner !== 'string' || typeof entry.task !== 'string' || !['active', 'blocked', 'completed', 'handed-off', 'reassigned'].includes(entry.status))) throw new Error('Invalid shared task state; no recovery report was produced.');
+  const entries = (await optionalJson(statePath)) ?? [];
+  if (
+    !Array.isArray(entries) ||
+    entries.some(entry => !entry || typeof entry.owner !== 'string' || typeof entry.task !== 'string' || !['active', 'blocked', 'completed', 'handed-off', 'reassigned'].includes(entry.status))
+  )
+    throw new Error('Invalid shared task state; no recovery report was produced.');
   return entries;
 }
 
@@ -91,10 +95,10 @@ function names(root, args) {
 async function receiptFor(records, assignment, checkout) {
   if (checkout) {
     for (const record of records) {
-      if (record.owner === assignment.owner && record.task === assignment.task && typeof record.path === 'string' && await samePath(record.path, checkout)) return record;
+      if (record.owner === assignment.owner && record.task === assignment.task && typeof record.path === 'string' && (await samePath(record.path, checkout))) return record;
     }
   }
-  return records.find((record) => record.owner === assignment.owner && record.task === assignment.task) ?? null;
+  return records.find(record => record.owner === assignment.owner && record.task === assignment.task) ?? null;
 }
 
 async function receiptSummary(receipt, checkout) {
@@ -102,20 +106,23 @@ async function receiptSummary(receipt, checkout) {
   return {
     id: receipt.id ?? null,
     status: receipt.status ?? 'unknown',
-    pathMatches: Boolean(checkout && typeof receipt.path === 'string' && await samePath(receipt.path, checkout)),
+    pathMatches: Boolean(checkout && typeof receipt.path === 'string' && (await samePath(receipt.path, checkout))),
   };
 }
 
 async function sessionMarker(repo, session) {
   if (typeof session !== 'string') return null;
-  try { validateSessionRef(session); }
-  catch { return null; }
+  try {
+    validateSessionRef(session);
+  } catch {
+    return null;
+  }
   try {
     const managedRoot = await agentRoot(repo);
     if (!managedRoot) return null;
     const directory = resolve(managedRoot, session);
     const stat = await lstat(directory);
-    if (!stat.isDirectory() || stat.isSymbolicLink() || await realpath(directory) !== directory) return null;
+    if (!stat.isDirectory() || stat.isSymbolicLink() || (await realpath(directory)) !== directory) return null;
     const path = resolve(directory, 'session.json');
     const marker = await optionalJson(path);
     if (!marker) return null;
@@ -128,10 +135,12 @@ async function sessionMarker(repo, session) {
 async function summarize(repo, assignment, worktreeReceipts) {
   const actual = await listedWorktree(repo, assignment.checkout);
   const listedPath = actual ? resolve(actual.worktree) : null;
-  const stat = listedPath ? await lstat(listedPath).catch((error) => {
-    if (error.code === 'ENOENT') return null;
-    throw error;
-  }) : null;
+  const stat = listedPath
+    ? await lstat(listedPath).catch(error => {
+        if (error.code === 'ENOENT') return null;
+        throw error;
+      })
+    : null;
   const canonical = stat?.isDirectory() && !stat.isSymbolicLink() ? await realpath(listedPath) : null;
   const checkout = canonical ?? listedPath;
   const receipt = await receiptSummary(await receiptFor(worktreeReceipts, assignment, checkout), checkout);
@@ -188,13 +197,13 @@ async function run(args) {
   const values = parse(args);
   const repo = await repository(values.root ?? resolve(dirname(fileURLToPath(import.meta.url)), '../..'));
   const [entries, worktreeReceipts] = await Promise.all([assignments(repo), receipts(repo)]);
-  const selected = entries.filter((entry) => ['active', 'blocked'].includes(entry.status) && (!values.owner || entry.owner === values.owner) && (!values.task || entry.task === values.task));
+  const selected = entries.filter(entry => ['active', 'blocked'].includes(entry.status) && (!values.owner || entry.owner === values.owner) && (!values.task || entry.task === values.task));
   const report = [];
   for (const assignment of selected) report.push(await summarize(repo, assignment, worktreeReceipts));
   console.log(JSON.stringify({ generatedAt: new Date().toISOString(), source: 'local contributor state and Git worktrees', assignments: report }, null, 2));
 }
 
-run(process.argv.slice(2)).catch((error) => {
+run(process.argv.slice(2)).catch(error => {
   console.error(error.message);
   process.exitCode = 1;
 });

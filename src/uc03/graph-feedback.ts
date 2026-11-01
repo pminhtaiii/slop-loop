@@ -6,14 +6,16 @@ import { reloadAuthoritativeState, transitionState } from './graph-transitions.t
 import type { UC03GraphConfig, UC03GraphPorts } from './graph-types.ts';
 import type { UC03GraphNode, UC03GraphState } from './graph-state.ts';
 
-function directionMatchesState(
-  direction: NonNullable<UC03GraphConfig['trustedDirection']>,
-  state: TaskState,
-): boolean {
-  return direction.taskId === state.taskId && direction.workspaceId === state.workspaceId &&
-    direction.repositoryRevisionDigest === state.repositoryRevisionDigest && direction.stateVersion === state.stateVersion &&
-    direction.planVersion === state.planVersion && direction.rejectedDecisionId === state.plan?.decisionRef &&
-    direction.strategyDigest === state.plan?.strategyDigest;
+function directionMatchesState(direction: NonNullable<UC03GraphConfig['trustedDirection']>, state: TaskState): boolean {
+  return (
+    direction.taskId === state.taskId &&
+    direction.workspaceId === state.workspaceId &&
+    direction.repositoryRevisionDigest === state.repositoryRevisionDigest &&
+    direction.stateVersion === state.stateVersion &&
+    direction.planVersion === state.planVersion &&
+    direction.rejectedDecisionId === state.plan?.decisionRef &&
+    direction.strategyDigest === state.plan?.strategyDigest
+  );
 }
 
 export function createAwaitFeedbackNode(ports: UC03GraphPorts, config?: UC03GraphConfig): UC03GraphNode {
@@ -23,7 +25,8 @@ export function createAwaitFeedbackNode(ports: UC03GraphPorts, config?: UC03Grap
     if (!current.ok) return { state: state.state, terminalOutcome: 'INCOMPLETE' as const, reasons: [current.reason] };
     const direction = config?.trustedDirection;
     if (!direction) return { state: current.state, terminalOutcome: 'needs-info' as const };
-    if (!directionMatchesState(direction, current.state)) return { state: current.state, terminalOutcome: 'INCOMPLETE' as const, reasons: ['Trusted feedback direction is stale or does not bind the current owner state'] };
+    if (!directionMatchesState(direction, current.state))
+      return { state: current.state, terminalOutcome: 'INCOMPLETE' as const, reasons: ['Trusted feedback direction is stale or does not bind the current owner state'] };
     if (direction.directive === 'terminate') {
       const next: TaskState = { ...current.state, stateVersion: current.state.stateVersion + 1, node: 'Incomplete', outcome: 'INCOMPLETE', nextAction: 'human-directed-termination' };
       return { state: await transitionState(ports.statePort, next, current.state.stateVersion), terminalOutcome: 'INCOMPLETE' as const };
@@ -42,7 +45,11 @@ export function createAwaitFeedbackNode(ports: UC03GraphPorts, config?: UC03Grap
     );
     if (!replanned.state || !['REPLAN_PREPARED', 'CLARIFICATION_ACCEPTED'].includes(replanned.outcome)) {
       const latest = await reloadAuthoritativeState(current.state, ports.statePort);
-      return { state: latest.ok ? latest.state : current.state, terminalOutcome: replanned.outcome === 'AWAIT_FEEDBACK' ? 'needs-info' as const : 'INCOMPLETE' as const, reasons: replanned.reasons };
+      return {
+        state: latest.ok ? latest.state : current.state,
+        terminalOutcome: replanned.outcome === 'AWAIT_FEEDBACK' ? ('needs-info' as const) : ('INCOMPLETE' as const),
+        reasons: replanned.reasons,
+      };
     }
     const persisted = await reloadAuthoritativeState(replanned.state, ports.statePort);
     if (!persisted.ok) return { state: current.state, terminalOutcome: 'INCOMPLETE' as const, reasons: [persisted.reason] };
@@ -52,4 +59,3 @@ export function createAwaitFeedbackNode(ports: UC03GraphPorts, config?: UC03Grap
     return { state: persisted.state, milestones };
   };
 }
-

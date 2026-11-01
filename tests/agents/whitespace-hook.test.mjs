@@ -35,7 +35,7 @@ async function repository(t) {
   return { root, env, git, runGit };
 }
 
-test('the pre-commit hook rejects staged trailing whitespace and runs the size check', async (t) => {
+test('the pre-commit hook rejects staged trailing whitespace and runs the size check', async t => {
   const { root, git, runGit } = await repository(t);
   await writeFile(join(root, 'src.ts'), 'const value = 1;  \n');
   git('add', '--', 'src.ts');
@@ -49,7 +49,7 @@ test('the pre-commit hook rejects staged trailing whitespace and runs the size c
   assert.match(output, /Staged-file size check passed/);
 });
 
-test('clean staged content commits successfully', async (t) => {
+test('clean staged content commits successfully', async t => {
   const { root, git, runGit } = await repository(t);
   await writeFile(join(root, 'src.ts'), 'const value = 1;\n');
   git('add', '--', 'src.ts');
@@ -59,7 +59,7 @@ test('clean staged content commits successfully', async (t) => {
   assert.match(result.stdout + result.stderr, /Staged-file size check passed/);
 });
 
-test('whitespace present only in unstaged content does not block a staged commit', async (t) => {
+test('whitespace present only in unstaged content does not block a staged commit', async t => {
   const { root, git, runGit } = await repository(t);
   await writeFile(join(root, 'src.ts'), 'const staged = true;\n');
   await writeFile(join(root, 'unstaged.ts'), 'const unstaged = true;  \n');
@@ -70,7 +70,7 @@ test('whitespace present only in unstaged content does not block a staged commit
   assert.match(git('status', '--short'), /\?\? unstaged\.ts/);
 });
 
-test('the pre-commit hook still blocks an oversized staged implementation file', async (t) => {
+test('the pre-commit hook still blocks an oversized staged implementation file', async t => {
   const { root, git, runGit } = await repository(t);
   await writeFile(join(root, 'src.ts'), 'x'.repeat(20_001));
   git('add', '--', 'src.ts');

@@ -11,6 +11,7 @@ This page records approved implementation choices and keeps undecided choices ex
 | Compiler and build | TypeScript 6.0.3, strict NodeNext ESM | pnpm run typecheck / pnpm run build |
 | Runtime test runner | Node.js built-in test runner | pnpm run test:runtime; compiled TypeScript tests |
 | Mechanical lint | ESLint 10.12.0, @eslint/js 10.0.1, globals 17.13.0, typescript-eslint 8.71.2 | pnpm run lint |
+| Mechanical formatting | Prettier 3.9.10, single quotes, printWidth 200, `endOfLine: auto` for the CRLF working copy | pnpm run format:check |
 | Workflow orchestration | `@langchain/langgraph` | Retain the official TypeScript implementation as the orchestration library |
 | Initial target repositories | Python with `pytest` | Repositories the runtime will initially operate on |
 | Task execution environment | Docker | Agent loop and trusted harness on host; repository and Python/pytest tooling in task container; host-side tools use Docker execution directly; see [ADR-0003](../docs/adr/0003-docker-task-workspace-boundary.md) |
@@ -27,7 +28,6 @@ Contributor helpers retain their existing Node.js commands. The separately selec
 
 No choice is recorded yet for:
 
-- formatting tools;
 - a CLI or service framework;
 - the LLM provider and model;
 - the persistence and LangGraph checkpoint backend;

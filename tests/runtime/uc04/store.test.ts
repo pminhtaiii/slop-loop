@@ -4,13 +4,7 @@ import { mkdtemp, mkdir, readdir, readFile, rm, symlink, writeFile } from 'node:
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { DurableStore, isSafeStorageId } from '../../../src/persistence/store.ts';
-import {
-  UC04_SCHEMA_VERSION,
-  type TaskState,
-  type DeliberatePauseRecord,
-  type BudgetJournalRecord,
-  type DispatchClaimRecord,
-} from '../../../src/persistence/contracts.ts';
+import { UC04_SCHEMA_VERSION, type TaskState, type DeliberatePauseRecord, type BudgetJournalRecord, type DispatchClaimRecord } from '../../../src/persistence/contracts.ts';
 
 async function countEntries(dir: string): Promise<number> {
   const entries = await readdir(dir, { recursive: true }).catch(() => [] as string[]);
@@ -94,7 +88,7 @@ describe('UC-04: DurableStore (Persistence & Checkpoints)', () => {
       },
       {
         message: /Non-monotonic stateVersion/i,
-      }
+      },
     );
 
     // Save version 3
@@ -114,7 +108,7 @@ describe('UC-04: DurableStore (Persistence & Checkpoints)', () => {
       },
       {
         message: /Non-monotonic stateVersion/i,
-      }
+      },
     );
   });
 
@@ -159,7 +153,7 @@ describe('UC-04: DurableStore (Persistence & Checkpoints)', () => {
       },
       {
         message: /busy|already locked/i,
-      }
+      },
     );
   });
 
@@ -178,7 +172,7 @@ describe('UC-04: DurableStore (Persistence & Checkpoints)', () => {
       },
       {
         message: /integrity|checksum mismatch/i,
-      }
+      },
     );
   });
 
@@ -223,7 +217,7 @@ describe('UC-04: DurableStore (Persistence & Checkpoints)', () => {
       async () => {
         await store.withLock('..', async () => 1);
       },
-      { message: /Unsafe lock resource id/ }
+      { message: /Unsafe lock resource id/ },
     );
 
     assert.equal(await countEntries(tempDir), before);
@@ -307,7 +301,7 @@ describe('UC-04: DurableStore (Persistence & Checkpoints)', () => {
       async () => {
         await store.loadBudgetJournal(sampleTask.taskId);
       },
-      { message: /Corrupted BudgetJournalRecord/ }
+      { message: /Corrupted BudgetJournalRecord/ },
     );
   });
 
@@ -335,7 +329,10 @@ describe('UC-04: DurableStore (Persistence & Checkpoints)', () => {
     await store.saveDispatchClaim(earlier);
 
     const claims = await store.loadDispatchClaims(sampleTask.taskId);
-    assert.deepEqual(claims.map((c) => c.claimId), ['claim-a', 'claim-b']);
+    assert.deepEqual(
+      claims.map(c => c.claimId),
+      ['claim-a', 'claim-b'],
+    );
     assert.deepEqual(await store.loadDispatchClaims('unknown-task'), []);
   });
 
@@ -350,7 +347,7 @@ describe('UC-04: DurableStore (Persistence & Checkpoints)', () => {
         async () => {
           await store.withLock('resource-1', async () => 'ran');
         },
-        { message: /escapes base directory/ }
+        { message: /escapes base directory/ },
       );
       assert.deepEqual(await readdir(outside), []);
     } finally {
@@ -368,7 +365,7 @@ describe('UC-04: DurableStore (Persistence & Checkpoints)', () => {
         async () => {
           await store.saveCheckpoint(sampleTask);
         },
-        { message: /escapes base directory/ }
+        { message: /escapes base directory/ },
       );
       assert.deepEqual(await readdir(outside), []);
     } finally {
@@ -397,7 +394,7 @@ describe('UC-04: DurableStore (Persistence & Checkpoints)', () => {
             createdAt: '2026-10-31T00:00:00.000Z',
           });
         },
-        { message: /escapes base directory/ }
+        { message: /escapes base directory/ },
       );
       assert.deepEqual(await readdir(outside), []);
     } finally {
@@ -417,7 +414,7 @@ describe('UC-04: DurableStore (Persistence & Checkpoints)', () => {
         async () => {
           await store.loadTask(sampleTask.taskId);
         },
-        { message: /escapes base directory/ }
+        { message: /escapes base directory/ },
       );
     } finally {
       await rm(outside, { recursive: true, force: true });
@@ -433,7 +430,7 @@ describe('UC-04: DurableStore (Persistence & Checkpoints)', () => {
       async () => {
         await store.loadTask('task-other-01');
       },
-      { message: /Task record mismatch: expected task-other-01, found task-test-01/ }
+      { message: /Task record mismatch: expected task-other-01, found task-test-01/ },
     );
   });
 

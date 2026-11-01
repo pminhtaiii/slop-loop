@@ -11,14 +11,26 @@ test('queued completion waits, closes the merged pair and confirms project Done'
   const f = await fixture(t, { loseCloseResponse: false });
   const p = await projectFixture(f.root, f.execute);
   let launches = 0;
-  const dependencies = { execute: p.execute, launch: async () => { launches++; } };
+  const dependencies = {
+    execute: p.execute,
+    launch: async () => {
+      launches++;
+    },
+  };
   const started = await completionJob(['start', ...f.args], dependencies);
   assert.equal(started.status, 'STARTED');
   assert.deepEqual(f.writes, []);
   assert.equal((await completionJob(['start', ...f.args], dependencies)).status, 'STARTING');
   assert.equal(launches, 1);
   let waits = 0;
-  const result = await runCompletionJob(f.root, 'localized-bug', { ...dependencies, wait: async ms => { assert.equal(ms, 60_000); waits++; mergePair(f); } });
+  const result = await runCompletionJob(f.root, 'localized-bug', {
+    ...dependencies,
+    wait: async ms => {
+      assert.equal(ms, 60_000);
+      waits++;
+      mergePair(f);
+    },
+  });
   assert.equal(waits, 1);
   assert.equal(result.status, 'COMPLETED');
   assert.equal(f.publicIssue.state, 'closed');
@@ -72,18 +84,22 @@ test('start rejects substitution of a queued resolving PR or acceptance evidence
   const f = await fixture(t);
   const dependencies = { execute: f.execute, launch: async () => {} };
   await completionJob(['start', ...f.args], dependencies);
-  const replaced = f.args.map(arg => arg === f.prs.primary.url ? 'https://github.com/example/public/pull/8' : arg);
+  const replaced = f.args.map(arg => (arg === f.prs.primary.url ? 'https://github.com/example/public/pull/8' : arg));
   await assert.rejects(completionJob(['start', ...replaced], dependencies), /different completion job/);
   assert.deepEqual(f.writes, []);
 });
 
 test('queue admission pins acceptance before preview rather than adopting changed criteria afterward', async t => {
   const f = await fixture(t, { loseCloseResponse: false });
-  await completionJob(['start', ...f.args], { execute: f.execute, launch: async () => {}, complete: async (args, options) => {
-    const result = await runIssueCompletion(args, options);
-    f.privateIssue.body += '\nNew criterion after preview.';
-    return result;
-  } });
+  await completionJob(['start', ...f.args], {
+    execute: f.execute,
+    launch: async () => {},
+    complete: async (args, options) => {
+      const result = await runIssueCompletion(args, options);
+      f.privateIssue.body += '\nNew criterion after preview.';
+      return result;
+    },
+  });
   mergePair(f);
   const result = await runCompletionJob(f.root, 'localized-bug', { execute: f.execute });
   assert.equal(result.status, 'BLOCKED');
@@ -109,17 +125,20 @@ test('evidence or project substitution between ready preview and apply cannot cl
       const started = await completionJob(['start', ...f.args], { execute: f.execute, launch: async () => {} });
       const record = JSON.parse(await readFile(started.record, 'utf8'));
       mergePair(f);
-      const result = await runCompletionJob(f.root, 'localized-bug', { execute: f.execute, complete: async (args, options) => {
-        const preview = await runIssueCompletion(args, options);
-        if (preview.status === 'READY_TO_COMPLETE' && !args.includes('--apply')) {
-          if (changed === 'evidence') {
-            const evidence = JSON.parse(await readFile(record.evidenceFile, 'utf8'));
-            evidence.summary = 'Replacement evidence after preview';
-            await writeFile(record.evidenceFile, JSON.stringify(evidence));
-          } else await writeFile(join(f.root, 'issue-project.json'), '{}');
-        }
-        return preview;
-      } });
+      const result = await runCompletionJob(f.root, 'localized-bug', {
+        execute: f.execute,
+        complete: async (args, options) => {
+          const preview = await runIssueCompletion(args, options);
+          if (preview.status === 'READY_TO_COMPLETE' && !args.includes('--apply')) {
+            if (changed === 'evidence') {
+              const evidence = JSON.parse(await readFile(record.evidenceFile, 'utf8'));
+              evidence.summary = 'Replacement evidence after preview';
+              await writeFile(record.evidenceFile, JSON.stringify(evidence));
+            } else await writeFile(join(f.root, 'issue-project.json'), '{}');
+          }
+          return preview;
+        },
+      });
       assert.equal(result.status, 'BLOCKED');
       assert.match(result.error, changed === 'evidence' ? /evidence changed/ : /configuration changed/);
       assert.deepEqual(f.writes, []);

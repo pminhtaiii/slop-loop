@@ -23,7 +23,7 @@ export function notRunCase(context: EvaluationCaseContext, reason: NotRunReason)
     reason === 'real-refused' ? 'Real mode was refused before driver invocation.' : '',
     reason === 'mock-grading-exercised' ? 'Injected mock grading boundary returned a snapshot-bound result; real C17 grading remains not-run.' : '',
     privateGrading ? C17_NOT_RUN_LIMITATION : '',
-  ].filter((value) => value.length > 0);
+  ].filter(value => value.length > 0);
   return {
     caseId: context.spec.caseId,
     useCase: 'UC-03',
@@ -43,10 +43,7 @@ export function notRunCase(context: EvaluationCaseContext, reason: NotRunReason)
   };
 }
 
-export function driverErrorCase(
-  context: EvaluationCaseContext,
-  error: 'driver-threw' | 'invalid-result',
-): CaseResult {
+export function driverErrorCase(context: EvaluationCaseContext, error: 'driver-threw' | 'invalid-result'): CaseResult {
   const actualOutcome = error === 'driver-threw' ? 'DRIVER_ERROR' : 'DRIVER_RESULT_INVALID';
   return {
     caseId: context.spec.caseId,
@@ -95,13 +92,13 @@ export function parseSummary(value: unknown): EvaluationSummary {
 }
 
 export function summarizeCases(cases: readonly CaseResult[], manifest: EvaluationManifest): EvaluationSummary {
-  const passedCases = cases.filter((item) => item.status === 'pass').length;
-  const failedCases = cases.filter((item) => item.status === 'fail').length;
-  const errorCases = cases.filter((item) => item.status === 'error').length;
-  const notRunCases = cases.filter((item) => item.status === 'not-run').length;
+  const passedCases = cases.filter(item => item.status === 'pass').length;
+  const failedCases = cases.filter(item => item.status === 'fail').length;
+  const errorCases = cases.filter(item => item.status === 'error').length;
+  const notRunCases = cases.filter(item => item.status === 'not-run').length;
   const requiredFailuresOrNotRun = failedCases + errorCases + notRunCases;
-  const expectedDenials = manifest.cases.filter((item) => item.expectedOutcome === 'FAILED').length;
-  const expectedDenialsPassed = cases.filter((item) => item.expectedOutcome === 'FAILED' && item.status === 'pass').length;
+  const expectedDenials = manifest.cases.filter(item => item.expectedOutcome === 'FAILED').length;
+  const expectedDenialsPassed = cases.filter(item => item.expectedOutcome === 'FAILED' && item.status === 'pass').length;
   return {
     totalCases: cases.length,
     passedCases,
@@ -132,9 +129,7 @@ export interface BuildReportInput {
 
 export function createEvaluationReport(input: BuildReportInput): EvaluationReport {
   const summary = summarizeCases(input.cases, input.manifest);
-  const verdict = input.mode === 'real'
-    ? 'REFUSED'
-    : summary.requiredFailuresOrNotRun > 0 ? 'FAIL' : 'PASS';
+  const verdict = input.mode === 'real' ? 'REFUSED' : summary.requiredFailuresOrNotRun > 0 ? 'FAIL' : 'PASS';
   const limitations = [
     input.mode === 'real'
       ? 'Real mode dispatch was refused before driver invocation.'

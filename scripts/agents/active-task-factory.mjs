@@ -22,12 +22,12 @@ All commands accept --root <checkout>. reserve fetches/pins origin/development; 
 Factory-managed handoffs require coordinator-pinned manifest and evidence. The coordinator runs pin-factory-handoff locally; it does not authenticate an OS identity.
 finish requires a published linked PR and passing current-head CI. Archive/clear require terminal state; reassignment preserves history; busy locks are never reclaimed.`;
 
-const text = (value) => typeof value === 'string' && value.trim() === value && value.length > 0;
-const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
+const text = value => typeof value === 'string' && value.trim() === value && value.length > 0;
+const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 const hashPattern = /^[a-f0-9]{64}$/;
 
 export function takeStartFlags(args) {
-  const count = (flag) => args.filter((argument) => argument === flag).length;
+  const count = flag => args.filter(argument => argument === flag).length;
   const factoryManaged = count('--factory-managed');
   const requireClean = count('--require-clean');
   const branchIndex = args.indexOf('--expected-branch');
@@ -37,10 +37,17 @@ export function takeStartFlags(args) {
   const expectedHead = headIndex < 0 ? undefined : args[headIndex + 1];
   const guarded = Boolean(requireClean || branchIndex >= 0 || headIndex >= 0);
   if (factoryManaged && !['start', 'reserve'].includes(args[0])) throw new Error('--factory-managed is valid only with worker start or reserve.');
-  if (guarded && (args[0] !== 'start' || requireClean !== 1 || branchIndex < 0 || headIndex < 0 || !text(expectedBranch) || expectedBranch.startsWith('--') || !/^[a-f0-9]{40,64}$/i.test(expectedHead ?? ''))) {
+  if (
+    guarded &&
+    (args[0] !== 'start' || requireClean !== 1 || branchIndex < 0 || headIndex < 0 || !text(expectedBranch) || expectedBranch.startsWith('--') || !/^[a-f0-9]{40,64}$/i.test(expectedHead ?? ''))
+  ) {
     throw new Error('Guarded start requires --expected-branch, a full --expected-head, and --require-clean.');
   }
-  const removed = new Set([args.indexOf('--factory-managed'), args.indexOf('--require-clean'), ...(branchIndex >= 0 ? [branchIndex, branchIndex + 1] : []), ...(headIndex >= 0 ? [headIndex, headIndex + 1] : [])].filter((index) => index >= 0));
+  const removed = new Set(
+    [args.indexOf('--factory-managed'), args.indexOf('--require-clean'), ...(branchIndex >= 0 ? [branchIndex, branchIndex + 1] : []), ...(headIndex >= 0 ? [headIndex, headIndex + 1] : [])].filter(
+      index => index >= 0,
+    ),
+  );
   return { args: args.filter((_, index) => !removed.has(index)), factoryManaged: factoryManaged === 1, requireClean: requireClean === 1, expectedBranch, expectedHead };
 }
 
@@ -50,7 +57,18 @@ export function validateFactoryAssignment(entry) {
   if (entry.factoryHandoff !== undefined && entry.factoryManaged !== true) throw new Error('Factory handoff pins require a factory-managed assignment; file left unchanged.');
   if (entry.factoryHandoff !== undefined) {
     const pin = entry.factoryHandoff;
-    if (!pin || typeof pin !== 'object' || Array.isArray(pin) || pin.schemaVersion !== 1 || !text(pin.manifestPath) || !isAbsolute(pin.manifestPath) || !hashPattern.test(pin.manifestSha256 ?? '') || !text(pin.evidencePath) || !isAbsolute(pin.evidencePath) || !hashPattern.test(pin.evidenceSha256 ?? '')) {
+    if (
+      !pin ||
+      typeof pin !== 'object' ||
+      Array.isArray(pin) ||
+      pin.schemaVersion !== 1 ||
+      !text(pin.manifestPath) ||
+      !isAbsolute(pin.manifestPath) ||
+      !hashPattern.test(pin.manifestSha256 ?? '') ||
+      !text(pin.evidencePath) ||
+      !isAbsolute(pin.evidencePath) ||
+      !hashPattern.test(pin.evidenceSha256 ?? '')
+    ) {
       throw new Error('Invalid factory handoff pin; file left unchanged.');
     }
   }
@@ -86,7 +104,10 @@ async function regularReference(path, root) {
   if (!text(path) || path.includes('\0')) throw new Error('Factory evidence references must be nonempty file paths.');
   const target = resolve(root, path);
   const pathRoot = parse(target).root;
-  const parts = target.slice(pathRoot.length).split(/[\\/]+/).filter(Boolean);
+  const parts = target
+    .slice(pathRoot.length)
+    .split(/[\\/]+/)
+    .filter(Boolean);
   let current = pathRoot;
   for (const [index, part] of parts.entries()) {
     current = join(current, part);

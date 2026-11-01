@@ -42,20 +42,37 @@ async function retainedProgress(path) {
       if (!line.startsWith('{"gate"')) continue;
       if (line.length > 4096) return unknownProgress('malformed-progress');
       let event;
-      try { event = JSON.parse(line); } catch { return unknownProgress('malformed-progress'); }
-      if (!event || typeof event !== 'object' || typeof event.gate !== 'string' || !['running', 'progress', 'heartbeat', 'passed', 'failed', 'timed-out'].includes(event.status)) return unknownProgress('malformed-progress');
+      try {
+        event = JSON.parse(line);
+      } catch {
+        return unknownProgress('malformed-progress');
+      }
+      if (!event || typeof event !== 'object' || typeof event.gate !== 'string' || !['running', 'progress', 'heartbeat', 'passed', 'failed', 'timed-out'].includes(event.status))
+        return unknownProgress('malformed-progress');
       const text = value => {
         if (typeof value !== 'string') return null;
         // Retained logs are untrusted text; keep status output to one bounded line.
-        // eslint-disable-next-line no-control-regex
-        return value.replace(/[\x00-\x1f\x7f-\x9f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200) || null;
+        return (
+          value
+            // eslint-disable-next-line no-control-regex
+            .replace(/[\x00-\x1f\x7f-\x9f]/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .slice(0, 200) || null
+        );
       };
-      const currentTest = text(event.currentTest), currentFile = text(event.currentFile);
+      const currentTest = text(event.currentTest),
+        currentFile = text(event.currentFile);
       const updatedAt = typeof event.lastProgressAt === 'string' && Number.isFinite(Date.parse(event.lastProgressAt)) ? event.lastProgressAt : null;
       const summary = [currentTest, currentFile && `(${currentFile})`].filter(Boolean).join(' ').slice(0, 420) || `${event.gate} ${event.status}`;
       return {
-        phase: 'gate', latestGate: event.gate.slice(0, 80), status: event.status, summary,
-        updatedAt, ...(currentTest ? { currentTest } : {}), ...(currentFile ? { currentFile } : {}),
+        phase: 'gate',
+        latestGate: event.gate.slice(0, 80),
+        status: event.status,
+        summary,
+        updatedAt,
+        ...(currentTest ? { currentTest } : {}),
+        ...(currentFile ? { currentFile } : {}),
         ...(Number.isFinite(event.elapsedMs) && event.elapsedMs >= 0 ? { elapsedMs: event.elapsedMs } : {}),
         ...(Number.isFinite(event.timeoutMs) && event.timeoutMs > 0 ? { timeoutMs: event.timeoutMs } : {}),
       };
@@ -63,7 +80,9 @@ async function retainedProgress(path) {
     return unknownProgress('no-progress-event');
   } catch (error) {
     return unknownProgress(error.code === 'ENOENT' ? 'missing-log' : 'unreadable-log');
-  } finally { await handle?.close(); }
+  } finally {
+    await handle?.close();
+  }
 }
 
 async function readBody(path) {
@@ -80,17 +99,24 @@ async function readBody(path) {
     }
     if (!length || length > 65_536) throw new Error('PR body must contain 1–65536 bytes.');
     return bytes.subarray(0, length).toString('utf8');
-  } finally { await handle.close(); }
+  } finally {
+    await handle.close();
+  }
 }
 
 export async function launchDetached(command, args, { cwd, log }) {
   const fd = openSync(log, 'ax', 0o600);
   try {
     const child = spawn(command, args, { cwd, detached: true, windowsHide: true, stdio: ['ignore', fd, fd] });
-    await new Promise((done, reject) => { child.once('error', reject); child.once('spawn', done); });
+    await new Promise((done, reject) => {
+      child.once('error', reject);
+      child.once('spawn', done);
+    });
     child.unref();
     return child.pid;
-  } finally { closeSync(fd); }
+  } finally {
+    closeSync(fd);
+  }
 }
 
 export async function runPublicationJob(root, id, dependencies = {}) {
@@ -104,14 +130,16 @@ export async function runPublicationJob(root, id, dependencies = {}) {
     try {
       const current = identity(repo.root);
       if (current.head !== record.head || current.branch !== record.branch) throw new Error('Checkout changed since job launch; publication refused.');
-      record.status = 'RUNNING'; record.pid = process.pid;
+      record.status = 'RUNNING';
+      record.pid = process.pid;
       await write(path, record);
       const args = ['publish', '--root', repo.root, '--base', 'development', '--body-file', record.bodyFile, '--summary', record.summary];
       if (record.skipReviewRequest) args.push('--skip-review-request');
       record.result = workflowSummary(await (dependencies.workflow ?? runWorkflow)(args, { expectedCandidate: { head: record.head, branch: record.branch } }));
       record.status = 'SUCCEEDED';
     } catch (error) {
-      record.status = 'FAILED'; record.error = error.message.slice(0, 2000);
+      record.status = 'FAILED';
+      record.error = error.message.slice(0, 2000);
     }
     record.finishedAt = new Date().toISOString();
     await write(path, record);
@@ -133,22 +161,46 @@ export async function publicationJob(args, dependencies = {}) {
     if (record.root !== repo.root || record.id !== values.id) throw new Error('Job belongs to another checkout.');
     let processAlive = null;
     if (unfinished.has(record.status) && record.pid) {
-      try { process.kill(record.pid, 0); processAlive = true; }
-      catch (error) { if (error.code === 'ESRCH') processAlive = false; }
+      try {
+        process.kill(record.pid, 0);
+        processAlive = true;
+      } catch (error) {
+        if (error.code === 'ESRCH') processAlive = false;
+      }
     }
     const expectedLog = resolve(directory, `${values.id}.log`);
     const progress = record.log === expectedLog ? await retainedProgress(expectedLog) : unknownProgress('invalid-log-path');
-    return { id: record.id, status: record.status, root: record.root, branch: record.branch, head: record.head, pid: record.pid, processAlive, log: record.log, progress, result: record.result, error: record.error, next: unfinished.has(record.status) ? 'Yield; inspect this job on resume. If its process stopped, inspect retained logs and locks before recovery.' : 'Inspect the result; successful publication still requires live PR status, app links and contributor completion.' };
+    return {
+      id: record.id,
+      status: record.status,
+      root: record.root,
+      branch: record.branch,
+      head: record.head,
+      pid: record.pid,
+      processAlive,
+      log: record.log,
+      progress,
+      result: record.result,
+      error: record.error,
+      next: unfinished.has(record.status)
+        ? 'Yield; inspect this job on resume. If its process stopped, inspect retained logs and locks before recovery.'
+        : 'Inspect the result; successful publication still requires live PR status, app links and contributor completion.',
+    };
   }
   const current = identity(repo.root);
-  assertNewBranch(current.branch); assertNewSummary(values.summary);
+  assertNewBranch(current.branch);
+  assertNewSummary(values.summary);
   if (git(repo.root, ['status', '--porcelain', '--untracked-files=all']).stdout.trim()) throw new Error('Commit scoped changes before starting publication.');
   const body = await readBody(resolve(values['body-file']));
   const key = createHash('sha256').update(current.branch).digest('hex');
   const latest = resolve(directory, `${key}.latest.json`);
   return withLock(`${latest}.lock`, async () => {
     let previous;
-    try { previous = await readJson(latest); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    try {
+      previous = await readJson(latest);
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
     if (previous) {
       if (!jobId.test(previous.id)) throw new Error('Invalid previous job pointer.');
       const retained = await readJson(resolve(directory, `${previous.id}.json`));
@@ -159,14 +211,34 @@ export async function publicationJob(args, dependencies = {}) {
     const bodyFile = resolve(directory, `${id}.body.md`);
     const log = resolve(directory, `${id}.log`);
     await atomicWrite(bodyFile, body, { exclusive: true });
-    const record = { id, status: 'STARTING', root: repo.root, ...current, bodyFile, summary: values.summary, skipReviewRequest: Boolean(values['skip-review-request']), log, startedAt: new Date().toISOString() };
+    const record = {
+      id,
+      status: 'STARTING',
+      root: repo.root,
+      ...current,
+      bodyFile,
+      summary: values.summary,
+      skipReviewRequest: Boolean(values['skip-review-request']),
+      log,
+      startedAt: new Date().toISOString(),
+    };
     await write(path, record);
     await write(latest, { id });
     try {
       const pid = await (dependencies.launch ?? launchDetached)(process.execPath, [script, '--run', id, repo.root], { cwd: repo.root, log });
-      return { id, status: 'STARTED', pid, root: repo.root, ...current, log, next: `Yield now. Resume with publication-job.mjs status --id ${id} --root <checkout>. No automatic agent wakeup is installed.` };
+      return {
+        id,
+        status: 'STARTED',
+        pid,
+        root: repo.root,
+        ...current,
+        log,
+        next: `Yield now. Resume with publication-job.mjs status --id ${id} --root <checkout>. No automatic agent wakeup is installed.`,
+      };
     } catch (error) {
-      record.status = 'FAILED'; record.error = error.message; record.finishedAt = new Date().toISOString();
+      record.status = 'FAILED';
+      record.error = error.message;
+      record.finishedAt = new Date().toISOString();
       await write(path, record);
       throw error;
     }
@@ -176,5 +248,13 @@ export async function publicationJob(args, dependencies = {}) {
 if (process.argv[1] && resolve(process.argv[1]) === script) {
   const args = process.argv.slice(2);
   const operation = args[0] === '--run' && args.length === 3 ? runPublicationJob(args[2], args[1]) : publicationJob(args);
-  operation.then(result => { console.log(JSON.stringify(result, null, 2)); if (result.status === 'FAILED') process.exitCode = 1; }).catch(error => { console.error(error.message); process.exitCode = 1; });
+  operation
+    .then(result => {
+      console.log(JSON.stringify(result, null, 2));
+      if (result.status === 'FAILED') process.exitCode = 1;
+    })
+    .catch(error => {
+      console.error(error.message);
+      process.exitCode = 1;
+    });
 }

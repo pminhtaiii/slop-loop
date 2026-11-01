@@ -33,10 +33,7 @@ export async function reloadAuthoritativeState(
   return { ok: true, state: current };
 }
 
-export async function loadCurrentOwnerState(
-  task: BugTask,
-  statePort: StatePort,
-): Promise<{ readonly ok: true; readonly state: TaskState } | { readonly ok: false; readonly reason: string }> {
+export async function loadCurrentOwnerState(task: BugTask, statePort: StatePort): Promise<{ readonly ok: true; readonly state: TaskState } | { readonly ok: false; readonly reason: string }> {
   let current: TaskState | null;
   try {
     current = await statePort.loadTask(task.taskId);
@@ -60,4 +57,3 @@ export async function transitionState(port: StatePort, next: TaskState, previous
   }
   return persisted;
 }
-

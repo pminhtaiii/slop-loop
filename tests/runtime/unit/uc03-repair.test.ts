@@ -60,11 +60,7 @@ import {
   type TrustedRepairContext,
 } from '../../../src/uc03/repair.ts';
 import { executeVerificationChecks } from '../../../src/uc03/verification.ts';
-import {
-  createFixtureBugTask,
-  createFixtureTaskState,
-  createFixtureCheckDefinition,
-} from '../support/uc03/port-fixtures.ts';
+import { createFixtureBugTask, createFixtureTaskState, createFixtureCheckDefinition } from '../support/uc03/port-fixtures.ts';
 import { MemoryStatePort, MemoryStatePortV02, StateConflictError } from '../support/uc03/memory-state.ts';
 import {
   createTestRepositoryAdmissionContextV02,
@@ -74,10 +70,7 @@ import {
   createTestObservedReconciliationReceiptV02,
   createTestReconciliationValidationContextV02,
 } from '../support/uc03/state-fixtures.ts';
-import {
-  createExecutionGuardV02,
-  type ExecutionGuardStatePortV02,
-} from '../../../src/foundation/execution-guard.ts';
+import { createExecutionGuardV02, type ExecutionGuardStatePortV02 } from '../../../src/foundation/execution-guard.ts';
 import { FakeRepositoryPort } from '../support/uc03/fake-repository.ts';
 import { ControlledRepositoryTools, type TrustedFilesystemPort } from '../../../src/foundation/repository-tools.ts';
 import { DockerWorkspaceManager } from '../../../src/foundation/docker-workspace.ts';
@@ -114,8 +107,7 @@ function createRepairTaskFixture(overrides?: Partial<BugTask>): {
   const task = createFixtureBugTask({
     taskId: 'task-uc03-calc-001',
     repositoryId: 'repo-uc03-calc',
-    initialRevisionDigest:
-      'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+    initialRevisionDigest: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
     requiredChecks: [checkReproduction, checkFocused, checkRegression],
     ...overrides,
   });
@@ -152,9 +144,7 @@ function createRepairStateFixture(options?: {
     scopedChanges: ['src/calculator.py'],
     checkSetDigest,
     baselineRef: task.initialRevisionDigest,
-    strategyDigest: computeCanonicalSha256(
-      'Check divisor == 0 before division and raise CalculationError'
-    ),
+    strategyDigest: computeCanonicalSha256('Check divisor == 0 before division and raise CalculationError'),
     decisionRef: 'dec-plan-001',
   };
 
@@ -243,7 +233,7 @@ function createRepairStateFixture(options?: {
     reproduction: task.reproduction,
     acceptanceCriteria: task.acceptanceCriteria,
     constraints: task.constraints,
-    requiredCheckIds: task.requiredChecks.map((c) => c.checkId),
+    requiredCheckIds: task.requiredChecks.map(c => c.checkId),
     node: options?.node ?? 'Repair',
     planVersion: 1,
     replanCount: options?.replanCount ?? 0,
@@ -295,30 +285,27 @@ function isStatePortV02(port: unknown): port is StatePortV02 {
 function forwardPublicStatePort(statePort: MemoryStatePortV02): StatePort & ExecutionGuardStatePortV02;
 function forwardPublicStatePort(statePort: StatePortV02): ExecutionGuardStatePortV02;
 function forwardPublicStatePort(statePort: StatePort): StatePort;
-function forwardPublicStatePort(
-  statePort: StatePort | StatePortV02
-): StatePort | ExecutionGuardStatePortV02 {
+function forwardPublicStatePort(statePort: StatePort | StatePortV02): StatePort | ExecutionGuardStatePortV02 {
   if (isStatePortV02(statePort)) {
     const v02Port = statePort;
     const underlying = statePort instanceof MemoryStatePortV02 ? statePort.getUnderlying() : undefined;
     const forwardedV02: ExecutionGuardStatePortV02 = {
       provenance: v02Port.provenance,
       executionGuardApiVersion: '0.2.0',
-      loadTask: (taskId) => v02Port.loadTask(taskId),
+      loadTask: taskId => v02Port.loadTask(taskId),
       transition: (state, expectedVersion) => v02Port.transition(state, expectedVersion),
-      claim: (context) => v02Port.claim(context),
+      claim: context => v02Port.claim(context),
       beginAttempt: (claimId, executor) => v02Port.beginAttempt(claimId, executor),
-      recordOutcome: (receipt) => v02Port.recordOutcome(receipt),
-      reconcileObservedOutcome: (receipt) => v02Port.reconcileObservedOutcome(receipt),
-      reconcileUncertain: (receipt) => v02Port.reconcileUncertain(receipt),
-      closeUnattemptedClaim: (receipt) => v02Port.closeUnattemptedClaim(receipt),
-      checkpoint: (state) => v02Port.checkpoint(state),
-      recover: (taskId) => v02Port.recover(taskId),
+      recordOutcome: receipt => v02Port.recordOutcome(receipt),
+      reconcileObservedOutcome: receipt => v02Port.reconcileObservedOutcome(receipt),
+      reconcileUncertain: receipt => v02Port.reconcileUncertain(receipt),
+      closeUnattemptedClaim: receipt => v02Port.closeUnattemptedClaim(receipt),
+      checkpoint: state => v02Port.checkpoint(state),
+      recover: taskId => v02Port.recover(taskId),
     };
     if (underlying) {
       return Object.assign(forwardedV02, {
-        reserve: (scope: 'task' | 'run', kind: string, amount: number, actionId: string) =>
-          underlying.reserve(scope, kind, amount, actionId),
+        reserve: (scope: 'task' | 'run', kind: string, amount: number, actionId: string) => underlying.reserve(scope, kind, amount, actionId),
         reserveMany: (
           reservations: readonly {
             readonly scope: 'task' | 'run';
@@ -326,7 +313,7 @@ function forwardPublicStatePort(
             readonly amount: number;
           }[],
           requestId: string,
-          transactionRef?: string
+          transactionRef?: string,
         ) => underlying.reserveMany(reservations, requestId, transactionRef),
         settle: (actionId: string, usage: ProviderUsage) => underlying.settle(actionId, usage),
       });
@@ -335,16 +322,14 @@ function forwardPublicStatePort(
   }
   return {
     provenance: statePort.provenance,
-    loadTask: (taskId) => statePort.loadTask(taskId),
+    loadTask: taskId => statePort.loadTask(taskId),
     transition: (state, expectedVersion) => statePort.transition(state, expectedVersion),
     reserve: (scope, kind, amount, actionId) => statePort.reserve(scope, kind, amount, actionId),
-    reserveMany: (reservations, requestId, transactionRef) =>
-      statePort.reserveMany(reservations, requestId, transactionRef),
+    reserveMany: (reservations, requestId, transactionRef) => statePort.reserveMany(reservations, requestId, transactionRef),
     settle: (actionId, usage) => statePort.settle(actionId, usage),
-    reconcileUncertain: (requestId, reconciliation) =>
-      statePort.reconcileUncertain(requestId, reconciliation),
-    checkpoint: (state) => statePort.checkpoint(state),
-    recover: (taskId) => statePort.recover(taskId),
+    reconcileUncertain: (requestId, reconciliation) => statePort.reconcileUncertain(requestId, reconciliation),
+    checkpoint: state => statePort.checkpoint(state),
+    recover: taskId => statePort.recover(taskId),
   };
 }
 
@@ -404,7 +389,7 @@ function createReviewerFindingEvidence(task: BugTask): ReviewResult {
 function createAuthorizedRepairPorts(
   state: TaskState,
   patchPermission: PermissionClass = 'ALLOWED',
-  failureEvidence: VerificationResult | ReviewResult = createFailedPatchEvidence(state.taskContext as BugTask)
+  failureEvidence: VerificationResult | ReviewResult = createFailedPatchEvidence(state.taskContext as BugTask),
 ): {
   statePort: MemoryStatePort;
   approvalPort: ScriptedApprovalPort;
@@ -419,7 +404,7 @@ function createAuthorizedRepairPorts(
   const actionRefs = [isVerificationEvidence(failureEvidence) ? failureEvidence.actionId : failureEvidence.iterationReservationRef];
   const diagnosticRefs = isVerificationEvidence(failureEvidence)
     ? [...failureEvidence.diagnosticRefs]
-    : [...new Set(failureEvidence.findings.map((finding) => finding.evidenceRef ?? failureEvidence.reviewId))];
+    : [...new Set(failureEvidence.findings.map(finding => finding.evidenceRef ?? failureEvidence.reviewId))];
   const authorizedState: TaskState = {
     ...state,
     evidenceRefs: [...new Set([...state.evidenceRefs, ...evidenceRefs, ...actionRefs, ...diagnosticRefs])],
@@ -514,24 +499,16 @@ function createRejectedPlanApproval(state: TaskState): {
   };
 }
 
-function isVerificationEvidence(
-  evidence: VerificationResult | ReviewResult
-): evidence is VerificationResult {
+function isVerificationEvidence(evidence: VerificationResult | ReviewResult): evidence is VerificationResult {
   return 'evidenceId' in evidence;
 }
 
-function createRepairProposal(
-  evidence: VerificationResult | ReviewResult,
-  diff: string,
-  affectedPaths: readonly string[]
-): RepairPatchProposal {
+function createRepairProposal(evidence: VerificationResult | ReviewResult, diff: string, affectedPaths: readonly string[]): RepairPatchProposal {
   return {
     diff,
     affectedPaths,
     evidenceRefs: [isVerificationEvidence(evidence) ? evidence.evidenceId : evidence.reviewId],
-    diagnosticRefs: isVerificationEvidence(evidence)
-      ? [...evidence.diagnosticRefs]
-      : [...new Set(evidence.findings.map((finding) => finding.evidenceRef ?? evidence.reviewId))],
+    diagnosticRefs: isVerificationEvidence(evidence) ? [...evidence.diagnosticRefs] : [...new Set(evidence.findings.map(finding => finding.evidenceRef ?? evidence.reviewId))],
   };
 }
 
@@ -571,10 +548,10 @@ test('repair: accepts valid fresh failed patch verification result and extracts 
       repairPatch: createRepairProposal(
         failureEvidence,
         '--- a/src/calculator.py\n+++ b/src/calculator.py\n@@ -1,1 +1,3 @@\n+if b == 0: raise CalculationError("Cannot divide by zero")\n def divide(a, b): return a / b\n',
-        ['src/calculator.py']
+        ['src/calculator.py'],
       ),
     },
-    { statePort, repositoryPort, approvalPort, trustedTransitionContext, trustedRepairContext, executionGuard: createExecutionGuard(repositoryPort) }
+    { statePort, repositoryPort, approvalPort, trustedTransitionContext, trustedRepairContext, executionGuard: createExecutionGuard(repositoryPort) },
   );
 
   assert.equal(res.outcome, 'REPAIR_PREPARED');
@@ -595,11 +572,11 @@ test('repair: rejects stale or mismatched failure evidence (wrong taskId, wrong 
       taskId: task.taskId,
       failureEvidence: staleEvidence,
     },
-    { statePort }
+    { statePort },
   );
 
   assert.equal(res.outcome, 'INCOMPLETE');
-  assert.ok(res.reasons.some((r) => r.includes('stale') || r.includes('unbound')));
+  assert.ok(res.reasons.some(r => r.includes('stale') || r.includes('unbound')));
 });
 
 test('repair: rejects passing verification result as failure evidence', async () => {
@@ -615,11 +592,11 @@ test('repair: rejects passing verification result as failure evidence', async ()
       taskId: task.taskId,
       failureEvidence: passingEvidence,
     },
-    { statePort }
+    { statePort },
   );
 
   assert.equal(res.outcome, 'INCOMPLETE');
-  assert.ok(res.reasons.some((r) => r.includes('not-failure')));
+  assert.ok(res.reasons.some(r => r.includes('not-failure')));
 });
 
 test('repair: handles focused pass with regression check failure, routing to repair without claiming completion (C05)', async () => {
@@ -637,7 +614,7 @@ test('repair: handles focused pass with regression check failure, routing to rep
       failureEvidence: regressionEvidence,
       repairPatch: createRepairProposal(regressionEvidence, '--- a/src/calculator.py\n+++ b/src/calculator.py\n', ['src/calculator.py']),
     },
-    { statePort, repositoryPort, approvalPort, trustedTransitionContext, trustedRepairContext, executionGuard: createExecutionGuard(repositoryPort) }
+    { statePort, repositoryPort, approvalPort, trustedTransitionContext, trustedRepairContext, executionGuard: createExecutionGuard(repositoryPort) },
   );
 
   assert.equal(res.outcome, 'REPAIR_PREPARED');
@@ -660,7 +637,7 @@ test('repair: incorporates read-only reviewer finding diagnostics into repair co
       failureEvidence: reviewEvidence,
       repairPatch: createRepairProposal(reviewEvidence, '--- a/src/calculator.py\n+++ b/src/calculator.py\n', ['src/calculator.py']),
     },
-    { statePort, repositoryPort, approvalPort, trustedTransitionContext, trustedRepairContext, executionGuard: createExecutionGuard(repositoryPort) }
+    { statePort, repositoryPort, approvalPort, trustedTransitionContext, trustedRepairContext, executionGuard: createExecutionGuard(repositoryPort) },
   );
 
   assert.equal(res.outcome, 'REPAIR_PREPARED');
@@ -681,11 +658,11 @@ test('repair: rejects reviewer result with status accepted as failure evidence',
       taskId: task.taskId,
       failureEvidence: acceptedReview,
     },
-    { statePort }
+    { statePort },
   );
 
   assert.equal(res.outcome, 'INCOMPLETE');
-  assert.ok(res.reasons.some((r) => r.includes('not-failure')));
+  assert.ok(res.reasons.some(r => r.includes('not-failure')));
 });
 
 test('repair: reserves repair budget in statePort BEFORE applying patch or modifying state (C10)', async () => {
@@ -699,18 +676,15 @@ test('repair: reserves repair budget in statePort BEFORE applying patch or modif
   });
   const originalApplyPatch = repositoryPort.applyPatch.bind(repositoryPort);
   function wrappedApplyPatch(patch: ApplyPatchAction, context: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02>;
-  function wrappedApplyPatch(patch: ApplyPatchAction): ReturnType<RepositoryPort["applyPatch"]>;
-  async function wrappedApplyPatch(patch: ApplyPatchAction, context?: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02 | Awaited<ReturnType<RepositoryPort["applyPatch"]>>> {
+  function wrappedApplyPatch(patch: ApplyPatchAction): ReturnType<RepositoryPort['applyPatch']>;
+  async function wrappedApplyPatch(patch: ApplyPatchAction, context?: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02 | Awaited<ReturnType<RepositoryPort['applyPatch']>>> {
     // Assert that repair reservation already exists in statePort BEFORE patch is applied!
     const ledgers = statePort.getLedgers();
-    const repairLedger = ledgers.find((l) => l.scope === 'task' && l.kind === 'repair');
+    const repairLedger = ledgers.find(l => l.scope === 'task' && l.kind === 'repair');
     assert.ok(repairLedger, 'Repair ledger must exist');
-    assert.ok(
-      repairLedger.reservations.length > 0,
-      'Repair reservation must exist in ledger BEFORE applyPatch is called'
-    );
+    assert.ok(repairLedger.reservations.length > 0, 'Repair reservation must exist in ledger BEFORE applyPatch is called');
     patchApplied = true;
-    return (context ? originalApplyPatch(patch, context) : originalApplyPatch(patch));
+    return context ? originalApplyPatch(patch, context) : originalApplyPatch(patch);
   }
   repositoryPort.applyPatch = wrappedApplyPatch;
 
@@ -720,7 +694,7 @@ test('repair: reserves repair budget in statePort BEFORE applying patch or modif
       failureEvidence,
       repairPatch: createRepairProposal(failureEvidence, '--- a/src/calculator.py\n+++ b/src/calculator.py\n', ['src/calculator.py']),
     },
-    { statePort, repositoryPort, approvalPort, trustedTransitionContext, trustedRepairContext, executionGuard: createExecutionGuard(repositoryPort) }
+    { statePort, repositoryPort, approvalPort, trustedTransitionContext, trustedRepairContext, executionGuard: createExecutionGuard(repositoryPort) },
   );
 
   assert.equal(res.outcome, 'REPAIR_PREPARED');
@@ -739,8 +713,8 @@ test('repair: fails closed and applies no patch when repair budget reservation f
   });
   const wrappedOriginal = repositoryPort.applyPatch.bind(repositoryPort);
   function wrappedApplyPatch(patch: ApplyPatchAction, context: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02>;
-  function wrappedApplyPatch(patch: ApplyPatchAction): ReturnType<RepositoryPort["applyPatch"]>;
-  async function wrappedApplyPatch(_patch: ApplyPatchAction, context?: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02 | Awaited<ReturnType<RepositoryPort["applyPatch"]>>> {
+  function wrappedApplyPatch(patch: ApplyPatchAction): ReturnType<RepositoryPort['applyPatch']>;
+  async function wrappedApplyPatch(_patch: ApplyPatchAction, context?: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02 | Awaited<ReturnType<RepositoryPort['applyPatch']>>> {
     void _patch;
     patchApplied = true;
     return context ? wrappedOriginal(_patch, context) : wrappedOriginal(_patch);
@@ -753,12 +727,12 @@ test('repair: fails closed and applies no patch when repair budget reservation f
       failureEvidence,
       repairPatch: createRepairProposal(failureEvidence, '--- a/src/calculator.py\n+++ b/src/calculator.py\n', ['src/calculator.py']),
     },
-    { statePort, repositoryPort, approvalPort, trustedTransitionContext, trustedRepairContext, executionGuard: createExecutionGuard(repositoryPort) }
+    { statePort, repositoryPort, approvalPort, trustedTransitionContext, trustedRepairContext, executionGuard: createExecutionGuard(repositoryPort) },
   );
 
   assert.equal(res.outcome, 'INCOMPLETE');
   assert.equal(patchApplied, false, 'No patch may be applied when budget reservation fails');
-  assert.ok(res.reasons.some((r) => r.includes('budget-exhausted')));
+  assert.ok(res.reasons.some(r => r.includes('budget-exhausted')));
 });
 
 test('repair: missing budget ledgers returns INCOMPLETE and halts action dispatch (C04)', async () => {
@@ -771,11 +745,11 @@ test('repair: missing budget ledgers returns INCOMPLETE and halts action dispatc
       taskId: task.taskId,
       failureEvidence,
     },
-    { statePort }
+    { statePort },
   );
 
   assert.equal(res.outcome, 'INCOMPLETE');
-  assert.ok(res.reasons.some((r) => r.includes('missing')));
+  assert.ok(res.reasons.some(r => r.includes('missing')));
 });
 
 test('repair: exhausted tokens or cost budget returns INCOMPLETE (C04, C10)', async () => {
@@ -789,11 +763,11 @@ test('repair: exhausted tokens or cost budget returns INCOMPLETE (C04, C10)', as
       taskId: task.taskId,
       failureEvidence,
     },
-    { statePort }
+    { statePort },
   );
 
   assert.equal(res.outcome, 'INCOMPLETE');
-  assert.ok(res.reasons.some((r) => r.includes('exhausted')));
+  assert.ok(res.reasons.some(r => r.includes('exhausted')));
 });
 
 test('repair: uncertain provider dispatch accounting halts dispatch and returns INCOMPLETE (C04)', async () => {
@@ -806,11 +780,11 @@ test('repair: uncertain provider dispatch accounting halts dispatch and returns 
       taskId: task.taskId,
       failureEvidence,
     },
-    { statePort }
+    { statePort },
   );
 
   assert.equal(res.outcome, 'INCOMPLETE');
-  assert.ok(res.reasons.some((r) => r.includes('uncertain')));
+  assert.ok(res.reasons.some(r => r.includes('uncertain')));
 });
 
 test('repair: persistent task budgets retain consumed amounts across simulated runs without reset (C04)', async () => {
@@ -830,7 +804,7 @@ test('repair: persistent task budgets retain consumed amounts across simulated r
       failureEvidence,
       repairPatch: createRepairProposal(failureEvidence, '--- a/src/calculator.py\n+++ b/src/calculator.py\n', ['src/calculator.py']),
     },
-    { statePort, repositoryPort, approvalPort, trustedTransitionContext, trustedRepairContext, executionGuard: createExecutionGuard(repositoryPort) }
+    { statePort, repositoryPort, approvalPort, trustedTransitionContext, trustedRepairContext, executionGuard: createExecutionGuard(repositoryPort) },
   );
   assert.equal(res1.outcome, 'REPAIR_PREPARED');
 
@@ -844,7 +818,14 @@ test('repair: persistent task budgets retain consumed amounts across simulated r
     budgetLedgers: statePort.getLedgers(),
     evidenceRefs: [...stateAfterRun1.evidenceRefs, 'evi-diag-run2', 'diag-run2'],
   };
-  const run2Evidence: VerificationResult = { ...failureEvidence, evidenceId: 'evi-diag-run2', actionId: 'act-verify-run2', runId: 'run-repair-002', repoDigest: stateAfterRun1.repositoryRevisionDigest, diagnosticRefs: ['diag-run2'] };
+  const run2Evidence: VerificationResult = {
+    ...failureEvidence,
+    evidenceId: 'evi-diag-run2',
+    actionId: 'act-verify-run2',
+    runId: 'run-repair-002',
+    repoDigest: stateAfterRun1.repositoryRevisionDigest,
+    diagnosticRefs: ['diag-run2'],
+  };
   const authorization2 = createAuthorizedRepairPorts(stateRun2, 'ALLOWED', run2Evidence);
   const { statePort: statePort2, approvalPort: approvalPort2, trustedTransitionContext: context2, trustedRepairContext: repairContext2 } = authorization2;
 
@@ -854,11 +835,18 @@ test('repair: persistent task budgets retain consumed amounts across simulated r
       taskId: task.taskId,
       failureEvidence: run2Evidence,
     },
-    { statePort: statePort2, repositoryPort, approvalPort: approvalPort2, trustedTransitionContext: context2, trustedRepairContext: repairContext2, executionGuard: createExecutionGuard(repositoryPort) }
+    {
+      statePort: statePort2,
+      repositoryPort,
+      approvalPort: approvalPort2,
+      trustedTransitionContext: context2,
+      trustedRepairContext: repairContext2,
+      executionGuard: createExecutionGuard(repositoryPort),
+    },
   );
 
   assert.equal(res2.outcome, 'INCOMPLETE');
-  assert.ok(res2.reasons.some((r) => r.includes('budget-exhausted')));
+  assert.ok(res2.reasons.some(r => r.includes('budget-exhausted')));
 });
 
 test('repair: patch attempting to modify protected paths (tests, config) is denied', async () => {
@@ -876,11 +864,11 @@ test('repair: patch attempting to modify protected paths (tests, config) is deni
       failureEvidence,
       repairPatch: createRepairProposal(failureEvidence, '--- a/tests/test_calculator.py\n+++ b/tests/test_calculator.py\n', ['tests/test_calculator.py']),
     },
-    { statePort, repositoryPort, approvalPort, trustedTransitionContext, trustedRepairContext, executionGuard: createExecutionGuard(repositoryPort) }
+    { statePort, repositoryPort, approvalPort, trustedTransitionContext, trustedRepairContext, executionGuard: createExecutionGuard(repositoryPort) },
   );
 
   assert.equal(res.outcome, 'DENIED');
-  assert.ok(res.reasons.some((r) => r.includes('protected')));
+  assert.ok(res.reasons.some(r => r.includes('protected')));
 });
 
 test('repair: protects test paths at any depth and admits ordinary tests_helpers source before guarded effects', async () => {
@@ -910,10 +898,10 @@ test('repair: protects test paths at any depth and admits ordinary tests_helpers
     const applyPatch = repositoryPort.applyPatch.bind(repositoryPort);
     let patchCalls = 0;
     function wrappedApplyPatch(patch: ApplyPatchAction, context: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02>;
-    function wrappedApplyPatch(patch: ApplyPatchAction): ReturnType<RepositoryPort["applyPatch"]>;
-    async function wrappedApplyPatch(patch: ApplyPatchAction, context?: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02 | Awaited<ReturnType<RepositoryPort["applyPatch"]>>> {
+    function wrappedApplyPatch(patch: ApplyPatchAction): ReturnType<RepositoryPort['applyPatch']>;
+    async function wrappedApplyPatch(patch: ApplyPatchAction, context?: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02 | Awaited<ReturnType<RepositoryPort['applyPatch']>>> {
       patchCalls += 1;
-      return (context ? applyPatch(patch, context) : applyPatch(patch));
+      return context ? applyPatch(patch, context) : applyPatch(patch);
     }
     repositoryPort.applyPatch = wrappedApplyPatch;
     const forwarded = forwardPublicStatePort(authorization.statePort);
@@ -948,14 +936,14 @@ test('repair: protects test paths at any depth and admits ordinary tests_helpers
         trustedTransitionContext: authorization.trustedTransitionContext,
         trustedRepairContext: authorization.trustedRepairContext,
         executionGuard,
-      }
+      },
     );
     observations.push({ path, outcome: result.outcome, reserves, guardCalls, patchCalls });
   }
 
   assert.deepEqual(
     observations,
-    protectedPaths.map((path) => ({ path, outcome: 'DENIED', reserves: 0, guardCalls: 0, patchCalls: 0 }))
+    protectedPaths.map(path => ({ path, outcome: 'DENIED', reserves: 0, guardCalls: 0, patchCalls: 0 })),
   );
 
   const allowedPath = 'src/tests_helpers/helper.py';
@@ -1000,7 +988,7 @@ test('repair: protects test paths at any depth and admits ordinary tests_helpers
       trustedTransitionContext: authorization.trustedTransitionContext,
       trustedRepairContext: authorization.trustedRepairContext,
       executionGuard,
-    }
+    },
   );
 
   assert.equal(allowed.outcome, 'REPAIR_PREPARED');
@@ -1017,8 +1005,8 @@ test('repair: noncanonical patch target is rejected before guarded effects', asy
   let patchCalls = 0;
   const wrappedOriginal = repositoryPort.applyPatch.bind(repositoryPort);
   function wrappedApplyPatch(patch: ApplyPatchAction, context: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02>;
-  function wrappedApplyPatch(patch: ApplyPatchAction): ReturnType<RepositoryPort["applyPatch"]>;
-  async function wrappedApplyPatch(patch: ApplyPatchAction, context?: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02 | Awaited<ReturnType<RepositoryPort["applyPatch"]>>> {
+  function wrappedApplyPatch(patch: ApplyPatchAction): ReturnType<RepositoryPort['applyPatch']>;
+  async function wrappedApplyPatch(patch: ApplyPatchAction, context?: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02 | Awaited<ReturnType<RepositoryPort['applyPatch']>>> {
     void patch;
     patchCalls += 1;
     return context ? wrappedOriginal(patch, context) : wrappedOriginal(patch);
@@ -1031,12 +1019,12 @@ test('repair: noncanonical patch target is rejected before guarded effects', asy
       failureEvidence,
       repairPatch: createRepairProposal(failureEvidence, 'patch', ['../outside.py']),
     },
-    { ...authorization, repositoryPort, executionGuard: createExecutionGuard(repositoryPort) }
+    { ...authorization, repositoryPort, executionGuard: createExecutionGuard(repositoryPort) },
   );
 
   assert.equal(result.outcome, 'INCOMPLETE');
   assert.equal(patchCalls, 0);
-  assert.equal(authorization.statePort.getLedgers().find((ledger) => ledger.kind === 'repair')?.reservations.length, 0);
+  assert.equal(authorization.statePort.getLedgers().find(ledger => ledger.kind === 'repair')?.reservations.length, 0);
 });
 
 test('repair: unapproved plan or missing plan decisionRef returns INCOMPLETE without applying edits', async () => {
@@ -1049,11 +1037,11 @@ test('repair: unapproved plan or missing plan decisionRef returns INCOMPLETE wit
       taskId: task.taskId,
       failureEvidence,
     },
-    { statePort }
+    { statePort },
   );
 
   assert.equal(res.outcome, 'INCOMPLETE');
-  assert.ok(res.reasons.some((r) => r.includes('plan')));
+  assert.ok(res.reasons.some(r => r.includes('plan')));
 });
 
 test('repair: persists the confirmed post-patch revision and invalidates stale authority', async () => {
@@ -1068,8 +1056,8 @@ test('repair: persists the confirmed post-patch revision and invalidates stale a
   let patchCalls = 0;
   const applyPatch = repositoryPort.applyPatch.bind(repositoryPort);
   function wrappedApplyPatch(patch: ApplyPatchAction, context: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02>;
-  function wrappedApplyPatch(patch: ApplyPatchAction): ReturnType<RepositoryPort["applyPatch"]>;
-  async function wrappedApplyPatch(patch: ApplyPatchAction, context?: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02 | Awaited<ReturnType<RepositoryPort["applyPatch"]>>> {
+  function wrappedApplyPatch(patch: ApplyPatchAction): ReturnType<RepositoryPort['applyPatch']>;
+  async function wrappedApplyPatch(patch: ApplyPatchAction, context?: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02 | Awaited<ReturnType<RepositoryPort['applyPatch']>>> {
     const result = await (context ? applyPatch(patch, context) : applyPatch(patch));
     patchCalls++;
     if (result.applied) confirmedRevision = result.newRevisionDigest;
@@ -1100,11 +1088,14 @@ test('repair: persists the confirmed post-patch revision and invalidates stale a
 
   const staleVerification = await executeRepair(input, ports);
   const staleReview = createReviewerFindingEvidence(task);
-  const staleReviewResult = await executeRepair({
-    ...input,
-    failureEvidence: staleReview,
-    repairPatch: createRepairProposal(staleReview, '--- a/src/calculator.py\n+++ b/src/calculator.py\n', ['src/calculator.py']),
-  }, ports);
+  const staleReviewResult = await executeRepair(
+    {
+      ...input,
+      failureEvidence: staleReview,
+      repairPatch: createRepairProposal(staleReview, '--- a/src/calculator.py\n+++ b/src/calculator.py\n', ['src/calculator.py']),
+    },
+    ports,
+  );
   assert.equal(staleVerification.outcome, 'INCOMPLETE');
   assert.ok(staleVerification.reasons.includes('stale-or-unbound-verification-failure'));
   assert.equal(staleReviewResult.outcome, 'INCOMPLETE');
@@ -1121,8 +1112,8 @@ test('repair: malformed post-patch revision stays incomplete and cannot replay',
   const applyPatch = repositoryPort.applyPatch.bind(repositoryPort);
   let patchCalls = 0;
   function wrappedApplyPatch(patch: ApplyPatchAction, context: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02>;
-  function wrappedApplyPatch(patch: ApplyPatchAction): ReturnType<RepositoryPort["applyPatch"]>;
-  async function wrappedApplyPatch(patch: ApplyPatchAction, context?: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02 | Awaited<ReturnType<RepositoryPort["applyPatch"]>>> {
+  function wrappedApplyPatch(patch: ApplyPatchAction): ReturnType<RepositoryPort['applyPatch']>;
+  async function wrappedApplyPatch(patch: ApplyPatchAction, context?: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02 | Awaited<ReturnType<RepositoryPort['applyPatch']>>> {
     const result = await (context ? applyPatch(patch, context) : applyPatch(patch));
     patchCalls++;
     return { ...result, newRevisionDigest: 'sha256:post-patch-current' };
@@ -1142,7 +1133,7 @@ test('repair: malformed post-patch revision stays incomplete and cannot replay',
   assert.equal(first.outcome, 'INCOMPLETE');
   assert.ok(first.reasons.includes('repair-effect-result-inconsistent'));
   assert.equal(persisted?.repositoryRevisionDigest, state.repositoryRevisionDigest);
-  assert.equal(persisted?.budgetLedgers?.find((ledger) => ledger.kind === 'repair')?.reservations[0]?.keyedId, first.reservedActionId);
+  assert.equal(persisted?.budgetLedgers?.find(ledger => ledger.kind === 'repair')?.reservations[0]?.keyedId, first.reservedActionId);
   assert.equal(second.outcome, 'INCOMPLETE');
   assert.equal(patchCalls, 1, 'A malformed confirmed revision remains charged and cannot be replayed');
 });
@@ -1158,8 +1149,8 @@ test('repair: forbidden current patch policy denies before reservation or reposi
   let patchCalls = 0;
   const wrappedOriginal = repositoryPort.applyPatch.bind(repositoryPort);
   function wrappedApplyPatch(patch: ApplyPatchAction, context: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02>;
-  function wrappedApplyPatch(patch: ApplyPatchAction): ReturnType<RepositoryPort["applyPatch"]>;
-  async function wrappedApplyPatch(_patch: ApplyPatchAction, context?: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02 | Awaited<ReturnType<RepositoryPort["applyPatch"]>>> {
+  function wrappedApplyPatch(patch: ApplyPatchAction): ReturnType<RepositoryPort['applyPatch']>;
+  async function wrappedApplyPatch(_patch: ApplyPatchAction, context?: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02 | Awaited<ReturnType<RepositoryPort['applyPatch']>>> {
     void _patch;
     patchCalls += 1;
     return context ? wrappedOriginal(_patch, context) : wrappedOriginal(_patch);
@@ -1171,16 +1162,12 @@ test('repair: forbidden current patch policy denies before reservation or reposi
       failureEvidence,
       repairPatch: createRepairProposal(failureEvidence, '--- a/src/calculator.py\n+++ b/src/calculator.py\n', ['src/calculator.py']),
     },
-    { statePort, repositoryPort, approvalPort, trustedTransitionContext, trustedRepairContext, executionGuard: createExecutionGuard(repositoryPort) }
+    { statePort, repositoryPort, approvalPort, trustedTransitionContext, trustedRepairContext, executionGuard: createExecutionGuard(repositoryPort) },
   );
 
   assert.equal(result.outcome, 'DENIED');
   assert.equal(patchCalls, 0, 'Forbidden patch policy must block the repository effect');
-  assert.equal(
-    statePort.getLedgers().find((ledger) => ledger.kind === 'repair')?.reservations.length,
-    0,
-    'A denied action must not reserve or charge the repair allowance'
-  );
+  assert.equal(statePort.getLedgers().find(ledger => ledger.kind === 'repair')?.reservations.length, 0, 'A denied action must not reserve or charge the repair allowance');
 });
 
 test('repair: bare plan decision reference does not authorize patch effects', async () => {
@@ -1192,8 +1179,8 @@ test('repair: bare plan decision reference does not authorize patch effects', as
   let patchCalls = 0;
   const wrappedOriginal = repositoryPort.applyPatch.bind(repositoryPort);
   function wrappedApplyPatch(patch: ApplyPatchAction, context: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02>;
-  function wrappedApplyPatch(patch: ApplyPatchAction): ReturnType<RepositoryPort["applyPatch"]>;
-  async function wrappedApplyPatch(_patch: ApplyPatchAction, context?: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02 | Awaited<ReturnType<RepositoryPort["applyPatch"]>>> {
+  function wrappedApplyPatch(patch: ApplyPatchAction): ReturnType<RepositoryPort['applyPatch']>;
+  async function wrappedApplyPatch(_patch: ApplyPatchAction, context?: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02 | Awaited<ReturnType<RepositoryPort['applyPatch']>>> {
     void _patch;
     patchCalls += 1;
     return context ? wrappedOriginal(_patch, context) : wrappedOriginal(_patch);
@@ -1206,16 +1193,12 @@ test('repair: bare plan decision reference does not authorize patch effects', as
       failureEvidence: createFailedPatchEvidence(task),
       repairPatch: createRepairProposal(createFailedPatchEvidence(task), '--- a/src/calculator.py\n+++ b/src/calculator.py\n', ['src/calculator.py']),
     },
-    { statePort, repositoryPort, approvalPort: new ScriptedApprovalPort({ classifications: { apply_patch: 'ALLOWED' } }) }
+    { statePort, repositoryPort, approvalPort: new ScriptedApprovalPort({ classifications: { apply_patch: 'ALLOWED' } }) },
   );
 
   assert.equal(result.outcome, 'INCOMPLETE');
   assert.equal(patchCalls, 0, 'A plan.decisionRef without current trusted approval is not authority');
-  assert.equal(
-    statePort.getLedgers().find((ledger) => ledger.kind === 'repair')?.reservations.length,
-    0,
-    'A missing current plan decision must stop before budget reservation'
-  );
+  assert.equal(statePort.getLedgers().find(ledger => ledger.kind === 'repair')?.reservations.length, 0, 'A missing current plan decision must stop before budget reservation');
 });
 
 test('repair: approval authority rejection blocks patch and reservation', async () => {
@@ -1230,8 +1213,8 @@ test('repair: approval authority rejection blocks patch and reservation', async 
   let patchCalls = 0;
   const wrappedOriginal = repositoryPort.applyPatch.bind(repositoryPort);
   function wrappedApplyPatch(patch: ApplyPatchAction, context: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02>;
-  function wrappedApplyPatch(patch: ApplyPatchAction): ReturnType<RepositoryPort["applyPatch"]>;
-  async function wrappedApplyPatch(patch: ApplyPatchAction, context?: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02 | Awaited<ReturnType<RepositoryPort["applyPatch"]>>> {
+  function wrappedApplyPatch(patch: ApplyPatchAction): ReturnType<RepositoryPort['applyPatch']>;
+  async function wrappedApplyPatch(patch: ApplyPatchAction, context?: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02 | Awaited<ReturnType<RepositoryPort['applyPatch']>>> {
     void patch;
     patchCalls += 1;
     return context ? wrappedOriginal(patch, context) : wrappedOriginal(patch);
@@ -1244,12 +1227,12 @@ test('repair: approval authority rejection blocks patch and reservation', async 
       failureEvidence,
       repairPatch: createRepairProposal(failureEvidence, 'patch', ['src/calculator.py']),
     },
-    { ...authorization, repositoryPort, executionGuard: createExecutionGuard(repositoryPort) }
+    { ...authorization, repositoryPort, executionGuard: createExecutionGuard(repositoryPort) },
   );
 
   assert.equal(result.outcome, 'INCOMPLETE');
   assert.equal(patchCalls, 0, 'A port rejection makes a structurally valid decision unusable');
-  assert.equal(authorization.statePort.getLedgers().find((ledger) => ledger.kind === 'repair')?.reservations.length, 0);
+  assert.equal(authorization.statePort.getLedgers().find(ledger => ledger.kind === 'repair')?.reservations.length, 0);
 });
 
 test('repair: compare-and-swap failure after a patch is incomplete and cannot replay the reservation', async () => {
@@ -1268,8 +1251,8 @@ test('repair: compare-and-swap failure after a patch is incomplete and cannot re
   let patchCalls = 0;
   const wrappedOriginal = repositoryPort.applyPatch.bind(repositoryPort);
   function wrappedApplyPatch(patch: ApplyPatchAction, context: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02>;
-  function wrappedApplyPatch(patch: ApplyPatchAction): ReturnType<RepositoryPort["applyPatch"]>;
-  async function wrappedApplyPatch(_patch: ApplyPatchAction, context?: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02 | Awaited<ReturnType<RepositoryPort["applyPatch"]>>> {
+  function wrappedApplyPatch(patch: ApplyPatchAction): ReturnType<RepositoryPort['applyPatch']>;
+  async function wrappedApplyPatch(_patch: ApplyPatchAction, context?: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02 | Awaited<ReturnType<RepositoryPort['applyPatch']>>> {
     void _patch;
     patchCalls += 1;
     return context ? wrappedOriginal(_patch, context) : wrappedOriginal(_patch);
@@ -1287,7 +1270,7 @@ test('repair: compare-and-swap failure after a patch is incomplete and cannot re
 
   assert.equal(first.outcome, 'INCOMPLETE');
   assert.equal(repairState(first).node, 'Repair', 'A failed CAS must not fabricate a persisted Patch state');
-  assert.equal(afterFirst?.budgetLedgers?.find((ledger) => ledger.kind === 'repair')?.reservations[0]?.keyedId, first.reservedActionId);
+  assert.equal(afterFirst?.budgetLedgers?.find(ledger => ledger.kind === 'repair')?.reservations[0]?.keyedId, first.reservedActionId);
   assert.equal(second.outcome, 'INCOMPLETE');
   assert.equal(patchCalls, 1, 'The reserved action cannot be applied again after an uncertain transition');
 });
@@ -1300,8 +1283,8 @@ test('repair: wrong-run or unconfigured-check failure evidence is rejected befor
   let patchCalls = 0;
   const wrappedOriginal = repositoryPort.applyPatch.bind(repositoryPort);
   function wrappedApplyPatch(patch: ApplyPatchAction, context: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02>;
-  function wrappedApplyPatch(patch: ApplyPatchAction): ReturnType<RepositoryPort["applyPatch"]>;
-  async function wrappedApplyPatch(_patch: ApplyPatchAction, context?: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02 | Awaited<ReturnType<RepositoryPort["applyPatch"]>>> {
+  function wrappedApplyPatch(patch: ApplyPatchAction): ReturnType<RepositoryPort['applyPatch']>;
+  async function wrappedApplyPatch(_patch: ApplyPatchAction, context?: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02 | Awaited<ReturnType<RepositoryPort['applyPatch']>>> {
     void _patch;
     patchCalls += 1;
     return context ? wrappedOriginal(_patch, context) : wrappedOriginal(_patch);
@@ -1316,10 +1299,10 @@ test('repair: wrong-run or unconfigured-check failure evidence is rejected befor
     const evidenceAuthorization = createAuthorizedRepairPorts(state, 'ALLOWED', failureEvidence);
     const result = await executeRepair(
       { taskId: task.taskId, failureEvidence, repairPatch: createRepairProposal(failureEvidence, 'patch', ['src/calculator.py']) },
-      { ...evidenceAuthorization, repositoryPort }
+      { ...evidenceAuthorization, repositoryPort },
     );
     assert.equal(result.outcome, 'INCOMPLETE');
-    assert.equal(evidenceAuthorization.statePort.getLedgers().find((ledger) => ledger.kind === 'repair')?.reservations.length, 0);
+    assert.equal(evidenceAuthorization.statePort.getLedgers().find(ledger => ledger.kind === 'repair')?.reservations.length, 0);
   }
 
   assert.equal(patchCalls, 0, 'Evidence outside the current run/check set cannot authorize a patch');
@@ -1327,10 +1310,8 @@ test('repair: wrong-run or unconfigured-check failure evidence is rejected befor
 
 test('repair: opaque unresolved token/cost reservations block without identifier-name inference', async () => {
   const { state, task } = createRepairStateFixture({ repairConsumed: 0 });
-  const budgetLedgers = state.budgetLedgers?.map((ledger) =>
-    ledger.kind === 'cost'
-      ? { ...ledger, reservations: [{ reservationId: 'reservation-42', keyedId: 'request-opaque-42', amount: 1 }] }
-      : ledger
+  const budgetLedgers = state.budgetLedgers?.map(ledger =>
+    ledger.kind === 'cost' ? { ...ledger, reservations: [{ reservationId: 'reservation-42', keyedId: 'request-opaque-42', amount: 1 }] } : ledger,
   );
   const authorizedState = { ...state, budgetLedgers };
   const failureEvidence = createFailedPatchEvidence(task);
@@ -1342,8 +1323,8 @@ test('repair: opaque unresolved token/cost reservations block without identifier
   let patchCalls = 0;
   const wrappedOriginal = repositoryPort.applyPatch.bind(repositoryPort);
   function wrappedApplyPatch(patch: ApplyPatchAction, context: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02>;
-  function wrappedApplyPatch(patch: ApplyPatchAction): ReturnType<RepositoryPort["applyPatch"]>;
-  async function wrappedApplyPatch(_patch: ApplyPatchAction, context?: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02 | Awaited<ReturnType<RepositoryPort["applyPatch"]>>> {
+  function wrappedApplyPatch(patch: ApplyPatchAction): ReturnType<RepositoryPort['applyPatch']>;
+  async function wrappedApplyPatch(_patch: ApplyPatchAction, context?: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02 | Awaited<ReturnType<RepositoryPort['applyPatch']>>> {
     void _patch;
     patchCalls += 1;
     return context ? wrappedOriginal(_patch, context) : wrappedOriginal(_patch);
@@ -1356,12 +1337,12 @@ test('repair: opaque unresolved token/cost reservations block without identifier
       failureEvidence,
       repairPatch: createRepairProposal(failureEvidence, 'patch', ['src/calculator.py']),
     },
-    { statePort, repositoryPort, approvalPort, trustedTransitionContext, trustedRepairContext }
+    { statePort, repositoryPort, approvalPort, trustedTransitionContext, trustedRepairContext },
   );
 
   assert.equal(result.outcome, 'INCOMPLETE');
   assert.equal(patchCalls, 0, 'Opaque outstanding accounting must fail closed');
-  assert.equal(statePort.getLedgers().find((ledger) => ledger.kind === 'repair')?.reservations.length, 0);
+  assert.equal(statePort.getLedgers().find(ledger => ledger.kind === 'repair')?.reservations.length, 0);
 });
 
 test('repair: repository effects require the canonical execution guard', async () => {
@@ -1373,8 +1354,8 @@ test('repair: repository effects require the canonical execution guard', async (
   let patchCalls = 0;
   const wrappedOriginal = repositoryPort.applyPatch.bind(repositoryPort);
   function wrappedApplyPatch(patch: ApplyPatchAction, context: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02>;
-  function wrappedApplyPatch(patch: ApplyPatchAction): ReturnType<RepositoryPort["applyPatch"]>;
-  async function wrappedApplyPatch(_patch: ApplyPatchAction, context?: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02 | Awaited<ReturnType<RepositoryPort["applyPatch"]>>> {
+  function wrappedApplyPatch(patch: ApplyPatchAction): ReturnType<RepositoryPort['applyPatch']>;
+  async function wrappedApplyPatch(_patch: ApplyPatchAction, context?: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02 | Awaited<ReturnType<RepositoryPort['applyPatch']>>> {
     void _patch;
     patchCalls += 1;
     return context ? wrappedOriginal(_patch, context) : wrappedOriginal(_patch);
@@ -1387,12 +1368,12 @@ test('repair: repository effects require the canonical execution guard', async (
       failureEvidence,
       repairPatch: createRepairProposal(failureEvidence, 'patch', ['src/calculator.py']),
     },
-    { statePort, repositoryPort, approvalPort, trustedTransitionContext, trustedRepairContext }
+    { statePort, repositoryPort, approvalPort, trustedTransitionContext, trustedRepairContext },
   );
 
   assert.equal(result.outcome, 'INCOMPLETE');
   assert.equal(patchCalls, 0, 'RepositoryPort alone cannot bypass ExecutionGuard');
-  assert.equal(statePort.getLedgers().find((ledger) => ledger.kind === 'repair')?.reservations.length, 0);
+  assert.equal(statePort.getLedgers().find(ledger => ledger.kind === 'repair')?.reservations.length, 0);
 });
 
 test('repair: mismatched configured repair ledger fails closed before effects', async () => {
@@ -1402,21 +1383,16 @@ test('repair: mismatched configured repair ledger fails closed before effects', 
   let patchCalls = 0;
   const wrappedOriginal = repositoryPort.applyPatch.bind(repositoryPort);
   function wrappedApplyPatch(patch: ApplyPatchAction, context: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02>;
-  function wrappedApplyPatch(patch: ApplyPatchAction): ReturnType<RepositoryPort["applyPatch"]>;
-  async function wrappedApplyPatch(_patch: ApplyPatchAction, context?: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02 | Awaited<ReturnType<RepositoryPort["applyPatch"]>>> {
+  function wrappedApplyPatch(patch: ApplyPatchAction): ReturnType<RepositoryPort['applyPatch']>;
+  async function wrappedApplyPatch(_patch: ApplyPatchAction, context?: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02 | Awaited<ReturnType<RepositoryPort['applyPatch']>>> {
     void _patch;
     patchCalls += 1;
     return context ? wrappedOriginal(_patch, context) : wrappedOriginal(_patch);
   }
   repositoryPort.applyPatch = wrappedApplyPatch;
 
-  for (const invalidLedger of [
-    { configurationId: 'different-config' },
-    { limit: 3 },
-  ]) {
-    const budgetLedgers = state.budgetLedgers?.map((ledger) =>
-      ledger.kind === 'repair' ? { ...ledger, ...invalidLedger } : ledger
-    );
+  for (const invalidLedger of [{ configurationId: 'different-config' }, { limit: 3 }]) {
+    const budgetLedgers = state.budgetLedgers?.map(ledger => (ledger.kind === 'repair' ? { ...ledger, ...invalidLedger } : ledger));
     const authorization = createAuthorizedRepairPorts({ ...state, budgetLedgers }, 'ALLOWED', failureEvidence);
     const result = await executeRepair(
       {
@@ -1424,10 +1400,10 @@ test('repair: mismatched configured repair ledger fails closed before effects', 
         failureEvidence,
         repairPatch: createRepairProposal(failureEvidence, 'patch', ['src/calculator.py']),
       },
-      { ...authorization, repositoryPort, executionGuard: createExecutionGuard(repositoryPort) }
+      { ...authorization, repositoryPort, executionGuard: createExecutionGuard(repositoryPort) },
     );
     assert.equal(result.outcome, 'INCOMPLETE');
-    assert.equal(authorization.statePort.getLedgers().find((ledger) => ledger.kind === 'repair')?.reservations.length, 0);
+    assert.equal(authorization.statePort.getLedgers().find(ledger => ledger.kind === 'repair')?.reservations.length, 0);
   }
 
   assert.equal(patchCalls, 0);
@@ -1439,13 +1415,10 @@ test('repair: missing patch proposal cannot return REPAIR_PREPARED', async () =>
   const authorization = createAuthorizedRepairPorts(state, 'ALLOWED', failureEvidence);
   const { statePort, trustedTransitionContext, trustedRepairContext } = authorization;
 
-  const result = await executeRepair(
-    { taskId: task.taskId, failureEvidence },
-    { ...authorization, trustedTransitionContext, trustedRepairContext }
-  );
+  const result = await executeRepair({ taskId: task.taskId, failureEvidence }, { ...authorization, trustedTransitionContext, trustedRepairContext });
 
   assert.equal(result.outcome, 'INCOMPLETE');
-  assert.equal(statePort.getLedgers().find((ledger) => ledger.kind === 'repair')?.reservations.length, 0);
+  assert.equal(statePort.getLedgers().find(ledger => ledger.kind === 'repair')?.reservations.length, 0);
 });
 
 // =========================================================================
@@ -1457,9 +1430,7 @@ test('replan: evaluatePlanMateriality detects material strategy shift based on b
   const materialPlan: FixPlan = {
     ...plan,
     strategy: 'Completely different strategy: return None instead of raising CalculationError',
-    strategyDigest: computeCanonicalSha256(
-      'Completely different strategy: return None instead of raising CalculationError'
-    ),
+    strategyDigest: computeCanonicalSha256('Completely different strategy: return None instead of raising CalculationError'),
   };
 
   const result = evaluatePlanMateriality(plan, materialPlan);
@@ -1518,10 +1489,7 @@ test('replan: minor evidence binding changes clear stale authority without charg
     },
   };
 
-  const result = await executeReplan(
-    { taskId: task.taskId, proposalId: 'minor-evidence-update', candidatePlan: { ...plan, evidenceRefs: ['fresh-diagnosis-evidence'] } },
-    { statePort }
-  );
+  const result = await executeReplan({ taskId: task.taskId, proposalId: 'minor-evidence-update', candidatePlan: { ...plan, evidenceRefs: ['fresh-diagnosis-evidence'] } }, { statePort });
 
   assert.equal(result.outcome, 'CLARIFICATION_ACCEPTED');
   assert.equal(result.state.node, 'AwaitPlan');
@@ -1553,7 +1521,7 @@ test('replan: first material replan charges 1 replan slot, increments replanCoun
       candidatePlan: materialPlan,
       proposalId: 'prop-replan-001',
     },
-    { statePort, trustedTransitionContext }
+    { statePort, trustedTransitionContext },
   );
 
   assert.equal(res.outcome, 'REPLAN_PREPARED');
@@ -1578,10 +1546,7 @@ test('replan: material change from Investigate returns the persisted charged res
     strategyDigest: computeCanonicalSha256('Investigate found a different bounded repair strategy'),
   };
 
-  const result = await executeReplan(
-    { taskId: task.taskId, candidatePlan: materialPlan, proposalId },
-    { statePort, trustedTransitionContext }
-  );
+  const result = await executeReplan({ taskId: task.taskId, candidatePlan: materialPlan, proposalId }, { statePort, trustedTransitionContext });
   const persisted = await statePort.loadTask(task.taskId);
 
   assert.equal(result.outcome, 'REPLAN_PREPARED');
@@ -1602,23 +1567,23 @@ test('replan: material change from Investigate returns the persisted charged res
     amount: 1,
   };
   for (const chargedState of [result.state, persisted]) {
-    const ledger = chargedState.budgetLedgers?.find((item) => item.kind === 'replan');
+    const ledger = chargedState.budgetLedgers?.find(item => item.kind === 'replan');
     assert.ok(ledger);
     assert.equal(ledger.consumed, 0);
     assert.deepEqual(ledger.reservations, [chargedReservation]);
   }
-  const persistedLedger = persisted.budgetLedgers?.find((item) => item.kind === 'replan');
-  assert.deepEqual(result.state.budgetLedgers?.find((item) => item.kind === 'replan'), persistedLedger);
+  const persistedLedger = persisted.budgetLedgers?.find(item => item.kind === 'replan');
+  assert.deepEqual(
+    result.state.budgetLedgers?.find(item => item.kind === 'replan'),
+    persistedLedger,
+  );
 
   const replayPlan: FixPlan = {
     ...materialPlan,
     strategy: 'Material replay of the reserved Investigate proposal',
     strategyDigest: computeCanonicalSha256('Material replay of the reserved Investigate proposal'),
   };
-  const replay = await executeReplan(
-    { taskId: task.taskId, candidatePlan: replayPlan, proposalId },
-    { statePort, trustedTransitionContext }
-  );
+  const replay = await executeReplan({ taskId: task.taskId, candidatePlan: replayPlan, proposalId }, { statePort, trustedTransitionContext });
   const nextProposalId = 'investigate-material-002';
   const nextPlan: FixPlan = {
     ...materialPlan,
@@ -1627,7 +1592,7 @@ test('replan: material change from Investigate returns the persisted charged res
   };
   const next = await executeReplan(
     { taskId: task.taskId, candidatePlan: nextPlan, proposalId: nextProposalId },
-    { statePort, trustedTransitionContext: createReplanTransitionContext(persisted, nextProposalId) }
+    { statePort, trustedTransitionContext: createReplanTransitionContext(persisted, nextProposalId) },
   );
   const afterAttempts = await statePort.loadTask(task.taskId);
 
@@ -1635,7 +1600,10 @@ test('replan: material change from Investigate returns the persisted charged res
   assert.equal(next.outcome, 'DENIED');
   assert.ok(afterAttempts);
   assert.equal(afterAttempts.replanCount, 1);
-  assert.deepEqual(afterAttempts.budgetLedgers?.find((item) => item.kind === 'replan'), persistedLedger);
+  assert.deepEqual(
+    afterAttempts.budgetLedgers?.find(item => item.kind === 'replan'),
+    persistedLedger,
+  );
 });
 
 test('replan: failed canonical admission returns the reloaded charged reservation', async () => {
@@ -1662,10 +1630,7 @@ test('replan: failed canonical admission returns the reloaded charged reservatio
     strategyDigest: computeCanonicalSha256('Investigate material plan with rejected reservation admission'),
   };
 
-  const result = await executeReplan(
-    { taskId: task.taskId, candidatePlan, proposalId },
-    { statePort, trustedTransitionContext }
-  );
+  const result = await executeReplan({ taskId: task.taskId, candidatePlan, proposalId }, { statePort, trustedTransitionContext });
   const persisted = await statePort.loadTask(task.taskId);
 
   assert.equal(result.outcome, 'INCOMPLETE');
@@ -1674,8 +1639,8 @@ test('replan: failed canonical admission returns the reloaded charged reservatio
   assert.ok(persisted);
   assert.equal(result.state.replanCount, 0);
   assert.equal(persisted.replanCount, 0);
-  const returnedLedger = result.state.budgetLedgers?.find((item) => item.kind === 'replan');
-  const persistedLedger = persisted.budgetLedgers?.find((item) => item.kind === 'replan');
+  const returnedLedger = result.state.budgetLedgers?.find(item => item.kind === 'replan');
+  const persistedLedger = persisted.budgetLedgers?.find(item => item.kind === 'replan');
   assert.ok(returnedLedger);
   assert.equal(returnedLedger.reservations.length, 1);
   assert.equal(returnedLedger.reservations[0]?.keyedId, proposalId);
@@ -1687,9 +1652,7 @@ test('replan: second material replan charges 1 replan slot, increments replanCou
   const materialPlan: FixPlan = {
     ...plan,
     strategy: 'Revised strategy 2: wrap with try-except ZeroDivisionError',
-    strategyDigest: computeCanonicalSha256(
-      'Revised strategy 2: wrap with try-except ZeroDivisionError'
-    ),
+    strategyDigest: computeCanonicalSha256('Revised strategy 2: wrap with try-except ZeroDivisionError'),
   };
   const trustedTransitionContext = createReplanTransitionContext(state, 'prop-replan-002');
   const statePort = new MemoryStatePort({ initialTaskState: state, transitionContexts: { [state.stateVersion + 1]: trustedTransitionContext } });
@@ -1700,7 +1663,7 @@ test('replan: second material replan charges 1 replan slot, increments replanCou
       candidatePlan: materialPlan,
       proposalId: 'prop-replan-002',
     },
-    { statePort, trustedTransitionContext }
+    { statePort, trustedTransitionContext },
   );
 
   assert.equal(res.outcome, 'REPLAN_PREPARED');
@@ -1714,9 +1677,7 @@ test('replan: third material replan charges 1 replan slot, reaches limit replanC
   const materialPlan: FixPlan = {
     ...plan,
     strategy: 'Revised strategy 3: type cast arguments before check',
-    strategyDigest: computeCanonicalSha256(
-      'Revised strategy 3: type cast arguments before check'
-    ),
+    strategyDigest: computeCanonicalSha256('Revised strategy 3: type cast arguments before check'),
   };
   const trustedTransitionContext = createReplanTransitionContext(state, 'prop-replan-003');
   const statePort = new MemoryStatePort({ initialTaskState: state, transitionContexts: { [state.stateVersion + 1]: trustedTransitionContext } });
@@ -1727,7 +1688,7 @@ test('replan: third material replan charges 1 replan slot, reaches limit replanC
       candidatePlan: materialPlan,
       proposalId: 'prop-replan-003',
     },
-    { statePort, trustedTransitionContext }
+    { statePort, trustedTransitionContext },
   );
 
   assert.equal(res.outcome, 'REPLAN_PREPARED');
@@ -1752,13 +1713,13 @@ test('replan: fourth material replan attempt is refused, transitions to Incomple
       candidatePlan: fourthPlan,
       proposalId: 'prop-replan-004',
     },
-    { statePort }
+    { statePort },
   );
 
   assert.equal(res.outcome, 'INCOMPLETE');
   assert.equal(res.replanCount, 3, 'replanCount must remain capped at 3');
   assert.equal(res.state.node, 'Incomplete');
-  assert.ok(res.reasons.some((r) => r.includes('cap') || r.includes('replan')));
+  assert.ok(res.reasons.some(r => r.includes('cap') || r.includes('replan')));
 });
 
 test('replan: minor clarification does not charge replanCount or consume replan budget (C12)', async () => {
@@ -1775,7 +1736,7 @@ test('replan: minor clarification does not charge replanCount or consume replan 
       candidatePlan: clarifiedPlan,
       proposalId: 'prop-clarify-001',
     },
-    { statePort }
+    { statePort },
   );
 
   assert.equal(res.outcome, 'CLARIFICATION_ACCEPTED');
@@ -1793,12 +1754,12 @@ test('replan: plan rejection transitions state to AwaitFeedback and pauses witho
       rejectionReason: 'Human rejected plan: please do not use try-except',
       decisionId: authority.decisionId,
     },
-    { statePort: authority.statePort, approvalPort: authority.approvalPort }
+    { statePort: authority.statePort, approvalPort: authority.approvalPort },
   );
 
   assert.equal(res.outcome, 'AWAIT_FEEDBACK');
   assert.equal(res.state.node, 'AwaitFeedback');
-  assert.ok(res.reasons.some((r) => r.includes('rejected') || r.includes('direction')));
+  assert.ok(res.reasons.some(r => r.includes('rejected') || r.includes('direction')));
 });
 
 test('replan: task-scoped replanCount persists across simulated new runs without reset (C04, C12)', async () => {
@@ -1817,7 +1778,7 @@ test('replan: task-scoped replanCount persists across simulated new runs without
       candidatePlan: materialPlan3,
       proposalId: 'prop-replan-run2-003',
     },
-    { statePort, trustedTransitionContext }
+    { statePort, trustedTransitionContext },
   );
   assert.equal(res3.outcome, 'REPLAN_PREPARED');
   assert.equal(res3.replanCount, 3);
@@ -1834,12 +1795,12 @@ test('replan: task-scoped replanCount persists across simulated new runs without
       candidatePlan: materialPlan4,
       proposalId: 'prop-replan-run2-004',
     },
-    { statePort }
+    { statePort },
   );
   assert.equal(res4.outcome, 'INCOMPLETE');
   assert.equal(res4.replanCount, 3);
   assert.equal(res4.state.node, 'Incomplete');
-  assert.ok(res4.reasons.some((r) => r.includes('cap') || r.includes('replan')));
+  assert.ok(res4.reasons.some(r => r.includes('cap') || r.includes('replan')));
 });
 
 test('replan: idempotent replay of an already-reserved proposal does not recharge replan budget', async () => {
@@ -1851,10 +1812,8 @@ test('replan: idempotent replay of an already-reserved proposal does not recharg
   };
   const stateWithExistingReservation: TaskState = {
     ...state,
-    budgetLedgers: state.budgetLedgers?.map((l) =>
-      l.scope === 'task' && l.kind === 'replan'
-        ? { ...l, consumed: 0, reservations: [...l.reservations, existingReservation], version: l.version + 1 }
-        : l
+    budgetLedgers: state.budgetLedgers?.map(l =>
+      l.scope === 'task' && l.kind === 'replan' ? { ...l, consumed: 0, reservations: [...l.reservations, existingReservation], version: l.version + 1 } : l,
     ),
   };
   const statePort = new MemoryStatePort({ initialTaskState: stateWithExistingReservation });
@@ -1869,11 +1828,11 @@ test('replan: idempotent replay of an already-reserved proposal does not recharg
       candidatePlan: materialPlan,
       proposalId: 'prop-replan-replay',
     },
-    { statePort }
+    { statePort },
   );
   assert.equal(res.outcome, 'DENIED');
   assert.equal(res.replanCount, 1);
-  assert.ok(res.reasons.some((r) => r.includes('replay') || r.includes('denied')));
+  assert.ok(res.reasons.some(r => r.includes('replay') || r.includes('denied')));
 });
 
 test('replan: uncertain token or cost accounting reservations fail closed before replan effects', async () => {
@@ -1890,17 +1849,17 @@ test('replan: uncertain token or cost accounting reservations fail closed before
       candidatePlan: materialPlan,
       proposalId: 'prop-replan-uncertain',
     },
-    { statePort }
+    { statePort },
   );
   assert.equal(res.outcome, 'INCOMPLETE');
-  assert.ok(res.reasons.some((r) => r.includes('uncertain')));
+  assert.ok(res.reasons.some(r => r.includes('uncertain')));
 });
 
 test('replan: missing replan budget ledger fails closed before replan effects', async () => {
   const { state, task, plan } = createRepairStateFixture();
   const stateWithoutReplanLedger: TaskState = {
     ...state,
-    budgetLedgers: state.budgetLedgers?.filter((l) => l.kind !== 'replan'),
+    budgetLedgers: state.budgetLedgers?.filter(l => l.kind !== 'replan'),
   };
   const statePort = new MemoryStatePort({ initialTaskState: stateWithoutReplanLedger });
   const materialPlan: FixPlan = {
@@ -1914,10 +1873,10 @@ test('replan: missing replan budget ledger fails closed before replan effects', 
       candidatePlan: materialPlan,
       proposalId: 'prop-replan-no-ledger',
     },
-    { statePort }
+    { statePort },
   );
   assert.equal(res.outcome, 'INCOMPLETE');
-  assert.ok(res.reasons.some((r) => r.includes('replan') || r.includes('ledger')));
+  assert.ok(res.reasons.some(r => r.includes('replan') || r.includes('ledger')));
 });
 
 test('replan: rejection in AwaitFeedback requires explicit direction; feedback text alone provides no repair authority', async () => {
@@ -1929,7 +1888,7 @@ test('replan: rejection in AwaitFeedback requires explicit direction; feedback t
       rejectionReason: 'Human rejected: do not use try-except; use validation instead',
       decisionId: authority.decisionId,
     },
-    { statePort: authority.statePort, approvalPort: authority.approvalPort }
+    { statePort: authority.statePort, approvalPort: authority.approvalPort },
   );
   assert.equal(rejectionRes.outcome, 'AWAIT_FEEDBACK');
   assert.equal(rejectionRes.state.node, 'AwaitFeedback');
@@ -1943,17 +1902,18 @@ test('replan: three sequential revisions persist through a public StatePort wrap
   for (const count of [0, 1, 2]) {
     const currentPlan = current.plan;
     assert.ok(currentPlan);
-    const resumed: TaskState = count === 0
-      ? current
-      : {
-          ...current,
-          stateVersion: current.stateVersion + 1,
-          node: 'Repair',
-          plan: { ...currentPlan, decisionRef: `dec-approved-${count}` },
-          activeDecisionId: `dec-approved-${count}`,
-          latestReviewRef: `review-${count}`,
-          reviewRefs: [`review-${count}`],
-        };
+    const resumed: TaskState =
+      count === 0
+        ? current
+        : {
+            ...current,
+            stateVersion: current.stateVersion + 1,
+            node: 'Repair',
+            plan: { ...currentPlan, decisionRef: `dec-approved-${count}` },
+            activeDecisionId: `dec-approved-${count}`,
+            latestReviewRef: `review-${count}`,
+            reviewRefs: [`review-${count}`],
+          };
     const proposalId = `public-port-replan-${count + 1}`;
     const reservation = createReplanReservation(resumed, proposalId);
     const trustedTransitionContext = { replanReservation: reservation };
@@ -1967,10 +1927,7 @@ test('replan: three sequential revisions persist through a public StatePort wrap
       strategyDigest: computeCanonicalSha256(`Public-port revised strategy ${count + 1}`),
     };
 
-    const result = await executeReplan(
-      { taskId: task.taskId, candidatePlan, proposalId },
-      { statePort: forwardPublicStatePort(statePort), trustedTransitionContext }
-    );
+    const result = await executeReplan({ taskId: task.taskId, candidatePlan, proposalId }, { statePort: forwardPublicStatePort(statePort), trustedTransitionContext });
 
     assert.equal(result.outcome, 'REPLAN_PREPARED');
     assert.equal(result.replanCount, count + 1);
@@ -1980,7 +1937,7 @@ test('replan: three sequential revisions persist through a public StatePort wrap
     assert.equal(result.state.activeDecisionId, undefined);
     assert.equal(result.state.latestReviewRef, undefined);
     assert.deepEqual(result.state.reviewRefs, []);
-    assert.equal(statePort.getLedgers().find((ledger) => ledger.kind === 'replan')?.reservations.length, count + 1);
+    assert.equal(statePort.getLedgers().find(ledger => ledger.kind === 'replan')?.reservations.length, count + 1);
     current = result.state;
   }
 
@@ -1992,15 +1949,12 @@ test('replan: three sequential revisions persist through a public StatePort wrap
     strategy: 'Fourth public-port strategy must stop',
     strategyDigest: computeCanonicalSha256('Fourth public-port strategy must stop'),
   };
-  const fourth = await executeReplan(
-    { taskId: task.taskId, candidatePlan: fourthPlan, proposalId: 'public-port-replan-4' },
-    { statePort: forwardPublicStatePort(finalPort) }
-  );
+  const fourth = await executeReplan({ taskId: task.taskId, candidatePlan: fourthPlan, proposalId: 'public-port-replan-4' }, { statePort: forwardPublicStatePort(finalPort) });
 
   assert.equal(fourth.outcome, 'INCOMPLETE');
   assert.equal(fourth.replanCount, 3);
   assert.equal(fourth.state.node, 'Incomplete');
-  assert.equal(finalPort.getLedgers().find((ledger) => ledger.kind === 'replan')?.reservations.length, 3);
+  assert.equal(finalPort.getLedgers().find(ledger => ledger.kind === 'replan')?.reservations.length, 3);
 });
 
 test('replan: caller rejection text without a stored rejected decision cannot pause a plan', async () => {
@@ -2015,10 +1969,7 @@ test('replan: caller rejection text without a stored rejected decision cannot pa
     },
   };
 
-  const result = await handlePlanRejection(
-    { taskId: task.taskId, decisionId: 'forged-decision', rejectionReason: 'I reject this plan; use a different strategy.' },
-    { statePort }
-  );
+  const result = await handlePlanRejection({ taskId: task.taskId, decisionId: 'forged-decision', rejectionReason: 'I reject this plan; use a different strategy.' }, { statePort });
 
   assert.equal(result.outcome, 'INCOMPLETE');
   assert.equal(result.state.node, 'AwaitPlan');
@@ -2056,14 +2007,14 @@ test('replan: feedback text without trusted direction leaves AwaitFeedback uncha
       proposalId,
       reason: 'Human feedback says to replace the plan with this strategy.',
     },
-    { statePort, trustedTransitionContext }
+    { statePort, trustedTransitionContext },
   );
 
   assert.equal(result.outcome, 'AWAIT_FEEDBACK');
   assert.equal(result.state.node, 'AwaitFeedback');
   assert.equal(result.replanCount, 0);
   assert.equal(transitions, 0);
-  assert.equal(memoryState.getLedgers().find((ledger) => ledger.kind === 'replan')?.reservations.length, 0);
+  assert.equal(memoryState.getLedgers().find(ledger => ledger.kind === 'replan')?.reservations.length, 0);
   assert.equal((await memoryState.loadTask(task.taskId))?.stateVersion, state.stateVersion);
 });
 
@@ -2099,7 +2050,7 @@ test('replan: explicit bound revise direction prepares a new plan but never appr
         rejectedDecisionId,
         strategyDigest: plan.strategyDigest,
       },
-    }
+    },
   );
 
   assert.equal(result.outcome, 'REPLAN_PREPARED');
@@ -2152,14 +2103,14 @@ test('replan: stale trusted direction cannot resume a newer paused plan', async 
         rejectedDecisionId,
         strategyDigest: plan.strategyDigest,
       },
-    }
+    },
   );
 
   assert.equal(result.outcome, 'AWAIT_FEEDBACK');
   assert.equal(result.state.stateVersion, state.stateVersion);
   assert.equal(result.replanCount, 0);
   assert.equal(transitions, 0);
-  assert.equal(memoryState.getLedgers().find((ledger) => ledger.kind === 'replan')?.reservations.length, 0);
+  assert.equal(memoryState.getLedgers().find(ledger => ledger.kind === 'replan')?.reservations.length, 0);
 });
 
 test('replan: malformed trusted direction cannot authorize a paused-plan transition', async () => {
@@ -2208,7 +2159,7 @@ test('replan: malformed trusted direction cannot authorize a paused-plan transit
         rejectedDecisionId: plan.decisionRef ?? '',
         strategyDigest: plan.strategyDigest,
       },
-    }
+    },
   );
 
   assert.equal(result.outcome, 'AWAIT_FEEDBACK');
@@ -2220,39 +2171,39 @@ test('replan: missing, mismatched, exhausted, or inconsistent task ledgers stop 
   const { state: base, task, plan } = createRepairStateFixture();
   const original = base.budgetLedgers ?? [];
   const cases: readonly { readonly name: string; readonly state: TaskState }[] = [
-    { name: 'missing tokens', state: { ...base, budgetLedgers: original.filter((ledger) => ledger.kind !== 'tokens') } },
-    { name: 'missing cost', state: { ...base, budgetLedgers: original.filter((ledger) => ledger.kind !== 'cost') } },
+    { name: 'missing tokens', state: { ...base, budgetLedgers: original.filter(ledger => ledger.kind !== 'tokens') } },
+    { name: 'missing cost', state: { ...base, budgetLedgers: original.filter(ledger => ledger.kind !== 'cost') } },
     {
       name: 'foreign token configuration',
-      state: { ...base, budgetLedgers: original.map((ledger) => ledger.kind === 'tokens' ? { ...ledger, configurationId: 'foreign-budget-config' } : ledger) },
+      state: { ...base, budgetLedgers: original.map(ledger => (ledger.kind === 'tokens' ? { ...ledger, configurationId: 'foreign-budget-config' } : ledger)) },
     },
     {
       name: 'wrong cost unit',
-      state: { ...base, budgetLedgers: original.map((ledger) => ledger.kind === 'cost' ? { ...ledger, unit: 'count' } : ledger) },
+      state: { ...base, budgetLedgers: original.map(ledger => (ledger.kind === 'cost' ? { ...ledger, unit: 'count' } : ledger)) },
     },
     {
       name: 'wrong configured replan limit',
-      state: { ...base, budgetLedgers: original.map((ledger) => ledger.kind === 'replan' ? { ...ledger, limit: 2 } : ledger) },
+      state: { ...base, budgetLedgers: original.map(ledger => (ledger.kind === 'replan' ? { ...ledger, limit: 2 } : ledger)) },
     },
     {
       name: 'wrong configured repair limit',
-      state: { ...base, budgetLedgers: original.map((ledger) => ledger.kind === 'repair' ? { ...ledger, limit: 1 } : ledger) },
+      state: { ...base, budgetLedgers: original.map(ledger => (ledger.kind === 'repair' ? { ...ledger, limit: 1 } : ledger)) },
     },
     {
       name: 'consumed token budget',
-      state: { ...base, budgetLedgers: original.map((ledger) => ledger.kind === 'tokens' ? { ...ledger, consumed: ledger.limit } : ledger) },
+      state: { ...base, budgetLedgers: original.map(ledger => (ledger.kind === 'tokens' ? { ...ledger, consumed: ledger.limit } : ledger)) },
     },
     {
       name: 'consumed cost budget',
-      state: { ...base, budgetLedgers: original.map((ledger) => ledger.kind === 'cost' ? { ...ledger, consumed: ledger.limit } : ledger) },
+      state: { ...base, budgetLedgers: original.map(ledger => (ledger.kind === 'cost' ? { ...ledger, consumed: ledger.limit } : ledger)) },
     },
     {
       name: 'consumed repair budget',
-      state: { ...base, budgetLedgers: original.map((ledger) => ledger.kind === 'repair' ? { ...ledger, consumed: ledger.limit } : ledger) },
+      state: { ...base, budgetLedgers: original.map(ledger => (ledger.kind === 'repair' ? { ...ledger, consumed: ledger.limit } : ledger)) },
     },
     {
       name: 'replan count does not match charged ledger',
-      state: { ...base, budgetLedgers: original.map((ledger) => ledger.kind === 'replan' ? { ...ledger, consumed: 1 } : ledger) },
+      state: { ...base, budgetLedgers: original.map(ledger => (ledger.kind === 'replan' ? { ...ledger, consumed: 1 } : ledger)) },
     },
   ];
 
@@ -2264,7 +2215,7 @@ test('replan: missing, mismatched, exhausted, or inconsistent task ledgers stop 
     let transitions = 0;
     const statePort: StatePort = {
       ...forwardPublicStatePort(memoryState),
-      loadTask: async (taskId) => {
+      loadTask: async taskId => {
         if (initialLoad) {
           initialLoad = false;
           return scenario.state;
@@ -2282,13 +2233,10 @@ test('replan: missing, mismatched, exhausted, or inconsistent task ledgers stop 
       strategyDigest: computeCanonicalSha256(`Strategy for ${scenario.name}`),
     };
 
-    const result = await executeReplan(
-      { taskId: task.taskId, candidatePlan, proposalId },
-      { statePort, trustedTransitionContext }
-    );
+    const result = await executeReplan({ taskId: task.taskId, candidatePlan, proposalId }, { statePort, trustedTransitionContext });
 
     assert.equal(result.outcome, 'INCOMPLETE', scenario.name);
-    assert.equal(memoryState.getLedgers().find((ledger) => ledger.kind === 'replan')?.reservations.length, 0, scenario.name);
+    assert.equal(memoryState.getLedgers().find(ledger => ledger.kind === 'replan')?.reservations.length, 0, scenario.name);
     assert.equal(transitions, 0, scenario.name);
     assert.equal((await memoryState.loadTask(task.taskId))?.stateVersion, scenario.state.stateVersion, scenario.name);
   }
@@ -2302,7 +2250,7 @@ test('replan: malformed public candidates return typed incomplete before any por
   let transitions = 0;
   const statePort: StatePort = {
     ...forwardPublicStatePort(memoryState),
-    loadTask: async (taskId) => {
+    loadTask: async taskId => {
       loads += 1;
       return memoryState.loadTask(taskId);
     },
@@ -2315,19 +2263,12 @@ test('replan: malformed public candidates return typed incomplete before any por
       return memoryState.transition(...args);
     },
   };
-  const candidates: readonly unknown[] = [
-    null,
-    { ...plan, strategyDigest: undefined },
-    { ...plan, strategy: 42 },
-  ];
+  const candidates: readonly unknown[] = [null, { ...plan, strategyDigest: undefined }, { ...plan, strategy: 42 }];
 
   for (const [index, candidatePlan] of candidates.entries()) {
     let result: Awaited<ReturnType<typeof executeReplan>> | undefined;
     await assert.doesNotReject(async () => {
-      result = await executeReplan(
-        { taskId: task.taskId, proposalId: `malformed-${index}`, candidatePlan } as never,
-        { statePort }
-      );
+      result = await executeReplan({ taskId: task.taskId, proposalId: `malformed-${index}`, candidatePlan } as never, { statePort });
     });
     assert.equal(result?.outcome, 'INCOMPLETE');
     assert.equal(loads, 0);
@@ -2349,10 +2290,7 @@ test('replan: initial plan records version zero without reserving a revision', a
     },
   };
 
-  const result = await executeReplan(
-    { taskId: task.taskId, proposalId: 'initial-plan-001', candidatePlan: { ...plan, planVersion: 1 } },
-    { statePort }
-  );
+  const result = await executeReplan({ taskId: task.taskId, proposalId: 'initial-plan-001', candidatePlan: { ...plan, planVersion: 1 } }, { statePort });
 
   assert.equal(result.outcome, 'REPLAN_PREPARED');
   assert.equal(result.isMaterial, false);
@@ -2367,9 +2305,9 @@ test('replan: opaque reservation identifiers containing uncertain are treated as
   const { state: source, task, plan } = createRepairStateFixture({ replanCount: 1 });
   const state = {
     ...source,
-    budgetLedgers: source.budgetLedgers?.map((ledger) => ledger.kind === 'replan'
-      ? { ...ledger, consumed: 0, reservations: [{ reservationId: 'opaque-uncertain-reservation', keyedId: 'opaque-uncertain-proposal', amount: 1 }] }
-      : ledger),
+    budgetLedgers: source.budgetLedgers?.map(ledger =>
+      ledger.kind === 'replan' ? { ...ledger, consumed: 0, reservations: [{ reservationId: 'opaque-uncertain-reservation', keyedId: 'opaque-uncertain-proposal', amount: 1 }] } : ledger,
+    ),
   };
   const proposalId = 'opaque-next-proposal';
   const trustedTransitionContext = createReplanTransitionContext(state, proposalId);
@@ -2383,10 +2321,7 @@ test('replan: opaque reservation identifiers containing uncertain are treated as
     strategyDigest: computeCanonicalSha256('Strategy with opaque prior reservation identity'),
   };
 
-  const result = await executeReplan(
-    { taskId: task.taskId, candidatePlan, proposalId },
-    { statePort: forwardPublicStatePort(memoryState), trustedTransitionContext }
-  );
+  const result = await executeReplan({ taskId: task.taskId, candidatePlan, proposalId }, { statePort: forwardPublicStatePort(memoryState), trustedTransitionContext });
 
   assert.equal(result.outcome, 'REPLAN_PREPARED');
   assert.equal(result.replanCount, 2);
@@ -2400,12 +2335,14 @@ test('replan: transition and reload failures resolve as typed incomplete without
   let loads = 0;
   const statePort: StatePort = {
     ...forwardPublicStatePort(memoryState),
-    loadTask: async (taskId) => {
+    loadTask: async taskId => {
       loads += 1;
       if (loads === 3) throw new Error('raw reload detail');
       return memoryState.loadTask(taskId);
     },
-    transition: async () => { throw new Error('raw transition detail'); },
+    transition: async () => {
+      throw new Error('raw transition detail');
+    },
   };
   const candidatePlan: FixPlan = {
     ...plan,
@@ -2415,15 +2352,12 @@ test('replan: transition and reload failures resolve as typed incomplete without
 
   let result: Awaited<ReturnType<typeof executeReplan>> | undefined;
   await assert.doesNotReject(async () => {
-    result = await executeReplan(
-      { taskId: task.taskId, candidatePlan, proposalId },
-      { statePort, trustedTransitionContext }
-    );
+    result = await executeReplan({ taskId: task.taskId, candidatePlan, proposalId }, { statePort, trustedTransitionContext });
   });
 
   assert.equal(result?.outcome, 'INCOMPLETE');
-  assert.ok(result?.reasons.every((reason) => !reason.includes('raw')));
-  assert.equal(result?.state.budgetLedgers?.find((ledger) => ledger.kind === 'replan')?.reservations.length, 1);
+  assert.ok(result?.reasons.every(reason => !reason.includes('raw')));
+  assert.equal(result?.state.budgetLedgers?.find(ledger => ledger.kind === 'replan')?.reservations.length, 1);
 });
 
 test('replan: failed post-repair verification preserves confirmed repair charges and requires reconciliation for unresolved effects', async () => {
@@ -2463,10 +2397,10 @@ test('replan: failed post-repair verification preserves confirmed repair charges
   let patchCalls = 0;
   const applyPatch = repositoryPort.applyPatch.bind(repositoryPort);
   function wrappedApplyPatch(patch: ApplyPatchAction, context: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02>;
-  function wrappedApplyPatch(patch: ApplyPatchAction): ReturnType<RepositoryPort["applyPatch"]>;
-  async function wrappedApplyPatch(patch: ApplyPatchAction, context?: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02 | Awaited<ReturnType<RepositoryPort["applyPatch"]>>> {
+  function wrappedApplyPatch(patch: ApplyPatchAction): ReturnType<RepositoryPort['applyPatch']>;
+  async function wrappedApplyPatch(patch: ApplyPatchAction, context?: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02 | Awaited<ReturnType<RepositoryPort['applyPatch']>>> {
     patchCalls += 1;
-    return (context ? applyPatch(patch, context) : applyPatch(patch));
+    return context ? applyPatch(patch, context) : applyPatch(patch);
   }
   repositoryPort.applyPatch = wrappedApplyPatch;
   let guardCalls = 0;
@@ -2492,14 +2426,14 @@ test('replan: failed post-repair verification preserves confirmed repair charges
       trustedTransitionContext: authorization.trustedTransitionContext,
       trustedRepairContext: authorization.trustedRepairContext,
       executionGuard,
-    }
+    },
   );
   assert.equal(repair.outcome, 'REPAIR_PREPARED');
   assert.ok(repair.reservedActionId);
 
   const repairedState = await statePort.loadTask(task.taskId);
   assert.ok(repairedState);
-  const repairLedgerBefore = repairedState.budgetLedgers?.find((ledger) => ledger.kind === 'repair');
+  const repairLedgerBefore = repairedState.budgetLedgers?.find(ledger => ledger.kind === 'repair');
   assert.ok(repairLedgerBefore);
   const repairReservationBefore = repairLedgerBefore.reservations[0];
   assert.ok(repairReservationBefore);
@@ -2513,7 +2447,7 @@ test('replan: failed post-repair verification preserves confirmed repair charges
     actionIdPrefix: 'verify-after-repair',
   });
   assert.ok(verificationResults.length > 0);
-  assert.ok(verificationResults.every((result) => result.outcome === 'fail'));
+  assert.ok(verificationResults.every(result => result.outcome === 'fail'));
   const failedVerification = verificationResults[0];
   assert.ok(failedVerification);
   assert.equal(failedVerification.repoDigest, repairedState.repositoryRevisionDigest);
@@ -2524,12 +2458,9 @@ test('replan: failed post-repair verification preserves confirmed repair charges
       stateVersion: repairedState.stateVersion + 1,
       node: 'Repair',
       nextAction: 'repair-after-failed-verification',
-      evidenceRefs: [...new Set([
-        ...repairedState.evidenceRefs,
-        ...verificationResults.flatMap((result) => [result.evidenceId, result.actionId, ...result.diagnosticRefs]),
-      ])],
+      evidenceRefs: [...new Set([...repairedState.evidenceRefs, ...verificationResults.flatMap(result => [result.evidenceId, result.actionId, ...result.diagnosticRefs])])],
     },
-    repairedState.stateVersion
+    repairedState.stateVersion,
   );
 
   const nextStrategy = 'Use the failed post-repair checks to revise the fix strategy';
@@ -2539,7 +2470,7 @@ test('replan: failed post-repair verification preserves confirmed repair charges
       proposalId,
       candidatePlan: { ...plan, strategy: nextStrategy, strategyDigest: computeCanonicalSha256(nextStrategy) },
     },
-    { statePort, trustedTransitionContext: trustedReplanContext }
+    { statePort, trustedTransitionContext: trustedReplanContext },
   );
 
   assert.equal(result.outcome, 'REPLAN_PREPARED');
@@ -2548,12 +2479,18 @@ test('replan: failed post-repair verification preserves confirmed repair charges
   assert.equal(verificationFailedState.node, 'Repair');
   assert.equal(patchCalls, 1);
   assert.equal(guardCalls, 1);
-  assert.deepEqual(reservationKinds.filter((kind) => kind === 'repair'), ['repair']);
-  assert.deepEqual(reservationKinds.filter((kind) => kind === 'replan'), ['replan']);
+  assert.deepEqual(
+    reservationKinds.filter(kind => kind === 'repair'),
+    ['repair'],
+  );
+  assert.deepEqual(
+    reservationKinds.filter(kind => kind === 'replan'),
+    ['replan'],
+  );
 
   const finalState = await statePort.loadTask(task.taskId);
   assert.ok(finalState);
-  const repairLedgerAfter = finalState.budgetLedgers?.find((ledger) => ledger.kind === 'repair');
+  const repairLedgerAfter = finalState.budgetLedgers?.find(ledger => ledger.kind === 'repair');
   assert.ok(repairLedgerAfter);
   assert.equal(repairLedgerAfter.consumed, repairLedgerBefore.consumed);
   assert.deepEqual(repairLedgerAfter.reservations, repairLedgerBefore.reservations);
@@ -2562,9 +2499,9 @@ test('replan: failed post-repair verification preserves confirmed repair charges
   const unresolvedActionId = 'act-repair-unconfirmed-effect';
   const unresolvedState: TaskState = {
     ...unresolvedBase,
-    budgetLedgers: unresolvedBase.budgetLedgers?.map((ledger) => ledger.kind === 'repair'
-      ? { ...ledger, reservations: [{ reservationId: 'res-repair-unconfirmed-effect', keyedId: unresolvedActionId, amount: 1 }] }
-      : ledger),
+    budgetLedgers: unresolvedBase.budgetLedgers?.map(ledger =>
+      ledger.kind === 'repair' ? { ...ledger, reservations: [{ reservationId: 'res-repair-unconfirmed-effect', keyedId: unresolvedActionId, amount: 1 }] } : ledger,
+    ),
   };
   const unresolvedProposalId = 'replan-blocked-by-unresolved-repair-effect';
   const unresolvedContext = createReplanTransitionContext(unresolvedState, unresolvedProposalId);
@@ -2590,7 +2527,7 @@ test('replan: failed post-repair verification preserves confirmed repair charges
       proposalId: unresolvedProposalId,
       candidatePlan: { ...unresolvedPlan, strategy: unresolvedStrategy, strategyDigest: computeCanonicalSha256(unresolvedStrategy) },
     },
-    { statePort: unresolvedPort, trustedTransitionContext: unresolvedContext }
+    { statePort: unresolvedPort, trustedTransitionContext: unresolvedContext },
   );
 
   assert.equal(unresolvedResult.outcome, 'INCOMPLETE');
@@ -2607,26 +2544,37 @@ test('v0.2 repair refuses valid evidence without owner admission context before 
   const { state, task } = createRepairStateFixture({ repairConsumed: 0 });
   const failureEvidence = createFailedPatchEvidence(task);
   const authorization = createAuthorizedRepairPorts(state, 'ALLOWED', failureEvidence);
-  const proposal = createRepairProposal(failureEvidence,
+  const proposal = createRepairProposal(
+    failureEvidence,
     '--- a/src/calculator.py\n+++ b/src/calculator.py\n@@ -1 +1 @@\n-def divide(a, b): return a / b\n+def divide(a, b): return a / b if b else 0\n',
-    ['src/calculator.py']);
+    ['src/calculator.py'],
+  );
   const journal = new MemoryStatePortV02({ initialTaskState: state });
   const statePort = forwardPublicStatePort(journal);
   const repositoryPort = new FakeRepositoryPort({
     statePort,
     initialFiles: { 'src/calculator.py': 'def divide(a, b): return a / b\n' },
   });
-  const executionGuard = createExecutionGuardV02({ ports: {
-    statePort, repositoryPort, approvalPort: authorization.approvalPort,
-  } });
+  const executionGuard = createExecutionGuardV02({
+    ports: {
+      statePort,
+      repositoryPort,
+      approvalPort: authorization.approvalPort,
+    },
+  });
   const beforeState = await statePort.loadTask(task.taskId);
   const beforeJournal = journal.getJournalSnapshot();
-  const result = await executeRepair({ taskId: task.taskId, failureEvidence, repairPatch: proposal }, {
-    statePort, repositoryPort, executionGuard,
-    approvalPort: authorization.approvalPort,
-    trustedTransitionContext: authorization.trustedTransitionContext,
-    trustedRepairContext: authorization.trustedRepairContext,
-  });
+  const result = await executeRepair(
+    { taskId: task.taskId, failureEvidence, repairPatch: proposal },
+    {
+      statePort,
+      repositoryPort,
+      executionGuard,
+      approvalPort: authorization.approvalPort,
+      trustedTransitionContext: authorization.trustedTransitionContext,
+      trustedRepairContext: authorization.trustedRepairContext,
+    },
+  );
   assert.equal(result.outcome, 'INCOMPLETE');
   assert.deepEqual(result.reasons, ['repair-admission-context-required']);
   assert.deepEqual(await statePort.loadTask(task.taskId), beforeState);
@@ -2634,14 +2582,10 @@ test('v0.2 repair refuses valid evidence without owner admission context before 
   assert.equal(repositoryPort.patches.length, 0);
 });
 
-function createRepairAdmissionContextV02(
-  state: TaskState,
-  action: ApplyPatchAction,
-  overrides?: Partial<RepositoryAdmissionContextV02>
-): RepositoryAdmissionContextV02 {
+function createRepairAdmissionContextV02(state: TaskState, action: ApplyPatchAction, overrides?: Partial<RepositoryAdmissionContextV02>): RepositoryAdmissionContextV02 {
   const plan = state.plan;
   if (!plan) {
-    throw new Error("state.plan is required for repair admission context");
+    throw new Error('state.plan is required for repair admission context');
   }
   const planBindingDigest = computeCanonicalSha256({
     taskId: state.taskId,
@@ -2715,8 +2659,7 @@ test('v0.2 repair admission: single-owner repair reservation and attempt account
   const { state, task } = createRepairStateFixture({ repairConsumed: 0 });
   const failureEvidence = createFailedPatchEvidence(task);
   const authorization = createAuthorizedRepairPorts(state, 'ALLOWED', failureEvidence);
-  const patchContent =
-    '--- a/src/calculator.py\n+++ b/src/calculator.py\n@@ -1,1 +1,3 @@\n+if b == 0: raise CalculationError("Cannot divide by zero")\n def divide(a, b): return a / b\n';
+  const patchContent = '--- a/src/calculator.py\n+++ b/src/calculator.py\n@@ -1,1 +1,3 @@\n+if b == 0: raise CalculationError("Cannot divide by zero")\n def divide(a, b): return a / b\n';
   const proposal = createRepairProposal(failureEvidence, patchContent, ['src/calculator.py']);
 
   const actionId = `act-repair-${computeCanonicalSha256({
@@ -2783,7 +2726,7 @@ test('v0.2 repair admission: single-owner repair reservation and attempt account
         admissionContext: context,
       },
       executionGuard,
-    }
+    },
   );
 
   assert.equal(res.outcome, 'REPAIR_PREPARED');
@@ -2853,11 +2796,13 @@ test('v0.2 repair validates active D1 against the current owner and issuer conte
     initialRevision: currentRevision,
     initialFiles: { 'src/calculator.py': 'def divide(a, b): return a / b\n' },
   });
-  const staleExecutionGuard = createExecutionGuardV02({ ports: {
-    statePort: staleJournal,
-    repositoryPort: staleRepository,
-    approvalPort: new ScriptedApprovalPort({ classifications: { apply_patch: 'ALLOWED' } }),
-  } });
+  const staleExecutionGuard = createExecutionGuardV02({
+    ports: {
+      statePort: staleJournal,
+      repositoryPort: staleRepository,
+      approvalPort: new ScriptedApprovalPort({ classifications: { apply_patch: 'ALLOWED' } }),
+    },
+  });
   const originalValidateBinding = authorization.approvalPort.validateBinding.bind(authorization.approvalPort);
   authorization.approvalPort.validateBinding = async () => true;
   const staleResult = await executeRepair(
@@ -2922,11 +2867,13 @@ test('v0.2 repair validates active D1 against the current owner and issuer conte
     initialFiles: { 'src/calculator.py': 'def divide(a, b): return a / b\n' },
   });
   const guardApprovalPort = new ScriptedApprovalPort({ classifications: { apply_patch: 'ALLOWED' } });
-  const executionGuard = createExecutionGuardV02({ ports: {
-    statePort: journal,
-    repositoryPort,
-    approvalPort: guardApprovalPort,
-  } });
+  const executionGuard = createExecutionGuardV02({
+    ports: {
+      statePort: journal,
+      repositoryPort,
+      approvalPort: guardApprovalPort,
+    },
+  });
 
   const result = await executeRepair(
     { taskId: task.taskId, failureEvidence, repairPatch: proposal },
@@ -2952,8 +2899,7 @@ test('v0.2 repair admission: exact admitted patch identity and confirmed revisio
   const { state, task } = createRepairStateFixture({ repairConsumed: 0 });
   const failureEvidence = createFailedPatchEvidence(task);
   const authorization = createAuthorizedRepairPorts(state, 'ALLOWED', failureEvidence);
-  const patchContent =
-    '--- a/src/calculator.py\n+++ b/src/calculator.py\n@@ -1,1 +1,3 @@\n+if b == 0: raise CalculationError("Cannot divide by zero")\n def divide(a, b): return a / b\n';
+  const patchContent = '--- a/src/calculator.py\n+++ b/src/calculator.py\n@@ -1,1 +1,3 @@\n+if b == 0: raise CalculationError("Cannot divide by zero")\n def divide(a, b): return a / b\n';
   const proposal = createRepairProposal(failureEvidence, patchContent, ['src/calculator.py']);
 
   const actionId = `act-repair-${computeCanonicalSha256({
@@ -3019,7 +2965,7 @@ test('v0.2 repair admission: exact admitted patch identity and confirmed revisio
         admissionContext: context,
       },
       executionGuard,
-    }
+    },
   );
 
   assert.equal(res.outcome, 'REPAIR_PREPARED');
@@ -3038,8 +2984,7 @@ test('v0.2 repair admission: guard and journal own state transition with no cons
   const { state, task } = createRepairStateFixture({ repairConsumed: 0 });
   const failureEvidence = createFailedPatchEvidence(task);
   const authorization = createAuthorizedRepairPorts(state, 'ALLOWED', failureEvidence);
-  const patchContent =
-    '--- a/src/calculator.py\n+++ b/src/calculator.py\n@@ -1,1 +1,3 @@\n+if b == 0: raise CalculationError("Cannot divide by zero")\n def divide(a, b): return a / b\n';
+  const patchContent = '--- a/src/calculator.py\n+++ b/src/calculator.py\n@@ -1,1 +1,3 @@\n+if b == 0: raise CalculationError("Cannot divide by zero")\n def divide(a, b): return a / b\n';
   const proposal = createRepairProposal(failureEvidence, patchContent, ['src/calculator.py']);
 
   const actionId = `act-repair-${computeCanonicalSha256({
@@ -3114,25 +3059,20 @@ test('v0.2 repair admission: guard and journal own state transition with no cons
         admissionContext: context,
       },
       executionGuard,
-    }
+    },
   );
 
   assert.equal(res.outcome, 'REPAIR_PREPARED');
   // Target v0.2 acceptance: Repair submits its proposed patch to ExecutionGuardV02; the guard and
   // StatePortV02 journal own the transition without a second consumer-level state CAS.
-  assert.equal(
-    consumerTransitionCalls,
-    0,
-    'Repair consumer must not perform separate direct state CAS transitions; guard and journal own the transition'
-  );
+  assert.equal(consumerTransitionCalls, 0, 'Repair consumer must not perform separate direct state CAS transitions; guard and journal own the transition');
 });
 
 test('v0.2 repair admission: zero effects on open claim blocking second dispatch (behavioral RED against pre-migration repair consumer)', async () => {
   const { state, task } = createRepairStateFixture({ repairConsumed: 0 });
   const failureEvidence = createFailedPatchEvidence(task);
   const authorization = createAuthorizedRepairPorts(state, 'ALLOWED', failureEvidence);
-  const patchContent =
-    '--- a/src/calculator.py\n+++ b/src/calculator.py\n@@ -1,1 +1,3 @@\n+if b == 0: raise CalculationError("Cannot divide by zero")\n def divide(a, b): return a / b\n';
+  const patchContent = '--- a/src/calculator.py\n+++ b/src/calculator.py\n@@ -1,1 +1,3 @@\n+if b == 0: raise CalculationError("Cannot divide by zero")\n def divide(a, b): return a / b\n';
   const proposal = createRepairProposal(failureEvidence, patchContent, ['src/calculator.py']);
 
   const actionId = `act-repair-${computeCanonicalSha256({
@@ -3203,7 +3143,7 @@ test('v0.2 repair admission: zero effects on open claim blocking second dispatch
         admissionContext: context,
       },
       executionGuard,
-    }
+    },
   );
 
   // Target v0.2 acceptance: An existing open claim blocks new attempts; zero repository effects
@@ -3216,8 +3156,7 @@ test('v0.2 repair admission: zero effects on missing or stale failure evidence c
   const { state, task } = createRepairStateFixture({ repairConsumed: 0 });
   const failureEvidence = createFailedPatchEvidence(task);
   const authorization = createAuthorizedRepairPorts(state, 'ALLOWED', failureEvidence);
-  const patchContent =
-    '--- a/src/calculator.py\n+++ b/src/calculator.py\n@@ -1,1 +1,3 @@\n+if b == 0: raise CalculationError("Cannot divide by zero")\n def divide(a, b): return a / b\n';
+  const patchContent = '--- a/src/calculator.py\n+++ b/src/calculator.py\n@@ -1,1 +1,3 @@\n+if b == 0: raise CalculationError("Cannot divide by zero")\n def divide(a, b): return a / b\n';
   const proposal = createRepairProposal(failureEvidence, patchContent, ['src/calculator.py']);
 
   const journal = new MemoryStatePortV02({ initialTaskState: state });
@@ -3242,7 +3181,7 @@ test('v0.2 repair admission: zero effects on missing or stale failure evidence c
       statePort: forwarded,
       repositoryPort,
       approvalPort: authorization.approvalPort,
-    }
+    },
   );
 
   assert.notEqual(res.outcome, 'REPAIR_PREPARED');
@@ -3251,7 +3190,6 @@ test('v0.2 repair admission: zero effects on missing or stale failure evidence c
   assert.equal(journal.getJournalSnapshot().claims.length, 0, 'Zero claims admitted on stale evidence');
 });
 
-
 async function createRepairReceiverHarness(mode: 'failed' | 'partial' | 'observed-conflict' | 'observed') {
   const { state, task } = createRepairStateFixture({ repairConsumed: 0 });
   const failureEvidence = createFailedPatchEvidence(task);
@@ -3259,19 +3197,27 @@ async function createRepairReceiverHarness(mode: 'failed' | 'partial' | 'observe
   const proposal = createRepairProposal(failureEvidence, 'controlled repair diff', ['src/calculator.py']);
   const action: ApplyPatchAction = {
     actionId: `act-repair-${computeCanonicalSha256({
-      taskId: state.taskId, runId: state.runId, repositoryRevisionDigest: state.repositoryRevisionDigest,
-      baselineRef: state.plan?.baselineRef, checkSetDigest: state.plan?.checkSetDigest,
+      taskId: state.taskId,
+      runId: state.runId,
+      repositoryRevisionDigest: state.repositoryRevisionDigest,
+      baselineRef: state.plan?.baselineRef,
+      checkSetDigest: state.plan?.checkSetDigest,
       diffDigest: authorization.trustedRepairContext.diffDigest,
-      evidenceRefs: [failureEvidence.evidenceId], actionRefs: [failureEvidence.actionId],
+      evidenceRefs: [failureEvidence.evidenceId],
+      actionRefs: [failureEvidence.actionId],
       diagnosticRefs: failureEvidence.diagnosticRefs,
     })}`,
-    kind: 'apply_patch', patchContent: proposal.diff, targetPaths: proposal.affectedPaths,
+    kind: 'apply_patch',
+    patchContent: proposal.diff,
+    targetPaths: proposal.affectedPaths,
     baseRevisionDigest: state.repositoryRevisionDigest,
   };
   const admission = createRepairAdmissionContextV02(state, action);
   const journal = new MemoryStatePortV02({
-    initialTaskState: state, initialAuthorityRef: admission.policyAuthorityRef,
-    initialControlVersion: admission.expectedControlVersion, initialEpoch: admission.expectedEpoch,
+    initialTaskState: state,
+    initialAuthorityRef: admission.policyAuthorityRef,
+    initialControlVersion: admission.expectedControlVersion,
+    initialEpoch: admission.expectedEpoch,
     transitionContexts: authorization.transitionContexts,
   });
   const publicPort = forwardPublicStatePort(journal);
@@ -3280,9 +3226,15 @@ async function createRepairReceiverHarness(mode: 'failed' | 'partial' | 'observe
   let settlement: Awaited<ReturnType<StatePortV02['recordOutcome']>> | undefined;
   const receiverPort: StatePortV02 = {
     ...publicPort,
-    claim: async (context) => { calls.claim++; return publicPort.claim(context); },
-    beginAttempt: async (claimId, executor) => { calls.begin++; return publicPort.beginAttempt(claimId, executor); },
-    recordOutcome: async (receipt) => {
+    claim: async context => {
+      calls.claim++;
+      return publicPort.claim(context);
+    },
+    beginAttempt: async (claimId, executor) => {
+      calls.begin++;
+      return publicPort.beginAttempt(claimId, executor);
+    },
+    recordOutcome: async receipt => {
       calls.record++;
       assert.equal(receipt.subjectKind, 'repository-action');
       if (receipt.subjectKind !== 'repository-action') throw new Error('repository outcome required');
@@ -3297,33 +3249,57 @@ async function createRepairReceiverHarness(mode: 'failed' | 'partial' | 'observe
       return settlement;
     },
   };
-  const manager = new DockerWorkspaceManager({ controller: {
-    provenance: 'mock', createVolume: async () => undefined, hasVolume: async () => true,
-    removeVolume: async () => undefined,
-  } });
+  const manager = new DockerWorkspaceManager({
+    controller: {
+      provenance: 'mock',
+      createVolume: async () => undefined,
+      hasVolume: async () => true,
+      removeVolume: async () => undefined,
+    },
+  });
   await manager.createWorkspace({
-    taskId: task.taskId, workspaceId: state.workspaceId, initialRevisionDigest: state.repositoryRevisionDigest,
-    profile: { profileId: admission.executionProfileId, image: 'test', imageDigest: state.repositoryRevisionDigest,
-      user: '1000:1000', readOnlyRootFilesystem: true, network: 'none', mounts: [],
-      limits: { timeoutMs: 30000, maxMemoryBytes: 2147483648, maxCpuCores: 2, maxPids: 256 } },
+    taskId: task.taskId,
+    workspaceId: state.workspaceId,
+    initialRevisionDigest: state.repositoryRevisionDigest,
+    profile: {
+      profileId: admission.executionProfileId,
+      image: 'test',
+      imageDigest: state.repositoryRevisionDigest,
+      user: '1000:1000',
+      readOnlyRootFilesystem: true,
+      network: 'none',
+      mounts: [],
+      limits: { timeoutMs: 30000, maxMemoryBytes: 2147483648, maxCpuCores: 2, maxPids: 256 },
+    },
   });
   let revision = state.repositoryRevisionDigest;
   const observedRevision = 'sha256:' + 'b'.repeat(64);
-  const unused = async (): Promise<never> => { throw new Error('unexpected read'); };
+  const unused = async (): Promise<never> => {
+    throw new Error('unexpected read');
+  };
   const fsPort: TrustedFilesystemPort = {
-    provenance: 'mock', stat: unused, lstat: unused, realpath: unused, readDir: unused, readTextFile: unused,
+    provenance: 'mock',
+    stat: unused,
+    lstat: unused,
+    realpath: unused,
+    readDir: unused,
+    readTextFile: unused,
     getCurrentRevisionDigest: async () => revision,
   };
   const repositoryPort = new ControlledRepositoryTools({
-    provenance: 'mock', fsPort, limits: { maxExcerptBytes: 1024, maxResultCount: 10 },
-    guardCapability: { provenance: 'mock', capabilityId: 'unused-read', workspaceId: state.workspaceId,
-      taskId: task.taskId, mediateRead: unused },
-    workspaceManager: manager, statePort: receiverPort,
-    adapterIdentity: 'repair-test', processIncarnation: 'repair-test-1', fencingGeneration: 1,
+    provenance: 'mock',
+    fsPort,
+    limits: { maxExcerptBytes: 1024, maxResultCount: 10 },
+    guardCapability: { provenance: 'mock', capabilityId: 'unused-read', workspaceId: state.workspaceId, taskId: task.taskId, mediateRead: unused },
+    workspaceManager: manager,
+    statePort: receiverPort,
+    adapterIdentity: 'repair-test',
+    processIncarnation: 'repair-test-1',
+    fencingGeneration: 1,
     attemptStartRecoveryHandoff: { queryAttemptStart: async () => ({ outcome: 'unknown' }) },
     unattemptedClaimClosureHandoff: { closeUnattemptedClaim: async () => ({ closed: false, receiptId: '' }) },
     patchRecoveryHandoff: {
-      prepare: async (input) => {
+      prepare: async input => {
         assert.deepEqual(input.outcome, submitted, 'Recovery receives the exact retained receiver outcome');
         assert.equal(input.outcome.outcome, 'observed');
         const current = await journal.loadTask(task.taskId);
@@ -3332,9 +3308,7 @@ async function createRepairReceiverHarness(mode: 'failed' | 'partial' | 'observe
           expectedCurrentTaskStateVersion: current.stateVersion,
           expectedCurrentControlVersion: journal.getJournalSnapshot().controlVersion,
         });
-        return { receipt, validationContext: createTestReconciliationValidationContextV02(
-          receipt, input.outcome, input.claim, input.attempt, input.admission,
-        ) };
+        return { receipt, validationContext: createTestReconciliationValidationContextV02(receipt, input.outcome, input.claim, input.attempt, input.admission) };
       },
     },
     patchReceiver: async () => {
@@ -3346,21 +3320,30 @@ async function createRepairReceiverHarness(mode: 'failed' | 'partial' | 'observe
       return { applied: true, newRevisionDigest: revision };
     },
   });
-  const executionGuard = createExecutionGuardV02({ ports: {
-    statePort: publicPort, repositoryPort,
-    approvalPort: new ScriptedApprovalPort({ classifications: { apply_patch: 'ALLOWED' } }),
-  } });
+  const executionGuard = createExecutionGuardV02({
+    ports: {
+      statePort: publicPort,
+      repositoryPort,
+      approvalPort: new ScriptedApprovalPort({ classifications: { apply_patch: 'ALLOWED' } }),
+    },
+  });
   const ports = {
-    statePort: { ...publicPort, transition: async (next: TaskState, expected: number) => {
-      calls.consumerCas++; return publicPort.transition(next, expected);
-    } },
-    repositoryPort, executionGuard, approvalPort: authorization.approvalPort,
+    statePort: {
+      ...publicPort,
+      transition: async (next: TaskState, expected: number) => {
+        calls.consumerCas++;
+        return publicPort.transition(next, expected);
+      },
+    },
+    repositoryPort,
+    executionGuard,
+    approvalPort: authorization.approvalPort,
     trustedTransitionContext: authorization.trustedTransitionContext,
-    trustedRepairContext: authorization.trustedRepairContext, admissionContext: admission,
+    trustedRepairContext: authorization.trustedRepairContext,
+    admissionContext: admission,
   };
   const input = { taskId: task.taskId, failureEvidence, repairPatch: proposal };
-  return { state, journal, repositoryPort, manager, calls, ports, input, observedRevision,
-    submitted: () => submitted, settlement: () => settlement, revision: () => revision };
+  return { state, journal, repositoryPort, manager, calls, ports, input, observedRevision, submitted: () => submitted, settlement: () => settlement, revision: () => revision };
 }
 
 for (const mode of ['failed', 'partial'] as const) {
@@ -3371,7 +3354,7 @@ for (const mode of ['failed', 'partial'] as const) {
     const persisted = await h.journal.loadTask(h.input.taskId);
     assert.deepEqual(result.state, persisted);
     assert.equal(persisted?.node, 'Patch');
-    const ledger = persisted?.budgetLedgers?.find((entry) => entry.kind === 'repair');
+    const ledger = persisted?.budgetLedgers?.find(entry => entry.kind === 'repair');
     assert.equal(ledger?.consumed, 1);
     assert.deepEqual(ledger?.reservations, []);
     assert.equal(h.revision(), mode === 'partial' ? h.observedRevision : h.state.repositoryRevisionDigest);
@@ -3404,7 +3387,7 @@ test('v0.2 repair: observed patch conflict retains exact outcome and reconciles 
   assert.deepEqual(result.state, held);
   assert.equal(held.node, 'Repair');
   assert.equal(held.repositoryRevisionDigest, h.state.repositoryRevisionDigest);
-  assert.equal(held.budgetLedgers?.find((entry) => entry.kind === 'repair')?.consumed, 1);
+  assert.equal(held.budgetLedgers?.find(entry => entry.kind === 'repair')?.consumed, 1);
   const snapshot = h.journal.getJournalSnapshot();
   assert.equal(snapshot.claims.length, 1);
   assert.equal(snapshot.attempts.length, 1);
@@ -3427,8 +3410,8 @@ test('v0.2 repair: observed patch conflict retains exact outcome and reconciles 
   assert.ok(recovered);
   assert.equal(recovered.node, 'Verify');
   assert.equal(recovered.repositoryRevisionDigest, h.observedRevision);
-  assert.equal(recovered.budgetLedgers?.find((entry) => entry.kind === 'repair')?.consumed, 1);
-  assert.deepEqual(recovered.budgetLedgers?.find((entry) => entry.kind === 'repair')?.reservations, []);
+  assert.equal(recovered.budgetLedgers?.find(entry => entry.kind === 'repair')?.consumed, 1);
+  assert.deepEqual(recovered.budgetLedgers?.find(entry => entry.kind === 'repair')?.reservations, []);
   assert.equal(recovered.activeDecisionId, undefined);
   assert.deepEqual(recovered.reviewRefs, []);
   assert.equal(h.manager.hasActiveWriterLease(h.state.workspaceId), false);
@@ -3443,18 +3426,19 @@ test('v0.2 repair: observed patch conflict retains exact outcome and reconciles 
   assert.deepEqual(h.calls, { claim: 1, begin: 1, record: 1, consumerCas: 0, effects: 1 });
 });
 
-
 for (const stale of ['control', 'authority'] as const) {
   test(`v0.2 repair: stale owner ${stale} context refuses with unchanged state and journal`, async () => {
     const h = await createRepairReceiverHarness('observed');
     if (stale === 'control') {
-      h.ports.admissionContext = { ...h.ports.admissionContext,
-        expectedControlVersion: h.ports.admissionContext.expectedControlVersion + 1 };
+      h.ports.admissionContext = { ...h.ports.admissionContext, expectedControlVersion: h.ports.admissionContext.expectedControlVersion + 1 };
     } else {
       const old = h.ports.admissionContext.policyAuthorityRef;
-      const publication = await h.journal.publishAuthority({ authorityRef: {
-        ...old, decisionAuthorityGeneration: old.decisionAuthorityGeneration + 1,
-      } });
+      const publication = await h.journal.publishAuthority({
+        authorityRef: {
+          ...old,
+          decisionAuthorityGeneration: old.decisionAuthorityGeneration + 1,
+        },
+      });
       assert.equal(publication.status, 'published');
     }
     const before = await h.journal.loadTask(h.input.taskId);

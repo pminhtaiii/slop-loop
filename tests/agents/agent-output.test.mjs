@@ -19,35 +19,32 @@ async function fixture(t) {
   assert.equal(git.status, 0, git.stderr);
   const sessionDirectory = join(root, '.agent-work', date, sessionId);
   await mkdir(sessionDirectory, { recursive: true });
-  await writeFile(join(sessionDirectory, 'session.json'), `${JSON.stringify({
-    schemaVersion: 1,
-    workspace: 'project',
-    date,
-    id: sessionId,
-    status: 'active',
-    startedAt: '2026-10-22T00:00:00.000Z',
-  })}\n`, 'utf8');
+  await writeFile(
+    join(sessionDirectory, 'session.json'),
+    `${JSON.stringify({
+      schemaVersion: 1,
+      workspace: 'project',
+      date,
+      id: sessionId,
+      status: 'active',
+      startedAt: '2026-10-22T00:00:00.000Z',
+    })}\n`,
+    'utf8',
+  );
   return { root, sessionDirectory };
 }
 
 function run(root, input, extraArgs = []) {
-  return spawnSync(process.execPath, [
-    cliPath,
-    '--workspace', root,
-    '--session', session,
-    '--output', 'handoff.json',
-    ...extraArgs,
-  ], { cwd: root, input, encoding: 'utf8', windowsHide: true });
+  return spawnSync(process.execPath, [cliPath, '--workspace', root, '--session', session, '--output', 'handoff.json', ...extraArgs], { cwd: root, input, encoding: 'utf8', windowsHide: true });
 }
 
-test('writes structured UTF-8 JSON and returns bounded log tail with caller exit observation', async (t) => {
+test('writes structured UTF-8 JSON and returns bounded log tail with caller exit observation', async t => {
   const { root, sessionDirectory } = await fixture(t);
   const payload = {
     brief: { taskContext: 'Existing agent-context task output', delta: 'Keep the brief concise.' },
     exitObservation: { code: 7, signal: null },
   };
-  const log = `${Array.from({ length: 500 }, (_, index) =>
-    `${String(index).padStart(3, '0')}: ${'é'.repeat(24)}`).join('\n')}\n`;
+  const log = `${Array.from({ length: 500 }, (_, index) => `${String(index).padStart(3, '0')}: ${'é'.repeat(24)}`).join('\n')}\n`;
   await writeFile(join(sessionDirectory, 'worker.log'), log, 'utf8');
 
   const result = run(root, JSON.stringify(payload), ['--log', 'worker.log']);
@@ -70,7 +67,7 @@ test('writes structured UTF-8 JSON and returns bounded log tail with caller exit
   assert.doesNotMatch(summary.log.tail, /000:/);
 });
 
-test('reports a missing named log by name before writing handoff output', async (t) => {
+test('reports a missing named log by name before writing handoff output', async t => {
   const { root, sessionDirectory } = await fixture(t);
 
   const result = run(root, JSON.stringify({ brief: 'valid' }), ['--log', 'missing.log']);
@@ -81,7 +78,7 @@ test('reports a missing named log by name before writing handoff output', async 
   await assert.rejects(lstat(join(sessionDirectory, 'handoff.json')));
 });
 
-test('drops leading UTF-8 continuation bytes when a bounded tail starts inside a four-byte character', async (t) => {
+test('drops leading UTF-8 continuation bytes when a bounded tail starts inside a four-byte character', async t => {
   for (const continuationBytes of [1, 2, 3]) {
     const { root, sessionDirectory } = await fixture(t);
     const suffix = 'x'.repeat(continuationBytes);
@@ -100,23 +97,17 @@ test('drops leading UTF-8 continuation bytes when a bounded tail starts inside a
   }
 });
 
-test('rejects malformed, BOM-prefixed, invalid UTF-8, and oversized input before creating output', async (t) => {
+test('rejects malformed, BOM-prefixed, invalid UTF-8, and oversized input before creating output', async t => {
   const { root, sessionDirectory } = await fixture(t);
   const oversized = Buffer.from(JSON.stringify({ note: 'x'.repeat(256 * 1024) }));
-  for (const input of [
-    '{',
-    '\uFEFF{"valid":true}',
-    '{"exitObservation":{"code":1.5}}',
-    Buffer.from([0xc3, 0x28]),
-    oversized,
-  ]) {
+  for (const input of ['{', '\uFEFF{"valid":true}', '{"exitObservation":{"code":1.5}}', Buffer.from([0xc3, 0x28]), oversized]) {
     const result = run(root, input);
     assert.notEqual(result.status, 0, Buffer.isBuffer(input) ? `${input.length} input bytes` : JSON.stringify(input));
     await assert.rejects(lstat(join(sessionDirectory, 'handoff.json')));
   }
 });
 
-test('rejects duplicate arguments, invalid session paths, and output names outside the session', async (t) => {
+test('rejects duplicate arguments, invalid session paths, and output names outside the session', async t => {
   const { root, sessionDirectory } = await fixture(t);
   const baseArgs = ['--workspace', root, '--session', session, '--output', 'handoff.json'];
   for (const args of [
@@ -136,7 +127,7 @@ test('rejects duplicate arguments, invalid session paths, and output names outsi
   }
 });
 
-test('does not overwrite an existing session file', async (t) => {
+test('does not overwrite an existing session file', async t => {
   const { root, sessionDirectory } = await fixture(t);
   const outputPath = join(sessionDirectory, 'handoff.json');
   await writeFile(outputPath, 'keep unrelated content\n', 'utf8');
@@ -147,7 +138,7 @@ test('does not overwrite an existing session file', async (t) => {
   assert.equal(await readFile(outputPath, 'utf8'), 'keep unrelated content\n');
 });
 
-test('refuses a session path linked outside the workspace', async (t) => {
+test('refuses a session path linked outside the workspace', async t => {
   const { root, sessionDirectory } = await fixture(t);
   const outside = await mkdtemp(join(tmpdir(), 'agent output external-'));
   t.after(async () => rm(outside, { recursive: true, force: true }));
@@ -170,7 +161,7 @@ test('refuses a session path linked outside the workspace', async (t) => {
   await assert.rejects(lstat(join(outside, 'handoff.json')));
 });
 
-test('refuses a log link outside the session', async (t) => {
+test('refuses a log link outside the session', async t => {
   const { root, sessionDirectory } = await fixture(t);
   const outside = await mkdtemp(join(tmpdir(), 'agent output external log-'));
   t.after(async () => rm(outside, { recursive: true, force: true }));

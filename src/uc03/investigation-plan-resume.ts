@@ -1,26 +1,8 @@
-import {
-  computeCanonicalSha256,
-  parseApprovalBinding,
-  validateApprovalBinding,
-  validateStateTransition,
-} from '../contracts/foundation/uc03.ts';
-import type {
-  ApprovalBinding,
-  ApprovalBindingContext,
-  Baseline,
-  FixPlan,
-  TaskState,
-} from '../contracts/foundation/uc03.ts';
+import { computeCanonicalSha256, parseApprovalBinding, validateApprovalBinding, validateStateTransition } from '../contracts/foundation/uc03.ts';
+import type { ApprovalBinding, ApprovalBindingContext, Baseline, FixPlan, TaskState } from '../contracts/foundation/uc03.ts';
 import { validateHostSnapshotFacts } from './investigation-snapshot.ts';
 import type { HostSnapshotValidationResult } from './investigation-snapshot.ts';
-import type {
-  BaselineEvidenceCandidate,
-  InvestigationConfigPort,
-  InvestigationPorts,
-  PlanPreparationResult,
-  TrustedHostPort,
-  TrustedHostSnapshot,
-} from './investigation-types.ts';
+import type { BaselineEvidenceCandidate, InvestigationConfigPort, InvestigationPorts, PlanPreparationResult, TrustedHostPort, TrustedHostSnapshot } from './investigation-types.ts';
 
 export interface PlanApprovalContinuation {
   readonly ports: InvestigationPorts;
@@ -169,10 +151,7 @@ export async function finishPlanApproval(input: PlanApprovalContinuation): Promi
     };
   }
 
-  if (
-    !Array.isArray(reloadedState.plan?.evidenceRefs) ||
-    computeCanonicalSha256(reloadedState.plan.evidenceRefs) !== computeCanonicalSha256(completeEvidenceRefs)
-  ) {
+  if (!Array.isArray(reloadedState.plan?.evidenceRefs) || computeCanonicalSha256(reloadedState.plan.evidenceRefs) !== computeCanonicalSha256(completeEvidenceRefs)) {
     return {
       outcome: 'rejected',
       plan: fixPlan,
@@ -181,10 +160,7 @@ export async function finishPlanApproval(input: PlanApprovalContinuation): Promi
     };
   }
 
-  if (
-    !Array.isArray(reloadedState.evidenceRefs) ||
-    computeCanonicalSha256(reloadedState.evidenceRefs) !== computeCanonicalSha256(updatedEvidenceRefs)
-  ) {
+  if (!Array.isArray(reloadedState.evidenceRefs) || computeCanonicalSha256(reloadedState.evidenceRefs) !== computeCanonicalSha256(updatedEvidenceRefs)) {
     return {
       outcome: 'rejected',
       plan: fixPlan,
@@ -227,7 +203,7 @@ export async function finishPlanApproval(input: PlanApprovalContinuation): Promi
         checkSetDigest: validBaseline.checkSetDigest,
         expectedTestFiles: validBaselineCandidate.expectedTestFiles,
       },
-      validBaselineCandidate.requiredChecks
+      validBaselineCandidate.requiredChecks,
     );
     if (!snapshotValidation.ok) {
       return {
@@ -286,10 +262,7 @@ export async function finishPlanApproval(input: PlanApprovalContinuation): Promi
     reloadedPolicyId = loadedConfig.configId;
     reloadedPolicyVersion = loadedConfig.configVersion;
   } else if (reloadedState.taskContext?.configId && reloadedState.taskContext?.configVersion) {
-    if (
-      reloadedState.taskContext.configId !== policyId ||
-      reloadedState.taskContext.configVersion !== policyVersion
-    ) {
+    if (reloadedState.taskContext.configId !== policyId || reloadedState.taskContext.configVersion !== policyVersion) {
       return {
         outcome: 'rejected',
         plan: fixPlan,
@@ -323,7 +296,7 @@ export async function finishPlanApproval(input: PlanApprovalContinuation): Promi
       plan: fixPlan,
       binding: decision,
       state: persistedAwaitPlanState,
-      reason: `Approval binding validation failed: ${bindingValidation.errors.map((e) => e.message).join(', ')}`,
+      reason: `Approval binding validation failed: ${bindingValidation.errors.map(e => e.message).join(', ')}`,
     };
   }
 
@@ -373,31 +346,23 @@ export async function finishPlanApproval(input: PlanApprovalContinuation): Promi
       stateVersion: persistedAwaitPlanState.stateVersion + 1,
       node: 'AwaitFeedback',
       nextAction: 'await-feedback',
-      ...(persistedAwaitPlanState.budgetLedgers !== undefined
-        ? { budgetLedgers: persistedAwaitPlanState.budgetLedgers }
-        : { budgetLedgers: [] }),
+      ...(persistedAwaitPlanState.budgetLedgers !== undefined ? { budgetLedgers: persistedAwaitPlanState.budgetLedgers } : { budgetLedgers: [] }),
     };
 
-    const feedbackTransitionVal = validateStateTransition(
-      persistedAwaitPlanState,
-      awaitFeedbackCandidate
-    );
+    const feedbackTransitionVal = validateStateTransition(persistedAwaitPlanState, awaitFeedbackCandidate);
     if (!feedbackTransitionVal.ok) {
       return {
         outcome: 'rejected',
         plan: fixPlan,
         binding: decision,
         state: persistedAwaitPlanState,
-        reason: `State transition to AwaitFeedback failed: ${feedbackTransitionVal.errors.map((e) => e.message).join(', ')}`,
+        reason: `State transition to AwaitFeedback failed: ${feedbackTransitionVal.errors.map(e => e.message).join(', ')}`,
       };
     }
 
     let finalFeedbackState: TaskState;
     try {
-      finalFeedbackState = await ports.state.transition(
-        awaitFeedbackCandidate,
-        persistedAwaitPlanState.stateVersion
-      );
+      finalFeedbackState = await ports.state.transition(awaitFeedbackCandidate, persistedAwaitPlanState.stateVersion);
       await ports.state.checkpoint(finalFeedbackState);
     } catch (err: unknown) {
       return {
@@ -436,7 +401,7 @@ export async function finishPlanApproval(input: PlanApprovalContinuation): Promi
         plan: fixPlan,
         binding: decision,
         state: persistedAwaitPlanState,
-        reason: `Approval binding freshness validation failed: ${admission.errors.map((e) => e.message).join(', ')}`,
+        reason: `Approval binding freshness validation failed: ${admission.errors.map(e => e.message).join(', ')}`,
       };
     }
 
@@ -449,39 +414,30 @@ export async function finishPlanApproval(input: PlanApprovalContinuation): Promi
       planVersion: fixPlan.planVersion,
       activeDecisionId: decision.decisionId,
       evidenceRefs: updatedEvidenceRefs,
-      ...(persistedAwaitPlanState.budgetLedgers !== undefined
-        ? { budgetLedgers: persistedAwaitPlanState.budgetLedgers }
-        : { budgetLedgers: [] }),
+      ...(persistedAwaitPlanState.budgetLedgers !== undefined ? { budgetLedgers: persistedAwaitPlanState.budgetLedgers } : { budgetLedgers: [] }),
     };
 
-    const patchTransitionVal = validateStateTransition(
-      persistedAwaitPlanState,
-      patchCandidate,
-      {
-        trusted: {
-          approval: {
-            binding: decision,
-            freshness: freshnessContext,
-          },
+    const patchTransitionVal = validateStateTransition(persistedAwaitPlanState, patchCandidate, {
+      trusted: {
+        approval: {
+          binding: decision,
+          freshness: freshnessContext,
         },
-      }
-    );
+      },
+    });
     if (!patchTransitionVal.ok) {
       return {
         outcome: 'rejected',
         plan: fixPlan,
         binding: decision,
         state: persistedAwaitPlanState,
-        reason: `State transition to Patch failed: ${patchTransitionVal.errors.map((e) => e.message).join(', ')}`,
+        reason: `State transition to Patch failed: ${patchTransitionVal.errors.map(e => e.message).join(', ')}`,
       };
     }
 
     let finalPatchState: TaskState;
     try {
-      finalPatchState = await ports.state.transition(
-        patchCandidate,
-        persistedAwaitPlanState.stateVersion
-      );
+      finalPatchState = await ports.state.transition(patchCandidate, persistedAwaitPlanState.stateVersion);
       await ports.state.checkpoint(finalPatchState);
     } catch (err: unknown) {
       return {

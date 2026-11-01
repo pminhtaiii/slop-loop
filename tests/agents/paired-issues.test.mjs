@@ -22,7 +22,13 @@ test('configured publication assigns the invoking human on both issues and prese
   const configured = { ...client, execute: project.execute };
   const result = await publish(root, bodyFile, configured);
   assert.equal(result.status, 'PUBLISHED');
-  assert.deepEqual([...project.state.assignments.entries()], [[publicRepository, 'driver'], [privateRepository, 'driver']]);
+  assert.deepEqual(
+    [...project.state.assignments.entries()],
+    [
+      [publicRepository, 'driver'],
+      [privateRepository, 'driver'],
+    ],
+  );
   assert.deepEqual([...project.state.items.keys()], [result.submission.url]);
   await publish(root, bodyFile, configured);
   assert.deepEqual(project.state.writes, ['add']);
@@ -46,10 +52,13 @@ async function workspace(t) {
   t.after(() => rm(root, { recursive: true, force: true }));
   const initialized = spawnSync('git', ['init', '--initial-branch=main'], { cwd: root, encoding: 'utf8' });
   assert.equal(initialized.status, 0, initialized.stderr);
-  await writeFile(join(root, 'publication-targets.json'), JSON.stringify({
-    schemaVersion: 1,
-    submission: { remote: 'submission', base: 'development' },
-  }));
+  await writeFile(
+    join(root, 'publication-targets.json'),
+    JSON.stringify({
+      schemaVersion: 1,
+      submission: { remote: 'submission', base: 'development' },
+    }),
+  );
   return root;
 }
 
@@ -290,14 +299,20 @@ test('changed local target identity and incomplete issue pagination fail before 
   await publish(root, bodyFile, client);
   client.writes.length = 0;
   const configPath = join(root, 'publication-targets.json');
-  await writeFile(configPath, JSON.stringify({
-    schemaVersion: 1,
-    submission: { remote: 'submission', base: 'development' },
-  }));
-  const changedClient = { ...client, execute: (binary, args, cwd, timeout) => {
-    if (binary === 'git' && args[2] === 'submission') return 'https://github.com/course/changed.git';
-    return client.execute(binary, args, cwd, timeout);
-  } };
+  await writeFile(
+    configPath,
+    JSON.stringify({
+      schemaVersion: 1,
+      submission: { remote: 'submission', base: 'development' },
+    }),
+  );
+  const changedClient = {
+    ...client,
+    execute: (binary, args, cwd, timeout) => {
+      if (binary === 'git' && args[2] === 'submission') return 'https://github.com/course/changed.git';
+      return client.execute(binary, args, cwd, timeout);
+    },
+  };
   await assert.rejects(publish(root, bodyFile, changedClient), /targets changed/);
   assert.equal(client.writes.length, 0);
 

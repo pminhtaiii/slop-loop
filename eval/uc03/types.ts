@@ -1,12 +1,9 @@
 export const UC03_CONTRACT_VERSION = '0.1.0';
 export const C17_NOT_RUN_LIMITATION = 'C17 private grading was not run; no isolation evidence is established.';
 
-export const EVALUATION_CASE_IDS = [
-  'C01', 'C02', 'C03', 'C04', 'C05', 'C06', 'C07', 'C08', 'C09',
-  'C10', 'C11', 'C12', 'C13', 'C14', 'C15', 'C16', 'C17',
-] as const;
+export const EVALUATION_CASE_IDS = ['C01', 'C02', 'C03', 'C04', 'C05', 'C06', 'C07', 'C08', 'C09', 'C10', 'C11', 'C12', 'C13', 'C14', 'C15', 'C16', 'C17'] as const;
 
-export type EvaluationCaseId = typeof EVALUATION_CASE_IDS[number];
+export type EvaluationCaseId = (typeof EVALUATION_CASE_IDS)[number];
 export type EvaluationOutcome = 'COMPLETED' | 'INCOMPLETE' | 'IMPLEMENTED_UNVERIFIED' | 'FAILED';
 export type EvaluationMode = 'mock' | 'real';
 export type CaseStatus = 'pass' | 'fail' | 'error' | 'not-run';

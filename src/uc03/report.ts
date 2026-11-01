@@ -12,15 +12,8 @@ import {
   type TaskState,
   type VerificationResult,
 } from '../contracts/foundation/uc03.ts';
-import {
-  isProtectedPathRef,
-  sanitizeDiagnostic,
-} from '../foundation/telemetry.ts';
-import {
-  evaluateDeterministicCompletion,
-  type CompletionPredicateInput,
-  type TrustedReviewRecord,
-} from './verification.ts';
+import { isProtectedPathRef, sanitizeDiagnostic } from '../foundation/telemetry.ts';
+import { evaluateDeterministicCompletion, type CompletionPredicateInput, type TrustedReviewRecord } from './verification.ts';
 
 import {
   DEFAULT_DIFF_BYTES,
@@ -159,18 +152,18 @@ function freezeReportGraph(value: object): void {
   Object.freeze(value);
 }
 
-function hasValidCompletionBoundary(
-  input: Pick<BuildFinalReportInput, 'task' | 'state' | 'baseline' | 'authorizedDiffDigest' | 'trustedReviewRecord'>,
-): boolean {
+function hasValidCompletionBoundary(input: Pick<BuildFinalReportInput, 'task' | 'state' | 'baseline' | 'authorizedDiffDigest' | 'trustedReviewRecord'>): boolean {
   try {
     const review = input.trustedReviewRecord;
     if (review !== undefined && (!review || typeof review !== 'object' || Array.isArray(review))) return false;
     const record = review as unknown as Record<string, unknown> | undefined;
-    return validateBugTask(input.task).ok &&
+    return (
+      validateBugTask(input.task).ok &&
       validateTaskState(input.state).ok &&
       validateBaseline(input.baseline).ok &&
       (input.authorizedDiffDigest === undefined || typeof input.authorizedDiffDigest === 'string') &&
-      (!record || Object.values(record).every((field) => typeof field === 'string'));
+      (!record || Object.values(record).every(field => typeof field === 'string'))
+    );
   } catch {
     return false;
   }
@@ -224,21 +217,15 @@ function buildFinalReportSnapshot(input: BuildFinalReportInput): FinalReport {
   const taskId = safeMetadata(task.taskId, 'task.taskId', customPatterns);
   const runId = safeMetadata(state.runId, 'state.runId', customPatterns);
   const repositoryId = safeMetadata(task.repositoryId, 'task.repositoryId', customPatterns);
-  const diffDigest = currentDiffDigest
-    ? safeMetadata(currentDiffDigest, 'currentDiffDigest', customPatterns)
-    : '';
-  const safeCurrentRepoDigest = currentRepoDigest
-    ? safeMetadata(currentRepoDigest, 'currentRepoDigest', customPatterns)
-    : '';
-  const baselineRef = baseline
-    ? safeReference(baseline.evidenceId, 'baseline.evidenceId', customPatterns)
-    : undefined;
+  const diffDigest = currentDiffDigest ? safeMetadata(currentDiffDigest, 'currentDiffDigest', customPatterns) : '';
+  const safeCurrentRepoDigest = currentRepoDigest ? safeMetadata(currentRepoDigest, 'currentRepoDigest', customPatterns) : '';
+  const baselineRef = baseline ? safeReference(baseline.evidenceId, 'baseline.evidenceId', customPatterns) : undefined;
   const inventory = combineChangedFiles(inputChangedFiles, state.changedPaths, customPatterns);
   const changedFiles = inventory.files;
   const verifications = verificationSnapshot(verificationResults, customPatterns);
   const review = reviewSnapshot(reviewResult, customPatterns);
   const failureReasons: string[] = [];
-  if (changedFiles.some((file) => isProtectedPath(file) || isProtectedPathRef(file))) {
+  if (changedFiles.some(file => isProtectedPath(file) || isProtectedPathRef(file))) {
     failureReasons.push('Changed-file inventory contains a protected path');
   }
   if (!inventory.consistent) failureReasons.push('Changed-file inventory does not match persisted task state');
@@ -253,9 +240,7 @@ function buildFinalReportSnapshot(input: BuildFinalReportInput): FinalReport {
   let finalOutcome: TaskOutcome;
   let delivery: Delivery | undefined;
   const hasModifications = changedFiles.length > 0 || (Array.isArray(state.changedPaths) && state.changedPaths.length > 0);
-  const fallbackUnverifiedOutcome: TaskOutcome = hasModifications
-    ? 'IMPLEMENTED_UNVERIFIED'
-    : 'INCOMPLETE';
+  const fallbackUnverifiedOutcome: TaskOutcome = hasModifications ? 'IMPLEMENTED_UNVERIFIED' : 'INCOMPLETE';
 
   const origProtected = originalProtectedTestsDigest;
   const currProtected = currentProtectedTestsDigest;
@@ -273,9 +258,15 @@ function buildFinalReportSnapshot(input: BuildFinalReportInput): FinalReport {
     typeof currProtected === 'string' &&
     inventory.consistent &&
     failureReasons.length === 0;
-  const invalidBoundary = hasCompletionEvidence && !hasValidCompletionBoundary({
-    task, state, baseline, authorizedDiffDigest, trustedReviewRecord,
-  });
+  const invalidBoundary =
+    hasCompletionEvidence &&
+    !hasValidCompletionBoundary({
+      task,
+      state,
+      baseline,
+      authorizedDiffDigest,
+      trustedReviewRecord,
+    });
   if (invalidBoundary) {
     failureReasons.push('Invalid completion evidence input; completion withheld');
   }
@@ -312,9 +303,7 @@ function buildFinalReportSnapshot(input: BuildFinalReportInput): FinalReport {
     }
   } else {
     isComplete = false;
-    finalOutcome = overrideOutcome && overrideOutcome !== 'COMPLETED'
-      ? overrideOutcome
-      : fallbackUnverifiedOutcome;
+    finalOutcome = overrideOutcome && overrideOutcome !== 'COMPLETED' ? overrideOutcome : fallbackUnverifiedOutcome;
     delivery = undefined;
     if (canRunCompletionEvaluation && failureReasons.length > 0) {
       finalOutcome = 'IMPLEMENTED_UNVERIFIED';
@@ -332,8 +321,7 @@ function buildFinalReportSnapshot(input: BuildFinalReportInput): FinalReport {
     failureReasons.push(...sanitizedStringList(inputFailureReasons, 'failureReasons', customPatterns));
   }
 
-  const sanitizedReasons = Object.freeze(failureReasons.slice(0, MAX_REPORT_ITEMS)
-    .map((reason) => boundedText(reason, DEFAULT_SUMMARY_BYTES, customPatterns)));
+  const sanitizedReasons = Object.freeze(failureReasons.slice(0, MAX_REPORT_ITEMS).map(reason => boundedText(reason, DEFAULT_SUMMARY_BYTES, customPatterns)));
   const sanitizedLimitations = sanitizedStringList(limitations, 'limitations', customPatterns);
 
   let patch: string | undefined;
@@ -361,11 +349,7 @@ function buildFinalReportSnapshot(input: BuildFinalReportInput): FinalReport {
 
   const verificationRefs = verifications.refs;
 
-  const evidenceRefs = [
-    ...(baselineRef ? [baselineRef] : []),
-    ...verificationRefs,
-    ...(review.ref ? [review.ref] : []),
-  ];
+  const evidenceRefs = [...(baselineRef ? [baselineRef] : []), ...verificationRefs, ...(review.ref ? [review.ref] : [])];
 
   const report: FinalReport = {
     taskId,
@@ -403,8 +387,15 @@ export function formatReportMarkdown(report: FinalReport): string {
   try {
     if (!report || typeof report !== 'object' || !issuedReports.has(report)) throw new Error();
     if (!Object.isFrozen(report) || !isTaskOutcome(report.outcome)) throw new Error();
-    if (typeof report.isComplete !== 'boolean' || report.isComplete !== (report.outcome === 'COMPLETED') ||
-      !report.diff || typeof report.diff !== 'object' || !report.evidence || typeof report.evidence !== 'object') throw new Error();
+    if (
+      typeof report.isComplete !== 'boolean' ||
+      report.isComplete !== (report.outcome === 'COMPLETED') ||
+      !report.diff ||
+      typeof report.diff !== 'object' ||
+      !report.evidence ||
+      typeof report.evidence !== 'object'
+    )
+      throw new Error();
     const taskId = safeMetadata(report.taskId, 'taskId');
     const runId = safeMetadata(report.runId, 'runId');
     const repositoryId = safeMetadata(report.repositoryId, 'repositoryId');
@@ -416,9 +407,7 @@ export function formatReportMarkdown(report: FinalReport): string {
     const changedFiles = safePaths(report.diff.changedFiles, 'diff.changedFiles');
     const rawPatch = report.diff.patch;
     if (rawPatch !== undefined && typeof rawPatch !== 'string') throw new Error();
-    const patch = typeof rawPatch === 'string'
-      ? sanitizeDiagnostic(rawPatch, { maxBytes: DEFAULT_DIFF_BYTES })
-      : undefined;
+    const patch = typeof rawPatch === 'string' ? sanitizeDiagnostic(rawPatch, { maxBytes: DEFAULT_DIFF_BYTES }) : undefined;
     if (report.diff.truncated !== undefined && typeof report.diff.truncated !== 'boolean') throw new Error();
     const baselineRef = report.evidence.baselineRef === undefined ? undefined : safeReference(report.evidence.baselineRef, 'evidence.baselineRef');
     const verificationRefs = safeReferences(report.evidence.verificationRefs, 'evidence.verificationRefs');
@@ -429,16 +418,20 @@ export function formatReportMarkdown(report: FinalReport): string {
     const milestones = reportMilestones(report.milestones);
     if (report.outcome === 'COMPLETED') {
       const checked = validateDelivery(report.delivery, {
-        expectedTaskId: taskId, expectedRunId: runId, expectedDiffDigest: diffDigest,
-        expectedBaselineRef: baselineRef ?? '', expectedReviewRef: reviewRef ?? '',
+        expectedTaskId: taskId,
+        expectedRunId: runId,
+        expectedDiffDigest: diffDigest,
+        expectedBaselineRef: baselineRef ?? '',
+        expectedReviewRef: reviewRef ?? '',
       });
       const expectedRefs = [baselineRef, ...verificationRefs, reviewRef];
-      const matchesDelivery = checked.ok && checked.value.outcome === 'COMPLETED' &&
+      const matchesDelivery =
+        checked.ok &&
+        checked.value.outcome === 'COMPLETED' &&
         JSON.stringify(checked.value.changedFiles) === JSON.stringify(changedFiles) &&
         JSON.stringify(checked.value.verificationRefs) === JSON.stringify(verificationRefs) &&
         checked.value.safeNextAction === safeNextAction;
-      if (!matchesDelivery || safeNextAction !== 'ready-for-human-review' ||
-        JSON.stringify(report.evidence.evidenceRefs) !== JSON.stringify(expectedRefs)) throw new Error();
+      if (!matchesDelivery || safeNextAction !== 'ready-for-human-review' || JSON.stringify(report.evidence.evidenceRefs) !== JSON.stringify(expectedRefs)) throw new Error();
     } else if (report.delivery !== undefined) {
       throw new Error();
     }
@@ -452,7 +445,7 @@ export function formatReportMarkdown(report: FinalReport): string {
       '',
       '### Changes and Diff',
       `- **Diff Digest**: \`${diffDigest || 'none'}\``,
-      `- **Changed Files**: ${changedFiles.length > 0 ? changedFiles.map((f) => `\`${f}\``).join(', ') : 'none'}`,
+      `- **Changed Files**: ${changedFiles.length > 0 ? changedFiles.map(f => `\`${f}\``).join(', ') : 'none'}`,
     ];
 
     if (patch?.sanitizedContent) {
@@ -471,14 +464,14 @@ export function formatReportMarkdown(report: FinalReport): string {
     lines.push(
       '### Evidence',
       `- **Baseline**: \`${baselineRef ?? 'none'}\``,
-      `- **Verification Checks**: ${verificationRefs.length > 0 ? verificationRefs.map((r) => `\`${r}\``).join(', ') : 'none'}`,
+      `- **Verification Checks**: ${verificationRefs.length > 0 ? verificationRefs.map(r => `\`${r}\``).join(', ') : 'none'}`,
       `- **Review**: \`${reviewRef ?? 'none'}\``,
       '',
       '### Resource Usage & Accounting',
       `- **Tokens Consumed**: ${usage.tokensConsumed.toLocaleString()}`,
       `- **Estimated Cost**: $${usage.costUsd.toFixed(4)} USD`,
       `- **Material Replans**: ${usage.replanCount}`,
-      ''
+      '',
     );
 
     if (failureReasons.length > 0) {

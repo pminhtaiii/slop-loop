@@ -11,9 +11,7 @@ export interface ValidationError {
   readonly code: string;
 }
 
-export type ValidationResult<T> =
-  | { readonly ok: true; readonly value: T }
-  | { readonly ok: false; readonly errors: readonly ValidationError[] };
+export type ValidationResult<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly errors: readonly ValidationError[] };
 
 export type StepStatus = 'todo' | 'doing' | 'done' | 'failed';
 
@@ -183,15 +181,7 @@ export interface CheckpointRecord {
 }
 
 /* Operation result discriminant types */
-export type OperationDiscriminator =
-  | 'ok'
-  | 'held'
-  | 'invalid'
-  | 'denied'
-  | 'conflict'
-  | 'exhausted'
-  | 'unavailable'
-  | 'uncertain';
+export type OperationDiscriminator = 'ok' | 'held' | 'invalid' | 'denied' | 'conflict' | 'exhausted' | 'unavailable' | 'uncertain';
 
 export interface BaseOperationResult {
   readonly status: OperationDiscriminator;

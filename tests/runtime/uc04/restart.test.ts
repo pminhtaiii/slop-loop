@@ -8,14 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 describe('UC-04: Durable Foundation Process Restart & Crash Recovery (T012)', () => {
   let tempDir: string;
-  const childScript = fileURLToPath(
-    new URL(
-      import.meta.url.endsWith('.js')
-        ? '../support/uc04/restart-child.js'
-        : '../support/uc04/restart-child.ts',
-      import.meta.url
-    )
-  );
+  const childScript = fileURLToPath(new URL(import.meta.url.endsWith('.js') ? '../support/uc04/restart-child.js' : '../support/uc04/restart-child.ts', import.meta.url));
 
   beforeEach(async () => {
     tempDir = await mkdtemp(join(tmpdir(), 'slop-restart-test-'));
@@ -29,44 +22,28 @@ describe('UC-04: Durable Foundation Process Restart & Crash Recovery (T012)', ()
     const taskId = 'task-restart-t012';
 
     // 1. Process 1: Initialize Task
-    const initRes = spawnSync(
-      process.execPath,
-      [childScript, '--store-dir', tempDir, '--task-id', taskId, '--command', 'init'],
-      { encoding: 'utf8' }
-    );
+    const initRes = spawnSync(process.execPath, [childScript, '--store-dir', tempDir, '--task-id', taskId, '--command', 'init'], { encoding: 'utf8' });
     assert.equal(initRes.status, 0, `Init failed: ${initRes.stderr}`);
     const initOut = JSON.parse(initRes.stdout.trim());
     assert.equal(initOut.status, 'INIT_OK');
     const pid1 = initOut.pid;
 
     // 2. Process 2: Execute Step 1
-    const step1Res = spawnSync(
-      process.execPath,
-      [childScript, '--store-dir', tempDir, '--task-id', taskId, '--command', 'step1'],
-      { encoding: 'utf8' }
-    );
+    const step1Res = spawnSync(process.execPath, [childScript, '--store-dir', tempDir, '--task-id', taskId, '--command', 'step1'], { encoding: 'utf8' });
     assert.equal(step1Res.status, 0, `Step 1 failed: ${step1Res.stderr}`);
     const step1Out = JSON.parse(step1Res.stdout.trim());
     assert.equal(step1Out.status, 'STEP1_OK');
     const pid2 = step1Out.pid;
 
     // 3. Process 3: Start Step 2 & Abruptly Crash (code 137)
-    const crashRes = spawnSync(
-      process.execPath,
-      [childScript, '--store-dir', tempDir, '--task-id', taskId, '--command', 'crash-on-step2'],
-      { encoding: 'utf8' }
-    );
+    const crashRes = spawnSync(process.execPath, [childScript, '--store-dir', tempDir, '--task-id', taskId, '--command', 'crash-on-step2'], { encoding: 'utf8' });
     assert.equal(crashRes.status, 137, 'Expected child process to exit with code 137');
     const crashOut = JSON.parse(crashRes.stdout.trim());
     assert.equal(crashOut.status, 'CRASHING_BEFORE_SETTLE');
     const pid3 = crashOut.pid;
 
     // 4. Process 4: Fresh Process Resumes and Completes Workflow
-    const resumeRes = spawnSync(
-      process.execPath,
-      [childScript, '--store-dir', tempDir, '--task-id', taskId, '--command', 'resume'],
-      { encoding: 'utf8' }
-    );
+    const resumeRes = spawnSync(process.execPath, [childScript, '--store-dir', tempDir, '--task-id', taskId, '--command', 'resume'], { encoding: 'utf8' });
     assert.equal(resumeRes.status, 0, `Resume failed: ${resumeRes.stderr}`);
     const resumeOut = JSON.parse(resumeRes.stdout.trim());
     assert.equal(resumeOut.status, 'RESUME_COMPLETED_OK');

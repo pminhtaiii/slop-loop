@@ -64,16 +64,36 @@ test('C16 unrecognized caller keys cannot leak protected data through diagnostic
 
 test('C16 accessor input is refused without invoking its getter', () => {
   let effects = 0;
-  const task = Object.defineProperty({}, 'reproduction', { enumerable: true, get() { effects++; return 'secret'; } });
+  const task = Object.defineProperty({}, 'reproduction', {
+    enumerable: true,
+    get() {
+      effects++;
+      return 'secret';
+    },
+  });
   assert.equal(receiveBugTask({ task }).status, 'invalid-input');
   assert.equal(effects, 0);
 });
 
 for (const [name, task] of [
   ['prototype', Object.create({ reproduction: 'inherited' }) as unknown],
-  ['cycle', (() => { const value: Record<string, unknown> = {}; value['self'] = value; return value; })()],
+  [
+    'cycle',
+    (() => {
+      const value: Record<string, unknown> = {};
+      value['self'] = value;
+      return value;
+    })(),
+  ],
   ['sparse', { ...createFixtureBugTask(), acceptanceCriteria: new Array(2) }],
-  ['deep', (() => { let value: unknown = 'leaf'; for (let i = 0; i < 34; i++) value = { nested: value }; return value; })()],
+  [
+    'deep',
+    (() => {
+      let value: unknown = 'leaf';
+      for (let i = 0; i < 34; i++) value = { nested: value };
+      return value;
+    })(),
+  ],
   ['oversized', { ...createFixtureBugTask(), observedBehavior: 'x'.repeat(1048577) }],
   ['too-many-values', { ...createFixtureBugTask(), constraints: Array.from({ length: 20001 }, () => 'constraint') }],
 ] as const) {
@@ -97,9 +117,18 @@ test('C16 nested Proxy is refused before any introspection trap runs', () => {
   let effects = 0;
   const task = createFixtureBugTask();
   const constraints = new Proxy([...task.constraints], {
-    getPrototypeOf(target) { effects++; return Reflect.getPrototypeOf(target); },
-    ownKeys(target) { effects++; return Reflect.ownKeys(target); },
-    getOwnPropertyDescriptor(target, key) { effects++; return Reflect.getOwnPropertyDescriptor(target, key); },
+    getPrototypeOf(target) {
+      effects++;
+      return Reflect.getPrototypeOf(target);
+    },
+    ownKeys(target) {
+      effects++;
+      return Reflect.ownKeys(target);
+    },
+    getOwnPropertyDescriptor(target, key) {
+      effects++;
+      return Reflect.getOwnPropertyDescriptor(target, key);
+    },
   });
   const result = receiveBugTask({ task: { ...task, constraints } });
   assert.deepEqual({ status: result.status, effects }, { status: 'invalid-input', effects: 0 });

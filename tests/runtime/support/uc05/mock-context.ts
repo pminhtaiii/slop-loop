@@ -1,5 +1,11 @@
 import { journalClaimV02 } from '../../../../src/approvals/control-v02.ts';
-import type { AttemptReceiptV02, ClaimReceiptV02, ExecutorIdentityV02, RepositoryAdmissionContextV02, RepositoryAdmissionTrustedContextV02 } from '../../../../src/contracts/foundation/uc03/v02/ports.ts';
+import type {
+  AttemptReceiptV02,
+  ClaimReceiptV02,
+  ExecutorIdentityV02,
+  RepositoryAdmissionContextV02,
+  RepositoryAdmissionTrustedContextV02,
+} from '../../../../src/contracts/foundation/uc03/v02/ports.ts';
 import { validateAdmissionV02 } from '../../../../src/contracts/foundation/uc03/v02/admission.ts';
 import { validateAttemptReceiptV02 } from '../../../../src/contracts/foundation/uc03/v02/attempt.ts';
 import { type MemoryStatePortV02, NEUTRAL_ATTEMPT_RECEIPT_V02, isNeutralAttemptReceiptV02 } from '../uc03/memory-state.ts';
@@ -72,20 +78,22 @@ export function createMockActivityControl(profileInput: unknown): MockActivityCo
   const attempts = new Map<string, MutableAttempt>();
   const effects: MockEffectAttempt[] = [];
 
-  const result = <T>(outcome: SafeOperationOutcome, safeReasonCode: string, value: T | null = null): MockActivityResponse<T> =>
-    freezeCopy({ outcome, safeReasonCode, value });
+  const result = <T>(outcome: SafeOperationOutcome, safeReasonCode: string, value: T | null = null): MockActivityResponse<T> => freezeCopy({ outcome, safeReasonCode, value });
 
   const admitAttempt = (input: unknown): MockActivityResponse<MockActivityAttempt> => {
     if (!validAttemptInput(input)) return result('invalid', 'invalid-activity-claim');
     const { attemptId, control, claim } = input;
     if (control.mode !== 'runnable') return result('paused', 'task-control-fences-activity');
-    if (control.taskId !== claim.taskId || control.epoch !== claim.expectedEpoch ||
+    if (
+      control.taskId !== claim.taskId ||
+      control.epoch !== claim.expectedEpoch ||
       (control.version !== claim.expectedControlVersion && control.version !== claim.expectedControlVersion + 1) ||
-      !isDeepStrictEqual(claim.policyIdentity, profile.policyIdentity)) {
+      !isDeepStrictEqual(claim.policyIdentity, profile.policyIdentity)
+    ) {
       return result('stale', 'claim-does-not-match-current-task-context');
     }
     if ((fences.get(claim.taskId) ?? 0) >= claim.expectedEpoch) return result('paused', 'task-epoch-is-fenced');
-    if (claim.phase !== 'claimed' || attempts.has(attemptId) || [...attempts.values()].some((attempt) => attempt.claimId === claim.claimId)) {
+    if (claim.phase !== 'claimed' || attempts.has(attemptId) || [...attempts.values()].some(attempt => attempt.claimId === claim.claimId)) {
       return result('conflict', 'claim-already-admitted');
     }
     const attempt: MutableAttempt = {
@@ -124,7 +132,7 @@ export function createMockActivityControl(profileInput: unknown): MockActivityCo
   const recordEffectAttempt = (attemptId: string, effectClass: MockEffectClass): MockActivityResponse<MockEffectAttempt> => {
     if (!isIdentifier(attemptId) || !['read', 'test', 'mutation'].includes(effectClass)) return result('invalid', 'invalid-effect-attempt');
     const attempt = attempts.get(attemptId);
-    if (!attempt || attempt.state !== 'outstanding' || effects.some((effect) => effect.attemptId === attemptId)) {
+    if (!attempt || attempt.state !== 'outstanding' || effects.some(effect => effect.attemptId === attemptId)) {
       return result('conflict', 'no-unrecorded-admitted-attempt');
     }
     const observation = attempt.cancellationRequested ? 'uncertain' : 'attempt-recorded';
@@ -144,18 +152,15 @@ export function createMockActivityControl(profileInput: unknown): MockActivityCo
     if (!isIdentifier(attemptId) || !['completed', 'cancelled', 'uncertain'].includes(outcome)) return result('invalid', 'invalid-activity-outcome');
     const attempt = attempts.get(attemptId);
     if (!attempt || attempt.state !== 'outstanding') return result('conflict', 'activity-attempt-is-not-outstanding');
-    if (outcome === 'cancelled' && (!attempt.cancellationRequested || effects.some((effect) => effect.attemptId === attemptId))) {
+    if (outcome === 'cancelled' && (!attempt.cancellationRequested || effects.some(effect => effect.attemptId === attemptId))) {
       return result('conflict', 'cancellation-cannot-imply-rollback');
     }
     attempt.state = outcome;
     return result(outcome === 'uncertain' ? 'uncertain' : 'ok', outcome === 'uncertain' ? 'activity-outcome-remains-uncertain' : 'activity-outcome-recorded', snapshot(attempt));
   };
 
-  const outstanding = (taskId: string): readonly MockActivityAttempt[] => freezeCopy(
-    [...attempts.values()]
-      .filter((attempt) => attempt.taskId === taskId && (attempt.state === 'outstanding' || attempt.state === 'uncertain'))
-      .map(snapshot),
-  );
+  const outstanding = (taskId: string): readonly MockActivityAttempt[] =>
+    freezeCopy([...attempts.values()].filter(attempt => attempt.taskId === taskId && (attempt.state === 'outstanding' || attempt.state === 'uncertain')).map(snapshot));
 
   const readEffectLog = (): readonly MockEffectAttempt[] => freezeCopy(effects);
 
@@ -180,9 +185,7 @@ function validAttemptInput(input: unknown): input is {
 } {
   if (input === null || typeof input !== 'object' || Array.isArray(input)) return false;
   const record = input as Record<string, unknown>;
-  return isIdentifier(record['attemptId'])
-    && validateApprovalTaskControl(record['control']).ok
-    && validateDispatchClaim(record['claim']).ok;
+  return isIdentifier(record['attemptId']) && validateApprovalTaskControl(record['control']).ok && validateDispatchClaim(record['claim']).ok;
 }
 
 /** Return an immutable copy of an activity attempt without exposing mutable mock state. */
@@ -222,7 +225,12 @@ export interface MockEffectAttemptV02 {
 export interface MockActivityControlV02 {
   readonly provenance: typeof UC05_MOCK_PROVENANCE;
   admitAttemptV02(admissionReceipt: ClaimReceiptV02, executor: ExecutorIdentityV02, context: RepositoryAdmissionContextV02, trusted: RepositoryAdmissionTrustedContextV02): Promise<AttemptReceiptV02>;
-  recordEffectAttemptV02(receipt: AttemptReceiptV02, effectClass: MockEffectClass, context: RepositoryAdmissionContextV02, trusted: RepositoryAdmissionTrustedContextV02): Promise<MockActivityResponse<MockEffectAttemptV02>>;
+  recordEffectAttemptV02(
+    receipt: AttemptReceiptV02,
+    effectClass: MockEffectClass,
+    context: RepositoryAdmissionContextV02,
+    trusted: RepositoryAdmissionTrustedContextV02,
+  ): Promise<MockActivityResponse<MockEffectAttemptV02>>;
   readEffectLogV02(): readonly MockEffectAttemptV02[];
 }
 
@@ -237,10 +245,18 @@ export function createMockActivityControlV02(profileInput: unknown, journal: Mem
       const checked = validateAdmissionV02(context, trusted);
       if (!checked.ok || checked.value.subjectKind !== 'repository-action' || executor?.payloadDigest !== checked.value.actionDigest) return NEUTRAL_ATTEMPT_RECEIPT_V02;
       const claim = journalClaimV02(admissionReceipt);
-      if (!claim || claim.taskId !== context.taskId || claim.runId !== context.runId || claim.subjectKind !== context.subjectKind ||
-        claim.planApplicability !== context.planApplicability || claim.preClaimTaskStateVersion !== context.expectedTaskStateVersion ||
-        claim.preClaimControlVersion !== context.expectedControlVersion || claim.epoch !== context.expectedEpoch ||
-        !isDeepStrictEqual(claim.reservationRefs, context.reservationRefs)) return NEUTRAL_ATTEMPT_RECEIPT_V02;
+      if (
+        !claim ||
+        claim.taskId !== context.taskId ||
+        claim.runId !== context.runId ||
+        claim.subjectKind !== context.subjectKind ||
+        claim.planApplicability !== context.planApplicability ||
+        claim.preClaimTaskStateVersion !== context.expectedTaskStateVersion ||
+        claim.preClaimControlVersion !== context.expectedControlVersion ||
+        claim.epoch !== context.expectedEpoch ||
+        !isDeepStrictEqual(claim.reservationRefs, context.reservationRefs)
+      )
+        return NEUTRAL_ATTEMPT_RECEIPT_V02;
       const inputs = freezeCopy({ context, trusted });
       const receipt = await journal.beginAttempt(claim.claimId, executor);
       if (!isNeutralAttemptReceiptV02(receipt)) admitted.set(receipt.attemptId, freezeCopy({ receipt, ...inputs }));
@@ -249,19 +265,41 @@ export function createMockActivityControlV02(profileInput: unknown, journal: Mem
     recordEffectAttemptV02: async (receipt, effectClass, context, trusted) => {
       const denied: MockActivityResponse<MockEffectAttemptV02> = { outcome: 'conflict', safeReasonCode: 'invalid-or-stale-effect-context', value: null };
       const checked = validateAdmissionV02(context, trusted);
-      if (!checked.ok || checked.value.subjectKind !== 'repository-action' || !validateAttemptReceiptV02(receipt, { isRepairPatch: context.action.kind === 'apply_patch' && context.runnableNode === 'Repair' }).ok) return denied;
+      if (
+        !checked.ok ||
+        checked.value.subjectKind !== 'repository-action' ||
+        !validateAttemptReceiptV02(receipt, { isRepairPatch: context.action.kind === 'apply_patch' && context.runnableNode === 'Repair' }).ok
+      )
+        return denied;
       const retained = admitted.get(receipt.attemptId);
-      if (!retained || !isDeepStrictEqual(receipt, retained.receipt) || !isDeepStrictEqual(context, retained.context) || !isDeepStrictEqual(trusted, retained.trusted) ||
-        !['read', 'test', 'mutation'].includes(effectClass) || effects.some(effect => effect.attemptReceipt.attemptId === receipt.attemptId)) return denied;
+      if (
+        !retained ||
+        !isDeepStrictEqual(receipt, retained.receipt) ||
+        !isDeepStrictEqual(context, retained.context) ||
+        !isDeepStrictEqual(trusted, retained.trusted) ||
+        !['read', 'test', 'mutation'].includes(effectClass) ||
+        effects.some(effect => effect.attemptReceipt.attemptId === receipt.attemptId)
+      )
+        return denied;
       receipt = retained.receipt;
       context = retained.context;
       trusted = retained.trusted;
       const task = await journal.loadTask(receipt.taskId);
       const current = journal.getJournalSnapshot();
-      if (effects.some(effect => effect.attemptReceipt.attemptId === receipt.attemptId) || !task || task.stateVersion !== receipt.postBeginTaskStateVersion || task.repositoryRevisionDigest !== context.canonicalRevision ||
-        current.mode !== 'runnable' || current.holdRef !== null || current.controlVersion !== receipt.postBeginControlVersion || current.epoch !== receipt.epoch ||
-        current.activeClaimId !== receipt.claimId || !isDeepStrictEqual(current.activeAuthorityRef, context.policyAuthorityRef) ||
-        !current.attempts.some(attempt => attempt.attemptId === receipt.attemptId && attempt.claimId === receipt.claimId && attempt.status === 'attempting')) return denied;
+      if (
+        effects.some(effect => effect.attemptReceipt.attemptId === receipt.attemptId) ||
+        !task ||
+        task.stateVersion !== receipt.postBeginTaskStateVersion ||
+        task.repositoryRevisionDigest !== context.canonicalRevision ||
+        current.mode !== 'runnable' ||
+        current.holdRef !== null ||
+        current.controlVersion !== receipt.postBeginControlVersion ||
+        current.epoch !== receipt.epoch ||
+        current.activeClaimId !== receipt.claimId ||
+        !isDeepStrictEqual(current.activeAuthorityRef, context.policyAuthorityRef) ||
+        !current.attempts.some(attempt => attempt.attemptId === receipt.attemptId && attempt.claimId === receipt.claimId && attempt.status === 'attempting')
+      )
+        return denied;
       const effect = freezeCopy({ attemptReceipt: receipt, admissionContext: context, trustedContext: trusted, effectClass });
       effects.push(effect);
       return freezeCopy({ outcome: 'ok', safeReasonCode: 'effect-recorded-test-only', value: effect });

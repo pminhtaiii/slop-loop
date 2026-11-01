@@ -6,12 +6,7 @@ export function isPlainObject(val: unknown): val is Record<string, unknown> {
   return typeof val === 'object' && val !== null && !Array.isArray(val);
 }
 
-export function rejectUnknownKeys(
-  obj: Record<string, unknown>,
-  allowedKeys: readonly string[],
-  path: string,
-  errors: ValidationError[]
-): void {
+export function rejectUnknownKeys(obj: Record<string, unknown>, allowedKeys: readonly string[], path: string, errors: ValidationError[]): void {
   const allowedSet = new Set(allowedKeys);
   for (const key of Object.keys(obj)) {
     if (!allowedSet.has(key)) {
@@ -24,11 +19,7 @@ export function rejectUnknownKeys(
   }
 }
 
-export function validateNonEmptyString(
-  val: unknown,
-  path: string,
-  errors: ValidationError[]
-): string | undefined {
+export function validateNonEmptyString(val: unknown, path: string, errors: ValidationError[]): string | undefined {
   if (typeof val !== 'string') {
     errors.push({
       path,
@@ -49,11 +40,7 @@ export function validateNonEmptyString(
   return trimmed;
 }
 
-export function validatePositiveInteger(
-  val: unknown,
-  path: string,
-  errors: ValidationError[]
-): number | undefined {
+export function validatePositiveInteger(val: unknown, path: string, errors: ValidationError[]): number | undefined {
   if (typeof val !== 'number' || !Number.isFinite(val) || !Number.isSafeInteger(val) || val <= 0) {
     errors.push({
       path,
@@ -65,11 +52,7 @@ export function validatePositiveInteger(
   return val;
 }
 
-export function validatePositiveNumber(
-  val: unknown,
-  path: string,
-  errors: ValidationError[]
-): number | undefined {
+export function validatePositiveNumber(val: unknown, path: string, errors: ValidationError[]): number | undefined {
   if (typeof val !== 'number' || !Number.isFinite(val) || val <= 0) {
     errors.push({
       path,
@@ -81,11 +64,7 @@ export function validatePositiveNumber(
   return val;
 }
 
-export function validateNonNegativeInteger(
-  val: unknown,
-  path: string,
-  errors: ValidationError[]
-): number | undefined {
+export function validateNonNegativeInteger(val: unknown, path: string, errors: ValidationError[]): number | undefined {
   if (typeof val !== 'number' || !Number.isFinite(val) || !Number.isSafeInteger(val) || val < 0) {
     errors.push({
       path,
@@ -97,11 +76,7 @@ export function validateNonNegativeInteger(
   return val;
 }
 
-export function validateNonNegativeNumber(
-  val: unknown,
-  path: string,
-  errors: ValidationError[]
-): number | undefined {
+export function validateNonNegativeNumber(val: unknown, path: string, errors: ValidationError[]): number | undefined {
   if (typeof val !== 'number' || !Number.isFinite(val) || val < 0) {
     errors.push({
       path,
@@ -113,12 +88,7 @@ export function validateNonNegativeNumber(
   return val;
 }
 
-export function validateStringArray(
-  arr: unknown,
-  fieldPath: string,
-  errors: ValidationError[],
-  options?: { allowEmpty?: boolean }
-): void {
+export function validateStringArray(arr: unknown, fieldPath: string, errors: ValidationError[], options?: { allowEmpty?: boolean }): void {
   if (!Array.isArray(arr)) {
     errors.push({
       path: fieldPath,

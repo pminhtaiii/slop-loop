@@ -156,7 +156,7 @@ export class UC01AccountingAdapter {
           { scope: 'task', kind: 'tokens', amount: ceiling.totalTokens },
           { scope: 'task', kind: 'cost', amount: ceiling.costUnits },
         ],
-        { taskId: context.taskId, runId: context.runId }
+        { taskId: context.taskId, runId: context.runId },
       );
       this.ownersById.set(context.requestId, context.taskId);
     } catch {
@@ -186,18 +186,12 @@ export class UC01AccountingAdapter {
   }
 
   /** Settles actual token and cost usage against a reserved ceiling. */
-  async settle(
-    context: UC01OperationContext,
-    reservationRef: string,
-    observed: UC01Usage
-  ): Promise<UC01SettleResult> {
+  async settle(context: UC01OperationContext, reservationRef: string, observed: UC01Usage): Promise<UC01SettleResult> {
     await this.restore(context.taskId);
     const before = this.budgetTracker.snapshot();
     if (observed.state === 'uncertain') {
       for (const ledger of before.ledgers) {
-        const match = ledger.reservations.find(
-          (r) => r.reservationId === reservationRef || r.keyedId === reservationRef
-        );
+        const match = ledger.reservations.find(r => r.reservationId === reservationRef || r.keyedId === reservationRef);
         if (match) {
           const owner = this.taskOf(match);
           if (owner === context.taskId || (owner === undefined && reservationRef === context.requestId)) {
@@ -248,11 +242,7 @@ export class UC01AccountingAdapter {
   }
 
   /** Persists task checkpoint with step progress and budget state. */
-  async saveCheckpoint(
-    taskId: string,
-    stepName: 'intake' | 'clarify' | 'assess' | 'recommend',
-    stepData?: unknown
-  ): Promise<void> {
+  async saveCheckpoint(taskId: string, stepName: 'intake' | 'clarify' | 'assess' | 'recommend', stepData?: unknown): Promise<void> {
     if (!this.durableStore) return;
 
     await this.restore(taskId);
@@ -267,7 +257,7 @@ export class UC01AccountingAdapter {
       { id: 'recommend', title: 'Destination Recommendation', description: 'Recommend', status: 'todo' as const },
     ];
 
-    const stepIndex = basePlan.findIndex((p) => p.id === stepName);
+    const stepIndex = basePlan.findIndex(p => p.id === stepName);
     const stepDigest = computeStepDigest(stepData);
     const updatedPlan = basePlan.map((p, idx) => {
       if (p.id === stepName) {

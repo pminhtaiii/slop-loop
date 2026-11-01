@@ -21,7 +21,9 @@ function sameIdentity(left, right) {
 
 function rejectUnsupportedReservation(entry) {
   if (entry.reservation?.schemaVersion === 1 && !['completed', 'handed-off', 'reassigned'].includes(entry.status)) {
-    throw new Error('Unsupported active schema-v1 reservation: the original coordinator checkout and readiness receipt were not recorded. The entry was left unchanged; preserve it and have the coordinator confirm the worker stopped before creating a replacement with a new owner/task. No path will be inferred.');
+    throw new Error(
+      'Unsupported active schema-v1 reservation: the original coordinator checkout and readiness receipt were not recorded. The entry was left unchanged; preserve it and have the coordinator confirm the worker stopped before creating a replacement with a new owner/task. No path will be inferred.',
+    );
   }
 }
 
@@ -32,32 +34,52 @@ function validRepositoryPath(path) {
 function validBase(base, reservation = false) {
   if (!isRecord(base) || typeof base.ref !== 'string') return false;
   if (reservation && base.ref !== originDevelopmentBaseRef) return false;
-  if (!reservation && base.ref === 'existing-checkout') return base.sha === null || typeof base.sha === 'string' && commitPattern.test(base.sha);
+  if (!reservation && base.ref === 'existing-checkout') return base.sha === null || (typeof base.sha === 'string' && commitPattern.test(base.sha));
   return base.ref === originDevelopmentBaseRef && typeof base.sha === 'string' && commitPattern.test(base.sha);
 }
 
 function readinessMatches(entry, readiness) {
   const binding = entry.binding;
   const reservation = entry.reservation;
-  return isRecord(readiness) && reservation?.schemaVersion === 2 && binding &&
+  return (
+    isRecord(readiness) &&
+    reservation?.schemaVersion === 2 &&
+    binding &&
     Object.keys(readiness).sort().join('\0') === readinessFields.join('\0') &&
-    readiness.schemaVersion === 1 && sameIdentity(readiness.identity, identity(entry)) &&
-    Object.keys(readiness.identity ?? {}).sort().join('\0') === ['owner', 'session', 'task'].join('\0') &&
-    readiness.checkout === binding.checkout && readiness.checkout.length <= 4096 &&
-    readiness.repository === binding.repository && readiness.repository.length <= 4096 &&
-    readiness.branch === binding.branch && typeof readiness.branch === 'string' && readiness.branch.length <= 1024 &&
-    isRecord(readiness.base) && Object.keys(readiness.base).sort().join('\0') === ['ref', 'sha'].join('\0') &&
-    readiness.base.ref === reservation.base.ref && readiness.base.sha === reservation.base.sha &&
-    typeof readiness.readyAt === 'string' && readiness.readyAt.length <= 32 &&
-    Number.isFinite(Date.parse(readiness.readyAt)) && new Date(readiness.readyAt).toISOString() === readiness.readyAt;
+    readiness.schemaVersion === 1 &&
+    sameIdentity(readiness.identity, identity(entry)) &&
+    Object.keys(readiness.identity ?? {})
+      .sort()
+      .join('\0') === ['owner', 'session', 'task'].join('\0') &&
+    readiness.checkout === binding.checkout &&
+    readiness.checkout.length <= 4096 &&
+    readiness.repository === binding.repository &&
+    readiness.repository.length <= 4096 &&
+    readiness.branch === binding.branch &&
+    typeof readiness.branch === 'string' &&
+    readiness.branch.length <= 1024 &&
+    isRecord(readiness.base) &&
+    Object.keys(readiness.base).sort().join('\0') === ['ref', 'sha'].join('\0') &&
+    readiness.base.ref === reservation.base.ref &&
+    readiness.base.sha === reservation.base.sha &&
+    typeof readiness.readyAt === 'string' &&
+    readiness.readyAt.length <= 32 &&
+    Number.isFinite(Date.parse(readiness.readyAt)) &&
+    new Date(readiness.readyAt).toISOString() === readiness.readyAt
+  );
 }
 
 export function validateBindingMetadata(entry) {
   rejectUnsupportedReservation(entry);
   if (entry.reservation !== undefined) {
     const reservation = entry.reservation;
-    if (!isRecord(reservation) || ![1, 2].includes(reservation.schemaVersion) || !sameIdentity(reservation.identity, identity(entry)) ||
-        !validRepositoryPath(reservation.repository) || !validBase(reservation.base, true)) {
+    if (
+      !isRecord(reservation) ||
+      ![1, 2].includes(reservation.schemaVersion) ||
+      !sameIdentity(reservation.identity, identity(entry)) ||
+      !validRepositoryPath(reservation.repository) ||
+      !validBase(reservation.base, true)
+    ) {
       throw new Error('Invalid active-task reservation identity or base.');
     }
     if (reservation.schemaVersion === 2 && (!validRepositoryPath(reservation.coordinatorCheckout) || !validRepositoryPath(reservation.primaryCheckout))) {
@@ -67,10 +89,17 @@ export function validateBindingMetadata(entry) {
   }
   if (entry.binding !== undefined) {
     const binding = entry.binding;
-    if (!isRecord(binding) || binding.schemaVersion !== 1 || !sameIdentity(binding.identity, identity(entry)) ||
-        !validRepositoryPath(binding.checkout) || !validRepositoryPath(binding.repository) ||
-        binding.branch !== null && (typeof binding.branch !== 'string' || !binding.branch.startsWith('refs/heads/')) ||
-        !validBase(binding.base) || typeof binding.boundAt !== 'string' || binding.checkout !== entry.checkout) {
+    if (
+      !isRecord(binding) ||
+      binding.schemaVersion !== 1 ||
+      !sameIdentity(binding.identity, identity(entry)) ||
+      !validRepositoryPath(binding.checkout) ||
+      !validRepositoryPath(binding.repository) ||
+      (binding.branch !== null && (typeof binding.branch !== 'string' || !binding.branch.startsWith('refs/heads/'))) ||
+      !validBase(binding.base) ||
+      typeof binding.boundAt !== 'string' ||
+      binding.checkout !== entry.checkout
+    ) {
       throw new Error('Invalid active-task binding identity.');
     }
     if (entry.reservation && (binding.repository !== entry.reservation.repository || JSON.stringify(binding.base) !== JSON.stringify(entry.reservation.base))) {
@@ -97,7 +126,7 @@ function pathKey(path) {
 
 async function inspectWorktree(repo, requestedPath, { requireBranch = false } = {}) {
   const path = await realDirectoryWithoutLinks(requestedPath, 'Worker worktree');
-  const record = repo.worktrees.find((item) => item.worktree && pathKey(item.worktree) === pathKey(path));
+  const record = repo.worktrees.find(item => item.worktree && pathKey(item.worktree) === pathKey(path));
   if (!record || Object.hasOwn(record, 'locked') || Object.hasOwn(record, 'prunable')) throw new Error('Worker must be a registered, unlocked Git worktree in the same repository.');
   const top = await realpath(git(path, ['rev-parse', '--show-toplevel']).stdout.trim());
   if (pathKey(top) !== pathKey(path)) throw new Error('Worker path must be the Git worktree root.');
@@ -157,9 +186,8 @@ export async function bindAssignment(entry, repo, worktreePath) {
   if (entry.binding) throw new Error('Assignment is already bound; retain its worktree identity.');
   const targetPath = resolve(repo.root, worktreePath);
   if (entry.checkout && !(await samePath(entry.checkout, targetPath))) throw new Error('Binding cannot relocate an existing assignment checkout.');
-  const protectedPaths = [repo.primary, entry.reservation?.coordinatorCheckout, entry.reservation?.primaryCheckout,
-    ...(entry.reservation?.schemaVersion === 1 ? [repo.root] : [])].filter(Boolean);
-  if (entry.reservation && (await Promise.all(protectedPaths.map((path) => samePath(targetPath, path)))).some(Boolean)) {
+  const protectedPaths = [repo.primary, entry.reservation?.coordinatorCheckout, entry.reservation?.primaryCheckout, ...(entry.reservation?.schemaVersion === 1 ? [repo.root] : [])].filter(Boolean);
+  if (entry.reservation && (await Promise.all(protectedPaths.map(path => samePath(targetPath, path)))).some(Boolean)) {
     throw new Error('Reserved worker must bind a separate worktree outside the coordinator and primary checkouts.');
   }
   const current = await inspectWorktree(repo, targetPath, { requireBranch: Boolean(entry.reservation) });
@@ -235,7 +263,7 @@ export async function verifyAssignmentBinding(entry, repo, currentCheckout) {
 
 export async function verifyHandoffAssignment(entry, repo, currentCheckout) {
   if (entry.binding || entry.reservation) return verifyAssignmentBinding(entry, repo, currentCheckout);
-  if (entry.role !== 'worker' || entry.reassignedFrom && entry.status !== 'handed-off') {
+  if (entry.role !== 'worker' || (entry.reassignedFrom && entry.status !== 'handed-off')) {
     throw new Error('Unbound reassigned workers cannot hand off; continue them with a fresh binding in the source checkout.');
   }
   if (!entry.checkout || !(await samePath(entry.checkout, currentCheckout ?? repo.root))) {

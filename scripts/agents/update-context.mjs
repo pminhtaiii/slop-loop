@@ -11,19 +11,25 @@ JSON: {"updates":[{"file":"context/example.md","sha256":"<current file hash>",
 "edits":[{"oldText":"unique existing passage","newText":"replacement passage"}]}]}
 Use {"updates":[]} after inspecting context when no content changes are needed.
 Headings and existing newline style are preserved. See context/workflow.md#context-refresh.`;
-const hash = (text) => createHash('sha256').update(text).digest('hex');
+const hash = text => createHash('sha256').update(text).digest('hex');
 
 function headings(text) {
   let fence;
-  return text.split('\n').filter((line) => {
-    const marker = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
-    if (fence) {
-      if (marker && marker[1][0] === fence[0] && marker[1].length >= fence.length && !marker[2].trim()) fence = undefined;
-      return false;
-    }
-    if (marker) { fence = marker[1]; return false; }
-    return /^ {0,3}#{1,6} /.test(line) || /^ {0,3}(?:=+|-+)\s*$/.test(line);
-  }).join('\n');
+  return text
+    .split('\n')
+    .filter(line => {
+      const marker = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+      if (fence) {
+        if (marker && marker[1][0] === fence[0] && marker[1].length >= fence.length && !marker[2].trim()) fence = undefined;
+        return false;
+      }
+      if (marker) {
+        fence = marker[1];
+        return false;
+      }
+      return /^ {0,3}#{1,6} /.test(line) || /^ {0,3}(?:=+|-+)\s*$/.test(line);
+    })
+    .join('\n');
 }
 
 async function run(args) {
@@ -42,7 +48,7 @@ async function run(args) {
   if (!options['--updates']) throw new Error(usage);
   const root = await realpath(resolve(options['--root'] ?? resolve(dirname(fileURLToPath(import.meta.url)), '../..')));
   const context = resolve(root, 'context');
-  if ((await lstat(context)).isSymbolicLink() || await realpath(context) !== context) throw new Error('context must be an unlinked directory.');
+  if ((await lstat(context)).isSymbolicLink() || (await realpath(context)) !== context) throw new Error('context must be an unlinked directory.');
   const plan = JSON.parse((await readFile(resolve(options['--updates']), 'utf8')).replace(/^\uFEFF/, ''));
   if (!Array.isArray(plan.updates)) throw new Error('Plan requires an updates array.');
   const execute = async () => {
@@ -54,7 +60,7 @@ async function run(args) {
       seen.add(update.file);
       const path = resolve(root, update.file);
       const stat = await lstat(path);
-      if (!stat.isFile() || stat.isSymbolicLink() || await realpath(path) !== path) throw new Error('Context targets must be regular unlinked files.');
+      if (!stat.isFile() || stat.isSymbolicLink() || (await realpath(path)) !== path) throw new Error('Context targets must be regular unlinked files.');
       const source = await readFile(path, 'utf8');
       if (hash(source) !== update.sha256?.toLowerCase()) throw new Error(`Stale source: ${update.file}; inspect again and regenerate edits.`);
       if (!Array.isArray(update.edits) || !update.edits.length) throw new Error('Each update requires nonempty edits.');
@@ -71,11 +77,12 @@ async function run(args) {
       content = content.replace(/\n/g, newline);
       if (content !== source) pending.push({ file: update.file, path, source, content });
     }
-    if (!options['--apply']) return console.log(JSON.stringify({ applied: false, files: pending.map(({ file, source, content }) => ({ file, before: hash(source), after: hash(content), content })) }, null, 2));
+    if (!options['--apply'])
+      return console.log(JSON.stringify({ applied: false, files: pending.map(({ file, source, content }) => ({ file, before: hash(source), after: hash(content), content })) }, null, 2));
     const written = [];
     try {
       for (const entry of pending) {
-        if (await readFile(entry.path, 'utf8') !== entry.source) throw new Error(`Source changed: ${entry.file}`);
+        if ((await readFile(entry.path, 'utf8')) !== entry.source) throw new Error(`Source changed: ${entry.file}`);
         await atomicWrite(entry.path, entry.content);
         written.push(entry);
       }
@@ -86,7 +93,10 @@ async function run(args) {
     } catch (error) {
       const retained = [];
       for (const entry of written.reverse()) {
-        if (await readFile(entry.path, 'utf8') !== entry.content) { retained.push(entry.file); continue; }
+        if ((await readFile(entry.path, 'utf8')) !== entry.content) {
+          retained.push(entry.file);
+          continue;
+        }
         await atomicWrite(entry.path, entry.source);
       }
       throw new Error(`${error.message}\nRestored this run's edits.${retained.length ? ` Concurrent edits retained; inspect: ${retained.join(', ')}` : ''}`, { cause: error });
@@ -96,4 +106,7 @@ async function run(args) {
   else await execute();
 }
 
-run(process.argv.slice(2)).catch((error) => { console.error(error.message); process.exitCode = 1; });
+run(process.argv.slice(2)).catch(error => {
+  console.error(error.message);
+  process.exitCode = 1;
+});

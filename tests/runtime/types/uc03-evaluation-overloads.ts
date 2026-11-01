@@ -1,18 +1,7 @@
-import {
-  runEvaluation,
-  SHARED_EVALUATION_VERSION,
-  type EvaluationReport,
-  type RunEvaluationOptions,
-  type SharedEvaluationOptions,
-  type SharedEvaluationReport,
-} from '../../../eval/uc03/runner.ts';
+import { runEvaluation, SHARED_EVALUATION_VERSION, type EvaluationReport, type RunEvaluationOptions, type SharedEvaluationOptions, type SharedEvaluationReport } from '../../../eval/uc03/runner.ts';
 
 // Compile-time regression coverage for overload selection and union narrowing.
-export function checkEvaluationOverloads(
-  legacy: RunEvaluationOptions,
-  shared: SharedEvaluationOptions,
-  ambiguous: RunEvaluationOptions | SharedEvaluationOptions,
-): void {
+export function checkEvaluationOverloads(legacy: RunEvaluationOptions, shared: SharedEvaluationOptions, ambiguous: RunEvaluationOptions | SharedEvaluationOptions): void {
   const legacyReport: Promise<EvaluationReport> = runEvaluation(legacy);
   const omittedVersion: Promise<EvaluationReport> = runEvaluation({ mode: 'mock' });
   const undefinedVersion: Promise<EvaluationReport> = runEvaluation({ mode: 'mock', contractVersion: undefined });
@@ -34,6 +23,5 @@ export function checkEvaluationOverloads(
     void narrowed;
   }
 
-  void [legacyReport, omittedVersion, undefinedVersion, sharedReport, ambiguousReport,
-    invalidLegacy, invalidLegacyReport, invalidSharedReport];
+  void [legacyReport, omittedVersion, undefinedVersion, sharedReport, ambiguousReport, invalidLegacy, invalidLegacyReport, invalidSharedReport];
 }

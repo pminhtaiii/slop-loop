@@ -10,35 +10,26 @@ import {
 import { isCollectionOrSyntaxError, validateHostSnapshotFacts } from './investigation-snapshot.ts';
 import { runBaselineChecks } from './investigation-baseline-checks.ts';
 import type { Baseline, BugTask, RepositoryPort, RepositoryPortV02 } from '../contracts/foundation/uc03.ts';
-import type {
-  BaselineEvidenceCandidate,
-  BaselineInvestigationResult,
-  TrustedHostExpectedContext,
-  TrustedHostPort,
-  TrustedHostSnapshotRequest,
-} from './investigation-types.ts';
+import type { BaselineEvidenceCandidate, BaselineInvestigationResult, TrustedHostExpectedContext, TrustedHostPort, TrustedHostSnapshotRequest } from './investigation-types.ts';
 
-export function investigateBaseline(
-  task: BugTask,
-  repository: RepositoryPort | RepositoryPortV02
-): Promise<BaselineInvestigationResult>;
+export function investigateBaseline(task: BugTask, repository: RepositoryPort | RepositoryPortV02): Promise<BaselineInvestigationResult>;
 export function investigateBaseline(
   task: BugTask,
   repository: RepositoryPort | RepositoryPortV02,
   hostAuthority: TrustedHostPort,
-  trustedExpectedContext: TrustedHostExpectedContext
+  trustedExpectedContext: TrustedHostExpectedContext,
 ): Promise<BaselineInvestigationResult>;
 export async function investigateBaseline(
   task: BugTask,
   repository: RepositoryPort | RepositoryPortV02,
   hostAuthority?: TrustedHostPort,
-  trustedExpectedContext?: TrustedHostExpectedContext
+  trustedExpectedContext?: TrustedHostExpectedContext,
 ): Promise<BaselineInvestigationResult> {
   const taskValidation = validateBugTask(task);
   if (!taskValidation.ok) {
     return {
       status: 'error',
-      reason: `BugTask validation failed: ${taskValidation.errors.map((e) => e.message).join(', ')}`,
+      reason: `BugTask validation failed: ${taskValidation.errors.map(e => e.message).join(', ')}`,
     };
   }
   const validTask = taskValidation.value;
@@ -47,13 +38,11 @@ export async function investigateBaseline(
   const taskId = validTask.taskId;
   const repositoryId = validTask.repositoryId;
   const taskRevisionDigest = validTask.initialRevisionDigest;
-  const requiredChecks = validTask.requiredChecks.map((check) =>
-    Object.freeze({ ...check, argv: Object.freeze([...check.argv]) })
-  );
+  const requiredChecks = validTask.requiredChecks.map(check => Object.freeze({ ...check, argv: Object.freeze([...check.argv]) }));
   const checkSetDigest = computeCheckSetDigest(requiredChecks);
   const criteriaDigest = computeCanonicalSha256(validTask.acceptanceCriteria);
 
-  const reproductionChecks = requiredChecks.filter((check) => check.purpose === 'reproduction');
+  const reproductionChecks = requiredChecks.filter(check => check.purpose === 'reproduction');
   const reproductionCheck = reproductionChecks[0];
 
   if (!reproductionCheck) {
@@ -217,9 +206,7 @@ export async function investigateBaseline(
 
   let rawSnapshot: unknown;
   try {
-    rawSnapshot = await (
-      loadSnapshotFn as (request: TrustedHostSnapshotRequest) => Promise<unknown> | unknown
-    ).call(hostAuthority, request);
+    rawSnapshot = await (loadSnapshotFn as (request: TrustedHostSnapshotRequest) => Promise<unknown> | unknown).call(hostAuthority, request);
   } catch {
     return {
       status: 'error',
@@ -238,7 +225,7 @@ export async function investigateBaseline(
       checkSetDigest: expectedCheckSetDigest,
       expectedTestFiles: detachedExpectedTestFiles,
     },
-    requiredChecks
+    requiredChecks,
   );
   if (!snapshotValidation.ok) {
     return {
@@ -261,26 +248,21 @@ export async function investigateBaseline(
   const { checkResults } = checkRun;
 
   const reproductionCheckId = reproductionCheck.checkId;
-  const reproResult = checkResults.find((result) => result.checkId === reproductionCheckId);
+  const reproResult = checkResults.find(result => result.checkId === reproductionCheckId);
   if (!reproResult) {
     return { status: 'error', reason: 'The required reproduction check result is missing' };
   }
 
-  const expectedCheckIds = requiredChecks.map((check) => check.checkId);
-  if (
-    checkResults.length !== expectedCheckIds.length ||
-    checkResults.some((result, index) => result.checkId !== expectedCheckIds[index])
-  ) {
+  const expectedCheckIds = requiredChecks.map(check => check.checkId);
+  if (checkResults.length !== expectedCheckIds.length || checkResults.some((result, index) => result.checkId !== expectedCheckIds[index])) {
     return { status: 'error', reason: 'Required check results do not match the exact required check set' };
   }
 
-  const expectedPassingChecks = requiredChecks.filter((check) => check.checkId !== reproductionCheckId);
-  const expectedPassingCheckIds = expectedPassingChecks.map((check) => check.checkId);
+  const expectedPassingChecks = requiredChecks.filter(check => check.checkId !== reproductionCheckId);
+  const expectedPassingCheckIds = expectedPassingChecks.map(check => check.checkId);
 
   if (reproResult.outcome === 'pass') {
-    const failedPreviouslyPassingCheck = expectedPassingChecks.find((check) =>
-      checkResults.find((result) => result.checkId === check.checkId)?.outcome !== 'pass'
-    );
+    const failedPreviouslyPassingCheck = expectedPassingChecks.find(check => checkResults.find(result => result.checkId === check.checkId)?.outcome !== 'pass');
     if (failedPreviouslyPassingCheck) {
       return {
         status: 'error',
@@ -337,7 +319,7 @@ export async function investigateBaseline(
   if (!baselineValidation.ok) {
     return {
       status: 'error',
-      reason: `Baseline admission failed: ${baselineValidation.errors.map((e) => e.message).join(', ')}`,
+      reason: `Baseline admission failed: ${baselineValidation.errors.map(e => e.message).join(', ')}`,
     };
   }
 

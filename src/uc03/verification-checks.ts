@@ -1,19 +1,6 @@
-import {
-  computeCanonicalSha256,
-  computeCheckSetDigest,
-  validateTaskState,
-  validateVerificationResult,
-} from '../contracts/foundation/uc03.ts';
+import { computeCanonicalSha256, computeCheckSetDigest, validateTaskState, validateVerificationResult } from '../contracts/foundation/uc03.ts';
 import { validateRepositoryAdmissionV02 as validateRepositoryAdmissionRecordV02 } from '../contracts/foundation/uc03/v02/admission/repository.ts';
-import type {
-  BugTask,
-  RepositoryAdmissionContextV02,
-  RepositoryPort,
-  RepositoryPortV02,
-  StatePortV02,
-  TaskState,
-  VerificationResult,
-} from '../contracts/foundation/uc03.ts';
+import type { BugTask, RepositoryAdmissionContextV02, RepositoryPort, RepositoryPortV02, StatePortV02, TaskState, VerificationResult } from '../contracts/foundation/uc03.ts';
 import type { VerificationExecutionContext } from './verification-types.ts';
 
 function computeGuardedTaskStateDigest(state: TaskState): string {
@@ -22,11 +9,7 @@ function computeGuardedTaskStateDigest(state: TaskState): string {
   return computeCanonicalSha256(stateWithoutAccounting);
 }
 
-export async function executeVerificationChecks(
-  task: BugTask,
-  repository: RepositoryPort | RepositoryPortV02,
-  context: VerificationExecutionContext
-): Promise<readonly VerificationResult[]> {
+export async function executeVerificationChecks(task: BugTask, repository: RepositoryPort | RepositoryPortV02, context: VerificationExecutionContext): Promise<readonly VerificationResult[]> {
   if (!task || !Array.isArray(task.requiredChecks)) {
     throw new Error('INVALID_TASK: BugTask requiredChecks must be an array');
   }
@@ -44,7 +27,7 @@ export async function executeVerificationChecks(
     rawAdmission !== undefined ||
     admissionContextForCheck !== undefined ||
     context.executionGuard !== undefined ||
-    (repository as { executionGuardApiVersion?: string })?.executionGuardApiVersion === '0.2.0'
+    (repository as { executionGuardApiVersion?: string })?.executionGuardApiVersion === '0.2.0',
   );
 
   let admissionDenied = false;
@@ -140,46 +123,37 @@ export async function executeVerificationChecks(
     }
 
     if (admissionDenied) {
-      return Object.freeze(task.requiredChecks.map((check) => {
-        const phase = check.purpose === 'reproduction' ? 'focused' : check.purpose;
-        const prefix = context.actionIdPrefix ?? 'action-verify';
-        const actionId = `${prefix}-${check.checkId}`;
-        const evidenceId = `evidence-verif-${check.checkId}-${computeCanonicalSha256([
-          context.runId,
-          check.checkId,
-          context.repoDigest,
-          context.diffDigest ?? '',
-        ])}`;
-        return {
-          evidenceId,
-          taskId: task.taskId,
-          runId: context.runId,
-          actionId,
-          phase,
-          repoDigest: context.repoDigest,
-          ...(context.diffDigest !== undefined ? { diffDigest: context.diffDigest } : {}),
-          commandIdentity: `${check.executable} ${check.argv.join(' ')}`,
-          outcome: 'error' as const,
-          testedIds: [check.checkId],
-          diagnosticRefs: [admissionDenialRef],
-        };
-      }));
+      return Object.freeze(
+        task.requiredChecks.map(check => {
+          const phase = check.purpose === 'reproduction' ? 'focused' : check.purpose;
+          const prefix = context.actionIdPrefix ?? 'action-verify';
+          const actionId = `${prefix}-${check.checkId}`;
+          const evidenceId = `evidence-verif-${check.checkId}-${computeCanonicalSha256([context.runId, check.checkId, context.repoDigest, context.diffDigest ?? ''])}`;
+          return {
+            evidenceId,
+            taskId: task.taskId,
+            runId: context.runId,
+            actionId,
+            phase,
+            repoDigest: context.repoDigest,
+            ...(context.diffDigest !== undefined ? { diffDigest: context.diffDigest } : {}),
+            commandIdentity: `${check.executable} ${check.argv.join(' ')}`,
+            outcome: 'error' as const,
+            testedIds: [check.checkId],
+            diagnosticRefs: [admissionDenialRef],
+          };
+        }),
+      );
     }
   }
 
   const results: VerificationResult[] = [];
 
   for (const check of task.requiredChecks) {
-    const phase =
-      check.purpose === 'reproduction' ? 'focused' : check.purpose;
+    const phase = check.purpose === 'reproduction' ? 'focused' : check.purpose;
     const prefix = context.actionIdPrefix ?? 'action-verify';
     const actionId = `${prefix}-${check.checkId}`;
-    const evidenceId = `evidence-verif-${check.checkId}-${computeCanonicalSha256([
-      context.runId,
-      check.checkId,
-      context.repoDigest,
-      context.diffDigest ?? '',
-    ])}`;
+    const evidenceId = `evidence-verif-${check.checkId}-${computeCanonicalSha256([context.runId, check.checkId, context.repoDigest, context.diffDigest ?? ''])}`;
 
     let outcome: VerificationResult['outcome'] = 'error';
     let diagnosticRefs: string[] = [];
@@ -205,9 +179,7 @@ export async function executeVerificationChecks(
             outcome = 'error';
             diagnosticRefs = ['authoritative-state-unavailable'];
           } else {
-            const suppliedAdmission = admissionContextForCheck
-              ? await admissionContextForCheck({ check, action: expectedAction, currentState })
-              : admission;
+            const suppliedAdmission = admissionContextForCheck ? await admissionContextForCheck({ check, action: expectedAction, currentState }) : admission;
             if (!suppliedAdmission || typeof suppliedAdmission !== 'object') {
               outcome = 'error';
               diagnosticRefs = ['missing-admission-context'];
@@ -240,8 +212,7 @@ export async function executeVerificationChecks(
                   diagnosticRefs = [`execution-guard:${guardResult.outcome}`];
                   if (guardResult.outcome === 'success' && guardResult.result && typeof guardResult.result === 'object') {
                     const commandResult = guardResult.result as Record<string, unknown>;
-                    if (Number.isSafeInteger(commandResult.exitCode) && typeof commandResult.stdout === 'string' &&
-                      typeof commandResult.stderr === 'string') {
+                    if (Number.isSafeInteger(commandResult.exitCode) && typeof commandResult.stdout === 'string' && typeof commandResult.stderr === 'string') {
                       outcome = commandResult.exitCode === 0 ? 'pass' : 'fail';
                     } else {
                       outcome = 'error';
@@ -282,9 +253,7 @@ export async function executeVerificationChecks(
       actionId,
       phase,
       repoDigest: context.repoDigest,
-      ...(context.diffDigest !== undefined
-        ? { diffDigest: context.diffDigest }
-        : {}),
+      ...(context.diffDigest !== undefined ? { diffDigest: context.diffDigest } : {}),
       commandIdentity: `${check.executable} ${check.argv.join(' ')}`,
       outcome,
       testedIds: [check.checkId],
@@ -293,9 +262,7 @@ export async function executeVerificationChecks(
 
     const validRes = validateVerificationResult(verificationResult);
     if (!validRes.ok) {
-      throw new Error(
-        `INVALID_VERIFICATION_RESULT: ${validRes.errors.map((e) => e.message).join('; ')}`
-      );
+      throw new Error(`INVALID_VERIFICATION_RESULT: ${validRes.errors.map(e => e.message).join('; ')}`);
     }
 
     results.push(validRes.value);
@@ -305,16 +272,15 @@ export async function executeVerificationChecks(
   if (isV02) {
     try {
       const currentState = await (rawStatePort as StatePortV02).loadTask(task.taskId);
-      if (!currentState || !initialGuardStateDigest ||
-        computeGuardedTaskStateDigest(currentState) !== initialGuardStateDigest) {
-        finalResults = results.map((result) => ({
+      if (!currentState || !initialGuardStateDigest || computeGuardedTaskStateDigest(currentState) !== initialGuardStateDigest) {
+        finalResults = results.map(result => ({
           ...result,
           outcome: 'error' as const,
           diagnosticRefs: [...result.diagnosticRefs, 'authoritative-state-drift'],
         }));
       }
     } catch {
-      finalResults = results.map((result) => ({
+      finalResults = results.map(result => ({
         ...result,
         outcome: 'error' as const,
         diagnosticRefs: [...result.diagnosticRefs, 'authoritative-state-unavailable'],

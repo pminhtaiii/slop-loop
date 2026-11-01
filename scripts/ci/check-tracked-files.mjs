@@ -12,17 +12,32 @@ export function isRejectedEnvPath(path) {
 }
 
 export function assertNoTrackedArtifacts(paths) {
-  const dependencies = paths.split('\0').filter((path) => /(^|\/)node_modules(\/|$)/.test(path));
+  const dependencies = paths.split('\0').filter(path => /(^|\/)node_modules(\/|$)/.test(path));
   if (dependencies.length) {
-    throw new Error(`Installed dependencies must remain untracked (${dependencies.length} paths): ${dependencies.slice(0, 5).map((path) => JSON.stringify(path)).join(', ')}. Remove them with git rm --cached; preserve local files.`);
+    throw new Error(
+      `Installed dependencies must remain untracked (${dependencies.length} paths): ${dependencies
+        .slice(0, 5)
+        .map(path => JSON.stringify(path))
+        .join(', ')}. Remove them with git rm --cached; preserve local files.`,
+    );
   }
-  const evidence = paths.split('\0').filter((path) => path.startsWith('docs/verification/'));
+  const evidence = paths.split('\0').filter(path => path.startsWith('docs/verification/'));
   if (evidence.length) {
-    throw new Error(`Verification records must remain local and untracked (${evidence.length} paths): ${evidence.slice(0, 5).map((path) => JSON.stringify(path)).join(', ')}. Remove them with git rm --cached; preserve local files.`);
+    throw new Error(
+      `Verification records must remain local and untracked (${evidence.length} paths): ${evidence
+        .slice(0, 5)
+        .map(path => JSON.stringify(path))
+        .join(', ')}. Remove them with git rm --cached; preserve local files.`,
+    );
   }
-  const env = paths.split('\0').filter((path) => path && isRejectedEnvPath(path));
+  const env = paths.split('\0').filter(path => path && isRejectedEnvPath(path));
   if (env.length) {
-    throw new Error(`Environment files must remain untracked (${env.length} paths): ${env.slice(0, 5).map((path) => JSON.stringify(path)).join(', ')}. Remove them with git rm --cached; only .env.example may be tracked.`);
+    throw new Error(
+      `Environment files must remain untracked (${env.length} paths): ${env
+        .slice(0, 5)
+        .map(path => JSON.stringify(path))
+        .join(', ')}. Remove them with git rm --cached; only .env.example may be tracked.`,
+    );
   }
 }
 

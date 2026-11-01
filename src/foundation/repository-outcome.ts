@@ -1,10 +1,6 @@
 import { computeCanonicalSha256 } from '../contracts/foundation/uc03.ts';
 import { computeAdmissionDigest } from '../contracts/foundation/uc03/v02/admission.ts';
-import {
-  computeAttemptOutcomeDigest,
-  isApprovedPlanPatchV02,
-  validateRepositoryActionOutcomeReceiptV02,
-} from '../contracts/foundation/uc03/v02/attempt.ts';
+import { computeAttemptOutcomeDigest, isApprovedPlanPatchV02, validateRepositoryActionOutcomeReceiptV02 } from '../contracts/foundation/uc03/v02/attempt.ts';
 import type {
   RepositoryPatchResultV02,
   AttemptReceiptV02,
@@ -59,10 +55,7 @@ export class RepositoryPatchReceiver {
     this.fencingGeneration = generation;
   }
 
-  async applyPatch(
-    patch: ApplyPatchAction,
-    context?: RepositoryAdmissionContextV02,
-  ): Promise<RepositoryPatchResultV02> {
+  async applyPatch(patch: ApplyPatchAction, context?: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02> {
     if (!context) throw new Error('NOT_IMPLEMENTED: applyPatch without v0.2 context is not implemented in v0.1 compatibility slice');
     const admitted = bindPatchToAdmission(patch, snapshotRepositoryAdmission(context, 'apply_patch'));
     const admittedContext = admitted.context;
@@ -115,8 +108,12 @@ export class RepositoryPatchReceiver {
         executor,
         isApprovedPlanPatchV02(admittedContext),
         () => assertCurrentPatchFence(lease, admittedContext.workspaceId, manager.getFencingGeneration(admittedContext.workspaceId), this.fencingGeneration),
-        (claim) => { claimed = claim; },
-        () => { attemptBeginStarted = true; },
+        claim => {
+          claimed = claim;
+        },
+        () => {
+          attemptBeginStarted = true;
+        },
       );
       assertCurrentPatchFence(lease, admittedContext.workspaceId, manager.getFencingGeneration(admittedContext.workspaceId), this.fencingGeneration);
       if (this.consumedAttempts.has(current.attempt.attemptId)) {
@@ -139,13 +136,7 @@ export class RepositoryPatchReceiver {
         if (attemptBeginStarted) {
           keepLease = true;
           if (!executorIdentity) throw new Error('ATTEMPT_START_RECOVERY_IDENTITY_MISSING: Attempt start has no captured executor identity');
-          const recoveryId = this.attemptStartRecovery.register(
-            lease,
-            admittedContext,
-            claimed,
-            executorIdentity,
-            isApprovedPlanPatchV02(admittedContext),
-          );
+          const recoveryId = this.attemptStartRecovery.register(lease, admittedContext, claimed, executorIdentity, isApprovedPlanPatchV02(admittedContext));
           throw new RepositoryAttemptStartPendingError(claimed.claimId, recoveryId);
         }
         const closed = await this.claimLifecycle.closeUnattemptedClaim(lease, admittedContext, claimed, {
@@ -169,8 +160,7 @@ export class RepositoryPatchReceiver {
         throw pendingError;
       }
     } finally {
-      if (!keepLease && (!claimed || !this.claimLifecycle.hasPending(claimed.claimId)) &&
-        (!current || !this.outcomeRecovery.hasPending(current.attempt.attemptId))) await lease.release();
+      if (!keepLease && (!claimed || !this.claimLifecycle.hasPending(claimed.claimId)) && (!current || !this.outcomeRecovery.hasPending(current.attempt.attemptId))) await lease.release();
     }
   }
 
@@ -183,7 +173,9 @@ export class RepositoryPatchReceiver {
     return await this.outcomeRecovery.recover(attemptId);
   }
 
-  hasPendingAttemptStart(recoveryId: string): boolean { return this.attemptStartRecovery.hasPending(recoveryId); }
+  hasPendingAttemptStart(recoveryId: string): boolean {
+    return this.attemptStartRecovery.hasPending(recoveryId);
+  }
 
   recoverAttemptStart(recoveryId: string): Promise<RepositoryAttemptStartRecoveryResultV02> {
     return this.attemptStartRecovery.recover(recoveryId);
@@ -199,7 +191,8 @@ export class RepositoryPatchReceiver {
   ): Promise<RepositoryPatchResultV02> {
     try {
       const recorded = await this.outcomeRecovery.record(lease, context, claim, attempt, receipt);
-      if (receipt.outcome === 'observed' && recorded.outcome === 'settled' && result) return { ...result, executionReceipt: { claim, attempt, outcome: receipt, settlement: recorded as typeof recorded & { readonly outcome: 'settled' } } };
+      if (receipt.outcome === 'observed' && recorded.outcome === 'settled' && result)
+        return { ...result, executionReceipt: { claim, attempt, outcome: receipt, settlement: recorded as typeof recorded & { readonly outcome: 'settled' } } };
       throw new PatchOutcomePendingError(attempt.attemptId);
     } catch {
       if (this.outcomeRecovery.hasPending(attempt.attemptId)) throw new PatchOutcomePendingError(attempt.attemptId);
@@ -219,31 +212,36 @@ function createPatchOutcomeReceipt(
   if (outcome === 'observed' && (!resultRevision || !/^sha256:[a-f0-9]{64}$/u.test(resultRevision))) {
     throw new Error('INVALID_PATCH_RESULT: Observed patch settlement requires a canonical revision from the receiver');
   }
-  const resultIdentity = outcome === 'observed'
-    ? { attemptId: attempt.attemptId, actionDigest: context.actionDigest, observedResultRevisionDigest: resultRevision }
-    : { attemptId: attempt.attemptId, actionDigest: context.actionDigest, outcome: 'uncertain' };
+  const resultIdentity =
+    outcome === 'observed'
+      ? { attemptId: attempt.attemptId, actionDigest: context.actionDigest, observedResultRevisionDigest: resultRevision }
+      : { attemptId: attempt.attemptId, actionDigest: context.actionDigest, outcome: 'uncertain' };
   const resultDigest = computeCanonicalSha256(resultIdentity);
   const resultRef = { reference: `patch-result-${resultDigest.slice(7)}`, digest: resultDigest };
-  const planFields = context.planApplicability === 'approved-plan'
-    ? {
-        planApplicability: context.planApplicability,
-        planBindingDigest: context.planBindingDigest,
-        planDecisionRef: context.planDecisionRef,
-        ...(context.diagnosticPurpose !== undefined ? { diagnosticPurpose: context.diagnosticPurpose } : {}),
-        ...(context.taskCriteriaDigest !== undefined ? { taskCriteriaDigest: context.taskCriteriaDigest } : {}),
-        ...(context.checkSetDigest !== undefined ? { checkSetDigest: context.checkSetDigest } : {}),
-      }
-    : {
-        planApplicability: context.planApplicability,
-        diagnosticPurpose: context.diagnosticPurpose,
-        taskCriteriaDigest: context.taskCriteriaDigest,
-        checkSetDigest: context.checkSetDigest,
-      };
-  const decisionFields = context.policyEvaluationReceipt.result === 'APPROVAL_REQUIRED'
-    ? context.actionDecisionReceipt
-      ? { actionDecisionReceiptRef: context.actionDecisionReceipt.decisionId, actionDecisionReceiptDigest: context.actionDecisionReceipt.decisionDigest }
-      : (() => { throw new Error('MISSING_ACTION_DECISION_RECEIPT: Patch outcome requires the admitted action decision'); })()
-    : {};
+  const planFields =
+    context.planApplicability === 'approved-plan'
+      ? {
+          planApplicability: context.planApplicability,
+          planBindingDigest: context.planBindingDigest,
+          planDecisionRef: context.planDecisionRef,
+          ...(context.diagnosticPurpose !== undefined ? { diagnosticPurpose: context.diagnosticPurpose } : {}),
+          ...(context.taskCriteriaDigest !== undefined ? { taskCriteriaDigest: context.taskCriteriaDigest } : {}),
+          ...(context.checkSetDigest !== undefined ? { checkSetDigest: context.checkSetDigest } : {}),
+        }
+      : {
+          planApplicability: context.planApplicability,
+          diagnosticPurpose: context.diagnosticPurpose,
+          taskCriteriaDigest: context.taskCriteriaDigest,
+          checkSetDigest: context.checkSetDigest,
+        };
+  const decisionFields =
+    context.policyEvaluationReceipt.result === 'APPROVAL_REQUIRED'
+      ? context.actionDecisionReceipt
+        ? { actionDecisionReceiptRef: context.actionDecisionReceipt.decisionId, actionDecisionReceiptDigest: context.actionDecisionReceipt.decisionDigest }
+        : (() => {
+            throw new Error('MISSING_ACTION_DECISION_RECEIPT: Patch outcome requires the admitted action decision');
+          })()
+      : {};
   const raw = {
     receiptId: `repo-out-${resultDigest.slice(7)}`,
     receiptDigest: 'sha256:placeholder',
@@ -266,12 +264,8 @@ function createPatchOutcomeReceipt(
     resultRef,
     evidenceRefs: [resultRef],
     proposedEffects: {
-      taskTransition: outcome === 'observed' && context.planApplicability === 'approved-plan'
-        ? { kind: 'transition', fromNode: 'Patch', toNode: 'Verify' }
-        : { kind: 'none' },
-      revision: outcome === 'observed' && resultRevision
-        ? { kind: 'advance', revisionDigest: resultRevision }
-        : { kind: 'preserve' },
+      taskTransition: outcome === 'observed' && context.planApplicability === 'approved-plan' ? { kind: 'transition', fromNode: 'Patch', toNode: 'Verify' } : { kind: 'none' },
+      revision: outcome === 'observed' && resultRevision ? { kind: 'advance', revisionDigest: resultRevision } : { kind: 'preserve' },
       invalidatedEvidence: [],
       accounting: {
         disposition: outcome === 'observed' ? 'settle' : 'hold',
@@ -301,6 +295,6 @@ function createPatchOutcomeReceipt(
     currentEpoch: attempt.epoch,
   };
   const validation = validateRepositoryActionOutcomeReceiptV02(receipt, validationContext);
-  if (!validation.ok) throw new Error(`INVALID_PATCH_OUTCOME_RECEIPT: ${validation.errors.map((item) => item.code).join(',')}`);
+  if (!validation.ok) throw new Error(`INVALID_PATCH_OUTCOME_RECEIPT: ${validation.errors.map(item => item.code).join(',')}`);
   return validation.value;
 }

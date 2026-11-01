@@ -27,7 +27,11 @@ export function checkPrMetadata(payload, { bindings = [] } = {}) {
 }
 
 function readEvent(path) {
-  try { return JSON.parse(readFileSync(path, 'utf8')); } catch { throw new Error('The event file is not readable JSON.'); }
+  try {
+    return JSON.parse(readFileSync(path, 'utf8'));
+  } catch {
+    throw new Error('The event file is not readable JSON.');
+  }
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

@@ -31,7 +31,7 @@ function isRecord(value: unknown): value is RecordValue {
 
 function hasExactKeys(value: RecordValue, keys: readonly string[]): boolean {
   const actual = Object.keys(value);
-  return actual.length === keys.length && keys.every((key) => Object.hasOwn(value, key));
+  return actual.length === keys.length && keys.every(key => Object.hasOwn(value, key));
 }
 
 function isId(value: unknown): value is string {
@@ -39,11 +39,7 @@ function isId(value: unknown): value is string {
 }
 
 function isSnapshot(value: unknown): value is EvaluationSnapshotIdentity {
-  return isRecord(value)
-    && hasExactKeys(value, ['snapshotId', 'digest'])
-    && isId(value['snapshotId'])
-    && typeof value['digest'] === 'string'
-    && SHA256.test(value['digest']);
+  return isRecord(value) && hasExactKeys(value, ['snapshotId', 'digest']) && isId(value['snapshotId']) && typeof value['digest'] === 'string' && SHA256.test(value['digest']);
 }
 
 function isBounds(value: unknown): value is EvaluationGradingBounds {
@@ -52,41 +48,38 @@ function isBounds(value: unknown): value is EvaluationGradingBounds {
     const limit = value[key];
     if (typeof limit !== 'number' || !Number.isSafeInteger(limit) || limit < 1 || limit > ceiling) return false;
   }
-  return typeof value['timeoutMs'] === 'number'
-    && typeof value['maxCpuMs'] === 'number'
-    && value['maxCpuMs'] <= value['timeoutMs'];
+  return typeof value['timeoutMs'] === 'number' && typeof value['maxCpuMs'] === 'number' && value['maxCpuMs'] <= value['timeoutMs'];
 }
 
 function isProfile(value: unknown): value is EvaluationGradingProfile {
-  return isRecord(value)
-    && hasExactKeys(value, ['profileId', 'digest', 'bounds'])
-    && isId(value['profileId'])
-    && typeof value['digest'] === 'string'
-    && SHA256.test(value['digest'])
-    && isBounds(value['bounds']);
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ['profileId', 'digest', 'bounds']) &&
+    isId(value['profileId']) &&
+    typeof value['digest'] === 'string' &&
+    SHA256.test(value['digest']) &&
+    isBounds(value['bounds'])
+  );
 }
 
 function isExecutor(value: unknown): value is EvaluationGraderExecutor {
-  return isRecord(value)
-    && hasExactKeys(value, ['executorId', 'execute'])
-    && isId(value['executorId'])
-    && typeof value['execute'] === 'function';
+  return isRecord(value) && hasExactKeys(value, ['executorId', 'execute']) && isId(value['executorId']) && typeof value['execute'] === 'function';
 }
 
 function isIsolationAuthority(value: unknown): value is EvaluationIsolationAuthority {
-  return isRecord(value)
-    && hasExactKeys(value, ['admit'])
-    && typeof value['admit'] === 'function';
+  return isRecord(value) && hasExactKeys(value, ['admit']) && typeof value['admit'] === 'function';
 }
 
 function isBoundary(value: unknown): value is MockPrivateGradingBoundary {
-  return isRecord(value)
-    && hasExactKeys(value, ['finalSnapshot', 'profile', 'graderPayload', 'isolationAuthority', 'executor'])
-    && Object.hasOwn(value, 'graderPayload')
-    && isSnapshot(value['finalSnapshot'])
-    && isProfile(value['profile'])
-    && isIsolationAuthority(value['isolationAuthority'])
-    && isExecutor(value['executor']);
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ['finalSnapshot', 'profile', 'graderPayload', 'isolationAuthority', 'executor']) &&
+    Object.hasOwn(value, 'graderPayload') &&
+    isSnapshot(value['finalSnapshot']) &&
+    isProfile(value['profile']) &&
+    isIsolationAuthority(value['isolationAuthority']) &&
+    isExecutor(value['executor'])
+  );
 }
 
 function freezeSnapshot(value: EvaluationSnapshotIdentity): EvaluationSnapshotIdentity {
@@ -101,51 +94,48 @@ function freezeProfile(value: EvaluationGradingProfile): EvaluationGradingProfil
   });
 }
 
-function isAdmission(
-  value: unknown,
-  request: EvaluationGradingAdmissionRequest,
-): value is EvaluationGradingAdmission {
-  return isRecord(value)
-    && hasExactKeys(value, ['kind', 'admissionId', 'finalSnapshot', 'profile', 'executorId'])
-    && value['kind'] === 'injected-mock-isolation-admission'
-    && isId(value['admissionId'])
-    && value['finalSnapshot'] === request.finalSnapshot
-    && value['profile'] === request.profile
-    && value['executorId'] === request.executorId;
+function isAdmission(value: unknown, request: EvaluationGradingAdmissionRequest): value is EvaluationGradingAdmission {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ['kind', 'admissionId', 'finalSnapshot', 'profile', 'executorId']) &&
+    value['kind'] === 'injected-mock-isolation-admission' &&
+    isId(value['admissionId']) &&
+    value['finalSnapshot'] === request.finalSnapshot &&
+    value['profile'] === request.profile &&
+    value['executorId'] === request.executorId
+  );
 }
 
 function isOutcome(value: unknown): value is EvaluationOutcome {
   return typeof value === 'string' && OUTCOMES.has(value);
 }
 
-function safeResult(
-  value: unknown,
-  request: EvaluationGraderExecutionRequest,
-): SafeEvaluationGradingResult | undefined {
-  if (!isRecord(value) || !hasExactKeys(value, [
-    'finalSnapshot', 'profile', 'executorId', 'status', 'actualOutcome', 'durationMs', 'cpuMs', 'outputBytes',
-  ])) return undefined;
+function safeResult(value: unknown, request: EvaluationGraderExecutionRequest): SafeEvaluationGradingResult | undefined {
+  if (!isRecord(value) || !hasExactKeys(value, ['finalSnapshot', 'profile', 'executorId', 'status', 'actualOutcome', 'durationMs', 'cpuMs', 'outputBytes'])) return undefined;
   const durationMs = value['durationMs'];
   const cpuMs = value['cpuMs'];
   const outputBytes = value['outputBytes'];
   const bounds = request.profile.bounds;
-  if (value['finalSnapshot'] !== request.finalSnapshot
-    || value['profile'] !== request.profile
-    || value['executorId'] !== request.executorId
-    || (value['status'] !== 'pass' && value['status'] !== 'fail')
-    || !isOutcome(value['actualOutcome'])
-    || typeof durationMs !== 'number'
-    || !Number.isSafeInteger(durationMs)
-    || durationMs < 0
-    || durationMs > bounds.timeoutMs
-    || typeof cpuMs !== 'number'
-    || !Number.isSafeInteger(cpuMs)
-    || cpuMs < 0
-    || cpuMs > bounds.maxCpuMs
-    || typeof outputBytes !== 'number'
-    || !Number.isSafeInteger(outputBytes)
-    || outputBytes < 0
-    || outputBytes > bounds.maxOutputBytes) return undefined;
+  if (
+    value['finalSnapshot'] !== request.finalSnapshot ||
+    value['profile'] !== request.profile ||
+    value['executorId'] !== request.executorId ||
+    (value['status'] !== 'pass' && value['status'] !== 'fail') ||
+    !isOutcome(value['actualOutcome']) ||
+    typeof durationMs !== 'number' ||
+    !Number.isSafeInteger(durationMs) ||
+    durationMs < 0 ||
+    durationMs > bounds.timeoutMs ||
+    typeof cpuMs !== 'number' ||
+    !Number.isSafeInteger(cpuMs) ||
+    cpuMs < 0 ||
+    cpuMs > bounds.maxCpuMs ||
+    typeof outputBytes !== 'number' ||
+    !Number.isSafeInteger(outputBytes) ||
+    outputBytes < 0 ||
+    outputBytes > bounds.maxOutputBytes
+  )
+    return undefined;
   return Object.freeze({
     finalSnapshot: request.finalSnapshot,
     profile: request.profile,

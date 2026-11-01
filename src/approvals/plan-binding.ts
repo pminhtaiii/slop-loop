@@ -18,24 +18,36 @@ export interface PlanBindingDigestInput {
   readonly decisionRef: string;
 }
 
-const PLAN_DIGEST_KEYS = [
-  'taskId', 'planVersion', 'strategyDigest', 'baselineRef', 'evidenceRefs', 'criteriaDigest', 'checkSetDigest', 'decisionRef',
-] as const;
+const PLAN_DIGEST_KEYS = ['taskId', 'planVersion', 'strategyDigest', 'baselineRef', 'evidenceRefs', 'criteriaDigest', 'checkSetDigest', 'decisionRef'] as const;
 
 const validId = (value: unknown): value is string => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value);
 
 export function computePlanBindingDigest(input: unknown): string {
-  if (!plainData(input) || typeof input !== 'object' || input === null || Array.isArray(input) ||
-    Object.keys(input).length !== PLAN_DIGEST_KEYS.length || PLAN_DIGEST_KEYS.some(key => !Object.hasOwn(input, key))) {
+  if (
+    !plainData(input) ||
+    typeof input !== 'object' ||
+    input === null ||
+    Array.isArray(input) ||
+    Object.keys(input).length !== PLAN_DIGEST_KEYS.length ||
+    PLAN_DIGEST_KEYS.some(key => !Object.hasOwn(input, key))
+  ) {
     throw new Error('computePlanBindingDigest requires a plain object');
   }
   const record = input as Record<string, unknown>;
   if (
-    !validId(record['taskId']) || !Number.isSafeInteger(record['planVersion']) || Number(record['planVersion']) < 1 ||
-    !isSha(record['strategyDigest']) || !validId(record['baselineRef']) ||
-    !Array.isArray(record['evidenceRefs']) || record['evidenceRefs'].length === 0 || record['evidenceRefs'].length > 128 ||
-    !record['evidenceRefs'].every(validId) || new Set(record['evidenceRefs']).size !== record['evidenceRefs'].length ||
-    !isSha(record['criteriaDigest']) || !isSha(record['checkSetDigest']) || !validId(record['decisionRef'])
+    !validId(record['taskId']) ||
+    !Number.isSafeInteger(record['planVersion']) ||
+    Number(record['planVersion']) < 1 ||
+    !isSha(record['strategyDigest']) ||
+    !validId(record['baselineRef']) ||
+    !Array.isArray(record['evidenceRefs']) ||
+    record['evidenceRefs'].length === 0 ||
+    record['evidenceRefs'].length > 128 ||
+    !record['evidenceRefs'].every(validId) ||
+    new Set(record['evidenceRefs']).size !== record['evidenceRefs'].length ||
+    !isSha(record['criteriaDigest']) ||
+    !isSha(record['checkSetDigest']) ||
+    !validId(record['decisionRef'])
   ) {
     throw new Error('computePlanBindingDigest missing required fields');
   }
@@ -92,7 +104,12 @@ export function evaluatePlanApplicabilityV02(input: unknown): PlanApplicabilityE
       return { status: 'denied', planApplicability: app, reasonCodes: ['invalid-diagnostic-purpose'] };
     }
     if (!isSha(record['taskCriteriaDigest']) || !isSha(record['checkSetDigest'])) return { status: 'denied', planApplicability: app, reasonCodes: ['invalid-task-criteria-or-check-set-digest'] };
-    if (typeof record['testPath'] !== 'string' || !record['testPath'].startsWith('tests/') || record['testPath'].split('/').some((part, index, parts) => part === '.' || part === '..' || part === '' && index !== parts.length - 1) || record['testPath'].includes('\\')) {
+    if (
+      typeof record['testPath'] !== 'string' ||
+      !record['testPath'].startsWith('tests/') ||
+      record['testPath'].split('/').some((part, index, parts) => part === '.' || part === '..' || (part === '' && index !== parts.length - 1)) ||
+      record['testPath'].includes('\\')
+    ) {
       return { status: 'denied', planApplicability: app, reasonCodes: ['invalid-diagnostic-test-path'] };
     }
     if (!validId(record['checkId'])) return { status: 'denied', planApplicability: app, reasonCodes: ['invalid-diagnostic-check-id'] };
@@ -101,7 +118,8 @@ export function evaluatePlanApplicabilityV02(input: unknown): PlanApplicabilityE
 
   // approved-plan
   const fields = ['planApplicability', 'planBindingDigest', 'planDecisionRef', 'planBinding'];
-  if (Object.keys(record).length !== fields.length || fields.some(key => !Object.hasOwn(record, key))) return { status: 'denied', planApplicability: app, reasonCodes: ['invalid-approved-plan-fields'] };
+  if (Object.keys(record).length !== fields.length || fields.some(key => !Object.hasOwn(record, key)))
+    return { status: 'denied', planApplicability: app, reasonCodes: ['invalid-approved-plan-fields'] };
   const planBindingDigest = record['planBindingDigest'];
   const planDecisionRef = record['planDecisionRef'];
   if (!isSha(planBindingDigest) || !isId(planDecisionRef)) {
@@ -123,10 +141,18 @@ export function evaluatePlanApplicabilityV02(input: unknown): PlanApplicabilityE
 
 // Key vocabulary stays exhaustive against the canonical type; admission owns value semantics.
 const contextFields: Readonly<Record<keyof ApprovalBindingContext, true>> = {
-  currentTaskId: true, currentWorkspaceId: true, currentRepositoryRevisionDigest: true,
-  currentPolicyId: true, currentPolicyVersion: true, currentNormalizedActionDigest: true,
-  currentPlanVersion: true, currentStrategyDigest: true, currentBaselineRef: true,
-  currentEvidenceRefs: true, currentCriteriaDigest: true, currentCheckSetDigest: true,
+  currentTaskId: true,
+  currentWorkspaceId: true,
+  currentRepositoryRevisionDigest: true,
+  currentPolicyId: true,
+  currentPolicyVersion: true,
+  currentNormalizedActionDigest: true,
+  currentPlanVersion: true,
+  currentStrategyDigest: true,
+  currentBaselineRef: true,
+  currentEvidenceRefs: true,
+  currentCriteriaDigest: true,
+  currentCheckSetDigest: true,
 };
 
 /** Evaluates freshness only; a valid pending/rejected binding is never consent. */
@@ -137,8 +163,11 @@ export function evaluatePlanBinding(binding: unknown, context: unknown): Binding
   if (!parsed.ok) return { status: 'denied', reasonCodes: ['invalid-binding'] };
   // Descriptor inspection admits only data; canonical admission owns the field semantics.
   let checked: ReturnType<typeof validateApprovalBinding>;
-  try { checked = validateApprovalBinding({ ...parsed.value, status: 'approved' }, context as ApprovalBindingContext); }
-  catch { return { status: 'denied', reasonCodes: ['invalid-binding-context'] }; }
+  try {
+    checked = validateApprovalBinding({ ...parsed.value, status: 'approved' }, context as ApprovalBindingContext);
+  } catch {
+    return { status: 'denied', reasonCodes: ['invalid-binding-context'] };
+  }
   if (checked.ok) return { status: 'valid', reasonCodes: [] };
   if (checked.errors.some(error => error.code !== 'STALE_APPROVAL_BINDING')) return { status: 'denied', reasonCodes: ['incomplete-binding-context'] };
   return { status: 'stale', reasonCodes: [...new Set(checked.errors.map(error => `changed-${error.path}`))] };

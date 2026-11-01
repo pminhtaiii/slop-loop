@@ -35,7 +35,9 @@ function shortPath(path) {
   ].join('\n');
   const command = `Add-Type -TypeDefinition @'\n${typeDefinition}\n'@\n$buffer = New-Object System.Text.StringBuilder(32768)\n[void][NativePathAlias]::GetShortPathName($env:WORKTREE_PATH_FOR_TEST, $buffer, [uint32]$buffer.Capacity)\n$buffer.ToString()`;
   const result = spawnSync('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', command], {
-    encoding: 'utf8', windowsHide: true, env: { ...process.env, WORKTREE_PATH_FOR_TEST: path },
+    encoding: 'utf8',
+    windowsHide: true,
+    env: { ...process.env, WORKTREE_PATH_FOR_TEST: path },
   });
   const candidate = result.status === 0 ? result.stdout.trim() : '';
   return candidate && candidate.toLowerCase() !== path.toLowerCase() ? candidate : null;
@@ -58,13 +60,19 @@ async function fixture(t, { externalWorker = false } = {}) {
   await mkdir(dirname(worker), { recursive: true });
   git(root, ['worktree', 'add', '-b', 'worker', worker]);
   await mkdir(join(root, '.agent-work/2026-10-15/run'), { recursive: true });
-  await writeFile(join(root, '.agent-work/2026-10-15/run/session.json'), JSON.stringify({
-    schemaVersion: 1, workspace: 'project', date: '2026-10-15', id: 'run', status: 'active', startedAt: new Date().toISOString(),
-  }));
+  await writeFile(
+    join(root, '.agent-work/2026-10-15/run/session.json'),
+    JSON.stringify({
+      schemaVersion: 1,
+      workspace: 'project',
+      date: '2026-10-15',
+      id: 'run',
+      status: 'active',
+      startedAt: new Date().toISOString(),
+    }),
+  );
   await mkdir(join(root, '.agent-work/state'));
-  await writeFile(join(root, '.agent-work/state/active-tasks.json'), JSON.stringify([
-    { owner: 'worker', task: 'T001', checkout: worker, summary: 'Work', next: 'Review', status: 'completed' },
-  ]));
+  await writeFile(join(root, '.agent-work/state/active-tasks.json'), JSON.stringify([{ owner: 'worker', task: 'T001', checkout: worker, summary: 'Work', next: 'Review', status: 'completed' }]));
   return { root, worker, base };
 }
 function register(root, worker) {
@@ -76,7 +84,7 @@ function accept(root, id = 'worker') {
   assert.equal(result.status, 0, result.stderr);
 }
 
-test('retirement previews by default and applies only to an accepted, clean, merged owned worktree', async (t) => {
+test('retirement previews by default and applies only to an accepted, clean, merged owned worktree', async t => {
   const { root, worker } = await fixture(t);
   register(root, worker);
   accept(root);
@@ -91,7 +99,7 @@ test('retirement previews by default and applies only to an accepted, clean, mer
   git(root, ['show-ref', '--verify', 'refs/heads/worker']);
 });
 
-test('unmerged commits remain even when the worker is clean and its handoff accepted', async (t) => {
+test('unmerged commits remain even when the worker is clean and its handoff accepted', async t => {
   const { root, worker } = await fixture(t);
   register(root, worker);
   await writeFile(join(worker, 'unmerged.txt'), 'preserve this change\n');
@@ -104,7 +112,7 @@ test('unmerged commits remain even when the worker is clean and its handoff acce
   assert.equal(await readFile(join(worker, 'unmerged.txt'), 'utf8'), 'preserve this change\n');
 });
 
-test('modified, untracked, and ignored content each prevent worktree retirement', async (t) => {
+test('modified, untracked, and ignored content each prevent worktree retirement', async t => {
   for (const mode of ['modified', 'untracked', 'ignored']) {
     const { root, worker } = await fixture(t);
     register(root, worker);
@@ -120,13 +128,17 @@ test('modified, untracked, and ignored content each prevent worktree retirement'
   }
 });
 
-test('checkout-wide active assignments, changed evidence, and locked worktrees invalidate retirement', async (t) => {
+test('checkout-wide active assignments, changed evidence, and locked worktrees invalidate retirement', async t => {
   for (const mode of ['resumed', 'unrelated-session', 'evidence', 'locked']) {
     const { root, worker } = await fixture(t);
     register(root, worker);
     accept(root);
     if (mode === 'resumed') await writeFile(join(root, '.agent-work/state/active-tasks.json'), JSON.stringify([{ owner: 'worker', task: 'T001', checkout: worker, status: 'active' }]));
-    if (mode === 'unrelated-session') await writeFile(join(root, '.agent-work/state/active-tasks.json'), JSON.stringify([{ owner: 'another-worker', task: 'T099', checkout: worker, session: '2026-10-21/another-session', status: 'active' }]));
+    if (mode === 'unrelated-session')
+      await writeFile(
+        join(root, '.agent-work/state/active-tasks.json'),
+        JSON.stringify([{ owner: 'another-worker', task: 'T099', checkout: worker, session: '2026-10-21/another-session', status: 'active' }]),
+      );
     if (mode === 'evidence') await writeFile(join(root, 'docs/evidence.md'), 'Changed after acceptance\n');
     if (mode === 'locked') git(root, ['worktree', 'lock', worker]);
     const result = run(root, 'cleanup', '--id', 'worker', '--apply');
@@ -138,23 +150,36 @@ test('checkout-wide active assignments, changed evidence, and locked worktrees i
   }
 });
 
-test('a reassigned predecessor does not block retirement after its successor finishes', async (t) => {
+test('a reassigned predecessor does not block retirement after its successor finishes', async t => {
   for (const successorStatus of ['completed', 'active', 'blocked']) {
     const { root, worker } = await fixture(t);
     register(root, worker);
     accept(root);
-    await writeFile(join(root, '.agent-work/state/active-tasks.json'), JSON.stringify([
-      {
-        owner: 'interrupted', task: 'T001', checkout: worker, session: '2026-10-15/source',
-        summary: 'Work', next: 'Transferred to successor', status: 'reassigned',
-        reassignments: [{ owner: 'worker', task: 'T001', session: '2026-10-15/successor', reason: 'Recovery', at: '2026-10-15T00:00:00.000Z' }],
-      },
-      {
-        owner: 'worker', task: 'T001', checkout: worker, session: '2026-10-15/successor',
-        summary: 'Work', next: 'Finish verification', status: successorStatus,
-        reassignedFrom: { owner: 'interrupted', task: 'T001', session: '2026-10-15/source' },
-      },
-    ]));
+    await writeFile(
+      join(root, '.agent-work/state/active-tasks.json'),
+      JSON.stringify([
+        {
+          owner: 'interrupted',
+          task: 'T001',
+          checkout: worker,
+          session: '2026-10-15/source',
+          summary: 'Work',
+          next: 'Transferred to successor',
+          status: 'reassigned',
+          reassignments: [{ owner: 'worker', task: 'T001', session: '2026-10-15/successor', reason: 'Recovery', at: '2026-10-15T00:00:00.000Z' }],
+        },
+        {
+          owner: 'worker',
+          task: 'T001',
+          checkout: worker,
+          session: '2026-10-15/successor',
+          summary: 'Work',
+          next: 'Finish verification',
+          status: successorStatus,
+          reassignedFrom: { owner: 'interrupted', task: 'T001', session: '2026-10-15/source' },
+        },
+      ]),
+    );
 
     const result = run(root, 'cleanup', '--id', 'worker');
     assert.equal(result.status, 0, result.stderr);
@@ -167,7 +192,7 @@ test('a reassigned predecessor does not block retirement after its successor fin
   }
 });
 
-test('unknown workers and attempts to register the primary checkout are rejected', async (t) => {
+test('unknown workers and attempts to register the primary checkout are rejected', async t => {
   const { root } = await fixture(t);
   let result = run(root, 'cleanup', '--id', 'unknown', '--apply');
   assert.equal(result.status, 1);
@@ -176,16 +201,32 @@ test('unknown workers and attempts to register the primary checkout are rejected
   assert.match(result.stderr, /inside the managed worktree area/);
 });
 
-test('external app-owned registration rejects a case-variant primary path on Windows', async (t) => {
+test('external app-owned registration rejects a case-variant primary path on Windows', async t => {
   if (process.platform !== 'win32') return t.skip('Windows path casing is required for this regression.');
   const { root } = await fixture(t);
-  const result = run(root, 'register', '--id', 'primary-case', '--path', alternateCase(root), '--integration-ref', 'main', '--session', '2026-10-15/run', '--owner', 'worker', '--task', 'T001', '--external-app-owned');
+  const result = run(
+    root,
+    'register',
+    '--id',
+    'primary-case',
+    '--path',
+    alternateCase(root),
+    '--integration-ref',
+    'main',
+    '--session',
+    '2026-10-15/run',
+    '--owner',
+    'worker',
+    '--task',
+    'T001',
+    '--external-app-owned',
+  );
   assert.equal(result.status, 1, `case-variant primary path unexpectedly registered: ${result.stdout}`);
   assert.match(result.stderr, /invoking and primary checkouts/i);
   await assert.rejects(readFile(join(root, '.agent-work/worktree-receipts/primary-case.json')), { code: 'ENOENT' });
 });
 
-test('registration accepts a valid case-variant worktree path on Windows', async (t) => {
+test('registration accepts a valid case-variant worktree path on Windows', async t => {
   if (process.platform !== 'win32') return t.skip('Windows path casing is required for this regression.');
   const { root, worker } = await fixture(t);
   const result = run(root, 'register', '--id', 'worker-case', '--path', alternateCase(worker), '--integration-ref', 'main', '--session', '2026-10-15/run', '--owner', 'worker', '--task', 'T001');
@@ -193,7 +234,7 @@ test('registration accepts a valid case-variant worktree path on Windows', async
   assert.equal(JSON.parse(await readFile(join(root, '.agent-work/worktree-receipts/worker-case.json'), 'utf8')).path.toLowerCase(), (await realpath(worker)).toLowerCase());
 });
 
-test('registration accepts a valid Windows 8.3 short-name worktree path when available', async (t) => {
+test('registration accepts a valid Windows 8.3 short-name worktree path when available', async t => {
   if (process.platform !== 'win32') return t.skip('Windows 8.3 alias not run locally; Windows CI validation is required.');
   const { root, worker } = await fixture(t);
   const alias = shortPath(worker);
@@ -203,7 +244,7 @@ test('registration accepts a valid Windows 8.3 short-name worktree path when ava
   assert.equal(JSON.parse(await readFile(join(root, '.agent-work/worktree-receipts/worker-short.json'), 'utf8')).path.toLowerCase(), (await realpath(worker)).toLowerCase());
 });
 
-test('registration rejects final and intermediate junction paths', async (t) => {
+test('registration rejects final and intermediate junction paths', async t => {
   for (const kind of ['final', 'intermediate']) {
     const { root, worker } = await fixture(t);
     const link = join(root, '.agent-work/worktrees', kind === 'final' ? 'worker-final-link' : 'worker-intermediate-link');
@@ -216,7 +257,7 @@ test('registration rejects final and intermediate junction paths', async (t) => 
   }
 });
 
-test('external app-owned worktrees require explicit registration and are never cleaned up by the helper', async (t) => {
+test('external app-owned worktrees require explicit registration and are never cleaned up by the helper', async t => {
   const { root, worker, base } = await fixture(t, { externalWorker: true });
   const statePath = join(root, '.agent-work/state/active-tasks.json');
   const entries = JSON.parse(await readFile(statePath, 'utf8'));
@@ -225,7 +266,9 @@ test('external app-owned worktrees require explicit registration and are never c
   const identity = { owner: 'worker', task: 'T001', session: '2026-10-15/run' };
   const originBase = { ref: 'refs/remotes/origin/development', sha: base };
   entries[0] = {
-    ...entries[0], session: identity.session, checkout,
+    ...entries[0],
+    session: identity.session,
+    checkout,
     reservation: { schemaVersion: 1, identity, repository, base: originBase },
     binding: { schemaVersion: 1, identity, checkout, repository, branch: 'refs/heads/worker', base: originBase, boundAt: '2026-10-15T00:00:00.000Z' },
   };

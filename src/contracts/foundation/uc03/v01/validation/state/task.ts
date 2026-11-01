@@ -57,11 +57,12 @@ export function validateTaskState(input: unknown): ValidationResult<TaskState> {
 
   for (const key of ['acceptanceCriteria', 'constraints', 'requiredCheckIds', 'changedPaths', 'evidenceRefs', 'approvalDecisionRefs', 'reviewRefs', 'risks']) {
     const value = input[key];
-    if (Array.isArray(value)) value.forEach((item, index) => {
-      validateNonEmptyString(item, `${key}[${index}]`, errors);
-      if (key === 'changedPaths' && (typeof item !== 'string' ||
-      !isCanonicalRelativePath(item))) errors.push({ path: `${key}[${index}]`, code: 'INVALID_PATH', message: 'Changed path must be canonical and relative' });
-    });
+    if (Array.isArray(value))
+      value.forEach((item, index) => {
+        validateNonEmptyString(item, `${key}[${index}]`, errors);
+        if (key === 'changedPaths' && (typeof item !== 'string' || !isCanonicalRelativePath(item)))
+          errors.push({ path: `${key}[${index}]`, code: 'INVALID_PATH', message: 'Changed path must be canonical and relative' });
+      });
   }
   const schemaVersion = validateNonEmptyString(input['schemaVersion'], 'schemaVersion', errors);
   if (schemaVersion && schemaVersion !== CONTRACT_VERSION) {
@@ -77,11 +78,7 @@ export function validateTaskState(input: unknown): ValidationResult<TaskState> {
   const runId = validateNonEmptyString(input['runId'], 'runId', errors);
   const workspaceId = validateNonEmptyString(input['workspaceId'], 'workspaceId', errors);
   const repositoryId = validateNonEmptyString(input['repositoryId'], 'repositoryId', errors);
-  const repositoryRevisionDigest = validateNonEmptyString(
-    input['repositoryRevisionDigest'],
-    'repositoryRevisionDigest',
-    errors
-  );
+  const repositoryRevisionDigest = validateNonEmptyString(input['repositoryRevisionDigest'], 'repositoryRevisionDigest', errors);
   const goal = validateNonEmptyString(input['goal'], 'goal', errors);
   const nextAction = validateNonEmptyString(input['nextAction'], 'nextAction', errors);
 
@@ -141,8 +138,19 @@ export function validateTaskState(input: unknown): ValidationResult<TaskState> {
 
   if (!taskContext) errors.push({ path: 'taskContext', code: 'MISSING_TASK_CONTEXT', message: 'Complete original validated BugTask is required for recovery' });
   if (taskContext) {
-    const originals: Record<string, unknown> = { taskId: taskContext.taskId, repositoryId: taskContext.repositoryId, goal: taskContext.goal, observedBehavior: taskContext.observedBehavior, expectedBehavior: taskContext.expectedBehavior, reproduction: taskContext.reproduction, acceptanceCriteria: taskContext.acceptanceCriteria, constraints: taskContext.constraints, requiredCheckIds: taskContext.requiredChecks.map(c => c.checkId) };
-    for (const [key, value] of Object.entries(originals)) if (canonicalJsonStringify(input[key]) !== canonicalJsonStringify(value)) errors.push({ path: key, code: 'TASK_CONTEXT_MISMATCH', message: 'State must preserve original task context' });
+    const originals: Record<string, unknown> = {
+      taskId: taskContext.taskId,
+      repositoryId: taskContext.repositoryId,
+      goal: taskContext.goal,
+      observedBehavior: taskContext.observedBehavior,
+      expectedBehavior: taskContext.expectedBehavior,
+      reproduction: taskContext.reproduction,
+      acceptanceCriteria: taskContext.acceptanceCriteria,
+      constraints: taskContext.constraints,
+      requiredCheckIds: taskContext.requiredChecks.map(c => c.checkId),
+    };
+    for (const [key, value] of Object.entries(originals))
+      if (canonicalJsonStringify(input[key]) !== canonicalJsonStringify(value)) errors.push({ path: key, code: 'TASK_CONTEXT_MISMATCH', message: 'State must preserve original task context' });
   }
   const nodeRes = validateTaskNode(input['node']);
   let node: TaskNode | undefined;
@@ -271,14 +279,13 @@ export function validateTaskState(input: unknown): ValidationResult<TaskState> {
     const key = `${ledger.scope}:${ledger.kind}`;
     if (ledgerKeys.has(key)) errors.push({ path: 'budgetLedgers', code: 'DUPLICATE_LEDGER', message: 'Each accounting scope and kind must have one ledger' });
     ledgerKeys.add(key);
-    if (ledger.consumed + ledger.reservations.reduce((sum, r) => sum + r.amount, 0) > ledger.limit) errors.push({ path: 'budgetLedgers', code: 'BUDGET_EXHAUSTED', message: 'Persisted charges cannot exceed the configured limit' });
+    if (ledger.consumed + ledger.reservations.reduce((sum, r) => sum + r.amount, 0) > ledger.limit)
+      errors.push({ path: 'budgetLedgers', code: 'BUDGET_EXHAUSTED', message: 'Persisted charges cannot exceed the configured limit' });
   }
   if (replanCount !== undefined && replanCount > 0) {
     const ledger = budgetLedgers?.find(l => l.scope === 'task' && l.kind === 'replan');
-    if (!ledger ||
-      ledger.configurationId !== taskContext?.configId ||
-      ledger.limit > 3 ||
-      ledger.consumed + ledger.reservations.reduce((sum, r) => sum + r.amount, 0) < replanCount) errors.push({ path: 'budgetLedgers', code: 'MISSING_REPLAN_ACCOUNTING', message: 'Recovery must retain all task-scoped replan charges' });
+    if (!ledger || ledger.configurationId !== taskContext?.configId || ledger.limit > 3 || ledger.consumed + ledger.reservations.reduce((sum, r) => sum + r.amount, 0) < replanCount)
+      errors.push({ path: 'budgetLedgers', code: 'MISSING_REPLAN_ACCOUNTING', message: 'Recovery must retain all task-scoped replan charges' });
   }
 
   let checkpointConfigId: string | undefined;

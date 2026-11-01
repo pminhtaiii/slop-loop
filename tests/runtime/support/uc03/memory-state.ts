@@ -54,31 +54,26 @@ import {
   isRecordVerificationApprovalRequestV02,
   isVerificationAuthoritySnapshotV02,
 } from '../../../../src/contracts/foundation/uc03.ts';
-import type {
-  AdmissionTrustedContextV02,
-  PolicyAuthorityRefV02,
-  SafeReferenceV02,
-} from '../../../../src/contracts/foundation/uc03/v02/ports.ts';
-import type {
-  AttemptOutcomeValidationContextV02,
-  AttemptReconciliationValidationContextV02,
-  ClaimClosureValidationContextV02,
-} from '../../../../src/contracts/foundation/uc03/v02/attempt.ts';
-import {
-  createTestProviderAdmissionTrustedContextV02,
-  createTestRepositoryAdmissionTrustedContextV02,
-} from './state-fixtures.ts';
+import type { AdmissionTrustedContextV02, PolicyAuthorityRefV02, SafeReferenceV02 } from '../../../../src/contracts/foundation/uc03/v02/ports.ts';
+import type { AttemptOutcomeValidationContextV02, AttemptReconciliationValidationContextV02, ClaimClosureValidationContextV02 } from '../../../../src/contracts/foundation/uc03/v02/attempt.ts';
+import { createTestProviderAdmissionTrustedContextV02, createTestRepositoryAdmissionTrustedContextV02 } from './state-fixtures.ts';
 
 function bindingMatchesContext(binding: ApprovalBinding, context: CompleteApprovalBindingContextV02): boolean {
-  return binding.actionKind === 'fix_plan' && binding.taskId === context.currentTaskId &&
+  return (
+    binding.actionKind === 'fix_plan' &&
+    binding.taskId === context.currentTaskId &&
     binding.workspaceId === context.currentWorkspaceId &&
     binding.repositoryRevisionDigest === context.currentRepositoryRevisionDigest &&
-    binding.policyId === context.currentPolicyId && binding.policyVersion === context.currentPolicyVersion &&
+    binding.policyId === context.currentPolicyId &&
+    binding.policyVersion === context.currentPolicyVersion &&
     binding.normalizedActionDigest === context.currentNormalizedActionDigest &&
-    binding.planVersion === context.currentPlanVersion && binding.strategyDigest === context.currentStrategyDigest &&
+    binding.planVersion === context.currentPlanVersion &&
+    binding.strategyDigest === context.currentStrategyDigest &&
     binding.baselineRef === context.currentBaselineRef &&
     computeCanonicalSha256(binding.evidenceRefs ?? []) === computeCanonicalSha256(context.currentEvidenceRefs) &&
-    binding.criteriaDigest === context.currentCriteriaDigest && binding.checkSetDigest === context.currentCheckSetDigest;
+    binding.criteriaDigest === context.currentCriteriaDigest &&
+    binding.checkSetDigest === context.currentCheckSetDigest
+  );
 }
 
 export class StateConflictError extends Error {
@@ -90,7 +85,7 @@ export class StateConflictError extends Error {
       readonly expectedVersion: number;
       readonly actualVersion: number;
       readonly currentVersion: number;
-    }
+    },
   ) {
     super(message);
     this.name = 'StateConflictError';
@@ -138,7 +133,7 @@ export class MemoryStatePort implements StatePort {
     if (options?.initialTaskState) {
       const val = validateTaskState(options.initialTaskState);
       if (!val.ok) {
-        throw new Error(`Invalid initial task state: ${val.errors.map((e) => e.message).join(', ')}`);
+        throw new Error(`Invalid initial task state: ${val.errors.map(e => e.message).join(', ')}`);
       }
       const cloned = structuredClone(val.value);
       this.tasks.set(cloned.taskId, cloned);
@@ -164,7 +159,7 @@ export class MemoryStatePort implements StatePort {
       for (const l of options.initialLedgers) {
         const lVal = validateBudgetLedger(l);
         if (!lVal.ok) {
-          throw new Error(`Invalid initial ledger: ${lVal.errors.map((e) => e.message).join(', ')}`);
+          throw new Error(`Invalid initial ledger: ${lVal.errors.map(e => e.message).join(', ')}`);
         }
         const key = `${l.scope}:${l.kind}`;
         if (this.ledgers.has(key)) throw new Error('Duplicate ledger identity');
@@ -192,12 +187,23 @@ export class MemoryStatePort implements StatePort {
     for (const [requestId, bundle] of Object.entries(options?.initialBundles ?? {})) {
       const checked = validateReservationBundle(bundle);
       const restoredItems = [...this.ledgers.values()].flatMap(ledger => ledger.reservations.filter(res => res.keyedId === requestId));
-      if (!checked.ok || restoredItems.length !== bundle.reservations.length || bundle.taskId !== (options?.currentTaskId ?? this.currentTaskId) || bundle.runId !== (options?.currentRunId ?? this.currentRunId) || !bundle.reservations.every(item => {
-        const ledger = this.ledgers.get(`${item.scope}:${item.kind}`);
-        return item.requestId === requestId && item.ledgerIdentity === this.ledgerIdentities.get(`${item.scope}:${item.kind}`) &&
-          ledger?.configurationId === item.configurationId && ledger.version === item.version &&
-          ledger.reservations.some(res => res.keyedId === requestId && res.amount === item.amount && res.reservationId === `${bundle.bundleId}:${item.ledgerIdentity}`);
-      })) throw new Error('Restored bundle does not match current ledger receipts');
+      if (
+        !checked.ok ||
+        restoredItems.length !== bundle.reservations.length ||
+        bundle.taskId !== (options?.currentTaskId ?? this.currentTaskId) ||
+        bundle.runId !== (options?.currentRunId ?? this.currentRunId) ||
+        !bundle.reservations.every(item => {
+          const ledger = this.ledgers.get(`${item.scope}:${item.kind}`);
+          return (
+            item.requestId === requestId &&
+            item.ledgerIdentity === this.ledgerIdentities.get(`${item.scope}:${item.kind}`) &&
+            ledger?.configurationId === item.configurationId &&
+            ledger.version === item.version &&
+            ledger.reservations.some(res => res.keyedId === requestId && res.amount === item.amount && res.reservationId === `${bundle.bundleId}:${item.ledgerIdentity}`)
+          );
+        })
+      )
+        throw new Error('Restored bundle does not match current ledger receipts');
       if ([...this.reservationBundles.values()].some(old => old.bundleId === bundle.bundleId || old.transactionRef === bundle.transactionRef)) throw new Error('Restored bundle identity collision');
       this.reservationBundles.set(requestId, structuredClone(bundle));
     }
@@ -233,11 +239,11 @@ export class MemoryStatePort implements StatePort {
   }
 
   getLedgers(): readonly BudgetLedger[] {
-    return Array.from(this.ledgers.values()).map((l) => structuredClone(l));
+    return Array.from(this.ledgers.values()).map(l => structuredClone(l));
   }
 
   getLedgerIdentities(): readonly string[] {
-    return Array.from(this.ledgers.keys()).map((k) => this.ledgerIdentities.get(k) ?? `ledger-${k}`);
+    return Array.from(this.ledgers.keys()).map(k => this.ledgerIdentities.get(k) ?? `ledger-${k}`);
   }
 
   getReservationIds(): Readonly<Record<string, string>> {
@@ -245,27 +251,28 @@ export class MemoryStatePort implements StatePort {
   }
 
   getStoredRequests(): readonly ProviderRequest[] {
-    return Array.from(this.storedRequests.values()).map((r) => structuredClone(r));
+    return Array.from(this.storedRequests.values()).map(r => structuredClone(r));
   }
 
   async loadTask(taskId: string): Promise<TaskState | null> {
     const task = this.tasks.get(taskId);
     if (!task) return null;
-    return structuredClone({...task, budgetLedgers: this.getLedgers()});
+    return structuredClone({ ...task, budgetLedgers: this.getLedgers() });
   }
 
   async transition(state: TaskState, expectedVersion: number): Promise<TaskState> {
     const val = validateTaskState(state);
     if (!val.ok) {
-      throw new Error(`Invalid transition state: ${val.errors.map((e) => e.message).join(', ')}`);
+      throw new Error(`Invalid transition state: ${val.errors.map(e => e.message).join(', ')}`);
     }
 
     const prior = this.tasks.get(state.taskId);
     if (!prior) {
       if (expectedVersion === 0 && state.stateVersion === 1) {
-        if (this.tasks.size > 0 || (this.currentTaskId && this.currentTaskId !== state.taskId) || (this.currentRunId && this.currentRunId !== state.runId)) throw new Error('Only the configured task/run is supported');
+        if (this.tasks.size > 0 || (this.currentTaskId && this.currentTaskId !== state.taskId) || (this.currentRunId && this.currentRunId !== state.runId))
+          throw new Error('Only the configured task/run is supported');
         if (this.ledgers.size && computeCanonicalSha256(state.budgetLedgers) !== computeCanonicalSha256(this.getLedgers())) throw new StateConflictError('Stale creation accounting');
-        const staged = new Map<string,BudgetLedger>();
+        const staged = new Map<string, BudgetLedger>();
         for (const ledger of state.budgetLedgers ?? []) {
           const key = `${ledger.scope}:${ledger.kind}`;
           if (staged.has(key)) throw new Error('Duplicate ledger identity');
@@ -285,46 +292,43 @@ export class MemoryStatePort implements StatePort {
     }
 
     if (expectedVersion !== prior.stateVersion || state.stateVersion !== expectedVersion + 1) {
-      throw new StateConflictError(
-        `CAS conflict: expected stateVersion ${prior.stateVersion + 1}, got ${state.stateVersion} (expectedVersion: ${expectedVersion})`,
-        {
-          expectedVersion,
-          actualVersion: state.stateVersion,
-          currentVersion: prior.stateVersion,
-        }
-      );
+      throw new StateConflictError(`CAS conflict: expected stateVersion ${prior.stateVersion + 1}, got ${state.stateVersion} (expectedVersion: ${expectedVersion})`, {
+        expectedVersion,
+        actualVersion: state.stateVersion,
+        currentVersion: prior.stateVersion,
+      });
     }
 
     if (computeCanonicalSha256(state.budgetLedgers) !== computeCanonicalSha256(this.getLedgers())) throw new StateConflictError('Transition must retain current authoritative accounting');
-    const currentPrior = {...prior, budgetLedgers: prior.budgetLedgers?.map(ledger => {
-      if (ledger.kind !== 'tokens' && ledger.kind !== 'token' && ledger.kind !== 'cost') return ledger;
-      let consumed = ledger.consumed;
-      const reservations = ledger.reservations.filter(reservation => {
-        const usage = this.terminal.get(reservation.keyedId);
-        if (!usage) return true;
-        consumed += ledger.kind === 'cost' ? usage.costUsd : usage.billableTokens ?? usage.inputTokens + usage.outputTokens;
-        return false;
-      });
-      return {...ledger, consumed, reservations};
-    })};
+    const currentPrior = {
+      ...prior,
+      budgetLedgers: prior.budgetLedgers?.map(ledger => {
+        if (ledger.kind !== 'tokens' && ledger.kind !== 'token' && ledger.kind !== 'cost') return ledger;
+        let consumed = ledger.consumed;
+        const reservations = ledger.reservations.filter(reservation => {
+          const usage = this.terminal.get(reservation.keyedId);
+          if (!usage) return true;
+          consumed += ledger.kind === 'cost' ? usage.costUsd : (usage.billableTokens ?? usage.inputTokens + usage.outputTokens);
+          return false;
+        });
+        return { ...ledger, consumed, reservations };
+      }),
+    };
     const transitionRes = validateStateTransition(currentPrior, state, { allowSameNode: false, trusted: this.transitionContexts[state.stateVersion] });
     if (!transitionRes.ok) {
-      const isCas = transitionRes.errors.some((e) => e.code === 'CAS_CONFLICT');
+      const isCas = transitionRes.errors.some(e => e.code === 'CAS_CONFLICT');
       if (isCas) {
-        throw new StateConflictError(
-          transitionRes.errors.map((e) => e.message).join(', '),
-          {
-            expectedVersion,
-            actualVersion: state.stateVersion,
-            currentVersion: prior.stateVersion,
-          }
-        );
+        throw new StateConflictError(transitionRes.errors.map(e => e.message).join(', '), {
+          expectedVersion,
+          actualVersion: state.stateVersion,
+          currentVersion: prior.stateVersion,
+        });
       }
-      throw new Error(`State transition validation failed: ${transitionRes.errors.map((e) => `${e.path}: ${e.message}`).join(', ')}`);
+      throw new Error(`State transition validation failed: ${transitionRes.errors.map(e => `${e.path}: ${e.message}`).join(', ')}`);
     }
 
     if (state.runId !== prior.runId) throw new Error('Run changes are unsupported by this finite mock');
-    const saved = structuredClone({...transitionRes.value, budgetLedgers: this.getLedgers()});
+    const saved = structuredClone({ ...transitionRes.value, budgetLedgers: this.getLedgers() });
     this.tasks.set(state.taskId, saved);
     return structuredClone(saved);
   }
@@ -345,15 +349,12 @@ export class MemoryStatePort implements StatePort {
       throw new Error(`Ledger not found for scope "${scope}" and kind "${kind}"`);
     }
 
-    const existing = ledger.reservations.find((r) => r.keyedId === actionId);
+    const existing = ledger.reservations.find(r => r.keyedId === actionId);
     if (existing) {
       if (existing.amount === amount) {
         return existing.reservationId;
       }
-      throw new BudgetConflictError(
-        `Conflicting reservation for action ${actionId}: existing amount ${existing.amount} !== requested ${amount}`,
-        { scope, kind, version: ledger.version }
-      );
+      throw new BudgetConflictError(`Conflicting reservation for action ${actionId}: existing amount ${existing.amount} !== requested ${amount}`, { scope, kind, version: ledger.version });
     }
 
     const reservedSum = ledger.reservations.reduce((sum, r) => sum + r.amount, 0);
@@ -361,7 +362,7 @@ export class MemoryStatePort implements StatePort {
     if (available < amount) {
       throw new BudgetExhaustionError(
         `Budget exhausted on ${scope} ${kind} ledger (limit: ${ledger.limit}, consumed: ${ledger.consumed}, reserved: ${reservedSum}, requested: ${amount}, available: ${available})`,
-        { scope, kind, limit: ledger.limit, requested: amount }
+        { scope, kind, limit: ledger.limit, requested: amount },
       );
     }
 
@@ -374,7 +375,7 @@ export class MemoryStatePort implements StatePort {
 
     const val = validateBudgetLedger(updatedLedger);
     if (!val.ok) {
-      throw new Error(`Updated ledger validation failed: ${val.errors.map((e) => e.message).join(', ')}`);
+      throw new Error(`Updated ledger validation failed: ${val.errors.map(e => e.message).join(', ')}`);
     }
 
     this.ledgers.set(key, updatedLedger);
@@ -391,7 +392,7 @@ export class MemoryStatePort implements StatePort {
       readonly amount: number;
     }[],
     requestId: string,
-    transactionRef?: string
+    transactionRef?: string,
   ): Promise<ReservationBundle> {
     if (!requestId || typeof requestId !== 'string' || !requestId.trim()) {
       throw new Error('reserveMany requires a valid non-empty requestId');
@@ -410,8 +411,11 @@ export class MemoryStatePort implements StatePort {
     if (this.terminal.has(requestId) || this.uncertain.has(requestId)) throw new BudgetConflictError('Terminal or uncertain request cannot reserve');
     const existingBundle = this.reservationBundles.get(requestId);
     if (existingBundle) {
-      if (existingBundle.transactionRef !== txRef || existingBundle.reservations.length !== reservations.length ||
-        !reservations.every(item => existingBundle.reservations.some(old => old.scope === item.scope && old.kind === item.kind && old.amount === item.amount))) {
+      if (
+        existingBundle.transactionRef !== txRef ||
+        existingBundle.reservations.length !== reservations.length ||
+        !reservations.every(item => existingBundle.reservations.some(old => old.scope === item.scope && old.kind === item.kind && old.amount === item.amount))
+      ) {
         throw new BudgetConflictError('Conflicting bundle identity');
       }
       return structuredClone(existingBundle);
@@ -437,14 +441,14 @@ export class MemoryStatePort implements StatePort {
       if (available < item.amount) {
         throw new BudgetExhaustionError(
           `Budget exhausted on ${item.scope} ${item.kind} ledger (limit: ${ledger.limit}, consumed: ${ledger.consumed}, reserved: ${reservedSum}, requested: ${item.amount}, available: ${available})`,
-          { scope: item.scope, kind: item.kind, limit: ledger.limit, requested: item.amount }
+          { scope: item.scope, kind: item.kind, limit: ledger.limit, requested: item.amount },
         );
       }
     }
 
     const bundleItems: ReservationBundleItem[] = [];
     const staged = new Map<string, BudgetLedger>();
-    const stagedIds: Record<string,string> = {};
+    const stagedIds: Record<string, string> = {};
 
     for (const item of reservations) {
       const key = `${item.scope}:${item.kind}`;
@@ -464,7 +468,7 @@ export class MemoryStatePort implements StatePort {
 
       const val = validateBudgetLedger(updatedLedger);
       if (!val.ok) {
-        throw new Error(`Atomic ledger validation failed: ${val.errors.map((e) => e.message).join(', ')}`);
+        throw new Error(`Atomic ledger validation failed: ${val.errors.map(e => e.message).join(', ')}`);
       }
 
       staged.set(key, updatedLedger);
@@ -491,7 +495,7 @@ export class MemoryStatePort implements StatePort {
 
     const bundleValidation = validateReservationBundle(bundle);
     if (!bundleValidation.ok) {
-      throw new Error(`Generated bundle invalid: ${bundleValidation.errors.map((e) => e.message).join(', ')}`);
+      throw new Error(`Generated bundle invalid: ${bundleValidation.errors.map(e => e.message).join(', ')}`);
     }
 
     for (const [key, ledger] of staged) this.ledgers.set(key, ledger);
@@ -503,7 +507,7 @@ export class MemoryStatePort implements StatePort {
   async settle(actionId: string, observed: ProviderUsage): Promise<void> {
     const val = validateProviderUsage(observed);
     if (!val.ok) {
-      throw new Error(`Invalid observed provider usage: ${val.errors.map((e) => e.message).join(', ')}`);
+      throw new Error(`Invalid observed provider usage: ${val.errors.map(e => e.message).join(', ')}`);
     }
 
     const usage = val.value;
@@ -516,14 +520,14 @@ export class MemoryStatePort implements StatePort {
     let matchedReservations = 0;
 
     for (const [key, ledger] of this.ledgers.entries()) {
-      const matchingRes = ledger.reservations.find((r) => r.keyedId === actionId);
+      const matchingRes = ledger.reservations.find(r => r.keyedId === actionId);
       if (matchingRes) {
         matchedReservations++;
-        const remaining = ledger.reservations.filter((r) => r.keyedId !== actionId);
+        const remaining = ledger.reservations.filter(r => r.keyedId !== actionId);
         let consumedIncrement = 0;
 
         if (ledger.kind === 'tokens' || ledger.kind === 'token') {
-          consumedIncrement = usage.billableTokens ?? (usage.inputTokens + usage.outputTokens);
+          consumedIncrement = usage.billableTokens ?? usage.inputTokens + usage.outputTokens;
         } else if (ledger.kind === 'cost') {
           consumedIncrement = usage.costUsd;
         } else {
@@ -539,7 +543,7 @@ export class MemoryStatePort implements StatePort {
 
         const ledgerVal = validateBudgetLedger(updatedLedger);
         if (!ledgerVal.ok) {
-          throw new Error(`Settled ledger validation failed: ${ledgerVal.errors.map((e) => e.message).join(', ')}`);
+          throw new Error(`Settled ledger validation failed: ${ledgerVal.errors.map(e => e.message).join(', ')}`);
         }
         staged.set(key, updatedLedger);
       }
@@ -567,7 +571,7 @@ export class MemoryStatePort implements StatePort {
     reconciliation: {
       readonly observedUsage?: ProviderUsage | undefined;
       readonly reason: string;
-    }
+    },
   ): Promise<void> {
     if (!reconciliation.reason || typeof reconciliation.reason !== 'string' || !reconciliation.reason.trim()) {
       throw new Error('reconcileUncertain requires a non-empty reason explaining the outcome');
@@ -603,13 +607,13 @@ export class MemoryStatePort implements StatePort {
   async checkpoint(state: TaskState): Promise<void> {
     const val = validateTaskState(state);
     if (!val.ok) {
-      throw new Error(`Invalid checkpoint state: ${val.errors.map((e) => e.message).join(', ')}`);
+      throw new Error(`Invalid checkpoint state: ${val.errors.map(e => e.message).join(', ')}`);
     }
     const prior = this.tasks.get(state.taskId);
     if (!prior) throw new Error('Checkpoint requires an existing task');
     if (computeCanonicalSha256(state.budgetLedgers) !== computeCanonicalSha256(this.getLedgers())) throw new StateConflictError('Stale checkpoint accounting');
     if (state.stateVersion === prior.stateVersion) {
-      const current = {...prior, budgetLedgers: this.getLedgers()};
+      const current = { ...prior, budgetLedgers: this.getLedgers() };
       if (computeCanonicalSha256(state) !== computeCanonicalSha256(current)) throw new StateConflictError('Conflicting same-version checkpoint');
       this.checkpoints.set(state.taskId, structuredClone(current));
       return;
@@ -634,7 +638,7 @@ export class MemoryStatePort implements StatePort {
 
     const val = validateTaskState(recovered);
     if (!val.ok) {
-      throw new Error(`Recovered task state invalid: ${val.errors.map((e) => e.message).join(', ')}`);
+      throw new Error(`Recovered task state invalid: ${val.errors.map(e => e.message).join(', ')}`);
     }
     return structuredClone(val.value);
   }
@@ -720,7 +724,7 @@ interface StoredClaimRecordV02 {
   readonly trustedAdmissionContext: AdmissionTrustedContextV02;
   status: 'claimed' | 'attempting' | 'dispatched' | 'outcome-recorded' | 'settled' | 'uncertain' | 'observed-unsettled' | 'closed';
   attemptId?: string | undefined;
-  settlementResult?: OutcomeRecordResultV02 & { readonly outcome: 'settled' } | undefined;
+  settlementResult?: (OutcomeRecordResultV02 & { readonly outcome: 'settled' }) | undefined;
 }
 
 interface StoredAttemptRecordV02 {
@@ -766,11 +770,24 @@ export interface MemoryJournalSnapshotV02 {
   readonly claims: readonly { readonly claimId: string; readonly status: string; readonly attemptId: string | null }[];
   readonly attempts: readonly { readonly attemptId: string; readonly claimId: string; readonly status: string; readonly outcomeReceiptId: string | null }[];
   readonly outcomes: readonly { readonly receiptId: string; readonly claimId: string; readonly attemptId: string; readonly outcome: string; readonly receiptDigest: string }[];
-  readonly reconciliations: readonly { readonly reconciliationId: string; readonly claimId: string; readonly attemptId: string; readonly predecessorReceiptId: string; readonly receiptDigest: string }[];
+  readonly reconciliations: readonly {
+    readonly reconciliationId: string;
+    readonly claimId: string;
+    readonly attemptId: string;
+    readonly predecessorReceiptId: string;
+    readonly receiptDigest: string;
+  }[];
   readonly closures: readonly { readonly receiptId: string; readonly claimId: string; readonly receiptDigest: string }[];
   readonly authorityPublications: readonly { readonly publicationId: string; readonly publicationDigest: string; readonly generation: number }[];
   readonly controlEventRefs: readonly string[];
-  readonly fenceProofs: readonly { readonly claimId: string; readonly proofRef: SafeReferenceV02; readonly fencingGeneration: number; readonly holdRef: string; readonly controlVersion: number; readonly epoch: number }[];
+  readonly fenceProofs: readonly {
+    readonly claimId: string;
+    readonly proofRef: SafeReferenceV02;
+    readonly fencingGeneration: number;
+    readonly holdRef: string;
+    readonly controlVersion: number;
+    readonly epoch: number;
+  }[];
   readonly recoveryEvidencePredecessorReceiptIds: readonly string[];
   readonly fencedIncarnations: readonly string[];
 }
@@ -804,10 +821,7 @@ interface MemoryReservationSpecV02 {
   readonly keyedId: string;
 }
 
-type VerificationApprovalReplayScopeV02 = Pick<
-  RecordVerificationApprovalRequestV02,
-  'workspaceId' | 'repositoryId' | 'expectedPlanVersion'
->;
+type VerificationApprovalReplayScopeV02 = Pick<RecordVerificationApprovalRequestV02, 'workspaceId' | 'repositoryId' | 'expectedPlanVersion'>;
 
 export interface MemoryStatePortV02Options extends MemoryStatePortOptions {
   readonly initialControlVersion?: number | undefined;
@@ -828,14 +842,20 @@ export class MemoryStatePortV02 implements StatePortV02 {
   private holdRef: string | null;
   private activeAuthorityRef: PolicyAuthorityRefV02 | null;
   private readonly verificationApprovalVerifier?: ContextualApprovalVerifierV02 | undefined;
-  private readonly verificationApprovalOperations = new Map<string, {
-    readonly scope: VerificationApprovalReplayScopeV02;
-    readonly operation: Promise<RecordVerificationApprovalResultV02>;
-  }>();
-  private readonly verificationApprovalResults = new Map<string, {
-    readonly scope: VerificationApprovalReplayScopeV02;
-    readonly result: RecordVerificationApprovalResultV02;
-  }>();
+  private readonly verificationApprovalOperations = new Map<
+    string,
+    {
+      readonly scope: VerificationApprovalReplayScopeV02;
+      readonly operation: Promise<RecordVerificationApprovalResultV02>;
+    }
+  >();
+  private readonly verificationApprovalResults = new Map<
+    string,
+    {
+      readonly scope: VerificationApprovalReplayScopeV02;
+      readonly result: RecordVerificationApprovalResultV02;
+    }
+  >();
   private readonly claims = new Map<string, StoredClaimRecordV02>();
   private activeClaimId?: string | undefined;
   private readonly attempts = new Map<string, StoredAttemptRecordV02>();
@@ -862,25 +882,33 @@ export class MemoryStatePortV02 implements StatePortV02 {
     this.verificationApprovalVerifier = options?.verificationApprovalVerifier;
     if (this.holdRef) {
       const initialTask = options?.initialTaskState;
-      this.controlEvents.set(this.holdRef, this.controlEvent(
+      this.controlEvents.set(
         this.holdRef,
-        initialTask?.taskId ?? options?.currentTaskId ?? '',
-        initialTask?.runId ?? '',
-        initialTask?.stateVersion ?? 0,
-        this.mode,
-        this.currentControlVersion,
-        this.currentEpoch,
-      ));
+        this.controlEvent(
+          this.holdRef,
+          initialTask?.taskId ?? options?.currentTaskId ?? '',
+          initialTask?.runId ?? '',
+          initialTask?.stateVersion ?? 0,
+          this.mode,
+          this.currentControlVersion,
+          this.currentEpoch,
+        ),
+      );
     }
   }
 
   private async exclusive<T>(operation: () => Promise<T> | T): Promise<T> {
     const prior = this.lockTail;
     let release!: () => void;
-    this.lockTail = new Promise<void>((resolve) => { release = resolve; });
+    this.lockTail = new Promise<void>(resolve => {
+      release = resolve;
+    });
     await prior;
-    try { return await operation(); }
-    finally { release(); }
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
   }
 
   getUnderlying(): MemoryStatePort {
@@ -893,17 +921,41 @@ export class MemoryStatePortV02 implements StatePortV02 {
       epoch: this.currentEpoch,
       mode: this.mode,
       holdRef: this.holdRef,
-      holdEventDigest: this.holdRef ? this.controlEvents.get(this.holdRef)?.digest ?? null : null,
+      holdEventDigest: this.holdRef ? (this.controlEvents.get(this.holdRef)?.digest ?? null) : null,
       activeClaimId: this.activeClaimId ?? null,
       activeAuthorityRef: this.activeAuthorityRef ? structuredClone(this.activeAuthorityRef) : null,
-      claims: [...this.claims.values()].map((claim) => ({ claimId: claim.receipt.claimId, status: claim.status, attemptId: claim.attemptId ?? null })),
-      attempts: [...this.attempts.values()].map((attempt) => ({ attemptId: attempt.receipt.attemptId, claimId: attempt.claimId, status: attempt.status, outcomeReceiptId: attempt.outcomeReceiptId ?? null })),
-      outcomes: [...this.outcomeReceipts.values()].map((receipt) => ({ receiptId: receipt.receiptId, claimId: receipt.claimId, attemptId: receipt.attemptId, outcome: receipt.outcome, receiptDigest: receipt.receiptDigest })),
-      reconciliations: [...this.reconciliationReceipts.values()].map((receipt) => ({ reconciliationId: receipt.reconciliationId, claimId: receipt.claimId, attemptId: receipt.attemptId, predecessorReceiptId: receipt.predecessorReceiptId, receiptDigest: receipt.reconciliationDigest })),
-      closures: [...this.claimClosureReceipts.values()].map((receipt) => ({ receiptId: receipt.receiptId, claimId: receipt.claimId, receiptDigest: receipt.receiptDigest })),
-      authorityPublications: [...this.publications.values()].map((receipt) => ({ publicationId: receipt.publicationId, publicationDigest: receipt.publicationDigest, generation: receipt.generation })),
+      claims: [...this.claims.values()].map(claim => ({ claimId: claim.receipt.claimId, status: claim.status, attemptId: claim.attemptId ?? null })),
+      attempts: [...this.attempts.values()].map(attempt => ({
+        attemptId: attempt.receipt.attemptId,
+        claimId: attempt.claimId,
+        status: attempt.status,
+        outcomeReceiptId: attempt.outcomeReceiptId ?? null,
+      })),
+      outcomes: [...this.outcomeReceipts.values()].map(receipt => ({
+        receiptId: receipt.receiptId,
+        claimId: receipt.claimId,
+        attemptId: receipt.attemptId,
+        outcome: receipt.outcome,
+        receiptDigest: receipt.receiptDigest,
+      })),
+      reconciliations: [...this.reconciliationReceipts.values()].map(receipt => ({
+        reconciliationId: receipt.reconciliationId,
+        claimId: receipt.claimId,
+        attemptId: receipt.attemptId,
+        predecessorReceiptId: receipt.predecessorReceiptId,
+        receiptDigest: receipt.reconciliationDigest,
+      })),
+      closures: [...this.claimClosureReceipts.values()].map(receipt => ({ receiptId: receipt.receiptId, claimId: receipt.claimId, receiptDigest: receipt.receiptDigest })),
+      authorityPublications: [...this.publications.values()].map(receipt => ({ publicationId: receipt.publicationId, publicationDigest: receipt.publicationDigest, generation: receipt.generation })),
       controlEventRefs: [...this.controlEvents.keys()],
-      fenceProofs: [...this.fenceProofs.values()].map((proof) => ({ claimId: proof.claimId, proofRef: structuredClone(proof.proofRef), fencingGeneration: proof.fencingGeneration, holdRef: proof.holdRef, controlVersion: proof.controlVersion, epoch: proof.epoch })),
+      fenceProofs: [...this.fenceProofs.values()].map(proof => ({
+        claimId: proof.claimId,
+        proofRef: structuredClone(proof.proofRef),
+        fencingGeneration: proof.fencingGeneration,
+        holdRef: proof.holdRef,
+        controlVersion: proof.controlVersion,
+        epoch: proof.epoch,
+      })),
       recoveryEvidencePredecessorReceiptIds: [...this.recoveryEvidence.keys()],
       fencedIncarnations: [...this.fencedIncarnationKeys].sort(),
     };
@@ -911,8 +963,11 @@ export class MemoryStatePortV02 implements StatePortV02 {
 
   async publishAuthority(options: { readonly authorityRef: PolicyAuthorityRefV02; readonly effectiveAt?: string }): Promise<MemoryAuthorityPublicationReceiptV02> {
     let snapshot: typeof options;
-    try { snapshot = structuredClone(options); }
-    catch { return this.publicationReceipt({ policyId: '', policyVersion: '', configId: '', configVersion: '', issuerKeyRef: '', decisionAuthorityGeneration: 0 }, 'conflict'); }
+    try {
+      snapshot = structuredClone(options);
+    } catch {
+      return this.publicationReceipt({ policyId: '', policyVersion: '', configId: '', configVersion: '', issuerKeyRef: '', decisionAuthorityGeneration: 0 }, 'conflict');
+    }
     return this.exclusive(() => {
       const authorityRef = structuredClone(snapshot.authorityRef);
       if (!this.validAuthority(authorityRef)) return this.publicationReceipt(authorityRef, 'conflict');
@@ -924,8 +979,12 @@ export class MemoryStatePortV02 implements StatePortV02 {
         return this.publicationReceipt(authorityRef, 'stale');
       }
       const receipt: MemoryAuthorityPublicationReceiptV02 = {
-        schemaVersion: 'uc05-approval/0.2-draft', publicationId, publicationDigest,
-        authorityRef, generation: authorityRef.decisionAuthorityGeneration, status: 'published',
+        schemaVersion: 'uc05-approval/0.2-draft',
+        publicationId,
+        publicationDigest,
+        authorityRef,
+        generation: authorityRef.decisionAuthorityGeneration,
+        status: 'published',
       };
       this.activeAuthorityRef = authorityRef;
       this.currentControlVersion++;
@@ -952,18 +1011,8 @@ export class MemoryStatePortV02 implements StatePortV02 {
     });
   }
 
-  private controlEvent(
-    eventRef: string,
-    taskId: string,
-    runId: string,
-    taskStateVersion: number,
-    mode: MemoryTaskControlModeV02,
-    controlVersion: number,
-    epoch: number,
-  ): MemoryControlEventV02 {
-    const eventKind: MemoryControlEventV02['eventKind'] = mode === 'paused' ? 'pause'
-      : mode === 'rejected' ? 'denial' : mode === 'runnable' ? 'resume'
-        : mode === 'ended' ? 'ended' : 'recovery';
+  private controlEvent(eventRef: string, taskId: string, runId: string, taskStateVersion: number, mode: MemoryTaskControlModeV02, controlVersion: number, epoch: number): MemoryControlEventV02 {
+    const eventKind: MemoryControlEventV02['eventKind'] = mode === 'paused' ? 'pause' : mode === 'rejected' ? 'denial' : mode === 'runnable' ? 'resume' : mode === 'ended' ? 'ended' : 'recovery';
     const metadata = {
       schemaVersion: 'uc04-control-event/0.2-draft',
       taskId,
@@ -980,19 +1029,31 @@ export class MemoryStatePortV02 implements StatePortV02 {
 
   async fenceClaimRecipient(claimId: string, recipientIdentity: ExecutorIdentityV02): Promise<MemoryFenceProofV02 | null> {
     let identity: ExecutorIdentityV02;
-    try { identity = structuredClone(recipientIdentity); } catch { return null; }
+    try {
+      identity = structuredClone(recipientIdentity);
+    } catch {
+      return null;
+    }
     return this.exclusive(() => this.fenceRecipient(claimId, identity, false));
   }
 
   async fenceAttemptRecipient(claimId: string, recipientIdentity: ExecutorIdentityV02): Promise<MemoryFenceProofV02 | null> {
     let identity: ExecutorIdentityV02;
-    try { identity = structuredClone(recipientIdentity); } catch { return null; }
+    try {
+      identity = structuredClone(recipientIdentity);
+    } catch {
+      return null;
+    }
     return this.exclusive(() => this.fenceRecipient(claimId, identity, true));
   }
 
   async publishRecoveryEvidence(evidence: MemoryRecoveryEvidenceV02): Promise<boolean> {
     let snapshot: MemoryRecoveryEvidenceV02;
-    try { snapshot = structuredClone(evidence); } catch { return false; }
+    try {
+      snapshot = structuredClone(evidence);
+    } catch {
+      return false;
+    }
     return this.exclusive(() => {
       const predecessor = this.outcomeReceipts.get(snapshot.predecessorReceiptId);
       const claim = predecessor && this.claims.get(predecessor.claimId);
@@ -1009,22 +1070,36 @@ export class MemoryStatePortV02 implements StatePortV02 {
   private publicationReceipt(authorityRef: PolicyAuthorityRefV02, status: 'stale' | 'conflict'): MemoryAuthorityPublicationReceiptV02 {
     const publicationId = `pub-${authorityRef.policyId}-${authorityRef.decisionAuthorityGeneration}`;
     return {
-      schemaVersion: 'uc05-approval/0.2-draft', publicationId,
+      schemaVersion: 'uc05-approval/0.2-draft',
+      publicationId,
       publicationDigest: computeCanonicalSha256({ publicationId, authorityRef }),
-      authorityRef: structuredClone(authorityRef), generation: authorityRef.decisionAuthorityGeneration, status,
+      authorityRef: structuredClone(authorityRef),
+      generation: authorityRef.decisionAuthorityGeneration,
+      status,
     };
   }
 
   private validAuthority(ref: PolicyAuthorityRefV02): boolean {
-    if (!ref || Object.getPrototypeOf(ref) !== Object.prototype || Object.keys(ref).length !== 6 ||
-      Object.keys(ref).some((key) => !['policyId', 'policyVersion', 'configId', 'configVersion', 'issuerKeyRef', 'decisionAuthorityGeneration'].includes(key))) return false;
-    return [ref.policyId, ref.policyVersion, ref.configId, ref.configVersion, ref.issuerKeyRef].every((value) => typeof value === 'string' && value.trim().length > 0) &&
-      Number.isSafeInteger(ref.decisionAuthorityGeneration) && ref.decisionAuthorityGeneration > 0;
+    if (
+      !ref ||
+      Object.getPrototypeOf(ref) !== Object.prototype ||
+      Object.keys(ref).length !== 6 ||
+      Object.keys(ref).some(key => !['policyId', 'policyVersion', 'configId', 'configVersion', 'issuerKeyRef', 'decisionAuthorityGeneration'].includes(key))
+    )
+      return false;
+    return (
+      [ref.policyId, ref.policyVersion, ref.configId, ref.configVersion, ref.issuerKeyRef].every(value => typeof value === 'string' && value.trim().length > 0) &&
+      Number.isSafeInteger(ref.decisionAuthorityGeneration) &&
+      ref.decisionAuthorityGeneration > 0
+    );
   }
 
   private equal(left: unknown, right: unknown): boolean {
-    try { return computeCanonicalSha256(left) === computeCanonicalSha256(right); }
-    catch { return false; }
+    try {
+      return computeCanonicalSha256(left) === computeCanonicalSha256(right);
+    } catch {
+      return false;
+    }
   }
 
   private safeRef(ref: SafeReferenceV02): boolean {
@@ -1034,33 +1109,47 @@ export class MemoryStatePortV02 implements StatePortV02 {
   private validExecutorIdentity(value: unknown): value is ExecutorIdentityV02 {
     if (!value || typeof value !== 'object' || Object.getPrototypeOf(value) !== Object.prototype) return false;
     const record = value as Record<string, unknown>;
-    return Object.keys(record).length === 4 && Object.keys(record).every((key) => ['adapterIdentity', 'processIncarnation', 'fencingGeneration', 'payloadDigest'].includes(key)) &&
-      typeof record['adapterIdentity'] === 'string' && !!record['adapterIdentity'].trim() &&
-      typeof record['processIncarnation'] === 'string' && !!record['processIncarnation'].trim() &&
-      Number.isSafeInteger(record['fencingGeneration']) && Number(record['fencingGeneration']) > 0 &&
-      typeof record['payloadDigest'] === 'string' && /^sha256:[0-9a-f]{64}$/u.test(record['payloadDigest']);
+    return (
+      Object.keys(record).length === 4 &&
+      Object.keys(record).every(key => ['adapterIdentity', 'processIncarnation', 'fencingGeneration', 'payloadDigest'].includes(key)) &&
+      typeof record['adapterIdentity'] === 'string' &&
+      !!record['adapterIdentity'].trim() &&
+      typeof record['processIncarnation'] === 'string' &&
+      !!record['processIncarnation'].trim() &&
+      Number.isSafeInteger(record['fencingGeneration']) &&
+      Number(record['fencingGeneration']) > 0 &&
+      typeof record['payloadDigest'] === 'string' &&
+      /^sha256:[0-9a-f]{64}$/u.test(record['payloadDigest'])
+    );
   }
 
   private isValidRecoveryEvidence(evidence: MemoryRecoveryEvidenceV02): boolean {
     const predecessor = this.outcomeReceipts.get(evidence.predecessorReceiptId);
     const claim = predecessor && this.claims.get(predecessor.claimId);
-    if (!claim || !this.safeRef(evidence.effectEvidenceRef) || !evidence.accountingEvidenceRefs.length || !evidence.accountingEvidenceRefs.every((ref) => this.safeRef(ref))) return false;
+    if (!claim || !this.safeRef(evidence.effectEvidenceRef) || !evidence.accountingEvidenceRefs.length || !evidence.accountingEvidenceRefs.every(ref => this.safeRef(ref))) return false;
     if (claim.context.subjectKind === 'provider-request') {
-      return evidence.observedUsage !== undefined && validateProviderUsage(evidence.observedUsage).ok &&
-        evidence.observedRevisionDigest === undefined && evidence.invalidatedEvidence === undefined;
+      return evidence.observedUsage !== undefined && validateProviderUsage(evidence.observedUsage).ok && evidence.observedRevisionDigest === undefined && evidence.invalidatedEvidence === undefined;
     }
     if (this.isRepositoryPatch(claim.context)) {
-      if (evidence.observedUsage !== undefined || typeof evidence.observedRevisionDigest !== 'string' ||
-        !/^sha256:[0-9a-f]{64}$/u.test(evidence.observedRevisionDigest) || !Array.isArray(evidence.invalidatedEvidence) ||
-        !evidence.invalidatedEvidence.every((ref) => this.safeRef(ref)) ||
-        new Set(evidence.invalidatedEvidence.map((ref) => ref.reference)).size !== evidence.invalidatedEvidence.length) return false;
-      return evidence.effectEvidenceRef.digest === computeCanonicalSha256({
-        schemaVersion: 'uc03-observed-patch-recovery/0.2-draft',
-        predecessorReceiptId: evidence.predecessorReceiptId,
-        observedRevisionDigest: evidence.observedRevisionDigest,
-        invalidatedEvidence: evidence.invalidatedEvidence,
-        accountingEvidenceRefs: evidence.accountingEvidenceRefs,
-      });
+      if (
+        evidence.observedUsage !== undefined ||
+        typeof evidence.observedRevisionDigest !== 'string' ||
+        !/^sha256:[0-9a-f]{64}$/u.test(evidence.observedRevisionDigest) ||
+        !Array.isArray(evidence.invalidatedEvidence) ||
+        !evidence.invalidatedEvidence.every(ref => this.safeRef(ref)) ||
+        new Set(evidence.invalidatedEvidence.map(ref => ref.reference)).size !== evidence.invalidatedEvidence.length
+      )
+        return false;
+      return (
+        evidence.effectEvidenceRef.digest ===
+        computeCanonicalSha256({
+          schemaVersion: 'uc03-observed-patch-recovery/0.2-draft',
+          predecessorReceiptId: evidence.predecessorReceiptId,
+          observedRevisionDigest: evidence.observedRevisionDigest,
+          invalidatedEvidence: evidence.invalidatedEvidence,
+          accountingEvidenceRefs: evidence.accountingEvidenceRefs,
+        })
+      );
     }
     return evidence.observedUsage === undefined && evidence.observedRevisionDigest === undefined && evidence.invalidatedEvidence === undefined;
   }
@@ -1072,7 +1161,9 @@ export class MemoryStatePortV02 implements StatePortV02 {
     const old = this.fenceProofs.get(claimId);
     if (old) {
       return this.fenceAfterAttempt.get(claimId) === afterAttempt &&
-        this.equal(old.recipientIdentity, recipient) && old.claimDigest === claim.receipt.claimDigest && old.taskId === claim.receipt.taskId
+        this.equal(old.recipientIdentity, recipient) &&
+        old.claimDigest === claim.receipt.claimDigest &&
+        old.taskId === claim.receipt.taskId
         ? structuredClone(old)
         : null;
     }
@@ -1086,10 +1177,17 @@ export class MemoryStatePortV02 implements StatePortV02 {
     const proofRef = this.makeRef(`fence-${claimId}`, { claimId, recipient, generation, holdRef: this.holdRef });
     const adapterEvidenceRefs = [this.makeRef(`adapter-fence-${claimId}`, { recipient, generation, holdRef: this.holdRef })];
     const proof: MemoryFenceProofV02 = {
-      claimId, claimDigest: claim.receipt.claimDigest, taskId: claim.receipt.taskId,
-      recipientIdentity: structuredClone(recipient), fencedExecutorIdentity,
-      fencingGeneration: generation, proofRef, adapterEvidenceRefs,
-      holdRef: this.holdRef, controlVersion: this.currentControlVersion + 1, epoch: this.currentEpoch,
+      claimId,
+      claimDigest: claim.receipt.claimDigest,
+      taskId: claim.receipt.taskId,
+      recipientIdentity: structuredClone(recipient),
+      fencedExecutorIdentity,
+      fencingGeneration: generation,
+      proofRef,
+      adapterEvidenceRefs,
+      holdRef: this.holdRef,
+      controlVersion: this.currentControlVersion + 1,
+      epoch: this.currentEpoch,
     };
     this.fenceProofs.set(claimId, structuredClone(proof));
     this.fenceAfterAttempt.set(claimId, afterAttempt);
@@ -1124,35 +1222,50 @@ export class MemoryStatePortV02 implements StatePortV02 {
   }
 
   private trustedAdmission(context: AdmissionContextV02): AdmissionTrustedContextV02 {
-    return context.subjectKind === 'repository-action'
-      ? createTestRepositoryAdmissionTrustedContextV02(context)
-      : createTestProviderAdmissionTrustedContextV02(context);
+    return context.subjectKind === 'repository-action' ? createTestRepositoryAdmissionTrustedContextV02(context) : createTestProviderAdmissionTrustedContextV02(context);
   }
 
   private validateAdmission(context: AdmissionContextV02): boolean {
-    try { return validateAdmissionV02(context, this.trustedAdmission(context)).ok; }
-    catch { return false; }
+    try {
+      return validateAdmissionV02(context, this.trustedAdmission(context)).ok;
+    } catch {
+      return false;
+    }
   }
 
   private planDigest(task: TaskState): string | undefined {
     const plan = task.plan;
     if (!plan) return undefined;
     return computeCanonicalSha256({
-      taskId: task.taskId, planVersion: plan.planVersion, strategyDigest: plan.strategyDigest,
-      baselineRef: plan.baselineRef, evidenceRefs: plan.evidenceRefs,
+      taskId: task.taskId,
+      planVersion: plan.planVersion,
+      strategyDigest: plan.strategyDigest,
+      baselineRef: plan.baselineRef,
+      evidenceRefs: plan.evidenceRefs,
       criteriaDigest: computeCanonicalSha256(task.acceptanceCriteria),
-      checkSetDigest: plan.checkSetDigest, decisionRef: plan.decisionRef,
+      checkSetDigest: plan.checkSetDigest,
+      decisionRef: plan.decisionRef,
     });
   }
 
   private contextMatchesTask(context: AdmissionContextV02, task: TaskState): boolean {
-    if (!this.validateAdmission(context) || task.taskId !== context.taskId || task.runId !== context.runId ||
-      task.stateVersion !== context.expectedTaskStateVersion || task.node !== context.runnableNode) return false;
-    if (context.subjectKind === 'repository-action' &&
-      (task.workspaceId !== context.workspaceId || task.repositoryId !== context.repositoryId || task.repositoryRevisionDigest !== context.canonicalRevision)) return false;
+    if (
+      !this.validateAdmission(context) ||
+      task.taskId !== context.taskId ||
+      task.runId !== context.runId ||
+      task.stateVersion !== context.expectedTaskStateVersion ||
+      task.node !== context.runnableNode
+    )
+      return false;
+    if (
+      context.subjectKind === 'repository-action' &&
+      (task.workspaceId !== context.workspaceId || task.repositoryId !== context.repositoryId || task.repositoryRevisionDigest !== context.canonicalRevision)
+    )
+      return false;
     if (context.planApplicability === 'pre-plan-diagnostic') {
       if (task.node !== 'Investigate' || task.plan !== undefined || task.activeDecisionId !== undefined) return false;
-    } else if (!task.plan || task.plan.decisionRef !== context.planDecisionRef || task.activeDecisionId !== context.planDecisionRef || this.planDigest(task) !== context.planBindingDigest) return false;
+    } else if (!task.plan || task.plan.decisionRef !== context.planDecisionRef || task.activeDecisionId !== context.planDecisionRef || this.planDigest(task) !== context.planBindingDigest)
+      return false;
     return true;
   }
 
@@ -1173,13 +1286,13 @@ export class MemoryStatePortV02 implements StatePortV02 {
   }
 
   private observedPatchTaskState(task: TaskState, invalidatedEvidence: readonly SafeReferenceV02[], revisionDigest: string, repairPatch: boolean): TaskState {
-    const invalidatedRefs = new Set(invalidatedEvidence.map((reference) => reference.reference));
+    const invalidatedRefs = new Set(invalidatedEvidence.map(reference => reference.reference));
     return {
       ...task,
       ...(repairPatch ? { node: 'Verify' as TaskNode } : {}),
       stateVersion: task.stateVersion + 1,
       repositoryRevisionDigest: revisionDigest,
-      evidenceRefs: task.evidenceRefs.filter((reference) => !invalidatedRefs.has(reference)),
+      evidenceRefs: task.evidenceRefs.filter(reference => !invalidatedRefs.has(reference)),
       activeDecisionId: undefined,
       reviewRefs: [],
       latestReviewRef: undefined,
@@ -1202,11 +1315,12 @@ export class MemoryStatePortV02 implements StatePortV02 {
   private reviewerIterationSpecs(context: AdmissionContextV02): readonly MemoryReservationSpecV02[] | null {
     if (context.subjectKind !== 'provider-request' || context.role !== 'reviewer') return [];
     const ledgers = this.underlying.getLedgers();
-    const taskRows = ledgers.filter((ledger) => ledger.scope === 'task' && (ledger.kind === 'iteration' || ledger.kind === 'review_iteration'));
-    const runRows = ledgers.filter((ledger) => ledger.scope === 'run' && (ledger.kind === 'iteration' || ledger.kind === 'review_iteration'));
+    const taskRows = ledgers.filter(ledger => ledger.scope === 'task' && (ledger.kind === 'iteration' || ledger.kind === 'review_iteration'));
+    const runRows = ledgers.filter(ledger => ledger.scope === 'run' && (ledger.kind === 'iteration' || ledger.kind === 'review_iteration'));
     const maxReviewerIterations = context.finiteBounds.maxReviewerIterations;
     const taskLedger = taskRows[0];
-    if (taskRows.length !== 1 || runRows.length > 1 || typeof maxReviewerIterations !== 'number' || !Number.isSafeInteger(maxReviewerIterations) || maxReviewerIterations <= 0 || !taskLedger) return null;
+    if (taskRows.length !== 1 || runRows.length > 1 || typeof maxReviewerIterations !== 'number' || !Number.isSafeInteger(maxReviewerIterations) || maxReviewerIterations <= 0 || !taskLedger)
+      return null;
     const rows = [taskLedger, ...runRows];
     return rows.map((ledger, index) => ({
       scope: ledger.scope,
@@ -1233,7 +1347,7 @@ export class MemoryStatePortV02 implements StatePortV02 {
     // The protocol order is task tokens, task cost, run tokens, run cost.
     const ledgers = this.underlying.getLedgers();
     for (const spec of resolved) {
-      const ledger = ledgers.find((candidate) => candidate.scope === spec.scope && candidate.kind === spec.kind);
+      const ledger = ledgers.find(candidate => candidate.scope === spec.scope && candidate.kind === spec.kind);
       if (!ledger) return null;
     }
     if (reviewerSpecs.some((spec, index) => !spec.reservationId || spec.reservationId !== context.budgetRefs[index + 4])) return null;
@@ -1245,11 +1359,16 @@ export class MemoryStatePortV02 implements StatePortV02 {
     const bounds = context.finiteBounds as unknown as Record<string, unknown>;
     const configuredKinds = ['timeoutMs', 'maxOutputBytes', 'maxCpuSeconds', 'maxMemoryBytes', 'maxProcessCount'] as const;
     const order = new Map(configuredKinds.map((kind, index) => [kind, index]));
-    const configured = this.underlying.getLedgers()
-      .filter((ledger) => (ledger.scope === 'task' || ledger.scope === 'run') && order.has(ledger.kind as typeof configuredKinds[number]))
-      .sort((left, right) => left.scope === right.scope
-        ? (order.get(left.kind as typeof configuredKinds[number]) ?? 0) - (order.get(right.kind as typeof configuredKinds[number]) ?? 0)
-        : left.scope === 'task' ? -1 : 1);
+    const configured = this.underlying
+      .getLedgers()
+      .filter(ledger => (ledger.scope === 'task' || ledger.scope === 'run') && order.has(ledger.kind as (typeof configuredKinds)[number]))
+      .sort((left, right) =>
+        left.scope === right.scope
+          ? (order.get(left.kind as (typeof configuredKinds)[number]) ?? 0) - (order.get(right.kind as (typeof configuredKinds)[number]) ?? 0)
+          : left.scope === 'task'
+            ? -1
+            : 1,
+      );
     if (context.reservationRefs.length !== configured.length || new Set(context.reservationRefs).size !== context.reservationRefs.length) return null;
     const specs = configured.map((ledger, index) => {
       const amount = bounds[ledger.kind];
@@ -1261,7 +1380,7 @@ export class MemoryStatePortV02 implements StatePortV02 {
         keyedId: context.action.actionId,
       };
     });
-    return specs.every((spec) => Number.isFinite(spec.amount) && spec.amount > 0) ? specs : null;
+    return specs.every(spec => Number.isFinite(spec.amount) && spec.amount > 0) ? specs : null;
   }
 
   private stageReservation(
@@ -1271,7 +1390,7 @@ export class MemoryStatePortV02 implements StatePortV02 {
     usage?: ProviderUsage,
   ): BudgetLedger | null {
     if (!ledger) return null;
-    const matching = ledger.reservations.filter((item) => item.reservationId === spec.reservationId || item.keyedId === spec.keyedId);
+    const matching = ledger.reservations.filter(item => item.reservationId === spec.reservationId || item.keyedId === spec.keyedId);
     if (operation === 'reserve') {
       if (matching.length) return null;
       const reserved = ledger.reservations.reduce((sum, item) => sum + item.amount, 0);
@@ -1280,30 +1399,32 @@ export class MemoryStatePortV02 implements StatePortV02 {
       return validateBudgetLedger(candidate).ok ? candidate : null;
     }
     if (matching.length !== 1 || matching[0]?.reservationId !== spec.reservationId || matching[0]?.keyedId !== spec.keyedId || matching[0]?.amount !== spec.amount) return null;
-    const increment = operation === 'consume' ? spec.amount
-      : operation === 'settle' ? usage === undefined ? spec.amount : ledger.kind === 'cost' ? usage.costUsd : usage.billableTokens ?? (usage.inputTokens + usage.outputTokens)
-        : 0;
+    const increment =
+      operation === 'consume'
+        ? spec.amount
+        : operation === 'settle'
+          ? usage === undefined
+            ? spec.amount
+            : ledger.kind === 'cost'
+              ? usage.costUsd
+              : (usage.billableTokens ?? usage.inputTokens + usage.outputTokens)
+          : 0;
     if (increment === undefined || (operation === 'settle' && increment > spec.amount) || ledger.consumed + increment > ledger.limit) return null;
     const candidate = {
       ...ledger,
       consumed: ledger.consumed + increment,
-      reservations: ledger.reservations.filter((item) => item.reservationId !== spec.reservationId),
+      reservations: ledger.reservations.filter(item => item.reservationId !== spec.reservationId),
       version: ledger.version + 1,
     };
     return validateBudgetLedger(candidate).ok ? candidate : null;
   }
 
-  private stageClaimReservations(
-    context: AdmissionContextV02,
-    operation: 'reserve' | 'settle' | 'release',
-    usage?: ProviderUsage,
-    releaseUnattempted = false,
-  ): Map<string, BudgetLedger> | null {
+  private stageClaimReservations(context: AdmissionContextV02, operation: 'reserve' | 'settle' | 'release', usage?: ProviderUsage, releaseUnattempted = false): Map<string, BudgetLedger> | null {
     const staged = new Map<string, BudgetLedger>();
     const add = (spec: MemoryReservationSpecV02, stageOperation = operation): boolean => {
       const { scope, kind, reservationId, keyedId, amount } = spec;
       const key = `${scope}:${kind}`;
-      const ledger = staged.get(key) ?? this.underlying.getLedgers().find((item) => item.scope === scope && item.kind === kind);
+      const ledger = staged.get(key) ?? this.underlying.getLedgers().find(item => item.scope === scope && item.kind === kind);
       const next = this.stageReservation(ledger, { reservationId, keyedId, amount }, stageOperation, usage);
       if (!next) return false;
       staged.set(key, next);
@@ -1312,67 +1433,101 @@ export class MemoryStatePortV02 implements StatePortV02 {
     if (context.subjectKind === 'provider-request') {
       const specs = this.providerSpecs(context);
       if (!specs) return null;
-      const iterationSpecs = specs.filter((spec) => spec.kind === 'iteration' || spec.kind === 'review_iteration');
-      const budgetSpecs = specs.filter((spec) => spec.kind === 'tokens' || spec.kind === 'cost');
-      const operationSpecs = operation === 'reserve' || (operation === 'release' && releaseUnattempted)
-        ? [...budgetSpecs, ...iterationSpecs]
-        : budgetSpecs;
+      const iterationSpecs = specs.filter(spec => spec.kind === 'iteration' || spec.kind === 'review_iteration');
+      const budgetSpecs = specs.filter(spec => spec.kind === 'tokens' || spec.kind === 'cost');
+      const operationSpecs = operation === 'reserve' || (operation === 'release' && releaseUnattempted) ? [...budgetSpecs, ...iterationSpecs] : budgetSpecs;
       if (operation === 'reserve') {
-        const allReservations = this.underlying.getLedgers().flatMap((ledger) => ledger.reservations);
-        if (operationSpecs.some((spec) => allReservations.some((reservation) => reservation.reservationId === spec.reservationId || reservation.keyedId === spec.keyedId))) return null;
-        if (iterationSpecs.some((spec) => {
-          const ledger = this.underlying.getLedgers().find((item) => item.scope === spec.scope && item.kind === spec.kind);
-          const reserved = ledger?.reservations.reduce((sum, item) => sum + item.amount, 0) ?? 0;
-          return !ledger || ledger.consumed + reserved + spec.amount > (context.finiteBounds.maxReviewerIterations ?? 0);
-        })) return null;
+        const allReservations = this.underlying.getLedgers().flatMap(ledger => ledger.reservations);
+        if (operationSpecs.some(spec => allReservations.some(reservation => reservation.reservationId === spec.reservationId || reservation.keyedId === spec.keyedId))) return null;
+        if (
+          iterationSpecs.some(spec => {
+            const ledger = this.underlying.getLedgers().find(item => item.scope === spec.scope && item.kind === spec.kind);
+            const reserved = ledger?.reservations.reduce((sum, item) => sum + item.amount, 0) ?? 0;
+            return !ledger || ledger.consumed + reserved + spec.amount > (context.finiteBounds.maxReviewerIterations ?? 0);
+          })
+        )
+          return null;
       } else {
         const allLedgers = this.underlying.getLedgers();
-        const allMatching = allLedgers.flatMap((ledger) => ledger.reservations.filter((reservation) => reservation.keyedId === context.providerRequestId || context.budgetRefs.includes(reservation.reservationId))
-          .map((reservation) => ({ scope: ledger.scope, kind: ledger.kind, ...reservation })));
-        if (allMatching.length !== operationSpecs.length || operationSpecs.some((spec) => !allMatching.some((reservation) =>
-          reservation.scope === spec.scope && reservation.kind === spec.kind && reservation.reservationId === spec.reservationId &&
-          reservation.keyedId === spec.keyedId && reservation.amount === spec.amount))) return null;
+        const allMatching = allLedgers.flatMap(ledger =>
+          ledger.reservations
+            .filter(reservation => reservation.keyedId === context.providerRequestId || context.budgetRefs.includes(reservation.reservationId))
+            .map(reservation => ({ scope: ledger.scope, kind: ledger.kind, ...reservation })),
+        );
+        if (
+          allMatching.length !== operationSpecs.length ||
+          operationSpecs.some(
+            spec =>
+              !allMatching.some(
+                reservation =>
+                  reservation.scope === spec.scope &&
+                  reservation.kind === spec.kind &&
+                  reservation.reservationId === spec.reservationId &&
+                  reservation.keyedId === spec.keyedId &&
+                  reservation.amount === spec.amount,
+              ),
+          )
+        )
+          return null;
       }
       for (const spec of operationSpecs) if (!add(spec)) return null;
     } else if (this.isRepairPatch(context)) {
-      if (context.reservationRefs.length !== 1 || !add({ scope: 'task', kind: 'repair', reservationId: context.reservationRefs[0] as string, keyedId: context.action.actionId, amount: 1 })) return null;
+      if (context.reservationRefs.length !== 1 || !add({ scope: 'task', kind: 'repair', reservationId: context.reservationRefs[0] as string, keyedId: context.action.actionId, amount: 1 }))
+        return null;
     } else if (context.action.kind === 'run_command') {
       const specs = this.repositoryResourceSpecs(context);
       if (!specs) return null;
       const allLedgers = this.underlying.getLedgers();
       if (operation === 'reserve') {
-        const allReservations = allLedgers.flatMap((ledger) => ledger.reservations);
-        if (specs.some((spec) => allReservations.some((reservation) => reservation.reservationId === spec.reservationId || reservation.keyedId === spec.keyedId))) return null;
+        const allReservations = allLedgers.flatMap(ledger => ledger.reservations);
+        if (specs.some(spec => allReservations.some(reservation => reservation.reservationId === spec.reservationId || reservation.keyedId === spec.keyedId))) return null;
       } else {
-        const allMatching = allLedgers.flatMap((ledger) => ledger.reservations.filter((reservation) => reservation.keyedId === context.action.actionId || context.reservationRefs.includes(reservation.reservationId))
-          .map((reservation) => ({ scope: ledger.scope, kind: ledger.kind, ...reservation })));
-        if (allMatching.length !== specs.length || specs.some((spec) => !allMatching.some((reservation) =>
-          reservation.scope === spec.scope && reservation.kind === spec.kind && reservation.reservationId === spec.reservationId &&
-          reservation.keyedId === spec.keyedId && reservation.amount === spec.amount))) return null;
+        const allMatching = allLedgers.flatMap(ledger =>
+          ledger.reservations
+            .filter(reservation => reservation.keyedId === context.action.actionId || context.reservationRefs.includes(reservation.reservationId))
+            .map(reservation => ({ scope: ledger.scope, kind: ledger.kind, ...reservation })),
+        );
+        if (
+          allMatching.length !== specs.length ||
+          specs.some(
+            spec =>
+              !allMatching.some(
+                reservation =>
+                  reservation.scope === spec.scope &&
+                  reservation.kind === spec.kind &&
+                  reservation.reservationId === spec.reservationId &&
+                  reservation.keyedId === spec.keyedId &&
+                  reservation.amount === spec.amount,
+              ),
+          )
+        )
+          return null;
       }
       for (const spec of specs) if (!add(spec)) return null;
     }
     return staged;
   }
 
-  private observedCommandAccountingMatches(
-    claim: StoredClaimRecordV02,
-    predecessor: AttemptOutcomeReceiptV02,
-  ): boolean {
+  private observedCommandAccountingMatches(claim: StoredClaimRecordV02, predecessor: AttemptOutcomeReceiptV02): boolean {
     if (claim.context.subjectKind !== 'repository-action' || claim.context.action.kind !== 'run_command') return true;
-    if (predecessor.subjectKind !== 'repository-action' || predecessor.repositoryOperation !== 'run-command' ||
-      predecessor.outcome !== 'observed' || predecessor.proposedEffects.accounting.disposition !== 'settle' ||
+    if (
+      predecessor.subjectKind !== 'repository-action' ||
+      predecessor.repositoryOperation !== 'run-command' ||
+      predecessor.outcome !== 'observed' ||
+      predecessor.proposedEffects.accounting.disposition !== 'settle' ||
       !this.equal(predecessor.proposedEffects.accounting.reservationRefs, claim.receipt.reservationRefs) ||
-      !this.equal(claim.receipt.reservationRefs, claim.context.reservationRefs)) return false;
+      !this.equal(claim.receipt.reservationRefs, claim.context.reservationRefs)
+    )
+      return false;
 
     const specs = this.repositoryResourceSpecs(claim.context);
     const initialLedgers = claim.taskSnapshot.budgetLedgers ?? [];
     if (!specs) return false;
-    return specs.every((spec) => {
-      const initial = initialLedgers.find((ledger) => ledger.scope === spec.scope && ledger.kind === spec.kind);
+    return specs.every(spec => {
+      const initial = initialLedgers.find(ledger => ledger.scope === spec.scope && ledger.kind === spec.kind);
       const reserved = initial && this.stageReservation(initial, spec, 'reserve');
       const expected = reserved && this.stageReservation(reserved, spec, 'settle');
-      const current = this.underlying.getLedgers().find((ledger) => ledger.scope === spec.scope && ledger.kind === spec.kind);
+      const current = this.underlying.getLedgers().find(ledger => ledger.scope === spec.scope && ledger.kind === spec.kind);
       return Boolean(expected && current && this.equal(current, expected));
     });
   }
@@ -1387,9 +1542,13 @@ export class MemoryStatePortV02 implements StatePortV02 {
 
   private outcomeContext(claim: StoredClaimRecordV02, attempt: StoredAttemptRecordV02, task: TaskState): AttemptOutcomeValidationContextV02 {
     return {
-      trustedAdmission: claim.context, trustedClaim: claim.receipt, trustedAttempt: attempt.receipt,
-      currentClaimStatus: 'attempting', currentTaskStateVersion: task.stateVersion,
-      currentControlVersion: this.currentControlVersion, currentEpoch: this.currentEpoch,
+      trustedAdmission: claim.context,
+      trustedClaim: claim.receipt,
+      trustedAttempt: attempt.receipt,
+      currentClaimStatus: 'attempting',
+      currentTaskStateVersion: task.stateVersion,
+      currentControlVersion: this.currentControlVersion,
+      currentEpoch: this.currentEpoch,
     };
   }
 
@@ -1405,22 +1564,34 @@ export class MemoryStatePortV02 implements StatePortV02 {
   ): AttemptReconciliationValidationContextV02 {
     const status = receipt.reconciliationKind === 'uncertain-attempt' ? 'uncertain' : 'observed-unsettled';
     return {
-      trustedAdmission: claim.context, trustedClaim: claim.receipt, currentClaimStatus: status,
-      predecessorJournalStatus: status, trustedAttempt: attempt.receipt, trustedPredecessor: predecessor,
-      predecessorReceiptDigest: predecessor.receiptDigest, currentTaskStateVersion: task.stateVersion,
-      currentControlVersion: this.currentControlVersion, currentEpoch: this.currentEpoch,
+      trustedAdmission: claim.context,
+      trustedClaim: claim.receipt,
+      currentClaimStatus: status,
+      predecessorJournalStatus: status,
+      trustedAttempt: attempt.receipt,
+      trustedPredecessor: predecessor,
+      predecessorReceiptDigest: predecessor.receiptDigest,
+      currentTaskStateVersion: task.stateVersion,
+      currentControlVersion: this.currentControlVersion,
+      currentEpoch: this.currentEpoch,
       trustedEvidenceRefs: evidenceRefs,
       trustedAccountingIdentityDigest: computeCanonicalSha256({ predecessorReceiptDigest: predecessor.receiptDigest, reservationRefs: claim.receipt.reservationRefs }),
-      ...(evidence ? {
-        trustedObservedEffectRef: evidence.effectEvidenceRef,
-        trustedAccountingEvidenceRefs: evidence.accountingEvidenceRefs,
-        ...(evidence.observedUsage ? { trustedObservedUsage: evidence.observedUsage } : {}),
-      } : {}),
-      ...(fence ? { trustedFencingProof: {
-        fencedRecipientIdentity: fence.recipientIdentity,
-        fencingGeneration: fence.fencingGeneration,
-        proofRef: fence.proofRef,
-      } } : {}),
+      ...(evidence
+        ? {
+            trustedObservedEffectRef: evidence.effectEvidenceRef,
+            trustedAccountingEvidenceRefs: evidence.accountingEvidenceRefs,
+            ...(evidence.observedUsage ? { trustedObservedUsage: evidence.observedUsage } : {}),
+          }
+        : {}),
+      ...(fence
+        ? {
+            trustedFencingProof: {
+              fencedRecipientIdentity: fence.recipientIdentity,
+              fencingGeneration: fence.fencingGeneration,
+              proofRef: fence.proofRef,
+            },
+          }
+        : {}),
     };
   }
 
@@ -1450,41 +1621,54 @@ export class MemoryStatePortV02 implements StatePortV02 {
       const authority = this.activeAuthorityRef;
       if (this.neutral || !task || !authority || !this.validAuthority(authority) || !task.repositoryRevisionDigest) return null;
       const snapshot: VerificationAuthoritySnapshotV02 = {
-        taskId: task.taskId, runId: task.runId, stateVersion: task.stateVersion,
+        taskId: task.taskId,
+        runId: task.runId,
+        stateVersion: task.stateVersion,
         repositoryRevisionDigest: task.repositoryRevisionDigest,
-        controlVersion: this.currentControlVersion, epoch: this.currentEpoch,
+        controlVersion: this.currentControlVersion,
+        epoch: this.currentEpoch,
         decisionAuthorityGeneration: authority.decisionAuthorityGeneration,
-        policyIdentity: this.policyIdentity(authority), controlMode: this.mode,
-        holdRef: this.holdRef, activeClaimId: this.activeClaimId ?? null,
+        policyIdentity: this.policyIdentity(authority),
+        controlMode: this.mode,
+        holdRef: this.holdRef,
+        activeClaimId: this.activeClaimId ?? null,
       };
       return isVerificationAuthoritySnapshotV02(snapshot) ? structuredClone(snapshot) : null;
     });
   }
 
-  async resolvePlanDecisionInContext(
-    decisionId: string,
-    context: VerificationApprovalContextV02,
-  ): Promise<VerificationApprovalResolutionV02> {
+  async resolvePlanDecisionInContext(decisionId: string, context: VerificationApprovalContextV02): Promise<VerificationApprovalResolutionV02> {
     const issuer = this.verificationApprovalVerifier;
     if (!issuer || typeof issuer.resolvePlanDecisionInContext !== 'function') return { outcome: 'unavailable', reasonCode: 'MISSING_CONTEXTUAL_ISSUER' };
     let contextSnapshot: VerificationApprovalContextV02;
-    try { contextSnapshot = structuredClone(context); } catch { return { outcome: 'denied', reasonCode: 'INVALID_CONTEXT' }; }
+    try {
+      contextSnapshot = structuredClone(context);
+    } catch {
+      return { outcome: 'denied', reasonCode: 'INVALID_CONTEXT' };
+    }
     if (!/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$/u.test(decisionId) || !isVerificationApprovalContextV02(contextSnapshot)) {
       return { outcome: 'denied', reasonCode: 'INVALID_CONTEXT' };
     }
     const ownerMatch = await this.exclusive(async () => this.contextMatchesOwner(decisionId, contextSnapshot));
     if (!ownerMatch) return { outcome: 'stale', reasonCode: 'OWNER_CONTEXT_CHANGED' };
     let result: unknown;
-    try { result = await issuer.resolvePlanDecisionInContext(decisionId, contextSnapshot); }
-    catch { return { outcome: 'unavailable', reasonCode: 'ISSUER_LOOKUP_FAILED' }; }
+    try {
+      result = await issuer.resolvePlanDecisionInContext(decisionId, contextSnapshot);
+    } catch {
+      return { outcome: 'unavailable', reasonCode: 'ISSUER_LOOKUP_FAILED' };
+    }
     if (!isVerificationApprovalResolutionV02(result)) return { outcome: 'denied', reasonCode: 'INVALID_ISSUER_RESULT' };
     if (result.outcome !== 'resolved') return result;
     const validation = validateApprovalBinding(result.binding, contextSnapshot.approvalContext);
-    if (result.decisionId !== decisionId || result.binding.decisionId !== decisionId ||
-        result.issuerKeyRef !== contextSnapshot.expectedIssuerKeyRef ||
-        result.decisionAuthorityGeneration !== contextSnapshot.expectedDecisionAuthorityGeneration ||
-        result.contextDigest !== computeCanonicalSha256(contextSnapshot) || !validation.ok ||
-        !bindingMatchesContext(result.binding, contextSnapshot.approvalContext)) {
+    if (
+      result.decisionId !== decisionId ||
+      result.binding.decisionId !== decisionId ||
+      result.issuerKeyRef !== contextSnapshot.expectedIssuerKeyRef ||
+      result.decisionAuthorityGeneration !== contextSnapshot.expectedDecisionAuthorityGeneration ||
+      result.contextDigest !== computeCanonicalSha256(contextSnapshot) ||
+      !validation.ok ||
+      !bindingMatchesContext(result.binding, contextSnapshot.approvalContext)
+    ) {
       return { outcome: 'denied', reasonCode: 'ISSUER_CONTEXT_MISMATCH' };
     }
     return structuredClone(result);
@@ -1492,7 +1676,11 @@ export class MemoryStatePortV02 implements StatePortV02 {
 
   async recordVerificationApproval(request: RecordVerificationApprovalRequestV02): Promise<RecordVerificationApprovalResultV02> {
     let snapshot: RecordVerificationApprovalRequestV02;
-    try { snapshot = structuredClone(request); } catch { return { outcome: 'conflict', requestIdentity: '', reasonCode: 'INVALID_REQUEST' }; }
+    try {
+      snapshot = structuredClone(request);
+    } catch {
+      return { outcome: 'conflict', requestIdentity: '', reasonCode: 'INVALID_REQUEST' };
+    }
     if (!isRecordVerificationApprovalRequestV02(snapshot)) return { outcome: 'conflict', requestIdentity: '', reasonCode: 'INVALID_REQUEST' };
     const scope: VerificationApprovalReplayScopeV02 = {
       workspaceId: snapshot.workspaceId,
@@ -1500,10 +1688,11 @@ export class MemoryStatePortV02 implements StatePortV02 {
       expectedPlanVersion: snapshot.expectedPlanVersion,
     };
     const sameScope = (candidate: VerificationApprovalReplayScopeV02) =>
-      candidate.workspaceId === scope.workspaceId && candidate.repositoryId === scope.repositoryId &&
-      candidate.expectedPlanVersion === scope.expectedPlanVersion;
+      candidate.workspaceId === scope.workspaceId && candidate.repositoryId === scope.repositoryId && candidate.expectedPlanVersion === scope.expectedPlanVersion;
     const scopeConflict: RecordVerificationApprovalResultV02 = {
-      outcome: 'conflict', requestIdentity: snapshot.requestIdentity, reasonCode: 'REQUEST_SCOPE_MISMATCH',
+      outcome: 'conflict',
+      requestIdentity: snapshot.requestIdentity,
+      reasonCode: 'REQUEST_SCOPE_MISMATCH',
     };
     const replay = this.verificationApprovalResults.get(snapshot.requestIdentity);
     if (replay) return sameScope(replay.scope) ? structuredClone(replay.result) : scopeConflict;
@@ -1525,33 +1714,58 @@ export class MemoryStatePortV02 implements StatePortV02 {
 
   async readSettledPatchAncestry(request: SettledPatchAncestryRequestV02): Promise<SettledPatchAncestryV02 | null> {
     let query: SettledPatchAncestryRequestV02;
-    try { query = structuredClone(request); } catch { return null; }
+    try {
+      query = structuredClone(request);
+    } catch {
+      return null;
+    }
     if (!query.taskId || !query.runId || !/^sha256:[0-9a-f]{64}$/u.test(query.resultingRepositoryRevisionDigest)) return null;
     return this.exclusive(async () => {
       if (this.neutral) return null;
       const matches: SettledPatchAncestryV02[] = [];
       for (const claim of this.claims.values()) {
-        if (claim.status !== 'settled' || !claim.attemptId || claim.receipt.taskId !== query.taskId || claim.receipt.runId !== query.runId ||
-            claim.context.subjectKind !== 'repository-action' || claim.context.runnableNode !== 'Patch' ||
-            claim.context.planApplicability !== 'approved-plan' || claim.context.action.kind !== 'apply_patch' ||
-            claim.trustedAdmissionContext.subjectKind !== 'repository-action' || !claim.settlementResult) continue;
+        if (
+          claim.status !== 'settled' ||
+          !claim.attemptId ||
+          claim.receipt.taskId !== query.taskId ||
+          claim.receipt.runId !== query.runId ||
+          claim.context.subjectKind !== 'repository-action' ||
+          claim.context.runnableNode !== 'Patch' ||
+          claim.context.planApplicability !== 'approved-plan' ||
+          claim.context.action.kind !== 'apply_patch' ||
+          claim.trustedAdmissionContext.subjectKind !== 'repository-action' ||
+          !claim.settlementResult
+        )
+          continue;
         const attempt = this.attempts.get(claim.attemptId);
         const outcome = attempt?.outcomeReceiptId ? this.outcomeReceipts.get(attempt.outcomeReceiptId) : undefined;
-        if (!attempt || attempt.status !== 'settled' || !outcome || outcome.subjectKind !== 'repository-action' || outcome.outcome !== 'observed' ||
-            outcome.observedResultRevisionDigest !== query.resultingRepositoryRevisionDigest ||
-            outcome.claimId !== claim.receipt.claimId || outcome.attemptId !== attempt.receipt.attemptId ||
-            claim.settlementResult.receiptId !== outcome.receiptId) continue;
+        if (
+          !attempt ||
+          attempt.status !== 'settled' ||
+          !outcome ||
+          outcome.subjectKind !== 'repository-action' ||
+          outcome.outcome !== 'observed' ||
+          outcome.observedResultRevisionDigest !== query.resultingRepositoryRevisionDigest ||
+          outcome.claimId !== claim.receipt.claimId ||
+          outcome.attemptId !== attempt.receipt.attemptId ||
+          claim.settlementResult.receiptId !== outcome.receiptId
+        )
+          continue;
         const admission = validateRepositoryAdmissionV02(claim.context, claim.trustedAdmissionContext);
         const execution: RepositoryExecutionReceiptV02 = {
-          claim: claim.receipt, attempt: attempt.receipt, outcome,
+          claim: claim.receipt,
+          attempt: attempt.receipt,
+          outcome,
           settlement: claim.settlementResult,
         };
         if (!admission.ok || !validateRepositoryExecutionReceiptV02(execution, claim.context).ok) continue;
         matches.push({
           admissionContext: structuredClone(claim.context),
           trustedAdmissionContext: structuredClone(claim.trustedAdmissionContext),
-          claim: structuredClone(claim.receipt), attempt: structuredClone(attempt.receipt),
-          outcome: structuredClone(outcome), settlement: structuredClone(claim.settlementResult),
+          claim: structuredClone(claim.receipt),
+          attempt: structuredClone(attempt.receipt),
+          outcome: structuredClone(outcome),
+          settlement: structuredClone(claim.settlementResult),
           originalTaskState: structuredClone(claim.taskSnapshot),
           originalAuthorityRef: structuredClone(claim.authorityRef),
         });
@@ -1601,7 +1815,9 @@ export class MemoryStatePortV02 implements StatePortV02 {
     });
   }
 
-  private async verificationApprovalRequestState(request: RecordVerificationApprovalRequestV02): Promise<
+  private async verificationApprovalRequestState(
+    request: RecordVerificationApprovalRequestV02,
+  ): Promise<
     | { readonly outcome: 'ready'; readonly state: TaskState; readonly authority: PolicyAuthorityRefV02 }
     | { readonly outcome: 'failed'; readonly result: Extract<RecordVerificationApprovalResultV02, { readonly reasonCode: string }> }
   > {
@@ -1614,12 +1830,22 @@ export class MemoryStatePortV02 implements StatePortV02 {
     if (!state || !authority) return fail('unavailable', 'OWNER_STATE_UNAVAILABLE');
     const plan = state.plan;
     if (state.node !== 'Verify' || !plan || plan.decisionRef !== request.originalDecisionId || state.activeDecisionId !== undefined) return fail('stale', 'VERIFY_STATE_MISMATCH');
-    if (state.taskId !== request.taskId || state.runId !== request.runId || state.workspaceId !== request.workspaceId || state.repositoryId !== request.repositoryId ||
-        state.stateVersion !== request.expectedStateVersion || state.repositoryRevisionDigest !== request.expectedRepositoryRevisionDigest ||
-        state.planVersion !== request.expectedPlanVersion || !this.equal(this.planMaterialDigest(state), request.expectedPlanMaterialDigest) ||
-        this.currentControlVersion !== request.expectedControlVersion || this.currentEpoch !== request.expectedEpoch ||
-        authority.decisionAuthorityGeneration !== request.expectedDecisionAuthorityGeneration ||
-        !this.equal(this.policyIdentity(authority), request.policyIdentity) || !this.equal(request.policyIdentity, this.policyIdentity(authority))) return fail('stale', 'OWNER_CAS_MISMATCH');
+    if (
+      state.taskId !== request.taskId ||
+      state.runId !== request.runId ||
+      state.workspaceId !== request.workspaceId ||
+      state.repositoryId !== request.repositoryId ||
+      state.stateVersion !== request.expectedStateVersion ||
+      state.repositoryRevisionDigest !== request.expectedRepositoryRevisionDigest ||
+      state.planVersion !== request.expectedPlanVersion ||
+      !this.equal(this.planMaterialDigest(state), request.expectedPlanMaterialDigest) ||
+      this.currentControlVersion !== request.expectedControlVersion ||
+      this.currentEpoch !== request.expectedEpoch ||
+      authority.decisionAuthorityGeneration !== request.expectedDecisionAuthorityGeneration ||
+      !this.equal(this.policyIdentity(authority), request.policyIdentity) ||
+      !this.equal(request.policyIdentity, this.policyIdentity(authority))
+    )
+      return fail('stale', 'OWNER_CAS_MISMATCH');
     if (request.decisionId === request.originalDecisionId || (state.approvalDecisionRefs ?? []).includes(request.decisionId)) return fail('conflict', 'DECISION_ID_ALREADY_USED');
     if (this.mode !== 'runnable' || this.holdRef || this.activeClaimId) return fail('blocked', 'OWNER_CONTROL_BLOCKED');
     return { outcome: 'ready', state, authority };
@@ -1627,9 +1853,13 @@ export class MemoryStatePortV02 implements StatePortV02 {
 
   private approvalResult(status: 'pending' | 'rejected' | 'approved', request: RecordVerificationApprovalRequestV02, state: TaskState): RecordVerificationApprovalResultV02 {
     return {
-      outcome: status, requestIdentity: request.requestIdentity, decisionId: request.decisionId,
-      state: structuredClone(state), controlVersion: this.currentControlVersion,
-      epoch: this.currentEpoch, decisionAuthorityGeneration: this.activeAuthorityRef?.decisionAuthorityGeneration ?? 0,
+      outcome: status,
+      requestIdentity: request.requestIdentity,
+      decisionId: request.decisionId,
+      state: structuredClone(state),
+      controlVersion: this.currentControlVersion,
+      epoch: this.currentEpoch,
+      decisionAuthorityGeneration: this.activeAuthorityRef?.decisionAuthorityGeneration ?? 0,
     };
   }
 
@@ -1637,11 +1867,18 @@ export class MemoryStatePortV02 implements StatePortV02 {
     if (!this.verificationApprovalVerifier) return false;
     const expectedGeneration = context.expectedDecisionAuthorityGeneration;
     if (context.purpose === 'historical-patch') {
-      const matches = [...this.claims.values()].filter((claim) => claim.receipt.taskId === context.approvalContext.currentTaskId &&
-        claim.context.subjectKind === 'repository-action' && claim.context.runnableNode === 'Patch' &&
-        claim.context.planApplicability === 'approved-plan' && claim.taskSnapshot.plan?.decisionRef === decisionId &&
-        claim.authorityRef.decisionAuthorityGeneration === expectedGeneration && claim.authorityRef.issuerKeyRef === context.expectedIssuerKeyRef &&
-        claim.status === 'settled' && claim.settlementResult?.outcome === 'settled');
+      const matches = [...this.claims.values()].filter(
+        claim =>
+          claim.receipt.taskId === context.approvalContext.currentTaskId &&
+          claim.context.subjectKind === 'repository-action' &&
+          claim.context.runnableNode === 'Patch' &&
+          claim.context.planApplicability === 'approved-plan' &&
+          claim.taskSnapshot.plan?.decisionRef === decisionId &&
+          claim.authorityRef.decisionAuthorityGeneration === expectedGeneration &&
+          claim.authorityRef.issuerKeyRef === context.expectedIssuerKeyRef &&
+          claim.status === 'settled' &&
+          claim.settlementResult?.outcome === 'settled',
+      );
       if (matches.length !== 1) return false;
       const original = matches[0]?.taskSnapshot;
       const authority = matches[0]?.authorityRef;
@@ -1649,8 +1886,15 @@ export class MemoryStatePortV02 implements StatePortV02 {
     }
     const task = await this.underlying.loadTask(context.approvalContext.currentTaskId);
     const authority = this.activeAuthorityRef;
-    if (!task || !authority || authority.decisionAuthorityGeneration !== expectedGeneration || authority.issuerKeyRef !== context.expectedIssuerKeyRef ||
-        !decisionId.startsWith('dec-verify-') || !task.plan) return false;
+    if (
+      !task ||
+      !authority ||
+      authority.decisionAuthorityGeneration !== expectedGeneration ||
+      authority.issuerKeyRef !== context.expectedIssuerKeyRef ||
+      !decisionId.startsWith('dec-verify-') ||
+      !task.plan
+    )
+      return false;
     const pendingBeforeRebind = task.node === 'Verify' && task.activeDecisionId === undefined;
     const currentPointer = task.plan.decisionRef === decisionId && (task.activeDecisionId === undefined || task.activeDecisionId === decisionId);
     if (!pendingBeforeRebind && !currentPointer) return false;
@@ -1661,21 +1905,32 @@ export class MemoryStatePortV02 implements StatePortV02 {
     const plan = task.plan;
     if (!plan) throw new Error('Plan is required for contextual verification approval');
     const action = {
-      actionId: decisionId, kind: 'approve_fix_plan' as const, planVersion: plan.planVersion,
-      strategyDigest: plan.strategyDigest, diagnosisEvidenceRefs: plan.evidenceRefs, checkSetDigest: plan.checkSetDigest,
+      actionId: decisionId,
+      kind: 'approve_fix_plan' as const,
+      planVersion: plan.planVersion,
+      strategyDigest: plan.strategyDigest,
+      diagnosisEvidenceRefs: plan.evidenceRefs,
+      checkSetDigest: plan.checkSetDigest,
     };
     const approvalContext: CompleteApprovalBindingContextV02 = {
-      currentTaskId: task.taskId, currentWorkspaceId: task.workspaceId,
+      currentTaskId: task.taskId,
+      currentWorkspaceId: task.workspaceId,
       currentRepositoryRevisionDigest: task.repositoryRevisionDigest,
-      currentPolicyId: authority.policyId, currentPolicyVersion: authority.policyVersion,
-      currentNormalizedActionDigest: computeCanonicalSha256(action), currentPlanVersion: plan.planVersion,
-      currentStrategyDigest: plan.strategyDigest, currentBaselineRef: plan.baselineRef,
-      currentEvidenceRefs: [...plan.evidenceRefs], currentCriteriaDigest: computeCanonicalSha256(task.acceptanceCriteria),
+      currentPolicyId: authority.policyId,
+      currentPolicyVersion: authority.policyVersion,
+      currentNormalizedActionDigest: computeCanonicalSha256(action),
+      currentPlanVersion: plan.planVersion,
+      currentStrategyDigest: plan.strategyDigest,
+      currentBaselineRef: plan.baselineRef,
+      currentEvidenceRefs: [...plan.evidenceRefs],
+      currentCriteriaDigest: computeCanonicalSha256(task.acceptanceCriteria),
       currentCheckSetDigest: plan.checkSetDigest,
     };
     return {
-      purpose, expectedIssuerKeyRef: authority.issuerKeyRef,
-      expectedDecisionAuthorityGeneration: authority.decisionAuthorityGeneration, approvalContext,
+      purpose,
+      expectedIssuerKeyRef: authority.issuerKeyRef,
+      expectedDecisionAuthorityGeneration: authority.decisionAuthorityGeneration,
+      approvalContext,
     };
   }
 
@@ -1684,18 +1939,26 @@ export class MemoryStatePortV02 implements StatePortV02 {
     if (!plan) return '';
     return computeCanonicalSha256({
       taskId: task.taskId,
-      planVersion: plan.planVersion, diagnosis: plan.diagnosis,
-      suspectedCauseLocations: plan.suspectedCauseLocations, evidenceRefs: plan.evidenceRefs,
-      strategy: plan.strategy, scopedChanges: plan.scopedChanges, checkSetDigest: plan.checkSetDigest,
-      baselineRef: plan.baselineRef, strategyDigest: plan.strategyDigest,
+      planVersion: plan.planVersion,
+      diagnosis: plan.diagnosis,
+      suspectedCauseLocations: plan.suspectedCauseLocations,
+      evidenceRefs: plan.evidenceRefs,
+      strategy: plan.strategy,
+      scopedChanges: plan.scopedChanges,
+      checkSetDigest: plan.checkSetDigest,
+      baselineRef: plan.baselineRef,
+      strategyDigest: plan.strategyDigest,
       criteriaDigest: computeCanonicalSha256(task.acceptanceCriteria),
     });
   }
 
   private policyIdentity(authority: PolicyAuthorityRefV02): VerificationPolicyIdentityV02 {
     return {
-      policyId: authority.policyId, policyVersion: authority.policyVersion,
-      configId: authority.configId, configVersion: authority.configVersion, issuerKeyRef: authority.issuerKeyRef,
+      policyId: authority.policyId,
+      policyVersion: authority.policyVersion,
+      configId: authority.configId,
+      configVersion: authority.configVersion,
+      issuerKeyRef: authority.issuerKeyRef,
     };
   }
 
@@ -1715,7 +1978,11 @@ export class MemoryStatePortV02 implements StatePortV02 {
 
   async claim(context: AdmissionContextV02): Promise<ClaimReceiptV02> {
     let snapshot: AdmissionContextV02;
-    try { snapshot = structuredClone(context); } catch { return NEUTRAL_CLAIM_RECEIPT_V02; }
+    try {
+      snapshot = structuredClone(context);
+    } catch {
+      return NEUTRAL_CLAIM_RECEIPT_V02;
+    }
     return this.exclusive(async () => {
       context = snapshot;
       if (this.neutral || this.mode !== 'runnable' || !this.validateAdmission(context)) return NEUTRAL_CLAIM_RECEIPT_V02;
@@ -1726,7 +1993,8 @@ export class MemoryStatePortV02 implements StatePortV02 {
         }
       }
       const task = await this.underlying.loadTask(context.taskId);
-      if (!task || !this.contextMatchesTask(context, task) || this.currentControlVersion !== context.expectedControlVersion || this.currentEpoch !== context.expectedEpoch) return NEUTRAL_CLAIM_RECEIPT_V02;
+      if (!task || !this.contextMatchesTask(context, task) || this.currentControlVersion !== context.expectedControlVersion || this.currentEpoch !== context.expectedEpoch)
+        return NEUTRAL_CLAIM_RECEIPT_V02;
       const authorityRef = this.authorityFor(context);
       if (!this.activeAuthorityRef || !this.equal(this.activeAuthorityRef, authorityRef)) return NEUTRAL_CLAIM_RECEIPT_V02;
 
@@ -1738,23 +2006,36 @@ export class MemoryStatePortV02 implements StatePortV02 {
       if (!staged) return NEUTRAL_CLAIM_RECEIPT_V02;
       const postClaimControlVersion = this.currentControlVersion + 1;
       const progression = validateProtocolVersionProgressionV02({
-        kind: 'claim', pre: { taskStateVersion: task.stateVersion, controlVersion: this.currentControlVersion, epoch: this.currentEpoch },
+        kind: 'claim',
+        pre: { taskStateVersion: task.stateVersion, controlVersion: this.currentControlVersion, epoch: this.currentEpoch },
         post: { taskStateVersion: task.stateVersion, controlVersion: postClaimControlVersion, epoch: this.currentEpoch },
       });
       if (!progression.ok) return NEUTRAL_CLAIM_RECEIPT_V02;
       const reservationRefs = context.subjectKind === 'repository-action' ? [...context.reservationRefs] : [context.requestReservationReceipt, ...context.budgetRefs];
       const rawReceipt: ClaimReceiptV02 = {
-        claimId, claimDigest: '', taskId: context.taskId, runId: context.runId,
-        subjectKind: context.subjectKind, planApplicability: context.planApplicability,
-        preClaimTaskStateVersion: task.stateVersion, preClaimControlVersion: this.currentControlVersion,
-        postClaimControlVersion, epoch: this.currentEpoch, status: 'claimed', reservationRefs,
+        claimId,
+        claimDigest: '',
+        taskId: context.taskId,
+        runId: context.runId,
+        subjectKind: context.subjectKind,
+        planApplicability: context.planApplicability,
+        preClaimTaskStateVersion: task.stateVersion,
+        preClaimControlVersion: this.currentControlVersion,
+        postClaimControlVersion,
+        epoch: this.currentEpoch,
+        status: 'claimed',
+        reservationRefs,
       };
       const claimReceipt: ClaimReceiptV02 = { ...rawReceipt, claimDigest: computeCanonicalSha256({ ...rawReceipt, claimDigest: undefined }) };
       this.commitLedgers(staged);
       this.currentControlVersion = postClaimControlVersion;
       this.claims.set(claimId, {
-        receipt: structuredClone(claimReceipt), context: structuredClone(context), taskSnapshot: structuredClone(task),
-        authorityRef: structuredClone(authorityRef), trustedAdmissionContext: structuredClone(this.trustedAdmission(context)), status: 'claimed',
+        receipt: structuredClone(claimReceipt),
+        context: structuredClone(context),
+        taskSnapshot: structuredClone(task),
+        authorityRef: structuredClone(authorityRef),
+        trustedAdmissionContext: structuredClone(this.trustedAdmission(context)),
+        status: 'claimed',
       });
       this.activeClaimId = claimId;
       return structuredClone(claimReceipt);
@@ -1763,18 +2044,30 @@ export class MemoryStatePortV02 implements StatePortV02 {
 
   async beginAttempt(claimId: string, executor: ExecutorIdentityV02): Promise<AttemptReceiptV02> {
     let actor: ExecutorIdentityV02;
-    try { actor = structuredClone(executor); } catch { return NEUTRAL_ATTEMPT_RECEIPT_V02; }
+    try {
+      actor = structuredClone(executor);
+    } catch {
+      return NEUTRAL_ATTEMPT_RECEIPT_V02;
+    }
     if (!this.validExecutorIdentity(actor)) return NEUTRAL_ATTEMPT_RECEIPT_V02;
     return this.exclusive(async () => {
       executor = actor;
       if (this.neutral) return NEUTRAL_ATTEMPT_RECEIPT_V02;
       const claim = this.claims.get(claimId);
-      if (!claim || claim.status !== 'claimed' || this.activeClaimId !== claimId || this.mode !== 'runnable' ||
-        this.currentEpoch !== claim.receipt.epoch || this.currentControlVersion !== claim.receipt.postClaimControlVersion ||
-        !this.activeAuthorityRef || !this.equal(this.activeAuthorityRef, claim.authorityRef)) return NEUTRAL_ATTEMPT_RECEIPT_V02;
+      if (
+        !claim ||
+        claim.status !== 'claimed' ||
+        this.activeClaimId !== claimId ||
+        this.mode !== 'runnable' ||
+        this.currentEpoch !== claim.receipt.epoch ||
+        this.currentControlVersion !== claim.receipt.postClaimControlVersion ||
+        !this.activeAuthorityRef ||
+        !this.equal(this.activeAuthorityRef, claim.authorityRef)
+      )
+        return NEUTRAL_ATTEMPT_RECEIPT_V02;
       const minGeneration = this.fencedActors.get(executor.adapterIdentity) ?? 0;
-      if (this.fencedIncarnationKeys.has(this.incarnationKey(executor)) || executor.fencingGeneration < Math.max(1, minGeneration) ||
-        executor.payloadDigest !== this.actorPayloadDigest(claim.context)) return NEUTRAL_ATTEMPT_RECEIPT_V02;
+      if (this.fencedIncarnationKeys.has(this.incarnationKey(executor)) || executor.fencingGeneration < Math.max(1, minGeneration) || executor.payloadDigest !== this.actorPayloadDigest(claim.context))
+        return NEUTRAL_ATTEMPT_RECEIPT_V02;
       const task = await this.underlying.loadTask(claim.receipt.taskId);
       if (!task || !this.contextMatchesTask(claim.context, task) || !this.equal(this.taskSemantic(task), this.taskSemantic(claim.taskSnapshot))) return NEUTRAL_ATTEMPT_RECEIPT_V02;
 
@@ -1782,7 +2075,8 @@ export class MemoryStatePortV02 implements StatePortV02 {
       const nextTaskVersion = task.stateVersion + (repairPatch ? 1 : 0);
       const nextControlVersion = this.currentControlVersion + 1;
       const progression = validateProtocolVersionProgressionV02({
-        kind: 'begin-attempt', isRepairPatch: repairPatch,
+        kind: 'begin-attempt',
+        isRepairPatch: repairPatch,
         pre: { taskStateVersion: task.stateVersion, controlVersion: this.currentControlVersion, epoch: this.currentEpoch },
         post: { taskStateVersion: nextTaskVersion, controlVersion: nextControlVersion, epoch: this.currentEpoch },
       });
@@ -1790,20 +2084,32 @@ export class MemoryStatePortV02 implements StatePortV02 {
 
       const attemptId = `att-${claimId}`;
       const receipt: AttemptReceiptV02 = {
-        attemptId, claimId, taskId: claim.receipt.taskId, executorIdentity: structuredClone(executor),
-        preAttemptTaskStateVersion: task.stateVersion, postBeginTaskStateVersion: nextTaskVersion,
-        preAttemptControlVersion: this.currentControlVersion, postBeginControlVersion: nextControlVersion,
-        epoch: this.currentEpoch, status: 'attempting',
+        attemptId,
+        claimId,
+        taskId: claim.receipt.taskId,
+        executorIdentity: structuredClone(executor),
+        preAttemptTaskStateVersion: task.stateVersion,
+        postBeginTaskStateVersion: nextTaskVersion,
+        preAttemptControlVersion: this.currentControlVersion,
+        postBeginControlVersion: nextControlVersion,
+        epoch: this.currentEpoch,
+        status: 'attempting',
       };
-      if (!validateAttemptReceiptV02(receipt, {
-        expectedTaskId: claim.receipt.taskId, expectedClaimId: claimId, expectedAttemptId: attemptId,
-        expectedEpoch: this.currentEpoch, isRepairPatch: repairPatch,
-      }).ok) return NEUTRAL_ATTEMPT_RECEIPT_V02;
+      if (
+        !validateAttemptReceiptV02(receipt, {
+          expectedTaskId: claim.receipt.taskId,
+          expectedClaimId: claimId,
+          expectedAttemptId: attemptId,
+          expectedEpoch: this.currentEpoch,
+          isRepairPatch: repairPatch,
+        }).ok
+      )
+        return NEUTRAL_ATTEMPT_RECEIPT_V02;
 
       const staged = new Map<string, BudgetLedger>();
       if (repairPatch) {
         if (claim.context.subjectKind !== 'repository-action') return NEUTRAL_ATTEMPT_RECEIPT_V02;
-        const ledger = this.underlying.getLedgers().find((item) => item.scope === 'task' && item.kind === 'repair');
+        const ledger = this.underlying.getLedgers().find(item => item.scope === 'task' && item.kind === 'repair');
         const next = this.stageReservation(ledger, { reservationId: claim.context.reservationRefs[0] ?? '', keyedId: claim.context.action.actionId, amount: 1 }, 'consume');
         if (!next) return NEUTRAL_ATTEMPT_RECEIPT_V02;
         staged.set('task:repair', next);
@@ -1813,7 +2119,7 @@ export class MemoryStatePortV02 implements StatePortV02 {
         if (!iterationSpecs?.length) return NEUTRAL_ATTEMPT_RECEIPT_V02;
         for (const spec of iterationSpecs) {
           const key = `${spec.scope}:${spec.kind}`;
-          const ledger = staged.get(key) ?? this.underlying.getLedgers().find((item) => item.scope === spec.scope && item.kind === spec.kind);
+          const ledger = staged.get(key) ?? this.underlying.getLedgers().find(item => item.scope === spec.scope && item.kind === spec.kind);
           const next = this.stageReservation(ledger, spec, 'consume');
           if (!next) return NEUTRAL_ATTEMPT_RECEIPT_V02;
           staged.set(key, next);
@@ -1836,7 +2142,11 @@ export class MemoryStatePortV02 implements StatePortV02 {
 
   async recordOutcome(receipt: AttemptOutcomeReceiptV02): Promise<OutcomeRecordResultV02> {
     let snapshot: AttemptOutcomeReceiptV02;
-    try { snapshot = structuredClone(receipt); } catch { return NEUTRAL_OUTCOME_RECORD_RESULT_V02; }
+    try {
+      snapshot = structuredClone(receipt);
+    } catch {
+      return NEUTRAL_OUTCOME_RECORD_RESULT_V02;
+    }
     if (!snapshot || typeof snapshot !== 'object') return NEUTRAL_OUTCOME_RECORD_RESULT_V02;
     return this.exclusive(async () => {
       receipt = snapshot;
@@ -1845,8 +2155,17 @@ export class MemoryStatePortV02 implements StatePortV02 {
       if (priorReceipt) return this.equal(priorReceipt, receipt) ? { outcome: 'already-recorded', receiptId: receipt.receiptId } : NEUTRAL_OUTCOME_RECORD_RESULT_V02;
       const attempt = this.attempts.get(receipt.attemptId);
       const claim = this.claims.get(receipt.claimId);
-      if (!attempt || attempt.claimId !== receipt.claimId || !claim || claim.status !== 'attempting' || claim.attemptId !== attempt.receipt.attemptId ||
-        attempt.status !== 'attempting' || attempt.outcomeReceiptId !== undefined || this.currentEpoch !== claim.receipt.epoch) return NEUTRAL_OUTCOME_RECORD_RESULT_V02;
+      if (
+        !attempt ||
+        attempt.claimId !== receipt.claimId ||
+        !claim ||
+        claim.status !== 'attempting' ||
+        claim.attemptId !== attempt.receipt.attemptId ||
+        attempt.status !== 'attempting' ||
+        attempt.outcomeReceiptId !== undefined ||
+        this.currentEpoch !== claim.receipt.epoch
+      )
+        return NEUTRAL_OUTCOME_RECORD_RESULT_V02;
       const task = await this.underlying.loadTask(claim.receipt.taskId);
       if (!task || !validateAttemptOutcomeReceiptV02(receipt, this.outcomeContext(claim, attempt, task)).ok || receipt.outcome === 'proven-not-dispatched') return NEUTRAL_OUTCOME_RECORD_RESULT_V02;
 
@@ -1855,7 +2174,7 @@ export class MemoryStatePortV02 implements StatePortV02 {
         if (!receipt.observedUsage || !validateProviderUsage(receipt.observedUsage).ok) return NEUTRAL_OUTCOME_RECORD_RESULT_V02;
         const budgetRefs = claim.context.subjectKind === 'provider-request' ? claim.context.budgetRefs : [];
         const specs = this.providerSpecs(claim.context);
-        if (!specs || specs.some((spec) => !budgetRefs.includes(spec.reservationId))) return NEUTRAL_OUTCOME_RECORD_RESULT_V02;
+        if (!specs || specs.some(spec => !budgetRefs.includes(spec.reservationId))) return NEUTRAL_OUTCOME_RECORD_RESULT_V02;
         const settled = this.stageClaimReservations(claim.context, 'settle', receipt.observedUsage);
         if (!settled) return NEUTRAL_OUTCOME_RECORD_RESULT_V02;
         stagedLedgers = settled;
@@ -1914,7 +2233,11 @@ export class MemoryStatePortV02 implements StatePortV02 {
 
   async reconcileObservedOutcome(receipt: AttemptReconciliationReceiptV02): Promise<ReconciliationResultV02> {
     let snapshot: AttemptReconciliationReceiptV02;
-    try { snapshot = structuredClone(receipt); } catch { return NEUTRAL_RECONCILIATION_RESULT_V02; }
+    try {
+      snapshot = structuredClone(receipt);
+    } catch {
+      return NEUTRAL_RECONCILIATION_RESULT_V02;
+    }
     if (!snapshot || typeof snapshot !== 'object') return NEUTRAL_RECONCILIATION_RESULT_V02;
     return this.exclusive(async () => {
       receipt = snapshot;
@@ -1924,9 +2247,18 @@ export class MemoryStatePortV02 implements StatePortV02 {
       const predecessor = this.outcomeReceipts.get(receipt.predecessorReceiptId);
       const claim = this.claims.get(receipt.claimId);
       const attempt = claim?.attemptId ? this.attempts.get(claim.attemptId) : undefined;
-      if (!predecessor || predecessor.outcome !== 'observed' || predecessor.receiptDigest !== receipt.predecessorReceiptDigest ||
-        !claim || claim.status !== 'observed-unsettled' || claim.attemptId !== receipt.attemptId || !attempt || attempt.outcomeReceiptId !== predecessor.receiptId ||
-        this.currentEpoch !== claim.receipt.epoch) return { outcome: 'conflict', receiptId: receipt.reconciliationId };
+      if (
+        !predecessor ||
+        predecessor.outcome !== 'observed' ||
+        predecessor.receiptDigest !== receipt.predecessorReceiptDigest ||
+        !claim ||
+        claim.status !== 'observed-unsettled' ||
+        claim.attemptId !== receipt.attemptId ||
+        !attempt ||
+        attempt.outcomeReceiptId !== predecessor.receiptId ||
+        this.currentEpoch !== claim.receipt.epoch
+      )
+        return { outcome: 'conflict', receiptId: receipt.reconciliationId };
       const task = await this.underlying.loadTask(claim.receipt.taskId);
       if (!task) return { outcome: 'conflict', receiptId: receipt.reconciliationId };
       const evidenceRefs = predecessor.evidenceRefs;
@@ -1941,11 +2273,8 @@ export class MemoryStatePortV02 implements StatePortV02 {
         if (claim.context.subjectKind !== 'repository-action' || predecessor.subjectKind !== 'repository-action') return { outcome: 'conflict', receiptId: receipt.reconciliationId };
         const transition = predecessor.proposedEffects.taskTransition;
         const resultRevision = predecessor.observedResultRevisionDigest;
-        const transitionMatches = repairPatch
-          ? transition.kind === 'transition' && transition.fromNode === 'Patch' && transition.toNode === 'Verify'
-          : transition.kind === 'none';
-        if (!resultRevision || !transitionMatches ||
-          !this.taskMatchesAttempt(claim, task, repairPatch, resultRevision)) return { outcome: 'conflict', receiptId: receipt.reconciliationId };
+        const transitionMatches = repairPatch ? transition.kind === 'transition' && transition.fromNode === 'Patch' && transition.toNode === 'Verify' : transition.kind === 'none';
+        if (!resultRevision || !transitionMatches || !this.taskMatchesAttempt(claim, task, repairPatch, resultRevision)) return { outcome: 'conflict', receiptId: receipt.reconciliationId };
         nextTask = this.observedPatchTaskState(task, predecessor.proposedEffects.invalidatedEvidence, resultRevision, repairPatch);
         if (!validateTaskState(nextTask).ok) return { outcome: 'conflict', receiptId: receipt.reconciliationId };
       } else if (!this.taskMatchesAttempt(claim, task, false, claim.taskSnapshot.repositoryRevisionDigest)) {
@@ -1964,7 +2293,11 @@ export class MemoryStatePortV02 implements StatePortV02 {
 
   async reconcileUncertain(receipt: AttemptReconciliationReceiptV02): Promise<ReconciliationResultV02> {
     let snapshot: AttemptReconciliationReceiptV02;
-    try { snapshot = structuredClone(receipt); } catch { return NEUTRAL_RECONCILIATION_RESULT_V02; }
+    try {
+      snapshot = structuredClone(receipt);
+    } catch {
+      return NEUTRAL_RECONCILIATION_RESULT_V02;
+    }
     if (!snapshot || typeof snapshot !== 'object') return NEUTRAL_RECONCILIATION_RESULT_V02;
     return this.exclusive(async () => {
       receipt = snapshot;
@@ -1974,9 +2307,18 @@ export class MemoryStatePortV02 implements StatePortV02 {
       const predecessor = this.outcomeReceipts.get(receipt.predecessorReceiptId);
       const claim = this.claims.get(receipt.claimId);
       const attempt = claim?.attemptId ? this.attempts.get(claim.attemptId) : undefined;
-      if (!predecessor || predecessor.outcome !== 'uncertain' || predecessor.receiptDigest !== receipt.predecessorReceiptDigest ||
-        !claim || claim.status !== 'uncertain' || claim.attemptId !== receipt.attemptId || !attempt || attempt.outcomeReceiptId !== predecessor.receiptId ||
-        this.currentEpoch !== claim.receipt.epoch) return { outcome: 'conflict', receiptId: receipt.reconciliationId };
+      if (
+        !predecessor ||
+        predecessor.outcome !== 'uncertain' ||
+        predecessor.receiptDigest !== receipt.predecessorReceiptDigest ||
+        !claim ||
+        claim.status !== 'uncertain' ||
+        claim.attemptId !== receipt.attemptId ||
+        !attempt ||
+        attempt.outcomeReceiptId !== predecessor.receiptId ||
+        this.currentEpoch !== claim.receipt.epoch
+      )
+        return { outcome: 'conflict', receiptId: receipt.reconciliationId };
       const task = await this.underlying.loadTask(claim.receipt.taskId);
       if (!task) return { outcome: 'conflict', receiptId: receipt.reconciliationId };
       const data = receipt as unknown as Record<string, unknown>;
@@ -1985,9 +2327,7 @@ export class MemoryStatePortV02 implements StatePortV02 {
       const fence = this.fenceProofs.get(claim.receipt.claimId);
       if (!fence || (disposition === 'observed-and-accounted' && !evidence)) return { outcome: 'conflict', receiptId: receipt.reconciliationId };
       if (fence.holdRef !== this.holdRef || this.mode === 'runnable') return { outcome: 'blocked', receiptId: receipt.reconciliationId };
-      const trustedEvidence = evidence
-        ? [evidence.effectEvidenceRef, ...evidence.accountingEvidenceRefs]
-        : fence.adapterEvidenceRefs;
+      const trustedEvidence = evidence ? [evidence.effectEvidenceRef, ...evidence.accountingEvidenceRefs] : fence.adapterEvidenceRefs;
       const validation = validateAttemptReconciliationReceiptV02(receipt, this.reconciliationContext(claim, attempt, predecessor, receipt, task, trustedEvidence, evidence, fence));
       if (!validation.ok) return { outcome: 'conflict', receiptId: receipt.reconciliationId };
 
@@ -2007,8 +2347,7 @@ export class MemoryStatePortV02 implements StatePortV02 {
       } else if (disposition === 'observed-and-accounted') {
         const repairPatch = this.isRepairPatch(claim.context);
         if (this.isRepositoryPatch(claim.context)) {
-          if (!evidence?.observedRevisionDigest || !evidence.invalidatedEvidence ||
-            !this.taskMatchesAttempt(claim, task, repairPatch, claim.taskSnapshot.repositoryRevisionDigest)) {
+          if (!evidence?.observedRevisionDigest || !evidence.invalidatedEvidence || !this.taskMatchesAttempt(claim, task, repairPatch, claim.taskSnapshot.repositoryRevisionDigest)) {
             return { outcome: 'blocked', receiptId: receipt.reconciliationId };
           }
           nextTask = this.observedPatchTaskState(task, evidence.invalidatedEvidence, evidence.observedRevisionDigest, repairPatch);
@@ -2044,7 +2383,11 @@ export class MemoryStatePortV02 implements StatePortV02 {
 
   async closeUnattemptedClaim(receipt: ClaimClosureReceiptV02): Promise<ClaimClosureResultV02> {
     let snapshot: ClaimClosureReceiptV02;
-    try { snapshot = structuredClone(receipt); } catch { return NEUTRAL_CLAIM_CLOSURE_RESULT_V02; }
+    try {
+      snapshot = structuredClone(receipt);
+    } catch {
+      return NEUTRAL_CLAIM_CLOSURE_RESULT_V02;
+    }
     if (!snapshot || typeof snapshot !== 'object') return NEUTRAL_CLAIM_CLOSURE_RESULT_V02;
     return this.exclusive(async () => {
       receipt = snapshot;
@@ -2053,14 +2396,27 @@ export class MemoryStatePortV02 implements StatePortV02 {
       if (prior) return this.equal(prior, receipt) ? { closed: true, receiptId: receipt.receiptId } : { closed: false, receiptId: receipt.receiptId };
       const claim = this.claims.get(receipt.claimId);
       const fence = claim && this.fenceProofs.get(receipt.claimId);
-      if (!claim || claim.status !== 'claimed' || claim.attemptId || this.attempts.size && [...this.attempts.values()].some((attempt) => attempt.claimId === receipt.claimId) ||
-        this.activeClaimId !== receipt.claimId || !fence || this.mode === 'runnable' || !this.holdRef || fence.holdRef !== this.holdRef ||
-        receipt.reason !== this.holdRef || !this.equal(receipt.fencedExecutorIdentity, fence.fencedExecutorIdentity) || !this.equal(receipt.unconsumedReservations, claim.receipt.reservationRefs)) {
+      if (
+        !claim ||
+        claim.status !== 'claimed' ||
+        claim.attemptId ||
+        (this.attempts.size && [...this.attempts.values()].some(attempt => attempt.claimId === receipt.claimId)) ||
+        this.activeClaimId !== receipt.claimId ||
+        !fence ||
+        this.mode === 'runnable' ||
+        !this.holdRef ||
+        fence.holdRef !== this.holdRef ||
+        receipt.reason !== this.holdRef ||
+        !this.equal(receipt.fencedExecutorIdentity, fence.fencedExecutorIdentity) ||
+        !this.equal(receipt.unconsumedReservations, claim.receipt.reservationRefs)
+      ) {
         return { closed: false, receiptId: receipt.receiptId };
       }
       const validationContext: ClaimClosureValidationContextV02 = {
-        expectedTaskId: claim.receipt.taskId, expectedClaimId: claim.receipt.claimId,
-        claim: { ...claim.receipt, hasCommittedAttempt: false }, hasCommittedAttempt: false,
+        expectedTaskId: claim.receipt.taskId,
+        expectedClaimId: claim.receipt.claimId,
+        claim: { ...claim.receipt, hasCommittedAttempt: false },
+        hasCommittedAttempt: false,
         expectedAdapterIdentity: fence.fencedExecutorIdentity.adapterIdentity,
         expectedMinFencingGeneration: fence.fencingGeneration,
         expectedFencedExecutorIdentity: fence.fencedExecutorIdentity,
@@ -2082,8 +2438,6 @@ export class MemoryStatePortV02 implements StatePortV02 {
   private reconciliationReplay(receipt: AttemptReconciliationReceiptV02): ReconciliationResultV02 | null {
     const prior = this.reconciliationReceipts.get(receipt.reconciliationId);
     if (!prior) return null;
-    return this.equal(prior, receipt)
-      ? { outcome: 'settled', receiptId: receipt.reconciliationId }
-      : { outcome: 'conflict', receiptId: receipt.reconciliationId };
+    return this.equal(prior, receipt) ? { outcome: 'settled', receiptId: receipt.reconciliationId } : { outcome: 'conflict', receiptId: receipt.reconciliationId };
   }
 }

@@ -146,11 +146,13 @@ function isDirectExecution(): boolean {
 }
 
 if (isDirectExecution()) {
-  void runUC03Cli(process.argv.slice(2)).then((result) => {
-    process.stdout.write(`${result.output}\n`);
-    process.exitCode = result.exitCode;
-  }).catch(() => {
-    process.stderr.write('UC03 CLI failed; exception details are not included\n');
-    process.exitCode = 1;
-  });
+  void runUC03Cli(process.argv.slice(2))
+    .then(result => {
+      process.stdout.write(`${result.output}\n`);
+      process.exitCode = result.exitCode;
+    })
+    .catch(() => {
+      process.stderr.write('UC03 CLI failed; exception details are not included\n');
+      process.exitCode = 1;
+    });
 }

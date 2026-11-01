@@ -26,7 +26,7 @@ export function isRecord(input: unknown): input is Record<string, unknown> {
     const prototype = Object.getPrototypeOf(input);
     if (prototype !== Object.prototype && prototype !== null) return false;
     const descriptors = Object.getOwnPropertyDescriptors(input);
-    return Reflect.ownKeys(input).every((key) => {
+    return Reflect.ownKeys(input).every(key => {
       if (typeof key !== 'string') return false;
       const descriptor = descriptors[key];
       return descriptor !== undefined && descriptor.enumerable === true && 'value' in descriptor;
@@ -63,12 +63,7 @@ export function addError(errors: ValidationError[], path: string, code: string, 
 }
 
 /** Accumulate errors for properties outside the record's explicit schema. */
-export function rejectUnknownKeys(
-  input: Record<string, unknown>,
-  allowed: readonly string[],
-  path: string,
-  errors: ValidationError[]
-): void {
+export function rejectUnknownKeys(input: Record<string, unknown>, allowed: readonly string[], path: string, errors: ValidationError[]): void {
   const allowedSet = new Set(allowed);
   for (const key of Object.keys(input)) {
     if (!allowedSet.has(key)) addError(errors, path ? `${path}.${key}` : key, 'UNKNOWN_PROPERTY', `Unknown property: ${key}`);
@@ -113,20 +108,14 @@ export function validateVersionString(input: unknown, path: string, errors: Vali
 
 /** Require nonempty UTF-8 text within the byte cap, excluding control and bidi formatting characters. */
 export function validateBoundedText(input: unknown, path: string, errors: ValidationError[], maxBytes: number): void {
-  if (
-    !hasNonEmptyString(input) ||
-    /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/u.test(input) ||
-    Buffer.byteLength(input, 'utf8') > maxBytes
-  ) {
+  if (!hasNonEmptyString(input) || /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/u.test(input) || Buffer.byteLength(input, 'utf8') > maxBytes) {
     addError(errors, path, 'INVALID_TEXT', `${path} must be nonempty bounded UTF-8 text without control characters`);
   }
 }
 
 /** Validate ISO-8601 timestamps with an explicit timezone and a real calendar date. */
 export function validateTimestamp(input: unknown, path: string, errors: ValidationError[]): void {
-  const match = typeof input === 'string'
-    ? /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?(Z|[+-](\d{2}):(\d{2}))$/.exec(input)
-    : null;
+  const match = typeof input === 'string' ? /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?(Z|[+-](\d{2}):(\d{2}))$/.exec(input) : null;
   const year = match?.[1] === undefined ? undefined : Number(match[1]);
   const month = match?.[2] === undefined ? undefined : Number(match[2]);
   const day = match?.[3] === undefined ? undefined : Number(match[3]);
@@ -135,14 +124,27 @@ export function validateTimestamp(input: unknown, path: string, errors: Validati
   const second = match?.[6] === undefined ? undefined : Number(match[6]);
   const offsetHour = match?.[8] === undefined ? 0 : Number(match[8]);
   const offsetMinute = match?.[9] === undefined ? 0 : Number(match[9]);
-  const validCalendarDate = year !== undefined && month !== undefined && day !== undefined && (() => {
-    const date = new Date(Date.UTC(year, month - 1, day));
-    return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
-  })();
+  const validCalendarDate =
+    year !== undefined &&
+    month !== undefined &&
+    day !== undefined &&
+    (() => {
+      const date = new Date(Date.UTC(year, month - 1, day));
+      return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+    })();
   if (
-    match === null || !validCalendarDate || hour === undefined || hour > 23 || minute === undefined || minute > 59 ||
-    second === undefined || second > 59 || offsetHour > 23 || offsetMinute > 59 ||
-    typeof input !== 'string' || Number.isNaN(Date.parse(input))
+    match === null ||
+    !validCalendarDate ||
+    hour === undefined ||
+    hour > 23 ||
+    minute === undefined ||
+    minute > 59 ||
+    second === undefined ||
+    second > 59 ||
+    offsetHour > 23 ||
+    offsetMinute > 59 ||
+    typeof input !== 'string' ||
+    Number.isNaN(Date.parse(input))
   ) {
     addError(errors, path, 'INVALID_TIMESTAMP', `${path} must be an ISO-8601 timestamp with an explicit timezone`);
   }

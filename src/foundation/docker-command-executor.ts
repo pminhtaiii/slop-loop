@@ -2,7 +2,16 @@ import { computeActionDigest } from '../contracts/foundation/uc03.ts';
 import { createDockerCommandPlan } from './docker-command-plan.ts';
 import { FORBIDDEN_ENV_KEYS, isImmutableEnvKey, isLoaderHook, isValidFencingGeneration, normalizeDockerExecutionOutput, validateDockerProfile } from './docker-workspace-policy.ts';
 import type { DockerWorkspaceManager } from './docker-workspace-manager.ts';
-import type { DockerEnvironmentPolicy, DockerLifecycleController, DockerMountConfig, DockerProfile, DockerResourceLimits, ExecuteCommandParams, StructuredExecutionResult, WorkspaceLease } from './docker-workspace-types.ts';
+import type {
+  DockerEnvironmentPolicy,
+  DockerLifecycleController,
+  DockerMountConfig,
+  DockerProfile,
+  DockerResourceLimits,
+  ExecuteCommandParams,
+  StructuredExecutionResult,
+  WorkspaceLease,
+} from './docker-workspace-types.ts';
 export interface StructuredCommandExecutorOptions {
   readonly manager: DockerWorkspaceManager;
   readonly controller?: DockerLifecycleController | undefined;
@@ -82,7 +91,7 @@ export class StructuredCommandExecutor {
     if (options.profile !== undefined) {
       const profileRes = validateDockerProfile(options.profile);
       if (!profileRes.ok) {
-        throw new Error(`INVALID_DOCKER_PROFILE: ${profileRes.errors.map((e) => e.message).join('; ')}`);
+        throw new Error(`INVALID_DOCKER_PROFILE: ${profileRes.errors.map(e => e.message).join('; ')}`);
       }
       const val = profileRes.value;
       const trustedLimits: DockerResourceLimits = Object.freeze({
@@ -90,19 +99,17 @@ export class StructuredCommandExecutor {
         maxMemoryBytes: val.limits.maxMemoryBytes,
         maxCpuCores: val.limits.maxCpuCores,
         maxPids: val.limits.maxPids,
-        ...(val.limits.maxOutputBytes !== undefined
-          ? { maxOutputBytes: val.limits.maxOutputBytes }
-          : {}),
+        ...(val.limits.maxOutputBytes !== undefined ? { maxOutputBytes: val.limits.maxOutputBytes } : {}),
       });
 
       const trustedMounts: readonly DockerMountConfig[] = Object.freeze(
-        val.mounts.map((m) =>
+        val.mounts.map(m =>
           Object.freeze({
             source: m.source,
             target: m.target,
             readOnly: m.readOnly,
-          })
-        )
+          }),
+        ),
       );
 
       this.trustedProfile = Object.freeze({
@@ -169,11 +176,7 @@ export class StructuredCommandExecutor {
       throw new Error(`STALE_COMMAND_VIEW: Active view revision '${activeView.canonicalRevisionDigest}' does not match canonical revision '${currentRev}'`);
     }
     if (params.view) {
-      if (
-        params.view.viewId !== activeView.viewId ||
-        params.view.viewDigest !== activeView.viewDigest ||
-        params.view.canonicalRevisionDigest !== activeView.canonicalRevisionDigest
-      ) {
+      if (params.view.viewId !== activeView.viewId || params.view.viewDigest !== activeView.viewDigest || params.view.canonicalRevisionDigest !== activeView.canonicalRevisionDigest) {
         throw new Error(`STALE_COMMAND_VIEW: Supplied view does not match current admitted command view for workspace '${params.workspaceId}'`);
       }
     }
@@ -185,9 +188,7 @@ export class StructuredCommandExecutor {
 
     // Absent constructor authority must deny even if command supplies a plausible profile
     if (!this.trustedProfile) {
-      throw new Error(
-        `PROFILE_REQUIRED: Trusted constructor DockerProfile is required for command execution on workspace '${params.workspaceId}'`
-      );
+      throw new Error(`PROFILE_REQUIRED: Trusted constructor DockerProfile is required for command execution on workspace '${params.workspaceId}'`);
     }
     const trustedProfile = this.trustedProfile;
 
@@ -195,7 +196,7 @@ export class StructuredCommandExecutor {
     if (params.profile !== undefined) {
       const candidateRes = validateDockerProfile(params.profile);
       if (!candidateRes.ok) {
-        throw new Error(`INVALID_DOCKER_PROFILE: ${candidateRes.errors.map((e) => e.message).join('; ')}`);
+        throw new Error(`INVALID_DOCKER_PROFILE: ${candidateRes.errors.map(e => e.message).join('; ')}`);
       }
       const p = candidateRes.value;
       const isExactMatch =
@@ -213,18 +214,11 @@ export class StructuredCommandExecutor {
         p.mounts.length === trustedProfile.mounts.length &&
         p.mounts.every((m, idx) => {
           const tm = trustedProfile.mounts[idx];
-          return (
-            tm !== undefined &&
-            m.source === tm.source &&
-            m.target === tm.target &&
-            m.readOnly === tm.readOnly
-          );
+          return tm !== undefined && m.source === tm.source && m.target === tm.target && m.readOnly === tm.readOnly;
         });
 
       if (!isExactMatch) {
-        throw new Error(
-          `COMMAND_PROFILE_OVERRIDE_FORBIDDEN: Command-supplied profile cannot override or differ from trusted constructor profile`
-        );
+        throw new Error(`COMMAND_PROFILE_OVERRIDE_FORBIDDEN: Command-supplied profile cannot override or differ from trusted constructor profile`);
       }
     }
 
@@ -260,7 +254,7 @@ export class StructuredCommandExecutor {
         throw new Error('INVALID_ATTEMPT_ID: Attempt receipt must have a valid attemptId');
       }
 
-      assertAttemptIdentity = (lease) => {
+      assertAttemptIdentity = lease => {
         const currentActor = attempt.executorIdentity;
         if (
           params.attempt !== attempt ||
@@ -290,12 +284,11 @@ export class StructuredCommandExecutor {
           !isValidFencingGeneration(managerGeneration) ||
           actorIdentity.fencingGeneration !== this.fencingGeneration ||
           actorIdentity.fencingGeneration !== managerGeneration ||
-          (lease !== undefined && (
-            !isValidFencingGeneration(lease.fencingGeneration) ||
-            actorIdentity.fencingGeneration !== lease.fencingGeneration
-          ))
+          (lease !== undefined && (!isValidFencingGeneration(lease.fencingGeneration) || actorIdentity.fencingGeneration !== lease.fencingGeneration))
         ) {
-          throw new Error(`STALE_FENCING_GENERATION: Attempt generation ${actorIdentity.fencingGeneration} must match executor ${this.fencingGeneration}, manager ${managerGeneration}, and lease ${lease?.fencingGeneration ?? 'unavailable'}`);
+          throw new Error(
+            `STALE_FENCING_GENERATION: Attempt generation ${actorIdentity.fencingGeneration} must match executor ${this.fencingGeneration}, manager ${managerGeneration}, and lease ${lease?.fencingGeneration ?? 'unavailable'}`,
+          );
         }
       };
       assertAttemptIdentity();
@@ -350,7 +343,6 @@ export class StructuredCommandExecutor {
     }
 
     return normalizeDockerExecutionOutput(rawOutput, limits, plan);
-
   }
 }
 

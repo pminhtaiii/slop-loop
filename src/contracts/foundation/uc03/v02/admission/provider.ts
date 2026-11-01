@@ -11,43 +11,40 @@
  */
 
 import { computeCanonicalSha256 } from '../../identity.ts';
-import type {
-  ProviderAdmissionContextV02,
-  ProviderAdmissionReceiptV02,
-  ProviderAdmissionTrustedContextV02,
-  ProviderFiniteBoundsV02,
-  ProviderPricingIdentityV02,
-} from '../ports.ts';
-import type {
-  ProviderRequest,
-  ValidationError,
-  ValidationResult,
-} from '../../v01/types.ts';
-import {
-  isPlainObject,
-  rejectUnknownKeys,
-  validateNonEmptyString,
-  validateNonNegativeInteger,
-  validatePositiveInteger,
-  validatePositiveNumber,
-} from '../../v01/validation/common.ts';
+import type { ProviderAdmissionContextV02, ProviderAdmissionReceiptV02, ProviderAdmissionTrustedContextV02, ProviderFiniteBoundsV02, ProviderPricingIdentityV02 } from '../ports.ts';
+import type { ProviderRequest, ValidationError, ValidationResult } from '../../v01/types.ts';
+import { isPlainObject, rejectUnknownKeys, validateNonEmptyString, validateNonNegativeInteger, validatePositiveInteger, validatePositiveNumber } from '../../v01/validation/common.ts';
 import { validateProviderRequest } from '../../v01/validation/provider/request.ts';
 
 const PROV_ALLOWED = [
-  'schemaVersion', 'subjectKind', 'planApplicability',
-  'taskStateSchemaVersion', 'expectedTaskStateVersion',
-  'controlSchemaVersion', 'expectedControlVersion', 'expectedEpoch',
-  'taskId', 'runId', 'runnableNode', 'providerRequest', 'providerRequestId', 'role',
-  'requestContentDigest', 'providerIdentity', 'providerAdmissionReceipt',
-  'requestReservationReceipt', 'budgetRefs', 'finiteBounds', 'admissionDigest',
-  'diagnosticPurpose', 'taskCriteriaDigest',
-  'planBindingDigest', 'planDecisionRef',
+  'schemaVersion',
+  'subjectKind',
+  'planApplicability',
+  'taskStateSchemaVersion',
+  'expectedTaskStateVersion',
+  'controlSchemaVersion',
+  'expectedControlVersion',
+  'expectedEpoch',
+  'taskId',
+  'runId',
+  'runnableNode',
+  'providerRequest',
+  'providerRequestId',
+  'role',
+  'requestContentDigest',
+  'providerIdentity',
+  'providerAdmissionReceipt',
+  'requestReservationReceipt',
+  'budgetRefs',
+  'finiteBounds',
+  'admissionDigest',
+  'diagnosticPurpose',
+  'taskCriteriaDigest',
+  'planBindingDigest',
+  'planDecisionRef',
 ] as const;
 
-const REPO_CROSS = [
-  'action', 'actionDigest', 'commandView', 'policyEvaluationReceipt',
-  'actionDecisionReceipt', 'patchDigest', 'baseRevision', 'targetPaths', 'executionProfileId',
-] as const;
+const REPO_CROSS = ['action', 'actionDigest', 'commandView', 'policyEvaluationReceipt', 'actionDecisionReceipt', 'patchDigest', 'baseRevision', 'targetPaths', 'executionProfileId'] as const;
 
 const PROV_ID_KEYS = ['providerId', 'modelId', 'configId', 'configVersion', 'pricingPolicyId', 'pricingPolicyVersion', 'issuerKeyRef', 'decisionAuthorityGeneration'] as const;
 const PROV_REC_KEYS = ['receiptId', 'receiptDigest', 'providerRequestId', 'role', 'requestContentDigest', 'providerId', 'modelId', 'configId', 'configVersion', 'decisionAuthorityGeneration'] as const;
@@ -86,10 +83,7 @@ function matchProp(src: Record<string, unknown>, tgt: Record<string, unknown>, f
   }
 }
 
-export function validateProviderAdmissionV02(
-  input: unknown,
-  trustedContext: ProviderAdmissionTrustedContextV02,
-): ValidationResult<ProviderAdmissionContextV02> {
+export function validateProviderAdmissionV02(input: unknown, trustedContext: ProviderAdmissionTrustedContextV02): ValidationResult<ProviderAdmissionContextV02> {
   const errs: ValidationError[] = [];
   if (!isPlainObject(input)) {
     return { ok: false, errors: [{ path: 'context', message: 'Provider admission context must be an object', code: 'INVALID_TYPE' }] };
@@ -167,7 +161,8 @@ export function validateProviderAdmissionV02(
       if (id['providerId'] && id['providerId'] !== validReq.providerId) errs.push({ path: 'providerIdentity.providerId', message: 'providerId mismatch', code: 'PROVIDER_IDENTITY_MISMATCH' });
       if (id['modelId'] && id['modelId'] !== validReq.modelId) errs.push({ path: 'providerIdentity.modelId', message: 'modelId mismatch', code: 'PROVIDER_IDENTITY_MISMATCH' });
       if (id['configId'] && id['configId'] !== validReq.configId) errs.push({ path: 'providerIdentity.configId', message: 'configId mismatch', code: 'PROVIDER_IDENTITY_MISMATCH' });
-      if (id['pricingPolicyId'] && id['pricingPolicyId'] !== validReq.pricingPolicyId) errs.push({ path: 'providerIdentity.pricingPolicyId', message: 'pricingPolicyId mismatch', code: 'PROVIDER_IDENTITY_MISMATCH' });
+      if (id['pricingPolicyId'] && id['pricingPolicyId'] !== validReq.pricingPolicyId)
+        errs.push({ path: 'providerIdentity.pricingPolicyId', message: 'pricingPolicyId mismatch', code: 'PROVIDER_IDENTITY_MISMATCH' });
     }
     if (gen !== undefined) provId = id as unknown as ProviderPricingIdentityV02;
   }

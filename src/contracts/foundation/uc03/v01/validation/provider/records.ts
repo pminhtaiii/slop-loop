@@ -5,41 +5,15 @@ import type { NormalizedAction, ProviderUsage, ReservationBundle, ReservationBun
 import { isPlainObject, rejectUnknownKeys, validateNonEmptyString, validateNonNegativeInteger, validateNonNegativeNumber } from '../common.ts';
 import { validateNormalizedAction } from '../intake.ts';
 
-const PROVIDER_USAGE_ALLOWED_KEYS = [
-  'inputTokens',
-  'outputTokens',
-  'costUsd',
-  'billableTokens',
-] as const;
+const PROVIDER_USAGE_ALLOWED_KEYS = ['inputTokens', 'outputTokens', 'costUsd', 'billableTokens'] as const;
 
-const MODEL_PROPOSAL_ALLOWED_KEYS = [
-  'proposalId',
-  'content',
-  'actions',
-] as const;
+const MODEL_PROPOSAL_ALLOWED_KEYS = ['proposalId', 'content', 'actions'] as const;
 
-const MODEL_RESULT_ALLOWED_KEYS = [
-  'proposal',
-  'observedUsage',
-] as const;
+const MODEL_RESULT_ALLOWED_KEYS = ['proposal', 'observedUsage'] as const;
 
-const RESERVATION_BUNDLE_ITEM_ALLOWED_KEYS = [
-  'ledgerIdentity',
-  'scope',
-  'kind',
-  'configurationId',
-  'version',
-  'requestId',
-  'amount',
-] as const;
+const RESERVATION_BUNDLE_ITEM_ALLOWED_KEYS = ['ledgerIdentity', 'scope', 'kind', 'configurationId', 'version', 'requestId', 'amount'] as const;
 
-const RESERVATION_BUNDLE_ALLOWED_KEYS = [
-  'bundleId',
-  'transactionRef',
-  'taskId',
-  'runId',
-  'reservations',
-] as const;
+const RESERVATION_BUNDLE_ALLOWED_KEYS = ['bundleId', 'transactionRef', 'taskId', 'runId', 'reservations'] as const;
 
 export function validateProviderUsage(input: unknown): ValidationResult<ProviderUsage> {
   if (!isPlainObject(input)) {
@@ -59,12 +33,7 @@ export function validateProviderUsage(input: unknown): ValidationResult<Provider
   let billableTokens: number | undefined;
   if (input['billableTokens'] !== undefined) {
     billableTokens = validateNonNegativeInteger(input['billableTokens'], 'billableTokens', errors);
-    if (
-      billableTokens !== undefined &&
-      inputTokens !== undefined &&
-      outputTokens !== undefined &&
-      billableTokens < inputTokens + outputTokens
-    ) {
+    if (billableTokens !== undefined && inputTokens !== undefined && outputTokens !== undefined && billableTokens < inputTokens + outputTokens) {
       errors.push({
         path: 'billableTokens',
         message: `billableTokens (${billableTokens}) cannot be less than sum of input and output tokens (${inputTokens + outputTokens})`,
@@ -73,13 +42,9 @@ export function validateProviderUsage(input: unknown): ValidationResult<Provider
     }
   }
 
-  if (typeof input['inputTokens'] === 'number' && typeof input['outputTokens'] === 'number' && !Number.isSafeInteger(input['inputTokens'] + input['outputTokens'])) errors.push({ path: 'inputTokens', code: 'UNSAFE_COUNT_SUM', message: 'Token totals must remain safe integers' });
-  if (
-    errors.length > 0 ||
-    inputTokens === undefined ||
-    outputTokens === undefined ||
-    costUsd === undefined
-  ) {
+  if (typeof input['inputTokens'] === 'number' && typeof input['outputTokens'] === 'number' && !Number.isSafeInteger(input['inputTokens'] + input['outputTokens']))
+    errors.push({ path: 'inputTokens', code: 'UNSAFE_COUNT_SUM', message: 'Token totals must remain safe integers' });
+  if (errors.length > 0 || inputTokens === undefined || outputTokens === undefined || costUsd === undefined) {
     return { ok: false, errors };
   }
 
@@ -133,10 +98,10 @@ export function validateModelProposal(input: unknown): ValidationResult<ModelPro
         const actionRes = validateNormalizedAction(act);
         if (!actionRes.ok) {
           errors.push(
-            ...actionRes.errors.map((e) => ({
+            ...actionRes.errors.map(e => ({
               ...e,
               path: e.path ? `actions[${i}].${e.path}` : `actions[${i}]`,
-            }))
+            })),
           );
         } else {
           actions.push(actionRes.value);
@@ -273,15 +238,7 @@ export function validateReservationBundle(input: unknown): ValidationResult<Rese
       const requestId = validateNonEmptyString(item['requestId'], `${itemPath}.requestId`, errors);
       const amount = (kind === 'cost' ? validateNonNegativeNumber : validateNonNegativeInteger)(item['amount'], `${itemPath}.amount`, errors);
 
-      if (
-        ledgerIdentity &&
-        (scope === 'task' || scope === 'run') &&
-        kind &&
-        configurationId &&
-        version !== undefined &&
-        requestId &&
-        amount !== undefined
-      ) {
+      if (ledgerIdentity && (scope === 'task' || scope === 'run') && kind && configurationId && version !== undefined && requestId && amount !== undefined) {
         reservations.push({
           ledgerIdentity,
           scope,
@@ -295,15 +252,7 @@ export function validateReservationBundle(input: unknown): ValidationResult<Rese
     }
   }
 
-  if (
-    errors.length > 0 ||
-    !bundleId ||
-    !transactionRef ||
-    !taskId ||
-    !runId ||
-    !Array.isArray(input['reservations']) ||
-    input['reservations'].length === 0
-  ) {
+  if (errors.length > 0 || !bundleId || !transactionRef || !taskId || !runId || !Array.isArray(input['reservations']) || input['reservations'].length === 0) {
     return { ok: false, errors };
   }
 

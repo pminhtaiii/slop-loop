@@ -1,9 +1,24 @@
 /** UC-03 workflow dependencies and configuration. */
 import type {
-  ApprovalPort, BugTask, ClaimReceiptV02, FixPlan, ModelPort, ProviderAdmissionContextV02,
-  ProviderAdmissionTrustedContextV02, ProviderRequest, RepositoryAdmissionContextV02,
-  RepositoryAdmissionTrustedContextV02, RepositoryPort, ReviewResult, SourceEvidence,
-  StatePort, StateTransitionOptions, TaskOutcome, TaskState, TelemetryPort, VerificationResult,
+  ApprovalPort,
+  BugTask,
+  ClaimReceiptV02,
+  FixPlan,
+  ModelPort,
+  ProviderAdmissionContextV02,
+  ProviderAdmissionTrustedContextV02,
+  ProviderRequest,
+  RepositoryAdmissionContextV02,
+  RepositoryAdmissionTrustedContextV02,
+  RepositoryPort,
+  ReviewResult,
+  SourceEvidence,
+  StatePort,
+  StateTransitionOptions,
+  TaskOutcome,
+  TaskState,
+  TelemetryPort,
+  VerificationResult,
 } from '../contracts/foundation/uc03.ts';
 import type { ExecutionGuardV02 } from '../foundation/execution-guard.ts';
 import type { BaselineEvidenceWriter, InvestigationConfigPort, TrustedHostExpectedContext, TrustedHostPort } from './investigation.ts';
@@ -26,14 +41,7 @@ export interface UC03GraphPorts {
 /** Route callers must pass the owner-issued provider admission with the exact review request. */
 export interface UC03ReviewerPort {
   readonly provenance: 'mock' | 'real';
-  review(
-    task: BugTask,
-    diff: string,
-    evidence: readonly SourceEvidence[],
-    request: ProviderRequest,
-    admission: ProviderAdmissionContextV02,
-    claim: ClaimReceiptV02,
-  ): Promise<ReviewResult>;
+  review(task: BugTask, diff: string, evidence: readonly SourceEvidence[], request: ProviderRequest, admission: ProviderAdmissionContextV02, claim: ClaimReceiptV02): Promise<ReviewResult>;
 }
 
 export interface UC03ReviewerAdmission {
@@ -62,13 +70,9 @@ export interface UC03RepositoryAdmission {
   readonly trustedContext: RepositoryAdmissionTrustedContextV02;
 }
 
-export type UC03ReviewerAdmissionResolver = (
-  request: UC03ReviewerAdmissionRequest,
-) => Promise<UC03ReviewerAdmission | undefined> | UC03ReviewerAdmission | undefined;
+export type UC03ReviewerAdmissionResolver = (request: UC03ReviewerAdmissionRequest) => Promise<UC03ReviewerAdmission | undefined> | UC03ReviewerAdmission | undefined;
 
-export type UC03PatchAdmissionResolver = (
-  request: UC03PatchAdmissionRequest,
-) => Promise<UC03RepositoryAdmission | undefined> | UC03RepositoryAdmission | undefined;
+export type UC03PatchAdmissionResolver = (request: UC03PatchAdmissionRequest) => Promise<UC03RepositoryAdmission | undefined> | UC03RepositoryAdmission | undefined;
 
 export interface UC03GraphConfig {
   readonly mode?: 'development' | 'production' | undefined;
@@ -81,12 +85,14 @@ export interface UC03GraphConfig {
   readonly targetPaths?: readonly string[] | undefined;
   readonly repairPatch?: RepairPatchProposal | undefined;
   readonly revisedPlan?: FixPlan | undefined;
-  readonly planDetails?: {
-    readonly diagnosis: string;
-    readonly strategy: string;
-    readonly suspectedCauseLocations: readonly string[];
-    readonly scopedChanges: readonly string[];
-  } | undefined;
+  readonly planDetails?:
+    | {
+        readonly diagnosis: string;
+        readonly strategy: string;
+        readonly suspectedCauseLocations: readonly string[];
+        readonly scopedChanges: readonly string[];
+      }
+    | undefined;
 }
 
 export interface UC03WorkflowResult {
@@ -96,4 +102,3 @@ export interface UC03WorkflowResult {
   readonly reasons: readonly string[];
   readonly milestones: readonly Milestone[];
 }
-

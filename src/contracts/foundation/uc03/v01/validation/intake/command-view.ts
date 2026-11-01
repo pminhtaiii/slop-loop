@@ -18,10 +18,7 @@ const COMMAND_VIEW_ALLOWED_KEYS = [
 
 const ADMITTED_FILE_ALLOWED_KEYS = ['path', 'digest'] as const;
 
-export function validateCommandView(
-  input: unknown,
-  options?: CommandViewValidationContext
-): ValidationResult<CommandView> {
+export function validateCommandView(input: unknown, options?: CommandViewValidationContext): ValidationResult<CommandView> {
   if (!isPlainObject(input)) {
     return {
       ok: false,
@@ -117,11 +114,7 @@ export function validateCommandView(
     }
   }
 
-  if (
-    options?.currentCanonicalRevisionDigest !== undefined &&
-    canonicalRevisionDigest &&
-    options.currentCanonicalRevisionDigest !== canonicalRevisionDigest
-  ) {
+  if (options?.currentCanonicalRevisionDigest !== undefined && canonicalRevisionDigest && options.currentCanonicalRevisionDigest !== canonicalRevisionDigest) {
     errors.push({
       path: 'canonicalRevisionDigest',
       message: `CommandView canonicalRevisionDigest (${canonicalRevisionDigest}) does not match current repository revision (${options.currentCanonicalRevisionDigest})`,
@@ -129,11 +122,7 @@ export function validateCommandView(
     });
   }
 
-  if (
-    options?.currentExclusionsPolicyVersion !== undefined &&
-    exclusionsPolicyVersion &&
-    options.currentExclusionsPolicyVersion !== exclusionsPolicyVersion
-  ) {
+  if (options?.currentExclusionsPolicyVersion !== undefined && exclusionsPolicyVersion && options.currentExclusionsPolicyVersion !== exclusionsPolicyVersion) {
     errors.push({
       path: 'exclusionsPolicyVersion',
       message: `CommandView exclusionsPolicyVersion (${exclusionsPolicyVersion}) does not match current policy (${options.currentExclusionsPolicyVersion})`,
@@ -141,11 +130,7 @@ export function validateCommandView(
     });
   }
 
-  if (
-    options?.expectedViewDigest !== undefined &&
-    viewDigest &&
-    options.expectedViewDigest !== viewDigest
-  ) {
+  if (options?.expectedViewDigest !== undefined && viewDigest && options.expectedViewDigest !== viewDigest) {
     errors.push({
       path: 'viewDigest',
       message: `CommandView viewDigest (${viewDigest}) does not match expected view digest (${options.expectedViewDigest})`,

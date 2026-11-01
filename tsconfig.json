@@ -27,9 +27,5 @@
     "outDir": "dist",
     "rootDir": "."
   },
-  "include": [
-    "src/**/*.ts",
-    "eval/**/*.ts",
-    "tests/runtime/**/*.ts"
-  ]
+  "include": ["src/**/*.ts", "eval/**/*.ts", "tests/runtime/**/*.ts"]
 }

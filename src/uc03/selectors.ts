@@ -8,11 +8,7 @@
  * investigation (T013) and verification (T014).
  */
 
-import {
-  isCanonicalRelativePath,
-  isProtectedPath,
-  type CheckDefinition,
-} from '../contracts/foundation/uc03.ts';
+import { isCanonicalRelativePath, isProtectedPath, type CheckDefinition } from '../contracts/foundation/uc03.ts';
 
 export interface PytestSelector {
   readonly rawToken: string;
@@ -37,12 +33,7 @@ export interface PytestSelector {
  */
 export function normalizePytestSelector(token: string): PytestSelector | null {
   if (typeof token !== 'string' || token.length === 0) return null;
-  if (
-    token.includes('\0') ||
-    token.includes('\\') ||
-    token.startsWith('/') ||
-    /^[a-zA-Z]:/.test(token)
-  ) {
+  if (token.includes('\0') || token.includes('\\') || token.startsWith('/') || /^[a-zA-Z]:/.test(token)) {
     return null;
   }
 
@@ -59,10 +50,7 @@ export function normalizePytestSelector(token: string): PytestSelector | null {
     const parts = raw.split('::');
     filePath = parts[0] ?? '';
     const nodeParts = parts.slice(1);
-    if (
-      nodeParts.length === 0 ||
-      nodeParts.some((p) => p.length === 0 || p.includes('/') || p.includes('\\'))
-    ) {
+    if (nodeParts.length === 0 || nodeParts.some(p => p.length === 0 || p.includes('/') || p.includes('\\'))) {
       return null;
     }
     nodeSelector = nodeParts.join('::');
@@ -127,17 +115,10 @@ export const PYTEST_OPTIONS_WITH_ARG: ReadonlySet<string> = new Set([
 /**
  * Resolves the first pytest argument for direct and Python module invocations.
  */
-export function resolvePytestInvocation(
-  check: CheckDefinition
-): { readonly argStart: number } | null {
-  const executable = (check.executable?.split(/[\\/]/).pop() ?? '')
-    .toLowerCase()
-    .replace(/\.exe$/, '');
+export function resolvePytestInvocation(check: CheckDefinition): { readonly argStart: number } | null {
+  const executable = (check.executable?.split(/[\\/]/).pop() ?? '').toLowerCase().replace(/\.exe$/, '');
   if (executable === 'pytest' || executable === 'py.test') return { argStart: 0 };
-  if (
-    /^python(?:\d+(?:\.\d+)*)?$/.test(executable) &&
-    check.argv[0] === '-m' && check.argv[1] === 'pytest'
-  ) {
+  if (/^python(?:\d+(?:\.\d+)*)?$/.test(executable) && check.argv[0] === '-m' && check.argv[1] === 'pytest') {
     return { argStart: 2 };
   }
   return null;
@@ -147,9 +128,7 @@ export function resolvePytestInvocation(
  * Extracts target test selectors from a check definition's argv.
  * Understands pytest option syntax and skips flag parameters like -k, -m.
  */
-export function extractCheckTestSelectors(
-  check: CheckDefinition
-): readonly PytestSelector[] {
+export function extractCheckTestSelectors(check: CheckDefinition): readonly PytestSelector[] {
   const invocation = resolvePytestInvocation(check);
   if (!invocation) return Object.freeze([]);
 

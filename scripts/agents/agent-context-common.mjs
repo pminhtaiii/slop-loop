@@ -22,26 +22,18 @@ export function fail(message) {
 export function samePath(left, right) {
   const normalizedLeft = resolve(left);
   const normalizedRight = resolve(right);
-  return process.platform === 'win32'
-    ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
-    : normalizedLeft === normalizedRight;
+  return process.platform === 'win32' ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase() : normalizedLeft === normalizedRight;
 }
 
 export function isInside(root, candidate) {
   const pathFromRoot = relative(root, candidate);
-  return (
-    pathFromRoot !== '' &&
-    pathFromRoot !== '..' &&
-    !pathFromRoot.startsWith(`..${sep}`) &&
-    !isAbsolute(pathFromRoot)
-  );
+  return pathFromRoot !== '' && pathFromRoot !== '..' && !pathFromRoot.startsWith(`..${sep}`) && !isAbsolute(pathFromRoot);
 }
 
 export async function resolveRoot(rootOption) {
   const candidate = rootOption ? resolve(process.cwd(), rootOption) : moduleRoot;
   const canonicalRoot = await realpath(candidate);
-  if (!(await stat(canonicalRoot)).isDirectory())
-    fail(`Checkout root is not a directory: ${candidate}`);
+  if (!(await stat(canonicalRoot)).isDirectory()) fail(`Checkout root is not a directory: ${candidate}`);
   return canonicalRoot;
 }
 
@@ -53,17 +45,10 @@ export async function repoFile(root, input, label, allowMissing = false) {
   if (!isInside(root, candidate)) fail(`${label} escapes the checkout root: ${input}`);
   try {
     const canonicalFile = await realpath(candidate);
-    if (!isInside(root, canonicalFile))
-      fail(`${label} resolves outside the checkout root: ${input}`);
+    if (!isInside(root, canonicalFile)) fail(`${label} resolves outside the checkout root: ${input}`);
     return canonicalFile;
   } catch (error) {
-    if (
-      allowMissing &&
-      error &&
-      typeof error === 'object' &&
-      'code' in error &&
-      error.code === 'ENOENT'
-    ) {
+    if (allowMissing && error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
       return candidate;
     }
     throw error;
@@ -99,9 +84,7 @@ export function markdownLines(text) {
         indent <= 3 &&
         body.length >= fence.length &&
         body.slice(0, fence.length) === fence.character.repeat(fence.length) &&
-        [...body.slice(fence.length)].every(
-          (character) => character === fence.character || character === ' ' || character === '\t',
-        );
+        [...body.slice(fence.length)].every(character => character === fence.character || character === ' ' || character === '\t');
       visible.push(false);
       if (closes) fence = null;
       continue;
@@ -137,37 +120,27 @@ export function parseTasks(text, path) {
     const match = line.match(/^ {0,3}[-*+]\s+\[([ xX])\]\s+(T\d{3})\b.*$/);
     if (!match) return;
     const id = match[2];
-    if (seen.has(id))
-      fail(
-        `Duplicate canonical task ID ${id} in ${path} at lines ${seen.get(id)} and ${index + 1}.`,
-      );
+    if (seen.has(id)) fail(`Duplicate canonical task ID ${id} in ${path} at lines ${seen.get(id)} and ${index + 1}.`);
     seen.set(id, index + 1);
-    const prior = sectionHeadings.filter((heading) => heading.index < index);
-    const phase =
-      [...prior].reverse().find((heading) => /\bphase\b/i.test(heading.title)) ??
-      prior.at(-1) ??
-      null;
+    const prior = sectionHeadings.filter(heading => heading.index < index);
+    const phase = [...prior].reverse().find(heading => /\bphase\b/i.test(heading.title)) ?? prior.at(-1) ?? null;
     tasks.push({ id, checked: match[1].toLowerCase() === 'x', line, lineIndex: index, phase });
   });
   if (tasks.length === 0) fail(`No canonical task checkbox lines were found in ${path}.`);
   tasks.forEach((task, index) => {
     const end = tasks[index + 1]?.lineIndex ?? source.lines.length;
-    const field = source.lines.slice(task.lineIndex + 1, end).find((line, offset) =>
-      source.visible[task.lineIndex + 1 + offset] && /^\s*[-*+]\s+\*\*Dependencies\*\*\s*:/i.test(line),
-    );
+    const field = source.lines.slice(task.lineIndex + 1, end).find((line, offset) => source.visible[task.lineIndex + 1 + offset] && /^\s*[-*+]\s+\*\*Dependencies\*\*\s*:/i.test(line));
     const value = field?.match(/^\s*[-*+]\s+\*\*Dependencies\*\*\s*:\s*(.*)$/i)?.[1]?.trim() ?? null;
     task.dependenciesDeclared = value !== null && value.length > 0;
-    task.dependencies = value && !/^none\b/i.test(value)
-      ? [...new Set(value.match(/\b(?:T\d{3}|X\d{2}(?:-[A-Z0-9]+)*)\b/g) ?? [])]
-      : [];
+    task.dependencies = value && !/^none\b/i.test(value) ? [...new Set(value.match(/\b(?:T\d{3}|X\d{2}(?:-[A-Z0-9]+)*)\b/g) ?? [])] : [];
   });
   return { ...source, tasks, headings: sectionHeadings };
 }
 
 export function findTask(parsed, id, path) {
-  const task = parsed.tasks.find((entry) => entry.id === id);
+  const task = parsed.tasks.find(entry => entry.id === id);
   if (task) return task;
-  const known = parsed.tasks.map((entry) => entry.id).join(', ');
+  const known = parsed.tasks.map(entry => entry.id).join(', ');
   fail(`Unknown task ID ${id} in ${path}. Canonical IDs: ${known}.`);
 }
 
@@ -180,8 +153,7 @@ export async function readOptionalText(root, path) {
     const file = await repoFile(root, path, 'context path');
     return (await readFile(file, 'utf8')).replace(/^\uFEFF/, '');
   } catch (error) {
-    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT')
-      return null;
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return null;
     throw error;
   }
 }

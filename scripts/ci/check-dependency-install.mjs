@@ -16,7 +16,10 @@ try {
   const location = spawnSync(windows ? 'cmd.exe' : 'pnpm', windows ? ['/d', '/s', '/c', 'pnpm cache path'] : ['cache', 'path'], { ...options, encoding: 'utf8' });
   if (location.error || location.status !== 0 || resolve(location.stdout.trim()) !== resolve(cache)) throw new Error('pnpm did not select the fresh metadata cache.');
   console.log('Dependency gate: frozen install with fresh metadata and lockfile policy verification');
-  const result = spawnSync(windows ? 'cmd.exe' : 'pnpm', windows ? ['/d', '/s', '/c', 'pnpm install --frozen-lockfile --no-trust-lockfile'] : ['install', '--frozen-lockfile', '--no-trust-lockfile'], { ...options, stdio: 'inherit' });
+  const result = spawnSync(windows ? 'cmd.exe' : 'pnpm', windows ? ['/d', '/s', '/c', 'pnpm install --frozen-lockfile --no-trust-lockfile'] : ['install', '--frozen-lockfile', '--no-trust-lockfile'], {
+    ...options,
+    stdio: 'inherit',
+  });
   if (result.error || result.status !== 0) throw new Error(result.error?.message || `Fresh dependency install failed (${result.status})`);
 } catch (error) {
   console.error(error.message);
