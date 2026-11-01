@@ -64,6 +64,22 @@ Evaluation of a test suite by introducing small changes to the code under test a
 
 A changed version of the code used in mutation testing. A mutant is killed when a test fails while the change is active, and survives when the tests pass. An equivalent mutant preserves observable behavior within the intended contract.
 
+## Evaluation case
+
+A versioned scenario with public task input and separate criteria for judging the observed behavior. A case may expect a successful repair, a clarification, or a safe refusal.
+
+## Experiment
+
+An evaluation of selected cases or a submitted bug under an identified configuration. An experiment references product-runtime tasks and runs; it does not replace their identities or authorize their actions.
+
+## Case observation
+
+The behavior and effects observed while exercising an evaluation case, including pauses, failures and uncertainty. An observation is evidence for judgment, not the judgment itself.
+
+## Case grade
+
+A judgment of case observations against that case's criteria. Passing a case that expects a safe refusal does not mean a bug was repaired.
+
 ## Completion gate
 
 The harness-controlled decision that required verification and review evidence satisfies the task's agreed completion requirements. An agent's proposal that work is finished does not itself pass this gate.

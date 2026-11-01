@@ -311,6 +311,8 @@ test('reports snapshot-relative paths and rejects a path that escapes the snapsh
 test('shipped exemptions validate and clear exactly the reviewed synthetic findings', () => {
   const shipped = JSON.parse(readFileSync(resolve('config/secret-scan-exemptions.json'), 'utf8'));
   const reviewed = [
+    ['generic-api-key', 'specs/007-runtime-evaluation-integration/data-model.md', 28, ''],
+    ['generic-api-key', 'specs/007-runtime-evaluation-integration/data-model.md', 28, '407a9b2a877d7a40eceeb4a4628bf9e2b614546b'],
     ['generic-api-key', 'src/contracts/foundation/uc03/v02/admission/attempt-outcome.ts', 34, ''],
     ['generic-api-key', 'src/contracts/foundation/uc03/v02/admission/attempt-outcome.ts', 83, ''],
     ['generic-api-key', 'tests/runtime/uc01/assess.test.ts', 315, ''],

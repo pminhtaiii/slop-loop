@@ -47,6 +47,8 @@ The contributor PR pilot targets `development` and treats about 1,000 added plus
 <!-- SPECKIT START -->
 ## Active Spec Kit features
 
+- Observable Python repair evaluation: [spec](specs/007-runtime-evaluation-integration/spec.md), [plan](specs/007-runtime-evaluation-integration/plan.md), [tasks](specs/007-runtime-evaluation-integration/tasks.md), and [decisions](specs/007-runtime-evaluation-integration/contracts/decisions.md). Planning and independent planning review only are authorized. Real generation, provider/controller composition, owner adapter delivery, containment, approval and grading remain implementation/release gates. The local operator console follows the first real repair route; no mock, full-suite or restart acceptance is implied.
+
 Before feature work, read its linked `spec.md`, `plan.md`, `tasks.md`, and `contracts/decisions.md`. The task ledger records completion; the decision record carries authorization. A completed task or earlier phase authorization does not release successor work. Keep capability claims within the evidence those records support.
 
 - Contributor CI and mutation-guided test quality: [spec](specs/006-ci-test-quality/spec.md), [plan](specs/006-ci-test-quality/plan.md), [tasks](specs/006-ci-test-quality/tasks.md), and [decisions](specs/006-ci-test-quality/contracts/decisions.md). Planning and independent planning review only are authorized. The proposed CI split retains direct required checks and historical identity compatibility; mutation CI is manual/report-only. No pre-PR hook, numeric mutation gate, requirement to kill equivalent survivors, implementation, live protection change or merge is released by these artifacts.
