@@ -22,7 +22,9 @@ function git(cwd, ...args) {
 }
 
 export function markerFor(key) {
-  const digest = createHash('sha256').update(publicRepository.toLowerCase() + '\0' + key).digest('hex');
+  const digest = createHash('sha256')
+    .update(publicRepository.toLowerCase() + '\0' + key)
+    .digest('hex');
   return `<!-- paired-issue:sha256:${digest} -->`;
 }
 
@@ -32,10 +34,13 @@ export async function fixture(t, options = {}) {
   git(root, 'init', '--initial-branch=main');
   await mkdir(join(root, 'config'));
   await writeFile(join(root, 'config', 'legacy-ci-heads.json'), JSON.stringify({ schemaVersion: 1, entries: options.historicalBindings ?? [] }));
-  await writeFile(join(root, 'publication-targets.json'), JSON.stringify({
-    schemaVersion: 1,
-    submission: { remote: 'submission', base: 'development' },
-  }));
+  await writeFile(
+    join(root, 'publication-targets.json'),
+    JSON.stringify({
+      schemaVersion: 1,
+      submission: { remote: 'submission', base: 'development' },
+    }),
+  );
   const key = 'localized-bug';
   const publicIssue = {
     number: 11,
@@ -187,11 +192,14 @@ export async function fixture(t, options = {}) {
     throw new Error(`unexpected GitHub command: ${args.join(' ')}`);
   };
   const evidenceFile = join(root, 'evidence.json');
-  await writeFile(evidenceFile, JSON.stringify({
-    schemaVersion: 1,
-    summary: 'Verified the requested repair.',
-    acceptance: [{ criterion: 'The localized display is correct.', evidence: 'Focused verification passed.' }],
-  }));
+  await writeFile(
+    evidenceFile,
+    JSON.stringify({
+      schemaVersion: 1,
+      summary: 'Verified the requested repair.',
+      acceptance: [{ criterion: 'The localized display is correct.', evidence: 'Focused verification passed.' }],
+    }),
+  );
   const args = ['--key', key, '--pr', prs.primary.url, '--evidence-file', evidenceFile, '--root', root];
   return { root, args, evidenceFile, execute, repositories, prs, writes, checks, publicIssue, privateIssue, remoteTargets, extraSubmissionPRs };
 }
@@ -204,6 +212,8 @@ export function mergePair(f) {
 }
 
 export function completionMarkerFor(key) {
-  const digest = createHash('sha256').update(publicRepository.toLowerCase() + '\0' + key).digest('hex');
+  const digest = createHash('sha256')
+    .update(publicRepository.toLowerCase() + '\0' + key)
+    .digest('hex');
   return `<!-- paired-issue-completion:sha256:${digest} -->`;
 }

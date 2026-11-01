@@ -1,21 +1,30 @@
 import path from 'node:path';
 import { validateExecutionLimits, validateNormalizedAction } from '../contracts/foundation/uc03.ts';
 import type { ExecutionLimits, RunCommandAction, CommandView } from '../contracts/foundation/uc03.ts';
-import { containsProtectedContent, DEFAULT_MAX_OUTPUT_BYTES, FORBIDDEN_ENV_KEYS, isImmutableEnvKey, isLoaderHook, PRIVATE_ALLOWED_EXECUTABLES, PRIVATE_DEFAULT_CONTAINER_ENV, SHELL_METACHARS_RE } from './docker-workspace-policy.ts';
+import {
+  containsProtectedContent,
+  DEFAULT_MAX_OUTPUT_BYTES,
+  FORBIDDEN_ENV_KEYS,
+  isImmutableEnvKey,
+  isLoaderHook,
+  PRIVATE_ALLOWED_EXECUTABLES,
+  PRIVATE_DEFAULT_CONTAINER_ENV,
+  SHELL_METACHARS_RE,
+} from './docker-workspace-policy.ts';
 import type { DockerContainerPlan, DockerMountConfig, DockerProfile, ExecuteCommandParams } from './docker-workspace-types.ts';
 
 export function createDockerCommandPlan(
   params: ExecuteCommandParams,
   trustedProfile: DockerProfile,
   activeView: CommandView,
-  allowedEnvKeys: ReadonlySet<string>
+  allowedEnvKeys: ReadonlySet<string>,
 ): { readonly action: RunCommandAction; readonly limits: ExecutionLimits; readonly plan: DockerContainerPlan } {
   // Resolve action
   let action: RunCommandAction;
   if (params.action) {
     const validAction = validateNormalizedAction(params.action);
     if (!validAction.ok || validAction.value.kind !== 'run_command') {
-      throw new Error(`INVALID_COMMAND_ACTION: ${validAction.ok ? 'Action must be run_command' : validAction.errors.map((e) => e.message).join('; ')}`);
+      throw new Error(`INVALID_COMMAND_ACTION: ${validAction.ok ? 'Action must be run_command' : validAction.errors.map(e => e.message).join('; ')}`);
     }
     action = validAction.value;
   } else if (params.executable) {
@@ -28,7 +37,7 @@ export function createDockerCommandPlan(
     };
     const validAction = validateNormalizedAction(constructed);
     if (!validAction.ok || validAction.value.kind !== 'run_command') {
-      throw new Error(`INVALID_COMMAND_ACTION: ${validAction.ok ? 'Action must be run_command' : validAction.errors.map((e) => e.message).join('; ')}`);
+      throw new Error(`INVALID_COMMAND_ACTION: ${validAction.ok ? 'Action must be run_command' : validAction.errors.map(e => e.message).join('; ')}`);
     }
     action = validAction.value;
   } else {
@@ -38,7 +47,7 @@ export function createDockerCommandPlan(
   // Validate limits
   const validLimits = validateExecutionLimits(params.limits);
   if (!validLimits.ok) {
-    throw new Error(`INVALID_EXECUTION_LIMITS: ${validLimits.errors.map((e) => e.message).join('; ')}`);
+    throw new Error(`INVALID_EXECUTION_LIMITS: ${validLimits.errors.map(e => e.message).join('; ')}`);
   }
   const limits: ExecutionLimits = Object.freeze({
     timeoutMs: validLimits.value.timeoutMs,
@@ -141,7 +150,6 @@ export function createDockerCommandPlan(
     env: Object.freeze(mergedEnv),
     limits,
   };
-
 
   return { action, limits, plan };
 }

@@ -7,11 +7,9 @@ export type Clarification = Intake & Readonly<{ priorQuestions: readonly Questio
 export function bindClarification(invocation: unknown, context: unknown): Validation<Clarification> {
   const intake = new IntakeBinder().bind(invocation, context);
   if (!intake.ok) return intake;
-  const priorQuestions = Object.freeze((intake.value.context.continuation?.questions ?? []).map(question =>
-    Object.freeze({ ...question, affects: Object.freeze([...question.affects]) })));
+  const priorQuestions = Object.freeze((intake.value.context.continuation?.questions ?? []).map(question => Object.freeze({ ...question, affects: Object.freeze([...question.affects]) })));
   const answered = new Set(intake.value.invocation.answers.map(answer => answer.questionId));
-  return { ok: true, value: { ...intake.value, priorQuestions,
-    unansweredQuestions: Object.freeze(priorQuestions.filter(question => !answered.has(question.id))) } };
+  return { ok: true, value: { ...intake.value, priorQuestions, unansweredQuestions: Object.freeze(priorQuestions.filter(question => !answered.has(question.id))) } };
 }
 
 export function projectClarification(proposal: unknown, binding: Clarification, context: TrustedContext = binding.context): Validation<Proposal> {
@@ -21,8 +19,12 @@ export function projectClarification(proposal: unknown, binding: Clarification, 
   for (const question of parsed.value.questions) {
     const prior = binding.priorQuestions.find(entry => entry.id === question.id);
     if (prior) {
-      if (!binding.unansweredQuestions.some(entry => entry.id === prior.id) || question.text !== prior.text || question.reason !== prior.reason
-        || JSON.stringify(question.affects) !== JSON.stringify(prior.affects)) {
+      if (
+        !binding.unansweredQuestions.some(entry => entry.id === prior.id) ||
+        question.text !== prior.text ||
+        question.reason !== prior.reason ||
+        JSON.stringify(question.affects) !== JSON.stringify(prior.affects)
+      ) {
         return { ok: false, status: 'error', reasonCode: 'invalid-model-output', path: '$.questions' };
       }
     } else questions.push(question);

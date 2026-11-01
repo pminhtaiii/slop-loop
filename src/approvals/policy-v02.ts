@@ -64,7 +64,16 @@ export interface CompiledPolicy extends CompiledPolicyV01 {
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,126}$/;
 const SHA = /^sha256:[0-9a-f]{64}$/;
-const POLICY_OPTIONS = ['decisionAuthorityGeneration', 'planApplicability', 'planBindingDigest', 'planDecisionRef', 'diagnosticPurpose', 'taskCriteriaDigest', 'freshnessContextDigest', 'receiptId'] as const;
+const POLICY_OPTIONS = [
+  'decisionAuthorityGeneration',
+  'planApplicability',
+  'planBindingDigest',
+  'planDecisionRef',
+  'diagnosticPurpose',
+  'taskCriteriaDigest',
+  'freshnessContextDigest',
+  'receiptId',
+] as const;
 const PROVIDER_OPTIONS = ['role', 'planApplicability', 'decisionAuthorityGeneration', 'planBindingDigest', 'planDecisionRef', 'diagnosticPurpose', 'taskCriteriaDigest', 'receiptId'] as const;
 
 const isId = (value: unknown): value is string => typeof value === 'string' && ID.test(value);
@@ -82,8 +91,12 @@ function validatedV02Facts(input: unknown): input is PolicyFactsV02 {
 
 function currentIdentity(facts: PolicyFactsV02, profile: PolicyProfile): boolean {
   const identity = profile.policyIdentity;
-  return facts.policyIdentity.policyId === identity.policyId && facts.policyIdentity.policyVersion === identity.policyVersion &&
-    facts.policyIdentity.configId === identity.configId && facts.policyIdentity.configVersion === identity.configVersion;
+  return (
+    facts.policyIdentity.policyId === identity.policyId &&
+    facts.policyIdentity.policyVersion === identity.policyVersion &&
+    facts.policyIdentity.configId === identity.configId &&
+    facts.policyIdentity.configVersion === identity.configVersion
+  );
 }
 
 function safetyFactsPass(facts: PolicyFactsV02): boolean {
@@ -126,26 +139,43 @@ function applicabilityInput(facts: PolicyFactsV02): Record<string, unknown> {
 }
 
 function optionsMatchFacts(options: Record<string, unknown>, facts: PolicyFactsV02): boolean {
-  return (options['planApplicability'] === undefined || options['planApplicability'] === facts.planApplicability) &&
+  return (
+    (options['planApplicability'] === undefined || options['planApplicability'] === facts.planApplicability) &&
     (options['planBindingDigest'] === undefined || options['planBindingDigest'] === facts.planBindingDigest) &&
     (options['planDecisionRef'] === undefined || options['planDecisionRef'] === facts.planDecisionRef) &&
     (options['diagnosticPurpose'] === undefined || options['diagnosticPurpose'] === facts.diagnosticPurpose) &&
-    (options['taskCriteriaDigest'] === undefined || options['taskCriteriaDigest'] === facts.taskCriteriaDigest);
+    (options['taskCriteriaDigest'] === undefined || options['taskCriteriaDigest'] === facts.taskCriteriaDigest)
+  );
 }
 
 function approvedPlanIsCurrent(facts: PolicyFactsV02, profile: PolicyProfile): boolean {
   const plan = facts.plan;
   const binding = plan?.binding;
   const context = plan?.context;
-  if (!plan || !binding || !context || binding.status !== 'approved' || binding.actionKind !== 'fix_plan' ||
-    binding.taskId !== facts.taskId || binding.workspaceId !== facts.workspaceId || binding.repositoryRevisionDigest !== facts.repositoryRevisionDigest ||
-    binding.policyId !== profile.policyIdentity.policyId || binding.policyVersion !== profile.policyIdentity.policyVersion ||
-    binding.decisionId !== facts.planDecisionRef || binding.checkSetDigest !== facts.checkSetDigest ||
-    (plan.materialChange && (plan.replanSlot === null || plan.replanSlot > 3)) || evaluatePlanBinding(binding, context).status !== 'valid') return false;
+  if (
+    !plan ||
+    !binding ||
+    !context ||
+    binding.status !== 'approved' ||
+    binding.actionKind !== 'fix_plan' ||
+    binding.taskId !== facts.taskId ||
+    binding.workspaceId !== facts.workspaceId ||
+    binding.repositoryRevisionDigest !== facts.repositoryRevisionDigest ||
+    binding.policyId !== profile.policyIdentity.policyId ||
+    binding.policyVersion !== profile.policyIdentity.policyVersion ||
+    binding.decisionId !== facts.planDecisionRef ||
+    binding.checkSetDigest !== facts.checkSetDigest ||
+    (plan.materialChange && (plan.replanSlot === null || plan.replanSlot > 3)) ||
+    evaluatePlanBinding(binding, context).status !== 'valid'
+  )
+    return false;
   const exact = planDigestInput(facts);
   if (!exact) return false;
-  try { return computePlanBindingDigest(exact) === facts.planBindingDigest; }
-  catch { return false; }
+  try {
+    return computePlanBindingDigest(exact) === facts.planBindingDigest;
+  } catch {
+    return false;
+  }
 }
 
 function repositoryBranchAllows(action: NormalizedAction, facts: PolicyFactsV02, profile: PolicyProfile, options: Record<string, unknown>): boolean {
@@ -156,15 +186,29 @@ function repositoryBranchAllows(action: NormalizedAction, facts: PolicyFactsV02,
   if (action.kind === 'run_command') {
     const command = facts.command;
     if (!command || facts.patch !== null || !action.argv.includes(facts.testPath ?? '')) return false;
-    const configured = profile.commandRules.some(rule => rule.executableRef === command.executableRef && rule.workingDirectoryRef === command.workingDirectoryRef &&
-      rule.argvPrefix.length === action.argv.length && rule.argvPrefix.every((token, index) => token === action.argv[index]));
+    const configured = profile.commandRules.some(
+      rule =>
+        rule.executableRef === command.executableRef &&
+        rule.workingDirectoryRef === command.workingDirectoryRef &&
+        rule.argvPrefix.length === action.argv.length &&
+        rule.argvPrefix.every((token, index) => token === action.argv[index]),
+    );
     return configured || command.constrainedCapability === 'constrained-tests';
   }
   if (action.kind === 'apply_patch') {
-    return facts.patch !== null && facts.command === null && facts.patch.productionCode === false && facts.patch.fileCount === 1 &&
-      facts.patch.dependencyChange === false && facts.patch.deletion === false && facts.patch.structuralChange === false &&
-      facts.patch.sensitiveConfiguration === false && action.targetPaths.length === 1 && action.targetPaths[0] === facts.testPath &&
-      action.targetPaths[0]?.startsWith('tests/') === true;
+    return (
+      facts.patch !== null &&
+      facts.command === null &&
+      facts.patch.productionCode === false &&
+      facts.patch.fileCount === 1 &&
+      facts.patch.dependencyChange === false &&
+      facts.patch.deletion === false &&
+      facts.patch.structuralChange === false &&
+      facts.patch.sensitiveConfiguration === false &&
+      action.targetPaths.length === 1 &&
+      action.targetPaths[0] === facts.testPath &&
+      action.targetPaths[0]?.startsWith('tests/') === true
+    );
   }
   return false;
 }
@@ -178,21 +222,38 @@ function providerOptionsMatch(options: Record<string, unknown>, facts: PolicyFac
 }
 
 function providerRequestIsCurrent(request: ProviderRequest, facts: PolicyFactsV02, profile: PolicyProfile, options: Record<string, unknown>): boolean {
-  if (request.dispatchState !== 'reserved' || request.taskId !== facts.taskId || request.runId !== facts.runId || request.role !== facts.role ||
-    request.configId !== profile.policyIdentity.configId || ![request.providerRequestId, request.taskId, request.runId, request.providerId, request.modelId, request.configId, request.pricingPolicyId, request.reservationRef].every(isId) ||
-    !isSha(request.contextDigest) || !currentIdentity(facts, profile) || !safetyFactsPass(facts) || !optionsMatchFacts(options, facts) ||
-    !facts.providerRequest || !validateProviderRequest(facts.providerRequest).ok || facts.providerRequest.dispatchState !== request.dispatchState ||
+  if (
+    request.dispatchState !== 'reserved' ||
+    request.taskId !== facts.taskId ||
+    request.runId !== facts.runId ||
+    request.role !== facts.role ||
+    request.configId !== profile.policyIdentity.configId ||
+    ![request.providerRequestId, request.taskId, request.runId, request.providerId, request.modelId, request.configId, request.pricingPolicyId, request.reservationRef].every(isId) ||
+    !isSha(request.contextDigest) ||
+    !currentIdentity(facts, profile) ||
+    !safetyFactsPass(facts) ||
+    !optionsMatchFacts(options, facts) ||
+    !facts.providerRequest ||
+    !validateProviderRequest(facts.providerRequest).ok ||
+    facts.providerRequest.dispatchState !== request.dispatchState ||
     facts.providerRequest.reservationRef !== request.reservationRef ||
-    computeRequestContentDigest(facts.providerRequest) !== computeRequestContentDigest(request)) return false;
+    computeRequestContentDigest(facts.providerRequest) !== computeRequestContentDigest(request)
+  )
+    return false;
   if (facts.planApplicability === 'pre-plan-diagnostic') return request.purpose === facts.diagnosticPurpose && evaluatePlanApplicabilityV02(applicabilityInput(facts)).status === 'valid';
   return approvedPlanIsCurrent(facts, profile) && evaluatePlanApplicabilityV02(applicabilityInput(facts)).status === 'valid';
 }
 
 function evaluatePolicy(compiled: CompiledPolicyV01, actionInput: unknown, factsInput: unknown, optionInput?: EvaluatePolicyOptionsV02): PolicyEvaluationResultV02 {
   const options = optionRecord(optionInput, POLICY_OPTIONS);
-  if (!options || !Number.isSafeInteger(options['decisionAuthorityGeneration']) || Number(options['decisionAuthorityGeneration']) < 1 ||
-    Object.hasOwn(options, 'freshnessContextDigest') && !isSha(options['freshnessContextDigest']) ||
-    Object.hasOwn(options, 'receiptId') && !isId(options['receiptId'])) return { ok: false, outcome: 'invalid', reasonCode: 'invalid-evaluation-options' };
+  if (
+    !options ||
+    !Number.isSafeInteger(options['decisionAuthorityGeneration']) ||
+    Number(options['decisionAuthorityGeneration']) < 1 ||
+    (Object.hasOwn(options, 'freshnessContextDigest') && !isSha(options['freshnessContextDigest'])) ||
+    (Object.hasOwn(options, 'receiptId') && !isId(options['receiptId']))
+  )
+    return { ok: false, outcome: 'invalid', reasonCode: 'invalid-evaluation-options' };
   if (!isBoundedPolicyData(actionInput, compiled.profile.maxActionBytes) || !isBoundedPolicyData(factsInput, compiled.profile.maxActionBytes) || !validatedV02Facts(factsInput)) {
     return { ok: false, outcome: 'invalid', reasonCode: 'invalid-current-policy-context' };
   }
@@ -207,10 +268,16 @@ function evaluatePolicy(compiled: CompiledPolicyV01, actionInput: unknown, facts
   const freshnessContextDigest = policyFreshnessDigest(action.value, facts, compiled.profile, generation);
   const receiptId = typeof options['receiptId'] === 'string' ? options['receiptId'] : `receipt-eval-${freshnessContextDigest.slice(7, 23)}-${generation}`;
   const unsignedReceipt = {
-    schemaVersion: UC05_APPROVAL_SCHEMA_VERSION_V02, receiptId, actionDigest: computeActionDigest(action.value), freshnessContextDigest,
-    policyId: compiled.profile.policyIdentity.policyId, policyVersion: compiled.profile.policyIdentity.policyVersion,
-    configId: compiled.profile.policyIdentity.configId, configVersion: compiled.profile.policyIdentity.configVersion,
-    decisionAuthorityGeneration: generation, result: classified.permission,
+    schemaVersion: UC05_APPROVAL_SCHEMA_VERSION_V02,
+    receiptId,
+    actionDigest: computeActionDigest(action.value),
+    freshnessContextDigest,
+    policyId: compiled.profile.policyIdentity.policyId,
+    policyVersion: compiled.profile.policyIdentity.policyVersion,
+    configId: compiled.profile.policyIdentity.configId,
+    configVersion: compiled.profile.policyIdentity.configVersion,
+    decisionAuthorityGeneration: generation,
+    result: classified.permission,
   };
   const receipt: PolicyEvaluationReceipt = freezePolicyData({ ...unsignedReceipt, receiptDigest: computePolicyEvaluationReceiptDigest(unsignedReceipt) });
   if (!validatePolicyEvaluationReceipt(receipt).ok) return { ok: false, outcome: 'invalid', reasonCode: 'invalid-policy-evaluation-receipt' };
@@ -219,8 +286,13 @@ function evaluatePolicy(compiled: CompiledPolicyV01, actionInput: unknown, facts
 
 function evaluateProviderAdmission(compiled: CompiledPolicyV01, requestInput: unknown, factsInput: unknown, optionInput?: EvaluateProviderAdmissionOptionsV02): ProviderAdmissionResultV02 {
   const options = optionRecord(optionInput, PROVIDER_OPTIONS);
-  if (!options || !Number.isSafeInteger(options['decisionAuthorityGeneration']) || Number(options['decisionAuthorityGeneration']) < 1 ||
-    Object.hasOwn(options, 'receiptId') && !isId(options['receiptId'])) return { ok: false, outcome: 'invalid', reasonCode: 'invalid-provider-options' };
+  if (
+    !options ||
+    !Number.isSafeInteger(options['decisionAuthorityGeneration']) ||
+    Number(options['decisionAuthorityGeneration']) < 1 ||
+    (Object.hasOwn(options, 'receiptId') && !isId(options['receiptId']))
+  )
+    return { ok: false, outcome: 'invalid', reasonCode: 'invalid-provider-options' };
   if (!isBoundedPolicyData(requestInput, 65_536) || !validatedV02Facts(factsInput)) return { ok: false, outcome: 'invalid', reasonCode: 'invalid-provider-context' };
   const parsed = validateProviderRequest(requestInput);
   if (!parsed.ok) return { ok: false, outcome: 'invalid', reasonCode: 'invalid-provider-request' };

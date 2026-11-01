@@ -1,6 +1,24 @@
 /** UC-03 runtime port interfaces and provenance admission. */
 
-import type { ActivityEvent, ApplyPatchAction, ApprovalBinding, BugTask, CheckDefinition, CheckResult, EnvelopeOutcome, NormalizedAction, PermissionClass, ProviderRequest, ProviderUsage, ReservationBundle, ReviewResult, RunCommandAction, SourceEvidence, TaskState, ValidationError } from './types.ts';
+import type {
+  ActivityEvent,
+  ApplyPatchAction,
+  ApprovalBinding,
+  BugTask,
+  CheckDefinition,
+  CheckResult,
+  EnvelopeOutcome,
+  NormalizedAction,
+  PermissionClass,
+  ProviderRequest,
+  ProviderUsage,
+  ReservationBundle,
+  ReviewResult,
+  RunCommandAction,
+  SourceEvidence,
+  TaskState,
+  ValidationError,
+} from './types.ts';
 
 export interface ModelProposal {
   readonly proposalId: string;
@@ -37,11 +55,7 @@ export interface ModelPortInvalid {
   readonly observedUsage?: ProviderUsage | undefined;
 }
 
-export type ModelPortResult =
-  | ModelPortObserved
-  | ModelPortUncertain
-  | ModelPortDenied
-  | ModelPortInvalid;
+export type ModelPortResult = ModelPortObserved | ModelPortUncertain | ModelPortDenied | ModelPortInvalid;
 
 export type PortProvenance = 'real' | 'mock';
 
@@ -52,29 +66,28 @@ export interface PortIdentity {
 export function isAdmittedForProduction(ports: readonly unknown[]): boolean {
   try {
     if (!Array.isArray(ports) || ports.length === 0) return false;
-    const indices = Object.getOwnPropertyNames(ports).filter((key) => {
+    const indices = Object.getOwnPropertyNames(ports).filter(key => {
       const index = Number(key);
       return Number.isInteger(index) && index >= 0 && index < ports.length && String(index) === key;
     });
-    return indices.length === ports.length && indices.every((index) => {
-      const slot = Object.getOwnPropertyDescriptor(ports, index);
-      if (slot === undefined || !('value' in slot)) return false;
-      const port = slot.value;
-      if (!port || typeof port !== 'object' || Array.isArray(port)) return false;
-      const provenance = Object.getOwnPropertyDescriptor(port, 'provenance');
-      return provenance !== undefined && 'value' in provenance && provenance.value === 'real';
-    });
+    return (
+      indices.length === ports.length &&
+      indices.every(index => {
+        const slot = Object.getOwnPropertyDescriptor(ports, index);
+        if (slot === undefined || !('value' in slot)) return false;
+        const port = slot.value;
+        if (!port || typeof port !== 'object' || Array.isArray(port)) return false;
+        const provenance = Object.getOwnPropertyDescriptor(port, 'provenance');
+        return provenance !== undefined && 'value' in provenance && provenance.value === 'real';
+      })
+    );
   } catch {
     return false;
   }
 }
 
 export interface ModelPort extends PortIdentity {
-  propose(
-    state: TaskState,
-    evidence: readonly SourceEvidence[],
-    request: ProviderRequest
-  ): Promise<ModelPortResult>;
+  propose(state: TaskState, evidence: readonly SourceEvidence[], request: ProviderRequest): Promise<ModelPortResult>;
 }
 
 export interface RepositoryPort extends PortIdentity {
@@ -88,10 +101,7 @@ export interface RepositoryPort extends PortIdentity {
 }
 
 export interface ExecutionGuard extends PortIdentity {
-  validateAndExecute(
-    action: NormalizedAction,
-    state: TaskState
-  ): Promise<{ readonly outcome: EnvelopeOutcome; readonly result?: unknown }>;
+  validateAndExecute(action: NormalizedAction, state: TaskState): Promise<{ readonly outcome: EnvelopeOutcome; readonly result?: unknown }>;
 }
 
 export interface StatePort extends PortIdentity {
@@ -105,7 +115,7 @@ export interface StatePort extends PortIdentity {
       readonly amount: number;
     }[],
     requestId: string,
-    transactionRef?: string
+    transactionRef?: string,
   ): Promise<ReservationBundle>;
   settle(actionId: string, observed: ProviderUsage): Promise<void>;
   reconcileUncertain(
@@ -113,7 +123,7 @@ export interface StatePort extends PortIdentity {
     reconciliation: {
       readonly observedUsage?: ProviderUsage | undefined;
       readonly reason: string;
-    }
+    },
   ): Promise<void>;
   checkpoint(state: TaskState): Promise<void>;
   recover(taskId: string): Promise<TaskState>;
@@ -127,16 +137,10 @@ export interface ApprovalPort extends PortIdentity {
 }
 
 export interface ReviewerPort extends PortIdentity {
-  review(
-    task: BugTask,
-    diff: string,
-    evidence: readonly SourceEvidence[],
-    request: ProviderRequest
-  ): Promise<ReviewResult>;
+  review(task: BugTask, diff: string, evidence: readonly SourceEvidence[], request: ProviderRequest): Promise<ReviewResult>;
 }
 
 export interface TelemetryPort extends PortIdentity {
-
   emitActivity(event: ActivityEvent): Promise<void>;
   recordUsage(taskId: string, runId: string, usage: ProviderUsage): Promise<void>;
 }

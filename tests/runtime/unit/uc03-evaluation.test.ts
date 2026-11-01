@@ -30,10 +30,7 @@ import {
   type EvaluationDriver,
   type CaseResult,
 } from '../../../eval/uc03/runner.ts';
-import {
-  compareEvaluations,
-  runComparison,
-} from '../../../eval/uc03/compare.ts';
+import { compareEvaluations, runComparison } from '../../../eval/uc03/compare.ts';
 
 const REPO_ROOT = resolve(process.cwd());
 const MANIFEST_PATH = join(REPO_ROOT, 'eval', 'uc03', 'manifest.json');
@@ -53,7 +50,7 @@ test('manifest: C01-C17 manifest exists and passes schema validation', () => {
   assert.equal(manifest.cases.length, 17, 'Must have exactly 17 cases');
 
   const expectedIds = Array.from({ length: 17 }, (_, i) => `C${String(i + 1).padStart(2, '0')}`);
-  const actualIds = manifest.cases.map((c) => c.caseId);
+  const actualIds = manifest.cases.map(c => c.caseId);
   assert.deepEqual(actualIds, expectedIds, 'Cases must be C01 through C17 in exact order');
 
   for (const c of manifest.cases) {
@@ -61,10 +58,7 @@ test('manifest: C01-C17 manifest exists and passes schema validation', () => {
     assert.ok(c.description.length > 0, `${c.caseId} must have description`);
     assert.equal(c.required, true, `${c.caseId} must be required`);
     assert.ok(c.requirements.length > 0, `${c.caseId} must list requirements`);
-    assert.ok(
-      ['COMPLETED', 'INCOMPLETE', 'IMPLEMENTED_UNVERIFIED', 'FAILED'].includes(c.expectedOutcome),
-      `${c.caseId} has valid expectedOutcome`
-    );
+    assert.ok(['COMPLETED', 'INCOMPLETE', 'IMPLEMENTED_UNVERIFIED', 'FAILED'].includes(c.expectedOutcome), `${c.caseId} has valid expectedOutcome`);
   }
 });
 
@@ -88,7 +82,7 @@ test('manifest: rejects malformed manifest objects', () => {
         version: '0.1.0',
         cases: [{ caseId: 'C01' }], // missing required fields
       }),
-    /Invalid manifest/
+    /Invalid manifest/,
   );
   assert.throws(
     () =>
@@ -116,7 +110,7 @@ test('manifest: rejects malformed manifest objects', () => {
           },
         ],
       }),
-    /Invalid manifest/
+    /Invalid manifest/,
   );
 });
 
@@ -155,13 +149,15 @@ function createFakeDriver(overrides?: Partial<Record<string, Partial<CaseResult>
   };
 }
 
-function createMockPrivateGrading(overrides: {
-  readonly admission?: (request: Record<string, unknown>) => unknown;
-  readonly result?: (request: Record<string, unknown>) => unknown;
-  readonly finalSnapshot?: unknown;
-  readonly profile?: unknown;
-  readonly isolationAuthority?: unknown;
-} = {}) {
+function createMockPrivateGrading(
+  overrides: {
+    readonly admission?: (request: Record<string, unknown>) => unknown;
+    readonly result?: (request: Record<string, unknown>) => unknown;
+    readonly finalSnapshot?: unknown;
+    readonly profile?: unknown;
+    readonly isolationAuthority?: unknown;
+  } = {},
+) {
   const graderPayload = { marker: 'MARKER_PRIVATE_GRADER_PAYLOAD' };
   const finalSnapshot = overrides.finalSnapshot ?? {
     snapshotId: 'snapshot-final-17',
@@ -210,9 +206,15 @@ function createMockPrivateGrading(overrides: {
     boundary: { finalSnapshot, profile, graderPayload, isolationAuthority, executor },
     graderPayload,
     executor,
-    get admissionCalls(): number { return admissionCalls; },
-    get executorCalls(): number { return executorCalls; },
-    get admittedRequest(): Record<string, unknown> | undefined { return admittedRequest; },
+    get admissionCalls(): number {
+      return admissionCalls;
+    },
+    get executorCalls(): number {
+      return executorCalls;
+    },
+    get admittedRequest(): Record<string, unknown> | undefined {
+      return admittedRequest;
+    },
   };
 }
 
@@ -237,8 +239,8 @@ test('runner: injected fake driver remains infrastructure evidence and leaves pr
   assert.equal(report.summary.successRate, 16 / 17);
   assert.equal(report.verdict, 'FAIL');
   assert.equal(report.exitCode, 1);
-  assert.equal(report.cases.find((result) => result.caseId === 'C17')?.status, 'not-run');
-  assert.ok(report.limitations.some((value) => value.includes('do not establish UC-03 workflow evidence')));
+  assert.equal(report.cases.find(result => result.caseId === 'C17')?.status, 'not-run');
+  assert.ok(report.limitations.some(value => value.includes('do not establish UC-03 workflow evidence')));
 
   // In mock mode, isRealVerified MUST ALWAYS BE FALSE
   assert.equal(report.isRealVerified, false, 'Mock mode can never report real-verified');
@@ -275,9 +277,9 @@ test('runner: admitted mock grading uses the separate executor and keeps C17 non
   assert.ok(!JSON.stringify(driverContext).includes(mockGrading.graderPayload.marker));
   assert.equal('graderPayload' in (mockGrading.admittedRequest ?? {}), false);
   assert.equal(mockGrading.admittedRequest?.['executorId'], mockGrading.executor.executorId);
-  const c17 = report.cases.find((result) => result.caseId === 'C17');
+  const c17 = report.cases.find(result => result.caseId === 'C17');
   assert.equal(c17?.status, 'not-run');
-  assert.ok(c17?.limitations.some((value) => value.includes('mock grading boundary')));
+  assert.ok(c17?.limitations.some(value => value.includes('mock grading boundary')));
   assert.equal(report.verdict, 'FAIL');
   assert.equal(report.exitCode, 1);
   assert.equal(report.isRealVerified, false);
@@ -302,7 +304,7 @@ test('grading: returns bounded metadata tied to the exact admitted snapshot and 
 
 test('grading: refuses missing or mismatched admission before executor invocation', async () => {
   const wrongSnapshot = createMockPrivateGrading({
-    admission: (request) => ({
+    admission: request => ({
       kind: 'injected-mock-isolation-admission',
       finalSnapshot: { snapshotId: 'snapshot-stale', digest: computeSha256('stale') },
       profile: request['profile'],
@@ -311,7 +313,7 @@ test('grading: refuses missing or mismatched admission before executor invocatio
     }),
   });
   const wrongProfile = createMockPrivateGrading({
-    admission: (request) => ({
+    admission: request => ({
       kind: 'injected-mock-isolation-admission',
       finalSnapshot: request['finalSnapshot'],
       profile: { profileId: 'profile-wrong', digest: computeSha256('wrong'), bounds: {} },
@@ -320,7 +322,7 @@ test('grading: refuses missing or mismatched admission before executor invocatio
     }),
   });
   const wrongExecutor = createMockPrivateGrading({
-    admission: (request) => ({
+    admission: request => ({
       kind: 'injected-mock-isolation-admission',
       finalSnapshot: request['finalSnapshot'],
       profile: request['profile'],
@@ -330,13 +332,7 @@ test('grading: refuses missing or mismatched admission before executor invocatio
   });
   const selfAssertedBoolean = createMockPrivateGrading({ admission: () => true });
   const missingAuthority = createMockPrivateGrading();
-  const invalidCases = [
-    wrongSnapshot,
-    wrongProfile,
-    wrongExecutor,
-    selfAssertedBoolean,
-    { ...missingAuthority, boundary: { ...missingAuthority.boundary, isolationAuthority: undefined } },
-  ];
+  const invalidCases = [wrongSnapshot, wrongProfile, wrongExecutor, selfAssertedBoolean, { ...missingAuthority, boundary: { ...missingAuthority.boundary, isolationAuthority: undefined } }];
 
   for (const mockGrading of invalidCases) {
     assert.equal(await executeMockPrivateGrading(mockGrading.boundary), undefined);
@@ -371,7 +367,7 @@ test('grading: invalid bounds and unsafe or mismatched results stay not-run and 
   ];
   for (const override of invalidResults) {
     const mockGrading = createMockPrivateGrading({
-      result: (request) => ({
+      result: request => ({
         finalSnapshot: request['finalSnapshot'],
         profile: request['profile'],
         executorId: request['executorId'],
@@ -393,7 +389,7 @@ test('grading: invalid bounds and unsafe or mismatched results stay not-run and 
     cases: ['C17'],
     mockPrivateGrading: invalidBounds.boundary,
   });
-  assert.equal(report.cases.find((result) => result.caseId === 'C17')?.status, 'not-run');
+  assert.equal(report.cases.find(result => result.caseId === 'C17')?.status, 'not-run');
   assert.equal(report.verdict, 'FAIL');
   assert.equal(report.exitCode, 1);
   assert.equal(report.isRealVerified, false);
@@ -420,11 +416,11 @@ test('runner: no configured driver yields honest not-run cases with zero measure
   assert.equal(report.summary.totalDurationMs, 0);
   assert.equal(report.verdict, 'FAIL');
   assert.equal(report.exitCode, 1);
-  const c17 = report.cases.find((result) => result.caseId === 'C17');
+  const c17 = report.cases.find(result => result.caseId === 'C17');
   assert.equal(c17?.status, 'not-run');
   assert.equal(c17?.taskId, null);
   assert.equal(c17?.runId, null);
-  assert.ok(report.limitations.some((value) => value.includes('C17 private grading was not run')));
+  assert.ok(report.limitations.some(value => value.includes('C17 private grading was not run')));
 });
 
 test('runner: selected cases retain omitted required cases as not-run and reject invalid requests before dispatch', async () => {
@@ -438,7 +434,7 @@ test('runner: selected cases retain omitted required cases as not-run and reject
   assert.equal(selected.summary.passedCases, 1);
   assert.equal(selected.summary.notRunCases, 16);
   assert.equal(selected.summary.requiredFailuresOrNotRun, 16);
-  assert.equal(selected.cases.find((result) => result.caseId === 'C02')?.status, 'not-run');
+  assert.equal(selected.cases.find(result => result.caseId === 'C02')?.status, 'not-run');
 
   let emptySelectionDriverCalls = 0;
   const emptySelection = await runEvaluation({
@@ -523,44 +519,28 @@ test('runner: rejects forged nested metrics, timing, digest, status, and provena
   };
   const malformedTiming: unknown = {
     ...report,
-    cases: report.cases.map((result, index) =>
-      index === 0 ? { ...result, timing: { ...result.timing, durationMs: 999 } } : result
-    ),
+    cases: report.cases.map((result, index) => (index === 0 ? { ...result, timing: { ...result.timing, durationMs: 999 } } : result)),
   };
   const malformedDigest: unknown = { ...report, manifestDigest: 'sha256:123' };
   const mismatchedCaseMode: unknown = {
     ...report,
-    cases: report.cases.map((result, index) =>
-      index === 0 ? { ...result, mode: 'real' } : result
-    ),
+    cases: report.cases.map((result, index) => (index === 0 ? { ...result, mode: 'real' } : result)),
   };
   const falsePass: unknown = {
     ...report,
-    cases: report.cases.map((result, index) =>
-      index === 0 ? { ...result, actualOutcome: 'FAILED' } : result
-    ),
+    cases: report.cases.map((result, index) => (index === 0 ? { ...result, actualOutcome: 'FAILED' } : result)),
   };
   const duplicateCase: unknown = {
     ...report,
-    cases: report.cases.map((result, index) =>
-      index === 1 ? { ...result, caseId: 'C01' } : result
-    ),
+    cases: report.cases.map((result, index) => (index === 1 ? { ...result, caseId: 'C01' } : result)),
   };
   const mismatchDigest: unknown = {
     ...report,
-    cases: report.cases.map((result, index) =>
-      index === 0
-        ? { ...result, digests: { ...result.digests, configDigest: computeSha256('forged config') } }
-        : result
-    ),
+    cases: report.cases.map((result, index) => (index === 0 ? { ...result, digests: { ...result.digests, configDigest: computeSha256('forged config') } } : result)),
   };
   const duplicateIdentity: unknown = {
     ...report,
-    cases: report.cases.map((result, index) =>
-      index === 1
-        ? { ...result, taskId: report.cases[0]?.taskId, runId: report.cases[0]?.runId }
-        : result
-    ),
+    cases: report.cases.map((result, index) => (index === 1 ? { ...result, taskId: report.cases[0]?.taskId, runId: report.cases[0]?.runId } : result)),
   };
   const inconsistentSummary: unknown = {
     ...report,
@@ -662,7 +642,7 @@ test('runner: real mode refuses before dispatch without real backend', async () 
   assert.equal(driverCalls, 0, 'Real mode must refuse before driver invocation');
   assert.equal(mockGrading.admissionCalls, 0, 'Real mode must refuse before grading admission');
   assert.equal(mockGrading.executorCalls, 0, 'Real mode must refuse before grader invocation');
-  assert.ok(report.limitations.some((l) => l.includes('refused') || l.includes('Real mode')));
+  assert.ok(report.limitations.some(l => l.includes('refused') || l.includes('Real mode')));
 });
 
 test('runner: sanitizes secrets from case outcomes and limitations', async () => {
@@ -751,7 +731,7 @@ test('compare: detects regressions and returns exit code 1', async () => {
   assert.equal(comparison.exitCode, 1, 'Must exit nonzero on regression');
   assert.equal(comparison.summary.regressionsCount, 1);
 
-  const c01Delta = comparison.cases.find((c) => c.caseId === 'C01');
+  const c01Delta = comparison.cases.find(c => c.caseId === 'C01');
   assert.ok(c01Delta !== undefined);
   assert.equal(c01Delta.baselineStatus, 'pass');
   assert.equal(c01Delta.candidateStatus, 'fail');
@@ -775,12 +755,12 @@ test('compare: driver error to pass is an improvement in runner-produced reports
   assert.notEqual(candidate.cases[0]?.taskId, null);
 
   const comparison = compareEvaluations(baseline, candidate);
-  const c01Delta = comparison.cases.find((result) => result.caseId === 'C01');
+  const c01Delta = comparison.cases.find(result => result.caseId === 'C01');
   assert.equal(comparison.summary.improvementsCount, 1);
   assert.equal(c01Delta?.transition, 'improved');
 
   const regression = compareEvaluations(candidate, baseline);
-  const reverseC01Delta = regression.cases.find((result) => result.caseId === 'C01');
+  const reverseC01Delta = regression.cases.find(result => result.caseId === 'C01');
   assert.equal(regression.verdict, 'REGRESSED');
   assert.equal(regression.exitCode, 1);
   assert.equal(regression.summary.regressionsCount, 1);
@@ -803,7 +783,7 @@ test('compare: reports improvements while required not-run cases keep the result
   assert.equal(comparison.summary.improvementsCount, 1);
   assert.equal(comparison.summary.regressionsCount, 0);
 
-  const c03Delta = comparison.cases.find((c) => c.caseId === 'C03');
+  const c03Delta = comparison.cases.find(c => c.caseId === 'C03');
   assert.ok(c03Delta !== undefined);
   assert.equal(c03Delta.baselineStatus, 'fail');
   assert.equal(c03Delta.candidateStatus, 'pass');
@@ -820,13 +800,13 @@ test('compare: not-run and result transitions retain nonzero required-failure be
   assert.notEqual(result.cases[0]?.taskId, null);
 
   const improvement = compareEvaluations(notRun, result);
-  const improvedC01 = improvement.cases.find((item) => item.caseId === 'C01');
+  const improvedC01 = improvement.cases.find(item => item.caseId === 'C01');
   assert.equal(improvement.verdict, 'INCOMPLETE');
   assert.equal(improvement.exitCode, 1);
   assert.equal(improvedC01?.transition, 'improved');
 
   const regression = compareEvaluations(result, notRun);
-  const regressedC01 = regression.cases.find((item) => item.caseId === 'C01');
+  const regressedC01 = regression.cases.find(item => item.caseId === 'C01');
   assert.equal(regression.verdict, 'REGRESSED');
   assert.equal(regression.exitCode, 1);
   assert.equal(regressedC01?.transition, 'regressed');
@@ -848,7 +828,7 @@ test('compare: refuses reports with different configuration or execution modes',
   const incompatibleConfig = {
     ...baseline,
     configDigest: alternateConfigDigest,
-    cases: baseline.cases.map((result) => ({
+    cases: baseline.cases.map(result => ({
       ...result,
       digests: { ...result.digests, configDigest: alternateConfigDigest },
     })),

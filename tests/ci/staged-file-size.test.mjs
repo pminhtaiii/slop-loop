@@ -31,7 +31,7 @@ async function repository(t) {
   return { root, env, git, runGit, check, commit };
 }
 
-test('the checker uses staged index bytes and allows exactly 20,000 bytes', async (t) => {
+test('the checker uses staged index bytes and allows exactly 20,000 bytes', async t => {
   const { root, git, check } = await repository(t);
   const unsupportedScope = check('--base', 'HEAD');
   assert.equal(unsupportedScope.status, 1, 'the checker does not accept a tree-range mode');
@@ -56,13 +56,10 @@ test('the checker uses staged index bytes and allows exactly 20,000 bytes', asyn
   assert.match(result.stderr, /pnpm run check:staged-size/);
 });
 
-test('known generated outputs, lockfiles, and binary blobs are skipped without exempting contracts', async (t) => {
+test('known generated outputs, lockfiles, and binary blobs are skipped without exempting contracts', async t => {
   const { root, git, check } = await repository(t);
   const tooLarge = Buffer.from('a'.repeat(20_001));
-  const skipped = [
-    'nested/pnpm-lock.yaml', 'node_modules/vendor/file.ts', 'dist/bundle.js', 'coverage/report.txt',
-    'src/api.generated.ts', 'src/schema.g.ts',
-  ];
+  const skipped = ['nested/pnpm-lock.yaml', 'node_modules/vendor/file.ts', 'dist/bundle.js', 'coverage/report.txt', 'src/api.generated.ts', 'src/schema.g.ts'];
   for (const path of skipped) {
     const file = join(root, path);
     await mkdir(dirname(file), { recursive: true });
@@ -82,7 +79,7 @@ test('known generated outputs, lockfiles, and binary blobs are skipped without e
   assert.doesNotMatch(result.stderr, /binary\.dat/);
 });
 
-test('top-level tests and specs are exempt by normalized path while implementation files remain checked', async (t) => {
+test('top-level tests and specs are exempt by normalized path while implementation files remain checked', async t => {
   const { root, git, check } = await repository(t);
   const paths = ['TESTS/foo.test.ts', 'SPECS/foo/spec.md', 'src/foo.ts', 'nested/tests/foo.test.ts'];
   for (const path of paths) {
@@ -100,7 +97,7 @@ test('top-level tests and specs are exempt by normalized path while implementati
   assert.doesNotMatch(result.stderr, /SPECS\/foo\/spec\.md/);
 });
 
-test('during a merge only exact parent mode and blob pairs pass, including renamed paths', async (t) => {
+test('during a merge only exact parent mode and blob pairs pass, including renamed paths', async t => {
   const { root, git, check } = await repository(t);
   const base = git('rev-parse', 'HEAD');
 
@@ -132,7 +129,7 @@ test('during a merge only exact parent mode and blob pairs pass, including renam
   assert.equal(check().status, 0, 'the exact parent mode and blob pairs stay exempt');
 });
 
-test('an oversized edited merge resolution is still checked', async (t) => {
+test('an oversized edited merge resolution is still checked', async t => {
   const { root, git, runGit, check } = await repository(t);
   await mkdir(join(root, 'src'));
   await writeFile(join(root, 'src/merge.ts'), 'base');
@@ -162,7 +159,7 @@ test('an oversized edited merge resolution is still checked', async (t) => {
   assert.match(result.stderr, /20,001 bytes/);
 });
 
-test('matching a parent blob outside a merge does not grant an exemption', async (t) => {
+test('matching a parent blob outside a merge does not grant an exemption', async t => {
   const { root, git, check } = await repository(t);
   const contents = 'p'.repeat(20_001);
   await writeFile(join(root, 'parent.ts'), contents);
@@ -176,7 +173,7 @@ test('matching a parent blob outside a merge does not grant an exemption', async
   assert.match(result.stderr, /new copy\.ts/);
 });
 
-test('the checker uses a linked worktree MERGE_HEAD path', async (t) => {
+test('the checker uses a linked worktree MERGE_HEAD path', async t => {
   const { root, git, runGit } = await repository(t);
   const base = git('rev-parse', 'HEAD');
   git('checkout', '--quiet', '-b', 'incoming');
@@ -196,12 +193,15 @@ test('the checker uses a linked worktree MERGE_HEAD path', async (t) => {
   assert.equal(mainGitPath.status, 0, mainGitPath.stderr);
   assert.notEqual(resolve(worktree, gitPath.stdout.trim()), resolve(root, mainGitPath.stdout.trim()));
   const result = spawnSync(process.execPath, [checker, '--root', worktree], {
-    cwd: worktree, encoding: 'utf8', windowsHide: true, timeout: 30_000,
+    cwd: worktree,
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: 30_000,
   });
   assert.equal(result.status, 0, result.stderr);
 });
 
-test('malformed MERGE_HEAD refs fail closed', async (t) => {
+test('malformed MERGE_HEAD refs fail closed', async t => {
   const { root, git, check } = await repository(t);
   await writeFile(join(root, 'large.ts'), 'm'.repeat(20_001));
   git('add', '--', 'large.ts');
@@ -213,7 +213,7 @@ test('malformed MERGE_HEAD refs fail closed', async (t) => {
   assert.match(result.stderr, /Invalid Git MERGE_HEAD/);
 });
 
-test('renames and copies check their destination; staged deletions are ignored', async (t) => {
+test('renames and copies check their destination; staged deletions are ignored', async t => {
   const { root, git, check } = await repository(t);
   await writeFile(join(root, 'rename old.ts'), 'r'.repeat(20_000));
   await writeFile(join(root, 'copy source.ts'), 'c'.repeat(20_000));
@@ -239,7 +239,7 @@ test('renames and copies check their destination; staged deletions are ignored',
   assert.equal(check().status, 0, 'deleting an over-limit old blob is allowed');
 });
 
-test('pnpm setup installs the repository hook and preserves custom Git hook paths', async (t) => {
+test('pnpm setup installs the repository hook and preserves custom Git hook paths', async t => {
   const { root, env, git } = await repository(t);
   await mkdir(join(root, '.githooks'));
   await copyFile(resolve(repoRoot, '.githooks/pre-commit'), join(root, '.githooks/pre-commit'));

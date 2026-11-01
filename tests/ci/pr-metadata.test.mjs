@@ -11,24 +11,36 @@ import { parseHistoricalBindings } from '../../scripts/ci/required-checks.mjs';
 
 const source = new URL('../../scripts/ci/check-pr-metadata.mjs', import.meta.url);
 const branch = 'feat/tooling-pr-metadata';
-const BODY = '## Summary\n\nStandardize the metadata check.\n\n## Evidence\n\nBefore: none; after: focused tests.\n\n## Merge Danger\n\n**Door:** revert the commit.\n\n**Blast Radius:** contributor tooling only.';
+const BODY =
+  '## Summary\n\nStandardize the metadata check.\n\n## Evidence\n\nBefore: none; after: focused tests.\n\n## Merge Danger\n\n**Door:** revert the commit.\n\n**Blast Radius:** contributor tooling only.';
 const CR_START = '<!-- This is an auto-generated comment: release notes by coderabbit.ai -->';
 const CR_END = '<!-- end of auto-generated comment: release notes by coderabbit.ai -->';
 const CR_BLOCK = `${CR_START}\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\nThe change standardizes the metadata check.\n\n${CR_END}`;
 const metadata = (overrides = {}) => ({ branch, base: 'development', title: `${branch}: add the metadata check`, body: BODY, ...overrides });
-const refusal = (run) => {
-  try { run(); } catch (error) { return error.message; }
+const refusal = run => {
+  try {
+    run();
+  } catch (error) {
+    return error.message;
+  }
   assert.fail('expected a refusal');
 };
-const repositoryId = 1419608901, head = 'a'.repeat(40), tree = 'b'.repeat(40);
+const repositoryId = 1419608901,
+  head = 'a'.repeat(40),
+  tree = 'b'.repeat(40);
 const bindings = (entries = [{ repositoryId, number: 42, head, headRepositoryId: repositoryId, tree, policy: 'ci-v1', convention: 1 }]) =>
   parseHistoricalBindings(JSON.stringify({ schemaVersion: 1, entries }));
 const event = (overrides = {}) => ({
   action: 'edited',
   repository: { id: repositoryId },
   pull_request: {
-    number: 42, draft: false, title: `${branch}: add the metadata check`, body: BODY, ...overrides,
-    base: { ref: 'development', ...overrides.base }, head: { ref: branch, sha: head, repo: { id: repositoryId }, ...overrides.head },
+    number: 42,
+    draft: false,
+    title: `${branch}: add the metadata check`,
+    body: BODY,
+    ...overrides,
+    base: { ref: 'development', ...overrides.base },
+    head: { ref: branch, sha: head, repo: { id: repositoryId }, ...overrides.head },
   },
 });
 
@@ -58,12 +70,21 @@ test('wrong or missing field types are refused by field and rule without echoing
     assert.match(message, pattern);
     assert.doesNotMatch(message, /42|\bfeat\/|Standardize|Blast Radius/, message);
   }
-  assert.match(refusal(() => assertPrMetadata(metadata(), { convention: '2' })), /convention/);
-  assert.match(refusal(() => assertPrMetadata(metadata(), { convention: 3 })), /convention/);
+  assert.match(
+    refusal(() => assertPrMetadata(metadata(), { convention: '2' })),
+    /convention/,
+  );
+  assert.match(
+    refusal(() => assertPrMetadata(metadata(), { convention: 3 })),
+    /convention/,
+  );
 });
 
 test('a non-development base is refused before any other metadata rule', () => {
-  assert.match(refusal(() => assertPrMetadata(metadata({ base: 'main' }), { convention: 2 })), /base must be development/);
+  assert.match(
+    refusal(() => assertPrMetadata(metadata({ base: 'main' }), { convention: 2 })),
+    /base must be development/,
+  );
 });
 
 test('canonical branch, title and body failures are refused', () => {
@@ -83,10 +104,18 @@ test('canonical branch, title and body failures are refused', () => {
     [metadata({ body: '## Summary\n\nchange\n\n## Evidence\n\nchecks\n\n## Merge Danger\n\n**Door:** revert.' }), 2, /body/],
     [metadata({ body: '## Summary\n\nchange\n\n## Evidence\n\nchecks\n\n## Merge Danger\n\n```\n**Door:** revert.\n**Blast Radius:** tooling.\n```\n' }), 2, /body/],
   ];
-  for (const [value, convention, pattern] of failures) assert.match(refusal(() => assertPrMetadata(value, { convention })), pattern, value.title);
+  for (const [value, convention, pattern] of failures)
+    assert.match(
+      refusal(() => assertPrMetadata(value, { convention })),
+      pattern,
+      value.title,
+    );
   // Version 1 keeps numbered branches and the same title/body rules.
   const numbered = { branch: 'feat/042-tooling-metadata', base: 'development', title: 'feat/042-tooling-metadata: add the metadata check', body: 'plain text' };
-  assert.match(refusal(() => assertPrMetadata(numbered, { convention: 1 })), /body/);
+  assert.match(
+    refusal(() => assertPrMetadata(numbered, { convention: 1 })),
+    /body/,
+  );
 });
 
 test('the CodeRabbit auto-generated tail is dropped before section analysis', () => {
@@ -97,21 +126,33 @@ test('the CodeRabbit auto-generated tail is dropped before section analysis', ()
 });
 
 test('generated-block and remaining section rules still refuse', () => {
-  assert.match(refusal(() => assertPrMetadata(metadata({ body: CR_BLOCK }), { convention: 2 })), /body/);
+  assert.match(
+    refusal(() => assertPrMetadata(metadata({ body: CR_BLOCK }), { convention: 2 })),
+    /body/,
+  );
   // An unclosed generated block cannot supply the required sections.
   const unclosed = `Just prose, no sections.\n\n${CR_START}\n\n## Summary\n\nfake\n\n## Evidence\n\nfake\n\n## Merge Danger\n\n**Door:** revert.\n\n**Blast Radius:** tooling.\n\n## Summary\n\nfake duplicate`;
-  assert.match(refusal(() => assertPrMetadata(metadata({ body: unclosed }), { convention: 2 })), /body/);
+  assert.match(
+    refusal(() => assertPrMetadata(metadata({ body: unclosed }), { convention: 2 })),
+    /body/,
+  );
   const fenced = `${BODY}\n\n\`\`\`\n${CR_START}\n## Summary\nreordered\n${CR_END}\n\`\`\``;
   assert.doesNotThrow(() => assertPrMetadata(metadata({ body: fenced }), { convention: 2 }), 'a fenced copy is literal content, not a real tail');
   const fourth = `${BODY}\n\n## Notes\n\nextra section`;
-  assert.match(refusal(() => assertPrMetadata(metadata({ body: fourth }), { convention: 2 })), /body/);
+  assert.match(
+    refusal(() => assertPrMetadata(metadata({ body: fourth }), { convention: 2 })),
+    /body/,
+  );
 });
 
 test('an unclosed generated block after valid sections is refused', () => {
   for (const tail of [CR_START, `${CR_START}\n\n## Notes\n\nextra section`]) {
     const body = `${BODY}\n\n${tail}`;
     assert.throws(() => assertNewDescription(body), /unclosed/i);
-    assert.match(refusal(() => assertPrMetadata(metadata({ body }), { convention: 2 })), /body.*unclosed/i);
+    assert.match(
+      refusal(() => assertPrMetadata(metadata({ body }), { convention: 2 })),
+      /body.*unclosed/i,
+    );
   }
 });
 
@@ -125,11 +166,22 @@ test('no refusal echoes the submitted title or body text', () => {
 test('historical convention identity is selected only by an explicit binding', () => {
   const bound = event({ head: { ref: 'feat/042-tooling-metadata' }, title: 'feat/042-tooling-metadata: add the metadata check' });
   assert.equal(checkPrMetadata(bound, { bindings: bindings() }).status, 'PASSED');
-  assert.match(refusal(() => checkPrMetadata(bound, { bindings: [] })), /branch/, 'current conventions apply without a binding');
-  assert.match(refusal(() => checkPrMetadata(event({ number: 43, head: { ref: 'feat/042-tooling-metadata' }, title: 'feat/042-tooling-metadata: add the metadata check' }), { bindings: bindings() })), /branch/);
+  assert.match(
+    refusal(() => checkPrMetadata(bound, { bindings: [] })),
+    /branch/,
+    'current conventions apply without a binding',
+  );
+  assert.match(
+    refusal(() => checkPrMetadata(event({ number: 43, head: { ref: 'feat/042-tooling-metadata' }, title: 'feat/042-tooling-metadata: add the metadata check' }), { bindings: bindings() })),
+    /branch/,
+  );
 
   const forged = event({ head: { ref: 'feat/042-tooling-metadata' }, title: 'feat/042-tooling-metadata: add the metadata check', convention: 1, conventionVersion: 1 });
-  assert.match(refusal(() => checkPrMetadata(forged, { bindings: [] })), /branch/, 'a PR cannot name its own convention');
+  assert.match(
+    refusal(() => checkPrMetadata(forged, { bindings: [] })),
+    /branch/,
+    'a PR cannot name its own convention',
+  );
   assert.equal(historicalBinding({ repositoryId, number: 42, head, headRepositoryId: repositoryId }, bindings()).convention, 1);
   assert.equal(historicalBinding({ repositoryId, number: 42, head }, bindings()), undefined, 'partial identities never match a binding');
   // A bound identity whose audited entry names no convention must not fall into the lenient
@@ -137,7 +189,7 @@ test('historical convention identity is selected only by an explicit binding', (
   assert.match(
     refusal(() => checkPrMetadata(event({ body: 'arbitrary unstructured body' }), { bindings: bindings([{ repositoryId, number: 42, head, headRepositoryId: repositoryId, tree, policy: 'ci-v1' }]) })),
     /body/,
-    'a binding without a convention still gets the current convention'
+    'a binding without a convention still gets the current convention',
   );
 });
 
@@ -168,15 +220,21 @@ test('shell-like metadata is data: parsed, validated and never executed', async 
 test('drafts and ready PRs are validated by the same rules', () => {
   for (const draft of [true, false]) {
     assert.equal(checkPrMetadata(event({ draft })).status, 'PASSED', String(draft));
-    assert.match(refusal(() => checkPrMetadata(event({ draft, body: 'plain text' }))), /body/, String(draft));
+    assert.match(
+      refusal(() => checkPrMetadata(event({ draft, body: 'plain text' }))),
+      /body/,
+      String(draft),
+    );
   }
 });
 
 test('input is validated without mutation', () => {
-  const value = metadata(), snapshot = JSON.stringify(value);
+  const value = metadata(),
+    snapshot = JSON.stringify(value);
   assertPrMetadata(value, { convention: 2 });
   assert.equal(JSON.stringify(value), snapshot);
-  const payload = event(), eventSnapshot = JSON.stringify(payload);
+  const payload = event(),
+    eventSnapshot = JSON.stringify(payload);
   checkPrMetadata(payload);
   assert.equal(JSON.stringify(payload), eventSnapshot);
 });

@@ -14,7 +14,14 @@ test('current-head CI allows human review without CodeRabbit approval', () => {
 
 test('merge and unknown commands are rejected before executing anything', async () => {
   let called = false;
-  await assert.rejects(runWorkflow(['merge'], { execute() { called = true; } }), /Usage/);
+  await assert.rejects(
+    runWorkflow(['merge'], {
+      execute() {
+        called = true;
+      },
+    }),
+    /Usage/,
+  );
   assert.equal(called, false);
 });
 
@@ -31,14 +38,22 @@ test('PR titles require their branch prefix and a short summary', () => {
 test('publishing rejects missing or invalid summaries before executing commands', async () => {
   let called = false;
   for (const args of [[], ['--summary', ' '], ['--summary', 'x'.repeat(81)], ['--summary', 'two\nlines']]) {
-    await assert.rejects(runWorkflow(['publish', '--body-file', 'body.md', ...args], { execute() { called = true; } }), /summary/);
+    await assert.rejects(
+      runWorkflow(['publish', '--body-file', 'body.md', ...args], {
+        execute() {
+          called = true;
+        },
+      }),
+      /summary/,
+    );
   }
   assert.equal(called, false);
 });
 
 test('failed, missing, skipped, spoofed, or superseded CI cannot be accepted', () => {
   for (const conclusion of ['failure', 'skipped', 'cancelled', 'neutral']) {
-    const e = evidence(); e.checks[0].conclusion = conclusion;
+    const e = evidence();
+    e.checks[0].conclusion = conclusion;
     assert.equal(assess(e).status, 'NEEDS_FIX');
   }
   const e = evidence();
@@ -77,10 +92,19 @@ test('PR sizing reports generated changes and binaries separately without hiding
 });
 
 test('routine summaries expose comments and log paths without historical command output', () => {
-  const summary = workflowSummary({ schemaVersion: 1, repairRounds: [], localVerification: { head: 'abc', tests: 'private lengthy test transcript' }, gateLogs: { tests: { status: 'passed', log: 'tests.log', exitCode: 0, summary: 'lengthy output' } }, observation: { unresolved: [{ id: 'thread', isOutdated: false, comments: { nodes: [{ url: 'https://example.invalid/comment', body: 'lengthy comment' }] } }] } });
+  const summary = workflowSummary({
+    schemaVersion: 1,
+    repairRounds: [],
+    localVerification: { head: 'abc', tests: 'private lengthy test transcript' },
+    gateLogs: { tests: { status: 'passed', log: 'tests.log', exitCode: 0, summary: 'lengthy output' } },
+    observation: { unresolved: [{ id: 'thread', isOutdated: false, comments: { nodes: [{ url: 'https://example.invalid/comment', body: 'lengthy comment' }] } }] },
+  });
   assert.equal(summary.localVerifiedHead, 'abc');
   assert.equal(summary.logs.tests.log, 'tests.log');
   assert.equal(summary.unresolved[0].id, 'thread');
   assert.doesNotMatch(JSON.stringify(summary), /lengthy/);
-  assert.equal(workflowSummary({ schemaVersion: 1, repairRounds: [], observation: { reason: 'Update the feature branch against development.' } }).reason, 'Update the feature branch against development.');
+  assert.equal(
+    workflowSummary({ schemaVersion: 1, repairRounds: [], observation: { reason: 'Update the feature branch against development.' } }).reason,
+    'Update the feature branch against development.',
+  );
 });

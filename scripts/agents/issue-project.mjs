@@ -4,23 +4,37 @@ import { createHash } from 'node:crypto';
 import { command, json } from './paired-issue-api.mjs';
 
 export async function issueProjectDigest(root) {
-  try { return createHash('sha256').update(await readFile(resolve(root, 'issue-project.json'))).digest('hex'); }
-  catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+  try {
+    return createHash('sha256')
+      .update(await readFile(resolve(root, 'issue-project.json')))
+      .digest('hex');
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  }
 }
 
 export async function loadIssueProject(repo, call, expectedSha256) {
   let bytes;
-  try { bytes = await readFile(resolve(repo.root, 'issue-project.json')); }
-  catch (error) {
+  try {
+    bytes = await readFile(resolve(repo.root, 'issue-project.json'));
+  } catch (error) {
     if (error.code !== 'ENOENT') throw error;
     if (expectedSha256 !== undefined && expectedSha256 !== null) throw new Error('Queued project configuration changed; inspect the retained job.', { cause: error });
     return null;
   }
   if (expectedSha256 !== undefined && createHash('sha256').update(bytes).digest('hex') !== expectedSha256) throw new Error('Queued project configuration changed; inspect the retained job.');
   const config = JSON.parse(bytes.toString('utf8'));
-  if (config.schemaVersion !== 1 || !/^[a-z\d](?:[a-z\d-]*[a-z\d])?$/i.test(config.owner ?? '') ||
-      !Number.isSafeInteger(config.number) || config.number < 1 || !/^PVT_[\w-]+$/.test(config.id ?? '') ||
-      !['primary', 'submission'].includes(config.side) || !config.statusField?.trim() || !config.doneStatus?.trim()) {
+  if (
+    config.schemaVersion !== 1 ||
+    !/^[a-z\d](?:[a-z\d-]*[a-z\d])?$/i.test(config.owner ?? '') ||
+    !Number.isSafeInteger(config.number) ||
+    config.number < 1 ||
+    !/^PVT_[\w-]+$/.test(config.id ?? '') ||
+    !['primary', 'submission'].includes(config.side) ||
+    !config.statusField?.trim() ||
+    !config.doneStatus?.trim()
+  ) {
     throw new Error('Invalid issue-project.json configuration.');
   }
   const project = json(call, ['project', 'view', String(config.number), '--owner', config.owner, '--format', 'json'], repo, 'issue project');
@@ -49,16 +63,24 @@ function issueIdentity(url) {
 
 export function projectItem(repo, call, project, issueUrl) {
   const issue = issueIdentity(issueUrl);
-  const query = 'query($owner:String!,$name:String!,$number:Int!,$endCursor:String){repository(owner:$owner,name:$name){issue(number:$number){url projectItems(first:100,after:$endCursor){nodes{id project{id} fieldValueByName(name:' + JSON.stringify(project.statusField) + '){... on ProjectV2ItemFieldSingleSelectValue{optionId}}} pageInfo{hasNextPage endCursor}}}}}';
-  const output = json(call, ['api', 'graphql', '--paginate', '--slurp', '-f', `query=${query}`, '-f', `owner=${issue.owner}`, '-f', `name=${issue.name}`, '-F', `number=${issue.number}`], repo, 'issue project membership');
+  const query =
+    'query($owner:String!,$name:String!,$number:Int!,$endCursor:String){repository(owner:$owner,name:$name){issue(number:$number){url projectItems(first:100,after:$endCursor){nodes{id project{id} fieldValueByName(name:' +
+    JSON.stringify(project.statusField) +
+    '){... on ProjectV2ItemFieldSingleSelectValue{optionId}}} pageInfo{hasNextPage endCursor}}}}}';
+  const output = json(
+    call,
+    ['api', 'graphql', '--paginate', '--slurp', '-f', `query=${query}`, '-f', `owner=${issue.owner}`, '-f', `name=${issue.name}`, '-F', `number=${issue.number}`],
+    repo,
+    'issue project membership',
+  );
   if (!Array.isArray(output) || !output.length) throw new Error('Incomplete issue project membership.');
   const nodes = [];
   for (let index = 0; index < output.length; index++) {
     const page = output[index];
     const remote = page.data?.repository?.issue;
     const connection = remote?.projectItems;
-    if (page.errors || remote?.url?.toLowerCase() !== issueUrl.toLowerCase() || !Array.isArray(connection?.nodes) ||
-        connection.pageInfo?.hasNextPage !== (index < output.length - 1)) throw new Error('Incomplete or mismatched issue project membership.');
+    if (page.errors || remote?.url?.toLowerCase() !== issueUrl.toLowerCase() || !Array.isArray(connection?.nodes) || connection.pageInfo?.hasNextPage !== index < output.length - 1)
+      throw new Error('Incomplete or mismatched issue project membership.');
     nodes.push(...connection.nodes);
   }
   const matches = nodes.filter(item => item.project?.id === project.id);

@@ -37,8 +37,12 @@ export function parseArgs(args) {
 async function localDirectory(root, path) {
   if (!inside(root, path)) throw new Error('Agent data path escapes the repository.');
   let stat;
-  try { stat = await lstat(path); }
-  catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+  try {
+    stat = await lstat(path);
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  }
   if (!stat.isDirectory() || stat.isSymbolicLink() || !(await samePath(path, await realpath(path)))) throw new Error('Agent data directory must be a real local directory.');
   return readdir(path);
 }
@@ -56,8 +60,10 @@ async function localKeys(repo) {
   const directory = resolve(repo.primary, '.agent-work', 'paired-issues');
   const entries = await localDirectory(repo.primary, directory);
   if (!entries) return [];
-  return entries.filter(name => name.endsWith('.json') && keyPattern.test(name.slice(0, -5)) && name.length <= 85)
-    .map(name => name.slice(0, -5)).sort();
+  return entries
+    .filter(name => name.endsWith('.json') && keyPattern.test(name.slice(0, -5)) && name.length <= 85)
+    .map(name => name.slice(0, -5))
+    .sort();
 }
 
 async function readPair(call, repo, targets, key) {
@@ -90,8 +96,23 @@ async function readCompletion(repo, targets, pair, key, publicUrl) {
   validateCompletionRecord(record, expected);
   const primary = record.resolvingPr?.primary;
   const submission = record.resolvingPr?.submission;
-  if (!Number.isSafeInteger(primary?.number) || !validPrUrl(primary?.url, targets.primary.repository, primary.number) || primary.repository?.toLowerCase() !== targets.primary.repository.toLowerCase() || !featureBranch.test(primary.branch ?? '') || primary.base !== 'development' || !validHash(record.evidenceSha256)) throw new Error('Retained completion record has an invalid public PR identity or evidence digest.');
-  if (!Number.isSafeInteger(submission?.number) || !validPrUrl(submission?.url, targets.submission.repository, submission.number) || submission.repository?.toLowerCase() !== targets.submission.repository.toLowerCase() || submission.branch !== primary.branch || submission.base !== targets.submission.base) throw new Error('Retained completion record has an invalid paired PR identity.');
+  if (
+    !Number.isSafeInteger(primary?.number) ||
+    !validPrUrl(primary?.url, targets.primary.repository, primary.number) ||
+    primary.repository?.toLowerCase() !== targets.primary.repository.toLowerCase() ||
+    !featureBranch.test(primary.branch ?? '') ||
+    primary.base !== 'development' ||
+    !validHash(record.evidenceSha256)
+  )
+    throw new Error('Retained completion record has an invalid public PR identity or evidence digest.');
+  if (
+    !Number.isSafeInteger(submission?.number) ||
+    !validPrUrl(submission?.url, targets.submission.repository, submission.number) ||
+    submission.repository?.toLowerCase() !== targets.submission.repository.toLowerCase() ||
+    submission.branch !== primary.branch ||
+    submission.base !== targets.submission.base
+  )
+    throw new Error('Retained completion record has an invalid paired PR identity.');
   return { record, matchesPublicPr: primary.number === publicUrl.number && primary.url.toLowerCase() === publicUrl.url.toLowerCase() };
 }
 
@@ -103,7 +124,9 @@ function completionState(record, issues) {
   return record ? 'PREVIEWED' : closed.every(Boolean) ? 'CLOSED_BOTH_UNTRACKED' : 'NOT_STARTED';
 }
 
-function quotePowerShell(value) { return `'${String(value).replaceAll("'", "''")}'`; }
+function quotePowerShell(value) {
+  return `'${String(value).replaceAll("'", "''")}'`;
+}
 
 function completionCommand(key, publicUrl, evidenceFile, root, apply = false) {
   return [
@@ -113,7 +136,9 @@ function completionCommand(key, publicUrl, evidenceFile, root, apply = false) {
     `--evidence-file ${evidenceFile ? quotePowerShell(evidenceFile) : '<evidence.json>'}`,
     root ? `--root ${quotePowerShell(root)}` : '',
     apply ? '--apply' : '',
-  ].filter(Boolean).join(' ');
+  ]
+    .filter(Boolean)
+    .join(' ');
 }
 
 function statusForPreview(status) {
@@ -144,7 +169,7 @@ export async function runIssueFollowup(args, dependencies = {}) {
     const issues = Object.fromEntries(sides.map(side => [side, pair.issues[side].state]));
     const issueNumbers = Object.fromEntries(sides.map(side => [side, pair.issues[side].number]));
     const retained = await readCompletion(repo, targets, pair, key, publicUrl);
-    const association = retained ? retained.matchesPublicPr ? 'RETAINED' : 'MISMATCH' : explicitKeys ? 'EXPLICIT' : 'NOT_ASSERTED';
+    const association = retained ? (retained.matchesPublicPr ? 'RETAINED' : 'MISMATCH') : explicitKeys ? 'EXPLICIT' : 'NOT_ASSERTED';
     let state = completionState(retained?.record, issues);
     if (state === 'COMPLETED' && project && projectItem(repo, call, project, pair.issues[project.side].url)?.fieldValueByName?.optionId !== project.doneId) state = 'PROJECT_PENDING';
     const item = {
@@ -195,10 +220,12 @@ export async function runIssueFollowup(args, dependencies = {}) {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  runIssueFollowup(process.argv.slice(2)).then(result => {
-    process.stdout.write(`${JSON.stringify(result)}\n`);
-  }).catch(error => {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-    process.exitCode = 1;
-  });
+  runIssueFollowup(process.argv.slice(2))
+    .then(result => {
+      process.stdout.write(`${JSON.stringify(result)}\n`);
+    })
+    .catch(error => {
+      process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+      process.exitCode = 1;
+    });
 }

@@ -38,11 +38,22 @@ const query = `query($owner:String!,$name:String!,$number:Int!){repository(owner
 export async function runWorkflow(args, dependencies = {}) {
   if (args.length === 1 && ['--help', '-h'].includes(args[0])) return { usage };
   const [command, ...rest] = args;
-  const allowed = { preflight: ['root'], 'prepare-next': ['root', 'branch'], publish: ['root', 'base', 'body-file', 'summary', 'skip-review-request', 'mode', 'reason'], status: ['root'], 'record-app-state': ['root', 'receipt'], complete: ['root'], ready: ['root'], repair: ['root', 'reason'], watch: ['root'] };
+  const allowed = {
+    preflight: ['root'],
+    'prepare-next': ['root', 'branch'],
+    publish: ['root', 'base', 'body-file', 'summary', 'skip-review-request', 'mode', 'reason'],
+    status: ['root'],
+    'record-app-state': ['root', 'receipt'],
+    complete: ['root'],
+    ready: ['root'],
+    repair: ['root', 'reason'],
+    watch: ['root'],
+  };
   if (!Object.hasOwn(allowed, command)) throw new Error(usage);
   const values = {};
   for (let index = 0; index < rest.length;) {
-    const option = rest[index], name = option.slice(2);
+    const option = rest[index],
+      name = option.slice(2);
     if (!option.startsWith('--') || !allowed[command].includes(name) || Object.hasOwn(values, name)) throw new Error(usage);
     if (name === 'skip-review-request') {
       values[name] = true;
@@ -55,7 +66,7 @@ export async function runWorkflow(args, dependencies = {}) {
     index += 2;
   }
   if (command === 'record-app-state' && !values.receipt) throw new Error('record-app-state requires --receipt with the app list_thread_pull_requests result.');
-  if (command === 'publish' && !values['body-file'] || command === 'repair' && !values.reason?.trim()) throw new Error(usage);
+  if ((command === 'publish' && !values['body-file']) || (command === 'repair' && !values.reason?.trim())) throw new Error(usage);
   if (command === 'publish' && !validSummary(values.summary)) throw new Error('Provide --summary with 1–80 characters on one line, without surrounding whitespace.');
   if (command === 'publish') values.publication = publicationMode(values);
   if (values.base && values.base !== 'development') throw new Error('The pilot only publishes to development.');
@@ -77,58 +88,94 @@ export async function runWorkflow(args, dependencies = {}) {
   if (!match) throw new Error('origin must identify a GitHub repository over HTTPS or SSH.');
   if (command === 'preflight') {
     git('fetch', '--no-tags', 'origin', 'refs/heads/development:refs/remotes/origin/development');
-    const head = git('rev-parse', 'HEAD'), base = git('rev-parse', 'origin/development');
+    const head = git('rev-parse', 'HEAD'),
+      base = git('rev-parse', 'origin/development');
     const [behind, ahead] = git('rev-list', '--left-right', '--count', `${base}...${head}`).split(/\s+/).map(Number);
     const dirty = git('status', '--porcelain', '--untracked-files=all');
     const branchValid = featureName.test(branch);
-    const blockers = [!branchValid && 'Use a feat/scope-description branch.', behind > 0 && 'Branch is behind development; integrate its changes before editing.', dirty && 'Review existing dirty paths before starting another assignment.'].filter(Boolean);
+    const blockers = [
+      !branchValid && 'Use a feat/scope-description branch.',
+      behind > 0 && 'Branch is behind development; integrate its changes before editing.',
+      dirty && 'Review existing dirty paths before starting another assignment.',
+    ].filter(Boolean);
     const size = changedLines(git('diff', '--numstat', '--no-renames', `${base}...${head}`));
     if (git('rev-parse', 'HEAD') !== head || git('branch', '--show-current') !== branch) throw new Error('Checkout changed during preflight; rerun it.');
     return { status: blockers.length ? 'BLOCKED' : 'READY_TO_WORK', branch, branchValid, head, base, behind, ahead, dirty, size, blockers };
   }
   if (!featureName.test(branch)) throw new Error('Use feat/scope-description; historical three-digit names remain readable; main and development cannot be published.');
-  const remote = match[1], [owner, name] = remote.split('/');
+  const remote = match[1],
+    [owner, name] = remote.split('/');
   const gh = (...argv) => call('gh', argv);
   const json = (...argv) => JSON.parse(gh(...argv));
   const store = await dataDirectory(repo, 'pr-workflow');
   const path = resolve(store, `${branch.slice(5)}.json`);
   const processCommand = async () => {
     let record;
-    try { record = await readJson(path); }
-    catch (error) { if (error.code !== 'ENOENT') throw error; record = { schemaVersion: 1, repository: remote, branch, base: 'development', repairRounds: [] }; }
-    if (record.schemaVersion !== 1 || record.repository !== remote || record.branch !== branch || record.base !== 'development' || !Array.isArray(record.repairRounds)) throw new Error('Invalid or mismatched PR workflow record.');
+    try {
+      record = await readJson(path);
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+      record = { schemaVersion: 1, repository: remote, branch, base: 'development', repairRounds: [] };
+    }
+    if (record.schemaVersion !== 1 || record.repository !== remote || record.branch !== branch || record.base !== 'development' || !Array.isArray(record.repairRounds))
+      throw new Error('Invalid or mismatched PR workflow record.');
     // A retained policy name is evidence of what was required when this record was published; an
     // unrecognised one means the record or the policy registry changed under it.
     if (record.checkPolicy !== undefined && !Object.hasOwn(POLICIES, record.checkPolicy)) throw new Error(`Retained PR workflow record names an unknown check policy: ${String(record.checkPolicy)}`);
     const pairedExecute = (binary, argv, cwd, timeout) => call(binary, argv, timeout);
     const targets = command === 'prepare-next' ? null : await publicationTargets(repo, pairedExecute);
-    if (command !== 'prepare-next' && record.pairedTargets && JSON.stringify(record.pairedTargets) !== JSON.stringify(targets)) throw new Error('Paired publication targets changed; restore their configuration and retained accounting.');
-    const save = async () => { record.updatedAt = new Date().toISOString(); await atomicWrite(path, JSON.stringify(record, null, 2) + '\n'); };
+    if (command !== 'prepare-next' && record.pairedTargets && JSON.stringify(record.pairedTargets) !== JSON.stringify(targets))
+      throw new Error('Paired publication targets changed; restore their configuration and retained accounting.');
+    const save = async () => {
+      record.updatedAt = new Date().toISOString();
+      await atomicWrite(path, JSON.stringify(record, null, 2) + '\n');
+    };
     const find = () => {
       const prs = json('pr', 'list', '--repo', remote, '--head', branch, '--state', 'open', '--json', 'number,url,baseRefName,headRefOid');
-      if (prs.length > 1 || prs.some((pr) => pr.baseRefName !== 'development')) throw new Error('Conflicting open PR/base; inspect before publishing.');
+      if (prs.length > 1 || prs.some(pr => pr.baseRefName !== 'development')) throw new Error('Conflicting open PR/base; inspect before publishing.');
       return prs[0];
     };
     if (command === 'prepare-next') {
       if (git('status', '--porcelain', '--untracked-files=all')) throw new Error('prepare-next requires a clean checkout; commit or preserve local work first.');
       if (!record.pr) throw new Error('A recorded merged PR is required; preserve its workflow accounting.');
       const merged = json('pr', 'view', String(record.pr), '--repo', remote, '--json', 'state,headRefName,baseRefName');
-      if (merged.state !== 'MERGED' || merged.headRefName !== branch || merged.baseRefName !== 'development') throw new Error('The recorded PR must be merged into development before preparing another branch.');
+      if (merged.state !== 'MERGED' || merged.headRefName !== branch || merged.baseRefName !== 'development')
+        throw new Error('The recorded PR must be merged into development before preparing another branch.');
       if (values.branch === branch || git('branch', '--list', values.branch)) throw new Error('Choose a different branch; target already exists.');
-      assertAvailableBranch({ branch: values.branch, targets: await publicationTargets(repo, pairedExecute) ?? { primary: { remote: 'origin', repository: remote } }, execute: pairedExecute, root: repo.root, fresh: true });
+      assertAvailableBranch({
+        branch: values.branch,
+        targets: (await publicationTargets(repo, pairedExecute)) ?? { primary: { remote: 'origin', repository: remote } },
+        execute: pairedExecute,
+        root: repo.root,
+        fresh: true,
+      });
       git('fetch', '--no-tags', 'origin', 'refs/heads/development:refs/remotes/origin/development');
       const base = git('rev-parse', 'origin/development');
       if (git('status', '--porcelain', '--untracked-files=all') || git('branch', '--show-current') !== branch) throw new Error('Checkout changed during preparation.');
       git('switch', '--no-track', '-c', values.branch, base);
       return { status: 'READY_TO_WORK', branch: values.branch, head: base, base, preservedBranch: branch, mergedPr: record.pr };
     }
-    if (command === 'publish') return publishCommand({
-      values, record, branch, repo, remote, git, find, pairedExecute, targets, dependencies, call, save, gh, json,
-    });
+    if (command === 'publish')
+      return publishCommand({
+        values,
+        record,
+        branch,
+        repo,
+        remote,
+        git,
+        find,
+        pairedExecute,
+        targets,
+        dependencies,
+        call,
+        save,
+        gh,
+        json,
+      });
     if (!record.pr && !record.publicationStarted) throw new Error('Missing PR accounting; restore its original record rather than reset the repair budget.');
     if (command === 'record-app-state') {
       const receipt = await readJson(resolve(values.receipt));
-      const linked = (receipt.structuredContent ?? receipt).pullRequests?.find((pr) => pr.url === record.url && pr.repository === remote && pr.number === record.pr);
+      const linked = (receipt.structuredContent ?? receipt).pullRequests?.find(pr => pr.url === record.url && pr.repository === remote && pr.number === record.pr);
       if (!linked) throw new Error('The app receipt must include this linked PR.');
       if (targets) {
         const submission = await verifySubmission({ repo, targets, branch, sourceHead: git('rev-parse', 'HEAD'), execute: pairedExecute });
@@ -148,14 +195,15 @@ export async function runWorkflow(args, dependencies = {}) {
     let pr;
     // A missing, malformed or failed live read is non-ready: readiness cannot be inferred from an
     // older same-head CI result, so the retained record is marked BLOCKED before the read is reported.
-    try { pr = json('api', 'graphql', '-f', `query=${query}`, '-F', `owner=${owner}`, '-F', `name=${name}`, '-F', `number=${prRef.number}`).data.repository.pullRequest; }
-    catch {
+    try {
+      pr = json('api', 'graphql', '-f', `query=${query}`, '-F', `owner=${owner}`, '-F', `name=${name}`, '-F', `number=${prRef.number}`).data.repository.pullRequest;
+    } catch {
       Object.assign(record, { status: 'BLOCKED', reason: 'Live PR metadata could not be read; readiness is unavailable.' });
       await save();
       throw new Error(record.reason);
     }
     const pages = json('api', '--paginate', '--slurp', `repos/${remote}/commits/${head}/check-runs?per_page=100`);
-    const result = assess({ head, pr, checks: pages.flatMap((page) => page.check_runs), convention: record.conventionVersion });
+    const result = assess({ head, pr, checks: pages.flatMap(page => page.check_runs), convention: record.conventionVersion });
     Object.assign(record, { pr: pr.number, url: pr.url, head, status: result.status, observation: result });
     delete record.reason;
     if (targets) {
@@ -167,9 +215,11 @@ export async function runWorkflow(args, dependencies = {}) {
         record.reason = record.submissionError = error.message;
       }
     }
-    if (result.status === 'NEEDS_FIX' && record.repairRounds.length >= maxRepairs && record.repairRounds.at(-1)?.head !== head) Object.assign(record, { status: 'BLOCKED', reason: 'Three repair rounds exhausted; human guidance required.' });
+    if (result.status === 'NEEDS_FIX' && record.repairRounds.length >= maxRepairs && record.repairRounds.at(-1)?.head !== head)
+      Object.assign(record, { status: 'BLOCKED', reason: 'Three repair rounds exhausted; human guidance required.' });
     if (command === 'repair') {
-      if (record.status !== 'NEEDS_FIX' && !(result.unresolved.length && ['READY_FOR_HUMAN', 'AWAITING_HUMAN_MERGE'].includes(record.status))) throw new Error(`Repair requires a current finding; status is ${record.status}.`);
+      if (record.status !== 'NEEDS_FIX' && !(result.unresolved.length && ['READY_FOR_HUMAN', 'AWAITING_HUMAN_MERGE'].includes(record.status)))
+        throw new Error(`Repair requires a current finding; status is ${record.status}.`);
       if (record.repairRounds.at(-1)?.head === head) throw new Error('A repair is already reserved for this head; publish its fix before reserving another round.');
       if (record.repairRounds.length >= maxRepairs) throw new Error('Three repair rounds exhausted; human guidance required.');
       if (values.reason.length > 2000) throw new Error('Keep the diagnosed repair reason within 2000 characters.');
@@ -180,11 +230,25 @@ export async function runWorkflow(args, dependencies = {}) {
       if (git('status', '--porcelain', '--untracked-files=all')) throw new Error('Completion requires a clean checkout.');
       if (record.publishedHead !== head) throw new Error('Completion requires the published current head; publish the current branch head first.');
       if (record.publicationMode !== 'push-only' && !hasLocalVerification(record, head)) throw new Error('Completion requires the current head to be locally verified.');
-      if (record.appLink?.url !== pr.url || record.appLink?.number !== pr.number || record.appLink?.repository !== remote) throw new Error('Completion requires an app receipt for the linked PR; run record-app-state.');
+      if (record.appLink?.url !== pr.url || record.appLink?.number !== pr.number || record.appLink?.repository !== remote)
+        throw new Error('Completion requires an app receipt for the linked PR; run record-app-state.');
       if (targets && record.submissionAppLink?.url !== record.submission?.url) throw new Error('Completion requires an app receipt for both linked PRs.');
-      if (!['READY_FOR_HUMAN', 'AWAITING_HUMAN_MERGE'].includes(record.status)) throw new Error(`Completion blocked: ${record.status}. Keep the assignment active/blocked and hand pending CI to the app watcher.`);
+      if (!['READY_FOR_HUMAN', 'AWAITING_HUMAN_MERGE'].includes(record.status))
+        throw new Error(`Completion blocked: ${record.status}. Keep the assignment active/blocked and hand pending CI to the app watcher.`);
       if (git('rev-parse', 'HEAD') !== head) throw new Error('Checkout changed during completion verification.');
-      record.completion = { head, url: pr.url, pr: pr.number, ci: 'passed', localGates: localGateStatus(record, head), publicationMode: record.publicationMode ?? 'full', publicationReason: record.publicationReason, appLink: record.appLink, submission: record.submission, submissionAppLink: record.submissionAppLink, verifiedAt: new Date().toISOString() };
+      record.completion = {
+        head,
+        url: pr.url,
+        pr: pr.number,
+        ci: 'passed',
+        localGates: localGateStatus(record, head),
+        publicationMode: record.publicationMode ?? 'full',
+        publicationReason: record.publicationReason,
+        appLink: record.appLink,
+        submission: record.submission,
+        submissionAppLink: record.submissionAppLink,
+        verifiedAt: new Date().toISOString(),
+      };
     }
     if (command === 'ready') {
       if (!['READY_FOR_HUMAN', 'AWAITING_HUMAN_MERGE'].includes(record.status)) throw new Error(`Not ready: ${record.status}.`);
@@ -204,15 +268,25 @@ export async function runWorkflow(args, dependencies = {}) {
   while (now() < deadline) {
     try {
       const record = await withLock(`${path}.lock`, processCommand);
-      if (record.status !== previous) { (dependencies.report ?? console.log)(JSON.stringify(workflowSummary(record))); previous = record.status; }
+      if (record.status !== previous) {
+        (dependencies.report ?? console.log)(JSON.stringify(workflowSummary(record)));
+        previous = record.status;
+      }
       if (!['WAITING_CI', 'WAITING_REVIEW', 'PUBLISHED'].includes(record.status)) return record;
-    } catch (error) { if (now() < deadline) throw error; }
+    } catch (error) {
+      if (now() < deadline) throw error;
+    }
     const delay = Math.max(0, Math.min(15_000, deadline - now()));
-    await (dependencies.sleep ?? ((ms) => new Promise((done) => setTimeout(done, ms))))(delay);
+    await (dependencies.sleep ?? (ms => new Promise(done => setTimeout(done, ms))))(delay);
   }
   return { status: 'TIMED_OUT', reason: 'Ten-minute watch ended; state is retained. Resume status/watch later.' };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  runWorkflow(process.argv.slice(2)).then((result) => console.log(JSON.stringify(workflowSummary(result), null, 2))).catch((error) => { console.error(error.message); process.exitCode = 1; });
+  runWorkflow(process.argv.slice(2))
+    .then(result => console.log(JSON.stringify(workflowSummary(result), null, 2)))
+    .catch(error => {
+      console.error(error.message);
+      process.exitCode = 1;
+    });
 }

@@ -4,13 +4,19 @@ import { join } from 'node:path';
 
 export const projectConfig = { schemaVersion: 1, owner: 'team', number: 33, id: 'PVT_example', side: 'submission', statusField: 'Status', doneStatus: 'Done' };
 
-export async function projectFixture(root, fallback = () => { throw new Error('Unexpected command'); }) {
+export async function projectFixture(
+  root,
+  fallback = () => {
+    throw new Error('Unexpected command');
+  },
+) {
   await writeFile(join(root, 'issue-project.json'), JSON.stringify(projectConfig));
   const state = { items: new Map(), writes: [], assignments: new Map(), projectId: projectConfig.id, doneId: 'done', failEdit: false, loseAdd: false, loseEdit: false, incomplete: false };
   const execute = (binary, args, cwd, timeout) => {
     if (binary !== 'gh') return fallback(binary, args, cwd, timeout);
     if (args[0] === 'project' && args[1] === 'view') return JSON.stringify({ id: state.projectId, owner: { login: 'team' }, number: 33, closed: false });
-    if (args[0] === 'project' && args[1] === 'field-list') return JSON.stringify({ totalCount: 1, fields: [{ id: 'field', name: 'Status', type: 'ProjectV2SingleSelectField', options: [{ id: state.doneId, name: 'Done' }] }] });
+    if (args[0] === 'project' && args[1] === 'field-list')
+      return JSON.stringify({ totalCount: 1, fields: [{ id: 'field', name: 'Status', type: 'ProjectV2SingleSelectField', options: [{ id: state.doneId, name: 'Done' }] }] });
     if (args[0] === 'api' && args[1] === 'user') return JSON.stringify({ login: 'driver', type: 'User' });
     if (args[0] === 'api' && args[1] === 'graphql') {
       const owner = args.find(arg => arg.startsWith('owner=')).slice(6);
@@ -25,7 +31,10 @@ export async function projectFixture(root, fallback = () => { throw new Error('U
       const item = state.items.get(url) ?? { id: 'item-' + state.items.size, project: { id: projectConfig.id }, fieldValueByName: { optionId: 'progress' } };
       state.items.set(url, item);
       state.writes.push('add');
-      if (state.loseAdd) { state.loseAdd = false; throw new Error('lost add response'); }
+      if (state.loseAdd) {
+        state.loseAdd = false;
+        throw new Error('lost add response');
+      }
       return JSON.stringify({ id: item.id });
     }
     if (args[0] === 'project' && args[1] === 'item-edit') {
@@ -35,7 +44,10 @@ export async function projectFixture(root, fallback = () => { throw new Error('U
       assert.ok(item);
       item.fieldValueByName.optionId = state.doneId;
       state.writes.push('done');
-      if (state.loseEdit) { state.loseEdit = false; throw new Error('lost edit response'); }
+      if (state.loseEdit) {
+        state.loseEdit = false;
+        throw new Error('lost edit response');
+      }
       return '';
     }
     if (args[0] === 'issue' && args[1] === 'edit' && args.includes('--add-assignee')) {

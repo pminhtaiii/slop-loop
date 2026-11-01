@@ -37,7 +37,7 @@ const finding = (overrides = {}) => ({
   Commit: 'a'.repeat(40),
   ...overrides,
 });
-const report = (findings) => JSON.stringify(findings);
+const report = findings => JSON.stringify(findings);
 // The trusted inputs main() writes beside the scanned tree; only their identity matters here.
 const trusted = { configPath: 'workspace/gitleaks.toml', ignorePath: 'workspace/gitleaks-ignore' };
 
@@ -57,22 +57,20 @@ test('installs only the pinned release verified against its checksum manifest', 
   assert.equal(RELEASE.baseUrl, `https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}`);
   assert.equal(verifyChecksum({ bytes: payload, expected: sha }), true);
   assert.equal(verifyChecksum({ bytes: payload, expected: '0'.repeat(64) }), false);
+  assert.throws(() => installGitleaks({ release: RELEASE, download: () => Buffer.from('tampered'), readChecksums: () => manifest }), /checksum mismatch/);
+  assert.throws(() => installGitleaks({ release: RELEASE, download: () => payload, readChecksums: () => 'no manifest rows' }), /does not list/);
   assert.throws(
-    () => installGitleaks({ release: RELEASE, download: () => Buffer.from('tampered'), readChecksums: () => manifest }),
-    /checksum mismatch/,
-  );
-  assert.throws(
-    () => installGitleaks({ release: RELEASE, download: () => payload, readChecksums: () => 'no manifest rows' }),
-    /does not list/,
-  );
-  assert.throws(
-    () => installGitleaks({ release: RELEASE, download: () => { throw new Error('boom'); }, readChecksums: () => manifest }),
+    () =>
+      installGitleaks({
+        release: RELEASE,
+        download: () => {
+          throw new Error('boom');
+        },
+        readChecksums: () => manifest,
+      }),
     /download failed/,
   );
-  assert.throws(
-    () => installGitleaks({ release: { ...RELEASE, version: '8.18.4' }, download: () => Buffer.alloc(0), readChecksums: () => manifest }),
-    /Unsupported Gitleaks release/,
-  );
+  assert.throws(() => installGitleaks({ release: { ...RELEASE, version: '8.18.4' }, download: () => Buffer.alloc(0), readChecksums: () => manifest }), /Unsupported Gitleaks release/);
   const installed = installGitleaks({ release: RELEASE, download: () => payload, readChecksums: () => manifest });
   assert.deepEqual(installed, { asset: RELEASE.asset, sha256: sha, version: GITLEAKS_VERSION });
 });
@@ -115,7 +113,10 @@ test('plans a complete tree scan with an admitted range or an explicit unavailab
 test('planScanRanges validates a pull-request base before probing availability', () => {
   const head = 'c'.repeat(40);
   const probed = [];
-  const available = (rev) => { probed.push(rev); return true; };
+  const available = rev => {
+    probed.push(rev);
+    return true;
+  };
   for (const unsafe of ['--upload-pack=evil', 'main..--output', 'HEAD^', 'x; rm -rf /', '$(id)']) {
     assert.throws(() => planScanRanges({ event: 'pull_request', head, base: unsafe, available }), /revision/i);
   }
@@ -131,7 +132,7 @@ test('builds structural arguments with full redaction and never a shell string',
   const trusted = { configPath: 'workspace/gitleaks.toml', ignorePath: 'workspace/gitleaks-ignore' };
   const args = scanArgs({ snapshot: 'snapshot', from: 'a'.repeat(40), to: 'b'.repeat(40), reportPath: 'report.json', ...trusted });
   assert.ok(args.includes('--redact=100'));
-  assert.ok(args.every((arg) => typeof arg === 'string' && !/[\r\n]/.test(arg)));
+  assert.ok(args.every(arg => typeof arg === 'string' && !/[\r\n]/.test(arg)));
   assert.ok(args.includes(`${'a'.repeat(40)}..${'b'.repeat(40)}`));
   assert.deepEqual(args.slice(0, 2), ['git', 'snapshot']);
   const tree = scanArgs({ snapshot: 'snapshot', reportPath: 'report.json', ...trusted });
@@ -151,8 +152,8 @@ test('always pins the trusted config, ignore path and inline-allow refusal in bo
     assert.equal(args[args.indexOf('--config') + 1], configPath);
     assert.equal(args[args.indexOf('--gitleaks-ignore-path') + 1], ignorePath);
     assert.ok(args.includes('--ignore-gitleaks-allow'));
-    assert.equal(args.filter((arg) => arg === '--config').length, 1);
-    assert.equal(args.filter((arg) => arg === '--ignore-gitleaks-allow').length, 1);
+    assert.equal(args.filter(arg => arg === '--config').length, 1);
+    assert.equal(args.filter(arg => arg === '--ignore-gitleaks-allow').length, 1);
   }
 });
 
@@ -195,7 +196,10 @@ test('reports unchanged-tree, added-then-deleted and clean scans with allowliste
   const unchanged = runSecretScan({
     plan: fallback,
     snapshot: 'snapshot',
-    scan: () => { calls += 1; return { status: 1, report: report([finding()]) }; },
+    scan: () => {
+      calls += 1;
+      return { status: 1, report: report([finding()]) };
+    },
   });
   assert.equal(unchanged.mode, 'tree-only-with-range-unavailable');
   assert.equal(calls, 1, 'the complete tree scan still runs when the range is unavailable');
@@ -217,14 +221,14 @@ test('a requested scan failure is never a clean report', () => {
   for (const [result, expected] of cases) {
     assert.throws(
       () => runSecretScan({ plan, snapshot: 'snapshot', scan: () => result }),
-      (error) => expected.test(error.message) && !error.message.includes(SYNTHETIC_SECRET),
+      error => expected.test(error.message) && !error.message.includes(SYNTHETIC_SECRET),
     );
   }
   assert.equal(parseFindings({ status: 1, report: report([finding()]) }).length, 1, 'exit 1 means findings were reported');
   assert.throws(() => parseFindings({ status: 2, report: '[]' }), /non-report exit status/);
 });
 
-test('bounded capture rejects an oversized report and maps timeouts to execution failures', async (t) => {
+test('bounded capture rejects an oversized report and maps timeouts to execution failures', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'gitleaks-bounded-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const path = join(directory, 'report.json');
@@ -233,11 +237,31 @@ test('bounded capture rejects an oversized report and maps timeouts to execution
   assert.throws(() => readReport(path, 1), /bounded size limit/);
   const timeout = Object.assign(new Error('spawnSync ETIMEDOUT'), { code: 'ETIMEDOUT' });
   assert.throws(
-    () => scanOnce({ kind: 'tree', snapshot: 'snapshot', binary: 'gitleaks', workdir: directory, ...trusted, execute: () => { throw timeout; } }),
+    () =>
+      scanOnce({
+        kind: 'tree',
+        snapshot: 'snapshot',
+        binary: 'gitleaks',
+        workdir: directory,
+        ...trusted,
+        execute: () => {
+          throw timeout;
+        },
+      }),
     /timed out/,
   );
   assert.throws(
-    () => scanOnce({ kind: 'tree', snapshot: 'snapshot', binary: 'gitleaks', workdir: directory, ...trusted, execute: () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); } }),
+    () =>
+      scanOnce({
+        kind: 'tree',
+        snapshot: 'snapshot',
+        binary: 'gitleaks',
+        workdir: directory,
+        ...trusted,
+        execute: () => {
+          throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+        },
+      }),
     /could not be executed/,
   );
   const args = scanOnce({
@@ -246,7 +270,10 @@ test('bounded capture rejects an oversized report and maps timeouts to execution
     binary: 'gitleaks',
     workdir: directory,
     ...trusted,
-    execute: ({ reportPath }) => { writeFileSync(reportPath, '[]'); return { status: 0, report: readReport(reportPath) }; },
+    execute: ({ reportPath }) => {
+      writeFileSync(reportPath, '[]');
+      return { status: 0, report: readReport(reportPath) };
+    },
   }).args;
   assert.ok(args.includes('--redact=100'));
   assert.equal(args[args.indexOf('--config') + 1], trusted.configPath, 'scanOnce forwards the trusted config');
@@ -258,16 +285,23 @@ test('bounded capture rejects an oversized report and maps timeouts to execution
 // and make every reviewed exemption unmatchable. A path outside the snapshot fails closed.
 test('reports snapshot-relative paths and rejects a path that escapes the snapshot', () => {
   const snapshot = '/tmp/gitleaks-scan-7Qcz38/tree';
-  const parse = (file) => parseFindings({ status: 1, report: report([finding({ File: file })]) }, snapshot);
-  assert.deepEqual(parse(`${snapshot}/src/x.ts`).map((item) => item.path), ['src/x.ts']);
-  assert.deepEqual(parse('src/x.ts').map((item) => item.path), ['src/x.ts'], 'a git scan is already repo-relative');
+  const parse = file => parseFindings({ status: 1, report: report([finding({ File: file })]) }, snapshot);
+  assert.deepEqual(
+    parse(`${snapshot}/src/x.ts`).map(item => item.path),
+    ['src/x.ts'],
+  );
+  assert.deepEqual(
+    parse('src/x.ts').map(item => item.path),
+    ['src/x.ts'],
+    'a git scan is already repo-relative',
+  );
   for (const escaped of [`${snapshot}/../outside.ts`, '/etc/passwd', 'a/../../b.ts']) {
     assert.throws(() => parse(escaped), /malformed output/, `refuses ${escaped}`);
   }
   // Redaction still wins over the path rejection: the secret never reaches the message.
   assert.throws(
     () => parseFindings({ status: 1, report: report([finding({ File: `/etc/${SYNTHETIC_SECRET}` })]) }, snapshot),
-    (error) => /redact/i.test(error.message) && !error.message.includes(SYNTHETIC_SECRET),
+    error => /redact/i.test(error.message) && !error.message.includes(SYNTHETIC_SECRET),
   );
 });
 
@@ -302,12 +336,16 @@ test('shipped exemptions validate and clear exactly the reviewed synthetic findi
   // applyExemptions validates every entry (exact path, reason, commit) and rejects duplicates.
   assert.deepEqual(applyExemptions(findings, shipped), []);
   assert.deepEqual(
-    shipped.map((entry) => [entry.ruleId, entry.path, entry.line]),
+    shipped.map(entry => [entry.ruleId, entry.path, entry.line]),
     reviewed,
     'the shipped list covers exactly the reviewed findings, no blanket allowlist',
   );
   const nearby = applyExemptions([...findings, { ruleId: 'generic-api-key', path: 'tests/runtime/unit/docker-workspace.test.ts', line: 883, commit: '' }], shipped);
-  assert.deepEqual(nearby.map((item) => item.line), [883], 'a nearby unlisted finding still fails');
+  assert.deepEqual(
+    nearby.map(item => item.line),
+    [883],
+    'a nearby unlisted finding still fails',
+  );
 });
 
 test('exemptions bind exact synthetic findings and never cover nearby unapproved ones', () => {
@@ -319,7 +357,10 @@ test('exemptions bind exact synthetic findings and never cover nearby unapproved
   const exact = runSecretScan({ plan, snapshot: 'snapshot', scan: () => ({ status: 1, report: report([exempted]) }), exemptions });
   assert.deepEqual(exact.findings, []);
   const withNearby = runSecretScan({ plan, snapshot: 'snapshot', scan: () => ({ status: 1, report: report([exempted, nearby]) }), exemptions });
-  assert.deepEqual(withNearby.findings.map((item) => item.line), [8]);
+  assert.deepEqual(
+    withNearby.findings.map(item => item.line),
+    [8],
+  );
   for (const bad of [
     { ...exemptions[0], reason: '' },
     { ...exemptions[0], path: 'tests/' },
@@ -355,14 +396,15 @@ test('the workflow argv keeps push and pull-request revisions distinct', () => {
 // scan's stale report. The name is derived from the kind, so the two can never collide.
 test('tree and range scans never share a report path', () => {
   const directory = join(tmpdir(), 'scan-report-names');
-  const paths = ['tree', 'range'].map((kind) => {
+  const paths = ['tree', 'range'].map(kind => {
     const { args } = scanOnce({ kind, snapshot: 'snapshot', reportDir: directory, binary: 'gitleaks', workdir: directory, ...trusted, execute: () => ({ status: 0, report: '[]' }) });
     return args[args.indexOf('--report-path') + 1];
   });
   assert.equal(new Set(paths).size, 2, 'a stale tree report cannot be read as a range report');
 });
 
-test('snapshot creation checks out the admitted head in isolation', async (t) => {  const root = await mkdtemp(join(tmpdir(), 'gitleaks-snapshot-'));
+test('snapshot creation checks out the admitted head in isolation', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'gitleaks-snapshot-'));
   const outside = await mkdtemp(join(tmpdir(), 'gitleaks-tree-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   t.after(() => rm(outside, { recursive: true, force: true }));
@@ -393,7 +435,7 @@ test('snapshot creation checks out the admitted head in isolation', async (t) =>
   assert.notEqual(spawnSync('git', ['-C', directory, 'rev-parse', 'HEAD'], { encoding: 'utf8', windowsHide: true }).status, 0);
 });
 
-test('snapshot creation removes a symbolic-link .gitleaksignore without changing its target', async (t) => {
+test('snapshot creation removes a symbolic-link .gitleaksignore without changing its target', async t => {
   const root = await mkdtemp(join(tmpdir(), 'gitleaks-linked-ignore-'));
   const outside = await mkdtemp(join(tmpdir(), 'gitleaks-linked-tree-'));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -429,7 +471,7 @@ test('snapshot creation removes a symbolic-link .gitleaksignore without changing
 
 // The base of a pull_request scan is the base branch tip, so a PR branch that is behind has a valid
 // base..head range without an ancestor relationship. Existence is the only property that matters.
-test('revisionExists accepts a real commit that is not an ancestor and rejects an unknown sha', async (t) => {
+test('revisionExists accepts a real commit that is not an ancestor and rejects an unknown sha', async t => {
   const root = await mkdtemp(join(tmpdir(), 'gitleaks-revision-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const git = (...args) => {
@@ -437,7 +479,7 @@ test('revisionExists accepts a real commit that is not an ancestor and rejects a
     assert.equal(result.status, 0, result.stderr);
     return result.stdout.trim();
   };
-  const commit = (message) => {
+  const commit = message => {
     git('-c', 'user.email=test@example.invalid', '-c', 'user.name=test', 'commit', '--allow-empty', '--quiet', '-m', message);
     return git('rev-parse', 'HEAD');
   };
@@ -453,7 +495,7 @@ test('revisionExists accepts a real commit that is not an ancestor and rejects a
   assert.equal(revisionExists(root, 'nope'), false);
 });
 
-test('CLI refuses usage errors and an unexecutable local binary before scanning', async (t) => {
+test('CLI refuses usage errors and an unexecutable local binary before scanning', async t => {
   const usage = spawnSync(process.execPath, [resolve('scripts/ci/scan-secrets.mjs'), '--help'], { encoding: 'utf8', windowsHide: true });
   assert.equal(usage.status, 1);
   assert.match(usage.stderr, /Usage: node scripts\/ci\/scan-secrets\.mjs/);
@@ -468,9 +510,10 @@ test('CLI refuses usage errors and an unexecutable local binary before scanning'
   git('init', '--quiet');
   git('-c', 'user.email=test@example.invalid', '-c', 'user.name=test', 'commit', '--allow-empty', '--quiet', '-m', 'root');
   const head = git('rev-parse', 'HEAD');
-  const scan = spawnSync(process.execPath, [
-    resolve('scripts/ci/scan-secrets.mjs'), '--event', 'push', '--head', head, '--root', root, '--gitleaks', join(root, 'absent-gitleaks'),
-  ], { encoding: 'utf8', windowsHide: true });
+  const scan = spawnSync(process.execPath, [resolve('scripts/ci/scan-secrets.mjs'), '--event', 'push', '--head', head, '--root', root, '--gitleaks', join(root, 'absent-gitleaks')], {
+    encoding: 'utf8',
+    windowsHide: true,
+  });
   assert.equal(scan.status, 1);
   assert.equal(scan.stdout, '', 'no report is emitted when the binary cannot be probed');
   assert.doesNotMatch(scan.stderr, /tree-plus-range/);

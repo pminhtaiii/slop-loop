@@ -1,7 +1,30 @@
 import type { ValidationError, ValidationResult } from '../../foundation/uc03.ts';
 import { parseApprovalBinding } from '../../foundation/uc03.ts';
-import type { ApprovalTaskControl, ApprovalRequestRecord, HumanResolutionValidationContext, HumanResolution, BindingAssessmentValidationContext, BindingAssessment, DeveloperDirectionValidationContext, DeveloperDirection } from './types.ts';
-import { TASK_CONTROL_KEYS, TASK_CONTROL_MODES, addError, invalidObject, isIdentifier, isRecord, rejectUnknownKeys, validateDigest, validateId, validateIdArray, validatePositiveInteger, validateSchemaVersion, validateTimestamp } from './validation.ts';
+import type {
+  ApprovalTaskControl,
+  ApprovalRequestRecord,
+  HumanResolutionValidationContext,
+  HumanResolution,
+  BindingAssessmentValidationContext,
+  BindingAssessment,
+  DeveloperDirectionValidationContext,
+  DeveloperDirection,
+} from './types.ts';
+import {
+  TASK_CONTROL_KEYS,
+  TASK_CONTROL_MODES,
+  addError,
+  invalidObject,
+  isIdentifier,
+  isRecord,
+  rejectUnknownKeys,
+  validateDigest,
+  validateId,
+  validateIdArray,
+  validatePositiveInteger,
+  validateSchemaVersion,
+  validateTimestamp,
+} from './validation.ts';
 
 export function validateApprovalTaskControl(input: unknown): ValidationResult<ApprovalTaskControl> {
   const path = 'approvalTaskControl';
@@ -14,7 +37,7 @@ export function validateApprovalTaskControl(input: unknown): ValidationResult<Ap
   validateId(input['workspaceId'], `${path}.workspaceId`, errors);
   validatePositiveInteger(input['version'], `${path}.version`, errors);
   validatePositiveInteger(input['epoch'], `${path}.epoch`, errors);
-  if (!TASK_CONTROL_MODES.includes(input['mode'] as typeof TASK_CONTROL_MODES[number])) {
+  if (!TASK_CONTROL_MODES.includes(input['mode'] as (typeof TASK_CONTROL_MODES)[number])) {
     addError(errors, `${path}.mode`, 'INVALID_MODE', 'mode is not a supported task-control state');
   }
   for (const field of ['pendingDecisionId', 'continuationRef'] as const) {
@@ -38,9 +61,24 @@ export function validateApprovalTaskControl(input: unknown): ValidationResult<Ap
 }
 
 const APPROVAL_REQUEST_KEYS = [
-  'schemaVersion', 'decisionId', 'binding', 'taskId', 'repositoryId', 'workspaceId', 'createdRunId',
-  'continuationRef', 'requestVersion', 'policyId', 'policyVersion', 'configId', 'configVersion',
-  'actionRef', 'actionDigest', 'presentationDigest', 'createdAt', 'submissionKey',
+  'schemaVersion',
+  'decisionId',
+  'binding',
+  'taskId',
+  'repositoryId',
+  'workspaceId',
+  'createdRunId',
+  'continuationRef',
+  'requestVersion',
+  'policyId',
+  'policyVersion',
+  'configId',
+  'configVersion',
+  'actionRef',
+  'actionDigest',
+  'presentationDigest',
+  'createdAt',
+  'submissionKey',
 ] as const;
 
 /** Validate a new pending request and its identity and digest agreement with the canonical binding. */
@@ -51,9 +89,20 @@ export function validateApprovalRequestRecord(input: unknown): ValidationResult<
   rejectUnknownKeys(input, APPROVAL_REQUEST_KEYS, path, errors);
   validateSchemaVersion(input, errors);
   for (const field of [
-    'decisionId', 'taskId', 'repositoryId', 'workspaceId', 'createdRunId', 'continuationRef',
-    'policyId', 'policyVersion', 'configId', 'configVersion', 'actionRef', 'submissionKey',
-  ] as const) validateId(input[field], `${path}.${field}`, errors);
+    'decisionId',
+    'taskId',
+    'repositoryId',
+    'workspaceId',
+    'createdRunId',
+    'continuationRef',
+    'policyId',
+    'policyVersion',
+    'configId',
+    'configVersion',
+    'actionRef',
+    'submissionKey',
+  ] as const)
+    validateId(input[field], `${path}.${field}`, errors);
   validatePositiveInteger(input['requestVersion'], `${path}.requestVersion`, errors);
   validateDigest(input['actionDigest'], `${path}.actionDigest`, errors);
   validateDigest(input['presentationDigest'], `${path}.presentationDigest`, errors);
@@ -71,8 +120,11 @@ export function validateApprovalRequestRecord(input: unknown): ValidationResult<
     validateDigest(binding.normalizedActionDigest, `${path}.binding.normalizedActionDigest`, errors);
     validateDigest(binding.repositoryRevisionDigest, `${path}.binding.repositoryRevisionDigest`, errors);
     for (const [field, value] of [
-      ['decisionId', binding.decisionId], ['taskId', binding.taskId], ['workspaceId', binding.workspaceId],
-      ['policyId', binding.policyId], ['policyVersion', binding.policyVersion],
+      ['decisionId', binding.decisionId],
+      ['taskId', binding.taskId],
+      ['workspaceId', binding.workspaceId],
+      ['policyId', binding.policyId],
+      ['policyVersion', binding.policyVersion],
     ] as const) {
       if (input[field] !== value) addError(errors, `${path}.${field}`, 'IDENTITY_MISMATCH', `${field} must match the canonical approval binding`);
     }
@@ -82,10 +134,7 @@ export function validateApprovalRequestRecord(input: unknown): ValidationResult<
   return errors.length > 0 ? { ok: false, errors } : { ok: true, value: input as unknown as ApprovalRequestRecord };
 }
 
-const HUMAN_RESOLUTION_KEYS = [
-  'schemaVersion', 'decisionId', 'responseKey', 'expectedRequestVersion', 'operatorChannelRef',
-  'decision', 'safeReasonCode', 'decidedAt', 'eventId',
-] as const;
+const HUMAN_RESOLUTION_KEYS = ['schemaVersion', 'decisionId', 'responseKey', 'expectedRequestVersion', 'operatorChannelRef', 'decision', 'safeReasonCode', 'decidedAt', 'eventId'] as const;
 const TRUSTED_OPERATOR_KEYS = ['actorId', 'channelRef', 'provenance'] as const;
 
 /** Require explicit actor and channel identifiers with real host provenance. */
@@ -119,7 +168,8 @@ function validateHumanResolutionRecord(input: unknown, context: HumanResolutionV
   validatePositiveInteger(context.expectedRequestVersion, 'context.expectedRequestVersion', errors);
   validateTrustedOperator(context.trustedOperator, errors);
   if (input['decisionId'] !== context.expectedDecisionId) addError(errors, `${path}.decisionId`, 'IDENTITY_MISMATCH', 'decisionId must match the trusted pending request');
-  if (input['expectedRequestVersion'] !== context.expectedRequestVersion) addError(errors, `${path}.expectedRequestVersion`, 'VERSION_MISMATCH', 'request version must match the current trusted request');
+  if (input['expectedRequestVersion'] !== context.expectedRequestVersion)
+    addError(errors, `${path}.expectedRequestVersion`, 'VERSION_MISMATCH', 'request version must match the current trusted request');
   if (isRecord(context.trustedOperator) && input['operatorChannelRef'] !== context.trustedOperator['channelRef']) {
     addError(errors, `${path}.operatorChannelRef`, 'IDENTITY_MISMATCH', 'operator channel must match the trusted host channel');
   }
@@ -128,14 +178,11 @@ function validateHumanResolutionRecord(input: unknown, context: HumanResolutionV
 
 /** Compare every persisted resolution field to distinguish an identical retry from a conflict. */
 function sameResolution(left: HumanResolution, right: HumanResolution): boolean {
-  return HUMAN_RESOLUTION_KEYS.every((key) => left[key] === right[key]);
+  return HUMAN_RESOLUTION_KEYS.every(key => left[key] === right[key]);
 }
 
 /** Validate a trusted human response, permitting identical retries and rejecting terminal conflicts. */
-export function validateHumanResolution(
-  input: unknown,
-  context?: HumanResolutionValidationContext
-): ValidationResult<HumanResolution> {
+export function validateHumanResolution(input: unknown, context?: HumanResolutionValidationContext): ValidationResult<HumanResolution> {
   if (context === undefined) {
     return { ok: false, errors: [{ path: 'context', message: 'trusted request and operator context are required', code: 'MISSING_TRUSTED_CONTEXT' }] };
   }
@@ -157,16 +204,10 @@ export function validateHumanResolution(
   return current;
 }
 
-const BINDING_ASSESSMENT_KEYS = [
-  'schemaVersion', 'assessmentId', 'decisionId', 'checkedTaskVersion', 'checkedEpoch',
-  'trustedContextDigest', 'status', 'reasonCodes', 'checkedAt',
-] as const;
+const BINDING_ASSESSMENT_KEYS = ['schemaVersion', 'assessmentId', 'decisionId', 'checkedTaskVersion', 'checkedEpoch', 'trustedContextDigest', 'status', 'reasonCodes', 'checkedAt'] as const;
 
 /** Validate assessment reasons and bind the record to the trusted decision, task version, epoch and context digest. */
-export function validateBindingAssessment(
-  input: unknown,
-  context?: BindingAssessmentValidationContext
-): ValidationResult<BindingAssessment> {
+export function validateBindingAssessment(input: unknown, context?: BindingAssessmentValidationContext): ValidationResult<BindingAssessment> {
   const path = 'bindingAssessment';
   if (!isRecord(input)) return { ok: false, errors: invalidObject(path) };
   const errors: ValidationError[] = [];
@@ -179,7 +220,7 @@ export function validateBindingAssessment(
   validateDigest(input['trustedContextDigest'], `${path}.trustedContextDigest`, errors);
   validateTimestamp(input['checkedAt'], `${path}.checkedAt`, errors);
   const statuses = ['valid', 'stale', 'denied'] as const;
-  if (!statuses.includes(input['status'] as typeof statuses[number])) addError(errors, `${path}.status`, 'INVALID_STATUS', 'status must be valid, stale, or denied');
+  if (!statuses.includes(input['status'] as (typeof statuses)[number])) addError(errors, `${path}.status`, 'INVALID_STATUS', 'status must be valid, stale, or denied');
   validateIdArray(input['reasonCodes'], `${path}.reasonCodes`, errors, true);
   if (input['status'] === 'valid' && Array.isArray(input['reasonCodes']) && input['reasonCodes'].length > 0) {
     addError(errors, `${path}.reasonCodes`, 'INCOMPATIBLE_STATUS', 'valid assessments cannot contain denial or staleness reasons');
@@ -200,21 +241,16 @@ export function validateBindingAssessment(
     if (input['decisionId'] !== context.expectedDecisionId) addError(errors, `${path}.decisionId`, 'IDENTITY_MISMATCH', 'assessment must match the trusted decision identity');
     if (input['checkedTaskVersion'] !== context.expectedTaskVersion) addError(errors, `${path}.checkedTaskVersion`, 'VERSION_MISMATCH', 'assessment must match the current task version');
     if (input['checkedEpoch'] !== context.expectedEpoch) addError(errors, `${path}.checkedEpoch`, 'EPOCH_MISMATCH', 'assessment must match the current task epoch');
-    if (input['trustedContextDigest'] !== context.trustedContextDigest) addError(errors, `${path}.trustedContextDigest`, 'IDENTITY_MISMATCH', 'assessment must bind the current trusted context digest');
+    if (input['trustedContextDigest'] !== context.trustedContextDigest)
+      addError(errors, `${path}.trustedContextDigest`, 'IDENTITY_MISMATCH', 'assessment must bind the current trusted context digest');
   }
   return errors.length > 0 ? { ok: false, errors } : { ok: true, value: input as unknown as BindingAssessment };
 }
 
-const DEVELOPER_DIRECTION_KEYS = [
-  'schemaVersion', 'directionId', 'taskId', 'expectedVersion', 'expectedEpoch', 'direction',
-  'safeScopeRef', 'responseKey', 'createdAt',
-] as const;
+const DEVELOPER_DIRECTION_KEYS = ['schemaVersion', 'directionId', 'taskId', 'expectedVersion', 'expectedEpoch', 'direction', 'safeScopeRef', 'responseKey', 'createdAt'] as const;
 
 /** Validate resume, revise or end direction against trusted operator and current task context. */
-export function validateDeveloperDirection(
-  input: unknown,
-  context?: DeveloperDirectionValidationContext
-): ValidationResult<DeveloperDirection> {
+export function validateDeveloperDirection(input: unknown, context?: DeveloperDirectionValidationContext): ValidationResult<DeveloperDirection> {
   const path = 'developerDirection';
   if (!isRecord(input)) return { ok: false, errors: invalidObject(path) };
   const errors: ValidationError[] = [];
@@ -225,7 +261,7 @@ export function validateDeveloperDirection(
   validatePositiveInteger(input['expectedEpoch'], `${path}.expectedEpoch`, errors);
   validateTimestamp(input['createdAt'], `${path}.createdAt`, errors);
   const directions = ['resume', 'revise', 'end'] as const;
-  if (!directions.includes(input['direction'] as typeof directions[number])) addError(errors, `${path}.direction`, 'INVALID_DIRECTION', 'direction must be resume, revise, or end');
+  if (!directions.includes(input['direction'] as (typeof directions)[number])) addError(errors, `${path}.direction`, 'INVALID_DIRECTION', 'direction must be resume, revise, or end');
 
   if (context === undefined) addError(errors, 'context', 'MISSING_TRUSTED_CONTEXT', 'trusted CLI operator and current task identity are required');
   else if (!isRecord(context)) addError(errors, 'context', 'INVALID_TYPE', 'direction context must be a plain object');

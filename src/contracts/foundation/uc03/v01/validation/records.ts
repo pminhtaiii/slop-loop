@@ -6,24 +6,13 @@ import { isPlainObject, rejectUnknownKeys, validateNonNegativeInteger, validateS
 import { validateProviderUsage } from './provider.ts';
 import { validateTaskOutcome } from './state.ts';
 
-export function validateTaskWorkspace(
-  input: unknown,
-  context?: TaskWorkspaceValidationContext,
-  path = 'taskWorkspace'
-): ValidationResult<TaskWorkspace> {
+export function validateTaskWorkspace(input: unknown, context?: TaskWorkspaceValidationContext, path = 'taskWorkspace'): ValidationResult<TaskWorkspace> {
   const errors: ValidationError[] = [];
   if (!isPlainObject(input)) {
     return { ok: false, errors: [{ path, message: `${path} must be an object`, code: 'INVALID_TYPE' }] };
   }
 
-  const allowedKeys = [
-    'taskId',
-    'workspaceId',
-    'containerImageDigest',
-    'repoVolumeId',
-    'scratchVolumeId',
-    'expectedRepoState',
-  ];
+  const allowedKeys = ['taskId', 'workspaceId', 'containerImageDigest', 'repoVolumeId', 'scratchVolumeId', 'expectedRepoState'];
   rejectUnknownKeys(input, allowedKeys, path, errors);
   for (const field of ['expectedRepoState']) {
     if (input[field] === undefined) errors.push({ path: `${path}.${field}`, message: `${path}.${field} is required`, code: 'REQUIRED_FIELD' });
@@ -169,17 +158,7 @@ export function validateActivityEvent(input: unknown, path = 'activityEvent'): V
     return { ok: false, errors: [{ path, message: `${path} must be an object`, code: 'INVALID_TYPE' }] };
   }
 
-  const allowedKeys = [
-    'eventId',
-    'taskId',
-    'runId',
-    'timestamp',
-    'node',
-    'actionType',
-    'outcome',
-    'durationMs',
-    'evidenceRefs',
-  ];
+  const allowedKeys = ['eventId', 'taskId', 'runId', 'timestamp', 'node', 'actionType', 'outcome', 'durationMs', 'evidenceRefs'];
   rejectUnknownKeys(input, allowedKeys, path, errors);
   for (const field of ['outcome', 'durationMs', 'evidenceRefs']) {
     if (input[field] === undefined) errors.push({ path: `${path}.${field}`, message: `${path}.${field} is required`, code: 'REQUIRED_FIELD' });
@@ -256,28 +235,13 @@ export function validateActivityEvent(input: unknown, path = 'activityEvent'): V
   return { ok: true, value: input as unknown as ActivityEvent };
 }
 
-export function validateDelivery(
-  input: unknown,
-  context?: DeliveryValidationContext,
-  path = 'delivery'
-): ValidationResult<Delivery> {
+export function validateDelivery(input: unknown, context?: DeliveryValidationContext, path = 'delivery'): ValidationResult<Delivery> {
   const errors: ValidationError[] = [];
   if (!isPlainObject(input)) {
     return { ok: false, errors: [{ path, message: `${path} must be an object`, code: 'INVALID_TYPE' }] };
   }
 
-  const allowedKeys = [
-    'taskId',
-    'runId',
-    'outcome',
-    'diffDigest',
-    'changedFiles',
-    'baselineRef',
-    'verificationRefs',
-    'reviewRef',
-    'limitations',
-    'safeNextAction',
-  ];
+  const allowedKeys = ['taskId', 'runId', 'outcome', 'diffDigest', 'changedFiles', 'baselineRef', 'verificationRefs', 'reviewRef', 'limitations', 'safeNextAction'];
   rejectUnknownKeys(input, allowedKeys, path, errors);
   for (const field of ['diffDigest', 'changedFiles', 'baselineRef', 'verificationRefs', 'reviewRef', 'limitations', 'safeNextAction']) {
     if (input[field] === undefined) errors.push({ path: `${path}.${field}`, message: `${path}.${field} is required`, code: 'REQUIRED_FIELD' });
@@ -397,8 +361,10 @@ export function validateDelivery(
   }
 
   if (context !== undefined) {
-    if (context.expectedDiffDigest !== undefined && input.diffDigest !== context.expectedDiffDigest) errors.push({ path: 'diffDigest', message: 'Expected identity mismatch', code: 'IDENTITY_MISMATCH' });
-    if (context.expectedBaselineRef !== undefined && input.baselineRef !== context.expectedBaselineRef) errors.push({ path: 'baselineRef', message: 'Expected identity mismatch', code: 'IDENTITY_MISMATCH' });
+    if (context.expectedDiffDigest !== undefined && input.diffDigest !== context.expectedDiffDigest)
+      errors.push({ path: 'diffDigest', message: 'Expected identity mismatch', code: 'IDENTITY_MISMATCH' });
+    if (context.expectedBaselineRef !== undefined && input.baselineRef !== context.expectedBaselineRef)
+      errors.push({ path: 'baselineRef', message: 'Expected identity mismatch', code: 'IDENTITY_MISMATCH' });
     if (context.expectedReviewRef !== undefined && input.reviewRef !== context.expectedReviewRef) errors.push({ path: 'reviewRef', message: 'Expected identity mismatch', code: 'IDENTITY_MISMATCH' });
     if (context.expectedTaskId !== undefined && input.taskId !== context.expectedTaskId) {
       errors.push({

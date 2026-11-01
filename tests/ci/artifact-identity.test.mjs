@@ -50,21 +50,19 @@ test('identity requires positive run numbers, a real head and a plain OS label',
   assert.equal(artifactIdentity(env({ BASE_SHA: '', MERGE_SHA: '' })).base, undefined, 'push and dispatch provenance is optional');
 });
 
-test('the manifest covers every shipped file with a stable order and content hash', (t) => {
+test('the manifest covers every shipped file with a stable order and content hash', t => {
   const root = checkout(t, { source: ['b', 'a'], emitted: ['b', 'a'] });
   const files = manifestOf(root);
-  assert.deepEqual(files.map((file) => file.path), [
-    'dist/tests/runtime/a.test.js',
-    'dist/tests/runtime/b.test.js',
-    'tests/runtime/a.test.ts',
-    'tests/runtime/b.test.ts',
-  ]);
+  assert.deepEqual(
+    files.map(file => file.path),
+    ['dist/tests/runtime/a.test.js', 'dist/tests/runtime/b.test.js', 'tests/runtime/a.test.ts', 'tests/runtime/b.test.ts'],
+  );
   for (const file of files) assert.match(file.sha256, /^[0-9a-f]{64}$/);
-  assert.equal(new Set(files.map((file) => file.sha256)).size, 4, 'distinct content yields distinct hashes');
+  assert.equal(new Set(files.map(file => file.sha256)).size, 4, 'distinct content yields distinct hashes');
   assert.throws(() => manifestOf(root, ['missing']), /No artifact files found/);
 });
 
-test('a recorded identity verifies only against its own run context', (t) => {
+test('a recorded identity verifies only against its own run context', t => {
   const root = checkout(t);
   writeIdentity({ root, env: env() });
   assert.equal(verifyIdentity({ root, env: env() }).runAttempt, 1);
@@ -84,7 +82,7 @@ test('a recorded identity verifies only against its own run context', (t) => {
   assert.throws(() => verifyIdentity({ root, env: env({ RUN_ATTEMPT: '2' }) }), /does not match this run/);
 });
 
-test('tampered, missing and orphaned artifact files are refused', (t) => {
+test('tampered, missing and orphaned artifact files are refused', t => {
   const root = checkout(t);
   writeIdentity({ root, env: env() });
 
@@ -103,11 +101,21 @@ test('tampered, missing and orphaned artifact files are refused', (t) => {
   writeFileSync(join(root, IDENTITY_FILE), '{"schemaVersion":2,"identity":{},"files":[]}');
   assert.throws(() => verifyIdentity({ root, env: env() }), /unsupported shape/);
 
-  writeFileSync(join(root, IDENTITY_FILE), JSON.stringify({ schemaVersion: 1, identity: artifactIdentity(env()), files: [{ path: 'tests/runtime/one.test.ts', sha256: 'x' }, { path: 'tests/runtime/one.test.ts', sha256: 'y' }] }));
+  writeFileSync(
+    join(root, IDENTITY_FILE),
+    JSON.stringify({
+      schemaVersion: 1,
+      identity: artifactIdentity(env()),
+      files: [
+        { path: 'tests/runtime/one.test.ts', sha256: 'x' },
+        { path: 'tests/runtime/one.test.ts', sha256: 'y' },
+      ],
+    }),
+  );
   assert.throws(() => verifyIdentity({ root, env: env() }), /duplicate path/);
 });
 
-test('an artifact from another OS or a merge checkout never satisfies the lane', (t) => {
+test('an artifact from another OS or a merge checkout never satisfies the lane', t => {
   const root = checkout(t);
   writeIdentity({ root, env: env({ RUNNER_OS_LABEL: 'windows-latest' }) });
   assert.throws(() => verifyIdentity({ root, env: env() }), /does not match this run/, 'wrong OS');

@@ -2,12 +2,23 @@ import type { ValidationError, ValidationResult } from '../../foundation/uc03.ts
 import type { DecisionEvent, DecisionEventType, SafeNextAction, SafeOperationOutcome, SafePresentation, SafeResult } from './types.ts';
 import { validatePolicyProfile } from './policy-validator.ts';
 import { validatePolicyIdentity } from './claim-validator.ts';
-import { SAFE_RELATIVE_PATH_PATTERN, addError, invalidObject, isBoundedDenseArray, isIdentifier, isRecord, rejectUnknownKeys, validateBoundedText, validateDigest, validateId, validatePositiveInteger, validateSchemaVersion, validateTimestamp } from './validation.ts';
+import {
+  SAFE_RELATIVE_PATH_PATTERN,
+  addError,
+  invalidObject,
+  isBoundedDenseArray,
+  isIdentifier,
+  isRecord,
+  rejectUnknownKeys,
+  validateBoundedText,
+  validateDigest,
+  validateId,
+  validatePositiveInteger,
+  validateSchemaVersion,
+  validateTimestamp,
+} from './validation.ts';
 
-const SAFE_PRESENTATION_KEYS = [
-  'schemaVersion', 'decisionId', 'requestVersion', 'bindingFingerprint', 'elements', 'inspectionRef',
-  'presentationDigest', 'page',
-] as const;
+const SAFE_PRESENTATION_KEYS = ['schemaVersion', 'decisionId', 'requestVersion', 'bindingFingerprint', 'elements', 'inspectionRef', 'presentationDigest', 'page'] as const;
 const PRESENTATION_ELEMENT_KEYS = ['action', 'necessity', 'targets', 'consequences', 'verificationStatus'] as const;
 const PRESENTATION_PAGE_KEYS = ['pageNumber', 'pageCount', 'pageBytes', 'totalBytes', 'truncated'] as const;
 
@@ -25,7 +36,7 @@ export function validateSafePresentation(input: unknown, profile: unknown): Vali
   validateDigest(input['presentationDigest'], `${path}.presentationDigest`, errors);
 
   const profileResult = validatePolicyProfile(profile);
-  if (!profileResult.ok) errors.push(...profileResult.errors.map((error) => ({ ...error, path: `profile.${error.path}` })));
+  if (!profileResult.ok) errors.push(...profileResult.errors.map(error => ({ ...error, path: `profile.${error.path}` })));
   const pageByteCap = profileResult.ok ? profileResult.value.maxPresentationPageBytes : 0;
   const totalByteCap = profileResult.ok ? profileResult.value.maxPresentationTotalBytes : 0;
   const pageCountCap = profileResult.ok ? profileResult.value.maxPresentationPages : 0;
@@ -39,10 +50,12 @@ export function validateSafePresentation(input: unknown, profile: unknown): Vali
     }
     const targets = elements['targets'];
     if (!isBoundedDenseArray(targets, 32) || targets.length === 0) addError(errors, `${path}.elements.targets`, 'INVALID_TARGETS', 'targets must be a nonempty bounded dense array');
-    else targets.forEach((target: unknown, index: number) => {
-      validateBoundedText(target, `${path}.elements.targets[${index}]`, errors, pageByteCap);
-      if (typeof target === 'string' && !SAFE_RELATIVE_PATH_PATTERN.test(target)) addError(errors, `${path}.elements.targets[${index}]`, 'INVALID_TARGET', 'presentation target must be a canonical relative path');
-    });
+    else
+      targets.forEach((target: unknown, index: number) => {
+        validateBoundedText(target, `${path}.elements.targets[${index}]`, errors, pageByteCap);
+        if (typeof target === 'string' && !SAFE_RELATIVE_PATH_PATTERN.test(target))
+          addError(errors, `${path}.elements.targets[${index}]`, 'INVALID_TARGET', 'presentation target must be a canonical relative path');
+      });
   }
 
   const page = input['page'];
@@ -56,7 +69,8 @@ export function validateSafePresentation(input: unknown, profile: unknown): Vali
       addError(errors, `${path}.page.pageNumber`, 'INVALID_PAGE', 'pageNumber cannot exceed pageCount');
     }
     if (typeof page['pageBytes'] === 'number' && page['pageBytes'] > pageByteCap) addError(errors, `${path}.page.pageBytes`, 'PAGE_SIZE_EXCEEDED', 'page bytes exceed the profile bound');
-    if (typeof page['totalBytes'] === 'number' && page['totalBytes'] > totalByteCap) addError(errors, `${path}.page.totalBytes`, 'PRESENTATION_SIZE_EXCEEDED', 'total inspectable bytes exceed the profile bound');
+    if (typeof page['totalBytes'] === 'number' && page['totalBytes'] > totalByteCap)
+      addError(errors, `${path}.page.totalBytes`, 'PRESENTATION_SIZE_EXCEEDED', 'total inspectable bytes exceed the profile bound');
     if (typeof page['pageBytes'] === 'number' && typeof page['totalBytes'] === 'number' && page['pageBytes'] > page['totalBytes']) {
       addError(errors, `${path}.page.totalBytes`, 'INVALID_PAGE_SIZE', 'total bytes cannot be less than the current page bytes');
     }
@@ -74,21 +88,19 @@ export function validateSafePresentation(input: unknown, profile: unknown): Vali
   return errors.length > 0 ? { ok: false, errors } : { ok: true, value: input as unknown as SafePresentation };
 }
 
-const SAFE_OUTCOMES: readonly SafeOperationOutcome[] = [
-  'ok', 'pending', 'paused', 'denied', 'invalid', 'conflict', 'stale', 'unavailable', 'uncertain',
-];
+const SAFE_OUTCOMES: readonly SafeOperationOutcome[] = ['ok', 'pending', 'paused', 'denied', 'invalid', 'conflict', 'stale', 'unavailable', 'uncertain'];
 const SAFE_NEXT_ACTIONS: readonly SafeNextAction[] = ['none', 'inspect', 'decide', 'resume', 'revise', 'end', 'retry-read', 'reconcile'];
-const SAFE_RESULT_KEYS = [
-  'schemaVersion', 'outcome', 'safeReasonCode', 'taskId', 'decisionId', 'controlVersion',
-  'requestVersion', 'eventRef', 'safeNextAction',
-] as const;
-const DECISION_EVENT_KEYS = [
-  'schemaVersion', 'eventId', 'taskId', 'runId', 'decisionId', 'directionId', 'claimId',
-  'type', 'outcome', 'policyRef', 'safeReasonCode', 'timestamp',
-] as const;
+const SAFE_RESULT_KEYS = ['schemaVersion', 'outcome', 'safeReasonCode', 'taskId', 'decisionId', 'controlVersion', 'requestVersion', 'eventRef', 'safeNextAction'] as const;
+const DECISION_EVENT_KEYS = ['schemaVersion', 'eventId', 'taskId', 'runId', 'decisionId', 'directionId', 'claimId', 'type', 'outcome', 'policyRef', 'safeReasonCode', 'timestamp'] as const;
 const DECISION_EVENT_TYPES: readonly DecisionEventType[] = [
-  'approval-request-created', 'human-resolution-recorded', 'binding-assessed', 'developer-direction-recorded',
-  'dispatch-claim-created', 'dispatch-effect-observed', 'dispatch-uncertain', 'claim-reconciled',
+  'approval-request-created',
+  'human-resolution-recorded',
+  'binding-assessed',
+  'developer-direction-recorded',
+  'dispatch-claim-created',
+  'dispatch-effect-observed',
+  'dispatch-uncertain',
+  'claim-reconciled',
 ];
 
 /** Validate safe outcome metadata and require paired decision identity and request version fields. */
@@ -150,7 +162,7 @@ export function validateDecisionEvent(input: unknown, profile: unknown): Validat
   }
 
   const profileResult = validatePolicyProfile(profile);
-  if (!profileResult.ok) errors.push(...profileResult.errors.map((error) => ({ ...error, path: `profile.${error.path}` })));
+  if (!profileResult.ok) errors.push(...profileResult.errors.map(error => ({ ...error, path: `profile.${error.path}` })));
   else {
     try {
       const bytes = Buffer.byteLength(JSON.stringify(input), 'utf8');

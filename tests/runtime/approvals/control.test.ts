@@ -1,8 +1,4 @@
-import {
-  createApprovalControlV02,
-  isExecutorCapability,
-  type UC04JournalPortV02,
-} from '../../../src/approvals/control.ts';
+import { createApprovalControlV02, isExecutorCapability, type UC04JournalPortV02 } from '../../../src/approvals/control.ts';
 import type { PolicyAuthorityRefV02 } from '../../../src/contracts/foundation/uc03/v02/ports.ts';
 import {
   UC05_APPROVAL_SCHEMA_VERSION_V02,
@@ -35,48 +31,194 @@ import {
 const digest = `sha256:${'a'.repeat(64)}`;
 const identity = { policyId: 'policy-1', policyVersion: '1', configId: 'config-1', configVersion: '1' };
 const profile: PolicyProfile = {
-  schemaVersion: 'uc05-approval/0.1-draft', profileId: 'uc05-local-v1', profileVersion: '1',
-  policyIdentity: identity, supportedActionKinds: ['run_command', 'apply_patch', 'approve_fix_plan'],
+  schemaVersion: 'uc05-approval/0.1-draft',
+  profileId: 'uc05-local-v1',
+  profileVersion: '1',
+  policyIdentity: identity,
+  supportedActionKinds: ['run_command', 'apply_patch', 'approve_fix_plan'],
   commandRules: [{ ruleId: 'tests', executableRef: 'pytest', argvPrefix: ['-q', 'tests/'], workingDirectoryRef: 'repository-root', timeoutMs: 2000, maxOutputBytes: 8192 }],
-  sensitivePaths: ['pyproject.toml'], patchBreadth: { maxFiles: 8, maxAddedDeletedLines: 400 },
-  maxActionBytes: 65536, maxArgvEntries: 32, maxArgvEntryBytes: 4096,
-  maxPresentationPageBytes: 8192, maxPresentationPages: 3, maxPresentationTotalBytes: 24576,
-  maxEventBytes: 1024, operationDeadlineMs: 2000, maxMutationAttempts: 1,
+  sensitivePaths: ['pyproject.toml'],
+  patchBreadth: { maxFiles: 8, maxAddedDeletedLines: 400 },
+  maxActionBytes: 65536,
+  maxArgvEntries: 32,
+  maxArgvEntryBytes: 4096,
+  maxPresentationPageBytes: 8192,
+  maxPresentationPages: 3,
+  maxPresentationTotalBytes: 24576,
+  maxEventBytes: 1024,
+  operationDeadlineMs: 2000,
+  maxMutationAttempts: 1,
   diagnosticRules: { maxBytes: 1024, redactSecrets: true, allowRawArtifacts: false, retainUnresolvedDecisions: true },
 };
 const action: NormalizedAction = { actionId: 'action-1', kind: 'run_command', executable: 'pytest', argv: ['-q', 'tests/other.py'], workingDirectory: '/workspace' };
-const binding = { decisionId: 'decision-1', actionKind: 'action' as const, normalizedActionDigest: computeActionDigest(action), taskId: 'task-1', workspaceId: 'workspace-1', repositoryRevisionDigest: digest, policyId: 'policy-1', policyVersion: '1', status: 'pending' as const };
-const freshness = { currentTaskId: 'task-1', currentWorkspaceId: 'workspace-1', currentRepositoryRevisionDigest: digest, currentPolicyId: 'policy-1', currentPolicyVersion: '1', currentNormalizedActionDigest: computeActionDigest(action) };
+const binding = {
+  decisionId: 'decision-1',
+  actionKind: 'action' as const,
+  normalizedActionDigest: computeActionDigest(action),
+  taskId: 'task-1',
+  workspaceId: 'workspace-1',
+  repositoryRevisionDigest: digest,
+  policyId: 'policy-1',
+  policyVersion: '1',
+  status: 'pending' as const,
+};
+const freshness = {
+  currentTaskId: 'task-1',
+  currentWorkspaceId: 'workspace-1',
+  currentRepositoryRevisionDigest: digest,
+  currentPolicyId: 'policy-1',
+  currentPolicyVersion: '1',
+  currentNormalizedActionDigest: computeActionDigest(action),
+};
 const elements = { action: 'Run focused tests', necessity: 'Verify the proposed repair', targets: ['tests/other.py'], consequences: 'Runs isolated tests', verificationStatus: 'Not yet executed' };
 
 test('actual coordinator bars every caller class on a waiting task, including alternate action identities', () => {
-  const store = createMockApprovalStore({ profile, initialControls: [{ schemaVersion: 'uc05-approval/0.1-draft', taskId: 'task-1', repositoryId: 'repository-1', workspaceId: 'workspace-1', version: 2, epoch: 2, mode: 'waiting', pendingDecisionId: 'decision-1', continuationRef: 'continuation-1', reasonCode: 'pending', outstandingClaimRefs: [] }] });
+  const store = createMockApprovalStore({
+    profile,
+    initialControls: [
+      {
+        schemaVersion: 'uc05-approval/0.1-draft',
+        taskId: 'task-1',
+        repositoryId: 'repository-1',
+        workspaceId: 'workspace-1',
+        version: 2,
+        epoch: 2,
+        mode: 'waiting',
+        pendingDecisionId: 'decision-1',
+        continuationRef: 'continuation-1',
+        reasonCode: 'pending',
+        outstandingClaimRefs: [],
+      },
+    ],
+  });
   const activity = createMockActivityControl(profile);
-  const coordinator = createApprovalControl({ taskId: 'task-1', activity, load: () => { const current = store.loadTaskControl('task-1').value; assert.ok(current); return current; } });
+  const coordinator = createApprovalControl({
+    taskId: 'task-1',
+    activity,
+    load: () => {
+      const current = store.loadTaskControl('task-1').value;
+      assert.ok(current);
+      return current;
+    },
+  });
   for (const caller of ['coder', 'reviewer', 'model', 'tool', 'read', 'test', 'background']) {
-    assert.equal(coordinator.admitAttempt(caller, { schemaVersion: 'uc05-approval/0.1-draft', claimId: `claim-${caller}`, actionId: `alternate-${caller}`, taskId: 'task-1', expectedControlVersion: 2, expectedEpoch: 2, repositoryStateDigest: digest, policyIdentity: identity, decisionRefs: [], reservationRefs: ['reservation-1'], phase: 'claimed', resultRef: null }), false);
+    assert.equal(
+      coordinator.admitAttempt(caller, {
+        schemaVersion: 'uc05-approval/0.1-draft',
+        claimId: `claim-${caller}`,
+        actionId: `alternate-${caller}`,
+        taskId: 'task-1',
+        expectedControlVersion: 2,
+        expectedEpoch: 2,
+        repositoryStateDigest: digest,
+        policyIdentity: identity,
+        decisionRefs: [],
+        reservationRefs: ['reservation-1'],
+        phase: 'claimed',
+        resultRef: null,
+      }),
+      false,
+    );
   }
   assert.equal(activity.inspectOutstanding('task-1').length, 0);
 });
 
-function setup(options: { mode?: 'runnable' | 'rejected' | 'recovery-blocked' | 'ended'; outstandingClaimRefs?: readonly string[]; deadlineMs?: number; wrapActivity?: (activity: ApprovalActivity) => ApprovalActivity; wrapStore?: (store: ApprovalStore) => ApprovalStore } = {}) {
-  const configuredProfile = { ...profile, operationDeadlineMs: options.deadlineMs ?? profile.operationDeadlineMs, commandRules: profile.commandRules.map(rule => ({ ...rule, timeoutMs: Math.min(rule.timeoutMs, options.deadlineMs ?? rule.timeoutMs) })) };
-  const store = createMockApprovalStore({ profile: configuredProfile, initialControls: [{ schemaVersion: 'uc05-approval/0.1-draft', taskId: 'task-1', repositoryId: 'repository-1', workspaceId: 'workspace-1', version: 1, epoch: 1, mode: options.mode ?? 'runnable', pendingDecisionId: null, continuationRef: null, reasonCode: 'ready', outstandingClaimRefs: options.outstandingClaimRefs ?? [] }] });
-  let current: ApprovalContext = { action, freshness, runId: 'run-1', elements, facts: {
-    taskId: 'task-1', repositoryId: 'repository-1', workspaceId: 'workspace-1', repositoryRevisionDigest: digest,
-    policyIdentity: identity, registeredActionDigest: computeActionDigest(action), continuationRef: 'continuation-1', role: 'coder',
-    safety: { workspaceContained: true, protectedContentAbsent: true, hiddenGradingAbsent: true, policyBypassAbsent: true, testsPreserved: true, commandSourceWritesAbsent: true, isolated: true },
-    command: { executableRef: 'pytest', resolvedExecutable: 'pytest', workingDirectoryRef: 'repository-root', workingDirectory: '/workspace', constrainedCapability: 'constrained-tests' }, patch: null, plan: null,
-  } };
-  const context = { loadForAction: async () => current, loadForDecision: async () => current, loadForTask: async () => ({ taskId: 'task-1', repositoryId: 'repository-1', workspaceId: 'workspace-1', runId: 'run-1', safeScopeRef: 'scope-1', policyIdentity: identity }) };
+function setup(
+  options: {
+    mode?: 'runnable' | 'rejected' | 'recovery-blocked' | 'ended';
+    outstandingClaimRefs?: readonly string[];
+    deadlineMs?: number;
+    wrapActivity?: (activity: ApprovalActivity) => ApprovalActivity;
+    wrapStore?: (store: ApprovalStore) => ApprovalStore;
+  } = {},
+) {
+  const configuredProfile = {
+    ...profile,
+    operationDeadlineMs: options.deadlineMs ?? profile.operationDeadlineMs,
+    commandRules: profile.commandRules.map(rule => ({ ...rule, timeoutMs: Math.min(rule.timeoutMs, options.deadlineMs ?? rule.timeoutMs) })),
+  };
+  const store = createMockApprovalStore({
+    profile: configuredProfile,
+    initialControls: [
+      {
+        schemaVersion: 'uc05-approval/0.1-draft',
+        taskId: 'task-1',
+        repositoryId: 'repository-1',
+        workspaceId: 'workspace-1',
+        version: 1,
+        epoch: 1,
+        mode: options.mode ?? 'runnable',
+        pendingDecisionId: null,
+        continuationRef: null,
+        reasonCode: 'ready',
+        outstandingClaimRefs: options.outstandingClaimRefs ?? [],
+      },
+    ],
+  });
+  let current: ApprovalContext = {
+    action,
+    freshness,
+    runId: 'run-1',
+    elements,
+    facts: {
+      taskId: 'task-1',
+      repositoryId: 'repository-1',
+      workspaceId: 'workspace-1',
+      repositoryRevisionDigest: digest,
+      policyIdentity: identity,
+      registeredActionDigest: computeActionDigest(action),
+      continuationRef: 'continuation-1',
+      role: 'coder',
+      safety: { workspaceContained: true, protectedContentAbsent: true, hiddenGradingAbsent: true, policyBypassAbsent: true, testsPreserved: true, commandSourceWritesAbsent: true, isolated: true },
+      command: { executableRef: 'pytest', resolvedExecutable: 'pytest', workingDirectoryRef: 'repository-root', workingDirectory: '/workspace', constrainedCapability: 'constrained-tests' },
+      patch: null,
+      plan: null,
+    },
+  };
+  const context = {
+    loadForAction: async () => current,
+    loadForDecision: async () => current,
+    loadForTask: async () => ({ taskId: 'task-1', repositoryId: 'repository-1', workspaceId: 'workspace-1', runId: 'run-1', safeScopeRef: 'scope-1', policyIdentity: identity }),
+  };
   const operator = { identity: { actorId: 'operator-1', channelRef: 'host-1', provenance: 'real' as const } };
   const activity = createMockActivityControl(configuredProfile);
-  const service = createApprovalService({ taskId: 'task-1', profile: configuredProfile, store: options.wrapStore?.(store) ?? store, context, activity: options.wrapActivity?.(activity) ?? activity, operator, now: () => '2026-10-19T00:00:00Z' });
-  return { service, store, context, activity, operator, setContext: (value: ApprovalContext) => { current = value; }, current: () => current };
+  const service = createApprovalService({
+    taskId: 'task-1',
+    profile: configuredProfile,
+    store: options.wrapStore?.(store) ?? store,
+    context,
+    activity: options.wrapActivity?.(activity) ?? activity,
+    operator,
+    now: () => '2026-10-19T00:00:00Z',
+  });
+  return {
+    service,
+    store,
+    context,
+    activity,
+    operator,
+    setContext: (value: ApprovalContext) => {
+      current = value;
+    },
+    current: () => current,
+  };
 }
 
 function claim(id = 'one') {
-  return { schemaVersion: 'uc05-approval/0.1-draft', claimId: `claim-${id}`, actionId: `action-${id}`, taskId: 'task-1', expectedControlVersion: 1, expectedEpoch: 1, repositoryStateDigest: digest, policyIdentity: identity, decisionRefs: [], reservationRefs: ['reservation-1'], phase: 'claimed', resultRef: null } as const;
+  return {
+    schemaVersion: 'uc05-approval/0.1-draft',
+    claimId: `claim-${id}`,
+    actionId: `action-${id}`,
+    taskId: 'task-1',
+    expectedControlVersion: 1,
+    expectedEpoch: 1,
+    repositoryStateDigest: digest,
+    policyIdentity: identity,
+    decisionRefs: [],
+    reservationRefs: ['reservation-1'],
+    phase: 'claimed',
+    resultRef: null,
+  } as const;
 }
 
 test('service pending fences in-flight activity and every caller; rejection requests cancellation without claiming rollback', async () => {
@@ -86,7 +228,15 @@ test('service pending fences in-flight activity and every caller; rejection requ
   assert.equal(activity.inspectOutstanding('task-1')[0]?.cancellationRequested, true);
   for (const caller of ['coder', 'reviewer', 'model', 'tool', 'read', 'test', 'background']) assert.equal(service.admitAttempt(caller, claim(caller)), false);
   const view = await service.show('task-1', 'decision-1');
-  await service.decide({ taskId: 'task-1', decisionId: 'decision-1', taskVersion: view.control.version, requestVersion: 1, presentationDigest: view.presentation.presentationDigest, decision: 'reject', responseKey: 'rejection' });
+  await service.decide({
+    taskId: 'task-1',
+    decisionId: 'decision-1',
+    taskVersion: view.control.version,
+    requestVersion: 1,
+    presentationDigest: view.presentation.presentationDigest,
+    decision: 'reject',
+    responseKey: 'rejection',
+  });
   assert.equal(activity.recordEffectAttempt('running', 'read').outcome, 'uncertain');
   assert.equal(activity.recordOutcome('running', 'cancelled').outcome, 'conflict');
   assert.equal((await service.list('task-1')).control.mode, 'rejected');
@@ -121,7 +271,20 @@ test('denied resume while approval is pending does not block admission after app
   const view = await scenario.service.show('task-1', 'decision-1');
   assert.equal((await scenario.service.control({ taskId: 'task-1', taskVersion: view.control.version, direction: 'resume', responseKey: 'premature-resume' })).outcome, 'denied');
   assert.equal(scenario.service.admitAttempt('pending', { ...claim('pending'), expectedControlVersion: 2, expectedEpoch: 2 }), false);
-  assert.equal((await scenario.service.decide({ taskId: 'task-1', decisionId: 'decision-1', taskVersion: view.control.version, requestVersion: 1, presentationDigest: view.presentation.presentationDigest, decision: 'approve', responseKey: 'approve' })).outcome, 'ok');
+  assert.equal(
+    (
+      await scenario.service.decide({
+        taskId: 'task-1',
+        decisionId: 'decision-1',
+        taskVersion: view.control.version,
+        requestVersion: 1,
+        presentationDigest: view.presentation.presentationDigest,
+        decision: 'approve',
+        responseKey: 'approve',
+      })
+    ).outcome,
+    'ok',
+  );
   const approved = (await scenario.service.list('task-1')).control;
   assert.equal(approved.mode, 'runnable');
   assert.equal(approved.version, 3);
@@ -129,18 +292,38 @@ test('denied resume while approval is pending does not block admission after app
   assert.equal(scenario.service.admitAttempt('approved', { ...claim('approved'), expectedControlVersion: approved.version, expectedEpoch: approved.epoch }), true);
 });
 
-for (const [outcome, canAdmit] of [['denied', true], ['conflict', true], ['invalid', true], ['stale', true], ['unavailable', false], ['uncertain', false]] as const) {
+for (const [outcome, canAdmit] of [
+  ['denied', true],
+  ['conflict', true],
+  ['invalid', true],
+  ['stale', true],
+  ['unavailable', false],
+  ['uncertain', false],
+] as const) {
   test(`a ${outcome} decision receipt ${canAdmit ? 'permits' : 'blocks'} admission after a successful approval retry`, async () => {
     let refuse = true;
-    const scenario = setup({ wrapStore: store => ({ ...store, resolvePending: input => {
-      if (!refuse) return store.resolvePending(input);
-      refuse = false;
-      const current = store.loadTaskControl('task-1');
-      return { safe: { ...current.safe, outcome, decisionId: 'decision-1', requestVersion: 1 }, value: null };
-    } }) });
+    const scenario = setup({
+      wrapStore: store => ({
+        ...store,
+        resolvePending: input => {
+          if (!refuse) return store.resolvePending(input);
+          refuse = false;
+          const current = store.loadTaskControl('task-1');
+          return { safe: { ...current.safe, outcome, decisionId: 'decision-1', requestVersion: 1 }, value: null };
+        },
+      }),
+    });
     await scenario.service.requestDecision(binding);
     const view = await scenario.service.show('task-1', 'decision-1');
-    const command = { taskId: 'task-1', decisionId: 'decision-1', taskVersion: view.control.version, requestVersion: 1, presentationDigest: view.presentation.presentationDigest, decision: 'approve' as const, responseKey: 'approve' };
+    const command = {
+      taskId: 'task-1',
+      decisionId: 'decision-1',
+      taskVersion: view.control.version,
+      requestVersion: 1,
+      presentationDigest: view.presentation.presentationDigest,
+      decision: 'approve' as const,
+      responseKey: 'approve',
+    };
     assert.equal((await scenario.service.decide(command)).outcome, outcome);
     assert.equal(scenario.store.readHistory('task-1').value?.resolutions.length, 0);
     assert.equal(scenario.service.admitAttempt('pending', { ...claim('pending'), expectedControlVersion: 2, expectedEpoch: 2 }), false);
@@ -150,15 +333,28 @@ for (const [outcome, canAdmit] of [['denied', true], ['conflict', true], ['inval
   });
 }
 
-for (const [outcome, canAdmit] of [['denied', true], ['conflict', true], ['invalid', true], ['stale', true], ['unavailable', false], ['uncertain', false]] as const) {
+for (const [outcome, canAdmit] of [
+  ['denied', true],
+  ['conflict', true],
+  ['invalid', true],
+  ['stale', true],
+  ['unavailable', false],
+  ['uncertain', false],
+] as const) {
   test(`a ${outcome} direction receipt ${canAdmit ? 'permits' : 'blocks'} admission after a recorded resume retry`, async () => {
     let refuse = true;
-    const scenario = setup({ mode: 'rejected', wrapStore: store => ({ ...store, recordDirection: input => {
-      assert.ok(store.recordDirection);
-      if (!refuse) return store.recordDirection(input);
-      refuse = false;
-      return { safe: { ...store.loadTaskControl('task-1').safe, outcome }, value: null };
-    } }) });
+    const scenario = setup({
+      mode: 'rejected',
+      wrapStore: store => ({
+        ...store,
+        recordDirection: input => {
+          assert.ok(store.recordDirection);
+          if (!refuse) return store.recordDirection(input);
+          refuse = false;
+          return { safe: { ...store.loadTaskControl('task-1').safe, outcome }, value: null };
+        },
+      }),
+    });
     const command = { taskId: 'task-1', taskVersion: 1, direction: 'resume', responseKey: 'resume' };
     assert.equal((await scenario.service.control(command)).outcome, outcome);
     assert.equal(scenario.store.readHistory('task-1').value?.directions.length, 0);
@@ -177,7 +373,15 @@ for (const [outcome, canAdmit] of [['denied', true], ['conflict', true], ['inval
 async function reject(scenario: ReturnType<typeof setup>) {
   await scenario.service.requestDecision(binding);
   const view = await scenario.service.show('task-1', 'decision-1');
-  await scenario.service.decide({ taskId: 'task-1', decisionId: 'decision-1', taskVersion: view.control.version, requestVersion: 1, presentationDigest: view.presentation.presentationDigest, decision: 'reject', responseKey: 'reject' });
+  await scenario.service.decide({
+    taskId: 'task-1',
+    decisionId: 'decision-1',
+    taskVersion: view.control.version,
+    requestVersion: 1,
+    presentationDigest: view.presentation.presentationDigest,
+    decision: 'reject',
+    responseKey: 'reject',
+  });
 }
 
 test('host direction releases only rejection and its accepted retry preserves a later pending request and original scope', async () => {
@@ -190,14 +394,16 @@ test('host direction releases only rejection and its accepted retry preserves a 
   assert.equal(await scenario.service.classify(action), 'APPROVAL_REQUIRED');
   await scenario.service.requestDecision({ ...binding, decisionId: 'decision-2' });
   const originalContext = scenario.context.loadForTask;
-  scenario.context.loadForTask = async () => { throw new Error('current context unavailable; retry must use history'); };
+  scenario.context.loadForTask = async () => {
+    throw new Error('current context unavailable; retry must use history');
+  };
   assert.equal((await scenario.service.control(command)).outcome, 'ok');
   assert.equal((await scenario.service.list('task-1')).control.mode, 'waiting');
   assert.equal(scenario.store.readHistory('task-1').value?.directions.length, 1);
   await assert.rejects(scenario.service.control({ ...command, direction: 'end' }));
   await assert.rejects(scenario.service.control({ ...command, responseKey: 'new-stale' }));
   assert.equal(scenario.service.admitAttempt('retry', claim()), false);
-  scenario.context.loadForTask = async () => ({ ...await originalContext(), safeScopeRef: 'scope-2' });
+  scenario.context.loadForTask = async () => ({ ...(await originalContext()), safeScopeRef: 'scope-2' });
   assert.equal((await scenario.service.control({ taskId: 'task-1', taskVersion: 5, direction: 'end', responseKey: 'end' })).outcome, 'paused');
   assert.equal((await scenario.service.control(command)).outcome, 'ok');
   assert.equal((await scenario.service.list('task-1')).control.mode, 'ended');
@@ -206,7 +412,15 @@ test('host direction releases only rejection and its accepted retry preserves a 
 
 test('resume cannot discard unconfirmed in-flight activity; end preserves uncertain observations and retries do not cancel twice', async () => {
   let cancellationRequests = 0;
-  const scenario = setup({ wrapActivity: activity => ({ ...activity, requestCancellation: taskId => { cancellationRequests += 1; return activity.requestCancellation(taskId); } }) });
+  const scenario = setup({
+    wrapActivity: activity => ({
+      ...activity,
+      requestCancellation: taskId => {
+        cancellationRequests += 1;
+        return activity.requestCancellation(taskId);
+      },
+    }),
+  });
   assert.equal(scenario.service.admitAttempt('running', claim()), true);
   await reject(scenario);
   assert.equal(scenario.activity.recordOutcome('running', 'uncertain').outcome, 'uncertain');
@@ -237,19 +451,41 @@ test('unavailable authoritative history closes local admission even when durable
 
 test('untrusted control receipts are rejected without invoking accessors', async () => {
   let reads = 0;
-  const scenario = setup({ wrapStore: store => ({ ...store, loadTaskControl: taskId => {
-    const response = store.loadTaskControl(taskId);
-    return { ...response, safe: Object.defineProperty({ ...response.safe }, 'outcome', { enumerable: true, get: () => { reads += 1; return 'ok'; } }) };
-  } }) });
+  const scenario = setup({
+    wrapStore: store => ({
+      ...store,
+      loadTaskControl: taskId => {
+        const response = store.loadTaskControl(taskId);
+        return {
+          ...response,
+          safe: Object.defineProperty({ ...response.safe }, 'outcome', {
+            enumerable: true,
+            get: () => {
+              reads += 1;
+              return 'ok';
+            },
+          }),
+        };
+      },
+    }),
+  });
   await assert.rejects(scenario.service.control({ taskId: 'task-1', taskVersion: 1, direction: 'end', responseKey: 'end' }));
   assert.equal(reads, 0);
   assert.equal(scenario.store.loadTaskControl('task-1').value?.mode, 'runnable');
 });
 
 test('a direction receipt without its authoritative event never reopens local admission', async () => {
-  const scenario = setup({ mode: 'rejected', wrapStore: store => ({ ...store, readEvents: taskId => {
-    const response = store.readEvents?.(taskId); assert.ok(response); return { ...response, value: [] };
-  } }) });
+  const scenario = setup({
+    mode: 'rejected',
+    wrapStore: store => ({
+      ...store,
+      readEvents: taskId => {
+        const response = store.readEvents?.(taskId);
+        assert.ok(response);
+        return { ...response, value: [] };
+      },
+    }),
+  });
   await assert.rejects(scenario.service.control({ taskId: 'task-1', taskVersion: 1, direction: 'resume', responseKey: 'resume' }));
   assert.equal(scenario.store.loadTaskControl('task-1').value?.mode, 'runnable');
   assert.equal(scenario.service.admitAttempt('gap', { ...claim(), expectedControlVersion: 2, expectedEpoch: 2 }), false);
@@ -293,7 +529,17 @@ test('failed pending/decision/direction writes and lost receipts retain closed a
   assert.equal((await direction.service.control({ taskId: 'task-1', taskVersion: 1, direction: 'resume', responseKey: 'resume' })).outcome, 'unavailable');
   assert.equal(direction.store.loadTaskControl('task-1').value?.mode, 'rejected');
   assert.equal(direction.store.readHistory('task-1').value?.directions.length, 0);
-  const lost = setup({ mode: 'rejected', wrapStore: store => ({ ...store, recordDirection: input => { const response = store.recordDirection?.(input); assert.ok(response); return { ...response, safe: { ...response.safe, outcome: 'uncertain', eventRef: null } }; } }) });
+  const lost = setup({
+    mode: 'rejected',
+    wrapStore: store => ({
+      ...store,
+      recordDirection: input => {
+        const response = store.recordDirection?.(input);
+        assert.ok(response);
+        return { ...response, safe: { ...response.safe, outcome: 'uncertain', eventRef: null } };
+      },
+    }),
+  });
   assert.equal((await lost.service.control({ taskId: 'task-1', taskVersion: 1, direction: 'resume', responseKey: 'resume' })).outcome, 'uncertain');
   assert.equal(lost.store.loadTaskControl('task-1').value?.mode, 'runnable');
   assert.equal(lost.service.admitAttempt('gap', { ...claim(), expectedControlVersion: 2, expectedEpoch: 2 }), false);
@@ -302,43 +548,103 @@ test('failed pending/decision/direction writes and lost receipts retain closed a
 test('deadline fences late task context before direction mutation; feedback, forged authority and stale versions create no directions', async () => {
   const delayed = setup({ mode: 'rejected', deadlineMs: 5 });
   const original = delayed.context.loadForTask;
-  delayed.context.loadForTask = async () => { await new Promise(resolve => setTimeout(resolve, 25)); return original(); };
+  delayed.context.loadForTask = async () => {
+    await new Promise(resolve => setTimeout(resolve, 25));
+    return original();
+  };
   await assert.rejects(delayed.service.control({ taskId: 'task-1', taskVersion: 1, direction: 'resume', responseKey: 'late' }));
   await new Promise(resolve => setTimeout(resolve, 35));
   assert.equal(delayed.store.readHistory('task-1').value?.directions.length, 0);
   assert.equal(delayed.store.loadTaskControl('task-1').value?.mode, 'rejected');
   const scenario = setup({ mode: 'rejected' });
   const command = { taskId: 'task-1', taskVersion: 1, direction: 'resume', responseKey: 'resume' };
-  for (const input of [{ ...command, taskId: 'foreign' }, { ...command, taskVersion: 2 }, { ...command, direction: 'feedback' }, { ...command, safeScopeRef: 'injected' }, { ...command, actorId: 'operator-1' }, { ...command, responseKey: '' }]) await assert.rejects(scenario.service.control(input));
+  for (const input of [
+    { ...command, taskId: 'foreign' },
+    { ...command, taskVersion: 2 },
+    { ...command, direction: 'feedback' },
+    { ...command, safeScopeRef: 'injected' },
+    { ...command, actorId: 'operator-1' },
+    { ...command, responseKey: '' },
+  ])
+    await assert.rejects(scenario.service.control(input));
   const unprivileged = createApprovalService({ taskId: 'task-1', profile, store: scenario.store, context: scenario.context, activity: scenario.activity });
   await assert.rejects(unprivileged.control(command));
-  scenario.context.loadForTask = async () => ({ ...await original(), safeScopeRef: '' });
+  scenario.context.loadForTask = async () => ({ ...(await original()), safeScopeRef: '' });
   await assert.rejects(scenario.service.control(command));
   assert.equal(scenario.store.readHistory('task-1').value?.directions.length, 0);
 });
 
 test('unrelated task admission remains eligible and a pause committed inside activity admission is observed', () => {
-  const initial = { schemaVersion: 'uc05-approval/0.1-draft', taskId: 'task-2', repositoryId: 'repository-1', workspaceId: 'workspace-1', version: 1, epoch: 1, mode: 'runnable', pendingDecisionId: null, continuationRef: null, reasonCode: 'ready', outstandingClaimRefs: [] } as const;
+  const initial = {
+    schemaVersion: 'uc05-approval/0.1-draft',
+    taskId: 'task-2',
+    repositoryId: 'repository-1',
+    workspaceId: 'workspace-1',
+    version: 1,
+    epoch: 1,
+    mode: 'runnable',
+    pendingDecisionId: null,
+    continuationRef: null,
+    reasonCode: 'ready',
+    outstandingClaimRefs: [],
+  } as const;
   const store = createMockApprovalStore({ profile, initialControls: [initial] });
   const activity = createMockActivityControl(profile);
-  const load = () => { const current = store.loadTaskControl('task-2').value; assert.ok(current); return current; };
+  const load = () => {
+    const current = store.loadTaskControl('task-2').value;
+    assert.ok(current);
+    return current;
+  };
   const unrelated = createApprovalControl({ taskId: 'task-2', activity, load });
   assert.equal(unrelated.admitAttempt('unrelated', { ...claim(), taskId: 'task-2' }), true);
   let paused = false;
-  const racing = createApprovalControl({ taskId: 'task-2', load: () => paused ? { ...load(), version: 2, epoch: 2, mode: 'ended' } : load(), activity: { ...activity, admitAttempt: input => { const receipt = activity.admitAttempt(input); paused = true; return receipt; } } });
+  const racing = createApprovalControl({
+    taskId: 'task-2',
+    load: () => (paused ? { ...load(), version: 2, epoch: 2, mode: 'ended' } : load()),
+    activity: {
+      ...activity,
+      admitAttempt: input => {
+        const receipt = activity.admitAttempt(input);
+        paused = true;
+        return receipt;
+      },
+    },
+  });
   assert.equal(racing.admitAttempt('racing', { ...claim('race'), taskId: 'task-2' }), false);
 });
 
 test('final authoritative admission reload must remain valid, task-local and free of outstanding holds', () => {
-  const initial = { schemaVersion: 'uc05-approval/0.1-draft', taskId: 'task-1', repositoryId: 'repository-1', workspaceId: 'workspace-1', version: 1, epoch: 1, mode: 'runnable', pendingDecisionId: null, continuationRef: null, reasonCode: 'ready', outstandingClaimRefs: [] } as const;
-  for (const change of [{ schemaVersion: 'invalid' }, { taskId: 'foreign-task' }, { outstandingClaimRefs: ['new-claim'] }, { repositoryId: 'foreign-repository' }, { workspaceId: 'foreign-workspace' }]) {
+  const initial = {
+    schemaVersion: 'uc05-approval/0.1-draft',
+    taskId: 'task-1',
+    repositoryId: 'repository-1',
+    workspaceId: 'workspace-1',
+    version: 1,
+    epoch: 1,
+    mode: 'runnable',
+    pendingDecisionId: null,
+    continuationRef: null,
+    reasonCode: 'ready',
+    outstandingClaimRefs: [],
+  } as const;
+  for (const change of [
+    { schemaVersion: 'invalid' },
+    { taskId: 'foreign-task' },
+    { outstandingClaimRefs: ['new-claim'] },
+    { repositoryId: 'foreign-repository' },
+    { workspaceId: 'foreign-workspace' },
+  ]) {
     const activity = createMockActivityControl(profile);
     let reads = 0;
-    const coordinator = createApprovalControl({ taskId: 'task-1', activity, load: () => {
-      reads += 1;
-      // Simulate an untrusted authoritative port changing its response during admission.
-      return reads === 1 ? initial : Object.assign({}, initial, change);
-    } });
+    const coordinator = createApprovalControl({
+      taskId: 'task-1',
+      activity,
+      load: () => {
+        reads += 1;
+        // Simulate an untrusted authoritative port changing its response during admission.
+        return reads === 1 ? initial : Object.assign({}, initial, change);
+      },
+    });
     assert.equal(coordinator.admitAttempt('racing', claim()), false, JSON.stringify(change));
     assert.equal(reads, 2);
   }
@@ -450,10 +756,15 @@ test('UC-05 v0.2 publication rejects malformed and foreign journal replies', asy
   const context = createTestRepositoryAdmissionContextV02();
   const accessorJournal = {
     provenance: 'mock',
-    publishAuthority: async () => Object.defineProperty({}, 'status', { get: () => { throw new Error('getter-must-not-run'); }, enumerable: true }),
+    publishAuthority: async () =>
+      Object.defineProperty({}, 'status', {
+        get: () => {
+          throw new Error('getter-must-not-run');
+        },
+        enumerable: true,
+      }),
   } as unknown as UC04JournalPortV02;
-  const accessorResult = await createApprovalControlV02({ taskId: context.taskId, journal: accessorJournal })
-    .publishAuthority({ authorityRef: publicationAfter(context) });
+  const accessorResult = await createApprovalControlV02({ taskId: context.taskId, journal: accessorJournal }).publishAuthority({ authorityRef: publicationAfter(context) });
   assert.deepEqual(accessorResult, { outcome: 'paused', receipt: null });
 
   const foreignJournal = {
@@ -467,8 +778,7 @@ test('UC-05 v0.2 publication rejects malformed and foreign journal replies', asy
       status: 'published',
     }),
   } as unknown as UC04JournalPortV02;
-  const foreignResult = await createApprovalControlV02({ taskId: context.taskId, journal: foreignJournal })
-    .publishAuthority({ authorityRef: publicationAfter(context) });
+  const foreignResult = await createApprovalControlV02({ taskId: context.taskId, journal: foreignJournal }).publishAuthority({ authorityRef: publicationAfter(context) });
   assert.deepEqual(foreignResult, { outcome: 'paused', receipt: null });
 });
 
@@ -491,7 +801,7 @@ test('UC-05 v0.2 publication winning the real journal queue rejects the old clai
   assert.deepEqual(await journal.loadTask(context.taskId), taskBefore);
   assert.deepEqual(journal.getLedgers(), ledgersBefore);
   assert.deepEqual(journal.getJournalSnapshot().activeAuthorityRef, authorityRef);
-  assert.equal(journal.getJournalSnapshot().claims.find((item) => item.claimId === claim.claimId)?.status, 'claimed');
+  assert.equal(journal.getJournalSnapshot().claims.find(item => item.claimId === claim.claimId)?.status, 'claimed');
   assert.equal(journal.getJournalSnapshot().attempts.length, 0);
 });
 
@@ -512,14 +822,14 @@ test('UC-05 v0.2 beginAttempt winning the real journal queue admits once before 
 
   assert.equal(isNeutralAttemptReceiptV02(attempted), false);
   assert.equal(published.outcome, 'ok');
-  assert.equal(journal.getJournalSnapshot().claims.find((item) => item.claimId === claim.claimId)?.status, 'attempting');
+  assert.equal(journal.getJournalSnapshot().claims.find(item => item.claimId === claim.claimId)?.status, 'attempting');
   assert.equal(journal.getJournalSnapshot().attempts.length, 1);
   assert.deepEqual(journal.getJournalSnapshot().activeAuthorityRef, authorityRef);
   assert.equal(taskBefore?.node, 'Repair');
   assert.equal(taskAfter?.node, 'Patch');
   assert.equal(taskAfter?.stateVersion, context.expectedTaskStateVersion + 1);
-  const repairBefore = ledgersBefore.find((ledger) => ledger.scope === 'task' && ledger.kind === 'repair');
-  const repairAfter = journal.getLedgers().find((ledger) => ledger.scope === 'task' && ledger.kind === 'repair');
+  const repairBefore = ledgersBefore.find(ledger => ledger.scope === 'task' && ledger.kind === 'repair');
+  const repairAfter = journal.getLedgers().find(ledger => ledger.scope === 'task' && ledger.kind === 'repair');
   assert.equal(repairBefore?.consumed, 0);
   assert.equal(repairAfter?.consumed, 1);
   assert.equal(isNeutralAttemptReceiptV02(await journal.beginAttempt(claim.claimId, actor)), true);
@@ -545,7 +855,7 @@ test('UC-05 v0.2 closure uses a real pause, no-attempt snapshot, fence, and jour
 
   const result = await control.closeUnattemptedClaim(input);
   const snapshot = journal.getJournalSnapshot();
-  const repair = journal.getLedgers().find((ledger) => ledger.scope === 'task' && ledger.kind === 'repair');
+  const repair = journal.getLedgers().find(ledger => ledger.scope === 'task' && ledger.kind === 'repair');
 
   assert.equal(result.closed, true);
   assert.ok(result.receipt);
@@ -554,7 +864,7 @@ test('UC-05 v0.2 closure uses a real pause, no-attempt snapshot, fence, and jour
   assert.equal(validateClaimClosureReceipt(result.receipt).ok, true);
   assert.equal(snapshot.mode, 'paused');
   assert.equal(snapshot.activeClaimId, null);
-  assert.equal(snapshot.claims.find((item) => item.claimId === journalClaim.claimId)?.status, 'closed');
+  assert.equal(snapshot.claims.find(item => item.claimId === journalClaim.claimId)?.status, 'closed');
   assert.equal(snapshot.attempts.length, 0);
   assert.equal(snapshot.closures.length, 1);
   assert.ok(snapshot.fencedIncarnations.length > 0);
@@ -567,7 +877,7 @@ test('UC-05 v0.2 closure uses a real pause, no-attempt snapshot, fence, and jour
   assert.equal(repair?.consumed, 0);
   assert.equal(repair?.reservations.length, 0);
   assert.equal(isNeutralAttemptReceiptV02(await journal.beginAttempt(journalClaim.claimId, actor)), true);
-  assert.deepEqual(ledgersBefore.find((ledger) => ledger.kind === 'repair')?.consumed, 0);
+  assert.deepEqual(ledgersBefore.find(ledger => ledger.kind === 'repair')?.consumed, 0);
 });
 
 test('UC-05 v0.2 denial closure records the rejected hold and releases only the unattempted claim', async () => {
@@ -691,7 +1001,7 @@ test('UC-05 v0.2 closure rejects a foreign journal close response without report
   const actor = createTestExecutorIdentityV02({ payloadDigest: context.actionDigest });
   await journal.setTaskControl(context.taskId, 'paused', 'pause-event-002');
   await journal.beginAttempt(journalClaim.claimId, actor);
-  assert.equal(journal.getJournalSnapshot().claims.find((item) => item.claimId === journalClaim.claimId)?.status, 'claimed');
+  assert.equal(journal.getJournalSnapshot().claims.find(item => item.claimId === journalClaim.claimId)?.status, 'claimed');
   const beforeTask = await journal.loadTask(context.taskId);
   const beforeSnapshot = journal.getJournalSnapshot();
   const beforeLedgers = journal.getLedgers();
@@ -781,8 +1091,7 @@ test('UC-05 v0.2 closure is claim-scoped after an earlier settled attempt and pr
   const historicalAttempt = journal.getJournalSnapshot().attempts[0];
   assert.ok(historicalAttempt);
   assert.equal((historicalAttempt as unknown as Record<string, unknown>)['claimId'], priorClaim.claimId);
-  const providerAccountingBeforeClosure = journal.getLedgers()
-    .filter(ledger => ledger.kind === 'tokens' || ledger.kind === 'cost');
+  const providerAccountingBeforeClosure = journal.getLedgers().filter(ledger => ledger.kind === 'tokens' || ledger.kind === 'cost');
 
   const repositoryAuthority = createTestRepositoryAdmissionContextV02().policyAuthorityRef;
   assert.equal((await journal.publishAuthority({ authorityRef: repositoryAuthority })).status, 'published');
@@ -818,8 +1127,14 @@ test('UC-05 v0.2 closure is claim-scoped after an earlier settled attempt and pr
   assert.ok(historicalAfter);
   assert.equal(historicalAfter?.status, 'settled');
   assert.equal((historicalAfter as unknown as Record<string, unknown>)['claimId'], priorClaim.claimId);
-  assert.equal((snapshot.attempts as unknown as readonly Record<string, unknown>[]).some(row => row['claimId'] === currentClaim.claimId), false);
-  assert.deepEqual(journal.getLedgers().filter(ledger => ledger.kind === 'tokens' || ledger.kind === 'cost'), providerAccountingBeforeClosure);
+  assert.equal(
+    (snapshot.attempts as unknown as readonly Record<string, unknown>[]).some(row => row['claimId'] === currentClaim.claimId),
+    false,
+  );
+  assert.deepEqual(
+    journal.getLedgers().filter(ledger => ledger.kind === 'tokens' || ledger.kind === 'cost'),
+    providerAccountingBeforeClosure,
+  );
   assert.equal(repair?.consumed, 0);
   assert.equal(repair?.reservations.length, 0);
   assert.ok(snapshot.fencedIncarnations.includes(`${currentActor.adapterIdentity}\u0000${currentActor.processIncarnation}`));

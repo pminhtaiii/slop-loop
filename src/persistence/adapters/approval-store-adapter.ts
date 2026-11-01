@@ -52,7 +52,7 @@ export class DurableApprovalStore implements ApprovalStore {
     } else {
       const profRes = validatePolicyProfile(options.profile);
       if (!profRes.ok) {
-        const msg = profRes.errors.map((e) => e.message).join('; ');
+        const msg = profRes.errors.map(e => e.message).join('; ');
         throw new Error(`Invalid policy profile: ${msg}`);
       }
       this.profile = profRes.value;
@@ -230,7 +230,7 @@ export class DurableApprovalStore implements ApprovalStore {
       return makeFailure<HumanResolution>(request.taskId, currentControl.version, 'unavailable', 'history-unavailable', decisionId);
     }
 
-    const priorResolution = historyRes.value.resolutions.find((r) => r.decisionId === resolution.decisionId);
+    const priorResolution = historyRes.value.resolutions.find(r => r.decisionId === resolution.decisionId);
     if (priorResolution !== undefined && priorResolution.responseKey !== resolution.responseKey) {
       return makeFailure<HumanResolution>(request.taskId, currentControl.version, 'conflict', 'decision-not-pending', decisionId);
     }
@@ -302,7 +302,7 @@ export class DurableApprovalStore implements ApprovalStore {
       return makeFailure<DeveloperDirection>(taskId, currentControl.version, 'unavailable', 'history-unavailable');
     }
 
-    const priorDirection = historyRes.value.directions.find((d) => d.directionId === direction.directionId);
+    const priorDirection = historyRes.value.directions.find(d => d.directionId === direction.directionId);
     if (priorDirection !== undefined && priorDirection.responseKey !== direction.responseKey) {
       return makeFailure<DeveloperDirection>(direction.taskId, currentControl.version, 'conflict', 'invalid-direction');
     }

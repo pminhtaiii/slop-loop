@@ -4,8 +4,17 @@ import { validatePositiveInteger, isPlainObject, rejectUnknownKeys } from '../..
 import { validateProviderUsage } from '../../v01/validation/provider/records.ts';
 import { protectValidator } from './snapshot.ts';
 import {
-  COMMON_KEYS, REPO_BRANCH_KEYS, PROVIDER_BRANCH_KEYS, REC_KEYS, addErr, canonicalEqual, checkTrustedEvidence,
-  digestWithout, validateCommon, validateSafeRef, validateSafeRefArray,
+  COMMON_KEYS,
+  REPO_BRANCH_KEYS,
+  PROVIDER_BRANCH_KEYS,
+  REC_KEYS,
+  addErr,
+  canonicalEqual,
+  checkTrustedEvidence,
+  digestWithout,
+  validateCommon,
+  validateSafeRef,
+  validateSafeRefArray,
   type AttemptReconciliationValidationContextV02,
 } from './reconciliation-common.ts';
 export type { AttemptReconciliationValidationContextV02, TrustedFencingProofV02 } from './reconciliation-common.ts';
@@ -15,20 +24,25 @@ function validateUncertainImpl(input: unknown, context?: AttemptReconciliationVa
   if (!isPlainObject(input)) return { ok: false, errors: [{ path: 'receipt', message: 'Must be object', code: 'INVALID_TYPE' }] };
   const validContext = validateCommon(input, 'uncertain-attempt', context, errors);
   if (input['disposition'] === 'observed-and-accounted') {
-    const allowed = validContext && context.trustedAdmission.subjectKind === 'repository-action'
-      ? [...COMMON_KEYS, ...REPO_BRANCH_KEYS, ...REC_KEYS, 'disposition', 'effectEvidenceRef', 'accountingEvidenceRefs', 'observedUsage']
-      : [...COMMON_KEYS, ...PROVIDER_BRANCH_KEYS, ...REC_KEYS, 'disposition', 'effectEvidenceRef', 'accountingEvidenceRefs', 'observedUsage'];
+    const allowed =
+      validContext && context.trustedAdmission.subjectKind === 'repository-action'
+        ? [...COMMON_KEYS, ...REPO_BRANCH_KEYS, ...REC_KEYS, 'disposition', 'effectEvidenceRef', 'accountingEvidenceRefs', 'observedUsage']
+        : [...COMMON_KEYS, ...PROVIDER_BRANCH_KEYS, ...REC_KEYS, 'disposition', 'effectEvidenceRef', 'accountingEvidenceRefs', 'observedUsage'];
     rejectUnknownKeys(input, allowed, 'receipt', errors);
     validateSafeRef(input['effectEvidenceRef'], 'effectEvidenceRef', errors);
     validateSafeRefArray(input['accountingEvidenceRefs'], 'accountingEvidenceRefs', errors);
-    if (!validContext || !context.trustedObservedEffectRef || !context.trustedAccountingEvidenceRefs?.length) addErr(errors, 'trustedContext', 'Trusted observed effect and accounting evidence are required', 'TRUSTED_OBSERVED_EVIDENCE_REQUIRED');
+    if (!validContext || !context.trustedObservedEffectRef || !context.trustedAccountingEvidenceRefs?.length)
+      addErr(errors, 'trustedContext', 'Trusted observed effect and accounting evidence are required', 'TRUSTED_OBSERVED_EVIDENCE_REQUIRED');
     else {
-      if (!canonicalEqual(input['effectEvidenceRef'], context.trustedObservedEffectRef)) addErr(errors, 'effectEvidenceRef', 'Effect evidence is not branch-matched trusted evidence', 'EFFECT_EVIDENCE_MISMATCH');
-      if (!canonicalEqual(input['accountingEvidenceRefs'], context.trustedAccountingEvidenceRefs)) addErr(errors, 'accountingEvidenceRefs', 'Accounting evidence is not branch-matched trusted evidence', 'ACCOUNTING_EVIDENCE_MISMATCH');
+      if (!canonicalEqual(input['effectEvidenceRef'], context.trustedObservedEffectRef))
+        addErr(errors, 'effectEvidenceRef', 'Effect evidence is not branch-matched trusted evidence', 'EFFECT_EVIDENCE_MISMATCH');
+      if (!canonicalEqual(input['accountingEvidenceRefs'], context.trustedAccountingEvidenceRefs))
+        addErr(errors, 'accountingEvidenceRefs', 'Accounting evidence is not branch-matched trusted evidence', 'ACCOUNTING_EVIDENCE_MISMATCH');
       checkTrustedEvidence(input['evidenceRefs'], [context.trustedObservedEffectRef, ...context.trustedAccountingEvidenceRefs], 'evidenceRefs', errors);
     }
     if (validContext && context.trustedAdmission.subjectKind === 'provider-request') {
-      if (input['observedUsage'] === undefined || context.trustedObservedUsage === undefined) addErr(errors, 'observedUsage', 'Provider observed/accounted reconciliation requires independently verified usage', 'OBSERVED_USAGE_REQUIRED');
+      if (input['observedUsage'] === undefined || context.trustedObservedUsage === undefined)
+        addErr(errors, 'observedUsage', 'Provider observed/accounted reconciliation requires independently verified usage', 'OBSERVED_USAGE_REQUIRED');
       else {
         const usage = validateProviderUsage(input['observedUsage']);
         if (!usage.ok) errors.push(...usage.errors);
@@ -36,19 +50,23 @@ function validateUncertainImpl(input: unknown, context?: AttemptReconciliationVa
       }
     } else if (input['observedUsage'] !== undefined) addErr(errors, 'observedUsage', 'Repository reconciliation cannot contain provider usage', 'CROSS_BRANCH_FIELDS_FORBIDDEN');
   } else if (input['disposition'] === 'proven-not-dispatched') {
-    const allowed = validContext && context.trustedAdmission.subjectKind === 'repository-action'
-      ? [...COMMON_KEYS, ...REPO_BRANCH_KEYS, ...REC_KEYS, 'disposition', 'adapterEvidenceRefs', 'fencedRecipientIdentity', 'fencingGeneration', 'fencingProof']
-      : [...COMMON_KEYS, ...PROVIDER_BRANCH_KEYS, ...REC_KEYS, 'disposition', 'adapterEvidenceRefs', 'fencedRecipientIdentity', 'fencingGeneration', 'fencingProof'];
+    const allowed =
+      validContext && context.trustedAdmission.subjectKind === 'repository-action'
+        ? [...COMMON_KEYS, ...REPO_BRANCH_KEYS, ...REC_KEYS, 'disposition', 'adapterEvidenceRefs', 'fencedRecipientIdentity', 'fencingGeneration', 'fencingProof']
+        : [...COMMON_KEYS, ...PROVIDER_BRANCH_KEYS, ...REC_KEYS, 'disposition', 'adapterEvidenceRefs', 'fencedRecipientIdentity', 'fencingGeneration', 'fencingProof'];
     rejectUnknownKeys(input, allowed, 'receipt', errors);
     validateSafeRefArray(input['adapterEvidenceRefs'], 'adapterEvidenceRefs', errors);
     validateSafeRef(input['fencingProof'], 'fencingProof', errors);
     if (!validContext || !context.trustedFencingProof) addErr(errors, 'trustedContext.trustedFencingProof', 'Independent fencing proof is required', 'FENCING_PROOF_REQUIRED');
-    else if (!Array.isArray(context.trustedEvidenceRefs) || context.trustedEvidenceRefs.length === 0) addErr(errors, 'trustedContext.trustedEvidenceRefs', 'Non-dispatch reconciliation requires adapter evidence in addition to fencing proof', 'FENCING_EVIDENCE_REQUIRED');
+    else if (!Array.isArray(context.trustedEvidenceRefs) || context.trustedEvidenceRefs.length === 0)
+      addErr(errors, 'trustedContext.trustedEvidenceRefs', 'Non-dispatch reconciliation requires adapter evidence in addition to fencing proof', 'FENCING_EVIDENCE_REQUIRED');
     else {
       const proof = context.trustedFencingProof;
-      if (!canonicalEqual(input['fencedRecipientIdentity'], proof.fencedRecipientIdentity) || !canonicalEqual(proof.fencedRecipientIdentity, context.trustedAttempt.executorIdentity)) addErr(errors, 'fencedRecipientIdentity', 'Fenced recipient identity/incarnation does not match the consumed attempt', 'FENCED_RECIPIENT_MISMATCH');
+      if (!canonicalEqual(input['fencedRecipientIdentity'], proof.fencedRecipientIdentity) || !canonicalEqual(proof.fencedRecipientIdentity, context.trustedAttempt.executorIdentity))
+        addErr(errors, 'fencedRecipientIdentity', 'Fenced recipient identity/incarnation does not match the consumed attempt', 'FENCED_RECIPIENT_MISMATCH');
       validatePositiveInteger(input['fencingGeneration'], 'fencingGeneration', errors);
-      if (input['fencingGeneration'] !== proof.fencingGeneration || proof.fencingGeneration <= context.trustedAttempt.executorIdentity.fencingGeneration) addErr(errors, 'fencingGeneration', 'Trusted fencing generation must supersede the dispatched recipient', 'FENCING_GENERATION_INVALID');
+      if (input['fencingGeneration'] !== proof.fencingGeneration || proof.fencingGeneration <= context.trustedAttempt.executorIdentity.fencingGeneration)
+        addErr(errors, 'fencingGeneration', 'Trusted fencing generation must supersede the dispatched recipient', 'FENCING_GENERATION_INVALID');
       if (!canonicalEqual(input['fencingProof'], proof.proofRef)) addErr(errors, 'fencingProof', 'Fencing proof reference mismatch', 'FENCING_PROOF_MISMATCH');
       checkTrustedEvidence(input['adapterEvidenceRefs'], context.trustedEvidenceRefs, 'adapterEvidenceRefs', errors);
       checkTrustedEvidence(input['evidenceRefs'], [...context.trustedEvidenceRefs, proof.proofRef], 'evidenceRefs', errors);
@@ -60,7 +78,8 @@ function validateUncertainImpl(input: unknown, context?: AttemptReconciliationVa
 function validateObservedImpl(input: unknown, context?: AttemptReconciliationValidationContextV02): ValidationResult<ObservedOutcomeReconciliationReceiptV02> {
   const errors: ValidationError[] = [];
   if (!isPlainObject(input)) return { ok: false, errors: [{ path: 'receipt', message: 'Must be object', code: 'INVALID_TYPE' }] };
-  if (input['disposition'] !== undefined || input['outcome'] !== undefined || input['effectEvidenceRef'] !== undefined || input['accountingEvidenceRefs'] !== undefined) addErr(errors, 'disposition', 'Observed-unsettled receipt cannot rewrite the outcome or accounting', 'OUTCOME_REWRITE_FORBIDDEN');
+  if (input['disposition'] !== undefined || input['outcome'] !== undefined || input['effectEvidenceRef'] !== undefined || input['accountingEvidenceRefs'] !== undefined)
+    addErr(errors, 'disposition', 'Observed-unsettled receipt cannot rewrite the outcome or accounting', 'OUTCOME_REWRITE_FORBIDDEN');
   validateCommon(input, 'observed-unsettled', context, errors);
   if (context) {
     const branch = context.trustedAdmission.subjectKind === 'repository-action' ? REPO_BRANCH_KEYS : PROVIDER_BRANCH_KEYS;

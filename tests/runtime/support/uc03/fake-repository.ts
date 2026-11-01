@@ -47,10 +47,7 @@ import {
 import { createCommandOutcomeReceipt, normalizeCommandResult, validateOutcomeRecordResult } from '../../../../src/foundation/repository-command-outcome.ts';
 import { beginRepositoryAttemptWithClaim } from '../../../../src/foundation/repository-receiver.ts';
 import { computeAttemptOutcomeDigest } from '../../../../src/contracts/foundation/uc03/v02/attempt.ts';
-import {
-  createTestRepositoryAdmissionTrustedContextV02,
-  createTestRepositoryOutcomeReceiptV02,
-} from './state-fixtures.ts';
+import { createTestRepositoryAdmissionTrustedContextV02, createTestRepositoryOutcomeReceiptV02 } from './state-fixtures.ts';
 
 export interface RepositorySnapshot {
   readonly revisionDigest: string;
@@ -116,9 +113,7 @@ export class FakeRepositoryPort implements RepositoryPort, RepositoryPortV02 {
   private v02CallLog: FakeRepositoryV02CallRecord[] = [];
 
   constructor(options?: FakeRepositoryOptions) {
-    const rev =
-      options?.initialRevision ??
-      'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+    const rev = options?.initialRevision ?? 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
     this.currentRevisionDigest = rev;
 
     const initialMap = new Map<string, string>();
@@ -128,14 +123,8 @@ export class FakeRepositoryPort implements RepositoryPort, RepositoryPortV02 {
       }
     } else {
       // Default initial python calculator files
-      initialMap.set(
-        'src/calculator.py',
-        'class Calculator:\n    def divide(self, a, b):\n        return a / b\n'
-      );
-      initialMap.set(
-        'tests/test_calculator.py',
-        'import pytest\nfrom src.calculator import Calculator\n\ndef test_divide():\n    calc = Calculator()\n    assert calc.divide(10, 2) == 5\n'
-      );
+      initialMap.set('src/calculator.py', 'class Calculator:\n    def divide(self, a, b):\n        return a / b\n');
+      initialMap.set('tests/test_calculator.py', 'import pytest\nfrom src.calculator import Calculator\n\ndef test_divide():\n    calc = Calculator()\n    assert calc.divide(10, 2) == 5\n');
     }
     this.snapshots.set(rev, initialMap);
 
@@ -248,14 +237,10 @@ export class FakeRepositoryPort implements RepositoryPort, RepositoryPortV02 {
     const normalized = dirPath === '' || dirPath === '.' ? '' : dirPath;
     if (normalized.length > 0) {
       if (!isCanonicalRelativePath(normalized)) {
-        throw new Error(
-          `WORKSPACE_ESCAPE: Path '${dirPath}' is not a canonical relative path`
-        );
+        throw new Error(`WORKSPACE_ESCAPE: Path '${dirPath}' is not a canonical relative path`);
       }
       if (isProtectedPath(normalized)) {
-        throw new Error(
-          `PROTECTED_PATH_FORBIDDEN: Path '${dirPath}' is protected and cannot be listed`
-        );
+        throw new Error(`PROTECTED_PATH_FORBIDDEN: Path '${dirPath}' is protected and cannot be listed`);
       }
     }
 
@@ -282,14 +267,10 @@ export class FakeRepositoryPort implements RepositoryPort, RepositoryPortV02 {
     this.readSpy.push(filePath);
 
     if (!isCanonicalRelativePath(filePath)) {
-      throw new Error(
-        `WORKSPACE_ESCAPE: Path '${filePath}' must be a canonical relative path`
-      );
+      throw new Error(`WORKSPACE_ESCAPE: Path '${filePath}' must be a canonical relative path`);
     }
     if (isProtectedPath(filePath)) {
-      throw new Error(
-        `PROTECTED_PATH_FORBIDDEN: Path '${filePath}' is protected and cannot be read`
-      );
+      throw new Error(`PROTECTED_PATH_FORBIDDEN: Path '${filePath}' is protected and cannot be read`);
     }
 
     const files = this.getCurrentFiles();
@@ -308,9 +289,7 @@ export class FakeRepositoryPort implements RepositoryPort, RepositoryPortV02 {
 
     const valid = validateSourceEvidence(evidence);
     if (!valid.ok) {
-      throw new Error(
-        `INVALID_SOURCE_EVIDENCE: ${valid.errors.map((e) => e.message).join('; ')}`
-      );
+      throw new Error(`INVALID_SOURCE_EVIDENCE: ${valid.errors.map(e => e.message).join('; ')}`);
     }
 
     return valid.value;
@@ -342,14 +321,10 @@ export class FakeRepositoryPort implements RepositoryPort, RepositoryPortV02 {
     return results;
   }
 
-  private async applyPatchInternal(
-    patch: ApplyPatchAction
-  ): Promise<{ readonly applied: boolean; readonly newRevisionDigest: string }> {
+  private async applyPatchInternal(patch: ApplyPatchAction): Promise<{ readonly applied: boolean; readonly newRevisionDigest: string }> {
     const validation = validateNormalizedAction(patch);
     if (!validation.ok) {
-      throw new Error(
-        `INVALID_PATCH_ACTION: ${validation.errors.map((e) => `${e.code}: ${e.message}`).join('; ')}`
-      );
+      throw new Error(`INVALID_PATCH_ACTION: ${validation.errors.map(e => `${e.code}: ${e.message}`).join('; ')}`);
     }
 
     // Base revision check
@@ -397,21 +372,13 @@ export class FakeRepositoryPort implements RepositoryPort, RepositoryPortV02 {
 
   applyPatch(patch: ApplyPatchAction, context: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02>;
   applyPatch(patch: ApplyPatchAction): ReturnType<RepositoryPort['applyPatch']>;
-  async applyPatch(
-    patch: ApplyPatchAction,
-    context?: RepositoryAdmissionContextV02
-  ): Promise<RepositoryPatchResultV02 | { readonly applied: boolean; readonly newRevisionDigest: string }> {
+  async applyPatch(patch: ApplyPatchAction, context?: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02 | { readonly applied: boolean; readonly newRevisionDigest: string }> {
     this.patchSpy.push(patch);
 
     const effectiveContext = context ?? this.defaultAdmissionContext;
     if (effectiveContext !== undefined) {
       // v0.2 validation
-      if (
-        !effectiveContext ||
-        typeof effectiveContext !== 'object' ||
-        effectiveContext.schemaVersion !== '0.2.0' ||
-        effectiveContext.subjectKind !== 'repository-action'
-      ) {
+      if (!effectiveContext || typeof effectiveContext !== 'object' || effectiveContext.schemaVersion !== '0.2.0' || effectiveContext.subjectKind !== 'repository-action') {
         throw new Error('REPOSITORY_ADMISSION_REFUSED');
       }
       if (effectiveContext.policyEvaluationReceipt?.result === 'FORBIDDEN') {
@@ -422,8 +389,11 @@ export class FakeRepositoryPort implements RepositoryPort, RepositoryPortV02 {
       }
       if (!this.statePort || !this.executorIdentity) throw new Error('STATE_PORT_REQUIRED');
       const { claim, attempt } = await beginRepositoryAttemptWithClaim(
-        this.statePort, effectiveContext, this.executorIdentity,
-        effectiveContext.action.kind === 'apply_patch' && effectiveContext.runnableNode === 'Repair', () => undefined,
+        this.statePort,
+        effectiveContext,
+        this.executorIdentity,
+        effectiveContext.action.kind === 'apply_patch' && effectiveContext.runnableNode === 'Repair',
+        () => undefined,
       );
       const outcome = await this.applyPatchInternal(patch);
 
@@ -432,9 +402,7 @@ export class FakeRepositoryPort implements RepositoryPort, RepositoryPortV02 {
       if (this.statePort && claim && attempt) {
         const receipt = createTestRepositoryOutcomeReceiptV02(claim, attempt, effectiveContext, {
           receiptId: `repository-outcome-${attempt.attemptId}`,
-          ...(outcome.applied
-            ? { observedResultRevisionDigest: outcome.newRevisionDigest }
-            : { outcome: 'uncertain' }),
+          ...(outcome.applied ? { observedResultRevisionDigest: outcome.newRevisionDigest } : { outcome: 'uncertain' }),
         });
         const rawReceipt = outcome.applied
           ? {
@@ -452,12 +420,17 @@ export class FakeRepositoryPort implements RepositoryPort, RepositoryPortV02 {
         settlement = validateOutcomeRecordResult(await this.statePort.recordOutcome(outcomeReceipt), outcomeReceipt.receiptId);
       }
 
-      if (!outcomeReceipt || outcomeReceipt.subjectKind !== 'repository-action' || outcomeReceipt.outcome !== 'observed' ||
-        !settlement || settlement.outcome !== 'settled' || settlement.receiptId !== outcomeReceipt.receiptId) {
+      if (
+        !outcomeReceipt ||
+        outcomeReceipt.subjectKind !== 'repository-action' ||
+        outcomeReceipt.outcome !== 'observed' ||
+        !settlement ||
+        settlement.outcome !== 'settled' ||
+        settlement.receiptId !== outcomeReceipt.receiptId
+      ) {
         throw new Error('REPOSITORY_OUTCOME_PENDING');
       }
-      const executionResult = { ...outcome, executionReceipt: { claim, attempt, outcome: outcomeReceipt,
-        settlement: settlement as OutcomeRecordResultV02 & { readonly outcome: 'settled' } } };
+      const executionResult = { ...outcome, executionReceipt: { claim, attempt, outcome: outcomeReceipt, settlement: settlement as OutcomeRecordResultV02 & { readonly outcome: 'settled' } } };
 
       this.v02CallLog.push({
         action: 'applyPatch',
@@ -476,22 +449,15 @@ export class FakeRepositoryPort implements RepositoryPort, RepositoryPortV02 {
     return this.applyPatchInternal(patch);
   }
 
-  private async runCommandInternal(
-    action: RunCommandAction
-  ): Promise<{ readonly exitCode: number; readonly stdout: string; readonly stderr: string }> {
+  private async runCommandInternal(action: RunCommandAction): Promise<{ readonly exitCode: number; readonly stdout: string; readonly stderr: string }> {
     const validation = validateNormalizedAction(action);
     if (!validation.ok) {
-      throw new Error(
-        `INVALID_COMMAND_ACTION: ${validation.errors.map((e) => `${e.code}: ${e.message}`).join('; ')}`
-      );
+      throw new Error(`INVALID_COMMAND_ACTION: ${validation.errors.map(e => `${e.code}: ${e.message}`).join('; ')}`);
     }
 
     // Check scripted responses by exact command key or executable
     const fullKey = `${action.executable} ${action.argv.join(' ')}`;
-    const scripted =
-      this.commandResponses.get(fullKey) ??
-      this.commandResponses.get(action.executable) ??
-      this.commandResponses.get('default');
+    const scripted = this.commandResponses.get(fullKey) ?? this.commandResponses.get(action.executable) ?? this.commandResponses.get('default');
 
     if (scripted) {
       return scripted;
@@ -504,18 +470,13 @@ export class FakeRepositoryPort implements RepositoryPort, RepositoryPortV02 {
   runCommand(action: RunCommandAction): ReturnType<RepositoryPort['runCommand']>;
   async runCommand(
     action: RunCommandAction,
-    context?: RepositoryAdmissionContextV02
+    context?: RepositoryAdmissionContextV02,
   ): Promise<RepositoryCommandResultV02 | { readonly exitCode: number; readonly stdout: string; readonly stderr: string }> {
     this.commandSpy.push(action);
 
     const effectiveContext = context ?? this.defaultAdmissionContext;
     if (effectiveContext !== undefined) {
-      if (
-        !effectiveContext ||
-        typeof effectiveContext !== 'object' ||
-        effectiveContext.schemaVersion !== '0.2.0' ||
-        effectiveContext.subjectKind !== 'repository-action'
-      ) {
+      if (!effectiveContext || typeof effectiveContext !== 'object' || effectiveContext.schemaVersion !== '0.2.0' || effectiveContext.subjectKind !== 'repository-action') {
         throw new Error('INVALID_ADMISSION_CONTEXT');
       }
       if (effectiveContext.policyEvaluationReceipt?.result === 'FORBIDDEN') {
@@ -523,22 +484,21 @@ export class FakeRepositoryPort implements RepositoryPort, RepositoryPortV02 {
       }
 
       const fullKey = `${action.executable} ${action.argv.join(' ')}`;
-      const scripted =
-        this.commandResponses.get(fullKey) ??
-        this.commandResponses.get(action.executable) ??
-        this.commandResponses.get('default');
+      const scripted = this.commandResponses.get(fullKey) ?? this.commandResponses.get(action.executable) ?? this.commandResponses.get('default');
       if (!scripted) {
         throw new Error('SCRIPT_EXHAUSTED: No scripted command response');
       }
 
       if (!this.statePort || !this.executorIdentity) throw new Error('STATE_PORT_REQUIRED');
       const { claim, attempt } = await beginRepositoryAttemptWithClaim(
-        this.statePort, effectiveContext, this.executorIdentity,
-        effectiveContext.action.kind === 'apply_patch' && effectiveContext.runnableNode === 'Repair', () => undefined,
+        this.statePort,
+        effectiveContext,
+        this.executorIdentity,
+        effectiveContext.action.kind === 'apply_patch' && effectiveContext.runnableNode === 'Repair',
+        () => undefined,
       );
       const scriptedResult = await this.runCommandInternal(action);
-      const outcome = { ...scriptedResult, plan: {}, durationMs: 0, timedOut: false,
-        outcome: scriptedResult.exitCode === 0 ? 'success' as const : 'failure' as const, truncated: false };
+      const outcome = { ...scriptedResult, plan: {}, durationMs: 0, timedOut: false, outcome: scriptedResult.exitCode === 0 ? ('success' as const) : ('failure' as const), truncated: false };
 
       let outcomeReceipt: AttemptOutcomeReceiptV02 | undefined;
       let settlement: OutcomeRecordResultV02 | undefined;
@@ -549,12 +509,17 @@ export class FakeRepositoryPort implements RepositoryPort, RepositoryPortV02 {
         settlement = validateOutcomeRecordResult(await this.statePort.recordOutcome(outcomeReceipt), outcomeReceipt.receiptId);
       }
 
-      if (!outcomeReceipt || outcomeReceipt.subjectKind !== 'repository-action' || outcomeReceipt.outcome !== 'observed' ||
-        !settlement || settlement.outcome !== 'settled' || settlement.receiptId !== outcomeReceipt.receiptId) {
+      if (
+        !outcomeReceipt ||
+        outcomeReceipt.subjectKind !== 'repository-action' ||
+        outcomeReceipt.outcome !== 'observed' ||
+        !settlement ||
+        settlement.outcome !== 'settled' ||
+        settlement.receiptId !== outcomeReceipt.receiptId
+      ) {
         throw new Error('REPOSITORY_OUTCOME_PENDING');
       }
-      const executionResult = { ...outcome, executionReceipt: { claim, attempt, outcome: outcomeReceipt,
-        settlement: settlement as OutcomeRecordResultV02 & { readonly outcome: 'settled' } } };
+      const executionResult = { ...outcome, executionReceipt: { claim, attempt, outcome: outcomeReceipt, settlement: settlement as OutcomeRecordResultV02 & { readonly outcome: 'settled' } } };
 
       this.v02CallLog.push({
         action: 'runCommand',
@@ -580,35 +545,23 @@ export class FakeRepositoryPort implements RepositoryPort, RepositoryPortV02 {
       throw new Error('INVALID_CHECK_DEFINITION: check failed validation');
     }
 
-    const scripted =
-      this.testResponses.get(check.checkId) ??
-      this.testResponses.get('default');
+    const scripted = this.testResponses.get(check.checkId) ?? this.testResponses.get('default');
 
     if (scripted) {
       const checked = validateCheckResult(scripted);
       if (checked.ok) return checked.value;
-      throw new Error(
-        `INVALID_CHECK_RESULT: ${checked.errors.map((e) => `${e.code}: ${e.message}`).join('; ')}`
-      );
+      throw new Error(`INVALID_CHECK_RESULT: ${checked.errors.map(e => `${e.code}: ${e.message}`).join('; ')}`);
     }
 
     throw new Error('SCRIPT_EXHAUSTED: No scripted check response');
   }
 
-  async runTests(
-    check: CheckDefinition,
-    context?: RepositoryAdmissionContextV02
-  ): Promise<CheckResult> {
+  async runTests(check: CheckDefinition, context?: RepositoryAdmissionContextV02): Promise<CheckResult> {
     this.testSpy.push(check);
 
     const effectiveContext = context ?? this.defaultAdmissionContext;
     if (effectiveContext !== undefined) {
-      if (
-        !effectiveContext ||
-        typeof effectiveContext !== 'object' ||
-        effectiveContext.schemaVersion !== '0.2.0' ||
-        effectiveContext.subjectKind !== 'repository-action'
-      ) {
+      if (!effectiveContext || typeof effectiveContext !== 'object' || effectiveContext.schemaVersion !== '0.2.0' || effectiveContext.subjectKind !== 'repository-action') {
         return {
           checkId: check.checkId,
           outcome: 'fail',
@@ -625,9 +578,7 @@ export class FakeRepositoryPort implements RepositoryPort, RepositoryPortV02 {
         };
       }
 
-      const scripted =
-        this.testResponses.get(check.checkId) ??
-        this.testResponses.get('default');
+      const scripted = this.testResponses.get(check.checkId) ?? this.testResponses.get('default');
       if (!scripted) {
         throw new Error('SCRIPT_EXHAUSTED: No scripted check response');
       }
@@ -677,9 +628,7 @@ export class FakeRepositoryPort implements RepositoryPort, RepositoryPortV02 {
     return this.runTestsInternal(check);
   }
 
-  async inspectDiff(
-    baseRevisionDigest: string
-  ): Promise<{ readonly diff: string; readonly diffDigest: string; readonly changedFiles: readonly string[] }> {
+  async inspectDiff(baseRevisionDigest: string): Promise<{ readonly diff: string; readonly diffDigest: string; readonly changedFiles: readonly string[] }> {
     const scripted = this.diffResponses.get(baseRevisionDigest);
     if (scripted) {
       return scripted;
@@ -775,39 +724,37 @@ export class FakeRepositoryPortV02 implements RepositoryPortV02 {
     return this.underlying.searchCode(query);
   }
 
-  applyPatch(
-    patch: ApplyPatchAction,
-    context: RepositoryAdmissionContextV02
-  ): Promise<RepositoryPatchResultV02> {
+  applyPatch(patch: ApplyPatchAction, context: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02> {
     if (!context || !this.admits(patch, context)) {
       return Promise.reject(new Error('INVALID_ADMISSION_CONTEXT'));
     }
     return this.underlying.applyPatch(patch, context);
   }
 
-  runCommand(
-    action: RunCommandAction,
-    context: RepositoryAdmissionContextV02
-  ): Promise<RepositoryCommandResultV02> {
+  runCommand(action: RunCommandAction, context: RepositoryAdmissionContextV02): Promise<RepositoryCommandResultV02> {
     if (!context || !this.admits(action, context)) {
       return Promise.reject(new Error(context ? 'INVALID_ADMISSION_CONTEXT' : 'MISSING_ADMISSION_CONTEXT'));
     }
     return this.underlying.runCommand(action, context);
   }
 
-  runTests(
-    check: CheckDefinition,
-    context: RepositoryAdmissionContextV02
-  ): Promise<CheckResult> {
-    if (!context || !check.workingDirectory || context.checkId !== check.checkId ||
-      !this.admits({
-        actionId: check.checkId,
-        kind: 'run_command',
-        executable: check.executable,
-        argv: check.argv,
-        workingDirectory: check.workingDirectory,
-        ...(check.purpose !== undefined ? { purpose: check.purpose } : {}),
-      }, context)) {
+  runTests(check: CheckDefinition, context: RepositoryAdmissionContextV02): Promise<CheckResult> {
+    if (
+      !context ||
+      !check.workingDirectory ||
+      context.checkId !== check.checkId ||
+      !this.admits(
+        {
+          actionId: check.checkId,
+          kind: 'run_command',
+          executable: check.executable,
+          argv: check.argv,
+          workingDirectory: check.workingDirectory,
+          ...(check.purpose !== undefined ? { purpose: check.purpose } : {}),
+        },
+        context,
+      )
+    ) {
       return Promise.resolve({
         checkId: check.checkId,
         outcome: 'fail',
@@ -818,9 +765,7 @@ export class FakeRepositoryPortV02 implements RepositoryPortV02 {
     return this.underlying.runTests(check, context);
   }
 
-  inspectDiff(
-    baseRevisionDigest: string
-  ): Promise<{ readonly diff: string; readonly diffDigest: string; readonly changedFiles: readonly string[] }> {
+  inspectDiff(baseRevisionDigest: string): Promise<{ readonly diff: string; readonly diffDigest: string; readonly changedFiles: readonly string[] }> {
     return this.underlying.inspectDiff(baseRevisionDigest);
   }
 }

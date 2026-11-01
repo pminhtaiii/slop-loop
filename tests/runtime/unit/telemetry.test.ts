@@ -1,16 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {
-  type ActivityEvent,
-  type ProviderUsage,
-  isAdmittedForProduction,
-} from '../../../src/contracts/foundation/uc03.ts';
-import {
-  SanitizedTelemetry,
-  sanitizeText,
-  sanitizeDiagnostic,
-  isProtectedPayload,
-} from '../../../src/foundation/telemetry.ts';
+import { type ActivityEvent, type ProviderUsage, isAdmittedForProduction } from '../../../src/contracts/foundation/uc03.ts';
+import { SanitizedTelemetry, sanitizeText, sanitizeDiagnostic, isProtectedPayload } from '../../../src/foundation/telemetry.ts';
 
 const VALID_EVENT: ActivityEvent = {
   eventId: 'evt-1001',
@@ -87,10 +78,7 @@ test('emitActivity enforces whitelisted metadata and rejects unknown keys', asyn
     rawPrompt: 'system prompt: solve the bug with instructions',
     sourceBody: 'def secret_algorithm(): return 42',
   };
-  await assert.rejects(
-    () => telemetry.emitActivity(maliciousEvent as unknown as ActivityEvent),
-    /Unknown property/
-  );
+  await assert.rejects(() => telemetry.emitActivity(maliciousEvent as unknown as ActivityEvent), /Unknown property/);
 });
 
 test('emitActivity validates required fields and types', async () => {
@@ -102,7 +90,7 @@ test('emitActivity validates required fields and types', async () => {
         ...VALID_EVENT,
         eventId: '',
       }),
-    /INVALID_STRING|non-empty string/
+    /INVALID_STRING|non-empty string/,
   );
 
   await assert.rejects(
@@ -111,7 +99,7 @@ test('emitActivity validates required fields and types', async () => {
         ...VALID_EVENT,
         durationMs: -5,
       }),
-    /INVALID_NON_NEGATIVE_INTEGER|durationMs/
+    /INVALID_NON_NEGATIVE_INTEGER|durationMs/,
   );
 
   await assert.rejects(
@@ -120,7 +108,7 @@ test('emitActivity validates required fields and types', async () => {
         ...VALID_EVENT,
         timestamp: 'not-a-timestamp',
       }),
-    /INVALID_TIMESTAMP|ISO 8601/
+    /INVALID_TIMESTAMP|ISO 8601/,
   );
 });
 
@@ -244,55 +232,22 @@ test('bounded redacted diagnostics enforces byte bounds INCLUDING suffix and saf
 
 test('missing or invalid finite diagnostic limits fail closed', () => {
   // sanitizeDiagnostic without maxBytes or with invalid maxBytes
-  assert.throws(
-    () => sanitizeDiagnostic('some text', {} as unknown as { readonly maxBytes: number }),
-    /INVALID_DIAGNOSTIC_LIMIT/
-  );
-  assert.throws(
-    () => sanitizeDiagnostic('some text', undefined as unknown as { readonly maxBytes: number }),
-    /INVALID_DIAGNOSTIC_LIMIT/
-  );
-  assert.throws(
-    () => sanitizeDiagnostic('some text', { maxBytes: 0 }),
-    /INVALID_DIAGNOSTIC_LIMIT/
-  );
-  assert.throws(
-    () => sanitizeDiagnostic('some text', { maxBytes: -10 }),
-    /INVALID_DIAGNOSTIC_LIMIT/
-  );
-  assert.throws(
-    () => sanitizeDiagnostic('some text', { maxBytes: NaN }),
-    /INVALID_DIAGNOSTIC_LIMIT/
-  );
-  assert.throws(
-    () => sanitizeDiagnostic('some text', { maxBytes: 1.5 }),
-    /INVALID_DIAGNOSTIC_LIMIT/
-  );
-  assert.throws(
-    () => sanitizeDiagnostic('some text', { maxBytes: Infinity }),
-    /INVALID_DIAGNOSTIC_LIMIT/
-  );
+  assert.throws(() => sanitizeDiagnostic('some text', {} as unknown as { readonly maxBytes: number }), /INVALID_DIAGNOSTIC_LIMIT/);
+  assert.throws(() => sanitizeDiagnostic('some text', undefined as unknown as { readonly maxBytes: number }), /INVALID_DIAGNOSTIC_LIMIT/);
+  assert.throws(() => sanitizeDiagnostic('some text', { maxBytes: 0 }), /INVALID_DIAGNOSTIC_LIMIT/);
+  assert.throws(() => sanitizeDiagnostic('some text', { maxBytes: -10 }), /INVALID_DIAGNOSTIC_LIMIT/);
+  assert.throws(() => sanitizeDiagnostic('some text', { maxBytes: NaN }), /INVALID_DIAGNOSTIC_LIMIT/);
+  assert.throws(() => sanitizeDiagnostic('some text', { maxBytes: 1.5 }), /INVALID_DIAGNOSTIC_LIMIT/);
+  assert.throws(() => sanitizeDiagnostic('some text', { maxBytes: Infinity }), /INVALID_DIAGNOSTIC_LIMIT/);
 
   // SanitizedTelemetry with invalid maxDiagnosticBytes constructor option
-  assert.throws(
-    () => new SanitizedTelemetry({ maxDiagnosticBytes: 0 }),
-    /INVALID_DIAGNOSTIC_LIMIT/
-  );
-  assert.throws(
-    () => new SanitizedTelemetry({ maxDiagnosticBytes: -5 }),
-    /INVALID_DIAGNOSTIC_LIMIT/
-  );
-  assert.throws(
-    () => new SanitizedTelemetry({ maxDiagnosticBytes: NaN }),
-    /INVALID_DIAGNOSTIC_LIMIT/
-  );
+  assert.throws(() => new SanitizedTelemetry({ maxDiagnosticBytes: 0 }), /INVALID_DIAGNOSTIC_LIMIT/);
+  assert.throws(() => new SanitizedTelemetry({ maxDiagnosticBytes: -5 }), /INVALID_DIAGNOSTIC_LIMIT/);
+  assert.throws(() => new SanitizedTelemetry({ maxDiagnosticBytes: NaN }), /INVALID_DIAGNOSTIC_LIMIT/);
 
   // SanitizedTelemetry without maxDiagnosticBytes fails closed when recordDiagnostic is invoked
   const unconfiguredTelemetry = new SanitizedTelemetry();
-  assert.throws(
-    () => unconfiguredTelemetry.recordDiagnostic('task-1', 'run-1', 'raw error trace'),
-    /INVALID_DIAGNOSTIC_LIMIT/
-  );
+  assert.throws(() => unconfiguredTelemetry.recordDiagnostic('task-1', 'run-1', 'raw error trace'), /INVALID_DIAGNOSTIC_LIMIT/);
 });
 
 test('recordDiagnostic stores and retrieves redacted diagnostics', () => {
@@ -311,7 +266,7 @@ test('recordDiagnostic stores and retrieves redacted diagnostics', () => {
 test('sink dispatch receives sanitized events', async () => {
   const dispatched: ActivityEvent[] = [];
   const telemetry = new SanitizedTelemetry({
-    sink: (evt) => {
+    sink: evt => {
       dispatched.push(evt);
     },
   });
@@ -342,13 +297,13 @@ test('protected payload detection identifies secrets and forbidden patterns', ()
     isProtectedPayload({
       token: 'sk-1234567890abcdef1234567890',
     }),
-    true
+    true,
   );
   assert.equal(
     isProtectedPayload({
       cleanKey: 'safe-value',
     }),
-    false
+    false,
   );
 });
 
@@ -397,7 +352,7 @@ test('recordUsage projects per-run usage and cost while keeping ledger external'
         outputTokens: 10,
         costUsd: 0.01,
       }),
-    /INVALID_NON_NEGATIVE_INTEGER: inputTokens/
+    /INVALID_NON_NEGATIVE_INTEGER: inputTokens/,
   );
 
   await assert.rejects(
@@ -407,7 +362,7 @@ test('recordUsage projects per-run usage and cost while keeping ledger external'
         outputTokens: -10,
         costUsd: 0.01,
       }),
-    /INVALID_NON_NEGATIVE_INTEGER: outputTokens/
+    /INVALID_NON_NEGATIVE_INTEGER: outputTokens/,
   );
 
   await assert.rejects(
@@ -417,7 +372,7 @@ test('recordUsage projects per-run usage and cost while keeping ledger external'
         outputTokens: 10,
         costUsd: -0.01,
       }),
-    /INVALID_NON_NEGATIVE_NUMBER: costUsd/
+    /INVALID_NON_NEGATIVE_NUMBER: costUsd/,
   );
 
   await assert.rejects(
@@ -427,7 +382,7 @@ test('recordUsage projects per-run usage and cost while keeping ledger external'
         outputTokens: 10,
         costUsd: 0.01,
       }),
-    /non-empty taskId/
+    /non-empty taskId/,
   );
 
   await assert.rejects(
@@ -437,14 +392,14 @@ test('recordUsage projects per-run usage and cost while keeping ledger external'
         outputTokens: 10,
         costUsd: 0.01,
       }),
-    /non-empty runId/
+    /non-empty runId/,
   );
 });
 
 test('fail-closed validation rejects protected stable identifiers with zero sink and stored effects', async () => {
   const sink: ActivityEvent[] = [];
   const telemetry = new SanitizedTelemetry({
-    sink: (e) => {
+    sink: e => {
       sink.push(e);
     },
   });
@@ -461,10 +416,7 @@ test('fail-closed validation rejects protected stable identifiers with zero sink
 
   for (const fieldOverride of protectedFields) {
     const invalidEvent = { ...VALID_EVENT, ...fieldOverride };
-    await assert.rejects(
-      () => telemetry.emitActivity(invalidEvent),
-      /Protected identifier rejected|protected/i
-    );
+    await assert.rejects(() => telemetry.emitActivity(invalidEvent), /Protected identifier rejected|protected/i);
     assert.equal(sink.length, 0, 'Sink must have zero effects on protected identifier');
     assert.equal(telemetry.getEvents().length, 0, 'Stored events must have zero effects on protected identifier');
   }
@@ -473,7 +425,7 @@ test('fail-closed validation rejects protected stable identifiers with zero sink
 test('fail-closed validation rejects protected path refs with zero sink and stored effects', async () => {
   const sink: ActivityEvent[] = [];
   const telemetry = new SanitizedTelemetry({
-    sink: (e) => {
+    sink: e => {
       sink.push(e);
     },
   });
@@ -492,10 +444,7 @@ test('fail-closed validation rejects protected path refs with zero sink and stor
 
   for (const evidenceRefs of protectedRefsList) {
     const invalidEvent = { ...VALID_EVENT, evidenceRefs };
-    await assert.rejects(
-      () => telemetry.emitActivity(invalidEvent),
-      /Protected path reference rejected|protected/i
-    );
+    await assert.rejects(() => telemetry.emitActivity(invalidEvent), /Protected path reference rejected|protected/i);
     assert.equal(sink.length, 0, 'Sink must have zero effects on protected path ref');
     assert.equal(telemetry.getEvents().length, 0, 'Stored events must have zero effects on protected path ref');
   }
@@ -504,7 +453,7 @@ test('fail-closed validation rejects protected path refs with zero sink and stor
 test('no marker in sink for every emitted field and preserves valid events unchanged', async () => {
   const sink: ActivityEvent[] = [];
   const telemetry = new SanitizedTelemetry({
-    sink: (e) => {
+    sink: e => {
       sink.push(e);
     },
   });
@@ -556,30 +505,18 @@ test('runUsage and recordDiagnostic enforce consistent identity validation', asy
   };
 
   // Protected taskId in recordUsage
-  await assert.rejects(
-    () => telemetry.recordUsage('MARKER_SECRET_TASK_0123', 'run-1', validUsage),
-    /Protected identifier rejected/i
-  );
+  await assert.rejects(() => telemetry.recordUsage('MARKER_SECRET_TASK_0123', 'run-1', validUsage), /Protected identifier rejected/i);
   assert.equal(telemetry.getRunUsage('MARKER_SECRET_TASK_0123', 'run-1'), undefined);
 
   // Protected runId in recordUsage
-  await assert.rejects(
-    () => telemetry.recordUsage('task-clean-1', 'MARKER_SECRET_RUN_0123', validUsage),
-    /Protected identifier rejected/i
-  );
+  await assert.rejects(() => telemetry.recordUsage('task-clean-1', 'MARKER_SECRET_RUN_0123', validUsage), /Protected identifier rejected/i);
   assert.equal(telemetry.getRunUsage('task-clean-1', 'MARKER_SECRET_RUN_0123'), undefined);
 
   // Protected taskId in recordDiagnostic
-  assert.throws(
-    () => telemetry.recordDiagnostic('MARKER_SECRET_TASK_0123', 'run-1', 'diag content'),
-    /Protected identifier rejected/i
-  );
+  assert.throws(() => telemetry.recordDiagnostic('MARKER_SECRET_TASK_0123', 'run-1', 'diag content'), /Protected identifier rejected/i);
 
   // Protected runId in recordDiagnostic
-  assert.throws(
-    () => telemetry.recordDiagnostic('task-clean-1', 'MARKER_SECRET_RUN_0123', 'diag content'),
-    /Protected identifier rejected/i
-  );
+  assert.throws(() => telemetry.recordDiagnostic('task-clean-1', 'MARKER_SECRET_RUN_0123', 'diag content'), /Protected identifier rejected/i);
 
   // Valid identities record correctly
   await telemetry.recordUsage('task-clean-1', 'run-clean-1', validUsage);
@@ -629,18 +566,9 @@ test('recordUsage and getRunUsage isolate usage across delimiter-collision task 
 });
 
 test('PR49 P1 Finding 1: PEM regex redacts legacy encrypted PEM with hyphenated headers and truncated PEM without end marker', () => {
-  const encryptedPem = [
-    '-----BEGIN RSA PRIVATE KEY-----',
-    'Proc-Type: 4,ENCRYPTED',
-    'DEK-Info: AES-128-CBC,fixture',
-    'RklYVFVSRQ==',
-    '-----END RSA PRIVATE KEY-----',
-  ].join('\n');
+  const encryptedPem = ['-----BEGIN RSA PRIVATE KEY-----', 'Proc-Type: 4,ENCRYPTED', 'DEK-Info: AES-128-CBC,fixture', 'RklYVFVSRQ==', '-----END RSA PRIVATE KEY-----'].join('\n');
 
-  const truncatedPem = [
-    '-----BEGIN PRIVATE KEY-----',
-    'RklYVFVSRQ==',
-  ].join('\n');
+  const truncatedPem = ['-----BEGIN PRIVATE KEY-----', 'RklYVFVSRQ=='].join('\n');
 
   // 1. sanitizeText directly
   const encryptedResult = sanitizeText(encryptedPem);
@@ -721,7 +649,7 @@ test('PR49 P1 Finding 2: generic secret pattern redacts JSON quoted keys, suffix
 test('PR49 P1 Finding 3: emitActivity rejects protected evidenceRef with generic index reason and echoes no raw path or payload', async () => {
   const sink: ActivityEvent[] = [];
   const telemetry = new SanitizedTelemetry({
-    sink: (e) => {
+    sink: e => {
       sink.push(e);
     },
   });
@@ -777,20 +705,19 @@ test('PR49 P1 Finding 3: emitActivity rejects protected evidenceRef with generic
           assert.equal(serialized.includes(marker), false, `Serialized error must not contain "${marker}"`);
         }
         return true;
-      }
+      },
     );
 
     assert.ok(caughtError);
     assert.equal(sink.length, 0, 'Sink must have zero effects on rejected evidenceRef');
     assert.equal(telemetry.getEvents().length, 0, 'Stored events must have zero effects on rejected evidenceRef');
   }
-
 });
 
 test('PR49 P1 end-to-end: emitActivity redacts outcomes and evidenceRefs without leaking markers while preserving valid metadata', async () => {
   const sink: ActivityEvent[] = [];
   const telemetry = new SanitizedTelemetry({
-    sink: (e) => {
+    sink: e => {
       sink.push(e);
     },
   });
@@ -851,7 +778,7 @@ test('PR49 P1 end-to-end: emitActivity redacts outcomes and evidenceRefs without
 
 test('PR49 P2 Finding 4305766331: sink callback mutation of event outcome and evidenceRefs does not corrupt stored telemetry (sync and async)', async () => {
   const telemetrySync = new SanitizedTelemetry({
-    sink: (e) => {
+    sink: e => {
       // Attempt to mutate outcome and evidenceRefs
       try {
         (e as { outcome: string }).outcome = 'INJECTED_SINK_MARKER_OUTCOME';
@@ -896,13 +823,13 @@ test('PR49 P2 Finding 4305766331: sink callback mutation of event outcome and ev
 
   // Async sink mutation after emit
   let asyncResolve!: () => void;
-  const asyncDone = new Promise<void>((resolve) => {
+  const asyncDone = new Promise<void>(resolve => {
     asyncResolve = resolve;
   });
 
   const telemetryAsync = new SanitizedTelemetry({
-    sink: async (e) => {
-      await new Promise((r) => setTimeout(r, 10));
+    sink: async e => {
+      await new Promise(r => setTimeout(r, 10));
       try {
         (e as { outcome: string }).outcome = 'INJECTED_ASYNC_SINK_MARKER_OUTCOME';
       } catch {
@@ -1047,6 +974,3 @@ test('PR49 P2 boundary isolation: caller original event and evidenceRefs mutatio
   assert.equal(allStored[0]?.outcome, 'caller pristine outcome');
   assert.deepEqual(allStored[0]?.evidenceRefs, ['caller-evidence-1', 'caller-evidence-2']);
 });
-
-
-

@@ -6,14 +6,8 @@ import { createMockApprovalStoreV01Compatibility, createMockApprovalStore, UC05_
 import { getUc05CaseFixture } from '../support/uc05/fixtures.ts';
 import { createRecoveryScenarioV02 } from '../support/uc05/mock-recovery.ts';
 import { isNeutralAttemptReceiptV02 } from '../support/uc03/memory-state.ts';
-import {
-  computeAttemptOutcomeDigest,
-  type AttemptOutcomeReceiptV02,
-} from '../../../src/contracts/foundation/uc03.ts';
-import {
-  createTestExecutorIdentityV02,
-  createTestRepositoryOutcomeReceiptV02,
-} from '../support/uc03/state-fixtures.ts';
+import { computeAttemptOutcomeDigest, type AttemptOutcomeReceiptV02 } from '../../../src/contracts/foundation/uc03.ts';
+import { createTestExecutorIdentityV02, createTestRepositoryOutcomeReceiptV02 } from '../support/uc03/state-fixtures.ts';
 
 const profile = {
   schemaVersion: 'uc05-approval/0.1-draft',
@@ -232,12 +226,15 @@ function createTwoClaimPausedStore() {
     reservationRefs: ['reservation-2'],
   };
   assert.equal(store.claimDispatch({ claim: secondClaim, event: claimEventFor('claim-2', 'event-claim-2') }).safe.outcome, 'ok');
-  assert.equal(store.createPendingAndPause({
-    expectedControlVersion: 3,
-    submissionKey: 'submission-1',
-    request,
-    event: requestEvent,
-  }).safe.outcome, 'pending');
+  assert.equal(
+    store.createPendingAndPause({
+      expectedControlVersion: 3,
+      submissionKey: 'submission-1',
+      request,
+      event: requestEvent,
+    }).safe.outcome,
+    'pending',
+  );
   return store;
 }
 
@@ -287,7 +284,10 @@ test('createPendingAndPause atomically saves the request and fences the task by 
     reasonCode: 'approval-pending',
   });
   assert.equal(store.readRequest('decision-1').value?.submissionKey, 'submission-1');
-  assert.deepEqual(store.readEvents('task-1').value?.map((entry) => entry.eventId), ['event-request-1']);
+  assert.deepEqual(
+    store.readEvents('task-1').value?.map(entry => entry.eventId),
+    ['event-request-1'],
+  );
 });
 
 test('replaceStalePending rejects repository or workspace identity changes without writing', () => {
@@ -307,7 +307,10 @@ test('replaceStalePending rejects repository or workspace identity changes witho
     assert.equal(result.safe.safeReasonCode, 'request-task-identity-mismatch');
     assert.deepEqual(store.loadTaskControl('task-1').value, before);
     assert.equal(store.readRequest('decision-2').safe.outcome, 'invalid');
-    assert.deepEqual(store.readEvents('task-1').value?.map((event) => event.eventId), ['event-request-1']);
+    assert.deepEqual(
+      store.readEvents('task-1').value?.map(event => event.eventId),
+      ['event-request-1'],
+    );
     assert.equal(store.readHistory('task-1').value?.assessments.length, 0);
   }
 });
@@ -322,7 +325,10 @@ test('replaceStalePending rejects a reused task submission key without overwriti
   assert.deepEqual(store.loadTaskControl('task-1').value, before);
   assert.equal(store.readRequest('decision-2').safe.outcome, 'invalid');
   assert.equal(store.readRequest('decision-1').value?.decisionId, 'decision-1');
-  assert.deepEqual(store.readEvents('task-1').value?.map((event) => event.eventId), ['event-request-1']);
+  assert.deepEqual(
+    store.readEvents('task-1').value?.map(event => event.eventId),
+    ['event-request-1'],
+  );
   assert.equal(store.readHistory('task-1').value?.assessments.length, 0);
 });
 
@@ -336,9 +342,10 @@ test('replaceStalePending accepts a fresh request with matching task identity an
   assert.equal(store.loadTaskControl('task-1').value?.pendingDecisionId, 'decision-2');
   assert.equal(store.readRequest('decision-1').value?.decisionId, 'decision-1');
   assert.equal(store.readRequest('decision-2').value?.submissionKey, 'submission-2');
-  assert.deepEqual(store.readEvents('task-1').value?.map((event) => event.eventId), [
-    'event-request-1', 'event-binding-stale-1', 'event-request-2',
-  ]);
+  assert.deepEqual(
+    store.readEvents('task-1').value?.map(event => event.eventId),
+    ['event-request-1', 'event-binding-stale-1', 'event-request-2'],
+  );
   assert.equal(store.readHistory('task-1').value?.assessments.length, 1);
 });
 
@@ -382,10 +389,13 @@ test('decision storage failure and mock operator provenance cannot release a wai
   assert.equal(failed.safe.outcome, 'unavailable');
   assert.equal(store.loadTaskControl('task-1').value?.mode, 'waiting');
   assert.equal(store.readHistory('task-1').value?.resolutions.length, 0);
-  assert.equal(store.resolvePending({
-    ...validInput,
-    trustedOperator: { ...trustedOperator, provenance: 'mock' },
-  }).safe.outcome, 'invalid');
+  assert.equal(
+    store.resolvePending({
+      ...validInput,
+      trustedOperator: { ...trustedOperator, provenance: 'mock' },
+    }).safe.outcome,
+    'invalid',
+  );
   assert.equal(store.loadTaskControl('task-1').value?.mode, 'waiting');
   assert.equal(store.readHistory('task-1').value?.resolutions.length, 0);
 });
@@ -419,7 +429,7 @@ test('resolvePending validates explicit operator input, deduplicates the same re
   assert.ok(terminalRecord);
   assert.throws(() => Object.assign(terminalRecord, { decision: 'rejected' }), TypeError);
   assert.equal(store.readHistory('task-1').value?.resolutions[0]?.decision, 'approved');
-  assert.equal(store.readEvents('task-1').value?.filter((entry) => entry.type === 'human-resolution-recorded').length, 1);
+  assert.equal(store.readEvents('task-1').value?.filter(entry => entry.type === 'human-resolution-recorded').length, 1);
 
   const conflicting = store.resolvePending({
     ...input,
@@ -481,12 +491,21 @@ test('a rejection stays held until an explicit direction, which preserves the te
   assert.equal(store.readHistory('task-1').value?.directions[0]?.direction, 'revise');
   const accepted = { expectedControlVersion: 3, trustedOperator, direction, event: directionEvent };
   assert.equal(store.recordDirection(accepted).safe.outcome, 'ok');
-  assert.equal(store.createPendingAndPause({ expectedControlVersion: 4, submissionKey: 'submission-2', request: { ...request, decisionId: 'decision-2', submissionKey: 'submission-2', binding: { ...request.binding, decisionId: 'decision-2' } }, event: { ...requestEvent, eventId: 'event-request-2', decisionId: 'decision-2' } }).safe.outcome, 'pending');
+  assert.equal(
+    store.createPendingAndPause({
+      expectedControlVersion: 4,
+      submissionKey: 'submission-2',
+      request: { ...request, decisionId: 'decision-2', submissionKey: 'submission-2', binding: { ...request.binding, decisionId: 'decision-2' } },
+      event: { ...requestEvent, eventId: 'event-request-2', decisionId: 'decision-2' },
+    }).safe.outcome,
+    'pending',
+  );
   assert.equal(store.recordDirection(accepted).safe.outcome, 'ok');
   assert.equal(store.loadTaskControl('task-1').value?.mode, 'waiting');
   assert.equal(store.readHistory('task-1').value?.directions.length, 1);
   assert.equal(store.readEvents('task-1').value?.filter(event => event.type === 'developer-direction-recorded').length, 1);
-  for (const change of [{ direction: 'end' }, { expectedVersion: 5 }, { expectedEpoch: 5 }, { safeScopeRef: 'changed' }]) assert.equal(store.recordDirection({ ...accepted, direction: { ...direction, ...change } }).safe.outcome, 'conflict');
+  for (const change of [{ direction: 'end' }, { expectedVersion: 5 }, { expectedEpoch: 5 }, { safeScopeRef: 'changed' }])
+    assert.equal(store.recordDirection({ ...accepted, direction: { ...direction, ...change } }).safe.outcome, 'conflict');
   assert.equal(store.recordDirection({ ...accepted, trustedOperator: { ...trustedOperator, channelRef: 'foreign-channel' } }).safe.outcome, 'conflict');
 });
 
@@ -585,20 +604,26 @@ test('observed claims keep recovery blocked until the final outstanding claim is
 
 test('reconciliation keeps recovery blocked until every outstanding claim is reconciled', () => {
   const store = createTwoClaimPausedStore();
-  assert.equal(store.recordOutcome({
-    claimId: 'claim-1',
-    expectedControlVersion: 4,
-    phase: 'uncertain',
-    resultRef: 'uncertain-claim-1',
-    event: claimOutcomeEvent('claim-1', 'event-uncertain-1', 'uncertain'),
-  }).safe.outcome, 'uncertain');
-  assert.equal(store.recordOutcome({
-    claimId: 'claim-2',
-    expectedControlVersion: 5,
-    phase: 'uncertain',
-    resultRef: 'uncertain-claim-2',
-    event: claimOutcomeEvent('claim-2', 'event-uncertain-2', 'uncertain'),
-  }).safe.outcome, 'uncertain');
+  assert.equal(
+    store.recordOutcome({
+      claimId: 'claim-1',
+      expectedControlVersion: 4,
+      phase: 'uncertain',
+      resultRef: 'uncertain-claim-1',
+      event: claimOutcomeEvent('claim-1', 'event-uncertain-1', 'uncertain'),
+    }).safe.outcome,
+    'uncertain',
+  );
+  assert.equal(
+    store.recordOutcome({
+      claimId: 'claim-2',
+      expectedControlVersion: 5,
+      phase: 'uncertain',
+      resultRef: 'uncertain-claim-2',
+      event: claimOutcomeEvent('claim-2', 'event-uncertain-2', 'uncertain'),
+    }).safe.outcome,
+    'uncertain',
+  );
   approveWithOutstandingClaims(store, 6);
 
   const first = store.reconcile({
@@ -647,21 +672,34 @@ test('T058 v0.2 continuation forwards the full admission and preserves the owner
     schemaVersion: 'uc05-approval/0.2-draft',
     claimId: result.claimState.journalReceipt.claimId,
     claimDigest: '',
-    taskId: context.taskId, runId: context.runId,
-    taskStateSchemaVersion: context.taskStateSchemaVersion, expectedTaskStateVersion: context.expectedTaskStateVersion,
-    controlSchemaVersion: context.controlSchemaVersion, expectedControlVersion: context.expectedControlVersion,
+    taskId: context.taskId,
+    runId: context.runId,
+    taskStateSchemaVersion: context.taskStateSchemaVersion,
+    expectedTaskStateVersion: context.expectedTaskStateVersion,
+    controlSchemaVersion: context.controlSchemaVersion,
+    expectedControlVersion: context.expectedControlVersion,
     expectedEpoch: context.expectedEpoch,
     policyIdentity: {
-      policyId: context.policyAuthorityRef.policyId, policyVersion: context.policyAuthorityRef.policyVersion,
-      configId: context.policyAuthorityRef.configId, configVersion: context.policyAuthorityRef.configVersion,
+      policyId: context.policyAuthorityRef.policyId,
+      policyVersion: context.policyAuthorityRef.policyVersion,
+      configId: context.policyAuthorityRef.configId,
+      configVersion: context.policyAuthorityRef.configVersion,
     },
-    decisionRefs: [context.planDecisionRef], reservationRefs: context.reservationRefs,
-    phase: 'claimed', resultRef: null, subjectKind: context.subjectKind, planApplicability: context.planApplicability,
-    planBindingDigest: context.planBindingDigest, planDecisionRef: context.planDecisionRef,
-    actionId: context.action.actionId, actionDigest: context.actionDigest, repositoryStateDigest: context.canonicalRevision,
+    decisionRefs: [context.planDecisionRef],
+    reservationRefs: context.reservationRefs,
+    phase: 'claimed',
+    resultRef: null,
+    subjectKind: context.subjectKind,
+    planApplicability: context.planApplicability,
+    planBindingDigest: context.planBindingDigest,
+    planDecisionRef: context.planDecisionRef,
+    actionId: context.action.actionId,
+    actionDigest: context.actionDigest,
+    repositoryStateDigest: context.canonicalRevision,
   };
   assert.deepEqual(structuredClone(result.claimState.claim), {
-    ...expectedClaim, claimDigest: computeDispatchClaimDigestV02(expectedClaim),
+    ...expectedClaim,
+    claimDigest: computeDispatchClaimDigestV02(expectedClaim),
   });
   assert.equal(result.claimState.claim.claimId, result.claimState.journalReceipt.claimId);
   assert.equal(result.claimState.claim.taskId, context.taskId);
@@ -685,11 +723,13 @@ test('T058 v0.2 continuation forwards the full admission and preserves the owner
     status: 'claimed',
     reservationRefs: context.reservationRefs,
   });
-  assert.deepEqual(scenario.journalPort.getJournalSnapshot().claims, [{
-    claimId: result.claimState.journalReceipt.claimId,
-    status: 'claimed',
-    attemptId: null,
-  }]);
+  assert.deepEqual(scenario.journalPort.getJournalSnapshot().claims, [
+    {
+      claimId: result.claimState.journalReceipt.claimId,
+      status: 'claimed',
+      attemptId: null,
+    },
+  ]);
   assert.equal(scenario.journalPort.getJournalSnapshot().activeClaimId, result.claimState.journalReceipt.claimId);
   assert.deepEqual(scenario.journalPort.getJournalSnapshot().attempts, []);
 });
@@ -705,12 +745,14 @@ test('T058 v0.2 activity control forwards executor identity and retains complete
   assert.equal(isNeutralAttemptReceiptV02(attempt), false);
   assert.deepEqual(attempt.executorIdentity, executor);
   assert.equal(attempt.claimId, claimResult.claimState.journalReceipt.claimId);
-  assert.deepEqual(scenario.journalPort.getJournalSnapshot().attempts, [{
-    attemptId: attempt.attemptId,
-    claimId: attempt.claimId,
-    status: 'attempting',
-    outcomeReceiptId: null,
-  }]);
+  assert.deepEqual(scenario.journalPort.getJournalSnapshot().attempts, [
+    {
+      attemptId: attempt.attemptId,
+      claimId: attempt.claimId,
+      status: 'attempting',
+      outcomeReceiptId: null,
+    },
+  ]);
 
   const [effect, duplicate] = await Promise.all([
     activity.recordEffectAttemptV02(attempt, 'mutation', scenario.admission.context, scenario.admission.trustedContext),
@@ -799,11 +841,7 @@ test('T058 v0.2 journal rejects unknown claim and attempt outcomes with complete
   const executor = createTestExecutorIdentityV02({ payloadDigest: scenario.admission.context.actionDigest });
   const attempt = await activity.admitAttemptV02(claimResult.claimState.journalReceipt, executor, scenario.admission.context, scenario.admission.trustedContext);
   assert.equal(isNeutralAttemptReceiptV02(attempt), false);
-  const outcome = createTestRepositoryOutcomeReceiptV02(
-    claimResult.claimState.journalReceipt,
-    attempt,
-    scenario.admission.context,
-  );
+  const outcome = createTestRepositoryOutcomeReceiptV02(claimResult.claimState.journalReceipt, attempt, scenario.admission.context);
   const unknownClaimBody = { ...outcome, claimId: 'unknown-claim', receiptDigest: undefined };
   const unknownClaim = { ...unknownClaimBody, receiptDigest: computeAttemptOutcomeDigest(unknownClaimBody) };
   const unknownAttemptBody = { ...outcome, attemptId: 'unknown-attempt', receiptDigest: undefined };
@@ -826,13 +864,15 @@ test('T058 v0.2 journal rejects unknown claim and attempt outcomes with complete
   const accepted = await scenario.store.recordOutcomeV02(outcome);
   assert.deepEqual(accepted, { outcome: 'settled', receiptId: outcome.receiptId });
   const snapshot = scenario.journalPort.getJournalSnapshot();
-  assert.deepEqual(snapshot.outcomes, [{
-    receiptId: outcome.receiptId,
-    claimId: outcome.claimId,
-    attemptId: outcome.attemptId,
-    outcome: 'observed',
-    receiptDigest: outcome.receiptDigest,
-  }]);
+  assert.deepEqual(snapshot.outcomes, [
+    {
+      receiptId: outcome.receiptId,
+      claimId: outcome.claimId,
+      attemptId: outcome.attemptId,
+      outcome: 'observed',
+      receiptDigest: outcome.receiptDigest,
+    },
+  ]);
   assert.equal(snapshot.activeClaimId, null);
   const task = await scenario.journalPort.loadTask('task-1');
   assert.equal(task?.node, 'Verify');
@@ -844,7 +884,6 @@ test('T058 explicitly named v0.1 compatibility store preserves its legacy proven
   const store = createMockApprovalStoreV01Compatibility({ profile, initialControls: [initialControl] });
   assert.equal(store.provenance, UC05_MOCK_PROVENANCE);
 });
-
 
 test('T058 v0.2 missing admission and forged, missing, or stale effect receipts leave all state unchanged', async () => {
   const scenario = createRecoveryScenarioV02();
@@ -866,12 +905,16 @@ test('T058 v0.2 missing admission and forged, missing, or stale effect receipts 
   const attempt = await activity.admitAttemptV02(claimed.claimState.journalReceipt, executor, context, trustedContext);
   assert.equal(isNeutralAttemptReceiptV02(attempt), false);
   assert.deepEqual(attempt, {
-    attemptId: attempt.attemptId, claimId: claimed.claimId, taskId: context.taskId, executorIdentity: executor,
+    attemptId: attempt.attemptId,
+    claimId: claimed.claimId,
+    taskId: context.taskId,
+    executorIdentity: executor,
     preAttemptTaskStateVersion: context.expectedTaskStateVersion,
     postBeginTaskStateVersion: context.expectedTaskStateVersion + 1,
     preAttemptControlVersion: context.expectedControlVersion + 1,
     postBeginControlVersion: context.expectedControlVersion + 2,
-    epoch: context.expectedEpoch, status: 'attempting',
+    epoch: context.expectedEpoch,
+    status: 'attempting',
   });
   const beforeEffect = { journal: scenario.store.readHistoryV02(), task: await scenario.journalPort.loadTask(context.taskId), effects: activity.readEffectLogV02() };
   const cases: readonly (readonly unknown[])[] = [
@@ -919,8 +962,6 @@ test('T058 v0.2 store forwards full outcome input and the exact owner result wit
   assert.deepEqual(await scenario.store.recordOutcomeV02(receipt), { outcome: 'already-recorded', receiptId: receipt.receiptId });
   assert.deepEqual({ journal: scenario.store.readHistoryV02(), task: await scenario.journalPort.loadTask(context.taskId) }, settled);
 });
-
-
 
 test('T058 v0.2 each absent or mismatched authority and plan decision refuses before owner mutation', async () => {
   for (const change of [

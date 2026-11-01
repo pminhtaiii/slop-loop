@@ -33,10 +33,7 @@ import {
   validateCommandView,
   validateTaskWorkspace,
 } from '../../../src/contracts/foundation/uc03.ts';
-import type {
-  AttemptReceiptV02,
-  ExecutorIdentityV02,
-} from '../../../src/contracts/foundation/uc03/v02/ports.ts';
+import type { AttemptReceiptV02, ExecutorIdentityV02 } from '../../../src/contracts/foundation/uc03/v02/ports.ts';
 
 export const TEST_PROFILE_IMAGE_DIGEST = 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' as const;
 
@@ -178,7 +175,7 @@ function createSnapshotEntry(
     readonly kind?: string;
     readonly digest?: string;
     readonly linkTarget?: string;
-  }
+  },
 ): CanonicalSnapshotEntry {
   return {
     path,
@@ -206,7 +203,7 @@ test('DockerProfile validation: rejects root user (root, 0, 0:0, empty)', () => 
     const res = validateDockerProfile(createValidProfile({ user: forbiddenUser }));
     assert.equal(res.ok, false);
     if (!res.ok) {
-      assert.ok(res.errors.some((e) => e.code === 'NON_ROOT_USER_REQUIRED'));
+      assert.ok(res.errors.some(e => e.code === 'NON_ROOT_USER_REQUIRED'));
     }
   }
 });
@@ -216,27 +213,24 @@ test('DockerProfile validation: rejects root UID variants (0:1000, 00:1000, root
     const res = validateDockerProfile(createValidProfile({ user: rootVariant }));
     assert.equal(res.ok, false, `Expected ${rootVariant} to be rejected as root variant`);
     if (!res.ok) {
-      assert.ok(res.errors.some((e) => e.code === 'NON_ROOT_USER_REQUIRED'), `Expected NON_ROOT_USER_REQUIRED for ${rootVariant}`);
+      assert.ok(
+        res.errors.some(e => e.code === 'NON_ROOT_USER_REQUIRED'),
+        `Expected NON_ROOT_USER_REQUIRED for ${rootVariant}`,
+      );
     }
   }
 });
 
 test('DockerProfile validation: rejects malformed users (:1000, 1000:, 1000:1000:1000, -1:1000, 1000:-1, invalid chars, out of range)', () => {
-  const malformed = [
-    ':1000',
-    '1000:',
-    '1000:1000:1000',
-    '-1:1000',
-    '1000:-1',
-    '1000:invalid@group',
-    'invalid@user:1000',
-    '99999999999999999999:1000',
-  ];
+  const malformed = [':1000', '1000:', '1000:1000:1000', '-1:1000', '1000:-1', '1000:invalid@group', 'invalid@user:1000', '99999999999999999999:1000'];
   for (const badUser of malformed) {
     const res = validateDockerProfile(createValidProfile({ user: badUser }));
     assert.equal(res.ok, false, `Expected malformed user ${badUser} to be rejected`);
     if (!res.ok) {
-      assert.ok(res.errors.some((e) => e.code === 'INVALID_USER'), `Expected INVALID_USER for ${badUser}`);
+      assert.ok(
+        res.errors.some(e => e.code === 'INVALID_USER'),
+        `Expected INVALID_USER for ${badUser}`,
+      );
     }
   }
 });
@@ -252,17 +246,15 @@ test('DockerProfile validation: rejects writable root filesystem', () => {
   const res = validateDockerProfile(createValidProfile({ readOnlyRootFilesystem: false }));
   assert.equal(res.ok, false);
   if (!res.ok) {
-    assert.ok(res.errors.some((e) => e.code === 'READONLY_ROOT_REQUIRED'));
+    assert.ok(res.errors.some(e => e.code === 'READONLY_ROOT_REQUIRED'));
   }
 });
 
 test('DockerProfile validation: rejects network modes other than none', () => {
-  const res = validateDockerProfile(
-    createValidProfile({ network: 'bridge' as unknown as 'none' })
-  );
+  const res = validateDockerProfile(createValidProfile({ network: 'bridge' as unknown as 'none' }));
   assert.equal(res.ok, false);
   if (!res.ok) {
-    assert.ok(res.errors.some((e) => e.code === 'NETWORK_NONE_REQUIRED'));
+    assert.ok(res.errors.some(e => e.code === 'NETWORK_NONE_REQUIRED'));
   }
 });
 
@@ -271,7 +263,7 @@ test('DockerProfile validation: rejects non-sha256 or mutable image digests', ()
     const res = validateDockerProfile(createValidProfile({ imageDigest: badDigest }));
     assert.equal(res.ok, false);
     if (!res.ok) {
-      assert.ok(res.errors.some((e) => e.code === 'IMMUTABLE_IMAGE_DIGEST_REQUIRED'));
+      assert.ok(res.errors.some(e => e.code === 'IMMUTABLE_IMAGE_DIGEST_REQUIRED'));
     }
   }
 });
@@ -295,33 +287,23 @@ test('DockerProfile validation: rejects invalid or missing resource limits', () 
           ...createValidProfile().limits,
           ...limitOverride,
         },
-      })
+      }),
     );
     assert.equal(res.ok, false);
     if (!res.ok) {
-      assert.ok(res.errors.some((e) => e.code === 'INVALID_LIMIT'));
+      assert.ok(res.errors.some(e => e.code === 'INVALID_LIMIT'));
     }
   }
 });
 
 test('DockerProfile validation: rejects dangerous mounts (docker socket, root, credentials, grader)', () => {
-  const dangerousTargets = [
-    '/var/run/docker.sock',
-    '/run/docker.sock',
-    '/',
-    '/root/.ssh',
-    '/home/user/.aws',
-    'eval/uc03/private',
-    'private/grading',
-  ];
+  const dangerousTargets = ['/var/run/docker.sock', '/run/docker.sock', '/', '/root/.ssh', '/home/user/.aws', 'eval/uc03/private', 'private/grading'];
   for (const target of dangerousTargets) {
-    const mounts: DockerMountConfig[] = [
-      { source: 'host', target, readOnly: true },
-    ];
+    const mounts: DockerMountConfig[] = [{ source: 'host', target, readOnly: true }];
     const res = validateDockerProfile(createValidProfile({ mounts }));
     assert.equal(res.ok, false);
     if (!res.ok) {
-      assert.ok(res.errors.some((e) => e.code === 'DANGEROUS_MOUNT_FORBIDDEN'));
+      assert.ok(res.errors.some(e => e.code === 'DANGEROUS_MOUNT_FORBIDDEN'));
     }
   }
 });
@@ -329,24 +311,20 @@ test('DockerProfile validation: rejects dangerous mounts (docker socket, root, c
 test('DockerProfile validation: rejects dangerous mount sources and writable canonical repository volumes', () => {
   // Dangerous sources
   for (const source of ['/var/run/docker.sock', '/run/docker.sock', '/etc/shadow', '.ssh', '.aws', '.env']) {
-    const mounts: DockerMountConfig[] = [
-      { source, target: '/safe', readOnly: true },
-    ];
+    const mounts: DockerMountConfig[] = [{ source, target: '/safe', readOnly: true }];
     const res = validateDockerProfile(createValidProfile({ mounts }));
     assert.equal(res.ok, false, `Expected dangerous source ${source} to be rejected`);
     if (!res.ok) {
-      assert.ok(res.errors.some((e) => e.code === 'DANGEROUS_MOUNT_FORBIDDEN'));
+      assert.ok(res.errors.some(e => e.code === 'DANGEROUS_MOUNT_FORBIDDEN'));
     }
   }
 
   // Canonical repository volume mounted writable at alias
-  const aliasMounts: DockerMountConfig[] = [
-    { source: 'canonical-repo-volume', target: '/workspace/alias', readOnly: false },
-  ];
+  const aliasMounts: DockerMountConfig[] = [{ source: 'canonical-repo-volume', target: '/workspace/alias', readOnly: false }];
   const resAlias = validateDockerProfile(createValidProfile({ mounts: aliasMounts }));
   assert.equal(resAlias.ok, false);
   if (!resAlias.ok) {
-    assert.ok(resAlias.errors.some((e) => e.code === 'READONLY_REPO_MOUNT_REQUIRED'));
+    assert.ok(resAlias.errors.some(e => e.code === 'READONLY_REPO_MOUNT_REQUIRED'));
   }
 });
 
@@ -355,7 +333,7 @@ test('DockerProfile validation: validates malformed mounts without throwing inci
   const res = validateDockerProfile(createValidProfile({ mounts: malformedMounts }));
   assert.equal(res.ok, false);
   if (!res.ok) {
-    assert.ok(res.errors.some((e) => e.code === 'INVALID_MOUNT'));
+    assert.ok(res.errors.some(e => e.code === 'INVALID_MOUNT'));
   }
 });
 
@@ -367,7 +345,7 @@ test('DockerProfile validation: rejects writable /workspace/repo mount', () => {
   const res = validateDockerProfile(createValidProfile({ mounts }));
   assert.equal(res.ok, false);
   if (!res.ok) {
-    assert.ok(res.errors.some((e) => e.code === 'READONLY_REPO_MOUNT_REQUIRED'));
+    assert.ok(res.errors.some(e => e.code === 'READONLY_REPO_MOUNT_REQUIRED'));
   }
 });
 
@@ -386,18 +364,9 @@ test('FakeDockerLifecycleController: tracks volume operations and advertises moc
 });
 
 test('DockerWorkspaceManager: requires injected DockerLifecycleController and fails if missing or invalid', () => {
-  assert.throws(
-    () => new (DockerWorkspaceManager as unknown as new () => DockerWorkspaceManager)(),
-    { message: /CONTROLLER_REQUIRED/ }
-  );
-  assert.throws(
-    () => new DockerWorkspaceManager({} as unknown as { readonly controller: DockerLifecycleController }),
-    { message: /CONTROLLER_REQUIRED/ }
-  );
-  assert.throws(
-    () => new DockerWorkspaceManager({ controller: null as unknown as DockerLifecycleController }),
-    { message: /CONTROLLER_REQUIRED/ }
-  );
+  assert.throws(() => new (DockerWorkspaceManager as unknown as new () => DockerWorkspaceManager)(), { message: /CONTROLLER_REQUIRED/ });
+  assert.throws(() => new DockerWorkspaceManager({} as unknown as { readonly controller: DockerLifecycleController }), { message: /CONTROLLER_REQUIRED/ });
+  assert.throws(() => new DockerWorkspaceManager({ controller: null as unknown as DockerLifecycleController }), { message: /CONTROLLER_REQUIRED/ });
 });
 
 test('DockerWorkspaceManager: validates task, workspace, and revision BEFORE volume effects (zero controller calls on invalid input)', async () => {
@@ -416,7 +385,7 @@ test('DockerWorkspaceManager: validates task, workspace, and revision BEFORE vol
         profile,
       });
     },
-    { message: /INVALID_TASK_WORKSPACE/ }
+    { message: /INVALID_TASK_WORKSPACE/ },
   );
   assert.equal(controller.createdVolumes.length, 0, 'Zero volumes created on invalid taskId');
 
@@ -430,7 +399,7 @@ test('DockerWorkspaceManager: validates task, workspace, and revision BEFORE vol
         profile,
       });
     },
-    { message: /INVALID_TASK_WORKSPACE/ }
+    { message: /INVALID_TASK_WORKSPACE/ },
   );
   assert.equal(controller.createdVolumes.length, 0, 'Zero volumes created on invalid workspaceId');
 
@@ -444,7 +413,7 @@ test('DockerWorkspaceManager: validates task, workspace, and revision BEFORE vol
         profile,
       });
     },
-    { message: /INVALID_REVISION_DIGEST/ }
+    { message: /INVALID_REVISION_DIGEST/ },
   );
   assert.equal(controller.createdVolumes.length, 0, 'Zero volumes created on invalid revision digest');
 
@@ -459,7 +428,7 @@ test('DockerWorkspaceManager: validates task, workspace, and revision BEFORE vol
         profile: badProfile,
       });
     },
-    { message: /INVALID_DOCKER_PROFILE/ }
+    { message: /INVALID_DOCKER_PROFILE/ },
   );
   assert.equal(controller.createdVolumes.length, 0, 'Zero volumes created on invalid profile');
 
@@ -483,7 +452,7 @@ test('DockerWorkspaceManager: validates task, workspace, and revision BEFORE vol
         profile,
       });
     },
-    { message: /WORKSPACE_ALREADY_EXISTS/ }
+    { message: /WORKSPACE_ALREADY_EXISTS/ },
   );
   assert.equal(controller.createdVolumes.length, 2, 'No new volumes created on duplicate create');
 });
@@ -550,7 +519,7 @@ test('DockerWorkspaceManager: resumeWorkspace verifies stable volume identities 
     async () => {
       await manager.resumeWorkspace({ workspace: created, profile: altProfile });
     },
-    { message: /IMAGE_DIGEST_MISMATCH/ }
+    { message: /IMAGE_DIGEST_MISMATCH/ },
   );
 
   // Rejects resume if volume identity drifted / hijacked
@@ -562,7 +531,7 @@ test('DockerWorkspaceManager: resumeWorkspace verifies stable volume identities 
     async () => {
       await manager.resumeWorkspace({ workspace: tamperedWorkspace, profile });
     },
-    { message: /VOLUME_IDENTITY_MISMATCH/ }
+    { message: /VOLUME_IDENTITY_MISMATCH/ },
   );
 });
 
@@ -586,7 +555,7 @@ test('DockerWorkspaceManager: admitCommandView fails closed when controller is m
     async () => {
       await manager.admitCommandView({ workspaceId: ws.workspaceId });
     },
-    { message: /CONTROLLER_SNAPSHOT_METHOD_REQUIRED/ }
+    { message: /CONTROLLER_SNAPSHOT_METHOD_REQUIRED/ },
   );
 });
 
@@ -613,7 +582,7 @@ test('DockerWorkspaceManager: admitCommandView fails closed when controller is m
     async () => {
       await manager.admitCommandView({ workspaceId: ws.workspaceId });
     },
-    { message: /CONTROLLER_MATERIALIZE_METHOD_REQUIRED/ }
+    { message: /CONTROLLER_MATERIALIZE_METHOD_REQUIRED/ },
   );
 });
 
@@ -639,7 +608,7 @@ test('DockerWorkspaceManager: admitCommandView rejects when controller returns s
     async () => {
       await manager.admitCommandView({ workspaceId: ws.workspaceId });
     },
-    { message: /STALE_COMMAND_VIEW/ }
+    { message: /STALE_COMMAND_VIEW/ },
   );
 });
 
@@ -709,7 +678,7 @@ test('DockerWorkspaceManager: admitCommandView rejects invalid file digests that
     async () => {
       await manager.admitCommandView({ workspaceId: ws.workspaceId });
     },
-    { message: /FILE_DIGEST_MISMATCH/ }
+    { message: /FILE_DIGEST_MISMATCH/ },
   );
   assert.equal(controller.materializedViews.length, 0);
 });
@@ -728,16 +697,14 @@ test('DockerWorkspaceManager: admitCommandView rejects escaping canonical paths 
 
   controller.snapshotToReturn = {
     canonicalRevisionDigest: rev,
-    entries: [
-      createSnapshotEntry('../escape.py', 'x = 1\n'),
-    ],
+    entries: [createSnapshotEntry('../escape.py', 'x = 1\n')],
   };
 
   await assert.rejects(
     async () => {
       await manager.admitCommandView({ workspaceId: ws.workspaceId });
     },
-    { message: /WORKSPACE_ESCAPE/ }
+    { message: /WORKSPACE_ESCAPE/ },
   );
   assert.equal(controller.materializedViews.length, 0);
 });
@@ -756,16 +723,14 @@ test('DockerWorkspaceManager: admitCommandView rejects unknown file kinds before
 
   controller.snapshotToReturn = {
     canonicalRevisionDigest: rev,
-    entries: [
-      createSnapshotEntry('src/pipe', '', { kind: 'fifo', digest: computeFileDigest('') }),
-    ],
+    entries: [createSnapshotEntry('src/pipe', '', { kind: 'fifo', digest: computeFileDigest('') })],
   };
 
   await assert.rejects(
     async () => {
       await manager.admitCommandView({ workspaceId: ws.workspaceId });
     },
-    { message: /UNKNOWN_FILE_KIND/ }
+    { message: /UNKNOWN_FILE_KIND/ },
   );
   assert.equal(controller.materializedViews.length, 0);
 });
@@ -803,7 +768,7 @@ test('DockerWorkspaceManager: admitCommandView rejects symlink link targets (cha
     async () => {
       await manager.admitCommandView({ workspaceId: ws.workspaceId });
     },
-    { message: /UNSAFE_LINK_TARGET/ }
+    { message: /UNSAFE_LINK_TARGET/ },
   );
   assert.equal(controller.materializedViews.length, 0);
 });
@@ -837,7 +802,7 @@ test('DockerWorkspaceManager: admitCommandView rejects outside link targets (/et
         await manager.admitCommandView({ workspaceId: ws.workspaceId });
       },
       { message: /UNSAFE_LINK_TARGET/ },
-      `Expected outside link target ${outsideTarget} to be rejected`
+      `Expected outside link target ${outsideTarget} to be rejected`,
     );
   }
   assert.equal(controller.materializedViews.length, 0);
@@ -872,7 +837,7 @@ test('DockerWorkspaceManager: admitCommandView rejects excluded link targets (.e
     async () => {
       await manager.admitCommandView({ workspaceId: ws.workspaceId });
     },
-    { message: /FORBIDDEN_LINK_TARGET/ }
+    { message: /FORBIDDEN_LINK_TARGET/ },
   );
 
   // Link pointing to file containing embedded secret
@@ -892,7 +857,7 @@ test('DockerWorkspaceManager: admitCommandView rejects excluded link targets (.e
     async () => {
       await manager.admitCommandView({ workspaceId: ws.workspaceId });
     },
-    { message: /FORBIDDEN_LINK_TARGET/ }
+    { message: /FORBIDDEN_LINK_TARGET/ },
   );
   assert.equal(controller.materializedViews.length, 0);
 });
@@ -929,16 +894,10 @@ test('DockerWorkspaceManager: admitCommandView excludes protected paths and unre
 
   // Admitted view assertions
   assert.equal(view.admittedFiles.length, 2);
-  const admittedPaths = view.admittedFiles.map((f) => f.path);
+  const admittedPaths = view.admittedFiles.map(f => f.path);
   assert.deepEqual(admittedPaths.sort(), ['src/calculator.py', 'tests/test_calculator.py']);
-  assert.equal(
-    view.admittedFiles.find((f) => f.path === 'src/calculator.py')?.digest,
-    computeFileDigest(calcPy)
-  );
-  assert.equal(
-    view.admittedFiles.find((f) => f.path === 'tests/test_calculator.py')?.digest,
-    computeFileDigest(testPy)
-  );
+  assert.equal(view.admittedFiles.find(f => f.path === 'src/calculator.py')?.digest, computeFileDigest(calcPy));
+  assert.equal(view.admittedFiles.find(f => f.path === 'tests/test_calculator.py')?.digest, computeFileDigest(testPy));
   assert.equal(view.mountedReadOnly, true);
   assert.equal(view.scratchIdentity, ws.scratchVolumeId);
 
@@ -976,10 +935,7 @@ test('DockerWorkspaceManager: admitCommandView fails closed when required file i
 
   controller.snapshotToReturn = {
     canonicalRevisionDigest: rev,
-    entries: [
-      createSnapshotEntry('src/calculator.py', 'def add(a, b): return a + b\n'),
-      createSnapshotEntry('.env', 'SECRET=true\n'),
-    ],
+    entries: [createSnapshotEntry('src/calculator.py', 'def add(a, b): return a + b\n'), createSnapshotEntry('.env', 'SECRET=true\n')],
     requiredFiles: ['.env', 'src/calculator.py'],
   };
 
@@ -987,7 +943,7 @@ test('DockerWorkspaceManager: admitCommandView fails closed when required file i
     async () => {
       await manager.admitCommandView({ workspaceId: ws.workspaceId });
     },
-    { message: /PROTECTED_PATH_FORBIDDEN/ }
+    { message: /PROTECTED_PATH_FORBIDDEN/ },
   );
   assert.equal(controller.materializedViews.length, 0);
 });
@@ -1006,9 +962,7 @@ test('DockerWorkspaceManager: admitCommandView fails closed when required file c
 
   controller.snapshotToReturn = {
     canonicalRevisionDigest: rev,
-    entries: [
-      createSnapshotEntry('src/auth.py', 'TOKEN = "MARKER_SECRET_REQUIRED_TOKEN_99"\ndef login(): pass\n'),
-    ],
+    entries: [createSnapshotEntry('src/auth.py', 'TOKEN = "MARKER_SECRET_REQUIRED_TOKEN_99"\ndef login(): pass\n')],
   };
 
   await assert.rejects(
@@ -1018,7 +972,7 @@ test('DockerWorkspaceManager: admitCommandView fails closed when required file c
         requiredFiles: ['src/auth.py'],
       });
     },
-    { message: /REQUIRED_FILE_CONTAINS_PROTECTED_CONTENT/ }
+    { message: /REQUIRED_FILE_CONTAINS_PROTECTED_CONTENT/ },
   );
   assert.equal(controller.materializedViews.length, 0);
 });
@@ -1037,9 +991,7 @@ test('DockerWorkspaceManager: admitCommandView fails closed when required file i
 
   controller.snapshotToReturn = {
     canonicalRevisionDigest: rev,
-    entries: [
-      createSnapshotEntry('src/calculator.py', 'def add(a, b): return a + b\n'),
-    ],
+    entries: [createSnapshotEntry('src/calculator.py', 'def add(a, b): return a + b\n')],
     requiredFiles: ['src/calculator.py', 'tests/test_calculator.py'],
   };
 
@@ -1047,7 +999,7 @@ test('DockerWorkspaceManager: admitCommandView fails closed when required file i
     async () => {
       await manager.admitCommandView({ workspaceId: ws.workspaceId });
     },
-    { message: /REQUIRED_FILE_EXCLUDED/ }
+    { message: /REQUIRED_FILE_EXCLUDED/ },
   );
   assert.equal(controller.materializedViews.length, 0);
 });
@@ -1102,9 +1054,7 @@ test('DockerWorkspaceManager: admitCommandView rejects view if canonical revisio
 
   controller.snapshotToReturn = {
     canonicalRevisionDigest: rev1,
-    entries: [
-      createSnapshotEntry('src/calculator.py', 'def add(a, b): return a + b\n'),
-    ],
+    entries: [createSnapshotEntry('src/calculator.py', 'def add(a, b): return a + b\n')],
   };
 
   // Simulate concurrent revision mutation during materialization
@@ -1116,7 +1066,7 @@ test('DockerWorkspaceManager: admitCommandView rejects view if canonical revisio
     async () => {
       await manager.admitCommandView({ workspaceId: ws.workspaceId });
     },
-    { message: /CANONICAL_REVISION_CHANGED/ }
+    { message: /CANONICAL_REVISION_CHANGED/ },
   );
 
   // Active view must not be stored on concurrent drift
@@ -1140,10 +1090,7 @@ test('DockerWorkspaceManager: changed canonical revision invalidates active comm
 
   controller.snapshotToReturn = {
     canonicalRevisionDigest: rev1,
-    entries: [
-      createSnapshotEntry('src/calculator.py', 'def add(a, b): return a + b\n'),
-      createSnapshotEntry('tests/test_calculator.py', 'def test_add(): assert add(1, 2) == 3\n'),
-    ],
+    entries: [createSnapshotEntry('src/calculator.py', 'def add(a, b): return a + b\n'), createSnapshotEntry('tests/test_calculator.py', 'def test_add(): assert add(1, 2) == 3\n')],
   };
 
   const view = await manager.admitCommandView({ workspaceId: ws.workspaceId });
@@ -1163,7 +1110,7 @@ test('DockerWorkspaceManager: changed canonical revision invalidates active comm
         canonicalRevisionDigest: rev1,
       });
     },
-    { message: /STALE_COMMAND_VIEW/ }
+    { message: /STALE_COMMAND_VIEW/ },
   );
 });
 
@@ -1272,7 +1219,7 @@ test('DockerWorkspaceManager: rejects cross-task resume identity drift and volum
     async () => {
       await manager.resumeWorkspace({ workspace: crossTaskDrift, profile });
     },
-    { message: /VOLUME_IDENTITY_MISMATCH/ }
+    { message: /VOLUME_IDENTITY_MISMATCH/ },
   );
 
   // Attempt cross-task resume with recomputed volumes for the hijacker
@@ -1287,7 +1234,7 @@ test('DockerWorkspaceManager: rejects cross-task resume identity drift and volum
     async () => {
       await manager.resumeWorkspace({ workspace: crossTaskWithNewVols, profile });
     },
-    { message: /VOLUME_IDENTITY_MISMATCH/ }
+    { message: /VOLUME_IDENTITY_MISMATCH/ },
   );
 
   // Tampered repoVolumeId
@@ -1298,7 +1245,7 @@ test('DockerWorkspaceManager: rejects cross-task resume identity drift and volum
         profile,
       });
     },
-    { message: /VOLUME_IDENTITY_MISMATCH/ }
+    { message: /VOLUME_IDENTITY_MISMATCH/ },
   );
 
   // Tampered scratchVolumeId
@@ -1309,7 +1256,7 @@ test('DockerWorkspaceManager: rejects cross-task resume identity drift and volum
         profile,
       });
     },
-    { message: /VOLUME_IDENTITY_MISMATCH/ }
+    { message: /VOLUME_IDENTITY_MISMATCH/ },
   );
 });
 
@@ -1337,7 +1284,7 @@ test('DockerWorkspaceManager: duplicate workspaceId fails before effects (zero a
         profile,
       });
     },
-    { message: /WORKSPACE_ALREADY_EXISTS/ }
+    { message: /WORKSPACE_ALREADY_EXISTS/ },
   );
   assert.equal(controller.createdVolumes.length, 2, 'No new volumes allocated on duplicate workspaceId');
 
@@ -1351,7 +1298,7 @@ test('DockerWorkspaceManager: duplicate workspaceId fails before effects (zero a
         profile,
       });
     },
-    { message: /WORKSPACE_ALREADY_EXISTS/ }
+    { message: /WORKSPACE_ALREADY_EXISTS/ },
   );
   assert.equal(controller.createdVolumes.length, 2, 'No new volumes allocated on cross-task duplicate workspaceId');
 });
@@ -1381,7 +1328,7 @@ test('DockerWorkspaceManager: invalid taskId or workspaceId variants fail before
           profile,
         });
       },
-      { message: /INVALID_TASK_WORKSPACE/ }
+      { message: /INVALID_TASK_WORKSPACE/ },
     );
   }
 
@@ -1408,7 +1355,7 @@ async function setupWorkspaceWithAdmittedView(
   controller: FakeDockerLifecycleController,
   taskId = 'task-t006b',
   workspaceId = 'ws-t006b',
-  revision = 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
+  revision = 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
 ): Promise<{ ws: TaskWorkspace; view: CommandView; profile: DockerProfile }> {
   const profile = createValidProfile();
   const ws = await manager.createWorkspace({
@@ -1419,10 +1366,7 @@ async function setupWorkspaceWithAdmittedView(
   });
   controller.snapshotToReturn = {
     canonicalRevisionDigest: revision,
-    entries: [
-      createSnapshotEntry('src/solution.py', 'def solve(): return 42\n'),
-      createSnapshotEntry('tests/test_solution.py', 'def test_solve(): pass\n'),
-    ],
+    entries: [createSnapshotEntry('src/solution.py', 'def solve(): return 42\n'), createSnapshotEntry('tests/test_solution.py', 'def test_solve(): pass\n')],
   };
   const view = await manager.admitCommandView({ workspaceId });
   return { ws, view, profile };
@@ -1437,18 +1381,16 @@ test('DockerProfile validation: rejects arbitrary mount targets, host bind mount
   const resTarget = validateDockerProfile(createValidProfile({ mounts: badTargetMounts }));
   assert.equal(resTarget.ok, false);
   if (!resTarget.ok) {
-    assert.ok(resTarget.errors.some((e) => e.code === 'ARBITRARY_MOUNT_TARGET_FORBIDDEN'));
+    assert.ok(resTarget.errors.some(e => e.code === 'ARBITRARY_MOUNT_TARGET_FORBIDDEN'));
   }
 
   // Host bind mount sources (absolute, relative, windows)
   for (const hostSource of ['/var/lib/data', 'C:\\host\\data', '../outside', './relative']) {
-    const hostMounts: DockerMountConfig[] = [
-      { source: hostSource, target: '/workspace/repo', readOnly: true },
-    ];
+    const hostMounts: DockerMountConfig[] = [{ source: hostSource, target: '/workspace/repo', readOnly: true }];
     const resHost = validateDockerProfile(createValidProfile({ mounts: hostMounts }));
     assert.equal(resHost.ok, false);
     if (!resHost.ok) {
-      assert.ok(resHost.errors.some((e) => e.code === 'HOST_BIND_MOUNT_FORBIDDEN' || e.code === 'DANGEROUS_MOUNT_FORBIDDEN'));
+      assert.ok(resHost.errors.some(e => e.code === 'HOST_BIND_MOUNT_FORBIDDEN' || e.code === 'DANGEROUS_MOUNT_FORBIDDEN'));
     }
   }
 
@@ -1460,17 +1402,15 @@ test('DockerProfile validation: rejects arbitrary mount targets, host bind mount
   const resRoScratch = validateDockerProfile(createValidProfile({ mounts: roScratchMounts }));
   assert.equal(resRoScratch.ok, false);
   if (!resRoScratch.ok) {
-    assert.ok(resRoScratch.errors.some((e) => e.code === 'WRITABLE_SCRATCH_MOUNT_REQUIRED'));
+    assert.ok(resRoScratch.errors.some(e => e.code === 'WRITABLE_SCRATCH_MOUNT_REQUIRED'));
   }
 
   // Canonical repo volume mounted at scratch
-  const repoAtScratchMounts: DockerMountConfig[] = [
-    { source: 'vol-repo', target: '/workspace/scratch', readOnly: false },
-  ];
+  const repoAtScratchMounts: DockerMountConfig[] = [{ source: 'vol-repo', target: '/workspace/scratch', readOnly: false }];
   const resRepoScratch = validateDockerProfile(createValidProfile({ mounts: repoAtScratchMounts }));
   assert.equal(resRepoScratch.ok, false);
   if (!resRepoScratch.ok) {
-    assert.ok(resRepoScratch.errors.some((e) => e.code === 'READONLY_REPO_MOUNT_REQUIRED'));
+    assert.ok(resRepoScratch.errors.some(e => e.code === 'READONLY_REPO_MOUNT_REQUIRED'));
   }
 
   // Duplicate mount targets
@@ -1481,15 +1421,12 @@ test('DockerProfile validation: rejects arbitrary mount targets, host bind mount
   const resDup = validateDockerProfile(createValidProfile({ mounts: dupMounts }));
   assert.equal(resDup.ok, false);
   if (!resDup.ok) {
-    assert.ok(resDup.errors.some((e) => e.code === 'DUPLICATE_MOUNT_TARGET_FORBIDDEN'));
+    assert.ok(resDup.errors.some(e => e.code === 'DUPLICATE_MOUNT_TARGET_FORBIDDEN'));
   }
 });
 
 test('StructuredCommandExecutor: requires manager and controller', () => {
-  assert.throws(
-    () => new StructuredCommandExecutor(null as unknown as { manager: DockerWorkspaceManager }),
-    { message: /MANAGER_REQUIRED/ }
-  );
+  assert.throws(() => new StructuredCommandExecutor(null as unknown as { manager: DockerWorkspaceManager }), { message: /MANAGER_REQUIRED/ });
 
   const controller = new FakeDockerLifecycleController();
   const manager = new DockerWorkspaceManager({ controller });
@@ -1597,7 +1534,7 @@ test('StructuredCommandExecutor: ZERO controller dispatch on missing or stale co
         limits,
       });
     },
-    { message: /COMMAND_VIEW_REQUIRED/ }
+    { message: /COMMAND_VIEW_REQUIRED/ },
   );
   assert.equal(controller.executedPlans.length, 0, 'Zero dispatch on missing view');
 
@@ -1614,7 +1551,7 @@ test('StructuredCommandExecutor: ZERO controller dispatch on missing or stale co
         limits,
       });
     },
-    { message: /COMMAND_VIEW_REQUIRED/ }
+    { message: /COMMAND_VIEW_REQUIRED/ },
   );
   assert.equal(controller.executedPlans.length, 0, 'Zero dispatch on invalidated view');
 
@@ -1630,7 +1567,7 @@ test('StructuredCommandExecutor: ZERO controller dispatch on missing or stale co
         view: view, // Stale view from ws-stale-01
       });
     },
-    { message: /STALE_COMMAND_VIEW/ }
+    { message: /STALE_COMMAND_VIEW/ },
   );
   assert.equal(controller.executedPlans.length, 0, 'Zero dispatch on stale view object');
 });
@@ -1664,7 +1601,7 @@ test('StructuredCommandExecutor: ZERO controller dispatch on missing or invalid 
           limits: badLimits as unknown as ExecutionLimits,
         });
       },
-      { message: /INVALID_EXECUTION_LIMITS/ }
+      { message: /INVALID_EXECUTION_LIMITS/ },
     );
   }
 
@@ -1690,7 +1627,7 @@ test('StructuredCommandExecutor: ZERO controller dispatch on disallowed executab
         });
       },
       { message: /DISALLOWED_EXECUTABLE/ },
-      'Expected disallowed executable ' + badExec + ' to be rejected'
+      'Expected disallowed executable ' + badExec + ' to be rejected',
     );
   }
 
@@ -1708,10 +1645,9 @@ test('StructuredCommandExecutor: exported executable set mutations cannot change
   try {
     exportedExecutables.clear();
     exportedExecutables.add('sh');
-    await assert.rejects(
-      executor.execute({ workspaceId: ws.workspaceId, executable: 'sh', limits: createValidLimits() }),
-      { message: "DISALLOWED_EXECUTABLE: Executable 'sh' is not in allowed executable set (pytest, python, python3)" }
-    );
+    await assert.rejects(executor.execute({ workspaceId: ws.workspaceId, executable: 'sh', limits: createValidLimits() }), {
+      message: "DISALLOWED_EXECUTABLE: Executable 'sh' is not in allowed executable set (pytest, python, python3)",
+    });
     assert.equal(controller.executedPlans.length, 0);
 
     for (const executable of ['pytest', 'python', 'python3']) {
@@ -1755,7 +1691,7 @@ test('StructuredCommandExecutor: ZERO controller dispatch on forbidden argv with
         });
       },
       { message: /FORBIDDEN_SHELL_CHARACTERS/ },
-      'Expected argv ' + JSON.stringify(badArgv) + ' to be rejected'
+      'Expected argv ' + JSON.stringify(badArgv) + ' to be rejected',
     );
   }
 
@@ -1791,7 +1727,7 @@ test('StructuredCommandExecutor: ZERO controller dispatch on forbidden environme
           limits,
         });
       },
-      { message: /FORBIDDEN_ENVIRONMENT_VARIABLE/ }
+      { message: /FORBIDDEN_ENVIRONMENT_VARIABLE/ },
     );
   }
 
@@ -1820,7 +1756,7 @@ test('StructuredCommandExecutor: ZERO controller dispatch on invalid working dir
           limits,
         });
       },
-      { message: /INVALID_WORKING_DIRECTORY/ }
+      { message: /INVALID_WORKING_DIRECTORY/ },
     );
   }
 
@@ -1842,10 +1778,7 @@ test('StructuredCommandExecutor: validates normalized working-directory containm
     '/workspace/scratch-other',
     'workspace/repo',
   ]) {
-    await assert.rejects(
-      executor.execute({ workspaceId: ws.workspaceId, executable: 'pytest', workingDirectory, limits: createValidLimits() }),
-      { message: /INVALID_WORKING_DIRECTORY/ }
-    );
+    await assert.rejects(executor.execute({ workspaceId: ws.workspaceId, executable: 'pytest', workingDirectory, limits: createValidLimits() }), { message: /INVALID_WORKING_DIRECTORY/ });
   }
   assert.equal(controller.executedPlans.length, 0);
 
@@ -1869,14 +1802,20 @@ test('StructuredCommandExecutor: validates normalized working-directory containm
 test('StructuredCommandExecutor: ZERO controller dispatch when controller lacks executeContainer method', async () => {
   const incompleteController = {
     provenance: 'mock' as const,
-    createVolume: async () => { void 0; },
+    createVolume: async () => {
+      void 0;
+    },
     hasVolume: async () => true,
-    removeVolume: async () => { void 0; },
+    removeVolume: async () => {
+      void 0;
+    },
     getCanonicalSnapshot: async () => ({
       canonicalRevisionDigest: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
       entries: [createSnapshotEntry('src/solution.py', 'x = 1\n')],
     }),
-    materializeView: async () => { void 0; },
+    materializeView: async () => {
+      void 0;
+    },
   };
 
   const manager = new DockerWorkspaceManager({ controller: incompleteController });
@@ -1899,7 +1838,7 @@ test('StructuredCommandExecutor: ZERO controller dispatch when controller lacks 
         limits: createValidLimits(),
       });
     },
-    { message: /CONTROLLER_EXECUTE_METHOD_REQUIRED/ }
+    { message: /CONTROLLER_EXECUTE_METHOD_REQUIRED/ },
   );
 });
 
@@ -1988,7 +1927,7 @@ test('StructuredCommandExecutor: enforces command view freshness AGAIN AFTER awa
         limits: createValidLimits(),
       });
     },
-    { message: /CANONICAL_REVISION_CHANGED/ }
+    { message: /CANONICAL_REVISION_CHANGED/ },
   );
 
   // Cached view must be invalidated
@@ -2009,16 +1948,8 @@ test('DockerWorkspaceManager: createCommandExecutor host construction seam retai
   };
 
   // Assert executeCommand wrapper entrypoint is removed from DockerWorkspaceManager
-  assert.equal(
-    typeof (manager as unknown as Record<string, unknown>)['executeCommand'],
-    'undefined',
-    'DockerWorkspaceManager.executeCommand convenience entrypoint must be removed'
-  );
-  assert.equal(
-    'executeCommand' in DockerWorkspaceManager.prototype,
-    false,
-    'DockerWorkspaceManager.prototype must not expose executeCommand'
-  );
+  assert.equal(typeof (manager as unknown as Record<string, unknown>)['executeCommand'], 'undefined', 'DockerWorkspaceManager.executeCommand convenience entrypoint must be removed');
+  assert.equal('executeCommand' in DockerWorkspaceManager.prototype, false, 'DockerWorkspaceManager.prototype must not expose executeCommand');
 
   // Host construction seam createCommandExecutor(trustedProfile) executes successfully
   const executor = manager.createCommandExecutor(profile);
@@ -2037,8 +1968,8 @@ test('DockerWorkspaceManager: createCommandExecutor host construction seam retai
 
   // Verify DockerCommandExecutor is exact alias of StructuredCommandExecutor
   assert.equal(DockerCommandExecutor, StructuredCommandExecutor);
-  assert.ok(ALLOWED_EXECUTABLES.has("pytest"));
-  assert.ok(DEFAULT_CONTAINER_ENV["PYTHONPATH"]);
+  assert.ok(ALLOWED_EXECUTABLES.has('pytest'));
+  assert.ok(DEFAULT_CONTAINER_ENV['PYTHONPATH']);
 });
 
 test('StructuredCommandExecutor: ZERO controller dispatch when trusted profile is missing (no fallback)', async () => {
@@ -2058,7 +1989,7 @@ test('StructuredCommandExecutor: ZERO controller dispatch when trusted profile i
         limits,
       });
     },
-    { message: /PROFILE_REQUIRED/ }
+    { message: /PROFILE_REQUIRED/ },
   );
   assert.equal(controller.executedPlans.length, 0, 'Zero dispatch when profile missing');
 
@@ -2073,16 +2004,12 @@ test('StructuredCommandExecutor: ZERO controller dispatch when trusted profile i
         limits,
       });
     },
-    { message: /PROFILE_REQUIRED/ }
+    { message: /PROFILE_REQUIRED/ },
   );
   assert.equal(controller.executedPlans.length, 0, 'Zero dispatch on manager-created executor without profile');
 
   // Verify manager has no executeCommand entrypoint to bypass constructor authority
-  assert.equal(
-    (manager as unknown as Record<string, unknown>)['executeCommand'],
-    undefined,
-    'Zero dispatch and zero entrypoint for manager executeCommand'
-  );
+  assert.equal((manager as unknown as Record<string, unknown>)['executeCommand'], undefined, 'Zero dispatch and zero entrypoint for manager executeCommand');
 
   // Absent constructor authority must deny even if command supplies a plausible profile
   const executorWithoutProfile = new StructuredCommandExecutor({ manager, controller });
@@ -2097,7 +2024,7 @@ test('StructuredCommandExecutor: ZERO controller dispatch when trusted profile i
         profile: plausibleProfile,
       });
     },
-    { message: /PROFILE_REQUIRED/ }
+    { message: /PROFILE_REQUIRED/ },
   );
   assert.equal(controller.executedPlans.length, 0, 'Zero dispatch when constructor authority is missing even if command supplies profile');
 });
@@ -2124,7 +2051,7 @@ test('StructuredCommandExecutor: ZERO controller dispatch on image digest drift 
         limits,
       });
     },
-    { message: /IMAGE_DIGEST_MISMATCH/ }
+    { message: /IMAGE_DIGEST_MISMATCH/ },
   );
   assert.equal(controller.executedPlans.length, 0, 'Zero dispatch on profile image drift');
 
@@ -2140,7 +2067,7 @@ test('StructuredCommandExecutor: ZERO controller dispatch on image digest drift 
         profile: driftingProfile,
       });
     },
-    { message: /COMMAND_PROFILE_OVERRIDE_FORBIDDEN/ }
+    { message: /COMMAND_PROFILE_OVERRIDE_FORBIDDEN/ },
   );
   assert.equal(controller.executedPlans.length, 0, 'Zero dispatch on param profile override attempt');
 });
@@ -2166,7 +2093,7 @@ test('StructuredCommandExecutor: enforces finite output ceilings with omitted an
         executable: 'pytest',
         limits: createValidLimits({ maxOutputBytes: ceiling + 1 }),
       }),
-      { message: new RegExp(`RESOURCE_LIMIT_EXCEEDS_PROFILE_CEILING: Command maxOutputBytes .* exceeds profile ceiling \\(${ceiling}\\)`) }
+      { message: new RegExp(`RESOURCE_LIMIT_EXCEEDS_PROFILE_CEILING: Command maxOutputBytes .* exceeds profile ceiling \\(${ceiling}\\)`) },
     );
     assert.equal(controller.executedPlans.length, 0);
 
@@ -2216,7 +2143,7 @@ test('StructuredCommandExecutor: ZERO controller dispatch when any resource limi
         });
       },
       { message: /RESOURCE_LIMIT_EXCEEDS_PROFILE_CEILING/ },
-      `Expected limit ceiling violation for ${label} to reject before dispatch`
+      `Expected limit ceiling violation for ${label} to reject before dispatch`,
     );
   }
   assert.equal(controller.executedPlans.length, 0, 'Zero dispatch across all resource ceiling violations');
@@ -2275,7 +2202,7 @@ test('StructuredCommandExecutor: ZERO controller dispatch on command CPU or user
         },
       });
     },
-    { message: /COMMAND_PROFILE_OVERRIDE_FORBIDDEN/ }
+    { message: /COMMAND_PROFILE_OVERRIDE_FORBIDDEN/ },
   );
   assert.equal(controller.executedPlans.length, 0, 'Zero dispatch on caller CPU/user override attempt');
 
@@ -2294,7 +2221,7 @@ test('StructuredCommandExecutor: ZERO controller dispatch on command CPU or user
         },
       });
     },
-    { message: /COMMAND_PROFILE_OVERRIDE_FORBIDDEN/ }
+    { message: /COMMAND_PROFILE_OVERRIDE_FORBIDDEN/ },
   );
   assert.equal(controller.executedPlans.length, 0, 'Zero dispatch on caller user override attempt');
 
@@ -2312,7 +2239,7 @@ test('StructuredCommandExecutor: ZERO controller dispatch on command CPU or user
         },
       });
     },
-    { message: /COMMAND_PROFILE_OVERRIDE_FORBIDDEN/ }
+    { message: /COMMAND_PROFILE_OVERRIDE_FORBIDDEN/ },
   );
   assert.equal(controller.executedPlans.length, 0, 'Zero dispatch on caller CPU limit widening in profile');
 });
@@ -2390,7 +2317,7 @@ test('StructuredCommandExecutor: accepts valid exact caps and dispatches matchin
         limits: { ...exactLimits, maxCpuCores: 999 },
       });
     },
-    { message: /RESOURCE_LIMIT_EXCEEDS_PROFILE_CEILING/ }
+    { message: /RESOURCE_LIMIT_EXCEEDS_PROFILE_CEILING/ },
   );
 
   // Valid limits execution retains constructor snapshot user ('1000:1000'), immune to later caller mutation
@@ -2466,7 +2393,7 @@ test('StructuredCommandExecutor: ZERO controller dispatch on unknown or unallowl
         limits,
       });
     },
-    { message: /DISALLOWED_ENVIRONMENT_VARIABLE/ }
+    { message: /DISALLOWED_ENVIRONMENT_VARIABLE/ },
   );
 
   // With explicit host allowlist: cannot pass unlisted variable
@@ -2487,7 +2414,7 @@ test('StructuredCommandExecutor: ZERO controller dispatch on unknown or unallowl
         limits,
       });
     },
-    { message: /DISALLOWED_ENVIRONMENT_VARIABLE/ }
+    { message: /DISALLOWED_ENVIRONMENT_VARIABLE/ },
   );
 
   assert.equal(controller.executedPlans.length, 0, 'Zero dispatch on unallowlisted env variables');
@@ -2529,7 +2456,7 @@ test('StructuredCommandExecutor: ZERO controller dispatch on loader and interpre
           limits,
         });
       },
-      { message: /LOADER_HOOK_FORBIDDEN/ }
+      { message: /LOADER_HOOK_FORBIDDEN/ },
     );
   }
 
@@ -2569,7 +2496,7 @@ test('StructuredCommandExecutor: ZERO controller dispatch on attempts to overrid
           limits,
         });
       },
-      { message: /IMMUTABLE_ENVIRONMENT_OVERRIDE_FORBIDDEN/ }
+      { message: /IMMUTABLE_ENVIRONMENT_OVERRIDE_FORBIDDEN/ },
     );
   }
 
@@ -2616,7 +2543,7 @@ test('StructuredCommandExecutor: snapshots and freezes host environment policy a
         limits,
       });
     },
-    { message: /DISALLOWED_ENVIRONMENT_VARIABLE/ }
+    { message: /DISALLOWED_ENVIRONMENT_VARIABLE/ },
   );
 
   // Original snapshotted approved variable dispatches cleanly
@@ -2641,7 +2568,7 @@ test('StructuredCommandExecutor: snapshots and freezes host environment policy a
         allowedEnvKeys: ['LD_PRELOAD'],
       });
     },
-    { message: /INVALID_ENVIRONMENT_POLICY/ }
+    { message: /INVALID_ENVIRONMENT_POLICY/ },
   );
 
   assert.throws(
@@ -2653,7 +2580,7 @@ test('StructuredCommandExecutor: snapshots and freezes host environment policy a
         allowedEnvKeys: ['PYTHONPATH'],
       });
     },
-    { message: /INVALID_ENVIRONMENT_POLICY/ }
+    { message: /INVALID_ENVIRONMENT_POLICY/ },
   );
 });
 
@@ -2687,7 +2614,7 @@ test('DockerWorkspaceManager: createCommandExecutor forwards host environment po
         limits,
       });
     },
-    { message: /DISALLOWED_ENVIRONMENT_VARIABLE/ }
+    { message: /DISALLOWED_ENVIRONMENT_VARIABLE/ },
   );
 
   // Rejects loader hook with zero dispatch
@@ -2701,7 +2628,7 @@ test('DockerWorkspaceManager: createCommandExecutor forwards host environment po
         limits,
       });
     },
-    { message: /LOADER_HOOK_FORBIDDEN/ }
+    { message: /LOADER_HOOK_FORBIDDEN/ },
   );
 
   assert.equal(controller.executedPlans.length, 0, 'Zero dispatch across manager-created executor rejections');
@@ -2722,12 +2649,7 @@ test('DockerWorkspaceManager: createCommandExecutor forwards host environment po
 test('StructuredCommandExecutor: protected HOME, PATH, PYTHONPATH, TMPDIR cannot be overridden regardless of external Set mutation; safe LANG allowed and host snapshot preserved', async () => {
   const controller = new FakeDockerLifecycleController();
   const manager = new DockerWorkspaceManager({ controller });
-  const { ws, profile } = await setupWorkspaceWithAdmittedView(
-    manager,
-    controller,
-    'task-env-extmut-01',
-    'ws-env-extmut-01'
-  );
+  const { ws, profile } = await setupWorkspaceWithAdmittedView(manager, controller, 'task-env-extmut-01', 'ws-env-extmut-01');
   const limits = createValidLimits();
 
   controller.outputToReturn = {
@@ -2756,7 +2678,7 @@ test('StructuredCommandExecutor: protected HOME, PATH, PYTHONPATH, TMPDIR cannot
           allowedEnvKeys: [key],
         });
       },
-      { message: /INVALID_ENVIRONMENT_POLICY/ }
+      { message: /INVALID_ENVIRONMENT_POLICY/ },
     );
   }
 
@@ -2773,12 +2695,7 @@ test('StructuredCommandExecutor: protected HOME, PATH, PYTHONPATH, TMPDIR cannot
   allowedKeys.push('MUTATED_AFTER_VAR');
 
   // 3. Execution rejects attempts to override protected keys regardless of exported Set mutation
-  const bypassAttempts = [
-    { HOME: '/workspace/repo' },
-    { PATH: '/bin:/usr/bin' },
-    { PYTHONPATH: '/workspace/scratch' },
-    { TMPDIR: '/workspace/repo' },
-  ];
+  const bypassAttempts = [{ HOME: '/workspace/repo' }, { PATH: '/bin:/usr/bin' }, { PYTHONPATH: '/workspace/scratch' }, { TMPDIR: '/workspace/repo' }];
 
   for (const envOverride of bypassAttempts) {
     await assert.rejects(
@@ -2791,7 +2708,7 @@ test('StructuredCommandExecutor: protected HOME, PATH, PYTHONPATH, TMPDIR cannot
           limits,
         });
       },
-      { message: /IMMUTABLE_ENVIRONMENT_OVERRIDE_FORBIDDEN/ }
+      { message: /IMMUTABLE_ENVIRONMENT_OVERRIDE_FORBIDDEN/ },
     );
   }
 
@@ -2806,7 +2723,7 @@ test('StructuredCommandExecutor: protected HOME, PATH, PYTHONPATH, TMPDIR cannot
         limits,
       });
     },
-    { message: /DISALLOWED_ENVIRONMENT_VARIABLE/ }
+    { message: /DISALLOWED_ENVIRONMENT_VARIABLE/ },
   );
 
   // Zero controller dispatch across all rejected attempts
@@ -3210,7 +3127,7 @@ test('StructuredCommandExecutor: malformed injected controller output fails clos
         });
       },
       { message: /INVALID_CONTROLLER_OUTPUT/ },
-      `Expected malformed output "${label}" to fail closed with INVALID_CONTROLLER_OUTPUT`
+      `Expected malformed output "${label}" to fail closed with INVALID_CONTROLLER_OUTPUT`,
     );
   }
 });
@@ -3292,7 +3209,7 @@ test('StructuredCommandExecutor: cleanup hook on controller is invoked in finall
         limits,
       });
     },
-    { message: /SIMULATED_DOCKER_CRASH/ }
+    { message: /SIMULATED_DOCKER_CRASH/ },
   );
 
   assert.equal(controller.cleanedUp, true, 'Controller cleanup must be called in finally block on rejection');
@@ -3302,12 +3219,7 @@ test('StructuredCommandExecutor: cleanup hook on controller is invoked in finall
 test('StructuredCommandExecutor: controller result fields are snapshotted ONCE into detached locals, preventing getter TOCTOU mutation', async () => {
   const controller = new FakeDockerLifecycleController();
   const manager = new DockerWorkspaceManager({ controller });
-  const { ws, profile } = await setupWorkspaceWithAdmittedView(
-    manager,
-    controller,
-    'task-getter-toctou-01',
-    'ws-getter-toctou-01'
-  );
+  const { ws, profile } = await setupWorkspaceWithAdmittedView(manager, controller, 'task-getter-toctou-01', 'ws-getter-toctou-01');
   const executor = new StructuredCommandExecutor({ manager, controller, profile });
   const limits = createValidLimits();
 
@@ -3404,19 +3316,14 @@ test('StructuredCommandExecutor: controller result fields are snapshotted ONCE i
         limits,
       });
     },
-    { message: /INVALID_CONTROLLER_OUTPUT: Controller output timedOut must be a boolean/ }
+    { message: /INVALID_CONTROLLER_OUTPUT: Controller output timedOut must be a boolean/ },
   );
 });
 
 test('StructuredCommandExecutor & truncateUtf8: lone high and low surrogates canonicalized to well-formed Unicode and explicit truncation honest', async () => {
   const controller = new FakeDockerLifecycleController();
   const manager = new DockerWorkspaceManager({ controller });
-  const { ws, profile } = await setupWorkspaceWithAdmittedView(
-    manager,
-    controller,
-    'task-surrogate-01',
-    'ws-surrogate-01'
-  );
+  const { ws, profile } = await setupWorkspaceWithAdmittedView(manager, controller, 'task-surrogate-01', 'ws-surrogate-01');
   const executor = new StructuredCommandExecutor({ manager, controller, profile });
 
   // 1. truncateUtf8 unit tests for lone high and low surrogates
@@ -3599,7 +3506,7 @@ test('StructuredCommandExecutor: authenticates adapter identity, process incarna
         attempt: createAttempt({ adapterIdentity: 'wrong-adapter' }),
       });
     },
-    { message: /AUTHENTICATION_FAILED/ }
+    { message: /AUTHENTICATION_FAILED/ },
   );
   assert.equal(controller.executedPlans.length, 0);
 
@@ -3614,7 +3521,7 @@ test('StructuredCommandExecutor: authenticates adapter identity, process incarna
         attempt: createAttempt({ processIncarnation: 'inc-prior-crash-000' }),
       });
     },
-    { message: /RESTART_INCARNATION_MISMATCH/ }
+    { message: /RESTART_INCARNATION_MISMATCH/ },
   );
   assert.equal(controller.executedPlans.length, 0);
 
@@ -3629,7 +3536,7 @@ test('StructuredCommandExecutor: authenticates adapter identity, process incarna
         attempt: createAttempt({ fencingGeneration: 1 }), // 1 < 2
       });
     },
-    { message: /STALE_FENCING_GENERATION/ }
+    { message: /STALE_FENCING_GENERATION/ },
   );
   assert.equal(controller.executedPlans.length, 0);
 
@@ -3644,7 +3551,7 @@ test('StructuredCommandExecutor: authenticates adapter identity, process incarna
         attempt: createAttempt({ payloadDigest: 'sha256:wrongdigest' }),
       });
     },
-    { message: /PAYLOAD_DIGEST_MISMATCH/ }
+    { message: /PAYLOAD_DIGEST_MISMATCH/ },
   );
   assert.equal(controller.executedPlans.length, 0);
 });
@@ -3707,7 +3614,7 @@ test('StructuredCommandExecutor: Section 10 Case 5 duplicate successful receipt 
 
   // Barrier to hold first delivery at pre-invoke gate
   let releaseBarrier!: () => void;
-  const barrierPromise = new Promise<void>((resolve) => {
+  const barrierPromise = new Promise<void>(resolve => {
     releaseBarrier = resolve;
   });
 
@@ -3726,7 +3633,7 @@ test('StructuredCommandExecutor: Section 10 Case 5 duplicate successful receipt 
 
   // Wait until first delivery reaches barrier
   while (!firstDeliveryStarted) {
-    await new Promise((r) => setTimeout(r, 5));
+    await new Promise(r => setTimeout(r, 5));
   }
 
   // Concurrently deliver identical successful attempt to the same executor incarnation
@@ -3740,7 +3647,7 @@ test('StructuredCommandExecutor: Section 10 Case 5 duplicate successful receipt 
         attempt,
       });
     },
-    { message: /DUPLICATE_ATTEMPT_CONSUMED/ }
+    { message: /DUPLICATE_ATTEMPT_CONSUMED/ },
   );
 
   // Release barrier to let first delivery complete
@@ -3762,7 +3669,7 @@ test('StructuredCommandExecutor: Section 10 Case 5 duplicate successful receipt 
         attempt,
       });
     },
-    { message: /DUPLICATE_ATTEMPT_CONSUMED/ }
+    { message: /DUPLICATE_ATTEMPT_CONSUMED/ },
   );
   assert.equal(controller.executedPlans.length, 1);
 });
@@ -3836,7 +3743,7 @@ test('StructuredCommandExecutor: Section 10 Case 8 stale executor actor after fe
         attempt: staleAttempt,
       });
     },
-    { message: /STALE_FENCING_GENERATION/ }
+    { message: /STALE_FENCING_GENERATION/ },
   );
 
   assert.equal(controller.executedPlans.length, 0);
@@ -3868,19 +3775,19 @@ test('DockerWorkspaceManager: Section 10 Case 20 patch workspace gate lifetime b
   let competingWriteCompleted = false;
 
   // 1. Competing view builder (admitCommandView) is blocked while writer lease is held
-  const viewPromise = manager.admitCommandView({ workspaceId: ws.workspaceId }).then((view) => {
+  const viewPromise = manager.admitCommandView({ workspaceId: ws.workspaceId }).then(view => {
     viewBuildCompleted = true;
     return view;
   });
 
   // 2. Competing writer lease is blocked while writer lease is held
-  const competingWritePromise = manager.acquireWriteLease(ws.workspaceId, rev).then((lease) => {
+  const competingWritePromise = manager.acquireWriteLease(ws.workspaceId, rev).then(lease => {
     competingWriteCompleted = true;
     return lease;
   });
 
   // Brief tick to ensure async operations have queued
-  await new Promise((r) => setTimeout(r, 20));
+  await new Promise(r => setTimeout(r, 20));
 
   assert.equal(viewBuildCompleted, false, 'Command-view builder must remain blocked while writer lease is active');
   assert.equal(competingWriteCompleted, false, 'Competing writer lease must remain blocked while writer lease is active');
@@ -3946,10 +3853,7 @@ test('StructuredCommandExecutor: rejects future and NaN fencing generations befo
       epoch: 1,
       status: 'attempting',
     };
-    await assert.rejects(
-      executor.execute({ workspaceId: ws.workspaceId, action, limits: createValidLimits(), view, attempt }),
-      /STALE_FENCING_GENERATION/,
-    );
+    await assert.rejects(executor.execute({ workspaceId: ws.workspaceId, action, limits: createValidLimits(), view, attempt }), /STALE_FENCING_GENERATION/);
     assert.equal(controller.executedPlans.length, 0);
   }
 });
@@ -3997,9 +3901,13 @@ test('StructuredCommandExecutor: rechecks manager fence and actor identity after
   };
 
   let releaseBarrier!: () => void;
-  const barrier = new Promise<void>((resolve) => { releaseBarrier = resolve; });
+  const barrier = new Promise<void>(resolve => {
+    releaseBarrier = resolve;
+  });
   let markBarrierReached!: () => void;
-  const barrierReached = new Promise<void>((resolve) => { markBarrierReached = resolve; });
+  const barrierReached = new Promise<void>(resolve => {
+    markBarrierReached = resolve;
+  });
   const execution = executor.execute({
     workspaceId: ws.workspaceId,
     action,
@@ -4036,9 +3944,13 @@ test('StructuredCommandExecutor: rechecks manager fence and actor identity after
     },
   };
   let releaseIdentityBarrier!: () => void;
-  const identityBarrier = new Promise<void>((resolve) => { releaseIdentityBarrier = resolve; });
+  const identityBarrier = new Promise<void>(resolve => {
+    releaseIdentityBarrier = resolve;
+  });
   let markIdentityBarrierReached!: () => void;
-  const identityBarrierReached = new Promise<void>((resolve) => { markIdentityBarrierReached = resolve; });
+  const identityBarrierReached = new Promise<void>(resolve => {
+    markIdentityBarrierReached = resolve;
+  });
   const changedExecution = restartedExecutor.execute({
     workspaceId: ws.workspaceId,
     action,
@@ -4079,9 +3991,13 @@ test('DockerWorkspaceManager: command-view read lease spans materialization and 
   };
 
   let releaseMaterialization!: () => void;
-  const materialization = new Promise<void>((resolve) => { releaseMaterialization = resolve; });
+  const materialization = new Promise<void>(resolve => {
+    releaseMaterialization = resolve;
+  });
   let markMaterializationStarted!: () => void;
-  const materializationStarted = new Promise<void>((resolve) => { markMaterializationStarted = resolve; });
+  const materializationStarted = new Promise<void>(resolve => {
+    markMaterializationStarted = resolve;
+  });
   controller.onMaterialize = async () => {
     markMaterializationStarted();
     await materialization;
@@ -4092,7 +4008,7 @@ test('DockerWorkspaceManager: command-view read lease spans materialization and 
   assert.equal(manager.hasActiveReaderLease(ws.workspaceId), true);
 
   let writerAcquired = false;
-  const writerPromise = manager.acquireWriteLease(ws.workspaceId, rev).then((lease) => {
+  const writerPromise = manager.acquireWriteLease(ws.workspaceId, rev).then(lease => {
     writerAcquired = true;
     return lease;
   });
@@ -4133,22 +4049,23 @@ test('DockerWorkspaceManager: stale lease waiters do not strand later readers or
       if (timeout !== undefined) clearTimeout(timeout);
     }
   };
-  const rejectStale = (lease: Promise<WorkspaceLease>): Promise<string> => lease.then(
-    (value) => {
-      value.release();
-      return 'unexpected-acquire';
-    },
-    (error: unknown) => {
-      assert.match(String(error), /STALE_REVISION_DRIFT/);
-      return 'stale';
-    },
-  );
+  const rejectStale = (lease: Promise<WorkspaceLease>): Promise<string> =>
+    lease.then(
+      value => {
+        value.release();
+        return 'unexpected-acquire';
+      },
+      (error: unknown) => {
+        assert.match(String(error), /STALE_REVISION_DRIFT/);
+        return 'stale';
+      },
+    );
 
   const writerHolder = await manager.acquireWriteLease(ws.workspaceId, rev0);
   const staleRead1 = rejectStale(manager.acquireReadLease(ws.workspaceId, rev0));
   const staleRead2 = rejectStale(manager.acquireReadLease(ws.workspaceId, rev0));
   manager.setCanonicalRevision(ws.workspaceId, rev1);
-  const eligibleRead = manager.acquireReadLease(ws.workspaceId, rev1).then((lease) => {
+  const eligibleRead = manager.acquireReadLease(ws.workspaceId, rev1).then(lease => {
     lease.release();
     return 'acquired';
   });
@@ -4159,7 +4076,7 @@ test('DockerWorkspaceManager: stale lease waiters do not strand later readers or
   const staleWrite1 = rejectStale(manager.acquireWriteLease(ws.workspaceId, rev1));
   const staleWrite2 = rejectStale(manager.acquireWriteLease(ws.workspaceId, rev1));
   manager.setCanonicalRevision(ws.workspaceId, rev2);
-  const eligibleWrite = manager.acquireWriteLease(ws.workspaceId, rev2).then((lease) => {
+  const eligibleWrite = manager.acquireWriteLease(ws.workspaceId, rev2).then(lease => {
     lease.release();
     return 'acquired';
   });
@@ -4180,11 +4097,11 @@ test('DockerWorkspaceManager: queued readers enter together after a writer relea
   });
   const writer = await manager.acquireWriteLease(workspace.workspaceId, revision);
   let readersAcquired = 0;
-  const readOne = manager.acquireReadLease(workspace.workspaceId, revision).then((lease) => {
+  const readOne = manager.acquireReadLease(workspace.workspaceId, revision).then(lease => {
     readersAcquired += 1;
     return lease;
   });
-  const readTwo = manager.acquireReadLease(workspace.workspaceId, revision).then((lease) => {
+  const readTwo = manager.acquireReadLease(workspace.workspaceId, revision).then(lease => {
     readersAcquired += 1;
     return lease;
   });
@@ -4196,13 +4113,15 @@ test('DockerWorkspaceManager: queued readers enter together after a writer relea
     new Promise<never>((_, reject) => {
       timeout = setTimeout(() => reject(new Error('QUEUED_READERS_DID_NOT_ACQUIRE_TOGETHER')), 1_000);
     }),
-  ]).finally(() => { if (timeout !== undefined) clearTimeout(timeout); });
+  ]).finally(() => {
+    if (timeout !== undefined) clearTimeout(timeout);
+  });
 
   assert.equal(readersAcquired, 2, 'both queued readers must acquire before either releases');
   assert.equal(manager.hasActiveWriterLease(workspace.workspaceId), false);
   assert.equal(manager.hasActiveReaderLease(workspace.workspaceId), true);
   let writerAcquired = false;
-  const waitingWriter = manager.acquireWriteLease(workspace.workspaceId, revision).then((lease) => {
+  const waitingWriter = manager.acquireWriteLease(workspace.workspaceId, revision).then(lease => {
     writerAcquired = true;
     lease.release();
   });

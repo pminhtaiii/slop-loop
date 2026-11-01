@@ -55,14 +55,7 @@ export function validateBaseline(input: unknown, path = 'baseline'): ValidationR
     return { ok: false, errors: [{ path, message: `${path} must be an object`, code: 'INVALID_TYPE' }] };
   }
 
-  const allowedKeys = [
-    'evidenceId',
-    'repositorySnapshotDigest',
-    'checkSetDigest',
-    'reproductionFailureSignature',
-    'checkResults',
-    'testProtectionDigest',
-  ];
+  const allowedKeys = ['evidenceId', 'repositorySnapshotDigest', 'checkSetDigest', 'reproductionFailureSignature', 'checkResults', 'testProtectionDigest'];
   rejectUnknownKeys(input, allowedKeys, path, errors);
   for (const field of ['reproductionFailureSignature', 'testProtectionDigest']) {
     if (input[field] === undefined) errors.push({ path: `${path}.${field}`, message: `${path}.${field} is required`, code: 'REQUIRED_FIELD' });
@@ -148,7 +141,8 @@ export function validateBaselineAdmission(baseline: unknown, context: BaselineAd
   }
   const value = shapeRes.value;
   const errors: ValidationError[] = [];
-  if (context.expectedEvidenceId !== undefined && value.evidenceId !== context.expectedEvidenceId) errors.push({ path: 'evidenceId', message: 'Expected identity mismatch', code: 'IDENTITY_MISMATCH' });
+  if (context.expectedEvidenceId !== undefined && value.evidenceId !== context.expectedEvidenceId)
+    errors.push({ path: 'evidenceId', message: 'Expected identity mismatch', code: 'IDENTITY_MISMATCH' });
 
   if (context.expectedRepositorySnapshotDigest !== undefined && value.repositorySnapshotDigest !== context.expectedRepositorySnapshotDigest) {
     errors.push({

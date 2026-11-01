@@ -76,16 +76,7 @@ export function validateReviewResult(input: unknown, path = 'reviewResult'): Val
     return { ok: false, errors: [{ path, message: `${path} must be an object`, code: 'INVALID_TYPE' }] };
   }
 
-  const allowedKeys = [
-    'reviewId',
-    'reviewerRoleConfigId',
-    'repoDigest',
-    'diffDigest',
-    'checkSetDigest',
-    'status',
-    'findings',
-    'iterationReservationRef',
-  ];
+  const allowedKeys = ['reviewId', 'reviewerRoleConfigId', 'repoDigest', 'diffDigest', 'checkSetDigest', 'status', 'findings', 'iterationReservationRef'];
   rejectUnknownKeys(input, allowedKeys, path, errors);
   for (const field of ['repoDigest', 'diffDigest', 'checkSetDigest', 'iterationReservationRef']) {
     if (input[field] === undefined) errors.push({ path: `${path}.${field}`, message: `${path}.${field} is required`, code: 'REQUIRED_FIELD' });

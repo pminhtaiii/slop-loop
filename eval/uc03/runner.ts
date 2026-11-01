@@ -6,32 +6,12 @@ import { runRegisteredEvaluation, SHARED_EVALUATION_VERSION, type SharedEvaluati
 export { registerEvaluation, SHARED_EVALUATION_VERSION } from '../shared.ts';
 export type { SharedEvaluationOptions, SharedEvaluationReport, RegisteredEvaluation, SharedSelection, SharedCaseResult } from '../shared.ts';
 import defaultManifest from './manifest.json' with { type: 'json' };
-import {
-  computeSha256,
-  validateEvaluationManifest,
-  validateEvaluationOptions,
-  validateEvaluationReport,
-  validateDriverCaseResult,
-} from './validation.ts';
-import {
-  createEvaluationReport,
-  driverErrorCase,
-  notRunCase,
-} from './results.ts';
+import { computeSha256, validateEvaluationManifest, validateEvaluationOptions, validateEvaluationReport, validateDriverCaseResult } from './validation.ts';
+import { createEvaluationReport, driverErrorCase, notRunCase } from './results.ts';
 import { executeMockPrivateGrading } from './grading.ts';
-import type {
-  EvaluationCaseContext,
-  EvaluationDriverContext,
-  EvaluationReport,
-  RunEvaluationOptions,
-} from './types.ts';
+import type { EvaluationCaseContext, EvaluationDriverContext, EvaluationReport, RunEvaluationOptions } from './types.ts';
 
-export {
-  computeSha256,
-  validateEvaluationManifest,
-  validateEvaluationOptions,
-  validateEvaluationReport,
-} from './validation.ts';
+export { computeSha256, validateEvaluationManifest, validateEvaluationOptions, validateEvaluationReport } from './validation.ts';
 export { executeMockPrivateGrading } from './grading.ts';
 export type {
   ActualOutcome,
@@ -65,9 +45,7 @@ export type {
 const DEFAULT_CONFIG_DIGEST = computeSha256('uc03-config-unconfigured');
 
 function readManifest(options: RunEvaluationOptions): string {
-  const manifestPath = options.manifestPath
-    ? resolve(options.manifestPath)
-    : fileURLToPath(new URL('./manifest.json', import.meta.url));
+  const manifestPath = options.manifestPath ? resolve(options.manifestPath) : fileURLToPath(new URL('./manifest.json', import.meta.url));
   if (!existsSync(manifestPath)) {
     if (options.manifestPath) throw new Error('Evaluation manifest not found');
     return JSON.stringify(defaultManifest);
@@ -99,12 +77,7 @@ function writeReport(outputPath: string | undefined, report: EvaluationReport): 
   }
 }
 
-function caseContext(
-  spec: EvaluationCaseContext['spec'],
-  mode: EvaluationCaseContext['mode'],
-  manifestDigest: string,
-  configDigest: string,
-): EvaluationCaseContext {
+function caseContext(spec: EvaluationCaseContext['spec'], mode: EvaluationCaseContext['mode'], manifestDigest: string, configDigest: string): EvaluationCaseContext {
   return { spec, mode, manifestDigest, configDigest };
 }
 
@@ -117,8 +90,7 @@ export function runEvaluation(options: SharedEvaluationOptions): Promise<SharedE
 export function runEvaluation(options: RunEvaluationOptions): Promise<EvaluationReport>;
 export function runEvaluation(options: unknown): Promise<EvaluationReport | SharedEvaluationReport>;
 export async function runEvaluation(options: unknown): Promise<EvaluationReport | SharedEvaluationReport> {
-  if (options && typeof options === 'object'
-    && Object.getOwnPropertyDescriptor(options, 'contractVersion')?.value === SHARED_EVALUATION_VERSION) {
+  if (options && typeof options === 'object' && Object.getOwnPropertyDescriptor(options, 'contractVersion')?.value === SHARED_EVALUATION_VERSION) {
     return runRegisteredEvaluation(options);
   }
   const request = validateEvaluationOptions(options);
@@ -133,7 +105,7 @@ export async function runEvaluation(options: unknown): Promise<EvaluationReport 
   const manifestDigest = computeSha256(JSON.stringify(manifest));
   const configDigest = readConfigDigest(request);
   const timestamp = new Date().toISOString();
-  const selected = new Set(request.cases ?? manifest.cases.map((item) => item.caseId));
+  const selected = new Set(request.cases ?? manifest.cases.map(item => item.caseId));
   const patterns = request.customSecretPatterns ?? [];
   const cases = [];
 
@@ -164,15 +136,17 @@ export async function runEvaluation(options: unknown): Promise<EvaluationReport 
     }
   }
 
-  const report = validateEvaluationReport(createEvaluationReport({
-    mode: request.mode,
-    manifest,
-    manifestDigest,
-    configDigest,
-    timestamp,
-    cases,
-    hasDriver: request.driver !== undefined,
-  }));
+  const report = validateEvaluationReport(
+    createEvaluationReport({
+      mode: request.mode,
+      manifest,
+      manifestDigest,
+      configDigest,
+      timestamp,
+      cases,
+      hasDriver: request.driver !== undefined,
+    }),
+  );
   writeReport(request.outputPath, report);
   return report;
 }
@@ -191,11 +165,7 @@ export async function main(): Promise<void> {
       },
       allowPositionals: false,
     });
-    const cases = values.cases === undefined
-      ? undefined
-      : values.cases.trim().length === 0
-        ? []
-        : values.cases.split(',').map((value) => value.trim());
+    const cases = values.cases === undefined ? undefined : values.cases.trim().length === 0 ? [] : values.cases.split(',').map(value => value.trim());
     const request: unknown = {
       suite: values.suite,
       mode: values.mode,

@@ -9,17 +9,9 @@ import {
   type ProviderAdmissionContextV02,
   computeCanonicalSha256,
 } from '../../../src/contracts/foundation/uc03.ts';
-import {
-  HostModelPortV02,
-} from '../../../src/foundation/model.ts';
-import {
-  MemoryStatePortV02,
-} from '../support/uc03/memory-state.ts';
-import {
-  createTestAdmissionTaskStateV02,
-  createTestProviderAdmissionContextV02,
-  createTestProviderRequest,
-} from '../support/uc03/state-fixtures.ts';
+import { HostModelPortV02 } from '../../../src/foundation/model.ts';
+import { MemoryStatePortV02 } from '../support/uc03/memory-state.ts';
+import { createTestAdmissionTaskStateV02, createTestProviderAdmissionContextV02, createTestProviderRequest } from '../support/uc03/state-fixtures.ts';
 import {
   HostModelPort,
   computeContextDigest,
@@ -28,12 +20,7 @@ import {
   type HostModelTransportPayload,
   type AuthoritativeAdmissionLoader,
 } from '../../../src/foundation/model.ts';
-import {
-  createFixtureTaskState,
-  createFixtureSourceEvidence,
-  createFixtureAdmissionContext,
-  createFixtureProviderRequest,
-} from '../support/uc03/port-fixtures.ts';
+import { createFixtureTaskState, createFixtureSourceEvidence, createFixtureAdmissionContext, createFixtureProviderRequest } from '../support/uc03/port-fixtures.ts';
 
 class StubTransport implements HostModelTransport {
   callCount = 0;
@@ -174,16 +161,14 @@ test('HostModelPort: ZERO transport calls on stale SourceEvidence revision', asy
   const { port, transport, state, request } = createValidSetup();
 
   // Stale evidence: revisionDigest does not match state.repositoryRevisionDigest
-  const staleEvidence: SourceEvidence[] = [
-    createFixtureSourceEvidence({ revisionDigest: 'sha256:stale-rev-digest' }),
-  ];
+  const staleEvidence: SourceEvidence[] = [createFixtureSourceEvidence({ revisionDigest: 'sha256:stale-rev-digest' })];
 
   const result = await port.propose(state, staleEvidence, request);
 
   assert.equal(transport.callCount, 0, 'Transport must NOT be called for stale SourceEvidence');
   assert.equal(result.outcome, 'invalid');
   if (result.outcome === 'invalid') {
-    assert.ok(result.errors.some((e) => e.code === 'STALE_EVIDENCE_REVISION'));
+    assert.ok(result.errors.some(e => e.code === 'STALE_EVIDENCE_REVISION'));
   }
 });
 
@@ -412,7 +397,7 @@ test('HostModelPort: returns invalid outcome when observed usage exceeds reserve
   assert.equal(transport.callCount, 1);
   assert.equal(result.outcome, 'invalid');
   if (result.outcome === 'invalid') {
-    assert.ok(result.errors.some((e) => e.code === 'USAGE_EXCEEDS_CAPS'));
+    assert.ok(result.errors.some(e => e.code === 'USAGE_EXCEEDS_CAPS'));
   }
 });
 
@@ -544,7 +529,7 @@ test('HostModelPort: ZERO transport calls when evidence excerpt is swapped to un
   assert.equal(transport.callCount, 0, 'Transport must NEVER be called on unapproved evidence excerpt');
   assert.equal(result.outcome, 'invalid');
   if (result.outcome === 'invalid') {
-    assert.ok(result.errors.some((e) => e.path === 'contextDigest' && e.code === 'REQUEST_IDENTITY_MISMATCH'));
+    assert.ok(result.errors.some(e => e.path === 'contextDigest' && e.code === 'REQUEST_IDENTITY_MISMATCH'));
   }
 });
 
@@ -564,7 +549,7 @@ test('HostModelPort: ZERO transport calls on MARKER_SECRET_UNAPPROVED_CONTEXT an
   assert.equal(transport.callCount, 0, 'Transport must NEVER dispatch secret marker');
   assert.equal(result.outcome, 'invalid');
   if (result.outcome === 'invalid') {
-    assert.ok(result.errors.some((e) => e.code === 'PROTECTED_CONTENT_FORBIDDEN'));
+    assert.ok(result.errors.some(e => e.code === 'PROTECTED_CONTENT_FORBIDDEN'));
     // Verify secret marker is not leaked in error messages
     const serialized = JSON.stringify(result.errors);
     assert.equal(serialized.includes(secretMarker), false, 'Secret marker must not be leaked in errors');
@@ -588,7 +573,7 @@ test('HostModelPort: ZERO transport calls on embedded secret in schema-valid pat
   assert.equal(transport.callCount, 0, 'Transport must NOT be called for embedded secret even in schema-valid path');
   assert.equal(result.outcome, 'invalid');
   if (result.outcome === 'invalid') {
-    assert.ok(result.errors.some((e) => e.code === 'PROTECTED_CONTENT_FORBIDDEN'));
+    assert.ok(result.errors.some(e => e.code === 'PROTECTED_CONTENT_FORBIDDEN'));
     const serialized = JSON.stringify(result.errors);
     assert.equal(serialized.includes(rawSecret), false, 'Raw secret must not be leaked in error message');
   }
@@ -664,7 +649,7 @@ test('HostModelPort: caller async mutation of evidence boundedExcerpt during adm
   const { context, request } = createFixtureAdmissionContext({ request: baseRequest });
 
   let releaseLoader!: () => void;
-  const loaderWait = new Promise<void>((resolve) => {
+  const loaderWait = new Promise<void>(resolve => {
     releaseLoader = resolve;
   });
 
@@ -697,7 +682,7 @@ test('HostModelPort: caller async mutation of evidence boundedExcerpt during adm
       path: 'src/secret.py',
       revisionDigest: state.repositoryRevisionDigest,
       boundedExcerpt: 'UNAPPROVED_CONTEXT_MARKER',
-    })
+    }),
   );
 
   // Resume admission loader
@@ -733,7 +718,7 @@ test('HostModelPort: caller async mutation of state arrays and taskContext durin
   const { context, request } = createFixtureAdmissionContext({ request: baseRequest });
 
   let releaseLoader!: () => void;
-  const loaderWait = new Promise<void>((resolve) => {
+  const loaderWait = new Promise<void>(resolve => {
     releaseLoader = resolve;
   });
 
@@ -796,7 +781,7 @@ test('HostModelPort: caller async mutation of request and host providerConfig du
   const originalInputTokens = request.maxInputTokens;
 
   let releaseLoader!: () => void;
-  const loaderWait = new Promise<void>((resolve) => {
+  const loaderWait = new Promise<void>(resolve => {
     releaseLoader = resolve;
   });
 
@@ -939,7 +924,7 @@ test('HostModelPort: fail-closed ZERO transport calls when unapproved secret is 
   assert.equal(loaderInvoked, false, 'Admission loader must not be invoked on invalid initial snapshot');
   assert.equal(result.outcome, 'invalid');
   if (result.outcome === 'invalid') {
-    assert.ok(result.errors.some((e) => e.code === 'PROTECTED_CONTENT_FORBIDDEN'));
+    assert.ok(result.errors.some(e => e.code === 'PROTECTED_CONTENT_FORBIDDEN'));
     const serialized = JSON.stringify(result.errors);
     assert.equal(serialized.includes(secretMarker), false, 'Secret marker must not be leaked');
   }
@@ -1029,12 +1014,14 @@ function createValidV02Setup(options?: {
 
   const context: ProviderAdmissionContextV02 = baseContext;
   const authority = authorityForV02(context);
-  const statePort = options?.statePort ?? new MemoryStatePortV02({
-    initialTaskState: taskState,
-    initialAuthorityRef: authority,
-    initialControlVersion: context.expectedControlVersion,
-    initialEpoch: context.expectedEpoch,
-  });
+  const statePort =
+    options?.statePort ??
+    new MemoryStatePortV02({
+      initialTaskState: taskState,
+      initialAuthorityRef: authority,
+      initialControlVersion: context.expectedControlVersion,
+      initialEpoch: context.expectedEpoch,
+    });
 
   const actor = { adapterIdentity: 'test-provider', processIncarnation: randomUUID(), fencingGeneration: 1 };
   const port = new HostModelPortV02({
@@ -1098,9 +1085,7 @@ test('HostModelPortV02: ZERO transport calls on missing admission context', asyn
 
 test('HostModelPortV02: ZERO transport calls on stale evidence revision', async () => {
   const { port, transport, state, request, context } = createValidV02Setup();
-  const staleEvidence: SourceEvidence[] = [
-    createFixtureSourceEvidence({ revisionDigest: 'sha256:stale-rev-digest' }),
-  ];
+  const staleEvidence: SourceEvidence[] = [createFixtureSourceEvidence({ revisionDigest: 'sha256:stale-rev-digest' })];
 
   const result = await port.propose(state, staleEvidence, request, context);
 
@@ -1209,11 +1194,15 @@ test('HostModelPortV02 Section 10 Case 14: competing request denied with zero tr
 test('HostModelPortV02 retries only a pre-claim denial after the competing claim settles', async () => {
   let releaseFirstDispatch!: () => void;
   let enterFirstDispatch!: () => void;
-  const firstDispatchEntered = new Promise<void>((resolve) => { enterFirstDispatch = resolve; });
-  const firstDispatchBarrier = new Promise<void>((resolve) => { releaseFirstDispatch = resolve; });
+  const firstDispatchEntered = new Promise<void>(resolve => {
+    enterFirstDispatch = resolve;
+  });
+  const firstDispatchBarrier = new Promise<void>(resolve => {
+    releaseFirstDispatch = resolve;
+  });
   const firstTransport = new StubTransport();
   const executeFirst = firstTransport.execute.bind(firstTransport);
-  firstTransport.execute = async (payload) => {
+  firstTransport.execute = async payload => {
     enterFirstDispatch();
     await firstDispatchBarrier;
     return await executeFirst(payload);
@@ -1260,10 +1249,14 @@ test('HostModelPortV02 retries only a pre-claim denial after the competing claim
   });
   let releaseRetryDispatch!: () => void;
   let enterRetryDispatch!: () => void;
-  const retryDispatchEntered = new Promise<void>((resolve) => { enterRetryDispatch = resolve; });
-  const retryDispatchBarrier = new Promise<void>((resolve) => { releaseRetryDispatch = resolve; });
+  const retryDispatchEntered = new Promise<void>(resolve => {
+    enterRetryDispatch = resolve;
+  });
+  const retryDispatchBarrier = new Promise<void>(resolve => {
+    releaseRetryDispatch = resolve;
+  });
   const executeRetry = competing.transport.execute.bind(competing.transport);
-  competing.transport.execute = async (payload) => {
+  competing.transport.execute = async payload => {
     enterRetryDispatch();
     await retryDispatchBarrier;
     return await executeRetry(payload);
@@ -1284,13 +1277,16 @@ test('HostModelPortV02 retries only a pre-claim denial after the competing claim
   assert.equal(journal.activeClaimId, null);
   const ledgersAfterRetry = first.statePort.getUnderlying().getLedgers();
   for (const reservationId of competing.context.budgetRefs) {
-    const during = ledgersDuringRetry.find((ledger) => ledger.reservations.some((item) => item.reservationId === reservationId));
+    const during = ledgersDuringRetry.find(ledger => ledger.reservations.some(item => item.reservationId === reservationId));
     assert.ok(during, `Retry reservation ${reservationId} is persisted before dispatch`);
-    const before = ledgersBeforeRetry.find((ledger) => ledger.scope === during.scope && ledger.kind === during.kind);
+    const before = ledgersBeforeRetry.find(ledger => ledger.scope === during.scope && ledger.kind === during.kind);
     assert.ok(before);
-    const after = ledgersAfterRetry.find((ledger) => ledger.scope === before.scope && ledger.kind === before.kind);
+    const after = ledgersAfterRetry.find(ledger => ledger.scope === before.scope && ledger.kind === before.kind);
     assert.ok(after);
-    assert.equal(after.reservations.some((item) => item.reservationId === reservationId), false);
+    assert.equal(
+      after.reservations.some(item => item.reservationId === reservationId),
+      false,
+    );
     assert.ok(after.consumed > before.consumed, `${reservationId} is accounted after retry settlement`);
   }
   assert.equal(journalDuringRetry.claims.length, 2);
@@ -1335,7 +1331,7 @@ test('HostModelPortV02 Section 10 Case 19: provider budget exhaustion in statePo
   // Exhausted budget: consumed equals limit
   const exhaustedTaskState: TaskState = {
     ...baseTaskState,
-    budgetLedgers: (baseTaskState.budgetLedgers ?? []).map((ledger) => ({
+    budgetLedgers: (baseTaskState.budgetLedgers ?? []).map(ledger => ({
       ...ledger,
       consumed: ledger.limit,
       reservations: [],
@@ -1420,7 +1416,11 @@ test('HostModelPortV02 exact immutable replay rejects changed admission and prot
   const denied = await s.port.propose(s.state, s.evidence, s.request, changed);
   assert.equal(denied.outcome, 'denied');
   assert.deepEqual(s.statePort.getJournalSnapshot(), before);
-  try { (first as { outcome: string }).outcome = 'invalid'; } catch { /* immutable result */ }
+  try {
+    (first as { outcome: string }).outcome = 'invalid';
+  } catch {
+    /* immutable result */
+  }
   const retry = await s.port.propose(s.state, s.evidence, s.request, s.context);
   assert.equal(retry.outcome, 'observed');
   assert.equal(s.transport.callCount, 1);
@@ -1431,7 +1431,7 @@ for (const mode of ['recorded-unsettled', 'already-recorded', 'uncertain', 'wron
   test(`HostModelPortV02 pending recording ${mode} preserves immutable recovery and never redispatches`, async () => {
     const s = createValidV02Setup();
     const record = s.statePort.recordOutcome.bind(s.statePort);
-    s.statePort.recordOutcome = async (receipt) => {
+    s.statePort.recordOutcome = async receipt => {
       if (mode === 'rejected') return { outcome: 'uncertain', receiptId: 'rejected' };
       await record(receipt);
       if (mode === 'lost-response') throw new Error('response lost after commit');
@@ -1454,22 +1454,28 @@ for (const mode of ['malformed-proposal', 'invalid-usage', 'overcap', 'denied', 
   test(`HostModelPortV02 post-network ${mode} accounts exactly once in canonical state`, async () => {
     const s = createValidV02Setup();
     const usage = { inputTokens: 150, outputTokens: 75, billableTokens: 225, costUsd: 0.005 };
-    s.transport.response = mode === 'malformed-proposal' ? { proposal: {}, observedUsage: usage }
-      : mode === 'invalid-usage' ? { proposal: {}, observedUsage: { ...usage, costUsd: -1 } }
-      : mode === 'overcap' ? { proposal: {}, observedUsage: { ...usage, billableTokens: 9999999 } }
-      : mode === 'denied' ? { outcome: 'denied', reason: 'post-network refusal' } : {};
+    s.transport.response =
+      mode === 'malformed-proposal'
+        ? { proposal: {}, observedUsage: usage }
+        : mode === 'invalid-usage'
+          ? { proposal: {}, observedUsage: { ...usage, costUsd: -1 } }
+          : mode === 'overcap'
+            ? { proposal: {}, observedUsage: { ...usage, billableTokens: 9999999 } }
+            : mode === 'denied'
+              ? { outcome: 'denied', reason: 'post-network refusal' }
+              : {};
     const first = await s.port.propose(s.state, s.evidence, s.request, s.context);
     assert.equal(first.outcome, mode === 'malformed-proposal' ? 'invalid' : 'uncertain');
     const journal = s.statePort.getJournalSnapshot();
     const persisted = await s.statePort.loadTask(s.state.taskId);
     assert.equal(journal.outcomes.length, 1);
     assert.equal(journal.outcomes[0]?.outcome, mode === 'malformed-proposal' ? 'observed' : 'uncertain');
-    const ledger = persisted?.budgetLedgers?.find((item) => item.scope === 'task' && item.kind === 'tokens');
+    const ledger = persisted?.budgetLedgers?.find(item => item.scope === 'task' && item.kind === 'tokens');
     assert.equal(ledger?.consumed, mode === 'malformed-proposal' ? 225 : 0);
     assert.equal(ledger?.reservations.length, mode === 'malformed-proposal' ? 0 : 1);
     for (const scope of ['task', 'run']) {
-      const tokens = persisted?.budgetLedgers?.find((item) => item.scope === scope && item.kind === 'tokens');
-      const cost = persisted?.budgetLedgers?.find((item) => item.scope === scope && item.kind === 'cost');
+      const tokens = persisted?.budgetLedgers?.find(item => item.scope === scope && item.kind === 'tokens');
+      const cost = persisted?.budgetLedgers?.find(item => item.scope === scope && item.kind === 'cost');
       assert.equal(tokens?.consumed, mode === 'malformed-proposal' ? 225 : 0);
       assert.equal(cost?.consumed, mode === 'malformed-proposal' ? 0.005 : 0);
       assert.equal(tokens?.reservations[0]?.amount, mode === 'malformed-proposal' ? undefined : 10000);
@@ -1484,11 +1490,23 @@ for (const mode of ['malformed-proposal', 'invalid-usage', 'overcap', 'denied', 
   });
 }
 
-for (const field of ['taskId', 'runId', 'subjectKind', 'planApplicability', 'preClaimTaskStateVersion', 'preClaimControlVersion', 'postClaimControlVersion', 'epoch', 'reservationRefs', 'claimDigest', 'status']) {
+for (const field of [
+  'taskId',
+  'runId',
+  'subjectKind',
+  'planApplicability',
+  'preClaimTaskStateVersion',
+  'preClaimControlVersion',
+  'postClaimControlVersion',
+  'epoch',
+  'reservationRefs',
+  'claimDigest',
+  'status',
+]) {
   test(`HostModelPortV02 authenticates claim ${field} before begin and transport`, async () => {
     const s = createValidV02Setup();
     const claim = s.statePort.claim.bind(s.statePort);
-    s.statePort.claim = async (context) => {
+    s.statePort.claim = async context => {
       const receipt = await claim(context);
       const wrong = { ...receipt, [field]: field === 'reservationRefs' ? ['foreign'] : typeof receipt[field as keyof typeof receipt] === 'number' ? 99 : 'foreign' };
       return { ...wrong, claimDigest: field === 'claimDigest' ? 'foreign' : computeCanonicalSha256({ ...wrong, claimDigest: undefined }) };
@@ -1516,18 +1534,30 @@ test('HostModelPortV02 awaits admission with current fence and detached actor re
 test('HostModelPortV02 serializes concurrent retries and rejects reconstructed and restarted actors', async () => {
   const s = createValidV02Setup();
   let release!: () => void;
-  const barrier = new Promise<void>((resolve) => { release = resolve; });
+  const barrier = new Promise<void>(resolve => {
+    release = resolve;
+  });
   const execute = s.transport.execute.bind(s.transport);
-  s.transport.execute = async (payload) => { const response = await execute(payload); await barrier; return response; };
+  s.transport.execute = async payload => {
+    const response = await execute(payload);
+    await barrier;
+    return response;
+  };
   const claim = s.statePort.claim.bind(s.statePort);
   const begin = s.statePort.beginAttempt.bind(s.statePort);
   let savedClaim: Awaited<ReturnType<typeof claim>> | undefined;
   let savedAttempt: Awaited<ReturnType<typeof begin>> | undefined;
-  s.statePort.claim = async (...args) => { savedClaim = await claim(...args); return savedClaim; };
-  s.statePort.beginAttempt = async (...args) => { savedAttempt = await begin(...args); return savedAttempt; };
+  s.statePort.claim = async (...args) => {
+    savedClaim = await claim(...args);
+    return savedClaim;
+  };
+  s.statePort.beginAttempt = async (...args) => {
+    savedAttempt = await begin(...args);
+    return savedAttempt;
+  };
   const first = s.port.propose(s.state, s.evidence, s.request, s.context);
   const duplicate = s.port.propose(s.state, s.evidence, s.request, s.context);
-  await new Promise<void>((resolve) => setImmediate(resolve));
+  await new Promise<void>(resolve => setImmediate(resolve));
   assert.equal(s.transport.callCount, 1);
   assert.ok(savedClaim && savedAttempt);
   const claimed = savedClaim;
@@ -1563,7 +1593,7 @@ test('HostModelPortV02 detaches provider observation before awaited settlement',
   const s = createValidV02Setup();
   const original = s.transport.response as { proposal: { content: string }; observedUsage: { billableTokens: number } };
   const record = s.statePort.recordOutcome.bind(s.statePort);
-  s.statePort.recordOutcome = async (receipt) => {
+  s.statePort.recordOutcome = async receipt => {
     original.proposal.content = 'changed after observation';
     original.observedUsage.billableTokens = 999;
     return record(receipt);
@@ -1572,7 +1602,7 @@ test('HostModelPortV02 detaches provider observation before awaited settlement',
   assert.equal(result.outcome, 'observed');
   assert.equal((result.result as { proposal: { content: string } }).proposal.content, 'Proposed fix for zero division');
   assert.equal(result.observedUsage?.billableTokens, 225);
-  assert.equal((await s.statePort.loadTask(s.state.taskId))?.budgetLedgers?.find((item) => item.kind === 'tokens')?.consumed, 225);
+  assert.equal((await s.statePort.loadTask(s.state.taskId))?.budgetLedgers?.find(item => item.kind === 'tokens')?.consumed, 225);
 });
 
 test('HostModelPortV02 requires explicit trusted actor configuration without changing state', async () => {
@@ -1598,7 +1628,13 @@ test('HostModelPortV02 refuses executable claim records without evaluating acces
   let getterCalls = 0;
   s.statePort.claim = async (...args) => {
     const receipt = await claim(...args);
-    return Object.defineProperty({ ...receipt }, 'claimId', { enumerable: true, get: () => { getterCalls++; return receipt.claimId; } });
+    return Object.defineProperty({ ...receipt }, 'claimId', {
+      enumerable: true,
+      get: () => {
+        getterCalls++;
+        return receipt.claimId;
+      },
+    });
   };
   assert.equal((await s.port.propose(s.state, s.evidence, s.request, s.context)).outcome, 'denied');
   assert.equal(getterCalls, 0);
@@ -1606,16 +1642,30 @@ test('HostModelPortV02 refuses executable claim records without evaluating acces
   assert.equal(s.statePort.getJournalSnapshot().attempts.length, 0);
 });
 
-
 for (const mode of ['outcome-getter', 'usage-getter', 'nested-getter', 'proxy'] as const) {
   test(`HostModelPortV02 hostile transport ${mode} retains canonical uncertainty without executing getters`, async () => {
     const s = createValidV02Setup();
     let getters = 0;
     const hostile = Object.defineProperty({}, mode === 'usage-getter' ? 'observedUsage' : 'outcome', {
-      enumerable: true, get() { getters++; throw new Error('MARKER_SECRET unsafe injected object'); },
+      enumerable: true,
+      get() {
+        getters++;
+        throw new Error('MARKER_SECRET unsafe injected object');
+      },
     });
-    s.transport.response = mode === 'nested-getter' ? { proposal: hostile, observedUsage: {} }
-      : mode === 'proxy' ? new Proxy({}, { ownKeys() { throw new Error('MARKER_SECRET proxy'); } }) : hostile;
+    s.transport.response =
+      mode === 'nested-getter'
+        ? { proposal: hostile, observedUsage: {} }
+        : mode === 'proxy'
+          ? new Proxy(
+              {},
+              {
+                ownKeys() {
+                  throw new Error('MARKER_SECRET proxy');
+                },
+              },
+            )
+          : hostile;
     const result = await s.port.propose(s.state, s.evidence, s.request, s.context);
     assert.equal(result.outcome, 'uncertain');
     assert.ok(result.recovery);
@@ -1628,13 +1678,15 @@ for (const mode of ['outcome-getter', 'usage-getter', 'nested-getter', 'proxy'] 
     assert.equal(receipt.attemptId, attempt.attemptId);
     assert.deepEqual(receipt.executorIdentity, attempt.executorIdentity);
     assert.equal(receipt.requestContentDigest, admission.requestContentDigest);
-    assert.deepEqual(receipt.proposedEffects.accounting.reservationRefs,
-      [s.context.requestReservationReceipt, ...s.context.budgetRefs]);
+    assert.deepEqual(receipt.proposedEffects.accounting.reservationRefs, [s.context.requestReservationReceipt, ...s.context.budgetRefs]);
     const journal = s.statePort.getJournalSnapshot();
     assert.equal(journal.outcomes.length, 1);
     assert.deepEqual(journal.outcomes[0], {
-      receiptId: receipt.receiptId, receiptDigest: receipt.receiptDigest,
-      claimId: receipt.claimId, attemptId: receipt.attemptId, outcome: 'uncertain',
+      receiptId: receipt.receiptId,
+      receiptDigest: receipt.receiptDigest,
+      claimId: receipt.claimId,
+      attemptId: receipt.attemptId,
+      outcome: 'uncertain',
     });
     assert.equal(journal.claims[0]?.status, 'uncertain');
     assert.ok(journal.activeClaimId);
@@ -1653,26 +1705,42 @@ for (const mode of ['outcome-getter', 'usage-getter', 'nested-getter', 'proxy'] 
   });
 }
 
-
 for (const mode of ['inherited', 'accessor', 'throwing-accessor', 'proxy'] as const) {
   test(`HostModelPortV02 hostile settlement ${mode} requires plain own data and recovers exact receipt`, async () => {
     const s = createValidV02Setup();
     const record = s.statePort.recordOutcome.bind(s.statePort);
     let getters = 0;
-    s.statePort.recordOutcome = async (receipt) => {
-      if (mode === 'inherited') return Object.assign(
-        Object.create({ outcome: 'settled', receiptId: receipt.receiptId }), { unrelatedA: 1, unrelatedB: 2 });
-      if (mode === 'proxy') return new Proxy({ outcome: 'settled' as const, receiptId: receipt.receiptId }, {
-        ownKeys() { throw new Error('MARKER_SECRET proxy'); },
-      });
-      return Object.defineProperties({}, {
-        outcome: { enumerable: true, get() {
-          getters++;
-          if (mode === 'throwing-accessor') throw new Error('MARKER_SECRET accessor');
-          return 'settled';
-        } },
-        receiptId: { enumerable: true, get() { getters++; return receipt.receiptId; } },
-      });
+    s.statePort.recordOutcome = async receipt => {
+      if (mode === 'inherited') return Object.assign(Object.create({ outcome: 'settled', receiptId: receipt.receiptId }), { unrelatedA: 1, unrelatedB: 2 });
+      if (mode === 'proxy')
+        return new Proxy(
+          { outcome: 'settled' as const, receiptId: receipt.receiptId },
+          {
+            ownKeys() {
+              throw new Error('MARKER_SECRET proxy');
+            },
+          },
+        );
+      return Object.defineProperties(
+        {},
+        {
+          outcome: {
+            enumerable: true,
+            get() {
+              getters++;
+              if (mode === 'throwing-accessor') throw new Error('MARKER_SECRET accessor');
+              return 'settled';
+            },
+          },
+          receiptId: {
+            enumerable: true,
+            get() {
+              getters++;
+              return receipt.receiptId;
+            },
+          },
+        },
+      );
     };
     const result = await s.port.propose(s.state, s.evidence, s.request, s.context);
     assert.equal(result.outcome, 'uncertain');
@@ -1731,7 +1799,6 @@ test('HostModelPortV02 accepts detached null-prototype settlement data from cano
   assert.equal(s.transport.callCount, 1);
 });
 
-
 for (const mode of ['then-null-rejection', 'error-message-getter', 'coercion-getter', 'rejection-proxy'] as const) {
   test(`HostModelPortV02 hostile rejection ${mode} retains canonical uncertainty with safe diagnostics`, async () => {
     const s = createValidV02Setup();
@@ -1739,21 +1806,46 @@ for (const mode of ['then-null-rejection', 'error-message-getter', 'coercion-get
     const marker = 'MARKER_SECRET api_key=sk-rejection-credential';
     if (mode === 'then-null-rejection') {
       s.transport.response = Object.defineProperty({}, 'then', {
-        get() { getters++; throw Object.create(null); },
+        get() {
+          getters++;
+          throw Object.create(null);
+        },
       });
     } else {
-      const rejection: unknown = mode === 'error-message-getter'
-        ? Object.defineProperty(new Error('transport failed'), 'message', {
-          get() { getters++; throw new Error(marker); },
-        })
-        : mode === 'coercion-getter' ? Object.defineProperty({}, Symbol.toPrimitive, {
-          get() { getters++; throw new Error(marker); },
-        }) : new Proxy({}, {
-          get() { getters++; throw new Error(marker); },
-          getPrototypeOf() { throw new Error(marker); },
-          getOwnPropertyDescriptor() { throw new Error(marker); },
-        });
-      s.transport.execute = async () => { s.transport.callCount++; throw rejection; };
+      const rejection: unknown =
+        mode === 'error-message-getter'
+          ? Object.defineProperty(new Error('transport failed'), 'message', {
+              get() {
+                getters++;
+                throw new Error(marker);
+              },
+            })
+          : mode === 'coercion-getter'
+            ? Object.defineProperty({}, Symbol.toPrimitive, {
+                get() {
+                  getters++;
+                  throw new Error(marker);
+                },
+              })
+            : new Proxy(
+                {},
+                {
+                  get() {
+                    getters++;
+                    throw new Error(marker);
+                  },
+                  getPrototypeOf() {
+                    throw new Error(marker);
+                  },
+                  getOwnPropertyDescriptor() {
+                    throw new Error(marker);
+                  },
+                },
+              );
+      s.transport.execute = async () => {
+        s.transport.callCount++;
+        throw rejection;
+      };
     }
     const result = await s.port.propose(s.state, s.evidence, s.request, s.context);
     assert.equal(result.outcome, 'uncertain');
@@ -1774,13 +1866,15 @@ for (const mode of ['then-null-rejection', 'error-message-getter', 'coercion-get
     assert.equal(receipt.providerRequestId, s.request.providerRequestId);
     assert.equal(receipt.outcome, 'uncertain');
     assert.equal(receipt.requestContentDigest, admission.requestContentDigest);
-    assert.deepEqual(receipt.proposedEffects.accounting.reservationRefs,
-      [s.context.requestReservationReceipt, ...s.context.budgetRefs]);
+    assert.deepEqual(receipt.proposedEffects.accounting.reservationRefs, [s.context.requestReservationReceipt, ...s.context.budgetRefs]);
     const journal = s.statePort.getJournalSnapshot();
     assert.equal(journal.outcomes.length, 1);
     assert.deepEqual(journal.outcomes[0], {
-      receiptId: receipt.receiptId, receiptDigest: receipt.receiptDigest,
-      claimId: receipt.claimId, attemptId: receipt.attemptId, outcome: 'uncertain',
+      receiptId: receipt.receiptId,
+      receiptDigest: receipt.receiptDigest,
+      claimId: receipt.claimId,
+      attemptId: receipt.attemptId,
+      outcome: 'uncertain',
     });
     assert.equal(journal.claims[0]?.status, 'uncertain');
     assert.equal(journal.activeClaimId, receipt.claimId);
@@ -1799,22 +1893,24 @@ for (const mode of ['then-null-rejection', 'error-message-getter', 'coercion-get
   });
 }
 
-
 for (const mode of ['own-name', 'own-message', 'name-accessor'] as const) {
   test(`HostModelPort safely classifies rejection ${mode} with fixed diagnostics`, async () => {
     const s = createValidSetup();
     let getters = 0;
     const rejection = new Error(mode === 'own-message' ? 'Request timed out api_key=sk-rejection-credential' : 'transport failed');
     if (mode === 'own-name') rejection.name = 'TimeoutError';
-    if (mode === 'name-accessor') Object.defineProperty(rejection, 'name', {
-      get() { getters++; throw new Error('MARKER_SECRET'); },
-    });
+    if (mode === 'name-accessor')
+      Object.defineProperty(rejection, 'name', {
+        get() {
+          getters++;
+          throw new Error('MARKER_SECRET');
+        },
+      });
     s.transport.throwError = rejection;
     const result = await s.port.propose(s.state, s.evidence, s.request);
     assert.equal(result.outcome, 'uncertain');
-    if (result.outcome === 'uncertain') assert.equal(result.reason, mode === 'name-accessor'
-      ? 'PROVIDER_ERROR: Model transport request failed'
-      : 'PROVIDER_TIMEOUT: Model transport request timed out');
+    if (result.outcome === 'uncertain')
+      assert.equal(result.reason, mode === 'name-accessor' ? 'PROVIDER_ERROR: Model transport request failed' : 'PROVIDER_TIMEOUT: Model transport request timed out');
     assert.equal(getters, 0);
     assert.equal(s.transport.callCount, 1);
   });

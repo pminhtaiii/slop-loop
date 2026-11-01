@@ -7,10 +7,11 @@ import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 import { cliSource, fixture, git, run } from './support/agent-context-fixture.mjs';
 
-test('assignment derives a UC brief and flags missing planning artifacts without changing tasks', async (t) => {
+test('assignment derives a UC brief and flags missing planning artifacts without changing tasks', async t => {
   const current = await fixture(t);
   const path = join(current.root, 'docs/use-case-delegation.md');
-  const source = '# Delegation\n## Assignments\n| UC | Delivery | Owner | Start condition | Feature artifacts |\n|---|---|---|---|---|\n| UC-03 | Bug fix | Tai | Bounded tools and approval gate | Not created |\n## Delivery order and shared work\n### Shared foundation ownership\nTai leads foundation; others own state and approval.\n## UC-03: Bug fix\n**Deliver:** fix a seeded bug.\n**Acceptance handoff:** baseline and regression pass.\n[Testing](../context/testing.md)\n## UC-04: Resume\nUnrelated brief.\n';
+  const source =
+    '# Delegation\n## Assignments\n| UC | Delivery | Owner | Start condition | Feature artifacts |\n|---|---|---|---|---|\n| UC-03 | Bug fix | Tai | Bounded tools and approval gate | Not created |\n## Delivery order and shared work\n### Shared foundation ownership\nTai leads foundation; others own state and approval.\n## UC-03: Bug fix\n**Deliver:** fix a seeded bug.\n**Acceptance handoff:** baseline and regression pass.\n[Testing](../context/testing.md)\n## UC-04: Resume\nUnrelated brief.\n';
   await writeFile(path, source);
   let result = run(current, ['assignment', '--uc', 'UC-03']);
   assert.equal(result.status, 0, result.stderr);
@@ -37,7 +38,7 @@ test('assignment derives a UC brief and flags missing planning artifacts without
   assert.equal(git(current.root, ['diff', '--', 'specs/feature/tasks.md']), '');
 });
 
-test('handoff derives canonical counts and workflow pointers from source docs', async (t) => {
+test('handoff derives canonical counts and workflow pointers from source docs', async t => {
   const current = await fixture(t);
   const result = run(current, ['handoff', '--tasks', 'specs/feature/tasks.md']);
   assert.equal(result.status, 0, result.stderr);
@@ -49,7 +50,7 @@ test('handoff derives canonical counts and workflow pointers from source docs', 
   assert.doesNotMatch(result.stdout, /Stale summary says/);
 });
 
-test('resume reports checkout, ledger frontier, evidence pointers and worker state without writes or granting work', async (t) => {
+test('resume reports checkout, ledger frontier, evidence pointers and worker state without writes or granting work', async t => {
   const current = await fixture(t);
   const tasks = `# Tasks
 
@@ -73,30 +74,44 @@ test('resume reports checkout, ledger frontier, evidence pointers and worker sta
   await mkdir(dirname(statePath), { recursive: true });
   const entries = [
     {
-      owner: 'worker-ready', task: 'T002', role: 'worker', status: 'active', checkout: current.root,
-      summary: 'Assigned candidate', next: 'Wait for coordinator authorization',
+      owner: 'worker-ready',
+      task: 'T002',
+      role: 'worker',
+      status: 'active',
+      checkout: current.root,
+      summary: 'Assigned candidate',
+      next: 'Wait for coordinator authorization',
       verification: `${'Focused pass; '.repeat(40)}full run failed; required check not run; see docs/verification/focused.md`,
-      result: 'https://example.invalid/runs/42', updatedAt: '2026-10-20T10:00:00.000Z',
+      result: 'https://example.invalid/runs/42',
+      updatedAt: '2026-10-20T10:00:00.000Z',
     },
     {
-      owner: 'worker-blocked', task: 'T004', role: 'worker', status: 'blocked', checkout: current.root,
-      summary: 'External dependency', next: 'Wait for X04-STATE', verification: 'Required check not run',
+      owner: 'worker-blocked',
+      task: 'T004',
+      role: 'worker',
+      status: 'blocked',
+      checkout: current.root,
+      summary: 'External dependency',
+      next: 'Wait for X04-STATE',
+      verification: 'Required check not run',
       updatedAt: '2026-10-20T09:00:00.000Z',
     },
     {
-      owner: 'coordinator', task: 'resume-report', role: 'coordinator', status: 'active', checkout: current.root,
-      summary: 'Current coordinator work', next: 'Inspect current state', verification: 'docs/verification/current.md',
+      owner: 'coordinator',
+      task: 'resume-report',
+      role: 'coordinator',
+      status: 'active',
+      checkout: current.root,
+      summary: 'Current coordinator work',
+      next: 'Inspect current state',
+      verification: 'docs/verification/current.md',
       updatedAt: '2026-10-20T11:00:00.000Z',
     },
   ];
   await writeFile(statePath, `${JSON.stringify(entries, null, 2)}\n`, 'utf8');
   const stateBefore = await readFile(statePath, 'utf8');
 
-  const result = run(current, [
-    'resume', '--tasks', 'specs/feature/tasks.md',
-    '--authorization', 'docs/authorization.md',
-    '--authorization', 'docs/authorization-follow-up.md',
-  ]);
+  const result = run(current, ['resume', '--tasks', 'specs/feature/tasks.md', '--authorization', 'docs/authorization.md', '--authorization', 'docs/authorization-follow-up.md']);
   assert.equal(result.status, 0, result.stderr);
   assert.ok(result.stdout.includes(`Checkout: ${current.root}`));
   assert.match(result.stdout, /Branch: fixture/);
@@ -121,7 +136,7 @@ test('resume reports checkout, ledger frontier, evidence pointers and worker sta
   assert.equal(await readFile(statePath, 'utf8'), stateBefore);
 });
 
-test('resume preserves porcelain status columns and formats staged renames with spaces', async (t) => {
+test('resume preserves porcelain status columns and formats staged renames with spaces', async t => {
   const current = await fixture(t);
   await writeFile(join(current.root, 'docs/spec.md'), '# Unstaged edit\n', 'utf8');
   git(current.root, ['add', '--', 'untracked.txt']);
@@ -139,7 +154,7 @@ test('resume preserves porcelain status columns and formats staged renames with 
   assert.doesNotMatch(renamed.stdout, /^ {2}src\/declared file\.ts$/m);
 });
 
-test('resume canonicalizes aliased checkouts, skips missing checkouts, and reports reassigned workers', async (t) => {
+test('resume canonicalizes aliased checkouts, skips missing checkouts, and reports reassigned workers', async t => {
   const current = await fixture(t);
   const alias = current.root + '-alias';
   await symlink(current.root, alias, process.platform === 'win32' ? 'junction' : 'dir');
@@ -149,16 +164,30 @@ test('resume canonicalizes aliased checkouts, skips missing checkouts, and repor
   await mkdir(join(current.root, '.agent-work/state'), { recursive: true });
   const entries = [
     {
-      owner: 'aliased-worker', task: 'T002', role: 'worker', status: 'handed-off', checkout: alias,
-      summary: 'Assignment recorded through a path alias', next: 'Await review',
+      owner: 'aliased-worker',
+      task: 'T002',
+      role: 'worker',
+      status: 'handed-off',
+      checkout: alias,
+      summary: 'Assignment recorded through a path alias',
+      next: 'Await review',
     },
     {
-      owner: 'missing-checkout', task: 'resume-report', role: 'coordinator', status: 'active',
-      summary: 'Legacy record has no checkout', next: 'Retain as evidence only',
+      owner: 'missing-checkout',
+      task: 'resume-report',
+      role: 'coordinator',
+      status: 'active',
+      summary: 'Legacy record has no checkout',
+      next: 'Retain as evidence only',
     },
     {
-      owner: 'reassigned-worker', task: 'T002', role: 'worker', status: 'reassigned', checkout: current.root,
-      summary: 'Assignment has a terminal reassigned status', next: 'No further work',
+      owner: 'reassigned-worker',
+      task: 'T002',
+      role: 'worker',
+      status: 'reassigned',
+      checkout: current.root,
+      summary: 'Assignment has a terminal reassigned status',
+      next: 'No further work',
     },
   ];
   await writeFile(statePath, JSON.stringify(entries, null, 2) + '\n', 'utf8');
@@ -171,7 +200,7 @@ test('resume canonicalizes aliased checkouts, skips missing checkouts, and repor
   assert.doesNotMatch(result.stdout, /reassigned-worker\/T002/);
 });
 
-test('resume without a ledger or shared state reports the absence without creating state', async (t) => {
+test('resume without a ledger or shared state reports the absence without creating state', async t => {
   const current = await fixture(t);
   const result = run(current, ['resume']);
   assert.equal(result.status, 0, result.stderr);
@@ -180,7 +209,7 @@ test('resume without a ledger or shared state reports the absence without creati
   await assert.rejects(access(join(current.root, '.agent-work')), { code: 'ENOENT' });
 });
 
-test('resume retries a busy shared store once and leaves its lock untouched', async (t) => {
+test('resume retries a busy shared store once and leaves its lock untouched', async t => {
   const current = await fixture(t);
   const stateDirectory = join(current.root, '.agent-work/state');
   const statePath = join(stateDirectory, 'active-tasks.json');
@@ -195,26 +224,17 @@ test('resume retries a busy shared store once and leaves its lock untouched', as
   assert.equal(await readFile(lockPath, 'utf8'), 'another writer\n');
 });
 
-test('explicit root works when the CLI is dispatched from another checkout', async (t) => {
+test('explicit root works when the CLI is dispatched from another checkout', async t => {
   const current = await fixture(t);
-  const result = spawnSync(
-    process.execPath,
-    [cliSource, 'handoff', '--tasks', 'specs/feature/tasks.md', '--root', current.root],
-    { cwd: tmpdir(), encoding: 'utf8', windowsHide: true },
-  );
+  const result = spawnSync(process.execPath, [cliSource, 'handoff', '--tasks', 'specs/feature/tasks.md', '--root', current.root], { cwd: tmpdir(), encoding: 'utf8', windowsHide: true });
   assert.equal(result.status, 0, result.stderr);
   assert.ok(result.stdout.includes(`Checkout: ${current.root}`));
 });
 
-test('CLI runs through a path alias and stays inert when imported with an unresolved argv path', async (t) => {
+test('CLI runs through a path alias and stays inert when imported with an unresolved argv path', async t => {
   const current = await fixture(t);
   const importer = join(current.root, 'import-agent-context.mjs');
-  await writeFile(
-    importer,
-    'process.argv[1] = "missing-agent-context.mjs";\nawait import(' +
-      JSON.stringify(pathToFileURL(current.cliPath).href) + ');\n',
-    'utf8',
-  );
+  await writeFile(importer, 'process.argv[1] = "missing-agent-context.mjs";\nawait import(' + JSON.stringify(pathToFileURL(current.cliPath).href) + ');\n', 'utf8');
   const imported = spawnSync(process.execPath, [importer], {
     cwd: current.root,
     encoding: 'utf8',
@@ -226,9 +246,7 @@ test('CLI runs through a path alias and stays inert when imported with an unreso
   let aliasPath;
   if (process.platform === 'win32') {
     const separator = current.cliPath.lastIndexOf('\\');
-    const aliasDirectory = current.cliPath.slice(0, separator + 1).replace(/[A-Za-z]/g, (letter) =>
-      letter === letter.toLowerCase() ? letter.toUpperCase() : letter.toLowerCase(),
-    );
+    const aliasDirectory = current.cliPath.slice(0, separator + 1).replace(/[A-Za-z]/g, letter => (letter === letter.toLowerCase() ? letter.toUpperCase() : letter.toLowerCase()));
     aliasPath = aliasDirectory + current.cliPath.slice(separator + 1);
   } else {
     aliasPath = current.cliPath + '.alias';
@@ -244,33 +262,19 @@ test('CLI runs through a path alias and stays inert when imported with an unreso
   assert.equal(invoked.stdout.match(/Usage:/g)?.length, 1);
 });
 
-test('task context is limited to the requested task, its phase notes, matching plan lines, and referenced ports', async (t) => {
+test('task context is limited to the requested task, its phase notes, matching plan lines, and referenced ports', async t => {
   const current = await fixture(t);
   const taskLedger = await readFile(current.tasksPath, 'utf8');
   await writeFile(
     current.tasksPath,
-    taskLedger.replace(
-      '- [ ] T018 [US1] A different task in another file.',
-      '- [ ] T018 [US1] A different task in another file.\n  - **Dependencies**: T017.',
-    ),
+    taskLedger.replace('- [ ] T018 [US1] A different task in another file.', '- [ ] T018 [US1] A different task in another file.\n  - **Dependencies**: T017.'),
     'utf8',
   );
-  const selected = run(current, [
-    'task',
-    '--tasks',
-    'specs/feature/tasks.md',
-    '--task',
-    'T017',
-    '--plan',
-    'specs/feature/plan.md',
-  ]);
+  const selected = run(current, ['task', '--tasks', 'specs/feature/tasks.md', '--task', 'T017', '--plan', 'specs/feature/plan.md']);
   assert.equal(selected.status, 0, selected.stderr);
   assert.match(selected.stdout, /Phase: ## Phase 2: US1 work/);
   assert.match(selected.stdout, /Canonical task line:\n- \[ \] T017 \[P\] \[US1\]/);
-  assert.match(
-    selected.stdout,
-    /Independent US1 test: unresolved provider outcomes remain pending/,
-  );
+  assert.match(selected.stdout, /Independent US1 test: unresolved provider outcomes remain pending/);
   assert.doesNotMatch(selected.stdout, /\*\*Dependencies\*\*: T017/);
   assert.match(selected.stdout, /US1 T017-T032 follows foundation/);
   assert.match(selected.stdout, /payment-fulfillment\.saga\.ts/);
@@ -278,60 +282,30 @@ test('task context is limited to the requested task, its phase notes, matching p
   assert.doesNotMatch(selected.stdout, /Do not include this material/);
   assert.doesNotMatch(selected.stdout, /unrelated\.service\.ts/);
 
-  const dependencyOwner = run(current, [
-    'task',
-    '--tasks',
-    'specs/feature/tasks.md',
-    '--task',
-    'T018',
-  ]);
+  const dependencyOwner = run(current, ['task', '--tasks', 'specs/feature/tasks.md', '--task', 'T018']);
   assert.equal(dependencyOwner.status, 0, dependencyOwner.stderr);
   assert.match(dependencyOwner.stdout, /\*\*Dependencies\*\*: T017/);
 
-  const database = run(current, [
-    'task',
-    '--tasks',
-    'specs/feature/tasks.md',
-    '--task',
-    'T006',
-    '--plan',
-    'specs/feature/plan.md',
-  ]);
+  const database = run(current, ['task', '--tasks', 'specs/feature/tasks.md', '--task', 'T006', '--plan', 'specs/feature/plan.md']);
   assert.equal(database.status, 0, database.stderr);
   assert.match(database.stdout, /schema\.prisma/);
   assert.match(database.stdout, /20261007000000_fulfillment_recovery\/migration\.sql/);
   assert.doesNotMatch(database.stdout, /001_seed_data\.sql/);
   assert.doesNotMatch(database.stdout, /unrelated database note/);
 
-  const checkout = run(current, [
-    'task',
-    '--tasks',
-    'specs/feature/tasks.md',
-    '--task',
-    'T030',
-    '--plan',
-    'specs/feature/plan.md',
-  ]);
+  const checkout = run(current, ['task', '--tasks', 'specs/feature/tasks.md', '--task', 'T030', '--plan', 'specs/feature/plan.md']);
   assert.equal(checkout.status, 0, checkout.stderr);
   assert.match(checkout.stdout, /checkout\/\[intentId\]\/payment\/page\.tsx/);
   assert.doesNotMatch(checkout.stdout, /\[otherId\]/);
 
-  const ports = run(current, [
-    'task',
-    '--tasks',
-    'specs/feature/tasks.md',
-    '--task',
-    'T021',
-    '--plan',
-    'specs/feature/plan.md',
-  ]);
+  const ports = run(current, ['task', '--tasks', 'specs/feature/tasks.md', '--task', 'T021', '--plan', 'specs/feature/plan.md']);
   assert.equal(ports.status, 0, ports.stderr);
   assert.match(ports.stdout, /PAYMENT_GATEWAY_PORT/);
   assert.match(ports.stdout, /FULFILLMENT_GATEWAY_PORT/);
   assert.doesNotMatch(ports.stdout, /OTHER_PORT/);
 });
 
-test('task IDs must be canonical and present, and duplicate canonical IDs fail', async (t) => {
+test('task IDs must be canonical and present, and duplicate canonical IDs fail', async t => {
   const current = await fixture(t);
   const invalid = run(current, ['task', '--tasks', 'specs/feature/tasks.md', '--task', 'T17']);
   assert.equal(invalid.status, 1);
@@ -340,12 +314,7 @@ test('task IDs must be canonical and present, and duplicate canonical IDs fail',
   assert.equal(unknown.status, 1);
   assert.match(unknown.stderr, /Unknown task ID T999/);
   assert.match(unknown.stderr, /Canonical IDs: T001, T002, T006, T030, T017, T018, T021/);
-  const unknownOption = run(current, [
-    'handoff',
-    '--tasks',
-    'specs/feature/tasks.md',
-    '--surprise',
-  ]);
+  const unknownOption = run(current, ['handoff', '--tasks', 'specs/feature/tasks.md', '--surprise']);
   assert.equal(unknownOption.status, 1);
   assert.match(unknownOption.stderr, /Unknown option or positional argument: --surprise/);
 
@@ -355,7 +324,7 @@ test('task IDs must be canonical and present, and duplicate canonical IDs fail',
   assert.match(duplicate.stderr, /Duplicate canonical task ID T017/);
 });
 
-test('snapshot hashes only declared files and verifies unchanged files across unrelated HEAD drift', async (t) => {
+test('snapshot hashes only declared files and verifies unchanged files across unrelated HEAD drift', async t => {
   const current = await fixture(t);
   const created = run(current, ['snapshot', '--files', 'src/declared file.ts', 'docs/spec.md']);
   assert.equal(created.status, 0, created.stderr);
@@ -365,7 +334,7 @@ test('snapshot hashes only declared files and verifies unchanged files across un
   assert.equal(snapshot.branch, 'fixture');
   assert.equal(snapshot.files.length, 2);
   assert.deepEqual(
-    snapshot.files.map((entry) => entry.path),
+    snapshot.files.map(entry => entry.path),
     ['src/declared file.ts', 'docs/spec.md'],
   );
   assert.equal(created.stdout.includes('private.env'), false);
@@ -381,18 +350,14 @@ test('snapshot hashes only declared files and verifies unchanged files across un
   assert.match(verified.stdout, /HEAD drift:/);
   assert.match(verified.stdout, /2\/2 unchanged/);
 
-  await writeFile(
-    join(current.root, 'src', 'declared file.ts'),
-    'export const value = 2;\n',
-    'utf8',
-  );
+  await writeFile(join(current.root, 'src', 'declared file.ts'), 'export const value = 2;\n', 'utf8');
   const stale = run(current, ['verify', '--snapshot', 'snapshot.json']);
   assert.equal(stale.status, 1);
   assert.match(stale.stderr, /Changed: src\/declared file\.ts/);
   assert.match(stale.stderr, /Snapshot is stale/);
 });
 
-test('verify rejects missing files, malformed snapshots, workspace mismatch, and escaping paths', async (t) => {
+test('verify rejects missing files, malformed snapshots, workspace mismatch, and escaping paths', async t => {
   const current = await fixture(t);
   const created = run(current, ['snapshot', '--files', 'docs/spec.md']);
   assert.equal(created.status, 0, created.stderr);

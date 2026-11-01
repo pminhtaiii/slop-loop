@@ -9,7 +9,9 @@ export interface ExcerptAdmission {
 }
 export class IntakeBinder {
   private readonly admission: ExcerptAdmission | undefined;
-  constructor(admission?: ExcerptAdmission) { this.admission = admission; }
+  constructor(admission?: ExcerptAdmission) {
+    this.admission = admission;
+  }
   bind(invocation: unknown, context: unknown): Validation<BoundIntake> {
     const result = validateIntake(invocation, context);
     if (!result.ok) return result;
@@ -19,8 +21,8 @@ export class IntakeBinder {
 
   admit(evidence: Evidence, inputBytes: number): Validation<ModelEvidence> {
     const excerpt: unknown = this.admission?.resolveExcerpt(evidence);
-    if (typeof excerpt !== 'string' || Buffer.byteLength(excerpt) > inputBytes || sha256Text(excerpt) !== evidence.contentDigest
-      || isProtectedPayload(excerpt)) return { ok: false, status: 'invalid-input', reasonCode: 'evidence-not-admitted', path: '$.evidence' };
+    if (typeof excerpt !== 'string' || Buffer.byteLength(excerpt) > inputBytes || sha256Text(excerpt) !== evidence.contentDigest || isProtectedPayload(excerpt))
+      return { ok: false, status: 'invalid-input', reasonCode: 'evidence-not-admitted', path: '$.evidence' };
     return { ok: true, value: { evidence, boundedExcerpt: excerpt } };
   }
 }

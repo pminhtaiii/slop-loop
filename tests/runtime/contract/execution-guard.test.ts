@@ -45,12 +45,7 @@ import {
 import { MemoryStatePort, MemoryStatePortV02 } from '../support/uc03/memory-state.ts';
 import { ScriptedApprovalPort } from '../support/uc03/scripted-approval.ts';
 import { FakeRepositoryPort, type ScriptedCommandResult } from '../support/uc03/fake-repository.ts';
-import {
-  createFixtureTaskState,
-  createFixtureBugTask,
-  createFixtureExecutionLimits,
-  createFixtureBudgetLimits,
-} from '../support/uc03/port-fixtures.ts';
+import { createFixtureTaskState, createFixtureBugTask, createFixtureExecutionLimits, createFixtureBudgetLimits } from '../support/uc03/port-fixtures.ts';
 import {
   createTestRepositoryAdmissionContextV02,
   createTestRepositoryCommandAdmissionContextV02,
@@ -127,9 +122,7 @@ function createTestHarnessV02(options?: {
   readonly failAuthoritativeLoad?: boolean | undefined;
 }) {
   const context = options?.context;
-  const initialTaskState =
-    options?.initialTaskState ??
-    (context ? createTestAdmissionTaskStateV02(context) : createFixtureTaskState());
+  const initialTaskState = options?.initialTaskState ?? (context ? createTestAdmissionTaskStateV02(context) : createFixtureTaskState());
   const isCommand = context?.action?.kind === 'run_command';
   const taskState: TaskState = isCommand
     ? {
@@ -155,14 +148,10 @@ function createTestHarnessV02(options?: {
     initialControlVersion: context?.expectedControlVersion ?? 0,
     initialEpoch: context?.expectedEpoch ?? 0,
     initialAuthorityRef: authorityRef,
-    transitionContexts: context
-      ? createTestAdmissionTransitionContextsV02(context, taskState)
-      : undefined,
+    transitionContexts: context ? createTestAdmissionTransitionContextsV02(context, taskState) : undefined,
   });
   const approvalPort = new ScriptedApprovalPort();
-  const executorIdentity = createTestExecutorIdentityV02(
-    context ? { payloadDigest: context.actionDigest } : undefined
-  );
+  const executorIdentity = createTestExecutorIdentityV02(context ? { payloadDigest: context.actionDigest } : undefined);
   const repositoryPort = new FakeRepositoryPort({
     statePort,
     executorIdentity,
@@ -180,8 +169,10 @@ function createTestHarnessV02(options?: {
     statePort,
     portCalls,
     options?.failAuthoritativeLoad
-      ? async () => { throw new Error('authoritative state store unavailable'); }
-      : undefined
+      ? async () => {
+          throw new Error('authoritative state store unavailable');
+        }
+      : undefined,
   );
   const forwardedRepositoryPort = forwardRepositoryPortV02(repositoryPort, portCalls);
 
@@ -220,20 +211,16 @@ interface V02PortCalls {
   tests: number;
 }
 
-function forwardStatePortV02(
-  port: StatePortV02,
-  calls: V02PortCalls,
-  loadTask: StatePortV02['loadTask'] = (taskId) => port.loadTask(taskId)
-): ExecutionGuardStatePortV02 {
+function forwardStatePortV02(port: StatePortV02, calls: V02PortCalls, loadTask: StatePortV02['loadTask'] = taskId => port.loadTask(taskId)): ExecutionGuardStatePortV02 {
   return {
     provenance: port.provenance,
     executionGuardApiVersion: '0.2.0',
-    loadTask: (taskId) => {
+    loadTask: taskId => {
       calls.loadTask++;
       return loadTask(taskId);
     },
     transition: (state, expectedVersion) => port.transition(state, expectedVersion),
-    claim: (context) => {
+    claim: context => {
       calls.claim++;
       return port.claim(context);
     },
@@ -241,25 +228,22 @@ function forwardStatePortV02(
       calls.beginAttempt++;
       return port.beginAttempt(claimId, executor);
     },
-    recordOutcome: (receipt) => port.recordOutcome(receipt),
-    reconcileObservedOutcome: (receipt) => port.reconcileObservedOutcome(receipt),
-    reconcileUncertain: (receipt) => port.reconcileUncertain(receipt),
-    closeUnattemptedClaim: (receipt) => port.closeUnattemptedClaim(receipt),
-    checkpoint: (state) => port.checkpoint(state),
-    recover: (taskId) => port.recover(taskId),
+    recordOutcome: receipt => port.recordOutcome(receipt),
+    reconcileObservedOutcome: receipt => port.reconcileObservedOutcome(receipt),
+    reconcileUncertain: receipt => port.reconcileUncertain(receipt),
+    closeUnattemptedClaim: receipt => port.closeUnattemptedClaim(receipt),
+    checkpoint: state => port.checkpoint(state),
+    recover: taskId => port.recover(taskId),
   };
 }
 
-function forwardRepositoryPortV02(
-  port: RepositoryPortV02,
-  calls: V02PortCalls
-): ExecutionGuardRepositoryPortV02 {
+function forwardRepositoryPortV02(port: RepositoryPortV02, calls: V02PortCalls): ExecutionGuardRepositoryPortV02 {
   return {
     provenance: port.provenance,
     executionGuardApiVersion: '0.2.0',
-    listDir: (path) => port.listDir(path),
-    readFile: (path) => port.readFile(path),
-    searchCode: (query) => port.searchCode(query),
+    listDir: path => port.listDir(path),
+    readFile: path => port.readFile(path),
+    searchCode: query => port.searchCode(query),
     applyPatch: (patch, context) => {
       calls.patches++;
       return port.applyPatch(patch, context);
@@ -272,27 +256,23 @@ function forwardRepositoryPortV02(
       calls.tests++;
       return port.runTests(check, context);
     },
-    inspectDiff: (revision) => port.inspectDiff(revision),
+    inspectDiff: revision => port.inspectDiff(revision),
   };
 }
 
-function createV01RepositorySpy(
-  port: RepositoryPort,
-  revisionDigest: string,
-  onPatch: () => void
-): RepositoryPort {
+function createV01RepositorySpy(port: RepositoryPort, revisionDigest: string, onPatch: () => void): RepositoryPort {
   return {
     provenance: port.provenance,
-    listDir: (path) => port.listDir(path),
-    readFile: (path) => port.readFile(path),
-    searchCode: (query) => port.searchCode(query),
+    listDir: path => port.listDir(path),
+    readFile: path => port.readFile(path),
+    searchCode: query => port.searchCode(query),
     applyPatch: async () => {
       onPatch();
       return { applied: true, newRevisionDigest: revisionDigest };
     },
-    runCommand: async (action) => port.runCommand(action),
-    runTests: (check) => port.runTests(check),
-    inspectDiff: (revision) => port.inspectDiff(revision),
+    runCommand: async action => port.runCommand(action),
+    runTests: check => port.runTests(check),
+    inspectDiff: revision => port.inspectDiff(revision),
   };
 }
 
@@ -361,11 +341,7 @@ function createValidCommandView(overrides?: Partial<CommandView>): CommandView {
 test('ExecutionGuard: declares port provenance and is evaluated by isAdmittedForProduction', () => {
   const { guard } = createTestHarness();
   assert.equal(guard.provenance, 'mock', 'Guard must declare mock provenance by default in test configuration');
-  assert.equal(
-    isAdmittedForProduction([guard]),
-    false,
-    'Production guard must reject mock execution guard'
-  );
+  assert.equal(isAdmittedForProduction([guard]), false, 'Production guard must reject mock execution guard');
   assert.ok(guard instanceof AuthoritativeExecutionGuard, 'Guard is instance of AuthoritativeExecutionGuard SUT');
 });
 
@@ -376,7 +352,7 @@ test('ExecutionGuard: class instance provenance is recognized without admitting 
   assert.equal(
     isAdmittedForProduction([guard, ports.statePort, ports.approvalPort, ports.repositoryPort]),
     false,
-    'Mock dependencies prevent overall production admission even if guard claims real provenance'
+    'Mock dependencies prevent overall production admission even if guard claims real provenance',
   );
 
   const result = await guard.validateAndExecute(createValidPatchAction(), createFixtureTaskState());
@@ -690,16 +666,8 @@ test('v0.1 compatibility: a valid approved action stays no-dispatch until the v0
 test('ExecutionGuardV02: declares port provenance and type conformance on real neutral v0.2 SUT', async () => {
   const { guard, ports, repositoryPort, taskState } = createTestHarnessV02({ guardProvenance: 'mock' });
   assert.equal(guard.provenance, 'mock', 'Guard must declare mock provenance by default in test configuration');
-  assert.equal(
-    isAdmittedForProduction([guard]),
-    false,
-    'Production guard must reject mock execution guard'
-  );
-  assert.equal(
-    isAdmittedForProduction([guard, ports.statePort, ports.repositoryPort]),
-    false,
-    'Production guard must reject mock execution guard and mock v0.2 dependencies'
-  );
+  assert.equal(isAdmittedForProduction([guard]), false, 'Production guard must reject mock execution guard');
+  assert.equal(isAdmittedForProduction([guard, ports.statePort, ports.repositoryPort]), false, 'Production guard must reject mock execution guard and mock v0.2 dependencies');
   assert.ok(guard instanceof AuthoritativeExecutionGuardV02, 'Guard is instance of AuthoritativeExecutionGuardV02 SUT');
   assert.ok(guard instanceof AuthoritativeExecutionGuard, 'Guard is also instance of AuthoritativeExecutionGuard base');
 
@@ -759,11 +727,7 @@ test('v0.2 positive admission: valid approved-plan patch executes cleanly via re
   const result = await guard.validateAndExecute(patchAction, taskState, context);
   const after = await statePort.loadTask(taskState.taskId);
 
-  assert.equal(
-    result.outcome,
-    'success',
-    'Valid approved patch must execute cleanly via receiver handoff'
-  );
+  assert.equal(result.outcome, 'success', 'Valid approved patch must execute cleanly via receiver handoff');
   assert.ok(result.result, 'Success result must contain patch application result');
   assert.equal(repositoryPort.patches.length, 1, 'The controlled repository effect must be persisted once');
   assert.equal(portCalls.patches, 1, 'The public RepositoryPortV02 wrapper forwards the receiver call once');
@@ -782,11 +746,7 @@ test('v0.2 positive admission: valid approved-plan command executes cleanly via 
   const result = await guard.validateAndExecute(cmdAction, taskState, context);
   const after = await statePort.loadTask(taskState.taskId);
 
-  assert.equal(
-    result.outcome,
-    'success',
-    'Valid approved command must execute cleanly via receiver handoff'
-  );
+  assert.equal(result.outcome, 'success', 'Valid approved command must execute cleanly via receiver handoff');
   assert.ok(result.result, 'Success result must contain command execution result');
   assert.equal(repositoryPort.commands.length, 1, 'The controlled repository effect must be persisted once');
   assert.equal(portCalls.commands, 1, 'The public RepositoryPortV02 wrapper forwards the receiver call once');
@@ -794,7 +754,7 @@ test('v0.2 positive admission: valid approved-plan command executes cleanly via 
   assert.equal(portCalls.beginAttempt, 0, 'ExecutionGuard does not duplicate the receiver-owned beginAttempt');
   assert.equal(after?.stateVersion, before?.stateVersion, 'Command settlement preserves the task state version');
   assert.equal(after?.repositoryRevisionDigest, before?.repositoryRevisionDigest);
-  const timeoutLedger = after?.budgetLedgers?.find((ledger) => ledger.kind === 'timeoutMs');
+  const timeoutLedger = after?.budgetLedgers?.find(ledger => ledger.kind === 'timeoutMs');
   assert.equal(timeoutLedger?.consumed, 30_000, 'The receiver settles the configured command reservation once');
   assert.deepEqual(timeoutLedger?.reservations, []);
   assert.equal(result.attemptId, (result.result as RepositoryPatchResultV02 | RepositoryCommandResultV02).executionReceipt.attempt.attemptId, 'The guard forwards the exact owner-issued identity');
@@ -818,11 +778,7 @@ test('v0.2 positive admission: pre-plan diagnostic check executes without requir
 
   const result = await guard.validateAndExecute(diagAction, taskState, context);
 
-  assert.equal(
-    result.outcome,
-    'success',
-    'Valid pre-plan diagnostic check must execute cleanly without requiring approved plan decision'
-  );
+  assert.equal(result.outcome, 'success', 'Valid pre-plan diagnostic check must execute cleanly without requiring approved plan decision');
   assert.equal(repositoryPort.commands.length, 1, 'RepositoryPort.runCommand must be dispatched for diagnostic check');
 });
 
@@ -847,15 +803,10 @@ test('v0.2 typed receipt and state/control progression: validates and binds prot
 
   const result = await guard.validateAndExecute(patchAction, taskState, context);
 
-  assert.equal(
-    result.outcome,
-    'success',
-    'Valid attempt handoff must bind receipt and version progression'
-  );
+  assert.equal(result.outcome, 'success', 'Valid attempt handoff must bind receipt and version progression');
   assert.ok(result.attemptId, 'Execution result must include assigned attemptId from UC-04 claim/attempt handoff');
   assert.equal(result.attemptId, issuedAttemptId, 'Guard projects the exact UC-04-issued attempt identity');
 });
-
 
 test('v0.2 authoritative state missing or changed denies before receiver mutation', async () => {
   for (const missing of [true, false]) {
@@ -863,10 +814,12 @@ test('v0.2 authoritative state missing or changed denies before receiver mutatio
     const context = createTestRepositoryAdmissionContextV02({ action });
     const { ports, taskState, repositoryPort, portCalls, statePort } = createTestHarnessV02({ context });
     const before = await statePort.loadTask(taskState.taskId);
-    const guard = createExecutionGuardV02({ ports: {
-      ...ports,
-      statePort: { ...ports.statePort, loadTask: async () => missing ? null : { ...taskState, stateVersion: 99 } },
-    } });
+    const guard = createExecutionGuardV02({
+      ports: {
+        ...ports,
+        statePort: { ...ports.statePort, loadTask: async () => (missing ? null : { ...taskState, stateVersion: 99 }) },
+      },
+    });
     const result = await guard.validateAndExecute(action, taskState, context);
     assert.equal(result.outcome, missing ? 'denied' : 'conflict');
     assert.equal(repositoryPort.patches.length, 0);
@@ -880,16 +833,18 @@ test('v0.2 ignores uncontracted mismatched receiver identity rather than treatin
   const action = createValidPatchAction();
   const context = createTestRepositoryAdmissionContextV02({ action });
   const { ports, taskState, portCalls } = createTestHarnessV02({ context });
-  const guard = createExecutionGuardV02({ ports: {
-    ...ports,
-    repositoryPort: {
-      ...ports.repositoryPort,
-      applyPatch: async (patch, admission) => ({
-        ...await ports.repositoryPort.applyPatch(patch, admission),
-        attemptId: 'unrelated-attempt',
-      }),
+  const guard = createExecutionGuardV02({
+    ports: {
+      ...ports,
+      repositoryPort: {
+        ...ports.repositoryPort,
+        applyPatch: async (patch, admission) => ({
+          ...(await ports.repositoryPort.applyPatch(patch, admission)),
+          attemptId: 'unrelated-attempt',
+        }),
+      },
     },
-  } });
+  });
   const result = await guard.validateAndExecute(action, taskState, context);
   assert.equal(result.attemptId, (result.result as RepositoryPatchResultV02).executionReceipt.attempt.attemptId);
   assert.notEqual(result.attemptId, 'unrelated-attempt');
@@ -899,31 +854,62 @@ test('v0.2 ignores uncontracted mismatched receiver identity rather than treatin
 });
 
 for (const kind of ['patch', 'command'] as const) {
-  for (const mutation of ['missing', 'digest', 'foreign-attempt', 'payload', 'branch', 'policy', 'versions', 'reservations', 'revision-or-output', 'unsettled', 'already-recorded', 'settlement-id', 'throw', 'wrong-successor', 'no-transition', 'foreign-invalidation'] as const) {
+  for (const mutation of [
+    'missing',
+    'digest',
+    'foreign-attempt',
+    'payload',
+    'branch',
+    'policy',
+    'versions',
+    'reservations',
+    'revision-or-output',
+    'unsettled',
+    'already-recorded',
+    'settlement-id',
+    'throw',
+    'wrong-successor',
+    'no-transition',
+    'foreign-invalidation',
+  ] as const) {
     test(`v0.2 ${kind}: ${mutation} after dispatch is uncertain without a second effect or accounting`, async () => {
       const action = kind === 'patch' ? createValidPatchAction() : createValidCommandAction();
-      const context = action.kind === 'apply_patch'
-        ? createTestRepositoryAdmissionContextV02({ action })
-        : createTestRepositoryCommandAdmissionContextV02({ action });
+      const context = action.kind === 'apply_patch' ? createTestRepositoryAdmissionContextV02({ action }) : createTestRepositoryCommandAdmissionContextV02({ action });
       const { ports, statePort, taskState, repositoryPort, portCalls } = createTestHarnessV02({ context });
       const counts = { claim: 0, begin: 0, settle: 0 };
-      const claim = statePort.claim.bind(statePort), begin = statePort.beginAttempt.bind(statePort), settle = statePort.recordOutcome.bind(statePort);
-      statePort.claim = async (admission) => { counts.claim++; return claim(admission); };
-      statePort.beginAttempt = async (id, executor) => { counts.begin++; return begin(id, executor); };
-      statePort.recordOutcome = async (receipt) => { counts.settle++; return settle(receipt); };
+      const claim = statePort.claim.bind(statePort),
+        begin = statePort.beginAttempt.bind(statePort),
+        settle = statePort.recordOutcome.bind(statePort);
+      statePort.claim = async admission => {
+        counts.claim++;
+        return claim(admission);
+      };
+      statePort.beginAttempt = async (id, executor) => {
+        counts.begin++;
+        return begin(id, executor);
+      };
+      statePort.recordOutcome = async receipt => {
+        counts.settle++;
+        return settle(receipt);
+      };
       let persisted: TaskState | null = null;
       function tamper<T extends RepositoryPatchResultV02 | RepositoryCommandResultV02>(result: T): T {
         if (mutation === 'throw') throw new Error('receiver lost response');
         const copy = structuredClone(result) as unknown as Record<string, unknown>;
-        if (mutation === 'missing') { delete copy['executionReceipt']; return copy as unknown as T; }
+        if (mutation === 'missing') {
+          delete copy['executionReceipt'];
+          return copy as unknown as T;
+        }
         const bundle = copy['executionReceipt'] as Record<string, Record<string, unknown>>;
         const outcome = bundle['outcome'];
         const attempt = bundle['attempt'];
         const settlement = bundle['settlement'];
         assert.ok(outcome && attempt && settlement);
-        if (mutation === 'wrong-successor') (outcome['proposedEffects'] as Record<string, unknown>)['taskTransition'] = { kind: 'transition', fromNode: kind === 'patch' ? 'Patch' : context.runnableNode, toNode: 'Completed' };
+        if (mutation === 'wrong-successor')
+          (outcome['proposedEffects'] as Record<string, unknown>)['taskTransition'] = { kind: 'transition', fromNode: kind === 'patch' ? 'Patch' : context.runnableNode, toNode: 'Completed' };
         if (mutation === 'no-transition') (outcome['proposedEffects'] as Record<string, unknown>)['taskTransition'] = { kind: 'none' };
-        if (mutation === 'foreign-invalidation') (outcome['proposedEffects'] as Record<string, unknown>)['invalidatedEvidence'] = [{ reference: 'foreign-evidence', digest: 'sha256:' + 'a'.repeat(64) }];
+        if (mutation === 'foreign-invalidation')
+          (outcome['proposedEffects'] as Record<string, unknown>)['invalidatedEvidence'] = [{ reference: 'foreign-evidence', digest: 'sha256:' + 'a'.repeat(64) }];
         if (mutation === 'digest') outcome['receiptDigest'] = 'sha256:' + '0'.repeat(64);
         if (mutation === 'foreign-attempt') attempt['attemptId'] = 'foreign-attempt';
         if (mutation === 'payload') (attempt['executorIdentity'] as Record<string, unknown>)['payloadDigest'] = 'sha256:' + '1'.repeat(64);
@@ -939,11 +925,24 @@ for (const kind of ['patch', 'command'] as const) {
         return copy as unknown as T;
       }
       const receiver = ports.repositoryPort;
-      const guard = createExecutionGuardV02({ ports: { ...ports, repositoryPort: {
-        ...receiver,
-        applyPatch: async (patch, admission) => { const result = await receiver.applyPatch(patch, admission); persisted = await statePort.loadTask(taskState.taskId); return tamper(result); },
-        runCommand: async (command, admission) => { const result = await receiver.runCommand(command, admission); persisted = await statePort.loadTask(taskState.taskId); return tamper(result); },
-      } } });
+      const guard = createExecutionGuardV02({
+        ports: {
+          ...ports,
+          repositoryPort: {
+            ...receiver,
+            applyPatch: async (patch, admission) => {
+              const result = await receiver.applyPatch(patch, admission);
+              persisted = await statePort.loadTask(taskState.taskId);
+              return tamper(result);
+            },
+            runCommand: async (command, admission) => {
+              const result = await receiver.runCommand(command, admission);
+              persisted = await statePort.loadTask(taskState.taskId);
+              return tamper(result);
+            },
+          },
+        },
+      });
       const result = await guard.validateAndExecute(action, taskState, context);
       const preservationControl = kind === 'command' && mutation === 'no-transition';
       assert.equal(result.outcome, preservationControl ? 'success' : 'uncertain-effect');
@@ -970,30 +969,54 @@ test('v0.2 real receiver: redigested successor handoff is uncertain after one se
   const action = createValidPatchAction();
   const context = createTestRepositoryAdmissionContextV02({ action });
   const h = createTestHarnessV02({ context });
-  const manager = new DockerWorkspaceManager({ controller: {
-    provenance: 'mock', createVolume: async () => undefined, hasVolume: async () => true,
-    removeVolume: async () => undefined,
-  } });
+  const manager = new DockerWorkspaceManager({
+    controller: {
+      provenance: 'mock',
+      createVolume: async () => undefined,
+      hasVolume: async () => true,
+      removeVolume: async () => undefined,
+    },
+  });
   await manager.createWorkspace({
-    taskId: context.taskId, workspaceId: context.workspaceId, initialRevisionDigest: context.canonicalRevision,
-    profile: { profileId: context.executionProfileId, image: 'test', imageDigest: context.canonicalRevision,
-      user: '1000:1000', readOnlyRootFilesystem: true, network: 'none', mounts: [],
-      limits: { timeoutMs: 30000, maxMemoryBytes: 2147483648, maxCpuCores: 2, maxPids: 256 } },
+    taskId: context.taskId,
+    workspaceId: context.workspaceId,
+    initialRevisionDigest: context.canonicalRevision,
+    profile: {
+      profileId: context.executionProfileId,
+      image: 'test',
+      imageDigest: context.canonicalRevision,
+      user: '1000:1000',
+      readOnlyRootFilesystem: true,
+      network: 'none',
+      mounts: [],
+      limits: { timeoutMs: 30000, maxMemoryBytes: 2147483648, maxCpuCores: 2, maxPids: 256 },
+    },
   });
   let revision = context.canonicalRevision;
   let effects = 0;
-  const unused = async (): Promise<never> => { throw new Error('unexpected read'); };
+  const unused = async (): Promise<never> => {
+    throw new Error('unexpected read');
+  };
   const fsPort: TrustedFilesystemPort = {
-    provenance: 'mock', stat: unused, lstat: unused, realpath: unused, readDir: unused, readTextFile: unused,
+    provenance: 'mock',
+    stat: unused,
+    lstat: unused,
+    realpath: unused,
+    readDir: unused,
+    readTextFile: unused,
     getCurrentRevisionDigest: async () => revision,
   };
   const receiver = new ControlledRepositoryTools({
-    provenance: 'mock', fsPort, limits: { maxExcerptBytes: 1024, maxResultCount: 10 },
-    guardCapability: { provenance: 'mock', capabilityId: 'unused-read', workspaceId: context.workspaceId,
-      taskId: context.taskId, mediateRead: unused },
-    workspaceManager: manager, statePort: h.ports.statePort,
+    provenance: 'mock',
+    fsPort,
+    limits: { maxExcerptBytes: 1024, maxResultCount: 10 },
+    guardCapability: { provenance: 'mock', capabilityId: 'unused-read', workspaceId: context.workspaceId, taskId: context.taskId, mediateRead: unused },
+    workspaceManager: manager,
+    statePort: h.ports.statePort,
     patchRecoveryHandoff: { prepare: unused },
-    adapterIdentity: 'effects-test', processIncarnation: 'effects-test-1', fencingGeneration: 1,
+    adapterIdentity: 'effects-test',
+    processIncarnation: 'effects-test-1',
+    fencingGeneration: 1,
     attemptStartRecoveryHandoff: { queryAttemptStart: async () => ({ outcome: 'unknown' }) },
     unattemptedClaimClosureHandoff: { closeUnattemptedClaim: async () => ({ closed: false, receiptId: '' }) },
     patchReceiver: async () => {
@@ -1005,22 +1028,29 @@ test('v0.2 real receiver: redigested successor handoff is uncertain after one se
   });
   let settledTask: TaskState | null = null;
   let settledJournal: ReturnType<typeof h.statePort.getJournalSnapshot> | undefined;
-  const guard = createExecutionGuardV02({ ports: { ...h.ports, repositoryPort: {
-    ...h.ports.repositoryPort,
-    applyPatch: async (patch, admission) => {
-      const result = await receiver.applyPatch(patch, admission);
-      assert.equal(result.executionReceipt.outcome.proposedEffects.invalidatedEvidence.length, 0);
-      assert.equal((await h.statePort.loadTask(context.taskId))?.node, 'Verify');
-      settledTask = await h.statePort.loadTask(context.taskId);
-      settledJournal = h.statePort.getJournalSnapshot();
-      const outcome = { ...result.executionReceipt.outcome, proposedEffects: {
-        ...result.executionReceipt.outcome.proposedEffects,
-        taskTransition: { kind: 'transition' as const, fromNode: 'Patch', toNode: 'Completed' },
-      } };
-      return { ...result, executionReceipt: { ...result.executionReceipt,
-        outcome: { ...outcome, receiptDigest: computeAttemptOutcomeDigest(outcome) } } };
+  const guard = createExecutionGuardV02({
+    ports: {
+      ...h.ports,
+      repositoryPort: {
+        ...h.ports.repositoryPort,
+        applyPatch: async (patch, admission) => {
+          const result = await receiver.applyPatch(patch, admission);
+          assert.equal(result.executionReceipt.outcome.proposedEffects.invalidatedEvidence.length, 0);
+          assert.equal((await h.statePort.loadTask(context.taskId))?.node, 'Verify');
+          settledTask = await h.statePort.loadTask(context.taskId);
+          settledJournal = h.statePort.getJournalSnapshot();
+          const outcome = {
+            ...result.executionReceipt.outcome,
+            proposedEffects: {
+              ...result.executionReceipt.outcome.proposedEffects,
+              taskTransition: { kind: 'transition' as const, fromNode: 'Patch', toNode: 'Completed' },
+            },
+          };
+          return { ...result, executionReceipt: { ...result.executionReceipt, outcome: { ...outcome, receiptDigest: computeAttemptOutcomeDigest(outcome) } } };
+        },
+      },
     },
-  } } });
+  });
   const result = await guard.validateAndExecute(action, h.taskState, context);
   assert.equal(result.outcome, 'uncertain-effect');
   assert.equal(result.attemptId, undefined);
@@ -1031,7 +1061,7 @@ test('v0.2 real receiver: redigested successor handoff is uncertain after one se
   assert.equal(settledJournal?.attempts.length, 1);
   assert.equal(settledJournal?.outcomes.length, 1);
   const persisted = await h.statePort.loadTask(context.taskId);
-  assert.equal(persisted?.budgetLedgers?.find((ledger) => ledger.kind === 'repair')?.consumed, 1);
+  assert.equal(persisted?.budgetLedgers?.find(ledger => ledger.kind === 'repair')?.consumed, 1);
 });
 
 test('v0.1 guard refuses a valid v0.2 context before state or receiver calls', async () => {
@@ -1043,17 +1073,15 @@ test('v0.1 guard refuses a valid v0.2 context before state or receiver calls', a
   const before = await loadTask(taskState.taskId);
   let stateCalls = 0;
   let receiverCalls = 0;
-  h.statePort.loadTask = async (taskId) => {
+  h.statePort.loadTask = async taskId => {
     stateCalls++;
     return loadTask(taskId);
   };
   const ports: ExecutionGuardPorts = {
     ...h.ports,
-    repositoryPort: createV01RepositorySpy(
-      h.repositoryPort,
-      taskState.repositoryRevisionDigest,
-      () => { receiverCalls++; }
-    ),
+    repositoryPort: createV01RepositorySpy(h.repositoryPort, taskState.repositoryRevisionDigest, () => {
+      receiverCalls++;
+    }),
   };
   const guard = createExecutionGuard({ ports });
 
@@ -1072,11 +1100,9 @@ test('v0.2 guard refuses an unmarked v0.1 repository before state or receiver ca
   const beforeJournal = h.statePort.getJournalSnapshot();
   const legacy = createTestHarness({ initialTaskState: h.taskState }).repositoryPort;
   let receiverCalls = 0;
-  const unmarkedRepositoryPort = createV01RepositorySpy(
-    legacy,
-    h.taskState.repositoryRevisionDigest,
-    () => { receiverCalls++; }
-  );
+  const unmarkedRepositoryPort = createV01RepositorySpy(legacy, h.taskState.repositoryRevisionDigest, () => {
+    receiverCalls++;
+  });
   const ports: ExecutionGuardPortsV02 = {
     ...h.ports,
     repositoryPort: unmarkedRepositoryPort as unknown as ExecutionGuardPortsV02['repositoryPort'],
@@ -1101,7 +1127,7 @@ test('v0.2 guard refuses an unmarked v0.1 state port before state or receiver ca
   const legacy = createTestHarness({ initialTaskState: h.taskState });
   const loadTask = legacy.statePort.loadTask.bind(legacy.statePort);
   let stateCalls = 0;
-  legacy.statePort.loadTask = async (taskId) => {
+  legacy.statePort.loadTask = async taskId => {
     stateCalls++;
     return loadTask(taskId);
   };
@@ -1113,9 +1139,18 @@ test('v0.2 guard refuses an unmarked v0.1 state port before state or receiver ca
   const guard = createExecutionGuardV02({ ports });
   const result = await guard.validateAndExecute(action, h.taskState, context);
 
-  assert.deepEqual({ stateCalls, ...h.portCalls }, {
-    stateCalls: 0, loadTask: 0, claim: 0, beginAttempt: 0, patches: 0, commands: 0, tests: 0,
-  });
+  assert.deepEqual(
+    { stateCalls, ...h.portCalls },
+    {
+      stateCalls: 0,
+      loadTask: 0,
+      claim: 0,
+      beginAttempt: 0,
+      patches: 0,
+      commands: 0,
+      tests: 0,
+    },
+  );
   assert.equal(result.outcome, 'denied');
   assert.deepEqual(await h.statePort.loadTask(h.taskState.taskId), beforeTask);
   assert.deepEqual(h.statePort.getJournalSnapshot(), beforeJournal);
@@ -1143,15 +1178,16 @@ test('v0.2 guard refuses malformed marked ports before any port call or mutation
     const h = createTestHarnessV02({ context });
     const beforeTask = await h.statePort.loadTask(h.taskState.taskId);
     const beforeJournal = h.statePort.getJournalSnapshot();
-    const ports: ExecutionGuardPortsV02 = malformed === 'state'
-      ? {
-          ...h.ports,
-          statePort: { ...h.ports.statePort, claim: undefined } as unknown as ExecutionGuardPortsV02['statePort'],
-        }
-      : {
-          ...h.ports,
-          repositoryPort: { ...h.ports.repositoryPort, applyPatch: undefined } as unknown as ExecutionGuardPortsV02['repositoryPort'],
-        };
+    const ports: ExecutionGuardPortsV02 =
+      malformed === 'state'
+        ? {
+            ...h.ports,
+            statePort: { ...h.ports.statePort, claim: undefined } as unknown as ExecutionGuardPortsV02['statePort'],
+          }
+        : {
+            ...h.ports,
+            repositoryPort: { ...h.ports.repositoryPort, applyPatch: undefined } as unknown as ExecutionGuardPortsV02['repositoryPort'],
+          };
 
     const result = await createExecutionGuardV02({ ports }).validateAndExecute(action, h.taskState, context);
 

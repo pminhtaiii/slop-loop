@@ -22,6 +22,8 @@
     "test:contributors": "node scripts/ci/run-contributor-tests.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "test:runtime": "node scripts/ci/run-runtime-tests.mjs"
   },
   "dependencies": {

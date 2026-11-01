@@ -6,10 +6,7 @@
  * Source-compatible with existing v01/ports.ts.
  */
 
-import type {
-  PortIdentity,
-  PortProvenance,
-} from '../v01/ports.ts';
+import type { PortIdentity, PortProvenance } from '../v01/ports.ts';
 import type {
   ApplyPatchAction,
   CheckDefinition,
@@ -176,9 +173,7 @@ export interface ProviderAdmissionTrustedContextV02 {
   readonly requestLimits: ProviderRequestLimitsV02;
 }
 
-export type AdmissionTrustedContextV02 =
-  | RepositoryAdmissionTrustedContextV02
-  | ProviderAdmissionTrustedContextV02;
+export type AdmissionTrustedContextV02 = RepositoryAdmissionTrustedContextV02 | ProviderAdmissionTrustedContextV02;
 
 export interface CommandFiniteBoundsV02 {
   readonly timeoutMs: number;
@@ -257,8 +252,7 @@ export interface RepositoryAdmissionBaseContextV02 {
   readonly patchDigest?: string | undefined;
 }
 
-export interface RepositoryPrePlanDiagnosticAdmissionContextV02
-  extends RepositoryAdmissionBaseContextV02 {
+export interface RepositoryPrePlanDiagnosticAdmissionContextV02 extends RepositoryAdmissionBaseContextV02 {
   readonly planApplicability: 'pre-plan-diagnostic';
   readonly diagnosticPurpose: string;
   readonly taskCriteriaDigest: string;
@@ -269,8 +263,7 @@ export interface RepositoryPrePlanDiagnosticAdmissionContextV02
   readonly planDecisionRef?: never | undefined;
 }
 
-export interface RepositoryApprovedPlanAdmissionContextV02
-  extends RepositoryAdmissionBaseContextV02 {
+export interface RepositoryApprovedPlanAdmissionContextV02 extends RepositoryAdmissionBaseContextV02 {
   readonly planApplicability: 'approved-plan';
   readonly planBindingDigest: string;
   readonly planDecisionRef: string;
@@ -281,9 +274,7 @@ export interface RepositoryApprovedPlanAdmissionContextV02
   readonly checkId?: string | undefined;
 }
 
-export type RepositoryAdmissionContextV02 =
-  | RepositoryPrePlanDiagnosticAdmissionContextV02
-  | RepositoryApprovedPlanAdmissionContextV02;
+export type RepositoryAdmissionContextV02 = RepositoryPrePlanDiagnosticAdmissionContextV02 | RepositoryApprovedPlanAdmissionContextV02;
 
 export interface ProviderAdmissionBaseContextV02 {
   readonly schemaVersion: '0.2.0';
@@ -308,8 +299,7 @@ export interface ProviderAdmissionBaseContextV02 {
   readonly admissionDigest?: string | undefined;
 }
 
-export interface ProviderPrePlanDiagnosticAdmissionContextV02
-  extends ProviderAdmissionBaseContextV02 {
+export interface ProviderPrePlanDiagnosticAdmissionContextV02 extends ProviderAdmissionBaseContextV02 {
   readonly planApplicability: 'pre-plan-diagnostic';
   readonly diagnosticPurpose: string;
   readonly taskCriteriaDigest: string;
@@ -317,8 +307,7 @@ export interface ProviderPrePlanDiagnosticAdmissionContextV02
   readonly planDecisionRef?: never | undefined;
 }
 
-export interface ProviderApprovedPlanAdmissionContextV02
-  extends ProviderAdmissionBaseContextV02 {
+export interface ProviderApprovedPlanAdmissionContextV02 extends ProviderAdmissionBaseContextV02 {
   readonly planApplicability: 'approved-plan';
   readonly planBindingDigest: string;
   readonly planDecisionRef: string;
@@ -326,13 +315,9 @@ export interface ProviderApprovedPlanAdmissionContextV02
   readonly taskCriteriaDigest?: string | undefined;
 }
 
-export type ProviderAdmissionContextV02 =
-  | ProviderPrePlanDiagnosticAdmissionContextV02
-  | ProviderApprovedPlanAdmissionContextV02;
+export type ProviderAdmissionContextV02 = ProviderPrePlanDiagnosticAdmissionContextV02 | ProviderApprovedPlanAdmissionContextV02;
 
-export type AdmissionContextV02 =
-  | RepositoryAdmissionContextV02
-  | ProviderAdmissionContextV02;
+export type AdmissionContextV02 = RepositoryAdmissionContextV02 | ProviderAdmissionContextV02;
 
 /* ------------------------------------------------------------------
  * Subsequent Attempt / Journal Types (Declarations for Future Tasks)
@@ -345,14 +330,7 @@ export interface ExecutorIdentityV02 {
   readonly payloadDigest: string;
 }
 
-export type ClaimStatusV02 =
-  | 'claimed'
-  | 'attempting'
-  | 'dispatched'
-  | 'outcome-recorded'
-  | 'settled'
-  | 'uncertain'
-  | 'observed-unsettled';
+export type ClaimStatusV02 = 'claimed' | 'attempting' | 'dispatched' | 'outcome-recorded' | 'settled' | 'uncertain' | 'observed-unsettled';
 
 export interface ClaimReceiptV02 {
   readonly claimId: string;
@@ -476,21 +454,10 @@ export interface RepositoryPortV02 extends PortIdentity {
   listDir(path: string): Promise<readonly string[]>;
   readFile(path: string): Promise<SourceEvidence>;
   searchCode(query: string): Promise<readonly SourceEvidence[]>;
-  applyPatch(
-    patch: ApplyPatchAction,
-    context: RepositoryAdmissionContextV02
-  ): Promise<RepositoryPatchResultV02>;
-  runCommand(
-    action: RunCommandAction,
-    context: RepositoryAdmissionContextV02
-  ): Promise<RepositoryCommandResultV02>;
-  runTests(
-    check: CheckDefinition,
-    context: RepositoryAdmissionContextV02
-  ): Promise<CheckResult>;
-  inspectDiff(
-    baseRevisionDigest: string
-  ): Promise<{ readonly diff: string; readonly diffDigest: string; readonly changedFiles: readonly string[] }>;
+  applyPatch(patch: ApplyPatchAction, context: RepositoryAdmissionContextV02): Promise<RepositoryPatchResultV02>;
+  runCommand(action: RunCommandAction, context: RepositoryAdmissionContextV02): Promise<RepositoryCommandResultV02>;
+  runTests(check: CheckDefinition, context: RepositoryAdmissionContextV02): Promise<CheckResult>;
+  inspectDiff(baseRevisionDigest: string): Promise<{ readonly diff: string; readonly diffDigest: string; readonly changedFiles: readonly string[] }>;
 }
 
 export interface ModelPortV02 extends PortIdentity {
@@ -498,7 +465,7 @@ export interface ModelPortV02 extends PortIdentity {
     state: TaskState,
     evidence: readonly SourceEvidence[],
     request: ProviderRequest,
-    context: ProviderAdmissionContextV02
+    context: ProviderAdmissionContextV02,
   ): Promise<{
     readonly outcome: 'observed' | 'uncertain' | 'denied' | 'invalid';
     readonly result?: unknown;
@@ -516,9 +483,5 @@ export interface ExecutionGuardResultV02 {
 }
 
 export interface ExecutionGuardV02 extends PortIdentity {
-  validateAndExecute(
-    action: NormalizedAction,
-    state: TaskState,
-    context: RepositoryAdmissionContextV02
-  ): Promise<ExecutionGuardResultV02>;
+  validateAndExecute(action: NormalizedAction, state: TaskState, context: RepositoryAdmissionContextV02): Promise<ExecutionGuardResultV02>;
 }

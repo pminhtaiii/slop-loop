@@ -209,9 +209,7 @@ export function createTestProviderUsage(overrides?: Partial<ProviderUsage>): Pro
   };
 }
 
-export function createTestExecutorIdentityV02(
-  overrides?: Partial<ExecutorIdentityV02>
-): ExecutorIdentityV02 {
+export function createTestExecutorIdentityV02(overrides?: Partial<ExecutorIdentityV02>): ExecutorIdentityV02 {
   return {
     adapterIdentity: 'adapter-worker-01',
     processIncarnation: 'proc-100',
@@ -285,13 +283,12 @@ export function createTestAdmissionTaskStateV02(context: AdmissionContextV02): T
     repositoryId: repositoryContext?.repositoryId ?? 'repo-mock-001',
     initialRevisionDigest: repositoryContext?.canonicalRevision ?? TEST_REPOSITORY_REVISION,
   });
-  const planDecisionRef = (repositoryContext?.planApplicability === 'approved-plan' || providerContext?.planApplicability === 'approved-plan')
-    ? (repositoryContext?.planDecisionRef ?? providerContext?.planDecisionRef)
-    : undefined;
+  const planDecisionRef =
+    repositoryContext?.planApplicability === 'approved-plan' || providerContext?.planApplicability === 'approved-plan'
+      ? (repositoryContext?.planDecisionRef ?? providerContext?.planDecisionRef)
+      : undefined;
   const plan = planDecisionRef ? createTestAdmissionPlan(task, planDecisionRef) : undefined;
-  const node: TaskState['node'] = repositoryContext
-    ? repositoryContext.runnableNode as TaskState['node']
-    : plan ? 'Repair' : 'Investigate';
+  const node: TaskState['node'] = repositoryContext ? (repositoryContext.runnableNode as TaskState['node']) : plan ? 'Repair' : 'Investigate';
   return createTestTaskState({
     stateVersion: context.expectedTaskStateVersion,
     taskId,
@@ -305,7 +302,7 @@ export function createTestAdmissionTaskStateV02(context: AdmissionContextV02): T
     reproduction: task.reproduction,
     acceptanceCriteria: task.acceptanceCriteria,
     constraints: task.constraints,
-    requiredCheckIds: task.requiredChecks.map((check) => check.checkId),
+    requiredCheckIds: task.requiredChecks.map(check => check.checkId),
     taskContext: task,
     node,
     planVersion: plan?.planVersion ?? 1,
@@ -316,12 +313,8 @@ export function createTestAdmissionTaskStateV02(context: AdmissionContextV02): T
   });
 }
 
-export function createTestAdmissionTransitionContextsV02(
-  context: AdmissionContextV02,
-  state: TaskState,
-): Readonly<Record<number, NonNullable<StateTransitionOptions['trusted']>>> {
-  if (context.subjectKind !== 'repository-action' || context.action.kind !== 'apply_patch' ||
-    context.planApplicability !== 'approved-plan' || !state.plan?.decisionRef) return {};
+export function createTestAdmissionTransitionContextsV02(context: AdmissionContextV02, state: TaskState): Readonly<Record<number, NonNullable<StateTransitionOptions['trusted']>>> {
+  if (context.subjectKind !== 'repository-action' || context.action.kind !== 'apply_patch' || context.planApplicability !== 'approved-plan' || !state.plan?.decisionRef) return {};
   const decision = context.planDecisionRef;
   const policy = context.policyAuthorityRef;
   const binding = createTestApprovalBinding({
@@ -378,9 +371,7 @@ type RepositoryAdmissionFixtureOptions = Partial<Record<string, unknown>> & {
   readonly policyAuthorityRef?: PolicyAuthorityRefV02;
 };
 
-export function createTestRepositoryAdmissionContextV02(
-  overrides?: RepositoryAdmissionFixtureOptions
-): RepositoryAdmissionContextV02 {
+export function createTestRepositoryAdmissionContextV02(overrides?: RepositoryAdmissionFixtureOptions): RepositoryAdmissionContextV02 {
   const taskId = (overrides?.taskId as string | undefined) ?? 'task-calc-001';
   const runId = (overrides?.runId as string | undefined) ?? 'run-001';
   const workspaceId = (overrides?.workspaceId as string | undefined) ?? 'workspace-001';
@@ -454,9 +445,7 @@ export function createTestRepositoryAdmissionContextV02(
   return context as unknown as RepositoryAdmissionContextV02;
 }
 
-export function createTestProviderAdmissionContextV02(
-  overrides?: Partial<Record<string, unknown>>
-): ProviderAdmissionContextV02 {
+export function createTestProviderAdmissionContextV02(overrides?: Partial<Record<string, unknown>>): ProviderAdmissionContextV02 {
   const requestOverrides = overrides?.providerRequest as Partial<ProviderRequest> | undefined;
   const providerRequest: ProviderRequest = createTestProviderRequest({
     ...(requestOverrides ?? {}),
@@ -532,9 +521,7 @@ export function createTestProviderAdmissionContextV02(
   return context as unknown as ProviderAdmissionContextV02;
 }
 
-export function createTestRepositoryAdmissionTrustedContextV02(
-  context: RepositoryAdmissionContextV02,
-): RepositoryAdmissionTrustedContextV02 {
+export function createTestRepositoryAdmissionTrustedContextV02(context: RepositoryAdmissionContextV02): RepositoryAdmissionTrustedContextV02 {
   return {
     subjectKind: 'repository-action',
     taskStateSchemaVersion: context.taskStateSchemaVersion,
@@ -562,9 +549,7 @@ export function createTestRepositoryAdmissionTrustedContextV02(
         }
       : {}),
     freshnessContextDigest: context.policyEvaluationReceipt.freshnessContextDigest,
-    ...(context.action.kind === 'run_command' && context.commandView
-      ? { commandViewDigest: context.commandView.viewDigest }
-      : {}),
+    ...(context.action.kind === 'run_command' && context.commandView ? { commandViewDigest: context.commandView.viewDigest } : {}),
     executionProfile: {
       isolationProfileRef: context.executionProfileId,
       exclusionsPolicyVersion: 'exclusions-v1',
@@ -581,31 +566,37 @@ export function createTestRepositoryAdmissionTrustedContextV02(
         maxChangedPaths: 5,
       },
     },
-    allowedDiagnosticChecks: context.planApplicability === 'pre-plan-diagnostic' && context.action.kind === 'run_command' &&
-      context.checkId && context.testPath && context.diagnosticPurpose && context.taskCriteriaDigest && context.checkSetDigest
-      ? [{
-          checkId: context.checkId,
-          testPath: context.testPath,
-          diagnosticPurpose: context.diagnosticPurpose,
-          taskCriteriaDigest: context.taskCriteriaDigest,
-          checkSetDigest: context.checkSetDigest,
-          action: context.action,
-        }]
-      : [],
-    allowedDiagnosticTestPaths: context.planApplicability === 'pre-plan-diagnostic'
-      ? (context.testPath ? [context.testPath] : [])
-      : [],
+    allowedDiagnosticChecks:
+      context.planApplicability === 'pre-plan-diagnostic' &&
+      context.action.kind === 'run_command' &&
+      context.checkId &&
+      context.testPath &&
+      context.diagnosticPurpose &&
+      context.taskCriteriaDigest &&
+      context.checkSetDigest
+        ? [
+            {
+              checkId: context.checkId,
+              testPath: context.testPath,
+              diagnosticPurpose: context.diagnosticPurpose,
+              taskCriteriaDigest: context.taskCriteriaDigest,
+              checkSetDigest: context.checkSetDigest,
+              action: context.action,
+            },
+          ]
+        : [],
+    allowedDiagnosticTestPaths: context.planApplicability === 'pre-plan-diagnostic' ? (context.testPath ? [context.testPath] : []) : [],
   };
 }
 
-export function createTestRepositoryCommandAdmissionContextV02(
-  overrides?: RepositoryAdmissionFixtureOptions,
-): RepositoryAdmissionContextV02 {
-  const action = (overrides?.action as RunCommandAction | undefined) ?? createTestAction({
-    actionId: 'act-command-admission-001',
-    argv: ['-q', 'tests/test_calculator.py'],
-    purpose: 'Run admitted verification',
-  });
+export function createTestRepositoryCommandAdmissionContextV02(overrides?: RepositoryAdmissionFixtureOptions): RepositoryAdmissionContextV02 {
+  const action =
+    (overrides?.action as RunCommandAction | undefined) ??
+    createTestAction({
+      actionId: 'act-command-admission-001',
+      argv: ['-q', 'tests/test_calculator.py'],
+      purpose: 'Run admitted verification',
+    });
   const reservationRefs = (overrides?.reservationRefs as readonly string[] | undefined) ?? ['res-command-admission-001'];
   const base = createTestRepositoryAdmissionContextV02({ ...overrides, action, reservationRefs }) as unknown as Record<string, unknown>;
   const executionProfileId = base['executionProfileId'] as string;
@@ -640,9 +631,7 @@ export function createTestRepositoryCommandAdmissionContextV02(
   return context as unknown as RepositoryAdmissionContextV02;
 }
 
-export function createTestProviderAdmissionTrustedContextV02(
-  context: ProviderAdmissionContextV02,
-): ProviderAdmissionTrustedContextV02 {
+export function createTestProviderAdmissionTrustedContextV02(context: ProviderAdmissionContextV02): ProviderAdmissionTrustedContextV02 {
   const request = context.providerRequest;
   return {
     subjectKind: 'provider-request',
@@ -672,9 +661,7 @@ export function createTestProviderAdmissionTrustedContextV02(
       maxOutputTokens: context.finiteBounds.maxOutputTokens,
       maxBillableTokens: context.finiteBounds.maxBillableTokens,
       maxCostUsd: context.finiteBounds.maxCostUsd,
-      ...(context.finiteBounds.maxReviewerIterations !== undefined
-        ? { maxReviewerIterations: context.finiteBounds.maxReviewerIterations }
-        : {}),
+      ...(context.finiteBounds.maxReviewerIterations !== undefined ? { maxReviewerIterations: context.finiteBounds.maxReviewerIterations } : {}),
     },
   };
 }
@@ -730,9 +717,7 @@ export function createTestDiagnosticPatchAdmissionContextV02(): RepositoryAdmiss
   return context as unknown as RepositoryAdmissionContextV02;
 }
 
-export function createTestClaimReceiptV02(
-  overrides?: Partial<ClaimReceiptV02>
-): ClaimReceiptV02 {
+export function createTestClaimReceiptV02(overrides?: Partial<ClaimReceiptV02>): ClaimReceiptV02 {
   const raw: ClaimReceiptV02 = {
     claimId: 'claim-001',
     claimDigest: '',
@@ -751,9 +736,7 @@ export function createTestClaimReceiptV02(
   return { ...raw, claimDigest: computeCanonicalSha256({ ...raw, claimDigest: undefined }) };
 }
 
-export function createTestAttemptReceiptV02(
-  overrides?: Partial<AttemptReceiptV02>
-): AttemptReceiptV02 {
+export function createTestAttemptReceiptV02(overrides?: Partial<AttemptReceiptV02>): AttemptReceiptV02 {
   return {
     attemptId: 'att-001',
     claimId: 'claim-001',
@@ -772,7 +755,7 @@ export function createTestAttemptReceiptV02(
 export function createTestClaimClosureReceiptV02(
   claim?: ClaimReceiptV02,
   executorIdentity: ExecutorIdentityV02 = createTestExecutorIdentityV02(),
-  overrides?: Partial<ClaimClosureReceiptV02>
+  overrides?: Partial<ClaimClosureReceiptV02>,
 ): ClaimClosureReceiptV02 {
   const raw = {
     receiptId: 'closure-001',
@@ -794,13 +777,11 @@ export function createTestRepositoryOutcomeReceiptV02(
   claim: ClaimReceiptV02,
   attempt: AttemptReceiptV02,
   context: RepositoryAdmissionContextV02,
-  overrides?: Partial<RepositoryActionOutcomeReceiptV02>
+  overrides?: Partial<RepositoryActionOutcomeReceiptV02>,
 ): RepositoryActionOutcomeReceiptV02 {
   const outcome = overrides?.outcome ?? 'observed';
   const isPatch = context.action.kind === 'apply_patch';
-  const observedResultRevisionDigest = isPatch && outcome === 'observed'
-    ? computeCanonicalSha256({ baseRevision: context.canonicalRevision, actionDigest: context.actionDigest })
-    : undefined;
+  const observedResultRevisionDigest = isPatch && outcome === 'observed' ? computeCanonicalSha256({ baseRevision: context.canonicalRevision, actionDigest: context.actionDigest }) : undefined;
   const safeRef = (reference: string) => ({ reference, digest: computeCanonicalSha256(reference) });
   const reservationRefs = [...claim.reservationRefs];
   const raw: Record<string, unknown> = {
@@ -825,12 +806,8 @@ export function createTestRepositoryOutcomeReceiptV02(
     resultRef: safeRef('result-repo-out-001'),
     evidenceRefs: [safeRef('evidence-repo-out-001')],
     proposedEffects: {
-      taskTransition: outcome === 'observed' && isPatch && context.planApplicability === 'approved-plan'
-        ? { kind: 'transition', fromNode: 'Patch', toNode: 'Verify' }
-        : { kind: 'none' },
-      revision: observedResultRevisionDigest
-        ? { kind: 'advance', revisionDigest: observedResultRevisionDigest }
-        : { kind: 'preserve' },
+      taskTransition: outcome === 'observed' && isPatch && context.planApplicability === 'approved-plan' ? { kind: 'transition', fromNode: 'Patch', toNode: 'Verify' } : { kind: 'none' },
+      revision: observedResultRevisionDigest ? { kind: 'advance', revisionDigest: observedResultRevisionDigest } : { kind: 'preserve' },
       invalidatedEvidence: [],
       accounting: {
         disposition: outcome === 'observed' ? 'settle' : outcome === 'uncertain' ? 'hold' : 'release-unused',
@@ -862,7 +839,7 @@ export function createTestProviderOutcomeReceiptV02(
   claim: ClaimReceiptV02,
   attempt: AttemptReceiptV02,
   context: ProviderAdmissionContextV02,
-  overrides?: Partial<ProviderRequestOutcomeReceiptV02>
+  overrides?: Partial<ProviderRequestOutcomeReceiptV02>,
 ): ProviderRequestOutcomeReceiptV02 {
   const outcome = overrides?.outcome ?? 'observed';
   const providerUsage = createTestProviderUsage({ inputTokens: 100, outputTokens: 20, billableTokens: 120, costUsd: 0.003 });
@@ -912,7 +889,12 @@ export function createTestProviderOutcomeReceiptV02(
     providerIdentity: context.providerIdentity,
     budgetRefs: [...context.budgetRefs],
     ...(context.planApplicability === 'approved-plan'
-      ? { planBindingDigest: context.planBindingDigest, planDecisionRef: context.planDecisionRef, ...(context.diagnosticPurpose !== undefined ? { diagnosticPurpose: context.diagnosticPurpose } : {}), ...(context.taskCriteriaDigest !== undefined ? { taskCriteriaDigest: context.taskCriteriaDigest } : {}) }
+      ? {
+          planBindingDigest: context.planBindingDigest,
+          planDecisionRef: context.planDecisionRef,
+          ...(context.diagnosticPurpose !== undefined ? { diagnosticPurpose: context.diagnosticPurpose } : {}),
+          ...(context.taskCriteriaDigest !== undefined ? { taskCriteriaDigest: context.taskCriteriaDigest } : {}),
+        }
       : { diagnosticPurpose: context.diagnosticPurpose, taskCriteriaDigest: context.taskCriteriaDigest }),
     ...overrides,
   };
@@ -922,11 +904,7 @@ export function createTestProviderOutcomeReceiptV02(
   } as unknown as ProviderRequestOutcomeReceiptV02;
 }
 
-export function createTestAttemptOutcomeValidationContextV02(
-  claim: ClaimReceiptV02,
-  attempt: AttemptReceiptV02,
-  context: AdmissionContextV02,
-): AttemptOutcomeValidationContextV02 {
+export function createTestAttemptOutcomeValidationContextV02(claim: ClaimReceiptV02, attempt: AttemptReceiptV02, context: AdmissionContextV02): AttemptOutcomeValidationContextV02 {
   return {
     trustedAdmission: context,
     trustedClaim: claim,
@@ -1030,9 +1008,7 @@ export function createTestUncertainReconciliationReceiptV02(
   const accountingEvidenceRefs = [safeRef('evidence-reconciled-accounting')];
   const adapterEvidenceRefs = [safeRef('evidence-adapter-nondispatch')];
   const fencingProof = safeRef('evidence-fencing-proof');
-  const evidenceRefs = disposition === 'observed-and-accounted'
-    ? [effectEvidenceRef, ...accountingEvidenceRefs]
-    : [...adapterEvidenceRefs, fencingProof];
+  const evidenceRefs = disposition === 'observed-and-accounted' ? [effectEvidenceRef, ...accountingEvidenceRefs] : [...adapterEvidenceRefs, fencingProof];
   const raw: Record<string, unknown> = {
     ...reconciliationBase(predecessor, claim, attempt, context, 'uncertain-attempt', evidenceRefs),
     disposition,
@@ -1061,10 +1037,15 @@ export function createTestObservedReconciliationReceiptV02(
   overrides?: Partial<ObservedOutcomeReconciliationReceiptV02>,
 ): ObservedOutcomeReconciliationReceiptV02 {
   if (predecessor.outcome !== 'observed') throw new Error('Observed reconciliation requires a recorded observed outcome receipt');
-  const evidenceRefs = predecessor.evidenceRefs.map((reference) => structuredClone(reference));
+  const evidenceRefs = predecessor.evidenceRefs.map(reference => structuredClone(reference));
   const raw: Record<string, unknown> = {
     ...reconciliationBase(
-      predecessor, claim, attempt, context, 'observed-unsettled', evidenceRefs,
+      predecessor,
+      claim,
+      attempt,
+      context,
+      'observed-unsettled',
+      evidenceRefs,
       overrides?.expectedCurrentTaskStateVersion ?? attempt.postBeginTaskStateVersion,
       overrides?.expectedCurrentControlVersion ?? attempt.postBeginControlVersion,
     ),
@@ -1082,11 +1063,12 @@ export function createTestReconciliationValidationContextV02(
 ): AttemptReconciliationValidationContextV02 {
   const raw = receipt as unknown as Record<string, unknown>;
   const disposition = raw['disposition'];
-  const evidenceRefs = disposition === 'observed-and-accounted'
-    ? [raw['effectEvidenceRef'], ...((raw['accountingEvidenceRefs'] as readonly unknown[]) ?? [])]
-    : disposition === 'proven-not-dispatched'
-      ? [...((raw['adapterEvidenceRefs'] as readonly unknown[]) ?? [])]
-      : raw['evidenceRefs'] as readonly { reference: string; digest: string }[];
+  const evidenceRefs =
+    disposition === 'observed-and-accounted'
+      ? [raw['effectEvidenceRef'], ...((raw['accountingEvidenceRefs'] as readonly unknown[]) ?? [])]
+      : disposition === 'proven-not-dispatched'
+        ? [...((raw['adapterEvidenceRefs'] as readonly unknown[]) ?? [])]
+        : (raw['evidenceRefs'] as readonly { reference: string; digest: string }[]);
   return {
     trustedAdmission: context,
     trustedClaim: claim,
@@ -1099,18 +1081,22 @@ export function createTestReconciliationValidationContextV02(
     currentControlVersion: receipt.expectedCurrentControlVersion,
     currentEpoch: receipt.expectedCurrentEpoch,
     trustedEvidenceRefs: evidenceRefs as { reference: string; digest: string }[],
-    ...(disposition === 'observed-and-accounted' ? {
-      trustedObservedEffectRef: raw['effectEvidenceRef'] as { reference: string; digest: string },
-      trustedAccountingEvidenceRefs: raw['accountingEvidenceRefs'] as { reference: string; digest: string }[],
-      ...(raw['observedUsage'] !== undefined ? { trustedObservedUsage: raw['observedUsage'] as ProviderUsage } : {}),
-    } : {}),
+    ...(disposition === 'observed-and-accounted'
+      ? {
+          trustedObservedEffectRef: raw['effectEvidenceRef'] as { reference: string; digest: string },
+          trustedAccountingEvidenceRefs: raw['accountingEvidenceRefs'] as { reference: string; digest: string }[],
+          ...(raw['observedUsage'] !== undefined ? { trustedObservedUsage: raw['observedUsage'] as ProviderUsage } : {}),
+        }
+      : {}),
     trustedAccountingIdentityDigest: receipt.accountingIdentityDigest,
-    ...(disposition === 'proven-not-dispatched' ? {
-      trustedFencingProof: {
-        fencedRecipientIdentity: raw['fencedRecipientIdentity'] as ExecutorIdentityV02,
-        fencingGeneration: raw['fencingGeneration'] as number,
-        proofRef: raw['fencingProof'] as { reference: string; digest: string },
-      },
-    } : {}),
+    ...(disposition === 'proven-not-dispatched'
+      ? {
+          trustedFencingProof: {
+            fencedRecipientIdentity: raw['fencedRecipientIdentity'] as ExecutorIdentityV02,
+            fencingGeneration: raw['fencingGeneration'] as number,
+            proofRef: raw['fencingProof'] as { reference: string; digest: string },
+          },
+        }
+      : {}),
   };
 }

@@ -54,28 +54,10 @@ function rejectMetadata(label: string): never {
   throw new Error(`Protected report metadata rejected: ${label}`);
 }
 
-export function safeMetadata<T extends string>(
-  value: T,
-  label: string,
-  customPatterns?: readonly (RegExp | string)[],
-): T;
-export function safeMetadata(
-  value: unknown,
-  label: string,
-  customPatterns?: readonly (RegExp | string)[]
-): string;
-export function safeMetadata(
-  value: unknown,
-  label: string,
-  customPatterns?: readonly (RegExp | string)[]
-): string {
-  if (
-    typeof value !== 'string' ||
-    !value ||
-    Buffer.byteLength(value, 'utf8') > MAX_METADATA_BYTES ||
-    PROTECTED_TEXT_MARKER.test(value) ||
-    sanitizeText(value, customPatterns) !== value
-  ) {
+export function safeMetadata<T extends string>(value: T, label: string, customPatterns?: readonly (RegExp | string)[]): T;
+export function safeMetadata(value: unknown, label: string, customPatterns?: readonly (RegExp | string)[]): string;
+export function safeMetadata(value: unknown, label: string, customPatterns?: readonly (RegExp | string)[]): string {
+  if (typeof value !== 'string' || !value || Buffer.byteLength(value, 'utf8') > MAX_METADATA_BYTES || PROTECTED_TEXT_MARKER.test(value) || sanitizeText(value, customPatterns) !== value) {
     return rejectMetadata(label);
   }
   return value;
@@ -93,22 +75,14 @@ export function reportLimit(value: number | undefined, fallback: number, maximum
   return Math.min(value, maximum);
 }
 
-export function boundedText(
-  value: string,
-  maxBytes: number,
-  customPatterns?: readonly (RegExp | string)[]
-): string {
+export function boundedText(value: string, maxBytes: number, customPatterns?: readonly (RegExp | string)[]): string {
   return sanitizeDiagnostic(value, {
     maxBytes,
     ...(customPatterns !== undefined ? { customPatterns } : {}),
   }).sanitizedContent;
 }
 
-export function safeReferences(
-  refs: unknown,
-  label: string,
-  customPatterns?: readonly (RegExp | string)[]
-): readonly string[] {
+export function safeReferences(refs: unknown, label: string, customPatterns?: readonly (RegExp | string)[]): readonly string[] {
   if (refs === undefined) return Object.freeze([]);
   if (!Array.isArray(refs) || refs.length > MAX_REPORT_ITEMS) return rejectMetadata(label);
   return Object.freeze(refs.map((ref, index) => safeReference(ref, `${label}[${index}]`, customPatterns)));
@@ -136,11 +110,7 @@ function sanitizeMilestone(value: unknown, index: number, customPatterns?: reado
     kind,
     summary: boundedText(summary, DEFAULT_SUMMARY_BYTES, customPatterns),
     outcome,
-    evidenceRefs: safeReferences(
-      milestone['evidenceRefs'],
-      `milestones[${index}].evidenceRefs`,
-      customPatterns
-    ),
+    evidenceRefs: safeReferences(milestone['evidenceRefs'], `milestones[${index}].evidenceRefs`, customPatterns),
     details: sanitizeDetails(milestone['details'], customPatterns),
   });
 }
@@ -150,14 +120,27 @@ export function isMilestoneOutcome(value: unknown): value is Milestone['outcome'
 }
 
 export function isMilestoneKind(value: string): value is MilestoneKind {
-  return value === 'task_started' || value === 'investigation_completed' || value === 'plan_proposed' ||
-    value === 'plan_approved' || value === 'plan_rejected' || value === 'patch_applied' ||
-    value === 'verification_completed' || value === 'review_completed' || value === 'replan_triggered' ||
-    value === 'budget_exhausted' || value === 'task_completed' || value === 'task_failed' || value === 'task_interrupted';
+  return (
+    value === 'task_started' ||
+    value === 'investigation_completed' ||
+    value === 'plan_proposed' ||
+    value === 'plan_approved' ||
+    value === 'plan_rejected' ||
+    value === 'patch_applied' ||
+    value === 'verification_completed' ||
+    value === 'review_completed' ||
+    value === 'replan_triggered' ||
+    value === 'budget_exhausted' ||
+    value === 'task_completed' ||
+    value === 'task_failed' ||
+    value === 'task_interrupted'
+  );
 }
 
 export function createMilestone(input: CreateMilestoneInput): Milestone {
-  try { return createMilestoneSnapshot(input); } catch {
+  try {
+    return createMilestoneSnapshot(input);
+  } catch {
     throw new Error('Invalid report milestone');
   }
 }
@@ -201,11 +184,7 @@ function usageNumber(value: unknown, integer: boolean): number {
   return value;
 }
 
-export function usageSnapshot(
-  ledgers: unknown,
-  stateReplanCount: unknown,
-  customPatterns?: readonly (RegExp | string)[]
-): UsageSnapshot {
+export function usageSnapshot(ledgers: unknown, stateReplanCount: unknown, customPatterns?: readonly (RegExp | string)[]): UsageSnapshot {
   try {
     let tokensConsumed = 0;
     let costUsd = 0;
@@ -273,41 +252,30 @@ export function safePath(value: unknown, label: string, customPatterns?: readonl
   return value;
 }
 
-export function combineChangedFiles(
-  inputFiles: unknown,
-  stateFiles: unknown,
-  customPatterns?: readonly (RegExp | string)[]
-): { readonly files: readonly string[]; readonly consistent: boolean } {
+export function combineChangedFiles(inputFiles: unknown, stateFiles: unknown, customPatterns?: readonly (RegExp | string)[]): { readonly files: readonly string[]; readonly consistent: boolean } {
   const explicit = inputFiles === undefined ? undefined : inputFiles;
   const persisted = Array.isArray(stateFiles) ? stateFiles : undefined;
   if (explicit !== undefined && !Array.isArray(explicit)) return rejectMetadata('changedFiles');
   if ((Array.isArray(explicit) && explicit.length > MAX_REPORT_ITEMS) || (persisted && persisted.length > MAX_REPORT_ITEMS)) {
     return rejectMetadata('changedFiles');
   }
-  const cleanExplicit = Array.isArray(explicit)
-    ? explicit.map((value, index) => safePath(value, `changedFiles[${index}]`, customPatterns))
-    : undefined;
-  const cleanPersisted = persisted
-    ? persisted.map((value, index) => safePath(value, `state.changedPaths[${index}]`, customPatterns))
-    : undefined;
-  const sameInventory = (left: readonly string[], right: readonly string[]): boolean =>
-    left.length === right.length && left.every((value) => right.includes(value));
+  const cleanExplicit = Array.isArray(explicit) ? explicit.map((value, index) => safePath(value, `changedFiles[${index}]`, customPatterns)) : undefined;
+  const cleanPersisted = persisted ? persisted.map((value, index) => safePath(value, `state.changedPaths[${index}]`, customPatterns)) : undefined;
+  const sameInventory = (left: readonly string[], right: readonly string[]): boolean => left.length === right.length && left.every(value => right.includes(value));
   const consistent = cleanExplicit === undefined || cleanPersisted === undefined || sameInventory(cleanExplicit, cleanPersisted);
   const files = [...new Set([...(cleanExplicit ?? []), ...(cleanPersisted ?? [])])];
   return { files: Object.freeze(files), consistent };
 }
 
-export function sanitizedStringList(
-  values: unknown,
-  label: string,
-  customPatterns?: readonly (RegExp | string)[]
-): readonly string[] {
+export function sanitizedStringList(values: unknown, label: string, customPatterns?: readonly (RegExp | string)[]): readonly string[] {
   if (values === undefined) return Object.freeze([]);
   if (!Array.isArray(values) || values.length > MAX_REPORT_ITEMS) return rejectMetadata(label);
-  return Object.freeze(values.map((value) => {
-    if (typeof value !== 'string') return rejectMetadata(label);
-    return boundedText(value, DEFAULT_SUMMARY_BYTES, customPatterns);
-  }));
+  return Object.freeze(
+    values.map(value => {
+      if (typeof value !== 'string') return rejectMetadata(label);
+      return boundedText(value, DEFAULT_SUMMARY_BYTES, customPatterns);
+    }),
+  );
 }
 
 export function reportMilestones(values: unknown, customPatterns?: readonly (RegExp | string)[]): readonly Milestone[] {
@@ -316,10 +284,7 @@ export function reportMilestones(values: unknown, customPatterns?: readonly (Reg
   return Object.freeze(values.map((value, index) => sanitizeMilestone(value, index, customPatterns)));
 }
 
-export function verificationSnapshot(
-  value: unknown,
-  customPatterns?: readonly (RegExp | string)[],
-): VerificationSnapshot {
+export function verificationSnapshot(value: unknown, customPatterns?: readonly (RegExp | string)[]): VerificationSnapshot {
   const results: VerificationResult[] = [];
   const refs: string[] = [];
   const snapshot = safeSnapshot(value);
@@ -348,10 +313,7 @@ export function verificationSnapshot(
   return { results: Object.freeze(results), refs: Object.freeze(refs), valid };
 }
 
-export function reviewSnapshot(
-  value: unknown,
-  customPatterns?: readonly (RegExp | string)[],
-): ReviewSnapshot {
+export function reviewSnapshot(value: unknown, customPatterns?: readonly (RegExp | string)[]): ReviewSnapshot {
   if (value === undefined) return { result: undefined, valid: false, ref: undefined };
   const snapshot = safeSnapshot(value);
   if (!snapshot.ok) return { result: undefined, valid: false, ref: undefined };
@@ -365,9 +327,7 @@ export function reviewSnapshot(
     return Object.freeze({
       ...finding,
       message: boundedText(finding.message, DEFAULT_SUMMARY_BYTES, customPatterns),
-      ...(finding.evidenceRef !== undefined
-        ? { evidenceRef: safeReference(finding.evidenceRef, `reviewResult.findings[${index}].evidenceRef`, customPatterns) }
-        : {}),
+      ...(finding.evidenceRef !== undefined ? { evidenceRef: safeReference(finding.evidenceRef, `reviewResult.findings[${index}].evidenceRef`, customPatterns) } : {}),
     });
   });
   return {
@@ -377,13 +337,7 @@ export function reviewSnapshot(
   };
 }
 
-export function sanitizeDetails(
-  details: unknown,
-  customPatterns?: readonly (RegExp | string)[],
-  seen = new WeakSet<object>(),
-  depth = 0,
-  budget = { items: 0 }
-): Record<string, unknown> | undefined {
+export function sanitizeDetails(details: unknown, customPatterns?: readonly (RegExp | string)[], seen = new WeakSet<object>(), depth = 0, budget = { items: 0 }): Record<string, unknown> | undefined {
   if (details === undefined) {
     return undefined;
   }
@@ -413,13 +367,7 @@ export function sanitizeDetails(
   }
 }
 
-function sanitizeDetailValue(
-  value: unknown,
-  customPatterns: readonly (RegExp | string)[] | undefined,
-  seen: WeakSet<object>,
-  depth: number,
-  budget: { items: number }
-): unknown {
+function sanitizeDetailValue(value: unknown, customPatterns: readonly (RegExp | string)[] | undefined, seen: WeakSet<object>, depth: number, budget: { items: number }): unknown {
   if (depth > MAX_DETAIL_DEPTH || budget.items >= MAX_DETAIL_ITEMS) return undefined;
   if (typeof value === 'string') {
     const options = customPatterns === undefined ? { maxBytes: 1024 } : { maxBytes: 1024, customPatterns };
@@ -429,14 +377,12 @@ function sanitizeDetailValue(
     if (seen.has(value)) throw new Error();
     seen.add(value);
     try {
-      const result = value.slice(0, MAX_DETAIL_ITEMS).flatMap((item) => {
+      const result = value.slice(0, MAX_DETAIL_ITEMS).flatMap(item => {
         if (budget.items >= MAX_DETAIL_ITEMS) return [];
         budget.items++;
         return [sanitizeDetailValue(item, customPatterns, seen, depth + 1, budget)];
       });
-      return Buffer.byteLength(JSON.stringify(result), 'utf8') <= MAX_DETAIL_BYTES
-        ? Object.freeze(result)
-        : Object.freeze([]);
+      return Buffer.byteLength(JSON.stringify(result), 'utf8') <= MAX_DETAIL_BYTES ? Object.freeze(result) : Object.freeze([]);
     } finally {
       seen.delete(value);
     }

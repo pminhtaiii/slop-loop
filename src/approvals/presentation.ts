@@ -8,7 +8,23 @@ import { isBoundedSafeDataV02, validateSafePresentationV02 } from './presentatio
 import type { PresentationBundleV02, PresentationInputV02, SafePresentationV02 } from './presentation-v02-validation.ts';
 
 export { isBoundedSafeDataV02, validateSafePresentationV02 } from './presentation-v02-validation.ts';
-export type { PresentationSubjectKindV02, PresentationPlanApplicabilityV02, SafePresentationV02Base, SafePresentationV02RepositoryActionPrePlan, SafePresentationV02RepositoryActionApprovedPlan, SafePresentationV02ProviderRequestPrePlan, SafePresentationV02ProviderRequestApprovedPlan, SafePresentationV02, PresentationBundleV02, PresentationInputV02Base, PresentationInputV02RepositoryActionPrePlan, PresentationInputV02RepositoryActionApprovedPlan, PresentationInputV02ProviderRequestPrePlan, PresentationInputV02ProviderRequestApprovedPlan, PresentationInputV02 } from './presentation-v02-validation.ts';
+export type {
+  PresentationSubjectKindV02,
+  PresentationPlanApplicabilityV02,
+  SafePresentationV02Base,
+  SafePresentationV02RepositoryActionPrePlan,
+  SafePresentationV02RepositoryActionApprovedPlan,
+  SafePresentationV02ProviderRequestPrePlan,
+  SafePresentationV02ProviderRequestApprovedPlan,
+  SafePresentationV02,
+  PresentationBundleV02,
+  PresentationInputV02Base,
+  PresentationInputV02RepositoryActionPrePlan,
+  PresentationInputV02RepositoryActionApprovedPlan,
+  PresentationInputV02ProviderRequestPrePlan,
+  PresentationInputV02ProviderRequestApprovedPlan,
+  PresentationInputV02,
+} from './presentation-v02-validation.ts';
 
 export interface PresentationInput {
   readonly requestVersion: number;
@@ -25,14 +41,16 @@ export interface PresentationBundle {
   readonly pages: readonly string[];
 }
 export function buildPresentation(input: PresentationInput, profile: PolicyProfile): PresentationBundle {
-  try { return admittedPresentation(input, profile); }
-  catch { throw new Error('unsafe-presentation'); }
+  try {
+    return admittedPresentation(input, profile);
+  } catch {
+    throw new Error('unsafe-presentation');
+  }
 }
 
 export function buildPresentationCompatibilityV01(input: PresentationInput, profile: PolicyProfile): PresentationBundle {
   return buildPresentation(input, profile);
 }
-
 
 export function buildPresentationV02(input: PresentationInputV02, profile: PolicyProfile): PresentationBundleV02 {
   if (!isBoundedSafeDataV02(input) || !Number.isSafeInteger(input.requestVersion) || input.requestVersion < 1) {
@@ -132,37 +150,41 @@ export function buildPresentationV02(input: PresentationInputV02, profile: Polic
   const pages: string[] = [];
   let page = '';
   for (const point of details) {
-    if (Buffer.byteLength(page + point) > profile.maxPresentationPageBytes) { pages.push(page); page = ''; }
+    if (Buffer.byteLength(page + point) > profile.maxPresentationPageBytes) {
+      pages.push(page);
+      page = '';
+    }
     if (Buffer.byteLength(point) > profile.maxPresentationPageBytes) throw new Error('unsafe-presentation');
     page += point;
   }
   if (page) pages.push(page);
   if (pages.length > profile.maxPresentationPages) throw new Error('unsafe-presentation');
 
-  const bindingFingerprintObj = subjectKind === 'repository-action'
-    ? {
-        subjectKind,
-        planApplicability,
-        actionId,
-        actionDigest,
-        repositoryId: input.repositoryId,
-        continuationRef: input.continuationRef,
-        policyIdentity: input.policyIdentity,
-        requestVersion: input.requestVersion,
-        ...(planApplicability === 'pre-plan-diagnostic' ? { diagnosticPurpose, taskCriteriaDigest } : { planBindingDigest, planDecisionRef }),
-      }
-    : {
-        subjectKind,
-        planApplicability,
-        providerRequestId,
-        requestContentDigest,
-        role,
-        repositoryId: input.repositoryId,
-        continuationRef: input.continuationRef,
-        policyIdentity: input.policyIdentity,
-        requestVersion: input.requestVersion,
-        ...(planApplicability === 'pre-plan-diagnostic' ? { diagnosticPurpose, taskCriteriaDigest } : { planBindingDigest, planDecisionRef }),
-      };
+  const bindingFingerprintObj =
+    subjectKind === 'repository-action'
+      ? {
+          subjectKind,
+          planApplicability,
+          actionId,
+          actionDigest,
+          repositoryId: input.repositoryId,
+          continuationRef: input.continuationRef,
+          policyIdentity: input.policyIdentity,
+          requestVersion: input.requestVersion,
+          ...(planApplicability === 'pre-plan-diagnostic' ? { diagnosticPurpose, taskCriteriaDigest } : { planBindingDigest, planDecisionRef }),
+        }
+      : {
+          subjectKind,
+          planApplicability,
+          providerRequestId,
+          requestContentDigest,
+          role,
+          repositoryId: input.repositoryId,
+          continuationRef: input.continuationRef,
+          policyIdentity: input.policyIdentity,
+          requestVersion: input.requestVersion,
+          ...(planApplicability === 'pre-plan-diagnostic' ? { diagnosticPurpose, taskCriteriaDigest } : { planBindingDigest, planDecisionRef }),
+        };
 
   const bindingFingerprint = computeCanonicalSha256(bindingFingerprintObj);
   const presentationDigest = computeCanonicalSha256({ bindingFingerprint, elements: input.elements, details });
@@ -210,12 +232,15 @@ export function buildPresentationV02(input: PresentationInputV02, profile: Polic
   return { summary, pages };
 }
 
-
 function admittedPresentation(input: PresentationInput, profile: PolicyProfile): PresentationBundle {
   if (!isBoundedSafeDataV02(input) || !Number.isSafeInteger(input.requestVersion) || input.requestVersion < 1) throw new Error('unsafe-presentation');
-  if (!validatePolicyProfile(profile).ok || !validateNormalizedAction(input.action).ok ||
+  if (
+    !validatePolicyProfile(profile).ok ||
+    !validateNormalizedAction(input.action).ok ||
     !validateApprovalBinding({ ...input.binding, status: 'approved' }, input.freshness).ok ||
-    computeActionDigest(input.action) !== input.binding.normalizedActionDigest) throw new Error('unsafe-presentation');
+    computeActionDigest(input.action) !== input.binding.normalizedActionDigest
+  )
+    throw new Error('unsafe-presentation');
   const details = JSON.stringify(input.action);
   const content = JSON.stringify(input);
   if (containsProtectedContent(content)) throw new Error('unsafe-presentation');
@@ -225,16 +250,30 @@ function admittedPresentation(input: PresentationInput, profile: PolicyProfile):
   const pages: string[] = [];
   let page = '';
   for (const point of details) {
-    if (Buffer.byteLength(page + point) > profile.maxPresentationPageBytes) { pages.push(page); page = ''; }
+    if (Buffer.byteLength(page + point) > profile.maxPresentationPageBytes) {
+      pages.push(page);
+      page = '';
+    }
     if (Buffer.byteLength(point) > profile.maxPresentationPageBytes) throw new Error('unsafe-presentation');
     page += point;
   }
   if (page) pages.push(page);
   if (pages.length > profile.maxPresentationPages) throw new Error('unsafe-presentation');
-  const bindingFingerprint = computeCanonicalSha256({ binding: input.binding, freshness: input.freshness, repositoryId: input.repositoryId, continuationRef: input.continuationRef, policyIdentity: input.policyIdentity, requestVersion: input.requestVersion });
+  const bindingFingerprint = computeCanonicalSha256({
+    binding: input.binding,
+    freshness: input.freshness,
+    repositoryId: input.repositoryId,
+    continuationRef: input.continuationRef,
+    policyIdentity: input.policyIdentity,
+    requestVersion: input.requestVersion,
+  });
   const summary: SafePresentation = {
-    schemaVersion: 'uc05-approval/0.1-draft', decisionId: input.binding.decisionId, requestVersion: input.requestVersion,
-    bindingFingerprint, elements: structuredClone(input.elements), inspectionRef: input.binding.decisionId,
+    schemaVersion: 'uc05-approval/0.1-draft',
+    decisionId: input.binding.decisionId,
+    requestVersion: input.requestVersion,
+    bindingFingerprint,
+    elements: structuredClone(input.elements),
+    inspectionRef: input.binding.decisionId,
     presentationDigest: computeCanonicalSha256({ bindingFingerprint, elements: input.elements, details }),
     page: { pageNumber: 1, pageCount: pages.length, pageBytes: Math.max(elementBytes, Buffer.byteLength(pages[0] ?? '')), totalBytes, truncated: false },
   };

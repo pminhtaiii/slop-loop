@@ -12,11 +12,7 @@ interface DockerViewBuilderOperations {
   readonly publishView: (workspaceId: string, view: CommandView) => void;
 }
 
-export async function buildDockerCommandView(
-  params: AdmitCommandViewParams,
-  controller: DockerLifecycleController,
-  operations: DockerViewBuilderOperations
-): Promise<CommandView> {
+export async function buildDockerCommandView(params: AdmitCommandViewParams, controller: DockerLifecycleController, operations: DockerViewBuilderOperations): Promise<CommandView> {
   if (!params || typeof params !== 'object') {
     throw new Error('INVALID_ADMIT_PARAMS: params must be an object');
   }
@@ -66,10 +62,7 @@ export async function buildDockerCommandView(
     }
 
     // Required files policy: combining snapshot policy with optional params policy
-    const required = new Set<string>([
-      ...(snapshot.requiredFiles ?? []),
-      ...(params.requiredFiles ?? []),
-    ]);
+    const required = new Set<string>([...(snapshot.requiredFiles ?? []), ...(params.requiredFiles ?? [])]);
 
     // Index entries by canonical relative path
     const entriesByPath = new Map<string, CanonicalSnapshotEntry>();
@@ -138,9 +131,7 @@ export async function buildDockerCommandView(
           throw new Error(`INVALID_SNAPSHOT_ENTRY: Link target '${trimmedTarget}' missing content`);
         }
 
-        const targetStr = typeof targetEntry.content === 'string'
-          ? targetEntry.content
-          : Buffer.from(targetEntry.content).toString('utf8');
+        const targetStr = typeof targetEntry.content === 'string' ? targetEntry.content : Buffer.from(targetEntry.content).toString('utf8');
 
         if (containsProtectedContent(targetStr)) {
           throw new Error(`FORBIDDEN_LINK_TARGET: Link '${filePath}' target '${trimmedTarget}' contains protected content and is excluded`);
@@ -166,9 +157,7 @@ export async function buildDockerCommandView(
       }
 
       const protectedPath = isProtectedPath(filePath);
-      const contentStr = typeof resolvedContent === 'string'
-        ? resolvedContent
-        : Buffer.from(resolvedContent).toString('utf8');
+      const contentStr = typeof resolvedContent === 'string' ? resolvedContent : Buffer.from(resolvedContent).toString('utf8');
       const protectedContent = containsProtectedContent(contentStr);
 
       if (protectedPath || protectedContent) {
@@ -221,7 +210,7 @@ export async function buildDockerCommandView(
       trustedFileDigests,
     });
     if (!validation.ok) {
-      throw new Error(`INVALID_COMMAND_VIEW: ${validation.errors.map((e) => e.message).join('; ')}`);
+      throw new Error(`INVALID_COMMAND_VIEW: ${validation.errors.map(e => e.message).join('; ')}`);
     }
 
     // Materialize view on controller passing permitted bytes only and read-only view identity

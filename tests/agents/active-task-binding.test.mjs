@@ -117,7 +117,7 @@ async function schemaV1ReservationFixture(t, { bound = false } = {}) {
   return { repo, caller, coordinator, worker, path };
 }
 
-test('reserve records only fetched-base provenance, then bind, edit, hand off, and verify through the public CLI', async (t) => {
+test('reserve records only fetched-base provenance, then bind, edit, hand off, and verify through the public CLI', async t => {
   const { directory, origin, repo, worker, baseSha } = await fixture(t);
   let result = reserve(repo, baseSha);
   assert.equal(result.status, 0, result.stderr);
@@ -192,12 +192,15 @@ test('reserve records only fetched-base provenance, then bind, edit, hand off, a
   assert.equal(JSON.parse(result.stdout).verified, true);
 });
 
-test('reserved binding refuses the coordinator checkout even when called from another checkout', async (t) => {
+test('reserved binding refuses the coordinator checkout even when called from another checkout', async t => {
   const { repo, worker, baseSha } = await fixture(t);
   assert.equal(reserve(repo, baseSha).status, 0);
   await addWorker(repo, worker, baseSha);
   const before = await readFile(stateFile(repo), 'utf8');
-  for (const [root, target] of [[repo, repo], [worker, repo]]) {
+  for (const [root, target] of [
+    [repo, repo],
+    [worker, repo],
+  ]) {
     const result = invoke(root, 'bind', '--owner', 'worker', '--task', 'binding', '--worktree', target);
     assert.equal(result.status, 1, `reserved primary checkout unexpectedly bound from ${root}`);
     assert.match(result.stderr, /coordinator|primary/i);
@@ -211,7 +214,7 @@ test('reserved binding refuses the coordinator checkout even when called from an
   }
 });
 
-test('reserved binding protects a distinct coordinator and primary when called from a third worktree', async (t) => {
+test('reserved binding protects a distinct coordinator and primary when called from a third worktree', async t => {
   const { directory, repo, baseSha } = await fixture(t);
   const coordinator = join(directory, 't3-app', 'coordinator');
   const caller = join(directory, 't3-app', 'caller');
@@ -238,7 +241,7 @@ test('reserved binding protects a distinct coordinator and primary when called f
   assert.equal(entry.binding.base.sha, baseSha);
 });
 
-test('reserved assignments cannot be reassigned into an existing-checkout successor', async (t) => {
+test('reserved assignments cannot be reassigned into an existing-checkout successor', async t => {
   const { repo, worker, baseSha } = await fixture(t);
   assert.equal(reserve(repo, baseSha).status, 0);
   await addWorker(repo, worker, baseSha);
@@ -251,8 +254,8 @@ test('reserved assignments cannot be reassigned into an existing-checkout succes
   assert.equal((await state(repo)).length, 1, 'rejected reassignment must not create a ghost successor');
 });
 
-test('active schema-v1 reservations fail closed without changing the registry', async (t) => {
-  await t.test('bind cannot claim the old coordinator from a sibling checkout', async (t) => {
+test('active schema-v1 reservations fail closed without changing the registry', async t => {
+  await t.test('bind cannot claim the old coordinator from a sibling checkout', async t => {
     const { repo, caller, coordinator, path } = await schemaV1ReservationFixture(t);
     const before = await readFile(path, 'utf8');
     const result = invoke(caller, 'bind', '--owner', 'worker', '--task', 'binding', '--worktree', coordinator);
@@ -262,7 +265,7 @@ test('active schema-v1 reservations fail closed without changing the registry', 
     assert.equal((await state(repo)).length, 1, 'rejected binding must not create a duplicate owner');
   });
 
-  await t.test('edit-ready rejects a bound v1 reservation without mutation', async (t) => {
+  await t.test('edit-ready rejects a bound v1 reservation without mutation', async t => {
     const { repo, worker, path } = await schemaV1ReservationFixture(t, { bound: true });
     const before = await readFile(path, 'utf8');
     const result = invoke(worker, 'edit-ready', '--owner', 'worker', '--task', 'binding');
@@ -272,7 +275,7 @@ test('active schema-v1 reservations fail closed without changing the registry', 
     assert.equal((await state(repo)).length, 1, 'rejected edit-ready must not create a duplicate owner');
   });
 
-  await t.test('handoff rejects a bound v1 reservation without mutation', async (t) => {
+  await t.test('handoff rejects a bound v1 reservation without mutation', async t => {
     const { repo, worker, path } = await schemaV1ReservationFixture(t, { bound: true });
     const before = await readFile(path, 'utf8');
     const result = invoke(worker, 'handoff', '--owner', 'worker', '--task', 'binding', '--result', 'Schema-v1 handoff must fail closed');
@@ -282,7 +285,7 @@ test('active schema-v1 reservations fail closed without changing the registry', 
     assert.equal((await state(repo)).length, 1, 'rejected handoff must not create a duplicate owner');
   });
 
-  await t.test('terminal v1 assignment remains readable as history', async (t) => {
+  await t.test('terminal v1 assignment remains readable as history', async t => {
     const { repo, path } = await schemaV1ReservationFixture(t, { bound: true });
     const entries = await state(repo);
     entries[0].status = 'handed-off';
@@ -298,7 +301,7 @@ test('active schema-v1 reservations fail closed without changing the registry', 
   });
 });
 
-test('reserved work edited before readiness cannot gain a pre-edit receipt or hand off', async (t) => {
+test('reserved work edited before readiness cannot gain a pre-edit receipt or hand off', async t => {
   for (const mode of ['dirty', 'commit']) {
     const { repo, worker, baseSha } = await fixture(t);
     assert.equal(reserve(repo, baseSha).status, 0);
@@ -321,7 +324,7 @@ test('reserved work edited before readiness cannot gain a pre-edit receipt or ha
   }
 });
 
-test('handoff rejects stale readiness identity, checkout, or creation base', async (t) => {
+test('handoff rejects stale readiness identity, checkout, or creation base', async t => {
   for (const mode of ['identity', 'checkout', 'base']) {
     const { repo, worker, baseSha } = await fixture(t);
     assert.equal(reserve(repo, baseSha).status, 0);
@@ -343,7 +346,7 @@ test('handoff rejects stale readiness identity, checkout, or creation base', asy
   }
 });
 
-test('reserve refuses a stale local branch, a feature commit, an unrelated SHA, or an unavailable origin branch', async (t) => {
+test('reserve refuses a stale local branch, a feature commit, an unrelated SHA, or an unavailable origin branch', async t => {
   for (const mode of ['stale-development', 'feature-commit', 'unrelated-sha', 'missing-fetched-ref']) {
     const { directory, origin, repo, baseSha } = await fixture(t, { originDevelopment: mode !== 'missing-fetched-ref' });
     let requestedSha = baseSha;
@@ -367,11 +370,11 @@ test('reserve refuses a stale local branch, a feature commit, an unrelated SHA, 
     const result = reserve(repo, requestedSha);
     assert.equal(result.status, 1, `${mode} unexpectedly reserved: ${result.stdout}`);
     assert.match(result.stderr, /origin\/development|fetched base|does not match/i);
-    assert.deepEqual(await state(repo).catch((error) => error.code === 'ENOENT' ? [] : Promise.reject(error)), []);
+    assert.deepEqual(await state(repo).catch(error => (error.code === 'ENOENT' ? [] : Promise.reject(error))), []);
   }
 });
 
-test('reserve fetches a remote advance before comparing the supplied SHA and leaves no stale-base reservation', async (t) => {
+test('reserve fetches a remote advance before comparing the supplied SHA and leaves no stale-base reservation', async t => {
   const { directory, origin, repo, baseSha } = await fixture(t);
   const remoteSha = await advanceBareDevelopment(directory, origin, 'remote-advance.txt');
   assert.equal(git(repo, ['rev-parse', 'HEAD']), baseSha);
@@ -381,10 +384,10 @@ test('reserve fetches a remote advance before comparing the supplied SHA and lea
   assert.equal(result.status, 1, `stale fetched base unexpectedly reserved: ${result.stdout}`);
   assert.match(result.stderr, /fetched origin\/development|match.*base|fetch/i);
   assert.equal(git(repo, ['rev-parse', 'refs/remotes/origin/development']), remoteSha, 'reserve must refresh the tracking ref before comparing');
-  assert.deepEqual(await state(repo).catch((error) => error.code === 'ENOENT' ? [] : Promise.reject(error)), []);
+  assert.deepEqual(await state(repo).catch(error => (error.code === 'ENOENT' ? [] : Promise.reject(error))), []);
 });
 
-test('reserve fails closed when fetch fails even though a valid stale tracking ref exists', async (t) => {
+test('reserve fails closed when fetch fails even though a valid stale tracking ref exists', async t => {
   const { directory, repo, baseSha } = await fixture(t);
   git(repo, ['remote', 'set-url', 'origin', join(directory, 'missing-origin.git')]);
   assert.equal(git(repo, ['rev-parse', 'refs/remotes/origin/development']), baseSha);
@@ -393,10 +396,10 @@ test('reserve fails closed when fetch fails even though a valid stale tracking r
   assert.equal(result.status, 1, `reservation unexpectedly survived failed fetch: ${result.stdout}`);
   assert.match(result.stderr, /fetch.*failed|could not fetch|failed to fetch/i);
   assert.equal(git(repo, ['rev-parse', 'refs/remotes/origin/development']), baseSha, 'failed fetch must leave the old tracking ref untouched and unusable');
-  assert.deepEqual(await state(repo).catch((error) => error.code === 'ENOENT' ? [] : Promise.reject(error)), []);
+  assert.deepEqual(await state(repo).catch(error => (error.code === 'ENOENT' ? [] : Promise.reject(error))), []);
 });
 
-test('bind rejects wrong-repository, unregistered, symlinked, and wrong-base worktrees without creating owners', async (t) => {
+test('bind rejects wrong-repository, unregistered, symlinked, and wrong-base worktrees without creating owners', async t => {
   const { directory, repo, worker, baseSha } = await fixture(t);
   assert.equal(reserve(repo, baseSha).status, 0);
   const foreign = join(directory, 'foreign');
@@ -433,7 +436,7 @@ test('bind rejects wrong-repository, unregistered, symlinked, and wrong-base wor
   }
 });
 
-test('double binding and stale worktree identity fail without moving or duplicating the assignment', async (t) => {
+test('double binding and stale worktree identity fail without moving or duplicating the assignment', async t => {
   const { repo, worker, baseSha } = await fixture(t);
   assert.equal(reserve(repo, baseSha).status, 0);
   await addWorker(repo, worker, baseSha);
@@ -451,7 +454,7 @@ test('double binding and stale worktree identity fail without moving or duplicat
   assert.equal((await state(repo)).length, 1);
 });
 
-test('malformed and stale reservation identities fail closed without rewriting state', async (t) => {
+test('malformed and stale reservation identities fail closed without rewriting state', async t => {
   for (const mode of ['malformed', 'stale-session']) {
     const { repo, worker, baseSha } = await fixture(t);
     assert.equal(reserve(repo, baseSha).status, 0);
@@ -469,9 +472,26 @@ test('malformed and stale reservation identities fail closed without rewriting s
   }
 });
 
-test('start remains an in-place backward-compatible worker assignment', async (t) => {
+test('start remains an in-place backward-compatible worker assignment', async t => {
   const { repo } = await fixture(t);
-  let result = invoke(repo, 'start', '--owner', 'legacy-worker', '--task', 'existing', '--session', session, '--role', 'worker', '--summary', 'Continue in this checkout', '--next', 'Edit here', '--owned-path', 'owned.txt');
+  let result = invoke(
+    repo,
+    'start',
+    '--owner',
+    'legacy-worker',
+    '--task',
+    'existing',
+    '--session',
+    session,
+    '--role',
+    'worker',
+    '--summary',
+    'Continue in this checkout',
+    '--next',
+    'Edit here',
+    '--owned-path',
+    'owned.txt',
+  );
   assert.equal(result.status, 0, result.stderr);
   let entries = await state(repo);
   assert.equal(entries.length, 1);
@@ -488,13 +508,26 @@ test('start remains an in-place backward-compatible worker assignment', async (t
   assert.equal(entries[0].readiness, undefined);
 });
 
-test('explicit legacy existing-checkout binding remains in place without a readiness receipt', async (t) => {
+test('explicit legacy existing-checkout binding remains in place without a readiness receipt', async t => {
   const { repo } = await fixture(t);
   await mkdir(dirname(stateFile(repo)), { recursive: true });
-  await writeFile(stateFile(repo), JSON.stringify([{
-    owner: 'legacy-worker', task: 'existing', session, role: 'worker', checkout: repo,
-    summary: 'Continue existing checkout', next: 'Bind without relocation', status: 'active', verification: '', ownedPaths: ['owned.txt'],
-  }]));
+  await writeFile(
+    stateFile(repo),
+    JSON.stringify([
+      {
+        owner: 'legacy-worker',
+        task: 'existing',
+        session,
+        role: 'worker',
+        checkout: repo,
+        summary: 'Continue existing checkout',
+        next: 'Bind without relocation',
+        status: 'active',
+        verification: '',
+        ownedPaths: ['owned.txt'],
+      },
+    ]),
+  );
   let result = invoke(repo, 'bind', '--owner', 'legacy-worker', '--task', 'existing', '--worktree', repo);
   assert.equal(result.status, 0, result.stderr);
   const entry = (await state(repo))[0];

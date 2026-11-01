@@ -26,11 +26,19 @@ test('gate accepts only bounded positive integer environment timeouts', async t 
     return schedule(callback, 10_000, ...args);
   });
   const cases = [
-    [undefined, 1_200_000], ['', 1_200_000], ['invalid', 1_200_000],
-    ['0', 1_200_000], ['-1', 1_200_000], ['1.5', 1_200_000],
-    ['Infinity', 1_200_000], ['-Infinity', 1_200_000],
-    ['2147483648', 1_200_000], ['1e100', 1_200_000],
-    ['1', 1], ['600000', 600_000], ['2147483647', 2_147_483_647],
+    [undefined, 1_200_000],
+    ['', 1_200_000],
+    ['invalid', 1_200_000],
+    ['0', 1_200_000],
+    ['-1', 1_200_000],
+    ['1.5', 1_200_000],
+    ['Infinity', 1_200_000],
+    ['-Infinity', 1_200_000],
+    ['2147483648', 1_200_000],
+    ['1e100', 1_200_000],
+    ['1', 1],
+    ['600000', 600_000],
+    ['2147483647', 2_147_483_647],
   ];
   for (const [index, [value, expected]] of cases.entries()) {
     if (value === undefined) delete process.env.WORKFLOW_GATE_TIMEOUT;
@@ -49,9 +57,23 @@ test('gate progress arrives before exit and complete stdout/stderr remains in it
   const logPath = join(directory, 'gate.log');
   const events = [];
   let notifyStart;
-  const started = new Promise(resolve => { notifyStart = resolve; });
+  const started = new Promise(resolve => {
+    notifyStart = resolve;
+  });
   let finished = false;
-  const running = runGate({ name: 'example', args: ['-e', "process.stdout.write('first\\n'); setTimeout(() => { console.error('last'); }, 100)"], cwd: directory, logPath, report: event => { events.push(event); if (event.status === 'running') notifyStart(); } }).then(result => { finished = true; return result; });
+  const running = runGate({
+    name: 'example',
+    args: ['-e', "process.stdout.write('first\\n'); setTimeout(() => { console.error('last'); }, 100)"],
+    cwd: directory,
+    logPath,
+    report: event => {
+      events.push(event);
+      if (event.status === 'running') notifyStart();
+    },
+  }).then(result => {
+    finished = true;
+    return result;
+  });
   await started;
   assert.equal(finished, false, 'start event must be visible before the command finishes');
   const result = await running;
@@ -121,7 +143,10 @@ test('progress heartbeats do not extend the finite gate watchdog', async t => {
   const timeoutDelays = [];
   let watching = false;
   t.mock.method(globalThis, 'setInterval', (callback, delay, ...args) => setInterval(callback, 10, ...args));
-  t.mock.method(globalThis, 'clearInterval', timer => { cleared.push(timer); return clearInterval(timer); });
+  t.mock.method(globalThis, 'clearInterval', timer => {
+    cleared.push(timer);
+    return clearInterval(timer);
+  });
   t.mock.method(globalThis, 'setTimeout', (callback, delay, ...args) => {
     if (watching) timeoutDelays.push(delay);
     return setTimeout(callback, delay, ...args);
@@ -142,12 +167,17 @@ test('progress heartbeats do not extend the finite gate watchdog', async t => {
         if (['passed', 'failed', 'timed-out'].includes(event.status)) watching = false;
       },
     });
-  } catch (error) { failure = error; }
+  } catch (error) {
+    failure = error;
+  }
   assert.ok(failure);
   assert.equal(failure.gate.status, 'timed-out');
   assert.equal(failure.gate.timeoutMs, timeoutMs);
   assert.deepEqual(timeoutDelays, [timeoutMs], 'heartbeats keep one finite watchdog deadline');
-  assert.ok(events.some(event => event.status === 'heartbeat'), 'the child stays alive long enough to emit heartbeats');
+  assert.ok(
+    events.some(event => event.status === 'heartbeat'),
+    'the child stays alive long enough to emit heartbeats',
+  );
   assert.notEqual(failure.gate.exitCode, 0, 'the timeout terminates the child instead of accepting its result');
   assert.equal(cleared.length, 1);
   assert.equal(events.at(-1).status, 'timed-out');
@@ -161,8 +191,17 @@ test('failed and timed-out gates retain diagnostics, exit status and bounded sum
     const logPath = join(directory, timeout ? 'timeout.log' : 'failure.log');
     let failure;
     try {
-      await runGate({ name: 'example', args: ['-e', timeout ? "console.log('waiting');setInterval(() => {}, 1000)" : "console.error('x'.repeat(5000));process.exit(2)"], cwd: directory, logPath, timeout: timeout ? 1000 : 10000, report() {} });
-    } catch (error) { failure = error; }
+      await runGate({
+        name: 'example',
+        args: ['-e', timeout ? "console.log('waiting');setInterval(() => {}, 1000)" : "console.error('x'.repeat(5000));process.exit(2)"],
+        cwd: directory,
+        logPath,
+        timeout: timeout ? 1000 : 10000,
+        report() {},
+      });
+    } catch (error) {
+      failure = error;
+    }
     assert.ok(failure);
     assert.ok(failure.message.length < 2500);
     assert.equal(failure.gate.status, timeout ? 'timed-out' : 'failed');
@@ -175,13 +214,29 @@ test('failed and timed-out gates retain diagnostics, exit status and bounded sum
 test('gate timeout terminates descendants inheriting its output pipes', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'workflow-gate-tree-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
-  const script = "const {spawn}=require('node:child_process');const child=spawn(process.execPath,['-e',\"setInterval(() => require('node:fs').appendFileSync('heartbeat','x'),50);setTimeout(() => process.exit(),60000)\"],{stdio:['ignore','inherit','inherit']});require('node:fs').writeFileSync('descendant.pid',String(child.pid));setTimeout(() => {},60000);";
+  const script =
+    "const {spawn}=require('node:child_process');const child=spawn(process.execPath,['-e',\"setInterval(() => require('node:fs').appendFileSync('heartbeat','x'),50);setTimeout(() => process.exit(),60000)\"],{stdio:['ignore','inherit','inherit']});require('node:fs').writeFileSync('descendant.pid',String(child.pid));setTimeout(() => {},60000);";
   const started = Date.now();
   await assert.rejects(runGate({ name: 'nested', args: ['-e', script], cwd: directory, logPath: join(directory, 'nested.log'), timeout: 1500, report() {} }), /timed-out/);
   const pid = Number(await readFile(join(directory, 'descendant.pid'), 'utf8'));
-  t.after(() => { try { process.kill(pid); } catch (error) { if (error.code !== 'ESRCH') throw error; } });
-  if (process.platform === 'win32') assert.throws(() => process.kill(pid, 0), error => error.code === 'ESRCH', 'descendant must not survive a gate timeout');
-  const heartbeat = () => readFile(join(directory, 'heartbeat'), 'utf8').catch(error => { if (error.code === 'ENOENT') return ''; throw error; });
+  t.after(() => {
+    try {
+      process.kill(pid);
+    } catch (error) {
+      if (error.code !== 'ESRCH') throw error;
+    }
+  });
+  if (process.platform === 'win32')
+    assert.throws(
+      () => process.kill(pid, 0),
+      error => error.code === 'ESRCH',
+      'descendant must not survive a gate timeout',
+    );
+  const heartbeat = () =>
+    readFile(join(directory, 'heartbeat'), 'utf8').catch(error => {
+      if (error.code === 'ENOENT') return '';
+      throw error;
+    });
   const stopped = await heartbeat();
   await new Promise(resolve => setTimeout(resolve, 200));
   assert.equal(await heartbeat(), stopped, 'descendant activity stops, even while POSIX waits to reap a zombie PID');

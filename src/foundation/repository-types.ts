@@ -1,8 +1,4 @@
-import type {
-  PortIdentity,
-  PortProvenance,
-  ApplyPatchAction,
-} from '../contracts/foundation/uc03.ts';
+import type { PortIdentity, PortProvenance, ApplyPatchAction } from '../contracts/foundation/uc03.ts';
 import type {
   RepositoryAdmissionContextV02,
   StatePortV02,
@@ -132,7 +128,8 @@ export interface ControlledRepositoryToolsOptions {
   readonly processIncarnation?: string | undefined;
   readonly fencingGeneration?: number | undefined;
   readonly taskControl?: RepositoryTaskControlReadPortV02 | undefined;
-  readonly patchReceiver?: ((patch: ApplyPatchAction, context: RepositoryAdmissionContextV02, attempt: AttemptReceiptV02) => Promise<{ readonly applied: boolean; readonly newRevisionDigest: string }>) | undefined;
+  readonly patchReceiver?:
+    ((patch: ApplyPatchAction, context: RepositoryAdmissionContextV02, attempt: AttemptReceiptV02) => Promise<{ readonly applied: boolean; readonly newRevisionDigest: string }>) | undefined;
   readonly patchRecoveryHandoff?: PatchRecoveryHandoffV02 | undefined;
   readonly attemptStartRecoveryHandoff?: RepositoryAttemptStartRecoveryHandoffV02 | undefined;
   readonly unattemptedClaimClosureHandoff?: UnattemptedClaimClosureHandoffV02 | undefined;
@@ -150,4 +147,3 @@ export interface RepositoryReadOperationsOptions {
   readonly statePort?: StatePortV02 | undefined;
   readonly taskControl?: RepositoryTaskControlReadPortV02 | undefined;
 }
-

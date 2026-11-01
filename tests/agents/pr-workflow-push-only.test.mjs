@@ -69,7 +69,10 @@ test('push-only skips local gates, retains prior verification, repair history, a
   assert.equal(workflowSummary(published).localGateStatus, 'skipped');
   const push = currentCalls.find(call => call[0] === 'git' && call[1] === 'push');
   assert.ok(push.includes('HEAD:refs/heads/feat/010-tooling-example'));
-  assert.equal(push.some(arg => ['main', 'development'].includes(arg)), false);
+  assert.equal(
+    push.some(arg => ['main', 'development'].includes(arg)),
+    false,
+  );
 });
 
 for (const priorVerification of [false, true]) {
@@ -84,12 +87,15 @@ for (const priorVerification of [false, true]) {
     const pushes = () => f.calls.filter(call => call[0] === 'git' && call[1] === 'push').length;
     const before = pushes();
 
-    await assert.rejects(runWorkflow(['publish', '--body-file', f.body, '--summary', 'gate unverified dependencies', '--root', f.root], {
-      execute(binary, args, cwd, timeout) {
-        if (binary === process.execPath && args[0].endsWith('check-dependency-install.mjs')) throw new Error('Release age rejected');
-        return f.execute(binary, args, cwd, timeout);
-      },
-    }), /Release age rejected/);
+    await assert.rejects(
+      runWorkflow(['publish', '--body-file', f.body, '--summary', 'gate unverified dependencies', '--root', f.root], {
+        execute(binary, args, cwd, timeout) {
+          if (binary === process.execPath && args[0].endsWith('check-dependency-install.mjs')) throw new Error('Release age rejected');
+          return f.execute(binary, args, cwd, timeout);
+        },
+      }),
+      /Release age rejected/,
+    );
     assert.equal(pushes(), before);
   });
 }
@@ -98,7 +104,10 @@ test('push-only keeps body and clean-checkout guards before writes', async t => 
   const f = await checkout(t);
   await writeFile(join(f.root, 'uncommitted.md'), 'dirty\n');
   await assert.rejects(f.run('publish', '--body-file', f.body, '--mode', 'push-only', '--reason', 'User requested publication.'), /checkout must be clean/);
-  assert.equal(f.calls.some(call => call[0] === 'git' && call[1] === 'push' || call[0] === 'gh' && call[1] === 'pr' && ['create', 'edit'].includes(call[2])), false);
+  assert.equal(
+    f.calls.some(call => (call[0] === 'git' && call[1] === 'push') || (call[0] === 'gh' && call[1] === 'pr' && ['create', 'edit'].includes(call[2]))),
+    false,
+  );
   assert.equal(gates(f.calls).length, 0);
 });
 
@@ -106,7 +115,10 @@ test('push-only keeps the publication body validation before writes', async t =>
   const f = await checkout(t);
   await writeFile(f.body, '  \n');
   await assert.rejects(f.run('publish', '--body-file', f.body, '--mode', 'push-only', '--reason', 'User requested publication.'), /PR body must contain/);
-  assert.equal(f.calls.some(call => call[0] === 'git' && call[1] === 'push' || call[0] === 'gh' && call[1] === 'pr' && ['create', 'edit'].includes(call[2])), false);
+  assert.equal(
+    f.calls.some(call => (call[0] === 'git' && call[1] === 'push') || (call[0] === 'gh' && call[1] === 'pr' && ['create', 'edit'].includes(call[2]))),
+    false,
+  );
 });
 
 test('push-only rejects a branch behind fetched development', async t => {
@@ -122,7 +134,10 @@ test('push-only rejects a branch behind fetched development', async t => {
   assert.equal(git(f.root, 'rev-parse', 'HEAD'), feature);
 
   await assert.rejects(f.run('publish', '--body-file', f.body, '--mode', 'push-only', '--reason', 'User requested publication.'), /behind development/);
-  assert.equal(f.calls.some(call => call[0] === 'git' && call[1] === 'push' || call[0] === 'gh' && call[1] === 'pr' && call[2] === 'create'), false);
+  assert.equal(
+    f.calls.some(call => (call[0] === 'git' && call[1] === 'push') || (call[0] === 'gh' && call[1] === 'pr' && call[2] === 'create')),
+    false,
+  );
 });
 
 test('push-only checks the head again before pushing', async t => {
@@ -137,8 +152,14 @@ test('push-only checks the head again before pushing', async t => {
     return f.execute(binary, args, cwd, timeout);
   };
 
-  await assert.rejects(runWorkflow(['publish', '--body-file', f.body, '--summary', 'add the example workflow', '--mode', 'push-only', '--reason', 'User requested publication.', '--root', f.root], { execute }), /changed before push/);
-  assert.equal(f.calls.some(call => call[0] === 'git' && call[1] === 'push' || call[0] === 'gh' && call[1] === 'pr' && call[2] === 'create'), false);
+  await assert.rejects(
+    runWorkflow(['publish', '--body-file', f.body, '--summary', 'add the example workflow', '--mode', 'push-only', '--reason', 'User requested publication.', '--root', f.root], { execute }),
+    /changed before push/,
+  );
+  assert.equal(
+    f.calls.some(call => (call[0] === 'git' && call[1] === 'push') || (call[0] === 'gh' && call[1] === 'pr' && call[2] === 'create')),
+    false,
+  );
 });
 
 test('push-only completion requires a matching published head and passing primary CI', async t => {
@@ -223,12 +244,20 @@ test('push-only recovers a paired partial publish without resetting provenance o
       return JSON.stringify(pr);
     }
     if (args[0] === 'pr' && args[1] === 'create') {
-      if (failPrivateCreate) { failPrivateCreate = false; throw new Error('simulated private PR create failure'); }
+      if (failPrivateCreate) {
+        failPrivateCreate = false;
+        throw new Error('simulated private PR create failure');
+      }
       const number = 7;
       const pr = {
-        number, url: `https://github.com/course/private/pull/${number}`, title: args[args.indexOf('--title') + 1],
-        body: readFileSync(args[args.indexOf('--body-file') + 1], 'utf8'), state: 'OPEN', isDraft: args.includes('--draft'),
-        headRefName: args[args.indexOf('--head') + 1], baseRefName: args[args.indexOf('--base') + 1],
+        number,
+        url: `https://github.com/course/private/pull/${number}`,
+        title: args[args.indexOf('--title') + 1],
+        body: readFileSync(args[args.indexOf('--body-file') + 1], 'utf8'),
+        state: 'OPEN',
+        isDraft: args.includes('--draft'),
+        headRefName: args[args.indexOf('--head') + 1],
+        baseRefName: args[args.indexOf('--base') + 1],
         headRefOid: privateHead(`refs/heads/${args[args.indexOf('--head') + 1]}`),
       };
       privatePrs.push(pr);
@@ -241,12 +270,12 @@ test('push-only recovers a paired partial publish without resetting provenance o
       privateCiQueries++;
       throw new Error('submission CI must not be queried');
     }
-    if (binary === 'gh' && (args[0] === 'repo' && args[1] === 'view' || args.includes('--repo') && args[args.indexOf('--repo') + 1] === 'course/private')) {
+    if (binary === 'gh' && ((args[0] === 'repo' && args[1] === 'view') || (args.includes('--repo') && args[args.indexOf('--repo') + 1] === 'course/private'))) {
       pairedCalls.push([binary, ...args]);
       return privateGh(args);
     }
     if (binary === 'git' && args[0] === 'remote' && args[1] === 'get-url' && args[2] === 'submission') return 'https://github.com/course/private.git';
-    if (binary === 'git' && (args[0] === 'fetch' && args.includes('submission') || args[0] === 'push' && args[1] === 'submission')) {
+    if (binary === 'git' && ((args[0] === 'fetch' && args.includes('submission')) || (args[0] === 'push' && args[1] === 'submission'))) {
       pairedCalls.push([binary, ...args]);
       const result = spawnSync('git', args, { cwd, timeout, encoding: 'utf8', windowsHide: true });
       assert.equal(result.status, 0, result.stderr);

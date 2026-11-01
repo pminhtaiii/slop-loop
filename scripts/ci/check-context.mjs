@@ -10,20 +10,23 @@ if (args.length !== 0 && (args.length !== 2 || args[0] !== '--root')) {
 
 function maskCode(source) {
   let fence;
-  return source.split('\n').map((line) => {
-    const marker = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
-    if (fence) {
-      if (marker && marker[1][0] === fence[0] && marker[1].length >= fence.length && !marker[2].trim()) {
-        fence = undefined;
+  return source
+    .split('\n')
+    .map(line => {
+      const marker = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+      if (fence) {
+        if (marker && marker[1][0] === fence[0] && marker[1].length >= fence.length && !marker[2].trim()) {
+          fence = undefined;
+        }
+        return line.replace(/./g, ' ');
       }
-      return line.replace(/./g, ' ');
-    }
-    if (marker) {
-      fence = marker[1];
-      return line.replace(/./g, ' ');
-    }
-    return line;
-  }).join('\n');
+      if (marker) {
+        fence = marker[1];
+        return line.replace(/./g, ' ');
+      }
+      return line;
+    })
+    .join('\n');
 }
 
 function factValue(value) {
@@ -33,7 +36,14 @@ function factValue(value) {
 try {
   const root = await realpath(resolve(args[1] ?? resolve(dirname(fileURLToPath(import.meta.url)), '../..')));
   const contract = JSON.parse(await readFile(resolve(root, 'context/contract.json'), 'utf8'));
-  if (!Array.isArray(contract.requiredDocuments) || contract.requiredDocuments.some((file) => typeof file !== 'string') || !contract.facts || typeof contract.facts !== 'object' || Array.isArray(contract.facts) || !Array.isArray(contract.authorizationReferences)) {
+  if (
+    !Array.isArray(contract.requiredDocuments) ||
+    contract.requiredDocuments.some(file => typeof file !== 'string') ||
+    !contract.facts ||
+    typeof contract.facts !== 'object' ||
+    Array.isArray(contract.facts) ||
+    !Array.isArray(contract.authorizationReferences)
+  ) {
     throw new Error('context/contract.json requires requiredDocuments, a facts object, and an authorizationReferences array.');
   }
   const files = ['AGENTS.md', 'docs/progress-checker-matrices.md'];
@@ -49,7 +59,7 @@ try {
   }
   for (const file of files) {
     const source = sources.get(file);
-    const prose = maskCode(source).replace(/(`+).*?\1/g, (code) => ' '.repeat(code.length));
+    const prose = maskCode(source).replace(/(`+).*?\1/g, code => ' '.repeat(code.length));
     localTargets.set(file, new Set());
     // shortcut: supports inline links used by context; add reference-link support when adopted.
     const links = /\[[^\]\n]*\]\(\s*(?:<([^>\n]+)>|([^\s)]+))\s*\)/g;
@@ -83,9 +93,10 @@ try {
       failures.push(`context/contract.json: fact ${id} requires a source and tableRow`);
       continue;
     }
-    const rows = maskCode(sources.get(definition.source) ?? '').split('\n')
-      .map((line) => line.split('|').map((cell) => cell.trim()))
-      .filter((cells) => cells[1] === definition.tableRow);
+    const rows = maskCode(sources.get(definition.source) ?? '')
+      .split('\n')
+      .map(line => line.split('|').map(cell => cell.trim()))
+      .filter(cells => cells[1] === definition.tableRow);
     if (rows.length !== 1 || !rows[0][2]) {
       failures.push(`context/contract.json: fact ${id} needs one source row ${definition.tableRow} in ${definition.source}`);
     } else {
@@ -95,7 +106,15 @@ try {
   const authorizationIds = new Set();
   const authorizationSources = new Set();
   for (const reference of contract.authorizationReferences) {
-    if (!reference || typeof reference.id !== 'string' || !reference.id || typeof reference.source !== 'string' || !Array.isArray(reference.summaries) || !reference.summaries.length || reference.summaries.some((summary) => typeof summary !== 'string')) {
+    if (
+      !reference ||
+      typeof reference.id !== 'string' ||
+      !reference.id ||
+      typeof reference.source !== 'string' ||
+      !Array.isArray(reference.summaries) ||
+      !reference.summaries.length ||
+      reference.summaries.some(summary => typeof summary !== 'string')
+    ) {
       failures.push('context/contract.json: each authorization reference requires an id, source, and summary paths');
       continue;
     }

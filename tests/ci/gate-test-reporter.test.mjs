@@ -44,13 +44,17 @@ test('custom reporter emits bounded test lifecycle events beside visible human f
   const directory = await mkdtemp(join(tmpdir(), 'gate-reporter-fixture-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const fixture = join(directory, 'fixture.test.mjs');
-  await writeFile(fixture, [
-    "import test from 'node:test';",
-    "test('passes safely', () => { process.stderr.write('RAW_FIXTURE_OUTPUT_MARKER'); });",
-    "test('fails visibly', () => { throw new Error('fixture failure marker'); });",
-    `test('unsafe\\nname ${'x'.repeat(400)}', () => {});`,
-    '',
-  ].join('\n'), 'utf8');
+  await writeFile(
+    fixture,
+    [
+      "import test from 'node:test';",
+      "test('passes safely', () => { process.stderr.write('RAW_FIXTURE_OUTPUT_MARKER'); });",
+      "test('fails visibly', () => { throw new Error('fixture failure marker'); });",
+      `test('unsafe\\nname ${'x'.repeat(400)}', () => {});`,
+      '',
+    ].join('\n'),
+    'utf8',
+  );
 
   const env = { ...process.env };
   delete env.NODE_TEST_CONTEXT;
@@ -64,9 +68,15 @@ test('custom reporter emits bounded test lifecycle events beside visible human f
   assert.ok(events.some(event => event.type === 'test:start'));
   assert.ok(events.some(event => event.type === 'test:pass'));
   assert.ok(events.some(event => event.type === 'test:fail'));
-  assert.ok(lines.every(line => line.length <= 512), 'event lines remain bounded');
+  assert.ok(
+    lines.every(line => line.length <= 512),
+    'event lines remain bounded',
+  );
   assert.ok(events.every(event => !event.test.includes('\n') && event.test.length <= 160));
   assert.ok(!lines.join('\n').includes('RAW_FIXTURE_OUTPUT_MARKER'));
   assert.ok(!lines.join('\n').includes('fixture failure marker'));
-  assert.ok(events.every(event => !event.file.includes(directory)), 'fixture paths do not expose the temporary absolute directory');
+  assert.ok(
+    events.every(event => !event.file.includes(directory)),
+    'fixture paths do not expose the temporary absolute directory',
+  );
 });

@@ -16,9 +16,7 @@ export async function snapshot(root, files) {
     const bytes = await readFile(file);
     declarations.push({ path, sha256: createHash('sha256').update(bytes).digest('hex') });
   }
-  process.stdout.write(
-    `${JSON.stringify({ schemaVersion: 1, ...current, files: declarations }, null, 2)}\n`,
-  );
+  process.stdout.write(`${JSON.stringify({ schemaVersion: 1, ...current, files: declarations }, null, 2)}\n`);
 }
 
 export function validSnapshot(value) {
@@ -28,10 +26,7 @@ export function validSnapshot(value) {
     snapshotValue.schemaVersion !== 1 ||
     typeof snapshotValue.root !== 'string' ||
     !isAbsolute(snapshotValue.root) ||
-    !(
-      snapshotValue.branch === null ||
-      (typeof snapshotValue.branch === 'string' && snapshotValue.branch.length > 0)
-    ) ||
+    !(snapshotValue.branch === null || (typeof snapshotValue.branch === 'string' && snapshotValue.branch.length > 0)) ||
     typeof snapshotValue.head !== 'string' ||
     !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(snapshotValue.head) ||
     !Array.isArray(snapshotValue.files) ||
@@ -39,14 +34,8 @@ export function validSnapshot(value) {
   )
     return false;
   return snapshotValue.files.every(
-    (entry) =>
-      entry &&
-      typeof entry === 'object' &&
-      !Array.isArray(entry) &&
-      typeof entry.path === 'string' &&
-      entry.path.length > 0 &&
-      typeof entry.sha256 === 'string' &&
-      /^[0-9a-f]{64}$/.test(entry.sha256),
+    entry =>
+      entry && typeof entry === 'object' && !Array.isArray(entry) && typeof entry.path === 'string' && entry.path.length > 0 && typeof entry.sha256 === 'string' && /^[0-9a-f]{64}$/.test(entry.sha256),
   );
 }
 
@@ -58,10 +47,8 @@ export async function verify(root, snapshotInput) {
   } catch (error) {
     throw new Error(`Invalid snapshot JSON in ${snapshotInput}: ${error.message}`, { cause: error });
   }
-  if (!validSnapshot(snapshotValue))
-    throw new Error(`Malformed or unsupported snapshot in ${snapshotInput}.`);
-  if (!samePath(snapshotValue.root, root))
-    throw new Error(`Snapshot workspace mismatch: expected ${root}, found ${snapshotValue.root}.`);
+  if (!validSnapshot(snapshotValue)) throw new Error(`Malformed or unsupported snapshot in ${snapshotInput}.`);
+  if (!samePath(snapshotValue.root, root)) throw new Error(`Snapshot workspace mismatch: expected ${root}, found ${snapshotValue.root}.`);
   const current = await checkout(root);
   const changed = [];
   const missing = [];
@@ -79,15 +66,9 @@ export async function verify(root, snapshotInput) {
     }
     if (createHash('sha256').update(bytes).digest('hex') !== entry.sha256) changed.push(entry.path);
   }
-  process.stdout.write(
-    `Workspace: ${current.root}\nFiles: ${snapshotValue.files.length - changed.length - missing.length}/${snapshotValue.files.length} unchanged\n`,
-  );
-  if (snapshotValue.head !== current.head)
-    process.stdout.write(`HEAD drift: ${snapshotValue.head} -> ${current.head}\n`);
-  if (snapshotValue.branch !== current.branch)
-    process.stdout.write(
-      `Branch drift: ${snapshotValue.branch ?? '(detached)'} -> ${current.branch ?? '(detached)'}\n`,
-    );
+  process.stdout.write(`Workspace: ${current.root}\nFiles: ${snapshotValue.files.length - changed.length - missing.length}/${snapshotValue.files.length} unchanged\n`);
+  if (snapshotValue.head !== current.head) process.stdout.write(`HEAD drift: ${snapshotValue.head} -> ${current.head}\n`);
+  if (snapshotValue.branch !== current.branch) process.stdout.write(`Branch drift: ${snapshotValue.branch ?? '(detached)'} -> ${current.branch ?? '(detached)'}\n`);
   if (changed.length > 0 || missing.length > 0) {
     for (const path of changed) process.stderr.write(`Changed: ${path}\n`);
     for (const path of missing) process.stderr.write(`Missing: ${path}\n`);

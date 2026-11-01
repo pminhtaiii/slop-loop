@@ -2,8 +2,30 @@ import type { ValidationError, ValidationResult } from '../../foundation/uc03.ts
 import { UC05_APPROVAL_SCHEMA_VERSION_V02 } from '../versions.ts';
 import type { ActionDecisionReceipt, ClaimClosureReceipt, PolicyEvaluationReceipt, ProviderAdmissionReceipt } from './types.ts';
 import { computeActionDecisionReceiptDigest, computeClaimClosureReceiptDigest, computePolicyEvaluationReceiptDigest, computeProviderAdmissionReceiptDigest } from './digests.ts';
-import { ACTION_DECISION_RECEIPT_KEYS, CLAIM_CLOSURE_RECEIPT_KEYS, EXECUTOR_IDENTITY_KEYS, NO_ATTEMPT_PROOF_KEYS, PAUSE_OR_DENIAL_EVENT_KEYS, POLICY_EVALUATION_RECEIPT_KEYS, PROVIDER_ADMISSION_RECEIPT_KEYS, RESERVATION_DISPOSITION_KEYS, validateNonNegativeInteger } from './validation.ts';
-import { addError, hasNonEmptyString, invalidObject, isBoundedDenseArray, isRecord, rejectUnknownKeys, validateBoundedText, validateDigest, validateId, validatePositiveInteger, validateVersionString } from '../v01/validation.ts';
+import {
+  ACTION_DECISION_RECEIPT_KEYS,
+  CLAIM_CLOSURE_RECEIPT_KEYS,
+  EXECUTOR_IDENTITY_KEYS,
+  NO_ATTEMPT_PROOF_KEYS,
+  PAUSE_OR_DENIAL_EVENT_KEYS,
+  POLICY_EVALUATION_RECEIPT_KEYS,
+  PROVIDER_ADMISSION_RECEIPT_KEYS,
+  RESERVATION_DISPOSITION_KEYS,
+  validateNonNegativeInteger,
+} from './validation.ts';
+import {
+  addError,
+  hasNonEmptyString,
+  invalidObject,
+  isBoundedDenseArray,
+  isRecord,
+  rejectUnknownKeys,
+  validateBoundedText,
+  validateDigest,
+  validateId,
+  validatePositiveInteger,
+  validateVersionString,
+} from '../v01/validation.ts';
 
 export function validatePolicyEvaluationReceipt(input: unknown): ValidationResult<PolicyEvaluationReceipt> {
   const path = 'policyEvaluationReceipt';

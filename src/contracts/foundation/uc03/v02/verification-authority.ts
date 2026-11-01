@@ -55,10 +55,7 @@ export type VerificationApprovalResolutionV02 =
 
 /** Public, issuer-owned lookup for approval records in an explicit authority context. */
 export interface ContextualApprovalVerifierV02 {
-  resolvePlanDecisionInContext(
-    decisionId: string,
-    context: VerificationApprovalContextV02,
-  ): Promise<VerificationApprovalResolutionV02>;
+  resolvePlanDecisionInContext(decisionId: string, context: VerificationApprovalContextV02): Promise<VerificationApprovalResolutionV02>;
 }
 
 export interface VerificationAuthoritySnapshotV02 {

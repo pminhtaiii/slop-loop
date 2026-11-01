@@ -11,7 +11,7 @@ function workflow(path) {
   // A checkout with core.autocrlf writes CRLF, so split on either ending before matching exact lines.
   const text = readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8');
   const lines = text.split(/\r?\n/);
-  const at = lines.findIndex((line) => line === 'jobs:');
+  const at = lines.findIndex(line => line === 'jobs:');
   assert.ok(at >= 0, `${path} declares jobs`);
   const jobs = new Map();
   let current;
@@ -30,15 +30,11 @@ function workflow(path) {
     }
   }
   const before = lines.slice(0, at).join('\n');
-  return { path, text, header: before, jobs, job: (id) => jobs.get(id) };
+  return { path, text, header: before, jobs, job: id => jobs.get(id) };
 }
 
-const WORKFLOWS = [
-  workflow('.github/workflows/contributor-checks.yml'),
-  workflow('.github/workflows/runtime-checks.yml'),
-  workflow('.github/workflows/pr-metadata.yml'),
-];
-const all = (predicate) => WORKFLOWS.flatMap((file) => [...file.jobs.values()].filter(predicate));
+const WORKFLOWS = [workflow('.github/workflows/contributor-checks.yml'), workflow('.github/workflows/runtime-checks.yml'), workflow('.github/workflows/pr-metadata.yml')];
+const all = predicate => WORKFLOWS.flatMap(file => [...file.jobs.values()].filter(predicate));
 
 test('every workflow keeps its triggers, finite limits, read-only permissions and pinned actions', () => {
   for (const file of WORKFLOWS) {
@@ -46,7 +42,11 @@ test('every workflow keeps its triggers, finite limits, read-only permissions an
     // The metadata workflow observes pull-request edits only; the code lanes also run on promoted
     // branches and manual dispatch. Neither may lose its own required trigger.
     if (file.path.endsWith('pr-metadata.yml')) {
-      assert.match(file.header, /^ {2}pull_request:\n {4}types: \[opened, reopened, synchronize, edited, ready_for_review, converted_to_draft\]$/m, `${file.path} observes the metadata-relevant events`);
+      assert.match(
+        file.header,
+        /^ {2}pull_request:\n {4}types: \[opened, reopened, synchronize, edited, ready_for_review, converted_to_draft\]$/m,
+        `${file.path} observes the metadata-relevant events`,
+      );
       assert.doesNotMatch(file.header, /^ {2}(?:push|workflow_dispatch):$/m, `${file.path} runs no code lane`);
     } else {
       assert.match(file.header, /^ {2}push:$/m, `${file.path} keeps push`);
@@ -60,7 +60,7 @@ test('every workflow keeps its triggers, finite limits, read-only permissions an
 
     for (const job of file.jobs.values()) {
       assert.match(job.block.join('\n'), /^ {4}timeout-minutes: [0-9]+$/m, `${file.path}:${job.id} has a finite timeout`);
-      const uses = job.block.filter((line) => /^\s*(?:- )?uses:/.test(line)).map((line) => line.match(/uses: (\S+)/)[1]);
+      const uses = job.block.filter(line => /^\s*(?:- )?uses:/.test(line)).map(line => line.match(/uses: (\S+)/)[1]);
       assert.ok(uses.length > 0, `${file.path}:${job.id} uses actions`);
       for (const action of uses) {
         if (/^actions\//.test(action)) assert.match(action, /^actions\/[a-z-]+@v[0-9]+$/, `${action} is a first-party major tag`);
@@ -72,7 +72,6 @@ test('every workflow keeps its triggers, finite limits, read-only permissions an
       // filename such as `scan-secrets.mjs`.
       assert.doesNotMatch(block, /\$\{\{\s*secrets\.|write-all|contents: write/, `${file.path}:${job.id} has no privileged access`);
     }
-
   }
 });
 
@@ -91,17 +90,23 @@ test('obsolete contributor and runtime matrix jobs are absent', () => {
 // Comment lines are dropped: a commented-out command is documentation, not a gate.
 function runsCommand(lines, command) {
   return lines
-    .filter((line) => !/^\s*#/.test(line))
-    .flatMap((line) => line.split(/\s*(?:&&|\|\||;|\|)\s*/))
-    .map((segment) => segment.trim().replace(/^(?:- )?run: /, ''))
-    .some((segment) => segment.startsWith(command));
+    .filter(line => !/^\s*#/.test(line))
+    .flatMap(line => line.split(/\s*(?:&&|\|\||;|\|)\s*/))
+    .map(segment => segment.trim().replace(/^(?:- )?run: /, ''))
+    .some(segment => segment.startsWith(command));
 }
 const REQUIRED_COMMANDS = {
-  'static-lint': ['pnpm run lint'],
+  'static-lint': ['pnpm run lint', 'pnpm run format:check'],
   'static-types': ['pnpm run typecheck'],
-  'repository-policy': ['node scripts/ci/check-context.mjs', 'node scripts/ci/check-tracked-files.mjs', 'node scripts/ci/check-env-examples.mjs', 'node scripts/ci/check-dependency-install.mjs', 'node scripts/ci/scan-secrets.mjs'],
+  'repository-policy': [
+    'node scripts/ci/check-context.mjs',
+    'node scripts/ci/check-tracked-files.mjs',
+    'node scripts/ci/check-env-examples.mjs',
+    'node scripts/ci/check-dependency-install.mjs',
+    'node scripts/ci/scan-secrets.mjs',
+  ],
   'pr-metadata': ['node scripts/ci/check-pr-metadata.mjs'],
-  'build': ['node scripts/ci/check-runtime.mjs --clean-build-only'],
+  build: ['node scripts/ci/check-runtime.mjs --clean-build-only'],
   'runtime-tests': ['node scripts/ci/artifact-identity.mjs verify', 'pnpm run test:runtime'],
   'contributor-tooling-tests': ['pnpm run test:contributors'],
 };
@@ -111,13 +116,13 @@ test('every policy name has a runnable counterpart in its declared workflow job'
   assert.equal(POLICIES[ACTIVE_POLICY_ID].required.length, 4);
   for (const name of POLICIES[ACTIVE_POLICY_ID].required) {
     const { workflow: path, job } = CHECK_JOBS[name];
-    const file = WORKFLOWS.find((candidate) => candidate.path === path);
+    const file = WORKFLOWS.find(candidate => candidate.path === path);
     assert.ok(file, `${name} names an existing workflow ${path}`);
     assert.ok(file.job(job), `${name} is produced by ${path}:${job}`);
   }
-  for (const job of WORKFLOWS.flatMap((file) => [...file.jobs.keys()])) {
+  for (const job of WORKFLOWS.flatMap(file => [...file.jobs.keys()])) {
     assert.ok(REQUIRED_COMMANDS[job], `${job} declares the commands it must run`);
-    const declared = WORKFLOWS.find((file) => file.job(job)).job(job);
+    const declared = WORKFLOWS.find(file => file.job(job)).job(job);
     assert.ok(declared.run.length > 0, `${job} runs at least one command`);
     for (const command of REQUIRED_COMMANDS[job]) {
       assert.ok(runsCommand(declared.block, command), `${job} must run ${command}`);
@@ -138,22 +143,32 @@ test('the command matcher refuses a mention and accepts a command position', () 
 test('the seven bare required names match all emitted jobs and the protection mirror', () => {
   const expected = ['static-lint', 'static-types', 'repository-policy', 'pr-metadata', 'build', 'contributor-tooling-tests', 'runtime-tests'];
   assert.deepEqual([...POLICIES['ci-v4'].required], expected);
-  assert.deepEqual(WORKFLOWS.flatMap((file) => [...file.jobs.keys()]).sort(), [...expected].sort());
+  assert.deepEqual(WORKFLOWS.flatMap(file => [...file.jobs.keys()]).sort(), [...expected].sort());
   const mirror = JSON.parse(readFileSync(new URL('../../.github/branch-protection.json', import.meta.url), 'utf8'));
   assert.equal(mirror.required_status_checks.strict, true);
   assert.equal(mirror.enforce_admins, true);
-  assert.deepEqual(mirror.required_status_checks.checks, [...POLICIES[ACTIVE_POLICY_ID].required].map((context) => ({ context, app_id: 15368 })));
-  for (const file of WORKFLOWS) for (const job of file.jobs.values()) {
-    assert.match(job.block.join('\n'), /^ {4}runs-on: ubuntu-latest$/m, job.id);
-    assert.doesNotMatch(job.block.join('\n'), /^ {4}name:/m, 'job IDs are the exact bare check names');
-  }
-  assert.equal(Object.values(POLICIES).some((policy) => policy.required.includes(MUTATION_CHECK_NAME)), false);
+  assert.deepEqual(
+    mirror.required_status_checks.checks,
+    [...POLICIES[ACTIVE_POLICY_ID].required].map(context => ({ context, app_id: 15368 })),
+  );
+  for (const file of WORKFLOWS)
+    for (const job of file.jobs.values()) {
+      assert.match(job.block.join('\n'), /^ {4}runs-on: ubuntu-latest$/m, job.id);
+      assert.doesNotMatch(job.block.join('\n'), /^ {4}name:/m, 'job IDs are the exact bare check names');
+    }
+  assert.equal(
+    Object.values(POLICIES).some(policy => policy.required.includes(MUTATION_CHECK_NAME)),
+    false,
+  );
 });
 
 test('the build lanes reuse the clean-build-only mode and the runtime lane consumes its artifact', () => {
-  const build = WORKFLOWS.find((file) => file.job('build')).job('build');
+  const build = WORKFLOWS.find(file => file.job('build')).job('build');
   assert.ok(build.run.includes('node scripts/ci/check-runtime.mjs --clean-build-only'), 'build uses clean-build-only');
-  assert.ok(build.run.some((command) => command === 'node scripts/ci/artifact-identity.mjs write'), 'build records identity');
+  assert.ok(
+    build.run.some(command => command === 'node scripts/ci/artifact-identity.mjs write'),
+    'build records identity',
+  );
   assert.match(build.block.join('\n'), /^ {12}artifact-identity\.json$/m, 'identity ships with the artifact');
   assert.match(build.block.join('\n'), /^ {12}(?:tests\/runtime|dist\/tests\/runtime)$/m, 'artifact carries source and emitted tests');
   assert.match(build.block.join('\n'), /if-no-files-found: error/);
@@ -163,27 +178,29 @@ test('the build lanes reuse the clean-build-only mode and the runtime lane consu
   // Deriving this from tsconfig rather than a fixed list is what catches a new source root; it also
   // works in lanes that never build.
   const tsconfig = JSON.parse(readFileSync(new URL('../../tsconfig.json', import.meta.url), 'utf8'));
-  const compiled = [...new Set(tsconfig.include.map((entry) => entry.split('/')[0]))]
-    .filter((name) => name !== 'tests')
-    .map((name) => `dist/${name}`);
+  const compiled = [...new Set(tsconfig.include.map(entry => entry.split('/')[0]))].filter(name => name !== 'tests').map(name => `dist/${name}`);
   assert.ok(compiled.length, 'tsconfig declares at least one compiled source root');
   for (const path of compiled) {
     assert.match(build.block.join('\n'), new RegExp(`^ {12}${path}$`, 'm'), `artifact carries ${path} that emitted tests import`);
     assert.ok(ARTIFACT_PATHS.includes(path), `the manifest covers ${path}`);
   }
 
-  const runtime = WORKFLOWS.find((file) => file.job('runtime-tests')).job('runtime-tests');
+  const runtime = WORKFLOWS.find(file => file.job('runtime-tests')).job('runtime-tests');
   assert.match(runtime.block.join('\n'), /^ {4}needs: build$/m, 'runtime tests depend on the build lane');
   assert.match(runtime.block.join('\n'), /name: runtime-build-ubuntu-latest/, 'only the matching OS artifact is downloaded');
   assert.ok(runtime.run.includes('node scripts/ci/artifact-identity.mjs verify'), 'identity is verified before the lane runs');
   assert.ok(runtime.run.includes('pnpm run test:runtime'), 'the complete emitted inventory runs');
-  assert.equal(runtime.run.some((command) => command.includes('validate:runtime')), false, 'no clean rebuild replaces the verified artifact');
+  assert.equal(
+    runtime.run.some(command => command.includes('validate:runtime')),
+    false,
+    'no clean rebuild replaces the verified artifact',
+  );
 });
 
 test('staged candidate lanes check out and verify H while recording distinct B and M', () => {
   // The metadata lane consumes its event payload instead of a working tree, so it is not a
   // candidate-code lane; every other job must bind and verify H.
-  const staged = all((job) => job.id !== 'pr-metadata');
+  const staged = all(job => job.id !== 'pr-metadata');
   assert.ok(staged.length >= 6);
   for (const job of staged) {
     const block = job.block.join('\n');
@@ -192,20 +209,20 @@ test('staged candidate lanes check out and verify H while recording distinct B a
     assert.match(block, /base=\$\{BASE_SHA:-none\} merge=\$\{MERGE_SHA:-none\}/, `${job.id} records B and M as provenance`);
     // Refusal must precede side effects: identity is confirmed before dependencies are installed.
     const lines = job.block;
-    const verifyAt = lines.findIndex((line) => line.includes('git rev-parse HEAD'));
-    const installAt = lines.findIndex((line) => /^\s*- name: Install dependencies$/.test(line));
+    const verifyAt = lines.findIndex(line => line.includes('git rev-parse HEAD'));
+    const installAt = lines.findIndex(line => /^\s*- name: Install dependencies$/.test(line));
     if (installAt >= 0) assert.ok(verifyAt >= 0 && verifyAt < installAt, `${job.id} verifies the head before installing`);
   }
   // The metadata lane must read the payload as data and must never execute candidate code. It does
   // check out the head tree now, but only as the bootstrap fallback for the PR that introduces the
   // validator; the base copy is preferred whenever it exists, so an editing PR cannot certify itself.
-  const metadata = WORKFLOWS.find((file) => file.job('pr-metadata')).job('pr-metadata');
+  const metadata = WORKFLOWS.find(file => file.job('pr-metadata')).job('pr-metadata');
   const metadataBlock = metadata.block.join('\n');
   assert.match(metadataBlock, /^ {10}ref: \$\{\{ github\.event\.pull_request\.base\.sha \}\}$/m, 'the metadata lane checks out the base revision');
   assert.doesNotMatch(metadataBlock, /ref: \$\{\{ env\.HEAD_SHA \}\}/, 'the metadata lane never checks out the candidate head through the shared env binding');
   assert.doesNotMatch(metadataBlock, /pnpm install|pnpm run|node --test/, 'metadata runs no candidate code');
   assert.match(metadataBlock, /EVENT_PATH: \$\{\{ github\.event_path \}\}/, 'the event payload arrives as a path, never as shell text');
-  for (const file of WORKFLOWS.filter((candidate) => !candidate.path.endsWith('pr-metadata.yml'))) {
+  for (const file of WORKFLOWS.filter(candidate => !candidate.path.endsWith('pr-metadata.yml'))) {
     assert.match(file.header, /^ {2}HEAD_SHA: \$\{\{ github\.event\.pull_request\.head\.sha \|\| github\.sha \}\}$/m, `${file.path} binds H to the PR head`);
     assert.match(file.header, /^ {2}BASE_SHA: \$\{\{ github\.event\.pull_request\.base\.sha \|\| github\.event\.before \}\}$/m, `${file.path} binds B separately`);
     assert.match(file.header, /^ {2}MERGE_SHA: \$\{\{ github\.sha \}\}$/m, `${file.path} binds M separately`);
@@ -215,11 +232,15 @@ test('staged candidate lanes check out and verify H while recording distinct B a
 test('the metadata lane grades with the base copy and falls back to the head copy only when absent', () => {
   // Pinning alone deadlocks the introducing PR: its base tree has no validator, and ci-v2 requires
   // this job. Both revisions are checked out; the base copy wins whenever it exists.
-  const metadata = WORKFLOWS.find((file) => file.job('pr-metadata')).job('pr-metadata');
+  const metadata = WORKFLOWS.find(file => file.job('pr-metadata')).job('pr-metadata');
   const block = metadata.block.join('\n');
   assert.match(block, /^ {10}ref: \$\{\{ github\.event\.pull_request\.base\.sha \}\}\n {10}path: base$/m, 'the base revision is checked out as the preferred grader');
   assert.match(block, /^ {10}ref: \$\{\{ github\.event\.pull_request\.head\.sha \}\}\n {10}path: candidate$/m, 'the head revision is checked out as the bootstrap fallback');
-  assert.match(block, /^ {8}run: root=base; \[ -f base\/scripts\/ci\/check-pr-metadata\.mjs \] \|\| root=candidate; cd "\$root" && node scripts\/ci\/check-pr-metadata\.mjs "\$EVENT_PATH"$/m, 'presence selects the base copy, else the head copy, then runs the literal command');
+  assert.match(
+    block,
+    /^ {8}run: root=base; \[ -f base\/scripts\/ci\/check-pr-metadata\.mjs \] \|\| root=candidate; cd "\$root" && node scripts\/ci\/check-pr-metadata\.mjs "\$EVENT_PATH"$/m,
+    'presence selects the base copy, else the head copy, then runs the literal command',
+  );
   // The fallback exists only for the introducing PR: once this change merges, the path must be present
   // or every later run has no validator at all, and the unreachable fallback branch hides that.
   assert.ok(existsSync(new URL('../../scripts/ci/check-pr-metadata.mjs', import.meta.url)), 'the working tree ships the validator the fallback runs');
@@ -227,9 +248,13 @@ test('the metadata lane grades with the base copy and falls back to the head cop
 
 test('artifact identity inputs come from the run context, never a candidate-supplied value', () => {
   for (const id of ['build', 'runtime-tests']) {
-    const job = WORKFLOWS.find((file) => file.job(id)).job(id);
+    const job = WORKFLOWS.find(file => file.job(id)).job(id);
     const block = job.block.join('\n');
-    for (const [name, value] of [['REPOSITORY_ID', 'github.repository_id'], ['RUN_ID', 'github.run_id'], ['RUN_ATTEMPT', 'github.run_attempt']]) {
+    for (const [name, value] of [
+      ['REPOSITORY_ID', 'github.repository_id'],
+      ['RUN_ID', 'github.run_id'],
+      ['RUN_ATTEMPT', 'github.run_attempt'],
+    ]) {
       assert.match(block, new RegExp(`^ {10}${name}: \\$\\{\\{ ${value.replace('.', '\\.')} \\}\\}$`, 'm'), `${id} binds ${name} to ${value}`);
     }
     assert.match(block, /^ {10}RUNNER_OS_LABEL: ubuntu-latest$/m, `${id} binds the OS label`);
@@ -238,8 +263,11 @@ test('artifact identity inputs come from the run context, never a candidate-supp
 });
 
 test('new lanes retain machine-readable results even when the lane fails', () => {
-  for (const [id, results] of [['contributor-tooling-tests', 'contributor-test-results.xml'], ['runtime-tests', 'runtime-test-results.xml']]) {
-    const job = WORKFLOWS.find((file) => file.job(id)).job(id);
+  for (const [id, results] of [
+    ['contributor-tooling-tests', 'contributor-test-results.xml'],
+    ['runtime-tests', 'runtime-test-results.xml'],
+  ]) {
+    const job = WORKFLOWS.find(file => file.job(id)).job(id);
     const block = job.block.join('\n');
     assert.match(block, /if: always\(\)/, `${id} uploads results on failure`);
     assert.match(block, new RegExp(`^ {10}path: ${results.replace('.', '\\.')}$`, 'm'), `${id} retains ${results}`);
@@ -260,7 +288,7 @@ test('no staged lane introduces a shard count or an aggregate required gate', ()
 // A historical job mapping must never accidentally restore a canonical Windows runner.
 test('canonical build and complete test inventories run only on Ubuntu', () => {
   for (const id of ['build', 'runtime-tests', 'contributor-tooling-tests']) {
-    const job = WORKFLOWS.find((file) => file.job(id)).job(id);
+    const job = WORKFLOWS.find(file => file.job(id)).job(id);
     assert.match(job.block.join('\n'), /^ {4}runs-on: ubuntu-latest$/m, id);
     assert.doesNotMatch(job.block.join('\n'), /windows-latest/, id);
   }

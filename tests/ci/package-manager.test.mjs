@@ -60,7 +60,10 @@ test('pnpm can run project scripts under the package manager requirement', () =>
 });
 
 test('npm run lint and npm test are refused with the required manager before scripts run', () => {
-  for (const [action, marker] of [['run lint', 'lint-ran'], ['test', 'test-ran']]) {
+  for (const [action, marker] of [
+    ['run lint', 'lint-ran'],
+    ['test', 'test-ran'],
+  ]) {
     const result = runManager('npm', action);
     assert.ifError(result.error);
     assert.notEqual(result.status, 0, result.stdout);
@@ -82,9 +85,10 @@ test('npm install is refused even when lifecycle scripts are ignored', () => {
   assert.notEqual(result.status, 0, result.stdout);
 });
 
-const corepackAvailable = process.platform === 'win32'
-  ? spawnSync('cmd.exe', ['/d', '/s', '/c', 'corepack --version'], { cwd: root, windowsHide: true }).status === 0
-  : spawnSync('corepack', ['--version'], { cwd: root }).status === 0;
+const corepackAvailable =
+  process.platform === 'win32'
+    ? spawnSync('cmd.exe', ['/d', '/s', '/c', 'corepack --version'], { cwd: root, windowsHide: true }).status === 0
+    : spawnSync('corepack', ['--version'], { cwd: root }).status === 0;
 
 test('Corepack refuses Yarn script and install commands for the pnpm project', { skip: !corepackAvailable }, () => {
   for (const action of ['run lint', 'install --immutable']) {

@@ -60,9 +60,7 @@ export function createFixtureBudgetLimits(): BudgetLimits {
   };
 }
 
-export function createFixtureCheckDefinition(
-  overrides?: Partial<CheckDefinition>
-): CheckDefinition {
+export function createFixtureCheckDefinition(overrides?: Partial<CheckDefinition>): CheckDefinition {
   return {
     checkId: 'check-pytest-reproduction',
     executable: 'pytest',
@@ -111,7 +109,7 @@ export function createFixtureTaskState(overrides?: Partial<TaskState>): TaskStat
     reproduction: task.reproduction,
     acceptanceCriteria: task.acceptanceCriteria,
     constraints: task.constraints,
-    requiredCheckIds: task.requiredChecks.map((c) => c.checkId),
+    requiredCheckIds: task.requiredChecks.map(c => c.checkId),
     taskContext: task,
     node: 'Investigate',
     planVersion: 1,
@@ -124,9 +122,7 @@ export function createFixtureTaskState(overrides?: Partial<TaskState>): TaskStat
   };
 }
 
-export function createFixtureProviderRequest(
-  overrides?: Partial<ProviderRequest>
-): ProviderRequest {
+export function createFixtureProviderRequest(overrides?: Partial<ProviderRequest>): ProviderRequest {
   return {
     providerRequestId: 'req-coder-001',
     taskId: 'task-calc-001',
@@ -149,9 +145,7 @@ export function createFixtureProviderRequest(
   };
 }
 
-export function createFixtureReviewerRequest(
-  overrides?: Partial<ProviderRequest>
-): ProviderRequest {
+export function createFixtureReviewerRequest(overrides?: Partial<ProviderRequest>): ProviderRequest {
   return {
     providerRequestId: 'req-reviewer-001',
     taskId: 'task-calc-001',
@@ -174,9 +168,7 @@ export function createFixtureReviewerRequest(
   };
 }
 
-export function createFixtureSourceEvidence(
-  overrides?: Partial<SourceEvidence>
-): SourceEvidence {
+export function createFixtureSourceEvidence(overrides?: Partial<SourceEvidence>): SourceEvidence {
   return {
     path: 'src/calculator.py',
     revisionDigest: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
@@ -229,9 +221,7 @@ export interface BuildAdmissionContextOptions {
   contextProvenance?: string | undefined;
 }
 
-export function createFixtureAdmissionContext(
-  options?: BuildAdmissionContextOptions
-): { context: DispatchAdmissionContext; request: ProviderRequest } {
+export function createFixtureAdmissionContext(options?: BuildAdmissionContextOptions): { context: DispatchAdmissionContext; request: ProviderRequest } {
   const req = options?.request ?? createFixtureProviderRequest();
   const configId = req.configId;
   const requestId = req.providerRequestId;
@@ -250,11 +240,11 @@ export function createFixtureAdmissionContext(
   const runCostResAmount = req.maxCostUsd;
   const reviewerIterResAmount = 1;
 
-  const omitTaskTokenRes = options?.omitTaskTokenRes ?? (options?.includeTaskTokens === false);
-  const omitTaskCostRes = options?.omitTaskCostRes ?? (options?.includeTaskCost === false);
-  const omitRunTokenRes = options?.omitRunTokenRes ?? (options?.includeRunTokens === false);
-  const omitRunCostRes = options?.omitRunCostRes ?? (options?.includeRunCost === false);
-  const omitReviewerIterationRes = options?.omitReviewerIterationRes ?? (options?.includeTaskIteration === false);
+  const omitTaskTokenRes = options?.omitTaskTokenRes ?? options?.includeTaskTokens === false;
+  const omitTaskCostRes = options?.omitTaskCostRes ?? options?.includeTaskCost === false;
+  const omitRunTokenRes = options?.omitRunTokenRes ?? options?.includeRunTokens === false;
+  const omitRunCostRes = options?.omitRunCostRes ?? options?.includeRunCost === false;
+  const omitReviewerIterationRes = options?.omitReviewerIterationRes ?? options?.includeTaskIteration === false;
 
   const bundleReservations: ReservationBundleItem[] = [];
 
@@ -337,11 +327,8 @@ export function createFixtureAdmissionContext(
   const reviewerIterationLimit = options?.reviewerIterationLimit ?? options?.taskIterationsLimit ?? 5;
   const reviewerIterationConsumed = options?.reviewerIterationConsumed ?? options?.taskIterationsConsumed ?? 0;
 
-  const requireRunReviewIteration =
-    options?.requireRunReviewIteration ??
-    (options?.includeRunIteration !== undefined || options?.runIterationsConsumed !== undefined);
-  const runReviewerIterationConsumed =
-    options?.runReviewerIterationConsumed ?? options?.runIterationsConsumed;
+  const requireRunReviewIteration = options?.requireRunReviewIteration ?? (options?.includeRunIteration !== undefined || options?.runIterationsConsumed !== undefined);
+  const runReviewerIterationConsumed = options?.runReviewerIterationConsumed ?? options?.runIterationsConsumed;
 
   const ledgers: BudgetLedger[] = [
     {
@@ -349,9 +336,7 @@ export function createFixtureAdmissionContext(
       kind: 'tokens',
       limit: taskTokensLimit,
       consumed: taskTokensConsumed,
-      reservations: omitTaskTokenRes
-        ? []
-        : [{ reservationId: 'res-task-tokens-1', keyedId: requestId, amount: taskTokenResAmount }],
+      reservations: omitTaskTokenRes ? [] : [{ reservationId: 'res-task-tokens-1', keyedId: requestId, amount: taskTokenResAmount }],
       unit: 'tokens',
       configurationId: configId,
       version: 1,
@@ -361,9 +346,7 @@ export function createFixtureAdmissionContext(
       kind: 'cost',
       limit: taskCostLimit,
       consumed: taskCostConsumed,
-      reservations: omitTaskCostRes
-        ? []
-        : [{ reservationId: 'res-task-cost-1', keyedId: requestId, amount: taskCostResAmount }],
+      reservations: omitTaskCostRes ? [] : [{ reservationId: 'res-task-cost-1', keyedId: requestId, amount: taskCostResAmount }],
       unit: 'usd',
       configurationId: configId,
       version: 1,
@@ -373,9 +356,7 @@ export function createFixtureAdmissionContext(
       kind: 'tokens',
       limit: runTokensLimit,
       consumed: runTokensConsumed,
-      reservations: omitRunTokenRes
-        ? []
-        : [{ reservationId: 'res-run-tokens-1', keyedId: requestId, amount: runTokenResAmount }],
+      reservations: omitRunTokenRes ? [] : [{ reservationId: 'res-run-tokens-1', keyedId: requestId, amount: runTokenResAmount }],
       unit: 'tokens',
       configurationId: configId,
       version: 1,
@@ -385,21 +366,14 @@ export function createFixtureAdmissionContext(
       kind: 'cost',
       limit: runCostLimit,
       consumed: runCostConsumed,
-      reservations: omitRunCostRes
-        ? []
-        : [{ reservationId: 'res-run-cost-1', keyedId: requestId, amount: runCostResAmount }],
+      reservations: omitRunCostRes ? [] : [{ reservationId: 'res-run-cost-1', keyedId: requestId, amount: runCostResAmount }],
       unit: 'usd',
       configurationId: configId,
       version: 1,
     },
   ];
 
-  const ledgerIdentities = [
-    taskTokenLedgerId,
-    taskCostLedgerId,
-    runTokenLedgerId,
-    runCostLedgerId,
-  ];
+  const ledgerIdentities = [taskTokenLedgerId, taskCostLedgerId, runTokenLedgerId, runCostLedgerId];
 
   const reservationIds: Record<string, string> = {
     [taskTokenLedgerId]: 'res-task-tokens-1',
@@ -414,9 +388,7 @@ export function createFixtureAdmissionContext(
       kind: 'iteration',
       limit: reviewerIterationLimit,
       consumed: reviewerIterationConsumed,
-      reservations: omitReviewerIterationRes
-        ? []
-        : [{ reservationId: 'res-task-iter-1', keyedId: requestId, amount: reviewerIterResAmount }],
+      reservations: omitReviewerIterationRes ? [] : [{ reservationId: 'res-task-iter-1', keyedId: requestId, amount: reviewerIterResAmount }],
       unit: 'count',
       configurationId: configId,
       version: 1,
@@ -449,8 +421,7 @@ export function createFixtureAdmissionContext(
     });
   }
 
-  const includeUncertainStoredRequest =
-    options?.includeUncertainStoredRequest ?? (options?.requestHistoryStatus === 'uncertain');
+  const includeUncertainStoredRequest = options?.includeUncertainStoredRequest ?? options?.requestHistoryStatus === 'uncertain';
   const storedRequests: ProviderRequest[] = [req];
   if (includeUncertainStoredRequest) {
     storedRequests.push({
@@ -461,8 +432,7 @@ export function createFixtureAdmissionContext(
     });
   }
 
-  const isTelemetryEstimate =
-    options?.isTelemetryEstimate ?? (options?.contextProvenance === 'estimate');
+  const isTelemetryEstimate = options?.isTelemetryEstimate ?? options?.contextProvenance === 'estimate';
 
   const context: DispatchAdmissionContext = {
     expectedRequest: req,
@@ -484,9 +454,7 @@ export function createFixtureAdmissionContext(
  * v0.2 Fixture Helpers (T053 / T054)
  * ============================================================================ */
 
-export function createFixtureExecutorIdentityV02(
-  overrides?: Partial<ExecutorIdentityV02>
-): ExecutorIdentityV02 {
+export function createFixtureExecutorIdentityV02(overrides?: Partial<ExecutorIdentityV02>): ExecutorIdentityV02 {
   return {
     adapterIdentity: 'adapter-fixture-worker',
     processIncarnation: 'proc-fixture-001',
@@ -496,9 +464,7 @@ export function createFixtureExecutorIdentityV02(
   };
 }
 
-export function createFixturePolicyAuthorityRefV02(
-  overrides?: Partial<PolicyAuthorityRefV02>
-): PolicyAuthorityRefV02 {
+export function createFixturePolicyAuthorityRefV02(overrides?: Partial<PolicyAuthorityRefV02>): PolicyAuthorityRefV02 {
   return {
     policyId: 'policy-default',
     policyVersion: '1.0.0',
@@ -510,9 +476,7 @@ export function createFixturePolicyAuthorityRefV02(
   };
 }
 
-export function createFixturePolicyEvaluationReceiptV02(
-  overrides?: Partial<PolicyEvaluationReceiptV02>
-): PolicyEvaluationReceiptV02 {
+export function createFixturePolicyEvaluationReceiptV02(overrides?: Partial<PolicyEvaluationReceiptV02>): PolicyEvaluationReceiptV02 {
   const auth = createFixturePolicyAuthorityRefV02();
   const receipt = {
     receiptId: 'pe-fixture-001',
@@ -533,9 +497,7 @@ export function createFixturePolicyEvaluationReceiptV02(
   };
 }
 
-export function createFixtureActionDecisionReceiptV02(
-  overrides?: Partial<ActionDecisionReceiptV02>
-): ActionDecisionReceiptV02 {
+export function createFixtureActionDecisionReceiptV02(overrides?: Partial<ActionDecisionReceiptV02>): ActionDecisionReceiptV02 {
   const decision = {
     decisionId: 'ad-fixture-001',
     decisionDigest: '',
@@ -551,9 +513,7 @@ export function createFixtureActionDecisionReceiptV02(
   };
 }
 
-export function createFixtureProviderAdmissionReceiptV02(
-  overrides?: Partial<ProviderAdmissionReceiptV02>
-): ProviderAdmissionReceiptV02 {
+export function createFixtureProviderAdmissionReceiptV02(overrides?: Partial<ProviderAdmissionReceiptV02>): ProviderAdmissionReceiptV02 {
   const req = createFixtureProviderRequest();
   const receipt = {
     receiptId: `par-${req.providerRequestId}`,
@@ -574,9 +534,7 @@ export function createFixtureProviderAdmissionReceiptV02(
   };
 }
 
-export function createFixtureClaimReceiptV02(
-  overrides?: Partial<ClaimReceiptV02>
-): ClaimReceiptV02 {
+export function createFixtureClaimReceiptV02(overrides?: Partial<ClaimReceiptV02>): ClaimReceiptV02 {
   const claim = {
     claimId: 'claim-fixture-001',
     claimDigest: '',
@@ -598,9 +556,7 @@ export function createFixtureClaimReceiptV02(
   };
 }
 
-export function createFixtureAttemptReceiptV02(
-  overrides?: Partial<AttemptReceiptV02>
-): AttemptReceiptV02 {
+export function createFixtureAttemptReceiptV02(overrides?: Partial<AttemptReceiptV02>): AttemptReceiptV02 {
   return {
     attemptId: 'att-fixture-001',
     claimId: 'claim-fixture-001',
@@ -616,13 +572,10 @@ export function createFixtureAttemptReceiptV02(
   };
 }
 
-export function createFixtureRepositoryAdmissionContextV02(
-  overrides?: Partial<Record<string, unknown>>
-): RepositoryAdmissionContextV02 {
+export function createFixtureRepositoryAdmissionContextV02(overrides?: Partial<Record<string, unknown>>): RepositoryAdmissionContextV02 {
   const taskId = (overrides?.taskId as string | undefined) ?? 'task-calc-001';
   const runId = (overrides?.runId as string | undefined) ?? 'run-001';
-  const canonicalRevision = (overrides?.canonicalRevision as string | undefined) ??
-    'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+  const canonicalRevision = (overrides?.canonicalRevision as string | undefined) ?? 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
   const action = (overrides?.action as NormalizedAction | undefined) ?? {
     actionId: 'act-patch-fixture-001',
     kind: 'apply_patch',
@@ -631,10 +584,9 @@ export function createFixtureRepositoryAdmissionContextV02(
     baseRevisionDigest: canonicalRevision,
   };
   const actionDigest = (overrides?.actionDigest as string | undefined) ?? computeActionDigest(action);
-  const policyAuthorityRef = (overrides?.policyAuthorityRef as PolicyAuthorityRefV02 | undefined) ??
-    createFixturePolicyAuthorityRefV02();
-  const policyEvaluationReceipt = (overrides?.policyEvaluationReceipt as PolicyEvaluationReceiptV02 | undefined) ??
-    createFixturePolicyEvaluationReceiptV02({ actionDigest, policyId: policyAuthorityRef.policyId });
+  const policyAuthorityRef = (overrides?.policyAuthorityRef as PolicyAuthorityRefV02 | undefined) ?? createFixturePolicyAuthorityRefV02();
+  const policyEvaluationReceipt =
+    (overrides?.policyEvaluationReceipt as PolicyEvaluationReceiptV02 | undefined) ?? createFixturePolicyEvaluationReceiptV02({ actionDigest, policyId: policyAuthorityRef.policyId });
   const rawContext: Record<string, unknown> = {
     schemaVersion: '0.2.0',
     subjectKind: 'repository-action',
@@ -673,11 +625,8 @@ export function createFixtureRepositoryAdmissionContextV02(
   } as unknown as RepositoryAdmissionContextV02;
 }
 
-export function createFixtureRepositoryCommandAdmissionContextV02(
-  overrides?: Partial<Record<string, unknown>>,
-): RepositoryAdmissionContextV02 {
-  const canonicalRevision = (overrides?.canonicalRevision as string | undefined) ??
-    'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+export function createFixtureRepositoryCommandAdmissionContextV02(overrides?: Partial<Record<string, unknown>>): RepositoryAdmissionContextV02 {
+  const canonicalRevision = (overrides?.canonicalRevision as string | undefined) ?? 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
   const action = (overrides?.action as NormalizedAction | undefined) ?? {
     actionId: 'act-command-fixture-001',
     kind: 'run_command' as const,
@@ -693,9 +642,7 @@ export function createFixtureRepositoryCommandAdmissionContextV02(
   });
 }
 
-export function createFixtureProviderAdmissionContextV02(
-  overrides?: Partial<Record<string, unknown>>
-): ProviderAdmissionContextV02 {
+export function createFixtureProviderAdmissionContextV02(overrides?: Partial<Record<string, unknown>>): ProviderAdmissionContextV02 {
   const req = (overrides?.providerRequest as ProviderRequest | undefined) ?? createFixtureProviderRequest();
   const role = ((overrides?.role as ProviderRoleV02 | undefined) ?? req.role) as ProviderRoleV02;
   const requestContentDigest = computeRequestContentDigest(req);

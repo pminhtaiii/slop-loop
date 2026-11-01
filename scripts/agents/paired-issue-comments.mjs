@@ -21,11 +21,11 @@ export function readIssueComments(call, repo, target, issue) {
 }
 
 export function existingCompletionComment(comments, marker, body, side) {
-  const completionComments = comments.filter((comment) => typeof comment?.body === 'string' && /<!-- paired-issue-completion:[^>]+ -->/.test(comment.body));
-  const matching = completionComments.filter((comment) => hasLine(comment.body, marker));
+  const completionComments = comments.filter(comment => typeof comment?.body === 'string' && /<!-- paired-issue-completion:[^>]+ -->/.test(comment.body));
+  const matching = completionComments.filter(comment => hasLine(comment.body, marker));
   if (matching.length > 1 || completionComments.length > matching.length) throw new Error(`Conflicting completion markers exist on the ${side} issue.`);
   if (!matching.length) return false;
-  const normalize = (value) => value.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const normalize = value => value.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
   if (normalize(matching[0].body) !== normalize(body)) throw new Error(`A completion marker on the ${side} issue has conflicting evidence.`);
   return true;
 }
@@ -36,7 +36,7 @@ export function sameVerifiedSnapshot(previous, current) {
 
 export async function postComment(repo, call, target, issue, body) {
   const args = ['issue', 'comment', String(issue.number), '--repo', target.repository, '--body-file'];
-  return withPublicationBody(repo, body, (path) => command(call, [...args, path], repo));
+  return withPublicationBody(repo, body, path => command(call, [...args, path], repo));
 }
 
 export function issueCommentsState(call, repo, targets, current, evidence, record) {

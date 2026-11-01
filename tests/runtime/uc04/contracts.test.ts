@@ -48,8 +48,8 @@ describe('UC-04: Data Contracts and Extension Validators', () => {
       });
       assert.equal(res.ok, false);
       if (!res.ok) {
-        assert.ok(res.errors.some((e) => e.path.endsWith('.id')));
-        assert.ok(res.errors.some((e) => e.path.endsWith('.title')));
+        assert.ok(res.errors.some(e => e.path.endsWith('.id')));
+        assert.ok(res.errors.some(e => e.path.endsWith('.title')));
       }
     });
 
@@ -63,7 +63,7 @@ describe('UC-04: Data Contracts and Extension Validators', () => {
       });
       assert.equal(res.ok, false);
       if (!res.ok) {
-        assert.ok(res.errors.some((e) => e.code === 'UNKNOWN_PROPERTY'));
+        assert.ok(res.errors.some(e => e.code === 'UNKNOWN_PROPERTY'));
       }
     });
 
@@ -86,7 +86,7 @@ describe('UC-04: Data Contracts and Extension Validators', () => {
       });
       assert.equal(res.ok, false);
       if (!res.ok) {
-        assert.ok(res.errors.some((e) => e.code === 'MISSING_COMPLETION_EVIDENCE' && e.path.endsWith('.evidenceRefs')));
+        assert.ok(res.errors.some(e => e.code === 'MISSING_COMPLETION_EVIDENCE' && e.path.endsWith('.evidenceRefs')));
       }
 
       const emptyRes = validatePlanStep({
@@ -129,7 +129,7 @@ describe('UC-04: Data Contracts and Extension Validators', () => {
       });
       assert.equal(badRes.ok, false);
       if (!badRes.ok) {
-        assert.ok(badRes.errors.some((e) => e.code === 'INVALID_REQUIRED_EVIDENCE'));
+        assert.ok(badRes.errors.some(e => e.code === 'INVALID_REQUIRED_EVIDENCE'));
       }
     });
   });
@@ -300,7 +300,7 @@ describe('UC-04: Data Contracts and Extension Validators', () => {
       const res = validateRegisterTaskInput(input);
       assert.equal(res.ok, false);
       if (!res.ok) {
-        assert.ok(res.errors.some((e) => e.code === 'CYCLIC_DEPENDENCY'));
+        assert.ok(res.errors.some(e => e.code === 'CYCLIC_DEPENDENCY'));
       }
     });
 
@@ -329,7 +329,7 @@ describe('UC-04: Data Contracts and Extension Validators', () => {
       const res = validateRegisterTaskInput(input);
       assert.equal(res.ok, false);
       if (!res.ok) {
-        assert.ok(res.errors.some((e) => e.code === 'DUPLICATE_STEP_ID'));
+        assert.ok(res.errors.some(e => e.code === 'DUPLICATE_STEP_ID'));
       }
     });
 
@@ -343,9 +343,7 @@ describe('UC-04: Data Contracts and Extension Validators', () => {
         goal: 'Add feature',
         acceptanceCriteria: ['pass tests'],
         constraints: [],
-        plan: [
-          { id: 's1', title: 'Step 1', description: 'Desc 1', status: 'todo', predecessorIds: ['unknown-step'] },
-        ],
+        plan: [{ id: 's1', title: 'Step 1', description: 'Desc 1', status: 'todo', predecessorIds: ['unknown-step'] }],
         budgetLedgers: [],
         workspaceBaseline: {
           commitHash: 'abcdef1234567890',
@@ -357,7 +355,7 @@ describe('UC-04: Data Contracts and Extension Validators', () => {
       const res = validateRegisterTaskInput(input);
       assert.equal(res.ok, false);
       if (!res.ok) {
-        assert.ok(res.errors.some((e) => e.code === 'FOREIGN_PREDECESSOR'));
+        assert.ok(res.errors.some(e => e.code === 'FOREIGN_PREDECESSOR'));
       }
     });
   });
@@ -615,7 +613,7 @@ describe('UC-04: Data Contracts and Extension Validators', () => {
       const resIncoherent = validateCheckpointRecord(incoherentTask);
       assert.equal(resIncoherent.ok, false);
       if (!resIncoherent.ok) {
-        assert.ok(resIncoherent.errors.some((e) => e.code === 'INCOHERENT_CHECKPOINT'));
+        assert.ok(resIncoherent.errors.some(e => e.code === 'INCOHERENT_CHECKPOINT'));
       }
 
       // Incoherent stateVersion
@@ -663,7 +661,7 @@ describe('UC-04: Data Contracts and Extension Validators', () => {
       });
       assert.equal(res.ok, false);
       if (!res.ok) {
-        assert.ok(res.errors.some((e) => e.code === 'INCOMPLETE_COMPLETION' && e.path.endsWith('.status')));
+        assert.ok(res.errors.some(e => e.code === 'INCOMPLETE_COMPLETION' && e.path.endsWith('.status')));
       }
     });
 
@@ -671,7 +669,7 @@ describe('UC-04: Data Contracts and Extension Validators', () => {
       const res = validateTaskState(baseState());
       assert.equal(res.ok, false);
       if (!res.ok) {
-        assert.ok(res.errors.some((e) => e.code === 'INCOMPLETE_COMPLETION' && e.path.endsWith('.verification')));
+        assert.ok(res.errors.some(e => e.code === 'INCOMPLETE_COMPLETION' && e.path.endsWith('.verification')));
       }
     });
 
@@ -682,7 +680,7 @@ describe('UC-04: Data Contracts and Extension Validators', () => {
       });
       assert.equal(res.ok, false);
       if (!res.ok) {
-        assert.ok(res.errors.some((e) => e.code === 'INCOMPLETE_COMPLETION' && e.path.endsWith('.verification')));
+        assert.ok(res.errors.some(e => e.code === 'INCOMPLETE_COMPLETION' && e.path.endsWith('.verification')));
       }
     });
 
@@ -701,7 +699,7 @@ describe('UC-04: Data Contracts and Extension Validators', () => {
       });
       assert.equal(res.ok, false);
       if (!res.ok) {
-        assert.ok(res.errors.some((e) => e.path.endsWith('.verification.status') && e.code === 'INVALID_VERIFICATION_STATUS'));
+        assert.ok(res.errors.some(e => e.path.endsWith('.verification.status') && e.code === 'INVALID_VERIFICATION_STATUS'));
       }
     });
   });
@@ -764,7 +762,7 @@ describe('UC-04: Data Contracts and Extension Validators', () => {
       const res = validateDispatchClaimRecord(missingClaimId);
       assert.equal(res.ok, false);
       if (!res.ok) {
-        assert.ok(res.errors.some((e) => e.path.endsWith('.claimId')));
+        assert.ok(res.errors.some(e => e.path.endsWith('.claimId')));
       }
     });
   });

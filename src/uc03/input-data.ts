@@ -19,7 +19,10 @@ export function snapshotInputData(input: unknown): Readonly<{ ok: true; value: u
   function copy(value: unknown, depth: number): unknown {
     if (++values > 20000 || depth > 32) throw new InvalidData();
     if (value === undefined || value === null || typeof value === 'boolean') return value;
-    if (typeof value === 'string') { account(value); return value; }
+    if (typeof value === 'string') {
+      account(value);
+      return value;
+    }
     if (typeof value === 'number' && Number.isFinite(value)) return value;
     if (typeof value !== 'object' || types.isProxy(value) || ancestors.has(value)) throw new InvalidData();
     ancestors.add(value);
@@ -48,8 +51,12 @@ export function snapshotInputData(input: unknown): Readonly<{ ok: true; value: u
     ancestors.delete(value);
     return result;
   }
-  try { return { ok: true, value: copy(input, 0) }; }
-  catch (error) { if (error instanceof InvalidData) return { ok: false }; throw error; }
+  try {
+    return { ok: true, value: copy(input, 0) };
+  } catch (error) {
+    if (error instanceof InvalidData) return { ok: false };
+    throw error;
+  }
 }
 
 export function hasInputKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
@@ -62,8 +69,7 @@ function missingValue(task: Record<string, unknown>, path: string): boolean {
     if (typeof value !== 'object' || value === null) return value === undefined;
     value = Object.getOwnPropertyDescriptor(value, part)?.value;
   }
-  return value === undefined || typeof value === 'string' && !value.trim()
-    || (path === 'acceptanceCriteria' || path === 'requiredChecks') && Array.isArray(value) && value.length === 0;
+  return value === undefined || (typeof value === 'string' && !value.trim()) || ((path === 'acceptanceCriteria' || path === 'requiredChecks') && Array.isArray(value) && value.length === 0);
 }
 
 /** Shared supplied-task admission; input is already a detached data snapshot. */

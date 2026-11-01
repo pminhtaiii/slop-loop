@@ -35,7 +35,7 @@ export function safeSnapshot(input: unknown): SafeSnapshot {
         const length = lengthDescriptor?.value;
         if (!Number.isSafeInteger(length) || length < 0) throw new TypeError();
         const keys = Reflect.ownKeys(value);
-        if (keys.length !== length + 1 || keys.some((key) => key !== 'length' && (typeof key !== 'string' || !/^(0|[1-9]\d*)$/.test(key)))) throw new TypeError();
+        if (keys.length !== length + 1 || keys.some(key => key !== 'length' && (typeof key !== 'string' || !/^(0|[1-9]\d*)$/.test(key)))) throw new TypeError();
         const result: unknown[] = new Array(length);
         copies.set(value, result);
         for (let i = 0; i < length; i++) {
@@ -55,7 +55,10 @@ export function safeSnapshot(input: unknown): SafeSnapshot {
         const descriptor = Object.getOwnPropertyDescriptor(value, key);
         if (!descriptor || !descriptor.enumerable || !('value' in descriptor)) throw new TypeError();
         Object.defineProperty(result, key, {
-          value: copy(descriptor.value, depth + 1), enumerable: true, writable: true, configurable: true,
+          value: copy(descriptor.value, depth + 1),
+          enumerable: true,
+          writable: true,
+          configurable: true,
         });
       }
       return result;
@@ -88,9 +91,7 @@ export function immutableResult<T>(result: ValidationResult<T>): ValidationResul
   return deepFreeze(snapshot.value as ValidationResult<T>);
 }
 
-export function protectValidator<T, C = unknown>(
-  validator: (input: unknown, context?: C) => ValidationResult<T>,
-): (input: unknown, context?: C) => ValidationResult<T> {
+export function protectValidator<T, C = unknown>(validator: (input: unknown, context?: C) => ValidationResult<T>): (input: unknown, context?: C) => ValidationResult<T> {
   return (input, context) => {
     const inputCopy = safeSnapshot(input);
     const contextCopy = safeSnapshot(context);

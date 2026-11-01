@@ -17,7 +17,13 @@ import {
 import { validateDispatchClaimV02 } from '../../../src/contracts/approvals/contracts.ts';
 
 type Scenario = ReturnType<typeof createRecoveryScenario>;
-const continuation = (scenario: Scenario, recovery: ApprovalRecoveryOwner = scenario.owner, deadline = 2000) => createApprovalContinuation({ taskId: 'task-1', profile: { ...recoveryProfile, commandRules: recoveryProfile.commandRules.map(rule => ({ ...rule, timeoutMs: deadline })), operationDeadlineMs: deadline }, approval: scenario.service(), recovery });
+const continuation = (scenario: Scenario, recovery: ApprovalRecoveryOwner = scenario.owner, deadline = 2000) =>
+  createApprovalContinuation({
+    taskId: 'task-1',
+    profile: { ...recoveryProfile, commandRules: recoveryProfile.commandRules.map(rule => ({ ...rule, timeoutMs: deadline })), operationDeadlineMs: deadline },
+    approval: scenario.service(),
+    recovery,
+  });
 async function approved(scenario: Scenario): Promise<void> {
   const service = scenario.service();
   await service.requestDecision(scenario.binding);
@@ -51,7 +57,13 @@ test('waiting and rejected task holds survive new service and continuation insta
 test('lost approval commit response reloads exact persisted decision but cannot create consent on failure', async () => {
   for (const committed of [false, true]) {
     const scenario = createRecoveryScenario();
-    const backend = { ...scenario.store, resolvePending: (input: unknown) => { if (committed) scenario.store.resolvePending(input); throw new Error('lost-decision-response'); } };
+    const backend = {
+      ...scenario.store,
+      resolvePending: (input: unknown) => {
+        if (committed) scenario.store.resolvePending(input);
+        throw new Error('lost-decision-response');
+      },
+    };
     const service = scenario.service(backend);
     await service.requestDecision(scenario.binding);
     await assert.rejects(scenario.decide(service));
@@ -81,7 +93,9 @@ test('repository drift invalidates approved consent before a recovery claim', as
 test('owner serialized pause wins over an already validated approval and prevents a claim', async () => {
   const scenario = createRecoveryScenario();
   await approved(scenario);
-  scenario.beforeClaim(async () => { await scenario.service().requestDecision({ ...scenario.binding, decisionId: 'decision-2' }); });
+  scenario.beforeClaim(async () => {
+    await scenario.service().requestDecision({ ...scenario.binding, decisionId: 'decision-2' });
+  });
   assert.notEqual((await continuation(scenario).admit('decision-1')).outcome, 'claimed');
   assert.equal(scenario.store.loadTaskControl('task-1').value?.mode, 'waiting');
   assert.equal(scenario.store.readHistory('task-1').value?.claims.length, 0);
@@ -123,9 +137,16 @@ test('observed, uncertain and reconciled outcomes never blindly replay the inter
     await approved(scenario);
     assert.equal((await continuation(scenario).admit('decision-1')).outcome, 'claimed');
     const initial = phase === 'observed' ? 'observed' : 'uncertain';
-    const response = scenario.store.recordOutcome({ claimId: 'claim-1', expectedControlVersion: 4, resultRef: 'result-1', phase: initial, event: scenario.event(initial === 'observed' ? 'dispatch-effect-observed' : 'dispatch-uncertain', 'claim-1') });
+    const response = scenario.store.recordOutcome({
+      claimId: 'claim-1',
+      expectedControlVersion: 4,
+      resultRef: 'result-1',
+      phase: initial,
+      event: scenario.event(initial === 'observed' ? 'dispatch-effect-observed' : 'dispatch-uncertain', 'claim-1'),
+    });
     assert.equal(response.safe.outcome, initial === 'observed' ? 'ok' : 'uncertain');
-    if (phase === 'reconciled') assert.equal(scenario.store.reconcile({ claimId: 'claim-1', expectedControlVersion: 5, resultRef: 'evidence-1', event: scenario.event('claim-reconciled', 'claim-1') }).safe.outcome, 'ok');
+    if (phase === 'reconciled')
+      assert.equal(scenario.store.reconcile({ claimId: 'claim-1', expectedControlVersion: 5, resultRef: 'evidence-1', event: scenario.event('claim-reconciled', 'claim-1') }).safe.outcome, 'ok');
     assert.equal((await continuation(scenario).admit('decision-1')).outcome, 'blocked');
     assert.equal(scenario.store.readHistory('task-1').value?.claims.length, 1);
     await scenario.accounting.reserve('task', 'tokens', 99900, 'remaining');
@@ -137,8 +158,16 @@ test('deadline while loading owner state cannot start a late claim', async () =>
   const scenario = createRecoveryScenario();
   await approved(scenario);
   let release: (() => void) | undefined;
-  const gate = new Promise<void>(resolve => { release = resolve; });
-  const recovery = { ...scenario.owner, load: async (id: string) => { await gate; return scenario.owner.load(id); } };
+  const gate = new Promise<void>(resolve => {
+    release = resolve;
+  });
+  const recovery = {
+    ...scenario.owner,
+    load: async (id: string) => {
+      await gate;
+      return scenario.owner.load(id);
+    },
+  };
   assert.equal((await continuation(scenario, recovery, 10).admit('decision-1')).outcome, 'unavailable');
   release?.();
   await new Promise<void>(resolve => setImmediate(resolve));
@@ -149,7 +178,9 @@ test('a claim that commits after caller deadline stays retained and cannot yield
   const scenario = createRecoveryScenario();
   await approved(scenario);
   let release: (() => void) | undefined;
-  const gate = new Promise<void>(resolve => { release = resolve; });
+  const gate = new Promise<void>(resolve => {
+    release = resolve;
+  });
   scenario.beforeClaim(async () => gate);
   assert.equal((await continuation(scenario, scenario.owner, 10).admit('decision-1')).outcome, 'unavailable');
   release?.();
@@ -163,13 +194,31 @@ test('malformed or protected claim receipts fail closed without releasing actual
     const scenario = createRecoveryScenario();
     await approved(scenario);
     let reads = 0;
-    const recovery = { ...scenario.owner, claimDispatch: async (input: Parameters<ApprovalRecoveryOwner['claimDispatch']>[0]) => {
-      const receipt = await scenario.owner.claimDispatch(input);
-      if (variant === 'accessor') return { get claim() { reads += 1; throw new Error('must-not-read'); } };
-      if (variant === 'proxy') return new Proxy({}, { getPrototypeOf() { reads += 1; throw new Error('must-not-trap'); } });
-      if (variant === 'protected') return { receipt, secret: '-----BEGIN PRIVATE KEY-----' };
-      return { ...(receipt as Record<string, unknown>), reservations: null };
-    } };
+    const recovery = {
+      ...scenario.owner,
+      claimDispatch: async (input: Parameters<ApprovalRecoveryOwner['claimDispatch']>[0]) => {
+        const receipt = await scenario.owner.claimDispatch(input);
+        if (variant === 'accessor')
+          return {
+            get claim() {
+              reads += 1;
+              throw new Error('must-not-read');
+            },
+          };
+        if (variant === 'proxy')
+          return new Proxy(
+            {},
+            {
+              getPrototypeOf() {
+                reads += 1;
+                throw new Error('must-not-trap');
+              },
+            },
+          );
+        if (variant === 'protected') return { receipt, secret: '-----BEGIN PRIVATE KEY-----' };
+        return { ...(receipt as Record<string, unknown>), reservations: null };
+      },
+    };
     assert.equal((await continuation(scenario, recovery).admit('decision-1')).outcome, 'unavailable');
     assert.equal(reads, 0);
     assert.equal(scenario.store.readHistory('task-1').value?.claims.length, 1);
@@ -180,7 +229,15 @@ test('malformed or protected claim receipts fail closed without releasing actual
 test('malformed recovery state closes admission without invoking an accessor', async () => {
   const scenario = createRecoveryScenario();
   let reads = 0;
-  const recovery = { ...scenario.owner, load: async () => ({ get control() { reads += 1; return {}; } }) };
+  const recovery = {
+    ...scenario.owner,
+    load: async () => ({
+      get control() {
+        reads += 1;
+        return {};
+      },
+    }),
+  };
   const continuation = createApprovalContinuation({ taskId: 'task-1', profile: recoveryProfile, approval: scenario.service(), recovery });
   assert.deepEqual(await continuation.admit('decision-1'), { outcome: 'unavailable', claimId: null });
   assert.equal(reads, 0);
@@ -189,9 +246,21 @@ test('malformed recovery state closes admission without invoking an accessor', a
 test('an unrelated unresolved owner claim missing its control fence makes recovery unavailable', async () => {
   const scenario = createRecoveryScenario();
   await approved(scenario);
-  const foreign = { schemaVersion: 'uc05-approval/0.1-draft', claimId: 'claim-other', actionId: 'action-other', taskId: 'task-1', expectedControlVersion: 1, expectedEpoch: 1,
-    repositoryStateDigest: scenario.binding.repositoryRevisionDigest, policyIdentity: recoveryProfile.policyIdentity, decisionRefs: ['decision-other'], reservationRefs: ['bundle-other'], phase: 'claimed', resultRef: null };
-  const recovery = { ...scenario.owner, load: async (id: string) => ({ ...(await scenario.owner.load(id) as Record<string, unknown>), claims: [foreign] }) };
+  const foreign = {
+    schemaVersion: 'uc05-approval/0.1-draft',
+    claimId: 'claim-other',
+    actionId: 'action-other',
+    taskId: 'task-1',
+    expectedControlVersion: 1,
+    expectedEpoch: 1,
+    repositoryStateDigest: scenario.binding.repositoryRevisionDigest,
+    policyIdentity: recoveryProfile.policyIdentity,
+    decisionRefs: ['decision-other'],
+    reservationRefs: ['bundle-other'],
+    phase: 'claimed',
+    resultRef: null,
+  };
+  const recovery = { ...scenario.owner, load: async (id: string) => ({ ...((await scenario.owner.load(id)) as Record<string, unknown>), claims: [foreign] }) };
   assert.equal((await continuation(scenario, recovery).admit('decision-1')).outcome, 'unavailable');
   assert.equal(scenario.store.readHistory('task-1').value?.claims.length, 0);
 });
@@ -212,8 +281,17 @@ test('owner current-policy and safety checks reject drift between approval valid
     await approved(scenario);
     scenario.beforeClaim(async () => {
       const context = scenario.current();
-      scenario.setContext(changed === 'run' ? { ...context, runId: 'run-2' } : { ...context, facts: { ...context.facts,
-        ...(changed === 'policy' ? { policyIdentity: { ...context.facts.policyIdentity, configVersion: '2' } } : { safety: { ...context.facts.safety, isolated: false } }) } });
+      scenario.setContext(
+        changed === 'run'
+          ? { ...context, runId: 'run-2' }
+          : {
+              ...context,
+              facts: {
+                ...context.facts,
+                ...(changed === 'policy' ? { policyIdentity: { ...context.facts.policyIdentity, configVersion: '2' } } : { safety: { ...context.facts.safety, isolated: false } }),
+              },
+            },
+      );
     });
     assert.notEqual((await continuation(scenario).admit('decision-1')).outcome, 'claimed');
     assert.equal(scenario.store.readHistory('task-1').value?.claims.length, 0);
@@ -283,9 +361,7 @@ test('UC-05 v0.2 continuation returns a validated journal claim as coordination 
   let legacyClaimCalls = 0;
   const recovery = {
     provenance: 'mock' as const,
-    loadAdmission: async (decisionId: string) => decisionId === 'decision-1'
-      ? { context, trustedContext }
-      : null,
+    loadAdmission: async (decisionId: string) => (decisionId === 'decision-1' ? { context, trustedContext } : null),
     claimDispatch: async () => {
       legacyClaimCalls += 1;
       return null;
@@ -302,12 +378,15 @@ test('UC-05 v0.2 continuation returns a validated journal claim as coordination 
   const result = await continuation.admit('decision-1');
   const snapshot = journal.getJournalSnapshot();
   const task = await journal.loadTask(context.taskId);
-  const claimState = result.claimState as unknown as {
-    readonly taskId: string;
-    readonly decisionId: string;
-    readonly claim: Record<string, unknown>;
-    readonly journalReceipt: { readonly claimId: string };
-  } | null | undefined;
+  const claimState = result.claimState as unknown as
+    | {
+        readonly taskId: string;
+        readonly decisionId: string;
+        readonly claim: Record<string, unknown>;
+        readonly journalReceipt: { readonly claimId: string };
+      }
+    | null
+    | undefined;
 
   assert.equal(result.outcome, 'claimed');
   assert.ok(claimState);
@@ -318,7 +397,7 @@ test('UC-05 v0.2 continuation returns a validated journal claim as coordination 
   assert.equal(claimState?.journalReceipt.claimId, result.claimId);
   assert.equal(legacyClaimCalls, 0);
   assert.equal(snapshot.activeClaimId, result.claimId);
-  assert.equal(snapshot.claims.find((item) => item.claimId === result.claimId)?.status, 'claimed');
+  assert.equal(snapshot.claims.find(item => item.claimId === result.claimId)?.status, 'claimed');
   assert.equal(snapshot.attempts.length, 0);
   assert.equal(task?.node, 'Repair');
   assert.equal(isExecutorCapability(result.claimId), false);

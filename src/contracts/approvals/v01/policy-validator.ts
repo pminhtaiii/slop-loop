@@ -1,13 +1,38 @@
 import type { ValidationError, ValidationResult } from '../../foundation/uc03.ts';
 import type { PolicyProfile } from './types.ts';
 import { validatePolicyIdentity } from './claim-validator.ts';
-import { SAFE_RELATIVE_PATH_PATTERN, addError, invalidObject, isBoundedDenseArray, isRecord, rejectUnknownKeys, validateBoundedText, validateId, validatePositiveInteger, validateSchemaVersion } from './validation.ts';
+import {
+  SAFE_RELATIVE_PATH_PATTERN,
+  addError,
+  invalidObject,
+  isBoundedDenseArray,
+  isRecord,
+  rejectUnknownKeys,
+  validateBoundedText,
+  validateId,
+  validatePositiveInteger,
+  validateSchemaVersion,
+} from './validation.ts';
 
 const POLICY_PROFILE_KEYS = [
-  'schemaVersion', 'profileId', 'profileVersion', 'policyIdentity', 'supportedActionKinds', 'commandRules',
-  'sensitivePaths', 'patchBreadth', 'maxActionBytes', 'maxArgvEntries', 'maxArgvEntryBytes',
-  'maxPresentationPageBytes', 'maxPresentationPages', 'maxPresentationTotalBytes', 'maxEventBytes',
-  'operationDeadlineMs', 'maxMutationAttempts', 'diagnosticRules',
+  'schemaVersion',
+  'profileId',
+  'profileVersion',
+  'policyIdentity',
+  'supportedActionKinds',
+  'commandRules',
+  'sensitivePaths',
+  'patchBreadth',
+  'maxActionBytes',
+  'maxArgvEntries',
+  'maxArgvEntryBytes',
+  'maxPresentationPageBytes',
+  'maxPresentationPages',
+  'maxPresentationTotalBytes',
+  'maxEventBytes',
+  'operationDeadlineMs',
+  'maxMutationAttempts',
+  'diagnosticRules',
 ] as const;
 const COMMAND_RULE_KEYS = ['ruleId', 'executableRef', 'argvPrefix', 'workingDirectoryRef', 'timeoutMs', 'maxOutputBytes'] as const;
 const PATCH_BREADTH_KEYS = ['maxFiles', 'maxAddedDeletedLines'] as const;
@@ -47,21 +72,28 @@ export function validatePolicyProfile(input: unknown): ValidationResult<PolicyPr
   validatePolicyIdentity(input['policyIdentity'], `${path}.policyIdentity`, errors);
 
   const actionKinds = input['supportedActionKinds'];
-  if (!isBoundedDenseArray(actionKinds, ACTION_KINDS.length) || actionKinds.length === 0) addError(errors, `${path}.supportedActionKinds`, 'MISSING_ACTION_RULES', 'at least one supported action kind must be explicit in a bounded dense array');
+  if (!isBoundedDenseArray(actionKinds, ACTION_KINDS.length) || actionKinds.length === 0)
+    addError(errors, `${path}.supportedActionKinds`, 'MISSING_ACTION_RULES', 'at least one supported action kind must be explicit in a bounded dense array');
   else {
     const seenActions = new Set<string>();
     actionKinds.forEach((kind: unknown, index: number) => {
-      if (typeof kind !== 'string' || !ACTION_KINDS.includes(kind as typeof ACTION_KINDS[number])) addError(errors, `${path}.supportedActionKinds[${index}]`, 'UNSUPPORTED_ACTION', 'action kind is not in the canonical action vocabulary');
+      if (typeof kind !== 'string' || !ACTION_KINDS.includes(kind as (typeof ACTION_KINDS)[number]))
+        addError(errors, `${path}.supportedActionKinds[${index}]`, 'UNSUPPORTED_ACTION', 'action kind is not in the canonical action vocabulary');
       else if (seenActions.has(kind)) addError(errors, `${path}.supportedActionKinds[${index}]`, 'DUPLICATE_ACTION', 'supported action kinds must be unique');
       else seenActions.add(kind);
     });
   }
 
   const positiveCaps: readonly [keyof typeof UC05_LOCAL_PROFILE_CAPS, string][] = [
-    ['maxActionBytes', 'maxActionBytes'], ['maxArgvEntries', 'maxArgvEntries'], ['maxArgvEntryBytes', 'maxArgvEntryBytes'],
-    ['maxPresentationPageBytes', 'maxPresentationPageBytes'], ['maxPresentationPages', 'maxPresentationPages'],
-    ['maxPresentationTotalBytes', 'maxPresentationTotalBytes'], ['maxEventBytes', 'maxEventBytes'],
-    ['operationDeadlineMs', 'operationDeadlineMs'], ['maxMutationAttempts', 'maxMutationAttempts'],
+    ['maxActionBytes', 'maxActionBytes'],
+    ['maxArgvEntries', 'maxArgvEntries'],
+    ['maxArgvEntryBytes', 'maxArgvEntryBytes'],
+    ['maxPresentationPageBytes', 'maxPresentationPageBytes'],
+    ['maxPresentationPages', 'maxPresentationPages'],
+    ['maxPresentationTotalBytes', 'maxPresentationTotalBytes'],
+    ['maxEventBytes', 'maxEventBytes'],
+    ['operationDeadlineMs', 'operationDeadlineMs'],
+    ['maxMutationAttempts', 'maxMutationAttempts'],
   ];
   for (const [capKey, field] of positiveCaps) validateCappedBound(input[field], UC05_LOCAL_PROFILE_CAPS[capKey], `${path}.${field}`, errors);
 
@@ -80,7 +112,8 @@ export function validatePolicyProfile(input: unknown): ValidationResult<PolicyPr
   } else {
     const seenPaths = new Set<string>();
     sensitivePaths.forEach((entry: unknown, index: number) => {
-      if (typeof entry !== 'string' || !SAFE_RELATIVE_PATH_PATTERN.test(entry)) addError(errors, `${path}.sensitivePaths[${index}]`, 'INVALID_PATH', 'sensitive path must be a canonical repository-relative path');
+      if (typeof entry !== 'string' || !SAFE_RELATIVE_PATH_PATTERN.test(entry))
+        addError(errors, `${path}.sensitivePaths[${index}]`, 'INVALID_PATH', 'sensitive path must be a canonical repository-relative path');
       else if (seenPaths.has(entry)) addError(errors, `${path}.sensitivePaths[${index}]`, 'DUPLICATE_PATH', 'sensitive paths must be unique');
       else seenPaths.add(entry);
     });
@@ -107,10 +140,12 @@ export function validatePolicyProfile(input: unknown): ValidationResult<PolicyPr
       validatePositiveInteger(entry['maxOutputBytes'], `${rulePath}.maxOutputBytes`, errors);
       const argvPrefix = entry['argvPrefix'];
       if (!isBoundedDenseArray(argvPrefix, 32)) addError(errors, `${rulePath}.argvPrefix`, 'INVALID_ARGV', 'argvPrefix must be a bounded dense array of argument tokens');
-      else argvPrefix.forEach((token: unknown, tokenIndex: number) => {
-        validateBoundedText(token, `${rulePath}.argvPrefix[${tokenIndex}]`, errors, 4_096);
-        if (typeof token === 'string' && /[;&|<>`$\n\r]/u.test(token)) addError(errors, `${rulePath}.argvPrefix[${tokenIndex}]`, 'UNSUPPORTED_SHELL_SYNTAX', 'argument rules cannot contain shell evaluation or chaining syntax');
-      });
+      else
+        argvPrefix.forEach((token: unknown, tokenIndex: number) => {
+          validateBoundedText(token, `${rulePath}.argvPrefix[${tokenIndex}]`, errors, 4_096);
+          if (typeof token === 'string' && /[;&|<>`$\n\r]/u.test(token))
+            addError(errors, `${rulePath}.argvPrefix[${tokenIndex}]`, 'UNSUPPORTED_SHELL_SYNTAX', 'argument rules cannot contain shell evaluation or chaining syntax');
+        });
       if (typeof entry['ruleId'] === 'string') {
         if (seenRules.has(entry['ruleId'])) addError(errors, `${rulePath}.ruleId`, 'DUPLICATE_RULE', 'command rule identifiers must be unique');
         seenRules.add(entry['ruleId']);
@@ -141,11 +176,15 @@ export function validatePolicyProfile(input: unknown): ValidationResult<PolicyPr
   }
 
   if (
-    typeof input['maxPresentationPageBytes'] === 'number' && Number.isSafeInteger(input['maxPresentationPageBytes']) &&
-    typeof input['maxPresentationPages'] === 'number' && Number.isSafeInteger(input['maxPresentationPages']) &&
-    typeof input['maxPresentationTotalBytes'] === 'number' && Number.isSafeInteger(input['maxPresentationTotalBytes']) &&
+    typeof input['maxPresentationPageBytes'] === 'number' &&
+    Number.isSafeInteger(input['maxPresentationPageBytes']) &&
+    typeof input['maxPresentationPages'] === 'number' &&
+    Number.isSafeInteger(input['maxPresentationPages']) &&
+    typeof input['maxPresentationTotalBytes'] === 'number' &&
+    Number.isSafeInteger(input['maxPresentationTotalBytes']) &&
     input['maxPresentationTotalBytes'] > input['maxPresentationPageBytes'] * input['maxPresentationPages']
-  ) addError(errors, `${path}.maxPresentationTotalBytes`, 'INCONSISTENT_PRESENTATION_BOUNDS', 'total presentation bytes cannot exceed page bytes times page count');
+  )
+    addError(errors, `${path}.maxPresentationTotalBytes`, 'INCONSISTENT_PRESENTATION_BOUNDS', 'total presentation bytes cannot exceed page bytes times page count');
 
   return errors.length > 0 ? { ok: false, errors } : { ok: true, value: input as unknown as PolicyProfile };
 }

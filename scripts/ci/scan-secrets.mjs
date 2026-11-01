@@ -95,17 +95,27 @@ export function scanArgs({ snapshot, from, to, reportPath, configPath, ignorePat
   for (const path of [configPath, ignorePath]) {
     if (typeof path !== 'string' || !path) throw new Error('A trusted Gitleaks config and ignore path are required.');
   }
-  const common = ['--config', configPath, '--gitleaks-ignore-path', ignorePath, '--ignore-gitleaks-allow', '--report-format', 'json', '--report-path', reportPath, '--redact=100', '--no-banner', '--exit-code', '1'];
+  const common = [
+    '--config',
+    configPath,
+    '--gitleaks-ignore-path',
+    ignorePath,
+    '--ignore-gitleaks-allow',
+    '--report-format',
+    'json',
+    '--report-path',
+    reportPath,
+    '--redact=100',
+    '--no-banner',
+    '--exit-code',
+    '1',
+  ];
   return from && to ? ['git', snapshot, '--log-opts', `${from}..${to}`, ...common] : ['dir', snapshot, ...common];
 }
 
 export function readReport(path, maxBytes = MAX_REPORT_BYTES) {
-  let stats;
-  try {
-    stats = statSync(path);
-  } catch {
-    throw new Error('Gitleaks report could not be read.');
-  }
+  const stats = statSync(path, { throwIfNoEntry: false });
+  if (!stats) throw new Error('Gitleaks report could not be read.');
   if (stats.size > maxBytes) throw new Error(`Gitleaks report exceeded the bounded size limit of ${maxBytes} bytes.`);
   return readFileSync(path, 'utf8');
 }
@@ -138,7 +148,10 @@ export function scanOnce({ kind, snapshot, range, binary, workdir, reportDir = w
 function snapshotPath(path, snapshot) {
   if (typeof snapshot === 'string' && snapshot) {
     for (const separator of ['/', '\\']) {
-      if (path.startsWith(snapshot + separator)) { path = path.slice(snapshot.length + 1); break; }
+      if (path.startsWith(snapshot + separator)) {
+        path = path.slice(snapshot.length + 1);
+        break;
+      }
     }
   }
   if (!path || isAbsolute(path) || path.startsWith('/') || path.includes('..') || !PRINTABLE.test(path)) throw new Error('Gitleaks produced malformed output; refusing to report it.');
@@ -151,7 +164,7 @@ function summary(finding, snapshot) {
   const line = finding?.StartLine;
   const commit = finding?.Commit ?? '';
   const secret = finding?.Secret;
-  const leak = typeof secret === 'string' && secret.length > 0 && [ruleId, path, commit, finding?.Description].some((value) => typeof value === 'string' && value.includes(secret));
+  const leak = typeof secret === 'string' && secret.length > 0 && [ruleId, path, commit, finding?.Description].some(value => typeof value === 'string' && value.includes(secret));
   if (leak) throw new Error('Gitleaks output failed redaction; refusing to report it.');
   if (typeof ruleId !== 'string' || !RULE_ID.test(ruleId)) throw new Error('Gitleaks produced malformed output; refusing to report it.');
   if (typeof path !== 'string') throw new Error('Gitleaks produced malformed output; refusing to report it.');
@@ -172,18 +185,26 @@ export function parseFindings({ status, report }, snapshot) {
     throw new Error('Gitleaks produced malformed output; refusing to report it.');
   }
   if (!Array.isArray(parsed)) throw new Error('Gitleaks produced malformed output; refusing to report it.');
-  return parsed.map((finding) => summary(finding, snapshot));
+  return parsed.map(finding => summary(finding, snapshot));
 }
 
-const keyOf = (finding) => `${finding.ruleId}\0${finding.path}\0${finding.line}\0${finding.commit}`;
+const keyOf = finding => `${finding.ruleId}\0${finding.path}\0${finding.line}\0${finding.commit}`;
 
 function validateExemption(exemption) {
-  const fail = (detail) => {
+  const fail = detail => {
     throw new Error(`Reviewed exemption is invalid: ${detail}`);
   };
   if (!exemption || typeof exemption !== 'object') fail('not an object');
   if (typeof exemption.ruleId !== 'string' || !RULE_ID.test(exemption.ruleId)) fail('rule id must be exact');
-  if (typeof exemption.path !== 'string' || !PRINTABLE.test(exemption.path) || !exemption.path.includes('/') || /[*?]/.test(exemption.path) || exemption.path.startsWith('/') || exemption.path.includes('..') || exemption.path.endsWith('/')) {
+  if (
+    typeof exemption.path !== 'string' ||
+    !PRINTABLE.test(exemption.path) ||
+    !exemption.path.includes('/') ||
+    /[*?]/.test(exemption.path) ||
+    exemption.path.startsWith('/') ||
+    exemption.path.includes('..') ||
+    exemption.path.endsWith('/')
+  ) {
     fail('path must name one exact file, never a directory or glob');
   }
   if (!Number.isInteger(exemption.line) || exemption.line < 1) fail('line must be a positive integer');
@@ -200,14 +221,14 @@ export function applyExemptions(findings, exemptions = []) {
     if (exempt.has(key)) throw new Error('Duplicate reviewed exemption for the same finding.');
     exempt.add(key);
   }
-  return findings.filter((finding) => !exempt.has(keyOf(finding)));
+  return findings.filter(finding => !exempt.has(keyOf(finding)));
 }
 
 export function runSecretScan({ plan, snapshot, scan, exemptions = [] }) {
   const findings = [];
   findings.push(...parseFindings(scan({ kind: 'tree', snapshot }), snapshot));
   for (const range of plan.ranges) findings.push(...parseFindings(scan({ kind: 'range', snapshot, range }), snapshot));
-  const unique = [...new Map(findings.map((finding) => [keyOf(finding), finding])).values()];
+  const unique = [...new Map(findings.map(finding => [keyOf(finding), finding])).values()];
   return { mode: plan.mode, findings: applyExemptions(unique, exemptions) };
 }
 
@@ -235,7 +256,8 @@ export function removeSnapshot({ root, directory }) {
   }
 }
 
-const USAGE = 'Usage: node scripts/ci/scan-secrets.mjs --event <pull_request|push|workflow_dispatch> --head <sha> [--base <sha>] [--before <sha>] [--root <checkout>] [--exemptions <json>] [--gitleaks <binary>] [--install-dir <dir>]';
+const USAGE =
+  'Usage: node scripts/ci/scan-secrets.mjs --event <pull_request|push|workflow_dispatch> --head <sha> [--base <sha>] [--before <sha>] [--root <checkout>] [--exemptions <json>] [--gitleaks <binary>] [--install-dir <dir>]';
 const FLAGS = new Set(['--event', '--head', '--base', '--before', '--root', '--exemptions', '--gitleaks', '--install-dir']);
 
 export function parseScanArgs(argv) {
@@ -278,7 +300,7 @@ async function main(argv) {
     head: args.head,
     base: args.base,
     before: args.before,
-    available: (rev) => revisionExists(root, rev),
+    available: rev => revisionExists(root, rev),
   });
   const exemptions = args.exemptions ? JSON.parse(readFileSync(args.exemptions, 'utf8')) : [];
   if (!Array.isArray(exemptions)) throw new Error('Reviewed exemptions must be a JSON array.');
@@ -294,7 +316,7 @@ async function main(argv) {
     writeFileSync(ignorePath, '');
     createSnapshot({ root, head: args.head, directory });
     // Reports live outside the scanned tree so analyzer output cannot become candidate content.
-    const scan = (spec) => scanOnce({ ...spec, binary, workdir: directory, reportDir: workspace, configPath, ignorePath });
+    const scan = spec => scanOnce({ ...spec, binary, workdir: directory, reportDir: workspace, configPath, ignorePath });
     const result = runSecretScan({ plan, snapshot: directory, scan, exemptions });
     console.log(JSON.stringify(result));
     if (result.findings.length) process.exitCode = 1;
@@ -328,7 +350,7 @@ export function revisionExists(root, from) {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  main(process.argv.slice(2)).catch((error) => {
+  main(process.argv.slice(2)).catch(error => {
     console.error(error.message);
     process.exitCode = 1;
   });

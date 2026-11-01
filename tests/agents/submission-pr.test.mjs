@@ -23,7 +23,9 @@ function git(cwd, ...args) {
   return result.stdout.trim();
 }
 
-function flag(args, name) { return args[args.indexOf(name) + 1]; }
+function flag(args, name) {
+  return args[args.indexOf(name) + 1];
+}
 
 async function fixture(t) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'submission-pr-')));
@@ -74,11 +76,11 @@ async function fixture(t) {
   let pushFailure;
   let permission = 'WRITE';
   let submissionPrivate = true;
-  const remoteHead = (ref) => {
+  const remoteHead = ref => {
     const output = git(source, 'ls-remote', '--heads', 'submission', ref);
     return output ? output.split(/\s+/)[0] : undefined;
   };
-  const gh = (args) => {
+  const gh = args => {
     if (args[0] === 'repo' && args[1] === 'view') {
       const isSubmission = args[2] === targets.submission.repository;
       return JSON.stringify({
@@ -88,17 +90,20 @@ async function fixture(t) {
       });
     }
     if (args[0] === 'pr' && args[1] === 'list') {
-      const found = prs.filter((pr) => pr.repository === flag(args, '--repo') && pr.headRefName === flag(args, '--head'));
+      const found = prs.filter(pr => pr.repository === flag(args, '--repo') && pr.headRefName === flag(args, '--head'));
       return JSON.stringify(found.map(({ number, url, baseRefName, headRefName, state }) => ({ number, url, baseRefName, headRefName, state })));
     }
     if (args[0] === 'pr' && args[1] === 'view') {
-      const pr = prs.find((item) => item.number === Number(args[2]));
+      const pr = prs.find(item => item.number === Number(args[2]));
       if (!pr) throw new Error('PR not found');
       pr.headRefOid = remoteHead(`refs/heads/${pr.headRefName}`) ?? pr.headRefOid;
       return JSON.stringify(pr);
     }
     if (args[0] === 'pr' && args[1] === 'create') {
-      if (createFailure === 'before') { createFailure = undefined; throw new Error('simulated create failure'); }
+      if (createFailure === 'before') {
+        createFailure = undefined;
+        throw new Error('simulated create failure');
+      }
       const pr = {
         number: prs.length + 1,
         repository: flag(args, '--repo'),
@@ -112,11 +117,14 @@ async function fixture(t) {
         headRefOid: remoteHead(`refs/heads/${flag(args, '--head')}`),
       };
       prs.push(pr);
-      if (createFailure === 'after') { createFailure = undefined; throw new Error('simulated lost create response'); }
+      if (createFailure === 'after') {
+        createFailure = undefined;
+        throw new Error('simulated lost create response');
+      }
       return pr.url;
     }
     if (args[0] === 'pr' && args[1] === 'edit') {
-      const pr = prs.find((item) => item.number === Number(args[2]));
+      const pr = prs.find(item => item.number === Number(args[2]));
       if (!pr) throw new Error('PR not found');
       pr.title = flag(args, '--title');
       pr.body = readFileSync(flag(args, '--body-file'), 'utf8');
@@ -141,11 +149,30 @@ async function fixture(t) {
   const input = (extra = {}) => ({ repo, targets, branch, head: git(source, 'rev-parse', 'HEAD'), title, body, primaryPr, execute, ...extra });
 
   return {
-    root, source, publicRemote, privateRemote, repo, prs, calls, execute, input,
-    get permission() { return permission; }, set permission(value) { permission = value; },
-    set submissionPrivate(value) { submissionPrivate = value; },
-    set createFailure(value) { createFailure = value; },
-    set pushFailure(value) { pushFailure = value; },
+    root,
+    source,
+    publicRemote,
+    privateRemote,
+    repo,
+    prs,
+    calls,
+    execute,
+    input,
+    get permission() {
+      return permission;
+    },
+    set permission(value) {
+      permission = value;
+    },
+    set submissionPrivate(value) {
+      submissionPrivate = value;
+    },
+    set createFailure(value) {
+      createFailure = value;
+    },
+    set pushFailure(value) {
+      pushFailure = value;
+    },
     remoteHead,
   };
 }
@@ -163,7 +190,10 @@ test('inspection rejects a public submission repository before any publication w
   };
 
   await assert.rejects(inspectSubmissionTarget({ repo: { root, primary: root }, targets, branch, execute }), /private/i);
-  assert.equal(calls.some(([binary, ...args]) => binary === 'git' && args[0] === 'push' || binary === 'gh' && args.includes('create')), false);
+  assert.equal(
+    calls.some(([binary, ...args]) => (binary === 'git' && args[0] === 'push') || (binary === 'gh' && args.includes('create'))),
+    false,
+  );
 });
 
 test('publication mirrors the complete source tree onto private ancestry and verifies both identities', async t => {
@@ -190,7 +220,10 @@ test('publication mirrors the complete source tree onto private ancestry and ver
   assert.equal(f.remoteHead('refs/heads/main'), privateMain);
   assert.equal(git(f.source, 'ls-remote', 'origin', 'refs/heads/development'), publicDevelopment);
   assert.equal(f.remoteHead('refs/heads/development'), privateDevelopment);
-  assert.deepEqual(f.calls.filter(c => c[0] === 'git' && c[1] === 'push'), [['git', 'push', 'submission', `${mirrorHead}:refs/heads/${branch}`]]);
+  assert.deepEqual(
+    f.calls.filter(c => c[0] === 'git' && c[1] === 'push'),
+    [['git', 'push', 'submission', `${mirrorHead}:refs/heads/${branch}`]],
+  );
   assert.match(f.prs[0].body, /https:\/\/github\.com\/example\/public\/pull\/42/);
   assert.doesNotMatch(f.prs[0].body, /course\/private/);
 
@@ -253,7 +286,10 @@ test('publication refuses external branch edits, closed PRs, changed targets, an
 
   const h = await fixture(t);
   await publishSubmission(h.input());
-  await assert.rejects(inspectSubmissionTarget({ repo: h.repo, targets: { ...targets, submission: { ...targets.submission, repository: 'course/other' } }, branch, execute: h.execute }), /remote changed/i);
+  await assert.rejects(
+    inspectSubmissionTarget({ repo: h.repo, targets: { ...targets, submission: { ...targets.submission, repository: 'course/other' } }, branch, execute: h.execute }),
+    /remote changed/i,
+  );
 
   const i = await fixture(t);
   i.permission = 'READ';
@@ -280,7 +316,10 @@ test('missing submission development never falls back to the existing main branc
   git(f.source, 'push', 'submission', '--delete', 'development');
   f.calls.length = 0;
   await assert.rejects(publishSubmission(f.input()), /configured base/);
-  assert.equal(f.calls.some(c => c[1] === 'push' || c[1] === 'pr' && ['create', 'edit'].includes(c[2])), false);
+  assert.equal(
+    f.calls.some(c => c[1] === 'push' || (c[1] === 'pr' && ['create', 'edit'].includes(c[2]))),
+    false,
+  );
 });
 
 test('historical main records remain verifiable and target migration refuses to rewrite them', async t => {
@@ -293,6 +332,9 @@ test('historical main records remain verifiable and target migration refuses to 
   assert.equal((await verifySubmission({ ...f.input({ targets: historical }), sourceHead: first.sourceHead })).head, first.head);
   f.calls.length = 0;
   await assert.rejects(publishSubmission(f.input()), /different targets/);
-  assert.equal(f.calls.some(c => c[1] === 'push' || c[1] === 'pr' && ['create', 'edit'].includes(c[2])), false);
+  assert.equal(
+    f.calls.some(c => c[1] === 'push' || (c[1] === 'pr' && ['create', 'edit'].includes(c[2]))),
+    false,
+  );
   assert.equal(await readFile(path, 'utf8'), snapshot);
 });

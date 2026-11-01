@@ -27,9 +27,18 @@ export function assertNewDescription(body) {
       if (marker && marker[1][0] === fence[0] && marker[1].length >= fence.length && !marker[2].trim()) fence = undefined;
       continue;
     }
-    if (marker) { fence = marker[1]; continue; }
-    if (generated) { if (generatedEnd.test(line)) generated = false; continue; }
-    if (generatedStart.test(line)) { generated = true; continue; }
+    if (marker) {
+      fence = marker[1];
+      continue;
+    }
+    if (generated) {
+      if (generatedEnd.test(line)) generated = false;
+      continue;
+    }
+    if (generatedStart.test(line)) {
+      generated = true;
+      continue;
+    }
     lines.push(line);
   }
   if (generated) throw new Error('PR description contains an unclosed auto-generated block.');
@@ -59,7 +68,10 @@ export function assertAvailableNumber({ branch, targets, execute, root, fresh = 
     }
     const pages = JSON.parse(call('gh', ['api', '--paginate', '--slurp', `repos/${target.repository}/pulls?state=all&per_page=100`]));
     if (!Array.isArray(pages) || pages.some(page => !Array.isArray(page) || page.some(pr => typeof pr.head?.ref !== 'string'))) throw new Error('Incomplete PR history; cannot verify unique NNN.');
-    for (const pr of pages.flat()) { names.add(pr.head.ref); if (pr.head.ref === branch) priorPr = true; }
+    for (const pr of pages.flat()) {
+      names.add(pr.head.ref);
+      if (pr.head.ref === branch) priorPr = true;
+    }
   }
   const number = branch.slice(5, 8);
   if ([...names].some(name => name !== branch && name.startsWith(`feat/${number}-`)) || (fresh && priorPr)) throw new Error(`Feature number ${number} was already used; select a unique NNN.`);
@@ -82,7 +94,8 @@ export function assertAvailableBranch({ branch, targets, execute, root, fresh = 
       if (fresh && match[1] === branch) throw new Error('New branch already exists on a publication remote.');
     }
     const pages = JSON.parse(call('gh', ['api', '--paginate', '--slurp', `repos/${target.repository}/pulls?state=all&per_page=100`]));
-    if (!Array.isArray(pages) || pages.some(page => !Array.isArray(page) || page.some(pr => typeof pr.head?.ref !== 'string'))) throw new Error('Incomplete PR history; cannot verify unique branch name.');
+    if (!Array.isArray(pages) || pages.some(page => !Array.isArray(page) || page.some(pr => typeof pr.head?.ref !== 'string')))
+      throw new Error('Incomplete PR history; cannot verify unique branch name.');
     if (pages.flat().some(pr => pr.head.ref === branch)) throw new Error('Branch name was already used by a PR; select a unique full name or restore its accounting.');
   }
 }
@@ -91,7 +104,7 @@ export function assertNewSummary(summary) {
   if (!action.test(summary)) throw new Error('New PR summary must start with a clear action verb (add, fix, standardize, document, update, ...).');
 }
 
-const control = (value) => [...value].some((character) => character.codePointAt(0) < 0x20 || character.codePointAt(0) === 0x7f);
+const control = value => [...value].some(character => character.codePointAt(0) < 0x20 || character.codePointAt(0) === 0x7f);
 
 // A summary reaches a commit message, a PR title and terminal output, so any control character —
 // not just a line break — could rewrite the line it lands in. Tabs included: nothing needs one.
@@ -101,7 +114,11 @@ export function validSummary(value) {
 
 const field = (name, message) => new Error(`PR metadata ${name} ${message}`);
 function checked(name, validate) {
-  try { validate(); } catch (error) { throw field(name, error.message); }
+  try {
+    validate();
+  } catch (error) {
+    throw field(name, error.message);
+  }
 }
 
 // Pure adapter over already-parsed metadata (a PR event or a live read), never a shell value. The
@@ -110,7 +127,11 @@ function checked(name, validate) {
 export function assertPrMetadata(metadata, { convention } = {}) {
   if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) throw new Error('PR metadata must be an object.');
   const { branch, base, title, body } = metadata;
-  for (const [name, value] of [['branch', branch], ['base', base], ['title', title]]) {
+  for (const [name, value] of [
+    ['branch', branch],
+    ['base', base],
+    ['title', title],
+  ]) {
     if (typeof value !== 'string' || value.length === 0) throw field(name, 'must be a nonempty string.');
   }
   if (body !== undefined && body !== null && typeof body !== 'string') throw field('body', 'must be a string.');
@@ -138,7 +159,7 @@ export function assertPrMetadata(metadata, { convention } = {}) {
 // including a head without its repository, is never a binding.
 export function historicalBinding(identity, bindings) {
   const keys = ['repositoryId', 'number', 'head', 'headRepositoryId'];
-  if (!identity || !Array.isArray(bindings) || !keys.every((key) => identity[key] !== undefined && identity[key] !== null)) return undefined;
+  if (!identity || !Array.isArray(bindings) || !keys.every(key => identity[key] !== undefined && identity[key] !== null)) return undefined;
   const same = (left, right) => typeof left === typeof right && String(left).toLowerCase() === String(right).toLowerCase();
-  return bindings.find((entry) => keys.every((key) => entry && same(entry[key], identity[key])));
+  return bindings.find(entry => keys.every(key => entry && same(entry[key], identity[key])));
 }

@@ -5,13 +5,10 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { BudgetExhaustionError, BudgetTracker } from '../../../src/persistence/accounting.ts';
 import { DurableStore } from '../../../src/persistence/store.ts';
-import {
-  UC03AccountingAdapter,
-  UC03ReplanExhaustionError,
-} from '../../../src/persistence/adapters/uc03-adapter.ts';
+import { UC03AccountingAdapter, UC03ReplanExhaustionError } from '../../../src/persistence/adapters/uc03-adapter.ts';
 import type { BudgetLedger } from '../../../src/persistence/contracts.ts';
 
-test('UC-04 / UC-03: Accounting & Recovery Adapter', async (t) => {
+test('UC-04 / UC-03: Accounting & Recovery Adapter', async t => {
   const stores: DurableStore[] = [];
   const newStore = (): DurableStore => {
     const store = new DurableStore(mkdtempSync(join(tmpdir(), 'uc03-adapter-test-')));
@@ -114,7 +111,7 @@ test('UC-04 / UC-03: Accounting & Recovery Adapter', async (t) => {
         assert.ok(err instanceof UC03ReplanExhaustionError);
         assert.match(err.message, /maximum 3 replans/);
         return true;
-      }
+      },
     );
   });
 
@@ -163,8 +160,8 @@ test('UC-04 / UC-03: Accounting & Recovery Adapter', async (t) => {
 
     const journalB = await store.loadBudgetJournal('task-B');
     assert.ok(journalB);
-    const keyedB = journalB.ledgers.flatMap((l) => l.reservations.map((r) => r.keyedId));
-    assert.ok(keyedB.every((keyed) => keyed === resB.reservationId));
+    const keyedB = journalB.ledgers.flatMap(l => l.reservations.map(r => r.keyedId));
+    assert.ok(keyedB.every(keyed => keyed === resB.reservationId));
     assert.equal(keyedB.includes(resA.reservationId), false);
 
     const rebuilt = new UC03AccountingAdapter(new BudgetTracker(initialLedgers), store);
@@ -187,8 +184,8 @@ test('UC-04 / UC-03: Accounting & Recovery Adapter', async (t) => {
     assert.equal(reconciledA.totalTokensConsumed, 500);
 
     // task-B reservation should still be pending in the ledger
-    const tokensLedger = budgetTracker.getLedgers().find((l) => l.kind === 'tokens');
-    const remainingRes = tokensLedger?.reservations.find((r) => r.keyedId === res2.reservationId);
+    const tokensLedger = budgetTracker.getLedgers().find(l => l.kind === 'tokens');
+    const remainingRes = tokensLedger?.reservations.find(r => r.keyedId === res2.reservationId);
     assert.ok(remainingRes);
     assert.equal(remainingRes.amount, 300);
   });
@@ -207,8 +204,8 @@ test('UC-04 / UC-03: Accounting & Recovery Adapter', async (t) => {
     const reconciled = await adapter.reconcileTaskBudgets('task-1', 'run-1');
     assert.equal(reconciled.totalTokensConsumed, 400);
 
-    const tokensLedger = budgetTracker.getLedgers().find((l) => l.kind === 'tokens');
-    const remainingRes = tokensLedger?.reservations.find((r) => r.keyedId === res2.reservationId);
+    const tokensLedger = budgetTracker.getLedgers().find(l => l.kind === 'tokens');
+    const remainingRes = tokensLedger?.reservations.find(r => r.keyedId === res2.reservationId);
     assert.ok(remainingRes);
     assert.equal(remainingRes.amount, 600);
 
@@ -235,7 +232,7 @@ test('UC-04 / UC-03: Accounting & Recovery Adapter', async (t) => {
         assert.ok(err instanceof RangeError);
         assert.match(err.message, /non-negative safe integer/);
         return true;
-      }
+      },
     );
     await assert.rejects(
       async () => {
@@ -244,7 +241,7 @@ test('UC-04 / UC-03: Accounting & Recovery Adapter', async (t) => {
       (err: Error) => {
         assert.ok(err instanceof RangeError);
         return true;
-      }
+      },
     );
   });
 
@@ -260,10 +257,10 @@ test('UC-04 / UC-03: Accounting & Recovery Adapter', async (t) => {
     assert.equal(journal.taskId, taskId);
     assert.equal(journal.runId, runId);
     assert.equal(journal.replanCount, 0);
-    const tokens = journal.ledgers.find((l) => l.kind === 'tokens');
-    const cost = journal.ledgers.find((l) => l.kind === 'cost');
-    assert.equal(tokens?.reservations.find((r) => r.keyedId === res.reservationId)?.amount, 1000);
-    assert.equal(cost?.reservations.find((r) => r.keyedId === res.reservationId)?.amount, 2);
+    const tokens = journal.ledgers.find(l => l.kind === 'tokens');
+    const cost = journal.ledgers.find(l => l.kind === 'cost');
+    assert.equal(tokens?.reservations.find(r => r.keyedId === res.reservationId)?.amount, 1000);
+    assert.equal(cost?.reservations.find(r => r.keyedId === res.reservationId)?.amount, 2);
   });
 
   await t.test('a reservation acknowledged before a crash stays held when rebuilt from the journal alone', async () => {
@@ -281,7 +278,7 @@ test('UC-04 / UC-03: Accounting & Recovery Adapter', async (t) => {
       async () => {
         await rebuilt.reserveInvestigation(taskId, runId, 4500, 2);
       },
-      (err: unknown) => err instanceof BudgetExhaustionError
+      (err: unknown) => err instanceof BudgetExhaustionError,
     );
     const replay = await rebuilt.reserveInvestigation(taskId, runId, 4000, 2);
     assert.ok(replay.reservationId);
@@ -322,7 +319,7 @@ test('UC-04 / UC-03: Accounting & Recovery Adapter', async (t) => {
       async () => {
         await rebuilt.reserveReplan(taskId, runId, 100, 0);
       },
-      (err: unknown) => err instanceof UC03ReplanExhaustionError
+      (err: unknown) => err instanceof UC03ReplanExhaustionError,
     );
   });
 
@@ -344,7 +341,7 @@ test('UC-04 / UC-03: Accounting & Recovery Adapter', async (t) => {
       async () => {
         await rebuilt.reserveReplan(taskId, runId, 100, 0);
       },
-      (err: unknown) => err instanceof UC03ReplanExhaustionError
+      (err: unknown) => err instanceof UC03ReplanExhaustionError,
     );
   });
 
@@ -362,23 +359,17 @@ test('UC-04 / UC-03: Accounting & Recovery Adapter', async (t) => {
     const budgetTracker = new BudgetTracker(initialLedgers);
     const adapter = new UC03AccountingAdapter(budgetTracker, store);
 
-    await assert.rejects(
-      async () => {
-        await adapter.reserveInvestigation(taskId, runId, 1000, 2);
-      },
-      /journal unavailable/
-    );
+    await assert.rejects(async () => {
+      await adapter.reserveInvestigation(taskId, runId, 1000, 2);
+    }, /journal unavailable/);
     assert.equal(budgetTracker.getAvailable('task', 'tokens'), 5000);
     assert.equal(budgetTracker.getAvailable('task', 'cost'), 20);
     assert.equal(await store.loadBudgetJournal(taskId), null);
 
     for (let i = 0; i < 4; i++) {
-      await assert.rejects(
-        async () => {
-          await adapter.reserveReplan(taskId, runId, 100, 0);
-        },
-        /journal unavailable/
-      );
+      await assert.rejects(async () => {
+        await adapter.reserveReplan(taskId, runId, 100, 0);
+      }, /journal unavailable/);
     }
     assert.equal(budgetTracker.getAvailable('task', 'tokens'), 5000);
 
@@ -391,7 +382,7 @@ test('UC-04 / UC-03: Accounting & Recovery Adapter', async (t) => {
       async () => {
         await adapter.reserveReplan(taskId, runId, 100, 0);
       },
-      (err: unknown) => err instanceof UC03ReplanExhaustionError
+      (err: unknown) => err instanceof UC03ReplanExhaustionError,
     );
   });
 
@@ -404,24 +395,24 @@ test('UC-04 / UC-03: Accounting & Recovery Adapter', async (t) => {
     const settled = await adapter.settleAttempt(invest.reservationId, { tokens: 800, cost: 2 });
     const afterSettle = await store.loadBudgetJournal(taskId);
     assert.ok(afterSettle);
-    assert.equal(afterSettle.ledgers.find((l) => l.kind === 'tokens')?.consumed, settled.consumedTokens);
-    assert.equal(afterSettle.ledgers.find((l) => l.kind === 'cost')?.consumed, settled.consumedCost);
-    assert.equal(afterSettle.ledgers.find((l) => l.kind === 'tokens')?.reservations.length, 0);
+    assert.equal(afterSettle.ledgers.find(l => l.kind === 'tokens')?.consumed, settled.consumedTokens);
+    assert.equal(afterSettle.ledgers.find(l => l.kind === 'cost')?.consumed, settled.consumedCost);
+    assert.equal(afterSettle.ledgers.find(l => l.kind === 'tokens')?.reservations.length, 0);
 
     const repair = await adapter.reserveRepairAttempt(taskId, runId, 1000, 2);
     await adapter.handleInterruptedCall(taskId, runId, repair.reservationId);
     const afterInterrupt = await store.loadBudgetJournal(taskId);
     assert.ok(afterInterrupt);
-    assert.equal(afterInterrupt.ledgers.find((l) => l.kind === 'tokens')?.consumed, 1800);
-    assert.equal(afterInterrupt.ledgers.find((l) => l.kind === 'repair')?.consumed, 1);
-    assert.equal(afterInterrupt.ledgers.find((l) => l.kind === 'tokens')?.reservations.length, 0);
+    assert.equal(afterInterrupt.ledgers.find(l => l.kind === 'tokens')?.consumed, 1800);
+    assert.equal(afterInterrupt.ledgers.find(l => l.kind === 'repair')?.consumed, 1);
+    assert.equal(afterInterrupt.ledgers.find(l => l.kind === 'tokens')?.reservations.length, 0);
 
     const reconciled = await adapter.reconcileTaskBudgets(taskId, runId);
     const afterReconcile = await store.loadBudgetJournal(taskId);
     assert.ok(afterReconcile);
-    assert.equal(afterReconcile.ledgers.find((l) => l.kind === 'tokens')?.consumed, reconciled.totalTokensConsumed);
-    assert.equal(afterReconcile.ledgers.find((l) => l.kind === 'cost')?.consumed, reconciled.totalCostConsumed);
-    assert.equal(afterReconcile.ledgers.find((l) => l.kind === 'repair')?.consumed, reconciled.totalRepairConsumed);
+    assert.equal(afterReconcile.ledgers.find(l => l.kind === 'tokens')?.consumed, reconciled.totalTokensConsumed);
+    assert.equal(afterReconcile.ledgers.find(l => l.kind === 'cost')?.consumed, reconciled.totalCostConsumed);
+    assert.equal(afterReconcile.ledgers.find(l => l.kind === 'repair')?.consumed, reconciled.totalRepairConsumed);
   });
 
   await t.test('settling via a fresh instance keeps the journal run identity', async () => {

@@ -1,18 +1,6 @@
-import type {
-  TaskState,
-  ApprovalRequestBinding,
-  DeliberatePauseRecord,
-  PauseTaskInput,
-  ResumeTaskInput,
-} from './contracts.ts';
+import type { TaskState, ApprovalRequestBinding, DeliberatePauseRecord, PauseTaskInput, ResumeTaskInput } from './contracts.ts';
 import type { DurableStore } from './store.ts';
-import {
-  UC04_SCHEMA_VERSION,
-  validateTaskState,
-  validateApprovalRequestBinding,
-  validatePauseTaskInput,
-  validateResumeTaskInput,
-} from './contracts.ts';
+import { UC04_SCHEMA_VERSION, validateTaskState, validateApprovalRequestBinding, validatePauseTaskInput, validateResumeTaskInput } from './contracts.ts';
 
 export class StaleApprovalBindingError extends Error {
   constructor(message: string) {
@@ -55,22 +43,16 @@ export interface ResumeApprovalOptions {
   readonly policyVersion?: string | undefined;
 }
 
-export async function pauseForApproval(
-  state: TaskState,
-  request: ApprovalRequestBinding,
-  store: DurableStore
-): Promise<TaskState> {
+export async function pauseForApproval(state: TaskState, request: ApprovalRequestBinding, store: DurableStore): Promise<TaskState> {
   const reqVal = validateApprovalRequestBinding(request);
   if (!reqVal.ok) {
-    throw new Error(`Invalid approval request binding: ${reqVal.errors.map((e) => e.message).join(', ')}`);
+    throw new Error(`Invalid approval request binding: ${reqVal.errors.map(e => e.message).join(', ')}`);
   }
 
   return await store.withLock(`pause-${state.taskId}`, async () => {
     const latest = await store.loadLatestCheckpoint(state.taskId);
     if (latest && latest.stateVersion !== state.stateVersion) {
-      throw new Error(
-        `State version mismatch in pauseForApproval: current state has version ${state.stateVersion}, but latest checkpoint has version ${latest.stateVersion}`
-      );
+      throw new Error(`State version mismatch in pauseForApproval: current state has version ${state.stateVersion}, but latest checkpoint has version ${latest.stateVersion}`);
     }
 
     const pausedState: TaskState = {
@@ -83,7 +65,7 @@ export async function pauseForApproval(
 
     const val = validateTaskState(pausedState);
     if (!val.ok) {
-      throw new Error(`Invalid paused state: ${val.errors.map((e) => e.message).join(', ')}`);
+      throw new Error(`Invalid paused state: ${val.errors.map(e => e.message).join(', ')}`);
     }
 
     await store.saveCheckpoint(pausedState);
@@ -91,12 +73,7 @@ export async function pauseForApproval(
   });
 }
 
-export async function resumeFromApproval(
-  taskId: string,
-  decision: HumanDecision,
-  store: DurableStore,
-  options: ResumeApprovalOptions = {}
-): Promise<TaskState> {
+export async function resumeFromApproval(taskId: string, decision: HumanDecision, store: DurableStore, options: ResumeApprovalOptions = {}): Promise<TaskState> {
   return await store.withLock(`pause-${taskId}`, async () => {
     const latestCp = await store.loadLatestCheckpoint(taskId);
     if (!latestCp) {
@@ -119,15 +96,11 @@ export async function resumeFromApproval(
 
     // Cryptographic & environment binding check (fail-closed)
     if (!options.currentCommit || options.currentCommit !== pending.repoCommit) {
-      throw new StaleApprovalBindingError(
-        `Stale approval: git commit mismatch. Approved at ${pending.repoCommit}, current commit is ${options.currentCommit ?? 'undefined'}`
-      );
+      throw new StaleApprovalBindingError(`Stale approval: git commit mismatch. Approved at ${pending.repoCommit}, current commit is ${options.currentCommit ?? 'undefined'}`);
     }
 
     if (!options.policyVersion || options.policyVersion !== pending.policyVersion) {
-      throw new StaleApprovalBindingError(
-        `Stale approval: policy version mismatch. Approved under ${pending.policyVersion}, current policy is ${options.policyVersion ?? 'undefined'}`
-      );
+      throw new StaleApprovalBindingError(`Stale approval: policy version mismatch. Approved under ${pending.policyVersion}, current policy is ${options.policyVersion ?? 'undefined'}`);
     }
 
     if (decision.decision === 'rejected') {
@@ -141,7 +114,7 @@ export async function resumeFromApproval(
       };
 
       const val = validateTaskState(rejectedState);
-      if (!val.ok) throw new Error(`Invalid rejected state: ${val.errors.map((e) => e.message).join(', ')}`);
+      if (!val.ok) throw new Error(`Invalid rejected state: ${val.errors.map(e => e.message).join(', ')}`);
       await store.saveCheckpoint(rejectedState);
       return rejectedState;
     }
@@ -157,30 +130,22 @@ export async function resumeFromApproval(
     };
 
     const val = validateTaskState(resumedState);
-    if (!val.ok) throw new Error(`Invalid resumed state: ${val.errors.map((e) => e.message).join(', ')}`);
+    if (!val.ok) throw new Error(`Invalid resumed state: ${val.errors.map(e => e.message).join(', ')}`);
     await store.saveCheckpoint(resumedState);
     return resumedState;
   });
 }
 
-export async function pauseTask(
-  store: DurableStore,
-  input: PauseTaskInput,
-  currentOutstandingAttempts: readonly string[] = []
-): Promise<DeliberatePauseRecord> {
+export async function pauseTask(store: DurableStore, input: PauseTaskInput, currentOutstandingAttempts: readonly string[] = []): Promise<DeliberatePauseRecord> {
   const val = validatePauseTaskInput(input);
   if (!val.ok) {
-    throw new Error(`Invalid PauseTaskInput: ${val.errors.map((e) => e.message).join(', ')}`);
+    throw new Error(`Invalid PauseTaskInput: ${val.errors.map(e => e.message).join(', ')}`);
   }
 
   return await store.withLock(`pause-${input.taskId}`, async () => {
     const existing = await store.loadPauseRecord(input.taskId);
     if (existing && existing.revision !== input.expectedRevision) {
-      throw new StalePauseRevisionError(
-        `Stale revision in pause request. Expected ${input.expectedRevision}, store has ${existing.revision}`,
-        input.expectedRevision,
-        existing.revision
-      );
+      throw new StalePauseRevisionError(`Stale revision in pause request. Expected ${input.expectedRevision}, store has ${existing.revision}`, input.expectedRevision, existing.revision);
     }
 
     const nextRevision = (existing?.revision ?? 0) + 1;
@@ -204,13 +169,10 @@ export async function pauseTask(
   });
 }
 
-export async function resumeTask(
-  store: DurableStore,
-  input: ResumeTaskInput
-): Promise<DeliberatePauseRecord> {
+export async function resumeTask(store: DurableStore, input: ResumeTaskInput): Promise<DeliberatePauseRecord> {
   const val = validateResumeTaskInput(input);
   if (!val.ok) {
-    throw new Error(`Invalid ResumeTaskInput: ${val.errors.map((e) => e.message).join(', ')}`);
+    throw new Error(`Invalid ResumeTaskInput: ${val.errors.map(e => e.message).join(', ')}`);
   }
 
   return await store.withLock(`pause-${input.taskId}`, async () => {
@@ -220,19 +182,12 @@ export async function resumeTask(
     }
 
     if (existing.revision !== input.expectedRevision) {
-      throw new StalePauseRevisionError(
-        `Stale revision in resume request. Expected ${input.expectedRevision}, store has ${existing.revision}`,
-        input.expectedRevision,
-        existing.revision
-      );
+      throw new StalePauseRevisionError(`Stale revision in resume request. Expected ${input.expectedRevision}, store has ${existing.revision}`, input.expectedRevision, existing.revision);
     }
 
     // Refuse early resume when outstanding in-flight attempts remain unsettled
     if (existing.outstandingAttemptRefs.length > 0) {
-      throw new InFlightWorkPendingError(
-        `Cannot resume task ${input.taskId}: in-flight attempts remain unsettled: ${existing.outstandingAttemptRefs.join(', ')}`,
-        existing.outstandingAttemptRefs
-      );
+      throw new InFlightWorkPendingError(`Cannot resume task ${input.taskId}: in-flight attempts remain unsettled: ${existing.outstandingAttemptRefs.join(', ')}`, existing.outstandingAttemptRefs);
     }
 
     const updated: DeliberatePauseRecord = {

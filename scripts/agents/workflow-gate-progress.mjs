@@ -8,9 +8,16 @@ const TEST_EVENTS = new Set(['test:start', 'test:pass', 'test:fail']);
 
 function safeLabel(value) {
   if (typeof value !== 'string') return null;
-  // Progress labels must not emit terminal escapes or raw control characters.
-  // eslint-disable-next-line no-control-regex
-  const cleaned = value.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '').replace(/[\x00-\x1f\x7f-\x9f]/g, ' ').replace(/\s+/g, ' ').trim();
+  // Progress labels must not emit terminal escapes or raw control characters. A block disable,
+  // not disable-next-line: the directive is positional, and the formatter may split a chained
+  // expression so the regex is no longer on the following line.
+  /* eslint-disable no-control-regex */
+  const cleaned = value
+    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '')
+    .replace(/[\x00-\x1f\x7f-\x9f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  /* eslint-enable no-control-regex */
   return cleaned ? cleaned.slice(0, MAX_TEST_LABEL_LENGTH) : null;
 }
 
@@ -38,8 +45,11 @@ export function createGateProgressParser() {
   const parseLine = line => {
     if (!line.startsWith(PROGRESS_PREFIX)) return null;
     let value;
-    try { value = JSON.parse(line.slice(PROGRESS_PREFIX.length)); }
-    catch { return null; }
+    try {
+      value = JSON.parse(line.slice(PROGRESS_PREFIX.length));
+    } catch {
+      return null;
+    }
     if (!value || typeof value !== 'object' || Array.isArray(value) || !TEST_EVENTS.has(value.type)) return null;
     const currentTest = safeLabel(value.test);
     if (!currentTest) return null;
@@ -57,8 +67,10 @@ export function createGateProgressParser() {
         pending = '';
         dropping = false;
       } else if (!dropping) {
-        if (pending.length >= MAX_PROGRESS_LINE_LENGTH) { pending = ''; dropping = true; }
-        else pending += character;
+        if (pending.length >= MAX_PROGRESS_LINE_LENGTH) {
+          pending = '';
+          dropping = true;
+        } else pending += character;
       }
     }
     if (flush && !dropping && pending) {

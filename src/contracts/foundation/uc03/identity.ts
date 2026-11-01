@@ -8,7 +8,7 @@ export function canonicalJsonStringify(val: unknown): string {
     return JSON.stringify(val);
   }
   if (Array.isArray(val)) {
-    return `[${val.map((item) => canonicalJsonStringify(item)).join(',')}]`;
+    return `[${val.map(item => canonicalJsonStringify(item)).join(',')}]`;
   }
   const obj = val as Record<string, unknown>;
   const sortedKeys = Object.keys(obj).sort();
@@ -112,11 +112,7 @@ export function isProtectedPath(filePath: string): boolean {
     return true;
   }
   // Credentials & secret configurations
-  if (
-    baseName === 'credentials.json' ||
-    baseName === 'secrets.json' ||
-    /^(password|passwords|token|tokens)(\.(txt|json|ya?ml|env))?$/.test(baseName)
-  ) {
+  if (baseName === 'credentials.json' || baseName === 'secrets.json' || /^(password|passwords|token|tokens)(\.(txt|json|ya?ml|env))?$/.test(baseName)) {
     return true;
   }
   // Git metadata
