@@ -1,7 +1,35 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import test from 'node:test';
 import { assess, changedLines, runWorkflow, workflowSummary } from '../../scripts/agents/pr-workflow.mjs';
-import { evidence } from './support/pr-workflow-fixture.mjs';
+import { packageScriptCommand } from '../../scripts/agents/workflow-gate.mjs';
+import { checkout, evidence } from './support/pr-workflow-fixture.mjs';
+
+const git = (root, ...args) => {
+  const result = spawnSync('git', args, { cwd: root, encoding: 'utf8', windowsHide: true });
+  assert.equal(result.status, 0, result.stderr);
+  return result.stdout.trim();
+};
+
+async function setCandidate(f, files) {
+  git(f.root, 'reset', '--hard', 'origin/development');
+  for (const [path, content] of Object.entries(files)) {
+    const file = join(f.root, path);
+    await mkdir(dirname(file), { recursive: true });
+    await writeFile(file, content);
+  }
+  git(f.root, 'add', '--', ...Object.keys(files));
+  git(f.root, 'commit', '--quiet', '-m', 'candidate changes');
+  const head = git(f.root, 'rev-parse', 'HEAD');
+  f.e.head = head;
+  f.e.pr.headRefOid = head;
+  for (const check of f.e.checks) check.head_sha = head;
+  return head;
+}
+
+const localGates = calls => calls.filter(([binary]) => binary === process.execPath || binary === packageScriptCommand('test:contributors').command);
 
 test('current-head CI allows human review without CodeRabbit approval', () => {
   const e = evidence();
@@ -10,6 +38,114 @@ test('current-head CI allows human review without CodeRabbit approval', () => {
   assert.equal(assess(e).status, 'READY_FOR_HUMAN');
   e.pr.reviews.nodes = [];
   assert.equal(assess(e).status, 'READY_FOR_HUMAN');
+});
+
+test('default publication skips full local gates for documentation and helper-only changes with provenance', async t => {
+  const f = await checkout(t);
+  await setCandidate(f, { 'docs/contributor-guide.md': '# Guide\n', 'scripts/agents/helper.mjs': 'export {};\n' });
+
+  const published = await f.run('publish', '--body-file', f.body, '--skip-review-request');
+
+  assert.equal(published.publicationMode, 'push-only');
+  assert.equal(published.publicationProvenance, 'automatic-v1');
+  assert.equal(published.publicationPolicy.classification, 'docs-helper-only');
+  assert.match(published.publicationReason, /documentation and contributor helper/);
+  assert.equal(published.localVerifiedHead, undefined);
+  assert.equal(published.localVerification, undefined);
+  assert.equal(workflowSummary(published).localGateStatus, 'skipped');
+  assert.equal(workflowSummary(published).publicationPolicy.provenance, 'automatic-v1');
+  assert.equal(localGates(f.calls).length, 0);
+});
+
+test('default publication keeps full local gates for runtime changes', async t => {
+  const f = await checkout(t);
+  const head = await setCandidate(f, { 'src/app.ts': 'export const value = 1;\n' });
+
+  const published = await f.run('publish', '--body-file', f.body, '--skip-review-request');
+
+  assert.equal(published.publicationMode, 'full');
+  assert.equal(published.publicationProvenance, 'automatic-v1');
+  assert.equal(published.publicationPolicy.classification, 'full-required');
+  assert.equal(published.localVerifiedHead, head);
+  assert.equal(workflowSummary(published).localGateStatus, 'passed');
+  assert.ok(localGates(f.calls).length > 0);
+});
+
+test('default publication only skips CI helpers and runs local gates for runtime or unknown CI scripts', async t => {
+  for (const [path, mode] of [
+    ['scripts/ci/check-context.mjs', 'push-only'],
+    ['scripts/ci/check-runtime.mjs', 'full'],
+    ['scripts/ci/run-runtime-tests.mjs', 'full'],
+    ['scripts/ci/unreviewed-helper.mjs', 'full'],
+  ]) {
+    await t.test(path, async t => {
+      const f = await checkout(t);
+      const head = await setCandidate(f, { [path]: '// candidate\n' });
+      const published = await f.run('publish', '--body-file', f.body, '--skip-review-request');
+
+      assert.equal(published.publicationMode, mode);
+      if (mode === 'full') {
+        assert.equal(published.localVerifiedHead, head);
+        assert.equal(workflowSummary(published).localGateStatus, 'passed');
+        assert.ok(localGates(f.calls).length > 0);
+      } else {
+        assert.equal(published.localVerifiedHead, undefined);
+        assert.equal(workflowSummary(published).localGateStatus, 'skipped');
+        assert.equal(localGates(f.calls).length, 0);
+      }
+    });
+  }
+});
+
+test('automatic publication blocks before push when the exact Git diff cannot be read', async t => {
+  const f = await checkout(t);
+  await setCandidate(f, { 'docs/contributor-guide.md': '# Guide\n' });
+  const execute = (binary, args, cwd, timeout) => {
+    if (binary === 'git' && args[0] === 'diff' && args[1] === '--name-status') throw new Error('range read failed');
+    return f.execute(binary, args, cwd, timeout);
+  };
+
+  await assert.rejects(
+    runWorkflow(['publish', '--body-file', f.body, '--summary', 'add the example workflow', '--skip-review-request', '--root', f.root], { execute }),
+    /Could not read the exact base-to-candidate Git diff: range read failed/,
+  );
+  assert.equal(
+    f.calls.some(call => call[0] === 'git' && call[1] === 'push'),
+    false,
+  );
+});
+
+test('eligible automatic push-only publication can complete after current-head CI without claiming local gates', async t => {
+  const f = await checkout(t);
+  const head = await setCandidate(f, { 'docs/contributor-guide.md': '# Guide\n' });
+  const published = await f.run('publish', '--body-file', f.body, '--skip-review-request');
+  const path = join(f.root, '.agent-work/pr-workflow/010-tooling-example.json');
+  const saved = JSON.parse(await readFile(path, 'utf8'));
+  saved.appLink = { url: f.e.pr.url, repository: 'example/project', number: f.e.pr.number };
+  await writeFile(path, JSON.stringify(saved));
+
+  const completed = await f.run('complete');
+
+  assert.equal(completed.status, 'READY_FOR_HUMAN');
+  assert.equal(completed.completion.head, head);
+  assert.equal(completed.completion.localGates, 'skipped');
+  assert.equal(completed.completion.publicationProvenance, 'automatic-v1');
+  assert.equal(completed.localVerifiedHead, undefined);
+  assert.equal(workflowSummary(completed).localGateStatus, 'skipped');
+  assert.equal(published.publicationMode, 'push-only');
+});
+
+test('tampered automatic publication evidence cannot bypass local gates at completion', async t => {
+  const f = await checkout(t);
+  await setCandidate(f, { 'docs/contributor-guide.md': '# Guide\n' });
+  await f.run('publish', '--body-file', f.body, '--skip-review-request');
+  const path = join(f.root, '.agent-work/pr-workflow/010-tooling-example.json');
+  const saved = JSON.parse(await readFile(path, 'utf8'));
+  saved.appLink = { url: f.e.pr.url, repository: 'example/project', number: f.e.pr.number };
+  saved.publicationPolicy.paths = ['src/tampered.ts'];
+  await writeFile(path, JSON.stringify(saved));
+
+  await assert.rejects(f.run('complete'), /Automatic publication policy is stale or inconsistent; completion requires local gates/);
 });
 
 test('merge and unknown commands are rejected before executing anything', async () => {

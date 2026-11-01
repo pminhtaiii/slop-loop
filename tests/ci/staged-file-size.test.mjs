@@ -97,6 +97,19 @@ test('top-level tests and specs are exempt by normalized path while implementati
   assert.doesNotMatch(result.stderr, /SPECS\/foo\/spec\.md/);
 });
 
+test('context/progress_checker.md is exempt by exact path while other context files stay checked', async t => {
+  const { root, git, check } = await repository(t);
+  await mkdir(join(root, 'context'));
+  await writeFile(join(root, 'context/progress_checker.md'), 'x'.repeat(20_001));
+  await writeFile(join(root, 'context/testing.md'), 'x'.repeat(20_001));
+  git('add', '--', 'context/progress_checker.md', 'context/testing.md');
+
+  const result = check();
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /- "context\/testing\.md" \(20,001 bytes\)/);
+  assert.doesNotMatch(result.stderr, /- "context\/progress_checker\.md"/);
+});
+
 test('during a merge only exact parent mode and blob pairs pass, including renamed paths', async t => {
   const { root, git, check } = await repository(t);
   const base = git('rev-parse', 'HEAD');

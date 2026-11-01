@@ -9,28 +9,13 @@ import { bindAssignment, recordEditReadiness, reserveBinding, startBinding, vali
 import { importLegacyViews, migrateLegacyViews, parseLegacyView, readLegacyViews, writeSessionProgress } from './active-task-legacy.mjs';
 import { reassign, retireReassigned } from './active-task-reassignment.mjs';
 import { updateOwnedPaths, validateOwnershipExtensions } from './active-task-ownership.mjs';
-
-const usage = `Usage: node scripts/agents/active-task.mjs <command> [options]
-Commands:
-  start --owner <id> --task <id> --session <date/id> --summary <text> --next <text> [--role coordinator|worker] [--owned-path <path>...]
-  reserve --owner <id> --task <id> --session <date/id> --base-sha <sha> --summary <text> --next <text> --owned-path <path>...
-  bind --owner <id> --task <id> --worktree <absolute-path>
-  edit-ready|verify-handoff --owner <id> --task <id>
-  update --owner <id> --task <id> [--next <text>] [--verification <text>] [--status active|blocked] [--add-owned-path <path>... --reason <text>]
-  handoff|finish --owner <id> --task <id> --result <text>
-  reassign --owner <id> --task <id> --new-owner <id> --session <date/id> --reason <text>
-  retire-reassigned --owner <id> --task <id> --reason <text>
-  clear --owner <id> --task <id>
-  archive --owner <id> --task <id> --output docs/verification/<name>.json [--apply]
-  migrate-legacy|list [--compact]|render [--output .agent-work/<date>/<session>/progress.md]
-All commands accept --root <checkout>. reserve fetches/pins origin/development; bind rejects coordinator paths. Reserved workers require clean pre-edit readiness before handoff; start remains in-place.
-finish requires a published linked PR and passing current-head CI. Archive/clear require terminal state; reassignment preserves history; busy locks are never reclaimed.`;
+import { pinFactoryHandoff, preserveFactoryManaged, takeStartFlags, usage, validateFactoryAssignment, verifyFactoryHandoff, verifyGuardedStart } from './active-task-factory.mjs';
 
 function parseArguments(args) {
   const [command, ...options] = args;
   const fields = {
     start: ['summary', 'next', 'role', 'session', 'owned-path'], reserve: ['summary', 'next', 'session', 'owned-path', 'base-sha'],
-    bind: ['worktree'], 'edit-ready': [], update: ['next', 'verification', 'status', 'add-owned-path', 'reason'],
+    bind: ['worktree'], 'edit-ready': [], update: ['next', 'verification', 'status', 'add-owned-path', 'reason'], 'pin-factory-handoff': ['manifest', 'evidence'],
     finish: ['result'], handoff: ['result'], clear: [], archive: ['output'], list: ['owner', 'task', 'status'], render: ['output'], 'migrate-legacy': [],
     reassign: ['new-owner', 'session', 'reason', 'role', 'owned-path'], 'retire-reassigned': ['reason'], 'verify-handoff': [],
   };
@@ -70,6 +55,7 @@ function parseArguments(args) {
     throw new Error('List status must be active, blocked, handed-off, completed, or reassigned.');
   }
   if (command === 'archive' && !values.output) throw new Error('archive requires --output docs/verification/<name>.json.');
+  if (command === 'pin-factory-handoff' && (!values.manifest || !values.evidence)) throw new Error('pin-factory-handoff requires --manifest and --evidence.');
   return { command, values };
 }
 
@@ -109,6 +95,7 @@ function validateEntries(entries) {
     if (entry.role !== undefined && !['coordinator', 'worker'].includes(entry.role) || entry.status === 'handed-off' && entry.role !== 'worker') throw new Error('Invalid task role or worker handoff.');
     if (entry.session !== undefined) validateSessionRef(entry.session);
     if (entry.ownedPaths !== undefined) validateOwnedPaths(entry.ownedPaths);
+    validateFactoryAssignment(entry);
     validateOwnershipExtensions(entry);
     validateBindingMetadata(entry);
     const key = JSON.stringify([entry.owner, entry.task]);
@@ -120,7 +107,10 @@ function validateEntries(entries) {
 
 async function run(args) {
   if (args.length === 1 && ['--help', '-h'].includes(args[0])) return console.log(usage);
-  const { command, values } = parseArguments(args);
+  const factoryOptions = takeStartFlags(args);
+  const { command, values } = parseArguments(factoryOptions.args);
+  if ((factoryOptions.factoryManaged || factoryOptions.requireClean) && command === 'start' && (values.role ?? 'coordinator') !== 'worker') throw new Error('Guarded start requires --role worker.');
+  if (factoryOptions.factoryManaged) values.factoryManaged = true;
   const repo = await repository(values.root ?? resolve(dirname(fileURLToPath(import.meta.url)), '../..'));
   const directory = resolve(repo.root, 'context');
   if (!(await lstat(directory)).isDirectory()) throw new Error('context must be a regular directory, not a link.');
@@ -172,7 +162,12 @@ async function run(args) {
       if (!verification.verified) process.exitCode = 1;
       return;
     }
-    if (command === 'archive') {
+    if (command === 'pin-factory-handoff') {
+      if (index === -1) throw new Error('No entry matches that owner and task.');
+      const entry = entries[index];
+      await pinFactoryHandoff(entry, entries, repo, values);
+      entry.updatedAt = new Date().toISOString();
+    } else if (command === 'archive') {
       if (!/^docs\/verification\/[A-Za-z0-9][A-Za-z0-9._-]*\.json$/.test(values.output)) throw new Error('Archive output must be a JSON file directly under docs/verification/.');
       for (const part of ['docs', 'docs/verification']) {
         const directory = resolve(repo.root, part);
@@ -210,7 +205,7 @@ async function run(args) {
       if (index !== -1) throw new Error('Entry already exists; reserve never relocates or overwrites an assignment.');
       const ownedPaths = validateOwnedPaths(values['owned-path'] ?? []);
       if (!ownedPaths.length) throw new Error('reserve requires at least one --owned-path.');
-      const entry = { owner: values.owner, task: values.task, session: values.session, role: 'worker', summary: values.summary, next: values.next, status: 'active', verification: '', ownedPaths, updatedAt: new Date().toISOString() };
+      const entry = { owner: values.owner, task: values.task, session: values.session, role: 'worker', summary: values.summary, next: values.next, status: 'active', verification: '', ...(values.factoryManaged ? { factoryManaged: true } : {}), ownedPaths, updatedAt: new Date().toISOString() };
       entry.reservation = await reserveBinding(repo, entry, values['base-sha']);
       entries.push(entry);
     } else if (command === 'bind') {
@@ -223,11 +218,15 @@ async function run(args) {
       const role = values.role ?? 'coordinator';
       const ownedPaths = validateOwnedPaths(values['owned-path'] ?? []);
       if (role === 'worker' && !ownedPaths.length) throw new Error('Worker start requires at least one --owned-path.');
-      const entry = { owner: values.owner, task: values.task, checkout: repo.root, session: values.session, role, summary: values.summary, next: values.next, status: 'active', verification: '', ...(ownedPaths.length ? { ownedPaths } : {}), updatedAt: new Date().toISOString() };
-      if (role === 'worker') entry.binding = await startBinding(repo, entry);
+      const entry = { owner: values.owner, task: values.task, checkout: repo.root, session: values.session, role, summary: values.summary, next: values.next, status: 'active', verification: '', ...(values.factoryManaged ? { factoryManaged: true } : {}), ...(ownedPaths.length ? { ownedPaths } : {}), updatedAt: new Date().toISOString() };
+      if (role === 'worker') {
+        entry.binding = await startBinding(repo, entry);
+        await verifyGuardedStart(entry, repo, factoryOptions);
+      }
       entries.push(entry);
     } else if (command === 'reassign') {
       await reassign(entries, index, values, repo);
+      preserveFactoryManaged(entries[index], entries.at(-1));
     } else if (command === 'retire-reassigned') {
       retireReassigned(entries, index, values);
     } else {
@@ -250,6 +249,7 @@ async function run(args) {
         if (command === 'handoff') {
           const binding = await verifyHandoffAssignment(entry, repo, repo.root);
           verifyReadinessReceipt(entry);
+          if (entry.factoryManaged) await verifyFactoryHandoff(entry, entries, repo);
           const handoffEvidence = binding && entry.ownedPaths?.length
             ? await captureOwnedHandoff(entry)
             : { schemaVersion: 1, status: 'unverified', reason: 'Legacy handoff has no registered worker identity; hashes were not inferred.' };
@@ -259,7 +259,7 @@ async function run(args) {
       }
     }
     await atomicWrite(statePath, JSON.stringify(entries, null, 2) + '\n');
-    console.log(command === 'archive' ? JSON.stringify({ applied: true, output: values.output, retained: entries.length }) : `${command}: ${values.owner}/${values.task}; ${entries.length} assignment(s) retained.`);
+    console.log(command === 'archive' ? JSON.stringify({ applied: true, output: values.output, retained: entries.length }) : command === 'pin-factory-handoff' ? JSON.stringify({ owner: values.owner, task: values.task, ...entries[index].factoryHandoff }, null, 2) : `${command}: ${values.owner}/${values.task}; ${entries.length} assignment(s) retained.`);
   });
 }
 

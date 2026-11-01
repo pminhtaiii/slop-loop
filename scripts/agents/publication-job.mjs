@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { closeSync, openSync } from 'node:fs';
-import { open } from 'node:fs/promises';
+import { lstat, open } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,8 +13,77 @@ const script = fileURLToPath(import.meta.url);
 const usage = 'publication-job.mjs start --body-file <file> --summary <action summary> [--skip-review-request] [--root <checkout>] | status --id <job UUID> [--root <checkout>]';
 const jobId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const unfinished = new Set(['STARTING', 'RUNNING']);
+const maxProgressTail = 64 * 1024;
 const write = (path, value) => atomicWrite(path, `${JSON.stringify(value, null, 2)}\n`);
 const identity = root => ({ branch: git(root, ['symbolic-ref', '--quiet', '--short', 'HEAD']).stdout.trim(), head: git(root, ['rev-parse', 'HEAD']).stdout.trim() });
+
+function unknownProgress(reason) {
+  return { phase: 'unknown', latestGate: null, status: 'unknown', summary: 'Progress is unavailable from the retained log.', updatedAt: null, reason };
+}
+
+async function retainedProgress(path) {
+  let handle;
+  try {
+    const file = await lstat(path);
+    if (!file.isFile() || file.isSymbolicLink()) return unknownProgress('invalid-log-file');
+    handle = await open(path, 'r');
+    const { size } = await handle.stat();
+    const length = Math.min(size, maxProgressTail);
+    if (!length) return unknownProgress('empty-log');
+    const buffer = Buffer.alloc(length);
+    const { bytesRead } = await handle.read(buffer, 0, length, size - length);
+    if (bytesRead !== length) return unknownProgress('partial-log');
+    const content = buffer.toString('utf8');
+    if (!content.endsWith('\n')) return unknownProgress('partial-log');
+    const lines = content.split(/\r?\n/);
+    if (size > length) lines.shift();
+    for (let index = lines.length - 1; index >= 0; index -= 1) {
+      const line = lines[index].trim();
+      if (!line.startsWith('{"gate"')) continue;
+      if (line.length > 4096) return unknownProgress('malformed-progress');
+      let event;
+      try {
+        event = JSON.parse(line);
+      } catch {
+        return unknownProgress('malformed-progress');
+      }
+      if (!event || typeof event !== 'object' || typeof event.gate !== 'string' || !['running', 'progress', 'heartbeat', 'passed', 'failed', 'timed-out'].includes(event.status))
+        return unknownProgress('malformed-progress');
+      const text = value => {
+        if (typeof value !== 'string') return null;
+        // Retained logs are untrusted text; keep status output to one bounded line.
+        // eslint-disable-next-line no-control-regex
+        return (
+          value
+            .replace(/[\x00-\x1f\x7f-\x9f]/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .slice(0, 200) || null
+        );
+      };
+      const currentTest = text(event.currentTest),
+        currentFile = text(event.currentFile);
+      const updatedAt = typeof event.lastProgressAt === 'string' && Number.isFinite(Date.parse(event.lastProgressAt)) ? event.lastProgressAt : null;
+      const summary = [currentTest, currentFile && `(${currentFile})`].filter(Boolean).join(' ').slice(0, 420) || `${event.gate} ${event.status}`;
+      return {
+        phase: 'gate',
+        latestGate: event.gate.slice(0, 80),
+        status: event.status,
+        summary,
+        updatedAt,
+        ...(currentTest ? { currentTest } : {}),
+        ...(currentFile ? { currentFile } : {}),
+        ...(Number.isFinite(event.elapsedMs) && event.elapsedMs >= 0 ? { elapsedMs: event.elapsedMs } : {}),
+        ...(Number.isFinite(event.timeoutMs) && event.timeoutMs > 0 ? { timeoutMs: event.timeoutMs } : {}),
+      };
+    }
+    return unknownProgress('no-progress-event');
+  } catch (error) {
+    return unknownProgress(error.code === 'ENOENT' ? 'missing-log' : 'unreadable-log');
+  } finally {
+    await handle?.close();
+  }
+}
 
 async function readBody(path) {
   const handle = await open(path, 'r');
@@ -99,6 +168,8 @@ export async function publicationJob(args, dependencies = {}) {
         if (error.code === 'ESRCH') processAlive = false;
       }
     }
+    const expectedLog = resolve(directory, `${values.id}.log`);
+    const progress = record.log === expectedLog ? await retainedProgress(expectedLog) : unknownProgress('invalid-log-path');
     return {
       id: record.id,
       status: record.status,
@@ -108,6 +179,7 @@ export async function publicationJob(args, dependencies = {}) {
       pid: record.pid,
       processAlive,
       log: record.log,
+      progress,
       result: record.result,
       error: record.error,
       next: unfinished.has(record.status)

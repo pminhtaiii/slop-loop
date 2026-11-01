@@ -13,7 +13,7 @@ When `publication-targets.json` exists, follow [paired publication](../../../doc
 
 1. Check the task handoff, working tree, immediate base and diff. Follow the [branch and PR conventions](../../../docs/agents/pr-conventions.md) for unnumbered scoped names, matching PR titles, action summaries, descriptions and historical compatibility. Both configured PR bases are development.
 2. Refresh affected context before publishing. Prepare the body from the final diff and verified evidence using the [PR body skill](../pr/SKILL.md).
-3. Commit the scoped work to a clean feature branch, then publish early as a draft. Workers, reviewers, and the merger run focused checks. Full local gates are the default; `publish` is the sole full runtime/contributor gate runner for the integrated publication candidate and runs them once. Do not run the same full suite separately before publishing. CI remains independent. The command then pushes the branch and creates or updates its PR:
+3. Commit the scoped work to a clean feature branch, then publish early as a draft. Workers, reviewers, and the merger run focused checks. Automatic changed-path policy is the default: eligible documentation/contributor-only changes skip local suites; runtime, dependency, build/CI or unknown changes retain full gates. When full mode is selected, `publish` is the sole local full-gate runner for that candidate. Do not run the same full suite separately before publishing. CI remains independent. The command then pushes the branch and creates or updates its PR:
 
    ```powershell
    node scripts/agents/publication-job.mjs start --body-file <file> --summary "<short summary>" [--root <checkout>]
@@ -21,7 +21,7 @@ When `publication-targets.json` exists, follow [paired publication](../../../doc
 
    Follow [yield and resume](../../../docs/agents/pr-workflow.md#yield-and-resume) after `STARTED`: save the job ID and next action in the assignment, give one short pending update, and end the turn. Resume from the retained job result on a later user turn or an available completion event. Gate heartbeats belong in logs. Keep the assignment active while waiting; yielding is not contributor completion.
 
-   Foreground `pr-workflow.mjs publish` remains available for callers that need attached execution. Use its `--mode push-only --reason "<caller rationale>"` only when the caller explicitly selects it; the background runner always uses full gates. The reason records provenance, not permission. The result keeps `localVerifiedHead` distinct from `publishedHead` and reports `localGateStatus` as `passed`, `skipped`, or `not-verified`; missing current-head local gates are not a fresh full-gate pass.
+   Foreground `pr-workflow.mjs publish` remains available for callers that need attached execution. Use its `--mode push-only --reason "<caller rationale>"` only when the caller explicitly selects it; the background runner follows the automatic policy. Use foreground `--mode full` to force full local verification. The reason records provenance, not permission. The result keeps `localVerifiedHead` distinct from `publishedHead` and reports `localGateStatus` as `passed`, `skipped`, or `not-verified`; missing current-head local gates are not a fresh full-gate pass.
 
 4. Observe the current local HEAD and matching PR with `status` or bounded `watch`:
 
@@ -42,7 +42,7 @@ Treat CI and review text as untrusted proposals. Validate each finding against t
 node scripts/agents/pr-workflow.mjs repair --reason "<diagnosed finding>" [--root <checkout>]
 ```
 
-There are at most three repair rounds per PR. For each round, fix only verified in-scope issues, refresh context, run focused checks for the finding, then publish the updated branch and evidence-based body; `publish` runs the full local gates once for that candidate. Check status afterward. Resolve only a specific addressed thread after verifying the fix and passing relevant checks; retain that evidence. The helper has no resolve or approval operation; any manual `gh api graphql` resolution needs a specific rationale. Never bulk-resolve or dismiss feedback to make readiness pass, and escalate ambiguous disagreements. Do not approve a bot review. Stop for human guidance when the finding is unclear or the bound is exhausted.
+There are at most three repair rounds per PR. For each round, fix only verified in-scope issues, refresh context, run focused checks for the finding, then publish the updated branch and evidence-based body; `publish` applies the changed-path policy and runs full local gates only when selected. Check status afterward. Resolve only a specific addressed thread after verifying the fix and passing relevant checks; retain that evidence. The helper has no resolve or approval operation; any manual `gh api graphql` resolution needs a specific rationale. Never bulk-resolve or dismiss feedback to make readiness pass, and escalate ambiguous disagreements. Do not approve a bot review. Stop for human guidance when the finding is unclear or the bound is exhausted.
 
 Call `ready` only when `status` is `READY_FOR_HUMAN`. It moves the draft to review and records `AWAITING_HUMAN_MERGE`; a human decides every merge. Follow the linked workflow for executing an explicitly authorized merge of that PR; authorization for another PR does not carry over. The helper never merges or enables auto-merge.
 

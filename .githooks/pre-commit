@@ -1,2 +1,9 @@
 #!/bin/sh
+git diff --cached --check
+whitespace_status=$?
 node scripts/ci/check-staged-file-size.mjs
+size_status=$?
+if [ "$whitespace_status" -ne 0 ]; then
+  exit "$whitespace_status"
+fi
+exit "$size_status"

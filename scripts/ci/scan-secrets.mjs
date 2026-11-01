@@ -114,8 +114,12 @@ export function scanArgs({ snapshot, from, to, reportPath, configPath, ignorePat
 }
 
 export function readReport(path, maxBytes = MAX_REPORT_BYTES) {
-  const stats = statSync(path, { throwIfNoEntry: false });
-  if (!stats) throw new Error('Gitleaks report could not be read.');
+  let stats;
+  try {
+    stats = statSync(path);
+  } catch {
+    throw new Error('Gitleaks report could not be read.');
+  }
   if (stats.size > maxBytes) throw new Error(`Gitleaks report exceeded the bounded size limit of ${maxBytes} bytes.`);
   return readFileSync(path, 'utf8');
 }

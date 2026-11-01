@@ -34,7 +34,14 @@ function parseRawDiff(raw) {
 function isExcluded(path) {
   const parts = path.toLowerCase().split('/');
   const basename = parts.at(-1);
-  return LOCKFILES.has(basename) || ['tests', 'specs'].includes(parts[0]) || parts.includes('node_modules') || ['dist', 'coverage'].includes(parts[0]) || /\.(?:generated|g)\.[^.]+$/.test(basename);
+  return (
+    LOCKFILES.has(basename) ||
+    parts.join('/') === 'context/progress_checker.md' ||
+    ['tests', 'specs'].includes(parts[0]) ||
+    parts.includes('node_modules') ||
+    ['dist', 'coverage'].includes(parts[0]) ||
+    /\.(?:generated|g)\.[^.]+$/.test(basename)
+  );
 }
 
 function stagedDiff(root) {
@@ -155,7 +162,9 @@ async function main() {
   const root = resolve(values['--root'] ?? git(process.cwd(), ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim());
   const result = await checkStagedFileSize(root);
   if (result.oversized.length) {
-    console.error(`Staged implementation files exceed ${formatNumber(LIMIT_BYTES)} bytes (about 5,000 tokens at bytes/4; top-level tests/ and specs/ are excluded):`);
+    console.error(
+      `Staged implementation files exceed ${formatNumber(LIMIT_BYTES)} bytes (about 5,000 tokens at bytes/4; top-level tests/ and specs/ are excluded, as is context/progress_checker.md):`,
+    );
     for (const file of result.oversized) console.error(`- ${JSON.stringify(file.path)} (${formatNumber(file.size)} bytes)`);
     console.error('Split each file along a cohesive responsibility into smaller modules, keep a small entry point, stage the split, then rerun `pnpm run check:staged-size`.');
     process.exitCode = 1;

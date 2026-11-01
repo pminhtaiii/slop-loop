@@ -93,7 +93,7 @@ const overlaps = (a, b) => {
 };
 const equalIdentity = (a, b) => ['owner', 'task', 'session', 'checkout'].every(field => a?.[field] === b?.[field]);
 
-export async function check({ root, mode, manifestPath, manifestSha256, evidencePath, evidenceSha256 }) {
+async function checkState({ root, mode, manifestPath, manifestSha256, evidencePath, evidenceSha256 }, registrySnapshot) {
   requireValue(['dispatch', 'handoff'].includes(mode), 'Mode must be dispatch or handoff.');
   requireValue(hashPattern.test(manifestSha256 ?? ''), 'A trusted manifest hash is required.');
   const repo = await repository(root);
@@ -102,12 +102,15 @@ export async function check({ root, mode, manifestPath, manifestSha256, evidence
   const manifest = JSON.parse(manifestBytes);
   validateManifest(manifest);
   requireValue(await samePath(manifest.identity.checkout, repo.root), 'Checkout mismatch.');
-  const lock = await lstat(resolve(repo.primary, '.agent-work/state/active-task.lock')).catch(error => {
-    if (error.code !== 'ENOENT') throw error;
-    return null;
-  });
-  requireValue(!lock, 'Active-task registry is busy.');
-  const entries = JSON.parse(await fileBytes(repo.primary, '.agent-work/state/active-tasks.json'));
+  let entries = registrySnapshot;
+  if (entries === undefined) {
+    const lock = await lstat(resolve(repo.primary, '.agent-work/state/active-task.lock')).catch(error => {
+      if (error.code !== 'ENOENT') throw error;
+      return null;
+    });
+    requireValue(!lock, 'Active-task registry is busy.');
+    entries = JSON.parse(await fileBytes(repo.primary, '.agent-work/state/active-tasks.json'));
+  } else requireValue(Array.isArray(entries), 'Internal active-task registry snapshot is invalid.');
   requireValue(Array.isArray(entries), 'Malformed registry.');
   const matches = entries.filter(entry => entry?.owner === manifest.identity.owner && entry?.task === manifest.identity.task);
   requireValue(matches.length === 1, 'Assignment missing or ambiguous.');
@@ -172,4 +175,13 @@ export async function check({ root, mode, manifestPath, manifestSha256, evidence
     candidateSha256: candidate.candidateSha256,
     provenance: 'Caller-supplied declarations and evidence are not authorization, semantic acceptance, or execution attestation.',
   };
+}
+
+export async function check(options) {
+  return checkState(options);
+}
+
+export async function checkAgainstLockedRegistry(options, entries) {
+  requireValue(Array.isArray(entries), 'Internal active-task registry snapshot is invalid.');
+  return checkState(options, entries);
 }

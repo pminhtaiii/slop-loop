@@ -118,6 +118,46 @@ test('launch and gate failures are retained without claiming success', async t =
   assert.equal(result.result, undefined);
 });
 
+test('status exposes the latest bounded gate progress from the retained output log', async t => {
+  const f = await fixture(t);
+  const job = await f.start();
+  const first = { gate: 'runtime', status: 'passed', exitCode: 0, lastProgressAt: '2026-10-31T08:00:00.000Z' };
+  const latest = {
+    gate: 'tests',
+    status: 'progress',
+    currentTest: 'worker preparation blocks on a closed PR',
+    currentFile: 'tests/agents/contributor-prepare.test.mjs',
+    elapsedMs: 875,
+    timeoutMs: 1200000,
+    lastProgressAt: '2026-10-31T08:01:00.000Z',
+  };
+  await writeFile(job.log, `${JSON.stringify(first)}\n${JSON.stringify(latest)}\n`);
+
+  const result = await f.status(job.id);
+  assert.equal(result.progress.phase, 'gate');
+  assert.equal(result.progress.latestGate, 'tests');
+  assert.equal(result.progress.status, 'progress');
+  assert.equal(result.progress.currentTest, latest.currentTest);
+  assert.equal(result.progress.currentFile, latest.currentFile);
+  assert.equal(result.progress.updatedAt, latest.lastProgressAt);
+});
+
+test('status marks missing, partial, and malformed progress logs unknown without failing the job read', async t => {
+  const f = await fixture(t);
+  const job = await f.start();
+  assert.equal((await f.status(job.id)).progress.status, 'unknown');
+  await writeFile(job.log, '{"gate":"tests","status":"progress"');
+  const result = await f.status(job.id);
+  assert.equal(result.status, 'STARTING');
+  assert.equal(result.progress.status, 'unknown');
+  assert.equal(result.progress.reason, 'partial-log');
+  await writeFile(job.log, '{"gate":"tests","status":"not-a-gate-status"}\n');
+  const malformed = await f.status(job.id);
+  assert.equal(malformed.status, 'STARTING');
+  assert.equal(malformed.progress.status, 'unknown');
+  assert.equal(malformed.progress.reason, 'malformed-progress');
+});
+
 test('invalid options and dirty checkout refuse before launch', async t => {
   const f = await fixture(t);
   await assert.rejects(publicationJob(['status', '--root', f.root, '--id', '../escape']), /Invalid job/);

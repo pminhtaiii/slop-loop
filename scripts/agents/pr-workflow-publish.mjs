@@ -9,9 +9,10 @@ import { inspectSubmissionTarget, publishSubmission } from './submission-pr.mjs'
 import { withPublicationBody } from './publication-targets.mjs';
 import { packageScriptCommand, runGate } from './workflow-gate.mjs';
 import { changedLines } from './pr-workflow-status.mjs';
+import { selectPublicationPolicy } from './publication-policy.mjs';
 
 export async function publishCommand({ values, record, branch, repo, remote, git, find, pairedExecute, targets, dependencies, call, save, gh, json }) {
-  const { mode, reason } = values.publication;
+  const { requestedMode, reason } = values.publication;
   const title = `${branch}: ${values.summary}`;
   const bodyPath = resolve(values['body-file']);
   if ((await stat(bodyPath)).size > 65_536) throw new Error('PR body exceeds 65536 bytes.');
@@ -54,6 +55,13 @@ export async function publishCommand({ values, record, branch, repo, remote, git
     throw new Error('Checkout changed since job launch; publication refused before gates.');
   const [behind] = git('rev-list', '--left-right', '--count', `origin/development...${head}`).split(/\s+/).map(Number);
   if (behind > 0) throw new Error('Branch is behind development; integrate its changes before publishing.');
+  const base = git('rev-parse', 'origin/development');
+  const publicationPolicy = await selectPublicationPolicy({ requestedMode, reason, base, head, git });
+  const { mode } = publicationPolicy;
+  record.publicationMode = mode;
+  record.publicationReason = publicationPolicy.reason;
+  record.publicationProvenance = publicationPolicy.provenance;
+  record.publicationPolicy = publicationPolicy;
   const size = changedLines(git('diff', '--numstat', '--no-renames', `origin/development...${head}`));
   if (!size.reviewable && !size.generated && !size.binaries) throw new Error('No changes against development.');
   if (targets) await inspectSubmissionTarget({ repo, targets, branch, execute: pairedExecute });
@@ -115,9 +123,6 @@ export async function publishCommand({ values, record, branch, repo, remote, git
     record.localVerification = localVerification;
     record.localVerifiedHead = head;
   }
-  record.publicationMode = mode;
-  if (reason) record.publicationReason = reason;
-  else delete record.publicationReason;
   delete record.completion;
   record.publicationStarted = true;
   if (newConventions) record.conventionVersion = conventionVersion;

@@ -16,6 +16,13 @@
     "context/progress_checker.md",
     "docs/progress-checker-matrices.md"
   ],
+  "requiredSkillStages": [
+    {
+      "skill": "verify-task",
+      "stage": "Task briefs and handoffs",
+      "path": ".agents/skills/verify-task/SKILL.md"
+    }
+  ],
   "facts": {
     "runtime-language": {
       "source": "context/tech_stack.md",
