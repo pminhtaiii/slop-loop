@@ -5,11 +5,7 @@ import tseslint from 'typescript-eslint';
 // A catch that only rethrows the caught error adds a frame and no information.
 const noUselessCatch = { 'no-useless-catch': 'error' };
 
-const nodeJavaScript = [
-  'scripts/**/*.mjs',
-  'tests/agents/**/*.mjs',
-  'tests/ci/**/*.mjs',
-];
+const nodeJavaScript = ['scripts/**/*.mjs', 'tests/agents/**/*.mjs', 'tests/ci/**/*.mjs'];
 
 export default tseslint.config(
   {
@@ -25,13 +21,16 @@ export default tseslint.config(
     rules: {
       ...js.configs.recommended.rules,
       ...noUselessCatch,
-      'no-unused-vars': ['error', {
-        argsIgnorePattern: '^_',
-        caughtErrorsIgnorePattern: '^_',
-        destructuredArrayIgnorePattern: '^_',
-        ignoreRestSiblings: true,
-        varsIgnorePattern: '^_',
-      }],
+      'no-unused-vars': [
+        'error',
+        {
+          argsIgnorePattern: '^_',
+          caughtErrorsIgnorePattern: '^_',
+          destructuredArrayIgnorePattern: '^_',
+          ignoreRestSiblings: true,
+          varsIgnorePattern: '^_',
+        },
+      ],
     },
   },
   {
