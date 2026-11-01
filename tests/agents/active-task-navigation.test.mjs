@@ -52,7 +52,7 @@ async function addLegacyWorktree(t, checkout, entries) {
   return linked;
 }
 
-test('routine lifecycle commands work with a navigation-only page and never rewrite it', async (t) => {
+test('routine lifecycle commands work with a navigation-only page and never rewrite it', async t => {
   const navigation = '# Active task\n\nUse `active-task.mjs list --compact` for current work.\n';
   const checkout = await fixture(t, navigation);
   const path = join(checkout, 'context/active_task.md');
@@ -81,7 +81,7 @@ test('routine lifecycle commands work with a navigation-only page and never rewr
   assert.equal(await readFile(path, 'utf8'), navigation);
 });
 
-test('session progress initializes and refreshes only its generated view from shared assignments', async (t) => {
+test('session progress initializes and refreshes only its generated view from shared assignments', async t => {
   const navigation = '# Active task\n\nUse `active-task.mjs list --compact` for current work.\n';
   const checkout = await fixture(t, navigation);
   const page = join(checkout, 'context/active_task.md');
@@ -98,9 +98,37 @@ test('session progress initializes and refreshes only its generated view from sh
 
   await mkdir(join(checkout, 'src'));
   await writeFile(join(checkout, 'src/example.ts'), 'export const example = true;\n');
-  result = run(checkout, 'start', '--role', 'worker', '--owner', 'progress-owner', '--task', 'T003', '--session', '2026-10-15/progress-run', '--summary', 'Implement the task', '--next', 'Run focused checks');
+  result = run(
+    checkout,
+    'start',
+    '--role',
+    'worker',
+    '--owner',
+    'progress-owner',
+    '--task',
+    'T003',
+    '--session',
+    '2026-10-15/progress-run',
+    '--summary',
+    'Implement the task',
+    '--next',
+    'Run focused checks',
+  );
   assert.equal(result.status, 0, result.stderr);
-  result = run(checkout, 'update', '--owner', 'progress-owner', '--task', 'T003', '--status', 'blocked', '--next', 'Resolve the fixture issue', '--verification', 'The focused check identifies the missing fixture');
+  result = run(
+    checkout,
+    'update',
+    '--owner',
+    'progress-owner',
+    '--task',
+    'T003',
+    '--status',
+    'blocked',
+    '--next',
+    'Resolve the fixture issue',
+    '--verification',
+    'The focused check identifies the missing fixture',
+  );
   assert.equal(result.status, 0, result.stderr);
   result = run(checkout, 'handoff', '--owner', 'progress-owner', '--task', 'T003', '--result', 'Focused checks passed');
   assert.equal(result.status, 0, result.stderr);
@@ -134,7 +162,7 @@ test('session progress initializes and refreshes only its generated view from sh
   assert.equal(await readFile(page, 'utf8'), navigation);
 });
 
-test('session progress rejects traversal, manual files, and symlinked directories', async (t) => {
+test('session progress rejects traversal, manual files, and symlinked directories', async t => {
   const checkout = await fixture(t, '# Active task\n');
   let result = run(checkout, 'render', '--output', '../outside.md');
   assert.equal(result.status, 1);
@@ -162,29 +190,55 @@ test('session progress rejects traversal, manual files, and symlinked directorie
   result = run(checkout, 'render', '--output', '.agent-work/2026-10-15/safe-view/progress.md');
   assert.equal(result.status, 1);
   assert.match(result.stderr, /directories must be regular directories, not links/);
-  assert.equal(await access(join(outside, 'safe-view/progress.md')).then(() => true, () => false), false);
+  assert.equal(
+    await access(join(outside, 'safe-view/progress.md')).then(
+      () => true,
+      () => false,
+    ),
+    false,
+  );
 });
 
-test('explicit migration backs up and imports distinct owners from all linked worktrees', async (t) => {
+test('explicit migration backs up and imports distinct owners from all linked worktrees', async t => {
   const active = { owner: 'legacy-active', task: 'T001', summary: 'Active legacy work', next: 'Resume active work', status: 'active', updatedAt: '2026-10-16T00:00:00.000Z' };
   const checkout = await fixture(t, legacyPage([active]));
   const currentPath = join(checkout, 'context/active_task.md');
   const currentSnapshot = await readFile(currentPath, 'utf8');
-  const completed = { owner: 'legacy-completed', task: 'T002', summary: 'Completed legacy work', next: 'Retain completion record', status: 'completed', result: 'Completed evidence', updatedAt: '2026-10-16T00:01:00.000Z' };
+  const completed = {
+    owner: 'legacy-completed',
+    task: 'T002',
+    summary: 'Completed legacy work',
+    next: 'Retain completion record',
+    status: 'completed',
+    result: 'Completed evidence',
+    updatedAt: '2026-10-16T00:01:00.000Z',
+  };
   const linked = await addLegacyWorktree(t, checkout, [completed]);
   const linkedPath = join(linked, 'context/active_task.md');
   const linkedSnapshot = await readFile(linkedPath, 'utf8');
 
   const listed = run(checkout, 'list');
   assert.equal(listed.status, 0, listed.stderr);
-  assert.deepEqual(JSON.parse(listed.stdout).map((entry) => entry.owner), ['legacy-active', 'legacy-completed']);
+  assert.deepEqual(
+    JSON.parse(listed.stdout).map(entry => entry.owner),
+    ['legacy-active', 'legacy-completed'],
+  );
   const statePath = join(checkout, '.agent-work/state/active-tasks.json');
-  assert.equal(await access(statePath).then(() => true, () => false), false);
+  assert.equal(
+    await access(statePath).then(
+      () => true,
+      () => false,
+    ),
+    false,
+  );
 
   const migrated = run(linked, 'migrate-legacy');
   assert.equal(migrated.status, 0, migrated.stderr);
   const entries = JSON.parse(await readFile(statePath, 'utf8'));
-  assert.deepEqual(entries.map((entry) => entry.owner), ['legacy-active', 'legacy-completed']);
+  assert.deepEqual(
+    entries.map(entry => entry.owner),
+    ['legacy-active', 'legacy-completed'],
+  );
   assert.equal(entries[1].result, 'Completed evidence');
   const backups = join(checkout, '.agent-work/state/legacy-active-task');
   assert.equal((await readdir(backups)).length, 2);
@@ -196,9 +250,17 @@ test('explicit migration backs up and imports distinct owners from all linked wo
   assert.equal((await readdir(backups)).length, 2);
 });
 
-test('explicit migration merges legacy owners into existing shared state without replacing existing rows', async (t) => {
+test('explicit migration merges legacy owners into existing shared state without replacing existing rows', async t => {
   const active = { owner: 'legacy-active', task: 'T001', summary: 'Active legacy work', next: 'Resume active work', status: 'active', updatedAt: '2026-10-16T00:00:00.000Z' };
-  const completed = { owner: 'legacy-completed', task: 'T002', summary: 'Completed legacy work', next: 'Retain completion record', status: 'completed', result: 'Completed evidence', updatedAt: '2026-10-16T00:01:00.000Z' };
+  const completed = {
+    owner: 'legacy-completed',
+    task: 'T002',
+    summary: 'Completed legacy work',
+    next: 'Retain completion record',
+    status: 'completed',
+    result: 'Completed evidence',
+    updatedAt: '2026-10-16T00:01:00.000Z',
+  };
   const conflicting = { owner: 'shared-owner', task: 'T003', summary: 'Stale legacy work', next: 'Keep the shared row', status: 'active', updatedAt: '2026-10-16T00:02:00.000Z' };
   const checkout = await fixture(t, legacyPage([active, conflicting]));
   const linked = await addLegacyWorktree(t, checkout, [completed]);
@@ -212,12 +274,15 @@ test('explicit migration merges legacy owners into existing shared state without
   assert.match(migrated.stdout, /"imported": 2/);
   assert.match(migrated.stdout, /"owner": "shared-owner"/);
   const entries = JSON.parse(await readFile(statePath, 'utf8'));
-  assert.deepEqual(entries.map((entry) => entry.owner), ['shared-owner', 'legacy-active', 'legacy-completed']);
+  assert.deepEqual(
+    entries.map(entry => entry.owner),
+    ['shared-owner', 'legacy-active', 'legacy-completed'],
+  );
   assert.equal(entries[0].next, 'Preserve this row');
   assert.equal(entries[2].result, 'Completed evidence');
 });
 
-test('legacy rows stay read-only until migration is requested', async (t) => {
+test('legacy rows stay read-only until migration is requested', async t => {
   const entry = { owner: 'legacy-owner', task: 'T001', summary: 'Legacy assignment', next: 'Keep this assignment', status: 'active' };
   const checkout = await fixture(t, legacyPage([entry]));
   const page = join(checkout, 'context/active_task.md');
@@ -226,12 +291,21 @@ test('legacy rows stay read-only until migration is requested', async (t) => {
   const started = run(checkout, 'start', '--role', 'worker', '--owner', 'new-owner', '--task', 'T002', '--summary', 'New assignment', '--next', 'Do not overwrite legacy state');
   assert.equal(started.status, 1);
   assert.match(started.stderr, /run active-task\.mjs migrate-legacy/);
-  assert.deepEqual(JSON.parse(run(checkout, 'list').stdout).map((row) => row.owner), ['legacy-owner']);
-  assert.equal(await access(join(checkout, '.agent-work/state/active-tasks.json')).then(() => true, () => false), false);
+  assert.deepEqual(
+    JSON.parse(run(checkout, 'list').stdout).map(row => row.owner),
+    ['legacy-owner'],
+  );
+  assert.equal(
+    await access(join(checkout, '.agent-work/state/active-tasks.json')).then(
+      () => true,
+      () => false,
+    ),
+    false,
+  );
   assert.equal(await readFile(page, 'utf8'), snapshot);
 });
 
-test('conflicting active and completed legacy rows are backed up without creating partial state', async (t) => {
+test('conflicting active and completed legacy rows are backed up without creating partial state', async t => {
   const active = { owner: 'same-owner', task: 'T001', summary: 'Active source', next: 'Keep running work', status: 'active', updatedAt: '2026-10-16T00:00:00.000Z' };
   const checkout = await fixture(t, legacyPage([active]));
   const currentPath = join(checkout, 'context/active_task.md');
@@ -244,11 +318,19 @@ test('conflicting active and completed legacy rows are backed up without creatin
   const result = run(checkout, 'migrate-legacy');
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /"owner": "same-owner"/);
-  const backups = await Promise.all((await readdir(join(checkout, '.agent-work/state/legacy-active-task'))).map((file) => readFile(join(checkout, '.agent-work/state/legacy-active-task', file), 'utf8')));
+  const backups = await Promise.all(
+    (await readdir(join(checkout, '.agent-work/state/legacy-active-task'))).map(file => readFile(join(checkout, '.agent-work/state/legacy-active-task', file), 'utf8')),
+  );
   assert.equal(backups.length, 2);
-  assert.ok(backups.some((backup) => backup.includes('Keep running work')));
-  assert.ok(backups.some((backup) => backup.includes('Completed evidence')));
-  assert.equal(await access(join(checkout, '.agent-work/state/active-tasks.json')).then(() => true, () => false), false);
+  assert.ok(backups.some(backup => backup.includes('Keep running work')));
+  assert.ok(backups.some(backup => backup.includes('Completed evidence')));
+  assert.equal(
+    await access(join(checkout, '.agent-work/state/active-tasks.json')).then(
+      () => true,
+      () => false,
+    ),
+    false,
+  );
   assert.equal(await readFile(currentPath, 'utf8'), currentSnapshot);
   assert.equal(await readFile(linkedPath, 'utf8'), linkedSnapshot);
 });

@@ -22,7 +22,9 @@ async function fixture(t) {
 
 function run(cli, checkout, ...args) {
   return spawnSync(process.execPath, [cli, ...args, '--root', checkout], {
-    encoding: 'utf8', windowsHide: true, timeout: 10_000,
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: 10_000,
   });
 }
 
@@ -31,7 +33,7 @@ function startSession(checkout, id) {
   assert.equal(result.status, 0, result.stderr);
 }
 
-test('new assignments require explicit sessions and workers must declare owned paths', async (t) => {
+test('new assignments require explicit sessions and workers must declare owned paths', async t => {
   const checkout = await fixture(t);
   const missingSession = run(taskCli, checkout, 'start', '--owner', 'coordinator', '--task', 'T001', '--summary', 'Work', '--next', 'Verify');
   assert.equal(missingSession.status, 1);
@@ -41,10 +43,24 @@ test('new assignments require explicit sessions and workers must declare owned p
   assert.match(missingPaths.stderr, /requires at least one --owned-path/);
 });
 
-test('finishing one session ignores another explicit session assignment in the same checkout', async (t) => {
+test('finishing one session ignores another explicit session assignment in the same checkout', async t => {
   const checkout = await fixture(t);
   startSession(checkout, 'target');
-  const assignment = run(taskCli, checkout, 'start', '--owner', 'other-worker', '--task', 'T002', '--session', '2026-10-21/other', '--summary', 'Other session work', '--next', 'Continue in its session');
+  const assignment = run(
+    taskCli,
+    checkout,
+    'start',
+    '--owner',
+    'other-worker',
+    '--task',
+    'T002',
+    '--session',
+    '2026-10-21/other',
+    '--summary',
+    'Other session work',
+    '--next',
+    'Continue in its session',
+  );
   assert.equal(assignment.status, 0, assignment.stderr);
 
   const finished = run(sessionCli, checkout, 'finish', '--session', '2026-10-21/target');
@@ -55,7 +71,7 @@ test('finishing one session ignores another explicit session assignment in the s
   assert.equal(tasks[0].status, 'active');
 });
 
-test('an assignment in its own session blocks finish and names the exact owner/task', async (t) => {
+test('an assignment in its own session blocks finish and names the exact owner/task', async t => {
   const checkout = await fixture(t);
   startSession(checkout, 'owned');
   const assignment = run(taskCli, checkout, 'start', '--owner', 'own-worker', '--task', 'T003', '--session', '2026-10-21/owned', '--summary', 'Owned work', '--next', 'Finish tests');
@@ -68,17 +84,35 @@ test('an assignment in its own session blocks finish and names the exact owner/t
   assert.equal(tasks[0].status, 'active');
 });
 
-test('reassignment retires the source session while active or blocked successor work still blocks', async (t) => {
+test('reassignment retires the source session while active or blocked successor work still blocks', async t => {
   const checkout = await fixture(t);
   startSession(checkout, 'source');
   startSession(checkout, 'successor');
-  let result = run(taskCli, checkout, 'start', '--owner', 'interrupted', '--task', 'T007', '--role', 'worker', '--session', '2026-10-21/source', '--summary', 'Continue the feature', '--next', 'Resume from checkpoint', '--owned-path', 'src/feature.ts');
+  let result = run(
+    taskCli,
+    checkout,
+    'start',
+    '--owner',
+    'interrupted',
+    '--task',
+    'T007',
+    '--role',
+    'worker',
+    '--session',
+    '2026-10-21/source',
+    '--summary',
+    'Continue the feature',
+    '--next',
+    'Resume from checkpoint',
+    '--owned-path',
+    'src/feature.ts',
+  );
   assert.equal(result.status, 0, result.stderr);
   result = run(taskCli, checkout, 'reassign', '--owner', 'interrupted', '--task', 'T007', '--new-owner', 'successor', '--session', '2026-10-21/successor', '--reason', 'Human-directed recovery');
   assert.equal(result.status, 0, result.stderr);
   let tasks = JSON.parse(await readFile(join(checkout, '.agent-work/state/active-tasks.json'), 'utf8'));
-  const predecessor = tasks.find((entry) => entry.owner === 'interrupted');
-  const successor = tasks.find((entry) => entry.owner === 'successor');
+  const predecessor = tasks.find(entry => entry.owner === 'interrupted');
+  const successor = tasks.find(entry => entry.owner === 'successor');
   assert.equal(predecessor.status, 'reassigned');
   assert.deepEqual(predecessor.binding.identity, { owner: 'interrupted', task: 'T007', session: '2026-10-21/source' });
   assert.equal(successor.checkout, checkout);
@@ -103,19 +137,22 @@ test('reassignment retires the source session while active or blocked successor 
   result = run(taskCli, checkout, 'handoff', '--owner', 'successor', '--task', 'T007', '--result', 'Successor work handed off');
   assert.equal(result.status, 0, result.stderr);
   tasks = JSON.parse(await readFile(join(checkout, '.agent-work/state/active-tasks.json'), 'utf8'));
-  assert.equal(tasks.find((entry) => entry.owner === 'interrupted').status, 'reassigned', 'predecessor history remains retained');
+  assert.equal(tasks.find(entry => entry.owner === 'interrupted').status, 'reassigned', 'predecessor history remains retained');
   result = run(sessionCli, checkout, 'finish', '--session', '2026-10-21/successor');
   assert.equal(result.status, 0, result.stderr);
 });
 
-test('legacy assignments with unknown session remain conservative blockers', async (t) => {
+test('legacy assignments with unknown session remain conservative blockers', async t => {
   const checkout = await fixture(t);
   startSession(checkout, 'legacy-target');
   await mkdir(join(checkout, '.agent-work/state'), { recursive: true });
-  await writeFile(join(checkout, '.agent-work/state/active-tasks.json'), JSON.stringify([
-    { owner: 'legacy-worker', task: 'T004', checkout, summary: 'Older record', next: 'Recover evidence', status: 'blocked' },
-    { owner: 'malformed-worker', task: 'T005', checkout, session: 'not-a-session', summary: 'Damaged record', next: 'Inspect the state', status: 'active' },
-  ]));
+  await writeFile(
+    join(checkout, '.agent-work/state/active-tasks.json'),
+    JSON.stringify([
+      { owner: 'legacy-worker', task: 'T004', checkout, summary: 'Older record', next: 'Recover evidence', status: 'blocked' },
+      { owner: 'malformed-worker', task: 'T005', checkout, session: 'not-a-session', summary: 'Damaged record', next: 'Inspect the state', status: 'active' },
+    ]),
+  );
 
   const finished = run(sessionCli, checkout, 'finish', '--session', '2026-10-21/legacy-target');
   assert.equal(finished.status, 1);
@@ -125,7 +162,7 @@ test('legacy assignments with unknown session remain conservative blockers', asy
   assert.equal(marker.status, 'active');
 });
 
-test('legacy assignment checkout aliases still block session finish', async (t) => {
+test('legacy assignment checkout aliases still block session finish', async t => {
   const checkout = await fixture(t);
   startSession(checkout, 'legacy-alias');
   const aliases = await mkdtemp(join(tmpdir(), 'session-alias-'));
@@ -133,9 +170,10 @@ test('legacy assignment checkout aliases still block session finish', async (t) 
   const alias = join(aliases, 'checkout');
   await symlink(checkout, alias, process.platform === 'win32' ? 'junction' : 'dir');
   await mkdir(join(checkout, '.agent-work/state'), { recursive: true });
-  await writeFile(join(checkout, '.agent-work/state/active-tasks.json'), JSON.stringify([
-    { owner: 'legacy-worker', task: 'T006', checkout: alias, session: 'unknown', summary: 'Older record', next: 'Recover evidence', status: 'active' },
-  ]));
+  await writeFile(
+    join(checkout, '.agent-work/state/active-tasks.json'),
+    JSON.stringify([{ owner: 'legacy-worker', task: 'T006', checkout: alias, session: 'unknown', summary: 'Older record', next: 'Recover evidence', status: 'active' }]),
+  );
 
   const finished = run(sessionCli, checkout, 'finish', '--session', '2026-10-21/legacy-alias');
   assert.equal(finished.status, 1);

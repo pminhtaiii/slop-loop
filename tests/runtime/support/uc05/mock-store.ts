@@ -37,14 +37,7 @@ export interface MockDecisionHistory {
   readonly claims: readonly DispatchClaim[];
 }
 
-export type MockStoreOperation =
-  | 'createPendingAndPause'
-  | 'resolvePending'
-  | 'replaceStalePending'
-  | 'recordDirection'
-  | 'claimDispatch'
-  | 'recordOutcome'
-  | 'reconcile';
+export type MockStoreOperation = 'createPendingAndPause' | 'resolvePending' | 'replaceStalePending' | 'recordDirection' | 'claimDispatch' | 'recordOutcome' | 'reconcile';
 
 export interface MockApprovalStore {
   readonly provenance: typeof UC05_MOCK_PROVENANCE;
@@ -162,51 +155,54 @@ export function createMockApprovalStore(input: CreateMockApprovalStoreInput): Mo
 
   const controlFor = (taskId: string): ApprovalTaskControl | undefined => controls.get(taskId);
   const requestForTask = (taskId: string): ApprovalRequestRecord | undefined =>
-    [...requests.values()].find((request) => request.taskId === taskId && controlFor(taskId)?.pendingDecisionId === request.decisionId);
+    [...requests.values()].find(request => request.taskId === taskId && controlFor(taskId)?.pendingDecisionId === request.decisionId);
   const fallbackControl = (): ApprovalTaskControl => controls.values().next().value as ApprovalTaskControl;
-  const currentOrUnknown = (taskId: string): ApprovalTaskControl => controlFor(taskId) ?? {
-    schemaVersion: 'uc05-approval/0.1-draft', taskId: 'unknown-task', repositoryId: 'unknown-repository',
-    workspaceId: 'unknown-workspace', version: 1, epoch: 1, mode: 'recovery-blocked',
-    pendingDecisionId: null, continuationRef: null, reasonCode: 'unknown-task', outstandingClaimRefs: [],
-  };
+  const currentOrUnknown = (taskId: string): ApprovalTaskControl =>
+    controlFor(taskId) ?? {
+      schemaVersion: 'uc05-approval/0.1-draft',
+      taskId: 'unknown-task',
+      repositoryId: 'unknown-repository',
+      workspaceId: 'unknown-workspace',
+      version: 1,
+      epoch: 1,
+      mode: 'recovery-blocked',
+      pendingDecisionId: null,
+      continuationRef: null,
+      reasonCode: 'unknown-task',
+      outstandingClaimRefs: [],
+    };
   const storageFailure = <T>(operation: MockStoreOperation, control: ApprovalTaskControl, decisionId: string | null = null, requestVersion: number | null = null): MockPortResponse<T> | undefined => {
     if (!failedNext.delete(operation)) return undefined;
     return makeResponse<T>(control, 'unavailable', 'mock-storage-commit-failed', null, decisionId, requestVersion, null);
   };
-  const pendingRequestVersion = (control: ApprovalTaskControl): number | null => control.pendingDecisionId === null
-    ? null
-    : requests.get(control.pendingDecisionId)?.requestVersion ?? null;
+  const pendingRequestVersion = (control: ApprovalTaskControl): number | null => (control.pendingDecisionId === null ? null : (requests.get(control.pendingDecisionId)?.requestVersion ?? null));
 
   const loadTaskControl = (taskId: string): MockPortResponse<ApprovalTaskControl> => {
     const control = controlFor(taskId);
-    return control
-      ? resultFor(control, 'ok', 'task-control-loaded', freezeCopy(control))
-      : resultFor(currentOrUnknown(taskId), 'invalid', 'unknown-task');
+    return control ? resultFor(control, 'ok', 'task-control-loaded', freezeCopy(control)) : resultFor(currentOrUnknown(taskId), 'invalid', 'unknown-task');
   };
 
   const readRequest = (decisionId: string): MockPortResponse<ApprovalRequestRecord> => {
     const request = requests.get(decisionId);
     const control = request ? currentOrUnknown(request.taskId) : fallbackControl();
-    return request
-      ? resultFor(control, 'ok', 'approval-request-loaded', freezeCopy(request), request.decisionId, request.requestVersion)
-      : resultFor(control, 'invalid', 'unknown-decision');
+    return request ? resultFor(control, 'ok', 'approval-request-loaded', freezeCopy(request), request.decisionId, request.requestVersion) : resultFor(control, 'invalid', 'unknown-decision');
   };
 
   const readEvents = (taskId: string): MockPortResponse<readonly DecisionEvent[]> => {
     const control = controlFor(taskId);
     if (!control) return resultFor(currentOrUnknown(taskId), 'invalid', 'unknown-task');
-    return resultFor(control, 'ok', 'decision-events-loaded', freezeCopy(events.filter((event) => event.taskId === taskId)));
+    return resultFor(control, 'ok', 'decision-events-loaded', freezeCopy(events.filter(event => event.taskId === taskId)));
   };
 
   const readHistory = (taskId: string): MockPortResponse<MockDecisionHistory> => {
     const control = controlFor(taskId);
     if (!control) return resultFor(currentOrUnknown(taskId), 'invalid', 'unknown-task');
-    const taskDecisionIds = new Set([...requests.values()].filter((request) => request.taskId === taskId).map((request) => request.decisionId));
+    const taskDecisionIds = new Set([...requests.values()].filter(request => request.taskId === taskId).map(request => request.decisionId));
     const history: MockDecisionHistory = {
-      assessments: assessments.filter((assessment) => taskDecisionIds.has(assessment.decisionId)),
-      resolutions: [...resolutions.values()].filter((resolution) => taskDecisionIds.has(resolution.decisionId)),
-      directions: directions.filter((direction) => direction.taskId === taskId),
-      claims: [...claims.values()].filter((claim) => claim.taskId === taskId),
+      assessments: assessments.filter(assessment => taskDecisionIds.has(assessment.decisionId)),
+      resolutions: [...resolutions.values()].filter(resolution => taskDecisionIds.has(resolution.decisionId)),
+      directions: directions.filter(direction => direction.taskId === taskId),
+      claims: [...claims.values()].filter(claim => claim.taskId === taskId),
     };
     return resultFor(control, 'ok', 'decision-history-loaded', freezeCopy(history));
   };
@@ -221,7 +217,15 @@ export function createMockApprovalStore(input: CreateMockApprovalStoreInput): Mo
     const request = requestResult.value;
     const control = controlFor(request.taskId);
     const event = validateEvent(candidate.event, profile);
-    if (!control || !event || event.type !== 'approval-request-created' || event.taskId !== request.taskId || event.decisionId !== request.decisionId || event.directionId !== null || event.claimId !== null) {
+    if (
+      !control ||
+      !event ||
+      event.type !== 'approval-request-created' ||
+      event.taskId !== request.taskId ||
+      event.decisionId !== request.decisionId ||
+      event.directionId !== null ||
+      event.claimId !== null
+    ) {
       return resultFor(control ?? fallbackControl(), 'invalid', 'invalid-pending-request-context');
     }
     const submissionIdentity = `${request.taskId}:${candidate.submissionKey}`;
@@ -291,7 +295,15 @@ export function createMockApprovalStore(input: CreateMockApprovalStoreInput): Mo
       return resultFor(control, 'ok', 'same-response-idempotent-retry', freezeCopy(prior), decisionId, request.requestVersion, prior.eventId);
     }
     const event = validateEvent(candidate.event, profile);
-    if (!event || event.type !== 'human-resolution-recorded' || event.taskId !== request.taskId || event.decisionId !== decisionId || event.directionId !== null || event.claimId !== null || eventExists(event.eventId)) {
+    if (
+      !event ||
+      event.type !== 'human-resolution-recorded' ||
+      event.taskId !== request.taskId ||
+      event.decisionId !== decisionId ||
+      event.directionId !== null ||
+      event.claimId !== null ||
+      eventExists(event.eventId)
+    ) {
       return resultFor<HumanResolution>(control, 'invalid', 'invalid-decision-event', null, decisionId, request.requestVersion);
     }
     if (control.version !== candidate.expectedControlVersion || control.mode !== 'waiting' || control.pendingDecisionId !== decisionId) {
@@ -301,9 +313,7 @@ export function createMockApprovalStore(input: CreateMockApprovalStoreInput): Mo
     if (failed) return failed;
 
     const resolution = resolutionResult.value;
-    const nextMode = resolution.decision === 'rejected'
-      ? 'rejected'
-      : control.outstandingClaimRefs.length > 0 ? 'recovery-blocked' : 'runnable';
+    const nextMode = resolution.decision === 'rejected' ? 'rejected' : control.outstandingClaimRefs.length > 0 ? 'recovery-blocked' : 'runnable';
     const nextControl = validateGeneratedControl({
       ...control,
       version: control.version + 1,
@@ -316,32 +326,64 @@ export function createMockApprovalStore(input: CreateMockApprovalStoreInput): Mo
     resolutions.set(decisionId, freezeCopy(resolution));
     controls.set(control.taskId, nextControl);
     events.push(freezeCopy(event));
-    return resultFor(nextControl, resolution.decision === 'rejected' ? 'paused' : nextMode === 'runnable' ? 'ok' : 'uncertain', 'human-resolution-recorded', freezeCopy(resolution), decisionId, request.requestVersion, event.eventId);
+    return resultFor(
+      nextControl,
+      resolution.decision === 'rejected' ? 'paused' : nextMode === 'runnable' ? 'ok' : 'uncertain',
+      'human-resolution-recorded',
+      freezeCopy(resolution),
+      decisionId,
+      request.requestVersion,
+      event.eventId,
+    );
   };
 
   const replaceStalePending = (input: unknown): MockPortResponse<ApprovalRequestRecord> => {
     if (!isRecord(input)) return resultFor(fallbackControl(), 'invalid', 'invalid-stale-replacement-input');
     const candidate = input as unknown as ReplaceStaleInput;
     const replacementResult = validateApprovalRequestRecord(candidate.replacement);
-    if (!replacementResult.ok || !Array.isArray(candidate.events) || candidate.events.length !== 2 || !isPositiveInteger(candidate.expectedControlVersion) || !isPositiveInteger(candidate.expectedRequestVersion)) {
+    if (
+      !replacementResult.ok ||
+      !Array.isArray(candidate.events) ||
+      candidate.events.length !== 2 ||
+      !isPositiveInteger(candidate.expectedControlVersion) ||
+      !isPositiveInteger(candidate.expectedRequestVersion)
+    ) {
       return resultFor(fallbackControl(), 'invalid', 'invalid-stale-replacement-input');
     }
     const replacement = replacementResult.value;
     const control = controlFor(replacement.taskId);
     const previous = requestForTask(replacement.taskId);
-    const assessmentResult = previous ? validateBindingAssessment(candidate.assessment, {
-      expectedDecisionId: previous.decisionId,
-      expectedTaskVersion: candidate.expectedControlVersion,
-      expectedEpoch: control?.epoch ?? 0,
-      trustedContextDigest: candidate.trustedContextDigest,
-    }) : undefined;
-    const checkedEvents = candidate.events.map((event) => validateEvent(event, profile));
+    const assessmentResult = previous
+      ? validateBindingAssessment(candidate.assessment, {
+          expectedDecisionId: previous.decisionId,
+          expectedTaskVersion: candidate.expectedControlVersion,
+          expectedEpoch: control?.epoch ?? 0,
+          trustedContextDigest: candidate.trustedContextDigest,
+        })
+      : undefined;
+    const checkedEvents = candidate.events.map(event => validateEvent(event, profile));
     const staleEvent = checkedEvents[0]?.type === 'binding-assessed' ? checkedEvents[0] : undefined;
     const requestEvent = checkedEvents[1]?.type === 'approval-request-created' ? checkedEvents[1] : undefined;
-    if (!control || !previous || !assessmentResult?.ok || assessmentResult.value.status !== 'stale' || !staleEvent || !requestEvent ||
-      staleEvent.taskId !== control.taskId || staleEvent.decisionId !== previous.decisionId || requestEvent.taskId !== control.taskId || requestEvent.decisionId !== replacement.decisionId ||
-      control.mode !== 'waiting' || control.pendingDecisionId !== previous.decisionId || candidate.expectedRequestVersion !== previous.requestVersion ||
-      control.version !== candidate.expectedControlVersion || replacement.decisionId === previous.decisionId || eventExists(staleEvent.eventId) || eventExists(requestEvent.eventId) || requests.has(replacement.decisionId)) {
+    if (
+      !control ||
+      !previous ||
+      !assessmentResult?.ok ||
+      assessmentResult.value.status !== 'stale' ||
+      !staleEvent ||
+      !requestEvent ||
+      staleEvent.taskId !== control.taskId ||
+      staleEvent.decisionId !== previous.decisionId ||
+      requestEvent.taskId !== control.taskId ||
+      requestEvent.decisionId !== replacement.decisionId ||
+      control.mode !== 'waiting' ||
+      control.pendingDecisionId !== previous.decisionId ||
+      candidate.expectedRequestVersion !== previous.requestVersion ||
+      control.version !== candidate.expectedControlVersion ||
+      replacement.decisionId === previous.decisionId ||
+      eventExists(staleEvent.eventId) ||
+      eventExists(requestEvent.eventId) ||
+      requests.has(replacement.decisionId)
+    ) {
       return resultFor(control ?? fallbackControl(), 'conflict', 'stale-replacement-context-changed');
     }
     if (replacement.repositoryId !== control.repositoryId || replacement.workspaceId !== control.workspaceId) {
@@ -378,9 +420,21 @@ export function createMockApprovalStore(input: CreateMockApprovalStoreInput): Mo
     if (!control) return resultFor(currentOrUnknown(taskId), 'invalid', 'unknown-task');
     const prior = directions.find(value => value.taskId === taskId && value.responseKey === rawDirection['responseKey']);
     if (prior) {
-      const validated = validateDeveloperDirection(rawDirection, { expectedTaskId: taskId, expectedVersion: prior.expectedVersion, expectedEpoch: prior.expectedEpoch, trustedOperator: candidate.trustedOperator });
+      const validated = validateDeveloperDirection(rawDirection, {
+        expectedTaskId: taskId,
+        expectedVersion: prior.expectedVersion,
+        expectedEpoch: prior.expectedEpoch,
+        trustedOperator: candidate.trustedOperator,
+      });
       const originalEvent = events.find(event => event.directionId === prior.directionId && event.taskId === taskId && event.type === 'developer-direction-recorded');
-      if (!validated.ok || candidate.expectedControlVersion !== prior.expectedVersion || !isDeepStrictEqual(candidate.trustedOperator, directionOperators.get(prior.directionId)) || !isDeepStrictEqual(rawDirection, prior) || !isDeepStrictEqual(candidate.event, originalEvent)) return resultFor<DeveloperDirection>(control, 'conflict', 'direction-response-conflict');
+      if (
+        !validated.ok ||
+        candidate.expectedControlVersion !== prior.expectedVersion ||
+        !isDeepStrictEqual(candidate.trustedOperator, directionOperators.get(prior.directionId)) ||
+        !isDeepStrictEqual(rawDirection, prior) ||
+        !isDeepStrictEqual(candidate.event, originalEvent)
+      )
+        return resultFor<DeveloperDirection>(control, 'conflict', 'direction-response-conflict');
       return resultFor(control, prior.direction === 'end' ? 'paused' : 'ok', 'same-direction-idempotent-retry', freezeCopy(prior), null, null, originalEvent?.eventId ?? null);
     }
     const directionResult = validateDeveloperDirection(rawDirection, {
@@ -390,7 +444,16 @@ export function createMockApprovalStore(input: CreateMockApprovalStoreInput): Mo
       trustedOperator: candidate.trustedOperator,
     });
     const event = validateEvent(candidate.event, profile);
-    if (!directionResult.ok || !event || event.type !== 'developer-direction-recorded' || event.taskId !== taskId || event.directionId !== directionResult.value.directionId || event.decisionId !== null || event.claimId !== null || eventExists(event.eventId)) {
+    if (
+      !directionResult.ok ||
+      !event ||
+      event.type !== 'developer-direction-recorded' ||
+      event.taskId !== taskId ||
+      event.directionId !== directionResult.value.directionId ||
+      event.decisionId !== null ||
+      event.claimId !== null ||
+      eventExists(event.eventId)
+    ) {
       return resultFor<DeveloperDirection>(control, 'invalid', 'invalid-trusted-direction', null, control.pendingDecisionId, pendingRequestVersion(control));
     }
     if (control.version !== candidate.expectedControlVersion || directionResult.value.expectedVersion !== control.version || directionResult.value.expectedEpoch !== control.epoch) {
@@ -398,7 +461,15 @@ export function createMockApprovalStore(input: CreateMockApprovalStoreInput): Mo
     }
     const canEnd = directionResult.value.direction === 'end' && control.mode !== 'ended';
     const canContinue = (directionResult.value.direction === 'resume' || directionResult.value.direction === 'revise') && control.mode === 'rejected' && control.outstandingClaimRefs.length === 0;
-    if (!canEnd && !canContinue) return resultFor<DeveloperDirection>(control, control.outstandingClaimRefs.length > 0 ? 'uncertain' : 'denied', 'direction-cannot-release-current-hold', null, control.pendingDecisionId, pendingRequestVersion(control));
+    if (!canEnd && !canContinue)
+      return resultFor<DeveloperDirection>(
+        control,
+        control.outstandingClaimRefs.length > 0 ? 'uncertain' : 'denied',
+        'direction-cannot-release-current-hold',
+        null,
+        control.pendingDecisionId,
+        pendingRequestVersion(control),
+      );
     const failed = storageFailure<DeveloperDirection>('recordDirection', control, control.pendingDecisionId, pendingRequestVersion(control));
     if (failed) return failed;
     const nextMode = directionResult.value.direction === 'end' ? 'ended' : 'runnable';
@@ -426,7 +497,16 @@ export function createMockApprovalStore(input: CreateMockApprovalStoreInput): Mo
     const claim = claimResult.value;
     const control = controlFor(claim.taskId);
     const event = validateEvent(candidate.event, profile);
-    if (!control || !event || event.type !== 'dispatch-claim-created' || event.taskId !== claim.taskId || event.claimId !== claim.claimId || event.decisionId !== null || event.directionId !== null || eventExists(event.eventId)) {
+    if (
+      !control ||
+      !event ||
+      event.type !== 'dispatch-claim-created' ||
+      event.taskId !== claim.taskId ||
+      event.claimId !== claim.claimId ||
+      event.decisionId !== null ||
+      event.directionId !== null ||
+      eventExists(event.eventId)
+    ) {
       return resultFor(control ?? fallbackControl(), 'invalid', 'invalid-dispatch-claim-context');
     }
     if (claims.has(claim.claimId)) return resultFor(control, 'conflict', 'claim-already-exists');
@@ -453,20 +533,26 @@ export function createMockApprovalStore(input: CreateMockApprovalStoreInput): Mo
     const claim = claims.get(candidate.claimId);
     const control = claim ? controlFor(claim.taskId) : undefined;
     const event = validateEvent(candidate.event, profile);
-    if (!claim || !control || !event || !isPositiveInteger(candidate.expectedControlVersion) || !isIdentifier(candidate.resultRef) ||
-      (candidate.phase !== 'observed' && candidate.phase !== 'uncertain') || event.claimId !== claim.claimId || event.taskId !== claim.taskId ||
-      event.type !== (candidate.phase === 'observed' ? 'dispatch-effect-observed' : 'dispatch-uncertain') || eventExists(event.eventId)) {
+    if (
+      !claim ||
+      !control ||
+      !event ||
+      !isPositiveInteger(candidate.expectedControlVersion) ||
+      !isIdentifier(candidate.resultRef) ||
+      (candidate.phase !== 'observed' && candidate.phase !== 'uncertain') ||
+      event.claimId !== claim.claimId ||
+      event.taskId !== claim.taskId ||
+      event.type !== (candidate.phase === 'observed' ? 'dispatch-effect-observed' : 'dispatch-uncertain') ||
+      eventExists(event.eventId)
+    ) {
       return resultFor(control ?? fallbackControl(), 'invalid', 'invalid-claim-outcome-context');
     }
     if (control.version !== candidate.expectedControlVersion || !control.outstandingClaimRefs.includes(claim.claimId)) return resultFor(control, 'conflict', 'claim-control-changed');
     const failed = storageFailure<DispatchClaim>('recordOutcome', control);
     if (failed) return failed;
     const nextClaim = validateGeneratedClaim({ ...claim, phase: candidate.phase, resultRef: candidate.resultRef });
-    const outstandingClaimRefs = candidate.phase === 'observed'
-      ? control.outstandingClaimRefs.filter((claimId) => claimId !== claim.claimId)
-      : control.outstandingClaimRefs;
-    const releasesHold = candidate.phase === 'observed' && outstandingClaimRefs.length === 0 &&
-      control.mode === 'recovery-blocked' && control.pendingDecisionId === null;
+    const outstandingClaimRefs = candidate.phase === 'observed' ? control.outstandingClaimRefs.filter(claimId => claimId !== claim.claimId) : control.outstandingClaimRefs;
+    const releasesHold = candidate.phase === 'observed' && outstandingClaimRefs.length === 0 && control.mode === 'recovery-blocked' && control.pendingDecisionId === null;
     const nextControl = validateGeneratedControl({
       ...control,
       version: control.version + 1,
@@ -476,7 +562,15 @@ export function createMockApprovalStore(input: CreateMockApprovalStoreInput): Mo
     claims.set(claim.claimId, nextClaim);
     controls.set(control.taskId, nextControl);
     events.push(freezeCopy(event));
-    return resultFor(nextControl, candidate.phase === 'observed' ? 'ok' : 'uncertain', candidate.phase === 'observed' ? 'effect-outcome-recorded' : 'effect-outcome-uncertain', freezeCopy(nextClaim), null, null, event.eventId);
+    return resultFor(
+      nextControl,
+      candidate.phase === 'observed' ? 'ok' : 'uncertain',
+      candidate.phase === 'observed' ? 'effect-outcome-recorded' : 'effect-outcome-uncertain',
+      freezeCopy(nextClaim),
+      null,
+      null,
+      event.eventId,
+    );
   };
 
   const reconcile = (input: unknown): MockPortResponse<DispatchClaim> => {
@@ -485,15 +579,25 @@ export function createMockApprovalStore(input: CreateMockApprovalStoreInput): Mo
     const claim = claims.get(candidate.claimId);
     const control = claim ? controlFor(claim.taskId) : undefined;
     const event = validateEvent(candidate.event, profile);
-    if (!claim || !control || !event || claim.phase !== 'uncertain' || !isPositiveInteger(candidate.expectedControlVersion) || !isIdentifier(candidate.resultRef) ||
-      event.type !== 'claim-reconciled' || event.taskId !== claim.taskId || event.claimId !== claim.claimId || eventExists(event.eventId)) {
+    if (
+      !claim ||
+      !control ||
+      !event ||
+      claim.phase !== 'uncertain' ||
+      !isPositiveInteger(candidate.expectedControlVersion) ||
+      !isIdentifier(candidate.resultRef) ||
+      event.type !== 'claim-reconciled' ||
+      event.taskId !== claim.taskId ||
+      event.claimId !== claim.claimId ||
+      eventExists(event.eventId)
+    ) {
       return resultFor(control ?? fallbackControl(), 'invalid', 'invalid-reconciliation-context');
     }
     if (control.version !== candidate.expectedControlVersion || !control.outstandingClaimRefs.includes(claim.claimId)) return resultFor(control, 'conflict', 'claim-control-changed');
     const failed = storageFailure<DispatchClaim>('reconcile', control);
     if (failed) return failed;
     const nextClaim = validateGeneratedClaim({ ...claim, phase: 'reconciled', resultRef: candidate.resultRef });
-    const outstandingClaimRefs = control.outstandingClaimRefs.filter((claimId) => claimId !== claim.claimId);
+    const outstandingClaimRefs = control.outstandingClaimRefs.filter(claimId => claimId !== claim.claimId);
     const releasesHold = control.mode === 'recovery-blocked' && control.pendingDecisionId === null && outstandingClaimRefs.length === 0;
     const nextControl = validateGeneratedControl({
       ...control,
@@ -514,7 +618,9 @@ export function createMockApprovalStore(input: CreateMockApprovalStoreInput): Mo
     readRequest,
     readEvents,
     readHistory,
-    failNext: (operation: MockStoreOperation) => { failedNext.add(operation); },
+    failNext: (operation: MockStoreOperation) => {
+      failedNext.add(operation);
+    },
     createPendingAndPause,
     resolvePending,
     replaceStalePending,
@@ -526,7 +632,7 @@ export function createMockApprovalStore(input: CreateMockApprovalStoreInput): Mo
 
   /** Detect event identity reuse across the mock store's committed audit history. */
   function eventExists(eventId: string): boolean {
-    return events.some((event) => event.eventId === eventId);
+    return events.some(event => event.eventId === eventId);
   }
 }
 
@@ -534,10 +640,7 @@ export function createMockApprovalStore(input: CreateMockApprovalStoreInput): Mo
 export const createMockApprovalStoreV01Compatibility = createMockApprovalStore;
 
 /** Forward to the actual in-memory UC-05 continuation and UC-04 journal owners. */
-export function createMockApprovalStoreV02(input: {
-  readonly continuation: ApprovalContinuationV02;
-  readonly journal: MemoryStatePortV02;
-}): MockApprovalStoreV02 {
+export function createMockApprovalStoreV02(input: { readonly continuation: ApprovalContinuationV02; readonly journal: MemoryStatePortV02 }): MockApprovalStoreV02 {
   return Object.freeze({
     provenance: UC05_MOCK_PROVENANCE,
     claimDispatchV02: (decisionId: string) => input.continuation.admit(decisionId),

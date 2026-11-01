@@ -27,10 +27,7 @@ export const PROVIDER_REQUEST_ALLOWED_KEYS = [
   'uncertainReason',
 ] as const;
 
-export function validateProviderRequest(
-  input: unknown,
-  options?: ProviderRequestValidationContext
-): ValidationResult<ProviderRequest> {
+export function validateProviderRequest(input: unknown, options?: ProviderRequestValidationContext): ValidationResult<ProviderRequest> {
   if (!isPlainObject(input)) {
     return {
       ok: false,
@@ -67,12 +64,7 @@ export function validateProviderRequest(
   const maxBillableTokens = validateNonNegativeInteger(input['maxBillableTokens'], 'maxBillableTokens', errors);
   const maxCostUsd = validateNonNegativeNumber(input['maxCostUsd'], 'maxCostUsd', errors);
 
-  if (
-    maxBillableTokens !== undefined &&
-    maxInputTokens !== undefined &&
-    maxOutputTokens !== undefined &&
-    maxBillableTokens < maxInputTokens + maxOutputTokens
-  ) {
+  if (maxBillableTokens !== undefined && maxInputTokens !== undefined && maxOutputTokens !== undefined && maxBillableTokens < maxInputTokens + maxOutputTokens) {
     errors.push({
       path: 'maxBillableTokens',
       message: `maxBillableTokens (${maxBillableTokens}) must include finite conservative overhead and cannot be less than maxInputTokens + maxOutputTokens (${maxInputTokens + maxOutputTokens})`,
@@ -237,7 +229,8 @@ export function validateProviderRequest(
     }
   }
 
-  if (typeof input['maxInputTokens'] === 'number' && typeof input['maxOutputTokens'] === 'number' && !Number.isSafeInteger(input['maxInputTokens'] + input['maxOutputTokens'])) errors.push({ path: 'maxBillableTokens', code: 'UNSAFE_COUNT_SUM', message: 'Token ceilings must remain safe integers' });
+  if (typeof input['maxInputTokens'] === 'number' && typeof input['maxOutputTokens'] === 'number' && !Number.isSafeInteger(input['maxInputTokens'] + input['maxOutputTokens']))
+    errors.push({ path: 'maxBillableTokens', code: 'UNSAFE_COUNT_SUM', message: 'Token ceilings must remain safe integers' });
   if (
     errors.length > 0 ||
     !providerRequestId ||

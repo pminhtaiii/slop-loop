@@ -1,12 +1,5 @@
 import { createHash } from 'node:crypto';
-import {
-  type ActivityEvent,
-  type PortProvenance,
-  type ProviderUsage,
-  type TelemetryPort,
-  isProtectedPath,
-  validateActivityEvent,
-} from '../contracts/foundation/uc03.ts';
+import { type ActivityEvent, type PortProvenance, type ProviderUsage, type TelemetryPort, isProtectedPath, validateActivityEvent } from '../contracts/foundation/uc03.ts';
 
 export interface TelemetryOptions {
   readonly provenance?: PortProvenance;
@@ -36,10 +29,7 @@ const BUILTIN_SECRET_PATTERNS: readonly RegExp[] = [
 const TRUNCATION_SUFFIX = ' ... [TRUNCATED]';
 const TRUNCATION_NOTICE = '... [TRUNCATED]';
 
-export function sanitizeText(
-  text: string,
-  customPatterns?: readonly (RegExp | string)[]
-): string {
+export function sanitizeText(text: string, customPatterns?: readonly (RegExp | string)[]): string {
   if (typeof text !== 'string' || text.length === 0) {
     return text;
   }
@@ -100,20 +90,14 @@ export function sanitizeDiagnostic(
   options?: {
     readonly maxBytes?: number;
     readonly customPatterns?: readonly (RegExp | string)[];
-  }
+  },
 ): RedactedDiagnostic {
   if (typeof content !== 'string') {
     throw new TypeError('content must be a string');
   }
 
   const maxBytes = options?.maxBytes;
-  if (
-    maxBytes === undefined ||
-    typeof maxBytes !== 'number' ||
-    !Number.isFinite(maxBytes) ||
-    !Number.isSafeInteger(maxBytes) ||
-    maxBytes <= 0
-  ) {
+  if (maxBytes === undefined || typeof maxBytes !== 'number' || !Number.isFinite(maxBytes) || !Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
     throw new Error('INVALID_DIAGNOSTIC_LIMIT: maxBytes must be a finite positive integer');
   }
 
@@ -169,11 +153,7 @@ export function isProtectedPathRef(ref: string): boolean {
   return false;
 }
 
-export function isProtectedPayload(
-  val: unknown,
-  customPatternsOrSeen?: readonly (RegExp | string)[] | Set<unknown>,
-  maybeSeen?: Set<unknown>
-): boolean {
+export function isProtectedPayload(val: unknown, customPatternsOrSeen?: readonly (RegExp | string)[] | Set<unknown>, maybeSeen?: Set<unknown>): boolean {
   let customPatterns: readonly (RegExp | string)[] | undefined;
   let seen: Set<unknown>;
 
@@ -190,10 +170,7 @@ export function isProtectedPayload(
     if (isProtectedPathRef(trimmed)) {
       return true;
     }
-    if (
-      trimmed.includes('-----BEGIN') &&
-      trimmed.includes('KEY-----')
-    ) {
+    if (trimmed.includes('-----BEGIN') && trimmed.includes('KEY-----')) {
       return true;
     }
     if (customPatterns && customPatterns.length > 0) {
@@ -227,10 +204,7 @@ export function isProtectedPayload(
     }
     seen.add(val);
     for (const [key, value] of Object.entries(val)) {
-      if (
-        isProtectedPayload(key, customPatterns, seen) ||
-        isProtectedPayload(value, customPatterns, seen)
-      ) {
+      if (isProtectedPayload(key, customPatterns, seen) || isProtectedPayload(value, customPatterns, seen)) {
         return true;
       }
     }
@@ -251,12 +225,7 @@ export class SanitizedTelemetry implements TelemetryPort {
   constructor(options: TelemetryOptions = {}) {
     this.provenance = options.provenance ?? 'real';
     if (options.maxDiagnosticBytes !== undefined) {
-      if (
-        typeof options.maxDiagnosticBytes !== 'number' ||
-        !Number.isFinite(options.maxDiagnosticBytes) ||
-        !Number.isSafeInteger(options.maxDiagnosticBytes) ||
-        options.maxDiagnosticBytes <= 0
-      ) {
+      if (typeof options.maxDiagnosticBytes !== 'number' || !Number.isFinite(options.maxDiagnosticBytes) || !Number.isSafeInteger(options.maxDiagnosticBytes) || options.maxDiagnosticBytes <= 0) {
         throw new Error('INVALID_DIAGNOSTIC_LIMIT: maxDiagnosticBytes must be a finite positive integer');
       }
       this.maxDiagnosticBytes = options.maxDiagnosticBytes;
@@ -273,9 +242,7 @@ export class SanitizedTelemetry implements TelemetryPort {
   async emitActivity(event: ActivityEvent): Promise<void> {
     const validation = validateActivityEvent(event);
     if (!validation.ok) {
-      const msg = validation.errors
-        .map((err) => `${err.path}: ${err.message} (${err.code})`)
-        .join('; ');
+      const msg = validation.errors.map(err => `${err.path}: ${err.message} (${err.code})`).join('; ');
       throw new Error(`Invalid ActivityEvent: ${msg}`);
     }
 
@@ -310,9 +277,7 @@ export class SanitizedTelemetry implements TelemetryPort {
     }
     // Redact permitted bounded diagnostic/outcome fields according to contract
     const sanitizedOutcome = sanitizeText(valid.outcome, this.secretPatterns);
-    const sanitizedEvidenceRefs = valid.evidenceRefs.map((ref) =>
-      sanitizeText(ref, this.secretPatterns)
-    );
+    const sanitizedEvidenceRefs = valid.evidenceRefs.map(ref => sanitizeText(ref, this.secretPatterns));
 
     const storedEvidenceRefs = Object.freeze([...sanitizedEvidenceRefs]);
     const storedEvent: ActivityEvent = Object.freeze({
@@ -350,11 +315,7 @@ export class SanitizedTelemetry implements TelemetryPort {
     }
   }
 
-  async recordUsage(
-    taskId: string,
-    runId: string,
-    usage: ProviderUsage
-  ): Promise<void> {
+  async recordUsage(taskId: string, runId: string, usage: ProviderUsage): Promise<void> {
     if (typeof taskId !== 'string' || taskId.trim().length === 0) {
       throw new Error('recordUsage requires a non-empty taskId');
     }
@@ -367,35 +328,16 @@ export class SanitizedTelemetry implements TelemetryPort {
     if (isProtectedPayload(runId, this.secretPatterns)) {
       throw new Error('Protected identifier rejected: recordUsage runId contains protected data or secret');
     }
-    if (
-      typeof usage !== 'object' ||
-      usage === null ||
-      typeof usage.inputTokens !== 'number' ||
-      !Number.isSafeInteger(usage.inputTokens) ||
-      usage.inputTokens < 0
-    ) {
+    if (typeof usage !== 'object' || usage === null || typeof usage.inputTokens !== 'number' || !Number.isSafeInteger(usage.inputTokens) || usage.inputTokens < 0) {
       throw new Error('INVALID_NON_NEGATIVE_INTEGER: inputTokens must be a non-negative integer');
     }
-    if (
-      typeof usage.outputTokens !== 'number' ||
-      !Number.isSafeInteger(usage.outputTokens) ||
-      usage.outputTokens < 0
-    ) {
+    if (typeof usage.outputTokens !== 'number' || !Number.isSafeInteger(usage.outputTokens) || usage.outputTokens < 0) {
       throw new Error('INVALID_NON_NEGATIVE_INTEGER: outputTokens must be a non-negative integer');
     }
-    if (
-      typeof usage.costUsd !== 'number' ||
-      !Number.isFinite(usage.costUsd) ||
-      usage.costUsd < 0
-    ) {
+    if (typeof usage.costUsd !== 'number' || !Number.isFinite(usage.costUsd) || usage.costUsd < 0) {
       throw new Error('INVALID_NON_NEGATIVE_NUMBER: costUsd must be a non-negative number');
     }
-    if (
-      usage.billableTokens !== undefined &&
-      (typeof usage.billableTokens !== 'number' ||
-        !Number.isSafeInteger(usage.billableTokens) ||
-        usage.billableTokens < 0)
-    ) {
+    if (usage.billableTokens !== undefined && (typeof usage.billableTokens !== 'number' || !Number.isSafeInteger(usage.billableTokens) || usage.billableTokens < 0)) {
       throw new Error('INVALID_NON_NEGATIVE_INTEGER: billableTokens must be a non-negative integer');
     }
 
@@ -408,10 +350,7 @@ export class SanitizedTelemetry implements TelemetryPort {
       const inputTokens = existing.inputTokens + usage.inputTokens;
       const outputTokens = existing.outputTokens + usage.outputTokens;
       const costUsd = Number((existing.costUsd + usage.costUsd).toFixed(6));
-      const billableTokens =
-        existing.billableTokens !== undefined || usage.billableTokens !== undefined
-          ? (existing.billableTokens ?? 0) + (usage.billableTokens ?? 0)
-          : undefined;
+      const billableTokens = existing.billableTokens !== undefined || usage.billableTokens !== undefined ? (existing.billableTokens ?? 0) + (usage.billableTokens ?? 0) : undefined;
 
       this.runUsage.set(key, {
         inputTokens,
@@ -422,11 +361,7 @@ export class SanitizedTelemetry implements TelemetryPort {
     }
   }
 
-  recordDiagnostic(
-    taskId: string,
-    runId: string,
-    rawDiagnostic: string
-  ): RedactedDiagnostic {
+  recordDiagnostic(taskId: string, runId: string, rawDiagnostic: string): RedactedDiagnostic {
     if (typeof taskId !== 'string' || taskId.trim().length === 0) {
       throw new Error('recordDiagnostic requires a non-empty taskId');
     }
@@ -440,9 +375,7 @@ export class SanitizedTelemetry implements TelemetryPort {
       throw new Error('Protected identifier rejected: recordDiagnostic runId contains protected data or secret');
     }
     if (this.maxDiagnosticBytes === undefined) {
-      throw new Error(
-        'INVALID_DIAGNOSTIC_LIMIT: maxDiagnosticBytes must be configured with a finite positive integer to record diagnostics'
-      );
+      throw new Error('INVALID_DIAGNOSTIC_LIMIT: maxDiagnosticBytes must be configured with a finite positive integer to record diagnostics');
     }
     const redacted = sanitizeDiagnostic(rawDiagnostic, {
       maxBytes: this.maxDiagnosticBytes,
@@ -494,4 +427,3 @@ export class SanitizedTelemetry implements TelemetryPort {
     this.diagnostics.clear();
   }
 }
-

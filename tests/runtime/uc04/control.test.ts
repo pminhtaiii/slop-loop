@@ -4,19 +4,8 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DurableStore } from '../../../src/persistence/store.ts';
-import {
-  StaleApprovalBindingError,
-  InFlightWorkPendingError,
-  pauseForApproval,
-  resumeFromApproval,
-  pauseTask,
-  resumeTask,
-} from '../../../src/persistence/task-control.ts';
-import {
-  UC04_SCHEMA_VERSION,
-  type TaskState,
-  type ApprovalRequestBinding,
-} from '../../../src/persistence/contracts.ts';
+import { StaleApprovalBindingError, InFlightWorkPendingError, pauseForApproval, resumeFromApproval, pauseTask, resumeTask } from '../../../src/persistence/task-control.ts';
+import { UC04_SCHEMA_VERSION, type TaskState, type ApprovalRequestBinding } from '../../../src/persistence/contracts.ts';
 
 describe('UC-04: Task Control, Deliberate Pause & Approval Binding', () => {
   let tempDir: string;
@@ -99,7 +88,7 @@ describe('UC-04: Task Control, Deliberate Pause & Approval Binding', () => {
         {
           currentCommit: sampleApproval.repoCommit,
           policyVersion: sampleApproval.policyVersion,
-        }
+        },
       );
 
       assert.equal(resumed.status, 'running');
@@ -123,12 +112,10 @@ describe('UC-04: Task Control, Deliberate Pause & Approval Binding', () => {
             {
               currentCommit: 'commit-bbb-drifted-2222222222222222222222222',
               policyVersion: sampleApproval.policyVersion,
-            }
+            },
           );
         },
-        (err: unknown) =>
-          err instanceof StaleApprovalBindingError &&
-          /stale approval.*commit mismatch/i.test((err as Error).message)
+        (err: unknown) => err instanceof StaleApprovalBindingError && /stale approval.*commit mismatch/i.test((err as Error).message),
       );
     });
 
@@ -148,12 +135,10 @@ describe('UC-04: Task Control, Deliberate Pause & Approval Binding', () => {
             {
               currentCommit: undefined,
               policyVersion: sampleApproval.policyVersion,
-            }
+            },
           );
         },
-        (err: unknown) =>
-          err instanceof StaleApprovalBindingError &&
-          /stale approval.*commit mismatch/i.test((err as Error).message)
+        (err: unknown) => err instanceof StaleApprovalBindingError && /stale approval.*commit mismatch/i.test((err as Error).message),
       );
 
       await assert.rejects(
@@ -169,12 +154,10 @@ describe('UC-04: Task Control, Deliberate Pause & Approval Binding', () => {
             {
               currentCommit: sampleApproval.repoCommit,
               policyVersion: undefined,
-            }
+            },
           );
         },
-        (err: unknown) =>
-          err instanceof StaleApprovalBindingError &&
-          /stale approval.*policy version mismatch/i.test((err as Error).message)
+        (err: unknown) => err instanceof StaleApprovalBindingError && /stale approval.*policy version mismatch/i.test((err as Error).message),
       );
     });
 
@@ -193,11 +176,11 @@ describe('UC-04: Task Control, Deliberate Pause & Approval Binding', () => {
         {
           currentCommit: sampleApproval.repoCommit,
           policyVersion: sampleApproval.policyVersion,
-        }
+        },
       );
 
       assert.equal(rejected.status, 'failed');
-      assert.ok(rejected.openRisks.some((r) => r.includes('Unauthorized table drop detected')));
+      assert.ok(rejected.openRisks.some(r => r.includes('Unauthorized table drop detected')));
     });
   });
 
@@ -212,7 +195,7 @@ describe('UC-04: Task Control, Deliberate Pause & Approval Binding', () => {
           operatorRef: 'operator-1',
           reason: 'Operator requested pause for inspection',
         },
-        []
+        [],
       );
 
       assert.equal(pauseRecord.active, true);
@@ -230,7 +213,7 @@ describe('UC-04: Task Control, Deliberate Pause & Approval Binding', () => {
           pauseKey: 'pause-key-abc',
           operatorRef: 'operator-1',
         },
-        ['attempt-exec-1'] // in-flight attempt
+        ['attempt-exec-1'], // in-flight attempt
       );
 
       await assert.rejects(
@@ -242,9 +225,7 @@ describe('UC-04: Task Control, Deliberate Pause & Approval Binding', () => {
             operatorRef: 'operator-1',
           });
         },
-        (err: unknown) =>
-          err instanceof InFlightWorkPendingError &&
-          err.outstandingAttemptRefs.includes('attempt-exec-1')
+        (err: unknown) => err instanceof InFlightWorkPendingError && err.outstandingAttemptRefs.includes('attempt-exec-1'),
       );
     });
 
@@ -257,7 +238,7 @@ describe('UC-04: Task Control, Deliberate Pause & Approval Binding', () => {
           pauseKey: 'pause-key-abc',
           operatorRef: 'operator-1',
         },
-        [] // no in-flight work
+        [], // no in-flight work
       );
 
       const resumed = await resumeTask(store, {

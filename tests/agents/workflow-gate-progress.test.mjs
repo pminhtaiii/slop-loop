@@ -7,12 +7,7 @@ test('progress parser handles split UTF-8 chunks and bounded safe labels', () =>
   assert.ok(line.startsWith(PROGRESS_PREFIX));
   const bytes = Buffer.from(line);
   const parser = createGateProgressParser();
-  const events = [
-    ...parser.write(bytes.subarray(0, 19)),
-    ...parser.write(bytes.subarray(19, 47)),
-    ...parser.write(bytes.subarray(47)),
-    ...parser.end(),
-  ];
+  const events = [...parser.write(bytes.subarray(0, 19)), ...parser.write(bytes.subarray(19, 47)), ...parser.write(bytes.subarray(47)), ...parser.end()];
   assert.equal(events.length, 1);
   assert.equal(events[0].testEvent, 'test:start');
   assert.ok(events[0].currentTest.length <= MAX_TEST_LABEL_LENGTH);
@@ -23,11 +18,7 @@ test('progress parser handles split UTF-8 chunks and bounded safe labels', () =>
 });
 
 test('outside absolute file paths from POSIX, Windows drives, and UNC roots emit only the basename', () => {
-  const files = [
-    '/outside/fixture.test.mjs',
-    'C:\\outside\\fixture.test.mjs',
-    '\\\\server\\share\\outside\\fixture.test.mjs',
-  ];
+  const files = ['/outside/fixture.test.mjs', 'C:\\outside\\fixture.test.mjs', '\\\\server\\share\\outside\\fixture.test.mjs'];
 
   for (const file of files) {
     const parser = createGateProgressParser();

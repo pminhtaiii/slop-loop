@@ -22,13 +22,7 @@ import {
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const OUTCOMES = new Set<string>(['COMPLETED', 'INCOMPLETE', 'IMPLEMENTED_UNVERIFIED', 'FAILED']);
-const ACTUAL_OUTCOMES = new Set<string>([
-  ...OUTCOMES,
-  'NOT_RUN',
-  'REFUSED_BEFORE_DISPATCH',
-  'DRIVER_ERROR',
-  'DRIVER_RESULT_INVALID',
-]);
+const ACTUAL_OUTCOMES = new Set<string>([...OUTCOMES, 'NOT_RUN', 'REFUSED_BEFORE_DISPATCH', 'DRIVER_ERROR', 'DRIVER_RESULT_INVALID']);
 const STATUSES = new Set<string>(['pass', 'fail', 'error', 'not-run']);
 const CASE_ID_SET = new Set<string>(EVALUATION_CASE_IDS);
 
@@ -338,11 +332,7 @@ function parseCase(data: unknown, context: EvaluationCaseContext, patterns: read
   };
 }
 
-export function validateDriverCaseResult(
-  data: unknown,
-  context: EvaluationCaseContext,
-  customPatterns: readonly string[] = [],
-): CaseResult {
+export function validateDriverCaseResult(data: unknown, context: EvaluationCaseContext, customPatterns: readonly string[] = []): CaseResult {
   try {
     return parseCase(data, context, customPatterns, true);
   } catch {
@@ -367,12 +357,17 @@ function parseEvaluationReport(data: unknown): EvaluationReport {
   const cases = data['cases'].map((entry: unknown, index: number): CaseResult => {
     const spec = CANONICAL_MANIFEST.cases[index];
     if (!spec) invalidReport();
-    const result = parseCase(entry, {
-      spec,
-      mode,
-      manifestDigest: DEFAULT_MANIFEST_DIGEST,
-      configDigest,
-    }, [], false);
+    const result = parseCase(
+      entry,
+      {
+        spec,
+        mode,
+        manifestDigest: DEFAULT_MANIFEST_DIGEST,
+        configDigest,
+      },
+      [],
+      false,
+    );
     if (result.caseId !== EVALUATION_CASE_IDS[index]) invalidReport();
     if (mode === 'real' && (result.status !== 'not-run' || result.actualOutcome !== 'REFUSED_BEFORE_DISPATCH')) invalidReport();
     if (mode === 'mock' && result.caseId === 'C17' && (result.status !== 'not-run' || result.actualOutcome !== 'NOT_RUN' || !result.limitations.includes(C17_NOT_RUN_LIMITATION))) invalidReport();
@@ -425,4 +420,3 @@ export function validateEvaluationReport(data: unknown): EvaluationReport {
     return invalidReport();
   }
 }
-

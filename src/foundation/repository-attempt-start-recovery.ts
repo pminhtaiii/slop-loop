@@ -13,10 +13,7 @@ import type {
 import type { WorkspaceLease } from './docker-workspace.ts';
 import { matchesRepositoryAttemptV02 } from './repository-claim-lifecycle.ts';
 import type { RepositoryOutcomeRecoveryV02 } from './repository-command-outcome.ts';
-import type {
-  RepositoryAttemptStartRecoveryHandoffV02,
-  RepositoryAttemptStartRecoveryResultV02,
-} from './repository-types.ts';
+import type { RepositoryAttemptStartRecoveryHandoffV02, RepositoryAttemptStartRecoveryResultV02 } from './repository-types.ts';
 
 interface PendingAttemptStartV02 {
   readonly recoveryId: string;
@@ -34,24 +31,35 @@ interface PendingAttemptStartV02 {
 }
 
 type OutcomeRecoveryBoundaryV02 = Pick<RepositoryOutcomeRecoveryV02, 'record' | 'recover' | 'hasPending'>;
-type UncertainOutcomeFactoryV02 = (
-  claim: ClaimReceiptV02,
-  attempt: AttemptReceiptV02,
-  admission: RepositoryAdmissionContextV02,
-) => RepositoryActionOutcomeReceiptV02;
+type UncertainOutcomeFactoryV02 = (claim: ClaimReceiptV02, attempt: AttemptReceiptV02, admission: RepositoryAdmissionContextV02) => RepositoryActionOutcomeReceiptV02;
 
 const CLAIM_KEYS = [
-  'claimId', 'claimDigest', 'taskId', 'runId', 'subjectKind', 'planApplicability',
-  'preClaimTaskStateVersion', 'preClaimControlVersion', 'postClaimControlVersion',
-  'epoch', 'status', 'reservationRefs',
+  'claimId',
+  'claimDigest',
+  'taskId',
+  'runId',
+  'subjectKind',
+  'planApplicability',
+  'preClaimTaskStateVersion',
+  'preClaimControlVersion',
+  'postClaimControlVersion',
+  'epoch',
+  'status',
+  'reservationRefs',
 ] as const;
 const ATTEMPT_KEYS = [
-  'attemptId', 'claimId', 'taskId', 'executorIdentity', 'preAttemptTaskStateVersion',
-  'postBeginTaskStateVersion', 'preAttemptControlVersion', 'postBeginControlVersion', 'epoch', 'status',
+  'attemptId',
+  'claimId',
+  'taskId',
+  'executorIdentity',
+  'preAttemptTaskStateVersion',
+  'postBeginTaskStateVersion',
+  'preAttemptControlVersion',
+  'postBeginControlVersion',
+  'epoch',
+  'status',
 ] as const;
-const CLOSURE_KEYS = [
-  'receiptId', 'receiptDigest', 'claimId', 'taskId', 'reason', 'fencedExecutorIdentity', 'unconsumedReservations',
-] as const;
+const CLOSURE_KEYS = ['receiptId', 'receiptDigest', 'claimId', 'taskId', 'reason', 'fencedExecutorIdentity', 'unconsumedReservations'] as const;
 
 /** Owns pending attempt starts and exposes a recovery path through the receiver that retained the lease. */
 export class RepositoryAttemptStartRecoveryV02 {
@@ -79,15 +87,11 @@ export class RepositoryAttemptStartRecoveryV02 {
     }
   }
 
-  hasPending(recoveryId: string): boolean { return this.pending.has(recoveryId); }
+  hasPending(recoveryId: string): boolean {
+    return this.pending.has(recoveryId);
+  }
 
-  register(
-    lease: WorkspaceLease,
-    admission: RepositoryAdmissionContextV02,
-    claim: ClaimReceiptV02,
-    executorIdentity: ExecutorIdentityV02,
-    isRepairPatch: boolean,
-  ): string {
+  register(lease: WorkspaceLease, admission: RepositoryAdmissionContextV02, claim: ClaimReceiptV02, executorIdentity: ExecutorIdentityV02, isRepairPatch: boolean): string {
     const recoveryId = `attempt-start:${randomUUID()}`;
     this.pending.set(recoveryId, {
       recoveryId,
@@ -139,13 +143,15 @@ export class RepositoryAttemptStartRecoveryV02 {
       if (reply['outcome'] === 'unattempted' && hasExactKeys(reply, ['outcome', 'claim', 'closureReceipt'])) {
         const proof = validateNoAttemptClaim(reply['claim'], pending.claim);
         const candidate = reply['closureReceipt'];
-        if (!proof || !isPlainRecord(candidate) || !hasExactKeys(candidate, CLOSURE_KEYS) ||
-          !safeStringArray(candidate['unconsumedReservations'])) return { outcome: 'blocked', recoveryId };
+        if (!proof || !isPlainRecord(candidate) || !hasExactKeys(candidate, CLOSURE_KEYS) || !safeStringArray(candidate['unconsumedReservations'])) return { outcome: 'blocked', recoveryId };
         const fenced = candidate['fencedExecutorIdentity'];
-        if (!isExecutorIdentity(fenced) || fenced.adapterIdentity !== pending.executorIdentity.adapterIdentity ||
+        if (
+          !isExecutorIdentity(fenced) ||
+          fenced.adapterIdentity !== pending.executorIdentity.adapterIdentity ||
           fenced.processIncarnation !== pending.executorIdentity.processIncarnation ||
           fenced.payloadDigest !== pending.executorIdentity.payloadDigest ||
-          fenced.fencingGeneration <= pending.executorIdentity.fencingGeneration) {
+          fenced.fencingGeneration <= pending.executorIdentity.fencingGeneration
+        ) {
           return { outcome: 'blocked', recoveryId };
         }
         const closure = validateClaimClosureReceiptV02(candidate, {
@@ -176,13 +182,7 @@ export class RepositoryAttemptStartRecoveryV02 {
     try {
       if (!pending.outcome) pending.outcome = deepCloneFreeze(this.createUncertainOutcome(pending.claim, attempt, pending.admission));
       if (!pending.outcomeRecorded) {
-        await this.outcomes.record(
-          pending.lease,
-          pending.admission,
-          pending.claim,
-          attempt,
-          pending.outcome,
-        );
+        await this.outcomes.record(pending.lease, pending.admission, pending.claim, attempt, pending.outcome);
         pending.outcomeRecorded = true;
       }
       if (!this.outcomes.hasPending(attempt.attemptId)) return { outcome: 'blocked', recoveryId: pending.recoveryId };
@@ -201,8 +201,7 @@ export class RepositoryAttemptStartRecoveryV02 {
     if (!receipt || !statePort || pending.leaseReleaseAttempted) return { outcome: 'blocked', recoveryId: pending.recoveryId };
     try {
       const result: unknown = await statePort.closeUnattemptedClaim(receipt);
-      if (!isPlainRecord(result) || !hasExactKeys(result, ['closed', 'receiptId']) ||
-        typeof result['closed'] !== 'boolean' || result['receiptId'] !== receipt.receiptId) {
+      if (!isPlainRecord(result) || !hasExactKeys(result, ['closed', 'receiptId']) || typeof result['closed'] !== 'boolean' || result['receiptId'] !== receipt.receiptId) {
         return { outcome: 'blocked', recoveryId: pending.recoveryId };
       }
       if (result['closed'] !== true) return { outcome: 'conflict', recoveryId: pending.recoveryId, receiptId: receipt.receiptId };
@@ -221,17 +220,20 @@ function validateNoAttemptClaim(input: unknown, expected: ClaimReceiptV02): (Cla
   const actual = input as unknown as ClaimReceiptV02 & { readonly hasCommittedAttempt: false };
   const actualValues = actual as unknown as Record<string, unknown>;
   const expectedValues = expected as unknown as Record<string, unknown>;
-  if (CLAIM_KEYS.some((key) => key === 'reservationRefs'
-    ? !sameStrings(actualValues[key], expectedValues[key])
-    : actualValues[key] !== expectedValues[key])) return null;
+  if (CLAIM_KEYS.some(key => (key === 'reservationRefs' ? !sameStrings(actualValues[key], expectedValues[key]) : actualValues[key] !== expectedValues[key]))) return null;
   return actual;
 }
 
 function isExecutorIdentity(input: unknown): input is ExecutorIdentityV02 {
-  return isPlainRecord(input) && hasExactKeys(input, ['adapterIdentity', 'processIncarnation', 'fencingGeneration', 'payloadDigest']) &&
-    typeof input['adapterIdentity'] === 'string' && typeof input['processIncarnation'] === 'string' &&
-    typeof input['payloadDigest'] === 'string' && Number.isSafeInteger(input['fencingGeneration']) &&
-    (input['fencingGeneration'] as number) > 0;
+  return (
+    isPlainRecord(input) &&
+    hasExactKeys(input, ['adapterIdentity', 'processIncarnation', 'fencingGeneration', 'payloadDigest']) &&
+    typeof input['adapterIdentity'] === 'string' &&
+    typeof input['processIncarnation'] === 'string' &&
+    typeof input['payloadDigest'] === 'string' &&
+    Number.isSafeInteger(input['fencingGeneration']) &&
+    (input['fencingGeneration'] as number) > 0
+  );
 }
 
 function isPlainRecord(input: unknown): input is Record<string, unknown> {
@@ -239,7 +241,7 @@ function isPlainRecord(input: unknown): input is Record<string, unknown> {
   const prototype = Object.getPrototypeOf(input);
   if (prototype !== Object.prototype && prototype !== null) return false;
   const descriptors = Object.getOwnPropertyDescriptors(input);
-  return Reflect.ownKeys(input).every((key) => {
+  return Reflect.ownKeys(input).every(key => {
     if (typeof key !== 'string') return false;
     const descriptor = descriptors[key];
     return descriptor !== undefined && Object.hasOwn(descriptor, 'value');
@@ -248,18 +250,20 @@ function isPlainRecord(input: unknown): input is Record<string, unknown> {
 
 function hasExactKeys(record: Record<string, unknown>, keys: readonly string[]): boolean {
   const ownKeys = Reflect.ownKeys(record);
-  return ownKeys.length === keys.length && ownKeys.every((key) => typeof key === 'string' && keys.includes(key)) &&
-    keys.every((key) => {
+  return (
+    ownKeys.length === keys.length &&
+    ownKeys.every(key => typeof key === 'string' && keys.includes(key)) &&
+    keys.every(key => {
       const descriptor = Object.getOwnPropertyDescriptor(record, key);
       return descriptor !== undefined && descriptor.enumerable && Object.hasOwn(descriptor, 'value');
-    });
+    })
+  );
 }
 
 function sameStrings(left: unknown, right: unknown): boolean {
   const leftValues = safeStringArray(left);
   const rightValues = safeStringArray(right);
-  return leftValues !== null && rightValues !== null && leftValues.length === rightValues.length &&
-    leftValues.every((value, index) => value === rightValues[index]);
+  return leftValues !== null && rightValues !== null && leftValues.length === rightValues.length && leftValues.every((value, index) => value === rightValues[index]);
 }
 
 function safeStringArray(input: unknown): string[] | null {

@@ -1,12 +1,5 @@
 import { createHash } from 'node:crypto';
-import type {
-  TaskState,
-  PlanStep,
-  WorkspaceBaseline,
-  VerificationRecord,
-  BudgetLedger,
-  BudgetReservationItem,
-} from './contracts.ts';
+import type { TaskState, PlanStep, WorkspaceBaseline, VerificationRecord, BudgetLedger, BudgetReservationItem } from './contracts.ts';
 import type { DurableStore } from './store.ts';
 import { BudgetTracker } from './accounting.ts';
 import { validateTaskState, UC04_SCHEMA_VERSION } from './contracts.ts';
@@ -15,7 +8,7 @@ import { attemptStepId, findOutcome, ledgerDigest, mergeLedgers, suspendedState 
 
 export { captureWorkspaceBaseline };
 
-const errorText = (errors: readonly { readonly message: string }[]): string => errors.map((e) => e.message).join(', ');
+const errorText = (errors: readonly { readonly message: string }[]): string => errors.map(e => e.message).join(', ');
 
 export class WorkspaceDriftError extends Error {
   readonly current: WorkspaceBaseline;
@@ -62,14 +55,14 @@ export class StepStateMachine {
     }
     const unsatisfied: string[] = [];
     for (const predId of step.predecessorIds) {
-      const predStep = state.plan.find((s) => s.id === predId);
+      const predStep = state.plan.find(s => s.id === predId);
       if (!predStep || predStep.status !== 'done') {
         unsatisfied.push(predId);
         continue;
       }
       const evidence = predStep.evidenceRefs ?? [];
       const required = predStep.requiredEvidenceRefs ?? [];
-      if (evidence.length === 0 || !required.every((id) => evidence.includes(id))) {
+      if (evidence.length === 0 || !required.every(id => evidence.includes(id))) {
         unsatisfied.push(predId);
       }
     }
@@ -77,7 +70,7 @@ export class StepStateMachine {
   }
 
   startStep(state: TaskState, stepId: string): TaskState {
-    const stepIdx = state.plan.findIndex((s) => s.id === stepId);
+    const stepIdx = state.plan.findIndex(s => s.id === stepId);
     if (stepIdx === -1) {
       throw new Error(`Step not found in plan: ${stepId}`);
     }
@@ -120,7 +113,7 @@ export class StepStateMachine {
   }
 
   completeStep(state: TaskState, stepId: string, options: StepCompletionOptions = {}): TaskState {
-    const stepIdx = state.plan.findIndex((s) => s.id === stepId);
+    const stepIdx = state.plan.findIndex(s => s.id === stepId);
     if (stepIdx === -1) {
       throw new Error(`Step not found in plan: ${stepId}`);
     }
@@ -145,17 +138,15 @@ export class StepStateMachine {
     const newPlan = [...state.plan];
     newPlan[stepIdx] = updatedStep;
 
-    const allChangedFiles = Array.from(
-      new Set([...state.changedFiles, ...(options.changedFiles ?? [])])
-    );
+    const allChangedFiles = Array.from(new Set([...state.changedFiles, ...(options.changedFiles ?? [])]));
 
     const verification = options.verification;
     const isVerified = verification?.status === 'verified' && verification.evidenceRefs.length > 0;
-    const isAllDone = newPlan.every((s) => s.status === 'done');
+    const isAllDone = newPlan.every(s => s.status === 'done');
 
     let nextStepIndex = stepIdx;
     if (!isAllDone) {
-      const nextIdx = newPlan.findIndex((s) => s.status === 'todo');
+      const nextIdx = newPlan.findIndex(s => s.status === 'todo');
       if (nextIdx !== -1) nextStepIndex = nextIdx;
     }
 
@@ -186,7 +177,7 @@ export class StepStateMachine {
   }
 
   failStep(state: TaskState, stepId: string, errorMessage: string): TaskState {
-    const stepIdx = state.plan.findIndex((s) => s.id === stepId);
+    const stepIdx = state.plan.findIndex(s => s.id === stepId);
     if (stepIdx === -1) {
       throw new Error(`Step not found in plan: ${stepId}`);
     }
@@ -229,21 +220,14 @@ export interface ReconcileOptions {
   readonly confirmedOutcomes?: readonly ConfirmedOutcome[];
 }
 
-async function resolveVerification(
-  state: TaskState,
-  capability: VerificationCapability | undefined
-): Promise<VerificationRecord> {
+async function resolveVerification(state: TaskState, capability: VerificationCapability | undefined): Promise<VerificationRecord> {
   if (capability) return await capability(state);
   const persisted = state.verification;
   if (persisted?.status === 'verified' && persisted.evidenceRefs.length > 0) return persisted;
   return { status: 'unavailable', evidenceRefs: [], checkedAt: new Date().toISOString() };
 }
 
-export async function reconcileAndResume(
-  taskId: string,
-  store: DurableStore,
-  options: ReconcileOptions = {}
-): Promise<TaskState> {
+export async function reconcileAndResume(taskId: string, store: DurableStore, options: ReconcileOptions = {}): Promise<TaskState> {
   return await store.withLock(`pause-${taskId}`, async () => {
     const latestCheckpoint = await store.loadLatestCheckpoint(taskId);
     if (!latestCheckpoint) {
@@ -251,10 +235,7 @@ export async function reconcileAndResume(
     }
 
     const persistedTask = await store.loadTask(taskId);
-    const savedState =
-      persistedTask && persistedTask.stateVersion > latestCheckpoint.state.stateVersion
-        ? persistedTask
-        : latestCheckpoint.state;
+    const savedState = persistedTask && persistedTask.stateVersion > latestCheckpoint.state.stateVersion ? persistedTask : latestCheckpoint.state;
 
     const pauseRecord = await store.loadPauseRecord(taskId);
     if (pauseRecord?.active) {
@@ -293,51 +274,28 @@ export async function reconcileAndResume(
     const expectedWorkspace = savedState.workspaceBaseline;
 
     if (currentWorkspace.commitHash !== expectedWorkspace.commitHash) {
-      throw new WorkspaceDriftError(
-        `Workspace drift detected: commit mismatch. Expected ${expectedWorkspace.commitHash}, got ${currentWorkspace.commitHash}`,
-        currentWorkspace,
-        expectedWorkspace
-      );
+      throw new WorkspaceDriftError(`Workspace drift detected: commit mismatch. Expected ${expectedWorkspace.commitHash}, got ${currentWorkspace.commitHash}`, currentWorkspace, expectedWorkspace);
     }
 
     if (currentWorkspace.branch !== expectedWorkspace.branch) {
-      throw new WorkspaceDriftError(
-        `Workspace drift detected: branch mismatch. Expected ${expectedWorkspace.branch}, got ${currentWorkspace.branch}`,
-        currentWorkspace,
-        expectedWorkspace
-      );
+      throw new WorkspaceDriftError(`Workspace drift detected: branch mismatch. Expected ${expectedWorkspace.branch}, got ${currentWorkspace.branch}`, currentWorkspace, expectedWorkspace);
     }
 
     if (expectedWorkspace.isClean && !currentWorkspace.isClean) {
-      throw new WorkspaceDriftError(
-        'Workspace drift detected: repository was clean when checkpointed but is now dirty',
-        currentWorkspace,
-        expectedWorkspace
-      );
+      throw new WorkspaceDriftError('Workspace drift detected: repository was clean when checkpointed but is now dirty', currentWorkspace, expectedWorkspace);
     }
 
     if (currentWorkspace.trackedFilesHash !== expectedWorkspace.trackedFilesHash) {
-      throw new WorkspaceDriftError(
-        'Workspace drift detected: tracked file content mismatch',
-        currentWorkspace,
-        expectedWorkspace
-      );
+      throw new WorkspaceDriftError('Workspace drift detected: tracked file content mismatch', currentWorkspace, expectedWorkspace);
     }
 
     const currentEpoch = pauseRecord?.epoch ?? 1;
     const existingClaims = await store.loadDispatchClaims(taskId);
-    const unsettledClaims = existingClaims.filter((c) => c.phase !== 'reconciled');
-    const mismatchedClaims = unsettledClaims.filter(
-      (c) => c.epoch !== currentEpoch || c.stateVersion > savedState.stateVersion
-    );
+    const unsettledClaims = existingClaims.filter(c => c.phase !== 'reconciled');
+    const mismatchedClaims = unsettledClaims.filter(c => c.epoch !== currentEpoch || c.stateVersion > savedState.stateVersion);
 
     if (mismatchedClaims.length > 0) {
-      return await suspend(
-        baseLedgers,
-        `Recovery refused: dispatch claim epoch or state version mismatch (${mismatchedClaims
-          .map((c) => c.claimId)
-          .join(', ')}); explicit reconciliation required`
-      );
+      return await suspend(baseLedgers, `Recovery refused: dispatch claim epoch or state version mismatch (${mismatchedClaims.map(c => c.claimId).join(', ')}); explicit reconciliation required`);
     }
 
     const outcomeByRequest = new Map<string, ConfirmedOutcome>();
@@ -345,8 +303,7 @@ export async function reconcileAndResume(
       if (outcome.evidenceRef.trim()) outcomeByRequest.set(outcome.requestId, outcome);
     }
 
-    const outcomeFor = (reservation: BudgetReservationItem): ConfirmedOutcome | undefined =>
-      findOutcome(reservation, outcomeByRequest);
+    const outcomeFor = (reservation: BudgetReservationItem): ConfirmedOutcome | undefined => findOutcome(reservation, outcomeByRequest);
 
     const tracker = new BudgetTracker(baseLedgers);
     const released = new Set<string>();
@@ -368,15 +325,14 @@ export async function reconcileAndResume(
 
     let ledgers = tracker.getLedgers();
     if (released.size > 0) {
-      ledgers = ledgers.map((l) => ({
+      ledgers = ledgers.map(l => ({
         ...l,
-        reservations: l.reservations.filter((r) => !released.has(r.reservationId)),
+        reservations: l.reservations.filter(r => !released.has(r.reservationId)),
       }));
     }
 
-    const unresolved = ledgers.flatMap((l) => l.reservations);
-    const isResolvedClaim = (claim: typeof unsettledClaims[number]): boolean =>
-      claim.reservationRefs.length > 0 && claim.reservationRefs.every((ref) => resolvedReservationIds.has(ref));
+    const unresolved = ledgers.flatMap(l => l.reservations);
+    const isResolvedClaim = (claim: (typeof unsettledClaims)[number]): boolean => claim.reservationRefs.length > 0 && claim.reservationRefs.every(ref => resolvedReservationIds.has(ref));
     const reconcileResolvedClaims = async (): Promise<void> => {
       for (const claim of unsettledClaims.filter(isResolvedClaim)) {
         await store.saveDispatchClaim({ ...claim, phase: 'reconciled', settledAt: new Date().toISOString() });
@@ -388,9 +344,7 @@ export async function reconcileAndResume(
       const stepId = attemptStepId(savedState);
       for (const reservation of unresolved) {
         const claimId = `rec-${createHash('sha256').update(reservation.reservationId).digest('hex').slice(0, 16)}`;
-        const alreadyClaimed = existingClaims.some(
-          (c) => c.claimId === claimId || c.reservationRefs.includes(reservation.reservationId)
-        );
+        const alreadyClaimed = existingClaims.some(c => c.claimId === claimId || c.reservationRefs.includes(reservation.reservationId));
         if (alreadyClaimed) continue;
         await store.saveDispatchClaim({
           claimId,
@@ -407,32 +361,22 @@ export async function reconcileAndResume(
       }
       await persistJournal(ledgers);
       await reconcileResolvedClaims();
-      return await suspend(
-        ledgers,
-        `Recovery suspended: unresolved reservation(s) ${unresolved
-          .map((r) => r.keyedId)
-          .join(', ')} require outcome evidence before resuming`
-      );
+      return await suspend(ledgers, `Recovery suspended: unresolved reservation(s) ${unresolved.map(r => r.keyedId).join(', ')} require outcome evidence before resuming`);
     }
 
-    const remainingClaims = unsettledClaims.filter((claim) => !isResolvedClaim(claim));
+    const remainingClaims = unsettledClaims.filter(claim => !isResolvedClaim(claim));
 
     if (remainingClaims.length > 0) {
       await persistJournal(ledgers);
       await reconcileResolvedClaims();
-      return await suspend(
-        ledgers,
-        `Recovery suspended: unsettled dispatch claim(s) ${remainingClaims
-          .map((c) => c.claimId)
-          .join(', ')} require outcome evidence before resuming`
-      );
+      return await suspend(ledgers, `Recovery suspended: unsettled dispatch claim(s) ${remainingClaims.map(c => c.claimId).join(', ')} require outcome evidence before resuming`);
     }
 
     await persistJournal(ledgers);
     await reconcileResolvedClaims();
 
     const machine = new StepStateMachine();
-    let nextStepIdx = savedState.plan.findIndex((s) => s.status !== 'done');
+    let nextStepIdx = savedState.plan.findIndex(s => s.status !== 'done');
     let blocked: { readonly id: string; readonly missing: readonly string[] } | undefined;
     if (nextStepIdx === -1) {
       nextStepIdx = Math.max(0, savedState.plan.length - 1);
@@ -440,27 +384,21 @@ export async function reconcileAndResume(
       const step = savedState.plan[nextStepIdx];
       const check = step ? machine.checkPredecessors(savedState, step) : { ready: true, unsatisfied: [] };
       if (step && !check.ready) {
-        const readyIdx = savedState.plan.findIndex(
-          (s) => s.status === 'todo' && machine.checkPredecessors(savedState, s).ready
-        );
+        const readyIdx = savedState.plan.findIndex(s => s.status === 'todo' && machine.checkPredecessors(savedState, s).ready);
         if (readyIdx !== -1) nextStepIdx = readyIdx;
         else blocked = { id: step.id, missing: check.unsatisfied };
       }
     }
 
-    const isTerminalOrBlocked =
-      savedState.status === 'waiting_approval' || savedState.status === 'failed';
+    const isTerminalOrBlocked = savedState.status === 'waiting_approval' || savedState.status === 'failed';
 
     if (blocked && !isTerminalOrBlocked) {
       await persistJournal(ledgers);
-      return await suspend(
-        ledgers,
-        `Recovery blocked: step ${blocked.id} requires predecessor evidence from ${blocked.missing.join(', ')}`
-      );
+      return await suspend(ledgers, `Recovery blocked: step ${blocked.id} requires predecessor evidence from ${blocked.missing.join(', ')}`);
     }
 
     const nextStep = savedState.plan[nextStepIdx];
-    const isAllDone = savedState.plan.every((s) => s.status === 'done');
+    const isAllDone = savedState.plan.every(s => s.status === 'done');
 
     let verification: VerificationRecord | undefined;
     let status: TaskState['status'];
@@ -473,9 +411,7 @@ export async function reconcileAndResume(
       verification = await resolveVerification(savedState, options.verification);
       const isVerified = verification.status === 'verified' && verification.evidenceRefs.length > 0;
       status = isVerified ? 'completed' : 'paused';
-      nextAction = isVerified
-        ? 'Task completed'
-        : `Verification required before completion (status: ${verification.status})`;
+      nextAction = isVerified ? 'Task completed' : `Verification required before completion (status: ${verification.status})`;
     } else {
       status = 'running';
       nextAction = nextStep ? `Resume from step ${nextStep.title}` : 'Awaiting next action';

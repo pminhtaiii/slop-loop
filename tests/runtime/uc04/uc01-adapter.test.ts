@@ -10,7 +10,7 @@ import { UC01AccountingAdapter } from '../../../src/persistence/adapters/uc01-ad
 import { captureWorkspaceBaseline, reconcileAndResume } from '../../../src/persistence/recovery.ts';
 import type { BudgetLedger } from '../../../src/persistence/contracts.ts';
 
-test('UC-04 / UC-01: Accounting & Recovery Adapter', async (t) => {
+test('UC-04 / UC-01: Accounting & Recovery Adapter', async t => {
   const stores: DurableStore[] = [];
   const repos: string[] = [];
   const newStore = (): DurableStore => {
@@ -22,11 +22,7 @@ test('UC-04 / UC-01: Accounting & Recovery Adapter', async (t) => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'uc01-adapter-repo-'));
     repos.push(repoRoot);
     execFileSync('git', ['init', '-b', 'task-branch'], { cwd: repoRoot, stdio: 'ignore' });
-    execFileSync(
-      'git',
-      ['-c', 'user.email=uc04@example.com', '-c', 'user.name=uc04', 'commit', '--allow-empty', '-m', 'init'],
-      { cwd: repoRoot, stdio: 'ignore' }
-    );
+    execFileSync('git', ['-c', 'user.email=uc04@example.com', '-c', 'user.name=uc04', 'commit', '--allow-empty', '-m', 'init'], { cwd: repoRoot, stdio: 'ignore' });
     return repoRoot;
   };
 
@@ -85,8 +81,8 @@ test('UC-04 / UC-01: Accounting & Recovery Adapter', async (t) => {
 
     const afterReserve = await store.loadBudgetJournal(taskId);
     assert.ok(afterReserve);
-    const reservedTokens = afterReserve.ledgers.find((l) => l.kind === 'tokens');
-    assert.equal(reservedTokens?.reservations.find((r) => r.keyedId === context.requestId)?.amount, 500);
+    const reservedTokens = afterReserve.ledgers.find(l => l.kind === 'tokens');
+    assert.equal(reservedTokens?.reservations.find(r => r.keyedId === context.requestId)?.amount, 500);
 
     // Tokens are now reserved (available should be 500)
     assert.equal(budgetTracker.getAvailable('task', 'tokens'), 500);
@@ -110,66 +106,63 @@ test('UC-04 / UC-01: Accounting & Recovery Adapter', async (t) => {
 
     const afterSettle = await store.loadBudgetJournal(taskId);
     assert.ok(afterSettle);
-    assert.equal(afterSettle.ledgers.find((l) => l.kind === 'tokens')?.consumed, settleResult.consumedTokens);
-    assert.equal(afterSettle.ledgers.find((l) => l.kind === 'cost')?.consumed, settleResult.consumedCost);
-    assert.equal(afterSettle.ledgers.find((l) => l.kind === 'tokens')?.reservations.length, 0);
+    assert.equal(afterSettle.ledgers.find(l => l.kind === 'tokens')?.consumed, settleResult.consumedTokens);
+    assert.equal(afterSettle.ledgers.find(l => l.kind === 'cost')?.consumed, settleResult.consumedCost);
+    assert.equal(afterSettle.ledgers.find(l => l.kind === 'tokens')?.reservations.length, 0);
   });
 
-  await t.test(
-    'reconciliation after interruption: preserves 500 tokens used and prevents blind replay',
-    async () => {
-      // Scenario: Fresh task with 1,000 token limit
-      const budgetTracker = new BudgetTracker(initialLedgers);
-      const store = newStore();
-      const adapter = new UC01AccountingAdapter(budgetTracker, store);
+  await t.test('reconciliation after interruption: preserves 500 tokens used and prevents blind replay', async () => {
+    // Scenario: Fresh task with 1,000 token limit
+    const budgetTracker = new BudgetTracker(initialLedgers);
+    const store = newStore();
+    const adapter = new UC01AccountingAdapter(budgetTracker, store);
 
-      const context = {
-        taskId,
-        runId,
-        requestId: 'req-interrupted-call',
-        accountingRef: 'account-1',
-      };
+    const context = {
+      taskId,
+      runId,
+      requestId: 'req-interrupted-call',
+      accountingRef: 'account-1',
+    };
 
-      const ceiling = {
-        inputTokens: 300,
-        outputTokens: 200,
-        totalTokens: 500,
-        costUnits: 1,
-        pricingId: 'pricing-1',
-      };
+    const ceiling = {
+      inputTokens: 300,
+      outputTokens: 200,
+      totalTokens: 500,
+      costUnits: 1,
+      pricingId: 'pricing-1',
+    };
 
-      // 1. LLM call reserves 500 tokens and 1 cost unit
-      const reserveResult = await adapter.reserve(context, ceiling);
-      assert.equal(reserveResult.ok, true);
+    // 1. LLM call reserves 500 tokens and 1 cost unit
+    const reserveResult = await adapter.reserve(context, ceiling);
+    assert.equal(reserveResult.ok, true);
 
-      // 2. CRASH happens! Process is interrupted before settle is called.
-      // 3. On restart / recovery: reconcileAfterInterrupt is called
-      const summary = await adapter.reconcileAfterInterrupt(taskId, runId);
+    // 2. CRASH happens! Process is interrupted before settle is called.
+    // 3. On restart / recovery: reconcileAfterInterrupt is called
+    const summary = await adapter.reconcileAfterInterrupt(taskId, runId);
 
-      // 4. Verify: Agent does NOT forget the 500 tokens consumed!
-      assert.equal(summary.preservedConsumedTokens, 500);
-      assert.equal(summary.preservedConsumedCost, 1);
-      assert.equal(summary.uncertainReservationsRetained, 2); // token + cost reservations
-      assert.equal(summary.blindReplayPrevented, true);
+    // 4. Verify: Agent does NOT forget the 500 tokens consumed!
+    assert.equal(summary.preservedConsumedTokens, 500);
+    assert.equal(summary.preservedConsumedCost, 1);
+    assert.equal(summary.uncertainReservationsRetained, 2); // token + cost reservations
+    assert.equal(summary.blindReplayPrevented, true);
 
-      // Consumed amount remains at least 500
-      assert.equal(budgetTracker.getConsumed('task', 'tokens'), 500);
-      // Available allowance is reduced to 500
-      assert.equal(budgetTracker.getAvailable('task', 'tokens'), 500);
+    // Consumed amount remains at least 500
+    assert.equal(budgetTracker.getConsumed('task', 'tokens'), 500);
+    // Available allowance is reduced to 500
+    assert.equal(budgetTracker.getAvailable('task', 'tokens'), 500);
 
-      // Attempting to request 600 tokens now will fail due to budget exhaustion
-      const excessiveCeiling = {
-        inputTokens: 400,
-        outputTokens: 200,
-        totalTokens: 600,
-        costUnits: 1,
-        pricingId: 'pricing-1',
-      };
-      const deniedResult = await adapter.reserve(context, excessiveCeiling);
-      assert.equal(deniedResult.ok, false);
-      assert.equal(deniedResult.reasonCode, 'call-budget-exhausted');
-    }
-  );
+    // Attempting to request 600 tokens now will fail due to budget exhaustion
+    const excessiveCeiling = {
+      inputTokens: 400,
+      outputTokens: 200,
+      totalTokens: 600,
+      costUnits: 1,
+      pricingId: 'pricing-1',
+    };
+    const deniedResult = await adapter.reserve(context, excessiveCeiling);
+    assert.equal(deniedResult.ok, false);
+    assert.equal(deniedResult.reasonCode, 'call-budget-exhausted');
+  });
 
   await t.test('saves step checkpoints to durable store', async () => {
     const budgetTracker = new BudgetTracker(initialLedgers);
@@ -196,20 +189,14 @@ test('UC-04 / UC-01: Accounting & Recovery Adapter', async (t) => {
     const store = newStore();
     const adapter = new UC01AccountingAdapter(budgetTracker, store);
 
-    await assert.rejects(
-      async () => {
-        await adapter.saveCheckpoint(taskId, 'intake', undefined);
-      },
-      /Invalid stepData/
-    );
+    await assert.rejects(async () => {
+      await adapter.saveCheckpoint(taskId, 'intake', undefined);
+    }, /Invalid stepData/);
     const circular: Record<string, unknown> = {};
     circular['self'] = circular;
-    await assert.rejects(
-      async () => {
-        await adapter.saveCheckpoint(taskId, 'intake', circular);
-      },
-      /Invalid stepData/
-    );
+    await assert.rejects(async () => {
+      await adapter.saveCheckpoint(taskId, 'intake', circular);
+    }, /Invalid stepData/);
   });
 
   await t.test('a reservation acknowledged before a crash stays held when rebuilt from the journal alone', async () => {
@@ -226,13 +213,16 @@ test('UC-04 / UC-01: Accounting & Recovery Adapter', async (t) => {
     const rebuilt = new UC01AccountingAdapter(tracker, store);
 
     assert.equal(tracker.getAvailable('task', 'tokens'), 500);
-    const replay = await rebuilt.reserve({ ...context, requestId: 'req-replay' }, {
-      inputTokens: 300,
-      outputTokens: 200,
-      totalTokens: 600,
-      costUnits: 1,
-      pricingId: 'pricing-1',
-    });
+    const replay = await rebuilt.reserve(
+      { ...context, requestId: 'req-replay' },
+      {
+        inputTokens: 300,
+        outputTokens: 200,
+        totalTokens: 600,
+        costUnits: 1,
+        pricingId: 'pricing-1',
+      },
+    );
     assert.equal(replay.ok, false);
     assert.equal(replay.reasonCode, 'call-budget-exhausted');
   });
@@ -276,9 +266,9 @@ test('UC-04 / UC-01: Accounting & Recovery Adapter', async (t) => {
     const summary = await adapter.reconcileAfterInterrupt(taskId, runId);
     const journal = await store.loadBudgetJournal(taskId);
     assert.ok(journal);
-    assert.equal(journal.ledgers.find((l) => l.kind === 'tokens')?.consumed, summary.preservedConsumedTokens);
-    assert.equal(journal.ledgers.find((l) => l.kind === 'cost')?.consumed, summary.preservedConsumedCost);
-    assert.equal(journal.ledgers.find((l) => l.kind === 'tokens')?.reservations.length, 0);
+    assert.equal(journal.ledgers.find(l => l.kind === 'tokens')?.consumed, summary.preservedConsumedTokens);
+    assert.equal(journal.ledgers.find(l => l.kind === 'cost')?.consumed, summary.preservedConsumedCost);
+    assert.equal(journal.ledgers.find(l => l.kind === 'tokens')?.reservations.length, 0);
   });
 
   await t.test('reconciliation charges only the calling task and leaves foreign reservations held', async () => {
@@ -287,10 +277,7 @@ test('UC-04 / UC-01: Accounting & Recovery Adapter', async (t) => {
     const adapter = new UC01AccountingAdapter(budgetTracker, store);
     const ceiling = { inputTokens: 300, outputTokens: 200, totalTokens: 500, costUnits: 1, pricingId: 'pricing-1' };
 
-    const reservedA = await adapter.reserve(
-      { taskId: 'task-a', runId: 'run-a', requestId: 'req-a', accountingRef: 'account-a' },
-      ceiling
-    );
+    const reservedA = await adapter.reserve({ taskId: 'task-a', runId: 'run-a', requestId: 'req-a', accountingRef: 'account-a' }, ceiling);
     assert.equal(reservedA.ok, true);
 
     const summaryB = await adapter.reconcileAfterInterrupt('task-b', 'run-b');
@@ -300,7 +287,7 @@ test('UC-04 / UC-01: Accounting & Recovery Adapter', async (t) => {
 
     const journalB = await store.loadBudgetJournal('task-b');
     assert.ok(journalB);
-    assert.equal(journalB.ledgers.find((l) => l.kind === 'tokens')?.consumed, 0);
+    assert.equal(journalB.ledgers.find(l => l.kind === 'tokens')?.consumed, 0);
 
     const summaryA = await adapter.reconcileAfterInterrupt('task-a', 'run-a');
     assert.equal(summaryA.preservedConsumedTokens, 500);
@@ -309,7 +296,7 @@ test('UC-04 / UC-01: Accounting & Recovery Adapter', async (t) => {
 
     const journalA = await store.loadBudgetJournal('task-a');
     assert.ok(journalA);
-    assert.equal(journalA.ledgers.find((l) => l.kind === 'tokens')?.consumed, 500);
+    assert.equal(journalA.ledgers.find(l => l.kind === 'tokens')?.consumed, 500);
   });
 
   await t.test('a task journal holds only its own reservations after another task reserves', async () => {
@@ -318,18 +305,12 @@ test('UC-04 / UC-01: Accounting & Recovery Adapter', async (t) => {
     const adapter = new UC01AccountingAdapter(budgetTracker, store);
     const ceiling = { inputTokens: 300, outputTokens: 200, totalTokens: 500, costUnits: 1, pricingId: 'pricing-1' };
 
-    await adapter.reserve(
-      { taskId: 'task-a', runId: 'run-a', requestId: 'req-a', accountingRef: 'account-a' },
-      ceiling
-    );
-    await adapter.reserve(
-      { taskId: 'task-b', runId: 'run-b', requestId: 'req-b', accountingRef: 'account-b' },
-      ceiling
-    );
+    await adapter.reserve({ taskId: 'task-a', runId: 'run-a', requestId: 'req-a', accountingRef: 'account-a' }, ceiling);
+    await adapter.reserve({ taskId: 'task-b', runId: 'run-b', requestId: 'req-b', accountingRef: 'account-b' }, ceiling);
 
     const journalB = await store.loadBudgetJournal('task-b');
     assert.ok(journalB);
-    const keyedB = journalB.ledgers.flatMap((l) => l.reservations.map((r) => r.keyedId));
+    const keyedB = journalB.ledgers.flatMap(l => l.reservations.map(r => r.keyedId));
     assert.deepEqual(keyedB.sort(), ['req-b', 'req-b']);
 
     const rebuilt = new UC01AccountingAdapter(new BudgetTracker(initialLedgers), store);
@@ -349,10 +330,7 @@ test('UC-04 / UC-01: Accounting & Recovery Adapter', async (t) => {
     const adapter = new UC01AccountingAdapter(budgetTracker, store, repoRoot);
     const ceiling = { inputTokens: 300, outputTokens: 200, totalTokens: 500, costUnits: 1, pricingId: 'pricing-1' };
 
-    await adapter.reserve(
-      { taskId, runId, requestId: 'req-1', accountingRef: 'account-1' },
-      ceiling
-    );
+    await adapter.reserve({ taskId, runId, requestId: 'req-1', accountingRef: 'account-1' }, ceiling);
     await adapter.saveCheckpoint(taskId, 'intake', { issueId: 'ISSUE-300' });
     const before = await store.loadBudgetJournal(taskId);
     assert.ok(before);

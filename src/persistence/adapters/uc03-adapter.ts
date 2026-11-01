@@ -70,12 +70,7 @@ export class UC03AccountingAdapter {
     return this.budgetTracker.getTaskLedgers(taskId);
   }
 
-  private async commit(
-    taskId: string,
-    runId: string,
-    replanCount: number,
-    before: BudgetTrackerSnapshot
-  ): Promise<void> {
+  private async commit(taskId: string, runId: string, replanCount: number, before: BudgetTrackerSnapshot): Promise<void> {
     if (!this.durableStore) return;
     this.runIdsByTask.set(taskId, runId);
     const record: BudgetJournalRecord = {
@@ -95,12 +90,7 @@ export class UC03AccountingAdapter {
   }
 
   /** Reserves tokens and cost allowance for an investigation phase. */
-  async reserveInvestigation(
-    taskId: string,
-    runId: string,
-    estimatedTokens: number,
-    estimatedCost = 1
-  ): Promise<UC03ReservationResult> {
+  async reserveInvestigation(taskId: string, runId: string, estimatedTokens: number, estimatedCost = 1): Promise<UC03ReservationResult> {
     const requestId = `inv-${taskId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const replans = await this.restore(taskId, 0);
     const before = this.budgetTracker.snapshot();
@@ -110,7 +100,7 @@ export class UC03AccountingAdapter {
         { scope: 'task', kind: 'tokens', amount: estimatedTokens },
         { scope: 'task', kind: 'cost', amount: estimatedCost },
       ],
-      { taskId, runId }
+      { taskId, runId },
     );
     await this.commit(taskId, runId, replans, before);
 
@@ -123,12 +113,7 @@ export class UC03AccountingAdapter {
   }
 
   /** Reserves tokens, cost, and a repair attempt allowance for a code repair attempt. */
-  async reserveRepairAttempt(
-    taskId: string,
-    runId: string,
-    estimatedTokens: number,
-    estimatedCost = 1
-  ): Promise<UC03ReservationResult> {
+  async reserveRepairAttempt(taskId: string, runId: string, estimatedTokens: number, estimatedCost = 1): Promise<UC03ReservationResult> {
     const requestId = `repair-${taskId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const replans = await this.restore(taskId, 0);
     const before = this.budgetTracker.snapshot();
@@ -139,7 +124,7 @@ export class UC03AccountingAdapter {
         { scope: 'task', kind: 'cost', amount: estimatedCost },
         { scope: 'task', kind: 'repair', amount: 1 },
       ],
-      { taskId, runId }
+      { taskId, runId },
     );
     await this.commit(taskId, runId, replans, before);
 
@@ -152,16 +137,9 @@ export class UC03AccountingAdapter {
   }
 
   /** Reserves a replan allowance, enforcing maximum 3 replans boundary. */
-  async reserveReplan(
-    taskId: string,
-    runId: string,
-    estimatedTokens: number,
-    currentReplanCount: number
-  ): Promise<UC03ReservationResult> {
+  async reserveReplan(taskId: string, runId: string, estimatedTokens: number, currentReplanCount: number): Promise<UC03ReservationResult> {
     if (!Number.isSafeInteger(currentReplanCount) || currentReplanCount < 0) {
-      throw new RangeError(
-        `currentReplanCount must be a non-negative safe integer; received ${currentReplanCount}`
-      );
+      throw new RangeError(`currentReplanCount must be a non-negative safe integer; received ${currentReplanCount}`);
     }
     const count = await this.restore(taskId, currentReplanCount);
     if (count >= 3) {
@@ -176,7 +154,7 @@ export class UC03AccountingAdapter {
         { scope: 'task', kind: 'tokens', amount: estimatedTokens },
         { scope: 'task', kind: 'cost', amount: 1 },
       ],
-      { taskId, runId }
+      { taskId, runId },
     );
     await this.commit(taskId, runId, count + 1, before);
     this.replanCountsByTask.set(taskId, count + 1);
@@ -191,19 +169,14 @@ export class UC03AccountingAdapter {
   }
 
   /** Settles an attempt against actual provider usage, falling back to reservation ceilings. */
-  async settleAttempt(
-    reservationId: string,
-    observedUsage: { readonly tokens?: number; readonly cost?: number }
-  ): Promise<UC03SettleResult> {
+  async settleAttempt(reservationId: string, observedUsage: { readonly tokens?: number; readonly cost?: number }): Promise<UC03SettleResult> {
     const task = this.parseTaskId(reservationId);
     const replans = task === null ? this.totalReplans : await this.restore(task, 0);
     const before = this.budgetTracker.snapshot();
     const reservedAmount = (kinds: readonly string[]): number | undefined => {
       for (const ledger of before.ledgers) {
         if (!kinds.includes(ledger.kind)) continue;
-        const match = ledger.reservations.find(
-          (r) => r.keyedId === reservationId || r.reservationId === reservationId
-        );
+        const match = ledger.reservations.find(r => r.keyedId === reservationId || r.reservationId === reservationId);
         if (match) return match.amount;
       }
       return undefined;
@@ -237,11 +210,7 @@ export class UC03AccountingAdapter {
     const before = this.budgetTracker.snapshot();
     let settled = false;
     for (const ledger of before.ledgers) {
-      const match = ledger.reservations.find(
-        (r) =>
-          (r.keyedId === reservationId || r.reservationId === reservationId) &&
-          this.belongsToTask(r.keyedId, taskId)
-      );
+      const match = ledger.reservations.find(r => (r.keyedId === reservationId || r.reservationId === reservationId) && this.belongsToTask(r.keyedId, taskId));
       if (match) {
         this.budgetTracker.settleReservation(match.reservationId, match.amount);
         settled = true;
@@ -251,7 +220,10 @@ export class UC03AccountingAdapter {
   }
 
   /** Reconciles all pending reservations for a given task owner. */
-  async reconcileTaskBudgets(taskId: string, runId: string): Promise<{
+  async reconcileTaskBudgets(
+    taskId: string,
+    runId: string,
+  ): Promise<{
     readonly taskId: string;
     readonly runId: string;
     readonly totalTokensConsumed: number;

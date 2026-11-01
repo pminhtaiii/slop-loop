@@ -1,24 +1,40 @@
-const safeDirectories = [
-  'docs/',
-  'context/',
-  '.agents/skills/',
-  '.githooks/',
-  'scripts/agents/',
-  'tests/agents/',
-  'tests/ci/',
-];
-const safeCiHelpers = new Set([
-  'scripts/ci/check-context.mjs',
-  'scripts/ci/check-staged-file-size.mjs',
-  'scripts/ci/check-env-examples.mjs',
-  'scripts/ci/check-tracked-files.mjs',
-]);
+const safeDirectories = ['docs/', 'context/', '.agents/skills/', '.githooks/', 'scripts/agents/', 'tests/agents/', 'tests/ci/'];
+const safeCiHelpers = new Set(['scripts/ci/check-context.mjs', 'scripts/ci/check-staged-file-size.mjs', 'scripts/ci/check-env-examples.mjs', 'scripts/ci/check-tracked-files.mjs']);
 const fullGateFiles = new Set([
-  '.npmrc', '.pnpmfile.cjs', 'pnpmfile.cjs', 'bun.lock', 'bun.lockb', 'npm-shrinkwrap.json',
-  'package.json', 'package-lock.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'yarn.lock',
-  'turbo.json', 'nx.json', 'project.json', 'makefile', 'cmakelists.txt',
+  '.npmrc',
+  '.pnpmfile.cjs',
+  'pnpmfile.cjs',
+  'bun.lock',
+  'bun.lockb',
+  'npm-shrinkwrap.json',
+  'package.json',
+  'package-lock.json',
+  'pnpm-lock.yaml',
+  'pnpm-workspace.yaml',
+  'yarn.lock',
+  'turbo.json',
+  'nx.json',
+  'project.json',
+  'makefile',
+  'cmakelists.txt',
 ]);
-const buildConfigPrefixes = ['eslint.config.', 'prettier.config.', 'vite.config.', 'vitest.config.', 'webpack.config.', 'rollup.config.', 'babel.config.', 'jest.config.', 'playwright.config.', 'next.config.', 'nuxt.config.', 'astro.config.', 'svelte.config.', 'postcss.config.', 'tailwind.config.'];
+const buildConfigPrefixes = [
+  'eslint.config.',
+  'prettier.config.',
+  'vite.config.',
+  'vitest.config.',
+  'webpack.config.',
+  'rollup.config.',
+  'babel.config.',
+  'jest.config.',
+  'playwright.config.',
+  'next.config.',
+  'nuxt.config.',
+  'astro.config.',
+  'svelte.config.',
+  'postcss.config.',
+  'tailwind.config.',
+];
 
 function parseChangedPaths(raw) {
   if (typeof raw !== 'string' || !raw) throw new Error('The exact base-to-candidate Git diff is empty or unreadable.');
@@ -31,7 +47,7 @@ function parseChangedPaths(raw) {
     const pathCount = /^[RC]\d{1,3}$/.test(status) ? 2 : ['A', 'D', 'M', 'T'].includes(status) ? 1 : 0;
     if (!pathCount || fields.length - index < pathCount) throw new Error('The exact base-to-candidate Git diff contains an invalid name-status record.');
     const changed = fields.slice(index, index + pathCount);
-    if (changed.some((path) => !path)) throw new Error('The exact base-to-candidate Git diff contains an empty path.');
+    if (changed.some(path => !path)) throw new Error('The exact base-to-candidate Git diff contains an empty path.');
     paths.push(...changed);
     index += pathCount;
   }
@@ -42,14 +58,14 @@ function parseChangedPaths(raw) {
 function isDocumentationOrHelperPath(path) {
   const normalized = path.toLowerCase();
   const basename = normalized.split('/').at(-1);
-  if (fullGateFiles.has(basename)
-    || /^(?:tsconfig|jsconfig)(?:\.[^/]*)?\.json$/.test(basename)
-    || /^\.(?:eslintrc|prettierrc)(?:\..+)?$/.test(basename)
-    || buildConfigPrefixes.some((prefix) => basename.startsWith(prefix))) return false;
-  return normalized === 'agents.md'
-    || /^readme(?:\.[^/]*)?$/.test(normalized)
-    || safeCiHelpers.has(path)
-    || safeDirectories.some((directory) => normalized.startsWith(directory));
+  if (
+    fullGateFiles.has(basename) ||
+    /^(?:tsconfig|jsconfig)(?:\.[^/]*)?\.json$/.test(basename) ||
+    /^\.(?:eslintrc|prettierrc)(?:\..+)?$/.test(basename) ||
+    buildConfigPrefixes.some(prefix => basename.startsWith(prefix))
+  )
+    return false;
+  return normalized === 'agents.md' || /^readme(?:\.[^/]*)?$/.test(normalized) || safeCiHelpers.has(path) || safeDirectories.some(directory => normalized.startsWith(directory));
 }
 
 function policy({ requestedMode, mode, provenance, reason, classification, base, head, paths }) {
@@ -79,7 +95,7 @@ export async function selectPublicationPolicy({ requestedMode = 'auto', reason, 
     throw new Error(`Could not read the exact base-to-candidate Git diff: ${error.message}`, { cause: error });
   }
   const paths = parseChangedPaths(raw);
-  const outOfScope = paths.find((path) => !isDocumentationOrHelperPath(path));
+  const outOfScope = paths.find(path => !isDocumentationOrHelperPath(path));
   return policy({
     requestedMode,
     mode: outOfScope ? 'full' : 'push-only',
@@ -95,19 +111,21 @@ export async function selectPublicationPolicy({ requestedMode = 'auto', reason, 
 }
 
 export function matchesAutomaticPushOnlyPolicy(record, head, policy) {
-  return record.publicationMode === 'push-only'
-    && record.publicationProvenance === 'automatic-v1'
-    && record.publicationPolicy?.provenance === 'automatic-v1'
-    && record.publicationPolicy.requestedMode === 'auto'
-    && record.publicationPolicy.mode === 'push-only'
-    && record.publicationPolicy.head === head
-    && record.publicationPolicy.base === policy.base
-    && record.publicationPolicy.reason === policy.reason
-    && record.publicationReason === policy.reason
-    && record.publicationPolicy.classification === policy.classification
-    && JSON.stringify(record.publicationPolicy.paths) === JSON.stringify(policy.paths)
-    && policy.mode === 'push-only'
-    && policy.provenance === 'automatic-v1';
+  return (
+    record.publicationMode === 'push-only' &&
+    record.publicationProvenance === 'automatic-v1' &&
+    record.publicationPolicy?.provenance === 'automatic-v1' &&
+    record.publicationPolicy.requestedMode === 'auto' &&
+    record.publicationPolicy.mode === 'push-only' &&
+    record.publicationPolicy.head === head &&
+    record.publicationPolicy.base === policy.base &&
+    record.publicationPolicy.reason === policy.reason &&
+    record.publicationReason === policy.reason &&
+    record.publicationPolicy.classification === policy.classification &&
+    JSON.stringify(record.publicationPolicy.paths) === JSON.stringify(policy.paths) &&
+    policy.mode === 'push-only' &&
+    policy.provenance === 'automatic-v1'
+  );
 }
 
 export async function validatePushOnlyCompletion(record, head, git) {
@@ -125,11 +143,14 @@ export async function validatePushOnlyCompletion(record, head, git) {
     }
     return;
   }
-  if (record.publicationProvenance === 'explicit-v1'
-    && policy?.provenance === 'explicit-v1'
-    && policy.requestedMode === 'push-only'
-    && policy.mode === 'push-only'
-    && policy.head === head
-    && policy.reason === record.publicationReason) return;
+  if (
+    record.publicationProvenance === 'explicit-v1' &&
+    policy?.provenance === 'explicit-v1' &&
+    policy.requestedMode === 'push-only' &&
+    policy.mode === 'push-only' &&
+    policy.head === head &&
+    policy.reason === record.publicationReason
+  )
+    return;
   throw new Error('Push-only publication provenance is missing or inconsistent; completion requires local gates.');
 }

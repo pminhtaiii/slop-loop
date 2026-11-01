@@ -11,7 +11,7 @@ export const PLACEHOLDER_VALUES = Object.freeze(['', 'CHANGE_ME', 'YOUR_VALUE_HE
 const REGULAR_MODES = new Set(['100644', '100755']);
 const ASSIGNMENT = /^(?:export[ \t]+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$/;
 
-const hasControl = (text) => {
+const hasControl = text => {
   for (const character of text) {
     const code = character.codePointAt(0);
     if (code < 0x20 && code !== 0x09 && code !== 0x0a && code !== 0x0d) return true;
@@ -107,7 +107,7 @@ export function gitEnvExampleReader(root) {
   }
   return {
     paths: [...entries.keys()],
-    read: (path) => {
+    read: path => {
       const entry = entries.get(path);
       if (!entry) throw new Error(`Example env file is no longer tracked: ${path}`);
       if (!REGULAR_MODES.has(entry.mode)) return { mode: entry.mode, bytes: Buffer.alloc(0) };

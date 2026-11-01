@@ -17,10 +17,7 @@ import {
   computeRequestContentDigest,
   validateDispatchAdmission,
 } from '../../../../src/contracts/foundation/uc03.ts';
-import {
-  createTestProviderAdmissionTrustedContextV02,
-  createTestProviderOutcomeReceiptV02,
-} from './state-fixtures.ts';
+import { createTestProviderAdmissionTrustedContextV02, createTestProviderOutcomeReceiptV02 } from './state-fixtures.ts';
 
 export interface ReviewerCallRecord {
   readonly task: BugTask;
@@ -134,31 +131,18 @@ export class ScriptedReviewerPort implements ReviewerPort {
     this.v02CallLog = [];
   }
 
-  async review(
-    task: BugTask,
-    diff: string,
-    evidence: readonly SourceEvidence[],
-    request: ProviderRequest,
-    context?: ProviderAdmissionContextV02
-  ): Promise<ReviewResult> {
+  async review(task: BugTask, diff: string, evidence: readonly SourceEvidence[], request: ProviderRequest, context?: ProviderAdmissionContextV02): Promise<ReviewResult> {
     this.attemptedCount++;
 
     const effectiveV02 = context ?? this.defaultAdmissionContextV02;
     if (effectiveV02 !== undefined) {
       // Role check: ReviewerPort requires distinct reviewer role
       if (request.role !== 'reviewer') {
-        const err = new Error(
-          `INVALID_ROLE: ReviewerPort expected request role 'reviewer', got '${request.role}'`
-        );
+        const err = new Error(`INVALID_ROLE: ReviewerPort expected request role 'reviewer', got '${request.role}'`);
         this.callLog.push({ task, diff, evidence, request, admitted: false, error: err });
         throw err;
       }
-      if (
-        !effectiveV02 ||
-        typeof effectiveV02 !== 'object' ||
-        effectiveV02.schemaVersion !== '0.2.0' ||
-        effectiveV02.subjectKind !== 'provider-request'
-      ) {
+      if (!effectiveV02 || typeof effectiveV02 !== 'object' || effectiveV02.schemaVersion !== '0.2.0' || effectiveV02.subjectKind !== 'provider-request') {
         const err = new Error('INVALID_ADMISSION_CONTEXT: Expected valid v0.2 ProviderAdmissionContextV02');
         this.callLog.push({ task, diff, evidence, request, admitted: false, error: err });
         throw err;
@@ -173,13 +157,13 @@ export class ScriptedReviewerPort implements ReviewerPort {
         this.callLog.push({ task, diff, evidence, request, admitted: false, error: err });
         throw err;
       }
-      const contextValidation = validateProviderAdmissionV02(
-        effectiveV02,
-        createTestProviderAdmissionTrustedContextV02(effectiveV02),
-      );
-      if (!contextValidation.ok || effectiveV02.role !== request.role ||
+      const contextValidation = validateProviderAdmissionV02(effectiveV02, createTestProviderAdmissionTrustedContextV02(effectiveV02));
+      if (
+        !contextValidation.ok ||
+        effectiveV02.role !== request.role ||
         computeRequestContentDigest(request) !== effectiveV02.requestContentDigest ||
-        computeCanonicalSha256(request) !== computeCanonicalSha256(effectiveV02.providerRequest)) {
+        computeCanonicalSha256(request) !== computeCanonicalSha256(effectiveV02.providerRequest)
+      ) {
         const err = new Error('CONTEXT_IDENTITY_MISMATCH: Request payload does not match current admission context');
         this.callLog.push({ task, diff, evidence, request, admitted: false, error: err });
         throw err;
@@ -267,9 +251,7 @@ export class ScriptedReviewerPort implements ReviewerPort {
 
     // Role check: ReviewerPort requires distinct reviewer role
     if (request.role !== 'reviewer') {
-      const err = new Error(
-        `INVALID_ROLE: ReviewerPort expected request role 'reviewer', got '${request.role}'`
-      );
+      const err = new Error(`INVALID_ROLE: ReviewerPort expected request role 'reviewer', got '${request.role}'`);
       this.callLog.push({ task, diff, evidence, request, admitted: false, error: err });
       throw err;
     }
@@ -277,18 +259,14 @@ export class ScriptedReviewerPort implements ReviewerPort {
     // Authoritative admission validation
     const admissionContext = this.defaultAdmissionContext;
     if (!admissionContext) {
-      const err = new Error(
-        'UNTRUSTED_DISPATCH_AUTHORIZATION: Dispatch admission requires trusted validated context (a bare reservation ref cannot authorize dispatch)'
-      );
+      const err = new Error('UNTRUSTED_DISPATCH_AUTHORIZATION: Dispatch admission requires trusted validated context (a bare reservation ref cannot authorize dispatch)');
       this.callLog.push({ task, diff, evidence, request, admitted: false, error: err });
       throw err;
     }
 
     const admissionRes = validateDispatchAdmission(request, admissionContext);
     if (!admissionRes.ok) {
-      const err = new Error(
-        `DISPATCH_ADMISSION_DENIED: ${admissionRes.errors.map((e) => `${e.code}: ${e.message}`).join('; ')}`
-      );
+      const err = new Error(`DISPATCH_ADMISSION_DENIED: ${admissionRes.errors.map(e => `${e.code}: ${e.message}`).join('; ')}`);
       this.callLog.push({ task, diff, evidence, request, admitted: false, error: err });
       throw err;
     }
@@ -340,13 +318,7 @@ export class ScriptedReviewerPortV02 {
     this.underlying.queueResponses(responses);
   }
 
-  review(
-    task: BugTask,
-    diff: string,
-    evidence: readonly SourceEvidence[],
-    request: ProviderRequest,
-    context: ProviderAdmissionContextV02
-  ): Promise<ReviewResult> {
+  review(task: BugTask, diff: string, evidence: readonly SourceEvidence[], request: ProviderRequest, context: ProviderAdmissionContextV02): Promise<ReviewResult> {
     if (!context) {
       return Promise.reject(new Error('MISSING_ADMISSION_CONTEXT: Expected ProviderAdmissionContextV02'));
     }

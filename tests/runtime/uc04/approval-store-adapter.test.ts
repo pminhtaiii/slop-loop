@@ -3,12 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import type {
-  ApprovalRequestRecord,
-  DecisionEvent,
-  DeveloperDirection,
-  HumanResolution,
-} from '../../../src/contracts/approvals/contracts.ts';
+import type { ApprovalRequestRecord, DecisionEvent, DeveloperDirection, HumanResolution } from '../../../src/contracts/approvals/contracts.ts';
 import { DurableApprovalStore } from '../../../src/persistence/adapters/approval-store-adapter.ts';
 import { DEFAULT_POLICY_PROFILE } from '../../../src/persistence/adapters/approval-types.ts';
 
@@ -18,7 +13,7 @@ const repoDigest = `sha256:${'d'.repeat(64)}`;
 const policyRef = { policyId: 'policy-1', policyVersion: '1.0.0', configId: 'config-1', configVersion: '1.0.0' };
 const trustedOperator = { actorId: 'developer-local', channelRef: 'channel-local', provenance: 'real' as const };
 
-test('UC-04 / UC-05: DurableApprovalStore Adapter', async (t) => {
+test('UC-04 / UC-05: DurableApprovalStore Adapter', async t => {
   const tempDir = mkdtempSync(join(tmpdir(), 'uc05-approval-store-test-'));
 
   t.after(() => {
@@ -58,11 +53,7 @@ test('UC-04 / UC-05: DurableApprovalStore Adapter', async (t) => {
       status: 'pending',
     },
   };
-  const requestFor = (
-    localTaskId: string,
-    localDecisionId: string,
-    extra: Partial<ApprovalRequestRecord> = {}
-  ): ApprovalRequestRecord => ({
+  const requestFor = (localTaskId: string, localDecisionId: string, extra: Partial<ApprovalRequestRecord> = {}): ApprovalRequestRecord => ({
     ...sampleRequest,
     ...extra,
     taskId: localTaskId,
@@ -101,7 +92,9 @@ test('UC-04 / UC-05: DurableApprovalStore Adapter', async (t) => {
 
   const listTree = (root: string): readonly string[] =>
     existsSync(root)
-      ? readdirSync(root, { recursive: true, encoding: 'utf8' }).map((path) => path.replaceAll('\\', '/')).sort()
+      ? readdirSync(root, { recursive: true, encoding: 'utf8' })
+          .map(path => path.replaceAll('\\', '/'))
+          .sort()
       : [];
 
   const writeStoredEvents = (storageDir: string, ownerTaskId: string, events: readonly unknown[]): void => {
@@ -413,10 +406,16 @@ test('UC-04 / UC-05: DurableApprovalStore Adapter', async (t) => {
     const res = store.readEvents('event-task');
     assert.equal(res.safe.outcome, 'ok');
     assert.equal(res.safe.safeReasonCode, 'events-loaded');
-    assert.deepEqual(res.value?.map((ev) => ev.eventId), ['event-stored']);
+    assert.deepEqual(
+      res.value?.map(ev => ev.eventId),
+      ['event-stored'],
+    );
 
     assert.deepEqual(store.appendEvent('event-task', eventOf({ eventId: 'event-new', taskId: 'event-task' })), { ok: true, status: 'appended' });
-    assert.deepEqual(store.readEvents('event-task').value?.map((ev) => ev.eventId), ['event-stored', 'event-new']);
+    assert.deepEqual(
+      store.readEvents('event-task').value?.map(ev => ev.eventId),
+      ['event-stored', 'event-new'],
+    );
   });
 
   await t.test('refused first pending creation leaves no control file', () => {
@@ -457,13 +456,16 @@ test('UC-04 / UC-05: DurableApprovalStore Adapter', async (t) => {
 
       assert.equal(res.safe.outcome, 'conflict');
       assert.equal(res.safe.safeReasonCode, 'event-conflict');
-      assert.deepEqual(store.readEvents(task).value?.map((ev) => ev.eventId), ['event-existing']);
+      assert.deepEqual(
+        store.readEvents(task).value?.map(ev => ev.eventId),
+        ['event-existing'],
+      );
       assert.equal(existsSync(join(dir, 'decisions', 'decision-replacement', 'request.json')), false);
     });
   });
 
   await t.test('stored events survive a tightened profile and new events still append', () => {
-    withFreshStore('uc05-approval-profile-tightened-', (dir) => {
+    withFreshStore('uc05-approval-profile-tightened-', dir => {
       const task = 'task-tight-profile';
       writeStoredEvents(dir, task, [eventOf({ eventId: 'event-stored-large', taskId: task, runId: 'r'.repeat(120) })]);
       const store = new DurableApprovalStore({
@@ -473,21 +475,21 @@ test('UC-04 / UC-05: DurableApprovalStore Adapter', async (t) => {
 
       const readRes = store.readEvents(task);
       assert.equal(readRes.safe.safeReasonCode, 'events-loaded');
-      assert.deepEqual(readRes.value?.map((ev) => ev.eventId), ['event-stored-large']);
+      assert.deepEqual(
+        readRes.value?.map(ev => ev.eventId),
+        ['event-stored-large'],
+      );
 
       assert.deepEqual(store.appendEvent(task, eventOf({ eventId: 'event-small', taskId: task })), { ok: true, status: 'appended' });
-      assert.deepEqual(store.readEvents(task).value?.map((ev) => ev.eventId), ['event-stored-large', 'event-small']);
+      assert.deepEqual(
+        store.readEvents(task).value?.map(ev => ev.eventId),
+        ['event-stored-large', 'event-small'],
+      );
     });
   });
 
   await t.test('throws when invalid policy profile is supplied', () => {
-    assert.throws(
-      () => new DurableApprovalStore({ storageDir: tempDir, profile: null }),
-      /Invalid policy profile/
-    );
-    assert.throws(
-      () => new DurableApprovalStore({ storageDir: tempDir, profile: '' }),
-      /Invalid policy profile/
-    );
+    assert.throws(() => new DurableApprovalStore({ storageDir: tempDir, profile: null }), /Invalid policy profile/);
+    assert.throws(() => new DurableApprovalStore({ storageDir: tempDir, profile: '' }), /Invalid policy profile/);
   });
 });

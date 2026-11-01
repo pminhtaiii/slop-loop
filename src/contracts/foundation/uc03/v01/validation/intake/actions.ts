@@ -1,35 +1,25 @@
 /** Normalized action and approval-binding validation. */
 
 import { isCanonicalRelativePath, isProtectedPath } from '../../../identity.ts';
-import type { ApplyPatchAction, ApprovalBinding, ApprovalBindingContext, ApprovalStatus, ApproveFixPlanAction, NormalizedAction, RunCommandAction, ValidationError, ValidationResult } from '../../types.ts';
+import type {
+  ApplyPatchAction,
+  ApprovalBinding,
+  ApprovalBindingContext,
+  ApprovalStatus,
+  ApproveFixPlanAction,
+  NormalizedAction,
+  RunCommandAction,
+  ValidationError,
+  ValidationResult,
+} from '../../types.ts';
 import { isPlainObject, rejectUnknownKeys, validateNonEmptyString, validatePositiveInteger } from '../common.ts';
 import { posix } from 'node:path';
 
-const RUN_COMMAND_ACTION_ALLOWED_KEYS = [
-  'actionId',
-  'kind',
-  'executable',
-  'argv',
-  'workingDirectory',
-  'purpose',
-] as const;
+const RUN_COMMAND_ACTION_ALLOWED_KEYS = ['actionId', 'kind', 'executable', 'argv', 'workingDirectory', 'purpose'] as const;
 
-const APPLY_PATCH_ACTION_ALLOWED_KEYS = [
-  'actionId',
-  'kind',
-  'patchContent',
-  'targetPaths',
-  'baseRevisionDigest',
-] as const;
+const APPLY_PATCH_ACTION_ALLOWED_KEYS = ['actionId', 'kind', 'patchContent', 'targetPaths', 'baseRevisionDigest'] as const;
 
-const APPROVE_FIX_PLAN_ACTION_ALLOWED_KEYS = [
-  'actionId',
-  'kind',
-  'planVersion',
-  'strategyDigest',
-  'diagnosisEvidenceRefs',
-  'checkSetDigest',
-] as const;
+const APPROVE_FIX_PLAN_ACTION_ALLOWED_KEYS = ['actionId', 'kind', 'planVersion', 'strategyDigest', 'diagnosisEvidenceRefs', 'checkSetDigest'] as const;
 
 const APPROVAL_BINDING_ACTION_ALLOWED_KEYS = [
   'decisionId',
@@ -114,9 +104,7 @@ export function validateNormalizedAction(input: unknown): ValidationResult<Norma
     const workingDirectory = validateNonEmptyString(input['workingDirectory'], 'workingDirectory', errors);
     if (workingDirectory) {
       const normalizedWorkingDirectory = posix.resolve('/', workingDirectory);
-      const workspaceRoot = ['/workspace/repo', '/workspace/scratch'].find((root) =>
-        normalizedWorkingDirectory === root || normalizedWorkingDirectory.startsWith(`${root}/`)
-      );
+      const workspaceRoot = ['/workspace/repo', '/workspace/scratch'].find(root => normalizedWorkingDirectory === root || normalizedWorkingDirectory.startsWith(`${root}/`));
       if (workspaceRoot) {
         const relativeWorkingDirectory = posix.relative(workspaceRoot, normalizedWorkingDirectory);
         if (isProtectedPath(relativeWorkingDirectory)) {
@@ -205,13 +193,7 @@ export function validateNormalizedAction(input: unknown): ValidationResult<Norma
       }
     }
 
-    if (
-      errors.length > 0 ||
-      !patchContent ||
-      !baseRevisionDigest ||
-      !Array.isArray(input['targetPaths']) ||
-      input['targetPaths'].length === 0
-    ) {
+    if (errors.length > 0 || !patchContent || !baseRevisionDigest || !Array.isArray(input['targetPaths']) || input['targetPaths'].length === 0) {
       return { ok: false, errors };
     }
 
@@ -250,14 +232,7 @@ export function validateNormalizedAction(input: unknown): ValidationResult<Norma
       }
     }
 
-    if (
-      errors.length > 0 ||
-      planVersion === undefined ||
-      !strategyDigest ||
-      !checkSetDigest ||
-      !Array.isArray(input['diagnosisEvidenceRefs']) ||
-      input['diagnosisEvidenceRefs'].length === 0
-    ) {
+    if (errors.length > 0 || planVersion === undefined || !strategyDigest || !checkSetDigest || !Array.isArray(input['diagnosisEvidenceRefs']) || input['diagnosisEvidenceRefs'].length === 0) {
       return { ok: false, errors };
     }
 
@@ -290,19 +265,24 @@ export function validateApprovalBinding(input: unknown, context?: ApprovalBindin
   if (!parsed.ok) return parsed;
   const binding = parsed.value;
   if (binding.status !== 'approved') return parsed;
-  const required: (keyof ApprovalBindingContext)[] = ['currentTaskId', 'currentWorkspaceId', 'currentRepositoryRevisionDigest', 'currentPolicyId', 'currentPolicyVersion', 'currentNormalizedActionDigest'];
+  const required: (keyof ApprovalBindingContext)[] = [
+    'currentTaskId',
+    'currentWorkspaceId',
+    'currentRepositoryRevisionDigest',
+    'currentPolicyId',
+    'currentPolicyVersion',
+    'currentNormalizedActionDigest',
+  ];
   if (binding.actionKind === 'fix_plan') required.push('currentPlanVersion', 'currentStrategyDigest', 'currentBaselineRef', 'currentEvidenceRefs', 'currentCriteriaDigest', 'currentCheckSetDigest');
   const errors: ValidationError[] = [];
   for (const field of required) {
     const value = context?.[field];
-    if (value === undefined ||
+    if (
+      value === undefined ||
       (typeof value === 'string' && !value.trim()) ||
-      (field === 'currentPlanVersion' && (!Number.isSafeInteger(value) ||
-      Number(value) < 1)) ||
-      (field === 'currentEvidenceRefs' && (!Array.isArray(value) ||
-      value.length === 0 ||
-      value.some(v => typeof v !== 'string' ||
-      !v.trim())))) {
+      (field === 'currentPlanVersion' && (!Number.isSafeInteger(value) || Number(value) < 1)) ||
+      (field === 'currentEvidenceRefs' && (!Array.isArray(value) || value.length === 0 || value.some(v => typeof v !== 'string' || !v.trim())))
+    ) {
       errors.push({ path: `context.${field}`, code: 'MISSING_FRESHNESS_CONTEXT', message: 'Complete trusted freshness context is required' });
     }
   }
@@ -311,10 +291,7 @@ export function validateApprovalBinding(input: unknown, context?: ApprovalBindin
   return errors.length ? { ok: false, errors } : checked;
 }
 
-export function parseApprovalBinding(
-  input: unknown,
-  context?: ApprovalBindingContext
-): ValidationResult<ApprovalBinding> {
+export function parseApprovalBinding(input: unknown, context?: ApprovalBindingContext): ValidationResult<ApprovalBinding> {
   if (!isPlainObject(input)) {
     return {
       ok: false,
@@ -478,10 +455,7 @@ export function parseApprovalBinding(
         errors.push({ path: 'checkSetDigest', message: 'Binding checkSetDigest does not match current context', code: 'STALE_APPROVAL_BINDING' });
       }
       if (context.currentEvidenceRefs !== undefined) {
-        const match =
-          Array.isArray(evidenceRefs) &&
-          context.currentEvidenceRefs.length === evidenceRefs.length &&
-          context.currentEvidenceRefs.every((r, idx) => r === evidenceRefs?.[idx]);
+        const match = Array.isArray(evidenceRefs) && context.currentEvidenceRefs.length === evidenceRefs.length && context.currentEvidenceRefs.every((r, idx) => r === evidenceRefs?.[idx]);
         if (!match) {
           errors.push({ path: 'evidenceRefs', message: 'Binding evidenceRefs do not match current context', code: 'STALE_APPROVAL_BINDING' });
         }
@@ -499,14 +473,7 @@ export function parseApprovalBinding(
     !policyId ||
     !policyVersion ||
     !validStatuses.includes(status) ||
-    (actionKind === 'fix_plan' &&
-      (planVersion === undefined ||
-        !strategyDigest ||
-        !baselineRef ||
-        !criteriaDigest ||
-        !checkSetDigest ||
-        !evidenceRefs ||
-        evidenceRefs.length === 0))
+    (actionKind === 'fix_plan' && (planVersion === undefined || !strategyDigest || !baselineRef || !criteriaDigest || !checkSetDigest || !evidenceRefs || evidenceRefs.length === 0))
   ) {
     return { ok: false, errors };
   }

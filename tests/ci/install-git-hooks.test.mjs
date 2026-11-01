@@ -10,7 +10,7 @@ test('Git hook installation skips cleanly when the Git executable is unavailable
   const emptyPath = join(root, 'empty-bin');
   mkdirSync(emptyPath);
   const env = { ...process.env };
-  const pathKey = Object.keys(env).find((key) => key.toLowerCase() === 'path') ?? 'PATH';
+  const pathKey = Object.keys(env).find(key => key.toLowerCase() === 'path') ?? 'PATH';
   env[pathKey] = emptyPath;
 
   try {

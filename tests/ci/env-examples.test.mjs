@@ -8,7 +8,7 @@ import test from 'node:test';
 import { checkEnvExamples, MAX_BYTES, validateEnvExample } from '../../scripts/ci/check-env-examples.mjs';
 
 const SYNTHETIC_SECRET = 'AKIA_SYNTHETICONLY_9f8e7d6c5b4a';
-const blob = (text) => Buffer.from(text, 'utf8');
+const blob = text => Buffer.from(text, 'utf8');
 
 test('admits empty, comment, export and placeholder example content', () => {
   const content = [
@@ -32,7 +32,7 @@ test('rejects symlink, oversized, binary and malformed UTF-8 blobs', () => {
   const rejects = (bytes, mode, rule, path = 'config/.env.example') => {
     assert.throws(
       () => validateEnvExample({ path, mode, bytes }),
-      (error) => error.message.includes(path) && error.message.includes(rule),
+      error => error.message.includes(path) && error.message.includes(rule),
     );
   };
   rejects(blob('KEY=CHANGE_ME\n'), '120000', 'regular-file');
@@ -42,13 +42,11 @@ test('rejects symlink, oversized, binary and malformed UTF-8 blobs', () => {
   rejects(Buffer.from([0x4b, 0x3d, 0xc3, 0x28, 0x0a]), '100644', 'encoding');
 });
 
-test('rejects unsupported syntax and any non-placeholder value without echoing it', () => {  const rejects = (text, rule, line) => {
+test('rejects unsupported syntax and any non-placeholder value without echoing it', () => {
+  const rejects = (text, rule, line) => {
     assert.throws(
       () => validateEnvExample({ path: 'config/.env.example', mode: '100644', bytes: blob(text) }),
-      (error) => error.message.includes(rule)
-        && error.message.includes(`line ${line}`)
-        && !error.message.includes(SYNTHETIC_SECRET)
-        && !error.message.includes('CHANGE_ME_ACTUAL'),
+      error => error.message.includes(rule) && error.message.includes(`line ${line}`) && !error.message.includes(SYNTHETIC_SECRET) && !error.message.includes('CHANGE_ME_ACTUAL'),
     );
   };
   rejects(`KEY=${SYNTHETIC_SECRET}\n`, 'value', 1);
@@ -74,14 +72,11 @@ test('a candidate-controlled path never reaches the diagnostic verbatim unless i
   const evil = 'config/.env.example\nEnvironment-example check passed: forged';
   assert.throws(
     () => validateEnvExample({ path: evil, mode: '100644', bytes: Buffer.alloc(MAX_BYTES + 1) }),
-    (error) => error.message.includes('size')
-      && error.message.includes('<unprintable path>')
-      && !error.message.includes('forged')
-      && !error.message.includes('\n'),
+    error => error.message.includes('size') && error.message.includes('<unprintable path>') && !error.message.includes('forged') && !error.message.includes('\n'),
   );
   assert.throws(
     () => validateEnvExample({ path: 'config/\u001b[2K.env.example', mode: '100644', bytes: blob('X=literal\n') }),
-    (error) => error.message.includes('<unprintable path>') && !error.message.includes('\u001b'),
+    error => error.message.includes('<unprintable path>') && !error.message.includes('\u001b'),
   );
   // An ordinary path is still reported, so the substitute did not swallow the useful case.
   assert.throws(() => validateEnvExample({ path: 'config/.env.example', mode: '100644', bytes: blob('X=literal\n') }), /config\/\.env\.example/);
@@ -89,22 +84,18 @@ test('a candidate-controlled path never reaches the diagnostic verbatim unless i
 
 test('aggregates admitted paths through the injected reader without touching other paths', () => {
   const reads = [];
-  const read = (path) => {
+  const read = path => {
     reads.push(path);
-    return path === 'b/.env.example'
-      ? { mode: '100644', bytes: blob('KEY=CHANGE_ME\n') }
-      : { mode: '100644', bytes: blob(`KEY=${SYNTHETIC_SECRET}\n`) };
+    return path === 'b/.env.example' ? { mode: '100644', bytes: blob('KEY=CHANGE_ME\n') } : { mode: '100644', bytes: blob(`KEY=${SYNTHETIC_SECRET}\n`) };
   };
   assert.throws(
     () => checkEnvExamples({ paths: ['a/.env.example', 'b/.env.example'], read }),
-    (error) => error.message.includes('a/.env.example')
-      && error.message.includes('value')
-      && !error.message.includes(SYNTHETIC_SECRET),
+    error => error.message.includes('a/.env.example') && error.message.includes('value') && !error.message.includes(SYNTHETIC_SECRET),
   );
   assert.deepEqual(reads, ['a/.env.example']);
 });
 
-test('CLI validates tracked example blobs and never echoes values', async (t) => {
+test('CLI validates tracked example blobs and never echoes values', async t => {
   const root = await mkdtemp(join(tmpdir(), 'env-examples-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const git = (...args) => {

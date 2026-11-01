@@ -10,7 +10,11 @@ import { branch, completionMarkerFor, fixture, markerFor, mergePair, privateRepo
 const historicalBinding = { repositoryId: 101, headRepositoryId: 101, number: 7, head: publicHead, tree: 'c'.repeat(40), policy: 'ci-v1' };
 
 function useHistoricalChecks(f) {
-  f.checks.splice(0, f.checks.length, ...POLICIES['ci-v1'].required.map((name, id) => ({ id: id + 1, name, head_sha: publicHead, status: 'completed', conclusion: 'success', app: { slug: 'github-actions' } })));
+  f.checks.splice(
+    0,
+    f.checks.length,
+    ...POLICIES['ci-v1'].required.map((name, id) => ({ id: id + 1, name, head_sha: publicHead, status: 'completed', conclusion: 'success', app: { slug: 'github-actions' } })),
+  );
 }
 
 test('an audited historical merged pair uses its bound policy and preserves preview/apply safeguards', async t => {
@@ -129,7 +133,10 @@ test('already closed issues stay untouched while the open counterpart is complet
 
   assert.equal(result.status, 'COMPLETED');
   assert.equal(f.publicIssue.comments.length, 0);
-  assert.equal(f.writes.some(write => write.repository === publicRepository), false);
+  assert.equal(
+    f.writes.some(write => write.repository === publicRepository),
+    false,
+  );
   assert.equal(f.privateIssue.state, 'closed');
 });
 
@@ -137,22 +144,28 @@ test('waiting previews accept revised evidence until an apply starts', async t =
   const f = await fixture(t);
   const waiting = await runIssueCompletion(f.args, { execute: f.execute });
   assert.equal(waiting.status, 'WAITING_PR');
-  await writeFile(f.evidenceFile, JSON.stringify({
-    schemaVersion: 1,
-    summary: 'Updated after review feedback.',
-    acceptance: [{ criterion: 'The localized display is correct.', evidence: 'The revised focused check passed.' }],
-  }));
+  await writeFile(
+    f.evidenceFile,
+    JSON.stringify({
+      schemaVersion: 1,
+      summary: 'Updated after review feedback.',
+      acceptance: [{ criterion: 'The localized display is correct.', evidence: 'The revised focused check passed.' }],
+    }),
+  );
   const stillWaiting = await runIssueCompletion(f.args, { execute: f.execute });
   assert.equal(stillWaiting.status, 'WAITING_PR');
 
   mergePair(f);
   const firstPreview = await runIssueCompletion(f.args, { execute: f.execute });
   assert.equal(firstPreview.status, 'READY_TO_COMPLETE');
-  await writeFile(f.evidenceFile, JSON.stringify({
-    schemaVersion: 1,
-    summary: 'Final verified repair.',
-    acceptance: [{ criterion: 'The localized display is correct.', evidence: 'Final verification passed.' }],
-  }));
+  await writeFile(
+    f.evidenceFile,
+    JSON.stringify({
+      schemaVersion: 1,
+      summary: 'Final verified repair.',
+      acceptance: [{ criterion: 'The localized display is correct.', evidence: 'Final verification passed.' }],
+    }),
+  );
   const revisedPreview = await runIssueCompletion(f.args, { execute: f.execute });
   assert.equal(revisedPreview.status, 'READY_TO_COMPLETE');
   assert.deepEqual(f.writes, []);
@@ -249,7 +262,11 @@ test('merged completion uses only the active policy and never a ci-v1 or unbound
 
   const v1 = await fixture(t);
   mergePair(v1);
-  v1.checks.splice(0, v1.checks.length, ...POLICIES['ci-v1'].required.map((name, id) => ({ id: id + 1, name, head_sha: publicHead, status: 'completed', conclusion: 'success', app: { slug: 'github-actions' } })));
+  v1.checks.splice(
+    0,
+    v1.checks.length,
+    ...POLICIES['ci-v1'].required.map((name, id) => ({ id: id + 1, name, head_sha: publicHead, status: 'completed', conclusion: 'success', app: { slug: 'github-actions' } })),
+  );
   const wrongPolicy = await runIssueCompletion([...v1.args, '--apply'], { execute: v1.execute });
   assert.equal(wrongPolicy.status, 'WAITING_CI', 'ci-v1 names do not satisfy the active ci-v5 policy');
   assert.deepEqual(v1.writes, []);
@@ -307,13 +324,16 @@ test('changed targets and conflicting retained issue receipts fail before writes
   const receipt = await fixture(t);
   const issueRecordDir = join(receipt.root, '.agent-work', 'paired-issues');
   await mkdir(issueRecordDir, { recursive: true });
-  await writeFile(join(issueRecordDir, 'localized-bug.json'), JSON.stringify({
-    schemaVersion: 1,
-    key: 'localized-bug',
-    marker: markerFor('localized-bug'),
-    targets: { primary: publicRepository, submission: privateRepository },
-    receipts: { primary: { number: 99, url: `https://github.com/${publicRepository}/issues/99` }, submission: null },
-  }));
+  await writeFile(
+    join(issueRecordDir, 'localized-bug.json'),
+    JSON.stringify({
+      schemaVersion: 1,
+      key: 'localized-bug',
+      marker: markerFor('localized-bug'),
+      targets: { primary: publicRepository, submission: privateRepository },
+      receipts: { primary: { number: 99, url: `https://github.com/${publicRepository}/issues/99` }, submission: null },
+    }),
+  );
   await assert.rejects(runIssueCompletion(receipt.args, { execute: receipt.execute }), /receipt no longer matches/i);
   assert.deepEqual(receipt.writes, []);
 });

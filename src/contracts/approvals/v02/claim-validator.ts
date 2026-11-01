@@ -4,7 +4,18 @@ import type { DispatchClaimPhaseV02, DispatchClaimV02 } from './types.ts';
 import { computeDispatchClaimDigestV02 } from './digests.ts';
 import { DISPATCH_CLAIM_V02_KEYS, DISPATCH_CLAIM_V02_PHASES, validateNonNegativeInteger } from './validation.ts';
 import { validatePolicyIdentity } from '../v01/claim-validator.ts';
-import { addError, invalidObject, isRecord, rejectUnknownKeys, validateBoundedText, validateDigest, validateId, validateIdArray, validatePositiveInteger, validateVersionString } from '../v01/validation.ts';
+import {
+  addError,
+  invalidObject,
+  isRecord,
+  rejectUnknownKeys,
+  validateBoundedText,
+  validateDigest,
+  validateId,
+  validateIdArray,
+  validatePositiveInteger,
+  validateVersionString,
+} from '../v01/validation.ts';
 
 export function validateDispatchClaimV02(input: unknown): ValidationResult<DispatchClaimV02> {
   const path = 'dispatchClaimV02';

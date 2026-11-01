@@ -1,10 +1,4 @@
-import type {
-  TaskState,
-  PlanStep,
-  ProviderUsage,
-  ApprovalRequestBinding,
-  VerificationRecord,
-} from '../../../../src/persistence/contracts.ts';
+import type { TaskState, PlanStep, ProviderUsage, ApprovalRequestBinding, VerificationRecord } from '../../../../src/persistence/contracts.ts';
 import type { DurableStore } from '../../../../src/persistence/store.ts';
 import { StepStateMachine, reconcileAndResume, type ReconcileOptions } from '../../../../src/persistence/recovery.ts';
 import { BudgetTracker } from '../../../../src/persistence/accounting.ts';
@@ -34,11 +28,7 @@ export class FeatureWorkflowEngine {
     return initialState;
   }
 
-  async executeWorkflow(
-    taskId: string,
-    stepHandler: StepHandler,
-    options: ReconcileOptions = {}
-  ): Promise<TaskState> {
+  async executeWorkflow(taskId: string, stepHandler: StepHandler, options: ReconcileOptions = {}): Promise<TaskState> {
     let state = await reconcileAndResume(taskId, this.store, options);
     const budgetTracker = new BudgetTracker(state.budgetLedgers);
 
@@ -48,12 +38,9 @@ export class FeatureWorkflowEngine {
 
       // If already done, skip (defense in depth)
       if (currentStep.status === 'done') {
-        const nextIdx = state.plan.findIndex((s) => s.status === 'todo');
+        const nextIdx = state.plan.findIndex(s => s.status === 'todo');
         const persisted = state.verification;
-        const certified =
-          state.plan.every((s) => s.status === 'done') &&
-          persisted?.status === 'verified' &&
-          persisted.evidenceRefs.length > 0;
+        const certified = state.plan.every(s => s.status === 'done') && persisted?.status === 'verified' && persisted.evidenceRefs.length > 0;
         state = {
           ...state,
           currentStepIndex: nextIdx !== -1 ? nextIdx : state.plan.length,
@@ -88,9 +75,9 @@ export class FeatureWorkflowEngine {
       // Settle budget usage if any
       if (result.usage) {
         const items = [
-          { scope: 'task' as const, kind: 'tokens' as const, amount: result.usage.billableTokens ?? (result.usage.inputTokens + result.usage.outputTokens) },
+          { scope: 'task' as const, kind: 'tokens' as const, amount: result.usage.billableTokens ?? result.usage.inputTokens + result.usage.outputTokens },
           { scope: 'task' as const, kind: 'cost' as const, amount: result.usage.costUsd },
-        ].filter((i) => i.amount > 0);
+        ].filter(i => i.amount > 0);
         if (items.length > 0) {
           budgetTracker.reserve(currentStep.id, items, { taskId: state.taskId, runId: state.runId });
           budgetTracker.settle(currentStep.id, result.usage);
@@ -102,10 +89,8 @@ export class FeatureWorkflowEngine {
       }
 
       // 3. Complete Step
-      const evidenceRefs = result.verificationRef
-        ? [result.verificationRef]
-        : (result.changedFiles ?? []).map((f) => `changed:${f}`);
-      const isFinalStep = state.plan.filter((s) => s.status !== 'done').length <= 1;
+      const evidenceRefs = result.verificationRef ? [result.verificationRef] : (result.changedFiles ?? []).map(f => `changed:${f}`);
+      const isFinalStep = state.plan.filter(s => s.status !== 'done').length <= 1;
       const persisted = state.verification;
       const verification: VerificationRecord | undefined = isFinalStep
         ? persisted?.status === 'verified' && persisted.evidenceRefs.length > 0

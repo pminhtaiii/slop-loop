@@ -1,15 +1,6 @@
 import { computeCanonicalSha256, validateTaskState } from '../contracts/foundation/uc03.ts';
 import { validateRepositoryAdmissionV02 as validateRepositoryAdmissionRecordV02 } from '../contracts/foundation/uc03/v02/admission/repository.ts';
-import type {
-  CheckDefinition,
-  CheckResult,
-  ExecutionGuardV02,
-  RepositoryAdmissionContextV02,
-  RepositoryPort,
-  RepositoryPortV02,
-  StatePortV02,
-  TaskState,
-} from '../contracts/foundation/uc03.ts';
+import type { CheckDefinition, CheckResult, ExecutionGuardV02, RepositoryAdmissionContextV02, RepositoryPort, RepositoryPortV02, StatePortV02, TaskState } from '../contracts/foundation/uc03.ts';
 import type { TrustedHostExpectedContext } from './investigation-types.ts';
 
 function computeGuardedTaskStateDigest(state: TaskState): string {
@@ -18,9 +9,7 @@ function computeGuardedTaskStateDigest(state: TaskState): string {
   return computeCanonicalSha256(stateWithoutAccounting);
 }
 
-export type BaselineCheckRunResult =
-  | { readonly status: 'checks'; readonly checkResults: CheckResult[] }
-  | { readonly status: 'error'; readonly reason: string };
+export type BaselineCheckRunResult = { readonly status: 'checks'; readonly checkResults: CheckResult[] } | { readonly status: 'error'; readonly reason: string };
 
 export async function runBaselineChecks(input: {
   readonly rawExpectedContext: unknown;
@@ -31,31 +20,22 @@ export async function runBaselineChecks(input: {
   readonly checkSetDigest: string;
   readonly requiredChecks: readonly CheckDefinition[];
 }): Promise<BaselineCheckRunResult> {
-  const {
-    rawExpectedContext,
-    repository,
-    expectedTaskId,
-    expectedRevisionDigest,
-    criteriaDigest,
-    checkSetDigest,
-    requiredChecks,
-  } = input;
+  const { rawExpectedContext, repository, expectedTaskId, expectedRevisionDigest, criteriaDigest, checkSetDigest, requiredChecks } = input;
   // Check if v0.2 guarded atomic admission is active
   const expectedContext = rawExpectedContext as TrustedHostExpectedContext | undefined;
   const contextAdmission = expectedContext?.admissionContext;
   const admissionContextForCheck = expectedContext?.admissionContextForCheck;
-  const rawStatePort = (rawExpectedContext as Record<string, unknown> | undefined)?.statePort ??
-    (repository as { statePort?: unknown })?.statePort;
+  const rawStatePort = (rawExpectedContext as Record<string, unknown> | undefined)?.statePort ?? (repository as { statePort?: unknown })?.statePort;
   const rawExecutionGuard = (rawExpectedContext as Record<string, unknown> | undefined)?.executionGuard;
-  const executionGuard = rawExecutionGuard && typeof rawExecutionGuard === 'object' &&
-    typeof (rawExecutionGuard as { validateAndExecute?: unknown }).validateAndExecute === 'function'
-    ? rawExecutionGuard as ExecutionGuardV02
-    : undefined;
+  const executionGuard =
+    rawExecutionGuard && typeof rawExecutionGuard === 'object' && typeof (rawExecutionGuard as { validateAndExecute?: unknown }).validateAndExecute === 'function'
+      ? (rawExecutionGuard as ExecutionGuardV02)
+      : undefined;
   const isV02 = Boolean(
     contextAdmission !== undefined ||
     admissionContextForCheck !== undefined ||
     rawExecutionGuard !== undefined ||
-    (repository as { executionGuardApiVersion?: string })?.executionGuardApiVersion === '0.2.0'
+    (repository as { executionGuardApiVersion?: string })?.executionGuardApiVersion === '0.2.0',
   );
 
   let admission: RepositoryAdmissionContextV02 | undefined;
@@ -75,7 +55,7 @@ export async function runBaselineChecks(input: {
       if (!valAdmission.ok) {
         return {
           status: 'error',
-          reason: `ADMISSION_DENIED: ${valAdmission.errors.map((e) => e.message).join('; ')}`,
+          reason: `ADMISSION_DENIED: ${valAdmission.errors.map(e => e.message).join('; ')}`,
         };
       }
       admission = valAdmission.value;
@@ -171,9 +151,7 @@ export async function runBaselineChecks(input: {
               outputExcerpt: 'STATE_UNAVAILABLE: Authoritative task state unavailable or invalid',
             };
           } else {
-            const suppliedAdmission = admissionContextForCheck
-              ? await admissionContextForCheck({ check, action: expectedAction, currentState })
-              : admission;
+            const suppliedAdmission = admissionContextForCheck ? await admissionContextForCheck({ check, action: expectedAction, currentState }) : admission;
             if (!suppliedAdmission || typeof suppliedAdmission !== 'object') {
               rawResult = {
                 checkId: check.checkId,
@@ -239,9 +217,7 @@ export async function runBaselineChecks(input: {
                         checkId: check.checkId,
                         outcome: exitCode === 0 ? 'pass' : 'fail',
                         outputExcerpt: stdout || stderr,
-                        ...(typeof commandResult.durationMs === 'number' && Number.isFinite(commandResult.durationMs)
-                          ? { durationMs: commandResult.durationMs }
-                          : {}),
+                        ...(typeof commandResult.durationMs === 'number' && Number.isFinite(commandResult.durationMs) ? { durationMs: commandResult.durationMs } : {}),
                       };
                     }
                   }
@@ -267,10 +243,7 @@ export async function runBaselineChecks(input: {
       const resultOutcome = result.outcome;
       const resultOutput = result.outputExcerpt;
       const resultDuration = result.durationMs;
-      if (
-        resultCheckId !== check.checkId ||
-        !['pass', 'fail', 'timeout', 'error', 'not-run'].includes(resultOutcome as string)
-      ) {
+      if (resultCheckId !== check.checkId || !['pass', 'fail', 'timeout', 'error', 'not-run'].includes(resultOutcome as string)) {
         checkResults.push({
           checkId: check.checkId,
           outcome: 'error',
@@ -283,9 +256,7 @@ export async function runBaselineChecks(input: {
         checkId: check.checkId,
         outcome: resultOutcome as CheckResult['outcome'],
         ...(typeof resultOutput === 'string' ? { outputExcerpt: resultOutput } : {}),
-        ...(typeof resultDuration === 'number' && Number.isFinite(resultDuration)
-          ? { durationMs: resultDuration }
-          : {}),
+        ...(typeof resultDuration === 'number' && Number.isFinite(resultDuration) ? { durationMs: resultDuration } : {}),
       });
     } catch (err: unknown) {
       checkResults.push({
@@ -299,8 +270,7 @@ export async function runBaselineChecks(input: {
   if (isV02) {
     try {
       const currentState = await (rawStatePort as StatePortV02).loadTask(expectedTaskId);
-      if (!currentState || !initialGuardStateDigest ||
-        computeGuardedTaskStateDigest(currentState) !== initialGuardStateDigest) {
+      if (!currentState || !initialGuardStateDigest || computeGuardedTaskStateDigest(currentState) !== initialGuardStateDigest) {
         return {
           status: 'error',
           reason: 'REVISION_DRIFT: Authoritative task state changed during investigation',

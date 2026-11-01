@@ -29,26 +29,23 @@ function createRouteLedgers(configId: string, task: BugTask) {
     ['maxProcessCount', 5, 'count'],
   ] as const;
   return [
-    ...createTestAdmissionLedgers(configId).map((ledger) => ledger.scope === 'task' && ledger.kind === 'repair'
-      ? { ...ledger, limit: task.budgetLimits.maxRepairAttempts }
-      : ledger),
-    ...(['task', 'run'] as const).flatMap((scope) => resources.map(([kind, limit, unit]) => ({
-      scope,
-      kind,
-      limit: limit * 10,
-      consumed: 0,
-      reservations: [],
-      unit,
-      configurationId: configId,
-      version: 1,
-    }))),
+    ...createTestAdmissionLedgers(configId).map(ledger => (ledger.scope === 'task' && ledger.kind === 'repair' ? { ...ledger, limit: task.budgetLimits.maxRepairAttempts } : ledger)),
+    ...(['task', 'run'] as const).flatMap(scope =>
+      resources.map(([kind, limit, unit]) => ({
+        scope,
+        kind,
+        limit: limit * 10,
+        consumed: 0,
+        reservations: [],
+        unit,
+        configurationId: configId,
+        version: 1,
+      })),
+    ),
   ];
 }
 
-export function createGraphTaskState(
-  task: BugTask,
-  overrides: Partial<TaskState> = {},
-): TaskState {
+export function createGraphTaskState(task: BugTask, overrides: Partial<TaskState> = {}): TaskState {
   return createFixtureTaskState({
     taskId: task.taskId,
     runId: 'run-graph-001',
@@ -61,7 +58,7 @@ export function createGraphTaskState(
     reproduction: task.reproduction,
     acceptanceCriteria: task.acceptanceCriteria,
     constraints: task.constraints,
-    requiredCheckIds: task.requiredChecks.map((check) => check.checkId),
+    requiredCheckIds: task.requiredChecks.map(check => check.checkId),
     taskContext: task,
     evidenceRefs: [],
     budgetLedgers: createRouteLedgers(task.configId, task),
@@ -69,10 +66,7 @@ export function createGraphTaskState(
   });
 }
 
-export async function seedGraphTaskState(
-  statePort: MemoryStatePortV02,
-  state: TaskState,
-): Promise<void> {
+export async function seedGraphTaskState(statePort: MemoryStatePortV02, state: TaskState): Promise<void> {
   await statePort.getUnderlying().transition(state, 0);
 }
 
@@ -92,20 +86,24 @@ class GraphRepositoryPort implements RepositoryPort, RepositoryPortV02 {
   private readonly statePort: MemoryStatePortV02;
   private readonly onPatchFailure: ((reason: string) => void) | undefined;
 
-  constructor(
-    repository: FakeRepositoryPort,
-    statePort: MemoryStatePortV02,
-    onPatchFailure?: (reason: string) => void,
-  ) {
+  constructor(repository: FakeRepositoryPort, statePort: MemoryStatePortV02, onPatchFailure?: (reason: string) => void) {
     this.repository = repository;
     this.statePort = statePort;
     this.onPatchFailure = onPatchFailure;
   }
 
-  listDir(directory: string) { return this.repository.listDir(directory); }
-  readFile(filePath: string) { return this.repository.readFile(filePath); }
-  searchCode(query: string) { return this.repository.searchCode(query); }
-  inspectDiff(revision: string) { return this.repository.inspectDiff(revision); }
+  listDir(directory: string) {
+    return this.repository.listDir(directory);
+  }
+  readFile(filePath: string) {
+    return this.repository.readFile(filePath);
+  }
+  searchCode(query: string) {
+    return this.repository.searchCode(query);
+  }
+  inspectDiff(revision: string) {
+    return this.repository.inspectDiff(revision);
+  }
 
   runCommand(action: RunCommandAction): Promise<{ readonly exitCode: number; readonly stdout: string; readonly stderr: string }>;
   runCommand(action: RunCommandAction, context: RepositoryAdmissionContextV02): Promise<RepositoryCommandResultV02>;
@@ -140,16 +138,18 @@ class GraphRepositoryPort implements RepositoryPort, RepositoryPortV02 {
       if (!isSettledOutcome(settlement)) {
         const current = await this.statePort.loadTask(context.taskId);
         const journal = this.statePort.getJournalSnapshot();
-        const validation = current && validateAttemptOutcomeReceiptV02(outcome, {
-          trustedAdmission: context,
-          trustedClaim: claim,
-          trustedAttempt: attempt,
-          currentClaimStatus: 'attempting',
-          currentTaskStateVersion: current.stateVersion,
-          currentControlVersion: journal.controlVersion,
-          currentEpoch: journal.epoch,
-        });
-        const errors = validation && !validation.ok ? validation.errors.map((item) => item.message).join('; ') : '';
+        const validation =
+          current &&
+          validateAttemptOutcomeReceiptV02(outcome, {
+            trustedAdmission: context,
+            trustedClaim: claim,
+            trustedAttempt: attempt,
+            currentClaimStatus: 'attempting',
+            currentTaskStateVersion: current.stateVersion,
+            currentControlVersion: journal.controlVersion,
+            currentEpoch: journal.epoch,
+          });
+        const errors = validation && !validation.ok ? validation.errors.map(item => item.message).join('; ') : '';
         throw new Error(`Owner did not settle the mock patch outcome (${settlement.outcome}:${settlement.receiptId})${errors ? `: ${errors}` : ''}`);
       }
       if (settlement.receiptId !== outcome.receiptId) throw new Error('Owner settled a different mock patch outcome receipt');
@@ -162,8 +162,6 @@ class GraphRepositoryPort implements RepositoryPort, RepositoryPortV02 {
   }
 }
 
-function isSettledOutcome(
-  result: Awaited<ReturnType<MemoryStatePortV02['recordOutcome']>>,
-): result is typeof result & { readonly outcome: 'settled' } {
+function isSettledOutcome(result: Awaited<ReturnType<MemoryStatePortV02['recordOutcome']>>): result is typeof result & { readonly outcome: 'settled' } {
   return result.outcome === 'settled';
 }

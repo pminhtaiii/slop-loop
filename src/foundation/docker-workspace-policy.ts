@@ -3,22 +3,11 @@ import { computeCanonicalSha256 } from '../contracts/foundation/uc03.ts';
 import type { ExecutionLimits, ValidationError, ValidationResult } from '../contracts/foundation/uc03.ts';
 import type { DockerContainerPlan, DockerMountConfig, DockerProfile, DockerResourceLimits, StructuredExecutionResult } from './docker-workspace-types.ts';
 
-const PRIVATE_IMMUTABLE_CONTAINER_ENV_KEYS: readonly string[] = Object.freeze([
-  'PYTHONPATH',
-  'PYTHONDONTWRITEBYTECODE',
-  'PYTHONUNBUFFERED',
-  'TMPDIR',
-  'HOME',
-  'PATH',
-]);
+const PRIVATE_IMMUTABLE_CONTAINER_ENV_KEYS: readonly string[] = Object.freeze(['PYTHONPATH', 'PYTHONDONTWRITEBYTECODE', 'PYTHONUNBUFFERED', 'TMPDIR', 'HOME', 'PATH']);
 
-const PRIVATE_IMMUTABLE_CONTAINER_ENV_KEY_SET: ReadonlySet<string> = new Set(
-  PRIVATE_IMMUTABLE_CONTAINER_ENV_KEYS
-);
+const PRIVATE_IMMUTABLE_CONTAINER_ENV_KEY_SET: ReadonlySet<string> = new Set(PRIVATE_IMMUTABLE_CONTAINER_ENV_KEYS);
 
-export const IMMUTABLE_CONTAINER_ENV_KEYS: ReadonlySet<string> = Object.freeze(
-  new Set(PRIVATE_IMMUTABLE_CONTAINER_ENV_KEYS)
-);
+export const IMMUTABLE_CONTAINER_ENV_KEYS: ReadonlySet<string> = Object.freeze(new Set(PRIVATE_IMMUTABLE_CONTAINER_ENV_KEYS));
 
 const LOADER_HOOK_RE = /^(?:LD_|DYLD_|PYTHON|NODE_OPTIONS|NODE_PATH|NODE_EXTRA_CA_CERTS|PERL5|RUBY|BASH_ENV|ENV$|PROMPT_COMMAND)/i;
 
@@ -67,13 +56,10 @@ export const SHELL_METACHARS_RE = /[;&|><`$\r\n]/;
 export const FORBIDDEN_ENV_KEYS = /(?:TOKEN|SECRET|KEY|PASSWORD|AUTH|CREDENTIAL|API|AWS|GITHUB|OPENAI|ANTHROPIC|GEMINI)/i;
 
 export function containsProtectedContent(content: string): boolean {
-  return typeof content === 'string' && content.length > 0 && EMBEDDED_SECRET_PATTERNS.some((re) => re.test(content));
+  return typeof content === 'string' && content.length > 0 && EMBEDDED_SECRET_PATTERNS.some(re => re.test(content));
 }
 
-export function computeWorkspaceVolumeIds(
-  taskId: string,
-  workspaceId: string
-): { readonly repoVolumeId: string; readonly scratchVolumeId: string } {
+export function computeWorkspaceVolumeIds(taskId: string, workspaceId: string): { readonly repoVolumeId: string; readonly scratchVolumeId: string } {
   const tupleHash = computeCanonicalSha256([taskId, workspaceId]).slice('sha256:'.length);
   return {
     repoVolumeId: `vol-repo-${tupleHash}`,
@@ -236,17 +222,12 @@ export function validateDockerProfile(input: unknown): ValidationResult<DockerPr
     maxMemoryBytes: limObj['maxMemoryBytes'] as number,
     maxCpuCores: limObj['maxCpuCores'] as number,
     maxPids: limObj['maxPids'] as number,
-    ...(limObj['maxOutputBytes'] !== undefined
-      ? { maxOutputBytes: limObj['maxOutputBytes'] as number }
-      : {}),
+    ...(limObj['maxOutputBytes'] !== undefined ? { maxOutputBytes: limObj['maxOutputBytes'] as number } : {}),
   };
   return { ok: true, value: { profileId, image, imageDigest, user: (obj['user'] as string).trim(), readOnlyRootFilesystem: true, network: 'none', limits: validatedLimits, mounts: validatedMounts } };
 }
 
-export function truncateUtf8(
-  str: string,
-  maxBytes: number
-): { readonly text: string; readonly byteLength: number; readonly truncated: boolean } {
+export function truncateUtf8(str: string, maxBytes: number): { readonly text: string; readonly byteLength: number; readonly truncated: boolean } {
   const canonical = str.toWellFormed();
   if (maxBytes <= 0) {
     return { text: '', byteLength: 0, truncated: canonical.length > 0 };
@@ -283,11 +264,7 @@ export function isValidFencingGeneration(generation: number): boolean {
   return Number.isSafeInteger(generation) && generation > 0;
 }
 
-export function normalizeDockerExecutionOutput(
-  rawOutput: unknown,
-  limits: ExecutionLimits,
-  plan: DockerContainerPlan
-): StructuredExecutionResult {
+export function normalizeDockerExecutionOutput(rawOutput: unknown, limits: ExecutionLimits, plan: DockerContainerPlan): StructuredExecutionResult {
   // Validate raw injected controller result at runtime: fail closed on malformed data
   if (typeof rawOutput !== 'object' || rawOutput === null || Array.isArray(rawOutput)) {
     throw new Error('INVALID_CONTROLLER_OUTPUT: Controller returned malformed output record (expected object)');
@@ -307,12 +284,7 @@ export function normalizeDockerExecutionOutput(
   }
   const timedOut = rawTimedOut;
 
-  if (
-    typeof rawDuration !== 'number' ||
-    !Number.isFinite(rawDuration) ||
-    Number.isNaN(rawDuration) ||
-    rawDuration < 0
-  ) {
+  if (typeof rawDuration !== 'number' || !Number.isFinite(rawDuration) || Number.isNaN(rawDuration) || rawDuration < 0) {
     throw new Error('INVALID_CONTROLLER_OUTPUT: Controller output durationMs must be a finite non-negative number');
   }
   const durationMs = rawDuration;
@@ -331,9 +303,7 @@ export function normalizeDockerExecutionOutput(
   }
 
   if (!validExitCode) {
-    throw new Error(
-      `INVALID_CONTROLLER_OUTPUT: Controller output exitCode must be a safe integer${effectiveTimedOut ? ' or null on timeout' : ' (null only permitted on timeout)'}`
-    );
+    throw new Error(`INVALID_CONTROLLER_OUTPUT: Controller output exitCode must be a safe integer${effectiveTimedOut ? ' or null on timeout' : ' (null only permitted on timeout)'}`);
   }
   const exitCode: number | null = rawExitCode as number | null;
 

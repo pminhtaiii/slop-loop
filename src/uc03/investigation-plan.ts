@@ -7,34 +7,18 @@ import {
   validateStateTransition,
   validateTaskState,
 } from '../contracts/foundation/uc03.ts';
-import type {
-  ApprovalBinding,
-  ApproveFixPlanAction,
-  Baseline,
-  FixPlan,
-  TaskState,
-} from '../contracts/foundation/uc03.ts';
+import type { ApprovalBinding, ApproveFixPlanAction, Baseline, FixPlan, TaskState } from '../contracts/foundation/uc03.ts';
 import { baselineEvidenceAcknowledgementMatches } from './investigation-snapshot.ts';
 import { validateBaselineEvidenceCandidate } from './investigation-baseline-evidence.ts';
 import { finishPlanApproval } from './investigation-plan-resume.ts';
-import type {
-  BaselineEvidenceCandidate,
-  BaselineEvidenceWriteRequest,
-  InvestigationPorts,
-  PlanPreparationResult,
-} from './investigation-types.ts';
+import type { BaselineEvidenceCandidate, BaselineEvidenceWriteRequest, InvestigationPorts, PlanPreparationResult } from './investigation-types.ts';
 
-export async function prepareFixPlanAndApproval(
-  state: TaskState,
-  baseline: BaselineEvidenceCandidate,
-  ports: InvestigationPorts,
-  planDetails?: Partial<FixPlan>
-): Promise<PlanPreparationResult> {
+export async function prepareFixPlanAndApproval(state: TaskState, baseline: BaselineEvidenceCandidate, ports: InvestigationPorts, planDetails?: Partial<FixPlan>): Promise<PlanPreparationResult> {
   const stateValidation = validateTaskState(state);
   if (!stateValidation.ok) {
     return {
       outcome: 'rejected',
-      reason: `TaskState validation failed: ${stateValidation.errors.map((e) => e.message).join(', ')}`,
+      reason: `TaskState validation failed: ${stateValidation.errors.map(e => e.message).join(', ')}`,
     };
   }
   const validState = stateValidation.value;
@@ -84,11 +68,7 @@ export async function prepareFixPlanAndApproval(
   const decisionId = planDetails?.decisionRef ?? `dec-plan-${validState.taskId}-${planVersion}`;
 
   const suspectedCauseLocations = planDetails?.suspectedCauseLocations;
-  if (
-    !suspectedCauseLocations ||
-    !Array.isArray(suspectedCauseLocations) ||
-    suspectedCauseLocations.length === 0
-  ) {
+  if (!suspectedCauseLocations || !Array.isArray(suspectedCauseLocations) || suspectedCauseLocations.length === 0) {
     return {
       outcome: 'rejected',
       reason: 'Missing suspected cause locations: suspectedCauseLocations must be explicitly provided in planDetails',
@@ -96,11 +76,7 @@ export async function prepareFixPlanAndApproval(
   }
 
   for (const loc of suspectedCauseLocations) {
-    if (
-      typeof loc !== 'string' ||
-      !isCanonicalRelativePath(loc) ||
-      isProtectedPath(loc)
-    ) {
+    if (typeof loc !== 'string' || !isCanonicalRelativePath(loc) || isProtectedPath(loc)) {
       return {
         outcome: 'rejected',
         reason: `Invalid suspected cause location: '${loc}' is not a valid canonical relative path or is protected`,
@@ -109,11 +85,7 @@ export async function prepareFixPlanAndApproval(
   }
 
   const scopedChanges = planDetails?.scopedChanges;
-  if (
-    !scopedChanges ||
-    !Array.isArray(scopedChanges) ||
-    scopedChanges.length === 0
-  ) {
+  if (!scopedChanges || !Array.isArray(scopedChanges) || scopedChanges.length === 0) {
     return {
       outcome: 'rejected',
       reason: 'Missing scoped changes: scopedChanges must be explicitly provided in planDetails',
@@ -121,11 +93,7 @@ export async function prepareFixPlanAndApproval(
   }
 
   for (const chg of scopedChanges) {
-    if (
-      typeof chg !== 'string' ||
-      !isCanonicalRelativePath(chg) ||
-      isProtectedPath(chg)
-    ) {
+    if (typeof chg !== 'string' || !isCanonicalRelativePath(chg) || isProtectedPath(chg)) {
       return {
         outcome: 'rejected',
         reason: `Invalid scoped change path: '${chg}' is not a valid canonical relative path or is protected`,
@@ -160,16 +128,10 @@ export async function prepareFixPlanAndApproval(
   const evidenceContent: BaselineEvidenceCandidate = Object.freeze({
     ...validBaselineCandidate,
     acceptanceCriteria: Object.freeze([...validBaselineCandidate.acceptanceCriteria]),
-    requiredChecks: Object.freeze(
-      validBaselineCandidate.requiredChecks.map((check) =>
-        Object.freeze({ ...check, argv: Object.freeze([...check.argv]) })
-      )
-    ),
+    requiredChecks: Object.freeze(validBaselineCandidate.requiredChecks.map(check => Object.freeze({ ...check, argv: Object.freeze([...check.argv]) }))),
     expectedPassingCheckIds: Object.freeze([...validBaselineCandidate.expectedPassingCheckIds]),
     expectedTestFiles: Object.freeze([...validBaselineCandidate.expectedTestFiles]),
-    checkResults: Object.freeze(
-      validBaselineCandidate.checkResults.map((result) => Object.freeze({ ...result }))
-    ),
+    checkResults: Object.freeze(validBaselineCandidate.checkResults.map(result => Object.freeze({ ...result }))),
   });
   const writeRequest: BaselineEvidenceWriteRequest = Object.freeze({
     content: evidenceContent,
@@ -212,7 +174,7 @@ export async function prepareFixPlanAndApproval(
   if (!persistedBaselineValidation.ok) {
     return {
       outcome: 'rejected',
-      reason: `Persisted baseline admission failed: ${persistedBaselineValidation.errors.map((error) => error.message).join(', ')}`,
+      reason: `Persisted baseline admission failed: ${persistedBaselineValidation.errors.map(error => error.message).join(', ')}`,
     };
   }
   const validBaseline = persistedBaselineValidation.value;
@@ -236,9 +198,7 @@ export async function prepareFixPlanAndApproval(
           reason: 'Invalid evidence reference: reference must be a non-empty string',
         };
       }
-      const isKnownProvenance =
-        ref === validBaseline.evidenceId ||
-        stateRefs.includes(ref);
+      const isKnownProvenance = ref === validBaseline.evidenceId || stateRefs.includes(ref);
       if (!isKnownProvenance) {
         return {
           outcome: 'rejected',
@@ -247,9 +207,7 @@ export async function prepareFixPlanAndApproval(
         };
       }
     }
-    const extra = requestedEvidenceRefs
-      .filter((r) => r !== validBaseline.evidenceId)
-      .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    const extra = requestedEvidenceRefs.filter(r => r !== validBaseline.evidenceId).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
     completeEvidenceRefs = Object.freeze([validBaseline.evidenceId, ...new Set(extra)]);
   }
 
@@ -273,16 +231,13 @@ export async function prepareFixPlanAndApproval(
   if (!planValidation.ok) {
     return {
       outcome: 'rejected',
-      reason: `FixPlan validation failed: ${planValidation.errors.map((e) => e.message).join(', ')}`,
+      reason: `FixPlan validation failed: ${planValidation.errors.map(e => e.message).join(', ')}`,
     };
   }
   const fixPlan = planValidation.value;
 
   const existingEvidenceRefs = validState.evidenceRefs ?? [];
-  const updatedEvidenceRefs = [
-    ...existingEvidenceRefs,
-    ...completeEvidenceRefs.filter((r) => !existingEvidenceRefs.includes(r)),
-  ];
+  const updatedEvidenceRefs = [...existingEvidenceRefs, ...completeEvidenceRefs.filter(r => !existingEvidenceRefs.includes(r))];
 
   const awaitPlanCandidate: TaskState = {
     ...validState,
@@ -292,25 +247,20 @@ export async function prepareFixPlanAndApproval(
     activeDecisionId: decisionId,
     nextAction: 'await-plan-approval',
     evidenceRefs: updatedEvidenceRefs,
-    ...(validState.budgetLedgers !== undefined
-      ? { budgetLedgers: validState.budgetLedgers }
-      : { budgetLedgers: [] }),
+    ...(validState.budgetLedgers !== undefined ? { budgetLedgers: validState.budgetLedgers } : { budgetLedgers: [] }),
   };
 
   const transitionValidation = validateStateTransition(validState, awaitPlanCandidate);
   if (!transitionValidation.ok) {
     return {
       outcome: 'rejected',
-      reason: `State transition to AwaitPlan failed: ${transitionValidation.errors.map((e) => e.message).join(', ')}`,
+      reason: `State transition to AwaitPlan failed: ${transitionValidation.errors.map(e => e.message).join(', ')}`,
     };
   }
 
   let persistedAwaitPlanState: TaskState;
   try {
-    persistedAwaitPlanState = await ports.state.transition(
-      awaitPlanCandidate,
-      validState.stateVersion
-    );
+    persistedAwaitPlanState = await ports.state.transition(awaitPlanCandidate, validState.stateVersion);
     await ports.state.checkpoint(persistedAwaitPlanState);
   } catch (err: unknown) {
     return {

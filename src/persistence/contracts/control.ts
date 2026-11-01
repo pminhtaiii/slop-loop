@@ -152,10 +152,18 @@ export function validateCheckpointRecord(val: unknown, path = 'checkpoint'): Val
       errors.push({ path: `${path}.runId`, message: `checkpoint runId (${String(val.runId)}) must match state runId (${stateRes.value.runId})`, code: 'INCOHERENT_CHECKPOINT' });
     }
     if (val.stepIndex !== stateRes.value.currentStepIndex) {
-      errors.push({ path: `${path}.stepIndex`, message: `checkpoint stepIndex (${String(val.stepIndex)}) must match state currentStepIndex (${stateRes.value.currentStepIndex})`, code: 'INCOHERENT_CHECKPOINT' });
+      errors.push({
+        path: `${path}.stepIndex`,
+        message: `checkpoint stepIndex (${String(val.stepIndex)}) must match state currentStepIndex (${stateRes.value.currentStepIndex})`,
+        code: 'INCOHERENT_CHECKPOINT',
+      });
     }
     if (val.stateVersion !== stateRes.value.stateVersion) {
-      errors.push({ path: `${path}.stateVersion`, message: `checkpoint stateVersion (${String(val.stateVersion)}) must match state stateVersion (${stateRes.value.stateVersion})`, code: 'INCOHERENT_CHECKPOINT' });
+      errors.push({
+        path: `${path}.stateVersion`,
+        message: `checkpoint stateVersion (${String(val.stateVersion)}) must match state stateVersion (${stateRes.value.stateVersion})`,
+        code: 'INCOHERENT_CHECKPOINT',
+      });
     }
   }
 
@@ -222,4 +230,3 @@ export function validateDispatchClaimRecord(val: unknown, path = 'dispatchClaim'
   if (errors.length > 0) return { ok: false, errors };
   return { ok: true, value: val as unknown as DispatchClaimRecord };
 }
-

@@ -44,15 +44,8 @@ import { investigateBaseline } from '../../../src/uc03/investigation.ts';
 import { createExecutionGuardV02 } from '../../../src/foundation/execution-guard.ts';
 import { FakeRepositoryPort } from '../support/uc03/fake-repository.ts';
 import { MemoryStatePortV02 } from '../support/uc03/memory-state.ts';
-import {
-  createTestExecutorIdentityV02,
-  createTestRepositoryCommandAdmissionContextV02,
-  createTestAdmissionTaskStateV02,
-} from '../support/uc03/state-fixtures.ts';
-import {
-  createFixtureBugTask,
-  createFixtureTaskState,
-} from '../support/uc03/port-fixtures.ts';
+import { createTestExecutorIdentityV02, createTestRepositoryCommandAdmissionContextV02, createTestAdmissionTaskStateV02 } from '../support/uc03/state-fixtures.ts';
+import { createFixtureBugTask, createFixtureTaskState } from '../support/uc03/port-fixtures.ts';
 
 function asLegacyV01RepositoryPort(repository: FakeRepositoryPort): FakeRepositoryPort {
   Object.defineProperty(repository, 'executionGuardApiVersion', { value: undefined });
@@ -161,13 +154,9 @@ function createGuardedVerificationFixture(options?: {
 }
 
 function createValidCompletionFixture(): CompletionPredicateInput {
-  const repoDigest =
-    'sha256:111122223333444455556666777788889999aaaabbbbccccddddeeeeffff0000';
-  const diffDigest =
-    'sha256:aaaabbbbccccddddeeeeffff0000111122223333444455556666777788889999';
-  const protectedDigest = computeCanonicalSha256(
-    'protected:tests/test_calculator.py'
-  );
+  const repoDigest = 'sha256:111122223333444455556666777788889999aaaabbbbccccddddeeeeffff0000';
+  const diffDigest = 'sha256:aaaabbbbccccddddeeeeffff0000111122223333444455556666777788889999';
+  const protectedDigest = computeCanonicalSha256('protected:tests/test_calculator.py');
 
   const checkReproduction: CheckDefinition = {
     checkId: 'check-pytest-reproduction',
@@ -208,12 +197,10 @@ function createValidCompletionFixture(): CompletionPredicateInput {
     testProtectionDigest: protectedDigest,
   };
 
-  const planStrategy =
-    'Add guard check in Calculator.divide to raise CalculationError on zero denominator';
+  const planStrategy = 'Add guard check in Calculator.divide to raise CalculationError on zero denominator';
   const plan: FixPlan = {
     planVersion: 1,
-    diagnosis:
-      'Calculator.divide raises unhandled ZeroDivisionError when denominator is zero',
+    diagnosis: 'Calculator.divide raises unhandled ZeroDivisionError when denominator is zero',
     suspectedCauseLocations: ['src/calculator.py:12'],
     evidenceRefs: [baseline.evidenceId],
     strategy: planStrategy,
@@ -230,7 +217,7 @@ function createValidCompletionFixture(): CompletionPredicateInput {
     taskId: task.taskId,
     repositoryId: task.repositoryId,
     repositoryRevisionDigest: repoDigest,
-    requiredCheckIds: task.requiredChecks.map((c) => c.checkId),
+    requiredCheckIds: task.requiredChecks.map(c => c.checkId),
     taskContext: task,
     node: 'Review',
     planVersion: 1,
@@ -326,10 +313,7 @@ test('completion: evaluates valid evidence and outputs COMPLETED with delivery r
   assert.equal(result.delivery?.diffDigest, input.currentDiffDigest);
   assert.deepEqual(result.delivery?.changedFiles, ['src/calculator.py']);
   assert.equal(result.delivery?.baselineRef, input.baseline.evidenceId);
-  assert.deepEqual(result.delivery?.verificationRefs, [
-    'verif-focused-001',
-    'verif-regression-001',
-  ]);
+  assert.deepEqual(result.delivery?.verificationRefs, ['verif-focused-001', 'verif-regression-001']);
   assert.equal(result.delivery?.reviewRef, input.reviewResult.reviewId);
   assert.equal(result.delivery?.safeNextAction, 'ready-for-human-review');
 });
@@ -340,20 +324,11 @@ test('completion: builds valid TrustedTransitionContext completion record', () =
 
   assert.equal(completionContext.taskId, input.task.taskId);
   assert.equal(completionContext.runId, input.state.runId);
-  assert.equal(
-    completionContext.repositoryRevisionDigest,
-    input.currentRepoDigest
-  );
+  assert.equal(completionContext.repositoryRevisionDigest, input.currentRepoDigest);
   assert.equal(completionContext.diffDigest, input.currentDiffDigest);
   assert.equal(completionContext.baselineRef, input.baseline.evidenceId);
-  assert.equal(
-    completionContext.protectedTestsDigest,
-    input.currentProtectedTestsDigest
-  );
-  assert.equal(
-    completionContext.originalProtectedTestsDigest,
-    input.originalProtectedTestsDigest
-  );
+  assert.equal(completionContext.protectedTestsDigest, input.currentProtectedTestsDigest);
+  assert.equal(completionContext.originalProtectedTestsDigest, input.originalProtectedTestsDigest);
 });
 
 /* ==================================================================
@@ -364,8 +339,7 @@ test('protected tests: current digest modified from original prevents completion
   const input = createValidCompletionFixture();
   const tampered: CompletionPredicateInput = {
     ...input,
-    currentProtectedTestsDigest:
-      'sha256:tamperedtestdigest00000000000000000000000000000000000000000000',
+    currentProtectedTestsDigest: 'sha256:tamperedtestdigest00000000000000000000000000000000000000000000',
   };
 
   const result = evaluateDeterministicCompletion(tampered);
@@ -373,8 +347,8 @@ test('protected tests: current digest modified from original prevents completion
   assert.equal(result.isComplete, false);
   assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
   assert.ok(
-    result.reasons.some((r) => r.toLowerCase().includes('protect')),
-    'reasons must mention protect'
+    result.reasons.some(r => r.toLowerCase().includes('protect')),
+    'reasons must mention protect',
   );
 });
 
@@ -393,8 +367,8 @@ test('protected tests: baseline testProtectionDigest mismatch prevents completio
   assert.equal(result.isComplete, false);
   assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
   assert.ok(
-    result.reasons.some((r) => r.toLowerCase().includes('protect')),
-    'reasons must mention protect'
+    result.reasons.some(r => r.toLowerCase().includes('protect')),
+    'reasons must mention protect',
   );
 });
 
@@ -410,8 +384,8 @@ test('protected tests: changedFiles modifying a test file prevents completion', 
   assert.equal(result.isComplete, false);
   assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
   assert.ok(
-    result.reasons.some((r) => r.toLowerCase().includes('protect')),
-    'reasons must mention protect'
+    result.reasons.some(r => r.toLowerCase().includes('protect')),
+    'reasons must mention protect',
   );
 });
 
@@ -427,8 +401,8 @@ test('protected tests: changedFiles with non-canonical path fails closed', () =>
   assert.equal(result.isComplete, false);
   assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
   assert.ok(
-    result.reasons.some((r) => r.toLowerCase().includes('canonical')),
-    'reasons must mention canonical'
+    result.reasons.some(r => r.toLowerCase().includes('canonical')),
+    'reasons must mention canonical',
   );
 });
 
@@ -440,8 +414,7 @@ test('digest drift: currentDiffDigest drift from reviewResult leaves state IMPLE
   const input = createValidCompletionFixture();
   const drifted: CompletionPredicateInput = {
     ...input,
-    currentDiffDigest:
-      'sha256:drifteddiffdigest00000000000000000000000000000000000000000000000',
+    currentDiffDigest: 'sha256:drifteddiffdigest00000000000000000000000000000000000000000000000',
   };
 
   const result = evaluateDeterministicCompletion(drifted);
@@ -449,10 +422,8 @@ test('digest drift: currentDiffDigest drift from reviewResult leaves state IMPLE
   assert.equal(result.isComplete, false);
   assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
   assert.ok(
-    result.reasons.some(
-      (r) => r.toLowerCase().includes('diff') || r.toLowerCase().includes('drift')
-    ),
-    'reasons must report diff drift'
+    result.reasons.some(r => r.toLowerCase().includes('diff') || r.toLowerCase().includes('drift')),
+    'reasons must report diff drift',
   );
 });
 
@@ -462,8 +433,7 @@ test('digest drift: state repository revision drift leaves state IMPLEMENTED_UNV
     ...input,
     state: {
       ...input.state,
-      repositoryRevisionDigest:
-        'sha256:driftedstaterevision000000000000000000000000000000000000000000',
+      repositoryRevisionDigest: 'sha256:driftedstaterevision000000000000000000000000000000000000000000',
     },
   };
 
@@ -472,19 +442,12 @@ test('digest drift: state repository revision drift leaves state IMPLEMENTED_UNV
   assert.equal(result.isComplete, false);
   assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
   assert.ok(
-    result.reasons.some(
-      (r) =>
-        r.toLowerCase().includes('drift') ||
-        r.toLowerCase().includes('revision') ||
-        r.toLowerCase().includes('digest')
-    ),
-    'reasons must report state revision drift'
+    result.reasons.some(r => r.toLowerCase().includes('drift') || r.toLowerCase().includes('revision') || r.toLowerCase().includes('digest')),
+    'reasons must report state revision drift',
   );
 });
 
-function getTwoVerificationResults(
-  input: CompletionPredicateInput
-): [VerificationResult, VerificationResult] {
+function getTwoVerificationResults(input: CompletionPredicateInput): [VerificationResult, VerificationResult] {
   const [first, second] = input.verificationResults;
   if (!first || !second) {
     throw new Error('Expected two verification results in fixture');
@@ -500,8 +463,7 @@ test('digest drift: verificationResult diff digest drift leaves state IMPLEMENTE
     verificationResults: [
       {
         ...first,
-        diffDigest:
-          'sha256:driftedverifdiff000000000000000000000000000000000000000000000',
+        diffDigest: 'sha256:driftedverifdiff000000000000000000000000000000000000000000000',
       },
       second,
     ],
@@ -512,10 +474,8 @@ test('digest drift: verificationResult diff digest drift leaves state IMPLEMENTE
   assert.equal(result.isComplete, false);
   assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
   assert.ok(
-    result.reasons.some(
-      (r) => r.toLowerCase().includes('diff') || r.toLowerCase().includes('drift')
-    ),
-    'reasons must report verification diff drift'
+    result.reasons.some(r => r.toLowerCase().includes('diff') || r.toLowerCase().includes('drift')),
+    'reasons must report verification diff drift',
   );
 });
 
@@ -528,8 +488,7 @@ test('digest drift: verificationResult repository digest drift leaves state IMPL
       first,
       {
         ...second,
-        repoDigest:
-          'sha256:driftedverifrepo000000000000000000000000000000000000000000000',
+        repoDigest: 'sha256:driftedverifrepo000000000000000000000000000000000000000000000',
       },
     ],
   };
@@ -539,12 +498,8 @@ test('digest drift: verificationResult repository digest drift leaves state IMPL
   assert.equal(result.isComplete, false);
   assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
   assert.ok(
-    result.reasons.some(
-      (r) =>
-        r.toLowerCase().includes('drift') ||
-        r.toLowerCase().includes('repository')
-    ),
-    'reasons must report verification repo drift'
+    result.reasons.some(r => r.toLowerCase().includes('drift') || r.toLowerCase().includes('repository')),
+    'reasons must report verification repo drift',
   );
 });
 
@@ -571,12 +526,8 @@ test('check failure: failed regression check distinguishes regression failure an
   assert.equal(result.isComplete, false);
   assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
   assert.ok(
-    result.reasons.some(
-      (r) =>
-        r.toLowerCase().includes('fail') ||
-        r.toLowerCase().includes('regression')
-    ),
-    'reasons must report regression failure'
+    result.reasons.some(r => r.toLowerCase().includes('fail') || r.toLowerCase().includes('regression')),
+    'reasons must report regression failure',
   );
 });
 
@@ -599,8 +550,8 @@ test('check timeout: timed-out check distinguishes timeout and remains IMPLEMENT
   assert.equal(result.isComplete, false);
   assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
   assert.ok(
-    result.reasons.some((r) => r.toLowerCase().includes('timeout')),
-    'reasons must report timeout'
+    result.reasons.some(r => r.toLowerCase().includes('timeout')),
+    'reasons must report timeout',
   );
 });
 
@@ -623,8 +574,8 @@ test('check not-run: not-run check distinguishes not-run and remains IMPLEMENTED
   assert.equal(result.isComplete, false);
   assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
   assert.ok(
-    result.reasons.some((r) => r.toLowerCase().includes('not-run') || r.toLowerCase().includes('not run')),
-    'reasons must report not run'
+    result.reasons.some(r => r.toLowerCase().includes('not-run') || r.toLowerCase().includes('not run')),
+    'reasons must report not run',
   );
 });
 
@@ -647,8 +598,8 @@ test('check environment error: error outcome distinguishes environment error and
   assert.equal(result.isComplete, false);
   assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
   assert.ok(
-    result.reasons.some((r) => r.toLowerCase().includes('error')),
-    'reasons must report environment error'
+    result.reasons.some(r => r.toLowerCase().includes('error')),
+    'reasons must report environment error',
   );
 });
 
@@ -665,8 +616,8 @@ test('check missing: required check missing entirely from verification results p
   assert.equal(result.isComplete, false);
   assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
   assert.ok(
-    result.reasons.some((r) => r.toLowerCase().includes('missing') || r.toLowerCase().includes('not run')),
-    'reasons must report missing required check'
+    result.reasons.some(r => r.toLowerCase().includes('missing') || r.toLowerCase().includes('not run')),
+    'reasons must report missing required check',
   );
 });
 
@@ -690,8 +641,8 @@ for (const phase of ['baseline', 'regression', 'compatibility', 'diff'] as const
     assert.equal(result.isComplete, false);
     assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
     assert.ok(
-      result.reasons.some((r) => r.includes("phase mismatch for check 'check-pytest-reproduction': expected 'focused'")),
-      'reasons must report phase mismatch'
+      result.reasons.some(r => r.includes("phase mismatch for check 'check-pytest-reproduction': expected 'focused'")),
+      'reasons must report phase mismatch',
     );
   });
 }
@@ -724,12 +675,8 @@ test('review: review status findings with error severity prevents completion', (
   assert.equal(result.isComplete, false);
   assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
   assert.ok(
-    result.reasons.some(
-      (r) =>
-        r.toLowerCase().includes('review') ||
-        r.toLowerCase().includes('finding')
-    ),
-    'reasons must report review findings'
+    result.reasons.some(r => r.toLowerCase().includes('review') || r.toLowerCase().includes('finding')),
+    'reasons must report review findings',
   );
 });
 
@@ -748,8 +695,8 @@ test('review: review status invalid prevents completion', () => {
   assert.equal(result.isComplete, false);
   assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
   assert.ok(
-    result.reasons.some((r) => r.toLowerCase().includes('review')),
-    'reasons must report review not accepted'
+    result.reasons.some(r => r.toLowerCase().includes('review')),
+    'reasons must report review not accepted',
   );
 });
 
@@ -777,12 +724,8 @@ test('review: review status accepted with lingering actionable findings prevents
   assert.equal(result.isComplete, false);
   assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
   assert.ok(
-    result.reasons.some(
-      (r) =>
-        r.toLowerCase().includes('review') ||
-        r.toLowerCase().includes('finding')
-    ),
-    'reasons must report actionable findings in accepted review'
+    result.reasons.some(r => r.toLowerCase().includes('review') || r.toLowerCase().includes('finding')),
+    'reasons must report actionable findings in accepted review',
   );
 });
 
@@ -801,8 +744,8 @@ test('review: review checkSetDigest mismatch prevents completion', () => {
   assert.equal(result.isComplete, false);
   assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
   assert.ok(
-    result.reasons.some((r) => r.toLowerCase().includes('checksetdigest')),
-    'reasons must report checkSetDigest mismatch'
+    result.reasons.some(r => r.toLowerCase().includes('checksetdigest')),
+    'reasons must report checkSetDigest mismatch',
   );
 });
 
@@ -821,8 +764,8 @@ test('review: reviewId mismatch with state latestReviewRef prevents completion',
   assert.equal(result.isComplete, false);
   assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
   assert.ok(
-    result.reasons.some((r) => r.toLowerCase().includes('review id')),
-    'reasons must report review ID mismatch'
+    result.reasons.some(r => r.toLowerCase().includes('review id')),
+    'reasons must report review ID mismatch',
   );
 });
 
@@ -845,8 +788,8 @@ test('baseline: baseline checkSetDigest mismatch prevents completion', () => {
   assert.equal(result.isComplete, false);
   assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
   assert.ok(
-    result.reasons.some((r) => r.toLowerCase().includes('checksetdigest')),
-    'reasons must report baseline checkSetDigest mismatch'
+    result.reasons.some(r => r.toLowerCase().includes('checksetdigest')),
+    'reasons must report baseline checkSetDigest mismatch',
   );
 });
 
@@ -866,8 +809,8 @@ test('unmodified state: empty changedFiles and empty state changedPaths yields I
   assert.equal(result.isComplete, false);
   assert.equal(result.outcome, 'INCOMPLETE', 'unmodified incomplete state must be INCOMPLETE');
   assert.ok(
-    result.reasons.some((r) => r.toLowerCase().includes('changedfiles')),
-    'reasons must report empty changedFiles'
+    result.reasons.some(r => r.toLowerCase().includes('changedfiles')),
+    'reasons must report empty changedFiles',
   );
 });
 
@@ -930,9 +873,11 @@ test('robustness: caller array mutation after evaluate invocation does not affec
 
 test('executeVerificationChecks: runs checks on FakeRepositoryPort and produces validated results', async () => {
   const input = createValidCompletionFixture();
-  const repo = asLegacyV01RepositoryPort(new FakeRepositoryPort({
-    initialRevision: input.currentRepoDigest,
-  }));
+  const repo = asLegacyV01RepositoryPort(
+    new FakeRepositoryPort({
+      initialRevision: input.currentRepoDigest,
+    }),
+  );
 
   repo.setTestResult('check-pytest-reproduction', {
     checkId: 'check-pytest-reproduction',
@@ -996,11 +941,7 @@ test('integration: buildCompletionTransitionContext produces trusted completion 
     trusted: { completion: completionContext },
   });
 
-  assert.equal(
-    transitionRes.ok,
-    true,
-    `validateStateTransition must succeed: ${transitionRes.ok ? '' : transitionRes.errors.map((e) => e.message).join('; ')}`
-  );
+  assert.equal(transitionRes.ok, true, `validateStateTransition must succeed: ${transitionRes.ok ? '' : transitionRes.errors.map(e => e.message).join('; ')}`);
 });
 
 test('verification: verificationResult taskId mismatch prevents completion and stays IMPLEMENTED_UNVERIFIED', () => {
@@ -1021,7 +962,7 @@ test('verification: verificationResult taskId mismatch prevents completion and s
   const result = evaluateDeterministicCompletion(mismatched);
   assert.equal(result.isComplete, false);
   assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
-  assert.ok(result.reasons.some((r) => r.includes('taskId')));
+  assert.ok(result.reasons.some(r => r.includes('taskId')));
 });
 
 test('verification: verificationResult runId mismatch prevents completion and stays IMPLEMENTED_UNVERIFIED', () => {
@@ -1042,7 +983,7 @@ test('verification: verificationResult runId mismatch prevents completion and st
   const result = evaluateDeterministicCompletion(mismatched);
   assert.equal(result.isComplete, false);
   assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
-  assert.ok(result.reasons.some((r) => r.includes('runId')));
+  assert.ok(result.reasons.some(r => r.includes('runId')));
 });
 
 test('verification: verificationResult missing diffDigest for candidate modification prevents completion', () => {
@@ -1063,7 +1004,7 @@ test('verification: verificationResult missing diffDigest for candidate modifica
   const result = evaluateDeterministicCompletion(noDiff);
   assert.equal(result.isComplete, false);
   assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
-  assert.ok(result.reasons.some((r) => r.toLowerCase().includes('diff')));
+  assert.ok(result.reasons.some(r => r.toLowerCase().includes('diff')));
 });
 
 test('review: missing reviewerRoleConfigId prevents completion', () => {
@@ -1079,7 +1020,7 @@ test('review: missing reviewerRoleConfigId prevents completion', () => {
   const result = evaluateDeterministicCompletion(noRoleConfig);
   assert.equal(result.isComplete, false);
   assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
-  assert.ok(result.reasons.some((r) => r.includes('reviewerRoleConfigId')));
+  assert.ok(result.reasons.some(r => r.includes('reviewerRoleConfigId')));
 });
 
 test('review: missing iterationReservationRef prevents completion', () => {
@@ -1095,15 +1036,12 @@ test('review: missing iterationReservationRef prevents completion', () => {
   const result = evaluateDeterministicCompletion(noResRef);
   assert.equal(result.isComplete, false);
   assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
-  assert.ok(result.reasons.some((r) => r.includes('iterationReservationRef')));
+  assert.ok(result.reasons.some(r => r.includes('iterationReservationRef')));
 });
 
 test('baseline: missing baseline testProtectionDigest prevents completion', () => {
   const input = createValidCompletionFixture();
-  const baselineWithoutProtection = { ...input.baseline } as Record<
-    string,
-    unknown
-  >;
+  const baselineWithoutProtection = { ...input.baseline } as Record<string, unknown>;
   delete baselineWithoutProtection['testProtectionDigest'];
   const noProtection: CompletionPredicateInput = {
     ...input,
@@ -1113,7 +1051,7 @@ test('baseline: missing baseline testProtectionDigest prevents completion', () =
   const result = evaluateDeterministicCompletion(noProtection);
   assert.equal(result.isComplete, false);
   assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
-  assert.ok(result.reasons.some((r) => r.toLowerCase().includes('protect')));
+  assert.ok(result.reasons.some(r => r.toLowerCase().includes('protect')));
 });
 
 test('state: missing plan in task state prevents completion', () => {
@@ -1129,7 +1067,7 @@ test('state: missing plan in task state prevents completion', () => {
   const result = evaluateDeterministicCompletion(noPlan);
   assert.equal(result.isComplete, false);
   assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
-  assert.ok(result.reasons.some((r) => r.toLowerCase().includes('plan')));
+  assert.ok(result.reasons.some(r => r.toLowerCase().includes('plan')));
 });
 
 test('state: plan checkSetDigest mismatch prevents completion', () => {
@@ -1149,7 +1087,7 @@ test('state: plan checkSetDigest mismatch prevents completion', () => {
   const result = evaluateDeterministicCompletion(badCheckSet);
   assert.equal(result.isComplete, false);
   assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
-  assert.ok(result.reasons.some((r) => r.toLowerCase().includes('checksetdigest')));
+  assert.ok(result.reasons.some(r => r.toLowerCase().includes('checksetdigest')));
 });
 
 test('protected tests: flag syntax test argument (--test-file=tests/test_calculator.py) is detected and protected', () => {
@@ -1177,7 +1115,7 @@ test('protected tests: flag syntax test argument (--test-file=tests/test_calcula
   const result = evaluateDeterministicCompletion(tamperedChangedFiles);
   assert.equal(result.isComplete, false);
   assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
-  assert.ok(result.reasons.some((r) => r.toLowerCase().includes('protect')));
+  assert.ok(result.reasons.some(r => r.toLowerCase().includes('protect')));
 });
 
 test('executeVerificationChecks: safely records error outcome when runTests throws', async () => {
@@ -1208,36 +1146,23 @@ test('executeVerificationChecks: throws on invalid inputs', async () => {
     initialRevision: input.currentRepoDigest,
   });
 
-  await assert.rejects(
-    async () => {
-      await executeVerificationChecks(null as unknown as BugTask, repo, {
-        runId: 'run-1',
-        repoDigest: 'repo-1',
-      });
-    },
-    /INVALID_TASK/
-  );
+  await assert.rejects(async () => {
+    await executeVerificationChecks(null as unknown as BugTask, repo, {
+      runId: 'run-1',
+      repoDigest: 'repo-1',
+    });
+  }, /INVALID_TASK/);
 
-  await assert.rejects(
-    async () => {
-      await executeVerificationChecks(input.task, null as unknown as FakeRepositoryPort, {
-        runId: 'run-1',
-        repoDigest: 'repo-1',
-      });
-    },
-    /INVALID_REPOSITORY/
-  );
+  await assert.rejects(async () => {
+    await executeVerificationChecks(input.task, null as unknown as FakeRepositoryPort, {
+      runId: 'run-1',
+      repoDigest: 'repo-1',
+    });
+  }, /INVALID_REPOSITORY/);
 
-  await assert.rejects(
-    async () => {
-      await executeVerificationChecks(
-        input.task,
-        repo,
-        null as unknown as { runId: string; repoDigest: string }
-      );
-    },
-    /INVALID_CONTEXT/
-  );
+  await assert.rejects(async () => {
+    await executeVerificationChecks(input.task, repo, null as unknown as { runId: string; repoDigest: string });
+  }, /INVALID_CONTEXT/);
 });
 
 /* ==================================================================
@@ -1255,8 +1180,8 @@ test('review: missing trustedReviewRecord prevents completion and stays IMPLEMEN
   assert.equal(result.isComplete, false);
   assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
   assert.ok(
-    result.reasons.some((r) => r.includes('Independent trustedReviewRecord is required')),
-    `Expected reason for missing trustedReviewRecord, got: ${result.reasons.join('; ')}`
+    result.reasons.some(r => r.includes('Independent trustedReviewRecord is required')),
+    `Expected reason for missing trustedReviewRecord, got: ${result.reasons.join('; ')}`,
   );
 });
 
@@ -1275,8 +1200,8 @@ test('review: mismatched reviewerRoleConfigId in trustedReviewRecord fails admis
   assert.equal(result.isComplete, false);
   assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
   assert.ok(
-    result.reasons.some((r) => r.includes('Reviewer role config ID mismatch with independent review record')),
-    `Expected reason for reviewerRoleConfigId mismatch, got: ${result.reasons.join('; ')}`
+    result.reasons.some(r => r.includes('Reviewer role config ID mismatch with independent review record')),
+    `Expected reason for reviewerRoleConfigId mismatch, got: ${result.reasons.join('; ')}`,
   );
 });
 
@@ -1295,9 +1220,10 @@ test('review: missing trusted status or check-set digest prevents completion', a
       });
       assert.equal(result.isComplete, false);
       assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
-      assert.ok(result.reasons.some(reason => reason.includes(
-        field === 'status' ? 'Trusted review record status is not accepted' : 'Trusted review record checkSetDigest mismatch'
-      )), result.reasons.join('; '));
+      assert.ok(
+        result.reasons.some(reason => reason.includes(field === 'status' ? 'Trusted review record status is not accepted' : 'Trusted review record checkSetDigest mismatch')),
+        result.reasons.join('; '),
+      );
     });
   }
 });
@@ -1317,8 +1243,8 @@ test('review: mismatched iterationReservationRef in trustedReviewRecord fails ad
   assert.equal(result.isComplete, false);
   assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
   assert.ok(
-    result.reasons.some((r) => r.includes('Review iteration reservation ref mismatch with independent review record')),
-    `Expected reason for iterationReservationRef mismatch, got: ${result.reasons.join('; ')}`
+    result.reasons.some(r => r.includes('Review iteration reservation ref mismatch with independent review record')),
+    `Expected reason for iterationReservationRef mismatch, got: ${result.reasons.join('; ')}`,
   );
 });
 
@@ -1336,8 +1262,8 @@ test('review: missing state.latestReviewRef prevents completion', () => {
   assert.equal(result.isComplete, false);
   assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
   assert.ok(
-    result.reasons.some((r) => r.includes('State latestReviewRef is required')),
-    `Expected reason for missing state.latestReviewRef, got: ${result.reasons.join('; ')}`
+    result.reasons.some(r => r.includes('State latestReviewRef is required')),
+    `Expected reason for missing state.latestReviewRef, got: ${result.reasons.join('; ')}`,
   );
 });
 
@@ -1357,8 +1283,8 @@ test('authorizedDiff: missing authorizedDiffDigest prevents completion', () => {
   assert.equal(result.isComplete, false);
   assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
   assert.ok(
-    result.reasons.some((r) => r.includes('Independent authorizedDiffDigest is required')),
-    `Expected reason for missing authorizedDiffDigest, got: ${result.reasons.join('; ')}`
+    result.reasons.some(r => r.includes('Independent authorizedDiffDigest is required')),
+    `Expected reason for missing authorizedDiffDigest, got: ${result.reasons.join('; ')}`,
   );
 });
 
@@ -1373,8 +1299,8 @@ test('authorizedDiff: authorizedDiffDigest mismatch with currentDiffDigest preve
   assert.equal(result.isComplete, false);
   assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
   assert.ok(
-    result.reasons.some((r) => r.includes('Authorized diff digest mismatch')),
-    `Expected reason for authorizedDiffDigest mismatch, got: ${result.reasons.join('; ')}`
+    result.reasons.some(r => r.includes('Authorized diff digest mismatch')),
+    `Expected reason for authorizedDiffDigest mismatch, got: ${result.reasons.join('; ')}`,
   );
 });
 
@@ -1447,8 +1373,8 @@ test('protected tests: pytest node ID selector (tests/foo.py::test_bar) protects
   assert.equal(result.isComplete, false);
   assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
   assert.ok(
-    result.reasons.some((r) => r.includes('test protection violation')),
-    `Expected test protection violation for modifying test file when check specified node ID, got: ${result.reasons.join('; ')}`
+    result.reasons.some(r => r.includes('test protection violation')),
+    `Expected test protection violation for modifying test file when check specified node ID, got: ${result.reasons.join('; ')}`,
   );
 });
 
@@ -1475,7 +1401,7 @@ test('protected tests: pytest invocation and option values determine which paths
       assert.equal(
         result.reasons.some(reason => reason.includes('test protection violation')),
         changedFile === check.protectedPath,
-        `${check.executable} ${check.argv.join(' ')}: ${changedFile}`
+        `${check.executable} ${check.argv.join(' ')}: ${changedFile}`,
       );
     }
   }
@@ -1508,8 +1434,8 @@ test('protected tests: test directory selector (tests/unit) protects files under
   assert.equal(result.isComplete, false);
   assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
   assert.ok(
-    result.reasons.some((r) => r.includes('test protection violation')),
-    `Expected test protection violation for modifying file inside test directory, got: ${result.reasons.join('; ')}`
+    result.reasons.some(r => r.includes('test protection violation')),
+    `Expected test protection violation for modifying file inside test directory, got: ${result.reasons.join('; ')}`,
   );
 });
 
@@ -1548,14 +1474,7 @@ test('integration: investigateBaseline output flows directly into evaluateDeterm
 
   const testFile = { path: 'tests/test_calculator.py', content: 'def test_calc(): pass\n' };
   const host = {
-    async loadSnapshot(req: {
-      taskId: string;
-      workspaceId: string;
-      repositoryId: string;
-      expectedRevisionDigest: string;
-      expectedCheckSetDigest: string;
-      expectedTestFiles: readonly string[];
-    }) {
+    async loadSnapshot(req: { taskId: string; workspaceId: string; repositoryId: string; expectedRevisionDigest: string; expectedCheckSetDigest: string; expectedTestFiles: readonly string[] }) {
       return {
         taskId: req.taskId,
         workspaceId: req.workspaceId,
@@ -1568,13 +1487,15 @@ test('integration: investigateBaseline output flows directly into evaluateDeterm
     },
   };
 
-  const initialRepo = asLegacyV01RepositoryPort(new FakeRepositoryPort({
-    initialRevision: task.initialRevisionDigest,
-    testResults: {
-      'check-pytest-repro': { checkId: 'check-pytest-repro', outcome: 'fail', outputExcerpt: 'ZeroDivisionError' },
-      'check-pytest-regress': { checkId: 'check-pytest-regress', outcome: 'pass', outputExcerpt: '1 passed' },
-    },
-  }));
+  const initialRepo = asLegacyV01RepositoryPort(
+    new FakeRepositoryPort({
+      initialRevision: task.initialRevisionDigest,
+      testResults: {
+        'check-pytest-repro': { checkId: 'check-pytest-repro', outcome: 'fail', outputExcerpt: 'ZeroDivisionError' },
+        'check-pytest-regress': { checkId: 'check-pytest-regress', outcome: 'pass', outputExcerpt: '1 passed' },
+      },
+    }),
+  );
 
   const expectedCheckSetDigest = computeCheckSetDigest(task.requiredChecks);
   const expectedContext = {
@@ -1627,7 +1548,7 @@ test('integration: investigateBaseline output flows directly into evaluateDeterm
     taskId: task.taskId,
     repositoryId: task.repositoryId,
     repositoryRevisionDigest: repoDigest,
-    requiredCheckIds: task.requiredChecks.map((c) => c.checkId),
+    requiredCheckIds: task.requiredChecks.map(c => c.checkId),
     taskContext: task,
     node: 'Review',
     planVersion: 1,
@@ -1639,13 +1560,15 @@ test('integration: investigateBaseline output flows directly into evaluateDeterm
     reviewRefs: ['review-flow-001'],
   };
 
-  const patchedRepo = asLegacyV01RepositoryPort(new FakeRepositoryPort({
-    initialRevision: repoDigest,
-    testResults: {
-      'check-pytest-repro': { checkId: 'check-pytest-repro', outcome: 'pass' },
-      'check-pytest-regress': { checkId: 'check-pytest-regress', outcome: 'pass' },
-    },
-  }));
+  const patchedRepo = asLegacyV01RepositoryPort(
+    new FakeRepositoryPort({
+      initialRevision: repoDigest,
+      testResults: {
+        'check-pytest-repro': { checkId: 'check-pytest-repro', outcome: 'pass' },
+        'check-pytest-regress': { checkId: 'check-pytest-regress', outcome: 'pass' },
+      },
+    }),
+  );
 
   const verificationResults = await executeVerificationChecks(task, patchedRepo, {
     runId: state.runId,
@@ -1737,8 +1660,8 @@ test('regression: changing check argv or executable invalidates stale baseline a
   assert.equal(result.isComplete, false);
   assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED');
   assert.ok(
-    result.reasons.some((r) => r.toLowerCase().includes('checksetdigest')),
-    'Must fail due to checkSetDigest mismatch between stale baseline and changed checks'
+    result.reasons.some(r => r.toLowerCase().includes('checksetdigest')),
+    'Must fail due to checkSetDigest mismatch between stale baseline and changed checks',
   );
 });
 
@@ -1773,9 +1696,7 @@ test('v0.2 verification admission: repository marker alone denies fallback witho
 
   assert.equal(results.length, task.requiredChecks.length);
   assert.equal(repo.tests.length, 0, 'A v0.2 marker must prevent legacy RepositoryPort.runTests calls');
-  assert.ok(results.every((result) =>
-    result.outcome === 'error' && result.diagnosticRefs.includes('missing-admission-context'))
-  );
+  assert.ok(results.every(result => result.outcome === 'error' && result.diagnosticRefs.includes('missing-admission-context')));
   assert.equal(repo.commands.length, 0, 'Missing authority must not reach the command receiver');
   assert.equal(repo.v02Calls.length, 0, 'Missing authority must not create a v0.2 receiver call');
 });
@@ -2001,11 +1922,7 @@ test('v0.2 verification admission: zero repository command effects when task has
   await executeVerificationChecks(task, repo, execContext);
 
   // Target v0.2 acceptance: An open claim blocks any new runTests effect and yields zero repository test effects.
-  assert.equal(
-    repo.tests.length,
-    0,
-    'Open claim must block the verification command and yield zero repository test effects'
-  );
+  assert.equal(repo.tests.length, 0, 'Open claim must block the verification command and yield zero repository test effects');
   assert.equal(repo.commands.length, 0, 'Open claims must not reach the command receiver');
   assert.equal(journal.getJournalSnapshot().claims.length, 1, 'No second claim may be created for an open claim');
   assert.equal(journal.getJournalSnapshot().attempts.length, 0, 'Open claims must not begin an attempt');
@@ -2095,11 +2012,7 @@ test('v0.2 verification admission: zero repository command effects when task is 
   await executeVerificationChecks(task, repo, execContext);
 
   // Target v0.2 acceptance: Paused task must block the verification command and yield zero repository test effects.
-  assert.equal(
-    repo.tests.length,
-    0,
-    'Paused task must block the verification command and yield zero repository test effects'
-  );
+  assert.equal(repo.tests.length, 0, 'Paused task must block the verification command and yield zero repository test effects');
   assert.equal(repo.commands.length, 0, 'Paused tasks must not reach the command receiver');
   assert.equal(journal.getJournalSnapshot().claims.length, 0, 'Paused tasks must not create a claim');
 });
@@ -2185,25 +2098,14 @@ test('v0.2 verification admission: zero repository command effects on missing or
   const results = await executeVerificationChecks(task, repo, execContext);
 
   // Target v0.2 acceptance: Missing or malformed admission context must deny the verification command and yield zero repository test effects.
-  assert.equal(
-    repo.tests.length,
-    0,
-    'Missing or malformed admission context must deny the verification command and yield zero repository test effects'
-  );
-  assert.equal(
-    repo.v02Calls.length,
-    0,
-    'Missing or malformed admission context must not make v0.2 calls'
-  );
+  assert.equal(repo.tests.length, 0, 'Missing or malformed admission context must deny the verification command and yield zero repository test effects');
+  assert.equal(repo.v02Calls.length, 0, 'Missing or malformed admission context must not make v0.2 calls');
   assert.equal(repo.commands.length, 0, 'Missing admission context must not reach the command receiver');
   assert.equal(journal.getJournalSnapshot().claims.length, 0, 'Missing admission context must not create a claim');
-  assert.ok(
-    results.length > 0 && results.every((r) => r.outcome === 'error'),
-    'Denied verification checks must record error outcomes'
-  );
+  assert.ok(results.length > 0 && results.every(r => r.outcome === 'error'), 'Denied verification checks must record error outcomes');
 });
 
-test('v0.2 verification admission: missing or stale view, stale state, and stale approved plan fail closed before repository effects', async (t) => {
+test('v0.2 verification admission: missing or stale view, stale state, and stale approved plan fail closed before repository effects', async t => {
   const cases: {
     readonly name: string;
     readonly alterAdmission?: (admission: RepositoryAdmissionContextV02) => void;
@@ -2211,11 +2113,13 @@ test('v0.2 verification admission: missing or stale view, stale state, and stale
   }[] = [
     {
       name: 'missing command view',
-      alterAdmission: (admission) => { delete (admission as unknown as Record<string, unknown>).commandView; },
+      alterAdmission: admission => {
+        delete (admission as unknown as Record<string, unknown>).commandView;
+      },
     },
     {
       name: 'stale command view revision',
-      alterAdmission: (admission) => {
+      alterAdmission: admission => {
         const context = admission as unknown as Record<string, unknown>;
         context.commandView = {
           ...(context.commandView as Record<string, unknown>),
@@ -2225,11 +2129,11 @@ test('v0.2 verification admission: missing or stale view, stale state, and stale
     },
     {
       name: 'stale task state version',
-      alterState: (state) => ({ ...state, stateVersion: state.stateVersion + 1 }),
+      alterState: state => ({ ...state, stateVersion: state.stateVersion + 1 }),
     },
     {
       name: 'stale approved plan decision',
-      alterState: (state) => ({ ...state, activeDecisionId: 'dec-stale-plan-002' }),
+      alterState: state => ({ ...state, activeDecisionId: 'dec-stale-plan-002' }),
     },
   ];
 
@@ -2244,7 +2148,7 @@ test('v0.2 verification admission: missing or stale view, stale state, and stale
         statePort: fixture.journal,
       });
       const snapshot = fixture.journal.getJournalSnapshot();
-      assert.ok(results.length > 0 && results.every((result) => result.outcome === 'error'));
+      assert.ok(results.length > 0 && results.every(result => result.outcome === 'error'));
       assert.equal(fixture.repo.tests.length, 0);
       assert.equal(fixture.repo.commands.length, 0);
       assert.equal(fixture.repo.v02Calls.length, 0);
@@ -2274,7 +2178,7 @@ test('v0.2 verification admission: authoritative task mutation after guarded exe
   assert.equal(fixture.journal.getJournalSnapshot().outcomes.length, 1, 'The receiver settles the effect before state drift invalidates its evidence');
 });
 
-test('v0.2 verification admission: each required check uses its own current authority', async (t) => {
+test('v0.2 verification admission: each required check uses its own current authority', async t => {
   const createFixture = (withSecondAdmission: boolean) => {
     const originalTask = createFixtureBugTask();
     const first = originalTask.requiredChecks[0];
@@ -2305,8 +2209,14 @@ test('v0.2 verification admission: each required check uses its own current auth
       budgetLedgers: [
         ...(initial.budgetLedgers ?? []),
         {
-          scope: 'task', kind: 'timeoutMs', limit: 60000, consumed: 0,
-          reservations: [], unit: 'count', configurationId: 'config-v1', version: 1,
+          scope: 'task',
+          kind: 'timeoutMs',
+          limit: 60000,
+          consumed: 0,
+          reservations: [],
+          unit: 'count',
+          configurationId: 'config-v1',
+          version: 1,
         },
       ],
     };
@@ -2399,7 +2309,10 @@ test('v0.2 verification admission: each required check uses its own current auth
     const snapshot = fixture.journal.getJournalSnapshot();
 
     assert.deepEqual(fixture.requestedCheckIds, ['check-pytest-reproduction', 'check-second-regression']);
-    assert.deepEqual(results.map((result) => result.outcome), ['pass', 'pass']);
+    assert.deepEqual(
+      results.map(result => result.outcome),
+      ['pass', 'pass'],
+    );
     assert.equal(fixture.repo.commands.length, 2);
     assert.equal(calls.length, 2);
     assert.equal(snapshot.claims.length, 2);
@@ -2428,7 +2341,10 @@ test('v0.2 verification admission: each required check uses its own current auth
     const snapshot = fixture.journal.getJournalSnapshot();
 
     assert.deepEqual(fixture.requestedCheckIds, ['check-pytest-reproduction', 'check-second-regression']);
-    assert.deepEqual(results.map((result) => result.outcome), ['pass', 'error']);
+    assert.deepEqual(
+      results.map(result => result.outcome),
+      ['pass', 'error'],
+    );
     assert.equal(fixture.repo.commands.length, 1);
     assert.equal(fixture.repo.v02Calls.length, 1);
     assert.equal(snapshot.claims.length, 1);

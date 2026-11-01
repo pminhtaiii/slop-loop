@@ -12,9 +12,22 @@ const CANARY = 'CANARY_LOCAL_VALUE=never-read';
 // A direct oracle for the classification itself, independent of how many names the diagnostic samples.
 test('every environment basename containing .env is rejected except the exact example', () => {
   const refused = [
-    '.env', '.env.local', '.env.production', '.env~', '.env-bak', '.envrc', '.env (copy)',
-    '.env.中', 'foo.env', 'notes.env.txt', 'sub.env.txt', 'App.ENV', '.ENV.EXAMPLE',
-    'config/.env.example.local', 'config/nested/deep/.env.example.md', '.envelope',
+    '.env',
+    '.env.local',
+    '.env.production',
+    '.env~',
+    '.env-bak',
+    '.envrc',
+    '.env (copy)',
+    '.env.中',
+    'foo.env',
+    'notes.env.txt',
+    'sub.env.txt',
+    'App.ENV',
+    '.ENV.EXAMPLE',
+    'config/.env.example.local',
+    'config/nested/deep/.env.example.md',
+    '.envelope',
   ];
   for (const path of refused) assert.equal(isRejectedEnvPath(path), true, `${path} must be refused`);
   for (const path of ['.env.example', 'config/.env.example', 'environment.md', 'src/env-config.ts', 'docs/environment.md']) {
@@ -22,7 +35,7 @@ test('every environment basename containing .env is rejected except the exact ex
   }
 });
 
-test('force-added dependencies and verification records fail; local artifacts and lockfiles pass', async (t) => {
+test('force-added dependencies and verification records fail; local artifacts and lockfiles pass', async t => {
   const root = await mkdtemp(join(tmpdir(), 'tracked-files-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const git = (...args) => {
@@ -55,7 +68,7 @@ test('force-added dependencies and verification records fail; local artifacts an
   assert.equal(check().status, 0);
 });
 
-test('environment basenames are rejected except the exact lowercase example', async (t) => {
+test('environment basenames are rejected except the exact lowercase example', async t => {
   const root = await mkdtemp(join(tmpdir(), 'tracked-env-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const git = (...args) => {

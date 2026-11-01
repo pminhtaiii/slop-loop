@@ -27,11 +27,13 @@ function run(checkout, ...args) {
     if (roleIndex !== -1 && args[roleIndex + 1] === 'worker' && !args.includes('--owned-path')) args.push('--owned-path', 'src/example.ts');
   }
   return spawnSync(process.execPath, [cli, ...args, '--root', checkout], {
-    encoding: 'utf8', windowsHide: true, timeout: 10_000,
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: 10_000,
   });
 }
 
-test('a worker handoff can be cleared without rewriting a legacy assignment view', async (t) => {
+test('a worker handoff can be cleared without rewriting a legacy assignment view', async t => {
   const checkout = await fixture(t);
   const path = join(checkout, 'context/active_task.md');
   const baseline = await readFile(path, 'utf8');
@@ -53,7 +55,7 @@ test('a worker handoff can be cleared without rewriting a legacy assignment view
   assert.equal(await readFile(path, 'utf8'), baseline);
 });
 
-test('active-task list keeps full JSON by default and offers compact owner/task/status filters', async (t) => {
+test('active-task list keeps full JSON by default and offers compact owner/task/status filters', async t => {
   const checkout = await fixture(t);
   for (const owner of ['active-worker', 'blocked-worker']) {
     const result = run(checkout, 'start', '--role', 'worker', '--owner', owner, '--task', 'T001', '--summary', `${owner} assignment`, '--next', 'Run the focused checks');
@@ -62,7 +64,10 @@ test('active-task list keeps full JSON by default and offers compact owner/task/
   assert.equal(run(checkout, 'update', '--owner', 'blocked-worker', '--task', 'T001', '--status', 'blocked').status, 0);
 
   const full = JSON.parse(run(checkout, 'list').stdout);
-  assert.deepEqual(full.map((entry) => entry.owner), ['active-worker', 'blocked-worker']);
+  assert.deepEqual(
+    full.map(entry => entry.owner),
+    ['active-worker', 'blocked-worker'],
+  );
   assert.equal(full[0].next, 'Run the focused checks');
 
   let result = run(checkout, 'list', '--compact');
@@ -80,10 +85,13 @@ test('active-task list keeps full JSON by default and offers compact owner/task/
 
   result = run(checkout, 'list', '--owner', 'active-worker');
   assert.equal(result.status, 0, result.stderr);
-  assert.deepEqual(JSON.parse(result.stdout).map((entry) => entry.owner), ['active-worker']);
+  assert.deepEqual(
+    JSON.parse(result.stdout).map(entry => entry.owner),
+    ['active-worker'],
+  );
 });
 
-test('archive previews without writes then preserves evidence before targeted clearing and safe retries', async (t) => {
+test('archive previews without writes then preserves evidence before targeted clearing and safe retries', async t => {
   const checkout = await fixture(t);
   await mkdir(join(checkout, 'docs/verification'), { recursive: true });
   for (const owner of ['done', 'busy', 'blocked']) {
@@ -102,14 +110,17 @@ test('archive previews without writes then preserves evidence before targeted cl
   assert.equal(result.status, 0, result.stderr);
   const archived = await readFile(join(checkout, 'docs/verification/done.json'), 'utf8');
   assert.equal(JSON.parse(archived).entries[0].result, 'Checks passed at revision abc');
-  assert.deepEqual(JSON.parse(run(checkout, 'list').stdout).map((entry) => entry.owner), ['busy', 'blocked']);
+  assert.deepEqual(
+    JSON.parse(run(checkout, 'list').stdout).map(entry => entry.owner),
+    ['busy', 'blocked'],
+  );
   result = run(checkout, ...args, '--apply');
   assert.equal(result.status, 0, result.stderr);
   assert.equal(await readFile(join(checkout, 'docs/verification/done.json'), 'utf8'), archived);
   for (const owner of ['busy', 'blocked']) assert.equal(run(checkout, 'archive', '--owner', owner, '--task', 'T001', '--output', 'docs/verification/no.json', '--apply').status, 1);
 });
 
-test('archive refuses unsafe destinations, collisions, and a busy store without clearing evidence', async (t) => {
+test('archive refuses unsafe destinations, collisions, and a busy store without clearing evidence', async t => {
   const checkout = await fixture(t);
   await mkdir(join(checkout, 'docs/verification'), { recursive: true });
   run(checkout, 'start', '--role', 'worker', '--owner', 'done', '--task', 'T001', '--summary', 'Work', '--next', 'Verify');
@@ -132,7 +143,7 @@ test('archive refuses unsafe destinations, collisions, and a busy store without 
   assert.equal(run(checkout, 'list').stdout, before);
 });
 
-test('archive resumes after saving evidence and refuses a later task that reused the same ID', async (t) => {
+test('archive resumes after saving evidence and refuses a later task that reused the same ID', async t => {
   const checkout = await fixture(t);
   await mkdir(join(checkout, 'docs/verification'), { recursive: true });
   run(checkout, 'start', '--role', 'worker', '--owner', 'worker', '--task', 'T001', '--summary', 'First task', '--next', 'Verify');
@@ -151,7 +162,7 @@ test('archive resumes after saving evidence and refuses a later task that reused
   assert.equal(JSON.parse(await readFile(file, 'utf8')).entries[0].result, 'First result');
 });
 
-test('worker cleanup preserves the parent entry and active or blocked work', async (t) => {
+test('worker cleanup preserves the parent entry and active or blocked work', async t => {
   const checkout = await fixture(t);
   const path = join(checkout, 'context/active_task.md');
   for (const owner of ['parent', 'worker']) {
@@ -178,13 +189,10 @@ test('worker cleanup preserves the parent entry and active or blocked work', asy
   assert.doesNotMatch(retained, /worker assignment/);
 });
 
-test('damaged markers and malformed data fail without overwriting the file', async (t) => {
+test('damaged markers and malformed data fail without overwriting the file', async t => {
   const checkout = await fixture(t);
   const path = join(checkout, 'context/active_task.md');
-  for (const source of [
-    '# Preserve this\n<!-- active-task:start -->\n',
-    '# Preserve this\n<!-- active-task:start -->\n```json\nnot json\n```\n<!-- active-task:end -->\n',
-  ]) {
+  for (const source of ['# Preserve this\n<!-- active-task:start -->\n', '# Preserve this\n<!-- active-task:start -->\n```json\nnot json\n```\n<!-- active-task:end -->\n']) {
     await writeFile(path, source);
     const result = run(checkout, 'start', '--role', 'worker', '--owner', 'parent', '--task', 'T001', '--summary', 'Work', '--next', 'Verify');
     assert.equal(result.status, 1);
@@ -192,7 +200,7 @@ test('damaged markers and malformed data fail without overwriting the file', asy
   }
 });
 
-test('a busy lock is retained and prevents any task-file mutation', async (t) => {
+test('a busy lock is retained and prevents any task-file mutation', async t => {
   const checkout = await fixture(t);
   const path = join(checkout, 'context/active_task.md');
   const baseline = await readFile(path, 'utf8');
@@ -206,7 +214,7 @@ test('a busy lock is retained and prevents any task-file mutation', async (t) =>
   assert.equal(await readFile(lock, 'utf8'), 'another writer');
 });
 
-test('linked worktrees share assignments and terminal render leaves the coordinator view alone', async (t) => {
+test('linked worktrees share assignments and terminal render leaves the coordinator view alone', async t => {
   const checkout = await fixture(t);
   await writeFile(join(checkout, '.gitignore'), '.agent-work/\n');
   for (const args of [
@@ -234,15 +242,36 @@ test('linked worktrees share assignments and terminal render leaves the coordina
   assert.equal(await readFile(join(checkout, 'context/active_task.md'), 'utf8'), parentView);
 });
 
-test('overlapping writers either serialize or report busy without losing an assignment', async (t) => {
+test('overlapping writers either serialize or report busy without losing an assignment', async t => {
   const checkout = await fixture(t);
   const execute = promisify(execFile);
-  const assignments = ['worker-one', 'worker-two'].map((owner) => [
-    'start', '--role', 'worker', '--owner', owner, '--task', 'T001', '--session', `2026-10-15/${owner}`, '--owned-path', 'src/example.ts', '--summary', owner, '--next', 'Verify',
+  const assignments = ['worker-one', 'worker-two'].map(owner => [
+    'start',
+    '--role',
+    'worker',
+    '--owner',
+    owner,
+    '--task',
+    'T001',
+    '--session',
+    `2026-10-15/${owner}`,
+    '--owned-path',
+    'src/example.ts',
+    '--summary',
+    owner,
+    '--next',
+    'Verify',
   ]);
-  const outcomes = await Promise.all(assignments.map((args) => execute(process.execPath, [cli, ...args, '--root', checkout], {
-    windowsHide: true, timeout: 10_000,
-  }).then(() => ({ status: 0 })).catch((error) => ({ status: error.code, stderr: error.stderr }))));
+  const outcomes = await Promise.all(
+    assignments.map(args =>
+      execute(process.execPath, [cli, ...args, '--root', checkout], {
+        windowsHide: true,
+        timeout: 10_000,
+      })
+        .then(() => ({ status: 0 }))
+        .catch(error => ({ status: error.code, stderr: error.stderr })),
+    ),
+  );
   for (let index = 0; index < outcomes.length; index += 1) {
     if (outcomes[index].status !== 0) {
       assert.equal(outcomes[index].status, 1, outcomes[index].stderr);
@@ -256,7 +285,7 @@ test('overlapping writers either serialize or report busy without losing an assi
   assert.match(source, /worker-two/);
 });
 
-test('contributor finish refuses unpublished work and retains the active assignment', async (t) => {
+test('contributor finish refuses unpublished work and retains the active assignment', async t => {
   const checkout = await fixture(t);
   assert.equal(run(checkout, 'start', '--owner', 'coordinator', '--task', 'publish', '--summary', 'Contributor changes', '--next', 'Publish').status, 0);
   const before = run(checkout, 'list').stdout;

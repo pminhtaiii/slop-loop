@@ -58,9 +58,7 @@ export interface HostModelTransport {
   execute(payload: HostModelTransportPayload): Promise<unknown>;
 }
 
-export type AuthoritativeAdmissionLoader = (
-  request: ProviderRequest
-) => Promise<DispatchAdmissionContext | null | undefined> | DispatchAdmissionContext | null | undefined;
+export type AuthoritativeAdmissionLoader = (request: ProviderRequest) => Promise<DispatchAdmissionContext | null | undefined> | DispatchAdmissionContext | null | undefined;
 
 export interface HostProviderConfig {
   readonly providerId?: string | undefined;
@@ -112,29 +110,21 @@ export function deepFreeze<T>(val: T, seen = new WeakSet<object>()): Readonly<T>
   return val;
 }
 
-export function computeContextDigest(
-  stateOrPayload: TaskState | ContextDigestPayload,
-  maybeEvidence?: readonly SourceEvidence[]
-): string {
+export function computeContextDigest(stateOrPayload: TaskState | ContextDigestPayload, maybeEvidence?: readonly SourceEvidence[]): string {
   let state: TaskState;
   let evidence: readonly SourceEvidence[];
 
   if (maybeEvidence !== undefined) {
     state = stateOrPayload as TaskState;
     evidence = maybeEvidence;
-  } else if (
-    typeof stateOrPayload === 'object' &&
-    stateOrPayload !== null &&
-    'state' in stateOrPayload &&
-    'evidence' in stateOrPayload
-  ) {
+  } else if (typeof stateOrPayload === 'object' && stateOrPayload !== null && 'state' in stateOrPayload && 'evidence' in stateOrPayload) {
     state = (stateOrPayload as ContextDigestPayload).state;
     evidence = (stateOrPayload as ContextDigestPayload).evidence;
   } else {
     throw new Error('computeContextDigest requires state and evidence');
   }
 
-  const canonicalEvidence = evidence.map((e) => ({
+  const canonicalEvidence = evidence.map(e => ({
     boundedExcerpt: e.boundedExcerpt,
     path: e.path,
     resultCount: e.resultCount,
@@ -162,13 +152,11 @@ export function containsProtectedContent(text: string): boolean {
 }
 
 function redactSensitiveData(text: string): string {
-  return text
-    .replace(/(?:sk-|api_key=|key=|token=|password=|bearer\s+)[a-zA-Z0-9_\-.]+/gi, '[REDACTED]')
-    .replace(/https?:\/\/[^\s]+/gi, (url) => url.split('?')[0] ?? url);
+  return text.replace(/(?:sk-|api_key=|key=|token=|password=|bearer\s+)[a-zA-Z0-9_\-.]+/gi, '[REDACTED]').replace(/https?:\/\/[^\s]+/gi, url => url.split('?')[0] ?? url);
 }
 
 function sanitizeValidationErrors(errors: readonly ValidationError[]): readonly ValidationError[] {
-  return errors.map((err) => ({
+  return errors.map(err => ({
     path: err.path,
     code: err.code,
     message: redactSensitiveData(err.message),
@@ -183,7 +171,7 @@ export function validateBaseModelInputs(
   snapshotState: TaskState,
   snapshotEvidence: readonly SourceEvidence[],
   snapshotRequest: ProviderRequest,
-  snapshotConfig?: HostProviderConfig
+  snapshotConfig?: HostProviderConfig,
 ): { ok: true; contextDigest: string } | { ok: false; outcome: 'invalid'; errors: readonly ValidationError[] } {
   const stateRes = validateTaskState(snapshotState);
   if (!stateRes.ok) {
@@ -250,11 +238,7 @@ export function validateBaseModelInputs(
   return { ok: true, contextDigest: computedContextDigest };
 }
 
-export function buildTransportPayload(
-  snapshotState: TaskState,
-  snapshotEvidence: readonly SourceEvidence[],
-  snapshotRequest: ProviderRequest
-): HostModelTransportPayload {
+export function buildTransportPayload(snapshotState: TaskState, snapshotEvidence: readonly SourceEvidence[], snapshotRequest: ProviderRequest): HostModelTransportPayload {
   const caps: HostModelCaps = deepFreeze({
     timeoutMs: snapshotRequest.timeoutMs,
     maxInputTokens: snapshotRequest.maxInputTokens,
@@ -264,12 +248,12 @@ export function buildTransportPayload(
   });
 
   const untrustedEvidenceItems: readonly UntrustedContextItem[] = deepFreeze(
-    snapshotEvidence.map((e) => ({
+    snapshotEvidence.map(e => ({
       path: e.path,
       revisionDigest: e.revisionDigest,
       content: e.boundedExcerpt,
       isUntrustedRepositoryContent: true as const,
-    }))
+    })),
   );
 
   return deepFreeze({
@@ -283,10 +267,7 @@ export function buildTransportPayload(
   });
 }
 
-function checkUsageCaps(
-  snapshotRequest: ProviderRequest,
-  observedUsage: ProviderUsage
-): readonly ValidationError[] {
+function checkUsageCaps(snapshotRequest: ProviderRequest, observedUsage: ProviderUsage): readonly ValidationError[] {
   const usageErrors: ValidationError[] = [];
   if (observedUsage.inputTokens > snapshotRequest.maxInputTokens) {
     usageErrors.push({
@@ -309,10 +290,7 @@ function checkUsageCaps(
       code: 'USAGE_EXCEEDS_CAPS',
     });
   }
-  if (
-    observedUsage.billableTokens !== undefined &&
-    observedUsage.billableTokens > snapshotRequest.maxBillableTokens
-  ) {
+  if (observedUsage.billableTokens !== undefined && observedUsage.billableTokens > snapshotRequest.maxBillableTokens) {
     usageErrors.push({
       path: 'observedUsage.billableTokens',
       message: `Observed billable tokens (${observedUsage.billableTokens}) exceed maxBillableTokens (${snapshotRequest.maxBillableTokens})`,
@@ -328,11 +306,7 @@ export type ExecutedTransportResult =
   | { readonly outcome: 'denied'; readonly reason: string }
   | { readonly outcome: 'invalid'; readonly errors: readonly ValidationError[]; readonly observedUsage?: ProviderUsage | undefined };
 
-export async function executeTransport(
-  transport: HostModelTransport,
-  payload: HostModelTransportPayload,
-  snapshotRequest: ProviderRequest
-): Promise<ExecutedTransportResult> {
+export async function executeTransport(transport: HostModelTransport, payload: HostModelTransportPayload, snapshotRequest: ProviderRequest): Promise<ExecutedTransportResult> {
   let rawResult: unknown;
   try {
     rawResult = await transport.execute(payload);
@@ -342,16 +316,14 @@ export async function executeTransport(
       if (typeof err === 'object' && err !== null) {
         const name = Object.getOwnPropertyDescriptor(err, 'name');
         const message = Object.getOwnPropertyDescriptor(err, 'message');
-        timeout = (name !== undefined && 'value' in name && name.value === 'TimeoutError')
-          || (message !== undefined && 'value' in message && typeof message.value === 'string'
-            && /timeout|timed out/i.test(message.value));
+        timeout =
+          (name !== undefined && 'value' in name && name.value === 'TimeoutError') ||
+          (message !== undefined && 'value' in message && typeof message.value === 'string' && /timeout|timed out/i.test(message.value));
       }
     } catch {
       // Failed descriptor inspection leaves the rejection unclassified.
     }
-    return { outcome: 'uncertain', reason: timeout
-      ? 'PROVIDER_TIMEOUT: Model transport request timed out'
-      : 'PROVIDER_ERROR: Model transport request failed' };
+    return { outcome: 'uncertain', reason: timeout ? 'PROVIDER_TIMEOUT: Model transport request timed out' : 'PROVIDER_ERROR: Model transport request failed' };
   }
 
   const snapshot = safeSnapshot(rawResult);
@@ -400,18 +372,11 @@ export class HostModelPort implements ModelPort {
     this.options = options;
   }
 
-  async propose(
-    state: TaskState,
-    evidence: readonly SourceEvidence[],
-    request: ProviderRequest
-  ): Promise<ModelPortResult> {
+  async propose(state: TaskState, evidence: readonly SourceEvidence[], request: ProviderRequest): Promise<ModelPortResult> {
     const snapshotState = deepFreeze(deepClone(state));
     const snapshotEvidence = deepFreeze(deepClone(evidence));
     const snapshotRequest = deepFreeze(deepClone(request));
-    const snapshotConfig =
-      this.options.providerConfig !== undefined
-        ? deepFreeze(deepClone(this.options.providerConfig))
-        : undefined;
+    const snapshotConfig = this.options.providerConfig !== undefined ? deepFreeze(deepClone(this.options.providerConfig)) : undefined;
 
     const baseValidation = validateBaseModelInputs(snapshotState, snapshotEvidence, snapshotRequest, snapshotConfig);
     if (!baseValidation.ok) {
@@ -469,9 +434,4 @@ export class HostModelPort implements ModelPort {
   }
 }
 
-export {
-  HostModelPortV02,
-  buildProviderOutcomeReceipt,
-  type HostModelPortV02Options,
-  type ModelPortV02Result,
-} from './model-v02.ts';
+export { HostModelPortV02, buildProviderOutcomeReceipt, type HostModelPortV02Options, type ModelPortV02Result } from './model-v02.ts';

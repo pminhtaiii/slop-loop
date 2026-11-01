@@ -4,15 +4,8 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DurableStore } from '../../../src/persistence/store.ts';
-import {
-  compactContext,
-  formatCompactSummaryMarkdown,
-  inspectTaskStatus,
-} from '../../../src/persistence/inspection.ts';
-import {
-  UC04_SCHEMA_VERSION,
-  type TaskState,
-} from '../../../src/persistence/contracts.ts';
+import { compactContext, formatCompactSummaryMarkdown, inspectTaskStatus } from '../../../src/persistence/inspection.ts';
+import { UC04_SCHEMA_VERSION, type TaskState } from '../../../src/persistence/contracts.ts';
 
 describe('UC-04: Inspection & Safe Context Compaction', () => {
   let tempDir: string;

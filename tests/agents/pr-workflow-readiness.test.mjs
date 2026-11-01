@@ -9,7 +9,8 @@ import { ACTIVE_POLICY_ID, POLICIES, createPolicyState, evaluateRequired, resolv
 import { checkout, evidence, requiredChecks } from './support/pr-workflow-fixture.mjs';
 
 const scoped = (overrides = {}) => {
-  const e = evidence(), branch = 'feat/tooling-example';
+  const e = evidence(),
+    branch = 'feat/tooling-example';
   Object.assign(e.pr, { headRefName: branch, title: `${branch}: add the example workflow` }, overrides);
   return { ...e, convention: 2 };
 };
@@ -19,7 +20,7 @@ test('a body-only edit at an unchanged head cannot ride an older passing same-he
   assert.equal(assess(green).status, 'READY_FOR_HUMAN', 'the valid candidate is unaffected');
   for (const body of ['plain text', '## Summary\n\nchange\n\n## Evidence\n\nchecks\n\n## Merge Danger\n\n**Door:** revert.\n\n**Blast Radius:** tooling.\n\n## Summary\n\nsecond']) {
     const edited = scoped({ body });
-    edited.checks = green.checks.map((check) => ({ ...check }));
+    edited.checks = green.checks.map(check => ({ ...check }));
     const result = assess(edited);
     assert.equal(result.status, 'BLOCKED', body.slice(0, 20));
     assert.doesNotMatch(result.reason, /plain text|change|revert/, 'the reason names the field and rule, never the body');
@@ -28,7 +29,7 @@ test('a body-only edit at an unchanged head cannot ride an older passing same-he
   assert.equal(assess(scoped({ isDraft: true })).status, 'READY_FOR_HUMAN', 'a validated draft stays a separate human state');
 });
 
-test('status refuses live metadata edited after the passing same-head check and unreadable metadata', async (t) => {
+test('status refuses live metadata edited after the passing same-head check and unreadable metadata', async t => {
   const f = await checkout(t);
   await f.run('publish', '--body-file', f.body);
   assert.equal((await f.run('status')).status, 'READY_FOR_HUMAN');
@@ -36,12 +37,15 @@ test('status refuses live metadata edited after the passing same-head check and 
   assert.equal((await f.run('status')).status, 'BLOCKED', 'green checks on the same head do not admit an edited body');
   f.e.pr.body = '## Summary\n\nStandardize tooling.\n\n## Evidence\n\nVerified.\n\n## Merge Danger\n\n**Door:** revert.\n\n**Blast Radius:** tooling.';
   assert.equal((await f.run('status')).status, 'READY_FOR_HUMAN');
-  await assert.rejects(runWorkflow(['status', '--root', f.root], {
-    execute(binary, args, cwd, timeout) {
-      if (binary === 'gh' && args[0] === 'api' && args[1] === 'graphql') throw new Error('simulated metadata read failure');
-      return f.execute(binary, args, cwd, timeout);
-    },
-  }), /metadata could not be read/);
+  await assert.rejects(
+    runWorkflow(['status', '--root', f.root], {
+      execute(binary, args, cwd, timeout) {
+        if (binary === 'gh' && args[0] === 'api' && args[1] === 'graphql') throw new Error('simulated metadata read failure');
+        return f.execute(binary, args, cwd, timeout);
+      },
+    }),
+    /metadata could not be read/,
+  );
   const record = JSON.parse(await readFile(join(f.root, '.agent-work/pr-workflow/010-tooling-example.json'), 'utf8'));
   assert.equal(record.status, 'BLOCKED', 'a failed metadata read stays non-ready');
 });
@@ -63,7 +67,7 @@ test('bot review decisions are advisory while GitHub merge blockers remain enfor
   assert.equal(assess(e).status, 'READY_FOR_HUMAN', 'a validated draft may move to ready, but cannot be merged by this helper');
 });
 
-test('missing accounting fails closed instead of granting a fresh budget to an existing PR', async (t) => {
+test('missing accounting fails closed instead of granting a fresh budget to an existing PR', async t => {
   const f = await checkout(t);
   await f.run('publish', '--body-file', f.body);
   const record = join(f.root, '.agent-work/pr-workflow/010-tooling-example.json');
@@ -71,17 +75,19 @@ test('missing accounting fails closed instead of granting a fresh budget to an e
   for (const command of ['status', 'ready']) await assert.rejects(f.run(command), /Missing PR accounting/);
   await assert.rejects(f.run('repair', '--reason', 'try again'), /Missing PR accounting/);
   await assert.rejects(f.run('publish', '--body-file', f.body), /no local accounting/);
-  assert.equal(f.calls.filter((call) => call[0] === 'gh' && call[2] === 'create').length, 1);
+  assert.equal(f.calls.filter(call => call[0] === 'gh' && call[2] === 'create').length, 1);
 });
 
-test('watch caps every observation and sleep to the remaining ten-minute deadline', async (t) => {
+test('watch caps every observation and sleep to the remaining ten-minute deadline', async t => {
   const f = await checkout(t);
   await f.run('publish', '--body-file', f.body);
   f.e.checks[0].status = 'in_progress';
   let clock = 0;
   const result = await runWorkflow(['watch', '--root', f.root], {
     now: () => clock,
-    sleep: async (ms) => { clock += ms; },
+    sleep: async ms => {
+      clock += ms;
+    },
     report: () => {},
     execute(binary, args, cwd, timeout) {
       if (binary === 'gh') clock += Math.min(timeout, 80_000);
@@ -97,8 +103,8 @@ test('every gating check must pass on the current head before readiness', () => 
   for (const name of ['static-lint', 'static-types', 'repository-policy', 'pr-metadata']) {
     for (const state of ['missing', 'failure', 'pending', 'stale']) {
       const e = evidence();
-      const check = e.checks.find((item) => item.name === name);
-      if (state === 'missing') e.checks = e.checks.filter((item) => item !== check);
+      const check = e.checks.find(item => item.name === name);
+      if (state === 'missing') e.checks = e.checks.filter(item => item !== check);
       if (state === 'failure') check.conclusion = 'failure';
       if (state === 'pending') check.status = 'in_progress';
       if (state === 'stale') check.head_sha = 'old';
@@ -110,24 +116,30 @@ test('every gating check must pass on the current head before readiness', () => 
 test('build and test lanes run without gating readiness', () => {
   const e = evidence();
   for (const name of ['build', 'contributor-tooling-tests', 'runtime-tests']) {
-    assert.ok(!e.checks.some((check) => check.name === name), `${name} is not required`);
+    assert.ok(!e.checks.some(check => check.name === name), `${name} is not required`);
     e.checks.push({ id: 90, name, head_sha: e.head, status: 'completed', conclusion: 'failure', app: { slug: 'github-actions' } });
   }
   assert.equal(assess(e).status, 'READY_FOR_HUMAN', 'a failing non-gating lane never blocks a merge');
 });
 
-test('runtime validation failure prevents publication', async (t) => {
+test('runtime validation failure prevents publication', async t => {
   const f = await checkout(t);
-  await assert.rejects(runWorkflow(['publish', '--body-file', f.body, '--summary', 'gate runtime', '--root', f.root], {
-    execute(binary, args, cwd, timeout) {
-      if (binary === process.execPath && args[0].endsWith('check-runtime.mjs')) throw new Error('Runtime typecheck failed');
-      return f.execute(binary, args, cwd, timeout);
-    },
-  }), /Runtime typecheck failed/);
-  assert.equal(f.calls.some((call) => call[1] === 'push' || call[0] === 'gh' && call[2] === 'create'), false);
+  await assert.rejects(
+    runWorkflow(['publish', '--body-file', f.body, '--summary', 'gate runtime', '--root', f.root], {
+      execute(binary, args, cwd, timeout) {
+        if (binary === process.execPath && args[0].endsWith('check-runtime.mjs')) throw new Error('Runtime typecheck failed');
+        return f.execute(binary, args, cwd, timeout);
+      },
+    }),
+    /Runtime typecheck failed/,
+  );
+  assert.equal(
+    f.calls.some(call => call[1] === 'push' || (call[0] === 'gh' && call[2] === 'create')),
+    false,
+  );
 });
 
-test('dependency changes require a fresh install before publishing; documentation changes do not', async (t) => {
+test('dependency changes require a fresh install before publishing; documentation changes do not', async t => {
   const f = await checkout(t);
   await f.run('publish', '--body-file', f.body);
   const git = (...args) => {
@@ -135,14 +147,16 @@ test('dependency changes require a fresh install before publishing; documentatio
     assert.equal(result.status, 0, result.stderr);
   };
   await writeFile(join(f.root, 'package.json'), '{"private":true}\n');
-  git('add', 'package.json'); git('commit', '--quiet', '-m', 'change dependency inputs');
-  const run = () => runWorkflow(['publish', '--body-file', f.body, '--summary', 'gate dependencies', '--root', f.root], {
-    execute(binary, args, cwd, timeout) {
-      if (binary === process.execPath && args[0].endsWith('check-dependency-install.mjs')) throw new Error('Release age rejected');
-      return f.execute(binary, args, cwd, timeout);
-    },
-  });
-  const pushes = () => f.calls.filter((call) => call[1] === 'push').length;
+  git('add', 'package.json');
+  git('commit', '--quiet', '-m', 'change dependency inputs');
+  const run = () =>
+    runWorkflow(['publish', '--body-file', f.body, '--summary', 'gate dependencies', '--root', f.root], {
+      execute(binary, args, cwd, timeout) {
+        if (binary === process.execPath && args[0].endsWith('check-dependency-install.mjs')) throw new Error('Release age rejected');
+        return f.execute(binary, args, cwd, timeout);
+      },
+    });
+  const pushes = () => f.calls.filter(call => call[1] === 'push').length;
   const before = pushes();
   await assert.rejects(run(), /Release age rejected/);
   assert.equal(pushes(), before);
@@ -152,7 +166,7 @@ test('dependency changes require a fresh install before publishing; documentatio
   assert.equal(pushes(), before + 2, 'unchanged dependencies permit documentation publication');
 });
 
-test('completion requires a clean published current head, linked PR and passing CI', async (t) => {
+test('completion requires a clean published current head, linked PR and passing CI', async t => {
   const f = await checkout(t);
   await assert.rejects(f.run('complete'), /Missing PR accounting/);
   await f.run('publish', '--body-file', f.body);
@@ -165,7 +179,8 @@ test('completion requires a clean published current head, linked PR and passing 
   assert.equal((await f.run('complete')).completion.head, f.e.head);
   f.e.checks[2].status = 'in_progress';
   await assert.rejects(f.run('complete'), /WAITING_CI/);
-  f.e.checks[2].status = 'completed'; f.e.checks[2].conclusion = 'failure';
+  f.e.checks[2].status = 'completed';
+  f.e.checks[2].conclusion = 'failure';
   await assert.rejects(f.run('complete'), /NEEDS_FIX/);
   f.e.checks[2].conclusion = 'success';
   await writeFile(join(f.root, 'dirty.md'), 'unpublished');
@@ -175,7 +190,7 @@ test('completion requires a clean published current head, linked PR and passing 
   await assert.rejects(f.run('complete'), /published|BLOCKED/);
 });
 
-test('retained publication accounting records the active check policy without changing it', async (t) => {
+test('retained publication accounting records the active check policy without changing it', async t => {
   const f = await checkout(t);
   await f.run('publish', '--body-file', f.body);
   const record = JSON.parse(await readFile(join(f.root, '.agent-work/pr-workflow/010-tooling-example.json'), 'utf8'));
@@ -205,8 +220,9 @@ test('a ci-v5 selection resolves the four ci-v5 names and demotes ci-v1 to an au
 
 test('ci-v5 and ci-v1 names never satisfy each other, in the selector or the consumer', () => {
   const head = 'a'.repeat(40);
-  const runs = (names) => names.map((name, id) => ({ id: id + 1, name, head_sha: head, status: 'completed', conclusion: 'success', app: { slug: 'github-actions' } }));
-  const oldRuns = runs(POLICIES['ci-v1'].required), newRuns = runs(POLICIES['ci-v5'].required);
+  const runs = names => names.map((name, id) => ({ id: id + 1, name, head_sha: head, status: 'completed', conclusion: 'success', app: { slug: 'github-actions' } }));
+  const oldRuns = runs(POLICIES['ci-v1'].required),
+    newRuns = runs(POLICIES['ci-v5'].required);
   const againstOld = evaluateRequired({ policy: POLICIES['ci-v1'], head, checks: newRuns });
   assert.equal(againstOld.status, 'WAITING');
   assert.deepEqual(againstOld.missing, [...POLICIES['ci-v1'].required]);
@@ -216,25 +232,38 @@ test('ci-v5 and ci-v1 names never satisfy each other, in the selector or the con
 
   // The consumer selects ci-v5, so ci-v1 names alone leave every current requirement missing.
   const e = evidence();
-  e.checks = oldRuns.map((check) => ({ ...check, head_sha: e.head }));
+  e.checks = oldRuns.map(check => ({ ...check, head_sha: e.head }));
   assert.equal(assess(e).status, 'WAITING_CI');
   // And a ci-v5 head is the one that reads as ready.
-  e.checks = newRuns.map((check) => ({ ...check, head_sha: e.head }));
+  e.checks = newRuns.map(check => ({ ...check, head_sha: e.head }));
   assert.equal(assess(e).status, 'READY_FOR_HUMAN');
 });
 
 test('the consumer refuses missing, failed, skipped, foreign-app and foreign-head required checks', () => {
   const states = {
-    missing: (check, e) => { e.checks = e.checks.filter((item) => item !== check); },
-    failure: (check) => { check.conclusion = 'failure'; },
-    skipped: (check) => { check.conclusion = 'skipped'; },
-    'foreign-app': (check) => { check.app = { slug: 'other-app' }; },
-    'foreign-head': (check) => { check.head_sha = 'b'.repeat(40); },
+    missing: (check, e) => {
+      e.checks = e.checks.filter(item => item !== check);
+    },
+    failure: check => {
+      check.conclusion = 'failure';
+    },
+    skipped: check => {
+      check.conclusion = 'skipped';
+    },
+    'foreign-app': check => {
+      check.app = { slug: 'other-app' };
+    },
+    'foreign-head': check => {
+      check.head_sha = 'b'.repeat(40);
+    },
   };
   for (const name of requiredChecks) {
     for (const [state, mutate] of Object.entries(states)) {
       const e = evidence();
-      mutate(e.checks.find((item) => item.name === name), e);
+      mutate(
+        e.checks.find(item => item.name === name),
+        e,
+      );
       const expected = ['failure', 'skipped'].includes(state) ? 'NEEDS_FIX' : 'WAITING_CI';
       assert.equal(assess(e).status, expected, `${name}: ${state}`);
     }

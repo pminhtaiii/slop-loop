@@ -76,10 +76,7 @@ function assertAdmissionFixture(context: AdmissionContextV02): {
   };
 }
 
-function createPort(
-  context: AdmissionContextV02,
-  options?: { readonly initialTaskState?: TaskState }
-): MemoryStatePortV02 {
+function createPort(context: AdmissionContextV02, options?: { readonly initialTaskState?: TaskState }): MemoryStatePortV02 {
   const fixture = assertAdmissionFixture(context);
   const authority =
     context.subjectKind === 'repository-action'
@@ -104,10 +101,7 @@ function createPort(
 
 test('Checkpoint validation: canonical v0.2 requires every listed migration checkpoint', async () => {
   assert.equal(REQUIRED_MIGRATION_CHECKPOINTS.length, 13, 'Must require exactly 13 migration checkpoints');
-  const expectedCheckpoints: readonly MigrationCheckpointId[] = [
-    'T038', 'T040', 'T042', 'T044', 'T046', 'T048', 'T050',
-    'T052', 'T054', 'T056', 'T058', 'T061', 'T063',
-  ];
+  const expectedCheckpoints: readonly MigrationCheckpointId[] = ['T038', 'T040', 'T042', 'T044', 'T046', 'T048', 'T050', 'T052', 'T054', 'T056', 'T058', 'T061', 'T063'];
   assert.deepEqual(REQUIRED_MIGRATION_CHECKPOINTS, expectedCheckpoints);
 
   // Full set satisfies requirement
@@ -124,7 +118,7 @@ test('Checkpoint validation: canonical v0.2 requires every listed migration chec
 
   // Each missing checkpoint independently causes rejection with zero effects
   for (const checkpoint of expectedCheckpoints) {
-    const subset = expectedCheckpoints.filter((cp) => cp !== checkpoint);
+    const subset = expectedCheckpoints.filter(cp => cp !== checkpoint);
     assert.equal(areMigrationCheckpointsSatisfied(subset), false);
     assert.deepEqual(getMissingMigrationCheckpoints(subset), [checkpoint]);
 
@@ -322,16 +316,8 @@ test('Positive cutover: fully migrated v0.2 mock composition reaches canonical a
     repositoryPort: repo,
   });
 
-  assert.equal(
-    decision.admitted,
-    true,
-    'Fully migrated v0.2 mock composition must be admitted canonically'
-  );
-  assert.equal(
-    decision.selectedVersion,
-    '0.2.0',
-    'Canonical cutover must select version 0.2.0'
-  );
+  assert.equal(decision.admitted, true, 'Fully migrated v0.2 mock composition must be admitted canonically');
+  assert.equal(decision.selectedVersion, '0.2.0', 'Canonical cutover must select version 0.2.0');
   assert.equal(decision.code, 'CANONICAL_V02_ADMITTED');
   assert.equal(decision.zeroEffects, true, 'Selection has no effect authority');
 
@@ -391,11 +377,7 @@ test('Actual effect boundary: canonical execution goes through ExecutionGuardV02
   assert.equal(repo.patches.length, 1, 'Selection does not dispatch another patch');
 
   // The public guard itself rejects legacy/forged contexts before receiver calls.
-  const legacyResult = await guard.validateAndExecute(
-    context.action,
-    initialTaskState,
-    { schemaVersion: '0.1.0' } as unknown as RepositoryAdmissionContextV02,
-  );
+  const legacyResult = await guard.validateAndExecute(context.action, initialTaskState, { schemaVersion: '0.1.0' } as unknown as RepositoryAdmissionContextV02);
   assert.equal(legacyResult.outcome, 'denied');
   assert.equal(repo.patches.length, 1, 'Legacy context does not reach the receiver');
 });

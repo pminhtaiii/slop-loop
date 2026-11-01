@@ -100,8 +100,14 @@ class RecordingStatePortV02 implements StatePortV02 {
     }
   }
 
-  async loadTask(taskId: string): Promise<TaskState | null> { void taskId; return null; }
-  async transition(state: TaskState, expectedVersion: number): Promise<TaskState> { void expectedVersion; return state; }
+  async loadTask(taskId: string): Promise<TaskState | null> {
+    void taskId;
+    return null;
+  }
+  async transition(state: TaskState, expectedVersion: number): Promise<TaskState> {
+    void expectedVersion;
+    return state;
+  }
   async claim(context: AdmissionContextV02): Promise<ClaimReceiptV02> {
     this.claimCalls.push(context);
     return this.claimReceipt;
@@ -130,8 +136,12 @@ class RecordingStatePortV02 implements StatePortV02 {
   async closeUnattemptedClaim(receipt: ClaimClosureReceiptV02): Promise<ClaimClosureResultV02> {
     return { closed: false, receiptId: receipt.receiptId };
   }
-  async checkpoint(state: TaskState): Promise<void> { void state; }
-  async recover(taskId: string): Promise<TaskState> { throw new Error(`unused recovery operation: ${taskId}`); }
+  async checkpoint(state: TaskState): Promise<void> {
+    void state;
+  }
+  async recover(taskId: string): Promise<TaskState> {
+    throw new Error(`unused recovery operation: ${taskId}`);
+  }
 }
 
 function createRecordingJournal(context: AdmissionContextV02, label: string) {
@@ -155,9 +165,7 @@ function createRecordingJournal(context: AdmissionContextV02, label: string) {
     preClaimControlVersion: context.expectedControlVersion,
     postClaimControlVersion: context.expectedControlVersion + 1,
     epoch: context.expectedEpoch,
-    reservationRefs: context.subjectKind === 'repository-action'
-      ? context.reservationRefs
-      : [context.requestReservationReceipt, ...context.budgetRefs],
+    reservationRefs: context.subjectKind === 'repository-action' ? context.reservationRefs : [context.requestReservationReceipt, ...context.budgetRefs],
   });
   const attempt = createFixtureAttemptReceiptV02({
     attemptId,
@@ -190,7 +198,10 @@ test('ScriptedModelPort: tracks attempted calls vs actual simulated dispatch', a
   const { context, request } = createFixtureAdmissionContext();
 
   model.setAdmissionContext(context);
-  model.queueResponse({ outcome: 'observed', result: { proposal: { proposalId: 'explicit-proposal', content: 'scripted' }, observedUsage: { inputTokens: 100, outputTokens: 50, billableTokens: 150, costUsd: 0.005 } } });
+  model.queueResponse({
+    outcome: 'observed',
+    result: { proposal: { proposalId: 'explicit-proposal', content: 'scripted' }, observedUsage: { inputTokens: 100, outputTokens: 50, billableTokens: 150, costUsd: 0.005 } },
+  });
   assert.equal(model.attemptedCalls, 0);
   assert.equal(model.simulatedDispatches, 0);
 
@@ -416,7 +427,16 @@ test('ScriptedReviewerPort: enforces reviewer role and iteration reservation', a
   });
 
   reviewer.setAdmissionContext(context);
-  reviewer.queueResponse({ reviewId: 'explicit-review', reviewerRoleConfigId: request.configId, repoDigest: task.initialRevisionDigest, diffDigest: computeCanonicalSha256(diff), checkSetDigest: computeCanonicalSha256(task.requiredChecks.map(c => c.checkId)), status: 'accepted', findings: [], iterationReservationRef: request.reservationRef });
+  reviewer.queueResponse({
+    reviewId: 'explicit-review',
+    reviewerRoleConfigId: request.configId,
+    repoDigest: task.initialRevisionDigest,
+    diffDigest: computeCanonicalSha256(diff),
+    checkSetDigest: computeCanonicalSha256(task.requiredChecks.map(c => c.checkId)),
+    status: 'accepted',
+    findings: [],
+    iterationReservationRef: request.reservationRef,
+  });
   const result = await reviewer.review(task, diff, evidence, request);
   assert.equal(reviewer.attemptedCalls, 1);
   assert.equal(reviewer.simulatedDispatches, 1);
@@ -433,10 +453,7 @@ test('ScriptedReviewerPort: rejects non-reviewer request role with zero dispatch
   const { context } = createFixtureAdmissionContext({ request: coderRequest });
 
   reviewer.setAdmissionContext(context);
-  await assert.rejects(
-    async () => reviewer.review(task, diff, evidence, coderRequest),
-    /INVALID_ROLE/
-  );
+  await assert.rejects(async () => reviewer.review(task, diff, evidence, coderRequest), /INVALID_ROLE/);
   assert.equal(reviewer.attemptedCalls, 1);
   assert.equal(reviewer.simulatedDispatches, 0);
 });
@@ -452,10 +469,7 @@ test('ScriptedReviewerPort: zero dispatch when iteration reservation is missing'
   });
 
   reviewer.setAdmissionContext(context);
-  await assert.rejects(
-    async () => reviewer.review(task, diff, evidence, request),
-    /PARTIAL_RESERVATION|DISPATCH_ADMISSION_DENIED/
-  );
+  await assert.rejects(async () => reviewer.review(task, diff, evidence, request), /PARTIAL_RESERVATION|DISPATCH_ADMISSION_DENIED/);
   assert.equal(reviewer.attemptedCalls, 1);
   assert.equal(reviewer.simulatedDispatches, 0);
 });
@@ -472,10 +486,7 @@ test('ScriptedReviewerPort: zero dispatch on reviewer exhausted token or cost bu
   });
 
   reviewer.setAdmissionContext(context);
-  await assert.rejects(
-    async () => reviewer.review(task, diff, evidence, request),
-    /BUDGET_EXHAUSTED|DISPATCH_ADMISSION_DENIED/
-  );
+  await assert.rejects(async () => reviewer.review(task, diff, evidence, request), /BUDGET_EXHAUSTED|DISPATCH_ADMISSION_DENIED/);
   assert.equal(reviewer.attemptedCalls, 1);
   assert.equal(reviewer.simulatedDispatches, 0);
 });
@@ -491,7 +502,7 @@ test('ScriptedReviewerPort: scripts findings and validates diff-line membership 
   reviewer.setAdmissionContext(context);
 
   const diffDigest = computeCanonicalSha256(diff);
-  const checkSetDigest = computeCanonicalSha256(task.requiredChecks.map((c) => c.checkId));
+  const checkSetDigest = computeCanonicalSha256(task.requiredChecks.map(c => c.checkId));
 
   const findingsResult: ReviewResult = {
     reviewId: 'rev-findings-001',
@@ -595,7 +606,7 @@ test('FakeRepositoryPort: path protection rejects protected files and traversal 
     initialFiles: {
       'src/calc.py': 'def divide(a, b): return a / b\n',
       '.env': 'SECRET_KEY=12345',
-      'id_rsa': '-----BEGIN RSA PRIVATE KEY-----',
+      id_rsa: '-----BEGIN RSA PRIVATE KEY-----',
     },
   });
 
@@ -651,14 +662,15 @@ test('FakeRepositoryPort: applyPatch advances snapshot revision and rejects stal
 test('FakeRepositoryPort: runCommand acts strictly as spy and returns scripted diagnostics', async () => {
   const repo = new FakeRepositoryPort();
   await assert.rejects(
-    async () => repo.runCommand({
-      actionId: 'act-cmd-unscripted',
-      kind: 'run_command',
-      executable: 'python',
-      argv: ['--version'],
-      workingDirectory: '.',
-    }),
-    /SCRIPT_EXHAUSTED/
+    async () =>
+      repo.runCommand({
+        actionId: 'act-cmd-unscripted',
+        kind: 'run_command',
+        executable: 'python',
+        argv: ['--version'],
+        workingDirectory: '.',
+      }),
+    /SCRIPT_EXHAUSTED/,
   );
   assert.equal(repo.commands.length, 1);
 
@@ -788,10 +800,14 @@ for (const role of ['coder', 'reviewer'] as const) {
       });
       const modelResponse: ModelPortResult = { outcome: 'uncertain', reason: 'scripted timeout' };
       const reviewResponse: ReviewResult = {
-        reviewId: 'finite-review', reviewerRoleConfigId: request.configId,
+        reviewId: 'finite-review',
+        reviewerRoleConfigId: request.configId,
         repoDigest: createFixtureBugTask().initialRevisionDigest,
-        diffDigest: computeCanonicalSha256('diff'), checkSetDigest: computeCanonicalSha256([]),
-        status: 'accepted', findings: [], iterationReservationRef: request.reservationRef,
+        diffDigest: computeCanonicalSha256('diff'),
+        checkSetDigest: computeCanonicalSha256([]),
+        status: 'accepted',
+        findings: [],
+        iterationReservationRef: request.reservationRef,
       };
       if (role === 'coder') {
         const port = new ScriptedModelPort({ admissionContext: context, responses: Array.from({ length: size }, () => modelResponse) });
@@ -829,30 +845,34 @@ const deniedProfiles: readonly [string, BuildAdmissionContextOptions][] = [
 ];
 for (const role of ['coder', 'reviewer'] as const) {
   const profiles: readonly (readonly [string, BuildAdmissionContextOptions | undefined])[] = [
-    ['missing context', undefined], ...deniedProfiles,
-    ...(role === 'reviewer' ? [
-      ['missing task iteration', { omitReviewerIterationRes: true }],
-      ['exhausted task iteration', { reviewerIterationConsumed: 5 }],
-      ['missing required run iteration', { requireRunReviewIteration: true }],
-      ['exhausted required run iteration', { requireRunReviewIteration: true, runReviewerIterationConsumed: 5 }],
-    ] as const : []),
+    ['missing context', undefined],
+    ...deniedProfiles,
+    ...(role === 'reviewer'
+      ? ([
+          ['missing task iteration', { omitReviewerIterationRes: true }],
+          ['exhausted task iteration', { reviewerIterationConsumed: 5 }],
+          ['missing required run iteration', { requireRunReviewIteration: true }],
+          ['exhausted required run iteration', { requireRunReviewIteration: true, runReviewerIterationConsumed: 5 }],
+        ] as const)
+      : []),
   ];
   for (const [name, options] of profiles) {
     test(`${role}: independently denies ${name} before dispatch`, async () => {
-      const { context, request } = createFixtureAdmissionContext({ ...options,
-        request: role === 'coder' ? createFixtureProviderRequest() : createFixtureReviewerRequest(),
-      });
+      const { context, request } = createFixtureAdmissionContext({ ...options, request: role === 'coder' ? createFixtureProviderRequest() : createFixtureReviewerRequest() });
       // A factory would succeed if dispatch were incorrectly admitted.
       if (role === 'coder') {
-        const port = new ScriptedModelPort({ admissionContext: options ? context : undefined,
-          responseFactory: () => ({ outcome: 'uncertain', reason: 'must not dispatch' }) });
+        const port = new ScriptedModelPort({ admissionContext: options ? context : undefined, responseFactory: () => ({ outcome: 'uncertain', reason: 'must not dispatch' }) });
         assert.equal((await port.propose(createFixtureTaskState(), [], request)).outcome, 'denied');
         assert.equal(port.attemptedCalls, 1);
         assert.equal(port.simulatedDispatches, 0);
         assert.equal(port.calls[0]?.admitted, false);
       } else {
-        const port = new ScriptedReviewerPort({ admissionContext: options ? context : undefined,
-          responseFactory: () => { throw new Error('factory must not run'); } });
+        const port = new ScriptedReviewerPort({
+          admissionContext: options ? context : undefined,
+          responseFactory: () => {
+            throw new Error('factory must not run');
+          },
+        });
         await assert.rejects(port.review(createFixtureBugTask(), 'diff', [], request), /UNTRUSTED_DISPATCH_AUTHORIZATION|DISPATCH_ADMISSION_DENIED/);
         assert.equal(port.attemptedCalls, 1);
         assert.equal(port.simulatedDispatches, 0);
@@ -926,7 +946,7 @@ test('ScriptedReviewerPort (v0.2): preserves exact attempt identity and outcome 
     reviewerRoleConfigId: request.configId,
     repoDigest: task.initialRevisionDigest,
     diffDigest: computeCanonicalSha256(diff),
-    checkSetDigest: computeCanonicalSha256(task.requiredChecks.map((c) => c.checkId)),
+    checkSetDigest: computeCanonicalSha256(task.requiredChecks.map(c => c.checkId)),
     status: 'accepted',
     findings: [],
     iterationReservationRef: request.reservationRef,
@@ -953,17 +973,11 @@ test('ScriptedReviewerPort (v0.2): missing or stale context causes zero simulate
   const request = createFixtureReviewerRequest();
 
   // Missing context
-  await assert.rejects(
-    async () => reviewer.review(task, diff, evidence, request, undefined as unknown as ProviderAdmissionContextV02),
-    /MISSING_ADMISSION_CONTEXT/
-  );
+  await assert.rejects(async () => reviewer.review(task, diff, evidence, request, undefined as unknown as ProviderAdmissionContextV02), /MISSING_ADMISSION_CONTEXT/);
   assert.equal(reviewer.simulatedDispatches, 0);
 
   // Stale/mismatched context
-  await assert.rejects(
-    async () => reviewer.review(task, diff, evidence, request, staleContext),
-    /CONTEXT_IDENTITY_MISMATCH/
-  );
+  await assert.rejects(async () => reviewer.review(task, diff, evidence, request, staleContext), /CONTEXT_IDENTITY_MISMATCH/);
   assert.equal(reviewer.simulatedDispatches, 0);
 });
 
@@ -1063,7 +1077,11 @@ test('FakeRepositoryPort (v0.2): missing or stale context causes zero mock effec
   assert.equal(staleContext.actionDigest, computeActionDigest(patchAction));
   assert.equal(staleContext.baseRevision, patchAction.baseRevisionDigest);
   assert.equal(validation.ok, false);
-  if (!validation.ok) assert.deepEqual(validation.errors.map(({ code }) => code), ['REVISION_MISMATCH']);
+  if (!validation.ok)
+    assert.deepEqual(
+      validation.errors.map(({ code }) => code),
+      ['REVISION_MISMATCH'],
+    );
   const journal = createRecordingJournal(staleContext, 'stale-repository-context');
   const underlying = new FakeRepositoryPort({ statePort: journal.statePort, executorIdentity: journal.executor });
   const repo = new FakeRepositoryPortV02(underlying);
@@ -1085,18 +1103,23 @@ test('FakeRepositoryPort (v0.2): missing or stale context causes zero mock effec
 
 test('ScriptedApprovalPort (v0.2): preserves exact evaluation and decision receipts on positive forwarding', async () => {
   const action = {
-    actionId: 'act-eval-001', kind: 'run_command' as const,
-    executable: 'pytest', argv: [], workingDirectory: 'tests',
+    actionId: 'act-eval-001',
+    kind: 'run_command' as const,
+    executable: 'pytest',
+    argv: [],
+    workingDirectory: 'tests',
   };
   const auth = createFixturePolicyAuthorityRefV02();
   const context = createFixtureRepositoryAdmissionContextV02({ action, policyAuthorityRef: auth });
   const expectedEvaluation = createCurrentPolicyEvaluation(action, context, auth, 'APPROVAL_REQUIRED');
   const expectedDecision = createCurrentDecision(expectedEvaluation);
-  const approval = new ScriptedApprovalPortV02(new ScriptedApprovalPort({
-    v02AuthorityRef: auth,
-    v02Evaluations: [expectedEvaluation],
-    v02Decisions: [expectedDecision],
-  }));
+  const approval = new ScriptedApprovalPortV02(
+    new ScriptedApprovalPort({
+      v02AuthorityRef: auth,
+      v02Evaluations: [expectedEvaluation],
+      v02Decisions: [expectedDecision],
+    }),
+  );
 
   const evalRes = await approval.evaluatePolicyV02(action, context);
   assert.strictEqual(evalRes, expectedEvaluation);
@@ -1183,7 +1206,7 @@ test('ScriptedApprovalPort public contextual issuer coalesces one D1 request and
   assert.equal(first.decisionId, decisionId);
   assert.equal(first.status, 'pending');
   assert.deepEqual(repeated, first);
-  assert.equal(port.getRecordedBindings().filter((entry) => entry.decisionId === decisionId).length, 1);
+  assert.equal(port.getRecordedBindings().filter(entry => entry.decisionId === decisionId).length, 1);
 
   port.scriptDecision({ ...binding, status: 'approved' }, authority.decisionAuthorityGeneration + 1);
   const earlier = await port.resolvePlanDecisionInContext(decisionId, contextAtGeneration(authority.decisionAuthorityGeneration));
@@ -1196,7 +1219,7 @@ test('ScriptedApprovalPort public contextual issuer coalesces one D1 request and
   assert.equal(resolved.binding.status, 'approved');
   assert.equal(resolved.decisionAuthorityGeneration, authority.decisionAuthorityGeneration + 1);
   await assert.rejects(() => port.requestDecision({ ...binding, strategyDigest: computeCanonicalSha256('changed strategy') }), /Conflicting request/);
-  assert.equal(port.getRecordedBindings().filter((entry) => entry.decisionId === decisionId).length, 1);
+  assert.equal(port.getRecordedBindings().filter(entry => entry.decisionId === decisionId).length, 1);
 });
 
 test('RecordingStatePortV02 transparently forwards optional verification authority operations', async () => {
@@ -1207,22 +1230,25 @@ test('RecordingStatePortV02 transparently forwards optional verification authori
   const journal = createRecordingJournal(context, 'optional-authority-forwarding');
   const forwarded = new RecordingStatePortV02(journal.claim, journal.attempt, owner);
 
-  assert.deepEqual(
-    await forwarded.readVerificationAuthoritySnapshot?.(taskState.taskId),
-    await owner.readVerificationAuthoritySnapshot(taskState.taskId),
-  );
+  assert.deepEqual(await forwarded.readVerificationAuthoritySnapshot?.(taskState.taskId), await owner.readVerificationAuthoritySnapshot(taskState.taskId));
   const invalidRequest: RecordVerificationApprovalRequestV02 = {
-    taskId: '', runId: '', workspaceId: '', repositoryId: '', originalDecisionId: '', decisionId: '',
-    expectedStateVersion: -1, expectedRepositoryRevisionDigest: '', expectedPlanVersion: 0,
-    expectedPlanMaterialDigest: '', expectedControlVersion: -1, expectedEpoch: -1,
+    taskId: '',
+    runId: '',
+    workspaceId: '',
+    repositoryId: '',
+    originalDecisionId: '',
+    decisionId: '',
+    expectedStateVersion: -1,
+    expectedRepositoryRevisionDigest: '',
+    expectedPlanVersion: 0,
+    expectedPlanMaterialDigest: '',
+    expectedControlVersion: -1,
+    expectedEpoch: -1,
     expectedDecisionAuthorityGeneration: 0,
     policyIdentity: { policyId: '', policyVersion: '', configId: '', configVersion: '', issuerKeyRef: '' },
     requestIdentity: '',
   };
-  assert.deepEqual(
-    await forwarded.recordVerificationApproval?.(invalidRequest),
-    await owner.recordVerificationApproval(invalidRequest),
-  );
+  assert.deepEqual(await forwarded.recordVerificationApproval?.(invalidRequest), await owner.recordVerificationApproval(invalidRequest));
   const contextual: VerificationApprovalContextV02 = {
     purpose: 'current-verification',
     expectedIssuerKeyRef: authority.issuerKeyRef,
@@ -1242,10 +1268,7 @@ test('RecordingStatePortV02 transparently forwards optional verification authori
       currentCheckSetDigest: computeCanonicalSha256(taskState.requiredCheckIds),
     },
   };
-  assert.deepEqual(
-    await forwarded.resolvePlanDecisionInContext?.('decision-forwarding', contextual),
-    await owner.resolvePlanDecisionInContext('decision-forwarding', contextual),
-  );
+  assert.deepEqual(await forwarded.resolvePlanDecisionInContext?.('decision-forwarding', contextual), await owner.resolvePlanDecisionInContext('decision-forwarding', contextual));
   const ancestryRequest = {
     taskId: taskState.taskId,
     runId: taskState.runId,
@@ -1286,17 +1309,18 @@ test('ScriptedReviewerPortV02 refuses a changed request before consuming its scr
   const context = createFixtureProviderAdmissionContextV02({ providerRequest: request, role: 'reviewer' });
   const task = createFixtureBugTask();
   const response: ReviewResult = {
-    reviewId: 'bound-reviewer', reviewerRoleConfigId: request.configId,
-    repoDigest: task.initialRevisionDigest, diffDigest: computeCanonicalSha256('bound diff'),
-    checkSetDigest: computeCanonicalSha256([]), status: 'accepted', findings: [],
+    reviewId: 'bound-reviewer',
+    reviewerRoleConfigId: request.configId,
+    repoDigest: task.initialRevisionDigest,
+    diffDigest: computeCanonicalSha256('bound diff'),
+    checkSetDigest: computeCanonicalSha256([]),
+    status: 'accepted',
+    findings: [],
     iterationReservationRef: request.reservationRef,
   };
   port.queueResponse(response);
 
-  await assert.rejects(
-    port.review(task, 'bound diff', [], { ...request, contextDigest: 'sha256:changed-payload' }, context),
-    /CONTEXT|ADMISSION|REQUEST/,
-  );
+  await assert.rejects(port.review(task, 'bound diff', [], { ...request, contextDigest: 'sha256:changed-payload' }, context), /CONTEXT|ADMISSION|REQUEST/);
   assert.equal(port.simulatedDispatches, 0);
 
   const accepted = await port.review(task, 'bound diff', [], request, context);
@@ -1312,11 +1336,18 @@ test('FakeRepositoryPortV02 requires context before forwarding any repository ef
   const port = new FakeRepositoryPortV02(underlying);
   const revision = port.currentRevision;
   const patch: ApplyPatchAction = {
-    actionId: 'patch-missing-context', kind: 'apply_patch', patchContent: '+must not apply',
-    targetPaths: ['src/calculator.py'], baseRevisionDigest: revision,
+    actionId: 'patch-missing-context',
+    kind: 'apply_patch',
+    patchContent: '+must not apply',
+    targetPaths: ['src/calculator.py'],
+    baseRevisionDigest: revision,
   };
   const command: RunCommandAction = {
-    actionId: 'command-missing-context', kind: 'run_command', executable: 'pytest', argv: [], workingDirectory: 'tests',
+    actionId: 'command-missing-context',
+    kind: 'run_command',
+    executable: 'pytest',
+    argv: [],
+    workingDirectory: 'tests',
   };
   const check = { ...createFixtureCheckDefinition(), checkId: 'check-missing-context' };
   const missing = undefined as unknown as RepositoryAdmissionContextV02;
@@ -1335,8 +1366,11 @@ test('FakeRepositoryPortV02 refuses changed payload and stale revision before ef
   const port = new FakeRepositoryPortV02(underlying);
   const revision = port.currentRevision;
   const admittedPatch: ApplyPatchAction = {
-    actionId: 'patch-admitted-payload', kind: 'apply_patch', patchContent: '+admitted',
-    targetPaths: ['src/calculator.py'], baseRevisionDigest: revision,
+    actionId: 'patch-admitted-payload',
+    kind: 'apply_patch',
+    patchContent: '+admitted',
+    targetPaths: ['src/calculator.py'],
+    baseRevisionDigest: revision,
   };
   const changedPatch = { ...admittedPatch, patchContent: '+changed after admission' };
   const context = createFixtureRepositoryAdmissionContextV02({ action: admittedPatch, canonicalRevision: revision });
@@ -1350,8 +1384,12 @@ test('FakeRepositoryPortV02 binds command and test payloads before forwarding', 
   const commandUnderlying = new FakeRepositoryPort({ commandResults: { default: { exitCode: 0, stdout: 'only admitted command', stderr: '' } } });
   const commandPort = new FakeRepositoryPortV02(commandUnderlying);
   const command: RunCommandAction = {
-    actionId: 'command-bound-101', kind: 'run_command', executable: 'pytest',
-    argv: ['-q', 'tests/test_calculator.py'], workingDirectory: 'tests', purpose: 'reproduction',
+    actionId: 'command-bound-101',
+    kind: 'run_command',
+    executable: 'pytest',
+    argv: ['-q', 'tests/test_calculator.py'],
+    workingDirectory: 'tests',
+    purpose: 'reproduction',
   };
   const commandContext = createFixtureRepositoryCommandAdmissionContextV02({ action: command, canonicalRevision: commandPort.currentRevision });
   const changedCommand = { ...command, argv: ['-q', 'tests/test_other.py'] };
@@ -1375,8 +1413,12 @@ test('FakeRepositoryPortV02 binds command and test payloads before forwarding', 
   const check = createFixtureCheckDefinition({ checkId: 'check-bound-102' });
   testUnderlying.setTestResult(check.checkId, { checkId: check.checkId, outcome: 'pass', durationMs: 1 });
   const checkAction: RunCommandAction = {
-    actionId: check.checkId, kind: 'run_command', executable: check.executable,
-    argv: check.argv, workingDirectory: check.workingDirectory ?? '', purpose: check.purpose,
+    actionId: check.checkId,
+    kind: 'run_command',
+    executable: check.executable,
+    argv: check.argv,
+    workingDirectory: check.workingDirectory ?? '',
+    purpose: check.purpose,
   };
   const checkContext = createFixtureRepositoryCommandAdmissionContextV02({
     action: checkAction,
@@ -1458,9 +1500,13 @@ test('v0.2 wrappers forward journal receipts and scripted outcomes exactly once'
   const reviewer = new ScriptedReviewerPortV02(reviewerUnderlying);
   const task = createFixtureBugTask();
   const reviewerOutcome: ReviewResult = {
-    reviewId: 'journal-reviewer', reviewerRoleConfigId: reviewerRequest.configId,
-    repoDigest: task.initialRevisionDigest, diffDigest: computeCanonicalSha256('journal diff'),
-    checkSetDigest: computeCanonicalSha256([]), status: 'accepted', findings: [],
+    reviewId: 'journal-reviewer',
+    reviewerRoleConfigId: reviewerRequest.configId,
+    repoDigest: task.initialRevisionDigest,
+    diffDigest: computeCanonicalSha256('journal diff'),
+    checkSetDigest: computeCanonicalSha256([]),
+    status: 'accepted',
+    findings: [],
     iterationReservationRef: reviewerRequest.reservationRef,
   };
   reviewer.queueResponse(reviewerOutcome);
@@ -1504,15 +1550,20 @@ test('v0.2 wrappers forward journal receipts and scripted outcomes exactly once'
 
   const revision = new FakeRepositoryPort().currentRevision;
   const patch: ApplyPatchAction = {
-    actionId: 'patch-journal-repository-093', kind: 'apply_patch', patchContent: '+journal result',
-    targetPaths: ['src/calculator.py'], baseRevisionDigest: revision,
+    actionId: 'patch-journal-repository-093',
+    kind: 'apply_patch',
+    patchContent: '+journal result',
+    targetPaths: ['src/calculator.py'],
+    baseRevisionDigest: revision,
   };
   const repositoryContext = createFixtureRepositoryAdmissionContextV02({ action: patch, canonicalRevision: revision });
   const repositoryJournal = createRecordingJournal(repositoryContext, 'repository-093');
-  const repositoryWithJournal = new FakeRepositoryPortV02(new FakeRepositoryPort({
-    statePort: repositoryJournal.statePort,
-    executorIdentity: repositoryJournal.executor,
-  }));
+  const repositoryWithJournal = new FakeRepositoryPortV02(
+    new FakeRepositoryPort({
+      statePort: repositoryJournal.statePort,
+      executorIdentity: repositoryJournal.executor,
+    }),
+  );
   const repositoryOutcome = await repositoryWithJournal.applyPatch(patch, repositoryContext);
   const repositoryCall = repositoryWithJournal.v02Calls[0];
   assert.ok(repositoryCall);
@@ -1561,11 +1612,13 @@ test('ScriptedApprovalPortV02 requires scripted current authority and never inve
 
   const context = createFixtureRepositoryAdmissionContextV02({ action, policyAuthorityRef: authority });
   const evaluation = createCurrentPolicyEvaluation(action, context, authority, 'FORBIDDEN');
-  const forbidden = new ScriptedApprovalPortV02(new ScriptedApprovalPort({
-    v02AuthorityRef: authority,
-    v02Evaluations: [evaluation],
-    v02Decisions: [createCurrentDecision(evaluation)],
-  }));
+  const forbidden = new ScriptedApprovalPortV02(
+    new ScriptedApprovalPort({
+      v02AuthorityRef: authority,
+      v02Evaluations: [evaluation],
+      v02Decisions: [createCurrentDecision(evaluation)],
+    }),
+  );
   const returnedEvaluation = await forbidden.evaluatePolicyV02(action, context);
   assert.strictEqual(returnedEvaluation, evaluation);
   assert.equal(evaluation.result, 'FORBIDDEN');
@@ -1603,15 +1656,21 @@ test('ScriptedApprovalPortV02 does not accept caller authority without configure
   const request = createFixtureProviderRequest({ providerRequestId: 'req-provider-authority-unconfigured-095' });
   const authority = createFixturePolicyAuthorityRefV02({ configId: request.configId });
   const action: RunCommandAction = {
-    actionId: 'approval-authority-unconfigured', kind: 'run_command', executable: 'pytest', argv: [], workingDirectory: 'tests',
+    actionId: 'approval-authority-unconfigured',
+    kind: 'run_command',
+    executable: 'pytest',
+    argv: [],
+    workingDirectory: 'tests',
   };
   const context = createFixtureRepositoryAdmissionContextV02({ action, policyAuthorityRef: authority });
   const evaluation = createCurrentPolicyEvaluation(action, context, authority, 'APPROVAL_REQUIRED');
   const decision = createCurrentDecision(evaluation);
-  const port = new ScriptedApprovalPortV02(new ScriptedApprovalPort({
-    v02Evaluations: [evaluation],
-    v02Decisions: [decision],
-  }));
+  const port = new ScriptedApprovalPortV02(
+    new ScriptedApprovalPort({
+      v02Evaluations: [evaluation],
+      v02Decisions: [decision],
+    }),
+  );
 
   await assert.rejects(port.issueProviderAdmissionReceiptV02(request, authority), /MISSING_CURRENT_AUTHORITY/);
   assert.equal(await port.validateBindingV02(evaluation, authority), false);
@@ -1746,15 +1805,17 @@ for (const status of ['recorded-unsettled', 'already-recorded', 'uncertain', 'fo
   for (const kind of ['patch', 'command'] as const) {
     test(`Fake repository ${kind} refuses settled success on ${status} without retry`, async () => {
       const underlying = new FakeRepositoryPort({ commandResults: { default: { exitCode: 0, stdout: 'ok', stderr: '' } } });
-      const action: ApplyPatchAction | RunCommandAction = kind === 'patch'
-        ? { actionId: `patch-${status}`, kind: 'apply_patch', patchContent: '+once', targetPaths: ['src/calculator.py'], baseRevisionDigest: underlying.currentRevision }
-        : { actionId: `command-${status}`, kind: 'run_command', executable: 'pytest', argv: [], workingDirectory: 'tests' };
-      const context = action.kind === 'apply_patch'
-        ? createFixtureRepositoryAdmissionContextV02({ action, canonicalRevision: underlying.currentRevision })
-        : createFixtureRepositoryCommandAdmissionContextV02({ action, canonicalRevision: underlying.currentRevision });
+      const action: ApplyPatchAction | RunCommandAction =
+        kind === 'patch'
+          ? { actionId: `patch-${status}`, kind: 'apply_patch', patchContent: '+once', targetPaths: ['src/calculator.py'], baseRevisionDigest: underlying.currentRevision }
+          : { actionId: `command-${status}`, kind: 'run_command', executable: 'pytest', argv: [], workingDirectory: 'tests' };
+      const context =
+        action.kind === 'apply_patch'
+          ? createFixtureRepositoryAdmissionContextV02({ action, canonicalRevision: underlying.currentRevision })
+          : createFixtureRepositoryCommandAdmissionContextV02({ action, canonicalRevision: underlying.currentRevision });
       const journal = createRecordingJournal(context, `${kind}-${status}`);
       let records = 0;
-      journal.statePort.recordOutcome = async (receipt) => {
+      journal.statePort.recordOutcome = async receipt => {
         records++;
         if (status === 'lost-response') throw new Error('lost settlement response');
         return { outcome: status === 'foreign-id' ? 'settled' : status, receiptId: status === 'foreign-id' ? 'foreign' : receipt.receiptId };
@@ -1762,7 +1823,7 @@ for (const status of ['recorded-unsettled', 'already-recorded', 'uncertain', 'fo
       underlying.setStatePort(journal.statePort);
       underlying.setExecutorIdentity(journal.executor);
       const port = new FakeRepositoryPortV02(underlying);
-      await assert.rejects(() => action.kind === 'apply_patch' ? port.applyPatch(action, context) : port.runCommand(action, context));
+      await assert.rejects(() => (action.kind === 'apply_patch' ? port.applyPatch(action, context) : port.runCommand(action, context)));
       assert.equal(journal.statePort.claimCalls.length, 1);
       assert.equal(journal.statePort.beginCalls.length, 1);
       assert.equal(records, 1);

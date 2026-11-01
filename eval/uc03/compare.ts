@@ -10,9 +10,7 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import {
-  validateEvaluationReport,
-} from './validation.ts';
+import { validateEvaluationReport } from './validation.ts';
 import type { CaseStatus, EvaluationMode } from './types.ts';
 
 export interface CaseDelta {
@@ -57,10 +55,7 @@ export interface CompareOptions {
   readonly outputPath?: string | undefined;
 }
 
-export function compareEvaluations(
-  baseline: unknown,
-  candidate: unknown,
-): ComparisonReport {
+export function compareEvaluations(baseline: unknown, candidate: unknown): ComparisonReport {
   const validBaseline = validateEvaluationReport(baseline);
   const validCandidate = validateEvaluationReport(candidate);
 
@@ -82,20 +77,16 @@ export function compareEvaluations(
       !candidateCase ||
       baseCase.caseId !== candidateCase.caseId ||
       baseCase.expectedOutcome !== candidateCase.expectedOutcome ||
-      (baseCase.taskId !== null &&
-        candidateCase.taskId !== null &&
-        baseCase.taskId !== candidateCase.taskId)
+      (baseCase.taskId !== null && candidateCase.taskId !== null && baseCase.taskId !== candidateCase.taskId)
     ) {
       throw new Error('Incomparable evaluation reports');
     }
   }
 
-  const baselineCaseMap = new Map(validBaseline.cases.map((c) => [c.caseId, c]));
-  const candidateCaseMap = new Map(validCandidate.cases.map((c) => [c.caseId, c]));
+  const baselineCaseMap = new Map(validBaseline.cases.map(c => [c.caseId, c]));
+  const candidateCaseMap = new Map(validCandidate.cases.map(c => [c.caseId, c]));
 
-  const allCaseIds = Array.from(
-    new Set([...baselineCaseMap.keys(), ...candidateCaseMap.keys()])
-  ).sort();
+  const allCaseIds = Array.from(new Set([...baselineCaseMap.keys(), ...candidateCaseMap.keys()])).sort();
 
   const caseDeltas: CaseDelta[] = [];
   let totalCommon = 0;
@@ -135,15 +126,9 @@ export function compareEvaluations(
       }
     }
 
-    const durationDeltaMs =
-      (candCase ? candCase.timing.durationMs : 0) -
-      (baseCase ? baseCase.timing.durationMs : 0);
-    const tokensDelta =
-      (candCase ? candCase.usage.tokensConsumed : 0) -
-      (baseCase ? baseCase.usage.tokensConsumed : 0);
-    const costDeltaUsd =
-      (candCase ? candCase.usage.costUsd : 0) -
-      (baseCase ? baseCase.usage.costUsd : 0);
+    const durationDeltaMs = (candCase ? candCase.timing.durationMs : 0) - (baseCase ? baseCase.timing.durationMs : 0);
+    const tokensDelta = (candCase ? candCase.usage.tokensConsumed : 0) - (baseCase ? baseCase.usage.tokensConsumed : 0);
+    const costDeltaUsd = (candCase ? candCase.usage.costUsd : 0) - (baseCase ? baseCase.usage.costUsd : 0);
 
     caseDeltas.push({
       caseId,
@@ -156,14 +141,10 @@ export function compareEvaluations(
     });
   }
 
-  const durationDeltaMs =
-    validCandidate.summary.totalDurationMs - validBaseline.summary.totalDurationMs;
-  const tokensDelta =
-    validCandidate.summary.totalTokensConsumed - validBaseline.summary.totalTokensConsumed;
-  const costDeltaUsd =
-    validCandidate.summary.totalCostUsd - validBaseline.summary.totalCostUsd;
-  const successRateDelta =
-    validCandidate.summary.successRate - validBaseline.summary.successRate;
+  const durationDeltaMs = validCandidate.summary.totalDurationMs - validBaseline.summary.totalDurationMs;
+  const tokensDelta = validCandidate.summary.totalTokensConsumed - validBaseline.summary.totalTokensConsumed;
+  const costDeltaUsd = validCandidate.summary.totalCostUsd - validBaseline.summary.totalCostUsd;
+  const successRateDelta = validCandidate.summary.successRate - validBaseline.summary.successRate;
 
   let verdict: ComparisonReport['verdict'] = 'IDENTICAL';
   let exitCode: 0 | 1 = 0;
@@ -203,10 +184,7 @@ export function compareEvaluations(
       costDeltaUsd,
       successRateDelta,
     },
-    limitations: [
-      'Comparison summarizes recorded statuses and metrics; it does not establish workflow evidence.',
-      'Reports missing any required C01-C17 case are rejected.',
-    ],
+    limitations: ['Comparison summarizes recorded statuses and metrics; it does not establish workflow evidence.', 'Reports missing any required C01-C17 case are rejected.'],
   };
 }
 
@@ -268,9 +246,7 @@ export async function main(): Promise<void> {
     });
 
     console.log(`UC-03 Comparison: Verdict = ${comparison.verdict}, ExitCode = ${comparison.exitCode}`);
-    console.log(
-      `Summary: ${comparison.summary.totalCommon} common, ${comparison.summary.regressionsCount} regressions, ${comparison.summary.improvementsCount} improvements`
-    );
+    console.log(`Summary: ${comparison.summary.totalCommon} common, ${comparison.summary.regressionsCount} regressions, ${comparison.summary.improvementsCount} improvements`);
     process.exitCode = comparison.exitCode;
   } catch {
     console.error('UC-03 comparison refused: invalid or incomparable report inputs.');

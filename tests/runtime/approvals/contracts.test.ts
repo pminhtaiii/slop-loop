@@ -147,14 +147,16 @@ const validPolicyProfile = {
   profileVersion: '1.0.0',
   policyIdentity,
   supportedActionKinds: ['run_command', 'apply_patch', 'approve_fix_plan'],
-  commandRules: [{
-    ruleId: 'pytest-focused',
-    executableRef: 'pytest',
-    argvPrefix: ['-q', 'tests/'],
-    workingDirectoryRef: 'repository-root',
-    timeoutMs: 2000,
-    maxOutputBytes: 8192,
-  }],
+  commandRules: [
+    {
+      ruleId: 'pytest-focused',
+      executableRef: 'pytest',
+      argvPrefix: ['-q', 'tests/'],
+      workingDirectoryRef: 'repository-root',
+      timeoutMs: 2000,
+      maxOutputBytes: 8192,
+    },
+  ],
   sensitivePaths: ['.github/workflows/ci.yml', 'pyproject.toml'],
   patchBreadth: { maxFiles: 8, maxAddedDeletedLines: 400 },
   maxActionBytes: 65536,
@@ -212,12 +214,15 @@ const validSafeResult = {
 
 test('ApprovalTaskControl validator accepts a complete current-version record', () => {
   assert.equal(validateApprovalTaskControl(validTaskControl).ok, true);
-  assert.equal(validateApprovalTaskControl({
-    ...validTaskControl,
-    mode: 'recovery-blocked',
-    pendingDecisionId: 'decision-1',
-    continuationRef: 'continuation-1',
-  }).ok, true);
+  assert.equal(
+    validateApprovalTaskControl({
+      ...validTaskControl,
+      mode: 'recovery-blocked',
+      pendingDecisionId: 'decision-1',
+      continuationRef: 'continuation-1',
+    }).ok,
+    true,
+  );
 });
 
 test('ApprovalTaskControl validator fails closed on unknown keys, incompatible versions, malformed bounds, or impossible states', () => {
@@ -277,7 +282,10 @@ test('BindingAssessment validator requires complete matching task, epoch, and tr
     [{ ...validAssessment, checkedTaskVersion: 4 }, assessmentContext],
     [{ ...validAssessment, trustedContextDigest: `sha256:${'f'.repeat(64)}` }, assessmentContext],
     [{ ...validAssessment, status: 'stale', reasonCodes: [] }, assessmentContext],
-    [{ ...validAssessment, reasonCodes: ['repo-changed'], status: 'stale' }, { ...assessmentContext, expectedEpoch: 3 }],
+    [
+      { ...validAssessment, reasonCodes: ['repo-changed'], status: 'stale' },
+      { ...assessmentContext, expectedEpoch: 3 },
+    ],
     [{ ...validAssessment, extraAuthority: true }, assessmentContext],
     [validAssessment, { ...assessmentContext, extraAuthority: true }],
   ];
@@ -383,22 +391,13 @@ test('SafeResult envelope cannot encode authority, unbounded versions, or raw di
  * UC-05 v0.2.0 Receipt Tests (T043 RED / T044 GREEN)
  * ========================================================================= */
 
-function redigestRecord(
-  value: object,
-  digestProperty: string,
-  computeDigest: (receipt: unknown) => string,
-): Record<string, unknown> {
+function redigestRecord(value: object, digestProperty: string, computeDigest: (receipt: unknown) => string): Record<string, unknown> {
   const candidate: Record<string, unknown> = { ...value };
   candidate[digestProperty] = computeDigest(candidate);
   return candidate;
 }
 
-function omitAndRedigestRecord(
-  value: object,
-  omittedProperty: string,
-  digestProperty: string,
-  computeDigest: (receipt: unknown) => string,
-): Record<string, unknown> {
+function omitAndRedigestRecord(value: object, omittedProperty: string, digestProperty: string, computeDigest: (receipt: unknown) => string): Record<string, unknown> {
   const source: Record<string, unknown> = { ...value };
   const { [omittedProperty]: omitted, ...candidate } = source;
   void omitted;
@@ -487,18 +486,26 @@ const validProviderAdmissionReceiptReviewer = {
   receiptDigest: computeProviderAdmissionReceiptDigest(provReviewerBase),
 };
 
-const validProviderAdmissionReceiptCoderPrePlan = redigestRecord({
-  ...provCoderCommon,
-  planApplicability: 'pre-plan-diagnostic',
-  diagnosticPurpose: 'baseline_investigation',
-  taskCriteriaDigest: `sha256:${'6'.repeat(64)}`,
-}, 'receiptDigest', computeProviderAdmissionReceiptDigest);
-const validProviderAdmissionReceiptReviewerApprovedPlan = redigestRecord({
-  ...provReviewerCommon,
-  planApplicability: 'approved-plan',
-  planBindingDigest: `sha256:${'4'.repeat(64)}`,
-  planDecisionRef: 'dec-plan-001',
-}, 'receiptDigest', computeProviderAdmissionReceiptDigest);
+const validProviderAdmissionReceiptCoderPrePlan = redigestRecord(
+  {
+    ...provCoderCommon,
+    planApplicability: 'pre-plan-diagnostic',
+    diagnosticPurpose: 'baseline_investigation',
+    taskCriteriaDigest: `sha256:${'6'.repeat(64)}`,
+  },
+  'receiptDigest',
+  computeProviderAdmissionReceiptDigest,
+);
+const validProviderAdmissionReceiptReviewerApprovedPlan = redigestRecord(
+  {
+    ...provReviewerCommon,
+    planApplicability: 'approved-plan',
+    planBindingDigest: `sha256:${'4'.repeat(64)}`,
+    planDecisionRef: 'dec-plan-001',
+  },
+  'receiptDigest',
+  computeProviderAdmissionReceiptDigest,
+);
 
 const closureBase = {
   schemaVersion: UC05_APPROVAL_SCHEMA_VERSION_V02,
@@ -616,18 +623,10 @@ test('v0.2 PolicyEvaluationReceipt validator accepts valid record', () => {
 });
 
 test('v0.2 receipt validators require their explicit schema version even with a recomputed digest', () => {
-  assert.equal(validatePolicyEvaluationReceipt(omitAndRedigestRecord(
-    validPolicyEvaluationReceipt, 'schemaVersion', 'receiptDigest', computePolicyEvaluationReceiptDigest,
-  )).ok, false);
-  assert.equal(validateActionDecisionReceipt(omitAndRedigestRecord(
-    validActionDecisionReceipt, 'schemaVersion', 'decisionDigest', computeActionDecisionReceiptDigest,
-  )).ok, false);
-  assert.equal(validateProviderAdmissionReceipt(omitAndRedigestRecord(
-    validProviderAdmissionReceiptCoder, 'schemaVersion', 'receiptDigest', computeProviderAdmissionReceiptDigest,
-  )).ok, false);
-  assert.equal(validateClaimClosureReceipt(omitAndRedigestRecord(
-    validClaimClosureReceipt, 'schemaVersion', 'receiptDigest', computeClaimClosureReceiptDigest,
-  )).ok, false);
+  assert.equal(validatePolicyEvaluationReceipt(omitAndRedigestRecord(validPolicyEvaluationReceipt, 'schemaVersion', 'receiptDigest', computePolicyEvaluationReceiptDigest)).ok, false);
+  assert.equal(validateActionDecisionReceipt(omitAndRedigestRecord(validActionDecisionReceipt, 'schemaVersion', 'decisionDigest', computeActionDecisionReceiptDigest)).ok, false);
+  assert.equal(validateProviderAdmissionReceipt(omitAndRedigestRecord(validProviderAdmissionReceiptCoder, 'schemaVersion', 'receiptDigest', computeProviderAdmissionReceiptDigest)).ok, false);
+  assert.equal(validateClaimClosureReceipt(omitAndRedigestRecord(validClaimClosureReceipt, 'schemaVersion', 'receiptDigest', computeClaimClosureReceiptDigest)).ok, false);
 });
 
 test('v0.2 PolicyEvaluationReceipt validator rejects unknown keys, cross-branch fields, and digest mismatch', () => {
@@ -672,30 +671,19 @@ test('v0.2 ProviderAdmissionReceipt accepts both roles on both explicit plan bra
 });
 
 test('v0.2 ProviderAdmissionReceipt requires and digest-binds policy identity on both branches', () => {
-  const receipts = [
-    validProviderAdmissionReceiptCoder,
-    validProviderAdmissionReceiptReviewer,
-    validProviderAdmissionReceiptCoderPrePlan,
-    validProviderAdmissionReceiptReviewerApprovedPlan,
-  ];
+  const receipts = [validProviderAdmissionReceiptCoder, validProviderAdmissionReceiptReviewer, validProviderAdmissionReceiptCoderPrePlan, validProviderAdmissionReceiptReviewerApprovedPlan];
   for (const receipt of receipts) {
     for (const field of ['policyId', 'policyVersion'] as const) {
-      assert.equal(validateProviderAdmissionReceipt(omitAndRedigestRecord(
-        receipt, field, 'receiptDigest', computeProviderAdmissionReceiptDigest,
-      )).ok, false, `${field} is required`);
-      const malformed = field === 'policyId'
-        ? { ...receipt, policyId: '' }
-        : { ...receipt, policyVersion: '' };
-      assert.equal(validateProviderAdmissionReceipt(redigestRecord(
-        malformed, 'receiptDigest', computeProviderAdmissionReceiptDigest,
-      )).ok, false, `${field} must be a valid identifier`);
-      const changed = field === 'policyId'
-        ? { ...receipt, policyId: 'policy-2' }
-        : { ...receipt, policyVersion: '2.0.0' };
+      assert.equal(validateProviderAdmissionReceipt(omitAndRedigestRecord(receipt, field, 'receiptDigest', computeProviderAdmissionReceiptDigest)).ok, false, `${field} is required`);
+      const malformed = field === 'policyId' ? { ...receipt, policyId: '' } : { ...receipt, policyVersion: '' };
+      assert.equal(validateProviderAdmissionReceipt(redigestRecord(malformed, 'receiptDigest', computeProviderAdmissionReceiptDigest)).ok, false, `${field} must be a valid identifier`);
+      const changed = field === 'policyId' ? { ...receipt, policyId: 'policy-2' } : { ...receipt, policyVersion: '2.0.0' };
       assert.equal(validateProviderAdmissionReceipt(changed).ok, false, `${field} is digest-bound`);
-      assert.equal(validateProviderAdmissionReceipt(redigestRecord(
-        changed, 'receiptDigest', computeProviderAdmissionReceiptDigest,
-      )).ok, true, `${field} changes are valid when their digest is recomputed`);
+      assert.equal(
+        validateProviderAdmissionReceipt(redigestRecord(changed, 'receiptDigest', computeProviderAdmissionReceiptDigest)).ok,
+        true,
+        `${field} changes are valid when their digest is recomputed`,
+      );
     }
   }
 });
@@ -746,10 +734,18 @@ test('v0.2 ClaimClosureReceipt binds claim versions, current pause evidence, no-
     omitAndRedigestRecord(validClaimClosureReceipt, 'pauseOrDenialEvent', 'receiptDigest', computeClaimClosureReceiptDigest),
     omitAndRedigestRecord(validClaimClosureReceipt, 'noAttemptProof', 'receiptDigest', computeClaimClosureReceiptDigest),
     omitAndRedigestRecord(validClaimClosureReceipt, 'reservationDispositions', 'receiptDigest', computeClaimClosureReceiptDigest),
-    redigestRecord({ ...validClaimClosureReceipt, pauseOrDenialEvent: { eventKind: 'pause', eventDigest: closureBase.pauseOrDenialEvent.eventDigest } }, 'receiptDigest', computeClaimClosureReceiptDigest),
+    redigestRecord(
+      { ...validClaimClosureReceipt, pauseOrDenialEvent: { eventKind: 'pause', eventDigest: closureBase.pauseOrDenialEvent.eventDigest } },
+      'receiptDigest',
+      computeClaimClosureReceiptDigest,
+    ),
     redigestRecord({ ...validClaimClosureReceipt, pauseOrDenialEvent: { eventKind: 'pause', eventRef: closureBase.pauseOrDenialEvent.eventRef } }, 'receiptDigest', computeClaimClosureReceiptDigest),
     redigestRecord({ ...validClaimClosureReceipt, noAttemptProof: { journalRef: closureBase.noAttemptProof.journalRef, claimPhase: 'claimed' } }, 'receiptDigest', computeClaimClosureReceiptDigest),
-    redigestRecord({ ...validClaimClosureReceipt, noAttemptProof: { journalDigest: closureBase.noAttemptProof.journalDigest, claimPhase: 'claimed' } }, 'receiptDigest', computeClaimClosureReceiptDigest),
+    redigestRecord(
+      { ...validClaimClosureReceipt, noAttemptProof: { journalDigest: closureBase.noAttemptProof.journalDigest, claimPhase: 'claimed' } },
+      'receiptDigest',
+      computeClaimClosureReceiptDigest,
+    ),
     redigestRecord({ ...validClaimClosureReceipt, reservationDispositions: [{ disposition: 'released' }] }, 'receiptDigest', computeClaimClosureReceiptDigest),
     redigestRecord({ ...validClaimClosureReceipt, reservationDispositions: [{ reservationRef: 'res-repair-1' }] }, 'receiptDigest', computeClaimClosureReceiptDigest),
     redigestRecord({ ...validClaimClosureReceipt, reservationDispositions: [{ reservationRef: 'res-repair-1', disposition: 'retained' }] }, 'receiptDigest', computeClaimClosureReceiptDigest),
@@ -775,11 +771,7 @@ test('v0.2 ClaimClosureReceipt validator rejects attemptId, cross-branch fields,
   }
 });
 
-function assertTypedReceiptRejection(
-  validate: (input: unknown) => { ok: boolean; errors?: readonly unknown[] },
-  input: unknown,
-  context: string,
-): void {
+function assertTypedReceiptRejection(validate: (input: unknown) => { ok: boolean; errors?: readonly unknown[] }, input: unknown, context: string): void {
   let result: { ok: boolean; errors?: readonly unknown[] } | undefined;
   assert.doesNotThrow(() => {
     result = validate(input);
@@ -820,25 +812,34 @@ for (const [name, validate, receipt] of v02ReceiptValidators) {
 }
 
 const claimClosureNestedCandidates = [
-  ['fencedExecutorIdentity.adapterIdentity', (value: unknown) => ({
-    ...validClaimClosureReceipt,
-    fencedExecutorIdentity: { ...validClaimClosureReceipt.fencedExecutorIdentity, adapterIdentity: value },
-  })],
-  ['pauseOrDenialEvent.eventKind', (value: unknown) => ({
-    ...validClaimClosureReceipt,
-    pauseOrDenialEvent: { ...validClaimClosureReceipt.pauseOrDenialEvent, eventKind: value },
-  })],
-  ['noAttemptProof.journalRef', (value: unknown) => ({
-    ...validClaimClosureReceipt,
-    noAttemptProof: { ...validClaimClosureReceipt.noAttemptProof, journalRef: value },
-  })],
-  ['reservationDispositions[0].reservationRef', (value: unknown) => ({
-    ...validClaimClosureReceipt,
-    reservationDispositions: [
-      { ...validClaimClosureReceipt.reservationDispositions[0], reservationRef: value },
-      ...validClaimClosureReceipt.reservationDispositions.slice(1),
-    ],
-  })],
+  [
+    'fencedExecutorIdentity.adapterIdentity',
+    (value: unknown) => ({
+      ...validClaimClosureReceipt,
+      fencedExecutorIdentity: { ...validClaimClosureReceipt.fencedExecutorIdentity, adapterIdentity: value },
+    }),
+  ],
+  [
+    'pauseOrDenialEvent.eventKind',
+    (value: unknown) => ({
+      ...validClaimClosureReceipt,
+      pauseOrDenialEvent: { ...validClaimClosureReceipt.pauseOrDenialEvent, eventKind: value },
+    }),
+  ],
+  [
+    'noAttemptProof.journalRef',
+    (value: unknown) => ({
+      ...validClaimClosureReceipt,
+      noAttemptProof: { ...validClaimClosureReceipt.noAttemptProof, journalRef: value },
+    }),
+  ],
+  [
+    'reservationDispositions[0].reservationRef',
+    (value: unknown) => ({
+      ...validClaimClosureReceipt,
+      reservationDispositions: [{ ...validClaimClosureReceipt.reservationDispositions[0], reservationRef: value }, ...validClaimClosureReceipt.reservationDispositions.slice(1)],
+    }),
+  ],
 ] as const;
 
 for (const [path, makeCandidate] of claimClosureNestedCandidates) {

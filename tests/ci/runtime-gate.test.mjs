@@ -10,7 +10,9 @@ function harness({ platform = 'linux', status = 0, error } = {}) {
     effects.push({ type: 'spawn', command, args, options });
     return { status: error ? null : status, ...(error ? { error } : {}) };
   };
-  const remove = (path, options) => { effects.push({ type: 'remove', path, options }); };
+  const remove = (path, options) => {
+    effects.push({ type: 'remove', path, options });
+  };
   return { effects, spawn, remove, platform };
 }
 
@@ -19,7 +21,7 @@ function run(options = {}) {
   let thrown;
   const logged = [];
   try {
-    runGate({ argv: options.argv ?? [], root, platform: h.platform, spawn: h.spawn, remove: h.remove, log: (line) => logged.push(line) });
+    runGate({ argv: options.argv ?? [], root, platform: h.platform, spawn: h.spawn, remove: h.remove, log: line => logged.push(line) });
   } catch (error) {
     thrown = error;
   }
@@ -32,7 +34,15 @@ test('the default mode keeps the complete clean runtime gate in order', () => {
   assert.deepEqual([...FULL_STEPS], ['typecheck', 'lint', 'build', 'test:runtime']);
   assert.equal(result.effects[0].type, 'remove', 'dist is cleaned before anything runs');
   const spawned = result.effects.slice(1);
-  assert.deepEqual(spawned.map((effect) => [effect.command, effect.args]), [['pnpm', ['run', 'typecheck']], ['pnpm', ['run', 'lint']], ['pnpm', ['run', 'build']], ['pnpm', ['run', 'test:runtime']]]);
+  assert.deepEqual(
+    spawned.map(effect => [effect.command, effect.args]),
+    [
+      ['pnpm', ['run', 'typecheck']],
+      ['pnpm', ['run', 'lint']],
+      ['pnpm', ['run', 'build']],
+      ['pnpm', ['run', 'test:runtime']],
+    ],
+  );
   assert.deepEqual(result.logged, ['Runtime gate: typecheck', 'Runtime gate: lint', 'Runtime gate: build', 'Runtime gate: test:runtime']);
   assert.equal(result.effects.length, 5);
 });
@@ -43,7 +53,7 @@ test('clean-build-only removes stale output and builds without other gates', () 
   assert.deepEqual([...CLEAN_BUILD_STEPS], ['build']);
   assert.equal(result.effects[0].type, 'remove');
   assert.match(result.effects[0].path, /[\\/]dist$/);
-  assert.equal(result.effects.filter((effect) => effect.type === 'spawn').length, 1);
+  assert.equal(result.effects.filter(effect => effect.type === 'spawn').length, 1);
   assert.deepEqual(result.effects[1].args, ['run', 'build']);
   assert.deepEqual(result.logged, ['Runtime gate: build']);
 });

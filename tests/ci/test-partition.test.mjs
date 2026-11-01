@@ -23,10 +23,10 @@ test('contributor selection includes each helper test and excludes runtime sourc
 });
 
 test('runtime selection requires one emitted test for each source test', () => {
-  assert.deepEqual(runtimeTestFiles(
-    ['tests/runtime/unit/telemetry.test.ts', 'tests/runtime/approvals/cli.test.ts'],
-    ['dist/tests/runtime/unit/telemetry.test.js', 'dist/tests/runtime/approvals/cli.test.js'],
-  ), ['dist/tests/runtime/approvals/cli.test.js', 'dist/tests/runtime/unit/telemetry.test.js']);
+  assert.deepEqual(
+    runtimeTestFiles(['tests/runtime/unit/telemetry.test.ts', 'tests/runtime/approvals/cli.test.ts'], ['dist/tests/runtime/unit/telemetry.test.js', 'dist/tests/runtime/approvals/cli.test.js']),
+    ['dist/tests/runtime/approvals/cli.test.js', 'dist/tests/runtime/unit/telemetry.test.js'],
+  );
 
   assert.throws(() => runtimeTestFiles(['tests/runtime/one.test.ts'], []), /missing emitted/);
   assert.throws(() => runtimeTestFiles([], ['dist/tests/runtime/orphan.test.js']), /unexpected emitted/);
@@ -51,9 +51,17 @@ test('missing, orphan and duplicate emission inside a lane are all refused', () 
 test('contributor and runtime inventories are disjoint and deliberately repeat across OS lanes only', () => {
   const contributor = contributorTestFiles(root);
   const runtimeSources = globSync('tests/runtime/**/*.test.*', { cwd: root }).map(normalize).sort();
-  assert.equal(contributor.some(file => file.startsWith('tests/runtime/')), false, 'no runtime test enters the contributor lane');
+  assert.equal(
+    contributor.some(file => file.startsWith('tests/runtime/')),
+    false,
+    'no runtime test enters the contributor lane',
+  );
   assert.ok(runtimeSources.length > 0);
-  assert.equal(runtimeSources.some(file => contributor.includes(file)), false, 'the two lanes never overlap');
+  assert.equal(
+    runtimeSources.some(file => contributor.includes(file)),
+    false,
+    'the two lanes never overlap',
+  );
 
   // The transition deliberately runs each OS lane twice (old job + new lane); that duplication is
   // counted separately and never used to claim exactly-once outside a canonical lane.
@@ -74,8 +82,9 @@ test('contributor runner executes through a symlink, propagates failures and sta
   }
   const entry = resolve(scripts, 'run-contributor-tests.mjs');
   const alias = resolve(fixture, 'runner-link.mjs');
-  try { await symlink(entry, alias, 'file'); }
-  catch (error) {
+  try {
+    await symlink(entry, alias, 'file');
+  } catch (error) {
     if (process.platform === 'win32' && ['EPERM', 'EACCES'].includes(error.code)) return t.skip('File symlinks unavailable.');
     throw error;
   }
@@ -121,7 +130,11 @@ test('a lane leaves machine-readable results and elapsed diagnostics on pass and
     ]) {
       const result = spawnSync(process.execPath, [resolve(scripts, entry)], { cwd: fixture, encoding: 'utf8', windowsHide: true, env: { ...base, TEST_RESULTS_FILE: results } });
       assert.equal(result.status, fail ? 1 : 0, `${lane} ${fail ? 'propagates' : 'passes'}: ${result.stderr}`);
-      assert.match(result.stdout, new RegExp(`${lane === 'contributor' ? 'Contributor' : 'Runtime'} lane: 1 (?:emitted )?test file\\(s\\) in \\d+ms; results in ${results}`), `${lane} reports elapsed time and where results went`);
+      assert.match(
+        result.stdout,
+        new RegExp(`${lane === 'contributor' ? 'Contributor' : 'Runtime'} lane: 1 (?:emitted )?test file\\(s\\) in \\d+ms; results in ${results}`),
+        `${lane} reports elapsed time and where results went`,
+      );
       const report = readFileSync(join(fixture, results), 'utf8');
       assert.match(report, /<testsuite/, `${lane} wrote machine-readable results`);
       assert.match(report, /<testcase/, `${lane} recorded the test case`);

@@ -2,8 +2,9 @@ import { lstat, realpath } from 'node:fs/promises';
 import { parse, resolve, sep } from 'node:path';
 
 async function directoryStat(path, label) {
-  try { return await lstat(path); }
-  catch (error) {
+  try {
+    return await lstat(path);
+  } catch (error) {
     if (error.code === 'ENOENT') throw new Error(`${label} does not exist.`, { cause: error });
     throw error;
   }

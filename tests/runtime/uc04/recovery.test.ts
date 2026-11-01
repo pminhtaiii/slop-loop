@@ -5,19 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { DurableStore } from '../../../src/persistence/store.ts';
-import {
-  StepStateMachine,
-  WorkspaceDriftError,
-  DependencyNotMetError,
-  reconcileAndResume,
-  captureWorkspaceBaseline,
-} from '../../../src/persistence/recovery.ts';
-import {
-  UC04_SCHEMA_VERSION,
-  type TaskState,
-  type WorkspaceBaseline,
-  type VerificationRecord,
-} from '../../../src/persistence/contracts.ts';
+import { StepStateMachine, WorkspaceDriftError, DependencyNotMetError, reconcileAndResume, captureWorkspaceBaseline } from '../../../src/persistence/recovery.ts';
+import { UC04_SCHEMA_VERSION, type TaskState, type WorkspaceBaseline, type VerificationRecord } from '../../../src/persistence/contracts.ts';
 
 describe('UC-04: StepStateMachine & Recovery Reconciliation', () => {
   let tempDir: string;
@@ -117,9 +106,7 @@ describe('UC-04: StepStateMachine & Recovery Reconciliation', () => {
 
   const allDoneTask: TaskState = {
     ...finalStepTask,
-    plan: finalStepTask.plan.map((s) =>
-      s.id === 'c' ? { ...s, status: 'done' as const, evidenceRefs: ['changed:c'] } : s
-    ),
+    plan: finalStepTask.plan.map(s => (s.id === 'c' ? { ...s, status: 'done' as const, evidenceRefs: ['changed:c'] } : s)),
   };
 
   const verified: VerificationRecord = {
@@ -151,31 +138,29 @@ describe('UC-04: StepStateMachine & Recovery Reconciliation', () => {
     it('rejects starting step if predecessor is not done', () => {
       assert.throws(
         () => machine.startStep(sampleTask, 'step-3'),
-        (err: unknown) => err instanceof DependencyNotMetError && (err as DependencyNotMetError).missingPredecessors.includes('step-2')
+        (err: unknown) => err instanceof DependencyNotMetError && (err as DependencyNotMetError).missingPredecessors.includes('step-2'),
       );
     });
 
     it('refuses a dependent when the done predecessor has no evidence', () => {
       const unevidenced: TaskState = {
         ...sampleTask,
-        plan: sampleTask.plan.map((s) => (s.id === 'step-1' ? { ...s, evidenceRefs: undefined } : s)),
+        plan: sampleTask.plan.map(s => (s.id === 'step-1' ? { ...s, evidenceRefs: undefined } : s)),
       };
       assert.throws(
         () => machine.startStep(unevidenced, 'step-2'),
-        (err: unknown) => err instanceof DependencyNotMetError && (err as DependencyNotMetError).missingPredecessors.includes('step-1')
+        (err: unknown) => err instanceof DependencyNotMetError && (err as DependencyNotMetError).missingPredecessors.includes('step-1'),
       );
     });
 
     it('refuses a dependent when the predecessor omits a required evidence id', () => {
       const incomplete: TaskState = {
         ...sampleTask,
-        plan: sampleTask.plan.map((s) =>
-          s.id === 'step-1' ? { ...s, evidenceRefs: ['changed:file1.ts'], requiredEvidenceRefs: ['tests:unit'] } : s
-        ),
+        plan: sampleTask.plan.map(s => (s.id === 'step-1' ? { ...s, evidenceRefs: ['changed:file1.ts'], requiredEvidenceRefs: ['tests:unit'] } : s)),
       };
       assert.throws(
         () => machine.startStep(incomplete, 'step-2'),
-        (err: unknown) => err instanceof DependencyNotMetError && (err as DependencyNotMetError).missingPredecessors.includes('step-1')
+        (err: unknown) => err instanceof DependencyNotMetError && (err as DependencyNotMetError).missingPredecessors.includes('step-1'),
       );
     });
 
@@ -196,7 +181,10 @@ describe('UC-04: StepStateMachine & Recovery Reconciliation', () => {
       const machine2 = new StepStateMachine();
       let state = machine2.startStep(finalStepTask, 'c');
       state = machine.completeStep(state, 'c', { evidenceRefs: ['changed:c'] });
-      assert.equal(state.plan.every((s) => s.status === 'done'), true);
+      assert.equal(
+        state.plan.every(s => s.status === 'done'),
+        true,
+      );
       assert.notEqual(state.status, 'completed');
       assert.match(state.nextAction, /verification/i);
     });
@@ -216,7 +204,7 @@ describe('UC-04: StepStateMachine & Recovery Reconciliation', () => {
 
       assert.equal(failed.plan[1]?.status, 'failed');
       assert.equal(failed.status, 'failed');
-      assert.ok(failed.openRisks.some((r) => r.includes('Compilation failed')));
+      assert.ok(failed.openRisks.some(r => r.includes('Compilation failed')));
     });
   });
 
@@ -274,11 +262,7 @@ describe('UC-04: StepStateMachine & Recovery Reconciliation', () => {
             version: 3,
           },
         ],
-        plan: sampleTask.plan.map((s) =>
-          s.id === 'step-2'
-            ? { ...s, status: 'done' as const, completedAt: new Date().toISOString(), evidenceRefs: ['changed:file2.ts'] }
-            : s
-        ),
+        plan: sampleTask.plan.map(s => (s.id === 'step-2' ? { ...s, status: 'done' as const, completedAt: new Date().toISOString(), evidenceRefs: ['changed:file2.ts'] } : s)),
       };
       await store.saveTask(newerTask);
 
@@ -290,7 +274,7 @@ describe('UC-04: StepStateMachine & Recovery Reconciliation', () => {
       assert.equal(resumed.plan[1]?.status, 'done');
       assert.equal(resumed.currentStepIndex, 2);
       assert.equal(resumed.stateVersion, 4);
-      const tokenLedger = resumed.budgetLedgers.find((l) => l.kind === 'tokens');
+      const tokenLedger = resumed.budgetLedgers.find(l => l.kind === 'tokens');
       assert.equal(tokenLedger?.consumed, 2500);
     });
 
@@ -301,9 +285,7 @@ describe('UC-04: StepStateMachine & Recovery Reconciliation', () => {
             gitInspector: async () => ({ ...baseline, commitHash: 'different-commit-hash-000000000000000000' }),
           });
         },
-        (err: unknown) =>
-          err instanceof WorkspaceDriftError &&
-          /workspace drift.*commit mismatch/i.test((err as Error).message)
+        (err: unknown) => err instanceof WorkspaceDriftError && /workspace drift.*commit mismatch/i.test((err as Error).message),
       );
     });
 
@@ -319,7 +301,7 @@ describe('UC-04: StepStateMachine & Recovery Reconciliation', () => {
             gitInspector: async () => ({ ...baseline, isClean: false, trackedFilesHash: 'dirty-b' }),
           });
         },
-        (err: unknown) => err instanceof WorkspaceDriftError && /tracked file content mismatch/i.test((err as Error).message)
+        (err: unknown) => err instanceof WorkspaceDriftError && /tracked file content mismatch/i.test((err as Error).message),
       );
     });
 
@@ -330,7 +312,7 @@ describe('UC-04: StepStateMachine & Recovery Reconciliation', () => {
             gitInspector: async () => ({ ...baseline, branch: 'other-branch' }),
           });
         },
-        (err: unknown) => err instanceof WorkspaceDriftError && /branch mismatch/i.test((err as Error).message)
+        (err: unknown) => err instanceof WorkspaceDriftError && /branch mismatch/i.test((err as Error).message),
       );
     });
 
@@ -342,14 +324,17 @@ describe('UC-04: StepStateMachine & Recovery Reconciliation', () => {
       });
 
       assert.notEqual(resumed.status, 'running');
-      const tokenLedger = resumed.budgetLedgers.find((l) => l.kind === 'tokens');
+      const tokenLedger = resumed.budgetLedgers.find(l => l.kind === 'tokens');
       assert.ok(tokenLedger);
       assert.equal(tokenLedger.reservations.length, 1);
       assert.equal(tokenLedger.reservations[0]?.keyedId, 'req-interrupted');
 
       const claims = await store.loadDispatchClaims(sampleTask.taskId);
       assert.ok(claims.length > 0);
-      assert.equal(claims.some((c) => c.phase === 'uncertain'), true);
+      assert.equal(
+        claims.some(c => c.phase === 'uncertain'),
+        true,
+      );
     });
 
     it('keeps a reservation held when charge_as_consumed has no positive evidence', async () => {
@@ -361,7 +346,7 @@ describe('UC-04: StepStateMachine & Recovery Reconciliation', () => {
       });
 
       assert.notEqual(resumed.status, 'running');
-      const tokenLedger = resumed.budgetLedgers.find((l) => l.kind === 'tokens');
+      const tokenLedger = resumed.budgetLedgers.find(l => l.kind === 'tokens');
       assert.equal(tokenLedger?.consumed, 2000);
       assert.equal(tokenLedger?.reservations.length, 1);
     });
@@ -375,7 +360,7 @@ describe('UC-04: StepStateMachine & Recovery Reconciliation', () => {
       });
 
       assert.equal(resumed.status, 'running');
-      const tokenLedger = resumed.budgetLedgers.find((l) => l.kind === 'tokens');
+      const tokenLedger = resumed.budgetLedgers.find(l => l.kind === 'tokens');
       assert.equal(tokenLedger?.consumed, 2000);
       assert.equal(tokenLedger?.reservations.length, 0);
     });
@@ -390,7 +375,7 @@ describe('UC-04: StepStateMachine & Recovery Reconciliation', () => {
       });
 
       assert.equal(resumed.status, 'running');
-      const tokenLedger = resumed.budgetLedgers.find((l) => l.kind === 'tokens');
+      const tokenLedger = resumed.budgetLedgers.find(l => l.kind === 'tokens');
       assert.equal(tokenLedger?.consumed, 3000);
       assert.equal(tokenLedger?.reservations.length, 0);
     });
@@ -399,12 +384,22 @@ describe('UC-04: StepStateMachine & Recovery Reconciliation', () => {
       it(`reconciles only fully resolved claims on the ${mode} path`, async () => {
         const state = withReservation(3);
         const extra = { reservationId: 'res-2', keyedId: 'req-other', amount: 100 };
-        await store.saveCheckpoint({ ...state, budgetLedgers: state.budgetLedgers.map((l) => ({
-          ...l, reservations: mode === 'unresolved-reservation' ? [...l.reservations, extra] : l.reservations,
-        })) });
+        await store.saveCheckpoint({
+          ...state,
+          budgetLedgers: state.budgetLedgers.map(l => ({
+            ...l,
+            reservations: mode === 'unresolved-reservation' ? [...l.reservations, extra] : l.reservations,
+          })),
+        });
         const claim = {
-          taskId: sampleTask.taskId, runId: sampleTask.runId, stepId: 'step-2', actionId: 'req-interrupted',
-          epoch: 1, stateVersion: 3, phase: 'dispatched' as const, createdAt: new Date().toISOString(),
+          taskId: sampleTask.taskId,
+          runId: sampleTask.runId,
+          stepId: 'step-2',
+          actionId: 'req-interrupted',
+          epoch: 1,
+          stateVersion: 3,
+          phase: 'dispatched' as const,
+          createdAt: new Date().toISOString(),
         };
         await store.saveDispatchClaim({ ...claim, claimId: 'resolved-claim', reservationRefs: ['res-1'] });
         if (mode !== 'normal') {
@@ -416,8 +411,8 @@ describe('UC-04: StepStateMachine & Recovery Reconciliation', () => {
         });
         assert.equal(resumed.status, mode === 'normal' ? 'running' : 'paused');
         const claims = await store.loadDispatchClaims(sampleTask.taskId);
-        assert.equal(claims.find((c) => c.claimId === 'resolved-claim')?.phase, 'reconciled');
-        if (mode !== 'normal') assert.equal(claims.find((c) => c.claimId === 'partial-claim')?.phase, 'dispatched');
+        assert.equal(claims.find(c => c.claimId === 'resolved-claim')?.phase, 'reconciled');
+        if (mode !== 'normal') assert.equal(claims.find(c => c.claimId === 'partial-claim')?.phase, 'dispatched');
       });
     }
 
@@ -451,7 +446,10 @@ describe('UC-04: StepStateMachine & Recovery Reconciliation', () => {
       });
 
       assert.notEqual(resumed.status, 'completed');
-      assert.equal(resumed.plan.every((s) => s.status === 'done'), true);
+      assert.equal(
+        resumed.plan.every(s => s.status === 'done'),
+        true,
+      );
       assert.match(resumed.nextAction, /verification/i);
     });
 
@@ -506,7 +504,7 @@ describe('UC-04: StepStateMachine & Recovery Reconciliation', () => {
       });
 
       assert.notEqual(resumed.status, 'running');
-      const tokenLedger = resumed.budgetLedgers.find((l) => l.kind === 'tokens');
+      const tokenLedger = resumed.budgetLedgers.find(l => l.kind === 'tokens');
       assert.equal(tokenLedger?.reservations.length, 1);
       assert.equal(tokenLedger?.reservations[0]?.keyedId, 'req-journal');
       assert.equal(tokenLedger?.version, 4);
@@ -541,7 +539,7 @@ describe('UC-04: StepStateMachine & Recovery Reconciliation', () => {
 
       assert.equal(resumed.status, 'running');
       const journal = await store.loadBudgetJournal(sampleTask.taskId);
-      const tokenLedger = journal?.ledgers.find((l) => l.kind === 'tokens');
+      const tokenLedger = journal?.ledgers.find(l => l.kind === 'tokens');
       assert.equal(tokenLedger?.reservations.length, 0);
       assert.equal(tokenLedger?.consumed, 2000);
       assert.equal(journal?.runId, sampleTask.runId);
@@ -584,7 +582,7 @@ describe('UC-04: StepStateMachine & Recovery Reconciliation', () => {
       });
 
       assert.notEqual(resumed.status, 'running');
-      const tokenLedger = resumed.budgetLedgers.find((l) => l.kind === 'tokens');
+      const tokenLedger = resumed.budgetLedgers.find(l => l.kind === 'tokens');
       assert.equal(tokenLedger?.reservations.length, 1);
       assert.equal(tokenLedger?.consumed, 2000);
     });
@@ -610,7 +608,7 @@ describe('UC-04: StepStateMachine & Recovery Reconciliation', () => {
       });
 
       assert.equal(resumed.status, 'running');
-      const tokenLedger = resumed.budgetLedgers.find((l) => l.kind === 'tokens');
+      const tokenLedger = resumed.budgetLedgers.find(l => l.kind === 'tokens');
       assert.equal(tokenLedger?.reservations.length, 0);
     });
 
@@ -618,7 +616,7 @@ describe('UC-04: StepStateMachine & Recovery Reconciliation', () => {
       await store.saveCheckpoint({
         ...sampleTask,
         stateVersion: 3,
-        plan: sampleTask.plan.map((s) => (s.id === 'step-1' ? { ...s, requiredEvidenceRefs: ['tests:unit'] } : s)),
+        plan: sampleTask.plan.map(s => (s.id === 'step-1' ? { ...s, requiredEvidenceRefs: ['tests:unit'] } : s)),
       });
 
       const resumed = await reconcileAndResume(sampleTask.taskId, store, {
@@ -635,11 +633,7 @@ describe('UC-04: StepStateMachine & Recovery Reconciliation', () => {
       await store.saveCheckpoint({
         ...sampleTask,
         stateVersion: 3,
-        plan: sampleTask.plan.map((s) =>
-          s.id === 'step-1'
-            ? { ...s, evidenceRefs: ['changed:file1.ts'], requiredEvidenceRefs: ['tests:unit'] }
-            : s
-        ),
+        plan: sampleTask.plan.map(s => (s.id === 'step-1' ? { ...s, evidenceRefs: ['changed:file1.ts'], requiredEvidenceRefs: ['tests:unit'] } : s)),
       });
 
       const resumed = await reconcileAndResume(sampleTask.taskId, store, {
@@ -648,18 +642,14 @@ describe('UC-04: StepStateMachine & Recovery Reconciliation', () => {
 
       assert.throws(
         () => new StepStateMachine().startStep(resumed, 'step-2'),
-        (err: unknown) =>
-          err instanceof DependencyNotMetError && (err as DependencyNotMetError).missingPredecessors.includes('step-1')
+        (err: unknown) => err instanceof DependencyNotMetError && (err as DependencyNotMetError).missingPredecessors.includes('step-1'),
       );
     });
 
     it('fails closed when captureWorkspaceBaseline encounters non-zero git exit code', async () => {
-      await assert.rejects(
-        async () => {
-          await captureWorkspaceBaseline(tempDir);
-        },
-        /Failed to get git/
-      );
+      await assert.rejects(async () => {
+        await captureWorkspaceBaseline(tempDir);
+      }, /Failed to get git/);
     });
   });
 

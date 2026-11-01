@@ -5,12 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DurableStore } from '../../../src/persistence/store.ts';
 import { FeatureWorkflowEngine } from '../support/uc04/workflow-engine.ts';
-import {
-  UC04_SCHEMA_VERSION,
-  type TaskState,
-  type WorkspaceBaseline,
-  type ApprovalRequestBinding,
-} from '../../../src/persistence/contracts.ts';
+import { UC04_SCHEMA_VERSION, type TaskState, type WorkspaceBaseline, type ApprovalRequestBinding } from '../../../src/persistence/contracts.ts';
 
 describe('UC-04: Multi-Step Workflow & Crash Recovery Simulation (Level 1, local controlled)', () => {
   let tempDir: string;
@@ -86,7 +81,7 @@ describe('UC-04: Multi-Step Workflow & Crash Recovery Simulation (Level 1, local
     try {
       await engine1.executeWorkflow(
         initialTask.taskId,
-        async (step) => {
+        async step => {
           executedSteps.push(step.id);
           if (step.id === 'step-1') {
             return {
@@ -101,7 +96,7 @@ describe('UC-04: Multi-Step Workflow & Crash Recovery Simulation (Level 1, local
           }
           return {};
         },
-        { gitInspector: async () => ({ ...baseline }) }
+        { gitInspector: async () => ({ ...baseline }) },
       );
     } catch {
       // simulated crash
@@ -121,7 +116,7 @@ describe('UC-04: Multi-Step Workflow & Crash Recovery Simulation (Level 1, local
 
     const finalState = await engine2.executeWorkflow(
       initialTask.taskId,
-      async (step) => {
+      async step => {
         resumedSteps.push(step.id);
         if (step.id === 'step-2') {
           return {
@@ -145,17 +140,20 @@ describe('UC-04: Multi-Step Workflow & Crash Recovery Simulation (Level 1, local
           evidenceRefs: ['tests:all'],
           checkedAt: new Date().toISOString(),
         }),
-      }
+      },
     );
 
     // CRITICAL ASSERTION: Step 1 was NEVER re-executed!
     assert.deepEqual(resumedSteps, ['step-2', 'step-3']);
     assert.equal(finalState.status, 'completed');
-    assert.equal(finalState.plan.every((s) => s.status === 'done'), true);
+    assert.equal(
+      finalState.plan.every(s => s.status === 'done'),
+      true,
+    );
     assert.deepEqual(finalState.changedFiles, ['src/types.ts', 'src/logic.ts', 'tests/logic.test.ts']);
 
     // Verify cumulative budget accounting across restarts
-    const tokenLedger = finalState.budgetLedgers.find((l) => l.kind === 'tokens');
+    const tokenLedger = finalState.budgetLedgers.find(l => l.kind === 'tokens');
     assert.ok(tokenLedger);
     // 700 (step 1) + 1500 (step 2) + 1100 (step 3) = 3300 consumed
     assert.equal(tokenLedger.consumed, 3300);
@@ -178,7 +176,7 @@ describe('UC-04: Multi-Step Workflow & Crash Recovery Simulation (Level 1, local
     // Run until Step 2 demands approval
     const pausedState = await engine.executeWorkflow(
       initialTask.taskId,
-      async (step) => {
+      async step => {
         if (step.id === 'step-1') {
           return { changedFiles: ['src/types.ts'] };
         }
@@ -187,7 +185,7 @@ describe('UC-04: Multi-Step Workflow & Crash Recovery Simulation (Level 1, local
         }
         return {};
       },
-      { gitInspector: async () => ({ ...baseline }) }
+      { gitInspector: async () => ({ ...baseline }) },
     );
 
     assert.equal(pausedState.status, 'waiting_approval');
@@ -204,13 +202,13 @@ describe('UC-04: Multi-Step Workflow & Crash Recovery Simulation (Level 1, local
       {
         currentCommit: baseline.commitHash,
         policyVersion: 'v1.0.0',
-      }
+      },
     );
 
     // Continue workflow
     const finishedState = await engine.executeWorkflow(
       initialTask.taskId,
-      async (step) => {
+      async step => {
         if (step.id === 'step-2') {
           return { changedFiles: ['migrations/001.sql'] };
         }
@@ -226,7 +224,7 @@ describe('UC-04: Multi-Step Workflow & Crash Recovery Simulation (Level 1, local
           evidenceRefs: ['tests:all'],
           checkedAt: new Date().toISOString(),
         }),
-      }
+      },
     );
 
     assert.equal(finishedState.status, 'completed');

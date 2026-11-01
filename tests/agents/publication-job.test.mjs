@@ -18,9 +18,11 @@ async function fixture(t) {
     return result.stdout.trim();
   };
   git('init', '-b', 'feat/tooling-example');
-  git('config', 'user.name', 'Fixture'); git('config', 'user.email', 'fixture@example.invalid');
+  git('config', 'user.name', 'Fixture');
+  git('config', 'user.email', 'fixture@example.invalid');
   await writeFile(resolve(root, '.gitignore'), '.agent-work/\nbody.md\n');
-  git('add', '.gitignore'); git('commit', '-m', 'fixture');
+  git('add', '.gitignore');
+  git('commit', '-m', 'fixture');
   await writeFile(resolve(root, 'body.md'), 'original body');
   const args = ['--root', root];
   const start = extra => publicationJob(['start', ...args, '--body-file', resolve(root, 'body.md'), '--summary', 'add example', ...(extra ?? [])], { launch: async () => 1234 });
@@ -36,15 +38,17 @@ test('retained job freezes body and candidate; duplicate starts cannot launch an
   await assert.rejects(f.start(), /unfinished/);
   await writeFile(resolve(f.root, 'body.md'), 'edited after launch');
   let calls = 0;
-  const result = await runPublicationJob(f.root, job.id, { workflow: async (args, options) => {
-    calls++;
-    assert.deepEqual(options.expectedCandidate, { head: job.head, branch: job.branch });
-    assert.equal(args[0], 'publish');
-    assert.ok(args.includes('--skip-review-request'));
-    assert.ok(!args.includes('--mode'));
-    assert.equal(await readFile(args[args.indexOf('--body-file') + 1], 'utf8'), 'original body');
-    return { publishedHead: job.head, status: 'PUBLISHED' };
-  } });
+  const result = await runPublicationJob(f.root, job.id, {
+    workflow: async (args, options) => {
+      calls++;
+      assert.deepEqual(options.expectedCandidate, { head: job.head, branch: job.branch });
+      assert.equal(args[0], 'publish');
+      assert.ok(args.includes('--skip-review-request'));
+      assert.ok(!args.includes('--mode'));
+      assert.equal(await readFile(args[args.indexOf('--body-file') + 1], 'utf8'), 'original body');
+      return { publishedHead: job.head, status: 'PUBLISHED' };
+    },
+  });
   assert.equal(calls, 1);
   assert.equal(result.status, 'SUCCEEDED');
   assert.equal((await f.status(job.id)).result.publishedHead, job.head);
@@ -65,7 +69,10 @@ test('candidate change during initial live reads refuses before gates or remote 
   };
   await assert.rejects(runWorkflow(['publish', '--root', f.root, '--body-file', f.body, '--summary', 'add example'], { execute, expectedCandidate }), /Checkout changed since job launch/);
   assert.equal(changed, true);
-  assert.equal(f.calls.some(([binary, ...args]) => binary === process.execPath || binary === 'git' && args[0] === 'push' || binary === 'gh' && ['create', 'edit', 'comment'].includes(args[1])), false);
+  assert.equal(
+    f.calls.some(([binary, ...args]) => binary === process.execPath || (binary === 'git' && args[0] === 'push') || (binary === 'gh' && ['create', 'edit', 'comment'].includes(args[1]))),
+    false,
+  );
 });
 
 test('oversized body is refused before launching a job', async t => {
@@ -79,7 +86,11 @@ test('changed candidate refuses publication before any workflow effect', async t
   const job = await f.start();
   f.git('commit', '--allow-empty', '-m', 'changed');
   let called = false;
-  const result = await runPublicationJob(f.root, job.id, { workflow: async () => { called = true; } });
+  const result = await runPublicationJob(f.root, job.id, {
+    workflow: async () => {
+      called = true;
+    },
+  });
   assert.equal(called, false);
   assert.equal(result.status, 'FAILED');
   assert.match(result.error, /Checkout changed/);
@@ -88,9 +99,20 @@ test('changed candidate refuses publication before any workflow effect', async t
 
 test('launch and gate failures are retained without claiming success', async t => {
   const f = await fixture(t);
-  await assert.rejects(publicationJob(['start', '--root', f.root, '--body-file', resolve(f.root, 'body.md'), '--summary', 'add example'], { launch: async () => { throw Error('spawn failed'); } }), /spawn failed/);
+  await assert.rejects(
+    publicationJob(['start', '--root', f.root, '--body-file', resolve(f.root, 'body.md'), '--summary', 'add example'], {
+      launch: async () => {
+        throw Error('spawn failed');
+      },
+    }),
+    /spawn failed/,
+  );
   const job = await f.start();
-  const result = await runPublicationJob(f.root, job.id, { workflow: async () => { throw Error('gate failed'); } });
+  const result = await runPublicationJob(f.root, job.id, {
+    workflow: async () => {
+      throw Error('gate failed');
+    },
+  });
   assert.equal(result.status, 'FAILED');
   assert.equal((await f.status(job.id)).error, 'gate failed');
   assert.equal(result.result, undefined);
@@ -100,7 +122,15 @@ test('status exposes the latest bounded gate progress from the retained output l
   const f = await fixture(t);
   const job = await f.start();
   const first = { gate: 'runtime', status: 'passed', exitCode: 0, lastProgressAt: '2026-10-31T08:00:00.000Z' };
-  const latest = { gate: 'tests', status: 'progress', currentTest: 'worker preparation blocks on a closed PR', currentFile: 'tests/agents/contributor-prepare.test.mjs', elapsedMs: 875, timeoutMs: 1200000, lastProgressAt: '2026-10-31T08:01:00.000Z' };
+  const latest = {
+    gate: 'tests',
+    status: 'progress',
+    currentTest: 'worker preparation blocks on a closed PR',
+    currentFile: 'tests/agents/contributor-prepare.test.mjs',
+    elapsedMs: 875,
+    timeoutMs: 1200000,
+    lastProgressAt: '2026-10-31T08:01:00.000Z',
+  };
   await writeFile(job.log, `${JSON.stringify(first)}\n${JSON.stringify(latest)}\n`);
 
   const result = await f.status(job.id);
@@ -148,7 +178,12 @@ test('detached child survives launcher exit and retains its completion output', 
   const deadline = Date.now() + 5000;
   let content;
   while (Date.now() < deadline) {
-    try { content = await readFile(marker, 'utf8'); break; } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    try {
+      content = await readFile(marker, 'utf8');
+      break;
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
     await new Promise(done => setTimeout(done, 50));
   }
   assert.equal(content, 'complete');

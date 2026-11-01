@@ -10,29 +10,49 @@ import type {
   ExecutorIdentityV02,
 } from './ports.ts';
 import type { ValidationError, ValidationResult } from '../v01/types.ts';
-import {
-  isPlainObject,
-  rejectUnknownKeys,
-  validateNonEmptyString,
-  validateNonNegativeInteger,
-  validateStringArray,
-} from '../v01/validation/common.ts';
+import { isPlainObject, rejectUnknownKeys, validateNonEmptyString, validateNonNegativeInteger, validateStringArray } from '../v01/validation/common.ts';
 import { protectValidator } from './admission/snapshot.ts';
+import { validateAttemptOutcomeReceiptV02, validateProviderRequestOutcomeReceiptV02, validateRepositoryActionOutcomeReceiptV02 } from './admission/attempt-outcome.ts';
 import {
-  validateAttemptOutcomeReceiptV02,
-  validateProviderRequestOutcomeReceiptV02,
-  validateRepositoryActionOutcomeReceiptV02,
-} from './admission/attempt-outcome.ts';
-import { REPO_KEYS, canonicalEqual, validateVersionBindings, validateEffects, validateSafeRef, validateSafeRefArray, checkActionDecisionBinding, validateExecutorIdentityV02 } from './admission/attempt-outcome-common.ts';
+  REPO_KEYS,
+  canonicalEqual,
+  validateVersionBindings,
+  validateEffects,
+  validateSafeRef,
+  validateSafeRefArray,
+  checkActionDecisionBinding,
+  validateExecutorIdentityV02,
+} from './admission/attempt-outcome-common.ts';
 
 export type VersionProgressionKindV02 = 'claim' | 'begin-attempt';
-export interface VersionDomainSnapshotV02 { taskStateVersion: number; controlVersion: number; epoch: number; }
-export interface VersionProgressionV02 { kind: VersionProgressionKindV02; pre: VersionDomainSnapshotV02; post: VersionDomainSnapshotV02; isRepairPatch?: boolean; }
-export interface ClaimClosureValidationContextV02 { expectedTaskId?: string; expectedClaimId?: string; claim?: Record<string, unknown>; hasCommittedAttempt?: boolean; expectedAdapterIdentity?: string; expectedMinFencingGeneration?: number; expectedFencedExecutorIdentity?: ExecutorIdentityV02; }
-export interface AttemptValidationContextV02 { expectedTaskId?: string; expectedClaimId?: string; expectedAttemptId?: string; expectedEpoch?: number; isRepairPatch?: boolean; }
-export function isApprovedPlanPatchV02(
-  admission: Pick<RepositoryAdmissionContextV02, 'action' | 'planApplicability'>,
-): boolean {
+export interface VersionDomainSnapshotV02 {
+  taskStateVersion: number;
+  controlVersion: number;
+  epoch: number;
+}
+export interface VersionProgressionV02 {
+  kind: VersionProgressionKindV02;
+  pre: VersionDomainSnapshotV02;
+  post: VersionDomainSnapshotV02;
+  isRepairPatch?: boolean;
+}
+export interface ClaimClosureValidationContextV02 {
+  expectedTaskId?: string;
+  expectedClaimId?: string;
+  claim?: Record<string, unknown>;
+  hasCommittedAttempt?: boolean;
+  expectedAdapterIdentity?: string;
+  expectedMinFencingGeneration?: number;
+  expectedFencedExecutorIdentity?: ExecutorIdentityV02;
+}
+export interface AttemptValidationContextV02 {
+  expectedTaskId?: string;
+  expectedClaimId?: string;
+  expectedAttemptId?: string;
+  expectedEpoch?: number;
+  isRepairPatch?: boolean;
+}
+export function isApprovedPlanPatchV02(admission: Pick<RepositoryAdmissionContextV02, 'action' | 'planApplicability'>): boolean {
   return admission.action.kind === 'apply_patch' && admission.planApplicability === 'approved-plan';
 }
 export type { AttemptOutcomeValidationContextV02 } from './admission/attempt-outcome.ts';
@@ -41,7 +61,18 @@ export type CanonicalAttemptReconciliationReceiptV02 = AttemptReconciliationRece
 export type { AttemptReconciliationValidationContextV02 } from './admission/reconciliation.ts';
 
 const CLOSURE_KEYS = ['receiptId', 'receiptDigest', 'claimId', 'taskId', 'reason', 'fencedExecutorIdentity', 'unconsumedReservations'] as const;
-const ATT_KEYS = ['attemptId', 'claimId', 'taskId', 'executorIdentity', 'preAttemptTaskStateVersion', 'postBeginTaskStateVersion', 'preAttemptControlVersion', 'postBeginControlVersion', 'epoch', 'status'] as const;
+const ATT_KEYS = [
+  'attemptId',
+  'claimId',
+  'taskId',
+  'executorIdentity',
+  'preAttemptTaskStateVersion',
+  'postBeginTaskStateVersion',
+  'preAttemptControlVersion',
+  'postBeginControlVersion',
+  'epoch',
+  'status',
+] as const;
 
 const addErr = (errs: ValidationError[], path: string, message: string, code: string) => {
   errs.push({ path, message, code });
@@ -78,14 +109,19 @@ function validateProtocolVersionProgressionImpl(input: unknown): ValidationResul
   }
   if (isRepairPatch !== undefined && typeof isRepairPatch !== 'boolean') addErr(errs, 'isRepairPatch', 'Must be a boolean', 'INVALID_REPAIR_PATCH_FLAG');
   if (!isPlainObject(pre) || !isPlainObject(post)) return { ok: false, errors: [{ path: 'pre/post', message: 'Must be object', code: 'INVALID_TYPE' }] };
-  const [pT, pC, pE] = ['taskStateVersion', 'controlVersion', 'epoch'].map((k) => validateNonNegativeInteger(pre[k], `pre.${k}`, errs));
-  const [nT, nC, nE] = ['taskStateVersion', 'controlVersion', 'epoch'].map((k) => validateNonNegativeInteger(post[k], `post.${k}`, errs));
+  const [pT, pC, pE] = ['taskStateVersion', 'controlVersion', 'epoch'].map(k => validateNonNegativeInteger(pre[k], `pre.${k}`, errs));
+  const [nT, nC, nE] = ['taskStateVersion', 'controlVersion', 'epoch'].map(k => validateNonNegativeInteger(post[k], `post.${k}`, errs));
   if (pT === undefined || pC === undefined || pE === undefined || nT === undefined || nC === undefined || nE === undefined) return { ok: false, errors: errs };
   if (pE !== nE) addErr(errs, 'epoch', 'Epoch mismatch', 'EPOCH_MISMATCH');
   if (nC !== pC + 1) addErr(errs, 'controlVersion', 'Control must advance by 1', 'CONTROL_VERSION_PROGRESSION_INVALID');
   if (kind === 'claim' && nT !== pT) addErr(errs, 'taskStateVersion', 'Claim must preserve task version', 'TASK_VERSION_MUTATED_ON_CLAIM');
   if (kind === 'begin-attempt' && nT !== (isRepairPatch ? pT + 1 : pT)) {
-    addErr(errs, 'taskStateVersion', isRepairPatch ? 'Repair must advance task version by 1' : 'Non-repair must preserve task version', isRepairPatch ? 'TASK_VERSION_PROGRESSION_INVALID' : 'TASK_VERSION_MUTATED_ON_NON_REPAIR');
+    addErr(
+      errs,
+      'taskStateVersion',
+      isRepairPatch ? 'Repair must advance task version by 1' : 'Non-repair must preserve task version',
+      isRepairPatch ? 'TASK_VERSION_PROGRESSION_INVALID' : 'TASK_VERSION_MUTATED_ON_NON_REPAIR',
+    );
   }
   return errs.length > 0 ? { ok: false, errors: errs } : { ok: true, value: input as unknown as VersionProgressionV02 };
 }
@@ -96,7 +132,9 @@ function validateAttemptReceiptImpl(input: unknown, ctx?: AttemptValidationConte
   rejectUnknownKeys(input, ATT_KEYS, 'receipt', errs);
   reqStrs(input, ['attemptId', 'claimId', 'taskId'], '', errs);
   if (input['status'] !== 'attempting') addErr(errs, 'status', 'Invalid status', 'INVALID_STATUS');
-  const [, pT, nT, pC, nC] = ['epoch', 'preAttemptTaskStateVersion', 'postBeginTaskStateVersion', 'preAttemptControlVersion', 'postBeginControlVersion'].map((k) => validateNonNegativeInteger(input[k], k, errs));
+  const [, pT, nT, pC, nC] = ['epoch', 'preAttemptTaskStateVersion', 'postBeginTaskStateVersion', 'preAttemptControlVersion', 'postBeginControlVersion'].map(k =>
+    validateNonNegativeInteger(input[k], k, errs),
+  );
   if (ctx?.isRepairPatch !== undefined && typeof ctx.isRepairPatch !== 'boolean') addErr(errs, 'trustedContext.isRepairPatch', 'Must be a boolean', 'INVALID_REPAIR_PATCH_FLAG');
   validateExecutorIdentityV02(input['executorIdentity'], 'executorIdentity', errs);
   if (pC !== undefined && nC !== undefined && nC !== pC + 1) addErr(errs, 'postBeginControlVersion', 'Control mismatch', 'CONTROL_VERSION_MISMATCH');
@@ -111,7 +149,7 @@ function validateClaimClosureReceiptImpl(input: unknown, ctx?: ClaimClosureValid
   const errs: ValidationError[] = [];
   if (!isPlainObject(input)) return { ok: false, errors: [{ path: 'receipt', message: 'Must be object', code: 'INVALID_TYPE' }] };
   if (input['attemptId'] !== undefined) return { ok: false, errors: [{ path: 'attemptId', message: 'No attemptId allowed', code: 'CLAIM_CLOSURE_CANNOT_HAVE_ATTEMPT_ID' }] };
-  if (['actionDigest', 'providerRequestId', 'outcome', 'disposition', 'reconciliationKind'].some((k) => input[k] !== undefined)) {
+  if (['actionDigest', 'providerRequestId', 'outcome', 'disposition', 'reconciliationKind'].some(k => input[k] !== undefined)) {
     return { ok: false, errors: [{ path: 'receipt', message: 'Forbidden', code: 'CROSS_BRANCH_FIELDS_FORBIDDEN' }] };
   }
   rejectUnknownKeys(input, CLOSURE_KEYS, 'receipt', errs);
@@ -128,23 +166,39 @@ function validateClaimClosureReceiptImpl(input: unknown, ctx?: ClaimClosureValid
     addErr(errs, 'trustedContext', 'Complete no-attempt and fenced-recipient proof is required', 'TRUSTED_CONTEXT_REQUIRED');
   }
   if (ctx?.hasCommittedAttempt !== false) addErr(errs, 'proofOfNoAttempt', 'Trusted proof must establish no committed attempt', 'PROOF_OF_NO_ATTEMPT_VIOLATION');
-  if (!c || typeof c['claimId'] !== 'string' || typeof c['taskId'] !== 'string' || typeof c['claimDigest'] !== 'string' ||
-    c['status'] !== 'claimed' || c['hasCommittedAttempt'] !== false || c['attemptId'] !== undefined) {
+  if (
+    !c ||
+    typeof c['claimId'] !== 'string' ||
+    typeof c['taskId'] !== 'string' ||
+    typeof c['claimDigest'] !== 'string' ||
+    c['status'] !== 'claimed' ||
+    c['hasCommittedAttempt'] !== false ||
+    c['attemptId'] !== undefined
+  ) {
     addErr(errs, 'claim', 'Trusted claim must prove an unattempted claimed state', 'INCOMPLETE_CLAIM_PROOF');
   } else {
     matchProps(input, c, { claimId: 'claimId', taskId: 'taskId' }, errs);
     if (ctx?.expectedClaimId !== c['claimId'] || ctx?.expectedTaskId !== c['taskId']) addErr(errs, 'trustedContext.claim', 'Expected claim identity does not match proof', 'CLAIM_IDENTITY_MISMATCH');
     const reservationRefs = c['reservationRefs'];
-    if (!Array.isArray(reservationRefs) || !Array.isArray(unconsumedReservations) ||
+    if (
+      !Array.isArray(reservationRefs) ||
+      !Array.isArray(unconsumedReservations) ||
       reservationRefs.length !== unconsumedReservations.length ||
-      reservationRefs.some((ref, index) => ref !== unconsumedReservations[index])) {
+      reservationRefs.some((ref, index) => ref !== unconsumedReservations[index])
+    ) {
       addErr(errs, 'unconsumedReservations', 'Reservations must exactly match the trusted claim', 'RESERVATION_REFS_MISMATCH');
     }
   }
   matchProps(input, ctx as Record<string, unknown> | undefined, { claimId: 'expectedClaimId', taskId: 'expectedTaskId' }, errs);
-  if (ctx?.expectedAdapterIdentity !== undefined && f && f.adapterIdentity !== ctx.expectedAdapterIdentity) addErr(errs, 'fencedExecutorIdentity.adapterIdentity', 'Adapter mismatch', 'ADAPTER_IDENTITY_MISMATCH');
-  if (ctx?.expectedMinFencingGeneration !== undefined && f && f.fencingGeneration < ctx.expectedMinFencingGeneration) addErr(errs, 'fencedExecutorIdentity.fencingGeneration', 'Generation too low', 'FENCING_GENERATION_TOO_LOW');
-  if (f && expectedFence && ['adapterIdentity', 'processIncarnation', 'payloadDigest', 'fencingGeneration'].some((key) => f[key as keyof ExecutorIdentityV02] !== expectedFence[key as keyof ExecutorIdentityV02])) {
+  if (ctx?.expectedAdapterIdentity !== undefined && f && f.adapterIdentity !== ctx.expectedAdapterIdentity)
+    addErr(errs, 'fencedExecutorIdentity.adapterIdentity', 'Adapter mismatch', 'ADAPTER_IDENTITY_MISMATCH');
+  if (ctx?.expectedMinFencingGeneration !== undefined && f && f.fencingGeneration < ctx.expectedMinFencingGeneration)
+    addErr(errs, 'fencedExecutorIdentity.fencingGeneration', 'Generation too low', 'FENCING_GENERATION_TOO_LOW');
+  if (
+    f &&
+    expectedFence &&
+    ['adapterIdentity', 'processIncarnation', 'payloadDigest', 'fencingGeneration'].some(key => f[key as keyof ExecutorIdentityV02] !== expectedFence[key as keyof ExecutorIdentityV02])
+  ) {
     addErr(errs, 'fencedExecutorIdentity', 'Fenced recipient does not match trusted identity and generation', 'FENCED_EXECUTOR_MISMATCH');
   }
   return errs.length > 0 ? { ok: false, errors: errs } : { ok: true, value: input as unknown as ClaimClosureReceiptV02 };
@@ -153,11 +207,7 @@ function validateClaimClosureReceiptImpl(input: unknown, ctx?: ClaimClosureValid
 export const validateProtocolVersionProgressionV02 = protectValidator(validateProtocolVersionProgressionImpl);
 export const validateAttemptReceiptV02 = protectValidator(validateAttemptReceiptImpl);
 export const validateClaimClosureReceiptV02 = protectValidator(validateClaimClosureReceiptImpl);
-export {
-  validateRepositoryActionOutcomeReceiptV02,
-  validateProviderRequestOutcomeReceiptV02,
-  validateAttemptOutcomeReceiptV02,
-};
+export { validateRepositoryActionOutcomeReceiptV02, validateProviderRequestOutcomeReceiptV02, validateAttemptOutcomeReceiptV02 };
 export {
   computeReconciliationDigest,
   validateUncertainAttemptReconciliationReceiptV02,
@@ -166,50 +216,79 @@ export {
 } from './admission/reconciliation.ts';
 
 /** Post-settlement binding checks only; does not assert current durable journal state. */
-export const validateRepositoryExecutionReceiptV02 = protectValidator(function (
-  input: unknown,
-  admission?: RepositoryAdmissionContextV02,
-): ValidationResult<RepositoryExecutionReceiptV02> {
+export const validateRepositoryExecutionReceiptV02 = protectValidator(function (input: unknown, admission?: RepositoryAdmissionContextV02): ValidationResult<RepositoryExecutionReceiptV02> {
   const errors: ValidationError[] = [];
-  const fail = (): ValidationResult<RepositoryExecutionReceiptV02> => ({ ok: false, errors: [{ path: 'executionReceipt', message: 'Invalid settled repository handoff', code: 'INVALID_EXECUTION_RECEIPT' }, ...errors] });
+  const fail = (): ValidationResult<RepositoryExecutionReceiptV02> => ({
+    ok: false,
+    errors: [{ path: 'executionReceipt', message: 'Invalid settled repository handoff', code: 'INVALID_EXECUTION_RECEIPT' }, ...errors],
+  });
   if (!admission || !isPlainObject(input)) return fail();
   rejectUnknownKeys(input, ['claim', 'attempt', 'outcome', 'settlement'], 'executionReceipt', errors);
   const claim = input['claim'];
   if (!isPlainObject(claim)) return fail();
-  const claimKeys = ['claimId', 'claimDigest', 'taskId', 'runId', 'subjectKind', 'planApplicability', 'preClaimTaskStateVersion', 'preClaimControlVersion', 'postClaimControlVersion', 'epoch', 'status', 'reservationRefs'];
+  const claimKeys = [
+    'claimId',
+    'claimDigest',
+    'taskId',
+    'runId',
+    'subjectKind',
+    'planApplicability',
+    'preClaimTaskStateVersion',
+    'preClaimControlVersion',
+    'postClaimControlVersion',
+    'epoch',
+    'status',
+    'reservationRefs',
+  ];
   rejectUnknownKeys(claim, claimKeys, 'claim', errors);
   reqStrs(claim, ['claimId', 'claimDigest'], 'claim', errors);
   const expectedClaim = {
-    taskId: admission.taskId, runId: admission.runId, subjectKind: admission.subjectKind,
-    planApplicability: admission.planApplicability, preClaimTaskStateVersion: admission.expectedTaskStateVersion,
-    preClaimControlVersion: admission.expectedControlVersion, postClaimControlVersion: admission.expectedControlVersion + 1,
-    epoch: admission.expectedEpoch, status: 'claimed', reservationRefs: admission.reservationRefs,
+    taskId: admission.taskId,
+    runId: admission.runId,
+    subjectKind: admission.subjectKind,
+    planApplicability: admission.planApplicability,
+    preClaimTaskStateVersion: admission.expectedTaskStateVersion,
+    preClaimControlVersion: admission.expectedControlVersion,
+    postClaimControlVersion: admission.expectedControlVersion + 1,
+    epoch: admission.expectedEpoch,
+    status: 'claimed',
+    reservationRefs: admission.reservationRefs,
   };
-  if (Object.entries(expectedClaim).some(([key, value]) => !canonicalEqual(claim[key], value)) ||
-    claim['claimDigest'] !== computeCanonicalSha256({ ...claim, claimDigest: undefined })) return fail();
+  if (Object.entries(expectedClaim).some(([key, value]) => !canonicalEqual(claim[key], value)) || claim['claimDigest'] !== computeCanonicalSha256({ ...claim, claimDigest: undefined })) return fail();
   const attemptResult = validateAttemptReceiptV02(input['attempt'], {
-    expectedTaskId: admission.taskId, expectedClaimId: String(claim['claimId']), expectedEpoch: admission.expectedEpoch,
+    expectedTaskId: admission.taskId,
+    expectedClaimId: String(claim['claimId']),
+    expectedEpoch: admission.expectedEpoch,
     isRepairPatch: isApprovedPlanPatchV02(admission),
   });
   if (!attemptResult.ok) return fail();
   const attempt = attemptResult.value;
-  if (attempt.preAttemptTaskStateVersion !== claim['preClaimTaskStateVersion'] ||
+  if (
+    attempt.preAttemptTaskStateVersion !== claim['preClaimTaskStateVersion'] ||
     attempt.preAttemptControlVersion !== claim['postClaimControlVersion'] ||
-    attempt.executorIdentity.payloadDigest !== admission.actionDigest) return fail();
+    attempt.executorIdentity.payloadDigest !== admission.actionDigest
+  )
+    return fail();
   const outcome = input['outcome'];
   const settlement = input['settlement'];
   if (!isPlainObject(outcome) || !isPlainObject(settlement)) return fail();
   rejectUnknownKeys(outcome, REPO_KEYS, 'outcome', errors);
   rejectUnknownKeys(settlement, ['outcome', 'receiptId'], 'settlement', errors);
   reqStrs(outcome, ['receiptId', 'receiptDigest'], 'outcome', errors);
-  if (outcome['receiptDigest'] !== computeAttemptOutcomeDigest(outcome) || outcome['outcome'] !== 'observed' ||
-    settlement['outcome'] !== 'settled' || settlement['receiptId'] !== outcome['receiptId']) return fail();
+  if (outcome['receiptDigest'] !== computeAttemptOutcomeDigest(outcome) || outcome['outcome'] !== 'observed' || settlement['outcome'] !== 'settled' || settlement['receiptId'] !== outcome['receiptId'])
+    return fail();
   const expectedOutcome = {
-    claimId: claim['claimId'], claimDigest: claim['claimDigest'], attemptId: attempt.attemptId,
-    executorIdentity: attempt.executorIdentity, admissionDigest: computeAdmissionDigest(admission),
-    subjectKind: 'repository-action', actionDigest: admission.actionDigest, planApplicability: admission.planApplicability,
+    claimId: claim['claimId'],
+    claimDigest: claim['claimDigest'],
+    attemptId: attempt.attemptId,
+    executorIdentity: attempt.executorIdentity,
+    admissionDigest: computeAdmissionDigest(admission),
+    subjectKind: 'repository-action',
+    actionDigest: admission.actionDigest,
+    planApplicability: admission.planApplicability,
     repositoryOperation: admission.action.kind === 'apply_patch' ? 'apply-patch' : 'run-command',
-    policyAuthorityRef: admission.policyAuthorityRef, policyEvaluationReceiptRef: admission.policyEvaluationReceipt.receiptId,
+    policyAuthorityRef: admission.policyAuthorityRef,
+    policyEvaluationReceiptRef: admission.policyEvaluationReceipt.receiptId,
     policyEvaluationReceiptDigest: admission.policyEvaluationReceipt.receiptDigest,
     freshnessContextDigest: admission.policyEvaluationReceipt.freshnessContextDigest,
   };
@@ -225,18 +304,26 @@ export const validateRepositoryExecutionReceiptV02 = protectValidator(function (
   validateSafeRefArray(outcome['evidenceRefs'], 'evidenceRefs', errors);
   validateEffects(outcome['proposedEffects'], 'observed', admission, errors);
   const effects = outcome['proposedEffects'];
-  if (!isPlainObject(effects) || !isPlainObject(effects['accounting']) ||
+  if (
+    !isPlainObject(effects) ||
+    !isPlainObject(effects['accounting']) ||
     !canonicalEqual(effects['accounting']['reservationRefs'], admission.reservationRefs) ||
-    Object.hasOwn(effects['accounting'], 'observedUsage') || !isPlainObject(effects['revision'])) return fail();
-  const expectedTransition = admission.action.kind === 'apply_patch' && admission.planApplicability === 'approved-plan'
-    ? { kind: 'transition', fromNode: 'Patch', toNode: 'Verify' }
-    : { kind: 'none' };
+    Object.hasOwn(effects['accounting'], 'observedUsage') ||
+    !isPlainObject(effects['revision'])
+  )
+    return fail();
+  const expectedTransition =
+    admission.action.kind === 'apply_patch' && admission.planApplicability === 'approved-plan' ? { kind: 'transition', fromNode: 'Patch', toNode: 'Verify' } : { kind: 'none' };
   // Admission grants no named evidence invalidation; owners invalidate revision-bound state at settlement.
-  if (!canonicalEqual(effects['taskTransition'], expectedTransition) ||
-    !canonicalEqual(effects['invalidatedEvidence'], [])) return fail();
+  if (!canonicalEqual(effects['taskTransition'], expectedTransition) || !canonicalEqual(effects['invalidatedEvidence'], [])) return fail();
   if (admission.action.kind === 'apply_patch') {
-    if (typeof outcome['observedResultRevisionDigest'] !== 'string' || !/^sha256:[a-f0-9]{64}$/u.test(outcome['observedResultRevisionDigest']) ||
-      effects['revision']['kind'] !== 'advance' || effects['revision']['revisionDigest'] !== outcome['observedResultRevisionDigest']) return fail();
+    if (
+      typeof outcome['observedResultRevisionDigest'] !== 'string' ||
+      !/^sha256:[a-f0-9]{64}$/u.test(outcome['observedResultRevisionDigest']) ||
+      effects['revision']['kind'] !== 'advance' ||
+      effects['revision']['revisionDigest'] !== outcome['observedResultRevisionDigest']
+    )
+      return fail();
   } else if (Object.hasOwn(outcome, 'observedResultRevisionDigest') || effects['revision']['kind'] !== 'preserve') return fail();
   return errors.length ? fail() : { ok: true, value: input as unknown as RepositoryExecutionReceiptV02 };
 });

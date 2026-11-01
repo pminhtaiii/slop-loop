@@ -1,10 +1,4 @@
-import type {
-  ExecutorIdentityV02,
-  PlanApplicabilityV02,
-  PolicyAuthorityRefV02,
-  ProviderPricingIdentityV02,
-  ProviderRoleV02,
-} from './ports.ts';
+import type { ExecutorIdentityV02, PlanApplicabilityV02, PolicyAuthorityRefV02, ProviderPricingIdentityV02, ProviderRoleV02 } from './ports.ts';
 import type { ProviderUsage } from '../v01/types.ts';
 
 export type AttemptOutcomeStatusV02 = 'observed' | 'proven-not-dispatched' | 'uncertain';
@@ -27,13 +21,9 @@ export interface AttemptVersionBindingsV02 {
   readonly epoch: number;
 }
 
-export type ProposedRevisionEffectV02 =
-  | { readonly kind: 'advance'; readonly revisionDigest: string }
-  | { readonly kind: 'preserve' | 'not-applicable' };
+export type ProposedRevisionEffectV02 = { readonly kind: 'advance'; readonly revisionDigest: string } | { readonly kind: 'preserve' | 'not-applicable' };
 
-export type ProposedTaskTransitionV02 =
-  | { readonly kind: 'transition'; readonly fromNode: string; readonly toNode: string }
-  | { readonly kind: 'none' };
+export type ProposedTaskTransitionV02 = { readonly kind: 'transition'; readonly fromNode: string; readonly toNode: string } | { readonly kind: 'none' };
 
 export interface ProposedAccountingSettlementV02 {
   readonly disposition: 'settle' | 'hold' | 'release-unused' | 'none';
@@ -73,8 +63,22 @@ interface RepositoryOutcomeBaseV02 extends AttemptOutcomeBaseV02 {
 }
 
 type RepositoryOutcomePlanV02 =
-  | { readonly planApplicability: 'pre-plan-diagnostic'; readonly diagnosticPurpose: string; readonly taskCriteriaDigest: string; readonly checkSetDigest: string; readonly planBindingDigest?: never | undefined; readonly planDecisionRef?: never | undefined }
-  | { readonly planApplicability: 'approved-plan'; readonly planBindingDigest: string; readonly planDecisionRef: string; readonly diagnosticPurpose?: string | undefined; readonly taskCriteriaDigest?: string | undefined; readonly checkSetDigest?: string | undefined };
+  | {
+      readonly planApplicability: 'pre-plan-diagnostic';
+      readonly diagnosticPurpose: string;
+      readonly taskCriteriaDigest: string;
+      readonly checkSetDigest: string;
+      readonly planBindingDigest?: never | undefined;
+      readonly planDecisionRef?: never | undefined;
+    }
+  | {
+      readonly planApplicability: 'approved-plan';
+      readonly planBindingDigest: string;
+      readonly planDecisionRef: string;
+      readonly diagnosticPurpose?: string | undefined;
+      readonly taskCriteriaDigest?: string | undefined;
+      readonly checkSetDigest?: string | undefined;
+    };
 type ActionDecisionReceiptBindingV02 =
   | { readonly actionDecisionReceiptRef: string; readonly actionDecisionReceiptDigest: string }
   | { readonly actionDecisionReceiptRef?: never | undefined; readonly actionDecisionReceiptDigest?: never | undefined };
@@ -98,11 +102,22 @@ interface ProviderOutcomeBaseV02 extends AttemptOutcomeBaseV02 {
 }
 
 type ProviderOutcomePlanV02 =
-  | { readonly planApplicability: 'pre-plan-diagnostic'; readonly diagnosticPurpose: string; readonly taskCriteriaDigest: string; readonly planBindingDigest?: never | undefined; readonly planDecisionRef?: never | undefined }
-  | { readonly planApplicability: 'approved-plan'; readonly planBindingDigest: string; readonly planDecisionRef: string; readonly diagnosticPurpose?: string | undefined; readonly taskCriteriaDigest?: string | undefined };
+  | {
+      readonly planApplicability: 'pre-plan-diagnostic';
+      readonly diagnosticPurpose: string;
+      readonly taskCriteriaDigest: string;
+      readonly planBindingDigest?: never | undefined;
+      readonly planDecisionRef?: never | undefined;
+    }
+  | {
+      readonly planApplicability: 'approved-plan';
+      readonly planBindingDigest: string;
+      readonly planDecisionRef: string;
+      readonly diagnosticPurpose?: string | undefined;
+      readonly taskCriteriaDigest?: string | undefined;
+    };
 type ProviderOutcomeUsageV02 =
-  | { readonly outcome: 'observed'; readonly observedUsage: ProviderUsage }
-  | { readonly outcome: 'uncertain' | 'proven-not-dispatched'; readonly observedUsage?: ProviderUsage | undefined };
+  { readonly outcome: 'observed'; readonly observedUsage: ProviderUsage } | { readonly outcome: 'uncertain' | 'proven-not-dispatched'; readonly observedUsage?: ProviderUsage | undefined };
 
 export type ProviderRequestOutcomeReceiptV02 = ProviderOutcomeBaseV02 & ProviderOutcomePlanV02 & ProviderOutcomeUsageV02;
 
@@ -153,27 +168,51 @@ interface ProviderReconciliationBaseV02 extends AttemptReconciliationBaseV02 {
 }
 
 type RepositoryReconciliationPlanFieldsV02 =
-  | { readonly planApplicability: 'pre-plan-diagnostic'; readonly diagnosticPurpose: string; readonly taskCriteriaDigest: string; readonly checkSetDigest: string; readonly planBindingDigest?: never | undefined; readonly planDecisionRef?: never | undefined }
+  | {
+      readonly planApplicability: 'pre-plan-diagnostic';
+      readonly diagnosticPurpose: string;
+      readonly taskCriteriaDigest: string;
+      readonly checkSetDigest: string;
+      readonly planBindingDigest?: never | undefined;
+      readonly planDecisionRef?: never | undefined;
+    }
   | { readonly planApplicability: 'approved-plan'; readonly planBindingDigest: string; readonly planDecisionRef: string };
 type ProviderReconciliationPlanFieldsV02 =
-  | { readonly planApplicability: 'pre-plan-diagnostic'; readonly diagnosticPurpose: string; readonly taskCriteriaDigest: string; readonly planBindingDigest?: never | undefined; readonly planDecisionRef?: never | undefined }
-  | { readonly planApplicability: 'approved-plan'; readonly planBindingDigest: string; readonly planDecisionRef: string; readonly diagnosticPurpose?: string | undefined; readonly taskCriteriaDigest?: string | undefined };
+  | {
+      readonly planApplicability: 'pre-plan-diagnostic';
+      readonly diagnosticPurpose: string;
+      readonly taskCriteriaDigest: string;
+      readonly planBindingDigest?: never | undefined;
+      readonly planDecisionRef?: never | undefined;
+    }
+  | {
+      readonly planApplicability: 'approved-plan';
+      readonly planBindingDigest: string;
+      readonly planDecisionRef: string;
+      readonly diagnosticPurpose?: string | undefined;
+      readonly taskCriteriaDigest?: string | undefined;
+    };
 
-type ReconciliationOutcomeEvidenceV02 = {
-  readonly disposition: 'observed-and-accounted';
-  readonly effectEvidenceRef: SafeReferenceV02;
-  readonly accountingEvidenceRefs: readonly SafeReferenceV02[];
-  readonly observedUsage?: ProviderUsage | undefined;
-} | {
-  readonly disposition: 'proven-not-dispatched';
-  readonly adapterEvidenceRefs: readonly SafeReferenceV02[];
-  readonly fencedRecipientIdentity: ExecutorIdentityV02;
-  readonly fencingGeneration: number;
-  readonly fencingProof: SafeReferenceV02;
-};
+type ReconciliationOutcomeEvidenceV02 =
+  | {
+      readonly disposition: 'observed-and-accounted';
+      readonly effectEvidenceRef: SafeReferenceV02;
+      readonly accountingEvidenceRefs: readonly SafeReferenceV02[];
+      readonly observedUsage?: ProviderUsage | undefined;
+    }
+  | {
+      readonly disposition: 'proven-not-dispatched';
+      readonly adapterEvidenceRefs: readonly SafeReferenceV02[];
+      readonly fencedRecipientIdentity: ExecutorIdentityV02;
+      readonly fencingGeneration: number;
+      readonly fencingProof: SafeReferenceV02;
+    };
 
 export type UncertainAttemptReconciliationReceiptV02 =
-  | (RepositoryReconciliationBaseV02 & RepositoryReconciliationPlanFieldsV02 & ActionDecisionReceiptBindingV02 & ReconciliationOutcomeEvidenceV02 & { readonly reconciliationKind: 'uncertain-attempt' })
+  | (RepositoryReconciliationBaseV02 &
+      RepositoryReconciliationPlanFieldsV02 &
+      ActionDecisionReceiptBindingV02 &
+      ReconciliationOutcomeEvidenceV02 & { readonly reconciliationKind: 'uncertain-attempt' })
   | (ProviderReconciliationBaseV02 & ProviderReconciliationPlanFieldsV02 & ReconciliationOutcomeEvidenceV02 & { readonly reconciliationKind: 'uncertain-attempt' });
 
 export type ObservedOutcomeReconciliationReceiptV02 =

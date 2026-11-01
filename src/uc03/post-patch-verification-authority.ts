@@ -34,17 +34,21 @@ export function expectedPlanMaterialDigest(task: BugTask, state: TaskState): str
   });
 }
 
-export function prepareVerificationApproval(
-  task: BugTask,
-  state: TaskState,
-  snapshot: VerificationAuthoritySnapshotV02,
-  originalDecisionId: string,
-): PreparedVerificationApprovalV02 | undefined {
+export function prepareVerificationApproval(task: BugTask, state: TaskState, snapshot: VerificationAuthoritySnapshotV02, originalDecisionId: string): PreparedVerificationApprovalV02 | undefined {
   const plan = state.plan;
   const materialDigest = expectedPlanMaterialDigest(task, state);
-  if (!plan || !materialDigest || snapshot.taskId !== state.taskId || snapshot.runId !== state.runId ||
-      snapshot.stateVersion !== state.stateVersion || snapshot.repositoryRevisionDigest !== state.repositoryRevisionDigest ||
-      snapshot.controlMode !== 'runnable' || snapshot.holdRef !== null || snapshot.activeClaimId !== null) return undefined;
+  if (
+    !plan ||
+    !materialDigest ||
+    snapshot.taskId !== state.taskId ||
+    snapshot.runId !== state.runId ||
+    snapshot.stateVersion !== state.stateVersion ||
+    snapshot.repositoryRevisionDigest !== state.repositoryRevisionDigest ||
+    snapshot.controlMode !== 'runnable' ||
+    snapshot.holdRef !== null ||
+    snapshot.activeClaimId !== null
+  )
+    return undefined;
   const policyIdentity = snapshot.policyIdentity;
   const requestIdentity = computeCanonicalSha256({
     purpose: 'post-patch-verification-approval',
@@ -137,33 +141,45 @@ export function createVerificationApprovalContext(
 }
 
 export function currentApprovalMatches(
-  resolution: { readonly outcome: string; readonly decisionId?: string; readonly binding?: ApprovalBinding; readonly issuerKeyRef?: string; readonly decisionAuthorityGeneration?: number; readonly contextDigest?: string },
+  resolution: {
+    readonly outcome: string;
+    readonly decisionId?: string;
+    readonly binding?: ApprovalBinding;
+    readonly issuerKeyRef?: string;
+    readonly decisionAuthorityGeneration?: number;
+    readonly contextDigest?: string;
+  },
   decisionId: string,
   context: VerificationApprovalContextV02,
 ): boolean {
   const binding = resolution.binding;
   const freshness = context.approvalContext;
-  return resolution.outcome === 'resolved' && resolution.decisionId === decisionId && !!binding &&
-    binding.decisionId === decisionId && binding.status === 'approved' && binding.actionKind === 'fix_plan' &&
-    binding.taskId === freshness.currentTaskId && binding.workspaceId === freshness.currentWorkspaceId &&
+  return (
+    resolution.outcome === 'resolved' &&
+    resolution.decisionId === decisionId &&
+    !!binding &&
+    binding.decisionId === decisionId &&
+    binding.status === 'approved' &&
+    binding.actionKind === 'fix_plan' &&
+    binding.taskId === freshness.currentTaskId &&
+    binding.workspaceId === freshness.currentWorkspaceId &&
     binding.repositoryRevisionDigest === freshness.currentRepositoryRevisionDigest &&
-    binding.policyId === freshness.currentPolicyId && binding.policyVersion === freshness.currentPolicyVersion &&
+    binding.policyId === freshness.currentPolicyId &&
+    binding.policyVersion === freshness.currentPolicyVersion &&
     binding.normalizedActionDigest === freshness.currentNormalizedActionDigest &&
-    binding.planVersion === freshness.currentPlanVersion && binding.strategyDigest === freshness.currentStrategyDigest &&
+    binding.planVersion === freshness.currentPlanVersion &&
+    binding.strategyDigest === freshness.currentStrategyDigest &&
     binding.baselineRef === freshness.currentBaselineRef &&
     computeCanonicalSha256(binding.evidenceRefs ?? []) === computeCanonicalSha256(freshness.currentEvidenceRefs) &&
-    binding.criteriaDigest === freshness.currentCriteriaDigest && binding.checkSetDigest === freshness.currentCheckSetDigest &&
+    binding.criteriaDigest === freshness.currentCriteriaDigest &&
+    binding.checkSetDigest === freshness.currentCheckSetDigest &&
     resolution.issuerKeyRef === context.expectedIssuerKeyRef &&
     resolution.decisionAuthorityGeneration === context.expectedDecisionAuthorityGeneration &&
-    resolution.contextDigest === computeCanonicalSha256(context);
+    resolution.contextDigest === computeCanonicalSha256(context)
+  );
 }
 
-export async function currentPlanApprovalIsCurrent(
-  task: BugTask,
-  expected: TaskState,
-  owner: StatePortV02,
-  decisionId: string,
-): Promise<boolean> {
+export async function currentPlanApprovalIsCurrent(task: BugTask, expected: TaskState, owner: StatePortV02, decisionId: string): Promise<boolean> {
   if (!owner.loadTask || !owner.readVerificationAuthoritySnapshot || !owner.resolvePlanDecisionInContext) return false;
   let current: TaskState | null;
   let snapshot: VerificationAuthoritySnapshotV02 | null;
@@ -171,20 +187,33 @@ export async function currentPlanApprovalIsCurrent(
     current = await owner.loadTask(expected.taskId);
     if (!current) return false;
     snapshot = await owner.readVerificationAuthoritySnapshot(expected.taskId);
-  } catch { return false; }
-  if (!snapshot || !current.plan || current.plan.decisionRef !== decisionId || expected.plan?.decisionRef !== decisionId ||
-      current.taskId !== expected.taskId || current.runId !== expected.runId ||
-      current.repositoryRevisionDigest !== expected.repositoryRevisionDigest ||
-      expectedPlanMaterialDigest(task, current) !== expectedPlanMaterialDigest(task, expected) ||
-      snapshot.stateVersion !== current.stateVersion || snapshot.repositoryRevisionDigest !== current.repositoryRevisionDigest ||
-      snapshot.controlMode !== 'runnable' || snapshot.holdRef !== null || snapshot.activeClaimId !== null ||
-      (current.activeDecisionId !== undefined && current.activeDecisionId !== decisionId)) return false;
-  const context = createVerificationApprovalContext(
-    task, current, snapshot.policyIdentity, snapshot.decisionAuthorityGeneration, decisionId,
-  );
+  } catch {
+    return false;
+  }
+  if (
+    !snapshot ||
+    !current.plan ||
+    current.plan.decisionRef !== decisionId ||
+    expected.plan?.decisionRef !== decisionId ||
+    current.taskId !== expected.taskId ||
+    current.runId !== expected.runId ||
+    current.repositoryRevisionDigest !== expected.repositoryRevisionDigest ||
+    expectedPlanMaterialDigest(task, current) !== expectedPlanMaterialDigest(task, expected) ||
+    snapshot.stateVersion !== current.stateVersion ||
+    snapshot.repositoryRevisionDigest !== current.repositoryRevisionDigest ||
+    snapshot.controlMode !== 'runnable' ||
+    snapshot.holdRef !== null ||
+    snapshot.activeClaimId !== null ||
+    (current.activeDecisionId !== undefined && current.activeDecisionId !== decisionId)
+  )
+    return false;
+  const context = createVerificationApprovalContext(task, current, snapshot.policyIdentity, snapshot.decisionAuthorityGeneration, decisionId);
   if (!context) return false;
   let resolution;
-  try { resolution = await owner.resolvePlanDecisionInContext(decisionId, context); }
-  catch { return false; }
+  try {
+    resolution = await owner.resolvePlanDecisionInContext(decisionId, context);
+  } catch {
+    return false;
+  }
   return currentApprovalMatches(resolution, decisionId, context);
 }

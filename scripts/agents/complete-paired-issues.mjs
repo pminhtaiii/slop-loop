@@ -7,7 +7,18 @@ import { dataDirectory, readJson, repository, withLock } from './agent-store.mjs
 import { publicationTargets } from './publication-targets.mjs';
 import { command, json, sides } from './paired-issue-api.mjs';
 import { privateIdentityAppears, resolveIssuePair, validateTarget } from './paired-issue-resolution.mjs';
-import { completionMarker, loadCompletionRecord, mergedSnapshot, parsePullUrl, prIdentity, readSubmissionPr, saveCompletionRecord, validateCompletionRecord, validHash, validPrUrl } from './paired-issue-state.mjs';
+import {
+  completionMarker,
+  loadCompletionRecord,
+  mergedSnapshot,
+  parsePullUrl,
+  prIdentity,
+  readSubmissionPr,
+  saveCompletionRecord,
+  validateCompletionRecord,
+  validHash,
+  validPrUrl,
+} from './paired-issue-state.mjs';
 import { issueCommentsState, postComment, sameVerifiedSnapshot } from './paired-issue-comments.mjs';
 import { featureBranch } from './pr-conventions.mjs';
 import { loadIssueProject, projectItem, syncProjectItem } from './issue-project.mjs';
@@ -45,23 +56,38 @@ export async function readEvidence(path) {
   const bytes = await readFile(resolve(path));
   if (bytes.length > 65_536) throw new Error('Evidence file exceeds 65536 bytes.');
   let text;
-  try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
-  catch { throw new Error('Evidence file must contain valid UTF-8.'); }
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    throw new Error('Evidence file must contain valid UTF-8.');
+  }
   if (text.includes('\0')) throw new Error('Evidence file must not contain NUL characters.');
   let input;
-  try { input = JSON.parse(text); }
-  catch { throw new Error('Evidence file must contain valid JSON.'); }
-  if (!input || typeof input !== 'object' || Array.isArray(input) || input.schemaVersion !== 1 || typeof input.summary !== 'string' || !input.summary.trim() || !Array.isArray(input.acceptance) || !input.acceptance.length) {
+  try {
+    input = JSON.parse(text);
+  } catch {
+    throw new Error('Evidence file must contain valid JSON.');
+  }
+  if (
+    !input ||
+    typeof input !== 'object' ||
+    Array.isArray(input) ||
+    input.schemaVersion !== 1 ||
+    typeof input.summary !== 'string' ||
+    !input.summary.trim() ||
+    !Array.isArray(input.acceptance) ||
+    !input.acceptance.length
+  ) {
     throw new Error('Evidence must use schemaVersion 1 with a nonblank summary and at least one acceptance entry.');
   }
-  const acceptance = input.acceptance.map((entry) => {
+  const acceptance = input.acceptance.map(entry => {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry) || typeof entry.criterion !== 'string' || !entry.criterion.trim() || typeof entry.evidence !== 'string' || !entry.evidence.trim()) {
       throw new Error('Each acceptance entry needs nonblank criterion and evidence text.');
     }
     return { criterion: entry.criterion.trim(), evidence: entry.evidence.trim() };
   });
   const evidence = { schemaVersion: 1, summary: input.summary.trim(), acceptance };
-  if ([evidence.summary, ...acceptance.flatMap((item) => [item.criterion, item.evidence])].some((value) => value.includes('\0'))) throw new Error('Evidence text must not contain NUL characters.');
+  if ([evidence.summary, ...acceptance.flatMap(item => [item.criterion, item.evidence])].some(value => value.includes('\0'))) throw new Error('Evidence text must not contain NUL characters.');
   return { evidence, source: text, decoded: JSON.stringify(input), sha256: createHash('sha256').update(JSON.stringify(evidence)).digest('hex') };
 }
 
@@ -72,7 +98,7 @@ export function expectedRecord(values, pair, targets, publicPr, submissionPr, ev
     issueMarker: pair.marker,
     completionMarker: completionMarker(targets.primary.repository, values.key),
     targets: { primary: targets.primary.repository, submission: targets.submission.repository },
-    issues: Object.fromEntries(sides.map((side) => [side, { number: pair.issues[side].number, url: pair.issues[side].url }])),
+    issues: Object.fromEntries(sides.map(side => [side, { number: pair.issues[side].number, url: pair.issues[side].url }])),
     resolvingPr: {
       primary: prIdentity(publicPr, targets.primary.repository),
       submission: prIdentity(submissionPr, targets.submission.repository),
@@ -82,7 +108,7 @@ export function expectedRecord(values, pair, targets, publicPr, submissionPr, ev
 }
 
 export async function inspectCurrent(values, evidenceInput, repo, call, targets, recordPath) {
-  if ([evidenceInput.source, evidenceInput.decoded, JSON.stringify(evidenceInput.evidence)].some((text) => privateIdentityAppears(text, targets.submission.repository))) {
+  if ([evidenceInput.source, evidenceInput.decoded, JSON.stringify(evidenceInput.evidence)].some(text => privateIdentityAppears(text, targets.submission.repository))) {
     throw new Error('Evidence must not include the private repository identity.');
   }
   for (const side of sides) {
@@ -90,12 +116,15 @@ export async function inspectCurrent(values, evidenceInput, repo, call, targets,
     validateTarget(side, targets[side], metadata);
   }
   const pair = await resolveIssuePair(call, repo, values, targets);
-  if (values.expectedIssueBodies && sides.some(side => pair.issues[side].bodySha256 !== values.expectedIssueBodies[side])) throw new Error('Ticket acceptance changed since automatic completion was queued; verify new evidence.');
+  if (values.expectedIssueBodies && sides.some(side => pair.issues[side].bodySha256 !== values.expectedIssueBodies[side]))
+    throw new Error('Ticket acceptance changed since automatic completion was queued; verify new evidence.');
   const publicUrl = parsePullUrl(values.pr, targets.primary.repository);
   const fields = 'number,url,state,mergedAt,headRefName,headRefOid,baseRefName,isDraft,isCrossRepository';
   const publicPr = json(call, ['pr', 'view', String(publicUrl.number), '--repo', targets.primary.repository, '--json', fields], repo, 'public PR');
-  if (publicPr.number !== publicUrl.number || !validPrUrl(publicPr.url, targets.primary.repository, publicUrl.number) || publicPr.isCrossRepository !== false) throw new Error('The public PR identity is invalid, cross-repository, or changed.');
-  if (!featureBranch.test(publicPr.headRefName ?? '') || publicPr.baseRefName !== 'development' || !validHash(publicPr.headRefOid)) throw new Error('The public PR must use a feat/scope-description branch (or historical numbered name) and development base.');
+  if (publicPr.number !== publicUrl.number || !validPrUrl(publicPr.url, targets.primary.repository, publicUrl.number) || publicPr.isCrossRepository !== false)
+    throw new Error('The public PR identity is invalid, cross-repository, or changed.');
+  if (!featureBranch.test(publicPr.headRefName ?? '') || publicPr.baseRefName !== 'development' || !validHash(publicPr.headRefOid))
+    throw new Error('The public PR must use a feat/scope-description branch (or historical numbered name) and development base.');
   if (!['OPEN', 'CLOSED', 'MERGED'].includes(publicPr.state)) throw new Error('GitHub returned an invalid public PR state.');
   if (publicPr.state === 'MERGED' && (typeof publicPr.mergedAt !== 'string' || !publicPr.mergedAt.trim())) throw new Error('The merged public PR has no mergedAt timestamp.');
   const submissionPr = readSubmissionPr(call, repo, targets.submission, publicPr.headRefName);
@@ -112,7 +141,7 @@ export async function inspectCurrent(values, evidenceInput, repo, call, targets,
   if (publicPr.state === 'CLOSED' || submissionPr.state === 'CLOSED') return { status: 'BLOCKED', reason: 'A resolving PR closed without merging.', pair, publicUrl, publicPr, submissionPr, expected };
   if (publicPr.state !== 'MERGED' || submissionPr.state !== 'MERGED') return { status: 'WAITING_PR', pair, publicUrl, publicPr, submissionPr, expected };
   const merged = mergedSnapshot(call, repo, targets, publicPr, submissionPr);
-  if (merged.verified) merged.verified.issueBodies = Object.fromEntries(sides.map((side) => [side, pair.issues[side].bodySha256]));
+  if (merged.verified) merged.verified.issueBodies = Object.fromEntries(sides.map(side => [side, pair.issues[side].bodySha256]));
   return { ...merged, pair, publicUrl, publicPr, submissionPr, expected };
 }
 
@@ -126,7 +155,8 @@ export async function runIssueCompletion(args, dependencies = {}) {
   if (values.help) return { usage };
   const evidenceInput = await readEvidence(values['evidence-file']);
   if (dependencies.expectedEvidenceSha256 !== undefined && evidenceInput.sha256 !== dependencies.expectedEvidenceSha256) throw new Error('Queued acceptance evidence changed; verify new evidence.');
-  if (values.expectedIssueBodies !== undefined && sides.some(side => !/^[a-f0-9]{64}$/.test(values.expectedIssueBodies?.[side] ?? ''))) throw new Error('Missing or invalid queued acceptance bindings.');
+  if (values.expectedIssueBodies !== undefined && sides.some(side => !/^[a-f0-9]{64}$/.test(values.expectedIssueBodies?.[side] ?? '')))
+    throw new Error('Missing or invalid queued acceptance bindings.');
   const repo = await repository(values.root ?? defaultRoot);
   const call = (binary, argv, cwd, timeout) => (dependencies.execute ?? execute)(binary, argv, cwd, timeout);
   const targets = await publicationTargets(repo, call);
@@ -156,12 +186,12 @@ export async function runIssueCompletion(args, dependencies = {}) {
     if (!values.apply) {
       record.verified = current.verified;
       await saveCompletionRecord(recordPath, record);
-      const closed = sides.every((side) => current.pair.issues[side].state === 'closed');
+      const closed = sides.every(side => current.pair.issues[side].state === 'closed');
       const done = !project || projectItem(repo, call, project, current.pair.issues[project.side].url)?.fieldValueByName?.optionId === project.doneId;
       return { status: closed && done ? 'COMPLETED' : 'READY_TO_COMPLETE', key: values.key, public: current.publicPr.url, submission: current.submissionPr.url };
     }
 
-    if (sides.every((side) => current.pair.issues[side].state === 'closed')) {
+    if (sides.every(side => current.pair.issues[side].state === 'closed')) {
       if (project) syncProjectItem(repo, call, project, current.pair.issues[project.side].url, true);
       record.verified = current.verified;
       for (const side of sides) record.progress[side].closed = true;
@@ -181,7 +211,8 @@ export async function runIssueCompletion(args, dependencies = {}) {
     await saveCompletionRecord(recordPath, record);
     for (const side of sides) {
       const beforeComment = await inspectCurrent(values, evidenceInput, repo, call, targets, recordPath);
-      if (beforeComment.status !== 'READY' || !sameVerifiedSnapshot(record.verified, beforeComment.verified)) throw new Error('PR, CI, tree, or issue evidence changed before completion comments could be added.');
+      if (beforeComment.status !== 'READY' || !sameVerifiedSnapshot(record.verified, beforeComment.verified))
+        throw new Error('PR, CI, tree, or issue evidence changed before completion comments could be added.');
       validateCompletionRecord(record, beforeComment.expected);
       current = beforeComment;
       const { bodies, comments } = issueCommentsState(call, repo, targets, current, evidenceInput.evidence, record);
@@ -226,7 +257,15 @@ export async function runIssueCompletion(args, dependencies = {}) {
     }
 
     const finalPair = await resolveIssuePair(call, repo, values, targets);
-    if (sides.some((side) => finalPair.issues[side].number !== current.pair.issues[side].number || finalPair.issues[side].url !== current.pair.issues[side].url || finalPair.issues[side].bodySha256 !== current.pair.issues[side].bodySha256 || finalPair.issues[side].state !== 'closed')) {
+    if (
+      sides.some(
+        side =>
+          finalPair.issues[side].number !== current.pair.issues[side].number ||
+          finalPair.issues[side].url !== current.pair.issues[side].url ||
+          finalPair.issues[side].bodySha256 !== current.pair.issues[side].bodySha256 ||
+          finalPair.issues[side].state !== 'closed',
+      )
+    ) {
       throw new Error('GitHub did not close both exact paired issues; rerun completion to recover.');
     }
     for (const side of sides) record.progress[side].closed = true;
@@ -237,10 +276,12 @@ export async function runIssueCompletion(args, dependencies = {}) {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  runIssueCompletion(process.argv.slice(2)).then((result) => {
-    console.log(result.usage ?? JSON.stringify(result, null, 2));
-  }).catch((error) => {
-    console.error(error.message);
-    process.exitCode = 1;
-  });
+  runIssueCompletion(process.argv.slice(2))
+    .then(result => {
+      console.log(result.usage ?? JSON.stringify(result, null, 2));
+    })
+    .catch(error => {
+      console.error(error.message);
+      process.exitCode = 1;
+    });
 }

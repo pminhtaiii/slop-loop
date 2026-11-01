@@ -14,7 +14,8 @@ function parse(args) {
   const [mode, ...rest] = args;
   const separator = rest.indexOf('--');
   if (!['run', 'verify'].includes(mode) || separator < 0) throw new Error(usage);
-  const options = rest.slice(0, separator), command = rest.slice(separator + 1);
+  const options = rest.slice(0, separator),
+    command = rest.slice(separator + 1);
   const values = { inputs: [] };
   for (let index = 0; index < options.length;) {
     const name = options[index].startsWith('--') ? options[index].slice(2) : '';
@@ -30,7 +31,16 @@ function parse(args) {
 }
 
 function relativePath(path) {
-  if (typeof path !== 'string' || !path || path.trim() !== path || isAbsolute(path) || path.includes('\\') || path.includes(':') || path.split('/').some(part => !part || ['.', '..', '.git'].includes(part.toLowerCase()))) throw new Error(`Unsafe repository path: ${path}`);
+  if (
+    typeof path !== 'string' ||
+    !path ||
+    path.trim() !== path ||
+    isAbsolute(path) ||
+    path.includes('\\') ||
+    path.includes(':') ||
+    path.split('/').some(part => !part || ['.', '..', '.git'].includes(part.toLowerCase()))
+  )
+    throw new Error(`Unsafe repository path: ${path}`);
   return path;
 }
 
@@ -54,7 +64,10 @@ async function artifactPath(root, path, { create = false } = {}) {
   let current = root;
   for (const part of parts.slice(0, -1)) {
     current = join(current, part);
-    if (create) await mkdir(current).catch(error => { if (error.code !== 'EEXIST') throw error; });
+    if (create)
+      await mkdir(current).catch(error => {
+        if (error.code !== 'EEXIST') throw error;
+      });
     const stat = await lstat(current);
     if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error(`Unsafe artifact directory: ${current}`);
   }
@@ -90,7 +103,8 @@ function validateReceiptDigest(receipt) {
 
 async function fileDigest(path) {
   const handle = await open(path, 'r');
-  const hash = createHash('sha256'), buffer = Buffer.alloc(64 * 1024);
+  const hash = createHash('sha256'),
+    buffer = Buffer.alloc(64 * 1024);
   try {
     for (;;) {
       const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
@@ -98,7 +112,9 @@ async function fileDigest(path) {
       hash.update(buffer.subarray(0, bytesRead));
     }
     return hash.digest('hex');
-  } finally { await handle.close(); }
+  } finally {
+    await handle.close();
+  }
 }
 
 async function executeRun(state, repo, inputHashes, outputPath, logPath) {
@@ -107,9 +123,15 @@ async function executeRun(state, repo, inputHashes, outputPath, logPath) {
   if (JSON.stringify(inputsBeforeRun) !== JSON.stringify(inputHashes)) throw new Error('Declared inputs changed before command execution.');
   const startedAt = new Date().toISOString();
   const base = {
-    schemaVersion: 1, status: 'running', root: repo.root, command: state.command,
-    candidateSha256: before.candidateSha256, inputs: inputHashes, environment: environment(repo.root, inputHashes),
-    startedAt, output: { log: relative(repo.root, logPath).replaceAll('\\', '/'), capture: 'combined stdout/stderr', streams: ['stdout', 'stderr'], sha256: null },
+    schemaVersion: 1,
+    status: 'running',
+    root: repo.root,
+    command: state.command,
+    candidateSha256: before.candidateSha256,
+    inputs: inputHashes,
+    environment: environment(repo.root, inputHashes),
+    startedAt,
+    output: { log: relative(repo.root, logPath).replaceAll('\\', '/'), capture: 'combined stdout/stderr', streams: ['stdout', 'stderr'], sha256: null },
   };
   await atomicWrite(outputPath, `${JSON.stringify(fingerprintReceipt(base), null, 2)}\n`, { exclusive: true });
   let gate, failure;
@@ -120,23 +142,41 @@ async function executeRun(state, repo, inputHashes, outputPath, logPath) {
     failure = error.message;
   }
   let after;
-  try { after = await capture(repo.root); }
-  catch (error) { failure ??= `Could not verify the candidate after execution: ${error.message}`; }
+  try {
+    after = await capture(repo.root);
+  } catch (error) {
+    failure ??= `Could not verify the candidate after execution: ${error.message}`;
+  }
   try {
     if (JSON.stringify(await fingerprints(repo.root, state.inputs)) !== JSON.stringify(inputHashes)) failure ??= 'Declared inputs changed during command execution.';
-  } catch (error) { failure ??= `Could not verify declared inputs after execution: ${error.message}`; }
+  } catch (error) {
+    failure ??= `Could not verify declared inputs after execution: ${error.message}`;
+  }
   if (after && after.candidateSha256 !== before.candidateSha256) failure ??= 'Candidate changed during command execution.';
-  const outputHash = await fileDigest(logPath).catch(error => { failure ??= `Captured output is unavailable: ${error.message}`; return null; });
+  const outputHash = await fileDigest(logPath).catch(error => {
+    failure ??= `Captured output is unavailable: ${error.message}`;
+    return null;
+  });
   const outcome = gate.status === 'passed' && !failure && outputHash ? 'passed' : 'failed';
   const payload = {
-    ...base, status: outcome, finishedAt: new Date().toISOString(), gate,
+    ...base,
+    status: outcome,
+    finishedAt: new Date().toISOString(),
+    gate,
     candidateAfterSha256: after?.candidateSha256 ?? null,
     output: { ...base.output, sha256: outputHash },
     scope: 'Binding observation for the candidate, declared inputs, command, allowlisted runtime identity, and captured output. Undeclared external state is outside this claim.',
     ...(failure ? { failure: failure.slice(0, 1000) } : {}),
   };
   await atomicWrite(outputPath, `${JSON.stringify(fingerprintReceipt(payload), null, 2)}\n`);
-  return { status: 'CAPTURED', outcome, receipt: relative(repo.root, outputPath).replaceAll('\\', '/'), log: payload.output.log, candidateSha256: payload.candidateSha256, gate: { status: gate.status, exitCode: gate.exitCode } };
+  return {
+    status: 'CAPTURED',
+    outcome,
+    receipt: relative(repo.root, outputPath).replaceAll('\\', '/'),
+    log: payload.output.log,
+    candidateSha256: payload.candidateSha256,
+    gate: { status: gate.status, exitCode: gate.exitCode },
+  };
 }
 
 async function verifyReceipt(state, repo, inputHashes, outputPath) {
@@ -145,7 +185,9 @@ async function verifyReceipt(state, repo, inputHashes, outputPath) {
     const stat = await lstat(outputPath);
     if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Receipt must be a regular file.');
     raw = await readFile(outputPath, 'utf8');
-  } catch (error) { throw new Error(`Receipt is unavailable: ${error.message}`, { cause: error }); }
+  } catch (error) {
+    throw new Error(`Receipt is unavailable: ${error.message}`, { cause: error });
+  }
   const payload = validateReceiptDigest(JSON.parse(raw));
   if (payload.schemaVersion !== 1 || payload.root !== repo.root || !Array.isArray(payload.command) || !Array.isArray(payload.inputs)) throw new Error('Malformed focused-check receipt.');
   if (JSON.stringify(payload.command) !== JSON.stringify(state.command)) throw new Error('Command changed since the focused check.');
@@ -159,7 +201,7 @@ async function verifyReceipt(state, repo, inputHashes, outputPath) {
   const logPath = await artifactPath(repo.root, expectedLog);
   const logStat = await lstat(logPath);
   if (!logStat.isFile() || logStat.isSymbolicLink()) throw new Error('Captured output must be a regular file.');
-  if (await fileDigest(logPath) !== payload.output.sha256) throw new Error('Captured output log changed since the focused check.');
+  if ((await fileDigest(logPath)) !== payload.output.sha256) throw new Error('Captured output log changed since the focused check.');
   return { status: 'REUSED', outcome: 'passed', receipt: relative(repo.root, outputPath).replaceAll('\\', '/'), log: expectedLog, candidateSha256: payload.candidateSha256, command: payload.command };
 }
 
@@ -174,15 +216,24 @@ export async function focusedCheck(args) {
   const inputHashes = await fingerprints(repo.root, state.inputs);
   if (state.mode === 'verify') return verifyReceipt(state, repo, inputHashes, outputPath);
   for (const path of [outputPath, logPath]) {
-    try { await lstat(path); throw new Error(`Retained output already exists: ${relative(repo.root, path)}`); }
-    catch (error) { if (error.code !== 'ENOENT') throw error; }
+    try {
+      await lstat(path);
+      throw new Error(`Retained output already exists: ${relative(repo.root, path)}`);
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
   }
   return executeRun(state, repo, inputHashes, outputPath, logPath);
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  focusedCheck(process.argv.slice(2)).then(result => {
-    console.log(JSON.stringify(result, null, 2));
-    if (result.outcome === 'failed') process.exitCode = 1;
-  }).catch(error => { console.error(error.message); process.exitCode = 1; });
+  focusedCheck(process.argv.slice(2))
+    .then(result => {
+      console.log(JSON.stringify(result, null, 2));
+      if (result.outcome === 'failed') process.exitCode = 1;
+    })
+    .catch(error => {
+      console.error(error.message);
+      process.exitCode = 1;
+    });
 }

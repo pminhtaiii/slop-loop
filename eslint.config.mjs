@@ -13,12 +13,7 @@ const nodeJavaScript = [
 
 export default tseslint.config(
   {
-    ignores: [
-      'dist/**',
-      'node_modules/**',
-      '.agent-work/**',
-      'coverage/**',
-    ],
+    ignores: ['dist/**', 'node_modules/**', '.agent-work/**', 'coverage/**'],
   },
   {
     ...js.configs.recommended,
@@ -41,18 +36,11 @@ export default tseslint.config(
   },
   {
     files: ['**/*.{ts,tsx,mts,cts}'],
-    extends: [
-      tseslint.configs.eslintRecommended,
-      ...tseslint.configs.strict,
-      ...tseslint.configs.stylistic,
-    ],
+    extends: [tseslint.configs.eslintRecommended, ...tseslint.configs.strict, ...tseslint.configs.stylistic],
     rules: {
       '@typescript-eslint/no-explicit-any': 'error',
       '@typescript-eslint/explicit-module-boundary-types': 'error',
-      '@typescript-eslint/consistent-type-imports': [
-        'error',
-        { prefer: 'type-imports', fixStyle: 'separate-type-imports' },
-      ],
+      '@typescript-eslint/consistent-type-imports': ['error', { prefer: 'type-imports', fixStyle: 'separate-type-imports' }],
       'prefer-const': 'error',
       ...noUselessCatch,
     },
@@ -83,17 +71,14 @@ export default tseslint.config(
       'no-restricted-imports': [
         'error',
         {
-          patterns: [{
-            group: [
-              '**/tests/runtime/support',
-              '**/tests/runtime/support/**',
-              'tests/runtime/support',
-              'tests/runtime/support/**',
-            ],
-            message: 'Production code cannot import runtime test support.',
-          }],
+          patterns: [
+            {
+              group: ['**/tests/runtime/support', '**/tests/runtime/support/**', 'tests/runtime/support', 'tests/runtime/support/**'],
+              message: 'Production code cannot import runtime test support.',
+            },
+          ],
         },
       ],
     },
-  }
+  },
 );

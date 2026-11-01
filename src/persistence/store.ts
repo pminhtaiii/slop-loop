@@ -1,20 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { lstat, mkdir, open, readFile, readdir, realpath, rename, unlink } from 'node:fs/promises';
 import { dirname, join, resolve, sep } from 'node:path';
-import type {
-  TaskState,
-  CheckpointRecord,
-  DeliberatePauseRecord,
-  BudgetJournalRecord,
-  DispatchClaimRecord,
-} from './contracts.ts';
-import {
-  validateTaskState,
-  validateCheckpointRecord,
-  validateDeliberatePauseRecord,
-  validateBudgetJournalRecord,
-  validateDispatchClaimRecord,
-} from './contracts.ts';
+import type { TaskState, CheckpointRecord, DeliberatePauseRecord, BudgetJournalRecord, DispatchClaimRecord } from './contracts.ts';
+import { validateTaskState, validateCheckpointRecord, validateDeliberatePauseRecord, validateBudgetJournalRecord, validateDispatchClaimRecord } from './contracts.ts';
 
 const SAFE_STORAGE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
@@ -164,7 +152,7 @@ export class DurableStore {
   async saveTask(task: TaskState): Promise<void> {
     const val = validateTaskState(task);
     if (!val.ok) {
-      throw new Error(`Invalid TaskState: ${val.errors.map((e) => e.message).join(', ')}`);
+      throw new Error(`Invalid TaskState: ${val.errors.map(e => e.message).join(', ')}`);
     }
     await this.init();
     const taskPath = this.getTaskPath(task.taskId);
@@ -176,7 +164,7 @@ export class DurableStore {
     const data = await this.readContained(this.getTaskPath(taskId));
     if (data === null) return null;
     const val = validateTaskState(JSON.parse(data) as unknown);
-    if (!val.ok) throw new Error(`Corrupted TaskState: ${val.errors.map((e) => e.message).join(', ')}`);
+    if (!val.ok) throw new Error(`Corrupted TaskState: ${val.errors.map(e => e.message).join(', ')}`);
     if (val.value.taskId !== taskId) throw new Error(`Task record mismatch: expected ${taskId}, found ${val.value.taskId}`);
     return val.value;
   }
@@ -184,14 +172,12 @@ export class DurableStore {
   async saveCheckpoint(task: TaskState): Promise<CheckpointRecord> {
     const val = validateTaskState(task);
     if (!val.ok) {
-      throw new Error(`Cannot checkpoint invalid task: ${val.errors.map((e) => e.message).join(', ')}`);
+      throw new Error(`Cannot checkpoint invalid task: ${val.errors.map(e => e.message).join(', ')}`);
     }
 
     const latest = await this.loadLatestCheckpoint(task.taskId);
     if (latest && task.stateVersion <= latest.stateVersion) {
-      throw new Error(
-        `Non-monotonic stateVersion: task version ${task.stateVersion} is <= latest checkpoint version ${latest.stateVersion}`
-      );
+      throw new Error(`Non-monotonic stateVersion: task version ${task.stateVersion} is <= latest checkpoint version ${latest.stateVersion}`);
     }
 
     await this.init();
@@ -215,7 +201,7 @@ export class DurableStore {
 
     const recordVal = validateCheckpointRecord(record);
     if (!recordVal.ok) {
-      throw new Error(`Invalid checkpoint record generated: ${recordVal.errors.map((e) => e.message).join(', ')}`);
+      throw new Error(`Invalid checkpoint record generated: ${recordVal.errors.map(e => e.message).join(', ')}`);
     }
 
     const cpPath = this.getCheckpointPath(task.taskId, checkpointId);
@@ -236,7 +222,7 @@ export class DurableStore {
 
     const val = validateCheckpointRecord(record);
     if (!val.ok) {
-      throw new Error(`Corrupted checkpoint record: ${val.errors.map((e) => e.message).join(', ')}`);
+      throw new Error(`Corrupted checkpoint record: ${val.errors.map(e => e.message).join(', ')}`);
     }
     if (val.value.taskId !== taskId) {
       throw new Error(`Checkpoint mismatch: expected ${taskId}, found ${val.value.taskId}`);
@@ -254,10 +240,10 @@ export class DurableStore {
     const cpDir = this.getCheckpointDir(taskId);
     try {
       const files = await readdir(cpDir);
-      const jsonFiles = files.filter((f) => f.endsWith('.json'));
+      const jsonFiles = files.filter(f => f.endsWith('.json'));
       if (jsonFiles.length === 0) return null;
 
-      const parsedFiles = jsonFiles.map((file) => {
+      const parsedFiles = jsonFiles.map(file => {
         const match = file.match(/^cp-(\d+)-v(\d+)\.json$/);
         const timestamp = match && match[1] ? Number(match[1]) : 0;
         const version = match && match[2] ? Number(match[2]) : 0;
@@ -280,7 +266,7 @@ export class DurableStore {
   async savePauseRecord(record: DeliberatePauseRecord): Promise<void> {
     const val = validateDeliberatePauseRecord(record);
     if (!val.ok) {
-      throw new Error(`Invalid DeliberatePauseRecord: ${val.errors.map((e) => e.message).join(', ')}`);
+      throw new Error(`Invalid DeliberatePauseRecord: ${val.errors.map(e => e.message).join(', ')}`);
     }
     await this.init();
     const pausePath = this.getPauseRecordPath(record.taskId);
@@ -292,7 +278,7 @@ export class DurableStore {
     const data = await this.readContained(this.getPauseRecordPath(taskId));
     if (data === null) return null;
     const val = validateDeliberatePauseRecord(JSON.parse(data) as unknown);
-    if (!val.ok) throw new Error(`Corrupted DeliberatePauseRecord: ${val.errors.map((e) => e.message).join(', ')}`);
+    if (!val.ok) throw new Error(`Corrupted DeliberatePauseRecord: ${val.errors.map(e => e.message).join(', ')}`);
     if (val.value.taskId !== taskId) throw new Error(`Pause record mismatch: expected ${taskId}, found ${val.value.taskId}`);
     return val.value;
   }
@@ -300,7 +286,7 @@ export class DurableStore {
   async saveBudgetJournal(record: BudgetJournalRecord): Promise<void> {
     const val = validateBudgetJournalRecord(record);
     if (!val.ok) {
-      throw new Error(`Invalid BudgetJournalRecord: ${val.errors.map((e) => e.message).join(', ')}`);
+      throw new Error(`Invalid BudgetJournalRecord: ${val.errors.map(e => e.message).join(', ')}`);
     }
     await this.init();
     const journalPath = this.getBudgetJournalPath(record.taskId);
@@ -312,7 +298,7 @@ export class DurableStore {
     const data = await this.readContained(this.getBudgetJournalPath(taskId));
     if (data === null) return null;
     const val = validateBudgetJournalRecord(JSON.parse(data) as unknown);
-    if (!val.ok) throw new Error(`Corrupted BudgetJournalRecord: ${val.errors.map((e) => e.message).join(', ')}`);
+    if (!val.ok) throw new Error(`Corrupted BudgetJournalRecord: ${val.errors.map(e => e.message).join(', ')}`);
     if (val.value.taskId !== taskId) throw new Error(`Budget journal mismatch: expected ${taskId}, found ${val.value.taskId}`);
     return val.value;
   }
@@ -320,7 +306,7 @@ export class DurableStore {
   async saveDispatchClaim(record: DispatchClaimRecord): Promise<void> {
     const val = validateDispatchClaimRecord(record);
     if (!val.ok) {
-      throw new Error(`Invalid DispatchClaimRecord: ${val.errors.map((e) => e.message).join(', ')}`);
+      throw new Error(`Invalid DispatchClaimRecord: ${val.errors.map(e => e.message).join(', ')}`);
     }
     await this.init();
     const claimPath = this.getClaimPath(record.taskId, record.claimId);
@@ -340,11 +326,11 @@ export class DurableStore {
     }
     await this.requireContainedParent(join(claimDir, 'x'));
     const records: DispatchClaimRecord[] = [];
-    for (const file of files.filter((f) => f.endsWith('.json')).sort()) {
+    for (const file of files.filter(f => f.endsWith('.json')).sort()) {
       const data = await this.readContained(join(claimDir, file));
       if (data === null) continue;
       const val = validateDispatchClaimRecord(JSON.parse(data) as unknown);
-      if (!val.ok) throw new Error(`Corrupted DispatchClaimRecord: ${val.errors.map((e) => e.message).join(', ')}`);
+      if (!val.ok) throw new Error(`Corrupted DispatchClaimRecord: ${val.errors.map(e => e.message).join(', ')}`);
       if (val.value.taskId !== taskId) {
         throw new Error(`Dispatch claim mismatch: expected ${taskId}, found ${val.value.taskId}`);
       }

@@ -28,10 +28,12 @@ async function fixture(t) {
 }
 
 function invoke(root, mode, command = [process.execPath, '-e', "console.log('focused stdout');console.error('focused stderr')"]) {
-  return spawnSync(process.execPath, [
-    cli, mode, '--root', root, '--receipt', '.agent-work/2026-10-31/focused-check.json',
-    '--input', 'spec.md', '--', ...command,
-  ], { cwd: project, encoding: 'utf8', windowsHide: true, timeout: 20_000 });
+  return spawnSync(process.execPath, [cli, mode, '--root', root, '--receipt', '.agent-work/2026-10-31/focused-check.json', '--input', 'spec.md', '--', ...command], {
+    cwd: project,
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: 20_000,
+  });
 }
 
 test('first focused run captures both output streams and a receipt that verify can reuse', async t => {

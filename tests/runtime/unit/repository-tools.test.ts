@@ -40,11 +40,7 @@ import {
   type CheckDefinition,
   type CommandView,
 } from '../../../src/contracts/foundation/uc03.ts';
-import {
-  computeDispatchClaimDigestV02,
-  UC05_APPROVAL_SCHEMA_VERSION_V02,
-  validateDispatchClaimV02,
-} from '../../../src/contracts/approvals/contracts.ts';
+import { computeDispatchClaimDigestV02, UC05_APPROVAL_SCHEMA_VERSION_V02, validateDispatchClaimV02 } from '../../../src/contracts/approvals/contracts.ts';
 import type { DispatchClaimV02 } from '../../../src/contracts/approvals/contracts.ts';
 import { createApprovalControlV02 } from '../../../src/approvals/control.ts';
 import type {
@@ -79,10 +75,7 @@ import {
   createTestRepositoryAdmissionContextV02,
   createTestRepositoryCommandAdmissionContextV02,
 } from '../support/uc03/state-fixtures.ts';
-import {
-  DockerWorkspaceManager,
-  StructuredCommandExecutor,
-} from '../../../src/foundation/docker-workspace.ts';
+import { DockerWorkspaceManager, StructuredCommandExecutor } from '../../../src/foundation/docker-workspace.ts';
 import type {
   CanonicalRepositorySnapshot,
   ContainerExecutionOutput,
@@ -102,9 +95,15 @@ class RepositoryTestDockerController implements DockerLifecycleController {
   outputToReturn?: Partial<ContainerExecutionOutput>;
   executionFailure?: Error;
 
-  async createVolume(id: string): Promise<void> { this.volumes.add(id); }
-  async hasVolume(id: string): Promise<boolean> { return this.volumes.has(id); }
-  async removeVolume(id: string): Promise<void> { this.volumes.delete(id); }
+  async createVolume(id: string): Promise<void> {
+    this.volumes.add(id);
+  }
+  async hasVolume(id: string): Promise<boolean> {
+    return this.volumes.has(id);
+  }
+  async removeVolume(id: string): Promise<void> {
+    this.volumes.delete(id);
+  }
 
   async getCanonicalSnapshot(workspaceId: string): Promise<CanonicalRepositorySnapshot> {
     this.snapshotRequests += 1;
@@ -112,7 +111,10 @@ class RepositoryTestDockerController implements DockerLifecycleController {
     return this.snapshotToReturn;
   }
 
-  async materializeView(params: MaterializeViewParams): Promise<void> { void params; this.materializedViews += 1; }
+  async materializeView(params: MaterializeViewParams): Promise<void> {
+    void params;
+    this.materializedViews += 1;
+  }
 
   async executeContainer(plan: DockerContainerPlan): Promise<ContainerExecutionOutput> {
     this.executedPlans.push(plan);
@@ -176,7 +178,7 @@ class FakeHostFilesystemPort implements TrustedFilesystemPort {
     }
     const rec = this.files.get(canonicalPath);
     if (!rec) {
-      const isDir = Array.from(this.files.keys()).some((k) => k.startsWith(`${canonicalPath}/`));
+      const isDir = Array.from(this.files.keys()).some(k => k.startsWith(`${canonicalPath}/`));
       if (isDir) {
         return { isFile: false, isDirectory: true, isSymbolicLink: false, size: 0 };
       }
@@ -197,7 +199,7 @@ class FakeHostFilesystemPort implements TrustedFilesystemPort {
     }
     const rec = this.files.get(canonicalPath);
     if (!rec) {
-      const isDir = Array.from(this.files.keys()).some((k) => k.startsWith(`${canonicalPath}/`));
+      const isDir = Array.from(this.files.keys()).some(k => k.startsWith(`${canonicalPath}/`));
       if (isDir) {
         return { isFile: false, isDirectory: true, isSymbolicLink: false, size: 0 };
       }
@@ -364,7 +366,7 @@ describe('ControlledRepositoryTools (Slice T007-a)', () => {
             fsPort,
             limits: defaultLimits,
           }),
-        /MISSING_GUARD_CAPABILITY/
+        /MISSING_GUARD_CAPABILITY/,
       );
       assert.equal(fsPort.readTextFileCalls.length, 0);
       assert.equal(fsPort.statCalls.length, 0);
@@ -378,7 +380,7 @@ describe('ControlledRepositoryTools (Slice T007-a)', () => {
             fsPort: null as unknown as TrustedFilesystemPort,
             limits: defaultLimits,
           }),
-        /MISSING_FILESYSTEM_PORT/
+        /MISSING_FILESYSTEM_PORT/,
       );
       assert.equal(fsPort.readTextFileCalls.length, 0);
     });
@@ -391,7 +393,7 @@ describe('ControlledRepositoryTools (Slice T007-a)', () => {
             fsPort,
             limits: null as unknown as RepositoryReadLimits,
           }),
-        /MISSING_LIMITS/
+        /MISSING_LIMITS/,
       );
       assert.throws(
         () =>
@@ -400,7 +402,7 @@ describe('ControlledRepositoryTools (Slice T007-a)', () => {
             fsPort,
             limits: { maxExcerptBytes: -1, maxResultCount: 10 },
           }),
-        /INVALID_LIMITS/
+        /INVALID_LIMITS/,
       );
       assert.equal(fsPort.readTextFileCalls.length, 0);
     });
@@ -423,14 +425,8 @@ describe('ControlledRepositoryTools (Slice T007-a)', () => {
         limits: defaultLimits,
       });
 
-      await assert.rejects(
-        () => tools.readFile('../outside.py'),
-        /WORKSPACE_ESCAPE/
-      );
-      await assert.rejects(
-        () => tools.readFile('src/../../outside.py'),
-        /WORKSPACE_ESCAPE/
-      );
+      await assert.rejects(() => tools.readFile('../outside.py'), /WORKSPACE_ESCAPE/);
+      await assert.rejects(() => tools.readFile('src/../../outside.py'), /WORKSPACE_ESCAPE/);
       assert.equal(fsPort.readTextFileCalls.length, 0);
     });
 
@@ -441,14 +437,8 @@ describe('ControlledRepositoryTools (Slice T007-a)', () => {
         limits: defaultLimits,
       });
 
-      await assert.rejects(
-        () => tools.readFile('/etc/passwd'),
-        /WORKSPACE_ESCAPE/
-      );
-      await assert.rejects(
-        () => tools.readFile('C:\\Windows\\system32'),
-        /WORKSPACE_ESCAPE/
-      );
+      await assert.rejects(() => tools.readFile('/etc/passwd'), /WORKSPACE_ESCAPE/);
+      await assert.rejects(() => tools.readFile('C:\\Windows\\system32'), /WORKSPACE_ESCAPE/);
       assert.equal(fsPort.readTextFileCalls.length, 0);
     });
 
@@ -459,10 +449,7 @@ describe('ControlledRepositoryTools (Slice T007-a)', () => {
         limits: defaultLimits,
       });
 
-      await assert.rejects(
-        () => tools.listDir('../..'),
-        /WORKSPACE_ESCAPE/
-      );
+      await assert.rejects(() => tools.listDir('../..'), /WORKSPACE_ESCAPE/);
       assert.equal(fsPort.readDirCalls.length, 0);
     });
   });
@@ -481,10 +468,7 @@ describe('ControlledRepositoryTools (Slice T007-a)', () => {
         limits: defaultLimits,
       });
 
-      await assert.rejects(
-        () => tools.readFile('symlink_outside.py'),
-        /WORKSPACE_ESCAPE/
-      );
+      await assert.rejects(() => tools.readFile('symlink_outside.py'), /WORKSPACE_ESCAPE/);
       assert.equal(fsPort.readTextFileCalls.length, 0);
     });
 
@@ -502,10 +486,7 @@ describe('ControlledRepositoryTools (Slice T007-a)', () => {
         limits: defaultLimits,
       });
 
-      await assert.rejects(
-        () => tools.readFile('symlink_env.py'),
-        /FORBIDDEN_LINK_TARGET|PROTECTED_PATH_FORBIDDEN/
-      );
+      await assert.rejects(() => tools.readFile('symlink_env.py'), /FORBIDDEN_LINK_TARGET|PROTECTED_PATH_FORBIDDEN/);
       assert.equal(fsPort.readTextFileCalls.length, 0);
     });
 
@@ -523,10 +504,7 @@ describe('ControlledRepositoryTools (Slice T007-a)', () => {
         limits: defaultLimits,
       });
 
-      await assert.rejects(
-        () => tools.readFile('linked-parent/source.py'),
-        /WORKSPACE_ESCAPE/
-      );
+      await assert.rejects(() => tools.readFile('linked-parent/source.py'), /WORKSPACE_ESCAPE/);
       assert.equal(fsPort.readTextFileCalls.includes('linked-parent/source.py'), false);
     });
 
@@ -544,10 +522,7 @@ describe('ControlledRepositoryTools (Slice T007-a)', () => {
         limits: defaultLimits,
       });
 
-      await assert.rejects(
-        () => tools.readFile('linked-git/config'),
-        /FORBIDDEN_LINK_TARGET|PROTECTED_PATH_FORBIDDEN/
-      );
+      await assert.rejects(() => tools.readFile('linked-git/config'), /FORBIDDEN_LINK_TARGET|PROTECTED_PATH_FORBIDDEN/);
       assert.equal(fsPort.readTextFileCalls.includes('linked-git/config'), false);
     });
 
@@ -584,10 +559,7 @@ describe('ControlledRepositoryTools (Slice T007-a)', () => {
         workspaceRoot: '/workspace',
       });
 
-      await assert.rejects(
-        () => tools.readFile('src/escape.py'),
-        /WORKSPACE_ESCAPE/
-      );
+      await assert.rejects(() => tools.readFile('src/escape.py'), /WORKSPACE_ESCAPE/);
       assert.equal(fsPort.readTextFileCalls.includes('src/escape.py'), false);
 
       fsPort.setFile('src/valid.py', 'def valid(): return True', {
@@ -629,14 +601,8 @@ describe('ControlledRepositoryTools (Slice T007-a)', () => {
         limits: defaultLimits,
       });
 
-      await assert.rejects(
-        () => tools.readFile('src/secrets.py'),
-        /PROTECTED_CONTENT_FORBIDDEN/
-      );
-      await assert.rejects(
-        () => tools.readFile('src/api_client.py'),
-        /PROTECTED_CONTENT_FORBIDDEN/
-      );
+      await assert.rejects(() => tools.readFile('src/secrets.py'), /PROTECTED_CONTENT_FORBIDDEN/);
+      await assert.rejects(() => tools.readFile('src/api_client.py'), /PROTECTED_CONTENT_FORBIDDEN/);
     });
 
     it('filters protected paths from listDir results', async () => {
@@ -679,10 +645,7 @@ describe('ControlledRepositoryTools (Slice T007-a)', () => {
         limits: defaultLimits,
       });
 
-      await assert.rejects(
-        () => tools.readFile('src/calc.py'),
-        /GUARD_DENIED: BUDGET_EXHAUSTED/
-      );
+      await assert.rejects(() => tools.readFile('src/calc.py'), /GUARD_DENIED: BUDGET_EXHAUSTED/);
       assert.equal(guard.mediatedOperations.length, 1);
       assert.equal(fsPort.readTextFileCalls.length, 0);
     });
@@ -696,10 +659,7 @@ describe('ControlledRepositoryTools (Slice T007-a)', () => {
         limits: defaultLimits,
       });
 
-      await assert.rejects(
-        () => tools.listDir('src'),
-        /GUARD_DENIED/
-      );
+      await assert.rejects(() => tools.listDir('src'), /GUARD_DENIED/);
       assert.equal(guard.mediatedOperations.length, 1);
       assert.equal(fsPort.readDirCalls.length, 0);
     });
@@ -713,10 +673,7 @@ describe('ControlledRepositoryTools (Slice T007-a)', () => {
         limits: defaultLimits,
       });
 
-      await assert.rejects(
-        () => tools.searchCode('def add'),
-        /GUARD_DENIED/
-      );
+      await assert.rejects(() => tools.searchCode('def add'), /GUARD_DENIED/);
       assert.equal(guard.mediatedOperations.length, 1);
       assert.equal(fsPort.readTextFileCalls.length, 0);
     });
@@ -733,10 +690,7 @@ describe('ControlledRepositoryTools (Slice T007-a)', () => {
 
       fsPort.setRevision('sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210');
 
-      await assert.rejects(
-        () => tools.readFile('src/calc.py'),
-        /STALE_REVISION/
-      );
+      await assert.rejects(() => tools.readFile('src/calc.py'), /STALE_REVISION/);
       assert.equal(fsPort.readTextFileCalls.length, 0);
     });
 
@@ -747,16 +701,13 @@ describe('ControlledRepositoryTools (Slice T007-a)', () => {
         limits: defaultLimits,
       });
 
-      await assert.rejects(
-        () => tools.readFile('src/non_existent.py'),
-        /FILE_NOT_FOUND|ENOENT/
-      );
+      await assert.rejects(() => tools.readFile('src/non_existent.py'), /FILE_NOT_FOUND|ENOENT/);
     });
 
     it('rejects an in-workspace path swap before readFile performs IO', async () => {
       fsPort.setFile('src/flapping.py', 'initial safe content', { realPath: '/workspace/src/flapping.py' });
       let realpathCount = 0;
-      fsPort.onRealpath = (p) => {
+      fsPort.onRealpath = p => {
         if (p === 'src/flapping.py') {
           realpathCount++;
           if (realpathCount === 2) {
@@ -773,10 +724,7 @@ describe('ControlledRepositoryTools (Slice T007-a)', () => {
         workspaceRoot: '/workspace',
       });
 
-      await assert.rejects(
-        () => tools.readFile('src/flapping.py'),
-        /TOCTOU_RESOLUTION_SWAP/
-      );
+      await assert.rejects(() => tools.readFile('src/flapping.py'), /TOCTOU_RESOLUTION_SWAP/);
       assert.equal(realpathCount, 2);
       assert.equal(fsPort.readTextFileCalls.length, 0);
     });
@@ -794,10 +742,7 @@ describe('ControlledRepositoryTools (Slice T007-a)', () => {
         expectedRevisionDigest: validRevision,
       });
 
-      await assert.rejects(
-        () => tools.readFile('src/calc.py'),
-        /REVISION_DRIFT/
-      );
+      await assert.rejects(() => tools.readFile('src/calc.py'), /REVISION_DRIFT/);
     });
 
     it('rejects listDir when revision mutates during awaited readDir', async () => {
@@ -812,10 +757,7 @@ describe('ControlledRepositoryTools (Slice T007-a)', () => {
         expectedRevisionDigest: validRevision,
       });
 
-      await assert.rejects(
-        () => tools.listDir('src'),
-        /REVISION_DRIFT/
-      );
+      await assert.rejects(() => tools.listDir('src'), /REVISION_DRIFT/);
     });
 
     it('rejects searchCode and leaks no results when revision mutates during search execution', async () => {
@@ -836,10 +778,7 @@ describe('ControlledRepositoryTools (Slice T007-a)', () => {
         expectedRevisionDigest: validRevision,
       });
 
-      await assert.rejects(
-        () => tools.searchCode('search_target'),
-        /REVISION_DRIFT/
-      );
+      await assert.rejects(() => tools.searchCode('search_target'), /REVISION_DRIFT/);
     });
   });
 
@@ -919,7 +858,7 @@ describe('ControlledRepositoryTools (Slice T007-a)', () => {
     it('skips a file that grows beyond maxFileSizeBytes after stat during searchCode', async () => {
       fsPort.setFile('src/growing.py', 'target');
       fsPort.setFile('src/within-limit.py', 'target');
-      fsPort.onReadTextFile = (path) => {
+      fsPort.onReadTextFile = path => {
         if (path === 'src/growing.py') fsPort.setFile(path, 'target grows past the limit');
       };
       const tools = new ControlledRepositoryTools({
@@ -930,13 +869,16 @@ describe('ControlledRepositoryTools (Slice T007-a)', () => {
 
       const results = await tools.searchCode('target');
 
-      assert.deepEqual(results.map((result) => result.path), ['src/within-limit.py']);
+      assert.deepEqual(
+        results.map(result => result.path),
+        ['src/within-limit.py'],
+      );
       assert.ok(fsPort.readTextFileCalls.includes('src/growing.py'));
     });
 
     it('rejects readFile when UTF-8 content grows beyond maxFileSizeBytes after stat', async () => {
       fsPort.setFile('src/growing.py', '中');
-      fsPort.onReadTextFile = (path) => {
+      fsPort.onReadTextFile = path => {
         if (path === 'src/growing.py') fsPort.setFile(path, '中文');
       };
       const tools = new ControlledRepositoryTools({
@@ -958,7 +900,10 @@ describe('ControlledRepositoryTools (Slice T007-a)', () => {
       });
 
       assert.equal((await tools.readFile('src/exact.py')).boundedExcerpt, '🙂');
-      assert.deepEqual((await tools.searchCode('🙂')).map((result) => result.path), ['src/exact.py']);
+      assert.deepEqual(
+        (await tools.searchCode('🙂')).map(result => result.path),
+        ['src/exact.py'],
+      );
     });
 
     it('limits searchCode results to maxResultCount and excludes protected files/secrets', async () => {
@@ -976,7 +921,7 @@ describe('ControlledRepositoryTools (Slice T007-a)', () => {
       const results = await tools.searchCode('target_query');
       assert.equal(results.length, 1);
       assert.ok(results[0]?.path === 'src/a.py' || results[0]?.path === 'src/b.py');
-      assert.ok(!results.some((r) => r.path === '.env' || r.path === 'src/secret.py'));
+      assert.ok(!results.some(r => r.path === '.env' || r.path === 'src/secret.py'));
 
       for (const res of results) {
         const valid = validateSourceEvidence(res);
@@ -1069,11 +1014,16 @@ class FakeStatePortV02 implements StatePortV02 {
     return receipt;
   }
 
-  async loadTask(taskId: string): Promise<TaskState | null> { void taskId; return null; }
-  async transition(state: TaskState, expectedVersion: number): Promise<TaskState> { void expectedVersion; return state; }
+  async loadTask(taskId: string): Promise<TaskState | null> {
+    void taskId;
+    return null;
+  }
+  async transition(state: TaskState, expectedVersion: number): Promise<TaskState> {
+    void expectedVersion;
+    return state;
+  }
   async claim(context: AdmissionContextV02): Promise<ClaimReceiptV02> {
-    if (context.subjectKind !== 'repository-action' ||
-      (context.action.kind !== 'apply_patch' && context.action.kind !== 'run_command')) {
+    if (context.subjectKind !== 'repository-action' || (context.action.kind !== 'apply_patch' && context.action.kind !== 'run_command')) {
       throw new Error('unsupported repository action');
     }
     this.claimCalls.push(context);
@@ -1111,9 +1061,17 @@ class FakeStatePortV02 implements StatePortV02 {
     if (!this.uncertainReconciliationHandler) throw new Error('not implemented');
     return await this.uncertainReconciliationHandler(receipt);
   }
-  async closeUnattemptedClaim(receipt: ClaimClosureReceiptV02): Promise<ClaimClosureResultV02> { void receipt; throw new Error('not implemented'); }
-  async checkpoint(state: TaskState): Promise<void> { void state; }
-  async recover(taskId: string): Promise<TaskState> { void taskId; throw new Error('not implemented'); }
+  async closeUnattemptedClaim(receipt: ClaimClosureReceiptV02): Promise<ClaimClosureResultV02> {
+    void receipt;
+    throw new Error('not implemented');
+  }
+  async checkpoint(state: TaskState): Promise<void> {
+    void state;
+  }
+  async recover(taskId: string): Promise<TaskState> {
+    void taskId;
+    throw new Error('not implemented');
+  }
 }
 
 interface TestAdmissionOverrides {
@@ -1137,11 +1095,9 @@ function createTestAdmissionContext(overrides: TestAdmissionOverrides = {}): Rep
     workingDirectory: '/workspace/repo',
   };
   const actionDigest = overrides.actionDigest ?? computeActionDigest(action);
-  const canonicalRevision = action.kind === 'apply_patch'
-    ? (overrides.baseRevision ?? action.baseRevisionDigest)
-    : 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+  const canonicalRevision = action.kind === 'apply_patch' ? (overrides.baseRevision ?? action.baseRevisionDigest) : 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
   const common = {
-      schemaVersion: '0.2.0' as const,
+    schemaVersion: '0.2.0' as const,
     subjectKind: 'repository-action' as const,
     taskStateSchemaVersion: 'uc03-task-state/0.1',
     expectedTaskStateVersion: 1,
@@ -1247,30 +1203,13 @@ function createTestPatchRecoveryHandoff() {
       readonly attempt: AttemptReceiptV02;
       readonly outcome: RepositoryActionOutcomeReceiptV02;
     }) {
-      const receipt = input.outcome.outcome === 'observed'
-        ? createTestObservedReconciliationReceiptV02(
-            input.outcome,
-            input.claim,
-            input.attempt,
-            input.admission,
-            { expectedCurrentControlVersion: input.attempt.postBeginControlVersion + 1 },
-          )
-        : createTestUncertainReconciliationReceiptV02(
-            input.outcome,
-            input.claim,
-            input.attempt,
-            input.admission,
-            { disposition: 'proven-not-dispatched' },
-          );
+      const receipt =
+        input.outcome.outcome === 'observed'
+          ? createTestObservedReconciliationReceiptV02(input.outcome, input.claim, input.attempt, input.admission, { expectedCurrentControlVersion: input.attempt.postBeginControlVersion + 1 })
+          : createTestUncertainReconciliationReceiptV02(input.outcome, input.claim, input.attempt, input.admission, { disposition: 'proven-not-dispatched' });
       return {
         receipt,
-        validationContext: createTestReconciliationValidationContextV02(
-          receipt,
-          input.outcome,
-          input.claim,
-          input.attempt,
-          input.admission,
-        ),
+        validationContext: createTestReconciliationValidationContextV02(receipt, input.outcome, input.claim, input.attempt, input.admission),
       };
     },
   };
@@ -1290,10 +1229,7 @@ function captureJournalAttempts(journal: MemoryStatePortV02, attempts: AttemptRe
   };
 }
 
-function createJournalBackedAttemptStartRecoveryHandoff(
-  journal: MemoryStatePortV02,
-  attempts: readonly AttemptReceiptV02[],
-) {
+function createJournalBackedAttemptStartRecoveryHandoff(journal: MemoryStatePortV02, attempts: readonly AttemptReceiptV02[]) {
   return {
     async queryAttemptStart(request: {
       readonly recoveryId: string;
@@ -1302,16 +1238,14 @@ function createJournalBackedAttemptStartRecoveryHandoff(
       readonly executorIdentity: ExecutorIdentityV02;
     }): Promise<unknown> {
       const snapshot = journal.getJournalSnapshot();
-      const committed = attempts.find((attempt) => attempt.claimId === request.claim.claimId);
-      if (committed && snapshot.attempts.some((attempt) =>
-        attempt.claimId === request.claim.claimId && attempt.attemptId === committed.attemptId)) {
+      const committed = attempts.find(attempt => attempt.claimId === request.claim.claimId);
+      if (committed && snapshot.attempts.some(attempt => attempt.claimId === request.claim.claimId && attempt.attemptId === committed.attemptId)) {
         return { outcome: 'committed', attempt: committed };
       }
-      const claimState = snapshot.claims.find((claim) => claim.claimId === request.claim.claimId);
-      if (!claimState || claimState.status !== 'claimed' || claimState.attemptId !== null ||
-        snapshot.activeClaimId !== request.claim.claimId) return { outcome: 'unknown' };
+      const claimState = snapshot.claims.find(claim => claim.claimId === request.claim.claimId);
+      if (!claimState || claimState.status !== 'claimed' || claimState.attemptId !== null || snapshot.activeClaimId !== request.claim.claimId) return { outcome: 'unknown' };
       const eventRef = `attempt-start-${request.claim.claimId}`;
-      if (!await journal.setTaskControl(request.admission.taskId, 'paused', eventRef)) return { outcome: 'unknown' };
+      if (!(await journal.setTaskControl(request.admission.taskId, 'paused', eventRef))) return { outcome: 'unknown' };
       const fence = await journal.fenceClaimRecipient(request.claim.claimId, request.executorIdentity);
       if (!fence) return { outcome: 'unknown' };
       return {
@@ -1324,11 +1258,18 @@ function createJournalBackedAttemptStartRecoveryHandoff(
 }
 
 function createUnknownAttemptStartRecoveryHandoff() {
-  return { async queryAttemptStart(): Promise<unknown> { return { outcome: 'unknown' }; } };
+  return {
+    async queryAttemptStart(): Promise<unknown> {
+      return { outcome: 'unknown' };
+    },
+  };
 }
 
 async function getAttemptStartRecoveryId(operation: () => Promise<unknown>): Promise<string> {
-  const error = await operation().then(() => null, (caught: unknown) => caught);
+  const error = await operation().then(
+    () => null,
+    (caught: unknown) => caught,
+  );
   assert.ok(error instanceof Error, 'Attempt start should surface a pending recovery error');
   assert.equal(error.name, 'RepositoryAttemptStartPendingError');
   const recoveryId = (error as Error & { readonly recoveryId?: unknown }).recoveryId;
@@ -1338,18 +1279,26 @@ async function getAttemptStartRecoveryId(operation: () => Promise<unknown>): Pro
 }
 
 function createRefusingClaimClosureHandoff(): UnattemptedClaimClosureHandoffV02 {
-  return { async closeUnattemptedClaim() { return { closed: false, receiptId: '' }; } };
+  return {
+    async closeUnattemptedClaim() {
+      return { closed: false, receiptId: '' };
+    },
+  };
 }
 
 function createUnavailableRecoveryHandoff() {
-  return { async prepare() { throw new Error('NO_TRUSTED_RECOVERY_EVIDENCE'); } };
+  return {
+    async prepare() {
+      throw new Error('NO_TRUSTED_RECOVERY_EVIDENCE');
+    },
+  };
 }
 
 function createJournalBackedClaimClosureHandoff(journal: MemoryStatePortV02): UnattemptedClaimClosureHandoffV02 {
   return {
     async closeUnattemptedClaim({ admission, claim, recipientIdentity }) {
       const eventRef = `pause-${claim.claimId}`;
-      if (!await journal.setTaskControl(admission.taskId, 'paused', eventRef)) return { closed: false, receiptId: '' };
+      if (!(await journal.setTaskControl(admission.taskId, 'paused', eventRef))) return { closed: false, receiptId: '' };
       const snapshot = journal.getJournalSnapshot();
       if (!snapshot.holdEventDigest) return { closed: false, receiptId: '' };
       const result = await createApprovalControlV02({ taskId: admission.taskId, journal }).closeUnattemptedClaim({
@@ -1363,14 +1312,12 @@ function createJournalBackedClaimClosureHandoff(journal: MemoryStatePortV02): Un
   };
 }
 
-function createDispatchClaimForClosure(
-  context: RepositoryAdmissionContextV02,
-  journalClaim: ClaimReceiptV02,
-): DispatchClaimV02 {
+function createDispatchClaimForClosure(context: RepositoryAdmissionContextV02, journalClaim: ClaimReceiptV02): DispatchClaimV02 {
   const authority = context.policyAuthorityRef;
-  const planFields = context.planApplicability === 'approved-plan'
-    ? { planApplicability: context.planApplicability, planBindingDigest: context.planBindingDigest, planDecisionRef: context.planDecisionRef }
-    : { planApplicability: context.planApplicability, diagnosticPurpose: context.diagnosticPurpose, taskCriteriaDigest: context.taskCriteriaDigest };
+  const planFields =
+    context.planApplicability === 'approved-plan'
+      ? { planApplicability: context.planApplicability, planBindingDigest: context.planBindingDigest, planDecisionRef: context.planDecisionRef }
+      : { planApplicability: context.planApplicability, diagnosticPurpose: context.diagnosticPurpose, taskCriteriaDigest: context.taskCriteriaDigest };
   const unsigned = {
     schemaVersion: UC05_APPROVAL_SCHEMA_VERSION_V02,
     claimId: journalClaim.claimId,
@@ -1388,9 +1335,7 @@ function createDispatchClaimForClosure(
       configId: authority.configId,
       configVersion: authority.configVersion,
     },
-    decisionRefs: context.actionDecisionReceipt
-      ? [context.actionDecisionReceipt.decisionId]
-      : [context.planDecisionRef ?? context.policyEvaluationReceipt.receiptId],
+    decisionRefs: context.actionDecisionReceipt ? [context.actionDecisionReceipt.decisionId] : [context.planDecisionRef ?? context.policyEvaluationReceipt.receiptId],
     reservationRefs: [...journalClaim.reservationRefs],
     phase: 'claimed' as const,
     resultRef: null,
@@ -1406,10 +1351,7 @@ function createDispatchClaimForClosure(
   return result.value;
 }
 
-function createJournalBackedRecoveryHandoff(
-  journal: MemoryStatePortV02,
-  behavior?: TestRepositoryRecoveryBehavior,
-) {
+function createJournalBackedRecoveryHandoff(journal: MemoryStatePortV02, behavior?: TestRepositoryRecoveryBehavior) {
   return {
     async prepare(input: {
       readonly admission: RepositoryAdmissionContextV02;
@@ -1423,38 +1365,26 @@ function createJournalBackedRecoveryHandoff(
         throw new Error('trusted owner has not produced settled recovery evidence');
       }
       const eventRef = `pause-attempt-${input.attempt.attemptId}`;
-      if (!await journal.setTaskControl(input.admission.taskId, 'paused', eventRef)) throw new Error('journal-pause-failed');
+      if (!(await journal.setTaskControl(input.admission.taskId, 'paused', eventRef))) throw new Error('journal-pause-failed');
       const fence = await journal.fenceAttemptRecipient(input.claim.claimId, input.attempt.executorIdentity);
       if (!fence) throw new Error('journal-attempt-fence-failed');
       const snapshot = journal.getJournalSnapshot();
       const task = await journal.loadTask(input.admission.taskId);
       if (!task) throw new Error('journal-task-missing');
-      const receipt = createTestUncertainReconciliationReceiptV02(
-        input.outcome,
-        input.claim,
-        input.attempt,
-        input.admission,
-        {
-          disposition: 'proven-not-dispatched',
-          expectedCurrentTaskStateVersion: task.stateVersion,
-          expectedCurrentControlVersion: snapshot.controlVersion + (behavior?.conflictNextPrepare ? 1 : 0),
-          expectedCurrentEpoch: snapshot.epoch,
-          adapterEvidenceRefs: fence.adapterEvidenceRefs,
-          fencedRecipientIdentity: fence.recipientIdentity,
-          fencingGeneration: fence.fencingGeneration,
-          fencingProof: fence.proofRef,
-          evidenceRefs: [...fence.adapterEvidenceRefs, fence.proofRef],
-        },
-      );
+      const receipt = createTestUncertainReconciliationReceiptV02(input.outcome, input.claim, input.attempt, input.admission, {
+        disposition: 'proven-not-dispatched',
+        expectedCurrentTaskStateVersion: task.stateVersion,
+        expectedCurrentControlVersion: snapshot.controlVersion + (behavior?.conflictNextPrepare ? 1 : 0),
+        expectedCurrentEpoch: snapshot.epoch,
+        adapterEvidenceRefs: fence.adapterEvidenceRefs,
+        fencedRecipientIdentity: fence.recipientIdentity,
+        fencingGeneration: fence.fencingGeneration,
+        fencingProof: fence.proofRef,
+        evidenceRefs: [...fence.adapterEvidenceRefs, fence.proofRef],
+      });
       return {
         receipt,
-        validationContext: createTestReconciliationValidationContextV02(
-          receipt,
-          input.outcome,
-          input.claim,
-          input.attempt,
-          input.admission,
-        ),
+        validationContext: createTestReconciliationValidationContextV02(receipt, input.outcome, input.claim, input.attempt, input.admission),
       };
     },
   };
@@ -1476,20 +1406,22 @@ function createJournalForRepositoryCommand(context: RepositoryAdmissionContextV0
   const bounds = context.finiteBounds as CommandFiniteBoundsV02;
   const task = createTestAdmissionTaskStateV02(context);
   const resourceKinds = ['timeoutMs', 'maxOutputBytes', 'maxCpuSeconds', 'maxMemoryBytes', 'maxProcessCount'] as const;
-  const resourceLedgers = (['task', 'run'] as const).flatMap((scope) => resourceKinds.map((kind) => {
-    const amount = bounds[kind];
-    if (typeof amount !== 'number' || !Number.isFinite(amount) || amount <= 0) throw new Error(`missing-command-bound:${kind}`);
-    return {
-      scope,
-      kind,
-      limit: amount * 2,
-      consumed: 0,
-      reservations: [],
-      unit: kind === 'maxMemoryBytes' ? 'bytes' : 'count',
-      configurationId: context.policyAuthorityRef.configId,
-      version: 1,
-    };
-  }));
+  const resourceLedgers = (['task', 'run'] as const).flatMap(scope =>
+    resourceKinds.map(kind => {
+      const amount = bounds[kind];
+      if (typeof amount !== 'number' || !Number.isFinite(amount) || amount <= 0) throw new Error(`missing-command-bound:${kind}`);
+      return {
+        scope,
+        kind,
+        limit: amount * 2,
+        consumed: 0,
+        reservations: [],
+        unit: kind === 'maxMemoryBytes' ? 'bytes' : 'count',
+        configurationId: context.policyAuthorityRef.configId,
+        version: 1,
+      };
+    }),
+  );
   const initialTaskState = { ...task, budgetLedgers: [...(task.budgetLedgers ?? []), ...resourceLedgers] };
   return new MemoryStatePortV02({
     initialTaskState,
@@ -1548,9 +1480,9 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
     };
     const { manager, controller } = await createWorkspaceManager();
     fsPort.setFile('src/app.py', 'test');
-    const reservationRefs = (['task', 'run'] as const).flatMap((scope) =>
-      (['timeoutMs', 'maxOutputBytes', 'maxCpuSeconds', 'maxMemoryBytes', 'maxProcessCount'] as const)
-        .map((kind) => `res-${actionId}-${scope}-${kind}`));
+    const reservationRefs = (['task', 'run'] as const).flatMap(scope =>
+      (['timeoutMs', 'maxOutputBytes', 'maxCpuSeconds', 'maxMemoryBytes', 'maxProcessCount'] as const).map(kind => `res-${actionId}-${scope}-${kind}`),
+    );
     const baseContext = createTestRepositoryCommandAdmissionContextV02({
       taskId: 'task-test-1',
       runId: 'run-1',
@@ -1577,7 +1509,7 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
       scratchIdentity: commandView.scratchIdentity,
       mountedReadOnly: true,
     };
-    manager.getActiveCommandView = (workspaceId) => workspaceId === context.workspaceId ? admittedView : null;
+    manager.getActiveCommandView = workspaceId => (workspaceId === context.workspaceId ? admittedView : null);
     const journal = createJournalForRepositoryCommand(context);
     const attempts: AttemptReceiptV02[] = [];
     captureJournalAttempts(journal, attempts);
@@ -1616,9 +1548,7 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
       adapterIdentity: 'command-outcome-executor',
       processIncarnation: `inc-${actionId}`,
       fencingGeneration: 1,
-      patchRecoveryHandoff: useTrustedRecovery
-        ? createJournalBackedRecoveryHandoff(journal, recoveryBehavior)
-        : createUnavailableRecoveryHandoff(),
+      patchRecoveryHandoff: useTrustedRecovery ? createJournalBackedRecoveryHandoff(journal, recoveryBehavior) : createUnavailableRecoveryHandoff(),
       attemptStartRecoveryHandoff,
       unattemptedClaimClosureHandoff: createRefusingClaimClosureHandoff(),
     });
@@ -1684,18 +1614,32 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
     const controller = new RepositoryTestDockerController();
     const manager = new DockerWorkspaceManager({ controller });
     await manager.createWorkspace({
-      taskId: context.taskId, workspaceId: context.workspaceId,
+      taskId: context.taskId,
+      workspaceId: context.workspaceId,
       initialRevisionDigest: context.canonicalRevision,
-      profile: { profileId: 'profile-test', image: 'test', imageDigest: canonicalRev,
-        user: '1000:1000', readOnlyRootFilesystem: true, network: 'none',
-        limits: { timeoutMs: 30000, maxMemoryBytes: 2147483648, maxCpuCores: 2, maxPids: 256 }, mounts: [] },
+      profile: {
+        profileId: 'profile-test',
+        image: 'test',
+        imageDigest: canonicalRev,
+        user: '1000:1000',
+        readOnlyRootFilesystem: true,
+        network: 'none',
+        limits: { timeoutMs: 30000, maxMemoryBytes: 2147483648, maxCpuCores: 2, maxPids: 256 },
+        mounts: [],
+      },
     });
     fsPort.setRevision(context.canonicalRevision);
     const nextRevision = 'sha256:' + 'a'.repeat(64);
     let effects = 0;
     const tools = new ControlledRepositoryTools({
-      guardCapability: guard, fsPort, limits: defaultLimits, statePort: journal,
-      workspaceManager: manager, adapterIdentity: 'diagnostic', processIncarnation: 'diag-1', fencingGeneration: 1,
+      guardCapability: guard,
+      fsPort,
+      limits: defaultLimits,
+      statePort: journal,
+      workspaceManager: manager,
+      adapterIdentity: 'diagnostic',
+      processIncarnation: 'diag-1',
+      fencingGeneration: 1,
       patchRecoveryHandoff: createTestPatchRecoveryHandoff(),
       attemptStartRecoveryHandoff: createUnknownAttemptStartRecoveryHandoff(),
       unattemptedClaimClosureHandoff: createRefusingClaimClosureHandoff(),
@@ -1716,7 +1660,7 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
     const persisted = await journal.loadTask(context.taskId);
     assert.equal(persisted?.node, 'Investigate');
     assert.equal(persisted?.repositoryRevisionDigest, nextRevision);
-    assert.equal(persisted?.budgetLedgers?.find((ledger) => ledger.kind === 'repair')?.consumed, 0);
+    assert.equal(persisted?.budgetLedgers?.find(ledger => ledger.kind === 'repair')?.consumed, 0);
     assert.equal(journal.getJournalSnapshot().activeClaimId, null);
     assert.equal(journal.getJournalSnapshot().outcomes.length, 1);
     await assert.rejects(() => tools.applyPatch(context.action as ApplyPatchAction, context));
@@ -1828,8 +1772,12 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
       const { manager } = await createWorkspaceManager();
       let continueBeginAttempt: (() => void) | undefined;
       let beginAttemptStarted: (() => void) | undefined;
-      const began = new Promise<void>((resolve) => { beginAttemptStarted = resolve; });
-      const resume = new Promise<void>((resolve) => { continueBeginAttempt = resolve; });
+      const began = new Promise<void>(resolve => {
+        beginAttemptStarted = resolve;
+      });
+      const resume = new Promise<void>(resolve => {
+        continueBeginAttempt = resolve;
+      });
       statePort.beforeBeginAttempt = async () => {
         beginAttemptStarted?.();
         await resume;
@@ -1904,8 +1852,12 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
       const fencedState = new FakeStatePortV02();
       let continueBeginAttempt: (() => void) | undefined;
       let beginAttemptStarted: (() => void) | undefined;
-      const began = new Promise<void>((resolve) => { beginAttemptStarted = resolve; });
-      const resume = new Promise<void>((resolve) => { continueBeginAttempt = resolve; });
+      const began = new Promise<void>(resolve => {
+        beginAttemptStarted = resolve;
+      });
+      const resume = new Promise<void>(resolve => {
+        continueBeginAttempt = resolve;
+      });
       fencedState.beforeBeginAttempt = async () => {
         beginAttemptStarted?.();
         await resume;
@@ -1944,11 +1896,13 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
   describe('Read holds: zero filesystem reads when paused or claim is open', () => {
     it('produces ZERO filesystem reads in listDir, readFile, and searchCode when task is paused', async () => {
       fsPort.setFile('src/file.py', 'print(1)');
-      const taskControl = new FakeTaskControlPortV02(makeJournalSnapshot({
-        mode: 'paused',
-        holdRef: 'pause-hold-1',
-        holdEventDigest: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
-      }));
+      const taskControl = new FakeTaskControlPortV02(
+        makeJournalSnapshot({
+          mode: 'paused',
+          holdRef: 'pause-hold-1',
+          holdEventDigest: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+        }),
+      );
 
       const tools = new ControlledRepositoryTools({
         guardCapability: guard,
@@ -1971,9 +1925,11 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
 
     it('produces ZERO filesystem reads in listDir, readFile, and searchCode when any claim is open', async () => {
       fsPort.setFile('src/file.py', 'print(1)');
-      const taskControl = new FakeTaskControlPortV02(makeJournalSnapshot({
-        claims: [{ claimId: 'claim-open-1', status: 'outcome-recorded', attemptId: 'att-open-1' }],
-      }));
+      const taskControl = new FakeTaskControlPortV02(
+        makeJournalSnapshot({
+          claims: [{ claimId: 'claim-open-1', status: 'outcome-recorded', attemptId: 'att-open-1' }],
+        }),
+      );
 
       const tools = new ControlledRepositoryTools({
         guardCapability: guard,
@@ -2109,10 +2065,7 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
         baseRevision: 'sha256:stale-base-revision-0000000000000000000000000000000000000000',
       });
 
-      await assert.rejects(
-        () => tools.applyPatch(patchAction, context),
-        /STALE_REVISION_DRIFT/
-      );
+      await assert.rejects(() => tools.applyPatch(patchAction, context), /STALE_REVISION_DRIFT/);
 
       assert.equal(statePort.beginAttemptCalls.length, 0, 'Zero beginAttempt calls on base revision drift');
       assert.equal(patchEffects, 0, 'Zero patch effects on base revision drift');
@@ -2146,16 +2099,18 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
       const executor = new StructuredCommandExecutor({
         manager,
         controller,
-        profile: ws ? {
-          profileId: 'profile-uc03-test',
-          image: 'ghcr.io/test:0.1',
-          imageDigest: canonicalRev,
-          user: '1000:1000',
-          readOnlyRootFilesystem: true,
-          network: 'none',
-          limits: { timeoutMs: 30000, maxMemoryBytes: 2147483648, maxCpuCores: 2, maxPids: 256 },
-          mounts: [],
-        } : undefined,
+        profile: ws
+          ? {
+              profileId: 'profile-uc03-test',
+              image: 'ghcr.io/test:0.1',
+              imageDigest: canonicalRev,
+              user: '1000:1000',
+              readOnlyRootFilesystem: true,
+              network: 'none',
+              limits: { timeoutMs: 30000, maxMemoryBytes: 2147483648, maxCpuCores: 2, maxPids: 256 },
+              mounts: [],
+            }
+          : undefined,
       });
 
       const tools = new ControlledRepositoryTools({
@@ -2201,18 +2156,12 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
         },
       });
 
-      await assert.rejects(
-        () => tools.runCommand(commandAction, context),
-        /STALE_COMMAND_VIEW/
-      );
+      await assert.rejects(() => tools.runCommand(commandAction, context), /STALE_COMMAND_VIEW/);
       assert.equal(statePort.beginAttemptCalls.length, 0, 'Zero beginAttempt calls on command view drift');
       assert.equal(controller.executedPlans.length, 0, 'Zero controller executions on command view drift');
 
       const check: CheckDefinition = { checkId: 'chk-drift-1', executable: 'pytest', argv: ['-q'], workingDirectory: '/workspace/repo', purpose: 'reproduction' };
-      await assert.rejects(
-        () => tools.runTests(check, context),
-        /STALE_COMMAND_VIEW/
-      );
+      await assert.rejects(() => tools.runTests(check, context), /STALE_COMMAND_VIEW/);
       assert.equal(statePort.beginAttemptCalls.length, 0, 'Zero beginAttempt calls on runTests view drift');
       assert.equal(controller.executedPlans.length, 0, 'Zero controller executions on runTests view drift');
     });
@@ -2233,7 +2182,7 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
       const journal = createJournalForRepositoryAdmission(context);
       const { manager } = await createWorkspaceManager();
       const claim = journal.claim.bind(journal);
-      journal.claim = async (admission) => {
+      journal.claim = async admission => {
         const receipt = await claim(admission);
         manager.setFencingGeneration(context.workspaceId, 2);
         return receipt;
@@ -2267,7 +2216,7 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
       assert.equal(snapshot.activeClaimId, null);
       assert.equal(snapshot.mode, 'paused');
       assert.equal(snapshot.fencedIncarnations.includes('patch-prebegin-closure\u0000inc-patch-prebegin-closure'), true);
-      const repair = journal.getLedgers().find((ledger) => ledger.kind === 'repair');
+      const repair = journal.getLedgers().find(ledger => ledger.kind === 'repair');
       assert.equal(repair?.consumed, 0);
       assert.equal(repair?.reservations.length, 0);
       const lease = await manager.acquireWriteLease(context.workspaceId, canonicalRev);
@@ -2310,7 +2259,10 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
         },
       });
 
-      const pendingError = await tools.applyPatch(patch, context).then(() => null, (error: unknown) => error);
+      const pendingError = await tools.applyPatch(patch, context).then(
+        () => null,
+        (error: unknown) => error,
+      );
       assert.equal(pendingError instanceof Error, true);
       assert.match((pendingError as Error).message, /PATCH_OUTCOME_PENDING/);
       const attempt = journal.getJournalSnapshot().attempts[0];
@@ -2321,7 +2273,7 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
       assert.equal(held.outcomes[0]?.outcome, 'uncertain');
       assert.equal(held.activeClaimId, held.claims[0]?.claimId);
       assert.equal(patchEffects, 0);
-      assert.equal(journal.getLedgers().find((ledger) => ledger.kind === 'repair')?.consumed, 1);
+      assert.equal(journal.getLedgers().find(ledger => ledger.kind === 'repair')?.consumed, 1);
 
       const settled = await tools.recoverPatchOutcome(attempt.attemptId);
       const recovered = journal.getJournalSnapshot();
@@ -2396,8 +2348,10 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
       };
       let recordedOutcome: AttemptOutcomeReceiptV02 | undefined;
       let releaseRecord: (() => void) | undefined;
-      const recordBarrier = new Promise<void>((resolve) => { releaseRecord = resolve; });
-      statePort.recordOutcomeHandler = async (receipt) => {
+      const recordBarrier = new Promise<void>(resolve => {
+        releaseRecord = resolve;
+      });
+      statePort.recordOutcomeHandler = async receipt => {
         recordedOutcome = receipt;
         await recordBarrier;
         return { outcome: 'settled', receiptId: receipt.receiptId };
@@ -2429,16 +2383,16 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
       };
       const context = createTestAdmissionContext({ action: patch, actionDigest: computeActionDigest(patch) });
       const applying = tools.applyPatch(patch, context);
-      await new Promise<void>((resolve) => setImmediate(resolve));
+      await new Promise<void>(resolve => setImmediate(resolve));
       const enteredSettlement = recordedOutcome !== undefined;
 
       let writerAcquired = false;
-      const competingWriter = manager.acquireWriteLease('ws-test-1', nextRevision).then((lease) => {
+      const competingWriter = manager.acquireWriteLease('ws-test-1', nextRevision).then(lease => {
         writerAcquired = true;
         return lease;
       });
       const viewBuild = manager.admitCommandView({ workspaceId: 'ws-test-1' });
-      await new Promise<void>((resolve) => setImmediate(resolve));
+      await new Promise<void>(resolve => setImmediate(resolve));
       const blockedBeforeSettlement = !writerAcquired && controller.snapshotRequests === 0;
       const recordedOutcomeKind = recordedOutcome?.outcome;
       releaseRecord?.();
@@ -2463,9 +2417,9 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
         canonicalRevisionDigest: nextRevision,
         entries: [{ path: 'src/a.py', kind: 'regular', content: 'test', digest: 'sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08' }],
       };
-      statePort.recordOutcomeHandler = async (receipt) => ({ outcome: 'recorded-unsettled', receiptId: receipt.receiptId });
+      statePort.recordOutcomeHandler = async receipt => ({ outcome: 'recorded-unsettled', receiptId: receipt.receiptId });
       let recoveryCalls = 0;
-      statePort.observedReconciliationHandler = async (receipt) => ({
+      statePort.observedReconciliationHandler = async receipt => ({
         outcome: ++recoveryCalls === 1 ? 'blocked' : 'settled',
         receiptId: receipt.reconciliationId,
       });
@@ -2499,7 +2453,7 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
       assert.equal(statePort.outcomeReceipts.at(-1)?.outcome, 'observed');
 
       let writerAcquired = false;
-      const competingWriter = manager.acquireWriteLease('ws-test-1', nextRevision).then((lease) => {
+      const competingWriter = manager.acquireWriteLease('ws-test-1', nextRevision).then(lease => {
         writerAcquired = true;
         return lease;
       });
@@ -2507,7 +2461,7 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
       const attempt = statePort.attemptReceipts.at(-1);
       assert.ok(attempt);
       const blocked = await tools.recoverPatchOutcome(attempt.attemptId);
-      await new Promise<void>((resolve) => setImmediate(resolve));
+      await new Promise<void>(resolve => setImmediate(resolve));
       assert.equal(blocked.outcome, 'blocked');
       assert.equal(writerAcquired, false, 'recorded-unsettled alone does not release the writer lease');
       assert.equal(controller.snapshotRequests, 0, 'recorded-unsettled alone does not admit a view');
@@ -2523,9 +2477,9 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
 
     it('replays the exact observed-recovery receipt after a committed reply is lost', async () => {
       const { manager } = await createWorkspaceManager();
-      statePort.recordOutcomeHandler = async (receipt) => ({ outcome: 'recorded-unsettled', receiptId: receipt.receiptId });
+      statePort.recordOutcomeHandler = async receipt => ({ outcome: 'recorded-unsettled', receiptId: receipt.receiptId });
       let committedReceipt: AttemptReconciliationReceiptV02 | undefined;
-      statePort.observedReconciliationHandler = async (receipt) => {
+      statePort.observedReconciliationHandler = async receipt => {
         if (!committedReceipt) {
           committedReceipt = structuredClone(receipt);
           throw new Error('observed recovery response lost after journal commit');
@@ -2573,29 +2527,26 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
       assert.ok(attempt);
       const firstRecoveryError = await tools.recoverPatchOutcome(attempt.attemptId).catch((error: unknown) => error);
       assert.match((firstRecoveryError as Error).message, /observed recovery response lost after journal commit/);
-      assert.equal(manager.hasActiveWriterLease(context.workspaceId), true,
-        'The workspace writer lease remains held after the owner commit reply is lost');
+      assert.equal(manager.hasActiveWriterLease(context.workspaceId), true, 'The workspace writer lease remains held after the owner commit reply is lost');
 
       const settled = await tools.recoverPatchOutcome(attempt.attemptId);
       assert.deepEqual(settled, { outcome: 'settled', receiptId: committedReceipt?.reconciliationId });
       assert.equal(statePort.observedReconciliations.length, 2);
-      assert.deepEqual(statePort.observedReconciliations[1], statePort.observedReconciliations[0],
-        'The public recovery operation replays the same validated receipt');
+      assert.deepEqual(statePort.observedReconciliations[1], statePort.observedReconciliations[0], 'The public recovery operation replays the same validated receipt');
       assert.equal(statePort.observedReconciliations[1]?.reconciliationId, committedReceipt?.reconciliationId);
       assert.equal(statePort.observedReconciliations[1]?.reconciliationDigest, committedReceipt?.reconciliationDigest);
       assert.equal(prepareCalls, 1, 'The receiver reuses the validated receipt after an ambiguous owner reply');
       assert.equal(statePort.beginAttemptCalls.length, 1);
       assert.equal(patchEffects, 1, 'Recovery replay does not dispatch the patch twice');
-      assert.equal(manager.hasActiveWriterLease(context.workspaceId), false,
-        'The workspace writer lease releases after the replay confirms settlement');
+      assert.equal(manager.hasActiveWriterLease(context.workspaceId), false, 'The workspace writer lease releases after the replay confirms settlement');
       await assert.rejects(() => tools.recoverPatchOutcome(attempt.attemptId), /PATCH_RECOVERY_NOT_FOUND/);
     });
 
     it('does not treat already-recorded as settlement proof', async () => {
       const { manager } = await createWorkspaceManager();
-      statePort.recordOutcomeHandler = async (receipt) => ({ outcome: 'already-recorded', receiptId: receipt.receiptId });
+      statePort.recordOutcomeHandler = async receipt => ({ outcome: 'already-recorded', receiptId: receipt.receiptId });
       let recoveryCalls = 0;
-      statePort.observedReconciliationHandler = async (receipt) => ({
+      statePort.observedReconciliationHandler = async receipt => ({
         outcome: ++recoveryCalls === 1 ? 'conflict' : 'settled',
         receiptId: receipt.reconciliationId,
       });
@@ -2625,13 +2576,13 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
       const attempt = statePort.attemptReceipts.at(-1);
       assert.ok(attempt);
       let writerAcquired = false;
-      const competingWriter = manager.acquireWriteLease('ws-test-1', canonicalRev).then((lease) => {
+      const competingWriter = manager.acquireWriteLease('ws-test-1', canonicalRev).then(lease => {
         writerAcquired = true;
         return lease;
       });
 
       const conflict = await tools.recoverPatchOutcome(attempt.attemptId);
-      await new Promise<void>((resolve) => setImmediate(resolve));
+      await new Promise<void>(resolve => setImmediate(resolve));
       assert.equal(conflict.outcome, 'conflict');
       assert.equal(writerAcquired, false, 'already-recorded followed by conflicting recovery remains fenced');
 
@@ -2647,8 +2598,8 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
         canonicalRevisionDigest: canonicalRev,
         entries: [{ path: 'src/a.py', kind: 'regular', content: 'test', digest: 'sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08' }],
       };
-      statePort.recordOutcomeHandler = async (receipt) => ({ outcome: 'uncertain', receiptId: receipt.receiptId });
-      statePort.uncertainReconciliationHandler = async (receipt) => ({ outcome: 'settled', receiptId: receipt.reconciliationId });
+      statePort.recordOutcomeHandler = async receipt => ({ outcome: 'uncertain', receiptId: receipt.receiptId });
+      statePort.uncertainReconciliationHandler = async receipt => ({ outcome: 'settled', receiptId: receipt.reconciliationId });
       const tools = new ControlledRepositoryTools({
         guardCapability: guard,
         fsPort,
@@ -2661,7 +2612,9 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
         patchRecoveryHandoff: createTestPatchRecoveryHandoff(),
         attemptStartRecoveryHandoff: createUnknownAttemptStartRecoveryHandoff(),
         unattemptedClaimClosureHandoff: createRefusingClaimClosureHandoff(),
-        patchReceiver: async () => { throw new Error('receiver interrupted after dispatch'); },
+        patchReceiver: async () => {
+          throw new Error('receiver interrupted after dispatch');
+        },
       });
       const patch: ApplyPatchAction = {
         actionId: 'act-patch-uncertain-recovery',
@@ -2677,12 +2630,12 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
       assert.equal(statePort.outcomeReceipts.at(-1)?.outcome, 'uncertain');
 
       let writerAcquired = false;
-      const competingWriter = manager.acquireWriteLease('ws-test-1', canonicalRev).then((lease) => {
+      const competingWriter = manager.acquireWriteLease('ws-test-1', canonicalRev).then(lease => {
         writerAcquired = true;
         return lease;
       });
       const viewBuild = manager.admitCommandView({ workspaceId: 'ws-test-1' });
-      await new Promise<void>((resolve) => setImmediate(resolve));
+      await new Promise<void>(resolve => setImmediate(resolve));
       assert.equal(writerAcquired, false, 'uncertain receiver outcome retains the patch lease');
       assert.equal(controller.snapshotRequests, 0, 'uncertain receiver outcome blocks view construction');
 
@@ -2712,10 +2665,12 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
       assert.equal(command.journal.getJournalSnapshot().claims[0]?.status, 'settled');
       assert.equal(command.journal.getJournalSnapshot().attempts[0]?.status, 'settled');
       assert.equal(command.journal.getJournalSnapshot().activeClaimId, null);
-      const commandLedgers = command.journal.getLedgers().filter((ledger) =>
-        ['timeoutMs', 'maxOutputBytes', 'maxCpuSeconds', 'maxMemoryBytes', 'maxProcessCount'].includes(ledger.kind));
+      const commandLedgers = command.journal.getLedgers().filter(ledger => ['timeoutMs', 'maxOutputBytes', 'maxCpuSeconds', 'maxMemoryBytes', 'maxProcessCount'].includes(ledger.kind));
       assert.equal(commandLedgers.length, 10);
-      assert.equal(commandLedgers.every((ledger) => ledger.reservations.length === 0 && ledger.consumed > 0), true);
+      assert.equal(
+        commandLedgers.every(ledger => ledger.reservations.length === 0 && ledger.consumed > 0),
+        true,
+      );
       assert.deepEqual(await command.tools.listDir('src'), ['app.py'], 'A settled command allows the next guarded read');
 
       const tests = await createJournalBackedCommandHarness('act-command-outcome-tests');
@@ -2738,19 +2693,21 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
     it('keeps uncertain executor results, reservations, and leases held for recovery', async () => {
       const command = await createJournalBackedCommandHarness('act-command-outcome-uncertain');
       command.controller.executionFailure = new Error('controller lost its response');
-      await assert.rejects(
-        () => command.tools.runCommand(command.action, command.context),
-        /COMMAND_OUTCOME_PENDING/,
-      );
+      await assert.rejects(() => command.tools.runCommand(command.action, command.context), /COMMAND_OUTCOME_PENDING/);
       const snapshot = command.journal.getJournalSnapshot();
       assert.equal(snapshot.outcomes[0]?.outcome, 'uncertain');
       assert.equal(snapshot.claims[0]?.status, 'uncertain');
       assert.equal(snapshot.attempts[0]?.status, 'uncertain');
       assert.ok(snapshot.activeClaimId);
-      const heldLedgers = command.journal.getLedgers().filter((ledger) =>
-        ['timeoutMs', 'maxOutputBytes', 'maxCpuSeconds', 'maxMemoryBytes', 'maxProcessCount'].includes(ledger.kind));
-      assert.equal(heldLedgers.reduce((count, ledger) => count + ledger.reservations.length, 0), 10);
-      assert.equal(heldLedgers.every((ledger) => ledger.consumed === 0), true);
+      const heldLedgers = command.journal.getLedgers().filter(ledger => ['timeoutMs', 'maxOutputBytes', 'maxCpuSeconds', 'maxMemoryBytes', 'maxProcessCount'].includes(ledger.kind));
+      assert.equal(
+        heldLedgers.reduce((count, ledger) => count + ledger.reservations.length, 0),
+        10,
+      );
+      assert.equal(
+        heldLedgers.every(ledger => ledger.consumed === 0),
+        true,
+      );
       const attemptId = snapshot.attempts[0]?.attemptId;
       assert.ok(attemptId);
 
@@ -2760,11 +2717,11 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
       assert.equal(command.controller.executedPlans.length, 1, 'A retry cannot redispatch the ambiguous command');
 
       let writerAcquired = false;
-      const blockedWriter = command.manager.acquireWriteLease('ws-test-1', canonicalRev).then((lease) => {
+      const blockedWriter = command.manager.acquireWriteLease('ws-test-1', canonicalRev).then(lease => {
         writerAcquired = true;
         return lease;
       });
-      await new Promise<void>((resolve) => setImmediate(resolve));
+      await new Promise<void>(resolve => setImmediate(resolve));
       assert.equal(writerAcquired, false, 'The uncertain command retains its read lease');
       await assert.rejects(() => command.tools.recoverCommandOutcome(attemptId), /NO_TRUSTED_RECOVERY_EVIDENCE/);
       assert.equal(writerAcquired, false, 'Missing proof does not release the lease or reservations');
@@ -2775,24 +2732,26 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
       const command = await createJournalBackedCommandHarness('act-command-outcome-malformed');
       command.controller.outputToReturn = { exitCode: 0, stdout: 'ran once\n', stderr: '', durationMs: 5 };
       const execute = command.executor.execute.bind(command.executor);
-      command.executor.execute = async (params) => {
+      command.executor.execute = async params => {
         const result = await execute(params);
         return { ...result, stdout: undefined } as unknown as StructuredExecutionResult;
       };
 
-      await assert.rejects(
-        () => command.tools.runCommand(command.action, command.context),
-        /COMMAND_OUTCOME_PENDING/,
-      );
+      await assert.rejects(() => command.tools.runCommand(command.action, command.context), /COMMAND_OUTCOME_PENDING/);
       const snapshot = command.journal.getJournalSnapshot();
       assert.equal(snapshot.outcomes[0]?.outcome, 'uncertain');
       assert.equal(snapshot.claims[0]?.status, 'uncertain');
       assert.equal(snapshot.attempts.length, 1);
       assert.equal(command.controller.executedPlans.length, 1, 'The command effect may have occurred before normalization failed');
-      const ledgers = command.journal.getLedgers().filter((ledger) =>
-        ['timeoutMs', 'maxOutputBytes', 'maxCpuSeconds', 'maxMemoryBytes', 'maxProcessCount'].includes(ledger.kind));
-      assert.equal(ledgers.reduce((count, ledger) => count + ledger.reservations.length, 0), 10);
-      assert.equal(ledgers.every((ledger) => ledger.consumed === 0), true);
+      const ledgers = command.journal.getLedgers().filter(ledger => ['timeoutMs', 'maxOutputBytes', 'maxCpuSeconds', 'maxMemoryBytes', 'maxProcessCount'].includes(ledger.kind));
+      assert.equal(
+        ledgers.reduce((count, ledger) => count + ledger.reservations.length, 0),
+        10,
+      );
+      assert.equal(
+        ledgers.every(ledger => ledger.consumed === 0),
+        true,
+      );
     });
 
     it('recovers a committed command attempt through the public owner handoff after unknown, blocked, and conflicting replies', async () => {
@@ -2802,7 +2761,10 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
       command.manager.acquireReadLease = async (workspaceId, expectedRevision) => {
         const lease = await acquireReadLease(workspaceId, expectedRevision);
         const release = lease.release.bind(lease);
-        lease.release = async () => { leaseReleaseCalls += 1; await release(); };
+        lease.release = async () => {
+          leaseReleaseCalls += 1;
+          await release();
+        };
         return lease;
       };
       const begin = command.journal.beginAttempt.bind(command.journal);
@@ -2816,18 +2778,21 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
       assert.equal(before.attempts[0]?.status, 'attempting');
       assert.equal(before.outcomes.length, 0, 'No outcome is recorded until the owner confirms the committed attempt');
       assert.equal(command.controller.executedPlans.length, 0, 'A beginAttempt response loss never dispatches the command');
-      const reserved = command.journal.getLedgers().filter((ledger) =>
-        ['timeoutMs', 'maxOutputBytes', 'maxCpuSeconds', 'maxMemoryBytes', 'maxProcessCount'].includes(ledger.kind));
-      assert.equal(reserved.reduce((count, ledger) => count + ledger.reservations.length, 0), 10);
+      const reserved = command.journal.getLedgers().filter(ledger => ['timeoutMs', 'maxOutputBytes', 'maxCpuSeconds', 'maxMemoryBytes', 'maxProcessCount'].includes(ledger.kind));
+      assert.equal(
+        reserved.reduce((count, ledger) => count + ledger.reservations.length, 0),
+        10,
+      );
 
       let ownerMode: 'unknown' | 'invalid' | 'trusted' = 'unknown';
       const query = command.attemptStartRecoveryHandoff.queryAttemptStart.bind(command.attemptStartRecoveryHandoff);
-      command.attemptStartRecoveryHandoff.queryAttemptStart = async (request) => {
+      command.attemptStartRecoveryHandoff.queryAttemptStart = async request => {
         if (ownerMode === 'unknown') return { outcome: 'unknown' };
-        if (ownerMode === 'invalid') return {
-          outcome: 'committed',
-          attempt: { ...command.attempts[0], claimId: 'another-claim' },
-        };
+        if (ownerMode === 'invalid')
+          return {
+            outcome: 'committed',
+            attempt: { ...command.attempts[0], claimId: 'another-claim' },
+          };
         return await query(request);
       };
 
@@ -2835,13 +2800,20 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
       assert.equal(unknown.outcome, 'blocked');
       const writer = command.manager.acquireWriteLease('ws-test-1', canonicalRev);
       let writerAcquired = false;
-      const waitingWriter = writer.then((lease) => { writerAcquired = true; return lease; });
-      await new Promise<void>((resolve) => setImmediate(resolve));
+      const waitingWriter = writer.then(lease => {
+        writerAcquired = true;
+        return lease;
+      });
+      await new Promise<void>(resolve => setImmediate(resolve));
       assert.equal(writerAcquired, false, 'Unknown owner state retains the command read lease');
       assert.equal(command.journal.getJournalSnapshot().attempts[0]?.status, 'attempting');
-      assert.equal(command.journal.getLedgers().filter((ledger) =>
-        ['timeoutMs', 'maxOutputBytes', 'maxCpuSeconds', 'maxMemoryBytes', 'maxProcessCount'].includes(ledger.kind))
-        .reduce((count, ledger) => count + ledger.reservations.length, 0), 10);
+      assert.equal(
+        command.journal
+          .getLedgers()
+          .filter(ledger => ['timeoutMs', 'maxOutputBytes', 'maxCpuSeconds', 'maxMemoryBytes', 'maxProcessCount'].includes(ledger.kind))
+          .reduce((count, ledger) => count + ledger.reservations.length, 0),
+        10,
+      );
 
       ownerMode = 'invalid';
       const invalid = await command.tools.recoverAttemptStart(recoveryId);
@@ -2872,9 +2844,13 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
       assert.equal(recovered.attempts[0]?.status, 'settled');
       assert.equal(recovered.activeClaimId, null);
       assert.equal(recovered.outcomes.length, 1);
-      assert.equal(command.journal.getLedgers().filter((ledger) =>
-        ['timeoutMs', 'maxOutputBytes', 'maxCpuSeconds', 'maxMemoryBytes', 'maxProcessCount'].includes(ledger.kind))
-        .every((ledger) => ledger.reservations.length === 0 && ledger.consumed === 0), true);
+      assert.equal(
+        command.journal
+          .getLedgers()
+          .filter(ledger => ['timeoutMs', 'maxOutputBytes', 'maxCpuSeconds', 'maxMemoryBytes', 'maxProcessCount'].includes(ledger.kind))
+          .every(ledger => ledger.reservations.length === 0 && ledger.consumed === 0),
+        true,
+      );
       assert.equal(command.attempts.length, 1, 'Recovery does not retry beginAttempt');
       assert.equal(command.controller.executedPlans.length, 0, 'Recovery does not dispatch the command');
       assert.equal(leaseReleaseCalls, 1, 'The command lease is released once after canonical settlement');
@@ -2889,17 +2865,22 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
       command.manager.acquireReadLease = async (workspaceId, expectedRevision) => {
         const lease = await acquireReadLease(workspaceId, expectedRevision);
         const release = lease.release.bind(lease);
-        lease.release = async () => { leaseReleaseCalls += 1; await release(); };
+        lease.release = async () => {
+          leaseReleaseCalls += 1;
+          await release();
+        };
         return lease;
       };
-      command.journal.beginAttempt = async () => { throw new Error('beginAttempt explicitly rejected before commit'); };
+      command.journal.beginAttempt = async () => {
+        throw new Error('beginAttempt explicitly rejected before commit');
+      };
       const recoveryId = await getAttemptStartRecoveryId(() => command.tools.runCommand(command.action, command.context));
       let writerAcquired = false;
-      const waitingWriter = command.manager.acquireWriteLease('ws-test-1', canonicalRev).then((lease) => {
+      const waitingWriter = command.manager.acquireWriteLease('ws-test-1', canonicalRev).then(lease => {
         writerAcquired = true;
         return lease;
       });
-      await new Promise<void>((resolve) => setImmediate(resolve));
+      await new Promise<void>(resolve => setImmediate(resolve));
       const pending = command.journal.getJournalSnapshot();
       assert.equal(pending.claims[0]?.status, 'claimed');
       assert.equal(pending.attempts.length, 0);
@@ -2909,13 +2890,14 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
 
       const trustedQuery = command.attemptStartRecoveryHandoff.queryAttemptStart.bind(command.attemptStartRecoveryHandoff);
       let allowTrustedNoAttemptProof = false;
-      command.attemptStartRecoveryHandoff.queryAttemptStart = async (request) => allowTrustedNoAttemptProof
-        ? await trustedQuery(request)
-        : {
-            outcome: 'unattempted',
-            claim: { ...request.claim, hasCommittedAttempt: false },
-            closureReceipt: createTestClaimClosureReceiptV02(request.claim, request.executorIdentity),
-          };
+      command.attemptStartRecoveryHandoff.queryAttemptStart = async request =>
+        allowTrustedNoAttemptProof
+          ? await trustedQuery(request)
+          : {
+              outcome: 'unattempted',
+              claim: { ...request.claim, hasCommittedAttempt: false },
+              closureReceipt: createTestClaimClosureReceiptV02(request.claim, request.executorIdentity),
+            };
       const invalidProof = await command.tools.recoverAttemptStart(recoveryId);
       assert.equal(invalidProof.outcome, 'blocked', 'An unfenced owner reply cannot close an unattempted claim');
       assert.equal(command.journal.getJournalSnapshot().closures.length, 0);
@@ -2930,9 +2912,13 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
       assert.equal(closed.attempts.length, 0);
       assert.equal(closed.closures.length, 1);
       assert.equal(closed.activeClaimId, null);
-      assert.equal(command.journal.getLedgers().filter((ledger) =>
-        ['timeoutMs', 'maxOutputBytes', 'maxCpuSeconds', 'maxMemoryBytes', 'maxProcessCount'].includes(ledger.kind))
-        .every((ledger) => ledger.reservations.length === 0 && ledger.consumed === 0), true);
+      assert.equal(
+        command.journal
+          .getLedgers()
+          .filter(ledger => ['timeoutMs', 'maxOutputBytes', 'maxCpuSeconds', 'maxMemoryBytes', 'maxProcessCount'].includes(ledger.kind))
+          .every(ledger => ledger.reservations.length === 0 && ledger.consumed === 0),
+        true,
+      );
       assert.equal(command.attempts.length, 0, 'Recovery does not retry a rejected beginAttempt');
       assert.equal(command.controller.executedPlans.length, 0);
       assert.equal(leaseReleaseCalls, 1, 'The command lease is released once after canonical closure');
@@ -2954,7 +2940,9 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
         };
         return lease;
       };
-      command.journal.beginAttempt = async () => { throw new Error('beginAttempt rejected before commit'); };
+      command.journal.beginAttempt = async () => {
+        throw new Error('beginAttempt rejected before commit');
+      };
       const recoveryId = await getAttemptStartRecoveryId(() => command.tools.runCommand(command.action, command.context));
       assert.equal((await command.tools.recoverAttemptStart(recoveryId)).outcome, 'blocked');
       const closed = command.journal.getJournalSnapshot();
@@ -2963,11 +2951,11 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
       assert.equal(closed.closures.length, 1);
       assert.equal(leaseReleaseCalls, 1);
       let writerAcquired = false;
-      const waitingWriter = command.manager.acquireWriteLease('ws-test-1', canonicalRev).then((lease) => {
+      const waitingWriter = command.manager.acquireWriteLease('ws-test-1', canonicalRev).then(lease => {
         writerAcquired = true;
         return lease;
       });
-      await new Promise<void>((resolve) => setImmediate(resolve));
+      await new Promise<void>(resolve => setImmediate(resolve));
       assert.equal(writerAcquired, false, 'The failed release retains the lease');
 
       const result = await command.tools.recoverAttemptStart(recoveryId);
@@ -3011,11 +2999,11 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
       assert.equal(settled.claims[0]?.status, 'settled');
       assert.equal(settled.reconciliations.length, 1);
       let writerAcquired = false;
-      const waitingWriter = command.manager.acquireWriteLease('ws-test-1', canonicalRev).then((lease) => {
+      const waitingWriter = command.manager.acquireWriteLease('ws-test-1', canonicalRev).then(lease => {
         writerAcquired = true;
         return lease;
       });
-      await new Promise<void>((resolve) => setImmediate(resolve));
+      await new Promise<void>(resolve => setImmediate(resolve));
       assert.equal(writerAcquired, false);
 
       command.recoveryBehavior.failNextPrepare = true;
@@ -3076,7 +3064,10 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
         if (trackOriginalWriteLease) {
           trackOriginalWriteLease = false;
           const release = lease.release.bind(lease);
-          lease.release = async () => { leaseReleaseCalls += 1; await release(); };
+          lease.release = async () => {
+            leaseReleaseCalls += 1;
+            await release();
+          };
         }
         return lease;
       };
@@ -3092,11 +3083,11 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
       assert.equal(patch.patchCalls(), 0, 'The patch effect is not invoked while attempt start is unknown');
 
       let readerAcquired = false;
-      const waitingReader = patch.manager.acquireReadLease('ws-test-1', canonicalRev).then((lease) => {
+      const waitingReader = patch.manager.acquireReadLease('ws-test-1', canonicalRev).then(lease => {
         readerAcquired = true;
         return lease;
       });
-      await new Promise<void>((resolve) => setImmediate(resolve));
+      await new Promise<void>(resolve => setImmediate(resolve));
       assert.equal(readerAcquired, false, 'The patch write lease remains held after the original call fails');
 
       const result = await patch.tools.recoverAttemptStart(recoveryId);
@@ -3107,7 +3098,10 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
       assert.equal(recovered.claims[0]?.status, 'settled');
       assert.equal(recovered.attempts[0]?.status, 'settled');
       assert.equal(recovered.activeClaimId, null);
-      assert.equal(patch.journal.getLedgers().every((ledger) => ledger.reservations.length === 0), true);
+      assert.equal(
+        patch.journal.getLedgers().every(ledger => ledger.reservations.length === 0),
+        true,
+      );
       assert.equal(patch.attempts.length, 1, 'Recovery does not retry beginAttempt');
       assert.equal(patch.patchCalls(), 0, 'Recovery does not dispatch the patch effect');
       assert.equal(leaseReleaseCalls, 1, 'The patch lease is released once after canonical settlement');
@@ -3228,7 +3222,7 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
       assert.equal(controller.executedPlans[0]?.executable, 'pytest');
       assert.equal(controller.executedPlans[0]?.limits.timeoutMs, 11);
       assert.equal(controller.executedPlans[0]?.limits.maxOutputBytes, 13);
-      assert.equal(controller.executedPlans[0]?.limits.maxCpuCores, 0.005 * 1000 / 11);
+      assert.equal(controller.executedPlans[0]?.limits.maxCpuCores, (0.005 * 1000) / 11);
       assert.equal(controller.executedPlans[0]?.limits.maxMemoryBytes, 134217728);
       assert.equal(controller.executedPlans[0]?.limits.maxPids, 3);
 
