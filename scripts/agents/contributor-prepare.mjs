@@ -61,7 +61,7 @@ async function environment(root, call) {
 }
 
 function dirtyPaths(dirty) {
-  return String(dirty ?? '').split(/\r?\n/).filter(Boolean).map(line => line.slice(3).trim()).filter(Boolean);
+  return String(dirty ?? '').split(/\r?\n/).filter(Boolean).map(line => line.replace(/^[ MADRCU?!]{1,2}\s+/, '').trim()).filter(Boolean);
 }
 
 function nextCommand(status, root, branch, nextBranch, pr) {

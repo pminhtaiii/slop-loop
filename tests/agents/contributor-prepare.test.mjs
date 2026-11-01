@@ -336,3 +336,13 @@ test('checkout change after worker start remains truthfully registered and block
   assert.equal(entries[0].binding.branch, 'refs/heads/feat/tooling-demo');
   assert.equal(entries[0].task, 'T010');
 });
+
+test('dirtyPaths strips the porcelain prefix from trimmed and untrimmed status lines', async t => {
+  const f = await fixture(t);
+  const raw = ' M source.txt\nM  staged.txt\nA  added.txt\n?? untracked.txt\n';
+  const report = await contributorPrepare(['--root', f.root], {
+    execute: executor({ head: f.head, calls: [], dirty: raw.trim(), pullRequests: [] }),
+  });
+
+  assert.deepEqual(report.checkout.dirtyPaths, ['source.txt', 'staged.txt', 'added.txt', 'untracked.txt']);
+});
