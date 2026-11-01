@@ -15,13 +15,12 @@ pnpm-lock.yaml
 *.yml
 *.yaml
 
-# Prettier's own line-wrapping pushes these eleven past the 20,000-byte cap in
-# scripts/ci/check-staged-file-size.mjs, and two were already over it before the
+# Prettier's own line-wrapping pushes these ten past the 20,000-byte cap in
+# scripts/ci/check-staged-file-size.mjs, and one was already over it before the
 # cap existed. They stay hand-formatted until each is split into smaller modules,
 # at which point its entry here is removed and the formatter takes over.
 scripts/agents/active-task.mjs
 scripts/agents/paired-merge-eligibility.mjs
-scripts/agents/planning-workflow.mjs
 src/approvals/control-v02.ts
 src/approvals/control.ts
 src/approvals/policy-v01.ts

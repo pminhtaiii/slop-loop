@@ -2,6 +2,9 @@ import js from '@eslint/js';
 import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
+// A catch that only rethrows the caught error adds a frame and no information.
+const noUselessCatch = { 'no-useless-catch': 'error' };
+
 const nodeJavaScript = ['scripts/**/*.mjs', 'tests/agents/**/*.mjs', 'tests/ci/**/*.mjs'];
 
 export default tseslint.config(
@@ -17,6 +20,7 @@ export default tseslint.config(
     },
     rules: {
       ...js.configs.recommended.rules,
+      ...noUselessCatch,
       'no-unused-vars': [
         'error',
         {
@@ -37,6 +41,7 @@ export default tseslint.config(
       '@typescript-eslint/explicit-module-boundary-types': 'error',
       '@typescript-eslint/consistent-type-imports': ['error', { prefer: 'type-imports', fixStyle: 'separate-type-imports' }],
       'prefer-const': 'error',
+      ...noUselessCatch,
     },
   },
   {
