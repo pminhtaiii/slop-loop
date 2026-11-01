@@ -22,6 +22,10 @@ Use the five canonical labels: `needs-triage`, `needs-info`, `ready-for-agent`, 
 
 Use the single-context layout (`GLOSSARY.md` and `docs/adr/` at the repo root). See `docs/agents/domain.md`.
 
+### Code standard
+
+Follow [context/code_standard.md](context/code_standard.md). Do not wrap code in `try`/`catch` to guard against a failure you can avoid: prefer a native non-throwing form (`statSync(path, { throwIfNoEntry: false })`, `existsSync`, an optional chain) or a typed result. Catch only to add context, recover, translate, or clean up; `no-useless-catch` rejects the rethrow-only case.
+
 ## Project context
 
 Use [context/README.md](context/README.md) to find the relevant project context. Load only the documents needed for the task.

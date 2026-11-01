@@ -118,7 +118,7 @@ Subagents report their findings using structured markdown tables categorizing ev
 
 ## Commands and Automation
 
-The planning workflow helper provides deterministic validation and review management:
+The planning workflow helper provides deterministic validation and review management. `scripts/agents/planning-workflow.mjs` retains the public exports and CLI; `scripts/agents/planning-task-ledger.mjs` owns pure task-ledger parsing, dependency validation, and owned-path checks behind the existing `validateTaskLedger` export:
 
 ```powershell
 # Run automated validation against planning artifacts in a feature directory

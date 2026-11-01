@@ -32,6 +32,8 @@ Keep node logic deterministic where practical, and route tool, provider, and per
 
 Model expected failures as typed, discriminated outcomes callers handle explicitly, such as validation rejection, permission denial, timeout, or a tool result. Let unexpected programming or infrastructure exceptions reach the workflow boundary for recording and safe task failure. Catch only to add context, recover, translate, or clean up. Catch-log-rethrow wrappers add noise and duplicate logs.
 
+Prefer a native or stdlib non-throwing form over a `try` used only to probe: `statSync(path, { throwIfNoEntry: false })` or `existsSync` for existence, a validated parse that returns a result, an optional chain for a possibly absent property. A `try` whose entire body is one call and whose `catch` returns a constant is the signal to reach for one. ESLint's `no-useless-catch` rejects the rethrow-only case mechanically.
+
 Emit structured logs with stable event names and task ID, run ID, node, tool, duration, and outcome fields. Sanitize user-controlled strings and never log raw prompts, credentials, environment values, raw tool content, or protected repository data. Follow [runtime_policy.md](runtime_policy.md) for permitted metadata, sanitized approved command details, bounded diagnostics, and protected artifact references; [tools_permissions.md](tools_permissions.md) defines protected data and access boundaries.
 
 ## Verification
