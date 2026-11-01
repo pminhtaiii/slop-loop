@@ -80,7 +80,7 @@
 - [ ] T013 [US2] Extend comparisons in eval/uc03/compare.ts and tests/runtime/unit/workflow-comparison.test.ts.
   - **Dependencies**: T002, T009.
   - **Owned Paths**: eval/uc03/compare.ts; tests/runtime/unit/workflow-comparison.test.ts.
-  - **Acceptance Checks**: Sections 4/5; differing config allowed only under matching case/repo/grader; report all changed factors/confounding; strict option and legacy compatibility; unknown metrics stay unknown, waits/nonselection retain coverage. No statistical quality claim from one pair.
+  - **Acceptance Checks**: Sections 4/5; differing config allowed only when suite, report contract version, execution mode, case set/order/digests, manifest/case cardinality, repository, grader and per-case expected outcomes all match; any failed guard refuses comparison; report all changed factors/confounding; strict option and legacy compatibility; unknown metrics stay unknown, waits/nonselection retain coverage. No statistical quality claim from one pair.
 
 - [ ] T014 [US2] Verify failure attribution and two-run evidence in tests/runtime/integration/evaluation-failures.test.ts and tests/runtime/integration/evaluation-comparison.test.ts.
   - **Dependencies**: T010, T011, T012, T013.

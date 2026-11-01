@@ -1,6 +1,6 @@
 # Planning Validation
 
-**Status**: Planning artifacts only; implementation is unreleased. Automated checks pass. Final independent quality decision is bound to the final snapshot and reports described below.
+**Status**: Planning artifacts only; implementation is unreleased. Automated planning artifact/ledger and context checks pass; repository CI status is reported separately by the PR. Final independent quality decision is bound to the final snapshot and reports described below.
 
 Required evidence: automated artifact/ledger validation, context consistency, source-bound snapshot verification, independent Standards/Architecture and Testability/Edge Cases reports with zero unresolved P0/P1. Retain full reports/snapshots in `.agent-work/2026-11-01/uc03-evaluation-planning/`; tracked summary records command results and stable relative pointers as code, not required shipped artifacts.
 
