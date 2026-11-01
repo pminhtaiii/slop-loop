@@ -122,7 +122,7 @@ The per-task dependency lists above are authoritative and define the acyclic imp
 
 After T001, T002/T003/T004 have disjoint ownership; after T009, T012/T013 have disjoint ownership. No unconditional parallel markers are used: prerequisites and actual active ownership must pass dispatch checks first. Console service work can proceed controlled while real external gates are pending, but its real acceptance cannot pass early.
 
-External gates are not fake task IDs. UC-03 T026/T066 corrections, T024/T025 proofs and X04/X05 delivery are prerequisites for real T011, not tasks silently implemented here. If corrections touch shared paths, serialize with the owner before T008/T012. No feature task is currently authorized for implementation.
+External gates are not fake task IDs. UC-03 T026/T066 corrections, T024/T025 proofs and X04/X05 delivery are prerequisites for real T011, not tasks silently implemented here. If corrections touch shared paths, serialize with the owner before T008/T012. On 2026-11-01 the user directed Phases 1–3: T001–T011 are authorized as one batch for source and controlled-tier tests (see [authorization](contracts/decisions.md)). Paid calls, container execution, foreign-owner implementation, comparison, console and merge remain unreleased.
 
 ## Implementation Strategy
 
