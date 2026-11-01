@@ -43,6 +43,7 @@ try {
   const failures = [];
   const sources = new Map();
   const localTargets = new Map();
+  const localTargetLines = new Map();
   for (const file of files) sources.set(file, await readFile(resolve(root, file), 'utf8'));
   for (const required of contract.requiredDocuments) {
     if (!sources.has(required)) failures.push(`required document missing: ${required}`);
@@ -51,6 +52,7 @@ try {
     const source = sources.get(file);
     const prose = maskCode(source).replace(/(`+).*?\1/g, (code) => ' '.repeat(code.length));
     localTargets.set(file, new Set());
+    localTargetLines.set(file, []);
     // shortcut: supports inline links used by context; add reference-link support when adopted.
     const links = /\[[^\]\n]*\]\(\s*(?:<([^>\n]+)>|([^\s)]+))\s*\)/g;
     for (const match of prose.matchAll(links)) {
@@ -58,7 +60,8 @@ try {
       if (/^[a-z][a-z\d+.-]*:/i.test(target) || target.startsWith('//')) continue;
       const path = target.split('#')[0];
       if (!path) continue;
-      const location = `${file}:${source.slice(0, match.index).split('\n').length}`;
+      const line = source.slice(0, match.index).split('\n').length;
+      const location = `${file}:${line}`;
       try {
         const destination = await realpath(resolve(dirname(resolve(root, file)), decodeURIComponent(path)));
         const fromRoot = relative(root, destination);
@@ -67,6 +70,7 @@ try {
         }
         const linked = fromRoot.split('\\').join('/');
         localTargets.get(file).add(linked);
+        localTargetLines.get(file).push({ line, target: linked });
         if (linked.endsWith('.md') && !sources.has(linked)) {
           sources.set(linked, await readFile(destination, 'utf8'));
           files.push(linked);
@@ -74,6 +78,49 @@ try {
       } catch (error) {
         failures.push(`${location}: ${target} (${error.code ?? error.message})`);
       }
+    }
+  }
+
+  if (contract.requiredSkillStages !== undefined && !Array.isArray(contract.requiredSkillStages)) {
+    failures.push('context/contract.json: requiredSkillStages must be an array');
+  }
+  for (const requirement of contract.requiredSkillStages ?? []) {
+    if (!requirement || typeof requirement.skill !== 'string' || !requirement.skill.trim() || typeof requirement.stage !== 'string' || !requirement.stage.trim() || typeof requirement.path !== 'string' || !requirement.path.trim()) {
+      failures.push('context/contract.json: each required skill stage requires a skill, stage, and path');
+      continue;
+    }
+    if (isAbsolute(requirement.path)) {
+      failures.push(`context/contract.json: required skill ${requirement.skill} path must be checkout-relative`);
+      continue;
+    }
+    const targetPath = resolve(root, requirement.path);
+    const fromRoot = relative(root, targetPath);
+    if (isAbsolute(fromRoot) || fromRoot === '..' || fromRoot.startsWith('../') || fromRoot.startsWith('..\\')) {
+      failures.push(`context/contract.json: required skill ${requirement.skill} path is outside the checkout: ${requirement.path}`);
+      continue;
+    }
+    const workflow = sources.get('context/workflow.md');
+    if (!workflow) {
+      failures.push(`context/workflow.md: required skill ${requirement.skill} workflow document is missing`);
+      continue;
+    }
+    const headings = maskCode(workflow)
+      .replace(/(`+).*?\1/g, (code) => ' '.repeat(code.length))
+      .split('\n')
+      .flatMap((line, index) => {
+        const match = line.match(/^ {0,3}(#{1,6})\s+(.+?)\s*#*\s*$/);
+        return match ? [{ line: index + 1, level: match[1].length, title: match[2].trim() }] : [];
+      });
+    const stages = headings.filter((heading) => heading.title === requirement.stage);
+    if (stages.length !== 1) {
+      failures.push(`context/workflow.md: required skill ${requirement.skill} stage ${requirement.stage} must have one matching heading`);
+      continue;
+    }
+    const stage = stages[0];
+    const end = headings.find((heading) => heading.line > stage.line && heading.level <= stage.level)?.line ?? Infinity;
+    const expected = fromRoot.split('\\').join('/');
+    if (!localTargetLines.get('context/workflow.md')?.some((link) => link.line > stage.line && link.line < end && link.target === expected)) {
+      failures.push(`context/workflow.md: required skill ${requirement.skill} must link to ${expected} within stage ${requirement.stage}`);
     }
   }
 

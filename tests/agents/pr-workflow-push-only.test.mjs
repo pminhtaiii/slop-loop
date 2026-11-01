@@ -32,9 +32,9 @@ test('push-only requires a non-empty reason before running commands', async t =>
   assert.deepEqual(f.calls, []);
 });
 
-test('default full publication runs local gates and records its verified head', async t => {
+test('explicit full publication runs local gates and records its verified head', async t => {
   const f = await checkout(t);
-  const published = await f.run('publish', '--body-file', f.body, '--skip-review-request');
+  const published = await f.run('publish', '--body-file', f.body, '--mode', 'full', '--skip-review-request');
   const contributorTests = packageScriptCommand('test:contributors');
 
   assert.equal(published.publicationMode, 'full');
@@ -47,7 +47,7 @@ test('default full publication runs local gates and records its verified head', 
 
 test('push-only skips local gates, retains prior verification, repair history, and its reason', async t => {
   const f = await checkout(t);
-  const full = await f.run('publish', '--body-file', f.body, '--skip-review-request');
+  const full = await f.run('publish', '--body-file', f.body, '--mode', 'full', '--skip-review-request');
   const reason = 'Explicit user request to publish this repair without rerunning local gates.';
   const path = recordPath(f.root);
   const prior = JSON.parse(await readFile(path, 'utf8'));
@@ -75,7 +75,7 @@ test('push-only skips local gates, retains prior verification, repair history, a
 for (const priorVerification of [false, true]) {
   test(`full publication checks dependencies after push-only with prior verification ${priorVerification}`, async t => {
     const f = await checkout(t);
-    if (priorVerification) await f.run('publish', '--body-file', f.body, '--skip-review-request');
+    if (priorVerification) await f.run('publish', '--body-file', f.body, '--mode', 'full', '--skip-review-request');
     await writeFile(join(f.root, 'package.json'), '{"private":true}\n');
     git(f.root, 'add', 'package.json');
     git(f.root, 'commit', '--quiet', '-m', 'change dependency inputs');
@@ -84,7 +84,7 @@ for (const priorVerification of [false, true]) {
     const pushes = () => f.calls.filter(call => call[0] === 'git' && call[1] === 'push').length;
     const before = pushes();
 
-    await assert.rejects(runWorkflow(['publish', '--body-file', f.body, '--summary', 'gate unverified dependencies', '--root', f.root], {
+    await assert.rejects(runWorkflow(['publish', '--body-file', f.body, '--summary', 'gate unverified dependencies', '--mode', 'full', '--root', f.root], {
       execute(binary, args, cwd, timeout) {
         if (binary === process.execPath && args[0].endsWith('check-dependency-install.mjs')) throw new Error('Release age rejected');
         return f.execute(binary, args, cwd, timeout);
