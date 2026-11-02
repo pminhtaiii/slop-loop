@@ -1,0 +1,122 @@
+/**
+ * Graph-backed workflow driver for the uc03 workflow evaluation.
+ *
+ * The host supplies the task, ports and pinned expected wait per case; only IDs and digests
+ * reach the observation. A preflight block never calls the graph.
+ */
+
+import type { BugTask } from '../../src/contracts/foundation/uc03.ts';
+import { sanitizeText } from '../../src/foundation/telemetry.ts';
+import type { CatalogEntry } from '../../src/runtime/evaluation-profile.ts';
+import { runUC03Graph } from '../../src/uc03/graph.ts';
+import type { UC03GraphConfig, UC03GraphPorts } from '../../src/uc03/graph-types.ts';
+import type { EvaluationCaseSpec, WorkflowCaseContext, WorkflowDriver, WorkflowLifecycle, WorkflowObservation, WorkflowUsage, WorkflowWait } from './types.ts';
+
+export interface WorkflowCaseHost {
+  readonly entry: CatalogEntry;
+  readonly task: BugTask;
+  readonly ports: UC03GraphPorts;
+  /** Pinned by the host catalog; never inferred from the run. */
+  readonly expectedWait: WorkflowWait | null;
+  /** Needed to drive the route at all; the brief's map shape omits it (reported gap). */
+  readonly config?: UC03GraphConfig | undefined;
+}
+
+const DIGEST = /^(?:sha256:)?[a-f0-9]{64}$/u;
+const TERMINAL = new Set<string>(['COMPLETED', 'INCOMPLETE', 'IMPLEMENTED_UNVERIFIED', 'FAILED']);
+const MAX_DIAGNOSTIC = 512;
+const MAX_ARTIFACT = 256;
+const MAX_ARTIFACTS = 16;
+
+function safeText(value: unknown, maxBytes: number): string | null {
+  if (typeof value !== 'string') return null;
+  const clean = sanitizeText(value);
+  return clean.length > 0 && Buffer.byteLength(clean, 'utf8') <= maxBytes ? clean : null;
+}
+
+function safeList(values: readonly unknown[]): readonly string[] {
+  const out: string[] = [];
+  for (const value of values) {
+    const clean = safeText(value, MAX_ARTIFACT);
+    if (clean !== null && !out.includes(clean)) out.push(clean);
+    if (out.length === MAX_ARTIFACTS) break;
+  }
+  return out;
+}
+
+export function lifecycleOf(outcome: string): WorkflowLifecycle {
+  if (outcome === 'pending-approval') return 'waiting-approval';
+  if (outcome === 'needs-info') return 'waiting-info';
+  return TERMINAL.has(outcome) ? (outcome as WorkflowLifecycle) : 'not-observed';
+}
+
+function usageOf(observed: boolean, statePresent: boolean): WorkflowUsage {
+  return observed ? 'observed' : statePresent ? 'uncertain' : 'unavailable';
+}
+
+function blockedObservation(caseId: string, host: WorkflowCaseHost | undefined, reasonCode: string): WorkflowObservation {
+  return {
+    repositoryId: host?.task.repositoryId ?? null,
+    taskId: null,
+    runId: null,
+    returnedModel: null,
+    graderDigest: host && DIGEST.test(host.entry.grader.digest) ? host.entry.grader.digest : null,
+    workflowOutcome: 'not-observed',
+    expectedWait: host?.expectedWait ?? null,
+    blocked: 'prerequisite-unavailable',
+    effects: 'none',
+    usage: 'unavailable',
+    diagnostic: safeText(`Preflight block ${caseId}: ${reasonCode}`, MAX_DIAGNOSTIC),
+    artifacts: [],
+    limitations: safeList([`Preflight block ${reasonCode}; no graph dispatch occurred.`]),
+  };
+}
+
+/**
+ * `effects` is `'observed'` when the route returned owner state and `'uncertain'` otherwise:
+ * a graph call may have dispatched before returning no state. Also `shortcut:` host usage is
+ * read from the authoritative final report only; owner accounting beyond it stays `uncertain`.
+ */
+function observationFor(host: WorkflowCaseHost, result: Awaited<ReturnType<typeof runUC03Graph>>): WorkflowObservation {
+  const state = result.state;
+  const outcome = lifecycleOf(result.outcome);
+  const report = result.finalReport;
+  return {
+    repositoryId: state?.repositoryId ?? host.task.repositoryId,
+    taskId: state?.taskId ?? null,
+    runId: state?.runId ?? null,
+    returnedModel: null,
+    graderDigest: host.entry.grader.digest,
+    workflowOutcome: outcome,
+    expectedWait: host.expectedWait,
+    blocked: null,
+    effects: state === null ? 'uncertain' : 'observed',
+    usage: usageOf(report?.usage !== undefined, state !== null),
+    diagnostic: safeText(`UC-03 outcome ${outcome}${state ? ` at ${state.node}` : ''}`, MAX_DIAGNOSTIC),
+    artifacts: safeList([...(report?.evidence.verificationRefs ?? []), ...(report?.evidence.reviewRef ? [report.evidence.reviewRef] : [])]),
+    limitations: safeList(report === undefined ? ['No authoritative final report was produced.'] : []),
+  };
+}
+
+/** Host-held map from public case id to the task, ports and pinned wait it should observe. */
+export function createWorkflowDriver(catalog: ReadonlyMap<string, WorkflowCaseHost>): WorkflowDriver {
+  if (!(catalog instanceof Map)) throw new Error('Invalid workflow driver catalog');
+  for (const [caseId, host] of catalog) {
+    if (typeof caseId !== 'string' || !host || host.entry.caseId !== caseId) throw new Error('Invalid workflow driver catalog entry');
+  }
+  return {
+    async executeCase(spec: EvaluationCaseSpec, context: WorkflowCaseContext): Promise<WorkflowObservation> {
+      const host = catalog.get(spec.caseId);
+      if (host === undefined) return blockedObservation(spec.caseId, undefined, 'UNKNOWN_CASE');
+      if (host.entry.caseId !== spec.caseId) return blockedObservation(spec.caseId, host, 'CATALOG_MISMATCH');
+      if (!DIGEST.test(host.entry.caseDigest) || !DIGEST.test(host.entry.publicTaskDigest) || !DIGEST.test(host.entry.initialRepositoryDigest) || !DIGEST.test(host.entry.grader.digest)) {
+        return blockedObservation(spec.caseId, host, 'MISSING_DIGEST');
+      }
+      if (!DIGEST.test(context.profileDigest) || !DIGEST.test(context.configDigest) || !DIGEST.test(context.pricingDigest)) {
+        return blockedObservation(spec.caseId, host, 'MISSING_DIGEST');
+      }
+      // runUC03Graph never throws; a real port failure is still a possible dispatch, hence uncertain effects.
+      return observationFor(host, await runUC03Graph(host.task, host.ports, host.config));
+    },
+  };
+}

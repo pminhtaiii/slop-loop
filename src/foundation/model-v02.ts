@@ -137,14 +137,35 @@ const consumedAttempts = new Set<string>();
 /**
  * Versioned ModelPortV02 ingress for both coder and reviewer roles (T051/T052).
  */
+/**
+ * True only for a transport that exposes the provider-identity channel this port reads after a
+ * real dispatch. Every test double lacks it and therefore stays mock.
+ * shortcut: structural proof — the value is provider-returned identity, but nothing in-process
+ * can prove a network round trip; upgrade if an unforgeable brand is ever needed.
+ */
+export function hasProviderIdentityChannel(transport: HostModelTransport): boolean {
+  const slot = Object.getOwnPropertyDescriptor(transport, 'lastModelIdentity');
+  return slot !== undefined && (typeof slot.get === 'function' || 'value' in slot);
+}
+
+/**
+ * Provenance is derived from the injected transport, never declared. A real transport exposes the
+ * identity channel even before its first dispatch (the identity value arrives with the reply), so
+ * this is not a claim that a call already happened.
+ */
+export function derivedModelProvenance(transport: HostModelTransport): PortProvenance {
+  return hasProviderIdentityChannel(transport) ? 'real' : 'mock';
+}
+
 export class HostModelPortV02 implements ModelPortV02 {
-  readonly provenance: PortProvenance = 'mock';
+  readonly provenance: PortProvenance;
   readonly options: HostModelPortV02Options;
   private readonly completedRequests = new Map<string, { readonly identity: string; readonly result: Promise<ModelPortV02Result> }>();
   private readonly requestIdentities = new Map<string, string>();
 
   constructor(options: HostModelPortV02Options) {
     this.options = options;
+    this.provenance = derivedModelProvenance(options.transport);
   }
 
   async propose(state: TaskState, evidence: readonly SourceEvidence[], request: ProviderRequest, context: ProviderAdmissionContextV02): Promise<ModelPortV02Result> {
