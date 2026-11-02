@@ -1114,6 +1114,38 @@ test('DockerWorkspaceManager: changed canonical revision invalidates active comm
   );
 });
 
+test('DockerWorkspaceManager: a failed re-materialization leaves no selectable active view for the replaced volume', async () => {
+  const controller = new FakeDockerLifecycleController();
+  const manager = new DockerWorkspaceManager({ controller });
+  const rev = 'sha256:0333333333333333333333333333333333333333333333333333333333333333';
+
+  const ws = await manager.createWorkspace({
+    taskId: 'task-remat-01',
+    workspaceId: 'ws-remat-01',
+    initialRevisionDigest: rev,
+    profile: createValidProfile(),
+  });
+  controller.snapshotToReturn = {
+    canonicalRevisionDigest: rev,
+    entries: [createSnapshotEntry('src/calculator.py', 'def add(a, b): return a + b\n')],
+  };
+
+  const first = await manager.admitCommandView({ workspaceId: ws.workspaceId });
+  assert.equal(manager.getActiveCommandView(ws.workspaceId)?.viewId, first.viewId);
+
+  // The same revision reuses the same viewId, so re-materialization replaces the volume the
+  // published view points at; a failed write must not leave that view selectable.
+  controller.onMaterialize = () => {
+    throw new Error('VIEW_MATERIALIZATION_FAILED: write timed out');
+  };
+  await assert.rejects(async () => {
+    const again = await manager.admitCommandView({ workspaceId: ws.workspaceId });
+    assert.equal(again.viewId, first.viewId);
+  }, /VIEW_MATERIALIZATION_FAILED/);
+
+  assert.equal(manager.getActiveCommandView(ws.workspaceId), null);
+});
+
 test('containsProtectedContent: detects marker secrets, private keys, bearer tokens, API tokens', () => {
   assert.equal(containsProtectedContent('def add(a, b): return a + b'), false);
   assert.equal(containsProtectedContent('TOKEN = "MARKER_SECRET_42"'), true);

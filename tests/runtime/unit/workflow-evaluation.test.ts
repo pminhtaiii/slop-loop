@@ -690,3 +690,43 @@ test('service allows one active experiment and forwards directions to control', 
   });
   assert.equal(unknownDirection.ok ? '' : unknownDirection.reasonCode, 'UNKNOWN_DIRECTION');
 });
+
+test('service forwards a direction for a task-bearing graph wait to control and accepts continuation', async () => {
+  const issued: string[] = [];
+  const { service } = createService({
+    graph: {
+      portsFor: () => ({ ports: 'host-only' }),
+      run: async () => ({ outcome: 'needs-info', state: { taskId: 'task-001', runId: 'run-001', workspaceId: 'ws-001' }, usage: { tokensConsumed: 10, costUsd: 0.01 } }),
+    },
+    control: {
+      issue: input => {
+        issued.push(input.kind);
+        return { receiptRef: `ctrl-1-${input.kind}`, kind: input.kind, taskId: 'task-001', controlVersion: 7 };
+      },
+    },
+  });
+  const started = await service.startExperiment({ source: completeBugSource, profileId: 'uc03-runtime-evaluation-v1', idempotencyKey: 'key-graph-wait' });
+  assert.ok(started.ok);
+  assert.equal(started.value.experiment.status, 'waiting-info');
+  assert.equal(started.value.experiment.taskId, 'task-001');
+
+  const direction = await service.issueDirection({ id: 'exp-001', expectedTaskVersion: 2, expectedControlVersion: 1, kind: 'revise', idempotencyKey: 'key-graph-revise' });
+  assert.ok(direction.ok);
+  assert.deepEqual(issued, ['revise']);
+  assert.ok('receiptRef' in direction.value.receipt);
+  assert.deepEqual(direction.value.experiment.directions, ['ctrl-1-revise']);
+
+  const replayed = await service.issueDirection({ id: 'exp-001', expectedTaskVersion: 2, expectedControlVersion: 1, kind: 'revise', idempotencyKey: 'key-graph-revise' });
+  assert.ok(replayed.ok);
+  assert.equal(replayed.value.receipt, direction.value.receipt);
+  assert.deepEqual(issued, ['revise']);
+
+  const continuation = await service.continueExperiment({
+    id: 'exp-001',
+    expectedVersion: direction.value.experiment.version,
+    directionRef: 'ctrl-1-revise',
+    idempotencyKey: 'key-graph-continue',
+  });
+  assert.ok(continuation.ok);
+  assert.equal(continuation.value.experiment.taskId, 'task-001');
+});

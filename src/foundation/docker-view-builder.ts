@@ -213,6 +213,9 @@ export async function buildDockerCommandView(params: AdmitCommandViewParams, con
       throw new Error(`INVALID_COMMAND_VIEW: ${validation.errors.map(e => e.message).join('; ')}`);
     }
 
+    // Materialization replaces the view volume, so any earlier view for this revision must stop
+    // being selectable before that destructive step, even if the replacement write then fails.
+    operations.invalidateViews(params.workspaceId);
     // Materialize view on controller passing permitted bytes only and read-only view identity
     await controller.materializeView({
       view: commandView,

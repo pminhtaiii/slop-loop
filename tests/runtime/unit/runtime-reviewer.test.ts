@@ -3,6 +3,7 @@ import test from 'node:test';
 import { computeCanonicalSha256, computeCheckSetDigest, type ClaimReceiptV02, type ProviderAdmissionContextV02, type ReviewResult } from '../../../src/contracts/foundation/uc03.ts';
 import type { HostModelTransportPayload } from '../../../src/foundation/model.ts';
 import { createRuntimeReviewer, parseUnifiedDiff } from '../../../src/foundation/reviewer.ts';
+import { createDeepSeekTransport } from '../../../src/foundation/deepseek-transport.ts';
 import {
   createFixtureBugTask,
   createFixtureClaimReceiptV02,
@@ -265,15 +266,26 @@ test('leaves the supplied task, diff, evidence, request, admission and claim unt
   assert.equal(Object.isFrozen(context.evidence[0]), false);
 });
 
-test('derives provenance from the transport instead of declaring it real', () => {
+test('derives provenance from the transport brand, not the identity-channel shape', () => {
   assert.equal(setup().reviewer.provenance, 'mock');
-  const real = createRuntimeReviewer({
+  // Shape-compatible fake: an own lastModelIdentity getter alone must not buy real provenance.
+  const fake = createRuntimeReviewer({
     transport: {
       ...fakeTransport(),
       get lastModelIdentity() {
         return undefined;
       },
     },
+    resolveRepoDigest: () => REPO_DIGEST,
+  });
+  assert.equal(fake.provenance, 'mock');
+  const real = createRuntimeReviewer({
+    transport: createDeepSeekTransport({
+      endpoint: 'https://api.deepseek.com/anthropic/v1/messages',
+      apiKey: 'sk-host-only-ref-0123456789',
+      pricing: { inputRate: 1, outputRate: 1, cacheRate: 1, overheadRate: 0, denominator: 1 },
+      fetch: async () => assert.fail('no network in this test'),
+    }),
     resolveRepoDigest: () => REPO_DIGEST,
   });
   assert.equal(real.provenance, 'real');

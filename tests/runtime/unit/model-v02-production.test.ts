@@ -18,7 +18,7 @@ function deepSeek() {
 
 const statePort = { claim: async () => undefined, beginAttempt: async () => undefined, recordOutcome: async () => undefined } as never;
 
-test('a transport that exposes the provider-identity channel yields a real, production-admissible model port', () => {
+test('the trusted DeepSeek transport yields a real, production-admissible model port', () => {
   const transport = deepSeek();
   assert.equal(derivedModelProvenance(transport), 'real');
   const port = new HostModelPortV02({ transport, statePort });
@@ -27,7 +27,7 @@ test('a transport that exposes the provider-identity channel yields a real, prod
   assert.equal(isAdmittedForProduction([port]), true);
 });
 
-test('a transport without the identity channel stays mock even though it can dispatch', () => {
+test('an unbranded transport stays mock even when it can dispatch', () => {
   const transport = { execute: async () => ({ outcome: 'observed' as const }) };
   assert.equal(derivedModelProvenance(transport), 'mock');
   const port = new HostModelPortV02({ transport, statePort });
@@ -35,10 +35,25 @@ test('a transport without the identity channel stays mock even though it can dis
   assert.equal(isAdmittedForProduction([port]), false);
 });
 
+test('an identity-channel-shaped fake stays mock', () => {
+  const transport = {
+    execute: async () => ({ outcome: 'observed' as const }),
+    get lastModelIdentity() {
+      return undefined;
+    },
+  };
+  assert.equal(derivedModelProvenance(transport), 'mock');
+  assert.equal(new HostModelPortV02({ transport, statePort }).provenance, 'mock');
+  // Spreading a genuine transport copies the getter as a data field but not the non-enumerable brand.
+  const copied = { ...deepSeek() };
+  assert.equal(Object.getOwnPropertyDescriptor(copied, 'lastModelIdentity') !== undefined, true);
+  assert.equal(derivedModelProvenance(copied), 'mock');
+});
+
 test('provenance is captured once at construction from the injected transport', () => {
   const transport: HostModelTransport = { execute: async () => ({ outcome: 'observed' as const }) };
   const port = new HostModelPortV02({ transport, statePort });
+  // shortcut: the brand is inspected at construction; a transport branded later stays mock.
   Object.defineProperty(transport, 'lastModelIdentity', { get: () => undefined });
-  // shortcut: the channel is inspected at construction; a transport that grows it later stays mock.
   assert.equal(port.provenance, 'mock');
 });

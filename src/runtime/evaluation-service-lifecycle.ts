@@ -211,9 +211,9 @@ export function createEvaluationService(deps: EvaluationServiceDeps): Evaluation
       const experiment = experiments.get(experimentId);
       if (!experiment) return fail('not-found', 'UNKNOWN_EXPERIMENT');
       // Pre-task intake accepts answers but never execution directions.
-      if (experiment.status === 'waiting-info' || experiment.submission?.questions.length) {
+      if (experiment.task === null && (experiment.status === 'waiting-info' || experiment.submission?.questions.length)) {
         // Only a taskless intake can end locally; a graph-produced wait still belongs to UC-05 control.
-        if (kind !== 'end' || experiment.task !== null) return fail('conflict', 'INCOMPLETE_INTAKE');
+        if (kind !== 'end') return fail('conflict', 'INCOMPLETE_INTAKE');
         // No UC-05 task exists here, so termination is recorded locally rather than issued by control.
         experiment.status = 'incomplete';
         experiment.version += 1;

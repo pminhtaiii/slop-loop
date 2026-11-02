@@ -33,6 +33,15 @@ export interface DeepSeekTransportOptions {
   readonly fetch?: typeof globalThis.fetch | undefined;
 }
 
+/** Module-private brand: only this factory can mint a trusted production transport. */
+const DEEPSEEK_TRANSPORT = Symbol('deepseek-transport');
+
+/** True only for objects returned by createDeepSeekTransport in this process. */
+export function isDeepSeekTransport(value: unknown): boolean {
+  const slot = typeof value === 'object' && value !== null ? Object.getOwnPropertyDescriptor(value, DEEPSEEK_TRANSPORT) : undefined;
+  return slot !== undefined && 'value' in slot && slot.value === true;
+}
+
 /** The only accepted endpoint; task, browser or profile input can never widen it. */
 const PINNED_ENDPOINT = 'https://api.deepseek.com/anthropic/v1/messages';
 const ANTHROPIC_VERSION = '2023-06-01';
@@ -202,7 +211,7 @@ export function createDeepSeekTransport(options: DeepSeekTransportOptions): Deep
   const fetchFn = options.fetch ?? globalThis.fetch;
   let lastModelIdentity: DeepSeekModelIdentity | undefined;
 
-  return {
+  const transport: DeepSeekTransport = {
     get lastModelIdentity() {
       return lastModelIdentity;
     },
@@ -250,4 +259,7 @@ export function createDeepSeekTransport(options: DeepSeekTransportOptions): Deep
       return { proposal: parsed.proposal, observedUsage: parsed.usage };
     },
   };
+  // Defaults are non-enumerable and non-configurable, so an object spread cannot launder the brand.
+  Object.defineProperty(transport, DEEPSEEK_TRANSPORT, { value: true });
+  return transport;
 }
