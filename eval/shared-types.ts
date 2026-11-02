@@ -34,6 +34,17 @@ export type EvaluationCallbacks = Readonly<{
   execute: (payload: Json, context: SharedExecutionContext) => Promise<unknown>;
   grade: (caseId: string, observation: unknown) => Promise<unknown>;
 }>;
+/** In-process capability issued only for an admitted profile and a recomputed binding; never caller-declared. */
+export type RealExecutionAdmission = Readonly<{ admissionId: string; profileDigest: string; bindingDigest: string }>;
+/** Exact run binding a real-execution capability is issued for; a receipt is void for any other binding. */
+export type RealExecutionBinding = Readonly<{
+  profileDigest: string;
+  configDigest: string;
+  pricingDigest: string;
+  adapterVersions: readonly string[];
+  caseIds: readonly string[];
+  requestedModel: string;
+}>;
 export type SharedSelection = Readonly<{
   ucId: string;
   datasetId: string;

@@ -31,6 +31,7 @@ import {
   computeRequestContentDigest,
 } from '../contracts/foundation/uc03.ts';
 import { deepClone, deepFreeze, validateBaseModelInputs, buildTransportPayload, executeTransport, type HostModelTransport, type HostProviderConfig } from './model.ts';
+import { isDeepSeekTransport } from './deepseek-transport.ts';
 
 export interface HostModelPortV02Options {
   readonly transport: HostModelTransport;
@@ -137,14 +138,23 @@ const consumedAttempts = new Set<string>();
 /**
  * Versioned ModelPortV02 ingress for both coder and reviewer roles (T051/T052).
  */
+/**
+ * Provenance is derived from the injected transport, never declared. Only a transport minted by
+ * the trusted production factory can be real; shape-compatible fakes stay mock.
+ */
+export function derivedModelProvenance(transport: HostModelTransport): PortProvenance {
+  return isDeepSeekTransport(transport) ? 'real' : 'mock';
+}
+
 export class HostModelPortV02 implements ModelPortV02 {
-  readonly provenance: PortProvenance = 'mock';
+  readonly provenance: PortProvenance;
   readonly options: HostModelPortV02Options;
   private readonly completedRequests = new Map<string, { readonly identity: string; readonly result: Promise<ModelPortV02Result> }>();
   private readonly requestIdentities = new Map<string, string>();
 
   constructor(options: HostModelPortV02Options) {
     this.options = options;
+    this.provenance = derivedModelProvenance(options.transport);
   }
 
   async propose(state: TaskState, evidence: readonly SourceEvidence[], request: ProviderRequest, context: ProviderAdmissionContextV02): Promise<ModelPortV02Result> {

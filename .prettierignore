@@ -8,6 +8,9 @@ pnpm-lock.yaml
 # .gitignore, so a formatter run would otherwise reformat worktree copies.
 .claude/
 
+# Spec Kit's local feature pointer is machine-written and gitignored per checkout.
+.specify/
+
 # Markdown, YAML and JSON are hand-formatted here: prose line breaks and spec
 # structure are deliberate, and reflowing them churns documents a formatter
 # gains nothing on.

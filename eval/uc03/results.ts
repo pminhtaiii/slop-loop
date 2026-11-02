@@ -1,12 +1,24 @@
 import {
   C17_NOT_RUN_LIMITATION,
+  EVALUATION_CASE_IDS,
   UC03_CONTRACT_VERSION,
+  WORKFLOW_EVALUATION_VERSION,
   type CaseResult,
   type EvaluationCaseContext,
+  type EvaluationCaseSpec,
   type EvaluationManifest,
   type EvaluationMode,
   type EvaluationReport,
   type EvaluationSummary,
+  type WorkflowBinding,
+  type WorkflowCaseResult,
+  type WorkflowEvaluationReport,
+  type WorkflowGrade,
+  type WorkflowLifecycle,
+  type WorkflowObservation,
+  type WorkflowReason,
+  type WorkflowSuiteAcceptance,
+  type WorkflowWait,
 } from './types.ts';
 
 export type NotRunReason = 'not-selected' | 'no-driver' | 'real-refused' | 'private-grading' | 'mock-grading-exercised';
@@ -153,4 +165,114 @@ export function createEvaluationReport(input: BuildReportInput): EvaluationRepor
     cases: input.cases,
     limitations,
   };
+}
+
+export interface BuildWorkflowReportInput {
+  readonly mode: EvaluationMode;
+  readonly binding: WorkflowBinding;
+  readonly scope: 'catalog' | 'exploratory';
+  readonly manifestDigest: string;
+  readonly timestamp: string;
+  readonly cases: readonly WorkflowCaseResult[];
+  readonly limitations: readonly string[];
+}
+
+/** Product-task lifecycle is observed, not judged: a task paused in an expected wait still satisfies a case predicate. */
+function judgeObservation(observation: WorkflowObservation, spec: EvaluationCaseSpec): Readonly<{ grade: WorkflowGrade; reason: WorkflowReason }> {
+  if (observation.blocked !== null) return { grade: 'not-run', reason: observation.blocked };
+  if (isWait(observation.workflowOutcome))
+    return observation.expectedWait === observation.workflowOutcome ? { grade: 'pass', reason: 'expected-wait-satisfied' } : { grade: 'not-run', reason: 'unresolved-wait' };
+  return observation.workflowOutcome === spec.expectedOutcome ? { grade: 'pass', reason: 'criteria-satisfied' } : { grade: 'fail', reason: 'criteria-violation' };
+}
+
+function isWait(outcome: WorkflowLifecycle): outcome is WorkflowWait {
+  return outcome === 'waiting-approval' || outcome === 'waiting-info';
+}
+
+export function workflowCaseResult(spec: EvaluationCaseSpec, observation: WorkflowObservation, binding: WorkflowBinding): WorkflowCaseResult {
+  const verdict = judgeObservation(observation, spec);
+  return {
+    caseId: spec.caseId,
+    repositoryId: observation.repositoryId,
+    taskId: observation.taskId,
+    runId: observation.runId,
+    requestedModel: binding.requestedModel,
+    returnedModel: observation.returnedModel,
+    tier: binding.tier,
+    profileDigest: binding.profileDigest,
+    configDigest: binding.configDigest,
+    pricingDigest: binding.pricingDigest,
+    adapterVersions: binding.adapterVersions,
+    graderDigest: observation.graderDigest,
+    workflowOutcome: observation.workflowOutcome,
+    grade: verdict.grade,
+    gradeReason: verdict.reason,
+    effects: observation.effects,
+    usage: observation.usage,
+    diagnostic: observation.diagnostic,
+    artifacts: observation.artifacts,
+    limitations: observation.limitations,
+  };
+}
+
+export function notRunWorkflowCase(spec: EvaluationCaseSpec, reason: WorkflowReason, limitation: string, binding: WorkflowBinding): WorkflowCaseResult {
+  return {
+    caseId: spec.caseId,
+    repositoryId: null,
+    taskId: null,
+    runId: null,
+    requestedModel: binding.requestedModel,
+    returnedModel: null,
+    tier: binding.tier,
+    profileDigest: binding.profileDigest,
+    configDigest: binding.configDigest,
+    pricingDigest: binding.pricingDigest,
+    adapterVersions: binding.adapterVersions,
+    graderDigest: null,
+    workflowOutcome: 'not-observed',
+    grade: 'not-run',
+    gradeReason: reason,
+    effects: 'none',
+    usage: 'unavailable',
+    diagnostic: null,
+    artifacts: [],
+    limitations: [limitation],
+  };
+}
+
+/** Suite acceptance counts every required case, so a passing selected subset stays incomplete and is always shown. */
+export function suiteAcceptanceFor(scope: 'catalog' | 'exploratory', passed: number, outcome: 'pass' | 'fail' | 'incomplete'): WorkflowSuiteAcceptance {
+  if (scope === 'exploratory') return { scope, requiredCases: 0, satisfiedCases: 0, outcome: 'not-applicable' };
+  return { scope, requiredCases: EVALUATION_CASE_IDS.length, satisfiedCases: passed, outcome: outcome === 'fail' ? 'fail' : passed === EVALUATION_CASE_IDS.length ? 'pass' : 'incomplete' };
+}
+
+export function createWorkflowEvaluationReport(input: BuildWorkflowReportInput): WorkflowEvaluationReport {
+  const passed = input.cases.filter(item => item.grade === 'pass').length;
+  const failed = input.cases.filter(item => item.grade === 'fail').length;
+  const incomplete = input.cases.filter(item => item.grade === 'not-run').length;
+  const pendingWaits = input.cases.filter(item => item.gradeReason === 'unresolved-wait').map(item => item.caseId);
+  const outcome = failed > 0 ? 'fail' : incomplete > 0 ? 'incomplete' : 'pass';
+  return {
+    suite: 'uc03',
+    contractVersion: WORKFLOW_EVALUATION_VERSION,
+    mode: input.mode,
+    tier: input.binding.tier,
+    manifestDigest: input.manifestDigest,
+    configDigest: input.binding.configDigest,
+    timestamp: input.timestamp,
+    isRealVerified: false,
+    selectionResult: { selected: input.cases.map(item => item.caseId), passed, failed, incomplete, pendingWaits, outcome },
+    suiteAcceptance: suiteAcceptanceFor(input.scope, passed, outcome),
+    exitCode: exitCodeFor(outcome, input.cases),
+    cases: input.cases,
+    limitations: input.limitations,
+  };
+}
+
+/** 0 selected-pass, 1 failure/incomplete, 3 unresolved human wait, 4 prerequisite/busy/reconciliation block. */
+export function exitCodeFor(outcome: 'pass' | 'fail' | 'incomplete', cases: readonly WorkflowCaseResult[]): WorkflowEvaluationReport['exitCode'] {
+  if (outcome === 'pass') return 0;
+  if (cases.some(item => item.gradeReason === 'prerequisite-unavailable' || item.gradeReason === 'busy' || item.gradeReason === 'reconciliation-required')) return 4;
+  if (outcome === 'incomplete' && cases.some(item => item.gradeReason === 'unresolved-wait')) return 3;
+  return 1;
 }

@@ -6,6 +6,8 @@ On 2026-11-01 (Asia/Saigon), user requested planning workflow/specs/plans for wo
 
 User selected a real issue-to-fix/test pipeline, interactive interface and evidence showing agent/tool struggles; latest DeepSeek Flash via Anthropic-compatible API, user-managed environment and no user-set spending cap/early optimization. Contributor Luna/max is unrelated to product model selection.
 
+On 2026-11-01 (Asia/Saigon) the user directed implementation of Phases 1–3. That is the G-AUTH release for exactly **T001–T011** and nothing else. It releases source and controlled-tier tests only: no paid provider call, no container execution, no real-owner adapter delivery, no console, no comparison and no merge are released. T004/T010 controlled checks are not T024/G-ISOLATION evidence; T006 controlled seams are not G-OWNERS; T011 controlled CLI evidence is not G-REAL/SC-001. Every other gate above remains unmet.
+
 ## Design Dispositions
 
 - Reuse graph/evaluator; add missing generation, bridge and truthful evidence.

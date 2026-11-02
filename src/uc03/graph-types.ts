@@ -21,6 +21,7 @@ import type {
   VerificationResult,
 } from '../contracts/foundation/uc03.ts';
 import type { ExecutionGuardV02 } from '../foundation/execution-guard.ts';
+import type { CoderAgent, CoderBudget } from './agent.ts';
 import type { BaselineEvidenceWriter, InvestigationConfigPort, TrustedHostExpectedContext, TrustedHostPort } from './investigation.ts';
 import type { RepairPatchProposal, TrustedReplanDirection } from './repair.ts';
 import type { FinalReport, Milestone } from './report.ts';
@@ -70,17 +71,43 @@ export interface UC03RepositoryAdmission {
   readonly trustedContext: RepositoryAdmissionTrustedContextV02;
 }
 
+export interface UC03CoderAdmission {
+  readonly request: ProviderRequest;
+  readonly context: ProviderAdmissionContextV02;
+  readonly trustedContext: ProviderAdmissionTrustedContextV02;
+}
+
+export interface UC03CoderAdmissionRequest {
+  readonly task: BugTask;
+  readonly state: TaskState;
+  readonly purpose: 'propose-plan' | 'propose-patch' | 'propose-repair' | 'propose-replan';
+  readonly evidence: readonly SourceEvidence[];
+}
+
+export type UC03CoderAdmissionResolver = (request: UC03CoderAdmissionRequest) => Promise<UC03CoderAdmission | undefined> | UC03CoderAdmission | undefined;
+
 export type UC03ReviewerAdmissionResolver = (request: UC03ReviewerAdmissionRequest) => Promise<UC03ReviewerAdmission | undefined> | UC03ReviewerAdmission | undefined;
 
 export type UC03PatchAdmissionResolver = (request: UC03PatchAdmissionRequest) => Promise<UC03RepositoryAdmission | undefined> | UC03RepositoryAdmission | undefined;
 
+/**
+ * Opt-in model generation for the real profile. Deliberately not a port: `CoderAgent` is host
+ * wiring, and each call needs an owner-issued coder admission (`coderAdmission`).
+ */
+export interface UC03GraphGeneration {
+  readonly agent: CoderAgent;
+  readonly budget?: CoderBudget | undefined;
+}
+
 export interface UC03GraphConfig {
   readonly mode?: 'development' | 'production' | undefined;
+  readonly generation?: UC03GraphGeneration | undefined;
   readonly trustedExpectedContext?: TrustedHostExpectedContext | undefined;
   readonly trustedDirection?: TrustedReplanDirection | undefined;
   readonly trustedTransitionContext?: StateTransitionOptions['trusted'] | undefined;
   readonly admissionContext?: UC03RepositoryAdmission | UC03PatchAdmissionResolver | undefined;
   readonly reviewerAdmission?: UC03ReviewerAdmission | UC03ReviewerAdmissionResolver | undefined;
+  readonly coderAdmission?: UC03CoderAdmission | UC03CoderAdmissionResolver | undefined;
   readonly patchContent?: string | undefined;
   readonly targetPaths?: readonly string[] | undefined;
   readonly repairPatch?: RepairPatchProposal | undefined;

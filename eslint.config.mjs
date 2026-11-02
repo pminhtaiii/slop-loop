@@ -9,7 +9,9 @@ const nodeJavaScript = ['scripts/**/*.mjs', 'tests/agents/**/*.mjs', 'tests/ci/*
 
 export default tseslint.config(
   {
-    ignores: ['dist/**', 'node_modules/**', '.agent-work/**', 'coverage/**'],
+    // `.claude/` is local-only checkout state whose worktrees each carry their own tsconfig;
+    // linting it makes the parser fail on every file with "multiple candidate TSConfigRootDirs".
+    ignores: ['dist/**', 'node_modules/**', '.agent-work/**', 'coverage/**', '.claude/**'],
   },
   {
     ...js.configs.recommended,
