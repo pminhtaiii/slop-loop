@@ -1,7 +1,7 @@
 # Tasks: Observable Python Repair Evaluation
 
 **Input**: [spec](spec.md), [plan](plan.md), [contract](contracts/integration.md), [release gates](contracts/decisions.md).
-**Status**: All implementation tasks proposed/unreleased. Task checkboxes record acceptance, never permission. Tests are required by FR-011 and existing repository TDD policy.
+**Status**: T001–T011 are released as one batch on 2026-11-01 (Asia/Saigon) for source and controlled-tier tests only; no paid provider call, container execution, real-owner adapter delivery or merge is released. All other tasks remain proposed/unreleased. Task checkboxes record acceptance, never permission. Tests are required by FR-011 and existing repository TDD policy.
 
 ## Phase 1: Setup
 

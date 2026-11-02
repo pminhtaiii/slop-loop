@@ -568,23 +568,27 @@ test('service blocks an unadmitted profile and unknown ids before any graph call
   assert.equal(unknownCase.ok ? '' : unknownCase.reasonCode, 'UNKNOWN_CASE');
 });
 
-test('service resolves catalog bindings and keeps custom submissions ungraded', async () => {
-  const { service } = createService();
+test('service resolves catalog bindings, executes them, and keeps custom submissions ungraded', async () => {
+  const { service, calls } = createService();
   const catalogStart = await service.startExperiment({ source: catalogSource, profileId: 'uc03-runtime-evaluation-v1', idempotencyKey: 'key-catalog' });
   assert.ok(catalogStart.ok);
   assert.equal(catalogStart.value.experiment.graded, true);
   assert.equal(catalogStart.value.experiment.scope, 'catalog');
+  assert.equal(catalogStart.value.experiment.status, 'waiting-approval');
+  assert.equal(catalogStart.value.experiment.taskId, 'task-001');
+  assert.deepEqual(calls, { run: 1, portsFor: 1 });
   assert.deepEqual(
     catalogStart.value.experiment.bindings.map(binding => binding.catalogEntryId),
     ['entry-case-001'],
   );
 
-  const { service: customService } = createService({ ids: () => 'exp-002' });
+  const { service: customService, calls: customCalls } = createService({ ids: () => 'exp-002' });
   const customStart = await customService.startExperiment({ source: completeBugSource, profileId: 'uc03-runtime-evaluation-v1', idempotencyKey: 'key-custom' });
   assert.ok(customStart.ok);
   assert.equal(customStart.value.experiment.graded, false);
   assert.equal(customStart.value.experiment.scope, 'exploratory');
   assert.deepEqual(customStart.value.experiment.bindings, []);
+  assert.deepEqual(customCalls, { run: 1, portsFor: 1 });
 });
 
 test('service returns the original receipt for a duplicate key and denies stale or conflicting replay', async () => {
@@ -637,6 +641,24 @@ test('service persists needs-info submissions with bound questions and answers n
 
   const direction = await service.issueDirection({ id: experiment.id, expectedTaskVersion: 0, expectedControlVersion: 0, kind: 'resume', idempotencyKey: 'key-direction-intake' });
   assert.equal(direction.ok ? '' : direction.reasonCode, 'INCOMPLETE_INTAKE');
+
+  const ended = await service.issueDirection({ id: experiment.id, expectedTaskVersion: 0, expectedControlVersion: 0, kind: 'end', idempotencyKey: 'key-end-intake' });
+  assert.ok(ended.ok);
+  assert.equal(ended.value.experiment.status, 'incomplete');
+  assert.equal(ended.value.experiment.version, experiment.version + 2);
+  assert.ok('receiptId' in ended.value.receipt);
+  assert.equal(ended.value.receipt.receiptId, `rcpt-direction-${experiment.id}-${ended.value.experiment.version}`);
+  assert.equal(ended.value.receipt.kind, 'direction');
+  assert.deepEqual(calls, { run: 0, portsFor: 0 });
+
+  const replayed = await service.issueDirection({ id: experiment.id, expectedTaskVersion: 0, expectedControlVersion: 0, kind: 'end', idempotencyKey: 'key-end-intake' });
+  assert.ok(replayed.ok);
+  assert.equal(replayed.value.receipt, ended.value.receipt);
+  assert.equal(replayed.value.experiment.status, 'incomplete');
+
+  const next = await service.startExperiment({ source: needsInfoBugSource, profileId: 'uc03-runtime-evaluation-v1', idempotencyKey: 'key-needs-info-2' });
+  assert.ok(next.ok);
+  assert.equal(next.value.experiment.status, 'waiting-info');
 });
 
 test('service allows one active experiment and forwards directions to control', async () => {

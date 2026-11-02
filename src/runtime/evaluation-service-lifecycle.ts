@@ -120,9 +120,9 @@ export function createEvaluationService(deps: EvaluationServiceDeps): Evaluation
       experiments.set(id, experiment);
       activeId = id;
 
-      // Incomplete intake is non-executable: no task, run, workspace, port or graph call.
-      if (source.kind !== 'bug' || source.status === 'needs-info') {
-        if (source.kind === 'bug') experiment.status = 'waiting-info';
+      // Incomplete bug intake is non-executable: no task, run, workspace, port or graph call.
+      if (source.kind === 'bug' && source.status === 'needs-info') {
+        experiment.status = 'waiting-info';
         const receipt = remember(key, fingerprint, { receiptId: `rcpt-start-${id}`, kind: 'start', idempotencyKey: key, experimentId: id, version: experiment.version });
         return ok({ experiment: viewOf(experiment), receipt });
       }
@@ -182,7 +182,7 @@ export function createEvaluationService(deps: EvaluationServiceDeps): Evaluation
       return ok({ experiment: viewOf(experiment), receipt });
     },
 
-    async issueDirection(input: unknown): Promise<ServiceResult<Readonly<{ experiment: ExperimentView; receipt: ServiceControlReceipt }>>> {
+    async issueDirection(input: unknown): Promise<ServiceResult<Readonly<{ experiment: ExperimentView; receipt: ServiceControlReceipt | ExperimentReceipt }>>> {
       const request = record(input, ['id', 'expectedTaskVersion', 'expectedControlVersion', 'kind', 'decisionRef', 'feedback', 'idempotencyKey']);
       if (!request) return fail('invalid-input', 'INVALID_REQUEST');
       const key = keyValue(request['idempotencyKey']);
@@ -199,16 +199,34 @@ export function createEvaluationService(deps: EvaluationServiceDeps): Evaluation
 
       const stored = receipts.get(key);
       if (stored) {
-        const existing = experiments.get(stored.receipt.experimentId);
-        const direction = existing?.directions.find(receipt => receipt.receiptRef === stored.receipt.receiptId);
         if (stored.fingerprint !== fingerprint) return fail('conflict', 'CONFLICTING_REPLAY');
-        return existing && direction ? ok({ experiment: viewOf(existing), receipt: direction }) : fail('conflict', 'UNKNOWN_DIRECTION');
+        const existing = experiments.get(stored.receipt.experimentId);
+        if (!existing) return fail('not-found', 'UNKNOWN_EXPERIMENT');
+        const direction = existing.directions.find(receipt => receipt.receiptRef === stored.receipt.receiptId);
+        // Only the local end-of-intake receipt has kind 'direction' without a UC-05 direction record.
+        if (direction) return ok({ experiment: viewOf(existing), receipt: direction });
+        return stored.receipt.kind === 'direction' ? ok({ experiment: viewOf(existing), receipt: stored.receipt }) : fail('conflict', 'UNKNOWN_DIRECTION');
       }
 
       const experiment = experiments.get(experimentId);
       if (!experiment) return fail('not-found', 'UNKNOWN_EXPERIMENT');
       // Pre-task intake accepts answers but never execution directions.
-      if (experiment.status === 'waiting-info' || experiment.submission?.questions.length) return fail('conflict', 'INCOMPLETE_INTAKE');
+      if (experiment.status === 'waiting-info' || experiment.submission?.questions.length) {
+        // Only a taskless intake can end locally; a graph-produced wait still belongs to UC-05 control.
+        if (kind !== 'end' || experiment.task !== null) return fail('conflict', 'INCOMPLETE_INTAKE');
+        // No UC-05 task exists here, so termination is recorded locally rather than issued by control.
+        experiment.status = 'incomplete';
+        experiment.version += 1;
+        if (activeId === experiment.id) activeId = undefined;
+        const receipt = remember(key, fingerprint, {
+          receiptId: `rcpt-direction-${experiment.id}-${experiment.version}`,
+          kind: 'direction',
+          idempotencyKey: key,
+          experimentId: experiment.id,
+          version: experiment.version,
+        });
+        return ok({ experiment: viewOf(experiment), receipt });
+      }
       const receipt = await deps.control.issue(
         Object.freeze({
           experimentId,

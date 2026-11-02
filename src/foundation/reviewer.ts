@@ -26,6 +26,7 @@ import {
 } from '../contracts/foundation/uc03.ts';
 import type { UC03ReviewerPort } from '../uc03/graph-types.ts';
 import { buildTransportPayload, deepClone, deepFreeze, executeTransport, type HostModelTransport } from './model.ts';
+import { derivedModelProvenance } from './model-v02.ts';
 import { providerClaim } from './provider-admission.ts';
 
 /** The review node issues exactly this purpose; a coder-purpose request is a bypass. */
@@ -140,7 +141,7 @@ export function createRuntimeReviewer(options: RuntimeReviewerOptions): RuntimeR
   let lastFailureReason: string | undefined;
 
   return {
-    provenance: 'real',
+    provenance: derivedModelProvenance(options.transport),
     get lastObservedUsage() {
       return lastObservedUsage;
     },

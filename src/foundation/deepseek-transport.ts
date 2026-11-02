@@ -130,7 +130,7 @@ function admit(payload: HostModelTransportPayload, pricing: DeepSeekPricing): Ad
   if (!Number.isFinite(caps.maxCostUsd) || caps.maxCostUsd <= 0) return { ok: false, reason: 'UNSUPPORTED_COST_BOUND: a finite positive cost bound is required before dispatch' };
   const prompt = promptFor(payload, request);
   // UTF-8 bytes upper-bound token count, so this bounds input without guessing a tokenizer.
-  const inputBound = Buffer.byteLength(prompt, 'utf8');
+  const inputBound = Buffer.byteLength(SYSTEM_PROMPT, 'utf8') + Buffer.byteLength(prompt, 'utf8');
   if (inputBound > caps.maxInputTokens) return { ok: false, reason: 'INPUT_TOKENS_UNBOUNDED: prompt exceeds the admitted input-token bound' };
   if (inputBound + request.maxOutputTokens > caps.maxBillableTokens) {
     return { ok: false, reason: 'BILLABLE_BOUND_UNSUPPORTED: admitted billable bound cannot cover the conservative input and output ceiling' };

@@ -122,7 +122,7 @@ test('expected wait passes its case while the selected result stays passing and 
 });
 
 test('an unresolved wait stays pending instead of failing and exits 3', async () => {
-  const fake = driver(spec => (spec.caseId === 'C01' ? observation({ workflowOutcome: 'waiting-approval' }) : observation({ taskId: 'task-2', runId: 'run-2' })));
+  const fake = driver(spec => (spec.caseId === 'C01' ? observation({ workflowOutcome: 'waiting-approval' }) : observation({ workflowOutcome: 'INCOMPLETE', taskId: 'task-2', runId: 'run-2' })));
   const report = await runEvaluation(options({ driver: fake }));
 
   const c01 = report.cases.find(item => item.caseId === 'C01');
@@ -196,7 +196,7 @@ test('exploratory scope grades nothing and claims no suite acceptance', async ()
 });
 
 test('report and observation validation reject inconsistent or widened payloads', async () => {
-  const report = await runEvaluation(options({ driver: driver(() => observation()) }));
+  const report = await runEvaluation(options({ cases: ['C01'], driver: driver(() => observation()) }));
   assert.throws(() => validateWorkflowEvaluationReport({ ...report, exitCode: 1 }));
   assert.throws(() => validateWorkflowEvaluationReport({ ...report, selectionResult: { ...report.selectionResult, passed: 17 } }));
   assert.throws(() => validateWorkflowEvaluationReport({ ...report, isRealVerified: true }));

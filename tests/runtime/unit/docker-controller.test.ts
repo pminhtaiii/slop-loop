@@ -241,8 +241,39 @@ test('materializeView writes only admitted bytes into the view volume, which exe
     false,
   );
 
+  // Re-materializing the same view replaces the volume so no earlier file survives.
+  const beforeRematerialize = calls.length;
+  await controller.materializeView(materializeParams());
+  assert.deepEqual(
+    calls
+      .slice(beforeRematerialize)
+      .map(call => call.args.slice(0, 3))
+      .filter(args => args[0] === 'volume'),
+    [
+      ['volume', 'inspect', 'view-ws1'],
+      ['volume', 'rm', 'view-ws1'],
+      ['volume', 'create', 'view-ws1'],
+    ],
+  );
+
   // Bytes the view never admitted cannot reach the volume.
   await assert.rejects(controller.materializeView(materializeParams({ files: { 'app.py': 'print(2)\n' } })), /UNADMITTED_VIEW_FILE/);
+  // Supplying fewer or more files than the view admits is not the admitted set.
+  await assert.rejects(controller.materializeView(materializeParams({ files: {} })), /EMPTY_MATERIALIZE_FILES/);
+  await assert.rejects(
+    controller.materializeView(
+      materializeParams({
+        view: view({
+          admittedFiles: [
+            { path: 'app.py', digest: computeFileDigest('print(1)\n') },
+            { path: 'lib.py', digest: computeFileDigest('x\n') },
+          ],
+        }),
+      }),
+    ),
+    /VIEW_FILE_SET_MISMATCH/,
+  );
+  await assert.rejects(controller.materializeView(materializeParams({ files: { 'app.py': 'print(1)\n', 'extra.py': 'import os\n' } })), /VIEW_FILE_SET_MISMATCH/);
   await assert.rejects(controller.materializeView(materializeParams({ view: view({ mountedReadOnly: false as true }) })), /COMMAND_VIEW_NOT_READONLY/);
   await assert.rejects(
     controller.materializeView(materializeParams({ files: { '.env': 'x' }, view: view({ admittedFiles: [{ path: '.env', digest: computeFileDigest('x') }] }) })),
@@ -288,7 +319,7 @@ test('a timed-out execution reports timedOut with a null exit code and preserves
   await controller.cleanup();
   const removed = calls.slice(beforeCleanup).map(call => call.args);
   assert.deepEqual(
-    removed.filter(args => args[1] === 'rm' && args.includes('ctr-')),
+    removed.filter(args => args[0] === 'rm' && args[1] === '-f' && args[2]?.startsWith('ctr-')),
     [],
     'uncertain execution container must be preserved',
   );
@@ -320,6 +351,57 @@ test('an uncertain run with no resolvable workspace preserves superseded volumes
     .map(call => call.args)
     .filter(args => args[1] === 'rm' && args[0] === 'volume');
   assert.deepEqual(removed, [], 'unknown effect scope must not delete the superseded view volume');
+});
+
+test('a re-activated view volume is not removed as superseded while it is current', async () => {
+  const { calls, spawn } = recorder();
+  const controller = makeController(spawn);
+
+  // A → B → A: materializing B supersedes A, materializing A again makes A current.
+  await controller.materializeView(materializeParams());
+  await controller.materializeView(materializeParams({ view: view({ viewId: 'view-ws1-b' }) }));
+  await controller.materializeView(materializeParams());
+
+  const before = calls.length;
+  await controller.cleanup();
+  const removedVolumes = calls
+    .slice(before)
+    .map(call => call.args)
+    .filter(args => args[0] === 'volume' && args[1] === 'rm');
+  assert.deepEqual(removedVolumes, [['volume', 'rm', 'view-ws1-b']], 'only the superseded view volume may be removed');
+});
+
+test('cleanup keeps a container or volume whose removal fails so the next cleanup retries', async () => {
+  const { calls, spawn } = recorder(call => (call.args[1] === 'inspect' || call.args[0] === 'rm' || call.args[1] === 'rm' ? { exitCode: 1, stderr: 'remove failed' } : undefined));
+  const controller = makeController(spawn);
+
+  await controller.materializeView(materializeParams());
+  await controller.materializeView(materializeParams({ view: view({ viewId: 'view-ws1-b' }) }));
+  await controller.executeContainer(plan());
+
+  await controller.cleanup();
+  const firstCleanup = calls.length;
+  const firstRemovals = calls.slice(-3).map(call => call.args);
+  assert.ok(
+    firstRemovals.some(args => args[0] === 'rm' && args[2]?.startsWith('ctr-')),
+    'container removal was attempted',
+  );
+  assert.ok(
+    firstRemovals.some(args => args[0] === 'volume' && args[1] === 'rm' && args[2] === 'view-ws1'),
+    'volume removal was attempted',
+  );
+
+  // Record survived, so a second cleanup retries both removals.
+  await controller.cleanup();
+  const retried = calls.slice(firstCleanup).map(call => call.args);
+  assert.ok(
+    retried.some(args => args[0] === 'rm' && args[2]?.startsWith('ctr-')),
+    'failed container removal is retried',
+  );
+  assert.ok(
+    retried.some(args => args[0] === 'volume' && args[1] === 'rm' && args[2] === 'view-ws1'),
+    'failed volume removal is retried',
+  );
 });
 
 test('cleanup removes containers it created after a clean run and preserves uncertain ones', async () => {

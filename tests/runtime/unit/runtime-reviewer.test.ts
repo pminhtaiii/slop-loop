@@ -265,6 +265,20 @@ test('leaves the supplied task, diff, evidence, request, admission and claim unt
   assert.equal(Object.isFrozen(context.evidence[0]), false);
 });
 
+test('derives provenance from the transport instead of declaring it real', () => {
+  assert.equal(setup().reviewer.provenance, 'mock');
+  const real = createRuntimeReviewer({
+    transport: {
+      ...fakeTransport(),
+      get lastModelIdentity() {
+        return undefined;
+      },
+    },
+    resolveRepoDigest: () => REPO_DIGEST,
+  });
+  assert.equal(real.provenance, 'real');
+});
+
 test('parses unified diffs into changed old and new lines only', () => {
   assert.deepEqual(parseUnifiedDiff(DIFF), { 'src/calculator.py': { oldLines: [2], newLines: [2, 3, 4] } });
 

@@ -76,12 +76,9 @@ function validReplanInput(input: unknown): input is ReplanInput {
 
 function validPlanForTask(plan: FixPlan, state: TaskState): boolean {
   const checks = state.taskContext?.requiredChecks;
-  return (
-    !!checks?.length &&
-    plan.checkSetDigest === computeCheckSetDigest(checks) &&
-    plan.baselineRef === state.taskContext?.initialRevisionDigest &&
-    plan.strategyDigest === computeCanonicalSha256(plan.strategy)
-  );
+  // The plan binds the baseline evidence ID; the revision digest is a separate snapshot invariant.
+  const baselineRef = state.plan?.baselineRef ?? state.taskContext?.initialRevisionDigest;
+  return !!checks?.length && plan.checkSetDigest === computeCheckSetDigest(checks) && plan.baselineRef === baselineRef && plan.strategyDigest === computeCanonicalSha256(plan.strategy);
 }
 
 function matchesReplanReservation(

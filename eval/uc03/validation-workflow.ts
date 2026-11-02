@@ -200,7 +200,8 @@ export function validateWorkflowEvaluationOptions(data: unknown): WorkflowEvalua
     configDigest: digestField('configDigest'),
     pricingDigest: digestField('pricingDigest'),
     adapterVersions: adapterVersions.map((value: unknown): string => {
-      if (typeof value !== 'string' || !validText(value, 128)) invalidWorkflowOptions();
+      // Same vocabulary as the report validator, so an unsupported version is refused before dispatch.
+      if (typeof value !== 'string' || !WORKFLOW_IDENTIFIER.test(value) || sanitizeText(value) !== value) invalidWorkflowOptions();
       return value;
     }),
     requestedModel,

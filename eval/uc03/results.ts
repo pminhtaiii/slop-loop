@@ -180,7 +180,6 @@ export interface BuildWorkflowReportInput {
 /** Product-task lifecycle is observed, not judged: a task paused in an expected wait still satisfies a case predicate. */
 function judgeObservation(observation: WorkflowObservation, spec: EvaluationCaseSpec): Readonly<{ grade: WorkflowGrade; reason: WorkflowReason }> {
   if (observation.blocked !== null) return { grade: 'not-run', reason: observation.blocked };
-  if (observation.workflowOutcome === 'COMPLETED') return { grade: 'pass', reason: 'criteria-satisfied' };
   if (isWait(observation.workflowOutcome))
     return observation.expectedWait === observation.workflowOutcome ? { grade: 'pass', reason: 'expected-wait-satisfied' } : { grade: 'not-run', reason: 'unresolved-wait' };
   return observation.workflowOutcome === spec.expectedOutcome ? { grade: 'pass', reason: 'criteria-satisfied' } : { grade: 'fail', reason: 'criteria-violation' };

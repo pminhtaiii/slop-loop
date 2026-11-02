@@ -9,9 +9,8 @@ const nodeJavaScript = ['scripts/**/*.mjs', 'tests/agents/**/*.mjs', 'tests/ci/*
 
 export default tseslint.config(
   {
-    // `.claude/` is local-only checkout state (other branches' worktrees, excluded via
-    // .git/info/exclude). Linting them is meaningless and, because each carries its own
-    // tsconfig, it makes the parser fail on every file with "multiple candidate TSConfigRootDirs".
+    // `.claude/` is local-only checkout state whose worktrees each carry their own tsconfig;
+    // linting it makes the parser fail on every file with "multiple candidate TSConfigRootDirs".
     ignores: ['dist/**', 'node_modules/**', '.agent-work/**', 'coverage/**', '.claude/**'],
   },
   {

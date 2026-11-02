@@ -561,6 +561,57 @@ test('production generation refuses a supplied revised plan before any replan re
   assert.equal(agent.counters.modelCalls, 0);
 });
 
+test('a revise direction at AwaitFeedback persists a replan that keeps the baseline evidence ID', async () => {
+  // Verification and completion bind the baseline evidence ID, not the revision digest; a replan
+  // that replaced it with `initialRevisionDigest` could never complete.
+  const { task, ports, statePort } = setup();
+  const baselineRef = `uc04://baseline/${task.taskId}/1`;
+  const strategy = 'retain the current bounded strategy';
+  const plan: FixPlan = {
+    planVersion: 1,
+    diagnosis: 'zero denominator is unguarded',
+    suspectedCauseLocations: ['src/calculator.py'],
+    evidenceRefs: [baselineRef],
+    strategy,
+    scopedChanges: ['src/calculator.py'],
+    checkSetDigest: computeCheckSetDigest(task.requiredChecks),
+    baselineRef,
+    strategyDigest: computeCanonicalSha256(strategy),
+    decisionRef: 'decision-agent-route-002',
+  };
+  const feedback = await seed(task, statePort, { node: 'AwaitFeedback', plan, evidenceRefs: [baselineRef], nextAction: 'await-human-feedback-and-direction' });
+  const direction = {
+    directive: 'revise' as const,
+    taskId: feedback.taskId,
+    workspaceId: feedback.workspaceId,
+    repositoryRevisionDigest: feedback.repositoryRevisionDigest,
+    stateVersion: feedback.stateVersion,
+    planVersion: feedback.planVersion,
+    rejectedDecisionId: plan.decisionRef as string,
+    strategyDigest: plan.strategyDigest,
+  };
+  const revised: FixPlan = { ...plan, decisionRef: undefined, evidenceRefs: ['src/calculator.py'] };
+
+  const result = await createAwaitFeedbackNode(ports, { mode: 'development', trustedDirection: direction, revisedPlan: revised })(graphState(task, feedback));
+  assert.equal(result.terminalOutcome, undefined, result.reasons?.join(' | '));
+  assert.equal(result.state?.node, 'AwaitPlan');
+  assert.equal(result.state?.plan?.baselineRef, baselineRef);
+  assert.equal(result.state?.plan?.decisionRef, undefined);
+  assert.equal(statePort.getLedgers().find(ledger => ledger.scope === 'task' && ledger.kind === 'replan')?.reservations.length, 0);
+
+  // A candidate that swaps the evidence ID for the revision digest is refused, not silently persisted.
+  const rejecting = setup();
+  const stale = await seed(rejecting.task, rejecting.statePort, { node: 'AwaitFeedback', plan, evidenceRefs: [baselineRef], nextAction: 'await-human-feedback-and-direction' });
+  const refused = await createAwaitFeedbackNode(rejecting.ports, {
+    mode: 'development',
+    trustedDirection: { ...direction, taskId: stale.taskId, stateVersion: stale.stateVersion },
+    revisedPlan: { ...revised, baselineRef: rejecting.task.initialRevisionDigest },
+  })(graphState(rejecting.task, stale));
+  assert.equal(refused.terminalOutcome, 'INCOMPLETE');
+  assert.deepEqual(refused.reasons, ['candidate-plan-binding-mismatch']);
+  assert.deepEqual(await rejecting.statePort.loadTask(rejecting.task.taskId), stale);
+});
+
 test('production generation still lets a human wait and a human stop through', async () => {
   // Generation answers the revise branch only. A human pause or terminate must never be
   // converted into a generation refusal, which would strand the run at propose-fix-plan.

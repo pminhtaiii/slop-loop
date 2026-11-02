@@ -126,15 +126,20 @@ function noPrivatePayload(result: unknown): void {
   assert.ok(!serialized.includes('executorId'), 'a receipt must never carry executor output');
 }
 
-test('repair success passes only with baseline, checks, test protection, current review and an admitted hidden check', async () => {
+test('repair success needs every check but the unbound hidden pass leaves it not-run', async () => {
   const result = await grader().grade('C01', { observation: observation(), snapshot: SNAPSHOT, evidence: evidence() });
-  assert.equal(result.grade, 'pass');
-  assert.equal(result.reason, 'criteria-satisfied');
+  // The executor result carries no check identity, so a hidden pass cannot be bound to the pinned hiddenCheckId.
+  assert.equal(result.grade, 'not-run');
+  assert.equal(result.reason, 'private-grading');
   assert.equal(result.criterionId, 'crit-c01');
   assert.ok(result.evidenceIds.includes('check:accepted-review'));
   assert.ok(result.evidenceIds.includes('check:hidden-c01'));
   assert.deepEqual(result.snapshot, SNAPSHOT);
   assert.ok(result.limitations.includes(SNAPSHOT_GRADE_LIMITATION), 'the grade must state that real isolation is not established');
+  assert.ok(
+    result.limitations.some(limitation => limitation.includes('pinned identity')),
+    'the grade must state why the hidden result is unbound',
+  );
   noPrivatePayload(result);
 });
 
@@ -158,6 +163,10 @@ test('clarification passes on needs-info with no speculative patch', async () =>
   assert.ok(!result.evidenceIds.some(id => id.includes('review')), 'a correctly paused case must not need a patch or review');
   const patched = await grader().grade('C02', { observation: observation({ workflowOutcome: 'INCOMPLETE' }), snapshot: SNAPSHOT, evidence: evidence({ speculativePatchApplied: true }) });
   assert.equal(patched.grade, 'fail');
+  const unwaited = await grader().grade('C02', { observation: observation({ workflowOutcome: 'INCOMPLETE' }), snapshot: SNAPSHOT, evidence: evidence() });
+  assert.equal(unwaited.grade, 'pass', 'an INCOMPLETE with no pinned wait satisfies the expected-wait check');
+  const unpinnedWait = await grader().grade('C02', { observation: observation({ workflowOutcome: 'waiting-info', expectedWait: null }), snapshot: SNAPSHOT, evidence: evidence() });
+  assert.equal(unpinnedWait.grade, 'fail', 'the expected-wait check must actually hold');
 });
 
 test('exhaustion passes on a stop before the next constrained effect', async () => {
@@ -253,8 +262,8 @@ test('an invalid host or invalid input is refused without grading', async () => 
   assert.equal(result.reason, 'invalid-observation');
 });
 
-test('a blocked observation fails with its blocking reason instead of grading evidence', async () => {
+test('a blocked observation is not-run with its blocking reason instead of grading evidence', async () => {
   const result = await grader().grade('C01', { observation: observation({ blocked: 'prerequisite-unavailable' }), snapshot: SNAPSHOT, evidence: evidence() });
-  assert.equal(result.grade, 'fail');
+  assert.equal(result.grade, 'not-run');
   assert.equal(result.reason, 'prerequisite-unavailable');
 });

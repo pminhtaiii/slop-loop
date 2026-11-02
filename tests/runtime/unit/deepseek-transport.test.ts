@@ -142,6 +142,21 @@ test('denies admission before any fetch when bounds are unsupported or the reque
   }
 });
 
+test('counts the system prompt inside the pre-dispatch input bound', async () => {
+  const { fetchImpl, calls } = fakeFetch(() => messageResponse());
+  const payload = payloadFor();
+  const admitted = await transport(fetchImpl).execute(payload);
+  assert.equal('observedUsage' in admitted, true);
+  const body = requestBody(calls[0]?.init as RequestInit);
+  const promptBytes = Buffer.byteLength(String((body['messages'] as readonly { content: string }[])[0]?.content), 'utf8');
+
+  const { fetchImpl: refusedFetch, calls: refusedCalls } = fakeFetch(() => messageResponse());
+  const refused = await transport(refusedFetch).execute({ ...payload, caps: { ...payload.caps, maxInputTokens: promptBytes } });
+  assert.equal(refusedCalls.length, 0);
+  assert.equal((refused as { outcome?: string }).outcome, 'denied');
+  assert.match((refused as { reason: string }).reason, /^INPUT_TOKENS_UNBOUNDED/);
+});
+
 test('refuses redirects without following or re-sending them', async () => {
   const { fetchImpl, calls } = fakeFetch(() => new Response(null, { status: 307, headers: { location: 'https://evil.example/collect' } }));
   const result = await transport(fetchImpl).execute(payloadFor());

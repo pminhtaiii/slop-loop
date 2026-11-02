@@ -80,6 +80,18 @@ const PLAN = {
   evidenceRefs: ['src/calculator.py'],
 };
 
+const FIX_PLAN = {
+  planVersion: 1,
+  diagnosis: 'd',
+  suspectedCauseLocations: ['src/calculator.py'],
+  evidenceRefs: ['src/calculator.py'],
+  strategy: 's',
+  scopedChanges: ['src/calculator.py'],
+  checkSetDigest: 'sha256:c',
+  baselineRef: 'sha256:b',
+  strategyDigest: 'sha256:plan',
+};
+
 test('parses each of the five proposal variants', () => {
   const cases: readonly unknown[] = [
     { kind: 'inspect', proposalId: 'i-1', operation: 'list_dir', args: { path: 'src' } },
@@ -335,6 +347,33 @@ test('enforces finite model-call, active-time, repair and replan budgets', async
   });
   const repairResult = await repairs.agent.turn(repairs.task, repairs.state, repairs.evidence, repairs.request);
   assert.equal(repairResult.outcome === 'invalid' ? repairResult.reason : '', 'REPAIR_BUDGET_EXHAUSTED');
+});
+
+test('allows only a replan proposal at AwaitFeedback and charges the replan budget', async () => {
+  const context = setup(() => observed(PLAN), { state: { node: 'AwaitFeedback', plan: FIX_PLAN } });
+  const replan = createFixtureProviderRequest({ purpose: 'propose-replan' });
+  const result = await context.agent.turn(context.task, context.state, context.evidence, replan);
+  assert.equal(result.outcome, 'proposal');
+  assert.equal(context.agent.counters.replans, 1);
+  assert.equal(context.agent.counters.modelCalls, 1);
+  const before = context.agent.counters.replans;
+  const again = await context.agent.turn(context.task, context.state, context.evidence, replan);
+  assert.deepEqual(again, { outcome: 'invalid', reason: 'REPLAN_BUDGET_EXHAUSTED', counters: { ...context.agent.counters } });
+  assert.equal(context.agent.counters.replans, before);
+
+  const patch = createFixtureProviderRequest({ purpose: 'propose-patch' });
+  const patched = await context.agent.turn(context.task, context.state, context.evidence, patch);
+  assert.deepEqual(patched, { outcome: 'waiting', reason: 'HUMAN_WAIT:AwaitFeedback', counters: { ...context.agent.counters } });
+
+  for (const node of ['NeedsInfo', 'AwaitPlan'] as const) {
+    for (const purpose of ['propose-plan', 'propose-replan', 'propose-patch'] as const) {
+      const waiting = setup(() => observed(PLAN), { state: { node, plan: FIX_PLAN } });
+      const outcome = await waiting.agent.turn(waiting.task, waiting.state, waiting.evidence, createFixtureProviderRequest({ purpose }));
+      assert.equal(outcome.outcome, 'waiting', `${node}/${purpose}`);
+      assert.deepEqual(waiting.modelCalls, []);
+      assert.equal(waiting.agent.counters.modelCalls, 0);
+    }
+  }
 });
 
 test('counts repairs and replans under budget without mutating inputs', async () => {

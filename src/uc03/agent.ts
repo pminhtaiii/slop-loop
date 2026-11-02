@@ -77,7 +77,9 @@ export function createCoderAgent(options: CoderAgentOptions): CoderAgent {
       return snapshot();
     },
     async turn(task: BugTask, state: TaskState, evidence: readonly SourceEvidence[], request: ProviderRequest): Promise<CoderTurnResult> {
-      if (WAITING_NODES.has(state.node)) return { outcome: 'waiting', reason: `HUMAN_WAIT:${state.node}`, counters: snapshot() };
+      // A trusted revise direction resumes AwaitFeedback for exactly one replan proposal.
+      const replanTurn = state.node === 'AwaitFeedback' && request.purpose === 'propose-replan';
+      if (WAITING_NODES.has(state.node) && !replanTurn) return { outcome: 'waiting', reason: `HUMAN_WAIT:${state.node}`, counters: snapshot() };
       if (TERMINAL_NODES.has(state.node)) return invalid(`TERMINAL_NODE:${state.node}`);
       if (counters.modelCalls >= budget.maxModelCalls) return invalid('MODEL_CALL_BUDGET_EXHAUSTED');
       if (counters.activeMs >= budget.maxActiveMs) return invalid('ACTIVE_TIME_BUDGET_EXHAUSTED');

@@ -227,6 +227,10 @@ export class DockerLifecycleController implements DockerLifecycleControllerPort 
     const admitted = new Map(view.admittedFiles.map(file => [file.path, file.digest]));
     const files = Object.entries(params.files ?? {});
     if (files.length === 0) throw new Error('EMPTY_MATERIALIZE_FILES: no permitted files were supplied for the view');
+    // The volume must be exactly the admitted set, so an omitted admitted file cannot be silently absent.
+    if (files.length !== admitted.size) {
+      throw new Error(`VIEW_FILE_SET_MISMATCH: view '${view.viewId}' admits ${admitted.size} file(s) but ${files.length} were supplied`);
+    }
 
     const payload: { path: string; b64: string }[] = [];
     for (const [filePath, content] of files) {
@@ -242,6 +246,9 @@ export class DockerLifecycleController implements DockerLifecycleControllerPort 
     const stdin = JSON.stringify({ files: payload });
     if (Buffer.byteLength(stdin, 'utf8') > MAX_VIEW_PAYLOAD_BYTES) throw new Error('VIEW_PAYLOAD_TOO_LARGE: admitted view exceeds the materialization ceiling');
 
+    // The view volume must be exactly the admitted set, so a volume left from an earlier
+    // materialization is replaced rather than written over (WRITE_SCRIPT never deletes files).
+    if (await this.hasVolume(view.viewId)) await this.removeVolume(view.viewId);
     await this.createVolume(view.viewId);
     const limits = this.trustedProfile.limits;
     const result = await this.spawnProcess(
@@ -263,6 +270,8 @@ export class DockerLifecycleController implements DockerLifecycleControllerPort 
 
     const previous = this.currentViewVolume.get(view.workspaceId);
     if (previous !== undefined && previous !== view.viewId) this.supersededVolumes.add(previous);
+    // A re-activated volume is live again, so cleanup must not remove it as superseded.
+    this.supersededVolumes.delete(view.viewId);
     this.currentViewVolume.set(view.workspaceId, view.viewId);
     this.volumeOwners.set(view.viewId, view.workspaceId);
     this.volumeOwners.set(view.scratchIdentity, view.workspaceId);
@@ -319,7 +328,9 @@ export class DockerLifecycleController implements DockerLifecycleControllerPort 
         preserved.push(container);
         continue;
       }
-      await this.spawnProcess('docker', ['rm', '-f', container.name], VOLUME_OP_OPTIONS);
+      const result = await this.spawnProcess('docker', ['rm', '-f', container.name], VOLUME_OP_OPTIONS);
+      // A failed removal keeps the record so the next cleanup retries instead of leaking the container.
+      if (result.timedOut || result.exitCode !== 0) preserved.push(container);
     }
     this.containers.length = 0;
     this.containers.push(...preserved);
@@ -328,8 +339,11 @@ export class DockerLifecycleController implements DockerLifecycleControllerPort 
       const owner = this.volumeOwners.get(volumeId);
       if (this.unattributedUncertainty) continue;
       if (owner !== undefined && this.uncertainWorkspaces.has(owner)) continue;
-      await this.spawnProcess('docker', ['volume', 'rm', volumeId], VOLUME_OP_OPTIONS);
+      const result = await this.spawnProcess('docker', ['volume', 'rm', volumeId], VOLUME_OP_OPTIONS);
+      if (result.timedOut || result.exitCode !== 0) continue;
       this.supersededVolumes.delete(volumeId);
+      this.createdVolumes.delete(volumeId);
+      this.volumeOwners.delete(volumeId);
     }
   }
 

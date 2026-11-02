@@ -16,7 +16,8 @@ function generatedPlan(
   proposal: { diagnosis: string; strategy: string; suspectedLocations: readonly string[]; scopedPaths: readonly string[]; evidenceRefs: readonly string[] },
 ): FixPlan | undefined {
   const task = state.taskContext;
-  if (!task?.requiredChecks.length) return undefined;
+  const prior = state.plan;
+  if (!task?.requiredChecks.length || !prior) return undefined;
   return {
     planVersion: state.planVersion,
     diagnosis: proposal.diagnosis,
@@ -25,7 +26,7 @@ function generatedPlan(
     strategy: proposal.strategy,
     scopedChanges: proposal.scopedPaths,
     checkSetDigest: computeCheckSetDigest(task.requiredChecks),
-    baselineRef: task.initialRevisionDigest,
+    baselineRef: prior.baselineRef,
     strategyDigest: computeCanonicalSha256(proposal.strategy),
   };
 }

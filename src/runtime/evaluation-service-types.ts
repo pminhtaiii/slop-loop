@@ -96,7 +96,7 @@ export interface EvaluationService {
   startExperiment(input: unknown): Promise<ServiceResult<Readonly<{ experiment: ExperimentView; receipt: ExperimentReceipt }>>>;
   getExperiment(id: unknown): ServiceResult<ExperimentView>;
   answerClarification(input: unknown): Promise<ServiceResult<Readonly<{ experiment: ExperimentView; receipt: ExperimentReceipt }>>>;
-  issueDirection(input: unknown): Promise<ServiceResult<Readonly<{ experiment: ExperimentView; receipt: ServiceControlReceipt }>>>;
+  issueDirection(input: unknown): Promise<ServiceResult<Readonly<{ experiment: ExperimentView; receipt: ServiceControlReceipt | ExperimentReceipt }>>>;
   continueExperiment(input: unknown): Promise<ServiceResult<Readonly<{ experiment: ExperimentView; receipt: ExperimentReceipt }>>>;
 }
 

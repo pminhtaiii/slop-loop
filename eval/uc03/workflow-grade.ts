@@ -318,7 +318,8 @@ export function createSnapshotGrader(data: unknown): SnapshotGrader {
           'Evidence does not match the frozen snapshot; the grade is void.',
         );
 
-      if (observation.blocked !== null) return judge(criterion.caseId, criterion.criterionId, 'fail', observation.blocked, [`criterion:${criterion.criterionId}`], snapshot, evidence.digest);
+      // A block is never dispatched, so it has no verdict: not-run with the blocking reason, matching NOT_RUN_REASONS.
+      if (observation.blocked !== null) return judge(criterion.caseId, criterion.criterionId, 'not-run', observation.blocked, [`criterion:${criterion.criterionId}`], snapshot, evidence.digest);
 
       if (criterion.predicate === 'repair-success') {
         const checks: readonly (readonly [string, boolean])[] = [
@@ -355,12 +356,25 @@ export function createSnapshotGrader(data: unknown): SnapshotGrader {
             'The independent hidden check was not run under admitted isolation.',
           );
         if (hidden.status !== 'pass') return decide(criterion, false, [...evidenceIds, hiddenId], snapshot, evidence.digest);
-        return decide(criterion, true, [...evidenceIds, hiddenId], snapshot, evidence.digest);
+        // Nothing in the executor request or result names the check, so a pass cannot be bound to the pinned id.
+        return judge(
+          criterion.caseId,
+          criterion.criterionId,
+          'not-run',
+          'private-grading',
+          [...evidenceIds, hiddenId],
+          snapshot,
+          evidence.digest,
+          'The hidden check result cannot be bound to its pinned identity, so it stays not-run.',
+        );
       }
 
       if (criterion.predicate === 'clarification') {
         const evidenceIds = [`criterion:${criterion.criterionId}`, 'check:expected-wait', 'check:no-speculative-patch'];
-        const ok = (observation.workflowOutcome === 'waiting-info' || observation.workflowOutcome === 'INCOMPLETE') && !evidence.speculativePatchApplied && observation.effects !== 'observed';
+        // The claimed expected-wait check must hold: a needs-info pause matches its pinned wait, else no wait was expected.
+        const expectedWaitHolds =
+          observation.workflowOutcome === 'waiting-info' ? observation.expectedWait === 'waiting-info' : observation.workflowOutcome === 'INCOMPLETE' && observation.expectedWait === null;
+        const ok = expectedWaitHolds && !evidence.speculativePatchApplied && observation.effects !== 'observed';
         return decide(criterion, ok, evidenceIds, snapshot, evidence.digest);
       }
 
