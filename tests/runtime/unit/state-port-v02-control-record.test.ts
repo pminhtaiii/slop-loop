@@ -65,6 +65,26 @@ test('durable control record: an invalid mode is refused', async () => {
   });
 });
 
+test('durable control record: runnable mode retaining a hold is refused', async () => {
+  await withState({ ...DEFAULT_CONTROL, holdRef: 'hold-1' }, async state => {
+    await assert.rejects(state.readControl(taskId, DEFAULT_CONTROL), /Corrupted UC-03 control record: runnable mode cannot retain a hold/);
+  });
+});
+
+test('durable control record: a missing activeClaimId is refused', async () => {
+  const missingClaimId: Record<string, unknown> = { ...DEFAULT_CONTROL };
+  delete missingClaimId['activeClaimId'];
+  await withState(missingClaimId, async state => {
+    await assert.rejects(state.readControl(taskId, DEFAULT_CONTROL), /Corrupted UC-03 control record: activeClaimId must be a safe id or null/);
+  });
+});
+
+test('durable control record: a non-string activeClaimId is refused', async () => {
+  await withState({ ...DEFAULT_CONTROL, activeClaimId: 42 }, async state => {
+    await assert.rejects(state.readControl(taskId, DEFAULT_CONTROL), /Corrupted UC-03 control record: activeClaimId must be a safe id or null/);
+  });
+});
+
 test('durable control record: a valid paused hold is read back unchanged', async () => {
   const held = { ...DEFAULT_CONTROL, mode: 'paused' as const, holdRef: 'hold-1' };
   await withState(held, async state => {

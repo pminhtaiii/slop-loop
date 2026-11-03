@@ -78,8 +78,13 @@ async function fenceRecipient(store: StatePortStore, claimId: string, recipient:
     } else if (claim.status !== 'claimed' || claim.attemptId !== undefined) return null;
     if (recipient.payloadDigest !== actorPayloadDigest(claim.context)) return null;
     const stateDir = dirname(store.statePath(taskId, 'x'));
+    // Only a missing state directory means no prior fences; any other readdir failure must abort before the proof is written.
+    const entries = await readdir(stateDir).catch((err: unknown) => {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [] as string[];
+      throw err;
+    });
     let priorGeneration = 0;
-    for (const file of (await readdir(stateDir).catch(() => [] as string[])).filter(name => name.startsWith('fence-') && name.endsWith('.json'))) {
+    for (const file of entries.filter(name => name.startsWith('fence-') && name.endsWith('.json'))) {
       const existing = await store.readJson<FenceProofV02>(store.statePath(taskId, file));
       if (!existing || existing.fencedExecutorIdentity.adapterIdentity !== recipient.adapterIdentity) continue;
       if (existing.fencedExecutorIdentity.processIncarnation === recipient.processIncarnation) return null;

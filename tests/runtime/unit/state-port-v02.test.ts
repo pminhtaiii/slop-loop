@@ -7,7 +7,7 @@
  */
 
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -15,6 +15,8 @@ import { computeCanonicalSha256, type RepositoryAdmissionContextV02, type TaskSt
 import { journalSnapshotV02 } from '../../../src/approvals/control-v02.ts';
 import { DurableStore } from '../../../src/persistence/store.ts';
 import { DurableStatePortV02, NEUTRAL_CLAIM_RECEIPT_V02, NEUTRAL_OUTCOME_RECORD_RESULT_V02 } from '../../../src/persistence/adapters/state-port-v02.ts';
+import { fenceClaimRecipient } from '../../../src/persistence/adapters/state-port-v02-control.ts';
+import { StatePortStore } from '../../../src/persistence/adapters/state-port-v02-storage.ts';
 import {
   createTestAdmissionTaskStateV02,
   createTestExecutorIdentityV02,
@@ -215,6 +217,30 @@ test('durable v0.2 state port: fenceAttemptRecipient fences an uncertain attempt
       expectedCurrentControlVersion: snapshot.controlVersion,
     });
     assert.deepEqual(await port.reconcileUncertain(reconciliation), { outcome: 'settled', receiptId: reconciliation.reconciliationId });
+  } finally {
+    rmSync(baseDir, { recursive: true, force: true });
+  }
+});
+
+test('durable v0.2 state port: a non-ENOENT fence scan failure aborts instead of fencing at generation 1', async () => {
+  const baseDir = mkdtempSync(join(tmpdir(), 'uc03-durable-fence-scan-error-'));
+  try {
+    const port = await openPort(baseDir);
+    await port.transition(seedTask(), 0);
+    const claim = await port.claim(context);
+    const executor = createTestExecutorIdentityV02({ payloadDigest: context.actionDigest });
+    assert.equal(await port.setTaskControl(context.taskId, 'paused', 'pause-fence-scan-error-001'), true);
+
+    // A regular file where the scan's state directory is makes readdir fail with ENOTDIR (not ENOENT) on Windows and Linux.
+    writeFileSync(join(baseDir, 'claims', context.taskId, 'blocked'), '');
+    const blocked = new (class extends StatePortStore {
+      override statePath(taskId: string, name: string): string {
+        return name === 'x' ? join(this.taskDir(taskId), 'blocked', 'x') : super.statePath(taskId, name);
+      }
+    })(port.store);
+
+    await assert.rejects(fenceClaimRecipient(blocked, claim.claimId, executor), { code: 'ENOTDIR' }, 'an unreadable state directory must abort the fence, not fence at generation 1');
+    assert.ok(await port.fenceClaimRecipient(claim.claimId, executor), 'the aborted fence must leave no persisted proof behind');
   } finally {
     rmSync(baseDir, { recursive: true, force: true });
   }

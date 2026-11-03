@@ -19,6 +19,8 @@ function validateControlRecord(value: unknown): ControlRecordV02 {
     throw new Error('Corrupted UC-03 control record: controlVersion and epoch must be safe integers');
   }
   if (record['holdRef'] !== null && typeof record['holdRef'] !== 'string') throw new Error('Corrupted UC-03 control record: holdRef must be a string or null');
+  if (record['mode'] === 'runnable' && record['holdRef'] !== null) throw new Error('Corrupted UC-03 control record: runnable mode cannot retain a hold');
+  if (record['activeClaimId'] !== null && !isSafeStorageId(record['activeClaimId'])) throw new Error('Corrupted UC-03 control record: activeClaimId must be a safe id or null');
   return value as ControlRecordV02;
 }
 
