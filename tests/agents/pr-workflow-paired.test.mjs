@@ -163,7 +163,7 @@ test('paired publication resumes after a partial private PR failure and gates co
   await writeFile(
     reviewPath,
     JSON.stringify({
-      base: privateMain,
+      base: git(f.root, 'rev-parse', 'refs/remotes/origin/development'),
       head: git(f.root, 'rev-parse', 'HEAD'),
       axes: [
         { name: 'standards', findings: [] },

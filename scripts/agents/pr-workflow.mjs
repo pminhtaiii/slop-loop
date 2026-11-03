@@ -28,7 +28,7 @@ preflight fetches origin/development and reports freshness, naming, dirty paths,
 publish requires --body-file <file> and --summary <short summary>; defaults to automatic path selection. Documentation and contributor-helper-only changes skip local gates; --mode full forces them. --mode push-only --reason <rationale> explicitly skips local gates; its reason is provenance, not an authorization receipt.
 repair requires --reason <diagnosed finding>. At most three repair rounds per PR.
 record-app-state requires --receipt <app list_thread_pull_requests JSON>.
-record-review requires --receipt <two-axis review JSON naming base, head and axes>.
+record-review requires --receipt <two-axis review JSON naming base, head, two axes and their report files>.
 prepare-next --branch feat/scope-description creates a fresh unique branch from fetched development after this branch's recorded PR merges; source branches and worktrees are retained.
 complete verifies clean published current-head work, linked PR evidence and passing CI; it never merges.
 watch polls for at most ten minutes, stopping for fixes, human approval, or timeout.

@@ -58,6 +58,11 @@ async function recordRawReview(f, receipt) {
   return f.run('record-review', '--receipt', file);
 }
 
+/** Two distinct non-empty report files, for receipts whose failure is meant to come from elsewhere. */
+function reportsFor(f) {
+  return [join(f.root, 'standards.md'), join(f.root, 'spec.md')];
+}
+
 test('current-head CI allows human review without CodeRabbit approval', () => {
   const e = evidence();
   assert.equal(assess(e).status, 'READY_FOR_HUMAN');
@@ -222,7 +227,7 @@ test('record-review refuses a review of the empty diff', async t => {
         { name: 'standards', findings: [] },
         { name: 'spec', findings: [] },
       ],
-      reports: [join(f.root, 'change.md'), join(f.root, 'change.md')],
+      reports: reportsFor(f),
     }),
     /a review of the empty diff observed nothing/,
   );
@@ -241,7 +246,7 @@ test('record-review refuses a receipt whose axis reports are absent', async t =>
       ],
       reports: [join(f.root, '.agent-work/standards.md'), join(f.root, '.agent-work/no-such-spec.md')],
     }),
-    /names a report file that does not exist/,
+    /is missing or empty/,
   );
 });
 
@@ -256,7 +261,7 @@ test('record-review refuses an axis name that is not a string', async t => {
         { name: 2, findings: [] },
         { name: 'spec', findings: [] },
       ],
-      reports: [join(f.root, 'change.md'), join(f.root, 'change.md')],
+      reports: reportsFor(f),
     }),
     /non-empty name and its findings as an array of strings/,
   );
@@ -273,12 +278,94 @@ test('record-review refuses a base SHA that is neither 40 nor 64 hex characters'
         { name: 'standards', findings: [] },
         { name: 'spec', findings: [] },
       ],
-      reports: [join(f.root, 'change.md'), join(f.root, 'change.md')],
+      reports: reportsFor(f),
     }),
     /must name base and head as full commit SHAs/,
   );
 });
 
+test('record-review refuses a base that is not a commit in the repository', async t => {
+  const f = await checkout(t);
+
+  await assert.rejects(
+    recordRawReview(f, {
+      base: '1'.repeat(40),
+      head: git(f.root, 'rev-parse', 'HEAD'),
+      axes: [
+        { name: 'standards', findings: [] },
+        { name: 'spec', findings: [] },
+      ],
+      reports: reportsFor(f),
+    }),
+    /base must name a commit in this repository/,
+  );
+});
+
+test('record-review refuses a base that is not an ancestor of the reviewed head', async t => {
+  const f = await checkout(t);
+  const head = git(f.root, 'rev-parse', 'HEAD');
+  // An unrelated root commit: a real object, but not part of the reviewed history.
+  let orphan;
+  try {
+    orphan = git(f.root, 'commit-tree', git(f.root, 'write-tree'), '-m', 'unrelated');
+  } catch {
+    orphan = null;
+  }
+  if (!orphan) return t.skip('cannot create an unrelated commit in this fixture');
+
+  await assert.rejects(
+    recordRawReview(f, {
+      base: orphan,
+      head,
+      axes: [
+        { name: 'standards', findings: [] },
+        { name: 'spec', findings: [] },
+      ],
+      reports: reportsFor(f),
+    }),
+    /base must share history with the reviewed head|base must be an ancestor/,
+  );
+});
+
+test('record-review refuses an empty report file', async t => {
+  const f = await checkout(t);
+  const empty = join(f.root, 'empty-report.md');
+  await writeFile(empty, '');
+  const filled = join(f.root, 'filled-report.md');
+  await writeFile(filled, 'findings\n');
+
+  await assert.rejects(
+    recordRawReview(f, {
+      base: git(f.root, 'rev-parse', 'origin/development'),
+      head: git(f.root, 'rev-parse', 'HEAD'),
+      axes: [
+        { name: 'standards', findings: [] },
+        { name: 'spec', findings: [] },
+      ],
+      reports: [empty, filled],
+    }),
+    /is missing or empty/,
+  );
+});
+
+test('record-review refuses the same report file named for both axes', async t => {
+  const f = await checkout(t);
+  const report = join(f.root, 'both-axes.md');
+  await writeFile(report, 'findings\n');
+
+  await assert.rejects(
+    recordRawReview(f, {
+      base: git(f.root, 'rev-parse', 'origin/development'),
+      head: git(f.root, 'rev-parse', 'HEAD'),
+      axes: [
+        { name: 'standards', findings: [] },
+        { name: 'spec', findings: [] },
+      ],
+      reports: [report, report],
+    }),
+    /must name a different report for each axis/,
+  );
+});
 test('record-review then completion retains the reviewed base, head and axes', async t => {
   const f = await checkout(t);
   const head = await setCandidate(f, { 'docs/contributor-guide.md': '# Guide\n' });

@@ -20,8 +20,8 @@ function validAxes(axes) {
 
 /**
  * Validates the review receipt, then stores it on the record. Returns the updated record.
- * The receipt names the axis report files; each must exist, so a receipt cannot assert that a
- * review ran without leaving the report it summarises.
+ * The receipt names the axis report files; each must exist and hold text, so a receipt cannot
+ * assert that a review ran without leaving the reports it summarises.
  */
 export async function recordReviewReceipt({ receiptPath, record, git, root }) {
   const receipt = await readJson(receiptPath);
@@ -33,16 +33,34 @@ export async function recordReviewReceipt({ receiptPath, record, git, root }) {
   if (receipt.head !== head) throw new Error('The review receipt head must match the current checkout HEAD.');
   // A review of the head against itself observed no change; the diff must be the reviewed artifact.
   if (receipt.base === head) throw new Error('The review receipt base and head must differ; a review of the empty diff observed nothing.');
+  // The base must be a real ancestor, not an arbitrary hex string: a review names the range it read.
+  // Existence and ancestry are separate checks because `merge-base` also fails on unrelated
+  // histories, which is a different error from a base that names nothing.
+  try {
+    git('rev-parse', '--verify', '--quiet', `${receipt.base}^{commit}`);
+  } catch {
+    throw new Error('The review receipt base must name a commit in this repository.');
+  }
+  let mergeBase;
+  try {
+    mergeBase = git('merge-base', receipt.base, head);
+  } catch {
+    throw new Error('The review receipt base must share history with the reviewed head.');
+  }
+  if (mergeBase !== receipt.base) throw new Error('The review receipt base must be an ancestor of the reviewed head.');
   if (!Array.isArray(receipt.reports) || receipt.reports.length !== 2 || receipt.reports.some(report => typeof report !== 'string' || report.trim() === ''))
     throw new Error('The review receipt must name the two axis report files.');
+  if (new Set(receipt.reports).size !== receipt.reports.length) throw new Error('The review receipt must name a different report for each axis.');
+  const reports = [];
   for (const report of receipt.reports) {
     const path = isAbsolute(report) ? report : resolve(root, report);
     // statIfPresent rather than existsSync: a review report is expected to be a regular file, and
     // a directory named like one must not satisfy the receipt.
     const stat = await statIfPresent(path);
-    if (!stat?.isFile()) throw new Error(`The review receipt names a report file that does not exist: ${report}`);
+    if (!stat?.isFile() || stat.size === 0) throw new Error(`The review receipt names a report file that is missing or empty: ${report}`);
+    reports.push(report);
   }
-  record.codeReview = receipt;
+  record.codeReview = { base: receipt.base, head: receipt.head, axes: receipt.axes, reports, recordedAt: new Date().toISOString() };
   return record;
 }
 
