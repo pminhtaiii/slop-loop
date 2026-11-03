@@ -4,11 +4,20 @@
  */
 import { readdir, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { validateTaskState } from '../../contracts/foundation/uc03.ts';
+import { fenceProofV02, journalClaimV02 } from '../../approvals/control-v02.ts';
+import { validateAdmissionV02, validateAttemptReceiptV02, validateTaskState } from '../../contracts/foundation/uc03.ts';
 import type { AttemptOutcomeReceiptV02, AttemptReconciliationReceiptV02, TaskState } from '../../contracts/foundation/uc03.ts';
 import { atomicWrite, isSafeStorageId, type DurableStore } from '../store.ts';
 import type { ControlRecordV02, FenceProofV02, RecoveryEvidenceV02, StoredAttemptV02, StoredClaimV02, TaskControlModeV02 } from './state-port-v02-types.ts';
 import { CONTROL_MODES } from './state-port-v02-types.ts';
+import { isRepairPatch } from './state-port-v02-admission.ts';
+
+const CLAIM_STATUSES: readonly StoredClaimV02['status'][] = ['claimed', 'attempting', 'settled', 'uncertain', 'observed-unsettled', 'closed'];
+const ATTEMPT_STATUSES: readonly StoredAttemptV02['status'][] = ['attempting', 'settled', 'uncertain', 'observed-unsettled'];
+
+function corrupt(kind: string, messages: readonly string[]): never {
+  throw new Error(`Corrupted UC-03 ${kind}: ${messages.join(', ')}`);
+}
 
 /** A present control head is authoritative: a bad shape must fail closed, not silently widen authority. */
 function validateControlRecord(value: unknown): ControlRecordV02 {
@@ -69,18 +78,57 @@ export class StatePortStore {
     const task = await this.readJson<TaskState>(this.statePath(taskId, 'task.json'));
     if (!task) return null;
     const validated = validateTaskState(task);
-    if (!validated.ok) throw new Error(`Corrupted UC-03 task state: ${validated.errors.map(error => error.message).join(', ')}`);
+    if (!validated.ok)
+      corrupt(
+        'task state',
+        validated.errors.map(error => error.message),
+      );
     return validated.value;
   }
 
   async readClaim(taskId: string, claimId: string): Promise<StoredClaimV02 | null> {
     if (!isSafeStorageId(claimId)) return null;
-    return this.readJson<StoredClaimV02>(this.store.getClaimPath(taskId, claimId));
+    const claim = await this.readJson<StoredClaimV02>(this.store.getClaimPath(taskId, claimId));
+    if (!claim) return null;
+    if (!journalClaimV02(claim.receipt)) corrupt('claim record', ['invalid claim receipt']);
+    const task = validateTaskState(claim.taskSnapshot);
+    if (!task.ok)
+      corrupt(
+        'claim record',
+        task.errors.map(error => error.message),
+      );
+    const admission = validateAdmissionV02(claim.context, claim.trustedAdmissionContext);
+    if (!admission.ok)
+      corrupt(
+        'claim record',
+        admission.errors.map(error => error.message),
+      );
+    if (!CLAIM_STATUSES.includes(claim.status)) corrupt('claim record', ['invalid claim status']);
+    if (claim.attemptId !== undefined && !isSafeStorageId(claim.attemptId)) corrupt('claim record', ['invalid attemptId']);
+    if (claim.settlementResult !== undefined && (claim.settlementResult.outcome !== 'settled' || !isSafeStorageId(claim.settlementResult.receiptId))) {
+      corrupt('claim record', ['invalid settlement result']);
+    }
+    return claim;
   }
 
   async readAttempt(taskId: string, attemptId: string): Promise<StoredAttemptV02 | null> {
     if (!isSafeStorageId(attemptId)) return null;
-    return this.readJson<StoredAttemptV02>(this.statePath(taskId, `attempt-${attemptId}.json`));
+    const attempt = await this.readJson<StoredAttemptV02>(this.statePath(taskId, `attempt-${attemptId}.json`));
+    if (!attempt) return null;
+    const receipt = attempt.receipt;
+    const claim = await this.readClaim(taskId, receipt.claimId);
+    if (!claim) corrupt('attempt record', ['owning claim is missing']);
+    // The record stores no repair flag: the claim's admission is the authority on whether the
+    // attempt is allowed to advance the task version.
+    const validated = validateAttemptReceiptV02(receipt, { isRepairPatch: isRepairPatch(claim.context) });
+    if (!validated.ok)
+      corrupt(
+        'attempt record',
+        validated.errors.map(error => error.message),
+      );
+    if (attempt.claimId !== receipt.claimId || !ATTEMPT_STATUSES.includes(attempt.status)) corrupt('attempt record', ['claim or status mismatch']);
+    if (attempt.outcomeReceiptId !== undefined && !isSafeStorageId(attempt.outcomeReceiptId)) corrupt('attempt record', ['invalid outcomeReceiptId']);
+    return attempt;
   }
 
   async readOutcome(taskId: string, receiptId: string): Promise<AttemptOutcomeReceiptV02 | null> {
@@ -95,7 +143,11 @@ export class StatePortStore {
 
   async readFence(taskId: string, claimId: string): Promise<FenceProofV02 | null> {
     if (!isSafeStorageId(claimId)) return null;
-    return this.readJson<FenceProofV02>(this.statePath(taskId, `fence-${claimId}.json`));
+    const proof = await this.readJson<FenceProofV02>(this.statePath(taskId, `fence-${claimId}.json`));
+    if (!proof) return null;
+    if (!fenceProofV02(proof)) corrupt('fence record', ['invalid fence proof']);
+    if (proof.claimId !== claimId || proof.taskId !== taskId) corrupt('fence record', ['claim or task mismatch']);
+    return proof;
   }
 
   async readRecovery(taskId: string, predecessorReceiptId: string): Promise<RecoveryEvidenceV02 | null> {
