@@ -33,6 +33,10 @@ const localGates = calls => calls.filter(([binary]) => binary === process.execPa
 
 async function recordReview(f, head) {
   const file = join(f.root, '.agent-work/review.json');
+  const standards = join(f.root, '.agent-work/standards.md');
+  const spec = join(f.root, '.agent-work/spec.md');
+  await writeFile(standards, 'Standards axis: no findings.\n');
+  await writeFile(spec, 'Spec axis: no findings.\n');
   await writeFile(
     file,
     JSON.stringify({
@@ -40,8 +44,9 @@ async function recordReview(f, head) {
       head,
       axes: [
         { name: 'standards', findings: [] },
-        { name: 'spec', findings: 0 },
+        { name: 'spec', findings: [] },
       ],
+      reports: [standards, spec],
     }),
   );
   return f.run('record-review', '--receipt', file);
@@ -185,11 +190,11 @@ test('record-review refuses a receipt that does not name exactly two axes', asyn
 
   await assert.rejects(
     recordRawReview(f, { base: git(f.root, 'rev-parse', 'origin/development'), head: git(f.root, 'rev-parse', 'HEAD'), axes: [{ name: 'standards', findings: [] }] }),
-    /exactly two review axes/,
+    /exactly two axes/,
   );
 });
 
-test('record-review refuses a negative finding count', async t => {
+test('record-review refuses findings given as a count instead of the findings themselves', async t => {
   const f = await checkout(t);
 
   await assert.rejects(
@@ -197,11 +202,63 @@ test('record-review refuses a negative finding count', async t => {
       base: git(f.root, 'rev-parse', 'origin/development'),
       head: git(f.root, 'rev-parse', 'HEAD'),
       axes: [
-        { name: 'standards', findings: -1 },
-        { name: 'spec', findings: 0 },
+        { name: 'standards', findings: 2 },
+        { name: 'spec', findings: [] },
       ],
     }),
-    /Each review axis must have a name and a findings array or count/,
+    /findings as an array of strings/,
+  );
+});
+
+test('record-review refuses a review of the empty diff', async t => {
+  const f = await checkout(t);
+  const head = git(f.root, 'rev-parse', 'HEAD');
+
+  await assert.rejects(
+    recordRawReview(f, {
+      base: head,
+      head,
+      axes: [
+        { name: 'standards', findings: [] },
+        { name: 'spec', findings: [] },
+      ],
+      reports: [join(f.root, 'change.md'), join(f.root, 'change.md')],
+    }),
+    /a review of the empty diff observed nothing/,
+  );
+});
+
+test('record-review refuses a receipt whose axis reports are absent', async t => {
+  const f = await checkout(t);
+
+  await assert.rejects(
+    recordRawReview(f, {
+      base: git(f.root, 'rev-parse', 'origin/development'),
+      head: git(f.root, 'rev-parse', 'HEAD'),
+      axes: [
+        { name: 'standards', findings: [] },
+        { name: 'spec', findings: [] },
+      ],
+      reports: [join(f.root, '.agent-work/standards.md'), join(f.root, '.agent-work/no-such-spec.md')],
+    }),
+    /names a report file that does not exist/,
+  );
+});
+
+test('record-review refuses an axis name that is not a string', async t => {
+  const f = await checkout(t);
+
+  await assert.rejects(
+    recordRawReview(f, {
+      base: git(f.root, 'rev-parse', 'origin/development'),
+      head: git(f.root, 'rev-parse', 'HEAD'),
+      axes: [
+        { name: 2, findings: [] },
+        { name: 'spec', findings: [] },
+      ],
+      reports: [join(f.root, 'change.md'), join(f.root, 'change.md')],
+    }),
+    /non-empty name and its findings as an array of strings/,
   );
 });
 
@@ -216,6 +273,7 @@ test('record-review refuses a base SHA that is neither 40 nor 64 hex characters'
         { name: 'standards', findings: [] },
         { name: 'spec', findings: [] },
       ],
+      reports: [join(f.root, 'change.md'), join(f.root, 'change.md')],
     }),
     /must name base and head as full commit SHAs/,
   );

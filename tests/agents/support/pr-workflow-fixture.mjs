@@ -112,6 +112,10 @@ export async function checkout(t) {
   };
   const review = async () => {
     const receipt = join(root, '.agent-work/review.json');
+    const standards = join(root, '.agent-work/standards.md');
+    const spec = join(root, '.agent-work/spec.md');
+    await writeFile(standards, 'Standards axis: no findings.\n');
+    await writeFile(spec, 'Spec axis: no findings.\n');
     await writeFile(
       receipt,
       JSON.stringify({
@@ -121,6 +125,7 @@ export async function checkout(t) {
           { name: 'standards', findings: [] },
           { name: 'spec', findings: [] },
         ],
+        reports: [standards, spec],
       }),
     );
     return runWorkflow(['record-review', '--receipt', receipt, '--root', root], { execute });

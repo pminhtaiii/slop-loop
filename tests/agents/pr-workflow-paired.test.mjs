@@ -156,6 +156,10 @@ test('paired publication resumes after a partial private PR failure and gates co
   assert.equal(linked.submissionAppLink.url, published.submission.url);
 
   const reviewPath = join(f.root, '.agent-work/review.json');
+  const standardsReport = join(f.root, '.agent-work/standards.md');
+  const specReport = join(f.root, '.agent-work/spec.md');
+  await writeFile(standardsReport, 'Standards axis: no findings.\n');
+  await writeFile(specReport, 'Spec axis: no findings.\n');
   await writeFile(
     reviewPath,
     JSON.stringify({
@@ -163,8 +167,9 @@ test('paired publication resumes after a partial private PR failure and gates co
       head: git(f.root, 'rev-parse', 'HEAD'),
       axes: [
         { name: 'standards', findings: [] },
-        { name: 'spec', findings: 0 },
+        { name: 'spec', findings: [] },
       ],
+      reports: [standardsReport, specReport],
     }),
   );
   await run('record-review', '--receipt', reviewPath);

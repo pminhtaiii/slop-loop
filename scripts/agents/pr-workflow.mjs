@@ -17,6 +17,8 @@ export function workflowSummary(record) {
   const summary = statusSummary(record);
   if (record.publicationPolicy) summary.publicationPolicy = record.publicationPolicy;
   if (record.publicationProvenance) summary.publicationProvenance = record.publicationProvenance;
+  // Surfaced so status reveals a missing review before completion refuses on it.
+  summary.codeReviewHead = record.codeReview?.head ?? null;
   return summary;
 }
 
@@ -188,7 +190,7 @@ export async function runWorkflow(args, dependencies = {}) {
         json,
       });
     if (command === 'record-review') {
-      await save(await recordReviewReceipt({ receiptPath: resolve(values.receipt), record, git }));
+      await save(await recordReviewReceipt({ receiptPath: resolve(values.receipt), record, git, root: repo.root }));
       return record;
     }
     if (!record.pr && !record.publicationStarted) throw new Error('Missing PR accounting; restore its original record rather than reset the repair budget.');
