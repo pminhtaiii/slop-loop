@@ -1,4 +1,4 @@
-import type { ApprovalBinding, ApprovalBindingContext, ApprovalPort, NormalizedAction } from '../contracts/foundation/uc03.ts';
+import type { ApprovalBinding, ApprovalBindingContext, ApprovalPort, NormalizedAction, PortProvenance } from '../contracts/foundation/uc03.ts';
 import type {
   ApprovalRequestRecord,
   ApprovalTaskControl,
@@ -28,7 +28,7 @@ export interface StoreResponse<T> {
   readonly value: T | null;
 }
 export interface ApprovalStore {
-  readonly provenance: 'mock';
+  readonly provenance: PortProvenance;
   loadTaskControl(taskId: string): StoreResponse<ApprovalTaskControl>;
   readRequest(decisionId: string): StoreResponse<ApprovalRequestRecord>;
   readHistory(taskId: string): StoreResponse<{
@@ -49,6 +49,8 @@ export interface ApprovalServiceOptions {
   readonly taskId: string;
   readonly profile: unknown;
   readonly store?: ApprovalStore;
+  /** Opt-in; defaults to 'mock' so existing callers keep the mock path unchanged. */
+  readonly provenance?: PortProvenance;
   readonly context: {
     loadForAction(taskId: string, actionId: string): Promise<unknown>;
     loadForDecision(decisionId: string): Promise<unknown>;

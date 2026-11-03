@@ -1,5 +1,5 @@
 import type { ApprovalService } from './service.ts';
-import type { ApprovalBinding, NormalizedAction } from '../contracts/foundation/uc03.ts';
+import type { ApprovalBinding, NormalizedAction, PortProvenance } from '../contracts/foundation/uc03.ts';
 import type { ApprovalRequestRecord, ApprovalTaskControl, DispatchClaim, PolicyProfile } from '../contracts/approvals/contracts.ts';
 import { isDeepStrictEqual } from 'node:util';
 import { isProxy } from 'node:util/types';
@@ -30,7 +30,7 @@ export interface RecoveryClaimInput {
   readonly expectedEpoch: number;
 }
 export interface ApprovalRecoveryOwner {
-  readonly provenance: 'mock';
+  readonly provenance: PortProvenance;
   /** Explicit finite requirements selected by the mock execution owner for this continuation. */
   readonly reservationRequirements: readonly { readonly scope: 'task' | 'run'; readonly kind: string; readonly amount: number }[];
   load(decisionId: string): Promise<unknown>;
@@ -86,7 +86,7 @@ export function createApprovalContinuation(options: {
       try {
         return await Promise.race([
           Promise.resolve().then(async () => {
-            if (options.recovery.provenance !== 'mock' || options.approval.provenance !== 'mock') throw new Error('approval-recovery-unavailable');
+            if (options.recovery.provenance !== options.approval.provenance) throw new Error('approval-recovery-unavailable');
             const saved = snapshot(await options.recovery.load(decisionId), options.taskId, decisionId, profile);
             active();
             if (!saved) throw new Error('approval-recovery-unavailable');

@@ -35,6 +35,7 @@ import {
   validateSourceEvidence,
   computeActionDigest,
   computeCanonicalSha256,
+  computeCommandViewDigest,
   type RunCommandAction,
   type ApplyPatchAction,
   type CheckDefinition,
@@ -1498,17 +1499,19 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
     const commandView = baseContext.commandView;
     if (!commandView) throw new Error('command-outcome-view-required');
     const context: RepositoryAdmissionContextV02 = baseContext;
-    const admittedView: CommandView = {
+    // Mirror what the workspace manager really publishes: a v0.1 view, digested over its own key
+    // set. Copying the v0.2 digest here would hide the shape mismatch this fixture stands in for.
+    const published = {
       viewId: commandView.viewId,
-      viewDigest: commandView.viewDigest,
       taskId: commandView.taskId,
       workspaceId: commandView.workspaceId,
       canonicalRevisionDigest: commandView.canonicalRevision,
       admittedFiles: commandView.admittedFiles,
       exclusionsPolicyVersion: commandView.exclusionsPolicyVersion,
       scratchIdentity: commandView.scratchIdentity,
-      mountedReadOnly: true,
+      mountedReadOnly: true as const,
     };
+    const admittedView: CommandView = { ...published, viewDigest: computeCommandViewDigest(published) };
     manager.getActiveCommandView = workspaceId => (workspaceId === context.workspaceId ? admittedView : null);
     const journal = createJournalForRepositoryCommand(context);
     const attempts: AttemptReceiptV02[] = [];
@@ -3192,14 +3195,25 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
           isolationProfileRef: 'profile-uc03-test',
         },
         commandView: {
+          // Carry every field over from the published view rather than inventing them: the
+          // receiver projects this to v0.1 and compares the digest against what the manager holds.
           viewId: view.viewId,
-          viewDigest: view.viewDigest,
-          taskId: 'task-test-1',
-          workspaceId: 'ws-test-1',
-          canonicalRevision: canonicalRev,
+          viewDigest: computeCommandViewDigest({
+            viewId: view.viewId,
+            taskId: view.taskId,
+            workspaceId: view.workspaceId,
+            canonicalRevisionDigest: view.canonicalRevisionDigest,
+            admittedFiles: view.admittedFiles,
+            exclusionsPolicyVersion: view.exclusionsPolicyVersion,
+            scratchIdentity: view.scratchIdentity,
+            mountedReadOnly: true as const,
+          }),
+          taskId: view.taskId,
+          workspaceId: view.workspaceId,
+          canonicalRevision: view.canonicalRevisionDigest,
           admittedFiles: view.admittedFiles,
-          exclusionsPolicyVersion: '0.1.0',
-          scratchIdentity: 'scratch-1',
+          exclusionsPolicyVersion: view.exclusionsPolicyVersion,
+          scratchIdentity: view.scratchIdentity,
           mountedReadOnly: true,
           isolationProfileRef: 'profile-uc03-test',
         },
@@ -3307,14 +3321,25 @@ describe('ControlledRepositoryTools v0.2 Receiver (T049/T050)', () => {
         actionDigest,
         checkId: 'chk-pytest-1',
         commandView: {
+          // Carry every field over from the published view rather than inventing them: the
+          // receiver projects this to v0.1 and compares the digest against what the manager holds.
           viewId: view.viewId,
-          viewDigest: view.viewDigest,
-          taskId: 'task-test-1',
-          workspaceId: 'ws-test-1',
-          canonicalRevision: canonicalRev,
+          viewDigest: computeCommandViewDigest({
+            viewId: view.viewId,
+            taskId: view.taskId,
+            workspaceId: view.workspaceId,
+            canonicalRevisionDigest: view.canonicalRevisionDigest,
+            admittedFiles: view.admittedFiles,
+            exclusionsPolicyVersion: view.exclusionsPolicyVersion,
+            scratchIdentity: view.scratchIdentity,
+            mountedReadOnly: true as const,
+          }),
+          taskId: view.taskId,
+          workspaceId: view.workspaceId,
+          canonicalRevision: view.canonicalRevisionDigest,
           admittedFiles: view.admittedFiles,
-          exclusionsPolicyVersion: '0.1.0',
-          scratchIdentity: 'scratch-1',
+          exclusionsPolicyVersion: view.exclusionsPolicyVersion,
+          scratchIdentity: view.scratchIdentity,
           mountedReadOnly: true,
           isolationProfileRef: 'profile-uc03-test',
         },

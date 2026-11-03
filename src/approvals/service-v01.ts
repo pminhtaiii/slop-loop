@@ -1,7 +1,7 @@
 import { createServiceControl } from './service-control.ts';
 import { createServiceRequest } from './service-request.ts';
 import { createServiceDecision } from './service-decision.ts';
-import type { ApprovalBinding } from '../contracts/foundation/uc03.ts';
+import type { ApprovalBinding, PortProvenance } from '../contracts/foundation/uc03.ts';
 import type {
   ApprovalRequestRecord,
   ApprovalTaskControl,
@@ -32,7 +32,7 @@ import type { ApprovalContext, ApprovalService, ApprovalServiceOptions, Approval
 import { identifier, plainContextData, dataRecord, exactFields, freshnessContext, decisionElements } from './service-context.ts';
 
 export function createApprovalServiceCore(
-  options: ApprovalServiceOptions & { readonly decisionAuthorityGeneration?: number }
+  options: ApprovalServiceOptions & { readonly decisionAuthorityGeneration?: number; readonly provenance?: PortProvenance }
 ): Readonly<{
   service: Readonly<ApprovalService>;
   runtime: ServiceRuntime & {
@@ -42,6 +42,9 @@ export function createApprovalServiceCore(
 }> {
   const compiled = compilePolicy(options.profile);
   if (!compiled.ok || !identifier(options.taskId)) throw new ApprovalServiceError('invalid');
+  // Opt-in only: existing callers omit it and keep the mock path byte-for-byte.
+  const provenance = options.provenance ?? 'mock';
+  if (provenance !== 'mock' && provenance !== 'real') throw new ApprovalServiceError('invalid');
   const policy = compiled.value;
   const profile: PolicyProfile = policy.profile;
   const now = options.now ?? (() => new Date().toISOString());
@@ -59,7 +62,7 @@ export function createApprovalServiceCore(
     catch { admission.closed = true; throw new ApprovalServiceError('unavailable'); }
   };
   const store = (): ApprovalStore => {
-    if (!options.store || options.store.provenance !== 'mock') throw new ApprovalServiceError('unavailable');
+    if (!options.store || options.store.provenance !== provenance) throw new ApprovalServiceError('unavailable');
     const backend = options.store;
     const { readEvents, recordDirection, replaceStalePending } = backend;
     return {
@@ -98,7 +101,7 @@ export function createApprovalServiceCore(
     if (!plainContextData(response) || response.safe.outcome !== 'ok' || !validateSafeResult(response.safe).ok || !validateApprovalTaskControl(response.value).ok || response.value?.taskId !== options.taskId || containsProtectedContent(JSON.stringify(response.value))) throw new ApprovalServiceError('unavailable');
     return response.value;
   };
-  const coordinator = createApprovalControl({ taskId: options.taskId, load: control, ...(options.activity ? { activity: options.activity } : {}) });
+  const coordinator = createApprovalControl({ taskId: options.taskId, provenance, load: control, ...(options.activity ? { activity: options.activity } : {}) });
   const admitContext = (raw: unknown): ApprovalContext => {
     if (!plainContextData(raw) || !dataRecord(raw) || !exactFields(raw, ['action', 'facts', 'freshness', 'runId', 'elements']) ||
       !identifier(raw['runId']) || !freshnessContext(raw['freshness']) || !decisionElements(raw['elements'])) throw new ApprovalServiceError('invalid');
@@ -196,7 +199,7 @@ export function createApprovalServiceCore(
     }),
     admitAttempt: (attemptId, claim) => !admission.closed && coordinator.admitAttempt(attemptId, claim),
     control: createServiceControl(runtime),
-    provenance: 'mock',
+    provenance,
     classify: action => bounded(async () => {
       if (admission.closed || coordinator.isClosed()) throw new ApprovalServiceError('unavailable');
       const current = control();
