@@ -72,9 +72,12 @@ function policy({ requestedMode, mode, provenance, reason, classification, base,
   return { requestedMode, mode, provenance, reason, classification, base, head, paths };
 }
 
+/** The commit-id shape every policy, receipt and binding predicate accepts. */
+export const commitId = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i;
+
 export async function selectPublicationPolicy({ requestedMode = 'auto', reason, base, head, git }) {
   if (!['auto', 'full', 'push-only'].includes(requestedMode)) throw new Error('Publication policy mode must be auto, full, or push-only.');
-  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(base ?? '') || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(head ?? '')) {
+  if (!commitId.test(base ?? '') || !commitId.test(head ?? '')) {
     throw new Error('Publication policy requires exact base and candidate commit IDs.');
   }
   if (requestedMode === 'full') {

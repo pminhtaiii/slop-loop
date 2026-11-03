@@ -6,9 +6,8 @@
 import { isAbsolute, resolve } from 'node:path';
 import { readJson } from './agent-store.mjs';
 import { statIfPresent } from './agent-context-resume.mjs';
+import { commitId } from './publication-policy.mjs';
 import { verifySubmission } from './submission-pr.mjs';
-
-export const commitId = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i;
 
 /** A distinct, non-empty axis name; the two names are what the review had to cover separately. */
 function validAxes(axes) {
