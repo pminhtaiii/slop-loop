@@ -31,6 +31,28 @@ async function setCandidate(f, files) {
 
 const localGates = calls => calls.filter(([binary]) => binary === process.execPath || binary === packageScriptCommand('test:contributors').command);
 
+async function recordReview(f, head) {
+  const file = join(f.root, '.agent-work/review.json');
+  await writeFile(
+    file,
+    JSON.stringify({
+      base: git(f.root, 'rev-parse', 'origin/development'),
+      head,
+      axes: [
+        { name: 'standards', findings: [] },
+        { name: 'spec', findings: 0 },
+      ],
+    }),
+  );
+  return f.run('record-review', '--receipt', file);
+}
+
+async function recordRawReview(f, receipt) {
+  const file = join(f.root, '.agent-work/review.json');
+  await writeFile(file, JSON.stringify(receipt));
+  return f.run('record-review', '--receipt', file);
+}
+
 test('current-head CI allows human review without CodeRabbit approval', () => {
   const e = evidence();
   assert.equal(assess(e).status, 'READY_FOR_HUMAN');
@@ -123,7 +145,6 @@ test('eligible automatic push-only publication can complete after current-head C
   const saved = JSON.parse(await readFile(path, 'utf8'));
   saved.appLink = { url: f.e.pr.url, repository: 'example/project', number: f.e.pr.number };
   await writeFile(path, JSON.stringify(saved));
-
   const completed = await f.run('complete');
 
   assert.equal(completed.status, 'READY_FOR_HUMAN');
@@ -133,6 +154,89 @@ test('eligible automatic push-only publication can complete after current-head C
   assert.equal(completed.localVerifiedHead, undefined);
   assert.equal(workflowSummary(completed).localGateStatus, 'skipped');
   assert.equal(published.publicationMode, 'push-only');
+});
+
+test('completion is refused without a code-review receipt for the current head', async t => {
+  const f = await checkout(t);
+  await setCandidate(f, { 'docs/contributor-guide.md': '# Guide\n' });
+  await f.run('publish', '--body-file', f.body, '--skip-review-request');
+  const path = join(f.root, '.agent-work/pr-workflow/010-tooling-example.json');
+  const saved = JSON.parse(await readFile(path, 'utf8'));
+  saved.appLink = { url: f.e.pr.url, repository: 'example/project', number: f.e.pr.number };
+  await writeFile(path, JSON.stringify(saved));
+
+  await assert.rejects(runWorkflow(['complete', '--root', f.root], { execute: f.execute }), /Completion requires a code-review receipt for the current head; run record-review/);
+});
+
+test('record-review refuses a receipt whose head is not the checkout HEAD', async t => {
+  const f = await checkout(t);
+
+  await assert.rejects(recordReview(f, 'b'.repeat(40)), /receipt head must match the current checkout HEAD/);
+});
+
+test('record-review refuses a non-object receipt', async t => {
+  const f = await checkout(t);
+
+  await assert.rejects(recordRawReview(f, null), /review receipt must be a JSON object/);
+});
+
+test('record-review refuses a receipt that does not name exactly two axes', async t => {
+  const f = await checkout(t);
+
+  await assert.rejects(
+    recordRawReview(f, { base: git(f.root, 'rev-parse', 'origin/development'), head: git(f.root, 'rev-parse', 'HEAD'), axes: [{ name: 'standards', findings: [] }] }),
+    /exactly two review axes/,
+  );
+});
+
+test('record-review refuses a negative finding count', async t => {
+  const f = await checkout(t);
+
+  await assert.rejects(
+    recordRawReview(f, {
+      base: git(f.root, 'rev-parse', 'origin/development'),
+      head: git(f.root, 'rev-parse', 'HEAD'),
+      axes: [
+        { name: 'standards', findings: -1 },
+        { name: 'spec', findings: 0 },
+      ],
+    }),
+    /Each review axis must have a name and a findings array or count/,
+  );
+});
+
+test('record-review refuses a base SHA that is neither 40 nor 64 hex characters', async t => {
+  const f = await checkout(t);
+
+  await assert.rejects(
+    recordRawReview(f, {
+      base: 'a'.repeat(41),
+      head: git(f.root, 'rev-parse', 'HEAD'),
+      axes: [
+        { name: 'standards', findings: [] },
+        { name: 'spec', findings: [] },
+      ],
+    }),
+    /must name base and head as full commit SHAs/,
+  );
+});
+
+test('record-review then completion retains the reviewed base, head and axes', async t => {
+  const f = await checkout(t);
+  const head = await setCandidate(f, { 'docs/contributor-guide.md': '# Guide\n' });
+  await f.run('publish', '--body-file', f.body, '--skip-review-request');
+  const path = join(f.root, '.agent-work/pr-workflow/010-tooling-example.json');
+  const saved = JSON.parse(await readFile(path, 'utf8'));
+  saved.appLink = { url: f.e.pr.url, repository: 'example/project', number: f.e.pr.number };
+  await writeFile(path, JSON.stringify(saved));
+
+  const reviewed = await recordReview(f, head);
+  const completed = await runWorkflow(['complete', '--root', f.root], { execute: f.execute });
+
+  assert.equal(reviewed.codeReview.head, head);
+  assert.equal(completed.completion.codeReview.base, reviewed.codeReview.base);
+  assert.equal(completed.completion.codeReview.head, head);
+  assert.deepEqual(completed.completion.codeReview.axes, reviewed.codeReview.axes);
 });
 
 test('tampered automatic publication evidence cannot bypass local gates at completion', async t => {

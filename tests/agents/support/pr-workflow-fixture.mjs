@@ -110,7 +110,25 @@ export async function checkout(t) {
     if (args[0] === 'api') return JSON.stringify([{ check_runs: e.checks }]);
     return '';
   };
-  const run = (...args) => runWorkflow([...args, ...(args[0] === 'publish' ? ['--summary', 'add the example workflow'] : []), '--root', root], { execute });
+  const review = async () => {
+    const receipt = join(root, '.agent-work/review.json');
+    await writeFile(
+      receipt,
+      JSON.stringify({
+        base: git('rev-parse', 'refs/remotes/origin/development'),
+        head: git('rev-parse', 'HEAD'),
+        axes: [
+          { name: 'standards', findings: [] },
+          { name: 'spec', findings: [] },
+        ],
+      }),
+    );
+    return runWorkflow(['record-review', '--receipt', receipt, '--root', root], { execute });
+  };
+  const run = async (...args) => {
+    if (args[0] === 'complete') await review();
+    return runWorkflow([...args, ...(args[0] === 'publish' ? ['--summary', 'add the example workflow'] : []), '--root', root], { execute });
+  };
   let revision = 0;
   const advance = async () => {
     await writeFile(join(root, 'change.md'), `repair ${++revision}\n`);
@@ -123,6 +141,7 @@ export async function checkout(t) {
     e,
     calls,
     run,
+    review,
     execute,
     advance,
     fail: () => {

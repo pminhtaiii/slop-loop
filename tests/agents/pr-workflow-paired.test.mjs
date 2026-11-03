@@ -155,6 +155,19 @@ test('paired publication resumes after a partial private PR failure and gates co
   const linked = await run('record-app-state', '--receipt', receiptPath);
   assert.equal(linked.submissionAppLink.url, published.submission.url);
 
+  const reviewPath = join(f.root, '.agent-work/review.json');
+  await writeFile(
+    reviewPath,
+    JSON.stringify({
+      base: privateMain,
+      head: git(f.root, 'rev-parse', 'HEAD'),
+      axes: [
+        { name: 'standards', findings: [] },
+        { name: 'spec', findings: 0 },
+      ],
+    }),
+  );
+  await run('record-review', '--receipt', reviewPath);
   const complete = await run('complete');
   assert.equal(complete.completion.submission.url, published.submission.url);
   assert.equal(complete.completion.submissionAppLink.url, published.submission.url);
