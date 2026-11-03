@@ -9,6 +9,7 @@ import {
   validateDispatchClaimV02,
 } from '../contracts/approvals/contracts.ts';
 import { computeCanonicalSha256, validateTaskState } from '../contracts/foundation/uc03.ts';
+import type { PortProvenance } from '../contracts/foundation/uc03.ts';
 import {
   computeClaimClosureDigest,
   validateClaimClosureReceiptV02,
@@ -57,7 +58,7 @@ import {
 } from './control-v02.ts';
 
 export interface ApprovalActivity {
-  readonly provenance: 'mock';
+  readonly provenance: PortProvenance;
   admitAttempt(input: unknown): { readonly outcome: string; readonly value: unknown };
   fenceTask(input: { readonly taskId: string; readonly epoch: number }): { readonly outcome: string };
   requestCancellation(taskId: string): { readonly outcome: string };
@@ -71,8 +72,11 @@ export interface ApprovalControl {
 export function createApprovalControl(options: {
   readonly taskId: string;
   readonly load: () => ApprovalTaskControl;
+  readonly provenance?: PortProvenance;
   readonly activity?: ApprovalActivity;
 }): ApprovalControl {
+  // Opt-in only: callers that omit it keep the mock gate.
+  const provenance = options.provenance ?? 'mock';
   let closed = false;
   return {
     isClosed: () => closed,
@@ -80,7 +84,7 @@ export function createApprovalControl(options: {
       if (!options.activity) return;
       const wasClosed = closed;
       closed = true;
-      if (options.activity.provenance !== 'mock' || !validateApprovalTaskControl(current).ok || current.taskId !== options.taskId ||
+      if (options.activity.provenance !== provenance || !validateApprovalTaskControl(current).ok || current.taskId !== options.taskId ||
         !activityReceipt(options.activity.fenceTask({ taskId: options.taskId, epoch: current.epoch }), 'paused') ||
         cancel && !activityReceipt(options.activity.requestCancellation(options.taskId), 'ok')) throw new Error('approval-activity-unavailable');
       closed = wasClosed;
@@ -90,7 +94,7 @@ export function createApprovalControl(options: {
         if (!plainData(input)) return false;
         const claim = validateDispatchClaim(input);
         const current = options.load();
-        if (closed || !options.activity || options.activity.provenance !== 'mock' || !validateApprovalTaskControl(current).ok || !claim.ok ||
+        if (closed || !options.activity || options.activity.provenance !== provenance || !validateApprovalTaskControl(current).ok || !claim.ok ||
           current.taskId !== options.taskId || claim.value.taskId !== options.taskId || current.mode !== 'runnable' ||
           current.epoch !== claim.value.expectedEpoch || current.version !== claim.value.expectedControlVersion || current.outstandingClaimRefs.length > 0) return false;
         const response = options.activity.admitAttempt({ attemptId, claim: claim.value, control: current });

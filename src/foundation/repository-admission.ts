@@ -1,9 +1,9 @@
-import { computeActionDigest, computeCanonicalSha256, validateNormalizedAction } from '../contracts/foundation/uc03.ts';
+import { computeActionDigest, computeCanonicalSha256, computeCommandViewDigest, validateNormalizedAction } from '../contracts/foundation/uc03.ts';
 import { validateRepositoryAdmissionV02 } from '../contracts/foundation/uc03/v02/admission/repository.ts';
 import { validateExecutionLimits } from '../contracts/foundation/uc03.ts';
 import type { ApplyPatchAction, CheckDefinition, CommandView, ExecutionLimits, RunCommandAction, ValidationError } from '../contracts/foundation/uc03/v01/types.ts';
 import { validateCheckDefinition } from '../contracts/foundation/uc03/v01/validation/intake/limits.ts';
-import type { RepositoryAdmissionContextV02 } from '../contracts/foundation/uc03/v02/ports.ts';
+import type { CommandViewV02, RepositoryAdmissionContextV02 } from '../contracts/foundation/uc03/v02/ports.ts';
 
 export interface BoundPatchAdmission {
   readonly context: RepositoryAdmissionContextV02;
@@ -35,12 +35,17 @@ export function snapshotRepositoryAdmission(input: unknown, expectedActionKind: 
   return context;
 }
 
+/**
+ * Projects the admitted v0.2 view onto the v0.1 shape the Docker layer publishes and compares.
+ * The digest is recomputed over that shape because it drops `isolationProfileRef` and renames
+ * `canonicalRevision`; copying the v0.2 digest could never match a builder-published view.
+ * Every field is already bound to the trusted context, so re-encoding them adds no trust.
+ */
 export function dockerCommandView(context: RepositoryAdmissionContextV02): CommandView {
   const view = context.commandView;
   if (!view) throw new Error('COMMAND_VIEW_REQUIRED: Admitted command view is required');
-  return {
+  const projected = {
     viewId: view.viewId,
-    viewDigest: view.viewDigest,
     taskId: view.taskId,
     workspaceId: view.workspaceId,
     canonicalRevisionDigest: view.canonicalRevision,
@@ -49,6 +54,24 @@ export function dockerCommandView(context: RepositoryAdmissionContextV02): Comma
     scratchIdentity: view.scratchIdentity,
     mountedReadOnly: view.mountedReadOnly,
   };
+  return { ...projected, viewDigest: computeCommandViewDigest(projected) };
+}
+
+/** Lifts the builder-published v0.1 view into v0.2; the digest is recomputed because the two key sets hash differently. */
+export function admissionCommandView(view: CommandView, isolationProfileRef: string): CommandViewV02 {
+  const projected = {
+    viewId: view.viewId,
+    taskId: view.taskId,
+    workspaceId: view.workspaceId,
+    canonicalRevision: view.canonicalRevisionDigest,
+    admittedFiles: view.admittedFiles,
+    exclusionsPolicyVersion: view.exclusionsPolicyVersion,
+    scratchIdentity: view.scratchIdentity,
+    mountedReadOnly: view.mountedReadOnly,
+    isolationProfileRef,
+  };
+  // Same canonical hash as the v0.2 admission re-check, which also widens the v0.1-typed signature.
+  return { ...projected, viewDigest: computeCommandViewDigest(projected as unknown as CommandView) };
 }
 
 export function bindCommandToAdmission(input: unknown, context: RepositoryAdmissionContextV02): BoundCommandAdmission {

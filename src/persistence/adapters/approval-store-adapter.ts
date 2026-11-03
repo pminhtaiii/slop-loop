@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ApprovalStore, StoreResponse } from '../../approvals/service-data.ts';
+import type { PortProvenance } from '../../contracts/foundation/uc03.ts';
 import {
   type ApprovalRequestRecord,
   type ApprovalTaskControl,
@@ -38,13 +39,15 @@ import { appendEvent, appendEvents, readEvents } from './approval-events.ts';
 
 /** Durable file-backed approval store adapter implementing UC-05 contracts. */
 export class DurableApprovalStore implements ApprovalStore {
-  readonly provenance = 'mock' as const;
+  readonly provenance: PortProvenance;
   private readonly storageDir: string;
   readonly durableStore?: DurableStore | undefined;
   readonly profile: PolicyProfile;
 
   /** Initializes DurableApprovalStore with isolated directory and policy profile. */
-  constructor(options: DurableApprovalStoreOptions) {
+  constructor(options: DurableApprovalStoreOptions & { readonly provenance?: PortProvenance }) {
+    this.provenance = options.provenance ?? 'mock';
+    if (this.provenance !== 'mock' && this.provenance !== 'real') throw new Error('Invalid approval store provenance');
     this.storageDir = options.storageDir;
     this.durableStore = options.durableStore;
     if (options.profile === undefined) {

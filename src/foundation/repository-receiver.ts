@@ -126,13 +126,15 @@ export async function executeAdmittedCommand(options: {
     assertCurrentCommandFenceV02(manager, commandExecutor, lease, context.workspaceId, identity, options.adapterIdentity, options.processIncarnation, options.fencingGeneration);
 
     const activeView = manager.getActiveCommandView(context.workspaceId);
-    const admittedView = context.commandView;
+    // The manager publishes and compares in v0.1 space, so project before comparing; the two key
+    // sets digest differently and a v0.2 digest can never equal a builder-published one.
+    const admittedView = context.commandView ? dockerCommandView(context) : null;
     if (
       !activeView ||
       !admittedView ||
       activeView.viewId !== admittedView.viewId ||
       activeView.viewDigest !== admittedView.viewDigest ||
-      activeView.canonicalRevisionDigest !== admittedView.canonicalRevision ||
+      activeView.canonicalRevisionDigest !== admittedView.canonicalRevisionDigest ||
       activeView.taskId !== admittedView.taskId ||
       activeView.workspaceId !== admittedView.workspaceId
     ) {

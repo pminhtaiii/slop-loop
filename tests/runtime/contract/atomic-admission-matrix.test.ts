@@ -422,7 +422,18 @@ async function createIntegratedCommandHarness(options?: {
   };
   const adaptedActiveView: CommandView = {
     viewId: commandView.viewId,
-    viewDigest: commandView.viewDigest,
+    // Digested over the v0.1 key set, as the workspace manager publishes it; the v0.2 digest
+    // covers a different shape and must never be copied across.
+    viewDigest: computeCommandViewDigest({
+      viewId: commandView.viewId,
+      taskId: commandView.taskId,
+      workspaceId: commandView.workspaceId,
+      canonicalRevisionDigest: commandView.canonicalRevision,
+      admittedFiles: commandView.admittedFiles,
+      exclusionsPolicyVersion: commandView.exclusionsPolicyVersion,
+      scratchIdentity: commandView.scratchIdentity,
+      mountedReadOnly: true as const,
+    }),
     taskId: commandView.taskId,
     workspaceId: commandView.workspaceId,
     canonicalRevisionDigest: commandView.canonicalRevision,
