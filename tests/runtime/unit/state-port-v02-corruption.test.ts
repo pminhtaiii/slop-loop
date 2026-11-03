@@ -149,6 +149,46 @@ test('corrupt records: an attempt whose owning claim is missing fails closed', a
   });
 });
 
+test('corrupt records: a present record decoding to null is corruption, not absence', async () => {
+  await withClaim(async (state, claim) => {
+    await state.writeJson(state.statePath(taskId, `fence-${claim.claimId}.json`), null);
+    await assert.rejects(state.readFence(taskId, claim.claimId), /Corrupted UC-03 record/);
+  });
+});
+
+test('corrupt records: a claim receipt filed under another claim id fails closed', async () => {
+  await withClaim(async (state, claim) => {
+    const stored = await state.readClaim(taskId, claim.claimId);
+    assert.ok(stored);
+    await state.writeJson(state.store.getClaimPath(taskId, 'claim-misfiled'), stored);
+    await assert.rejects(state.readClaim(taskId, 'claim-misfiled'), /Corrupted UC-03 claim record/);
+  });
+});
+
+test('corrupt records: an attempt whose receipt is missing fails closed instead of throwing a TypeError', async () => {
+  await withClaim(async (state, claim) => {
+    const port = new DurableStatePortV02({ store: state.store, initialControl: DEFAULT_CONTROL });
+    const attempt = await port.beginAttempt(claim.claimId, createTestExecutorIdentityV02({ payloadDigest: context.actionDigest }));
+
+    const stored = await state.readAttempt(taskId, attempt.attemptId);
+    assert.ok(stored);
+    await state.writeJson(state.statePath(taskId, `attempt-${attempt.attemptId}.json`), { ...stored, receipt: null });
+    await assert.rejects(state.readAttempt(taskId, attempt.attemptId), /Corrupted UC-03 attempt record/);
+  });
+});
+
+test('corrupt records: an attempt receipt naming another attempt fails closed', async () => {
+  await withClaim(async (state, claim) => {
+    const port = new DurableStatePortV02({ store: state.store, initialControl: DEFAULT_CONTROL });
+    const attempt = await port.beginAttempt(claim.claimId, createTestExecutorIdentityV02({ payloadDigest: context.actionDigest }));
+
+    const stored = await state.readAttempt(taskId, attempt.attemptId);
+    assert.ok(stored);
+    await state.writeJson(state.statePath(taskId, `attempt-${attempt.attemptId}.json`), { ...stored, receipt: { ...stored.receipt, attemptId: 'att-other-001' } });
+    await assert.rejects(state.readAttempt(taskId, attempt.attemptId), /Corrupted UC-03 attempt record/);
+  });
+});
+
 test('corrupt records: a fence proof that no longer validates fails closed', async () => {
   await withClaim(async (state, claim) => {
     const port = new DurableStatePortV02({ store: state.store, initialControl: DEFAULT_CONTROL });
