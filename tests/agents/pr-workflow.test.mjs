@@ -493,3 +493,38 @@ test('routine summaries expose comments and log paths without historical command
     'Update the feature branch against development.',
   );
 });
+
+test('record-review accepts a recorded opt-out with its reason', async t => {
+  const f = await checkout(t);
+
+  const recorded = await recordRawReview(f, { head: git(f.root, 'rev-parse', 'HEAD'), optedOut: true, reason: 'User asked to skip review for this batch.' });
+  assert.equal(recorded.codeReview.optedOut, true);
+  assert.equal(recorded.codeReview.reason, 'User asked to skip review for this batch.');
+});
+
+test('record-review refuses an opt-out that does not record the user request', async t => {
+  const f = await checkout(t);
+
+  await assert.rejects(recordRawReview(f, { head: git(f.root, 'rev-parse', 'HEAD'), optedOut: true, reason: '  ' }), /must record the user request that skipped the review/);
+});
+
+test('record-review refuses a base and head with identical content', async t => {
+  const f = await checkout(t);
+  const head = git(f.root, 'rev-parse', 'HEAD');
+  // A second commit carrying the same tree: a real descendant, but nothing was changed.
+  const same = git(f.root, 'commit-tree', git(f.root, 'rev-parse', `${head}^{tree}`), '-p', head, '-m', 'empty');
+  git(f.root, 'update-ref', 'HEAD', same);
+
+  await assert.rejects(
+    recordRawReview(f, {
+      base: head,
+      head: same,
+      axes: [
+        { name: 'standards', findings: [] },
+        { name: 'spec', findings: [] },
+      ],
+      reports: reportsFor(f),
+    }),
+    /must differ in content|observed nothing/,
+  );
+});

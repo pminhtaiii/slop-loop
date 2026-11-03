@@ -22,15 +22,23 @@ function validAxes(axes) {
  * Validates the review receipt, then stores it on the record. Returns the updated record.
  * The receipt names the axis report files; each must exist and hold text, so a receipt cannot
  * assert that a review ran without leaving the reports it summarises.
+ *
+ * A user may explicitly opt out of post-implementation review (context/workflow.md). That path
+ * records its own outcome here rather than being forced to invent a review that did not happen.
  */
 export async function recordReviewReceipt({ receiptPath, record, git, root }) {
   const receipt = await readJson(receiptPath);
   if (typeof receipt !== 'object' || receipt === null || Array.isArray(receipt)) throw new Error('The review receipt must be a JSON object.');
+  const head = git('rev-parse', 'HEAD');
+  if (receipt.head !== head) throw new Error('The review receipt head must match the current checkout HEAD.');
+  if (receipt.optedOut === true) {
+    if (typeof receipt.reason !== 'string' || receipt.reason.trim() === '') throw new Error('A review opt-out receipt must record the user request that skipped the review.');
+    record.codeReview = { optedOut: true, reason: receipt.reason.trim(), head, recordedAt: new Date().toISOString() };
+    return record;
+  }
   if (!commitId.test(receipt.base ?? '') || !commitId.test(receipt.head ?? '')) throw new Error('The review receipt must name base and head as full commit SHAs.');
   if (!validAxes(receipt.axes)) throw new Error('The review receipt must name exactly two axes, each with a non-empty name and its findings as an array of strings.');
   if (new Set(receipt.axes.map(axis => axis.name)).size !== receipt.axes.length) throw new Error('The review receipt must name each axis exactly once.');
-  const head = git('rev-parse', 'HEAD');
-  if (receipt.head !== head) throw new Error('The review receipt head must match the current checkout HEAD.');
   // A review of the head against itself observed no change; the diff must be the reviewed artifact.
   if (receipt.base === head) throw new Error('The review receipt base and head must differ; a review of the empty diff observed nothing.');
   // The base must be a real ancestor, not an arbitrary hex string: a review names the range it read.
@@ -48,6 +56,8 @@ export async function recordReviewReceipt({ receiptPath, record, git, root }) {
     throw new Error('The review receipt base must share history with the reviewed head.');
   }
   if (mergeBase !== receipt.base) throw new Error('The review receipt base must be an ancestor of the reviewed head.');
+  // Distinct commits can carry identical trees, so ancestry alone does not prove a diff existed.
+  if (git('diff', '--name-only', receipt.base, head).trim() === '') throw new Error('The review receipt base and head must differ in content; the reviewed diff is empty.');
   if (!Array.isArray(receipt.reports) || receipt.reports.length !== 2 || receipt.reports.some(report => typeof report !== 'string' || report.trim() === ''))
     throw new Error('The review receipt must name the two axis report files.');
   if (new Set(receipt.reports).size !== receipt.reports.length) throw new Error('The review receipt must name a different report for each axis.');
