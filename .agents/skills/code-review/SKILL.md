@@ -85,6 +85,14 @@ Save both axis reports and the aggregate in the active session dump's `reviews` 
 
 Pin each axis report to its base, evaluated candidate SHA, and reviewed input hashes. When a candidate changes, rerun only the axis affected by the changed inputs. Carry forward another axis only after verifying that its reviewed input hashes still match the candidate; record its evaluated SHA and current candidate SHA separately without claiming another review. Update a finding's current SHA only when its evidence is verified against the candidate. Final acceptance may consume only reports whose snapshots and candidate association have been verified. Reuse reports for the same unchanged candidate and inputs.
 
+For contributor PR work, record the outcome so the completion gate can see it:
+
+```powershell
+node scripts/agents/pr-workflow.mjs record-review --receipt <file.json>
+```
+
+The receipt names the reviewed `base` and `head` (full SHAs, base an ancestor of head), the two axes with their findings, and the two report file paths. Contributor PR completion refuses without one for the current head (see [enforce completion](../../../docs/agents/pr-workflow.md#enforce-completion)), so a review of an earlier candidate does not carry to a later head: record it against the head being completed.
+
 End with a one-line summary: total findings per axis, and the worst issue _within each axis_ (if any). Don't pick a single winner across axes — that's the reranking the separation exists to prevent.
 
 ## Why two axes

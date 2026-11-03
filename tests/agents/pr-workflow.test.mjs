@@ -31,6 +31,38 @@ async function setCandidate(f, files) {
 
 const localGates = calls => calls.filter(([binary]) => binary === process.execPath || binary === packageScriptCommand('test:contributors').command);
 
+async function recordReview(f, head) {
+  const file = join(f.root, '.agent-work/review.json');
+  const standards = join(f.root, '.agent-work/standards.md');
+  const spec = join(f.root, '.agent-work/spec.md');
+  await writeFile(standards, 'Standards axis: no findings.\n');
+  await writeFile(spec, 'Spec axis: no findings.\n');
+  await writeFile(
+    file,
+    JSON.stringify({
+      base: git(f.root, 'rev-parse', 'origin/development'),
+      head,
+      axes: [
+        { name: 'standards', findings: [] },
+        { name: 'spec', findings: [] },
+      ],
+      reports: [standards, spec],
+    }),
+  );
+  return f.run('record-review', '--receipt', file);
+}
+
+async function recordRawReview(f, receipt) {
+  const file = join(f.root, '.agent-work/review.json');
+  await writeFile(file, JSON.stringify(receipt));
+  return f.run('record-review', '--receipt', file);
+}
+
+/** Two distinct non-empty report files, for receipts whose failure is meant to come from elsewhere. */
+function reportsFor(f) {
+  return [join(f.root, 'standards.md'), join(f.root, 'spec.md')];
+}
+
 test('current-head CI allows human review without CodeRabbit approval', () => {
   const e = evidence();
   assert.equal(assess(e).status, 'READY_FOR_HUMAN');
@@ -123,7 +155,6 @@ test('eligible automatic push-only publication can complete after current-head C
   const saved = JSON.parse(await readFile(path, 'utf8'));
   saved.appLink = { url: f.e.pr.url, repository: 'example/project', number: f.e.pr.number };
   await writeFile(path, JSON.stringify(saved));
-
   const completed = await f.run('complete');
 
   assert.equal(completed.status, 'READY_FOR_HUMAN');
@@ -133,6 +164,224 @@ test('eligible automatic push-only publication can complete after current-head C
   assert.equal(completed.localVerifiedHead, undefined);
   assert.equal(workflowSummary(completed).localGateStatus, 'skipped');
   assert.equal(published.publicationMode, 'push-only');
+});
+
+test('completion is refused without a code-review receipt for the current head', async t => {
+  const f = await checkout(t);
+  await setCandidate(f, { 'docs/contributor-guide.md': '# Guide\n' });
+  await f.run('publish', '--body-file', f.body, '--skip-review-request');
+  const path = join(f.root, '.agent-work/pr-workflow/010-tooling-example.json');
+  const saved = JSON.parse(await readFile(path, 'utf8'));
+  saved.appLink = { url: f.e.pr.url, repository: 'example/project', number: f.e.pr.number };
+  await writeFile(path, JSON.stringify(saved));
+
+  await assert.rejects(runWorkflow(['complete', '--root', f.root], { execute: f.execute }), /Completion requires a code-review receipt for the current head; run record-review/);
+});
+
+test('record-review refuses a receipt whose head is not the checkout HEAD', async t => {
+  const f = await checkout(t);
+
+  await assert.rejects(recordReview(f, 'b'.repeat(40)), /receipt head must match the current checkout HEAD/);
+});
+
+test('record-review refuses a non-object receipt', async t => {
+  const f = await checkout(t);
+
+  await assert.rejects(recordRawReview(f, null), /review receipt must be a JSON object/);
+});
+
+test('record-review refuses a receipt that does not name exactly two axes', async t => {
+  const f = await checkout(t);
+
+  await assert.rejects(
+    recordRawReview(f, { base: git(f.root, 'rev-parse', 'origin/development'), head: git(f.root, 'rev-parse', 'HEAD'), axes: [{ name: 'standards', findings: [] }] }),
+    /exactly two axes/,
+  );
+});
+
+test('record-review refuses findings given as a count instead of the findings themselves', async t => {
+  const f = await checkout(t);
+
+  await assert.rejects(
+    recordRawReview(f, {
+      base: git(f.root, 'rev-parse', 'origin/development'),
+      head: git(f.root, 'rev-parse', 'HEAD'),
+      axes: [
+        { name: 'standards', findings: 2 },
+        { name: 'spec', findings: [] },
+      ],
+    }),
+    /findings as an array of strings/,
+  );
+});
+
+test('record-review refuses a review of the empty diff', async t => {
+  const f = await checkout(t);
+  const head = git(f.root, 'rev-parse', 'HEAD');
+
+  await assert.rejects(
+    recordRawReview(f, {
+      base: head,
+      head,
+      axes: [
+        { name: 'standards', findings: [] },
+        { name: 'spec', findings: [] },
+      ],
+      reports: reportsFor(f),
+    }),
+    /a review of the empty diff observed nothing/,
+  );
+});
+
+test('record-review refuses a receipt whose axis reports are absent', async t => {
+  const f = await checkout(t);
+
+  await assert.rejects(
+    recordRawReview(f, {
+      base: git(f.root, 'rev-parse', 'origin/development'),
+      head: git(f.root, 'rev-parse', 'HEAD'),
+      axes: [
+        { name: 'standards', findings: [] },
+        { name: 'spec', findings: [] },
+      ],
+      reports: [join(f.root, '.agent-work/standards.md'), join(f.root, '.agent-work/no-such-spec.md')],
+    }),
+    /is missing or empty/,
+  );
+});
+
+test('record-review refuses an axis name that is not a string', async t => {
+  const f = await checkout(t);
+
+  await assert.rejects(
+    recordRawReview(f, {
+      base: git(f.root, 'rev-parse', 'origin/development'),
+      head: git(f.root, 'rev-parse', 'HEAD'),
+      axes: [
+        { name: 2, findings: [] },
+        { name: 'spec', findings: [] },
+      ],
+      reports: reportsFor(f),
+    }),
+    /non-empty name and its findings as an array of strings/,
+  );
+});
+
+test('record-review refuses a base SHA that is neither 40 nor 64 hex characters', async t => {
+  const f = await checkout(t);
+
+  await assert.rejects(
+    recordRawReview(f, {
+      base: 'a'.repeat(41),
+      head: git(f.root, 'rev-parse', 'HEAD'),
+      axes: [
+        { name: 'standards', findings: [] },
+        { name: 'spec', findings: [] },
+      ],
+      reports: reportsFor(f),
+    }),
+    /must name base and head as full commit SHAs/,
+  );
+});
+
+test('record-review refuses a base that is not a commit in the repository', async t => {
+  const f = await checkout(t);
+
+  await assert.rejects(
+    recordRawReview(f, {
+      base: '1'.repeat(40),
+      head: git(f.root, 'rev-parse', 'HEAD'),
+      axes: [
+        { name: 'standards', findings: [] },
+        { name: 'spec', findings: [] },
+      ],
+      reports: reportsFor(f),
+    }),
+    /base must name a commit in this repository/,
+  );
+});
+
+test('record-review refuses a base that is not an ancestor of the reviewed head', async t => {
+  const f = await checkout(t);
+  const head = git(f.root, 'rev-parse', 'HEAD');
+  // An unrelated root commit: a real object, but not part of the reviewed history.
+  let orphan;
+  try {
+    orphan = git(f.root, 'commit-tree', git(f.root, 'write-tree'), '-m', 'unrelated');
+  } catch {
+    orphan = null;
+  }
+  if (!orphan) return t.skip('cannot create an unrelated commit in this fixture');
+
+  await assert.rejects(
+    recordRawReview(f, {
+      base: orphan,
+      head,
+      axes: [
+        { name: 'standards', findings: [] },
+        { name: 'spec', findings: [] },
+      ],
+      reports: reportsFor(f),
+    }),
+    /base must share history with the reviewed head|base must be an ancestor/,
+  );
+});
+
+test('record-review refuses an empty report file', async t => {
+  const f = await checkout(t);
+  const empty = join(f.root, 'empty-report.md');
+  await writeFile(empty, '');
+  const filled = join(f.root, 'filled-report.md');
+  await writeFile(filled, 'findings\n');
+
+  await assert.rejects(
+    recordRawReview(f, {
+      base: git(f.root, 'rev-parse', 'origin/development'),
+      head: git(f.root, 'rev-parse', 'HEAD'),
+      axes: [
+        { name: 'standards', findings: [] },
+        { name: 'spec', findings: [] },
+      ],
+      reports: [empty, filled],
+    }),
+    /is missing or empty/,
+  );
+});
+
+test('record-review refuses the same report file named for both axes', async t => {
+  const f = await checkout(t);
+  const report = join(f.root, 'both-axes.md');
+  await writeFile(report, 'findings\n');
+
+  await assert.rejects(
+    recordRawReview(f, {
+      base: git(f.root, 'rev-parse', 'origin/development'),
+      head: git(f.root, 'rev-parse', 'HEAD'),
+      axes: [
+        { name: 'standards', findings: [] },
+        { name: 'spec', findings: [] },
+      ],
+      reports: [report, report],
+    }),
+    /must name a different report for each axis/,
+  );
+});
+test('record-review then completion retains the reviewed base, head and axes', async t => {
+  const f = await checkout(t);
+  const head = await setCandidate(f, { 'docs/contributor-guide.md': '# Guide\n' });
+  await f.run('publish', '--body-file', f.body, '--skip-review-request');
+  const path = join(f.root, '.agent-work/pr-workflow/010-tooling-example.json');
+  const saved = JSON.parse(await readFile(path, 'utf8'));
+  saved.appLink = { url: f.e.pr.url, repository: 'example/project', number: f.e.pr.number };
+  await writeFile(path, JSON.stringify(saved));
+
+  const reviewed = await recordReview(f, head);
+  const completed = await runWorkflow(['complete', '--root', f.root], { execute: f.execute });
+
+  assert.equal(reviewed.codeReview.head, head);
+  assert.equal(completed.completion.codeReview.base, reviewed.codeReview.base);
+  assert.equal(completed.completion.codeReview.head, head);
+  assert.deepEqual(completed.completion.codeReview.axes, reviewed.codeReview.axes);
 });
 
 test('tampered automatic publication evidence cannot bypass local gates at completion', async t => {
@@ -242,5 +491,40 @@ test('routine summaries expose comments and log paths without historical command
   assert.equal(
     workflowSummary({ schemaVersion: 1, repairRounds: [], observation: { reason: 'Update the feature branch against development.' } }).reason,
     'Update the feature branch against development.',
+  );
+});
+
+test('record-review accepts a recorded opt-out with its reason', async t => {
+  const f = await checkout(t);
+
+  const recorded = await recordRawReview(f, { head: git(f.root, 'rev-parse', 'HEAD'), optedOut: true, reason: 'User asked to skip review for this batch.' });
+  assert.equal(recorded.codeReview.optedOut, true);
+  assert.equal(recorded.codeReview.reason, 'User asked to skip review for this batch.');
+});
+
+test('record-review refuses an opt-out that does not record the user request', async t => {
+  const f = await checkout(t);
+
+  await assert.rejects(recordRawReview(f, { head: git(f.root, 'rev-parse', 'HEAD'), optedOut: true, reason: '  ' }), /must record the user request that skipped the review/);
+});
+
+test('record-review refuses a base and head with identical content', async t => {
+  const f = await checkout(t);
+  const head = git(f.root, 'rev-parse', 'HEAD');
+  // A second commit carrying the same tree: a real descendant, but nothing was changed.
+  const same = git(f.root, 'commit-tree', git(f.root, 'rev-parse', `${head}^{tree}`), '-p', head, '-m', 'empty');
+  git(f.root, 'update-ref', 'HEAD', same);
+
+  await assert.rejects(
+    recordRawReview(f, {
+      base: head,
+      head: same,
+      axes: [
+        { name: 'standards', findings: [] },
+        { name: 'spec', findings: [] },
+      ],
+      reports: reportsFor(f),
+    }),
+    /must differ in content|observed nothing/,
   );
 });

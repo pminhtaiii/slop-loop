@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { publishCommand } from './pr-workflow-publish.mjs';
 import { publicationTargets } from './publication-targets.mjs';
 import { verifySubmission } from './submission-pr.mjs';
+import { recordAppStateReceipt, recordReviewReceipt } from './pr-workflow-receipts.mjs';
 import { assertAvailableBranch, assertNewBranch } from './pr-conventions.mjs';
 import { assess, changedLines, featureName, validSummary, workflowSummary as statusSummary } from './pr-workflow-status.mjs';
 import { hasLocalVerification, localGateStatus, publicationMode } from './pr-workflow-push-only.mjs';
@@ -16,15 +17,18 @@ export function workflowSummary(record) {
   const summary = statusSummary(record);
   if (record.publicationPolicy) summary.publicationPolicy = record.publicationPolicy;
   if (record.publicationProvenance) summary.publicationProvenance = record.publicationProvenance;
+  // Surfaced so status reveals a missing review before completion refuses on it.
+  summary.codeReviewHead = record.codeReview?.head ?? null;
   return summary;
 }
 
 const maxRepairs = 3;
-const usage = `Usage: node scripts/agents/pr-workflow.mjs <preflight|publish|status|ready|repair|watch|record-app-state|complete|prepare-next> [--root <checkout>]
+const usage = `Usage: node scripts/agents/pr-workflow.mjs <preflight|publish|status|ready|repair|watch|record-app-state|record-review|complete|prepare-next> [--root <checkout>]
 preflight fetches origin/development and reports freshness, naming, dirty paths, and diff size; it never publishes.
 publish requires --body-file <file> and --summary <short summary>; defaults to automatic path selection. Documentation and contributor-helper-only changes skip local gates; --mode full forces them. --mode push-only --reason <rationale> explicitly skips local gates; its reason is provenance, not an authorization receipt.
 repair requires --reason <diagnosed finding>. At most three repair rounds per PR.
 record-app-state requires --receipt <app list_thread_pull_requests JSON>.
+record-review requires --receipt <two-axis review JSON naming base, head, two axes and their report files>.
 prepare-next --branch feat/scope-description creates a fresh unique branch from fetched development after this branch's recorded PR merges; source branches and worktrees are retained.
 complete verifies clean published current-head work, linked PR evidence and passing CI; it never merges.
 watch polls for at most ten minutes, stopping for fixes, human approval, or timeout.
@@ -52,6 +56,7 @@ export async function runWorkflow(args, dependencies = {}) {
     publish: ['root', 'base', 'body-file', 'summary', 'skip-review-request', 'mode', 'reason'],
     status: ['root'],
     'record-app-state': ['root', 'receipt'],
+    'record-review': ['root', 'receipt'],
     complete: ['root'],
     ready: ['root'],
     repair: ['root', 'reason'],
@@ -74,6 +79,7 @@ export async function runWorkflow(args, dependencies = {}) {
     index += 2;
   }
   if (command === 'record-app-state' && !values.receipt) throw new Error('record-app-state requires --receipt with the app list_thread_pull_requests result.');
+  if (command === 'record-review' && !values.receipt) throw new Error('record-review requires --receipt with the two-axis review result.');
   if ((command === 'publish' && !values['body-file']) || (command === 'repair' && !values.reason?.trim())) throw new Error(usage);
   if (command === 'publish' && !validSummary(values.summary)) throw new Error('Provide --summary with 1–80 characters on one line, without surrounding whitespace.');
   if (command === 'publish') {
@@ -183,20 +189,13 @@ export async function runWorkflow(args, dependencies = {}) {
         gh,
         json,
       });
+    if (command === 'record-review') {
+      await save(await recordReviewReceipt({ receiptPath: resolve(values.receipt), record, git, root: repo.root }));
+      return record;
+    }
     if (!record.pr && !record.publicationStarted) throw new Error('Missing PR accounting; restore its original record rather than reset the repair budget.');
     if (command === 'record-app-state') {
-      const receipt = await readJson(resolve(values.receipt));
-      const linked = (receipt.structuredContent ?? receipt).pullRequests?.find(pr => pr.url === record.url && pr.repository === remote && pr.number === record.pr);
-      if (!linked) throw new Error('The app receipt must include this linked PR.');
-      if (targets) {
-        const submission = await verifySubmission({ repo, targets, branch, sourceHead: git('rev-parse', 'HEAD'), execute: pairedExecute });
-        const pairedLink = (receipt.structuredContent ?? receipt).pullRequests?.find(pr => pr.url === submission.url && pr.repository === submission.repository && pr.number === submission.number);
-        if (!pairedLink) throw new Error('The app receipt must include both linked PRs, including submission.');
-        record.submission = submission;
-        record.submissionAppLink = { url: pairedLink.url, repository: pairedLink.repository, number: pairedLink.number, recordedAt: new Date().toISOString() };
-      }
-      record.appLink = { url: linked.url, repository: remote, number: linked.number, recordedAt: new Date().toISOString() };
-      await save();
+      await save(await recordAppStateReceipt({ receiptPath: resolve(values.receipt), record, remote, targets, repo, branch, git, execute: pairedExecute }));
       return record;
     }
     const prRef = find();
@@ -245,6 +244,7 @@ export async function runWorkflow(args, dependencies = {}) {
       if (record.appLink?.url !== pr.url || record.appLink?.number !== pr.number || record.appLink?.repository !== remote)
         throw new Error('Completion requires an app receipt for the linked PR; run record-app-state.');
       if (targets && record.submissionAppLink?.url !== record.submission?.url) throw new Error('Completion requires an app receipt for both linked PRs.');
+      if (record.codeReview?.head !== head) throw new Error('Completion requires a code-review receipt for the current head; run record-review.');
       if (!['READY_FOR_HUMAN', 'AWAITING_HUMAN_MERGE'].includes(record.status))
         throw new Error(`Completion blocked: ${record.status}. Keep the assignment active/blocked and hand pending CI to the app watcher.`);
       if (git('rev-parse', 'HEAD') !== head) throw new Error('Checkout changed during completion verification.');
@@ -259,6 +259,7 @@ export async function runWorkflow(args, dependencies = {}) {
         publicationReason: record.publicationReason,
         publicationPolicy: record.publicationPolicy,
         appLink: record.appLink,
+        codeReview: record.codeReview,
         submission: record.submission,
         submissionAppLink: record.submissionAppLink,
         verifiedAt: new Date().toISOString(),
