@@ -3,10 +3,11 @@
  *
  * shortcut: StatePortV02 has no control/fence surface, but closeUnattemptedClaim and
  * reconcileUncertain are unreachable without one. These mirror MemoryStatePortV02's non-contract
- * setTaskControl/fenceClaimRecipient; fold them into the contract when it grows them.
+ * setTaskControl/fenceClaimRecipient/fenceAttemptRecipient; fold them into the contract when it
+ * grows them.
  */
 import { readdir } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname } from 'node:path';
 import { computeCanonicalSha256 } from '../../contracts/foundation/uc03.ts';
 import type { ExecutorIdentityV02 } from '../../contracts/foundation/uc03.ts';
 import { isSafeStorageId } from '../store.ts';
@@ -49,7 +50,17 @@ export async function setTaskControl(store: StatePortStore, taskId: string, mode
   });
 }
 
+/** Fences a claim that never dispatched; the closure handoff and closeUnattemptedClaim depend on that guard. */
 export async function fenceClaimRecipient(store: StatePortStore, claimId: string, recipient: ExecutorIdentityV02): Promise<FenceProofV02 | null> {
+  return fenceRecipient(store, claimId, recipient, false);
+}
+
+/** Fences an already-attempted uncertain claim, which is how reconcileUncertain obtains its proof. */
+export async function fenceAttemptRecipient(store: StatePortStore, claimId: string, recipient: ExecutorIdentityV02): Promise<FenceProofV02 | null> {
+  return fenceRecipient(store, claimId, recipient, true);
+}
+
+async function fenceRecipient(store: StatePortStore, claimId: string, recipient: ExecutorIdentityV02, afterAttempt: boolean): Promise<FenceProofV02 | null> {
   if (!validExecutorIdentity(recipient)) return null;
   const located = await store.findClaimTask(claimId);
   if (!located) return null;
@@ -59,13 +70,17 @@ export async function fenceClaimRecipient(store: StatePortStore, claimId: string
     const claim = await store.readClaim(taskId, claimId);
     if (!claim) return null;
     const prior = await store.readFence(taskId, claimId);
-    if (prior) return equal(prior.recipientIdentity, recipient) ? structuredClone(prior) : null;
+    if (prior) return (claim.attemptId !== undefined) === afterAttempt && equal(prior.recipientIdentity, recipient) ? structuredClone(prior) : null;
     if (!control.holdRef || control.mode === 'runnable') return null;
-    if (claim.status !== 'claimed' || claim.attemptId !== undefined) return null;
+    if (afterAttempt) {
+      const attempt = claim.attemptId !== undefined ? await store.readAttempt(taskId, claim.attemptId) : null;
+      if (claim.status !== 'uncertain' || !attempt || !equal(attempt.receipt.executorIdentity, recipient)) return null;
+    } else if (claim.status !== 'claimed' || claim.attemptId !== undefined) return null;
     if (recipient.payloadDigest !== actorPayloadDigest(claim.context)) return null;
+    const stateDir = dirname(store.statePath(taskId, 'x'));
     let priorGeneration = 0;
-    for (const file of (await readdir(store.taskDir(taskId)).catch(() => [] as string[])).filter(name => name.startsWith('fence-') && name.endsWith('.json'))) {
-      const existing = await store.readJson<FenceProofV02>(join(store.taskDir(taskId), file));
+    for (const file of (await readdir(stateDir).catch(() => [] as string[])).filter(name => name.startsWith('fence-') && name.endsWith('.json'))) {
+      const existing = await store.readJson<FenceProofV02>(store.statePath(taskId, file));
       if (!existing || existing.fencedExecutorIdentity.adapterIdentity !== recipient.adapterIdentity) continue;
       if (existing.fencedExecutorIdentity.processIncarnation === recipient.processIncarnation) return null;
       priorGeneration = Math.max(priorGeneration, existing.fencingGeneration);

@@ -5,6 +5,8 @@ import { truncateUtf8 } from './docker-workspace-policy.ts';
 
 // Longest UTF-8 character is 4 bytes, so 3 spare bytes keep a character split by the cap decodable for truncateUtf8.
 const CAPTURE_SLACK_BYTES = 3;
+// A timed-out child that ignores or lags SIGTERM still has to settle the promise.
+const SIGKILL_GRACE_MS = 2_000;
 
 interface Capture {
   readonly chunks: Buffer[];
@@ -38,15 +40,22 @@ export const structuredSpawn: StructuredSpawn = (command, args, options) =>
     const stderr = capture(child.stderr, limit);
 
     let timedOut = false;
+    let killTimer: ReturnType<typeof setTimeout> | undefined;
     const timer = setTimeout(() => {
       timedOut = true;
       // shortcut: kills only the direct child; a Windows .cmd shim's grandchild survives, add a tree kill when docker is launched through a shim.
       child.kill();
+      killTimer = setTimeout(() => child.kill('SIGKILL'), SIGKILL_GRACE_MS);
     }, options.timeoutMs);
 
-    child.on('spawn', () => child.stdin?.end(options.stdin));
+    child.on('spawn', () => {
+      // A child that exits before reading a large stdin emits EPIPE; the close handler reports the exit code.
+      child.stdin?.on('error', () => undefined);
+      child.stdin?.end(options.stdin);
+    });
     child.on('close', code => {
       clearTimeout(timer);
+      clearTimeout(killTimer);
       resolve({
         exitCode: code,
         stdout: capturedText(stdout, limit),
@@ -57,6 +66,7 @@ export const structuredSpawn: StructuredSpawn = (command, args, options) =>
     });
     child.on('error', error => {
       clearTimeout(timer);
+      clearTimeout(killTimer);
       reject(new Error(`SPAWN_FAILED: could not start '${command}': ${error.message}`, { cause: error }));
     });
   });

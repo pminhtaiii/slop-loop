@@ -154,8 +154,10 @@ export function getJournalSnapshot(options: JournalOptions, taskId: string): unk
     }
   };
   const names = listDir(store.taskDir(taskId));
+  // Prefixed records (attempts, outcomes, fences, ...) live under v02/, not beside the claim files.
+  const stateNames = listDir(dirname(store.statePath(taskId, 'x')));
   const ids = (prefix: string): string[] =>
-    names.filter(name => name.startsWith(prefix) && name.endsWith('.json') && isSafeStorageId(name.slice(prefix.length, -'.json'.length))).map(name => name.slice(prefix.length, -'.json'.length));
+    stateNames.filter(name => name.startsWith(prefix) && name.endsWith('.json') && isSafeStorageId(name.slice(prefix.length, -'.json'.length))).map(name => name.slice(prefix.length, -'.json'.length));
   const all = <T>(prefix: string): T[] =>
     ids(prefix)
       .map(id => read<T>(store.statePath(taskId, `${prefix}${id}.json`)))

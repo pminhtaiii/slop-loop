@@ -5,6 +5,7 @@
  * ControlledRepositoryReader's containment check directly: a link that leaves the
  * workspace resolves to an absolute path and is refused there.
  */
+import { realpathSync } from 'node:fs';
 import { open, lstat, readdir, realpath, stat } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
 import type { PortProvenance } from '../contracts/foundation/uc03.ts';
@@ -25,13 +26,27 @@ function toFileStat(info: { isFile(): boolean; isDirectory(): boolean; isSymboli
   return { isFile: info.isFile(), isDirectory: info.isDirectory(), isSymbolicLink: info.isSymbolicLink(), size: info.size };
 }
 
+export type ProbeRead = (buffer: Buffer, offset: number, length: number, position: number) => Promise<number>;
+
+/** Short reads are legal, so keep reading until the window is full or EOF. */
+export async function readProbe(probe: Buffer, read: ProbeRead): Promise<number> {
+  let total = 0;
+  while (total < probe.length) {
+    const bytesRead = await read(probe, total, probe.length - total, total);
+    if (bytesRead === 0) break;
+    total += bytesRead;
+  }
+  return total;
+}
+
 export class WorkspaceFilesystemPort implements TrustedFilesystemPort {
   readonly provenance: PortProvenance;
   private readonly root: string;
 
   constructor(options: WorkspaceFilesystemPortOptions) {
     if (!options || typeof options.root !== 'string' || !options.root.trim()) throw new Error('INVALID_OPTIONS: root must be a non-empty path');
-    this.root = resolve(options.root);
+    // Canonicalize once so containment compares realpath results against the real root, not a lexical path.
+    this.root = realpathSync(resolve(options.root));
     this.provenance = options.provenance ?? 'real';
     if (this.provenance !== 'real' && this.provenance !== 'mock') throw new Error('INVALID_PROVENANCE: Provenance must be real or mock');
   }
@@ -76,7 +91,7 @@ export class WorkspaceFilesystemPort implements TrustedFilesystemPort {
     try {
       if (maxBytes === undefined) return await handle.readFile({ encoding: 'utf8' });
       const probe = Buffer.alloc(maxBytes + 1);
-      const { bytesRead } = await handle.read(probe, 0, maxBytes + 1, 0);
+      const bytesRead = await readProbe(probe, async (buffer, offset, length, position) => (await handle.read(buffer, offset, length, position)).bytesRead);
       if (bytesRead > maxBytes) throw new Error(`FILE_TOO_LARGE: Path '${canonicalPath}' exceeds ${maxBytes} bytes`);
       return probe.subarray(0, bytesRead).toString('utf8');
     } finally {

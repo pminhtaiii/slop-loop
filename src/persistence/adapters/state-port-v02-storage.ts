@@ -7,7 +7,20 @@ import { dirname, join } from 'node:path';
 import { validateTaskState } from '../../contracts/foundation/uc03.ts';
 import type { AttemptOutcomeReceiptV02, AttemptReconciliationReceiptV02, TaskState } from '../../contracts/foundation/uc03.ts';
 import { atomicWrite, isSafeStorageId, type DurableStore } from '../store.ts';
-import type { ControlRecordV02, FenceProofV02, RecoveryEvidenceV02, StoredAttemptV02, StoredClaimV02 } from './state-port-v02-types.ts';
+import type { ControlRecordV02, FenceProofV02, RecoveryEvidenceV02, StoredAttemptV02, StoredClaimV02, TaskControlModeV02 } from './state-port-v02-types.ts';
+import { CONTROL_MODES } from './state-port-v02-types.ts';
+
+/** A present control head is authoritative: a bad shape must fail closed, not silently widen authority. */
+function validateControlRecord(value: unknown): ControlRecordV02 {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error('Corrupted UC-03 control record: expected an object');
+  const record = value as Record<string, unknown>;
+  if (!CONTROL_MODES.includes(record['mode'] as TaskControlModeV02)) throw new Error('Corrupted UC-03 control record: invalid mode');
+  if (!Number.isSafeInteger(record['controlVersion']) || !Number.isSafeInteger(record['epoch'])) {
+    throw new Error('Corrupted UC-03 control record: controlVersion and epoch must be safe integers');
+  }
+  if (record['holdRef'] !== null && typeof record['holdRef'] !== 'string') throw new Error('Corrupted UC-03 control record: holdRef must be a string or null');
+  return value as ControlRecordV02;
+}
 
 export class StatePortStore {
   readonly store: DurableStore;
@@ -24,11 +37,15 @@ export class StatePortStore {
     return join(this.taskDir(taskId), 'v02', name);
   }
 
-  async readJson<T>(path: string): Promise<T | null> {
-    const data = await readFile(path, 'utf8').catch((err: unknown) => {
+  async readText(path: string): Promise<string | null> {
+    return readFile(path, 'utf8').catch((err: unknown) => {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
       throw err;
     });
+  }
+
+  async readJson<T>(path: string): Promise<T | null> {
+    const data = await this.readText(path);
     return data === null ? null : (JSON.parse(data) as T);
   }
 
@@ -41,7 +58,9 @@ export class StatePortStore {
   }
 
   async readControl(taskId: string, fallback: ControlRecordV02): Promise<ControlRecordV02> {
-    return (await this.readJson<ControlRecordV02>(this.statePath(taskId, 'control.json'))) ?? fallback;
+    // Only a missing file seeds the fallback; a present control head must validate or fail closed.
+    const data = await this.readText(this.statePath(taskId, 'control.json'));
+    return data === null ? fallback : validateControlRecord(JSON.parse(data) as unknown);
   }
 
   async readTask(taskId: string): Promise<TaskState | null> {

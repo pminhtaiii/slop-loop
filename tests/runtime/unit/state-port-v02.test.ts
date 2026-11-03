@@ -20,8 +20,8 @@ import {
   createTestExecutorIdentityV02,
   createTestRepositoryCommandAdmissionContextV02,
   createTestRepositoryOutcomeReceiptV02,
+  createTestUncertainReconciliationReceiptV02,
 } from '../support/uc03/state-fixtures.ts';
-
 const context: RepositoryAdmissionContextV02 = createTestRepositoryCommandAdmissionContextV02();
 
 // The command admission reserves one timeoutMs resource, so the task must carry that ledger.
@@ -125,6 +125,96 @@ test('durable v0.2 state port: its journal snapshot validates and tracks the ope
     assert.deepEqual(claimed.claims, [{ claimId: claim.claimId, status: 'claimed', attemptId: null }]);
 
     assert.equal(port.getJournalSnapshot('not a task id'), null, 'an unsafe id must not be read');
+  } finally {
+    rmSync(baseDir, { recursive: true, force: true });
+  }
+});
+
+test('durable v0.2 state port: the journal snapshot reports a begun attempt', async () => {
+  const baseDir = mkdtempSync(join(tmpdir(), 'uc03-durable-snapshot-attempt-'));
+  try {
+    const port = await openPort(baseDir);
+    await port.transition(seedTask(), 0);
+    const claim = await port.claim(context);
+    const attempt = await port.beginAttempt(claim.claimId, createTestExecutorIdentityV02({ payloadDigest: context.actionDigest }));
+    assert.notEqual(attempt.attemptId, '', 'the fixture must begin a real attempt');
+
+    const snapshot = journalSnapshotV02(port.getJournalSnapshot(context.taskId));
+    assert.ok(snapshot, 'a begun attempt must still project a valid snapshot');
+    assert.deepEqual(snapshot.attempts, [{ attemptId: attempt.attemptId, claimId: claim.claimId, status: 'attempting', outcomeReceiptId: null }]);
+    assert.deepEqual(snapshot.claims, [{ claimId: claim.claimId, status: 'attempting', attemptId: attempt.attemptId }]);
+  } finally {
+    rmSync(baseDir, { recursive: true, force: true });
+  }
+});
+
+test('durable v0.2 state port: a persisted fence appears in the journal snapshot and blocks its incarnation', async () => {
+  const baseDir = mkdtempSync(join(tmpdir(), 'uc03-durable-snapshot-fence-'));
+  try {
+    const port = await openPort(baseDir);
+    await port.transition(seedTask(), 0);
+    const claim = await port.claim(context);
+    const recipient = createTestExecutorIdentityV02({ payloadDigest: context.actionDigest });
+    assert.equal(await port.setTaskControl(context.taskId, 'paused', 'pause-fence-snapshot-001'), true);
+
+    const fence = await port.fenceClaimRecipient(claim.claimId, recipient);
+    assert.ok(fence, 'a paused, unattempted claim must be fenceable');
+    assert.ok(fence.fencingGeneration > recipient.fencingGeneration, 'the fence must raise the recipient generation');
+
+    const snapshot = journalSnapshotV02(port.getJournalSnapshot(context.taskId));
+    assert.ok(snapshot, 'a fenced task must still project a valid snapshot');
+    assert.deepEqual(snapshot.fenceProofs, [
+      { claimId: claim.claimId, proofRef: fence.proofRef, fencingGeneration: fence.fencingGeneration, holdRef: fence.holdRef, controlVersion: fence.controlVersion, epoch: fence.epoch },
+    ]);
+    assert.deepEqual(snapshot.fencedIncarnations, [`${recipient.adapterIdentity}\u0000${recipient.processIncarnation}`]);
+  } finally {
+    rmSync(baseDir, { recursive: true, force: true });
+  }
+});
+
+test('durable v0.2 state port: fenceAttemptRecipient fences an uncertain attempt and refuses a fenced incarnation', async () => {
+  const baseDir = mkdtempSync(join(tmpdir(), 'uc03-durable-fence-attempt-'));
+  try {
+    const port = await openPort(baseDir);
+    await port.transition(seedTask(), 0);
+    const claim = await port.claim(context);
+    const executor = createTestExecutorIdentityV02({ payloadDigest: context.actionDigest });
+    const attempt = await port.beginAttempt(claim.claimId, executor);
+    assert.notEqual(attempt.attemptId, '', 'the fixture must begin a real attempt');
+    assert.deepEqual(await port.recordOutcome(createTestRepositoryOutcomeReceiptV02(claim, attempt, context, { outcome: 'uncertain' })), {
+      outcome: 'uncertain',
+      receiptId: 'repo-out-001',
+    });
+    assert.equal(await port.setTaskControl(context.taskId, 'paused', 'pause-fence-attempt-001'), true);
+
+    assert.equal(await port.fenceClaimRecipient(claim.claimId, executor), null, 'an attempted claim must not be fenced as unattempted');
+    const fence = await port.fenceAttemptRecipient(claim.claimId, executor);
+    assert.ok(fence, 'an uncertain attempted claim must be fenceable');
+    assert.ok(fence.fencingGeneration > executor.fencingGeneration, 'the fence must supersede the dispatched recipient');
+
+    const snapshot = journalSnapshotV02(port.getJournalSnapshot(context.taskId));
+    assert.ok(snapshot);
+    assert.equal(snapshot.fenceProofs.length, 1, 'the fence must be visible in the snapshot');
+    assert.deepEqual(snapshot.fencedIncarnations, [`${executor.adapterIdentity}\u0000${executor.processIncarnation}`], 'the fenced incarnation must be recorded');
+
+    // A second fence for the same adapter/incarnation at a higher generation is still refused.
+    const higher = { ...executor, fencingGeneration: fence.fencingGeneration + 1 };
+    assert.equal(await port.fenceAttemptRecipient(claim.claimId, higher), null, 'a prior fence raises the generation and refuses a repeated incarnation');
+
+    // The fence is usable: proven-not-dispatched settles the uncertain attempt through it.
+    const task = await port.loadTask(context.taskId);
+    assert.ok(task);
+    const reconciliation = createTestUncertainReconciliationReceiptV02(createTestRepositoryOutcomeReceiptV02(claim, attempt, context, { outcome: 'uncertain' }), claim, attempt, context, {
+      disposition: 'proven-not-dispatched',
+      fencedRecipientIdentity: fence.recipientIdentity,
+      fencingGeneration: fence.fencingGeneration,
+      fencingProof: fence.proofRef,
+      adapterEvidenceRefs: fence.adapterEvidenceRefs,
+      evidenceRefs: [...fence.adapterEvidenceRefs, fence.proofRef],
+      expectedCurrentTaskStateVersion: task.stateVersion,
+      expectedCurrentControlVersion: snapshot.controlVersion,
+    });
+    assert.deepEqual(await port.reconcileUncertain(reconciliation), { outcome: 'settled', receiptId: reconciliation.reconciliationId });
   } finally {
     rmSync(baseDir, { recursive: true, force: true });
   }

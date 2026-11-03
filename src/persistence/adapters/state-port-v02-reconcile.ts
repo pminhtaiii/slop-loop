@@ -57,7 +57,8 @@ function reconciliationContext(
           ...(evidence.observedUsage ? { trustedObservedUsage: evidence.observedUsage } : {}),
         }
       : {}),
-    ...(fence ? { trustedFencingProof: { fencedRecipientIdentity: fence.fencedExecutorIdentity, fencingGeneration: fence.fencingGeneration, proofRef: fence.proofRef } } : {}),
+    // The receipt names the pre-fence recipient; the raised generation is carried separately.
+    ...(fence ? { trustedFencingProof: { fencedRecipientIdentity: fence.recipientIdentity, fencingGeneration: fence.fencingGeneration, proofRef: fence.proofRef } } : {}),
   };
 }
 

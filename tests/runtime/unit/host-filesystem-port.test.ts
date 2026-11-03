@@ -7,7 +7,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { WorkspaceFilesystemPort } from '../../../src/foundation/host-filesystem-port.ts';
+import { WorkspaceFilesystemPort, readProbe } from '../../../src/foundation/host-filesystem-port.ts';
 
 function withWorkspace(run: (root: string) => Promise<void>): () => Promise<void> {
   return async () => {
@@ -69,6 +69,44 @@ test(
     await assert.rejects(() => port.stat('../etc/passwd'), /WORKSPACE_ESCAPE/, 'a non-canonical path never reaches the filesystem');
   }),
 );
+
+test('workspace filesystem port: a symlinked root still resolves containment', async t => {
+  const real = mkdtempSync(join(tmpdir(), 'uc03-fs-port-real-'));
+  const link = join(mkdtempSync(join(tmpdir(), 'uc03-fs-port-link-')), 'root');
+  try {
+    mkdirSync(join(real, 'src'));
+    writeFileSync(join(real, 'src', 'a.py'), 'x = 1\n');
+    // A Windows junction needs no elevation; elsewhere a plain directory link.
+    try {
+      symlinkSync(real, link, process.platform === 'win32' ? 'junction' : 'dir');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'EPERM') return t.skip(`cannot create a link without elevation: ${String(error)}`);
+      throw error;
+    }
+
+    const port = new WorkspaceFilesystemPort({ root: link });
+    assert.equal(await port.realpath('src/a.py'), 'src/a.py', 'the canonicalized root must contain its own files');
+    assert.equal(await port.readTextFile('src/a.py'), 'x = 1\n');
+  } finally {
+    rmSync(link, { recursive: true, force: true });
+    rmSync(real, { recursive: true, force: true });
+  }
+});
+
+test('workspace filesystem port: the size probe keeps reading through short reads', async () => {
+  const source = Buffer.from('0123456789');
+  const fakeRead = async (buffer: Buffer, offset: number, length: number, position: number): Promise<number> => {
+    const bytesRead = Math.min(length, 2, source.length - position);
+    source.copy(buffer, offset, position, position + bytesRead);
+    return bytesRead;
+  };
+
+  const probe = Buffer.alloc(8);
+  assert.equal(await readProbe(probe, fakeRead), 8, 'short reads must accumulate to the full probe window');
+  assert.equal(probe.toString('utf8'), '01234567');
+
+  assert.equal(await readProbe(Buffer.alloc(12), fakeRead), 10, 'EOF stops the loop and reports the true length');
+});
 
 test(
   'workspace filesystem port: the revision digest is deterministic and content-bound',

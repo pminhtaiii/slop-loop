@@ -147,6 +147,10 @@ export class DurableStatePortV02 implements StatePortV02 {
     return control.fenceClaimRecipient(this.statePort, claimId, recipient);
   }
 
+  fenceAttemptRecipient(claimId: string, recipient: ExecutorIdentityV02): Promise<FenceProofV02 | null> {
+    return control.fenceAttemptRecipient(this.statePort, claimId, recipient);
+  }
+
   publishRecoveryEvidence(taskId: string, evidence: RecoveryEvidenceV02): Promise<boolean> {
     return control.publishRecoveryEvidence(this.statePort, taskId, evidence);
   }

@@ -30,6 +30,22 @@ test('exceeding timeoutMs kills the child and resolves with timedOut', async () 
   assert.ok(Date.now() - started < 5_000);
 });
 
+test('a child that ignores SIGTERM is escalated to SIGKILL and still settles', { skip: process.platform === 'win32' }, async () => {
+  // Node cannot catch SIGTERM on Windows: libuv maps it to TerminateProcess, so the escalation is untestable there.
+  const started = Date.now();
+  const script = "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)";
+  const result = await structuredSpawn(NODE, ['-e', script], { ...OPTS, timeoutMs: 200 });
+
+  assert.equal(result.timedOut, true);
+  assert.notEqual(result.exitCode, 0);
+  assert.ok(Date.now() - started < 5_000);
+});
+
+test('a child exiting before reading a large stdin does not crash on EPIPE', async () => {
+  const result = await structuredSpawn(NODE, ['-e', 'process.exit(0)'], { ...OPTS, stdin: 'x'.repeat(4 * 1024 * 1024) });
+  assert.equal(result.exitCode, 0);
+});
+
 test('output beyond maxOutputBytes is capped on a UTF-8 boundary and flagged truncated', async () => {
   const script = "process.stdout.write('a'.repeat(90) + '€'.repeat(10)); process.stderr.write('e'.repeat(500))";
   const result = await structuredSpawn(NODE, ['-e', script], { ...OPTS, maxOutputBytes: 100 });
