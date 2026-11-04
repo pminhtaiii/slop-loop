@@ -1,6 +1,6 @@
 # Validation Guide: Observable Python Repair Evaluation
 
-Planning-only guide. Commands for new files below are **future commands**, unavailable until their named tasks are implemented. No real provider/container invocation is authorized by this guide. See [release gates](contracts/decisions.md).
+Commands below are implemented for the controlled tier where a task has been delivered; T011, T017 and T019–T034 have no runnable command. No real provider/container invocation is authorized by this guide. See [release gates](contracts/decisions.md).
 
 ## Current Planning Checks
 
@@ -51,14 +51,16 @@ Expected evidence: baseline pytest failure; model-generated diagnosis/plan; actu
 
 ## Faults and Comparison (T012–T014)
 
-Future commands:
+Implemented controlled checks (source; emitted counterparts after `pnpm run build`):
 
 ```powershell
 node --test tests/runtime/integration/evaluation-failures.test.ts tests/runtime/integration/evaluation-comparison.test.ts
-node dist/src/cli/evaluate.js compare --baseline <attempt-id> --candidate <attempt-id>
+node --test tests/runtime/unit/evaluation-diagnostics.test.ts tests/runtime/unit/workflow-comparison.test.ts
 ```
 
-Required fault witnesses: missing config/provider, denied tool, malformed model output, test regression, stale/rejected approval, uncertain dispatch/effect, unknown metrics, missing grader and altered final snapshot. Assert returned status **and** persisted state/no downstream effects. Keep controlled/real tiers explicit. Two real experiments use fresh tasks with same initial case/repository/grader; changed configuration is displayed. Mismatched case/grader refuses comparison; unknown cost never becomes zero.
+Workflow comparison is library-only: `compareWorkflowEvaluations(baseline, candidate, { strictSameConfig })` in `eval/uc03/compare.ts`. The existing `node dist/eval/uc03/compare.js --baseline <file> --candidate <file> [--output <file>]` entry still calls only the legacy `compareEvaluations`, so no CLI command compares workflow reports yet. Diagnostics are produced by `createEvaluationDiagnostic` (`src/runtime/evaluation-diagnostics.ts`) and attached to non-complete `runUC03Graph` results (`src/uc03/graph.ts`). The workflow report stores one bounded `diagnostic` string composed from that record's bounded component/attribution/reason codes; its evidence refs and milestone kinds are still dropped at that boundary. Comparison identity guards treat an unobserved (`null`) repository, grader or pinned initial repository as **unverified**, which refuses the pair — two not-run reports cannot compare as compatible. The console's comparison port is injected by tests only: no production adapter maps the page's `guarded`/`strict` selection onto `strictSameConfig` yet.
+
+Required fault witnesses: missing config/provider, denied tool, malformed model output, test regression, stale/rejected approval, uncertain dispatch/effect, unknown metrics, missing grader and altered final snapshot. Assert returned status **and** persisted state/no downstream effects. Keep controlled/real tiers explicit. Every listed witness here is controlled; the two-real-attempt comparison half is not run because T011 is not-run. Two real experiments would use fresh tasks with same initial case/repository/grader; changed configuration is displayed. Mismatched case/grader refuses comparison; unknown cost never becomes zero.
 
 Expected refusal/clarification/exhaustion cases are graded against their own safe-outcome/no-effect predicates. They can pass evaluation without completing a repair; only repair-success cases require the complete successful repair evidence chain.
 
@@ -66,11 +68,19 @@ Required report/CLI witness: expected C02 clarification satisfies its case predi
 
 ## Local Console (T015–T017)
 
-Future command: `node dist/src/cli/evaluate.js serve --profile local-flash --catalog local-cases`.
+Controlled server checks only (source; emitted counterparts after build):
 
-Open printed loopback URL; enter host-issued session token locally (never in URL). Select case, submit bug input, inspect progress, explicitly approve/reject the current presentation, submit bound continuation and inspect diff/checks/diagnostics/selection/suite/comparison. Repeat stale and double-submit requests; assert no extra provider call/patch. Test cross-origin/Host substitution, escaped hostile output and private-artifact access refusal. Record actual browser actions/results against exact candidate; API-only testing is not browser acceptance. No browser credential entry/config editor or arbitrary shell.
+```powershell
+node --test tests/runtime/unit/evaluation-console.test.ts tests/runtime/unit/evaluation-console-page.test.ts
+```
+
+No `serve` command exists yet: `src/cli/evaluate.ts` still exposes only the evaluation run grammar, and `createConsoleServer` (`src/runtime/console-server.ts`) is constructed by tests alone. The server binds `127.0.0.1`, requires exact `Host`/`Origin` and an `x-operator-token` header, and takes the UC-05 approval and comparison surfaces as injected ports. The page checks are string-level assertions on the rendered document, not a browser run.
+
+Once wired, the journey is: open the loopback URL; enter the host-issued session token locally (never in URL). Select case, submit bug input, inspect progress, explicitly approve/reject the current presentation, submit bound continuation and inspect diff/checks/diagnostics/selection/suite/comparison. Repeat stale and double-submit requests; assert no extra provider call/patch. Test cross-origin/Host substitution, escaped hostile output and private-artifact access refusal. T017 requires actual browser actions/results to be recorded against the exact candidate; API-only testing is not browser acceptance. T017 is **not run**: it depends on T011 (G-REAL) and no browser was driven. No browser credential entry/config editor or arbitrary shell.
 
 ## Acceptance and Handoff
+
+Recorded 2026-11-04 on `feat/uc03-diagnostics-comparison-console` (base HEAD `e80b7b9e`, 20 pre-existing uncommitted paths plus the five T018 documents). Observed: `node --test tests/runtime/unit/evaluation-diagnostics.test.ts` 13/13 pass; `tests/runtime/unit/workflow-comparison.test.ts` 12/12; `tests/runtime/integration/evaluation-failures.test.ts` 13/13; `tests/runtime/integration/evaluation-comparison.test.ts` 5/5; `tests/runtime/unit/evaluation-console.test.ts` 13/13; `tests/runtime/unit/evaluation-console-page.test.ts` 9/9; `tests/runtime/integration/evaluation-success.test.ts` 4/4; combined integration trio 22/22. Emitted counterparts after `pnpm run build`: eight unit files 78/78, three integration files 22/22. `pnpm run typecheck` exit 0; `pnpm run build` exit 0; `eslint src eval tests` and `prettier --check` over the changed paths exit 0. All tiers are controlled/mock; no provider, container or browser ran. The full runtime lane (`node scripts/ci/run-runtime-tests.mjs`, 91 emitted files, 571845ms) is **not clean**: one failure in `dist/tests/runtime/approvals/acceptance.test.js` (`{comparable:false}` vs expected `true`). That test runs two children of the identical command against verified-unchanged source; in this lane the first was killed at 240150ms (`exitStatus:null`, `signal:SIGTERM`) after reporting 263 of 283 checks, while the second completed the same command in 113856ms with 283/283 passing (matching the test's own `expectedCheckCount = 283`). Import tracing found zero transitive edges from those suites to anything this branch changed (0 hits over 108 source and 99 emitted files). The suites are healthy; the first, cold child alone exceeds the test's own 240s cap on this hardware, so the test is timing-sensitive here rather than impossible to pass, and no full-suite pass is claimed. T011 stays not-run (G-OWNERS/G-ROUTE/G-PROFILE/G-ISOLATION/G-APPROVAL unmet), T017 stays not-run (inherits T011), and suite acceptance stays `incomplete` (17 required, satisfied subset). T019–T034 remain planning/review only.
 
 After focused checks, run `pnpm validate:runtime`, contributor checks and context consistency per repository publication policy. Retain exact source/emission, image/profile/adapter/model/pricing/grader identities, commands/exit codes and actual/not-run criteria under ignored session. Update existing context through `update-context.mjs`; do not force-add local artifacts or fixtures. Existing UC-03 ledgers independently judge T024/T025/T028; no broad/full-suite/restart claims from a single successful case.
 

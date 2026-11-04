@@ -72,17 +72,17 @@
 **Goal**: Explain observed failures and compare experiments without hiding missing coverage.
 **Independent test**: SC-002–004 via controlled fault matrix plus two explicitly identified real attempts when admitted.
 
-- [ ] T012 [US2] Preserve safe stage/component diagnostics in src/runtime/evaluation-diagnostics.ts, src/uc03/graph.ts and tests/runtime/unit/evaluation-diagnostics.test.ts.
+- [x] T012 [US2] Preserve safe stage/component diagnostics in src/runtime/evaluation-diagnostics.ts, src/uc03/graph.ts and tests/runtime/unit/evaluation-diagnostics.test.ts.
   - **Dependencies**: T009.
   - **Owned Paths**: src/runtime/evaluation-diagnostics.ts; src/uc03/graph.ts; tests/runtime/unit/evaluation-diagnostics.test.ts.
   - **Acceptance Checks**: Section 5; preserve available milestones/refs through errors, bounded known component codes, unknown attribution/effects, no raw exceptions/secret payloads. Test provider/tool/state/approval/model-output failures separately from pytest/review failures; safe failures never fabricate root cause.
 
-- [ ] T013 [US2] Extend comparisons in eval/uc03/compare.ts and tests/runtime/unit/workflow-comparison.test.ts.
+- [x] T013 [US2] Extend comparisons in eval/uc03/compare.ts and tests/runtime/unit/workflow-comparison.test.ts.
   - **Dependencies**: T002, T009.
   - **Owned Paths**: eval/uc03/compare.ts; tests/runtime/unit/workflow-comparison.test.ts.
   - **Acceptance Checks**: Sections 4/5; differing config allowed only when suite, report contract version, execution mode, case set/order/digests, manifest/case cardinality, repository, grader and per-case expected outcomes all match; any failed guard refuses comparison; report all changed factors/confounding; strict option and legacy compatibility; unknown metrics stay unknown, waits/nonselection retain coverage. No statistical quality claim from one pair.
 
-- [ ] T014 [US2] Verify failure attribution and two-run evidence in tests/runtime/integration/evaluation-failures.test.ts and tests/runtime/integration/evaluation-comparison.test.ts.
+- [ ] T014 [US2] Verify failure attribution and two-run evidence in tests/runtime/integration/evaluation-failures.test.ts and tests/runtime/integration/evaluation-comparison.test.ts. Controlled-tier half (both integration files, including the two-run identity-refusal guards) is implemented and passing; the two-real-attempt requirement remains not-run because T011 is not-run.
   - **Dependencies**: T010, T011, T012, T013.
   - **Owned Paths**: tests/runtime/integration/evaluation-failures.test.ts; tests/runtime/integration/evaluation-comparison.test.ts.
   - **Acceptance Checks**: All US2 scenarios; controlled absent-provider/tool-denial/malformed-output/test-regression/stale-approval/uncertain-effect/unknown-usage cases and explicit tiers; no forbidden effects. Expected incomplete/refusal grades pass only their safe predicates, never verified repair. Two compatible real attempts use fresh tasks but identical initial case/repo/grader; capture actual outcomes even if repair fails. Selected pass/full-suite incomplete shown. Required not-run never auto-skips/passes.
@@ -92,12 +92,12 @@
 **Goal**: Interactive local operation on the same service.
 **Independent test**: SC-005, controlled browser contract tests and actual admitted first-route browser journey. UI development can use controlled service injection; real acceptance follows G-REAL.
 
-- [ ] T015 [US3] Implement protected local server in src/runtime/console-server.ts and tests/runtime/unit/evaluation-console.test.ts.
+- [x] T015 [US3] Implement protected local server in src/runtime/console-server.ts and tests/runtime/unit/evaluation-console.test.ts.
   - **Dependencies**: T009, T012, T013.
   - **Owned Paths**: src/runtime/console-server.ts; tests/runtime/unit/evaluation-console.test.ts.
   - **Acceptance Checks**: Section 6 endpoints including public custom bug, bound answers and explicit direction issuance; loopback/token/exact origin-host, idempotency/version/CAS, bounds/artifact allowlist. Cross-origin/rebinding/traversal/forged decision denies before owner/tool effects. No credentials/prompts/private artifacts served. UC-05 presentation/decision/control remain authoritative; answers cannot resume.
 
-- [ ] T016 [US3] Build local operator page in src/runtime/console-page.ts and tests/runtime/unit/evaluation-console-page.test.ts.
+- [x] T016 [US3] Build local operator page in src/runtime/console-page.ts and tests/runtime/unit/evaluation-console-page.test.ts.
   - **Dependencies**: T015.
   - **Owned Paths**: src/runtime/console-page.ts; tests/runtime/unit/evaluation-console-page.test.ts.
   - **Acceptance Checks**: US3 journeys; prepared-case/bug submission, readiness, milestones, explicit decisions/directions, safe diff/tests/diagnostics/usage, selection-vs-suite and comparison. Escaped text rendering, no browser authority/config editor, no double-submit effects, accessible labeled controls and keyboard operation.

@@ -356,6 +356,7 @@ test('driver maps a paused real graph route to a validated waiting-approval obse
     'effects',
     'expectedWait',
     'graderDigest',
+    'initialRepositoryDigest',
     'limitations',
     'repositoryId',
     'returnedModel',

@@ -5,6 +5,7 @@ import {
   EVALUATION_CASE_IDS,
   WORKFLOW_EVALUATION_VERSION,
   type EvaluationCaseId,
+  type EvaluationOutcome,
   type WorkflowBlock,
   type WorkflowCaseResult,
   type WorkflowDriver,
@@ -83,6 +84,7 @@ const observationKeys = [
   'runId',
   'returnedModel',
   'graderDigest',
+  'initialRepositoryDigest',
   'workflowOutcome',
   'expectedWait',
   'blocked',
@@ -116,6 +118,7 @@ export function validateWorkflowObservation(data: unknown): WorkflowObservation 
     runId: optionalIdentifier(data['runId']),
     returnedModel: optionalIdentifier(data['returnedModel']),
     graderDigest: data['graderDigest'] === null ? null : workflowDigest(data['graderDigest']),
+    initialRepositoryDigest: data['initialRepositoryDigest'] === null ? null : workflowDigest(data['initialRepositoryDigest']),
     workflowOutcome: workflowOutcome as WorkflowLifecycle,
     expectedWait: expectedWait as WorkflowWait | null,
     blocked: blocked as WorkflowBlock | null,
@@ -224,7 +227,9 @@ const workflowCaseKeys = [
   'pricingDigest',
   'adapterVersions',
   'graderDigest',
+  'initialRepositoryDigest',
   'workflowOutcome',
+  'expectedOutcome',
   'grade',
   'gradeReason',
   'effects',
@@ -244,6 +249,8 @@ function parseWorkflowCase(entry: unknown, tier: WorkflowTier, configDigest: str
   const effects = entry['effects'];
   const usage = entry['usage'];
   if (typeof workflowOutcome !== 'string' || !WORKFLOW_LIFECYCLES.has(workflowOutcome)) invalidWorkflow();
+  // The pinned expectation is the only per-case criteria identity a report carries.
+  if (typeof entry['expectedOutcome'] !== 'string' || !OUTCOMES.has(entry['expectedOutcome'])) invalidWorkflow();
   if (typeof grade !== 'string' || !WORKFLOW_GRADES.has(grade)) invalidWorkflow();
   if (typeof gradeReason !== 'string' || !WORKFLOW_REASONS.has(gradeReason)) invalidWorkflow();
   if (typeof effects !== 'string' || !WORKFLOW_EFFECTS.has(effects) || typeof usage !== 'string' || !WORKFLOW_USAGES.has(usage)) invalidWorkflow();
@@ -268,7 +275,9 @@ function parseWorkflowCase(entry: unknown, tier: WorkflowTier, configDigest: str
     pricingDigest: String(entry['pricingDigest']),
     adapterVersions: adapterVersions.map((value: unknown): string => workflowIdentifier(value)),
     graderDigest: entry['graderDigest'] === null ? null : workflowDigest(entry['graderDigest']),
+    initialRepositoryDigest: entry['initialRepositoryDigest'] === null ? null : workflowDigest(entry['initialRepositoryDigest']),
     workflowOutcome: workflowOutcome as WorkflowLifecycle,
+    expectedOutcome: entry['expectedOutcome'] as EvaluationOutcome,
     grade: grade as WorkflowGrade,
     gradeReason: gradeReason as WorkflowReason,
     effects: effects as WorkflowEffects,

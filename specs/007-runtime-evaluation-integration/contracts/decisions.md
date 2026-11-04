@@ -8,6 +8,8 @@ User selected a real issue-to-fix/test pipeline, interactive interface and evide
 
 On 2026-11-01 (Asia/Saigon) the user directed implementation of Phases 1–3. That is the G-AUTH release for exactly **T001–T011** and nothing else. It releases source and controlled-tier tests only: no paid provider call, no container execution, no real-owner adapter delivery, no console, no comparison and no merge are released. T004/T010 controlled checks are not T024/G-ISOLATION evidence; T006 controlled seams are not G-OWNERS; T011 controlled CLI evidence is not G-REAL/SC-001. Every other gate above remains unmet.
 
+On 2026-11-04 (Asia/Saigon) the user directed implementing **the remaining tasks of this feature**, explicitly allowing T011 to be left incomplete. That is a new G-AUTH release for exactly **T012–T018** (diagnostics, comparison, console server/page, and their controlled witnesses plus the T018 context refresh) and nothing else. It releases source and controlled-tier tests only, on the same terms as the 2026-11-01 batch: no paid provider call, no container execution, no real-owner adapter delivery, no real first-repair claim and no merge. T011 stays unchecked because G-REAL is unmet; T014 and T017 inherit T011 and therefore cannot reach their real-tier acceptance, only their controlled portion. **T019–T034 are not released**: the 2026-11-04 host-composition amendment remains planning/review only, its proposed contract still needs exact Tai/Thanh Tan/Trong Tan agreement, and this direction does not substitute for that signoff.
+
 ## Design Dispositions
 
 - Reuse graph/evaluator; add missing generation, bridge and truthful evidence.
@@ -22,7 +24,7 @@ On 2026-11-01 (Asia/Saigon) the user directed implementation of Phases 1–3. Th
 | Gate | Required evidence / accountable owner | Scope affected |
 |---|---|---|
 | G-PLAN | Automated validation + independent Standards/Architecture and Testability/Edge Cases; no open P0/P1 | Design quality only |
-| G-AUTH | Explicit exact implementation batch release | T001–T011 released only as recorded above; all other implementation remains unreleased |
+| G-AUTH | Explicit exact implementation batch release | T001–T011 (2026-11-01) and T012–T018 (2026-11-04) released as recorded above; T019–T034 and all other implementation remain unreleased |
 | G-OWNERS | Tai/Thanh Tan/Trong Tan confirm exact v0.2 production capabilities, evidence writer, atomic accounting, approval presentation/continuation and public seams; pinned delivery revisions | Real composition; no duplicate owner implementation |
 | G-ROUTE | Fresh evidence closes relevant UC-03 T026/T066 recorded gaps; old ledgers own acceptance | Real route/reused claims |
 | G-PROFILE | Operator credentials/config, conservative billable/pricing bounds, image/platform/limits, protected artifact profile and conforming adapters | Corresponding real operations |

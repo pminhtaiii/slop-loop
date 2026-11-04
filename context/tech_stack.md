@@ -33,6 +33,8 @@ No choice is recorded yet for:
 - the persistence and LangGraph checkpoint backend;
 - the concrete Docker isolation configuration;
 - deployment and supported operating environments;
-- the evaluation harness and reporting format.
+- the evaluation harness and reporting format; a controlled-tier `uc03-workflow-evaluation/1` report contract exists in `eval/uc03/`, but the harness and reporting choice is not closed by it;
 
 Treat these as open until an implementation decision is explicitly recorded. Do not infer them from the existing helper scripts or tests.
+
+Feature 007 Phase 4–5 added no dependency. Workflow comparison is a pure function in `eval/uc03/compare.ts`, diagnostics reuse the existing `src/foundation/telemetry.ts` sanitizers, and the local console uses the built-in `node:http` server; there is still no CLI or service framework choice, and the console is not exposed through a CLI command.

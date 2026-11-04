@@ -43,6 +43,7 @@ function observation(overrides: Partial<WorkflowObservation> = {}): WorkflowObse
     runId: 'run-1',
     returnedModel: 'model-1',
     graderDigest: DIGEST,
+    initialRepositoryDigest: DIGEST,
     workflowOutcome: 'COMPLETED',
     expectedWait: null,
     blocked: null,
