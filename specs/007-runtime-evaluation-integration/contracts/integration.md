@@ -2,6 +2,8 @@
 
 Proposed host-side integration, not a new network execution service. Canonical v0.1/v0.2 owner authority remains mandatory; version names integration records only.
 
+The 2026-11-04 [host-composition proposal](host-composition.md) defines explicit v0.2 production consumer migration and missing host/owner seams for US1. Its T019 owner review and separate correction release are prerequisites; this integration record grants no implicit production compatibility.
+
 ## 1. Admission and Lifecycle
 
 `startExperiment({source, profileId, idempotencyKey}) -> AttemptView`: source is exactly `{kind: catalog, caseIds}` or `{kind: bug, repositoryId, checkSetId, bugInput}`. Repository/profile/check-set IDs must be configured; no browser filesystem path/executable. Host resolves catalog or validates public input, allocates experiment/attempt and fresh per-case task/run/workspace only after complete intake, computes actual snapshot digests and persists owner state before effects. Fixture placeholder digests are not authority. Catalog public task/grader bindings are immutable. Custom source records submission identity/digest, is exploratory/ungraded and cannot borrow catalog acceptance.

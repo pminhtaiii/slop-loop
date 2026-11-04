@@ -30,3 +30,22 @@ Usage records coder/reviewer input/output/cache/billable tokens, observed/conser
 Coverage retains every required manifest case. Selected pass with omitted required cases means selected pass/suite incomplete. Historical reports retain their original evidence tier and contract.
 
 Exploratory custom runs have no catalog acceptance coverage: caseGrade is not-run/unpinned-criteria, suiteAcceptance is not-applicable, workflow verification remains separately visible. A catalog attempt cannot be relabeled exploratory to obtain an acceptance pass. Answers that materially change frozen public criteria stop that attempt as non-comparable; operator must explicitly register a new case version/experiment. Original evidence and task accounting remain retained; no automatic retry as a new task.
+
+## Proposed host-composition supplement
+
+These records are immutable identity/observation references, not another task ledger. Exact public owner signatures require T019 agreement; [host contract](contracts/host-composition.md) specifies behavior.
+
+| Record | Required binding | Validation / lifecycle |
+|---|---|---|
+| HostDelivery | capability kind, explicit contract version, revision, profile/config digest, owner conformance refs, adapter | Trusted host resolves; duplicates, stale bindings, missing methods or controlled delivery deny real readiness |
+| HostReadiness | controlled/production tier, component statuses/reason codes, delivery/profile identities | Side-effect-free assembly; only complete accepted production delivery may enable execution admission; no credential payload |
+| GuardedReadBinding | capability/task/workspace/run/repository identity, current control generation, policy, finite bounds | Fresh owner-fenced read authorization before one closure; pause/fence revokes subsequent reads |
+| MeasuredHostSnapshot | existing TrustedHostSnapshot plus configured expected inventory | Actual revision/check/test measurements; partial/stale observation invalid, never fabricated from task input |
+| BaselineDelivery | canonical content/digest, durable acknowledgement, load capability | UC-04-owned immutable evidence; uncertain write blocks until owner lookup; same identity/content on restore |
+| RegisteredActionObservation | task/run/action digest, measured facts/elements refs, revision/profile, authority generation | Host-only registration; unknown/changed/expired lookup unavailable; fresh observation on continuation |
+| RetainedRepositoryBaseline | configured immutable source/manifest identity, admitted file paths/digests/byte bounds, task/workspace/repository/base revision | Host-owned original source content separate from UC-04 verification evidence; present before edits, revalidated on lookup/continuation, complete diff requires retained bytes |
+| MaterialReplanOperation | full request identity, canonical candidate FixPlan payload/digest, prior task/control/plan/count, explicit direction, owner receipt/result state | UC-04 transaction, UC-05 direction validation; payload/schema/digest checked before mutation, accepted advances once, same replay same committed state/receipts, conflicting ID denies, uncertain blocks |
+
+Provider lifecycle stays canonical `admission -> claim -> beginAttempt -> outcome/uncertainty`, owned at model ingress. Graph generation forwards authority without another claim. Material replan is a separate owner transaction, not a provider/repository admission. Its accepted transition invalidates prior approval/review/edit authority and enters renewed plan approval; at most three material replans, with no count reset on continuation. Command-view facts come from one measured snapshot shared by owner admission and executor, with mismatches denied before attempts.
+
+Coder inspection observations are bounded sanitized evidence/check-result references used to construct the next owner-bound request; each new model turn gets a distinct current admission. Explicit clarification persists bound questions and waits; stop/exhaustion cannot complete a repair. Reviewer uses the same canonical provider lifecycle with a distinct reviewer request/role; raw transport without durable attempt/outcome is unavailable on the production route.
