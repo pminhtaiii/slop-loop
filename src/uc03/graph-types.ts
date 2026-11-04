@@ -21,7 +21,9 @@ import type {
   VerificationResult,
 } from '../contracts/foundation/uc03.ts';
 import type { ExecutionGuardV02 } from '../foundation/execution-guard.ts';
-import type { CoderAgent, CoderBudget } from './agent.ts';
+import type { CoderAgent, CoderBudget, UC03CoderAdmission } from './agent.ts';
+
+export type { UC03CoderAdmission } from './agent.ts';
 import type { BaselineEvidenceWriter, InvestigationConfigPort, TrustedHostExpectedContext, TrustedHostPort } from './investigation.ts';
 import type { RepairPatchProposal, TrustedReplanDirection } from './repair.ts';
 import type { FinalReport, Milestone } from './report.ts';
@@ -39,6 +41,9 @@ export interface UC03GraphPorts {
   readonly hostAuthority?: TrustedHostPort | undefined;
   readonly configPort?: InvestigationConfigPort | undefined;
 }
+
+/** v0.2 production types; additive, never widens the controlled surface above. */
+export * from './graph-types-v02.ts';
 
 /** Route callers must pass the owner-issued provider admission with the exact review request. */
 export interface UC03ReviewerPort {
@@ -70,12 +75,6 @@ export interface UC03PatchAdmissionRequest {
 export interface UC03RepositoryAdmission {
   readonly context: RepositoryAdmissionContextV02;
   readonly trustedContext: RepositoryAdmissionTrustedContextV02;
-}
-
-export interface UC03CoderAdmission {
-  readonly request: ProviderRequest;
-  readonly context: ProviderAdmissionContextV02;
-  readonly trustedContext: ProviderAdmissionTrustedContextV02;
 }
 
 export interface UC03CoderAdmissionRequest {
