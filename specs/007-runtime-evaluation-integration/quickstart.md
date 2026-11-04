@@ -73,3 +73,37 @@ Open printed loopback URL; enter host-issued session token locally (never in URL
 ## Acceptance and Handoff
 
 After focused checks, run `pnpm validate:runtime`, contributor checks and context consistency per repository publication policy. Retain exact source/emission, image/profile/adapter/model/pricing/grader identities, commands/exit codes and actual/not-run criteria under ignored session. Update existing context through `update-context.mjs`; do not force-add local artifacts or fixtures. Existing UC-03 ledgers independently judge T024/T025/T028; no broad/full-suite/restart claims from a single successful case.
+
+## Host-composition correction validation — proposed T019–T034
+
+The 2026-11-04 request authorizes planning/review, not the following future runtime checks. First obtain T019 owner agreement, an explicit correction implementation release, and the accepted public deliveries named in [host contract](contracts/host-composition.md). Test-only deliveries keep the controlled label even when adapter code has a real provenance path.
+
+Future focused source commands after the files exist:
+
+```powershell
+node --test tests/runtime/contract/uc03-production-ports.test.ts tests/runtime/unit/guarded-read-capability.test.ts tests/runtime/unit/trusted-host-snapshot.test.ts tests/runtime/contract/baseline-evidence-adapter.test.ts tests/runtime/unit/host-action-context.test.ts tests/runtime/contract/command-view-owner-binding.test.ts
+node --test tests/runtime/unit/uc03-coder-v02.test.ts tests/runtime/integration/uc03-v02-route.test.ts tests/runtime/contract/uc03-host-bootstrap.test.ts tests/runtime/unit/uc03-host-cli.test.ts tests/runtime/integration/uc03-host-pipeline.test.ts
+node --test tests/runtime/unit/repository-baseline-source.test.ts tests/runtime/unit/repository-diff.test.ts tests/runtime/unit/reviewer-v02-accounting.test.ts
+pnpm run typecheck
+pnpm run build
+node --test dist/tests/runtime/integration/uc03-v02-route.test.js dist/tests/runtime/contract/uc03-host-bootstrap.test.js dist/tests/runtime/integration/uc03-host-pipeline.test.js
+```
+
+Also run the emitted counterparts of every focused source test listed above and existing affected legacy source/emitted suites; retain commands/exits. The sole full local runtime/contributor publication gate runner remains `publish` under repository policy.
+
+| Witness | Required observed result | Task |
+|---|---|---|
+| Complete/missing/stale owner delivery | Complete controlled assembly labeled controlled; missing/stale production assembly unavailable, zero mutation/dispatch/allocation | T020/T028 |
+| Read during pause/fence race | Closure never runs on stale authority; repository containment/redaction still enforced | T021 |
+| Real snapshot and baseline restore | Measured identities plus exact durable ack/lookup; drift/forged ack/uncertainty blocks | T022/T023 |
+| Changed/unknown registered action | No reconstructed policy facts or reused decision; explicit new bound authority needed | T024 |
+| Nonliteral correct view vs each mismatch | Correct measured values accepted by owner fixture; mismatch yields no executor call | T025 |
+| Provider and coder test action | Exact fourth context forwarded; one claim/attempt/charge; independent per-check repository admission | T026 |
+| Explicit material replan/replay/race/exhaustion | Candidate payload/digest checked before commit; one durable charge/current transition; same replay same committed state/receipts, changed content/digest mismatch/loser denied, fourth refused, uncertain commit blocks | T027 |
+| CLI and full controlled traversal | Real bootstrap/graph/evaluator used; explicit decisions/directions; C02 selected pass/task paused versus C01 pending; protected sentinels intact | T029/T030 |
+| Recovery lacks proof | Unknown start/unfenced closure/unsupported patch reconciliation stays blocked, no repeated effect | T028/T030 |
+| Retained source and actual diff | Original source bytes available after edits/continuation; changed/deleted/added files measured; wrong base/missing source/partial manifest refuses | T033/T032 |
+| Inspect loop, clarification and stop | Observed tool result reaches next freshly admitted request; explicit wait makes zero calls; stop/exhaustion withholds completion | T026/T030 |
+| Reviewer durable chain | Distinct reviewer role/current context, exactly one claim/attempt/outcome; stale/fenced zero transport, possible-dispatch timeout charged uncertain/no replay | T034/T030 |
+
+T031 records this evidence without accepting original UC-03 findings automatically. For a real attempt, separately confirm current G-OWNERS/G-PROFILE/G-ROUTE, then obtain execution release and run original T024 guard-composed containment and T025 actual approvals on the exact candidate/profile. T011/UC-03 T028 require actual provider/tools/state/gate/reviewer and independent final-snapshot grade, with one successful repair. Earlier direct Docker probes or local durable handoff tests are not these proofs. Missing real prerequisites are not-run/nonzero. Retain ignored evidence; do not force-add fixtures or local verification archives.

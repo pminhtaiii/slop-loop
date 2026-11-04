@@ -1,7 +1,7 @@
 # Implementation Plan: Observable Python Repair Evaluation
 
 **Branch**: `feat/uc03-evaluation-integration-plan` | **Date**: 2026-11-01 | **Spec**: [spec.md](spec.md)
-**Status**: Planning only; [decisions](contracts/decisions.md) govern release.
+**Status**: Original controlled release remains scoped to T001–T011. Host-composition remediation T019–T034 is proposed/planning only; [decisions](contracts/decisions.md) govern release.
 
 ## Summary
 
@@ -84,3 +84,37 @@ Reviewable local profile, not approved production defaults: 24 total coder+revie
 ## Complexity Tracking
 
 No new workflow engine, storage system, generic provider layer or frontend framework. Versioned report is needed because old reports assert mock-only verification. Shared experiment service prevents duplicate CLI/UI authority/effects.
+
+## Targeted Host-Composition Plan — 2026-11-04
+
+**Planning branch/base**: `feat/uc03-host-composition-plan`, development `d2f953239b658b2b282d9e41523e819d9785fd49`. Sources match the investigated `67646d8` candidate for `src/` and `specs/`; this is source inspection, not fresh runtime acceptance. Template resolution and setup reuse this feature; original task IDs and checked evidence remain intact.
+
+### Design choices and boundaries
+
+Use explicit versioned production graph/coder entry types and migrate production consumers to v0.2. Retain the existing v0.1 controlled entry and tests until the new route has conformance coverage. No dual-surface production object, optional-context overload, cast to v0.1, fallback `reserve`/`settle`, or provenance relabel closes a gap. The proposed additive host supplement in [host-composition](contracts/host-composition.md) requires owner review before implementation; canonical owner APIs are not amended by this planning request.
+
+The host bootstrap consumes pinned owner deliveries and constructs only Tai-owned foundation/host components. UC-04 supplies durable baseline evidence, current task/control/accounting authority and atomic replan acceptance. UC-05 supplies real policy/approval presentation, decision, control and continuation capability. Existing local durable adapters/recovery helpers are candidates, never proof of these deliveries. The approval controls' non-mock refusal remains intact until UC-05 separately releases a conforming real path.
+
+### Execution order
+
+1. **T019 contract prerequisite**: obtain review/signoff of the exact supplemental capabilities, owner revisions and migration boundaries. This is a future release prerequisite, not signoff claimed by independent contributor review. A changed public owner contract receives targeted owner amendment/review first.
+2. **T020–T025 foundations**: typed versioned production seams; read mediation; trusted snapshot producer; durable evidence consumer; observed action context; coherent command-view identity. Controlled test deliveries are permitted only after explicit implementation release and stay labeled controlled. Owner adapters remain external prerequisites.
+3. **T026/T034/T027 consumer migration**: coder forwards full provider context and loops through bounded inspect observations into freshly admitted next turns; clarification/stop have explicit outcomes. Reviewer T034 uses the canonical model ingress instead of raw transport. Only HostModelPortV02 claims/begins/settles each coder/reviewer provider attempt; graph nodes do not preclaim. Coder run-check obtains per-check repository admission. Repair retains exact current receipts. Material replan uses an explicit owner transaction, never legacy reserve mapped to a provider/repository claim.
+4. **T028 bootstrap**: validate pinned identities and every required capability, then construct Foundation ports, explicit graph config/resolvers and a side-effect-free readiness result. Only admitted execution allocates/initializes the workspace via existing service lifecycle; assembly/preflight performs no provider call, command, patch or task mutation.
+5. **T029 CLI wiring / T030 controlled proof**: trusted operator bootstrap, actual graph/evaluator, explicit pause/control/continuation, fault matrix and source/emitted conformance. This is the smallest controlled integration milestone; it is not SC-001.
+6. **T031 correction handoff**: record exact closure evidence for the new criteria and cross-reference original UC-03 findings; do not change old ledger status without its own acceptance evidence. T011 then requires fresh G-OWNERS/G-PROFILE/G-ISOLATION/G-APPROVAL/G-ROUTE and separately authorized execution before one actual successful repair can satisfy SC-001. Console/restart/full-suite remain separate.
+
+### Planned paths
+
+| Concern | Principal source/test paths |
+|---|---|
+| Versioned production surface | `src/uc03/graph-types-v02.ts`, `graph-v02.ts`, `agent-types.ts`, `graph-generation.ts`; `tests/runtime/contract/uc03-production-ports.test.ts` |
+| Read and snapshot producers | `src/foundation/guarded-read-capability.ts`, `src/runtime/trusted-host-snapshot.ts`; matching unit tests |
+| Owner evidence consumption | `src/runtime/baseline-evidence-adapter.ts`; `tests/runtime/contract/baseline-evidence-adapter.test.ts` |
+| Observed actions and view identity | `src/runtime/host-action-context.ts`, `src/foundation/docker-view-builder.ts`; matching contract/unit tests; UC-04 supplied view facts |
+| Consumer migration | existing `src/uc03/agent.ts`, `graph-generation.ts`, `graph-nodes.ts`, `graph-feedback.ts`, `investigation*.ts`, `verification*.ts`, `replan.ts`, `repair.ts`; focused route tests |
+| Assembly and CLI | `src/runtime/uc03-host-bootstrap.ts`, `evaluation-composition.ts`, `src/cli/evaluate.ts`, `src/cli/uc03.ts`; bootstrap, CLI and integration tests |
+
+No new dependency or persistence engine. Exact owned paths and serialization are in tasks.md. Pre/post-design governance check: placeholder constitution stays unratified; owner, production profile and real-execution prerequisites remain gates. Planning quality may pass while runtime readiness remains denied.
+
+T033 binds a retained immutable initial repository tree and its admitted-file manifest, distinct from durable verification evidence. It supplies original source bytes across continuation. T032 uses that source to implement the concrete read-only `inspectDiff` producer currently stubbed in ControlledRepositoryTools. Both join bootstrap T028 through T032; T034 reviewer ingress precedes shared route migration T027. Task numbering preserves the appended ledger history rather than implying execution order. Diff measurement must be current, complete, bounded and protected-content-safe before review/grading can work.
