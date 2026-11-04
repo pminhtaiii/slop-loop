@@ -61,6 +61,7 @@ function blockedObservation(caseId: string, host: WorkflowCaseHost | undefined, 
     runId: null,
     returnedModel: null,
     graderDigest: host && DIGEST.test(host.entry.grader.digest) ? host.entry.grader.digest : null,
+    initialRepositoryDigest: host && DIGEST.test(host.entry.initialRepositoryDigest) ? host.entry.initialRepositoryDigest : null,
     workflowOutcome: 'not-observed',
     expectedWait: host?.expectedWait ?? null,
     blocked: 'prerequisite-unavailable',
@@ -81,18 +82,22 @@ function observationFor(host: WorkflowCaseHost, result: Awaited<ReturnType<typeo
   const state = result.state;
   const outcome = lifecycleOf(result.outcome);
   const report = result.finalReport;
+  // The graph's structured diagnostic is flattened to this report's single string field.
+  // shortcut: evidenceRefs and milestone kinds are dropped here; carry them structurally when the report shape next versions.
+  const codes = result.diagnostic === undefined ? '' : ` [${result.diagnostic.component}/${result.diagnostic.attribution}/${result.diagnostic.reasonCode}]`;
   return {
     repositoryId: state?.repositoryId ?? host.task.repositoryId,
     taskId: state?.taskId ?? null,
     runId: state?.runId ?? null,
     returnedModel: null,
     graderDigest: host.entry.grader.digest,
+    initialRepositoryDigest: host.entry.initialRepositoryDigest,
     workflowOutcome: outcome,
     expectedWait: host.expectedWait,
     blocked: null,
     effects: state === null ? 'uncertain' : 'observed',
     usage: usageOf(report?.usage !== undefined, state !== null),
-    diagnostic: safeText(`UC-03 outcome ${outcome}${state ? ` at ${state.node}` : ''}`, MAX_DIAGNOSTIC),
+    diagnostic: safeText(`UC-03 outcome ${outcome}${state ? ` at ${state.node}` : ''}${codes}`, MAX_DIAGNOSTIC),
     artifacts: safeList([...(report?.evidence.verificationRefs ?? []), ...(report?.evidence.reviewRef ? [report.evidence.reviewRef] : [])]),
     limitations: safeList(report === undefined ? ['No authoritative final report was produced.'] : []),
   };

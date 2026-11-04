@@ -15,6 +15,8 @@ import { UC03StateAnnotation, type UC03GraphNode, type UC03GraphState } from './
 import { type UC03GraphConfig, type UC03GraphPorts, type UC03WorkflowResult } from './graph-types.ts';
 import { createReviewNode } from './graph-review.ts';
 import { handlePlanRejection } from './repair.ts';
+import { createEvaluationDiagnostic } from '../runtime/evaluation-diagnostics.ts';
+import { diagnosticForOutcome, stageForNode } from './graph-diagnostics.ts';
 
 export { UC03StateAnnotation };
 export type { UC03GraphConfig, UC03GraphPorts, UC03GraphState, UC03WorkflowResult };
@@ -194,6 +196,14 @@ export async function runUC03Graph(task: BugTask, ports: UC03GraphPorts, config?
       state: null,
       reasons: ['PRODUCTION_ADMISSION_REFUSED: All effectful ports must declare real provenance and satisfy production admission'],
       milestones: [],
+      diagnostic: createEvaluationDiagnostic({
+        stage: 'preflight',
+        component: 'workflow',
+        attribution: 'integration',
+        attributionConfidence: 'observed',
+        reasonCode: 'production-admission-refused',
+        limitations: ['Refusal observes port provenance declarations only; no effectful component was exercised'],
+      }),
     };
   }
 
@@ -208,6 +218,7 @@ export async function runUC03Graph(task: BugTask, ports: UC03GraphPorts, config?
       finalReport: output.finalReport,
       reasons: output.finalReport?.failureReasons ?? output.reasons ?? [],
       milestones: output.milestones ?? [],
+      ...diagnosticForOutcome(output),
     };
   } catch {
     let current: TaskState | null = null;
@@ -222,6 +233,18 @@ export async function runUC03Graph(task: BugTask, ports: UC03GraphPorts, config?
       state: current?.outcome === 'COMPLETED' ? null : current,
       reasons: ['UC-03 route stopped after an unconfirmed owner transition'],
       milestones: [],
+      diagnostic: createEvaluationDiagnostic({
+        stage: stageForNode(current?.node),
+        component: 'workflow',
+        attribution: 'unknown',
+        attributionConfidence: 'unknown',
+        reasonCode: 'unconfirmed-owner-transition',
+        evidenceRefs: current ? current.evidenceRefs : [],
+        limitations: [
+          'Route stopped on a thrown failure; the failing component and its effects are unproven',
+          ...(current ? [] : ['No authoritative owner state could be reloaded after the failure']),
+        ],
+      }),
     };
   }
 }

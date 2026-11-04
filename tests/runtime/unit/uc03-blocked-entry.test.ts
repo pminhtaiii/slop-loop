@@ -39,6 +39,7 @@ const BLOCKED: WorkflowObservation = {
   runId: null,
   returnedModel: null,
   graderDigest: null,
+  initialRepositoryDigest: null,
   workflowOutcome: 'not-observed',
   expectedWait: null,
   blocked: 'prerequisite-unavailable',

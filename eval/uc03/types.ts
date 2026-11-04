@@ -233,6 +233,8 @@ export interface WorkflowObservation {
   readonly runId: string | null;
   readonly returnedModel: string | null;
   readonly graderDigest: string | null;
+  /** Host-pinned initial repository revision; the only per-case evidence of the §5 initial-repository guard. */
+  readonly initialRepositoryDigest: string | null;
   readonly workflowOutcome: WorkflowLifecycle;
   readonly expectedWait: WorkflowWait | null;
   readonly blocked: WorkflowBlock | null;
@@ -270,7 +272,10 @@ export interface WorkflowCaseResult {
   readonly pricingDigest: string;
   readonly adapterVersions: readonly string[];
   readonly graderDigest: string | null;
+  readonly initialRepositoryDigest: string | null;
   readonly workflowOutcome: WorkflowLifecycle;
+  /** Pinned by the catalog spec, so two reports can prove their per-case criteria identity. */
+  readonly expectedOutcome: EvaluationOutcome;
   readonly tier: WorkflowTier;
   readonly grade: WorkflowGrade;
   readonly gradeReason: WorkflowReason;

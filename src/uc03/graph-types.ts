@@ -25,6 +25,7 @@ import type { CoderAgent, CoderBudget } from './agent.ts';
 import type { BaselineEvidenceWriter, InvestigationConfigPort, TrustedHostExpectedContext, TrustedHostPort } from './investigation.ts';
 import type { RepairPatchProposal, TrustedReplanDirection } from './repair.ts';
 import type { FinalReport, Milestone } from './report.ts';
+import type { EvaluationDiagnostic } from '../runtime/evaluation-diagnostics.ts';
 
 export interface UC03GraphPorts {
   readonly statePort: StatePort;
@@ -128,4 +129,5 @@ export interface UC03WorkflowResult {
   readonly finalReport?: FinalReport | undefined;
   readonly reasons: readonly string[];
   readonly milestones: readonly Milestone[];
+  readonly diagnostic?: EvaluationDiagnostic | undefined;
 }
