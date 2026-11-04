@@ -12,7 +12,7 @@ import { computeCanonicalSha256, computeCheckSetDigest } from '../../../src/cont
 import type { CheckDefinition } from '../../../src/contracts/foundation/uc03.ts';
 import { WorkspaceFilesystemPort } from '../../../src/foundation/host-filesystem-port.ts';
 import type { TrustedFilesystemPort } from '../../../src/foundation/repository-types.ts';
-import { createTrustedHostSnapshot } from '../../../src/runtime/trusted-host-snapshot.ts';
+import { createTrustedHostSnapshot, TrustedHostSnapshotError } from '../../../src/runtime/trusted-host-snapshot.ts';
 import type { TrustedHostSnapshotRequest } from '../../../src/uc03/investigation-types.ts';
 import { validateHostSnapshotFacts } from '../../../src/uc03/investigation-snapshot.ts';
 
@@ -192,6 +192,28 @@ test(
     await assert.rejects(async () => authority.loadSnapshot(await request(filesystem, { workspaceId: 'other-ws' })), /IDENTITY_MISMATCH/);
     await assert.rejects(async () => authority.loadSnapshot(await request(filesystem, { repositoryId: 'other-repo' })), /IDENTITY_MISMATCH/);
     await assert.rejects(async () => authority.loadSnapshot(await request(filesystem, { expectedTestFiles: ['tests/test_a.py'] })), /INVALID_REQUEST/);
+  }),
+);
+
+test(
+  'trusted snapshot: a refused path is reported by index and never echoed',
+  withWorkspace(async root => {
+    const filesystem = new WorkspaceFilesystemPort({ root });
+    const authority = producer(filesystem);
+    // Newlines, terminal escapes and traversal all fail canonicalization; none may reach the refusal message.
+    const invalid = 'FORGED_INVALID\n\u001b[31m/../escape';
+    const canonical = 'FORGED_CONTROL\n\u001b[31m.py';
+    const refusal = (code: string) => (error: unknown) => {
+      assert.ok(error instanceof TrustedHostSnapshotError);
+      assert.equal(error.code, code);
+      assert.ok(!error.message.includes('FORGED_'), 'the refused input is not echoed into the message');
+      return true;
+    };
+
+    await assert.rejects(async () => producer(filesystem, { expectedTestFiles: ['tests/test_a.py', invalid] }), refusal('INVALID_CONFIGURATION'));
+    await assert.rejects(async () => producer(filesystem, { expectedTestFiles: [canonical, canonical] }), refusal('INVALID_CONFIGURATION'));
+    await assert.rejects(async () => authority.loadSnapshot(await request(filesystem, { expectedTestFiles: ['tests/test_a.py', invalid] })), refusal('INVALID_REQUEST'));
+    await assert.rejects(async () => authority.loadSnapshot(await request(filesystem, { expectedTestFiles: ['tests/test_a.py', canonical] })), refusal('INVALID_REQUEST'));
   }),
 );
 

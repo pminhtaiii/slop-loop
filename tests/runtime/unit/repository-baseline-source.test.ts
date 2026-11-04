@@ -263,5 +263,13 @@ test(
 
     assert.throws(() => source(fixture, { taskWorkspaceRoot: fixture.base }), /INVALID_CONFIGURATION/, 'retention inside writable task authority is refused');
     assert.doesNotThrow(() => source(fixture, { taskWorkspaceRoot: join(fixture.base, 'elsewhere') }), 'an unrelated writable root is allowed');
+
+    const dotdotChild = join(fixture.base, '..cache');
+    mkdirSync(dotdotChild);
+    assert.throws(
+      () => source(fixture, { root: dotdotChild, taskWorkspaceRoot: fixture.base }),
+      /INVALID_CONFIGURATION/,
+      'a retention child whose name begins with .. is still inside writable task authority',
+    );
   }),
 );

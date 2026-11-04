@@ -11,7 +11,7 @@
  * from the current post-patch workspace, and no method writes to the retention directory.
  */
 import { statSync } from 'node:fs';
-import { isAbsolute, relative, resolve } from 'node:path';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { computeCanonicalSha256, isCanonicalRelativePath, isProtectedPath } from '../contracts/foundation/uc03.ts';
 import { SHA256_HEX_REGEX, computeFileDigest, containsProtectedContent } from '../foundation/docker-workspace-policy.ts';
 import { WorkspaceFilesystemPort } from '../foundation/host-filesystem-port.ts';
@@ -145,7 +145,7 @@ export function createRepositoryBaselineSource(options: RepositoryBaselineSource
     // shortcut: the writable-root exclusion is lexical, upgrade to realpath comparison when
     // retention and workspace roots are guaranteed to exist at static preflight.
     const within = relative(resolve(writableRoot), resolve(root));
-    if (within === '' || (!within.startsWith('..') && !isAbsolute(within))) {
+    if (within === '' || (within !== '..' && !within.startsWith(`..${sep}`) && !isAbsolute(within))) {
       fail('INVALID_CONFIGURATION', 'the retained baseline must live outside writable task authority');
     }
   }

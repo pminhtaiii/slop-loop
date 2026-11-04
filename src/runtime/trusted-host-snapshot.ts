@@ -66,12 +66,12 @@ function normalizeInventory(paths: unknown, code: TrustedHostSnapshotRefusal): r
   if (!Array.isArray(paths) || paths.length === 0) fail(code, 'the test inventory must be a non-empty array');
   const seen = new Set<string>();
   const out: string[] = [];
-  for (const path of paths) {
+  for (const [index, path] of paths.entries()) {
     if (typeof path !== 'string' || !isCanonicalRelativePath(path) || isProtectedPath(path)) {
-      fail(code, `invalid test inventory path '${typeof path === 'string' ? path : ''}'`);
+      fail(code, `invalid test inventory path at index ${index}`);
     }
     const key = path.toLowerCase();
-    if (seen.has(key)) fail(code, `duplicate test inventory path '${path}'`);
+    if (seen.has(key)) fail(code, `duplicate test inventory path at index ${index}`);
     seen.add(key);
     out.push(path);
   }
@@ -83,13 +83,13 @@ function assertRequestInventory(expected: readonly string[], configured: readonl
     fail('INVALID_REQUEST', 'the request inventory does not match the trusted configuration');
   }
   const seen = new Set<string>();
-  for (const path of expected) {
+  for (const [index, path] of expected.entries()) {
     if (typeof path !== 'string' || !isCanonicalRelativePath(path) || isProtectedPath(path)) {
-      fail('INVALID_REQUEST', `invalid requested test path '${typeof path === 'string' ? path : ''}'`);
+      fail('INVALID_REQUEST', `invalid requested test path at index ${index}`);
     }
     const key = path.toLowerCase();
     if (seen.has(key) || !configuredSet.has(key)) {
-      fail('INVALID_REQUEST', `requested test path '${path}' is not part of the trusted inventory`);
+      fail('INVALID_REQUEST', `requested test path at index ${index} is not part of the trusted inventory`);
     }
     seen.add(key);
   }
