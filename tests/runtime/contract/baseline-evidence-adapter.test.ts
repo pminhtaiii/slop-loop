@@ -206,6 +206,26 @@ test('an absent owner lookup and an explicit missing result are refusals, not si
   await rejectsWithCode(uncertain.loadBaselineEvidence('task-1', 'workspace-1', 'repo-1', 'evidence-1'), 'BASELINE_EVIDENCE_LOOKUP_UNCERTAIN');
 });
 
+test('a delivery whose load reads its own receiver is called bound', async () => {
+  const content = makeCandidate();
+  const self = {
+    provenance: 'real' as const,
+    content,
+    persist(request: BaselineEvidenceWriteRequest): OwnerBaselineWriteOutcome {
+      return { outcome: 'durable', acknowledgement: makeAck(request.content, 'evidence-1') };
+    },
+    load(request: OwnerBaselineLookupRequest): OwnerBaselineLoadOutcome {
+      return request.evidenceId === 'evidence-1' ? { outcome: 'found', content: this.content, acknowledgement: makeAck(this.content, 'evidence-1') } : { outcome: 'missing' };
+    },
+  };
+  const adapter = createBaselineEvidenceAdapter(self);
+
+  await adapter.persistBaselineEvidence(writeRequest(content));
+  const loaded = await adapter.loadBaselineEvidence('task-1', 'workspace-1', 'repo-1', 'evidence-1');
+
+  assert.deepEqual(loaded, { content, acknowledgement: makeAck(content, 'evidence-1') });
+});
+
 test('a lookup for another task, a substituted digest, or a conflicting ID blocks', async () => {
   const content = makeCandidate();
   const acknowledgement = makeAck(content, 'evidence-1');

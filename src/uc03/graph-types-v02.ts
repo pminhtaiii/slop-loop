@@ -119,7 +119,7 @@ export type UC03ReviewerAdmissionResolverV02 = (request: {
  * method is added once, not in every consumer's own check.
  */
 export const REQUIRED_PORTS_V02_METHODS = {
-  statePort: ['loadTask', 'transition', 'claim', 'beginAttempt', 'recordOutcome', 'reconcileUncertain', 'closeUnattemptedClaim', 'recover'],
+  statePort: ['loadTask', 'transition', 'claim', 'beginAttempt', 'recordOutcome', 'reconcileObservedOutcome', 'reconcileUncertain', 'closeUnattemptedClaim', 'checkpoint', 'recover'],
   approvalPort: ['classify', 'requestDecision', 'validateBinding', 'resolve'],
   repositoryPort: ['listDir', 'readFile', 'searchCode', 'applyPatch', 'runCommand', 'runTests', 'inspectDiff'],
   modelPort: ['propose'],

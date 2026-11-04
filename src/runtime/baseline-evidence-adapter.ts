@@ -222,10 +222,9 @@ export function createBaselineEvidenceAdapter(delivery: OwnerBaselineEvidenceDel
       repositoryId: string,
       evidenceId: string,
     ): Promise<{ readonly content: BaselineEvidenceCandidate; readonly acknowledgement: BaselineEvidenceAcknowledgement } | null> {
-      const load = delivery.load;
-      if (typeof load !== 'function') throw blocked('BASELINE_EVIDENCE_LOOKUP_UNAVAILABLE', 'the accepted owner delivery provides no baseline lookup');
+      if (typeof delivery.load !== 'function') throw blocked('BASELINE_EVIDENCE_LOOKUP_UNAVAILABLE', 'the accepted owner delivery provides no baseline lookup');
 
-      const outcome: unknown = await load({ taskId, workspaceId, repositoryId, evidenceId });
+      const outcome: unknown = await delivery.load({ taskId, workspaceId, repositoryId, evidenceId });
       if (!isRecord(outcome)) throw blocked('BASELINE_EVIDENCE_LOOKUP_INVALID', 'owner lookup outcome is not a typed object');
       const kind = outcome['outcome'];
       if (kind === 'missing') return null;
