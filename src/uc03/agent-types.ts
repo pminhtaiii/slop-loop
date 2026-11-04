@@ -1,4 +1,22 @@
-import type { BugTask, CheckResult, ModelPort, ProviderRequest, RepositoryPort, SourceEvidence, TaskState } from '../contracts/foundation/uc03.ts';
+import type {
+  BugTask,
+  CheckResult,
+  ModelPort,
+  PortProvenance,
+  ProviderAdmissionContextV02,
+  ProviderAdmissionTrustedContextV02,
+  ProviderRequest,
+  RepositoryPort,
+  SourceEvidence,
+  TaskState,
+} from '../contracts/foundation/uc03.ts';
+
+/** Owner-issued coder admission for exactly one turn. Owned here; `graph-types.ts` re-exports it. */
+export interface UC03CoderAdmission {
+  readonly request: ProviderRequest;
+  readonly context: ProviderAdmissionContextV02;
+  readonly trustedContext: ProviderAdmissionTrustedContextV02;
+}
 
 export type CoderKind = 'inspect' | 'propose-plan' | 'propose-patch' | 'request-info' | 'stop';
 
@@ -72,3 +90,33 @@ export interface CoderAgent {
   readonly counters: CoderCounters;
   turn(task: BugTask, state: TaskState, evidence: readonly SourceEvidence[], request: ProviderRequest): Promise<CoderTurnResult>;
 }
+
+/**
+ * Production coder turn — T020.
+ *
+ * Differences from `CoderAgent` above are the whole point of the version bump: the caller passes the
+ * exact owner-issued admission for this task/run/state/purpose/evidence, so the agent never claims
+ * and the graph cannot preclaim. `ModelPortV02.propose` receives that admission's `request` and
+ * `context`; the model boundary alone reserves, begins the attempt and records the outcome.
+ * A stale or substituted admission refuses with zero network calls.
+ */
+export interface CoderAgentV02 {
+  readonly counters: CoderCounters;
+  readonly provenance: PortProvenance;
+  turn(input: CoderTurnInputV02): Promise<CoderTurnResultV02>;
+}
+
+export interface CoderTurnInputV02 {
+  readonly task: BugTask;
+  readonly state: TaskState;
+  readonly purpose: 'propose-plan' | 'propose-patch' | 'propose-repair' | 'propose-replan';
+  /** Observations accumulated so far this generation loop; each turn re-admits against these. */
+  readonly evidence: readonly SourceEvidence[];
+  readonly admission: UC03CoderAdmission;
+}
+
+export type CoderTurnResultV02 =
+  | { readonly outcome: 'proposal'; readonly proposal: CoderProposal; readonly tool?: CoderToolResult | undefined; readonly counters: CoderCounters }
+  | { readonly outcome: 'waiting'; readonly reason: string; readonly counters: CoderCounters }
+  | { readonly outcome: 'invalid'; readonly reason: string; readonly counters: CoderCounters }
+  | { readonly outcome: 'unavailable'; readonly reason: string; readonly counters: CoderCounters };
