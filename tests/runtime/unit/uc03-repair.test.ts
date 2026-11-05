@@ -76,11 +76,6 @@ import { ControlledRepositoryTools, type TrustedFilesystemPort } from '../../../
 import { DockerWorkspaceManager } from '../../../src/foundation/docker-workspace.ts';
 import { ScriptedApprovalPort } from '../support/uc03/scripted-approval.ts';
 
-function asLegacyV01RepositoryPort(repositoryPort: FakeRepositoryPort): FakeRepositoryPort {
-  Object.defineProperty(repositoryPort, 'executionGuardApiVersion', { value: undefined });
-  return repositoryPort;
-}
-
 // Inlined deterministic builders conforming to T004
 function createRepairTaskFixture(overrides?: Partial<BugTask>): {
   task: BugTask;
@@ -2386,7 +2381,7 @@ test('replan: failed post-repair verification preserves confirmed repair charges
       return forwarded.reserve(scope, kind, amount, actionId);
     },
   };
-  const repositoryPort = asLegacyV01RepositoryPort(new FakeRepositoryPort());
+  const repositoryPort = new FakeRepositoryPort();
   for (const check of task.requiredChecks) {
     repositoryPort.setTestResult(check.checkId, {
       checkId: check.checkId,

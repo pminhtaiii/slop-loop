@@ -47,11 +47,6 @@ import { MemoryStatePortV02 } from '../support/uc03/memory-state.ts';
 import { createTestExecutorIdentityV02, createTestRepositoryCommandAdmissionContextV02, createTestAdmissionTaskStateV02 } from '../support/uc03/state-fixtures.ts';
 import { createFixtureBugTask, createFixtureTaskState } from '../support/uc03/port-fixtures.ts';
 
-function asLegacyV01RepositoryPort(repository: FakeRepositoryPort): FakeRepositoryPort {
-  Object.defineProperty(repository, 'executionGuardApiVersion', { value: undefined });
-  return repository;
-}
-
 function createGuardedVerificationFixture(options?: {
   readonly alterAdmission?: ((admission: RepositoryAdmissionContextV02) => void) | undefined;
   readonly alterState?: ((state: TaskState) => TaskState) | undefined;
@@ -873,11 +868,9 @@ test('robustness: caller array mutation after evaluate invocation does not affec
 
 test('executeVerificationChecks: runs checks on FakeRepositoryPort and produces validated results', async () => {
   const input = createValidCompletionFixture();
-  const repo = asLegacyV01RepositoryPort(
-    new FakeRepositoryPort({
-      initialRevision: input.currentRepoDigest,
-    }),
-  );
+  const repo = new FakeRepositoryPort({
+    initialRevision: input.currentRepoDigest,
+  });
 
   repo.setTestResult('check-pytest-reproduction', {
     checkId: 'check-pytest-reproduction',
@@ -1487,15 +1480,13 @@ test('integration: investigateBaseline output flows directly into evaluateDeterm
     },
   };
 
-  const initialRepo = asLegacyV01RepositoryPort(
-    new FakeRepositoryPort({
-      initialRevision: task.initialRevisionDigest,
-      testResults: {
-        'check-pytest-repro': { checkId: 'check-pytest-repro', outcome: 'fail', outputExcerpt: 'ZeroDivisionError' },
-        'check-pytest-regress': { checkId: 'check-pytest-regress', outcome: 'pass', outputExcerpt: '1 passed' },
-      },
-    }),
-  );
+  const initialRepo = new FakeRepositoryPort({
+    initialRevision: task.initialRevisionDigest,
+    testResults: {
+      'check-pytest-repro': { checkId: 'check-pytest-repro', outcome: 'fail', outputExcerpt: 'ZeroDivisionError' },
+      'check-pytest-regress': { checkId: 'check-pytest-regress', outcome: 'pass', outputExcerpt: '1 passed' },
+    },
+  });
 
   const expectedCheckSetDigest = computeCheckSetDigest(task.requiredChecks);
   const expectedContext = {
@@ -1560,15 +1551,13 @@ test('integration: investigateBaseline output flows directly into evaluateDeterm
     reviewRefs: ['review-flow-001'],
   };
 
-  const patchedRepo = asLegacyV01RepositoryPort(
-    new FakeRepositoryPort({
-      initialRevision: repoDigest,
-      testResults: {
-        'check-pytest-repro': { checkId: 'check-pytest-repro', outcome: 'pass' },
-        'check-pytest-regress': { checkId: 'check-pytest-regress', outcome: 'pass' },
-      },
-    }),
-  );
+  const patchedRepo = new FakeRepositoryPort({
+    initialRevision: repoDigest,
+    testResults: {
+      'check-pytest-repro': { checkId: 'check-pytest-repro', outcome: 'pass' },
+      'check-pytest-regress': { checkId: 'check-pytest-regress', outcome: 'pass' },
+    },
+  });
 
   const verificationResults = await executeVerificationChecks(task, patchedRepo, {
     runId: state.runId,
@@ -1685,17 +1674,18 @@ test('regression: trustedReviewRecord checkSetDigest mismatch prevents completio
 // SECTION: v0.2 Atomic Admission & Guarded Verification Runs (T062 Behavioral RED)
 // =========================================================================
 
-test('v0.2 verification admission: repository marker alone denies fallback without admission, guard, or state', async () => {
+test('v0.2 verification admission: explicit v0.2 context without admission, guard, or state denies fallback', async () => {
   const task = createFixtureBugTask();
   const repo = new FakeRepositoryPort();
 
   const results = await executeVerificationChecks(task, repo, {
     runId: 'run-marker-only',
     repoDigest: task.initialRevisionDigest,
+    admissionContext: null as unknown as RepositoryAdmissionContextV02,
   });
 
   assert.equal(results.length, task.requiredChecks.length);
-  assert.equal(repo.tests.length, 0, 'A v0.2 marker must prevent legacy RepositoryPort.runTests calls');
+  assert.equal(repo.tests.length, 0, 'Explicit v0.2 selection must prevent legacy RepositoryPort.runTests calls');
   assert.ok(results.every(result => result.outcome === 'error' && result.diagnosticRefs.includes('missing-admission-context')));
   assert.equal(repo.commands.length, 0, 'Missing authority must not reach the command receiver');
   assert.equal(repo.v02Calls.length, 0, 'Missing authority must not create a v0.2 receiver call');
