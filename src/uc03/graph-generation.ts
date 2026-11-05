@@ -9,8 +9,7 @@ import {
   type SourceEvidence,
   type TaskState,
 } from '../contracts/foundation/uc03.ts';
-import type { CoderProposal, CoderTurnInputV02, CoderTurnResult } from './agent.ts';
-import { coderAdmissionRefusal } from './agent.ts';
+import type { CoderProposal, CoderToolResult, CoderTurnInputV02, CoderTurnResult } from './agent.ts';
 import type { UC03CoderAdmission, UC03GraphConfig } from './graph-types.ts';
 import type { UC03GraphGenerationV02 } from './graph-types-v02.ts';
 import { currentPlanBindingDigest, samePaths, trustedExpectedContext } from './graph-validation.ts';
@@ -43,7 +42,7 @@ export function coderContextDigest(task: BugTask, state: TaskState, purpose: Cod
 
 export type CoderPurpose = 'propose-plan' | 'propose-patch' | 'propose-repair' | 'propose-replan';
 
-export type CoderGeneration = { readonly ok: true; readonly proposal: CoderProposal } | { readonly ok: false; readonly reason: string };
+export type CoderGeneration = { readonly ok: true; readonly proposal: CoderProposal; readonly tool?: CoderToolResult | undefined } | { readonly ok: false; readonly reason: string };
 
 /**
  * Resolve the owner admission, validate it against the current state, reserve, then dispatch.
@@ -118,10 +117,8 @@ function validCoderClaim(claim: ClaimReceiptV02 | undefined, admission: Provider
  * begins the attempt and records the outcome, so a claim on this side would be a second one.
  */
 export async function generateV02(generation: UC03GraphGenerationV02, input: CoderTurnInputV02): Promise<CoderGeneration> {
-  const refusal = coderAdmissionRefusal(input.admission, input);
-  if (refusal !== null) return { ok: false, reason: `REAL_PROFILE_GENERATION_INVALID: ${refusal}` };
   const turn = await generation.agent.turn(input);
-  if (turn.outcome === 'proposal') return { ok: true, proposal: turn.proposal };
+  if (turn.outcome === 'proposal') return { ok: true, proposal: turn.proposal, tool: turn.tool };
   // `waiting` is a human pause, not a failure; other outcomes carry a safe code and no model text.
   return { ok: false, reason: turn.outcome === 'waiting' ? `HUMAN_WAIT:${turn.reason}` : `REAL_PROFILE_GENERATION_INVALID: ${turn.reason}` };
 }

@@ -8,6 +8,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { Annotation, END, START, StateGraph } from '@langchain/langgraph';
+
 import {
   computeAdmissionDigest,
   computeCanonicalSha256,
@@ -73,9 +75,9 @@ function statePortSpy(): { port: Record<string, unknown>; calls: string[] } {
   return { port, calls };
 }
 
-function admit(state: TaskState, purpose: 'propose-plan' | 'propose-patch' | 'propose-repair' | 'propose-replan' = 'propose-plan'): UC03CoderAdmission {
+function admit(state: TaskState, purpose: 'propose-plan' | 'propose-patch' | 'propose-repair' | 'propose-replan' = 'propose-plan', providerRequestId = 'req-v02-1'): UC03CoderAdmission {
   const request: ProviderRequest = {
-    providerRequestId: 'req-v02-1',
+    providerRequestId,
     taskId: state.taskId,
     runId: state.runId,
     role: 'coder',
@@ -319,4 +321,54 @@ test('generateV02 never claims on the owner state port', async () => {
   assert.equal(generated.ok, true);
   assert.deepEqual(spy.calls, []);
   assert.equal(model.calls.length, 1);
+});
+
+test('a graph continuation carries the first turn observation into a second admitted generateV02 call', async () => {
+  const task = createFixtureBugTask();
+  const state = createFixtureTaskState({ node: 'Investigate' });
+  const responses = [JSON.stringify({ kind: 'inspect', proposalId: 'p-inspect', operation: 'read_file', args: { path: 'src/calculator.py' } }), PLAN];
+  const model = new RecordingModelPort(async () => ({ outcome: 'observed', result: { proposal: { proposalId: 'p-turn', content: responses.shift() } } }));
+  const agent = createCoderAgentV02({
+    model,
+    repository: new FakeRepositoryPort({ initialRevision: task.initialRevisionDigest, initialFiles: { 'src/calculator.py': 'def divide(a, b): return a / b\n' } }),
+    budget: BUDGET,
+    guardedRead: recordingGuardedRead().capability,
+  });
+
+  // The real graph pattern: evidence accumulates across node visits rather than being replaced.
+  const GraphState = Annotation.Root({
+    evidence: Annotation<readonly SourceEvidence[]>({ reducer: (left, right) => [...left, ...right], default: () => [] }),
+    planKind: Annotation<string>(),
+  });
+
+  const workflow = new StateGraph(GraphState)
+    .addNode('inspect', async (current: typeof GraphState.State): Promise<Partial<typeof GraphState.State>> => {
+      const generated = await generateV02({ agent }, { task, state, purpose: 'propose-plan', evidence: current.evidence, admission: admit(state, 'propose-plan', 'req-v02-inspect') });
+      assert.equal(generated.ok, true);
+      return { evidence: generated.ok && generated.tool?.kind === 'read-file' ? [generated.tool.evidence] : [] };
+    })
+    .addNode('plan', async (current: typeof GraphState.State): Promise<Partial<typeof GraphState.State>> => {
+      const generated = await generateV02({ agent }, { task, state, purpose: 'propose-plan', evidence: current.evidence, admission: admit(state, 'propose-plan', 'req-v02-plan') });
+      assert.equal(generated.ok && generated.proposal.kind, 'propose-plan');
+      return { planKind: generated.ok ? generated.proposal.kind : generated.reason };
+    })
+    .addEdge(START, 'inspect')
+    .addEdge('inspect', 'plan')
+    .addEdge('plan', END);
+
+  const result = await workflow.compile().invoke({});
+
+  // The second dispatch received the observation the first turn produced, not an empty list.
+  assert.deepEqual(
+    model.calls[1]?.evidence.map(item => item.path),
+    ['src/calculator.py'],
+  );
+  // The real answer came out of the second generateV02, not merely "some proposal".
+  assert.equal(model.calls.length, 2);
+  assert.notEqual(model.calls[0]?.request.providerRequestId, model.calls[1]?.request.providerRequestId);
+  assert.deepEqual(
+    result.evidence.map(item => item.path),
+    ['src/calculator.py'],
+  );
+  assert.equal(result.planKind, 'propose-plan');
 });
