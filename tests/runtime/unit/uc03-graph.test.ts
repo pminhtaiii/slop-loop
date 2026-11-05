@@ -61,7 +61,6 @@ import {
   createTestRepositoryAdmissionContextV02,
   createTestRepositoryCommandAdmissionContextV02,
   createTestRepositoryAdmissionTrustedContextV02,
-  createTestClaimReceiptV02,
 } from '../support/uc03/state-fixtures.ts';
 import { FakeRepositoryPort } from '../support/uc03/fake-repository.ts';
 import { MemoryStatePortV02 } from '../support/uc03/memory-state.ts';
@@ -211,11 +210,13 @@ function createControllableReviewerPort(repositoryPort: FakeRepositoryPort, stat
     setStatus(s: 'accepted' | 'findings') {
       currentStatus = s;
     },
-    async review(task: BugTask, diff: string, _evidence, request: ProviderRequest, admission: ProviderAdmissionContextV02, claim: ClaimReceiptV02): Promise<ReviewResult> {
-      if (!claim.claimId) throw new Error('Persisted reviewer allowance was not supplied by the route');
-      const attempt = await statePort.beginAttempt(claim.claimId, createFixtureExecutorIdentityV02({ payloadDigest: computeRequestContentDigest(request) }));
+    async review(task: BugTask, diff: string, _evidence, request: ProviderRequest, admission: ProviderAdmissionContextV02, claim?: ClaimReceiptV02): Promise<ReviewResult> {
+      // The graph no longer preclaims: this mock stands in for the model boundary, which claims for itself.
+      const effectiveClaim = claim ?? (await statePort.claim(admission));
+      if (!effectiveClaim.claimId) throw new Error('Persisted reviewer allowance was not supplied by the route');
+      const attempt = await statePort.beginAttempt(effectiveClaim.claimId, createFixtureExecutorIdentityV02({ payloadDigest: computeRequestContentDigest(request) }));
       if (!attempt.attemptId) throw new Error('Persisted reviewer attempt was refused');
-      const outcome = await statePort.recordOutcome(createTestProviderOutcomeReceiptV02(claim, attempt, admission));
+      const outcome = await statePort.recordOutcome(createTestProviderOutcomeReceiptV02(effectiveClaim, attempt, admission));
       if (outcome.outcome !== 'settled') throw new Error('Persisted reviewer allowance did not settle');
       return {
         reviewId: `review-${request.providerRequestId}`,
@@ -1188,37 +1189,8 @@ test('Mock route delivers only after baseline, owner-settled patch, current chec
   assert.equal(statePort.getJournalSnapshot().attempts.length, 1 + task.requiredChecks.length * 2 + 1);
   assert.ok(result.milestones.some(milestone => milestone.kind === 'task_completed'));
 
-  // Exercise private claim checks through the workflow, with no reviewer dispatch or owner mutation.
-  for (const mismatch of ['reservationRefs', 'preClaimTaskStateVersion'] as const) {
-    const refused = createTestSetup({ contextualApprovalIssuer: true });
-    const claim = refused.statePort.claim.bind(refused.statePort);
-    const before: { state?: TaskState; journal?: ReturnType<MemoryStatePortV02['getJournalSnapshot']> } = {};
-    refused.statePort.claim = async admission => {
-      if (admission.subjectKind !== 'provider-request' || admission.role !== 'reviewer') return claim(admission);
-      const owner = await refused.statePort.loadTask(refused.task.taskId);
-      assert.ok(owner);
-      before.state = owner;
-      before.journal = refused.statePort.getJournalSnapshot();
-      return createTestClaimReceiptV02({
-        taskId: owner.taskId,
-        runId: owner.runId,
-        subjectKind: 'provider-request',
-        planApplicability: 'approved-plan',
-        preClaimTaskStateVersion: owner.stateVersion + (mismatch === 'preClaimTaskStateVersion' ? 1 : 0),
-        reservationRefs: mismatch === 'reservationRefs' ? ['other-reservation'] : [admission.requestReservationReceipt, ...admission.budgetRefs],
-      });
-    };
-    const refusal = await runPassingMockRoute(refused, deliveryTrustedContext);
-    assert.equal(refusal.reviewerCalls, 0, mismatch);
-    assert.equal(refusal.result.outcome, 'IMPLEMENTED_UNVERIFIED', mismatch);
-    assert.ok(
-      refusal.result.reasons.some(reason => reason.includes('Owner budget protocol refused')),
-      mismatch,
-    );
-    assert.ok(before.state && before.journal, 'Route must reach the reviewer claim seam');
-    assert.deepEqual(await refused.statePort.loadTask(refused.task.taskId), before.state, mismatch);
-    assert.deepEqual(refused.statePort.getJournalSnapshot(), before.journal, mismatch);
-  }
+  // A mismatched reviewer claim is refused inside the model boundary, not here, and with zero
+  // provider dispatch; tests/runtime/unit/model.test.ts owns that assertion.
 
   const staleD0Setup = createTestSetup({
     contextualApprovalIssuer: true,
