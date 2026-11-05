@@ -253,7 +253,9 @@ export function createCoderAgentV02(options: CoderAgentV02Options): CoderAgentV0
     async turn(input: CoderTurnInputV02): Promise<CoderTurnResultV02> {
       const { task, state, evidence } = input;
       // A human pause short-circuits before admission: no new owner decision is needed to wait.
-      if (WAITING_NODES.has(state.node)) return { outcome: 'waiting', reason: `HUMAN_WAIT:${state.node}`, counters: snapshot() };
+      // A trusted revise direction resumes AwaitFeedback for exactly one replan proposal.
+      const replanTurn = state.node === 'AwaitFeedback' && input.purpose === 'propose-replan';
+      if (WAITING_NODES.has(state.node) && !replanTurn) return { outcome: 'waiting', reason: `HUMAN_WAIT:${state.node}`, counters: snapshot() };
       if (TERMINAL_NODES.has(state.node)) return invalid(`TERMINAL_NODE:${state.node}`);
       const admissionRefusal = coderAdmissionRefusal(input.admission, input);
       if (admissionRefusal !== null) return invalid(admissionRefusal);

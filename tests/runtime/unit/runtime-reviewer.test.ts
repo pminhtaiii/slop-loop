@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   computeCanonicalSha256,
   computeCheckSetDigest,
+  validateTaskState,
   type ClaimReceiptV02,
   type ModelPortV02,
   type ProviderAdmissionContextV02,
@@ -192,6 +193,13 @@ test('dispatches exactly one read-only reviewer request and accepts a clean diff
   );
   assert.deepEqual({ ...context.reviewer.lastObservedUsage }, USAGE);
   assert.equal(context.reviewer.lastFailureReason, undefined);
+});
+
+test('forwards a projection the production task-state validator accepts', async () => {
+  const context = setup();
+  await run(context);
+  const validation = validateTaskState(context.model.calls[0]?.state);
+  assert.deepEqual(validation.ok ? [] : validation.errors, []);
 });
 
 test('keeps actionable findings that land on real old and new changed lines', async () => {

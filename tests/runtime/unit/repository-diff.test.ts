@@ -147,18 +147,23 @@ function countingFilesystem(root: string): { readonly port: TrustedFilesystemPor
 }
 
 /** Reports the supplied entry name from the workspace root, so hostile names can be exercised here. */
-function namedEntryFilesystem(revision: string, name: string): TrustedFilesystemPort {
+function namedEntryFilesystem(revision: string, name: string): { readonly port: TrustedFilesystemPort; readonly calls: { count: number } } {
   const entry: TrustedFilesystemEntry = { name, isDirectory: false, isFile: true, isSymbolicLink: false };
   const file: FileStat = { isFile: true, isDirectory: false, isSymbolicLink: false, size: 5 };
-  return {
+  const calls = { count: 0 };
+  const port: TrustedFilesystemPort = {
     provenance: 'mock',
     stat: async () => file,
     lstat: async () => file,
     realpath: async path => path,
     readDir: async dir => (dir === '' ? [entry] : []),
-    readTextFile: async () => 'evil\n',
+    readTextFile: async () => {
+      calls.count++;
+      return 'evil\n';
+    },
     getCurrentRevisionDigest: async () => revision,
   };
+  return { port, calls };
 }
 
 test(
@@ -237,6 +242,24 @@ test(
     const { port, calls } = countingFilesystem(fixture.current);
     await assert.rejects(() => measureRepositoryDiff(diffOptions(fixture, { filesystem: port, binding: binding({ baseRevision: 'base-rev' }) })), /INVALID_REQUEST/);
     assert.equal(calls.count, 0, 'no workspace access happens for a malformed request');
+  }),
+);
+
+test(
+  'repository diff: a binding or guard naming another task, workspace or repository refuses before any workspace read',
+  withFixture(async fixture => {
+    const { port, calls } = countingFilesystem(fixture.current);
+    const cases: readonly (readonly [string, Partial<RepositoryDiffMeasurementOptions>])[] = [
+      ['binding taskId', { binding: binding({ baseRevision: fixture.revision, taskId: 'task-2' }) }],
+      ['binding workspaceId', { binding: binding({ baseRevision: fixture.revision, workspaceId: 'ws-2' }) }],
+      ['binding repositoryId', { binding: binding({ baseRevision: fixture.revision, repositoryId: 'repo-2' }) }],
+      ['guard taskId', { guard: { ...passThroughGuard(), taskId: 'task-2' } }],
+      ['guard workspaceId', { guard: { ...passThroughGuard(), workspaceId: 'ws-2' } }],
+    ];
+    for (const [label, overrides] of cases) {
+      await assert.rejects(() => measureRepositoryDiff(diffOptions(fixture, { filesystem: port, ...overrides })), /IDENTITY_MISMATCH/, `${label} must not be admitted`);
+    }
+    assert.equal(calls.count, 0, 'an identity mismatch performs no workspace access');
   }),
 );
 
@@ -328,8 +351,28 @@ test(
   'repository diff: hostile path names from the current tree refuse',
   withFixture(async fixture => {
     for (const name of ['../escape.py', 'a\\b.py', '/abs.py', 'dir//file.py', 'trailing/']) {
-      const filesystem = namedEntryFilesystem(fixture.revision, name);
-      await assert.rejects(() => measureRepositoryDiff(diffOptions(fixture, { filesystem })), /INVALID_REQUEST/, `'${name}' must not enter the diff`);
+      const { port } = namedEntryFilesystem(fixture.revision, name);
+      await assert.rejects(() => measureRepositoryDiff(diffOptions(fixture, { filesystem: port })), /INVALID_REQUEST/, `'${name}' must not enter the diff`);
+    }
+  }),
+);
+
+test(
+  'repository diff: a control-character path name refuses before its file is read',
+  withFixture(async fixture => {
+    // A newline would forge a `+++ b/...` header; a tab or DEL would still break the header line.
+    for (const name of ['bad\nname.py', 'x\n+++ b/other.py', 'bad\tname.py', 'bad\u007fname.py']) {
+      const { port, calls } = namedEntryFilesystem(fixture.revision, name);
+      await assert.rejects(
+        () => measureRepositoryDiff(diffOptions(fixture, { filesystem: port })),
+        (error: Error) => {
+          assert.match(error.message, /INVALID_REQUEST/);
+          assert.ok(!error.message.includes('bad'), 'the refusal must not echo the untrusted name');
+          return true;
+        },
+        `${JSON.stringify(name)} must not enter the diff`,
+      );
+      assert.equal(calls.count, 0, 'a rejected name is never read');
     }
   }),
 );

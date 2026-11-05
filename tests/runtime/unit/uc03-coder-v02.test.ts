@@ -288,6 +288,26 @@ test('request-info waits without a further model call', async () => {
   assert.equal(model.calls.length, 1);
 });
 
+test('a propose-replan turn at AwaitFeedback passes the wait gate to the admission check', async () => {
+  const task = createFixtureBugTask();
+  const state = createFixtureTaskState({ node: 'AwaitFeedback' });
+  const model = new RecordingModelPort();
+  const agent = createCoderAgentV02({ model, repository: new FakeRepositoryPort(), budget: BUDGET });
+  const result = await agent.turn({ task, state, purpose: 'propose-replan', evidence: [], admission: undefined as unknown as UC03CoderAdmission });
+  assert.equal(result.outcome, 'invalid');
+  assert.match(result.reason, /CODER_ADMISSION_MISSING/u);
+  assert.equal(model.calls.length, 0);
+});
+
+test('AwaitFeedback without the replan purpose still waits', async () => {
+  const { task, model, agent, admission } = setup();
+  const state = createFixtureTaskState({ node: 'AwaitFeedback' });
+  const result = await agent.turn({ task, state, purpose: 'propose-plan', evidence: [], admission });
+  assert.equal(result.outcome, 'waiting');
+  assert.match(result.reason, /^HUMAN_WAIT:AwaitFeedback$/u);
+  assert.equal(model.calls.length, 0);
+});
+
 test('generateV02 never claims on the owner state port', async () => {
   const { task, state, model } = setup();
   const spy = statePortSpy();

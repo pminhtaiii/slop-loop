@@ -90,6 +90,13 @@ export async function measureRepositoryDiff(options: RepositoryDiffMeasurementOp
   if (typeof binding.baseRevision !== 'string' || !SHA256_HEX_REGEX.test(binding.baseRevision)) {
     fail('INVALID_REQUEST', 'the base revision must be a sha256 digest');
   }
+  // The binding and the read capability are the caller's claims; both must name this measurement.
+  if (binding.taskId !== options.taskId || binding.workspaceId !== options.workspaceId || binding.repositoryId !== options.repositoryId) {
+    fail('IDENTITY_MISMATCH', 'the baseline binding does not match the task, workspace, or repository');
+  }
+  if (guard.taskId !== options.taskId || guard.workspaceId !== options.workspaceId) {
+    fail('IDENTITY_MISMATCH', 'the guarded read capability does not match the task or workspace');
+  }
 
   // The retained manifest re-measures its own tree, so a missing, mutated or wrong-base baseline
   // refuses here before any current-side byte is read.
@@ -106,7 +113,7 @@ export async function measureRepositoryDiff(options: RepositoryDiffMeasurementOp
         const found: string[] = [];
         for (const entry of await readDirOrFail(filesystem, dir)) {
           const child = dir === '' ? entry.name : `${dir}/${entry.name}`;
-          if (!isCanonicalRelativePath(child)) fail('INVALID_REQUEST', `current path '${child}' is not a canonical repository-relative path`);
+          if (!isCanonicalRelativePath(child)) fail('INVALID_REQUEST', 'a current path is not a canonical repository-relative path');
           if (entry.isSymbolicLink) fail('LINKED_ESCAPE', `current path '${child}' is a symbolic link or junction`);
           if (isProtectedPath(child)) fail('PROTECTED_CONTENT', `current path '${child}' is protected`);
           if (entry.isDirectory) found.push(...(await walk(child)));

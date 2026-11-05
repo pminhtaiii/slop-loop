@@ -218,8 +218,10 @@ export function createRuntimeReviewer(options: RuntimeReviewerOptions): RuntimeR
         acceptanceCriteria: task.acceptanceCriteria,
         constraints: task.constraints,
         requiredCheckIds: task.requiredChecks.map(check => check.checkId),
+        taskContext: task,
         node: 'Review',
-        planVersion: 0,
+        // The projection carries no plan; version 1 is the pre-plan baseline the graph itself starts from.
+        planVersion: 1,
         replanCount: 0,
         changedPaths: Object.keys(trustedDiffLines),
         evidenceRefs: evidence.map(item => item.path),
