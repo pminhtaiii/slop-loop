@@ -50,7 +50,7 @@ export interface RuntimeReviewer extends UC03ReviewerPort {
 }
 
 function diffPath(raw: string, prefix: string): string | null {
-  const token = raw.trim().split('\t')[0] ?? '';
+  const token = (raw.endsWith('\r') ? raw.slice(0, -1) : raw).split('\t')[0] ?? '';
   if (token === '/dev/null') return null;
   const path = token.startsWith(prefix) ? token.slice(prefix.length) : token;
   return isCanonicalRelativePath(path) ? path : null;

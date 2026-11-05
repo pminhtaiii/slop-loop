@@ -305,4 +305,10 @@ test('parses unified diffs into changed old and new lines only', () => {
   assert.equal(parseUnifiedDiff('--- a/x\n+++ b/x\n@@ -1,1 +1,1 @@\n*unexpected\n'), null);
   assert.equal(parseUnifiedDiff('+++ b/x\n@@ -1 +1 @@\n-a\n+b'), null);
   assert.equal(parseUnifiedDiff('--- a/../x\n+++ b/../x\n@@ -1 +1 @@\n-a\n+b'), null);
+
+  const trailingSpace = '--- a/x \n+++ b/x \n@@ -1 +1 @@\n-a\n+b';
+  assert.deepEqual(parseUnifiedDiff(trailingSpace), { 'x ': { oldLines: [1], newLines: [1] } });
+
+  const tabMetadata = '--- a/x\t2024-01-01\n+++ b/x\t2024-01-01\n@@ -1 +1 @@\n-a\n+b';
+  assert.deepEqual(parseUnifiedDiff(tabMetadata), { x: { oldLines: [1], newLines: [1] } });
 });

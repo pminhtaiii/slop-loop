@@ -42,7 +42,12 @@ export interface TrustedFilesystemPort extends PortIdentity {
    * Never load the whole oversized file and then validate or truncate it.
    */
   readTextFile(canonicalPath: string, maxBytes?: number): Promise<string>;
-  getCurrentRevisionDigest(): Promise<string>;
+  /**
+   * If maxBytes is supplied, enforce it while hashing each file: read raw bytes from the
+   * open handle with at most one maxBytes + 1 read, never loading the whole oversized file,
+   * and reject with an Error whose message starts with FILE_TOO_LARGE on overflow.
+   */
+  getCurrentRevisionDigest(maxBytes?: number): Promise<string>;
 }
 
 export interface GuardedReadOperation<T = unknown> {

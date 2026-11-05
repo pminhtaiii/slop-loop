@@ -70,21 +70,32 @@ function renderFile(path: string, before: string | null, after: string | null): 
   return lines.join('\n');
 }
 
-export async function measureRepositoryDiff(options: RepositoryDiffMeasurementOptions): Promise<RepositoryDiffMeasurement> {
-  if (!options || typeof options !== 'object') fail('INVALID_CONFIGURATION', 'options are required');
-  const { baseline, filesystem, guard } = options;
+/** Validates a diff source against its guard capability; used both here and at construction. */
+export function assertRepositoryDiffSource(source: RepositoryDiffSourceOptions, guard: ExecutionGuardReadCapability): { readonly maxFileBytes: number; readonly maxDiffBytes: number } {
+  if (!source || typeof source !== 'object') fail('INVALID_CONFIGURATION', 'options are required');
+  const { baseline } = source;
   if (!baseline || typeof baseline.loadManifest !== 'function' || typeof baseline.readBaselineFile !== 'function') {
     fail('INVALID_CONFIGURATION', 'a retained repository baseline source is required');
   }
+  requireText(source.taskId, 'taskId');
+  requireText(source.workspaceId, 'workspaceId');
+  requireText(source.repositoryId, 'repositoryId');
+  const maxFileBytes = requirePositiveInteger(source.maxFileBytes, 'maxFileBytes');
+  const maxDiffBytes = requirePositiveInteger(source.maxDiffBytes, 'maxDiffBytes');
+  if (source.taskId !== guard.taskId || source.workspaceId !== guard.workspaceId) {
+    fail('IDENTITY_MISMATCH', 'the diff source names a different task or workspace than the guard capability');
+  }
+  return { maxFileBytes, maxDiffBytes };
+}
+
+export async function measureRepositoryDiff(options: RepositoryDiffMeasurementOptions): Promise<RepositoryDiffMeasurement> {
+  if (!options || typeof options !== 'object') fail('INVALID_CONFIGURATION', 'options are required');
+  const { baseline, filesystem, guard } = options;
+  if (!guard || typeof guard.mediateRead !== 'function') fail('INVALID_CONFIGURATION', 'a guarded read capability is required');
+  const { maxFileBytes, maxDiffBytes } = assertRepositoryDiffSource(options, guard);
   if (!filesystem || typeof filesystem.readDir !== 'function' || typeof filesystem.readTextFile !== 'function' || typeof filesystem.getCurrentRevisionDigest !== 'function') {
     fail('INVALID_CONFIGURATION', 'a trusted filesystem port is required');
   }
-  if (!guard || typeof guard.mediateRead !== 'function') fail('INVALID_CONFIGURATION', 'a guarded read capability is required');
-  requireText(options.taskId, 'taskId');
-  requireText(options.workspaceId, 'workspaceId');
-  requireText(options.repositoryId, 'repositoryId');
-  const maxFileBytes = requirePositiveInteger(options.maxFileBytes, 'maxFileBytes');
-  const maxDiffBytes = requirePositiveInteger(options.maxDiffBytes, 'maxDiffBytes');
   const binding = options.binding;
   if (!binding || typeof binding !== 'object') fail('INVALID_REQUEST', 'a baseline binding is required');
   if (typeof binding.baseRevision !== 'string' || !SHA256_HEX_REGEX.test(binding.baseRevision)) {
@@ -100,7 +111,7 @@ export async function measureRepositoryDiff(options: RepositoryDiffMeasurementOp
     kind: 'list',
     targetPath: '',
     execute: async (): Promise<RepositoryDiffMeasurement> => {
-      const initialRevision = await measureRevision(filesystem);
+      const initialRevision = await measureRevision(filesystem, maxFileBytes);
 
       const walk = async (dir: string): Promise<string[]> => {
         const found: string[] = [];
@@ -147,7 +158,7 @@ export async function measureRepositoryDiff(options: RepositoryDiffMeasurementOp
       }
 
       // Re-measure after the reads: any write during measurement refuses the whole diff.
-      if ((await measureRevision(filesystem)) !== initialRevision) fail('REVISION_DRIFT', 'the repository revision changed during diff measurement');
+      if ((await measureRevision(filesystem, maxFileBytes)) !== initialRevision) fail('REVISION_DRIFT', 'the repository revision changed during diff measurement');
 
       const diff = chunks.length === 0 ? '' : `${chunks.join('\n')}\n`;
       return Object.freeze({ diff, diffDigest: computeCanonicalSha256(diff), changedFiles: Object.freeze(changedFiles) });
@@ -155,8 +166,14 @@ export async function measureRepositoryDiff(options: RepositoryDiffMeasurementOp
   });
 }
 
-async function measureRevision(filesystem: TrustedFilesystemPort): Promise<string> {
-  const digest = await filesystem.getCurrentRevisionDigest();
+async function measureRevision(filesystem: TrustedFilesystemPort, maxFileBytes: number): Promise<string> {
+  let digest: string;
+  try {
+    digest = await filesystem.getCurrentRevisionDigest(maxFileBytes);
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith('FILE_TOO_LARGE')) fail('OVERSIZED_FILE', `a repository file exceeds ${maxFileBytes} bytes`);
+    throw error;
+  }
   if (typeof digest !== 'string' || !SHA256_HEX_REGEX.test(digest)) fail('REVISION_MISMATCH', 'the filesystem returned a malformed revision digest');
   return digest;
 }

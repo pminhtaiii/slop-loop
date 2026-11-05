@@ -372,6 +372,39 @@ test(
 );
 
 test(
+  'repository diff: an oversized file present in the current workspace refuses during measurement',
+  withFixture(async fixture => {
+    writeFileSync(join(fixture.current, 'src', 'huge.py'), 'x'.repeat(64));
+    await assert.rejects(() => measureRepositoryDiff(diffOptions(fixture, { maxFileBytes: 8 })), /OVERSIZED_FILE/, 'the per-file bound also covers the revision digest');
+  }),
+);
+
+test(
+  'repository diff: an invalid or mismatched diff source refuses at construction',
+  withFixture(async fixture => {
+    const valid = {
+      baseline: baselineSource(fixture),
+      taskId: TASK_ID,
+      workspaceId: WORKSPACE_ID,
+      repositoryId: REPOSITORY_ID,
+      maxFileBytes: 4096,
+      maxDiffBytes: 65536,
+    };
+    const make = (repositoryDiff: typeof valid) =>
+      new ControlledRepositoryTools({
+        guardCapability: passThroughGuard(),
+        fsPort: new WorkspaceFilesystemPort({ root: fixture.current }),
+        limits: { maxExcerptBytes: 4096, maxResultCount: 100 },
+        repositoryDiff,
+      });
+
+    assert.throws(() => make({ ...valid, taskId: 'task-2' }), /IDENTITY_MISMATCH/, 'a diff source for another task is refused');
+    assert.throws(() => make({ ...valid, maxFileBytes: 0 }), /INVALID_CONFIGURATION/, 'an invalid bound is refused');
+    assert.ok(make(valid) instanceof ControlledRepositoryTools, 'a valid diff source still constructs');
+  }),
+);
+
+test(
   'repository diff: inspectDiff without a configured baseline still fails closed',
   withFixture(async fixture => {
     const tools = new ControlledRepositoryTools({

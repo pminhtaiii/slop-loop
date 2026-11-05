@@ -117,5 +117,9 @@ test(
 
     writeFileSync(join(root, 'src', 'a.py'), 'x = 2\n');
     assert.notEqual(await port.getCurrentRevisionDigest(), first, 'changed bytes must change the digest');
+
+    writeFileSync(join(root, 'src', 'big.py'), 'y' + 'z'.repeat(4096));
+    await assert.rejects(() => port.getCurrentRevisionDigest(1024), /FILE_TOO_LARGE/, 'a bounded digest refuses an oversized file');
+    assert.match(await port.getCurrentRevisionDigest(), /^sha256:[a-f0-9]{64}$/, 'the unbounded digest still measures the same tree');
   }),
 );
