@@ -54,7 +54,8 @@ export function computeCheckSetDigest(checks: readonly CheckDefinition[]): strin
 
 export function isCanonicalRelativePath(filePath: string): boolean {
   if (typeof filePath !== 'string' || filePath.length === 0) return false;
-  if (filePath.includes('\0')) return false;
+  // A control character would forge or break each line a caller echoes the path into (diff headers).
+  if (/[\u0000-\u001f\u007f]/.test(filePath)) return false;
   if (filePath.includes('\\')) return false;
   if (filePath.startsWith('/') || /^[a-zA-Z]:/.test(filePath)) return false;
   if (filePath.startsWith('./') || filePath === '.') return false;
