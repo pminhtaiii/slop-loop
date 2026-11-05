@@ -186,7 +186,9 @@ export function readinessReport(readiness: UC03HostReadiness): string {
   if (readiness.status === 'unavailable') {
     return JSON.stringify({
       outcome: 'unavailable',
-      reasons: readiness.reasons.map(reason => (reason.kind === 'identity' ? { kind: 'identity', reasonCode: reason.reasonCode } : { kind: 'component', component: reason.component, reasonCode: reason.reasonCode })),
+      reasons: readiness.reasons.map(reason =>
+        reason.kind === 'identity' ? { kind: 'identity', reasonCode: reason.reasonCode } : { kind: 'component', component: reason.component, reasonCode: reason.reasonCode },
+      ),
     });
   }
   return JSON.stringify({ outcome: 'ready', components: [...UC03_PRODUCTION_COMPONENTS_V02], identity: readiness.identity });
@@ -195,18 +197,18 @@ export function readinessReport(readiness: UC03HostReadiness): string {
 /** Assemble the production route from the host file. Absent assembly is a named prerequisite gap, not a fallback. */
 type Assembled = Readonly<{ ok: true; readiness: UC03HostReady; configuration: HostConfiguration }> | Readonly<{ ok: false; result: EvaluateCliResult }>;
 
-function assemble(parsed: ParsedArgs, options: EvaluateCliOptions): Assembled {
+function assemble(parsed: ParsedArgs, options: EvaluateCliOptions | undefined): Assembled {
   if (parsed.hostPath === undefined) return { ok: false, result: cliError(4, 'HOST_CONFIGURATION_REQUIRED', 'A host configuration path is required') };
   const loaded = loadHostConfiguration(parsed.hostPath);
   if (!loaded.ok) return { ok: false, result: loaded.error };
-  if (options.host === undefined) return { ok: false, result: cliError(4, 'HOST_ASSEMBLY_UNAVAILABLE', 'No host assembly is configured') };
+  if (options?.host === undefined) return { ok: false, result: cliError(4, 'HOST_ASSEMBLY_UNAVAILABLE', 'No host assembly is configured') };
 
   const readiness = prepareUC03Host({ ...options.host, pins: loaded.value.pins, identity: loaded.value.identity });
   if (readiness.status !== 'ready') return { ok: false, result: { exitCode: 4, output: readinessReport(readiness) } };
   return { ok: true, readiness, configuration: loaded.value };
 }
 
-export async function runEvaluateCli(args: readonly string[], options: EvaluateCliOptions): Promise<EvaluateCliResult> {
+export async function runEvaluateCli(args: readonly string[], options?: EvaluateCliOptions): Promise<EvaluateCliResult> {
   let parsed: ParsedArgs;
   try {
     parsed = parseCliArgs(args);
@@ -225,12 +227,13 @@ export async function runEvaluateCli(args: readonly string[], options: EvaluateC
   if (parsed.hostPath !== undefined) {
     const assembled = assemble(parsed, options);
     if (!assembled.ok) return assembled.result;
-    if (options.production === undefined) return cliError(4, 'HOST_ROUTE_UNAVAILABLE', 'No production route is configured');
+    if (options?.production === undefined) return cliError(4, 'HOST_ROUTE_UNAVAILABLE', 'No production route is configured');
     const bound: EvaluateCliOptions = { ...options, ...assembled.configuration, driver: options.production(assembled.readiness) };
     const report = await run(parsed, bound);
     return finish(parsed, report);
   }
 
+  if (options === undefined) return cliError(4, 'HOST_ASSEMBLY_UNAVAILABLE', 'No host assembly is configured');
   const report = await run(parsed, options);
   return finish(parsed, report);
 }
@@ -252,8 +255,9 @@ function isDirectExecution(): boolean {
   return invokedPath !== undefined && resolve(invokedPath) === resolve(fileURLToPath(import.meta.url));
 }
 
-/** argv cannot carry the trusted binding, so a direct shell invocation can only refuse. */
+/** Parse operator references normally; absent host deliveries remain an explicit prerequisite gap. */
 if (isDirectExecution()) {
-  process.stderr.write('UC-03 evaluation requires host-supplied profile, config, pricing and model binding\n');
-  process.exitCode = 2;
+  const result = await runEvaluateCli(process.argv.slice(2));
+  process.stdout.write(`${result.output}\n`);
+  process.exitCode = result.exitCode;
 }

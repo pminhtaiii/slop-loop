@@ -10,6 +10,8 @@ import test from 'node:test';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 import { loadHostConfiguration, readinessReport, runEvaluateCli, type HostAssembly, type EvaluateCliOptions } from '../../../src/cli/evaluate.ts';
 import type { OwnerDelivery } from '../../../src/runtime/evaluation-composition.ts';
@@ -79,6 +81,20 @@ function hostFile(overrides: Record<string, unknown> = {}): string {
 function options(overrides: Partial<EvaluateCliOptions> = {}): EvaluateCliOptions {
   return { profileDigest: DIGEST, configDigest: DIGEST, pricingDigest: DIGEST, adapterVersions: ['uc03-adapter-1'], requestedModel: 'deepseek-v4.1', ...overrides };
 }
+
+test('direct evaluation preflight parses the host file and reports unavailable assembly', () => {
+  const extension = import.meta.url.endsWith('.ts') ? '.ts' : '.js';
+  const entry = fileURLToPath(new URL(`../../../src/cli/evaluate${extension}`, import.meta.url));
+  const result = spawnSync(process.execPath, [entry, 'preflight', '--host', hostFile()], { encoding: 'utf8', windowsHide: true });
+  assert.equal(result.status, 4, result.stderr);
+  assert.equal(JSON.parse(result.stdout).error, 'HOST_ASSEMBLY_UNAVAILABLE');
+  assert.equal(result.stderr, '');
+
+  const invalid = spawnSync(process.execPath, [entry, 'preflight', '--host', hostFile({ apiKey: 'secret-shell-value' })], { encoding: 'utf8', windowsHide: true });
+  assert.equal(invalid.status, 2);
+  assert.equal(JSON.parse(invalid.stdout).error, 'HOST_CONFIG_UNSUPPORTED_FIELD');
+  assert.equal(invalid.stdout.includes('secret-shell-value'), false);
+});
 
 test('a complete host file loads without carrying ports, policy facts or credentials', () => {
   const loaded = loadHostConfiguration(hostFile());
