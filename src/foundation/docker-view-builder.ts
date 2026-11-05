@@ -54,8 +54,16 @@ function ownerViewMismatch(
   if (owner.exclusionsPolicyVersion !== observed.exclusionsPolicyVersion) return `exclusions policy ${owner.exclusionsPolicyVersion} does not match measured ${observed.exclusionsPolicyVersion}`;
   if (owner.scratchIdentity !== observed.scratchIdentity) return 'scratch identity differs from the measured workspace scratch';
   if (!Array.isArray(owner.admittedFiles)) return 'owner admittedFiles must be an array';
-  const ownerDigests = new Map(owner.admittedFiles.map(file => [file.path, file.digest]));
-  if (ownerDigests.size !== owner.admittedFiles.length || ownerDigests.size !== observed.admittedFiles.length) return 'admitted file inventory differs from the measured snapshot';
+  // Owner data is untrusted: a malformed entry must yield a mismatch string, not a raw TypeError.
+  const ownerDigests = new Map<string, string>();
+  for (const file of owner.admittedFiles as readonly unknown[]) {
+    if (!file || typeof file !== 'object') return 'owner admitted files must be path and digest entries';
+    const { path, digest } = file as AdmittedFile;
+    if (typeof path !== 'string' || typeof digest !== 'string') return 'owner admitted files must be path and digest entries';
+    if (ownerDigests.has(path)) return 'admitted file inventory differs from the measured snapshot';
+    ownerDigests.set(path, digest);
+  }
+  if (ownerDigests.size !== observed.admittedFiles.length) return 'admitted file inventory differs from the measured snapshot';
   for (const file of observed.admittedFiles) {
     if (ownerDigests.get(file.path) !== file.digest) return `admitted digest for '${file.path}' differs from the measured snapshot`;
   }

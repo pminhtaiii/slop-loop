@@ -183,7 +183,11 @@ export function createHostActionContext(options: HostActionContextOptions): Host
     if (entry.replaced) fail('REPLACED_ACTION', `action '${actionId}' was replaced after registration`);
     if (now() >= entry.expiresAtEpochMs) fail('EXPIRED_AUTHORITY', `action '${actionId}' registration has expired`);
     // Continuation re-observes: facts recorded earlier are only reused while the tree they describe is unchanged.
-    if ((await measureRevision()) !== entry.revision) fail('REVISION_DRIFT', `the repository changed since action '${actionId}' was registered`);
+    // Measuring suspends, so recheck the mutable facts before handing the entry on.
+    const revision = await measureRevision();
+    if (entry.replaced) fail('REPLACED_ACTION', `action '${actionId}' was replaced after registration`);
+    if (now() >= entry.expiresAtEpochMs) fail('EXPIRED_AUTHORITY', `action '${actionId}' registration has expired`);
+    if (revision !== entry.revision) fail('REVISION_DRIFT', `the repository changed since action '${actionId}' was registered`);
     return entry.observed;
   };
 

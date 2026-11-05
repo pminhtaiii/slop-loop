@@ -19,7 +19,7 @@ import type {
   DockerLifecycleController,
   MaterializeViewParams,
 } from '../../../src/foundation/docker-workspace-types.ts';
-import type { CommandView, TaskWorkspace } from '../../../src/contracts/foundation/uc03.ts';
+import type { CommandView, AdmittedFile, TaskWorkspace } from '../../../src/contracts/foundation/uc03.ts';
 
 const REVISION = `sha256:${'a'.repeat(64)}`;
 const WORKSPACE_ID = 'ws-t025';
@@ -157,6 +157,7 @@ test('each mismatching field refuses before materialization and publishes nothin
     // Same measured inventory, but the owner side repeats an entry: the Map would silently collapse it.
     owner => ({ ...owner, admittedFiles: [...owner.admittedFiles, ...owner.admittedFiles.slice(0, 1)] }),
     owner => ({ ...owner, admittedFiles: 'nope' as unknown as OwnerCommandViewMeasurementV02['admittedFiles'] }),
+    owner => ({ ...owner, admittedFiles: [null as unknown as AdmittedFile] }),
   ];
 
   for (const perturb of cases) {

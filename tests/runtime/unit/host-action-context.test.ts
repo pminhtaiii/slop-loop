@@ -13,6 +13,7 @@ import type { PolicyFacts } from '../../../src/approvals/policy.ts';
 import { computeActionDigest } from '../../../src/contracts/foundation/uc03.ts';
 import type { NormalizedAction } from '../../../src/contracts/foundation/uc03.ts';
 import { WorkspaceFilesystemPort } from '../../../src/foundation/host-filesystem-port.ts';
+import type { TrustedFilesystemPort } from '../../../src/foundation/repository-types.ts';
 import { DurableApprovalStore } from '../../../src/persistence/adapters/approval-store-adapter.ts';
 import { DEFAULT_POLICY_PROFILE } from '../../../src/persistence/adapters/approval-types.ts';
 import { DurableStore } from '../../../src/persistence/store.ts';
@@ -87,7 +88,9 @@ function facts(revision: string, overrides: Partial<PolicyFacts> = {}): PolicyFa
   };
 }
 
-function hostContext(filesystem: WorkspaceFilesystemPort, overrides: Partial<Parameters<typeof createHostActionContext>[0]> = {}) {
+type RevisionPort = Pick<TrustedFilesystemPort, 'getCurrentRevisionDigest' | 'provenance'>;
+
+function hostContext(filesystem: RevisionPort, overrides: Partial<Parameters<typeof createHostActionContext>[0]> = {}) {
   return createHostActionContext({
     filesystem,
     workspaceId: WORKSPACE_ID,
@@ -103,6 +106,22 @@ const refusalCode = (run: () => Promise<unknown>): Promise<string | undefined> =
     () => undefined,
     (error: Error) => (error as { code?: string }).code,
   );
+
+/** A real port whose next digests-await runs one armed side effect, so a test can interleave with observation's measurement. */
+function interleavable(filesystem: WorkspaceFilesystemPort): { port: RevisionPort; arm: (effect: () => Promise<unknown>) => void } {
+  let duringMeasure: (() => Promise<unknown>) | undefined;
+  const port: RevisionPort = {
+    provenance: filesystem.provenance,
+    async getCurrentRevisionDigest() {
+      const revision = await filesystem.getCurrentRevisionDigest();
+      const pending = duringMeasure;
+      duringMeasure = undefined;
+      if (pending) await pending();
+      return revision;
+    },
+  };
+  return { port, arm: effect => (duringMeasure = effect) };
+}
 
 test('host registration feeds the existing real context provider end to end', async t => {
   const root = workspace(t);
@@ -167,6 +186,37 @@ test('expired registration authority refuses', async t => {
 
   clock = 1_100;
   await assert.rejects(source.observe(TASK_ID, ACTION.actionId), /EXPIRED_AUTHORITY/);
+});
+
+test('an action replaced while observation is measuring is refused', async t => {
+  const filesystem = new WorkspaceFilesystemPort({ root: workspace(t) });
+  const revision = await filesystem.getCurrentRevisionDigest();
+  const { port, arm } = interleavable(filesystem);
+  const source = hostContext(port);
+  await source.register({ action: ACTION, facts: facts(revision), elements: ELEMENTS });
+
+  const changed: NormalizedAction = { ...ACTION, argv: ['-q', 'tests/y.py'] };
+  arm(async () => {
+    // The swap itself refuses; only its effect on the registry matters here.
+    await source.register({ action: changed, facts: facts(revision, { registeredActionDigest: computeActionDigest(changed) }), elements: ELEMENTS }).catch(() => undefined);
+  });
+
+  assert.equal(await refusalCode(() => source.observe(TASK_ID, ACTION.actionId)), 'REPLACED_ACTION');
+});
+
+test('an action that expires while observation is measuring is refused', async t => {
+  const filesystem = new WorkspaceFilesystemPort({ root: workspace(t) });
+  const revision = await filesystem.getCurrentRevisionDigest();
+  const { port, arm } = interleavable(filesystem);
+  let clock = 1_000;
+  const source = hostContext(port, { ttlMs: 100, now: () => clock });
+  await source.register({ action: ACTION, facts: facts(revision), elements: ELEMENTS });
+
+  arm(async () => {
+    clock = 1_100;
+  });
+
+  assert.equal(await refusalCode(() => source.observe(TASK_ID, ACTION.actionId)), 'EXPIRED_AUTHORITY');
 });
 
 test('caller-supplied facts the host did not measure are refused, with no registry entry', async t => {
