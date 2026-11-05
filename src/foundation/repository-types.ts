@@ -12,6 +12,8 @@ import type {
 import type { AttemptReconciliationValidationContextV02 } from '../contracts/foundation/uc03/v02/attempt.ts';
 import type { DockerWorkspaceManager, StructuredCommandExecutor } from './docker-workspace.ts';
 import type { RepositoryCommandResourcePolicy } from './repository-admission.ts';
+import type { RepositoryDiffSourceOptions } from './repository-diff.ts';
+export type { RepositoryDiffSourceOptions };
 
 export interface FileStat {
   readonly isFile: boolean;
@@ -133,6 +135,8 @@ export interface ControlledRepositoryToolsOptions {
   readonly patchRecoveryHandoff?: PatchRecoveryHandoffV02 | undefined;
   readonly attemptStartRecoveryHandoff?: RepositoryAttemptStartRecoveryHandoffV02 | undefined;
   readonly unattemptedClaimClosureHandoff?: UnattemptedClaimClosureHandoffV02 | undefined;
+  /** Absent means `inspectDiff` stays fail-closed: no baseline, no measurement. */
+  readonly repositoryDiff?: RepositoryDiffSourceOptions | undefined;
   readonly neutralStub?: boolean | undefined;
 }
 
