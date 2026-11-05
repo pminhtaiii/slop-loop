@@ -9,8 +9,10 @@ import {
   type SourceEvidence,
   type TaskState,
 } from '../contracts/foundation/uc03.ts';
-import type { CoderProposal, CoderTurnResult } from './agent.ts';
+import type { CoderProposal, CoderTurnInputV02, CoderTurnResult } from './agent.ts';
+import { coderAdmissionRefusal } from './agent.ts';
 import type { UC03CoderAdmission, UC03GraphConfig } from './graph-types.ts';
+import type { UC03GraphGenerationV02 } from './graph-types-v02.ts';
 import { currentPlanBindingDigest, samePaths, trustedExpectedContext } from './graph-validation.ts';
 
 const SUPPLIED_ANSWER_FIELD = { Investigate: 'planDetails', Patch: 'patchContent', Repair: 'repairPatch', AwaitFeedback: 'revisedPlan' } as const;
@@ -109,4 +111,17 @@ function validCoderClaim(claim: ClaimReceiptV02 | undefined, admission: Provider
     claim.preClaimTaskStateVersion === state.stateVersion &&
     samePaths(claim.reservationRefs, [admission.requestReservationReceipt, ...admission.budgetRefs])
   );
+}
+
+/**
+ * v0.2 generation: no claim here. The model boundary (`ModelPortV02.propose`) alone reserves,
+ * begins the attempt and records the outcome, so a claim on this side would be a second one.
+ */
+export async function generateV02(generation: UC03GraphGenerationV02, input: CoderTurnInputV02): Promise<CoderGeneration> {
+  const refusal = coderAdmissionRefusal(input.admission, input);
+  if (refusal !== null) return { ok: false, reason: `REAL_PROFILE_GENERATION_INVALID: ${refusal}` };
+  const turn = await generation.agent.turn(input);
+  if (turn.outcome === 'proposal') return { ok: true, proposal: turn.proposal };
+  // `waiting` is a human pause, not a failure; other outcomes carry a safe code and no model text.
+  return { ok: false, reason: turn.outcome === 'waiting' ? `HUMAN_WAIT:${turn.reason}` : `REAL_PROFILE_GENERATION_INVALID: ${turn.reason}` };
 }
