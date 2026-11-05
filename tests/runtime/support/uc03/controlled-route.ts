@@ -125,10 +125,11 @@ export function createControllableReviewerPort(repositoryPort: FakeRepositoryPor
       _evidence: readonly SourceEvidence[],
       request: ProviderRequest,
       admission: ProviderAdmissionContextV02,
-      claim: ClaimReceiptV02,
+      claim?: ClaimReceiptV02,
     ): Promise<ReviewResult> {
-      const attempt = await statePort.beginAttempt(claim.claimId, createFixtureExecutorIdentityV02({ payloadDigest: computeRequestContentDigest(request) }));
-      const outcome = await statePort.recordOutcome(createTestProviderOutcomeReceiptV02(claim, attempt, admission));
+      const effectiveClaim = claim ?? (await statePort.claim(admission));
+      const attempt = await statePort.beginAttempt(effectiveClaim.claimId, createFixtureExecutorIdentityV02({ payloadDigest: computeRequestContentDigest(request) }));
+      const outcome = await statePort.recordOutcome(createTestProviderOutcomeReceiptV02(effectiveClaim, attempt, admission));
       if (outcome.outcome !== 'settled') throw new Error('Persisted reviewer allowance did not settle');
       return {
         reviewId: `review-${request.providerRequestId}`,

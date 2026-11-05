@@ -14,7 +14,7 @@ import {
   validateProviderRequest,
   validateReviewAdmission,
   type BugTask,
-  type ClaimReceiptV02,
+  type ModelPortV02,
   type ProviderAdmissionContextV02,
   type ProviderRequest,
   type ProviderUsage,
@@ -25,9 +25,7 @@ import {
   type TrustedDiffLines,
 } from '../contracts/foundation/uc03.ts';
 import type { UC03ReviewerPort } from '../uc03/graph-types.ts';
-import { buildTransportPayload, deepClone, deepFreeze, executeTransport, type HostModelTransport } from './model.ts';
-import { derivedModelProvenance } from './model-v02.ts';
-import { providerClaim } from './provider-admission.ts';
+import { deepClone, deepFreeze } from './model.ts';
 
 /** The review node issues exactly this purpose; a coder-purpose request is a bypass. */
 const REVIEWER_PURPOSE = 'final-review';
@@ -35,7 +33,8 @@ const DIFF_PATH = 'review/diff.patch';
 const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/u;
 
 export interface RuntimeReviewerOptions {
-  readonly transport: HostModelTransport;
+  /** Canonical v0.2 model boundary; it owns the durable claim, attempt and outcome accounting. */
+  readonly model: ModelPortV02;
   /**
    * Current post-patch repository revision digest. The port receives no owner state, and
    * revision digests are not derivable from diff text, so the host must resolve it.
@@ -135,20 +134,20 @@ function parseVerdict(content: string): { readonly status: 'accepted' | 'finding
 }
 
 export function createRuntimeReviewer(options: RuntimeReviewerOptions): RuntimeReviewer {
-  if (!options?.transport || typeof options.transport.execute !== 'function') throw new Error('INVALID_TRANSPORT: a host transport is required');
+  if (!options?.model || typeof options.model.propose !== 'function') throw new Error('INVALID_MODEL: a ModelPortV02 reviewer ingress is required');
   if (typeof options.resolveRepoDigest !== 'function') throw new Error('INVALID_REPO_DIGEST_RESOLVER: the host must resolve the current revision digest');
   let lastObservedUsage: ProviderUsage | undefined;
   let lastFailureReason: string | undefined;
 
   return {
-    provenance: derivedModelProvenance(options.transport),
+    provenance: options.model.provenance,
     get lastObservedUsage() {
       return lastObservedUsage;
     },
     get lastFailureReason() {
       return lastFailureReason;
     },
-    async review(task: BugTask, diff: string, evidence: readonly SourceEvidence[], request: ProviderRequest, admission: ProviderAdmissionContextV02, claim: ClaimReceiptV02): Promise<ReviewResult> {
+    async review(task: BugTask, diff: string, evidence: readonly SourceEvidence[], request: ProviderRequest, admission: ProviderAdmissionContextV02): Promise<ReviewResult> {
       lastObservedUsage = undefined;
       lastFailureReason = undefined;
 
@@ -164,8 +163,8 @@ export function createRuntimeReviewer(options: RuntimeReviewerOptions): RuntimeR
         return deepFreeze<ReviewResult>({ ...base, status: 'invalid', findings: [] });
       };
 
-      // Separate reviewer role and accounting, and a claim that matches this exact request,
-      // are all checked before any dispatch can happen.
+      // Separate reviewer role and accounting are checked before any dispatch can happen.
+      // The model boundary owns the claim, attempt and outcome accounting.
       if (request?.role !== 'reviewer') return invalid('ROLE_NOT_REVIEWER');
       if (admission?.schemaVersion !== '0.2.0' || admission.subjectKind !== 'provider-request' || admission.role !== 'reviewer') return invalid('ADMISSION_NOT_REVIEWER');
       if (admission.taskId !== task.taskId || admission.runId !== request.runId || request.taskId !== task.taskId) return invalid('TASK_BINDING_MISMATCH');
@@ -200,8 +199,6 @@ export function createRuntimeReviewer(options: RuntimeReviewerOptions): RuntimeR
       ) {
         return invalid('REQUEST_EXCEEDS_ADMITTED_BOUNDS');
       }
-      if (claim?.planApplicability !== 'approved-plan' || providerClaim(claim, admission) === null) return invalid('CLAIM_REFUSED');
-
       const trustedDiffLines = parseUnifiedDiff(diff);
       if (trustedDiffLines === null) return invalid('DIFF_NOT_UNIFIED');
 
@@ -234,14 +231,13 @@ export function createRuntimeReviewer(options: RuntimeReviewerOptions): RuntimeR
         { path: DIFF_PATH, revisionDigest: diffDigest, boundedExcerpt: diff, resultCount: 1, truncated: false },
       ];
       const snapshotRequest = deepClone(request);
-      const payload = buildTransportPayload(reviewState, reviewEvidence, snapshotRequest);
 
-      const executed = await executeTransport(options.transport, payload, snapshotRequest);
-      if ('observedUsage' in executed && executed.observedUsage !== undefined) lastObservedUsage = executed.observedUsage;
-      if (executed.outcome === 'uncertain' || executed.outcome === 'denied') return invalid(`PROVIDER_${executed.outcome.toUpperCase()}:${executed.reason}`);
-      if (executed.outcome === 'invalid') return invalid(`PROVIDER_INVALID:${executed.errors[0]?.code ?? 'UNKNOWN'}`);
+      const executed = await options.model.propose(reviewState, reviewEvidence, snapshotRequest, admission);
+      if (executed.observedUsage !== undefined) lastObservedUsage = executed.observedUsage;
+      if (executed.outcome === 'uncertain' || executed.outcome === 'denied') return invalid(`PROVIDER_${executed.outcome.toUpperCase()}:${executed.reason ?? 'UNKNOWN'}`);
+      if (executed.outcome === 'invalid') return invalid(`PROVIDER_INVALID:${executed.errors?.[0]?.code ?? 'UNKNOWN'}`);
 
-      const proposal = executed.result.proposal;
+      const proposal = typeof executed.result === 'object' && executed.result !== null && 'proposal' in executed.result ? executed.result.proposal : null;
       const content = typeof proposal === 'object' && proposal !== null && 'content' in proposal && typeof proposal.content === 'string' ? proposal.content : null;
       const verdict = content === null ? null : parseVerdict(content);
       if (!verdict) return invalid('REVIEW_CONTENT_INVALID');

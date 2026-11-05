@@ -1,9 +1,18 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { computeCanonicalSha256, computeCheckSetDigest, type ClaimReceiptV02, type ProviderAdmissionContextV02, type ReviewResult } from '../../../src/contracts/foundation/uc03.ts';
-import type { HostModelTransportPayload } from '../../../src/foundation/model.ts';
+import {
+  computeCanonicalSha256,
+  computeCheckSetDigest,
+  type ClaimReceiptV02,
+  type ModelPortV02,
+  type ProviderAdmissionContextV02,
+  type ProviderRequest,
+  type ReviewResult,
+  type SourceEvidence,
+  type TaskState,
+} from '../../../src/contracts/foundation/uc03.ts';
+import { buildTransportPayload, executeTransport } from '../../../src/foundation/model.ts';
 import { createRuntimeReviewer, parseUnifiedDiff } from '../../../src/foundation/reviewer.ts';
-import { createDeepSeekTransport } from '../../../src/foundation/deepseek-transport.ts';
 import {
   createFixtureBugTask,
   createFixtureClaimReceiptV02,
@@ -34,13 +43,22 @@ function verdict(status: 'accepted' | 'findings', findings: readonly unknown[] =
   return response(JSON.stringify({ status, findings }), observedUsage);
 }
 
-function fakeTransport(respond: (payload: HostModelTransportPayload) => unknown = () => verdict('accepted')) {
-  const calls: HostModelTransportPayload[] = [];
+interface ModelCall {
+  readonly state: TaskState;
+  readonly evidence: readonly SourceEvidence[];
+  readonly request: ProviderRequest;
+  readonly context: ProviderAdmissionContextV02;
+}
+
+/** Fake v0.2 boundary: records the forwarded snapshot and maps the raw reply like the host ingress. */
+function fakeModel(respond: () => unknown = () => verdict('accepted')): ModelPortV02 & { readonly calls: ModelCall[] } {
+  const calls: ModelCall[] = [];
   return {
+    provenance: 'mock',
     calls,
-    async execute(payload: HostModelTransportPayload): Promise<unknown> {
-      calls.push(payload);
-      return respond(payload);
+    async propose(state, evidence, request, context) {
+      calls.push({ state, evidence, request, context });
+      return executeTransport({ execute: async () => respond() }, buildTransportPayload(state, evidence, request), request);
     },
   };
 }
@@ -59,16 +77,16 @@ function claimFor(admission: ProviderAdmissionContextV02): ClaimReceiptV02 {
   });
 }
 
-function setup(respond?: (payload: HostModelTransportPayload) => unknown) {
+function setup(respond?: () => unknown) {
   const task = createFixtureBugTask();
   const diff = DIFF;
   const evidence = [createFixtureSourceEvidence()];
   const request = createFixtureReviewerRequest({ purpose: 'final-review', contextDigest: computeCanonicalSha256(diff) });
   const admission = createFixtureProviderAdmissionContextV02({ providerRequest: request, role: 'reviewer', runnableNode: 'Review' });
   const claim = claimFor(admission);
-  const transport = fakeTransport(respond);
-  const reviewer = createRuntimeReviewer({ transport, resolveRepoDigest: () => REPO_DIGEST });
-  return { task, diff, evidence, request, admission, claim, transport, reviewer };
+  const model = fakeModel(respond);
+  const reviewer = createRuntimeReviewer({ model, resolveRepoDigest: () => REPO_DIGEST });
+  return { task, diff, evidence, request, admission, claim, model, reviewer };
 }
 
 async function run(context: ReturnType<typeof setup>): Promise<ReviewResult> {
@@ -80,11 +98,11 @@ test('refuses a coder-role request without dispatching', async () => {
   const coder = createFixtureReviewerRequest({ role: 'coder', purpose: 'investigate-and-propose', contextDigest: computeCanonicalSha256(DIFF) });
   const result = await context.reviewer.review(context.task, context.diff, context.evidence, coder, context.admission, context.claim);
   assert.equal(result.status, 'invalid');
-  assert.equal(context.transport.calls.length, 0);
+  assert.equal(context.model.calls.length, 0);
   assert.equal(context.reviewer.lastFailureReason, 'ROLE_NOT_REVIEWER');
 });
 
-test('refuses admission, reservation and claim mismatches before any dispatch', async () => {
+test('refuses admission, reservation and bounds mismatches before any dispatch', async () => {
   const coderAdmissionContext = createFixtureProviderAdmissionContextV02({ role: 'coder' });
   const cases: readonly { readonly run: (context: ReturnType<typeof setup>) => Promise<ReviewResult>; readonly reason: string }[] = [
     {
@@ -108,10 +126,6 @@ test('refuses admission, reservation and claim mismatches before any dispatch', 
       reason: 'RESERVATION_MISMATCH',
     },
     {
-      run: async context => context.reviewer.review(context.task, context.diff, context.evidence, context.request, context.admission, createFixtureClaimReceiptV02()),
-      reason: 'CLAIM_REFUSED',
-    },
-    {
       run: async context =>
         context.reviewer.review(
           context.task,
@@ -129,7 +143,7 @@ test('refuses admission, reservation and claim mismatches before any dispatch', 
     const result = await attempt(context);
     assert.equal(result.status, 'invalid', reason);
     assert.equal(context.reviewer.lastFailureReason, reason);
-    assert.equal(context.transport.calls.length, 0, reason);
+    assert.equal(context.model.calls.length, 0, reason);
   }
 });
 
@@ -142,7 +156,7 @@ test('refuses empty and non-unified diffs before dispatch', async () => {
     assert.equal(result.status, 'invalid');
     assert.equal(result.findings.length, 0);
     assert.equal(context.reviewer.lastFailureReason, 'DIFF_NOT_UNIFIED');
-    assert.equal(context.transport.calls.length, 0);
+    assert.equal(context.model.calls.length, 0);
   }
 });
 
@@ -150,19 +164,18 @@ test('dispatches exactly one read-only reviewer request and accepts a clean diff
   const context = setup();
   const result = await run(context);
 
-  assert.equal(context.transport.calls.length, 1);
-  const payload = context.transport.calls[0];
-  assert.ok(payload);
-  assert.equal(payload.request.role, 'reviewer');
-  assert.equal(payload.request.purpose, 'final-review');
-  assert.equal(payload.state.node, 'Review');
-  assert.equal(payload.state.taskId, 'task-calc-001');
-  assert.deepEqual([...payload.state.changedPaths], ['src/calculator.py']);
-  assert.equal(payload.evidence.length, 2);
-  const diffItem = payload.untrustedContext.evidenceItems.find(item => item.path === 'review/diff.patch');
-  assert.equal(diffItem?.content, DIFF);
-  assert.equal(diffItem?.isUntrustedRepositoryContent, true);
-  assert.equal('tools' in payload, false);
+  assert.equal(context.model.calls.length, 1);
+  const call = context.model.calls[0];
+  assert.ok(call);
+  assert.equal(call.request.role, 'reviewer');
+  assert.equal(call.request.purpose, 'final-review');
+  assert.equal(call.state.node, 'Review');
+  assert.equal(call.state.taskId, 'task-calc-001');
+  assert.deepEqual([...call.state.changedPaths], ['src/calculator.py']);
+  assert.equal(call.evidence.length, 2);
+  assert.equal(call.evidence.find(item => item.path === 'review/diff.patch')?.boundedExcerpt, DIFF);
+  assert.equal(call.context.providerRequestId, context.request.providerRequestId);
+  assert.deepEqual(call.request, context.request);
 
   assert.deepEqual(
     { ...result },
@@ -221,7 +234,7 @@ test('rejects findings off the diff or contradictory to their status', async () 
     assert.equal(result.status, 'invalid');
     assert.equal(result.findings.length, 0);
     assert.equal(context.reviewer.lastFailureReason, reason);
-    assert.equal(context.transport.calls.length, 1);
+    assert.equal(context.model.calls.length, 1);
   }
 });
 
@@ -266,29 +279,15 @@ test('leaves the supplied task, diff, evidence, request, admission and claim unt
   assert.equal(Object.isFrozen(context.evidence[0]), false);
 });
 
-test('derives provenance from the transport brand, not the identity-channel shape', () => {
+test('takes provenance from the model port', () => {
   assert.equal(setup().reviewer.provenance, 'mock');
-  // Shape-compatible fake: an own lastModelIdentity getter alone must not buy real provenance.
-  const fake = createRuntimeReviewer({
-    transport: {
-      ...fakeTransport(),
-      get lastModelIdentity() {
-        return undefined;
-      },
-    },
-    resolveRepoDigest: () => REPO_DIGEST,
-  });
-  assert.equal(fake.provenance, 'mock');
   const real = createRuntimeReviewer({
-    transport: createDeepSeekTransport({
-      endpoint: 'https://api.deepseek.com/anthropic/v1/messages',
-      apiKey: 'sk-host-only-ref-0123456789',
-      pricing: { inputRate: 1, outputRate: 1, cacheRate: 1, overheadRate: 0, denominator: 1 },
-      fetch: async () => assert.fail('no network in this test'),
-    }),
+    model: { ...fakeModel(), provenance: 'real' },
     resolveRepoDigest: () => REPO_DIGEST,
   });
   assert.equal(real.provenance, 'real');
+  // The ingress shape must include propose; a bare provenance value is not enough.
+  assert.throws(() => createRuntimeReviewer({ model: { provenance: 'mock' } as unknown as ModelPortV02, resolveRepoDigest: () => REPO_DIGEST }), /^Error: INVALID_MODEL/);
 });
 
 test('parses unified diffs into changed old and new lines only', () => {
