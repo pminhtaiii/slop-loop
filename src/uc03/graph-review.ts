@@ -7,15 +7,13 @@ import {
   validateProviderRequest,
   validateReviewAdmission,
   validateReviewResult,
-  type ClaimReceiptV02,
-  type ProviderAdmissionContextV02,
   type TaskState,
 } from '../contracts/foundation/uc03.ts';
 import { evaluateDeterministicCompletion } from './verification.ts';
 import { loadCompletionPredicateInput, reportForPredicate } from './graph-completion.ts';
 import { loadVerifiedPatchAncestry } from './graph-patch-ancestry.ts';
 import { currentPlanApprovalIsCurrent } from './post-patch-verification-authority.ts';
-import { addMilestone, reviewAdmissionMatchesState, samePaths, trustedExpectedContext, trustedOwnerStateMatches, validDiffInfo } from './graph-validation.ts';
+import { addMilestone, reviewAdmissionMatchesState, trustedExpectedContext, trustedOwnerStateMatches, validDiffInfo } from './graph-validation.ts';
 import { reloadAuthoritativeState, transitionState } from './graph-transitions.ts';
 import { buildFinalReport } from './report.ts';
 import type { UC03GraphConfig, UC03GraphPorts } from './graph-types.ts';
@@ -23,19 +21,6 @@ import type { UC03GraphNode, UC03GraphState } from './graph-state.ts';
 
 type ReviewPorts = Pick<UC03GraphPorts, 'statePort' | 'repositoryPort' | 'reviewerPort' | 'hostAuthority'>;
 type ReviewConfig = Pick<UC03GraphConfig, 'reviewerAdmission' | 'trustedExpectedContext' | 'trustedTransitionContext'>;
-
-function validReviewerClaim(claim: ClaimReceiptV02 | undefined, admission: ProviderAdmissionContextV02, state: TaskState): claim is ClaimReceiptV02 {
-  return (
-    !!claim &&
-    claim.status === 'claimed' &&
-    claim.subjectKind === 'provider-request' &&
-    claim.planApplicability === 'approved-plan' &&
-    claim.taskId === state.taskId &&
-    claim.runId === state.runId &&
-    claim.preClaimTaskStateVersion === state.stateVersion &&
-    samePaths(claim.reservationRefs, [admission.requestReservationReceipt, ...admission.budgetRefs])
-  );
-}
 
 export function createReviewNode(ports: ReviewPorts, config?: ReviewConfig): UC03GraphNode {
   return async (state: UC03GraphState) => {
@@ -98,13 +83,7 @@ export function createReviewNode(ports: ReviewPorts, config?: ReviewConfig): UC0
     }
     const beforeReview = await reloadAuthoritativeState(current.state, ports.statePort);
     if (!beforeReview.ok) return { state: current.state, terminalOutcome: 'IMPLEMENTED_UNVERIFIED' as const, reasons: [beforeReview.reason] };
-    const claim = await trusted.statePort.claim(reviewAdmission.context);
-    if (!validReviewerClaim(claim, reviewAdmission.context, current.state)) {
-      return { state: current.state, terminalOutcome: 'IMPLEMENTED_UNVERIFIED' as const, reasons: ['Owner budget protocol refused the reviewer allowance before dispatch'] };
-    }
-    const beforeDispatch = await reloadAuthoritativeState(current.state, ports.statePort, { allowAccountingChange: true });
-    if (!beforeDispatch.ok) return { state: current.state, terminalOutcome: 'IMPLEMENTED_UNVERIFIED' as const, reasons: [beforeDispatch.reason] };
-    const result = await ports.reviewerPort.review(state.task, diffInfo.diff, [], reviewAdmission.request, reviewAdmission.context, claim);
+    const result = await ports.reviewerPort.review(state.task, diffInfo.diff, [], reviewAdmission.request, reviewAdmission.context, undefined);
     const afterReview = await reloadAuthoritativeState(current.state, ports.statePort, { allowAccountingChange: true });
     if (!afterReview.ok) return { state: current.state, terminalOutcome: 'IMPLEMENTED_UNVERIFIED' as const, reasons: [afterReview.reason] };
     const ownerState = afterReview.state;
