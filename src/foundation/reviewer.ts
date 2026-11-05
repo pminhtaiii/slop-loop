@@ -230,7 +230,8 @@ export function createRuntimeReviewer(options: RuntimeReviewerOptions): RuntimeR
       });
       const reviewEvidence: readonly SourceEvidence[] = [
         ...evidence.map(item => ({ ...item })),
-        { path: DIFF_PATH, revisionDigest: diffDigest, boundedExcerpt: diff, resultCount: 1, truncated: false },
+        // The synthetic diff entry is read at the projected revision, not at the diff's own digest.
+        { path: DIFF_PATH, revisionDigest: repoDigest, boundedExcerpt: diff, resultCount: 1, truncated: false },
       ];
       const snapshotRequest = deepClone(request);
 

@@ -12,7 +12,7 @@ import {
   type SourceEvidence,
   type TaskState,
 } from '../../../src/contracts/foundation/uc03.ts';
-import { buildTransportPayload, executeTransport } from '../../../src/foundation/model.ts';
+import { buildTransportPayload, executeTransport, validateBaseModelInputs } from '../../../src/foundation/model.ts';
 import { createRuntimeReviewer, parseUnifiedDiff } from '../../../src/foundation/reviewer.ts';
 import {
   createFixtureBugTask,
@@ -81,7 +81,8 @@ function claimFor(admission: ProviderAdmissionContextV02): ClaimReceiptV02 {
 function setup(respond?: () => unknown) {
   const task = createFixtureBugTask();
   const diff = DIFF;
-  const evidence = [createFixtureSourceEvidence()];
+  // Caller evidence is read at the projected (post-patch) revision, as the ingress requires.
+  const evidence = [createFixtureSourceEvidence({ revisionDigest: REPO_DIGEST })];
   const request = createFixtureReviewerRequest({ purpose: 'final-review', contextDigest: computeCanonicalSha256(diff) });
   const admission = createFixtureProviderAdmissionContextV02({ providerRequest: request, role: 'reviewer', runnableNode: 'Review' });
   const claim = claimFor(admission);
@@ -200,6 +201,30 @@ test('forwards a projection the production task-state validator accepts', async 
   await run(context);
   const validation = validateTaskState(context.model.calls[0]?.state);
   assert.deepEqual(validation.ok ? [] : validation.errors, []);
+});
+
+test('the real model ingress accepts the reviewer snapshot as current evidence', async () => {
+  const context = setup();
+  const complaints: string[] = [];
+  const ingressModel: ModelPortV02 = {
+    provenance: 'mock',
+    async propose(state, evidence, request) {
+      const validation = validateBaseModelInputs(state, evidence, request);
+      if (!validation.ok) complaints.push(...validation.errors.map(error => `${error.path}:${error.code}`));
+      return executeTransport({ execute: async () => verdict('accepted') }, buildTransportPayload(state, evidence, request), request);
+    },
+  };
+  const reviewer = createRuntimeReviewer({ model: ingressModel, resolveRepoDigest: () => REPO_DIGEST });
+  const result = await reviewer.review(context.task, context.diff, context.evidence, context.request, context.admission, context.claim);
+
+  assert.equal(
+    complaints.some(complaint => complaint.endsWith(':STALE_EVIDENCE_REVISION')),
+    false,
+  );
+  // Deferred, not fixed: the owner request's contextDigest is the diff digest while the ingress
+  // recomputes it from this host-built projection. Releasing that needs owner-contract agreement.
+  assert.deepEqual(complaints, ['contextDigest:REQUEST_IDENTITY_MISMATCH']);
+  assert.equal(result.status, 'accepted');
 });
 
 test('keeps actionable findings that land on real old and new changed lines', async () => {

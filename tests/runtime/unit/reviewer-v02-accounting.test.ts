@@ -66,7 +66,8 @@ function spyModel(respond: () => unknown = () => ({ proposal: { proposalId: 'msg
 
 function reviewerSetup(respond?: () => unknown) {
   const task = createFixtureBugTask();
-  const evidence = [createFixtureSourceEvidence()];
+  // The projection reads the post-patch revision, so caller evidence declares that revision too.
+  const evidence = [createFixtureSourceEvidence({ revisionDigest: REPO_DIGEST })];
   const request = createFixtureReviewerRequest({ purpose: 'final-review', contextDigest: computeCanonicalSha256(DIFF) });
   const admission = createFixtureProviderAdmissionContextV02({ providerRequest: request, role: 'reviewer', runnableNode: 'Review' });
   const claim: ClaimReceiptV02 = createFixtureClaimReceiptV02({
