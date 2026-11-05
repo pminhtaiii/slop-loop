@@ -181,6 +181,53 @@ test('caller-supplied facts the host did not measure are refused, with no regist
   await assert.rejects(source.observe(TASK_ID, ACTION.actionId), /UNKNOWN_ACTION/);
 });
 
+test('a mock-provenance filesystem port is refused at construction', async t => {
+  const filesystem = new WorkspaceFilesystemPort({ root: workspace(t), provenance: 'mock' });
+  assert.equal(await refusalCode(async () => hostContext(filesystem)), 'INVALID_CONFIGURATION');
+});
+
+test('re-registering the same action id with different facts or elements refuses as replaced', async t => {
+  const filesystem = new WorkspaceFilesystemPort({ root: workspace(t) });
+  const revision = await filesystem.getCurrentRevisionDigest();
+  const factsSource = hostContext(filesystem);
+  const elementsSource = hostContext(filesystem);
+  await factsSource.register({ action: ACTION, facts: facts(revision), elements: ELEMENTS });
+  await elementsSource.register({ action: ACTION, facts: facts(revision), elements: ELEMENTS });
+
+  assert.equal(await refusalCode(() => factsSource.register({ action: ACTION, facts: facts(revision, { continuationRef: 'continuation-2' }), elements: ELEMENTS })), 'REPLACED_ACTION');
+  assert.equal(await refusalCode(() => factsSource.observe(TASK_ID, ACTION.actionId)), 'REPLACED_ACTION');
+  assert.equal(await refusalCode(() => elementsSource.register({ action: ACTION, facts: facts(revision), elements: { ...ELEMENTS, action: 'Run the suite' } })), 'REPLACED_ACTION');
+  assert.equal(await refusalCode(() => elementsSource.observe(TASK_ID, ACTION.actionId)), 'REPLACED_ACTION');
+});
+
+test('an accepted replay keeps its expiry, and a later different registration still refuses', async t => {
+  const filesystem = new WorkspaceFilesystemPort({ root: workspace(t) });
+  let clock = 1_000;
+  const source = hostContext(filesystem, { ttlMs: 100, now: () => clock });
+  const revision = await filesystem.getCurrentRevisionDigest();
+  assert.equal((await source.register({ action: ACTION, facts: facts(revision), elements: ELEMENTS })).expiresAtEpochMs, 1_100);
+
+  clock = 1_050;
+  assert.deepEqual(await source.register({ action: ACTION, facts: facts(revision), elements: ELEMENTS }), { actionId: ACTION.actionId, expiresAtEpochMs: 1_100 });
+
+  assert.equal(await refusalCode(() => source.register({ action: ACTION, facts: facts(revision, { continuationRef: 'continuation-2' }), elements: ELEMENTS })), 'REPLACED_ACTION');
+  // Once replaced, even the original registration is no longer a replay.
+  assert.equal(await refusalCode(() => source.register({ action: ACTION, facts: facts(revision), elements: ELEMENTS })), 'REPLACED_ACTION');
+});
+
+test('an action id that is not a bounded identifier is refused at registration', async t => {
+  const filesystem = new WorkspaceFilesystemPort({ root: workspace(t) });
+  const source = hostContext(filesystem);
+  const revision = await filesystem.getCurrentRevisionDigest();
+  const malformed: NormalizedAction = { ...ACTION, actionId: 'not an id!' };
+
+  assert.equal(
+    await refusalCode(() => source.register({ action: malformed, facts: facts(revision, { registeredActionDigest: computeActionDigest(malformed) }), elements: ELEMENTS })),
+    'INVALID_CONFIGURATION',
+  );
+  assert.equal(await refusalCode(() => source.observe(TASK_ID, malformed.actionId)), 'UNKNOWN_ACTION');
+});
+
 /** Same id as ACTION, different content, but facts still carry ACTION's digest. */
 function changingArgv(): NormalizedAction {
   return { actionId: ACTION.actionId, kind: 'run_command', executable: 'pytest', argv: ['-q', 'tests/z.py'], workingDirectory: '/workspace/repo' };

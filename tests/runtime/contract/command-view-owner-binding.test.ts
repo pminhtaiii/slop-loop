@@ -154,6 +154,9 @@ test('each mismatching field refuses before materialization and publishes nothin
     owner => ({ ...owner, scratchIdentity: 'scratch-someone-else' }),
     owner => ({ ...owner, admittedFiles: owner.admittedFiles.slice(1) }),
     owner => ({ ...owner, admittedFiles: owner.admittedFiles.map((file, index) => (index === 0 ? { ...file, digest: 'b'.repeat(64) } : file)) }),
+    // Same measured inventory, but the owner side repeats an entry: the Map would silently collapse it.
+    owner => ({ ...owner, admittedFiles: [...owner.admittedFiles, ...owner.admittedFiles.slice(0, 1)] }),
+    owner => ({ ...owner, admittedFiles: 'nope' as unknown as OwnerCommandViewMeasurementV02['admittedFiles'] }),
   ];
 
   for (const perturb of cases) {

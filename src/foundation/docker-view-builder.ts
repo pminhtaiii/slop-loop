@@ -21,9 +21,10 @@ interface DockerViewBuilderOperations {
  * known literal exclusions/scratch mismatch must be corrected at the UC-04 producer rather than
  * papered over here.
  *
- * shortcut: the isolation reference is only checked for presence here; the published v0.1
- * `CommandView` has no field for it, so the actual binding happens one layer up in
- * `admissionCommandView()`. Extend this comparison if the view shape ever carries isolation.
+ * shortcut: the isolation reference is only checked for presence and bound here; the published v0.1
+ * `CommandView` has no field for it. The v0.2 admission re-check requires the ref
+ * (`validateRepositoryAdmissionV02`) and `commandExecutionLimits` compares it to the trusted profile.
+ * Extend this comparison if the view shape ever carries isolation.
  */
 export interface OwnerCommandViewMeasurementV02 {
   readonly canonicalRevision: string;
@@ -52,8 +53,9 @@ function ownerViewMismatch(
   if (owner.canonicalRevision !== observed.revision) return `revision ${owner.canonicalRevision} does not match measured ${observed.revision}`;
   if (owner.exclusionsPolicyVersion !== observed.exclusionsPolicyVersion) return `exclusions policy ${owner.exclusionsPolicyVersion} does not match measured ${observed.exclusionsPolicyVersion}`;
   if (owner.scratchIdentity !== observed.scratchIdentity) return 'scratch identity differs from the measured workspace scratch';
+  if (!Array.isArray(owner.admittedFiles)) return 'owner admittedFiles must be an array';
   const ownerDigests = new Map(owner.admittedFiles.map(file => [file.path, file.digest]));
-  if (ownerDigests.size !== observed.admittedFiles.length) return 'admitted file inventory differs from the measured snapshot';
+  if (ownerDigests.size !== owner.admittedFiles.length || ownerDigests.size !== observed.admittedFiles.length) return 'admitted file inventory differs from the measured snapshot';
   for (const file of observed.admittedFiles) {
     if (ownerDigests.get(file.path) !== file.digest) return `admitted digest for '${file.path}' differs from the measured snapshot`;
   }

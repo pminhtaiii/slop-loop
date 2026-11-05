@@ -11,7 +11,7 @@
  * the existing real-context provider keep that authority.
  */
 import type { PolicyIdentity } from '../contracts/approvals/contracts.ts';
-import { computeActionDigest, validateNormalizedAction } from '../contracts/foundation/uc03.ts';
+import { computeActionDigest, computeCanonicalSha256, validateNormalizedAction } from '../contracts/foundation/uc03.ts';
 import type { NormalizedAction } from '../contracts/foundation/uc03.ts';
 import { freezePolicyData, isValidPolicyFacts } from '../approvals/policy-v01.ts';
 import type { PolicyFacts } from '../approvals/policy.ts';
@@ -44,8 +44,8 @@ export class HostActionContextError extends Error {
 }
 
 export interface HostActionContextOptions {
-  /** The host's own revision measurement; a caller claim is never used in its place. */
-  readonly filesystem: Pick<TrustedFilesystemPort, 'getCurrentRevisionDigest'>;
+  /** The host's own revision measurement; must be a real-provenance port, since only that supports a caller-claim-free 'real' context. */
+  readonly filesystem: Pick<TrustedFilesystemPort, 'getCurrentRevisionDigest' | 'provenance'>;
   readonly workspaceId: string;
   readonly repositoryId: string;
   readonly policyIdentity: PolicyIdentity;
@@ -103,6 +103,7 @@ export function createHostActionContext(options: HostActionContextOptions): Host
   if (!filesystem || typeof filesystem.getCurrentRevisionDigest !== 'function') {
     fail('INVALID_CONFIGURATION', 'a revision-measuring filesystem port is required');
   }
+  if (filesystem.provenance !== 'real') fail('INVALID_CONFIGURATION', 'the filesystem port must have real provenance');
   const workspaceId = requireIdentifier(options.workspaceId, 'workspaceId');
   const repositoryId = requireIdentifier(options.repositoryId, 'repositoryId');
   const identity = options.policyIdentity;
@@ -145,12 +146,20 @@ export function createHostActionContext(options: HostActionContextOptions): Host
       fail('FABRICATED_FACTS', 'the claimed repository revision is not the revision the host measured');
     }
 
-    const actionId = action.value.actionId;
+    const actionId = requireIdentifier(action.value.actionId, 'actionId');
     const taskId = facts.taskId;
     const existing = registry.get(actionId);
     if (existing) {
       // A repeated identical registration is the same fact; anything else swaps the action behind an id already observed.
-      if (existing.actionDigest === digest && existing.taskId === taskId) return { actionId, expiresAtEpochMs: existing.expiresAtEpochMs };
+      if (
+        !existing.replaced &&
+        existing.actionDigest === digest &&
+        existing.taskId === taskId &&
+        computeCanonicalSha256(existing.observed.facts) === computeCanonicalSha256(facts) &&
+        computeCanonicalSha256(existing.observed.elements) === computeCanonicalSha256(registration.elements)
+      ) {
+        return { actionId, expiresAtEpochMs: existing.expiresAtEpochMs };
+      }
       existing.replaced = true;
       fail('REPLACED_ACTION', `action '${actionId}' was already registered with different content or identity`);
     }
