@@ -12,6 +12,7 @@ import {
 import type { CoderProposal, CoderToolResult, CoderTurnInputV02, CoderTurnResult } from './agent.ts';
 import type { UC03CoderAdmission, UC03GraphConfig } from './graph-types.ts';
 import type { UC03GraphGenerationV02 } from './graph-types-v02.ts';
+import { computeContextDigest } from '../foundation/model.ts';
 import { currentPlanBindingDigest, samePaths, trustedExpectedContext } from './graph-validation.ts';
 
 const SUPPLIED_ANSWER_FIELD = { Investigate: 'planDetails', Patch: 'patchContent', Repair: 'repairPatch', AwaitFeedback: 'revisedPlan' } as const;
@@ -22,7 +23,7 @@ const SUPPLIED_ANSWER_FIELD = { Investigate: 'planDetails', Patch: 'patchContent
  * agent proposes one through an owner-issued coder admission.
  */
 export function generationRefusal(config: UC03GraphConfig | undefined, node: keyof typeof SUPPLIED_ANSWER_FIELD): string | undefined {
-  if (config?.mode !== 'production' || (!config.generation && !config.generationV02)) return undefined;
+  if ((config?.mode !== 'production' && config?.mode !== 'controlled') || (!config.generation && !config.generationV02)) return undefined;
   const field = SUPPLIED_ANSWER_FIELD[node];
   if (config[field] !== undefined || (node === 'Patch' && Boolean(config.targetPaths?.length))) {
     return `REAL_PROFILE_SUPPLIED_ANSWER_REFUSED: ${node} takes no config.${field}; the generation agent must produce it`;
@@ -32,7 +33,7 @@ export function generationRefusal(config: UC03GraphConfig | undefined, node: key
 
 /** True when this route must obtain its answer from the model rather than the config. */
 export function generates(config: UC03GraphConfig | undefined): config is UC03GraphConfig {
-  return config?.mode === 'production' && (config.generation !== undefined || config.generationV02 !== undefined);
+  return (config?.mode === 'production' || config?.mode === 'controlled') && (config.generation !== undefined || config.generationV02 !== undefined);
 }
 
 /** What the owner binds the coder request to: this task/run/state, this purpose, this evidence. */
@@ -58,7 +59,8 @@ export async function generate(config: UC03GraphConfig, task: BugTask, state: Ta
   const admission = typeof source === 'function' ? await source({ task, state, purpose, evidence }) : source;
   if (!admission) return { ok: false, reason: 'Owner did not issue a coder admission for the current task state' };
 
-  const bound = coderAdmissionBinds(admission, task, state, purpose, evidence);
+  const contextDigest = generationV02 ? computeContextDigest(state, evidence) : coderContextDigest(task, state, purpose, evidence);
+  const bound = coderAdmissionBinds(admission, task, state, purpose, contextDigest);
   if (!bound) return { ok: false, reason: 'Coder request or persisted admission does not bind the current task, run, state, and reservation' };
 
   // The v0.2 model boundary alone claims, begins and settles this provider attempt.
@@ -77,13 +79,13 @@ export async function generate(config: UC03GraphConfig, task: BugTask, state: Ta
   return { ok: false, reason: turn.outcome === 'waiting' ? `HUMAN_WAIT:${turn.reason}` : `REAL_PROFILE_GENERATION_INVALID: ${turn.reason}` };
 }
 
-function coderAdmissionBinds(admission: UC03CoderAdmission, task: BugTask, state: TaskState, purpose: CoderPurpose, evidence: readonly SourceEvidence[]): boolean {
+function coderAdmissionBinds(admission: UC03CoderAdmission, task: BugTask, state: TaskState, purpose: CoderPurpose, expectedContextDigest: string): boolean {
   const requestValidation = validateProviderRequest(admission.request, {
     expectedTaskId: state.taskId,
     expectedRunId: state.runId,
     expectedRole: 'coder',
     expectedPurpose: purpose,
-    expectedContextDigest: coderContextDigest(task, state, purpose, evidence),
+    expectedContextDigest,
     expectedProviderRequestId: admission.context.providerRequestId,
   });
   const admissionValidation = validateProviderAdmissionV02(admission.context, admission.trustedContext);

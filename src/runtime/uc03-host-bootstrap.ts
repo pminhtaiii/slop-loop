@@ -19,8 +19,16 @@
  */
 import type { ExecutionGuardReadCapability } from '../foundation/repository-types.ts';
 import type { RealContextSource } from '../approvals/real-context-provider.ts';
-import { checkProductionPortsV02, UC03_PRODUCTION_COMPONENTS_V02, UNPROVENANCED_COMPONENTS_V02, type UC03GraphConfigV02, type UC03GraphPortsV02, type UC03ProductionComponentV02 } from '../uc03/graph-types-v02.ts';
-import { composeEvaluationPorts, type OwnerDelivery } from './evaluation-composition.ts';
+import {
+  checkControlledPortsV02,
+  checkProductionPortsV02,
+  UC03_PRODUCTION_COMPONENTS_V02,
+  UNPROVENANCED_COMPONENTS_V02,
+  type UC03GraphConfigV02,
+  type UC03GraphPortsV02,
+  type UC03ProductionComponentV02,
+} from '../uc03/graph-types-v02.ts';
+import { composeControlledEvaluationPorts, composeEvaluationPorts, type OwnerDelivery } from './evaluation-composition.ts';
 
 export type UC03HostComponent = UC03ProductionComponentV02 | 'registry';
 
@@ -58,6 +66,9 @@ export type UC03HostReadiness =
   | Readonly<{ status: 'ready'; ports: UC03GraphPortsV02; config: UC03GraphConfigV02; identity: Readonly<Record<string, string>> }>
   | Readonly<{ status: 'unavailable'; reasons: readonly UC03HostUnavailableReason[] }>;
 
+export type UC03ControlledHostReadiness =
+  Readonly<{ status: 'controlled-ready'; ports: UC03GraphPortsV02; config: UC03GraphConfigV02; identity: Readonly<Record<string, string>> }> | Extract<UC03HostReadiness, { status: 'unavailable' }>;
+
 /** A credential never belongs in a readiness identity; a key or value naming one is refused. */
 const CREDENTIAL = /credential|secret|token|password|api[-_]?key/iu;
 const REQUIRED_IDENTITY = ['profileId', 'profileDigest', 'configDigest', 'pricingDigest'] as const;
@@ -70,11 +81,24 @@ const unavailable = (...reasons: readonly UC03HostUnavailableReason[]): UC03Host
  * the whole gap in one pass.
  */
 export function prepareUC03Host(inputs: UC03HostInputs): UC03HostReadiness {
+  return prepareHost(inputs, 'real');
+}
+
+/** Separate mock-only assembly; its tagged result never issues real evaluation admission. */
+export function prepareControlledUC03Host(inputs: UC03HostInputs): UC03ControlledHostReadiness {
+  const result = prepareHost(inputs, 'mock');
+  return result.status === 'ready' ? { ...result, status: 'controlled-ready' } : result;
+}
+
+function prepareHost(inputs: UC03HostInputs, provenance: 'real' | 'mock'): UC03HostReadiness {
   const candidate: unknown = inputs;
   if (typeof candidate !== 'object' || candidate === null) return unavailable({ kind: 'identity', reasonCode: 'incomplete-identity' });
   const { pins, owner, producers, config, identity } = inputs;
   if (typeof pins !== 'object' || pins === null || typeof config !== 'object' || config === null || typeof producers !== 'object' || producers === null) {
     return unavailable({ kind: 'identity', reasonCode: 'incomplete-identity' });
+  }
+  if (typeof pins.revisions !== 'object' || pins.revisions === null || Array.isArray(pins.revisions) || !Array.isArray(owner)) {
+    return unavailable({ kind: 'component', component: 'registry', reasonCode: 'incompatible-delivery' });
   }
 
   const identityError = checkIdentity(identity);
@@ -87,22 +111,25 @@ export function prepareUC03Host(inputs: UC03HostInputs): UC03HostReadiness {
     if (!stale.some(reason => reason.kind === 'component' && reason.component === component)) stale.push({ kind: 'component', component, reasonCode: 'stale-revision' });
   };
   UC03_PRODUCTION_COMPONENTS_V02.filter(component => !isRevision(pins.revisions[component])).forEach(staleFor);
-  const deliveries = [...owner, ...hostDeliveries(producers, pins)];
+  const deliveries: readonly OwnerDelivery[] = [...owner, ...hostDeliveries(producers, pins, provenance)];
   for (const delivery of deliveries) {
+    if (typeof delivery !== 'object' || delivery === null) return unavailable({ kind: 'component', component: 'registry', reasonCode: 'incompatible-delivery' });
     if (pins.revisions[delivery.component] !== delivery.revision) staleFor(delivery.component);
   }
   if (stale.length > 0) return unavailable(...stale);
 
-  const composition = composeEvaluationPorts(deliveries, pins.contractVersion);
+  const composition = provenance === 'real' ? composeEvaluationPorts(deliveries, pins.contractVersion) : composeControlledEvaluationPorts(deliveries, pins.contractVersion);
   if (composition.status === 'denied') {
     return unavailable({ kind: 'component', component: composition.component, reasonCode: 'incompatible-delivery' });
   }
 
-  const rejection = checkProductionPortsV02(composition.ports);
+  const rejection = provenance === 'real' ? checkProductionPortsV02(composition.ports) : checkControlledPortsV02(composition.ports);
   if (rejection) return unavailable({ kind: 'component', component: rejection.component, reasonCode: rejection.reasonCode });
 
-  const mock = UC03_PRODUCTION_COMPONENTS_V02.filter(component => !UNPROVENANCED_COMPONENTS_V02.includes(component) && (composition.ports[component] as { readonly provenance?: unknown }).provenance === 'mock');
-  if (mock.length > 0) return unavailable(...mock.map(component => ({ kind: 'component', component, reasonCode: 'mock-delivery' }) as const));
+  const mock = UC03_PRODUCTION_COMPONENTS_V02.filter(
+    component => !UNPROVENANCED_COMPONENTS_V02.includes(component) && (composition.ports[component] as { readonly provenance?: unknown }).provenance === 'mock',
+  );
+  if (provenance === 'real' && mock.length > 0) return unavailable(...mock.map(component => ({ kind: 'component', component, reasonCode: 'mock-delivery' }) as const));
 
   return { status: 'ready', ports: composition.ports, config, identity: Object.freeze({ ...identity }) };
 }
@@ -111,7 +138,7 @@ const REVISION = /^[a-f0-9]{40,64}$/u;
 const isRevision = (value: unknown): value is string => typeof value === 'string' && REVISION.test(value);
 
 /** The Tai-owned producers as deliveries, so one composition path validates all twelve. */
-function hostDeliveries(producers: UC03HostProducers, pins: UC03HostPins): OwnerDelivery[] {
+function hostDeliveries(producers: UC03HostProducers, pins: UC03HostPins, provenance: 'real' | 'mock'): OwnerDelivery[] {
   const port = producers as unknown as Record<string, unknown>;
   return Object.entries(port).map(
     ([component, adapter]) =>
@@ -120,7 +147,7 @@ function hostDeliveries(producers: UC03HostProducers, pins: UC03HostPins): Owner
         id: `host-${component}`,
         contractVersion: pins.contractVersion,
         revision: pins.revisions[component as UC03ProductionComponentV02] ?? '',
-        provenance: 'real',
+        provenance,
         adapter,
       }) as OwnerDelivery,
   );

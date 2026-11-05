@@ -1,5 +1,12 @@
 import type { PortProvenance } from '../contracts/foundation/uc03/v01/ports.ts';
-import { checkProductionPortsV02, REQUIRED_PORTS_V02_METHODS, UC03_PRODUCTION_COMPONENTS_V02, type UC03GraphPortsV02, type UC03ProductionComponentV02 } from '../uc03/graph-types-v02.ts';
+import {
+  checkControlledPortsV02,
+  checkProductionPortsV02,
+  REQUIRED_PORTS_V02_METHODS,
+  UC03_PRODUCTION_COMPONENTS_V02,
+  type UC03GraphPortsV02,
+  type UC03ProductionComponentV02,
+} from '../uc03/graph-types-v02.ts';
 
 /**
  * UC-03 production (v0.2) port composition.
@@ -44,6 +51,8 @@ export type EvaluationComposition = Readonly<{
 export type CompositionResult =
   Readonly<{ status: 'ready'; ports: UC03GraphPortsV02; composition: EvaluationComposition }> | Readonly<{ status: 'denied'; reasonCode: 'incompatible-delivery'; component: Component | 'registry' }>;
 
+export type ControlledCompositionResult = Readonly<{ status: 'controlled-ready'; ports: UC03GraphPortsV02; composition: EvaluationComposition }> | Extract<CompositionResult, { status: 'denied' }>;
+
 const REVISION = /^[a-f0-9]{40,64}$/u;
 const SAFE_ID = /^[A-Za-z0-9._:-]{1,128}$/u;
 const CONTRACT_VERSION = /^[A-Za-z0-9._:/-]{1,128}$/u;
@@ -56,6 +65,15 @@ const CONTRACT_VERSION = /^[A-Za-z0-9._:/-]{1,128}$/u;
  * from whatever the delivery happens to declare.
  */
 export function composeEvaluationPorts(deliveries: readonly OwnerDelivery[], contractVersion: string): CompositionResult {
+  return composePorts(deliveries, contractVersion, 'real');
+}
+
+export function composeControlledEvaluationPorts(deliveries: readonly OwnerDelivery[], contractVersion: string): ControlledCompositionResult {
+  const result = composePorts(deliveries, contractVersion, 'mock');
+  return result.status === 'ready' ? { ...result, status: 'controlled-ready' } : result;
+}
+
+function composePorts(deliveries: readonly OwnerDelivery[], contractVersion: string, provenance: 'real' | 'mock'): CompositionResult {
   const denied = (component: Component | 'registry'): CompositionResult => ({ status: 'denied', reasonCode: 'incompatible-delivery', component });
   if (!Array.isArray(deliveries) || !CONTRACT_VERSION.test(contractVersion)) return denied('registry');
 
@@ -84,7 +102,7 @@ export function composeEvaluationPorts(deliveries: readonly OwnerDelivery[], con
       delivery.contractVersion !== contractVersion ||
       !REVISION.test(delivery.revision) ||
       // Provenance is checked here so a mock delivery is named as such, not as a missing method.
-      delivery.provenance !== 'real' ||
+      delivery.provenance !== provenance ||
       REQUIRED_PORTS_V02_METHODS[component].some(method => typeof Reflect.get(adapter, method) !== 'function')
     ) {
       return denied(component);
@@ -96,7 +114,7 @@ export function composeEvaluationPorts(deliveries: readonly OwnerDelivery[], con
 
   // Independent of the deliveries' own declarations: the assembled set must pass the same guard the
   // graph applies, so a delivery cannot satisfy this function and then be refused at run time.
-  const rejection = checkProductionPortsV02(ports);
+  const rejection = provenance === 'real' ? checkProductionPortsV02(ports) : checkControlledPortsV02(ports);
   if (rejection) return denied(rejection.component);
 
   return {

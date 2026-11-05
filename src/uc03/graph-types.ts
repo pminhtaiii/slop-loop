@@ -105,7 +105,7 @@ export interface UC03GraphGeneration {
 }
 
 export interface UC03GraphConfig {
-  readonly mode?: 'development' | 'production' | undefined;
+  readonly mode?: 'development' | 'production' | 'controlled' | undefined;
   readonly generation?: UC03GraphGeneration | undefined;
   readonly generationV02?: UC03GraphGenerationV02 | undefined;
   readonly trustedExpectedContext?: TrustedHostExpectedContext | undefined;

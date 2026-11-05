@@ -9,7 +9,7 @@ import type { BugTask } from '../../src/contracts/foundation/uc03.ts';
 import { sanitizeText } from '../../src/foundation/telemetry.ts';
 import type { CatalogEntry } from '../../src/runtime/evaluation-profile.ts';
 import { runUC03Graph } from '../../src/uc03/graph.ts';
-import { runUC03GraphV02 } from '../../src/uc03/graph-v02.ts';
+import { runControlledUC03GraphV02, runUC03GraphV02 } from '../../src/uc03/graph-v02.ts';
 import type { UC03GraphConfigV02, UC03GraphPortsV02 } from '../../src/uc03/graph-types-v02.ts';
 import type { UC03GraphConfig, UC03GraphPorts, UC03WorkflowResult } from '../../src/uc03/graph-types.ts';
 import type { EvaluationCaseSpec, WorkflowCaseContext, WorkflowDriver, WorkflowLifecycle, WorkflowObservation, WorkflowUsage, WorkflowWait } from './types.ts';
@@ -29,6 +29,8 @@ export interface WorkflowCaseHost {
    * `prepareUC03Host`; presenting it does not make the run real.
    */
   readonly production?: Readonly<{ ports: UC03GraphPortsV02; config: UC03GraphConfigV02 }> | undefined;
+  /** Mock-only versioned route, never eligible for real evaluation admission. */
+  readonly controlled?: Readonly<{ ports: UC03GraphPortsV02; config: UC03GraphConfigV02 }> | undefined;
 }
 
 const DIGEST = /^(?:sha256:)?[a-f0-9]{64}$/u;
@@ -130,6 +132,10 @@ export function createWorkflowDriver(catalog: ReadonlyMap<string, WorkflowCaseHo
         return blockedObservation(spec.caseId, host, 'MISSING_DIGEST');
       }
       // Neither entry throws; a real port failure is still a possible dispatch, hence uncertain effects.
+      if (host.controlled) {
+        if (context.mode !== 'mock' || host.production || host.ports) return blockedObservation(spec.caseId, host, 'CONTROLLED_ROUTE_ONLY');
+        return observationFor(host, await runControlledUC03GraphV02(host.task, host.controlled.ports, host.controlled.config));
+      }
       if (host.production) return observationFor(host, await runUC03GraphV02(host.task, host.production.ports, host.production.config));
       if (!host.ports) return blockedObservation(spec.caseId, host, 'MISSING_ROUTE');
       return observationFor(host, await runUC03Graph(host.task, host.ports, host.config));

@@ -181,12 +181,21 @@ export const UNPROVENANCED_COMPONENTS_V02: readonly UC03ProductionComponentV02[]
  * is named as such instead of being reported as a missing method.
  */
 export function checkProductionPortsV02(candidate: unknown): ProductionPortRejectionV02 | null {
+  return checkPortsV02(candidate, 'real');
+}
+
+/** Controlled assembly admits only mock effects and cannot establish production authority. */
+export function checkControlledPortsV02(candidate: unknown): ProductionPortRejectionV02 | null {
+  return checkPortsV02(candidate, 'mock');
+}
+
+function checkPortsV02(candidate: unknown, provenance: 'real' | 'mock'): ProductionPortRejectionV02 | null {
   if (typeof candidate !== 'object' || candidate === null) return { status: 'rejected', component: 'statePort', reasonCode: 'missing-port' };
   const ports = candidate as Record<string, unknown>;
   for (const component of UC03_PRODUCTION_COMPONENTS_V02) {
     const port = ports[component] as Record<string, unknown> | null | undefined;
     if (typeof port !== 'object' || port === null) return { status: 'rejected', component, reasonCode: 'missing-port' };
-    if (!UNPROVENANCED_COMPONENTS_V02.includes(component) && port['provenance'] !== 'real') return { status: 'rejected', component, reasonCode: 'invalid-provenance' };
+    if (!UNPROVENANCED_COMPONENTS_V02.includes(component) && port['provenance'] !== provenance) return { status: 'rejected', component, reasonCode: 'invalid-provenance' };
     for (const method of REQUIRED_PORTS_V02_METHODS[component]) {
       if (typeof port[method] !== 'function') return { status: 'rejected', component, reasonCode: 'missing-method' };
     }
