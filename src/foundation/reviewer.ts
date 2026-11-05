@@ -25,7 +25,7 @@ import {
   type TrustedDiffLines,
 } from '../contracts/foundation/uc03.ts';
 import type { UC03ReviewerPort } from '../uc03/graph-types.ts';
-import { deepClone, deepFreeze } from './model.ts';
+import { computeContextDigest, deepClone, deepFreeze } from './model.ts';
 
 /** The review node issues exactly this purpose; a coder-purpose request is a bypass. */
 const REVIEWER_PURPOSE = 'final-review';
@@ -133,6 +133,58 @@ function parseVerdict(content: string): { readonly status: 'accepted' | 'finding
   return { status, findings: record['findings'] as readonly ReviewFinding[] };
 }
 
+/**
+ * Minting API for the reviewer projection. A host that must issue a matching reviewer
+ * request builds the snapshot here and sets `contextDigest` to
+ * `computeContextDigest(snapshot.state, snapshot.evidence)` — the value the model ingress
+ * recomputes. Byte-identical to what the review closure dispatches.
+ */
+export function buildReviewerSnapshot(
+  task: BugTask,
+  diff: string,
+  evidence: readonly SourceEvidence[],
+  repoDigest: string,
+  binding: { readonly runId: string; readonly expectedTaskStateVersion: number },
+): { readonly state: TaskState; readonly evidence: readonly SourceEvidence[] } {
+  const trustedDiffLines = parseUnifiedDiff(diff);
+  // Callers mint only after the review path's own DIFF_NOT_UNIFIED guard; a non-unified diff here is a host bug.
+  if (trustedDiffLines === null) throw new Error('DIFF_NOT_UNIFIED: buildReviewerSnapshot requires a unified diff');
+
+  const state = deepClone<TaskState>({
+    schemaVersion: '0.1.0',
+    stateVersion: binding.expectedTaskStateVersion,
+    taskId: task.taskId,
+    runId: binding.runId,
+    workspaceId: 'review-read-only',
+    repositoryId: task.repositoryId,
+    repositoryRevisionDigest: repoDigest,
+    goal: task.goal,
+    observedBehavior: task.observedBehavior,
+    expectedBehavior: task.expectedBehavior,
+    reproduction: task.reproduction,
+    acceptanceCriteria: task.acceptanceCriteria,
+    constraints: task.constraints,
+    requiredCheckIds: task.requiredChecks.map(check => check.checkId),
+    taskContext: task,
+    node: 'Review',
+    // The projection carries no plan; version 1 is the pre-plan baseline the graph itself starts from.
+    planVersion: 1,
+    replanCount: 0,
+    changedPaths: Object.keys(trustedDiffLines),
+    evidenceRefs: evidence.map(item => item.path),
+    risks: [],
+    nextAction: 'final-review',
+  });
+  return {
+    state,
+    evidence: [
+      ...evidence.map(item => ({ ...item })),
+      // The synthetic diff entry is read at the projected revision, not at the diff's own digest.
+      { path: DIFF_PATH, revisionDigest: repoDigest, boundedExcerpt: diff, resultCount: 1, truncated: false },
+    ],
+  };
+}
+
 export function createRuntimeReviewer(options: RuntimeReviewerOptions): RuntimeReviewer {
   if (!options?.model || typeof options.model.propose !== 'function') throw new Error('INVALID_MODEL: a ModelPortV02 reviewer ingress is required');
   if (typeof options.resolveRepoDigest !== 'function') throw new Error('INVALID_REPO_DIGEST_RESOLVER: the host must resolve the current revision digest');
@@ -171,12 +223,21 @@ export function createRuntimeReviewer(options: RuntimeReviewerOptions): RuntimeR
 
       const identity = admission.providerIdentity;
       if (!identity || typeof identity.configId !== 'string' || !identity.configId.trim()) return invalid('ADMISSION_NOT_REVIEWER');
+      const trustedDiffLines = parseUnifiedDiff(diff);
+      if (trustedDiffLines === null) return invalid('DIFF_NOT_UNIFIED');
+
+      // One projection serves both the request check and the dispatch, so the minted and the
+      // recomputed context digests cannot drift.
+      const snapshot = buildReviewerSnapshot(task, diff, evidence, repoDigest, {
+        runId: admission.runId,
+        expectedTaskStateVersion: admission.expectedTaskStateVersion,
+      });
       const requestCheck = validateProviderRequest(request, {
         expectedTaskId: task.taskId,
         expectedRunId: admission.runId,
         expectedRole: 'reviewer',
         expectedPurpose: REVIEWER_PURPOSE,
-        expectedContextDigest: diffDigest,
+        expectedContextDigest: computeContextDigest(snapshot.state, snapshot.evidence),
         expectedProviderRequestId: admission.providerRequestId,
         expectedProviderId: identity.providerId,
         expectedModelId: identity.modelId,
@@ -199,43 +260,9 @@ export function createRuntimeReviewer(options: RuntimeReviewerOptions): RuntimeR
       ) {
         return invalid('REQUEST_EXCEEDS_ADMITTED_BOUNDS');
       }
-      const trustedDiffLines = parseUnifiedDiff(diff);
-      if (trustedDiffLines === null) return invalid('DIFF_NOT_UNIFIED');
-
-      // Fresh read-only projection: task criteria, diff and evidence only, no writes or tools.
-      const reviewState = deepClone<TaskState>({
-        schemaVersion: '0.1.0',
-        stateVersion: admission.expectedTaskStateVersion,
-        taskId: task.taskId,
-        runId: admission.runId,
-        workspaceId: 'review-read-only',
-        repositoryId: task.repositoryId,
-        repositoryRevisionDigest: repoDigest,
-        goal: task.goal,
-        observedBehavior: task.observedBehavior,
-        expectedBehavior: task.expectedBehavior,
-        reproduction: task.reproduction,
-        acceptanceCriteria: task.acceptanceCriteria,
-        constraints: task.constraints,
-        requiredCheckIds: task.requiredChecks.map(check => check.checkId),
-        taskContext: task,
-        node: 'Review',
-        // The projection carries no plan; version 1 is the pre-plan baseline the graph itself starts from.
-        planVersion: 1,
-        replanCount: 0,
-        changedPaths: Object.keys(trustedDiffLines),
-        evidenceRefs: evidence.map(item => item.path),
-        risks: [],
-        nextAction: 'final-review',
-      });
-      const reviewEvidence: readonly SourceEvidence[] = [
-        ...evidence.map(item => ({ ...item })),
-        // The synthetic diff entry is read at the projected revision, not at the diff's own digest.
-        { path: DIFF_PATH, revisionDigest: repoDigest, boundedExcerpt: diff, resultCount: 1, truncated: false },
-      ];
       const snapshotRequest = deepClone(request);
 
-      const executed = await options.model.propose(reviewState, reviewEvidence, snapshotRequest, admission);
+      const executed = await options.model.propose(snapshot.state, snapshot.evidence, snapshotRequest, admission);
       if (executed.observedUsage !== undefined) lastObservedUsage = executed.observedUsage;
       if (executed.outcome === 'uncertain' || executed.outcome === 'denied') return invalid(`PROVIDER_${executed.outcome.toUpperCase()}:${executed.reason ?? 'UNKNOWN'}`);
       if (executed.outcome === 'invalid') return invalid(`PROVIDER_INVALID:${executed.errors?.[0]?.code ?? 'UNKNOWN'}`);

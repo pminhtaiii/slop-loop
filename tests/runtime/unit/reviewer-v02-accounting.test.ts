@@ -10,8 +10,8 @@ import {
   type SourceEvidence,
   type TaskState,
 } from '../../../src/contracts/foundation/uc03.ts';
-import { buildTransportPayload, executeTransport, type HostModelTransport } from '../../../src/foundation/model.ts';
-import { createRuntimeReviewer } from '../../../src/foundation/reviewer.ts';
+import { buildTransportPayload, computeContextDigest, executeTransport, type HostModelTransport } from '../../../src/foundation/model.ts';
+import { buildReviewerSnapshot, createRuntimeReviewer } from '../../../src/foundation/reviewer.ts';
 import {
   createFixtureBugTask,
   createFixtureClaimReceiptV02,
@@ -68,7 +68,8 @@ function reviewerSetup(respond?: () => unknown) {
   const task = createFixtureBugTask();
   // The projection reads the post-patch revision, so caller evidence declares that revision too.
   const evidence = [createFixtureSourceEvidence({ revisionDigest: REPO_DIGEST })];
-  const request = createFixtureReviewerRequest({ purpose: 'final-review', contextDigest: computeCanonicalSha256(DIFF) });
+  const snapshot = buildReviewerSnapshot(task, DIFF, evidence, REPO_DIGEST, { runId: 'run-001', expectedTaskStateVersion: 1 });
+  const request = createFixtureReviewerRequest({ purpose: 'final-review', contextDigest: computeContextDigest(snapshot.state, snapshot.evidence) });
   const admission = createFixtureProviderAdmissionContextV02({ providerRequest: request, role: 'reviewer', runnableNode: 'Review' });
   const claim: ClaimReceiptV02 = createFixtureClaimReceiptV02({
     taskId: admission.taskId,

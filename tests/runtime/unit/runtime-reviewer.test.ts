@@ -12,8 +12,8 @@ import {
   type SourceEvidence,
   type TaskState,
 } from '../../../src/contracts/foundation/uc03.ts';
-import { buildTransportPayload, executeTransport, validateBaseModelInputs } from '../../../src/foundation/model.ts';
-import { createRuntimeReviewer, parseUnifiedDiff } from '../../../src/foundation/reviewer.ts';
+import { buildTransportPayload, computeContextDigest, executeTransport, validateBaseModelInputs } from '../../../src/foundation/model.ts';
+import { buildReviewerSnapshot, createRuntimeReviewer, parseUnifiedDiff } from '../../../src/foundation/reviewer.ts';
 import {
   createFixtureBugTask,
   createFixtureClaimReceiptV02,
@@ -78,12 +78,18 @@ function claimFor(admission: ProviderAdmissionContextV02): ClaimReceiptV02 {
   });
 }
 
+/** The owner mints the request from the same projection the ingress recomputes. */
+function reviewerContextDigest(task: ReturnType<typeof createFixtureBugTask>, diff: string, evidence: readonly SourceEvidence[]): string {
+  const snapshot = buildReviewerSnapshot(task, diff, evidence, REPO_DIGEST, { runId: 'run-001', expectedTaskStateVersion: 1 });
+  return computeContextDigest(snapshot.state, snapshot.evidence);
+}
+
 function setup(respond?: () => unknown) {
   const task = createFixtureBugTask();
   const diff = DIFF;
   // Caller evidence is read at the projected (post-patch) revision, as the ingress requires.
   const evidence = [createFixtureSourceEvidence({ revisionDigest: REPO_DIGEST })];
-  const request = createFixtureReviewerRequest({ purpose: 'final-review', contextDigest: computeCanonicalSha256(diff) });
+  const request = createFixtureReviewerRequest({ purpose: 'final-review', contextDigest: reviewerContextDigest(task, diff, evidence) });
   const admission = createFixtureProviderAdmissionContextV02({ providerRequest: request, role: 'reviewer', runnableNode: 'Review' });
   const claim = claimFor(admission);
   const model = fakeModel(respond);
@@ -152,6 +158,7 @@ test('refuses admission, reservation and bounds mismatches before any dispatch',
 test('refuses empty and non-unified diffs before dispatch', async () => {
   for (const diff of ['', 'not a diff\n', '--- a/x\n+++ b/x\n@@ -1 +1 @@\n??\n']) {
     const context = setup();
+    // The diff is rejected before any snapshot or request check, so the digest value is irrelevant here.
     const request = createFixtureReviewerRequest({ purpose: 'final-review', contextDigest: computeCanonicalSha256(diff) });
     const admission = createFixtureProviderAdmissionContextV02({ providerRequest: request, role: 'reviewer' });
     const result = await context.reviewer.review(context.task, diff, context.evidence, request, admission, claimFor(admission));
@@ -203,7 +210,7 @@ test('forwards a projection the production task-state validator accepts', async 
   assert.deepEqual(validation.ok ? [] : validation.errors, []);
 });
 
-test('the real model ingress refuses the reviewer snapshot before dispatch', async () => {
+test('the real model ingress accepts the reviewer snapshot and dispatches once', async () => {
   const context = setup();
   const complaints: string[] = [];
   let dispatches = 0;
@@ -223,17 +230,20 @@ test('the real model ingress refuses the reviewer snapshot before dispatch', asy
   const reviewer = createRuntimeReviewer({ model: ingressModel, resolveRepoDigest: () => REPO_DIGEST });
   const result = await reviewer.review(context.task, context.diff, context.evidence, context.request, context.admission, context.claim);
 
-  assert.equal(
-    complaints.some(complaint => complaint.endsWith(':STALE_EVIDENCE_REVISION')),
-    false,
-  );
-  // Refused, and unresolved: the owner request's contextDigest is the diff digest (reviewer.ts:179)
-  // while the ingress recomputes it from (state, evidence) (model.ts:228). Reconciling that is an
-  // owner-contract decision under specs/007-runtime-evaluation-integration/contracts/host-composition.md §2.
-  assert.deepEqual(complaints, ['contextDigest:REQUEST_IDENTITY_MISMATCH']);
-  assert.equal(dispatches, 0);
+  assert.deepEqual(complaints, []);
+  assert.equal(dispatches, 1);
+  assert.equal(result.status, 'accepted');
+  assert.equal(reviewer.lastFailureReason, undefined);
+});
+
+test('still refuses a request whose contextDigest does not match the projection, before dispatch', async () => {
+  const context = setup();
+  const wrong = createFixtureReviewerRequest({ purpose: 'final-review', contextDigest: computeCanonicalSha256(context.diff) });
+  const admission = createFixtureProviderAdmissionContextV02({ providerRequest: wrong, role: 'reviewer', runnableNode: 'Review' });
+  const result = await context.reviewer.review(context.task, context.diff, context.evidence, wrong, admission, claimFor(admission));
   assert.equal(result.status, 'invalid');
-  assert.equal(reviewer.lastFailureReason, 'PROVIDER_INVALID:REQUEST_IDENTITY_MISMATCH');
+  assert.equal(context.reviewer.lastFailureReason, 'REQUEST_REJECTED:REQUEST_IDENTITY_MISMATCH');
+  assert.equal(context.model.calls.length, 0);
 });
 
 test('keeps actionable findings that land on real old and new changed lines', async () => {
