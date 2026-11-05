@@ -1,36 +1,27 @@
-import { isAdmittedForProduction, type PortProvenance } from '../contracts/foundation/uc03/v01/ports.ts';
-import type { UC03GraphPorts } from '../uc03/graph-types.ts';
+import type { PortProvenance } from '../contracts/foundation/uc03/v01/ports.ts';
+import { checkProductionPortsV02, REQUIRED_PORTS_V02_METHODS, UC03_PRODUCTION_COMPONENTS_V02, type UC03GraphPortsV02, type UC03ProductionComponentV02 } from '../uc03/graph-types-v02.ts';
 
 /**
- * UC-03 real-tier port composition (T006).
+ * UC-03 production (v0.2) port composition.
  *
- * Composes already-delivered owner capabilities into `UC03GraphPorts`. It implements no owner:
- * state, approval, repository, model and reviewer arrive as injected deliveries, and UC-04/UC-05
- * remain external. A delivery is admitted only when its declared contract version, revision and
- * callable surface match what this composition requires; anything missing or incompatible denies
+ * Composes already-delivered owner capabilities into `UC03GraphPortsV02`. It implements no owner:
+ * state, approval, repository, model/reviewer, guard, snapshot, baseline, context and replan arrive
+ * as injected deliveries. A delivery is admitted only when its declared contract version, revision
+ * and callable surface match what this composition requires; anything missing or incompatible denies
  * before the graph can produce an effect.
+ *
+ * The callable surface is `REQUIRED_PORTS_V02_METHODS`, shared with the runtime guard, so a method
+ * added to the production contract is required here without a second list to maintain.
  *
  * G-AUTH note: a `ready` real composition is a prerequisite for G-OWNERS, not evidence of it.
  * Nothing here establishes that a real owner, profile or route exists.
  */
 
-export const EVALUATION_COMPOSITION_VERSION = 'uc03-evaluation-composition/1';
+export const EVALUATION_COMPOSITION_VERSION = 'uc03-evaluation-composition/2';
 
-/**
- * Required capability per port, matching what the graph actually calls. State covers durable
- * reservation, settlement and charged uncertainty; repository covers admitted evidence reads.
- */
-const REQUIRED_METHODS = {
-  statePort: ['loadTask', 'transition', 'reserve', 'settle', 'reconcileUncertain'],
-  approvalPort: ['classify', 'requestDecision', 'validateBinding', 'resolve'],
-  repositoryPort: ['listDir', 'readFile', 'searchCode', 'runTests', 'inspectDiff'],
-  modelPort: ['propose'],
-  reviewerPort: ['review'],
-} as const;
-
-type Component = keyof typeof REQUIRED_METHODS;
-type ComponentPort<K extends Component> = NonNullable<UC03GraphPorts[K]>;
-const COMPONENTS = Object.keys(REQUIRED_METHODS) as readonly Component[];
+type Component = UC03ProductionComponentV02;
+type ComponentPort<K extends Component> = UC03GraphPortsV02[K];
+const COMPONENTS = UC03_PRODUCTION_COMPONENTS_V02;
 
 /** One public owner delivery, supplied by the trusted host — never by task or model input. */
 export type OwnerDelivery = {
@@ -51,7 +42,7 @@ export type EvaluationComposition = Readonly<{
 }>;
 
 export type CompositionResult =
-  Readonly<{ status: 'ready'; ports: UC03GraphPorts; composition: EvaluationComposition }> | Readonly<{ status: 'denied'; reasonCode: 'incompatible-delivery'; component: Component | 'registry' }>;
+  Readonly<{ status: 'ready'; ports: UC03GraphPortsV02; composition: EvaluationComposition }> | Readonly<{ status: 'denied'; reasonCode: 'incompatible-delivery'; component: Component | 'registry' }>;
 
 const REVISION = /^[a-f0-9]{40,64}$/u;
 const SAFE_ID = /^[A-Za-z0-9._:-]{1,128}$/u;
@@ -92,7 +83,9 @@ export function composeEvaluationPorts(deliveries: readonly OwnerDelivery[], con
       !SAFE_ID.test(delivery.id) ||
       delivery.contractVersion !== contractVersion ||
       !REVISION.test(delivery.revision) ||
-      REQUIRED_METHODS[component].some(method => typeof Reflect.get(adapter, method) !== 'function')
+      // Provenance is checked here so a mock delivery is named as such, not as a missing method.
+      delivery.provenance !== 'real' ||
+      REQUIRED_PORTS_V02_METHODS[component].some(method => typeof Reflect.get(adapter, method) !== 'function')
     ) {
       return denied(component);
     }
@@ -101,16 +94,14 @@ export function composeEvaluationPorts(deliveries: readonly OwnerDelivery[], con
     selected[component] = delivery.id;
   }
 
-  // Independent of the deliveries' own declarations: every port must pass the same production
-  // admission the graph applies, so a mock adapter can never ride along in a real-tier composition.
-  const graphPorts = ports as unknown as UC03GraphPorts;
-  if (!isAdmittedForProduction([graphPorts.statePort, graphPorts.approvalPort, graphPorts.repositoryPort, graphPorts.modelPort, graphPorts.reviewerPort])) {
-    return denied('registry');
-  }
+  // Independent of the deliveries' own declarations: the assembled set must pass the same guard the
+  // graph applies, so a delivery cannot satisfy this function and then be refused at run time.
+  const rejection = checkProductionPortsV02(ports);
+  if (rejection) return denied(rejection.component);
 
   return {
     status: 'ready',
-    ports: graphPorts,
+    ports: ports as unknown as UC03GraphPortsV02,
     composition: { version: EVALUATION_COMPOSITION_VERSION, deliveries: Object.freeze(selected), revisions: Object.freeze(revisions) },
   };
 }

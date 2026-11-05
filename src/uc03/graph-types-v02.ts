@@ -169,6 +169,13 @@ export interface UC03RoutePorts {
 }
 
 /**
+ * Components whose contract declares no `provenance`. `TrustedHostPort` is `{ loadSnapshot }` and
+ * `InvestigationConfigPort` makes provenance optional, so demanding one here would refuse the real
+ * producers this feature ships. Their authority is host wiring plus the pinned revision, not a label.
+ */
+export const UNPROVENANCED_COMPONENTS_V02: readonly UC03ProductionComponentV02[] = ['hostAuthority', 'configPort'];
+
+/**
  * Runtime counterpart to the compile-time contract: a substituted or half-implemented delivery is
  * refused here before the graph can produce an effect. Provenance is checked separately so a mock
  * is named as such instead of being reported as a missing method.
@@ -179,7 +186,7 @@ export function checkProductionPortsV02(candidate: unknown): ProductionPortRejec
   for (const component of UC03_PRODUCTION_COMPONENTS_V02) {
     const port = ports[component] as Record<string, unknown> | null | undefined;
     if (typeof port !== 'object' || port === null) return { status: 'rejected', component, reasonCode: 'missing-port' };
-    if (port['provenance'] !== 'real') return { status: 'rejected', component, reasonCode: 'invalid-provenance' };
+    if (!UNPROVENANCED_COMPONENTS_V02.includes(component) && port['provenance'] !== 'real') return { status: 'rejected', component, reasonCode: 'invalid-provenance' };
     for (const method of REQUIRED_PORTS_V02_METHODS[component]) {
       if (typeof port[method] !== 'function') return { status: 'rejected', component, reasonCode: 'missing-method' };
     }

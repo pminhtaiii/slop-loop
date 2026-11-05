@@ -9,17 +9,26 @@ import type { BugTask } from '../../src/contracts/foundation/uc03.ts';
 import { sanitizeText } from '../../src/foundation/telemetry.ts';
 import type { CatalogEntry } from '../../src/runtime/evaluation-profile.ts';
 import { runUC03Graph } from '../../src/uc03/graph.ts';
-import type { UC03GraphConfig, UC03GraphPorts } from '../../src/uc03/graph-types.ts';
+import { runUC03GraphV02 } from '../../src/uc03/graph-v02.ts';
+import type { UC03GraphConfigV02, UC03GraphPortsV02 } from '../../src/uc03/graph-types-v02.ts';
+import type { UC03GraphConfig, UC03GraphPorts, UC03WorkflowResult } from '../../src/uc03/graph-types.ts';
 import type { EvaluationCaseSpec, WorkflowCaseContext, WorkflowDriver, WorkflowLifecycle, WorkflowObservation, WorkflowUsage, WorkflowWait } from './types.ts';
 
 export interface WorkflowCaseHost {
   readonly entry: CatalogEntry;
   readonly task: BugTask;
-  readonly ports: UC03GraphPorts;
+  /** Controlled route. Absent only when `production` supplies the route instead. */
+  readonly ports?: UC03GraphPorts | undefined;
   /** Pinned by the host catalog; never inferred from the run. */
   readonly expectedWait: WorkflowWait | null;
   /** Needed to drive the route at all; the brief's map shape omits it (reported gap). */
   readonly config?: UC03GraphConfig | undefined;
+  /**
+   * Production route: the v0.2 entry takes its ports explicitly and refuses a mock, half-implemented
+   * or stale delivery before any effect. A host that reaches here has already passed
+   * `prepareUC03Host`; presenting it does not make the run real.
+   */
+  readonly production?: Readonly<{ ports: UC03GraphPortsV02; config: UC03GraphConfigV02 }> | undefined;
 }
 
 const DIGEST = /^(?:sha256:)?[a-f0-9]{64}$/u;
@@ -78,7 +87,7 @@ function blockedObservation(caseId: string, host: WorkflowCaseHost | undefined, 
  * a graph call may have dispatched before returning no state. Also `shortcut:` host usage is
  * read from the authoritative final report only; owner accounting beyond it stays `uncertain`.
  */
-function observationFor(host: WorkflowCaseHost, result: Awaited<ReturnType<typeof runUC03Graph>>): WorkflowObservation {
+function observationFor(host: WorkflowCaseHost, result: UC03WorkflowResult): WorkflowObservation {
   const state = result.state;
   const outcome = lifecycleOf(result.outcome);
   const report = result.finalReport;
@@ -120,7 +129,9 @@ export function createWorkflowDriver(catalog: ReadonlyMap<string, WorkflowCaseHo
       if (!DIGEST.test(context.profileDigest) || !DIGEST.test(context.configDigest) || !DIGEST.test(context.pricingDigest)) {
         return blockedObservation(spec.caseId, host, 'MISSING_DIGEST');
       }
-      // runUC03Graph never throws; a real port failure is still a possible dispatch, hence uncertain effects.
+      // Neither entry throws; a real port failure is still a possible dispatch, hence uncertain effects.
+      if (host.production) return observationFor(host, await runUC03GraphV02(host.task, host.production.ports, host.production.config));
+      if (!host.ports) return blockedObservation(spec.caseId, host, 'MISSING_ROUTE');
       return observationFor(host, await runUC03Graph(host.task, host.ports, host.config));
     },
   };
