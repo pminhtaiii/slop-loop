@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { runEvaluateCli, type EvaluateCliOptions } from '../../../src/cli/evaluate.ts';
-import type { WorkflowDriver } from '../../../eval/uc03/types.ts';
+import type { WorkflowDriver, WorkflowObservation } from '../../../eval/uc03/types.ts';
 import { sha256Text } from '../../../src/uc01/contracts.ts';
 
 const digest = (seed: string): string => sha256Text(seed);
@@ -156,4 +156,49 @@ test('an unwritable --output exits 2', async () => {
 
   assert.equal(result.exitCode, 2);
   assert.equal(JSON.parse(result.output).error, 'OUTPUT_WRITE_ERROR');
+});
+
+/** A complete observation; the CLI exit is the only thing under test. */
+function observed(overrides: Record<string, unknown>): WorkflowObservation {
+  return {
+    repositoryId: 'repo-1',
+    taskId: 'task-1',
+    runId: 'run-1',
+    returnedModel: 'mock-model-v1',
+    graderDigest: null,
+    initialRepositoryDigest: null,
+    workflowOutcome: 'COMPLETED',
+    expectedWait: null,
+    blocked: null,
+    effects: 'observed',
+    usage: 'uncertain',
+    diagnostic: null,
+    artifacts: [],
+    limitations: [],
+    ...overrides,
+  } as WorkflowObservation;
+}
+
+function waitingDriver(outcome: 'waiting-info' | 'waiting-approval', expectedWait: string | null): WorkflowDriver {
+  return { executeCase: () => observed({ workflowOutcome: outcome, expectedWait }) };
+}
+
+test('an expected wait exits 0 with the task still paused, while an unresolved wait exits 3', async () => {
+  const expected = await runEvaluateCli(['--mode', 'mock', '--cases', 'C02'], { ...HOST_OPTIONS, driver: waitingDriver('waiting-info', 'waiting-info') });
+  assert.equal(expected.exitCode, 0);
+  const expectedCase = (parseOutput(expected.output) as { readonly cases: readonly { readonly grade: string; readonly gradeReason: string; readonly workflowOutcome: string }[] }).cases[0];
+  assert.deepEqual([expectedCase?.grade, expectedCase?.gradeReason, expectedCase?.workflowOutcome], ['pass', 'expected-wait-satisfied', 'waiting-info']);
+
+  const unresolved = await runEvaluateCli(['--mode', 'mock', '--cases', 'C01'], { ...HOST_OPTIONS, driver: waitingDriver('waiting-approval', null) });
+  assert.equal(unresolved.exitCode, 3);
+  const unresolvedCase = (parseOutput(unresolved.output) as { readonly cases: readonly { readonly gradeReason: string }[] }).cases[0];
+  assert.equal(unresolvedCase?.gradeReason, 'unresolved-wait');
+});
+
+test('a blocked prerequisite exits 4, never 1 and never a mock fallback', async () => {
+  const driver: WorkflowDriver = { executeCase: () => observed({ blocked: 'prerequisite-unavailable' }) };
+  const result = await runEvaluateCli(['--mode', 'mock', '--cases', 'C01'], { ...HOST_OPTIONS, driver });
+
+  assert.equal(result.exitCode, 4);
+  assert.equal(/mock fallback/iu.test(result.output), false);
 });
