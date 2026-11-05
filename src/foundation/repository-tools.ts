@@ -3,9 +3,16 @@ import type { ExecutionGuardRepositoryPortV02 } from './execution-guard.ts';
 import type { RepositoryPatchResultV02, RepositoryCommandResultV02, RepositoryPortV02, RepositoryAdmissionContextV02, ReconciliationResultV02 } from '../contracts/foundation/uc03/v02/ports.ts';
 import type { ApplyPatchAction, CheckDefinition, CheckResult, RunCommandAction } from '../contracts/foundation/uc03/v01/types.ts';
 import { ControlledRepositoryReader, containsProtectedContent } from './repository-read.ts';
+import { measureRepositoryDiff } from './repository-diff.ts';
 import { RepositoryCommandReceiver } from './repository-receiver.ts';
 import { RepositoryPatchReceiver } from './repository-outcome.ts';
-import type { ControlledRepositoryToolsOptions, RepositoryAttemptStartRecoveryResultV02 } from './repository-types.ts';
+import type {
+  ControlledRepositoryToolsOptions,
+  ExecutionGuardReadCapability,
+  RepositoryAttemptStartRecoveryResultV02,
+  RepositoryDiffSourceOptions,
+  TrustedFilesystemPort,
+} from './repository-types.ts';
 
 export type {
   ControlledRepositoryToolsV02Options,
@@ -19,6 +26,7 @@ export type {
   RepositoryAttemptStartRecoveryHandoffV02,
   RepositoryAttemptStartRecoveryRequestV02,
   RepositoryAttemptStartRecoveryResultV02,
+  RepositoryDiffSourceOptions,
   UnattemptedClaimClosureHandoffV02,
   UnattemptedClaimClosureRequestV02,
   RepositoryReadLimits,
@@ -34,8 +42,11 @@ export class ControlledRepositoryTools implements RepositoryPort, ExecutionGuard
   private readonly reader: ControlledRepositoryReader;
   private readonly commands: RepositoryCommandReceiver;
   private readonly patches: RepositoryPatchReceiver;
+  private readonly fsPort: TrustedFilesystemPort;
+  private readonly guardCapability: ExecutionGuardReadCapability;
   private readonly adapterIdentity: string;
   private readonly processIncarnation: string;
+  private readonly repositoryDiff: RepositoryDiffSourceOptions | undefined;
   private fencingGeneration: number;
 
   constructor(options: ControlledRepositoryToolsOptions) {
@@ -60,8 +71,11 @@ export class ControlledRepositoryTools implements RepositoryPort, ExecutionGuard
     this.reader = new ControlledRepositoryReader(options);
     this.commands = new RepositoryCommandReceiver(options);
     this.patches = new RepositoryPatchReceiver(options);
+    this.fsPort = options.fsPort;
+    this.guardCapability = options.guardCapability;
     this.adapterIdentity = options.adapterIdentity ?? options.commandExecutor?.getAdapterIdentity?.() ?? '';
     this.processIncarnation = options.processIncarnation ?? options.commandExecutor?.getProcessIncarnation?.() ?? '';
+    this.repositoryDiff = options.repositoryDiff;
     this.fencingGeneration = options.fencingGeneration ?? options.commandExecutor?.getFencingGeneration?.() ?? 0;
   }
 
@@ -122,8 +136,14 @@ export class ControlledRepositoryTools implements RepositoryPort, ExecutionGuard
   }
 
   async inspectDiff(baseRevisionDigest: string): Promise<{ readonly diff: string; readonly diffDigest: string; readonly changedFiles: readonly string[] }> {
-    void baseRevisionDigest;
-    throw new Error('NOT_IMPLEMENTED: inspectDiff is not implemented in T007-a slice');
+    const source = this.repositoryDiff;
+    if (!source) throw new Error('NOT_IMPLEMENTED: inspectDiff requires a trusted repository diff source');
+    return await measureRepositoryDiff({
+      ...source,
+      binding: { taskId: source.taskId, workspaceId: source.workspaceId, repositoryId: source.repositoryId, baseRevision: baseRevisionDigest },
+      filesystem: this.fsPort,
+      guard: this.guardCapability,
+    });
   }
 }
 
