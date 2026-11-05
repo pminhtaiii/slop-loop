@@ -77,10 +77,12 @@ const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,126}$/u;
 const SHA256 = /^sha256:[0-9a-f]{64}$/u;
 const MODES: readonly GuardedReadControlMode[] = ['runnable', 'paused', 'rejected', 'ended', 'recovery'];
 
+/** Narrows an unknown to a safe positive integer, rejecting non-finite and fractional values. */
 function isPositiveInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
 }
 
+/** Builds the typed denial every refusal surfaces as. */
 function deny(reasonCode: string, detail?: string): GuardedReadDenial {
   return new GuardedReadDenial(reasonCode, detail);
 }
@@ -134,29 +136,33 @@ class FencedGuardedReadCapability implements ExecutionGuardReadCapability {
     this.owner = owner;
   }
 
+  /** Validates, serializes observation and fence against the control tail, then returns the closure's pending result. */
   async mediateRead<T>(operation: GuardedReadOperation<T>): Promise<T> {
     this.validateOperation(operation);
+    // The tail releases once the closure is invoked, not when its promise settles, so one slow read does not serialize later reads.
     const run = this.controlTail.then(() => this.#dispatch(operation));
     this.controlTail = run.then(
       () => undefined,
       () => undefined,
     );
-    return run;
+    return run.then(({ pending }) => pending);
   }
 
-  async #dispatch<T>(operation: GuardedReadOperation<T>): Promise<T> {
+  /** Runs the fenced section for one read; the returned object carries the closure's pending result. */
+  async #dispatch<T>(operation: GuardedReadOperation<T>): Promise<{ pending: Promise<T> }> {
     const observation = await this.owner.observeReadControl();
     this.assertObservation(observation);
     const receipt = await this.owner.fenceReadControl(observation);
     this.assertFenceReceipt(observation, receipt);
     // No await between the fence and this call: the closure is invoked inside the fenced section, once.
-    return operation.execute();
+    return { pending: operation.execute() };
   }
 
+  /** Refuses an operation whose kind, execute or path/query shape is unsafe before any owner call. */
   private validateOperation(operation: GuardedReadOperation<unknown>): void {
     if (!operation || typeof operation !== 'object') throw deny('INVALID_READ_OPERATION', 'Operation must be an object');
     const kind: unknown = operation.kind;
-    if (kind !== 'list' && kind !== 'read' && kind !== 'search') throw deny('UNSUPPORTED_READ_KIND', String(kind));
+    if (kind !== 'list' && kind !== 'read' && kind !== 'search') throw deny('UNSUPPORTED_READ_KIND', `unsupported kind (typeof ${typeof kind})`);
     if (typeof operation.execute !== 'function') throw deny('INVALID_READ_OPERATION', 'execute must be a function');
 
     const targetPath: unknown = operation.targetPath;
@@ -168,6 +174,7 @@ class FencedGuardedReadCapability implements ExecutionGuardReadCapability {
     else if (kind === 'search') throw deny('INVALID_READ_QUERY', 'search requires a query');
   }
 
+  /** Refuses non-canonical, over-length, protected or root-targeting paths outside `list`. */
   private assertPath(kind: 'list' | 'read' | 'search', targetPath: unknown): void {
     if (typeof targetPath !== 'string') throw deny('INVALID_READ_PATH', 'targetPath must be a string');
     if (targetPath.length > this.maxPathLength) throw deny('INVALID_READ_PATH', 'targetPath exceeds maxPathLength');
@@ -179,6 +186,7 @@ class FencedGuardedReadCapability implements ExecutionGuardReadCapability {
     if (isProtectedPath(targetPath)) throw deny('PROTECTED_READ_PATH', `Path '${targetPath}' is protected`);
   }
 
+  /** Refuses a query on non-search operations and any empty, over-length or NUL-bearing query. */
   private assertQuery(kind: 'list' | 'read' | 'search', query: unknown): void {
     if (kind !== 'search') throw deny('INVALID_READ_QUERY', 'only search accepts a query');
     if (typeof query !== 'string' || query.length === 0) throw deny('INVALID_READ_QUERY', 'query must be a non-empty string');
@@ -186,6 +194,7 @@ class FencedGuardedReadCapability implements ExecutionGuardReadCapability {
     if (query.includes('\0')) throw deny('INVALID_READ_QUERY', 'query must not contain NUL');
   }
 
+  /** Refuses a malformed, mismatched or non-runnable owner observation before the fence is attempted. */
   private assertObservation(observation: GuardedReadControlObservation | null | undefined): void {
     if (!observation || typeof observation !== 'object') throw deny('INVALID_READ_CONTROL', 'Owner control observation is missing');
     if (!SAFE_ID.test(observation.taskId ?? '') || !SAFE_ID.test(observation.workspaceId ?? '') || !SAFE_ID.test(observation.repositoryId ?? '')) {
@@ -216,6 +225,7 @@ class FencedGuardedReadCapability implements ExecutionGuardReadCapability {
     if (observation.holdRef !== null) throw deny('READ_CONTROL_HELD', `Task retains hold '${observation.holdRef}'`);
   }
 
+  /** Refuses a missing receipt or one that does not exactly match the admitted observation. */
   private assertFenceReceipt(observation: GuardedReadControlObservation, receipt: GuardedReadFenceReceipt | null | undefined): void {
     if (!receipt || typeof receipt !== 'object') throw deny('READ_FENCED', 'Owner fence refused dispatch; control changed after observation');
     if (!SAFE_ID.test(receipt.receiptId ?? '')) throw deny('READ_FENCE_INVALID', 'Owner fence receipt identity is malformed');

@@ -73,7 +73,8 @@ function fakeOwner(initial: GuardedReadControlObservation = runnableControl()): 
         current.mode !== observation.mode ||
         current.holdRef !== observation.holdRef ||
         current.fencingGeneration !== observation.fencingGeneration ||
-        current.policyDigest !== observation.policyDigest
+        current.policyDigest !== observation.policyDigest ||
+        current.readAllowed !== observation.readAllowed
       ) {
         return null;
       }
@@ -256,6 +257,20 @@ test('guarded read: race witness — control fences between observation and disp
   assert.equal(owner.control.controlVersion, 4);
 });
 
+test('guarded read: read-policy flip between observation and fence denies dispatch', async () => {
+  const owner = fakeOwner();
+  const execute = witness();
+  // Only the policy decision changes; every other fenced field stays current.
+  owner.beforeFence = () => {
+    owner.control = { ...owner.control, readAllowed: false };
+  };
+  const capability = createGuardedReadCapability(options(owner));
+
+  await denial(capability.mediateRead({ kind: 'read', targetPath: 'src/a.ts', execute: execute.execute }), 'READ_FENCED');
+  assert.equal(execute.calls, 0);
+  assert.equal(owner.writes, 0);
+});
+
 test('guarded read: fence receipt that does not match the observation denies', async () => {
   const owner = fakeOwner();
   owner.owner = {
@@ -310,10 +325,62 @@ test('guarded read: concurrent reads observe control under the same serialized t
   assert.deepEqual(owner.events, ['observe', 'fence', 'observe', 'fence']);
 });
 
-test('guarded read: one denial does not wedge later reads', async () => {
+test('guarded read: a pending closure does not serialize later reads', { timeout: 5000 }, async () => {
+  const owner = fakeOwner();
+  const capability = createGuardedReadCapability(options(owner));
+  let releaseSlow: () => void = () => undefined;
+  const slowSettled = new Promise<void>(resolve => {
+    releaseSlow = resolve;
+  });
+
+  const slow = capability.mediateRead({
+    kind: 'read',
+    targetPath: 'src/a.ts',
+    execute: async () => {
+      await slowSettled;
+      return 'slow';
+    },
+  });
+  // The tail must release once the closure is invoked, so the next read observes and fences without waiting.
+  await Promise.resolve();
+  assert.equal(await capability.mediateRead({ kind: 'read', targetPath: 'src/b.ts', execute: async () => 'fast' }), 'fast');
+  assert.deepEqual(owner.events, ['observe', 'fence', 'observe', 'fence']);
+
+  releaseSlow();
+  assert.equal(await slow, 'slow');
+});
+
+test('guarded read: a path rejected before chaining does not wedge later reads', async () => {
   const owner = fakeOwner();
   const capability = createGuardedReadCapability(options(owner));
   await denial(capability.mediateRead({ kind: 'read', targetPath: '../a.ts', execute: async () => 'never' }), 'INVALID_READ_PATH');
+
+  const execute = witness();
+  assert.equal(await capability.mediateRead({ kind: 'read', targetPath: 'src/a.ts', execute: execute.execute }), 'ok');
+  assert.equal(execute.calls, 1);
+});
+
+test('guarded read: a fenced denial inside dispatch does not wedge later reads', async () => {
+  const owner = fakeOwner();
+  const capability = createGuardedReadCapability(options(owner));
+  // Release the serialized chain: a later read must not inherit this rejection.
+  owner.beforeFence = () => {
+    owner.control = { ...owner.control, mode: 'paused' };
+  };
+  await denial(capability.mediateRead({ kind: 'read', targetPath: 'src/a.ts', execute: async () => 'never' }), 'READ_FENCED');
+  owner.beforeFence = undefined;
+  owner.control = { ...owner.control, mode: 'runnable' };
+
+  const execute = witness();
+  assert.equal(await capability.mediateRead({ kind: 'read', targetPath: 'src/a.ts', execute: execute.execute }), 'ok');
+  assert.equal(execute.calls, 1);
+});
+
+test('guarded read: a rejecting closure does not wedge later reads', async () => {
+  const owner = fakeOwner();
+  const capability = createGuardedReadCapability(options(owner));
+  const failure = new Error('reader exploded');
+  await assert.rejects(capability.mediateRead({ kind: 'read', targetPath: 'src/a.ts', execute: async () => Promise.reject(failure) }), error => error === failure);
 
   const execute = witness();
   assert.equal(await capability.mediateRead({ kind: 'read', targetPath: 'src/a.ts', execute: execute.execute }), 'ok');
