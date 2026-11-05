@@ -9,6 +9,8 @@ import {
   validateReviewResult,
   type TaskState,
 } from '../contracts/foundation/uc03.ts';
+import { buildReviewerSnapshot, parseUnifiedDiff } from '../foundation/reviewer.ts';
+import { computeContextDigest } from '../foundation/model.ts';
 import { evaluateDeterministicCompletion } from './verification.ts';
 import { loadCompletionPredicateInput, reportForPredicate } from './graph-completion.ts';
 import { loadVerifiedPatchAncestry } from './graph-patch-ancestry.ts';
@@ -50,14 +52,32 @@ export function createReviewNode(ports: ReviewPorts, config?: ReviewConfig): UC0
     if (!trusted) return { state: current.state, terminalOutcome: 'IMPLEMENTED_UNVERIFIED' as const, reasons: ['Reviewer requires the current owner StatePortV02 boundary'] };
     if (!(await trustedOwnerStateMatches(trusted, current.state)))
       return { state: current.state, terminalOutcome: 'IMPLEMENTED_UNVERIFIED' as const, reasons: ['Trusted reviewer and route ports do not share current owner task state'] };
-    const reviewAdmission = typeof admissionSource === 'function' ? await admissionSource({ task: state.task, state: current.state, diff: diffInfo }) : admissionSource;
+    // The ingress recomputes the digest from the projection, so the request must be minted from it too.
+    // shortcut: a non-unified diff falls back to the legacy digest; the real reviewer refuses that diff
+    // at DIFF_NOT_UNIFIED before any dispatch, so only the controlled path ever compares it.
+    const snapshot =
+      parseUnifiedDiff(diffInfo.diff) === null
+        ? undefined
+        : buildReviewerSnapshot(state.task, diffInfo.diff, [], current.state.repositoryRevisionDigest, { runId: current.state.runId, expectedTaskStateVersion: current.state.stateVersion });
+    const expectedContextDigest = snapshot ? computeContextDigest(snapshot.state, snapshot.evidence) : computeCanonicalSha256(diffInfo.diff);
+    const reviewAdmission =
+      typeof admissionSource === 'function'
+        ? await admissionSource({
+            task: state.task,
+            state: current.state,
+            diff: diffInfo,
+            repoDigest: current.state.repositoryRevisionDigest,
+            runId: current.state.runId,
+            expectedTaskStateVersion: current.state.stateVersion,
+          })
+        : admissionSource;
     if (!reviewAdmission) return { state: current.state, terminalOutcome: 'IMPLEMENTED_UNVERIFIED' as const, reasons: ['Owner did not issue a reviewer admission for the current diff'] };
     const requestValidation = validateProviderRequest(reviewAdmission.request, {
       expectedTaskId: current.state.taskId,
       expectedRunId: current.state.runId,
       expectedRole: 'reviewer',
       expectedPurpose: 'final-review',
-      expectedContextDigest: computeCanonicalSha256(diffInfo.diff),
+      expectedContextDigest,
       expectedProviderRequestId: reviewAdmission.context.providerRequestId,
     });
     const admissionValidation = validateProviderAdmissionV02(reviewAdmission.context, reviewAdmission.trustedContext);

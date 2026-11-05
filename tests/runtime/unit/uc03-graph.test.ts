@@ -40,6 +40,8 @@ import {
   validateRepositoryAdmissionV02,
 } from '../../../src/contracts/foundation/uc03.ts';
 import { runUC03Graph, type UC03GraphPorts, type UC03GraphState } from '../../../src/uc03/graph.ts';
+import { buildReviewerSnapshot, parseUnifiedDiff } from '../../../src/foundation/reviewer.ts';
+import { computeContextDigest } from '../../../src/foundation/model.ts';
 import { createAwaitFeedbackNode } from '../../../src/uc03/graph-feedback.ts';
 import { validSettledPatchEvidence } from '../../../src/uc03/graph-validation.ts';
 import { createRepairNode } from '../../../src/uc03/graph-nodes.ts';
@@ -438,13 +440,26 @@ function createMockReviewerAdmissionResolver(statePort: MemoryStatePortV02) {
     task,
     state,
     diff,
+    repoDigest,
+    runId,
+    expectedTaskStateVersion,
   }: {
     readonly task: BugTask;
     readonly state: TaskState;
     readonly diff: { readonly diff: string; readonly diffDigest: string; readonly changedFiles: readonly string[] };
+    readonly repoDigest: string;
+    readonly runId: string;
+    readonly expectedTaskStateVersion: number;
   }) => {
     const ownerAuthority = await statePort.readVerificationAuthoritySnapshot(task.taskId);
     if (!ownerAuthority) return undefined;
+    // Mint from the same projection the ingress recomputes, exactly as a real host does. A non-unified
+    // diff has no projection, so it keeps the legacy digest the route falls back to.
+    let contextDigest = diff.diffDigest;
+    if (parseUnifiedDiff(diff.diff) !== null) {
+      const snapshot = buildReviewerSnapshot(task, diff.diff, [], repoDigest, { runId, expectedTaskStateVersion });
+      contextDigest = computeContextDigest(snapshot.state, snapshot.evidence);
+    }
     const request = createTestProviderRequest({
       providerRequestId: `provider-${task.taskId}-${state.stateVersion}`,
       taskId: task.taskId,
@@ -453,7 +468,7 @@ function createMockReviewerAdmissionResolver(statePort: MemoryStatePortV02) {
       purpose: 'final-review',
       configId: ownerAuthority.policyIdentity.configId,
       pricingPolicyId: ownerAuthority.policyIdentity.policyId,
-      contextDigest: diff.diffDigest,
+      contextDigest,
       reservationRef: `review-allowance:${task.taskId}:${state.stateVersion}`,
     });
     const providerIdentity: ProviderPricingIdentityV02 = {

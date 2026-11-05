@@ -2342,3 +2342,16 @@ test('v0.2 verification admission: each required check uses its own current auth
     assert.equal(snapshot.outcomes.length, 1);
   });
 });
+
+test('v0.2 verification admission: a statePort-only context selects v0.2 and never falls back to runTests', async () => {
+  const task = createFixtureBugTask();
+  const repo = new FakeRepositoryPort();
+
+  const results = await executeVerificationChecks(task, repo, { runId: 'run-state-port-only', repoDigest: task.initialRevisionDigest, statePort: new MemoryStatePortV02() });
+
+  assert.equal(results.length, task.requiredChecks.length);
+  assert.equal(repo.tests.length, 0, 'A bound StatePortV02 must prevent legacy RepositoryPort.runTests calls');
+  assert.ok(results.every(result => result.outcome === 'error' && result.diagnosticRefs.includes('missing-admission-context')));
+  assert.equal(repo.commands.length, 0, 'Missing admission must not reach the command receiver');
+  assert.equal(repo.v02Calls.length, 0, 'Missing admission must not create a v0.2 receiver call');
+});

@@ -61,6 +61,10 @@ export interface UC03ReviewerAdmissionRequest {
   readonly task: BugTask;
   readonly state: TaskState;
   readonly diff: { readonly diff: string; readonly diffDigest: string; readonly changedFiles: readonly string[] };
+  /** The three facts a host needs to mint the reviewer projection the ingress recomputes. */
+  readonly repoDigest: string;
+  readonly runId: string;
+  readonly expectedTaskStateVersion: number;
 }
 
 export interface UC03PatchAdmissionRequest {

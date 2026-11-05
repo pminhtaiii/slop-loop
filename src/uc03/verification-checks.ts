@@ -23,7 +23,7 @@ export async function executeVerificationChecks(task: BugTask, repository: Repos
   const rawAdmission = context.admissionContext;
   const admissionContextForCheck = context.admissionContextForCheck;
   const rawStatePort = context.statePort ?? (repository as { statePort?: unknown })?.statePort;
-  const isV02 = Boolean(rawAdmission !== undefined || admissionContextForCheck !== undefined || context.executionGuard !== undefined);
+  const isV02 = Boolean(rawAdmission !== undefined || admissionContextForCheck !== undefined || context.executionGuard !== undefined || context.statePort !== undefined);
 
   let admissionDenied = false;
   let admissionDenialRef = 'admission-denied';

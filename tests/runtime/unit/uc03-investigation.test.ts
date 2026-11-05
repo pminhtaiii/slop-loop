@@ -25,6 +25,7 @@ import {
   type InvestigationConfigPort,
 } from '../../../src/uc03/investigation.ts';
 import { createExecutionGuardV02 } from '../../../src/foundation/execution-guard.ts';
+import { runBaselineChecks } from '../../../src/uc03/investigation-baseline-checks.ts';
 import { createFixtureBugTask, createFixtureCheckDefinition, createFixtureTaskState } from '../support/uc03/port-fixtures.ts';
 import { FakeRepositoryPort } from '../support/uc03/fake-repository.ts';
 import { MemoryStatePort, MemoryStatePortV02 } from '../support/uc03/memory-state.ts';
@@ -3925,4 +3926,24 @@ test('v0.2 baseline admission: each required check uses its own current authorit
     assert.equal(snapshot.attempts.length, 1);
     assert.equal(snapshot.outcomes.length, 1);
   });
+});
+
+test('v0.2 baseline admission: a statePort-only trusted context selects v0.2 and never falls back to runTests', async () => {
+  const task = createFixtureBugTask();
+  const repo = new FakeRepositoryPort();
+
+  const result = await runBaselineChecks({
+    rawExpectedContext: { ...createTrustedAdmissionContext(task), statePort: new MemoryStatePortV02() },
+    repository: repo,
+    expectedTaskId: task.taskId,
+    expectedRevisionDigest: task.initialRevisionDigest,
+    criteriaDigest: computeCanonicalSha256(task.acceptanceCriteria),
+    checkSetDigest: computeCheckSetDigest(task.requiredChecks),
+    requiredChecks: task.requiredChecks,
+  });
+
+  assert.equal(result.status, 'error');
+  assert.match(result.status === 'error' ? result.reason : '', /ADMISSION_DENIED/u);
+  assert.equal(repo.tests.length, 0, 'A bound StatePortV02 must prevent legacy RepositoryPort.runTests calls');
+  assert.equal(repo.commands.length, 0, 'Missing admission must not reach the command receiver');
 });
