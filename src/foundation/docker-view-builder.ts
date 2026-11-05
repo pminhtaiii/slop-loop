@@ -12,7 +12,65 @@ interface DockerViewBuilderOperations {
   readonly publishView: (workspaceId: string, view: CommandView) => void;
 }
 
-export async function buildDockerCommandView(params: AdmitCommandViewParams, controller: DockerLifecycleController, operations: DockerViewBuilderOperations): Promise<CommandView> {
+/**
+ * The owner's measurement of the same snapshot this builder is about to materialize (T025).
+ *
+ * Host-composition §5: owner admission facts and the Docker view must describe *the same measured
+ * snapshot*, and neither side may rewrite a value to satisfy the other. So this is compared, never
+ * merged — a disagreement refuses before the executor or materializer is reached, which is why the
+ * known literal exclusions/scratch mismatch must be corrected at the UC-04 producer rather than
+ * papered over here.
+ *
+ * shortcut: the isolation reference is only checked for presence and bound here; the published v0.1
+ * `CommandView` has no field for it. The v0.2 admission re-check requires the ref
+ * (`validateRepositoryAdmissionV02`) and `commandExecutionLimits` compares it to the trusted profile.
+ * Extend this comparison if the view shape ever carries isolation.
+ */
+export interface OwnerCommandViewMeasurementV02 {
+  readonly canonicalRevision: string;
+  readonly exclusionsPolicyVersion: string;
+  readonly scratchIdentity: string;
+  readonly admittedFiles: readonly AdmittedFile[];
+  readonly mountedReadOnly: true;
+  readonly isolationProfileRef: string;
+}
+
+export type CommandViewOwnerBindingParams = AdmitCommandViewParams & {
+  /** Absent for legacy/controlled callers; when present its facts are authoritative. */
+  readonly ownerView?: OwnerCommandViewMeasurementV02 | undefined;
+};
+
+function ownerViewMismatch(
+  params: CommandViewOwnerBindingParams,
+  observed: { revision: string; exclusionsPolicyVersion: string; scratchIdentity: string; admittedFiles: readonly AdmittedFile[] },
+): string | null {
+  const owner = params.ownerView;
+  if (owner === undefined) return null;
+  if (!owner || typeof owner !== 'object') return 'owner view measurement must be an object';
+  if (typeof owner.isolationProfileRef !== 'string' || owner.isolationProfileRef.length === 0 || owner.isolationProfileRef.length > 256)
+    return 'owner isolationProfileRef must be a bounded non-empty string';
+  if (owner.mountedReadOnly !== true) return 'owner view must declare mountedReadOnly';
+  if (owner.canonicalRevision !== observed.revision) return `revision ${owner.canonicalRevision} does not match measured ${observed.revision}`;
+  if (owner.exclusionsPolicyVersion !== observed.exclusionsPolicyVersion) return `exclusions policy ${owner.exclusionsPolicyVersion} does not match measured ${observed.exclusionsPolicyVersion}`;
+  if (owner.scratchIdentity !== observed.scratchIdentity) return 'scratch identity differs from the measured workspace scratch';
+  if (!Array.isArray(owner.admittedFiles)) return 'owner admittedFiles must be an array';
+  // Owner data is untrusted: a malformed entry must yield a mismatch string, not a raw TypeError.
+  const ownerDigests = new Map<string, string>();
+  for (const file of owner.admittedFiles as readonly unknown[]) {
+    if (!file || typeof file !== 'object') return 'owner admitted files must be path and digest entries';
+    const { path, digest } = file as AdmittedFile;
+    if (typeof path !== 'string' || typeof digest !== 'string') return 'owner admitted files must be path and digest entries';
+    if (ownerDigests.has(path)) return 'admitted file inventory differs from the measured snapshot';
+    ownerDigests.set(path, digest);
+  }
+  if (ownerDigests.size !== observed.admittedFiles.length) return 'admitted file inventory differs from the measured snapshot';
+  for (const file of observed.admittedFiles) {
+    if (ownerDigests.get(file.path) !== file.digest) return `admitted digest for '${file.path}' differs from the measured snapshot`;
+  }
+  return null;
+}
+
+export async function buildDockerCommandView(params: CommandViewOwnerBindingParams, controller: DockerLifecycleController, operations: DockerViewBuilderOperations): Promise<CommandView> {
   if (!params || typeof params !== 'object') {
     throw new Error('INVALID_ADMIT_PARAMS: params must be an object');
   }
@@ -212,6 +270,16 @@ export async function buildDockerCommandView(params: AdmitCommandViewParams, con
     if (!validation.ok) {
       throw new Error(`INVALID_COMMAND_VIEW: ${validation.errors.map(e => e.message).join('; ')}`);
     }
+
+    // Owner/view agreement is checked after the view is measured but before anything is mutated, so
+    // a mismatch costs zero executor calls and leaves view/accounting state untouched.
+    const mismatch = ownerViewMismatch(params, {
+      revision: initialRev,
+      exclusionsPolicyVersion,
+      scratchIdentity: workspace.scratchVolumeId,
+      admittedFiles,
+    });
+    if (mismatch !== null) throw new Error(`OWNER_VIEW_MISMATCH: ${mismatch}`);
 
     // Materialization replaces the view volume, so any earlier view for this revision must stop
     // being selectable before that destructive step, even if the replacement write then fails.
