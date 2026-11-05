@@ -31,12 +31,8 @@ export async function runBaselineChecks(input: {
     rawExecutionGuard && typeof rawExecutionGuard === 'object' && typeof (rawExecutionGuard as { validateAndExecute?: unknown }).validateAndExecute === 'function'
       ? (rawExecutionGuard as ExecutionGuardV02)
       : undefined;
-  const isV02 = Boolean(
-    contextAdmission !== undefined ||
-    admissionContextForCheck !== undefined ||
-    rawExecutionGuard !== undefined ||
-    (repository as { executionGuardApiVersion?: string })?.executionGuardApiVersion === '0.2.0',
-  );
+  // Only the caller-supplied expected context selects v0.2; a repository marker must not infer the route.
+  const isV02 = Boolean(contextAdmission !== undefined || admissionContextForCheck !== undefined || rawExecutionGuard !== undefined || expectedContext?.statePort !== undefined);
 
   let admission: RepositoryAdmissionContextV02 | undefined;
   let initialGuardStateDigest: string | undefined;

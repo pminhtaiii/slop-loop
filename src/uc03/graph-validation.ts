@@ -28,7 +28,7 @@ export type GraphInputValidation =
       readonly reasons: readonly string[];
     };
 
-export async function validateGraphInput(task: BugTask, suppliedState: TaskState | undefined, statePort: StatePort): Promise<GraphInputValidation> {
+export async function validateGraphInput(task: BugTask, suppliedState: TaskState | undefined, statePort: Pick<StatePort, 'loadTask'>): Promise<GraphInputValidation> {
   const taskValidation = validateBugTask(task);
   if (!taskValidation.ok) {
     const needsInfo = !task.reproduction?.trim() || !Array.isArray(task.acceptanceCriteria) || task.acceptanceCriteria.length === 0;
