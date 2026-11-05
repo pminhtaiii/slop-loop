@@ -24,6 +24,7 @@ import type {
   BudgetLedger,
 } from '../contracts/foundation/uc03.ts';
 import { computeCanonicalSha256, computeCheckSetDigest, isProtectedPath } from '../contracts/foundation/uc03.ts';
+import type { MaterialReplanPortV02 } from './graph-types-v02.ts';
 
 export type RepairOutcome = 'REPAIR_PREPARED' | 'INCOMPLETE' | 'DENIED';
 
@@ -105,7 +106,9 @@ export interface TrustedReplanDirection {
 }
 
 export interface ReplanPorts {
-  readonly statePort: StatePort;
+  readonly statePort: StatePort | StatePortV02;
+  /** Present on the production route: the UC-04 material-replan transaction replaces legacy reserve/settle. */
+  readonly replanPort?: MaterialReplanPortV02 | undefined;
   readonly approvalPort?: ApprovalPort | undefined;
   readonly trustedTransitionContext?: StateTransitionOptions['trusted'] | undefined;
   readonly trustedDirection?: TrustedReplanDirection | undefined;
