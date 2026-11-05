@@ -203,14 +203,20 @@ test('forwards a projection the production task-state validator accepts', async 
   assert.deepEqual(validation.ok ? [] : validation.errors, []);
 });
 
-test('the real model ingress accepts the reviewer snapshot as current evidence', async () => {
+test('the real model ingress refuses the reviewer snapshot before dispatch', async () => {
   const context = setup();
   const complaints: string[] = [];
+  let dispatches = 0;
+  // Mirrors HostModelPort.propose: a failing base validation returns invalid and never dispatches.
   const ingressModel: ModelPortV02 = {
     provenance: 'mock',
     async propose(state, evidence, request) {
       const validation = validateBaseModelInputs(state, evidence, request);
-      if (!validation.ok) complaints.push(...validation.errors.map(error => `${error.path}:${error.code}`));
+      if (!validation.ok) {
+        complaints.push(...validation.errors.map(error => `${error.path}:${error.code}`));
+        return { outcome: validation.outcome, errors: validation.errors };
+      }
+      dispatches += 1;
       return executeTransport({ execute: async () => verdict('accepted') }, buildTransportPayload(state, evidence, request), request);
     },
   };
@@ -221,10 +227,13 @@ test('the real model ingress accepts the reviewer snapshot as current evidence',
     complaints.some(complaint => complaint.endsWith(':STALE_EVIDENCE_REVISION')),
     false,
   );
-  // Deferred, not fixed: the owner request's contextDigest is the diff digest while the ingress
-  // recomputes it from this host-built projection. Releasing that needs owner-contract agreement.
+  // Refused, and unresolved: the owner request's contextDigest is the diff digest (reviewer.ts:179)
+  // while the ingress recomputes it from (state, evidence) (model.ts:228). Reconciling that is an
+  // owner-contract decision under specs/007-runtime-evaluation-integration/contracts/host-composition.md §2.
   assert.deepEqual(complaints, ['contextDigest:REQUEST_IDENTITY_MISMATCH']);
-  assert.equal(result.status, 'accepted');
+  assert.equal(dispatches, 0);
+  assert.equal(result.status, 'invalid');
+  assert.equal(reviewer.lastFailureReason, 'PROVIDER_INVALID:REQUEST_IDENTITY_MISMATCH');
 });
 
 test('keeps actionable findings that land on real old and new changed lines', async () => {
