@@ -1,9 +1,9 @@
 /**
  * UC-03 production (v0.2) graph surface — T020.
  *
- * Additive only: `UC03GraphPorts` in `graph-types.ts` still types every controlled caller and is not
- * widened. These types name the exact production seams so a v0.1 port, a partially-implemented
- * adapter or a mock cannot stand in for one.
+ * These types name the exact production seams so a v0.1 port, a partially-implemented adapter or a
+ * mock cannot stand in for one. The shared graph types retain legacy controlled behavior alongside
+ * the explicit v0.2 entry.
  *
  * `StatePort` and `RepositoryPort` are structurally rejected by `StatePortV02`/`RepositoryPortV02`
  * (extra required methods; `applyPatch` must return an `executionReceipt`), so those two need no
@@ -16,11 +16,9 @@
  */
 import type {
   ApprovalPort,
-  ClaimReceiptV02,
   FixPlan,
   ModelPort,
   PortProvenance,
-  ProviderAdmissionContextV02,
   RepositoryPort,
   StatePort,
   StatePortV02,
@@ -32,10 +30,10 @@ import type {
 } from '../contracts/foundation/uc03.ts';
 import type { RealContextSource } from '../approvals/real-context-provider.ts';
 import type { ExecutionGuardReadCapability } from '../foundation/repository-types.ts';
-import type { InvestigationConfigPort, TrustedHostPort, BaselineEvidenceWriter } from './investigation.ts';
+import type { InvestigationConfigPort, TrustedHostExpectedContext, TrustedHostPort, BaselineEvidenceWriter } from './investigation.ts';
 import type { CoderAgentV02 } from './agent-types.ts';
 import type { TrustedReplanDirection } from './repair-types.ts';
-import type { UC03CoderAdmissionResolver, UC03GraphConfig, UC03ReviewerPort } from './graph-types.ts';
+import type { UC03CoderAdmissionResolver, UC03GraphConfig, UC03ReviewerAdmissionResolver, UC03ReviewerPort } from './graph-types.ts';
 
 /**
  * Production baseline evidence. §3 requires lookup, though the consumer interface keeps it
@@ -108,16 +106,8 @@ export interface UC03GraphGenerationV02 {
   readonly agent: CoderAgentV02;
 }
 
-/** An owner-issued reviewer admission, resolved per review request. */
-export interface UC03ReviewerAdmissionV02 {
-  readonly provision: ProviderAdmissionContextV02;
-  readonly claim: ClaimReceiptV02;
-}
-
-export type UC03ReviewerAdmissionResolverV02 = (request: {
-  readonly task: TaskState;
-  readonly diff: { readonly diff: string; readonly diffDigest: string; readonly changedFiles: readonly string[] };
-}) => Promise<UC03ReviewerAdmissionV02 | undefined> | UC03ReviewerAdmissionV02 | undefined;
+/** The T034 reviewer uses a bound request/context bundle; ModelPortV02 owns its claim. */
+export type UC03ReviewerAdmissionResolverV02 = UC03ReviewerAdmissionResolver;
 
 /**
  * Per-port callable surface used by the runtime guard. Kept beside the interfaces so a new required
@@ -152,6 +142,7 @@ export interface UC03GraphConfigV02 {
   readonly generation?: UC03GraphGenerationV02 | undefined;
   readonly coderAdmission?: UC03CoderAdmissionResolver | undefined;
   readonly reviewerAdmission?: UC03ReviewerAdmissionResolverV02 | undefined;
+  readonly trustedExpectedContext: TrustedHostExpectedContext;
   readonly trustedDirection?: TrustedReplanDirection | undefined;
   readonly trustedTransitionContext?: StateTransitionOptions['trusted'] | undefined;
   readonly admissionContext?: UC03GraphConfig['admissionContext'];

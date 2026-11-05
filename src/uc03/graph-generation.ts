@@ -22,7 +22,7 @@ const SUPPLIED_ANSWER_FIELD = { Investigate: 'planDetails', Patch: 'patchContent
  * agent proposes one through an owner-issued coder admission.
  */
 export function generationRefusal(config: UC03GraphConfig | undefined, node: keyof typeof SUPPLIED_ANSWER_FIELD): string | undefined {
-  if (config?.mode !== 'production' || !config.generation) return undefined;
+  if (config?.mode !== 'production' || (!config.generation && !config.generationV02)) return undefined;
   const field = SUPPLIED_ANSWER_FIELD[node];
   if (config[field] !== undefined || (node === 'Patch' && Boolean(config.targetPaths?.length))) {
     return `REAL_PROFILE_SUPPLIED_ANSWER_REFUSED: ${node} takes no config.${field}; the generation agent must produce it`;
@@ -31,8 +31,8 @@ export function generationRefusal(config: UC03GraphConfig | undefined, node: key
 }
 
 /** True when this route must obtain its answer from the model rather than the config. */
-export function generates(config: UC03GraphConfig | undefined): config is UC03GraphConfig & { generation: NonNullable<UC03GraphConfig['generation']> } {
-  return config?.mode === 'production' && config.generation !== undefined;
+export function generates(config: UC03GraphConfig | undefined): config is UC03GraphConfig {
+  return config?.mode === 'production' && (config.generation !== undefined || config.generationV02 !== undefined);
 }
 
 /** What the owner binds the coder request to: this task/run/state, this purpose, this evidence. */
@@ -50,15 +50,21 @@ export type CoderGeneration = { readonly ok: true; readonly proposal: CoderPropo
  * model. The reservation is the owner's; this route never fabricates a request.
  */
 export async function generate(config: UC03GraphConfig, task: BugTask, state: TaskState, purpose: CoderPurpose, evidence: readonly SourceEvidence[]): Promise<CoderGeneration> {
-  const trusted = trustedExpectedContext(config, task, state);
+  const generationV02 = config.generationV02;
+  const trusted = generationV02 ? undefined : trustedExpectedContext(config, task, state);
   const source = config.coderAdmission;
-  if (!trusted?.statePort || !source) return { ok: false, reason: 'REAL_PROFILE_GENERATION_UNWIRED: no owner-issued coder admission for this state' };
+  if ((!generationV02 && !trusted?.statePort) || !source) return { ok: false, reason: 'REAL_PROFILE_GENERATION_UNWIRED: no owner-issued coder admission for this state' };
 
   const admission = typeof source === 'function' ? await source({ task, state, purpose, evidence }) : source;
   if (!admission) return { ok: false, reason: 'Owner did not issue a coder admission for the current task state' };
 
   const bound = coderAdmissionBinds(admission, task, state, purpose, evidence);
   if (!bound) return { ok: false, reason: 'Coder request or persisted admission does not bind the current task, run, state, and reservation' };
+
+  // The v0.2 model boundary alone claims, begins and settles this provider attempt.
+  if (generationV02) return generateV02(generationV02, { task, state, purpose, evidence, admission });
+
+  if (!trusted?.statePort) return { ok: false, reason: 'REAL_PROFILE_GENERATION_UNWIRED: no owner-issued coder admission for this state' };
 
   const claim = await trusted.statePort.claim(admission.context);
   if (!validCoderClaim(claim, admission.context, state)) return { ok: false, reason: 'Owner budget protocol refused the coder allowance before dispatch' };

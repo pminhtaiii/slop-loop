@@ -89,7 +89,7 @@ export function createAwaitFeedbackNode(ports: UC03GraphPorts, config?: UC03Grap
     const proposalId = `replan-${computeCanonicalSha256([current.state.taskId, current.state.runId, current.state.stateVersion, plan]).slice(7)}`;
     const replanned = await executeReplan(
       { taskId: current.state.taskId, proposalId, candidatePlan: plan },
-      { statePort: ports.statePort, approvalPort: ports.approvalPort, trustedDirection: direction, trustedTransitionContext: config?.trustedTransitionContext },
+      { statePort: ports.statePort, replanPort: ports.replanPort, approvalPort: ports.approvalPort, trustedDirection: direction, trustedTransitionContext: config?.trustedTransitionContext },
     );
     if (!replanned.state || !['REPLAN_PREPARED', 'CLARIFICATION_ACCEPTED'].includes(replanned.outcome)) {
       const latest = await reloadAuthoritativeState(current.state, ports.statePort, { allowAccountingChange: true });

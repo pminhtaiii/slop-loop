@@ -129,7 +129,7 @@ export interface RejectionInput {
 }
 
 export interface RejectionPorts {
-  readonly statePort: StatePort;
+  readonly statePort: StatePort | StatePortV02;
   readonly approvalPort?: ApprovalPort | undefined;
   readonly trustedTransitionContext?: StateTransitionOptions['trusted'] | undefined;
 }
