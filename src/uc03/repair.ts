@@ -208,13 +208,16 @@ export async function executeRepair(input: RepairInput, ports: RepairPorts): Pro
     };
   }
 
-  // Legacy v0.1 reservation and state CAS flow
+  // Legacy v0.1 reservation and state CAS flow. The v0.2 guards above return on every path, but a
+  // property is not narrowed across them, so the legacy port is named once here.
+  const statePort = isStatePortV02(ports.statePort) ? undefined : ports.statePort;
+  if (!statePort) return stop('repair-admission-version-mismatch');
   let receiptId: string;
-  try { receiptId = await (ports.statePort as StatePort).reserve('task', 'repair', 1, actionId); }
+  try { receiptId = await statePort.reserve('task', 'repair', 1, actionId); }
   catch { return stop('repair-reservation-failed'); }
   if (!receiptId.trim()) return stop('repair-reservation-unconfirmed', actionId);
   let reserved: TaskState | null;
-  try { reserved = await ports.statePort.loadTask(input.taskId); }
+  try { reserved = await statePort.loadTask(input.taskId); }
   catch { return stop('reserved-task-state-unavailable', actionId); }
   if (!reserved || reserved.stateVersion !== state.stateVersion || reserved.runId !== state.runId ||
       reserved.repositoryRevisionDigest !== state.repositoryRevisionDigest || !validateTaskState(reserved).ok) {
@@ -251,7 +254,7 @@ export async function executeRepair(input: RepairInput, ports: RepairPorts): Pro
   let patched: TaskState;
   let transitioned: TaskState;
   try {
-    patched = await (ports.statePort as StatePort).transition(next, state.stateVersion);
+    patched = await statePort.transition(next, state.stateVersion);
     if (!validateStateTransition(state, patched, { trusted: ports.trustedTransitionContext }).ok) {
       return failPatch(reserved, 'repair-transition-result-inconsistent');
     }
@@ -260,7 +263,7 @@ export async function executeRepair(input: RepairInput, ports: RepairPorts): Pro
       repositoryRevisionDigest: revision,
       activeDecisionId: undefined, reviewRefs: [], latestReviewRef: undefined,
     };
-    transitioned = await (ports.statePort as StatePort).transition(verified, patched.stateVersion);
+    transitioned = await statePort.transition(verified, patched.stateVersion);
   }
   catch {
     return failPatch(reserved, 'repair-transition-not-confirmed');

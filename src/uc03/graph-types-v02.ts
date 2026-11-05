@@ -18,9 +18,13 @@ import type {
   ApprovalPort,
   ClaimReceiptV02,
   FixPlan,
+  ModelPort,
   PortProvenance,
   ProviderAdmissionContextV02,
+  RepositoryPort,
+  StatePort,
   StatePortV02,
+  StateTransitionOptions,
   TaskState,
   RepositoryPortV02,
   ModelPortV02,
@@ -31,6 +35,7 @@ import type { ExecutionGuardReadCapability } from '../foundation/repository-type
 import type { InvestigationConfigPort, TrustedHostPort, BaselineEvidenceWriter } from './investigation.ts';
 import type { CoderAgentV02 } from './agent-types.ts';
 import type { TrustedReplanDirection } from './repair-types.ts';
+import type { UC03CoderAdmissionResolver, UC03GraphConfig, UC03ReviewerPort } from './graph-types.ts';
 
 /**
  * Production baseline evidence. §3 requires lookup, though the consumer interface keeps it
@@ -134,7 +139,6 @@ export const REQUIRED_PORTS_V02_METHODS = {
 } as const satisfies Readonly<Record<keyof UC03GraphPortsV02 | 'configPort', readonly string[]>>;
 
 export type UC03ProductionComponentV02 = keyof typeof REQUIRED_PORTS_V02_METHODS;
-
 export const UC03_PRODUCTION_COMPONENTS_V02 = Object.keys(REQUIRED_PORTS_V02_METHODS) as readonly UC03ProductionComponentV02[];
 
 export type ProductionPortRejectionV02 = Readonly<{
@@ -142,6 +146,36 @@ export type ProductionPortRejectionV02 = Readonly<{
   component: UC03ProductionComponentV02;
   reasonCode: 'missing-port' | 'missing-method' | 'invalid-provenance';
 }>;
+
+/** Host wiring for the v0.2 production route. No `mode`: this entry is production by construction. */
+export interface UC03GraphConfigV02 {
+  readonly generation?: UC03GraphGenerationV02 | undefined;
+  readonly coderAdmission?: UC03CoderAdmissionResolver | undefined;
+  readonly reviewerAdmission?: UC03ReviewerAdmissionResolverV02 | undefined;
+  readonly trustedDirection?: TrustedReplanDirection | undefined;
+  readonly trustedTransitionContext?: StateTransitionOptions['trusted'] | undefined;
+  readonly admissionContext?: UC03GraphConfig['admissionContext'];
+}
+
+/**
+ * The intersection of the v0.1 and v0.2 dependency sets. `repositoryPort` is the narrowed member:
+ * `runTests`/`applyPatch`/`runCommand` take an extra owner admission in v0.2, so only `inspectDiff`
+ * is common. Both full port sets assign to this with zero casts, but it is NOT enough to type the
+ * node factories: their bodies pass the ports to helpers that demand full `StatePort`/
+ * `RepositoryPort` (`prepareFixPlanAndApproval`, `executeVerificationChecks`) and dereference
+ * `reviewerPort`, which v0.2 does not have.
+ */
+export interface UC03RoutePorts {
+  readonly statePort: Pick<StatePort, 'loadTask' | 'transition'>;
+  readonly approvalPort: ApprovalPort;
+  readonly repositoryPort: Pick<RepositoryPort, 'inspectDiff'>;
+  readonly modelPort: ModelPort | ModelPortV02;
+  readonly reviewerPort?: UC03ReviewerPort | undefined;
+  readonly executionGuard?: ExecutionGuardV02 | undefined;
+  readonly baselineEvidenceWriter?: BaselineEvidenceWriter | undefined;
+  readonly hostAuthority?: TrustedHostPort | undefined;
+  readonly configPort?: InvestigationConfigPort | undefined;
+}
 
 /**
  * Runtime counterpart to the compile-time contract: a substituted or half-implemented delivery is
