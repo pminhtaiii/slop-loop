@@ -12,7 +12,10 @@ import {
 import type { CoderProposal, CoderToolResult, CoderTurnInputV02, CoderTurnResult } from './agent.ts';
 import type { UC03CoderAdmission, UC03GraphConfig } from './graph-types.ts';
 import type { UC03GraphGenerationV02 } from './graph-types-v02.ts';
+import { computeContextDigest } from '../foundation/model.ts';
+import { sanitizeText } from '../foundation/telemetry.ts';
 import { currentPlanBindingDigest, samePaths, trustedExpectedContext } from './graph-validation.ts';
+import { reloadAuthoritativeState } from './graph-transitions.ts';
 
 const SUPPLIED_ANSWER_FIELD = { Investigate: 'planDetails', Patch: 'patchContent', Repair: 'repairPatch', AwaitFeedback: 'revisedPlan' } as const;
 
@@ -22,7 +25,7 @@ const SUPPLIED_ANSWER_FIELD = { Investigate: 'planDetails', Patch: 'patchContent
  * agent proposes one through an owner-issued coder admission.
  */
 export function generationRefusal(config: UC03GraphConfig | undefined, node: keyof typeof SUPPLIED_ANSWER_FIELD): string | undefined {
-  if (config?.mode !== 'production' || !config.generation) return undefined;
+  if ((config?.mode !== 'production' && config?.mode !== 'controlled') || (!config.generation && !config.generationV02)) return undefined;
   const field = SUPPLIED_ANSWER_FIELD[node];
   if (config[field] !== undefined || (node === 'Patch' && Boolean(config.targetPaths?.length))) {
     return `REAL_PROFILE_SUPPLIED_ANSWER_REFUSED: ${node} takes no config.${field}; the generation agent must produce it`;
@@ -31,8 +34,8 @@ export function generationRefusal(config: UC03GraphConfig | undefined, node: key
 }
 
 /** True when this route must obtain its answer from the model rather than the config. */
-export function generates(config: UC03GraphConfig | undefined): config is UC03GraphConfig & { generation: NonNullable<UC03GraphConfig['generation']> } {
-  return config?.mode === 'production' && config.generation !== undefined;
+export function generates(config: UC03GraphConfig | undefined): config is UC03GraphConfig {
+  return (config?.mode === 'production' || config?.mode === 'controlled') && (config.generation !== undefined || config.generationV02 !== undefined);
 }
 
 /** What the owner binds the coder request to: this task/run/state, this purpose, this evidence. */
@@ -50,6 +53,8 @@ export type CoderGeneration = { readonly ok: true; readonly proposal: CoderPropo
  * model. The reservation is the owner's; this route never fabricates a request.
  */
 export async function generate(config: UC03GraphConfig, task: BugTask, state: TaskState, purpose: CoderPurpose, evidence: readonly SourceEvidence[]): Promise<CoderGeneration> {
+  const generationV02 = config.generationV02;
+  if (generationV02) return generateObservedPlan(config, generationV02, task, state, purpose, evidence);
   const trusted = trustedExpectedContext(config, task, state);
   const source = config.coderAdmission;
   if (!trusted?.statePort || !source) return { ok: false, reason: 'REAL_PROFILE_GENERATION_UNWIRED: no owner-issued coder admission for this state' };
@@ -57,7 +62,8 @@ export async function generate(config: UC03GraphConfig, task: BugTask, state: Ta
   const admission = typeof source === 'function' ? await source({ task, state, purpose, evidence }) : source;
   if (!admission) return { ok: false, reason: 'Owner did not issue a coder admission for the current task state' };
 
-  const bound = coderAdmissionBinds(admission, task, state, purpose, evidence);
+  const contextDigest = coderContextDigest(task, state, purpose, evidence);
+  const bound = coderAdmissionBinds(admission, task, state, purpose, contextDigest);
   if (!bound) return { ok: false, reason: 'Coder request or persisted admission does not bind the current task, run, state, and reservation' };
 
   const claim = await trusted.statePort.claim(admission.context);
@@ -71,13 +77,66 @@ export async function generate(config: UC03GraphConfig, task: BugTask, state: Ta
   return { ok: false, reason: turn.outcome === 'waiting' ? `HUMAN_WAIT:${turn.reason}` : `REAL_PROFILE_GENERATION_INVALID: ${turn.reason}` };
 }
 
-function coderAdmissionBinds(admission: UC03CoderAdmission, task: BugTask, state: TaskState, purpose: CoderPurpose, evidence: readonly SourceEvidence[]): boolean {
+/** Each turn consumes the agent's existing finite call/time budget and a fresh owner admission. */
+async function generateObservedPlan(
+  config: UC03GraphConfig,
+  generation: UC03GraphGenerationV02,
+  task: BugTask,
+  initialState: TaskState,
+  purpose: CoderPurpose,
+  initialEvidence: readonly SourceEvidence[],
+): Promise<CoderGeneration> {
+  const source = config.coderAdmission;
+  if (!source) return { ok: false, reason: 'REAL_PROFILE_GENERATION_UNWIRED: no owner-issued coder admission for this state' };
+  let state = initialState;
+  const evidence = new Map(initialEvidence.map(item => [item.path, item]));
+  const requests = new Set<string>();
+  for (;;) {
+    const observed = [...evidence.values()];
+    const admission = typeof source === 'function' ? await source({ task, state, purpose, evidence: observed }) : source;
+    if (!admission || !coderAdmissionBinds(admission, task, state, purpose, computeContextDigest(state, observed))) {
+      return { ok: false, reason: 'Coder request or persisted admission does not bind the current task, run, state, and evidence' };
+    }
+    if (requests.has(admission.request.providerRequestId)) return { ok: false, reason: 'Coder admission reused a provider request within the generation loop' };
+    requests.add(admission.request.providerRequestId);
+    const beforeCalls = generation.agent.counters.modelCalls;
+    const result = await generateV02(generation, { task, state, purpose, evidence: observed, admission });
+    if (!result.ok || result.proposal.kind !== 'inspect') return result;
+    if (!result.tool || generation.agent.counters.modelCalls <= beforeCalls) return { ok: false, reason: 'Inspect did not produce a bounded model turn and observation' };
+    for (const item of toolEvidence(result.tool, state.repositoryRevisionDigest)) evidence.set(item.path, item);
+    const owner = config.trustedExpectedContext?.statePort;
+    if (owner) {
+      const current = await reloadAuthoritativeState(state, owner, { allowAccountingChange: true });
+      if (!current.ok) return { ok: false, reason: current.reason };
+      state = current.state;
+    }
+  }
+}
+
+function toolEvidence(tool: CoderToolResult, revisionDigest: string): readonly SourceEvidence[] {
+  if (tool.kind === 'read-file') return [tool.evidence];
+  if (tool.kind === 'search-code') return tool.evidence;
+  const identity = tool.kind === 'list-dir' ? tool.path : tool.checkId;
+  return [
+    {
+      path: `_observations/${tool.kind}-${computeCanonicalSha256(identity).slice(7)}.json`,
+      revisionDigest,
+      boundedExcerpt: sanitizeText(
+        JSON.stringify(tool.kind === 'list-dir' ? { kind: tool.kind, path: tool.path, entries: tool.entries } : { kind: tool.kind, checkId: tool.checkId, result: tool.result }),
+      ),
+      resultCount: tool.kind === 'list-dir' ? tool.entries.length : 1,
+      truncated: true,
+    },
+  ];
+}
+
+function coderAdmissionBinds(admission: UC03CoderAdmission, task: BugTask, state: TaskState, purpose: CoderPurpose, expectedContextDigest: string): boolean {
   const requestValidation = validateProviderRequest(admission.request, {
     expectedTaskId: state.taskId,
     expectedRunId: state.runId,
     expectedRole: 'coder',
     expectedPurpose: purpose,
-    expectedContextDigest: coderContextDigest(task, state, purpose, evidence),
+    expectedContextDigest,
     expectedProviderRequestId: admission.context.providerRequestId,
   });
   const admissionValidation = validateProviderAdmissionV02(admission.context, admission.trustedContext);

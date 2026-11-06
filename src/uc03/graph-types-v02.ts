@@ -1,9 +1,9 @@
 /**
  * UC-03 production (v0.2) graph surface — T020.
  *
- * Additive only: `UC03GraphPorts` in `graph-types.ts` still types every controlled caller and is not
- * widened. These types name the exact production seams so a v0.1 port, a partially-implemented
- * adapter or a mock cannot stand in for one.
+ * These types name the exact production seams so a v0.1 port, a partially-implemented adapter or a
+ * mock cannot stand in for one. The shared graph types retain legacy controlled behavior alongside
+ * the explicit v0.2 entry.
  *
  * `StatePort` and `RepositoryPort` are structurally rejected by `StatePortV02`/`RepositoryPortV02`
  * (extra required methods; `applyPatch` must return an `executionReceipt`), so those two need no
@@ -16,11 +16,13 @@
  */
 import type {
   ApprovalPort,
-  ClaimReceiptV02,
   FixPlan,
+  ModelPort,
   PortProvenance,
-  ProviderAdmissionContextV02,
+  RepositoryPort,
+  StatePort,
   StatePortV02,
+  StateTransitionOptions,
   TaskState,
   RepositoryPortV02,
   ModelPortV02,
@@ -28,9 +30,10 @@ import type {
 } from '../contracts/foundation/uc03.ts';
 import type { RealContextSource } from '../approvals/real-context-provider.ts';
 import type { ExecutionGuardReadCapability } from '../foundation/repository-types.ts';
-import type { InvestigationConfigPort, TrustedHostPort, BaselineEvidenceWriter } from './investigation.ts';
+import type { InvestigationConfigPort, TrustedHostExpectedContext, TrustedHostPort, BaselineEvidenceWriter } from './investigation.ts';
 import type { CoderAgentV02 } from './agent-types.ts';
 import type { TrustedReplanDirection } from './repair-types.ts';
+import type { UC03CoderAdmissionResolver, UC03GraphConfig, UC03ReviewerAdmissionResolver, UC03ReviewerPort } from './graph-types.ts';
 
 /**
  * Production baseline evidence. §3 requires lookup, though the consumer interface keeps it
@@ -103,16 +106,8 @@ export interface UC03GraphGenerationV02 {
   readonly agent: CoderAgentV02;
 }
 
-/** An owner-issued reviewer admission, resolved per review request. */
-export interface UC03ReviewerAdmissionV02 {
-  readonly provision: ProviderAdmissionContextV02;
-  readonly claim: ClaimReceiptV02;
-}
-
-export type UC03ReviewerAdmissionResolverV02 = (request: {
-  readonly task: TaskState;
-  readonly diff: { readonly diff: string; readonly diffDigest: string; readonly changedFiles: readonly string[] };
-}) => Promise<UC03ReviewerAdmissionV02 | undefined> | UC03ReviewerAdmissionV02 | undefined;
+/** The T034 reviewer uses a bound request/context bundle; ModelPortV02 owns its claim. */
+export type UC03ReviewerAdmissionResolverV02 = UC03ReviewerAdmissionResolver;
 
 /**
  * Per-port callable surface used by the runtime guard. Kept beside the interfaces so a new required
@@ -134,7 +129,6 @@ export const REQUIRED_PORTS_V02_METHODS = {
 } as const satisfies Readonly<Record<keyof UC03GraphPortsV02 | 'configPort', readonly string[]>>;
 
 export type UC03ProductionComponentV02 = keyof typeof REQUIRED_PORTS_V02_METHODS;
-
 export const UC03_PRODUCTION_COMPONENTS_V02 = Object.keys(REQUIRED_PORTS_V02_METHODS) as readonly UC03ProductionComponentV02[];
 
 export type ProductionPortRejectionV02 = Readonly<{
@@ -143,18 +137,65 @@ export type ProductionPortRejectionV02 = Readonly<{
   reasonCode: 'missing-port' | 'missing-method' | 'invalid-provenance';
 }>;
 
+/** Host wiring for the v0.2 production route. No `mode`: this entry is production by construction. */
+export interface UC03GraphConfigV02 {
+  readonly generation?: UC03GraphGenerationV02 | undefined;
+  readonly coderAdmission?: UC03CoderAdmissionResolver | undefined;
+  readonly reviewerAdmission?: UC03ReviewerAdmissionResolverV02 | undefined;
+  readonly trustedExpectedContext: TrustedHostExpectedContext;
+  readonly trustedDirection?: TrustedReplanDirection | undefined;
+  readonly trustedTransitionContext?: StateTransitionOptions['trusted'] | undefined;
+  readonly admissionContext?: UC03GraphConfig['admissionContext'];
+}
+
+/**
+ * The intersection of the v0.1 and v0.2 dependency sets. `repositoryPort` is the narrowed member:
+ * `runTests`/`applyPatch`/`runCommand` take an extra owner admission in v0.2, so only `inspectDiff`
+ * is common. Both full port sets assign to this with zero casts, but it is NOT enough to type the
+ * node factories: their bodies pass the ports to helpers that demand full `StatePort`/
+ * `RepositoryPort` (`prepareFixPlanAndApproval`, `executeVerificationChecks`) and dereference
+ * `reviewerPort`, which v0.2 does not have.
+ */
+export interface UC03RoutePorts {
+  readonly statePort: Pick<StatePort, 'loadTask' | 'transition'>;
+  readonly approvalPort: ApprovalPort;
+  readonly repositoryPort: Pick<RepositoryPort, 'inspectDiff'>;
+  readonly modelPort: ModelPort | ModelPortV02;
+  readonly reviewerPort?: UC03ReviewerPort | undefined;
+  readonly executionGuard?: ExecutionGuardV02 | undefined;
+  readonly baselineEvidenceWriter?: BaselineEvidenceWriter | undefined;
+  readonly hostAuthority?: TrustedHostPort | undefined;
+  readonly configPort?: InvestigationConfigPort | undefined;
+}
+
+/**
+ * Components whose contract declares no `provenance`. `TrustedHostPort` is `{ loadSnapshot }` and
+ * `InvestigationConfigPort` makes provenance optional, so demanding one here would refuse the real
+ * producers this feature ships. Their authority is host wiring plus the pinned revision, not a label.
+ */
+export const UNPROVENANCED_COMPONENTS_V02: readonly UC03ProductionComponentV02[] = ['hostAuthority', 'configPort'];
+
 /**
  * Runtime counterpart to the compile-time contract: a substituted or half-implemented delivery is
  * refused here before the graph can produce an effect. Provenance is checked separately so a mock
  * is named as such instead of being reported as a missing method.
  */
 export function checkProductionPortsV02(candidate: unknown): ProductionPortRejectionV02 | null {
+  return checkPortsV02(candidate, 'real');
+}
+
+/** Controlled assembly admits only mock effects and cannot establish production authority. */
+export function checkControlledPortsV02(candidate: unknown): ProductionPortRejectionV02 | null {
+  return checkPortsV02(candidate, 'mock');
+}
+
+function checkPortsV02(candidate: unknown, provenance: 'real' | 'mock'): ProductionPortRejectionV02 | null {
   if (typeof candidate !== 'object' || candidate === null) return { status: 'rejected', component: 'statePort', reasonCode: 'missing-port' };
   const ports = candidate as Record<string, unknown>;
   for (const component of UC03_PRODUCTION_COMPONENTS_V02) {
     const port = ports[component] as Record<string, unknown> | null | undefined;
     if (typeof port !== 'object' || port === null) return { status: 'rejected', component, reasonCode: 'missing-port' };
-    if (port['provenance'] !== 'real') return { status: 'rejected', component, reasonCode: 'invalid-provenance' };
+    if (!UNPROVENANCED_COMPONENTS_V02.includes(component) && port['provenance'] !== provenance) return { status: 'rejected', component, reasonCode: 'invalid-provenance' };
     for (const method of REQUIRED_PORTS_V02_METHODS[component]) {
       if (typeof port[method] !== 'function') return { status: 'rejected', component, reasonCode: 'missing-method' };
     }

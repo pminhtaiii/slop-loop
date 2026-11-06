@@ -5,15 +5,18 @@ import type {
   ClaimReceiptV02,
   FixPlan,
   ModelPort,
+  ModelPortV02,
   ProviderAdmissionContextV02,
   ProviderAdmissionTrustedContextV02,
   ProviderRequest,
   RepositoryAdmissionContextV02,
   RepositoryAdmissionTrustedContextV02,
   RepositoryPort,
+  RepositoryPortV02,
   ReviewResult,
   SourceEvidence,
   StatePort,
+  StatePortV02,
   StateTransitionOptions,
   TaskOutcome,
   TaskState,
@@ -22,6 +25,7 @@ import type {
 } from '../contracts/foundation/uc03.ts';
 import type { ExecutionGuardV02 } from '../foundation/execution-guard.ts';
 import type { CoderAgent, CoderBudget, UC03CoderAdmission } from './agent.ts';
+import type { MaterialReplanPortV02, UC03GraphGenerationV02 } from './graph-types-v02.ts';
 
 export type { UC03CoderAdmission } from './agent.ts';
 import type { BaselineEvidenceWriter, InvestigationConfigPort, TrustedHostExpectedContext, TrustedHostPort } from './investigation.ts';
@@ -30,16 +34,17 @@ import type { FinalReport, Milestone } from './report.ts';
 import type { EvaluationDiagnostic } from '../runtime/evaluation-diagnostics.ts';
 
 export interface UC03GraphPorts {
-  readonly statePort: StatePort;
+  readonly statePort: StatePort | StatePortV02;
   readonly approvalPort: ApprovalPort;
-  readonly repositoryPort: RepositoryPort;
-  readonly modelPort: ModelPort;
+  readonly repositoryPort: RepositoryPort | RepositoryPortV02;
+  readonly modelPort: ModelPort | ModelPortV02;
   readonly reviewerPort: UC03ReviewerPort;
   readonly executionGuard?: ExecutionGuardV02 | undefined;
   readonly telemetryPort?: TelemetryPort | undefined;
   readonly baselineEvidenceWriter?: BaselineEvidenceWriter | undefined;
   readonly hostAuthority?: TrustedHostPort | undefined;
   readonly configPort?: InvestigationConfigPort | undefined;
+  readonly replanPort?: MaterialReplanPortV02 | undefined;
 }
 
 /** v0.2 production types; additive, never widens the controlled surface above. */
@@ -48,7 +53,7 @@ export * from './graph-types-v02.ts';
 /** Route callers must pass the owner-issued provider admission with the exact review request. */
 export interface UC03ReviewerPort {
   readonly provenance: 'mock' | 'real';
-  review(task: BugTask, diff: string, evidence: readonly SourceEvidence[], request: ProviderRequest, admission: ProviderAdmissionContextV02, claim: ClaimReceiptV02): Promise<ReviewResult>;
+  review(task: BugTask, diff: string, evidence: readonly SourceEvidence[], request: ProviderRequest, admission: ProviderAdmissionContextV02, claim?: ClaimReceiptV02): Promise<ReviewResult>;
 }
 
 export interface UC03ReviewerAdmission {
@@ -100,8 +105,9 @@ export interface UC03GraphGeneration {
 }
 
 export interface UC03GraphConfig {
-  readonly mode?: 'development' | 'production' | undefined;
+  readonly mode?: 'development' | 'production' | 'controlled' | undefined;
   readonly generation?: UC03GraphGeneration | undefined;
+  readonly generationV02?: UC03GraphGenerationV02 | undefined;
   readonly trustedExpectedContext?: TrustedHostExpectedContext | undefined;
   readonly trustedDirection?: TrustedReplanDirection | undefined;
   readonly trustedTransitionContext?: StateTransitionOptions['trusted'] | undefined;
