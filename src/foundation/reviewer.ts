@@ -185,6 +185,22 @@ export function buildReviewerSnapshot(
   };
 }
 
+/**
+ * The reviewer snapshot context digest, or null when `diff` is not unified.
+ * One minting point: graph admission checks and `createRuntimeReviewer` must agree here.
+ */
+export function reviewerContextDigest(
+  task: BugTask,
+  diff: string,
+  evidence: readonly SourceEvidence[],
+  repoDigest: string,
+  binding: { readonly runId: string; readonly expectedTaskStateVersion: number },
+): string | null {
+  if (parseUnifiedDiff(diff) === null) return null;
+  const snapshot = buildReviewerSnapshot(task, diff, evidence, repoDigest, binding);
+  return computeContextDigest(snapshot.state, snapshot.evidence);
+}
+
 export function createRuntimeReviewer(options: RuntimeReviewerOptions): RuntimeReviewer {
   if (!options?.model || typeof options.model.propose !== 'function') throw new Error('INVALID_MODEL: a ModelPortV02 reviewer ingress is required');
   if (typeof options.resolveRepoDigest !== 'function') throw new Error('INVALID_REPO_DIGEST_RESOLVER: the host must resolve the current revision digest');

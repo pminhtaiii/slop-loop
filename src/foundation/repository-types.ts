@@ -12,7 +12,7 @@ import type {
 import type { AttemptReconciliationValidationContextV02 } from '../contracts/foundation/uc03/v02/attempt.ts';
 import type { DockerWorkspaceManager, StructuredCommandExecutor } from './docker-workspace.ts';
 import type { RepositoryCommandResourcePolicy } from './repository-admission.ts';
-import type { RepositoryDiffSourceOptions } from './repository-diff.ts';
+import type { RepositoryDiffSourceOptions } from './repository-diff-types.ts';
 export type { RepositoryDiffSourceOptions };
 
 export interface FileStat {

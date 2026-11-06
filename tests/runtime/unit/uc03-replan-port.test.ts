@@ -111,6 +111,48 @@ test('replan: v0.2 material replan maps all four owner outcomes with no legacy a
   }
 });
 
+test('replan: owner-committed state must bind to this task, run and one-step replan advance', async () => {
+  const { state, candidatePlan } = fixture();
+  const direction: TrustedReplanDirection = {
+    directive: 'revise',
+    taskId: state.taskId,
+    workspaceId: state.workspaceId,
+    repositoryRevisionDigest: state.repositoryRevisionDigest,
+    stateVersion: state.stateVersion,
+    planVersion: state.planVersion,
+    rejectedDecisionId: state.plan?.decisionRef ?? '',
+    strategyDigest: state.plan?.strategyDigest ?? '',
+  };
+  const charged = state.budgetLedgers?.map(ledger => (ledger.kind === 'replan' ? { ...ledger, consumed: 1 } : ledger));
+  const committed: TaskState = { ...state, stateVersion: 3, node: 'AwaitPlan', replanCount: 1, budgetLedgers: charged };
+  const cases = [
+    ['bound', {}, 'REPLAN_PREPARED'],
+    ['replanCount does not advance', { replanCount: 0 }, 'INCOMPLETE'],
+    ['replanCount advances by two', { replanCount: 2 }, 'INCOMPLETE'],
+    ['different taskId', { taskId: 'task-other' }, 'INCOMPLETE'],
+    ['different runId', { runId: 'run-other' }, 'INCOMPLETE'],
+  ] as const;
+  for (const [label, override, expected] of cases) {
+    const statePort = new CountingPort({ initialTaskState: state });
+    const replanPort: MaterialReplanPortV02 = {
+      provenance: 'mock',
+      accept: async (): Promise<MaterialReplanResultV02> => ({ outcome: 'accepted', state: { ...committed, ...override }, reservationReceipt: 'res-1', transitionReceipt: 'tr-1' }),
+    };
+    const result = await executeReplan({ taskId: state.taskId, candidatePlan, proposalId: 'prop-1' }, { statePort, replanPort, trustedDirection: direction });
+    assert.equal(result.outcome, expected, label);
+    if (expected === 'REPLAN_PREPARED') {
+      assert.deepEqual(result.reasons, [], label);
+      assert.equal(result.state.replanCount, 1, label);
+    } else {
+      assert.deepEqual(result.reasons, ['reserved-task-state-inconsistent'], label);
+      assert.deepEqual(result.state, state, `${label} must not accept the owner state`);
+      assert.equal(result.state.replanCount, 0, label);
+    }
+    assert.equal(statePort.reserveCalls, 0, `${label} must not reserve`);
+    assert.equal(statePort.transitionCalls, 0, `${label} must not transition locally`);
+  }
+});
+
 test('replan: absent replanPort keeps the controlled legacy reserve path', async () => {
   const { state, candidatePlan } = fixture();
   const proposalId = 'prop-legacy';

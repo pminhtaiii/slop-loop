@@ -1,6 +1,6 @@
 # Validation Guide: Observable Python Repair Evaluation
 
-Commands below exercise the source/controlled tier where code has been delivered. T011 and T017 still lack real acceptance. T020–T034 have the separate controlled implementation release recorded in [release gates](contracts/decisions.md); restored code and green focused tests do not establish their full task acceptance. No real provider/container invocation is authorized by this guide.
+Commands below exercise the source/controlled tier where code has been delivered. T011 and T017 still lack real acceptance. T020–T034 have the separate controlled implementation release recorded in [release gates](contracts/decisions.md); restored code and green focused tests do not establish their full-task acceptance. No real provider/container invocation is authorized by this guide.
 
 ## Current Planning Checks
 

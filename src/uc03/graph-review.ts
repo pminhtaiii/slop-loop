@@ -9,6 +9,7 @@ import {
   validateReviewResult,
   type TaskState,
 } from '../contracts/foundation/uc03.ts';
+import { reviewerContextDigest } from '../foundation/reviewer.ts';
 import { evaluateDeterministicCompletion } from './verification.ts';
 import { loadCompletionPredicateInput, reportForPredicate } from './graph-completion.ts';
 import { loadVerifiedPatchAncestry } from './graph-patch-ancestry.ts';
@@ -52,12 +53,18 @@ export function createReviewNode(ports: ReviewPorts, config?: ReviewConfig): UC0
       return { state: current.state, terminalOutcome: 'IMPLEMENTED_UNVERIFIED' as const, reasons: ['Trusted reviewer and route ports do not share current owner task state'] };
     const reviewAdmission = typeof admissionSource === 'function' ? await admissionSource({ task: state.task, state: current.state, diff: diffInfo }) : admissionSource;
     if (!reviewAdmission) return { state: current.state, terminalOutcome: 'IMPLEMENTED_UNVERIFIED' as const, reasons: ['Owner did not issue a reviewer admission for the current diff'] };
+    // Same projection the real reviewer recomputes, over the same empty evidence list it dispatches.
+    const contextDigest = reviewerContextDigest(state.task, diffInfo.diff, [], current.state.repositoryRevisionDigest, {
+      runId: current.state.runId,
+      expectedTaskStateVersion: current.state.stateVersion,
+    });
+    if (contextDigest === null) return { state: current.state, terminalOutcome: 'IMPLEMENTED_UNVERIFIED' as const, reasons: ['Current repository diff is not a unified diff'] };
     const requestValidation = validateProviderRequest(reviewAdmission.request, {
       expectedTaskId: current.state.taskId,
       expectedRunId: current.state.runId,
       expectedRole: 'reviewer',
       expectedPurpose: 'final-review',
-      expectedContextDigest: computeCanonicalSha256(diffInfo.diff),
+      expectedContextDigest: contextDigest,
       expectedProviderRequestId: reviewAdmission.context.providerRequestId,
     });
     const admissionValidation = validateProviderAdmissionV02(reviewAdmission.context, reviewAdmission.trustedContext);

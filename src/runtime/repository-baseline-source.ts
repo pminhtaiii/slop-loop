@@ -16,44 +16,10 @@ import { computeCanonicalSha256, isCanonicalRelativePath, isProtectedPath } from
 import { SHA256_HEX_REGEX, computeFileDigest, containsProtectedContent } from '../foundation/docker-workspace-policy.ts';
 import { WorkspaceFilesystemPort } from '../foundation/host-filesystem-port.ts';
 import type { TrustedFilesystemEntry, TrustedFilesystemPort } from '../foundation/repository-types.ts';
+import type { RepositoryBaselineBinding, RepositoryBaselineFile, RepositoryBaselineManifest, RepositoryBaselineManifestEntry, RepositoryBaselineSource } from '../foundation/repository-diff-types.ts';
+export type { RepositoryBaselineBinding, RepositoryBaselineFile, RepositoryBaselineManifest, RepositoryBaselineManifestEntry, RepositoryBaselineSource };
 import { TrustedHostSnapshotError, isSupportedSnapshotPlatform } from './trusted-host-snapshot.ts';
 import type { TrustedHostSnapshotRefusal } from './trusted-host-snapshot.ts';
-
-export interface RepositoryBaselineBinding {
-  readonly taskId: string;
-  readonly workspaceId: string;
-  readonly repositoryId: string;
-  /** Measured revision digest of the retained initial tree. */
-  readonly baseRevision: string;
-}
-
-export interface RepositoryBaselineManifestEntry {
-  readonly path: string;
-  /** Raw-byte sha256, matching `WorkspaceFilesystemPort.getCurrentRevisionDigest`. */
-  readonly digest: string;
-  readonly sizeBytes: number;
-}
-
-export interface RepositoryBaselineManifest {
-  readonly taskId: string;
-  readonly workspaceId: string;
-  readonly repositoryId: string;
-  readonly baseRevision: string;
-  readonly entries: readonly RepositoryBaselineManifestEntry[];
-  readonly manifestDigest: string;
-}
-
-export interface RepositoryBaselineFile {
-  readonly path: string;
-  readonly content: string;
-  readonly digest: string;
-  readonly sizeBytes: number;
-}
-
-export interface RepositoryBaselineSource {
-  loadManifest(binding: RepositoryBaselineBinding): Promise<RepositoryBaselineManifest>;
-  readBaselineFile(binding: RepositoryBaselineBinding, path: string): Promise<RepositoryBaselineFile>;
-}
 
 export interface RepositoryBaselineSourceOptions {
   /** Retained initial tree; it must not sit inside writable task authority. */

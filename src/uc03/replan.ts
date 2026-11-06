@@ -279,7 +279,10 @@ export async function executeReplan(input: ReplanInput, ports: ReplanPorts): Pro
     if (accepted.outcome === 'denied') return response('DENIED', state, [accepted.reason], true);
     if (accepted.outcome === 'uncertain') return response('INCOMPLETE', state, [accepted.operationRef], true);
     // 'accepted' and 'already-accepted' both carry the owner-committed state; replay adds no charge.
-    return validateTaskState(accepted.state).ok ? response('REPLAN_PREPARED', accepted.state, [], true) : response('INCOMPLETE', state, ['reserved-task-state-inconsistent'], true);
+    // Bind it to this request: a valid state for another task/run, or one that skips the charge, is inconsistent.
+    const owned = accepted.state;
+    const bound = validateTaskState(owned).ok && owned.taskId === state.taskId && owned.runId === state.runId && owned.replanCount === state.replanCount + 1;
+    return bound ? response('REPLAN_PREPARED', owned, [], true) : response('INCOMPLETE', state, ['reserved-task-state-inconsistent'], true);
   }
 
   // Controlled caller: legacy reservation and state CAS flow.

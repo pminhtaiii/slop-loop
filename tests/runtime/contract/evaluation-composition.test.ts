@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { composeEvaluationPorts, EVALUATION_COMPOSITION_VERSION, type OwnerDelivery } from '../../../src/runtime/evaluation-composition.ts';
-import { REQUIRED_PORTS_V02_METHODS, UC03_PRODUCTION_COMPONENTS_V02 } from '../../../src/uc03/graph-types-v02.ts';
+import { REQUIRED_PORTS_V02_METHODS, UC03_PRODUCTION_COMPONENTS_V02, checkProductionPortsV02 } from '../../../src/uc03/graph-types-v02.ts';
 
 const CONTRACT = 'uc03-owner-delivery/1';
 const REV = 'a'.repeat(40);
@@ -57,7 +57,14 @@ test('an adapter missing a required method, a duplicate component or a bad revis
 
   // The v0.2 dial is required state capability: a v0.1 reserve/settle port denies.
   const legacyState = over('statePort', {
-    adapter: { provenance: 'real', loadTask: () => undefined, transition: () => undefined, reserve: () => undefined, settle: () => undefined, reconcileUncertain: () => undefined } as unknown as OwnerDelivery['adapter'],
+    adapter: {
+      provenance: 'real',
+      loadTask: () => undefined,
+      transition: () => undefined,
+      reserve: () => undefined,
+      settle: () => undefined,
+      reconcileUncertain: () => undefined,
+    } as unknown as OwnerDelivery['adapter'],
   });
   assert.deepEqual(composeEvaluationPorts(legacyState, CONTRACT), { status: 'denied', reasonCode: 'incompatible-delivery', component: 'statePort' });
 
@@ -73,5 +80,5 @@ test('the composed set is the one the runtime guard admits', () => {
   assert.equal(result.status, 'ready');
   if (result.status !== 'ready') return;
   // Composition cannot return a set the route entry would refuse.
-  assert.equal(UC03_PRODUCTION_COMPONENTS_V02.every(component => result.ports[component] !== undefined), true);
+  assert.equal(checkProductionPortsV02(result.ports), null, 'composition produced a port set the production guard would refuse');
 });

@@ -65,7 +65,8 @@ import {
 import { FakeRepositoryPort } from '../support/uc03/fake-repository.ts';
 import { MemoryStatePortV02 } from '../support/uc03/memory-state.ts';
 import { ScriptedApprovalPort } from '../support/uc03/scripted-approval.ts';
-import { ScriptedModelPort } from '../support/uc03/scripted-model.ts';
+import { ScriptedModelPort, ScriptedModelPortV02 } from '../support/uc03/scripted-model.ts';
+import { createRuntimeReviewer, reviewerContextDigest } from '../../../src/foundation/reviewer.ts';
 import type {
   TrustedHostPort,
   TrustedHostSnapshot,
@@ -445,6 +446,11 @@ function createMockReviewerAdmissionResolver(statePort: MemoryStatePortV02) {
   }) => {
     const ownerAuthority = await statePort.readVerificationAuthoritySnapshot(task.taskId);
     if (!ownerAuthority) return undefined;
+    const contextDigest = reviewerContextDigest(task, diff.diff, [], state.repositoryRevisionDigest, {
+      runId: state.runId,
+      expectedTaskStateVersion: state.stateVersion,
+    });
+    if (contextDigest === null) return undefined;
     const request = createTestProviderRequest({
       providerRequestId: `provider-${task.taskId}-${state.stateVersion}`,
       taskId: task.taskId,
@@ -453,7 +459,7 @@ function createMockReviewerAdmissionResolver(statePort: MemoryStatePortV02) {
       purpose: 'final-review',
       configId: ownerAuthority.policyIdentity.configId,
       pricingPolicyId: ownerAuthority.policyIdentity.policyId,
-      contextDigest: diff.diffDigest,
+      contextDigest,
       reservationRef: `review-allowance:${task.taskId}:${state.stateVersion}`,
     });
     const providerIdentity: ProviderPricingIdentityV02 = {
@@ -1498,6 +1504,61 @@ test('Rejected current post-patch D1 reports INCOMPLETE and preserves the owner 
   assert.equal(repositoryPort.patches.length, beforePatches);
   assert.equal(diffReads, 0);
   assert.equal(reviewerCalls, 0);
+});
+
+test('Owner-minted reviewer admission satisfies the real runtime reviewer', async () => {
+  const setup = createTestSetup({ contextualApprovalIssuer: true });
+  const { task, ports, statePort, repositoryPort, trustedExpectedContext } = setup;
+  await seedGraphTaskState(statePort, createGraphTaskState(task));
+  const config = {
+    mode: 'development' as const,
+    trustedExpectedContext,
+    planDetails: ROUTE_PLAN_DETAILS,
+    admissionContext: createMockPatchAdmissionResolver(repositoryPort, statePort),
+    reviewerAdmission: createMockReviewerAdmissionResolver(statePort),
+    patchContent: 'add the approved zero denominator guard',
+    targetPaths: ['src/calculator.py'],
+  };
+  const pending = await runUC03Graph(task, ports, config);
+  assert.equal(pending.outcome, 'pending-approval');
+  assert.ok(pending.state);
+  const d1 = setup.verificationApprovalPort?.getRecordedBindings().find(binding => binding.decisionId.startsWith('dec-verify-'));
+  const authority = await statePort.readVerificationAuthoritySnapshot(task.taskId);
+  assert.ok(d1 && authority);
+  const nextAuthority = { ...setup.authorityRef, decisionAuthorityGeneration: authority.decisionAuthorityGeneration + 1 };
+  assert.equal((await statePort.publishAuthority({ authorityRef: nextAuthority })).status, 'published');
+  setup.verificationApprovalPort?.setV02AuthorityRef(nextAuthority);
+  setup.verificationApprovalPort?.scriptDecision({ ...d1, status: 'approved' }, nextAuthority.decisionAuthorityGeneration);
+
+  // The real reviewer recomputes the snapshot context digest; the graph mints it through the same helper.
+  const scripted = new ScriptedModelPort();
+  scripted.queueResponse({
+    outcome: 'observed',
+    result: {
+      proposal: { proposalId: 'review-1', content: JSON.stringify({ status: 'accepted', findings: [] }) },
+      observedUsage: { inputTokens: 1, outputTokens: 1, billableTokens: 2, costUsd: 0.001 },
+    },
+  });
+  const reviewer = createRuntimeReviewer({
+    model: new ScriptedModelPortV02(scripted),
+    resolveRepoDigest: async current => (await statePort.loadTask(current.taskId))?.repositoryRevisionDigest,
+  });
+  let reviewed: ReviewResult | undefined;
+  setup.reviewerPort.review = async (reviewTask, diff, evidence, request, admission) => {
+    // The real reviewer holds no accounting authority; this port settles the allowance around it.
+    const claim = await statePort.claim(admission);
+    const attempt = await statePort.beginAttempt(claim.claimId, createFixtureExecutorIdentityV02({ payloadDigest: computeRequestContentDigest(request) }));
+    assert.equal((await statePort.recordOutcome(createTestProviderOutcomeReceiptV02(claim, attempt, admission))).outcome, 'settled');
+    reviewed = await reviewer.review(reviewTask, diff, evidence, request, admission);
+    return reviewed;
+  };
+
+  const resumed = await runUC03Graph(task, ports, config, pending.state);
+  assert.ok(reviewed, `route stopped before review: ${resumed.reasons.join('; ')}`);
+  assert.equal(reviewer.lastFailureReason, undefined);
+  assert.equal(reviewed.status, 'accepted');
+  assert.deepEqual(reviewed.findings, []);
+  assert.equal(scripted.simulatedDispatches, 1);
 });
 
 /* ------------------------------------------------------------------

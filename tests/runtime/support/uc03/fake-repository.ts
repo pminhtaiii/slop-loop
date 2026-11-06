@@ -640,11 +640,22 @@ export class FakeRepositoryPort implements RepositoryPort, RepositoryPortV02 {
     const changedFiles: string[] = [];
     let diff = '';
 
+    // Real hunk counts: the reviewer's unified-diff parser walks them and rejects a mismatch.
+    const lines = (content: string | undefined): string[] => {
+      if (content === undefined) return [];
+      const trimmed = content.endsWith('\n') ? content.slice(0, -1) : content;
+      return trimmed === '' ? [] : trimmed.split('\n');
+    };
+    const range = (hunk: readonly string[]): string => (hunk.length === 0 ? '0,0' : `1,${hunk.length}`);
+
     for (const [path, content] of currentFiles.entries()) {
       const baseContent = baseFiles.get(path);
       if (baseContent !== content) {
         changedFiles.push(path);
-        diff += `--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-${baseContent ?? ''}\n+${content}\n`;
+        const oldLines = lines(baseContent);
+        const newLines = lines(content);
+        const body = [...oldLines.map(line => `-${line}`), ...newLines.map(line => `+${line}`)].join('\n');
+        diff += `--- a/${path}\n+++ b/${path}\n@@ -${range(oldLines)} +${range(newLines)} @@\n${body}\n`;
       }
     }
 

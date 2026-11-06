@@ -96,7 +96,10 @@ test('a half-implemented Tai-owned producer is refused before any effect', () =>
   const readiness = prepareUC03Host(inputs({ producers }));
   assert.equal(readiness.status, 'unavailable');
   if (readiness.status !== 'unavailable') return;
-  assert.ok(readiness.reasons.some(reason => reason.kind === 'component' && reason.component === 'guardedRead' && reason.reasonCode === 'incompatible-delivery'), JSON.stringify(readiness.reasons));
+  assert.ok(
+    readiness.reasons.some(reason => reason.kind === 'component' && reason.component === 'guardedRead' && reason.reasonCode === 'incompatible-delivery'),
+    JSON.stringify(readiness.reasons),
+  );
 });
 
 test('an unpinned host producer is stale, so a swapped guard cannot arrive unnoticed', () => {
@@ -125,7 +128,9 @@ test('assembly calls nothing: a delivery whose every method throws still assembl
   const hostile = (): never => {
     throw new Error('MARKER_ASSEMBLY_EFFECT');
   };
-  const owner = OWNER_COMPONENTS.map(component => delivery(component, { adapter: Object.fromEntries([['provenance', 'real'], ...REQUIRED_PORTS_V02_METHODS[component].map(method => [method, hostile])]) }));
+  const owner = OWNER_COMPONENTS.map(component =>
+    delivery(component, { adapter: Object.fromEntries([['provenance', 'real'], ...REQUIRED_PORTS_V02_METHODS[component].map(method => [method, hostile])]) }),
+  );
   const readiness = prepareUC03Host(inputs({ owner }));
   assert.equal(readiness.status, 'ready', JSON.stringify(readiness));
 });
