@@ -21,7 +21,7 @@ import { prepareControlledUC03Host } from '../../../../src/runtime/uc03-host-boo
 import { createCoderAgentV02 } from '../../../../src/uc03/agent.ts';
 import { runControlledUC03GraphV02 } from '../../../../src/uc03/graph-v02.ts';
 import { currentPlanBindingDigest } from '../../../../src/uc03/graph-validation.ts';
-import type { UC03GraphConfigV02, UC03GraphPortsV02 } from '../../../../src/uc03/graph-types-v02.ts';
+import type { UC03GraphConfigV02, UC03GraphPortsV02, UC03ProductionExecutionGuardV02 } from '../../../../src/uc03/graph-types-v02.ts';
 import { controlledHostFixture } from './host-pipeline-fixtures.ts';
 import { createFixtureBugTask } from './port-fixtures.ts';
 
@@ -281,8 +281,9 @@ export async function controlledGeneratedPlanFixture(): Promise<ControlledGenera
       return { outcome: 'found', content: stored.content, acknowledgement: stored.acknowledgement };
     },
   });
-  const executionGuard = route.ports.executionGuard;
-  if (!executionGuard) throw new Error('Controlled route is missing its execution guard');
+  const guard = route.ports.executionGuard;
+  if (!guard || !('executionGuardApiVersion' in guard) || guard.executionGuardApiVersion !== '0.2.0') throw new Error('Controlled route is missing its v0.2 execution guard');
+  const executionGuard = guard as UC03ProductionExecutionGuardV02;
   const ports: UC03GraphPortsV02 = {
     statePort,
     approvalPort: route.approvalPort,

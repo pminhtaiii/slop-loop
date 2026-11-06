@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 
 import { loadHostConfiguration, readinessReport, runEvaluateCli, type HostAssembly, type EvaluateCliOptions } from '../../../src/cli/evaluate.ts';
 import type { OwnerDelivery } from '../../../src/runtime/evaluation-composition.ts';
-import { REQUIRED_PORTS_V02_METHODS, UC03_PRODUCTION_COMPONENTS_V02, type UC03GraphConfigV02 } from '../../../src/uc03/graph-types-v02.ts';
+import { REQUIRED_PORTS_V02_METHODS, UC03_PRODUCTION_COMPONENTS_V02, portDeclarationsV02, type UC03GraphConfigV02 } from '../../../src/uc03/graph-types-v02.ts';
 
 const CONTRACT = 'uc03-owner-delivery/1';
 const REV = 'a'.repeat(40);
@@ -30,7 +30,7 @@ function shell(component: OwnerDelivery['component']): OwnerDelivery {
     contractVersion: CONTRACT,
     revision: REV,
     provenance: 'real',
-    adapter: { provenance: 'real', ...Object.fromEntries(REQUIRED_PORTS_V02_METHODS[component].map(method => [method, () => undefined])) },
+    adapter: { provenance: 'real', ...portDeclarationsV02(component), ...Object.fromEntries(REQUIRED_PORTS_V02_METHODS[component].map(method => [method, () => undefined])) },
   } as OwnerDelivery;
 }
 

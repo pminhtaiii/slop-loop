@@ -24,6 +24,7 @@ import {
   checkProductionPortsV02,
   UC03_PRODUCTION_COMPONENTS_V02,
   UNPROVENANCED_COMPONENTS_V02,
+  type ProductionPortRejectionV02,
   type UC03GraphConfigV02,
   type UC03GraphPortsV02,
   type UC03ProductionComponentV02,
@@ -59,7 +60,11 @@ export interface UC03HostInputs {
 }
 
 export type UC03HostUnavailableReason =
-  | Readonly<{ kind: 'component'; component: UC03HostComponent; reasonCode: 'incompatible-delivery' | 'stale-revision' | 'mock-delivery' | 'missing-port' | 'missing-method' | 'invalid-provenance' }>
+  | Readonly<{
+      kind: 'component';
+      component: UC03HostComponent;
+      reasonCode: 'incompatible-delivery' | 'stale-revision' | 'mock-delivery' | ProductionPortRejectionV02['reasonCode'];
+    }>
   | Readonly<{ kind: 'identity'; reasonCode: 'unsafe-identity' | 'incomplete-identity' }>;
 
 export type UC03HostReadiness =

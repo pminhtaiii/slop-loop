@@ -430,6 +430,7 @@ export class AuthoritativeExecutionGuard<TPorts extends ExecutionGuardPorts | Ex
 }
 
 export class AuthoritativeExecutionGuardV02 extends AuthoritativeExecutionGuard<ExecutionGuardPortsV02> implements ExecutionGuardV02 {
+  readonly executionGuardApiVersion = '0.2.0' as const;
   declare readonly ports: ExecutionGuardPortsV02;
   declare readonly config?: ExecutionGuardConfigV02 | undefined;
 

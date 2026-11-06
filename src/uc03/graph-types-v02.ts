@@ -8,8 +8,9 @@
  * `StatePort` and `RepositoryPort` are structurally rejected by `StatePortV02`/`RepositoryPortV02`
  * (extra required methods; `applyPatch` must return an `executionReceipt`), so those two need no
  * cast to be safe. `ExecutionGuard`, `ModelPort` and `ApprovalPort` *are* assignable across
- * versions — TypeScript accepts a narrower-arity function in a wider slot — so their production
- * status rests on `checkProductionPortsV02` at assembly, not on the type system. Both are covered by
+ * versions — TypeScript accepts a narrower-arity function in a wider slot — so the model and guard
+ * members of `UC03GraphPortsV02` also require a version marker, and `checkPortsV02` re-checks it.
+ * `ApprovalPort`'s production status rests on `checkProductionPortsV02` alone. All are covered by
  * the compile fixture in `tests/runtime/contract/uc03-production-ports.test.ts`.
  *
  * See `specs/007-runtime-evaluation-integration/contracts/host-composition.md` §1/§2/§4.
@@ -45,8 +46,22 @@ export interface UC03ProductionBaselinePort extends BaselineEvidenceWriter {
   loadBaselineEvidence: NonNullable<BaselineEvidenceWriter['loadBaselineEvidence']>;
 }
 
+/**
+ * Version markers. A v0.1 `ModelPort`/`ExecutionGuard` has the same method names with narrower
+ * arity, so structural typing alone admits it; these markers are what the production surface and
+ * the runtime guard actually separate the versions by. Same mechanism as the repository and state
+ * adapters (`executionGuardApiVersion`).
+ */
+export interface UC03ProductionModelPortV02 extends ModelPortV02 {
+  readonly modelPortApiVersion: '0.2.0';
+}
+
+export interface UC03ProductionExecutionGuardV02 extends ExecutionGuardV02 {
+  readonly executionGuardApiVersion: '0.2.0';
+}
+
 /** Reviewer ingress is the same canonical model boundary in a distinct role — never a second transport. */
-export interface UC03ReviewerModelPortV02 extends ModelPortV02 {
+export interface UC03ReviewerModelPortV02 extends UC03ProductionModelPortV02 {
   readonly providerRole: 'reviewer';
 }
 
@@ -90,9 +105,9 @@ export interface UC03GraphPortsV02 {
   readonly approvalPort: ApprovalPort;
   readonly repositoryPort: RepositoryPortV02;
   /** Coder role. */
-  readonly modelPort: ModelPortV02;
+  readonly modelPort: UC03ProductionModelPortV02;
   readonly reviewerModelPort: UC03ReviewerModelPortV02;
-  readonly executionGuard: ExecutionGuardV02;
+  readonly executionGuard: UC03ProductionExecutionGuardV02;
   readonly guardedRead: ExecutionGuardReadCapability;
   readonly baselineEvidence: UC03ProductionBaselinePort;
   readonly hostAuthority: TrustedHostPort;
@@ -134,8 +149,25 @@ export const UC03_PRODUCTION_COMPONENTS_V02 = Object.keys(REQUIRED_PORTS_V02_MET
 export type ProductionPortRejectionV02 = Readonly<{
   status: 'rejected';
   component: UC03ProductionComponentV02;
-  reasonCode: 'missing-port' | 'missing-method' | 'invalid-provenance';
+  reasonCode: 'missing-port' | 'missing-method' | 'invalid-provenance' | 'missing-version-marker' | 'wrong-provider-role';
 }>;
+
+/**
+ * Properties a component's v0.2 adapter must declare for `checkPortsV02` to admit it, beyond its
+ * methods. A v0.1 adapter has every method name, so the marker is what separates the versions; the
+ * reviewer seam additionally needs its role, since the coder's own `HostModelPortV02` carries the
+ * same marker and would otherwise pass as the reviewer.
+ */
+const PORT_DECLARATIONS_V02: Readonly<Partial<Record<UC03ProductionComponentV02, Readonly<Record<string, string>>>>> = {
+  modelPort: { modelPortApiVersion: '0.2.0' },
+  reviewerModelPort: { modelPortApiVersion: '0.2.0', providerRole: 'reviewer' },
+  executionGuard: { executionGuardApiVersion: '0.2.0' },
+};
+
+/** The properties a component's v0.2 adapter must declare, if any. Fixtures spread this to build real shells. */
+export function portDeclarationsV02(component: UC03ProductionComponentV02): Readonly<Record<string, string>> {
+  return PORT_DECLARATIONS_V02[component] ?? {};
+}
 
 /** Host wiring for the v0.2 production route. No `mode`: this entry is production by construction. */
 export interface UC03GraphConfigV02 {
@@ -189,6 +221,12 @@ export function checkControlledPortsV02(candidate: unknown): ProductionPortRejec
   return checkPortsV02(candidate, 'mock');
 }
 
+/** Own-property read, as in `cutover.ts`: a getter or an inherited value does not count. */
+function isOwnDeclaration(port: Record<string, unknown>, key: string, value: string): boolean {
+  const descriptor = Object.getOwnPropertyDescriptor(port, key);
+  return descriptor !== undefined && 'value' in descriptor && descriptor.value === value;
+}
+
 function checkPortsV02(candidate: unknown, provenance: 'real' | 'mock'): ProductionPortRejectionV02 | null {
   if (typeof candidate !== 'object' || candidate === null) return { status: 'rejected', component: 'statePort', reasonCode: 'missing-port' };
   const ports = candidate as Record<string, unknown>;
@@ -198,6 +236,12 @@ function checkPortsV02(candidate: unknown, provenance: 'real' | 'mock'): Product
     if (!UNPROVENANCED_COMPONENTS_V02.includes(component) && port['provenance'] !== provenance) return { status: 'rejected', component, reasonCode: 'invalid-provenance' };
     for (const method of REQUIRED_PORTS_V02_METHODS[component]) {
       if (typeof port[method] !== 'function') return { status: 'rejected', component, reasonCode: 'missing-method' };
+    }
+    // A v0.1 adapter has every method name; only these declarations separate it from v0.2.
+    for (const [key, declared] of Object.entries(portDeclarationsV02(component))) {
+      if (!isOwnDeclaration(port, key, declared)) {
+        return { status: 'rejected', component, reasonCode: key === 'providerRole' ? 'wrong-provider-role' : 'missing-version-marker' };
+      }
     }
   }
   return null;

@@ -11,7 +11,7 @@ import test from 'node:test';
 
 import { prepareUC03Host, type UC03HostInputs } from '../../../src/runtime/uc03-host-bootstrap.ts';
 import type { OwnerDelivery } from '../../../src/runtime/evaluation-composition.ts';
-import { REQUIRED_PORTS_V02_METHODS, UC03_PRODUCTION_COMPONENTS_V02, type UC03GraphConfigV02 } from '../../../src/uc03/graph-types-v02.ts';
+import { REQUIRED_PORTS_V02_METHODS, UC03_PRODUCTION_COMPONENTS_V02, portDeclarationsV02, type UC03GraphConfigV02 } from '../../../src/uc03/graph-types-v02.ts';
 
 const CONTRACT = 'uc03-owner-delivery/1';
 const REV = 'a'.repeat(40);
@@ -22,7 +22,7 @@ const HOST_COMPONENTS = ['guardedRead', 'baselineEvidence', 'hostAuthority', 'co
 const OWNER_COMPONENTS = UC03_PRODUCTION_COMPONENTS_V02.filter(component => !(HOST_COMPONENTS as readonly string[]).includes(component));
 
 function adapter(component: OwnerDelivery['component'], provenance = 'real'): OwnerDelivery['adapter'] {
-  const shell: Record<string, unknown> = { provenance };
+  const shell: Record<string, unknown> = { provenance, ...portDeclarationsV02(component) };
   for (const method of REQUIRED_PORTS_V02_METHODS[component]) shell[method] = () => undefined;
   return shell as unknown as OwnerDelivery['adapter'];
 }
@@ -129,7 +129,9 @@ test('assembly calls nothing: a delivery whose every method throws still assembl
     throw new Error('MARKER_ASSEMBLY_EFFECT');
   };
   const owner = OWNER_COMPONENTS.map(component =>
-    delivery(component, { adapter: Object.fromEntries([['provenance', 'real'], ...REQUIRED_PORTS_V02_METHODS[component].map(method => [method, hostile])]) }),
+    delivery(component, {
+      adapter: Object.fromEntries([['provenance', 'real'], ...Object.entries(portDeclarationsV02(component)), ...REQUIRED_PORTS_V02_METHODS[component].map(method => [method, hostile])]),
+    }),
   );
   const readiness = prepareUC03Host(inputs({ owner }));
   assert.equal(readiness.status, 'ready', JSON.stringify(readiness));

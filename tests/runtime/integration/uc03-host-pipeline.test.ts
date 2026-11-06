@@ -15,7 +15,14 @@ import type { OwnerDelivery } from '../../../src/runtime/evaluation-composition.
 import { createRepositoryBaselineSource } from '../../../src/runtime/repository-baseline-source.ts';
 import { prepareControlledUC03Host, prepareUC03Host } from '../../../src/runtime/uc03-host-bootstrap.ts';
 import { createProductionRoute, runControlledUC03GraphV02, runUC03GraphV02 } from '../../../src/uc03/graph-v02.ts';
-import { REQUIRED_PORTS_V02_METHODS, UC03_PRODUCTION_COMPONENTS_V02, type UC03GraphConfigV02, type UC03GraphPortsV02, type UC03ProductionComponentV02 } from '../../../src/uc03/graph-types-v02.ts';
+import {
+  REQUIRED_PORTS_V02_METHODS,
+  UC03_PRODUCTION_COMPONENTS_V02,
+  portDeclarationsV02,
+  type UC03GraphConfigV02,
+  type UC03GraphPortsV02,
+  type UC03ProductionComponentV02,
+} from '../../../src/uc03/graph-types-v02.ts';
 import { sha256Text } from '../../../src/uc01/contracts.ts';
 import { createFixtureBugTask, createFixtureTaskState } from '../support/uc03/port-fixtures.ts';
 import { controlledHostFixture } from '../support/uc03/host-pipeline-fixtures.ts';
@@ -40,7 +47,11 @@ const reset = (): void => {
 };
 
 function delivery(component: UC03ProductionComponentV02, adapterProvenance: 'real' | 'mock' = 'real'): OwnerDelivery {
-  const adapter = { provenance: adapterProvenance, ...Object.fromEntries(REQUIRED_PORTS_V02_METHODS[component].map(method => [method, recording(component, method)])) };
+  const adapter = {
+    provenance: adapterProvenance,
+    ...portDeclarationsV02(component),
+    ...Object.fromEntries(REQUIRED_PORTS_V02_METHODS[component].map(method => [method, recording(component, method)])),
+  };
   return { component, id: `${component}-id`, contractVersion: CONTRACT, revision: REV, provenance: 'real', adapter } as OwnerDelivery;
 }
 

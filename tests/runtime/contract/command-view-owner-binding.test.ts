@@ -179,6 +179,59 @@ test('a measurement that does not declare read-only mounting is refused', async 
   await assert.rejects(() => build(controller, bad), /OWNER_VIEW_MISMATCH: owner view must declare mountedReadOnly/u);
 });
 
+test('a legitimate non-literal isolation reference binds the owner measurement to the trusted profile', async () => {
+  const controller = new RecordingController();
+  const ownerView = { ...(await honest(controller)), isolationProfileRef: 'profile/t025 measured-2026.11' };
+  const trustedIsolationProfileRef = 'profile/t025 measured-2026.11';
+  const before = controller.materialized.length;
+  const { operations, published } = harness();
+  const view = await buildDockerCommandView({ workspaceId: WORKSPACE_ID, ownerView, trustedIsolationProfileRef }, controller, operations);
+  assert.equal(controller.materialized.length, before + 1, 'an agreeing isolation reference must materialize the view');
+  assert.equal(published(), view);
+  assert.equal(view.mountedReadOnly, true);
+});
+
+test('a differing trusted isolation reference refuses before materialization and publishes nothing', async () => {
+  const controller = new RecordingController();
+  const ownerView = await honest(controller);
+  const before = controller.materialized.length;
+  const { operations, published } = harness();
+  // Same length as the owner's reference: the refusal must compare by value, not by shape.
+  await assert.rejects(
+    () => buildDockerCommandView({ workspaceId: WORKSPACE_ID, ownerView, trustedIsolationProfileRef: 'profile-u025' }, controller, operations),
+    /OWNER_VIEW_MISMATCH: owner isolationProfileRef/u,
+  );
+  assert.equal(controller.materialized.length, before, 'a refused isolation binding must not materialize a view');
+  assert.equal(published(), null, 'a refused isolation binding must not publish a view');
+  assert.equal(controller.executedPlans.length, 0, 'a refused isolation binding must not reach the executor');
+});
+
+test('an absent trusted reference or absent owner measurement keeps the previous behaviour', async () => {
+  const controller = new RecordingController();
+  const ownerView = await honest(controller);
+  const withoutTrusted = await build(controller, ownerView);
+  assert.equal(withoutTrusted.mountedReadOnly, true);
+
+  const { operations } = harness();
+  const withoutOwner = await buildDockerCommandView({ workspaceId: WORKSPACE_ID }, controller, operations);
+  assert.equal(withoutOwner.viewId, withoutTrusted.viewId);
+  assert.equal(withoutOwner.viewDigest, withoutTrusted.viewDigest);
+});
+
+// A trusted profile is only meaningful against a measurement; silently skipping the check would
+// report success for a comparison that never happened.
+test('a trusted reference with no owner measurement is refused, not silently skipped', async () => {
+  const controller = new RecordingController();
+  const { operations, published } = harness();
+  await assert.rejects(
+    buildDockerCommandView({ workspaceId: WORKSPACE_ID, trustedIsolationProfileRef: 'profile-u025' }, controller, operations),
+    /OWNER_VIEW_MISMATCH: trustedIsolationProfileRef requires an owner view measurement/,
+  );
+  assert.equal(controller.materialized.length, 0, 'a refused binding must not materialize a view');
+  assert.equal(published(), null, 'a refused binding must not publish a view');
+  assert.equal(controller.executedPlans.length, 0, 'a refused binding must not reach the executor');
+});
+
 test('an absent or unbounded isolation reference is refused', async () => {
   const controller = new RecordingController();
   const ownerView = await honest(controller);

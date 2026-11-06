@@ -2,7 +2,7 @@
 
 **Feature Branch**: `feat/uc03-evaluation-integration-plan`
 **Created**: 2026-11-01 (Asia/Saigon)
-**Status**: T001–T011 retain their recorded controlled implementation release. The 2026-11-04 host-composition remediation is planning/review only; [decisions and gates](contracts/decisions.md) own authorization.
+**Status**: T001–T011 retain their recorded controlled implementation release. The 2026-11-04 host-composition remediation went through planning and then an explicit separate release for T020–T034, source and controlled-tier tests only; [decisions and gates](contracts/decisions.md) own authorization and the planning step is superseded for implementation.
 **Input**: Integrate the existing coding workflow and evaluator, exercise real Python fixes, expose where agents/tools struggle, and provide a local interactive interface. User selects DeepSeek Flash through the Anthropic-compatible API, configures their environment, and requests no user-set spend cap or early cost optimization.
 
 ## User Scenarios & Testing *(mandatory)*
@@ -120,4 +120,4 @@ Custom public bug submissions are limited to configured repositories/check sets.
 
 ## Host-composition remediation — 2026-11-04
 
-This targeted amendment closes verified gaps in US1; it does not add a second workflow or expand console/comparison scope. [Host contract](contracts/host-composition.md) and T019–T034 define the proposed work. Existing T001–T010 statuses are historical controlled evidence; they do not establish the new acceptance criteria. T011 remains the sole first-real-repair acceptance task. Existing UC-03 T024/T025/T026/T028/T066 and external owner gates retain their acceptance ownership. This request authorizes planning, validation and independent review only.
+This targeted amendment closes verified gaps in US1; it does not add a second workflow or expand console/comparison scope. [Host contract](contracts/host-composition.md) and T019–T034 define the proposed work. Existing T001–T010 statuses are historical controlled evidence; they do not establish the new acceptance criteria. T011 remains the sole first-real-repair acceptance task. Existing UC-03 T024/T025/T026/T028/T066 and external owner gates retain their acceptance ownership. The 2026-11-04 request that produced this amendment authorized planning, validation and independent review only; the later same-day direction recorded in [decisions](contracts/decisions.md) separately released T020–T034 implementation at source/controlled tier and nothing beyond it.

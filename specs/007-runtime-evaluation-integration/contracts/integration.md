@@ -2,7 +2,7 @@
 
 Proposed host-side integration, not a new network execution service. Canonical v0.1/v0.2 owner authority remains mandatory; version names integration records only.
 
-The 2026-11-04 [host-composition proposal](host-composition.md) defines explicit v0.2 production consumer migration and missing host/owner seams for US1. Its T019 owner review and separate correction release are prerequisites; this integration record grants no implicit production compatibility.
+The 2026-11-04 [host-composition proposal](host-composition.md) defines explicit v0.2 production consumer migration and missing host/owner seams for US1. Its T019 owner review and separate correction release were prerequisites and are now recorded in [decisions](decisions.md) as one delegated attestation plus a source/controlled-tier release; this integration record still grants no implicit production compatibility, and pinned owner delivery remains absent.
 
 ## 1. Admission and Lifecycle
 

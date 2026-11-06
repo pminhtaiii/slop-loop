@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { prepareControlledUC03Host, prepareUC03Host, type UC03HostInputs } from '../../../src/runtime/uc03-host-bootstrap.ts';
 import { runControlledUC03GraphV02, runUC03GraphV02 } from '../../../src/uc03/graph-v02.ts';
-import { REQUIRED_PORTS_V02_METHODS, UC03_PRODUCTION_COMPONENTS_V02, type UC03GraphConfigV02, type UC03GraphPortsV02 } from '../../../src/uc03/graph-types-v02.ts';
+import { REQUIRED_PORTS_V02_METHODS, UC03_PRODUCTION_COMPONENTS_V02, portDeclarationsV02, type UC03GraphConfigV02, type UC03GraphPortsV02 } from '../../../src/uc03/graph-types-v02.ts';
 import type { OwnerDelivery } from '../../../src/runtime/evaluation-composition.ts';
 import { createFixtureBugTask } from '../support/uc03/port-fixtures.ts';
 import { createWorkflowDriver } from '../../../eval/uc03/workflow-driver.ts';
@@ -30,6 +30,7 @@ function fixture() {
       component,
       {
         provenance: 'mock',
+        ...portDeclarationsV02(component),
         ...Object.fromEntries(
           REQUIRED_PORTS_V02_METHODS[component].map(method => [
             method,
