@@ -1,4 +1,3 @@
-/** T030 controlled pipeline evidence. */
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -20,7 +19,7 @@ import { REQUIRED_PORTS_V02_METHODS, UC03_PRODUCTION_COMPONENTS_V02, type UC03Gr
 import { sha256Text } from '../../../src/uc01/contracts.ts';
 import { createFixtureBugTask, createFixtureTaskState } from '../support/uc03/port-fixtures.ts';
 import { controlledHostFixture } from '../support/uc03/host-pipeline-fixtures.ts';
-import { controlledGeneratedPlanFixture } from '../support/uc03/controlled-host-journey.ts';
+import { assertControlledPlanApprovalPatchBarrier, controlledGeneratedPlanFixture } from '../support/uc03/controlled-host-journey.ts';
 
 const CONTRACT = 'uc03-owner-delivery/1';
 const REV = 'a'.repeat(40);
@@ -123,7 +122,7 @@ test('assembly is effect-free and a controlled delivery never becomes ready', ()
   assert.deepEqual(stale, { status: 'unavailable', reasons: [{ kind: 'component', component: 'replanPort', reasonCode: 'stale-revision' }] });
 });
 
-test('controlled graph generates a plan through model admission and reaches approval wait', async () => {
+test('controlled graph generates a plan and waits for approval', async () => {
   const fixture = await controlledGeneratedPlanFixture();
   const readiness = prepareControlledUC03Host(fixture.host.inputs);
   assert.equal(readiness.status, 'controlled-ready');
@@ -134,6 +133,8 @@ test('controlled graph generates a plan through model admission and reaches appr
   assert.equal(state?.node, 'AwaitPlan');
   assert.deepEqual(fixture.modelCalls, ['coder:propose-plan', 'coder:propose-plan']);
 });
+
+test('D0 approval gates patch and pauses at D1', async () => assertControlledPlanApprovalPatchBarrier(await controlledGeneratedPlanFixture()));
 
 test('a post-assembly substitution is refused by the route before any method runs', async () => {
   const ports = readyPorts() as unknown as Record<string, Record<string, unknown>>;

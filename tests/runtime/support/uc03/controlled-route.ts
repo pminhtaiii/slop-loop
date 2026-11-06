@@ -145,15 +145,18 @@ export function createControllableReviewerPort(repositoryPort: FakeRepositoryPor
   };
 }
 
-export function createPlanApprovalContext(task: Parameters<typeof createGraphTaskState>[0]): Readonly<Record<number, NonNullable<StateTransitionOptions['trusted']>>> {
+export function createPlanApprovalContext(
+  task: Parameters<typeof createGraphTaskState>[0],
+  decisionRef: string = ROUTE_PLAN_DETAILS.decisionRef,
+): Readonly<Record<number, NonNullable<StateTransitionOptions['trusted']>>> {
   const state = createGraphTaskState(task);
   const baselineRef = `uc04://baseline/${task.taskId}/1`;
   const evidenceRefs = [baselineRef];
   const checkSetDigest = computeCheckSetDigest(task.requiredChecks);
   const strategyDigest = computeCanonicalSha256(ROUTE_PLAN_DETAILS.strategy);
-  const action = { actionId: ROUTE_PLAN_DETAILS.decisionRef, kind: 'approve_fix_plan' as const, planVersion: state.planVersion, strategyDigest, diagnosisEvidenceRefs: evidenceRefs, checkSetDigest };
+  const action = { actionId: decisionRef, kind: 'approve_fix_plan' as const, planVersion: state.planVersion, strategyDigest, diagnosisEvidenceRefs: evidenceRefs, checkSetDigest };
   const binding = createTestApprovalBinding({
-    decisionId: ROUTE_PLAN_DETAILS.decisionRef,
+    decisionId: decisionRef,
     actionKind: 'fix_plan',
     normalizedActionDigest: computeCanonicalSha256(action),
     taskId: task.taskId,
@@ -207,13 +210,17 @@ export function createPlanBindingDigest(task: Parameters<typeof createGraphTaskS
 }
 
 /** Controlled route. A pending plan approval parks the route at AwaitPlan; `approved` lets it run on. */
-export function createPendingApprovalRoute(initialDecision: 'approved' | 'pending' | 'rejected' = 'pending'): {
+export function createPendingApprovalRoute(
+  initialDecision: 'approved' | 'pending' | 'rejected' = 'pending',
+  decisionRef: string = ROUTE_PLAN_DETAILS.decisionRef,
+): {
   readonly task: BugTask;
   readonly ports: UC03GraphPorts;
   readonly statePort: MemoryStatePortV02;
   readonly config: UC03GraphConfig;
   readonly approvalPort: RouteApprovalPort;
   readonly repositoryPort: FakeRepositoryPort;
+  readonly patchFailureReasons: string[];
   readonly hostAuthority: TrustedHostPort;
 } {
   const checkRepro = createFixtureCheckDefinition({
@@ -231,7 +238,7 @@ export function createPendingApprovalRoute(initialDecision: 'approved' | 'pendin
     configVersion: task.configVersion,
     decisionAuthorityGeneration: 3,
   });
-  const transitionContexts = createPlanApprovalContext(task);
+  const transitionContexts = createPlanApprovalContext(task, decisionRef);
   const planApproval = transitionContexts[3]?.approval;
   if (!planApproval) throw new Error('Plan approval fixture is missing its transition context');
   const approvalPort = createContextualApprovalPort({ ...(planApproval.binding as ApprovalBinding), status: initialDecision }, planApproval.freshness, authorityRef);
@@ -249,7 +256,8 @@ export function createPendingApprovalRoute(initialDecision: 'approved' | 'pendin
   repositoryPort.setStatePort(statePort);
   repositoryPort.setTestResult('check-pytest-reproduction', { checkId: 'check-pytest-reproduction', outcome: 'pass', outputExcerpt: '1 passed', durationMs: 100 });
   repositoryPort.setTestResult('check-pytest-regression', { checkId: 'check-pytest-regression', outcome: 'pass', outputExcerpt: '1 passed', durationMs: 100 });
-  const ownerSettledRepositoryPort = createGraphRepositoryPort(repositoryPort, statePort);
+  const patchFailureReasons: string[] = [];
+  const ownerSettledRepositoryPort = createGraphRepositoryPort(repositoryPort, statePort, reason => patchFailureReasons.push(reason));
   const executionGuard = createExecutionGuardV02({ ports: { statePort, repositoryPort: ownerSettledRepositoryPort, approvalPort: autoApprovingPort } });
   const trustedExpectedContext = {
     taskId: task.taskId,
@@ -302,10 +310,11 @@ export function createPendingApprovalRoute(initialDecision: 'approved' | 'pendin
     baselineEvidenceWriter: createMockBaselineEvidenceWriter(),
     executionGuard,
   };
+  const planDetails = { ...ROUTE_PLAN_DETAILS, decisionRef };
   const config: UC03GraphConfig = {
     mode: 'development',
     trustedExpectedContext,
-    planDetails: ROUTE_PLAN_DETAILS,
+    planDetails,
   };
-  return { task, ports, statePort, config, approvalPort: autoApprovingPort, repositoryPort, hostAuthority };
+  return { task, ports, statePort, config, approvalPort: autoApprovingPort, repositoryPort, patchFailureReasons, hostAuthority };
 }

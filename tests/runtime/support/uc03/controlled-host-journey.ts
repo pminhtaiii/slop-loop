@@ -1,32 +1,57 @@
-import type { ProviderPricingIdentityV02, ProviderRequest, RepositoryPortV02 } from '../../../../src/contracts/foundation/uc03.ts';
+import assert from 'node:assert/strict';
+import type { NormalizedAction, ProviderPricingIdentityV02, ProviderRequest, RepositoryExecutionReceiptV02, RepositoryPortV02 } from '../../../../src/contracts/foundation/uc03.ts';
+import type { BaselineEvidenceAcknowledgement, BaselineEvidenceCandidate } from '../../../../src/uc03/investigation-types.ts';
 import { computeCanonicalSha256, computeRequestContentDigest } from '../../../../src/contracts/foundation/uc03.ts';
 import { createFixtureExecutorIdentityV02, createFixtureProviderAdmissionReceiptV02 } from './port-fixtures.ts';
 import { createGraphTaskState, seedGraphTaskState } from './graph-fixtures.ts';
-import { createTestProviderAdmissionContextV02, createTestProviderAdmissionTrustedContextV02, createTestProviderRequest } from './state-fixtures.ts';
+import {
+  createTestProviderAdmissionContextV02,
+  createTestProviderAdmissionTrustedContextV02,
+  createTestProviderRequest,
+  createTestRepositoryAdmissionContextV02,
+  createTestRepositoryAdmissionTrustedContextV02,
+} from './state-fixtures.ts';
 import { createPendingApprovalRoute, ROUTE_PLAN_DETAILS } from './controlled-route.ts';
 import { HostModelPortV02 } from '../../../../src/foundation/model-v02.ts';
 import type { HostModelTransport } from '../../../../src/foundation/model.ts';
 import { computeContextDigest } from '../../../../src/foundation/model.ts';
 import { createGuardedReadCapability, type GuardedReadControlObservation } from '../../../../src/foundation/guarded-read-capability.ts';
+import { createBaselineEvidenceAdapter } from '../../../../src/runtime/baseline-evidence-adapter.ts';
+import { prepareControlledUC03Host } from '../../../../src/runtime/uc03-host-bootstrap.ts';
 import { createCoderAgentV02 } from '../../../../src/uc03/agent.ts';
+import { runControlledUC03GraphV02 } from '../../../../src/uc03/graph-v02.ts';
 import { currentPlanBindingDigest } from '../../../../src/uc03/graph-validation.ts';
 import type { UC03GraphConfigV02, UC03GraphPortsV02 } from '../../../../src/uc03/graph-types-v02.ts';
 import { controlledHostFixture } from './host-pipeline-fixtures.ts';
+import { createFixtureBugTask } from './port-fixtures.ts';
 
 const USAGE = { inputTokens: 1, outputTokens: 1, billableTokens: 2, costUsd: 0.001 };
 const BUDGET = { maxModelCalls: 4, maxActiveMs: 60_000, maxRepairs: 1, maxReplans: 1 };
+let controlledFixtureSequence = 0;
+const PATCH_DIFF = [
+  '--- a/src/calculator.py',
+  '+++ b/src/calculator.py',
+  '@@ -1,1 +1,3 @@',
+  '-def divide(a, b): return a / b',
+  '+def divide(a, b):',
+  '+    if b == 0: raise CalculationError("denominator must be non-zero")',
+  '+    return a / b',
+  '',
+].join('\n');
 
-type ControlledGeneratedPlanFixture = {
+export interface ControlledGeneratedPlanFixture {
   readonly route: ReturnType<typeof createPendingApprovalRoute>;
   readonly task: ReturnType<typeof createPendingApprovalRoute>['task'];
   readonly statePort: ReturnType<typeof createPendingApprovalRoute>['statePort'];
   readonly modelCalls: string[];
+  readonly patchReceipts: RepositoryExecutionReceiptV02[];
   readonly host: ReturnType<typeof controlledHostFixture>;
   readonly config: UC03GraphConfigV02;
-};
+}
 
 export async function controlledGeneratedPlanFixture(): Promise<ControlledGeneratedPlanFixture> {
-  const route = createPendingApprovalRoute('pending');
+  const fixtureSequence = ++controlledFixtureSequence;
+  const route = createPendingApprovalRoute('pending', `dec-plan-${createFixtureBugTask().taskId}-1`);
   const statePort = route.statePort;
   const task = route.task;
   const graphState = createGraphTaskState(task);
@@ -56,7 +81,14 @@ export async function controlledGeneratedPlanFixture(): Promise<ControlledGenera
       }),
     },
   ];
-  const actor = createFixtureExecutorIdentityV02();
+  const patchReceipts: RepositoryExecutionReceiptV02[] = [];
+  const applyPatch = repositoryPort.applyPatch.bind(repositoryPort);
+  repositoryPort.applyPatch = async (action, context) => {
+    const result = await applyPatch(action, context);
+    patchReceipts.push(result.executionReceipt);
+    return result;
+  };
+  const actor = createFixtureExecutorIdentityV02({ processIncarnation: `controlled-proc-${fixtureSequence}` });
   const readControl: GuardedReadControlObservation = {
     taskId: graphState.taskId,
     workspaceId: graphState.workspaceId,
@@ -111,8 +143,22 @@ export async function controlledGeneratedPlanFixture(): Promise<ControlledGenera
     async execute(payload) {
       modelCalls.push(`${payload.request.role}:${payload.request.purpose}`);
       const proposal = responses.shift();
-      if (!proposal) throw new Error('SCRIPT_EXHAUSTED');
-      return { proposal, observedUsage: USAGE };
+      if (proposal) return { proposal, observedUsage: USAGE };
+      const plan = payload.state.plan;
+      if (payload.request.purpose !== 'propose-patch' || !plan?.strategyDigest || !plan.decisionRef) throw new Error('SCRIPT_EXHAUSTED');
+      return {
+        proposal: {
+          proposalId: `controlled-patch-${plan.planVersion}`,
+          content: JSON.stringify({
+            kind: 'propose-patch',
+            proposalId: `controlled-patch-${plan.planVersion}`,
+            diff: PATCH_DIFF,
+            targetPaths: ['src/calculator.py'],
+            approvedPlanRef: plan.decisionRef,
+          }),
+        },
+        observedUsage: USAGE,
+      };
     },
   };
   const model = new HostModelPortV02({ transport, statePort, executorIdentity: actor, currentExecutorIdentity: () => actor });
@@ -173,8 +219,7 @@ export async function controlledGeneratedPlanFixture(): Promise<ControlledGenera
         expectedControlVersion: journal.controlVersion,
         expectedEpoch: journal.epoch,
         planApplicability: purpose === 'propose-plan' ? 'pre-plan-diagnostic' : 'approved-plan',
-        diagnosticPurpose: 'diagnose-zero-denominator',
-        taskCriteriaDigest: computeCanonicalSha256(currentTask.acceptanceCriteria),
+        ...(purpose === 'propose-plan' ? { diagnosticPurpose: 'diagnose-zero-denominator', taskCriteriaDigest: computeCanonicalSha256(currentTask.acceptanceCriteria) } : {}),
         planDecisionRef: state.plan?.decisionRef,
         planBindingDigest: currentPlanBindingDigest(currentTask, state),
         budgetRefs: [`task-tokens:${request.providerRequestId}`, `task-cost:${request.providerRequestId}`, `run-tokens:${request.providerRequestId}`, `run-cost:${request.providerRequestId}`],
@@ -187,23 +232,60 @@ export async function controlledGeneratedPlanFixture(): Promise<ControlledGenera
       }
       return { request, context, trustedContext: createTestProviderAdmissionTrustedContextV02(context) };
     },
-  };
-  const baselineWriter = route.ports.baselineEvidenceWriter;
-  const loadBaselineEvidence = baselineWriter?.loadBaselineEvidence;
-  if (!baselineWriter || !loadBaselineEvidence) throw new Error('Controlled route is missing its readable baseline evidence writer');
-  const baseline = { ...baselineWriter, loadBaselineEvidence: loadBaselineEvidence.bind(baselineWriter), provenance: 'mock' as const };
-  const executionGuard = route.ports.executionGuard;
-  if (!executionGuard) throw new Error('Controlled route is missing its execution guard');
-  const approvalPort = {
-    ...route.approvalPort,
-    async requestDecision(binding: Parameters<typeof route.approvalPort.requestDecision>[0]) {
-      route.approvalPort.scriptDecision({ ...binding, status: 'pending' });
-      return route.approvalPort.requestDecision(binding);
+    admissionContext: async ({ task: currentTask, state, patchContent, targetPaths, actionId }) => {
+      const owner = await statePort.readVerificationAuthoritySnapshot(state.taskId);
+      if (!owner || !state.plan?.decisionRef) return undefined;
+      const action: NormalizedAction = {
+        actionId: actionId ?? `patch-${state.taskId}-${state.stateVersion}`,
+        kind: 'apply_patch',
+        patchContent,
+        targetPaths,
+        baseRevisionDigest: state.repositoryRevisionDigest,
+      };
+      const journal = statePort.getJournalSnapshot();
+      const context = createTestRepositoryAdmissionContextV02({
+        taskId: state.taskId,
+        runId: state.runId,
+        workspaceId: state.workspaceId,
+        repositoryId: state.repositoryId,
+        canonicalRevision: state.repositoryRevisionDigest,
+        expectedTaskStateVersion: state.stateVersion,
+        expectedControlVersion: journal.controlVersion,
+        expectedEpoch: journal.epoch,
+        runnableNode: 'Patch',
+        planDecisionRef: state.plan.decisionRef,
+        planBindingDigest: currentPlanBindingDigest(currentTask, state),
+        policyAuthorityRef: { ...owner.policyIdentity, decisionAuthorityGeneration: owner.decisionAuthorityGeneration },
+        action,
+        baseRevision: state.repositoryRevisionDigest,
+        targetPaths,
+        patchDigest: computeCanonicalSha256(patchContent),
+        reservationRefs: [`repair-slot:${state.taskId}:${state.stateVersion}`],
+      });
+      return { context, trustedContext: createTestRepositoryAdmissionTrustedContextV02(context) };
     },
   };
+  const baselineWriter = route.ports.baselineEvidenceWriter;
+  if (!baselineWriter) throw new Error('Controlled route is missing its baseline evidence writer');
+  let storedBaseline: { readonly content: BaselineEvidenceCandidate; readonly acknowledgement: BaselineEvidenceAcknowledgement } | undefined;
+  const baseline = createBaselineEvidenceAdapter({
+    provenance: 'mock',
+    async persist(request) {
+      const acknowledgement = await baselineWriter.persistBaselineEvidence(request);
+      storedBaseline = { content: request.content, acknowledgement };
+      return { outcome: 'durable', acknowledgement };
+    },
+    load(request) {
+      const stored = storedBaseline;
+      if (!stored || stored.acknowledgement.evidenceId !== request.evidenceId) return { outcome: 'missing' };
+      return { outcome: 'found', content: stored.content, acknowledgement: stored.acknowledgement };
+    },
+  });
+  const executionGuard = route.ports.executionGuard;
+  if (!executionGuard) throw new Error('Controlled route is missing its execution guard');
   const ports: UC03GraphPortsV02 = {
     statePort,
-    approvalPort,
+    approvalPort: route.approvalPort,
     repositoryPort,
     modelPort: model,
     reviewerModelPort: reviewerModel,
@@ -221,5 +303,57 @@ export async function controlledGeneratedPlanFixture(): Promise<ControlledGenera
     hostAuthority: route.hostAuthority,
     contextSource: ports.contextSource,
   });
-  return { route, task, statePort, modelCalls, host: controlled, config };
+  return { route, task, statePort, modelCalls, patchReceipts, host: controlled, config };
+}
+
+export async function assertControlledPlanApprovalPatchBarrier(fixture: ControlledGeneratedPlanFixture): Promise<void> {
+  const readiness = prepareControlledUC03Host(fixture.host.inputs);
+  assert.equal(readiness.status, 'controlled-ready');
+  if (readiness.status !== 'controlled-ready') return;
+  const before = await runControlledUC03GraphV02(fixture.task, readiness.ports, readiness.config);
+  const initialState = await fixture.statePort.loadTask(fixture.task.taskId);
+  assert.equal(before.outcome, 'pending-approval', JSON.stringify({ reasons: before.reasons, modelCalls: fixture.modelCalls, node: initialState?.node }));
+  assert.equal(fixture.route.repositoryPort.patches.length, 0);
+  const sentinel = await fixture.route.repositoryPort.readFile('tests/test_calculator.py');
+  const currentAuthority = await fixture.statePort.readVerificationAuthoritySnapshot(fixture.task.taskId);
+  assert.ok(currentAuthority);
+  const approvalAuthority = {
+    ...currentAuthority.policyIdentity,
+    decisionAuthorityGeneration: currentAuthority.decisionAuthorityGeneration + 1,
+  };
+  const publication = await fixture.statePort.publishAuthority({ authorityRef: approvalAuthority });
+  assert.equal(publication.status, 'published', JSON.stringify(publication));
+  fixture.route.approvalPort.setV02AuthorityRef(approvalAuthority);
+  const decisionRef = `dec-plan-${fixture.task.taskId}-1`;
+  const pendingDecision = fixture.route.approvalPort.getRecordedBindings().find(binding => binding.decisionId === decisionRef);
+  assert.ok(pendingDecision, `Missing owner-issued D0 binding ${decisionRef}`);
+  fixture.route.approvalPort.scriptDecision({ ...pendingDecision, status: 'approved' });
+
+  const result = await runControlledUC03GraphV02(fixture.task, readiness.ports, readiness.config);
+  const state = await fixture.statePort.loadTask(fixture.task.taskId);
+  assert.equal(
+    result.outcome,
+    'pending-approval',
+    JSON.stringify({
+      reasons: result.reasons,
+      node: state?.node,
+      patchCount: fixture.route.repositoryPort.patches.length,
+      patchReceiptCount: fixture.patchReceipts.length,
+      receiverFailures: fixture.route.patchFailureReasons,
+      modelCalls: fixture.modelCalls,
+    }),
+  );
+  assert.equal(state?.node, 'Verify');
+  assert.equal(fixture.route.repositoryPort.patches.length, 1);
+  assert.deepEqual(fixture.modelCalls, ['coder:propose-plan', 'coder:propose-plan', 'coder:propose-patch']);
+  assert.equal(fixture.patchReceipts.length, 1);
+  const receipt = fixture.patchReceipts[0];
+  assert.ok(receipt);
+  assert.equal(receipt.outcome.repositoryOperation, 'apply-patch');
+  const transition = receipt.outcome.proposedEffects.taskTransition;
+  if (transition.kind !== 'transition') throw new Error('Patch receipt did not include the Verify transition');
+  assert.equal(transition.toNode, 'Verify');
+  assert.equal(receipt.outcome.observedResultRevisionDigest, state?.repositoryRevisionDigest);
+  assert.equal(receipt.settlement.outcome, 'settled');
+  assert.equal((await fixture.route.repositoryPort.readFile('tests/test_calculator.py')).boundedExcerpt, sentinel.boundedExcerpt);
 }
