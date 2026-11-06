@@ -1,7 +1,7 @@
 import type { TaskState } from '../../../../src/contracts/foundation/uc03.ts';
 import type { OwnerDelivery } from '../../../../src/runtime/evaluation-composition.ts';
 import type { UC03HostInputs } from '../../../../src/runtime/uc03-host-bootstrap.ts';
-import { REQUIRED_PORTS_V02_METHODS, UC03_PRODUCTION_COMPONENTS_V02, type UC03GraphConfigV02, type UC03ProductionComponentV02 } from '../../../../src/uc03/graph-types-v02.ts';
+import { REQUIRED_PORTS_V02_METHODS, UC03_PRODUCTION_COMPONENTS_V02, portDeclarationsV02, type UC03GraphConfigV02, type UC03ProductionComponentV02 } from '../../../../src/uc03/graph-types-v02.ts';
 
 const CONTRACT = 'uc03-owner-delivery/1';
 const REVISION = 'a'.repeat(40);
@@ -23,7 +23,7 @@ export function controlledHostFixture(
   const calls: string[] = [];
   const owner = OWNER_COMPONENTS.map(component => {
     const injected = ownerAdapters[component];
-    const adapter: Record<string, unknown> = injected ? (injected as Record<string, unknown>) : { provenance: 'mock' };
+    const adapter: Record<string, unknown> = injected ? (injected as Record<string, unknown>) : { provenance: 'mock', ...portDeclarationsV02(component) };
     if (!injected) {
       for (const method of REQUIRED_PORTS_V02_METHODS[component]) {
         adapter[method] = async (..._args: unknown[]) => {

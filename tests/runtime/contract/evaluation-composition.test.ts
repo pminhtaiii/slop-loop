@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { composeEvaluationPorts, EVALUATION_COMPOSITION_VERSION, type OwnerDelivery } from '../../../src/runtime/evaluation-composition.ts';
-import { REQUIRED_PORTS_V02_METHODS, UC03_PRODUCTION_COMPONENTS_V02, checkProductionPortsV02 } from '../../../src/uc03/graph-types-v02.ts';
+import { REQUIRED_PORTS_V02_METHODS, UC03_PRODUCTION_COMPONENTS_V02, checkProductionPortsV02, portDeclarationsV02 } from '../../../src/uc03/graph-types-v02.ts';
 
 const CONTRACT = 'uc03-owner-delivery/1';
 const REV = 'a'.repeat(40);
 
 /** A structurally complete adapter per component. Only the declared provenance varies. */
 function adapterFor(component: OwnerDelivery['component'], provenance: 'real' | 'mock'): OwnerDelivery['adapter'] {
-  const shell: Record<string, unknown> = { provenance };
+  const shell: Record<string, unknown> = { provenance, ...portDeclarationsV02(component) };
   for (const method of REQUIRED_PORTS_V02_METHODS[component]) shell[method] = () => undefined;
   return shell as unknown as OwnerDelivery['adapter'];
 }

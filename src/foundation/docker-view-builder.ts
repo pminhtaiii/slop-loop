@@ -21,10 +21,10 @@ interface DockerViewBuilderOperations {
  * known literal exclusions/scratch mismatch must be corrected at the UC-04 producer rather than
  * papered over here.
  *
- * shortcut: the isolation reference is only checked for presence and bound here; the published v0.1
- * `CommandView` has no field for it. The v0.2 admission re-check requires the ref
- * (`validateRepositoryAdmissionV02`) and `commandExecutionLimits` compares it to the trusted profile.
- * Extend this comparison if the view shape ever carries isolation.
+ * shortcut: the published v0.1 `CommandView` still has no isolation field, so the owner's reference
+ * is compared to the trusted profile only at build time and never reaches the published view. The
+ * v0.2 `commandExecutionLimits` check is not a substitute: it compares against a view ref the caller
+ * supplies through `admissionCommandView`. Upgrade when the view shape carries isolation.
  */
 export interface OwnerCommandViewMeasurementV02 {
   readonly canonicalRevision: string;
@@ -38,6 +38,8 @@ export interface OwnerCommandViewMeasurementV02 {
 export type CommandViewOwnerBindingParams = AdmitCommandViewParams & {
   /** Absent for legacy/controlled callers; when present its facts are authoritative. */
   readonly ownerView?: OwnerCommandViewMeasurementV02 | undefined;
+  /** The trusted execution profile the owner measurement must name; requires `ownerView`. */
+  readonly trustedIsolationProfileRef?: string | undefined;
 };
 
 function ownerViewMismatch(
@@ -45,10 +47,15 @@ function ownerViewMismatch(
   observed: { revision: string; exclusionsPolicyVersion: string; scratchIdentity: string; admittedFiles: readonly AdmittedFile[] },
 ): string | null {
   const owner = params.ownerView;
-  if (owner === undefined) return null;
+  if (owner === undefined) {
+    // A trusted profile with nothing to compare against is a caller bug, not a skipped check.
+    return params.trustedIsolationProfileRef === undefined ? null : 'trustedIsolationProfileRef requires an owner view measurement';
+  }
   if (!owner || typeof owner !== 'object') return 'owner view measurement must be an object';
   if (typeof owner.isolationProfileRef !== 'string' || owner.isolationProfileRef.length === 0 || owner.isolationProfileRef.length > 256)
     return 'owner isolationProfileRef must be a bounded non-empty string';
+  if (params.trustedIsolationProfileRef !== undefined && owner.isolationProfileRef !== params.trustedIsolationProfileRef)
+    return `owner isolationProfileRef ${owner.isolationProfileRef} does not match trusted profile ${params.trustedIsolationProfileRef}`;
   if (owner.mountedReadOnly !== true) return 'owner view must declare mountedReadOnly';
   if (owner.canonicalRevision !== observed.revision) return `revision ${owner.canonicalRevision} does not match measured ${observed.revision}`;
   if (owner.exclusionsPolicyVersion !== observed.exclusionsPolicyVersion) return `exclusions policy ${owner.exclusionsPolicyVersion} does not match measured ${observed.exclusionsPolicyVersion}`;

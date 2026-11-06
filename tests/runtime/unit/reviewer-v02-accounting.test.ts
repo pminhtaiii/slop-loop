@@ -3,26 +3,11 @@ import { HostModelPortV02 } from '../../../src/foundation/model-v02.ts';
 import { createDeepSeekTransport } from '../../../src/foundation/deepseek-transport.ts';
 import { MemoryStatePortV02 } from '../support/uc03/memory-state.ts';
 import test from 'node:test';
-import {
-  computeCanonicalSha256,
-  type ClaimReceiptV02,
-  type ModelPortV02,
-  type ProviderAdmissionContextV02,
-  type ProviderRequest,
-  type ReviewResult,
-  type SourceEvidence,
-  type TaskState,
-} from '../../../src/contracts/foundation/uc03.ts';
-import { buildTransportPayload, computeContextDigest, executeTransport, type HostModelTransport } from '../../../src/foundation/model.ts';
+import { type ProviderAdmissionContextV02, type ReviewResult } from '../../../src/contracts/foundation/uc03.ts';
+import { computeContextDigest, type HostModelTransport } from '../../../src/foundation/model.ts';
 import { buildReviewerSnapshot, createRuntimeReviewer, usesCanonicalReviewerIngress } from '../../../src/foundation/reviewer.ts';
-import {
-  createFixtureBugTask,
-  createFixtureClaimReceiptV02,
-  createFixtureProviderAdmissionContextV02,
-  createFixtureProviderRequest,
-  createFixtureReviewerRequest,
-  createFixtureSourceEvidence,
-} from '../support/uc03/port-fixtures.ts';
+import { createFixtureBugTask, createFixtureSourceEvidence } from '../support/uc03/port-fixtures.ts';
+import { createTestAdmissionTaskStateV02, createTestProviderAdmissionContextV02, createTestProviderRequest } from '../support/uc03/state-fixtures.ts';
 
 const REPO_DIGEST = 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 const DIFF = [
@@ -37,127 +22,256 @@ const DIFF = [
   '',
 ].join('\n');
 const USAGE = { inputTokens: 100, outputTokens: 20, costUsd: 0.001, billableTokens: 120 };
+const ACCEPTED = { proposal: { proposalId: 'msg-1', content: JSON.stringify({ status: 'accepted', findings: [] }) }, observedUsage: USAGE };
+const TASK_ID = 'task-calc-001';
+const RUN_ID = 'run-001';
 
-interface ProposalCall {
-  readonly state: TaskState;
-  readonly evidence: readonly SourceEvidence[];
-  readonly request: ProviderRequest;
-  readonly context: ProviderAdmissionContextV02;
+// The v0.2 ingress refuses to re-consume an attempt keyed by task, attempt and actor, so every
+// logical request in this file gets its own provider request id and actor incarnation.
+let sequence = 0;
+const nextRequestId = (role: string): string => `req-${role}-${++sequence}`;
+const nextActor = (tag: string) => ({ adapterIdentity: `adapter-${tag}-${sequence}`, processIncarnation: `proc-${tag}-${sequence}`, fencingGeneration: 1 });
+
+function authorityFor(context: ProviderAdmissionContextV02) {
+  const identity = context.providerIdentity;
+  return {
+    policyId: identity.pricingPolicyId,
+    policyVersion: identity.pricingPolicyVersion,
+    configId: identity.configId,
+    configVersion: identity.configVersion,
+    issuerKeyRef: identity.issuerKeyRef,
+    decisionAuthorityGeneration: identity.decisionAuthorityGeneration,
+  };
 }
 
-/** Counting transport plus a spy v0.2 model boundary; only the transport dispatch is counted. */
-function spyModel(respond: () => unknown = () => ({ proposal: { proposalId: 'msg-1', content: JSON.stringify({ status: 'accepted', findings: [] }) }, observedUsage: USAGE })) {
-  let transportCalls = 0;
+function reviewerSnapshot() {
+  const task = createFixtureBugTask();
+  const evidence = [createFixtureSourceEvidence({ revisionDigest: REPO_DIGEST })];
+  const snapshot = buildReviewerSnapshot(task, DIFF, evidence, REPO_DIGEST, { runId: RUN_ID, expectedTaskStateVersion: 1 });
+  return { task, evidence, snapshot };
+}
+
+/** Reviewer admission bound to the journal's current control version and epoch. */
+function buildReviewerAdmission(controlVersion = 2, epoch = 1): ProviderAdmissionContextV02 {
+  const { snapshot } = reviewerSnapshot();
+  const providerRequestId = nextRequestId('reviewer');
+  const providerRequest = createTestProviderRequest({
+    providerRequestId,
+    taskId: TASK_ID,
+    runId: RUN_ID,
+    role: 'reviewer',
+    purpose: 'final-review',
+    contextDigest: computeContextDigest(snapshot.state, snapshot.evidence),
+    reservationRef: `res-${providerRequestId}`,
+  });
+  return createTestProviderAdmissionContextV02({
+    providerRequest,
+    taskId: TASK_ID,
+    runId: RUN_ID,
+    expectedControlVersion: controlVersion,
+    expectedEpoch: epoch,
+  });
+}
+
+function createStatePort(admission: ProviderAdmissionContextV02): MemoryStatePortV02 {
+  return new MemoryStatePortV02({
+    initialTaskState: createTestAdmissionTaskStateV02(admission),
+    initialControlVersion: admission.expectedControlVersion,
+    initialEpoch: admission.expectedEpoch,
+    initialAuthorityRef: authorityFor(admission),
+  });
+}
+
+function runReview(reviewer: ReturnType<typeof createRuntimeReviewer>, admission: ProviderAdmissionContextV02): Promise<ReviewResult> {
+  const { task, evidence } = reviewerSnapshot();
+  return reviewer.review(task, DIFF, evidence, admission.providerRequest, admission);
+}
+
+/** A real durable owner journal plus a counting fake transport; the transport is the only dispatch. */
+function createDouble(admission: ProviderAdmissionContextV02, respond: () => unknown = () => ACCEPTED) {
+  const dispatches: string[] = [];
+  const actor = nextActor('reviewer');
+  const fence = { generation: actor.fencingGeneration };
   const transport: HostModelTransport = {
-    async execute() {
-      transportCalls++;
+    async execute(payload) {
+      dispatches.push(`${payload.request.role}:${payload.request.providerRequestId}`);
       return respond();
     },
   };
-  const calls: ProposalCall[] = [];
-  const model: ModelPortV02 & { readonly calls: ProposalCall[]; readonly transportCalls: () => number } = {
-    provenance: 'mock',
-    calls,
-    transportCalls: () => transportCalls,
-    async propose(state, evidence, request, context) {
-      calls.push({ state, evidence, request, context });
-      return executeTransport(transport, buildTransportPayload(state, evidence, request), request);
-    },
-  };
-  return model;
-}
-
-function reviewerSetup(respond?: () => unknown) {
-  const task = createFixtureBugTask();
-  // The projection reads the post-patch revision, so caller evidence declares that revision too.
-  const evidence = [createFixtureSourceEvidence({ revisionDigest: REPO_DIGEST })];
-  const snapshot = buildReviewerSnapshot(task, DIFF, evidence, REPO_DIGEST, { runId: 'run-001', expectedTaskStateVersion: 1 });
-  const request = createFixtureReviewerRequest({ purpose: 'final-review', contextDigest: computeContextDigest(snapshot.state, snapshot.evidence) });
-  const admission = createFixtureProviderAdmissionContextV02({ providerRequest: request, role: 'reviewer', runnableNode: 'Review' });
-  const claim: ClaimReceiptV02 = createFixtureClaimReceiptV02({
-    taskId: admission.taskId,
-    runId: admission.runId,
-    subjectKind: 'provider-request',
-    planApplicability: 'approved-plan',
-    preClaimTaskStateVersion: admission.expectedTaskStateVersion,
-    preClaimControlVersion: admission.expectedControlVersion,
-    postClaimControlVersion: admission.expectedControlVersion + 1,
-    epoch: admission.expectedEpoch,
-    reservationRefs: [admission.requestReservationReceipt, ...admission.budgetRefs],
-  });
-  const model = spyModel(respond);
+  const statePort = createStatePort(admission);
+  const model = new HostModelPortV02({ statePort, transport, executorIdentity: actor, currentExecutorIdentity: () => ({ ...actor, fencingGeneration: fence.generation }) });
   const reviewer = createRuntimeReviewer({ model, resolveRepoDigest: () => REPO_DIGEST });
-  return { task, evidence, request, admission, claim, model, reviewer };
+  return { statePort, model, reviewer, dispatches, fence };
 }
 
-function review(context: ReturnType<typeof reviewerSetup>): Promise<ReviewResult> {
-  return context.reviewer.review(context.task, DIFF, context.evidence, context.request, context.admission, context.claim);
-}
-
-test('the transport executes exactly once per review and the reviewer never calls it itself', async () => {
-  const context = reviewerSetup();
-  const result = await review(context);
+test('one logical reviewer request drives exactly one claim, attempt and outcome', async () => {
+  const admission = buildReviewerAdmission();
+  const double = createDouble(admission);
+  const result = await runReview(double.reviewer, admission);
 
   assert.equal(result.status, 'accepted');
-  assert.equal(context.model.transportCalls(), 1);
-  assert.equal(context.model.calls.length, 1);
-  // The reviewer is a plain consumer of the port: the port captured every forwarded snapshot.
-  assert.equal(context.model.calls[0]?.state.node, 'Review');
-  assert.equal(context.model.calls[0]?.request.role, 'reviewer');
+  assert.equal(double.dispatches.length, 1);
+
+  const journal = double.statePort.getJournalSnapshot();
+  assert.equal(journal.claims.length, 1);
+  assert.equal(journal.attempts.length, 1);
+  assert.equal(journal.outcomes.length, 1);
+  assert.equal(journal.claims[0]?.claimId, `claim-${admission.providerRequestId}`);
+  assert.equal(journal.outcomes[0]?.claimId, journal.claims[0]?.claimId);
+  assert.equal(journal.outcomes[0]?.attemptId, journal.attempts[0]?.attemptId);
+  assert.equal(journal.outcomes[0]?.outcome, 'observed');
+  assert.equal(journal.claims[0]?.status, 'settled');
+  assert.equal(journal.attempts[0]?.status, 'settled');
 });
 
-test('same task, coder then reviewer: two separate dispatches with distinct roles and exact snapshots', async () => {
-  const context = reviewerSetup();
+test('coder and reviewer turns share the task but keep distinct journal chains', async () => {
+  const coderRequestId = nextRequestId('coder');
+  const coderDraft = createTestProviderRequest({
+    providerRequestId: coderRequestId,
+    taskId: TASK_ID,
+    runId: RUN_ID,
+    role: 'coder',
+    purpose: 'investigate-and-propose',
+    reservationRef: `res-${coderRequestId}`,
+  });
+  const coderSeed = createTestProviderAdmissionContextV02({
+    providerRequest: coderDraft,
+    taskId: TASK_ID,
+    runId: RUN_ID,
+    expectedControlVersion: 2,
+    expectedEpoch: 1,
+  });
+  const coderState = createTestAdmissionTaskStateV02(coderSeed);
+  const coderEvidence = [createFixtureSourceEvidence({ revisionDigest: coderState.repositoryRevisionDigest })];
+  const coderRequest = createTestProviderRequest({ ...coderSeed.providerRequest, contextDigest: computeContextDigest(coderState, coderEvidence) });
+  const coderAdmission = createTestProviderAdmissionContextV02({
+    providerRequest: coderRequest,
+    taskId: TASK_ID,
+    runId: RUN_ID,
+    expectedControlVersion: 2,
+    expectedEpoch: 1,
+  });
 
-  const coderState: TaskState = {
-    schemaVersion: '0.1.0',
-    stateVersion: 1,
-    taskId: context.task.taskId,
-    runId: 'run-001',
-    workspaceId: 'workspace-001',
-    repositoryId: context.task.repositoryId,
-    repositoryRevisionDigest: context.task.initialRevisionDigest,
-    goal: context.task.goal,
-    observedBehavior: context.task.observedBehavior,
-    expectedBehavior: context.task.expectedBehavior,
-    reproduction: context.task.reproduction,
-    acceptanceCriteria: context.task.acceptanceCriteria,
-    constraints: context.task.constraints,
-    requiredCheckIds: context.task.requiredChecks.map(check => check.checkId),
-    node: 'Investigate',
-    planVersion: 0,
-    replanCount: 0,
-    changedPaths: [],
-    evidenceRefs: [],
-    risks: [],
-    nextAction: 'propose-fix-plan',
-  };
-  const coderEvidence = [createFixtureSourceEvidence({ revisionDigest: context.task.initialRevisionDigest })];
-  const coderRequest = createFixtureProviderRequest({ purpose: 'investigate-and-propose', contextDigest: computeCanonicalSha256(coderEvidence) });
-  const coderAdmission = createFixtureProviderAdmissionContextV02({ providerRequest: coderRequest, role: 'coder', runnableNode: 'Investigate' });
+  const dispatches: string[] = [];
+  const actor = nextActor('coder');
+  const statePort = createStatePort(coderAdmission);
+  const model = new HostModelPortV02({
+    statePort,
+    transport: {
+      async execute(payload) {
+        dispatches.push(`${payload.request.role}:${payload.request.providerRequestId}`);
+        return ACCEPTED;
+      },
+    },
+    executorIdentity: actor,
+    currentExecutorIdentity: () => actor,
+  });
 
-  const coderResult = await context.model.propose(coderState, coderEvidence, coderRequest, coderAdmission);
+  const coderResult = await model.propose(coderState, coderEvidence, coderRequest, coderAdmission);
   assert.equal(coderResult.outcome, 'observed');
 
-  const reviewerResult = await review(context);
-  assert.equal(reviewerResult.status, 'accepted');
+  const afterCoder = statePort.getJournalSnapshot();
+  assert.equal(afterCoder.claims.length, 1);
+  assert.equal(afterCoder.outcomes[0]?.outcome, 'observed');
 
-  const [coderCall, reviewerCall] = context.model.calls;
-  assert.equal(context.model.transportCalls(), 2);
-  assert.equal(coderCall?.request.role, 'coder');
-  assert.equal(reviewerCall?.request.role, 'reviewer');
-  assert.deepEqual(reviewerCall?.request, context.request);
-  assert.deepEqual(reviewerCall?.context, context.admission);
-  assert.equal(reviewerCall?.state.taskId, context.task.taskId);
-  assert.equal(reviewerCall?.state.repositoryRevisionDigest, REPO_DIGEST);
-  assert.deepEqual(
-    reviewerCall?.evidence.map(item => item.path),
-    ['src/calculator.py', 'review/diff.patch'],
-  );
-  assert.equal(reviewerCall?.evidence[1]?.boundedExcerpt, DIFF);
+  const reviewerAdmission = buildReviewerAdmission(afterCoder.controlVersion, afterCoder.epoch);
+  const reviewer = createRuntimeReviewer({ model, resolveRepoDigest: () => REPO_DIGEST });
+  const reviewResult = await runReview(reviewer, reviewerAdmission);
+  assert.equal(reviewResult.status, 'accepted');
+
+  assert.equal(dispatches.length, 2);
+  assert.equal(dispatches[0]?.startsWith('coder:'), true);
+  assert.equal(dispatches[1]?.startsWith('reviewer:'), true);
+  assert.notEqual(coderRequest.providerRequestId, reviewerAdmission.providerRequestId);
+  assert.equal(coderAdmission.taskId, reviewerAdmission.taskId);
+  assert.equal(reviewerAdmission.taskId, TASK_ID);
+
+  const journal = statePort.getJournalSnapshot();
+  assert.equal(journal.claims.length, 2);
+  assert.equal(journal.attempts.length, 2);
+  assert.equal(journal.outcomes.length, 2);
+  assert.equal(new Set(journal.claims.map(claim => claim.claimId)).size, 2);
+  assert.deepEqual(journal.claims.map(claim => claim.claimId).sort(), [`claim-${coderRequestId}`, `claim-${reviewerAdmission.providerRequestId}`].sort());
+  assert.deepEqual(journal.outcomes.map(outcome => [outcome.claimId, outcome.attemptId]).sort(), journal.attempts.map(attempt => [attempt.claimId, attempt.attemptId]).sort());
+  assert.ok(journal.claims.every(claim => claim.status === 'settled'));
+  assert.equal(journal.activeClaimId, null);
 });
 
-test('malformed reviewer content is refused after exactly one provider call', async () => {
+test('wrong-role, stale, fenced and mismatched admissions dispatch nothing and leave the ledger unchanged', async () => {
+  const admission = buildReviewerAdmission();
+  const double = createDouble(admission);
+  const { snapshot } = reviewerSnapshot();
+
+  const denied = async (label: string, context: ProviderAdmissionContextV02, expectedReason: RegExp): Promise<void> => {
+    const before = double.statePort.getJournalSnapshot();
+    const result = await double.model.propose(snapshot.state, snapshot.evidence, admission.providerRequest, context);
+    assert.notEqual(result.outcome, 'observed', label);
+    assert.match(result.reason ?? '', expectedReason, label);
+    assert.equal(double.dispatches.length, 0, label);
+    assert.deepEqual(double.statePort.getJournalSnapshot(), before, label);
+  };
+
+  await denied('coder admission presented for the reviewer role', { ...admission, role: 'coder' }, /^ROLE_MISMATCH/);
+  await denied('stale expectedControlVersion', { ...admission, expectedControlVersion: admission.expectedControlVersion + 7 }, /^CLAIM_DENIED/);
+  await denied('stale expectedEpoch', { ...admission, expectedEpoch: admission.expectedEpoch + 7 }, /^CLAIM_DENIED/);
+  await denied('admission providerRequestId does not match the request', { ...admission, providerRequestId: 'req-not-this-one' }, /^REQUEST_ID_MISMATCH/);
+  double.fence.generation = 2;
+  await denied('fenced executor', admission, /^FENCED_EXECUTOR/);
+});
+
+test('fence drift after the claim is re-checked before dispatch and reaches no transport', async () => {
+  const admission = buildReviewerAdmission();
+  const double = createDouble(admission);
+  const { snapshot } = reviewerSnapshot();
+
+  // The fence advances between the claim and the attempt: the ingress must re-check before any effect.
+  const claim = double.statePort.claim.bind(double.statePort);
+  double.statePort.claim = async (...args: Parameters<typeof claim>) => {
+    const receipt = await claim(...args);
+    double.fence.generation = 2;
+    return receipt;
+  };
+
+  const result = await double.model.propose(snapshot.state, snapshot.evidence, admission.providerRequest, admission);
+  assert.equal(result.outcome, 'denied');
+  assert.match(result.reason ?? '', /^FENCED_EXECUTOR/);
+  assert.equal(double.dispatches.length, 0);
+
+  // The claim was taken before the drift and stands; no attempt or outcome was charged after it.
+  const after = double.statePort.getJournalSnapshot();
+  assert.equal(after.claims.length, 1);
+  assert.equal(after.attempts.length, 0);
+  assert.equal(after.outcomes.length, 0);
+});
+
+test('an uncertain dispatch is charged exactly once and never auto-retried', async () => {
+  const admission = buildReviewerAdmission();
+  const double = createDouble(admission, () => ({ outcome: 'uncertain', reason: 'upstream said: MODEL_OVERLOADED sk-leak' }));
+  const result = await runReview(double.reviewer, admission);
+
+  assert.equal(result.status, 'invalid');
+  assert.match(double.reviewer.lastFailureReason ?? '', /^PROVIDER_UNCERTAIN/);
+  assert.equal(JSON.stringify(result).includes('MODEL_OVERLOADED'), false);
+  assert.equal(JSON.stringify(result).includes('sk-leak'), false);
+  assert.equal(double.dispatches.length, 1);
+
+  const afterFirst = double.statePort.getJournalSnapshot();
+  assert.equal(afterFirst.claims.length, 1);
+  assert.equal(afterFirst.attempts.length, 1);
+  assert.equal(afterFirst.outcomes.length, 1);
+  assert.equal(afterFirst.outcomes[0]?.outcome, 'uncertain');
+  assert.equal(afterFirst.claims[0]?.status, 'uncertain');
+  assert.equal(afterFirst.attempts[0]?.status, 'uncertain');
+
+  // Same provider request and admission: the ingress replays its cached uncertain result.
+  const { snapshot } = reviewerSnapshot();
+  const replay = await double.model.propose(snapshot.state, snapshot.evidence, admission.providerRequest, admission);
+  assert.equal(replay.outcome, 'uncertain');
+  assert.equal(double.dispatches.length, 1);
+  assert.deepEqual(double.statePort.getJournalSnapshot(), afterFirst);
+});
+
+test('malformed reviewer content is refused after exactly one accounted provider call', async () => {
   const cases: readonly { readonly respond: () => unknown; readonly reason: string }[] = [
     { respond: () => ({ proposal: { proposalId: 'msg-1', content: 'not json' }, observedUsage: USAGE }), reason: 'REVIEW_CONTENT_INVALID' },
     {
@@ -172,35 +286,31 @@ test('malformed reviewer content is refused after exactly one provider call', as
     },
   ];
   for (const { respond, reason } of cases) {
-    const context = reviewerSetup(respond);
-    const result = await review(context);
+    const admission = buildReviewerAdmission();
+    const double = createDouble(admission, respond);
+    const result = await runReview(double.reviewer, admission);
     assert.equal(result.status, 'invalid', reason);
     assert.deepEqual(result.findings, []);
-    assert.equal(context.reviewer.lastFailureReason, reason);
-    assert.equal(context.model.transportCalls(), 1, reason);
+    assert.equal(double.reviewer.lastFailureReason, reason);
+    assert.equal(double.dispatches.length, 1, reason);
+    const journal = double.statePort.getJournalSnapshot();
+    assert.equal(journal.claims.length, 1, reason);
+    assert.equal(journal.attempts.length, 1, reason);
+    assert.equal(journal.outcomes.length, 1, reason);
+    assert.equal(journal.outcomes[0]?.outcome, 'observed', reason);
   }
 });
 
-test('an uncertain outcome is invalid with a safe reason, one dispatch and no provider text', async () => {
-  const providerText = 'upstream said: MODEL_OVERLOADED sk-leak';
-  const context = reviewerSetup(() => ({ outcome: 'uncertain', reason: providerText }));
-  const result = await review(context);
-
-  assert.equal(result.status, 'invalid');
-  assert.match(context.reviewer.lastFailureReason ?? '', /^PROVIDER_UNCERTAIN/);
-  assert.equal(context.model.transportCalls(), 1);
-  assert.equal(JSON.stringify(result).includes('MODEL_OVERLOADED'), false);
-  assert.equal(JSON.stringify(result).includes('sk-leak'), false);
-});
-
 test('the reviewer holds no write authority and returns only canonical review fields', async () => {
-  const context = reviewerSetup();
-  const before = JSON.stringify({ task: context.task, evidence: context.evidence, request: context.request, admission: context.admission });
-  const result = await review(context);
+  const admission = buildReviewerAdmission();
+  const double = createDouble(admission);
+  const { task, evidence } = reviewerSnapshot();
+  const before = JSON.stringify({ task, evidence, request: admission.providerRequest, admission });
+  const result = await double.reviewer.review(task, DIFF, evidence, admission.providerRequest, admission);
 
   assert.deepEqual(Object.keys(result).sort(), ['checkSetDigest', 'diffDigest', 'findings', 'iterationReservationRef', 'repoDigest', 'reviewId', 'reviewerRoleConfigId', 'status']);
   assert.equal(Object.isFrozen(result), true);
-  assert.equal(JSON.stringify({ task: context.task, evidence: context.evidence, request: context.request, admission: context.admission }), before);
+  assert.equal(JSON.stringify({ task, evidence, request: admission.providerRequest, admission }), before);
 });
 
 test('production reviewer admission binds the canonical accounting ingress and review implementation', () => {
@@ -219,7 +329,13 @@ test('production reviewer admission binds the canonical accounting ingress and r
   const reviewer = createRuntimeReviewer({ model, resolveRepoDigest: () => REPO_DIGEST });
   assert.equal(usesCanonicalReviewerIngress(reviewer), true);
   assert.equal(usesCanonicalReviewerIngress({ ...reviewer }), false);
-  assert.equal(usesCanonicalReviewerIngress(createRuntimeReviewer({ model: { ...spyModel(), provenance: 'real' }, resolveRepoDigest: () => REPO_DIGEST })), false);
+  const nonCanonicalModel = {
+    provenance: 'real' as const,
+    async propose() {
+      return { outcome: 'denied' as const };
+    },
+  };
+  assert.equal(usesCanonicalReviewerIngress(createRuntimeReviewer({ model: nonCanonicalModel, resolveRepoDigest: () => REPO_DIGEST })), false);
   const originalReview = reviewer.review;
   reviewer.review = async () => {
     throw new Error('Unaccounted review');

@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { createProductionRoute, runUC03GraphV02 } from '../../../src/uc03/graph-v02.ts';
-import { REQUIRED_PORTS_V02_METHODS, UC03_PRODUCTION_COMPONENTS_V02, type UC03GraphConfigV02, type UC03GraphPortsV02 } from '../../../src/uc03/graph-types-v02.ts';
+import { REQUIRED_PORTS_V02_METHODS, UC03_PRODUCTION_COMPONENTS_V02, portDeclarationsV02, type UC03GraphConfigV02, type UC03GraphPortsV02 } from '../../../src/uc03/graph-types-v02.ts';
 import { createFixtureBugTask } from '../support/uc03/port-fixtures.ts';
 
 const COUNTERS = { calls: 0 };
@@ -22,7 +22,10 @@ function portSet(provenance: string): Record<string, Record<string, unknown>> {
     return undefined;
   };
   return Object.fromEntries(
-    UC03_PRODUCTION_COMPONENTS_V02.map(component => [component, { provenance, ...Object.fromEntries(REQUIRED_PORTS_V02_METHODS[component].map(method => [method, counted()])) }]),
+    UC03_PRODUCTION_COMPONENTS_V02.map(component => [
+      component,
+      { provenance, ...portDeclarationsV02(component), ...Object.fromEntries(REQUIRED_PORTS_V02_METHODS[component].map(method => [method, counted()])) },
+    ]),
   );
 }
 

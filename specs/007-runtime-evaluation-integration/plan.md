@@ -1,7 +1,7 @@
 # Implementation Plan: Observable Python Repair Evaluation
 
 **Branch**: `feat/uc03-evaluation-integration-plan` | **Date**: 2026-11-01 | **Spec**: [spec.md](spec.md)
-**Status**: Original controlled release remains scoped to T001–T011. Host-composition remediation T019–T034 is proposed/planning only; [decisions](contracts/decisions.md) govern release.
+**Status**: Original controlled release remains scoped to T001–T011. Host-composition remediation T019–T034 completed its planning step and was then separately released for source/controlled-tier implementation on 2026-11-04; [decisions](contracts/decisions.md) govern release and supersede the planning-only status this plan was authored under.
 
 ## Summary
 
@@ -91,13 +91,13 @@ No new workflow engine, storage system, generic provider layer or frontend frame
 
 ### Design choices and boundaries
 
-Use explicit versioned production graph/coder entry types and migrate production consumers to v0.2. Retain the existing v0.1 controlled entry and tests until the new route has conformance coverage. No dual-surface production object, optional-context overload, cast to v0.1, fallback `reserve`/`settle`, or provenance relabel closes a gap. The proposed additive host supplement in [host-composition](contracts/host-composition.md) requires owner review before implementation; canonical owner APIs are not amended by this planning request.
+Use explicit versioned production graph/coder entry types and migrate production consumers to v0.2. Retain the existing v0.1 controlled entry and tests until the new route has conformance coverage. No dual-surface production object, optional-context overload, cast to v0.1, fallback `reserve`/`settle`, or provenance relabel closes a gap. The proposed additive host supplement in [host-composition](contracts/host-composition.md) required owner review before implementation and received the recorded T019 agreement plus the separate source/controlled release; canonical owner APIs are not amended by this planning request.
 
 The host bootstrap consumes pinned owner deliveries and constructs only Tai-owned foundation/host components. UC-04 supplies durable baseline evidence, current task/control/accounting authority and atomic replan acceptance. UC-05 supplies real policy/approval presentation, decision, control and continuation capability. Existing local durable adapters/recovery helpers are candidates, never proof of these deliveries. The approval controls' non-mock refusal remains intact until UC-05 separately releases a conforming real path.
 
 ### Execution order
 
-1. **T019 contract prerequisite**: obtain review/signoff of the exact supplemental capabilities, owner revisions and migration boundaries. This is a future release prerequisite, not signoff claimed by independent contributor review. A changed public owner contract receives targeted owner amendment/review first.
+1. **T019 contract prerequisite**: obtain review/signoff of the exact supplemental capabilities, owner revisions and migration boundaries — recorded in [decisions](contracts/decisions.md) as one delegated attestation covering the three lanes, with pinned owner revisions still absent. This was a pre-implementation prerequisite, not signoff claimed by independent contributor review. A changed public owner contract receives targeted owner amendment/review first.
 2. **T020–T025 foundations**: typed versioned production seams; read mediation; trusted snapshot producer; durable evidence consumer; observed action context; coherent command-view identity. Controlled test deliveries are permitted only after explicit implementation release and stay labeled controlled. Owner adapters remain external prerequisites.
 3. **T026/T034/T027 consumer migration**: coder forwards full provider context and loops through bounded inspect observations into freshly admitted next turns; clarification/stop have explicit outcomes. Reviewer T034 uses the canonical model ingress instead of raw transport. Only HostModelPortV02 claims/begins/settles each coder/reviewer provider attempt; graph nodes do not preclaim. Coder run-check obtains per-check repository admission. Repair retains exact current receipts. Material replan uses an explicit owner transaction, never legacy reserve mapped to a provider/repository claim.
 4. **T028 bootstrap**: validate pinned identities and every required capability, then construct Foundation ports, explicit graph config/resolvers and a side-effect-free readiness result. Only admitted execution allocates/initializes the workspace via existing service lifecycle; assembly/preflight performs no provider call, command, patch or task mutation.

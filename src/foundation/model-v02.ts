@@ -147,6 +147,7 @@ export function derivedModelProvenance(transport: HostModelTransport): PortProve
 }
 
 export class HostModelPortV02 implements ModelPortV02 {
+  readonly modelPortApiVersion = '0.2.0' as const;
   readonly provenance: PortProvenance;
   readonly options: HostModelPortV02Options;
   private readonly completedRequests = new Map<string, { readonly identity: string; readonly result: Promise<ModelPortV02Result> }>();

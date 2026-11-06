@@ -1,6 +1,6 @@
 # Proposed Contract: uc03-host-composition/2
 
-Status: planning proposal, 2026-11-04. This supplements [runtime-evaluation/1](integration.md) for US1/FR-013–018; it neither changes canonical v0.1/v0.2 contracts nor records owner signoff. T019 requires exact owner acceptance before implementation of the supplemental authority. Production uses explicit v0.2 consumers; legacy test compatibility cannot confer authority.
+Status: planning proposal, 2026-11-04. This supplements [runtime-evaluation/1](integration.md) for US1/FR-013–018; it neither changes canonical v0.1/v0.2 contracts nor records owner signoff. T019 requires exact owner acceptance before implementation of the supplemental authority. Production uses explicit v0.2 consumers; legacy test compatibility cannot confer authority. The T019 acceptance and the T020–T034 source/controlled-tier release are recorded in [decisions](decisions.md); that release covers no real tier and no owner delivery, so this proposal's real-tier prerequisites still block production composition.
 
 ## 1. Inputs, readiness and ownership
 
