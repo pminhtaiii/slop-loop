@@ -37,4 +37,4 @@ No choice is recorded yet for:
 
 Treat these as open until an implementation decision is explicitly recorded. Do not infer them from the existing helper scripts or tests.
 
-Feature 007 Phase 4–5 added no dependency. Workflow comparison is a pure function in `eval/uc03/compare.ts`, diagnostics reuse the existing `src/foundation/telemetry.ts` sanitizers, and the local console uses the built-in `node:http` server; there is still no CLI or service framework choice, and the console is not exposed through a CLI command.
+The recovered Feature 007 v0.2 route, bootstrap and CLI reuse existing modules and Node built-ins; recovery adds no dependency, persistence backend, provider or isolation choice. Feature 007 Phase 4–5 added no dependency. Workflow comparison is a pure function in `eval/uc03/compare.ts`, diagnostics reuse the existing `src/foundation/telemetry.ts` sanitizers, and the local console uses the built-in `node:http` server; there is still no CLI or service framework choice, and the console is not exposed through a CLI command.

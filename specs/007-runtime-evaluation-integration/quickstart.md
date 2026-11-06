@@ -1,6 +1,6 @@
 # Validation Guide: Observable Python Repair Evaluation
 
-Commands below are implemented for the controlled tier where a task has been delivered; T011, T017 and T019–T034 have no runnable command. No real provider/container invocation is authorized by this guide. See [release gates](contracts/decisions.md).
+Commands below exercise the source/controlled tier where code has been delivered. T011 and T017 still lack real acceptance. T020–T034 have the separate controlled implementation release recorded in [release gates](contracts/decisions.md); restored code and green focused tests do not establish their full task acceptance. No real provider/container invocation is authorized by this guide.
 
 ## Current Planning Checks
 
@@ -84,22 +84,29 @@ Recorded 2026-11-04 on `feat/uc03-diagnostics-comparison-console` (base HEAD `e8
 
 After focused checks, run `pnpm validate:runtime`, contributor checks and context consistency per repository publication policy. Retain exact source/emission, image/profile/adapter/model/pricing/grader identities, commands/exit codes and actual/not-run criteria under ignored session. Update existing context through `update-context.mjs`; do not force-add local artifacts or fixtures. Existing UC-03 ledgers independently judge T024/T025/T028; no broad/full-suite/restart claims from a single successful case.
 
-## Host-composition correction validation — proposed T019–T034
+## Host-composition correction validation — source/controlled recovery
 
-The 2026-11-04 request authorizes planning/review, not the following future runtime checks. First obtain T019 owner agreement, an explicit correction implementation release, and the accepted public deliveries named in [host contract](contracts/host-composition.md). Test-only deliveries keep the controlled label even when adapter code has a real provenance path.
+The decision record contains T019's single delegated-attestation agreement and the later source/controlled release of T020–T034. Pinned real owner implementations and production execution gates remain absent. Test-only deliveries keep the controlled label. `prepareControlledUC03Host` returns `controlled-ready` for complete mock deliveries; `runControlledUC03GraphV02` and the driver's distinct controlled binding exercise the versioned path without relabeling mocks. Production assembly and execution continue to refuse mock ports; the controlled binding cannot run in a real evaluation context.
 
-Future focused source commands after the files exist:
+Focused source commands (run the applicable groups and retain candidate-bound results):
 
 ```powershell
 node --test tests/runtime/contract/uc03-production-ports.test.ts tests/runtime/unit/guarded-read-capability.test.ts tests/runtime/unit/trusted-host-snapshot.test.ts tests/runtime/contract/baseline-evidence-adapter.test.ts tests/runtime/unit/host-action-context.test.ts tests/runtime/contract/command-view-owner-binding.test.ts
 node --test tests/runtime/unit/uc03-coder-v02.test.ts tests/runtime/integration/uc03-v02-route.test.ts tests/runtime/contract/uc03-host-bootstrap.test.ts tests/runtime/unit/uc03-host-cli.test.ts tests/runtime/integration/uc03-host-pipeline.test.ts
 node --test tests/runtime/unit/repository-baseline-source.test.ts tests/runtime/unit/repository-diff.test.ts tests/runtime/unit/reviewer-v02-accounting.test.ts
+node --test tests/runtime/contract/uc03-controlled-host.test.ts tests/runtime/contract/evaluation-composition.test.ts tests/runtime/unit/evaluation-cli.test.ts
 pnpm run typecheck
 pnpm run build
 node --test dist/tests/runtime/integration/uc03-v02-route.test.js dist/tests/runtime/contract/uc03-host-bootstrap.test.js dist/tests/runtime/integration/uc03-host-pipeline.test.js
 ```
 
 Also run the emitted counterparts of every focused source test listed above and existing affected legacy source/emitted suites; retain commands/exits. The sole full local runtime/contributor publication gate runner remains `publish` under repository policy.
+
+Recovery on `feat/uc03-route-recovery` restores the missing route entry, shared port unions, generation dispatch and replan forwarding in `c71d209a`, then reuses the retained bootstrap, CLI and pipeline witnesses through `36b6aa9d`. At that candidate, the host/composition/CLI/pipeline source group passes 47/47 and typecheck exits 0; the preceding route/coder/replan/reviewer group passes 29/29. These are historical checks of that recovery step, not results for subsequent edits. The original pipeline witness stops at the first owner reload and does not prove full traversal.
+
+Subsequent recovery adds a direct-shell regression (valid host references reach assembly-unavailable exit 4; malformed configuration remains exit 2), separate controlled assembly/dispatch, and a public generation regression using the canonical model-input validator. The latter first failed because graph and model computed incompatible context digests; the v0.2 branch now uses the canonical digest while preserving legacy controlled behavior. Retain the final source/emitted results separately. Full generated repair, reject/revise, approval-context consumption and original UC-03 closure remain required until their own checks pass; T027–T031 are not automatically accepted by restoration.
+
+At `854d2017`, the first controlled journey reaches persisted `AwaitPlan` with `pending-approval` after baseline reproduction, a fenced source read and two model-boundary turns under fresh canonical admissions. Integrated source checks for coder generation, pipeline and controlled admission pass 32/32; typecheck exits 0. The generated plan contains no caller-supplied solution and no edit occurs before explicit approval. This is a bounded checkpoint, not a completed repair or full T030 acceptance. Mid-run clarification still needs an owner-contract amendment: the current task schema has no bound-question record, and its `Investigate` transition permits only `AwaitPlan`.
 
 | Witness | Required observed result | Task |
 |---|---|---|
