@@ -108,7 +108,7 @@ test('a coder-role model port is refused at the reviewer seam', () => {
  * substitutions the type system also catches, so a future widening that makes a legacy port
  * structurally acceptable fails the build instead of silently passing at runtime.
  */
-import type { ExecutionGuard, RepositoryPort, StatePort, ModelPort, ModelPortV02, ProviderRequest } from '../../../src/contracts/foundation/uc03.ts';
+import type { ExecutionGuard, RepositoryPort, RepositoryPortV02, StatePort, StatePortV02, ModelPort, ModelPortV02, ProviderRequest } from '../../../src/contracts/foundation/uc03.ts';
 import type { CoderAgent, CoderAgentV02, CoderTurnInputV02 } from '../../../src/uc03/agent-types.ts';
 import type { UC03GraphPortsV02, UC03ProductionExecutionGuardV02, UC03ProductionModelPortV02, UC03RoutePorts } from '../../../src/uc03/graph-types-v02.ts';
 

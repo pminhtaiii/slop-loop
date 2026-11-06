@@ -247,12 +247,25 @@ test('fence drift after the claim is re-checked before dispatch and reaches no t
 test('an uncertain dispatch is charged exactly once and never auto-retried', async () => {
   const admission = buildReviewerAdmission();
   const double = createDouble(admission, () => ({ outcome: 'uncertain', reason: 'upstream said: MODEL_OVERLOADED sk-leak' }));
+
+  const recordOutcome = double.statePort.recordOutcome.bind(double.statePort);
+  const receipts: Parameters<typeof recordOutcome>[0][] = [];
+  double.statePort.recordOutcome = async (...args: Parameters<typeof recordOutcome>) => {
+    receipts.push(args[0]);
+    return recordOutcome(...args);
+  };
+
   const result = await runReview(double.reviewer, admission);
 
   assert.equal(result.status, 'invalid');
   assert.match(double.reviewer.lastFailureReason ?? '', /^PROVIDER_UNCERTAIN/);
   assert.equal(JSON.stringify(result).includes('MODEL_OVERLOADED'), false);
   assert.equal(JSON.stringify(result).includes('sk-leak'), false);
+  assert.equal(double.reviewer.lastFailureReason?.includes('MODEL_OVERLOADED'), false);
+  assert.equal(double.reviewer.lastFailureReason?.includes('sk-leak'), false);
+  assert.equal(receipts.length, 1);
+  assert.equal(JSON.stringify(receipts).includes('MODEL_OVERLOADED'), false);
+  assert.equal(JSON.stringify(receipts).includes('sk-leak'), false);
   assert.equal(double.dispatches.length, 1);
 
   const afterFirst = double.statePort.getJournalSnapshot();
