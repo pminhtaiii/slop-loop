@@ -12,21 +12,10 @@
 import { computeCanonicalSha256, isCanonicalRelativePath, isProtectedPath } from '../contracts/foundation/uc03.ts';
 import { SHA256_HEX_REGEX, computeFileDigest, containsProtectedContent } from './docker-workspace-policy.ts';
 import type { ExecutionGuardReadCapability, TrustedFilesystemPort } from './repository-types.ts';
-import type { RepositoryBaselineBinding, RepositoryBaselineSource } from '../runtime/repository-baseline-source.ts';
+import type { RepositoryBaselineBinding, RepositoryDiffSourceOptions } from './repository-diff-types.ts';
+export type { RepositoryDiffSourceOptions };
 import { TrustedHostSnapshotError } from '../runtime/trusted-host-snapshot.ts';
 import type { TrustedHostSnapshotRefusal } from '../runtime/trusted-host-snapshot.ts';
-
-export interface RepositoryDiffSourceOptions {
-  readonly baseline: RepositoryBaselineSource;
-  readonly taskId: string;
-  readonly workspaceId: string;
-  readonly repositoryId: string;
-  /** Per-file read bound; a larger current or retained file refuses rather than truncating. */
-  readonly maxFileBytes: number;
-  /** Finite bound on the emitted diff bytes; exceeding it refuses rather than truncating. */
-  readonly maxDiffBytes: number;
-}
-
 export interface RepositoryDiffMeasurementOptions extends RepositoryDiffSourceOptions {
   /** The caller's claimed base; the retained source must record exactly this revision and identity. */
   readonly binding: RepositoryBaselineBinding;

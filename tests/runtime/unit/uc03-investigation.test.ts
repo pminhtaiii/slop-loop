@@ -25,16 +25,12 @@ import {
   type InvestigationConfigPort,
 } from '../../../src/uc03/investigation.ts';
 import { createExecutionGuardV02 } from '../../../src/foundation/execution-guard.ts';
+import { runBaselineChecks } from '../../../src/uc03/investigation-baseline-checks.ts';
 import { createFixtureBugTask, createFixtureCheckDefinition, createFixtureTaskState } from '../support/uc03/port-fixtures.ts';
 import { FakeRepositoryPort } from '../support/uc03/fake-repository.ts';
 import { MemoryStatePort, MemoryStatePortV02 } from '../support/uc03/memory-state.ts';
 import { createTestExecutorIdentityV02, createTestRepositoryCommandAdmissionContextV02, createTestAdmissionTaskStateV02 } from '../support/uc03/state-fixtures.ts';
 import { ScriptedApprovalPort } from '../support/uc03/scripted-approval.ts';
-
-function asLegacyV01RepositoryPort(repository: FakeRepositoryPort): FakeRepositoryPort {
-  Object.defineProperty(repository, 'executionGuardApiVersion', { value: undefined });
-  return repository;
-}
 
 interface CompleteBaselineCandidate {
   readonly taskId: string;
@@ -1371,7 +1367,7 @@ test('investigation: requires explicit reproduction purpose and refuses substrin
 test('investigation: works with FakeRepositoryPort when explicit TrustedHostPort is injected', async () => {
   const task = createFixtureBugTask();
   const hostPort = createValidHostPort(task);
-  const repo = asLegacyV01RepositoryPort(new FakeRepositoryPort({ initialRevision: task.initialRevisionDigest }));
+  const repo = new FakeRepositoryPort({ initialRevision: task.initialRevisionDigest });
   repo.setTestResult('check-pytest-reproduction', {
     checkId: 'check-pytest-reproduction',
     outcome: 'fail',
@@ -3192,18 +3188,16 @@ test('investigateBaseline: pytest node ID (tests/test_calculator.py::test_calc) 
   const task = createFixtureBugTask({
     requiredChecks: [nodeCheck],
   });
-  const repo = asLegacyV01RepositoryPort(
-    new FakeRepositoryPort({
-      initialRevision: task.initialRevisionDigest,
-      testResults: {
-        'check-pytest-repro-node': {
-          checkId: 'check-pytest-repro-node',
-          outcome: 'fail',
-          outputExcerpt: 'AssertionError',
-        },
+  const repo = new FakeRepositoryPort({
+    initialRevision: task.initialRevisionDigest,
+    testResults: {
+      'check-pytest-repro-node': {
+        checkId: 'check-pytest-repro-node',
+        outcome: 'fail',
+        outputExcerpt: 'AssertionError',
       },
-    }),
-  );
+    },
+  });
   const host = createBoundHostPort(task, {
     testFiles: [{ path: 'tests/test_calculator.py', content: 'def test_calc(): pass\n' }],
   });
@@ -3460,13 +3454,16 @@ test('v0.2 baseline admission: pre-plan diagnostic command is guarded without a 
   assert.equal(v02Call?.context.planDecisionRef, undefined, 'Pre-plan diagnostics must not fabricate a plan decision');
 });
 
-test('v0.2 baseline admission: repository marker alone denies fallback without admission, guard, or state', async () => {
+test('v0.2 baseline admission: explicit v0.2 context without admission, guard, or state denies fallback', async () => {
   const task = createFixtureBugTask();
   const repo = new FakeRepositoryPort();
 
-  const result = await investigateWithTestContext(task, repo, createBoundHostPort(task));
+  const result = await investigateBaseline(task, repo, createBoundHostPort(task), {
+    ...createTrustedAdmissionContext(task),
+    admissionContext: null as unknown as RepositoryAdmissionContextV02,
+  });
 
-  assert.equal(repo.tests.length, 0, 'A v0.2 marker must prevent legacy RepositoryPort.runTests calls');
+  assert.equal(repo.tests.length, 0, 'Explicit v0.2 selection must prevent legacy RepositoryPort.runTests calls');
   assert.equal(result.status, 'error');
   assert.match(result.reason ?? '', /ADMISSION_DENIED: Missing or malformed admission context/);
   assert.equal(repo.commands.length, 0, 'Missing authority must not reach the command receiver');
@@ -3929,4 +3926,24 @@ test('v0.2 baseline admission: each required check uses its own current authorit
     assert.equal(snapshot.attempts.length, 1);
     assert.equal(snapshot.outcomes.length, 1);
   });
+});
+
+test('v0.2 baseline admission: a statePort-only trusted context selects v0.2 and never falls back to runTests', async () => {
+  const task = createFixtureBugTask();
+  const repo = new FakeRepositoryPort();
+
+  const result = await runBaselineChecks({
+    rawExpectedContext: { ...createTrustedAdmissionContext(task), statePort: new MemoryStatePortV02() },
+    repository: repo,
+    expectedTaskId: task.taskId,
+    expectedRevisionDigest: task.initialRevisionDigest,
+    criteriaDigest: computeCanonicalSha256(task.acceptanceCriteria),
+    checkSetDigest: computeCheckSetDigest(task.requiredChecks),
+    requiredChecks: task.requiredChecks,
+  });
+
+  assert.equal(result.status, 'error');
+  assert.match(result.status === 'error' ? result.reason : '', /ADMISSION_DENIED/u);
+  assert.equal(repo.tests.length, 0, 'A bound StatePortV02 must prevent legacy RepositoryPort.runTests calls');
+  assert.equal(repo.commands.length, 0, 'Missing admission must not reach the command receiver');
 });

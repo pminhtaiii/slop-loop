@@ -7,8 +7,10 @@ import type {
   ExecutionGuardV02,
   FixPlan,
   ModelPort,
+  ModelPortV02,
   RepositoryAdmissionContextV02,
   RepositoryPort,
+  RepositoryPortV02,
   StatePort,
   StatePortV02,
   TaskState,
@@ -142,11 +144,11 @@ export interface InvestigationConfigPort {
 }
 
 export interface InvestigationPorts {
-  readonly repository: RepositoryPort;
-  readonly state: StatePort;
+  readonly repository: RepositoryPort | RepositoryPortV02;
+  readonly state: StatePort | StatePortV02;
   readonly approval: ApprovalPort;
   readonly baselineEvidenceWriter?: BaselineEvidenceWriter | undefined;
-  readonly model?: ModelPort | undefined;
+  readonly model?: ModelPort | ModelPortV02 | undefined;
   readonly host?: TrustedHostPort | undefined;
   readonly config?: InvestigationConfigPort | undefined;
 }

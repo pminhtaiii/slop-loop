@@ -61,12 +61,12 @@ import {
   createTestRepositoryAdmissionContextV02,
   createTestRepositoryCommandAdmissionContextV02,
   createTestRepositoryAdmissionTrustedContextV02,
-  createTestClaimReceiptV02,
 } from '../support/uc03/state-fixtures.ts';
 import { FakeRepositoryPort } from '../support/uc03/fake-repository.ts';
 import { MemoryStatePortV02 } from '../support/uc03/memory-state.ts';
 import { ScriptedApprovalPort } from '../support/uc03/scripted-approval.ts';
-import { ScriptedModelPort } from '../support/uc03/scripted-model.ts';
+import { ScriptedModelPort, ScriptedModelPortV02 } from '../support/uc03/scripted-model.ts';
+import { createRuntimeReviewer, reviewerContextDigest } from '../../../src/foundation/reviewer.ts';
 import type {
   TrustedHostPort,
   TrustedHostSnapshot,
@@ -211,11 +211,13 @@ function createControllableReviewerPort(repositoryPort: FakeRepositoryPort, stat
     setStatus(s: 'accepted' | 'findings') {
       currentStatus = s;
     },
-    async review(task: BugTask, diff: string, _evidence, request: ProviderRequest, admission: ProviderAdmissionContextV02, claim: ClaimReceiptV02): Promise<ReviewResult> {
-      if (!claim.claimId) throw new Error('Persisted reviewer allowance was not supplied by the route');
-      const attempt = await statePort.beginAttempt(claim.claimId, createFixtureExecutorIdentityV02({ payloadDigest: computeRequestContentDigest(request) }));
+    async review(task: BugTask, diff: string, _evidence, request: ProviderRequest, admission: ProviderAdmissionContextV02, claim?: ClaimReceiptV02): Promise<ReviewResult> {
+      // The graph no longer preclaims: this mock stands in for the model boundary, which claims for itself.
+      const effectiveClaim = claim ?? (await statePort.claim(admission));
+      if (!effectiveClaim.claimId) throw new Error('Persisted reviewer allowance was not supplied by the route');
+      const attempt = await statePort.beginAttempt(effectiveClaim.claimId, createFixtureExecutorIdentityV02({ payloadDigest: computeRequestContentDigest(request) }));
       if (!attempt.attemptId) throw new Error('Persisted reviewer attempt was refused');
-      const outcome = await statePort.recordOutcome(createTestProviderOutcomeReceiptV02(claim, attempt, admission));
+      const outcome = await statePort.recordOutcome(createTestProviderOutcomeReceiptV02(effectiveClaim, attempt, admission));
       if (outcome.outcome !== 'settled') throw new Error('Persisted reviewer allowance did not settle');
       return {
         reviewId: `review-${request.providerRequestId}`,
@@ -444,6 +446,11 @@ function createMockReviewerAdmissionResolver(statePort: MemoryStatePortV02) {
   }) => {
     const ownerAuthority = await statePort.readVerificationAuthoritySnapshot(task.taskId);
     if (!ownerAuthority) return undefined;
+    const contextDigest = reviewerContextDigest(task, diff.diff, [], state.repositoryRevisionDigest, {
+      runId: state.runId,
+      expectedTaskStateVersion: state.stateVersion,
+    });
+    if (contextDigest === null) return undefined;
     const request = createTestProviderRequest({
       providerRequestId: `provider-${task.taskId}-${state.stateVersion}`,
       taskId: task.taskId,
@@ -452,7 +459,7 @@ function createMockReviewerAdmissionResolver(statePort: MemoryStatePortV02) {
       purpose: 'final-review',
       configId: ownerAuthority.policyIdentity.configId,
       pricingPolicyId: ownerAuthority.policyIdentity.policyId,
-      contextDigest: diff.diffDigest,
+      contextDigest,
       reservationRef: `review-allowance:${task.taskId}:${state.stateVersion}`,
     });
     const providerIdentity: ProviderPricingIdentityV02 = {
@@ -1188,37 +1195,8 @@ test('Mock route delivers only after baseline, owner-settled patch, current chec
   assert.equal(statePort.getJournalSnapshot().attempts.length, 1 + task.requiredChecks.length * 2 + 1);
   assert.ok(result.milestones.some(milestone => milestone.kind === 'task_completed'));
 
-  // Exercise private claim checks through the workflow, with no reviewer dispatch or owner mutation.
-  for (const mismatch of ['reservationRefs', 'preClaimTaskStateVersion'] as const) {
-    const refused = createTestSetup({ contextualApprovalIssuer: true });
-    const claim = refused.statePort.claim.bind(refused.statePort);
-    const before: { state?: TaskState; journal?: ReturnType<MemoryStatePortV02['getJournalSnapshot']> } = {};
-    refused.statePort.claim = async admission => {
-      if (admission.subjectKind !== 'provider-request' || admission.role !== 'reviewer') return claim(admission);
-      const owner = await refused.statePort.loadTask(refused.task.taskId);
-      assert.ok(owner);
-      before.state = owner;
-      before.journal = refused.statePort.getJournalSnapshot();
-      return createTestClaimReceiptV02({
-        taskId: owner.taskId,
-        runId: owner.runId,
-        subjectKind: 'provider-request',
-        planApplicability: 'approved-plan',
-        preClaimTaskStateVersion: owner.stateVersion + (mismatch === 'preClaimTaskStateVersion' ? 1 : 0),
-        reservationRefs: mismatch === 'reservationRefs' ? ['other-reservation'] : [admission.requestReservationReceipt, ...admission.budgetRefs],
-      });
-    };
-    const refusal = await runPassingMockRoute(refused, deliveryTrustedContext);
-    assert.equal(refusal.reviewerCalls, 0, mismatch);
-    assert.equal(refusal.result.outcome, 'IMPLEMENTED_UNVERIFIED', mismatch);
-    assert.ok(
-      refusal.result.reasons.some(reason => reason.includes('Owner budget protocol refused')),
-      mismatch,
-    );
-    assert.ok(before.state && before.journal, 'Route must reach the reviewer claim seam');
-    assert.deepEqual(await refused.statePort.loadTask(refused.task.taskId), before.state, mismatch);
-    assert.deepEqual(refused.statePort.getJournalSnapshot(), before.journal, mismatch);
-  }
+  // A mismatched reviewer claim is refused inside the model boundary, not here, and with zero
+  // provider dispatch; tests/runtime/unit/model.test.ts owns that assertion.
 
   const staleD0Setup = createTestSetup({
     contextualApprovalIssuer: true,
@@ -1526,6 +1504,61 @@ test('Rejected current post-patch D1 reports INCOMPLETE and preserves the owner 
   assert.equal(repositoryPort.patches.length, beforePatches);
   assert.equal(diffReads, 0);
   assert.equal(reviewerCalls, 0);
+});
+
+test('Owner-minted reviewer admission satisfies the real runtime reviewer', async () => {
+  const setup = createTestSetup({ contextualApprovalIssuer: true });
+  const { task, ports, statePort, repositoryPort, trustedExpectedContext } = setup;
+  await seedGraphTaskState(statePort, createGraphTaskState(task));
+  const config = {
+    mode: 'development' as const,
+    trustedExpectedContext,
+    planDetails: ROUTE_PLAN_DETAILS,
+    admissionContext: createMockPatchAdmissionResolver(repositoryPort, statePort),
+    reviewerAdmission: createMockReviewerAdmissionResolver(statePort),
+    patchContent: 'add the approved zero denominator guard',
+    targetPaths: ['src/calculator.py'],
+  };
+  const pending = await runUC03Graph(task, ports, config);
+  assert.equal(pending.outcome, 'pending-approval');
+  assert.ok(pending.state);
+  const d1 = setup.verificationApprovalPort?.getRecordedBindings().find(binding => binding.decisionId.startsWith('dec-verify-'));
+  const authority = await statePort.readVerificationAuthoritySnapshot(task.taskId);
+  assert.ok(d1 && authority);
+  const nextAuthority = { ...setup.authorityRef, decisionAuthorityGeneration: authority.decisionAuthorityGeneration + 1 };
+  assert.equal((await statePort.publishAuthority({ authorityRef: nextAuthority })).status, 'published');
+  setup.verificationApprovalPort?.setV02AuthorityRef(nextAuthority);
+  setup.verificationApprovalPort?.scriptDecision({ ...d1, status: 'approved' }, nextAuthority.decisionAuthorityGeneration);
+
+  // The real reviewer recomputes the snapshot context digest; the graph mints it through the same helper.
+  const scripted = new ScriptedModelPort();
+  scripted.queueResponse({
+    outcome: 'observed',
+    result: {
+      proposal: { proposalId: 'review-1', content: JSON.stringify({ status: 'accepted', findings: [] }) },
+      observedUsage: { inputTokens: 1, outputTokens: 1, billableTokens: 2, costUsd: 0.001 },
+    },
+  });
+  const reviewer = createRuntimeReviewer({
+    model: new ScriptedModelPortV02(scripted),
+    resolveRepoDigest: async current => (await statePort.loadTask(current.taskId))?.repositoryRevisionDigest,
+  });
+  let reviewed: ReviewResult | undefined;
+  setup.reviewerPort.review = async (reviewTask, diff, evidence, request, admission) => {
+    // The real reviewer holds no accounting authority; this port settles the allowance around it.
+    const claim = await statePort.claim(admission);
+    const attempt = await statePort.beginAttempt(claim.claimId, createFixtureExecutorIdentityV02({ payloadDigest: computeRequestContentDigest(request) }));
+    assert.equal((await statePort.recordOutcome(createTestProviderOutcomeReceiptV02(claim, attempt, admission))).outcome, 'settled');
+    reviewed = await reviewer.review(reviewTask, diff, evidence, request, admission);
+    return reviewed;
+  };
+
+  const resumed = await runUC03Graph(task, ports, config, pending.state);
+  assert.ok(reviewed, `route stopped before review: ${resumed.reasons.join('; ')}`);
+  assert.equal(reviewer.lastFailureReason, undefined);
+  assert.equal(reviewed.status, 'accepted');
+  assert.deepEqual(reviewed.findings, []);
+  assert.equal(scripted.simulatedDispatches, 1);
 });
 
 /* ------------------------------------------------------------------
@@ -1933,4 +1966,37 @@ test('CLI: argument, validation, read, and write errors omit input and paths', a
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
+});
+
+test('production runner refuses a real-labeled reviewer without canonical accounting before effects', async () => {
+  const { task, ports } = createTestSetup();
+  let calls = 0;
+  const realPorts = {
+    ...ports,
+    statePort: {
+      ...ports.statePort,
+      provenance: 'real' as const,
+      loadTask: async () => {
+        calls++;
+        return null;
+      },
+    },
+    approvalPort: { ...ports.approvalPort, provenance: 'real' as const },
+    repositoryPort: { ...ports.repositoryPort, provenance: 'real' as const },
+    modelPort: { ...ports.modelPort, provenance: 'real' as const },
+    reviewerPort: {
+      ...ports.reviewerPort,
+      provenance: 'real' as const,
+      review: async () => {
+        calls++;
+        throw new Error('Unaccounted dispatch');
+      },
+    },
+    executionGuard: undefined,
+  };
+  const result = await runUC03Graph(task, realPorts, { mode: 'production' });
+  assert.equal(result.outcome, 'INCOMPLETE');
+  assert.equal(result.state, null);
+  assert.ok(result.reasons.some(reason => reason.includes('canonical accounted model ingress')));
+  assert.equal(calls, 0);
 });

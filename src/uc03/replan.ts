@@ -10,20 +10,11 @@
  * - Safe typed outcome without raw error exposure on unexpected port failures.
  */
 
-import {
-  computeCanonicalSha256,
-  computeCheckSetDigest,
-  validateBudgetLedger,
-  validateFixPlan,
-  validateTaskState,
-  validateStateTransition,
-  type BudgetLedger,
-  type FixPlan,
-  type TaskState,
-} from '../contracts/foundation/uc03.ts';
+import { computeCanonicalSha256, computeCheckSetDigest, validateFixPlan, validateTaskState, validateStateTransition, type FixPlan, type TaskState } from '../contracts/foundation/uc03.ts';
+import { isStatePortV02 } from './repair-types.ts';
+import { MAX_TASK_REPLANS, checkReplanAccounting } from './replan-accounting.ts';
 import type { PlanMaterialityResult, ReplanInput, ReplanPorts, ReplanResult, TrustedReplanDirection } from './repair-types.ts';
-
-const MAX_TASK_REPLANS = 3;
+import type { MaterialReplanResultV02 } from './graph-types-v02.ts';
 
 /**
  * Evaluates whether a candidate fix plan constitutes a material shift compared
@@ -49,8 +40,6 @@ export function evaluatePlanMateriality(priorPlan: FixPlan, candidatePlan: FixPl
     reason: isMaterial ? 'material-bound-plan-shift' : 'non-material-clarification',
   };
 }
-
-type ReplanAccountingCheck = { readonly ok: true; readonly replanLedger: BudgetLedger } | { readonly ok: false; readonly reason: string };
 
 function response(outcome: ReplanResult['outcome'], state: TaskState, reasons: readonly string[] = [], isMaterial = false): ReplanResult {
   return { outcome, state, reasons, replanCount: state.replanCount, isMaterial };
@@ -172,68 +161,6 @@ async function prepareUnchargedPlan(state: TaskState, candidatePlan: FixPlan, po
   return second.error ? response('INCOMPLETE', second.state, [second.error]) : response('CLARIFICATION_ACCEPTED', second.state, ['clarification-requires-fresh-plan-approval']);
 }
 
-function checkReplanAccounting(state: TaskState, proposalId?: string, receiptId?: string): ReplanAccountingCheck {
-  const task = state.taskContext;
-  const ledgers = state.budgetLedgers;
-  if (!ledgers?.length) return { ok: false, reason: 'missing-budget-ledgers' };
-  if (!task) return { ok: false, reason: 'missing-budget-configuration' };
-
-  const requirements = [
-    ['replan', task.budgetLimits.maxReplanCount, 'count'],
-    ['repair', task.budgetLimits.maxRepairAttempts, 'count'],
-    ['tokens', task.budgetLimits.maxTokens, 'count'],
-    ['cost', task.budgetLimits.maxCostUsd, 'usd'],
-  ] as const;
-  const seenReservations = new Set<string>();
-  const checked: BudgetLedger[] = [];
-  for (const [kind, limit, unit] of requirements) {
-    const matches = ledgers.filter(ledger => ledger.scope === 'task' && ledger.kind === kind);
-    if (matches.length !== 1) return { ok: false, reason: `missing-or-duplicate-${kind}-budget-ledger` };
-    const ledger = matches[0];
-    if (!ledger || !validateBudgetLedger(ledger).ok || !Number.isFinite(limit) || limit <= 0 || ledger.configurationId !== task.configId || ledger.limit !== limit || ledger.unit !== unit) {
-      return { ok: false, reason: `inconsistent-${kind}-budget-configuration` };
-    }
-    for (const item of ledger.reservations) {
-      if (item.amount <= 0 || seenReservations.has(item.reservationId)) {
-        return { ok: false, reason: `inconsistent-${kind}-budget-accounting` };
-      }
-      seenReservations.add(item.reservationId);
-    }
-    const total = ledger.consumed + ledger.reservations.reduce((sum, item) => sum + item.amount, 0);
-    if (total > ledger.limit) {
-      return { ok: false, reason: `inconsistent-${kind}-budget-accounting` };
-    }
-    checked.push(ledger);
-  }
-
-  const replanLedger = checked[0];
-  if (!replanLedger) return { ok: false, reason: 'missing-replan-budget-ledger' };
-  const replanTotal = replanLedger.consumed + replanLedger.reservations.reduce((sum, item) => sum + item.amount, 0);
-  const expectedCount = proposalId && receiptId ? state.replanCount + 1 : state.replanCount;
-  if (task.budgetLimits.maxReplanCount !== MAX_TASK_REPLANS || replanLedger.limit !== MAX_TASK_REPLANS || replanTotal !== expectedCount) {
-    return { ok: false, reason: 'inconsistent-replan-accounting' };
-  }
-  if (checked[1]?.reservations.some(item => !state.evidenceRefs.includes('repair-action:' + item.keyedId))) {
-    return { ok: false, reason: 'repair-effect-needs-trusted-reconciliation' };
-  }
-  if (checked.slice(2).some(ledger => ledger.reservations.length > 0)) return { ok: false, reason: 'uncertain-accounting-reservations' };
-  if (checked.slice(1).some(ledger => ledger.consumed >= ledger.limit)) {
-    return { ok: false, reason: 'task-budget-exhausted' };
-  }
-
-  if (proposalId || receiptId) {
-    if (
-      !proposalId ||
-      !receiptId ||
-      replanTotal !== state.replanCount + 1 ||
-      replanLedger.reservations.filter(item => item.keyedId === proposalId && item.amount === 1 && item.reservationId === receiptId).length !== 1
-    ) {
-      return { ok: false, reason: 'replan-reservation-not-authoritative' };
-    }
-  }
-  return { ok: true, replanLedger };
-}
-
 /**
  * Executes a material replan or minor plan clarification within task bounds.
  */
@@ -323,6 +250,44 @@ export async function executeReplan(input: ReplanInput, ports: ReplanPorts): Pro
   if (state.node !== 'Repair' && state.node !== 'Investigate' && state.node !== 'AwaitFeedback') {
     return response('DENIED', state, [`replan-unsupported-from-node-${state.node}`], true);
   }
+
+  // Production route: the UC-04 material-replan transaction owns the allowance and the transition.
+  if (ports.replanPort) {
+    const direction = ports.trustedDirection;
+    if (!direction) return response('INCOMPLETE', state, ['explicit-human-direction-required'], true);
+    let accepted: MaterialReplanResultV02;
+    try {
+      accepted = await ports.replanPort.accept({
+        taskId: state.taskId,
+        runId: state.runId,
+        workspaceId: state.workspaceId,
+        repositoryId: state.repositoryId,
+        configurationId: state.taskContext?.configId ?? '',
+        configurationVersion: state.taskContext?.configVersion ?? '',
+        proposalId: input.proposalId,
+        candidatePlan: input.candidatePlan,
+        candidatePlanDigest: computeCanonicalSha256(input.candidatePlan),
+        priorPlanVersion: state.planVersion,
+        priorStateVersion: state.stateVersion,
+        priorReplanCount: state.replanCount,
+        expectedNextReplanCount: state.replanCount + 1,
+        direction,
+      });
+    } catch {
+      return response('INCOMPLETE', state, ['replan-reservation-failed'], true);
+    }
+    if (accepted.outcome === 'denied') return response('DENIED', state, [accepted.reason], true);
+    if (accepted.outcome === 'uncertain') return response('INCOMPLETE', state, [accepted.operationRef], true);
+    // 'accepted' and 'already-accepted' both carry the owner-committed state; replay adds no charge.
+    // Bind it to this request: a valid state for another task/run, or one that skips the charge, is inconsistent.
+    const owned = accepted.state;
+    const bound = validateTaskState(owned).ok && owned.taskId === state.taskId && owned.runId === state.runId && owned.replanCount === state.replanCount + 1;
+    return bound ? response('REPLAN_PREPARED', owned, [], true) : response('INCOMPLETE', state, ['reserved-task-state-inconsistent'], true);
+  }
+
+  // Controlled caller: legacy reservation and state CAS flow.
+  const statePort = ports.statePort;
+  if (isStatePortV02(statePort)) return response('INCOMPLETE', state, ['replan-transition-admission-unavailable'], true);
   if (accounting.replanLedger.reservations.some(item => item.keyedId === input.proposalId && item.amount === 1)) {
     return response('DENIED', state, ['idempotent-replay-denied-proposal-already-reserved'], true);
   }
@@ -333,13 +298,13 @@ export async function executeReplan(input: ReplanInput, ports: ReplanPorts): Pro
 
   let receiptId: string;
   try {
-    receiptId = await ports.statePort.reserve('task', 'replan', 1, input.proposalId);
+    receiptId = await statePort.reserve('task', 'replan', 1, input.proposalId);
   } catch {
     return response('INCOMPLETE', state, ['replan-reservation-failed'], true);
   }
   let reserved: TaskState | null;
   try {
-    reserved = await ports.statePort.loadTask(input.taskId);
+    reserved = await statePort.loadTask(input.taskId);
   } catch {
     return response('INCOMPLETE', state, ['reserved-task-state-unavailable'], true);
   }
