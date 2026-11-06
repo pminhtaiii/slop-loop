@@ -29,6 +29,7 @@ import {
   type ExecutionGuardReadCapability,
   type GuardedReadOperation,
   type RepositoryReadLimits,
+  type RepositoryDiffSourceOptions,
   type UnattemptedClaimClosureHandoffV02,
 } from '../../../src/foundation/repository-tools.ts';
 import {
@@ -405,6 +406,32 @@ describe('ControlledRepositoryTools (Slice T007-a)', () => {
           }),
         /INVALID_LIMITS/,
       );
+      assert.equal(fsPort.readTextFileCalls.length, 0);
+    });
+
+    it('rejects an invalid repository diff source at construction with zero IO', () => {
+      const repositoryDiff = {
+        baseline: { loadManifest: async () => ({ entries: [] }), readBaselineFile: async () => ({ content: '' }) },
+        taskId: 'task-test',
+        workspaceId: 'ws-test',
+        repositoryId: 'repo-test',
+        maxFileBytes: 0,
+        maxDiffBytes: 1024,
+      } as unknown as RepositoryDiffSourceOptions;
+      assert.throws(() => new ControlledRepositoryTools({ guardCapability: guard, fsPort, limits: defaultLimits, repositoryDiff }), /INVALID_CONFIGURATION/);
+      assert.equal(fsPort.readTextFileCalls.length, 0);
+    });
+
+    it('rejects a repository diff source whose identity differs from the guard capability', () => {
+      const repositoryDiff = {
+        baseline: { loadManifest: async () => ({ entries: [] }), readBaselineFile: async () => ({ content: '' }) },
+        taskId: 'another-task',
+        workspaceId: 'ws-test',
+        repositoryId: 'repo-test',
+        maxFileBytes: 1024,
+        maxDiffBytes: 1024,
+      } as unknown as RepositoryDiffSourceOptions;
+      assert.throws(() => new ControlledRepositoryTools({ guardCapability: guard, fsPort, limits: defaultLimits, repositoryDiff }), /IDENTITY_MISMATCH/);
       assert.equal(fsPort.readTextFileCalls.length, 0);
     });
 

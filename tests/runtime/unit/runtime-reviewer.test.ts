@@ -306,4 +306,11 @@ test('parses unified diffs into changed old and new lines only', () => {
   assert.equal(parseUnifiedDiff('--- a/x\n+++ b/x\n@@ -1,1 +1,1 @@\n*unexpected\n'), null);
   assert.equal(parseUnifiedDiff('+++ b/x\n@@ -1 +1 @@\n-a\n+b'), null);
   assert.equal(parseUnifiedDiff('--- a/../x\n+++ b/../x\n@@ -1 +1 @@\n-a\n+b'), null);
+
+  // A trailing space is a legal path character, so the key must match renderFile's literal path.
+  assert.deepEqual(parseUnifiedDiff('--- a/x.py \n+++ b/x.py \n@@ -1 +1 @@\n-a\n+b'), { 'x.py ': { oldLines: [1], newLines: [1] } });
+  assert.deepEqual(parseUnifiedDiff('--- a/x.py\t2024-01-01 00:00:00 +0000\n+++ b/x.py\t2024-01-01 00:00:00 +0000\n@@ -1 +1 @@\n-a\n+b'), {
+    'x.py': { oldLines: [1], newLines: [1] },
+  });
+  assert.deepEqual(parseUnifiedDiff('--- a/x.py\n+++ b/x.py\n@@ -1 +1 @@\n-a\n+b\n'.replaceAll('\n', '\r\n')), { 'x.py': { oldLines: [1], newLines: [1] } });
 });
