@@ -1,26 +1,4 @@
-/**
- * T030 witness: the host pipeline in one place, at the boundary the controlled tier can honestly reach.
- *
- * Every fixture here is controlled — a mock-provenance delivery, or a declared-real shell whose
- * methods do nothing but count. `checkProductionPortsV02` demands `'real'` provenance and the shared
- * route re-checks it, so a controlled delivery cannot be promoted into production. What this file
- * observes is therefore: assembly and readiness refusals, the v0.2 pre-effect refusal, the owner
- * reload where a declared-real shell set stops, the evaluator's controlled-tier report, the CLI
- * exits, and the pre-admission refusals of the guarded-read and baseline producers.
- *
- * This is not G-OWNERS, G-ROUTE or G-REAL evidence. No owner, profile, route or real repair exists
- * behind these doubles, and nothing below claims one.
- *
- * unreachable: retained baseline -> inspect-read/check -> observed evidence -> fresh request ->
- * generated plan -> explicit approve -> generated patch -> checks -> canonical reviewer ingress ->
- * grade; the reject/revise and material-replan paths inside the graph; persisted task/control/
- * accounting from a real traversal; distinct coder/reviewer claim/attempt/outcome chains; unchanged
- * protected sentinels at grade; view mismatch at command dispatch; explicit request-info pause and
- * continuation; uncertain provider/replan/patch recovery; changed final snapshot at grade; stop and
- * loop exhaustion. Reason: every controlled fixture declares mock or no behaviour, so the production
- * route either refuses it before any effect or stops at the first owner reload; reaching the graph
- * body needs owner deliveries this release does not have.
- */
+/** T030 controlled pipeline evidence. */
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -36,17 +14,13 @@ import { createGuardedReadCapability, type GuardedReadControlObservation } from 
 import { createBaselineEvidenceAdapter } from '../../../src/runtime/baseline-evidence-adapter.ts';
 import type { OwnerDelivery } from '../../../src/runtime/evaluation-composition.ts';
 import { createRepositoryBaselineSource } from '../../../src/runtime/repository-baseline-source.ts';
-import { prepareUC03Host } from '../../../src/runtime/uc03-host-bootstrap.ts';
-import { createProductionRoute, runUC03GraphV02 } from '../../../src/uc03/graph-v02.ts';
-import {
-  REQUIRED_PORTS_V02_METHODS,
-  UC03_PRODUCTION_COMPONENTS_V02,
-  type UC03GraphConfigV02,
-  type UC03GraphPortsV02,
-  type UC03ProductionComponentV02,
-} from '../../../src/uc03/graph-types-v02.ts';
+import { prepareControlledUC03Host, prepareUC03Host } from '../../../src/runtime/uc03-host-bootstrap.ts';
+import { createProductionRoute, runControlledUC03GraphV02, runUC03GraphV02 } from '../../../src/uc03/graph-v02.ts';
+import { REQUIRED_PORTS_V02_METHODS, UC03_PRODUCTION_COMPONENTS_V02, type UC03GraphConfigV02, type UC03GraphPortsV02, type UC03ProductionComponentV02 } from '../../../src/uc03/graph-types-v02.ts';
 import { sha256Text } from '../../../src/uc01/contracts.ts';
-import { createFixtureBugTask } from '../support/uc03/port-fixtures.ts';
+import { createFixtureBugTask, createFixtureTaskState } from '../support/uc03/port-fixtures.ts';
+import { controlledHostFixture } from '../support/uc03/host-pipeline-fixtures.ts';
+import { controlledGeneratedPlanFixture } from '../support/uc03/controlled-host-journey.ts';
 
 const CONTRACT = 'uc03-owner-delivery/1';
 const REV = 'a'.repeat(40);
@@ -56,17 +30,18 @@ const HOST_COMPONENTS = ['guardedRead', 'baselineEvidence', 'hostAuthority', 'co
 const OWNER_COMPONENTS = UC03_PRODUCTION_COMPONENTS_V02.filter(component => !(HOST_COMPONENTS as readonly string[]).includes(component));
 
 const CALLS: string[] = [];
-const recording = (component: string, method: string): (() => undefined) => () => {
-  CALLS.push(`${component}.${method}`);
-  return undefined;
-};
+const recording =
+  (component: string, method: string): (() => undefined) =>
+  () => {
+    CALLS.push(`${component}.${method}`);
+    return undefined;
+  };
 const reset = (): void => {
   CALLS.length = 0;
 };
 
 function delivery(component: UC03ProductionComponentV02, adapterProvenance: 'real' | 'mock' = 'real'): OwnerDelivery {
   const adapter = { provenance: adapterProvenance, ...Object.fromEntries(REQUIRED_PORTS_V02_METHODS[component].map(method => [method, recording(component, method)])) };
-  // The delivery declaration stays `real` here so only the adapter's own provenance varies.
   return { component, id: `${component}-id`, contractVersion: CONTRACT, revision: REV, provenance: 'real', adapter } as OwnerDelivery;
 }
 
@@ -125,8 +100,6 @@ const OPTIONS = {
   requestedModel: 'controlled-model',
 } as const;
 
-/* ---------------------------------------------------------------- assembly */
-
 test('assembly is effect-free and a controlled delivery never becomes ready', () => {
   reset();
   const readiness = prepareUC03Host(assembly());
@@ -137,26 +110,29 @@ test('assembly is effect-free and a controlled delivery never becomes ready', ()
     const refused = prepareUC03Host(assembly(provenance));
     assert.equal(refused.status, 'unavailable');
     if (refused.status !== 'unavailable') continue;
-    assert.ok(refused.reasons.every(reason => reason.kind === 'component' && reason.reasonCode === 'incompatible-delivery'), JSON.stringify(refused.reasons));
+    assert.ok(
+      refused.reasons.every(reason => reason.kind === 'component' && reason.reasonCode === 'incompatible-delivery'),
+      JSON.stringify(refused.reasons),
+    );
   }
   assert.deepEqual(CALLS, []);
 
-  // A missing owner delivery and a stale revision are the two other gaps the operator can close.
   const missing = prepareUC03Host({ ...assembly(), owner: OWNER_COMPONENTS.slice(0, -1).map(component => delivery(component)) });
   assert.deepEqual(missing, { status: 'unavailable', reasons: [{ kind: 'component', component: OWNER_COMPONENTS.at(-1), reasonCode: 'incompatible-delivery' }] });
   const stale = prepareUC03Host({ ...assembly(), owner: OWNER_COMPONENTS.map(component => (component === 'replanPort' ? { ...delivery(component), revision: 'd'.repeat(40) } : delivery(component))) });
   assert.deepEqual(stale, { status: 'unavailable', reasons: [{ kind: 'component', component: 'replanPort', reasonCode: 'stale-revision' }] });
 });
 
-/* ------------------------------------------------------------- route entries */
-
-test('the assembled route stops at the first owner reload, not at a hidden step', async () => {
-  reset();
-  const result = await runUC03GraphV02(createFixtureBugTask(), readyPorts(), CONFIG);
-  assert.equal(result.outcome, 'INCOMPLETE');
-  assert.equal(result.state, null);
-  assert.deepEqual(result.reasons, ['Authoritative task state is missing']);
-  assert.deepEqual(CALLS, ['statePort.loadTask'], 'one owner reload, and no provider, command, patch or approval effect');
+test('controlled graph generates a plan through model admission and reaches approval wait', async () => {
+  const fixture = await controlledGeneratedPlanFixture();
+  const readiness = prepareControlledUC03Host(fixture.host.inputs);
+  assert.equal(readiness.status, 'controlled-ready');
+  if (readiness.status !== 'controlled-ready') return;
+  const result = await runControlledUC03GraphV02(fixture.task, readiness.ports, readiness.config);
+  const state = await fixture.statePort.loadTask(fixture.task.taskId);
+  assert.equal(result.outcome, 'pending-approval', JSON.stringify({ reasons: result.reasons, node: state?.node, modelCalls: fixture.modelCalls }));
+  assert.equal(state?.node, 'AwaitPlan');
+  assert.deepEqual(fixture.modelCalls, ['coder:propose-plan', 'coder:propose-plan']);
 });
 
 test('a post-assembly substitution is refused by the route before any method runs', async () => {
@@ -184,8 +160,6 @@ test('createProductionRoute assembles without admitting anything', () => {
   assert.deepEqual(CALLS, []);
 });
 
-/* ---------------------------------------------------------------- evaluator */
-
 test('the evaluator reports a refused production run as controlled and incomplete', async () => {
   reset();
   const host: WorkflowCaseHost = { entry: catalogEntry('C01'), task: createFixtureBugTask(), expectedWait: null, production: { ports: readyPorts(), config: CONFIG } };
@@ -206,6 +180,44 @@ test('the evaluator reports a refused production run as controlled and incomplet
   assert.deepEqual(CALLS, ['statePort.loadTask']);
 });
 
+test('controlled host resumes the persisted C02 pause and reports an unpinned C01 wait', async () => {
+  const task = createFixtureBugTask();
+  const paused = createFixtureTaskState({ node: 'NeedsInfo', nextAction: 'request-info' });
+  const c02Fixture = controlledHostFixture(paused, CONFIG);
+  const c02Ready = prepareControlledUC03Host(c02Fixture.inputs);
+  assert.equal(c02Ready.status, 'controlled-ready');
+  if (c02Ready.status !== 'controlled-ready') return;
+  const c02Host: WorkflowCaseHost = {
+    entry: catalogEntry('C02'),
+    task,
+    expectedWait: 'waiting-info',
+    controlled: { ports: c02Ready.ports, config: c02Ready.config },
+  };
+  const c02 = await runEvaluation({ ...OPTIONS, mode: 'mock', cases: ['C02'], driver: createWorkflowDriver(new Map([['C02', c02Host]])) });
+  assert.equal(c02.tier, 'controlled');
+  assert.equal(c02.isRealVerified, false);
+  assert.equal(c02.exitCode, 0);
+  assert.equal(c02.cases[0]?.grade, 'pass');
+  assert.equal(c02.cases[0]?.workflowOutcome, 'waiting-info');
+  assert.deepEqual(c02Fixture.calls, ['statePort.loadTask']);
+  assert.deepEqual(await c02Ready.ports.statePort.loadTask(task.taskId), paused);
+
+  const c01Fixture = controlledHostFixture(paused, CONFIG);
+  const c01Ready = prepareControlledUC03Host(c01Fixture.inputs);
+  assert.equal(c01Ready.status, 'controlled-ready');
+  if (c01Ready.status !== 'controlled-ready') return;
+  const c01Host: WorkflowCaseHost = {
+    entry: catalogEntry('C01'),
+    task,
+    expectedWait: null,
+    controlled: { ports: c01Ready.ports, config: c01Ready.config },
+  };
+  const c01 = await runEvaluation({ ...OPTIONS, mode: 'mock', cases: ['C01'], driver: createWorkflowDriver(new Map([['C01', c01Host]])) });
+  assert.equal(c01.exitCode, 3);
+  assert.equal(c01.cases[0]?.gradeReason, 'unresolved-wait');
+  assert.deepEqual(c01Fixture.calls, ['statePort.loadTask']);
+});
+
 test('real mode refuses before dispatch and accounts no effect', async () => {
   reset();
   const host: WorkflowCaseHost = { entry: catalogEntry('C01'), task: createFixtureBugTask(), expectedWait: null, production: { ports: readyPorts(), config: CONFIG } };
@@ -221,13 +233,20 @@ test('real mode refuses before dispatch and accounts no effect', async () => {
   assert.deepEqual(CALLS, [], 'no admission means no owner reload, provider call or command');
 });
 
-/* ---------------------------------------------------------------------- CLI */
-
 function hostFile(): string {
   const path = join(mkdtempSync(join(tmpdir(), 'uc03-pipeline-')), 'host.json');
   writeFileSync(
     path,
-    JSON.stringify({ profileId: 'profile-001', profileDigest: DIGEST, configDigest: DIGEST, pricingDigest: DIGEST, requestedModel: 'controlled-model', adapterVersions: ['uc03-adapter-1'], contractVersion: CONTRACT, revisions: PINS.revisions }),
+    JSON.stringify({
+      profileId: 'profile-001',
+      profileDigest: DIGEST,
+      configDigest: DIGEST,
+      pricingDigest: DIGEST,
+      requestedModel: 'controlled-model',
+      adapterVersions: ['uc03-adapter-1'],
+      contractVersion: CONTRACT,
+      revisions: PINS.revisions,
+    }),
     'utf8',
   );
   return path;
@@ -276,8 +295,6 @@ test('CLI run without a production binding is a named prerequisite gap, never a 
   assert.deepEqual(CALLS, []);
 });
 
-/* --------------------------------------------------- pre-admission producers */
-
 const CONTROL: GuardedReadControlObservation = {
   taskId: 'task-guarded',
   workspaceId: 'ws-guarded',
@@ -316,7 +333,10 @@ test('the guarded read refuses a control mismatch and a read race before the clo
       (error: Error) => (error as { reasonCode?: string }).reasonCode,
     );
 
-  assert.equal(await denied(() => capability({ ...CONTROL, taskId: 'task-other' }, () => ({ ...CONTROL, receiptId: 'r' })).mediateRead({ kind: 'read', targetPath: 'src/app.py', execute: closure })), 'READ_CONTROL_MISMATCH');
+  assert.equal(
+    await denied(() => capability({ ...CONTROL, taskId: 'task-other' }, () => ({ ...CONTROL, receiptId: 'r' })).mediateRead({ kind: 'read', targetPath: 'src/app.py', execute: closure })),
+    'READ_CONTROL_MISMATCH',
+  );
   assert.equal(await denied(() => capability(CONTROL, () => null).mediateRead({ kind: 'read', targetPath: 'src/app.py', execute: closure })), 'READ_FENCED');
   assert.equal(executed, 0, 'a refused read never invokes the repository closure');
 });
@@ -328,7 +348,11 @@ test('the baseline producers refuse an absent owner fact instead of inventing on
   const missing = createBaselineEvidenceAdapter({ provenance: 'real', persist: () => ({ outcome: 'denied', reason: 'not supplied' }), load: () => ({ outcome: 'missing' }) });
   assert.equal(await missing.loadBaselineEvidence('task-1', 'ws-1', 'repo-1', 'evidence-1'), null);
 
-  const uncertain = createBaselineEvidenceAdapter({ provenance: 'real', persist: () => ({ outcome: 'denied', reason: 'not supplied' }), load: () => ({ outcome: 'uncertain', reason: 'owner unreachable' }) });
+  const uncertain = createBaselineEvidenceAdapter({
+    provenance: 'real',
+    persist: () => ({ outcome: 'denied', reason: 'not supplied' }),
+    load: () => ({ outcome: 'uncertain', reason: 'owner unreachable' }),
+  });
   await assert.rejects(() => uncertain.loadBaselineEvidence('task-1', 'ws-1', 'repo-1', 'evidence-1'), /BASELINE_EVIDENCE_LOOKUP_UNCERTAIN/u);
 
   const retained = createRepositoryBaselineSource({

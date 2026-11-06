@@ -13,7 +13,9 @@ import type { CoderProposal, CoderToolResult, CoderTurnInputV02, CoderTurnResult
 import type { UC03CoderAdmission, UC03GraphConfig } from './graph-types.ts';
 import type { UC03GraphGenerationV02 } from './graph-types-v02.ts';
 import { computeContextDigest } from '../foundation/model.ts';
+import { sanitizeText } from '../foundation/telemetry.ts';
 import { currentPlanBindingDigest, samePaths, trustedExpectedContext } from './graph-validation.ts';
+import { reloadAuthoritativeState } from './graph-transitions.ts';
 
 const SUPPLIED_ANSWER_FIELD = { Investigate: 'planDetails', Patch: 'patchContent', Repair: 'repairPatch', AwaitFeedback: 'revisedPlan' } as const;
 
@@ -52,21 +54,17 @@ export type CoderGeneration = { readonly ok: true; readonly proposal: CoderPropo
  */
 export async function generate(config: UC03GraphConfig, task: BugTask, state: TaskState, purpose: CoderPurpose, evidence: readonly SourceEvidence[]): Promise<CoderGeneration> {
   const generationV02 = config.generationV02;
-  const trusted = generationV02 ? undefined : trustedExpectedContext(config, task, state);
+  if (generationV02) return generateObservedPlan(config, generationV02, task, state, purpose, evidence);
+  const trusted = trustedExpectedContext(config, task, state);
   const source = config.coderAdmission;
-  if ((!generationV02 && !trusted?.statePort) || !source) return { ok: false, reason: 'REAL_PROFILE_GENERATION_UNWIRED: no owner-issued coder admission for this state' };
+  if (!trusted?.statePort || !source) return { ok: false, reason: 'REAL_PROFILE_GENERATION_UNWIRED: no owner-issued coder admission for this state' };
 
   const admission = typeof source === 'function' ? await source({ task, state, purpose, evidence }) : source;
   if (!admission) return { ok: false, reason: 'Owner did not issue a coder admission for the current task state' };
 
-  const contextDigest = generationV02 ? computeContextDigest(state, evidence) : coderContextDigest(task, state, purpose, evidence);
+  const contextDigest = coderContextDigest(task, state, purpose, evidence);
   const bound = coderAdmissionBinds(admission, task, state, purpose, contextDigest);
   if (!bound) return { ok: false, reason: 'Coder request or persisted admission does not bind the current task, run, state, and reservation' };
-
-  // The v0.2 model boundary alone claims, begins and settles this provider attempt.
-  if (generationV02) return generateV02(generationV02, { task, state, purpose, evidence, admission });
-
-  if (!trusted?.statePort) return { ok: false, reason: 'REAL_PROFILE_GENERATION_UNWIRED: no owner-issued coder admission for this state' };
 
   const claim = await trusted.statePort.claim(admission.context);
   if (!validCoderClaim(claim, admission.context, state)) return { ok: false, reason: 'Owner budget protocol refused the coder allowance before dispatch' };
@@ -77,6 +75,59 @@ export async function generate(config: UC03GraphConfig, task: BugTask, state: Ta
   if (turn.outcome === 'proposal') return { ok: true, proposal: turn.proposal };
   // `waiting` is a human pause, not a failure; `invalid` carries a safe code and no model text.
   return { ok: false, reason: turn.outcome === 'waiting' ? `HUMAN_WAIT:${turn.reason}` : `REAL_PROFILE_GENERATION_INVALID: ${turn.reason}` };
+}
+
+/** Each turn consumes the agent's existing finite call/time budget and a fresh owner admission. */
+async function generateObservedPlan(
+  config: UC03GraphConfig,
+  generation: UC03GraphGenerationV02,
+  task: BugTask,
+  initialState: TaskState,
+  purpose: CoderPurpose,
+  initialEvidence: readonly SourceEvidence[],
+): Promise<CoderGeneration> {
+  const source = config.coderAdmission;
+  if (!source) return { ok: false, reason: 'REAL_PROFILE_GENERATION_UNWIRED: no owner-issued coder admission for this state' };
+  let state = initialState;
+  const evidence = new Map(initialEvidence.map(item => [item.path, item]));
+  const requests = new Set<string>();
+  for (;;) {
+    const observed = [...evidence.values()];
+    const admission = typeof source === 'function' ? await source({ task, state, purpose, evidence: observed }) : source;
+    if (!admission || !coderAdmissionBinds(admission, task, state, purpose, computeContextDigest(state, observed))) {
+      return { ok: false, reason: 'Coder request or persisted admission does not bind the current task, run, state, and evidence' };
+    }
+    if (requests.has(admission.request.providerRequestId)) return { ok: false, reason: 'Coder admission reused a provider request within the generation loop' };
+    requests.add(admission.request.providerRequestId);
+    const beforeCalls = generation.agent.counters.modelCalls;
+    const result = await generateV02(generation, { task, state, purpose, evidence: observed, admission });
+    if (!result.ok || result.proposal.kind !== 'inspect') return result;
+    if (!result.tool || generation.agent.counters.modelCalls <= beforeCalls) return { ok: false, reason: 'Inspect did not produce a bounded model turn and observation' };
+    for (const item of toolEvidence(result.tool, state.repositoryRevisionDigest)) evidence.set(item.path, item);
+    const owner = config.trustedExpectedContext?.statePort;
+    if (owner) {
+      const current = await reloadAuthoritativeState(state, owner, { allowAccountingChange: true });
+      if (!current.ok) return { ok: false, reason: current.reason };
+      state = current.state;
+    }
+  }
+}
+
+function toolEvidence(tool: CoderToolResult, revisionDigest: string): readonly SourceEvidence[] {
+  if (tool.kind === 'read-file') return [tool.evidence];
+  if (tool.kind === 'search-code') return tool.evidence;
+  const identity = tool.kind === 'list-dir' ? tool.path : tool.checkId;
+  return [
+    {
+      path: `_observations/${tool.kind}-${computeCanonicalSha256(identity).slice(7)}.json`,
+      revisionDigest,
+      boundedExcerpt: sanitizeText(
+        JSON.stringify(tool.kind === 'list-dir' ? { kind: tool.kind, path: tool.path, entries: tool.entries } : { kind: tool.kind, checkId: tool.checkId, result: tool.result }),
+      ),
+      resultCount: tool.kind === 'list-dir' ? tool.entries.length : 1,
+      truncated: true,
+    },
+  ];
 }
 
 function coderAdmissionBinds(admission: UC03CoderAdmission, task: BugTask, state: TaskState, purpose: CoderPurpose, expectedContextDigest: string): boolean {
