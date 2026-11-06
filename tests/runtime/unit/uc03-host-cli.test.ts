@@ -117,6 +117,16 @@ test('a port, a policy fact or a credential field is refused and no value is ech
   }
 });
 
+test('adapter metadata refuses credential-shaped values and an unbounded list', () => {
+  for (const adapterVersions of [['credential:private-value'], Array.from({ length: 65 }, () => 'adapter-v1')]) {
+    const loaded = loadHostConfiguration(hostFile({ adapterVersions }));
+    assert.equal(loaded.ok, false);
+    if (loaded.ok) continue;
+    assert.equal(loaded.error.exitCode, 2);
+    assert.equal(loaded.error.output.includes('private-value'), false);
+  }
+});
+
 test('an incomplete host file is refused rather than half-assembled', () => {
   for (const overrides of [{ profileId: '' }, { revisions: { statePort: 'not-a-revision' } }, { revisions: { notAComponent: REV } }, { adapterVersions: [] }]) {
     const loaded = loadHostConfiguration(hostFile(overrides));

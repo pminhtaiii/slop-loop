@@ -117,12 +117,13 @@ function observationFor(host: WorkflowCaseHost, result: UC03WorkflowResult): Wor
 /** Host-held map from public case id to the task, ports and pinned wait it should observe. */
 export function createWorkflowDriver(catalog: ReadonlyMap<string, WorkflowCaseHost>): WorkflowDriver {
   if (!(catalog instanceof Map)) throw new Error('Invalid workflow driver catalog');
-  for (const [caseId, host] of catalog) {
+  const hosts = new Map(catalog);
+  for (const [caseId, host] of hosts) {
     if (typeof caseId !== 'string' || !host || host.entry.caseId !== caseId) throw new Error('Invalid workflow driver catalog entry');
   }
   return {
     async executeCase(spec: EvaluationCaseSpec, context: WorkflowCaseContext): Promise<WorkflowObservation> {
-      const host = catalog.get(spec.caseId);
+      const host = hosts.get(spec.caseId);
       if (host === undefined) return blockedObservation(spec.caseId, undefined, 'UNKNOWN_CASE');
       if (host.entry.caseId !== spec.caseId) return blockedObservation(spec.caseId, host, 'CATALOG_MISMATCH');
       if (!DIGEST.test(host.entry.caseDigest) || !DIGEST.test(host.entry.publicTaskDigest) || !DIGEST.test(host.entry.initialRepositoryDigest) || !DIGEST.test(host.entry.grader.digest)) {
@@ -136,7 +137,10 @@ export function createWorkflowDriver(catalog: ReadonlyMap<string, WorkflowCaseHo
         if (context.mode !== 'mock' || host.production || host.ports) return blockedObservation(spec.caseId, host, 'CONTROLLED_ROUTE_ONLY');
         return observationFor(host, await runControlledUC03GraphV02(host.task, host.controlled.ports, host.controlled.config));
       }
-      if (host.production) return observationFor(host, await runUC03GraphV02(host.task, host.production.ports, host.production.config));
+      if (host.production) {
+        if (context.mode !== 'real' || host.ports) return blockedObservation(spec.caseId, host, 'PRODUCTION_ROUTE_REQUIRES_REAL_MODE');
+        return observationFor(host, await runUC03GraphV02(host.task, host.production.ports, host.production.config));
+      }
       if (!host.ports) return blockedObservation(spec.caseId, host, 'MISSING_ROUTE');
       return observationFor(host, await runUC03Graph(host.task, host.ports, host.config));
     },

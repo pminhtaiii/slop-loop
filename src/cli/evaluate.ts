@@ -79,7 +79,8 @@ export function loadHostConfiguration(filePath: string): HostConfigurationLoad {
   const model = text(requestedModel);
   const contract = text(contractVersion);
   if ([id, profile, config, pricing, model, contract].some(value => value === '')) return refused('HOST_CONFIG_INCOMPLETE');
-  if (!Array.isArray(adapterVersions) || adapterVersions.length === 0 || adapterVersions.some(value => text(value) === '')) return refused('HOST_CONFIG_INCOMPLETE');
+  if (!Array.isArray(adapterVersions) || adapterVersions.length === 0 || adapterVersions.length > 64 || adapterVersions.some(value => text(value) === '')) return refused('HOST_CONFIG_INCOMPLETE');
+  if (adapterVersions.some(value => typeof value === 'string' && CREDENTIAL.test(value))) return refused('HOST_CONFIG_UNSAFE_FIELD');
   if (typeof revisions !== 'object' || revisions === null || Array.isArray(revisions)) return refused('HOST_CONFIG_INCOMPLETE');
   const pinned: Record<string, string> = {};
   for (const [component, revision] of Object.entries(revisions)) {

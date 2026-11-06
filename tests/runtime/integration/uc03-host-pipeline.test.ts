@@ -161,7 +161,7 @@ test('createProductionRoute assembles without admitting anything', () => {
   assert.deepEqual(CALLS, []);
 });
 
-test('the evaluator reports a refused production run as controlled and incomplete', async () => {
+test('mock evaluation refuses a production route before any port call', async () => {
   reset();
   const host: WorkflowCaseHost = { entry: catalogEntry('C01'), task: createFixtureBugTask(), expectedWait: null, production: { ports: readyPorts(), config: CONFIG } };
   const report = await runEvaluation({ ...OPTIONS, mode: 'mock', cases: ['C01'], driver: createWorkflowDriver(new Map([['C01', host]])) });
@@ -170,15 +170,15 @@ test('the evaluator reports a refused production run as controlled and incomplet
 
   assert.equal(report.tier, 'controlled');
   assert.equal(report.isRealVerified, false);
-  assert.deepEqual(report.suiteAcceptance, { scope: 'catalog', requiredCases: 17, satisfiedCases: 0, outcome: 'fail' });
-  assert.equal(observed.workflowOutcome, 'INCOMPLETE');
-  assert.equal(observed.grade, 'fail');
-  assert.equal(observed.gradeReason, 'criteria-violation');
-  assert.equal(observed.effects, 'uncertain', 'a route that returned no state may have dispatched');
+  assert.deepEqual(report.suiteAcceptance, { scope: 'catalog', requiredCases: 17, satisfiedCases: 0, outcome: 'incomplete' });
+  assert.equal(observed.workflowOutcome, 'not-observed');
+  assert.equal(observed.grade, 'not-run');
+  assert.equal(observed.gradeReason, 'prerequisite-unavailable');
+  assert.equal(observed.effects, 'none');
   assert.equal(observed.usage, 'unavailable');
   assert.deepEqual(observed.artifacts, [], 'no evidence artifact was produced');
-  assert.deepEqual(observed.limitations, ['No authoritative final report was produced.']);
-  assert.deepEqual(CALLS, ['statePort.loadTask']);
+  assert.deepEqual(observed.limitations, ['Preflight block PRODUCTION_ROUTE_REQUIRES_REAL_MODE; no graph dispatch occurred.']);
+  assert.deepEqual(CALLS, []);
 });
 
 test('controlled host resumes the persisted C02 pause and reports an unpinned C01 wait', async () => {
@@ -268,12 +268,12 @@ test('CLI preflight reaches assembly and stops there', async () => {
   assert.deepEqual(CALLS, []);
 });
 
-test('CLI run binds the assembled route and reports the same incomplete outcome', async () => {
+test('CLI mock run refuses the assembled production route without effects', async () => {
   reset();
   const production = (ready: { ports: UC03GraphPortsV02; config: UC03GraphConfigV02 }) =>
     createWorkflowDriver(new Map([['C01', { entry: catalogEntry('C01'), task: createFixtureBugTask(), expectedWait: null, production: { ports: ready.ports, config: ready.config } }]]));
   const result = await runEvaluateCli(['run', '--host', hostFile(), '--cases', 'C01'], options({ production }));
-  assert.equal(result.exitCode, 1, result.output);
+  assert.equal(result.exitCode, 4, result.output);
   const report = JSON.parse(result.output.slice(0, result.output.indexOf('\nUC-03 Workflow Evaluation'))) as {
     readonly tier: string;
     readonly isRealVerified: boolean;
@@ -282,10 +282,10 @@ test('CLI run binds the assembled route and reports the same incomplete outcome'
   };
   assert.equal(report.tier, 'controlled');
   assert.equal(report.isRealVerified, false);
-  assert.deepEqual(report.suiteAcceptance, { scope: 'catalog', requiredCases: 17, satisfiedCases: 0, outcome: 'fail' });
-  assert.equal(report.cases[0]?.gradeReason, 'criteria-violation');
-  assert.equal(report.cases[0]?.workflowOutcome, 'INCOMPLETE');
-  assert.deepEqual(CALLS, ['statePort.loadTask']);
+  assert.deepEqual(report.suiteAcceptance, { scope: 'catalog', requiredCases: 17, satisfiedCases: 0, outcome: 'incomplete' });
+  assert.equal(report.cases[0]?.gradeReason, 'prerequisite-unavailable');
+  assert.equal(report.cases[0]?.workflowOutcome, 'not-observed');
+  assert.deepEqual(CALLS, []);
 });
 
 test('CLI run without a production binding is a named prerequisite gap, never a mock fallback', async () => {
