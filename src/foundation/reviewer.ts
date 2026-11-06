@@ -26,6 +26,7 @@ import {
 } from '../contracts/foundation/uc03.ts';
 import type { UC03ReviewerPort } from '../uc03/graph-types.ts';
 import { computeContextDigest, deepClone, deepFreeze } from './model.ts';
+import { HostModelPortV02 } from './model-v02.ts';
 
 /** The review node issues exactly this purpose; a coder-purpose request is a bypass. */
 const REVIEWER_PURPOSE = 'final-review';
@@ -47,6 +48,16 @@ export interface RuntimeReviewer extends UC03ReviewerPort {
   readonly lastObservedUsage: ProviderUsage | undefined;
   /** Safe failure code of the last review, never provider output or credentials. */
   readonly lastFailureReason: string | undefined;
+}
+
+// Bind the check to the factory's actual dispatch closure, not caller-declared provenance.
+const reviewerIngresses = new WeakMap<UC03ReviewerPort, { model: ModelPortV02; review: UC03ReviewerPort['review'] }>();
+
+export function usesCanonicalReviewerIngress(reviewer: UC03ReviewerPort): boolean {
+  const ingress = reviewerIngresses.get(reviewer);
+  return (
+    !!ingress && reviewer.review === ingress.review && ingress.model instanceof HostModelPortV02 && ingress.model.provenance === 'real' && ingress.model.propose === HostModelPortV02.prototype.propose
+  );
 }
 
 function diffPath(raw: string, prefix: string): string | null {
@@ -207,8 +218,9 @@ export function createRuntimeReviewer(options: RuntimeReviewerOptions): RuntimeR
   let lastObservedUsage: ProviderUsage | undefined;
   let lastFailureReason: string | undefined;
 
-  return {
-    provenance: options.model.provenance,
+  const model = options.model;
+  const reviewer: RuntimeReviewer = {
+    provenance: model.provenance,
     get lastObservedUsage() {
       return lastObservedUsage;
     },
@@ -278,7 +290,7 @@ export function createRuntimeReviewer(options: RuntimeReviewerOptions): RuntimeR
       }
       const snapshotRequest = deepClone(request);
 
-      const executed = await options.model.propose(snapshot.state, snapshot.evidence, snapshotRequest, admission);
+      const executed = await model.propose(snapshot.state, snapshot.evidence, snapshotRequest, admission);
       if (executed.observedUsage !== undefined) lastObservedUsage = executed.observedUsage;
       if (executed.outcome === 'uncertain' || executed.outcome === 'denied') return invalid(`PROVIDER_${executed.outcome.toUpperCase()}:${executed.reason ?? 'UNKNOWN'}`);
       if (executed.outcome === 'invalid') return invalid(`PROVIDER_INVALID:${executed.errors?.[0]?.code ?? 'UNKNOWN'}`);
@@ -304,4 +316,6 @@ export function createRuntimeReviewer(options: RuntimeReviewerOptions): RuntimeR
       return deepFreeze<ReviewResult>(admissionCheck.value);
     },
   };
+  reviewerIngresses.set(reviewer, { model, review: reviewer.review });
+  return reviewer;
 }

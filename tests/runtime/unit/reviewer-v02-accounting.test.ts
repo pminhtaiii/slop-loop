@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { HostModelPortV02 } from '../../../src/foundation/model-v02.ts';
+import { createDeepSeekTransport } from '../../../src/foundation/deepseek-transport.ts';
+import { MemoryStatePortV02 } from '../support/uc03/memory-state.ts';
 import test from 'node:test';
 import {
   computeCanonicalSha256,
@@ -11,7 +14,7 @@ import {
   type TaskState,
 } from '../../../src/contracts/foundation/uc03.ts';
 import { buildTransportPayload, computeContextDigest, executeTransport, type HostModelTransport } from '../../../src/foundation/model.ts';
-import { buildReviewerSnapshot, createRuntimeReviewer } from '../../../src/foundation/reviewer.ts';
+import { buildReviewerSnapshot, createRuntimeReviewer, usesCanonicalReviewerIngress } from '../../../src/foundation/reviewer.ts';
 import {
   createFixtureBugTask,
   createFixtureClaimReceiptV02,
@@ -198,4 +201,31 @@ test('the reviewer holds no write authority and returns only canonical review fi
   assert.deepEqual(Object.keys(result).sort(), ['checkSetDigest', 'diffDigest', 'findings', 'iterationReservationRef', 'repoDigest', 'reviewId', 'reviewerRoleConfigId', 'status']);
   assert.equal(Object.isFrozen(result), true);
   assert.equal(JSON.stringify({ task: context.task, evidence: context.evidence, request: context.request, admission: context.admission }), before);
+});
+
+test('production reviewer admission binds the canonical accounting ingress and review implementation', () => {
+  const statePort = new MemoryStatePortV02();
+  const model = new HostModelPortV02({
+    statePort,
+    transport: createDeepSeekTransport({
+      endpoint: 'https://api.deepseek.com/anthropic/v1/messages',
+      apiKey: 'synthetic-test-key',
+      pricing: { inputRate: 1, outputRate: 1, cacheRate: 1, overheadRate: 0, denominator: 1000000 },
+      fetch: async () => {
+        throw new Error('Admission must not dispatch');
+      },
+    }),
+  });
+  const reviewer = createRuntimeReviewer({ model, resolveRepoDigest: () => REPO_DIGEST });
+  assert.equal(usesCanonicalReviewerIngress(reviewer), true);
+  assert.equal(usesCanonicalReviewerIngress({ ...reviewer }), false);
+  assert.equal(usesCanonicalReviewerIngress(createRuntimeReviewer({ model: { ...spyModel(), provenance: 'real' }, resolveRepoDigest: () => REPO_DIGEST })), false);
+  const originalReview = reviewer.review;
+  reviewer.review = async () => {
+    throw new Error('Unaccounted review');
+  };
+  assert.equal(usesCanonicalReviewerIngress(reviewer), false);
+  reviewer.review = originalReview;
+  model.propose = async () => ({ outcome: 'denied' });
+  assert.equal(usesCanonicalReviewerIngress(reviewer), false);
 });

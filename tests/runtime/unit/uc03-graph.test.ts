@@ -1967,3 +1967,36 @@ test('CLI: argument, validation, read, and write errors omit input and paths', a
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });
+
+test('production runner refuses a real-labeled reviewer without canonical accounting before effects', async () => {
+  const { task, ports } = createTestSetup();
+  let calls = 0;
+  const realPorts = {
+    ...ports,
+    statePort: {
+      ...ports.statePort,
+      provenance: 'real' as const,
+      loadTask: async () => {
+        calls++;
+        return null;
+      },
+    },
+    approvalPort: { ...ports.approvalPort, provenance: 'real' as const },
+    repositoryPort: { ...ports.repositoryPort, provenance: 'real' as const },
+    modelPort: { ...ports.modelPort, provenance: 'real' as const },
+    reviewerPort: {
+      ...ports.reviewerPort,
+      provenance: 'real' as const,
+      review: async () => {
+        calls++;
+        throw new Error('Unaccounted dispatch');
+      },
+    },
+    executionGuard: undefined,
+  };
+  const result = await runUC03Graph(task, realPorts, { mode: 'production' });
+  assert.equal(result.outcome, 'INCOMPLETE');
+  assert.equal(result.state, null);
+  assert.ok(result.reasons.some(reason => reason.includes('canonical accounted model ingress')));
+  assert.equal(calls, 0);
+});

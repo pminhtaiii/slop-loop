@@ -14,6 +14,7 @@ import { buildFinalReport, type Milestone } from './report.ts';
 import { UC03StateAnnotation, type UC03GraphNode, type UC03GraphState } from './graph-state.ts';
 import { type UC03GraphConfig, type UC03GraphPorts, type UC03WorkflowResult } from './graph-types.ts';
 import { createReviewNode } from './graph-review.ts';
+import { usesCanonicalReviewerIngress } from '../foundation/reviewer.ts';
 import { handlePlanRejection } from './repair.ts';
 import { createEvaluationDiagnostic } from '../runtime/evaluation-diagnostics.ts';
 import { diagnosticForOutcome, stageForNode } from './graph-diagnostics.ts';
@@ -189,12 +190,13 @@ export function createAwaitPlanNode(ports: UC03GraphPorts): UC03GraphNode {
 export async function runUC03Graph(task: BugTask, ports: UC03GraphPorts, config?: UC03GraphConfig, initialState?: TaskState): Promise<UC03WorkflowResult> {
   if (
     config?.mode === 'production' &&
-    !isAdmittedForProduction([ports.statePort, ports.approvalPort, ports.repositoryPort, ports.modelPort, ports.reviewerPort, ...(ports.executionGuard ? [ports.executionGuard] : [])])
+    (!isAdmittedForProduction([ports.statePort, ports.approvalPort, ports.repositoryPort, ports.modelPort, ports.reviewerPort, ...(ports.executionGuard ? [ports.executionGuard] : [])]) ||
+      !usesCanonicalReviewerIngress(ports.reviewerPort))
   ) {
     return {
       outcome: 'INCOMPLETE',
       state: null,
-      reasons: ['PRODUCTION_ADMISSION_REFUSED: All effectful ports must declare real provenance and satisfy production admission'],
+      reasons: ['PRODUCTION_ADMISSION_REFUSED: All effectful ports must declare real provenance and satisfy production admission; the reviewer must use the canonical accounted model ingress'],
       milestones: [],
       diagnostic: createEvaluationDiagnostic({
         stage: 'preflight',

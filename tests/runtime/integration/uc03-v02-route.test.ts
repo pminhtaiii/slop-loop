@@ -84,16 +84,13 @@ test('a single mock component is named as such even when the rest declare real',
   assert.match(result.reasons[0] ?? '', /PRODUCTION_ADMISSION_REFUSED: replanPort invalid-provenance/u);
 });
 
-test('a complete real-declared set passes this entry and is handed to the shared runner', async () => {
-  // The shared runner owns the invoke; with stub methods it stops at the first owner reload rather
-  // than succeeding. What this pins is that the v0.2 entry does not add its own second refusal.
+test('a real-declared stub ingress is refused by the shared runner before effects', async () => {
   reset();
   const result = await runUC03GraphV02(createFixtureBugTask(), asPorts(portSet('real')), config());
-  assert.equal(
-    result.reasons.some(reason => reason.includes('PRODUCTION_ADMISSION_REFUSED')),
-    false,
-    'the entry must not refuse a set the shared runner would accept',
-  );
+  assert.equal(result.outcome, 'INCOMPLETE');
+  assert.equal(result.state, null);
+  assert.ok(result.reasons.some(reason => reason.includes('canonical accounted model ingress')));
+  assert.equal(COUNTERS.calls, 0);
 });
 
 test('createProductionRoute assembles without admitting anything', () => {
