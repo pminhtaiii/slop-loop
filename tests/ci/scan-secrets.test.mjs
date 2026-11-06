@@ -332,7 +332,7 @@ test('shipped exemptions validate and clear exactly the reviewed synthetic findi
     ['generic-api-key', 'tests/runtime/unit/model.test.ts', 509, ''],
     ['generic-api-key', 'tests/runtime/security/uc03-isolation.test.ts', 837, ''],
     ['github-pat', 'tests/runtime/security/uc03-isolation.test.ts', 840, ''],
-    ['generic-api-key', 'tests/runtime/unit/repository-tools.test.ts', 597, ''],
+    ['generic-api-key', 'tests/runtime/unit/repository-tools.test.ts', 624, ''],
     ['generic-api-key', 'src/contracts/foundation/uc03/v02/admission/attempt-outcome.ts', 34, '54f61997dda7fdce3d745dfec41893f1e6705dfb'],
     ['generic-api-key', 'src/contracts/foundation/uc03/v02/admission/attempt-outcome.ts', 83, '54f61997dda7fdce3d745dfec41893f1e6705dfb'],
     ['private-key', 'tests/runtime/unit/telemetry.test.ts', 569, '54f61997dda7fdce3d745dfec41893f1e6705dfb'],
