@@ -8,6 +8,7 @@ import type { RealExecutionAdmission } from '../../eval/shared-types.ts';
 import { WORKFLOW_EVALUATION_VERSION, type WorkflowDriver, type WorkflowEvaluationOptions, type WorkflowEvaluationReport } from '../../eval/uc03/types.ts';
 import { prepareUC03Host, type UC03HostInputs, type UC03HostPins, type UC03HostReadiness } from '../runtime/uc03-host-bootstrap.ts';
 import { UC03_PRODUCTION_COMPONENTS_V02, type UC03ProductionComponentV02 } from '../uc03/graph-types-v02.ts';
+import { isEvaluationControlCommand, runEvaluationControlCli, type EvaluationControlBindings } from './evaluate-control.ts';
 
 export interface EvaluateCliResult {
   readonly exitCode: number;
@@ -30,6 +31,8 @@ export interface EvaluateCliOptions {
   readonly host?: HostAssembly | undefined;
   /** Binds the assembled route to a driver. Only reached when `host` and a configuration path are given. */
   readonly production?: ((ready: UC03HostReady) => WorkflowDriver) | undefined;
+  /** Trusted operator delivery; decisions and continuation retain existing owner authority. */
+  readonly control?: EvaluationControlBindings | undefined;
 }
 
 /** A host-only configuration file. It resolves references; it never carries authority. */
@@ -209,6 +212,7 @@ function assemble(parsed: ParsedArgs, options: EvaluateCliOptions | undefined): 
 }
 
 export async function runEvaluateCli(args: readonly string[], options?: EvaluateCliOptions): Promise<EvaluateCliResult> {
+  if (isEvaluationControlCommand(args[0])) return runEvaluationControlCli(args, options?.control);
   let parsed: ParsedArgs;
   try {
     parsed = parseCliArgs(args);
