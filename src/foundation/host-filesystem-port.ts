@@ -100,13 +100,13 @@ export class WorkspaceFilesystemPort implements TrustedFilesystemPort {
   }
 
   /** Deterministic tree digest: sorted `path\0fileDigest\n` lines, symlinks skipped. */
-  async getCurrentRevisionDigest(): Promise<string> {
+  async getCurrentRevisionDigest(maxBytes?: number): Promise<string> {
     const lines: string[] = [];
     const walk = async (dir: string): Promise<void> => {
       for (const entry of await this.readDir(dir)) {
         const child = dir === '' ? entry.name : `${dir}/${entry.name}`;
         if (entry.isDirectory) await walk(child);
-        else if (entry.isFile) lines.push(`${child}\0${computeFileDigest(await this.readBytes(child))}\n`);
+        else if (entry.isFile) lines.push(`${child}\0${computeFileDigest(await this.readBytes(child, maxBytes))}\n`);
       }
     };
     await walk('');
@@ -114,10 +114,14 @@ export class WorkspaceFilesystemPort implements TrustedFilesystemPort {
     return computeCanonicalSha256(lines.join(''));
   }
 
-  private async readBytes(canonicalPath: string): Promise<Buffer> {
+  private async readBytes(canonicalPath: string, maxBytes?: number): Promise<Buffer> {
     const handle = await open(this.absolute(canonicalPath), 'r');
     try {
-      return await handle.readFile();
+      if (maxBytes === undefined) return await handle.readFile();
+      const probe = Buffer.alloc(maxBytes + 1);
+      const bytesRead = await readProbe(probe, async (buffer, offset, length, position) => (await handle.read(buffer, offset, length, position)).bytesRead);
+      if (bytesRead > maxBytes) throw new Error(`FILE_TOO_LARGE: Path '${canonicalPath}' exceeds ${maxBytes} bytes`);
+      return probe.subarray(0, bytesRead);
     } finally {
       await handle.close();
     }

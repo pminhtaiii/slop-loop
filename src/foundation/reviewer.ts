@@ -61,7 +61,8 @@ export function usesCanonicalReviewerIngress(reviewer: UC03ReviewerPort): boolea
 }
 
 function diffPath(raw: string, prefix: string): string | null {
-  const token = raw.trim().split('\t')[0] ?? '';
+  // Strip only a CRLF carriage return: trim() would also drop path characters isCanonicalRelativePath permits.
+  const token = raw.replace(/\r$/u, '').split('\t')[0] ?? '';
   if (token === '/dev/null') return null;
   const path = token.startsWith(prefix) ? token.slice(prefix.length) : token;
   return isCanonicalRelativePath(path) ? path : null;

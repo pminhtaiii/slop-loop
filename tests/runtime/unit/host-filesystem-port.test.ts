@@ -119,3 +119,14 @@ test(
     assert.notEqual(await port.getCurrentRevisionDigest(), first, 'changed bytes must change the digest');
   }),
 );
+
+test(
+  'workspace filesystem port: the revision digest honours the per-file bound without loading an oversized file',
+  withWorkspace(async root => {
+    const port = new WorkspaceFilesystemPort({ root });
+    writeFileSync(join(root, 'src', 'big.py'), 'y' + 'z'.repeat(4096));
+
+    await assert.rejects(() => port.getCurrentRevisionDigest(4096), /FILE_TOO_LARGE/, 'a file one byte over the bound must refuse the digest');
+    assert.equal(await port.getCurrentRevisionDigest(4097), await port.getCurrentRevisionDigest(), 'a bound at or above the file must digest identically to the unbounded read');
+  }),
+);

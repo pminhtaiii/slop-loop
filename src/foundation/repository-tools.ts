@@ -3,7 +3,7 @@ import type { ExecutionGuardRepositoryPortV02 } from './execution-guard.ts';
 import type { RepositoryPatchResultV02, RepositoryCommandResultV02, RepositoryPortV02, RepositoryAdmissionContextV02, ReconciliationResultV02 } from '../contracts/foundation/uc03/v02/ports.ts';
 import type { ApplyPatchAction, CheckDefinition, CheckResult, RunCommandAction } from '../contracts/foundation/uc03/v01/types.ts';
 import { ControlledRepositoryReader, containsProtectedContent } from './repository-read.ts';
-import { measureRepositoryDiff } from './repository-diff.ts';
+import { assertRepositoryDiffSource, measureRepositoryDiff } from './repository-diff.ts';
 import { RepositoryCommandReceiver } from './repository-receiver.ts';
 import { RepositoryPatchReceiver } from './repository-outcome.ts';
 import type {
@@ -75,6 +75,7 @@ export class ControlledRepositoryTools implements RepositoryPort, ExecutionGuard
     this.guardCapability = options.guardCapability;
     this.adapterIdentity = options.adapterIdentity ?? options.commandExecutor?.getAdapterIdentity?.() ?? '';
     this.processIncarnation = options.processIncarnation ?? options.commandExecutor?.getProcessIncarnation?.() ?? '';
+    if (options.repositoryDiff !== undefined) assertRepositoryDiffSource(options.repositoryDiff, options.guardCapability);
     this.repositoryDiff = options.repositoryDiff;
     this.fencingGeneration = options.fencingGeneration ?? options.commandExecutor?.getFencingGeneration?.() ?? 0;
   }
