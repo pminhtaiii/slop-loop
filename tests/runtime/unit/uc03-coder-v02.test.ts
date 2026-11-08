@@ -13,6 +13,7 @@ import {
   computeCanonicalSha256,
   type CheckDefinition,
   type CheckResult,
+  type FixPlan,
   type ModelPortV02,
   type ProviderAdmissionContextV02,
   type ProviderRequest,
@@ -23,7 +24,8 @@ import {
 import type { ExecutionGuardReadCapability, GuardedReadOperation } from '../../../src/foundation/repository-types.ts';
 import { computeContextDigest, validateBaseModelInputs } from '../../../src/foundation/model.ts';
 import { createCoderAgentV02, type CoderAgentV02Options } from '../../../src/uc03/agent.ts';
-import { generate } from '../../../src/uc03/graph-nodes.ts';
+import { coderContextDigest, generate } from '../../../src/uc03/graph-nodes.ts';
+import { currentPlanBindingDigest } from '../../../src/uc03/graph-validation.ts';
 import type { UC03GraphConfig } from '../../../src/uc03/graph-types.ts';
 import type { CoderBudget, UC03CoderAdmission } from '../../../src/uc03/agent-types.ts';
 import { FakeRepositoryPort } from '../support/uc03/fake-repository.ts';
@@ -84,6 +86,7 @@ function admit(
   purpose: 'propose-plan' | 'propose-patch' | 'propose-repair' | 'propose-replan' = 'propose-plan',
   providerRequestId = 'req-v02-1',
   contextDigest = 'sha256:context-001',
+  approvedPlan = false,
 ): UC03CoderAdmission {
   const request: ProviderRequest = {
     providerRequestId,
@@ -107,15 +110,17 @@ function admit(
   const context = createFixtureProviderAdmissionContextV02({
     providerRequest: request,
     expectedTaskStateVersion: state.stateVersion,
-    planApplicability: 'pre-plan-diagnostic',
-    diagnosticPurpose: 'diagnose-zero-denominator',
-    taskCriteriaDigest: computeCanonicalSha256(['criteria']),
-    runnableNode: 'Investigate',
+    planApplicability: approvedPlan ? 'approved-plan' : 'pre-plan-diagnostic',
+    ...(approvedPlan
+      ? { planDecisionRef: state.plan?.decisionRef, planBindingDigest: currentPlanBindingDigest(createFixtureBugTask(), state) }
+      : { diagnosticPurpose: 'diagnose-zero-denominator', taskCriteriaDigest: computeCanonicalSha256(['criteria']), runnableNode: 'Investigate' }),
   });
   const prePlan = context as unknown as Record<string, unknown>;
-  delete prePlan['planBindingDigest'];
-  delete prePlan['planDecisionRef'];
-  // The fixture seeds approved-plan fields and sealed a digest over them; deleting them without
+  if (!approvedPlan) {
+    delete prePlan['planBindingDigest'];
+    delete prePlan['planDecisionRef'];
+  }
+  // The fixture seeds approved-plan fields and sealed a digest over them; replacing them without
   // resealing makes validateProviderAdmissionV02 reject the fixture itself (ADMISSION_DIGEST_MISMATCH).
   prePlan['admissionDigest'] = computeAdmissionDigest(prePlan);
   return { request, context, trustedContext: createTestProviderAdmissionTrustedContextV02(context) };
@@ -147,6 +152,129 @@ function setup(options: Partial<CoderAgentV02Options> = {}) {
   const agent = createCoderAgentV02({ model, repository, budget: BUDGET, ...options });
   return { task, state, repository, model, agent, admission: admit(state) };
 }
+
+function answeredState(answerDigest: string) {
+  return createFixtureTaskState({
+    node: 'Investigate',
+    clarification: {
+      questionId: 'q-1',
+      questionDigest: 'sha256:question-1',
+      askedAtStateVersion: 1,
+      round: 1,
+      questions: [{ questionId: 'q-1', text: 'which fixture?' }],
+      evidenceRefs: [],
+      answer: { answerDigest, answeredAtStateVersion: 2, recorderRef: 'owner-1', items: [{ questionId: 'q-1', text: 'use the calculator fixture' }] },
+    },
+  });
+}
+
+test('coderContextDigest folds the stored answer and changes only when it changes', () => {
+  const task = createFixtureBugTask();
+  const answered = answeredState('sha256:answer-1');
+  assert.equal(coderContextDigest(task, answered, 'propose-plan', []), coderContextDigest(task, answeredState('sha256:answer-1'), 'propose-plan', []));
+  assert.notEqual(coderContextDigest(task, answered, 'propose-plan', []), coderContextDigest(task, answeredState('sha256:answer-2'), 'propose-plan', []));
+});
+
+test('a mutated answer digest is refused before the model and the stored answer reaches it once', async () => {
+  const task = createFixtureBugTask();
+  const answered = answeredState('sha256:answer-1');
+  const model = new RecordingModelPort();
+  const agent = createCoderAgentV02({ model, repository: new FakeRepositoryPort(), budget: BUDGET });
+  const admission = admit(answered, 'propose-plan', 'req-clarified', computeContextDigest(answered, []));
+  const config: UC03GraphConfig = { mode: 'production', generationV02: { agent }, coderAdmission: admission };
+
+  const mutated = answeredState('sha256:answer-2');
+  const refused = await generate(config, task, mutated, 'propose-plan', []);
+  assert.deepEqual(refused, { ok: false, reason: 'Coder request or persisted admission does not bind the current task, run, state, and evidence' });
+  assert.equal(model.calls.length, 0);
+
+  const accepted = await generate(config, task, answered, 'propose-plan', []);
+  assert.ok(accepted.ok);
+  assert.equal(model.calls.length, 1);
+  assert.equal(model.calls[0]?.state.clarification?.answer?.answerDigest, 'sha256:answer-1');
+});
+
+test('a stop is reported as a stop, never a completion, and a success claim is refused', async () => {
+  const stop = JSON.stringify({ kind: 'stop', proposalId: 's-1', reasonCode: 'reproduction-unclear', summary: 'No failing test found', evidenceRefs: [] });
+  const task = createFixtureBugTask();
+  const state = createFixtureTaskState({ node: 'Investigate' });
+  const model = new RecordingModelPort(async () => ({ outcome: 'observed', result: { proposal: { proposalId: 's-1', content: stop } } }));
+  const agent = createCoderAgentV02({ model, repository: new FakeRepositoryPort(), budget: BUDGET });
+  const result = await agent.turn({ task, state, purpose: 'propose-plan', evidence: [], admission: admit(state) });
+  assert.equal(result.outcome, 'proposal');
+  assert.ok(result.outcome === 'proposal' && result.proposal.kind === 'stop');
+  // A stop is reported as a stop: no plan, no patch, and no tool effect accompanies it.
+  assert.equal(result.outcome === 'proposal' ? result.proposal.kind === 'stop' && result.tool === undefined : false, true);
+
+  const claiming = new RecordingModelPort(async () => ({
+    outcome: 'observed',
+    result: { proposal: { proposalId: 's-2', content: JSON.stringify({ kind: 'stop', proposalId: 's-2', reasonCode: 'fixed', summary: 'All good', evidenceRefs: [] }) } },
+  }));
+  const refusing = createCoderAgentV02({ model: claiming, repository: new FakeRepositoryPort(), budget: BUDGET });
+  const refused = await refusing.turn({ task, state, purpose: 'propose-plan', evidence: [], admission: admit(state) });
+  assert.equal(refused.outcome, 'invalid');
+  assert.match(refused.reason, /PROPOSAL_INVALID:UNSAFE_REASON/u);
+});
+
+test('each exhaustion path withholds completion', async () => {
+  const task = createFixtureBugTask();
+  const state = createFixtureTaskState({ node: 'Investigate' });
+
+  const timeModel = new RecordingModelPort();
+  const timed = createCoderAgentV02({ model: timeModel, repository: new FakeRepositoryPort(), budget: { ...BUDGET, maxActiveMs: 0 } });
+  const noTime = await timed.turn({ task, state, purpose: 'propose-plan', evidence: [], admission: admit(state) });
+  assert.equal(noTime.outcome, 'invalid');
+  assert.match(noTime.reason, /ACTIVE_TIME_BUDGET_EXHAUSTED/u);
+  assert.equal(timeModel.calls.length, 0);
+
+  const plan: FixPlan = {
+    planVersion: 1,
+    diagnosis: 'unhandled zero denominator',
+    suspectedCauseLocations: ['src/calculator.py'],
+    evidenceRefs: ['evidence-baseline-001'],
+    strategy: 'raise CalculationError when b is zero',
+    scopedChanges: ['src/calculator.py'],
+    checkSetDigest: 'sha256:checks',
+    baselineRef: 'evidence-baseline-001',
+    strategyDigest: 'sha256:strategy',
+    decisionRef: 'dec-plan-001',
+  };
+
+  const replanState = createFixtureTaskState({ node: 'AwaitFeedback', plan });
+  const replanModel = new RecordingModelPort();
+  const replanning = createCoderAgentV02({ model: replanModel, repository: new FakeRepositoryPort(), budget: { ...BUDGET, maxReplans: 0 } });
+  const noReplan = await replanning.turn({
+    task,
+    state: replanState,
+    purpose: 'propose-replan',
+    evidence: [],
+    admission: admit(replanState, 'propose-replan', 'req-replan-1', 'sha256:context-replan', true),
+  });
+  assert.equal(noReplan.outcome, 'invalid');
+  assert.match(noReplan.reason, /REPLAN_BUDGET_EXHAUSTED/u);
+
+  const repairState = createFixtureTaskState({ node: 'Repair', plan });
+  const diff = ['--- a/src/calculator.py', '+++ b/src/calculator.py', '@@ -1,2 +1,2 @@', ' def divide(a, b):', '-    return a / b', '+    return a / b if b else 0'].join('\n');
+  const repairModel = new RecordingModelPort(async () => ({
+    outcome: 'observed',
+    result: {
+      proposal: {
+        proposalId: 'rp-1',
+        content: JSON.stringify({ kind: 'propose-patch', proposalId: 'rp-1', diff, targetPaths: ['src/calculator.py'], approvedPlanRef: 'dec-plan-001' }),
+      },
+    },
+  }));
+  const repairing = createCoderAgentV02({ model: repairModel, repository: new FakeRepositoryPort(), budget: { ...BUDGET, maxRepairs: 0 } });
+  const noRepair = await repairing.turn({
+    task,
+    state: repairState,
+    purpose: 'propose-repair',
+    evidence: [],
+    admission: admit(repairState, 'propose-repair', 'req-repair-1', 'sha256:context-repair', true),
+  });
+  assert.equal(noRepair.outcome, 'invalid');
+  assert.match(noRepair.reason, /REPAIR_BUDGET_EXHAUSTED/u);
+});
 
 test('the exact owner-issued context reaches the model fourth argument', async () => {
   const { task, state, model, agent, admission } = setup();

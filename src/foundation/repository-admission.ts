@@ -4,6 +4,8 @@ import { validateExecutionLimits } from '../contracts/foundation/uc03.ts';
 import type { ApplyPatchAction, CheckDefinition, CommandView, ExecutionLimits, RunCommandAction, ValidationError } from '../contracts/foundation/uc03/v01/types.ts';
 import { validateCheckDefinition } from '../contracts/foundation/uc03/v01/validation/intake/limits.ts';
 import type { CommandViewV02, RepositoryAdmissionContextV02 } from '../contracts/foundation/uc03/v02/ports.ts';
+import { isMeasuredCommandViewIsolation } from './docker-view-builder.ts';
+import type { MeasuredCommandViewIsolation } from './docker-view-builder.ts';
 
 export interface BoundPatchAdmission {
   readonly context: RepositoryAdmissionContextV02;
@@ -57,8 +59,26 @@ export function dockerCommandView(context: RepositoryAdmissionContextV02): Comma
   return { ...projected, viewDigest: computeCommandViewDigest(projected) };
 }
 
-/** Lifts the builder-published v0.1 view into v0.2; the digest is recomputed because the two key sets hash differently. */
-export function admissionCommandView(view: CommandView, isolationProfileRef: string): CommandViewV02 {
+/**
+ * Lifts the builder-published v0.1 view into v0.2; the digest is recomputed because the two key sets hash differently.
+ *
+ * §9: the isolation reference comes from the host-owned record the build issued for *this* view, not
+ * from the caller. Four ordered refusals, so a genuine record cannot be replayed onto another view and
+ * a mutated view cannot borrow its own measurement.
+ */
+export function admissionCommandView(view: CommandView, measured: MeasuredCommandViewIsolation): CommandViewV02 {
+  if (!isMeasuredCommandViewIsolation(measured)) {
+    throw new Error('ISOLATION_RECORD_UNMEASURED: Isolation profile reference must come from a host-measured build');
+  }
+  if (measured.viewId !== view.viewId) {
+    throw new Error(`ISOLATION_RECORD_VIEW_MISMATCH: Record belongs to view '${measured.viewId}', not '${view.viewId}'`);
+  }
+  if (measured.viewDigest !== view.viewDigest) {
+    throw new Error('ISOLATION_RECORD_DIGEST_MISMATCH: Record was issued for a different view digest');
+  }
+  if (computeCommandViewDigest(view) !== view.viewDigest) {
+    throw new Error('ISOLATION_RECORD_VIEW_UNHASHED: Command view no longer hashes to its declared digest');
+  }
   const projected = {
     viewId: view.viewId,
     taskId: view.taskId,
@@ -68,7 +88,7 @@ export function admissionCommandView(view: CommandView, isolationProfileRef: str
     exclusionsPolicyVersion: view.exclusionsPolicyVersion,
     scratchIdentity: view.scratchIdentity,
     mountedReadOnly: view.mountedReadOnly,
-    isolationProfileRef,
+    isolationProfileRef: measured.isolationProfileRef,
   };
   // Same canonical hash as the v0.2 admission re-check, which also widens the v0.1-typed signature.
   return { ...projected, viewDigest: computeCommandViewDigest(projected as unknown as CommandView) };

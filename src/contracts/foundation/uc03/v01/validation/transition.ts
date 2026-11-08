@@ -273,7 +273,39 @@ export function validateStateTransition(priorState: unknown, nextState: unknown,
     }
   }
 
-  // 5. Material Replan Limits & Replenishment Prohibition
+  // 5. Bound clarification (host-composition §8): the pair are the only writers of the record.
+  if (prior.node === 'Investigate' && next.node === 'NeedsInfo') {
+    const record = next.clarification;
+    const open = prior.clarification;
+    if (!record) fail('clarification', 'CLARIFICATION_RECORD_REQUIRED', 'Investigate to NeedsInfo requires the bound clarification record');
+    else if (record.answer !== undefined) fail('clarification', 'CLARIFICATION_ALREADY_ANSWERED', 'The asked record cannot arrive already answered');
+    else if (record.askedAtStateVersion !== prior.stateVersion)
+      fail('clarification.askedAtStateVersion', 'CLARIFICATION_VERSION_MISMATCH', 'A question must be bound to the state version it was asked at');
+    else if (!open && record.round !== 1) fail('clarification.round', 'CLARIFICATION_ROUND_SEQUENCE', 'A first question must be round 1');
+    else if (open && open.answer === undefined) fail('clarification', 'CLARIFICATION_QUESTION_OPEN', 'An unanswered question blocks a second one');
+    else if (open && record.round !== open.round + 1) fail('clarification.round', 'CLARIFICATION_ROUND_SEQUENCE', 'A replacing question must advance the round by exactly one');
+    if (record && record.evidenceRefs.some(ref => !next.evidenceRefs.includes(ref))) fail('evidenceRefs', 'CLARIFICATION_EVIDENCE_NOT_CARRIED', 'The ask write must carry its refs into evidenceRefs');
+  } else if (prior.node === 'NeedsInfo' && next.node === 'Investigate') {
+    const open = prior.clarification;
+    const answer = next.clarification?.answer;
+    if (!open) fail('clarification', 'CLARIFICATION_RECORD_REQUIRED', 'NeedsInfo to Investigate requires the open clarification record');
+    else if (open.answer !== undefined) fail('clarification', 'CLARIFICATION_ALREADY_ANSWERED', 'The open record was already answered');
+    else if (!answer) fail('clarification.answer', 'CLARIFICATION_ANSWER_MISSING', 'The reporter answer must arrive as input on this transition');
+    else if (answer.answeredAtStateVersion !== prior.stateVersion)
+      fail('clarification.answer.answeredAtStateVersion', 'CLARIFICATION_VERSION_MISMATCH', 'The answer must be bound to the state version it answers');
+    else if (
+      next.clarification?.questionId !== open.questionId ||
+      next.clarification?.questionDigest !== open.questionDigest ||
+      next.clarification?.round !== open.round ||
+      canonicalJsonStringify(next.clarification?.questions) !== canonicalJsonStringify(open.questions) ||
+      canonicalJsonStringify(next.clarification?.evidenceRefs) !== canonicalJsonStringify(open.evidenceRefs)
+    )
+      fail('clarification', 'CLARIFICATION_ANSWER_SUBSTITUTED', 'The answered record must be the same record it answers');
+  } else if (prior.node === 'NeedsInfo' && next.node === 'Validate' && prior.clarification !== undefined) {
+    fail('clarification', 'CLARIFICATION_BYPASS_REFUSED', 'A paused task cannot abandon its open question through Validate');
+  }
+
+  // 6. Material Replan Limits & Replenishment Prohibition
   if (next.replanCount < prior.replanCount) {
     errors.push({
       path: 'replanCount',
@@ -289,7 +321,7 @@ export function validateStateTransition(priorState: unknown, nextState: unknown,
     });
   }
 
-  // 6. Plan required before entering AwaitPlan
+  // 7. Plan required before entering AwaitPlan
   if (next.node === 'AwaitPlan' && !next.plan) {
     errors.push({
       path: 'plan',

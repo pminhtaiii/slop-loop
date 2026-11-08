@@ -21,10 +21,8 @@ interface DockerViewBuilderOperations {
  * known literal exclusions/scratch mismatch must be corrected at the UC-04 producer rather than
  * papered over here.
  *
- * shortcut: the published v0.1 `CommandView` still has no isolation field, so the owner's reference
- * is compared to the trusted profile only at build time and never reaches the published view. The
- * v0.2 `commandExecutionLimits` check is not a substitute: it compares against a view ref the caller
- * supplies through `admissionCommandView`. Upgrade when the view shape carries isolation.
+ * The accepted measurement also yields the host-owned isolation record below, so the owner's
+ * reference reaches `admissionCommandView` as a capability rather than as a caller-supplied string.
  */
 export interface OwnerCommandViewMeasurementV02 {
   readonly canonicalRevision: string;
@@ -33,6 +31,28 @@ export interface OwnerCommandViewMeasurementV02 {
   readonly admittedFiles: readonly AdmittedFile[];
   readonly mountedReadOnly: true;
   readonly isolationProfileRef: string;
+}
+
+/**
+ * Host-composition §9: the isolation record a successful build issues for the view it published.
+ * Object identity in a module-private set is the capability — a caller cannot construct one.
+ */
+export interface MeasuredCommandViewIsolation {
+  readonly viewId: string;
+  readonly viewDigest: string;
+  readonly isolationProfileRef: string;
+}
+
+const measuredCommandViews = new WeakSet<MeasuredCommandViewIsolation>();
+
+export function isMeasuredCommandViewIsolation(value: unknown): value is MeasuredCommandViewIsolation {
+  return value !== null && typeof value === 'object' && measuredCommandViews.has(value as MeasuredCommandViewIsolation);
+}
+
+export interface IssuedCommandView {
+  readonly view: CommandView;
+  /** Absent when the build had no owner measurement, so there is no isolation to hand off. */
+  readonly measured?: MeasuredCommandViewIsolation;
 }
 
 export type CommandViewOwnerBindingParams = AdmitCommandViewParams & {
@@ -77,7 +97,7 @@ function ownerViewMismatch(
   return null;
 }
 
-export async function buildDockerCommandView(params: CommandViewOwnerBindingParams, controller: DockerLifecycleController, operations: DockerViewBuilderOperations): Promise<CommandView> {
+export async function buildDockerCommandView(params: CommandViewOwnerBindingParams, controller: DockerLifecycleController, operations: DockerViewBuilderOperations): Promise<IssuedCommandView> {
   if (!params || typeof params !== 'object') {
     throw new Error('INVALID_ADMIT_PARAMS: params must be an object');
   }
@@ -305,7 +325,16 @@ export async function buildDockerCommandView(params: CommandViewOwnerBindingPara
     }
 
     operations.publishView(params.workspaceId, commandView);
-    return commandView;
+    // Issued only from an accepted owner measurement of the published view: a build with no
+    // ownerView hands back no record, so lifting for isolation refuses instead of defaulting.
+    if (params.ownerView === undefined) return { view: commandView };
+    const measured: MeasuredCommandViewIsolation = Object.freeze({
+      viewId: commandView.viewId,
+      viewDigest: commandView.viewDigest,
+      isolationProfileRef: params.ownerView.isolationProfileRef,
+    });
+    measuredCommandViews.add(measured);
+    return { view: commandView, measured };
   } finally {
     gateLease.release();
   }

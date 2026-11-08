@@ -6,6 +6,8 @@ export const TASK_OUTCOMES = ['COMPLETED', 'IMPLEMENTED_UNVERIFIED', 'INCOMPLETE
 
 export type TaskOutcome = (typeof TASK_OUTCOMES)[number];
 
+import type { ClarificationRecord } from './clarification-types.ts';
+
 export const ENVELOPE_OUTCOMES = ['success', 'needs-info', 'pending-approval', 'denied', 'conflict', 'exhausted', 'timeout', 'error', 'uncertain-effect'] as const;
 
 export type EnvelopeOutcome = (typeof ENVELOPE_OUTCOMES)[number];
@@ -18,8 +20,8 @@ export type TaskNode = (typeof TASK_NODES)[number];
 
 export const ALLOWED_NODE_TRANSITIONS: Readonly<Record<TaskNode, readonly TaskNode[]>> = {
   Validate: ['NeedsInfo', 'Investigate'],
-  NeedsInfo: ['Validate'],
-  Investigate: ['AwaitPlan'],
+  NeedsInfo: ['Validate', 'Investigate'],
+  Investigate: ['AwaitPlan', 'NeedsInfo'],
   AwaitPlan: ['AwaitFeedback', 'Patch'],
   AwaitFeedback: ['Investigate', 'Incomplete'],
   Patch: ['Verify', 'Repair'],
@@ -336,6 +338,8 @@ export interface BudgetLedger {
   readonly version: number;
 }
 
+export type { ClarificationAnswer, ClarificationQuestion, ClarificationRecord } from './clarification-types.ts';
+
 export interface TaskState {
   readonly schemaVersion: string;
   readonly stateVersion: number;
@@ -369,6 +373,7 @@ export interface TaskState {
   readonly risks: readonly string[];
   readonly nextAction: string;
   readonly outcome?: TaskOutcome | undefined;
+  readonly clarification?: ClarificationRecord | undefined;
 }
 
 export type TaskCheckpoint = TaskState;
@@ -506,60 +511,12 @@ export interface Delivery {
 export type CheckOutcome = 'pass' | 'fail' | 'timeout' | 'error' | 'not-run';
 export type VerificationPhase = 'baseline' | 'focused' | 'regression' | 'compatibility' | 'diff';
 
-export interface SourceEvidenceLimits {
-  readonly maxExcerptBytes?: number | undefined;
-  readonly maxResultCount?: number | undefined;
-  readonly allowedPaths?: readonly string[] | undefined;
-}
-
-export interface BaselineAdmissionContext {
-  readonly expectedEvidenceId?: string | undefined;
-  readonly expectedRepositorySnapshotDigest: string;
-  readonly expectedCheckSetDigest: string;
-  readonly expectedTestProtectionDigest: string;
-  readonly expectedReproductionCheckId: string;
-  readonly expectedPassingCheckIds: readonly string[];
-}
-
-export interface VerificationAdmissionContext {
-  readonly expectedTaskId: string;
-  readonly expectedRunId: string;
-  readonly expectedRepoDigest: string;
-  readonly expectedDiffDigest?: string | undefined;
-  readonly expectedCheckId?: string | undefined;
-  readonly requiredPhase?: VerificationPhase | undefined;
-}
-
-export type TrustedDiffLines = Readonly<
-  Record<
-    string,
-    {
-      readonly oldLines?: readonly number[] | undefined;
-      readonly newLines?: readonly number[] | undefined;
-    }
-  >
->;
-
-export interface ReviewAdmissionContext {
-  readonly expectedReviewId?: string | undefined;
-  readonly expectedTaskId?: string | undefined;
-  readonly expectedRepoDigest: string;
-  readonly expectedDiffDigest: string;
-  readonly expectedCheckSetDigest: string;
-  readonly expectedRoleConfigId: string;
-  readonly expectedIterationReservationRef?: string | undefined;
-  readonly trustedDiffLines?: TrustedDiffLines | undefined;
-}
-
-export interface TaskWorkspaceValidationContext {
-  readonly expectedTaskId?: string | undefined;
-  readonly expectedWorkspaceId?: string | undefined;
-}
-
-export interface DeliveryValidationContext {
-  readonly expectedTaskId?: string | undefined;
-  readonly expectedRunId?: string | undefined;
-  readonly expectedDiffDigest?: string | undefined;
-  readonly expectedBaselineRef?: string | undefined;
-  readonly expectedReviewRef?: string | undefined;
-}
+export type {
+  BaselineAdmissionContext,
+  DeliveryValidationContext,
+  ReviewAdmissionContext,
+  SourceEvidenceLimits,
+  TaskWorkspaceValidationContext,
+  TrustedDiffLines,
+  VerificationAdmissionContext,
+} from './admission-context.ts';

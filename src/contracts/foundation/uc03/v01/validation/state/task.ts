@@ -6,6 +6,7 @@ import { CONTRACT_VERSION } from '../../types.ts';
 import { isPlainObject, rejectUnknownKeys, validateNonEmptyString, validateNonNegativeInteger, validatePositiveInteger } from '../common.ts';
 import { validateBugTask } from '../intake.ts';
 
+import { validateClarification } from './clarification.ts';
 import { validateTaskNode, validatePlanStep, validateFixPlan } from './primitives.ts';
 import { validateBudgetLedger } from './budget.ts';
 
@@ -42,6 +43,7 @@ const TASK_STATE_ALLOWED_KEYS = [
   'risks',
   'nextAction',
   'outcome',
+  'clarification',
 ] as const;
 
 export function validateTaskState(input: unknown): ValidationResult<TaskState> {
@@ -306,6 +308,8 @@ export function validateTaskState(input: unknown): ValidationResult<TaskState> {
     });
   }
 
+  const clarification = input['clarification'] === undefined ? undefined : validateClarification(input['clarification'], 'clarification', { taskId, runId }, errors);
+
   // Terminal vs Non-terminal outcome validation
   let outcome: TaskOutcome | undefined;
   const rawOutcome = input['outcome'];
@@ -399,6 +403,7 @@ export function validateTaskState(input: unknown): ValidationResult<TaskState> {
       risks: input['risks'] as readonly string[],
       nextAction,
       ...(outcome !== undefined ? { outcome } : {}),
+      ...(clarification !== undefined ? { clarification } : {}),
     },
   };
 }
