@@ -2,8 +2,10 @@ import { readFile, readdir, stat } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateTaskLedger } from './planning-task-ledger.mjs';
+import { generateReviewTemplate } from './planning-review-template.mjs';
 
 export { validateTaskLedger } from './planning-task-ledger.mjs';
+export { generateReviewTemplate } from './planning-review-template.mjs';
 
 async function fileExists(path) {
   try {
@@ -127,18 +129,13 @@ Target Files to Inspect:
 ${targetFiles.map(f => `- ${f}`).join('\n')}
 
 ## Issue Severity Guidelines
-- **P0 (Critical / Blocker)**: Defect that makes implementation impossible, inconsistent, or hazardous. Contradictory criteria, invalid syntax, policy/permission violations, broken dependencies. Blocks implementation!
-- **P1 (Major)**: Gaps or ambiguities that risk incorrect implementation or test failures. Unresolved clarifications, missing edge-case criteria, orphan contracts, untestable criteria. Blocks implementation!
-- **P2 (Advisory / Minor)**: Non-blocking polish, stylistic improvements, documentation enhancements.
+Read and apply context/planning.md#issue-severity-definitions for the canonical P0 (Critical / Blocker), P1 (Major), and P2 (Advisory / Minor) policy.
 
 ## Output Format
-Provide your findings in a structured Markdown table:
+Use the generated template below, outside code fences. Add actual P0, P1 or P2 finding rows; an unfinished template fails evaluation. If the completed review finds no issues, replace the entire table with exactly: "No blocking issues found."
 
-| Severity | Code | Title | Description | Recommendation |
-|---|---|---|---|---|
-| P0/P1/P2 | <UPPER_SNAKE_CODE> | <Short Title> | <Description of issue> | <Actionable fix> |
-
-If no issues are found, state: "No blocking issues found."
+${generateReviewTemplate()}
+Run node scripts/agents/planning-workflow.mjs evaluate-review --review <report.md> before returning. A malformed report needs a format repair; a valid report with P0/P1 needs substantive correction. See docs/agents/planning-review.md for verified delta reviews.
 `;
 
   return { role, targetFiles, prompt };
@@ -229,7 +226,7 @@ export function parseReviewFindings(markdownContent) {
   return { valid, passed, p0, p1, p2, errors };
 }
 
-export async function runPlanningWorkflow({ action, featureDir, role = 'standards', reviewContent, reviewPath, root = process.cwd() }) {
+export async function runPlanningWorkflow({ action, featureDir, role = 'standards', reviewContent, reviewPath, noFindings = false, root = process.cwd() }) {
   if (action === 'validate') {
     if (!featureDir) throw new Error('validate action requires --dir <featureDir>');
     const artifactRes = await validateArtifacts({ featureDir, root });
@@ -251,6 +248,10 @@ export async function runPlanningWorkflow({ action, featureDir, role = 'standard
       p2,
       tasks: taskRes.tasks,
     };
+  }
+
+  if (action === 'review-template') {
+    return { action, template: generateReviewTemplate({ noFindings }) };
   }
 
   if (action === 'review-brief') {
@@ -299,6 +300,7 @@ function parseCliArgs(argv) {
   let role = 'standards';
   let reviewPath;
   let json = false;
+  let noFindings = false;
 
   for (let i = 1; i < args.length; i += 1) {
     if (args[i] === '--dir') {
@@ -307,31 +309,36 @@ function parseCliArgs(argv) {
       role = args[++i];
     } else if (args[i] === '--review') {
       reviewPath = args[++i];
+    } else if (args[i] === '--no-findings') {
+      noFindings = true;
     } else if (args[i] === '--json') {
       json = true;
     }
   }
 
-  return { action, featureDir, role, reviewPath, json };
+  return { action, featureDir, role, reviewPath, noFindings, json };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const { action, featureDir, role, reviewPath, json } = parseCliArgs(process.argv);
+  const { action, featureDir, role, reviewPath, noFindings, json } = parseCliArgs(process.argv);
   if (!action || ['--help', '-h'].includes(action)) {
     console.log(`Usage:
   node scripts/agents/planning-workflow.mjs validate --dir <featureDir> [--json]
   node scripts/agents/planning-workflow.mjs review-brief --dir <featureDir> [--role standards|testability] [--json]
+  node scripts/agents/planning-workflow.mjs review-template [--no-findings] [--json]
   node scripts/agents/planning-workflow.mjs evaluate-review --review <file> [--json]
   node scripts/agents/planning-workflow.mjs status --dir <featureDir> [--json]`);
     process.exit(0);
   }
 
   try {
-    const result = await runPlanningWorkflow({ action, featureDir, role, reviewPath });
+    const result = await runPlanningWorkflow({ action, featureDir, role, reviewPath, noFindings });
     if (json) {
       console.log(JSON.stringify(result, null, 2));
     } else {
-      if (action === 'review-brief') {
+      if (action === 'review-template') {
+        process.stdout.write(result.template);
+      } else if (action === 'review-brief') {
         console.log(result.prompt);
       } else if (action === 'validate' || action === 'status') {
         console.log(`[planning-workflow] Action: ${result.action} | Status: ${result.status}`);
@@ -348,6 +355,8 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
         }
       } else if (action === 'evaluate-review') {
         console.log(`[planning-workflow] Review Status: ${result.status}`);
+        console.log(`Report format: ${result.valid ? 'valid' : 'invalid'}`);
+        result.errors.forEach(error => console.error(`  - ${error}`));
         console.log(`P0: ${result.p0.length} | P1: ${result.p1.length} | P2: ${result.p2.length}`);
       }
     }

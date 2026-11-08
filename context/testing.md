@@ -29,9 +29,9 @@ Use the repository's established test and quality commands. Read `AGENTS.md`, pr
 
 ## Reporting results
 
-For every validation command, report the exact command and its exit status. Distinguish passed, failed, and unrun checks; explain why an applicable check was not run. A focused pass proves only the behavior it exercised.
+Report exact commands and exit statuses, and distinguish passed, failed, and unrun checks. For criterion-level task evidence and handoff status, follow the [task-verification contract](../docs/agents/task-verification.md); explain why an applicable check was not run. A focused pass proves only the behavior it exercised.
 
-Do not mark a task complete until its implementation is integrated and its applicable checks pass. Do not claim feature completion while required tests, convergence, or review gates remain unresolved. Historical or intentionally red runs do not establish current readiness.
+Task completion requires integrated implementation and passing applicable checks; feature completion also requires resolved test, convergence, and review gates. Historical or intentionally red runs do not establish current readiness.
 
 `publish` is the sole local full-gate runner; workers, mergers and reviewers run focused checks. Gate contents, automatic changed-path selection, runtime validation, dependency-install and tracked-file rules live in the [PR workflow](../docs/agents/pr-workflow.md#publish-a-draft); full-mode gate results are not cached, automatic contributor-only skips are recorded explicitly, and CI runs independently. The tracked-file gate rejects installed node_modules at any depth and root docs/verification records, including force-added ignored files; local untracked artifacts and tracked lockfiles are permitted. The `ci-v5` policy requires four exact-head GitHub Actions successes with bare check names and Ubuntu-only jobs; `build`, `contributor-tooling-tests` and `runtime-tests` still run but do not gate a merge, and historical ci-v1–ci-v4 need audited merged bindings (see the [Ubuntu-only amendment](../specs/006-ci-test-quality/contracts/ubuntu-only.md)). Unresolved comments and CodeRabbit approval remain advisory for the merge decision. These gates verify repository helpers, context consistency and runtime bootstrap integration; they do not verify planned product-runtime capabilities.
 
