@@ -108,6 +108,20 @@ function createQuestion(text = 'What output did you observe?'): ClarificationQue
   return { questionId: 'q-1', text };
 }
 
+function createPlan() {
+  return {
+    planVersion: 1,
+    diagnosis: 'ZeroDivisionError unhandled in divide method',
+    suspectedCauseLocations: ['src/calculator.py:42'],
+    evidenceRefs: [BASELINE_REF],
+    strategy: 'Check denominator and raise CalculationError if zero',
+    scopedChanges: ['src/calculator.py'],
+    checkSetDigest: 'sha256:2222222222222222222222222222222222222222222222222222222222222222',
+    baselineRef: BASELINE_REF,
+    strategyDigest: 'sha256:1111111111111111111111111111111111111111111111111111111111111111',
+  };
+}
+
 function createRecord(state: TaskState, round = 1, questions: readonly ClarificationQuestion[] = [createQuestion()], evidenceRefs: readonly string[] = [BASELINE_REF]): ClarificationRecord {
   const questionId = computeClarificationQuestionId({ taskId: state.taskId, runId: state.runId, round, questions, evidenceRefs });
   const questionDigest = computeClarificationQuestionDigest({
@@ -333,17 +347,7 @@ test('NeedsInfo -> Validate works with no record (intake path) and refuses when 
 });
 
 test('Investigate -> AwaitPlan still transitions with an answered record and echoes it unchanged', (): void => {
-  const plan = {
-    planVersion: 1,
-    diagnosis: 'ZeroDivisionError unhandled in divide method',
-    suspectedCauseLocations: ['src/calculator.py:42'],
-    evidenceRefs: [BASELINE_REF],
-    strategy: 'Check denominator and raise CalculationError if zero',
-    scopedChanges: ['src/calculator.py'],
-    checkSetDigest: 'sha256:2222222222222222222222222222222222222222222222222222222222222222',
-    baselineRef: BASELINE_REF,
-    strategyDigest: 'sha256:1111111111111111111111111111111111111111111111111111111111111111',
-  };
+  const plan = createPlan();
   const state = createValidTaskState('Investigate', 4);
   const record = createRecord(state);
   const answered: ClarificationRecord = { ...record, answer: createAnswer(record, 5) };
@@ -359,6 +363,31 @@ test('Investigate -> AwaitPlan still transitions with an answered record and ech
       { plan: prior.plan, planVersion: prior.planVersion, replanCount: prior.replanCount },
     );
   }
+
+  // The only difference from the accepted pair above is the dropped record: the record lifecycle (§8)
+  // refuses it, so the transition cannot shed the record on its way out of the pair.
+  assert.ok(transitionCodes(prior, { ...next, clarification: undefined }).includes('CLARIFICATION_RECORD_ALTERED'), 'dropped record');
+});
+
+test('a record cannot be shed outside the pair, so a later ask cannot restart at round 1', (): void => {
+  const plan = createPlan();
+  const state = createValidTaskState('Investigate', 4);
+  const record = createRecord(state);
+  const answered: ClarificationRecord = { ...record, answer: createAnswer(record, 5) };
+  const prior: TaskState = { ...state, plan, clarification: answered };
+
+  // AwaitPlan dropping the record is the route that would otherwise let a later Investigate -> NeedsInfo
+  // derive round = (undefined ?? 0) + 1 = 1 and reset the per-task cap of three.
+  assert.ok(transitionCodes(prior, { ...prior, stateVersion: 5, node: 'AwaitPlan', clarification: undefined }).includes('CLARIFICATION_RECORD_ALTERED'));
+
+  // A different but self-consistent record is refused as an alteration too, so the guard is about the
+  // pair's write monopoly, not just a nil check.
+  assert.ok(transitionCodes(prior, { ...prior, stateVersion: 5, node: 'AwaitPlan', clarification: createRecord(prior, 2) }).includes('CLARIFICATION_RECORD_ALTERED'), 'replaced record');
+
+  // The consequence: an Investigate state with no record does accept a round-1 ask, so a shed record
+  // really would restart the cap. Only the refusal above keeps that state unreachable.
+  const bare = createValidTaskState('Investigate', 4);
+  assert.equal(validateStateTransition(bare, { ...bare, stateVersion: 5, node: 'NeedsInfo', clarification: createRecord(bare) }).ok, true);
 });
 
 test('CLARIFICATION_ROUND_CAP is 3 and round 4 is refused', (): void => {
@@ -497,10 +526,11 @@ function graphState(task: BugTask, state: TaskState): UC03GraphState {
   };
 }
 
-test('a request-info proposal at Investigate persists the bound record and pauses with exactly one dispatch', async () => {
+/** A controlled route whose coder always asks for info, so the Investigate ask path is the only effect. */
+async function requestInfoRoute(seedOverrides: Partial<TaskState> = {}) {
   const route = createPendingApprovalRoute('pending');
   const { task, statePort, ports } = route;
-  const seeded = createGraphTaskState(task, { evidenceRefs: ['src/calculator.py'] });
+  const seeded = createGraphTaskState(task, { evidenceRefs: ['src/calculator.py'], ...seedOverrides });
   await seedGraphTaskState(statePort, seeded);
 
   const dispatches: string[] = [];
@@ -534,7 +564,13 @@ test('a request-info proposal at Investigate persists the bound record and pause
     coderAdmission: coderAdmission(statePort),
   };
 
-  const result = await createInvestigateNode(ports, config)(graphState(task, seeded));
+  return { task, statePort, seeded, dispatches, agent, run: () => createInvestigateNode(ports, config)(graphState(task, seeded)) };
+}
+
+test('a request-info proposal at Investigate persists the bound record and pauses with exactly one dispatch', async () => {
+  const { task, statePort, seeded, dispatches, agent, run } = await requestInfoRoute();
+
+  const result = await run();
 
   assert.equal(result.terminalOutcome, 'needs-info', result.reasons?.join(' | '));
   assert.equal(result.state?.node, 'NeedsInfo');
@@ -564,6 +600,22 @@ test('a request-info proposal at Investigate persists the bound record and pause
 
   assert.equal(dispatches.length, 1, 'exactly one model dispatch');
   assert.equal(agent.counters.modelCalls, 1);
+});
+
+test('an exhausted round budget stops the Investigate node as a typed refusal, not an escaping throw', async () => {
+  // Round 3 is already answered, so the coder's ask would be round 4. The node must refuse *before*
+  // the write: without that pre-check the producer's throw escapes the node and the graph runner
+  // reports an unconfirmed owner transition instead of this reason.
+  const probe = createGraphTaskState(createPendingApprovalRoute('pending').task);
+  const usedRecord = createRecord(probe, CLARIFICATION_ROUND_CAP);
+  const { dispatches, run } = await requestInfoRoute({ clarification: { ...usedRecord, answer: createAnswer(usedRecord, 7) } });
+
+  const result = await run();
+
+  assert.equal(result.terminalOutcome, 'INCOMPLETE');
+  assert.match(result.reasons?.join(' | ') ?? '', /CLARIFICATION_ROUND_EXCEEDED/u);
+  assert.equal(result.state?.clarification?.round, CLARIFICATION_ROUND_CAP, 'the used record is preserved, not rewritten');
+  assert.equal(dispatches.length, 1, 'the model was still consulted once before the refusal');
 });
 
 /* ------------------------------------------------------------------
@@ -627,6 +679,25 @@ test('askClarification replay returns the prior state unchanged and issues no ow
   assert.equal(replay.replayed, true);
   assert.equal(replay.state, first.state, 'a replay returns the very same reference, not a rewrite');
   assert.equal(writes.length, 1, 'a replay issues no second write');
+});
+
+test('askClarification refuses a fourth round before the port, and still replays the third', async (): Promise<void> => {
+  const base = createValidTaskState('Investigate', 6);
+  const third = createRecord(base, CLARIFICATION_ROUND_CAP);
+  const prior: TaskState = { ...base, clarification: { ...third, answer: createAnswer(third, 7) } };
+  const writes: TaskState[] = [];
+  const port = producerPort(prior, writes);
+
+  // A new ask is a fourth round. It must refuse here: if the cap only lived in the validator, the throw
+  // would escape `createInvestigateNode` and be reported as an unconfirmed owner transition instead.
+  await assert.rejects(askClarification({ statePort: port, prior, proposal: requestInfoProposal([createQuestion('a different ask')]) }), /CLARIFICATION_ROUND_EXCEEDED/u);
+  assert.equal(writes.length, 0, 'a refused round issues no owner write');
+
+  // At the cap but not a new round: the same ask replayed writes nothing and is not refused.
+  const replay = await askClarification({ statePort: port, prior, proposal: requestInfoProposal([createQuestion()]) });
+  assert.equal(replay.replayed, true);
+  assert.equal(replay.state, prior);
+  assert.equal(writes.length, 0);
 });
 
 test('recordClarificationAnswer: a partial answer is refused by the producer, not merely by the validator', async (): Promise<void> => {

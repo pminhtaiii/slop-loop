@@ -6,6 +6,7 @@
  * caller that knows the field values can compute a self-consistent record (§8).
  */
 import {
+  CLARIFICATION_ROUND_CAP,
   computeClarificationAnswerDigest,
   computeClarificationQuestionDigest,
   computeClarificationQuestionId,
@@ -17,8 +18,7 @@ import {
 import type { CoderProposal } from './agent-types.ts';
 import { transitionState } from './graph-transitions.ts';
 
-/** The single source of the round bound; the transition guard enforces the same number. */
-export const CLARIFICATION_ROUND_CAP = 3;
+export { CLARIFICATION_ROUND_CAP };
 
 export type ClarificationPort = Pick<StatePort, 'loadTask' | 'transition'>;
 
@@ -31,26 +31,17 @@ function sameQuestions(left: readonly { readonly questionId: string; readonly te
   return left.length === right.length && left.every((item, index) => item.questionId === right[index]?.questionId && item.text === right[index]?.text);
 }
 
-/**
- * Persist the asked record. A replay re-derives both ids from the record's own fields — including its
- * stored `askedAtStateVersion` — and returns the prior state without touching the port.
- */
-export async function askClarification(input: {
-  readonly statePort: ClarificationPort;
-  readonly prior: TaskState;
-  readonly proposal: Extract<CoderProposal, { kind: 'request-info' }>;
-}): Promise<ClarificationWrite> {
-  const questions = input.proposal.questions.map(question => ({ questionId: question.questionId, text: question.text }));
-  const evidenceRefs = [...input.proposal.evidenceRefs];
-  const existing = input.prior.clarification;
-
-  if (
-    existing &&
-    computeClarificationQuestionId({ taskId: input.prior.taskId, runId: input.prior.runId, round: existing.round, questions: existing.questions, evidenceRefs: existing.evidenceRefs }) ===
-      existing.questionId &&
+/** The record on `prior` already answers this exact ask, re-derived from its own stored fields. */
+function isClarificationReplay(prior: TaskState, proposal: Extract<CoderProposal, { kind: 'request-info' }>): boolean {
+  const existing = prior.clarification;
+  if (!existing) return false;
+  const questions = proposal.questions.map(question => ({ questionId: question.questionId, text: question.text }));
+  const evidenceRefs = [...proposal.evidenceRefs];
+  return (
+    computeClarificationQuestionId({ taskId: prior.taskId, runId: prior.runId, round: existing.round, questions: existing.questions, evidenceRefs: existing.evidenceRefs }) === existing.questionId &&
     computeClarificationQuestionDigest({
-      taskId: input.prior.taskId,
-      runId: input.prior.runId,
+      taskId: prior.taskId,
+      runId: prior.runId,
       askedAtStateVersion: existing.askedAtStateVersion,
       round: existing.round,
       questionId: existing.questionId,
@@ -60,7 +51,36 @@ export async function askClarification(input: {
     sameQuestions(existing.questions, questions) &&
     existing.evidenceRefs.length === evidenceRefs.length &&
     existing.evidenceRefs.every((ref, index) => ref === evidenceRefs[index])
-  ) {
+  );
+}
+
+/**
+ * Why a *new* ask is refused, or `undefined` when it is allowed. A replay of the record already at the
+ * cap is not a new round and issues no write, so it stays allowed. Callers refuse before the port call,
+ * which is why this is a predicate rather than the throw inside `askClarification`.
+ */
+export function clarificationRoundRefusal(prior: TaskState, proposal: Extract<CoderProposal, { kind: 'request-info' }>): string | undefined {
+  if (isClarificationReplay(prior, proposal)) return undefined;
+  const asked = prior.clarification?.round ?? 0;
+  return asked < CLARIFICATION_ROUND_CAP ? undefined : `CLARIFICATION_ROUND_EXCEEDED: the record has used ${asked} of ${CLARIFICATION_ROUND_CAP} rounds`;
+}
+
+/**
+ * Persist the asked record. A replay re-derives both ids from the record's own fields — including its
+ * stored `askedAtStateVersion` — and returns the prior state without touching the port.
+ */
+export async function askClarification(input: {
+  readonly statePort: ClarificationPort;
+  readonly prior: TaskState;
+  readonly proposal: Extract<CoderProposal, { kind: 'request-info' }>;
+}): Promise<ClarificationWrite> {
+  const refusal = clarificationRoundRefusal(input.prior, input.proposal);
+  if (refusal !== undefined) throw new Error(refusal);
+  const questions = input.proposal.questions.map(question => ({ questionId: question.questionId, text: question.text }));
+  const evidenceRefs = [...input.proposal.evidenceRefs];
+  const existing = input.prior.clarification;
+
+  if (isClarificationReplay(input.prior, input.proposal)) {
     return { state: input.prior, replayed: true };
   }
 

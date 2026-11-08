@@ -5,7 +5,7 @@ import { createRepairActionId, createTrustedRepairContext, executeRepair } from 
 import type { UC03GraphConfig, UC03GraphPorts } from './graph-types.ts';
 import type { UC03GraphNode, UC03GraphState } from './graph-state.ts';
 import { generate, generationRefusal, generates } from './graph-generation.ts';
-import { askClarification } from './clarification.ts';
+import { askClarification, clarificationRoundRefusal } from './clarification.ts';
 
 import { addMilestone, currentPlanBindingDigest, resolveExecutionGuard, samePaths, trustedExpectedContext, trustedOwnerStateMatches, validSettledPatchEvidence } from './graph-validation.ts';
 import { reloadAuthoritativeState, transitionState } from './graph-transitions.ts';
@@ -58,6 +58,9 @@ export function createInvestigateNode(ports: UC03GraphPorts, config?: UC03GraphC
         // The claim committed the coder reservations without bumping stateVersion, as for the plan write.
         const postClaim = await reloadAuthoritativeState(postBaseline.state, ports.statePort, { allowAccountingChange: true });
         if (!postClaim.ok) return { state: postBaseline.state, terminalOutcome: 'INCOMPLETE' as const, reasons: [postClaim.reason] };
+        // Rounds are exhausted: refuse here, so the producer's throw never becomes an unconfirmed transition.
+        const roundRefusal = clarificationRoundRefusal(postClaim.state, generated.proposal);
+        if (roundRefusal !== undefined) return { state: postClaim.state, terminalOutcome: 'INCOMPLETE' as const, reasons: [roundRefusal] };
         const asked = await askClarification({ statePort: ports.statePort, prior: postClaim.state, proposal: generated.proposal });
         return { state: asked.state, terminalOutcome: 'needs-info' as const, reasons: ['Task paused on a bound coder question'] };
       }

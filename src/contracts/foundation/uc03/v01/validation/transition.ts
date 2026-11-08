@@ -303,6 +303,9 @@ export function validateStateTransition(priorState: unknown, nextState: unknown,
       fail('clarification', 'CLARIFICATION_ANSWER_SUBSTITUTED', 'The answered record must be the same record it answers');
   } else if (prior.node === 'NeedsInfo' && next.node === 'Validate' && prior.clarification !== undefined) {
     fail('clarification', 'CLARIFICATION_BYPASS_REFUSED', 'A paused task cannot abandon its open question through Validate');
+  } else if (canonicalJsonStringify(prior.clarification) !== canonicalJsonStringify(next.clarification)) {
+    // §8 record lifecycle: only the pair writes the record, so every other edge must carry it byte-identically.
+    fail('clarification', 'CLARIFICATION_RECORD_ALTERED', 'Only the Investigate/NeedsInfo pair may write or replace the clarification record');
   }
 
   // 6. Material Replan Limits & Replenishment Prohibition

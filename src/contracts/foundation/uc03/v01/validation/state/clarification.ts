@@ -1,6 +1,7 @@
 /** Host-composition §8 clarification record validation, split out of `state/task.ts` to keep that module bounded. */
 
 import { computeClarificationAnswerDigest, computeClarificationQuestionDigest, computeClarificationQuestionId } from '../../../identity.ts';
+import { CLARIFICATION_ROUND_CAP } from '../../clarification-types.ts';
 import type { ClarificationAnswer, ClarificationQuestion, ClarificationRecord, ValidationError } from '../../types.ts';
 import { isPlainObject, rejectUnknownKeys, validatePositiveInteger } from '../common.ts';
 
@@ -82,8 +83,8 @@ export function validateClarification(
   const questionDigest = validateRawString(input['questionDigest'], `${path}.questionDigest`, errors);
   const askedAtStateVersion = validatePositiveInteger(input['askedAtStateVersion'], `${path}.askedAtStateVersion`, errors);
   const round = validatePositiveInteger(input['round'], `${path}.round`, errors);
-  if (round !== undefined && round > 3) {
-    errors.push({ path: `${path}.round`, code: 'CLARIFICATION_ROUND_EXCEEDED', message: 'Clarification round cannot exceed 3' });
+  if (round !== undefined && round > CLARIFICATION_ROUND_CAP) {
+    errors.push({ path: `${path}.round`, code: 'CLARIFICATION_ROUND_EXCEEDED', message: `Clarification round cannot exceed ${CLARIFICATION_ROUND_CAP}` });
   }
   const questions = validateClarificationItems(input['questions'], `${path}.questions`, errors);
   const evidenceRefs = validateClarificationRefs(input['evidenceRefs'], `${path}.evidenceRefs`, errors);

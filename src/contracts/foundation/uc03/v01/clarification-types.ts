@@ -1,5 +1,8 @@
 /** Host-composition §8 bound clarification record, split out of `types.ts` to keep that module bounded. */
 
+/** The round bound, held here so the validator and the producer cannot drift apart. */
+export const CLARIFICATION_ROUND_CAP = 3;
+
 /** A bounded coder question persisted so the record can be verified from `TaskState` alone. */
 export interface ClarificationQuestion {
   readonly questionId: string;
