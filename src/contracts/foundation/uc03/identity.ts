@@ -1,7 +1,7 @@
 /** Canonical identity, repository path, and protected-path rules. */
 
 import { createHash } from 'node:crypto';
-import type { CheckDefinition, CommandView, NormalizedAction } from './v01/types.ts';
+import type { CheckDefinition, ClarificationQuestion, CommandView, NormalizedAction } from './v01/types.ts';
 
 export function canonicalJsonStringify(val: unknown): string {
   if (val === null || typeof val !== 'object') {
@@ -25,6 +25,33 @@ export function computeCanonicalSha256(val: unknown): string {
   const json = canonicalJsonStringify(val);
   const hash = createHash('sha256').update(json, 'utf8').digest('hex');
   return `sha256:${hash}`;
+}
+
+/** Clarification question identity: bound to task/run/round/content, never to the asking version (§8). */
+export function computeClarificationQuestionId(input: {
+  readonly taskId: string;
+  readonly runId: string;
+  readonly round: number;
+  readonly questions: readonly ClarificationQuestion[];
+  readonly evidenceRefs: readonly string[];
+}): string {
+  return computeCanonicalSha256(input).slice(0, 39);
+}
+
+export function computeClarificationQuestionDigest(input: {
+  readonly taskId: string;
+  readonly runId: string;
+  readonly askedAtStateVersion: number;
+  readonly round: number;
+  readonly questionId: string;
+  readonly questions: readonly ClarificationQuestion[];
+  readonly evidenceRefs: readonly string[];
+}): string {
+  return computeCanonicalSha256(input);
+}
+
+export function computeClarificationAnswerDigest(input: { readonly questionDigest: string; readonly recorderRef: string; readonly items: readonly ClarificationQuestion[] }): string {
+  return computeCanonicalSha256(input);
 }
 
 export function computeActionDigest(action: NormalizedAction): string {

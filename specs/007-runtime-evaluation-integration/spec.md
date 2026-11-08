@@ -2,7 +2,7 @@
 
 **Feature Branch**: `feat/uc03-evaluation-integration-plan`
 **Created**: 2026-11-01 (Asia/Saigon)
-**Status**: T001–T011 retain their recorded controlled implementation release. The 2026-11-04 host-composition remediation went through planning and then an explicit separate release for T020–T034, source and controlled-tier tests only; [decisions and gates](contracts/decisions.md) own authorization and the planning step is superseded for implementation.
+**Status**: T001–T011 retain their recorded controlled implementation release. The 2026-11-04 host-composition remediation went through planning and then an explicit separate release for T020–T034, source and controlled-tier tests only; [decisions and gates](contracts/decisions.md) own authorization and the planning step is superseded for implementation. The 2026-11-07 clarification and isolation-binding amendments ([host contract](contracts/host-composition.md) §8–9) close the two recorded contract gaps; they extend T025/T026 and release no owner delivery, real execution or merge.
 **Input**: Integrate the existing coding workflow and evaluator, exercise real Python fixes, expose where agents/tools struggle, and provide a local interactive interface. User selects DeepSeek Flash through the Anthropic-compatible API, configures their environment, and requests no user-set spend cap or early cost optimization.
 
 ## User Scenarios & Testing *(mandatory)*

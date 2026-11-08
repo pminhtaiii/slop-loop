@@ -1,6 +1,7 @@
 import type { CommandView, TaskWorkspace } from '../contracts/foundation/uc03.ts';
 import { validateTaskWorkspace } from '../contracts/foundation/uc03.ts';
 import { buildDockerCommandView } from './docker-view-builder.ts';
+import type { CommandViewOwnerBindingParams, IssuedCommandView } from './docker-view-builder.ts';
 import { StructuredCommandExecutor } from './docker-command-executor.ts';
 import { computeWorkspaceVolumeIds, isValidFencingGeneration, SHA256_HEX_REGEX, validateDockerProfile } from './docker-workspace-policy.ts';
 import type {
@@ -324,6 +325,11 @@ export class DockerWorkspaceManager {
   }
 
   async admitCommandView(params: AdmitCommandViewParams): Promise<CommandView> {
+    const { view } = await this.admitMeasuredCommandView(params);
+    return view;
+  }
+
+  admitMeasuredCommandView(params: CommandViewOwnerBindingParams): Promise<IssuedCommandView> {
     return buildDockerCommandView(params, this.controller, {
       getWorkspace: workspaceId => this.getWorkspace(workspaceId),
       getCanonicalRevision: workspaceId => this.getCanonicalRevision(workspaceId),

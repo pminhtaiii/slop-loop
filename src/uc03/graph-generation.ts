@@ -38,9 +38,16 @@ export function generates(config: UC03GraphConfig | undefined): config is UC03Gr
   return (config?.mode === 'production' || config?.mode === 'controlled') && (config.generation !== undefined || config.generationV02 !== undefined);
 }
 
-/** What the owner binds the coder request to: this task/run/state, this purpose, this evidence. */
+/** What the owner binds the coder request to: this task/run/state, this purpose, this evidence, and the answer the state carries. */
 export function coderContextDigest(task: BugTask, state: TaskState, purpose: CoderPurpose, evidence: readonly SourceEvidence[]): string {
-  return computeCanonicalSha256({ taskId: task.taskId, runId: state.runId, stateVersion: state.stateVersion, purpose, evidence: evidence.map(item => item.path) });
+  return computeCanonicalSha256({
+    taskId: task.taskId,
+    runId: state.runId,
+    stateVersion: state.stateVersion,
+    purpose,
+    evidence: evidence.map(item => item.path),
+    clarification: state.clarification?.answer?.answerDigest,
+  });
 }
 
 export type CoderPurpose = 'propose-plan' | 'propose-patch' | 'propose-repair' | 'propose-replan';
