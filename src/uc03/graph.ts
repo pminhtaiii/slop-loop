@@ -100,6 +100,7 @@ function createWorkflowApp(ports: UC03GraphPorts, config?: UC03GraphConfig) {
     return routeFromPersistedNode(state.state?.node);
   });
   workflow.addConditionalEdges('Investigate', (state: UC03GraphState) => {
+    if (state.terminalOutcome === 'needs-info') return END;
     if (state.terminalOutcome) return 'Incomplete';
     return routeFromPersistedNode(state.state?.node, 'Incomplete');
   });
