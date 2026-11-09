@@ -44,7 +44,7 @@ The local gate remains available with `--mode full` when deliberately requested:
 
 Push-only records its reason and candidate, keeps `localVerifiedHead` separate from `publishedHead`, and reports `localGateStatus: "skipped"`. Completion revalidates retained push-only provenance and independent current-head CI; a skip is never a local pass. Required CI, app links, review receipts, paired identity and clean revision remain unchanged. The tracked-file guard excludes installed dependencies and root verification archives; tracked lockfiles are permitted. `publish` measures the development diff, combines branch and summary as the title, and rejects other bases.
 
-CI code lanes bootstrap the packageManager-pinned pnpm through the npm registry with repository installation disabled, then install dependencies separately with the frozen lockfile. The Gitleaks downloader retries only HTTP 408, 429 and 5xx responses, up to four attempts with 30-second request timeouts; checksum validation and scan findings still fail closed.
+CI code lanes bootstrap the packageManager-pinned pnpm through the npm registry with repository installation disabled, then install dependencies separately with the frozen lockfile. The Gitleaks downloader retries only transient failures — HTTP 408, 429 and 5xx responses plus transport errors such as a refused connection, a timeout or a truncated body — across five attempts with 30-second request timeouts and a 1/2/4/8-second backoff, naming the exhausted cause in its error; checksum validation and scan findings still fail closed.
 
 Refresh the body after each repair so its summary and evidence describe the latest head. `publish` is the authorized remote-write path for this pilot.
 

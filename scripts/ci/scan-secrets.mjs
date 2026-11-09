@@ -273,15 +273,33 @@ export function parseScanArgs(argv) {
   return args;
 }
 
-// Retry transient HTTP failures only; version and checksum admission still happen after download.
+// The release CDN has failed a whole scan step with bursts of 5xx, so the budget has to outlast a
+// ~30-second outage, not just a single dropped connection.
+const RETRY_WAITS_MS = [1000, 2000, 4000, 8000];
+const TRANSIENT_STATUS = status => status === 408 || status === 429 || (status >= 500 && status <= 599);
+
+async function fetchOnce(url, request) {
+  try {
+    const response = await request(url, { redirect: 'follow', signal: AbortSignal.timeout(30_000) });
+    if (response.ok) return { bytes: Buffer.from(await response.arrayBuffer()) };
+    await response.body?.cancel();
+    return TRANSIENT_STATUS(response.status) ? { failure: `HTTP ${response.status}` } : { permanent: `HTTP ${response.status}` };
+  } catch (error) {
+    // A refused, timed-out or truncated transfer is as transient as a 5xx; undici hides the real
+    // cause code one level down, so read both before falling back to a generic label.
+    return { failure: error.code ?? error.cause?.code ?? error.name ?? 'transport error' };
+  }
+}
+
+// Retry transient HTTP and transport failures only; version and checksum admission still happen after
+// download. The cause is named in the message because the CI log is the only place it surfaces.
 export async function download(url, { request = fetch, wait = delay } = {}) {
   for (let attempt = 0; ; attempt++) {
-    const response = await request(url, { redirect: 'follow', signal: AbortSignal.timeout(30_000) });
-    if (response.ok) return Buffer.from(await response.arrayBuffer());
-    const transient = response.status === 408 || response.status === 429 || (response.status >= 500 && response.status <= 599);
-    if (!transient || attempt === 3) throw Object.assign(new Error('download failed'), { code: `HTTP ${response.status}` });
-    await response.body?.cancel();
-    await wait(1000 * 2 ** attempt);
+    const outcome = await fetchOnce(url, request);
+    if (outcome.bytes) return outcome.bytes;
+    if (outcome.permanent) throw Object.assign(new Error(`download failed: ${outcome.permanent}`), { code: outcome.permanent });
+    if (attempt === RETRY_WAITS_MS.length) throw Object.assign(new Error(`download failed: ${outcome.failure}`), { code: outcome.failure });
+    await wait(RETRY_WAITS_MS[attempt]);
   }
 }
 
