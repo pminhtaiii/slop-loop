@@ -441,6 +441,10 @@ test('every other NeedsInfo/Investigate exit and every terminal-node exit stays 
  * ------------------------------------------------------------------ */
 
 const AGENT_BUDGET = { maxModelCalls: 4, maxActiveMs: 60_000, maxRepairs: 1, maxReplans: 1 };
+// The one ask the fixture agent proposes. A record built from it is a replay; change it here and the
+// replay tests stop being replays. Tests that assert the record's content spell it out literally
+// instead — comparing against this const would make that round-trip assertion tautological.
+const FIXTURE_QUESTION = { questionId: 'q-1', text: 'Which exception type should divide() raise for a zero denominator?' };
 
 /** Owner-issued coder admission bound to the current state, as the route documents. */
 function coderAdmission(statePort: MemoryStatePortV02): UC03CoderAdmissionResolver {
@@ -545,7 +549,7 @@ async function requestInfoRoute(seedOverrides: Partial<TaskState> = {}) {
             content: JSON.stringify({
               kind: 'request-info',
               proposalId: 'prop-info-1',
-              questions: [{ questionId: 'q-1', text: 'Which exception type should divide() raise for a zero denominator?' }],
+              questions: [FIXTURE_QUESTION],
               evidenceRefs: ['src/calculator.py'],
             }),
           },
@@ -616,6 +620,31 @@ test('an exhausted round budget stops the Investigate node as a typed refusal, n
   assert.match(result.reasons?.join(' | ') ?? '', /CLARIFICATION_ROUND_EXCEEDED/u);
   assert.equal(result.state?.clarification?.round, CLARIFICATION_ROUND_CAP, 'the used record is preserved, not rewritten');
   assert.equal(dispatches.length, 1, 'the model was still consulted once before the refusal');
+});
+
+test('a replayed ask on an already-answered record is refused and issues no state transition', async () => {
+  // The record answers the coder's exact ask, which is what makes this a replay. This is an unreachable
+  // state by construction — §8 writes the answer through NeedsInfo -> Investigate, so a real answered
+  // record sits above version 1 with `answeredAtStateVersion` one past its ask. The replay check keys on
+  // the ask's identity fields, so the branch under test is reached correctly; but do not read this
+  // fixture as how an answered record comes to exist.
+  // Node-level only: `run` invokes the node directly, so this proves the refusal, the unchanged record
+  // and the single dispatch — never the graph edge. No task currently owns that graph-level witness.
+  // The one dispatch already claimed the coder reservation before the refusal; the node itself writes
+  // no record and no transition.
+  const probe = createGraphTaskState(createPendingApprovalRoute('pending').task);
+  const record = createRecord(probe, 1, [FIXTURE_QUESTION], ['src/calculator.py']);
+  const { task, statePort, seeded, dispatches, run } = await requestInfoRoute({ clarification: { ...record, answer: createAnswer(record, probe.stateVersion) } });
+
+  const result = await run();
+
+  assert.equal(result.terminalOutcome, 'INCOMPLETE', 'an answered replay is a refusal, not a pause');
+  assert.match(result.reasons?.join(' | ') ?? '', /no question is open to pause on/u);
+  assert.equal(result.state?.node, 'Investigate');
+  assert.deepEqual(result.state?.clarification, seeded.clarification, 'the answered record is carried unchanged');
+  assert.equal(result.state?.stateVersion, seeded.stateVersion, 'the replay issues no owner write');
+  assert.deepEqual(await statePort.loadTask(task.taskId), result.state);
+  assert.equal(dispatches.length, 1, 'the model was still consulted once');
 });
 
 /* ------------------------------------------------------------------
