@@ -397,6 +397,64 @@ test('driver blocks before dispatch on an unknown case or a missing pinned diges
   assert.deepEqual(calls, []);
 });
 
+test('driver refuses a controlled route outside mock mode before dispatch', async () => {
+  const route = createPendingApprovalRoute();
+  const routeReads: string[] = [];
+  // Reading either route member is the dispatch attempt; a refusal must never happen after it.
+  // The v0.1 route stands in for the v0.2 shape because neither member is read on this path.
+  const controlled = {
+    get ports() {
+      routeReads.push('ports');
+      return route.ports;
+    },
+    get config() {
+      routeReads.push('config');
+      return route.config;
+    },
+  } as unknown as NonNullable<WorkflowCaseHost['controlled']>;
+  const driver = createWorkflowDriver(new Map([['C05', { entry: catalogEntryFor('C05', route.task), task: route.task, controlled, expectedWait: null }]]));
+
+  const observation = validateWorkflowObservation(await driver.executeCase(observationContext('C05').spec, { ...observationContext('C05'), mode: 'real' }));
+
+  assert.equal(observation.blocked, 'prerequisite-unavailable');
+  assert.equal(observation.effects, 'none');
+  assert.equal(observation.workflowOutcome, 'not-observed');
+  assert.equal(observation.taskId, null);
+  assert.equal(observation.runId, null);
+  assert.equal(observation.usage, 'unavailable');
+  assert.match(observation.diagnostic ?? '', /CONTROLLED_ROUTE_ONLY/u);
+  assert.deepEqual(observation.limitations, ['Preflight block CONTROLLED_ROUTE_ONLY; no graph dispatch occurred.']);
+  assert.deepEqual(routeReads, []);
+});
+
+test('driver refuses a host with no route before dispatch', async () => {
+  const route = createPendingApprovalRoute();
+  const routeReads: string[] = [];
+  // Only the default-route call reads `config`; a preflight block must not reach it.
+  const host: WorkflowCaseHost = {
+    entry: catalogEntryFor('C06', route.task),
+    task: route.task,
+    expectedWait: null,
+    get config() {
+      routeReads.push('config');
+      return route.config;
+    },
+  };
+  const driver = createWorkflowDriver(new Map([['C06', host]]));
+
+  const observation = validateWorkflowObservation(await driver.executeCase(observationContext('C06').spec, observationContext('C06')));
+
+  assert.equal(observation.blocked, 'prerequisite-unavailable');
+  assert.equal(observation.effects, 'none');
+  assert.equal(observation.workflowOutcome, 'not-observed');
+  assert.equal(observation.taskId, null);
+  assert.equal(observation.runId, null);
+  assert.equal(observation.usage, 'unavailable');
+  assert.match(observation.diagnostic ?? '', /MISSING_ROUTE/u);
+  assert.deepEqual(observation.limitations, ['Preflight block MISSING_ROUTE; no graph dispatch occurred.']);
+  assert.deepEqual(routeReads, []);
+});
+
 test('observation validation rejects an extra key', async () => {
   const route = createPendingApprovalRoute();
   await seedGraphTaskState(route.statePort, createGraphTaskState(route.task));
