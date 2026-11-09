@@ -4,7 +4,11 @@ These standards apply to the slop-loop runtime written in <!-- context-fact: run
 
 ## Engineering discipline
 
-Before changing code, establish the task scope and relevant repository evidence. Implement the smallest readable solution that meets the requirements. Reuse existing helpers before adding dependencies, and avoid speculative abstractions. Add comments to explain non-obvious reasons or constraints, not to restate the code.
+Before changing code, establish the task scope and relevant repository evidence. Implement the smallest readable solution that meets the requirements. Reuse existing helpers before adding dependencies, and avoid speculative abstractions. Use comments as navigation and contract summaries: help a reader decide whether a module or function is relevant before reading its implementation. For a module whose responsibility or boundaries are not clear from its name and exports, add a short file header stating what it owns, its main entry points, and important effects or constraints. Keep headers about responsibilities rather than inventories of every function.
+
+Use JSDoc on public functions and types when names and signatures leave important behavior implicit. Summarize purpose and the applicable input constraints, outcomes, side effects, refusal behavior, and replay semantics so callers can understand the contract without reading the body. Straightforward private helpers and transparent exports need no ceremonial docstring. Add inline comments only for a non-obvious reason, invariant, or constraint; editing code alone does not require adding comments.
+
+Keep summaries accurate when behavior changes. Describe forwarding wrappers as forwarding, and claim assembly, validation, or execution only where it occurs. Prefer one authoritative explanation with a pointer over repeated prose. Reviewers check documentation sufficiency and correctness at meaningful boundaries, rather than counting comments or requiring a docstring percentage. Comments support navigation; changes and verification claims still require inspecting the relevant implementation.
 
 ## Types and boundaries
 
@@ -26,7 +30,7 @@ A public wrapper that only forwards across a port is an intentional boundary: pa
 
 Define graph state with explicit types and fields needed for transitions, recovery, and verification. Validate node inputs and restored checkpoints at runtime. Nodes return typed partial updates for fields they own; avoid shared-state mutation or silently overwriting unrelated fields. Keep reducers and merge behavior explicit for fields that can receive multiple updates.
 
-Keep node logic deterministic where practical, and route tool, provider, and persistence side effects through explicit boundaries. Retry only transient failures, and only when an operation is idempotent or guarded against duplicate effects; never blindly retry mutations or permission denials. Check cancellation, bound timeouts and retry counts, and clean up resources in `finally` or equivalent. Checkpointing may replay nodes, so in-memory flags cannot prevent duplicate effects. See [State and memory](state_and_memory.md) for recovery requirements.
+Keep node logic deterministic where practical, and route tool, provider, and persistence side effects through explicit boundaries. Retry only transient failures, and only when an operation is idempotent or guarded against duplicate effects; never blindly retry mutations or permission denials. Check cancellation, bound timeouts and retry counts, and clean up resources in `finally` or equivalent. Checkpointing may replay nodes, so in-memory flags cannot prevent duplicate effects. For each replay branch, make the next state or terminal outcome explicit and account for repeated effects. A branch that leaves the node and domain counter unchanged must pause, terminate, or use an explicit domain bound before repeating costly work; the framework recursion limit alone does not establish that bound. See [State and memory](state_and_memory.md) for recovery requirements.
 
 ## Outcomes, failures, and logs
 

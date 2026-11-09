@@ -79,7 +79,7 @@ node scripts/agents/agent-context.mjs snapshot --files <repo-relative-path>... [
 node scripts/agents/agent-context.mjs verify --snapshot <snapshot.json> [--root <checkout>]
 ```
 
-Verify the snapshot against the same checkout before relying on review findings. Keep Standards and Spec reviews independent. Maintain a shared finding ledger with each finding's ID, reproducer, regression coverage, disposition, and current SHA. When a candidate changes, rerun only the affected review axis; reuse another axis only after verifying its reviewed input hashes still match the candidate. Final acceptance may consume only pinned, verified reports.
+Before dispatch and reuse, verify snapshots in the intended checkout; match the brief's base, target and diff to the candidate and scope. After ledger or authorization edits, reassess scope and refresh snapshot/factory bindings; hashes alone do not prove authorization. Keep Standards and Spec independent. Track each finding's ID, reproducer, regression coverage, disposition and current SHA. On candidate changes, rerun affected axes; reuse others only after verifying their input hashes against the candidate. Accept only pinned, verified reports.
 
 ### Skill evaluation evidence
 

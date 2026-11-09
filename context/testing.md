@@ -24,12 +24,15 @@ Use the repository's established test and quality commands. Read `AGENTS.md`, pr
 - Acceptance evidence checks the returned outcome and persisted state separately; a passing command does not establish acceptance when either result is wrong.
 - On refusal or denial, assert zero effects: persisted state is unchanged and no downstream port, tool, or external effect runs.
 - For a public port-only wrapper, verify that it forwards the expected input, preserves the returned outcome, and adds no policy or side effect.
-- When changed logic spans a meaningful predecessor-to-successor transition, cover at least one such flow; do not test every graph edge or trivial edit.
+- When changed logic spans a meaningful predecessor-to-successor transition, cover at least one such flow; do not test every graph edge or trivial edit. Test names, comments, and acceptance claims must match the exercised boundary: a node-factory test proves node behavior; graph routing requires invoking the graph through the relevant transition. If the required witness belongs to another task, record the gap, owner, and completion dependency; ownership or deferral does not establish a passing criterion.
+- For changed decisions, identify the behavior each regression protects and assert its observable outcome and relevant effects. Prefer meaningful behavioral coverage over a raw coverage percentage. Use a focused mutation check when it is unclear whether an assertion distinguishes the intended branch; a numeric mutation gate or tests for equivalent mutants are not required by this guidance.
 - For UC-03, select applicable boundary regressions for mixed-version input, missing authority, forged receipts, refusal with zero effects, and no-funds settlement. These are focused boundary evidence, not a per-task review or universal matrix.
 
 ## Reporting results
 
 Report exact commands and exit statuses, and distinguish passed, failed, and unrun checks. For criterion-level task evidence and handoff status, follow the [task-verification contract](../docs/agents/task-verification.md); explain why an applicable check was not run. A focused pass proves only the behavior it exercised.
+
+For focused mutation evidence, retain the exact mutation and confirm it changed the intended source before running the test. Check that it alters the targeted decision for the fixture, especially for compound conditions. Count a mutant as detected only when the relevant behavioral assertion fails; compilation, collection, or harness failures are inconclusive. A source edit that did not apply is an invalid experiment, not a surviving or detected mutant. Restore the original source, verify restoration, and rerun the focused check on the clean candidate. Keep mutant output separate from clean-candidate evidence.
 
 Task completion requires integrated implementation and passing applicable checks; feature completion also requires resolved test, convergence, and review gates. Historical or intentionally red runs do not establish current readiness.
 
