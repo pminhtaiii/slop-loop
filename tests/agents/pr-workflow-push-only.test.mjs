@@ -5,9 +5,9 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { runWorkflow, workflowSummary } from '../../scripts/agents/pr-workflow.mjs';
+import { assess, runWorkflow, workflowSummary } from '../../scripts/agents/pr-workflow.mjs';
 import { packageScriptCommand } from '../../scripts/agents/workflow-gate.mjs';
-import { checkout } from './support/pr-workflow-fixture.mjs';
+import { checkout, evidence } from './support/pr-workflow-fixture.mjs';
 
 const recordPath = root => join(root, '.agent-work/pr-workflow/010-tooling-example.json');
 const git = (root, ...args) => {
@@ -21,6 +21,30 @@ const gitAt = (cwd, ...args) => {
   return result.stdout.trim();
 };
 const gates = calls => calls.filter(call => call[0] === process.execPath || call[0] === packageScriptCommand('test:contributors').command);
+
+test('push-only readiness waits for exact-head regressions and exposes failures for repair', () => {
+  for (const name of ['build', 'contributor-tooling-tests', 'runtime-tests']) {
+    const e = evidence();
+    e.publicationMode = 'push-only';
+    e.checks = e.checks.filter(check => check.name !== name);
+    for (const regression of ['build', 'contributor-tooling-tests', 'runtime-tests'].filter(check => check !== name)) {
+      if (!e.checks.some(check => check.name === regression)) e.checks.push({ ...e.checks[0], id: e.checks.length + 10, name: regression });
+    }
+    assert.equal(assess(e).status, 'WAITING_CI', `missing ${name}`);
+    const check = { ...e.checks[0], id: 100, name, head_sha: 'b'.repeat(40) };
+    e.checks.push(check);
+    assert.equal(assess(e).status, 'WAITING_CI', `stale ${name}`);
+    check.head_sha = e.head;
+    check.status = 'in_progress';
+    assert.equal(assess(e).status, 'WAITING_CI', `pending ${name}`);
+    check.status = 'completed';
+    check.conclusion = 'failure';
+    assert.equal(assess(e).status, 'NEEDS_FIX', `failed ${name}`);
+    assert.ok(assess(e).failedChecks.some(failure => failure.name === name));
+    check.conclusion = 'success';
+    assert.equal(assess(e).status, 'READY_FOR_HUMAN');
+  }
+});
 
 test('push-only requires a non-empty reason before running commands', async t => {
   const f = await checkout(t);
@@ -192,6 +216,30 @@ test('push-only cannot complete from a failed primary current-head check', async
   f.e.checks[0].conclusion = 'failure';
 
   await assert.rejects(f.run('complete'), /Completion blocked: NEEDS_FIX/);
+});
+
+test('push-only CLI blocks completion and allows repair for a failed regression without review threads', async t => {
+  const f = await checkout(t);
+  await f.run('publish', '--body-file', f.body, '--mode', 'push-only', '--reason', 'CI runs the regression suites.', '--skip-review-request');
+  const path = recordPath(f.root);
+  const saved = JSON.parse(await readFile(path, 'utf8'));
+  saved.appLink = { url: saved.url, repository: 'example/project', number: saved.pr };
+  await writeFile(path, JSON.stringify(saved));
+  assert.deepEqual(f.e.pr.reviewThreads.nodes, []);
+  for (const name of ['build', 'contributor-tooling-tests', 'runtime-tests']) {
+    const check = f.e.checks.find(check => check.name === name);
+    check.status = 'in_progress';
+    await assert.rejects(f.run('complete'), /Completion blocked: WAITING_CI/);
+    check.status = 'completed';
+    check.conclusion = 'failure';
+    await assert.rejects(f.run('complete'), /Completion blocked: NEEDS_FIX/);
+    assert.ok((await f.run('status')).observation.failedChecks.some(check => check.name === name));
+    check.conclusion = 'success';
+  }
+  f.e.checks.find(check => check.name === 'runtime-tests').conclusion = 'failure';
+  const repair = await f.run('repair', '--reason', 'Runtime regression failed.');
+  assert.equal(repair.status, 'REPAIR_RESERVED');
+  assert.equal(repair.repairRounds.length, 1);
 });
 
 test('push-only recovers a paired partial publish without resetting provenance or querying submission CI', async t => {

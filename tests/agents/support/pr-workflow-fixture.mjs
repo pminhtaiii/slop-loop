@@ -16,7 +16,7 @@ const HEAD = 'a'.repeat(40);
 export const BODY =
   '## Summary\n\nStandardize tooling.\n\n## Evidence\n\nBefore: legacy behavior; after: verified checks.\n\n## Merge Danger\n\n**Door:** two-way; revert commit.\n\n**Blast Radius:** tooling; integration checks required.';
 
-export function evidence() {
+export function evidence({ includeRegressions = false } = {}) {
   return {
     head: HEAD,
     pr: {
@@ -30,7 +30,14 @@ export function evidence() {
       reviews: { pageInfo: { hasPreviousPage: false }, nodes: [{ author: { login: 'coderabbitai', __typename: 'Bot' }, state: 'APPROVED', commit: { oid: HEAD } }] },
       reviewThreads: { pageInfo: { hasNextPage: false }, nodes: [] },
     },
-    checks: requiredChecks.map((name, id) => ({ id, name, head_sha: HEAD, status: 'completed', conclusion: 'success', app: { slug: 'github-actions' } })),
+    checks: (includeRegressions ? [...requiredChecks, 'build', 'contributor-tooling-tests', 'runtime-tests'] : requiredChecks).map((name, id) => ({
+      id,
+      name,
+      head_sha: HEAD,
+      status: 'completed',
+      conclusion: 'success',
+      app: { slug: 'github-actions' },
+    })),
   };
 }
 
@@ -64,7 +71,7 @@ export async function checkout(t) {
   const body = join(root, '.agent-work/body.md');
   await writeFile(body, BODY);
   const head = git('rev-parse', 'HEAD');
-  const e = evidence();
+  const e = evidence({ includeRegressions: true });
   e.head = head;
   e.pr.headRefOid = head;
   e.pr.reviews.nodes[0].commit.oid = head;

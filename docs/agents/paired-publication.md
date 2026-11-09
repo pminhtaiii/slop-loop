@@ -7,10 +7,10 @@ The public `origin` repository is the review source of truth, including CodeRabb
 Follow the [branch and PR conventions](pr-conventions.md) for the shared feature branch, identical titles and PR descriptions. Use the existing publication command from the public checkout:
 
 ```powershell
-node scripts/agents/pr-workflow.mjs publish --base development --body-file <body.md> --summary "<short summary>"
+node scripts/agents/pr-workflow.mjs publish --base development --body-file <body.md> --summary "<short summary>" --mode push-only --reason "Repository PR-first workflow; regression suites run in CI"
 ```
 
-The helper validates both targets before publishing, runs the normal local gates, publishes the public feature PR against `development`, then creates or updates its submission partner against `development`. Both repositories receive feature branches, never direct writes to their default branches. Both PRs remain subject to human merge decisions.
+The helper validates both targets before publishing, records the selected local-gate policy, publishes the public feature PR against `development`, then creates or updates its submission partner against `development`. Both repositories receive feature branches, never direct writes to their default branches. Both PRs remain subject to human merge decisions.
 
 The submission repository has separate Git history. Its feature commit has submission ancestry and an exact copy of the public source commit's tracked tree. This includes the project README at the repository root, replacing the initial submission README as approved. Ignored dependencies, local evidence and agent state are excluded. The source SHA and tree are retained as provenance; the two PR heads are intentionally different commits.
 

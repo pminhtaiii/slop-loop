@@ -1,6 +1,6 @@
 # Background Publication Jobs
 
-Start long local publication gates through the detached runner:
+The standard [PR-first workflow](pr-workflow.md#publish-a-draft) uses foreground `publish --mode push-only` and runs regression suites in CI. This optional detached runner retains automatic changed-path selection and may run long local gates; select it deliberately:
 
 ```powershell
 node scripts/agents/publication-job.mjs start --root <checkout> --body-file <file> --summary "<action summary>"

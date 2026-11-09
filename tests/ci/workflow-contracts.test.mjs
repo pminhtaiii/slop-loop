@@ -36,6 +36,15 @@ function workflow(path) {
 const WORKFLOWS = [workflow('.github/workflows/contributor-checks.yml'), workflow('.github/workflows/runtime-checks.yml'), workflow('.github/workflows/pr-metadata.yml')];
 const all = predicate => WORKFLOWS.flatMap(file => [...file.jobs.values()].filter(predicate));
 
+test('candidate lanes bootstrap pinned pnpm through the registry without installing repository dependencies', () => {
+  for (const job of all(job => job.id !== 'pr-metadata')) {
+    const block = job.block.join('\n');
+    assert.match(block, /uses: pnpm\/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1/);
+    assert.match(block, /run_install: false/);
+    assert.doesNotMatch(block, /pnpm\/setup@|standalone: true/);
+  }
+});
+
 test('every workflow keeps its triggers, finite limits, read-only permissions and pinned actions', () => {
   for (const file of WORKFLOWS) {
     assert.match(file.header, /^on:$/m, file.path);
