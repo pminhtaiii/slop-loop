@@ -10,6 +10,14 @@ Use JSDoc on public functions and types when names and signatures leave importan
 
 Keep summaries accurate when behavior changes. Describe forwarding wrappers as forwarding, and claim assembly, validation, or execution only where it occurs. Prefer one authoritative explanation with a pointer over repeated prose. Reviewers check documentation sufficiency and correctness at meaningful boundaries, rather than counting comments or requiring a docstring percentage. Comments support navigation; changes and verification claims still require inspecting the relevant implementation.
 
+Reviewers apply these standards to the assigned change and relevant surrounding code:
+
+- **Concrete findings:** For a behavioral bug, state the triggering input or state, expected and actual behavior, consequence, and exact code location. Cite inspected code, a reproducer, or observed evidence; distinguish a reasoned code trace from a command actually run. For a documented-standard violation, cite the rule and offending code. Mark unverified suspicions as questions rather than established defects, and label personal preferences as optional.
+- **Complete interactions:** Trace changed behavior through its relevant caller, boundary, state owner, and downstream consumer. Check that inputs, outcomes, versions, dependency direction, and effects agree across those seams. Read the implementation needed to establish the claim; a correct-looking diff fragment or summary alone does not establish correct integration.
+- **Mutable-data ownership:** Identify which component owns each mutable value crossing a boundary and who may modify it. Borrowed inputs remain unchanged unless their contract permits mutation. Check nested references retained by shallow copies, shared arrays, and callbacks; a new outer object or a readonly annotation does not establish isolation of mutable nested data.
+- **Code smells:** Actively inspect the change for the review skill's smell baseline. For each finding, name the smell, identify the code, explain a concrete correctness or maintenance cost, and suggest the smallest useful remedy. Duplicated policy or a change requiring edits in several owners can establish a design cost without a runtime failure. Smell labels remain judgment calls unless a separate documented rule is violated; neither a label alone nor a personal style preference establishes a blocker. Leave mechanical style checks to tooling.
+
+
 ## Types and boundaries
 
 Use strict TypeScript. Treat untrusted input and external data as `unknown`; validate and narrow them before use. Never use `any`, including in casts or library wrappers. Assert only when a runtime check or trusted invariant establishes what TypeScript cannot express; keep the assertion local and explain the invariant. Prefer `const`, and mark values and fields `readonly` when mutation is outside their contract.
