@@ -213,7 +213,7 @@ export async function runWorkflow(args, dependencies = {}) {
       throw new Error(record.reason);
     }
     const pages = json('api', '--paginate', '--slurp', `repos/${remote}/commits/${head}/check-runs?per_page=100`);
-    const result = assess({ head, pr, checks: pages.flatMap(page => page.check_runs), convention: record.conventionVersion });
+    const result = assess({ head, pr, checks: pages.flatMap(page => page.check_runs), convention: record.conventionVersion, publicationMode: record.publicationMode });
     Object.assign(record, { pr: pr.number, url: pr.url, head, status: result.status, observation: result });
     delete record.reason;
     if (targets) {

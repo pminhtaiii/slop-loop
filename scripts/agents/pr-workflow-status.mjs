@@ -3,7 +3,7 @@ import { localGateStatus, localVerifiedHead } from './pr-workflow-push-only.mjs'
 import { ACTIVE_POLICY_ID, createPolicyState, selectLatest } from '../ci/required-checks.mjs';
 export { featureName, validSummary };
 
-export function assess({ head, pr, checks, convention }) {
+export function assess({ head, pr, checks, convention, publicationMode }) {
   const result = { status: 'WAITING_CI', failedChecks: [], unresolved: [] };
   if (!pr || typeof pr !== 'object' || Array.isArray(pr) || pr.state !== 'OPEN' || pr.headRefOid !== head)
     return { ...result, status: 'BLOCKED', reason: 'PR identity, title, base, state, or current HEAD does not match.' };
@@ -17,7 +17,10 @@ export function assess({ head, pr, checks, convention }) {
   if (pr.reviews.pageInfo.hasPreviousPage || pr.reviewThreads.pageInfo.hasNextPage) return { ...result, status: 'BLOCKED', reason: 'Review data exceeds the bounded page; inspect manually.' };
   result.unresolved = pr.reviewThreads.nodes.filter(thread => !thread.isResolved);
   if (pr.mergeable === 'CONFLICTING' || pr.mergeStateStatus === 'BEHIND') return { ...result, status: 'BLOCKED', reason: 'Update the feature branch against development and rerun verification.' };
-  const latest = selectLatest({ policy: createPolicyState(ACTIVE_POLICY_ID).policy, head, checks }).map(({ check }) => check);
+  const active = createPolicyState(ACTIVE_POLICY_ID).policy;
+  // Skipped local suites need remote regression evidence, in addition to the branch-policy checks.
+  const policy = publicationMode === 'push-only' ? { ...active, required: [...active.required, 'build', 'contributor-tooling-tests', 'runtime-tests'] } : active;
+  const latest = selectLatest({ policy, head, checks }).map(({ check }) => check);
   result.failedChecks = latest
     .filter(check => check?.status === 'completed' && check.conclusion !== 'success')
     .map(check => ({ name: check.name, conclusion: check.conclusion, url: check.details_url }));

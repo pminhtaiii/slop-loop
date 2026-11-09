@@ -13,6 +13,7 @@ import {
   applyExemptions,
   assertPinnedVersion,
   createSnapshot,
+  download,
   installGitleaks,
   parseFindings,
   parseScanArgs,
@@ -40,6 +41,48 @@ const finding = (overrides = {}) => ({
 const report = findings => JSON.stringify(findings);
 // The trusted inputs main() writes beside the scanned tree; only their identity matters here.
 const trusted = { configPath: 'workspace/gitleaks.toml', ignorePath: 'workspace/gitleaks-ignore' };
+
+test('release download retries a transient gateway response and returns the successful bytes', async () => {
+  const requests = [];
+  const waits = [];
+  const bytes = await download('https://example.invalid/release', {
+    request: async (url, options) => {
+      requests.push({ url, options });
+      return requests.length === 1 ? new Response('gateway unavailable', { status: 504 }) : new Response('archive bytes');
+    },
+    wait: async milliseconds => waits.push(milliseconds),
+  });
+  assert.equal(bytes.toString(), 'archive bytes');
+  assert.equal(requests.length, 2);
+  assert.deepEqual(waits, [1000]);
+  for (const { url, options } of requests) {
+    assert.equal(url, 'https://example.invalid/release');
+    assert.equal(options.redirect, 'follow');
+    assert.ok(options.signal instanceof AbortSignal);
+  }
+});
+
+test('release download fails closed on permanent errors or exhausted transient retries', async () => {
+  for (const [status, expectedCalls, expectedWaits] of [
+    [404, 1, []],
+    [504, 4, [1000, 2000, 4000]],
+  ]) {
+    let calls = 0;
+    const waits = [];
+    await assert.rejects(
+      download('https://example.invalid/release', {
+        request: async () => {
+          calls++;
+          return new Response('unavailable', { status });
+        },
+        wait: async milliseconds => waits.push(milliseconds),
+      }),
+      { message: 'download failed', code: `HTTP ${status}` },
+    );
+    assert.equal(calls, expectedCalls);
+    assert.deepEqual(waits, expectedWaits);
+  }
+});
 
 test('refuses any Gitleaks binary that is not exactly the pinned version', () => {
   assert.equal(GITLEAKS_VERSION, '8.30.1');

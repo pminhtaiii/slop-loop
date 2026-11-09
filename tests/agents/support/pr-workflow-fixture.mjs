@@ -30,7 +30,14 @@ export function evidence() {
       reviews: { pageInfo: { hasPreviousPage: false }, nodes: [{ author: { login: 'coderabbitai', __typename: 'Bot' }, state: 'APPROVED', commit: { oid: HEAD } }] },
       reviewThreads: { pageInfo: { hasNextPage: false }, nodes: [] },
     },
-    checks: requiredChecks.map((name, id) => ({ id, name, head_sha: HEAD, status: 'completed', conclusion: 'success', app: { slug: 'github-actions' } })),
+    checks: [...requiredChecks, 'build', 'contributor-tooling-tests', 'runtime-tests'].map((name, id) => ({
+      id,
+      name,
+      head_sha: HEAD,
+      status: 'completed',
+      conclusion: 'success',
+      app: { slug: 'github-actions' },
+    })),
   };
 }
 

@@ -4,6 +4,7 @@ import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { setTimeout as delay } from 'node:timers/promises';
 
 // Adapter around one pinned Gitleaks CLI release. Everything here reports only rule id, path, line
 // and commit; raw matches, secret fields and scanner stdout/stderr never leave this module.
@@ -272,10 +273,16 @@ export function parseScanArgs(argv) {
   return args;
 }
 
-async function download(url) {
-  const response = await fetch(url, { redirect: 'follow' });
-  if (!response.ok) throw Object.assign(new Error('download failed'), { code: `HTTP ${response.status}` });
-  return Buffer.from(await response.arrayBuffer());
+// Retry transient HTTP failures only; version and checksum admission still happen after download.
+export async function download(url, { request = fetch, wait = delay } = {}) {
+  for (let attempt = 0; ; attempt++) {
+    const response = await request(url, { redirect: 'follow', signal: AbortSignal.timeout(30_000) });
+    if (response.ok) return Buffer.from(await response.arrayBuffer());
+    const transient = response.status === 408 || response.status === 429 || (response.status >= 500 && response.status <= 599);
+    if (!transient || attempt === 3) throw Object.assign(new Error('download failed'), { code: `HTTP ${response.status}` });
+    await response.body?.cancel();
+    await wait(1000 * 2 ** attempt);
+  }
 }
 
 async function setupGitleaks(directory) {

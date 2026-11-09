@@ -33,9 +33,9 @@ jobs:
         with:
           node-version: '24'
       - name: Select pinned pnpm version
-        uses: pnpm/setup@c9883cc79df532ad1a7b81bf9ab944ceb090d65c # v2.0.0
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
-          install: false
+          run_install: false
       - name: Verify the checked-out head is the candidate
         shell: bash
         run: |
@@ -47,7 +47,7 @@ jobs:
           echo "head=$HEAD_SHA base=${BASE_SHA:-none} merge=${MERGE_SHA:-none} os=${{ runner.os }}" >> "$GITHUB_STEP_SUMMARY"
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-      # Clean build only: the full local gate stays the default for publication.
+      # Clean build only; emitted tests run in the dependent runtime lane.
       - name: Build from source
         run: node scripts/ci/check-runtime.mjs --clean-build-only
       - name: Record artifact identity and manifest
@@ -84,9 +84,9 @@ jobs:
         with:
           node-version: '24'
       - name: Select pinned pnpm version
-        uses: pnpm/setup@c9883cc79df532ad1a7b81bf9ab944ceb090d65c # v2.0.0
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
-          install: false
+          run_install: false
       - name: Verify the checked-out head is the candidate
         shell: bash
         run: |
