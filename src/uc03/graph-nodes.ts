@@ -62,6 +62,16 @@ export function createInvestigateNode(ports: UC03GraphPorts, config?: UC03GraphC
         const roundRefusal = clarificationRoundRefusal(postClaim.state, generated.proposal);
         if (roundRefusal !== undefined) return { state: postClaim.state, terminalOutcome: 'INCOMPLETE' as const, reasons: [roundRefusal] };
         const asked = await askClarification({ statePort: ports.statePort, prior: postClaim.state, proposal: generated.proposal });
+        // A replayed ask on an already-answered record leaves no open question, so it cannot be a pause.
+        // It also cannot return without an outcome: the replay leaves `node` at Investigate, so the edge
+        // would route straight back here and re-run this model turn on every lap until the runner's own
+        // step limit stops it. `round` is unchanged on a replay, so the section 8 cap does not bound that.
+        if (asked.replayed && asked.state.clarification?.answer)
+          return {
+            state: asked.state,
+            terminalOutcome: 'INCOMPLETE' as const,
+            reasons: ['The clarification record already answers this ask, so no question is open to pause on'],
+          };
         return { state: asked.state, terminalOutcome: 'needs-info' as const, reasons: ['Task paused on a bound coder question'] };
       }
       if (generated.proposal.kind !== 'propose-plan')
