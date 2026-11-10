@@ -36,6 +36,8 @@ Before implementation and before declaring contributor work complete, follow the
 
 Before delegating parallel contributor work, follow the [agent coordination](context/workflow.md#agent-coordination) policy.
 
+For each contributor implementation batch, spawn a separate merger sub-agent for [integration and behavioral verification](docs/agents/task-verification.md#merger-integration-and-verification), including coordinator-authored changes. Record its agent identity and candidate-bound verdict before acceptance; worker self-checks and coordinator integration do not substitute for this assignment. The merger reports failures to the coordinator, who assigns repairs and returns the corrected candidate for verification.
+
 After implementation, follow the [context refresh](context/workflow.md#context-refresh): review affected context documents, prepare evidence-based updates in their existing format, and run `node scripts/agents/update-context.mjs --updates <edits.json> --apply` before handoff.
 
 ## Branch and PR naming
