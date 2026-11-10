@@ -25,7 +25,7 @@ Map each applicable criterion to an observable expected result from its acceptan
 - **Evidence:** retain exact commands, exit statuses, relevant output, expected-versus-observed results and artifact paths under the registered `.agent-work/` session. Reuse prior results only when candidate inputs and environment remain applicable. Build success alone establishes no behavioral acceptance.
 - **Cleanup:** release only resources created by this run. Retain evidence and confirm it survives cleanup.
 
-Repair failures within authorized scope and rerun affected checks. Stop at a concrete blocker or configured limit; keep the task incomplete.
+Implementing workers repair failures within authorized scope and rerun affected checks. Mergers report defects to the coordinator for repair assignment, then verify the corrected candidate. Stop at a concrete blocker or configured limit; keep the task incomplete.
 
 ## Handoff
 
