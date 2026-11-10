@@ -15,6 +15,7 @@ import {
   type BugTask,
   type ContextualApprovalVerifierV02,
   type PolicyAuthorityRefV02,
+  type PermissionClass,
   type ProviderAdmissionContextV02,
   type ProviderRequest,
   type ReviewResult,
@@ -93,6 +94,8 @@ type RouteApprovalPort = ApprovalPort &
     readonly provenance: 'mock';
     setDecision(status: ApprovalBinding['status']): void;
     scriptDecision(binding: ApprovalBinding): void;
+    /** Repair admits through the route's classifier, which leaves unknown actions at APPROVAL_REQUIRED. */
+    scriptClassification(actionIdOrKind: string, permission: PermissionClass): void;
     getRecordedBindings(): readonly ApprovalBinding[];
     setV02AuthorityRef(authority: PolicyAuthorityRefV02 | undefined): void;
   };
@@ -109,6 +112,7 @@ export function createContextualApprovalPort(initialBinding: ApprovalBinding, cu
     validateBinding: (binding: ApprovalBinding) => issuer.validateBinding(binding),
     resolve: (decisionId: string) => issuer.resolve(decisionId),
     scriptDecision: (binding: ApprovalBinding) => issuer.scriptDecision(binding),
+    scriptClassification: (actionIdOrKind: string, permission: PermissionClass) => issuer.scriptClassification(actionIdOrKind, permission),
     getRecordedBindings: () => issuer.getRecordedBindings(),
     setV02AuthorityRef: (authority: PolicyAuthorityRefV02 | undefined) => issuer.setV02AuthorityRef(authority),
     resolvePlanDecisionInContext: (decisionId: string, context: Parameters<ContextualApprovalVerifierV02['resolvePlanDecisionInContext']>[1]) =>
@@ -213,6 +217,7 @@ export function createPlanBindingDigest(task: Parameters<typeof createGraphTaskS
 export function createPendingApprovalRoute(
   initialDecision: 'approved' | 'pending' | 'rejected' = 'pending',
   decisionRef: string = ROUTE_PLAN_DETAILS.decisionRef,
+  extraTransitionContexts: Readonly<Record<number, NonNullable<StateTransitionOptions['trusted']>>> = {},
 ): {
   readonly task: BugTask;
   readonly ports: UC03GraphPorts;
@@ -243,7 +248,11 @@ export function createPendingApprovalRoute(
   if (!planApproval) throw new Error('Plan approval fixture is missing its transition context');
   const approvalPort = createContextualApprovalPort({ ...(planApproval.binding as ApprovalBinding), status: initialDecision }, planApproval.freshness, authorityRef);
   const autoApprovingPort = approvalPort;
-  const statePort = new MemoryStatePortV02({ transitionContexts, initialAuthorityRef: authorityRef, verificationApprovalVerifier: autoApprovingPort });
+  const statePort = new MemoryStatePortV02({
+    transitionContexts: { ...transitionContexts, ...extraTransitionContexts },
+    initialAuthorityRef: authorityRef,
+    verificationApprovalVerifier: autoApprovingPort,
+  });
   const repositoryPort = new FakeRepositoryPort({
     initialRevision: task.initialRevisionDigest,
     initialFiles: { 'tests/test_calculator.py': 'def test_divide(): pass\n', 'src/calculator.py': 'def divide(a, b): return a / b\n' },

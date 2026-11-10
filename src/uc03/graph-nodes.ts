@@ -149,36 +149,41 @@ export function createRepairNode(ports: UC03GraphPorts, config?: UC03GraphConfig
     if (!current.ok) return { state: state.state, terminalOutcome: 'INCOMPLETE' as const, reasons: [current.reason] };
     let repairPatch = config?.repairPatch;
     const failures = state.failureEvidence ?? [];
+    let ownerState = current.state;
     if (config && repairPatch === undefined && generates(config)) {
       const generated = await generate(config, state.task, current.state, 'propose-repair', []);
       if (!generated.ok) return { state: current.state, terminalOutcome: generated.reason.startsWith('HUMAN_WAIT') ? ('needs-info' as const) : ('INCOMPLETE' as const), reasons: [generated.reason] };
       if (generated.proposal.kind !== 'propose-patch')
         return { state: current.state, terminalOutcome: 'INCOMPLETE' as const, reasons: [`Expected a repair proposal, received ${generated.proposal.kind}`] };
+      // As in the patch node: the coder claim moved the ledgers, not the state version.
+      const postClaim = await reloadAuthoritativeState(current.state, ports.statePort, { allowAccountingChange: true });
+      if (!postClaim.ok) return { state: current.state, terminalOutcome: 'INCOMPLETE' as const, reasons: [postClaim.reason] };
+      ownerState = postClaim.state;
       const refs = failureRefs(failures);
       repairPatch = { diff: generated.proposal.diff, affectedPaths: generated.proposal.targetPaths, evidenceRefs: refs.evidence, diagnosticRefs: refs.diagnostics };
     }
     if (!config || !repairPatch) {
-      const outcome: 'IMPLEMENTED_UNVERIFIED' | 'INCOMPLETE' = current.state.changedPaths.length ? 'IMPLEMENTED_UNVERIFIED' : 'INCOMPLETE';
-      const next = { ...current.state, stateVersion: current.state.stateVersion + 1, node: 'Incomplete' as const, outcome, nextAction: 'halt-no-repair-proposal' };
-      const persisted = await transitionState(ports.statePort, next, current.state.stateVersion);
+      const outcome: 'IMPLEMENTED_UNVERIFIED' | 'INCOMPLETE' = ownerState.changedPaths.length ? 'IMPLEMENTED_UNVERIFIED' : 'INCOMPLETE';
+      const next = { ...ownerState, stateVersion: ownerState.stateVersion + 1, node: 'Incomplete' as const, outcome, nextAction: 'halt-no-repair-proposal' };
+      const persisted = await transitionState(ports.statePort, next, ownerState.stateVersion);
       return { state: persisted, terminalOutcome: outcome, reasons: ['No repair patch proposal provided'] };
     }
-    const expected = trustedExpectedContext(config, state.task, current.state);
+    const expected = trustedExpectedContext(config, state.task, ownerState);
     const guard = resolveExecutionGuard(ports, config),
       source = config.admissionContext;
     if (!expected?.statePort || !guard || !source) {
-      const outcome: 'IMPLEMENTED_UNVERIFIED' | 'INCOMPLETE' = current.state.changedPaths.length ? 'IMPLEMENTED_UNVERIFIED' : 'INCOMPLETE';
-      const next = { ...current.state, stateVersion: current.state.stateVersion + 1, node: 'Incomplete' as const, outcome, nextAction: 'halt-missing-repair-admission' };
-      const persisted = await transitionState(ports.statePort, next, current.state.stateVersion);
+      const outcome: 'IMPLEMENTED_UNVERIFIED' | 'INCOMPLETE' = ownerState.changedPaths.length ? 'IMPLEMENTED_UNVERIFIED' : 'INCOMPLETE';
+      const next = { ...ownerState, stateVersion: ownerState.stateVersion + 1, node: 'Incomplete' as const, outcome, nextAction: 'halt-missing-repair-admission' };
+      const persisted = await transitionState(ports.statePort, next, ownerState.stateVersion);
       return { state: persisted, terminalOutcome: outcome, reasons: ['Repair requires current v0.2 admission and finite owner configuration'] };
     }
-    const actionId = createRepairActionId(current.state, failures);
-    if (!actionId) return { state: current.state, terminalOutcome: 'IMPLEMENTED_UNVERIFIED' as const, reasons: ['Repair requires current actionable failure evidence'] };
+    const actionId = createRepairActionId(ownerState, failures);
+    if (!actionId) return { state: ownerState, terminalOutcome: 'IMPLEMENTED_UNVERIFIED' as const, reasons: ['Repair requires current actionable failure evidence'] };
     const admission =
       typeof source === 'function'
-        ? await source({ task: state.task, state: current.state, patchContent: repairPatch.diff, targetPaths: repairPatch.affectedPaths, actionId, failureEvidence: failures })
+        ? await source({ task: state.task, state: ownerState, patchContent: repairPatch.diff, targetPaths: repairPatch.affectedPaths, actionId, failureEvidence: failures })
         : source;
-    if (!admission) return { state: current.state, terminalOutcome: 'IMPLEMENTED_UNVERIFIED' as const, reasons: ['Owner did not issue a repair admission for the current task state'] };
+    if (!admission) return { state: ownerState, terminalOutcome: 'IMPLEMENTED_UNVERIFIED' as const, reasons: ['Owner did not issue a repair admission for the current task state'] };
     const validated = validateRepositoryAdmissionV02(admission.context, admission.trustedContext);
     if (
       !validated.ok ||
@@ -188,19 +193,19 @@ export function createRepairNode(ports: UC03GraphPorts, config?: UC03GraphConfig
       validated.value.action.actionId !== actionId ||
       validated.value.action.patchContent !== repairPatch.diff ||
       !samePaths(validated.value.action.targetPaths, repairPatch.affectedPaths) ||
-      validated.value.canonicalRevision !== current.state.repositoryRevisionDigest ||
-      validated.value.expectedTaskStateVersion !== current.state.stateVersion ||
-      validated.value.planDecisionRef !== current.state.plan?.decisionRef ||
-      validated.value.planBindingDigest !== currentPlanBindingDigest(state.task, current.state)
+      validated.value.canonicalRevision !== ownerState.repositoryRevisionDigest ||
+      validated.value.expectedTaskStateVersion !== ownerState.stateVersion ||
+      validated.value.planDecisionRef !== ownerState.plan?.decisionRef ||
+      validated.value.planBindingDigest !== currentPlanBindingDigest(state.task, ownerState)
     ) {
-      return { state: current.state, terminalOutcome: 'IMPLEMENTED_UNVERIFIED' as const, reasons: ['Repair admission does not bind the current owner state and exact repair patch'] };
+      return { state: ownerState, terminalOutcome: 'IMPLEMENTED_UNVERIFIED' as const, reasons: ['Repair admission does not bind the current owner state and exact repair patch'] };
     }
-    const before = await reloadAuthoritativeState(current.state, ports.statePort);
-    if (!before.ok) return { state: current.state, terminalOutcome: 'IMPLEMENTED_UNVERIFIED' as const, reasons: [before.reason] };
-    const trustedRepairContext = createTrustedRepairContext(current.state, failures, validated.value);
-    if (!trustedRepairContext) return { state: current.state, terminalOutcome: 'IMPLEMENTED_UNVERIFIED' as const, reasons: ['Repair evidence cannot be bound to the current owner state'] };
+    const before = await reloadAuthoritativeState(ownerState, ports.statePort);
+    if (!before.ok) return { state: ownerState, terminalOutcome: 'IMPLEMENTED_UNVERIFIED' as const, reasons: [before.reason] };
+    const trustedRepairContext = createTrustedRepairContext(ownerState, failures, validated.value);
+    if (!trustedRepairContext) return { state: ownerState, terminalOutcome: 'IMPLEMENTED_UNVERIFIED' as const, reasons: ['Repair evidence cannot be bound to the current owner state'] };
     const result = await executeRepair(
-      { taskId: current.state.taskId, failureEvidence: failures, repairPatch, actionId, admissionContext: validated.value },
+      { taskId: ownerState.taskId, failureEvidence: failures, repairPatch, actionId, admissionContext: validated.value },
       {
         statePort: expected.statePort,
         repositoryPort: ports.repositoryPort,
