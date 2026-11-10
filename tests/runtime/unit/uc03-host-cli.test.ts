@@ -82,7 +82,8 @@ function options(overrides: Partial<EvaluateCliOptions> = {}): EvaluateCliOption
   return { profileDigest: DIGEST, configDigest: DIGEST, pricingDigest: DIGEST, adapterVersions: ['uc03-adapter-1'], requestedModel: 'deepseek-v4.1', ...overrides };
 }
 
-const errorOf = (stdout: string): unknown => (JSON.parse(stdout) as { error?: unknown }).error;
+const errorOf = (output: string): unknown => (JSON.parse(output) as { error?: unknown }).error;
+const reasonOf = (output: string): unknown => (JSON.parse(output) as { diagnostic?: { reasonCode?: unknown } }).diagnostic?.reasonCode;
 
 /** A real-shaped assembly module the direct binary imports; `body` runs inside the factory, before it returns. */
 function assemblyModule(body = '', factoryName = 'createHostAssembly'): string {
@@ -398,7 +399,7 @@ test('the legacy uc03 direct binary resolves the same reference and keeps the §
   const reached = spawnCli('uc03', ['--task', taskFile, '--config', hostFile(), '--host', hostFile({ assembly: assemblyModule('') })]);
   assert.equal(reached.status, 1, reached.stdout + reached.stderr);
   assert.equal(reached.stdout.includes('HOST_ASSEMBLY_UNAVAILABLE'), false);
-  assert.equal((JSON.parse(reached.stdout) as { diagnostic: { reasonCode: string } }).diagnostic.reasonCode, 'production-admission-refused');
+  assert.equal(reasonOf(reached.stdout), 'production-admission-refused');
 
   // No resolvable assembly is still the legacy unavailable-configuration exit.
   const missing = join(directory, 'absent.mjs');
