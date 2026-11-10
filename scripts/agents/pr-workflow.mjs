@@ -89,7 +89,7 @@ export async function runWorkflow(args, dependencies = {}) {
   if (command === 'record-verification' && (!values.manifest || !values['manifest-sha256'] || !values.receipt))
     throw new Error('record-verification requires --manifest, --manifest-sha256 and --receipt.');
   if ((command === 'publish' && !values['body-file']) || (command === 'repair' && !values.reason?.trim())) throw new Error(usage);
-  if (command === 'publish' && !validSummary(values.summary)) throw new Error('Provide --summary with 1â€“80 characters on one line, without surrounding whitespace.');
+  if (command === 'publish' && !validSummary(values.summary)) throw new Error('Provide --summary with 1–80 characters on one line, without surrounding whitespace.');
   if (command === 'publish') {
     const parsed = publicationMode(values);
     values.publication = { requestedMode: values.mode ?? 'auto', reason: parsed.reason };
