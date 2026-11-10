@@ -1,7 +1,16 @@
 import assert from 'node:assert/strict';
-import type { NormalizedAction, ProviderPricingIdentityV02, ProviderRequest, RepositoryExecutionReceiptV02, RepositoryPortV02 } from '../../../../src/contracts/foundation/uc03.ts';
+import type {
+  NormalizedAction,
+  ProviderPricingIdentityV02,
+  ProviderRequest,
+  RepositoryExecutionReceiptV02,
+  RepositoryPortV02,
+  ReviewFinding,
+  StateTransitionOptions,
+  TaskState,
+} from '../../../../src/contracts/foundation/uc03.ts';
 import type { BaselineEvidenceAcknowledgement, BaselineEvidenceCandidate } from '../../../../src/uc03/investigation-types.ts';
-import { computeCanonicalSha256, computeRequestContentDigest } from '../../../../src/contracts/foundation/uc03.ts';
+import { computeCanonicalSha256, computeCheckSetDigest, computeRequestContentDigest } from '../../../../src/contracts/foundation/uc03.ts';
 import { createFixtureExecutorIdentityV02, createFixtureProviderAdmissionReceiptV02 } from './port-fixtures.ts';
 import { createGraphTaskState, seedGraphTaskState } from './graph-fixtures.ts';
 import {
@@ -21,6 +30,8 @@ import { prepareControlledUC03Host } from '../../../../src/runtime/uc03-host-boo
 import { createCoderAgentV02 } from '../../../../src/uc03/agent.ts';
 import { runControlledUC03GraphV02 } from '../../../../src/uc03/graph-v02.ts';
 import { currentPlanBindingDigest } from '../../../../src/uc03/graph-validation.ts';
+import { reviewerContextDigest } from '../../../../src/foundation/reviewer.ts';
+import { computeTestProtectionDigest, type TrustedHostPort } from '../../../../src/uc03/investigation.ts';
 import type { UC03GraphConfigV02, UC03GraphPortsV02, UC03ProductionExecutionGuardV02 } from '../../../../src/uc03/graph-types-v02.ts';
 import { controlledHostFixture } from './host-pipeline-fixtures.ts';
 import { createFixtureBugTask } from './port-fixtures.ts';
@@ -38,23 +49,48 @@ const PATCH_DIFF = [
   '+    return a / b',
   '',
 ].join('\n');
+const REPAIR_DIFF = [
+  '--- a/src/calculator.py',
+  '+++ b/src/calculator.py',
+  '@@ -1,3 +1,3 @@',
+  ' def divide(a, b):',
+  '     if b == 0: raise CalculationError("denominator must be non-zero")',
+  '-    return a / b',
+  '+    return a / b  # repair: guard reviewed',
+  '',
+].join('\n');
 
 export interface ControlledGeneratedPlanFixture {
   readonly route: ReturnType<typeof createPendingApprovalRoute>;
   readonly task: ReturnType<typeof createPendingApprovalRoute>['task'];
   readonly statePort: ReturnType<typeof createPendingApprovalRoute>['statePort'];
+  /** Transport dispatch log, `${role}:${purpose}` per dispatch. */
   readonly modelCalls: string[];
+  /** Owner-issued coder providerRequestIds, in admission order; the journal claim is `claim-${id}`. */
+  readonly coderAdmissions: string[];
   readonly patchReceipts: RepositoryExecutionReceiptV02[];
   readonly host: ReturnType<typeof controlledHostFixture>;
   readonly config: UC03GraphConfigV02;
+  /** The mock baseline the route persisted, once it ran past Investigate. */
+  readonly baselineEvidence: () => { readonly content: BaselineEvidenceCandidate; readonly acknowledgement: BaselineEvidenceAcknowledgement } | undefined;
 }
 
-export async function controlledGeneratedPlanFixture(): Promise<ControlledGeneratedPlanFixture> {
+export interface ControlledFixtureOptions {
+  readonly taskState?: Partial<TaskState> | undefined;
+  /** Replaces the first scripted coder response, e.g. with a `request-info` proposal. */
+  readonly firstResponse?: { readonly proposalId: string; readonly content: string } | undefined;
+  /** Reviewer verdict returned by the controlled reviewer transport. */
+  readonly reviewVerdict?: { readonly status: 'accepted' | 'findings'; readonly findings: readonly ReviewFinding[] } | undefined;
+  /** Extra owner trusted transition contexts, keyed by target state version. */
+  readonly transitionContexts?: Readonly<Record<number, NonNullable<StateTransitionOptions['trusted']>>> | undefined;
+}
+
+export async function controlledGeneratedPlanFixture(options: ControlledFixtureOptions = {}): Promise<ControlledGeneratedPlanFixture> {
   const fixtureSequence = ++controlledFixtureSequence;
-  const route = createPendingApprovalRoute('pending', `dec-plan-${createFixtureBugTask().taskId}-1`);
+  const route = createPendingApprovalRoute('pending', `dec-plan-${createFixtureBugTask().taskId}-1`, options.transitionContexts ?? {});
   const statePort = route.statePort;
   const task = route.task;
-  const graphState = createGraphTaskState(task);
+  const graphState = createGraphTaskState(task, options.taskState ?? {});
   await seedGraphTaskState(statePort, graphState);
   const routeRepository = route.ports.repositoryPort;
   if (!('executionGuardApiVersion' in routeRepository) || routeRepository.executionGuardApiVersion !== '0.2.0') {
@@ -63,8 +99,9 @@ export async function controlledGeneratedPlanFixture(): Promise<ControlledGenera
   // The controlled-route factory installs this v0.2 adapter but declares the legacy compatibility union.
   const repositoryPort = routeRepository as RepositoryPortV02;
   const modelCalls: string[] = [];
+  const coderAdmissions: string[] = [];
   const responses = [
-    {
+    options.firstResponse ?? {
       proposalId: 'controlled-inspect-1',
       content: JSON.stringify({ kind: 'inspect', proposalId: 'controlled-inspect-1', operation: 'read_file', args: { path: 'src/calculator.py' } }),
     },
@@ -145,14 +182,17 @@ export async function controlledGeneratedPlanFixture(): Promise<ControlledGenera
       const proposal = responses.shift();
       if (proposal) return { proposal, observedUsage: USAGE };
       const plan = payload.state.plan;
-      if (payload.request.purpose !== 'propose-patch' || !plan?.strategyDigest || !plan.decisionRef) throw new Error('SCRIPT_EXHAUSTED');
+      if (!plan?.strategyDigest || !plan.decisionRef) throw new Error('SCRIPT_EXHAUSTED');
+      const repair = payload.request.purpose === 'propose-repair';
+      if (!repair && payload.request.purpose !== 'propose-patch') throw new Error('SCRIPT_EXHAUSTED');
+      const proposalId = `controlled-${repair ? 'repair' : 'patch'}-${plan.planVersion}`;
       return {
         proposal: {
-          proposalId: `controlled-patch-${plan.planVersion}`,
+          proposalId,
           content: JSON.stringify({
             kind: 'propose-patch',
-            proposalId: `controlled-patch-${plan.planVersion}`,
-            diff: PATCH_DIFF,
+            proposalId,
+            diff: repair ? REPAIR_DIFF : PATCH_DIFF,
             targetPaths: ['src/calculator.py'],
             approvedPlanRef: plan.decisionRef,
           }),
@@ -162,15 +202,25 @@ export async function controlledGeneratedPlanFixture(): Promise<ControlledGenera
     },
   };
   const model = new HostModelPortV02({ transport, statePort, executorIdentity: actor, currentExecutorIdentity: () => actor });
-  const reviewerModel = Object.assign(new HostModelPortV02({ transport: { execute: async () => ({ outcome: 'denied', reason: 'unused reviewer fixture' }) }, statePort }), {
-    providerRole: 'reviewer' as const,
-  });
+  const reviewerActor = createFixtureExecutorIdentityV02({ processIncarnation: `controlled-reviewer-${fixtureSequence}` });
+  const reviewerModel = Object.assign(
+    new HostModelPortV02({
+      transport: {
+        execute: async () => ({ proposal: { proposalId: 'controlled-review-1', content: JSON.stringify(options.reviewVerdict ?? { status: 'accepted', findings: [] }) }, observedUsage: USAGE }),
+      },
+      statePort,
+      executorIdentity: reviewerActor,
+      currentExecutorIdentity: () => reviewerActor,
+    }),
+    { providerRole: 'reviewer' as const },
+  );
   const agent = createCoderAgentV02({ model, repository: repositoryPort, budget: BUDGET, guardedRead });
   let admissionId = 0;
   const trustedExpectedContext = route.config.trustedExpectedContext;
   if (!trustedExpectedContext) throw new Error('Controlled route is missing its trusted expected context');
   const config: UC03GraphConfigV02 = {
     trustedExpectedContext,
+    trustedTransitionContext: Object.values(options.transitionContexts ?? {}).find(trusted => trusted.completion),
     generation: { agent },
     coderAdmission: async ({ task: currentTask, state, purpose, evidence }) => {
       const owner = await statePort.readVerificationAuthoritySnapshot(state.taskId);
@@ -196,6 +246,7 @@ export async function controlledGeneratedPlanFixture(): Promise<ControlledGenera
         contextDigest: computeContextDigest(state, evidence),
         reservationRef: `coder-allowance-${admissionId}`,
       });
+      coderAdmissions.push(request.providerRequestId);
       const receipt = createFixtureProviderAdmissionReceiptV02({
         providerRequestId: request.providerRequestId,
         role: 'coder',
@@ -232,11 +283,78 @@ export async function controlledGeneratedPlanFixture(): Promise<ControlledGenera
       }
       return { request, context, trustedContext: createTestProviderAdmissionTrustedContextV02(context) };
     },
+    reviewerAdmission: async ({ task: currentTask, state, diff }) => {
+      const owner = await statePort.readVerificationAuthoritySnapshot(state.taskId);
+      if (!owner) return undefined;
+      const contextDigest = reviewerContextDigest(currentTask, diff.diff, [], state.repositoryRevisionDigest, {
+        runId: state.runId,
+        expectedTaskStateVersion: state.stateVersion,
+      });
+      if (contextDigest === null) return undefined;
+      const request = createTestProviderRequest({
+        providerRequestId: `provider-${state.taskId}-${state.stateVersion}`,
+        taskId: state.taskId,
+        runId: state.runId,
+        role: 'reviewer',
+        purpose: 'final-review',
+        configId: owner.policyIdentity.configId,
+        pricingPolicyId: owner.policyIdentity.policyId,
+        contextDigest,
+        reservationRef: `review-allowance:${state.taskId}:${state.stateVersion}`,
+      });
+      const identity: ProviderPricingIdentityV02 = {
+        providerId: request.providerId,
+        modelId: request.modelId,
+        configId: request.configId,
+        configVersion: owner.policyIdentity.configVersion,
+        pricingPolicyId: owner.policyIdentity.policyId,
+        pricingPolicyVersion: owner.policyIdentity.policyVersion,
+        issuerKeyRef: owner.policyIdentity.issuerKeyRef,
+        decisionAuthorityGeneration: owner.decisionAuthorityGeneration,
+      };
+      const receipt = createFixtureProviderAdmissionReceiptV02({
+        providerRequestId: request.providerRequestId,
+        role: 'reviewer',
+        requestContentDigest: computeRequestContentDigest(request),
+        providerId: identity.providerId,
+        modelId: identity.modelId,
+        configId: identity.configId,
+        configVersion: identity.configVersion,
+        decisionAuthorityGeneration: identity.decisionAuthorityGeneration,
+      });
+      const journal = statePort.getJournalSnapshot();
+      const context = createTestProviderAdmissionContextV02({
+        providerRequest: request,
+        providerIdentity: identity,
+        providerAdmissionReceipt: receipt,
+        taskId: state.taskId,
+        runId: state.runId,
+        runnableNode: 'Review',
+        role: 'reviewer',
+        expectedTaskStateVersion: state.stateVersion,
+        expectedControlVersion: journal.controlVersion,
+        expectedEpoch: journal.epoch,
+        planApplicability: 'approved-plan',
+        planDecisionRef: state.plan?.decisionRef,
+        planBindingDigest: currentPlanBindingDigest(currentTask, state),
+        budgetRefs: [
+          `task-tokens:${request.providerRequestId}`,
+          `task-cost:${request.providerRequestId}`,
+          `run-tokens:${request.providerRequestId}`,
+          `run-cost:${request.providerRequestId}`,
+          `task-iteration:${request.providerRequestId}`,
+        ],
+      });
+      return { request, context, trustedContext: createTestProviderAdmissionTrustedContextV02(context) };
+    },
     admissionContext: async ({ task: currentTask, state, patchContent, targetPaths, actionId }) => {
       const owner = await statePort.readVerificationAuthoritySnapshot(state.taskId);
       if (!owner || !state.plan?.decisionRef) return undefined;
       const action: NormalizedAction = {
-        actionId: actionId ?? `patch-${state.taskId}-${state.stateVersion}`,
+        // The fake repository echoes the action id into file content; it must not contain a
+        // `sk-`-shaped run (a task-id-derived id does: `patch-task-calc-…` → `sk-calc-…`), which
+        // the model boundary refuses as protected content before the reviewer ever dispatches.
+        actionId: actionId ?? `controlled-patch-${state.stateVersion}`,
         kind: 'apply_patch',
         patchContent,
         targetPaths,
@@ -252,7 +370,7 @@ export async function controlledGeneratedPlanFixture(): Promise<ControlledGenera
         expectedTaskStateVersion: state.stateVersion,
         expectedControlVersion: journal.controlVersion,
         expectedEpoch: journal.epoch,
-        runnableNode: 'Patch',
+        runnableNode: state.node === 'Repair' ? 'Repair' : 'Patch',
         planDecisionRef: state.plan.decisionRef,
         planBindingDigest: currentPlanBindingDigest(currentTask, state),
         policyAuthorityRef: { ...owner.policyIdentity, decisionAuthorityGeneration: owner.decisionAuthorityGeneration },
@@ -304,7 +422,65 @@ export async function controlledGeneratedPlanFixture(): Promise<ControlledGenera
     hostAuthority: route.hostAuthority,
     contextSource: ports.contextSource,
   });
-  return { route, task, statePort, modelCalls, patchReceipts, host: controlled, config };
+  return { route, task, statePort, modelCalls, coderAdmissions, patchReceipts, host: controlled, config, baselineEvidence: () => storedBaseline };
+}
+
+/**
+ * Owner trusted completion for the accepted-review delivery transition. `state` is the post-review
+ * owner state, so the review admission it records was issued one version earlier. Every field comes
+ * from the deterministic controlled route, so a fresh fixture reaches the same delivery version.
+ */
+export async function controlledCompletionContext(fixture: ControlledGeneratedPlanFixture, state: TaskState): Promise<NonNullable<StateTransitionOptions['trusted']>> {
+  const stored = fixture.baselineEvidence();
+  const owner = await fixture.statePort.readVerificationAuthoritySnapshot(state.taskId);
+  if (!stored || !owner) throw new Error('Controlled fixture has no persisted baseline or owner authority');
+  const repositoryPort = fixture.route.ports.repositoryPort;
+  if (!('inspectDiff' in repositoryPort) || !('loadSnapshot' in fixture.route.hostAuthority)) throw new Error('Controlled fixture is missing its repository or host authority');
+  const diffInfo = await repositoryPort.inspectDiff(fixture.task.initialRevisionDigest);
+  const hostAuthority = fixture.route.hostAuthority as TrustedHostPort;
+  const snapshot = await hostAuthority.loadSnapshot({
+    taskId: state.taskId,
+    workspaceId: state.workspaceId,
+    repositoryId: fixture.task.repositoryId,
+    expectedRevisionDigest: state.repositoryRevisionDigest,
+    expectedCriteriaDigest: computeCanonicalSha256(fixture.task.acceptanceCriteria),
+    expectedCheckSetDigest: computeCheckSetDigest(fixture.task.requiredChecks),
+    expectedTestFiles: ['tests/test_calculator.py'],
+  });
+  const providerRequestId = `provider-${state.taskId}-${state.stateVersion}`;
+  const checkSetDigest = computeCheckSetDigest(fixture.task.requiredChecks);
+  return {
+    completion: {
+      taskId: state.taskId,
+      runId: state.runId,
+      repositoryRevisionDigest: state.repositoryRevisionDigest,
+      diffDigest: diffInfo.diffDigest,
+      checkSetDigest,
+      baselineRef: stored.acknowledgement.evidenceId,
+      criteriaDigest: computeCanonicalSha256(fixture.task.acceptanceCriteria),
+      authorizedDiffDigest: diffInfo.diffDigest,
+      protectedTestsDigest: computeTestProtectionDigest(snapshot.testFiles),
+      originalProtectedTestsDigest: stored.acknowledgement.testProtectionDigest,
+      reviewerRoleConfigId: owner.policyIdentity.configId,
+      reviewIterationReservationRef: `review-allowance:${state.taskId}:${state.stateVersion}`,
+      checks: fixture.task.requiredChecks.map(check => ({
+        checkId: check.checkId,
+        outcome: 'pass' as const,
+        repositoryRevisionDigest: state.repositoryRevisionDigest,
+        diffDigest: diffInfo.diffDigest,
+      })),
+      review: {
+        reviewId: `review-${providerRequestId}`,
+        reviewerRoleConfigId: owner.policyIdentity.configId,
+        repoDigest: state.repositoryRevisionDigest,
+        diffDigest: diffInfo.diffDigest,
+        checkSetDigest,
+        status: 'accepted',
+        findings: [],
+        iterationReservationRef: `review-allowance:${state.taskId}:${state.stateVersion}`,
+      },
+    },
+  };
 }
 
 export async function assertControlledPlanApprovalPatchBarrier(fixture: ControlledGeneratedPlanFixture): Promise<void> {

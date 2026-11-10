@@ -24,9 +24,10 @@ import {
   type UC03ProductionComponentV02,
 } from '../../../src/uc03/graph-types-v02.ts';
 import { sha256Text } from '../../../src/uc01/contracts.ts';
+import { askClarification, recordClarificationAnswer } from '../../../src/uc03/clarification.ts';
 import { createFixtureBugTask, createFixtureTaskState } from '../support/uc03/port-fixtures.ts';
 import { controlledHostFixture } from '../support/uc03/host-pipeline-fixtures.ts';
-import { assertControlledPlanApprovalPatchBarrier, controlledGeneratedPlanFixture } from '../support/uc03/controlled-host-journey.ts';
+import { assertControlledPlanApprovalPatchBarrier, controlledCompletionContext, controlledGeneratedPlanFixture } from '../support/uc03/controlled-host-journey.ts';
 
 const CONTRACT = 'uc03-owner-delivery/1';
 const REV = 'a'.repeat(40);
@@ -146,6 +147,215 @@ test('controlled graph generates a plan and waits for approval', async () => {
 });
 
 test('D0 approval gates patch and pauses at D1', async () => assertControlledPlanApprovalPatchBarrier(await controlledGeneratedPlanFixture()));
+
+/** Drive the controlled route to its post-patch `dec-verify-*` pause, then approve D1 with the bumped generation. */
+async function approveD0AndD1(fixture: Awaited<ReturnType<typeof controlledGeneratedPlanFixture>>) {
+  const readiness = prepareControlledUC03Host(fixture.host.inputs);
+  assert.equal(readiness.status, 'controlled-ready');
+  if (readiness.status !== 'controlled-ready') throw new Error('Controlled host was not ready');
+  const bumpAuthority = async () => {
+    const snapshot = await fixture.statePort.readVerificationAuthoritySnapshot(fixture.task.taskId);
+    assert.ok(snapshot, 'owner published no authority');
+    const next = { ...snapshot.policyIdentity, decisionAuthorityGeneration: snapshot.decisionAuthorityGeneration + 1 };
+    assert.equal((await fixture.statePort.publishAuthority({ authorityRef: next })).status, 'published');
+    fixture.route.approvalPort.setV02AuthorityRef(next);
+    return next.decisionAuthorityGeneration;
+  };
+  await runControlledUC03GraphV02(fixture.task, readiness.ports, readiness.config);
+  const d0 = fixture.route.approvalPort.getRecordedBindings().find(binding => binding.decisionId.startsWith('dec-plan-'));
+  assert.ok(d0, 'owner did not issue D0');
+  await bumpAuthority();
+  fixture.route.approvalPort.scriptDecision({ ...d0, status: 'approved' });
+  const patched = await runControlledUC03GraphV02(fixture.task, readiness.ports, readiness.config);
+  assert.equal(patched.outcome, 'pending-approval', JSON.stringify({ reasons: patched.reasons, modelCalls: fixture.modelCalls }));
+  const d1 = fixture.route.approvalPort.getRecordedBindings().find(binding => binding.decisionId.startsWith('dec-verify-'));
+  assert.ok(d1, 'owner did not issue D1');
+  await bumpAuthority();
+  fixture.route.approvalPort.scriptDecision({ ...d1, status: 'approved' });
+  // The route scripts the pre-patch reproduction as failing; after the patch the same command passes.
+  fixture.route.repositoryPort.setCommandResult('pytest -q tests/test_calculator.py -k test_divide_zero', { exitCode: 0, stdout: '1 passed', stderr: '' });
+}
+
+test('verification approval, review, and the owner completion record deliver the controlled run', async () => {
+  const probe = await controlledGeneratedPlanFixture();
+  await approveD0AndD1(probe);
+  const probeReadiness = prepareControlledUC03Host(probe.host.inputs);
+  assert.equal(probeReadiness.status, 'controlled-ready');
+  if (probeReadiness.status !== 'controlled-ready') return;
+  const probeResult = await runControlledUC03GraphV02(probe.task, probeReadiness.ports, probeReadiness.config);
+  // The review id carries the Review-state version; the failed delivery record then advances it.
+  assert.equal(
+    probeResult.state?.latestReviewRef,
+    `review-provider-${probe.task.taskId}-${(probeResult.state?.stateVersion ?? 0) - 1}`,
+    JSON.stringify({
+      reasons: probeResult.reasons,
+      state: probeResult.state,
+      modelCalls: probe.modelCalls,
+    }),
+  );
+  assert.equal(probeResult.outcome, 'IMPLEMENTED_UNVERIFIED');
+  // Without an owner completion record the predicate input is incomplete, so the review node never
+  // reaches the field-by-field staleness comparison.
+  assert.deepEqual(probeResult.reasons, [
+    'Incomplete verification or review evidence for completion',
+    'Independent baseline, verification, patch settlement, review, and completion authority are required',
+  ]);
+
+  // A fresh fixture reaches the same deterministic review state version; only the completion record differs.
+  const fixture = await controlledGeneratedPlanFixture();
+  await approveD0AndD1(fixture);
+  const reviewedReadiness = prepareControlledUC03Host(fixture.host.inputs);
+  assert.equal(reviewedReadiness.status, 'controlled-ready');
+  if (reviewedReadiness.status !== 'controlled-ready') return;
+  const reviewed = await runControlledUC03GraphV02(fixture.task, reviewedReadiness.ports, reviewedReadiness.config);
+  assert.equal(reviewed.state?.latestReviewRef, probeResult.state?.latestReviewRef);
+  const reviewStateVersion = (reviewed.state?.stateVersion ?? 0) - 1;
+  const deliveryStateVersion = reviewed.state?.stateVersion ?? 0;
+  const completionContext = reviewed.state && (await controlledCompletionContext(fixture, { ...reviewed.state, stateVersion: reviewStateVersion }));
+  const completed = await controlledGeneratedPlanFixture({
+    transitionContexts: { [deliveryStateVersion]: completionContext },
+  });
+  await approveD0AndD1(completed);
+  const readiness = prepareControlledUC03Host(completed.host.inputs);
+  assert.equal(readiness.status, 'controlled-ready');
+  if (readiness.status !== 'controlled-ready') return;
+  const result = await runControlledUC03GraphV02(completed.task, readiness.ports, readiness.config);
+
+  assert.equal(result.outcome, 'COMPLETED', JSON.stringify({ reasons: result.reasons, node: result.state?.node }));
+  assert.equal(result.state?.node, 'Deliver');
+  assert.equal(result.state?.activeDecisionId, undefined);
+  assert.equal(result.finalReport?.isComplete, true);
+  assert.equal(result.finalReport?.delivery?.outcome, 'COMPLETED');
+  assert.ok(result.finalReport?.evidence.reviewRef);
+  assert.deepEqual(await completed.statePort.loadTask(completed.task.taskId), result.state);
+  assert.equal(completed.route.repositoryPort.patches.length, 1);
+  assert.equal(completed.statePort.getLedgers().find(ledger => ledger.scope === 'task' && ledger.kind === 'repair')?.consumed, 1);
+  assert.equal(completed.statePort.getLedgers().find(ledger => ledger.scope === 'task' && ledger.kind === 'iteration')?.consumed, 1);
+});
+
+test('a reviewer finding sends the controlled route back to Repair for a second patch', async () => {
+  const fixture = await controlledGeneratedPlanFixture({
+    reviewVerdict: {
+      status: 'findings',
+      findings: [{ file: 'src/calculator.py', line: 2, side: 'new', severity: 'error', message: 'Guard message is not actionable for the operator' }],
+    },
+  });
+  await approveD0AndD1(fixture);
+  // Repair admits only through the owner classifier, which leaves an unscripted action pending.
+  fixture.route.approvalPort.scriptClassification('apply_patch', 'ALLOWED');
+  const readiness = prepareControlledUC03Host(fixture.host.inputs);
+  assert.equal(readiness.status, 'controlled-ready');
+  if (readiness.status !== 'controlled-ready') return;
+  const result = await runControlledUC03GraphV02(fixture.task, readiness.ports, readiness.config);
+
+  // The journal ancestry readers admit only `runnableNode === 'Patch'`, so a repair-settled patch is
+  // refused at Verify even though it applied: the route honestly stops incomplete, not completed.
+  assert.deepEqual(fixture.modelCalls.slice(-2), ['coder:propose-patch', 'coder:propose-repair']);
+  assert.equal(fixture.route.repositoryPort.patches.length, 2, JSON.stringify({ reasons: result.reasons, node: result.state?.node, modelCalls: fixture.modelCalls }));
+  assert.notEqual(fixture.route.repositoryPort.patches[0]?.actionId, fixture.route.repositoryPort.patches[1]?.actionId);
+  assert.equal(result.state?.node, 'Verify', JSON.stringify({ reasons: result.reasons, nextAction: result.state?.nextAction }));
+  assert.equal(result.outcome, 'INCOMPLETE', JSON.stringify({ reasons: result.reasons, node: result.state?.node }));
+  assert.ok(result.reasons.includes('Verification requires issuer-validated owner patch ancestry'), JSON.stringify(result.reasons));
+});
+
+test('a record-free NeedsInfo pause dispatches no model call and claims nothing', async () => {
+  const fixture = await controlledGeneratedPlanFixture({ taskState: { node: 'NeedsInfo', nextAction: 'request-info' } });
+  const readiness = prepareControlledUC03Host(fixture.host.inputs);
+  assert.equal(readiness.status, 'controlled-ready');
+  if (readiness.status !== 'controlled-ready') return;
+  const claimsBefore = fixture.statePort.getJournalSnapshot().claims.length;
+  const result = await runControlledUC03GraphV02(fixture.task, readiness.ports, readiness.config);
+  assert.equal(result.outcome, 'needs-info', JSON.stringify(result.reasons));
+  assert.deepEqual(fixture.modelCalls, [], 'no transport dispatch');
+  const journal = fixture.statePort.getJournalSnapshot();
+  assert.equal(journal.claims.length - claimsBefore, 0, 'no new claim');
+  const state = await fixture.statePort.loadTask(fixture.task.taskId);
+  assert.equal(state?.node, 'NeedsInfo');
+  assert.equal(state?.clarification, undefined);
+});
+
+test('the clarification pair: an ask pauses with one claim, and an answered record resumes the coder', async () => {
+  // Ask half, produced by the route: Investigate v1 -> NeedsInfo v2, asked at v1.
+  const askFixture = await controlledGeneratedPlanFixture({
+    firstResponse: {
+      proposalId: 'controlled-ask-1',
+      content: JSON.stringify({ kind: 'request-info', proposalId: 'controlled-ask-1', questions: [{ questionId: 'q-denominator', text: 'What should a zero denominator do?' }], evidenceRefs: [] }),
+    },
+  });
+  const askReady = prepareControlledUC03Host(askFixture.host.inputs);
+  assert.equal(askReady.status, 'controlled-ready');
+  if (askReady.status !== 'controlled-ready') return;
+  const asked = await runControlledUC03GraphV02(askFixture.task, askReady.ports, askReady.config);
+  assert.equal(asked.outcome, 'needs-info', JSON.stringify(asked.reasons));
+  assert.deepEqual(askFixture.modelCalls, ['coder:propose-plan'], 'the proposal alone produced the pause');
+  const askedState = await askFixture.statePort.loadTask(askFixture.task.taskId);
+  assert.equal(askedState?.node, 'NeedsInfo');
+  assert.equal(askedState?.stateVersion, 2);
+  assert.equal(askedState?.clarification?.askedAtStateVersion, 1);
+  assert.equal(askedState?.clarification?.answer, undefined);
+  const askRequestId = askFixture.coderAdmissions[0];
+  assert.ok(askRequestId);
+  assert.equal(askFixture.statePort.getJournalSnapshot().claims.filter(claim => claim.claimId === `claim-${askRequestId}`).length, 1, `exactly one claim for ${askRequestId}`);
+
+  // Answer half, built by the producers from a seeded Investigate v1: ask v2, answer v3.
+  const resumeFixture = await controlledGeneratedPlanFixture();
+  const resumeReady = prepareControlledUC03Host(resumeFixture.host.inputs);
+  assert.equal(resumeReady.status, 'controlled-ready');
+  if (resumeReady.status !== 'controlled-ready') return;
+  const seeded = await resumeFixture.statePort.loadTask(resumeFixture.task.taskId);
+  assert.ok(seeded);
+  assert.equal(seeded.node, 'Investigate');
+  assert.equal(seeded.stateVersion, 1);
+  const open = await askClarification({
+    statePort: resumeFixture.statePort,
+    prior: seeded,
+    proposal: { kind: 'request-info', proposalId: 'controlled-ask-2', questions: [{ questionId: 'q-denominator', text: 'What should a zero denominator do?' }], evidenceRefs: [] },
+  });
+  assert.equal(open.replayed, false);
+  assert.equal(open.state.stateVersion, 2);
+  assert.equal(open.state.node, 'NeedsInfo');
+  assert.equal(open.state.clarification?.askedAtStateVersion, 1);
+  assert.ok(open.state.clarification);
+  const answered = await recordClarificationAnswer({
+    statePort: resumeFixture.statePort,
+    prior: open.state,
+    answer: { recorderRef: 'reporter-1', items: open.state.clarification.questions.map(question => ({ questionId: question.questionId, text: 'raise a guarded error' })) },
+  });
+  assert.equal(answered.replayed, false);
+  assert.equal(answered.state.node, 'Investigate');
+  assert.equal(answered.state.stateVersion, 3);
+  assert.equal(answered.state.clarification?.answer?.answeredAtStateVersion, 2);
+
+  // Validate hands the answered task back to Investigate, which reaches the model again.
+  const resumed = await runControlledUC03GraphV02(resumeFixture.task, resumeReady.ports, resumeReady.config);
+  assert.ok(resumed.state, JSON.stringify(resumed.reasons));
+  assert.ok(resumeFixture.modelCalls.length >= 1, JSON.stringify({ modelCalls: resumeFixture.modelCalls, reasons: resumed.reasons }));
+  const resumedRequestId = resumeFixture.coderAdmissions[0];
+  assert.ok(resumedRequestId);
+  assert.ok(
+    resumeFixture.statePort.getJournalSnapshot().claims.some(claim => claim.claimId === `claim-${resumedRequestId}`),
+    `the resumed turn's claim is journaled for ${resumedRequestId}`,
+  );
+});
+
+test('a substituted authoritative task is refused, with a positive sibling on the same fixture', async () => {
+  const fixture = await controlledGeneratedPlanFixture({ taskState: { node: 'NeedsInfo', nextAction: 'request-info' } });
+  const readiness = prepareControlledUC03Host(fixture.host.inputs);
+  assert.equal(readiness.status, 'controlled-ready');
+  if (readiness.status !== 'controlled-ready') return;
+
+  // Positive sibling: the identical fixture, unmutated, validates.
+  const sibling = await runControlledUC03GraphV02(fixture.task, readiness.ports, readiness.config);
+  assert.equal(sibling.outcome, 'needs-info', JSON.stringify(sibling.reasons));
+
+  const authoritative = await fixture.statePort.loadTask(fixture.task.taskId);
+  assert.ok(authoritative);
+  fixture.statePort.getUnderlying().internalSetTask({ ...structuredClone(authoritative), goal: 'A substituted goal the supplied task does not carry' });
+  const refused = await runControlledUC03GraphV02(fixture.task, readiness.ports, readiness.config);
+  assert.equal(refused.outcome, 'INCOMPLETE');
+  assert.ok(refused.reasons.includes('Authoritative task state does not match the supplied task'), JSON.stringify(refused.reasons));
+  assert.equal(refused.state, null);
+});
 
 test('a post-assembly substitution is refused by the route before any method runs', async () => {
   const ports = readyPorts() as unknown as Record<string, Record<string, unknown>>;

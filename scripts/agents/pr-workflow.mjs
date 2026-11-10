@@ -36,7 +36,8 @@ Configured paired publication also opens a submission PR with the same source tr
 The helper never merges, force-pushes, or resolves review threads.`;
 
 function execute(binary, args, cwd, timeout = 30_000) {
-  const result = spawnSync(binary, args, { cwd, encoding: 'utf8', windowsHide: true, timeout, maxBuffer: 2 * 1024 * 1024 });
+  // 64 MB: the paginated pull-request history this helper reads is already past 2 MB.
+  const result = spawnSync(binary, args, { cwd, encoding: 'utf8', windowsHide: true, timeout, maxBuffer: 64 * 1024 * 1024 });
   if (result.error || result.status !== 0) throw new Error(result.error?.message || result.stderr || result.stdout || `${binary} failed (${result.status})`);
   return result.stdout.trim();
 }

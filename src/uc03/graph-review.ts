@@ -120,12 +120,14 @@ export function createReviewNode(ports: ReviewPorts, config?: ReviewConfig): UC0
     if (result.status !== 'accepted') {
       const failureRefs = [result.reviewId, result.iterationReservationRef, ...result.findings.map(finding => finding.evidenceRef ?? result.reviewId)];
       const repairState: TaskState = {
-        ...current.state,
-        stateVersion: current.state.stateVersion + 1,
+        // The review dispatch settled its own usage into the ledgers, so the pre-dispatch snapshot
+        // is no longer authoritative accounting.
+        ...ownerState,
+        stateVersion: ownerState.stateVersion + 1,
         node: 'Repair',
         latestReviewRef: result.reviewId,
         reviewRefs,
-        evidenceRefs: [...new Set([...current.state.evidenceRefs, ...failureRefs])],
+        evidenceRefs: [...new Set([...ownerState.evidenceRefs, ...failureRefs])],
         nextAction: 'repair-review-findings',
       };
       const persisted = await transitionState(ports.statePort, repairState, ownerState.stateVersion);
@@ -163,7 +165,7 @@ export function createReviewNode(ports: ReviewPorts, config?: ReviewConfig): UC0
         node: 'Repair',
         latestReviewRef: result.reviewId,
         reviewRefs,
-        outcome: 'IMPLEMENTED_UNVERIFIED',
+        // Repair is non-terminal, so the outcome lives on the report only.
         nextAction: 'halt-missing-completion-evidence',
       };
       const persisted = await transitionState(ports.statePort, incompleteState, ownerState.stateVersion);
@@ -192,7 +194,6 @@ export function createReviewNode(ports: ReviewPorts, config?: ReviewConfig): UC0
         node: 'Repair',
         latestReviewRef: result.reviewId,
         reviewRefs,
-        outcome: completion.outcome,
         nextAction: 'halt-incomplete-completion-predicate',
       };
       const persisted = await transitionState(ports.statePort, incompleteState, ownerState.stateVersion);

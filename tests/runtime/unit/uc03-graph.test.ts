@@ -1098,7 +1098,8 @@ test('Mock route delivers only after baseline, owner-settled patch, current chec
   );
   const ownerReview = observedReview;
   const ownerRequest = observedRequest;
-  assert.equal(probeState.node, 'Review');
+  assert.equal(probeState.node, 'Repair');
+  assert.equal(probeState.nextAction, 'halt-missing-completion-evidence');
   const baseline: Baseline = {
     evidenceId: `uc04://baseline/${probe.task.taskId}/1`,
     repositorySnapshotDigest: baselineWrite.content.repositorySnapshotDigest,
@@ -1141,7 +1142,8 @@ test('Mock route delivers only after baseline, owner-settled patch, current chec
       review: ownerReview,
     },
   };
-  const deliveryStateVersion = probeState.stateVersion + 1;
+  // The halted Repair and the delivering Deliver are both written one version past the same Review state.
+  const deliveryStateVersion = probeState.stateVersion;
   const setup = createTestSetup({ contextualApprovalIssuer: true, transitionContexts: { [deliveryStateVersion]: deliveryTrustedContext } });
   const { task, statePort, repositoryPort } = setup;
   const { result, reviewerCalls, approvalStages, reviewedOwnerState, patchReceiptUnchanged } = await runPassingMockRoute(setup, deliveryTrustedContext);
@@ -1339,7 +1341,8 @@ test('Pending plan approval: pauses at AwaitPlan and resumes when approved', asy
   );
 
   assert.equal(resumedResult.outcome, 'IMPLEMENTED_UNVERIFIED', `${resumedResult.reasons.join('; ')}; state=${resumedResult.state?.node ?? 'none'}`);
-  assert.equal(resumedResult.state?.node, 'Review');
+  assert.equal(resumedResult.state?.node, 'Repair');
+  assert.equal(resumedResult.state?.nextAction, 'halt-missing-completion-evidence');
   assert.deepEqual(await statePort.loadTask(task.taskId), resumedResult.state);
   assert.equal(repositoryPort.patches.length, 1);
   assert.equal(repositoryPort.commands.length, 4);

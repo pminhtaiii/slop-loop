@@ -6,8 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { validateBugTask } from '../contracts/foundation/uc03.ts';
 import { runUC03Graph, type UC03GraphPorts } from '../uc03/graph.ts';
 import { runUC03GraphV02 } from '../uc03/graph-v02.ts';
-import { prepareUC03Host } from '../runtime/uc03-host-bootstrap.ts';
-import { loadHostConfiguration, readinessReport, type HostAssembly } from './evaluate.ts';
+import { loadHostConfiguration, prepareAssembly, readinessReport, resolveHostAssembly, type HostAssembly } from './evaluate.ts';
 
 export interface CliResult {
   readonly exitCode: number;
@@ -138,11 +137,14 @@ export async function runUC03Cli(args: readonly string[], options?: UC03CliOptio
   if (parsed.hostPath !== undefined) {
     // The same host-only loader and bootstrap the evaluation CLI uses; nothing here reads argv.
     const report = (payload: string): CliResult => ({ exitCode: 5, output: payload });
+    const unavailable = (): CliResult => report(JSON.stringify({ outcome: 'unavailable-production-configuration', error: 'HOST_ASSEMBLY_UNAVAILABLE: no host assembly is configured' }));
     const loaded = loadHostConfiguration(parsed.hostPath);
     if (!loaded.ok) return loaded.error;
-    if (options?.host === undefined) return report(JSON.stringify({ outcome: 'unavailable-production-configuration', error: 'HOST_ASSEMBLY_UNAVAILABLE: no host assembly is configured' }));
+    const resolved = await resolveHostAssembly(loaded.value, options?.host);
+    if (resolved === undefined) return unavailable();
 
-    const readiness = prepareUC03Host({ ...options.host, pins: loaded.value.pins, identity: loaded.value.identity });
+    const readiness = prepareAssembly(resolved.host, loaded.value);
+    if (readiness === undefined) return unavailable();
     if (readiness.status !== 'ready') return report(readinessReport(readiness));
 
     const result = await runUC03GraphV02(validation.value, readiness.ports, readiness.config);
