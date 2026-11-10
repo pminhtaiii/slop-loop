@@ -1,6 +1,7 @@
 import { readFile, readdir, realpath } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { checkProgressFormat } from './check-progress-format.mjs';
 
 const args = process.argv.slice(2);
 if (args.length !== 0 && (args.length !== 2 || args[0] !== '--root')) {
@@ -99,6 +100,7 @@ try {
   const localTargets = new Map();
   const localTargetLines = new Map();
   for (const file of files) sources.set(file, await readFile(resolve(root, file), 'utf8'));
+  if (sources.has('context/progress_checker.md')) failures.push(...checkProgressFormat(sources.get('context/progress_checker.md')));
   for (const required of contract.requiredDocuments) {
     if (!sources.has(required)) failures.push(`required document missing: ${required}`);
   }
