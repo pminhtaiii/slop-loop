@@ -85,11 +85,15 @@ function options(overrides: Partial<EvaluateCliOptions> = {}): EvaluateCliOption
 const errorOf = (output: string): unknown => (JSON.parse(output) as { error?: unknown }).error;
 const reasonOf = (output: string): unknown => (JSON.parse(output) as { diagnostic?: { reasonCode?: unknown } }).diagnostic?.reasonCode;
 
+/** Authored `.ts`, compiled `.js`; this file's own extension is what tells them apart. */
+const SOURCE = import.meta.url.endsWith('.ts') ? '.ts' : '.js';
+
 /** A real-shaped assembly module the direct binary imports; `body` runs inside the factory, before it returns. */
 function assemblyModule(body = '', factoryName = 'createHostAssembly'): string {
   const directory = mkdtempSync(join(tmpdir(), 'uc03-assembly-'));
   const path = join(directory, 'assembly.mjs');
-  const source = pathToFileURL(fileURLToPath(new URL('../../../src/uc03/graph-types-v02.ts', import.meta.url))).href;
+  // A written string literal is not a rewritten import, so the extension must be resolved here.
+  const source = pathToFileURL(fileURLToPath(new URL(`../../../src/uc03/graph-types-v02${SOURCE}`, import.meta.url))).href;
   writeFileSync(
     path,
     `import { REQUIRED_PORTS_V02_METHODS as METHODS, UC03_PRODUCTION_COMPONENTS_V02 as COMPONENTS, portDeclarationsV02 as DECLARATIONS } from ${JSON.stringify(source)};
@@ -177,8 +181,7 @@ function pausedRoute(expectedWait: string | null): string {
 }
 
 function cliEntry(name: 'evaluate' | 'uc03'): string {
-  const extension = import.meta.url.endsWith('.ts') ? '.ts' : '.js';
-  return fileURLToPath(new URL(`../../../src/cli/${name}${extension}`, import.meta.url));
+  return fileURLToPath(new URL(`../../../src/cli/${name}${SOURCE}`, import.meta.url));
 }
 
 function spawnCli(name: 'evaluate' | 'uc03', args: readonly string[]): SpawnSyncReturns<string> {
