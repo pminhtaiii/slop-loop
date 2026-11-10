@@ -173,6 +173,7 @@ test('paired publication resumes after a partial private PR failure and gates co
     }),
   );
   await run('record-review', '--receipt', reviewPath);
+  await f.verification(execute);
   const complete = await run('complete');
   assert.equal(complete.completion.submission.url, published.submission.url);
   assert.equal(complete.completion.submissionAppLink.url, published.submission.url);

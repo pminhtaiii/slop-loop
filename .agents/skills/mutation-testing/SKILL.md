@@ -11,14 +11,15 @@ Strengthen tests for observable behavior that meaningful mutations break. **Do n
 
 1. **Bind the scope.** Identify the authorized source, public behavior, related tests, current revision and existing Stryker configuration. Record source/test/configuration hashes. Match historical findings by source fingerprint, location, operator and replacement; IDs alone are report-local. Use an isolated workspace for injected mutations. Keep credentials out of inspection and reports.
 2. **Establish a working baseline.** Run the relevant unmodified tests and Stryker dry run. Resolve collection, environment and build failures before interpreting mutants. Confirm mutations reach the executed code: source instrumentation paired with stale `dist` tests proves nothing. For Node's built-in runner or compiled TypeScript, read [the runner reference](references/stryker-node.md).
-3. **Calibrate execution.** Exercise a known observable mutation and inspect its assertion failure. Recheck suspicious timeouts with unchanged tests, fewer workers and a justified larger allowance; retain both observations. A dry-run pass is setup evidence. A full run's exit 0 with a reporting-only threshold is not a quality-gate pass.
+3. **Calibrate execution.** Exercise a known observable mutation and inspect its assertion failure. For local timeouts without a concrete result, follow [local timeout escalation](../../../docs/agents/verification-evidence.md#local-timeout-escalation): preserve the inconclusive run, stop local retries and defer to authorized CI. An inconclusive mutation establishes neither a kill nor a survivor. A dry-run pass is setup evidence. A full run's exit 0 with a reporting-only threshold is not a quality-gate pass.
 4. **Classify the selected survivors.** Inspect the exact replacement against intended behavior before editing tests. Prioritize security, refusal/zero-effect guarantees, boundaries and persisted outcomes within the authorized batch. Keep every reviewed finding in a disposition ledger.
 
 | Disposition | Next action |
 | --- | --- |
 | Meaningful behavior change | Add a public-boundary test with independently justified expected values. |
 | Equivalent or redundant within the contract | Explain unchanged observable behavior for that exact mutation; retain the evidence. |
-| Runner, build or timeout problem | Repair or calibrate execution, then rerun before judging test adequacy. |
+| Runner or build problem | Repair within scope before judging test adequacy. |
+| Local timeout without a concrete result | Retain as inconclusive and defer to authorized CI; no local retry. |
 | Unclear or outside scope | Record the question, reason and follow-up; leave it unresolved explicitly. |
 
 5. **Verify one improvement at a time.** Show the new assertion fails against the intended mutant and passes against the original candidate. Preserve existing assertions and intended runtime behavior. Restore any injected mutation; test the actual candidate, not an old scratch copy. If the contract is unclear or an implementation defect emerges, establish the applicable scope before broadening the change.
