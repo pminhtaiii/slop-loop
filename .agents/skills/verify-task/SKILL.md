@@ -1,11 +1,11 @@
 ---
 name: verify-task
-description: Use when a worker has implemented an approved task and needs to verify its behavior against the spec and plan before handoff. Code review and contributor publication remain separate.
+description: Use before worker handoff or when a merger verifies an integrated contributor candidate against approved acceptance criteria. Code review and contributor publication remain separate.
 ---
 
 # Verify a task
 
-Produce acceptance evidence for the assigned scope. The factory owns the acceptance criteria; the worker exercises them. This skill supplies instructions, not tool-enforced protection or completion authority.
+Produce acceptance evidence for the assigned scope. The factory owns the acceptance criteria; the assigned worker or merger exercises them. Mergers follow the [integration verification contract](../../../docs/agents/task-verification.md#merger-integration-and-verification). This skill supplies instructions, not tool-enforced protection or completion authority.
 
 ## Bind the scope
 
@@ -17,7 +17,7 @@ Keep governing criteria, expected outputs, required fixtures and evaluation orac
 
 ## Exercise the behavior
 
-Map each applicable criterion to an observable expected result and an existing runnable check. Take commands from the relevant quickstart, testing guidance, package scripts or harness. Record unmapped criteria as gaps.
+Map each applicable criterion to an observable expected result from its acceptance source, then select a runnable check. Take commands from the relevant quickstart, testing guidance, package scripts or harness. An independent merger checks the integrated behavior against those expectations and challenges plausible wrong outcomes; replaying worker tests alone is insufficient. Record unmapped criteria as gaps.
 
 - **Launch:** prepare the documented build/profile in isolated task state; confirm the entry point is usable. A library check may need no persistent process.
 - **Doctor:** confirm candidate, dependencies and required profile. Missing setup is a blocker, not a product failure or permission to fabricate a replacement.
@@ -31,6 +31,6 @@ Repair failures within authorized scope and rerun affected checks. Stop at a con
 
 Return a compact table: `criterion/source | check | expected/observed | PASS/FAIL/BLOCKED/NOT-RUN | evidence`. Include candidate identity, snapshot path, evidence tier, overall verdict and next action. A required criterion without passing applicable evidence leaves verification incomplete. Separate task-scoped success from full-feature acceptance.
 
-Submit through the existing worker handoff lifecycle. Independent code review, integration, publication and human merge authority remain separate gates.
+Submit through the existing worker handoff lifecycle. The merger returns its candidate-bound verdict and reproducible findings to the coordinator for acceptance or repair dispatch. Independent code review, publication and human merge authority remain separate gates; worker self-verification also precedes independent merger verification.
 
 Adapted from pstack's launch/doctor/drive/evidence/cleanup approach. See [source provenance](references/pstack/SOURCE.md); load the upstream generator only when changing this verification method.
