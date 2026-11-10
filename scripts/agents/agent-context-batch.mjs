@@ -50,6 +50,43 @@ function taskSummary(task) {
   return task.line.replace(/^\s*[-*+]\s+\[[ xX]\]\s+T\d{3}\s*/, '').trim();
 }
 
+function taskAcceptance(parsed, task, path) {
+  const result = { source: { path, line: task.lineIndex + 1 }, checks: [], remaining: [], prerequisites: [], certified: false, classification: 'coordinator-required' };
+  const end = Math.min(
+    parsed.tasks.find(next => next.lineIndex > task.lineIndex)?.lineIndex ?? parsed.lines.length,
+    parsed.headings.find(heading => heading.index > task.lineIndex)?.index ?? parsed.lines.length,
+  );
+  const categories = {
+    'acceptance checks': 'checks',
+    'remaining acceptance': 'remaining',
+    dependencies: 'prerequisites',
+    prerequisites: 'prerequisites',
+    'external prerequisites': 'prerequisites',
+    gates: 'prerequisites',
+    'external gates': 'prerequisites',
+  };
+  let field;
+  const retain = () => {
+    if (!field?.category) return;
+    const text = field.lines.join('\n').trimEnd();
+    result[field.category].push({ line: field.line, text: text.slice(0, 4000), truncated: text.length > 4000 });
+  };
+  for (let index = task.lineIndex + 1; index < end; index += 1) {
+    if (!parsed.visible[index]) continue;
+    const line = parsed.lines[index];
+    const label = line
+      .match(/^\s*[-*+]\s+\*\*([^*]+)\*\*\s*:/)?.[1]
+      ?.trim()
+      .toLowerCase();
+    if (label) {
+      retain();
+      field = { category: Object.hasOwn(categories, label) ? categories[label] : undefined, line: index + 1, lines: [line] };
+    } else if (field) field.lines.push(line);
+  }
+  retain();
+  return result;
+}
+
 function dependencyDetails(task, byId) {
   if (!task.dependenciesDeclared) return { state: 'unspecified', dependencies: [] };
   const dependencies = task.dependencies.map(id => {
@@ -142,6 +179,7 @@ export async function batchContext(root, tasksInput, scopes, authorizedIds = [],
     summary: taskSummary(task),
     dependencies: dependencyDetails(task, byId),
     paths: pathsById.get(task.id),
+    acceptance: taskAcceptance(parsed, task, normalizedRepoPath(root, tasksFile)),
     authorization: task.checked ? 'not-needed-for-checked-task' : authorized.has(task.id) ? 'provided-by-caller' : 'missing',
   }));
   const prerequisites = closureTasks

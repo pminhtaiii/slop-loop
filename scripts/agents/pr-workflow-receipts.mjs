@@ -3,6 +3,8 @@
  * record. Both are local workflow accounting rather than signed credentials, and both are
  * validated here so `complete` can require them without the caller supplying a claim.
  */
+import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { isAbsolute, resolve } from 'node:path';
 import { readJson } from './agent-store.mjs';
 import { statIfPresent } from './agent-context-resume.mjs';
@@ -62,6 +64,7 @@ export async function recordReviewReceipt({ receiptPath, record, git, root }) {
     throw new Error('The review receipt must name the two axis report files.');
   if (new Set(receipt.reports).size !== receipt.reports.length) throw new Error('The review receipt must name a different report for each axis.');
   const reports = [];
+  const reportHashes = [];
   for (const report of receipt.reports) {
     const path = isAbsolute(report) ? report : resolve(root, report);
     // statIfPresent rather than existsSync: a review report is expected to be a regular file, and
@@ -69,9 +72,31 @@ export async function recordReviewReceipt({ receiptPath, record, git, root }) {
     const stat = await statIfPresent(path);
     if (!stat?.isFile() || stat.size === 0) throw new Error(`The review receipt names a report file that is missing or empty: ${report}`);
     reports.push(report);
+    reportHashes.push({
+      path: report,
+      sha256: createHash('sha256')
+        .update(await readFile(path))
+        .digest('hex'),
+    });
   }
-  record.codeReview = { base: receipt.base, head: receipt.head, axes: receipt.axes, reports, recordedAt: new Date().toISOString() };
+  record.codeReview = { base: receipt.base, head: receipt.head, axes: receipt.axes, reports, reportHashes, recordedAt: new Date().toISOString() };
   return record;
+}
+
+/** Checks that completion consumes the same review reports recorded for this candidate. */
+export async function verifyReviewReceipt({ root, review, head }) {
+  if (review?.head !== head) throw new Error('Review does not match current head.');
+  if (review.optedOut === true) return;
+  if (!Array.isArray(review.reportHashes) || review.reportHashes.length !== 2) throw new Error('Review report hashes missing; run record-review.');
+  for (const report of review.reportHashes) {
+    const path = isAbsolute(report.path) ? report.path : resolve(root, report.path);
+    if (
+      createHash('sha256')
+        .update(await readFile(path))
+        .digest('hex') !== report.sha256
+    )
+      throw new Error('Review report changed; repeat affected review and run record-review.');
+  }
 }
 
 /** Validates the app link receipt against the live PRs, then stores it on the record. */

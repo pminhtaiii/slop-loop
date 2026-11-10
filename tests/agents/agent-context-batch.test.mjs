@@ -180,6 +180,73 @@ test('batch surfaces exact path collisions at the ready frontier', async t => {
   assert.ok(output.conflicts.some(conflict => conflict.path === 'src/shared.ts' && conflict.tasks.includes('T003') && conflict.tasks.includes('T004')));
 });
 
+test('batch exposes declared acceptance and external prerequisites without certifying partial work', async t => {
+  const source = `# Tasks
+
+## Phase 1: Controlled work
+- [ ] T001 Exercise the CLI in \`src/cli/run.ts\`.
+  - **Dependencies**: None.
+  - **Owned Paths**: src/cli/run.ts.
+  - **Acceptance Checks**: Controlled CLI reports the retained result.
+    Refusal leaves the journal unchanged.
+  - **Remaining Acceptance**: Control binding requires another owner's task; publication is partial.
+  - **External Prerequisites**: G-REAL requires pinned owner delivery.
+  - **constructor**: Unrelated ledger metadata.
+
+\`\`\`markdown
+  - **Remaining Acceptance**: Fenced example is not a requirement.
+\`\`\`
+
+## Phase 2: Other owner
+- [x] T002 Supply control in \`src/control.ts\`.
+  - **Dependencies**: None.
+  - **Acceptance Checks**: Other task's check.
+`;
+  const current = await checkout(t, source);
+  const before = await readFile(current.tasksPath, 'utf8');
+  const result = run(current, 'batch', ['--scope', 'T001', '--authorized', 'T001']);
+  assert.equal(result.status, 0, result.stderr);
+  const output = JSON.parse(result.stdout);
+  const task = output.tasks[0];
+  assert.deepEqual(
+    output.readyFrontier.map(item => item.id),
+    ['T001'],
+  );
+  assert.deepEqual(task.paths, ['src/cli/run.ts']);
+  assert.deepEqual(task.acceptance.source, { path: 'specs/feature/tasks.md', line: 4 });
+  assert.equal(task.acceptance.certified, false);
+  assert.equal(task.acceptance.classification, 'coordinator-required');
+  assert.deepEqual(task.acceptance.checks, [{ line: 7, text: '  - **Acceptance Checks**: Controlled CLI reports the retained result.\n    Refusal leaves the journal unchanged.', truncated: false }]);
+  assert.deepEqual(task.acceptance.remaining, [{ line: 9, text: "  - **Remaining Acceptance**: Control binding requires another owner's task; publication is partial.", truncated: false }]);
+  assert.deepEqual(task.acceptance.prerequisites, [
+    { line: 5, text: '  - **Dependencies**: None.', truncated: false },
+    { line: 10, text: '  - **External Prerequisites**: G-REAL requires pinned owner delivery.', truncated: false },
+  ]);
+  assert.equal(result.stdout.includes('Fenced example'), false);
+  assert.equal(result.stdout.includes('Unrelated ledger metadata'), false);
+  assert.equal(result.stdout.includes("Other task's check"), false);
+  assert.equal(await readFile(current.tasksPath, 'utf8'), before);
+});
+
+test('checked review logistics retain a bounded remaining-acceptance source rather than certifying it', async t => {
+  const remaining = `  - **Remaining Acceptance**: ${'Owner evidence is pending. '.repeat(180)}`;
+  const current = await checkout(
+    t,
+    `# Tasks\n\n## Phase 1\n- [x] T001 Add CLI in \`src/cli/run.ts\`.\n  - **Dependencies**: None.\n${remaining}\n  - **Verification Evidence**: Existing passing check.\n`,
+  );
+  const result = run(current, 'review-ready', ['--scope', 'T001']);
+  assert.equal(result.status, 0, result.stderr);
+  const output = JSON.parse(result.stdout);
+  assert.equal(output.review.status, 'ready');
+  assert.equal(output.review.acceptanceCertified, false);
+  const acceptance = output.tasks[0].acceptance;
+  assert.equal(acceptance.certified, false);
+  assert.deepEqual(acceptance.source, { path: 'specs/feature/tasks.md', line: 4 });
+  assert.deepEqual(acceptance.checks, []);
+  assert.deepEqual(acceptance.remaining, [{ line: 6, text: remaining.slice(0, 4000), truncated: true }]);
+  assert.equal(result.stdout.includes('Existing passing check.'), false);
+});
+
 test('batch rejects unknown scopes, malformed dependencies, duplicate IDs, cycles, and path traversal', async t => {
   const current = await checkout(t);
   assert.match(run(current, 'batch', ['--scope', 'T999']).stderr, /Unknown scope task ID T999/);

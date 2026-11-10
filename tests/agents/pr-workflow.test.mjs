@@ -376,6 +376,7 @@ test('record-review then completion retains the reviewed base, head and axes', a
   await writeFile(path, JSON.stringify(saved));
 
   const reviewed = await recordReview(f, head);
+  await f.verification();
   const completed = await runWorkflow(['complete', '--root', f.root], { execute: f.execute });
 
   assert.equal(reviewed.codeReview.head, head);
@@ -527,4 +528,43 @@ test('record-review refuses a base and head with identical content', async t => 
     }),
     /must differ in content|observed nothing/,
   );
+});
+
+async function linkedCandidate(t) {
+  const f = await checkout(t);
+  await f.run('publish', '--body-file', f.body, '--mode', 'push-only', '--reason', 'CI-first verification', '--skip-review-request');
+  const path = join(f.root, '.agent-work/pr-workflow/010-tooling-example.json');
+  const saved = JSON.parse(await readFile(path, 'utf8'));
+  saved.appLink = { url: f.e.pr.url, repository: 'example/project', number: f.e.pr.number };
+  await writeFile(path, JSON.stringify(saved));
+  await f.review();
+  return f;
+}
+
+test('draft publication permits pending merger evidence but completion requires it separately from review', async t => {
+  const f = await linkedCandidate(t);
+  await assert.rejects(runWorkflow(['complete', '--root', f.root], { execute: f.execute }), /retained merger verification/);
+  await f.verification();
+  const completed = await runWorkflow(['complete', '--root', f.root], { execute: f.execute });
+  assert.equal(completed.completion.verification.head, git(f.root, 'rev-parse', 'HEAD'));
+  assert.equal(workflowSummary(completed).verification.status, 'passed');
+});
+
+test('completion refuses changed retained review reports and merger artifacts', async t => {
+  const f = await linkedCandidate(t);
+  await f.verification();
+  await writeFile(join(f.root, '.agent-work/standards.md'), 'different findings');
+  await assert.rejects(runWorkflow(['complete', '--root', f.root], { execute: f.execute }), /Review report changed/);
+  await f.review();
+  await writeFile(join(f.root, '.agent-work/verification.log'), 'different evidence');
+  await assert.rejects(runWorkflow(['complete', '--root', f.root], { execute: f.execute }), /Artifact hash mismatch/);
+});
+
+test('workflow summary keeps published progress distinct from incomplete or stale acceptance', () => {
+  const record = { schemaVersion: 1, repairRounds: [], head: 'a'.repeat(40), status: 'PUBLISHED', verification: { head: 'a'.repeat(40), criteria: [{ id: 'C1', status: 'not-run' }] } };
+  assert.equal(workflowSummary(record).status, 'PUBLISHED');
+  assert.equal(workflowSummary(record).verification.status, 'incomplete');
+  record.verification.criteria[0].status = 'passed';
+  record.head = 'b'.repeat(40);
+  assert.equal(workflowSummary(record).verification.status, 'incomplete');
 });

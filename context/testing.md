@@ -18,7 +18,7 @@ Use the repository's established test and quality commands. Read `AGENTS.md`, pr
 ## Test-first implementation
 
 - For code changes, use the repository's `tdd` skill and write or update focused behavioral tests before implementation.
-- Run the narrowest relevant tests first, then the broader applicable regression checks.
+- Run focused checks during implementation; GitHub CI runs broader regression suites through the PR-first workflow. For a local timeout without a concrete result, use the escalation policy below.
 - Treat unrelated collection, environment, harness, or fixture failures as blockers to test evidence, not as a passing behavioral test.
 - Do not skip coverage, weaken assertions, change expected behavior, or relax a safety constraint just to obtain a passing result.
 - Acceptance evidence checks the returned outcome and persisted state separately; a passing command does not establish acceptance when either result is wrong.
@@ -30,7 +30,9 @@ Use the repository's established test and quality commands. Read `AGENTS.md`, pr
 
 ## Reporting results
 
-Report exact commands and exit statuses, and distinguish passed, failed, and unrun checks. For criterion-level task evidence and handoff status, follow the [task-verification contract](../docs/agents/task-verification.md); explain why an applicable check was not run. A focused pass proves only the behavior it exercised.
+For local checks that time out without a concrete result, follow [local timeout escalation](../docs/agents/verification-evidence.md#local-timeout-escalation): preserve inconclusive evidence, stop local retries and use authorized exact-head GitHub CI. For changed CLI/generated-module/subprocess boundaries, follow [focused compiled checks](../docs/agents/verification-evidence.md#focused-compiled-boundaries).
+
+Generate verification summaries from retained criterion/check evidence, naming the candidate and artifacts. Missing evidence remains NOT-RUN; preserve failed and inconclusive receipts. Report exact commands and exit statuses, and distinguish passed, failed, and unrun checks. For criterion-level task evidence and handoff status, follow the [task-verification contract](../docs/agents/task-verification.md); explain why an applicable check was not run. A focused pass proves only the behavior it exercised.
 
 For focused mutation evidence, retain the exact mutation and confirm it changed the intended source before running the test. Check that it alters the targeted decision for the fixture, especially for compound conditions. Count a mutant as detected only when the relevant behavioral assertion fails; compilation, collection, or harness failures are inconclusive. A source edit that did not apply is an invalid experiment, not a surviving or detected mutant. Restore the original source, verify restoration, and rerun the focused check on the clean candidate. Keep mutant output separate from clean-candidate evidence.
 
@@ -42,39 +44,15 @@ The contributor-checks workflow runs `pnpm run lint` and `pnpm run format:check`
 
 ## Local helper tests
 
-Session-retro contributor regressions exercise public CLI boundaries in `tests/agents/active-task-factory.test.mjs`, `contributor-prepare.test.mjs`, `focused-check.test.mjs`, `publication-policy.test.mjs`, `publication-job.test.mjs`, `pr-workflow.test.mjs`, `pr-workflow-push-only.test.mjs`, `whitespace-hook.test.mjs`, and `tests/ci/check-context.test.mjs`. Capture focused output on its first run through the [receipt runner](../docs/agents/orchestration-tools.md#focused-verification-receipts); reuse requires unchanged command, candidate, declared inputs, runtime identity and retained output. These receipts do not substitute for independent CI or required full-mode publication gates. Public lifecycle fixture results establish local contributor behavior, not product-runtime acceptance.
-
-The planning-workflow regressions cover required artifact types, unique sequential task IDs, invalid dependency graphs, normalized explicit ownership and directory overlap, dependency-ordered shared paths, nested contract inventories, malformed review rejection, and automated-only status. These checks do not certify independent reviews or authorize feature implementation.
-
-The task-context, managed-session, and planning-workflow helpers require Node.js 20 or newer and use Node.js built-ins, so they can be tested without installing packages. Resume regressions cover status-column preservation, rename pairing, canonical checkout aliases and missing checkout records; task context excludes sibling-task continuation bullets; direct invocation follows path aliases while imports remain inert:
-
-```powershell
-node --test tests/agents/agent-context.test.mjs tests/agents/agent-work.test.mjs tests/agents/planning-workflow.test.mjs
-```
-
-Test active-task handoff behavior, explicit reassignment to a terminal status, legacy recorded-transfer migration, preview/apply archival, collision refusal, and archive recovery directly with:
-
-```powershell
-node --test tests/agents/active-task.test.mjs tests/agents/active-task-reassignment.test.mjs
-```
-
-Test worktree retirement eligibility and safe removal in disposable Git repositories with `node --test tests/agents/agent-worktree.test.mjs`. These checks cover preview-only operation, retained branches, unmerged commits, dirty/untracked/ignored data, resumed tasks, changed evidence, locked or unknown worktrees, and retirement after the successor work is complete or handed off; active or blocked successors remain blockers while reassigned predecessors do not. Skill evaluations additionally follow [the versioned evidence procedure](workflow.md#skill-evaluation-evidence).
-
-The publication contributor gate covers preflight reporting without publication, UC brief extraction without ledger writes, archive-before-clear safety, and completion refusals for unpublished, dirty, stale, unlinked, pending, or failing revisions.
+See the [local helper tests](../docs/agents/contributor-test-reference.md#local-helper-tests) reference.
 
 ## Context consistency check
 
-After changing [the context contract](contract.json), `AGENTS.md`, `context/*.md`, the matrices, or referenced agent documentation, run the consistency check. It follows local inline links transitively into Markdown documents from the existing roots, visits cycles once, and enforces checkout containment for every checked link. It checks that required documents exist, declared fact sources resolve to one table row, every context Markdown page is linked from `context/README.md`, `AGENTS.md` links to that README, local inline Markdown file links resolve, and explicitly marked fact claims match their source rows. It also checks authorizationReferences: every configured summary links to its designated source document, and each declared skill stage links to that skill inside its stage section. These pointer checks do not interpret decision contents or infer permission from task progress. It ignores external URLs, heading-only links, and examples in fenced code blocks or HTML comments. It cannot detect conflicts in unmarked prose, so review related documents for semantic consistency.
-
-Run:
-
-```powershell
-node scripts/ci/check-context.mjs
-```
+See the [context consistency check](../docs/agents/contributor-test-reference.md#context-consistency-check) reference.
 
 ## Context updater tests
 
-Test post-implementation context updates with `node --test tests/agents/update-context.test.mjs`. The CLI checks cover read-only preview, architecture and progress updates, newline preservation, stale or ambiguous edits, heading preservation, out-of-scope targets, batch rollback on invalid links, no-change validation, and updater lock retention. Follow [context maintenance](../docs/agents/context-maintenance.md) for update plans and post-write progress-format checks.
+See the [context updater tests](../docs/agents/contributor-test-reference.md#context-updater-tests) reference.
 
 ## Runtime bootstrap gate
 

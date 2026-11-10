@@ -24,6 +24,8 @@ Whatever the user said is the fixed point — a commit SHA, branch name, tag, `m
 
 Capture the diff command once: `git diff <fixed-point>...HEAD` (three-dot, so the comparison is against the merge-base). Also note the list of commits via `git log <fixed-point>..HEAD --oneline`. Record the immutable base SHA, candidate SHA, and reviewed source snapshot or file hashes for each axis.
 
+Use a clean committed candidate in an isolated checkout while implementation continues, or hold writes until both axes finish. Treat dispatched patches and snapshots as immutable. Corrections produce a new candidate; re-labelling an older report with the new head does not establish review.
+
 Before going further, confirm the fixed point resolves (`git rev-parse <fixed-point>`) and the diff is non-empty. A bad ref or empty diff should fail here — not inside two parallel sub-agents.
 
 ### 2. Identify the spec source

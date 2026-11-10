@@ -36,7 +36,7 @@ pnpm exec stryker run stryker.config.json --dryRunOnly
 pnpm exec stryker run stryker.config.json
 ```
 
-Worker count and timeout values are starting settings, not universal requirements. A measured dry run and unchanged-test retries determine suitable allowances. The `high`/`low` values color the report; `break: 0` makes this experiment report-only. Retain separate before/after reports rather than overwrite the baseline.
+Worker count and timeout values are starting settings, not universal requirements. A measured dry run informs the initial allowances. If a local run times out without a concrete result, follow [local timeout escalation](../../../../docs/agents/verification-evidence.md#local-timeout-escalation): retain it as inconclusive, stop local retries and use authorized CI evidence. The `high`/`low` values color the report; `break: 0` makes this experiment report-only. Retain separate before/after reports rather than overwrite the baseline.
 
 ## Interpret the command runner accurately
 

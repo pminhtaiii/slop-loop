@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { runWorkflow } from '../../../scripts/agents/pr-workflow.mjs';
 import { packageScriptCommand } from '../../../scripts/agents/workflow-gate.mjs';
 import { ACTIVE_POLICY_ID, createPolicyState } from '../../../scripts/ci/required-checks.mjs';
@@ -137,8 +138,82 @@ export async function checkout(t) {
     );
     return runWorkflow(['record-review', '--receipt', receipt, '--root', root], { execute });
   };
+  const verification = async (executeOverride = execute) => {
+    const head = git('rev-parse', 'HEAD');
+    const hash = bytes => createHash('sha256').update(bytes).digest('hex');
+    const coordinator = { owner: 'fixture-coordinator', agentId: '/root' };
+    const merger = { owner: 'fixture-merger', task: 'verify', session: '2026-11-10/fixture', agentId: '/root/merger' };
+    await mkdir(join(root, '.agent-work/state'), { recursive: true });
+    await writeFile(
+      join(root, '.agent-work/state/active-tasks.json'),
+      JSON.stringify([
+        { ...coordinator, task: 'batch', session: merger.session, checkout: root, role: 'coordinator', status: 'active' },
+        {
+          ...merger,
+          checkout: root,
+          role: 'worker',
+          status: 'active',
+          binding: {
+            schemaVersion: 1,
+            identity: { owner: merger.owner, task: merger.task, session: merger.session },
+            checkout: root,
+            repository: resolve(git('rev-parse', '--path-format=absolute', '--git-common-dir')),
+            branch: git('symbolic-ref', 'HEAD'),
+            base: { ref: 'existing-checkout', sha: head },
+            boundAt: new Date().toISOString(),
+          },
+        },
+      ]),
+    );
+    const source = { path: '.gitignore', sha256: hash('.agent-work/\n') };
+    const manifest = {
+      schemaVersion: 1,
+      head,
+      coordinator,
+      merger,
+      implementers: [coordinator],
+      sources: [source],
+      inputs: [source],
+      criteria: [{ id: 'fixture', source: '.gitignore', expected: 'The assigned fixture behavior passes.', allowedTiers: ['controlled'], requiredChecks: ['focused'] }],
+    };
+    const manifestPath = join(root, '.agent-work/verification-manifest.json');
+    const receiptPath = join(root, '.agent-work/verification.json');
+    const manifestBytes = JSON.stringify(manifest),
+      manifestSha256 = hash(manifestBytes);
+    await writeFile(manifestPath, manifestBytes);
+    await writeFile(join(root, '.agent-work/verification.log'), 'fixture behavior passed\n');
+    await writeFile(
+      receiptPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        head,
+        manifestSha256,
+        criteria: [
+          {
+            id: 'fixture',
+            status: 'passed',
+            tier: 'controlled',
+            observed: 'Fixture behavior passed.',
+            checks: [
+              {
+                id: 'focused',
+                command: 'node --test fixture.test.mjs',
+                status: 'passed',
+                exitCode: 0,
+                artifacts: [{ path: '.agent-work/verification.log', sha256: hash('fixture behavior passed\n') }],
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    return runWorkflow(['record-verification', '--manifest', manifestPath, '--manifest-sha256', manifestSha256, '--receipt', receiptPath, '--root', root], { execute: executeOverride });
+  };
   const run = async (...args) => {
-    if (args[0] === 'complete') await review();
+    if (args[0] === 'complete') {
+      await review();
+      await verification();
+    }
     return runWorkflow([...args, ...(args[0] === 'publish' ? ['--summary', 'add the example workflow'] : []), '--root', root], { execute });
   };
   let revision = 0;
@@ -154,6 +229,7 @@ export async function checkout(t) {
     calls,
     run,
     review,
+    verification,
     execute,
     advance,
     fail: () => {
