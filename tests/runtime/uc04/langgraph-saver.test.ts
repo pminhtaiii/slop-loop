@@ -179,4 +179,211 @@ test('UC-04: DurableCheckpointSaver for LangGraph', async t => {
     assert.ok(tuple.pendingWrites, 'Pending writes must be restored');
     assert.ok(tuple.pendingWrites.length > 0, 'Pending writes array must not be empty');
   });
+
+  await t.test('deleteThread is properly coordinated with pending persist tasks', async () => {
+    const saver = new DurableCheckpointSaver(store);
+    const threadId = 'thread-delete-coord-1';
+    const config = { configurable: { thread_id: threadId, checkpoint_ns: '', checkpoint_id: 'cp-01' } };
+
+    // Fire put and deleteThread back-to-back without awaiting put first
+    const putPromise = saver.put(
+      config,
+      {
+        v: 1,
+        id: 'cp-01',
+        ts: new Date().toISOString(),
+        channel_values: { val: 42 },
+        channel_versions: { val: 1 },
+        versions_seen: {},
+      },
+      { source: 'input', step: 1, parents: {} },
+    );
+
+    const deletePromise = saver.deleteThread(threadId);
+    await Promise.all([putPromise, deletePromise]);
+
+    // Check thread is deleted in current saver
+    const tuple = await saver.getTuple(config);
+    assert.equal(tuple, undefined, 'Deleted thread must return undefined');
+
+    // Fresh saver instance must also see thread as deleted (not resurrected by trailing persist)
+    const freshSaver = new DurableCheckpointSaver(store);
+    const freshTuple = await freshSaver.getTuple(config);
+    assert.equal(freshTuple, undefined, 'Fresh saver must confirm thread remains deleted');
+  });
+
+  await t.test('concurrent restore operations are safely serialized', async () => {
+    const saver1 = new DurableCheckpointSaver(store);
+    const threadId = 'thread-restore-concurrent-1';
+    const config = { configurable: { thread_id: threadId, checkpoint_ns: '', checkpoint_id: 'cp-c1' } };
+
+    await saver1.put(
+      config,
+      {
+        v: 1,
+        id: 'cp-c1',
+        ts: new Date().toISOString(),
+        channel_values: { status: 'ready' },
+        channel_versions: { status: 1 },
+        versions_seen: {},
+      },
+      { source: 'input', step: 1, parents: {} },
+    );
+
+    // Create fresh instance and invoke concurrent restores/reads
+    const saver2 = new DurableCheckpointSaver(store);
+    const results = await Promise.all([saver2.getTuple(config), saver2.getTuple(config), saver2.getTuple(config)]);
+
+    for (const res of results) {
+      assert.ok(res);
+      assert.equal(res.checkpoint.id, 'cp-c1');
+    }
+  });
+
+  await t.test('serializes checkpoint updates across distinct saver instances on the same thread', async () => {
+    const threadId = 'thread-cross-instance-1';
+    const config1 = { configurable: { thread_id: threadId, checkpoint_ns: '', checkpoint_id: 'cp-inst-1' } };
+    const config2 = { configurable: { thread_id: threadId, checkpoint_ns: '', checkpoint_id: 'cp-inst-2' } };
+
+    const saverA = new DurableCheckpointSaver(store);
+    const saverB = new DurableCheckpointSaver(store);
+
+    // saverA saves checkpoint 1
+    await saverA.put(
+      config1,
+      {
+        v: 1,
+        id: 'cp-inst-1',
+        ts: new Date().toISOString(),
+        channel_values: { step: 1 },
+        channel_versions: { step: 1 },
+        versions_seen: {},
+      },
+      { source: 'input', step: 1, parents: {} },
+    );
+
+    // saverB saves checkpoint 2 on the same thread
+    await saverB.put(
+      config2,
+      {
+        v: 1,
+        id: 'cp-inst-2',
+        ts: new Date().toISOString(),
+        channel_values: { step: 2 },
+        channel_versions: { step: 2 },
+        versions_seen: {},
+      },
+      { source: 'loop', step: 2, parents: {} },
+    );
+
+    // saverA reloads and gets latest tuple - should see saverB's checkpoint 2
+    const tupleA = await saverA.getTuple({ configurable: { thread_id: threadId } });
+    assert.ok(tupleA);
+    assert.equal(tupleA.checkpoint.id, 'cp-inst-2');
+
+    // Verify all checkpoints exist in saverA list
+    const tuplesList: unknown[] = [];
+    for await (const t of saverA.list({ configurable: { thread_id: threadId } })) {
+      tuplesList.push(t);
+    }
+    assert.equal(tuplesList.length, 2, 'Both checkpoints from saverA and saverB must be retained');
+  });
+
+  await t.test('two-saver delete regression: clearing cache when thread is deleted by another instance', async () => {
+    const threadId = 'thread-two-saver-del-1';
+    const config = { configurable: { thread_id: threadId, checkpoint_ns: '', checkpoint_id: 'cp-del-1' } };
+
+    const saverA = new DurableCheckpointSaver(store);
+    const saverB = new DurableCheckpointSaver(store);
+
+    // saverA creates checkpoint
+    await saverA.put(
+      config,
+      {
+        v: 1,
+        id: 'cp-del-1',
+        ts: new Date().toISOString(),
+        channel_values: { count: 100 },
+        channel_versions: { count: 1 },
+        versions_seen: {},
+      },
+      { source: 'input', step: 1, parents: {} },
+    );
+
+    // saverB loads thread into its memory
+    const tupleBBefore = await saverB.getTuple(config);
+    assert.ok(tupleBBefore);
+    assert.equal(tupleBBefore.checkpoint.id, 'cp-del-1');
+
+    // saverA deletes thread
+    await saverA.deleteThread(threadId);
+
+    // saverB gets tuple - must return undefined and clear its cache
+    const tupleBAfter = await saverB.getTuple(config);
+    assert.equal(tupleBAfter, undefined, 'saverB must observe deletion and clear cached data');
+
+    // saverB lists all threads - deleted thread must not be listed
+    const allListed: unknown[] = [];
+    for await (const t of saverB.list({})) {
+      allListed.push(t);
+    }
+    const matchingDeleted = allListed.filter(t => (t as { config?: { configurable?: { thread_id?: string } } }).config?.configurable?.thread_id === threadId);
+    assert.equal(matchingDeleted.length, 0, 'Deleted thread must not appear in saverB all-thread list');
+  });
+
+  await t.test('preserves undefined parentConfig for root checkpoints across disk reloads', async () => {
+    const threadId = 'thread-root-cp-1';
+    const config = { configurable: { thread_id: threadId, checkpoint_ns: '' } };
+    const saver1 = new DurableCheckpointSaver(store);
+
+    // Save root checkpoint (no parent in config)
+    await saver1.put(
+      config,
+      {
+        v: 1,
+        id: 'cp-root-01',
+        ts: new Date().toISOString(),
+        channel_values: { count: 0 },
+        channel_versions: { count: 1 },
+        versions_seen: {},
+      },
+      { source: 'input', step: 1, parents: {} },
+    );
+
+    // Restore via a fresh saver instance from disk
+    const saver2 = new DurableCheckpointSaver(store);
+    const restored = await saver2.getTuple(config);
+    assert.ok(restored, 'Checkpoint must be restored');
+    assert.equal(restored.parentConfig, undefined, 'Root checkpoint must have undefined parentConfig, not checkpoint_id: null');
+  });
+
+  await t.test('persists and restores task writes incrementally across multiple tasks', async () => {
+    const threadId = 'thread-multi-task-writes-1';
+    const config = { configurable: { thread_id: threadId, checkpoint_ns: '', checkpoint_id: 'cp-w-1' } };
+    const saver1 = new DurableCheckpointSaver(store);
+
+    await saver1.put(
+      config,
+      {
+        v: 1,
+        id: 'cp-w-1',
+        ts: new Date().toISOString(),
+        channel_values: { a: 1, b: 2 },
+        channel_versions: { a: 1, b: 1 },
+        versions_seen: {},
+      },
+      { source: 'input', step: 1, parents: {} },
+    );
+
+    // Write from taskA and taskB
+    await saver1.putWrites(config, [['a', 10]], 'task-A');
+    await saver1.putWrites(config, [['b', 20]], 'task-B');
+
+    // Fresh saver instance from disk must see pending writes for both tasks
+    const saver2 = new DurableCheckpointSaver(store);
+    const restored = await saver2.getTuple(config);
+    assert.ok(restored);
+    assert.ok(restored.pendingWrites);
+    assert.equal(restored.pendingWrites.length, 2, 'Pending writes from both taskA and taskB must be restored');
+  });
 });

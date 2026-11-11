@@ -183,4 +183,61 @@ test('UC-04: Concurrent Accounting & Concurrency Safety (SPEC-C-006)', async t =
 
     assert.equal(res, 'recovered');
   });
+
+  await t.test('withLockRetry preserves lock held by a live operation even if past staleThresholdMs', async () => {
+    const resourceId = 'live-long-running';
+    const lockDir = join(tempBase, 'locks');
+    const lockPath = join(lockDir, `${resourceId}.lock`);
+    const { mkdir: fsMkdir, writeFile: fsWriteFile, utimes: fsUtimes } = await import('node:fs/promises');
+
+    await fsMkdir(lockDir, { recursive: true });
+    // Write lock held by current (alive) process
+    const liveLockPayload = JSON.stringify({
+      pid: process.pid,
+      token: 'live-token-123',
+      createdAt: Date.now() - 60_000,
+    });
+    await fsWriteFile(lockPath, liveLockPayload, 'utf8');
+
+    // Set mtime to 60 seconds ago
+    const pastTime = (Date.now() - 60_000) / 1000;
+    await fsUtimes(lockPath, pastTime, pastTime);
+
+    // Contender should NOT steal lock from live process, and should fail after retries
+    await assert.rejects(async () => {
+      await store.withLockRetry(resourceId, async () => 'should-fail', {
+        staleThresholdMs: 10_000,
+        maxRetries: 2,
+        retryDelayMs: 10,
+      });
+    }, /Resource live-long-running is busy \/ already locked after 2 attempts/);
+  });
+
+  await t.test('mutateBudgetJournal succeeds for task IDs of maximum length (128 characters)', async () => {
+    // 128 characters safe ID
+    const longTaskId = `task-${'a'.repeat(123)}`;
+    assert.equal(longTaskId.length, 128);
+
+    await store.saveBudgetJournal({
+      schemaVersion: UC04_SCHEMA_VERSION,
+      taskId: longTaskId,
+      runId: 'run-long-1',
+      ledgers: [makeMockLedger('task', 'tokens', [])],
+      replanCount: 0,
+      updatedAt: new Date().toISOString(),
+    });
+
+    const mutated = await store.mutateBudgetJournal(longTaskId, current => {
+      assert.ok(current);
+      return {
+        ...current,
+        replanCount: current.replanCount + 1,
+        updatedAt: new Date().toISOString(),
+      };
+    });
+
+    assert.equal(mutated.replanCount, 1);
+    const reloaded = await store.loadBudgetJournal(longTaskId);
+    assert.equal(reloaded?.replanCount, 1);
+  });
 });
