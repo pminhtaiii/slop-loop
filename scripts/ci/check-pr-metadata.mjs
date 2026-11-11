@@ -22,7 +22,9 @@ export function checkPrMetadata(payload, { bindings = [] } = {}) {
   const binding = historicalBinding(identity, bindings);
   // A binding that names no convention gets the current one, never the lenient "no convention" path:
   // an incomplete audited entry must not become a validation bypass.
-  assertPrMetadata(metadata, { convention: binding?.convention ?? 2 });
+  // Only the same repository's integration branch can promote into main.
+  const allowPromotion = Number.isSafeInteger(identity.repositoryId) && identity.repositoryId > 0 && identity.headRepositoryId === identity.repositoryId;
+  assertPrMetadata(metadata, { convention: binding?.convention ?? 2, allowPromotion });
   return { status: 'PASSED' };
 }
 

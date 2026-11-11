@@ -52,6 +52,21 @@ test('canonical metadata passes under each explicit convention', () => {
   assert.doesNotThrow(() => assertPrMetadata({ ...retained, body: undefined }), 'a retained live read need not carry a body');
 });
 
+test('same-repository development promotion keeps title and body validation', () => {
+  const promotion = event({ base: { ref: 'main' }, head: { ref: 'development', sha: head, repo: { id: repositoryId } }, title: 'development: update main with development changes' });
+  assert.deepEqual(checkPrMetadata(promotion), { status: 'PASSED' });
+  for (const change of [
+    { title: 'promote development' },
+    { body: 'unstructured' },
+    { head: { ref: branch, sha: head, repo: { id: repositoryId } } },
+    { head: { ref: 'development', sha: head, repo: { id: repositoryId + 1 } } },
+    { head: { ref: 'development', sha: head } },
+    { base: { ref: 'release' } },
+  ])
+    assert.throws(() => checkPrMetadata({ ...promotion, pull_request: { ...promotion.pull_request, ...change } }));
+  assert.throws(() => assertPrMetadata(metadata({ branch: 'development', base: 'main' }), { convention: 2 }), /base/);
+});
+
 test('wrong or missing field types are refused by field and rule without echoing the value', () => {
   const cases = [
     [null, /metadata/],
