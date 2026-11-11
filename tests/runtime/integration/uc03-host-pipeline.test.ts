@@ -279,8 +279,9 @@ function assertRepairTraversal(fixture: ControlledFixture, repaired: Awaited<Ret
   const journal = fixture.statePort.getJournalSnapshot();
   const verifyClaims = journal.claims.map(claim => claim.claimId).filter(id => id.startsWith('claim-action-verify-'));
   // Every durable id the verification path derives (`claim-<actionId>`, `att-<claimId>`) must fit the
-  // owner's storage-id cap; an over-long id is silently answered with a neutral receipt and the run
-  // loops to budget exhaustion instead of failing loudly.
+  // owner's storage-id cap. The durable adapter answers an unsafe id with a neutral receipt rather than
+  // an error, so the violation would surface as an unsettleable claim, not a loud failure. This double
+  // does not enforce the cap, so the assertion here is the only witness on this tier.
   const verifyClaimIds = new Set(verifyClaims);
   const durableIds = [...verifyClaimIds, ...journal.attempts.filter(attempt => verifyClaimIds.has(attempt.claimId)).map(attempt => attempt.attemptId)];
   for (const id of durableIds) assert.ok(isSafeStorageId(id), `verification id is not a safe storage id (${id.length} chars): ${id}`);
