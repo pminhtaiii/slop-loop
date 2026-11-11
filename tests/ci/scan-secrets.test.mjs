@@ -406,6 +406,10 @@ test('shipped exemptions validate and clear exactly the reviewed synthetic findi
     ['generic-api-key', 'src/contracts/foundation/uc03/v02/admission/attempt-outcome.ts', 34, '54f61997dda7fdce3d745dfec41893f1e6705dfb'],
     ['generic-api-key', 'src/contracts/foundation/uc03/v02/admission/attempt-outcome.ts', 83, '54f61997dda7fdce3d745dfec41893f1e6705dfb'],
     ['private-key', 'tests/runtime/unit/telemetry.test.ts', 569, '54f61997dda7fdce3d745dfec41893f1e6705dfb'],
+    ['generic-api-key', 'src/contracts/foundation/uc03/v02/admission/attempt-outcome.ts', 34, '12515fc40bc3579b3a5e75109b3a5ec545a1e29a'],
+    ['generic-api-key', 'src/contracts/foundation/uc03/v02/admission/attempt-outcome.ts', 83, '12515fc40bc3579b3a5e75109b3a5ec545a1e29a'],
+    ['private-key', 'tests/runtime/unit/telemetry.test.ts', 569, '12515fc40bc3579b3a5e75109b3a5ec545a1e29a'],
+    ['generic-api-key', 'specs/007-runtime-evaluation-integration/data-model.md', 28, '7015a46c47af462186db31830262a8de33f5ba4d'],
   ];
   const findings = reviewed.map(([ruleId, path, line, commit]) => ({ ruleId, path, line, commit }));
   // applyExemptions validates every entry (exact path, reason, commit) and rejects duplicates.

@@ -15,6 +15,8 @@ Before creating a branch from fetched `origin/development`, inspect local branch
 
 ## PR titles
 
+For an explicitly requested release promotion, the same repository's `development` branch may target `main`. Use `development: <action-summary>` and the same three-section description below. The CI event adapter checks the repository identity; feature publication and eligibility helpers retain their `development` base requirement. Opening a promotion PR does not authorize merging it.
+
 Use `<branch-name>: <action-summary>`. Both paired PRs must have the same title. The summary has 1–80 characters, occupies one line, and has no surrounding whitespace. Start with a clear lowercase action verb: `add`, `implement`, `fix`, `refactor`, `standardize`, `document`, `update`, `remove`, `preserve`, `prevent`, `support`, `configure`, `migrate`, `validate`, `test`, `improve`, `tighten`, `enforce`, `restore`, `repair`, `freeze` or `gate`.
 
 Describe the resulting behavior, for example `feat/tooling-pr-conventions: standardize naming and paired development targets`. The title prefix must exactly match the branch name, including its scope and description, on both repositories. Avoid generic summaries such as “tooling changes”.
