@@ -235,6 +235,7 @@ export function createRepairActionId(state: TaskState, items: readonly (Verifica
   const refs = failureRefs(items),
     diffDigest = items[0]?.diffDigest;
   if (!diffDigest || items.some(item => item.diffDigest !== diffDigest)) return undefined;
+  // slice(7) drops the `sha256:` prefix: a durable id may not contain a colon (SAFE_STORAGE_ID).
   return `act-repair-${computeCanonicalSha256({
     taskId: state.taskId,
     runId: state.runId,
@@ -245,7 +246,7 @@ export function createRepairActionId(state: TaskState, items: readonly (Verifica
     evidenceRefs: refs.evidence,
     actionRefs: refs.actions,
     diagnosticRefs: refs.diagnostics,
-  })}`;
+  }).slice(7)}`;
 }
 
 export function refsMatch(actual: unknown, expected: readonly string[]): boolean {
