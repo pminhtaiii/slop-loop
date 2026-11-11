@@ -150,10 +150,10 @@ relying on the producer's own minimum.
 **Producer and writer.** Two digest constructors, `computeClarificationQuestionDigest` and
 `computeClarificationAnswerDigest`, live in `src/contracts/foundation/uc03/identity.ts` beside
 `computeCanonicalSha256` (`:24-28`). That is where they have to be: `validateTaskState`
-(`src/contracts/foundation/uc03/v01/validation/state/task.ts:47`, whose `:56` call into
-`rejectUnknownKeys` is the insertion point) re-derives both digests to reject a
+(`src/contracts/foundation/uc03/v01/validation/state/task.ts`, whose own `rejectUnknownKeys` call
+is the insertion point) re-derives both digests to reject a
 mismatch, and it must do so in-layer — nothing under `src/contracts/**` imports `src/uc03/**` today,
-and `task.ts:3` already imports from `../../../identity.ts`, so the recipe is reachable without
+and `task.ts` already imports from `../../../identity.ts`, so the recipe is reachable without
 creating a contracts→uc03 edge. One new module, `src/uc03/clarification.ts`, is the only place the two
 **records** are assembled, and it calls those constructors rather than restating the preimages. Its
 signature is fixed here because the write-boundary idempotency guarantee has no other seam:
@@ -250,7 +250,13 @@ an answered record requires `round === prior.round + 1`, and `round` may not exc
 `Investigate ↔ NeedsInfo` cycling per task without a new top-level state field — each `request-info`
 costs a model turn, so an unbounded loop is a spend path, not just a style problem. The cap of 3
 mirrors the accepted three-material-replan limit; it is the one new numeric constant this amendment
-adds, and T031 records it beside that precedent in `context/runtime_policy.md`.
+adds, and T031 records it beside that precedent in `context/runtime_policy.md`. Unlike this cap, that
+precedent is **not** single-sourced: `MAX_TASK_REPLANS = 3` (`src/uc03/replan-accounting.ts:10`) is
+defined and compared in that module (`:52`) and checked at `src/uc03/replan.ts:228`, while `3` is also hardcoded at
+`validation/state/task.ts:167`, `:362`, `validation/transition.ts:319` and `src/uc03/report/sanitize.ts:229`.
+The clarification cap is deliberately defined once (`v01/clarification-types.ts:4`) and imported
+everywhere else, so T031 cites that constant for this number and describes the replan limit as the
+drifted literal it actually is rather than implying a shared constant exists.
 
 **Transitions.** `ALLOWED_NODE_TRANSITIONS` gains exactly two successors:
 `Investigate: ['AwaitPlan', 'NeedsInfo']` and `NeedsInfo: ['Validate', 'Investigate']`. Guarding is
@@ -358,15 +364,24 @@ direction or patch.
 **Behaviour.** A `request-info` proposal is persisted as the bound unanswered record and leaves the
 task at `NeedsInfo` with terminal `needs-info`; no further model or tool call occurs until the
 reporter's complete answers and an explicit valid direction permit continuation, on the same gating
-condition §2 states for the intake wait. That is a condition on the pause, not a whole-run call count:
+condition §2 states for the intake wait. The one named exception is a **replayed** `request-info`
+against an already-answered record: it writes nothing and ends `INCOMPLETE`. It is not a pause
+because there is no open question left to pause on, and it must not fall through — a replay leaves
+`node` at `Investigate` and does not advance `round`, so returning without a terminal outcome would
+make the `Investigate` edge a self-edge that re-runs the baseline investigation and model turn until
+the runner's loop limit trips. That is a spend path `:247-253` forbids; the refusal is therefore an
+honest incomplete outcome, not a completion. The single-dispatch expectation is a condition on the
+pause, not a whole-run call count:
 producing the proposal is itself one `coder:propose-plan` dispatch, and the ask write adds no second
 one. `stop` keeps its honest incomplete outcome, and loop/output/time exhaustion keep their existing
-bounded refusals — none of them may be reported as completion. Until T027 wires the route, this edge is
-contract-only. Today a `request-info` at `Investigate` does not reach `NeedsInfo` at all: it is a
-successful generation that fails the wrong-kind check at `graph-nodes.ts:57` and reports `INCOMPLETE`
-before any record is persisted. Once T026 persists the record, the `Investigate` edge's
-terminal-outcome check (`graph.ts:103`) still returns `'Incomplete'` ahead of any node routing, so the
-pause reads as `INCOMPLETE` until T027 adds the `needs-info` END case. T026 acceptance stops at the
+bounded refusals — none of them may be reported as completion. The `needs-info → END` case is
+**implemented and witnessed end to end**: `graph.ts` tests it first on the `Investigate` edge, and
+`tests/runtime/integration/uc03-host-pipeline.test.ts:354-375` drives a full `invoke` through it —
+a `request-info` raised at `Investigate` ends `needs-info` with the model log exactly
+`['coder:propose-plan']` and the record persisted unanswered at `stateVersion` 2. (Before T027
+wrote the kind branch, a `request-info` at `Investigate` was instead a successful generation that
+failed the wrong-kind check in `graph-nodes.ts` and reported `INCOMPLETE` before any record was
+persisted. That is the pre-change state, recorded for provenance only.) T026 acceptance stops at the
 validator/agent boundary; T027 owns the routing. Do **not** close this by adding `NeedsInfo` to
 `WORKFLOW_NODES` — `NeedsInfo` is a pause, not a traversable workflow node.
 
