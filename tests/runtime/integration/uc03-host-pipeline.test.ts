@@ -153,24 +153,16 @@ async function approveD0AndD1(fixture: Awaited<ReturnType<typeof controlledGener
   const readiness = prepareControlledUC03Host(fixture.host.inputs);
   assert.equal(readiness.status, 'controlled-ready');
   if (readiness.status !== 'controlled-ready') throw new Error('Controlled host was not ready');
-  const bumpAuthority = async () => {
-    const snapshot = await fixture.statePort.readVerificationAuthoritySnapshot(fixture.task.taskId);
-    assert.ok(snapshot, 'owner published no authority');
-    const next = { ...snapshot.policyIdentity, decisionAuthorityGeneration: snapshot.decisionAuthorityGeneration + 1 };
-    assert.equal((await fixture.statePort.publishAuthority({ authorityRef: next })).status, 'published');
-    fixture.route.approvalPort.setV02AuthorityRef(next);
-    return next.decisionAuthorityGeneration;
-  };
   await runControlledUC03GraphV02(fixture.task, readiness.ports, readiness.config);
   const d0 = fixture.route.approvalPort.getRecordedBindings().find(binding => binding.decisionId.startsWith('dec-plan-'));
   assert.ok(d0, 'owner did not issue D0');
-  await bumpAuthority();
+  await bumpAuthority(fixture);
   fixture.route.approvalPort.scriptDecision({ ...d0, status: 'approved' });
   const patched = await runControlledUC03GraphV02(fixture.task, readiness.ports, readiness.config);
   assert.equal(patched.outcome, 'pending-approval', JSON.stringify({ reasons: patched.reasons, modelCalls: fixture.modelCalls }));
   const d1 = fixture.route.approvalPort.getRecordedBindings().find(binding => binding.decisionId.startsWith('dec-verify-'));
   assert.ok(d1, 'owner did not issue D1');
-  await bumpAuthority();
+  await bumpAuthority(fixture);
   fixture.route.approvalPort.scriptDecision({ ...d1, status: 'approved' });
   // The route scripts the pre-patch reproduction as failing; after the patch the same command passes.
   fixture.route.repositoryPort.setCommandResult('pytest -q tests/test_calculator.py -k test_divide_zero', { exitCode: 0, stdout: '1 passed', stderr: '' });
@@ -292,9 +284,9 @@ test('a reviewer finding sends the controlled route back to Repair for a second 
     'Independent baseline, verification, patch settlement, review, and completion authority are required',
   ]);
 
-  const reviewStateVersion = (probeRepaired.state?.stateVersion ?? 0) - 1;
-  const deliveryStateVersion = probeRepaired.state?.stateVersion ?? 0;
   assert.ok(probeRepaired.state, 'the repair probe halted without a state');
+  const reviewStateVersion = probeRepaired.state.stateVersion - 1;
+  const deliveryStateVersion = probeRepaired.state.stateVersion;
   const completionContext = await controlledCompletionContext(probe, { ...probeRepaired.state, stateVersion: reviewStateVersion });
   const fixture = await controlledGeneratedPlanFixture({
     reviewVerdict: REPAIR_VERDICTS,

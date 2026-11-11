@@ -136,8 +136,9 @@ export function createVerifyNode(ports: UC03GraphPorts, config?: UC03GraphConfig
       runId: verifiedState.runId,
       repoDigest: verifiedState.repositoryRevisionDigest,
       diffDigest: diffInfo.diffDigest,
-      // A repair round repeats the same checks on a new revision; its already-settled ids cannot be claimed again.
-      ...(verifiedState.repositoryRevisionDigest === task.initialRevisionDigest ? {} : { actionIdPrefix: `action-verify-${verifiedState.repositoryRevisionDigest.slice('sha256:'.length)}` }),
+      // A repair round starts from a plan already rebound to a `dec-verify-` ref and repeats the same
+      // checks on a new revision; its already-settled ids cannot be claimed again.
+      ...(ancestry.originalDecisionId.startsWith('dec-verify-') ? { actionIdPrefix: `action-verify-${verifiedState.repositoryRevisionDigest.slice('sha256:'.length)}` } : {}),
       admissionContextForCheck: async request => {
         if (!(await currentPlanApprovalIsCurrent(task, request.currentState, owner, d1))) return undefined;
         return trusted.admissionContextForCheck?.(request);
