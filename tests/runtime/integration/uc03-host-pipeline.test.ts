@@ -201,8 +201,9 @@ test('verification approval, review, and the owner completion record deliver the
   if (reviewedReadiness.status !== 'controlled-ready') return;
   const reviewed = await runControlledUC03GraphV02(fixture.task, reviewedReadiness.ports, reviewedReadiness.config);
   assert.equal(reviewed.state?.latestReviewRef, probeResult.state?.latestReviewRef);
-  const reviewStateVersion = (reviewed.state?.stateVersion ?? 0) - 1;
-  const deliveryStateVersion = reviewed.state?.stateVersion ?? 0;
+  assert.ok(reviewed.state, 'the review probe halted without a state');
+  const reviewStateVersion = reviewed.state.stateVersion - 1;
+  const deliveryStateVersion = reviewed.state.stateVersion;
   const completionContext = reviewed.state && (await controlledCompletionContext(fixture, { ...reviewed.state, stateVersion: reviewStateVersion }));
   const completed = await controlledGeneratedPlanFixture({
     transitionContexts: { [deliveryStateVersion]: completionContext },
@@ -271,6 +272,18 @@ function assertRepairTraversal(fixture: ControlledFixture, repaired: Awaited<Ret
   assert.deepEqual(fixture.modelCalls, ['coder:propose-plan', 'coder:propose-plan', 'coder:propose-patch', 'coder:propose-repair']);
   assert.equal(fixture.route.repositoryPort.patches.length, 2, JSON.stringify({ reasons: repaired.reasons, node: repaired.state?.node, modelCalls: fixture.modelCalls }));
   assert.notEqual(fixture.route.repositoryPort.patches[0]?.actionId, fixture.route.repositoryPort.patches[1]?.actionId);
+  // Round two repeats the same checks against a new revision, so its verification claims must be
+  // revision-scoped; reusing round one's `action-verify-<checkId>` ids would be refused by the owner
+  // and the run would never reach completion. Claim ids are `claim-<actionId>`.
+  const verifyClaims = fixture.statePort
+    .getJournalSnapshot()
+    .claims.map(claim => claim.claimId)
+    .filter(id => id.startsWith('claim-action-verify-'));
+  const roundOne = verifyClaims.filter(id => /^claim-action-verify-check-/u.test(id));
+  const roundScoped = verifyClaims.filter(id => /^claim-action-verify-[0-9a-f]{64}-check-/u.test(id));
+  assert.ok(roundOne.length > 0, `no round-one verification claim: ${JSON.stringify(verifyClaims)}`);
+  assert.ok(roundScoped.length > 0, `no revision-scoped repair verification claim: ${JSON.stringify(verifyClaims)}`);
+  assert.equal(roundScoped.length, roundOne.length, `rounds ran different check counts: ${JSON.stringify(verifyClaims)}`);
 }
 
 test('a reviewer finding sends the controlled route back to Repair for a second patch', async () => {
