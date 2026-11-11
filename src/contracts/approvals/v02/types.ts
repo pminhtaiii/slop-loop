@@ -48,19 +48,19 @@ interface ProviderAdmissionReceiptBase {
 }
 export type ProviderAdmissionReceipt =
   | (ProviderAdmissionReceiptBase & {
-    readonly planApplicability: 'pre-plan-diagnostic';
-    readonly diagnosticPurpose: string;
-    readonly taskCriteriaDigest: string;
-    readonly planBindingDigest?: never;
-    readonly planDecisionRef?: never;
-  })
+      readonly planApplicability: 'pre-plan-diagnostic';
+      readonly diagnosticPurpose: string;
+      readonly taskCriteriaDigest: string;
+      readonly planBindingDigest?: never;
+      readonly planDecisionRef?: never;
+    })
   | (ProviderAdmissionReceiptBase & {
-    readonly planApplicability: 'approved-plan';
-    readonly planBindingDigest: string;
-    readonly planDecisionRef: string;
-    readonly diagnosticPurpose?: never;
-    readonly taskCriteriaDigest?: never;
-  });
+      readonly planApplicability: 'approved-plan';
+      readonly planBindingDigest: string;
+      readonly planDecisionRef: string;
+      readonly diagnosticPurpose?: never;
+      readonly taskCriteriaDigest?: never;
+    });
 export type ProviderAdmissionReceiptV02 = ProviderAdmissionReceipt;
 
 export interface ExecutorIdentityV02Receipt {
@@ -102,14 +102,7 @@ export interface ClaimClosureReceipt {
 }
 export type ClaimClosureReceiptV02 = ClaimClosureReceipt;
 
-export type DispatchClaimPhaseV02 =
-  | 'claimed'
-  | 'attempting'
-  | 'dispatched'
-  | 'outcome-recorded'
-  | 'settled'
-  | 'uncertain'
-  | 'observed-unsettled';
+export type DispatchClaimPhaseV02 = 'claimed' | 'attempting' | 'dispatched' | 'outcome-recorded' | 'settled' | 'uncertain' | 'observed-unsettled';
 
 interface DispatchClaimV02Identity {
   readonly schemaVersion: typeof UC05_APPROVAL_SCHEMA_VERSION_V02;
@@ -135,62 +128,62 @@ type DispatchClaimV02Lifecycle =
 
 type RepositoryActionClaimV02 =
   | {
-    readonly subjectKind: 'repository-action';
-    readonly planApplicability: 'pre-plan-diagnostic';
-    readonly actionId: string;
-    readonly actionDigest: string;
-    readonly repositoryStateDigest: string;
-    readonly diagnosticPurpose: string;
-    readonly taskCriteriaDigest: string;
-    readonly planBindingDigest?: never;
-    readonly planDecisionRef?: never;
-    readonly providerRequestId?: never;
-    readonly requestContentDigest?: never;
-    readonly role?: never;
-  }
+      readonly subjectKind: 'repository-action';
+      readonly planApplicability: 'pre-plan-diagnostic';
+      readonly actionId: string;
+      readonly actionDigest: string;
+      readonly repositoryStateDigest: string;
+      readonly diagnosticPurpose: string;
+      readonly taskCriteriaDigest: string;
+      readonly planBindingDigest?: never;
+      readonly planDecisionRef?: never;
+      readonly providerRequestId?: never;
+      readonly requestContentDigest?: never;
+      readonly role?: never;
+    }
   | {
-    readonly subjectKind: 'repository-action';
-    readonly planApplicability: 'approved-plan';
-    readonly actionId: string;
-    readonly actionDigest: string;
-    readonly repositoryStateDigest: string;
-    readonly planBindingDigest: string;
-    readonly planDecisionRef: string;
-    readonly diagnosticPurpose?: never;
-    readonly taskCriteriaDigest?: never;
-    readonly providerRequestId?: never;
-    readonly requestContentDigest?: never;
-    readonly role?: never;
-  };
+      readonly subjectKind: 'repository-action';
+      readonly planApplicability: 'approved-plan';
+      readonly actionId: string;
+      readonly actionDigest: string;
+      readonly repositoryStateDigest: string;
+      readonly planBindingDigest: string;
+      readonly planDecisionRef: string;
+      readonly diagnosticPurpose?: never;
+      readonly taskCriteriaDigest?: never;
+      readonly providerRequestId?: never;
+      readonly requestContentDigest?: never;
+      readonly role?: never;
+    };
 
 type ProviderRequestClaimV02 =
   | {
-    readonly subjectKind: 'provider-request';
-    readonly planApplicability: 'pre-plan-diagnostic';
-    readonly providerRequestId: string;
-    readonly requestContentDigest: string;
-    readonly role: ProviderRole;
-    readonly diagnosticPurpose: string;
-    readonly taskCriteriaDigest: string;
-    readonly actionId?: never;
-    readonly actionDigest?: never;
-    readonly repositoryStateDigest?: never;
-    readonly planBindingDigest?: never;
-    readonly planDecisionRef?: never;
-  }
+      readonly subjectKind: 'provider-request';
+      readonly planApplicability: 'pre-plan-diagnostic';
+      readonly providerRequestId: string;
+      readonly requestContentDigest: string;
+      readonly role: ProviderRole;
+      readonly diagnosticPurpose: string;
+      readonly taskCriteriaDigest: string;
+      readonly actionId?: never;
+      readonly actionDigest?: never;
+      readonly repositoryStateDigest?: never;
+      readonly planBindingDigest?: never;
+      readonly planDecisionRef?: never;
+    }
   | {
-    readonly subjectKind: 'provider-request';
-    readonly planApplicability: 'approved-plan';
-    readonly providerRequestId: string;
-    readonly requestContentDigest: string;
-    readonly role: ProviderRole;
-    readonly planBindingDigest: string;
-    readonly planDecisionRef: string;
-    readonly diagnosticPurpose?: never;
-    readonly taskCriteriaDigest?: never;
-    readonly actionId?: never;
-    readonly actionDigest?: never;
-    readonly repositoryStateDigest?: never;
-  };
+      readonly subjectKind: 'provider-request';
+      readonly planApplicability: 'approved-plan';
+      readonly providerRequestId: string;
+      readonly requestContentDigest: string;
+      readonly role: ProviderRole;
+      readonly planBindingDigest: string;
+      readonly planDecisionRef: string;
+      readonly diagnosticPurpose?: never;
+      readonly taskCriteriaDigest?: never;
+      readonly actionId?: never;
+      readonly actionDigest?: never;
+      readonly repositoryStateDigest?: never;
+    };
 
 export type DispatchClaimV02 = DispatchClaimV02Identity & DispatchClaimV02Lifecycle & (RepositoryActionClaimV02 | ProviderRequestClaimV02);

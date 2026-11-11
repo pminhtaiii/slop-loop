@@ -3,12 +3,13 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { lstat, realpath } from 'node:fs/promises';
 import { isDeepStrictEqual } from 'node:util';
-import { featureBranch } from './pr-conventions.mjs';
+import { assertPrMetadata, featureBranch } from './pr-conventions.mjs';
 import { githubRepository } from './publication-targets.mjs';
 import { readBoundedEvidence } from './paired-merge-evidence.mjs';
+import { ACTIVE_POLICY_ID, createPolicyState, selectLatest } from '../ci/required-checks.mjs';
 
 const usage = 'Usage: node scripts/agents/paired-merge-eligibility.mjs [--root <checkout>]';
-const required = ['contributor-checks (ubuntu-latest)', 'contributor-checks (windows-latest)', 'runtime-checks (ubuntu-latest)', 'runtime-checks (windows-latest)'];
+const activePolicy = createPolicyState(ACTIVE_POLICY_ID).policy;
 const hash = value => typeof value === 'string' && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(value);
 const decode = value => new TextDecoder('utf-8', { fatal: true }).decode(value);
 const lower = value => typeof value === 'string' ? value.toLowerCase() : value;
@@ -85,7 +86,7 @@ function checkObservation(pages, head) {
   requireEvidence(Array.isArray(pages) && pages.length > 0 && pages.every(page => page && Number.isSafeInteger(page.total_count) && page.total_count >= 0 && Array.isArray(page.check_runs)), 'CHECK_PAGINATION');
   const count = pages[0].total_count, runs = pages.flatMap(page => page.check_runs);
   requireEvidence(pages.every(page => page.total_count === count) && runs.length === count && runs.every(run => run && Number.isSafeInteger(run.id) && run.id > 0) && new Set(runs.map(run => run.id)).size === runs.length, 'CHECK_PAGINATION');
-  const checks = required.map(name => runs.filter(run => run?.name === name && run.head_sha === head && run.app?.slug === 'github-actions').sort((a, b) => b.id - a.id)[0]);
+  const checks = selectLatest({ policy: activePolicy, head, checks: runs }).map(({ check }) => check);
   requireEvidence(checks.every(check => check && Number.isSafeInteger(check.id) && check.id > 0), 'MISSING_CHECKS', 'WAITING_EVIDENCE');
   requireEvidence(!checks.some(check => check.status === 'completed' && check.conclusion !== 'success'), 'FAILED_CHECK');
   requireEvidence(checks.every(check => check.status === 'completed' && check.conclusion === 'success'), 'PENDING_CHECKS', 'WAITING_EVIDENCE');
@@ -189,6 +190,8 @@ export async function runEligibility(args, dependencies = {}) {
         requireEvidence(pr.mergeable !== false && ['clean', 'unknown'].includes(pr.mergeable_state), 'PR_NOT_READY');
         requireEvidence(pr.mergeable !== null && pr.mergeable_state !== 'unknown', 'MERGEABILITY_PENDING', 'WAITING_EVIDENCE');
         requireEvidence(pr.title === pair.title && typeof pr.title === 'string' && pr.title.startsWith(`${branch}: `), 'PR_METADATA');
+        // Live title/body edits after a same-head pass are refused.
+        try { assertPrMetadata({ ...pr, branch, base: pr.base.ref }, { convention: workflow.conventionVersion }); } catch { throw new Refusal('PR_METADATA'); }
         if (side === 'submission') requireEvidence(typeof pr.body === 'string' && pr.body.includes(pair.marker), 'PAIR_MARKER');
         const commit = json(`repos/${repository}/git/commits/${expectedHead}`);
         requireEvidence(commit.sha === expectedHead && hash(commit.tree?.sha) && commit.tree.sha === pair.sourceTree, 'TREE_IDENTITY');

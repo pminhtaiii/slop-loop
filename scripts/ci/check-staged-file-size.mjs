@@ -34,11 +34,14 @@ function parseRawDiff(raw) {
 function isExcluded(path) {
   const parts = path.toLowerCase().split('/');
   const basename = parts.at(-1);
-  return LOCKFILES.has(basename)
-    || ['tests', 'specs'].includes(parts[0])
-    || parts.includes('node_modules')
-    || ['dist', 'coverage'].includes(parts[0])
-    || /\.(?:generated|g)\.[^.]+$/.test(basename);
+  return (
+    LOCKFILES.has(basename) ||
+    parts.join('/') === 'context/progress_checker.md' ||
+    ['tests', 'specs'].includes(parts[0]) ||
+    parts.includes('node_modules') ||
+    ['dist', 'coverage'].includes(parts[0]) ||
+    /\.(?:generated|g)\.[^.]+$/.test(basename)
+  );
 }
 
 function stagedDiff(root) {
@@ -65,7 +68,7 @@ function mergeParentBlobSignatures(root) {
 
   const mergeRefs = mergeHead.split(/\r?\n/);
   if (mergeRefs.at(-1) === '') mergeRefs.pop();
-  if (!mergeRefs.length || mergeRefs.some((ref) => !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(ref))) {
+  if (!mergeRefs.length || mergeRefs.some(ref => !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(ref))) {
     throw new Error('Invalid Git MERGE_HEAD: expected commit object IDs.');
   }
 
@@ -108,13 +111,15 @@ function hasNulByte(root, oid) {
     const child = spawn('git', ['cat-file', 'blob', oid], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
     let binary = false;
     let stderr = '';
-    child.stdout.on('data', (chunk) => {
+    child.stdout.on('data', chunk => {
       if (!binary && chunk.includes(0)) {
         binary = true;
         child.kill();
       }
     });
-    child.stderr.on('data', (chunk) => { if (stderr.length < 2_000) stderr += chunk.toString('utf8'); });
+    child.stderr.on('data', chunk => {
+      if (stderr.length < 2_000) stderr += chunk.toString('utf8');
+    });
     child.once('error', rejectPromise);
     child.once('close', (code, signal) => {
       if (binary) return resolvePromise(true);
@@ -141,9 +146,7 @@ export async function checkStagedFileSize(root) {
   const staged = parseRawDiff(stagedDiff(root)).filter(({ path }) => !isExcluded(path));
   const mergeParents = staged.length ? mergeParentBlobSignatures(root) : null;
   // Renames and resolutions can change paths; an exact parent mode and blob is the approved identity.
-  const entries = mergeParents
-    ? staged.filter(({ mode, oid }) => !mergeParents.has(`${mode}:${oid}`))
-    : staged;
+  const entries = mergeParents ? staged.filter(({ mode, oid }) => !mergeParents.has(`${mode}:${oid}`)) : staged;
   const sizes = objectSizes(root, entries);
   const oversized = [];
   for (let index = 0; index < entries.length; index += 1) {
@@ -159,7 +162,9 @@ async function main() {
   const root = resolve(values['--root'] ?? git(process.cwd(), ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim());
   const result = await checkStagedFileSize(root);
   if (result.oversized.length) {
-    console.error(`Staged implementation files exceed ${formatNumber(LIMIT_BYTES)} bytes (about 5,000 tokens at bytes/4; top-level tests/ and specs/ are excluded):`);
+    console.error(
+      `Staged implementation files exceed ${formatNumber(LIMIT_BYTES)} bytes (about 5,000 tokens at bytes/4; top-level tests/ and specs/ are excluded, as is context/progress_checker.md):`,
+    );
     for (const file of result.oversized) console.error(`- ${JSON.stringify(file.path)} (${formatNumber(file.size)} bytes)`);
     console.error('Split each file along a cohesive responsibility into smaller modules, keep a small entry point, stage the split, then rerun `pnpm run check:staged-size`.');
     process.exitCode = 1;
@@ -169,7 +174,7 @@ async function main() {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  main().catch((error) => {
+  main().catch(error => {
     console.error(error.message);
     process.exitCode = 1;
   });

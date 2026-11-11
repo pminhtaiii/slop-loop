@@ -7,8 +7,10 @@ import type {
   ExecutionGuardV02,
   FixPlan,
   ModelPort,
+  ModelPortV02,
   RepositoryAdmissionContextV02,
   RepositoryPort,
+  RepositoryPortV02,
   StatePort,
   StatePortV02,
   TaskState,
@@ -67,18 +69,12 @@ export interface TrustedHostSnapshot {
 
 export interface TrustedHostPort {
   /** Returns producer claims; it cannot set admission facts or provide durable baseline/CAS guarantees. */
-  loadSnapshot(
-    request: TrustedHostSnapshotRequest
-  ): Promise<TrustedHostSnapshot> | TrustedHostSnapshot;
+  loadSnapshot(request: TrustedHostSnapshotRequest): Promise<TrustedHostSnapshot> | TrustedHostSnapshot;
 }
 
 export type TrustedInvestigationHostAuthority = TrustedHostPort;
 
-export type BaselineStatus =
-  | 'reproduced'
-  | 'non-reproducing'
-  | 'collection-error'
-  | 'error';
+export type BaselineStatus = 'reproduced' | 'non-reproducing' | 'collection-error' | 'error';
 
 export interface BaselineEvidenceCandidate extends Omit<Baseline, 'evidenceId'> {
   readonly taskId: string;
@@ -115,9 +111,7 @@ export interface BaselineEvidenceAcknowledgement {
 
 /** Local UC-04 consumer contract; the host adapter owns durable storage and evidence identity. */
 export interface BaselineEvidenceWriter {
-  persistBaselineEvidence(
-    request: BaselineEvidenceWriteRequest
-  ): Promise<BaselineEvidenceAcknowledgement>;
+  persistBaselineEvidence(request: BaselineEvidenceWriteRequest): Promise<BaselineEvidenceAcknowledgement>;
   /** Optional owner lookup used to restore TaskState-only graph continuations. */
   loadBaselineEvidence?(
     taskId: string,
@@ -146,20 +140,15 @@ export interface PlanPreparationResult {
 
 export interface InvestigationConfigPort {
   readonly provenance?: string | undefined;
-  loadConfig?(
-    taskId: string
-  ):
-    | Promise<{ readonly configId?: string; readonly configVersion?: string } | null>
-    | { readonly configId?: string; readonly configVersion?: string }
-    | null;
+  loadConfig?(taskId: string): Promise<{ readonly configId?: string; readonly configVersion?: string } | null> | { readonly configId?: string; readonly configVersion?: string } | null;
 }
 
 export interface InvestigationPorts {
-  readonly repository: RepositoryPort;
-  readonly state: StatePort;
+  readonly repository: RepositoryPort | RepositoryPortV02;
+  readonly state: StatePort | StatePortV02;
   readonly approval: ApprovalPort;
   readonly baselineEvidenceWriter?: BaselineEvidenceWriter | undefined;
-  readonly model?: ModelPort | undefined;
+  readonly model?: ModelPort | ModelPortV02 | undefined;
   readonly host?: TrustedHostPort | undefined;
   readonly config?: InvestigationConfigPort | undefined;
 }

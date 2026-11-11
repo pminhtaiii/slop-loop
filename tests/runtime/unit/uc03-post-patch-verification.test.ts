@@ -23,10 +23,12 @@ import { prepareVerificationApproval } from '../../../src/uc03/post-patch-verifi
 
 const D0 = 'decision-post-patch-original-001';
 
-function createOwnerFixture(options: {
-  readonly verifier?: boolean;
-  readonly wrapVerifier?: (issuer: ScriptedApprovalPort) => ContextualApprovalVerifierV02;
-} = {}) {
+function createOwnerFixture(
+  options: {
+    readonly verifier?: boolean;
+    readonly wrapVerifier?: (issuer: ScriptedApprovalPort) => ContextualApprovalVerifierV02;
+  } = {},
+) {
   const task = createFixtureBugTask();
   const base = createGraphTaskState(task);
   const baselineRef = `uc04://baseline/${task.taskId}/1`;
@@ -114,18 +116,13 @@ function createOwnerFixture(options: {
   return { task, state, authorityRef, issuer, owner };
 }
 
-function reidentifyRequest(
-  request: RecordVerificationApprovalRequestV02,
-  changes: Partial<RecordVerificationApprovalRequestV02>,
-): RecordVerificationApprovalRequestV02 {
+function reidentifyRequest(request: RecordVerificationApprovalRequestV02, changes: Partial<RecordVerificationApprovalRequestV02>): RecordVerificationApprovalRequestV02 {
   const candidate = { ...request, ...changes };
   const requestIdentity = expectedVerificationRequestIdentityV02(candidate);
   return { ...candidate, requestIdentity, decisionId: `dec-verify-${requestIdentity.slice('sha256:'.length)}` };
 }
 
-async function requestD1(
-  fixture: ReturnType<typeof createOwnerFixture>,
-) {
+async function requestD1(fixture: ReturnType<typeof createOwnerFixture>) {
   const snapshot = await fixture.owner.readVerificationAuthoritySnapshot(fixture.task.taskId);
   assert.ok(snapshot);
   const prepared = prepareVerificationApproval(fixture.task, fixture.state, snapshot, D0);
@@ -158,12 +155,17 @@ test('verification request identity is stable and the contextual records reject 
   const first = await requestD1(fixture);
   const snapshot = await fixture.owner.readVerificationAuthoritySnapshot(fixture.task.taskId);
   assert.ok(snapshot);
-  const second = prepareVerificationApproval(fixture.task, fixture.state, {
-    ...snapshot,
-    controlVersion: snapshot.controlVersion + 1,
-    epoch: snapshot.epoch + 1,
-    decisionAuthorityGeneration: snapshot.decisionAuthorityGeneration + 1,
-  }, D0);
+  const second = prepareVerificationApproval(
+    fixture.task,
+    fixture.state,
+    {
+      ...snapshot,
+      controlVersion: snapshot.controlVersion + 1,
+      epoch: snapshot.epoch + 1,
+      decisionAuthorityGeneration: snapshot.decisionAuthorityGeneration + 1,
+    },
+    D0,
+  );
   assert.ok(second);
   assert.equal(first.request.requestIdentity, second.request.requestIdentity);
   assert.equal(first.request.decisionId, second.request.decisionId);
@@ -173,11 +175,21 @@ test('verification request identity is stable and the contextual records reject 
   assert.equal(isRecordVerificationApprovalRequestV02({ ...first.request, decisionId: D0 }), false);
   assert.equal(isVerificationApprovalContextV02(first.context), true);
   assert.equal(isVerificationApprovalContextV02({ ...first.context, extra: true }), false);
-  assert.equal(isVerificationApprovalContextV02({
-    ...first.context,
-    approvalContext: { ...first.context.approvalContext, currentCheckSetDigest: undefined },
-  }), false);
-  const hostile = new Proxy({}, { getPrototypeOf() { throw new Error('proxy trap'); } });
+  assert.equal(
+    isVerificationApprovalContextV02({
+      ...first.context,
+      approvalContext: { ...first.context.approvalContext, currentCheckSetDigest: undefined },
+    }),
+    false,
+  );
+  const hostile = new Proxy(
+    {},
+    {
+      getPrototypeOf() {
+        throw new Error('proxy trap');
+      },
+    },
+  );
   assert.equal(isVerificationApprovalContextV02(hostile), false);
   assert.equal(isRecordVerificationApprovalRequestV02(hostile), false);
   assert.equal(isVerificationApprovalResolutionV02(hostile), false);
@@ -189,11 +201,11 @@ test('owner holds a pending D1 without mutation, then commits one explicit appro
   const before = await fixture.owner.loadTask(fixture.task.taskId);
   const beforeSnapshot = await fixture.owner.readVerificationAuthoritySnapshot(fixture.task.taskId);
   assert.ok(before && beforeSnapshot);
-  const pending = await Promise.all([
-    fixture.owner.recordVerificationApproval(prepared.request),
-    fixture.owner.recordVerificationApproval(prepared.request),
-  ]);
-  assert.deepEqual(pending.map((result) => result.outcome), ['pending', 'pending']);
+  const pending = await Promise.all([fixture.owner.recordVerificationApproval(prepared.request), fixture.owner.recordVerificationApproval(prepared.request)]);
+  assert.deepEqual(
+    pending.map(result => result.outcome),
+    ['pending', 'pending'],
+  );
   const firstPending = pending[0];
   assert.ok(firstPending && firstPending.outcome === 'pending');
   assert.deepEqual(firstPending.state, before);
@@ -202,7 +214,7 @@ test('owner holds a pending D1 without mutation, then commits one explicit appro
   assert.equal(pendingSnapshot?.controlVersion, beforeSnapshot.controlVersion);
   assert.equal(pendingSnapshot?.epoch, beforeSnapshot.epoch);
   assert.equal(pendingSnapshot?.decisionAuthorityGeneration, beforeSnapshot.decisionAuthorityGeneration);
-  assert.equal(fixture.issuer.getRecordedBindings().filter((binding) => binding.decisionId === prepared.request.decisionId).length, 1);
+  assert.equal(fixture.issuer.getRecordedBindings().filter(binding => binding.decisionId === prepared.request.decisionId).length, 1);
 
   const nextAuthority: PolicyAuthorityRefV02 = {
     ...fixture.authorityRef,
@@ -216,11 +228,11 @@ test('owner holds a pending D1 without mutation, then commits one explicit appro
   assert.ok(resumed);
   assert.equal(resumed.request.requestIdentity, prepared.request.requestIdentity);
   await fixture.issuer.requestDecision(resumed.binding);
-  const approvedResults = await Promise.all([
-    fixture.owner.recordVerificationApproval(resumed.request),
-    fixture.owner.recordVerificationApproval(resumed.request),
-  ]);
-  assert.deepEqual(approvedResults.map((result) => result.outcome), ['approved', 'approved']);
+  const approvedResults = await Promise.all([fixture.owner.recordVerificationApproval(resumed.request), fixture.owner.recordVerificationApproval(resumed.request)]);
+  assert.deepEqual(
+    approvedResults.map(result => result.outcome),
+    ['approved', 'approved'],
+  );
   const approved = approvedResults[0];
   assert.ok(approved && approved.outcome === 'approved');
   assert.equal(approved.state.stateVersion, before.stateVersion + 1);
@@ -312,9 +324,14 @@ test('legacy scripted updates remain available while a contextual D1 rejection s
   assert.equal(await legacy.validateBinding(legacyApproved, pending.context.approvalContext), true);
 
   const rejectedGeneration = fixture.authorityRef.decisionAuthorityGeneration + 1;
-  assert.equal((await fixture.owner.publishAuthority({
-    authorityRef: { ...fixture.authorityRef, decisionAuthorityGeneration: rejectedGeneration },
-  })).status, 'published');
+  assert.equal(
+    (
+      await fixture.owner.publishAuthority({
+        authorityRef: { ...fixture.authorityRef, decisionAuthorityGeneration: rejectedGeneration },
+      })
+    ).status,
+    'published',
+  );
   fixture.issuer.scriptDecision({ ...pending.binding, status: 'rejected', reason: 'Rejected D1' }, rejectedGeneration);
   const rejected = await fixture.owner.resolvePlanDecisionInContext(pending.request.decisionId, {
     ...pending.context,
@@ -325,9 +342,14 @@ test('legacy scripted updates remain available while a contextual D1 rejection s
   assert.equal(rejected.binding.status, 'rejected');
 
   const laterGeneration = rejectedGeneration + 1;
-  assert.equal((await fixture.owner.publishAuthority({
-    authorityRef: { ...fixture.authorityRef, decisionAuthorityGeneration: laterGeneration },
-  })).status, 'published');
+  assert.equal(
+    (
+      await fixture.owner.publishAuthority({
+        authorityRef: { ...fixture.authorityRef, decisionAuthorityGeneration: laterGeneration },
+      })
+    ).status,
+    'published',
+  );
   fixture.issuer.scriptDecision({ ...pending.binding, status: 'approved' }, laterGeneration);
   const afterRejectedUpdate = await fixture.owner.resolvePlanDecisionInContext(pending.request.decisionId, {
     ...pending.context,
@@ -378,7 +400,7 @@ test('owner rejects stale CAS fences and changed task, repository, policy, revis
     assert.equal(after?.epoch, snapshot.epoch);
     assert.equal(after?.decisionAuthorityGeneration, snapshot.decisionAuthorityGeneration);
   }
-  assert.equal(await fixture.owner.recordVerificationApproval({ ...prepared.request, decisionId: D0 }).then((result) => result.outcome), 'conflict');
+  assert.equal(await fixture.owner.recordVerificationApproval({ ...prepared.request, decisionId: D0 }).then(result => result.outcome), 'conflict');
 });
 
 test('contextual issuer resolution is bound to its issuer, generation, revision, and full explicit context', async () => {
@@ -408,16 +430,19 @@ test('contextual issuer resolution is bound to its issuer, generation, revision,
     const result = await fixture.owner.resolvePlanDecisionInContext(prepared.request.decisionId, context);
     assert.equal(result.outcome, 'stale');
   }
-  assert.equal(isVerificationApprovalContextV02({
-    ...prepared.context,
-    approvalContext: { ...prepared.context.approvalContext, extra: true },
-  }), false);
+  assert.equal(
+    isVerificationApprovalContextV02({
+      ...prepared.context,
+      approvalContext: { ...prepared.context.approvalContext, extra: true },
+    }),
+    false,
+  );
 });
 
 test('pause after issuer resolution defeats the owner CAS without changing task state or accounting', async () => {
   const afterResolution: { run?: () => Promise<void> } = {};
   const fixture = createOwnerFixture({
-    wrapVerifier: (issuer) => ({
+    wrapVerifier: issuer => ({
       async resolvePlanDecisionInContext(decisionId, context) {
         const result = await issuer.resolvePlanDecisionInContext(decisionId, context);
         if (context.purpose === 'current-verification') await afterResolution.run?.();
@@ -441,7 +466,9 @@ test('pause after issuer resolution defeats the owner CAS without changing task 
   await fixture.issuer.requestDecision(current.binding);
   const before = await fixture.owner.loadTask(fixture.task.taskId);
   const beforeLedgers = fixture.owner.getLedgers();
-  afterResolution.run = async () => { await fixture.owner.setTaskControl(fixture.task.taskId, 'paused', 'pause-after-issuer-resolution'); };
+  afterResolution.run = async () => {
+    await fixture.owner.setTaskControl(fixture.task.taskId, 'paused', 'pause-after-issuer-resolution');
+  };
   const result = await fixture.owner.recordVerificationApproval(current.request);
   assert.ok(result.outcome === 'blocked' || result.outcome === 'stale');
   assert.deepEqual(await fixture.owner.loadTask(fixture.task.taskId), before);
@@ -455,7 +482,7 @@ test('pause after issuer resolution defeats the owner CAS without changing task 
 test('owner refuses changed verification scope after cached approval while preserving stale-fence replay', async () => {
   let resolutionCalls = 0;
   const fixture = createOwnerFixture({
-    wrapVerifier: (issuer) => ({
+    wrapVerifier: issuer => ({
       async resolvePlanDecisionInContext(decisionId, context) {
         resolutionCalls++;
         return issuer.resolvePlanDecisionInContext(decisionId, context);
@@ -507,10 +534,14 @@ test('owner refuses changed verification scope while the identical request is in
   let releaseResolution: (() => void) | undefined;
   let signalResolution: (() => void) | undefined;
   let resolutionCalls = 0;
-  const resolutionEntered = new Promise<void>((resolve) => { signalResolution = resolve; });
-  const resolutionHold = new Promise<void>((resolve) => { releaseResolution = resolve; });
+  const resolutionEntered = new Promise<void>(resolve => {
+    signalResolution = resolve;
+  });
+  const resolutionHold = new Promise<void>(resolve => {
+    releaseResolution = resolve;
+  });
   const fixture = createOwnerFixture({
-    wrapVerifier: (issuer) => ({
+    wrapVerifier: issuer => ({
       async resolvePlanDecisionInContext(decisionId, context) {
         resolutionCalls++;
         const result = await issuer.resolvePlanDecisionInContext(decisionId, context);
@@ -536,7 +567,7 @@ test('owner refuses changed verification scope while the identical request is in
       { ...current.request, repositoryId: 'repository-other' },
       { ...current.request, expectedPlanVersion: current.request.expectedPlanVersion + 1 },
     ];
-    const mismatchedResults = mismatchedRequests.map((request) => fixture.owner.recordVerificationApproval(request));
+    const mismatchedResults = mismatchedRequests.map(request => fixture.owner.recordVerificationApproval(request));
     const coalesced = fixture.owner.recordVerificationApproval(current.request);
     assert.deepEqual(await fixture.owner.loadTask(fixture.task.taskId), before);
     assert.deepEqual(fixture.owner.getLedgers(), beforeLedgers);

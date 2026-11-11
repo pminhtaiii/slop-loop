@@ -21,30 +21,54 @@ export function projectRecommendation(proposal: unknown, context: unknown): Vali
   const compatible = catalog.value.destinations.filter(entry => entry.acceptsClassificationIds.includes(candidate.classification.value));
   const destination = compatible.find(entry => entry.id === candidate.destination.value);
   const normalize = (text: string): string => text.trim().replace(/\s+/gu, ' ').toLowerCase();
-  const indistinguishable = destination && compatible.some(entry => entry.id !== destination.id
-    && normalize(entry.responsibility) === normalize(destination.responsibility));
+  const indistinguishable = destination && compatible.some(entry => entry.id !== destination.id && normalize(entry.responsibility) === normalize(destination.responsibility));
   const hasRouteQuestion = candidate.questions.some(question => question.affects.includes('destination'));
   if (candidate.destination.value === 'undetermined' || indistinguishable || hasRouteQuestion) {
     const ambiguous = compatible.length > 1;
-    const reason = compatible.length === 0 ? 'No configured destination supports the assessed classification.'
-      : ambiguous ? 'Available evidence does not distinguish compatible destination responsibilities.'
-        : 'Destination responsibility fit remains undetermined from the available evidence.';
+    const reason =
+      compatible.length === 0
+        ? 'No configured destination supports the assessed classification.'
+        : ambiguous
+          ? 'Available evidence does not distinguish compatible destination responsibilities.'
+          : 'Destination responsibility fit remains undetermined from the available evidence.';
     const questions = [...candidate.questions];
-    if (ambiguous && !hasRouteQuestion) questions.push({ id: unusedId('uc01-destination', questions.map(question => question.id)),
-      text: 'Which configured destination responsibility should handle this issue?', affects: ['destination'],
-      reason: 'The available evidence cannot distinguish the compatible configured destinations.' });
-    if (questions.length > trusted.limits.questions) return {
-      ok: false, status: 'error', reasonCode: 'question-budget-exhausted', path: '$.questions',
-    };
-    const routeId = unusedId('uc01-route-unknown', candidate.assertions.map(assertion => assertion.id));
-    return validateProposal({ ...candidate, destination: { value: 'undetermined', assertionIds: [routeId] }, questions,
-      assertions: [...candidate.assertions, { id: routeId, text: reason, basis: 'unknown', evidenceIds: [] }],
-      uncertainties: [...new Set([...candidate.uncertainties, reason])] }, context);
+    if (ambiguous && !hasRouteQuestion)
+      questions.push({
+        id: unusedId(
+          'uc01-destination',
+          questions.map(question => question.id),
+        ),
+        text: 'Which configured destination responsibility should handle this issue?',
+        affects: ['destination'],
+        reason: 'The available evidence cannot distinguish the compatible configured destinations.',
+      });
+    if (questions.length > trusted.limits.questions)
+      return {
+        ok: false,
+        status: 'error',
+        reasonCode: 'question-budget-exhausted',
+        path: '$.questions',
+      };
+    const routeId = unusedId(
+      'uc01-route-unknown',
+      candidate.assertions.map(assertion => assertion.id),
+    );
+    return validateProposal(
+      {
+        ...candidate,
+        destination: { value: 'undetermined', assertionIds: [routeId] },
+        questions,
+        assertions: [...candidate.assertions, { id: routeId, text: reason, basis: 'unknown', evidenceIds: [] }],
+        uncertainties: [...new Set([...candidate.uncertainties, reason])],
+      },
+      context,
+    );
   }
-  const fit = candidate.assertions.find(assertion => candidate.destination.assertionIds.includes(assertion.id)
-    && assertion.basis === 'inference' && assertion.evidenceIds.length > 0);
+  const fit = candidate.assertions.find(assertion => candidate.destination.assertionIds.includes(assertion.id) && assertion.basis === 'inference' && assertion.evidenceIds.length > 0);
   if (!destination || !fit) return { ok: false, status: 'error', reasonCode: 'invalid-model-output', path: '$.destination' };
   const responsibility = `Configured responsibility: ${destination.responsibility}`;
-  return validateProposal({ ...candidate, assertions: candidate.assertions.map(assertion => assertion.id === fit.id
-    ? { ...assertion, text: `${assertion.text} ${responsibility}` } : assertion) }, context);
+  return validateProposal(
+    { ...candidate, assertions: candidate.assertions.map(assertion => (assertion.id === fit.id ? { ...assertion, text: `${assertion.text} ${responsibility}` } : assertion)) },
+    context,
+  );
 }

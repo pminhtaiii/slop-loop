@@ -7,6 +7,8 @@
 
 ## Evaluation-first completion rule
 
+The user-reported Tai delegation on 2026-10-30 releases T011/T015 implementation and binding technical amendments, superseding historical unreleased wording only for those tasks. T015 infrastructure/conformance may proceed before T012; full acceptance still requires actual real integration and two comparable real-model runs. T011/T015 remain unchecked until all their criteria pass; no successor or dispatch authorization follows. See [decisions](contracts/decisions.md#delegated-t011t015-authority--2026-10-30).
+
 Keep the original 16 task IDs and six Issue groupings. For each task: prepare named cases/oracles/rules before implementation; run its applicable available checks immediately after the authorized change; retain versioned pass/fail/error/not-run results, sanitized trace/evidence and failure analysis; rerun impacted prior cases; complete only the task's declared scope when its criteria pass. The [execution schedule](contracts/acceptance.md#incremental-execution-and-evidence-schedule) determines the first capable slice; T014/T015 never postpone earlier runnable safety/evaluation work. Required unavailable checks retain not-run reasons, owner/gate and retry conditions. Mock-task completion cannot satisfy deferred real-integration/model/project gates. Only the coordinator changes checkboxes after evidence review.
 
 ## Format and ownership
@@ -106,7 +108,7 @@ Sequential T001–T016; story tasks carry [US1], [US2] or [US3]. Thai owns all l
 - [ ] T011 Compose real shared adapters in src/uc01/compose.ts and tests/runtime/uc01/composition.test.ts.
   - **Owner**: Thai; adapters delivered by external owners.
   - **Dependencies**: T010; external X-READ-MODEL, X04-STATE, X05-GATE and A-PRODUCTION.
-  - **Owned Paths**: src/uc01/compose.ts; tests/runtime/uc01/composition.test.ts.
+  - **Owned Paths**: src/uc01/compose.ts; src/uc01/production-profile.ts; src/uc01/shared-adapters.ts; src/uc01/assessment-ports.ts; src/uc01/assessment-protocol.ts; src/uc01/assess.ts; tests/runtime/uc01/composition.test.ts; tests/runtime/uc01/shared-adapters.test.ts.
   - **Acceptance Checks**: Record owner-approved contract versions/adapter revisions; bind selected workspace/config/policy and durable accounting. Reject mock/missing/incompatible adapter before constrained call (C20). Consume shared guards; no implementation under src/foundation/, src/persistence/ or src/approvals/.
   - **Evaluation & Evidence**: Before composition: define C20 real-adapter admission criteria and exact required versions/config/accounting/policy evidence. Run available admission checks immediately and regress mock composition cases separately. Missing external delivery is not-run with owner/retry condition; a mock negative-admission test is not real integration acceptance.
 
@@ -134,7 +136,7 @@ Sequential T001–T016; story tasks carry [US1], [US2] or [US3]. Thai owns all l
 - [ ] T015 Compare real-model quality and prove shared evaluation compatibility in proposed tests/runtime/uc01/evaluation.test.ts.
   - **Owner**: Thai; Tai owns runner, project owner approves corpus/thresholds.
   - **Dependencies**: T012, T013, T014; external A-EVALUATION, A-PRODUCTION, X-EVAL-AGREEMENT and X-EVAL-RUNNER.
-  - **Owned Paths**: tests/runtime/uc01/evaluation.test.ts; fixtures/uc01/public/ (public inputs only).
+  - **Owned Paths**: tests/runtime/uc01/evaluation.test.ts; eval/uc03/runner.ts; eval/shared.ts; eval/shared-types.ts; eval/uc01/registration.ts; fixtures/uc01/public/ (public inputs only).
   - **Acceptance Checks**: Use versioned case/oracle/rule design prepared at T002–T004, with approved hidden labels inaccessible to model/tools. Compare at least two equivalent actual model runs for SC-006, including >=80% classification on a frozen >=5-case corpus covering defect/feature/ambiguity/irrelevant/malicious reports, complete required execution and hard safety gates. Report failures plus severity/clarification/routing, latency, tokens/cost and comparison identities. Prove actual shared registration/scoped selection, required-UC manifest validation, result isolation and failure propagation without redesigning cases; missing runner/agreement/deliveries means not-run and blocks completion. No local competing runner/provider transport; no invented project pass or unapproved command/path. Other thresholds/rules approved before runs.
   - **Evaluation & Evidence**: Before scored runs: approve frozen corpus/oracles/grader rules, comparability plan, shared descriptor/runner versions and numeric gates. Execute real scoped/shared conformance plus two comparable model runs; retain pass/fail/error/not-run, confusion matrix, per-case analysis, latency/token/cost and safe traces. Preserve errors/unrun cases and cross-UC isolation; unavailable required runner/project delivery blocks that obligation, not earlier authorized local development.
 

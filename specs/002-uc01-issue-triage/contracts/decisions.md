@@ -1,6 +1,18 @@
 # Decisions and Authorization: UC-01
 
+The [2026-10-30 delegated T011/T015 amendment](#delegated-t011t015-authority--2026-10-30) supersedes the historical unreleased wording below for those two tasks only.
+
 **Status**: T001 artifact and consumer-contract agreement approved on 2026-10-18 (Asia/Bangkok). T002–T010 completed under separate authorization at the controlled local level. On 2026-10-19 (Asia/Bangkok), the user authorized Phase 5, T009–T010, for configured recommendation through controlled shared ports. T014 was separately authorized on 2026-10-20 (Asia/Bangkok); T013 is separately authorized on 2026-10-28 for versioned receiver compatibility after UC-03 T011/T012; T011/T012, T015/T016 and real execution remain separately gated.
+
+## Delegated T011/T015 authority — 2026-10-30
+
+The user reports Tai's delegation of full technical decisions for T011 and T015 on latest development. This releases implementation, necessary shared integration amendments, tests, independent review and standard contributor publication within those two tasks. It supersedes historical unreleased wording only for this scope. T012/T016, unrelated UC work, dispatch and automatic repair are excluded. T015 infrastructure/conformance may proceed before T012; real-model comparison and task completion still require its real prerequisites. Both task checkboxes remain open until complete acceptance.
+
+Adopt `uc01-composition-v1` for trusted composition: exact consumer-v1 component versions and immutable revision receipts, explicitly selected task/run/repository/workspace/snapshot/config/policy/accounting identities, finite limits, reservation ceiling and integer rational pricing. A trusted delivery registry binds receipts to actual component object identities; a caller-supplied `real` label alone grants no admission. Missing, mock, incompatible or unregistered components fail before any component call. Recheck the bound context and admitted provenance per invocation. No fake UC-03 task mapping is permitted.
+
+Real assessment uses explicit pricing and preserves real evidence/output provenance. Invalid or unpriced usage retains the full reservation as uncertain. Fixture defaults remain mock-only. Delivered UC-04 reserve/settle envelopes may be projected into consumer-v1, but its current task-only in-memory accounting is not a durable task/run admission implementation. It must not become production eligible through that projection. Existing Foundation model requests require UC-03 state; UC-05 requires its canonical action/policy binding. Missing triage-compatible deliveries are concrete integration prerequisites, not grounds to fabricate adapters.
+
+T015 extends the existing evaluation entry point under `shared-evaluation-v1`; the executable agreement and isolation/status rules are recorded in [evaluation](evaluation.md). Frozen identities, private grader data and the original classification floor are preserved. Controlled conformance proves infrastructure behavior only; actual model comparisons require an explicitly configured real provider and approved held-out execution/isolation.
 
 ## T001 approval provenance and approved agreement
 

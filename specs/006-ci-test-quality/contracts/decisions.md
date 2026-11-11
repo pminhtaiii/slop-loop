@@ -1,0 +1,138 @@
+# Scope and Authorization
+
+## Dependency-install check moved into CI — 2026-10-31 (Asia/Saigon)
+
+The user reported that the local publication gate is too expensive and asked
+whether publication could rely on GitHub Actions instead. Investigation from
+retained gate logs (83 runs in `.agent-work/pr-workflow-logs/`) measured the
+contributor-test gate at 9 min median and 19 min p90 locally, while the same 468
+tests finish in about 31 s on an Ubuntu runner; the gap is `git` subprocess
+spawn cost on Windows across 336 call sites, not gate design. The runtime gate
+adds about 107 s median. Full CI for all three workflows completes in about 100 s.
+
+All four local gates had CI counterparts except
+`node scripts/ci/check-dependency-install.mjs`, which no workflow referenced.
+That script is the only place the release-age policy in `pnpm-workspace.yaml` is
+verified against a cold metadata cache: it installs frozen with a unique cache dir
+and `--no-trust-lockfile`, so a memoized supply-chain verdict cannot satisfy it.
+Every other lane installs from a warm cache.
+
+This releases one bounded source change: add that command to the existing
+`repository-policy` job and its `REQUIRED_COMMANDS` contract entry, and correct
+the stale "Linux and Windows" sentence in `docs/agents/pr-workflow.md`. It adds
+no job, changes no required check name, keeps `--mode full` as the publication
+default, and records no new authority for any agent. Wall-clock rationale and the
+call to prefer push-only for iterative heads live in the rollout log; here the
+authorization boundary is what matters.
+
+Not released: any live branch-protection change, any merge, any change to the
+`ci-v1`–`ci-v5` policy lists, and any relaxation of the default publication mode.
+`specs/006-ci-test-quality/plan.md` still pins the full local gate as the default
+command/order; per-invocation `--mode push-only` remains the supported escape.
+No remote observation backs any statement in this section.
+
+## Merge-gating narrowed to four checks — 2026-10-30 (Asia/Saigon)
+
+The user asked that only static analysis and PR metadata be required for merging.
+This releases one bounded source change: an immutable `ci-v5` policy of
+`static-lint`, `static-types`, `repository-policy` and `pr-metadata`, its
+activation, the matching `.github/branch-protection.json` mirror, and the
+consumer/test updates that follow the active policy.
+
+The `build`, `contributor-tooling-tests` and `runtime-tests` lanes keep running,
+keep their command contracts, and stay visible in the evidence; they no longer
+gate a merge or a contributor completion. `ci-v4` stays immutable so merged heads
+assessed under it remain reproducible, and historical policies stay bindable only
+through audited merged identities.
+
+Not released: any live branch-protection change, any merge, and any removal of
+the three non-gating lanes. Gate 4 still governs the remote migration. Until a
+human authorizes and reads back that change, development protection continues to
+require the seven `ci-v4` names.
+
+## Ubuntu-only replacement — 2026-10-30 (Asia/Saigon)
+
+Follow-up authorization: the user explicitly approved the proposed development
+protection update and selected removal of redundant jobs **and** OS name suffixes.
+The [final cleanup contract](ubuntu-only.md#final-cleanup-and-stable-names--2026-10-30-asiasaigon)
+releases this bounded source cleanup and exact ci-v4 protection-name migration
+after its checks pass. All other protections and human merge authority remain.
+
+Observed rollout: PR #126 head `c68832a` passed all seven exact-head ci-v4 checks.
+The approved final required-name migration was applied and full protection read-back
+preserved every unrelated setting. Fresh hosted reruns retain the same source head;
+see the [rollout evidence](../../../docs/agents/ci-rollout.md#ubuntu-only-replacement--2026-10-30).
+The user explicitly selected push-only publication without local publication gates;
+current-head full local verification remains skipped. No merge was authorized.
+
+The user requested CI consolidation and selected Ubuntu-only CI. The bounded
+[Ubuntu-only amendment](ubuntu-only.md) supersedes the earlier requirement to
+retain both OS lanes. Source implementation and ordinary contributor publication
+are released after independent targeted design review. Live protection changes,
+legacy-job removal before verified migration, and merges remain gated.
+
+Targeted design gate: automated planning validation passed; independent standards/architecture and testability reviews found zero P0/P1 issues against the amendment. This releases its source stage only.
+
+## Confirmed direction — 2026-10-28 (Asia/Saigon)
+
+The user selected Stryker, requested an initial telemetry experiment, and agreed to separate named CI responsibilities while retaining both OS behavioral lanes. Subsequent answers explicitly withdrew pre-PR mutation enforcement, selected direct required jobs with a shared names list, allowed only `.env.example` as an environment example, and chose a manual/report-only mutation CI pilot. The user then requested the planning workflow and specifications for CI changes and mutation-guided test improvements.
+
+This authorizes creation, refinement and independent review of these planning artifacts. It does **not** authorize implementation, live branch-protection changes, publication to the default branch, a pre-PR hook, a numeric mutation gate, automatic merging or broader runtime work. Existing scoped contributor authority is unchanged; no merge is authorized here.
+
+## Planning choices proposed for approval
+
+The associated contracts define ten directly required new check names, a staged remote rollout, an explicit historical merged-head policy, a pinned secret scanner, strict placeholder examples and a whole-module manual telemetry profile. They are implementation proposals derived from the agreed direction, not observed deployed capabilities. Sharding is deferred until measured evidence supports another scope.
+
+**Do not chase every survivor or force a 100% mutation score.** Meaningful behavior-changing survivors get assertions. Equivalent/redundant changes get specific explanations. Harness problems get calibrated separately. Unreviewed or unresolved survivors remain visible.
+
+The original experiment is retained locally at `.agent-work/2026-10-28/mutation-ci-trial/observations.md`. Its final excerpt baseline is 222 mutants: 136 killed, 85 survived and one timeout, 61.71%. The earlier 66.67% run was inflated by timing noise. The exact-limit assertion exists only in the disposable pilot. None of these results establishes whole-module, whole-repository or production-runtime quality.
+
+## Implementation authorization — 2026-10-29 (Asia/Bangkok)
+
+The user explicitly asked for the remaining implementation phases of this feature to be implemented, and
+for the already-implemented Phase 1–3 work to be marked complete. This is the gate-2 user approval for a
+bounded implementation batch:
+
+- Released: T007–T019 (Phases 4–6 and the documentation/integration task) as local source, test and
+  workflow-file changes, including the single reviewed `ci-v2` activation in `scripts/ci/required-checks.mjs`.
+- Not released: T020, T021, T023 and therefore T022/T024 dependants require live observation, an
+  explicitly authorized operator protection change, or default-branch promotion. They remain unchecked.
+- Not released by this approval: any remote setting change, any default-branch push or promotion, any
+  merge, a pre-PR hook, a numeric mutation gate, automatic mutation on PR/push, or broader runtime work.
+
+Stage A1 (T001–T006) was implemented and its leaves merged into PR #122 evidence rows; those rows are
+local-gate evidence only. Marking a task complete records implemented source and exercised local
+behavior; it does not assert a live CI or remote-protection observation.
+
+The 2026-10-29 review-and-repair batch on the same branch falls inside this authorization. Every repair
+was a behaviour-preserving correction to a file already owned by T007–T019 (`check-tracked-files.mjs`,
+`check-env-examples.mjs`, `scan-secrets.mjs`, `pr-conventions.mjs`, `pr-metadata.yml`, `run-mutation.mjs`,
+`tests/runtime/unit/telemetry.test.ts` and their tests and contract prose); none added a required check,
+a live setting, a mutation gate or a new scope, so no separate decision is needed. Its evidence is
+local-gate only and is recorded in `tasks.md` T019 and the `ci-rollout.md` evidence log.
+
+The second review-and-repair round on the same day also falls inside this authorization, on the same
+terms. Its one behavioural change is in `scripts/agents/pr-conventions.mjs`, which `T007` already owns:
+the description contract now ignores a review bot's generated block, identified by its own comment
+markers, so a machine-appended summary cannot fail the required `pr-metadata` lane. The three canonical
+sections and every refusal rule are unchanged; only the bot's own block is exempt, and a human adding a
+fourth section or writing the same heading without the markers is still refused. The remaining repairs
+are corrections to `scan-secrets.mjs`, `quickstart.md` and `tests/ci/workflow-contracts.test.mjs`. No
+required check, live setting, mutation gate or scope was added, and no remote fact was observed.
+
+## Gates
+
+1. Automated planning validation plus current-artifact independent standards/architecture and testability reviews with no unresolved P0/P1 findings.
+2. Separate user approval releasing a bounded implementation batch; unchecked tasks do not establish approval.
+3. Ordinary contributor review/publication and exact-head CI evidence for implemented changes.
+4. Explicit authorization and read-back evidence before changing live branch requirements or promoting workflow files to the default branch. Remove transitional jobs only after the replacement requirements are observed.
+
+Planning-gate results are recorded after review; absence of a result is not a pass.
+
+## Planning quality gate — 2026-10-28 (Asia/Saigon)
+
+Automated artifact/task-DAG validation passed. Independent R1 reviews identified activation-frontier, candidate-tree secret coverage, transitional inventory-count and PR head/merge identity gaps; the correction batch also clarified context ownership and mutation-report terminality. Both independent R2 axes found no blocking issues, and their separate strict-format verdicts each passed the repository review evaluator with zero P0/P1/P2 findings. The coordinator passes the planning quality gate for this bounded design.
+
+Reviewed design identity and detailed evidence are retained locally at `.agent-work/2026-10-28/mutation-ci-trial/ci-planning-r2-snapshot.json`, with the standards/testability R2 reports and verdicts alongside it. The 22 declared design/governance inputs verified unchanged before/after the reviews. Subsequent changes to this decision footer, the spec status and the checklist record the gate result only; they add no implementation authorization or requirements.
+
+This is artifact readiness for implementation approval, not approval to implement any task or perform live rollout. All 24 tasks remain unchecked. Proposed technical choices and external gates retain the scope above.

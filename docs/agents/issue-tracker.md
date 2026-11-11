@@ -6,7 +6,7 @@ Issues and specs for this repo live as GitHub issues. With [paired publication](
 node scripts/agents/paired-issues.mjs publish --key <stable-key> --title "<title>" --body-file <file>
 ```
 
-Retain the key for later updates and use the returned URLs; issue numbers differ between repositories. Read and triage with `gh --repo <owner/repository>` for the intended target. The helper preserves closed state and does not mirror comments or assignees.
+Retain the key for later updates and use the returned URLs; issue numbers differ between repositories. Read and triage with `gh --repo <owner/repository>` for the intended target. With `issue-project.json`, the helper assigns both issues to the authenticated human from `gh api user` and adds the configured side to the Project, preserving existing project status. The helper preserves closed state and does not mirror comments. GitHub operations use CLI only; the token needs repository write and `project` access.
 
 ## Conventions
 

@@ -41,9 +41,7 @@ async function checkout(t, source = ledger()) {
 }
 
 function run(current, mode, extra = [], tasksPath = 'specs/feature/tasks.md') {
-  return spawnSync(process.execPath, [
-    cliSource, mode, '--tasks', tasksPath, ...extra, '--root', current.root,
-  ], { cwd: tmpdir(), encoding: 'utf8', windowsHide: true });
+  return spawnSync(process.execPath, [cliSource, mode, '--tasks', tasksPath, ...extra, '--root', current.root], { cwd: tmpdir(), encoding: 'utf8', windowsHide: true });
 }
 
 async function writeAssignments(current, entries) {
@@ -51,15 +49,27 @@ async function writeAssignments(current, entries) {
   await writeFile(current.statePath, `${JSON.stringify(entries)}\n`, 'utf8');
 }
 
-test('batch computes canonical dependency closure, reports explicit authorization and ignores unrelated assignments without writing', async (t) => {
+test('batch computes canonical dependency closure, reports explicit authorization and ignores unrelated assignments without writing', async t => {
   const current = await checkout(t, ledger({ open: ['T060', 'T061'] }));
   const unrelated = Array.from({ length: 300 }, (_, index) => ({
-    owner: `old-${index}`, task: `unrelated-${index}`, role: 'worker', status: 'active',
-    checkout: current.root, session: 'old-session', summary: 'Unrelated stale assignment', next: 'No action',
+    owner: `old-${index}`,
+    task: `unrelated-${index}`,
+    role: 'worker',
+    status: 'active',
+    checkout: current.root,
+    session: 'old-session',
+    summary: 'Unrelated stale assignment',
+    next: 'No action',
   }));
   unrelated.push({
-    owner: 'prior-session-worker', task: 'T060', role: 'worker', status: 'active',
-    checkout: current.root, session: 'old-session', summary: 'Prior session assignment', next: 'No action',
+    owner: 'prior-session-worker',
+    task: 'T060',
+    role: 'worker',
+    status: 'active',
+    checkout: current.root,
+    session: 'old-session',
+    summary: 'Prior session assignment',
+    next: 'No action',
     ownedPaths: ['src/task-T060.ts'],
   });
   await writeAssignments(current, unrelated);
@@ -69,45 +79,76 @@ test('batch computes canonical dependency closure, reports explicit authorizatio
   const result = run(current, 'batch', ['--scope', 'T057-T061', '--session', 'current-session']);
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(JSON.parse(result.stdout).dependencyClosure, [
-    'T018', 'T021', 'T022', 'T040', 'T042', 'T044', 'T046', 'T048', 'T050', 'T052',
-    'T054', 'T056', 'T057', 'T058', 'T059', 'T060', 'T061',
+    'T018',
+    'T021',
+    'T022',
+    'T040',
+    'T042',
+    'T044',
+    'T046',
+    'T048',
+    'T050',
+    'T052',
+    'T054',
+    'T056',
+    'T057',
+    'T058',
+    'T059',
+    'T060',
+    'T061',
   ]);
   const output = JSON.parse(result.stdout);
-  assert.deepEqual(output.readyFrontier.map((task) => task.id), ['T060']);
+  assert.deepEqual(
+    output.readyFrontier.map(task => task.id),
+    ['T060'],
+  );
   assert.deepEqual(output.missingAuthorization, ['T060', 'T061']);
   assert.deepEqual(output.workers, []);
-  assert.ok(output.tasks.find((task) => task.id === 'T060').paths.includes('src/task-T060.ts'));
+  assert.ok(output.tasks.find(task => task.id === 'T060').paths.includes('src/task-T060.ts'));
   assert.equal(result.stdout.includes('unrelated-'), false);
   assert.equal(await readFile(current.tasksPath, 'utf8'), beforeTasks);
   assert.equal(await readFile(current.statePath, 'utf8'), beforeState);
 });
 
-test('review-ready requires checked integrated scope and terminal scoped workers; no-review is skipped, not certified', async (t) => {
+test('review-ready requires checked integrated scope and terminal scoped workers; no-review is skipped, not certified', async t => {
   const current = await checkout(t, ledger({ open: ['T060', 'T061'] }));
-  await writeAssignments(current, [{
-    owner: 'live-worker', task: 'T060', role: 'worker', status: 'active', checkout: current.root,
-    session: 'current-session', summary: 'Still editing', next: 'Finish and hand off', ownedPaths: ['src/task-T060.ts'],
-  }, {
-    owner: 'handoff-worker', task: 'T061', role: 'worker', status: 'handed-off', checkout: current.root,
-    session: 'current-session', summary: 'Result awaits integration', next: 'Coordinator integration', ownedPaths: ['src/task-T061.ts'],
-  }]);
-
-  const blocked = run(current, 'review-ready', [
-    '--scope', 'T057-T061', '--session', 'current-session', '--authorized', 'T060',
+  await writeAssignments(current, [
+    {
+      owner: 'live-worker',
+      task: 'T060',
+      role: 'worker',
+      status: 'active',
+      checkout: current.root,
+      session: 'current-session',
+      summary: 'Still editing',
+      next: 'Finish and hand off',
+      ownedPaths: ['src/task-T060.ts'],
+    },
+    {
+      owner: 'handoff-worker',
+      task: 'T061',
+      role: 'worker',
+      status: 'handed-off',
+      checkout: current.root,
+      session: 'current-session',
+      summary: 'Result awaits integration',
+      next: 'Coordinator integration',
+      ownedPaths: ['src/task-T061.ts'],
+    },
   ]);
+
+  const blocked = run(current, 'review-ready', ['--scope', 'T057-T061', '--session', 'current-session', '--authorized', 'T060']);
   assert.equal(blocked.status, 0, blocked.stderr);
   let output = JSON.parse(blocked.stdout);
   assert.equal(output.review.status, 'blocked');
   assert.equal(output.review.reviewed, false);
   assert.equal(output.review.acceptanceCertified, false);
   assert.ok(output.blockers.unchecked.includes('T060'));
-  assert.ok(output.blockers.liveWorkers.some((worker) => worker.task === 'T060'));
-  assert.ok(output.blockers.unintegratedHandoffs.some((worker) => worker.task === 'T061'));
+  assert.ok(output.blockers.liveWorkers.some(worker => worker.task === 'T060'));
+  assert.ok(output.blockers.unintegratedHandoffs.some(worker => worker.task === 'T061'));
   assert.deepEqual(output.missingAuthorization, ['T061']);
 
-  const skipped = run(current, 'review-ready', [
-    '--scope', 'T057-T061', '--no-review', '--session', 'current-session',
-  ]);
+  const skipped = run(current, 'review-ready', ['--scope', 'T057-T061', '--no-review', '--session', 'current-session']);
   assert.equal(skipped.status, 0, skipped.stderr);
   output = JSON.parse(skipped.stdout);
   assert.equal(output.review.status, 'skipped');
@@ -115,7 +156,7 @@ test('review-ready requires checked integrated scope and terminal scoped workers
   assert.equal(output.review.acceptanceCertified, false);
 });
 
-test('review-ready reports end-of-scope logistics without treating a checked RED checkpoint as acceptance', async (t) => {
+test('review-ready reports end-of-scope logistics without treating a checked RED checkpoint as acceptance', async t => {
   const current = await checkout(t);
   const result = run(current, 'review-ready', ['--scope', 'T057-T061']);
   assert.equal(result.status, 0, result.stderr);
@@ -123,21 +164,90 @@ test('review-ready reports end-of-scope logistics without treating a checked RED
   assert.equal(output.review.status, 'ready');
   assert.equal(output.review.reviewed, false);
   assert.equal(output.review.acceptanceCertified, false);
-  assert.ok(output.tasks.find((task) => task.id === 'T059').summary.includes('intentional behavioral RED'));
+  assert.ok(output.tasks.find(task => task.id === 'T059').summary.includes('intentional behavioral RED'));
   assert.ok(output.dependencyClosure.includes('T022'));
 });
 
-test('batch surfaces exact path collisions at the ready frontier', async (t) => {
+test('batch surfaces exact path collisions at the ready frontier', async t => {
   const current = await checkout(t, ledger({ checked: false, conflicts: true }));
   const result = run(current, 'batch', ['--scope', 'T003-T004', '--authorized', 'T003', '--authorized', 'T004']);
   assert.equal(result.status, 0, result.stderr);
   const output = JSON.parse(result.stdout);
-  assert.deepEqual(output.readyFrontier.map((task) => task.id), ['T003', 'T004']);
-  assert.ok(output.conflicts.some((conflict) =>
-    conflict.path === 'src/shared.ts' && conflict.tasks.includes('T003') && conflict.tasks.includes('T004')));
+  assert.deepEqual(
+    output.readyFrontier.map(task => task.id),
+    ['T003', 'T004'],
+  );
+  assert.ok(output.conflicts.some(conflict => conflict.path === 'src/shared.ts' && conflict.tasks.includes('T003') && conflict.tasks.includes('T004')));
 });
 
-test('batch rejects unknown scopes, malformed dependencies, duplicate IDs, cycles, and path traversal', async (t) => {
+test('batch exposes declared acceptance and external prerequisites without certifying partial work', async t => {
+  const source = `# Tasks
+
+## Phase 1: Controlled work
+- [ ] T001 Exercise the CLI in \`src/cli/run.ts\`.
+  - **Dependencies**: None.
+  - **Owned Paths**: src/cli/run.ts.
+  - **Acceptance Checks**: Controlled CLI reports the retained result.
+    Refusal leaves the journal unchanged.
+  - **Remaining Acceptance**: Control binding requires another owner's task; publication is partial.
+  - **External Prerequisites**: G-REAL requires pinned owner delivery.
+  - **constructor**: Unrelated ledger metadata.
+
+\`\`\`markdown
+  - **Remaining Acceptance**: Fenced example is not a requirement.
+\`\`\`
+
+## Phase 2: Other owner
+- [x] T002 Supply control in \`src/control.ts\`.
+  - **Dependencies**: None.
+  - **Acceptance Checks**: Other task's check.
+`;
+  const current = await checkout(t, source);
+  const before = await readFile(current.tasksPath, 'utf8');
+  const result = run(current, 'batch', ['--scope', 'T001', '--authorized', 'T001']);
+  assert.equal(result.status, 0, result.stderr);
+  const output = JSON.parse(result.stdout);
+  const task = output.tasks[0];
+  assert.deepEqual(
+    output.readyFrontier.map(item => item.id),
+    ['T001'],
+  );
+  assert.deepEqual(task.paths, ['src/cli/run.ts']);
+  assert.deepEqual(task.acceptance.source, { path: 'specs/feature/tasks.md', line: 4 });
+  assert.equal(task.acceptance.certified, false);
+  assert.equal(task.acceptance.classification, 'coordinator-required');
+  assert.deepEqual(task.acceptance.checks, [{ line: 7, text: '  - **Acceptance Checks**: Controlled CLI reports the retained result.\n    Refusal leaves the journal unchanged.', truncated: false }]);
+  assert.deepEqual(task.acceptance.remaining, [{ line: 9, text: "  - **Remaining Acceptance**: Control binding requires another owner's task; publication is partial.", truncated: false }]);
+  assert.deepEqual(task.acceptance.prerequisites, [
+    { line: 5, text: '  - **Dependencies**: None.', truncated: false },
+    { line: 10, text: '  - **External Prerequisites**: G-REAL requires pinned owner delivery.', truncated: false },
+  ]);
+  assert.equal(result.stdout.includes('Fenced example'), false);
+  assert.equal(result.stdout.includes('Unrelated ledger metadata'), false);
+  assert.equal(result.stdout.includes("Other task's check"), false);
+  assert.equal(await readFile(current.tasksPath, 'utf8'), before);
+});
+
+test('checked review logistics retain a bounded remaining-acceptance source rather than certifying it', async t => {
+  const remaining = `  - **Remaining Acceptance**: ${'Owner evidence is pending. '.repeat(180)}`;
+  const current = await checkout(
+    t,
+    `# Tasks\n\n## Phase 1\n- [x] T001 Add CLI in \`src/cli/run.ts\`.\n  - **Dependencies**: None.\n${remaining}\n  - **Verification Evidence**: Existing passing check.\n`,
+  );
+  const result = run(current, 'review-ready', ['--scope', 'T001']);
+  assert.equal(result.status, 0, result.stderr);
+  const output = JSON.parse(result.stdout);
+  assert.equal(output.review.status, 'ready');
+  assert.equal(output.review.acceptanceCertified, false);
+  const acceptance = output.tasks[0].acceptance;
+  assert.equal(acceptance.certified, false);
+  assert.deepEqual(acceptance.source, { path: 'specs/feature/tasks.md', line: 4 });
+  assert.deepEqual(acceptance.checks, []);
+  assert.deepEqual(acceptance.remaining, [{ line: 6, text: remaining.slice(0, 4000), truncated: true }]);
+  assert.equal(result.stdout.includes('Existing passing check.'), false);
+});
+
+test('batch rejects unknown scopes, malformed dependencies, duplicate IDs, cycles, and path traversal', async t => {
   const current = await checkout(t);
   assert.match(run(current, 'batch', ['--scope', 'T999']).stderr, /Unknown scope task ID T999/);
   assert.match(run(current, 'batch', ['--scope', '../T001']).stderr, /Invalid scope/);
@@ -158,8 +268,7 @@ test('batch rejects unknown scopes, malformed dependencies, duplicate IDs, cycle
   await writeFile(current.tasksPath, externalGate, 'utf8');
   result = run(current, 'review-ready', ['--scope', 'T002']);
   assert.equal(result.status, 0, result.stderr);
-  assert.ok(JSON.parse(result.stdout).blockers.unresolvedExternalDependencies.some((entry) =>
-    entry.task === 'T002' && entry.dependency === 'X04-STATE'));
+  assert.ok(JSON.parse(result.stdout).blockers.unresolvedExternalDependencies.some(entry => entry.task === 'T002' && entry.dependency === 'X04-STATE'));
 
   const unknownDependency = ledger().replace('  - **Dependencies**: None.\n', '  - **Dependencies**: T999.\n');
   await writeFile(current.tasksPath, unknownDependency, 'utf8');
@@ -178,14 +287,16 @@ test('batch rejects unknown scopes, malformed dependencies, duplicate IDs, cycle
 test('CLI help documents batch and review-ready scope, authorization, and opt-out flags', () => {
   for (const mode of ['batch', 'review-ready']) {
     const result = spawnSync(process.execPath, [cliSource, mode, '--help'], {
-      encoding: 'utf8', windowsHide: true,
+      encoding: 'utf8',
+      windowsHide: true,
     });
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /--scope T057-T061/);
     assert.match(result.stdout, /--authorized T057/);
   }
   const review = spawnSync(process.execPath, [cliSource, 'review-ready', '--help'], {
-    encoding: 'utf8', windowsHide: true,
+    encoding: 'utf8',
+    windowsHide: true,
   });
   assert.match(review.stdout, /--no-review/);
 });

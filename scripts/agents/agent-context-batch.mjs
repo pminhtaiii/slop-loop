@@ -6,7 +6,7 @@ import { checkout, fail, markdownLines, normalizedRepoPath, parseTasks, repoFile
 
 function expandScopes(scopes, parsed, path) {
   if (!scopes.length) fail('batch and review-ready require at least one --scope.');
-  const byId = new Map(parsed.tasks.map((task) => [task.id, task]));
+  const byId = new Map(parsed.tasks.map(task => [task.id, task]));
   const selected = new Set();
   for (const scope of scopes) {
     const match = scope.match(/^(T\d{3})(?:-(T\d{3}))?$/);
@@ -36,31 +36,73 @@ function pathsOverlap(left, right) {
 
 function safeRegisteredPaths(paths) {
   if (!Array.isArray(paths)) return [];
-  return [...new Set(paths.filter((path) => typeof path === 'string' && path.trim())
-    .map((path) => path.replaceAll('\\', '/').replace(/^\.\//, ''))
-    .filter((path) => !path.startsWith('/') && !/^[A-Za-z]:/.test(path) && !path.split('/').includes('..')))];
+  return [
+    ...new Set(
+      paths
+        .filter(path => typeof path === 'string' && path.trim())
+        .map(path => path.replaceAll('\\', '/').replace(/^\.\//, ''))
+        .filter(path => !path.startsWith('/') && !/^[A-Za-z]:/.test(path) && !path.split('/').includes('..')),
+    ),
+  ];
 }
 
 function taskSummary(task) {
   return task.line.replace(/^\s*[-*+]\s+\[[ xX]\]\s+T\d{3}\s*/, '').trim();
 }
 
+function taskAcceptance(parsed, task, path) {
+  const result = { source: { path, line: task.lineIndex + 1 }, checks: [], remaining: [], prerequisites: [], certified: false, classification: 'coordinator-required' };
+  const end = Math.min(
+    parsed.tasks.find(next => next.lineIndex > task.lineIndex)?.lineIndex ?? parsed.lines.length,
+    parsed.headings.find(heading => heading.index > task.lineIndex)?.index ?? parsed.lines.length,
+  );
+  const categories = {
+    'acceptance checks': 'checks',
+    'remaining acceptance': 'remaining',
+    dependencies: 'prerequisites',
+    prerequisites: 'prerequisites',
+    'external prerequisites': 'prerequisites',
+    gates: 'prerequisites',
+    'external gates': 'prerequisites',
+  };
+  let field;
+  const retain = () => {
+    if (!field?.category) return;
+    const text = field.lines.join('\n').trimEnd();
+    result[field.category].push({ line: field.line, text: text.slice(0, 4000), truncated: text.length > 4000 });
+  };
+  for (let index = task.lineIndex + 1; index < end; index += 1) {
+    if (!parsed.visible[index]) continue;
+    const line = parsed.lines[index];
+    const label = line
+      .match(/^\s*[-*+]\s+\*\*([^*]+)\*\*\s*:/)?.[1]
+      ?.trim()
+      .toLowerCase();
+    if (label) {
+      retain();
+      field = { category: Object.hasOwn(categories, label) ? categories[label] : undefined, line: index + 1, lines: [line] };
+    } else if (field) field.lines.push(line);
+  }
+  retain();
+  return result;
+}
+
 function dependencyDetails(task, byId) {
   if (!task.dependenciesDeclared) return { state: 'unspecified', dependencies: [] };
-  const dependencies = task.dependencies.map((id) => {
+  const dependencies = task.dependencies.map(id => {
     const entry = byId.get(id);
     return { id, state: entry ? (entry.checked ? 'checked' : 'open') : 'external-unresolved' };
   });
   return {
-    state: dependencies.every((dependency) => dependency.state === 'checked') ? 'ready' : 'waiting',
+    state: dependencies.every(dependency => dependency.state === 'checked') ? 'ready' : 'waiting',
     dependencies,
   };
 }
 
 async function scopedWorkers(root, closureIds, tasks, parsedPaths, session) {
   const state = await readWorkerState(root);
-  const worktreePaths = state.worktrees.map((entry) => entry.worktree).filter(Boolean);
-  const closurePaths = [...new Set([...closureIds].flatMap((id) => parsedPaths.get(id) ?? []))];
+  const worktreePaths = state.worktrees.map(entry => entry.worktree).filter(Boolean);
+  const closurePaths = [...new Set([...closureIds].flatMap(id => parsedPaths.get(id) ?? []))];
   const entries = [];
   for (const entry of state.entries) {
     if (entry.role !== 'worker' || !['active', 'blocked', 'handed-off'].includes(entry.status)) continue;
@@ -75,7 +117,7 @@ async function scopedWorkers(root, closureIds, tasks, parsedPaths, session) {
     if (!inRepository) continue;
     const ownedPaths = safeRegisteredPaths(entry.ownedPaths);
     const taskMatches = closureIds.has(entry.task);
-    const pathsMatch = ownedPaths.some((owned) => closurePaths.some((path) => pathsOverlap(owned, path)));
+    const pathsMatch = ownedPaths.some(owned => closurePaths.some(path => pathsOverlap(owned, path)));
     if (!taskMatches && !pathsMatch) continue;
     const task = tasks.get(entry.task);
     entries.push({
@@ -97,18 +139,18 @@ export async function batchContext(root, tasksInput, scopes, authorizedIds = [],
   const taskText = (await readFile(tasksFile, 'utf8')).replace(/^\uFEFF/, '');
   const parsed = parseTasks(taskText, tasksInput);
   const planningSource = markdownLines(taskText);
-  const planningText = planningSource.lines.map((line, index) => planningSource.visible[index] ? line : '').join('\n');
+  const planningText = planningSource.lines.map((line, index) => (planningSource.visible[index] ? line : '')).join('\n');
   const planning = validateTaskLedger(planningText);
   if (planning.tasks.length !== parsed.tasks.length || parsed.tasks.some((task, index) => planning.tasks[index]?.id !== task.id)) {
     fail('Task checkbox parsing differs from the canonical planning ledger parser.');
   }
   if (planning.p0.length) {
-    fail(`Task ledger has invalid canonical task or dependency data: ${planning.p0.map((issue) => issue.message).join('; ')}`);
+    fail(`Task ledger has invalid canonical task or dependency data: ${planning.p0.map(issue => issue.message).join('; ')}`);
   }
 
   const selectedIds = expandScopes(scopes, parsed, tasksInput);
-  const byId = new Map(parsed.tasks.map((task) => [task.id, task]));
-  const selectedOrder = parsed.tasks.filter((task) => selectedIds.has(task.id));
+  const byId = new Map(parsed.tasks.map(task => [task.id, task]));
+  const selectedOrder = parsed.tasks.filter(task => selectedIds.has(task.id));
   const authorized = new Set();
   for (const id of authorizedIds) {
     if (!/^T\d{3}$/.test(id)) fail(`Invalid --authorized task ID ${id}; use a canonical ID such as T057.`);
@@ -117,7 +159,7 @@ export async function batchContext(root, tasksInput, scopes, authorizedIds = [],
   }
 
   const closureIds = new Set();
-  const visit = (id) => {
+  const visit = id => {
     if (closureIds.has(id)) return;
     closureIds.add(id);
     const task = byId.get(id);
@@ -127,24 +169,27 @@ export async function batchContext(root, tasksInput, scopes, authorizedIds = [],
   };
   for (const id of selectedIds) visit(id);
 
-  const planned = new Map((planning.tasks ?? []).map((task) => [task.id, task]));
-  const pathsById = new Map(parsed.tasks.map((task) => [task.id, planned.get(task.id)?.filePaths ?? []]));
-  const closureTasks = parsed.tasks.filter((task) => closureIds.has(task.id));
-  const selected = selectedOrder.map((task) => ({
+  const planned = new Map((planning.tasks ?? []).map(task => [task.id, task]));
+  const pathsById = new Map(parsed.tasks.map(task => [task.id, planned.get(task.id)?.filePaths ?? []]));
+  const closureTasks = parsed.tasks.filter(task => closureIds.has(task.id));
+  const selected = selectedOrder.map(task => ({
     id: task.id,
     checked: task.checked,
     phase: task.phase?.title ?? null,
     summary: taskSummary(task),
     dependencies: dependencyDetails(task, byId),
     paths: pathsById.get(task.id),
-    authorization: task.checked ? 'not-needed-for-checked-task' : (authorized.has(task.id) ? 'provided-by-caller' : 'missing'),
+    acceptance: taskAcceptance(parsed, task, normalizedRepoPath(root, tasksFile)),
+    authorization: task.checked ? 'not-needed-for-checked-task' : authorized.has(task.id) ? 'provided-by-caller' : 'missing',
   }));
-  const prerequisites = closureTasks.filter((task) => !selectedIds.has(task.id)).map((task) => ({
-    id: task.id,
-    checked: task.checked,
-  }));
+  const prerequisites = closureTasks
+    .filter(task => !selectedIds.has(task.id))
+    .map(task => ({
+      id: task.id,
+      checked: task.checked,
+    }));
 
-  const ready = closureTasks.filter((task) => {
+  const ready = closureTasks.filter(task => {
     if (task.checked || !task.dependenciesDeclared) return false;
     return dependencyDetails(task, byId).state === 'ready';
   });
@@ -155,7 +200,7 @@ export async function batchContext(root, tasksInput, scopes, authorizedIds = [],
         for (const rightPath of pathsById.get(ready[right].id) ?? []) {
           if (pathsOverlap(leftPath, rightPath)) {
             const path = leftPath.length <= rightPath.length ? leftPath : rightPath;
-            if (!conflicts.some((conflict) => conflict.path === path && conflict.tasks.includes(ready[left].id) && conflict.tasks.includes(ready[right].id))) {
+            if (!conflicts.some(conflict => conflict.path === path && conflict.tasks.includes(ready[left].id) && conflict.tasks.includes(ready[right].id))) {
               conflicts.push({ path, tasks: [ready[left].id, ready[right].id], kind: 'ready-frontier-path-overlap', blocking: true });
             }
           }
@@ -170,12 +215,11 @@ export async function batchContext(root, tasksInput, scopes, authorizedIds = [],
     for (const task of ready) {
       if (worker.task === task.id) continue;
       for (const taskPath of pathsById.get(task.id) ?? []) {
-        const path = workerPaths.find((owned) => pathsOverlap(owned, taskPath));
+        const path = workerPaths.find(owned => pathsOverlap(owned, taskPath));
         if (path) {
           const conflictPath = path.length <= taskPath.length ? path : taskPath;
           const kind = `${worker.status}-worker-path-overlap`;
-          if (!conflicts.some((conflict) => conflict.path === conflictPath && conflict.kind === kind &&
-            conflict.tasks.includes(task.id) && conflict.tasks.includes(worker.task))) {
+          if (!conflicts.some(conflict => conflict.path === conflictPath && conflict.kind === kind && conflict.tasks.includes(task.id) && conflict.tasks.includes(worker.task))) {
             conflicts.push({
               path: conflictPath,
               tasks: [task.id, worker.task],
@@ -189,31 +233,33 @@ export async function batchContext(root, tasksInput, scopes, authorizedIds = [],
     }
   }
 
-  const missingAuthorization = closureTasks.filter((task) => !task.checked && !authorized.has(task.id)).map((task) => task.id);
-  const unusedAuthorization = [...authorized].filter((id) => !closureIds.has(id));
+  const missingAuthorization = closureTasks.filter(task => !task.checked && !authorized.has(task.id)).map(task => task.id);
+  const unusedAuthorization = [...authorized].filter(id => !closureIds.has(id));
   const blockers = {
-    unchecked: closureTasks.filter((task) => !task.checked).map((task) => task.id),
-    dependenciesUnspecified: closureTasks.filter((task) => !task.dependenciesDeclared).map((task) => task.id),
-    unresolvedExternalDependencies: closureTasks.flatMap((task) =>
-      dependencyDetails(task, byId).dependencies.filter((dependency) => dependency.state === 'external-unresolved')
-        .map((dependency) => ({ task: task.id, dependency: dependency.id }))),
-    liveWorkers: workers.filter((worker) => ['active', 'blocked'].includes(worker.status)),
-    unintegratedHandoffs: workers.filter((worker) => worker.status === 'handed-off' && !worker.checked),
-    conflicts: conflicts.filter((conflict) => conflict.blocking),
+    unchecked: closureTasks.filter(task => !task.checked).map(task => task.id),
+    dependenciesUnspecified: closureTasks.filter(task => !task.dependenciesDeclared).map(task => task.id),
+    unresolvedExternalDependencies: closureTasks.flatMap(task =>
+      dependencyDetails(task, byId)
+        .dependencies.filter(dependency => dependency.state === 'external-unresolved')
+        .map(dependency => ({ task: task.id, dependency: dependency.id })),
+    ),
+    liveWorkers: workers.filter(worker => ['active', 'blocked'].includes(worker.status)),
+    unintegratedHandoffs: workers.filter(worker => worker.status === 'handed-off' && !worker.checked),
+    conflicts: conflicts.filter(conflict => conflict.blocking),
   };
-  const blocked = Object.values(blockers).some((items) => items.length > 0);
+  const blocked = Object.values(blockers).some(items => items.length > 0);
   const report = {
     mode: options.reviewReady ? 'review-ready' : 'batch',
-    status: options.reviewReady ? (options.noReview ? 'skipped' : (blocked ? 'blocked' : 'ready')) : 'brief',
+    status: options.reviewReady ? (options.noReview ? 'skipped' : blocked ? 'blocked' : 'ready') : 'brief',
     checkout: current.root,
     branch: current.branch,
     tasksPath: normalizedRepoPath(root, tasksFile),
     session: options.session ?? null,
-    selected: selected.map((task) => task.id),
-    dependencyClosure: closureTasks.map((task) => task.id),
+    selected: selected.map(task => task.id),
+    dependencyClosure: closureTasks.map(task => task.id),
     tasks: selected,
     prerequisites,
-    readyFrontier: ready.map((task) => ({
+    readyFrontier: ready.map(task => ({
       id: task.id,
       paths: pathsById.get(task.id),
       authorization: authorized.has(task.id) ? 'provided-by-caller' : 'missing',
@@ -227,7 +273,7 @@ export async function batchContext(root, tasksInput, scopes, authorizedIds = [],
   };
   if (options.reviewReady) {
     report.review = {
-      status: options.noReview ? 'skipped' : (blocked ? 'blocked' : 'ready'),
+      status: options.noReview ? 'skipped' : blocked ? 'blocked' : 'ready',
       reviewed: false,
       acceptanceCertified: false,
       note: options.noReview

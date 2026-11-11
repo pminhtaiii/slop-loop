@@ -2,54 +2,26 @@
 
 export const CONTRACT_VERSION = '0.1.0' as const;
 
-export const TASK_OUTCOMES = [
-  'COMPLETED',
-  'IMPLEMENTED_UNVERIFIED',
-  'INCOMPLETE',
-  'FAILED',
-] as const;
+export const TASK_OUTCOMES = ['COMPLETED', 'IMPLEMENTED_UNVERIFIED', 'INCOMPLETE', 'FAILED'] as const;
 
 export type TaskOutcome = (typeof TASK_OUTCOMES)[number];
 
-export const ENVELOPE_OUTCOMES = [
-  'success',
-  'needs-info',
-  'pending-approval',
-  'denied',
-  'conflict',
-  'exhausted',
-  'timeout',
-  'error',
-  'uncertain-effect',
-] as const;
+import type { ClarificationRecord } from './clarification-types.ts';
+
+export const ENVELOPE_OUTCOMES = ['success', 'needs-info', 'pending-approval', 'denied', 'conflict', 'exhausted', 'timeout', 'error', 'uncertain-effect'] as const;
 
 export type EnvelopeOutcome = (typeof ENVELOPE_OUTCOMES)[number];
 
-export type PermissionClass =
-  | 'ALLOWED'
-  | 'APPROVAL_REQUIRED'
-  | 'FORBIDDEN';
+export type PermissionClass = 'ALLOWED' | 'APPROVAL_REQUIRED' | 'FORBIDDEN';
 
-export const TASK_NODES = [
-  'Validate',
-  'NeedsInfo',
-  'Investigate',
-  'AwaitPlan',
-  'AwaitFeedback',
-  'Patch',
-  'Verify',
-  'Review',
-  'Repair',
-  'Deliver',
-  'Incomplete',
-] as const;
+export const TASK_NODES = ['Validate', 'NeedsInfo', 'Investigate', 'AwaitPlan', 'AwaitFeedback', 'Patch', 'Verify', 'Review', 'Repair', 'Deliver', 'Incomplete'] as const;
 
 export type TaskNode = (typeof TASK_NODES)[number];
 
 export const ALLOWED_NODE_TRANSITIONS: Readonly<Record<TaskNode, readonly TaskNode[]>> = {
   Validate: ['NeedsInfo', 'Investigate'],
-  NeedsInfo: ['Validate'],
-  Investigate: ['AwaitPlan'],
+  NeedsInfo: ['Validate', 'Investigate'],
+  Investigate: ['AwaitPlan', 'NeedsInfo'],
   AwaitPlan: ['AwaitFeedback', 'Patch'],
   AwaitFeedback: ['Investigate', 'Incomplete'],
   Patch: ['Verify', 'Repair'],
@@ -77,9 +49,7 @@ export interface ValidationError {
   readonly code: string;
 }
 
-export type ValidationResult<T> =
-  | { readonly ok: true; readonly value: T }
-  | { readonly ok: false; readonly errors: readonly ValidationError[] };
+export type ValidationResult<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly errors: readonly ValidationError[] };
 
 export interface ExecutionLimits {
   readonly timeoutMs: number;
@@ -97,12 +67,7 @@ export interface BudgetLimits {
   readonly maxReviewIterations: number;
 }
 
-export type CheckPurpose =
-  | 'reproduction'
-  | 'focused'
-  | 'regression'
-  | 'compatibility'
-  | 'diff';
+export type CheckPurpose = 'reproduction' | 'focused' | 'regression' | 'compatibility' | 'diff';
 
 export interface CheckDefinition {
   readonly checkId: string;
@@ -157,16 +122,9 @@ export interface ApproveFixPlanAction {
   readonly checkSetDigest: string;
 }
 
-export type NormalizedAction =
-  | RunCommandAction
-  | ApplyPatchAction
-  | ApproveFixPlanAction;
+export type NormalizedAction = RunCommandAction | ApplyPatchAction | ApproveFixPlanAction;
 
-export type ApprovalStatus =
-  | 'pending'
-  | 'approved'
-  | 'rejected'
-  | 'stale';
+export type ApprovalStatus = 'pending' | 'approved' | 'rejected' | 'stale';
 
 export interface ApprovalBinding {
   readonly decisionId: string;
@@ -313,10 +271,7 @@ export interface DispatchAdmissionContext {
 export class BudgetExhaustionError extends Error {
   readonly code = 'BUDGET_EXHAUSTED' as const;
   readonly details: { scope?: string; kind?: string; limit?: number; requested?: number } | undefined;
-  constructor(
-    message: string,
-    details?: { scope?: string; kind?: string; limit?: number; requested?: number }
-  ) {
+  constructor(message: string, details?: { scope?: string; kind?: string; limit?: number; requested?: number }) {
     super(message);
     this.name = 'BudgetExhaustionError';
     this.details = details;
@@ -326,10 +281,7 @@ export class BudgetExhaustionError extends Error {
 export class BudgetConflictError extends Error {
   readonly code = 'BUDGET_CONFLICT' as const;
   readonly details: { scope?: string; kind?: string; version?: number } | undefined;
-  constructor(
-    message: string,
-    details?: { scope?: string; kind?: string; version?: number }
-  ) {
+  constructor(message: string, details?: { scope?: string; kind?: string; version?: number }) {
     super(message);
     this.name = 'BudgetConflictError';
     this.details = details;
@@ -386,6 +338,9 @@ export interface BudgetLedger {
   readonly version: number;
 }
 
+export { CLARIFICATION_ROUND_CAP } from './clarification-types.ts';
+export type { ClarificationAnswer, ClarificationQuestion, ClarificationRecord } from './clarification-types.ts';
+
 export interface TaskState {
   readonly schemaVersion: string;
   readonly stateVersion: number;
@@ -419,6 +374,7 @@ export interface TaskState {
   readonly risks: readonly string[];
   readonly nextAction: string;
   readonly outcome?: TaskOutcome | undefined;
+  readonly clarification?: ClarificationRecord | undefined;
 }
 
 export type TaskCheckpoint = TaskState;
@@ -427,31 +383,38 @@ export type TaskCheckpoint = TaskState;
 export interface TrustedTransitionContext {
   readonly approval?: { readonly binding: unknown; readonly freshness: ApprovalBindingContext };
   readonly completion?: {
-    readonly taskId: string; readonly runId: string; readonly repositoryRevisionDigest: string;
-    readonly diffDigest: string; readonly checkSetDigest: string; readonly baselineRef: string;
-    readonly criteriaDigest: string; readonly authorizedDiffDigest: string;
-    readonly protectedTestsDigest: string; readonly originalProtectedTestsDigest: string;
+    readonly taskId: string;
+    readonly runId: string;
+    readonly repositoryRevisionDigest: string;
+    readonly diffDigest: string;
+    readonly checkSetDigest: string;
+    readonly baselineRef: string;
+    readonly criteriaDigest: string;
+    readonly authorizedDiffDigest: string;
+    readonly protectedTestsDigest: string;
+    readonly originalProtectedTestsDigest: string;
     readonly reviewerRoleConfigId?: string;
     readonly reviewIterationReservationRef?: string;
-    readonly checks: readonly (
-      | { readonly checkId: string; readonly outcome: 'pass'; readonly repositoryRevisionDigest: string; readonly diffDigest: string }
-      | VerificationResult
-    )[];
+    readonly checks: readonly ({ readonly checkId: string; readonly outcome: 'pass'; readonly repositoryRevisionDigest: string; readonly diffDigest: string } | VerificationResult)[];
     readonly review:
-      | { readonly reviewId: string;
+      | {
+          readonly reviewId: string;
           readonly status: 'accepted';
           readonly repositoryRevisionDigest: string;
           readonly diffDigest: string;
           readonly checkSetDigest: string;
-          readonly roleConfigId: string }
+          readonly roleConfigId: string;
+        }
       | ReviewResult;
   };
-  readonly replanReservation?: { readonly proposalId: string;
+  readonly replanReservation?: {
+    readonly proposalId: string;
     readonly taskId: string;
     readonly configurationId: string;
     readonly priorCount: number;
     readonly nextCount: number;
-    readonly reservationId: string };
+    readonly reservationId: string;
+  };
 }
 
 export interface StateTransitionOptions {
@@ -549,60 +512,12 @@ export interface Delivery {
 export type CheckOutcome = 'pass' | 'fail' | 'timeout' | 'error' | 'not-run';
 export type VerificationPhase = 'baseline' | 'focused' | 'regression' | 'compatibility' | 'diff';
 
-export interface SourceEvidenceLimits {
-  readonly maxExcerptBytes?: number | undefined;
-  readonly maxResultCount?: number | undefined;
-  readonly allowedPaths?: readonly string[] | undefined;
-}
-
-export interface BaselineAdmissionContext {
-  readonly expectedEvidenceId?: string | undefined;
-  readonly expectedRepositorySnapshotDigest: string;
-  readonly expectedCheckSetDigest: string;
-  readonly expectedTestProtectionDigest: string;
-  readonly expectedReproductionCheckId: string;
-  readonly expectedPassingCheckIds: readonly string[];
-}
-
-export interface VerificationAdmissionContext {
-  readonly expectedTaskId: string;
-  readonly expectedRunId: string;
-  readonly expectedRepoDigest: string;
-  readonly expectedDiffDigest?: string | undefined;
-  readonly expectedCheckId?: string | undefined;
-  readonly requiredPhase?: VerificationPhase | undefined;
-}
-
-export type TrustedDiffLines = Readonly<
-  Record<
-    string,
-    {
-      readonly oldLines?: readonly number[] | undefined;
-      readonly newLines?: readonly number[] | undefined;
-    }
-  >
->;
-
-export interface ReviewAdmissionContext {
-  readonly expectedReviewId?: string | undefined;
-  readonly expectedTaskId?: string | undefined;
-  readonly expectedRepoDigest: string;
-  readonly expectedDiffDigest: string;
-  readonly expectedCheckSetDigest: string;
-  readonly expectedRoleConfigId: string;
-  readonly expectedIterationReservationRef?: string | undefined;
-  readonly trustedDiffLines?: TrustedDiffLines | undefined;
-}
-
-export interface TaskWorkspaceValidationContext {
-  readonly expectedTaskId?: string | undefined;
-  readonly expectedWorkspaceId?: string | undefined;
-}
-
-export interface DeliveryValidationContext {
-  readonly expectedTaskId?: string | undefined;
-  readonly expectedRunId?: string | undefined;
-  readonly expectedDiffDigest?: string | undefined;
-  readonly expectedBaselineRef?: string | undefined;
-  readonly expectedReviewRef?: string | undefined;
-}
+export type {
+  BaselineAdmissionContext,
+  DeliveryValidationContext,
+  ReviewAdmissionContext,
+  SourceEvidenceLimits,
+  TaskWorkspaceValidationContext,
+  TrustedDiffLines,
+  VerificationAdmissionContext,
+} from './admission-context.ts';

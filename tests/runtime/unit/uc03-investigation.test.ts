@@ -25,24 +25,12 @@ import {
   type InvestigationConfigPort,
 } from '../../../src/uc03/investigation.ts';
 import { createExecutionGuardV02 } from '../../../src/foundation/execution-guard.ts';
-import {
-  createFixtureBugTask,
-  createFixtureCheckDefinition,
-  createFixtureTaskState,
-} from '../support/uc03/port-fixtures.ts';
+import { runBaselineChecks } from '../../../src/uc03/investigation-baseline-checks.ts';
+import { createFixtureBugTask, createFixtureCheckDefinition, createFixtureTaskState } from '../support/uc03/port-fixtures.ts';
 import { FakeRepositoryPort } from '../support/uc03/fake-repository.ts';
 import { MemoryStatePort, MemoryStatePortV02 } from '../support/uc03/memory-state.ts';
-import {
-  createTestExecutorIdentityV02,
-  createTestRepositoryCommandAdmissionContextV02,
-  createTestAdmissionTaskStateV02,
-} from '../support/uc03/state-fixtures.ts';
+import { createTestExecutorIdentityV02, createTestRepositoryCommandAdmissionContextV02, createTestAdmissionTaskStateV02 } from '../support/uc03/state-fixtures.ts';
 import { ScriptedApprovalPort } from '../support/uc03/scripted-approval.ts';
-
-function asLegacyV01RepositoryPort(repository: FakeRepositoryPort): FakeRepositoryPort {
-  Object.defineProperty(repository, 'executionGuardApiVersion', { value: undefined });
-  return repository;
-}
 
 interface CompleteBaselineCandidate {
   readonly taskId: string;
@@ -82,12 +70,9 @@ interface BaselineEvidenceAcknowledgement {
   readonly requiredCheckIds: readonly string[];
 }
 
-function createBaselineCandidate(
-  task: BugTask = createFixtureBugTask(),
-  workspaceId = 'workspace-uc03-test'
-): CompleteBaselineCandidate {
-  const requiredChecks = task.requiredChecks.map((check) => ({ ...check, argv: [...check.argv] }));
-  const reproductionCheck = requiredChecks.find((check) => check.purpose === 'reproduction');
+function createBaselineCandidate(task: BugTask = createFixtureBugTask(), workspaceId = 'workspace-uc03-test'): CompleteBaselineCandidate {
+  const requiredChecks = task.requiredChecks.map(check => ({ ...check, argv: [...check.argv] }));
+  const reproductionCheck = requiredChecks.find(check => check.purpose === 'reproduction');
   assert.ok(reproductionCheck);
   return {
     taskId: task.taskId,
@@ -96,39 +81,30 @@ function createBaselineCandidate(
     acceptanceCriteria: [...task.acceptanceCriteria],
     criteriaDigest: computeCanonicalSha256(task.acceptanceCriteria),
     requiredChecks,
-    expectedPassingCheckIds: requiredChecks
-      .filter((check) => check.checkId !== reproductionCheck.checkId)
-      .map((check) => check.checkId),
+    expectedPassingCheckIds: requiredChecks.filter(check => check.checkId !== reproductionCheck.checkId).map(check => check.checkId),
     reproductionCheckId: reproductionCheck.checkId,
     expectedTestFiles: ['tests/test_calculator.py'],
     repositorySnapshotDigest: task.initialRevisionDigest,
     checkSetDigest: computeCheckSetDigest(requiredChecks),
     reproductionFailureSignature: 'ZeroDivisionError: division by zero',
-    checkResults: requiredChecks.map((check) => ({
+    checkResults: requiredChecks.map(check => ({
       checkId: check.checkId,
       outcome: check.checkId === reproductionCheck.checkId ? 'fail' : 'pass',
-      ...(check.checkId === reproductionCheck.checkId
-        ? { outputExcerpt: 'ZeroDivisionError: division by zero' }
-        : {}),
+      ...(check.checkId === reproductionCheck.checkId ? { outputExcerpt: 'ZeroDivisionError: division by zero' } : {}),
       durationMs: 20,
     })),
-    testProtectionDigest: computeTestProtectionDigest([
-      { path: 'tests/test_calculator.py', content: 'def test_calc(): pass\n' },
-    ]),
+    testProtectionDigest: computeTestProtectionDigest([{ path: 'tests/test_calculator.py', content: 'def test_calc(): pass\n' }]),
   };
 }
 
-function createStateForBaselineCandidate(
-  task: BugTask,
-  candidate: CompleteBaselineCandidate
-): TaskState {
+function createStateForBaselineCandidate(task: BugTask, candidate: CompleteBaselineCandidate): TaskState {
   return createFixtureTaskState({
     taskId: candidate.taskId,
     workspaceId: candidate.workspaceId,
     repositoryId: candidate.repositoryId,
     repositoryRevisionDigest: candidate.repositorySnapshotDigest,
     acceptanceCriteria: candidate.acceptanceCriteria,
-    requiredCheckIds: candidate.requiredChecks.map((check) => check.checkId),
+    requiredCheckIds: candidate.requiredChecks.map(check => check.checkId),
     taskContext: task,
     node: 'Investigate',
     evidenceRefs: [],
@@ -142,9 +118,7 @@ function createBaselineEvidenceWriter(options?: {
   readonly throwError?: boolean | undefined;
 }): {
   readonly writer: {
-    persistBaselineEvidence(
-      request: BaselineEvidenceWriteRequest
-    ): Promise<BaselineEvidenceAcknowledgement>;
+    persistBaselineEvidence(request: BaselineEvidenceWriteRequest): Promise<BaselineEvidenceAcknowledgement>;
   };
   readonly requests: BaselineEvidenceWriteRequest[];
 } {
@@ -170,7 +144,7 @@ function createBaselineEvidenceWriter(options?: {
           reproductionCheckId: content.reproductionCheckId,
           expectedPassingCheckIds: content.expectedPassingCheckIds,
           expectedTestFiles: content.expectedTestFiles,
-          requiredCheckIds: content.requiredChecks.map((check) => check.checkId),
+          requiredCheckIds: content.requiredChecks.map(check => check.checkId),
           ...options?.acknowledgement,
         };
       },
@@ -241,7 +215,7 @@ function observeStatePort(port: MemoryStatePort, events: string[]): MemoryStateP
         };
       }
       const value = Reflect.get(target, property, receiver) as unknown;
-      return typeof value === 'function' ? value.bind(target) as unknown : value;
+      return typeof value === 'function' ? (value.bind(target) as unknown) : value;
     },
   });
 }
@@ -277,25 +251,27 @@ class FakeTrustedHostPort implements TrustedHostPort {
   readonly snapshotClaims: TrustedHostExpectedContext;
   currentRevision: string;
   testFiles: TrustedTestFileSnapshot[];
-  readonly options?: {
-    readonly checkSetDigest?: string | undefined;
-    readonly expectedTestFiles?: readonly string[] | undefined;
-    readonly onSnapshot?: (() => void) | undefined;
-  } | undefined;
+  readonly options?:
+    | {
+        readonly checkSetDigest?: string | undefined;
+        readonly expectedTestFiles?: readonly string[] | undefined;
+        readonly onSnapshot?: (() => void) | undefined;
+      }
+    | undefined;
 
   constructor(
     task: BugTask,
     currentRevision: string,
     testFiles: TrustedTestFileSnapshot[],
-    options?: {
-      readonly checkSetDigest?: string | undefined;
-      readonly expectedTestFiles?: readonly string[] | undefined;
-      readonly onSnapshot?: (() => void) | undefined;
-    } | undefined
+    options?:
+      | {
+          readonly checkSetDigest?: string | undefined;
+          readonly expectedTestFiles?: readonly string[] | undefined;
+          readonly onSnapshot?: (() => void) | undefined;
+        }
+      | undefined,
   ) {
-    const checkSetDigest =
-      options?.checkSetDigest ??
-      computeCheckSetDigest(task.requiredChecks);
+    const checkSetDigest = options?.checkSetDigest ?? computeCheckSetDigest(task.requiredChecks);
     this.currentRevision = currentRevision;
     this.testFiles = testFiles;
     this.options = options;
@@ -306,7 +282,7 @@ class FakeTrustedHostPort implements TrustedHostPort {
       revisionDigest: task.initialRevisionDigest,
       criteriaDigest: computeCanonicalSha256(task.acceptanceCriteria),
       checkSetDigest,
-      expectedTestFiles: options?.expectedTestFiles ?? testFiles.map((file) => file.path),
+      expectedTestFiles: options?.expectedTestFiles ?? testFiles.map(file => file.path),
     };
   }
 
@@ -314,8 +290,7 @@ class FakeTrustedHostPort implements TrustedHostPort {
     if (this.options?.onSnapshot) {
       this.options.onSnapshot();
     }
-    const expectedTestFiles =
-      this.options?.expectedTestFiles ?? this.snapshotClaims.expectedTestFiles;
+    const expectedTestFiles = this.options?.expectedTestFiles ?? this.snapshotClaims.expectedTestFiles;
 
     return {
       taskId: this.snapshotClaims.taskId,
@@ -332,47 +307,40 @@ class FakeTrustedHostPort implements TrustedHostPort {
 function createValidHostPort(
   task: BugTask,
   testFiles?: TrustedTestFileSnapshot[] | undefined,
-  options?: {
-    readonly checkSetDigest?: string | undefined;
-    readonly expectedTestFiles?: readonly string[] | undefined;
-    readonly onSnapshot?: (() => void) | undefined;
-  } | undefined
+  options?:
+    | {
+        readonly checkSetDigest?: string | undefined;
+        readonly expectedTestFiles?: readonly string[] | undefined;
+        readonly onSnapshot?: (() => void) | undefined;
+      }
+    | undefined,
 ): FakeTrustedHostPort {
   const files = testFiles ?? [
     {
       path: 'tests/test_calculator.py',
-      content:
-        'import pytest\nfrom src.calculator import Calculator\n\ndef test_divide_zero():\n    calc = Calculator()\n    calc.divide(10, 0)\n',
+      content: 'import pytest\nfrom src.calculator import Calculator\n\ndef test_divide_zero():\n    calc = Calculator()\n    calc.divide(10, 0)\n',
     },
   ];
-  return new FakeTrustedHostPort(
-    task,
-    task.initialRevisionDigest,
-    files,
-    {
-      checkSetDigest:
-        options?.checkSetDigest ??
-        computeCheckSetDigest(task.requiredChecks),
-      expectedTestFiles:
-        options?.expectedTestFiles ?? files.map((f) => f.path),
-      onSnapshot: options?.onSnapshot,
-    }
-  );
+  return new FakeTrustedHostPort(task, task.initialRevisionDigest, files, {
+    checkSetDigest: options?.checkSetDigest ?? computeCheckSetDigest(task.requiredChecks),
+    expectedTestFiles: options?.expectedTestFiles ?? files.map(f => f.path),
+    onSnapshot: options?.onSnapshot,
+  });
 }
 
 function createBoundHostPort(
   task: BugTask,
-  options?: {
-    readonly producerClaims?: Partial<TrustedHostExpectedContext> | undefined;
-    readonly snapshot?: Partial<TrustedHostSnapshot> | undefined;
-    readonly testFiles?: readonly TrustedTestFileSnapshot[] | undefined;
-  } | undefined
+  options?:
+    | {
+        readonly producerClaims?: Partial<TrustedHostExpectedContext> | undefined;
+        readonly snapshot?: Partial<TrustedHostSnapshot> | undefined;
+        readonly testFiles?: readonly TrustedTestFileSnapshot[] | undefined;
+      }
+    | undefined,
 ): TrustedHostPort {
-  const testFiles = options?.testFiles ?? [
-    { path: 'tests/test_calculator.py', content: 'def test_calc(): pass\n' },
-  ];
+  const testFiles = options?.testFiles ?? [{ path: 'tests/test_calculator.py', content: 'def test_calc(): pass\n' }];
   const checkSetDigest = computeCheckSetDigest(task.requiredChecks);
-  const expectedTestFiles = testFiles.map((file) => file.path);
+  const expectedTestFiles = testFiles.map(file => file.path);
   const producerClaims: TrustedHostExpectedContext = {
     taskId: task.taskId,
     workspaceId: 'workspace-uc03-test',
@@ -402,7 +370,7 @@ function createBoundHostPort(
 function createTrustedAdmissionContext(
   task: BugTask,
   expectedTestFiles: readonly string[] = ['tests/test_calculator.py'],
-  overrides?: Partial<TrustedHostExpectedContext>
+  overrides?: Partial<TrustedHostExpectedContext>,
 ): TrustedHostExpectedContext {
   return {
     taskId: task.taskId,
@@ -428,7 +396,7 @@ function createGuardedBaselineFixture(options?: {
   readonly expectedContext: TrustedHostExpectedContext;
 } {
   const task = createFixtureBugTask();
-  const reproCheck = task.requiredChecks.find((check) => check.purpose === 'reproduction');
+  const reproCheck = task.requiredChecks.find(check => check.purpose === 'reproduction');
   assert.ok(reproCheck, 'fixture must include a reproduction check');
   const action = {
     actionId: reproCheck.checkId,
@@ -505,23 +473,17 @@ function createGuardedBaselineFixture(options?: {
   };
 }
 
-function investigateWithTestContext(
-  task: BugTask,
-  repository: RepositoryPort,
-  hostAuthority: TrustedHostPort,
-  expectedTestFiles?: readonly string[]
-) {
-  return investigateBaseline(
-    task,
-    repository,
-    hostAuthority,
-    createTrustedAdmissionContext(task, expectedTestFiles)
-  );
+function investigateWithTestContext(task: BugTask, repository: RepositoryPort, hostAuthority: TrustedHostPort, expectedTestFiles?: readonly string[]) {
+  return investigateBaseline(task, repository, hostAuthority, createTrustedAdmissionContext(task, expectedTestFiles));
 }
 
-function createCanonicalRepositoryStub(options?: {
-  readonly onRunTests?: ((check: CheckDefinition) => CheckResult) | undefined;
-} | undefined): { repository: RepositoryPort; getRunTestsCalls: () => number } {
+function createCanonicalRepositoryStub(
+  options?:
+    | {
+        readonly onRunTests?: ((check: CheckDefinition) => CheckResult) | undefined;
+      }
+    | undefined,
+): { repository: RepositoryPort; getRunTestsCalls: () => number } {
   let runTestsCalls = 0;
   const repository: RepositoryPort = {
     provenance: 'mock',
@@ -594,20 +556,11 @@ test('investigation authority: producer-controlled context cannot replace indepe
     expectedTestFiles: ['tests/test_calculator.py', 'tests/test_other.py'],
   };
 
-  const result = await investigateBaseline(
-    task,
-    repoStub.repository,
-    producer,
-    independentlyMeasuredContext
-  );
+  const result = await investigateBaseline(task, repoStub.repository, producer, independentlyMeasuredContext);
 
   assert.equal(result.status, 'error');
   assert.equal(result.baseline, undefined);
-  assert.equal(
-    repoStub.getRunTestsCalls(),
-    0,
-    'producer-authored revision, check-set, and incomplete inventory claims must not admit tests'
-  );
+  assert.equal(repoStub.getRunTestsCalls(), 0, 'producer-authored revision, check-set, and incomplete inventory claims must not admit tests');
 });
 
 test('test protection authority: different test bytes with same path yield different digests', () => {
@@ -625,11 +578,7 @@ test('test protection authority: different test bytes with same path yield diffe
 
   assert.match(digestA, /^sha256:[a-f0-9]{64}$/);
   assert.match(digestB, /^sha256:[a-f0-9]{64}$/);
-  assert.notEqual(
-    digestA,
-    digestB,
-    'different file content must yield distinct protection digests'
-  );
+  assert.notEqual(digestA, digestB, 'different file content must yield distinct protection digests');
 });
 
 test('test protection authority: distinct invalid UTF-8 byte sequences with same path yield different digests', () => {
@@ -649,11 +598,7 @@ test('test protection authority: distinct invalid UTF-8 byte sequences with same
   const digestFF = computeTestProtectionDigest([fileFF]);
   const digestFE = computeTestProtectionDigest([fileFE]);
 
-  assert.notEqual(
-    digestFF,
-    digestFE,
-    'distinct byte sequences 0xff and 0xfe must not collide to the same digest'
-  );
+  assert.notEqual(digestFF, digestFE, 'distinct byte sequences 0xff and 0xfe must not collide to the same digest');
 });
 
 test('investigation authority: canonical RepositoryPort stub (no extras) with forged caller facts denies without running tests or requesting approval', async () => {
@@ -674,16 +619,9 @@ test('investigation authority: canonical RepositoryPort stub (no extras) with fo
   const result = await investigateWithTestContext(task, repoStub.repository, forgedCallerFacts);
 
   assert.equal(result.status, 'error');
-  assert.match(
-    result.reason ?? '',
-    /missing trusted host authority|explicit TrustedHostPort/i
-  );
+  assert.match(result.reason ?? '', /missing trusted host authority|explicit TrustedHostPort/i);
   assert.equal(result.baseline, undefined);
-  assert.equal(
-    repoStub.getRunTestsCalls(),
-    0,
-    'zero runTests executions permitted when trusted host port is missing'
-  );
+  assert.equal(repoStub.getRunTestsCalls(), 0, 'zero runTests executions permitted when trusted host port is missing');
 
   // Attempting plan preparation without a valid baseline must produce zero approval requests
   const state: TaskState = createFixtureTaskState({
@@ -705,11 +643,7 @@ test('investigation authority: canonical RepositoryPort stub (no extras) with fo
   });
 
   assert.equal(planResult.outcome, 'rejected');
-  assert.equal(
-    ports.approval.getRecordedBindings().length,
-    0,
-    'zero approval requests recorded when authority facts or plan scope are rejected'
-  );
+  assert.equal(ports.approval.getRecordedBindings().length, 0, 'zero approval requests recorded when authority facts or plan scope are rejected');
 });
 
 test('investigation authority: valid separately supplied admission context admits a snapshot producer', async () => {
@@ -722,21 +656,10 @@ test('investigation authority: valid separately supplied admission context admit
 
   assert.equal(result.status, 'reproduced');
   assert.ok(result.baseline !== undefined, 'baseline must be recorded');
-  assert.equal(
-    result.baseline?.repositorySnapshotDigest,
-    task.initialRevisionDigest,
-    'snapshot digest must match host authority'
-  );
-  assert.equal(
-    result.baseline?.testProtectionDigest,
-    computeTestProtectionDigest(hostPort.testFiles),
-    'test protection digest must match host test byte digest'
-  );
+  assert.equal(result.baseline?.repositorySnapshotDigest, task.initialRevisionDigest, 'snapshot digest must match host authority');
+  assert.equal(result.baseline?.testProtectionDigest, computeTestProtectionDigest(hostPort.testFiles), 'test protection digest must match host test byte digest');
   assert.equal(result.baseline?.checkResults[0]?.outcome, 'fail');
-  assert.ok(
-    repoStub.getRunTestsCalls() >= 1,
-    'runTests must be executed under valid explicit host port authority'
-  );
+  assert.ok(repoStub.getRunTestsCalls() >= 1, 'runTests must be executed under valid explicit host port authority');
 });
 
 test('investigation authority: missing trusted host authority fails closed with 0 runTests', async () => {
@@ -747,16 +670,9 @@ test('investigation authority: missing trusted host authority fails closed with 
   const result = await investigateBaseline(task, repoStub.repository);
 
   assert.equal(result.status, 'error');
-  assert.match(
-    result.reason ?? '',
-    /missing trusted host authority|explicit TrustedHostPort/i
-  );
+  assert.match(result.reason ?? '', /missing trusted host authority|explicit TrustedHostPort/i);
   assert.equal(result.baseline, undefined);
-  assert.equal(
-    repoStub.getRunTestsCalls(),
-    0,
-    'zero runTests executions when authority is omitted'
-  );
+  assert.equal(repoStub.getRunTestsCalls(), 0, 'zero runTests executions when authority is omitted');
 });
 
 test('investigation authority: stale host snapshot revision mismatch fails closed with 0 runTests', async () => {
@@ -778,7 +694,7 @@ test('investigation authority: stale host snapshot revision mismatch fails close
     {
       checkSetDigest: computeCheckSetDigest(task.requiredChecks),
       expectedTestFiles: ['tests/test_calculator.py'],
-    }
+    },
   );
 
   const result = await investigateWithTestContext(task, repoStub.repository, staleHostPort);
@@ -786,11 +702,7 @@ test('investigation authority: stale host snapshot revision mismatch fails close
   assert.equal(result.status, 'error');
   assert.match(result.reason ?? '', /snapshot revision binding mismatch/i);
   assert.equal(result.baseline, undefined);
-  assert.equal(
-    repoStub.getRunTestsCalls(),
-    0,
-    'zero runTests executions when host snapshot revision mismatches'
-  );
+  assert.equal(repoStub.getRunTestsCalls(), 0, 'zero runTests executions when host snapshot revision mismatches');
 });
 
 test('investigation authority: incomplete test inventory in required checks argv fails closed with 0 runTests', async () => {
@@ -823,7 +735,7 @@ test('investigation authority: incomplete test inventory in required checks argv
     {
       checkSetDigest: computeCheckSetDigest(task.requiredChecks),
       expectedTestFiles: ['tests/test_calculator.py'],
-    }
+    },
   );
 
   const result = await investigateWithTestContext(task, repoStub.repository, incompleteHostPort);
@@ -831,11 +743,7 @@ test('investigation authority: incomplete test inventory in required checks argv
   assert.equal(result.status, 'error');
   assert.equal(result.baseline, undefined);
   assert.match(result.reason ?? '', /inventory/i);
-  assert.equal(
-    repoStub.getRunTestsCalls(),
-    0,
-    'zero runTests executions on incomplete inventory'
-  );
+  assert.equal(repoStub.getRunTestsCalls(), 0, 'zero runTests executions on incomplete inventory');
 });
 
 test('investigation authority: host expected test files list mismatch fails closed with 0 runTests', async () => {
@@ -855,24 +763,15 @@ test('investigation authority: host expected test files list mismatch fails clos
     {
       checkSetDigest: computeCheckSetDigest(task.requiredChecks),
       expectedTestFiles: ['tests/test_calculator.py', 'tests/test_unprovided.py'],
-    }
+    },
   );
 
-  const result = await investigateWithTestContext(
-    task,
-    repoStub.repository,
-    mismatchedHostPort,
-    ['tests/test_calculator.py', 'tests/test_unprovided.py']
-  );
+  const result = await investigateWithTestContext(task, repoStub.repository, mismatchedHostPort, ['tests/test_calculator.py', 'tests/test_unprovided.py']);
 
   assert.equal(result.status, 'error');
   assert.equal(result.baseline, undefined);
   assert.match(result.reason ?? '', /inventory.*(incomplete|mismatch)|count mismatch/i);
-  assert.equal(
-    repoStub.getRunTestsCalls(),
-    0,
-    'zero runTests executions on expectedTestFiles mismatch'
-  );
+  assert.equal(repoStub.getRunTestsCalls(), 0, 'zero runTests executions on expectedTestFiles mismatch');
 });
 
 test('investigation authority: detached immutable copy resists in-flight mutation during await (TOCTOU)', async () => {
@@ -896,8 +795,7 @@ test('investigation authority: detached immutable copy resists in-flight mutatio
       if (mutableContent instanceof Uint8Array) {
         mutableContent[0] = 0x99;
       }
-      hostPort.currentRevision =
-        'sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff';
+      hostPort.currentRevision = 'sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff';
       return {
         checkId: 'check-pytest-reproduction',
         outcome: 'fail',
@@ -912,16 +810,8 @@ test('investigation authority: detached immutable copy resists in-flight mutatio
   assert.equal(result.status, 'reproduced');
   assert.ok(result.baseline !== undefined, 'baseline must be recorded');
   // Baseline must retain the detached pre-await digest, NOT the mutated content
-  assert.equal(
-    result.baseline?.testProtectionDigest,
-    expectedInitialProtectionDigest,
-    'test protection digest must match pre-await detached facts'
-  );
-  assert.equal(
-    result.baseline?.repositorySnapshotDigest,
-    task.initialRevisionDigest,
-    'snapshot digest must match pre-await detached facts'
-  );
+  assert.equal(result.baseline?.testProtectionDigest, expectedInitialProtectionDigest, 'test protection digest must match pre-await detached facts');
+  assert.equal(result.baseline?.repositorySnapshotDigest, task.initialRevisionDigest, 'snapshot digest must match pre-await detached facts');
 });
 
 test('investigation authority: caller mutation during snapshot await cannot widen detached admission facts', async () => {
@@ -949,10 +839,10 @@ test('investigation authority: caller mutation during snapshot await cannot wide
   };
   let markSnapshotRequested!: () => void;
   let resolveSnapshot!: (snapshot: TrustedHostSnapshot) => void;
-  const snapshotRequested = new Promise<void>((resolve) => {
+  const snapshotRequested = new Promise<void>(resolve => {
     markSnapshotRequested = resolve;
   });
-  const snapshotGate = new Promise<TrustedHostSnapshot>((resolve) => {
+  const snapshotGate = new Promise<TrustedHostSnapshot>(resolve => {
     resolveSnapshot = resolve;
   });
   const producer: TrustedHostPort = {
@@ -962,12 +852,7 @@ test('investigation authority: caller mutation during snapshot await cannot wide
     },
   };
 
-  const pendingResult = investigateBaseline(
-    task,
-    repoStub.repository,
-    producer,
-    trustedContext
-  );
+  const pendingResult = investigateBaseline(task, repoStub.repository, producer, trustedContext);
   await snapshotRequested;
   mutableContext.revisionDigest = forgedRevision;
   mutableContext.checkSetDigest = forgedCheckSet;
@@ -978,11 +863,7 @@ test('investigation authority: caller mutation during snapshot await cannot wide
 
   assert.equal(result.status, 'error');
   assert.equal(result.baseline, undefined);
-  assert.equal(
-    repoStub.getRunTestsCalls(),
-    0,
-    'mutating the caller-owned context while loading a snapshot must not widen admission'
-  );
+  assert.equal(repoStub.getRunTestsCalls(), 0, 'mutating the caller-owned context while loading a snapshot must not widen admission');
 });
 
 test('investigation authority: producer mutates retained snapshot object revision during runTests await; baseline retains original validated revision', async () => {
@@ -1009,8 +890,7 @@ test('investigation authority: producer mutates retained snapshot object revisio
   const repoStub = createCanonicalRepositoryStub({
     onRunTests: () => {
       // Producer mutates the exact object returned by loadSnapshot during test await
-      mutableSnapshot.currentRevision =
-        'sha256:8888888888888888888888888888888888888888888888888888888888888888';
+      mutableSnapshot.currentRevision = 'sha256:8888888888888888888888888888888888888888888888888888888888888888';
       return {
         checkId: 'check-pytest-reproduction',
         outcome: 'fail',
@@ -1024,11 +904,7 @@ test('investigation authority: producer mutates retained snapshot object revisio
 
   assert.equal(result.status, 'reproduced');
   assert.ok(result.baseline !== undefined);
-  assert.equal(
-    result.baseline?.repositorySnapshotDigest,
-    task.initialRevisionDigest,
-    'baseline must retain original detached revision and ignore in-flight mutation of producer snapshot object'
-  );
+  assert.equal(result.baseline?.repositorySnapshotDigest, task.initialRevisionDigest, 'baseline must retain original detached revision and ignore in-flight mutation of producer snapshot object');
 });
 
 test('investigation authority: host snapshot omitting checkSetDigest denies before tests with 0 runTests', async () => {
@@ -1118,21 +994,12 @@ test('investigation authority: snapshot with argv-only subset that omits another
     }),
   };
 
-  const result = await investigateWithTestContext(
-    task,
-    repoStub.repository,
-    argvOnlyHost,
-    ['tests/test_calculator.py', 'tests/test_extra_protected.py']
-  );
+  const result = await investigateWithTestContext(task, repoStub.repository, argvOnlyHost, ['tests/test_calculator.py', 'tests/test_extra_protected.py']);
 
   assert.equal(result.status, 'error');
   assert.equal(result.baseline, undefined);
   assert.match(result.reason ?? '', /inventory/i);
-  assert.equal(
-    repoStub.getRunTestsCalls(),
-    0,
-    'zero runTests executions when snapshot is only an argv subset missing other expected protected tests'
-  );
+  assert.equal(repoStub.getRunTestsCalls(), 0, 'zero runTests executions when snapshot is only an argv subset missing other expected protected tests');
 });
 
 test('investigation authority: duplicate path in expectedTestFiles denies before tests with 0 runTests', async () => {
@@ -1203,12 +1070,7 @@ test('investigation authority: trusted expected context binds current task, repo
 
   for (const mismatch of mismatches) {
     const repoStub = createCanonicalRepositoryStub();
-    const result = await investigateBaseline(
-      task,
-      repoStub.repository,
-      createBoundHostPort(task, { producerClaims: mismatch.context }),
-      createTrustedAdmissionContext(task)
-    );
+    const result = await investigateBaseline(task, repoStub.repository, createBoundHostPort(task, { producerClaims: mismatch.context }), createTrustedAdmissionContext(task));
 
     assert.equal(result.status, 'error', `${mismatch.name} mismatch must fail closed`);
     assert.equal(result.baseline, undefined, `${mismatch.name} mismatch must not produce a baseline`);
@@ -1248,12 +1110,7 @@ test('investigation authority: snapshot binds workspace and producer facts to th
 
   for (const mismatch of mismatches) {
     const repoStub = createCanonicalRepositoryStub();
-    const result = await investigateBaseline(
-      task,
-      repoStub.repository,
-      createBoundHostPort(task, { snapshot: mismatch.snapshot }),
-      createTrustedAdmissionContext(task)
-    );
+    const result = await investigateBaseline(task, repoStub.repository, createBoundHostPort(task, { snapshot: mismatch.snapshot }), createTrustedAdmissionContext(task));
 
     assert.equal(result.status, 'error', `${mismatch.name} snapshot binding must fail closed`);
     assert.equal(result.baseline, undefined, `${mismatch.name} mismatch must not produce a baseline`);
@@ -1276,7 +1133,7 @@ test('investigation authority: producer cannot replace the independently expecte
     task,
     repoStub.repository,
     createBoundHostPort(task, { snapshot: { expectedTestFiles: ['tests/test_calculator.py'] } }),
-    createTrustedAdmissionContext(task, ['tests/test_calculator.py', 'tests/test_extra.py'])
+    createTrustedAdmissionContext(task, ['tests/test_calculator.py', 'tests/test_extra.py']),
   );
 
   assert.equal(result.status, 'error');
@@ -1302,7 +1159,7 @@ test('investigation authority: hostile snapshot ownKeys trap fails closed withou
       ownKeys() {
         throw new Error('HOSTILE_OWN_KEYS_SECRET_PAYLOAD');
       },
-    }
+    },
   );
   const hostileHost = {
     loadSnapshot: async () => hostileSnapshot,
@@ -1412,7 +1269,7 @@ test('investigation authority: hostile Proxy on testFiles entry fails closed wit
         }
         return Reflect.get(target, prop);
       },
-    }
+    },
   );
 
   const hostileHost: TrustedHostPort = {
@@ -1483,7 +1340,7 @@ test('investigation authority: deep raw byte copy preserves test bytes against p
   assert.equal(
     result.baseline?.testProtectionDigest,
     expectedProtectionDigest,
-    'test protection digest must match initial detached bytes, completely unaffected by in-place mutation of producer buffer'
+    'test protection digest must match initial detached bytes, completely unaffected by in-place mutation of producer buffer',
   );
 });
 
@@ -1510,7 +1367,7 @@ test('investigation: requires explicit reproduction purpose and refuses substrin
 test('investigation: works with FakeRepositoryPort when explicit TrustedHostPort is injected', async () => {
   const task = createFixtureBugTask();
   const hostPort = createValidHostPort(task);
-  const repo = asLegacyV01RepositoryPort(new FakeRepositoryPort({ initialRevision: task.initialRevisionDigest }));
+  const repo = new FakeRepositoryPort({ initialRevision: task.initialRevisionDigest });
   repo.setTestResult('check-pytest-reproduction', {
     checkId: 'check-pytest-reproduction',
     outcome: 'fail',
@@ -1523,10 +1380,7 @@ test('investigation: works with FakeRepositoryPort when explicit TrustedHostPort
   assert.equal(result.status, 'reproduced');
   assert.ok(result.baseline !== undefined, 'baseline must be recorded');
   assert.equal(result.baseline?.repositorySnapshotDigest, task.initialRevisionDigest);
-  assert.equal(
-    result.baseline?.testProtectionDigest,
-    computeTestProtectionDigest(hostPort.testFiles)
-  );
+  assert.equal(result.baseline?.testProtectionDigest, computeTestProtectionDigest(hostPort.testFiles));
   assert.equal(result.baseline?.checkResults[0]?.outcome, 'fail');
 });
 
@@ -1546,29 +1400,24 @@ test('investigation: admits only the complete explicit required check set', asyn
   const repoStub = createCanonicalRepositoryStub({
     onRunTests(check) {
       observedCheckIds.push(check.checkId);
-      return check.purpose === 'reproduction'
-        ? { checkId: check.checkId, outcome: 'fail', outputExcerpt: 'ZeroDivisionError' }
-        : { checkId: check.checkId, outcome: 'pass' };
+      return check.purpose === 'reproduction' ? { checkId: check.checkId, outcome: 'fail', outputExcerpt: 'ZeroDivisionError' } : { checkId: check.checkId, outcome: 'pass' };
     },
   });
 
   const result = await investigateWithTestContext(task, repoStub.repository, hostPort);
 
-  assert.deepEqual(observedCheckIds, task.requiredChecks.map((check) => check.checkId));
+  assert.deepEqual(
+    observedCheckIds,
+    task.requiredChecks.map(check => check.checkId),
+  );
   assert.equal(result.status, 'reproduced');
   assert.equal(result.baseline?.checkSetDigest, checkSetDigest);
   assert.equal(
-    result.baseline && 'criteriaDigest' in result.baseline
-      ? result.baseline.criteriaDigest
-      : undefined,
+    result.baseline && 'criteriaDigest' in result.baseline ? result.baseline.criteriaDigest : undefined,
     computeCanonicalSha256(task.acceptanceCriteria),
-    'the candidate must bind the exact accepted criteria'
+    'the candidate must bind the exact accepted criteria',
   );
-  assert.equal(
-    result.baseline && 'evidenceId' in result.baseline,
-    false,
-    'investigation candidates must not claim a durable reference before the evidence writer acknowledges it'
-  );
+  assert.equal(result.baseline && 'evidenceId' in result.baseline, false, 'investigation candidates must not claim a durable reference before the evidence writer acknowledges it');
 });
 
 test('investigation: previously passing required checks must pass for a baseline candidate', async () => {
@@ -1585,9 +1434,7 @@ test('investigation: previously passing required checks must pass for a baseline
     const hostPort = createValidHostPort(task);
     const repoStub = createCanonicalRepositoryStub({
       onRunTests(check) {
-        return check.purpose === 'reproduction'
-          ? { checkId: check.checkId, outcome: 'fail', outputExcerpt: 'ZeroDivisionError' }
-          : { checkId: check.checkId, outcome };
+        return check.purpose === 'reproduction' ? { checkId: check.checkId, outcome: 'fail', outputExcerpt: 'ZeroDivisionError' } : { checkId: check.checkId, outcome };
       },
     });
 
@@ -1622,15 +1469,15 @@ test('investigation: runs the complete check set before returning non-reproducin
 
   assert.equal(result.status, 'non-reproducing');
   assert.equal(result.baseline, undefined);
-  assert.deepEqual(observedCheckIds, task.requiredChecks.map((check) => check.checkId));
+  assert.deepEqual(
+    observedCheckIds,
+    task.requiredChecks.map(check => check.checkId),
+  );
 });
 
 test('investigation: non-reproducing requires every previously passing check to pass', async () => {
   const task = createFixtureBugTask({
-    requiredChecks: [
-      createFixtureCheckDefinition({ checkId: 'check-repro', purpose: 'reproduction' }),
-      createFixtureCheckDefinition({ checkId: 'check-existing-regression', purpose: 'regression' }),
-    ],
+    requiredChecks: [createFixtureCheckDefinition({ checkId: 'check-repro', purpose: 'reproduction' }), createFixtureCheckDefinition({ checkId: 'check-existing-regression', purpose: 'regression' })],
   });
   const cases: readonly {
     readonly name: string;
@@ -1651,9 +1498,7 @@ test('investigation: non-reproducing requires every previously passing check to 
     const repoStub = createCanonicalRepositoryStub({
       onRunTests(check) {
         observedCheckIds.push(check.checkId);
-        return check.purpose === 'reproduction'
-          ? { checkId: check.checkId, outcome: 'pass' }
-          : { checkId: check.checkId, outcome: testCase.outcome };
+        return check.purpose === 'reproduction' ? { checkId: check.checkId, outcome: 'pass' } : { checkId: check.checkId, outcome: testCase.outcome };
       },
     });
 
@@ -1661,7 +1506,10 @@ test('investigation: non-reproducing requires every previously passing check to 
 
     assert.equal(result.status, testCase.expectedStatus, `${testCase.name} required check status`);
     assert.equal(result.baseline, undefined, `${testCase.name} required check cannot create a baseline`);
-    assert.deepEqual(observedCheckIds, task.requiredChecks.map((check) => check.checkId));
+    assert.deepEqual(
+      observedCheckIds,
+      task.requiredChecks.map(check => check.checkId),
+    );
   }
 });
 
@@ -1679,9 +1527,7 @@ test('investigation: a thrown required check is recorded and does not omit later
     onRunTests(check) {
       observedCheckIds.push(check.checkId);
       if (check.checkId === 'check-throws') throw new Error('regression runner unavailable');
-      return check.purpose === 'reproduction'
-        ? { checkId: check.checkId, outcome: 'fail', outputExcerpt: 'ZeroDivisionError' }
-        : { checkId: check.checkId, outcome: 'pass' };
+      return check.purpose === 'reproduction' ? { checkId: check.checkId, outcome: 'fail', outputExcerpt: 'ZeroDivisionError' } : { checkId: check.checkId, outcome: 'pass' };
     },
   });
 
@@ -1689,7 +1535,10 @@ test('investigation: a thrown required check is recorded and does not omit later
 
   assert.equal(result.status, 'error');
   assert.equal(result.baseline, undefined);
-  assert.deepEqual(observedCheckIds, task.requiredChecks.map((check) => check.checkId));
+  assert.deepEqual(
+    observedCheckIds,
+    task.requiredChecks.map(check => check.checkId),
+  );
 });
 
 test('plan preparation: persisted Baseline cannot substitute for a complete evidence candidate', async () => {
@@ -1855,16 +1704,21 @@ test('plan preparation: missing trusted evidence writer leaves state before Awai
   const events: string[] = [];
   const statePort = observeStatePort(new MemoryStatePort({ initialTaskState: state }), events);
   const approval = createPendingApprovalPort(events);
-  const result = await prepareFixPlanAndApproval(state, candidate, {
-    repository: new FakeRepositoryPort({ initialRevision: task.initialRevisionDigest }),
-    state: statePort,
-    approval: approval.port,
-  }, {
-    diagnosis: 'Zero denominator reaches the division operation',
-    strategy: 'Reject a zero denominator before division',
-    suspectedCauseLocations: ['src/calculator.py'],
-    scopedChanges: ['src/calculator.py'],
-  });
+  const result = await prepareFixPlanAndApproval(
+    state,
+    candidate,
+    {
+      repository: new FakeRepositoryPort({ initialRevision: task.initialRevisionDigest }),
+      state: statePort,
+      approval: approval.port,
+    },
+    {
+      diagnosis: 'Zero denominator reaches the division operation',
+      strategy: 'Reject a zero denominator before division',
+      suspectedCauseLocations: ['src/calculator.py'],
+      scopedChanges: ['src/calculator.py'],
+    },
+  );
 
   assert.equal(result.outcome, 'rejected');
   assert.equal((await statePort.loadTask(state.taskId))?.node, 'Investigate');
@@ -1892,17 +1746,22 @@ test('plan preparation: evidence acknowledgement precedes state CAS, checkpoint,
     evidenceId: 'uc04://baseline/task-calc-001/accepted-1',
   });
 
-  const result = await prepareFixPlanAndApproval(state, candidate, {
-    repository: new FakeRepositoryPort({ initialRevision: task.initialRevisionDigest }),
-    state: statePort,
-    approval: approval.port,
-    baselineEvidenceWriter: evidence.writer,
-  }, {
-    diagnosis: 'Zero denominator reaches the division operation',
-    strategy: 'Reject a zero denominator before division',
-    suspectedCauseLocations: ['src/calculator.py'],
-    scopedChanges: ['src/calculator.py'],
-  });
+  const result = await prepareFixPlanAndApproval(
+    state,
+    candidate,
+    {
+      repository: new FakeRepositoryPort({ initialRevision: task.initialRevisionDigest }),
+      state: statePort,
+      approval: approval.port,
+      baselineEvidenceWriter: evidence.writer,
+    },
+    {
+      diagnosis: 'Zero denominator reaches the division operation',
+      strategy: 'Reject a zero denominator before division',
+      suspectedCauseLocations: ['src/calculator.py'],
+      scopedChanges: ['src/calculator.py'],
+    },
+  );
 
   assert.equal(result.outcome, 'pending');
   assert.deepEqual(events, ['evidence', 'state-transition', 'checkpoint', 'approval']);
@@ -1913,8 +1772,10 @@ test('plan preparation: evidence acknowledgement precedes state CAS, checkpoint,
   assert.equal(request.contentDigest, computeCanonicalSha256(request.content));
   assert.deepEqual(request.content.acceptanceCriteria, task.acceptanceCriteria);
   assert.deepEqual(request.content.requiredChecks, task.requiredChecks);
-  assert.deepEqual(request.content.checkResults.map((check) => check.checkId),
-    task.requiredChecks.map((check) => check.checkId));
+  assert.deepEqual(
+    request.content.checkResults.map(check => check.checkId),
+    task.requiredChecks.map(check => check.checkId),
+  );
   assert.equal(request.content.repositorySnapshotDigest, task.initialRevisionDigest);
   assert.equal(request.content.checkSetDigest, computeCheckSetDigest(task.requiredChecks));
   assert.equal(request.content.criteriaDigest, computeCanonicalSha256(task.acceptanceCriteria));
@@ -1942,18 +1803,23 @@ test('plan preparation: caller evidence refs cannot omit the acknowledged baseli
   const baselineRef = 'uc04://baseline/task-calc-001/accepted-1';
   const evidence = createBaselineEvidenceWriter({ events, evidenceId: baselineRef });
 
-  const result = await prepareFixPlanAndApproval(state, candidate, {
-    repository: new FakeRepositoryPort({ initialRevision: task.initialRevisionDigest }),
-    state: statePort,
-    approval: approval.port,
-    baselineEvidenceWriter: evidence.writer,
-  }, {
-    diagnosis: 'Zero denominator reaches the division operation',
-    strategy: 'Reject a zero denominator before division',
-    suspectedCauseLocations: ['src/calculator.py'],
-    scopedChanges: ['src/calculator.py'],
-    evidenceRefs: [callerEvidenceRef],
-  });
+  const result = await prepareFixPlanAndApproval(
+    state,
+    candidate,
+    {
+      repository: new FakeRepositoryPort({ initialRevision: task.initialRevisionDigest }),
+      state: statePort,
+      approval: approval.port,
+      baselineEvidenceWriter: evidence.writer,
+    },
+    {
+      diagnosis: 'Zero denominator reaches the division operation',
+      strategy: 'Reject a zero denominator before division',
+      suspectedCauseLocations: ['src/calculator.py'],
+      scopedChanges: ['src/calculator.py'],
+      evidenceRefs: [callerEvidenceRef],
+    },
+  );
 
   assert.equal(result.outcome, 'pending');
   assert.equal(result.plan?.baselineRef, baselineRef);
@@ -1978,17 +1844,22 @@ test('plan preparation: mismatched evidence acknowledgement fails before state o
     },
   });
 
-  const result = await prepareFixPlanAndApproval(state, candidate, {
-    repository: new FakeRepositoryPort({ initialRevision: task.initialRevisionDigest }),
-    state: statePort,
-    approval: approval.port,
-    baselineEvidenceWriter: evidence.writer,
-  }, {
-    diagnosis: 'Zero denominator reaches the division operation',
-    strategy: 'Reject a zero denominator before division',
-    suspectedCauseLocations: ['src/calculator.py'],
-    scopedChanges: ['src/calculator.py'],
-  });
+  const result = await prepareFixPlanAndApproval(
+    state,
+    candidate,
+    {
+      repository: new FakeRepositoryPort({ initialRevision: task.initialRevisionDigest }),
+      state: statePort,
+      approval: approval.port,
+      baselineEvidenceWriter: evidence.writer,
+    },
+    {
+      diagnosis: 'Zero denominator reaches the division operation',
+      strategy: 'Reject a zero denominator before division',
+      suspectedCauseLocations: ['src/calculator.py'],
+      scopedChanges: ['src/calculator.py'],
+    },
+  );
 
   assert.equal(result.outcome, 'rejected');
   assert.equal((await statePort.loadTask(state.taskId))?.node, 'Investigate');
@@ -2005,17 +1876,22 @@ test('plan preparation: evidence writer failure leaves state before AwaitPlan an
   const approval = createPendingApprovalPort(events);
   const evidence = createBaselineEvidenceWriter({ events, throwError: true });
 
-  const result = await prepareFixPlanAndApproval(state, candidate, {
-    repository: new FakeRepositoryPort({ initialRevision: task.initialRevisionDigest }),
-    state: statePort,
-    approval: approval.port,
-    baselineEvidenceWriter: evidence.writer,
-  }, {
-    diagnosis: 'Zero denominator reaches the division operation',
-    strategy: 'Reject a zero denominator before division',
-    suspectedCauseLocations: ['src/calculator.py'],
-    scopedChanges: ['src/calculator.py'],
-  });
+  const result = await prepareFixPlanAndApproval(
+    state,
+    candidate,
+    {
+      repository: new FakeRepositoryPort({ initialRevision: task.initialRevisionDigest }),
+      state: statePort,
+      approval: approval.port,
+      baselineEvidenceWriter: evidence.writer,
+    },
+    {
+      diagnosis: 'Zero denominator reaches the division operation',
+      strategy: 'Reject a zero denominator before division',
+      suspectedCauseLocations: ['src/calculator.py'],
+      scopedChanges: ['src/calculator.py'],
+    },
+  );
 
   assert.equal(result.outcome, 'rejected');
   assert.equal((await statePort.loadTask(state.taskId))?.node, 'Investigate');
@@ -2038,22 +1914,18 @@ test('plan preparation: nonpassing or missing required checks cannot be persiste
     readonly name: string;
     readonly candidate: CompleteBaselineCandidate;
   }[] = [
-    ...(['fail', 'error', 'timeout', 'not-run'] as const).map((outcome) => ({
+    ...(['fail', 'error', 'timeout', 'not-run'] as const).map(outcome => ({
       name: outcome,
       candidate: {
         ...complete,
-        checkResults: complete.checkResults.map((result) =>
-          result.checkId === 'check-existing-regression' ? { ...result, outcome } : result
-        ),
+        checkResults: complete.checkResults.map(result => (result.checkId === 'check-existing-regression' ? { ...result, outcome } : result)),
       },
     })),
     {
       name: 'missing',
       candidate: {
         ...complete,
-        checkResults: complete.checkResults.filter(
-          (result) => result.checkId !== 'check-existing-regression'
-        ),
+        checkResults: complete.checkResults.filter(result => result.checkId !== 'check-existing-regression'),
       },
     },
   ];
@@ -2064,17 +1936,22 @@ test('plan preparation: nonpassing or missing required checks cannot be persiste
     const statePort = observeStatePort(new MemoryStatePort({ initialTaskState: state }), events);
     const approval = createPendingApprovalPort(events);
     const evidence = createBaselineEvidenceWriter({ events });
-    const result = await prepareFixPlanAndApproval(state, testCase.candidate, {
-      repository: new FakeRepositoryPort({ initialRevision: task.initialRevisionDigest }),
-      state: statePort,
-      approval: approval.port,
-      baselineEvidenceWriter: evidence.writer,
-    }, {
-      diagnosis: 'Zero denominator reaches the division operation',
-      strategy: 'Reject a zero denominator before division',
-      suspectedCauseLocations: ['src/calculator.py'],
-      scopedChanges: ['src/calculator.py'],
-    });
+    const result = await prepareFixPlanAndApproval(
+      state,
+      testCase.candidate,
+      {
+        repository: new FakeRepositoryPort({ initialRevision: task.initialRevisionDigest }),
+        state: statePort,
+        approval: approval.port,
+        baselineEvidenceWriter: evidence.writer,
+      },
+      {
+        diagnosis: 'Zero denominator reaches the division operation',
+        strategy: 'Reject a zero denominator before division',
+        suspectedCauseLocations: ['src/calculator.py'],
+        scopedChanges: ['src/calculator.py'],
+      },
+    );
 
     assert.equal(result.outcome, 'rejected', `${testCase.name} required check must reject the candidate`);
     assert.equal((await statePort.loadTask(state.taskId))?.node, 'Investigate');
@@ -2156,7 +2033,7 @@ test('plan preparation: valid approved decision transitions to Patch, checkpoint
       baselineEvidenceWriter: evidence.writer,
       host: createBoundHostPort(task),
     },
-    standardPlanDetails
+    standardPlanDetails,
   );
 
   assert.equal(result.outcome, 'approved');
@@ -2194,7 +2071,7 @@ test('plan preparation: approved decision with StatePort transition CAS throw ne
         };
       }
       const val = Reflect.get(target, prop, receiver) as unknown;
-      return typeof val === 'function' ? val.bind(target) as unknown : val;
+      return typeof val === 'function' ? (val.bind(target) as unknown) : val;
     },
   });
 
@@ -2215,7 +2092,7 @@ test('plan preparation: approved decision with StatePort transition CAS throw ne
       baselineEvidenceWriter: evidence.writer,
       host: createBoundHostPort(task),
     },
-    standardPlanDetails
+    standardPlanDetails,
   );
 
   assert.equal(result.outcome, 'rejected', 'CAS failure must never report approved');
@@ -2250,7 +2127,7 @@ test('plan preparation: approved decision with StatePort checkpoint throw never 
         };
       }
       const val = Reflect.get(target, prop, receiver) as unknown;
-      return typeof val === 'function' ? val.bind(target) as unknown : val;
+      return typeof val === 'function' ? (val.bind(target) as unknown) : val;
     },
   });
 
@@ -2271,7 +2148,7 @@ test('plan preparation: approved decision with StatePort checkpoint throw never 
       baselineEvidenceWriter: evidence.writer,
       host: createBoundHostPort(task),
     },
-    standardPlanDetails
+    standardPlanDetails,
   );
 
   assert.equal(result.outcome, 'rejected', 'checkpoint durability failure must never report approved');
@@ -2308,7 +2185,7 @@ test('plan preparation: approved decision with forged planVersion fails admissio
       approval: approval.port,
       baselineEvidenceWriter: evidence.writer,
     },
-    standardPlanDetails
+    standardPlanDetails,
   );
 
   assert.equal(result.outcome, 'rejected');
@@ -2345,7 +2222,7 @@ test('plan preparation: approved decision with forged strategyDigest fails admis
       approval: approval.port,
       baselineEvidenceWriter: evidence.writer,
     },
-    standardPlanDetails
+    standardPlanDetails,
   );
 
   assert.equal(result.outcome, 'rejected');
@@ -2382,7 +2259,7 @@ test('plan preparation: approved decision with forged baselineRef fails admissio
       approval: approval.port,
       baselineEvidenceWriter: evidence.writer,
     },
-    standardPlanDetails
+    standardPlanDetails,
   );
 
   assert.equal(result.outcome, 'rejected');
@@ -2419,7 +2296,7 @@ test('plan preparation: approved decision with mismatched decisionId fails and m
       approval: approval.port,
       baselineEvidenceWriter: evidence.writer,
     },
-    standardPlanDetails
+    standardPlanDetails,
   );
 
   assert.equal(result.outcome, 'rejected');
@@ -2444,7 +2321,7 @@ test('plan preparation: state CAS version drift while approval await rejects dec
         };
       }
       const val = Reflect.get(target, prop, receiver) as unknown;
-      return typeof val === 'function' ? val.bind(target) as unknown : val;
+      return typeof val === 'function' ? (val.bind(target) as unknown) : val;
     },
   });
 
@@ -2466,7 +2343,7 @@ test('plan preparation: state CAS version drift while approval await rejects dec
       approval: approval.port,
       baselineEvidenceWriter: evidence.writer,
     },
-    standardPlanDetails
+    standardPlanDetails,
   );
 
   assert.equal(result.outcome, 'rejected');
@@ -2490,7 +2367,7 @@ test('plan preparation: state node drift while approval await rejects decision a
         };
       }
       const val = Reflect.get(target, prop, receiver) as unknown;
-      return typeof val === 'function' ? val.bind(target) as unknown : val;
+      return typeof val === 'function' ? (val.bind(target) as unknown) : val;
     },
   });
 
@@ -2512,7 +2389,7 @@ test('plan preparation: state node drift while approval await rejects decision a
       approval: approval.port,
       baselineEvidenceWriter: evidence.writer,
     },
-    standardPlanDetails
+    standardPlanDetails,
   );
 
   assert.equal(result.outcome, 'rejected');
@@ -2539,7 +2416,7 @@ test('plan preparation: StatePort loadTask returning null after approval await f
         };
       }
       const val = Reflect.get(target, prop, receiver) as unknown;
-      return typeof val === 'function' ? val.bind(target) as unknown : val;
+      return typeof val === 'function' ? (val.bind(target) as unknown) : val;
     },
   });
 
@@ -2556,7 +2433,7 @@ test('plan preparation: StatePort loadTask returning null after approval await f
       approval: approval.port,
       baselineEvidenceWriter: evidence.writer,
     },
-    standardPlanDetails
+    standardPlanDetails,
   );
 
   assert.equal(result.outcome, 'rejected');
@@ -2585,7 +2462,7 @@ test('plan preparation: StatePort loadTask throwing after approval await fails c
         };
       }
       const val = Reflect.get(target, prop, receiver) as unknown;
-      return typeof val === 'function' ? val.bind(target) as unknown : val;
+      return typeof val === 'function' ? (val.bind(target) as unknown) : val;
     },
   });
 
@@ -2602,7 +2479,7 @@ test('plan preparation: StatePort loadTask throwing after approval await fails c
       approval: approval.port,
       baselineEvidenceWriter: evidence.writer,
     },
-    standardPlanDetails
+    standardPlanDetails,
   );
 
   assert.equal(result.outcome, 'rejected');
@@ -2643,7 +2520,7 @@ test('plan preparation: repository revision drift via host snapshot reload while
       baselineEvidenceWriter: evidence.writer,
       host,
     },
-    standardPlanDetails
+    standardPlanDetails,
   );
 
   assert.equal(result.outcome, 'rejected');
@@ -2679,7 +2556,7 @@ test('plan preparation: config version drift via config port reload while approv
       baselineEvidenceWriter: evidence.writer,
       config: configPort,
     },
-    standardPlanDetails
+    standardPlanDetails,
   );
 
   assert.equal(result.outcome, 'rejected');
@@ -2715,7 +2592,7 @@ test('plan preparation: config port loadConfig returning incomplete config fails
       baselineEvidenceWriter: evidence.writer,
       config: configPort,
     },
-    standardPlanDetails
+    standardPlanDetails,
   );
 
   assert.equal(result.outcome, 'rejected');
@@ -2748,7 +2625,7 @@ test('plan preparation: config port loadConfig throwing after approval await fai
       baselineEvidenceWriter: evidence.writer,
       config: configPort,
     },
-    standardPlanDetails
+    standardPlanDetails,
   );
 
   assert.equal(result.outcome, 'rejected');
@@ -2782,7 +2659,7 @@ test('plan preparation: forged pending decision with mismatched strategyDigest f
       approval: approval.port,
       baselineEvidenceWriter: evidence.writer,
     },
-    standardPlanDetails
+    standardPlanDetails,
   );
 
   assert.equal(result.outcome, 'rejected');
@@ -2817,7 +2694,7 @@ test('plan preparation: forged pending decision with unknown keys fails binding 
       approval: approval.port,
       baselineEvidenceWriter: evidence.writer,
     },
-    standardPlanDetails
+    standardPlanDetails,
   );
 
   assert.equal(result.outcome, 'rejected');
@@ -2847,7 +2724,7 @@ test('plan preparation: valid rejected decision transitions to AwaitFeedback wit
       approval: approval.port,
       baselineEvidenceWriter: evidence.writer,
     },
-    standardPlanDetails
+    standardPlanDetails,
   );
 
   assert.equal(result.outcome, 'rejected');
@@ -2887,7 +2764,7 @@ test('plan preparation: forged rejected decision with mismatched baselineRef fai
       approval: approval.port,
       baselineEvidenceWriter: evidence.writer,
     },
-    standardPlanDetails
+    standardPlanDetails,
   );
 
   assert.equal(result.outcome, 'rejected');
@@ -2913,7 +2790,7 @@ test('plan preparation: rejected decision with StatePort transition throw return
         };
       }
       const val = Reflect.get(target, prop, receiver) as unknown;
-      return typeof val === 'function' ? val.bind(target) as unknown : val;
+      return typeof val === 'function' ? (val.bind(target) as unknown) : val;
     },
   });
 
@@ -2930,7 +2807,7 @@ test('plan preparation: rejected decision with StatePort transition throw return
       approval: approval.port,
       baselineEvidenceWriter: evidence.writer,
     },
-    standardPlanDetails
+    standardPlanDetails,
   );
 
   assert.equal(result.outcome, 'rejected');
@@ -2959,7 +2836,7 @@ test('plan preparation: stale decision status returns rejected and stays at Awai
       approval: approval.port,
       baselineEvidenceWriter: evidence.writer,
     },
-    standardPlanDetails
+    standardPlanDetails,
   );
 
   assert.equal(result.outcome, 'rejected');
@@ -2986,7 +2863,7 @@ test('plan preparation: approval request throw returns rejected and stays at Awa
       approval: approval.port,
       baselineEvidenceWriter: evidence.writer,
     },
-    standardPlanDetails
+    standardPlanDetails,
   );
 
   assert.equal(result.outcome, 'rejected');
@@ -3018,7 +2895,7 @@ test('plan preparation: approved decision with missing host port fails closed be
       baselineEvidenceWriter: evidence.writer,
       // Omit host port intentionally!
     },
-    standardPlanDetails
+    standardPlanDetails,
   );
 
   assert.equal(result.outcome, 'rejected');
@@ -3046,7 +2923,7 @@ test('plan preparation: approved decision with drifted host snapshot testProtect
         currentRevision: req.expectedRevisionDigest,
         checkSetDigest: req.expectedCheckSetDigest,
         expectedTestFiles: req.expectedTestFiles,
-        testFiles: req.expectedTestFiles.map((p) => ({
+        testFiles: req.expectedTestFiles.map(p => ({
           path: p,
           content: 'tampered test content while awaiting approval',
         })),
@@ -3064,7 +2941,7 @@ test('plan preparation: approved decision with drifted host snapshot testProtect
       baselineEvidenceWriter: evidence.writer,
       host,
     },
-    standardPlanDetails
+    standardPlanDetails,
   );
 
   assert.equal(result.outcome, 'rejected');
@@ -3091,9 +2968,7 @@ test('plan preparation: approved decision with valid host port transitions to Pa
         currentRevision: req.expectedRevisionDigest,
         checkSetDigest: req.expectedCheckSetDigest,
         expectedTestFiles: req.expectedTestFiles,
-        testFiles: [
-          { path: 'tests/test_calculator.py', content: 'def test_calc(): pass\n' },
-        ],
+        testFiles: [{ path: 'tests/test_calculator.py', content: 'def test_calc(): pass\n' }],
       };
     },
   };
@@ -3108,7 +2983,7 @@ test('plan preparation: approved decision with valid host port transitions to Pa
       baselineEvidenceWriter: evidence.writer,
       host,
     },
-    standardPlanDetails
+    standardPlanDetails,
   );
 
   assert.equal(result.outcome, 'approved', result.reason);
@@ -3139,7 +3014,7 @@ test('plan preparation: evidenceRefs with untrusted reference fails provenance c
         {
           ...standardPlanDetails,
           evidenceRefs: [ref],
-        }
+        },
       );
 
       assert.equal(result.outcome, 'rejected');
@@ -3171,9 +3046,7 @@ test('plan preparation: evidenceRefs with valid state provenance are determinist
         currentRevision: req.expectedRevisionDigest,
         checkSetDigest: req.expectedCheckSetDigest,
         expectedTestFiles: req.expectedTestFiles,
-        testFiles: [
-          { path: 'tests/test_calculator.py', content: 'def test_calc(): pass\n' },
-        ],
+        testFiles: [{ path: 'tests/test_calculator.py', content: 'def test_calc(): pass\n' }],
       };
     },
   };
@@ -3192,7 +3065,7 @@ test('plan preparation: evidenceRefs with valid state provenance are determinist
       ...standardPlanDetails,
       // Provide extra refs in reverse alphabetical order
       evidenceRefs: ['evidence-prior-z', 'evidence-prior-a'],
-    }
+    },
   );
 
   assert.equal(result.outcome, 'approved', result.reason);
@@ -3254,16 +3127,33 @@ test('investigateBaseline: validates selectors only for direct and module pytest
 
 test('investigateBaseline: skips pytest option values while validating deselected selectors', async t => {
   const options = [
-    '-p', 'no:cacheprovider', '-r', 'a', '--durations', '10', '--durations-min', '0.5',
-    '--basetemp', '/tmp/pytest', '--confcutdir', '.', '--timeout', '10',
-    '--cov-report', 'term-missing',
+    '-p',
+    'no:cacheprovider',
+    '-r',
+    'a',
+    '--durations',
+    '10',
+    '--durations-min',
+    '0.5',
+    '--basetemp',
+    '/tmp/pytest',
+    '--confcutdir',
+    '.',
+    '--timeout',
+    '10',
+    '--cov-report',
+    'term-missing',
   ];
   for (const prefix of [[], ['-m', 'pytest']]) {
     for (const deselect of [
-      [], ['--deselect', 'tests/test_calculator.py::test_other'],
+      [],
+      ['--deselect', 'tests/test_calculator.py::test_other'],
       ['--deselect=tests/test_calculator.py::test_other'],
-      ['--deselect', '../secrets.py'], ['--deselect=../secrets.py'],
-      ['--deselect', '.env'], ['--deselect', '--invalid'], ['--deselect'],
+      ['--deselect', '../secrets.py'],
+      ['--deselect=../secrets.py'],
+      ['--deselect', '.env'],
+      ['--deselect', '--invalid'],
+      ['--deselect'],
     ]) {
       await t.test(`${prefix.join(' ')} ${deselect.join(' ')}`, async () => {
         const check = createFixtureCheckDefinition({
@@ -3298,7 +3188,7 @@ test('investigateBaseline: pytest node ID (tests/test_calculator.py::test_calc) 
   const task = createFixtureBugTask({
     requiredChecks: [nodeCheck],
   });
-  const repo = asLegacyV01RepositoryPort(new FakeRepositoryPort({
+  const repo = new FakeRepositoryPort({
     initialRevision: task.initialRevisionDigest,
     testResults: {
       'check-pytest-repro-node': {
@@ -3307,7 +3197,7 @@ test('investigateBaseline: pytest node ID (tests/test_calculator.py::test_calc) 
         outputExcerpt: 'AssertionError',
       },
     },
-  }));
+  });
   const host = createBoundHostPort(task, {
     testFiles: [{ path: 'tests/test_calculator.py', content: 'def test_calc(): pass\n' }],
   });
@@ -3478,7 +3368,7 @@ test('investigateBaseline: positional argument that is not a test selector fails
 
 test('v0.2 baseline admission: pre-plan diagnostic command is guarded without a plan decision', async () => {
   const task = createFixtureBugTask();
-  const reproCheck = task.requiredChecks.find((c) => c.purpose === 'reproduction');
+  const reproCheck = task.requiredChecks.find(c => c.purpose === 'reproduction');
   assert.ok(reproCheck, 'fixture must include a reproduction check');
   const action = {
     actionId: reproCheck.checkId,
@@ -3564,13 +3454,16 @@ test('v0.2 baseline admission: pre-plan diagnostic command is guarded without a 
   assert.equal(v02Call?.context.planDecisionRef, undefined, 'Pre-plan diagnostics must not fabricate a plan decision');
 });
 
-test('v0.2 baseline admission: repository marker alone denies fallback without admission, guard, or state', async () => {
+test('v0.2 baseline admission: explicit v0.2 context without admission, guard, or state denies fallback', async () => {
   const task = createFixtureBugTask();
   const repo = new FakeRepositoryPort();
 
-  const result = await investigateWithTestContext(task, repo, createBoundHostPort(task));
+  const result = await investigateBaseline(task, repo, createBoundHostPort(task), {
+    ...createTrustedAdmissionContext(task),
+    admissionContext: null as unknown as RepositoryAdmissionContextV02,
+  });
 
-  assert.equal(repo.tests.length, 0, 'A v0.2 marker must prevent legacy RepositoryPort.runTests calls');
+  assert.equal(repo.tests.length, 0, 'Explicit v0.2 selection must prevent legacy RepositoryPort.runTests calls');
   assert.equal(result.status, 'error');
   assert.match(result.reason ?? '', /ADMISSION_DENIED: Missing or malformed admission context/);
   assert.equal(repo.commands.length, 0, 'Missing authority must not reach the command receiver');
@@ -3579,7 +3472,7 @@ test('v0.2 baseline admission: repository marker alone denies fallback without a
 
 test('v0.2 baseline admission: zero repository command effects when task has open claim', async () => {
   const task = createFixtureBugTask();
-  const reproCheck = task.requiredChecks.find((c) => c.purpose === 'reproduction');
+  const reproCheck = task.requiredChecks.find(c => c.purpose === 'reproduction');
   assert.ok(reproCheck, 'fixture must include a reproduction check');
   const action = {
     actionId: reproCheck.checkId,
@@ -3654,11 +3547,7 @@ test('v0.2 baseline admission: zero repository command effects when task has ope
   await investigateBaseline(task, repo, hostPort, trustedContext);
 
   // Target v0.2 acceptance: An open claim blocks any new runTests effect and yields zero repository test effects.
-  assert.equal(
-    repo.tests.length,
-    0,
-    'Open claim must block the baseline command and yield zero repository test effects'
-  );
+  assert.equal(repo.tests.length, 0, 'Open claim must block the baseline command and yield zero repository test effects');
   assert.equal(repo.commands.length, 0, 'Open claims must not reach the command receiver');
   assert.equal(journal.getJournalSnapshot().attempts.length, 0, 'Open claims must not begin an attempt');
   assert.equal(journal.getJournalSnapshot().outcomes.length, 0, 'Open claims must not record an outcome');
@@ -3666,7 +3555,7 @@ test('v0.2 baseline admission: zero repository command effects when task has ope
 
 test('v0.2 baseline admission: zero repository command effects when task is paused', async () => {
   const task = createFixtureBugTask();
-  const reproCheck = task.requiredChecks.find((c) => c.purpose === 'reproduction');
+  const reproCheck = task.requiredChecks.find(c => c.purpose === 'reproduction');
   assert.ok(reproCheck, 'fixture must include a reproduction check');
   const action = {
     actionId: reproCheck.checkId,
@@ -3721,18 +3610,14 @@ test('v0.2 baseline admission: zero repository command effects when task is paus
   await investigateBaseline(task, repo, hostPort, trustedContext);
 
   // Target v0.2 acceptance: Paused task must block the baseline command and yield zero repository test effects.
-  assert.equal(
-    repo.tests.length,
-    0,
-    'Paused task must block the baseline command and yield zero repository test effects'
-  );
+  assert.equal(repo.tests.length, 0, 'Paused task must block the baseline command and yield zero repository test effects');
   assert.equal(repo.commands.length, 0, 'Paused tasks must not reach the command receiver');
   assert.equal(journal.getJournalSnapshot().claims.length, 0, 'Paused tasks must not create a claim');
 });
 
 test('v0.2 baseline admission: zero repository command effects on missing or malformed admission context', async () => {
   const task = createFixtureBugTask();
-  const reproCheck = task.requiredChecks.find((c) => c.purpose === 'reproduction');
+  const reproCheck = task.requiredChecks.find(c => c.purpose === 'reproduction');
   assert.ok(reproCheck, 'fixture must include a reproduction check');
   const action = {
     actionId: reproCheck.checkId,
@@ -3785,22 +3670,14 @@ test('v0.2 baseline admission: zero repository command effects on missing or mal
   const result = await investigateBaseline(task, repo, hostPort, trustedContext);
 
   // Target v0.2 acceptance: Missing or malformed admission context must deny the baseline command and yield zero repository test effects.
-  assert.equal(
-    repo.tests.length,
-    0,
-    'Missing or malformed admission context must deny the baseline command and yield zero repository test effects'
-  );
-  assert.equal(
-    repo.v02Calls.length,
-    0,
-    'Missing or malformed admission context must not make v0.2 calls'
-  );
+  assert.equal(repo.tests.length, 0, 'Missing or malformed admission context must deny the baseline command and yield zero repository test effects');
+  assert.equal(repo.v02Calls.length, 0, 'Missing or malformed admission context must not make v0.2 calls');
   assert.equal(repo.commands.length, 0, 'Missing admission context must not reach the command receiver');
   assert.equal(journal.getJournalSnapshot().claims.length, 0, 'Missing admission context must not create a claim');
   assert.equal(result.status, 'error', 'Missing or malformed admission context must fail investigation');
 });
 
-test('v0.2 baseline admission: missing or stale command views, stale state, and lingering plan fail closed before repository effects', async (t) => {
+test('v0.2 baseline admission: missing or stale command views, stale state, and lingering plan fail closed before repository effects', async t => {
   const cases: {
     readonly name: string;
     readonly alterAdmission?: (admission: RepositoryAdmissionContextV02) => void;
@@ -3808,11 +3685,13 @@ test('v0.2 baseline admission: missing or stale command views, stale state, and 
   }[] = [
     {
       name: 'missing command view',
-      alterAdmission: (admission) => { delete (admission as unknown as Record<string, unknown>).commandView; },
+      alterAdmission: admission => {
+        delete (admission as unknown as Record<string, unknown>).commandView;
+      },
     },
     {
       name: 'stale command view revision',
-      alterAdmission: (admission) => {
+      alterAdmission: admission => {
         const context = admission as unknown as Record<string, unknown>;
         context.commandView = {
           ...(context.commandView as Record<string, unknown>),
@@ -3822,12 +3701,12 @@ test('v0.2 baseline admission: missing or stale command views, stale state, and 
     },
     {
       name: 'stale task state version',
-      alterState: (state) => ({ ...state, stateVersion: state.stateVersion + 1 }),
+      alterState: state => ({ ...state, stateVersion: state.stateVersion + 1 }),
     },
     {
       name: 'pre-plan state with a lingering plan',
       alterState: (state, task) => {
-        const check = task.requiredChecks.find((entry) => entry.purpose === 'reproduction');
+        const check = task.requiredChecks.find(entry => entry.purpose === 'reproduction');
         assert.ok(check, 'fixture must include a reproduction check');
         const action = {
           actionId: check.checkId,
@@ -3853,12 +3732,7 @@ test('v0.2 baseline admission: missing or stale command views, stale state, and 
   for (const scenario of cases) {
     await t.test(scenario.name, async () => {
       const fixture = createGuardedBaselineFixture(scenario);
-      const result = await investigateBaseline(
-        fixture.task,
-        fixture.repo,
-        fixture.hostAuthority,
-        fixture.expectedContext
-      );
+      const result = await investigateBaseline(fixture.task, fixture.repo, fixture.hostAuthority, fixture.expectedContext);
       const snapshot = fixture.journal.getJournalSnapshot();
       assert.equal(result.status, 'error');
       assert.equal(fixture.repo.tests.length, 0);
@@ -3873,12 +3747,7 @@ test('v0.2 baseline admission: missing or stale command views, stale state, and 
 
 test('v0.2 baseline admission: authoritative task mutation after guarded execution invalidates the baseline', async () => {
   const fixture = createGuardedBaselineFixture({ mutateAfterExecution: true });
-  const result = await investigateBaseline(
-    fixture.task,
-    fixture.repo,
-    fixture.hostAuthority,
-    fixture.expectedContext
-  );
+  const result = await investigateBaseline(fixture.task, fixture.repo, fixture.hostAuthority, fixture.expectedContext);
 
   assert.equal(fixture.repo.commands.length, 1, 'The authorized command executes through the receiver once');
   assert.equal(fixture.repo.tests.length, 0, 'The v0.2 caller must not use runTests');
@@ -3887,10 +3756,10 @@ test('v0.2 baseline admission: authoritative task mutation after guarded executi
   assert.equal(fixture.journal.getJournalSnapshot().outcomes.length, 1, 'The receiver settles the effect before the later state mutation invalidates its evidence');
 });
 
-test('v0.2 baseline admission: each required check uses its own current authority', async (t) => {
+test('v0.2 baseline admission: each required check uses its own current authority', async t => {
   const createFixture = (withSecondAdmission: boolean) => {
     const originalTask = createFixtureBugTask();
-    const first = originalTask.requiredChecks.find((check) => check.purpose === 'reproduction');
+    const first = originalTask.requiredChecks.find(check => check.purpose === 'reproduction');
     assert.ok(first, 'fixture must include a reproduction check');
     const second: CheckDefinition = {
       ...first,
@@ -3926,8 +3795,14 @@ test('v0.2 baseline admission: each required check uses its own current authorit
       budgetLedgers: [
         ...(initial.budgetLedgers ?? []),
         {
-          scope: 'task', kind: 'timeoutMs', limit: 60000, consumed: 0,
-          reservations: [], unit: 'count', configurationId: 'config-v1', version: 1,
+          scope: 'task',
+          kind: 'timeoutMs',
+          limit: 60000,
+          consumed: 0,
+          reservations: [],
+          unit: 'count',
+          configurationId: 'config-v1',
+          version: 1,
         },
       ],
     };
@@ -3942,7 +3817,9 @@ test('v0.2 baseline admission: each required check uses its own current authorit
       executorIdentity: createTestExecutorIdentityV02({ payloadDigest: initialAdmission.actionDigest }),
       commandResults: {
         [`${first.executable} ${first.argv.join(' ')}`]: {
-          exitCode: 1, stdout: 'ZeroDivisionError: division by zero', stderr: '',
+          exitCode: 1,
+          stdout: 'ZeroDivisionError: division by zero',
+          stderr: '',
         },
         [`${second.executable} ${second.argv.join(' ')}`]: { exitCode: 0, stdout: '1 passed', stderr: '' },
       },
@@ -4049,4 +3926,24 @@ test('v0.2 baseline admission: each required check uses its own current authorit
     assert.equal(snapshot.attempts.length, 1);
     assert.equal(snapshot.outcomes.length, 1);
   });
+});
+
+test('v0.2 baseline admission: a statePort-only trusted context selects v0.2 and never falls back to runTests', async () => {
+  const task = createFixtureBugTask();
+  const repo = new FakeRepositoryPort();
+
+  const result = await runBaselineChecks({
+    rawExpectedContext: { ...createTrustedAdmissionContext(task), statePort: new MemoryStatePortV02() },
+    repository: repo,
+    expectedTaskId: task.taskId,
+    expectedRevisionDigest: task.initialRevisionDigest,
+    criteriaDigest: computeCanonicalSha256(task.acceptanceCriteria),
+    checkSetDigest: computeCheckSetDigest(task.requiredChecks),
+    requiredChecks: task.requiredChecks,
+  });
+
+  assert.equal(result.status, 'error');
+  assert.match(result.status === 'error' ? result.reason : '', /ADMISSION_DENIED/u);
+  assert.equal(repo.tests.length, 0, 'A bound StatePortV02 must prevent legacy RepositoryPort.runTests calls');
+  assert.equal(repo.commands.length, 0, 'Missing admission must not reach the command receiver');
 });

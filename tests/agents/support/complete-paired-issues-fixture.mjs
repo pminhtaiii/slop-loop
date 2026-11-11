@@ -2,9 +2,10 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { ACTIVE_POLICY_ID, createPolicyState } from '../../../scripts/ci/required-checks.mjs';
 
 export const publicRepository = 'example/public';
 export const privateRepository = 'course/private';
@@ -12,12 +13,7 @@ export const branch = 'feat/tooling-example';
 export const publicHead = 'a'.repeat(40);
 export const privateHead = 'b'.repeat(40);
 export const tree = 'c'.repeat(40);
-export const requiredChecks = [
-  'contributor-checks (ubuntu-latest)',
-  'contributor-checks (windows-latest)',
-  'runtime-checks (ubuntu-latest)',
-  'runtime-checks (windows-latest)',
-];
+export const requiredChecks = createPolicyState(ACTIVE_POLICY_ID).policy.required;
 
 function git(cwd, ...args) {
   const result = spawnSync('git', args, { cwd, encoding: 'utf8', windowsHide: true });
@@ -26,7 +22,9 @@ function git(cwd, ...args) {
 }
 
 export function markerFor(key) {
-  const digest = createHash('sha256').update(publicRepository.toLowerCase() + '\0' + key).digest('hex');
+  const digest = createHash('sha256')
+    .update(publicRepository.toLowerCase() + '\0' + key)
+    .digest('hex');
   return `<!-- paired-issue:sha256:${digest} -->`;
 }
 
@@ -34,10 +32,15 @@ export async function fixture(t, options = {}) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'complete-paired-issues-')));
   t.after(() => rm(root, { recursive: true, force: true }));
   git(root, 'init', '--initial-branch=main');
-  await writeFile(join(root, 'publication-targets.json'), JSON.stringify({
-    schemaVersion: 1,
-    submission: { remote: 'submission', base: 'development' },
-  }));
+  await mkdir(join(root, 'config'));
+  await writeFile(join(root, 'config', 'legacy-ci-heads.json'), JSON.stringify({ schemaVersion: 1, entries: options.historicalBindings ?? [] }));
+  await writeFile(
+    join(root, 'publication-targets.json'),
+    JSON.stringify({
+      schemaVersion: 1,
+      submission: { remote: 'submission', base: 'development' },
+    }),
+  );
   const key = 'localized-bug';
   const publicIssue = {
     number: 11,
@@ -142,6 +145,17 @@ export async function fixture(t, options = {}) {
       throw new Error(`unexpected paginated endpoint: ${endpoint}`);
     }
     if (args[0] === 'api' && args[1]?.startsWith('repos/')) {
+      if (args[1] === `repos/${publicRepository}/pulls/${prs.primary.number}`) {
+        return JSON.stringify({
+          number: prs.primary.number,
+          html_url: prs.primary.url,
+          state: prs.primary.state === 'OPEN' ? 'open' : 'closed',
+          merged_at: prs.primary.mergedAt,
+          base: { ref: prs.primary.baseRefName, repo: { id: 101, full_name: publicRepository } },
+          head: { ref: prs.primary.headRefName, sha: prs.primary.headRefOid, repo: { id: 101, full_name: publicRepository } },
+          ...options.publicPull,
+        });
+      }
       const commit = args[1].match(/^repos\/([^/]+\/[^/]+)\/git\/commits\/([^/]+)$/);
       if (commit) return JSON.stringify({ sha: commit[2], tree: { sha: commit[1] === privateRepository && options.treeMismatch ? 'd'.repeat(40) : tree } });
     }
@@ -178,11 +192,14 @@ export async function fixture(t, options = {}) {
     throw new Error(`unexpected GitHub command: ${args.join(' ')}`);
   };
   const evidenceFile = join(root, 'evidence.json');
-  await writeFile(evidenceFile, JSON.stringify({
-    schemaVersion: 1,
-    summary: 'Verified the requested repair.',
-    acceptance: [{ criterion: 'The localized display is correct.', evidence: 'Focused verification passed.' }],
-  }));
+  await writeFile(
+    evidenceFile,
+    JSON.stringify({
+      schemaVersion: 1,
+      summary: 'Verified the requested repair.',
+      acceptance: [{ criterion: 'The localized display is correct.', evidence: 'Focused verification passed.' }],
+    }),
+  );
   const args = ['--key', key, '--pr', prs.primary.url, '--evidence-file', evidenceFile, '--root', root];
   return { root, args, evidenceFile, execute, repositories, prs, writes, checks, publicIssue, privateIssue, remoteTargets, extraSubmissionPRs };
 }
@@ -195,6 +212,8 @@ export function mergePair(f) {
 }
 
 export function completionMarkerFor(key) {
-  const digest = createHash('sha256').update(publicRepository.toLowerCase() + '\0' + key).digest('hex');
+  const digest = createHash('sha256')
+    .update(publicRepository.toLowerCase() + '\0' + key)
+    .digest('hex');
   return `<!-- paired-issue-completion:sha256:${digest} -->`;
 }

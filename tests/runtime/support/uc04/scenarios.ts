@@ -1,10 +1,4 @@
-import {
-  UC04_SCHEMA_VERSION,
-  type TaskState,
-  type WorkspaceBaseline,
-  type BudgetLedger,
-  type PlanStep,
-} from '../../../../src/persistence/contracts.ts';
+import { UC04_SCHEMA_VERSION, type TaskState, type WorkspaceBaseline, type BudgetLedger, type PlanStep } from '../../../../src/persistence/contracts.ts';
 
 export interface RecoveryScenario {
   readonly id: string;
@@ -86,14 +80,14 @@ export function createStandardTestTask(taskId = 'task-scen-01'): TaskState {
     goal: 'Demonstrate durable execution and restart recovery',
     acceptanceCriteria: ['All 3 steps complete', 'Zero duplicate dispatch', 'Cumulative budget preserved'],
     constraints: ['Strict Node 24 ESM', 'Safe file isolation'],
-    plan: samplePlan.map((s) => ({ ...s })),
+    plan: samplePlan.map(s => ({ ...s })),
     currentStepIndex: 0,
     changedFiles: [],
     openRisks: [],
     nextAction: 'Start step-1',
     status: 'pending',
     stateVersion: 1,
-    budgetLedgers: defaultLedgers.map((l) => ({ ...l })),
+    budgetLedgers: defaultLedgers.map(l => ({ ...l })),
     workspaceBaseline: { ...baselineWorkspace },
   };
 }
@@ -125,8 +119,14 @@ export const RECOVERY_SCENARIOS: readonly RecoveryScenario[] = [
         currentStepIndex: 1,
         plan: task.plan.map((s, idx) =>
           idx === 0
-            ? { ...s, status: 'done' as const, completedAt: '2026-10-21T12:00:00.000Z', changedFiles: ['src/init.ts'] }
-            : { ...s, status: 'todo' as const }
+            ? {
+                ...s,
+                status: 'done' as const,
+                completedAt: '2026-10-21T12:00:00.000Z',
+                changedFiles: ['src/init.ts'],
+                evidenceRefs: ['changed:src/init.ts'],
+              }
+            : { ...s, status: 'todo' as const },
         ),
         changedFiles: ['src/init.ts'],
         stateVersion: 2,

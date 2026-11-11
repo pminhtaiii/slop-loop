@@ -75,8 +75,7 @@ This unrelated database note should not be copied into task context.
   await writeFile(join(root, '.gitignore'), '.agent-work/\n', 'utf8');
   await copyFile(cliSource, cliPath);
   await copyFile(storeSource, storePath);
-  const companionModules = (await readdir(dirname(cliSource)))
-    .filter((name) => /^agent-context-(?:common|assignment|resume|task|snapshot)\.mjs$/.test(name));
+  const companionModules = (await readdir(dirname(cliSource))).filter(name => /^agent-context-(?:common|assignment|resume|task|snapshot)\.mjs$/.test(name));
   for (const name of companionModules) await copyFile(join(dirname(cliSource), name), join(dirname(cliPath), name));
   await writeFile(tasksPath, tasks, 'utf8');
   await writeFile(planPath, plan, 'utf8');
@@ -97,16 +96,7 @@ This unrelated database note should not be copied into task context.
     ].join('\n'),
     'utf8',
   );
-  await writeFile(
-    join(root, 'context', 'workflow.md'),
-    [
-      '# Workflow',
-      '## Step 2: Converge',
-      '## Step 3: Dual-Axis Code Review',
-      '## Step 4: PR / CI Verification & Convergence',
-    ].join('\n'),
-    'utf8',
-  );
+  await writeFile(join(root, 'context', 'workflow.md'), ['# Workflow', '## Step 2: Converge', '## Step 3: Dual-Axis Code Review', '## Step 4: PR / CI Verification & Convergence'].join('\n'), 'utf8');
   await writeFile(join(root, 'context', 'testing.md'), '# Verification gates\n', 'utf8');
   git(root, ['init']);
   git(root, ['config', 'user.name', 'Agent Context Tests']);
@@ -117,7 +107,7 @@ This unrelated database note should not be copied into task context.
     '--',
     'scripts/agents/agent-context.mjs',
     'scripts/agents/agent-store.mjs',
-    ...companionModules.map((name) => `scripts/agents/${name}`),
+    ...companionModules.map(name => `scripts/agents/${name}`),
     '.gitignore',
     'specs/feature/tasks.md',
     'specs/feature/plan.md',

@@ -39,17 +39,11 @@ import {
   validateStateTransition,
   validateRepositoryAdmissionV02,
 } from '../../../src/contracts/foundation/uc03.ts';
-import {
-  runUC03Graph,
-  type UC03GraphPorts,
-  type UC03GraphState,
-} from '../../../src/uc03/graph.ts';
+import { runUC03Graph, type UC03GraphPorts, type UC03GraphState } from '../../../src/uc03/graph.ts';
 import { createAwaitFeedbackNode } from '../../../src/uc03/graph-feedback.ts';
 import { validSettledPatchEvidence } from '../../../src/uc03/graph-validation.ts';
 import { createRepairNode } from '../../../src/uc03/graph-nodes.ts';
-import {
-  runUC03Cli,
-} from '../../../src/cli/uc03.ts';
+import { runUC03Cli } from '../../../src/cli/uc03.ts';
 import {
   createFixtureBugTask,
   createFixtureCheckDefinition,
@@ -67,12 +61,12 @@ import {
   createTestRepositoryAdmissionContextV02,
   createTestRepositoryCommandAdmissionContextV02,
   createTestRepositoryAdmissionTrustedContextV02,
-  createTestClaimReceiptV02,
 } from '../support/uc03/state-fixtures.ts';
 import { FakeRepositoryPort } from '../support/uc03/fake-repository.ts';
 import { MemoryStatePortV02 } from '../support/uc03/memory-state.ts';
 import { ScriptedApprovalPort } from '../support/uc03/scripted-approval.ts';
-import { ScriptedModelPort } from '../support/uc03/scripted-model.ts';
+import { ScriptedModelPort, ScriptedModelPortV02 } from '../support/uc03/scripted-model.ts';
+import { createRuntimeReviewer, reviewerContextDigest } from '../../../src/foundation/reviewer.ts';
 import type {
   TrustedHostPort,
   TrustedHostSnapshot,
@@ -86,9 +80,7 @@ import { computeTestProtectionDigest } from '../../../src/uc03/investigation.ts'
 import { createExecutionGuardV02 } from '../../../src/foundation/execution-guard.ts';
 import { transitionState } from '../../../src/uc03/graph-transitions.ts';
 
-function createMockHostAuthority(
-  expectedTestFileContent = 'def test_divide(): pass\n'
-): TrustedHostPort {
+function createMockHostAuthority(expectedTestFileContent = 'def test_divide(): pass\n'): TrustedHostPort {
   return {
     async loadSnapshot(request: TrustedHostSnapshotRequest): Promise<TrustedHostSnapshot> {
       const testFilePath = 'tests/test_calculator.py';
@@ -129,10 +121,11 @@ function createMockBaselineEvidenceWriter(onPersist?: (request: BaselineEvidence
         reproductionCheckId: content.reproductionCheckId,
         expectedPassingCheckIds: content.expectedPassingCheckIds,
         expectedTestFiles: content.expectedTestFiles,
-        requiredCheckIds: content.requiredChecks.map((c) => c.checkId),
+        requiredCheckIds: content.requiredChecks.map(c => c.checkId),
       };
       records.set(`${content.taskId}\0${content.workspaceId}\0${content.repositoryId}\0${acknowledgement.evidenceId}`, {
-        content: structuredClone(content), acknowledgement: structuredClone(acknowledgement),
+        content: structuredClone(content),
+        acknowledgement: structuredClone(acknowledgement),
       });
       return acknowledgement;
     },
@@ -153,9 +146,7 @@ interface ContextualControllableApprovalPort extends ControllableApprovalPort, C
   setV02AuthorityRef(authority: PolicyAuthorityRefV02 | undefined): void;
 }
 
-function createControllableApprovalPort(
-  initialDecision: 'approved' | 'pending' | 'rejected' = 'approved'
-): ControllableApprovalPort {
+function createControllableApprovalPort(initialDecision: 'approved' | 'pending' | 'rejected' = 'approved'): ControllableApprovalPort {
   let currentDecision = initialDecision;
   let currentBinding: ApprovalBinding | undefined;
   return {
@@ -188,11 +179,7 @@ function createControllableApprovalPort(
   };
 }
 
-function createContextualApprovalPort(
-  initialBinding: ApprovalBinding,
-  currentContext: ApprovalBindingContext,
-  authorityRef: PolicyAuthorityRefV02,
-): ContextualControllableApprovalPort {
+function createContextualApprovalPort(initialBinding: ApprovalBinding, currentContext: ApprovalBindingContext, authorityRef: PolicyAuthorityRefV02): ContextualControllableApprovalPort {
   const issuer = new ScriptedApprovalPort({ decisions: [initialBinding], currentContext, v02AuthorityRef: authorityRef });
   return {
     provenance: 'mock',
@@ -200,56 +187,37 @@ function createContextualApprovalPort(
       const current = issuer.getRecordedBindings().at(-1) ?? initialBinding;
       issuer.scriptDecision({ ...current, status });
     },
-    classify: (action) => issuer.classify(action),
-    requestDecision: (binding) => issuer.requestDecision(binding),
-    validateBinding: (binding) => issuer.validateBinding(binding),
-    resolve: (decisionId) => issuer.resolve(decisionId),
+    classify: action => issuer.classify(action),
+    requestDecision: binding => issuer.requestDecision(binding),
+    validateBinding: binding => issuer.validateBinding(binding),
+    resolve: decisionId => issuer.resolve(decisionId),
     scriptDecision: (binding, generation) => issuer.scriptDecision(binding, generation),
     getRecordedBindings: () => issuer.getRecordedBindings(),
-    setV02AuthorityRef: (authority) => issuer.setV02AuthorityRef(authority),
+    setV02AuthorityRef: authority => issuer.setV02AuthorityRef(authority),
     resolvePlanDecisionInContext: (decisionId, context) => issuer.resolvePlanDecisionInContext(decisionId, context),
   };
 }
 
 interface ControllableReviewerPort {
   readonly provenance: 'mock' | 'real';
-  review(
-    task: BugTask,
-    diff: string,
-    evidence: readonly SourceEvidence[],
-    request: ProviderRequest,
-    admission: ProviderAdmissionContextV02,
-    claim: ClaimReceiptV02,
-  ): Promise<ReviewResult>;
+  review(task: BugTask, diff: string, evidence: readonly SourceEvidence[], request: ProviderRequest, admission: ProviderAdmissionContextV02, claim: ClaimReceiptV02): Promise<ReviewResult>;
   setStatus(s: 'accepted' | 'findings'): void;
 }
 
-function createControllableReviewerPort(
-  repositoryPort: FakeRepositoryPort,
-  statePort: MemoryStatePortV02,
-  initialStatus: 'accepted' | 'findings' = 'accepted'
-): ControllableReviewerPort {
+function createControllableReviewerPort(repositoryPort: FakeRepositoryPort, statePort: MemoryStatePortV02, initialStatus: 'accepted' | 'findings' = 'accepted'): ControllableReviewerPort {
   let currentStatus = initialStatus;
   return {
     provenance: 'mock' as const,
     setStatus(s: 'accepted' | 'findings') {
       currentStatus = s;
     },
-    async review(
-      task: BugTask,
-      diff: string,
-      _evidence,
-      request: ProviderRequest,
-      admission: ProviderAdmissionContextV02,
-      claim: ClaimReceiptV02,
-    ): Promise<ReviewResult> {
-      if (!claim.claimId) throw new Error('Persisted reviewer allowance was not supplied by the route');
-      const attempt = await statePort.beginAttempt(
-        claim.claimId,
-        createFixtureExecutorIdentityV02({ payloadDigest: computeRequestContentDigest(request) }),
-      );
+    async review(task: BugTask, diff: string, _evidence, request: ProviderRequest, admission: ProviderAdmissionContextV02, claim?: ClaimReceiptV02): Promise<ReviewResult> {
+      // The graph no longer preclaims: this mock stands in for the model boundary, which claims for itself.
+      const effectiveClaim = claim ?? (await statePort.claim(admission));
+      if (!effectiveClaim.claimId) throw new Error('Persisted reviewer allowance was not supplied by the route');
+      const attempt = await statePort.beginAttempt(effectiveClaim.claimId, createFixtureExecutorIdentityV02({ payloadDigest: computeRequestContentDigest(request) }));
       if (!attempt.attemptId) throw new Error('Persisted reviewer attempt was refused');
-      const outcome = await statePort.recordOutcome(createTestProviderOutcomeReceiptV02(claim, attempt, admission));
+      const outcome = await statePort.recordOutcome(createTestProviderOutcomeReceiptV02(effectiveClaim, attempt, admission));
       if (outcome.outcome !== 'settled') throw new Error('Persisted reviewer allowance did not settle');
       return {
         reviewId: `review-${request.providerRequestId}`,
@@ -259,17 +227,18 @@ function createControllableReviewerPort(
         checkSetDigest: computeCheckSetDigest(task.requiredChecks),
         reviewerRoleConfigId: admission.providerIdentity.configId,
         iterationReservationRef: request.reservationRef,
-        findings: currentStatus === 'findings'
-          ? [
-              {
-                file: 'src/calculator.py',
-                line: 2,
-                side: 'new',
-                severity: 'error',
-                message: 'Zero check missing',
-              },
-            ]
-          : [],
+        findings:
+          currentStatus === 'findings'
+            ? [
+                {
+                  file: 'src/calculator.py',
+                  line: 2,
+                  side: 'new',
+                  severity: 'error',
+                  message: 'Zero check missing',
+                },
+              ]
+            : [],
       };
     },
   };
@@ -292,17 +261,30 @@ function createGraphState(input: {
   patchReceipt?: UC03GraphState['patchReceipt'];
 }): UC03GraphState {
   return {
-    task: input.task, state: input.state, baseline: input.baseline,
-    verificationResults: [], reviewResult: undefined, reviewRequest: undefined,
-    patchAdmission: input.patchAdmission, patchReceipt: input.patchReceipt,
-    failureEvidence: input.failureEvidence ?? [], finalReport: undefined, reasons: [],
-    terminalOutcome: undefined, milestones: [],
+    task: input.task,
+    state: input.state,
+    baseline: input.baseline,
+    verificationResults: [],
+    reviewResult: undefined,
+    reviewRequest: undefined,
+    patchAdmission: input.patchAdmission,
+    patchReceipt: input.patchReceipt,
+    failureEvidence: input.failureEvidence ?? [],
+    finalReport: undefined,
+    reasons: [],
+    terminalOutcome: undefined,
+    milestones: [],
   };
 }
 
-function createPlanApprovalContext(task: BugTask): Readonly<Record<number, NonNullable<StateTransitionOptions['trusted']> & {
-  readonly approval?: { readonly binding: ApprovalBinding; readonly freshness: ApprovalBindingContext };
-}>> {
+function createPlanApprovalContext(task: BugTask): Readonly<
+  Record<
+    number,
+    NonNullable<StateTransitionOptions['trusted']> & {
+      readonly approval?: { readonly binding: ApprovalBinding; readonly freshness: ApprovalBindingContext };
+    }
+  >
+> {
   const state = createGraphTaskState(task);
   const baselineRef = `uc04://baseline/${task.taskId}/1`;
   const evidenceRefs = [baselineRef];
@@ -379,12 +361,12 @@ test('Mock route approval fixture binds its transition to the exact generated pl
   const trusted = createPlanApprovalContext(task)[3];
   assert.ok(trusted?.approval);
   const validation = validateStateTransition(current, next, { trusted });
-  assert.ok(validation.ok, validation.ok ? '' : validation.errors.map((error) => error.message).join('; '));
+  assert.ok(validation.ok, validation.ok ? '' : validation.errors.map(error => error.message).join('; '));
 });
 
 function createResourceReservationRefs(actionId: string): readonly string[] {
   const kinds = ['timeoutMs', 'maxOutputBytes', 'maxCpuSeconds', 'maxMemoryBytes', 'maxProcessCount'] as const;
-  return (['task', 'run'] as const).flatMap((scope) => kinds.map((kind) => `${scope}:${kind}:${actionId}`));
+  return (['task', 'run'] as const).flatMap(scope => kinds.map(kind => `${scope}:${kind}:${actionId}`));
 }
 
 function createPlanBindingDigest(task: BugTask, state: TaskState): string {
@@ -403,7 +385,13 @@ function createPlanBindingDigest(task: BugTask, state: TaskState): string {
 }
 
 function createMockPatchAdmissionResolver(repositoryPort: FakeRepositoryPort, statePort: MemoryStatePortV02) {
-  return async ({ task, state, patchContent, targetPaths, actionId }: {
+  return async ({
+    task,
+    state,
+    patchContent,
+    targetPaths,
+    actionId,
+  }: {
     readonly task: BugTask;
     readonly state: TaskState;
     readonly patchContent: string;
@@ -447,13 +435,22 @@ function createMockPatchAdmissionResolver(repositoryPort: FakeRepositoryPort, st
 }
 
 function createMockReviewerAdmissionResolver(statePort: MemoryStatePortV02) {
-  return async ({ task, state, diff }: {
+  return async ({
+    task,
+    state,
+    diff,
+  }: {
     readonly task: BugTask;
     readonly state: TaskState;
     readonly diff: { readonly diff: string; readonly diffDigest: string; readonly changedFiles: readonly string[] };
   }) => {
     const ownerAuthority = await statePort.readVerificationAuthoritySnapshot(task.taskId);
     if (!ownerAuthority) return undefined;
+    const contextDigest = reviewerContextDigest(task, diff.diff, [], state.repositoryRevisionDigest, {
+      runId: state.runId,
+      expectedTaskStateVersion: state.stateVersion,
+    });
+    if (contextDigest === null) return undefined;
     const request = createTestProviderRequest({
       providerRequestId: `provider-${task.taskId}-${state.stateVersion}`,
       taskId: task.taskId,
@@ -462,7 +459,7 @@ function createMockReviewerAdmissionResolver(statePort: MemoryStatePortV02) {
       purpose: 'final-review',
       configId: ownerAuthority.policyIdentity.configId,
       pricingPolicyId: ownerAuthority.policyIdentity.policyId,
-      contextDigest: diff.diffDigest,
+      contextDigest,
       reservationRef: `review-allowance:${task.taskId}:${state.stateVersion}`,
     });
     const providerIdentity: ProviderPricingIdentityV02 = {
@@ -540,21 +537,18 @@ function createTestSetup(overrides?: {
 
   const transitionContexts = { ...createPlanApprovalContext(task), ...(overrides?.transitionContexts ?? {}) };
   const authorityRef = createFixturePolicyAuthorityRefV02({
-    policyId: task.configId, policyVersion: task.configVersion,
-    configId: task.configId, configVersion: task.configVersion,
+    policyId: task.configId,
+    policyVersion: task.configVersion,
+    configId: task.configId,
+    configVersion: task.configVersion,
     decisionAuthorityGeneration: 3,
   });
   const initialPlanApproval = createPlanApprovalContext(task)[3]?.approval;
-  const contextualApprovalPort = overrides?.contextualApprovalIssuer && initialPlanApproval
-    ? createContextualApprovalPort(
-      { ...initialPlanApproval.binding, status: overrides.initialDecision ?? 'approved' },
-      initialPlanApproval.freshness,
-      authorityRef,
-    )
-    : undefined;
-  const contextualVerifier = contextualApprovalPort
-    ? overrides?.wrapContextualApprovalVerifier?.(contextualApprovalPort) ?? contextualApprovalPort
-    : undefined;
+  const contextualApprovalPort =
+    overrides?.contextualApprovalIssuer && initialPlanApproval
+      ? createContextualApprovalPort({ ...initialPlanApproval.binding, status: overrides.initialDecision ?? 'approved' }, initialPlanApproval.freshness, authorityRef)
+      : undefined;
+  const contextualVerifier = contextualApprovalPort ? (overrides?.wrapContextualApprovalVerifier?.(contextualApprovalPort) ?? contextualApprovalPort) : undefined;
   const statePort = new MemoryStatePortV02({
     transitionContexts,
     initialAuthorityRef: authorityRef,
@@ -594,7 +588,9 @@ function createTestSetup(overrides?: {
   const executionGuard = createExecutionGuardV02({ ports: { statePort, repositoryPort: ownerSettledRepositoryPort, approvalPort } });
   const hostAuthority = createMockHostAuthority();
   let baselineEvidenceRequest: BaselineEvidenceWriteRequest | undefined;
-  const baselineEvidenceWriter = createMockBaselineEvidenceWriter((request) => { baselineEvidenceRequest = request; });
+  const baselineEvidenceWriter = createMockBaselineEvidenceWriter(request => {
+    baselineEvidenceRequest = request;
+  });
   const verificationAdmissions: RepositoryAdmissionContextV02[] = [];
 
   // Verification results for post-patch
@@ -648,9 +644,7 @@ function createTestSetup(overrides?: {
         checkSetDigest: computeCheckSetDigest(task.requiredChecks),
         checkId: check.checkId,
         testPath: 'tests/test_calculator.py',
-        ...(isVerify
-          ? { planBindingDigest, planDecisionRef: currentState.plan?.decisionRef }
-          : { planBindingDigest: undefined, planDecisionRef: undefined, diagnosticPurpose: check.purpose }),
+        ...(isVerify ? { planBindingDigest, planDecisionRef: currentState.plan?.decisionRef } : { planBindingDigest: undefined, planDecisionRef: undefined, diagnosticPurpose: check.purpose }),
       });
       if (isVerify) verificationAdmissions.push(context);
       repositoryPort.setExecutorIdentity(createFixtureExecutorIdentityV02({ payloadDigest: computeActionDigest(action) }));
@@ -684,7 +678,9 @@ function createTestSetup(overrides?: {
     baselineEvidenceWriter,
     executionGuard,
     trustedExpectedContext,
-    get baselineEvidenceRequest() { return baselineEvidenceRequest; },
+    get baselineEvidenceRequest() {
+      return baselineEvidenceRequest;
+    },
   };
 }
 
@@ -702,8 +698,8 @@ test('Production guard: refuses mock dependencies and real dispatch when mode is
 
   assert.equal(result.outcome, 'INCOMPLETE');
   assert.ok(
-    result.reasons.some((r) => r.includes('PRODUCTION_ADMISSION_REFUSED')),
-    `Expected PRODUCTION_ADMISSION_REFUSED in reasons, got: ${result.reasons.join(', ')}`
+    result.reasons.some(r => r.includes('PRODUCTION_ADMISSION_REFUSED')),
+    `Expected PRODUCTION_ADMISSION_REFUSED in reasons, got: ${result.reasons.join(', ')}`,
   );
   assert.equal(result.finalReport, undefined);
 });
@@ -712,21 +708,24 @@ test('State transition rejection propagates instead of returning the proposed st
   const task = createFixtureBugTask();
   const state = createGraphTaskState(task);
   const statePort = new MemoryStatePortV02({ initialTaskState: state }).getUnderlying();
-  statePort.transition = async () => { throw new Error('CAS_CONFLICT'); };
+  statePort.transition = async () => {
+    throw new Error('CAS_CONFLICT');
+  };
 
-  await assert.rejects(
-    transitionState(statePort, { ...state, stateVersion: 2, node: 'AwaitPlan' }, 1),
-    /CAS_CONFLICT/,
-  );
+  await assert.rejects(transitionState(statePort, { ...state, stateVersion: 2, node: 'AwaitPlan' }, 1), /CAS_CONFLICT/);
 });
 
 test('Route exceptions return a fixed safe reason and do not expose exception text', async () => {
   const { task, ports, statePort, repositoryPort, trustedExpectedContext } = createTestSetup();
   await seedGraphTaskState(statePort, createGraphTaskState(task, { node: 'Validate' }));
-  statePort.getUnderlying().transition = async () => { throw new Error('MARKER_SECRET_GRAPH_EXCEPTION'); };
+  statePort.getUnderlying().transition = async () => {
+    throw new Error('MARKER_SECRET_GRAPH_EXCEPTION');
+  };
 
   const result = await runUC03Graph(task, ports, {
-    mode: 'development', trustedExpectedContext, planDetails: ROUTE_PLAN_DETAILS,
+    mode: 'development',
+    trustedExpectedContext,
+    planDetails: ROUTE_PLAN_DETAILS,
   });
   const serialized = JSON.stringify(result);
 
@@ -758,15 +757,26 @@ test('Rejected approval CAS halts before the graph enters Patch', async () => {
   let reviewerCalls = 0;
   const inspectDiff = repositoryPort.inspectDiff.bind(repositoryPort);
   const review = reviewerPort.review.bind(reviewerPort);
-  repositoryPort.inspectDiff = async (revision) => { diffReads += 1; return inspectDiff(revision); };
-  reviewerPort.review = async (...args) => { reviewerCalls += 1; return review(...args); };
+  repositoryPort.inspectDiff = async revision => {
+    diffReads += 1;
+    return inspectDiff(revision);
+  };
+  reviewerPort.review = async (...args) => {
+    reviewerCalls += 1;
+    return review(...args);
+  };
 
-  const result = await runUC03Graph(task, ports, {
-    ...config,
-    admissionContext: createMockPatchAdmissionResolver(repositoryPort, statePort),
-    patchContent: 'diff --git a/src/calculator.py b/src/calculator.py\n',
-    targetPaths: ['src/calculator.py'],
-  }, paused.state);
+  const result = await runUC03Graph(
+    task,
+    ports,
+    {
+      ...config,
+      admissionContext: createMockPatchAdmissionResolver(repositoryPort, statePort),
+      patchContent: 'diff --git a/src/calculator.py b/src/calculator.py\n',
+      targetPaths: ['src/calculator.py'],
+    },
+    paused.state,
+  );
 
   const persisted = await statePort.loadTask(task.taskId);
   assert.equal(result.outcome, 'INCOMPLETE');
@@ -796,19 +806,30 @@ test('Stale restored state is refused before repository, approval, or model effe
   const resolveDecision = approvalPort.resolve.bind(approvalPort);
   const propose = modelPort.propose.bind(modelPort);
   const loadSnapshot = hostAuthority.loadSnapshot.bind(hostAuthority);
-  repositoryPort.inspectDiff = async (revision) => { repositoryEffects += 1; return inspectDiff(revision); };
-  repositoryPort.runTests = async (check) => { repositoryEffects += 1; return runTests(check); };
-  approvalPort.resolve = async (decisionId) => { approvalResolves += 1; return resolveDecision(decisionId); };
-  modelPort.propose = async (...args) => { modelCalls += 1; return propose(...args); };
-  hostAuthority.loadSnapshot = async (request) => { snapshotReads += 1; return loadSnapshot(request); };
+  repositoryPort.inspectDiff = async revision => {
+    repositoryEffects += 1;
+    return inspectDiff(revision);
+  };
+  repositoryPort.runTests = async check => {
+    repositoryEffects += 1;
+    return runTests(check);
+  };
+  approvalPort.resolve = async decisionId => {
+    approvalResolves += 1;
+    return resolveDecision(decisionId);
+  };
+  modelPort.propose = async (...args) => {
+    modelCalls += 1;
+    return propose(...args);
+  };
+  hostAuthority.loadSnapshot = async request => {
+    snapshotReads += 1;
+    return loadSnapshot(request);
+  };
 
   const result = await runUC03Graph(task, ports, { mode: 'development' }, { ...current, stateVersion: 2 });
-  const invalidTaskResult = await runUC03Graph(
-    { ...task, acceptanceCriteria: [] }, ports, { mode: 'development' }, current,
-  );
-  const crossTaskResult = await runUC03Graph(
-    { ...task, taskId: 'task-cross-owner' }, ports, { mode: 'development' }, current,
-  );
+  const invalidTaskResult = await runUC03Graph({ ...task, acceptanceCriteria: [] }, ports, { mode: 'development' }, current);
+  const crossTaskResult = await runUC03Graph({ ...task, taskId: 'task-cross-owner' }, ports, { mode: 'development' }, current);
 
   assert.notEqual(result.outcome, 'COMPLETED');
   assert.equal(invalidTaskResult.outcome, 'needs-info');
@@ -827,21 +848,36 @@ test('AwaitFeedback requires a bound revise direction and a validated changed ca
   const baselineRef = task.initialRevisionDigest;
   const strategy = 'Retain the current bounded repair strategy';
   const plan: FixPlan = {
-    planVersion: 1, diagnosis: 'The denominator guard is missing.', suspectedCauseLocations: ['src/calculator.py'],
-    evidenceRefs: [baselineRef], strategy, scopedChanges: ['src/calculator.py'],
-    checkSetDigest: computeCheckSetDigest(task.requiredChecks), baselineRef,
-    strategyDigest: computeCanonicalSha256(strategy), decisionRef: 'decision-feedback-001',
+    planVersion: 1,
+    diagnosis: 'The denominator guard is missing.',
+    suspectedCauseLocations: ['src/calculator.py'],
+    evidenceRefs: [baselineRef],
+    strategy,
+    scopedChanges: ['src/calculator.py'],
+    checkSetDigest: computeCheckSetDigest(task.requiredChecks),
+    baselineRef,
+    strategyDigest: computeCanonicalSha256(strategy),
+    decisionRef: 'decision-feedback-001',
   };
   const decisionRef = plan.decisionRef;
   assert.ok(decisionRef);
   const feedback = createGraphTaskState(task, {
-    stateVersion: 1, node: 'AwaitFeedback', plan, evidenceRefs: [baselineRef], nextAction: 'await-human-feedback-and-direction',
+    stateVersion: 1,
+    node: 'AwaitFeedback',
+    plan,
+    evidenceRefs: [baselineRef],
+    nextAction: 'await-human-feedback-and-direction',
   });
   await seedGraphTaskState(statePort, feedback);
   const direction = {
-    directive: 'revise' as const, taskId: feedback.taskId, workspaceId: feedback.workspaceId,
-    repositoryRevisionDigest: feedback.repositoryRevisionDigest, stateVersion: feedback.stateVersion,
-    planVersion: feedback.planVersion, rejectedDecisionId: decisionRef, strategyDigest: plan.strategyDigest,
+    directive: 'revise' as const,
+    taskId: feedback.taskId,
+    workspaceId: feedback.workspaceId,
+    repositoryRevisionDigest: feedback.repositoryRevisionDigest,
+    stateVersion: feedback.stateVersion,
+    planVersion: feedback.planVersion,
+    rejectedDecisionId: decisionRef,
+    strategyDigest: plan.strategyDigest,
   };
   const missing = await createAwaitFeedbackNode(ports, { trustedDirection: direction })(createGraphState({ task, state: feedback }));
   assert.equal(missing.terminalOutcome, 'needs-info');
@@ -852,7 +888,7 @@ test('AwaitFeedback requires a bound revise direction and a validated changed ca
   const denied = await createAwaitFeedbackNode(ports, { trustedDirection: direction, revisedPlan })(createGraphState({ task, state: feedback }));
   assert.equal(denied.terminalOutcome, 'INCOMPLETE');
   assert.deepEqual(await statePort.loadTask(task.taskId), feedback);
-  const replanLedger = statePort.getLedgers().find((ledger) => ledger.scope === 'task' && ledger.kind === 'replan');
+  const replanLedger = statePort.getLedgers().find(ledger => ledger.scope === 'task' && ledger.kind === 'replan');
   assert.equal(replanLedger?.consumed, 0);
   assert.deepEqual(replanLedger?.reservations, []);
   assert.equal(repositoryPort.patches.length, 0);
@@ -867,8 +903,14 @@ test('Restored Deliver without baseline, current checks, and review cannot claim
   let reviewerCalls = 0;
   const inspectDiff = repositoryPort.inspectDiff.bind(repositoryPort);
   const review = reviewerPort.review.bind(reviewerPort);
-  repositoryPort.inspectDiff = async (revision) => { repositoryReads += 1; return inspectDiff(revision); };
-  reviewerPort.review = async (...args) => { reviewerCalls += 1; return review(...args); };
+  repositoryPort.inspectDiff = async revision => {
+    repositoryReads += 1;
+    return inspectDiff(revision);
+  };
+  reviewerPort.review = async (...args) => {
+    reviewerCalls += 1;
+    return review(...args);
+  };
 
   const result = await runUC03Graph(task, ports, { mode: 'development' }, delivered);
 
@@ -885,17 +927,14 @@ test('Restored Deliver without baseline, current checks, and review cannot claim
  * ------------------------------------------------------------------ */
 
 test('Mock route delivers only after baseline, owner-settled patch, current checks, and accounted review', async () => {
-  const patchContent = '--- a/src/calculator.py\n+++ b/src/calculator.py\n@@ -1 +1,2 @@\n-def divide(a, b): return a / b\n+def divide(a, b):\n+    if b == 0: raise CalculationError("zero denominator")\n+    return a / b\n';
+  const patchContent =
+    '--- a/src/calculator.py\n+++ b/src/calculator.py\n@@ -1 +1,2 @@\n-def divide(a, b): return a / b\n+def divide(a, b):\n+    if b == 0: raise CalculationError("zero denominator")\n+    return a / b\n';
   const runPassingMockRoute = async (
     setup: ReturnType<typeof createTestSetup>,
     trustedTransitionContext?: NonNullable<StateTransitionOptions['trusted']>,
     onReview?: (result: ReviewResult, request: ProviderRequest) => void,
     resumeState?: TaskState,
-    onOpenVerifyClaim?: (
-      state: TaskState,
-      rerun: (resume: TaskState) => ReturnType<typeof runUC03Graph>,
-      reviewerCalls: number,
-    ) => Promise<void>,
+    onOpenVerifyClaim?: (state: TaskState, rerun: (resume: TaskState) => ReturnType<typeof runUC03Graph>, reviewerCalls: number) => Promise<void>,
   ) => {
     if (!resumeState) await seedGraphTaskState(setup.statePort, createGraphTaskState(setup.task));
     const guardReasons: string[] = [];
@@ -911,20 +950,26 @@ test('Mock route delivers only after baseline, owner-settled patch, current chec
     let reviewerCalls = 0;
     setup.reviewerPort.review = async (task, diff, evidence, request, admission, claim) => {
       reviewerCalls += 1;
-      reviewedOwnerState = await setup.statePort.loadTask(task.taskId) ?? undefined;
+      reviewedOwnerState = (await setup.statePort.loadTask(task.taskId)) ?? undefined;
       const result = await review(task, diff, evidence, request, admission, claim);
       onReview?.(result, request);
       return result;
     };
     setup.repositoryPort.setTestResult('check-pytest-reproduction', {
-      checkId: 'check-pytest-reproduction', outcome: 'fail',
-      outputExcerpt: 'FAILED tests/test_calculator.py::test_divide_zero - ZeroDivisionError: division by zero', durationMs: 150,
+      checkId: 'check-pytest-reproduction',
+      outcome: 'fail',
+      outputExcerpt: 'FAILED tests/test_calculator.py::test_divide_zero - ZeroDivisionError: division by zero',
+      durationMs: 150,
     });
     setup.repositoryPort.setTestResult('check-pytest-regression', { checkId: 'check-pytest-regression', outcome: 'pass', outputExcerpt: '1 passed', durationMs: 100 });
     const routeConfig = {
-      mode: 'development', trustedExpectedContext: setup.trustedExpectedContext, planDetails: ROUTE_PLAN_DETAILS,
+      mode: 'development',
+      trustedExpectedContext: setup.trustedExpectedContext,
+      planDetails: ROUTE_PLAN_DETAILS,
       admissionContext: createMockPatchAdmissionResolver(setup.repositoryPort, setup.statePort),
-      reviewerAdmission: createMockReviewerAdmissionResolver(setup.statePort), patchContent, targetPaths: ['src/calculator.py'],
+      reviewerAdmission: createMockReviewerAdmissionResolver(setup.statePort),
+      patchContent,
+      targetPaths: ['src/calculator.py'],
       ...(trustedTransitionContext ? { trustedTransitionContext } : {}),
     } as const;
     if (onOpenVerifyClaim) {
@@ -935,7 +980,7 @@ test('Mock route delivers only after baseline, owner-settled patch, current chec
         const current = await setup.statePort.loadTask(setup.task.taskId);
         if (!nestedRunStarted && current?.node === 'Verify' && setup.statePort.getJournalSnapshot().activeClaimId) {
           nestedRunStarted = true;
-          await onOpenVerifyClaim(current, (resume) => runUC03Graph(setup.task, setup.ports, routeConfig, resume), reviewerCalls);
+          await onOpenVerifyClaim(current, resume => runUC03Graph(setup.task, setup.ports, routeConfig, resume), reviewerCalls);
         }
         return attempt;
       };
@@ -952,11 +997,14 @@ test('Mock route delivers only after baseline, owner-settled patch, current chec
         });
         const beforeReceiptDigest = beforeAncestry
           ? computeCanonicalSha256({
-            admissionContext: beforeAncestry.admissionContext, claim: beforeAncestry.claim,
-            attempt: beforeAncestry.attempt, outcome: beforeAncestry.outcome, settlement: beforeAncestry.settlement,
-          })
+              admissionContext: beforeAncestry.admissionContext,
+              claim: beforeAncestry.claim,
+              attempt: beforeAncestry.attempt,
+              outcome: beforeAncestry.outcome,
+              settlement: beforeAncestry.settlement,
+            })
           : '';
-        const d1 = setup.verificationApprovalPort.getRecordedBindings().find((binding) => binding.decisionId.startsWith('dec-verify-'));
+        const d1 = setup.verificationApprovalPort.getRecordedBindings().find(binding => binding.decisionId.startsWith('dec-verify-'));
         const snapshot = await setup.statePort.readVerificationAuthoritySnapshot(pendingState.taskId);
         if (d1 && snapshot) {
           const nextAuthority = {
@@ -982,9 +1030,12 @@ test('Mock route delivers only after baseline, owner-settled patch, current chec
         });
         const afterReceiptDigest = afterAncestry
           ? computeCanonicalSha256({
-            admissionContext: afterAncestry.admissionContext, claim: afterAncestry.claim,
-            attempt: afterAncestry.attempt, outcome: afterAncestry.outcome, settlement: afterAncestry.settlement,
-          })
+              admissionContext: afterAncestry.admissionContext,
+              claim: afterAncestry.claim,
+              attempt: afterAncestry.attempt,
+              outcome: afterAncestry.outcome,
+              settlement: afterAncestry.settlement,
+            })
           : '';
         return { result, reviewerCalls, guardReasons, approvalStages, reviewedOwnerState, patchReceiptUnchanged: !!beforeReceiptDigest && beforeReceiptDigest === afterReceiptDigest };
       }
@@ -1001,39 +1052,54 @@ test('Mock route delivers only after baseline, owner-settled patch, current chec
   const baselineAdmission = await probe.trustedExpectedContext.admissionContextForCheck?.({
     check: baselineCheck,
     action: {
-      actionId: baselineCheck.checkId, kind: 'run_command', executable: baselineCheck.executable,
-      argv: [...baselineCheck.argv], workingDirectory: baselineCheck.workingDirectory ?? 'tests', purpose: baselineCheck.purpose,
+      actionId: baselineCheck.checkId,
+      kind: 'run_command',
+      executable: baselineCheck.executable,
+      argv: [...baselineCheck.argv],
+      workingDirectory: baselineCheck.workingDirectory ?? 'tests',
+      purpose: baselineCheck.purpose,
     },
     currentState: probeInitialState,
   });
-  const baselineAdmissionValidation = baselineAdmission
-    ? validateRepositoryAdmissionV02(baselineAdmission, createTestRepositoryAdmissionTrustedContextV02(baselineAdmission))
-    : undefined;
+  const baselineAdmissionValidation = baselineAdmission ? validateRepositoryAdmissionV02(baselineAdmission, createTestRepositoryAdmissionTrustedContextV02(baselineAdmission)) : undefined;
   let observedReview: ReviewResult | undefined;
   let observedRequest: ProviderRequest | undefined;
-  const probeRun = await runPassingMockRoute(probe, undefined, (review, request) => { observedReview = review; observedRequest = request; }, probeInitialState);
-  assert.equal(probeRun.result.outcome, 'IMPLEMENTED_UNVERIFIED', JSON.stringify({
-    reasons: probeRun.result.reasons,
-    approvalStages: probeRun.approvalStages,
-    state: probeRun.result.state,
-    guardReasons: probeRun.guardReasons,
-    baselineAdmissionValidation,
-  }));
+  const probeRun = await runPassingMockRoute(
+    probe,
+    undefined,
+    (review, request) => {
+      observedReview = review;
+      observedRequest = request;
+    },
+    probeInitialState,
+  );
+  assert.equal(
+    probeRun.result.outcome,
+    'IMPLEMENTED_UNVERIFIED',
+    JSON.stringify({
+      reasons: probeRun.result.reasons,
+      approvalStages: probeRun.approvalStages,
+      state: probeRun.result.state,
+      guardReasons: probeRun.guardReasons,
+      baselineAdmissionValidation,
+    }),
+  );
   const probeState = probeRun.result.state;
   const baselineWrite = probe.baselineEvidenceRequest;
   assert.ok(baselineWrite, 'Mock route did not persist its baseline evidence');
   assert.ok(probeState, 'Mock route did not retain the owner task state');
-  assert.ok(observedReview && observedRequest, `Mock route did not reach independently accounted review: ${JSON.stringify({
-    guardReasons: probeRun.guardReasons,
-    resultReasons: probeRun.result.reasons,
-    verificationAdmissions: probe.verificationAdmissions.map((context) => validateRepositoryAdmissionV02(
-      context,
-      createTestRepositoryAdmissionTrustedContextV02(context),
-    )),
-  })}`);
+  assert.ok(
+    observedReview && observedRequest,
+    `Mock route did not reach independently accounted review: ${JSON.stringify({
+      guardReasons: probeRun.guardReasons,
+      resultReasons: probeRun.result.reasons,
+      verificationAdmissions: probe.verificationAdmissions.map(context => validateRepositoryAdmissionV02(context, createTestRepositoryAdmissionTrustedContextV02(context))),
+    })}`,
+  );
   const ownerReview = observedReview;
   const ownerRequest = observedRequest;
-  assert.equal(probeState.node, 'Review');
+  assert.equal(probeState.node, 'Repair');
+  assert.equal(probeState.nextAction, 'halt-missing-completion-evidence');
   const baseline: Baseline = {
     evidenceId: `uc04://baseline/${probe.task.taskId}/1`,
     repositorySnapshotDigest: baselineWrite.content.repositorySnapshotDigest,
@@ -1044,31 +1110,40 @@ test('Mock route delivers only after baseline, owner-settled patch, current chec
   };
   const diffInfo = await probe.repositoryPort.inspectDiff(probe.task.initialRevisionDigest);
   const protectedSnapshot = await probe.hostAuthority.loadSnapshot({
-    taskId: probe.task.taskId, workspaceId: probeState.workspaceId, repositoryId: probe.task.repositoryId,
+    taskId: probe.task.taskId,
+    workspaceId: probeState.workspaceId,
+    repositoryId: probe.task.repositoryId,
     expectedRevisionDigest: probeState.repositoryRevisionDigest,
     expectedCriteriaDigest: computeCanonicalSha256(probe.task.acceptanceCriteria),
-    expectedCheckSetDigest: computeCheckSetDigest(probe.task.requiredChecks), expectedTestFiles: probe.trustedExpectedContext.expectedTestFiles,
+    expectedCheckSetDigest: computeCheckSetDigest(probe.task.requiredChecks),
+    expectedTestFiles: probe.trustedExpectedContext.expectedTestFiles,
   });
   const deliveryTrustedContext: NonNullable<StateTransitionOptions['trusted']> = {
     ...(createPlanApprovalContext(probe.task)[3] ?? {}),
     completion: {
-      taskId: probe.task.taskId, runId: probeState.runId,
+      taskId: probe.task.taskId,
+      runId: probeState.runId,
       repositoryRevisionDigest: probeState.repositoryRevisionDigest,
-      diffDigest: diffInfo.diffDigest, checkSetDigest: computeCheckSetDigest(probe.task.requiredChecks),
-      baselineRef: baseline.evidenceId, criteriaDigest: computeCanonicalSha256(probe.task.acceptanceCriteria),
+      diffDigest: diffInfo.diffDigest,
+      checkSetDigest: computeCheckSetDigest(probe.task.requiredChecks),
+      baselineRef: baseline.evidenceId,
+      criteriaDigest: computeCanonicalSha256(probe.task.acceptanceCriteria),
       authorizedDiffDigest: diffInfo.diffDigest,
       protectedTestsDigest: computeTestProtectionDigest(protectedSnapshot.testFiles),
       originalProtectedTestsDigest: baseline.testProtectionDigest,
       reviewerRoleConfigId: ownerReview.reviewerRoleConfigId,
       reviewIterationReservationRef: ownerRequest.reservationRef,
-      checks: probe.task.requiredChecks.map((check) => ({
-        checkId: check.checkId, outcome: 'pass' as const,
-        repositoryRevisionDigest: probeState.repositoryRevisionDigest, diffDigest: diffInfo.diffDigest,
+      checks: probe.task.requiredChecks.map(check => ({
+        checkId: check.checkId,
+        outcome: 'pass' as const,
+        repositoryRevisionDigest: probeState.repositoryRevisionDigest,
+        diffDigest: diffInfo.diffDigest,
       })),
       review: ownerReview,
     },
   };
-  const deliveryStateVersion = probeState.stateVersion + 1;
+  // The halted Repair and the delivering Deliver are both written one version past the same Review state.
+  const deliveryStateVersion = probeState.stateVersion;
   const setup = createTestSetup({ contextualApprovalIssuer: true, transitionContexts: { [deliveryStateVersion]: deliveryTrustedContext } });
   const { task, statePort, repositoryPort } = setup;
   const { result, reviewerCalls, approvalStages, reviewedOwnerState, patchReceiptUnchanged } = await runPassingMockRoute(setup, deliveryTrustedContext);
@@ -1085,7 +1160,7 @@ test('Mock route delivers only after baseline, owner-settled patch, current chec
   assert.equal(result.finalReport.delivery?.outcome, 'COMPLETED');
   assert.deepEqual(await statePort.loadTask(task.taskId), result.state);
   assert.ok(setup.verificationApprovalPort);
-  const verificationDecision = setup.verificationApprovalPort.getRecordedBindings().find((binding) => binding.decisionId.startsWith('dec-verify-'));
+  const verificationDecision = setup.verificationApprovalPort.getRecordedBindings().find(binding => binding.decisionId.startsWith('dec-verify-'));
   assert.ok(verificationDecision);
   assert.notEqual(verificationDecision.decisionId, ROUTE_PLAN_DETAILS.decisionRef);
   assert.equal(result.state.plan?.decisionRef, verificationDecision.decisionId);
@@ -1096,58 +1171,38 @@ test('Mock route delivers only after baseline, owner-settled patch, current chec
   assert.equal(patchReceiptUnchanged, true);
   assert.equal(setup.verificationAdmissions.length, task.requiredChecks.length);
   assert.deepEqual(
-    setup.verificationAdmissions.map((admission) => admission.subjectKind === 'repository-action' && admission.planApplicability === 'approved-plan' ? admission.checkId : undefined).sort(),
-    task.requiredChecks.map((check) => check.checkId).sort(),
+    setup.verificationAdmissions.map(admission => (admission.subjectKind === 'repository-action' && admission.planApplicability === 'approved-plan' ? admission.checkId : undefined)).sort(),
+    task.requiredChecks.map(check => check.checkId).sort(),
   );
-  assert.ok(setup.verificationAdmissions.every((admission) => admission.subjectKind === 'repository-action' &&
-    admission.planApplicability === 'approved-plan' && admission.runnableNode === 'Verify' &&
-    admission.planDecisionRef === verificationDecision.decisionId));
+  assert.ok(
+    setup.verificationAdmissions.every(
+      admission =>
+        admission.subjectKind === 'repository-action' &&
+        admission.planApplicability === 'approved-plan' &&
+        admission.runnableNode === 'Verify' &&
+        admission.planDecisionRef === verificationDecision.decisionId,
+    ),
+  );
   assert.equal(result.state.plan?.baselineRef, result.finalReport.evidence.baselineRef);
   assert.notEqual(result.state.repositoryRevisionDigest, task.initialRevisionDigest);
   assert.equal(repositoryPort.patches.length, 1);
   assert.equal(repositoryPort.commands.length, task.requiredChecks.length * 2);
   for (const check of task.requiredChecks) {
-    assert.equal(repositoryPort.commands.filter((command) => command.actionId === check.checkId).length, 1);
+    assert.equal(repositoryPort.commands.filter(command => command.actionId === check.checkId).length, 1);
   }
   assert.equal(reviewerCalls, 1);
-  assert.equal(statePort.getLedgers().find((ledger) => ledger.scope === 'task' && ledger.kind === 'repair')?.consumed, 1);
+  assert.equal(statePort.getLedgers().find(ledger => ledger.scope === 'task' && ledger.kind === 'repair')?.consumed, 1);
   assert.equal(result.state.replanCount, 0);
-  assert.equal(statePort.getLedgers().find((ledger) => ledger.scope === 'task' && ledger.kind === 'iteration')?.consumed, 1);
+  assert.equal(statePort.getLedgers().find(ledger => ledger.scope === 'task' && ledger.kind === 'iteration')?.consumed, 1);
   assert.equal(statePort.getJournalSnapshot().attempts.length, 1 + task.requiredChecks.length * 2 + 1);
-  assert.ok(result.milestones.some((milestone) => milestone.kind === 'task_completed'));
+  assert.ok(result.milestones.some(milestone => milestone.kind === 'task_completed'));
 
-  // Exercise private claim checks through the workflow, with no reviewer dispatch or owner mutation.
-  for (const mismatch of ['reservationRefs', 'preClaimTaskStateVersion'] as const) {
-    const refused = createTestSetup({ contextualApprovalIssuer: true });
-    const claim = refused.statePort.claim.bind(refused.statePort);
-    const before: { state?: TaskState; journal?: ReturnType<MemoryStatePortV02['getJournalSnapshot']> } = {};
-    refused.statePort.claim = async (admission) => {
-      if (admission.subjectKind !== 'provider-request' || admission.role !== 'reviewer') return claim(admission);
-      const owner = await refused.statePort.loadTask(refused.task.taskId);
-      assert.ok(owner);
-      before.state = owner;
-      before.journal = refused.statePort.getJournalSnapshot();
-      return createTestClaimReceiptV02({
-        taskId: owner.taskId, runId: owner.runId, subjectKind: 'provider-request',
-        planApplicability: 'approved-plan',
-        preClaimTaskStateVersion: owner.stateVersion + (mismatch === 'preClaimTaskStateVersion' ? 1 : 0),
-        reservationRefs: mismatch === 'reservationRefs'
-          ? ['other-reservation']
-          : [admission.requestReservationReceipt, ...admission.budgetRefs],
-      });
-    };
-    const refusal = await runPassingMockRoute(refused, deliveryTrustedContext);
-    assert.equal(refusal.reviewerCalls, 0, mismatch);
-    assert.equal(refusal.result.outcome, 'IMPLEMENTED_UNVERIFIED', mismatch);
-    assert.ok(refusal.result.reasons.some(reason => reason.includes('Owner budget protocol refused')), mismatch);
-    assert.ok(before.state && before.journal, 'Route must reach the reviewer claim seam');
-    assert.deepEqual(await refused.statePort.loadTask(refused.task.taskId), before.state, mismatch);
-    assert.deepEqual(refused.statePort.getJournalSnapshot(), before.journal, mismatch);
-  }
+  // A mismatched reviewer claim is refused inside the model boundary, not here, and with zero
+  // provider dispatch; tests/runtime/unit/model.test.ts owns that assertion.
 
   const staleD0Setup = createTestSetup({
     contextualApprovalIssuer: true,
-    wrapContextualApprovalVerifier: (issuer) => ({
+    wrapContextualApprovalVerifier: issuer => ({
       async resolvePlanDecisionInContext(decisionId, context) {
         if (context.purpose === 'historical-patch') return { outcome: 'stale', reasonCode: 'STALE_D0_TEST_RECORD' };
         return issuer.resolvePlanDecisionInContext(decisionId, context);
@@ -1159,7 +1214,7 @@ test('Mock route delivers only after baseline, owner-settled patch, current chec
   assert.equal(staleD0Run.result.state?.node, 'Verify');
   assert.equal(staleD0Run.result.state?.plan?.decisionRef, ROUTE_PLAN_DETAILS.decisionRef);
   assert.equal(staleD0Run.result.state?.activeDecisionId, undefined);
-  assert.equal(staleD0Setup.verificationApprovalPort?.getRecordedBindings().filter((binding) => binding.decisionId.startsWith('dec-verify-')).length, 0);
+  assert.equal(staleD0Setup.verificationApprovalPort?.getRecordedBindings().filter(binding => binding.decisionId.startsWith('dec-verify-')).length, 0);
   assert.equal(staleD0Setup.verificationAdmissions.length, 0);
   assert.equal(staleD0Setup.repositoryPort.commands.length, staleD0Setup.task.requiredChecks.length);
   assert.equal(staleD0Setup.repositoryPort.patches.length, 1);
@@ -1180,7 +1235,7 @@ test('Mock route delivers only after baseline, owner-settled patch, current chec
   assert.ok(concurrentResult);
   assert.equal(openClaimSetup.verificationAdmissions.length, openClaimSetup.task.requiredChecks.length);
   assert.equal(openClaimSetup.repositoryPort.patches.length, 1);
-  assert.equal(openClaimSetup.verificationApprovalPort?.getRecordedBindings().filter((binding) => binding.decisionId.startsWith('dec-verify-')).length, 1);
+  assert.equal(openClaimSetup.verificationApprovalPort?.getRecordedBindings().filter(binding => binding.decisionId.startsWith('dec-verify-')).length, 1);
 });
 
 /* ------------------------------------------------------------------
@@ -1195,8 +1250,14 @@ test('Pending plan approval: pauses at AwaitPlan and resumes when approved', asy
   let reviewerCalls = 0;
   const inspectDiff = repositoryPort.inspectDiff.bind(repositoryPort);
   const review = reviewerPort.review.bind(reviewerPort);
-  repositoryPort.inspectDiff = async (revision) => { diffReads += 1; return inspectDiff(revision); };
-  reviewerPort.review = async (...args) => { reviewerCalls += 1; return review(...args); };
+  repositoryPort.inspectDiff = async revision => {
+    diffReads += 1;
+    return inspectDiff(revision);
+  };
+  reviewerPort.review = async (...args) => {
+    reviewerCalls += 1;
+    return review(...args);
+  };
 
   // First run: should pause at AwaitPlan
   const pausedResult = await runUC03Graph(task, ports, {
@@ -1216,7 +1277,7 @@ test('Pending plan approval: pauses at AwaitPlan and resumes when approved', asy
 
   // Publish the explicit D0 approval at a new owner generation, then resume from the owner TaskState.
   assert.ok(setup.verificationApprovalPort);
-  const d0 = setup.verificationApprovalPort.getRecordedBindings().find((binding) => binding.decisionId === ROUTE_PLAN_DETAILS.decisionRef);
+  const d0 = setup.verificationApprovalPort.getRecordedBindings().find(binding => binding.decisionId === ROUTE_PLAN_DETAILS.decisionRef);
   const initialAuthority = await statePort.readVerificationAuthoritySnapshot(task.taskId);
   assert.ok(d0 && initialAuthority);
   const d0Authority = { ...setup.authorityRef, decisionAuthorityGeneration: initialAuthority.decisionAuthorityGeneration + 1 };
@@ -1244,7 +1305,7 @@ test('Pending plan approval: pauses at AwaitPlan and resumes when approved', asy
         '--- a/src/calculator.py\n+++ b/src/calculator.py\n@@ -1 +1,2 @@\n-def divide(a, b): return a / b\n+def divide(a, b):\n+    if b == 0: raise CalculationError("zero denominator")\n+    return a / b\n',
       targetPaths: ['src/calculator.py'],
     },
-    pausedResult.state
+    pausedResult.state,
   );
 
   assert.equal(pendingVerification.outcome, 'pending-approval');
@@ -1256,26 +1317,32 @@ test('Pending plan approval: pauses at AwaitPlan and resumes when approved', asy
   assert.equal(repositoryPort.commands.length, 2);
   assert.equal(diffReads, 0);
   assert.equal(reviewerCalls, 0);
-  const d1 = setup.verificationApprovalPort.getRecordedBindings().find((binding) => binding.decisionId.startsWith('dec-verify-'));
+  const d1 = setup.verificationApprovalPort.getRecordedBindings().find(binding => binding.decisionId.startsWith('dec-verify-'));
   const verificationAuthority = await statePort.readVerificationAuthoritySnapshot(task.taskId);
   assert.ok(d1 && verificationAuthority);
   const d1Authority = { ...setup.authorityRef, decisionAuthorityGeneration: verificationAuthority.decisionAuthorityGeneration + 1 };
   assert.equal((await statePort.publishAuthority({ authorityRef: d1Authority })).status, 'published');
   setup.verificationApprovalPort.setV02AuthorityRef(d1Authority);
   setup.verificationApprovalPort.scriptDecision({ ...d1, status: 'approved' }, d1Authority.decisionAuthorityGeneration);
-  const resumedResult = await runUC03Graph(task, ports, {
-    mode: 'development',
-    trustedExpectedContext,
-    planDetails: ROUTE_PLAN_DETAILS,
-    admissionContext: createMockPatchAdmissionResolver(repositoryPort, statePort),
-    reviewerAdmission: createMockReviewerAdmissionResolver(statePort),
-    patchContent:
-      '--- a/src/calculator.py\n+++ b/src/calculator.py\n@@ -1 +1,2 @@\n-def divide(a, b): return a / b\n+def divide(a, b):\n+    if b == 0: raise CalculationError("zero denominator")\n+    return a / b\n',
-    targetPaths: ['src/calculator.py'],
-  }, pendingVerification.state ?? undefined);
+  const resumedResult = await runUC03Graph(
+    task,
+    ports,
+    {
+      mode: 'development',
+      trustedExpectedContext,
+      planDetails: ROUTE_PLAN_DETAILS,
+      admissionContext: createMockPatchAdmissionResolver(repositoryPort, statePort),
+      reviewerAdmission: createMockReviewerAdmissionResolver(statePort),
+      patchContent:
+        '--- a/src/calculator.py\n+++ b/src/calculator.py\n@@ -1 +1,2 @@\n-def divide(a, b): return a / b\n+def divide(a, b):\n+    if b == 0: raise CalculationError("zero denominator")\n+    return a / b\n',
+      targetPaths: ['src/calculator.py'],
+    },
+    pendingVerification.state ?? undefined,
+  );
 
   assert.equal(resumedResult.outcome, 'IMPLEMENTED_UNVERIFIED', `${resumedResult.reasons.join('; ')}; state=${resumedResult.state?.node ?? 'none'}`);
-  assert.equal(resumedResult.state?.node, 'Review');
+  assert.equal(resumedResult.state?.node, 'Repair');
+  assert.equal(resumedResult.state?.nextAction, 'halt-missing-completion-evidence');
   assert.deepEqual(await statePort.loadTask(task.taskId), resumedResult.state);
   assert.equal(repositoryPort.patches.length, 1);
   assert.equal(repositoryPort.commands.length, 4);
@@ -1306,7 +1373,7 @@ test('Current post-patch D1 routes failed checks through owner-admitted Repair',
   assert.ok(pending.state);
   assert.notEqual(pending.state.repositoryRevisionDigest, task.initialRevisionDigest);
 
-  const d1 = setup.verificationApprovalPort?.getRecordedBindings().find((binding) => binding.decisionId.startsWith('dec-verify-'));
+  const d1 = setup.verificationApprovalPort?.getRecordedBindings().find(binding => binding.decisionId.startsWith('dec-verify-'));
   const currentAuthority = await statePort.readVerificationAuthoritySnapshot(task.taskId);
   assert.ok(d1 && currentAuthority);
   const d1Authority = { ...setup.authorityRef, decisionAuthorityGeneration: currentAuthority.decisionAuthorityGeneration + 1 };
@@ -1314,14 +1381,12 @@ test('Current post-patch D1 routes failed checks through owner-admitted Repair',
   setup.verificationApprovalPort?.setV02AuthorityRef(d1Authority);
   setup.verificationApprovalPort?.scriptDecision({ ...d1, status: 'approved' }, d1Authority.decisionAuthorityGeneration);
   const classifyRepair = setup.approvalPort.classify.bind(setup.approvalPort);
-  setup.approvalPort.classify = async (action) => action.kind === 'apply_patch' ? 'ALLOWED' : classifyRepair(action);
+  setup.approvalPort.classify = async action => (action.kind === 'apply_patch' ? 'ALLOWED' : classifyRepair(action));
 
-  const regression = task.requiredChecks.find((check) => check.purpose === 'regression');
+  const regression = task.requiredChecks.find(check => check.purpose === 'regression');
   assert.ok(regression);
   const diffInfo = await repositoryPort.inspectDiff(task.initialRevisionDigest);
-  const failureEvidenceId = `evidence-verif-${regression.checkId}-${computeCanonicalSha256([
-    pending.state.runId, regression.checkId, pending.state.repositoryRevisionDigest, diffInfo.diffDigest,
-  ])}`;
+  const failureEvidenceId = `evidence-verif-${regression.checkId}-${computeCanonicalSha256([pending.state.runId, regression.checkId, pending.state.repositoryRevisionDigest, diffInfo.diffDigest])}`;
   repositoryPort.setCommandResult(`${regression.executable} ${regression.argv.join(' ')}`, {
     exitCode: 1,
     stdout: 'regression check failed after D1 approval',
@@ -1345,12 +1410,17 @@ test('Current post-patch D1 routes failed checks through owner-admitted Repair',
     reviewerCalls += 1;
     return originalReview(...args);
   };
-  const repairLedgerBefore = statePort.getLedgers().find((ledger) => ledger.scope === 'task' && ledger.kind === 'repair')?.consumed ?? 0;
-  const resumed = await runUC03Graph(task, ports, {
-    ...initialConfig,
-    admissionContext: observingAdmission,
-    repairPatch,
-  }, pending.state);
+  const repairLedgerBefore = statePort.getLedgers().find(ledger => ledger.scope === 'task' && ledger.kind === 'repair')?.consumed ?? 0;
+  const resumed = await runUC03Graph(
+    task,
+    ports,
+    {
+      ...initialConfig,
+      admissionContext: observingAdmission,
+      repairPatch,
+    },
+    pending.state,
+  );
 
   assert.notEqual(resumed.outcome, 'COMPLETED');
   assert.equal(repairAdmissions.length, 1);
@@ -1365,7 +1435,7 @@ test('Current post-patch D1 routes failed checks through owner-admitted Repair',
   assert.equal(persistedAfterRepair.repositoryRevisionDigest, repositoryPort.currentRevision);
   assert.notEqual(persistedAfterRepair.repositoryRevisionDigest, pending.state.repositoryRevisionDigest);
   assert.deepEqual(resumed.state, persistedAfterRepair);
-  assert.equal(statePort.getLedgers().find((ledger) => ledger.scope === 'task' && ledger.kind === 'repair')?.consumed, repairLedgerBefore + 1);
+  assert.equal(statePort.getLedgers().find(ledger => ledger.scope === 'task' && ledger.kind === 'repair')?.consumed, repairLedgerBefore + 1);
   assert.equal(reviewerCalls, 0);
   assert.equal(resumed.state?.node, 'Verify');
 });
@@ -1396,7 +1466,7 @@ test('Rejected current post-patch D1 reports INCOMPLETE and preserves the owner 
   assert.equal(pending.state?.node, 'Verify');
   assert.ok(pending.state);
   assert.deepEqual(await statePort.loadTask(task.taskId), pending.state);
-  const d1 = setup.verificationApprovalPort?.getRecordedBindings().find((binding) => binding.decisionId.startsWith('dec-verify-'));
+  const d1 = setup.verificationApprovalPort?.getRecordedBindings().find(binding => binding.decisionId.startsWith('dec-verify-'));
   const currentAuthority = await statePort.readVerificationAuthoritySnapshot(task.taskId);
   assert.ok(d1 && currentAuthority);
   const d1Authority = { ...setup.authorityRef, decisionAuthorityGeneration: currentAuthority.decisionAuthorityGeneration + 1 };
@@ -1421,7 +1491,7 @@ test('Rejected current post-patch D1 reports INCOMPLETE and preserves the owner 
   assert.equal(rejected.outcome, 'INCOMPLETE');
   assert.equal(rejected.finalReport?.outcome, 'INCOMPLETE');
   assert.equal(rejected.finalReport?.isComplete, false);
-  assert.ok(rejected.reasons.some((reason) => reason.includes('approval was rejected')));
+  assert.ok(rejected.reasons.some(reason => reason.includes('approval was rejected')));
   assert.deepEqual(rejected.state, persisted);
   assert.deepEqual(persisted, pending.state, 'rejection must not mutate persisted TaskState');
   assert.equal(afterJournal.mode, 'rejected');
@@ -1437,6 +1507,61 @@ test('Rejected current post-patch D1 reports INCOMPLETE and preserves the owner 
   assert.equal(repositoryPort.patches.length, beforePatches);
   assert.equal(diffReads, 0);
   assert.equal(reviewerCalls, 0);
+});
+
+test('Owner-minted reviewer admission satisfies the real runtime reviewer', async () => {
+  const setup = createTestSetup({ contextualApprovalIssuer: true });
+  const { task, ports, statePort, repositoryPort, trustedExpectedContext } = setup;
+  await seedGraphTaskState(statePort, createGraphTaskState(task));
+  const config = {
+    mode: 'development' as const,
+    trustedExpectedContext,
+    planDetails: ROUTE_PLAN_DETAILS,
+    admissionContext: createMockPatchAdmissionResolver(repositoryPort, statePort),
+    reviewerAdmission: createMockReviewerAdmissionResolver(statePort),
+    patchContent: 'add the approved zero denominator guard',
+    targetPaths: ['src/calculator.py'],
+  };
+  const pending = await runUC03Graph(task, ports, config);
+  assert.equal(pending.outcome, 'pending-approval');
+  assert.ok(pending.state);
+  const d1 = setup.verificationApprovalPort?.getRecordedBindings().find(binding => binding.decisionId.startsWith('dec-verify-'));
+  const authority = await statePort.readVerificationAuthoritySnapshot(task.taskId);
+  assert.ok(d1 && authority);
+  const nextAuthority = { ...setup.authorityRef, decisionAuthorityGeneration: authority.decisionAuthorityGeneration + 1 };
+  assert.equal((await statePort.publishAuthority({ authorityRef: nextAuthority })).status, 'published');
+  setup.verificationApprovalPort?.setV02AuthorityRef(nextAuthority);
+  setup.verificationApprovalPort?.scriptDecision({ ...d1, status: 'approved' }, nextAuthority.decisionAuthorityGeneration);
+
+  // The real reviewer recomputes the snapshot context digest; the graph mints it through the same helper.
+  const scripted = new ScriptedModelPort();
+  scripted.queueResponse({
+    outcome: 'observed',
+    result: {
+      proposal: { proposalId: 'review-1', content: JSON.stringify({ status: 'accepted', findings: [] }) },
+      observedUsage: { inputTokens: 1, outputTokens: 1, billableTokens: 2, costUsd: 0.001 },
+    },
+  });
+  const reviewer = createRuntimeReviewer({
+    model: new ScriptedModelPortV02(scripted),
+    resolveRepoDigest: async current => (await statePort.loadTask(current.taskId))?.repositoryRevisionDigest,
+  });
+  let reviewed: ReviewResult | undefined;
+  setup.reviewerPort.review = async (reviewTask, diff, evidence, request, admission) => {
+    // The real reviewer holds no accounting authority; this port settles the allowance around it.
+    const claim = await statePort.claim(admission);
+    const attempt = await statePort.beginAttempt(claim.claimId, createFixtureExecutorIdentityV02({ payloadDigest: computeRequestContentDigest(request) }));
+    assert.equal((await statePort.recordOutcome(createTestProviderOutcomeReceiptV02(claim, attempt, admission))).outcome, 'settled');
+    reviewed = await reviewer.review(reviewTask, diff, evidence, request, admission);
+    return reviewed;
+  };
+
+  const resumed = await runUC03Graph(task, ports, config, pending.state);
+  assert.ok(reviewed, `route stopped before review: ${resumed.reasons.join('; ')}`);
+  assert.equal(reviewer.lastFailureReason, undefined);
+  assert.equal(reviewed.status, 'accepted');
+  assert.deepEqual(reviewed.findings, []);
+  assert.equal(scripted.simulatedDispatches, 1);
 });
 
 /* ------------------------------------------------------------------
@@ -1479,7 +1604,7 @@ test('Plan rejection: transitions to AwaitFeedback and pauses or replans', async
         strategyDigest: feedbackResult.state.plan?.strategyDigest ?? '',
       },
     },
-    feedbackResult.state
+    feedbackResult.state,
   );
 
   assert.equal(terminateResult.outcome, 'INCOMPLETE');
@@ -1514,16 +1639,15 @@ test('Verification failure: routes to Repair on test failure', async () => {
     trustedExpectedContext,
     planDetails: ROUTE_PLAN_DETAILS,
     admissionContext: createMockPatchAdmissionResolver(repositoryPort, statePort),
-    patchContent:
-      '--- a/src/calculator.py\n+++ b/src/calculator.py\n@@ -1 +1,2 @@\n-def divide(a, b): return a / b\n+def divide(a, b): return 0\n',
+    patchContent: '--- a/src/calculator.py\n+++ b/src/calculator.py\n@@ -1 +1,2 @@\n-def divide(a, b): return a / b\n+def divide(a, b): return 0\n',
     targetPaths: ['src/calculator.py'],
   });
 
   // Repair without repair proposal stops at INCOMPLETE
   assert.equal(result.outcome, 'INCOMPLETE');
   assert.ok(
-    result.milestones.some((m) => m.node === 'Repair' || m.kind === 'task_failed'),
-    'Expected Repair or task_failed milestone'
+    result.milestones.some(m => m.node === 'Repair' || m.kind === 'task_failed'),
+    'Expected Repair or task_failed milestone',
   );
 });
 
@@ -1534,52 +1658,79 @@ for (const evidenceKind of ['verification', 'review'] as const) {
     const baselineRef = `uc04://baseline/${task.taskId}/1`;
     const strategyDigest = computeCanonicalSha256(ROUTE_PLAN_DETAILS.strategy);
     const plan: FixPlan = {
-      planVersion: 1, diagnosis: ROUTE_PLAN_DETAILS.diagnosis,
-      suspectedCauseLocations: [...ROUTE_PLAN_DETAILS.suspectedCauseLocations], evidenceRefs: [baselineRef],
-      strategy: ROUTE_PLAN_DETAILS.strategy, scopedChanges: [...ROUTE_PLAN_DETAILS.scopedChanges], checkSetDigest,
-      baselineRef, strategyDigest, decisionRef: ROUTE_PLAN_DETAILS.decisionRef,
+      planVersion: 1,
+      diagnosis: ROUTE_PLAN_DETAILS.diagnosis,
+      suspectedCauseLocations: [...ROUTE_PLAN_DETAILS.suspectedCauseLocations],
+      evidenceRefs: [baselineRef],
+      strategy: ROUTE_PLAN_DETAILS.strategy,
+      scopedChanges: [...ROUTE_PLAN_DETAILS.scopedChanges],
+      checkSetDigest,
+      baselineRef,
+      strategyDigest,
+      decisionRef: ROUTE_PLAN_DETAILS.decisionRef,
     };
     const failureDigest = computeCanonicalSha256(`failure-${evidenceKind}`);
     const verificationFailure: VerificationResult = {
-      evidenceId: `evidence-failed-${evidenceKind}`, taskId: task.taskId, runId: 'run-graph-001',
-      actionId: 'action-verify-check-pytest-reproduction', phase: 'focused',
-      repoDigest: task.initialRevisionDigest, diffDigest: failureDigest,
-      commandIdentity: 'pytest -q tests/test_calculator.py -k test_divide_zero', outcome: 'fail',
-      testedIds: ['check-pytest-reproduction'], diagnosticRefs: [`verify-${evidenceKind}-failure`],
+      evidenceId: `evidence-failed-${evidenceKind}`,
+      taskId: task.taskId,
+      runId: 'run-graph-001',
+      actionId: 'action-verify-check-pytest-reproduction',
+      phase: 'focused',
+      repoDigest: task.initialRevisionDigest,
+      diffDigest: failureDigest,
+      commandIdentity: 'pytest -q tests/test_calculator.py -k test_divide_zero',
+      outcome: 'fail',
+      testedIds: ['check-pytest-reproduction'],
+      diagnosticRefs: [`verify-${evidenceKind}-failure`],
     };
     const reviewFailure: ReviewResult = {
-      reviewId: `review-failed-${evidenceKind}`, status: 'findings', repoDigest: task.initialRevisionDigest,
-      diffDigest: failureDigest, checkSetDigest, reviewerRoleConfigId: 'reviewer-config-route-test',
+      reviewId: `review-failed-${evidenceKind}`,
+      status: 'findings',
+      repoDigest: task.initialRevisionDigest,
+      diffDigest: failureDigest,
+      checkSetDigest,
+      reviewerRoleConfigId: 'reviewer-config-route-test',
       iterationReservationRef: 'review-allowance-route-test',
       findings: [{ file: 'src/calculator.py', line: 1, side: 'new', severity: 'error', message: 'Zero check is missing', evidenceRef: `review-${evidenceKind}-finding` }],
     };
     const failure = evidenceKind === 'verification' ? verificationFailure : reviewFailure;
-    const evidenceRefs = evidenceKind === 'verification'
-      ? [baselineRef, verificationFailure.evidenceId, verificationFailure.actionId, ...verificationFailure.diagnosticRefs]
-      : [baselineRef, reviewFailure.reviewId, reviewFailure.iterationReservationRef, `review-${evidenceKind}-finding`];
+    const evidenceRefs =
+      evidenceKind === 'verification'
+        ? [baselineRef, verificationFailure.evidenceId, verificationFailure.actionId, ...verificationFailure.diagnosticRefs]
+        : [baselineRef, reviewFailure.reviewId, reviewFailure.iterationReservationRef, `review-${evidenceKind}-finding`];
     const repairState = createGraphTaskState(task, {
-      stateVersion: 1, node: 'Repair', plan, activeDecisionId: plan.decisionRef,
-      changedPaths: ['src/calculator.py'], evidenceRefs,
+      stateVersion: 1,
+      node: 'Repair',
+      plan,
+      activeDecisionId: plan.decisionRef,
+      changedPaths: ['src/calculator.py'],
+      evidenceRefs,
       ...(evidenceKind === 'review' ? { latestReviewRef: reviewFailure.reviewId, reviewRefs: [reviewFailure.reviewId] } : {}),
     });
     await seedGraphTaskState(statePort, repairState);
     approvalPort.classify = async () => 'ALLOWED';
     approvalPort.validateBinding = async () => true;
     const repairPatch = {
-      diff: 'add a zero denominator guard', affectedPaths: ['src/calculator.py'],
+      diff: 'add a zero denominator guard',
+      affectedPaths: ['src/calculator.py'],
       evidenceRefs: [evidenceKind === 'verification' ? verificationFailure.evidenceId : reviewFailure.reviewId],
       diagnosticRefs: evidenceKind === 'verification' ? [...verificationFailure.diagnosticRefs] : [`review-${evidenceKind}-finding`],
     };
     const baseline: Baseline = {
-      evidenceId: baselineRef, repositorySnapshotDigest: task.initialRevisionDigest, checkSetDigest,
+      evidenceId: baselineRef,
+      repositorySnapshotDigest: task.initialRevisionDigest,
+      checkSetDigest,
       reproductionFailureSignature: 'baseline reproduction failed',
-      checkResults: task.requiredChecks.map((check) => ({ checkId: check.checkId, outcome: check.purpose === 'reproduction' ? 'fail' : 'pass', outputExcerpt: 'mock check', durationMs: 1 })),
+      checkResults: task.requiredChecks.map(check => ({ checkId: check.checkId, outcome: check.purpose === 'reproduction' ? 'fail' : 'pass', outputExcerpt: 'mock check', durationMs: 1 })),
       testProtectionDigest: computeCanonicalSha256('protected-test-snapshot'),
     };
     const graphState = createGraphState({ task, state: repairState, baseline, failureEvidence: [failure] });
     const repaired = await createRepairNode(ports, {
-      mode: 'development', trustedExpectedContext, trustedTransitionContext: createPlanApprovalContext(task)[3],
-      admissionContext: createMockPatchAdmissionResolver(repositoryPort, statePort), repairPatch,
+      mode: 'development',
+      trustedExpectedContext,
+      trustedTransitionContext: createPlanApprovalContext(task)[3],
+      admissionContext: createMockPatchAdmissionResolver(repositoryPort, statePort),
+      repairPatch,
     })(graphState);
 
     assert.equal(repaired.terminalOutcome, undefined, repaired.reasons?.join('; '));
@@ -1595,7 +1746,7 @@ for (const evidenceKind of ['verification', 'review'] as const) {
     assert.equal(validSettledPatchEvidence({ ...nextEvidence, state: staleState }, task, staleState), false);
     assert.equal(repositoryPort.patches.length, 1);
     assert.equal(statePort.getJournalSnapshot().attempts.length, 1);
-    assert.equal(statePort.getLedgers().find((ledger) => ledger.scope === 'task' && ledger.kind === 'repair')?.consumed, 1);
+    assert.equal(statePort.getLedgers().find(ledger => ledger.scope === 'task' && ledger.kind === 'repair')?.consumed, 1);
   });
 }
 
@@ -1638,14 +1789,7 @@ test('CLI: rejects unavailable production configuration on run', async () => {
   fs.writeFileSync(configFile, JSON.stringify({ mode: 'production' }), 'utf8');
 
   try {
-    const res = await runUC03Cli([
-      '--task',
-      taskFile,
-      '--config',
-      configFile,
-      '--mode',
-      'production',
-    ]);
+    const res = await runUC03Cli(['--task', taskFile, '--config', configFile, '--mode', 'production']);
     assert.equal(res.exitCode, 5);
     assert.ok(res.output.includes('unavailable-production-configuration'));
   } finally {
@@ -1664,12 +1808,7 @@ test('CLI source entry point writes output and exits nonzero when real ports are
 
   try {
     const cliPath = path.resolve(process.cwd(), 'src/cli/uc03.ts');
-    const child = spawnSync(process.execPath, [
-      '--experimental-strip-types', cliPath,
-      '--task', taskFile,
-      '--config', configFile,
-      '--output', outputFile,
-    ], { cwd: process.cwd(), encoding: 'utf8' });
+    const child = spawnSync(process.execPath, ['--experimental-strip-types', cliPath, '--task', taskFile, '--config', configFile, '--output', outputFile], { cwd: process.cwd(), encoding: 'utf8' });
     assert.equal(child.status, 5, child.stderr || child.stdout);
     assert.ok(child.stdout.includes('unavailable-production-configuration'));
     assert.match(fs.readFileSync(outputFile, 'utf8'), /"outcome":"unavailable-production-configuration"/);
@@ -1767,8 +1906,10 @@ test('CLI: oversized malformed task and config JSON stay bounded in results and 
       const cliArgs = [
         '--experimental-strip-types',
         path.resolve(process.cwd(), 'src/cli/uc03.ts'),
-        '--task', taskFile,
-        '--output', scenario.outputFile,
+        '--task',
+        taskFile,
+        '--output',
+        scenario.outputFile,
         ...(scenario.configInput === undefined ? [] : ['--config', configFile]),
       ];
       const child = spawnSync(process.execPath, cliArgs, { cwd: process.cwd(), encoding: 'utf8' });
@@ -1804,10 +1945,7 @@ test('CLI: argument, validation, read, and write errors omit input and paths', a
     assertSafeCliError(missingTaskResult.output, 'TASK_READ_ERROR', protectedPathMarker);
 
     fs.writeFileSync(taskFile, JSON.stringify(task), 'utf8');
-    const missingConfigResult = await runUC03Cli([
-      '--task', taskFile,
-      '--config', path.join(tmpDir, `${protectedPathMarker}.json`),
-    ], { ports: tracked.ports });
+    const missingConfigResult = await runUC03Cli(['--task', taskFile, '--config', path.join(tmpDir, `${protectedPathMarker}.json`)], { ports: tracked.ports });
     assert.equal(missingConfigResult.exitCode, 2);
     assertSafeCliError(missingConfigResult.output, 'CONFIG_READ_ERROR', protectedPathMarker);
 
@@ -1819,7 +1957,9 @@ test('CLI: argument, validation, read, and write errors omit input and paths', a
 
     const runMarker = 'RUN_MARKER_SECRET';
     const throwingPorts = new Proxy(tracked.ports, {
-      get() { throw new Error(runMarker); },
+      get() {
+        throw new Error(runMarker);
+      },
     });
     fs.writeFileSync(path.join(tmpDir, 'config.json'), JSON.stringify({ mode: 'production' }), 'utf8');
     const runResult = await runUC03Cli(['--task', taskFile, '--config', path.join(tmpDir, 'config.json')], { ports: throwingPorts });
@@ -1829,4 +1969,37 @@ test('CLI: argument, validation, read, and write errors omit input and paths', a
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
+});
+
+test('production runner refuses a real-labeled reviewer without canonical accounting before effects', async () => {
+  const { task, ports } = createTestSetup();
+  let calls = 0;
+  const realPorts = {
+    ...ports,
+    statePort: {
+      ...ports.statePort,
+      provenance: 'real' as const,
+      loadTask: async () => {
+        calls++;
+        return null;
+      },
+    },
+    approvalPort: { ...ports.approvalPort, provenance: 'real' as const },
+    repositoryPort: { ...ports.repositoryPort, provenance: 'real' as const },
+    modelPort: { ...ports.modelPort, provenance: 'real' as const },
+    reviewerPort: {
+      ...ports.reviewerPort,
+      provenance: 'real' as const,
+      review: async () => {
+        calls++;
+        throw new Error('Unaccounted dispatch');
+      },
+    },
+    executionGuard: undefined,
+  };
+  const result = await runUC03Graph(task, realPorts, { mode: 'production' });
+  assert.equal(result.outcome, 'INCOMPLETE');
+  assert.equal(result.state, null);
+  assert.ok(result.reasons.some(reason => reason.includes('canonical accounted model ingress')));
+  assert.equal(calls, 0);
 });

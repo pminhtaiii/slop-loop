@@ -8,32 +8,51 @@ function scenario(caseId = 'UC-01:C02:all-users-locked-out'): TrustedContext {
   const selected = UC01_PUBLIC_CASES.find(entry => entry.caseId === caseId);
   assert.ok(selected);
   const input = selected.input.invocation;
-  return { taskId: input.taskId, runId: input.runId, repositoryId: input.repositoryId, workspaceId: 'workspace',
-    repositorySnapshotDigest: selected.input.repositorySnapshotDigest, configId: 'uc01-fixture-v1', configVersion: '1',
-    policyId: selected.prerequisites.policyId, policyVersion: '1', catalog: trustedCatalogForCase(caseId),
-    limits: fixtureLimits, accountingRef: 'account', evidenceRegistry: publicEvidenceForCase(caseId).filter(entry => entry.kind === 'reporter'),
-    continuation: undefined };
+  return {
+    taskId: input.taskId,
+    runId: input.runId,
+    repositoryId: input.repositoryId,
+    workspaceId: 'workspace',
+    repositorySnapshotDigest: selected.input.repositorySnapshotDigest,
+    configId: 'uc01-fixture-v1',
+    configVersion: '1',
+    policyId: selected.prerequisites.policyId,
+    policyVersion: '1',
+    catalog: trustedCatalogForCase(caseId),
+    limits: fixtureLimits,
+    accountingRef: 'account',
+    evidenceRegistry: publicEvidenceForCase(caseId).filter(entry => entry.kind === 'reporter'),
+    continuation: undefined,
+  };
 }
 function proposal(context: TrustedContext, classification = 'defect', destination = 'repair'): Proposal {
   const evidenceId = context.evidenceRegistry[0]?.id;
   assert.ok(evidenceId);
   const unknown = { summary: 'Impact dimension has not been established.', known: false, evidenceIds: [] };
-  return { classification: { value: classification, assertionIds: ['reported'] },
+  return {
+    classification: { value: classification, assertionIds: ['reported'] },
     severity: { value: 'undetermined', functionality: unknown, affectedUsers: unknown, workaround: unknown, assertionIds: ['impact'] },
     destination: { value: destination, assertionIds: ['route'] },
-    assertions: [{ id: 'reported', text: 'Reporter describes the supplied issue.', basis: 'fact', evidenceIds: [evidenceId] },
+    assertions: [
+      { id: 'reported', text: 'Reporter describes the supplied issue.', basis: 'fact', evidenceIds: [evidenceId] },
       { id: 'impact', text: 'Affected functionality, users and workaround remain unknown.', basis: 'unknown', evidenceIds: [] },
-      { id: 'route', text: 'Inference: this report fits the selected destination.', basis: 'inference', evidenceIds: [evidenceId] }],
-    uncertainties: ['Impact is not established.'], evidenceIds: [evidenceId], questions: [] };
+      { id: 'route', text: 'Inference: this report fits the selected destination.', basis: 'inference', evidenceIds: [evidenceId] },
+    ],
+    uncertainties: ['Impact is not established.'],
+    evidenceIds: [evidenceId],
+    questions: [],
+  };
 }
 
 test('C14 rejects a compatible route with no evidence-linked inference supporting responsibility fit', () => {
   const context = scenario();
   const candidate = proposal(context);
-  const withoutFit = { ...candidate, assertions: candidate.assertions.map(assertion => assertion.id === 'route'
-    ? { ...assertion, basis: 'unknown', evidenceIds: [] } : assertion) };
+  const withoutFit = { ...candidate, assertions: candidate.assertions.map(assertion => (assertion.id === 'route' ? { ...assertion, basis: 'unknown', evidenceIds: [] } : assertion)) };
   assert.deepEqual(projectRecommendation(withoutFit, context), {
-    ok: false, status: 'error', reasonCode: 'invalid-model-output', path: '$.destination',
+    ok: false,
+    status: 'error',
+    reasonCode: 'invalid-model-output',
+    path: '$.destination',
   });
 });
 
@@ -77,8 +96,10 @@ test('C12 indistinguishable responsibilities cannot become a selected destinatio
 
 test('C12 a distinct supported responsibility may be selected from several compatible destinations', () => {
   const base = scenario();
-  const context = { ...base, catalog: { ...base.catalog, destinations: [...base.catalog.destinations,
-    { id: 'specialist', responsibility: 'Review accessibility defects', acceptsClassificationIds: ['defect'] }] } };
+  const context = {
+    ...base,
+    catalog: { ...base.catalog, destinations: [...base.catalog.destinations, { id: 'specialist', responsibility: 'Review accessibility defects', acceptsClassificationIds: ['defect'] }] },
+  };
   const result = projectRecommendation(proposal(context), context);
   assert.ok(result.ok);
   assert.equal(result.value.destination.value, 'repair');
@@ -99,10 +120,15 @@ test('C12 generated question and rationale IDs do not collide with existing call
   const context = scenario('UC-01:C12:overlapping-responsibilities');
   const candidate = proposal(context);
   const question = { id: 'uc01-destination:1', text: 'Who is affected?', affects: ['scope'] as const, reason: 'User scope is material.' };
-  const result = projectRecommendation({ ...candidate, questions: [question], assertions: [...candidate.assertions,
-    { id: 'uc01-route-unknown:1', text: 'Scope remains unknown.', basis: 'unknown', evidenceIds: [] }] }, context);
+  const result = projectRecommendation(
+    { ...candidate, questions: [question], assertions: [...candidate.assertions, { id: 'uc01-route-unknown:1', text: 'Scope remains unknown.', basis: 'unknown', evidenceIds: [] }] },
+    context,
+  );
   assert.ok(result.ok);
-  assert.deepEqual(result.value.questions.map(entry => entry.id), ['uc01-destination:1', 'uc01-destination:2']);
+  assert.deepEqual(
+    result.value.questions.map(entry => entry.id),
+    ['uc01-destination:1', 'uc01-destination:2'],
+  );
   assert.deepEqual(result.value.destination.assertionIds, ['uc01-route-unknown:2']);
 });
 
@@ -112,7 +138,10 @@ test('C16/C22 necessary route question exceeding the finite allowance is explici
   const candidate = proposal(context);
   const question = { id: 'scope', text: 'Who is affected?', affects: ['scope'], reason: 'User scope is material.' };
   assert.deepEqual(projectRecommendation({ ...candidate, questions: [question] }, context), {
-    ok: false, status: 'error', reasonCode: 'question-budget-exhausted', path: '$.questions',
+    ok: false,
+    status: 'error',
+    reasonCode: 'question-budget-exhausted',
+    path: '$.questions',
   });
 });
 
@@ -126,11 +155,24 @@ test('C15 protected proposal payload is rejected with bounded metadata only', ()
 
 test('C15 trusted responsibility containing protected content is rejected before it can enter a recommendation', () => {
   const base = scenario();
-  const context = { ...base, catalog: { ...base.catalog, destinations: [{
-    id: 'repair', responsibility: 'MARKER_SECRET_host', acceptsClassificationIds: ['defect'],
-  }] } };
+  const context = {
+    ...base,
+    catalog: {
+      ...base.catalog,
+      destinations: [
+        {
+          id: 'repair',
+          responsibility: 'MARKER_SECRET_host',
+          acceptsClassificationIds: ['defect'],
+        },
+      ],
+    },
+  };
   assert.deepEqual(projectRecommendation(proposal(context), context), {
-    ok: false, status: 'invalid-input', reasonCode: 'protected-content', path: '$.catalog',
+    ok: false,
+    status: 'invalid-input',
+    reasonCode: 'protected-content',
+    path: '$.catalog',
   });
 });
 
@@ -154,7 +196,7 @@ test('C14/C15/C19/C22 malformed citations, task instructions, incompatible desti
   for (const altered of [
     { ...candidate, destination: { value: 'unconfigured', assertionIds: ['route'] } },
     { ...candidate, destination: { value: 'triage', assertionIds: ['route'] } },
-    { ...candidate, assertions: candidate.assertions.map(entry => entry.id === 'route' ? { ...entry, evidenceIds: ['invented'] } : entry) },
+    { ...candidate, assertions: candidate.assertions.map(entry => (entry.id === 'route' ? { ...entry, evidenceIds: ['invented'] } : entry)) },
     { ...candidate, dispatch: { approved: true } },
     { ...candidate, repairTask: { command: 'execute repair' } },
     { ...candidate, uncertainties: ['x'.repeat(20000)] },
@@ -162,7 +204,10 @@ test('C14/C15/C19/C22 malformed citations, task instructions, incompatible desti
   ]) {
     const result = projectRecommendation(altered, context);
     assert.equal(result.ok, false);
-    if (!result.ok) { assert.equal(result.status, 'error'); assert.equal(result.reasonCode, 'invalid-model-output'); }
+    if (!result.ok) {
+      assert.equal(result.status, 'error');
+      assert.equal(result.reasonCode, 'invalid-model-output');
+    }
   }
 });
 

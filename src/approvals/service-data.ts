@@ -1,5 +1,16 @@
-import type { ApprovalBinding, ApprovalBindingContext, ApprovalPort, NormalizedAction } from '../contracts/foundation/uc03.ts';
-import type { ApprovalRequestRecord, ApprovalTaskControl, BindingAssessment, DecisionEvent, DeveloperDirection, DispatchClaim, HumanResolution, PolicyProfile, SafeResult, TrustedOperatorIdentity } from '../contracts/approvals/contracts.ts';
+import type { ApprovalBinding, ApprovalBindingContext, ApprovalPort, NormalizedAction, PortProvenance } from '../contracts/foundation/uc03.ts';
+import type {
+  ApprovalRequestRecord,
+  ApprovalTaskControl,
+  BindingAssessment,
+  DecisionEvent,
+  DeveloperDirection,
+  DispatchClaim,
+  HumanResolution,
+  PolicyProfile,
+  SafeResult,
+  TrustedOperatorIdentity,
+} from '../contracts/approvals/contracts.ts';
 import type { PolicyFacts, CompiledPolicy } from './policy.ts';
 import type { PresentationBundle, PresentationInput } from './presentation.ts';
 import type { ApprovalActivity, ApprovalControl } from './control.ts';
@@ -12,12 +23,20 @@ export interface ApprovalContext {
   readonly runId: string;
   readonly elements: PresentationInput['elements'];
 }
-export interface StoreResponse<T> { readonly safe: SafeResult; readonly value: T | null }
+export interface StoreResponse<T> {
+  readonly safe: SafeResult;
+  readonly value: T | null;
+}
 export interface ApprovalStore {
-  readonly provenance: 'mock';
+  readonly provenance: PortProvenance;
   loadTaskControl(taskId: string): StoreResponse<ApprovalTaskControl>;
   readRequest(decisionId: string): StoreResponse<ApprovalRequestRecord>;
-  readHistory(taskId: string): StoreResponse<{ readonly resolutions: readonly HumanResolution[]; readonly directions?: readonly DeveloperDirection[]; readonly assessments?: readonly BindingAssessment[]; readonly claims?: readonly DispatchClaim[] }>;
+  readHistory(taskId: string): StoreResponse<{
+    readonly resolutions: readonly HumanResolution[];
+    readonly directions?: readonly DeveloperDirection[];
+    readonly assessments?: readonly BindingAssessment[];
+    readonly claims?: readonly DispatchClaim[];
+  }>;
   readEvents?(taskId: string): StoreResponse<readonly DecisionEvent[]>;
   recordDirection?(input: unknown): StoreResponse<DeveloperDirection>;
   createPendingAndPause(input: unknown): StoreResponse<ApprovalRequestRecord>;
@@ -30,6 +49,8 @@ export interface ApprovalServiceOptions {
   readonly taskId: string;
   readonly profile: unknown;
   readonly store?: ApprovalStore;
+  /** Opt-in; defaults to 'mock' so existing callers keep the mock path unchanged. */
+  readonly provenance?: PortProvenance;
   readonly context: {
     loadForAction(taskId: string, actionId: string): Promise<unknown>;
     loadForDecision(decisionId: string): Promise<unknown>;
@@ -55,7 +76,11 @@ export interface ApprovalService extends ApprovalPort {
 export class ApprovalServiceError extends Error {
   readonly outcome: SafeResult['outcome'];
   readonly reasonCode: string;
-  constructor(outcome: SafeResult['outcome'], reasonCode = 'approval-operation-denied') { super('approval-operation-denied'); this.outcome = outcome; this.reasonCode = reasonCode; }
+  constructor(outcome: SafeResult['outcome'], reasonCode = 'approval-operation-denied') {
+    super('approval-operation-denied');
+    this.outcome = outcome;
+    this.reasonCode = reasonCode;
+  }
 }
 
 /** Shared host-owned capabilities; helpers cannot independently reopen admission. */

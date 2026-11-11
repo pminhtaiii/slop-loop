@@ -51,11 +51,7 @@ describe('UC-04: BudgetTracker & Durable Accounting', () => {
 
   it('accepts explicit owner taskId and runId on reserve', () => {
     const tracker = new BudgetTracker(initialLedgers);
-    const bundle = tracker.reserve(
-      'req-owner',
-      [{ scope: 'task', kind: 'tokens', amount: 1000 }],
-      { taskId: 'custom-task', runId: 'custom-run' }
-    );
+    const bundle = tracker.reserve('req-owner', [{ scope: 'task', kind: 'tokens', amount: 1000 }], { taskId: 'custom-task', runId: 'custom-run' });
     assert.equal(bundle.taskId, 'custom-task');
     assert.equal(bundle.runId, 'custom-run');
     assert.equal(bundle.transactionRef, 'req-owner');
@@ -70,31 +66,25 @@ describe('UC-04: BudgetTracker & Durable Accounting', () => {
       },
       {
         message: /Reservation already exists for requestId: req-dup-id/i,
-      }
+      },
     );
   });
 
   it('rejects duplicate reservation keys in a single request', () => {
     const tracker = new BudgetTracker(initialLedgers);
-    assert.throws(
-      () => {
-        tracker.reserve('req-dup', [
-          { scope: 'task', kind: 'tokens', amount: 500 },
-          { scope: 'task', kind: 'tokens', amount: 300 },
-        ]);
-      },
-      /Duplicate reservation key/i
-    );
+    assert.throws(() => {
+      tracker.reserve('req-dup', [
+        { scope: 'task', kind: 'tokens', amount: 500 },
+        { scope: 'task', kind: 'tokens', amount: 300 },
+      ]);
+    }, /Duplicate reservation key/i);
   });
 
   it('throws BudgetExhaustionError when requested amount exceeds available allowance', () => {
     const tracker = new BudgetTracker(initialLedgers);
     assert.throws(
-      () =>
-        tracker.reserve('req-2', [
-          { scope: 'task', kind: 'tokens', amount: 15000 },
-        ]),
-      (err: unknown) => err instanceof BudgetExhaustionError && /exhausted.*tokens/i.test((err as Error).message)
+      () => tracker.reserve('req-2', [{ scope: 'task', kind: 'tokens', amount: 15000 }]),
+      (err: unknown) => err instanceof BudgetExhaustionError && /exhausted.*tokens/i.test((err as Error).message),
     );
   });
 
@@ -128,8 +118,8 @@ describe('UC-04: BudgetTracker & Durable Accounting', () => {
       { scope: 'task', kind: 'cost', amount: 0.5 },
     ]);
 
-    const tokenLedger = tracker.getLedgers().find((l) => l.kind === 'tokens');
-    const costLedger = tracker.getLedgers().find((l) => l.kind === 'cost');
+    const tokenLedger = tracker.getLedgers().find(l => l.kind === 'tokens');
+    const costLedger = tracker.getLedgers().find(l => l.kind === 'cost');
     assert.ok(tokenLedger && costLedger);
     const tokenRes = tokenLedger.reservations[0];
     const costRes = costLedger.reservations[0];
@@ -151,9 +141,7 @@ describe('UC-04: BudgetTracker & Durable Accounting', () => {
 
   it('reconciles uncertain interrupted reservation without resetting spent allowance', () => {
     const tracker = new BudgetTracker(initialLedgers);
-    tracker.reserve('req-interrupted', [
-      { scope: 'task', kind: 'tokens', amount: 2000 },
-    ]);
+    tracker.reserve('req-interrupted', [{ scope: 'task', kind: 'tokens', amount: 2000 }]);
 
     // Process crashed before settle. Reconcile with verified evidence
     tracker.reconcileUncertain('req-interrupted', {
@@ -200,5 +188,20 @@ describe('UC-04: BudgetTracker & Durable Accounting', () => {
     assert.ok(claim.claimId.startsWith('claim-'));
     assert.equal(claim.phase, 'claimed');
     assert.equal(claim.stepId, 'step-1');
+  });
+
+  it('replaces ledger authority in place from a journal snapshot', () => {
+    const tracker = new BudgetTracker(initialLedgers);
+    tracker.reserve('req-lost', [{ scope: 'task', kind: 'tokens', amount: 1000 }]);
+    tracker.settle('req-lost', { inputTokens: 600, outputTokens: 0, costUsd: 0 });
+
+    tracker.replaceLedgers(initialLedgers);
+    assert.equal(tracker.getConsumed('task', 'tokens'), 0);
+    assert.equal(tracker.getAvailable('task', 'tokens'), 10000);
+
+    tracker.replaceLedgers(tracker.getLedgers().map(l => (l.kind === 'tokens' ? { ...l, consumed: 2500 } : l)));
+    assert.equal(tracker.getConsumed('task', 'tokens'), 2500);
+    assert.equal(tracker.getAvailable('task', 'tokens'), 7500);
+    assert.equal(tracker.getLedger('task', 'cost')?.limit, 5);
   });
 });

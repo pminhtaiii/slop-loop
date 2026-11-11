@@ -12,33 +12,12 @@ import type {
 } from '../contracts/foundation/uc03/v02/ports.ts';
 import type { ControlledRepositoryToolsOptions, RepositoryAttemptStartRecoveryResultV02 } from './repository-types.ts';
 import type { ExecutionLimits, RunCommandAction } from '../contracts/foundation/uc03/v01/types.ts';
-import {
-  dockerCommandView,
-} from './repository-admission.ts';
-import {
-  assertCurrentCommandFenceV02,
-  matchesRepositoryAttemptV02,
-  matchesRepositoryIdentityV02,
-  validateRepositoryClaimV02,
-} from './repository-claim-lifecycle.ts';
-import type {
-  DockerWorkspaceManager,
-  StructuredCommandExecutor,
-  StructuredExecutionResult,
-  WorkspaceLease,
-} from './docker-workspace.ts';
-import {
-  bindCheckToAdmission,
-  bindCommandToAdmission,
-  commandExecutionLimits,
-  snapshotRepositoryAdmission,
-} from './repository-admission.ts';
+import { dockerCommandView } from './repository-admission.ts';
+import { assertCurrentCommandFenceV02, matchesRepositoryAttemptV02, matchesRepositoryIdentityV02, validateRepositoryClaimV02 } from './repository-claim-lifecycle.ts';
+import type { DockerWorkspaceManager, StructuredCommandExecutor, StructuredExecutionResult, WorkspaceLease } from './docker-workspace.ts';
+import { bindCheckToAdmission, bindCommandToAdmission, commandExecutionLimits, snapshotRepositoryAdmission } from './repository-admission.ts';
 import { ClaimClosurePendingError, RepositoryAttemptStartPendingError, RepositoryClaimLifecycleV02 } from './repository-claim-lifecycle.ts';
-import {
-  createCommandOutcomeReceipt,
-  normalizeCommandResult,
-  RepositoryOutcomeRecoveryV02,
-} from './repository-command-outcome.ts';
+import { createCommandOutcomeReceipt, normalizeCommandResult, RepositoryOutcomeRecoveryV02 } from './repository-command-outcome.ts';
 import { RepositoryAttemptStartRecoveryV02 } from './repository-attempt-start-recovery.ts';
 
 const noopCallback = (): void => undefined;
@@ -60,13 +39,7 @@ export async function beginRepositoryAttempt(
   _isRepairPatch: boolean,
   beforeBeginAttempt: () => void,
 ): Promise<AttemptReceiptV02> {
-  return (await beginRepositoryAttemptWithClaim(
-    statePort,
-    context,
-    executorIdentity,
-    _isRepairPatch,
-    beforeBeginAttempt,
-  )).attempt;
+  return (await beginRepositoryAttemptWithClaim(statePort, context, executorIdentity, _isRepairPatch, beforeBeginAttempt)).attempt;
 }
 
 /** Retain the legacy flag for existing callers; the admission defines progression. */
@@ -98,15 +71,15 @@ export async function beginRepositoryAttemptWithClaim(
   return { claim, attempt: attemptInput as AttemptReceiptV02 };
 }
 
-export function assertCurrentPatchFence(
-  lease: WorkspaceLease,
-  workspaceId: string,
-  currentGeneration: number,
-  receiverGeneration: number,
-): void {
-  if (lease.kind !== 'write' || lease.workspaceId !== workspaceId ||
-    !Number.isSafeInteger(currentGeneration) || currentGeneration <= 0 ||
-    lease.fencingGeneration !== currentGeneration || receiverGeneration !== currentGeneration) {
+export function assertCurrentPatchFence(lease: WorkspaceLease, workspaceId: string, currentGeneration: number, receiverGeneration: number): void {
+  if (
+    lease.kind !== 'write' ||
+    lease.workspaceId !== workspaceId ||
+    !Number.isSafeInteger(currentGeneration) ||
+    currentGeneration <= 0 ||
+    lease.fencingGeneration !== currentGeneration ||
+    receiverGeneration !== currentGeneration
+  ) {
     throw new Error('FENCED_EXECUTOR: Patch receiver is stale at the invocation boundary');
   }
 }
@@ -117,10 +90,8 @@ export interface PatchReceiverResult {
 }
 
 export function isPatchReceiverResult(input: unknown): input is PatchReceiverResult {
-  if (!isPlainRecord(input) || Object.keys(input).length !== 2 ||
-    !Object.hasOwn(input, 'applied') || !Object.hasOwn(input, 'newRevisionDigest')) return false;
-  return typeof input['applied'] === 'boolean' && typeof input['newRevisionDigest'] === 'string' &&
-    /^sha256:[a-f0-9]{64}$/u.test(input['newRevisionDigest']);
+  if (!isPlainRecord(input) || Object.keys(input).length !== 2 || !Object.hasOwn(input, 'applied') || !Object.hasOwn(input, 'newRevisionDigest')) return false;
+  return typeof input['applied'] === 'boolean' && typeof input['newRevisionDigest'] === 'string' && /^sha256:[a-f0-9]{64}$/u.test(input['newRevisionDigest']);
 }
 
 export async function executeAdmittedCommand(options: {
@@ -152,15 +123,21 @@ export async function executeAdmittedCommand(options: {
       payloadDigest: context.actionDigest,
     };
     executorIdentity = identity;
-    assertCurrentCommandFenceV02(manager, commandExecutor, lease, context.workspaceId, identity,
-      options.adapterIdentity, options.processIncarnation, options.fencingGeneration);
+    assertCurrentCommandFenceV02(manager, commandExecutor, lease, context.workspaceId, identity, options.adapterIdentity, options.processIncarnation, options.fencingGeneration);
 
     const activeView = manager.getActiveCommandView(context.workspaceId);
-    const admittedView = context.commandView;
-    if (!activeView || !admittedView || activeView.viewId !== admittedView.viewId ||
+    // The manager publishes and compares in v0.1 space, so project before comparing; the two key
+    // sets digest differently and a v0.2 digest can never equal a builder-published one.
+    const admittedView = context.commandView ? dockerCommandView(context) : null;
+    if (
+      !activeView ||
+      !admittedView ||
+      activeView.viewId !== admittedView.viewId ||
       activeView.viewDigest !== admittedView.viewDigest ||
-      activeView.canonicalRevisionDigest !== admittedView.canonicalRevision ||
-      activeView.taskId !== admittedView.taskId || activeView.workspaceId !== admittedView.workspaceId) {
+      activeView.canonicalRevisionDigest !== admittedView.canonicalRevisionDigest ||
+      activeView.taskId !== admittedView.taskId ||
+      activeView.workspaceId !== admittedView.workspaceId
+    ) {
       throw new Error('STALE_COMMAND_VIEW: Active command view does not match the admitted view');
     }
 
@@ -169,14 +146,16 @@ export async function executeAdmittedCommand(options: {
       context,
       identity,
       false,
-      () => assertCurrentCommandFenceV02(manager, commandExecutor, lease, context.workspaceId, identity,
-        options.adapterIdentity, options.processIncarnation, options.fencingGeneration),
-      (claim) => { claimed = claim; },
-      () => { attemptBeginStarted = true; },
+      () => assertCurrentCommandFenceV02(manager, commandExecutor, lease, context.workspaceId, identity, options.adapterIdentity, options.processIncarnation, options.fencingGeneration),
+      claim => {
+        claimed = claim;
+      },
+      () => {
+        attemptBeginStarted = true;
+      },
     );
     try {
-      assertCurrentCommandFenceV02(manager, commandExecutor, lease, context.workspaceId, identity,
-        options.adapterIdentity, options.processIncarnation, options.fencingGeneration);
+      assertCurrentCommandFenceV02(manager, commandExecutor, lease, context.workspaceId, identity, options.adapterIdentity, options.processIncarnation, options.fencingGeneration);
       const result = await commandExecutor.execute({
         workspaceId: context.workspaceId,
         action,
@@ -186,15 +165,10 @@ export async function executeAdmittedCommand(options: {
         context,
       });
       const normalized = normalizeCommandResult(result);
-      const outcome = createCommandOutcomeReceipt(
-        current.claim,
-        current.attempt,
-        context,
-        normalized ? 'observed' : 'uncertain',
-        normalized ?? undefined,
-      );
+      const outcome = createCommandOutcomeReceipt(current.claim, current.attempt, context, normalized ? 'observed' : 'uncertain', normalized ?? undefined);
       const recorded = await options.outcomeRecovery.record(lease, context, current.claim, current.attempt, outcome);
-      if (outcome.outcome === 'observed' && recorded.outcome === 'settled') return { ...result, executionReceipt: { claim: current.claim, attempt: current.attempt, outcome, settlement: recorded as typeof recorded & { readonly outcome: 'settled' } } };
+      if (outcome.outcome === 'observed' && recorded.outcome === 'settled')
+        return { ...result, executionReceipt: { claim: current.claim, attempt: current.attempt, outcome, settlement: recorded as typeof recorded & { readonly outcome: 'settled' } } };
       keepLease = true;
       throw new CommandOutcomePendingError(current.attempt.attemptId);
     } catch (error: unknown) {
@@ -233,22 +207,15 @@ export async function executeAdmittedCommand(options: {
     }
     throw error;
   } finally {
-    if (!keepLease && (!claimed || !options.claimLifecycle.hasPending(claimed.claimId)) &&
-      (!current || !options.outcomeRecovery.hasPending(current.attempt.attemptId))) await lease.release();
+    if (!keepLease && (!claimed || !options.claimLifecycle.hasPending(claimed.claimId)) && (!current || !options.outcomeRecovery.hasPending(current.attempt.attemptId))) await lease.release();
   }
 }
 
-export function matchesAttemptIdentity(
-  attempt: AttemptReceiptV02,
-  expected: ExecutorIdentityV02,
-): boolean {
+export function matchesAttemptIdentity(attempt: AttemptReceiptV02, expected: ExecutorIdentityV02): boolean {
   return matchesRepositoryIdentityV02(attempt.executorIdentity, expected);
 }
 
-export function matchesIdentity(
-  actual: ExecutorIdentityV02,
-  expected: ExecutorIdentityV02,
-): boolean {
+export function matchesIdentity(actual: ExecutorIdentityV02, expected: ExecutorIdentityV02): boolean {
   return matchesRepositoryIdentityV02(actual, expected);
 }
 
@@ -277,10 +244,7 @@ export class RepositoryCommandReceiver {
     this.options.commandExecutor?.setFencingGeneration(generation);
   }
 
-  async runCommand(
-    action: RunCommandAction,
-    context?: RepositoryAdmissionContextV02,
-  ): Promise<RepositoryCommandResultV02> {
+  async runCommand(action: RunCommandAction, context?: RepositoryAdmissionContextV02): Promise<RepositoryCommandResultV02> {
     if (!context) throw new Error('NOT_IMPLEMENTED: runCommand without v0.2 context is not implemented in v0.1 compatibility slice');
     const admitted = bindCommandToAdmission(action, snapshotRepositoryAdmission(context, 'run_command'));
     if (this.options.neutralStub) throw new Error('NEUTRAL_RECEIVER_STUB: Positive execution not implemented in T049 neutral stub');
@@ -349,13 +313,14 @@ export class RepositoryCommandReceiver {
       outcomeRecovery: this.outcomeRecovery,
       attemptStartRecovery: this.attemptStartRecovery,
     });
-    const outcome = result.timedOut || result.outcome === 'timeout'
-      ? 'timeout'
-      : result.exitCode === null || result.outcome === 'error'
-        ? 'error'
-        : result.outcome === 'success' && result.exitCode === 0
-          ? 'pass'
-          : 'fail';
+    const outcome =
+      result.timedOut || result.outcome === 'timeout'
+        ? 'timeout'
+        : result.exitCode === null || result.outcome === 'error'
+          ? 'error'
+          : result.outcome === 'success' && result.exitCode === 0
+            ? 'pass'
+            : 'fail';
     return {
       checkId: admittedCheck.checkId,
       outcome,
@@ -373,7 +338,9 @@ export class RepositoryCommandReceiver {
     return this.claimLifecycle.recoverUnattemptedClaim(claimId);
   }
 
-  hasPendingAttemptStart(recoveryId: string): boolean { return this.attemptStartRecovery.hasPending(recoveryId); }
+  hasPendingAttemptStart(recoveryId: string): boolean {
+    return this.attemptStartRecovery.hasPending(recoveryId);
+  }
 
   recoverAttemptStart(recoveryId: string): Promise<RepositoryAttemptStartRecoveryResultV02> {
     return this.attemptStartRecovery.recover(recoveryId);

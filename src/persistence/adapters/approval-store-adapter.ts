@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { isDeepStrictEqual } from 'node:util';
 import type { ApprovalStore, StoreResponse } from '../../approvals/service-data.ts';
+import type { PortProvenance } from '../../contracts/foundation/uc03.ts';
 import {
   type ApprovalRequestRecord,
   type ApprovalTaskControl,
@@ -11,7 +11,6 @@ import {
   type PolicyProfile,
   validateApprovalRequestRecord,
   validateApprovalTaskControl,
-  validateDecisionEvent,
   validateDeveloperDirection,
   validateHumanResolution,
   validatePolicyProfile,
@@ -36,16 +35,19 @@ import {
   taskDir,
   writeJsonAtomic,
 } from './approval-types.ts';
+import { appendEvent, appendEvents, readEvents } from './approval-events.ts';
 
 /** Durable file-backed approval store adapter implementing UC-05 contracts. */
 export class DurableApprovalStore implements ApprovalStore {
-  readonly provenance = 'mock' as const;
+  readonly provenance: PortProvenance;
   private readonly storageDir: string;
   readonly durableStore?: DurableStore | undefined;
   readonly profile: PolicyProfile;
 
   /** Initializes DurableApprovalStore with isolated directory and policy profile. */
-  constructor(options: DurableApprovalStoreOptions) {
+  constructor(options: DurableApprovalStoreOptions & { readonly provenance?: PortProvenance }) {
+    this.provenance = options.provenance ?? 'mock';
+    if (this.provenance !== 'mock' && this.provenance !== 'real') throw new Error('Invalid approval store provenance');
     this.storageDir = options.storageDir;
     this.durableStore = options.durableStore;
     if (options.profile === undefined) {
@@ -53,7 +55,7 @@ export class DurableApprovalStore implements ApprovalStore {
     } else {
       const profRes = validatePolicyProfile(options.profile);
       if (!profRes.ok) {
-        const msg = profRes.errors.map((e) => e.message).join('; ');
+        const msg = profRes.errors.map(e => e.message).join('; ');
         throw new Error(`Invalid policy profile: ${msg}`);
       }
       this.profile = profRes.value;
@@ -71,6 +73,20 @@ export class DurableApprovalStore implements ApprovalStore {
       return makeResponse(defaultControl, 'ok', 'initial-control-created', defaultControl);
     }
 
+    try {
+      const raw = JSON.parse(readFileSync(filePath, 'utf8'));
+      const validation = validateApprovalTaskControl(raw);
+      if (!validation.ok) return makeFailure<ApprovalTaskControl>(taskId, 1, 'denied', 'invalid-stored-control');
+      return makeResponse(validation.value, 'ok', 'task-control-loaded', validation.value);
+    } catch {
+      return makeFailure<ApprovalTaskControl>(taskId, 1, 'unavailable', 'read-error');
+    }
+  }
+
+  private readTaskControl(taskId: string): StoreResponse<ApprovalTaskControl> {
+    if (!isSafeId(taskId)) return makeFailure<ApprovalTaskControl>('unknown', 1, 'denied', 'invalid-id');
+    const filePath = join(taskDir(this.storageDir, taskId), 'control.json');
+    if (!existsSync(filePath)) return makeFailure<ApprovalTaskControl>(taskId, 1, 'denied', 'control-not-found');
     try {
       const raw = JSON.parse(readFileSync(filePath, 'utf8'));
       const validation = validateApprovalTaskControl(raw);
@@ -116,17 +132,7 @@ export class DurableApprovalStore implements ApprovalStore {
 
   /** Reads decision events for a task. */
   readEvents(taskId: string): StoreResponse<readonly DecisionEvent[]> {
-    if (!isSafeId(taskId)) return makeFailure<readonly DecisionEvent[]>('unknown', 1, 'denied', 'invalid-id');
-    const filePath = join(taskDir(this.storageDir, taskId), 'events.json');
-    if (!existsSync(filePath)) return makeResponse({ taskId, version: 1 }, 'ok', 'empty-events', []);
-
-    try {
-      const raw = JSON.parse(readFileSync(filePath, 'utf8'));
-      if (!Array.isArray(raw)) return makeFailure<readonly DecisionEvent[]>(taskId, 1, 'unavailable', 'read-error');
-      return makeResponse({ taskId, version: 1 }, 'ok', 'events-loaded', raw);
-    } catch {
-      return makeFailure<readonly DecisionEvent[]>(taskId, 1, 'unavailable', 'read-error');
-    }
+    return readEvents(this.storageDir, taskId);
   }
 
   /** Creates a pending approval request and transitions task to waiting mode. */
@@ -139,11 +145,15 @@ export class DurableApprovalStore implements ApprovalStore {
     if (!validReq.ok) return makeFailure<ApprovalRequestRecord>('unknown', 1, 'denied', 'invalid-request');
     const request = validReq.value;
 
-    const currentControlRes = this.loadTaskControl(request.taskId);
-    if (currentControlRes.safe.outcome !== 'ok' || !currentControlRes.value) {
+    const currentControlRes = this.readTaskControl(request.taskId);
+    let currentControl: ApprovalTaskControl;
+    if (currentControlRes.safe.outcome === 'ok' && currentControlRes.value) {
+      currentControl = currentControlRes.value;
+    } else if (currentControlRes.safe.safeReasonCode === 'control-not-found') {
+      currentControl = makeInitialControl(request.taskId);
+    } else {
       return makeFailure<ApprovalRequestRecord>(request.taskId, 1, 'denied', 'control-unavailable');
     }
-    const currentControl = currentControlRes.value;
 
     if (payload.expectedControlVersion !== undefined && currentControl.version !== payload.expectedControlVersion) {
       return makeFailure<ApprovalRequestRecord>(request.taskId, currentControl.version, 'conflict', 'version-conflict', request.decisionId);
@@ -198,7 +208,7 @@ export class DurableApprovalStore implements ApprovalStore {
     }
     const request = reqRes.value;
 
-    const currentControlRes = this.loadTaskControl(request.taskId);
+    const currentControlRes = this.readTaskControl(request.taskId);
     if (currentControlRes.safe.outcome !== 'ok' || !currentControlRes.value) {
       return makeFailure<HumanResolution>(request.taskId, 1, 'denied', 'control-unavailable', decisionId);
     }
@@ -223,7 +233,7 @@ export class DurableApprovalStore implements ApprovalStore {
       return makeFailure<HumanResolution>(request.taskId, currentControl.version, 'unavailable', 'history-unavailable', decisionId);
     }
 
-    const priorResolution = historyRes.value.resolutions.find((r) => r.decisionId === resolution.decisionId);
+    const priorResolution = historyRes.value.resolutions.find(r => r.decisionId === resolution.decisionId);
     if (priorResolution !== undefined && priorResolution.responseKey !== resolution.responseKey) {
       return makeFailure<HumanResolution>(request.taskId, currentControl.version, 'conflict', 'decision-not-pending', decisionId);
     }
@@ -263,12 +273,17 @@ export class DurableApprovalStore implements ApprovalStore {
 
     const rawDir = payload.direction as Record<string, unknown> | undefined;
     const taskId = typeof rawDir?.['taskId'] === 'string' ? rawDir['taskId'] : '';
+    if (!isSafeId(taskId)) return makeFailure<DeveloperDirection>('unknown', 1, 'denied', 'invalid-id');
 
-    const currentControlRes = this.loadTaskControl(taskId);
-    if (currentControlRes.safe.outcome !== 'ok' || !currentControlRes.value) {
-      return makeFailure<DeveloperDirection>(taskId, 1, 'denied', 'control-unavailable');
+    const controlReadRes = this.readTaskControl(taskId);
+    let currentControl: ApprovalTaskControl;
+    if (controlReadRes.safe.outcome === 'ok' && controlReadRes.value) {
+      currentControl = controlReadRes.value;
+    } else if (controlReadRes.safe.safeReasonCode === 'control-not-found') {
+      currentControl = makeInitialControl(taskId);
+    } else {
+      return makeFailure<DeveloperDirection>(taskId, 1, controlReadRes.safe.outcome, controlReadRes.safe.safeReasonCode);
     }
-    const currentControl = currentControlRes.value;
 
     const preErr = checkDirectionPreconditions(currentControl, payload);
     if (preErr) {
@@ -290,7 +305,7 @@ export class DurableApprovalStore implements ApprovalStore {
       return makeFailure<DeveloperDirection>(taskId, currentControl.version, 'unavailable', 'history-unavailable');
     }
 
-    const priorDirection = historyRes.value.directions.find((d) => d.directionId === direction.directionId);
+    const priorDirection = historyRes.value.directions.find(d => d.directionId === direction.directionId);
     if (priorDirection !== undefined && priorDirection.responseKey !== direction.responseKey) {
       return makeFailure<DeveloperDirection>(direction.taskId, currentControl.version, 'conflict', 'invalid-direction');
     }
@@ -332,7 +347,7 @@ export class DurableApprovalStore implements ApprovalStore {
     if (!validReq.ok) return makeFailure<ApprovalRequestRecord>('unknown', 1, 'denied', 'invalid-replacement');
     const replacement = validReq.value;
 
-    const controlRes = this.loadTaskControl(replacement.taskId);
+    const controlRes = this.readTaskControl(replacement.taskId);
     if (controlRes.safe.outcome !== 'ok' || !controlRes.value) {
       return makeFailure<ApprovalRequestRecord>(replacement.taskId, 1, 'denied', 'control-unavailable');
     }
@@ -343,16 +358,8 @@ export class DurableApprovalStore implements ApprovalStore {
       return makeFailure<ApprovalRequestRecord>(replacement.taskId, currentControl.version, 'conflict', preErr, replacement.decisionId);
     }
 
-    if (payload.events !== undefined) {
-      if (!Array.isArray(payload.events)) {
-        return makeFailure<ApprovalRequestRecord>(replacement.taskId, currentControl.version, 'denied', 'invalid-events', replacement.decisionId);
-      }
-      for (const ev of payload.events) {
-        const valid = validateDecisionEvent(ev, this.profile);
-        if (!valid.ok) {
-          return makeFailure<ApprovalRequestRecord>(replacement.taskId, currentControl.version, 'denied', 'invalid-event', replacement.decisionId);
-        }
-      }
+    if (payload.events !== undefined && !Array.isArray(payload.events)) {
+      return makeFailure<ApprovalRequestRecord>(replacement.taskId, currentControl.version, 'denied', 'invalid-events', replacement.decisionId);
     }
 
     const updatedControl: ApprovalTaskControl = {
@@ -368,14 +375,10 @@ export class DurableApprovalStore implements ApprovalStore {
     const repFile = join(decisionDir(this.storageDir, replacement.decisionId), 'request.json');
     try {
       writeJsonAtomic(repFile, replacement);
-      if (Array.isArray(payload.events)) {
-        for (const ev of payload.events) {
-          const evRes = this.appendEvent(replacement.taskId, ev);
-          if (!evRes.ok) {
-            rmSync(repFile, { force: true });
-            return makeFailure<ApprovalRequestRecord>(replacement.taskId, currentControl.version, evRes.error, evRes.reason, replacement.decisionId);
-          }
-        }
+      const evRes = this.appendEvents(replacement.taskId, payload.events);
+      if (!evRes.ok) {
+        rmSync(repFile, { force: true });
+        return makeFailure<ApprovalRequestRecord>(replacement.taskId, currentControl.version, evRes.error, evRes.reason, replacement.decisionId);
       }
       writeJsonAtomic(join(taskDir(this.storageDir, replacement.taskId), 'control.json'), updatedControl);
     } catch {
@@ -388,26 +391,10 @@ export class DurableApprovalStore implements ApprovalStore {
 
   /** Appends a decision event to the task audit log. */
   appendEvent(taskId: string, event: unknown): EventAppendResult {
-    if (event === undefined) return { ok: true, status: 'skipped' };
-    const valid = validateDecisionEvent(event, this.profile);
-    if (!valid.ok) return { ok: false, error: 'denied', reason: 'invalid-event' };
-    if (valid.value.taskId !== taskId) {
-      return { ok: false, error: 'denied', reason: 'task-id-mismatch' };
-    }
+    return appendEvent(this.storageDir, taskId, event, this.profile);
+  }
 
-    const res = this.readEvents(taskId);
-    if (res.safe.outcome !== 'ok' || !res.value) {
-      return { ok: false, error: 'unavailable', reason: 'events-unavailable' };
-    }
-
-    const existing = res.value.find((e) => e.eventId === valid.value.eventId);
-    if (existing !== undefined) {
-      return isDeepStrictEqual(existing, valid.value)
-        ? { ok: true, status: 'idempotent' }
-        : { ok: false, error: 'conflict', reason: 'event-conflict' };
-    }
-
-    writeJsonAtomic(join(taskDir(this.storageDir, taskId), 'events.json'), [...res.value, valid.value]);
-    return { ok: true, status: 'appended' };
+  appendEvents(taskId: string, events: readonly unknown[] | undefined): EventAppendResult {
+    return appendEvents(this.storageDir, taskId, events, this.profile);
   }
 }

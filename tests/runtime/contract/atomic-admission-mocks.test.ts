@@ -87,9 +87,10 @@ function assertAdmissionFixture(context: AdmissionContextV02): {
   readonly initialTaskState: TaskState;
   readonly transitionContexts: ReturnType<typeof createTestAdmissionTransitionContextsV02>;
 } {
-  const validation = context.subjectKind === 'repository-action'
-    ? validateAdmissionV02(context, createTestRepositoryAdmissionTrustedContextV02(context))
-    : validateAdmissionV02(context, createTestProviderAdmissionTrustedContextV02(context));
+  const validation =
+    context.subjectKind === 'repository-action'
+      ? validateAdmissionV02(context, createTestRepositoryAdmissionTrustedContextV02(context))
+      : validateAdmissionV02(context, createTestProviderAdmissionTrustedContextV02(context));
   assert.equal(validation.ok, true, `${context.subjectKind} admission fixture: ${JSON.stringify(validation)}`);
 
   const initialTaskState = createTestAdmissionTaskStateV02(context);
@@ -147,18 +148,11 @@ function assertClaimMatchesContext(claim: ClaimReceiptV02, context: AdmissionCon
   assert.equal(claim.postClaimControlVersion, context.expectedControlVersion + 1);
   assert.equal(claim.epoch, context.expectedEpoch);
 
-  const requiredRefs = context.subjectKind === 'repository-action'
-    ? context.reservationRefs
-    : [context.requestReservationReceipt, ...context.budgetRefs];
+  const requiredRefs = context.subjectKind === 'repository-action' ? context.reservationRefs : [context.requestReservationReceipt, ...context.budgetRefs];
   for (const ref of requiredRefs) assert.ok(claim.reservationRefs.includes(ref), `claim binds current reservation ${ref}`);
 }
 
-function assertAttemptMatchesContext(
-  attempt: AttemptReceiptV02,
-  claim: ClaimReceiptV02,
-  executor: ExecutorIdentityV02,
-  context: AdmissionContextV02,
-): void {
+function assertAttemptMatchesContext(attempt: AttemptReceiptV02, claim: ClaimReceiptV02, executor: ExecutorIdentityV02, context: AdmissionContextV02): void {
   assertIdentity(attempt.attemptId, 'attemptId');
   assert.equal(attempt.claimId, claim.claimId);
   assert.equal(attempt.taskId, context.taskId);
@@ -180,12 +174,7 @@ function assertAttemptMatchesContext(
   assert.equal(validation.ok, true, `attempt receipt: ${JSON.stringify(validation)}`);
 }
 
-function assertOutcomeMatchesFlow(
-  receipt: AttemptOutcomeReceiptV02,
-  claim: ClaimReceiptV02,
-  attempt: AttemptReceiptV02,
-  context: AdmissionContextV02,
-): void {
+function assertOutcomeMatchesFlow(receipt: AttemptOutcomeReceiptV02, claim: ClaimReceiptV02, attempt: AttemptReceiptV02, context: AdmissionContextV02): void {
   assertIdentity(receipt.receiptId, 'outcome receiptId');
   assertDigest(receipt.receiptDigest, 'outcome receiptDigest');
   assert.equal(receipt.claimId, claim.claimId);
@@ -226,10 +215,7 @@ function assertReconciliationMatchesPredecessor(
   assert.equal(receipt.attemptId, predecessor.attemptId);
   assert.equal(receipt.subjectKind, predecessor.subjectKind);
   assert.equal(receipt.planApplicability, predecessor.planApplicability);
-  const validation = validateAttemptReconciliationReceiptV02(
-    receipt,
-    createTestReconciliationValidationContextV02(receipt, predecessor, claim, attempt, context),
-  );
+  const validation = validateAttemptReconciliationReceiptV02(receipt, createTestReconciliationValidationContextV02(receipt, predecessor, claim, attempt, context));
   assert.equal(validation.ok, true, `reconciliation receipt: ${JSON.stringify(validation)}`);
 }
 
@@ -259,7 +245,7 @@ async function beginProviderAttempt(context = createTestProviderAdmissionContext
 }
 
 function providerLedgers(port: MemoryStatePortV02) {
-  return port.getLedgers().filter((ledger) => ledger.kind === 'tokens' || ledger.kind === 'cost');
+  return port.getLedgers().filter(ledger => ledger.kind === 'tokens' || ledger.kind === 'cost');
 }
 
 // ---------------------------------------------------------------------------
@@ -383,10 +369,10 @@ test('Journal: simulated lost Patch beginAttempt response leaves the claim open 
   assert.deepEqual(await flow.port.loadTask(context.taskId), afterFirst.task);
   assert.deepEqual(flow.port.getLedgers(), afterFirst.ledgers);
   assert.deepEqual(flow.port.getJournalSnapshot(), afterFirst.snapshot);
-  assert.equal(afterFirst.snapshot.claims.find((item) => item.claimId === flow.claim.claimId)?.status, 'attempting');
+  assert.equal(afterFirst.snapshot.claims.find(item => item.claimId === flow.claim.claimId)?.status, 'attempting');
   assert.equal(afterFirst.task?.stateVersion, context.expectedTaskStateVersion + 1);
   assert.equal(afterFirst.task?.node, 'Patch');
-  const repairLedger = afterFirst.ledgers.find((ledger) => ledger.scope === 'task' && ledger.kind === 'repair');
+  const repairLedger = afterFirst.ledgers.find(ledger => ledger.scope === 'task' && ledger.kind === 'repair');
   assert.ok(repairLedger);
   assert.equal(repairLedger.consumed, 1);
   assert.deepEqual(repairLedger.reservations, []);
@@ -408,11 +394,11 @@ test('Journal: failed initial Patch keeps one consumed allowance and cannot invo
 
   assert.equal(repository.patches.length, 1);
   assert.equal(repository.currentRevision, failedRevision);
-  const activeClaim = afterFailure.snapshot.claims.find((item) => item.claimId === afterFailure.snapshot.activeClaimId);
+  const activeClaim = afterFailure.snapshot.claims.find(item => item.claimId === afterFailure.snapshot.activeClaimId);
   assert.ok(activeClaim);
   assert.equal(activeClaim.status, 'attempting');
   assert.equal(afterFailure.task?.stateVersion, context.expectedTaskStateVersion + 1);
-  const repairLedger = afterFailure.ledgers.find((ledger) => ledger.scope === 'task' && ledger.kind === 'repair');
+  const repairLedger = afterFailure.ledgers.find(ledger => ledger.scope === 'task' && ledger.kind === 'repair');
   assert.ok(repairLedger);
   assert.equal(repairLedger.consumed, 1);
   assert.deepEqual(repairLedger.reservations, []);
@@ -462,20 +448,23 @@ test('Owner-generated approved Patch and Repair handoffs validate the consumed a
     assert.ok(settledTask);
     assert.equal(settledTask.stateVersion, receipt.attempt.postBeginTaskStateVersion + 1);
     assert.equal(settledTask.node, 'Verify');
-    const repairLedger = statePort.getLedgers().find((ledger) => ledger.scope === 'task' && ledger.kind === 'repair');
+    const repairLedger = statePort.getLedgers().find(ledger => ledger.scope === 'task' && ledger.kind === 'repair');
     assert.ok(repairLedger);
     assert.equal(repairLedger.consumed, 1);
     assert.deepEqual(repairLedger.reservations, []);
     assert.equal(repository.patches.length, 1);
 
-    for (const postBeginTaskStateVersion of [
-      receipt.attempt.preAttemptTaskStateVersion,
-      receipt.attempt.postBeginTaskStateVersion + 1,
-    ]) {
-      assert.equal(validateRepositoryExecutionReceiptV02({
-        ...receipt,
-        attempt: { ...receipt.attempt, postBeginTaskStateVersion },
-      }, context).ok, false);
+    for (const postBeginTaskStateVersion of [receipt.attempt.preAttemptTaskStateVersion, receipt.attempt.postBeginTaskStateVersion + 1]) {
+      assert.equal(
+        validateRepositoryExecutionReceiptV02(
+          {
+            ...receipt,
+            attempt: { ...receipt.attempt, postBeginTaskStateVersion },
+          },
+          context,
+        ).ok,
+        false,
+      );
     }
   }
 });
@@ -543,7 +532,7 @@ test('Positive vector: closeUnattemptedClaim closes a claimed task without begin
   assert.equal(result.receiptId, closureReceipt.receiptId);
   const closedSnapshot = flow.port.getJournalSnapshot();
   assert.deepEqual(closedSnapshot.closures, [{ receiptId: closureReceipt.receiptId, claimId: flow.claim.claimId, receiptDigest: closureReceipt.receiptDigest }]);
-  assert.equal(closedSnapshot.claims.find((item) => item.claimId === flow.claim.claimId)?.status, 'closed');
+  assert.equal(closedSnapshot.claims.find(item => item.claimId === flow.claim.claimId)?.status, 'closed');
 });
 
 test('Positive vector: reconcileUncertain consumes trusted provider usage for the exact uncertain predecessor (RED in T041, GREEN in T042)', async () => {
@@ -557,12 +546,15 @@ test('Positive vector: reconcileUncertain consumes trusted provider usage for th
   const effectEvidenceRef = { reference: 'evidence-reconciled-effect', digest: computeCanonicalSha256('evidence-reconciled-effect') };
   const accountingEvidenceRefs = [{ reference: 'evidence-reconciled-accounting', digest: computeCanonicalSha256('evidence-reconciled-accounting') }];
   const observedUsage = { inputTokens: 100, outputTokens: 20, billableTokens: 120, costUsd: 0.003 };
-  assert.equal(await flow.port.publishRecoveryEvidence({
-    predecessorReceiptId: outcomeReceipt.receiptId,
-    effectEvidenceRef,
-    accountingEvidenceRefs,
-    observedUsage,
-  }), true);
+  assert.equal(
+    await flow.port.publishRecoveryEvidence({
+      predecessorReceiptId: outcomeReceipt.receiptId,
+      effectEvidenceRef,
+      accountingEvidenceRefs,
+      observedUsage,
+    }),
+    true,
+  );
   assert.equal(await flow.port.setTaskControl(flow.context.taskId, 'paused', 'pause-provider-recovery-positive-001'), true);
   assert.ok(await flow.port.fenceAttemptRecipient(flow.claim.claimId, flow.executor));
   const reconciliation = createTestUncertainReconciliationReceiptV02(outcomeReceipt, flow.claim, flow.attempt, flow.context, {
@@ -579,9 +571,9 @@ test('Positive vector: reconcileUncertain consumes trusted provider usage for th
   assert.equal(result.outcome, 'settled');
   assert.equal(result.receiptId, reconciliation.reconciliationId);
   const after = flow.port.getLedgers();
-  for (const ledger of after.filter((item) => item.kind === 'tokens')) assert.equal(ledger.consumed, observedUsage.billableTokens);
-  for (const ledger of after.filter((item) => item.kind === 'cost')) assert.equal(ledger.consumed, observedUsage.costUsd);
-  assert.ok(after.every((ledger) => ledger.reservations.length === 0));
+  for (const ledger of after.filter(item => item.kind === 'tokens')) assert.equal(ledger.consumed, observedUsage.billableTokens);
+  for (const ledger of after.filter(item => item.kind === 'cost')) assert.equal(ledger.consumed, observedUsage.costUsd);
+  assert.ok(after.every(ledger => ledger.reservations.length === 0));
 });
 
 // ---------------------------------------------------------------------------
@@ -633,12 +625,28 @@ test('Extended Acceptance: claim denies on stale expectedControlVersion with zer
 });
 
 test('Extended Acceptance: open claim blocks fresh claim with different ID', async () => {
-  const context1 = createTestRepositoryAdmissionContextV02({ action: { actionId: 'act-001', kind: 'apply_patch', patchContent: 'x', targetPaths: ['src/calculator.py'], baseRevisionDigest: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' } });
+  const context1 = createTestRepositoryAdmissionContextV02({
+    action: {
+      actionId: 'act-001',
+      kind: 'apply_patch',
+      patchContent: 'x',
+      targetPaths: ['src/calculator.py'],
+      baseRevisionDigest: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+    },
+  });
   const port = createPort(context1);
   const claim1 = await port.claim(context1);
   assert.equal(isNeutralClaimReceiptV02(claim1), false);
 
-  const context2 = createTestRepositoryAdmissionContextV02({ action: { actionId: 'act-002', kind: 'apply_patch', patchContent: 'y', targetPaths: ['src/calculator.py'], baseRevisionDigest: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' } });
+  const context2 = createTestRepositoryAdmissionContextV02({
+    action: {
+      actionId: 'act-002',
+      kind: 'apply_patch',
+      patchContent: 'y',
+      targetPaths: ['src/calculator.py'],
+      baseRevisionDigest: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+    },
+  });
   const beforeTask = await port.loadTask(context1.taskId);
   const beforeLedgers = port.getLedgers();
   const beforeSnapshot = port.getJournalSnapshot();
@@ -728,7 +736,7 @@ test('Extended Acceptance: beginAttempt consumes exactly one repair allowance on
   const context = createTestRepositoryAdmissionContextV02();
   const port = createPort(context);
   const beforeLedgers = port.getLedgers();
-  const beforeRepair = beforeLedgers.find((l) => l.scope === 'task' && l.kind === 'repair');
+  const beforeRepair = beforeLedgers.find(l => l.scope === 'task' && l.kind === 'repair');
   assert.ok(beforeRepair);
   const initialConsumed = beforeRepair.consumed;
 
@@ -738,7 +746,7 @@ test('Extended Acceptance: beginAttempt consumes exactly one repair allowance on
   assert.equal(isNeutralAttemptReceiptV02(attempt), false);
 
   const afterLedgers = port.getLedgers();
-  const afterRepair = afterLedgers.find((l) => l.scope === 'task' && l.kind === 'repair');
+  const afterRepair = afterLedgers.find(l => l.scope === 'task' && l.kind === 'repair');
   assert.ok(afterRepair);
   assert.equal(afterRepair.consumed, initialConsumed + 1, 'Exactly one repair allowance consumed at beginAttempt');
 });
@@ -757,12 +765,7 @@ test('Extended Acceptance: reconcileUncertain denies when predecessor is not unc
   await flow.port.recordOutcome(observedReceipt);
 
   const fakeUncertainPredecessor = createTestRepositoryOutcomeReceiptV02(flow.claim, flow.attempt, flow.context, { outcome: 'uncertain' });
-  const reconciliation = createTestUncertainReconciliationReceiptV02(
-    fakeUncertainPredecessor,
-    flow.claim,
-    flow.attempt,
-    flow.context
-  );
+  const reconciliation = createTestUncertainReconciliationReceiptV02(fakeUncertainPredecessor, flow.claim, flow.attempt, flow.context);
   const result = await flow.port.reconcileUncertain(reconciliation);
   assert.equal(result.outcome, 'conflict', 'reconcileUncertain requires recorded uncertain predecessor');
 });
@@ -808,24 +811,18 @@ test('Extended Acceptance: reconcileUncertain with proven-not-dispatched records
   const fence = await flow.port.fenceAttemptRecipient(flow.claim.claimId, flow.executor);
   assert.ok(fence);
 
-  const reconciliation = createTestUncertainReconciliationReceiptV02(
-    outcomeReceipt,
-    flow.claim,
-    flow.attempt,
-    flow.context,
-    {
-      disposition: 'proven-not-dispatched',
-      adapterEvidenceRefs: fence.adapterEvidenceRefs,
-      fencedRecipientIdentity: fence.recipientIdentity,
-      fencingGeneration: fence.fencingGeneration,
-      fencingProof: fence.proofRef,
-      evidenceRefs: [...fence.adapterEvidenceRefs, fence.proofRef],
-      expectedCurrentControlVersion: flow.port.getJournalSnapshot().controlVersion,
-    }
-  );
+  const reconciliation = createTestUncertainReconciliationReceiptV02(outcomeReceipt, flow.claim, flow.attempt, flow.context, {
+    disposition: 'proven-not-dispatched',
+    adapterEvidenceRefs: fence.adapterEvidenceRefs,
+    fencedRecipientIdentity: fence.recipientIdentity,
+    fencingGeneration: fence.fencingGeneration,
+    fencingProof: fence.proofRef,
+    evidenceRefs: [...fence.adapterEvidenceRefs, fence.proofRef],
+    expectedCurrentControlVersion: flow.port.getJournalSnapshot().controlVersion,
+  });
   const result = await flow.port.reconcileUncertain(reconciliation);
   assert.equal(result.outcome, 'settled');
-  const repair = flow.port.getLedgers().find((ledger) => ledger.scope === 'task' && ledger.kind === 'repair');
+  const repair = flow.port.getLedgers().find(ledger => ledger.scope === 'task' && ledger.kind === 'repair');
   assert.ok(repair);
   assert.equal(repair.consumed, 1, 'proven non-dispatch after begin does not refund the consumed repair slot');
   assert.equal(repair.reservations.length, 0);
@@ -873,21 +870,22 @@ test('Journal regressions: claim reserves exact provider task/run ledgers before
   const claim = await port.claim(context);
 
   assert.equal(isNeutralClaimReceiptV02(claim), false);
-  const reservations = port.getLedgers().flatMap((ledger) => ledger.reservations.map((reservation) => ({
-    scope: ledger.scope,
-    kind: ledger.kind,
-    ...reservation,
-  })));
-  assert.deepEqual(
-    reservations.map(({ scope, kind }) => `${scope}:${kind}`).sort(),
-    ['run:cost', 'run:tokens', 'task:cost', 'task:tokens'],
+  const reservations = port.getLedgers().flatMap(ledger =>
+    ledger.reservations.map(reservation => ({
+      scope: ledger.scope,
+      kind: ledger.kind,
+      ...reservation,
+    })),
   );
-  assert.deepEqual(reservations.map((reservation) => reservation.reservationId).sort(), [...context.budgetRefs].sort());
+  assert.deepEqual(reservations.map(({ scope, kind }) => `${scope}:${kind}`).sort(), ['run:cost', 'run:tokens', 'task:cost', 'task:tokens']);
+  assert.deepEqual(reservations.map(reservation => reservation.reservationId).sort(), [...context.budgetRefs].sort());
   assert.deepEqual(
-    Object.fromEntries(reservations.map((reservation) => [`${reservation.scope}:${reservation.kind}`, reservation.reservationId])),
+    Object.fromEntries(reservations.map(reservation => [`${reservation.scope}:${reservation.kind}`, reservation.reservationId])),
     {
-      'task:tokens': context.budgetRefs[0], 'task:cost': context.budgetRefs[1],
-      'run:tokens': context.budgetRefs[2], 'run:cost': context.budgetRefs[3],
+      'task:tokens': context.budgetRefs[0],
+      'task:cost': context.budgetRefs[1],
+      'run:tokens': context.budgetRefs[2],
+      'run:cost': context.budgetRefs[3],
     },
     'each exact finite provider ref is reserved on its specified task/run ledger',
   );
@@ -903,13 +901,13 @@ test('Journal regressions: concurrent begins admit one repair attempt and consum
     flow.port.beginAttempt(flow.claim.claimId, createTestExecutorIdentityV02({ payloadDigest: flow.context.actionDigest })),
   ]);
 
-  assert.equal(results.filter((result) => !isNeutralAttemptReceiptV02(result)).length, 1);
+  assert.equal(results.filter(result => !isNeutralAttemptReceiptV02(result)).length, 1);
   const afterTask = await flow.port.loadTask(flow.context.taskId);
   assert.ok(afterTask);
   assert.equal(afterTask.node, 'Patch');
   assert.equal(afterTask.stateVersion, flow.context.expectedTaskStateVersion + 1);
-  const repairBefore = before.find((ledger) => ledger.scope === 'task' && ledger.kind === 'repair');
-  const repairAfter = flow.port.getLedgers().find((ledger) => ledger.scope === 'task' && ledger.kind === 'repair');
+  const repairBefore = before.find(ledger => ledger.scope === 'task' && ledger.kind === 'repair');
+  const repairAfter = flow.port.getLedgers().find(ledger => ledger.scope === 'task' && ledger.kind === 'repair');
   assert.ok(repairBefore && repairAfter);
   assert.equal(repairAfter.consumed, repairBefore.consumed + 1);
   assert.equal(repairAfter.reservations.length, 0);
@@ -920,7 +918,7 @@ test('Journal regressions: missing or partial resource ledgers deny claim withou
   const repairState = createTestAdmissionTaskStateV02(repairContext);
   const missingRepairState: TaskState = {
     ...repairState,
-    budgetLedgers: repairState.budgetLedgers?.filter((ledger) => ledger.kind !== 'repair'),
+    budgetLedgers: repairState.budgetLedgers?.filter(ledger => ledger.kind !== 'repair'),
   };
   const repairPort = createPort(repairContext, { initialTaskState: missingRepairState });
   const repairBefore = repairPort.getLedgers();
@@ -935,7 +933,7 @@ test('Journal regressions: missing or partial resource ledgers deny claim withou
   const providerState = createTestAdmissionTaskStateV02(providerContext);
   const partialProviderState: TaskState = {
     ...providerState,
-    budgetLedgers: providerState.budgetLedgers?.filter((ledger) => !(ledger.scope === 'run' && ledger.kind === 'cost')),
+    budgetLedgers: providerState.budgetLedgers?.filter(ledger => !(ledger.scope === 'run' && ledger.kind === 'cost')),
   };
   const providerPort = createPort(providerContext, { initialTaskState: partialProviderState });
   const providerBefore = providerPort.getLedgers();
@@ -966,7 +964,7 @@ test('Journal regressions: malformed admission digest is refused with no task or
 test('Journal regressions: diagnostic test patch does not reserve or consume repair allowance', async () => {
   const context = createTestDiagnosticPatchAdmissionContextV02();
   const port = createPort(context);
-  const before = port.getLedgers().find((ledger) => ledger.scope === 'task' && ledger.kind === 'repair');
+  const before = port.getLedgers().find(ledger => ledger.scope === 'task' && ledger.kind === 'repair');
   assert.ok(before);
 
   const claim = await port.claim(context);
@@ -977,7 +975,7 @@ test('Journal regressions: diagnostic test patch does not reserve or consume rep
   assert.equal(isNeutralAttemptReceiptV02(attempt), false);
   assert.equal(attempt.postBeginTaskStateVersion, attempt.preAttemptTaskStateVersion);
 
-  const after = port.getLedgers().find((ledger) => ledger.scope === 'task' && ledger.kind === 'repair');
+  const after = port.getLedgers().find(ledger => ledger.scope === 'task' && ledger.kind === 'repair');
   assert.ok(after);
   assert.deepEqual(after, before);
   assert.equal((await port.loadTask(context.taskId))?.node, 'Investigate');
@@ -1003,9 +1001,7 @@ test('Journal R3: observed diagnostic patch settles revision and exact invalidat
   assert.equal(attempt.postBeginTaskStateVersion, attempt.preAttemptTaskStateVersion);
   const baseOutcome = createTestRepositoryOutcomeReceiptV02(claim, attempt, context);
   const outcome = createTestRepositoryOutcomeReceiptV02(claim, attempt, context, {
-    proposedEffects: { ...baseOutcome.proposedEffects, invalidatedEvidence: [
-      { reference: 'evidence-prior-baseline', digest: computeCanonicalSha256('evidence-prior-baseline') },
-    ] },
+    proposedEffects: { ...baseOutcome.proposedEffects, invalidatedEvidence: [{ reference: 'evidence-prior-baseline', digest: computeCanonicalSha256('evidence-prior-baseline') }] },
   });
   assert.deepEqual(outcome.proposedEffects.taskTransition, { kind: 'none' });
 
@@ -1022,8 +1018,8 @@ test('Journal R3: observed diagnostic patch settles revision and exact invalidat
   assert.equal(context.planDecisionRef, undefined);
   assert.deepEqual(port.getLedgers(), beforeLedgers);
   const settledSnapshot = port.getJournalSnapshot();
-  assert.equal(settledSnapshot.claims.find((row) => row.claimId === claim.claimId)?.status, 'settled');
-  assert.ok(settledSnapshot.outcomes.some((row) => row.receiptId === outcome.receiptId));
+  assert.equal(settledSnapshot.claims.find(row => row.claimId === claim.claimId)?.status, 'settled');
+  assert.ok(settledSnapshot.outcomes.some(row => row.receiptId === outcome.receiptId));
 
   assert.deepEqual(await port.recordOutcome(outcome), { outcome: 'already-recorded', receiptId: outcome.receiptId });
   assert.deepEqual(await port.loadTask(context.taskId), settledTask);
@@ -1051,8 +1047,8 @@ test('Journal R3: uncertain diagnostic patch requires its exact predecessor, evi
   const retainedTask = await port.loadTask(context.taskId);
   const retainedSnapshot = port.getJournalSnapshot();
   assert.deepEqual(retainedTask, beforeOutcomeTask);
-  assert.equal(retainedSnapshot.claims.find((row) => row.claimId === claim.claimId)?.status, 'uncertain');
-  assert.ok(retainedSnapshot.outcomes.some((row) => row.receiptId === uncertain.receiptId));
+  assert.equal(retainedSnapshot.claims.find(row => row.claimId === claim.claimId)?.status, 'uncertain');
+  assert.ok(retainedSnapshot.outcomes.some(row => row.receiptId === uncertain.receiptId));
   assert.deepEqual(port.getLedgers(), beforeLedgers);
 
   const invalidatedEvidence = [{ reference: 'evidence-prior-diagnostic-r3', digest: computeCanonicalSha256('evidence-prior-diagnostic-r3') }];
@@ -1072,7 +1068,10 @@ test('Journal R3: uncertain diagnostic patch requires its exact predecessor, evi
   const wrongPredecessor = createTestUncertainReconciliationReceiptV02(uncertain, claim, attempt, context, {
     reconciliationId: 'recon-diagnostic-wrong-predecessor-r3',
     predecessorReceiptId: 'foreign-diagnostic-predecessor-r3',
-    disposition: 'observed-and-accounted', effectEvidenceRef, accountingEvidenceRefs, evidenceRefs,
+    disposition: 'observed-and-accounted',
+    effectEvidenceRef,
+    accountingEvidenceRefs,
+    evidenceRefs,
     expectedCurrentControlVersion: retainedSnapshot.controlVersion,
   });
   assert.equal((await port.reconcileUncertain(wrongPredecessor)).outcome, 'conflict');
@@ -1082,7 +1081,10 @@ test('Journal R3: uncertain diagnostic patch requires its exact predecessor, evi
 
   const missingEvidence = createTestUncertainReconciliationReceiptV02(uncertain, claim, attempt, context, {
     reconciliationId: 'recon-diagnostic-missing-evidence-r3',
-    disposition: 'observed-and-accounted', effectEvidenceRef, accountingEvidenceRefs, evidenceRefs,
+    disposition: 'observed-and-accounted',
+    effectEvidenceRef,
+    accountingEvidenceRefs,
+    evidenceRefs,
     expectedCurrentControlVersion: retainedSnapshot.controlVersion,
   });
   assert.equal((await port.reconcileUncertain(missingEvidence)).outcome, 'conflict');
@@ -1100,7 +1102,10 @@ test('Journal R3: uncertain diagnostic patch requires its exact predecessor, evi
   const evidenceSnapshot = port.getJournalSnapshot();
   const unfenced = createTestUncertainReconciliationReceiptV02(uncertain, claim, attempt, context, {
     reconciliationId: 'recon-diagnostic-unfenced-r3',
-    disposition: 'observed-and-accounted', effectEvidenceRef, accountingEvidenceRefs, evidenceRefs,
+    disposition: 'observed-and-accounted',
+    effectEvidenceRef,
+    accountingEvidenceRefs,
+    evidenceRefs,
     expectedCurrentControlVersion: evidenceSnapshot.controlVersion,
   });
   assert.equal((await port.reconcileUncertain(unfenced)).outcome, 'conflict');
@@ -1112,7 +1117,10 @@ test('Journal R3: uncertain diagnostic patch requires its exact predecessor, evi
   assert.ok(await port.fenceAttemptRecipient(claim.claimId, executor));
   const recovery = createTestUncertainReconciliationReceiptV02(uncertain, claim, attempt, context, {
     reconciliationId: 'recon-diagnostic-fenced-r3',
-    disposition: 'observed-and-accounted', effectEvidenceRef, accountingEvidenceRefs, evidenceRefs,
+    disposition: 'observed-and-accounted',
+    effectEvidenceRef,
+    accountingEvidenceRefs,
+    evidenceRefs,
     expectedCurrentTaskStateVersion: attempt.postBeginTaskStateVersion,
     expectedCurrentControlVersion: port.getJournalSnapshot().controlVersion,
   });
@@ -1127,7 +1135,7 @@ test('Journal R3: uncertain diagnostic patch requires its exact predecessor, evi
   assert.deepEqual(port.getLedgers(), beforeLedgers);
   const settledSnapshot = port.getJournalSnapshot();
   assert.equal(settledSnapshot.mode, 'paused');
-  assert.equal(settledSnapshot.claims.find((row) => row.claimId === claim.claimId)?.status, 'settled');
+  assert.equal(settledSnapshot.claims.find(row => row.claimId === claim.claimId)?.status, 'settled');
 
   assert.deepEqual(await port.recordOutcome(uncertain), { outcome: 'already-recorded', receiptId: uncertain.receiptId });
   assert.deepEqual(await port.reconcileUncertain(recovery), { outcome: 'settled', receiptId: recovery.reconciliationId });
@@ -1145,21 +1153,23 @@ test('Journal regressions: a provider outcome settles one attempt once and exact
   const afterFirst = flow.port.getLedgers();
   const afterFirstTask = await flow.port.loadTask(flow.context.taskId);
   const afterFirstSnapshot = flow.port.getJournalSnapshot();
-  const settledProviderLedgers = afterFirst.filter((ledger) => ledger.kind === 'tokens' || ledger.kind === 'cost');
+  const settledProviderLedgers = afterFirst.filter(ledger => ledger.kind === 'tokens' || ledger.kind === 'cost');
   assert.equal(settledProviderLedgers.length, 4);
   for (const ledger of settledProviderLedgers) {
     assert.equal(ledger.consumed, ledger.kind === 'cost' ? outcome.observedUsage.costUsd : outcome.observedUsage.billableTokens);
     assert.equal(ledger.reservations.length, 0);
   }
-  assert.equal(afterFirst.find((ledger) => ledger.scope === 'task' && ledger.kind === 'repair')?.consumed, 0);
-  assert.deepEqual(afterFirstSnapshot.outcomes, [{
-    receiptId: outcome.receiptId,
-    claimId: flow.claim.claimId,
-    attemptId: flow.attempt.attemptId,
-    outcome: 'observed',
-    receiptDigest: outcome.receiptDigest,
-  }]);
-  assert.equal(afterFirstSnapshot.attempts.find((item) => item.attemptId === flow.attempt.attemptId)?.status, 'settled');
+  assert.equal(afterFirst.find(ledger => ledger.scope === 'task' && ledger.kind === 'repair')?.consumed, 0);
+  assert.deepEqual(afterFirstSnapshot.outcomes, [
+    {
+      receiptId: outcome.receiptId,
+      claimId: flow.claim.claimId,
+      attemptId: flow.attempt.attemptId,
+      outcome: 'observed',
+      receiptDigest: outcome.receiptDigest,
+    },
+  ]);
+  assert.equal(afterFirstSnapshot.attempts.find(item => item.attemptId === flow.attempt.attemptId)?.status, 'settled');
 
   const replay = await flow.port.recordOutcome(outcome);
   assert.deepEqual(replay, { outcome: 'already-recorded', receiptId: outcome.receiptId });
@@ -1226,9 +1236,9 @@ test('Journal regressions: reconciliation binds the exact predecessor and refuse
   const flow = await beginProviderAttempt();
   const outcome = createTestProviderOutcomeReceiptV02(flow.claim, flow.attempt, flow.context, { outcome: 'uncertain' });
   assert.deepEqual(await flow.port.recordOutcome(outcome), { outcome: 'uncertain', receiptId: outcome.receiptId });
-  const uncertainLedgers = flow.port.getLedgers().filter((ledger) => ledger.kind === 'tokens' || ledger.kind === 'cost');
+  const uncertainLedgers = flow.port.getLedgers().filter(ledger => ledger.kind === 'tokens' || ledger.kind === 'cost');
   assert.equal(uncertainLedgers.length, 4);
-  assert.ok(uncertainLedgers.every((ledger) => ledger.consumed === 0 && ledger.reservations.length === 1));
+  assert.ok(uncertainLedgers.every(ledger => ledger.consumed === 0 && ledger.reservations.length === 1));
   const effectEvidenceRef = { reference: 'evidence-reconciled-effect', digest: computeCanonicalSha256('evidence-reconciled-effect') };
   const accountingEvidenceRefs = [{ reference: 'evidence-reconciled-accounting', digest: computeCanonicalSha256('evidence-reconciled-accounting') }];
   const observedUsage = { inputTokens: 100, outputTokens: 20, billableTokens: 120, costUsd: 0.003 };
@@ -1236,8 +1246,11 @@ test('Journal regressions: reconciliation binds the exact predecessor and refuse
   assert.equal(await flow.port.setTaskControl(flow.context.taskId, 'paused', 'pause-provider-recovery-idempotency-001'), true);
   assert.ok(await flow.port.fenceAttemptRecipient(flow.claim.claimId, flow.executor));
   const reconciliation = createTestUncertainReconciliationReceiptV02(outcome, flow.claim, flow.attempt, flow.context, {
-    disposition: 'observed-and-accounted', effectEvidenceRef, accountingEvidenceRefs,
-    evidenceRefs: [effectEvidenceRef, ...accountingEvidenceRefs], observedUsage,
+    disposition: 'observed-and-accounted',
+    effectEvidenceRef,
+    accountingEvidenceRefs,
+    evidenceRefs: [effectEvidenceRef, ...accountingEvidenceRefs],
+    observedUsage,
     expectedCurrentControlVersion: flow.port.getJournalSnapshot().controlVersion,
   });
   const first = await flow.port.reconcileUncertain(reconciliation);
@@ -1245,13 +1258,15 @@ test('Journal regressions: reconciliation binds the exact predecessor and refuse
   const afterFirst = flow.port.getLedgers();
   const afterFirstTask = await flow.port.loadTask(flow.context.taskId);
   const afterFirstSnapshot = flow.port.getJournalSnapshot();
-  assert.deepEqual(afterFirstSnapshot.reconciliations, [{
-    reconciliationId: reconciliation.reconciliationId,
-    claimId: flow.claim.claimId,
-    attemptId: flow.attempt.attemptId,
-    predecessorReceiptId: outcome.receiptId,
-    receiptDigest: reconciliation.reconciliationDigest,
-  }]);
+  assert.deepEqual(afterFirstSnapshot.reconciliations, [
+    {
+      reconciliationId: reconciliation.reconciliationId,
+      claimId: flow.claim.claimId,
+      attemptId: flow.attempt.attemptId,
+      predecessorReceiptId: outcome.receiptId,
+      receiptDigest: reconciliation.reconciliationDigest,
+    },
+  ]);
 
   const altered = {
     ...reconciliation,
@@ -1384,7 +1399,7 @@ test('Journal regressions: authority publication winning before beginAttempt lea
   assert.deepEqual(port.getJournalSnapshot().activeAuthorityRef, replacement);
   assert.deepEqual(await port.loadTask(context.taskId), beforeTask);
   assert.deepEqual(port.getLedgers(), beforeLedgers);
-  assert.equal(port.getJournalSnapshot().claims.find((item) => item.claimId === claim.claimId)?.status, 'claimed');
+  assert.equal(port.getJournalSnapshot().claims.find(item => item.claimId === claim.claimId)?.status, 'claimed');
 });
 
 test('Journal regressions: beginAttempt winning before publication remains one admitted in-flight attempt', async () => {
@@ -1395,21 +1410,18 @@ test('Journal regressions: beginAttempt winning before publication remains one a
   const replacement = { ...context.policyAuthorityRef, decisionAuthorityGeneration: context.policyAuthorityRef.decisionAuthorityGeneration + 1 };
   const beforePublication = port.getJournalSnapshot();
 
-  const [attempt, publication] = await Promise.all([
-    port.beginAttempt(claim.claimId, actor),
-    port.publishAuthority({ authorityRef: replacement }),
-  ]);
+  const [attempt, publication] = await Promise.all([port.beginAttempt(claim.claimId, actor), port.publishAuthority({ authorityRef: replacement })]);
   assert.equal(isNeutralAttemptReceiptV02(attempt), false);
 
   assert.equal(publication.status, 'published');
   assert.equal(port.getJournalSnapshot().controlVersion, beforePublication.controlVersion + 2);
   assert.deepEqual(port.getJournalSnapshot().activeAuthorityRef, replacement);
-  assert.equal(port.getJournalSnapshot().claims.find((item) => item.claimId === claim.claimId)?.status, 'attempting');
+  assert.equal(port.getJournalSnapshot().claims.find(item => item.claimId === claim.claimId)?.status, 'attempting');
   assert.equal(isNeutralAttemptReceiptV02(await port.beginAttempt(claim.claimId, actor)), true);
   const task = await port.loadTask(context.taskId);
   assert.ok(task);
   assert.equal(task.node, 'Patch');
-  const repair = port.getLedgers().find((ledger) => ledger.scope === 'task' && ledger.kind === 'repair');
+  const repair = port.getLedgers().find(ledger => ledger.scope === 'task' && ledger.kind === 'repair');
   assert.ok(repair);
   assert.equal(repair.consumed, 1);
 });
@@ -1423,10 +1435,7 @@ test('Journal regressions: pause denies begin and fenced no-attempt closure rele
   const beforeTask = await port.loadTask(context.taskId);
   const beforeLedgers = port.getLedgers();
 
-  const [paused, attempt] = await Promise.all([
-    port.setTaskControl(context.taskId, 'paused', 'pause-event-001'),
-    port.beginAttempt(claim.claimId, actor),
-  ]);
+  const [paused, attempt] = await Promise.all([port.setTaskControl(context.taskId, 'paused', 'pause-event-001'), port.beginAttempt(claim.claimId, actor)]);
   assert.equal(paused, true);
   assert.equal(isNeutralAttemptReceiptV02(attempt), true);
   assert.deepEqual(await port.loadTask(context.taskId), beforeTask);
@@ -1443,9 +1452,9 @@ test('Journal regressions: pause denies begin and fenced no-attempt closure rele
   const closed = await port.closeUnattemptedClaim(closure);
   assert.deepEqual(closed, { closed: true, receiptId: closure.receiptId });
   assert.equal(port.getJournalSnapshot().mode, 'paused');
-  assert.equal(port.getJournalSnapshot().claims.find((item) => item.claimId === claim.claimId)?.status, 'closed');
+  assert.equal(port.getJournalSnapshot().claims.find(item => item.claimId === claim.claimId)?.status, 'closed');
   assert.ok(port.getJournalSnapshot().fencedIncarnations.length > 0);
-  const repair = port.getLedgers().find((ledger) => ledger.scope === 'task' && ledger.kind === 'repair');
+  const repair = port.getLedgers().find(ledger => ledger.scope === 'task' && ledger.kind === 'repair');
   assert.ok(repair);
   assert.equal(repair.consumed, 0);
   assert.equal(repair.reservations.length, 0);
@@ -1454,7 +1463,7 @@ test('Journal regressions: pause denies begin and fenced no-attempt closure rele
   const conflictingClosure = createTestClaimClosureReceiptV02(claim, fence.fencedExecutorIdentity, { reason: 'conflicting replay' });
   assert.equal((await port.closeUnattemptedClaim(conflictingClosure)).closed, false);
   assert.equal(port.getJournalSnapshot().mode, 'paused');
-  assert.equal(port.getJournalSnapshot().claims.find((item) => item.claimId === claim.claimId)?.status, 'closed');
+  assert.equal(port.getJournalSnapshot().claims.find(item => item.claimId === claim.claimId)?.status, 'closed');
 
   const repository = new FakeRepositoryPort({ initialRevision: context.canonicalRevision });
   const receiver = createGraphRepositoryPort(repository, port);
@@ -1467,20 +1476,17 @@ test('Journal regressions: begin winning a queued pause admits once and prevents
   const port = createPort(context);
   const claim = await port.claim(context);
   const actor = createTestExecutorIdentityV02({ payloadDigest: context.actionDigest });
-  const [attempt, paused] = await Promise.all([
-    port.beginAttempt(claim.claimId, actor),
-    port.setTaskControl(context.taskId, 'paused', 'pause-after-begin-001'),
-  ]);
+  const [attempt, paused] = await Promise.all([port.beginAttempt(claim.claimId, actor), port.setTaskControl(context.taskId, 'paused', 'pause-after-begin-001')]);
 
   assert.equal(paused, true);
   assert.equal(isNeutralAttemptReceiptV02(attempt), false);
   assert.equal(port.getJournalSnapshot().mode, 'paused');
-  assert.equal(port.getJournalSnapshot().claims.find((item) => item.claimId === claim.claimId)?.status, 'attempting');
+  assert.equal(port.getJournalSnapshot().claims.find(item => item.claimId === claim.claimId)?.status, 'attempting');
   const task = await port.loadTask(context.taskId);
   assert.ok(task);
   assert.equal(task.node, 'Patch');
   assert.equal(task.stateVersion, context.expectedTaskStateVersion + 1);
-  const repair = port.getLedgers().find((ledger) => ledger.scope === 'task' && ledger.kind === 'repair');
+  const repair = port.getLedgers().find(ledger => ledger.scope === 'task' && ledger.kind === 'repair');
   assert.ok(repair);
   assert.equal(repair.consumed, 1);
   assert.equal(repair.reservations.length, 0);
@@ -1520,10 +1526,10 @@ test('Journal regressions: concurrent task transitions serialize with beginAttem
   assert.ok(after);
   assert.equal(after.node, 'Patch');
   assert.equal(after.stateVersion, before.stateVersion + 1);
-  const repair = port.getLedgers().find((ledger) => ledger.scope === 'task' && ledger.kind === 'repair');
+  const repair = port.getLedgers().find(ledger => ledger.scope === 'task' && ledger.kind === 'repair');
   assert.ok(repair);
   assert.equal(repair.consumed, 1);
-  assert.equal(port.getJournalSnapshot().claims.find((item) => item.claimId === claim.claimId)?.status, 'attempting');
+  assert.equal(port.getJournalSnapshot().claims.find(item => item.claimId === claim.claimId)?.status, 'attempting');
 });
 
 function makeTestLedger(scope: 'task' | 'run', kind: string, limit: number, consumed = 0): BudgetLedger {
@@ -1546,17 +1552,20 @@ test('Journal R2: snapshot persists the canonical digest of the complete active 
 
   const snapshot = port.getJournalSnapshot() as unknown as { holdRef: string | null; holdEventDigest: string | null; controlVersion: number; epoch: number };
   assert.equal(snapshot.holdRef, 'pause-event-r2-digest');
-  assert.equal(snapshot.holdEventDigest, computeCanonicalSha256({
-    schemaVersion: 'uc04-control-event/0.2-draft',
-    taskId: context.taskId,
-    runId: context.runId,
-    taskStateVersion: context.expectedTaskStateVersion,
-    eventKind: 'pause',
-    mode: 'paused',
-    eventRef: snapshot.holdRef,
-    controlVersion: snapshot.controlVersion,
-    epoch: snapshot.epoch,
-  }));
+  assert.equal(
+    snapshot.holdEventDigest,
+    computeCanonicalSha256({
+      schemaVersion: 'uc04-control-event/0.2-draft',
+      taskId: context.taskId,
+      runId: context.runId,
+      taskStateVersion: context.expectedTaskStateVersion,
+      eventKind: 'pause',
+      mode: 'paused',
+      eventRef: snapshot.holdRef,
+      controlVersion: snapshot.controlVersion,
+      epoch: snapshot.epoch,
+    }),
+  );
 
   assert.equal(await port.setTaskControl(context.taskId, 'paused', 'pause-event-r2-digest'), true);
   const afterRetry = port.getJournalSnapshot() as unknown as typeof snapshot;
@@ -1575,15 +1584,15 @@ test('Journal R2: reviewer iteration reservations bind task and configured run l
   const runIteration = makeTestLedger('run', 'iteration', 2, 1);
   const state: TaskState = { ...initial, budgetLedgers: [...(initial.budgetLedgers ?? []), runIteration] };
   const port = createPort(context, { initialTaskState: state });
-  const taskBefore = port.getLedgers().find((ledger) => ledger.scope === 'task' && ledger.kind === 'iteration');
-  const runBefore = port.getLedgers().find((ledger) => ledger.scope === 'run' && ledger.kind === 'iteration');
+  const taskBefore = port.getLedgers().find(ledger => ledger.scope === 'task' && ledger.kind === 'iteration');
+  const runBefore = port.getLedgers().find(ledger => ledger.scope === 'run' && ledger.kind === 'iteration');
   assert.ok(taskBefore && runBefore);
 
   const claim = await port.claim(context);
   assert.equal(isNeutralClaimReceiptV02(claim), false);
   const afterClaim = port.getLedgers();
-  const taskReserved = afterClaim.find((ledger) => ledger.scope === 'task' && ledger.kind === 'iteration');
-  const runReserved = afterClaim.find((ledger) => ledger.scope === 'run' && ledger.kind === 'iteration');
+  const taskReserved = afterClaim.find(ledger => ledger.scope === 'task' && ledger.kind === 'iteration');
+  const runReserved = afterClaim.find(ledger => ledger.scope === 'run' && ledger.kind === 'iteration');
   assert.ok(taskReserved && runReserved);
   assert.equal(taskReserved.consumed, taskBefore.consumed);
   assert.deepEqual(taskReserved.reservations, [{ reservationId: context.budgetRefs[4], keyedId: requestId, amount: 1 }]);
@@ -1594,8 +1603,8 @@ test('Journal R2: reviewer iteration reservations bind task and configured run l
   const actor = createTestExecutorIdentityV02({ payloadDigest: context.requestContentDigest });
   assert.equal(isNeutralAttemptReceiptV02(await port.beginAttempt(claim.claimId, actor)), false);
   const afterBegin = port.getLedgers();
-  const taskCharged = afterBegin.find((ledger) => ledger.scope === 'task' && ledger.kind === 'iteration');
-  const runCharged = afterBegin.find((ledger) => ledger.scope === 'run' && ledger.kind === 'iteration');
+  const taskCharged = afterBegin.find(ledger => ledger.scope === 'task' && ledger.kind === 'iteration');
+  const runCharged = afterBegin.find(ledger => ledger.scope === 'run' && ledger.kind === 'iteration');
   assert.ok(taskCharged && runCharged);
   assert.equal(taskCharged.consumed, taskBefore.consumed + 1);
   assert.deepEqual(taskCharged.reservations, []);
@@ -1610,7 +1619,7 @@ test('Journal R2: missing or exhausted reviewer iteration rows refuse atomically
   const missingInitial = createTestAdmissionTaskStateV02(missingContext);
   const missingState: TaskState = {
     ...missingInitial,
-    budgetLedgers: missingInitial.budgetLedgers?.filter((ledger) => !(ledger.scope === 'task' && ledger.kind === 'iteration')),
+    budgetLedgers: missingInitial.budgetLedgers?.filter(ledger => !(ledger.scope === 'task' && ledger.kind === 'iteration')),
   };
   const missingPort = createPort(missingContext, { initialTaskState: missingState });
   const missingBefore = {
@@ -1633,9 +1642,7 @@ test('Journal R2: missing or exhausted reviewer iteration rows refuse atomically
   const exhaustedState: TaskState = {
     ...initial,
     budgetLedgers: [
-      ...(initial.budgetLedgers ?? []).map((ledger) => ledger.scope === 'task' && ledger.kind === 'iteration'
-        ? { ...ledger, consumed: ledger.limit }
-        : ledger),
+      ...(initial.budgetLedgers ?? []).map(ledger => (ledger.scope === 'task' && ledger.kind === 'iteration' ? { ...ledger, consumed: ledger.limit } : ledger)),
       makeTestLedger('run', 'iteration', 2),
     ],
   };
@@ -1686,15 +1693,15 @@ test('Journal R2: fenced pre-attempt reviewer closure releases exact task and ru
 
   assert.deepEqual(await port.closeUnattemptedClaim(closure), { closed: true, receiptId: closure.receiptId });
   const after = port.getLedgers();
-  const taskIteration = after.find((ledger) => ledger.scope === 'task' && ledger.kind === 'iteration');
-  const runIteration = after.find((ledger) => ledger.scope === 'run' && ledger.kind === 'iteration');
+  const taskIteration = after.find(ledger => ledger.scope === 'task' && ledger.kind === 'iteration');
+  const runIteration = after.find(ledger => ledger.scope === 'run' && ledger.kind === 'iteration');
   assert.ok(taskIteration && runIteration);
   assert.equal(taskIteration.consumed, 0);
   assert.deepEqual(taskIteration.reservations, []);
   assert.equal(runIteration.consumed, 0);
   assert.deepEqual(runIteration.reservations, []);
-  assert.ok(after.filter((ledger) => ledger.kind === 'tokens' || ledger.kind === 'cost').every((ledger) => ledger.consumed === 0 && ledger.reservations.length === 0));
-  assert.equal(port.getJournalSnapshot().claims.find((item) => item.claimId === claim.claimId)?.status, 'closed');
+  assert.ok(after.filter(ledger => ledger.kind === 'tokens' || ledger.kind === 'cost').every(ledger => ledger.consumed === 0 && ledger.reservations.length === 0));
+  assert.equal(port.getJournalSnapshot().claims.find(item => item.claimId === claim.claimId)?.status, 'closed');
 });
 
 test('Journal R2: repository command reserves and settles only configured execution-resource ledgers', async () => {
@@ -1704,22 +1711,21 @@ test('Journal R2: repository command reserves and settles only configured execut
   const initial = createTestAdmissionTaskStateV02(context);
   const state: TaskState = {
     ...initial,
-    budgetLedgers: [
-      ...(initial.budgetLedgers ?? []),
-      makeTestLedger('task', 'maxCpuSeconds', 10),
-      makeTestLedger('run', 'maxOutputBytes', 65_536),
-    ],
+    budgetLedgers: [...(initial.budgetLedgers ?? []), makeTestLedger('task', 'maxCpuSeconds', 10), makeTestLedger('run', 'maxOutputBytes', 65_536)],
   };
   const port = createPort(context, { initialTaskState: state });
-  const tokenCostBefore = port.getLedgers().filter((ledger) => ledger.kind === 'tokens' || ledger.kind === 'cost');
+  const tokenCostBefore = port.getLedgers().filter(ledger => ledger.kind === 'tokens' || ledger.kind === 'cost');
   const claim = await port.claim(context);
   assert.equal(isNeutralClaimReceiptV02(claim), false);
-  const commandReservations = port.getLedgers().flatMap((ledger) => ledger.reservations.map((reservation) => ({ scope: ledger.scope, kind: ledger.kind, ...reservation })));
+  const commandReservations = port.getLedgers().flatMap(ledger => ledger.reservations.map(reservation => ({ scope: ledger.scope, kind: ledger.kind, ...reservation })));
   assert.deepEqual(commandReservations, [
     { scope: 'task', kind: 'maxCpuSeconds', reservationId: context.reservationRefs[0], keyedId: context.action.actionId, amount: 10 },
     { scope: 'run', kind: 'maxOutputBytes', reservationId: context.reservationRefs[1], keyedId: context.action.actionId, amount: 65_536 },
   ]);
-  assert.deepEqual(port.getLedgers().filter((ledger) => ledger.kind === 'tokens' || ledger.kind === 'cost'), tokenCostBefore);
+  assert.deepEqual(
+    port.getLedgers().filter(ledger => ledger.kind === 'tokens' || ledger.kind === 'cost'),
+    tokenCostBefore,
+  );
 
   const actor = createTestExecutorIdentityV02({ payloadDigest: context.actionDigest });
   const attempt = await port.beginAttempt(claim.claimId, actor);
@@ -1727,11 +1733,14 @@ test('Journal R2: repository command reserves and settles only configured execut
   const outcome = createTestRepositoryOutcomeReceiptV02(claim, attempt, context);
   assert.equal((await port.recordOutcome(outcome)).outcome, 'settled');
   const after = port.getLedgers();
-  assert.equal(after.find((ledger) => ledger.scope === 'task' && ledger.kind === 'maxCpuSeconds')?.consumed, 10);
-  assert.equal(after.find((ledger) => ledger.scope === 'run' && ledger.kind === 'maxOutputBytes')?.consumed, 65_536);
-  assert.deepEqual(after.find((ledger) => ledger.scope === 'task' && ledger.kind === 'maxCpuSeconds')?.reservations, []);
-  assert.deepEqual(after.find((ledger) => ledger.scope === 'run' && ledger.kind === 'maxOutputBytes')?.reservations, []);
-  assert.deepEqual(after.filter((ledger) => ledger.kind === 'tokens' || ledger.kind === 'cost'), tokenCostBefore);
+  assert.equal(after.find(ledger => ledger.scope === 'task' && ledger.kind === 'maxCpuSeconds')?.consumed, 10);
+  assert.equal(after.find(ledger => ledger.scope === 'run' && ledger.kind === 'maxOutputBytes')?.consumed, 65_536);
+  assert.deepEqual(after.find(ledger => ledger.scope === 'task' && ledger.kind === 'maxCpuSeconds')?.reservations, []);
+  assert.deepEqual(after.find(ledger => ledger.scope === 'run' && ledger.kind === 'maxOutputBytes')?.reservations, []);
+  assert.deepEqual(
+    after.filter(ledger => ledger.kind === 'tokens' || ledger.kind === 'cost'),
+    tokenCostBefore,
+  );
 });
 
 test('Journal R2: observed command recovery settles same-version drift without charging twice', async () => {
@@ -1741,11 +1750,7 @@ test('Journal R2: observed command recovery settles same-version drift without c
   const initial = createTestAdmissionTaskStateV02(context);
   const state: TaskState = {
     ...initial,
-    budgetLedgers: [
-      ...(initial.budgetLedgers ?? []),
-      makeTestLedger('task', 'maxCpuSeconds', 10),
-      makeTestLedger('run', 'maxOutputBytes', 65_536),
-    ],
+    budgetLedgers: [...(initial.budgetLedgers ?? []), makeTestLedger('task', 'maxCpuSeconds', 10), makeTestLedger('run', 'maxOutputBytes', 65_536)],
   };
   const port = createPort(context, { initialTaskState: state });
   const snapshot = async () => ({
@@ -1753,7 +1758,7 @@ test('Journal R2: observed command recovery settles same-version drift without c
     journal: port.getJournalSnapshot(),
     ledgers: port.getLedgers(),
   });
-  const providerLedgersBefore = port.getLedgers().filter((ledger) => ledger.kind === 'tokens' || ledger.kind === 'cost');
+  const providerLedgersBefore = port.getLedgers().filter(ledger => ledger.kind === 'tokens' || ledger.kind === 'cost');
   const claim = await port.claim(context);
   assert.equal(isNeutralClaimReceiptV02(claim), false);
   const actor = createTestExecutorIdentityV02({ payloadDigest: context.actionDigest });
@@ -1775,15 +1780,26 @@ test('Journal R2: observed command recovery settles same-version drift without c
   assert.ok(afterRecord.task);
   assert.equal(afterRecord.task.stateVersion, attempt.postBeginTaskStateVersion);
   assert.equal(afterRecord.task.node, driftNode);
-  assert.equal(afterRecord.journal.claims.find((item) => item.claimId === claim.claimId)?.status, 'observed-unsettled');
-  assert.equal(afterRecord.journal.attempts.find((item) => item.attemptId === attempt.attemptId)?.status, 'observed-unsettled');
+  assert.equal(afterRecord.journal.claims.find(item => item.claimId === claim.claimId)?.status, 'observed-unsettled');
+  assert.equal(afterRecord.journal.attempts.find(item => item.attemptId === attempt.attemptId)?.status, 'observed-unsettled');
   assert.equal(afterRecord.journal.activeClaimId, claim.claimId);
-  assert.equal(afterRecord.journal.outcomes.some((item) => item.receiptId === outcome.receiptId && item.outcome === 'observed'), true);
-  assert.deepEqual(afterRecord.ledgers.filter((ledger) => ledger.kind === 'maxCpuSeconds' || ledger.kind === 'maxOutputBytes').map(({ scope, kind, consumed, reservations }) => ({ scope, kind, consumed, reservations })), [
-    { scope: 'task', kind: 'maxCpuSeconds', consumed: 10, reservations: [] },
-    { scope: 'run', kind: 'maxOutputBytes', consumed: 65_536, reservations: [] },
-  ]);
-  assert.deepEqual(afterRecord.ledgers.filter((ledger) => ledger.kind === 'tokens' || ledger.kind === 'cost'), providerLedgersBefore);
+  assert.equal(
+    afterRecord.journal.outcomes.some(item => item.receiptId === outcome.receiptId && item.outcome === 'observed'),
+    true,
+  );
+  assert.deepEqual(
+    afterRecord.ledgers
+      .filter(ledger => ledger.kind === 'maxCpuSeconds' || ledger.kind === 'maxOutputBytes')
+      .map(({ scope, kind, consumed, reservations }) => ({ scope, kind, consumed, reservations })),
+    [
+      { scope: 'task', kind: 'maxCpuSeconds', consumed: 10, reservations: [] },
+      { scope: 'run', kind: 'maxOutputBytes', consumed: 65_536, reservations: [] },
+    ],
+  );
+  assert.deepEqual(
+    afterRecord.ledgers.filter(ledger => ledger.kind === 'tokens' || ledger.kind === 'cost'),
+    providerLedgersBefore,
+  );
 
   assert.deepEqual(await port.recordOutcome(outcome), { outcome: 'already-recorded', receiptId: outcome.receiptId });
   assert.deepEqual(await snapshot(), afterRecord, 'outcome replay reports status without changing persisted state');
@@ -1840,14 +1856,17 @@ test('Journal R2: observed command recovery settles same-version drift without c
   assert.ok(afterRecovery.task);
   assert.equal(afterRecovery.task.stateVersion, attempt.postBeginTaskStateVersion);
   assert.equal(afterRecovery.task.node, afterAttempt.node);
-  assert.equal(afterRecovery.journal.claims.find((item) => item.claimId === claim.claimId)?.status, 'settled');
-  assert.equal(afterRecovery.journal.attempts.find((item) => item.attemptId === attempt.attemptId)?.status, 'settled');
+  assert.equal(afterRecovery.journal.claims.find(item => item.claimId === claim.claimId)?.status, 'settled');
+  assert.equal(afterRecovery.journal.attempts.find(item => item.attemptId === attempt.attemptId)?.status, 'settled');
   assert.equal(afterRecovery.journal.activeClaimId, null);
-  assert.equal(afterRecovery.journal.reconciliations.filter((item) => item.reconciliationId === compatibleRecovery.reconciliationId).length, 1);
+  assert.equal(afterRecovery.journal.reconciliations.filter(item => item.reconciliationId === compatibleRecovery.reconciliationId).length, 1);
   assert.equal(afterRecovery.journal.mode, 'paused');
   assert.equal(afterRecovery.journal.holdRef, 'pause-command-recovery-r2');
   assert.deepEqual(afterRecovery.ledgers, beforeRecovery.ledgers, 'recovery closes the claim without settling command resources again');
-  assert.deepEqual(afterRecovery.ledgers.filter((ledger) => ledger.kind === 'tokens' || ledger.kind === 'cost'), providerLedgersBefore);
+  assert.deepEqual(
+    afterRecovery.ledgers.filter(ledger => ledger.kind === 'tokens' || ledger.kind === 'cost'),
+    providerLedgersBefore,
+  );
 
   assert.deepEqual(await port.reconcileObservedOutcome(compatibleRecovery), { outcome: 'settled', receiptId: compatibleRecovery.reconciliationId });
   assert.deepEqual(await snapshot(), afterRecovery, 'exact reconciliation replay is status-only');
@@ -1858,11 +1877,7 @@ test('Journal R2: command resource reservation mismatch refuses without partial 
   const initial = createTestAdmissionTaskStateV02(context);
   const state: TaskState = {
     ...initial,
-    budgetLedgers: [
-      ...(initial.budgetLedgers ?? []),
-      makeTestLedger('task', 'maxCpuSeconds', 10),
-      makeTestLedger('run', 'maxOutputBytes', 65_536),
-    ],
+    budgetLedgers: [...(initial.budgetLedgers ?? []), makeTestLedger('task', 'maxCpuSeconds', 10), makeTestLedger('run', 'maxOutputBytes', 65_536)],
   };
   const port = createPort(context, { initialTaskState: state });
   const before = { task: await port.loadTask(context.taskId), ledgers: port.getLedgers(), snapshot: port.getJournalSnapshot() };
@@ -1890,9 +1905,7 @@ test('Journal R2: observed patch settlement atomically invalidates only proposed
   const attempt = await port.beginAttempt(claim.claimId, actor);
   const baseOutcome = createTestRepositoryOutcomeReceiptV02(claim, attempt, context);
   const outcome = createTestRepositoryOutcomeReceiptV02(claim, attempt, context, {
-    proposedEffects: { ...baseOutcome.proposedEffects, invalidatedEvidence: [
-      { reference: 'evidence-prior-baseline', digest: computeCanonicalSha256('evidence-prior-baseline') },
-    ] },
+    proposedEffects: { ...baseOutcome.proposedEffects, invalidatedEvidence: [{ reference: 'evidence-prior-baseline', digest: computeCanonicalSha256('evidence-prior-baseline') }] },
   });
   assert.equal((await port.recordOutcome(outcome)).outcome, 'settled');
   const settledTask = await port.loadTask(context.taskId);
@@ -1931,12 +1944,10 @@ test('Journal R2: observed-unsettled patch recovery applies the same exact inval
   port.getUnderlying().internalSetTask({ ...afterAttempt, node: 'Repair' });
   const baseOutcome = createTestRepositoryOutcomeReceiptV02(claim, attempt, context);
   const outcome = createTestRepositoryOutcomeReceiptV02(claim, attempt, context, {
-    proposedEffects: { ...baseOutcome.proposedEffects, invalidatedEvidence: [
-      { reference: 'evidence-prior-baseline', digest: computeCanonicalSha256('evidence-prior-baseline') },
-    ] },
+    proposedEffects: { ...baseOutcome.proposedEffects, invalidatedEvidence: [{ reference: 'evidence-prior-baseline', digest: computeCanonicalSha256('evidence-prior-baseline') }] },
   });
   assert.equal((await port.recordOutcome(outcome)).outcome, 'recorded-unsettled');
-  const repairAfterRecord = port.getLedgers().find((ledger) => ledger.scope === 'task' && ledger.kind === 'repair');
+  const repairAfterRecord = port.getLedgers().find(ledger => ledger.scope === 'task' && ledger.kind === 'repair');
   assert.ok(repairAfterRecord);
   assert.equal(repairAfterRecord.consumed, 1);
   assert.deepEqual(await port.recordOutcome(outcome), { outcome: 'already-recorded', receiptId: outcome.receiptId });
@@ -1983,7 +1994,7 @@ test('Journal R2: uncertain initial Patch recovery requires a persisted fence an
   const attempt = await port.beginAttempt(claim.claimId, actor);
   const uncertain = createTestRepositoryOutcomeReceiptV02(claim, attempt, context, { outcome: 'uncertain' });
   assert.equal((await port.recordOutcome(uncertain)).outcome, 'uncertain');
-  const repairAfterUncertain = port.getLedgers().find((ledger) => ledger.scope === 'task' && ledger.kind === 'repair');
+  const repairAfterUncertain = port.getLedgers().find(ledger => ledger.scope === 'task' && ledger.kind === 'repair');
   assert.ok(repairAfterUncertain);
   assert.equal(repairAfterUncertain.consumed, 1);
 
@@ -2000,11 +2011,15 @@ test('Journal R2: uncertain initial Patch recovery requires a persisted fence an
       accountingEvidenceRefs,
     }),
   };
-  assert.equal(await port.publishRecoveryEvidence({
-    predecessorReceiptId: uncertain.receiptId,
-    effectEvidenceRef,
-    accountingEvidenceRefs,
-  }), false, 'a repair revision cannot be recovered without persisted revision evidence');
+  assert.equal(
+    await port.publishRecoveryEvidence({
+      predecessorReceiptId: uncertain.receiptId,
+      effectEvidenceRef,
+      accountingEvidenceRefs,
+    }),
+    false,
+    'a repair revision cannot be recovered without persisted revision evidence',
+  );
   const validEvidence = { predecessorReceiptId: uncertain.receiptId, effectEvidenceRef, accountingEvidenceRefs, observedRevisionDigest, invalidatedEvidence };
   assert.equal(await port.publishRecoveryEvidence(validEvidence), true);
   const beforeFence = {
@@ -2050,8 +2065,8 @@ test('Journal R2: uncertain initial Patch recovery requires a persisted fence an
   assert.deepEqual(settledTask.approvalDecisionRefs, ['historic-decision-uncertain-r2']);
   assert.equal(settledSnapshot.mode, 'paused');
   assert.equal(settledSnapshot.holdRef, 'pause-uncertain-repair-r2');
-  assert.ok(settledSnapshot.fenceProofs.some((proof) => proof.claimId === claim.claimId));
-  assert.equal(settledSnapshot.claims.find((row) => row.claimId === claim.claimId)?.status, 'settled');
+  assert.ok(settledSnapshot.fenceProofs.some(proof => proof.claimId === claim.claimId));
+  assert.equal(settledSnapshot.claims.find(row => row.claimId === claim.claimId)?.status, 'settled');
   assert.deepEqual(await port.reconcileUncertain(recovery), { outcome: 'settled', receiptId: recovery.reconciliationId });
   assert.deepEqual(await port.loadTask(context.taskId), settledTask);
   assert.deepEqual(port.getLedgers(), settledLedgers);

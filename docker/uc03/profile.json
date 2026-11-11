@@ -1,0 +1,27 @@
+{
+  "profileId": "uc03-prepared-runtime-v1",
+  "image": "uc03-runtime:latest",
+  "imageDigest": "sha256:89f3ad0cbc4b4912ce7831153bbeccae4b155293fe3c1b91fb737ef0bbe64d40",
+  "user": "1000:1000",
+  "readOnlyRootFilesystem": true,
+  "network": "none",
+  "limits": {
+    "timeoutMs": 60000,
+    "maxMemoryBytes": 1073741824,
+    "maxCpuCores": 1,
+    "maxPids": 128,
+    "maxOutputBytes": 1048576
+  },
+  "mounts": [
+    {
+      "source": "vol-uc03-repo",
+      "target": "/workspace/repo",
+      "readOnly": true
+    },
+    {
+      "source": "vol-uc03-scratch",
+      "target": "/workspace/scratch",
+      "readOnly": false
+    }
+  ]
+}

@@ -35,23 +35,10 @@ import type {
   ApplyPatchAction,
   RunCommandAction,
 } from '../contracts/foundation/uc03.ts';
-import {
-  computeCanonicalSha256,
-  computeActionDigest,
-  isCanonicalRelativePath,
-  isProtectedPath,
-  validateNormalizedAction,
-  validateTaskState,
-} from '../contracts/foundation/uc03.ts';
+import { computeCanonicalSha256, computeActionDigest, isCanonicalRelativePath, isProtectedPath, validateNormalizedAction, validateTaskState } from '../contracts/foundation/uc03.ts';
 import { validateRepositoryAdmissionV02 as validateRepositoryAdmissionRecordV02 } from '../contracts/foundation/uc03/v02/admission/repository.ts';
 
-export type {
-  ExecutionGuardV02,
-  ExecutionGuardResultV02,
-  RepositoryAdmissionContextV02,
-  StatePortV02,
-  RepositoryPortV02,
-};
+export type { ExecutionGuardV02, ExecutionGuardResultV02, RepositoryAdmissionContextV02, StatePortV02, RepositoryPortV02 };
 
 export interface ExecutionGuardPorts {
   readonly statePort: StatePort;
@@ -109,20 +96,24 @@ export interface ExecutionGuardOptionsV02 {
   readonly config?: ExecutionGuardConfigV02 | undefined;
 }
 
-interface ExecutionGuardOptionsFor<
-  TPorts extends ExecutionGuardPorts | ExecutionGuardPortsV02,
-> {
+interface ExecutionGuardOptionsFor<TPorts extends ExecutionGuardPorts | ExecutionGuardPortsV02> {
   readonly ports: TPorts;
   readonly config?: ExecutionGuardConfig | ExecutionGuardConfigV02 | undefined;
-};
+}
 
 const STATE_PORT_V02_METHODS = [
-  'loadTask', 'transition', 'claim', 'beginAttempt', 'recordOutcome',
-  'reconcileObservedOutcome', 'reconcileUncertain', 'closeUnattemptedClaim', 'checkpoint', 'recover',
+  'loadTask',
+  'transition',
+  'claim',
+  'beginAttempt',
+  'recordOutcome',
+  'reconcileObservedOutcome',
+  'reconcileUncertain',
+  'closeUnattemptedClaim',
+  'checkpoint',
+  'recover',
 ] as const;
-const REPOSITORY_PORT_V02_METHODS = [
-  'listDir', 'readFile', 'searchCode', 'applyPatch', 'runCommand', 'runTests', 'inspectDiff',
-] as const;
+const REPOSITORY_PORT_V02_METHODS = ['listDir', 'readFile', 'searchCode', 'applyPatch', 'runCommand', 'runTests', 'inspectDiff'] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -155,7 +146,7 @@ function hasMethod(value: unknown, name: string): boolean {
 
 function hasGuardV02Port(value: unknown, methods: readonly string[]): boolean {
   // The marker selects the adapter version; these descriptors only validate completeness without invoking ports.
-  return hasGuardV02Marker(value) && methods.every((method) => hasMethod(value, method));
+  return hasGuardV02Marker(value) && methods.every(method => hasMethod(value, method));
 }
 
 function isExecutionGuardPortsV02(value: unknown): value is ExecutionGuardPortsV02 {
@@ -163,10 +154,14 @@ function isExecutionGuardPortsV02(value: unknown): value is ExecutionGuardPortsV
   try {
     const state = Object.getOwnPropertyDescriptor(value, 'statePort');
     const repository = Object.getOwnPropertyDescriptor(value, 'repositoryPort');
-    return state !== undefined && 'value' in state &&
-      repository !== undefined && 'value' in repository &&
+    return (
+      state !== undefined &&
+      'value' in state &&
+      repository !== undefined &&
+      'value' in repository &&
       hasGuardV02Port(state.value, STATE_PORT_V02_METHODS) &&
-      hasGuardV02Port(repository.value, REPOSITORY_PORT_V02_METHODS);
+      hasGuardV02Port(repository.value, REPOSITORY_PORT_V02_METHODS)
+    );
   } catch {
     return false;
   }
@@ -176,9 +171,7 @@ function isExecutionGuardPortsV02(value: unknown): value is ExecutionGuardPortsV
  * ExecutionGuard / ExecutionGuardV02 Implementations
  * ------------------------------------------------------------------ */
 
-export class AuthoritativeExecutionGuard<
-  TPorts extends ExecutionGuardPorts | ExecutionGuardPortsV02 = ExecutionGuardPorts,
-> implements ExecutionGuard {
+export class AuthoritativeExecutionGuard<TPorts extends ExecutionGuardPorts | ExecutionGuardPortsV02 = ExecutionGuardPorts> implements ExecutionGuard {
   readonly provenance: PortProvenance;
   readonly ports: TPorts;
   readonly config?: ExecutionGuardConfig | ExecutionGuardConfigV02 | undefined;
@@ -189,11 +182,7 @@ export class AuthoritativeExecutionGuard<
     this.config = options.config;
   }
 
-  async validateAndExecute(
-    _action: NormalizedAction,
-    _state: TaskState,
-    context?: RepositoryAdmissionContextV02
-  ): Promise<ExecutionGuardResultV02> {
+  async validateAndExecute(_action: NormalizedAction, _state: TaskState, context?: RepositoryAdmissionContextV02): Promise<ExecutionGuardResultV02> {
     return context === undefined
       ? { outcome: 'denied', reason: 'ADMISSION_CONTEXT_REQUIRED: Admission context is required; v0.1 compatibility is no-dispatch' }
       : { outcome: 'denied', reason: 'V02_GUARD_REQUIRED: v0.1 guard is no-dispatch for v0.2 admission' };
@@ -203,7 +192,7 @@ export class AuthoritativeExecutionGuard<
     this: AuthoritativeExecutionGuard<ExecutionGuardPortsV02>,
     action: NormalizedAction,
     state: TaskState,
-    context: RepositoryAdmissionContextV02
+    context: RepositoryAdmissionContextV02,
   ): Promise<ExecutionGuardResultV02> {
     if (!isExecutionGuardPortsV02(this.ports)) {
       return { outcome: 'denied', reason: 'PORT_VERSION_MISMATCH: Guard requires marked v0.2 state and repository adapters' };
@@ -213,7 +202,7 @@ export class AuthoritativeExecutionGuard<
     if (!validAction.ok) {
       return {
         outcome: 'denied',
-        reason: `INVALID_ACTION: ${validAction.errors.map((e) => e.message).join('; ')}`,
+        reason: `INVALID_ACTION: ${validAction.errors.map(e => e.message).join('; ')}`,
       };
     }
 
@@ -221,16 +210,11 @@ export class AuthoritativeExecutionGuard<
     if (!validState.ok) {
       return {
         outcome: 'denied',
-        reason: `INVALID_TASK_STATE: ${validState.errors.map((e) => e.message).join('; ')}`,
+        reason: `INVALID_TASK_STATE: ${validState.errors.map(e => e.message).join('; ')}`,
       };
     }
 
-    if (
-      !context ||
-      typeof context !== 'object' ||
-      context.schemaVersion !== '0.2.0' ||
-      context.subjectKind !== 'repository-action'
-    ) {
+    if (!context || typeof context !== 'object' || context.schemaVersion !== '0.2.0' || context.subjectKind !== 'repository-action') {
       return {
         outcome: 'denied',
         reason: 'INVALID_ADMISSION_CONTEXT: Context must be a 0.2.0 repository-action admission record',
@@ -241,16 +225,13 @@ export class AuthoritativeExecutionGuard<
     if (!validContext.ok) {
       return {
         outcome: 'denied',
-        reason: `INVALID_ADMISSION_CONTEXT: ${validContext.errors.map((e) => e.message).join('; ')}`,
+        reason: `INVALID_ADMISSION_CONTEXT: ${validContext.errors.map(e => e.message).join('; ')}`,
       };
     }
 
     context = validContext.value;
     const computedActionDigest = computeActionDigest(action);
-    if (
-      context.actionDigest !== computedActionDigest ||
-      computeActionDigest(context.action) !== computedActionDigest
-    ) {
+    if (context.actionDigest !== computedActionDigest || computeActionDigest(context.action) !== computedActionDigest) {
       return {
         outcome: 'denied',
         reason: 'ACTION_DIGEST_MISMATCH: Action digest does not match admission context',
@@ -287,11 +268,7 @@ export class AuthoritativeExecutionGuard<
         };
       }
     } else if (context.planApplicability === 'approved-plan') {
-      if (
-        !state.plan ||
-        state.plan.decisionRef !== context.planDecisionRef ||
-        state.activeDecisionId !== context.planDecisionRef
-      ) {
+      if (!state.plan || state.plan.decisionRef !== context.planDecisionRef || state.activeDecisionId !== context.planDecisionRef) {
         return {
           outcome: 'denied',
           reason: 'APPROVED_PLAN_MISMATCH: Task state does not have the expected approved plan binding',
@@ -359,10 +336,7 @@ export class AuthoritativeExecutionGuard<
 
     if (action.kind === 'apply_patch') {
       const patch = action as ApplyPatchAction;
-      if (
-        context.baseRevision !== state.repositoryRevisionDigest ||
-        patch.baseRevisionDigest !== state.repositoryRevisionDigest
-      ) {
+      if (context.baseRevision !== state.repositoryRevisionDigest || patch.baseRevisionDigest !== state.repositoryRevisionDigest) {
         return {
           outcome: 'denied',
           reason: 'BASE_REVISION_MISMATCH: Base revision does not match current repository revision',
@@ -406,15 +380,9 @@ export class AuthoritativeExecutionGuard<
     try {
       let res: unknown;
       if (action.kind === 'apply_patch') {
-        res = await this.ports.repositoryPort.applyPatch(
-          action as ApplyPatchAction,
-          context
-        );
+        res = await this.ports.repositoryPort.applyPatch(action as ApplyPatchAction, context);
       } else if (action.kind === 'run_command') {
-        res = await this.ports.repositoryPort.runCommand(
-          action as RunCommandAction,
-          context
-        );
+        res = await this.ports.repositoryPort.runCommand(action as RunCommandAction, context);
       } else {
         return {
           outcome: 'denied',
@@ -430,23 +398,26 @@ export class AuthoritativeExecutionGuard<
         return { outcome: 'uncertain-effect', reason: 'INVALID_EXECUTION_RECEIPT: Receiver handoff binding failed' };
       }
       if (action.kind === 'apply_patch') {
-        if (!('applied' in res) || res.applied !== true || !('newRevisionDigest' in res) ||
-          res.newRevisionDigest !== receipt.value.outcome.observedResultRevisionDigest) {
+        if (!('applied' in res) || res.applied !== true || !('newRevisionDigest' in res) || res.newRevisionDigest !== receipt.value.outcome.observedResultRevisionDigest) {
           return { outcome: 'uncertain-effect', reason: 'INVALID_PATCH_RESULT: Observed revision mismatch' };
         }
       } else {
         const normalized = normalizeCommandResult(res);
         const bounds = context.finiteBounds;
-        if (!normalized || !bounds || !('timeoutMs' in bounds) ||
+        if (
+          !normalized ||
+          !bounds ||
+          !('timeoutMs' in bounds) ||
           Buffer.byteLength(normalized.stdout, 'utf8') + Buffer.byteLength(normalized.stderr, 'utf8') > bounds.maxOutputBytes ||
-          normalized.exitCode === null || normalized.timedOut ||
-          normalized.outcome === 'timeout' || normalized.outcome === 'error') {
+          normalized.exitCode === null ||
+          normalized.timedOut ||
+          normalized.outcome === 'timeout' ||
+          normalized.outcome === 'error'
+        ) {
           return { outcome: 'uncertain-effect', reason: 'INVALID_COMMAND_RESULT: No bounded observed command result' };
         }
-        const digest = computeCanonicalSha256({ attemptId: receipt.value.attempt.attemptId,
-          actionDigest: context.actionDigest, outcome: 'observed', observedResultDigest: normalized.digest });
-        if (receipt.value.outcome.resultRef.digest !== digest ||
-          receipt.value.outcome.resultRef.reference !== `command-result-${digest.slice(7)}`) {
+        const digest = computeCanonicalSha256({ attemptId: receipt.value.attempt.attemptId, actionDigest: context.actionDigest, outcome: 'observed', observedResultDigest: normalized.digest });
+        if (receipt.value.outcome.resultRef.digest !== digest || receipt.value.outcome.resultRef.reference !== `command-result-${digest.slice(7)}`) {
           return { outcome: 'uncertain-effect', reason: 'INVALID_COMMAND_RESULT: Command output digest mismatch' };
         }
       }
@@ -456,36 +427,24 @@ export class AuthoritativeExecutionGuard<
       return { outcome: 'uncertain-effect', reason: 'RECEIVER_OUTCOME_UNVERIFIED: Receiver invocation requires recovery' };
     }
   }
-
-
 }
 
-export class AuthoritativeExecutionGuardV02
-  extends AuthoritativeExecutionGuard<ExecutionGuardPortsV02>
-  implements ExecutionGuardV02
-{
+export class AuthoritativeExecutionGuardV02 extends AuthoritativeExecutionGuard<ExecutionGuardPortsV02> implements ExecutionGuardV02 {
+  readonly executionGuardApiVersion = '0.2.0' as const;
   declare readonly ports: ExecutionGuardPortsV02;
   declare readonly config?: ExecutionGuardConfigV02 | undefined;
 
-  override async validateAndExecute(
-    action: NormalizedAction,
-    state: TaskState,
-    context?: RepositoryAdmissionContextV02
-  ): Promise<ExecutionGuardResultV02> {
+  override async validateAndExecute(action: NormalizedAction, state: TaskState, context?: RepositoryAdmissionContextV02): Promise<ExecutionGuardResultV02> {
     return context === undefined
       ? { outcome: 'denied', reason: 'ADMISSION_CONTEXT_REQUIRED: Admission context is required; v0.2 dispatch is no-dispatch without context' }
       : this.validateAndExecuteV02(action, state, context);
   }
 }
 
-export function createExecutionGuard(
-  options: ExecutionGuardOptions
-): AuthoritativeExecutionGuard {
+export function createExecutionGuard(options: ExecutionGuardOptions): AuthoritativeExecutionGuard {
   return new AuthoritativeExecutionGuard(options);
 }
 
-export function createExecutionGuardV02(
-  options: ExecutionGuardOptionsV02
-): AuthoritativeExecutionGuardV02 {
+export function createExecutionGuardV02(options: ExecutionGuardOptionsV02): AuthoritativeExecutionGuardV02 {
   return new AuthoritativeExecutionGuardV02(options);
 }

@@ -61,6 +61,14 @@ Iterate until the user approves the breakdown.
 
 ### 5. Publish the tickets to the configured tracker
 
+For this repository, read [issue tracker guidance](../../../docs/agents/issue-tracker.md) and use GitHub CLI through the paired publisher below. After the breakdown is approved, publish without a second confirmation. Resolve the driving human from `gh api user`; never infer their login from the ticket author, model, Git author, or a previous session.
+
+```powershell
+node scripts/agents/paired-issues.mjs publish --key <feature-ticket-stable-key> --title "<title>" --body-file <ticket.md> --label <canonical-label>
+```
+
+Reuse the stable key on retries and later updates. Inspect existing paired markers/receipts before selecting keys; task IDs alone are not unique across features. The configured publisher assigns both issues to the authenticated human and adds the submission issue to the configured GitHub Project. Verify the returned URLs, assignees, and project membership; a partial publication needs retry with the same key. Preserve existing project status when updating a ticket.
+
 Publish the approved tickets. **How** depends on the tracker `/setup-matt-pocock-skills` configured; the tickets are the same either way, only the shape of the blocking edges changes:
 
 - **Local files** → write one file per ticket under `.scratch/<feature-slug>/issues/<NN>-<slug>.md`, numbered from `01` in dependency order (blockers first). Each file's "Blocked by" lists the numbers/titles it depends on. Use the per-ticket file template below: one ticket per file, never a single combined file.
@@ -69,6 +77,8 @@ Publish the approved tickets. **How** depends on the tracker `/setup-matt-pocock
 Work the **frontier**: any ticket whose blockers are all done. Recheck blocker state before assigning readiness or starting work; after blockers complete, the authorized ticket workflow may promote the child to `ready-for-agent`. For a purely linear chain that means top to bottom. A shared component is a blocker only when required work cannot proceed through the agreed mock/stub contract; do not manufacture dependencies that prevent an independently implementable slice.
 
 Do NOT close or modify any parent issue.
+
+Hand off each paired stable key and both issue URLs to the implementer. During its resolving PR, verify every acceptance criterion and queue the exact key, public PR and evidence using [automatic completion](../../../docs/agents/paired-publication.md#automatic-completion). The completion job waits for both merged PRs and passing public exact-head CI before closing both issues and setting the project item to Done. Keep incomplete or dependency-blocked tickets open; publishing or merging a partial slice does not establish full ticket acceptance.
 
 <local-ticket-template>
 

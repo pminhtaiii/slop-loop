@@ -1,11 +1,6 @@
 /** Validates v0.2 repository admission facts and branch-specific policy bounds. */
 
-import {
-  computeActionDigest,
-  computeCanonicalSha256,
-  isCanonicalRelativePath,
-  isProtectedPath,
-} from '../../identity.ts';
+import { computeActionDigest, computeCanonicalSha256, isCanonicalRelativePath, isProtectedPath } from '../../identity.ts';
 import type {
   ActionDecisionReceiptV02,
   CommandFiniteBoundsV02,
@@ -15,51 +10,77 @@ import type {
   PolicyEvaluationReceiptV02,
   RepositoryAdmissionContextV02,
 } from '../ports.ts';
-import type {
-  AdmittedFile,
-  ApplyPatchAction,
-  NormalizedAction,
-  ValidationError,
-  ValidationResult,
-} from '../../v01/types.ts';
-import {
-  isPlainObject,
-  rejectUnknownKeys,
-  validateNonEmptyString,
-  validateNonNegativeInteger,
-  validatePositiveInteger,
-  validatePositiveNumber,
-} from '../../v01/validation/common.ts';
+import type { AdmittedFile, ApplyPatchAction, NormalizedAction, ValidationError, ValidationResult } from '../../v01/types.ts';
+import { isPlainObject, rejectUnknownKeys, validateNonEmptyString, validateNonNegativeInteger, validatePositiveInteger, validatePositiveNumber } from '../../v01/validation/common.ts';
 import { validateNormalizedAction } from '../../v01/validation/intake/actions.ts';
 
 const REPO_ALLOWED = [
-  'schemaVersion', 'subjectKind', 'planApplicability',
-  'taskStateSchemaVersion', 'expectedTaskStateVersion',
-  'controlSchemaVersion', 'expectedControlVersion', 'expectedEpoch',
-  'taskId', 'runId', 'workspaceId', 'repositoryId', 'runnableNode',
-  'canonicalRevision', 'executionProfileId', 'action', 'actionDigest',
-  'policyAuthorityRef', 'policyEvaluationReceipt', 'actionDecisionReceipt',
-  'reservationRefs', 'admissionDigest',
-  'diagnosticPurpose', 'taskCriteriaDigest', 'checkSetDigest', 'testPath', 'checkId',
-  'planBindingDigest', 'planDecisionRef',
-  'commandView', 'baseRevision', 'targetPaths', 'patchDigest', 'finiteBounds',
+  'schemaVersion',
+  'subjectKind',
+  'planApplicability',
+  'taskStateSchemaVersion',
+  'expectedTaskStateVersion',
+  'controlSchemaVersion',
+  'expectedControlVersion',
+  'expectedEpoch',
+  'taskId',
+  'runId',
+  'workspaceId',
+  'repositoryId',
+  'runnableNode',
+  'canonicalRevision',
+  'executionProfileId',
+  'action',
+  'actionDigest',
+  'policyAuthorityRef',
+  'policyEvaluationReceipt',
+  'actionDecisionReceipt',
+  'reservationRefs',
+  'admissionDigest',
+  'diagnosticPurpose',
+  'taskCriteriaDigest',
+  'checkSetDigest',
+  'testPath',
+  'checkId',
+  'planBindingDigest',
+  'planDecisionRef',
+  'commandView',
+  'baseRevision',
+  'targetPaths',
+  'patchDigest',
+  'finiteBounds',
 ] as const;
 
-const PROV_CROSS = [
-  'providerRequestId', 'requestContentDigest', 'providerRequest',
-  'providerAdmissionReceipt', 'requestReservationReceipt', 'budgetRefs', 'providerIdentity',
-] as const;
+const PROV_CROSS = ['providerRequestId', 'requestContentDigest', 'providerRequest', 'providerAdmissionReceipt', 'requestReservationReceipt', 'budgetRefs', 'providerIdentity'] as const;
 
 const AUTH_REF_KEYS = ['policyId', 'policyVersion', 'configId', 'configVersion', 'issuerKeyRef', 'decisionAuthorityGeneration'] as const;
-const PE_RECEIPT_KEYS = ['receiptId', 'receiptDigest', 'actionDigest', 'freshnessContextDigest', 'policyId', 'policyVersion', 'configId', 'configVersion', 'decisionAuthorityGeneration', 'result'] as const;
+const PE_RECEIPT_KEYS = [
+  'receiptId',
+  'receiptDigest',
+  'actionDigest',
+  'freshnessContextDigest',
+  'policyId',
+  'policyVersion',
+  'configId',
+  'configVersion',
+  'decisionAuthorityGeneration',
+  'result',
+] as const;
 const AD_RECEIPT_KEYS = ['decisionId', 'decisionDigest', 'actionDigest', 'evaluationReceiptRef', 'decisionAuthorityGeneration', 'status', 'reason'] as const;
 const CMD_BOUNDS_KEYS = ['timeoutMs', 'maxOutputBytes', 'maxCpuSeconds', 'maxMemoryBytes', 'maxProcessCount', 'isolationProfileRef'] as const;
 const PATCH_BOUNDS_KEYS = ['maxPatchBytes', 'maxChangedPaths'] as const;
 const CMD_VIEW_ALLOWED = [
-  'viewId', 'viewDigest', 'taskId', 'workspaceId',
-  'canonicalRevision', 'canonicalRevisionDigest',
-  'admittedFiles', 'exclusionsPolicyVersion', 'scratchIdentity',
-  'mountedReadOnly', 'isolationProfileRef',
+  'viewId',
+  'viewDigest',
+  'taskId',
+  'workspaceId',
+  'canonicalRevision',
+  'canonicalRevisionDigest',
+  'admittedFiles',
+  'exclusionsPolicyVersion',
+  'scratchIdentity',
+  'mountedReadOnly',
+  'isolationProfileRef',
 ] as const;
 
 function reqStrings(o: Record<string, unknown>, keys: readonly string[], pre: string, errs: ValidationError[]): void {
@@ -76,19 +97,10 @@ function matchProp(src: Record<string, unknown>, tgt: Record<string, unknown>, f
 
 function isTestPath(p: string): boolean {
   const norm = p.replace(/\\/g, '/').toLowerCase();
-  return (
-    norm.startsWith('tests/') ||
-    norm.includes('/tests/') ||
-    norm.includes('/test_') ||
-    norm.endsWith('_test.py') ||
-    norm.endsWith('.test.ts') ||
-    norm.endsWith('.test.js')
-  );
+  return norm.startsWith('tests/') || norm.includes('/tests/') || norm.includes('/test_') || norm.endsWith('_test.py') || norm.endsWith('.test.ts') || norm.endsWith('.test.js');
 }
 
-export function validateRepositoryAdmissionV02(
-  input: unknown
-): ValidationResult<RepositoryAdmissionContextV02> {
+export function validateRepositoryAdmissionV02(input: unknown): ValidationResult<RepositoryAdmissionContextV02> {
   const errs: ValidationError[] = [];
   if (!isPlainObject(input)) {
     return { ok: false, errors: [{ path: 'context', message: 'Repository admission context must be an object', code: 'INVALID_TYPE' }] };
@@ -134,7 +146,7 @@ export function validateRepositoryAdmissionV02(
 
   if (planApp === 'pre-plan-diagnostic' && validAct) {
     if (validAct.kind === 'apply_patch') {
-      const nonTests = (validAct as ApplyPatchAction).targetPaths.filter((p) => !isTestPath(p));
+      const nonTests = (validAct as ApplyPatchAction).targetPaths.filter(p => !isTestPath(p));
       if (nonTests.length > 0) {
         errs.push({ path: 'action.targetPaths', message: `Test-only patch violation: ${nonTests.join(', ')}`, code: 'TEST_ONLY_PATCH_POLICY_VIOLATION' });
       }

@@ -6,13 +6,13 @@ function configuredReceiver(value: unknown, context: TrustedContext): Readonly<{
   if (!isInputRecord(value) || !hasInputKeys(value, ['destinationId', 'defectClassificationIds'])) return undefined;
   const destinationId = value['destinationId'];
   const ids = value['defectClassificationIds'];
-  if (typeof destinationId !== 'string' || !destinationId.trim() || !Array.isArray(ids) || !ids.length
-    || ids.some(id => typeof id !== 'string' || !id.trim()) || new Set(ids).size !== ids.length) return undefined;
+  if (typeof destinationId !== 'string' || !destinationId.trim() || !Array.isArray(ids) || !ids.length || ids.some(id => typeof id !== 'string' || !id.trim()) || new Set(ids).size !== ids.length)
+    return undefined;
   const destination = context.catalog.destinations.find(entry => entry.id === destinationId);
   const classificationIds: string[] = [];
   for (const id of ids) {
-    if (typeof id !== 'string' || !context.catalog.classifications.some(entry => entry.id === id && entry.impairmentAssessment)
-      || !destination?.acceptsClassificationIds.includes(id)) return undefined;
+    if (typeof id !== 'string' || !context.catalog.classifications.some(entry => entry.id === id && entry.impairmentAssessment) || !destination?.acceptsClassificationIds.includes(id))
+      return undefined;
     classificationIds.push(id);
   }
   return { destinationId, defectClassificationIds: classificationIds };
@@ -57,7 +57,8 @@ export function receiveUc01Assessment(input: unknown): IntakeResult {
     if (digest !== intake.value.context.repositorySnapshotDigest) return { status: 'conflict', reasonCode: 'task-binding-mismatch', path: 'initialRevisionDigest' };
   }
   const outcome = parsed.value;
-  if (outcome.status === 'needs-info') return { status: 'needs-info', fields: result.status === 'needs-info' ? result.fields : [], questionIds: outcome.assessment.questions.map(question => question.id) };
+  if (outcome.status === 'needs-info')
+    return { status: 'needs-info', fields: result.status === 'needs-info' ? result.fields : [], questionIds: outcome.assessment.questions.map(question => question.id) };
   if (outcome.status !== 'assessed') return { status: 'not-applicable', reasonCode: 'source-not-assessed', path: 'outcome' };
   const assessment = outcome.assessment;
   if (assessment.destination.value !== config.destinationId || !config.defectClassificationIds.includes(assessment.classification.value)) {
@@ -65,8 +66,17 @@ export function receiveUc01Assessment(input: unknown): IntakeResult {
   }
   if (result.status !== 'accepted') return result;
   const task = result.task;
-  return { status: 'accepted', task, source: {
-    contractVersion: RECEIVER_CONTRACT_VERSION, assessmentId: assessment.assessmentId, issueId: assessment.issueId,
-    reportDigest: assessment.reportDigest, catalogId: assessment.catalogId, catalogVersion: assessment.catalogVersion, provenance: assessment.provenance,
-  } };
+  return {
+    status: 'accepted',
+    task,
+    source: {
+      contractVersion: RECEIVER_CONTRACT_VERSION,
+      assessmentId: assessment.assessmentId,
+      issueId: assessment.issueId,
+      reportDigest: assessment.reportDigest,
+      catalogId: assessment.catalogId,
+      catalogVersion: assessment.catalogVersion,
+      provenance: assessment.provenance,
+    },
+  };
 }

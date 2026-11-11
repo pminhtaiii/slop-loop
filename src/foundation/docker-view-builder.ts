@@ -12,11 +12,92 @@ interface DockerViewBuilderOperations {
   readonly publishView: (workspaceId: string, view: CommandView) => void;
 }
 
-export async function buildDockerCommandView(
-  params: AdmitCommandViewParams,
-  controller: DockerLifecycleController,
-  operations: DockerViewBuilderOperations
-): Promise<CommandView> {
+/**
+ * The owner's measurement of the same snapshot this builder is about to materialize (T025).
+ *
+ * Host-composition §5: owner admission facts and the Docker view must describe *the same measured
+ * snapshot*, and neither side may rewrite a value to satisfy the other. So this is compared, never
+ * merged — a disagreement refuses before the executor or materializer is reached, which is why the
+ * known literal exclusions/scratch mismatch must be corrected at the UC-04 producer rather than
+ * papered over here.
+ *
+ * The accepted measurement also yields the host-owned isolation record below, so the owner's
+ * reference reaches `admissionCommandView` as a capability rather than as a caller-supplied string.
+ */
+export interface OwnerCommandViewMeasurementV02 {
+  readonly canonicalRevision: string;
+  readonly exclusionsPolicyVersion: string;
+  readonly scratchIdentity: string;
+  readonly admittedFiles: readonly AdmittedFile[];
+  readonly mountedReadOnly: true;
+  readonly isolationProfileRef: string;
+}
+
+/**
+ * Host-composition §9: the isolation record a successful build issues for the view it published.
+ * Object identity in a module-private set is the capability — a caller cannot construct one.
+ */
+export interface MeasuredCommandViewIsolation {
+  readonly viewId: string;
+  readonly viewDigest: string;
+  readonly isolationProfileRef: string;
+}
+
+const measuredCommandViews = new WeakSet<MeasuredCommandViewIsolation>();
+
+export function isMeasuredCommandViewIsolation(value: unknown): value is MeasuredCommandViewIsolation {
+  return value !== null && typeof value === 'object' && measuredCommandViews.has(value as MeasuredCommandViewIsolation);
+}
+
+export interface IssuedCommandView {
+  readonly view: CommandView;
+  /** Absent when the build had no owner measurement, so there is no isolation to hand off. */
+  readonly measured?: MeasuredCommandViewIsolation;
+}
+
+export type CommandViewOwnerBindingParams = AdmitCommandViewParams & {
+  /** Absent for legacy/controlled callers; when present its facts are authoritative. */
+  readonly ownerView?: OwnerCommandViewMeasurementV02 | undefined;
+  /** The trusted execution profile the owner measurement must name; requires `ownerView`. */
+  readonly trustedIsolationProfileRef?: string | undefined;
+};
+
+function ownerViewMismatch(
+  params: CommandViewOwnerBindingParams,
+  observed: { revision: string; exclusionsPolicyVersion: string; scratchIdentity: string; admittedFiles: readonly AdmittedFile[] },
+): string | null {
+  const owner = params.ownerView;
+  if (owner === undefined) {
+    // A trusted profile with nothing to compare against is a caller bug, not a skipped check.
+    return params.trustedIsolationProfileRef === undefined ? null : 'trustedIsolationProfileRef requires an owner view measurement';
+  }
+  if (!owner || typeof owner !== 'object') return 'owner view measurement must be an object';
+  if (typeof owner.isolationProfileRef !== 'string' || owner.isolationProfileRef.length === 0 || owner.isolationProfileRef.length > 256)
+    return 'owner isolationProfileRef must be a bounded non-empty string';
+  if (params.trustedIsolationProfileRef !== undefined && owner.isolationProfileRef !== params.trustedIsolationProfileRef)
+    return `owner isolationProfileRef ${owner.isolationProfileRef} does not match trusted profile ${params.trustedIsolationProfileRef}`;
+  if (owner.mountedReadOnly !== true) return 'owner view must declare mountedReadOnly';
+  if (owner.canonicalRevision !== observed.revision) return `revision ${owner.canonicalRevision} does not match measured ${observed.revision}`;
+  if (owner.exclusionsPolicyVersion !== observed.exclusionsPolicyVersion) return `exclusions policy ${owner.exclusionsPolicyVersion} does not match measured ${observed.exclusionsPolicyVersion}`;
+  if (owner.scratchIdentity !== observed.scratchIdentity) return 'scratch identity differs from the measured workspace scratch';
+  if (!Array.isArray(owner.admittedFiles)) return 'owner admittedFiles must be an array';
+  // Owner data is untrusted: a malformed entry must yield a mismatch string, not a raw TypeError.
+  const ownerDigests = new Map<string, string>();
+  for (const file of owner.admittedFiles as readonly unknown[]) {
+    if (!file || typeof file !== 'object') return 'owner admitted files must be path and digest entries';
+    const { path, digest } = file as AdmittedFile;
+    if (typeof path !== 'string' || typeof digest !== 'string') return 'owner admitted files must be path and digest entries';
+    if (ownerDigests.has(path)) return 'admitted file inventory differs from the measured snapshot';
+    ownerDigests.set(path, digest);
+  }
+  if (ownerDigests.size !== observed.admittedFiles.length) return 'admitted file inventory differs from the measured snapshot';
+  for (const file of observed.admittedFiles) {
+    if (ownerDigests.get(file.path) !== file.digest) return `admitted digest for '${file.path}' differs from the measured snapshot`;
+  }
+  return null;
+}
+
+export async function buildDockerCommandView(params: CommandViewOwnerBindingParams, controller: DockerLifecycleController, operations: DockerViewBuilderOperations): Promise<IssuedCommandView> {
   if (!params || typeof params !== 'object') {
     throw new Error('INVALID_ADMIT_PARAMS: params must be an object');
   }
@@ -66,10 +147,7 @@ export async function buildDockerCommandView(
     }
 
     // Required files policy: combining snapshot policy with optional params policy
-    const required = new Set<string>([
-      ...(snapshot.requiredFiles ?? []),
-      ...(params.requiredFiles ?? []),
-    ]);
+    const required = new Set<string>([...(snapshot.requiredFiles ?? []), ...(params.requiredFiles ?? [])]);
 
     // Index entries by canonical relative path
     const entriesByPath = new Map<string, CanonicalSnapshotEntry>();
@@ -138,9 +216,7 @@ export async function buildDockerCommandView(
           throw new Error(`INVALID_SNAPSHOT_ENTRY: Link target '${trimmedTarget}' missing content`);
         }
 
-        const targetStr = typeof targetEntry.content === 'string'
-          ? targetEntry.content
-          : Buffer.from(targetEntry.content).toString('utf8');
+        const targetStr = typeof targetEntry.content === 'string' ? targetEntry.content : Buffer.from(targetEntry.content).toString('utf8');
 
         if (containsProtectedContent(targetStr)) {
           throw new Error(`FORBIDDEN_LINK_TARGET: Link '${filePath}' target '${trimmedTarget}' contains protected content and is excluded`);
@@ -166,9 +242,7 @@ export async function buildDockerCommandView(
       }
 
       const protectedPath = isProtectedPath(filePath);
-      const contentStr = typeof resolvedContent === 'string'
-        ? resolvedContent
-        : Buffer.from(resolvedContent).toString('utf8');
+      const contentStr = typeof resolvedContent === 'string' ? resolvedContent : Buffer.from(resolvedContent).toString('utf8');
       const protectedContent = containsProtectedContent(contentStr);
 
       if (protectedPath || protectedContent) {
@@ -221,9 +295,22 @@ export async function buildDockerCommandView(
       trustedFileDigests,
     });
     if (!validation.ok) {
-      throw new Error(`INVALID_COMMAND_VIEW: ${validation.errors.map((e) => e.message).join('; ')}`);
+      throw new Error(`INVALID_COMMAND_VIEW: ${validation.errors.map(e => e.message).join('; ')}`);
     }
 
+    // Owner/view agreement is checked after the view is measured but before anything is mutated, so
+    // a mismatch costs zero executor calls and leaves view/accounting state untouched.
+    const mismatch = ownerViewMismatch(params, {
+      revision: initialRev,
+      exclusionsPolicyVersion,
+      scratchIdentity: workspace.scratchVolumeId,
+      admittedFiles,
+    });
+    if (mismatch !== null) throw new Error(`OWNER_VIEW_MISMATCH: ${mismatch}`);
+
+    // Materialization replaces the view volume, so any earlier view for this revision must stop
+    // being selectable before that destructive step, even if the replacement write then fails.
+    operations.invalidateViews(params.workspaceId);
     // Materialize view on controller passing permitted bytes only and read-only view identity
     await controller.materializeView({
       view: commandView,
@@ -238,7 +325,16 @@ export async function buildDockerCommandView(
     }
 
     operations.publishView(params.workspaceId, commandView);
-    return commandView;
+    // Issued only from an accepted owner measurement of the published view: a build with no
+    // ownerView hands back no record, so lifting for isolation refuses instead of defaulting.
+    if (params.ownerView === undefined) return { view: commandView };
+    const measured: MeasuredCommandViewIsolation = Object.freeze({
+      viewId: commandView.viewId,
+      viewDigest: commandView.viewDigest,
+      isolationProfileRef: params.ownerView.isolationProfileRef,
+    });
+    measuredCommandViews.add(measured);
+    return { view: commandView, measured };
   } finally {
     gateLease.release();
   }

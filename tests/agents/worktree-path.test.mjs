@@ -27,7 +27,9 @@ function shortPath(path) {
   ].join('\n');
   const command = `Add-Type -TypeDefinition @'\n${typeDefinition}\n'@\n$buffer = New-Object System.Text.StringBuilder(32768)\n[void][NativePathAlias]::GetShortPathName($env:WORKTREE_PATH_FOR_TEST, $buffer, [uint32]$buffer.Capacity)\n$buffer.ToString()`;
   const result = spawnSync('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', command], {
-    encoding: 'utf8', windowsHide: true, env: { ...process.env, WORKTREE_PATH_FOR_TEST: path },
+    encoding: 'utf8',
+    windowsHide: true,
+    env: { ...process.env, WORKTREE_PATH_FOR_TEST: path },
   });
   const candidate = result.status === 0 ? result.stdout.trim() : '';
   return candidate && candidate.toLowerCase() !== path.toLowerCase() ? candidate : null;
@@ -41,18 +43,18 @@ async function fixture(t) {
   return { root, directory };
 }
 
-test('accepts a canonical directory path', async (t) => {
+test('accepts a canonical directory path', async t => {
   const { directory } = await fixture(t);
   assert.equal(await realDirectoryWithoutLinks(directory), await realpath(directory));
 });
 
-test('accepts a valid case-variant directory path on Windows', async (t) => {
+test('accepts a valid case-variant directory path on Windows', async t => {
   if (process.platform !== 'win32') return t.skip('Windows path casing is required for this regression.');
   const { directory } = await fixture(t);
   assert.equal(await realDirectoryWithoutLinks(alternateCase(directory)), await realpath(directory));
 });
 
-test('accepts a valid Windows 8.3 short-name directory path when the volume provides one', async (t) => {
+test('accepts a valid Windows 8.3 short-name directory path when the volume provides one', async t => {
   if (process.platform !== 'win32') return t.skip('Windows 8.3 alias not run locally; Windows CI validation is required.');
   const { directory } = await fixture(t);
   const alias = shortPath(directory);
@@ -60,14 +62,14 @@ test('accepts a valid Windows 8.3 short-name directory path when the volume prov
   assert.equal(await realDirectoryWithoutLinks(alias), await realpath(directory));
 });
 
-test('rejects a final directory junction or symbolic link', async (t) => {
+test('rejects a final directory junction or symbolic link', async t => {
   const { root, directory } = await fixture(t);
   const link = join(root, 'final-link');
   await symlink(directory, link, process.platform === 'win32' ? 'junction' : 'dir');
   await assert.rejects(realDirectoryWithoutLinks(link), /symbolic link/i);
 });
 
-test('rejects a junction or symbolic link in an intermediate directory component', async (t) => {
+test('rejects a junction or symbolic link in an intermediate directory component', async t => {
   const { root } = await fixture(t);
   const realParent = join(root, 'real-parent');
   const linkedParent = join(root, 'linked-parent');

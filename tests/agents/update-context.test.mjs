@@ -8,7 +8,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const cli = new URL('../../scripts/agents/update-context.mjs', import.meta.url);
-const hash = (text) => createHash('sha256').update(text).digest('hex');
+const hash = text => createHash('sha256').update(text).digest('hex');
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), 'context-update-'));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -20,14 +20,18 @@ async function fixture(t) {
   await writeFile(join(root, 'context/README.md'), '[Architecture](architecture.md)\n[Progress](progress_checker.md)\n');
   const source = '# Architecture\r\n\r\n## Runtime\r\n\r\nPlanned runtime.\r\n';
   await writeFile(join(root, 'context/architecture.md'), source);
-  await writeFile(join(root, 'context/progress_checker.md'), '# Progress\n\n| Area | Observation |\n|---|---|\n| Helpers | Old evidence |\n');
+  const definitions = ['NOT_STARTED', 'IN_PROGRESS', 'BLOCKED', 'IMPLEMENTED_UNVERIFIED', 'VERIFIED'].map(status => `| \`${status}\` | Meaning |`).join('\n');
+  await writeFile(
+    join(root, 'context/progress_checker.md'),
+    `# Implementation Status\n\n## Status meanings\n\n| Status | Meaning |\n|---|---|\n${definitions}\n\n## Repository observations\n\n| Area | Status | Implementation / inspected paths | Verification evidence | Inspected revision |\n|---|---|---|---|---|\n| Helpers | \`IMPLEMENTED_UNVERIFIED\` | scripts/agents/ | Old evidence | abc1234 |\n`,
+  );
   const updates = [{ file: 'context/architecture.md', sha256: hash(source), edits: [{ oldText: 'Planned runtime.', newText: 'Implemented boundary; verification remains incomplete.' }] }];
   const plan = join(root, 'updates.json');
   const run = (apply = false) => spawnSync(process.execPath, [fileURLToPath(cli), '--root', root, '--updates', plan, ...(apply ? ['--apply'] : [])], { encoding: 'utf8', windowsHide: true });
   return { root, source, updates, run, save: () => writeFile(plan, JSON.stringify({ updates })) };
 }
 
-test('preview is read-only; apply updates architecture and progress while preserving their format', async (t) => {
+test('preview is read-only; apply updates architecture and progress while preserving their format', async t => {
   const f = await fixture(t);
   const path = join(f.root, 'context/progress_checker.md');
   const progress = await readFile(path, 'utf8');
@@ -43,7 +47,7 @@ test('preview is read-only; apply updates architecture and progress while preser
   assert.notEqual(f.run(true).status, 0, 'reusing stale edits must fail');
 });
 
-test('invalid links roll back every file written by the run', async (t) => {
+test('invalid links roll back every file written by the run', async t => {
   const f = await fixture(t);
   const progressPath = join(f.root, 'context/progress_checker.md');
   const progress = await readFile(progressPath, 'utf8');
@@ -56,13 +60,36 @@ test('invalid links roll back every file written by the run', async (t) => {
   assert.equal(await readFile(progressPath, 'utf8'), progress);
 });
 
-test('stale, ambiguous, structural, and out-of-scope updates fail without changing context', async (t) => {
+test('invalid progress format rolls back the entire context update batch', async t => {
+  const f = await fixture(t);
+  const path = join(f.root, 'context/progress_checker.md');
+  const progress = await readFile(path, 'utf8');
+  f.updates.push({ file: 'context/progress_checker.md', sha256: hash(progress), edits: [{ oldText: 'Old evidence', newText: 'Broken | extra cell' }] });
+  await f.save();
+  const result = f.run(true);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /progress_checker.md:\d+: Expected 5 nonempty cells/);
+  assert.equal(await readFile(path, 'utf8'), progress);
+  assert.equal(await readFile(join(f.root, 'context/architecture.md'), 'utf8'), f.source);
+});
+
+test('stale, ambiguous, structural, and out-of-scope updates fail without changing context', async t => {
   for (const change of [
-    (u) => { u.sha256 = '0'.repeat(64); },
-    (u) => { u.edits[0].oldText = '\n'; },
-    (u) => { u.edits[0] = { oldText: '## Runtime', newText: '## Replaced heading' }; },
-    (u) => { u.file = '../AGENTS.md'; },
-    (u) => { u.file = 'context/active_task.md'; },
+    u => {
+      u.sha256 = '0'.repeat(64);
+    },
+    u => {
+      u.edits[0].oldText = '\n';
+    },
+    u => {
+      u.edits[0] = { oldText: '## Runtime', newText: '## Replaced heading' };
+    },
+    u => {
+      u.file = '../AGENTS.md';
+    },
+    u => {
+      u.file = 'context/active_task.md';
+    },
   ]) {
     const f = await fixture(t);
     change(f.updates[0]);
@@ -73,7 +100,7 @@ test('stale, ambiguous, structural, and out-of-scope updates fail without changi
   }
 });
 
-test('an empty update plan validates context and an existing updater lock is retained', async (t) => {
+test('an empty update plan validates context and an existing updater lock is retained', async t => {
   const f = await fixture(t);
   f.updates.length = 0;
   await f.save();

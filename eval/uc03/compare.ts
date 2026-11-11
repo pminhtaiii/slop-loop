@@ -1,281 +1,224 @@
 /**
- * UC-03 Verified Code Repair - Evaluation Comparison
- * Task: T027 (evaluation and comparison infrastructure)
+ * UC-03 workflow (uc03-workflow-evaluation/1) comparison.
  *
- * Compares two evaluation runs (baseline vs candidate), computing status
- * transitions, metrics deltas, and regression detection.
+ * The legacy tagged-report comparison and its CLI live in `compare-legacy.ts`; they are
+ * re-exported here so existing imports and the documented `node dist/eval/uc03/compare.js`
+ * entry keep working.
  */
 
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import {
-  validateEvaluationReport,
-} from './validation.ts';
-import type { CaseStatus, EvaluationMode } from './types.ts';
+import { validateWorkflowEvaluationReport } from './validation.ts';
+import { EVALUATION_CASE_IDS, WORKFLOW_EVALUATION_VERSION } from './types.ts';
+import type { EvaluationCaseId, WorkflowEvaluationReport, WorkflowGrade, WorkflowSuiteAcceptance } from './types.ts';
+import { main } from './compare-legacy.ts';
 
-export interface CaseDelta {
-  readonly caseId: string;
-  readonly baselineStatus: CaseStatus | 'missing';
-  readonly candidateStatus: CaseStatus | 'missing';
+export * from './compare-legacy.ts';
+
+/* Workflow (uc03-workflow-evaluation/1) comparison - additive, tagged. */
+
+/** Guard false when the reports differ on it; every failed guard refuses the comparison. */
+export type WorkflowComparisonGuard =
+  'suite' | 'contractVersion' | 'mode' | 'selected' | 'manifestDigest' | 'caseCardinality' | 'repositoryId' | 'graderDigest' | 'initialRepositoryDigest' | 'expectedOutcome' | 'strictSameConfig';
+
+export type WorkflowComparisonFactor = 'profileDigest' | 'configDigest' | 'pricingDigest' | 'adapterVersions' | 'requestedModel' | 'returnedModel';
+
+export interface WorkflowComparisonCase {
+  readonly caseId: EvaluationCaseId;
+  readonly baselineGrade: WorkflowGrade | 'missing';
+  readonly candidateGrade: WorkflowGrade | 'missing';
   readonly transition: 'stable' | 'improved' | 'regressed' | 'added' | 'removed';
-  readonly durationDeltaMs: number;
-  readonly tokensDelta: number;
-  readonly costDeltaUsd: number;
 }
 
-export interface ComparisonSummary {
+export interface WorkflowComparisonSummary {
   readonly totalCommon: number;
   readonly totalAdded: number;
   readonly totalRemoved: number;
-  readonly regressionsCount: number;
-  readonly improvementsCount: number;
   readonly stableCount: number;
-  readonly durationDeltaMs: number;
-  readonly tokensDelta: number;
-  readonly costDeltaUsd: number;
-  readonly successRateDelta: number;
+  readonly improvementsCount: number;
+  readonly regressionsCount: number;
+  readonly unknownUsageCases: number;
+  readonly observedUsageCases: number;
 }
 
-export interface ComparisonReport {
+export interface WorkflowComparisonReport {
   readonly suite: 'uc03';
-  readonly baselineDigest: string;
-  readonly candidateDigest: string;
-  readonly baselineMode: EvaluationMode;
-  readonly candidateMode: EvaluationMode;
+  readonly contractVersion: typeof WORKFLOW_EVALUATION_VERSION;
+  readonly baselineConfigDigest: string;
+  readonly candidateConfigDigest: string;
+  readonly compatible: boolean;
   readonly verdict: 'IDENTICAL' | 'IMPROVED' | 'REGRESSED' | 'INCOMPLETE';
   readonly exitCode: 0 | 1;
-  readonly cases: readonly CaseDelta[];
-  readonly summary: ComparisonSummary;
+  readonly failedGuards: readonly WorkflowComparisonGuard[];
+  readonly unverifiedGuards: readonly WorkflowComparisonGuard[];
+  readonly changedFactors: readonly WorkflowComparisonFactor[];
+  readonly configurationConfounded: boolean;
+  readonly cases: readonly WorkflowComparisonCase[];
+  readonly summary: WorkflowComparisonSummary;
+  readonly selectedCases: readonly EvaluationCaseId[];
+  /** Both sides' waits are kept visible; a wait is not a failure. */
+  readonly pendingWaits: Readonly<{ baseline: readonly EvaluationCaseId[]; candidate: readonly EvaluationCaseId[] }>;
+  /** Cases outside the selection never silently become coverage. */
+  readonly notSelectedCases: Readonly<{ baseline: readonly EvaluationCaseId[]; candidate: readonly EvaluationCaseId[] }>;
+  /** Workflow reports carry no numeric usage amounts, so both deltas are unknown, never zero. */
+  readonly tokensDelta: null;
+  readonly costDeltaUsd: null;
+  readonly baselineAcceptance: WorkflowSuiteAcceptance;
+  readonly candidateAcceptance: WorkflowSuiteAcceptance;
   readonly limitations: readonly string[];
 }
 
-export interface CompareOptions {
-  readonly baselinePath: string;
-  readonly candidatePath: string;
-  readonly outputPath?: string | undefined;
+export interface WorkflowCompareOptions {
+  readonly strictSameConfig?: boolean | undefined;
 }
 
-export function compareEvaluations(
-  baseline: unknown,
-  candidate: unknown,
-): ComparisonReport {
-  const validBaseline = validateEvaluationReport(baseline);
-  const validCandidate = validateEvaluationReport(candidate);
+const sameList = (left: readonly string[], right: readonly string[]): boolean => left.length === right.length && left.every((value, index) => value === right[index]);
 
-  if (
-    validBaseline.suite !== validCandidate.suite ||
-    validBaseline.contractVersion !== validCandidate.contractVersion ||
-    validBaseline.mode !== validCandidate.mode ||
-    validBaseline.manifestDigest !== validCandidate.manifestDigest ||
-    validBaseline.configDigest !== validCandidate.configDigest ||
-    validBaseline.cases.length !== validCandidate.cases.length
-  ) {
-    throw new Error('Incomparable evaluation reports');
+const notSelected = (report: WorkflowEvaluationReport): readonly EvaluationCaseId[] => EVALUATION_CASE_IDS.filter(caseId => !report.selectionResult.selected.includes(caseId));
+
+function workflowChangedFactors(baseline: WorkflowEvaluationReport, candidate: WorkflowEvaluationReport): readonly WorkflowComparisonFactor[] {
+  const factors = new Set<WorkflowComparisonFactor>();
+  if (baseline.configDigest !== candidate.configDigest) factors.add('configDigest');
+  const candidateById = new Map(candidate.cases.map(item => [item.caseId, item]));
+  for (const baseCase of baseline.cases) {
+    const candCase = candidateById.get(baseCase.caseId);
+    if (!candCase) continue;
+    if (baseCase.profileDigest !== candCase.profileDigest) factors.add('profileDigest');
+    if (baseCase.configDigest !== candCase.configDigest) factors.add('configDigest');
+    if (baseCase.pricingDigest !== candCase.pricingDigest) factors.add('pricingDigest');
+    if (!sameList(baseCase.adapterVersions, candCase.adapterVersions)) factors.add('adapterVersions');
+    if (baseCase.requestedModel !== candCase.requestedModel) factors.add('requestedModel');
+    if (baseCase.returnedModel !== candCase.returnedModel) factors.add('returnedModel');
   }
-  for (let index = 0; index < validBaseline.cases.length; index++) {
-    const baseCase = validBaseline.cases[index];
-    const candidateCase = validCandidate.cases[index];
-    if (
-      !baseCase ||
-      !candidateCase ||
-      baseCase.caseId !== candidateCase.caseId ||
-      baseCase.expectedOutcome !== candidateCase.expectedOutcome ||
-      (baseCase.taskId !== null &&
-        candidateCase.taskId !== null &&
-        baseCase.taskId !== candidateCase.taskId)
-    ) {
-      throw new Error('Incomparable evaluation reports');
+  return [...factors].sort();
+}
+
+function workflowCases(baseline: WorkflowEvaluationReport, candidate: WorkflowEvaluationReport): readonly WorkflowComparisonCase[] {
+  const baselineById = new Map(baseline.cases.map(item => [item.caseId, item]));
+  const candidateById = new Map(candidate.cases.map(item => [item.caseId, item]));
+  const caseIds = [...new Set([...baselineById.keys(), ...candidateById.keys()])].sort();
+  return caseIds.map(caseId => {
+    const baseCase = baselineById.get(caseId);
+    const candCase = candidateById.get(caseId);
+    const baselineGrade = baseCase ? baseCase.grade : ('missing' as const);
+    const candidateGrade = candCase ? candCase.grade : ('missing' as const);
+    let transition: WorkflowComparisonCase['transition'];
+    if (baselineGrade === 'missing') transition = 'added';
+    else if (candidateGrade === 'missing') transition = 'removed';
+    else if (baselineGrade === 'pass' && candidateGrade !== 'pass') transition = 'regressed';
+    else if (baselineGrade !== 'pass' && candidateGrade === 'pass') transition = 'improved';
+    else transition = 'stable';
+    return { caseId, baselineGrade, candidateGrade, transition };
+  });
+}
+
+/**
+ * Guards over facts two reports must share. An identity fact observed on neither side (`null`)
+ * is unprovable rather than equal, so it lands in `unverified` and still refuses the pair.
+ */
+function workflowGuards(
+  baseline: WorkflowEvaluationReport,
+  candidate: WorkflowEvaluationReport,
+): Readonly<{ failed: readonly WorkflowComparisonGuard[]; unverified: readonly WorkflowComparisonGuard[] }> {
+  const failed = new Set<WorkflowComparisonGuard>();
+  const unverified = new Set<WorkflowComparisonGuard>();
+  if (baseline.suite !== candidate.suite) failed.add('suite');
+  if (baseline.contractVersion !== candidate.contractVersion) failed.add('contractVersion');
+  if (baseline.mode !== candidate.mode) failed.add('mode');
+  if (!sameList(baseline.selectionResult.selected, candidate.selectionResult.selected)) failed.add('selected');
+  if (baseline.manifestDigest !== candidate.manifestDigest) failed.add('manifestDigest');
+  if (baseline.cases.length !== candidate.cases.length) failed.add('caseCardinality');
+  const candidateById = new Map(candidate.cases.map(item => [item.caseId, item]));
+  for (const baseCase of baseline.cases) {
+    const candCase = candidateById.get(baseCase.caseId);
+    if (!candCase) continue;
+    for (const guard of ['repositoryId', 'graderDigest', 'initialRepositoryDigest'] as const) {
+      const baseValue = baseCase[guard];
+      const candValue = candCase[guard];
+      if (baseValue === null || candValue === null) unverified.add(guard);
+      else if (baseValue !== candValue) failed.add(guard);
     }
+    if (baseCase.expectedOutcome !== candCase.expectedOutcome) failed.add('expectedOutcome');
   }
+  return { failed: [...failed].sort(), unverified: [...unverified].sort() };
+}
 
-  const baselineCaseMap = new Map(validBaseline.cases.map((c) => [c.caseId, c]));
-  const candidateCaseMap = new Map(validCandidate.cases.map((c) => [c.caseId, c]));
+function workflowVerdict(
+  failedGuards: readonly WorkflowComparisonGuard[],
+  unverifiedGuards: readonly WorkflowComparisonGuard[],
+  cases: readonly WorkflowComparisonCase[],
+  candidate: WorkflowEvaluationReport,
+): Readonly<{ verdict: WorkflowComparisonReport['verdict']; exitCode: 0 | 1 }> {
+  // Any failed or unproven guard refuses a verdict: the pair is not comparable.
+  if (failedGuards.length > 0 || unverifiedGuards.length > 0) return { verdict: 'INCOMPLETE', exitCode: 1 };
+  if (cases.some(item => item.transition === 'regressed' || item.transition === 'removed')) return { verdict: 'REGRESSED', exitCode: 1 };
+  if (candidate.suiteAcceptance.outcome !== 'pass') return { verdict: 'INCOMPLETE', exitCode: 1 };
+  if (cases.some(item => item.transition === 'improved' || item.transition === 'added')) return { verdict: 'IMPROVED', exitCode: 0 };
+  return { verdict: 'IDENTICAL', exitCode: 0 };
+}
 
-  const allCaseIds = Array.from(
-    new Set([...baselineCaseMap.keys(), ...candidateCaseMap.keys()])
-  ).sort();
+/**
+ * Compares two tagged workflow reports. Legacy reports are refused (and stay owned by
+ * `compareEvaluations`); an invalid report makes the validator throw, never a "compatible" result.
+ */
+export function compareWorkflowEvaluations(baseline: unknown, candidate: unknown, options: WorkflowCompareOptions = {}): WorkflowComparisonReport {
+  const validBaseline = validateWorkflowEvaluationReport(baseline);
+  const validCandidate = validateWorkflowEvaluationReport(candidate);
 
-  const caseDeltas: CaseDelta[] = [];
-  let totalCommon = 0;
-  let totalAdded = 0;
-  let totalRemoved = 0;
-  let regressionsCount = 0;
-  let improvementsCount = 0;
-  let stableCount = 0;
+  const { failed: guardFailures, unverified: unverifiedGuards } = workflowGuards(validBaseline, validCandidate);
+  const failedGuards = [...guardFailures];
+  const changedFactors = workflowChangedFactors(validBaseline, validCandidate);
+  const configurationConfounded = changedFactors.length >= 2;
+  if (options.strictSameConfig === true && changedFactors.length > 0) failedGuards.push('strictSameConfig');
 
-  for (const caseId of allCaseIds) {
-    const baseCase = baselineCaseMap.get(caseId);
-    const candCase = candidateCaseMap.get(caseId);
-
-    const baselineStatus: CaseStatus | 'missing' = baseCase ? baseCase.status : 'missing';
-    const candidateStatus: CaseStatus | 'missing' = candCase ? candCase.status : 'missing';
-
-    let transition: CaseDelta['transition'] = 'stable';
-    if (baselineStatus === 'missing') {
-      transition = 'added';
-      totalAdded++;
-      if (candidateStatus === 'pass') improvementsCount++;
-    } else if (candidateStatus === 'missing') {
-      transition = 'removed';
-      totalRemoved++;
-      regressionsCount++;
-    } else {
-      totalCommon++;
-      if (baselineStatus === 'pass' && candidateStatus !== 'pass') {
-        transition = 'regressed';
-        regressionsCount++;
-      } else if (baselineStatus !== 'pass' && candidateStatus === 'pass') {
-        transition = 'improved';
-        improvementsCount++;
-      } else {
-        transition = 'stable';
-        stableCount++;
-      }
-    }
-
-    const durationDeltaMs =
-      (candCase ? candCase.timing.durationMs : 0) -
-      (baseCase ? baseCase.timing.durationMs : 0);
-    const tokensDelta =
-      (candCase ? candCase.usage.tokensConsumed : 0) -
-      (baseCase ? baseCase.usage.tokensConsumed : 0);
-    const costDeltaUsd =
-      (candCase ? candCase.usage.costUsd : 0) -
-      (baseCase ? baseCase.usage.costUsd : 0);
-
-    caseDeltas.push({
-      caseId,
-      baselineStatus,
-      candidateStatus,
-      transition,
-      durationDeltaMs,
-      tokensDelta,
-      costDeltaUsd,
-    });
-  }
-
-  const durationDeltaMs =
-    validCandidate.summary.totalDurationMs - validBaseline.summary.totalDurationMs;
-  const tokensDelta =
-    validCandidate.summary.totalTokensConsumed - validBaseline.summary.totalTokensConsumed;
-  const costDeltaUsd =
-    validCandidate.summary.totalCostUsd - validBaseline.summary.totalCostUsd;
-  const successRateDelta =
-    validCandidate.summary.successRate - validBaseline.summary.successRate;
-
-  let verdict: ComparisonReport['verdict'] = 'IDENTICAL';
-  let exitCode: 0 | 1 = 0;
-
-  if (regressionsCount > 0) {
-    verdict = 'REGRESSED';
-    exitCode = 1;
-  } else if (validCandidate.summary.requiredFailuresOrNotRun > 0) {
-    verdict = 'INCOMPLETE';
-    exitCode = 1;
-  } else if (improvementsCount > 0) {
-    verdict = 'IMPROVED';
-    exitCode = 0;
-  } else {
-    verdict = 'IDENTICAL';
-    exitCode = 0;
-  }
+  const cases = workflowCases(validBaseline, validCandidate);
+  const common = cases.filter(item => item.baselineGrade !== 'missing' && item.candidateGrade !== 'missing');
+  const unknownUsageCases = validBaseline.cases.filter(item => item.usage !== 'observed').length + validCandidate.cases.filter(item => item.usage !== 'observed').length;
+  const observations = [...validBaseline.cases, ...validCandidate.cases];
+  const summary: WorkflowComparisonSummary = {
+    totalCommon: common.length,
+    totalAdded: cases.filter(item => item.transition === 'added').length,
+    totalRemoved: cases.filter(item => item.transition === 'removed').length,
+    stableCount: cases.filter(item => item.transition === 'stable').length,
+    improvementsCount: cases.filter(item => item.transition === 'improved').length,
+    regressionsCount: cases.filter(item => item.transition === 'regressed').length,
+    unknownUsageCases,
+    observedUsageCases: observations.length - unknownUsageCases,
+  };
+  const { verdict, exitCode } = workflowVerdict(failedGuards, unverifiedGuards, cases, validCandidate);
+  const acceptanceComplete = validBaseline.suiteAcceptance.outcome === 'pass' && validCandidate.suiteAcceptance.outcome === 'pass';
 
   return {
     suite: 'uc03',
-    baselineDigest: validBaseline.manifestDigest,
-    candidateDigest: validCandidate.manifestDigest,
-    baselineMode: validBaseline.mode,
-    candidateMode: validCandidate.mode,
+    contractVersion: WORKFLOW_EVALUATION_VERSION,
+    baselineConfigDigest: validBaseline.configDigest,
+    candidateConfigDigest: validCandidate.configDigest,
+    compatible: failedGuards.length === 0 && unverifiedGuards.length === 0,
     verdict,
     exitCode,
-    cases: caseDeltas,
-    summary: {
-      totalCommon,
-      totalAdded,
-      totalRemoved,
-      regressionsCount,
-      improvementsCount,
-      stableCount,
-      durationDeltaMs,
-      tokensDelta,
-      costDeltaUsd,
-      successRateDelta,
-    },
+    failedGuards,
+    unverifiedGuards,
+    changedFactors,
+    configurationConfounded,
+    cases,
+    summary,
+    selectedCases: validCandidate.selectionResult.selected,
+    pendingWaits: { baseline: validBaseline.selectionResult.pendingWaits, candidate: validCandidate.selectionResult.pendingWaits },
+    notSelectedCases: { baseline: notSelected(validBaseline), candidate: notSelected(validCandidate) },
+    tokensDelta: null,
+    costDeltaUsd: null,
+    baselineAcceptance: validBaseline.suiteAcceptance,
+    candidateAcceptance: validCandidate.suiteAcceptance,
     limitations: [
-      'Comparison summarizes recorded statuses and metrics; it does not establish workflow evidence.',
-      'Reports missing any required C01-C17 case are rejected.',
+      'Two attempts are observations; this comparison supports no causal or statistical quality claim.',
+      'A selected-case pass does not make the full suite pass; suite acceptance is mirrored from each report and never inferred.',
+      ...(unverifiedGuards.length > 0 ? [`Guards not provable from the reports are reported unverified and refuse the pair: ${unverifiedGuards.join(', ')}.`] : []),
+      ...(failedGuards.length > 0 ? [`Comparison refused: incompatible reports failed guards ${failedGuards.join(', ')}.`] : []),
+      ...(configurationConfounded ? ['Multiple configuration factors changed; outcome differences are configuration-confounded.'] : []),
+      ...(acceptanceComplete ? [] : ['At least one report does not certify complete suite acceptance, so complete acceptance cannot be presented.']),
+      ...(unknownUsageCases > 0 ? [`Usage is unknown for ${unknownUsageCases} case observation(s); cost and token deltas are null, never zero.`] : []),
     ],
   };
-}
-
-export async function runComparison(options: CompareOptions): Promise<ComparisonReport> {
-  const resolvedBase = resolve(process.cwd(), options.baselinePath);
-  const resolvedCand = resolve(process.cwd(), options.candidatePath);
-
-  if (!existsSync(resolvedBase)) {
-    throw new Error('Baseline report not found');
-  }
-  if (!existsSync(resolvedCand)) {
-    throw new Error('Candidate report not found');
-  }
-
-  let baseValue: unknown;
-  let candidateValue: unknown;
-  try {
-    baseValue = JSON.parse(readFileSync(resolvedBase, 'utf8'));
-    candidateValue = JSON.parse(readFileSync(resolvedCand, 'utf8'));
-  } catch {
-    throw new Error('Comparison report JSON is invalid or unavailable');
-  }
-
-  const comparison = compareEvaluations(baseValue, candidateValue);
-
-  if (options.outputPath) {
-    try {
-      writeFileSync(resolve(process.cwd(), options.outputPath), JSON.stringify(comparison, null, 2), 'utf8');
-    } catch {
-      throw new Error('Comparison report could not be written');
-    }
-  }
-
-  return comparison;
-}
-
-export async function main(): Promise<void> {
-  try {
-    const { values } = parseArgs({
-      args: process.argv.slice(2),
-      options: {
-        baseline: { type: 'string' },
-        candidate: { type: 'string' },
-        output: { type: 'string' },
-      },
-      allowPositionals: false,
-    });
-
-    if (!values.baseline || !values.candidate) {
-      console.error('Usage: node compare.js --baseline <run-a.json> --candidate <run-b.json> [--output <comparison.json>]');
-      process.exitCode = 1;
-      return;
-    }
-
-    const comparison = await runComparison({
-      baselinePath: values.baseline,
-      candidatePath: values.candidate,
-      ...(values.output ? { outputPath: values.output } : {}),
-    });
-
-    console.log(`UC-03 Comparison: Verdict = ${comparison.verdict}, ExitCode = ${comparison.exitCode}`);
-    console.log(
-      `Summary: ${comparison.summary.totalCommon} common, ${comparison.summary.regressionsCount} regressions, ${comparison.summary.improvementsCount} improvements`
-    );
-    process.exitCode = comparison.exitCode;
-  } catch {
-    console.error('UC-03 comparison refused: invalid or incomparable report inputs.');
-    process.exitCode = 1;
-  }
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {

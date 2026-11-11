@@ -2,20 +2,16 @@ import js from '@eslint/js';
 import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
-const nodeJavaScript = [
-  'scripts/**/*.mjs',
-  'tests/agents/**/*.mjs',
-  'tests/ci/**/*.mjs',
-];
+// A catch that only rethrows the caught error adds a frame and no information.
+const noUselessCatch = { 'no-useless-catch': 'error' };
+
+const nodeJavaScript = ['scripts/**/*.mjs', 'tests/agents/**/*.mjs', 'tests/ci/**/*.mjs'];
 
 export default tseslint.config(
   {
-    ignores: [
-      'dist/**',
-      'node_modules/**',
-      '.agent-work/**',
-      'coverage/**',
-    ],
+    // `.claude/` is local-only checkout state whose worktrees each carry their own tsconfig;
+    // linting it makes the parser fail on every file with "multiple candidate TSConfigRootDirs".
+    ignores: ['dist/**', 'node_modules/**', '.agent-work/**', 'coverage/**', '.claude/**', '.scratch/**'],
   },
   {
     ...js.configs.recommended,
@@ -26,30 +22,28 @@ export default tseslint.config(
     },
     rules: {
       ...js.configs.recommended.rules,
-      'no-unused-vars': ['error', {
-        argsIgnorePattern: '^_',
-        caughtErrorsIgnorePattern: '^_',
-        destructuredArrayIgnorePattern: '^_',
-        ignoreRestSiblings: true,
-        varsIgnorePattern: '^_',
-      }],
+      ...noUselessCatch,
+      'no-unused-vars': [
+        'error',
+        {
+          argsIgnorePattern: '^_',
+          caughtErrorsIgnorePattern: '^_',
+          destructuredArrayIgnorePattern: '^_',
+          ignoreRestSiblings: true,
+          varsIgnorePattern: '^_',
+        },
+      ],
     },
   },
   {
     files: ['**/*.{ts,tsx,mts,cts}'],
-    extends: [
-      tseslint.configs.eslintRecommended,
-      ...tseslint.configs.strict,
-      ...tseslint.configs.stylistic,
-    ],
+    extends: [tseslint.configs.eslintRecommended, ...tseslint.configs.strict, ...tseslint.configs.stylistic],
     rules: {
       '@typescript-eslint/no-explicit-any': 'error',
       '@typescript-eslint/explicit-module-boundary-types': 'error',
-      '@typescript-eslint/consistent-type-imports': [
-        'error',
-        { prefer: 'type-imports', fixStyle: 'separate-type-imports' },
-      ],
+      '@typescript-eslint/consistent-type-imports': ['error', { prefer: 'type-imports', fixStyle: 'separate-type-imports' }],
       'prefer-const': 'error',
+      ...noUselessCatch,
     },
   },
   {
@@ -78,17 +72,14 @@ export default tseslint.config(
       'no-restricted-imports': [
         'error',
         {
-          patterns: [{
-            group: [
-              '**/tests/runtime/support',
-              '**/tests/runtime/support/**',
-              'tests/runtime/support',
-              'tests/runtime/support/**',
-            ],
-            message: 'Production code cannot import runtime test support.',
-          }],
+          patterns: [
+            {
+              group: ['**/tests/runtime/support', '**/tests/runtime/support/**', 'tests/runtime/support', 'tests/runtime/support/**'],
+              message: 'Production code cannot import runtime test support.',
+            },
+          ],
         },
       ],
     },
-  }
+  },
 );

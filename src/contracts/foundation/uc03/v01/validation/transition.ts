@@ -8,16 +8,12 @@ import { validateReviewAdmission, validateVerificationAdmission, validateVerific
 import { validateApprovalBinding } from './intake.ts';
 import { validateTaskState } from './state.ts';
 
-export function validateStateTransition(
-  priorState: unknown,
-  nextState: unknown,
-  options?: StateTransitionOptions
-): ValidationResult<TaskState> {
+export function validateStateTransition(priorState: unknown, nextState: unknown, options?: StateTransitionOptions): ValidationResult<TaskState> {
   const priorRes = validateTaskState(priorState);
   if (!priorRes.ok) {
     return {
       ok: false,
-      errors: priorRes.errors.map((e) => ({
+      errors: priorRes.errors.map(e => ({
         ...e,
         path: `priorState.${e.path}`,
       })),
@@ -28,7 +24,7 @@ export function validateStateTransition(
   if (!nextRes.ok) {
     return {
       ok: false,
-      errors: nextRes.errors.map((e) => ({
+      errors: nextRes.errors.map(e => ({
         ...e,
         path: `nextState.${e.path}`,
       })),
@@ -81,41 +77,49 @@ export function validateStateTransition(
     });
   }
 
-  const fail = (path: string, code: string, message: string): void => { errors.push({ path, code, message }); };
+  const fail = (path: string, code: string, message: string): void => {
+    errors.push({ path, code, message });
+  };
   if (canonicalJsonStringify(prior.taskContext) !== canonicalJsonStringify(next.taskContext)) fail('taskContext', 'IMMUTABLE_TASK_CONTEXT', 'Original task and configuration cannot change');
   if (next.plan && next.plan.planVersion !== next.planVersion) fail('planVersion', 'PLAN_VERSION_MISMATCH', 'Plan version must match state');
-  if (prior.checkpointConfigId !== undefined && next.checkpointConfigId !== prior.checkpointConfigId) fail('checkpointConfigId', 'IMMUTABLE_CHECKPOINT_CONFIG', 'Checkpoint configuration cannot disappear or change');
-  if (prior.checkpointVersion !== undefined && (next.checkpointVersion === undefined ||
-      next.checkpointVersion < prior.checkpointVersion)) fail('checkpointVersion', 'CHECKPOINT_VERSION_RESET', 'Checkpoint version cannot disappear or reset');
+  if (prior.checkpointConfigId !== undefined && next.checkpointConfigId !== prior.checkpointConfigId)
+    fail('checkpointConfigId', 'IMMUTABLE_CHECKPOINT_CONFIG', 'Checkpoint configuration cannot disappear or change');
+  if (prior.checkpointVersion !== undefined && (next.checkpointVersion === undefined || next.checkpointVersion < prior.checkpointVersion))
+    fail('checkpointVersion', 'CHECKPOINT_VERSION_RESET', 'Checkpoint version cannot disappear or reset');
   if (next.planVersion < prior.planVersion) fail('planVersion', 'PLAN_VERSION_DECREASED', 'Plan versions cannot reset');
   for (const ledger of prior.budgetLedgers ?? []) {
     const current = next.budgetLedgers?.find(l => l.scope === ledger.scope && l.kind === ledger.kind);
-    if (!current ||
+    if (
+      !current ||
       current.configurationId !== ledger.configurationId ||
       current.limit !== ledger.limit ||
       current.unit !== ledger.unit ||
       current.consumed < ledger.consumed ||
-      current.version < ledger.version) {
-      fail('budgetLedgers', 'ACCOUNTING_RESET', 'Persisted accounting cannot disappear or reset'); continue;
+      current.version < ledger.version
+    ) {
+      fail('budgetLedgers', 'ACCOUNTING_RESET', 'Persisted accounting cannot disappear or reset');
+      continue;
     }
-    const removed = ledger.reservations.filter(r => !current.reservations.some(n => n.reservationId === r.reservationId && n.keyedId === r.keyedId && n.amount === r.amount)).reduce((sum, r) => sum + r.amount, 0);
+    const removed = ledger.reservations
+      .filter(r => !current.reservations.some(n => n.reservationId === r.reservationId && n.keyedId === r.keyedId && n.amount === r.amount))
+      .reduce((sum, r) => sum + r.amount, 0);
     if (current.consumed < ledger.consumed + removed) fail('budgetLedgers', 'ACCOUNTING_RESET', 'Removed reservations must remain charged as consumption');
   }
   if (prior.plan && !next.plan && next.planVersion !== prior.planVersion + 1) {
     fail('plan', 'PLAN_IDENTITY_DROPPED', 'Retain the recorded strategy until a new charged plan version is reserved');
   }
-  const material = (prior.plan && next.plan && (prior.plan.strategyDigest !== next.plan.strategyDigest ||
-      prior.plan.strategy !== next.plan.strategy)) ||
-      next.planVersion > prior.planVersion ||
-      (prior.node === 'Repair' && next.node === 'Investigate');
+  const material =
+    (prior.plan && next.plan && (prior.plan.strategyDigest !== next.plan.strategyDigest || prior.plan.strategy !== next.plan.strategy)) ||
+    next.planVersion > prior.planVersion ||
+    (prior.node === 'Repair' && next.node === 'Investigate');
   if (material || next.replanCount > prior.replanCount) {
     const reservation = options?.trusted?.replanReservation;
     const ledger = next.budgetLedgers?.find(l => l.scope === 'task' && l.kind === 'replan');
-    if (next.replanCount !== prior.replanCount + 1 ||
+    if (
+      next.replanCount !== prior.replanCount + 1 ||
       !reservation ||
       !reservation.proposalId?.trim() ||
-      prior.budgetLedgers?.some(l => l.reservations.some(r => r.reservationId === reservation.reservationId ||
-      r.keyedId === reservation.proposalId)) ||
+      prior.budgetLedgers?.some(l => l.reservations.some(r => r.reservationId === reservation.reservationId || r.keyedId === reservation.proposalId)) ||
       reservation.taskId !== next.taskId ||
       reservation.configurationId !== next.taskContext?.configId ||
       reservation.priorCount !== prior.replanCount ||
@@ -124,17 +128,21 @@ export function validateStateTransition(
       ledger.limit > 3 ||
       ledger.configurationId !== reservation.configurationId ||
       !ledger.reservations.some(r => r.reservationId === reservation.reservationId && r.keyedId === reservation.proposalId && r.amount === 1) ||
-      ledger.consumed + ledger.reservations.reduce((sum, r) => sum + r.amount, 0) < next.replanCount) fail('replanCount', 'MISSING_REPLAN_RESERVATION', 'Material replan needs one monotone task-scoped reserved slot');
-    if (prior.node === 'Repair' && next.node === 'Investigate' && next.planVersion !== prior.planVersion + 1) fail('planVersion', 'MATERIAL_PLAN_VERSION', 'Reserve the new plan version before investigation');
-    if (prior.plan && next.plan && (prior.plan.strategyDigest !== next.plan.strategyDigest ||
-      prior.plan.strategy !== next.plan.strategy) && next.planVersion !== prior.planVersion + 1) fail('planVersion', 'MATERIAL_PLAN_VERSION', 'Material strategy changes require a new plan version');
+      ledger.consumed + ledger.reservations.reduce((sum, r) => sum + r.amount, 0) < next.replanCount
+    )
+      fail('replanCount', 'MISSING_REPLAN_RESERVATION', 'Material replan needs one monotone task-scoped reserved slot');
+    if (prior.node === 'Repair' && next.node === 'Investigate' && next.planVersion !== prior.planVersion + 1)
+      fail('planVersion', 'MATERIAL_PLAN_VERSION', 'Reserve the new plan version before investigation');
+    if (prior.plan && next.plan && (prior.plan.strategyDigest !== next.plan.strategyDigest || prior.plan.strategy !== next.plan.strategy) && next.planVersion !== prior.planVersion + 1)
+      fail('planVersion', 'MATERIAL_PLAN_VERSION', 'Material strategy changes require a new plan version');
   }
   if (next.node === 'Patch') {
     const authorization = options?.trusted?.approval;
     const admitted = validateApprovalBinding(authorization?.binding, authorization?.freshness);
     const binding = admitted.ok ? admitted.value : undefined;
     const plan = next.plan;
-    if (!binding ||
+    if (
+      !binding ||
       binding.status !== 'approved' ||
       binding.actionKind !== 'fix_plan' ||
       !plan ||
@@ -149,34 +157,59 @@ export function validateStateTransition(
       binding.criteriaDigest !== computeCanonicalSha256(next.acceptanceCriteria) ||
       canonicalJsonStringify(binding.evidenceRefs) !== canonicalJsonStringify(plan.evidenceRefs) ||
       binding.decisionId !== next.activeDecisionId ||
-      plan.decisionRef !== binding.decisionId) fail('node', 'UNAPPROVED_PATCH', 'Patch requires a fresh trusted approved binding for this exact plan');
+      plan.decisionRef !== binding.decisionId
+    )
+      fail('node', 'UNAPPROVED_PATCH', 'Patch requires a fresh trusted approved binding for this exact plan');
   }
   if (next.outcome === 'COMPLETED') {
     const evidence = options?.trusted?.completion;
     const plan = next.plan;
-    const rawChecksValid = evidence && Array.isArray(evidence.checks) && evidence.checks.every(record => {
-      if (!isPlainObject(record)) return false;
-      if ('checkId' in record) return Object.keys(record).every(key => ['checkId', 'outcome', 'repositoryRevisionDigest', 'diffDigest'].includes(key));
-      const shape = validateVerificationResult(record);
-      if (!shape.ok) return false;
-      const matching = next.taskContext?.requiredChecks.filter(check => shape.value.testedIds.includes(check.checkId));
-      return !!matching?.length && shape.value.testedIds.every(id => matching.some(check => check.checkId === id)) && matching.every(check => validateVerificationAdmission(record, {
-        expectedTaskId: next.taskId, expectedRunId: next.runId,
-        expectedRepoDigest: next.repositoryRevisionDigest, expectedDiffDigest: evidence.diffDigest,
-        expectedCheckId: check.checkId, requiredPhase: check.purpose === 'reproduction' ? 'focused' : check.purpose,
-      }).ok);
-    });
-    const rawReviewValid = evidence && evidence.review !== null && typeof evidence.review === 'object' && ('roleConfigId' in evidence.review
-      ? Object.keys(evidence.review).every(key => ['reviewId', 'status', 'repositoryRevisionDigest', 'diffDigest', 'checkSetDigest', 'roleConfigId'].includes(key))
-      : !!evidence.reviewerRoleConfigId && !!evidence.reviewIterationReservationRef && validateReviewAdmission(evidence.review, {
-          expectedReviewId: next.latestReviewRef, expectedRepoDigest: next.repositoryRevisionDigest,
-          expectedDiffDigest: evidence.diffDigest, expectedCheckSetDigest: evidence.checkSetDigest,
-          expectedRoleConfigId: evidence.reviewerRoleConfigId,
-          expectedIterationReservationRef: evidence.reviewIterationReservationRef,
-        }).ok);
+    const rawChecksValid =
+      evidence &&
+      Array.isArray(evidence.checks) &&
+      evidence.checks.every(record => {
+        if (!isPlainObject(record)) return false;
+        if ('checkId' in record) return Object.keys(record).every(key => ['checkId', 'outcome', 'repositoryRevisionDigest', 'diffDigest'].includes(key));
+        const shape = validateVerificationResult(record);
+        if (!shape.ok) return false;
+        const matching = next.taskContext?.requiredChecks.filter(check => shape.value.testedIds.includes(check.checkId));
+        return (
+          !!matching?.length &&
+          shape.value.testedIds.every(id => matching.some(check => check.checkId === id)) &&
+          matching.every(
+            check =>
+              validateVerificationAdmission(record, {
+                expectedTaskId: next.taskId,
+                expectedRunId: next.runId,
+                expectedRepoDigest: next.repositoryRevisionDigest,
+                expectedDiffDigest: evidence.diffDigest,
+                expectedCheckId: check.checkId,
+                requiredPhase: check.purpose === 'reproduction' ? 'focused' : check.purpose,
+              }).ok,
+          )
+        );
+      });
+    const rawReviewValid =
+      evidence &&
+      evidence.review !== null &&
+      typeof evidence.review === 'object' &&
+      ('roleConfigId' in evidence.review
+        ? Object.keys(evidence.review).every(key => ['reviewId', 'status', 'repositoryRevisionDigest', 'diffDigest', 'checkSetDigest', 'roleConfigId'].includes(key))
+        : !!evidence.reviewerRoleConfigId &&
+          !!evidence.reviewIterationReservationRef &&
+          validateReviewAdmission(evidence.review, {
+            expectedReviewId: next.latestReviewRef,
+            expectedRepoDigest: next.repositoryRevisionDigest,
+            expectedDiffDigest: evidence.diffDigest,
+            expectedCheckSetDigest: evidence.checkSetDigest,
+            expectedRoleConfigId: evidence.reviewerRoleConfigId,
+            expectedIterationReservationRef: evidence.reviewIterationReservationRef,
+          }).ok);
 
-    if (!evidence ||
-      !rawChecksValid || !rawReviewValid ||
+    if (
+      !evidence ||
+      !rawChecksValid ||
+      !rawReviewValid ||
       !plan ||
       evidence.taskId !== next.taskId ||
       evidence.runId !== next.runId ||
@@ -190,20 +223,25 @@ export function validateStateTransition(
       !evidence.protectedTestsDigest?.trim() ||
       evidence.protectedTestsDigest !== evidence.originalProtectedTestsDigest ||
       !Array.isArray(evidence.checks) ||
-      !next.taskContext?.requiredChecks.every(c => evidence.checks.some(r => {
-        const checkIdMatch = 'checkId' in r ? r.checkId === c.checkId : ('testedIds' in r && Array.isArray((r as VerificationResult).testedIds) && (r as VerificationResult).testedIds.includes(c.checkId));
-        const outcomeMatch = r.outcome === 'pass';
-        const repoMatch = ('repositoryRevisionDigest' in r ? r.repositoryRevisionDigest : ('repoDigest' in r ? (r as VerificationResult).repoDigest : undefined)) === next.repositoryRevisionDigest;
-        const diffMatch = r.diffDigest === evidence.diffDigest;
-        return checkIdMatch && outcomeMatch && repoMatch && diffMatch;
-      })) ||
+      !next.taskContext?.requiredChecks.every(c =>
+        evidence.checks.some(r => {
+          const checkIdMatch =
+            'checkId' in r ? r.checkId === c.checkId : 'testedIds' in r && Array.isArray((r as VerificationResult).testedIds) && (r as VerificationResult).testedIds.includes(c.checkId);
+          const outcomeMatch = r.outcome === 'pass';
+          const repoMatch = ('repositoryRevisionDigest' in r ? r.repositoryRevisionDigest : 'repoDigest' in r ? (r as VerificationResult).repoDigest : undefined) === next.repositoryRevisionDigest;
+          const diffMatch = r.diffDigest === evidence.diffDigest;
+          return checkIdMatch && outcomeMatch && repoMatch && diffMatch;
+        }),
+      ) ||
       evidence.review?.status !== 'accepted' ||
       !('roleConfigId' in evidence.review ? evidence.review.roleConfigId?.trim() : evidence.review.reviewerRoleConfigId?.trim()) ||
       ('repositoryRevisionDigest' in evidence.review ? evidence.review.repositoryRevisionDigest : evidence.review.repoDigest) !== next.repositoryRevisionDigest ||
       evidence.review.diffDigest !== evidence.diffDigest ||
       evidence.review.checkSetDigest !== evidence.checkSetDigest ||
       evidence.review.reviewId !== next.latestReviewRef ||
-      !next.reviewRefs?.includes(evidence.review.reviewId)) fail('outcome', 'UNSUPPORTED_COMPLETION', 'Completion requires trusted current baseline, authorized diff, passing checks, test protection and accepted read-only review');
+      !next.reviewRefs?.includes(evidence.review.reviewId)
+    )
+      fail('outcome', 'UNSUPPORTED_COMPLETION', 'Completion requires trusted current baseline, authorized diff, passing checks, test protection and accepted read-only review');
   }
 
   // 3. Terminal node check
@@ -235,7 +273,42 @@ export function validateStateTransition(
     }
   }
 
-  // 5. Material Replan Limits & Replenishment Prohibition
+  // 5. Bound clarification (host-composition §8): the pair are the only writers of the record.
+  if (prior.node === 'Investigate' && next.node === 'NeedsInfo') {
+    const record = next.clarification;
+    const open = prior.clarification;
+    if (!record) fail('clarification', 'CLARIFICATION_RECORD_REQUIRED', 'Investigate to NeedsInfo requires the bound clarification record');
+    else if (record.answer !== undefined) fail('clarification', 'CLARIFICATION_ALREADY_ANSWERED', 'The asked record cannot arrive already answered');
+    else if (record.askedAtStateVersion !== prior.stateVersion)
+      fail('clarification.askedAtStateVersion', 'CLARIFICATION_VERSION_MISMATCH', 'A question must be bound to the state version it was asked at');
+    else if (!open && record.round !== 1) fail('clarification.round', 'CLARIFICATION_ROUND_SEQUENCE', 'A first question must be round 1');
+    else if (open && open.answer === undefined) fail('clarification', 'CLARIFICATION_QUESTION_OPEN', 'An unanswered question blocks a second one');
+    else if (open && record.round !== open.round + 1) fail('clarification.round', 'CLARIFICATION_ROUND_SEQUENCE', 'A replacing question must advance the round by exactly one');
+    if (record && record.evidenceRefs.some(ref => !next.evidenceRefs.includes(ref))) fail('evidenceRefs', 'CLARIFICATION_EVIDENCE_NOT_CARRIED', 'The ask write must carry its refs into evidenceRefs');
+  } else if (prior.node === 'NeedsInfo' && next.node === 'Investigate') {
+    const open = prior.clarification;
+    const answer = next.clarification?.answer;
+    if (!open) fail('clarification', 'CLARIFICATION_RECORD_REQUIRED', 'NeedsInfo to Investigate requires the open clarification record');
+    else if (open.answer !== undefined) fail('clarification', 'CLARIFICATION_ALREADY_ANSWERED', 'The open record was already answered');
+    else if (!answer) fail('clarification.answer', 'CLARIFICATION_ANSWER_MISSING', 'The reporter answer must arrive as input on this transition');
+    else if (answer.answeredAtStateVersion !== prior.stateVersion)
+      fail('clarification.answer.answeredAtStateVersion', 'CLARIFICATION_VERSION_MISMATCH', 'The answer must be bound to the state version it answers');
+    else if (
+      next.clarification?.questionId !== open.questionId ||
+      next.clarification?.questionDigest !== open.questionDigest ||
+      next.clarification?.round !== open.round ||
+      canonicalJsonStringify(next.clarification?.questions) !== canonicalJsonStringify(open.questions) ||
+      canonicalJsonStringify(next.clarification?.evidenceRefs) !== canonicalJsonStringify(open.evidenceRefs)
+    )
+      fail('clarification', 'CLARIFICATION_ANSWER_SUBSTITUTED', 'The answered record must be the same record it answers');
+  } else if (prior.node === 'NeedsInfo' && next.node === 'Validate' && prior.clarification !== undefined) {
+    fail('clarification', 'CLARIFICATION_BYPASS_REFUSED', 'A paused task cannot abandon its open question through Validate');
+  } else if (canonicalJsonStringify(prior.clarification) !== canonicalJsonStringify(next.clarification)) {
+    // §8 record lifecycle: only the pair writes the record, so every other edge must carry it byte-identically.
+    fail('clarification', 'CLARIFICATION_RECORD_ALTERED', 'Only the Investigate/NeedsInfo pair may write or replace the clarification record');
+  }
+
+  // 6. Material Replan Limits & Replenishment Prohibition
   if (next.replanCount < prior.replanCount) {
     errors.push({
       path: 'replanCount',
@@ -251,7 +324,7 @@ export function validateStateTransition(
     });
   }
 
-  // 6. Plan required before entering AwaitPlan
+  // 7. Plan required before entering AwaitPlan
   if (next.node === 'AwaitPlan' && !next.plan) {
     errors.push({
       path: 'plan',

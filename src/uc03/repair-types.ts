@@ -23,11 +23,8 @@ import type {
   RepositoryAdmissionContextV02,
   BudgetLedger,
 } from '../contracts/foundation/uc03.ts';
-import {
-  computeCanonicalSha256,
-  computeCheckSetDigest,
-  isProtectedPath,
-} from '../contracts/foundation/uc03.ts';
+import { computeCanonicalSha256, computeCheckSetDigest, isProtectedPath } from '../contracts/foundation/uc03.ts';
+import type { MaterialReplanPortV02 } from './graph-types-v02.ts';
 
 export type RepairOutcome = 'REPAIR_PREPARED' | 'INCOMPLETE' | 'DENIED';
 
@@ -55,10 +52,7 @@ export interface TrustedRepairContext {
 
 export interface RepairInput {
   readonly taskId: string;
-  readonly failureEvidence:
-    | VerificationResult
-    | ReviewResult
-    | readonly (VerificationResult | ReviewResult)[];
+  readonly failureEvidence: VerificationResult | ReviewResult | readonly (VerificationResult | ReviewResult)[];
   readonly repairPatch?: RepairPatchProposal | undefined;
   readonly actionId?: string | undefined;
   readonly admissionContext?: RepositoryAdmissionContextV02 | undefined;
@@ -91,12 +85,7 @@ export interface PlanMaterialityResult {
   readonly reason: string;
 }
 
-export type ReplanOutcome =
-  | 'REPLAN_PREPARED'
-  | 'CLARIFICATION_ACCEPTED'
-  | 'INCOMPLETE'
-  | 'AWAIT_FEEDBACK'
-  | 'DENIED';
+export type ReplanOutcome = 'REPLAN_PREPARED' | 'CLARIFICATION_ACCEPTED' | 'INCOMPLETE' | 'AWAIT_FEEDBACK' | 'DENIED';
 
 export interface ReplanInput {
   readonly taskId: string;
@@ -117,7 +106,9 @@ export interface TrustedReplanDirection {
 }
 
 export interface ReplanPorts {
-  readonly statePort: StatePort;
+  readonly statePort: StatePort | StatePortV02;
+  /** Present on the production route: the UC-04 material-replan transaction replaces legacy reserve/settle. */
+  readonly replanPort?: MaterialReplanPortV02 | undefined;
   readonly approvalPort?: ApprovalPort | undefined;
   readonly trustedTransitionContext?: StateTransitionOptions['trusted'] | undefined;
   readonly trustedDirection?: TrustedReplanDirection | undefined;
@@ -138,7 +129,7 @@ export interface RejectionInput {
 }
 
 export interface RejectionPorts {
-  readonly statePort: StatePort;
+  readonly statePort: StatePort | StatePortV02;
   readonly approvalPort?: ApprovalPort | undefined;
   readonly trustedTransitionContext?: StateTransitionOptions['trusted'] | undefined;
 }
@@ -146,9 +137,14 @@ export interface RejectionPorts {
 export function validateRejectionInput(input: unknown): input is RejectionInput {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return false;
   const value = input as Record<string, unknown>;
-  return typeof value.taskId === 'string' && !!value.taskId.trim() &&
-    typeof value.decisionId === 'string' && !!value.decisionId.trim() &&
-    typeof value.rejectionReason === 'string' && !!value.rejectionReason.trim();
+  return (
+    typeof value.taskId === 'string' &&
+    !!value.taskId.trim() &&
+    typeof value.decisionId === 'string' &&
+    !!value.decisionId.trim() &&
+    typeof value.rejectionReason === 'string' &&
+    !!value.rejectionReason.trim()
+  );
 }
 
 export function getRejectionApprovalContext(state: TaskState): ApprovalBindingContext | undefined {
@@ -182,12 +178,7 @@ export function getRejectionApprovalContext(state: TaskState): ApprovalBindingCo
 }
 
 export function isStatePortV02(port: unknown): port is StatePortV02 {
-  return (
-    typeof port === 'object' &&
-    port !== null &&
-    'claim' in port &&
-    typeof (port as Record<string, unknown>).claim === 'function'
-  );
+  return typeof port === 'object' && port !== null && 'claim' in port && typeof (port as Record<string, unknown>).claim === 'function';
 }
 
 export function isVerificationResult(item: unknown): item is VerificationResult {
@@ -196,8 +187,7 @@ export function isVerificationResult(item: unknown): item is VerificationResult 
 
 export function isProtectedPathOrTest(filePath: string): boolean {
   const norm = filePath.toLowerCase().replace(/\\/g, '/');
-  return isProtectedPath(filePath) ||
-    /(^|\/)(test|tests)(\/|$)|(^|\/)(test_[^/]*\.py|[^/]*_test\.py|conftest\.py)$/.test(norm);
+  return isProtectedPath(filePath) || /(^|\/)(test|tests)(\/|$)|(^|\/)(test_[^/]*\.py|[^/]*_test\.py|conftest\.py)$/.test(norm);
 }
 
 export function isReviewResult(item: unknown): item is ReviewResult {
@@ -209,38 +199,52 @@ export function failureRefs(items: readonly (VerificationResult | ReviewResult)[
   actions: string[];
   diagnostics: string[];
 } {
-  const evidence = items.map((item) => isVerificationResult(item) ? item.evidenceId : item.reviewId);
-  const actions = items.map((item) => isVerificationResult(item) ? item.actionId : item.iterationReservationRef);
-  const diagnostics = items.flatMap((item) => isVerificationResult(item) ? item.diagnosticRefs : item.findings.map((finding) => finding.evidenceRef ?? item.reviewId));
+  const evidence = items.map(item => (isVerificationResult(item) ? item.evidenceId : item.reviewId));
+  const actions = items.map(item => (isVerificationResult(item) ? item.actionId : item.iterationReservationRef));
+  const diagnostics = items.flatMap(item => (isVerificationResult(item) ? item.diagnosticRefs : item.findings.map(finding => finding.evidenceRef ?? item.reviewId)));
   return { evidence, actions, diagnostics: [...new Set(diagnostics)] };
 }
 
-export function createTrustedRepairContext(
-  state: TaskState,
-  items: readonly (VerificationResult | ReviewResult)[],
-  admissionContext: RepositoryAdmissionContextV02,
-): TrustedRepairContext | undefined {
-  const plan = state.plan, task = state.taskContext;
+export function createTrustedRepairContext(state: TaskState, items: readonly (VerificationResult | ReviewResult)[], admissionContext: RepositoryAdmissionContextV02): TrustedRepairContext | undefined {
+  const plan = state.plan,
+    task = state.taskContext;
   if (!plan?.baselineRef || !task || state.node !== 'Repair' || !items.length) return undefined;
-  const refs = failureRefs(items), diffDigest = items[0]?.diffDigest;
-  if (!diffDigest || items.some((item) => item.diffDigest !== diffDigest) || !refs.diagnostics.length) return undefined;
+  const refs = failureRefs(items),
+    diffDigest = items[0]?.diffDigest;
+  if (!diffDigest || items.some(item => item.diffDigest !== diffDigest) || !refs.diagnostics.length) return undefined;
   return {
-    taskId: state.taskId, runId: state.runId, workspaceId: state.workspaceId, repositoryId: state.repositoryId,
-    repositoryRevisionDigest: state.repositoryRevisionDigest, baselineRef: plan.baselineRef,
-    checkSetDigest: computeCheckSetDigest(task.requiredChecks), diffDigest,
-    evidenceRefs: refs.evidence, actionRefs: refs.actions, diagnosticRefs: refs.diagnostics, admissionContext,
+    taskId: state.taskId,
+    runId: state.runId,
+    workspaceId: state.workspaceId,
+    repositoryId: state.repositoryId,
+    repositoryRevisionDigest: state.repositoryRevisionDigest,
+    baselineRef: plan.baselineRef,
+    checkSetDigest: computeCheckSetDigest(task.requiredChecks),
+    diffDigest,
+    evidenceRefs: refs.evidence,
+    actionRefs: refs.actions,
+    diagnosticRefs: refs.diagnostics,
+    admissionContext,
   };
 }
 
 export function createRepairActionId(state: TaskState, items: readonly (VerificationResult | ReviewResult)[]): string | undefined {
-  const plan = state.plan, task = state.taskContext;
+  const plan = state.plan,
+    task = state.taskContext;
   if (!plan?.baselineRef || !task || !items.length) return undefined;
-  const refs = failureRefs(items), diffDigest = items[0]?.diffDigest;
-  if (!diffDigest || items.some((item) => item.diffDigest !== diffDigest)) return undefined;
+  const refs = failureRefs(items),
+    diffDigest = items[0]?.diffDigest;
+  if (!diffDigest || items.some(item => item.diffDigest !== diffDigest)) return undefined;
   return `act-repair-${computeCanonicalSha256({
-    taskId: state.taskId, runId: state.runId, repositoryRevisionDigest: state.repositoryRevisionDigest,
-    baselineRef: plan.baselineRef, checkSetDigest: computeCheckSetDigest(task.requiredChecks), diffDigest,
-    evidenceRefs: refs.evidence, actionRefs: refs.actions, diagnosticRefs: refs.diagnostics,
+    taskId: state.taskId,
+    runId: state.runId,
+    repositoryRevisionDigest: state.repositoryRevisionDigest,
+    baselineRef: plan.baselineRef,
+    checkSetDigest: computeCheckSetDigest(task.requiredChecks),
+    diffDigest,
+    evidenceRefs: refs.evidence,
+    actionRefs: refs.actions,
+    diagnosticRefs: refs.diagnostics,
   })}`;
 }
 
@@ -248,27 +252,32 @@ export function refsMatch(actual: unknown, expected: readonly string[]): boolean
   return Array.isArray(actual) && actual.length === expected.length && actual.every((ref: unknown, index: number) => typeof ref === 'string' && ref === expected[index]);
 }
 
-export const isSha256 = (value: unknown): value is string =>
-  typeof value === 'string' && value.length === 71 && /^sha256:[a-f0-9]{64}$/.test(value);
+export const isSha256 = (value: unknown): value is string => typeof value === 'string' && value.length === 71 && /^sha256:[a-f0-9]{64}$/.test(value);
 
 export type AccountingCheck = { readonly ok: true; readonly repair: BudgetLedger } | { readonly ok: false; readonly reason: string };
 
 export function checkAccounting(state: TaskState, actionId?: string, receiptId?: string): AccountingCheck {
-  const task = state.taskContext, ledgers = state.budgetLedgers;
+  const task = state.taskContext,
+    ledgers = state.budgetLedgers;
   if (!ledgers?.length) return { ok: false, reason: 'missing-budget-ledgers' };
   if (!task) return { ok: false, reason: 'missing-budget-configuration' };
-  const [repair, tokens, cost] = (['repair', 'tokens', 'cost'] as const).map((kind) => ledgers.find((entry) => entry.scope === 'task' && entry.kind === kind));
+  const [repair, tokens, cost] = (['repair', 'tokens', 'cost'] as const).map(kind => ledgers.find(entry => entry.scope === 'task' && entry.kind === kind));
   if (!repair || !tokens || !cost) return { ok: false, reason: 'missing-budget-ledgers' };
-  for (const [ledger, limit, unit] of [[repair, task.budgetLimits.maxRepairAttempts, 'count'], [tokens, task.budgetLimits.maxTokens, 'count'], [cost, task.budgetLimits.maxCostUsd, 'usd']] as const) {
+  for (const [ledger, limit, unit] of [
+    [repair, task.budgetLimits.maxRepairAttempts, 'count'],
+    [tokens, task.budgetLimits.maxTokens, 'count'],
+    [cost, task.budgetLimits.maxCostUsd, 'usd'],
+  ] as const) {
     if (ledger.configurationId !== task.configId || ledger.limit !== limit || ledger.unit !== unit) return { ok: false, reason: 'inconsistent-budget-configuration' };
-    if (ledger.reservations.some((item) => item.amount <= 0)) return { ok: false, reason: 'inconsistent-budget-accounting' };
+    if (ledger.reservations.some(item => item.amount <= 0)) return { ok: false, reason: 'inconsistent-budget-accounting' };
     const total = ledger.consumed + ledger.reservations.reduce((sum, item) => sum + item.amount, 0);
     if (ledger.kind === 'repair' && actionId) {
       if (total > limit) return { ok: false, reason: 'inconsistent-budget-accounting' };
-      if (ledger.reservations.filter((item) => item.keyedId === actionId && item.amount === 1 && item.reservationId === receiptId).length !== 1) return { ok: false, reason: 'repair-reservation-not-authoritative' };
+      if (ledger.reservations.filter(item => item.keyedId === actionId && item.amount === 1 && item.reservationId === receiptId).length !== 1)
+        return { ok: false, reason: 'repair-reservation-not-authoritative' };
     } else if (total >= limit) return { ok: false, reason: ledger.kind === 'repair' ? 'repair-budget-exhausted' : 'token-or-cost-budget-exhausted' };
   }
-  if (ledgers.some((entry) => (entry.kind === 'tokens' || entry.kind === 'cost') && entry.reservations.length > 0)) return { ok: false, reason: 'uncertain-accounting-reservations' };
+  if (ledgers.some(entry => (entry.kind === 'tokens' || entry.kind === 'cost') && entry.reservations.length > 0)) return { ok: false, reason: 'uncertain-accounting-reservations' };
   return { ok: true, repair };
 }
 
@@ -282,18 +291,21 @@ export function isPatchResult(value: unknown): value is {
     const applied = Object.getOwnPropertyDescriptor(value, 'applied');
     const revision = Object.getOwnPropertyDescriptor(value, 'newRevisionDigest');
     const receipt = Object.getOwnPropertyDescriptor(value, 'executionReceipt');
-    return applied !== undefined && 'value' in applied && applied.value === true &&
-      revision !== undefined && 'value' in revision && isSha256(revision.value) &&
-      (receipt === undefined || 'value' in receipt);
+    return (
+      applied !== undefined &&
+      'value' in applied &&
+      applied.value === true &&
+      revision !== undefined &&
+      'value' in revision &&
+      isSha256(revision.value) &&
+      (receipt === undefined || 'value' in receipt)
+    );
   } catch {
     return false;
   }
 }
 
 /** The guard and journal validate supplied owner authority; repair never creates it. */
-export function resolveRepairAdmissionContext(
-  ports: RepairPorts,
-  ctx?: TrustedRepairContext | undefined,
-): RepositoryAdmissionContextV02 | undefined {
+export function resolveRepairAdmissionContext(ports: RepairPorts, ctx?: TrustedRepairContext | undefined): RepositoryAdmissionContextV02 | undefined {
   return ports.admissionContext ?? ctx?.admissionContext;
 }

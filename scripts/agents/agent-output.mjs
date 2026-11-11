@@ -3,16 +3,7 @@ import { realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { TextDecoder } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import {
-  assertDirectoryStat,
-  existingManagedRoot,
-  idPattern,
-  managedRootPath,
-  readManifest,
-  reservedWindowsNamePattern,
-  statOrNull,
-  validateDate,
-} from './agent-work-session.mjs';
+import { assertDirectoryStat, existingManagedRoot, idPattern, managedRootPath, readManifest, reservedWindowsNamePattern, statOrNull, validateDate } from './agent-work-session.mjs';
 import { atomicWrite, inside, repository, samePath } from './agent-store.mjs';
 
 const maxInputBytes = 256 * 1024;
@@ -99,7 +90,7 @@ async function readInput() {
 
 function validateExitObservation(value) {
   if (value === undefined) return;
-  if (!isObject(value) || Object.keys(value).some((key) => !['code', 'signal'].includes(key))) {
+  if (!isObject(value) || Object.keys(value).some(key => !['code', 'signal'].includes(key))) {
     throw new Error('exitObservation must contain only code and signal');
   }
   if ('code' in value && value.code !== null && !Number.isSafeInteger(value.code)) {
@@ -160,9 +151,7 @@ async function readLogTail(sessionDirectory, file) {
     }
     const offset = Math.max(0, fileStat.size - maxTailBytes);
     const buffer = Buffer.alloc(fileStat.size - offset);
-    const { bytesRead } = buffer.length > 0
-      ? await handle.read(buffer, 0, buffer.length, offset)
-      : { bytesRead: 0 };
+    const { bytesRead } = buffer.length > 0 ? await handle.read(buffer, 0, buffer.length, offset) : { bytesRead: 0 };
     let start = 0;
     if (offset > 0) {
       while (start < bytesRead && (buffer[start] & 0xc0) === 0x80) start += 1;
@@ -214,17 +203,19 @@ async function main() {
   if (!inside(sessionDirectory, outputPath)) throw new Error('Output path escapes its session');
   const content = `${JSON.stringify(input, null, 2)}\n`;
   await atomicWrite(outputPath, content, { exclusive: true });
-  process.stdout.write(`${JSON.stringify({
-    status: 'written',
-    output: options.output,
-    bytes: Buffer.byteLength(content, 'utf8'),
-    exitObservation: input.exitObservation ?? null,
-    log,
-  })}\n`);
+  process.stdout.write(
+    `${JSON.stringify({
+      status: 'written',
+      output: options.output,
+      bytes: Buffer.byteLength(content, 'utf8'),
+      exitObservation: input.exitObservation ?? null,
+      log,
+    })}\n`,
+  );
 }
 
 if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
-  main().catch((error) => {
+  main().catch(error => {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 1;
   });

@@ -30,15 +30,8 @@ import {
   computeAttemptOutcomeDigest,
   computeRequestContentDigest,
 } from '../contracts/foundation/uc03.ts';
-import {
-  deepClone,
-  deepFreeze,
-  validateBaseModelInputs,
-  buildTransportPayload,
-  executeTransport,
-  type HostModelTransport,
-  type HostProviderConfig,
-} from './model.ts';
+import { deepClone, deepFreeze, validateBaseModelInputs, buildTransportPayload, executeTransport, type HostModelTransport, type HostProviderConfig } from './model.ts';
+import { isDeepSeekTransport } from './deepseek-transport.ts';
 
 export interface HostModelPortV02Options {
   readonly transport: HostModelTransport;
@@ -70,7 +63,7 @@ export function buildProviderOutcomeReceipt(
   attempt: AttemptReceiptV02,
   outcome: 'observed' | 'uncertain',
   rawPayload: unknown,
-  observedUsage?: ProviderUsage
+  observedUsage?: ProviderUsage,
 ): ProviderRequestOutcomeReceiptV02 {
   const references = [context.requestReservationReceipt, ...context.budgetRefs];
   const receiptId = `prov-out-${attempt.attemptId}`;
@@ -145,31 +138,32 @@ const consumedAttempts = new Set<string>();
 /**
  * Versioned ModelPortV02 ingress for both coder and reviewer roles (T051/T052).
  */
+/**
+ * Provenance is derived from the injected transport, never declared. Only a transport minted by
+ * the trusted production factory can be real; shape-compatible fakes stay mock.
+ */
+export function derivedModelProvenance(transport: HostModelTransport): PortProvenance {
+  return isDeepSeekTransport(transport) ? 'real' : 'mock';
+}
+
 export class HostModelPortV02 implements ModelPortV02 {
-  readonly provenance: PortProvenance = 'mock';
+  readonly modelPortApiVersion = '0.2.0' as const;
+  readonly provenance: PortProvenance;
   readonly options: HostModelPortV02Options;
   private readonly completedRequests = new Map<string, { readonly identity: string; readonly result: Promise<ModelPortV02Result> }>();
   private readonly requestIdentities = new Map<string, string>();
 
-
   constructor(options: HostModelPortV02Options) {
     this.options = options;
+    this.provenance = derivedModelProvenance(options.transport);
   }
 
-  async propose(
-    state: TaskState,
-    evidence: readonly SourceEvidence[],
-    request: ProviderRequest,
-    context: ProviderAdmissionContextV02
-  ): Promise<ModelPortV02Result> {
+  async propose(state: TaskState, evidence: readonly SourceEvidence[], request: ProviderRequest, context: ProviderAdmissionContextV02): Promise<ModelPortV02Result> {
     const snapshotState = deepFreeze(deepClone(state));
     const snapshotEvidence = deepFreeze(deepClone(evidence));
     const snapshotRequest = deepFreeze(deepClone(request));
     const snapshotContext = deepFreeze(deepClone(context));
-    const snapshotConfig =
-      this.options.providerConfig !== undefined
-        ? deepFreeze(deepClone(this.options.providerConfig))
-        : undefined;
+    const snapshotConfig = this.options.providerConfig !== undefined ? deepFreeze(deepClone(this.options.providerConfig)) : undefined;
 
     const baseValidation = validateBaseModelInputs(snapshotState, snapshotEvidence, snapshotRequest, snapshotConfig);
     if (!baseValidation.ok) {
@@ -196,10 +190,7 @@ export class HostModelPortV02 implements ModelPortV02 {
       return { outcome: 'denied', reason: 'RECEIPT_ROLE_MISMATCH: Admission receipt role or requestId mismatch' };
     }
     const computedReqDigest = computeRequestContentDigest(snapshotRequest);
-    if (
-      snapshotContext.requestContentDigest !== computedReqDigest ||
-      snapshotContext.providerAdmissionReceipt.requestContentDigest !== computedReqDigest
-    ) {
+    if (snapshotContext.requestContentDigest !== computedReqDigest || snapshotContext.providerAdmissionReceipt.requestContentDigest !== computedReqDigest) {
       return { outcome: 'denied', reason: 'REQUEST_DIGEST_MISMATCH: Request content digest mismatch' };
     }
 
@@ -221,8 +212,12 @@ export class HostModelPortV02 implements ModelPortV02 {
     // Publish the in-flight entry before admission can yield or reenter this receiver.
     let provenPreClaimDenial = false;
     const result = Promise.resolve()
-      .then(() => this.dispatch(snapshotState, snapshotEvidence, snapshotRequest, snapshotContext, () => { provenPreClaimDenial = true; }))
-      .then((value) => {
+      .then(() =>
+        this.dispatch(snapshotState, snapshotEvidence, snapshotRequest, snapshotContext, () => {
+          provenPreClaimDenial = true;
+        }),
+      )
+      .then(value => {
         if (provenPreClaimDenial) {
           const current = this.completedRequests.get(snapshotRequest.providerRequestId);
           if (current?.identity === identity && current.result === result) {
@@ -246,9 +241,13 @@ export class HostModelPortV02 implements ModelPortV02 {
     markPreClaimDenial: () => void,
   ): Promise<ModelPortV02Result> {
     const configured = this.options.executorIdentity;
-    if (!configured?.adapterIdentity?.trim() || !configured.processIncarnation?.trim() ||
-      !Number.isSafeInteger(configured.fencingGeneration) || (configured.fencingGeneration ?? 0) <= 0 ||
-      !this.options.currentExecutorIdentity) {
+    if (
+      !configured?.adapterIdentity?.trim() ||
+      !configured.processIncarnation?.trim() ||
+      !Number.isSafeInteger(configured.fencingGeneration) ||
+      (configured.fencingGeneration ?? 0) <= 0 ||
+      !this.options.currentExecutorIdentity
+    ) {
       markPreClaimDenial();
       return { outcome: 'denied', reason: 'EXECUTOR_IDENTITY_REQUIRED: Explicit trusted actor and current fence are required' };
     }
@@ -272,8 +271,12 @@ export class HostModelPortV02 implements ModelPortV02 {
     if (!isCurrent()) return { outcome: 'denied', reason: 'FENCED_EXECUTOR' };
     const attempt = providerAttempt(await this.options.statePort.beginAttempt(claim.claimId, executorIdentity), claim, executorIdentity);
     if (!attempt) return { outcome: 'denied', reason: 'ATTEMPT_DENIED: Mismatched provider attempt' };
-    const consumeKey = computeCanonicalSha256({ taskId: claim.taskId, attemptId: attempt.attemptId,
-      adapterIdentity: executorIdentity.adapterIdentity, processIncarnation: executorIdentity.processIncarnation });
+    const consumeKey = computeCanonicalSha256({
+      taskId: claim.taskId,
+      attemptId: attempt.attemptId,
+      adapterIdentity: executorIdentity.adapterIdentity,
+      processIncarnation: executorIdentity.processIncarnation,
+    });
     if (!isCurrent()) return { outcome: 'denied', reason: 'FENCED_EXECUTOR' };
     const payload = buildTransportPayload(snapshotState, snapshotEvidence, snapshotRequest);
     if (consumedAttempts.has(consumeKey)) return { outcome: 'denied', reason: 'ALREADY_CONSUMED' };
@@ -284,15 +287,20 @@ export class HostModelPortV02 implements ModelPortV02 {
 
     const usage = 'observedUsage' in transportRes ? transportRes.observedUsage : undefined;
     const bounds = snapshotContext.finiteBounds;
-    const accounted = usage !== undefined &&
+    const accounted =
+      usage !== undefined &&
       usage.inputTokens <= Math.min(snapshotRequest.maxInputTokens, bounds.maxInputTokens) &&
       usage.outputTokens <= Math.min(snapshotRequest.maxOutputTokens, bounds.maxOutputTokens) &&
       (usage.billableTokens ?? usage.inputTokens + usage.outputTokens) <= Math.min(snapshotRequest.maxBillableTokens, bounds.maxBillableTokens) &&
       usage.costUsd <= Math.min(snapshotRequest.maxCostUsd, bounds.maxCostUsd);
-    const receipt = buildProviderOutcomeReceipt(snapshotContext, claim, attempt,
+    const receipt = buildProviderOutcomeReceipt(
+      snapshotContext,
+      claim,
+      attempt,
       accounted ? 'observed' : 'uncertain',
       transportRes.outcome === 'observed' ? transportRes.result : { outcome: transportRes.outcome },
-      accounted ? usage : undefined);
+      accounted ? usage : undefined,
+    );
     const pending = await this.recordProviderOutcome(snapshotContext, claim, attempt, receipt);
     if (pending) return pending;
     if (transportRes.outcome === 'observed') {
@@ -309,18 +317,20 @@ export class HostModelPortV02 implements ModelPortV02 {
     receipt: ProviderRequestOutcomeReceiptV02,
   ): Promise<ModelPortV02Result | null> {
     const validation = validateProviderRequestOutcomeReceiptV02(receipt, {
-      trustedAdmission: admission, trustedClaim: claim, trustedAttempt: attempt,
-      currentClaimStatus: 'attempting', currentTaskStateVersion: attempt.postBeginTaskStateVersion,
-      currentControlVersion: attempt.postBeginControlVersion, currentEpoch: attempt.epoch,
+      trustedAdmission: admission,
+      trustedClaim: claim,
+      trustedAttempt: attempt,
+      currentClaimStatus: 'attempting',
+      currentTaskStateVersion: attempt.postBeginTaskStateVersion,
+      currentControlVersion: attempt.postBeginControlVersion,
+      currentEpoch: attempt.epoch,
     });
     if (!validation.ok) throw new Error('INVALID_PROVIDER_OUTCOME_RECEIPT');
     const recovery = deepFreeze(deepClone({ admission, claim, attempt, receipt: validation.value }));
     try {
       const snapshot = safeSnapshot(await this.options.statePort.recordOutcome(recovery.receipt));
       const recorded = snapshot.ok ? snapshot.value : null;
-      if (recorded && typeof recorded === 'object' && !Array.isArray(recorded) &&
-        Object.keys(recorded).length === 2 && Object.hasOwn(recorded, 'receiptId') &&
-        Object.hasOwn(recorded, 'outcome')) {
+      if (recorded && typeof recorded === 'object' && !Array.isArray(recorded) && Object.keys(recorded).length === 2 && Object.hasOwn(recorded, 'receiptId') && Object.hasOwn(recorded, 'outcome')) {
         // The detached snapshot contains only own plain-data properties.
         const data = recorded as Record<string, unknown>;
         if (data['receiptId'] === receipt.receiptId && data['outcome'] === 'settled' && receipt.outcome === 'observed') return null;
@@ -330,13 +340,9 @@ export class HostModelPortV02 implements ModelPortV02 {
     }
     return { outcome: 'uncertain', reason: 'PROVIDER_OUTCOME_PENDING', recovery };
   }
-
 }
 
-function computeProviderRequestIdentity(
-  request: ProviderRequest,
-  context: ProviderAdmissionContextV02,
-): string {
+function computeProviderRequestIdentity(request: ProviderRequest, context: ProviderAdmissionContextV02): string {
   const immutableAdmission = { ...context };
   Reflect.deleteProperty(immutableAdmission, 'expectedControlVersion');
   Reflect.deleteProperty(immutableAdmission, 'admissionDigest');
@@ -345,14 +351,37 @@ function computeProviderRequestIdentity(
 
 function isNeutralClaimReceipt(input: unknown): boolean {
   const snapshot = safeSnapshot(input);
-  const claimKeys = ['claimId', 'claimDigest', 'taskId', 'runId', 'subjectKind', 'planApplicability',
-    'preClaimTaskStateVersion', 'preClaimControlVersion', 'postClaimControlVersion', 'epoch', 'status', 'reservationRefs'];
+  const claimKeys = [
+    'claimId',
+    'claimDigest',
+    'taskId',
+    'runId',
+    'subjectKind',
+    'planApplicability',
+    'preClaimTaskStateVersion',
+    'preClaimControlVersion',
+    'postClaimControlVersion',
+    'epoch',
+    'status',
+    'reservationRefs',
+  ];
   if (!snapshot.ok || !snapshot.value || typeof snapshot.value !== 'object' || Array.isArray(snapshot.value)) return false;
   const copy = snapshot.value as Record<string, unknown>;
-  return Object.keys(copy).length === claimKeys.length && claimKeys.every((key) => Object.hasOwn(copy, key)) &&
-    copy['claimId'] === '' && copy['claimDigest'] === '' && copy['taskId'] === '' && copy['runId'] === '' &&
-    copy['subjectKind'] === 'repository-action' && copy['planApplicability'] === 'pre-plan-diagnostic' &&
-    copy['preClaimTaskStateVersion'] === 0 && copy['preClaimControlVersion'] === 0 &&
-    copy['postClaimControlVersion'] === 0 && copy['epoch'] === 0 && copy['status'] === 'claimed' &&
-    Array.isArray(copy['reservationRefs']) && copy['reservationRefs'].length === 0;
+  return (
+    Object.keys(copy).length === claimKeys.length &&
+    claimKeys.every(key => Object.hasOwn(copy, key)) &&
+    copy['claimId'] === '' &&
+    copy['claimDigest'] === '' &&
+    copy['taskId'] === '' &&
+    copy['runId'] === '' &&
+    copy['subjectKind'] === 'repository-action' &&
+    copy['planApplicability'] === 'pre-plan-diagnostic' &&
+    copy['preClaimTaskStateVersion'] === 0 &&
+    copy['preClaimControlVersion'] === 0 &&
+    copy['postClaimControlVersion'] === 0 &&
+    copy['epoch'] === 0 &&
+    copy['status'] === 'claimed' &&
+    Array.isArray(copy['reservationRefs']) &&
+    copy['reservationRefs'].length === 0
+  );
 }

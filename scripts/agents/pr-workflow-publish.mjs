@@ -2,15 +2,17 @@ import { randomUUID } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { assertNoTrackedArtifacts } from '../ci/check-tracked-files.mjs';
+import { ACTIVE_POLICY_ID } from '../ci/required-checks.mjs';
 import { dataDirectory } from './agent-store.mjs';
 import { assertAvailableNumber, assertAvailableBranch, assertNewDescription, assertNewSummary } from './pr-conventions.mjs';
 import { inspectSubmissionTarget, publishSubmission } from './submission-pr.mjs';
 import { withPublicationBody } from './publication-targets.mjs';
 import { packageScriptCommand, runGate } from './workflow-gate.mjs';
 import { changedLines } from './pr-workflow-status.mjs';
+import { selectPublicationPolicy } from './publication-policy.mjs';
 
 export async function publishCommand({ values, record, branch, repo, remote, git, find, pairedExecute, targets, dependencies, call, save, gh, json }) {
-  const { mode, reason } = values.publication;
+  const { requestedMode, reason } = values.publication;
   const title = `${branch}: ${values.summary}`;
   const bodyPath = resolve(values['body-file']);
   if ((await stat(bodyPath)).size > 65_536) throw new Error('PR body exceeds 65536 bytes.');
@@ -19,7 +21,8 @@ export async function publishCommand({ values, record, branch, repo, remote, git
   if (targets) {
     const publicContent = `${title}\n${body}`.toLowerCase();
     const privateRepository = targets.submission.repository.toLowerCase();
-    if (publicContent.includes(privateRepository) || publicContent.includes(encodeURIComponent(privateRepository))) throw new Error('Public PR content must not include the private repository identity.');
+    if (publicContent.includes(privateRepository) || publicContent.includes(encodeURIComponent(privateRepository)))
+      throw new Error('Public PR content must not include the private repository identity.');
   }
   if (git('status', '--porcelain', '--untracked-files=all')) throw new Error('Commit the assigned changes before publishing; checkout must be clean.');
   assertNoTrackedArtifacts(git('ls-files', '-z'));
@@ -34,12 +37,31 @@ export async function publishCommand({ values, record, branch, repo, remote, git
     assertNewSummary(values.summary);
     assertNewDescription(body);
     const inventory = conventionVersion === 1 ? assertAvailableNumber : assertAvailableBranch;
-    inventory({ branch, targets: targets ?? { primary: { remote: 'origin', repository: remote } }, execute: pairedExecute, root: repo.root, fresh: !record.pr && !record.publicationStarted, hasPr: Boolean(record.pr) });
+    inventory({
+      branch,
+      targets: targets ?? { primary: { remote: 'origin', repository: remote } },
+      execute: pairedExecute,
+      root: repo.root,
+      fresh: !record.pr && !record.publicationStarted,
+      hasPr: Boolean(record.pr),
+    });
   }
   git('fetch', '--no-tags', 'origin', 'refs/heads/development:refs/remotes/origin/development');
   const head = git('rev-parse', 'HEAD');
+  if (
+    dependencies.expectedCandidate &&
+    (head !== dependencies.expectedCandidate.head || branch !== dependencies.expectedCandidate.branch || git('branch', '--show-current') !== dependencies.expectedCandidate.branch)
+  )
+    throw new Error('Checkout changed since job launch; publication refused before gates.');
   const [behind] = git('rev-list', '--left-right', '--count', `origin/development...${head}`).split(/\s+/).map(Number);
   if (behind > 0) throw new Error('Branch is behind development; integrate its changes before publishing.');
+  const base = git('rev-parse', 'origin/development');
+  const publicationPolicy = await selectPublicationPolicy({ requestedMode, reason, base, head, git });
+  const { mode } = publicationPolicy;
+  record.publicationMode = mode;
+  record.publicationReason = publicationPolicy.reason;
+  record.publicationProvenance = publicationPolicy.provenance;
+  record.publicationPolicy = publicationPolicy;
   const size = changedLines(git('diff', '--numstat', '--no-renames', `origin/development...${head}`));
   if (!size.reviewable && !size.generated && !size.binaries) throw new Error('No changes against development.');
   if (targets) await inspectSubmissionTarget({ repo, targets, branch, execute: pairedExecute });
@@ -55,20 +77,45 @@ export async function publishCommand({ values, record, branch, repo, remote, git
         gateLogs[name] = result;
         return result.summary || 'Passed without output.';
       } catch (error) {
-        if (error.gate) { record.gateLogs = { ...gateLogs, [name]: error.gate }; await save(); }
+        if (error.gate) {
+          record.gateLogs = { ...gateLogs, [name]: error.gate };
+          await save();
+        }
         throw error;
       }
     };
     const contextOutput = await gate('context', [resolve(repo.root, 'scripts/ci/check-context.mjs')]);
-    const dependencyChanges = git('diff', '--name-only', record.localVerifiedHead ?? 'origin/development', 'HEAD', '--', 'package.json', '**/package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', '.npmrc', '.pnpmfile.cjs', 'pnpmfile.cjs');
-    const installOutput = dependencyChanges ? await gate('dependencies', [resolve(repo.root, 'scripts/ci/check-dependency-install.mjs')]) : 'Dependency inputs unchanged since the last locally verified head/base.';
+    const dependencyChanges = git(
+      'diff',
+      '--name-only',
+      record.localVerifiedHead ?? 'origin/development',
+      'HEAD',
+      '--',
+      'package.json',
+      '**/package.json',
+      'pnpm-lock.yaml',
+      'pnpm-workspace.yaml',
+      '.npmrc',
+      '.pnpmfile.cjs',
+      'pnpmfile.cjs',
+    );
+    const installOutput = dependencyChanges
+      ? await gate('dependencies', [resolve(repo.root, 'scripts/ci/check-dependency-install.mjs')])
+      : 'Dependency inputs unchanged since the last locally verified head/base.';
     const runtimeOutput = await gate('runtime', [resolve(repo.root, 'scripts/ci/check-runtime.mjs')]);
     const contributorTests = packageScriptCommand('test:contributors');
     const testOutput = await gate('tests', contributorTests.args, contributorTests.command);
-    localVerification = { head, context: contextOutput.slice(-2000), runtime: runtimeOutput.slice(-2000), dependencies: installOutput.slice(-2000), tests: testOutput.split('\n').slice(-10).join('\n') };
+    localVerification = {
+      head,
+      context: contextOutput.slice(-2000),
+      runtime: runtimeOutput.slice(-2000),
+      dependencies: installOutput.slice(-2000),
+      tests: testOutput.split('\n').slice(-10).join('\n'),
+    };
     record.gateLogs = gateLogs;
   }
-  if (git('status', '--porcelain', '--untracked-files=all') || git('rev-parse', 'HEAD') !== head || git('branch', '--show-current') !== branch) throw new Error('Checkout changed before push; inspect before publishing.');
+  if (git('status', '--porcelain', '--untracked-files=all') || git('rev-parse', 'HEAD') !== head || git('branch', '--show-current') !== branch)
+    throw new Error('Checkout changed before push; inspect before publishing.');
   let pr = find();
   if (record.pr && (!pr || pr.number !== record.pr)) throw new Error('Recorded PR is closed or replaced; start a new feature branch instead of resetting its budget.');
   if (pr?.number !== initialPr?.number || pr?.headRefOid !== initialPr?.headRefOid) throw new Error('PR changed before publishing; inspect its current head.');
@@ -76,9 +123,6 @@ export async function publishCommand({ values, record, branch, repo, remote, git
     record.localVerification = localVerification;
     record.localVerifiedHead = head;
   }
-  record.publicationMode = mode;
-  if (reason) record.publicationReason = reason;
-  else delete record.publicationReason;
   delete record.completion;
   record.publicationStarted = true;
   if (newConventions) record.conventionVersion = conventionVersion;
@@ -86,6 +130,7 @@ export async function publishCommand({ values, record, branch, repo, remote, git
   await save();
   git('push', '--set-upstream', 'origin', `HEAD:refs/heads/${branch}`);
   record.publishedHead = head;
+  record.checkPolicy = ACTIVE_POLICY_ID;
   await save();
   await withPublicationBody(repo, body, async frozenBodyPath => {
     if (pr) gh('pr', 'edit', String(pr.number), '--repo', remote, '--title', title, '--body-file', frozenBodyPath);
@@ -113,7 +158,7 @@ export async function publishCommand({ values, record, branch, repo, remote, git
   if (!values['skip-review-request'] && record.requestedReviewHead !== head) {
     const request = `@coderabbitai review\n\n<!-- slop-loop-review:${head} -->`;
     const pages = json('api', '--paginate', '--slurp', `repos/${remote}/issues/${pr.number}/comments?per_page=100`);
-    if (!pages.flat().some((comment) => comment.body === request)) gh('pr', 'comment', String(pr.number), '--repo', remote, '--body', request);
+    if (!pages.flat().some(comment => comment.body === request)) gh('pr', 'comment', String(pr.number), '--repo', remote, '--body', request);
     record.requestedReviewHead = head;
     await save();
   }

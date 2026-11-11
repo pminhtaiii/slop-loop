@@ -1,8 +1,4 @@
-import type {
-  PortIdentity,
-  PortProvenance,
-  ApplyPatchAction,
-} from '../contracts/foundation/uc03.ts';
+import type { PortIdentity, PortProvenance, ApplyPatchAction } from '../contracts/foundation/uc03.ts';
 import type {
   RepositoryAdmissionContextV02,
   StatePortV02,
@@ -16,6 +12,8 @@ import type {
 import type { AttemptReconciliationValidationContextV02 } from '../contracts/foundation/uc03/v02/attempt.ts';
 import type { DockerWorkspaceManager, StructuredCommandExecutor } from './docker-workspace.ts';
 import type { RepositoryCommandResourcePolicy } from './repository-admission.ts';
+import type { RepositoryDiffSourceOptions } from './repository-diff-types.ts';
+export type { RepositoryDiffSourceOptions };
 
 export interface FileStat {
   readonly isFile: boolean;
@@ -44,7 +42,12 @@ export interface TrustedFilesystemPort extends PortIdentity {
    * Never load the whole oversized file and then validate or truncate it.
    */
   readTextFile(canonicalPath: string, maxBytes?: number): Promise<string>;
-  getCurrentRevisionDigest(): Promise<string>;
+  /**
+   * If maxBytes is supplied, enforce it while hashing each file: read raw bytes from the
+   * open handle with at most one maxBytes + 1 read, never loading the whole oversized file,
+   * and reject with an Error whose message starts with FILE_TOO_LARGE on overflow.
+   */
+  getCurrentRevisionDigest(maxBytes?: number): Promise<string>;
 }
 
 export interface GuardedReadOperation<T = unknown> {
@@ -132,10 +135,13 @@ export interface ControlledRepositoryToolsOptions {
   readonly processIncarnation?: string | undefined;
   readonly fencingGeneration?: number | undefined;
   readonly taskControl?: RepositoryTaskControlReadPortV02 | undefined;
-  readonly patchReceiver?: ((patch: ApplyPatchAction, context: RepositoryAdmissionContextV02, attempt: AttemptReceiptV02) => Promise<{ readonly applied: boolean; readonly newRevisionDigest: string }>) | undefined;
+  readonly patchReceiver?:
+    ((patch: ApplyPatchAction, context: RepositoryAdmissionContextV02, attempt: AttemptReceiptV02) => Promise<{ readonly applied: boolean; readonly newRevisionDigest: string }>) | undefined;
   readonly patchRecoveryHandoff?: PatchRecoveryHandoffV02 | undefined;
   readonly attemptStartRecoveryHandoff?: RepositoryAttemptStartRecoveryHandoffV02 | undefined;
   readonly unattemptedClaimClosureHandoff?: UnattemptedClaimClosureHandoffV02 | undefined;
+  /** Absent means `inspectDiff` stays fail-closed: no baseline, no measurement. */
+  readonly repositoryDiff?: RepositoryDiffSourceOptions | undefined;
   readonly neutralStub?: boolean | undefined;
 }
 
@@ -150,4 +156,3 @@ export interface RepositoryReadOperationsOptions {
   readonly statePort?: StatePortV02 | undefined;
   readonly taskControl?: RepositoryTaskControlReadPortV02 | undefined;
 }
-

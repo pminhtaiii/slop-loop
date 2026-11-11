@@ -6,21 +6,59 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runPairedIssues } from '../../scripts/agents/paired-issues.mjs';
+import { projectFixture } from './support/issue-project-fixture.mjs';
 
 const publicRepository = 'example/public';
 const privateRepository = 'course/private';
 const publicUrl = 'https://github.com/' + publicRepository;
 const privateUrl = 'https://github.com/' + privateRepository;
 
+test('configured publication assigns the invoking human on both issues and preserves one project item', async t => {
+  const root = await workspace(t);
+  const bodyFile = join(root, 'request.md');
+  await writeFile(bodyFile, 'A complete ticket.');
+  const client = github();
+  const project = await projectFixture(root, client.execute);
+  const configured = { ...client, execute: project.execute };
+  const result = await publish(root, bodyFile, configured);
+  assert.equal(result.status, 'PUBLISHED');
+  assert.deepEqual(
+    [...project.state.assignments.entries()],
+    [
+      [publicRepository, 'driver'],
+      [privateRepository, 'driver'],
+    ],
+  );
+  assert.deepEqual([...project.state.items.keys()], [result.submission.url]);
+  await publish(root, bodyFile, configured);
+  assert.deepEqual(project.state.writes, ['add']);
+  assert.equal(project.state.items.get(result.submission.url).fieldValueByName.optionId, 'progress');
+});
+
+test('project access failure refuses publication before creating either issue', async t => {
+  const root = await workspace(t);
+  const bodyFile = join(root, 'request.md');
+  await writeFile(bodyFile, 'A complete ticket.');
+  const client = github();
+  const project = await projectFixture(root, client.execute);
+  project.state.projectId = 'PVT_replaced';
+  await assert.rejects(publish(root, bodyFile, { ...client, execute: project.execute }), /identity changed/);
+  assert.deepEqual(client.writes, []);
+  assert.deepEqual(project.state.writes, []);
+});
+
 async function workspace(t) {
   const root = await mkdtemp(join(tmpdir(), 'paired-issues-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const initialized = spawnSync('git', ['init', '--initial-branch=main'], { cwd: root, encoding: 'utf8' });
   assert.equal(initialized.status, 0, initialized.stderr);
-  await writeFile(join(root, 'publication-targets.json'), JSON.stringify({
-    schemaVersion: 1,
-    submission: { remote: 'submission', base: 'development' },
-  }));
+  await writeFile(
+    join(root, 'publication-targets.json'),
+    JSON.stringify({
+      schemaVersion: 1,
+      submission: { remote: 'submission', base: 'development' },
+    }),
+  );
   return root;
 }
 
@@ -261,14 +299,20 @@ test('changed local target identity and incomplete issue pagination fail before 
   await publish(root, bodyFile, client);
   client.writes.length = 0;
   const configPath = join(root, 'publication-targets.json');
-  await writeFile(configPath, JSON.stringify({
-    schemaVersion: 1,
-    submission: { remote: 'submission', base: 'development' },
-  }));
-  const changedClient = { ...client, execute: (binary, args, cwd, timeout) => {
-    if (binary === 'git' && args[2] === 'submission') return 'https://github.com/course/changed.git';
-    return client.execute(binary, args, cwd, timeout);
-  } };
+  await writeFile(
+    configPath,
+    JSON.stringify({
+      schemaVersion: 1,
+      submission: { remote: 'submission', base: 'development' },
+    }),
+  );
+  const changedClient = {
+    ...client,
+    execute: (binary, args, cwd, timeout) => {
+      if (binary === 'git' && args[2] === 'submission') return 'https://github.com/course/changed.git';
+      return client.execute(binary, args, cwd, timeout);
+    },
+  };
   await assert.rejects(publish(root, bodyFile, changedClient), /targets changed/);
   assert.equal(client.writes.length, 0);
 

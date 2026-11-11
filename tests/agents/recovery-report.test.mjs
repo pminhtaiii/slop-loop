@@ -26,7 +26,7 @@ function run(cli, checkout, ...args) {
   return spawnSync(process.execPath, [cli, ...args, '--root', checkout], { encoding: 'utf8', windowsHide: true, timeout: 10_000 });
 }
 
-test('recovery report joins assignment, live Git worktree, checkpoint, changes, and unknown agent status', async (t) => {
+test('recovery report joins assignment, live Git worktree, checkpoint, changes, and unknown agent status', async t => {
   const checkout = await fixture(t);
   let result = run(sessionCli, checkout, 'start', '--session', 'session-one', '--date', '2026-10-21');
   assert.equal(result.status, 0, result.stderr);
@@ -43,7 +43,11 @@ test('recovery report joins assignment, live Git worktree, checkpoint, changes, 
   assert.equal(report.assignments.length, 1);
   const assignment = report.assignments[0];
   assert.deepEqual(assignment.assignment, {
-    owner: 'worker', task: 'T001', status: 'active', session: '2026-10-21/session-one', checkout: canonicalCheckout,
+    owner: 'worker',
+    task: 'T001',
+    status: 'active',
+    session: '2026-10-21/session-one',
+    checkout: canonicalCheckout,
   });
   assert.equal(assignment.worktree.path, canonicalCheckout);
   assert.deepEqual(assignment.worktree.stagedPaths, ['staged.txt']);
@@ -53,32 +57,48 @@ test('recovery report joins assignment, live Git worktree, checkpoint, changes, 
   assert.match(assignment.agent.note, /do not prove an agent is running or stopped/);
 });
 
-test('recovery report accepts reassigned history and reports only the active successor', async (t) => {
+test('recovery report accepts reassigned history and reports only the active successor', async t => {
   const checkout = await fixture(t);
   const stateDirectory = join(checkout, '.agent-work/state');
   await mkdir(stateDirectory, { recursive: true });
-  await writeFile(join(stateDirectory, 'active-tasks.json'), JSON.stringify([
-    {
-      owner: 'interrupted', task: 'T008', checkout, session: '2026-10-21/source',
-      summary: 'Feature work', next: 'Transferred to successor', status: 'reassigned',
-      reassignments: [{ owner: 'successor', task: 'T008', session: '2026-10-21/successor', reason: 'Recovery', at: '2026-10-21T00:00:00.000Z' }],
-    },
-    {
-      owner: 'successor', task: 'T008', checkout, session: '2026-10-21/successor',
-      summary: 'Feature work', next: 'Run focused checks', status: 'active',
-      reassignedFrom: { owner: 'interrupted', task: 'T008', session: '2026-10-21/source' },
-    },
-  ]));
+  await writeFile(
+    join(stateDirectory, 'active-tasks.json'),
+    JSON.stringify([
+      {
+        owner: 'interrupted',
+        task: 'T008',
+        checkout,
+        session: '2026-10-21/source',
+        summary: 'Feature work',
+        next: 'Transferred to successor',
+        status: 'reassigned',
+        reassignments: [{ owner: 'successor', task: 'T008', session: '2026-10-21/successor', reason: 'Recovery', at: '2026-10-21T00:00:00.000Z' }],
+      },
+      {
+        owner: 'successor',
+        task: 'T008',
+        checkout,
+        session: '2026-10-21/successor',
+        summary: 'Feature work',
+        next: 'Run focused checks',
+        status: 'active',
+        reassignedFrom: { owner: 'interrupted', task: 'T008', session: '2026-10-21/source' },
+      },
+    ]),
+  );
 
   const all = run(reportCli, checkout);
   assert.equal(all.status, 0, all.stderr);
-  assert.deepEqual(JSON.parse(all.stdout).assignments.map((entry) => entry.assignment.owner), ['successor']);
+  assert.deepEqual(
+    JSON.parse(all.stdout).assignments.map(entry => entry.assignment.owner),
+    ['successor'],
+  );
   const source = run(reportCli, checkout, '--owner', 'interrupted', '--task', 'T008');
   assert.equal(source.status, 0, source.stderr);
   assert.deepEqual(JSON.parse(source.stdout).assignments, []);
 });
 
-test('recovery report is read-only when contributor state is absent', async (t) => {
+test('recovery report is read-only when contributor state is absent', async t => {
   const checkout = await fixture(t);
   const result = run(reportCli, checkout);
   assert.equal(result.status, 0, result.stderr);
@@ -86,7 +106,7 @@ test('recovery report is read-only when contributor state is absent', async (t) 
   await assert.rejects(access(join(checkout, '.agent-work')));
 });
 
-test('recovery report joins legacy checkout and receipt aliases to their worktree', async (t) => {
+test('recovery report joins legacy checkout and receipt aliases to their worktree', async t => {
   const checkout = await fixture(t);
   let result = run(sessionCli, checkout, 'start', '--session', 'session-one', '--date', '2026-10-21');
   assert.equal(result.status, 0, result.stderr);

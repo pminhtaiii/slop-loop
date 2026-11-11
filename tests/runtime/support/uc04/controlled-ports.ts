@@ -1,8 +1,4 @@
-import type {
-  WorkspaceBaseline,
-  ProviderUsage,
-  ApprovalRequestBinding,
-} from '../../../../src/persistence/contracts.ts';
+import type { WorkspaceBaseline, ProviderUsage, ApprovalRequestBinding } from '../../../../src/persistence/contracts.ts';
 
 export type GitInspectorPort = (repoRoot: string) => Promise<WorkspaceBaseline>;
 

@@ -5,21 +5,9 @@ import { isPlainObject, rejectUnknownKeys, validateNonEmptyString, validateNonNe
 
 const BUDGET_RESERVATION_ALLOWED_KEYS = ['reservationId', 'keyedId', 'amount'] as const;
 
-const BUDGET_LEDGER_ALLOWED_KEYS = [
-  'scope',
-  'kind',
-  'limit',
-  'consumed',
-  'reservations',
-  'unit',
-  'configurationId',
-  'version',
-] as const;
+const BUDGET_LEDGER_ALLOWED_KEYS = ['scope', 'kind', 'limit', 'consumed', 'reservations', 'unit', 'configurationId', 'version'] as const;
 
-export function validateBudgetLedger(
-  input: unknown,
-  path = 'budgetLedger'
-): ValidationResult<BudgetLedger> {
+export function validateBudgetLedger(input: unknown, path = 'budgetLedger'): ValidationResult<BudgetLedger> {
   if (!isPlainObject(input)) {
     return {
       ok: false,
@@ -84,8 +72,7 @@ export function validateBudgetLedger(
       errors.push({ path, code: 'UNSAFE_COUNT_SUM', message: 'Count ledger amounts and totals must be safe integers' });
     }
   }
-  if (new Set(reservations.map(reservation => reservation.reservationId)).size !== reservations.length ||
-      new Set(reservations.map(reservation => reservation.keyedId)).size !== reservations.length) {
+  if (new Set(reservations.map(reservation => reservation.reservationId)).size !== reservations.length || new Set(reservations.map(reservation => reservation.keyedId)).size !== reservations.length) {
     errors.push({ path, code: 'DUPLICATE_RESERVATION', message: 'Ledger reservation IDs and keys must be unique' });
   }
 

@@ -1,6 +1,7 @@
 import { readFile, readdir, realpath } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { checkProgressFormat } from './check-progress-format.mjs';
 
 const args = process.argv.slice(2);
 if (args.length !== 0 && (args.length !== 2 || args[0] !== '--root')) {
@@ -10,20 +11,67 @@ if (args.length !== 0 && (args.length !== 2 || args[0] !== '--root')) {
 
 function maskCode(source) {
   let fence;
-  return source.split('\n').map((line) => {
-    const marker = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
-    if (fence) {
-      if (marker && marker[1][0] === fence[0] && marker[1].length >= fence.length && !marker[2].trim()) {
-        fence = undefined;
+  return source
+    .split('\n')
+    .map(line => {
+      const marker = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+      if (fence) {
+        if (marker && marker[1][0] === fence[0] && marker[1].length >= fence.length && !marker[2].trim()) {
+          fence = undefined;
+        }
+        return line.replace(/./g, ' ');
       }
-      return line.replace(/./g, ' ');
-    }
-    if (marker) {
-      fence = marker[1];
-      return line.replace(/./g, ' ');
-    }
-    return line;
-  }).join('\n');
+      if (marker) {
+        fence = marker[1];
+        return line.replace(/./g, ' ');
+      }
+      return line;
+    })
+    .join('\n');
+}
+
+// Masks fenced code and HTML comments together: separate passes would let a fence inside a
+// comment (or a comment marker inside a fence) leak into nearby prose. Length and newlines are preserved.
+function maskProse(source) {
+  let fence;
+  let comment = false;
+  return source
+    .split('\n')
+    .map(line => {
+      const marker = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+      if (fence) {
+        if (marker && marker[1][0] === fence[0] && marker[1].length >= fence.length && !marker[2].trim()) {
+          fence = undefined;
+        }
+        return line.replace(/./g, ' ');
+      }
+      if (!comment && marker) {
+        fence = marker[1];
+        return line.replace(/./g, ' ');
+      }
+      let masked = '';
+      let index = 0;
+      while (index < line.length) {
+        if (comment) {
+          const end = line.indexOf('-->', index);
+          const stop = end === -1 ? line.length : end + 3;
+          masked += ' '.repeat(stop - index);
+          index = stop;
+          if (end !== -1) comment = false;
+        } else {
+          const start = line.indexOf('<!--', index);
+          if (start === -1) {
+            masked += line.slice(index);
+            break;
+          }
+          masked += `${line.slice(index, start)}    `;
+          index = start + 4;
+          comment = true;
+        }
+      }
+      return masked;
+    })
+    .join('\n');
 }
 
 function factValue(value) {
@@ -33,7 +81,14 @@ function factValue(value) {
 try {
   const root = await realpath(resolve(args[1] ?? resolve(dirname(fileURLToPath(import.meta.url)), '../..')));
   const contract = JSON.parse(await readFile(resolve(root, 'context/contract.json'), 'utf8'));
-  if (!Array.isArray(contract.requiredDocuments) || contract.requiredDocuments.some((file) => typeof file !== 'string') || !contract.facts || typeof contract.facts !== 'object' || Array.isArray(contract.facts) || !Array.isArray(contract.authorizationReferences)) {
+  if (
+    !Array.isArray(contract.requiredDocuments) ||
+    contract.requiredDocuments.some(file => typeof file !== 'string') ||
+    !contract.facts ||
+    typeof contract.facts !== 'object' ||
+    Array.isArray(contract.facts) ||
+    !Array.isArray(contract.authorizationReferences)
+  ) {
     throw new Error('context/contract.json requires requiredDocuments, a facts object, and an authorizationReferences array.');
   }
   const files = ['AGENTS.md', 'docs/progress-checker-matrices.md'];
@@ -43,14 +98,17 @@ try {
   const failures = [];
   const sources = new Map();
   const localTargets = new Map();
+  const localTargetLines = new Map();
   for (const file of files) sources.set(file, await readFile(resolve(root, file), 'utf8'));
+  if (sources.has('context/progress_checker.md')) failures.push(...checkProgressFormat(sources.get('context/progress_checker.md')));
   for (const required of contract.requiredDocuments) {
     if (!sources.has(required)) failures.push(`required document missing: ${required}`);
   }
   for (const file of files) {
     const source = sources.get(file);
-    const prose = maskCode(source).replace(/(`+).*?\1/g, (code) => ' '.repeat(code.length));
+    const prose = maskProse(source).replace(/(`+).*?\1/g, code => ' '.repeat(code.length));
     localTargets.set(file, new Set());
+    localTargetLines.set(file, []);
     // shortcut: supports inline links used by context; add reference-link support when adopted.
     const links = /\[[^\]\n]*\]\(\s*(?:<([^>\n]+)>|([^\s)]+))\s*\)/g;
     for (const match of prose.matchAll(links)) {
@@ -58,7 +116,8 @@ try {
       if (/^[a-z][a-z\d+.-]*:/i.test(target) || target.startsWith('//')) continue;
       const path = target.split('#')[0];
       if (!path) continue;
-      const location = `${file}:${source.slice(0, match.index).split('\n').length}`;
+      const line = source.slice(0, match.index).split('\n').length;
+      const location = `${file}:${line}`;
       try {
         const destination = await realpath(resolve(dirname(resolve(root, file)), decodeURIComponent(path)));
         const fromRoot = relative(root, destination);
@@ -67,6 +126,7 @@ try {
         }
         const linked = fromRoot.split('\\').join('/');
         localTargets.get(file).add(linked);
+        localTargetLines.get(file).push({ line, target: linked });
         if (linked.endsWith('.md') && !sources.has(linked)) {
           sources.set(linked, await readFile(destination, 'utf8'));
           files.push(linked);
@@ -77,15 +137,67 @@ try {
     }
   }
 
+  if (contract.requiredSkillStages !== undefined && !Array.isArray(contract.requiredSkillStages)) {
+    failures.push('context/contract.json: requiredSkillStages must be an array');
+  }
+  for (const requirement of contract.requiredSkillStages ?? []) {
+    if (
+      !requirement ||
+      typeof requirement.skill !== 'string' ||
+      !requirement.skill.trim() ||
+      typeof requirement.stage !== 'string' ||
+      !requirement.stage.trim() ||
+      typeof requirement.path !== 'string' ||
+      !requirement.path.trim()
+    ) {
+      failures.push('context/contract.json: each required skill stage requires a skill, stage, and path');
+      continue;
+    }
+    if (isAbsolute(requirement.path)) {
+      failures.push(`context/contract.json: required skill ${requirement.skill} path must be checkout-relative`);
+      continue;
+    }
+    const targetPath = resolve(root, requirement.path);
+    const fromRoot = relative(root, targetPath);
+    if (isAbsolute(fromRoot) || fromRoot === '..' || fromRoot.startsWith('../') || fromRoot.startsWith('..\\')) {
+      failures.push(`context/contract.json: required skill ${requirement.skill} path is outside the checkout: ${requirement.path}`);
+      continue;
+    }
+    const workflow = sources.get('context/workflow.md');
+    if (!workflow) {
+      failures.push(`context/workflow.md: required skill ${requirement.skill} workflow document is missing`);
+      continue;
+    }
+    const headings = maskProse(workflow)
+      .replace(/(`+).*?\1/g, code => ' '.repeat(code.length))
+      .split('\n')
+      .flatMap((line, index) => {
+        const match = line.match(/^ {0,3}(#{1,6})\s+(.+?)\s*#*\s*$/);
+        return match ? [{ line: index + 1, level: match[1].length, title: match[2].trim() }] : [];
+      });
+    const stages = headings.filter(heading => heading.title === requirement.stage);
+    if (stages.length !== 1) {
+      failures.push(`context/workflow.md: required skill ${requirement.skill} stage ${requirement.stage} must have one matching heading`);
+      continue;
+    }
+    const stage = stages[0];
+    const end = headings.find(heading => heading.line > stage.line && heading.level <= stage.level)?.line ?? Infinity;
+    const expected = fromRoot.split('\\').join('/');
+    if (!localTargetLines.get('context/workflow.md')?.some(link => link.line > stage.line && link.line < end && link.target === expected)) {
+      failures.push(`context/workflow.md: required skill ${requirement.skill} must link to ${expected} within stage ${requirement.stage}`);
+    }
+  }
+
   const facts = new Map();
   for (const [id, definition] of Object.entries(contract.facts)) {
     if (!definition || typeof definition.source !== 'string' || typeof definition.tableRow !== 'string') {
       failures.push(`context/contract.json: fact ${id} requires a source and tableRow`);
       continue;
     }
-    const rows = maskCode(sources.get(definition.source) ?? '').split('\n')
-      .map((line) => line.split('|').map((cell) => cell.trim()))
-      .filter((cells) => cells[1] === definition.tableRow);
+    const rows = maskCode(sources.get(definition.source) ?? '')
+      .split('\n')
+      .map(line => line.split('|').map(cell => cell.trim()))
+      .filter(cells => cells[1] === definition.tableRow);
     if (rows.length !== 1 || !rows[0][2]) {
       failures.push(`context/contract.json: fact ${id} needs one source row ${definition.tableRow} in ${definition.source}`);
     } else {
@@ -95,7 +207,15 @@ try {
   const authorizationIds = new Set();
   const authorizationSources = new Set();
   for (const reference of contract.authorizationReferences) {
-    if (!reference || typeof reference.id !== 'string' || !reference.id || typeof reference.source !== 'string' || !Array.isArray(reference.summaries) || !reference.summaries.length || reference.summaries.some((summary) => typeof summary !== 'string')) {
+    if (
+      !reference ||
+      typeof reference.id !== 'string' ||
+      !reference.id ||
+      typeof reference.source !== 'string' ||
+      !Array.isArray(reference.summaries) ||
+      !reference.summaries.length ||
+      reference.summaries.some(summary => typeof summary !== 'string')
+    ) {
       failures.push('context/contract.json: each authorization reference requires an id, source, and summary paths');
       continue;
     }

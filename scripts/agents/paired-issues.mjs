@@ -5,6 +5,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { atomicWrite, dataDirectory, readJson, repository, withLock } from './agent-store.mjs';
 import { publicationTargets } from './publication-targets.mjs';
+import { authenticatedAssignee, loadIssueProject, syncProjectItem } from './issue-project.mjs';
 
 const labels = {
   'needs-triage': { color: 'fbca04', description: 'Maintainer needs to evaluate this issue.' },
@@ -38,7 +39,8 @@ function parseArgs(args) {
   }
   if (!values.key || !values.title || !values['body-file']) throw new Error(usage);
   if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(values.key) || values.key.length > 80) throw new Error('Provide --key as a lowercase stable slug of at most 80 characters.');
-  if (values.title !== values.title.trim() || values.title.length > 256 || /[\r\n\0]/.test(values.title)) throw new Error('Issue title must contain 1-256 characters on one line without surrounding whitespace.');
+  if (values.title !== values.title.trim() || values.title.length > 256 || /[\r\n\0]/.test(values.title))
+    throw new Error('Issue title must contain 1-256 characters on one line without surrounding whitespace.');
   if (values.label && !Object.hasOwn(labels, values.label)) throw new Error('Use one of the five canonical triage labels for --label.');
   values.label ??= 'needs-triage';
   return values;
@@ -48,16 +50,22 @@ async function readBody(path) {
   const bytes = await readFile(resolve(path));
   if (bytes.length > 65_536) throw new Error('Issue body exceeds 65536 bytes.');
   let body;
-  try { body = new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
-  catch { throw new Error('Issue body file must contain valid UTF-8.'); }
+  try {
+    body = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    throw new Error('Issue body file must contain valid UTF-8.');
+  }
   if (!body.trim() || body.includes('\0')) throw new Error('Issue body must contain 1-65536 bytes and no NUL characters.');
   if (/<!-- paired-issue:sha256:[a-f0-9]{64} -->/i.test(body)) throw new Error('Issue body must not contain a paired-issue identity marker.');
   return body;
 }
 
 function json(output, description) {
-  try { return JSON.parse(output); }
-  catch { throw new Error('GitHub returned invalid ' + description + ' JSON.'); }
+  try {
+    return JSON.parse(output);
+  } catch {
+    throw new Error('GitHub returned invalid ' + description + ' JSON.');
+  }
 }
 
 function pages(output, description) {
@@ -67,7 +75,9 @@ function pages(output, description) {
 }
 
 function markerFor(publicRepository, key) {
-  const digest = createHash('sha256').update(publicRepository.toLowerCase() + '\0' + key).digest('hex');
+  const digest = createHash('sha256')
+    .update(publicRepository.toLowerCase() + '\0' + key)
+    .digest('hex');
   return '<!-- paired-issue:sha256:' + digest + ' -->';
 }
 
@@ -78,23 +88,30 @@ function markerMatches(issue, marker) {
 function issueUrl(repositoryName, issue) {
   if (!Number.isSafeInteger(issue.number) || issue.number < 1 || typeof issue.html_url !== 'string') throw new Error('A marker-matched issue has an invalid identity.');
   let url;
-  try { url = new URL(issue.html_url); }
-  catch { throw new Error('A marker-matched issue has an invalid URL.'); }
+  try {
+    url = new URL(issue.html_url);
+  } catch {
+    throw new Error('A marker-matched issue has an invalid URL.');
+  }
   const expectedPath = '/' + repositoryName + '/issues/' + issue.number;
-  if (url.protocol !== 'https:' || url.hostname !== 'github.com' || url.pathname.toLowerCase() !== expectedPath.toLowerCase() || url.search || url.hash) throw new Error('A marker-matched issue belongs to a different identity.');
+  if (url.protocol !== 'https:' || url.hostname !== 'github.com' || url.pathname.toLowerCase() !== expectedPath.toLowerCase() || url.search || url.hash)
+    throw new Error('A marker-matched issue belongs to a different identity.');
   return { number: issue.number, url: url.toString(), state: issue.state };
 }
 
 function validateRecord(record, key, marker, targets) {
-  if (!record || typeof record !== 'object' || Array.isArray(record) || record.schemaVersion !== 1 || record.key !== key || record.marker !== marker) throw new Error('Paired issue record has a mismatched stable-key identity.');
+  if (!record || typeof record !== 'object' || Array.isArray(record) || record.schemaVersion !== 1 || record.key !== key || record.marker !== marker)
+    throw new Error('Paired issue record has a mismatched stable-key identity.');
   if (!record.targets || sides.some(side => typeof record.targets[side] !== 'string')) throw new Error('Paired issue record has invalid target identities.');
-  if (sides.some(side => record.targets[side].toLowerCase() !== targets[side].repository.toLowerCase())) throw new Error('Paired publication targets changed; restore their configuration or reconcile the retained record.');
+  if (sides.some(side => record.targets[side].toLowerCase() !== targets[side].repository.toLowerCase()))
+    throw new Error('Paired publication targets changed; restore their configuration or reconcile the retained record.');
   if (!record.receipts || sides.some(side => !Object.hasOwn(record.receipts, side))) throw new Error('Paired issue record has invalid receipts.');
 }
 
 function validatePreflight(side, target, data) {
   const expectedVisibility = side === 'primary' ? 'PUBLIC' : 'PRIVATE';
-  if (!data || typeof data !== 'object' || data.nameWithOwner?.toLowerCase() !== target.repository.toLowerCase()) throw new Error('GitHub repository identity does not match the configured ' + side + ' target.');
+  if (!data || typeof data !== 'object' || data.nameWithOwner?.toLowerCase() !== target.repository.toLowerCase())
+    throw new Error('GitHub repository identity does not match the configured ' + side + ' target.');
   if (data.visibility !== expectedVisibility) throw new Error('The ' + side + ' repository must be ' + expectedVisibility.toLowerCase() + '.');
   if (data.hasIssuesEnabled !== true) throw new Error('Issues must be enabled for the ' + side + ' repository.');
   if (!['WRITE', 'MAINTAIN', 'ADMIN'].includes(data.viewerPermission)) throw new Error('Write permission is required for the ' + side + ' repository.');
@@ -125,7 +142,9 @@ async function withBodyFile(directory, body, operation) {
     await atomicWrite(path, body);
     return await operation(path);
   } finally {
-    await unlink(path).catch(error => { if (error.code !== 'ENOENT') throw error; });
+    await unlink(path).catch(error => {
+      if (error.code !== 'ENOENT') throw error;
+    });
   }
 }
 
@@ -140,7 +159,10 @@ function labelList(call, target) {
 }
 
 function createReceipt(output, repositoryName) {
-  const escaped = repositoryName.split('/').map(part => part.replaceAll('.', '\\.')).join('/');
+  const escaped = repositoryName
+    .split('/')
+    .map(part => part.replaceAll('.', '\\.'))
+    .join('/');
   const matches = [...String(output ?? '').matchAll(new RegExp('https://github\\.com/' + escaped + '/issues/(\\d+)(?:\\b|$)', 'gi'))];
   if (matches.length !== 1) throw new Error('GitHub issue creation returned no unambiguous issue URL; retry to recover by stable marker.');
   const number = Number(matches[0][1]);
@@ -156,6 +178,8 @@ export async function runPairedIssues(args, dependencies = {}) {
   const targetExecute = (binary, argv, cwd, timeout) => (dependencies.execute ?? execute)(binary, argv, cwd, timeout);
   const targets = await publicationTargets(repo, targetExecute);
   if (!targets) throw new Error('Paired issue publication requires publication-targets.json.');
+  const project = await loadIssueProject(repo, targetExecute);
+  const assignee = project ? authenticatedAssignee(repo, targetExecute) : null;
   if (containsPrivateIdentity(body, targets.submission.repository) || containsPrivateIdentity(values.title, targets.submission.repository)) {
     throw new Error('Public issue content must not include the private repository identity.');
   }
@@ -180,17 +204,23 @@ export async function runPairedIssues(args, dependencies = {}) {
       };
     }
 
-    const metadata = Object.fromEntries(await Promise.all(sides.map(async side => [
-      side,
-      json(call('gh', ['repo', 'view', targets[side].repository, '--json', 'nameWithOwner,visibility,viewerPermission,hasIssuesEnabled']), targets[side].repository + ' repository'),
-    ])));
+    const metadata = Object.fromEntries(
+      await Promise.all(
+        sides.map(async side => [
+          side,
+          json(call('gh', ['repo', 'view', targets[side].repository, '--json', 'nameWithOwner,visibility,viewerPermission,hasIssuesEnabled']), targets[side].repository + ' repository'),
+        ]),
+      ),
+    );
     for (const side of sides) validatePreflight(side, targets[side], metadata[side]);
 
-    const found = Object.fromEntries(sides.map(side => {
-      const matches = issueList(call, targets[side]).filter(issue => !issue.pull_request && markerMatches(issue, marker));
-      if (matches.length > 1) throw new Error('Multiple issues contain the stable marker in the ' + side + ' repository.');
-      return [side, matches[0] ? issueUrl(targets[side].repository, matches[0]) : null];
-    }));
+    const found = Object.fromEntries(
+      sides.map(side => {
+        const matches = issueList(call, targets[side]).filter(issue => !issue.pull_request && markerMatches(issue, marker));
+        if (matches.length > 1) throw new Error('Multiple issues contain the stable marker in the ' + side + ' repository.');
+        return [side, matches[0] ? issueUrl(targets[side].repository, matches[0]) : null];
+      }),
+    );
     for (const side of sides) record.receipts[side] = ensureReceipt(record.receipts[side], found[side], side);
 
     const availableLabels = Object.fromEntries(sides.map(side => [side, labelList(call, targets[side])]));
@@ -223,6 +253,17 @@ export async function runPairedIssues(args, dependencies = {}) {
 
     const primary = await publishOne('primary', joinedBody(body, [], marker));
     const submission = await publishOne('submission', joinedBody(body, ['Public counterpart: ' + primary.url], marker));
+    if (project) {
+      for (const side of sides) {
+        const receipt = record.receipts[side];
+        call('gh', ['issue', 'edit', String(receipt.number), '--repo', targets[side].repository, '--add-assignee', assignee]);
+        const assigned = json(call('gh', ['issue', 'view', String(receipt.number), '--repo', targets[side].repository, '--json', 'assignees']), 'issue assignees');
+        if (!assigned.assignees?.some(user => user.login?.toLowerCase() === assignee.toLowerCase())) throw new Error('Ticket assignee was not confirmed; retry publication.');
+      }
+      const item = syncProjectItem(repo, targetExecute, project, record.receipts[project.side].url);
+      record.project = { ...project, assignee, itemId: item.id };
+      await atomicWrite(recordPath, JSON.stringify(record, null, 2) + '\n');
+    }
     return {
       status: 'PUBLISHED',
       key: values.key,
@@ -233,10 +274,12 @@ export async function runPairedIssues(args, dependencies = {}) {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  runPairedIssues(process.argv.slice(2)).then(result => {
-    console.log(result.usage ?? JSON.stringify(result, null, 2));
-  }).catch(error => {
-    console.error(error.message);
-    process.exitCode = 1;
-  });
+  runPairedIssues(process.argv.slice(2))
+    .then(result => {
+      console.log(result.usage ?? JSON.stringify(result, null, 2));
+    })
+    .catch(error => {
+      console.error(error.message);
+      process.exitCode = 1;
+    });
 }

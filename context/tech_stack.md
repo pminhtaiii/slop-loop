@@ -11,6 +11,7 @@ This page records approved implementation choices and keeps undecided choices ex
 | Compiler and build | TypeScript 6.0.3, strict NodeNext ESM | pnpm run typecheck / pnpm run build |
 | Runtime test runner | Node.js built-in test runner | pnpm run test:runtime; compiled TypeScript tests |
 | Mechanical lint | ESLint 10.12.0, @eslint/js 10.0.1, globals 17.13.0, typescript-eslint 8.71.2 | pnpm run lint |
+| Mechanical formatting | Prettier 3.9.10, single quotes, printWidth 200, `endOfLine: auto` for the CRLF working copy | pnpm run format:check |
 | Workflow orchestration | `@langchain/langgraph` | Retain the official TypeScript implementation as the orchestration library |
 | Initial target repositories | Python with `pytest` | Repositories the runtime will initially operate on |
 | Task execution environment | Docker | Agent loop and trusted harness on host; repository and Python/pytest tooling in task container; host-side tools use Docker execution directly; see [ADR-0003](../docs/adr/0003-docker-task-workspace-boundary.md) |
@@ -27,12 +28,13 @@ Contributor helpers retain their existing Node.js commands. The separately selec
 
 No choice is recorded yet for:
 
-- formatting tools;
 - a CLI or service framework;
 - the LLM provider and model;
 - the persistence and LangGraph checkpoint backend;
 - the concrete Docker isolation configuration;
 - deployment and supported operating environments;
-- the evaluation harness and reporting format.
+- the evaluation harness and reporting format; a controlled-tier `uc03-workflow-evaluation/1` report contract exists in `eval/uc03/`, but the harness and reporting choice is not closed by it;
 
 Treat these as open until an implementation decision is explicitly recorded. Do not infer them from the existing helper scripts or tests.
+
+The recovered Feature 007 v0.2 route, bootstrap and CLI reuse existing modules and Node built-ins; recovery adds no dependency, persistence backend, provider or isolation choice. Feature 007 Phase 4–5 added no dependency. Workflow comparison is a pure function in `eval/uc03/compare.ts`, diagnostics reuse the existing `src/foundation/telemetry.ts` sanitizers, and the local console uses the built-in `node:http` server; there is still no CLI or service framework choice, and the console is not exposed through a CLI command.

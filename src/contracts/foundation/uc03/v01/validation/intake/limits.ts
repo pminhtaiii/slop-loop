@@ -3,31 +3,11 @@
 import type { BudgetLimits, CheckDefinition, CheckPurpose, ExecutionLimits, ValidationError, ValidationResult } from '../../types.ts';
 import { isPlainObject, rejectUnknownKeys, validateNonEmptyString, validateNonNegativeInteger, validateNonNegativeNumber, validatePositiveInteger, validatePositiveNumber } from '../common.ts';
 
-const EXECUTION_LIMITS_ALLOWED_KEYS = [
-  'timeoutMs',
-  'maxOutputBytes',
-  'maxCpuCores',
-  'maxMemoryBytes',
-  'maxPids',
-] as const;
+const EXECUTION_LIMITS_ALLOWED_KEYS = ['timeoutMs', 'maxOutputBytes', 'maxCpuCores', 'maxMemoryBytes', 'maxPids'] as const;
 
-const BUDGET_LIMITS_ALLOWED_KEYS = [
-  'maxReplanCount',
-  'maxTokens',
-  'maxCostUsd',
-  'maxRepairAttempts',
-  'maxReviewIterations',
-] as const;
+const BUDGET_LIMITS_ALLOWED_KEYS = ['maxReplanCount', 'maxTokens', 'maxCostUsd', 'maxRepairAttempts', 'maxReviewIterations'] as const;
 
-const CHECK_DEFINITION_ALLOWED_KEYS = [
-  'checkId',
-  'executable',
-  'argv',
-  'purpose',
-  'workingDirectory',
-  'timeoutMs',
-  'maxOutputBytes',
-] as const;
+const CHECK_DEFINITION_ALLOWED_KEYS = ['checkId', 'executable', 'argv', 'purpose', 'workingDirectory', 'timeoutMs', 'maxOutputBytes'] as const;
 
 /* ------------------------------------------------------------------
  * Validators
@@ -50,14 +30,7 @@ export function validateExecutionLimits(input: unknown): ValidationResult<Execut
   const maxMemoryBytes = validatePositiveInteger(input['maxMemoryBytes'], 'limits.maxMemoryBytes', errors);
   const maxPids = validatePositiveInteger(input['maxPids'], 'limits.maxPids', errors);
 
-  if (
-    errors.length > 0 ||
-    timeoutMs === undefined ||
-    maxOutputBytes === undefined ||
-    maxCpuCores === undefined ||
-    maxMemoryBytes === undefined ||
-    maxPids === undefined
-  ) {
+  if (errors.length > 0 || timeoutMs === undefined || maxOutputBytes === undefined || maxCpuCores === undefined || maxMemoryBytes === undefined || maxPids === undefined) {
     return { ok: false, errors };
   }
 
@@ -97,15 +70,7 @@ export function validateBudgetLimits(input: unknown): ValidationResult<BudgetLim
   const maxRepairAttempts = validateNonNegativeInteger(input['maxRepairAttempts'], 'budgetLimits.maxRepairAttempts', errors);
   const maxReviewIterations = validateNonNegativeInteger(input['maxReviewIterations'], 'budgetLimits.maxReviewIterations', errors);
 
-  if (
-    errors.length > 0 ||
-    replan === undefined ||
-    replan > 3 ||
-    maxTokens === undefined ||
-    maxCostUsd === undefined ||
-    maxRepairAttempts === undefined ||
-    maxReviewIterations === undefined
-  ) {
+  if (errors.length > 0 || replan === undefined || replan > 3 || maxTokens === undefined || maxCostUsd === undefined || maxRepairAttempts === undefined || maxReviewIterations === undefined) {
     return { ok: false, errors };
   }
 
@@ -120,11 +85,7 @@ export function validateBudgetLimits(input: unknown): ValidationResult<BudgetLim
   return { ok: true, value: result };
 }
 
-export function validateCheckDefinition(
-  input: unknown,
-  path: string,
-  errors: ValidationError[]
-): CheckDefinition | undefined {
+export function validateCheckDefinition(input: unknown, path: string, errors: ValidationError[]): CheckDefinition | undefined {
   if (!isPlainObject(input)) {
     errors.push({
       path,
@@ -162,13 +123,7 @@ export function validateCheckDefinition(
     if (allStrings) argvValid = true;
   }
 
-  const validPurposes: readonly CheckPurpose[] = [
-    'reproduction',
-    'focused',
-    'regression',
-    'compatibility',
-    'diff',
-  ];
+  const validPurposes: readonly CheckPurpose[] = ['reproduction', 'focused', 'regression', 'compatibility', 'diff'];
   const purpose = input['purpose'] as CheckPurpose;
   if (!validPurposes.includes(purpose)) {
     errors.push({
@@ -193,13 +148,7 @@ export function validateCheckDefinition(
     maxOutputBytes = validatePositiveInteger(input['maxOutputBytes'], `${path}.maxOutputBytes`, errors);
   }
 
-  if (
-    errors.length > initialErrorsCount ||
-    !checkId ||
-    !executable ||
-    !argvValid ||
-    !validPurposes.includes(purpose)
-  ) {
+  if (errors.length > initialErrorsCount || !checkId || !executable || !argvValid || !validPurposes.includes(purpose)) {
     return undefined;
   }
 

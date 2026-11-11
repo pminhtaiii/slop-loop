@@ -1,3 +1,13 @@
+## Default contributor role
+
+Act as the orchestrator (coordinator) for the user's contributor request by default; no additional role prompt is needed. Own scope and authorization checks, task preparation, dependency-aware dispatch, bounded recovery, verification evidence, integration, and contributor handoff through the linked workflow. Handle trivial indivisible work directly. Explicitly assigned workers and reviewers retain their bounded roles; they do not become orchestrators or gain remote authority by reading this file. Explicit user role assignments take precedence.
+
+Before dispatch, supply each worker with its approved task scope, applicable acceptance criteria and source pointers, exact owned paths, verification commands, and known prerequisites. Reuse valid supplied context and retrieve additional sources when needed, while honoring required feature reads. Keep acceptance criteria and judging materials under factory control; workers report gaps rather than changing them to obtain a pass.
+
+Use `agent-context.mjs snapshot` and `verify` from the [coordination workflow](context/workflow.md#review-snapshots) to bind reusable context to its declared source files. Verify before dispatch and before relying on that context at integration. Changed or missing sources require refreshed context and reassessment of affected work. HEAD/branch drift is reported separately; a matching file snapshot proves only declared-file freshness, not unchanged repository state, current authorization, or behavioral acceptance.
+
+For factory-managed assignments, prepare and pin the manifest defined in [factory state checks](docs/agents/orchestration-tools.md#factory-state-checks). Require a passing dispatch check before dispatch and a passing final-candidate handoff check before consuming worker evidence. Keep trusted manifest/evidence digests with the coordinator. These checks establish binding and declared coverage; independent review and contributor completion gates still apply.
+
 ## Agent skills
 
 ### Issue tracker
@@ -12,6 +22,10 @@ Use the five canonical labels: `needs-triage`, `needs-info`, `ready-for-agent`, 
 
 Use the single-context layout (`GLOSSARY.md` and `docs/adr/` at the repo root). See `docs/agents/domain.md`.
 
+### Code standard
+
+Follow [context/code_standard.md](context/code_standard.md). Do not wrap code in `try`/`catch` to guard against a failure you can avoid: prefer a native non-throwing form (`statSync(path, { throwIfNoEntry: false })`, `existsSync`, an optional chain) or a typed result. Catch only to add context, recover, translate, or clean up; `no-useless-catch` rejects the rethrow-only case.
+
 ## Project context
 
 Use [context/README.md](context/README.md) to find the relevant project context. Load only the documents needed for the task.
@@ -21,6 +35,8 @@ Before creating or revising feature specs, plans, task ledgers, or audits, follo
 Before implementation and before declaring contributor work complete, follow the [active-task handoff](context/workflow.md#active-task-handoff). Contributor completion requires the published, linked PR gate; worker handoff is separate.
 
 Before delegating parallel contributor work, follow the [agent coordination](context/workflow.md#agent-coordination) policy.
+
+For each contributor implementation batch, spawn a separate merger sub-agent for [integration and behavioral verification](docs/agents/task-verification.md#merger-integration-and-verification), including coordinator-authored changes. Record its agent identity and candidate-bound verdict before acceptance; worker self-checks and coordinator integration do not substitute for this assignment. The merger reports failures to the coordinator, who assigns repairs and returns the corrected candidate for verification.
 
 After implementation, follow the [context refresh](context/workflow.md#context-refresh): review affected context documents, prepare evidence-based updates in their existing format, and run `node scripts/agents/update-context.mjs --updates <edits.json> --apply` before handoff.
 
@@ -33,7 +49,11 @@ The contributor PR pilot targets `development` and treats about 1,000 added plus
 <!-- SPECKIT START -->
 ## Active Spec Kit features
 
+- Observable Python repair evaluation: [spec](specs/007-runtime-evaluation-integration/spec.md), [plan](specs/007-runtime-evaluation-integration/plan.md), [tasks](specs/007-runtime-evaluation-integration/tasks.md), and [decisions](specs/007-runtime-evaluation-integration/contracts/decisions.md). T001–T011 retain the 2026-11-01 source/controlled-test release; T012–T018 hold the separate 2026-11-04 release for diagnostics, comparison and the local console, also source/controlled-test only. The 2026-11-04 host-composition correction T019–T034 was planned, then the T019 delegated agreement was recorded and T020–T034 separately released for source/controlled-tier implementation the same day; its [contract](specs/007-runtime-evaluation-integration/contracts/host-composition.md) rests on that one-person delegated attestation, not three signatures. Real-owner delivery, provider/container execution, containment, approval, grading and successors remain gated. Console real acceptance follows the first real repair; controlled checks imply no full-suite or restart acceptance.
+
 Before feature work, read its linked `spec.md`, `plan.md`, `tasks.md`, and `contracts/decisions.md`. The task ledger records completion; the decision record carries authorization. A completed task or earlier phase authorization does not release successor work. Keep capability claims within the evidence those records support.
+
+- Contributor CI and mutation-guided test quality: [spec](specs/006-ci-test-quality/spec.md), [plan](specs/006-ci-test-quality/plan.md), [tasks](specs/006-ci-test-quality/tasks.md), and [decisions](specs/006-ci-test-quality/contracts/decisions.md). Planning and independent planning review only are authorized. The proposed CI split retains direct required checks and historical identity compatibility; mutation CI is manual/report-only. No pre-PR hook, numeric mutation gate, requirement to kill equivalent survivors, implementation, live protection change or merge is released by these artifacts.
 
 - UC-01 evidence-backed issue triage: [spec](specs/002-uc01-issue-triage/spec.md), [plan](specs/002-uc01-issue-triage/plan.md), [tasks](specs/002-uc01-issue-triage/tasks.md), and [decisions](specs/002-uc01-issue-triage/contracts/decisions.md). Use the decision record for current scope and authorization. T013 was separately authorized on 2026-10-28 (Asia/Bangkok) for actual UC-03 receiver compatibility under `uc01-uc03-receiver-v1` after UC-03 T011/T012; its task ledger owns acceptance status. T011/T012, T015/T016, real adapters, production choices and model-quality evaluation remain gated. Mock checks establish only exercised local behavior.
 - UC-03 verified code repair: [spec](specs/001-verified-code-repair/spec.md), [plan](specs/001-verified-code-repair/plan.md), [tasks](specs/001-verified-code-repair/tasks.md), and [quickstart](specs/001-verified-code-repair/quickstart.md). The [decision record](specs/001-verified-code-repair/contracts/decisions.md) records the separately authorized Phase 4 T015–T018 work on `feat/uc03-bounded-repair` (2026-10-21, Asia-Saigon): mock-backed repair and replan only. Phase 5 onward, real execution, and production adapters remain gated. UC-03 T011/T012 and UC-01 T013 were separately authorized on 2026-10-28 (Asia/Bangkok) for pure supplied-task intake and versioned receiver compatibility without dispatch, repair or new shared-owner implementation. Task status reports progress, not authorization; mock checks establish only exercised local behavior.

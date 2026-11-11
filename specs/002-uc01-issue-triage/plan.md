@@ -7,6 +7,10 @@
 
 ## Summary
 
+The 2026-10-30 user-reported Tai delegation supersedes historical unreleased T011/T015 wording for this scope; see [decisions](contracts/decisions.md#delegated-t011t015-authority--2026-10-30). Implement `uc01-composition-v1`, explicit `uc01-production-v1` profile/pricing and available shared projections in `src/uc01/`, with C20 admission/controller tests. The trusted registry requires consumer-v1 version, immutable source revision, capability evidence and actual component references; snapshot/config/policy/accounting/limits/catalog are bound before invocation. Preserve fixture-only behavior and fail closed for unavailable production capabilities. The current delivered accounting adapter lacks durable task/run admission; canonical Foundation/UC-05 provider roles remain coder/reviewer and cannot be repurposed as triage.
+
+T015 extends `eval/uc03/runner.ts` with shared versioned registration/selection and UC-01 registration. It may implement infrastructure/conformance before T012; T012 remains a prerequisite for real-model comparison acceptance. Frozen cases stay unchanged, private grading never enters driver context, and errors/unavailable cases remain visible. Both T011 and T015 stay unchecked pending their complete actual integration and model-quality acceptance. No T012/T016 implementation or automatic dispatch is released.
+
 Thai owns an assessment boundary for one issue/repository. Validate input and trusted catalogs; collect bounded evidence through Tai's shared read/search tools; ask the model for a structured assessment; validate provenance and values; return an assessment or material questions. Preserve original report. Recommend without dispatching. No dedicated rewrite call.
 
 ## Technical Context

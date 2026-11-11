@@ -1,14 +1,14 @@
 /** Canonical identity, repository path, and protected-path rules. */
 
 import { createHash } from 'node:crypto';
-import type { CheckDefinition, CommandView, NormalizedAction } from './v01/types.ts';
+import type { CheckDefinition, ClarificationQuestion, CommandView, NormalizedAction } from './v01/types.ts';
 
 export function canonicalJsonStringify(val: unknown): string {
   if (val === null || typeof val !== 'object') {
     return JSON.stringify(val);
   }
   if (Array.isArray(val)) {
-    return `[${val.map((item) => canonicalJsonStringify(item)).join(',')}]`;
+    return `[${val.map(item => canonicalJsonStringify(item)).join(',')}]`;
   }
   const obj = val as Record<string, unknown>;
   const sortedKeys = Object.keys(obj).sort();
@@ -25,6 +25,33 @@ export function computeCanonicalSha256(val: unknown): string {
   const json = canonicalJsonStringify(val);
   const hash = createHash('sha256').update(json, 'utf8').digest('hex');
   return `sha256:${hash}`;
+}
+
+/** Clarification question identity: bound to task/run/round/content, never to the asking version (§8). */
+export function computeClarificationQuestionId(input: {
+  readonly taskId: string;
+  readonly runId: string;
+  readonly round: number;
+  readonly questions: readonly ClarificationQuestion[];
+  readonly evidenceRefs: readonly string[];
+}): string {
+  return computeCanonicalSha256(input).slice(0, 39);
+}
+
+export function computeClarificationQuestionDigest(input: {
+  readonly taskId: string;
+  readonly runId: string;
+  readonly askedAtStateVersion: number;
+  readonly round: number;
+  readonly questionId: string;
+  readonly questions: readonly ClarificationQuestion[];
+  readonly evidenceRefs: readonly string[];
+}): string {
+  return computeCanonicalSha256(input);
+}
+
+export function computeClarificationAnswerDigest(input: { readonly questionDigest: string; readonly recorderRef: string; readonly items: readonly ClarificationQuestion[] }): string {
+  return computeCanonicalSha256(input);
 }
 
 export function computeActionDigest(action: NormalizedAction): string {
@@ -54,7 +81,8 @@ export function computeCheckSetDigest(checks: readonly CheckDefinition[]): strin
 
 export function isCanonicalRelativePath(filePath: string): boolean {
   if (typeof filePath !== 'string' || filePath.length === 0) return false;
-  if (filePath.includes('\0')) return false;
+  // A control character would forge or break each line a caller echoes the path into (diff headers).
+  if (/[\u0000-\u001f\u007f]/.test(filePath)) return false;
   if (filePath.includes('\\')) return false;
   if (filePath.startsWith('/') || /^[a-zA-Z]:/.test(filePath)) return false;
   if (filePath.startsWith('./') || filePath === '.') return false;
@@ -112,11 +140,7 @@ export function isProtectedPath(filePath: string): boolean {
     return true;
   }
   // Credentials & secret configurations
-  if (
-    baseName === 'credentials.json' ||
-    baseName === 'secrets.json' ||
-    /^(password|passwords|token|tokens)(\.(txt|json|ya?ml|env))?$/.test(baseName)
-  ) {
+  if (baseName === 'credentials.json' || baseName === 'secrets.json' || /^(password|passwords|token|tokens)(\.(txt|json|ya?ml|env))?$/.test(baseName)) {
     return true;
   }
   // Git metadata

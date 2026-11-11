@@ -1,14 +1,5 @@
 import { dirname, join } from 'node:path';
-import {
-  closeSync,
-  existsSync,
-  fsyncSync,
-  mkdirSync,
-  openSync,
-  renameSync,
-  rmSync,
-  writeSync,
-} from 'node:fs';
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, renameSync, rmSync, writeSync } from 'node:fs';
 import type { StoreResponse } from '../../approvals/service-data.ts';
 import {
   type ApprovalRequestRecord,
@@ -23,6 +14,7 @@ import {
   UC05_APPROVAL_SCHEMA_VERSION,
 } from '../../contracts/approvals/contracts.ts';
 import type { DurableStore } from '../store.ts';
+import { isSafeStorageId } from '../store.ts';
 
 export interface DurableApprovalStoreOptions {
   readonly storageDir: string;
@@ -31,8 +23,7 @@ export interface DurableApprovalStoreOptions {
 }
 
 export type EventAppendResult =
-  | { readonly ok: true; readonly status: 'skipped' | 'idempotent' | 'appended' }
-  | { readonly ok: false; readonly error: 'denied' | 'unavailable' | 'conflict'; readonly reason: string };
+  { readonly ok: true; readonly status: 'skipped' | 'idempotent' | 'appended' } | { readonly ok: false; readonly error: 'denied' | 'unavailable' | 'conflict'; readonly reason: string };
 
 export const DEFAULT_POLICY_PROFILE: PolicyProfile = {
   schemaVersion: 'uc05-approval/0.1-draft',
@@ -82,7 +73,7 @@ export function makeResponse<T>(
   value: T | null,
   decisionId: string | null = null,
   requestVersion: number | null = null,
-  eventRef: string | null = null
+  eventRef: string | null = null,
 ): StoreResponse<T> {
   const safe: SafeResult = {
     schemaVersion: UC05_APPROVAL_SCHEMA_VERSION,
@@ -99,18 +90,11 @@ export function makeResponse<T>(
 }
 
 /** Constructs a failure StoreResponse envelope. */
-export const makeFailure = <T>(
-  taskId: string,
-  v: number,
-  o: SafeOperationOutcome,
-  code: string,
-  dId: string | null = null,
-  rV: number | null = null
-): StoreResponse<T> => makeResponse<T>({ taskId, version: v }, o, code, null, dId, rV);
+export const makeFailure = <T>(taskId: string, v: number, o: SafeOperationOutcome, code: string, dId: string | null = null, rV: number | null = null): StoreResponse<T> =>
+  makeResponse<T>({ taskId, version: v }, o, code, null, dId, rV);
 
 /** Validates that an identifier does not traverse directory bounds. */
-export const isSafeId = (id: string): boolean =>
-  typeof id === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(id) && !id.includes('..');
+export const isSafeId = (id: string): boolean => isSafeStorageId(id);
 
 /** Resolves the approvals directory for a task. */
 export const taskDir = (storageDir: string, taskId: string): string => join(storageDir, 'tasks', taskId, 'approvals');
@@ -190,11 +174,7 @@ export function writeJsonAtomic(path: string, data: unknown): void {
 }
 
 /** Evaluates preconditions before applying a human resolution. */
-export function checkResolvePreconditions(
-  currentControl: ApprovalTaskControl,
-  request: ApprovalRequestRecord,
-  payload: StorePayload
-): string | null {
+export function checkResolvePreconditions(currentControl: ApprovalTaskControl, request: ApprovalRequestRecord, payload: StorePayload): string | null {
   if (currentControl.mode !== 'waiting') return 'task-not-waiting';
   if (currentControl.pendingDecisionId !== request.decisionId) return 'decision-not-pending';
   if (payload.expectedControlVersion !== undefined && currentControl.version !== payload.expectedControlVersion) return 'version-conflict';
@@ -204,10 +184,7 @@ export function checkResolvePreconditions(
 }
 
 /** Evaluates preconditions before recording developer direction. */
-export function checkDirectionPreconditions(
-  currentControl: ApprovalTaskControl,
-  payload: StorePayload
-): string | null {
+export function checkDirectionPreconditions(currentControl: ApprovalTaskControl, payload: StorePayload): string | null {
   if (currentControl.mode === 'ended' || currentControl.mode === 'rejected') return 'task-terminal';
   if (payload.expectedControlVersion !== undefined && currentControl.version !== payload.expectedControlVersion) return 'version-conflict';
   if (!payload.trustedOperator) return 'missing-trusted-operator';
@@ -215,17 +192,9 @@ export function checkDirectionPreconditions(
 }
 
 /** Evaluates preconditions before replacing a stale pending approval request. */
-export function checkReplacePreconditions(
-  currentControl: ApprovalTaskControl,
-  replacement: ApprovalRequestRecord,
-  storageDir: string,
-  payload: StorePayload
-): string | null {
+export function checkReplacePreconditions(currentControl: ApprovalTaskControl, replacement: ApprovalRequestRecord, storageDir: string, payload: StorePayload): string | null {
   if (currentControl.mode !== 'waiting' || currentControl.pendingDecisionId === null) return 'no-pending-decision';
-  if (
-    replacement.decisionId === currentControl.pendingDecisionId ||
-    existsSync(join(decisionDir(storageDir, replacement.decisionId), 'request.json'))
-  ) {
+  if (replacement.decisionId === currentControl.pendingDecisionId || existsSync(join(decisionDir(storageDir, replacement.decisionId), 'request.json'))) {
     return 'decision-id-in-use';
   }
   if (payload.expectedControlVersion !== undefined && currentControl.version !== payload.expectedControlVersion) return 'version-conflict';

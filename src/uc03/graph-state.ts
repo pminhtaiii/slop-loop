@@ -22,4 +22,3 @@ export const UC03StateAnnotation = Annotation.Root({
 
 export type UC03GraphState = typeof UC03StateAnnotation.State;
 export type UC03GraphNode = (state: UC03GraphState) => Promise<Partial<UC03GraphState>>;
-

@@ -48,11 +48,7 @@ async function main() {
       tracker.settle('req-step1', { inputTokens: 400, outputTokens: 100, costUsd: 0.01 });
 
       // Complete step-1
-      state = machine.completeStep(
-        { ...state, budgetLedgers: tracker.getLedgers() },
-        'step-1',
-        { changedFiles: ['src/init.ts'] }
-      );
+      state = machine.completeStep({ ...state, budgetLedgers: tracker.getLedgers() }, 'step-1', { changedFiles: ['src/init.ts'], evidenceRefs: ['changed:src/init.ts'] });
       await store.saveCheckpoint(state);
 
       console.log(JSON.stringify({ pid: process.pid, status: 'STEP1_OK', currentStepIndex: state.currentStepIndex }));
@@ -83,6 +79,13 @@ async function main() {
       const resumed = await reconcileAndResume(taskId, store, {
         gitInspector: async () => ({ ...baselineWorkspace }),
         unresolvedReservationAction: 'charge_as_consumed',
+        confirmedOutcomes: [
+          {
+            requestId: 'req-crash-step2',
+            outcome: 'effect_observed',
+            evidenceRef: 'crash:step2-dispatch-was-in-flight',
+          },
+        ],
       });
 
       // Explicitly rerun interrupted step-2 work and settle its usage
@@ -92,19 +95,27 @@ async function main() {
       let state: TaskState = { ...resumed, budgetLedgers: tracker.getLedgers() };
 
       // Complete step-2
-      state = machine.completeStep(state, 'step-2', { changedFiles: ['src/core.ts'] });
+      state = machine.completeStep(state, 'step-2', {
+        changedFiles: ['src/core.ts'],
+        evidenceRefs: ['changed:src/core.ts'],
+      });
       // Start and complete step-3
       state = machine.startStep(state, 'step-3');
-      state = machine.completeStep(state, 'step-3', { evidenceRefs: ['test-ok'] });
+      state = machine.completeStep(state, 'step-3', {
+        evidenceRefs: ['test-ok'],
+        verification: { status: 'verified', evidenceRefs: ['test-ok'], checkedAt: new Date().toISOString() },
+      });
       await store.saveCheckpoint(state);
 
-      console.log(JSON.stringify({
-        pid: process.pid,
-        status: 'RESUME_COMPLETED_OK',
-        finalStatus: state.status,
-        stepStatuses: state.plan.map((s: PlanStep) => ({ id: s.id, status: s.status })),
-        consumedTokens: state.budgetLedgers.find((l: BudgetLedger) => l.kind === 'tokens')?.consumed,
-      }));
+      console.log(
+        JSON.stringify({
+          pid: process.pid,
+          status: 'RESUME_COMPLETED_OK',
+          finalStatus: state.status,
+          stepStatuses: state.plan.map((s: PlanStep) => ({ id: s.id, status: s.status })),
+          consumedTokens: state.budgetLedgers.find((l: BudgetLedger) => l.kind === 'tokens')?.consumed,
+        }),
+      );
       break;
     }
 
@@ -114,7 +125,7 @@ async function main() {
   }
 }
 
-main().catch((err) => {
+main().catch(err => {
   console.error(err);
   process.exit(1);
 });

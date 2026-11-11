@@ -5,6 +5,8 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateBugTask } from '../contracts/foundation/uc03.ts';
 import { runUC03Graph, type UC03GraphPorts } from '../uc03/graph.ts';
+import { runUC03GraphV02 } from '../uc03/graph-v02.ts';
+import { loadHostConfiguration, prepareAssembly, readinessReport, resolveHostAssembly, type HostAssembly } from './evaluate.ts';
 
 export interface CliResult {
   readonly exitCode: number;
@@ -14,11 +16,14 @@ export interface CliResult {
 export interface UC03CliOptions {
   readonly ports?: UC03GraphPorts | undefined;
   readonly allowMockInDev?: boolean | undefined;
+  /** Production assembly. Only a host-supplied one can reach the v0.2 route. */
+  readonly host?: HostAssembly | undefined;
 }
 
 interface ParsedArgs {
   readonly taskPath?: string | undefined;
   readonly configPath?: string | undefined;
+  readonly hostPath?: string | undefined;
   readonly outputPath?: string | undefined;
   readonly command: 'run' | 'validate';
   readonly mode: 'production' | 'development';
@@ -27,6 +32,7 @@ interface ParsedArgs {
 function parseCliArgs(args: readonly string[]): ParsedArgs {
   let taskPath: string | undefined;
   let configPath: string | undefined;
+  let hostPath: string | undefined;
   let outputPath: string | undefined;
   let command: 'run' | 'validate' = 'run';
   let mode: 'production' | 'development' = 'production';
@@ -34,7 +40,7 @@ function parseCliArgs(args: readonly string[]): ParsedArgs {
 
   for (let index = 0; index < args.length; index += 1) {
     const flag = args[index];
-    if (flag !== '--task' && flag !== '--task-file' && flag !== '--config' && flag !== '--output' && flag !== '--command' && flag !== '--mode') {
+    if (flag !== '--task' && flag !== '--task-file' && flag !== '--config' && flag !== '--host' && flag !== '--output' && flag !== '--command' && flag !== '--mode') {
       throw new Error('UNKNOWN_ARGUMENT: unsupported option');
     }
     if (seen.has(flag)) throw new Error('DUPLICATE_ARGUMENT: option appears more than once');
@@ -47,6 +53,7 @@ function parseCliArgs(args: readonly string[]): ParsedArgs {
       if (taskPath !== undefined) throw new Error('DUPLICATE_ARGUMENT: task path provided more than once');
       taskPath = value;
     } else if (flag === '--config') configPath = value;
+    else if (flag === '--host') hostPath = value;
     else if (flag === '--output') outputPath = value;
     else if (flag === '--command') {
       if (value !== 'run' && value !== 'validate') throw new Error('INVALID_COMMAND: unsupported command');
@@ -57,7 +64,7 @@ function parseCliArgs(args: readonly string[]): ParsedArgs {
     }
   }
 
-  return { taskPath, configPath, outputPath, command, mode };
+  return { taskPath, configPath, hostPath, outputPath, command, mode };
 }
 
 function cliError(exitCode: number, code: string, message: string): CliResult {
@@ -118,7 +125,7 @@ export async function runUC03Cli(args: readonly string[], options?: UC03CliOptio
   if (typeof configFile.value !== 'object' || configFile.value === null || Array.isArray(configFile.value)) {
     return cliError(2, 'INVALID_CONFIG', 'Configuration must be a JSON object');
   }
-  if (!options?.ports) {
+  if (!options?.ports && parsed.hostPath === undefined) {
     const kind = parsed.mode === 'production' ? 'unavailable-production-configuration' : 'unavailable-development-configuration';
     const output = JSON.stringify({
       outcome: kind,
@@ -126,6 +133,26 @@ export async function runUC03Cli(args: readonly string[], options?: UC03CliOptio
     });
     return writeOutput(parsed.outputPath, output) ?? { exitCode: 5, output };
   }
+
+  if (parsed.hostPath !== undefined) {
+    // The same host-only loader and bootstrap the evaluation CLI uses; nothing here reads argv.
+    const report = (payload: string): CliResult => ({ exitCode: 5, output: payload });
+    const unavailable = (): CliResult => report(JSON.stringify({ outcome: 'unavailable-production-configuration', error: 'HOST_ASSEMBLY_UNAVAILABLE: no host assembly is configured' }));
+    const loaded = loadHostConfiguration(parsed.hostPath);
+    if (!loaded.ok) return loaded.error;
+    const resolved = await resolveHostAssembly(loaded.value, options?.host);
+    if (resolved === undefined) return unavailable();
+
+    const readiness = prepareAssembly(resolved.host, loaded.value);
+    if (readiness === undefined) return unavailable();
+    if (readiness.status !== 'ready') return report(readinessReport(readiness));
+
+    const result = await runUC03GraphV02(validation.value, readiness.ports, readiness.config);
+    const exitCode = result.outcome === 'COMPLETED' && result.finalReport?.outcome === 'COMPLETED' && result.finalReport.isComplete ? 0 : 1;
+    const output = JSON.stringify(result);
+    return writeOutput(parsed.outputPath, output) ?? { exitCode, output };
+  }
+  if (!options?.ports) return cliError(5, 'PORT_COMPOSITION_UNAVAILABLE', 'Ports are unavailable');
   if (parsed.mode === 'development' && options.allowMockInDev !== true && options.ports.repositoryPort.provenance === 'mock') {
     return cliError(5, 'MOCK_MODE_REFUSED', 'Mock ports require explicit allowMockInDev in development mode');
   }
@@ -146,11 +173,13 @@ function isDirectExecution(): boolean {
 }
 
 if (isDirectExecution()) {
-  void runUC03Cli(process.argv.slice(2)).then((result) => {
-    process.stdout.write(`${result.output}\n`);
-    process.exitCode = result.exitCode;
-  }).catch(() => {
-    process.stderr.write('UC03 CLI failed; exception details are not included\n');
-    process.exitCode = 1;
-  });
+  void runUC03Cli(process.argv.slice(2))
+    .then(result => {
+      process.stdout.write(`${result.output}\n`);
+      process.exitCode = result.exitCode;
+    })
+    .catch(() => {
+      process.stderr.write('UC03 CLI failed; exception details are not included\n');
+      process.exitCode = 1;
+    });
 }

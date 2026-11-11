@@ -13,7 +13,8 @@ test('paired publication resumes after a partial private PR failure and gates co
   Object.assign(f.e.pr, { headRefName: 'feat/tooling-paired-naming', title: 'feat/tooling-paired-naming: add the paired workflow' });
   const git = (cwd, ...args) => {
     const result = spawnSync('git', args, { cwd, encoding: 'utf8', windowsHide: true });
-    assert.equal(result.status, 0, result.stderr); return result.stdout.trim();
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout.trim();
   };
   const privateRemote = join(f.root, '.agent-work/private.git');
   const privateSeed = join(f.root, '.agent-work/private-seed');
@@ -44,9 +45,9 @@ test('paired publication resumes after a partial private PR failure and gates co
   };
   const privateGh = args => {
     if (args[0] === 'repo' && args[1] === 'view') {
-      return JSON.stringify(args[2] === 'course/private'
-        ? { visibility: 'PRIVATE', isPrivate: true, viewerPermission: 'WRITE' }
-        : { visibility: 'PUBLIC', isPrivate: false, viewerPermission: 'ADMIN' });
+      return JSON.stringify(
+        args[2] === 'course/private' ? { visibility: 'PRIVATE', isPrivate: true, viewerPermission: 'WRITE' } : { visibility: 'PUBLIC', isPrivate: false, viewerPermission: 'ADMIN' },
+      );
     }
     const repository = args[args.indexOf('--repo') + 1];
     if (repository !== 'course/private') return undefined;
@@ -60,12 +61,20 @@ test('paired publication resumes after a partial private PR failure and gates co
       return JSON.stringify(pr);
     }
     if (args[0] === 'pr' && args[1] === 'create') {
-      if (failPrivateCreate) { failPrivateCreate = false; throw new Error('simulated private PR create failure'); }
+      if (failPrivateCreate) {
+        failPrivateCreate = false;
+        throw new Error('simulated private PR create failure');
+      }
       const number = 7;
       const pr = {
-        number, url: `https://github.com/course/private/pull/${number}`, title: args[args.indexOf('--title') + 1],
-        body: readFileSync(args[args.indexOf('--body-file') + 1], 'utf8'), state: 'OPEN', isDraft: args.includes('--draft'),
-        headRefName: args[args.indexOf('--head') + 1], baseRefName: args[args.indexOf('--base') + 1],
+        number,
+        url: `https://github.com/course/private/pull/${number}`,
+        title: args[args.indexOf('--title') + 1],
+        body: readFileSync(args[args.indexOf('--body-file') + 1], 'utf8'),
+        state: 'OPEN',
+        isDraft: args.includes('--draft'),
+        headRefName: args[args.indexOf('--head') + 1],
+        baseRefName: args[args.indexOf('--base') + 1],
         headRefOid: privateHead(`refs/heads/${args[args.indexOf('--head') + 1]}`),
       };
       privatePrs.push(pr);
@@ -81,7 +90,7 @@ test('paired publication resumes after a partial private PR failure and gates co
   };
   const execute = (binary, args, cwd, timeout) => {
     if (binary === 'gh') {
-      if (args[0] === 'repo' && args[1] === 'view' || args.includes('--repo') && args[args.indexOf('--repo') + 1] === 'course/private') {
+      if ((args[0] === 'repo' && args[1] === 'view') || (args.includes('--repo') && args[args.indexOf('--repo') + 1] === 'course/private')) {
         pairedCalls.push([binary, ...args]);
         return privateGh(args);
       }
@@ -90,10 +99,11 @@ test('paired publication resumes after a partial private PR failure and gates co
     if (binary === 'git' && args[0] === 'remote' && args[1] === 'get-url' && args[2] === 'submission') {
       return 'https://github.com/course/private.git';
     }
-    if (binary === 'git' && (args[0] === 'fetch' && args.includes('submission') || args[0] === 'push' && args[1] === 'submission')) {
+    if (binary === 'git' && ((args[0] === 'fetch' && args.includes('submission')) || (args[0] === 'push' && args[1] === 'submission'))) {
       pairedCalls.push([binary, ...args]);
       const result = spawnSync('git', args, { cwd, timeout, encoding: 'utf8', windowsHide: true });
-      assert.equal(result.status, 0, result.stderr); return result.stdout.trim();
+      assert.equal(result.status, 0, result.stderr);
+      return result.stdout.trim();
     }
     return f.execute(binary, args, cwd, timeout);
   };
@@ -103,8 +113,15 @@ test('paired publication resumes after a partial private PR failure and gates co
   await writeFile(f.body, 'Summary includes https://github.com/course/private/pull/7');
   f.calls.length = 0;
   await assert.rejects(publish(), /private/i);
-  assert.equal(f.calls.some(call => call[0] === 'git' && call[1] === 'push' && call[2] === 'origin' || call[0] === 'gh' && call[1] === 'pr' && call[2] === 'create'), false, 'private repository identity must be rejected before public publication');
-  await writeFile(f.body, '## Summary\n\nStandardize tooling.\n\n## Evidence\n\nBefore: legacy behavior; after: verified checks.\n\n## Merge Danger\n\n**Door:** two-way; revert commit.\n\n**Blast Radius:** tooling; integration checks required.');
+  assert.equal(
+    f.calls.some(call => (call[0] === 'git' && call[1] === 'push' && call[2] === 'origin') || (call[0] === 'gh' && call[1] === 'pr' && call[2] === 'create')),
+    false,
+    'private repository identity must be rejected before public publication',
+  );
+  await writeFile(
+    f.body,
+    '## Summary\n\nStandardize tooling.\n\n## Evidence\n\nBefore: legacy behavior; after: verified checks.\n\n## Merge Danger\n\n**Door:** two-way; revert commit.\n\n**Blast Radius:** tooling; integration checks required.',
+  );
 
   await assert.rejects(publish(), /submission publication incomplete/);
   const recordPath = join(f.root, '.agent-work/pr-workflow/tooling-paired-naming.json');
@@ -131,13 +148,32 @@ test('paired publication resumes after a partial private PR failure and gates co
   const primaryOnly = { pullRequests: [{ url: published.url, repository: 'example/project', number: published.pr }] };
   await writeFile(receiptPath, JSON.stringify(primaryOnly));
   await assert.rejects(run('record-app-state', '--receipt', receiptPath), /both linked PRs|including submission/);
-  await writeFile(receiptPath, JSON.stringify({ pullRequests: [
-    ...primaryOnly.pullRequests,
-    { url: published.submission.url, repository: published.submission.repository, number: published.submission.number },
-  ] }));
+  await writeFile(
+    receiptPath,
+    JSON.stringify({ pullRequests: [...primaryOnly.pullRequests, { url: published.submission.url, repository: published.submission.repository, number: published.submission.number }] }),
+  );
   const linked = await run('record-app-state', '--receipt', receiptPath);
   assert.equal(linked.submissionAppLink.url, published.submission.url);
 
+  const reviewPath = join(f.root, '.agent-work/review.json');
+  const standardsReport = join(f.root, '.agent-work/standards.md');
+  const specReport = join(f.root, '.agent-work/spec.md');
+  await writeFile(standardsReport, 'Standards axis: no findings.\n');
+  await writeFile(specReport, 'Spec axis: no findings.\n');
+  await writeFile(
+    reviewPath,
+    JSON.stringify({
+      base: git(f.root, 'rev-parse', 'refs/remotes/origin/development'),
+      head: git(f.root, 'rev-parse', 'HEAD'),
+      axes: [
+        { name: 'standards', findings: [] },
+        { name: 'spec', findings: [] },
+      ],
+      reports: [standardsReport, specReport],
+    }),
+  );
+  await run('record-review', '--receipt', reviewPath);
+  await f.verification(execute);
   const complete = await run('complete');
   assert.equal(complete.completion.submission.url, published.submission.url);
   assert.equal(complete.completion.submissionAppLink.url, published.submission.url);

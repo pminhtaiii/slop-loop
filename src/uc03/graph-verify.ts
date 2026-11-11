@@ -5,10 +5,7 @@ import type { UC03GraphNode, UC03GraphState } from './graph-state.ts';
 import { addMilestone, requiredChecksPassed, resolveExecutionGuard, trustedExpectedContext, trustedOwnerStateMatches, validDiffInfo } from './graph-validation.ts';
 import { reloadAuthoritativeState, transitionState } from './graph-transitions.ts';
 import { loadVerifiedPatchAncestry, restoreVerificationEvidence } from './graph-patch-ancestry.ts';
-import {
-  currentPlanApprovalIsCurrent,
-  prepareVerificationApproval,
-} from './post-patch-verification-authority.ts';
+import { currentPlanApprovalIsCurrent, prepareVerificationApproval } from './post-patch-verification-authority.ts';
 
 export function createVerifyNode(ports: UC03GraphPorts, config?: UC03GraphConfig): UC03GraphNode {
   return async (state: UC03GraphState) => {
@@ -19,32 +16,34 @@ export function createVerifyNode(ports: UC03GraphPorts, config?: UC03GraphConfig
     const trusted = trustedExpectedContext(config, task, current.state);
     const guard = resolveExecutionGuard(ports, config);
     const owner = trusted?.statePort;
-    if (!trusted || !owner || !guard || !owner.readVerificationAuthoritySnapshot ||
-        !owner.recordVerificationApproval || !owner.resolvePlanDecisionInContext || !owner.readSettledPatchAncestry) {
+    if (!trusted || !owner || !guard || !owner.readVerificationAuthoritySnapshot || !owner.recordVerificationApproval || !owner.resolvePlanDecisionInContext || !owner.readSettledPatchAncestry) {
       return { state: current.state, terminalOutcome: 'INCOMPLETE' as const, reasons: ['Verification requires the public v0.2 owner authority and ancestry capabilities'] };
     }
-    if (!await trustedOwnerStateMatches(trusted, current.state)) {
+    if (!(await trustedOwnerStateMatches(trusted, current.state))) {
       return { state: current.state, terminalOutcome: 'INCOMPLETE' as const, reasons: ['Trusted host and route ports do not share current owner task state'] };
     }
     const ancestry = await loadVerifiedPatchAncestry(task, current.state, owner);
     if (!ancestry) return { state: current.state, terminalOutcome: 'INCOMPLETE' as const, reasons: ['Verification requires issuer-validated owner patch ancestry'] };
-    if ((state.patchAdmission && computeCanonicalSha256(state.patchAdmission) !== computeCanonicalSha256(ancestry.admission)) ||
-        (state.patchReceipt && computeCanonicalSha256(state.patchReceipt) !== computeCanonicalSha256(ancestry.receipt))) {
+    if (
+      (state.patchAdmission && computeCanonicalSha256(state.patchAdmission) !== computeCanonicalSha256(ancestry.admission)) ||
+      (state.patchReceipt && computeCanonicalSha256(state.patchReceipt) !== computeCanonicalSha256(ancestry.receipt))
+    ) {
       return { state: current.state, terminalOutcome: 'INCOMPLETE' as const, reasons: ['Graph patch evidence differs from the settled owner journal'] };
     }
     let baseline = state.baseline;
     if (!baseline) {
-      const restored = await restoreVerificationEvidence(
-        task, current.state, owner, ports.baselineEvidenceWriter, trusted.expectedTestFiles,
-      );
+      const restored = await restoreVerificationEvidence(task, current.state, owner, ports.baselineEvidenceWriter, trusted.expectedTestFiles);
       if (!restored) return { state: current.state, terminalOutcome: 'INCOMPLETE' as const, reasons: ['TaskState-only resume lacks owner-retained baseline or patch evidence'] };
       baseline = restored.baseline;
     }
     const originalPlan = ancestry.originalTaskState.plan;
-    if (!originalPlan || baseline.evidenceId !== originalPlan.baselineRef ||
-        baseline.repositorySnapshotDigest !== task.initialRevisionDigest ||
-        baseline.checkSetDigest !== computeCheckSetDigest(task.requiredChecks) ||
-        current.state.plan?.baselineRef !== baseline.evidenceId) {
+    if (
+      !originalPlan ||
+      baseline.evidenceId !== originalPlan.baselineRef ||
+      baseline.repositorySnapshotDigest !== task.initialRevisionDigest ||
+      baseline.checkSetDigest !== computeCheckSetDigest(task.requiredChecks) ||
+      current.state.plan?.baselineRef !== baseline.evidenceId
+    ) {
       return { state: current.state, terminalOutcome: 'INCOMPLETE' as const, reasons: ['Verification baseline does not match owner patch ancestry and current task criteria'] };
     }
     const beforeApproval = await reloadAuthoritativeState(current.state, ports.statePort);
@@ -61,18 +60,27 @@ export function createVerifyNode(ports: UC03GraphPorts, config?: UC03GraphConfig
         return { state: current.state, terminalOutcome: 'INCOMPLETE' as const, reasons: ['Verification decision reference is stale or already inconsistent'] };
       }
       let requestResult;
-      try { requestResult = await ports.approvalPort.requestDecision(prepared.binding); }
-      catch { return { state: current.state, terminalOutcome: 'INCOMPLETE' as const, reasons: ['Verification approval request could not be issued'] }; }
+      try {
+        requestResult = await ports.approvalPort.requestDecision(prepared.binding);
+      } catch {
+        return { state: current.state, terminalOutcome: 'INCOMPLETE' as const, reasons: ['Verification approval request could not be issued'] };
+      }
       if (requestResult.decisionId !== prepared.request.decisionId) {
         return { state: current.state, terminalOutcome: 'INCOMPLETE' as const, reasons: ['Approval issuer returned a different verification decision identity'] };
       }
       let recorded;
-      try { recorded = await owner.recordVerificationApproval(prepared.request); }
-      catch { return { state: current.state, terminalOutcome: 'INCOMPLETE' as const, reasons: ['Owner could not record the verification approval'] }; }
+      try {
+        recorded = await owner.recordVerificationApproval(prepared.request);
+      } catch {
+        return { state: current.state, terminalOutcome: 'INCOMPLETE' as const, reasons: ['Owner could not record the verification approval'] };
+      }
       if (recorded.outcome === 'pending') {
-        if (computeCanonicalSha256(recorded.state) !== computeCanonicalSha256(verifiedState) ||
-            recorded.controlVersion !== snapshot.controlVersion || recorded.epoch !== snapshot.epoch ||
-            recorded.decisionAuthorityGeneration !== snapshot.decisionAuthorityGeneration) {
+        if (
+          computeCanonicalSha256(recorded.state) !== computeCanonicalSha256(verifiedState) ||
+          recorded.controlVersion !== snapshot.controlVersion ||
+          recorded.epoch !== snapshot.epoch ||
+          recorded.decisionAuthorityGeneration !== snapshot.decisionAuthorityGeneration
+        ) {
           return { state: current.state, terminalOutcome: 'INCOMPLETE' as const, reasons: ['Pending approval changed owner state or authority counters'] };
         }
         return {
@@ -85,9 +93,12 @@ export function createVerifyNode(ports: UC03GraphPorts, config?: UC03GraphConfig
         };
       }
       if (recorded.outcome === 'rejected') {
-        if (computeCanonicalSha256(recorded.state) !== computeCanonicalSha256(verifiedState) ||
-            recorded.controlVersion !== snapshot.controlVersion + 1 || recorded.epoch !== snapshot.epoch ||
-            recorded.decisionAuthorityGeneration !== snapshot.decisionAuthorityGeneration) {
+        if (
+          computeCanonicalSha256(recorded.state) !== computeCanonicalSha256(verifiedState) ||
+          recorded.controlVersion !== snapshot.controlVersion + 1 ||
+          recorded.epoch !== snapshot.epoch ||
+          recorded.decisionAuthorityGeneration !== snapshot.decisionAuthorityGeneration
+        ) {
           return { state: current.state, terminalOutcome: 'INCOMPLETE' as const, reasons: ['Rejected approval did not preserve task state and establish one owner hold'] };
         }
         return {
@@ -99,18 +110,21 @@ export function createVerifyNode(ports: UC03GraphPorts, config?: UC03GraphConfig
           reasons: ['Fresh post-patch verification approval was rejected and the owner placed the task on hold'],
         };
       }
-      if (recorded.outcome !== 'approved' || recorded.decisionId !== prepared.request.decisionId ||
-          recorded.controlVersion !== snapshot.controlVersion + 1 || recorded.epoch !== snapshot.epoch ||
-          recorded.decisionAuthorityGeneration !== snapshot.decisionAuthorityGeneration ||
-          !approvedRebindMatches(verifiedState, recorded.state, prepared.request.decisionId)) {
+      if (
+        recorded.outcome !== 'approved' ||
+        recorded.decisionId !== prepared.request.decisionId ||
+        recorded.controlVersion !== snapshot.controlVersion + 1 ||
+        recorded.epoch !== snapshot.epoch ||
+        recorded.decisionAuthorityGeneration !== snapshot.decisionAuthorityGeneration ||
+        !approvedRebindMatches(verifiedState, recorded.state, prepared.request.decisionId)
+      ) {
         return { state: current.state, terminalOutcome: 'INCOMPLETE' as const, reasons: ['Owner verification approval result did not perform the exact one-field authority rebind'] };
       }
       verifiedState = recorded.state;
     }
 
     const d1 = verifiedState.plan?.decisionRef;
-    if (!d1 || verifiedState.activeDecisionId !== d1 ||
-        !await currentPlanApprovalIsCurrent(task, verifiedState, owner, d1)) {
+    if (!d1 || verifiedState.activeDecisionId !== d1 || !(await currentPlanApprovalIsCurrent(task, verifiedState, owner, d1))) {
       return { state: verifiedState, terminalOutcome: 'INCOMPLETE' as const, reasons: ['Current verification approval is not issuer-approved at the active owner generation'] };
     }
     const diffInfo = await ports.repositoryPort.inspectDiff(task.initialRevisionDigest);
@@ -122,8 +136,13 @@ export function createVerifyNode(ports: UC03GraphPorts, config?: UC03GraphConfig
       runId: verifiedState.runId,
       repoDigest: verifiedState.repositoryRevisionDigest,
       diffDigest: diffInfo.diffDigest,
-      admissionContextForCheck: async (request) => {
-        if (!await currentPlanApprovalIsCurrent(task, request.currentState, owner, d1)) return undefined;
+      // A repair round settles its patch from a plan whose decision ref is already the round-one
+      // `dec-verify-` ref, and repeats the same checks on a new revision; its already-settled ids
+      // cannot be claimed again. The token is bounded to 16 hex so `att-claim-<prefix>-<checkId>`
+      // stays inside the 128-char durable storage id: 64 hex left too little for a long check id.
+      ...(ancestry.originalDecisionId.startsWith('dec-verify-') ? { actionIdPrefix: `action-verify-${verifiedState.repositoryRevisionDigest.slice('sha256:'.length, 'sha256:'.length + 16)}` } : {}),
+      admissionContextForCheck: async request => {
+        if (!(await currentPlanApprovalIsCurrent(task, request.currentState, owner, d1))) return undefined;
         return trusted.admissionContextForCheck?.(request);
       },
       executionGuard: guard,
@@ -137,14 +156,19 @@ export function createVerifyNode(ports: UC03GraphPorts, config?: UC03GraphConfig
       stateVersion: postChecks.state.stateVersion + 1,
       node: passing ? 'Review' : 'Repair',
       changedPaths: [...new Set([...postChecks.state.changedPaths, ...diffInfo.changedFiles])],
-      evidenceRefs: [...new Set([...postChecks.state.evidenceRefs, ...results.flatMap((result) => [result.evidenceId, result.actionId, ...result.diagnosticRefs])])],
+      evidenceRefs: [...new Set([...postChecks.state.evidenceRefs, ...results.flatMap(result => [result.evidenceId, result.actionId, ...result.diagnosticRefs])])],
       nextAction: passing ? 'request-review' : 'repair-failing-checks',
     };
     const persisted = await transitionState(ports.statePort, next, postChecks.state.stateVersion);
     const milestones = addMilestone(
-      state.milestones ?? [], persisted.taskId, persisted.runId, 'Verify', 'verification_completed',
-      passing ? 'All verification checks passed' : 'Required verification did not pass', passing ? 'success' : 'failure',
-      results.map((result) => result.evidenceId),
+      state.milestones ?? [],
+      persisted.taskId,
+      persisted.runId,
+      'Verify',
+      'verification_completed',
+      passing ? 'All verification checks passed' : 'Required verification did not pass',
+      passing ? 'success' : 'failure',
+      results.map(result => result.evidenceId),
     );
     return {
       state: persisted,
@@ -152,7 +176,7 @@ export function createVerifyNode(ports: UC03GraphPorts, config?: UC03GraphConfig
       patchAdmission: ancestry.admission,
       patchReceipt: ancestry.receipt,
       verificationResults: results,
-      ...(passing ? {} : { failureEvidence: results.filter((result) => result.outcome !== 'pass') }),
+      ...(passing ? {} : { failureEvidence: results.filter(result => result.outcome !== 'pass') }),
       milestones,
     };
   };

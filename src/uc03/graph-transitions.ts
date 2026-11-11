@@ -16,9 +16,13 @@ function samePersistedState(left: TaskState, right: TaskState, allowAccountingCh
   }
 }
 
+/** Structural so `StatePort` and `StatePortV02` both satisfy it; the route needs nothing more. */
+export type StateReloadPort = Pick<StatePort, 'loadTask'>;
+export type StateTransitionPort = Pick<StatePort, 'loadTask' | 'transition'>;
+
 export async function reloadAuthoritativeState(
   expected: TaskState,
-  statePort: StatePort,
+  statePort: StateReloadPort,
   options: { readonly allowAccountingChange?: boolean | undefined } = {},
 ): Promise<{ readonly ok: true; readonly state: TaskState } | { readonly ok: false; readonly reason: string }> {
   let current: TaskState | null;
@@ -33,10 +37,7 @@ export async function reloadAuthoritativeState(
   return { ok: true, state: current };
 }
 
-export async function loadCurrentOwnerState(
-  task: BugTask,
-  statePort: StatePort,
-): Promise<{ readonly ok: true; readonly state: TaskState } | { readonly ok: false; readonly reason: string }> {
+export async function loadCurrentOwnerState(task: BugTask, statePort: StateReloadPort): Promise<{ readonly ok: true; readonly state: TaskState } | { readonly ok: false; readonly reason: string }> {
   let current: TaskState | null;
   try {
     current = await statePort.loadTask(task.taskId);
@@ -49,7 +50,7 @@ export async function loadCurrentOwnerState(
   return { ok: true, state: current };
 }
 
-export async function transitionState(port: StatePort, next: TaskState, previousVersion: number): Promise<TaskState> {
+export async function transitionState(port: StateTransitionPort, next: TaskState, previousVersion: number): Promise<TaskState> {
   if (next.stateVersion !== previousVersion + 1) throw new Error('State transition version does not follow the expected owner version');
   const returned = await port.transition(next, previousVersion);
   const reloaded = await reloadAuthoritativeState(returned, port);
@@ -60,4 +61,3 @@ export async function transitionState(port: StatePort, next: TaskState, previous
   }
   return persisted;
 }
-

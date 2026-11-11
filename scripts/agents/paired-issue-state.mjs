@@ -1,28 +1,42 @@
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { atomicWrite, readJson } from './agent-store.mjs';
 import { command, json, sides } from './paired-issue-api.mjs';
 import { featureBranch } from './pr-conventions.mjs';
+import { ACTIVE_POLICY_ID, createPolicyState, parseHistoricalBindings, resolvePolicy, selectLatest } from '../ci/required-checks.mjs';
 
-const requiredChecks = [
-  'contributor-checks (ubuntu-latest)',
-  'contributor-checks (windows-latest)',
-  'runtime-checks (ubuntu-latest)',
-  'runtime-checks (windows-latest)',
-];
+const activePolicy = createPolicyState(ACTIVE_POLICY_ID).policy;
 
 export function parsePullUrl(url, repositoryName) {
   let parsed;
-  try { parsed = new URL(url); }
-  catch { throw new Error('Provide the public resolving PR URL for the configured origin repository.'); }
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error('Provide the public resolving PR URL for the configured origin repository.');
+  }
   const match = parsed.pathname.match(/^\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/pull\/([1-9]\d*)\/?$/i);
   const number = Number(match?.[2]);
-  if (parsed.protocol !== 'https:' || parsed.hostname !== 'github.com' || parsed.username || parsed.password || parsed.port || parsed.search || parsed.hash || !match || !Number.isSafeInteger(number) || match[1].toLowerCase() !== repositoryName.toLowerCase()) {
+  if (
+    parsed.protocol !== 'https:' ||
+    parsed.hostname !== 'github.com' ||
+    parsed.username ||
+    parsed.password ||
+    parsed.port ||
+    parsed.search ||
+    parsed.hash ||
+    !match ||
+    !Number.isSafeInteger(number) ||
+    match[1].toLowerCase() !== repositoryName.toLowerCase()
+  ) {
     throw new Error('The public resolving PR URL must match the configured origin repository.');
   }
   return { number, url: `https://github.com/${repositoryName}/pull/${number}` };
 }
 
-export function validHash(value) { return typeof value === 'string' && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(value); }
+export function validHash(value) {
+  return typeof value === 'string' && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(value);
+}
 
 export function validPrUrl(value, repositoryName, number) {
   return typeof value === 'string' && value.toLowerCase() === `https://github.com/${repositoryName}/pull/${number}`.toLowerCase();
@@ -41,12 +55,18 @@ export function readPr(call, repo, repositoryName, number, side, branch, expecte
 }
 
 export function readSubmissionPr(call, repo, target, branch) {
-  const listed = json(call, ['pr', 'list', '--repo', target.repository, '--head', branch, '--state', 'all', '--limit', '1000', '--json', 'number,url,baseRefName,headRefName,state'], repo, 'submission PR list');
+  const listed = json(
+    call,
+    ['pr', 'list', '--repo', target.repository, '--head', branch, '--state', 'all', '--limit', '1000', '--json', 'number,url,baseRefName,headRefName,state'],
+    repo,
+    'submission PR list',
+  );
   if (!Array.isArray(listed)) throw new Error('GitHub returned an invalid submission PR list.');
   if (listed.length > 1) throw new Error('Multiple submission PRs use this feature branch; inspect before completing issues.');
   if (!listed.length) return null;
   const item = listed[0];
-  if (!Number.isSafeInteger(item?.number) || item.number < 1 || item.headRefName !== branch || item.baseRefName !== target.base) throw new Error('The submission PR does not use the public feature branch and configured base (historical main requires its original configuration).');
+  if (!Number.isSafeInteger(item?.number) || item.number < 1 || item.headRefName !== branch || item.baseRefName !== target.base)
+    throw new Error('The submission PR does not use the public feature branch and configured base (historical main requires its original configuration).');
   return readPr(call, repo, target.repository, item.number, 'submission', branch, target.base);
 }
 
@@ -55,15 +75,31 @@ export function prIdentity(pr, repositoryName) {
 }
 
 export function completionMarker(publicRepository, key) {
-  const digest = createHash('sha256').update(publicRepository.toLowerCase() + '\0' + key).digest('hex');
+  const digest = createHash('sha256')
+    .update(publicRepository.toLowerCase() + '\0' + key)
+    .digest('hex');
   return `<!-- paired-issue-completion:sha256:${digest} -->`;
 }
 
 export function validateCompletionRecord(record, expected) {
-  if (!record || typeof record !== 'object' || Array.isArray(record) || record.schemaVersion !== 1 || record.key !== expected.key || record.issueMarker !== expected.issueMarker || record.completionMarker !== expected.completionMarker) throw new Error('Paired issue completion record has a mismatched stable-key identity.');
-  if (JSON.stringify(record.targets) !== JSON.stringify(expected.targets) || JSON.stringify(record.issues) !== JSON.stringify(expected.issues) || JSON.stringify(record.resolvingPr) !== JSON.stringify(expected.resolvingPr)) throw new Error('Paired issue targets, issue identities, or resolving PR changed; inspect the retained completion record.');
-  if (!record.progress || sides.some((side) => !record.progress[side] || typeof record.progress[side] !== 'object')) throw new Error('Paired issue completion record has invalid per-side progress.');
-  const effectsStarted = record.applyStarted === true || sides.some((side) => ['commentIntent', 'commented', 'closeIntent', 'closed'].some((field) => record.progress[side][field] === true));
+  if (
+    !record ||
+    typeof record !== 'object' ||
+    Array.isArray(record) ||
+    record.schemaVersion !== 1 ||
+    record.key !== expected.key ||
+    record.issueMarker !== expected.issueMarker ||
+    record.completionMarker !== expected.completionMarker
+  )
+    throw new Error('Paired issue completion record has a mismatched stable-key identity.');
+  if (
+    JSON.stringify(record.targets) !== JSON.stringify(expected.targets) ||
+    JSON.stringify(record.issues) !== JSON.stringify(expected.issues) ||
+    JSON.stringify(record.resolvingPr) !== JSON.stringify(expected.resolvingPr)
+  )
+    throw new Error('Paired issue targets, issue identities, or resolving PR changed; inspect the retained completion record.');
+  if (!record.progress || sides.some(side => !record.progress[side] || typeof record.progress[side] !== 'object')) throw new Error('Paired issue completion record has invalid per-side progress.');
+  const effectsStarted = record.applyStarted === true || sides.some(side => ['commentIntent', 'commented', 'closeIntent', 'closed'].some(field => record.progress[side][field] === true));
   if (record.evidenceSha256 !== expected.evidenceSha256 && effectsStarted) throw new Error('Completion evidence changed after apply intent or an audit effect began.');
   if (record.evidenceSha256 !== expected.evidenceSha256) delete record.verified;
   record.evidenceSha256 = expected.evidenceSha256;
@@ -89,27 +125,33 @@ export function readCheckRuns(call, repo, repositoryName, head) {
   const endpoint = `repos/${repositoryName}/commits/${head}/check-runs?per_page=100`;
   const output = command(call, ['api', '--paginate', '--slurp', '--method', 'GET', endpoint], repo, 60_000);
   let responses;
-  try { responses = JSON.parse(output); }
-  catch { throw new Error('GitHub returned invalid check-run JSON.'); }
-  if (!Array.isArray(responses) || !responses.length || responses.some((page) => !page || typeof page !== 'object' || !Array.isArray(page.check_runs))) throw new Error('Could not confirm complete public check-run pagination.');
-  return responses.flatMap((page) => page.check_runs);
+  try {
+    responses = JSON.parse(output);
+  } catch {
+    throw new Error('GitHub returned invalid check-run JSON.');
+  }
+  if (!Array.isArray(responses) || !responses.length || responses.some(page => !page || typeof page !== 'object' || !Array.isArray(page.check_runs)))
+    throw new Error('Could not confirm complete public check-run pagination.');
+  return responses.flatMap(page => page.check_runs);
 }
 
-export function assessChecks(call, repo, repositoryName, head) {
-  const checks = readCheckRuns(call, repo, repositoryName, head);
-  const latest = requiredChecks.map((name) => checks
-    .filter((check) => check?.name === name && check.head_sha?.toLowerCase() === head.toLowerCase() && check.app?.slug === 'github-actions')
-    .sort((left, right) => Number(right.id) - Number(left.id))[0]);
-  const signatures = latest.map((check) => check ? {
-    name: check.name,
-    head: check.head_sha,
-    status: check.status,
-    conclusion: check.conclusion,
-    app: check.app.slug,
-  } : null);
-  if (latest.some((check) => !check || !Number.isSafeInteger(check.id) || check.id < 1)) return { status: 'WAITING_CI', checks: signatures };
-  if (latest.some((check) => check.status === 'completed' && check.conclusion !== 'success')) return { status: 'BLOCKED', checks: signatures, reason: 'A required exact-head GitHub Actions check failed.' };
-  if (latest.some((check) => check.status !== 'completed' || check.conclusion !== 'success')) return { status: 'WAITING_CI', checks: signatures };
+export function assessChecks(call, repo, repositoryName, head, policy = activePolicy) {
+  const latest = selectLatest({ policy, head, checks: readCheckRuns(call, repo, repositoryName, head) });
+  const signatures = latest.map(({ check }) =>
+    check
+      ? {
+          name: check.name,
+          head: check.head_sha,
+          status: check.status,
+          conclusion: check.conclusion,
+          app: check.app.slug,
+        }
+      : null,
+  );
+  if (latest.some(({ check }) => !check || !Number.isSafeInteger(check.id) || check.id < 1)) return { status: 'WAITING_CI', checks: signatures };
+  if (latest.some(({ check }) => check.status === 'completed' && check.conclusion !== 'success'))
+    return { status: 'BLOCKED', checks: signatures, reason: 'A required exact-head GitHub Actions check failed.' };
+  if (latest.some(({ check }) => check.status !== 'completed' || check.conclusion !== 'success')) return { status: 'WAITING_CI', checks: signatures };
   return { status: 'READY', checks: signatures };
 }
 
@@ -120,9 +162,41 @@ export function readCommitTree(call, repo, repositoryName, head) {
 }
 
 export function mergedSnapshot(call, repo, targets, publicPr, submissionPr) {
-  const checks = assessChecks(call, repo, targets.primary.repository, publicPr.headRefOid);
+  const repositoryName = targets.primary.repository;
+  const bindings = parseHistoricalBindings(readFileSync(resolve(repo.root, 'config/legacy-ci-heads.json'), 'utf8'));
+  const state = createPolicyState(ACTIVE_POLICY_ID, bindings);
+  const publicTree = readCommitTree(call, repo, repositoryName, publicPr.headRefOid);
+  let policy = state.policy;
+  if (bindings.some(entry => entry.number === publicPr.number && entry.head.toLowerCase() === publicPr.headRefOid.toLowerCase())) {
+    const observed = json(call, ['api', `repos/${repositoryName}/pulls/${publicPr.number}`], repo, 'public PR binding identity');
+    if (
+      publicPr.state !== 'MERGED' ||
+      observed.number !== publicPr.number ||
+      !validPrUrl(observed.html_url, repositoryName, publicPr.number) ||
+      observed.state !== 'closed' ||
+      observed.merged_at !== publicPr.mergedAt ||
+      !observed.merged_at ||
+      observed.base?.ref !== publicPr.baseRefName ||
+      observed.head?.ref !== publicPr.headRefName ||
+      observed.head?.sha?.toLowerCase() !== publicPr.headRefOid.toLowerCase() ||
+      observed.base?.repo?.full_name?.toLowerCase() !== repositoryName.toLowerCase() ||
+      observed.head?.repo?.full_name?.toLowerCase() !== repositoryName.toLowerCase()
+    ) {
+      throw new Error('The public PR binding identity changed or is not merged.');
+    }
+    const identity = { repositoryId: observed.base.repo.id, headRepositoryId: observed.head.repo.id, number: observed.number, head: observed.head.sha, tree: publicTree, state: 'MERGED' };
+    const binding = bindings.find(
+      entry =>
+        entry.repositoryId === identity.repositoryId &&
+        entry.headRepositoryId === identity.headRepositoryId &&
+        entry.number === identity.number &&
+        entry.head.toLowerCase() === identity.head.toLowerCase() &&
+        entry.tree.toLowerCase() === identity.tree,
+    );
+    policy = resolvePolicy(state, { policyId: binding?.policy ?? ACTIVE_POLICY_ID, pr: identity }).policy;
+  }
+  const checks = assessChecks(call, repo, repositoryName, publicPr.headRefOid, policy);
   if (checks.status !== 'READY') return { ...checks };
-  const publicTree = readCommitTree(call, repo, targets.primary.repository, publicPr.headRefOid);
   const submissionTree = readCommitTree(call, repo, targets.submission.repository, submissionPr.headRefOid);
   if (publicTree !== submissionTree) return { status: 'BLOCKED', reason: 'The public and submission PR heads have different Git trees.' };
   return {

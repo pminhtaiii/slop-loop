@@ -24,9 +24,7 @@ import { currentPlanApprovalIsCurrent } from './post-patch-verification-authorit
 
 type TrustedCompletion = NonNullable<NonNullable<StateTransitionOptions['trusted']>['completion']>;
 
-export type CompletionInputResult =
-  | { readonly ok: true; readonly input: CompletionPredicateInput }
-  | { readonly ok: false; readonly reasons: readonly string[] };
+export type CompletionInputResult = { readonly ok: true; readonly input: CompletionPredicateInput } | { readonly ok: false; readonly reasons: readonly string[] };
 
 export async function loadCompletionPredicateInput(args: {
   readonly task: BugTask;
@@ -42,10 +40,7 @@ export async function loadCompletionPredicateInput(args: {
   readonly trustedExpectedContext: TrustedHostExpectedContext | undefined;
   readonly trustedCompletion: TrustedCompletion | undefined;
 }): Promise<CompletionInputResult> {
-  const {
-    task, state, baseline, verificationResults, reviewResult, diffInfo,
-    reviewRequest, patchAdmission, patchReceipt, hostAuthority, trustedExpectedContext, trustedCompletion,
-  } = args;
+  const { task, state, baseline, verificationResults, reviewResult, diffInfo, reviewRequest, patchAdmission, patchReceipt, hostAuthority, trustedExpectedContext, trustedCompletion } = args;
   if (!baseline || !verificationResults?.length || !reviewResult || !trustedCompletion || !patchAdmission || !patchReceipt) {
     return { ok: false, reasons: ['Independent baseline, verification, patch settlement, review, and completion authority are required'] };
   }
@@ -62,26 +57,36 @@ export async function loadCompletionPredicateInput(args: {
   const owner = trustedExpectedContext.statePort;
   const ancestry = owner ? await loadVerifiedPatchAncestry(task, state, owner) : undefined;
   const currentDecisionId = plan?.decisionRef;
-  const patchAncestry = admissionValidation.ok &&
-    (admissionValidation.value.runnableNode === 'Patch' || admissionValidation.value.runnableNode === 'Repair');
-  if (!admissionValidation.ok || !receiptValidation.ok || !plan || !plan.decisionRef ||
-      (state.activeDecisionId !== undefined && state.activeDecisionId !== plan.decisionRef) ||
-      !owner || !ancestry || !currentDecisionId ||
-      computeCanonicalSha256(patchAdmission) !== computeCanonicalSha256(ancestry.admission) ||
-      computeCanonicalSha256(patchReceipt) !== computeCanonicalSha256(ancestry.receipt) ||
-      !await currentPlanApprovalIsCurrent(task, state, owner, currentDecisionId) ||
-      admissionValidation.value.planApplicability !== 'approved-plan' ||
-      admissionValidation.value.action.kind !== 'apply_patch' ||
-      admissionValidation.value.taskId !== state.taskId || admissionValidation.value.runId !== state.runId ||
-      admissionValidation.value.workspaceId !== state.workspaceId || admissionValidation.value.repositoryId !== state.repositoryId ||
-      !patchAncestry || admissionValidation.value.planDecisionRef !== ancestry.originalDecisionId ||
-      baseline.repositorySnapshotDigest !== task.initialRevisionDigest || baseline.evidenceId !== plan.baselineRef ||
-      (admissionValidation.value.runnableNode === 'Patch' && admissionValidation.value.canonicalRevision !== baseline.repositorySnapshotDigest) ||
-      admissionValidation.value.expectedTaskStateVersion + 2 > state.stateVersion ||
-      admissionValidation.value.planBindingDigest !== currentPlanBindingDigest(task, ancestry.originalTaskState) ||
-      !samePaths(admissionValidation.value.action.targetPaths, diffInfo.changedFiles) ||
-      receiptValidation.value.outcome.repositoryOperation !== 'apply-patch' ||
-      receiptValidation.value.outcome.observedResultRevisionDigest !== state.repositoryRevisionDigest) {
+  const patchAncestry = admissionValidation.ok && (admissionValidation.value.runnableNode === 'Patch' || admissionValidation.value.runnableNode === 'Repair');
+  if (
+    !admissionValidation.ok ||
+    !receiptValidation.ok ||
+    !plan ||
+    !plan.decisionRef ||
+    (state.activeDecisionId !== undefined && state.activeDecisionId !== plan.decisionRef) ||
+    !owner ||
+    !ancestry ||
+    !currentDecisionId ||
+    computeCanonicalSha256(patchAdmission) !== computeCanonicalSha256(ancestry.admission) ||
+    computeCanonicalSha256(patchReceipt) !== computeCanonicalSha256(ancestry.receipt) ||
+    !(await currentPlanApprovalIsCurrent(task, state, owner, currentDecisionId)) ||
+    admissionValidation.value.planApplicability !== 'approved-plan' ||
+    admissionValidation.value.action.kind !== 'apply_patch' ||
+    admissionValidation.value.taskId !== state.taskId ||
+    admissionValidation.value.runId !== state.runId ||
+    admissionValidation.value.workspaceId !== state.workspaceId ||
+    admissionValidation.value.repositoryId !== state.repositoryId ||
+    !patchAncestry ||
+    admissionValidation.value.planDecisionRef !== ancestry.originalDecisionId ||
+    baseline.repositorySnapshotDigest !== task.initialRevisionDigest ||
+    baseline.evidenceId !== plan.baselineRef ||
+    (admissionValidation.value.runnableNode === 'Patch' && admissionValidation.value.canonicalRevision !== baseline.repositorySnapshotDigest) ||
+    admissionValidation.value.expectedTaskStateVersion + 2 > state.stateVersion ||
+    admissionValidation.value.planBindingDigest !== currentPlanBindingDigest(task, ancestry.originalTaskState) ||
+    !samePaths(admissionValidation.value.action.targetPaths, diffInfo.changedFiles) ||
+    receiptValidation.value.outcome.repositoryOperation !== 'apply-patch' ||
+    receiptValidation.value.outcome.observedResultRevisionDigest !== state.repositoryRevisionDigest
+  ) {
     return { ok: false, reasons: ['Owner-settled patch receipt does not bind the approved plan and current repository diff'] };
   }
 
@@ -120,10 +125,16 @@ export async function loadCompletionPredicateInput(args: {
   }
 
   const review = trustedCompletion.review;
-  if (!review || !('reviewerRoleConfigId' in review) || !('iterationReservationRef' in review) ||
-      typeof review.reviewerRoleConfigId !== 'string' || !review.reviewerRoleConfigId.trim() ||
-      typeof review.iterationReservationRef !== 'string' || !review.iterationReservationRef.trim() ||
-      (review.status !== 'accepted' && review.status !== 'findings')) {
+  if (
+    !review ||
+    !('reviewerRoleConfigId' in review) ||
+    !('iterationReservationRef' in review) ||
+    typeof review.reviewerRoleConfigId !== 'string' ||
+    !review.reviewerRoleConfigId.trim() ||
+    typeof review.iterationReservationRef !== 'string' ||
+    !review.iterationReservationRef.trim() ||
+    (review.status !== 'accepted' && review.status !== 'findings')
+  ) {
     return { ok: false, reasons: ['An owner-provided review receipt bound to its persisted reservation is required'] };
   }
   const trustedReviewRecord: TrustedReviewRecord = {
@@ -150,7 +161,8 @@ export async function loadCompletionPredicateInput(args: {
     trustedCompletion.protectedTestsDigest !== currentProtectedTestsDigest ||
     trustedCompletion.reviewerRoleConfigId !== reviewResult.reviewerRoleConfigId ||
     trustedCompletion.reviewIterationReservationRef !== reviewRequest.reservationRef ||
-    !plan.baselineRef || !plan.evidenceRefs.includes(plan.baselineRef) ||
+    !plan.baselineRef ||
+    !plan.evidenceRefs.includes(plan.baselineRef) ||
     plan.checkSetDigest !== checkSetDigest ||
     review.reviewId !== reviewResult.reviewId ||
     review.status !== 'accepted' ||
@@ -163,9 +175,9 @@ export async function loadCompletionPredicateInput(args: {
     reviewResult.status !== 'accepted' ||
     reviewResult.repoDigest !== state.repositoryRevisionDigest ||
     reviewResult.diffDigest !== diffInfo.diffDigest ||
-    reviewResult.checkSetDigest !== checkSetDigest
-    || state.latestReviewRef !== reviewResult.reviewId
-    || !state.reviewRefs?.includes(reviewResult.reviewId)
+    reviewResult.checkSetDigest !== checkSetDigest ||
+    state.latestReviewRef !== reviewResult.reviewId ||
+    !state.reviewRefs?.includes(reviewResult.reviewId)
   ) {
     return { ok: false, reasons: ['Owner-provided completion evidence is stale or does not match the current route'] };
   }
@@ -195,17 +207,18 @@ export async function loadCompletionPredicateInput(args: {
   };
 }
 
-function hostContextMatchesTask(
-  trusted: TrustedHostExpectedContext,
-  task: BugTask,
-  state: TaskState,
-): boolean {
+function hostContextMatchesTask(trusted: TrustedHostExpectedContext, task: BugTask, state: TaskState): boolean {
   const expectedTestFiles = resolveExpectedTestFiles(task);
-  return trusted.taskId === task.taskId && trusted.workspaceId === state.workspaceId &&
-    trusted.repositoryId === task.repositoryId && trusted.revisionDigest === task.initialRevisionDigest &&
+  return (
+    trusted.taskId === task.taskId &&
+    trusted.workspaceId === state.workspaceId &&
+    trusted.repositoryId === task.repositoryId &&
+    trusted.revisionDigest === task.initialRevisionDigest &&
     trusted.criteriaDigest === computeCanonicalSha256(task.acceptanceCriteria) &&
-    trusted.checkSetDigest === computeCheckSetDigest(task.requiredChecks) && expectedTestFiles.length > 0 &&
-    samePaths(trusted.expectedTestFiles, expectedTestFiles);
+    trusted.checkSetDigest === computeCheckSetDigest(task.requiredChecks) &&
+    expectedTestFiles.length > 0 &&
+    samePaths(trusted.expectedTestFiles, expectedTestFiles)
+  );
 }
 
 function currentPlanBindingDigest(task: BugTask, state: TaskState): string {
@@ -233,31 +246,34 @@ function resolveExpectedTestFiles(task: BugTask): readonly string[] {
   return [...files].sort();
 }
 
-function trustedChecksMatch(
-  task: BugTask,
-  state: TaskState,
-  diffDigest: string,
-  results: readonly VerificationResult[],
-  trusted: TrustedCompletion['checks'],
-): boolean {
-  return task.requiredChecks.every((check) => {
-    const matches = results.filter((result) => result.testedIds.includes(check.checkId));
-    const trustedMatches = trusted.filter((record) => 'checkId' in record
-      ? record.checkId === check.checkId
-      : record.testedIds.includes(check.checkId));
+function trustedChecksMatch(task: BugTask, state: TaskState, diffDigest: string, results: readonly VerificationResult[], trusted: TrustedCompletion['checks']): boolean {
+  return task.requiredChecks.every(check => {
+    const matches = results.filter(result => result.testedIds.includes(check.checkId));
+    const trustedMatches = trusted.filter(record => ('checkId' in record ? record.checkId === check.checkId : record.testedIds.includes(check.checkId)));
     if (matches.length !== 1 || trustedMatches.length !== 1) return false;
     const result = matches[0];
     const record = trustedMatches[0];
     if (!result || !record) return false;
     const actualPhase = check.purpose === 'reproduction' ? 'focused' : check.purpose;
-    const recordMatches = 'checkId' in record
-      ? record.outcome === 'pass' && record.repositoryRevisionDigest === state.repositoryRevisionDigest && record.diffDigest === diffDigest
-      : record.outcome === 'pass' && record.phase === actualPhase && record.taskId === task.taskId &&
-        record.runId === state.runId && record.repoDigest === state.repositoryRevisionDigest && record.diffDigest === diffDigest &&
-        record.testedIds.includes(check.checkId);
-    return result.outcome === 'pass' && result.phase === actualPhase && result.taskId === task.taskId &&
-      result.runId === state.runId && result.repoDigest === state.repositoryRevisionDigest &&
-      result.diffDigest === diffDigest && recordMatches;
+    const recordMatches =
+      'checkId' in record
+        ? record.outcome === 'pass' && record.repositoryRevisionDigest === state.repositoryRevisionDigest && record.diffDigest === diffDigest
+        : record.outcome === 'pass' &&
+          record.phase === actualPhase &&
+          record.taskId === task.taskId &&
+          record.runId === state.runId &&
+          record.repoDigest === state.repositoryRevisionDigest &&
+          record.diffDigest === diffDigest &&
+          record.testedIds.includes(check.checkId);
+    return (
+      result.outcome === 'pass' &&
+      result.phase === actualPhase &&
+      result.taskId === task.taskId &&
+      result.runId === state.runId &&
+      result.repoDigest === state.repositoryRevisionDigest &&
+      result.diffDigest === diffDigest &&
+      recordMatches
+    );
   });
 }
 
@@ -318,4 +334,3 @@ export function incompleteDelivery(
     milestones: state.milestones,
   };
 }
-

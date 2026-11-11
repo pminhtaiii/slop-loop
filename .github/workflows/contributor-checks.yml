@@ -13,32 +13,173 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # Canonical candidate identity for every staged lane. H is the checked-out candidate, B is the
+  # event base and M is the generated merge SHA; they are recorded separately and never assumed equal.
+  HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+  BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+  MERGE_SHA: ${{ github.sha }}
+
 jobs:
-  contributor-checks:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+  # Canonical Ubuntu checks with stable OS-independent check names.
+  static-lint:
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ env.HEAD_SHA }}
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
       - name: Select pinned pnpm version
-        uses: pnpm/setup@c9883cc79df532ad1a7b81bf9ab944ceb090d65c # v2.0.0
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
-          install: false
-      - name: Install dependencies for test discovery
+          run_install: false
+      - name: Verify the checked-out head is the candidate
+        shell: bash
+        run: |
+          actual="$(git rev-parse HEAD)"
+          if [ "$actual" != "$HEAD_SHA" ]; then
+            echo "Checked out $actual but the candidate head is $HEAD_SHA" >&2
+            exit 1
+          fi
+          echo "head=$HEAD_SHA base=${BASE_SHA:-none} merge=${MERGE_SHA:-none} os=${{ runner.os }}" >> "$GITHUB_STEP_SUMMARY"
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Lint repository JavaScript and TypeScript
+        run: pnpm run lint
+      - name: Check formatting
+        run: pnpm run format:check
+
+  static-types:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.HEAD_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Select pinned pnpm version
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          run_install: false
+      - name: Verify the checked-out head is the candidate
+        shell: bash
+        run: |
+          actual="$(git rev-parse HEAD)"
+          if [ "$actual" != "$HEAD_SHA" ]; then
+            echo "Checked out $actual but the candidate head is $HEAD_SHA" >&2
+            exit 1
+          fi
+          echo "head=$HEAD_SHA base=${BASE_SHA:-none} merge=${MERGE_SHA:-none} os=${{ runner.os }}" >> "$GITHUB_STEP_SUMMARY"
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck repository JavaScript and TypeScript
+        run: pnpm run typecheck
+
+  repository-policy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.HEAD_SHA }}
+          persist-credentials: false
+          # The admitted base commit must exist locally for the range scan to be admissible; a shallow
+          # checkout would make every pull-request scan refuse rather than scan.
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Select pinned pnpm version
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          run_install: false
+      - name: Verify the checked-out head is the candidate
+        shell: bash
+        run: |
+          actual="$(git rev-parse HEAD)"
+          if [ "$actual" != "$HEAD_SHA" ]; then
+            echo "Checked out $actual but the candidate head is $HEAD_SHA" >&2
+            exit 1
+          fi
+          echo "head=$HEAD_SHA base=${BASE_SHA:-none} merge=${MERGE_SHA:-none} os=${{ runner.os }}" >> "$GITHUB_STEP_SUMMARY"
+      - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Check context consistency
         run: node scripts/ci/check-context.mjs
       - name: Check tracked files
         run: node scripts/ci/check-tracked-files.mjs
-      - name: Lint repository JavaScript and TypeScript
-        run: pnpm run lint
+      # A frozen install into a fresh metadata cache is the only gate that enforces the release-age
+      # policy; the warm-cache install in every other lane cannot observe it. Keeping it here means a
+      # push-only publication skips no coverage.
+      - name: Verify dependency install and lockfile policy
+        run: node scripts/ci/check-dependency-install.mjs
+      # Environment examples may document keys but may only hold approved placeholders. Diagnostics
+      # name the path, line and rule, never the observed value.
+      - name: Validate environment examples
+        run: node scripts/ci/check-env-examples.mjs
+      # Pinned Gitleaks release over the admitted Git range. Only rule id, path, line and commit may
+      # reach the summary; raw matches and scanner output never leave the adapter. The event name and
+      # head come from the run context, never from candidate-supplied input.
+      - name: Scan candidate content for secrets
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_SHA_INPUT: ${{ env.HEAD_SHA }}
+          BASE_SHA_INPUT: ${{ env.BASE_SHA }}
+        run: |
+          args=(--event "$EVENT_NAME" --head "$HEAD_SHA_INPUT")
+          # A pull-request scan needs the merge base; a push scan needs the pre-push revision, which is
+          # the only range that catches a secret added in one commit and deleted in the next.
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            if [ -n "$BASE_SHA_INPUT" ]; then args+=(--base "$BASE_SHA_INPUT"); fi
+          elif [ -n "$BASE_SHA_INPUT" ]; then
+            args+=(--before "$BASE_SHA_INPUT")
+          fi
+          # Reviewed exemptions are fingerprinted to exact synthetic findings and live in the PR diff,
+          # so a candidate cannot add a finding without also adding a visible, reviewable exemption.
+          node scripts/ci/scan-secrets.mjs "${args[@]}" --exemptions config/secret-scan-exemptions.json
+
+  contributor-tooling-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.HEAD_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Select pinned pnpm version
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          run_install: false
+      - name: Verify the checked-out head is the candidate
+        shell: bash
+        run: |
+          actual="$(git rev-parse HEAD)"
+          if [ "$actual" != "$HEAD_SHA" ]; then
+            echo "Checked out $actual but the candidate head is $HEAD_SHA" >&2
+            exit 1
+          fi
+          echo "head=$HEAD_SHA base=${BASE_SHA:-none} merge=${MERGE_SHA:-none} os=${{ runner.os }}" >> "$GITHUB_STEP_SUMMARY"
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      # The complete contributor selector runs here independently of the build lane.
       - name: Test contributor helpers
         run: pnpm run test:contributors
+      - name: Retain machine-readable results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: contributor-tooling-results-ubuntu-latest
+          path: contributor-test-results.xml
+          if-no-files-found: warn
+          retention-days: 7

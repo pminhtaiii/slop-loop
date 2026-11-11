@@ -13,26 +13,111 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # H is the checked-out candidate; B and M are recorded provenance and are never assumed equal to H.
+  HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+  BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+  MERGE_SHA: ${{ github.sha }}
+
 jobs:
-  runtime-checks:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
+  # Canonical Ubuntu build emits the artifact the runtime lane consumes.
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ env.HEAD_SHA }}
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
       - name: Select pinned pnpm version
-        uses: pnpm/setup@c9883cc79df532ad1a7b81bf9ab944ceb090d65c # v2.0.0
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
-          install: false
+          run_install: false
+      - name: Verify the checked-out head is the candidate
+        shell: bash
+        run: |
+          actual="$(git rev-parse HEAD)"
+          if [ "$actual" != "$HEAD_SHA" ]; then
+            echo "Checked out $actual but the candidate head is $HEAD_SHA" >&2
+            exit 1
+          fi
+          echo "head=$HEAD_SHA base=${BASE_SHA:-none} merge=${MERGE_SHA:-none} os=${{ runner.os }}" >> "$GITHUB_STEP_SUMMARY"
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-      - name: Validate runtime from a clean build
-        run: pnpm run validate:runtime
+      # Clean build only; emitted tests run in the dependent runtime lane.
+      - name: Build from source
+        run: node scripts/ci/check-runtime.mjs --clean-build-only
+      - name: Record artifact identity and manifest
+        shell: bash
+        env:
+          REPOSITORY_ID: ${{ github.repository_id }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUNNER_OS_LABEL: ubuntu-latest
+        run: node scripts/ci/artifact-identity.mjs write
+      - uses: actions/upload-artifact@v4
+        with:
+          name: runtime-build-ubuntu-latest
+          path: |
+            artifact-identity.json
+            tests/runtime
+            dist/tests/runtime
+            dist/src
+            dist/eval
+          if-no-files-found: error
+          retention-days: 7
+
+  # Canonical Ubuntu runtime lane refuses artifacts with a different run identity.
+  runtime-tests:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.HEAD_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Select pinned pnpm version
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          run_install: false
+      - name: Verify the checked-out head is the candidate
+        shell: bash
+        run: |
+          actual="$(git rev-parse HEAD)"
+          if [ "$actual" != "$HEAD_SHA" ]; then
+            echo "Checked out $actual but the candidate head is $HEAD_SHA" >&2
+            exit 1
+          fi
+          echo "head=$HEAD_SHA base=${BASE_SHA:-none} merge=${MERGE_SHA:-none} os=${{ runner.os }}" >> "$GITHUB_STEP_SUMMARY"
+      # A failed-jobs-only rerun without a current-attempt build fails closed here.
+      - uses: actions/download-artifact@v4
+        with:
+          name: runtime-build-ubuntu-latest
+          path: .
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Verify artifact identity and integrity
+        shell: bash
+        env:
+          REPOSITORY_ID: ${{ github.repository_id }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUNNER_OS_LABEL: ubuntu-latest
+        run: node scripts/ci/artifact-identity.mjs verify
+      - name: Run the complete emitted runtime inventory
+        run: pnpm run test:runtime
+      - name: Retain machine-readable results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-results-ubuntu-latest
+          path: runtime-test-results.xml
+          if-no-files-found: warn
+          retention-days: 7

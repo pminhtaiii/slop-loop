@@ -5,9 +5,9 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { runWorkflow, workflowSummary } from '../../scripts/agents/pr-workflow.mjs';
+import { assess, runWorkflow, workflowSummary } from '../../scripts/agents/pr-workflow.mjs';
 import { packageScriptCommand } from '../../scripts/agents/workflow-gate.mjs';
-import { checkout } from './support/pr-workflow-fixture.mjs';
+import { checkout, evidence } from './support/pr-workflow-fixture.mjs';
 
 const recordPath = root => join(root, '.agent-work/pr-workflow/010-tooling-example.json');
 const git = (root, ...args) => {
@@ -22,6 +22,30 @@ const gitAt = (cwd, ...args) => {
 };
 const gates = calls => calls.filter(call => call[0] === process.execPath || call[0] === packageScriptCommand('test:contributors').command);
 
+test('push-only readiness waits for exact-head regressions and exposes failures for repair', () => {
+  for (const name of ['build', 'contributor-tooling-tests', 'runtime-tests']) {
+    const e = evidence();
+    e.publicationMode = 'push-only';
+    e.checks = e.checks.filter(check => check.name !== name);
+    for (const regression of ['build', 'contributor-tooling-tests', 'runtime-tests'].filter(check => check !== name)) {
+      if (!e.checks.some(check => check.name === regression)) e.checks.push({ ...e.checks[0], id: e.checks.length + 10, name: regression });
+    }
+    assert.equal(assess(e).status, 'WAITING_CI', `missing ${name}`);
+    const check = { ...e.checks[0], id: 100, name, head_sha: 'b'.repeat(40) };
+    e.checks.push(check);
+    assert.equal(assess(e).status, 'WAITING_CI', `stale ${name}`);
+    check.head_sha = e.head;
+    check.status = 'in_progress';
+    assert.equal(assess(e).status, 'WAITING_CI', `pending ${name}`);
+    check.status = 'completed';
+    check.conclusion = 'failure';
+    assert.equal(assess(e).status, 'NEEDS_FIX', `failed ${name}`);
+    assert.ok(assess(e).failedChecks.some(failure => failure.name === name));
+    check.conclusion = 'success';
+    assert.equal(assess(e).status, 'READY_FOR_HUMAN');
+  }
+});
+
 test('push-only requires a non-empty reason before running commands', async t => {
   const f = await checkout(t);
   await assert.rejects(f.run('publish', '--body-file', f.body, '--mode', 'push-only'), /Push-only publication requires a non-empty --reason/);
@@ -32,9 +56,9 @@ test('push-only requires a non-empty reason before running commands', async t =>
   assert.deepEqual(f.calls, []);
 });
 
-test('default full publication runs local gates and records its verified head', async t => {
+test('explicit full publication runs local gates and records its verified head', async t => {
   const f = await checkout(t);
-  const published = await f.run('publish', '--body-file', f.body, '--skip-review-request');
+  const published = await f.run('publish', '--body-file', f.body, '--mode', 'full', '--skip-review-request');
   const contributorTests = packageScriptCommand('test:contributors');
 
   assert.equal(published.publicationMode, 'full');
@@ -47,7 +71,7 @@ test('default full publication runs local gates and records its verified head', 
 
 test('push-only skips local gates, retains prior verification, repair history, and its reason', async t => {
   const f = await checkout(t);
-  const full = await f.run('publish', '--body-file', f.body, '--skip-review-request');
+  const full = await f.run('publish', '--body-file', f.body, '--mode', 'full', '--skip-review-request');
   const reason = 'Explicit user request to publish this repair without rerunning local gates.';
   const path = recordPath(f.root);
   const prior = JSON.parse(await readFile(path, 'utf8'));
@@ -69,13 +93,16 @@ test('push-only skips local gates, retains prior verification, repair history, a
   assert.equal(workflowSummary(published).localGateStatus, 'skipped');
   const push = currentCalls.find(call => call[0] === 'git' && call[1] === 'push');
   assert.ok(push.includes('HEAD:refs/heads/feat/010-tooling-example'));
-  assert.equal(push.some(arg => ['main', 'development'].includes(arg)), false);
+  assert.equal(
+    push.some(arg => ['main', 'development'].includes(arg)),
+    false,
+  );
 });
 
 for (const priorVerification of [false, true]) {
   test(`full publication checks dependencies after push-only with prior verification ${priorVerification}`, async t => {
     const f = await checkout(t);
-    if (priorVerification) await f.run('publish', '--body-file', f.body, '--skip-review-request');
+    if (priorVerification) await f.run('publish', '--body-file', f.body, '--mode', 'full', '--skip-review-request');
     await writeFile(join(f.root, 'package.json'), '{"private":true}\n');
     git(f.root, 'add', 'package.json');
     git(f.root, 'commit', '--quiet', '-m', 'change dependency inputs');
@@ -84,12 +111,15 @@ for (const priorVerification of [false, true]) {
     const pushes = () => f.calls.filter(call => call[0] === 'git' && call[1] === 'push').length;
     const before = pushes();
 
-    await assert.rejects(runWorkflow(['publish', '--body-file', f.body, '--summary', 'gate unverified dependencies', '--root', f.root], {
-      execute(binary, args, cwd, timeout) {
-        if (binary === process.execPath && args[0].endsWith('check-dependency-install.mjs')) throw new Error('Release age rejected');
-        return f.execute(binary, args, cwd, timeout);
-      },
-    }), /Release age rejected/);
+    await assert.rejects(
+      runWorkflow(['publish', '--body-file', f.body, '--summary', 'gate unverified dependencies', '--mode', 'full', '--root', f.root], {
+        execute(binary, args, cwd, timeout) {
+          if (binary === process.execPath && args[0].endsWith('check-dependency-install.mjs')) throw new Error('Release age rejected');
+          return f.execute(binary, args, cwd, timeout);
+        },
+      }),
+      /Release age rejected/,
+    );
     assert.equal(pushes(), before);
   });
 }
@@ -98,7 +128,10 @@ test('push-only keeps body and clean-checkout guards before writes', async t => 
   const f = await checkout(t);
   await writeFile(join(f.root, 'uncommitted.md'), 'dirty\n');
   await assert.rejects(f.run('publish', '--body-file', f.body, '--mode', 'push-only', '--reason', 'User requested publication.'), /checkout must be clean/);
-  assert.equal(f.calls.some(call => call[0] === 'git' && call[1] === 'push' || call[0] === 'gh' && call[1] === 'pr' && ['create', 'edit'].includes(call[2])), false);
+  assert.equal(
+    f.calls.some(call => (call[0] === 'git' && call[1] === 'push') || (call[0] === 'gh' && call[1] === 'pr' && ['create', 'edit'].includes(call[2]))),
+    false,
+  );
   assert.equal(gates(f.calls).length, 0);
 });
 
@@ -106,7 +139,10 @@ test('push-only keeps the publication body validation before writes', async t =>
   const f = await checkout(t);
   await writeFile(f.body, '  \n');
   await assert.rejects(f.run('publish', '--body-file', f.body, '--mode', 'push-only', '--reason', 'User requested publication.'), /PR body must contain/);
-  assert.equal(f.calls.some(call => call[0] === 'git' && call[1] === 'push' || call[0] === 'gh' && call[1] === 'pr' && ['create', 'edit'].includes(call[2])), false);
+  assert.equal(
+    f.calls.some(call => (call[0] === 'git' && call[1] === 'push') || (call[0] === 'gh' && call[1] === 'pr' && ['create', 'edit'].includes(call[2]))),
+    false,
+  );
 });
 
 test('push-only rejects a branch behind fetched development', async t => {
@@ -122,7 +158,10 @@ test('push-only rejects a branch behind fetched development', async t => {
   assert.equal(git(f.root, 'rev-parse', 'HEAD'), feature);
 
   await assert.rejects(f.run('publish', '--body-file', f.body, '--mode', 'push-only', '--reason', 'User requested publication.'), /behind development/);
-  assert.equal(f.calls.some(call => call[0] === 'git' && call[1] === 'push' || call[0] === 'gh' && call[1] === 'pr' && call[2] === 'create'), false);
+  assert.equal(
+    f.calls.some(call => (call[0] === 'git' && call[1] === 'push') || (call[0] === 'gh' && call[1] === 'pr' && call[2] === 'create')),
+    false,
+  );
 });
 
 test('push-only checks the head again before pushing', async t => {
@@ -137,8 +176,14 @@ test('push-only checks the head again before pushing', async t => {
     return f.execute(binary, args, cwd, timeout);
   };
 
-  await assert.rejects(runWorkflow(['publish', '--body-file', f.body, '--summary', 'add the example workflow', '--mode', 'push-only', '--reason', 'User requested publication.', '--root', f.root], { execute }), /changed before push/);
-  assert.equal(f.calls.some(call => call[0] === 'git' && call[1] === 'push' || call[0] === 'gh' && call[1] === 'pr' && call[2] === 'create'), false);
+  await assert.rejects(
+    runWorkflow(['publish', '--body-file', f.body, '--summary', 'add the example workflow', '--mode', 'push-only', '--reason', 'User requested publication.', '--root', f.root], { execute }),
+    /changed before push/,
+  );
+  assert.equal(
+    f.calls.some(call => (call[0] === 'git' && call[1] === 'push') || (call[0] === 'gh' && call[1] === 'pr' && call[2] === 'create')),
+    false,
+  );
 });
 
 test('push-only completion requires a matching published head and passing primary CI', async t => {
@@ -171,6 +216,30 @@ test('push-only cannot complete from a failed primary current-head check', async
   f.e.checks[0].conclusion = 'failure';
 
   await assert.rejects(f.run('complete'), /Completion blocked: NEEDS_FIX/);
+});
+
+test('push-only CLI blocks completion and allows repair for a failed regression without review threads', async t => {
+  const f = await checkout(t);
+  await f.run('publish', '--body-file', f.body, '--mode', 'push-only', '--reason', 'CI runs the regression suites.', '--skip-review-request');
+  const path = recordPath(f.root);
+  const saved = JSON.parse(await readFile(path, 'utf8'));
+  saved.appLink = { url: saved.url, repository: 'example/project', number: saved.pr };
+  await writeFile(path, JSON.stringify(saved));
+  assert.deepEqual(f.e.pr.reviewThreads.nodes, []);
+  for (const name of ['build', 'contributor-tooling-tests', 'runtime-tests']) {
+    const check = f.e.checks.find(check => check.name === name);
+    check.status = 'in_progress';
+    await assert.rejects(f.run('complete'), /Completion blocked: WAITING_CI/);
+    check.status = 'completed';
+    check.conclusion = 'failure';
+    await assert.rejects(f.run('complete'), /Completion blocked: NEEDS_FIX/);
+    assert.ok((await f.run('status')).observation.failedChecks.some(check => check.name === name));
+    check.conclusion = 'success';
+  }
+  f.e.checks.find(check => check.name === 'runtime-tests').conclusion = 'failure';
+  const repair = await f.run('repair', '--reason', 'Runtime regression failed.');
+  assert.equal(repair.status, 'REPAIR_RESERVED');
+  assert.equal(repair.repairRounds.length, 1);
 });
 
 test('push-only recovers a paired partial publish without resetting provenance or querying submission CI', async t => {
@@ -223,12 +292,20 @@ test('push-only recovers a paired partial publish without resetting provenance o
       return JSON.stringify(pr);
     }
     if (args[0] === 'pr' && args[1] === 'create') {
-      if (failPrivateCreate) { failPrivateCreate = false; throw new Error('simulated private PR create failure'); }
+      if (failPrivateCreate) {
+        failPrivateCreate = false;
+        throw new Error('simulated private PR create failure');
+      }
       const number = 7;
       const pr = {
-        number, url: `https://github.com/course/private/pull/${number}`, title: args[args.indexOf('--title') + 1],
-        body: readFileSync(args[args.indexOf('--body-file') + 1], 'utf8'), state: 'OPEN', isDraft: args.includes('--draft'),
-        headRefName: args[args.indexOf('--head') + 1], baseRefName: args[args.indexOf('--base') + 1],
+        number,
+        url: `https://github.com/course/private/pull/${number}`,
+        title: args[args.indexOf('--title') + 1],
+        body: readFileSync(args[args.indexOf('--body-file') + 1], 'utf8'),
+        state: 'OPEN',
+        isDraft: args.includes('--draft'),
+        headRefName: args[args.indexOf('--head') + 1],
+        baseRefName: args[args.indexOf('--base') + 1],
         headRefOid: privateHead(`refs/heads/${args[args.indexOf('--head') + 1]}`),
       };
       privatePrs.push(pr);
@@ -241,12 +318,12 @@ test('push-only recovers a paired partial publish without resetting provenance o
       privateCiQueries++;
       throw new Error('submission CI must not be queried');
     }
-    if (binary === 'gh' && (args[0] === 'repo' && args[1] === 'view' || args.includes('--repo') && args[args.indexOf('--repo') + 1] === 'course/private')) {
+    if (binary === 'gh' && ((args[0] === 'repo' && args[1] === 'view') || (args.includes('--repo') && args[args.indexOf('--repo') + 1] === 'course/private'))) {
       pairedCalls.push([binary, ...args]);
       return privateGh(args);
     }
     if (binary === 'git' && args[0] === 'remote' && args[1] === 'get-url' && args[2] === 'submission') return 'https://github.com/course/private.git';
-    if (binary === 'git' && (args[0] === 'fetch' && args.includes('submission') || args[0] === 'push' && args[1] === 'submission')) {
+    if (binary === 'git' && ((args[0] === 'fetch' && args.includes('submission')) || (args[0] === 'push' && args[1] === 'submission'))) {
       pairedCalls.push([binary, ...args]);
       const result = spawnSync('git', args, { cwd, timeout, encoding: 'utf8', windowsHide: true });
       assert.equal(result.status, 0, result.stderr);

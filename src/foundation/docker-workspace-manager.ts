@@ -1,9 +1,18 @@
 import type { CommandView, TaskWorkspace } from '../contracts/foundation/uc03.ts';
 import { validateTaskWorkspace } from '../contracts/foundation/uc03.ts';
 import { buildDockerCommandView } from './docker-view-builder.ts';
+import type { CommandViewOwnerBindingParams, IssuedCommandView } from './docker-view-builder.ts';
 import { StructuredCommandExecutor } from './docker-command-executor.ts';
 import { computeWorkspaceVolumeIds, isValidFencingGeneration, SHA256_HEX_REGEX, validateDockerProfile } from './docker-workspace-policy.ts';
-import type { AdmitCommandViewParams, CreateWorkspaceParams, DockerEnvironmentPolicy, DockerLifecycleController, DockerProfile, ResumeWorkspaceParams, WorkspaceLease } from './docker-workspace-types.ts';
+import type {
+  AdmitCommandViewParams,
+  CreateWorkspaceParams,
+  DockerEnvironmentPolicy,
+  DockerLifecycleController,
+  DockerProfile,
+  ResumeWorkspaceParams,
+  WorkspaceLease,
+} from './docker-workspace-types.ts';
 export class DockerWorkspaceManager {
   private readonly controller: DockerLifecycleController;
   private readonly workspaces = new Map<string, TaskWorkspace>();
@@ -75,13 +84,15 @@ export class DockerWorkspaceManager {
     }
 
     while (this.activeWriterLeases.has(workspaceId) || (this.activeReaderLeases.get(workspaceId)?.size ?? 0) > 0) {
-      await new Promise<void>((resolve) => {
+      await new Promise<void>(resolve => {
         let waiters = this.leaseWaiters.get(workspaceId);
         if (!waiters) {
           waiters = [];
           this.leaseWaiters.set(workspaceId, waiters);
         }
-        waiters.push(() => { resolve(); });
+        waiters.push(() => {
+          resolve();
+        });
       });
       const revAfterWait = this.getCanonicalRevision(workspaceId);
       if (expectedRevision !== undefined && revAfterWait !== expectedRevision) {
@@ -122,13 +133,15 @@ export class DockerWorkspaceManager {
     }
 
     while (this.activeWriterLeases.has(workspaceId)) {
-      await new Promise<void>((resolve) => {
+      await new Promise<void>(resolve => {
         let waiters = this.leaseWaiters.get(workspaceId);
         if (!waiters) {
           waiters = [];
           this.leaseWaiters.set(workspaceId, waiters);
         }
-        waiters.push(() => { resolve(); });
+        waiters.push(() => {
+          resolve();
+        });
       });
       const revAfterWait = this.getCanonicalRevision(workspaceId);
       if (expectedRevision !== undefined && revAfterWait !== expectedRevision) {
@@ -178,7 +191,7 @@ export class DockerWorkspaceManager {
       | {
           readonly environmentPolicy?: DockerEnvironmentPolicy | undefined;
           readonly allowedEnvKeys?: readonly string[] | ReadonlySet<string> | undefined;
-        }
+        },
   ): StructuredCommandExecutor {
     let resolvedPolicy: DockerEnvironmentPolicy | readonly string[] | ReadonlySet<string> | undefined;
     let resolvedAllowedKeys: readonly string[] | ReadonlySet<string> | undefined;
@@ -212,7 +225,7 @@ export class DockerWorkspaceManager {
       throw new Error('INVALID_WORKSPACE_PARAMS: params must be an object');
     }
     const profileRes = validateDockerProfile(params.profile);
-    if (!profileRes.ok) throw new Error(`INVALID_DOCKER_PROFILE: ${profileRes.errors.map((e) => e.message).join('; ')}`);
+    if (!profileRes.ok) throw new Error(`INVALID_DOCKER_PROFILE: ${profileRes.errors.map(e => e.message).join('; ')}`);
 
     if (!SHA256_HEX_REGEX.test(params.initialRevisionDigest)) {
       throw new Error('INVALID_REVISION_DIGEST: initialRevisionDigest must be sha256 hex digest');
@@ -229,7 +242,7 @@ export class DockerWorkspaceManager {
       expectedRepoState: params.initialRevisionDigest,
     };
     const validWs = validateTaskWorkspace(workspace);
-    if (!validWs.ok) throw new Error(`INVALID_TASK_WORKSPACE: ${validWs.errors.map((e) => e.message).join('; ')}`);
+    if (!validWs.ok) throw new Error(`INVALID_TASK_WORKSPACE: ${validWs.errors.map(e => e.message).join('; ')}`);
 
     if (this.workspaces.has(params.workspaceId)) {
       throw new Error(`WORKSPACE_ALREADY_EXISTS: Workspace '${params.workspaceId}' already exists; use resumeWorkspace`);
@@ -250,9 +263,9 @@ export class DockerWorkspaceManager {
       throw new Error('INVALID_WORKSPACE_PARAMS: params must be an object');
     }
     const validWs = validateTaskWorkspace(params.workspace);
-    if (!validWs.ok) throw new Error(`INVALID_TASK_WORKSPACE: ${validWs.errors.map((e) => e.message).join('; ')}`);
+    if (!validWs.ok) throw new Error(`INVALID_TASK_WORKSPACE: ${validWs.errors.map(e => e.message).join('; ')}`);
     const profileRes = validateDockerProfile(params.profile);
-    if (!profileRes.ok) throw new Error(`INVALID_DOCKER_PROFILE: ${profileRes.errors.map((e) => e.message).join('; ')}`);
+    if (!profileRes.ok) throw new Error(`INVALID_DOCKER_PROFILE: ${profileRes.errors.map(e => e.message).join('; ')}`);
 
     if (params.expectedRevisionDigest !== undefined && !SHA256_HEX_REGEX.test(params.expectedRevisionDigest)) {
       throw new Error('INVALID_REVISION_DIGEST: expectedRevisionDigest must be sha256 hex digest');
@@ -263,10 +276,7 @@ export class DockerWorkspaceManager {
     }
 
     const expectedVolumeIds = computeWorkspaceVolumeIds(params.workspace.taskId, params.workspace.workspaceId);
-    if (
-      params.workspace.repoVolumeId !== expectedVolumeIds.repoVolumeId ||
-      params.workspace.scratchVolumeId !== expectedVolumeIds.scratchVolumeId
-    ) {
+    if (params.workspace.repoVolumeId !== expectedVolumeIds.repoVolumeId || params.workspace.scratchVolumeId !== expectedVolumeIds.scratchVolumeId) {
       throw new Error('VOLUME_IDENTITY_MISMATCH: Resumed workspace volume identities do not match canonical deterministic volume identities');
     }
 
@@ -315,12 +325,16 @@ export class DockerWorkspaceManager {
   }
 
   async admitCommandView(params: AdmitCommandViewParams): Promise<CommandView> {
+    const { view } = await this.admitMeasuredCommandView(params);
+    return view;
+  }
+
+  admitMeasuredCommandView(params: CommandViewOwnerBindingParams): Promise<IssuedCommandView> {
     return buildDockerCommandView(params, this.controller, {
-      getWorkspace: (workspaceId) => this.getWorkspace(workspaceId),
-      getCanonicalRevision: (workspaceId) => this.getCanonicalRevision(workspaceId),
-      acquireReadLease: (workspaceId, expectedRevision) =>
-        this.acquireReadLease(workspaceId, expectedRevision),
-      invalidateViews: (workspaceId) => this.invalidateViews(workspaceId),
+      getWorkspace: workspaceId => this.getWorkspace(workspaceId),
+      getCanonicalRevision: workspaceId => this.getCanonicalRevision(workspaceId),
+      acquireReadLease: (workspaceId, expectedRevision) => this.acquireReadLease(workspaceId, expectedRevision),
+      invalidateViews: workspaceId => this.invalidateViews(workspaceId),
       publishView: (workspaceId, view) => this.activeViews.set(workspaceId, view),
     });
   }

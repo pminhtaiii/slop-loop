@@ -16,19 +16,7 @@ export function validateVerificationResult(input: unknown, path = 'verificationR
     return { ok: false, errors: [{ path, message: `${path} must be an object`, code: 'INVALID_TYPE' }] };
   }
 
-  const allowedKeys = [
-    'evidenceId',
-    'taskId',
-    'runId',
-    'actionId',
-    'phase',
-    'repoDigest',
-    'diffDigest',
-    'commandIdentity',
-    'outcome',
-    'testedIds',
-    'diagnosticRefs',
-  ];
+  const allowedKeys = ['evidenceId', 'taskId', 'runId', 'actionId', 'phase', 'repoDigest', 'diffDigest', 'commandIdentity', 'outcome', 'testedIds', 'diagnosticRefs'];
   rejectUnknownKeys(input, allowedKeys, path, errors);
   for (const field of ['repoDigest', 'diagnosticRefs']) {
     if (input[field] === undefined) errors.push({ path: `${path}.${field}`, message: `${path}.${field} is required`, code: 'REQUIRED_FIELD' });

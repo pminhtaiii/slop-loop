@@ -7,10 +7,7 @@ import { validateBudgetLedger } from '../state.ts';
 import { validateReservationBundle } from './records.ts';
 import { PROVIDER_REQUEST_ALLOWED_KEYS, validateProviderRequest } from './request.ts';
 
-export function validateDispatchAdmission(
-  request: unknown,
-  context: unknown
-): ValidationResult<ProviderRequest> {
+export function validateDispatchAdmission(request: unknown, context: unknown): ValidationResult<ProviderRequest> {
   const reqRes = validateProviderRequest(request);
   if (!reqRes.ok) {
     return reqRes;
@@ -58,26 +55,35 @@ export function validateDispatchAdmission(
 
   // Schema parsing alone does not authorize a network request. The host must supply
   // a complete trusted identity and the persisted task accounting snapshot.
-  const fail = (code: string, message: string): void => { errors.push({ path: 'context', code, message }); };
+  const fail = (code: string, message: string): void => {
+    errors.push({ path: 'context', code, message });
+  };
   const expected = validateProviderRequest(context['expectedRequest']);
-  if (!expected.ok || !Array.isArray(context['storedRequests']) ||
-      context['taskAccountingStatus'] !== 'healthy' ||
-      typeof context['requireRunReviewIteration'] !== 'boolean' ||
-      typeof context['transactionRef'] !== 'string' || !context['transactionRef'].trim() ||
-      !Array.isArray(context['ledgerIdentities']) || !isPlainObject(context['reservationIds'])) {
+  if (
+    !expected.ok ||
+    !Array.isArray(context['storedRequests']) ||
+    context['taskAccountingStatus'] !== 'healthy' ||
+    typeof context['requireRunReviewIteration'] !== 'boolean' ||
+    typeof context['transactionRef'] !== 'string' ||
+    !context['transactionRef'].trim() ||
+    !Array.isArray(context['ledgerIdentities']) ||
+    !isPlainObject(context['reservationIds'])
+  ) {
     fail('UNTRUSTED_DISPATCH_AUTHORIZATION', 'Complete trusted identity, receipt and healthy task accounting are required');
     return { ok: false, errors };
   }
   const identityKeys = PROVIDER_REQUEST_ALLOWED_KEYS;
-  if (identityKeys.some(key => (req as unknown as Record<string, unknown>)[key] !==
-      (expected.value as unknown as Record<string, unknown>)[key])) {
+  if (identityKeys.some(key => (req as unknown as Record<string, unknown>)[key] !== (expected.value as unknown as Record<string, unknown>)[key])) {
     fail('PROVIDER_IDENTITY_MISMATCH', 'Request differs from the complete trusted reserved envelope');
   }
   const seenRequestIds = new Set<string>();
   let storedMatches = 0;
   for (const raw of context['storedRequests']) {
     const stored = validateProviderRequest(raw);
-    if (!stored.ok) { fail('INVALID_ACCOUNTING_HISTORY', 'Stored request history must be valid'); continue; }
+    if (!stored.ok) {
+      fail('INVALID_ACCOUNTING_HISTORY', 'Stored request history must be valid');
+      continue;
+    }
     const value = stored.value;
     if (seenRequestIds.has(value.providerRequestId)) fail('DUPLICATE_REQUEST_ID', 'History contains duplicate request identity');
     seenRequestIds.add(value.providerRequestId);
@@ -86,8 +92,8 @@ export function validateDispatchAdmission(
     }
     if (value.providerRequestId === req.providerRequestId) {
       storedMatches++;
-      if (identityKeys.some(key => (value as unknown as Record<string, unknown>)[key] !==
-          (req as unknown as Record<string, unknown>)[key])) fail('REQUEST_REPLAY', 'Persisted request is not the same undispatched reservation');
+      if (identityKeys.some(key => (value as unknown as Record<string, unknown>)[key] !== (req as unknown as Record<string, unknown>)[key]))
+        fail('REQUEST_REPLAY', 'Persisted request is not the same undispatched reservation');
     }
   }
   if (storedMatches !== 1) fail('MISSING_STORED_REQUEST', 'Exactly one persisted reserved request is required');
@@ -161,9 +167,7 @@ export function validateDispatchAdmission(
   // - run tokens (amount >= req.maxBillableTokens)
   // - run cost (amount >= req.maxCostUsd)
   // - if reviewer: iteration (amount >= 1)
-  const taskTokenRes = bundle.reservations.find(
-    (r) => r.scope === 'task' && (r.kind === 'tokens' || r.kind === 'token')
-  );
+  const taskTokenRes = bundle.reservations.find(r => r.scope === 'task' && (r.kind === 'tokens' || r.kind === 'token'));
   if (!taskTokenRes || taskTokenRes.amount < req.maxBillableTokens) {
     errors.push({
       path: 'reservationBundle',
@@ -172,9 +176,7 @@ export function validateDispatchAdmission(
     });
   }
 
-  const taskCostRes = bundle.reservations.find(
-    (r) => r.scope === 'task' && r.kind === 'cost'
-  );
+  const taskCostRes = bundle.reservations.find(r => r.scope === 'task' && r.kind === 'cost');
   if (!taskCostRes || taskCostRes.amount < req.maxCostUsd) {
     errors.push({
       path: 'reservationBundle',
@@ -183,9 +185,7 @@ export function validateDispatchAdmission(
     });
   }
 
-  const runTokenRes = bundle.reservations.find(
-    (r) => r.scope === 'run' && (r.kind === 'tokens' || r.kind === 'token')
-  );
+  const runTokenRes = bundle.reservations.find(r => r.scope === 'run' && (r.kind === 'tokens' || r.kind === 'token'));
   if (!runTokenRes || runTokenRes.amount < req.maxBillableTokens) {
     errors.push({
       path: 'reservationBundle',
@@ -194,9 +194,7 @@ export function validateDispatchAdmission(
     });
   }
 
-  const runCostRes = bundle.reservations.find(
-    (r) => r.scope === 'run' && r.kind === 'cost'
-  );
+  const runCostRes = bundle.reservations.find(r => r.scope === 'run' && r.kind === 'cost');
   if (!runCostRes || runCostRes.amount < req.maxCostUsd) {
     errors.push({
       path: 'reservationBundle',
@@ -206,9 +204,7 @@ export function validateDispatchAdmission(
   }
 
   if (req.role === 'reviewer') {
-    const iterationRes = bundle.reservations.find(
-      (r) => r.scope === 'task' && (r.kind === 'iteration' || r.kind === 'review_iteration')
-    );
+    const iterationRes = bundle.reservations.find(r => r.scope === 'task' && (r.kind === 'iteration' || r.kind === 'review_iteration'));
     if (!iterationRes || iterationRes.amount < 1) {
       errors.push({
         path: 'reservationBundle',
@@ -218,8 +214,11 @@ export function validateDispatchAdmission(
     }
   }
 
-  if (req.role === 'reviewer' && context['requireRunReviewIteration'] === true &&
-      !bundle.reservations.some(item => item.scope === 'run' && (item.kind === 'iteration' || item.kind === 'review_iteration') && item.amount >= 1)) {
+  if (
+    req.role === 'reviewer' &&
+    context['requireRunReviewIteration'] === true &&
+    !bundle.reservations.some(item => item.scope === 'run' && (item.kind === 'iteration' || item.kind === 'review_iteration') && item.amount >= 1)
+  ) {
     fail('PARTIAL_RESERVATION', 'Trusted profile also requires a run review iteration');
   }
   // 7. Ledgers validation and capacity check
@@ -250,17 +249,18 @@ export function validateDispatchAdmission(
   }
 
   const ledgerIds = context['ledgerIdentities'] as unknown[];
-  if (ledgerIds.length !== validatedLedgers.length || ledgerIds.some(id => typeof id !== 'string' || !id.trim()) ||
-      new Set(ledgerIds).size !== ledgerIds.length ||
-      new Set(validatedLedgers.map(ledger => `${ledger.scope}:${ledger.kind}`)).size !== validatedLedgers.length) {
+  if (
+    ledgerIds.length !== validatedLedgers.length ||
+    ledgerIds.some(id => typeof id !== 'string' || !id.trim()) ||
+    new Set(ledgerIds).size !== ledgerIds.length ||
+    new Set(validatedLedgers.map(ledger => `${ledger.scope}:${ledger.kind}`)).size !== validatedLedgers.length
+  ) {
     fail('INVALID_LEDGER_IDENTITIES', 'Every authoritative ledger needs a unique identity and budget slot');
     return { ok: false, errors };
   }
   // Match each bundle reservation against a ledger
   for (const item of bundle.reservations) {
-    const matchingLedger = validatedLedgers.find(
-      (l, index) => ledgerIds[index] === item.ledgerIdentity && l.scope === item.scope && l.kind === item.kind
-    );
+    const matchingLedger = validatedLedgers.find((l, index) => ledgerIds[index] === item.ledgerIdentity && l.scope === item.scope && l.kind === item.kind);
     if (!matchingLedger) {
       errors.push({
         path: 'ledgers',
@@ -280,16 +280,17 @@ export function validateDispatchAdmission(
     }
 
     const persisted = matchingLedger.reservations.filter(reservation => reservation.keyedId === req.providerRequestId);
-    if (matchingLedger.version !== item.version || persisted.length !== 1 ||
-        persisted[0]?.amount !== item.amount ||
-        typeof context['reservationIds'][item.ledgerIdentity] !== 'string' ||
-        persisted[0]?.reservationId !== context['reservationIds'][item.ledgerIdentity]) {
+    if (
+      matchingLedger.version !== item.version ||
+      persisted.length !== 1 ||
+      persisted[0]?.amount !== item.amount ||
+      typeof context['reservationIds'][item.ledgerIdentity] !== 'string' ||
+      persisted[0]?.reservationId !== context['reservationIds'][item.ledgerIdentity]
+    ) {
       fail('MISSING_PERSISTED_RESERVATION', 'Exact reserved amount, ID, ledger version and bundle identity must exist in StatePort');
     }
     // Capacity calculation: limit - consumed - sum(other reservations)
-    const otherReservationsSum = matchingLedger.reservations
-      .filter((r) => r.keyedId !== req.providerRequestId)
-      .reduce((sum, r) => sum + r.amount, 0);
+    const otherReservationsSum = matchingLedger.reservations.filter(r => r.keyedId !== req.providerRequestId).reduce((sum, r) => sum + r.amount, 0);
 
     const available = matchingLedger.limit - matchingLedger.consumed - otherReservationsSum;
     if (available < item.amount) {
@@ -308,10 +309,7 @@ export function validateDispatchAdmission(
   return { ok: true, value: req };
 }
 
-export function isAdmittedForDispatch(
-  request: unknown,
-  context: unknown
-): boolean {
+export function isAdmittedForDispatch(request: unknown, context: unknown): boolean {
   const res = validateDispatchAdmission(request, context);
   return res.ok;
 }

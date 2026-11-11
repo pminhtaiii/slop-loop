@@ -45,7 +45,7 @@ export class ControlledRepositoryReader {
     if (journalSnapshot.activeClaimId !== null) {
       throw new Error(`CLAIM_OPEN_READ_DENIED: Claim '${journalSnapshot.activeClaimId}' is open`);
     }
-    const openClaim = journalSnapshot.claims.find((claim) => claim.status !== 'settled' && claim.status !== 'closed');
+    const openClaim = journalSnapshot.claims.find(claim => claim.status !== 'settled' && claim.status !== 'closed');
     if (openClaim) {
       throw new Error(`CLAIM_OPEN_READ_DENIED: Claim '${openClaim.claimId}' is open (${openClaim.status})`);
     }
@@ -200,7 +200,7 @@ export class ControlledRepositoryReader {
     }
     const evidence: SourceEvidence = { path: filePath, revisionDigest, boundedExcerpt, resultCount: 1, truncated };
     const valid = validateSourceEvidence(evidence, { maxExcerptBytes: this.limits.maxExcerptBytes, maxResultCount: this.limits.maxResultCount });
-    if (!valid.ok) throw new Error(`INVALID_SOURCE_EVIDENCE: ${valid.errors.map((e) => e.message).join('; ')}`);
+    if (!valid.ok) throw new Error(`INVALID_SOURCE_EVIDENCE: ${valid.errors.map(e => e.message).join('; ')}`);
     return valid.value;
   }
 

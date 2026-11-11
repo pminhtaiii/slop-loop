@@ -10,6 +10,8 @@
 
 ## User Scenarios & Testing *(mandatory)*
 
+The [2026-10-30 delegated decision](contracts/decisions.md#delegated-t011t015-authority--2026-10-30) releases T011/T015 implementation and technical amendments. Earlier status restrictions are historical for those tasks. Implement all available composition and shared-evaluation behavior, preserve fail-closed production admission and frozen evaluation identities, and leave incomplete acceptance unchecked. This scope supplies no fabricated runtime or model-quality result.
+
 ### User Story 1 - Assess an issue with traceable evidence (Priority: P1)
 
 As a developer, I receive a classification and impact-based severity with an explanation traceable to the original report or inspected repository content.

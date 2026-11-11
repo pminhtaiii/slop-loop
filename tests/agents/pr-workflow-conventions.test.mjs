@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { assess, runWorkflow } from '../../scripts/agents/pr-workflow.mjs';
-import { assertAvailableNumber } from '../../scripts/agents/pr-conventions.mjs';
+import { assertAvailableNumber, validSummary } from '../../scripts/agents/pr-conventions.mjs';
 import { checkout } from './support/pr-workflow-fixture.mjs';
 
 test('new publication requires a scope before gates or writes', async t => {
@@ -12,7 +12,21 @@ test('new publication requires a scope before gates or writes', async t => {
   const result = spawnSync('git', ['switch', '-c', 'feat/011-unscoped'], { cwd: f.root, windowsHide: true });
   assert.equal(result.status, 0);
   await assert.rejects(f.run('publish', '--body-file', f.body), /scope/);
-  assert.equal(f.calls.some(c => c[1] === 'push'), false);
+  assert.equal(
+    f.calls.some(c => c[1] === 'push'),
+    false,
+  );
+});
+
+test('a summary that carries a control character is refused', () => {
+  // A summary lands in a commit message, a PR title and terminal output; any control character, not
+  // just a line break, could rewrite the line it appears on.
+  for (const bad of ['add\u0007 tooling', 'add\u001b[2Ktooling', 'add\ttooling', '\u0000add tooling', 'add tooling\u007f']) {
+    assert.equal(validSummary(bad), false, `${JSON.stringify(bad)} must be refused`);
+  }
+  for (const good of ['add tooling', 'standardize branch naming', 'fix the ünicode summary']) {
+    assert.equal(validSummary(good), true, `${JSON.stringify(good)} must be admitted`);
+  }
 });
 
 test('invalid new branch forms and incomplete history are refused before gates or writes', async t => {
@@ -20,23 +34,37 @@ test('invalid new branch forms and incomplete history are refused before gates o
     const f = await checkout(t);
     assert.equal(spawnSync('git', ['switch', '-c', branch], { cwd: f.root, windowsHide: true }).status, 0);
     await assert.rejects(f.run('publish', '--body-file', f.body), /scope|three-digit/);
-    assert.equal(f.calls.some(c => c[1] === 'push' || c[0] === process.execPath), false);
+    assert.equal(
+      f.calls.some(c => c[1] === 'push' || c[0] === process.execPath),
+      false,
+    );
   }
   const f = await checkout(t);
-  await assert.rejects(runWorkflow(['publish', '--body-file', f.body, '--summary', 'add tooling', '--root', f.root], {
-    execute(binary, args, cwd, timeout) {
-      if (binary === 'gh' && args[0] === 'api' && args.at(-1).includes('/pulls?')) return JSON.stringify([{ truncated: true }]);
-      return f.execute(binary, args, cwd, timeout);
-    },
-  }), /Incomplete PR history/);
-  assert.equal(f.calls.some(c => c[1] === 'push' || c[0] === process.execPath), false);
+  await assert.rejects(
+    runWorkflow(['publish', '--body-file', f.body, '--summary', 'add tooling', '--root', f.root], {
+      execute(binary, args, cwd, timeout) {
+        if (binary === 'gh' && args[0] === 'api' && args.at(-1).includes('/pulls?')) return JSON.stringify([{ truncated: true }]);
+        return f.execute(binary, args, cwd, timeout);
+      },
+    }),
+    /Incomplete PR history/,
+  );
+  assert.equal(
+    f.calls.some(c => c[1] === 'push' || c[0] === process.execPath),
+    false,
+  );
 });
 
 test('new paired work requires development bases while public base overrides fail before commands', async t => {
   let executed = false;
-  await assert.rejects(runWorkflow(['publish', '--body-file', 'body.md', '--summary', 'add tooling', '--base', 'main'], {
-    execute() { executed = true; },
-  }), /only publishes to development/);
+  await assert.rejects(
+    runWorkflow(['publish', '--body-file', 'body.md', '--summary', 'add tooling', '--base', 'main'], {
+      execute() {
+        executed = true;
+      },
+    }),
+    /only publishes to development/,
+  );
   assert.equal(executed, false);
   const f = await checkout(t);
   const git = (...args) => {
@@ -48,23 +76,35 @@ test('new paired work requires development bases while public base overrides fai
   git('add', 'publication-targets.json');
   git('commit', '--quiet', '-m', 'historical configuration');
   await assert.rejects(f.run('publish', '--body-file', f.body), /New paired work requires submission\/development/);
-  assert.equal(f.calls.some(c => c[1] === 'push' || c[0] === process.execPath), false);
+  assert.equal(
+    f.calls.some(c => c[1] === 'push' || c[0] === process.execPath),
+    false,
+  );
 });
 
 test('new publish rejects reused numbers across local branches, live heads and paginated closed PR history', async t => {
   for (const source of ['local', 'remote', 'closed', 'merged', 'exact']) {
     const f = await checkout(t);
     if (source === 'local') assert.equal(spawnSync('git', ['branch', 'feat/010-tooling-prior'], { cwd: f.root, windowsHide: true }).status, 0);
-    await assert.rejects(runWorkflow(['publish', '--body-file', f.body, '--summary', 'standardize tooling', '--root', f.root], {
-      execute(binary, args, cwd, timeout) {
-        if (binary === 'git' && args[0] === 'ls-remote' && source === 'remote') return 'a'.repeat(40) + '\trefs/heads/feat/010-infra-prior';
-        if (binary === 'gh' && args[0] === 'api' && args.at(-1).includes('/pulls?') && ['closed', 'merged', 'exact'].includes(source)) {
-          return JSON.stringify([[], [{ state: 'closed', merged_at: source === 'merged' ? '2026-10-16' : null, head: { ref: source === 'exact' ? 'feat/010-tooling-example' : 'feat/010-legacy' } }]]);
-        }
-        return f.execute(binary, args, cwd, timeout);
-      },
-    }), /unique NNN|already exists/);
-    assert.equal(f.calls.some(c => c[1] === 'push' || c[0] === process.execPath), false);
+    await assert.rejects(
+      runWorkflow(['publish', '--body-file', f.body, '--summary', 'standardize tooling', '--root', f.root], {
+        execute(binary, args, cwd, timeout) {
+          if (binary === 'git' && args[0] === 'ls-remote' && source === 'remote') return 'a'.repeat(40) + '\trefs/heads/feat/010-infra-prior';
+          if (binary === 'gh' && args[0] === 'api' && args.at(-1).includes('/pulls?') && ['closed', 'merged', 'exact'].includes(source)) {
+            return JSON.stringify([
+              [],
+              [{ state: 'closed', merged_at: source === 'merged' ? '2026-10-16' : null, head: { ref: source === 'exact' ? 'feat/010-tooling-example' : 'feat/010-legacy' } }],
+            ]);
+          }
+          return f.execute(binary, args, cwd, timeout);
+        },
+      }),
+      /unique NNN|already exists/,
+    );
+    assert.equal(
+      f.calls.some(c => c[1] === 'push' || c[0] === process.execPath),
+      false,
+    );
   }
 });
 
@@ -90,7 +130,10 @@ test('an established convention-v1 PR remains updateable after a historical same
   assert.equal(updated.status, 'PUBLISHED');
   assert.equal(updated.pr, recordedPr);
   assert.equal(f.calls.filter(call => call[0] === 'gh' && call[1] === 'pr' && call[2] === 'edit').length, 1);
-  assert.equal(f.calls.some(call => call[0] === 'gh' && call[1] === 'pr' && call[2] === 'create'), false);
+  assert.equal(
+    f.calls.some(call => call[0] === 'gh' && call[1] === 'pr' && call[2] === 'create'),
+    false,
+  );
 });
 
 test('assertAvailableNumber returns early when hasPr is true and checks collisions on retries', () => {
@@ -98,7 +141,9 @@ test('assertAvailableNumber returns early when hasPr is true and checks collisio
   assertAvailableNumber({
     branch: 'feat/010-tooling-example',
     targets: { primary: { remote: 'origin', repository: 'example/project' } },
-    execute() { executed = true; },
+    execute() {
+      executed = true;
+    },
     root: '.',
     fresh: false,
     hasPr: true,
@@ -144,36 +189,45 @@ test('an unrecorded retry allows its own pushed branch on remote but rejects oth
   const f = await checkout(t);
   await mkdir(join(f.root, '.agent-work/pr-workflow'), { recursive: true });
   const recordPath = join(f.root, '.agent-work/pr-workflow/010-tooling-example.json');
-  await writeFile(recordPath, JSON.stringify({
-    schemaVersion: 1,
-    repository: 'example/project',
-    branch: 'feat/010-tooling-example',
-    base: 'development',
-    repairRounds: [],
-    publicationStarted: true,
-    conventionVersion: 1,
-  }));
+  await writeFile(
+    recordPath,
+    JSON.stringify({
+      schemaVersion: 1,
+      repository: 'example/project',
+      branch: 'feat/010-tooling-example',
+      base: 'development',
+      repairRounds: [],
+      publicationStarted: true,
+      conventionVersion: 1,
+    }),
+  );
 
-  await assert.rejects(runWorkflow(['publish', '--body-file', f.body, '--summary', 'add the example workflow', '--root', f.root], {
-    execute(binary, args, cwd, timeout) {
-      if (binary === 'git' && args[0] === 'ls-remote') {
-        return 'a'.repeat(40) + '\trefs/heads/feat/010-tooling-example\n' + 'b'.repeat(40) + '\trefs/heads/feat/010-other-feature';
-      }
-      return f.execute(binary, args, cwd, timeout);
-    },
-  }), /Feature number 010 was already used; select a unique NNN\./);
+  await assert.rejects(
+    runWorkflow(['publish', '--body-file', f.body, '--summary', 'add the example workflow', '--root', f.root], {
+      execute(binary, args, cwd, timeout) {
+        if (binary === 'git' && args[0] === 'ls-remote') {
+          return 'a'.repeat(40) + '\trefs/heads/feat/010-tooling-example\n' + 'b'.repeat(40) + '\trefs/heads/feat/010-other-feature';
+        }
+        return f.execute(binary, args, cwd, timeout);
+      },
+    }),
+    /Feature number 010 was already used; select a unique NNN\./,
+  );
 
-  await assert.rejects(runWorkflow(['publish', '--body-file', f.body, '--summary', 'add the example workflow', '--root', f.root], {
-    execute(binary, args, cwd, timeout) {
-      if (binary === 'git' && args[0] === 'ls-remote') {
-        return 'a'.repeat(40) + '\trefs/heads/feat/010-tooling-example';
-      }
-      if (binary === 'gh' && args[0] === 'api' && args.at(-1).includes('/pulls?')) {
-        return JSON.stringify([[{ state: 'closed', head: { ref: 'feat/010-other-historical' } }]]);
-      }
-      return f.execute(binary, args, cwd, timeout);
-    },
-  }), /Feature number 010 was already used; select a unique NNN\./);
+  await assert.rejects(
+    runWorkflow(['publish', '--body-file', f.body, '--summary', 'add the example workflow', '--root', f.root], {
+      execute(binary, args, cwd, timeout) {
+        if (binary === 'git' && args[0] === 'ls-remote') {
+          return 'a'.repeat(40) + '\trefs/heads/feat/010-tooling-example';
+        }
+        if (binary === 'gh' && args[0] === 'api' && args.at(-1).includes('/pulls?')) {
+          return JSON.stringify([[{ state: 'closed', head: { ref: 'feat/010-other-historical' } }]]);
+        }
+        return f.execute(binary, args, cwd, timeout);
+      },
+    }),
+    /Feature number 010 was already used; select a unique NNN\./,
+  );
 
   const retried = await runWorkflow(['publish', '--body-file', f.body, '--summary', 'add the example workflow', '--root', f.root], {
     execute(binary, args, cwd, timeout) {
@@ -196,19 +250,31 @@ test('new publish validates action summary and ordered nonempty description sect
   for (const summary of ['tooling changes', 'Standardize tooling']) {
     await assert.rejects(runWorkflow(['publish', '--body-file', f.body, '--summary', summary, '--root', f.root], { execute: f.execute }), /action verb/);
   }
-  for (const body of ['plain text', '## Evidence\nchecks\n## Summary\nchange\n## Merge Danger\nrisk', '## Summary\n\n## Evidence\nchecks\n## Merge Danger\nrisk', '## Summary\nchange\n## Evidence\nchecks\n## Merge Danger\nrisk']) {
+  for (const body of [
+    'plain text',
+    '## Evidence\nchecks\n## Summary\nchange\n## Merge Danger\nrisk',
+    '## Summary\n\n## Evidence\nchecks\n## Merge Danger\nrisk',
+    '## Summary\nchange\n## Evidence\nchecks\n## Merge Danger\nrisk',
+  ]) {
     await writeFile(f.body, body);
     await assert.rejects(f.run('publish', '--body-file', f.body), /description|Merge Danger/);
   }
-  assert.equal(f.calls.some(c => c[1] === 'push' || c[0] === process.execPath), false);
+  assert.equal(
+    f.calls.some(c => c[1] === 'push' || c[0] === process.execPath),
+    false,
+  );
 });
 
 test('legacy branch identity and retained publication intent remain readable', async t => {
-  const f = await checkout(t), legacy = 'feat/001-example';
+  const f = await checkout(t),
+    legacy = 'feat/001-example';
   assert.equal(spawnSync('git', ['switch', '-c', legacy], { cwd: f.root, windowsHide: true }).status, 0);
   Object.assign(f.e.pr, { headRefName: legacy, title: legacy + ': historical title' });
   await mkdir(join(f.root, '.agent-work/pr-workflow'), { recursive: true });
-  await writeFile(join(f.root, '.agent-work/pr-workflow/001-example.json'), JSON.stringify({ schemaVersion: 1, repository: 'example/project', branch: legacy, base: 'development', repairRounds: [], publicationStarted: true }));
+  await writeFile(
+    join(f.root, '.agent-work/pr-workflow/001-example.json'),
+    JSON.stringify({ schemaVersion: 1, repository: 'example/project', branch: legacy, base: 'development', repairRounds: [], publicationStarted: true }),
+  );
   await writeFile(f.body, 'Historical unstructured description');
   assert.equal((await f.run('publish', '--body-file', f.body)).status, 'PUBLISHED');
   assert.equal(assess(f.e).status, 'READY_FOR_HUMAN');

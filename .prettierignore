@@ -1,0 +1,34 @@
+dist/
+node_modules/
+coverage/
+.agent-work/
+pnpm-lock.yaml
+
+# Local-only checkout state, excluded through .git/info/exclude rather than
+# .gitignore, so a formatter run would otherwise reformat worktree copies.
+.claude/
+
+# Spec Kit's local feature pointer is machine-written and gitignored per checkout.
+.specify/
+
+# Markdown, YAML and JSON are hand-formatted here: prose line breaks and spec
+# structure are deliberate, and reflowing them churns documents a formatter
+# gains nothing on.
+*.md
+*.yml
+*.yaml
+
+# Prettier's own line-wrapping pushes these ten past the 20,000-byte cap in
+# scripts/ci/check-staged-file-size.mjs, and one was already over it before the
+# cap existed. They stay hand-formatted until each is split into smaller modules,
+# at which point its entry here is removed and the formatter takes over.
+scripts/agents/active-task.mjs
+scripts/agents/paired-merge-eligibility.mjs
+src/approvals/control-v02.ts
+src/approvals/control.ts
+src/approvals/policy-v01.ts
+src/approvals/presentation-v02-validation.ts
+src/approvals/service-v01.ts
+src/contracts/foundation/uc03/v02/admission/reconciliation-common.ts
+src/uc01/contracts.ts
+src/uc03/repair.ts

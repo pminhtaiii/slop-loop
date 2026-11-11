@@ -3,13 +3,7 @@ import test from 'node:test';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import {
-  validateArtifacts,
-  validateTaskLedger,
-  generateReviewBrief,
-  parseReviewFindings,
-  runPlanningWorkflow,
-} from '../../scripts/agents/planning-workflow.mjs';
+import { validateArtifacts, validateTaskLedger, generateReviewBrief, parseReviewFindings, runPlanningWorkflow } from '../../scripts/agents/planning-workflow.mjs';
 
 async function writeRequiredArtifacts(directory, overrides = {}) {
   const artifacts = {
@@ -35,15 +29,7 @@ test('validateArtifacts: flags all missing required files and contracts director
   const result = await validateArtifacts({ featureDir: directory });
   assert.equal(result.valid, false);
   const p0Codes = result.p0.map(issue => issue.code);
-  for (const code of [
-    'MISSING_SPEC',
-    'MISSING_PLAN',
-    'MISSING_TASKS',
-    'MISSING_RESEARCH',
-    'MISSING_DATA_MODEL',
-    'MISSING_QUICKSTART',
-    'MISSING_CONTRACTS',
-  ]) {
+  for (const code of ['MISSING_SPEC', 'MISSING_PLAN', 'MISSING_TASKS', 'MISSING_RESEARCH', 'MISSING_DATA_MODEL', 'MISSING_QUICKSTART', 'MISSING_CONTRACTS']) {
     assert.ok(p0Codes.includes(code), `Should detect ${code}`);
   }
 });
@@ -79,9 +65,7 @@ test('validateArtifacts: flags unresolved clarification markers across all artif
 
   const result = await validateArtifacts({ featureDir: directory });
   assert.equal(result.valid, false);
-  const clarificationFiles = result.p1
-    .filter(i => i.code === 'UNRESOLVED_CLARIFICATION')
-    .map(i => i.file);
+  const clarificationFiles = result.p1.filter(i => i.code === 'UNRESOLVED_CLARIFICATION').map(i => i.file);
   assert.ok(clarificationFiles.includes('spec.md'));
   assert.ok(clarificationFiles.includes('data-model.md'));
   assert.ok(clarificationFiles.includes('quickstart.md'));
@@ -245,8 +229,14 @@ T001 --> T002
 T002 --> T999
 `);
   assert.ok(result.p0.some(issue => issue.code === 'UNKNOWN_DEPENDENCY_TASK'));
-  assert.equal(result.p0.some(issue => issue.code === 'MISSING_FILE_PATH'), false);
-  assert.equal(result.p0.some(issue => issue.code === 'MALFORMED_TASK_SYNTAX'), false);
+  assert.equal(
+    result.p0.some(issue => issue.code === 'MISSING_FILE_PATH'),
+    false,
+  );
+  assert.equal(
+    result.p0.some(issue => issue.code === 'MALFORMED_TASK_SYNTAX'),
+    false,
+  );
 });
 
 test('validateTaskLedger: rejects duplicate and nonsequential task IDs', () => {
@@ -308,7 +298,10 @@ test('validateTaskLedger: excludes dependency-ordered parallel ownership from si
   - **Dependencies**: T001.
   - **Owned Paths**: src/shared.ts
 `);
-  assert.equal(result.p0.some(issue => issue.code === 'PARALLEL_FILE_COLLISION'), false);
+  assert.equal(
+    result.p0.some(issue => issue.code === 'PARALLEL_FILE_COLLISION'),
+    false,
+  );
 });
 
 test('validateTaskLedger: requires explicit local paths and rejects absolute or outside targets', () => {
@@ -326,7 +319,10 @@ test('validateTaskLedger: requires explicit local paths and rejects absolute or 
   assert.ok(p0Codes.includes('MISSING_FILE_PATH'));
   assert.ok(p0Codes.includes('AMBIGUOUS_ROOT_PATH'));
   assert.equal(p0Codes.filter(code => code === 'INVALID_FILE_PATH').length, 3);
-  assert.equal(result.p0.some(issue => issue.code === 'AMBIGUOUS_ROOT_PATH' && ['T002', 'T003', 'T004'].includes(issue.task)), false);
+  assert.equal(
+    result.p0.some(issue => issue.code === 'AMBIGUOUS_ROOT_PATH' && ['T002', 'T003', 'T004'].includes(issue.task)),
+    false,
+  );
 });
 
 test('validateTaskLedger: excludes version numbers, abbreviations, and capitalized frameworks from AMBIGUOUS_ROOT_PATH', () => {
@@ -341,7 +337,10 @@ test('validateTaskLedger: excludes version numbers, abbreviations, and capitaliz
   const ambiguousMessages = ambiguous.map(issue => issue.message);
   assert.ok(ambiguousMessages.some(msg => msg.includes('main.ts')));
   assert.ok(ambiguousMessages.some(msg => msg.includes('util.js')));
-  assert.equal(ambiguous.some(issue => ['T001', 'T002'].includes(issue.task)), false);
+  assert.equal(
+    ambiguous.some(issue => ['T001', 'T002'].includes(issue.task)),
+    false,
+  );
 });
 
 test('generateReviewBrief: generates specialized review instructions for subagent roles', async t => {
@@ -367,13 +366,10 @@ test('generateReviewBrief: rejects unknown review roles', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'planning-wf-test-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
 
-  await assert.rejects(
-    () => generateReviewBrief({ featureDir: directory, role: 'invalid' }),
-    {
-      name: 'Error',
-      message: 'Unknown review role: invalid (expected standards|testability)',
-    }
-  );
+  await assert.rejects(() => generateReviewBrief({ featureDir: directory, role: 'invalid' }), {
+    name: 'Error',
+    message: 'Unknown review role: invalid (expected standards|testability)',
+  });
 });
 
 test('generateReviewBrief: includes all contracts files recursively regardless of extension', async t => {
@@ -393,7 +389,10 @@ test('generateReviewBrief: includes all contracts files recursively regardless o
   assert.ok(brief.targetFiles.includes('contracts/schema.json'));
   assert.ok(brief.targetFiles.includes('contracts/schemas/event.yaml'));
   assert.ok(brief.targetFiles.includes('contracts/schemas/readme.md'));
-  assert.equal(brief.targetFiles.some(file => file.includes('ignored.yaml')), false);
+  assert.equal(
+    brief.targetFiles.some(file => file.includes('ignored.yaml')),
+    false,
+  );
 });
 
 test('parseReviewFindings: parses structured subagent findings into P0, P1, P2 issues', () => {
@@ -504,6 +503,3 @@ test('runPlanningWorkflow: validated artifacts await independent reviews before 
   assert.equal(result.readyForImplementation, false);
   assert.equal(result.status, 'awaiting-independent-reviews');
 });
-
-
-
