@@ -24,6 +24,7 @@ import {
   type UC03ProductionComponentV02,
 } from '../../../src/uc03/graph-types-v02.ts';
 import { sha256Text } from '../../../src/uc01/contracts.ts';
+import { isSafeStorageId } from '../../../src/persistence/store.ts';
 import { askClarification, recordClarificationAnswer } from '../../../src/uc03/clarification.ts';
 import { createFixtureBugTask, createFixtureTaskState } from '../support/uc03/port-fixtures.ts';
 import { controlledHostFixture } from '../support/uc03/host-pipeline-fixtures.ts';
@@ -275,12 +276,16 @@ function assertRepairTraversal(fixture: ControlledFixture, repaired: Awaited<Ret
   // Round two repeats the same checks against a new revision, so its verification claims must be
   // revision-scoped; reusing round one's `action-verify-<checkId>` ids would be refused by the owner
   // and the run would never reach completion. Claim ids are `claim-<actionId>`.
-  const verifyClaims = fixture.statePort
-    .getJournalSnapshot()
-    .claims.map(claim => claim.claimId)
-    .filter(id => id.startsWith('claim-action-verify-'));
+  const journal = fixture.statePort.getJournalSnapshot();
+  const verifyClaims = journal.claims.map(claim => claim.claimId).filter(id => id.startsWith('claim-action-verify-'));
+  // Every durable id the verification path derives (`claim-<actionId>`, `att-<claimId>`) must fit the
+  // owner's storage-id cap; an over-long id is silently answered with a neutral receipt and the run
+  // loops to budget exhaustion instead of failing loudly.
+  const verifyClaimIds = new Set(verifyClaims);
+  const durableIds = [...verifyClaimIds, ...journal.attempts.filter(attempt => verifyClaimIds.has(attempt.claimId)).map(attempt => attempt.attemptId)];
+  for (const id of durableIds) assert.ok(isSafeStorageId(id), `verification id is not a safe storage id (${id.length} chars): ${id}`);
   const roundOne = verifyClaims.filter(id => /^claim-action-verify-check-/u.test(id));
-  const roundScoped = verifyClaims.filter(id => /^claim-action-verify-[0-9a-f]{64}-check-/u.test(id));
+  const roundScoped = verifyClaims.filter(id => /^claim-action-verify-[0-9a-f]{16}-check-/u.test(id));
   assert.ok(roundOne.length > 0, `no round-one verification claim: ${JSON.stringify(verifyClaims)}`);
   assert.ok(roundScoped.length > 0, `no revision-scoped repair verification claim: ${JSON.stringify(verifyClaims)}`);
   assert.equal(roundScoped.length, roundOne.length, `rounds ran different check counts: ${JSON.stringify(verifyClaims)}`);
@@ -312,6 +317,21 @@ test('a reviewer finding sends the controlled route back to Repair for a second 
   assert.equal(repaired.state?.node, 'Deliver');
   assert.equal(repaired.finalReport?.isComplete, true);
   assert.equal(repaired.finalReport?.delivery?.outcome, 'COMPLETED');
+});
+
+test('a long but contract-valid check id completes the repair round inside the durable id cap', async () => {
+  // The repair round now scopes its action ids by only 16 hex of the revision, so a check id that a
+  // 64-hex scope used to overflow must traverse both rounds and still journal safe storage ids.
+  const longCheckId = `check-${'long-denominator-reproduction'.padEnd(34, '-')}`;
+  assert.equal(longCheckId.length, 40);
+  const fixture = await controlledGeneratedPlanFixture({ reviewVerdict: REPAIR_VERDICTS, reproductionCheckId: longCheckId });
+  const repaired = await driveRepairRound(fixture);
+  assertRepairTraversal(fixture, repaired);
+  assert.equal(repaired.outcome, 'IMPLEMENTED_UNVERIFIED', JSON.stringify({ reasons: repaired.reasons, node: repaired.state?.node }));
+  assert.deepEqual(repaired.reasons, [
+    'Incomplete verification or review evidence for completion',
+    'Independent baseline, verification, patch settlement, review, and completion authority are required',
+  ]);
 });
 
 test('a record-free NeedsInfo pause dispatches no model call and claims nothing', async () => {

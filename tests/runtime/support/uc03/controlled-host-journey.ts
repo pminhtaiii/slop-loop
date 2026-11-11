@@ -88,11 +88,13 @@ export interface ControlledFixtureOptions {
   readonly reviewVerdict?: ControlledReviewVerdict | readonly ControlledReviewVerdict[] | undefined;
   /** Extra owner trusted transition contexts, keyed by target state version. */
   readonly transitionContexts?: Readonly<Record<number, NonNullable<StateTransitionOptions['trusted']>>> | undefined;
+  /** Replaces the reproduction check's id, e.g. to exercise a long-but-valid durable id. */
+  readonly reproductionCheckId?: string | undefined;
 }
 
 export async function controlledGeneratedPlanFixture(options: ControlledFixtureOptions = {}): Promise<ControlledGeneratedPlanFixture> {
   const fixtureSequence = ++controlledFixtureSequence;
-  const route = createPendingApprovalRoute('pending', `dec-plan-${createFixtureBugTask().taskId}-1`, options.transitionContexts ?? {});
+  const route = createPendingApprovalRoute('pending', `dec-plan-${createFixtureBugTask().taskId}-1`, options.transitionContexts ?? {}, options.reproductionCheckId);
   const statePort = route.statePort;
   const task = route.task;
   const graphState = createGraphTaskState(task, options.taskState ?? {});
