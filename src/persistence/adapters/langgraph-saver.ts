@@ -45,7 +45,7 @@ function decodeStorageData(value: unknown): unknown {
 }
 
 function sanitizeKey(key: string): string {
-  return encodeURIComponent(key).replace(/\./g, '%2E').replace(/[*]/g, '_');
+  return encodeURIComponent(key).replace(/\./g, '%2E').replace(/[*]/g, '%2A');
 }
 
 /**
@@ -55,17 +55,20 @@ function sanitizeKey(key: string): string {
  */
 export class DurableCheckpointSaver extends MemorySaver {
   private readonly storageDir: string;
+  private readonly storeInstance?: DurableStore;
   private restoredThreads = new Set<string>();
   private threadQueues = new Map<string, Promise<void>>();
 
   constructor(target?: DurableStore | string | DurableCheckpointSaverOptions) {
     super();
     if (target instanceof DurableStore) {
+      this.storeInstance = target;
       this.storageDir = join(target.baseDir, 'langgraph');
     } else if (typeof target === 'string') {
       this.storageDir = resolve(target);
     } else if (target && typeof target === 'object') {
       if (target.store) {
+        this.storeInstance = target.store;
         this.storageDir = join(target.store.baseDir, 'langgraph');
       } else if (target.baseDir) {
         this.storageDir = resolve(target.baseDir);
@@ -81,6 +84,10 @@ export class DurableCheckpointSaver extends MemorySaver {
     return this.storageDir;
   }
 
+  public getStore(): DurableStore | undefined {
+    return this.storeInstance;
+  }
+
   private getThreadFilePath(threadId: string): string {
     const filePath = resolve(this.storageDir, `${sanitizeKey(threadId)}.json`);
     if (!filePath.startsWith(resolve(this.storageDir))) {
@@ -91,54 +98,56 @@ export class DurableCheckpointSaver extends MemorySaver {
 
   private async persistThread(threadId: string): Promise<void> {
     const prev = this.threadQueues.get(threadId) ?? Promise.resolve();
-    const task = prev.then(async () => {
-      await mkdir(this.storageDir, { recursive: true });
-      const filePath = this.getThreadFilePath(threadId);
-      const tmpPath = `${filePath}.${randomUUID()}.tmp`;
+    const task = prev
+      .catch(() => undefined)
+      .then(async () => {
+        await mkdir(this.storageDir, { recursive: true, mode: 0o700 });
+        const filePath = this.getThreadFilePath(threadId);
+        const tmpPath = `${filePath}.${randomUUID()}.tmp`;
 
-      // Extract writes belonging to this threadId
-      const threadWrites: Record<string, unknown> = {};
-      for (const [k, v] of Object.entries(this.writes)) {
-        if (k.startsWith(`${threadId}$$$`)) {
-          threadWrites[k] = v;
-        }
-      }
-
-      const payload = {
-        threadId,
-        storage: this.storage[threadId] ?? {},
-        writes: threadWrites,
-        updatedAt: new Date().toISOString(),
-      };
-
-      const encoded = JSON.stringify(encodeStorageData(payload), null, 2);
-      try {
-        await writeFile(tmpPath, encoded, 'utf8');
-
-        let renamed = false;
-        for (let attempt = 0; attempt < 15; attempt++) {
-          try {
-            await rename(tmpPath, filePath);
-            renamed = true;
-            break;
-          } catch (err: unknown) {
-            if ((err as NodeJS.ErrnoException).code === 'EPERM' || (err as NodeJS.ErrnoException).code === 'EBUSY') {
-              await new Promise(r => setTimeout(r, 10));
-              continue;
-            }
-            throw err;
+        // Extract writes belonging to this threadId (supports both MemorySaver JSON key and custom separator)
+        const threadWrites: Record<string, unknown> = {};
+        const memorySaverPrefix = `[${JSON.stringify(threadId)},`;
+        for (const [k, v] of Object.entries(this.writes)) {
+          if (k.startsWith(`${threadId}$$$`) || k.startsWith(memorySaverPrefix)) {
+            threadWrites[k] = v;
           }
         }
-        if (!renamed) {
-          await unlink(filePath).catch(() => undefined);
-          await rename(tmpPath, filePath);
+
+        const payload = {
+          threadId,
+          storage: this.storage[threadId] ?? {},
+          writes: threadWrites,
+          updatedAt: new Date().toISOString(),
+        };
+
+        const encoded = JSON.stringify(encodeStorageData(payload), null, 2);
+        try {
+          await writeFile(tmpPath, encoded, { encoding: 'utf8', mode: 0o600 });
+
+          let renamed = false;
+          for (let attempt = 0; attempt < 15; attempt++) {
+            try {
+              await rename(tmpPath, filePath);
+              renamed = true;
+              break;
+            } catch (err: unknown) {
+              if ((err as NodeJS.ErrnoException).code === 'EPERM' || (err as NodeJS.ErrnoException).code === 'EBUSY') {
+                await new Promise(r => setTimeout(r, 10));
+                continue;
+              }
+              throw err;
+            }
+          }
+          if (!renamed) {
+            throw new Error(`Failed to atomically replace checkpoint file for thread ${threadId} after 15 attempts.`);
+          }
+        } finally {
+          await unlink(tmpPath).catch((err: unknown) => {
+            if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+          });
         }
-      } finally {
-        await unlink(tmpPath).catch((err: unknown) => {
-          if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
-        });
-      }
-    });
+      });
 
     this.threadQueues.set(threadId, task);
     await task;

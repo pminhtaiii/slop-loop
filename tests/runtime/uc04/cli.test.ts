@@ -135,6 +135,31 @@ test('UC-04: Operator Task Control CLI', async t => {
     assert.equal(updatedPause?.active, false);
   });
 
+  await t.test('resume command preserves deliberate pause when workspace drift is detected', async () => {
+    const taskId = 'task-resume-drift-1';
+    const mockTask = makeMockTask(taskId, 'running');
+    await store.saveTaskState(mockTask);
+    await store.saveCheckpoint(mockTask);
+
+    // Pause first
+    await runCli(['pause', taskId], store);
+    assert.equal((await store.loadPauseRecord(taskId))?.active, true);
+
+    // Resume with mismatched git inspector simulating drift
+    const resResume = await runCli(['resume', taskId], store, {
+      gitInspector: async () => ({
+        ...mockTask.workspaceBaseline,
+        commitHash: '0000000000000000000000000000000000000000',
+      }),
+    });
+    assert.equal(resResume.exitCode, 1);
+    assert.ok(resResume.output.includes('Drift detected'));
+
+    // Guarded transition: deliberate pause must remain active!
+    const pauseAfterDrift = await store.loadPauseRecord(taskId);
+    assert.equal(pauseAfterDrift?.active, true);
+  });
+
   await t.test('compact command outputs 6-field markdown summary', async () => {
     const taskId = 'task-compact-1';
     await store.saveTaskState(makeMockTask(taskId));

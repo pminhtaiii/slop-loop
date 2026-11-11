@@ -149,4 +149,34 @@ test('UC-04: DurableCheckpointSaver for LangGraph', async t => {
     const freshTuple = await freshSaver.getTuple({ configurable: { thread_id: 'thread-list-1' } });
     assert.equal(freshTuple, undefined, 'Deleted thread must remain deleted in fresh instance');
   });
+
+  await t.test('putWrites preserves MemorySaver JSON-formatted pending writes across instances', async () => {
+    const saver1 = new DurableCheckpointSaver(store);
+    const threadId = 'thread-writes-json-1';
+    const config = { configurable: { thread_id: threadId, checkpoint_ns: '', checkpoint_id: 'cp-01' } };
+
+    // Initialize checkpoint
+    await saver1.put(
+      config,
+      {
+        v: 1,
+        id: 'cp-01',
+        ts: new Date().toISOString(),
+        channel_values: { count: 1 },
+        channel_versions: { count: 1 },
+        versions_seen: {},
+      },
+      { source: 'input', step: 1, parents: {} },
+    );
+
+    // Call putWrites
+    await saver1.putWrites(config, [['count', 2]], 'task-write-01');
+
+    // Create fresh instance from disk
+    const saver2 = new DurableCheckpointSaver(store);
+    const tuple = await saver2.getTuple(config);
+    assert.ok(tuple, 'Checkpoint tuple must be restored');
+    assert.ok(tuple.pendingWrites, 'Pending writes must be restored');
+    assert.ok(tuple.pendingWrites.length > 0, 'Pending writes array must not be empty');
+  });
 });

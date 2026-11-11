@@ -164,4 +164,23 @@ test('UC-04: Concurrent Accounting & Concurrency Safety (SPEC-C-006)', async t =
     assert.equal(expectedKeys.size, 0, 'No reservation should be lost or missing');
     assert.equal(finalLedger.version, 6, 'Version must be incremented 5 times (1 -> 6)');
   });
+
+  await t.test('withLockRetry recovers from stale lock file abandoned by crashed process', async () => {
+    const resourceId = 'abandoned-resource';
+    const lockDir = join(tempBase, 'locks');
+    const lockPath = join(lockDir, `${resourceId}.lock`);
+    const { mkdir: fsMkdir, writeFile: fsWriteFile, utimes: fsUtimes } = await import('node:fs/promises');
+
+    await fsMkdir(lockDir, { recursive: true });
+    await fsWriteFile(lockPath, 'stale-pid-1234', 'utf8');
+
+    // Set modification time to 40 seconds ago (older than 30s stale threshold)
+    const pastTime = (Date.now() - 40_000) / 1000;
+    await fsUtimes(lockPath, pastTime, pastTime);
+
+    // withLockRetry should notice the stale lock, unlink it, and succeed
+    const res = await store.withLockRetry(resourceId, async () => 'recovered', { staleThresholdMs: 30_000, maxRetries: 10, retryDelayMs: 20 });
+
+    assert.equal(res, 'recovered');
+  });
 });

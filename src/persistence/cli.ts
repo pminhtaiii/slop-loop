@@ -81,11 +81,12 @@ export async function runCli(args: string[], storeInstance?: DurableStore, optio
           operatorRef: 'operator-cli',
         });
 
-        // Update task state status to paused
+        // Update fresh task state status to paused preserving any intermediate step progress
+        const freshState = (await store.loadTaskState(taskId)) ?? state;
         await store.saveTaskState({
-          ...state,
+          ...freshState,
           status: 'paused',
-          stateVersion: state.stateVersion + 1,
+          stateVersion: freshState.stateVersion + 1,
         });
 
         return {
@@ -99,6 +100,7 @@ export async function runCli(args: string[], storeInstance?: DurableStore, optio
         if (!taskId) {
           return { exitCode: 1, output: 'Error: Missing <taskId> parameter for resume command.' };
         }
+        let unpaused = false;
         try {
           const pauseRecord = await store.loadPauseRecord(taskId);
           if (pauseRecord?.active) {
@@ -108,6 +110,7 @@ export async function runCli(args: string[], storeInstance?: DurableStore, optio
               resumeKey: `resume-${randomUUID()}`,
               operatorRef: 'operator-cli',
             });
+            unpaused = true;
           }
           const resumed = await reconcileAndResume(taskId, store, {
             repoRoot: options?.repoRoot ?? '.',
@@ -118,6 +121,16 @@ export async function runCli(args: string[], storeInstance?: DurableStore, optio
             output: `Task '${taskId}' successfully resumed to state '${resumed.status}'. Steps: ${resumed.plan.length}`,
           };
         } catch (err: unknown) {
+          if (unpaused) {
+            // Guarded transition: leave task deliberately paused if reconciliation fails
+            const currentPause = await store.loadPauseRecord(taskId);
+            await pauseTask(store, {
+              taskId,
+              expectedRevision: currentPause?.revision ?? 1,
+              pauseKey: `revert-pause-${randomUUID()}`,
+              operatorRef: 'operator-cli-revert',
+            }).catch(() => undefined);
+          }
           if (err instanceof WorkspaceDriftError) {
             return {
               exitCode: 1,

@@ -126,13 +126,24 @@ export class DurableStore {
     }
   }
 
-  async withLockRetry<T>(resourceId: string, operation: () => Promise<T>, options?: { retries?: number; delayMs?: number; maxRetries?: number; retryDelayMs?: number }): Promise<T> {
+  async withLockRetry<T>(
+    resourceId: string,
+    operation: () => Promise<T>,
+    options?: {
+      retries?: number;
+      delayMs?: number;
+      maxRetries?: number;
+      retryDelayMs?: number;
+      staleThresholdMs?: number;
+    },
+  ): Promise<T> {
     requireSafeId(resourceId, 'lock resource id');
     await mkdir(this.lockDir, { recursive: true });
     const lockPath = join(this.lockDir, `${resourceId}.lock`);
     await this.requireContainedParent(lockPath);
     const retries = options?.retries ?? options?.maxRetries ?? 50;
     const delayMs = options?.delayMs ?? options?.retryDelayMs ?? 20;
+    const staleThresholdMs = options?.staleThresholdMs ?? 30_000;
 
     let handle: FileHandle | null = null;
     for (let attempt = 0; attempt <= retries; attempt++) {
@@ -142,6 +153,11 @@ export class DurableStore {
       } catch (err: unknown) {
         const code = (err as NodeJS.ErrnoException).code;
         if (code === 'EEXIST' || code === 'EPERM' || code === 'EBUSY' || code === 'EACCES') {
+          // Recover from stale/abandoned lock left by an abruptly terminated process
+          const lockStat = await lstat(lockPath).catch(() => null);
+          if (lockStat && Date.now() - lockStat.mtimeMs > staleThresholdMs) {
+            await unlink(lockPath).catch(() => undefined);
+          }
           if (attempt === retries) {
             throw new Error(`Resource ${resourceId} is busy / already locked after ${retries} attempts.`);
           }

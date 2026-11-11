@@ -86,7 +86,8 @@ async function runScenario(scenarioId, type, tempBase) {
       unresolvedReservationAction: 'charge_as_consumed',
     };
     const resumed = await reconcileAndResume(taskId, freshStore, reconcileOpts);
-    const success = resumed.status === 'running';
+    const progressPreserved = resumed.currentStepIndex === updatedTask.currentStepIndex && resumed.plan[1]?.status === 'done';
+    const success = resumed.status === 'running' && progressPreserved;
     return {
       scenarioId,
       type,
@@ -201,13 +202,15 @@ async function runScenario(scenarioId, type, tempBase) {
 
     const settled = await freshStore.loadBudgetJournal(taskId);
     const afterConsumed = settled?.ledgers[0]?.consumed ?? 0;
-    const success = afterConsumed === beforeConsumed + 800 && settled?.ledgers[0]?.reservations.length === 0;
+    const expectedConsumed = beforeConsumed + 800;
+    const budgetLoss = Math.abs(expectedConsumed - afterConsumed);
+    const success = afterConsumed === expectedConsumed && settled?.ledgers[0]?.reservations.length === 0;
 
     return {
       scenarioId,
       type,
       success,
-      budgetLoss: 0,
+      budgetLoss,
       details: 'Zero budget leakage; pending reservation converted to consumed via CAS lock',
     };
   }
@@ -217,29 +220,48 @@ async function runScenario(scenarioId, type, tempBase) {
 
 function measureCompactionSavings() {
   const sampleTask = createMockTask('sample-task-compaction', 8);
-  // Add extra verbose history to simulate real multi-turn conversation tokens
-  const fullContextString = JSON.stringify({
-    task: sampleTask,
-    history: Array.from({ length: 15 }, (_, i) => ({
-      role: i % 2 === 0 ? 'assistant' : 'user',
-      content: `Extensive multi-line reasoning traces, AST transformations, compiler errors, and raw test logs for turn ${i + 1}. `.repeat(12),
+  const enrichedTask = {
+    ...sampleTask,
+    goal: 'Implement distributed checkpointer with high-throughput recovery and fail-safe multi-step orchestration across cloud nodes',
+    acceptanceCriteria: [
+      'Reserves and settles tokens atomically without duplicate charges or lost allowances',
+      'Provides crash-safe process resumption across arbitrary process terminations',
+      'Emits deterministic 6-field compact summaries to shrink LLM prompt context window',
+      'Enforces maximum replan limits and operator deliberate pause constraints',
+    ],
+    constraints: [
+      'Single-writer mutex locks on disk with exponential backoff retry',
+      'No in-memory state leakage across process lifecycles',
+      'Windows-resilient atomic file renames handling EPERM and EBUSY',
+    ],
+    openRisks: ['Lock file abandonment on ungraceful process kill (handled via stale threshold cleanup)', 'Subprocess drift between disk working directory and git baseline'],
+    plan: Array.from({ length: 8 }, (_, i) => ({
+      id: `step-${i + 1}`,
+      title: `Orchestration Pipeline Node ${i + 1}: Checkpointing and Concurrency Safe Storage`,
+      description:
+        `Executes sub-task node ${i + 1} with full validation, receipt recording, state hashing, and evidence tracking. Detailed step context containing inputs, schemas, and AST metadata.`.repeat(3),
+      status: i < 5 ? 'done' : i === 5 ? 'in_progress' : 'todo',
+      requiredEvidenceRefs: [`ev-${i + 1}-a`, `ev-${i + 1}-b`],
+      evidenceRefs: i < 5 ? [`ev-${i + 1}-a`, `ev-${i + 1}-b`] : [],
+      predecessorIds: i > 0 ? [`step-${i}`] : [],
     })),
-  });
+  };
 
-  const compact = compactContext(sampleTask);
+  const rawTaskString = JSON.stringify(enrichedTask, null, 2);
+  const compact = compactContext(enrichedTask);
   const compactMarkdown = formatCompactSummaryMarkdown(compact);
 
   // Approximate token count (roughly 4 chars per token)
-  const fullTokens = Math.ceil(fullContextString.length / 4);
+  const fullTokens = Math.ceil(rawTaskString.length / 4);
   const compactTokens = Math.ceil(compactMarkdown.length / 4);
-  const tokensSaved = fullTokens - compactTokens;
+  const tokensSaved = Math.max(0, fullTokens - compactTokens);
   const reductionPercentage = ((tokensSaved / fullTokens) * 100).toFixed(2);
 
   return {
     fullTokens,
     compactTokens,
     tokensSaved,
-    reductionPercentage: Number(reductionPercentage),
+    reductionPercentage,
   };
 }
 
