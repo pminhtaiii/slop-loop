@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { lstat, mkdir, open, readFile, readdir, realpath, rename, unlink } from 'node:fs/promises';
+import type { FileHandle } from 'node:fs/promises';
 import { dirname, join, resolve, sep } from 'node:path';
 import type { TaskState, CheckpointRecord, DeliberatePauseRecord, BudgetJournalRecord, DispatchClaimRecord } from './contracts.ts';
 import { validateTaskState, validateCheckpointRecord, validateDeliberatePauseRecord, validateBudgetJournalRecord, validateDispatchClaimRecord } from './contracts.ts';
@@ -50,7 +51,7 @@ export class DurableStore {
   readonly journalDir: string;
   readonly claimDir: string;
 
-  constructor(baseDir: string) {
+  constructor(baseDir = './.slop-loop/store') {
     this.baseDir = resolve(baseDir);
     this.stateDir = join(this.baseDir, 'tasks');
     this.checkpointDir = join(this.baseDir, 'checkpoints');
@@ -125,6 +126,55 @@ export class DurableStore {
     }
   }
 
+  async withLockRetry<T>(
+    resourceId: string,
+    operation: () => Promise<T>,
+    options?: { retries?: number; delayMs?: number; maxRetries?: number; retryDelayMs?: number },
+  ): Promise<T> {
+    requireSafeId(resourceId, 'lock resource id');
+    await mkdir(this.lockDir, { recursive: true });
+    const lockPath = join(this.lockDir, `${resourceId}.lock`);
+    await this.requireContainedParent(lockPath);
+    const retries = options?.retries ?? options?.maxRetries ?? 50;
+    const delayMs = options?.delayMs ?? options?.retryDelayMs ?? 20;
+
+    let handle: FileHandle | null = null;
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        handle = await open(lockPath, 'wx');
+        break;
+      } catch (err: unknown) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code === 'EEXIST' || code === 'EPERM' || code === 'EBUSY' || code === 'EACCES') {
+          if (attempt === retries) {
+            throw new Error(`Resource ${resourceId} is busy / already locked after ${retries} attempts.`);
+          }
+          await new Promise((res) => setTimeout(res, delayMs));
+          continue;
+        }
+        throw err;
+      }
+    }
+
+    if (!handle) {
+      throw new Error(`Resource ${resourceId} is busy / already locked.`);
+    }
+
+    let fileStat: { ino?: number; dev?: number } | null = null;
+    try {
+      fileStat = await handle.stat();
+      return await operation();
+    } finally {
+      await handle.close();
+      if (fileStat) {
+        const current = await lstat(lockPath).catch(() => null);
+        if (current && current.ino === fileStat.ino && current.dev === fileStat.dev) {
+          await unlink(lockPath).catch(() => undefined);
+        }
+      }
+    }
+  }
+
   getTaskPath(taskId: string): string {
     return join(this.stateDir, `${requireSafeId(taskId, 'task id')}.json`);
   }
@@ -167,6 +217,14 @@ export class DurableStore {
     if (!val.ok) throw new Error(`Corrupted TaskState: ${val.errors.map(e => e.message).join(', ')}`);
     if (val.value.taskId !== taskId) throw new Error(`Task record mismatch: expected ${taskId}, found ${val.value.taskId}`);
     return val.value;
+  }
+
+  async saveTaskState(task: TaskState): Promise<void> {
+    return this.saveTask(task);
+  }
+
+  async loadTaskState(taskId: string): Promise<TaskState | null> {
+    return this.loadTask(taskId);
   }
 
   async saveCheckpoint(task: TaskState): Promise<CheckpointRecord> {
@@ -301,6 +359,27 @@ export class DurableStore {
     if (!val.ok) throw new Error(`Corrupted BudgetJournalRecord: ${val.errors.map(e => e.message).join(', ')}`);
     if (val.value.taskId !== taskId) throw new Error(`Budget journal mismatch: expected ${taskId}, found ${val.value.taskId}`);
     return val.value;
+  }
+
+  async mutateBudgetJournal(
+    taskId: string,
+    mutator: (current: BudgetJournalRecord | null) => Promise<BudgetJournalRecord> | BudgetJournalRecord,
+    options?: { retries?: number; delayMs?: number; maxRetries?: number; retryDelayMs?: number },
+  ): Promise<BudgetJournalRecord> {
+    requireSafeId(taskId, 'task id');
+    return this.withLockRetry(
+      `journal-${taskId}`,
+      async () => {
+        const current = await this.loadBudgetJournal(taskId);
+        const updated = await mutator(current);
+        if (updated.taskId !== taskId) {
+          throw new Error(`mutateBudgetJournal: mutator returned mismatched taskId: expected ${taskId}, got ${updated.taskId}`);
+        }
+        await this.saveBudgetJournal(updated);
+        return updated;
+      },
+      options,
+    );
   }
 
   async saveDispatchClaim(record: DispatchClaimRecord): Promise<void> {

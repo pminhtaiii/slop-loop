@@ -1,4 +1,4 @@
-﻿# Feature Specification: UC-04 — Multi-step Feature with Resume
+# Feature Specification: UC-04 — Multi-step Feature with Resume
 
 **Feature Branch**: `feat/037-uc04-recovery-spec`
 
@@ -74,6 +74,35 @@ As a developer, I want useful compact reasoning and inspectable state without lo
 3. **Given** requested status inspection, **When** displayed, **Then** show goal, completed steps, hold/outstanding operation and next safe action with bounded safe evidence. Notify unsafe recovery; successful restoration needs no extra narration.
 4. **Given** completed local work, **When** inspected, **Then** state/history remain available. Explicit deletion requires the future agreed policy; unresolved approvals/effects/accounting cannot be purged merely because visible work looks complete.
 
+### User Story 5 - LangGraph durable checkpoint saver (Priority: P1)
+
+As a workflow orchestrator, I want LangGraph workflows to checkpoint and restore state through `DurableStore` using the official `BaseCheckpointSaver` interface.
+
+**Why this priority**: Enables seamless plug-and-play integration of UC-04 durable persistence with LangGraph workflows in UC-03 and other graph-based agents.
+
+**Independent Test**: Compile a LangGraph `StateGraph` with `DurableCheckpointSaver`, execute a step, interrupt, reload the graph in a fresh instance, and resume execution to completion.
+
+**Acceptance Scenarios**:
+
+1. **Given** a LangGraph runnable config with thread identity, **When** `put` is called, **Then** serialize and persist the checkpoint and metadata durably through `DurableStore`.
+2. **Given** an interrupted thread ID, **When** `getTuple` is called, **Then** load, deserialize, and restore the exact checkpoint tuple including pending channel writes.
+3. **Given** a thread with multiple history points, **When** `list` is invoked, **Then** yield checkpoint tuples in reverse chronological order.
+
+### User Story 6 - Operator task control CLI (Priority: P2)
+
+As an operator, I want a terminal CLI to inspect task status, trigger deliberate pauses, resume from checkpoints with drift safety, and display compact summaries.
+
+**Why this priority**: Provides interactive operational visibility and control from the terminal during development and project demonstrations.
+
+**Independent Test**: Invoke CLI commands for `status`, `pause`, `resume`, and `compact` against durable tasks and verify truthful exit codes and formatted outputs.
+
+**Acceptance Scenarios**:
+
+1. **Given** a task ID, **When** `task status <taskId>` is run, **Then** format and output the 6 core inspection fields.
+2. **Given** a running task, **When** `task pause <taskId> [reason]` is run, **Then** create a durable deliberate pause record and report status.
+3. **Given** a paused task, **When** `task resume <taskId>` is run, **Then** verify workspace baseline against drift and resume to runnable state.
+4. **Given** an existing task, **When** `task compact <taskId>` is run, **Then** print formatted compact markdown without mutating task state.
+
 ### Edge Cases
 
 - Lost commit response is not proof of rollback: reload stable request identity before mutation/retry. Stale concurrent writers conflict; duplicate delivery creates no extra completion/charge/effect.
@@ -102,6 +131,9 @@ As a developer, I want useful compact reasoning and inspectable state without lo
 - **FR-013**: Provide safe requested status, recovery blockers and actual verification outcome; retain inspectable history, gating deletion and protecting unresolved records.
 - **FR-014**: Keep structured runtime state outside human context and repository-code authority. Validate restored input; traces/reports use sanitized bounded metadata/references, never protected data, raw prompts or streams.
 - **FR-015**: Require contract/behavior/concurrency/compaction and actual kill/restore foundation evidence; separately require real approval/executor/feature integration evidence. Account every case with pass/fail/error/not-run and evidence level.
+- **FR-016**: Provide `DurableCheckpointSaver` implementing official `BaseCheckpointSaver` from `@langchain/langgraph` to serialize, persist, list, and restore checkpoints through `DurableStore`.
+- **FR-017**: Provide operator CLI interface with commands `status`, `pause`, `resume`, `compact` for direct terminal operations.
+- **FR-018**: Resolve SPEC-C-006 by ensuring budget journal mutations acquire durable file locks (`withLockRetry`), preventing race conditions, lost updates, or reservation overwrites under concurrent adapters or multi-process execution.
 
 ### Key Entities *(include if feature involves data)*
 
@@ -112,6 +144,7 @@ As a developer, I want useful compact reasoning and inspectable state without lo
 - **Holds/continuation**: Independent deliberate pause, approval/rejection and recovery blockers.
 - **Repository assumptions/evidence**: State bindings for continuation and verification.
 - **Summary/status**: Advisory reasoning and safe inspection, distinct from authority.
+- **LangGraph Checkpoint**: Graph thread channel versions and pending writes serialized through BaseCheckpointSaver.
 
 ## Success Criteria *(mandatory)*
 
@@ -123,6 +156,9 @@ As a developer, I want useful compact reasoning and inspectable state without lo
 - **SC-004**: Every stale/missing/inconsistent/exhausted-state case blocks unsafe continuation and reports a safe next action, with zero unverified completion claims.
 - **SC-005**: Every admitted compact summary retains all six required fields; zero summaries mutate authority and zero protected markers/raw payloads appear in safe inspection.
 - **SC-006**: Every applicable matrix row maps to cases/evidence; mock-only or absent restart/integration results never promote durability or integrated capability.
+- **SC-007**: Concurrent budget journal mutations acquire retry-capable locks with zero lost updates under multi-adapter/multi-process concurrency (closes SPEC-C-006).
+- **SC-008**: LangGraph `StateGraph` compiles with `DurableCheckpointSaver`, persists node checkpoints, and successfully resumes from stored tuples.
+- **SC-009**: Operator task CLI executes `status`, `pause`, `resume`, and `compact` truthfully with valid exit codes.
 
 ## Assumptions
 

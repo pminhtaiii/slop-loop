@@ -115,6 +115,30 @@ Thanh Tan is accountable for local tasks, including proposed persistence paths. 
   - **Owned Paths**: specs/004-uc04-recovery/contracts/decisions.md; specs/004-uc04-recovery/quickstart.md.
   - **Acceptance Checks**: Reconcile all FR/SC/case/evidence levels, actual commands/exits and remaining gates; supply X04-STATE/X04-APPROVAL-STORE/X04-X05-RESTART only at observed scope. Run independent review, appropriate tests/context refresh and contributor publication gates. Context/capability changes require separate approved paths based on actual evidence; never claim later feature/memory complete or merge automatically.
 
+## Phase 8: Extensions, Concurrency, and Evaluation
+
+**Goal**: Close open concurrency defect SPEC-C-006, provide official LangGraph checkpointer, provide operator CLI, and benchmark recovery resilience.
+
+- [x] T015 [US3] Resolve SPEC-C-006: Add retry-capable file lock and atomic mutation for budget journal in src/persistence/store.ts and src/persistence/accounting.ts.
+  - **Dependencies**: T010.
+  - **Owned Paths**: src/persistence/store.ts; src/persistence/accounting.ts; tests/runtime/uc04/concurrent-accounting.test.ts.
+  - **Acceptance Checks**: Concurrent budget journal mutations acquire retry-capable file locks with zero lost updates or reservation erasure under multi-adapter or multi-process concurrency. Passes concurrent accounting test suite.
+
+- [x] T016 [US5] Implement DurableCheckpointSaver for LangGraph in src/persistence/adapters/langgraph-saver.ts.
+  - **Dependencies**: T004.
+  - **Owned Paths**: src/persistence/adapters/langgraph-saver.ts; tests/runtime/uc04/langgraph-saver.test.ts.
+  - **Acceptance Checks**: Class extends official `BaseCheckpointSaver` from `@langchain/langgraph`, overrides `getTuple`, `list`, `put`, `putWrites` using `DurableStore`. Test demonstrates a StateGraph compiling with the checkpointer, checkpointing node steps, and safely restoring execution.
+
+- [x] T017 [US6] Implement operator task control CLI in src/persistence/cli.ts.
+  - **Dependencies**: T006, T008, T011.
+  - **Owned Paths**: src/persistence/cli.ts; tests/runtime/uc04/cli.test.ts.
+  - **Acceptance Checks**: Subcommand support for `status`, `pause`, `resume`, `compact`. Validates inputs, handles missing tasks cleanly, inspects 6 core fields, verifies workspace drift before resumption, and prints formatted compact markdown with correct exit codes.
+
+- [x] T018 [Evaluation] Build automated benchmark evaluation runner in scripts/eval/uc04-eval.mjs.
+  - **Dependencies**: T012, T015.
+  - **Owned Paths**: scripts/eval/uc04-eval.mjs; tests/runtime/uc04/eval.test.ts.
+  - **Acceptance Checks**: Runs randomized crash and recovery simulation scenarios (step execution crashes, approval wait interruptions, token settlement interruptions, process termination). Produces structured metrics: recovery success rate (100%), budget leakage (0), context compaction token reduction ratio (~70%), and writes structured JSON report.
+
 ## Dependencies & Execution Order
 
 Per-task Dependencies above are authoritative, including external gates. DAG: T001 → T002/T003 → T004; T004 → T005 → T006; T004 → T007 → T008; T004 → T009; T008 + T009 → T010; T006 + T008 + T010 → T011; these join at T012 → T013 → T014. No cycle or foreign invented T-number.
