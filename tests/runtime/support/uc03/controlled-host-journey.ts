@@ -75,19 +75,26 @@ export interface ControlledGeneratedPlanFixture {
   readonly baselineEvidence: () => { readonly content: BaselineEvidenceCandidate; readonly acknowledgement: BaselineEvidenceAcknowledgement } | undefined;
 }
 
+export interface ControlledReviewVerdict {
+  readonly status: 'accepted' | 'findings';
+  readonly findings: readonly ReviewFinding[];
+}
+
 export interface ControlledFixtureOptions {
   readonly taskState?: Partial<TaskState> | undefined;
   /** Replaces the first scripted coder response, e.g. with a `request-info` proposal. */
   readonly firstResponse?: { readonly proposalId: string; readonly content: string } | undefined;
-  /** Reviewer verdict returned by the controlled reviewer transport. */
-  readonly reviewVerdict?: { readonly status: 'accepted' | 'findings'; readonly findings: readonly ReviewFinding[] } | undefined;
+  /** Reviewer verdicts returned in order by the controlled reviewer transport; the last repeats. */
+  readonly reviewVerdict?: ControlledReviewVerdict | readonly ControlledReviewVerdict[] | undefined;
   /** Extra owner trusted transition contexts, keyed by target state version. */
   readonly transitionContexts?: Readonly<Record<number, NonNullable<StateTransitionOptions['trusted']>>> | undefined;
+  /** Replaces the reproduction check's id, e.g. to exercise a long-but-valid durable id. */
+  readonly reproductionCheckId?: string | undefined;
 }
 
 export async function controlledGeneratedPlanFixture(options: ControlledFixtureOptions = {}): Promise<ControlledGeneratedPlanFixture> {
   const fixtureSequence = ++controlledFixtureSequence;
-  const route = createPendingApprovalRoute('pending', `dec-plan-${createFixtureBugTask().taskId}-1`, options.transitionContexts ?? {});
+  const route = createPendingApprovalRoute('pending', `dec-plan-${createFixtureBugTask().taskId}-1`, options.transitionContexts ?? {}, options.reproductionCheckId);
   const statePort = route.statePort;
   const task = route.task;
   const graphState = createGraphTaskState(task, options.taskState ?? {});
@@ -202,11 +209,18 @@ export async function controlledGeneratedPlanFixture(options: ControlledFixtureO
     },
   };
   const model = new HostModelPortV02({ transport, statePort, executorIdentity: actor, currentExecutorIdentity: () => actor });
+  const reviewVerdicts = Array.isArray(options.reviewVerdict) ? [...options.reviewVerdict] : [options.reviewVerdict ?? { status: 'accepted', findings: [] }];
+  // Keep the last verdict so a repeated review round replays it instead of running dry.
+  let reviewCursor = 0;
+  const nextReviewVerdict = (): ControlledReviewVerdict => reviewVerdicts[Math.min(reviewCursor++, reviewVerdicts.length - 1)] ?? { status: 'accepted', findings: [] };
   const reviewerActor = createFixtureExecutorIdentityV02({ processIncarnation: `controlled-reviewer-${fixtureSequence}` });
   const reviewerModel = Object.assign(
     new HostModelPortV02({
       transport: {
-        execute: async () => ({ proposal: { proposalId: 'controlled-review-1', content: JSON.stringify(options.reviewVerdict ?? { status: 'accepted', findings: [] }) }, observedUsage: USAGE }),
+        execute: async () => ({
+          proposal: { proposalId: 'controlled-review-1', content: JSON.stringify(nextReviewVerdict()) },
+          observedUsage: USAGE,
+        }),
       },
       statePort,
       executorIdentity: reviewerActor,

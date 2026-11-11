@@ -24,10 +24,11 @@ import {
   type UC03ProductionComponentV02,
 } from '../../../src/uc03/graph-types-v02.ts';
 import { sha256Text } from '../../../src/uc01/contracts.ts';
+import { isSafeStorageId } from '../../../src/persistence/store.ts';
 import { askClarification, recordClarificationAnswer } from '../../../src/uc03/clarification.ts';
 import { createFixtureBugTask, createFixtureTaskState } from '../support/uc03/port-fixtures.ts';
 import { controlledHostFixture } from '../support/uc03/host-pipeline-fixtures.ts';
-import { assertControlledPlanApprovalPatchBarrier, controlledCompletionContext, controlledGeneratedPlanFixture } from '../support/uc03/controlled-host-journey.ts';
+import { assertControlledPlanApprovalPatchBarrier, controlledCompletionContext, controlledGeneratedPlanFixture, type ControlledReviewVerdict } from '../support/uc03/controlled-host-journey.ts';
 
 const CONTRACT = 'uc03-owner-delivery/1';
 const REV = 'a'.repeat(40);
@@ -153,24 +154,16 @@ async function approveD0AndD1(fixture: Awaited<ReturnType<typeof controlledGener
   const readiness = prepareControlledUC03Host(fixture.host.inputs);
   assert.equal(readiness.status, 'controlled-ready');
   if (readiness.status !== 'controlled-ready') throw new Error('Controlled host was not ready');
-  const bumpAuthority = async () => {
-    const snapshot = await fixture.statePort.readVerificationAuthoritySnapshot(fixture.task.taskId);
-    assert.ok(snapshot, 'owner published no authority');
-    const next = { ...snapshot.policyIdentity, decisionAuthorityGeneration: snapshot.decisionAuthorityGeneration + 1 };
-    assert.equal((await fixture.statePort.publishAuthority({ authorityRef: next })).status, 'published');
-    fixture.route.approvalPort.setV02AuthorityRef(next);
-    return next.decisionAuthorityGeneration;
-  };
   await runControlledUC03GraphV02(fixture.task, readiness.ports, readiness.config);
   const d0 = fixture.route.approvalPort.getRecordedBindings().find(binding => binding.decisionId.startsWith('dec-plan-'));
   assert.ok(d0, 'owner did not issue D0');
-  await bumpAuthority();
+  await bumpAuthority(fixture);
   fixture.route.approvalPort.scriptDecision({ ...d0, status: 'approved' });
   const patched = await runControlledUC03GraphV02(fixture.task, readiness.ports, readiness.config);
   assert.equal(patched.outcome, 'pending-approval', JSON.stringify({ reasons: patched.reasons, modelCalls: fixture.modelCalls }));
   const d1 = fixture.route.approvalPort.getRecordedBindings().find(binding => binding.decisionId.startsWith('dec-verify-'));
   assert.ok(d1, 'owner did not issue D1');
-  await bumpAuthority();
+  await bumpAuthority(fixture);
   fixture.route.approvalPort.scriptDecision({ ...d1, status: 'approved' });
   // The route scripts the pre-patch reproduction as failing; after the patch the same command passes.
   fixture.route.repositoryPort.setCommandResult('pytest -q tests/test_calculator.py -k test_divide_zero', { exitCode: 0, stdout: '1 passed', stderr: '' });
@@ -209,8 +202,9 @@ test('verification approval, review, and the owner completion record deliver the
   if (reviewedReadiness.status !== 'controlled-ready') return;
   const reviewed = await runControlledUC03GraphV02(fixture.task, reviewedReadiness.ports, reviewedReadiness.config);
   assert.equal(reviewed.state?.latestReviewRef, probeResult.state?.latestReviewRef);
-  const reviewStateVersion = (reviewed.state?.stateVersion ?? 0) - 1;
-  const deliveryStateVersion = reviewed.state?.stateVersion ?? 0;
+  assert.ok(reviewed.state, 'the review probe halted without a state');
+  const reviewStateVersion = reviewed.state.stateVersion - 1;
+  const deliveryStateVersion = reviewed.state.stateVersion;
   const completionContext = reviewed.state && (await controlledCompletionContext(fixture, { ...reviewed.state, stateVersion: reviewStateVersion }));
   const completed = await controlledGeneratedPlanFixture({
     transitionContexts: { [deliveryStateVersion]: completionContext },
@@ -233,29 +227,112 @@ test('verification approval, review, and the owner completion record deliver the
   assert.equal(completed.statePort.getLedgers().find(ledger => ledger.scope === 'task' && ledger.kind === 'iteration')?.consumed, 1);
 });
 
-test('a reviewer finding sends the controlled route back to Repair for a second patch', async () => {
-  const fixture = await controlledGeneratedPlanFixture({
-    reviewVerdict: {
-      status: 'findings',
-      findings: [{ file: 'src/calculator.py', line: 2, side: 'new', severity: 'error', message: 'Guard message is not actionable for the operator' }],
-    },
-  });
+type ControlledFixture = Awaited<ReturnType<typeof controlledGeneratedPlanFixture>>;
+
+/** The first review reports a finding; the second review of the repair patch accepts it. */
+const REPAIR_VERDICTS: readonly ControlledReviewVerdict[] = [
+  {
+    status: 'findings',
+    findings: [{ file: 'src/calculator.py', line: 2, side: 'new', severity: 'error', message: 'Guard message is not actionable for the operator' }],
+  },
+  { status: 'accepted', findings: [] },
+];
+
+async function bumpAuthority(fixture: ControlledFixture) {
+  const snapshot = await fixture.statePort.readVerificationAuthoritySnapshot(fixture.task.taskId);
+  assert.ok(snapshot, 'owner published no authority');
+  const next = { ...snapshot.policyIdentity, decisionAuthorityGeneration: snapshot.decisionAuthorityGeneration + 1 };
+  assert.equal((await fixture.statePort.publishAuthority({ authorityRef: next })).status, 'published');
+  fixture.route.approvalPort.setV02AuthorityRef(next);
+}
+
+/** Drive the rejecting run through D0/D1, its finding, and the repair patch's own fresh verification approval. */
+async function driveRepairRound(fixture: ControlledFixture) {
   await approveD0AndD1(fixture);
   // Repair admits only through the owner classifier, which leaves an unscripted action pending.
   fixture.route.approvalPort.scriptClassification('apply_patch', 'ALLOWED');
   const readiness = prepareControlledUC03Host(fixture.host.inputs);
   assert.equal(readiness.status, 'controlled-ready');
-  if (readiness.status !== 'controlled-ready') return;
-  const result = await runControlledUC03GraphV02(fixture.task, readiness.ports, readiness.config);
+  if (readiness.status !== 'controlled-ready') throw new Error('Controlled host was not ready');
+  const first = await runControlledUC03GraphV02(fixture.task, readiness.ports, readiness.config);
+  // The repair patch is a second owner-settled apply_patch, so it earns its own fresh post-patch
+  // verification approval rather than reusing the first patch's.
+  assert.equal(first.outcome, 'pending-approval', JSON.stringify({ reasons: first.reasons, node: first.state?.node, modelCalls: fixture.modelCalls }));
+  const repairDecision = fixture.route.approvalPort
+    .getRecordedBindings()
+    .filter(binding => binding.decisionId.startsWith('dec-verify-'))
+    .at(-1);
+  assert.ok(repairDecision, 'owner issued no repair verification decision');
+  await bumpAuthority(fixture);
+  fixture.route.approvalPort.scriptDecision({ ...repairDecision, status: 'approved' });
+  return runControlledUC03GraphV02(fixture.task, readiness.ports, readiness.config);
+}
 
-  // The journal ancestry readers admit only `runnableNode === 'Patch'`, so a repair-settled patch is
-  // refused at Verify even though it applied: the route honestly stops incomplete, not completed.
-  assert.deepEqual(fixture.modelCalls.slice(-2), ['coder:propose-patch', 'coder:propose-repair']);
-  assert.equal(fixture.route.repositoryPort.patches.length, 2, JSON.stringify({ reasons: result.reasons, node: result.state?.node, modelCalls: fixture.modelCalls }));
+function assertRepairTraversal(fixture: ControlledFixture, repaired: Awaited<ReturnType<typeof runControlledUC03GraphV02>>) {
+  // The reviewer transport is separate from the coder transport, so modelCalls tracks only coder turns.
+  assert.deepEqual(fixture.modelCalls, ['coder:propose-plan', 'coder:propose-plan', 'coder:propose-patch', 'coder:propose-repair']);
+  assert.equal(fixture.route.repositoryPort.patches.length, 2, JSON.stringify({ reasons: repaired.reasons, node: repaired.state?.node, modelCalls: fixture.modelCalls }));
   assert.notEqual(fixture.route.repositoryPort.patches[0]?.actionId, fixture.route.repositoryPort.patches[1]?.actionId);
-  assert.equal(result.state?.node, 'Verify', JSON.stringify({ reasons: result.reasons, nextAction: result.state?.nextAction }));
-  assert.equal(result.outcome, 'INCOMPLETE', JSON.stringify({ reasons: result.reasons, node: result.state?.node }));
-  assert.ok(result.reasons.includes('Verification requires issuer-validated owner patch ancestry'), JSON.stringify(result.reasons));
+  // Round two repeats the same checks against a new revision, so its verification claims must be
+  // revision-scoped; reusing round one's `action-verify-<checkId>` ids would be refused by the owner
+  // and the run would never reach completion. Claim ids are `claim-<actionId>`.
+  const journal = fixture.statePort.getJournalSnapshot();
+  const verifyClaims = journal.claims.map(claim => claim.claimId).filter(id => id.startsWith('claim-action-verify-'));
+  // Every durable id the verification path derives (`claim-<actionId>`, `att-<claimId>`) must fit the
+  // owner's storage-id cap. The durable adapter answers an unsafe id with a neutral receipt rather than
+  // an error, so the violation would surface as an unsettleable claim, not a loud failure. This double
+  // does not enforce the cap, so the assertion here is the only witness on this tier.
+  const verifyClaimIds = new Set(verifyClaims);
+  const durableIds = [...verifyClaimIds, ...journal.attempts.filter(attempt => verifyClaimIds.has(attempt.claimId)).map(attempt => attempt.attemptId)];
+  for (const id of durableIds) assert.ok(isSafeStorageId(id), `verification id is not a safe storage id (${id.length} chars): ${id}`);
+  const roundOne = verifyClaims.filter(id => /^claim-action-verify-check-/u.test(id));
+  const roundScoped = verifyClaims.filter(id => /^claim-action-verify-[0-9a-f]{16}-check-/u.test(id));
+  assert.ok(roundOne.length > 0, `no round-one verification claim: ${JSON.stringify(verifyClaims)}`);
+  assert.ok(roundScoped.length > 0, `no revision-scoped repair verification claim: ${JSON.stringify(verifyClaims)}`);
+  assert.equal(roundScoped.length, roundOne.length, `rounds ran different check counts: ${JSON.stringify(verifyClaims)}`);
+}
+
+test('a reviewer finding sends the controlled route back to Repair for a second patch', async () => {
+  const probe = await controlledGeneratedPlanFixture({ reviewVerdict: REPAIR_VERDICTS });
+  const probeRepaired = await driveRepairRound(probe);
+  assertRepairTraversal(probe, probeRepaired);
+  // Without the owner completion record the repair run halts after both patches with its evidence intact.
+  assert.equal(probeRepaired.outcome, 'IMPLEMENTED_UNVERIFIED', JSON.stringify({ reasons: probeRepaired.reasons, node: probeRepaired.state?.node }));
+  assert.deepEqual(probeRepaired.reasons, [
+    'Incomplete verification or review evidence for completion',
+    'Independent baseline, verification, patch settlement, review, and completion authority are required',
+  ]);
+
+  assert.ok(probeRepaired.state, 'the repair probe halted without a state');
+  const reviewStateVersion = probeRepaired.state.stateVersion - 1;
+  const deliveryStateVersion = probeRepaired.state.stateVersion;
+  const completionContext = await controlledCompletionContext(probe, { ...probeRepaired.state, stateVersion: reviewStateVersion });
+  const fixture = await controlledGeneratedPlanFixture({
+    reviewVerdict: REPAIR_VERDICTS,
+    transitionContexts: { [deliveryStateVersion]: completionContext },
+  });
+  const repaired = await driveRepairRound(fixture);
+  assertRepairTraversal(fixture, repaired);
+
+  assert.equal(repaired.outcome, 'COMPLETED', JSON.stringify({ reasons: repaired.reasons, node: repaired.state?.node }));
+  assert.equal(repaired.state?.node, 'Deliver');
+  assert.equal(repaired.finalReport?.isComplete, true);
+  assert.equal(repaired.finalReport?.delivery?.outcome, 'COMPLETED');
+});
+
+test('a long but contract-valid check id completes the repair round inside the durable id cap', async () => {
+  // The repair round now scopes its action ids by only 16 hex of the revision, so a check id that a
+  // 64-hex scope used to overflow must traverse both rounds and still journal safe storage ids.
+  const longCheckId = `check-${'long-denominator-reproduction'.padEnd(34, '-')}`;
+  assert.equal(longCheckId.length, 40);
+  const fixture = await controlledGeneratedPlanFixture({ reviewVerdict: REPAIR_VERDICTS, reproductionCheckId: longCheckId });
+  const repaired = await driveRepairRound(fixture);
+  assertRepairTraversal(fixture, repaired);
+  assert.equal(repaired.outcome, 'IMPLEMENTED_UNVERIFIED', JSON.stringify({ reasons: repaired.reasons, node: repaired.state?.node }));
+  assert.deepEqual(repaired.reasons, [
+    'Incomplete verification or review evidence for completion',
+    'Independent baseline, verification, patch settlement, review, and completion authority are required',
+  ]);
 });
 
 test('a record-free NeedsInfo pause dispatches no model call and claims nothing', async () => {

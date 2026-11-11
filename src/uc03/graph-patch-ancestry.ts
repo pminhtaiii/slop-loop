@@ -56,7 +56,9 @@ export async function restoreVerificationEvidence(
     contentDigest: computeCanonicalSha256(ownerBaseline.content),
   };
   if (ownerBaseline.acknowledgement.contentDigest !== writeRequest.contentDigest || !baselineEvidenceAcknowledgementMatches(ownerBaseline.acknowledgement, writeRequest)) return undefined;
-  const validation = validateBaselineEvidenceCandidate(ownerBaseline.content, original);
+  // A repair claim snapshot already carries the post-first-patch revision; the retained baseline is still a fact about the initial revision.
+  const baselineState = original.node === 'Repair' ? { ...original, repositoryRevisionDigest: task.initialRevisionDigest } : original;
+  const validation = validateBaselineEvidenceCandidate(ownerBaseline.content, baselineState);
   if (!validation.ok) return undefined;
   return {
     baseline: { ...validation.baseline, evidenceId: ownerBaseline.acknowledgement.evidenceId },
@@ -88,12 +90,12 @@ export async function loadVerifiedPatchAncestry(task: BugTask, current: TaskStat
     !currentPlan ||
     !originalDecisionId ||
     original.activeDecisionId !== originalDecisionId ||
-    original.node !== 'Patch' ||
+    (original.node !== 'Patch' && original.node !== 'Repair') ||
     original.taskId !== current.taskId ||
     original.runId !== current.runId ||
     original.workspaceId !== current.workspaceId ||
     original.repositoryId !== task.repositoryId ||
-    original.repositoryRevisionDigest !== task.initialRevisionDigest ||
+    (original.node === 'Patch' && original.repositoryRevisionDigest !== task.initialRevisionDigest) ||
     originalDecisionId !== ancestry.admissionContext.planDecisionRef ||
     currentPlan.planVersion !== originalPlan.planVersion ||
     expectedPlanMaterialDigest(task, original) !== expectedPlanMaterialDigest(task, current)
@@ -114,7 +116,7 @@ export async function loadVerifiedPatchAncestry(task: BugTask, current: TaskStat
   if (
     !admissionValidation.ok ||
     !receiptValidation.ok ||
-    ancestry.admissionContext.runnableNode !== 'Patch' ||
+    (ancestry.admissionContext.runnableNode !== 'Patch' && ancestry.admissionContext.runnableNode !== 'Repair') ||
     ancestry.admissionContext.planApplicability !== 'approved-plan' ||
     ancestry.admissionContext.action.kind !== 'apply_patch' ||
     ancestry.admissionContext.taskId !== original.taskId ||

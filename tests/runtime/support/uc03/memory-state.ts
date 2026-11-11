@@ -1730,7 +1730,7 @@ export class MemoryStatePortV02 implements StatePortV02 {
           claim.receipt.taskId !== query.taskId ||
           claim.receipt.runId !== query.runId ||
           claim.context.subjectKind !== 'repository-action' ||
-          claim.context.runnableNode !== 'Patch' ||
+          (claim.context.runnableNode !== 'Patch' && claim.context.runnableNode !== 'Repair') ||
           claim.context.planApplicability !== 'approved-plan' ||
           claim.context.action.kind !== 'apply_patch' ||
           claim.trustedAdmissionContext.subjectKind !== 'repository-action' ||
@@ -1871,7 +1871,7 @@ export class MemoryStatePortV02 implements StatePortV02 {
         claim =>
           claim.receipt.taskId === context.approvalContext.currentTaskId &&
           claim.context.subjectKind === 'repository-action' &&
-          claim.context.runnableNode === 'Patch' &&
+          (claim.context.runnableNode === 'Patch' || claim.context.runnableNode === 'Repair') &&
           claim.context.planApplicability === 'approved-plan' &&
           claim.taskSnapshot.plan?.decisionRef === decisionId &&
           claim.authorityRef.decisionAuthorityGeneration === expectedGeneration &&

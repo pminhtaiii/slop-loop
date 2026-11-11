@@ -218,6 +218,7 @@ export function createPendingApprovalRoute(
   initialDecision: 'approved' | 'pending' | 'rejected' = 'pending',
   decisionRef: string = ROUTE_PLAN_DETAILS.decisionRef,
   extraTransitionContexts: Readonly<Record<number, NonNullable<StateTransitionOptions['trusted']>>> = {},
+  reproductionCheckId = 'check-pytest-reproduction',
 ): {
   readonly task: BugTask;
   readonly ports: UC03GraphPorts;
@@ -229,7 +230,7 @@ export function createPendingApprovalRoute(
   readonly hostAuthority: TrustedHostPort;
 } {
   const checkRepro = createFixtureCheckDefinition({
-    checkId: 'check-pytest-reproduction',
+    checkId: reproductionCheckId,
     executable: 'pytest',
     argv: ['-q', 'tests/test_calculator.py', '-k', 'test_divide_zero'],
     purpose: 'reproduction',
@@ -263,7 +264,7 @@ export function createPendingApprovalRoute(
     },
   });
   repositoryPort.setStatePort(statePort);
-  repositoryPort.setTestResult('check-pytest-reproduction', { checkId: 'check-pytest-reproduction', outcome: 'pass', outputExcerpt: '1 passed', durationMs: 100 });
+  repositoryPort.setTestResult(reproductionCheckId, { checkId: reproductionCheckId, outcome: 'pass', outputExcerpt: '1 passed', durationMs: 100 });
   repositoryPort.setTestResult('check-pytest-regression', { checkId: 'check-pytest-regression', outcome: 'pass', outputExcerpt: '1 passed', durationMs: 100 });
   const patchFailureReasons: string[] = [];
   const ownerSettledRepositoryPort = createGraphRepositoryPort(repositoryPort, statePort, reason => patchFailureReasons.push(reason));

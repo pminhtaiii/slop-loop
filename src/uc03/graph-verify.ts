@@ -136,6 +136,11 @@ export function createVerifyNode(ports: UC03GraphPorts, config?: UC03GraphConfig
       runId: verifiedState.runId,
       repoDigest: verifiedState.repositoryRevisionDigest,
       diffDigest: diffInfo.diffDigest,
+      // A repair round settles its patch from a plan whose decision ref is already the round-one
+      // `dec-verify-` ref, and repeats the same checks on a new revision; its already-settled ids
+      // cannot be claimed again. The token is bounded to 16 hex so `att-claim-<prefix>-<checkId>`
+      // stays inside the 128-char durable storage id: 64 hex left too little for a long check id.
+      ...(ancestry.originalDecisionId.startsWith('dec-verify-') ? { actionIdPrefix: `action-verify-${verifiedState.repositoryRevisionDigest.slice('sha256:'.length, 'sha256:'.length + 16)}` } : {}),
       admissionContextForCheck: async request => {
         if (!(await currentPlanApprovalIsCurrent(task, request.currentState, owner, d1))) return undefined;
         return trusted.admissionContextForCheck?.(request);

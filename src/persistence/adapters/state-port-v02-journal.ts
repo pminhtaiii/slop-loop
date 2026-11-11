@@ -84,7 +84,7 @@ export async function readSettledPatchAncestry(store: StatePortStore, request: S
         claim.receipt.taskId !== query.taskId ||
         claim.receipt.runId !== query.runId ||
         claim.context.subjectKind !== 'repository-action' ||
-        claim.context.runnableNode !== 'Patch' ||
+        (claim.context.runnableNode !== 'Patch' && claim.context.runnableNode !== 'Repair') ||
         claim.context.planApplicability !== 'approved-plan' ||
         claim.context.action.kind !== 'apply_patch' ||
         claim.trustedAdmissionContext.subjectKind !== 'repository-action' ||
