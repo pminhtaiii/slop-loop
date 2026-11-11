@@ -183,7 +183,7 @@ async function runScenario(scenarioId, type, tempBase) {
     const beforeConsumed = journal?.ledgers[0]?.consumed ?? 0;
 
     // Mutate and settle within lock retry
-    await freshStore.mutateBudgetJournal(taskId, (current) => {
+    await freshStore.mutateBudgetJournal(taskId, current => {
       const base = current.ledgers[0];
       return {
         ...current,
@@ -280,7 +280,7 @@ export async function runBenchmark() {
   }
 
   const compactionMetrics = measureCompactionSavings();
-  const successful = results.filter((r) => r.success).length;
+  const successful = results.filter(r => r.success).length;
   const total = results.length;
   const successRate = ((successful / total) * 100).toFixed(1);
   const totalBudgetLoss = results.reduce((acc, r) => acc + r.budgetLoss, 0);
@@ -309,11 +309,7 @@ export async function runBenchmark() {
   // Write verification report
   const resultsPath = fileURLToPath(new URL('../../docs/verification/uc04-benchmark-results.json', import.meta.url));
   await mkdir(dirname(resultsPath), { recursive: true });
-  await writeFile(
-    resultsPath,
-    JSON.stringify(evaluationReport, null, 2),
-    'utf8',
-  );
+  await writeFile(resultsPath, JSON.stringify(evaluationReport, null, 2), 'utf8');
 
   return evaluationReport;
 }
@@ -321,7 +317,7 @@ export async function runBenchmark() {
 if (process.argv[1] && process.argv[1].includes('uc04-eval.mjs')) {
   console.log('Running UC-04 Durable Recovery Evaluation Benchmark (20 Scenarios)...');
   runBenchmark()
-    .then((report) => {
+    .then(report => {
       console.log('====================================================');
       console.log('UC-04 BENCHMARK EVALUATION RESULTS:');
       console.log(`Total Scenarios:           ${report.metrics.totalScenarios}`);
@@ -332,7 +328,7 @@ if (process.argv[1] && process.argv[1].includes('uc04-eval.mjs')) {
       console.log('====================================================');
       process.exit(0);
     })
-    .catch((err) => {
+    .catch(err => {
       console.error('Benchmark failed:', err);
       process.exit(1);
     });

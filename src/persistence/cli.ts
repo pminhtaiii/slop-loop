@@ -47,17 +47,10 @@ export async function runCli(args: string[], storeInstance?: DurableStore, optio
         if (!state) {
           return { exitCode: 1, output: `Error: Task '${taskId}' not found in storage.` };
         }
-        const lines: string[] = [
-          `Task: ${state.taskId} [Run: ${state.runId}]`,
-          `Status: ${state.status}`,
-          `State Version: ${state.stateVersion}`,
-          'Steps:',
-        ];
+        const lines: string[] = [`Task: ${state.taskId} [Run: ${state.runId}]`, `Status: ${state.status}`, `State Version: ${state.stateVersion}`, 'Steps:'];
         for (const step of state.plan) {
           const stepObj = step as unknown as Record<string, unknown>;
-          const stepId = typeof stepObj['id'] === 'string'
-            ? stepObj['id']
-            : (typeof stepObj['stepId'] === 'string' ? stepObj['stepId'] : 'step');
+          const stepId = typeof stepObj['id'] === 'string' ? stepObj['id'] : typeof stepObj['stepId'] === 'string' ? stepObj['stepId'] : 'step';
           const rawDeps = stepObj['predecessorIds'] ?? stepObj['dependencies'];
           const depsArr = Array.isArray(rawDeps) ? (rawDeps as string[]) : [];
           const deps = depsArr.length > 0 ? ` (deps: ${depsArr.join(', ')})` : '';
@@ -167,7 +160,7 @@ export async function runCli(args: string[], storeInstance?: DurableStore, optio
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url).toLowerCase() === resolve(process.argv[1]).toLowerCase()) {
-  runCli(process.argv.slice(2)).then((res) => {
+  runCli(process.argv.slice(2)).then(res => {
     if (res.output) {
       if (res.exitCode === 0) {
         console.log(res.output);

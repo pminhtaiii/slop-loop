@@ -126,11 +126,7 @@ export class DurableStore {
     }
   }
 
-  async withLockRetry<T>(
-    resourceId: string,
-    operation: () => Promise<T>,
-    options?: { retries?: number; delayMs?: number; maxRetries?: number; retryDelayMs?: number },
-  ): Promise<T> {
+  async withLockRetry<T>(resourceId: string, operation: () => Promise<T>, options?: { retries?: number; delayMs?: number; maxRetries?: number; retryDelayMs?: number }): Promise<T> {
     requireSafeId(resourceId, 'lock resource id');
     await mkdir(this.lockDir, { recursive: true });
     const lockPath = join(this.lockDir, `${resourceId}.lock`);
@@ -149,7 +145,7 @@ export class DurableStore {
           if (attempt === retries) {
             throw new Error(`Resource ${resourceId} is busy / already locked after ${retries} attempts.`);
           }
-          await new Promise((res) => setTimeout(res, delayMs));
+          await new Promise(res => setTimeout(res, delayMs));
           continue;
         }
         throw err;

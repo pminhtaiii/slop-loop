@@ -7,7 +7,7 @@ import { StateGraph, Annotation, interrupt, Command } from '@langchain/langgraph
 import { DurableStore } from '../../../src/persistence/store.ts';
 import { DurableCheckpointSaver } from '../../../src/persistence/adapters/langgraph-saver.ts';
 
-test('UC-04: DurableCheckpointSaver for LangGraph', async (t) => {
+test('UC-04: DurableCheckpointSaver for LangGraph', async t => {
   let tempBase: string;
   let store: DurableStore;
 
@@ -74,7 +74,7 @@ test('UC-04: DurableCheckpointSaver for LangGraph', async (t) => {
           approvedBy: String(feedback),
         };
       })
-      .addNode('final_step', (s) => ({
+      .addNode('final_step', s => ({
         status: `completed_by_${s.approvedBy}`,
       }))
       .addEdge('__start__', 'step1')
@@ -103,10 +103,7 @@ test('UC-04: DurableCheckpointSaver for LangGraph', async (t) => {
     assert.deepEqual(resumedStateBefore.next, ['approval_gate']);
 
     // Resume execution with operator feedback
-    const finalResult = await graphProcess2.invoke(
-      new Command({ resume: 'Operator Thanh Tan' }),
-      config,
-    );
+    const finalResult = await graphProcess2.invoke(new Command({ resume: 'Operator Thanh Tan' }), config);
 
     assert.equal(finalResult.status, 'completed_by_Operator Thanh Tan');
     assert.equal(finalResult.approvedBy, 'Operator Thanh Tan');

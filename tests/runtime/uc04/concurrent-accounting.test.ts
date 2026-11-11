@@ -22,7 +22,7 @@ function makeMockLedger(scope: 'task' | 'run', kind: 'tokens' | 'cost' | 'repair
   };
 }
 
-test('UC-04: Concurrent Accounting & Concurrency Safety (SPEC-C-006)', async (t) => {
+test('UC-04: Concurrent Accounting & Concurrency Safety (SPEC-C-006)', async t => {
   let tempBase: string;
   let store: DurableStore;
 
@@ -54,10 +54,14 @@ test('UC-04: Concurrent Accounting & Concurrency Safety (SPEC-C-006)', async (t)
     }
 
     // Try acquiring with retry (e.g. 15 retries with 15ms wait = up to 225ms wait)
-    const result = await store.withLockRetry(resourceId, async () => {
-      assert.equal(backgroundFinished, true, 'Lock must wait until background hold finishes');
-      return 'acquired';
-    }, { maxRetries: 15, retryDelayMs: 15 });
+    const result = await store.withLockRetry(
+      resourceId,
+      async () => {
+        assert.equal(backgroundFinished, true, 'Lock must wait until background hold finishes');
+        return 'acquired';
+      },
+      { maxRetries: 15, retryDelayMs: 15 },
+    );
 
     assert.equal(result, 'acquired');
     await backgroundHold;
@@ -78,14 +82,15 @@ test('UC-04: Concurrent Accounting & Concurrency Safety (SPEC-C-006)', async (t)
     }
 
     // Attempt with tiny retry count so it times out
-    await assert.rejects(
-      async () => {
-        await store.withLockRetry(resourceId, async () => {
+    await assert.rejects(async () => {
+      await store.withLockRetry(
+        resourceId,
+        async () => {
           return 'should-not-reach';
-        }, { maxRetries: 2, retryDelayMs: 10 });
-      },
-      /Resource timeout-resource is busy \/ already locked after 2 attempts/,
-    );
+        },
+        { maxRetries: 2, retryDelayMs: 10 },
+      );
+    }, /Resource timeout-resource is busy \/ already locked after 2 attempts/);
 
     await backgroundHold;
   });
@@ -105,33 +110,40 @@ test('UC-04: Concurrent Accounting & Concurrency Safety (SPEC-C-006)', async (t)
 
     // Concurrently simulate 5 operations appending distinct reservations
     const operations = Array.from({ length: 5 }, (_, i) => async () => {
-      return store.mutateBudgetJournal(taskId, async (current) => {
-        assert.ok(current, 'Current journal must exist');
-        // Add a slight async delay to expose race conditions if unlocked
-        await new Promise(resolve => setTimeout(resolve, 15));
-        const baseLedger = current.ledgers[0];
-        assert.ok(baseLedger, 'Base ledger must exist');
+      return store.mutateBudgetJournal(
+        taskId,
+        async current => {
+          assert.ok(current, 'Current journal must exist');
+          // Add a slight async delay to expose race conditions if unlocked
+          await new Promise(resolve => setTimeout(resolve, 15));
+          const baseLedger = current.ledgers[0];
+          assert.ok(baseLedger, 'Base ledger must exist');
 
-        const currentRes = baseLedger.reservations ?? [];
-        const newRes = [...currentRes, {
-          reservationId: `res-worker-${i}`,
-          keyedId: `key-worker-${i}`,
-          amount: (i + 1) * 10,
-        }];
+          const currentRes = baseLedger.reservations ?? [];
+          const newRes = [
+            ...currentRes,
+            {
+              reservationId: `res-worker-${i}`,
+              keyedId: `key-worker-${i}`,
+              amount: (i + 1) * 10,
+            },
+          ];
 
-        const updatedLedger: BudgetLedger = {
-          ...baseLedger,
-          reservations: newRes,
-          version: baseLedger.version + 1,
-        };
+          const updatedLedger: BudgetLedger = {
+            ...baseLedger,
+            reservations: newRes,
+            version: baseLedger.version + 1,
+          };
 
-        const updated: BudgetJournalRecord = {
-          ...current,
-          ledgers: [updatedLedger],
-          updatedAt: new Date().toISOString(),
-        };
-        return updated;
-      }, { maxRetries: 50, retryDelayMs: 15 });
+          const updated: BudgetJournalRecord = {
+            ...current,
+            ledgers: [updatedLedger],
+            updatedAt: new Date().toISOString(),
+          };
+          return updated;
+        },
+        { maxRetries: 50, retryDelayMs: 15 },
+      );
     });
 
     // Execute concurrently via Promise.all

@@ -115,30 +115,30 @@ export class DurableCheckpointSaver extends MemorySaver {
       try {
         await writeFile(tmpPath, encoded, 'utf8');
 
-      let renamed = false;
-      for (let attempt = 0; attempt < 15; attempt++) {
-        try {
-          await rename(tmpPath, filePath);
-          renamed = true;
-          break;
-        } catch (err: unknown) {
-          if ((err as NodeJS.ErrnoException).code === 'EPERM' || (err as NodeJS.ErrnoException).code === 'EBUSY') {
-            await new Promise((r) => setTimeout(r, 10));
-            continue;
+        let renamed = false;
+        for (let attempt = 0; attempt < 15; attempt++) {
+          try {
+            await rename(tmpPath, filePath);
+            renamed = true;
+            break;
+          } catch (err: unknown) {
+            if ((err as NodeJS.ErrnoException).code === 'EPERM' || (err as NodeJS.ErrnoException).code === 'EBUSY') {
+              await new Promise(r => setTimeout(r, 10));
+              continue;
+            }
+            throw err;
           }
-          throw err;
         }
+        if (!renamed) {
+          await unlink(filePath).catch(() => undefined);
+          await rename(tmpPath, filePath);
+        }
+      } finally {
+        await unlink(tmpPath).catch((err: unknown) => {
+          if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+        });
       }
-      if (!renamed) {
-        await unlink(filePath).catch(() => undefined);
-        await rename(tmpPath, filePath);
-      }
-    } finally {
-      await unlink(tmpPath).catch((err: unknown) => {
-        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
-      });
-    }
-  });
+    });
 
     this.threadQueues.set(threadId, task);
     await task;
@@ -191,11 +191,7 @@ export class DurableCheckpointSaver extends MemorySaver {
     }
   }
 
-  public override async put(
-    config: RunnableConfig,
-    checkpoint: Checkpoint,
-    metadata: CheckpointMetadata,
-  ): Promise<RunnableConfig> {
+  public override async put(config: RunnableConfig, checkpoint: Checkpoint, metadata: CheckpointMetadata): Promise<RunnableConfig> {
     const threadId = config.configurable?.thread_id;
     if (threadId) {
       await this.restoreThread(threadId);
@@ -207,12 +203,7 @@ export class DurableCheckpointSaver extends MemorySaver {
     return result;
   }
 
-  public override async putWrites(
-    config: RunnableConfig,
-    writes: [string, unknown][],
-    taskId: string,
-    taskPath?: string,
-  ): Promise<void> {
+  public override async putWrites(config: RunnableConfig, writes: [string, unknown][], taskId: string, taskPath?: string): Promise<void> {
     const threadId = config.configurable?.thread_id;
     if (threadId) {
       await this.restoreThread(threadId);
@@ -231,10 +222,7 @@ export class DurableCheckpointSaver extends MemorySaver {
     return super.getTuple(config);
   }
 
-  public override async *list(
-    config: RunnableConfig,
-    options?: { before?: RunnableConfig; limit?: number; filter?: Record<string, unknown> },
-  ): AsyncGenerator<CheckpointTuple> {
+  public override async *list(config: RunnableConfig, options?: { before?: RunnableConfig; limit?: number; filter?: Record<string, unknown> }): AsyncGenerator<CheckpointTuple> {
     const threadId = config.configurable?.thread_id;
     if (threadId) {
       await this.restoreThread(threadId);

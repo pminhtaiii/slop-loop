@@ -4,10 +4,10 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-test('UC-04: Standalone Benchmark & Evaluation Runner', async (t) => {
+test('UC-04: Standalone Benchmark & Evaluation Runner', async t => {
   await t.test('executes 20 scenarios with 100% success rate and zero budget leakage', async () => {
     const scriptPath = resolve(process.cwd(), 'scripts/eval/uc04-eval.mjs');
-    const { runBenchmark } = await import(pathToFileURL(scriptPath).href) as {
+    const { runBenchmark } = (await import(pathToFileURL(scriptPath).href)) as {
       runBenchmark: () => Promise<{
         metrics: {
           totalScenarios: number;

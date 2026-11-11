@@ -57,7 +57,7 @@ function makeMockTask(taskId: string, status: TaskState['status'] = 'running'): 
   };
 }
 
-test('UC-04: Operator Task Control CLI', async (t) => {
+test('UC-04: Operator Task Control CLI', async t => {
   let tempBase: string;
   let store: DurableStore;
 
