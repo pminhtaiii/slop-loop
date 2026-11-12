@@ -90,11 +90,29 @@ export interface ControlledFixtureOptions {
   readonly transitionContexts?: Readonly<Record<number, NonNullable<StateTransitionOptions['trusted']>>> | undefined;
   /** Replaces the reproduction check's id, e.g. to exercise a long-but-valid durable id. */
   readonly reproductionCheckId?: string | undefined;
+  /**
+   * Makes the owner-settled patch receiver throw once, on its first call. The execution guard's own
+   * `catch` turns that into `uncertain-effect`, which is the only seam that reaches the patch node's
+   * `IMPLEMENTED_UNVERIFIED` recovery branch — the model transport is a different fault.
+   */
+  readonly failFirstPatch?: boolean | undefined;
+  /**
+   * Makes the coder transport throw on its first dispatch. The seeded script otherwise wins, so an
+   * exhausted script is not a reliable provider fault: it only fires once the queue is dry *and* no
+   * plan is bound, which a fresh fixture never reaches on its opening turns.
+   */
+  readonly failFirstResponse?: boolean | undefined;
+  /**
+   * Replaces the protected-test content the mock host reports. Baseline and completion both read the
+   * same authority, so any change here moves both digests together; to exercise the drift refusal,
+   * mint the completion context from a default fixture and run it against a fixture using this.
+   */
+  readonly hostTestFileContent?: string | undefined;
 }
 
 export async function controlledGeneratedPlanFixture(options: ControlledFixtureOptions = {}): Promise<ControlledGeneratedPlanFixture> {
   const fixtureSequence = ++controlledFixtureSequence;
-  const route = createPendingApprovalRoute('pending', `dec-plan-${createFixtureBugTask().taskId}-1`, options.transitionContexts ?? {}, options.reproductionCheckId);
+  const route = createPendingApprovalRoute('pending', `dec-plan-${createFixtureBugTask().taskId}-1`, options.transitionContexts ?? {}, options.reproductionCheckId, options.hostTestFileContent);
   const statePort = route.statePort;
   const task = route.task;
   const graphState = createGraphTaskState(task, options.taskState ?? {});
@@ -127,7 +145,9 @@ export async function controlledGeneratedPlanFixture(options: ControlledFixtureO
   ];
   const patchReceipts: RepositoryExecutionReceiptV02[] = [];
   const applyPatch = repositoryPort.applyPatch.bind(repositoryPort);
+  let patchAttempts = 0;
   repositoryPort.applyPatch = async (action, context) => {
+    if (options.failFirstPatch && patchAttempts++ === 0) throw new Error('CONTROLLED_PATCH_FAULT: simulated receiver loss');
     const result = await applyPatch(action, context);
     patchReceipts.push(result.executionReceipt);
     return result;
@@ -186,6 +206,7 @@ export async function controlledGeneratedPlanFixture(options: ControlledFixtureO
   const transport: HostModelTransport = {
     async execute(payload) {
       modelCalls.push(`${payload.request.role}:${payload.request.purpose}`);
+      if (options.failFirstResponse && modelCalls.length === 1) throw new Error('CONTROLLED_PROVIDER_FAULT: simulated uncertain dispatch');
       const proposal = responses.shift();
       if (proposal) return { proposal, observedUsage: USAGE };
       const plan = payload.state.plan;

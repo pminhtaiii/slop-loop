@@ -158,16 +158,47 @@ test('a review of a different diff and missing test protection fail the repair p
 });
 
 test('clarification passes on needs-info with no speculative patch', async () => {
-  const result = await grader().grade('C02', { observation: observation({ workflowOutcome: 'waiting-info', expectedWait: 'waiting-info' }), snapshot: SNAPSHOT, evidence: evidence() });
+  const result = await grader().grade('C02', {
+    observation: observation({ workflowOutcome: 'waiting-info', expectedWait: 'waiting-info', effects: 'observed' }),
+    snapshot: SNAPSHOT,
+    evidence: evidence(),
+  });
   assert.equal(result.grade, 'pass');
   assert.equal(result.reason, 'criteria-satisfied');
   assert.ok(!result.evidenceIds.some(id => id.includes('review')), 'a correctly paused case must not need a patch or review');
   const patched = await grader().grade('C02', { observation: observation({ workflowOutcome: 'INCOMPLETE' }), snapshot: SNAPSHOT, evidence: evidence({ speculativePatchApplied: true }) });
   assert.equal(patched.grade, 'fail');
-  const unwaited = await grader().grade('C02', { observation: observation({ workflowOutcome: 'INCOMPLETE' }), snapshot: SNAPSHOT, evidence: evidence() });
+  const unwaited = await grader().grade('C02', { observation: observation({ workflowOutcome: 'INCOMPLETE', effects: 'observed' }), snapshot: SNAPSHOT, evidence: evidence() });
   assert.equal(unwaited.grade, 'pass', 'an INCOMPLETE with no pinned wait satisfies the expected-wait check');
   const unpinnedWait = await grader().grade('C02', { observation: observation({ workflowOutcome: 'waiting-info', expectedWait: null }), snapshot: SNAPSHOT, evidence: evidence() });
   assert.equal(unpinnedWait.grade, 'fail', 'the expected-wait check must actually hold');
+});
+
+test('a genuine pause is certified with observed effects, and only an uncertain effect disqualifies it', async () => {
+  // A real pause persists owner state, so the driver records `effects: 'observed'` (`workflow-driver.ts:109`).
+  // Asserting `!== 'observed'` therefore failed exactly the run C02 must certify and inverted `data-model.md:24`
+  // ("unknown is not zero/false"). The three rows below pin each branch of the corrected predicate: observed
+  // passes, uncertain fails, and the speculative-patch check stays independent of `effects`.
+  const paused = await grader().grade('C02', {
+    observation: observation({ workflowOutcome: 'waiting-info', expectedWait: 'waiting-info', effects: 'observed' }),
+    snapshot: SNAPSHOT,
+    evidence: evidence(),
+  });
+  assert.equal(paused.grade, 'pass', 'a paused run with owner state observed must certify');
+
+  const uncertain = await grader().grade('C02', {
+    observation: observation({ workflowOutcome: 'waiting-info', expectedWait: 'waiting-info', effects: 'uncertain' }),
+    snapshot: SNAPSHOT,
+    evidence: evidence(),
+  });
+  assert.equal(uncertain.grade, 'fail', 'an unknown effect must not be certified as a clean pause');
+
+  const patched = await grader().grade('C02', {
+    observation: observation({ workflowOutcome: 'waiting-info', expectedWait: 'waiting-info', effects: 'observed' }),
+    snapshot: SNAPSHOT,
+    evidence: evidence({ speculativePatchApplied: true }),
+  });
+  assert.equal(patched.grade, 'fail', 'an observed effect does not excuse a speculative patch');
 });
 
 test('exhaustion passes on a stop before the next constrained effect', async () => {

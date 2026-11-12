@@ -219,6 +219,7 @@ export function createPendingApprovalRoute(
   decisionRef: string = ROUTE_PLAN_DETAILS.decisionRef,
   extraTransitionContexts: Readonly<Record<number, NonNullable<StateTransitionOptions['trusted']>>> = {},
   reproductionCheckId = 'check-pytest-reproduction',
+  hostTestFileContent?: string,
 ): {
   readonly task: BugTask;
   readonly ports: UC03GraphPorts;
@@ -309,7 +310,7 @@ export function createPendingApprovalRoute(
       return context;
     },
   };
-  const hostAuthority = createMockHostAuthority();
+  const hostAuthority = createMockHostAuthority(hostTestFileContent);
   const ports: UC03GraphPorts = {
     statePort: statePort.getUnderlying(),
     approvalPort: autoApprovingPort,

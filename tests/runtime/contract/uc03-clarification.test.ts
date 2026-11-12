@@ -409,6 +409,33 @@ test('CLARIFICATION_ROUND_CAP is 3 and round 4 is refused', (): void => {
   );
 });
 
+test('the round sequence is enforced: a first ask is round 1 and a replacement advances by exactly one', (): void => {
+  // Both branches of the `CLARIFICATION_ROUND_SEQUENCE` guard, each witnessed by its own row. Without
+  // a witness `validateClarification`'s cap of 3 alone would let a first ask open at round 2 or a
+  // replacement jump 1 -> 3, shortening the task's real budget without any refusal.
+  const fresh = createValidTaskState('Investigate', 2);
+  const openingAtTwo = createRecord(fresh, 2);
+  assert.ok(
+    transitionCodes(fresh, { ...fresh, stateVersion: 3, node: 'NeedsInfo', clarification: openingAtTwo, evidenceRefs: openingAtTwo.evidenceRefs }).includes('CLARIFICATION_ROUND_SEQUENCE'),
+    'a first ask must be round 1',
+  );
+
+  // A replacement ask leaves `Investigate` carrying an already-answered record.
+  const investigate = createValidTaskState('Investigate', 2);
+  const open = createRecord(investigate, 1);
+  const prior: TaskState = { ...investigate, clarification: { ...open, answer: createAnswer(open, 3) }, evidenceRefs: open.evidenceRefs };
+  const jumping = createRecord(prior, 3);
+  assert.ok(
+    transitionCodes(prior, { ...prior, stateVersion: 3, node: 'NeedsInfo', clarification: jumping, evidenceRefs: jumping.evidenceRefs }).includes('CLARIFICATION_ROUND_SEQUENCE'),
+    'a replacement must advance the round by exactly one',
+  );
+
+  // The adjacent legal advance is the positive control: 1 -> 2 still transitions, so the two refusals
+  // above are the sequence guard and not a blanket refusal of any replacement.
+  const next = createRecord(prior, 2);
+  assert.equal(validateStateTransition(prior, { ...prior, stateVersion: 3, node: 'NeedsInfo', clarification: next, evidenceRefs: next.evidenceRefs }).ok, true);
+});
+
 test('every other NeedsInfo/Investigate exit and every terminal-node exit stays refused', (): void => {
   const nodes: readonly TaskNode[] = ['Validate', 'NeedsInfo', 'Investigate', 'AwaitPlan', 'AwaitFeedback', 'Patch', 'Verify', 'Review', 'Repair', 'Deliver', 'Incomplete'];
   const permitted = new Set(['NeedsInfo->Validate', 'NeedsInfo->Investigate', 'Investigate->AwaitPlan', 'Investigate->NeedsInfo']);
