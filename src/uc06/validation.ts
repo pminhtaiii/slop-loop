@@ -79,13 +79,21 @@ export function validateReviewDiff(input: unknown, maxBytes: number): Validation
   let i = 0;
   while (i < lines.length) {
     let gitPath: string | undefined;
+    let fileMode: 'new' | 'deleted' | undefined;
     if (lines[i]?.startsWith('diff --git ')) {
       const m = /^diff --git a\/(\S+) b\/(\S+)$/u.exec(lines[i++] ?? '');
       if (!m || m[1] !== m[2] || !path(m[1])) return invalid();
       gitPath = m[1];
     }
+    if (gitPath && /^(?:new|deleted) file mode /u.test(lines[i] ?? '')) {
+      const mode = /^(new|deleted) file mode 100[0-7]{3}$/u.exec(lines[i++] ?? '');
+      if (!mode) return invalid();
+      fileMode = mode[1] === 'new' ? 'new' : 'deleted';
+      if (!lines[i]?.startsWith('index ')) return invalid();
+    }
     if (lines[i]?.startsWith('index ')) {
-      if (!gitPath || !/^index [a-f0-9]+\.\.[a-f0-9]+(?: 100[0-7]{3})?$/u.test(lines[i++] ?? '')) return invalid();
+      const index = lines[i++] ?? '';
+      if (!gitPath || !(fileMode ? /^index [a-f0-9]+\.\.[a-f0-9]+$/u : /^index [a-f0-9]+\.\.[a-f0-9]+(?: 100[0-7]{3})?$/u).test(index)) return invalid();
     }
     const old = /^--- (a\/.*|\/dev\/null)$/u.exec(lines[i++] ?? ''),
       next = /^\+\+\+ (b\/.*|\/dev\/null)$/u.exec(lines[i++] ?? '');
@@ -93,6 +101,7 @@ export function validateReviewDiff(input: unknown, maxBytes: number): Validation
     const a = old[1] === '/dev/null' ? null : old[1]?.slice(2),
       b = next[1] === '/dev/null' ? null : next[1]?.slice(2);
     if (a === undefined || b === undefined || (a === null && b === null) || (a !== null && !path(a)) || (b !== null && !path(b)) || (a !== null && b !== null && a !== b)) return invalid();
+    if ((fileMode === 'new' && (a !== null || b === null)) || (fileMode === 'deleted' && (a === null || b !== null))) return invalid();
     const file = b ?? a;
     if (!file || (gitPath !== undefined && gitPath !== file) || Object.hasOwn(files, file)) return invalid();
     const changed = { oldLines: [] as number[], newLines: [] as number[] };

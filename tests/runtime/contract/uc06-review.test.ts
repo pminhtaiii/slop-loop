@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   validateReviewProfile,
   validateReviewContext,
+  validateReviewContextAdmission,
   validateReviewDiff,
   validateReviewOutput,
   validateReviewObservation,
@@ -204,4 +205,129 @@ test('accepts exact acknowledged evidence roundtrip and recovery without graph-o
   assert.equal(validatePersistReviewObservationResult({ outcome: 'acknowledged', ack: f.ack }, f.persist).ok, true);
   assert.equal(validateLoadReviewObservationResult({ outcome: 'found', observation: f.o, ack: f.ack }, f.load).ok, true);
   assert.equal(validateRecoverReviewObservationResult({ outcome: 'found', observation: f.o, ack: f.ack }, f.recover).ok, true);
+});
+
+test('accepts Git textual additions and deletions with exact changed sides', () => {
+  for (const added of [true, false]) {
+    const patch = gitFileDiff(added);
+    const result = validateReviewDiff(patch, 49152);
+    assert.equal(result.ok, true, patch);
+    if (result.ok) assert.deepEqual(result.value['src/a.py'], { oldLines: added ? [] : [1], newLines: added ? [1] : [] });
+    assert.equal(validateReviewDiff(patch.replace(/^(new|deleted) file mode 100644\nindex abc\.\.def\n/mu, ''), 49152).ok, true);
+  }
+  assert.equal(validateReviewDiff('diff --git a/src/a.py b/src/a.py\nindex abc..def 100644\n' + diff, 49152).ok, true);
+});
+function gitFileDiff(added: boolean): string {
+  return (
+    'diff --git a/src/a.py b/src/a.py\n' +
+    (added ? 'new' : 'deleted') +
+    ' file mode 100644\nindex abc..def\n' +
+    (added ? '--- /dev/null\n+++ b/src/a.py\n@@ -0,0 +1 @@\n+new\n' : '--- a/src/a.py\n+++ /dev/null\n@@ -1 +0,0 @@\n-old\n')
+  );
+}
+test('refuses contradictory, repeated and unsupported Git file metadata', () => {
+  for (const added of [true, false]) {
+    const patch = gitFileDiff(added);
+    for (const bad of [
+      patch.replace('index abc..def', 'index abc..def 100644'),
+      patch.replace('index abc..def\n', ''),
+      patch.replace('file mode 100644', 'file mode 120000'),
+      patch.replace('index abc..def', 'new file mode 100644\nindex abc..def'),
+      patch.replace('index abc..def', 'deleted file mode 100644\nindex abc..def'),
+      patch.replace(added ? 'new file mode' : 'deleted file mode', added ? 'deleted file mode' : 'new file mode'),
+      patch.replace('/dev/null', added ? 'a/src/a.py' : 'b/src/a.py'),
+      patch.replace('diff --git a/src/a.py b/src/a.py\n', ''),
+    ])
+      assert.equal(validateReviewDiff(bad, 49152).ok, false, bad);
+  }
+});
+test('refuses forged and mismatched evidence ACK fields', () => {
+  const f = evidenceFixture();
+  for (const [key, value] of Object.entries({
+    committed: false,
+    storeRecordVersion: 0,
+    receiptId: '',
+    extra: true,
+    taskId: 'other',
+    runId: 'other',
+    repositoryId: 'other',
+    workspaceId: 'other',
+    headRevisionDigest: hash('other'),
+    diffDigest: hash('other'),
+    contextDigest: hash('other'),
+    providerRequestId: 'other',
+    observationDigest: hash('other'),
+  })) {
+    const ack = { ...f.ack, [key]: value };
+    assert.equal(validateReviewEvidenceAck(ack, f.o).ok, false, key);
+    assert.equal(validateLoadReviewObservationResult({ outcome: 'found', observation: f.o, ack }, f.load).ok, false, key);
+    assert.equal(validateRecoverReviewObservationResult({ outcome: 'found', observation: f.o, ack }, f.recover).ok, false, key);
+  }
+});
+test('refuses found evidence for different locators, candidates and authority', () => {
+  const f = evidenceFixture();
+  const found = { outcome: 'found', observation: f.o, ack: f.ack };
+  for (const [key, value] of Object.entries({ taskId: 'other', runId: 'other', providerRequestId: 'other', contextDigest: hash('other'), observationDigest: hash('other') }))
+    assert.equal(validateLoadReviewObservationResult(found, { ...f.load, [key]: value }).ok, false, key);
+  for (const [key, value] of Object.entries({ taskId: 'other', workspaceId: 'other', repositoryId: 'other', headRevisionDigest: hash('other'), diffDigest: hash('other') }))
+    assert.equal(validateRecoverReviewObservationResult(found, { ...f.recover, [key]: value }).ok, false, key);
+  for (const [key, value] of Object.entries({ taskStateVersion: 0, controlVersion: 1, epoch: 0, decisionAuthorityGeneration: 0, planDecisionRef: 'other', planBindingDigest: hash('other') })) {
+    const expectedAuthority = { ...authority, [key]: value };
+    assert.equal(validateLoadReviewObservationResult(found, { ...f.load, expectedAuthority }).ok, false, key);
+    assert.equal(validateRecoverReviewObservationResult(found, { ...f.recover, expectedAuthority }).ok, false, key);
+  }
+});
+test('refuses contradictory observations and mismatched result/accounting bindings', () => {
+  const o = observation();
+  for (const bad of [
+    { ...o, result: null },
+    { ...o, reviewId: null },
+    { ...o, providerRequestId: null },
+    { ...o, accountingRefs: [] },
+    { ...o, accountingRefs: ['other'] },
+    { ...o, reasonCode: 'FINDINGS' },
+    { ...o, status: 'findings' },
+    { ...o, status: 'blocked', reasonCode: 'MODEL_OUTPUT_INVALID' },
+    { ...o, status: 'stale', reasonCode: 'MODEL_OUTPUT_INVALID' },
+    { ...o, status: 'uncertain', reasonCode: 'MODEL_OUTPUT_INVALID' },
+    { ...o, status: 'invalid', reasonCode: 'MODEL_OUTPUT_INVALID' },
+    ...['reviewId', 'repoDigest', 'diffDigest', 'checkSetDigest'].map(key => ({
+      ...o,
+      result: { ...o.result, [key]: key === 'reviewId' ? 'other' : hash('other') },
+    })),
+  ])
+    assert.equal(validateReviewObservation(bad).ok, false, JSON.stringify(bad));
+});
+test('admits exact host context and refuses binding, excerpts, limits and required checks', () => {
+  const f = fixture();
+  const source = f.sourceEvidence[0];
+  assert.ok(source);
+  const trusted = { binding: f.context.binding, authority, sourceEvidence: f.sourceEvidence, requiredCheckIds: ['check'] };
+  assert.equal(validateReviewContextAdmission(f.context, trusted).ok, true);
+  for (const bad of [
+    { ...trusted, binding: { ...trusted.binding, taskId: 'other' } },
+    { ...trusted, authority: { ...authority, epoch: 0 } },
+    { ...trusted, sourceEvidence: [{ ...source, boundedExcerpt: 'different' }] },
+    { ...trusted, requiredCheckIds: [] },
+    { ...trusted, requiredCheckIds: ['missing'] },
+    { ...trusted, requiredCheckIds: ['check', 'check'] },
+  ])
+    assert.equal(validateReviewContextAdmission(f.context, bad).ok, false);
+  // Rehash altered supplied evidence so admission must check its content, not just the outer digest.
+  for (const change of [{ boundedExcerpt: 'different' }, { truncated: true }, { revisionDigest: hash('other') }, { path: 'src/other.py' }]) {
+    const sourceEvidence: typeof f.sourceEvidence = [{ ...source, ...change }];
+    const binding = { ...f.context.binding, evidenceDigest: hash(sourceEvidence) };
+    const { contextDigest, ...body } = { ...f.context, binding };
+    const context = { ...body, contextDigest: hash(body) };
+    assert.notEqual(context.contextDigest, contextDigest);
+    assert.equal(validateReviewContext(context).ok, true);
+    assert.equal(validateReviewContextAdmission(context, { ...trusted, binding, sourceEvidence }).ok, false);
+  }
+  const limitedProfile = { ...profile, maxEvidenceBytes: 2 };
+  const binding = { ...f.context.binding, profileDigest: hash(limitedProfile) };
+  const { contextDigest, ...body } = { ...f.context, profile: limitedProfile, binding };
+  const context = { ...body, contextDigest: hash(body) };
+  assert.notEqual(context.contextDigest, contextDigest);
+  assert.equal(validateReviewContext(context).ok, true);
+  assert.equal(validateReviewContextAdmission(context, { ...trusted, binding }).ok, false);
 });
