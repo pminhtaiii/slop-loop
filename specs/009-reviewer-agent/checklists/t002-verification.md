@@ -1,0 +1,11 @@
+# T002 implementation evidence — acceptance pending
+
+Source candidate: 04f055d on feat/uc06-contract-validation, immediate implementation parent c761a69; development base fd0a7eb6c0c567312b06c571f90dc3e9533c72a6. Only src/contracts/review.ts, src/uc06/validation.ts and tests/runtime/contract/uc06-review.test.ts implement T002. Existing canonical contracts are unchanged.
+
+Observed source/controlled checks: node --test tests/runtime/contract/uc06-review.test.ts passed 8/8; fresh emitted counterpart passed 8/8 after node node_modules/typescript/bin/tsc; tsc --noEmit passed; scoped ESLint and Prettier check passed after correcting two interface declarations. Existing runtime-reviewer/reviewer-v02-accounting/uc03-review-regressions source suites passed 25/25. Installed missing Prettier through packageManager-pinned pnpm with frozen lockfile; no dependency declaration/lockfile change.
+
+Worker retained assertion RED then GREEN for profile, context, diff/output, observation and evidence request/result slices in ignored .agent-work/2026-11-12/uc06-t002/. Neutral exports compiled; missing imports are not counted RED. Isolated mutation inverted maxResponseBytes >= maxOutputBytes; the public profile assertion killed it, original source hash stayed unchanged and baseline 8/8 passed afterward. This is one focused mutation, not comprehensive mutation coverage.
+
+Independent merger /root/t002_merger prepared acceptance vectors, but its verification turn stopped under usage limits before a verdict. Standards /root/t002_standards and Spec /root/testability_review also stopped under usage limits; no pass report exists. Their source snapshots/preparations are not acceptance evidence. All required independent judgments remain NOT-RUN/incomplete. T002 stays unchecked; publication is a draft, not task/feature or contributor-completion acceptance.
+
+No provider/container, owner journal/storage implementation, reviewer/transport/graph integration, real model-quality or actual restart ran. Full local runtime/contributor suites were not run; publication follows PR-first CI. T003 onward remain unreleased. Scoped convergence found the implemented public validation surfaces but cannot certify all criteria without the independent checks; existing successor tasks already cover future integration, so no duplicate tasks were appended.

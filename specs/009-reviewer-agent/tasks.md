@@ -1,7 +1,7 @@
 # Tasks: UC-06 — Reviewer Agent
 
 **Input**: [spec](spec.md), [plan](plan.md), [research](research.md), [data model](data-model.md), [context contract](contracts/review-context.md), [evaluation](contracts/evaluation.md), [decisions](contracts/decisions.md).
-**Status**: T001 ownership/contract agreement is recorded from Trọng Tấn's confirmation in [decisions](contracts/decisions.md#t001-owner-agreement--2026-11-12). T002–T014 remain unchecked and unreleased. T001 is documentation only; no runtime TDD cycle applies. Tests required by FR-011 and repository policy apply when code tasks are released.
+**Status**: T001 agreement is recorded in [decisions](contracts/decisions.md). T002 is released for source/controlled implementation and publication; its implementation remains unchecked pending independent merger/review, interrupted by agent usage limits. T003–T014 remain unreleased. See [T002 evidence](checklists/t002-verification.md). No real integration or full-feature acceptance is claimed.
 
 ## Phase 1: Setup
 
@@ -16,6 +16,7 @@
 - [ ] T002 Add strict versioned review companion types and runtime validation in src/contracts/review.ts and src/uc06/validation.ts with tests/runtime/contract/uc06-review.test.ts.
   - **Dependencies**: T001.
   - **Owned Paths**: src/contracts/review.ts; src/uc06/validation.ts; tests/runtime/contract/uc06-review.test.ts.
+  - **Verification Evidence**: Source implementation at 04f055d. Public source/emitted tests pass 8/8 each, existing reviewer regressions 25/25; typecheck/build/scoped lint/format pass. Retained profile/context/diff/observation/evidence assertion RED–GREEN logs and isolated byte-bound mutation kill. Independent merger and two-axis review did not finish because agent usage limits interrupted their turns; T002 remains unchecked and successor work is not accepted or released.
   - **Acceptance Checks**: Contract sections 2/3/5/6; exact companion and ReviewEvidencePortV1 persist/load/recover request/result/ACK fields/digests, candidate-bound recovery without graph locator, safe identifiers/paths/finite bounds, forged/mismatched ACK rejection, mandatory evidence, side/revision mapping, whole-diff/mixed/overflow refusal, contradictions/output bounds and no protected payload. Canonical schemas unchanged. Neutral assertion RED then GREEN; import/type failure is not RED.
 
 ## Phase 3: User Story 1 - Bound review (Priority: P1)
