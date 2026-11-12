@@ -5,3 +5,4 @@ export * from './task-control.ts';
 export * from './inspection.ts';
 export * from './contracts.ts';
 export * from './adapters/index.ts';
+export * from './cli.ts';
