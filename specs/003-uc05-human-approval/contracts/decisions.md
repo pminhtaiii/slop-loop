@@ -145,6 +145,30 @@ The candidate's `DurableStore` and task-control exports do not provide the eight
 
 T020 remains blocked on the actual compatible store adapter, X03 shared admission/executor and approved profiles; T021/T022 retain their dependency chain. All 104 required UC-05 real/restart vectors stay not-run. This updates the earlier preflight's knowledge of an upstream UC-04 candidate without promoting it to delivered UC-05 integration or authorizing UC-03/UC-04 implementation.
 
+## Gate readiness review (2026-11-12)
+
+The user requested review of current UC-05 code and closure of gates where evidence permits, with publication to both configured repositories. The reviewed source is development `94a7ed3658326c5599d2c8726353cfbb90d66018`; the feature now resides in `specs/003-uc05-human-approval/`. This authorizes the audit and evidence updates, without selecting a production profile, implementing another owner's adapter, or treating a task checkbox as evidence. Historical authorization and results above retain their original scope.
+
+The October statement that the ApprovalStore API and execution guard are absent is no longer current. Development contains `src/persistence/adapters/approval-store-adapter.ts`, `src/approvals/real-context-provider.ts`, the execution guard and versioned approval consumers. Two independent review axes inspected the changed approval boundaries since `f03cd751025066096a1dd9d307b24f7bf89b4483`: Standards found no verified violation; Spec found two P1 integration blockers. A separate merger replayed the actual service/file-store probe:
+
+1. **UC05-STORE-RECEIPTS**: `DurableApprovalStore.readRequest` returns `denied/request-not-found` for a missing decision, but `service-request.ts` requires `invalid/unknown-decision` before creating the first request. The actual service returns safe `unavailable`, leaves the request absent and control runnable. Separately, direct store creation persists waiting state but acknowledges `ok` with null `eventRef`; the service requires `pending` with the committed request-event ID. The store API's existence therefore does not establish consumer compatibility.
+2. **UC05-STORE-MAPPING**: `makeInitialControl` in `approval-types.ts` uses `default-repo/default-ws`; the adapter's optional durable store does not supply the actual task mapping to this initialization. An ordinary task-bound context is rejected as `stale/changed-repository-mapping`. Aligning fixture identities only isolates the receipt failure; it is not an accepted production mapping fix.
+
+Both findings belong to the UC-04 adapter handoff. The reproduction uses the actual approval service and file-backed adapter, controlled action/context/profile values and disposable local storage; no repository command, provider or executor effect runs. These are interoperability failures, not real-execution acceptance. Store methods also perform separate file writes; no compound transaction or kill-window atomicity claim follows from a file being durable.
+
+| Gate / deliverable | Observed state and next action |
+| --- | --- |
+| G-AUTH / G-CONTRACT | Earlier recorded Phase 8 authorization and logical agreement remain in force. This audit supplies no new production or cross-owner contract signoff. |
+| X04-APPROVAL-STORE | API is delivered in source, but the reproduced receipt and task-mapping incompatibilities block integration. UC-04 must supply a compatible revision and conformance evidence. |
+| X03-ADMISSION / G-REAL | Guard/provider components exist, but `control-v02.ts` authority publication and `recovery-v02.ts` continuation still require mock provenance. The complete task-wide real composition is not verified. |
+| G-PROFILE | A Docker profile artifact and the test-only `uc05-local-v1` profile exist; approved joint UC-05 policy/execution/host configuration is not established. Docker CLI is unavailable on this audit host. |
+| G-RESTART / X04-X05-RESTART | UC-04's existing file-state process-lifecycle fixture passes. It does not exercise UC-05 approval/claim/effect kill windows with the real shared executor; T021 remains blocked after T020. |
+| T022 / X05-GATE | Final acceptance/handoff still depends on T021. A partial evidence refresh does not complete this task. |
+
+`node --test tests/runtime/approvals/*.test.ts` passed 289/289 (exit 0), including the local catalog's two-run comparison. `node --test tests/runtime/unit/approval-real-provenance.test.ts tests/runtime/uc04/restart.test.ts` passed 5/5 (exit 0). The existing provenance tests check construction/mismatch/context, not the pending-request lifecycle; an advertised `real` provenance flag alone is insufficient. The restart fixture uses distinct child processes and an explicit exit 137, not a full external-kill approval/claim/effect matrix. Focused receipts, frozen axis reports and independently replayed probe output are retained locally under `.agent-work/2026-11-12/uc05-gate-readiness/`; they remain ignored. No full local runtime/contributor suite was run for this audit; regression publication checks run in CI under the repository PR-first workflow.
+
+The achievable local regression checks pass. No additional real/profile/restart gate can be closed from this evidence: T020–T022 stay unchecked, all 104 required real/restart vectors remain not-run, and full UC-05 acceptance remains unverified. Runtime source, canonical contracts and external owner task statuses are unchanged.
+
 ## Agreed design register
 
 | ID | Proposal | Scope / approval state |
