@@ -92,6 +92,10 @@ A concise user-facing account of meaningful progress, its evidence, and the next
 
 A grouping of contributor work and its temporary artifacts. A contributor session is distinct from a product-runtime run.
 
+## Product session
+
+A continuing conversation between a user and the product runtime that can contain multiple tasks and their runs. Relevant conversational context carries across turns; a product session is distinct from a contributor session and does not depend on a single model context window.
+
 ## Checkpoint
 
 A durable recovery point containing the authoritative state needed to resume a product-runtime workflow. A conversation summary alone is not a checkpoint.
