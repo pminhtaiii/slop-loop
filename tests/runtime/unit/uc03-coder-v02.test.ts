@@ -157,6 +157,8 @@ function createReplanState(replanCount: number): TaskState {
   const plan: FixPlan = {
     planVersion: 1,
     diagnosis: 'division by zero is not handled',
+    suspectedCauseLocations: ['src/calculator.py'],
+    evidenceRefs: ['evidence-baseline-001'],
     strategy: 'raise CalculationError when b is zero',
     scopedChanges: ['src/calculator.py'],
     checkSetDigest: 'sha256:checks',
@@ -492,6 +494,7 @@ test('a run-check exception returns TOOL_ERROR without another dispatch', async 
   const admittedContexts: RepositoryAdmissionContextV02[] = [];
   repository.runTests = async (requestedCheck, context) => {
     attemptedChecks.push(requestedCheck);
+    if (context === undefined) throw new Error('CONTROLLED_MISSING_CHECK_CONTEXT');
     admittedContexts.push(context);
     throw new Error('CONTROLLED_PRIVATE_CHECK_FAILURE');
   };
