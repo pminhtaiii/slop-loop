@@ -45,8 +45,8 @@ spec.md, plan.md, tasks.md, research.md, data-model.md, quickstart.md, contracts
 
 | Change class | Exact paths | Ownership / purpose |
 |---|---|---|
-| New | src/contracts/review.ts; src/uc06/validation.ts | UC-06 owner unassigned; pure companion types/runtime validation |
-| New | src/uc06/context.ts | Assigned UC-06 owner consumes host records, builds immutable projection; no IO/storage authority |
+| New | src/contracts/review.ts; src/uc06/validation.ts | Trọng Tấn, UC-06; pure companion types/runtime validation; T002 unreleased |
+| New | src/uc06/context.ts | Trọng Tấn consumes host records, builds immutable projection; no IO/storage authority; T003 unreleased |
 | Extension | src/foundation/reviewer.ts | Tai; opt-in resolver, shared snapshot/digest companion and stricter output/evidence validation |
 | Extension | src/foundation/deepseek-transport.ts | Tai; trusted role prompt/schema branch; retain coder/transport/accounting |
 | Extension | src/uc03/graph.ts; src/uc03/graph-types.ts; src/uc03/graph-types-v02.ts; src/uc03/graph-v02.ts; src/uc03/graph-state.ts; src/uc03/graph-review.ts; src/uc03/graph-completion.ts; src/uc03/verification-types.ts; src/uc03/verification-review.ts | Tai; v0.2 propagation, context resolution/admission, both Review/Deliver completion calls |

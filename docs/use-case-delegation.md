@@ -14,8 +14,9 @@ Assignments use the colleague names supplied by the project owner. These rows ar
 | UC-03 | Evidence-backed end-to-end bug fix | Tai | Validated bug-task input contract; shared tools, verification, and UC-05 action gate integrated | Phase 1 build setup authorized: [spec](../specs/001-verified-code-repair/spec.md), [plan](../specs/001-verified-code-repair/plan.md), [tasks](../specs/001-verified-code-repair/tasks.md); shared contract agreement confirmed by user, production choices deferred before real execution per [decisions](../specs/001-verified-code-repair/contracts/decisions.md) |
 | UC-04 | Multi-step feature with restart/resume | Thanh Tan | Shared persisted task/step contracts and budget ownership agreed; UC-05 binding contract agreed | Not created; link approved spec, plan, and task ledger here |
 | UC-05 | Bound human approval and safe continuation | Trong Tan | Separately authorized T001–T019 and T023–T028 corrections complete locally through `391d3ff`; Phase 8 T019–T022 authorized on 2026-10-22; T020–T022 await external delivery gates | [Spec](../specs/003-uc05-human-approval/spec.md), [plan](../specs/003-uc05-human-approval/plan.md), [tasks](../specs/003-uc05-human-approval/tasks.md); shared baseline agreement, local Phase 7 authorization and remaining real/profile/restart gates in [decisions](../specs/003-uc05-human-approval/contracts/decisions.md). Mock/canonical-consumer checks do not establish production capability |
+| UC-06 | Bound read-only review using the existing foundation reviewer | Trọng Tấn | T001 administrative agreement only; T002 onward and all runtime/real work require separate release | [Spec](../specs/009-reviewer-agent/spec.md), [plan](../specs/009-reviewer-agent/plan.md), [tasks](../specs/009-reviewer-agent/tasks.md); [T001 decisions](../specs/009-reviewer-agent/contracts/decisions.md#t001-owner-agreement--2026-11-12) record one user's relayed confirmation of shared-owner consent, not separate owner signatures or delivered adapters |
 
-Other UCs remain unselected for implementation in this batch. UC-01's subsequent authorization covers only its named local tasks and does not expand other owners' assignments. This is not a permanent `OUT_OF_SCOPE` decision for the final project.
+Other UCs remain unselected for implementation in this batch. UC-01's subsequent authorization covers only its named local tasks; UC-06's T001 agreement covers documentation/assignment only and expands no other owner's implementation scope. This is not a permanent `OUT_OF_SCOPE` decision for the final project.
 
 ## Delivery order and shared work
 
@@ -81,6 +82,16 @@ Agreed human-control behavior follows [ADR-0006](adr/0006-uc05-cli-and-human-con
 **Acceptance handoff:** allowed action, pause before a risky action, approve/resume, reject/adapt, revise then approve, forbidden action, stale decision, changed repository/policy, and restart while approval is pending. Prove rejection cannot be bypassed via an equivalent command and forbidden actions cannot be approved. Map evidence to every **Human approval** row; retain sanitized decision/outcome records.
 
 **Boundary:** the product runtime approval gate is separate from a colleague approving a contributor PR. Keep approval decisions behind the shared execution boundary so no UC can bypass them.
+
+## UC-06: Bound product review
+
+**Owner:** Trọng Tấn. The [T001 decision](../specs/009-reviewer-agent/contracts/decisions.md#t001-owner-agreement--2026-11-12) records the user's self-identification and user-relayed confirmation of all shared-owner agreement to the exact prepared packet. This is no independent set of signatures and does not identify this owner with the historically recorded UC-05 owner.
+
+**Owns:** UC-06 context/validation and coordination of its delivery. Tai retains shared reviewer/transport/graph/evaluation, Thanh Tan durable evidence/accounting/recovery, and Trong Tan approval/control. Exact paths remain in [tasks](../specs/009-reviewer-agent/tasks.md).
+
+**Deliver:** T001 records the agreed additive context/observation/evidence/evaluator contracts and documentation-only scope. Reuse the existing reviewer for UC-03; no second reviewer, store, budget ledger or runner.
+
+**Acceptance handoff:** recorded owner/provenance, exact reviewed contract/path baseline, finite-profile/rubric proposal status and T001-only release. T002 onward, actual adapter delivery, production profiles, independently approved labels, real workflow/model quality and restart require their separate gates. No code/TDD acceptance is claimed for administrative T001.
 
 ## Knowledge coverage to validate
 

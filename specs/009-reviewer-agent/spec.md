@@ -98,4 +98,4 @@ As a developer, I see findings inform bounded repair and distinguish verified ha
 
 ## Assumptions
 
-First proposed scope is UC-03 only: no standalone review, PR bot, GitHub integration, new CLI/UI or autonomous reviewer exploration. UC-06 owner is unassigned; Tai retains foundation/reviewer/evaluation, Thanh Tan accounting/recovery, Trong Tan approval. Numeric production profiles remain explicit external approvals. Constitution is an unratified template; existing repo policy/ADRs govern.
+First scope is UC-03 only: no standalone review, PR bot, GitHub integration, new CLI/UI or autonomous reviewer exploration. Trọng Tấn is UC-06 owner under the T001 user-relayed agreement in decisions.md; Tai retains foundation/reviewer/evaluation, Thanh Tan accounting/recovery, Trong Tan approval. T002 onward and numeric production profiles remain separately gated. Constitution is unratified; existing repo policy/ADRs govern.
