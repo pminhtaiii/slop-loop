@@ -75,6 +75,7 @@ import { FakeRepositoryPort } from '../support/uc03/fake-repository.ts';
 import { ControlledRepositoryTools, type TrustedFilesystemPort } from '../../../src/foundation/repository-tools.ts';
 import { DockerWorkspaceManager } from '../../../src/foundation/docker-workspace.ts';
 import { ScriptedApprovalPort } from '../support/uc03/scripted-approval.ts';
+import { isSafeStorageId } from '../../../src/persistence/store.ts';
 
 function asLegacyV01RepositoryPort(repositoryPort: FakeRepositoryPort): FakeRepositoryPort {
   Object.defineProperty(repositoryPort, 'executionGuardApiVersion', { value: undefined });
@@ -2662,17 +2663,8 @@ test('v0.2 repair admission: single-owner repair reservation and attempt account
   const patchContent = '--- a/src/calculator.py\n+++ b/src/calculator.py\n@@ -1,1 +1,3 @@\n+if b == 0: raise CalculationError("Cannot divide by zero")\n def divide(a, b): return a / b\n';
   const proposal = createRepairProposal(failureEvidence, patchContent, ['src/calculator.py']);
 
-  const actionId = `act-repair-${computeCanonicalSha256({
-    taskId: state.taskId,
-    runId: state.runId,
-    repositoryRevisionDigest: state.repositoryRevisionDigest,
-    baselineRef: state.plan ? state.plan.baselineRef : '',
-    checkSetDigest: state.plan ? state.plan.checkSetDigest : '',
-    diffDigest: authorization.trustedRepairContext.diffDigest,
-    evidenceRefs: [failureEvidence.evidenceId],
-    actionRefs: [failureEvidence.actionId],
-    diagnosticRefs: failureEvidence.diagnosticRefs,
-  })}`;
+  const actionId = createRepairActionId(state, [failureEvidence]);
+  assert.ok(actionId);
 
   const patchAction: ApplyPatchAction = {
     actionId,
@@ -2902,17 +2894,8 @@ test('v0.2 repair admission: exact admitted patch identity and confirmed revisio
   const patchContent = '--- a/src/calculator.py\n+++ b/src/calculator.py\n@@ -1,1 +1,3 @@\n+if b == 0: raise CalculationError("Cannot divide by zero")\n def divide(a, b): return a / b\n';
   const proposal = createRepairProposal(failureEvidence, patchContent, ['src/calculator.py']);
 
-  const actionId = `act-repair-${computeCanonicalSha256({
-    taskId: state.taskId,
-    runId: state.runId,
-    repositoryRevisionDigest: state.repositoryRevisionDigest,
-    baselineRef: state.plan ? state.plan.baselineRef : '',
-    checkSetDigest: state.plan ? state.plan.checkSetDigest : '',
-    diffDigest: authorization.trustedRepairContext.diffDigest,
-    evidenceRefs: [failureEvidence.evidenceId],
-    actionRefs: [failureEvidence.actionId],
-    diagnosticRefs: failureEvidence.diagnosticRefs,
-  })}`;
+  const actionId = createRepairActionId(state, [failureEvidence]);
+  assert.ok(actionId);
 
   const patchAction: ApplyPatchAction = {
     actionId,
@@ -2987,17 +2970,8 @@ test('v0.2 repair admission: guard and journal own state transition with no cons
   const patchContent = '--- a/src/calculator.py\n+++ b/src/calculator.py\n@@ -1,1 +1,3 @@\n+if b == 0: raise CalculationError("Cannot divide by zero")\n def divide(a, b): return a / b\n';
   const proposal = createRepairProposal(failureEvidence, patchContent, ['src/calculator.py']);
 
-  const actionId = `act-repair-${computeCanonicalSha256({
-    taskId: state.taskId,
-    runId: state.runId,
-    repositoryRevisionDigest: state.repositoryRevisionDigest,
-    baselineRef: state.plan ? state.plan.baselineRef : '',
-    checkSetDigest: state.plan ? state.plan.checkSetDigest : '',
-    diffDigest: authorization.trustedRepairContext.diffDigest,
-    evidenceRefs: [failureEvidence.evidenceId],
-    actionRefs: [failureEvidence.actionId],
-    diagnosticRefs: failureEvidence.diagnosticRefs,
-  })}`;
+  const actionId = createRepairActionId(state, [failureEvidence]);
+  assert.ok(actionId);
 
   const patchAction: ApplyPatchAction = {
     actionId,
@@ -3075,17 +3049,8 @@ test('v0.2 repair admission: zero effects on open claim blocking second dispatch
   const patchContent = '--- a/src/calculator.py\n+++ b/src/calculator.py\n@@ -1,1 +1,3 @@\n+if b == 0: raise CalculationError("Cannot divide by zero")\n def divide(a, b): return a / b\n';
   const proposal = createRepairProposal(failureEvidence, patchContent, ['src/calculator.py']);
 
-  const actionId = `act-repair-${computeCanonicalSha256({
-    taskId: state.taskId,
-    runId: state.runId,
-    repositoryRevisionDigest: state.repositoryRevisionDigest,
-    baselineRef: state.plan ? state.plan.baselineRef : '',
-    checkSetDigest: state.plan ? state.plan.checkSetDigest : '',
-    diffDigest: authorization.trustedRepairContext.diffDigest,
-    evidenceRefs: [failureEvidence.evidenceId],
-    actionRefs: [failureEvidence.actionId],
-    diagnosticRefs: failureEvidence.diagnosticRefs,
-  })}`;
+  const actionId = createRepairActionId(state, [failureEvidence]);
+  assert.ok(actionId);
 
   const patchAction: ApplyPatchAction = {
     actionId,
@@ -3195,18 +3160,10 @@ async function createRepairReceiverHarness(mode: 'failed' | 'partial' | 'observe
   const failureEvidence = createFailedPatchEvidence(task);
   const authorization = createAuthorizedRepairPorts(state, 'ALLOWED', failureEvidence);
   const proposal = createRepairProposal(failureEvidence, 'controlled repair diff', ['src/calculator.py']);
+  const actionId = createRepairActionId(state, [failureEvidence]);
+  assert.ok(actionId);
   const action: ApplyPatchAction = {
-    actionId: `act-repair-${computeCanonicalSha256({
-      taskId: state.taskId,
-      runId: state.runId,
-      repositoryRevisionDigest: state.repositoryRevisionDigest,
-      baselineRef: state.plan?.baselineRef,
-      checkSetDigest: state.plan?.checkSetDigest,
-      diffDigest: authorization.trustedRepairContext.diffDigest,
-      evidenceRefs: [failureEvidence.evidenceId],
-      actionRefs: [failureEvidence.actionId],
-      diagnosticRefs: failureEvidence.diagnosticRefs,
-    })}`,
+    actionId,
     kind: 'apply_patch',
     patchContent: proposal.diff,
     targetPaths: proposal.affectedPaths,
@@ -3456,3 +3413,13 @@ for (const stale of ['control', 'authority'] as const) {
     assert.equal(h.manager.hasActiveWriterLease(h.state.workspaceId), false);
   });
 }
+
+test('createRepairActionId emits an id a durable store accepts', () => {
+  const { state, task } = createRepairStateFixture();
+  const actionId = createRepairActionId(state, [createFailedPatchEvidence(task)]);
+  assert.ok(actionId);
+  // The durable adapter answers an unsafe id with a neutral receipt, not an error, so the assertion is the witness.
+  assert.ok(isSafeStorageId(actionId), `repair action id is not a safe storage id: ${actionId}`);
+  // Pins the prefix contract: slice(7) would silently eat hex if computeCanonicalSha256 ever changed its prefix.
+  assert.match(actionId, /^act-repair-[a-f0-9]{64}$/);
+});
