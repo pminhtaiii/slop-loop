@@ -39,11 +39,14 @@ import {
   validateStateTransition,
   validateRepositoryAdmissionV02,
 } from '../../../src/contracts/foundation/uc03.ts';
-import { runUC03Graph, type UC03GraphPorts, type UC03GraphState } from '../../../src/uc03/graph.ts';
+import { createAwaitPlanNode, runUC03Graph, type UC03GraphConfig, type UC03GraphPorts, type UC03GraphState } from '../../../src/uc03/graph.ts';
 import { createAwaitFeedbackNode } from '../../../src/uc03/graph-feedback.ts';
-import { validSettledPatchEvidence } from '../../../src/uc03/graph-validation.ts';
+import { currentPlanBindingDigest, validSettledPatchEvidence } from '../../../src/uc03/graph-validation.ts';
 import { createRepairNode } from '../../../src/uc03/graph-nodes.ts';
 import { runUC03Cli } from '../../../src/cli/uc03.ts';
+import { createCoderAgentV02 } from '../../../src/uc03/agent.ts';
+import { computeContextDigest } from '../../../src/foundation/model.ts';
+import type { CoderBudget, UC03CoderAdmission } from '../../../src/uc03/agent-types.ts';
 import {
   createFixtureBugTask,
   createFixtureCheckDefinition,
@@ -719,7 +722,9 @@ test('Route exceptions return a fixed safe reason and do not expose exception te
   const { task, ports, statePort, repositoryPort, trustedExpectedContext } = createTestSetup();
   await seedGraphTaskState(statePort, createGraphTaskState(task, { node: 'Validate' }));
   statePort.getUnderlying().transition = async () => {
-    throw new Error('MARKER_SECRET_GRAPH_EXCEPTION');
+    const error = new Error('MARKER_SECRET_GRAPH_EXCEPTION');
+    error.name = 'GraphRecursionError';
+    throw error;
   };
 
   const result = await runUC03Graph(task, ports, {
@@ -731,7 +736,27 @@ test('Route exceptions return a fixed safe reason and do not expose exception te
 
   assert.equal(result.outcome, 'INCOMPLETE');
   assert.deepEqual(result.reasons, ['UC-03 route stopped after an unconfirmed owner transition']);
+  assert.equal(result.diagnostic?.reasonCode, 'unconfirmed-owner-transition', 'A same-name foreign error is not LangGraph exhaustion');
   assert.doesNotMatch(serialized, /MARKER_SECRET_GRAPH_EXCEPTION/u);
+  assert.equal(repositoryPort.patches.length, 0);
+  assert.equal(repositoryPort.commands.length, 0);
+});
+
+test('Route reports the actual LangGraph recursion error with the bounded project reason', async () => {
+  const { task, ports, statePort, repositoryPort, trustedExpectedContext } = createTestSetup();
+  await seedGraphTaskState(statePort, createGraphTaskState(task, { node: 'Validate' }));
+
+  const result = await runUC03Graph(task, ports, {
+    mode: 'development',
+    trustedExpectedContext,
+    planDetails: ROUTE_PLAN_DETAILS,
+    recursionLimit: 1,
+  });
+
+  assert.equal(result.outcome, 'INCOMPLETE');
+  assert.deepEqual(result.reasons, ['UC-03 route stopped at the project graph recursion limit']);
+  assert.equal(result.diagnostic?.reasonCode, 'graph-recursion-exhausted');
+  assert.equal(result.state?.node, 'Investigate');
   assert.equal(repositoryPort.patches.length, 0);
   assert.equal(repositoryPort.commands.length, 0);
 });
@@ -865,6 +890,7 @@ test('AwaitFeedback requires a bound revise direction and a validated changed ca
     stateVersion: 1,
     node: 'AwaitFeedback',
     plan,
+    activeDecisionId: decisionRef,
     evidenceRefs: [baselineRef],
     nextAction: 'await-human-feedback-and-direction',
   });
@@ -893,6 +919,309 @@ test('AwaitFeedback requires a bound revise direction and a validated changed ca
   assert.deepEqual(replanLedger?.reservations, []);
   assert.equal(repositoryPort.patches.length, 0);
   assert.equal(repositoryPort.commands.length, 0);
+});
+
+test('AwaitFeedback rejects a missing or different rejected-decision pointer before coder or replan admission', async () => {
+  for (const pointer of ['missing', 'different', 'matching'] as const) {
+    const setup = createTestSetup();
+    const { task, ports, statePort } = setup;
+    const decisionId = 'decision-feedback-pointer';
+    const strategy = 'Keep the approved strategy while awaiting a specific revision';
+    const plan: FixPlan = {
+      planVersion: 1,
+      diagnosis: 'The denominator guard is missing.',
+      suspectedCauseLocations: ['src/calculator.py'],
+      evidenceRefs: [task.initialRevisionDigest],
+      strategy,
+      scopedChanges: ['src/calculator.py'],
+      checkSetDigest: computeCheckSetDigest(task.requiredChecks),
+      baselineRef: task.initialRevisionDigest,
+      strategyDigest: computeCanonicalSha256(strategy),
+      decisionRef: decisionId,
+    };
+    const feedback = createGraphTaskState(task, {
+      stateVersion: 1,
+      node: 'AwaitFeedback',
+      plan,
+      ...(pointer === 'missing' ? {} : { activeDecisionId: pointer === 'different' ? 'decision-other' : decisionId }),
+      evidenceRefs: [task.initialRevisionDigest],
+      nextAction: 'await-human-feedback-and-direction',
+    });
+    await seedGraphTaskState(statePort, feedback);
+    let coderAdmissions = 0;
+    let modelCalls = 0;
+    let replanCalls = 0;
+    const portsWithReplan: UC03GraphPorts = {
+      ...ports,
+      replanPort: {
+        provenance: 'mock',
+        accept: async () => {
+          replanCalls += 1;
+          throw new Error('replan should not be reached');
+        },
+      },
+    };
+    const config: UC03GraphConfig = {
+      mode: 'controlled',
+      trustedExpectedContext: setup.trustedExpectedContext,
+      trustedDirection: {
+        directive: 'revise',
+        taskId: feedback.taskId,
+        workspaceId: feedback.workspaceId,
+        repositoryRevisionDigest: feedback.repositoryRevisionDigest,
+        stateVersion: feedback.stateVersion,
+        planVersion: feedback.planVersion,
+        rejectedDecisionId: decisionId,
+        strategyDigest: plan.strategyDigest,
+      },
+      generation: {
+        budget: { maxModelCalls: 2, maxActiveMs: 1000, maxRepairs: 1, maxReplans: 1 },
+        agent: {
+          counters: { modelCalls: 0, modelOutputFailures: 0, repairs: 0, replans: 0, activeMs: 0 },
+          turn: async () => {
+            modelCalls += 1;
+            return { outcome: 'waiting', reason: 'unexpected', counters: { modelCalls: 0, modelOutputFailures: 0, repairs: 0, replans: 0, activeMs: 0 } };
+          },
+        },
+      },
+      coderAdmission: () => {
+        coderAdmissions += 1;
+        return undefined;
+      },
+    };
+
+    const result = await createAwaitFeedbackNode(portsWithReplan, config)(createGraphState({ task, state: feedback }));
+    if (pointer === 'matching') assert.equal(coderAdmissions, 1, 'matching pointer must reach the admission resolver');
+    else assert.equal(coderAdmissions, 0, `${pointer} pointer must refuse before coder admission`);
+    assert.equal(modelCalls, 0);
+    assert.equal(replanCalls, 0);
+    if (pointer !== 'matching') {
+      assert.equal(result.terminalOutcome, 'INCOMPLETE');
+      assert.deepEqual(await statePort.loadTask(task.taskId), feedback);
+    }
+  }
+});
+
+test('Generated AwaitFeedback revisions call the owner once and require renewed plan approval', async () => {
+  for (const ownerOutcome of ['accepted', 'uncertain'] as const) {
+    const setup = createTestSetup();
+    const { task, statePort, repositoryPort } = setup;
+    const decisionId = 'decision-generated-replan';
+    const strategy = 'Use the original bounded strategy';
+    const plan: FixPlan = {
+      planVersion: 1,
+      diagnosis: 'The denominator guard is missing.',
+      suspectedCauseLocations: ['src/calculator.py'],
+      evidenceRefs: [task.initialRevisionDigest],
+      strategy,
+      scopedChanges: ['src/calculator.py'],
+      checkSetDigest: computeCheckSetDigest(task.requiredChecks),
+      baselineRef: task.initialRevisionDigest,
+      strategyDigest: computeCanonicalSha256(strategy),
+      decisionRef: decisionId,
+    };
+    const feedback = createGraphTaskState(task, {
+      stateVersion: 1,
+      node: 'AwaitFeedback',
+      plan,
+      activeDecisionId: decisionId,
+      evidenceRefs: [task.initialRevisionDigest],
+      nextAction: 'await-human-feedback-and-direction',
+    });
+    await seedGraphTaskState(statePort, feedback);
+    const authority = await statePort.readVerificationAuthoritySnapshot(task.taskId);
+    assert.ok(authority);
+    const journal = statePort.getJournalSnapshot();
+    const requestId = `coder-replan-${ownerOutcome}`;
+    const request = createTestProviderRequest({
+      providerRequestId: requestId,
+      taskId: task.taskId,
+      runId: feedback.runId,
+      role: 'coder',
+      purpose: 'propose-replan',
+      configId: authority.policyIdentity.configId,
+      pricingPolicyId: authority.policyIdentity.policyId,
+      contextDigest: computeContextDigest(feedback, []),
+      reservationRef: `replan-provider-reservation:${requestId}`,
+    });
+    const providerIdentity: ProviderPricingIdentityV02 = {
+      providerId: request.providerId,
+      modelId: request.modelId,
+      configId: request.configId,
+      configVersion: authority.policyIdentity.configVersion,
+      pricingPolicyId: authority.policyIdentity.policyId,
+      pricingPolicyVersion: authority.policyIdentity.policyVersion,
+      issuerKeyRef: authority.policyIdentity.issuerKeyRef,
+      decisionAuthorityGeneration: authority.decisionAuthorityGeneration,
+    };
+    const providerAdmissionReceipt = createFixtureProviderAdmissionReceiptV02({
+      providerRequestId: requestId,
+      role: 'coder',
+      requestContentDigest: computeRequestContentDigest(request),
+      providerId: providerIdentity.providerId,
+      modelId: providerIdentity.modelId,
+      configId: providerIdentity.configId,
+      configVersion: providerIdentity.configVersion,
+      decisionAuthorityGeneration: providerIdentity.decisionAuthorityGeneration,
+    });
+    const context = createTestProviderAdmissionContextV02({
+      providerRequest: request,
+      providerIdentity,
+      providerAdmissionReceipt,
+      taskId: task.taskId,
+      runId: feedback.runId,
+      runnableNode: 'AwaitFeedback',
+      role: 'coder',
+      expectedTaskStateVersion: feedback.stateVersion,
+      expectedControlVersion: journal.controlVersion,
+      expectedEpoch: journal.epoch,
+      planApplicability: 'approved-plan',
+      planDecisionRef: decisionId,
+      planBindingDigest: currentPlanBindingDigest(task, feedback),
+      budgetRefs: [`task-tokens:${requestId}`, `task-cost:${requestId}`, `run-tokens:${requestId}`, `run-cost:${requestId}`],
+    });
+    const admission: UC03CoderAdmission = { request, context, trustedContext: createTestProviderAdmissionTrustedContextV02(context) };
+    const scripted = new ScriptedModelPort({
+      statePort,
+      executorIdentity: createFixtureExecutorIdentityV02({ payloadDigest: computeRequestContentDigest(request) }),
+      responses: [{
+        outcome: 'observed',
+        result: { observedUsage: { inputTokens: 1, outputTokens: 1, costUsd: 0.01, billableTokens: 2 }, proposal: { proposalId: `model-${requestId}`, content: JSON.stringify({
+          kind: 'propose-plan',
+          proposalId: `proposal-${requestId}`,
+          diagnosis: 'The denominator guard is missing.',
+          strategy: 'Check zero before division, then raise the domain error.',
+          suspectedLocations: ['src/calculator.py'],
+          scopedPaths: ['src/calculator.py'],
+          evidenceRefs: [task.initialRevisionDigest],
+        }) } },
+      }],
+    });
+    const agent = createCoderAgentV02({
+      model: new ScriptedModelPortV02(scripted),
+      repository: repositoryPort,
+      budget: { maxModelCalls: 2, maxActiveMs: 60_000, maxRepairs: 1, maxReplans: 3 } satisfies CoderBudget,
+    });
+    let ownerCalls = 0;
+    const ports: UC03GraphPorts = {
+      ...setup.ports,
+      replanPort: {
+        provenance: 'mock',
+        accept: async request => {
+          ownerCalls += 1;
+          assert.equal(request.direction.rejectedDecisionId, decisionId);
+          if (ownerOutcome === 'uncertain') return { outcome: 'uncertain', operationRef: `uncertain-${requestId}` };
+          const owner = statePort.getUnderlying();
+          const current = await owner.loadTask(task.taskId);
+          assert.ok(current);
+          const replanLedger = owner.getLedgers().find(ledger => ledger.scope === 'task' && ledger.kind === 'replan');
+          assert.ok(replanLedger);
+          owner.internalSetLedger({ ...replanLedger, consumed: replanLedger.consumed + 1, version: replanLedger.version + 1 });
+          const next: TaskState = {
+            ...current,
+            stateVersion: request.priorStateVersion + 1,
+            node: 'AwaitPlan',
+            nextAction: 'approve-fix-plan',
+            planVersion: request.priorPlanVersion + 1,
+            plan: { ...request.candidatePlan, planVersion: request.priorPlanVersion + 1, decisionRef: `renewed-${requestId}` },
+            activeDecisionId: `renewed-${requestId}`,
+            latestReviewRef: undefined,
+            reviewRefs: [],
+            replanCount: request.expectedNextReplanCount,
+            budgetLedgers: owner.getLedgers(),
+          };
+          owner.internalSetTask(next);
+          const saved = await owner.loadTask(task.taskId);
+          assert.ok(saved);
+          return { outcome: 'accepted', state: saved, reservationReceipt: `reservation-${requestId}`, transitionReceipt: `transition-${requestId}` };
+        },
+      },
+    };
+    const direction = {
+      directive: 'revise' as const,
+      taskId: feedback.taskId,
+      workspaceId: feedback.workspaceId,
+      repositoryRevisionDigest: feedback.repositoryRevisionDigest,
+      stateVersion: feedback.stateVersion,
+      planVersion: feedback.planVersion,
+      rejectedDecisionId: decisionId,
+      strategyDigest: plan.strategyDigest,
+    };
+    const result = await createAwaitFeedbackNode(ports, {
+      mode: 'controlled',
+      trustedExpectedContext: setup.trustedExpectedContext,
+      trustedDirection: direction,
+      generationV02: { agent },
+      coderAdmission: admission,
+    })(createGraphState({ task, state: feedback }));
+
+    assert.equal(scripted.simulatedDispatches, 1, JSON.stringify({ outcome: result.terminalOutcome, reasons: result.reasons, admissions: scripted.attemptedCalls }));
+    assert.equal(scripted.v02Calls.length, 1);
+    assert.equal(ownerCalls, 1, JSON.stringify({ outcome: result.terminalOutcome, reasons: result.reasons, model: scripted.v02Calls.map(call => call.outcome) }));
+    assert.equal(repositoryPort.patches.length, 0);
+    assert.equal(repositoryPort.commands.length, 0);
+    if (ownerOutcome === 'accepted') {
+      assert.equal(result.state?.node, 'AwaitPlan');
+      assert.equal(result.state?.planVersion, feedback.planVersion + 1);
+      assert.equal(result.state?.plan?.decisionRef, `renewed-${requestId}`);
+      assert.equal(result.state?.activeDecisionId, result.state?.plan?.decisionRef);
+      assert.equal(result.state?.nextAction, 'approve-fix-plan');
+      assert.equal(result.state?.replanCount, feedback.replanCount + 1);
+      assert.deepEqual(result.state?.reviewRefs, []);
+      assert.equal(result.state?.latestReviewRef, undefined);
+      assert.equal(result.terminalOutcome, undefined);
+
+      const renewedState = result.state;
+      assert.ok(renewedState?.plan);
+      const renewedDecisionId = renewedState.activeDecisionId;
+      assert.ok(renewedDecisionId);
+      const renewedPlan = renewedState.plan;
+      const pendingBinding: ApprovalBinding = {
+        decisionId: renewedDecisionId,
+        actionKind: 'fix_plan',
+        normalizedActionDigest: computeCanonicalSha256({
+          actionId: renewedDecisionId,
+          kind: 'approve_fix_plan',
+          planVersion: renewedPlan.planVersion,
+          strategyDigest: renewedPlan.strategyDigest,
+          diagnosisEvidenceRefs: renewedPlan.evidenceRefs,
+          checkSetDigest: renewedPlan.checkSetDigest,
+        }),
+        taskId: renewedState.taskId,
+        workspaceId: renewedState.workspaceId,
+        repositoryRevisionDigest: renewedState.repositoryRevisionDigest,
+        policyId: renewedState.taskContext?.configId ?? '',
+        policyVersion: renewedState.taskContext?.configVersion ?? '',
+        planVersion: renewedPlan.planVersion,
+        strategyDigest: renewedPlan.strategyDigest,
+        baselineRef: renewedPlan.baselineRef,
+        evidenceRefs: renewedPlan.evidenceRefs,
+        criteriaDigest: computeCanonicalSha256(renewedState.acceptanceCriteria),
+        checkSetDigest: renewedPlan.checkSetDigest,
+        status: 'pending',
+      };
+      let renewedResolveCalls = 0;
+      const renewedApprovalNode = createAwaitPlanNode({
+        ...ports,
+        approvalPort: {
+          ...ports.approvalPort,
+          resolve: async decisionId => {
+            renewedResolveCalls += 1;
+            assert.equal(decisionId, renewedDecisionId);
+            return pendingBinding;
+          },
+        },
+      });
+      const renewedApproval = await renewedApprovalNode(createGraphState({ task, state: renewedState }));
+      assert.equal(renewedResolveCalls, 1);
+      assert.equal(renewedApproval.terminalOutcome, 'pending-approval');
+      assert.equal(renewedApproval.state?.activeDecisionId, renewedDecisionId);
+    } else {
+      assert.equal(result.terminalOutcome, 'INCOMPLETE');
+      assert.equal(result.state?.node, 'AwaitFeedback');
+      assert.equal(result.state?.replanCount, feedback.replanCount);
+    }
+  }
 });
 
 test('Restored Deliver without baseline, current checks, and review cannot claim completion', async () => {
@@ -1153,6 +1482,19 @@ test('Mock route delivers only after baseline, owner-settled patch, current chec
   assert.equal(result.state.node, 'Deliver');
   assert.ok(result.finalReport !== undefined);
   assert.equal(result.finalReport.isComplete, true);
+  const executionEvidence = result.executionEvidence;
+  assert.ok(executionEvidence?.baseline);
+  assert.equal(executionEvidence?.verificationResults?.length, task.requiredChecks.length);
+  assert.ok(executionEvidence?.reviewRequest);
+  assert.ok(executionEvidence?.reviewResult);
+  assert.ok(executionEvidence?.patchAdmission);
+  assert.ok(executionEvidence?.patchReceipt);
+  assert.deepEqual(executionEvidence?.finalState, result.state);
+  assert.equal(Object.getOwnPropertyDescriptor(result, 'executionEvidence')?.enumerable, false);
+  assert.equal(({ ...result } as typeof result).executionEvidence, undefined);
+  assert.doesNotMatch(JSON.stringify(result), /executionEvidence|patchAdmission|patchReceipt/u);
+  assert.ok(Object.isFrozen(executionEvidence));
+  assert.ok(Object.isFrozen(executionEvidence.verificationResults));
   assert.equal(result.finalReport.outcome, 'COMPLETED');
   assert.equal(result.finalReport.evidence.verificationRefs.length, task.requiredChecks.length);
   assert.ok(result.finalReport.evidence.baselineRef);
@@ -1584,6 +1926,7 @@ test('Plan rejection: transitions to AwaitFeedback and pauses or replans', async
   assert.equal(feedbackResult.outcome, 'needs-info');
   assert.ok(feedbackResult.state !== null);
   assert.equal(feedbackResult.state.node, 'AwaitFeedback');
+  assert.equal(feedbackResult.state.activeDecisionId, feedbackResult.state.plan?.decisionRef);
 
   // Now terminate via human direction
   const terminateResult = await runUC03Graph(

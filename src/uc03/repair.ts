@@ -1,5 +1,3 @@
-/** UC-03 repair; T018 replan and shared types factored into sibling modules. */
-
 import {
   computeCanonicalSha256, computeCheckSetDigest, validateApprovalBinding,
   validateStateTransition, validateTaskState, validateNormalizedAction, validateVerificationResult, validateReviewResult,
@@ -156,7 +154,6 @@ export async function executeRepair(input: RepairInput, ports: RepairPorts): Pro
     if (permission !== 'ALLOWED') return stop('patch-action-approval-required');
   } catch { return stop('patch-policy-unavailable'); }
 
-  // Check if v0.2 atomic admission is active
   const admissionContext = resolveRepairAdmissionContext(ports, ctx);
   if (isStatePortV02(ports.statePort) && !admissionContext) return stop('repair-admission-context-required');
   if (admissionContext && !isStatePortV02(ports.statePort)) return stop('repair-admission-version-mismatch');
@@ -208,8 +205,6 @@ export async function executeRepair(input: RepairInput, ports: RepairPorts): Pro
     };
   }
 
-  // Legacy v0.1 reservation and state CAS flow. The v0.2 guards above return on every path, but a
-  // property is not narrowed across them, so the legacy port is named once here.
   const statePort = isStatePortV02(ports.statePort) ? undefined : ports.statePort;
   if (!statePort) return stop('repair-admission-version-mismatch');
   let receiptId: string;
@@ -303,14 +298,14 @@ export async function handlePlanRejection(input: RejectionInput, ports: Rejectio
 
   const next: TaskState = {
     ...state, stateVersion: state.stateVersion + 1, node: 'AwaitFeedback',
-    nextAction: 'await-human-feedback-and-direction', activeDecisionId: undefined,
+    nextAction: 'await-human-feedback-and-direction', activeDecisionId: decision.value.decisionId,
     approvalDecisionRefs: [...new Set([...(state.approvalDecisionRefs ?? []), decision.value.decisionId])],
   };
   if (!validateStateTransition(state, next).ok) return rejectionResult('INCOMPLETE', state, ['rejection-transition-prevalidation-failed']);
   let saved: TaskState;
   try { saved = await ports.statePort.transition(next, state.stateVersion); }
   catch { return rejectionResult('INCOMPLETE', await safeReload(ports.statePort, input.taskId, state), ['rejection-transition-failed']); }
-  if (!validateStateTransition(state, saved).ok || saved.node !== 'AwaitFeedback' || saved.activeDecisionId) {
+  if (!validateStateTransition(state, saved).ok || saved.node !== 'AwaitFeedback' || saved.activeDecisionId !== decision.value.decisionId || saved.plan?.decisionRef !== decision.value.decisionId) {
     return rejectionResult('INCOMPLETE', await safeReload(ports.statePort, input.taskId, state), ['rejection-transition-result-inconsistent']);
   }
   return rejectionResult('AWAIT_FEEDBACK', saved, ['stored-plan-rejection-confirmed', 'explicit-human-direction-required']);

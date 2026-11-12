@@ -38,7 +38,9 @@ function directionMatchesState(direction: NonNullable<UC03GraphConfig['trustedDi
     direction.repositoryRevisionDigest === state.repositoryRevisionDigest &&
     direction.stateVersion === state.stateVersion &&
     direction.planVersion === state.planVersion &&
-    direction.rejectedDecisionId === state.plan?.decisionRef &&
+    !!state.plan?.decisionRef &&
+    state.activeDecisionId === state.plan.decisionRef &&
+    direction.rejectedDecisionId === state.activeDecisionId &&
     direction.strategyDigest === state.plan?.strategyDigest
   );
 }

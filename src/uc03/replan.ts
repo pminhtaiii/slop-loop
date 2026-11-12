@@ -1,14 +1,4 @@
-/**
- * UC-03 Material Replan & Human Feedback Transitions (T018)
- * Feature: specs/001-verified-code-repair
- *
- * Requirements & Acceptance:
- * - C12: Initial plan zero, at most 3 material replans, fourth refused; rejection waits
- *   for user feedback; minor vs material based on bound fields NOT caller boolean.
- * - CAS transitions via StatePort without local durable ledger duck typing.
- * - Invalidate prior edit/approval/review authority upon material replan.
- * - Safe typed outcome without raw error exposure on unexpected port failures.
- */
+/** T018: canonical materiality and bounded owner-gated replanning. */
 
 import { computeCanonicalSha256, computeCheckSetDigest, validateFixPlan, validateTaskState, validateStateTransition, type FixPlan, type TaskState } from '../contracts/foundation/uc03.ts';
 import { isStatePortV02 } from './repair-types.ts';
@@ -65,7 +55,6 @@ function validReplanInput(input: unknown): input is ReplanInput {
 
 function validPlanForTask(plan: FixPlan, state: TaskState): boolean {
   const checks = state.taskContext?.requiredChecks;
-  // The plan binds the baseline evidence ID; the revision digest is a separate snapshot invariant.
   const baselineRef = state.plan?.baselineRef ?? state.taskContext?.initialRevisionDigest;
   return !!checks?.length && plan.checkSetDigest === computeCheckSetDigest(checks) && plan.baselineRef === baselineRef && plan.strategyDigest === computeCanonicalSha256(plan.strategy);
 }
@@ -93,8 +82,8 @@ function matchesTrustedDirection(direction: TrustedReplanDirection | undefined, 
   const plan = state.plan;
   return (
     state.node === 'AwaitFeedback' &&
-    !state.activeDecisionId &&
     !!plan?.decisionRef &&
+    state.activeDecisionId === plan.decisionRef &&
     !!direction &&
     (direction.directive === 'resume' || direction.directive === 'revise' || direction.directive === 'terminate') &&
     direction.taskId === state.taskId &&
@@ -281,8 +270,31 @@ export async function executeReplan(input: ReplanInput, ports: ReplanPorts): Pro
     // 'accepted' and 'already-accepted' both carry the owner-committed state; replay adds no charge.
     // Bind it to this request: a valid state for another task/run, or one that skips the charge, is inconsistent.
     const owned = accepted.state;
-    const bound = validateTaskState(owned).ok && owned.taskId === state.taskId && owned.runId === state.runId && owned.replanCount === state.replanCount + 1;
-    return bound ? response('REPLAN_PREPARED', owned, [], true) : response('INCOMPLETE', state, ['reserved-task-state-inconsistent'], true);
+    const renewedDecisionId = owned.plan?.decisionRef;
+    const committedPlan = owned.plan && { ...owned.plan, decisionRef: undefined };
+    const expectedPlan = { ...input.candidatePlan, planVersion: state.planVersion + 1, decisionRef: undefined };
+    const bound = validateTaskState(owned).ok &&
+      owned.taskId === state.taskId &&
+      owned.runId === state.runId &&
+      owned.workspaceId === state.workspaceId &&
+      owned.repositoryId === state.repositoryId &&
+      owned.repositoryRevisionDigest === state.repositoryRevisionDigest &&
+      owned.taskContext?.configId === state.taskContext?.configId &&
+      owned.taskContext?.configVersion === state.taskContext?.configVersion &&
+      owned.stateVersion === state.stateVersion + 1 &&
+      owned.node === 'AwaitPlan' &&
+      owned.nextAction === 'approve-fix-plan' &&
+      owned.planVersion === state.planVersion + 1 &&
+      owned.replanCount === state.replanCount + 1 &&
+      computeCanonicalSha256(committedPlan ?? null) === computeCanonicalSha256(expectedPlan) &&
+      typeof renewedDecisionId === 'string' && renewedDecisionId.length > 0 &&
+      renewedDecisionId !== state.activeDecisionId &&
+      owned.activeDecisionId === renewedDecisionId &&
+      owned.latestReviewRef === undefined &&
+      (owned.reviewRefs?.length ?? 0) === 0;
+    const hasReceipts = typeof accepted.reservationReceipt === 'string' && accepted.reservationReceipt.length > 0 &&
+      typeof accepted.transitionReceipt === 'string' && accepted.transitionReceipt.length > 0;
+    return bound && hasReceipts ? response('REPLAN_PREPARED', owned, [], true) : response('INCOMPLETE', state, ['reserved-task-state-inconsistent'], true);
   }
 
   // Controlled caller: legacy reservation and state CAS flow.

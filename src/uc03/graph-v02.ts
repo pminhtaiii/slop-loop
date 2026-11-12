@@ -48,6 +48,7 @@ function assembleConfig(config: UC03GraphConfigV02, mode: 'production' | 'contro
     // No supplied answer: the production route never accepts plan/patch/replan bytes from config,
     // and a configured generation attempt refuses one (REAL_PROFILE_SUPPLIED_ANSWER_REFUSED).
     generationV02: config.generation,
+    recursionLimit: config.recursionLimit,
     trustedExpectedContext: config.trustedExpectedContext,
     trustedDirection: config.trustedDirection,
     trustedTransitionContext: config.trustedTransitionContext,

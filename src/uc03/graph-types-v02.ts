@@ -172,6 +172,7 @@ export function portDeclarationsV02(component: UC03ProductionComponentV02): Read
 /** Host wiring for the v0.2 production route. No `mode`: this entry is production by construction. */
 export interface UC03GraphConfigV02 {
   readonly generation?: UC03GraphGenerationV02 | undefined;
+  readonly recursionLimit?: number | undefined;
   readonly coderAdmission?: UC03CoderAdmissionResolver | undefined;
   readonly reviewerAdmission?: UC03ReviewerAdmissionResolverV02 | undefined;
   readonly trustedExpectedContext: TrustedHostExpectedContext;

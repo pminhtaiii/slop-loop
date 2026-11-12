@@ -1,5 +1,3 @@
-/** UC-03 mock-capable route orchestration. Real execution remains gated. */
-
 import { END, START, StateGraph } from '@langchain/langgraph';
 import { isAdmittedForProduction, type BugTask, type TaskState } from '../contracts/foundation/uc03.ts';
 import { createInvestigateNode, createPatchNode, createRepairNode } from './graph-nodes.ts';
@@ -12,7 +10,7 @@ import { incompleteDelivery, loadCompletionPredicateInput, reportForPredicate } 
 import { evaluateDeterministicCompletion } from './verification.ts';
 import { buildFinalReport, type Milestone } from './report.ts';
 import { UC03StateAnnotation, type UC03GraphNode, type UC03GraphState } from './graph-state.ts';
-import { type UC03GraphConfig, type UC03GraphPorts, type UC03WorkflowResult } from './graph-types.ts';
+import { attachUC03ExecutionEvidence, graphRecursionLimit, isGraphRecursionError, type UC03ExecutionEvidence, type UC03GraphConfig, type UC03GraphPorts, type UC03WorkflowResult } from './graph-types.ts';
 import { createReviewNode } from './graph-review.ts';
 import { usesCanonicalReviewerIngress } from '../foundation/reviewer.ts';
 import { handlePlanRejection } from './repair.ts';
@@ -20,7 +18,7 @@ import { createEvaluationDiagnostic } from '../runtime/evaluation-diagnostics.ts
 import { diagnosticForOutcome, stageForNode } from './graph-diagnostics.ts';
 
 export { UC03StateAnnotation };
-export type { UC03GraphConfig, UC03GraphPorts, UC03GraphState, UC03WorkflowResult };
+export type { UC03ExecutionEvidence, UC03GraphConfig, UC03GraphPorts, UC03GraphState, UC03WorkflowResult };
 
 const WORKFLOW_NODES = ['Investigate', 'AwaitPlan', 'AwaitFeedback', 'Patch', 'Verify', 'Review', 'Repair', 'Deliver', 'Incomplete'] as const;
 
@@ -212,39 +210,38 @@ export async function runUC03Graph(task: BugTask, ports: UC03GraphPorts, config?
 
   const app = buildUC03Graph(ports, config);
   try {
-    const output = await app.invoke({ task, state: initialState, reasons: [], milestones: [] });
+    const output = await app.invoke({ task, state: initialState, reasons: [], milestones: [] }, { recursionLimit: graphRecursionLimit(config?.recursionLimit) });
     const reportOutcome = output.finalReport?.outcome;
     const outcome = reportOutcome ?? output.terminalOutcome ?? output.state?.outcome ?? 'INCOMPLETE';
-    return {
+    return attachUC03ExecutionEvidence({
       outcome,
       state: output.state ?? null,
       finalReport: output.finalReport,
       reasons: output.finalReport?.failureReasons ?? output.reasons ?? [],
       milestones: output.milestones ?? [],
       ...diagnosticForOutcome(output),
-    };
-  } catch {
+    }, output);
+  } catch (error) {
     let current: TaskState | null = null;
     try {
       current = await ports.statePort.loadTask(task.taskId);
-    } catch {
-      /* No authoritative state is available. */
-    }
+    } catch { /* No authoritative state is available. */ }
     const outcome = current?.changedPaths.length ? 'IMPLEMENTED_UNVERIFIED' : 'INCOMPLETE';
+    const exhausted = isGraphRecursionError(error);
     return {
       outcome,
       state: current?.outcome === 'COMPLETED' ? null : current,
-      reasons: ['UC-03 route stopped after an unconfirmed owner transition'],
+      reasons: [exhausted ? 'UC-03 route stopped at the project graph recursion limit' : 'UC-03 route stopped after an unconfirmed owner transition'],
       milestones: [],
       diagnostic: createEvaluationDiagnostic({
         stage: stageForNode(current?.node),
         component: 'workflow',
         attribution: 'unknown',
         attributionConfidence: 'unknown',
-        reasonCode: 'unconfirmed-owner-transition',
+        reasonCode: exhausted ? 'graph-recursion-exhausted' : 'unconfirmed-owner-transition',
         evidenceRefs: current ? current.evidenceRefs : [],
         limitations: [
-          'Route stopped on a thrown failure; the failing component and its effects are unproven',
+          exhausted ? 'The finite project graph recursion allowance was exhausted; completion is withheld' : 'Route stopped on a thrown failure; the failing component and its effects are unproven',
           ...(current ? [] : ['No authoritative owner state could be reloaded after the failure']),
         ],
       }),
