@@ -24,6 +24,7 @@ import {
   type UC03ProductionComponentV02,
 } from '../../../src/uc03/graph-types-v02.ts';
 import { sha256Text } from '../../../src/uc01/contracts.ts';
+import { validateTaskState } from '../../../src/contracts/foundation/uc03.ts';
 import { isSafeStorageId } from '../../../src/persistence/store.ts';
 import { askClarification, recordClarificationAnswer } from '../../../src/uc03/clarification.ts';
 import { createFixtureBugTask, createFixtureTaskState } from '../support/uc03/port-fixtures.ts';
@@ -225,6 +226,29 @@ test('verification approval, review, and the owner completion record deliver the
   assert.equal(completed.route.repositoryPort.patches.length, 1);
   assert.equal(completed.statePort.getLedgers().find(ledger => ledger.scope === 'task' && ledger.kind === 'repair')?.consumed, 1);
   assert.equal(completed.statePort.getLedgers().find(ledger => ledger.scope === 'task' && ledger.kind === 'iteration')?.consumed, 1);
+
+  // The protected test file is read, never written: the delivery itself must leave the sentinel intact,
+  // not just the pre-patch approval barrier.
+  const sentinel = await completed.route.repositoryPort.readFile('tests/test_calculator.py');
+  assert.equal(sentinel.boundedExcerpt, 'def test_divide(): pass\n', 'the delivered run rewrote the protected test file');
+
+  // Coder and reviewer charges are separate durable chains: each role's claim carries its own attempt
+  // and settled outcome, and no receipt is shared across the roles.
+  const journal = completed.statePort.getJournalSnapshot();
+  const coderClaims = journal.claims.filter(claim => claim.claimId.startsWith('claim-controlled-'));
+  const reviewerClaims = journal.claims.filter(claim => claim.claimId.startsWith('claim-provider-'));
+  assert.ok(coderClaims.length > 0, JSON.stringify(journal.claims));
+  assert.ok(reviewerClaims.length > 0, JSON.stringify(journal.claims));
+  assert.equal(new Set([...coderClaims, ...reviewerClaims].map(claim => claim.claimId)).size, coderClaims.length + reviewerClaims.length, 'a claim is charged to both roles');
+  for (const claim of [...coderClaims, ...reviewerClaims]) {
+    const attempts = journal.attempts.filter(attempt => attempt.claimId === claim.claimId);
+    assert.equal(attempts.length, 1, `claim ${claim.claimId} began ${attempts.length} attempts`);
+    const outcomes = journal.outcomes.filter(outcome => outcome.claimId === claim.claimId);
+    assert.equal(outcomes.length, 1, `claim ${claim.claimId} settled ${outcomes.length} outcomes`);
+    assert.equal(outcomes[0]?.outcome, 'observed', `claim ${claim.claimId} recorded no observed outcome: ${JSON.stringify(outcomes)}`);
+    assert.equal(claim.status, 'settled', `claim ${claim.claimId} is ${claim.status}, not settled`);
+    assert.equal(claim.attemptId, attempts[0]?.attemptId, `claim ${claim.claimId} points at another attempt`);
+  }
 });
 
 type ControlledFixture = Awaited<ReturnType<typeof controlledGeneratedPlanFixture>>;
@@ -320,6 +344,36 @@ test('a reviewer finding sends the controlled route back to Repair for a second 
   assert.equal(repaired.finalReport?.delivery?.outcome, 'COMPLETED');
 });
 
+test('a completion record minted before the protected-test content drifted is refused', async () => {
+  // Baseline and completion both read one host authority, so a same-fixture content change moves both
+  // digests together. Drift needs the completion record minted from the default-content probe and the
+  // delivery run's own baseline written from different content. The digest comparison at
+  // `graph-completion.ts:160-161` is the guard that fires; the traversal still completes both patches
+  // because the divergence is only visible at completion.
+  const probe = await controlledGeneratedPlanFixture({ reviewVerdict: REPAIR_VERDICTS });
+  const probeRepaired = await driveRepairRound(probe);
+  assertRepairTraversal(probe, probeRepaired);
+  assert.ok(probeRepaired.state, 'the repair probe halted without a state');
+  const reviewStateVersion = probeRepaired.state.stateVersion - 1;
+  const deliveryStateVersion = probeRepaired.state.stateVersion;
+  const completionContext = await controlledCompletionContext(probe, { ...probeRepaired.state, stateVersion: reviewStateVersion });
+
+  const fixture = await controlledGeneratedPlanFixture({
+    reviewVerdict: REPAIR_VERDICTS,
+    transitionContexts: { [deliveryStateVersion]: completionContext },
+    hostTestFileContent: 'def test_divide(): return None\n',
+  });
+  const repaired = await driveRepairRound(fixture);
+  assertRepairTraversal(fixture, repaired);
+
+  assert.equal(repaired.outcome, 'IMPLEMENTED_UNVERIFIED', JSON.stringify({ reasons: repaired.reasons, node: repaired.state?.node }));
+  // The stale-evidence refusal is second, not alone: the review node's drift branch omits the digests
+  // from its report input, so the report builder takes its non-evaluable branch and prepends the
+  // generic reason. The second element still discriminates the refusal from the unsupplied-context
+  // pair the passing test above reports ('Independent baseline, ...').
+  assert.deepEqual(repaired.reasons, ['Incomplete verification or review evidence for completion', 'Owner-provided completion evidence is stale or does not match the current route']);
+});
+
 test('a long but contract-valid check id completes the repair round inside the durable id cap', async () => {
   // The repair round now scopes its action ids by only 16 hex of the revision, so a check id that a
   // 64-hex scope used to overflow must traverse both rounds and still journal safe storage ids.
@@ -413,6 +467,140 @@ test('the clarification pair: an ask pauses with one claim, and an answered reco
     resumeFixture.statePort.getJournalSnapshot().claims.some(claim => claim.claimId === `claim-${resumedRequestId}`),
     `the resumed turn's claim is journaled for ${resumedRequestId}`,
   );
+});
+
+test('a substituted clarification answer is refused at the graph tier with zero model calls', async () => {
+  // Every other substitution row in this file mutates `goal`; this one mutates the clarification
+  // `answerDigest`, which is the input §8 binds the resumed coder turn to. The generic graph reason
+  // does not name the cause, so the row also asserts the validator code that produced it — otherwise
+  // an unrelated task-state mismatch would satisfy it.
+  const fixture = await controlledGeneratedPlanFixture();
+  const readiness = prepareControlledUC03Host(fixture.host.inputs);
+  assert.equal(readiness.status, 'controlled-ready');
+  if (readiness.status !== 'controlled-ready') return;
+  const seeded = await fixture.statePort.loadTask(fixture.task.taskId);
+  assert.ok(seeded);
+  const open = await askClarification({
+    statePort: fixture.statePort,
+    prior: seeded,
+    proposal: { kind: 'request-info', proposalId: 'substitution-ask', questions: [{ questionId: 'q-denominator', text: 'What should a zero denominator do?' }], evidenceRefs: [] },
+  });
+  const answered = await recordClarificationAnswer({
+    statePort: fixture.statePort,
+    prior: open.state,
+    answer: { recorderRef: 'reporter-1', items: (open.state.clarification?.questions ?? []).map(question => ({ questionId: question.questionId, text: 'raise a guarded error' })) },
+  });
+  assert.equal(answered.state.node, 'Investigate');
+
+  // `structuredClone` yields a mutable copy; the interface is readonly by contract, not at runtime.
+  const substituted = structuredClone(answered.state) as { clarification?: { answer?: { answerDigest: string } } };
+  assert.ok(substituted.clarification?.answer);
+  substituted.clarification.answer.answerDigest = `sha256:${'0'.repeat(64)}`;
+  // The one non-validating write on this fixture; a re-transition would be refused at the seed.
+  fixture.statePort.getUnderlying().internalSetTask(substituted as typeof answered.state);
+  const validation = validateTaskState(substituted as typeof answered.state);
+  assert.ok(!validation.ok && validation.errors.some(error => error.code === 'CLARIFICATION_ANSWER_DIGEST_MISMATCH'), JSON.stringify(validation));
+
+  // The fixture journal is cumulative, so the baseline (not a bare zero) is what makes "this run
+  // claimed nothing" mean the refusal, and not the fixture's own seeding.
+  const claimsBefore = fixture.statePort.getJournalSnapshot().claims.length;
+  const result = await runControlledUC03GraphV02(fixture.task, readiness.ports, readiness.config);
+  assert.equal(result.outcome, 'INCOMPLETE', JSON.stringify(result.reasons));
+  assert.ok(result.reasons.includes('Authoritative task state does not match the supplied task'), JSON.stringify(result.reasons));
+  assert.equal(fixture.statePort.getJournalSnapshot().claims.length - claimsBefore, 0, 'a substituted answer must claim nothing');
+  assert.deepEqual(fixture.modelCalls, [], 'a substituted answer must dispatch nothing');
+  // The refusal precedes any coder admission: this is the validator, not a coder-admission refusal.
+  assert.deepEqual(fixture.coderAdmissions, [], 'no coder admission was requested');
+
+  // Positive sibling on the same fixture: restore the correct answer and the same invoke dispatches,
+  // so the zero above is the refusal and not a branch that was never reached.
+  fixture.statePort.getUnderlying().internalSetTask(answered.state);
+  const resumed = await runControlledUC03GraphV02(fixture.task, readiness.ports, readiness.config);
+  assert.ok(resumed.state, JSON.stringify(resumed.reasons));
+  assert.ok(fixture.modelCalls.length >= 1, JSON.stringify({ modelCalls: fixture.modelCalls, reasons: resumed.reasons }));
+  // "At least one call" alone would not prove the model boundary claimed: the claim id must be the
+  // one derived from the coder request this sibling actually dispatched (`claim-${providerRequestId}`).
+  const resumedRequestId = fixture.coderAdmissions[0];
+  assert.ok(resumedRequestId);
+  assert.ok(
+    fixture.statePort.getJournalSnapshot().claims.some(claim => claim.claimId === `claim-${resumedRequestId}`),
+    `the resumed turn's claim is journaled for ${resumedRequestId}`,
+  );
+});
+
+test('a stop proposal withholds completion and accepts no plan', async () => {
+  const fixture = await controlledGeneratedPlanFixture({
+    firstResponse: {
+      proposalId: 'controlled-stop-1',
+      content: JSON.stringify({ kind: 'stop', proposalId: 'controlled-stop-1', reasonCode: 'insufficient-evidence', summary: 'Cannot diagnose the failure', evidenceRefs: [] }),
+    },
+  });
+  const readiness = prepareControlledUC03Host(fixture.host.inputs);
+  assert.equal(readiness.status, 'controlled-ready');
+  if (readiness.status !== 'controlled-ready') return;
+  const result = await runControlledUC03GraphV02(fixture.task, readiness.ports, readiness.config);
+
+  assert.equal(result.outcome, 'INCOMPLETE', JSON.stringify({ reasons: result.reasons, node: result.state?.node }));
+  // `graph-nodes.ts` renders stop through the generic wrong-kind refusal, so the reason names that
+  // shape rather than a dedicated stop path. Asserting it keeps this row from being read as a stop
+  // handler: the claim it supports is only "stop withholds completion".
+  assert.ok(
+    result.reasons.some(reason => reason.includes('received stop')),
+    JSON.stringify(result.reasons),
+  );
+  assert.equal(result.finalReport?.isComplete, false, 'a stop must not report a complete run');
+  assert.equal(result.finalReport?.delivery?.outcome, undefined, 'a stop must not produce a delivery record');
+  assert.equal(result.state?.node, 'Investigate');
+  const state = await fixture.statePort.loadTask(fixture.task.taskId);
+  assert.equal(state?.plan, undefined, 'a stop must not persist a plan');
+  assert.deepEqual(fixture.route.repositoryPort.patches, [], 'a stop must apply no patch');
+});
+
+test('an uncertain patch recovery halts as IMPLEMENTED_UNVERIFIED and settles no patch receipt', async () => {
+  // The fault belongs in the repository receiver, not the model transport: the execution guard's one
+  // `catch` serves both `applyPatch` and `runCommand`, and a throw there is what `graph-patch.ts:61`
+  // maps to `IMPLEMENTED_UNVERIFIED`. Downstream of a provider fault would be the wrong witness.
+  const probe = await controlledGeneratedPlanFixture({ failFirstPatch: true });
+  const readiness = prepareControlledUC03Host(probe.host.inputs);
+  assert.equal(readiness.status, 'controlled-ready');
+  if (readiness.status !== 'controlled-ready') return;
+  await runControlledUC03GraphV02(probe.task, readiness.ports, readiness.config);
+  const d0 = probe.route.approvalPort.getRecordedBindings().find(binding => binding.decisionId.startsWith('dec-plan-'));
+  assert.ok(d0, 'owner did not issue D0');
+  await bumpAuthority(probe);
+  probe.route.approvalPort.scriptDecision({ ...d0, status: 'approved' });
+  const result = await runControlledUC03GraphV02(probe.task, readiness.ports, readiness.config);
+
+  assert.equal(result.outcome, 'IMPLEMENTED_UNVERIFIED', JSON.stringify({ reasons: result.reasons, node: result.state?.node }));
+  assert.ok(
+    result.reasons.some(reason => reason.includes('uncertain-effect')),
+    JSON.stringify(result.reasons),
+  );
+  // The refused patch left no settled receipt, so the uncertain effect is not silently accounted as one.
+  assert.equal(probe.patchReceipts.length, 0, 'an uncertain patch must not settle a receipt');
+  assert.equal(probe.route.repositoryPort.patches.length, 0, 'the receiver refused before applying');
+  assert.equal(result.finalReport?.isComplete, false);
+});
+
+test('an uncertain provider dispatch stops the run without a completion record', async () => {
+  // The transport throw is classified `uncertain` by the model boundary, which the coder agent turns
+  // into `unavailable` and the generation node carries to `INCOMPLETE`. A settled stop must not also
+  // look like a completion, and the same dispatch must not be replayed.
+  const fixture = await controlledGeneratedPlanFixture({ failFirstResponse: true });
+  const readiness = prepareControlledUC03Host(fixture.host.inputs);
+  assert.equal(readiness.status, 'controlled-ready');
+  if (readiness.status !== 'controlled-ready') return;
+  const result = await runControlledUC03GraphV02(fixture.task, readiness.ports, readiness.config);
+
+  assert.equal(result.outcome, 'INCOMPLETE', JSON.stringify({ reasons: result.reasons, node: result.state?.node }));
+  assert.ok(
+    result.reasons.some(reason => reason.includes('MODEL_UNCERTAIN') || reason.includes('uncertain')),
+    JSON.stringify(result.reasons),
+  );
+  assert.equal(result.finalReport?.isComplete, false);
+  assert.deepEqual(fixture.modelCalls, ['coder:propose-plan'], 'an uncertain dispatch is charged once, never replayed');
+  const state = await fixture.statePort.loadTask(fixture.task.taskId);
+  assert.equal(state?.plan, undefined, 'an uncertain dispatch must not persist a plan');
 });
 
 test('a substituted authoritative task is refused, with a positive sibling on the same fixture', async () => {

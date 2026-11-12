@@ -374,7 +374,10 @@ export function createSnapshotGrader(data: unknown): SnapshotGrader {
         // The claimed expected-wait check must hold: a needs-info pause matches its pinned wait, else no wait was expected.
         const expectedWaitHolds =
           observation.workflowOutcome === 'waiting-info' ? observation.expectedWait === 'waiting-info' : observation.workflowOutcome === 'INCOMPLETE' && observation.expectedWait === null;
-        const ok = expectedWaitHolds && !evidence.speculativePatchApplied && observation.effects !== 'observed';
+        // `effects` records whether owner state was observed, not whether a patch landed: a genuine pause returns
+        // state and is recorded `observed`, which is exactly the run this must certify. Only an `uncertain` effect
+        // (unknown whether anything happened) disqualifies. A speculative patch is caught by its own check.
+        const ok = expectedWaitHolds && !evidence.speculativePatchApplied && observation.effects !== 'uncertain';
         return decide(criterion, ok, evidenceIds, snapshot, evidence.digest);
       }
 
