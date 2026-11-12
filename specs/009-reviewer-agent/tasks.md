@@ -1,14 +1,15 @@
 # Tasks: UC-06 — Reviewer Agent
 
 **Input**: [spec](spec.md), [plan](plan.md), [research](research.md), [data model](data-model.md), [context contract](contracts/review-context.md), [evaluation](contracts/evaluation.md), [decisions](contracts/decisions.md).
-**Status**: All future tasks unchecked and unreleased. Planning/reviews do not complete T001 or authorize implementation. Tests required by FR-011 and repository policy. Source tests plus matching emitted tests and typecheck/build are required at implementation checkpoints; preserve existing assertions.
+**Status**: T001 ownership/contract agreement is recorded from Trọng Tấn's confirmation in [decisions](contracts/decisions.md#t001-owner-agreement--2026-11-12). T002–T014 remain unchecked and unreleased. T001 is documentation only; no runtime TDD cycle applies. Tests required by FR-011 and repository policy apply when code tasks are released.
 
 ## Phase 1: Setup
 
-- [ ] T001 Record exact UC-06 owner assignment, shared-owner contract/path agreement, reviewed profile/rubric proposal and explicit implementation tier release in specs/009-reviewer-agent/contracts/decisions.md.
+- [x] T001 Record exact UC-06 owner assignment, shared-owner contract/path agreement, reviewed profile/rubric proposal and explicit implementation tier release in specs/009-reviewer-agent/contracts/decisions.md.
   - **Dependencies**: None.
   - **Owned Paths**: specs/009-reviewer-agent/contracts/decisions.md.
-  - **Acceptance Checks**: G-AUTH/G-OWNER; direct or explicitly delegated signoff provenance, exact APIs including uc06-review-evidence/1 UC-04 supplement, graph v0.2, trusted transport byte-cap configuration and evaluator v2, owned paths and controlled vs real releases. No invented owner consent. Production/rubric approval remain separate; unavailable real deliveries do not block expressly released controlled work.
+  - **Verification Evidence**: User selected T001 and identified as Trọng Tấn, confirming all owners agreed to the prepared exact packet; recorded as user-relayed agreement, not separate signatures. Assignment, contract/path baseline, documentation-only T001 release and outstanding profile/rubric/delivery/real gates are explicit in decisions.md. Targeted review/check evidence is in checklists/t001-validation.md. No runtime code or successor task released.
+  - **Acceptance Checks**: G-AUTH/G-OWNER; explicitly labeled direct, user-relayed or delegated agreement provenance (T001 records the user's relayed confirmation, not independent signatures/delegation), exact APIs including uc06-review-evidence/1 UC-04 supplement, graph v0.2, trusted transport byte-cap configuration and evaluator v2, owned paths and controlled vs real releases. No invented owner consent. Production/rubric approval remain separate; unavailable real deliveries do not block expressly released controlled work.
 
 ## Phase 2: Foundational
 
@@ -110,4 +111,4 @@ Only T004/T005 have [P]: disjoint paths and the same accepted prerequisite T003.
 
 ## Implementation strategy
 
-MVP T001–T006 covers current bound review while enforcing read-only/admission/accounting invariants from the start; US2 adds hostile/failure proof. US3 adds actual graph loop and independent grading. Controlled T002–T010 work can be released without opening real gates. Do not reimplement existing Feature 007 T005/T034, UC-03 reviewer/provider accounting or UC-04 recovery as new tasks. Tests assert actual reused behavior and only needed extensions. No implementation box is checked by this planning run.
+MVP T001–T006 covers current bound review while enforcing read-only/admission/accounting invariants from the start; US2 adds hostile/failure proof. US3 adds actual graph loop and independent grading. Controlled T002–T010 can be separately released without real gates. Do not reimplement existing Feature 007 T005/T034, UC-03 reviewer/accounting or UC-04 recovery. Only administrative T001 is checked by the owner-agreement follow-up; no runtime task is complete.
