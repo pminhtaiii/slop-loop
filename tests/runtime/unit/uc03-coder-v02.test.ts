@@ -153,6 +153,26 @@ function setup(options: Partial<CoderAgentV02Options> = {}) {
   return { task, state, repository, model, agent, admission: admit(state) };
 }
 
+function createReplanState(replanCount: number): TaskState {
+  const plan: FixPlan = {
+    planVersion: 1,
+    diagnosis: 'division by zero is not handled',
+    strategy: 'raise CalculationError when b is zero',
+    scopedChanges: ['src/calculator.py'],
+    checkSetDigest: 'sha256:checks',
+    baselineRef: 'evidence-baseline-001',
+    strategyDigest: 'sha256:strategy',
+    decisionRef: 'dec-plan-001',
+  };
+  return createFixtureTaskState({
+    node: 'AwaitFeedback',
+    plan,
+    planVersion: 1,
+    replanCount,
+    activeDecisionId: plan.decisionRef,
+  });
+}
+
 function answeredState(answerDigest: string) {
   return createFixtureTaskState({
     node: 'Investigate',
@@ -274,6 +294,65 @@ test('each exhaustion path withholds completion', async () => {
   });
   assert.equal(noRepair.outcome, 'invalid');
   assert.match(noRepair.reason, /REPAIR_BUDGET_EXHAUSTED/u);
+});
+
+test('a persisted replan count consumes allowance when the agent counter is zero', async () => {
+  const task = createFixtureBugTask();
+  const state = createReplanState(1);
+  const model = new RecordingModelPort();
+  const agent = createCoderAgentV02({ model, repository: new FakeRepositoryPort(), budget: { ...BUDGET, maxReplans: 1 } });
+
+  const result = await agent.turn({
+    task,
+    state,
+    purpose: 'propose-replan',
+    evidence: [],
+    admission: admit(state, 'propose-replan', 'req-replan-persisted-count', 'sha256:context-replan', true),
+  });
+
+  assert.equal(result.outcome, 'invalid');
+  assert.ok(result.outcome === 'invalid' && result.reason === 'REPLAN_BUDGET_EXHAUSTED');
+  assert.equal(model.calls.length, 1, 'the proposal is checked against task allowance after one admitted dispatch');
+  assert.equal(model.calls[0]?.state.replanCount, 1);
+});
+
+test('the shared replan count takes the greater persisted or in-run value without double-counting', async () => {
+  const task = createFixtureBugTask();
+  const state = createReplanState(1);
+  const model = new RecordingModelPort();
+  const agent = createCoderAgentV02({ model, repository: new FakeRepositoryPort(), budget: { ...BUDGET, maxReplans: 3 } });
+
+  const first = await agent.turn({
+    task,
+    state,
+    purpose: 'propose-replan',
+    evidence: [],
+    admission: admit(state, 'propose-replan', 'req-replan-counter-1', 'sha256:context-replan', true),
+  });
+  assert.equal(first.outcome, 'proposal');
+  assert.equal(first.counters.replans, 2, 'one persisted replan plus one accepted proposal yields shared count 2');
+
+  const second = await agent.turn({
+    task,
+    state,
+    purpose: 'propose-replan',
+    evidence: [],
+    admission: admit(state, 'propose-replan', 'req-replan-counter-2', 'sha256:context-replan', true),
+  });
+  assert.equal(second.outcome, 'proposal');
+  assert.equal(second.counters.replans, 3, 'the in-run count now exceeds the unchanged persisted count of 1');
+
+  const third = await agent.turn({
+    task,
+    state,
+    purpose: 'propose-replan',
+    evidence: [],
+    admission: admit(state, 'propose-replan', 'req-replan-counter-3', 'sha256:context-replan', true),
+  });
+  assert.equal(third.outcome, 'invalid');
+  assert.ok(third.outcome === 'invalid' && third.reason === 'REPLAN_BUDGET_EXHAUSTED');
+  assert.equal(model.calls.length, 3);
+  assert.deepEqual(model.calls.map(call => call.state.replanCount), [1, 1, 1]);
 });
 
 test('the exact owner-issued context reaches the model fourth argument', async () => {
@@ -398,6 +477,47 @@ test('a run-check with a fresh owner admission executes against that exact conte
   assert.equal(result.outcome, 'proposal');
   assert.equal(admitted.length, 1);
   assert.equal(admitted[0], ownerContext);
+});
+
+test('a run-check exception returns TOOL_ERROR without another dispatch', async () => {
+  const check = createFixtureCheckDefinition();
+  const task = createFixtureBugTask({ requiredChecks: [check] });
+  const state = createFixtureTaskState({ node: 'Investigate', taskId: task.taskId });
+  const model = new RecordingModelPort(async () => ({
+    outcome: 'observed',
+    result: { proposal: { proposalId: 'p-check-error', content: JSON.stringify({ kind: 'inspect', proposalId: 'p-check-error', operation: 'run_check', args: { checkId: check.checkId } }) } },
+  }));
+  const repository = new FakeRepositoryPort({ initialRevision: task.initialRevisionDigest });
+  const attemptedChecks: CheckDefinition[] = [];
+  const admittedContexts: RepositoryAdmissionContextV02[] = [];
+  repository.runTests = async (requestedCheck, context) => {
+    attemptedChecks.push(requestedCheck);
+    admittedContexts.push(context);
+    throw new Error('CONTROLLED_PRIVATE_CHECK_FAILURE');
+  };
+  const providerContext = admit(state).context as unknown as Record<string, unknown>;
+  const ownerContext = { ...providerContext, runnableNode: 'Investigate', checkId: check.checkId } as unknown as RepositoryAdmissionContextV02;
+  let admissionCalls = 0;
+  const agent = createCoderAgentV02({
+    model,
+    repository,
+    budget: BUDGET,
+    admissionContextForCheck: () => {
+      admissionCalls += 1;
+      return ownerContext;
+    },
+  });
+
+  const result = await agent.turn({ task, state, purpose: 'propose-plan', evidence: [], admission: admit(state) });
+
+  assert.equal(result.outcome, 'invalid');
+  assert.ok(result.outcome === 'invalid' && result.reason === 'TOOL_ERROR');
+  assert.equal(model.calls.length, 1, 'the failed action must not trigger another provider turn');
+  assert.equal(admissionCalls, 1);
+  assert.deepEqual(attemptedChecks, [check]);
+  assert.deepEqual(admittedContexts, [ownerContext]);
+  assert.deepEqual(repository.patches, []);
+  assert.equal(JSON.stringify(result).includes('CONTROLLED_PRIVATE_CHECK_FAILURE'), false);
 });
 
 test('the existing finite budget still stops the loop', async () => {
