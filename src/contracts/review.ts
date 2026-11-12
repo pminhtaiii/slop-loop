@@ -1,5 +1,6 @@
 /** UC-06 additive companion records. Canonical UC-03/provider schemas remain unchanged. */
 import type { ReviewResult, SourceEvidence, TrustedDiffLines, ValidationResult } from './foundation/uc03.ts';
+import { deepFreeze } from './foundation/uc03/v02/admission/snapshot.ts';
 export interface ReviewProfileV1 {
   readonly profileId: string;
   readonly profileVersion: string;
@@ -172,7 +173,8 @@ export interface ReviewOutputV1 {
 export type ReviewDiffValidationV1 = ValidationResult<TrustedDiffLines>;
 
 /** Closed JSON shapes shared by the pure parser; these descriptors convey no owner authority. */
-export const REVIEW_SCHEMAS: Readonly<Record<string, unknown>> = {
+type Shape<T> = { readonly [K in keyof Required<T>]: unknown } & { readonly $optional?: readonly (keyof T)[] };
+const schemas = {
   profile: {
     profileId: 'id',
     profileVersion: 'id',
@@ -269,4 +271,18 @@ export const REVIEW_SCHEMAS: Readonly<Record<string, unknown>> = {
   },
   load: { taskId: 'id', runId: 'id', providerRequestId: ['nullable', 'id'], contextDigest: 'sha', observationDigest: 'sha', expectedAuthority: 'authority' },
   recover: { taskId: 'id', workspaceId: 'id', repositoryId: 'id', headRevisionDigest: 'sha', diffDigest: 'sha', expectedAuthority: 'authority', operationRef: 'id', $optional: ['operationRef'] },
+} as const satisfies {
+  profile: Shape<ReviewProfileV1>;
+  binding: Shape<ReviewBindingV1>;
+  authority: Shape<ReviewAuthorityV1>;
+  convention: Shape<ReviewConventionV1>;
+  evidence: Shape<ReviewEvidenceV1>;
+  verification: Shape<ReviewVerificationV1>;
+  context: Shape<ReviewContextV1>;
+  observation: Shape<ReviewObservationV1>;
+  persist: Shape<PersistReviewObservationRequestV1>;
+  ack: Shape<ReviewEvidenceAckV1>;
+  load: Shape<LoadReviewObservationRequestV1>;
+  recover: Shape<RecoverReviewObservationRequestV1>;
 };
+export const REVIEW_SCHEMAS: Readonly<Record<string, unknown>> = deepFreeze(schemas);

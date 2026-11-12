@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { REVIEW_SCHEMAS } from '../../../src/contracts/review.ts';
 import {
   validateReviewProfile,
   validateReviewContext,
@@ -34,6 +35,11 @@ const profile = {
   maxOutputBytes: 16384,
   maxResponseBytes: 131072,
 };
+test('schema descriptors are deeply immutable', () => {
+  assert.equal(Object.isFrozen(REVIEW_SCHEMAS), true);
+  assert.equal(Object.isFrozen(REVIEW_SCHEMAS['profile']), true);
+});
+
 test('accepts an explicit finite reviewer profile without inventing defaults', () => {
   assert.equal(validateReviewProfile(profile).ok, true);
 });
