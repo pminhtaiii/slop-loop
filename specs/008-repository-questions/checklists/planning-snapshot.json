@@ -1,0 +1,132 @@
+{
+  "schemaVersion": 1,
+  "root": "C:\\coding agent",
+  "branch": "feat/uc03-repair-id-storage-safety",
+  "head": "208224f6c366276aa2c50455e38c2f62b33e11d7",
+  "files": [
+    {
+      "path": "specs/008-repository-questions/data-model.md",
+      "sha256": "8939c2b677018c7eb5194210160d0235f9af99d20a5b4c662cae727818fa6224"
+    },
+    {
+      "path": "specs/008-repository-questions/plan.md",
+      "sha256": "71c548603cdbee7161712de7cc230e0bfb0951b1086b22f2ac28dae89cbe8a3a"
+    },
+    {
+      "path": "specs/008-repository-questions/quickstart.md",
+      "sha256": "7b9dcf5b289666392b0b845a5f4e5625ada49040a3b7837701aa27331d1e4b12"
+    },
+    {
+      "path": "specs/008-repository-questions/research.md",
+      "sha256": "1ef9d998508806ce247d397c32be8253a673b5c2a2e48821f2c308e0f29530fa"
+    },
+    {
+      "path": "specs/008-repository-questions/spec.md",
+      "sha256": "85d89848194071b242bc4762c7d9a0dd6df844d9d31e27e80116ae84a5565cb5"
+    },
+    {
+      "path": "specs/008-repository-questions/tasks.md",
+      "sha256": "03e5b6a4df136c26252460e86c583fca2ef39c612f7004b69ddd41f15396bc30"
+    },
+    {
+      "path": "specs/008-repository-questions/checklists/requirements.md",
+      "sha256": "74734b038f15b250ce5a57351638a628a584e8a3d31f8a8fd011d4aee6ad6985"
+    },
+    {
+      "path": "specs/008-repository-questions/contracts/decisions.md",
+      "sha256": "d0e43d7c0f7b3462faded135c2b1d8dde2d536f7953fa7d7e2233134a686eb68"
+    },
+    {
+      "path": "specs/008-repository-questions/contracts/evaluation.md",
+      "sha256": "4d9c9df574f04c816d46ed02fd4ae811600a3700b5a40f76d0f1009e575cf6a9"
+    },
+    {
+      "path": "specs/008-repository-questions/contracts/question-runtime.md",
+      "sha256": "f1401d90bf625cae7056479f98bf43537d60bbf8061e8251fca3ec24dd86f31d"
+    },
+    {
+      "path": "specs/008-repository-questions/contracts/repository-tools.md",
+      "sha256": "0506fa5357349323de7f52c19b1e21331dfe96b5d0b32c1b8f789096e2a7bddc"
+    },
+    {
+      "path": "AGENTS.md",
+      "sha256": "58b927b8b1b1c03edfe0c0b6f4b8c07347860208fb732593ab9e93a224144784"
+    },
+    {
+      "path": "GLOSSARY.md",
+      "sha256": "8175452ffe41312ece19c15ad0fba1e4aedcce8ffc982f6e3648ed68a66c99d8"
+    },
+    {
+      "path": "docs/adr/0008-read-only-target-repository-questions.md",
+      "sha256": "5f59906af7ce2a5b41fc3cf74a44b672cc39d59139bc3f26239c57bc013c0aaf"
+    },
+    {
+      "path": "context/planning.md",
+      "sha256": "a7d33913be2377fd276f6af25ee0f42729f5bb05be4a7552d833d2b6d86ba976"
+    },
+    {
+      "path": "context/architecture.md",
+      "sha256": "ecc1333b40f66b70878096d5fb5aef3d478b09851376658416514fc9793a1bb9"
+    },
+    {
+      "path": "context/tools_permissions.md",
+      "sha256": "d03c663b0569a1bdf65936a3e7ffeef89058d4d3e9510d075d8c3d6cd1702a01"
+    },
+    {
+      "path": "context/runtime_policy.md",
+      "sha256": "966fc46f50c5607632ad1847414d7fa2473e23f27a26ce9d374bfc60000cb215"
+    },
+    {
+      "path": "context/state_and_memory.md",
+      "sha256": "6d2734068d00e2b6d7bb627ee21a3788d70b5d6ee0109aaa81ecd3ec2ced21c8"
+    },
+    {
+      "path": "context/code_standard.md",
+      "sha256": "deb0097919d461da9fe407665aee20560e6f4a550a90ba9244bf781cbfc82d85"
+    },
+    {
+      "path": "context/tech_stack.md",
+      "sha256": "4fe55da6144a612b4a8bfa44283e9919678af2364257df75c541c8729edb6716"
+    },
+    {
+      "path": ".specify/memory/constitution.md",
+      "sha256": "29fc1837b20f493d302203554923322a245123b4be9ed5734d9e1af96cd5ef0b"
+    },
+    {
+      "path": "src/foundation/repository-read.ts",
+      "sha256": "2c3c34d23fce47f82431475c40c61ee9a8ea08dc555d71384b8c0984677e6e91"
+    },
+    {
+      "path": "src/foundation/repository-types.ts",
+      "sha256": "7b1ae1ee69df6ecbfa49e323aade4d5b91f8de9ef4727116fba16b40e12703f1"
+    },
+    {
+      "path": "src/foundation/repository-tools.ts",
+      "sha256": "09aaf39d8ab9790005c14bc2d66e6642f8c202a4261451576cc4f6603389fe53"
+    },
+    {
+      "path": "src/foundation/host-filesystem-port.ts",
+      "sha256": "d9bb1f6d63609f10bb5d00ed214754286b8bd6d5621b16ee8399b5aa1042c905"
+    },
+    {
+      "path": "src/foundation/guarded-read-capability.ts",
+      "sha256": "e2a8007b566d5cbcf117467348df48d78204fe6eefec774ea164ee6b58492dce"
+    },
+    {
+      "path": "src/foundation/model.ts",
+      "sha256": "5cc755a3f029259cce955a792707495fef2181eaa5acd8aa4a55e7804b1b9176"
+    },
+    {
+      "path": "src/contracts/foundation/uc03/v01/ports.ts",
+      "sha256": "5258c5d91b5b70a82f1c7731550fe9b09fb968a5adde8eb8f7272ef80b8cf265"
+    },
+    {
+      "path": "src/contracts/foundation/uc03/v01/types.ts",
+      "sha256": "923d340d28bb10d58be6b157832d310812ef1d2c49d6b91703a2b0225fdee55c"
+    },
+    {
+      "path": "tsconfig.json",
+      "sha256": "b0b09e685e4443a8a1cc8deb58b50c9b0759c6e9060f80559cd2071deb22b6a8"
+    }
+  ]
+}

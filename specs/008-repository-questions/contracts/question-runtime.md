@@ -1,0 +1,51 @@
+# Read-only question runtime — repository-question/1
+
+## Entry and ownership
+
+Internal library only; no UI/CLI/service selected. Host `openSession`, `submitQuestion`, `continueTask`, `startTask`, `switchRepository`, `compactSession`, `cancelTask`, `closeSession` use validated inputs. Model cannot invoke lifecycle/configuration methods. One in-flight turn per session; concurrent submission returns busy without effects. Runtime contracts/validators live in `src/contracts/questions/`; model, graph, budget, session, evidence and presentation implementations in `src/questions/`.
+
+Question identity: `{sessionId, taskId, runId, questionId, binding, configDigest}`. `submitQuestion` creates an explicitly new task; `continueTask` references the exact current task and pending clarification/turn ID when applicable. Clarification answers are user data, not authorization. An unqualified follow-up referring to multiple prior tasks requests clarification. Task/run IDs never derive authority from model text.
+
+## Model and accounting ports
+
+`QuestionModelPort.decide(context, admission, signal) -> ModelDecisionWithUsage`. Context contains current user question, labeled bounded conversation, admitted source spans as untrusted data, valid tool schema and remaining budget metadata. Host injects provider/model/pricing identities; no credentials/raw prompts in repository tools or logs.
+
+`ModelDecision` is exactly one of:
+- `list` / `search` / `read`, with arguments from repository contract;
+- `answer`, with structured `claims: [{claimId, text, kind: observation | inference, evidenceIds/ranges}]` and bounded limitations;
+- `clarify`, with bounded question and explanation of unresolved referents;
+- `insufficient`, with bounded explanation and optional supported claims.
+
+No unconstrained answer prose outside structured claims/limitations; all factual repository claims require evidence. Pure conversational clarification/refusal text need not cite source. Runtime cannot mechanically guarantee entailment or that all prose is classified correctly; semantic evaluation checks this boundary. Validate/sanitize all displayed text, including limitations and errors. Invalid decision -> failed, zero tool execution, no automatic corrective retry. No model-selected authority or budget increases.
+
+Before reservation/transport, a deterministic request compiler selects only fitting context: mandatory system/tool/schema overhead and current user intent/constraints/pending clarification first, then recent labeled conversation and selected issued evidence spans in stable priority/order. It must count the complete serialized provider request with an exact provider tokenizer or a host-certified conservative token bound including serialization/system/tool overhead. A generic character heuristic without a certified upper bound is insufficient. Validate compiledInputTokens <= maxInputTokensPerCall and reserve that bound plus maxOutputTokensPerCall at admitted pricing before dispatch. Keep dropped spans only as opaque local references and permit later targeted reads; omitted source text cannot support new source claims merely from a summary. If mandatory context alone cannot fit, return fixed claim-free `context-limit` without a provider call; do not silently drop intent or endlessly clarify. Transport must enforce output token cap. Missing trusted counting/cap enforcement blocks live composition; controlled token counter/transport are explicitly fixture-only. Post-response trusted usage checks detect violations but never replace pre-call admission.
+
+Before every model call, the host accounting port atomically reserves configured max billable input/output/cost against the task ledger and returns bound reservation identity. Settle known usage exactly once using trusted usage metadata; hold reservation/charge uncertain outcomes on timeout/error or malformed usage and block further dispatch pending authoritative reconciliation. No automatic provider retries in v1. Complete/missing/unknown usage and model/provider/config IDs are reported distinctly. No repair StatePort or approval journal is fabricated for Q&A. Controlled accounting adapter is test-only; live accounting integration requires G-LIVE.
+
+## Budgets
+
+Host supplies finite positive values at task admission: maxToolCalls, maxModelCalls, maxScannedFiles, maxScannedBytes, maxReturnedBytes, maxInputTokensPerCall, maxOutputTokensPerCall, maxBillableTokensTask, maxCostMicrosTask, maxElapsedMsTask, maxClarificationRounds, maxConversationBytes, maxFinalBytes; repository contract adds per-operation limits. Integers only; missing/zero/negative/nonfinite/overflow config fails before IO. Cost uses nonnegative integer micro-USD accounting and explicit rational/integer pricing, never floating approximate enforcement. A cost ceiling itself is positive.
+
+Task elapsed budget is accumulated active operation time across runs, including IO/model time; human waiting excluded. Reserve tool call before dispatch; charge scan/returned bytes as work occurs. Model cap reserves input+output at configured pricing; response is not admitted if trusted counts exceed reservation. Follow-ups, clarification turns, compaction and same-task drift continuation retain consumed/reserved totals. New task requires explicit host/user action; model cannot relabel work to reset limits. Each model decision, tool operation and summary operation is charged; no no-op cycle is free. Compaction is deterministic bounded projection in v1, no extra summarization model call.
+
+Admission requires room for the next operation's worst-case bounded reservation; if not, end `budget-exhausted`. Final presentation uses a bounded deterministic renderer with no extra model call after exhaustion. Cancellation/deadline checks before and after awaits; ignore late results and block subsequent dispatch. Host pause/rejection closes activity until owner resume. Adapters receive deadline/signal; unsupported adapters are denied. No claim of hard cancellation of a provider already processing a request.
+
+Terminalization precedence: answered/insufficient results containing source claims require a separately admitted bounded final checkBinding and content/render validation within remaining work/time budget. If that work cannot be reserved/completed, emit only a fixed claim-free `budget-exhausted` result. Budget-exhausted, elapsed-deadline, cancelled, stale, accounting-unknown/blocked and context-limit results contain no repository claims/citations and require no new filesystem/model IO. They may carry already captured safe IDs/counters/reason codes only. No final scan is attempted after limits close; late results cannot restore a source-bearing answer. Thus previously gathered evidence does not promise a partial answer after exhaustion. Clarification is also suppressed by cancellation/exhaustion/unknown accounting. Formatting fixed terminal results remains deterministic bounded host work, not a model operation. Tests must exercise the exact last-byte/file/call/deadline boundary with a spy asserting zero post-limit IO.
+
+## Evidence and delivery
+
+Private registry owns tool-issued span identity and exact bytes/lines. Proposed citations must belong to this run or have been explicitly re-admitted from a same-binding prior run. Referenced range is within fully exposed lines and correct repository/path/revision/digest. Copied/forged model objects cannot establish issuance. Validate claims/citations and protected content, then `checkBinding` immediately before delivery. Binding drift ends stale; never deliver a current answer with old spans. The final record names its examined revision; a later edit does not retroactively change that record.
+
+Invalid citation -> fixed failed outcome with no invalid answer displayed; no automatic repair retry. An insufficient-evidence outcome may include supported claims only after successful admitted final validation; exhausted outcomes are always claim-free under terminalization precedence. Citation validity is provenance, not proof of correctness. Uncertainty must not become an absence assertion after partial search.
+
+## State transitions
+
+`admitted -> deciding -> validating -> reading -> deciding` is the investigative loop. From validating: `answered | awaiting-clarification | insufficient-evidence`; from any active state: `budget-exhausted | stale-repository | cancelled | blocked | failed`. `awaiting-clarification` waits without model/background tools; exact user continuation resumes a new run of same task. Cap reached -> insufficient-evidence, no new clarification. Task-wide elapsed accounting pauses while waiting.
+
+After stale-repository, user/host must explicitly rebind a new run to the current revision, clear source registry for active use and retain task ledger. No automatic restart. A follow-up on answered work continues same task unless user explicitly starts a distinct task. Repository switch cancels/settles active work first, opens a new task with fresh binding and excludes old source excerpts/claims from active model context. Safe prior user intent can remain labeled by task/repo; cross-repo comparative analysis is outside v1.
+
+Product sessions are in-memory and expire on host close/restart. Reconstructed model text cannot resume accounting or evidence. Compaction projects bounded intent, constraints, unresolved clarification and source references; authoritative ledger/evidence/identities stay outside summary. If conversation cannot fit without losing unresolved intent, ask a bounded clarification rather than guessing. Owner/accounting errors block, never grant authority.
+
+## Required checks
+
+Contracts malformed inputs/decision/usage, unknown tools, injection, forbidden execution, invalid/late citations and protected final content; unit counters/reservations/deadlines/repeated activity; graph integration known/paraphrased/cross-file/inference/clarification/exhaustion; session concurrent calls, repository drift/switch, compaction and continuation; output capture shows no raw prompt/source/secret logging. Test live-model quality separately.
