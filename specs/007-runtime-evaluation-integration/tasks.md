@@ -275,7 +275,7 @@ The 2026-11-13 source assessment found three remaining US3 gaps (FR-007/008/010/
   - **Owned Paths**: src/runtime/evaluation-console-host.ts; src/cli/evaluate.ts; tests/runtime/unit/evaluation-console-host.test.ts; tests/runtime/unit/evaluation-cli.test.ts.
   - **Acceptance Checks**: Console-host contract startup, authority and lifetime sections; reject malformed args before module load; use existing configuration loader; one exact readiness/graph/service/server; validate admitted profile/catalog/routes/token before listening; live-service report comparison lookup; safe unavailable/listen errors and bounded shutdown. Source/emitted host and CLI tests plus typecheck/build. Production CLI never falls back to controlled adapters.
 
-- [ ] T036 [US3] Project the existing safe workflow report into src/runtime/console-page-assets.ts with tests/runtime/unit/evaluation-console-page.test.ts per US3/AC4 and FR-007/008/010/012 (partial).
+- [x] T036 [US3] Project the existing safe workflow report into src/runtime/console-page-assets.ts with tests/runtime/unit/evaluation-console-page.test.ts per US3/AC4 and FR-007/008/010/012 (partial).
   - **Dependencies**: T016, T035.
   - **Owned Paths**: src/runtime/console-page-assets.ts; tests/runtime/unit/evaluation-console-page.test.ts.
   - **Acceptance Checks**: Console-host contract report projection; bounded explicit safe fields rendered with textContent; separate lifecycle, grade, selected and suite acceptance; missing/invalid report unknown rather than passing; no raw payload or paths. Preserve existing server origin/token/body/artifact protections. Source/emitted page tests plus typecheck/build.
