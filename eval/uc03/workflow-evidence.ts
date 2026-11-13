@@ -1,6 +1,6 @@
 /** Host-only producer for snapshot-bound workflow grades. */
 
-import type { BugTask, RepositoryPort, RepositoryPortV02 } from '../../src/contracts/foundation/uc03.ts';
+import type { BugTask, RepositoryPort, RepositoryPortV02, StatePortV02 } from '../../src/contracts/foundation/uc03.ts';
 import type { BaselineEvidenceCandidate } from '../../src/uc03/investigation.ts';
 import { deriveWorkflowEvidenceFacts, parseWorkflowFinalTree, type DerivedWorkflowFacts, type FinalTreeBinding, type TrustedFinalTreeSnapshotPort } from './workflow-evidence-facts.ts';
 import { isSnapshotGradeCurrent, type SnapshotGradeResult, type SnapshotGrader } from './workflow-grade.ts';
@@ -65,6 +65,7 @@ export async function produceWorkflowEvidence(input: {
   readonly result: UC03WorkflowResult;
   readonly observation: WorkflowObservation;
   readonly repository: Pick<RepositoryPort, 'inspectDiff'> | Pick<RepositoryPortV02, 'inspectDiff'> | undefined;
+  readonly statePort?: StatePortV02 | undefined;
   readonly host: WorkflowEvidenceHost;
   readonly retainedBaseline?: BaselineEvidenceCandidate | undefined;
 }): Promise<void> {
@@ -86,6 +87,7 @@ export async function produceWorkflowEvidence(input: {
       result: input.result,
       observation,
       repository: input.repository,
+      statePort: input.statePort,
       finalTree: input.host.finalTree,
       retainedBaseline: input.retainedBaseline,
     });
@@ -97,7 +99,6 @@ export async function produceWorkflowEvidence(input: {
     decisions.set(key, await notRunDecision(input.host.grader, input.caseId, 'Required task, snapshot, diff, protected-test, check, review or patch-effect evidence was missing or inconsistent.'));
     return;
   }
-
   let grade: SnapshotGradeResult;
   try {
     grade = await input.host.grader.grade(input.caseId, { observation, snapshot: facts.snapshot, evidence: facts.evidence });

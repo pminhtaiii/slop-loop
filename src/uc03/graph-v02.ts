@@ -52,6 +52,7 @@ function assembleConfig(config: UC03GraphConfigV02, mode: 'production' | 'contro
     trustedExpectedContext: config.trustedExpectedContext,
     trustedDirection: config.trustedDirection,
     trustedTransitionContext: config.trustedTransitionContext,
+    completionContextFor: config.completionContextFor,
     admissionContext: config.admissionContext,
     reviewerAdmission: config.reviewerAdmission,
     coderAdmission: config.coderAdmission,

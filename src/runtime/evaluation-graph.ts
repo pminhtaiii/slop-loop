@@ -11,6 +11,8 @@ import type { UC03ControlledHostReadiness, UC03HostReadiness } from './uc03-host
 import { createHostCoderGeneration } from './host-coder.ts';
 import type { BoundSource, CaseBinding, CatalogEntry } from './evaluation-profile.ts';
 import type { AnswerRecord, EvaluationGraph, EvaluationGraphResult, EvaluationTaskIdentity, ServiceControlReceipt } from './evaluation-service-types.ts';
+import { reportUC03GraphResult, validateEvaluationGraphReportBinding, type EvaluationGraphReportBinding } from './evaluation-graph-report.ts';
+import type { WorkflowCaseHost } from '../../eval/uc03/workflow-driver.ts';
 
 type ReadyHost = Extract<UC03HostReadiness, { readonly status: 'ready' }> | Extract<UC03ControlledHostReadiness, { readonly status: 'controlled-ready' }>;
 
@@ -60,6 +62,8 @@ export interface UC03EvaluationGraphRoute {
   readonly resolveDirection: (input: EvaluationDirectionResolutionInput) => TrustedReplanDirection | undefined | Promise<TrustedReplanDirection | undefined>;
   /** Resolves current owner control/state and binds the complete reporter answer set before its CAS write. */
   readonly resolveClarificationResume?: ((input: ClarificationResumeResolutionInput) => ClarificationResumeReceipt | undefined | Promise<ClarificationResumeReceipt | undefined>) | undefined;
+  /** Host-only report identity and optional controlled grader wiring; never accepted from service input. */
+  readonly workflowReport?: EvaluationGraphReportBinding | undefined;
 }
 
 export interface UC03EvaluationGraphOptions {
@@ -182,6 +186,13 @@ function clarificationView(state: TaskState | null): EvaluationGraphResult['work
 export function createUC03EvaluationGraph(options: UC03EvaluationGraphOptions): EvaluationGraph {
   if (!(options?.catalogRoutes instanceof Map)) throw new Error('Invalid UC-03 evaluation graph routes');
   const catalogRoutes = new Map(options.catalogRoutes);
+  const reportBindings = new Map<UC03EvaluationGraphRoute, EvaluationGraphReportBinding>();
+  for (const [caseId, route] of catalogRoutes) {
+    if (route.workflowReport === undefined) continue;
+    if (route.readiness.status !== 'controlled-ready' || route.entry?.caseId !== caseId) throw new Error('Invalid controlled workflow report route');
+    reportBindings.set(route, validateEvaluationGraphReportBinding(caseId, route.readiness.identity, route.workflowReport));
+  }
+  if (options.customRoute?.workflowReport !== undefined) throw new Error('Custom workflow submissions cannot carry a catalog report binding');
   const portTokens = new WeakMap<object, GraphPortToken>();
   const sessions = new Map<string, RunSession>();
 
@@ -340,11 +351,29 @@ export function createUC03EvaluationGraph(options: UC03EvaluationGraphOptions): 
         ? await runUC03GraphV02(task, readiness.ports, config, graphInitialState)
         : await runControlledUC03GraphV02(task, readiness.ports, config, graphInitialState);
       const state = graphResult.executionEvidence?.finalState ?? graphResult.state;
+      const reportBinding = readiness.status === 'controlled-ready' ? reportBindings.get(route) : undefined;
+      const workflowReport = reportBinding && route.entry
+        ? await reportUC03GraphResult({
+            host: {
+              entry: route.entry,
+              task,
+              expectedWait: route.expectedWait,
+              ...(reportBinding.workflowEvidence === undefined ? {} : { workflowEvidence: reportBinding.workflowEvidence }),
+            } satisfies WorkflowCaseHost,
+            result: graphResult,
+            ports: readiness.ports,
+            generation: session.generation,
+            trustedExpectedContext: readiness.config.trustedExpectedContext,
+            binding: reportBinding,
+            mode: 'mock',
+          })
+        : undefined;
       return {
         outcome: graphResult.outcome,
         state: state ? { taskId: state.taskId, runId: state.runId, workspaceId: state.workspaceId } : null,
         workflowClarification: clarificationView(state),
         ...(graphResult.finalReport ? { usage: { tokensConsumed: graphResult.finalReport.usage.tokensConsumed, costUsd: graphResult.finalReport.usage.costUsd } } : {}),
+        ...(workflowReport === undefined ? {} : { workflowReport }),
       };
     },
   };

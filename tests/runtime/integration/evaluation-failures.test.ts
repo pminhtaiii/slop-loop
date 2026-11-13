@@ -15,8 +15,11 @@ import { runEvaluation, type WorkflowEvaluationOptions } from '../../../eval/uc0
 import { WORKFLOW_EVALUATION_VERSION } from '../../../eval/uc03/types.ts';
 import type { CatalogEntry } from '../../../src/runtime/evaluation-profile.ts';
 import { sha256Text } from '../../../src/uc01/contracts.ts';
+import { prepareControlledUC03Host } from '../../../src/runtime/uc03-host-bootstrap.ts';
+import { runControlledUC03GraphV02 } from '../../../src/uc03/graph-v02.ts';
 import { createGraphTaskState, seedGraphTaskState } from '../support/uc03/graph-fixtures.ts';
 import { createPendingApprovalRoute, ROUTE_PLAN_DETAILS } from '../support/uc03/controlled-route.ts';
+import { controlledGeneratedPlanFixture } from '../support/uc03/controlled-host-journey.ts';
 
 const digest = (seed: string): string => sha256Text(seed);
 
@@ -266,4 +269,55 @@ test('the shared route fixture drives a real plan through investigation', async 
   // Guards the fixture itself: a typo in ROUTE_PLAN_DETAILS would make every witness above vacuous.
   assert.equal(ROUTE_PLAN_DETAILS.decisionRef, 'decision-route-test-001');
   assert.deepEqual(ROUTE_PLAN_DETAILS.scopedChanges, ['src/calculator.py']);
+});
+
+async function assertControlledBaselineRefusal(
+  expectedStatus: 'non-reproducing' | 'collection-error' | 'error',
+  reproduction: { readonly exitCode: number; readonly stdout: string },
+  regression: { readonly exitCode: number; readonly stdout: string },
+): Promise<void> {
+  const fixture = await controlledGeneratedPlanFixture();
+  fixture.route.repositoryPort.setCommandResult('pytest -q tests/test_calculator.py -k test_divide_zero', { ...reproduction, stderr: '' });
+  fixture.route.repositoryPort.setCommandResult('pytest -q tests/test_calculator.py', { ...regression, stderr: '' });
+  const readiness = prepareControlledUC03Host(fixture.host.inputs);
+  assert.equal(readiness.status, 'controlled-ready');
+  if (readiness.status !== 'controlled-ready') return;
+
+  const before = await fixture.statePort.loadTask(fixture.task.taskId);
+  assert.ok(before);
+  const claimsBefore = fixture.statePort.getJournalSnapshot().claims.length;
+  const ledgersBefore = fixture.statePort.getLedgers();
+  const result = await runControlledUC03GraphV02(fixture.task, readiness.ports, readiness.config);
+  const after = await fixture.statePort.loadTask(fixture.task.taskId);
+  assert.ok(after);
+
+  assert.equal(result.outcome, 'INCOMPLETE');
+  assert.ok(result.reasons.some(reason => reason.includes(`Baseline investigation failed: ${expectedStatus}`)));
+  assert.deepEqual({ ...after, budgetLedgers: [] }, { ...before, budgetLedgers: [] }, `${expectedStatus} does not transition owner task state`);
+  const journal = fixture.statePort.getJournalSnapshot();
+  const diagnosticClaims = journal.claims.slice(claimsBefore);
+  const diagnosticClaimIds = fixture.route.repositoryPort.v02Calls.map(call => call.claimId);
+  assert.equal(diagnosticClaims.length, 2, 'only the two admitted diagnostic commands claim owner capacity');
+  assert.deepEqual(diagnosticClaims.map(claim => claim.status), ['settled', 'settled']);
+  assert.equal(diagnosticClaimIds.filter((claimId): claimId is string => typeof claimId === 'string').length, 2);
+  assert.deepEqual(diagnosticClaims.map(claim => claim.claimId), diagnosticClaimIds);
+  assert.equal(journal.claims.some(claim => claim.claimId.startsWith('claim-controlled-')), false, 'no coder claim or model generation follows the refusal');
+  assert.ok(fixture.statePort.getLedgers().some((ledger, index) => ledger.consumed > (ledgersBefore[index]?.consumed ?? 0)), 'the two settled diagnostics retain their finite resource accounting');
+  assert.deepEqual(fixture.modelCalls, []);
+  assert.deepEqual(fixture.coderAdmissions, []);
+  assert.deepEqual(fixture.route.repositoryPort.patches, []);
+  assert.deepEqual(fixture.route.repositoryPort.commands.map(command => command.purpose), ['reproduction', 'regression']);
+  assert.equal(fixture.route.repositoryPort.v02Calls.length, 2);
+}
+
+test('a non-reproducing baseline refuses plan generation without changing owner state', async () => {
+  await assertControlledBaselineRefusal('non-reproducing', { exitCode: 0, stdout: '1 passed' }, { exitCode: 0, stdout: '1 passed' });
+});
+
+test('a reproduction collection error refuses plan generation without changing owner state', async () => {
+  await assertControlledBaselineRefusal('collection-error', { exitCode: 2, stdout: 'ERROR: Failed to collect tests/test_calculator.py' }, { exitCode: 0, stdout: '1 passed' });
+});
+
+test('a pre-existing regression failure refuses plan generation without changing owner state', async () => {
+  await assertControlledBaselineRefusal('error', { exitCode: 0, stdout: '1 passed' }, { exitCode: 1, stdout: 'FAILED tests/test_calculator.py::test_divide - AssertionError' });
 });

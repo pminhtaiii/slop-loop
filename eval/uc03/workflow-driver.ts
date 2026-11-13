@@ -138,7 +138,8 @@ function observationFor(host: WorkflowCaseHost, result: UC03WorkflowResult, port
   };
 }
 
-async function observeAndGrade(
+/** Builds the safe observation and attaches private snapshot evidence for an already completed graph result. */
+export async function observeAndGradeWorkflowResult(
   host: WorkflowCaseHost,
   result: UC03WorkflowResult,
   ports: UC03GraphPortsV02 | undefined,
@@ -168,7 +169,7 @@ async function observeAndGrade(
       });
       if (retained.ok) retainedBaseline = retained.baseline;
     }
-    await produceWorkflowEvidence({ caseId: host.entry.caseId, task: host.task, result, observation, repository, host: host.workflowEvidence, retainedBaseline });
+    await produceWorkflowEvidence({ caseId: host.entry.caseId, task: host.task, result, observation, repository, statePort: ports?.statePort, host: host.workflowEvidence, retainedBaseline });
   }
   return observation;
 }
@@ -247,18 +248,18 @@ export function createWorkflowDriver(catalog: ReadonlyMap<string, WorkflowCaseHo
         if ('readiness' in host.controlled) {
           const route = constructedControlledRoutes.get(spec.caseId);
           if (!route) return blockedObservation(spec.caseId, host, 'HOST_CODER_UNAVAILABLE');
-          return observeAndGrade(host, await runControlledUC03GraphV02(host.task, route.ports, route.config), route.ports, context.requestedModel, context.mode, route.config.generation, route.config.trustedExpectedContext);
+          return observeAndGradeWorkflowResult(host, await runControlledUC03GraphV02(host.task, route.ports, route.config), route.ports, context.requestedModel, context.mode, route.config.generation, route.config.trustedExpectedContext);
         }
-        return observeAndGrade(host, await runControlledUC03GraphV02(host.task, host.controlled.ports, host.controlled.config), host.controlled.ports, context.requestedModel, context.mode, host.controlled.config.generation, host.controlled.config.trustedExpectedContext);
+        return observeAndGradeWorkflowResult(host, await runControlledUC03GraphV02(host.task, host.controlled.ports, host.controlled.config), host.controlled.ports, context.requestedModel, context.mode, host.controlled.config.generation, host.controlled.config.trustedExpectedContext);
       }
       if (host.production) {
         if (context.mode !== 'real' || host.ports) return blockedObservation(spec.caseId, host, 'PRODUCTION_ROUTE_REQUIRES_REAL_MODE');
         const route = productionRoutes.get(spec.caseId);
         if (!route) return blockedObservation(spec.caseId, host, 'HOST_CODER_UNAVAILABLE');
-        return observeAndGrade(host, await runUC03GraphV02(host.task, route.ports, route.config), route.ports, context.requestedModel, context.mode, route.config.generation, route.config.trustedExpectedContext);
+        return observeAndGradeWorkflowResult(host, await runUC03GraphV02(host.task, route.ports, route.config), route.ports, context.requestedModel, context.mode, route.config.generation, route.config.trustedExpectedContext);
       }
       if (!host.ports) return blockedObservation(spec.caseId, host, 'MISSING_ROUTE');
-      return observeAndGrade(host, await runUC03Graph(host.task, host.ports, host.config), undefined, context.requestedModel, context.mode, host.config?.generationV02, host.config?.trustedExpectedContext);
+      return observeAndGradeWorkflowResult(host, await runUC03Graph(host.task, host.ports, host.config), undefined, context.requestedModel, context.mode, host.config?.generationV02, host.config?.trustedExpectedContext);
     },
   };
 }

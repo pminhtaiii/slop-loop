@@ -10,13 +10,16 @@ import {
   type BugTask,
   type RepositoryPort,
   type RepositoryPortV02,
+  type StatePortV02,
   type TaskState,
   type VerificationResult,
+  validateVerificationAdmission,
+  validateVerificationResult,
 } from '../../src/contracts/foundation/uc03.ts';
 import { computeTestProtectionDigest, type BaselineEvidenceCandidate, type TrustedTestFileSnapshot } from '../../src/uc03/investigation.ts';
-import { requiredChecksPassed, resolveExpectedTestFiles, samePaths, validDiffInfo, validSettledPatchEvidence } from '../../src/uc03/graph-validation.ts';
+import { loadVerifiedPatchAncestry } from '../../src/uc03/graph-patch-ancestry.ts';
+import { resolveExpectedTestFiles, samePaths, validDiffInfo } from '../../src/uc03/graph-validation.ts';
 import type { UC03ExecutionEvidence, UC03WorkflowResult } from '../../src/uc03/graph-types.ts';
-import type { UC03GraphState } from '../../src/uc03/graph-state.ts';
 import type { EvaluationSnapshotIdentity, WorkflowObservation } from './types.ts';
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
@@ -114,28 +117,25 @@ export function parseWorkflowFinalTree(value: unknown, binding: FinalTreeBinding
   return { tree, snapshot };
 }
 
-function ownerAndPatchFacts(evidence: UC03ExecutionEvidence, task: BugTask, state: TaskState, result: UC03WorkflowResult): boolean | undefined {
+async function ownerAndPatchFacts(evidence: UC03ExecutionEvidence, task: BugTask, state: TaskState, owner: StatePortV02 | undefined): Promise<boolean | undefined> {
   if (evidence.patchAdmission === undefined && evidence.patchReceipt === undefined) {
     if (state.changedPaths.length === 0 && ['Investigate', 'NeedsInfo', 'AwaitPlan', 'AwaitFeedback'].includes(state.node)) return false;
     return undefined;
   }
-  if (evidence.patchAdmission === undefined || evidence.patchReceipt === undefined) return undefined;
-  const candidate: UC03GraphState = {
-    task,
-    state,
-    baseline: evidence.baseline,
-    verificationResults: evidence.verificationResults ?? [],
-    reviewRequest: evidence.reviewRequest,
-    reviewResult: evidence.reviewResult,
-    patchAdmission: evidence.patchAdmission,
-    patchReceipt: evidence.patchReceipt,
-    failureEvidence: [],
-    finalReport: result.finalReport,
-    reasons: result.reasons,
-    terminalOutcome: result.outcome,
-    milestones: result.milestones,
-  };
-  return validSettledPatchEvidence(candidate, task, state) ? true : undefined;
+  if (!owner || !evidence.patchAdmission || !evidence.patchReceipt) return undefined;
+  let ancestry;
+  try {
+    ancestry = await loadVerifiedPatchAncestry(task, state, owner);
+  } catch {
+    return undefined;
+  }
+  if (
+    !ancestry ||
+    computeCanonicalSha256(ancestry.admission) !== computeCanonicalSha256(evidence.patchAdmission) ||
+    computeCanonicalSha256(ancestry.receipt) !== computeCanonicalSha256(evidence.patchReceipt) ||
+    ancestry.receipt.outcome.observedResultRevisionDigest !== state.repositoryRevisionDigest
+  ) return undefined;
+  return true;
 }
 
 function verifyBaseline(baseline: Baseline | BaselineEvidenceCandidate | undefined, task: BugTask, state: TaskState): Readonly<{ failed: boolean; evidenceId: string; testProtectionDigest: string }> | undefined {
@@ -145,46 +145,72 @@ function verifyBaseline(baseline: Baseline | BaselineEvidenceCandidate | undefin
   const reproduction = reproductions[0];
   if (!reproduction) return undefined;
   const expectedPassing = task.requiredChecks.filter(check => check.checkId !== reproduction.checkId).map(check => check.checkId);
-  if ('evidenceId' in baseline) {
-    if (!SHA256.test(baseline.evidenceId)) return undefined;
-    const checked = validateBaselineAdmission(baseline, {
-      expectedEvidenceId: baseline.evidenceId,
-      expectedRepositorySnapshotDigest: task.initialRevisionDigest,
-      expectedCheckSetDigest: computeCheckSetDigest(task.requiredChecks),
-      expectedTestProtectionDigest: baseline.testProtectionDigest,
-      expectedReproductionCheckId: reproduction.checkId,
-      expectedPassingCheckIds: expectedPassing,
-    });
-    if (!checked.ok) return undefined;
-    const result = checked.value.checkResults.find(item => item.checkId === reproduction.checkId);
-    if (!result || result.outcome !== 'fail') return undefined;
-    return { failed: true, evidenceId: checked.value.evidenceId, testProtectionDigest: checked.value.testProtectionDigest };
+  if ('taskId' in baseline) {
+    if (
+      baseline.taskId !== task.taskId || baseline.workspaceId !== state.workspaceId || baseline.repositoryId !== task.repositoryId ||
+      baseline.repositorySnapshotDigest !== task.initialRevisionDigest || baseline.criteriaDigest !== computeCanonicalSha256(task.acceptanceCriteria) ||
+      baseline.checkSetDigest !== computeCheckSetDigest(task.requiredChecks) || baseline.reproductionCheckId !== reproduction.checkId ||
+      computeCanonicalSha256(baseline.requiredChecks) !== computeCanonicalSha256(task.requiredChecks) ||
+      !samePaths(baseline.expectedPassingCheckIds, expectedPassing) ||
+      !samePaths(baseline.expectedTestFiles, resolveExpectedTestFiles(task)) || !SHA256.test(baseline.testProtectionDigest) ||
+      baseline.checkResults.length !== task.requiredChecks.length ||
+      !task.requiredChecks.every((check, index) => baseline.checkResults[index]?.checkId === check.checkId && baseline.checkResults[index]?.outcome === (check.checkId === reproduction.checkId ? 'fail' : 'pass'))
+    ) return undefined;
+    return { failed: true, evidenceId: computeCanonicalSha256(baseline), testProtectionDigest: baseline.testProtectionDigest };
   }
-  if (
-    baseline.taskId !== task.taskId || baseline.workspaceId !== state.workspaceId || baseline.repositoryId !== task.repositoryId ||
-    baseline.repositorySnapshotDigest !== task.initialRevisionDigest || baseline.criteriaDigest !== computeCanonicalSha256(task.acceptanceCriteria) ||
-    baseline.checkSetDigest !== computeCheckSetDigest(task.requiredChecks) || baseline.reproductionCheckId !== reproduction.checkId ||
-    computeCanonicalSha256(baseline.requiredChecks) !== computeCanonicalSha256(task.requiredChecks) ||
-    !samePaths(baseline.expectedPassingCheckIds, expectedPassing) ||
-    !samePaths(baseline.expectedTestFiles, resolveExpectedTestFiles(task)) || !SHA256.test(baseline.testProtectionDigest) ||
-    baseline.checkResults.length !== task.requiredChecks.length ||
-    !task.requiredChecks.every((check, index) => baseline.checkResults[index]?.checkId === check.checkId && baseline.checkResults[index]?.outcome === (check.checkId === reproduction.checkId ? 'fail' : 'pass'))
-  ) return undefined;
-  return { failed: true, evidenceId: computeCanonicalSha256(baseline), testProtectionDigest: baseline.testProtectionDigest };
+
+  const checked = validateBaselineAdmission(baseline, {
+    expectedEvidenceId: baseline.evidenceId,
+    expectedRepositorySnapshotDigest: task.initialRevisionDigest,
+    expectedCheckSetDigest: computeCheckSetDigest(task.requiredChecks),
+    expectedTestProtectionDigest: baseline.testProtectionDigest,
+    expectedReproductionCheckId: reproduction.checkId,
+    expectedPassingCheckIds: expectedPassing,
+  });
+  if (!checked.ok) return undefined;
+  return { failed: true, evidenceId: checked.value.evidenceId, testProtectionDigest: checked.value.testProtectionDigest };
 }
 
 function exactVerificationResults(value: readonly VerificationResult[] | undefined): readonly VerificationResult[] | undefined {
-  return value && value.every(item => item && SHA256.test(item.evidenceId) && typeof item.taskId === 'string' && typeof item.runId === 'string') ? value : undefined;
+  if (!Array.isArray(value)) return undefined;
+  const evidenceIds = new Set<string>();
+  const results: VerificationResult[] = [];
+  for (const item of value) {
+    const checked = validateVerificationResult(item);
+    if (!checked.ok || !ID.test(checked.value.evidenceId) || evidenceIds.has(checked.value.evidenceId)) return undefined;
+    evidenceIds.add(checked.value.evidenceId);
+    results.push(checked.value);
+  }
+  return results;
 }
 
-function verificationFacts(task: BugTask, state: TaskState, diffDigest: string, results: readonly VerificationResult[] | undefined): Readonly<{ required: boolean; focused: boolean }> {
+export function deriveVerificationFacts(task: BugTask, state: TaskState, diffDigest: string, results: readonly VerificationResult[] | undefined): Readonly<{ required: boolean; focused: boolean }> {
   const checked = exactVerificationResults(results);
-  if (!checked) return { required: false, focused: false };
+  if (!checked || checked.length !== task.requiredChecks.length) return { required: false, focused: false };
   const reproduction = task.requiredChecks.find(check => check.purpose === 'reproduction');
-  const focused = reproduction && checked.filter(result => result.testedIds.includes(reproduction.checkId));
-  const focusedPassed = !!focused && focused.length === 1 && focused[0]?.outcome === 'pass' && focused[0].phase === 'focused' &&
-    focused[0].taskId === task.taskId && focused[0].runId === state.runId && focused[0].repoDigest === state.repositoryRevisionDigest && focused[0].diffDigest === diffDigest;
-  return { required: requiredChecksPassed(task, state, diffDigest, checked), focused: focusedPassed };
+  const matchedResults = new Set<VerificationResult>();
+  let focusedPassed = false;
+  for (const check of task.requiredChecks) {
+    const resultMatches = checked.filter(result => result.testedIds.includes(check.checkId));
+    if (resultMatches.length !== 1) return { required: false, focused: false };
+    const result = resultMatches[0];
+    if (!result || task.requiredChecks.filter(candidate => result.testedIds.includes(candidate.checkId)).length !== 1 || matchedResults.has(result)) {
+      return { required: false, focused: false };
+    }
+    const expectedPhase = check.purpose === 'reproduction' ? 'focused' : check.purpose;
+    const admission = validateVerificationAdmission(result, {
+      expectedTaskId: task.taskId,
+      expectedRunId: state.runId,
+      expectedRepoDigest: state.repositoryRevisionDigest,
+      expectedDiffDigest: diffDigest,
+      expectedCheckId: check.checkId,
+      requiredPhase: expectedPhase,
+    });
+    if (!admission.ok) return { required: false, focused: false };
+    matchedResults.add(result);
+    if (check === reproduction) focusedPassed = true;
+  }
+  return { required: matchedResults.size === checked.length, focused: focusedPassed };
 }
 
 function reviewFacts(evidence: UC03ExecutionEvidence, state: TaskState, diffDigest: string): Readonly<{ accepted: boolean; reviewedDiffDigest: string | null }> | undefined {
@@ -209,6 +235,7 @@ export async function deriveWorkflowEvidenceFacts(input: {
   readonly result: UC03WorkflowResult;
   readonly observation: WorkflowObservation;
   readonly repository: Pick<RepositoryPort, 'inspectDiff'> | Pick<RepositoryPortV02, 'inspectDiff'> | undefined;
+  readonly statePort?: StatePortV02 | undefined;
   readonly finalTree: TrustedFinalTreeSnapshotPort;
   readonly retainedBaseline?: BaselineEvidenceCandidate | undefined;
 }): Promise<DerivedWorkflowFacts | undefined> {
@@ -258,12 +285,12 @@ export async function deriveWorkflowEvidenceFacts(input: {
     return undefined;
   }
   const testsProtected = protectedDigest === baseline.testProtectionDigest;
-  const patchApplied = ownerAndPatchFacts(execution, input.task, state, input.result);
+  const patchApplied = await ownerAndPatchFacts(execution, input.task, state, input.statePort);
   const review = reviewFacts(execution, state, diffInfo.diffDigest);
   const withheld = completionWasWithheld(input.result, state);
   if (patchApplied === undefined || review === undefined || withheld === undefined) return undefined;
 
-  const checks = verificationFacts(input.task, state, diffInfo.diffDigest, execution.verificationResults);
+  const checks = deriveVerificationFacts(input.task, state, diffInfo.diffDigest, execution.verificationResults);
   const unmodifiedChecks = expectedTestFiles.every(path => !diffInfo.changedFiles.includes(path));
   const sentinelsUnchanged = testsProtected && unmodifiedChecks;
   const exhaustedBeforeNextEffect = input.result.reasons.some(reason => /(?:MODEL_CALL_BUDGET_EXHAUSTED|ACTIVE_TIME_BUDGET_EXHAUSTED|REPAIR_BUDGET_EXHAUSTED|REPLAN_BUDGET_EXHAUSTED)/u.test(reason));

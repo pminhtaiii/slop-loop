@@ -21,7 +21,7 @@ import type { UC03GraphConfig, UC03GraphPorts } from './graph-types.ts';
 import type { UC03GraphNode, UC03GraphState } from './graph-state.ts';
 
 type ReviewPorts = Pick<UC03GraphPorts, 'statePort' | 'repositoryPort' | 'reviewerPort' | 'hostAuthority'>;
-type ReviewConfig = Pick<UC03GraphConfig, 'reviewerAdmission' | 'trustedExpectedContext' | 'trustedTransitionContext'>;
+type ReviewConfig = Pick<UC03GraphConfig, 'reviewerAdmission' | 'trustedExpectedContext' | 'trustedTransitionContext' | 'completionContextFor'>;
 
 export function createReviewNode(ports: ReviewPorts, config?: ReviewConfig): UC03GraphNode {
   return async (state: UC03GraphState) => {
@@ -155,6 +155,7 @@ export function createReviewNode(ports: ReviewPorts, config?: ReviewConfig): UC0
       hostAuthority: ports.hostAuthority,
       trustedExpectedContext: config?.trustedExpectedContext,
       trustedCompletion: config?.trustedTransitionContext?.completion,
+      completionContextFor: config?.completionContextFor,
       patchAdmission: state.patchAdmission,
       patchReceipt: state.patchReceipt,
     });

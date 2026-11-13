@@ -3,6 +3,7 @@
 import { computeCanonicalSha256, computeCheckSetDigest, validateFixPlan, validateTaskState, validateStateTransition, type FixPlan, type TaskState } from '../contracts/foundation/uc03.ts';
 import { isStatePortV02 } from './repair-types.ts';
 import { MAX_TASK_REPLANS, checkReplanAccounting } from './replan-accounting.ts';
+import { bindAcceptedMaterialReplan } from './replan-owner-result.ts';
 import type { PlanMaterialityResult, ReplanInput, ReplanPorts, ReplanResult, TrustedReplanDirection } from './repair-types.ts';
 import type { MaterialReplanResultV02 } from './graph-types-v02.ts';
 
@@ -269,32 +270,9 @@ export async function executeReplan(input: ReplanInput, ports: ReplanPorts): Pro
     if (accepted.outcome === 'uncertain') return response('INCOMPLETE', state, [accepted.operationRef], true);
     // 'accepted' and 'already-accepted' both carry the owner-committed state; replay adds no charge.
     // Bind it to this request: a valid state for another task/run, or one that skips the charge, is inconsistent.
-    const owned = accepted.state;
-    const renewedDecisionId = owned.plan?.decisionRef;
-    const committedPlan = owned.plan && { ...owned.plan, decisionRef: undefined };
-    const expectedPlan = { ...input.candidatePlan, planVersion: state.planVersion + 1, decisionRef: undefined };
-    const bound = validateTaskState(owned).ok &&
-      owned.taskId === state.taskId &&
-      owned.runId === state.runId &&
-      owned.workspaceId === state.workspaceId &&
-      owned.repositoryId === state.repositoryId &&
-      owned.repositoryRevisionDigest === state.repositoryRevisionDigest &&
-      owned.taskContext?.configId === state.taskContext?.configId &&
-      owned.taskContext?.configVersion === state.taskContext?.configVersion &&
-      owned.stateVersion === state.stateVersion + 1 &&
-      owned.node === 'AwaitPlan' &&
-      owned.nextAction === 'approve-fix-plan' &&
-      owned.planVersion === state.planVersion + 1 &&
-      owned.replanCount === state.replanCount + 1 &&
-      computeCanonicalSha256(committedPlan ?? null) === computeCanonicalSha256(expectedPlan) &&
-      typeof renewedDecisionId === 'string' && renewedDecisionId.length > 0 &&
-      renewedDecisionId !== state.activeDecisionId &&
-      owned.activeDecisionId === renewedDecisionId &&
-      owned.latestReviewRef === undefined &&
-      (owned.reviewRefs?.length ?? 0) === 0;
-    const hasReceipts = typeof accepted.reservationReceipt === 'string' && accepted.reservationReceipt.length > 0 &&
-      typeof accepted.transitionReceipt === 'string' && accepted.transitionReceipt.length > 0;
-    return bound && hasReceipts ? response('REPLAN_PREPARED', owned, [], true) : response('INCOMPLETE', state, ['reserved-task-state-inconsistent'], true);
+    if (!isStatePortV02(ports.statePort)) return response('INCOMPLETE', state, ['replan-owner-state-port-unavailable'], true);
+    const owned = await bindAcceptedMaterialReplan(state, input, accepted, ports.statePort);
+    return owned ? response('REPLAN_PREPARED', owned, [], true) : response('INCOMPLETE', state, ['reserved-task-state-inconsistent'], true);
   }
 
   // Controlled caller: legacy reservation and state CAS flow.

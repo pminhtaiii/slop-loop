@@ -26,6 +26,7 @@ import {
   type ClaimReceiptV02,
   type StateTransitionOptions,
   type TaskState,
+  type VerificationResult,
 } from '../../../src/contracts/foundation/uc03.ts';
 import { createExecutionGuardV02 } from '../../../src/foundation/execution-guard.ts';
 import { HostModelPortV02 } from '../../../src/foundation/model-v02.ts';
@@ -35,16 +36,17 @@ import type { UC03GraphConfig, UC03GraphPorts } from '../../../src/uc03/graph-ty
 import type { BaselineEvidenceAcknowledgement, BaselineEvidenceWriteRequest, BaselineEvidenceWriter, TrustedHostExpectedContext, TrustedHostPort } from '../../../src/uc03/investigation.ts';
 import { admitEvaluationProfile, bindEvaluationSource, type CatalogEntry, type EvaluationProfile } from '../../../src/runtime/evaluation-profile.ts';
 import { createEvaluationService, type ServiceControlReceipt } from '../../../src/runtime/evaluation-service.ts';
-import { createUC03EvaluationGraph } from '../../../src/runtime/evaluation-graph.ts';
+import { createUC03EvaluationGraph, type UC03EvaluationGraphRoute } from '../../../src/runtime/evaluation-graph.ts';
 import { prepareControlledUC03Host } from '../../../src/runtime/uc03-host-bootstrap.ts';
 import { canonicalDigest, sha256Text } from '../../../src/uc01/contracts.ts';
 import { createWorkflowDriver, type WorkflowCaseHost } from '../../../eval/uc03/workflow-driver.ts';
+import { deriveVerificationFacts } from '../../../eval/uc03/workflow-evidence-facts.ts';
 import { createSnapshotGrader } from '../../../eval/uc03/workflow-grade.ts';
 import { issueRealExecutionAdmission, runEvaluation } from '../../../eval/uc03/runner.ts';
 import { registerUC03WorkflowEvaluation } from '../../../eval/uc03/registration.ts';
 import { validateWorkflowObservation } from '../../../eval/uc03/validation.ts';
 import { WORKFLOW_EVALUATION_VERSION, type EvaluationCaseSpec, type WorkflowCaseContext } from '../../../eval/uc03/types.ts';
-import { createFixtureBugTask, createFixtureCheckDefinition, createFixtureExecutorIdentityV02, createFixturePolicyAuthorityRefV02 } from '../support/uc03/port-fixtures.ts';
+import { createFixtureBugTask, createFixtureCheckDefinition, createFixtureExecutorIdentityV02, createFixturePolicyAuthorityRefV02, createFixtureTaskState } from '../support/uc03/port-fixtures.ts';
 import { createGraphRepositoryPort, createGraphTaskState, seedGraphTaskState } from '../support/uc03/graph-fixtures.ts';
 import { createTestApprovalBinding, createTestProviderOutcomeReceiptV02, createTestRepositoryCommandAdmissionContextV02 } from '../support/uc03/state-fixtures.ts';
 import { FakeRepositoryPort } from '../support/uc03/fake-repository.ts';
@@ -469,6 +471,11 @@ test('driver constructs the controlled host coder and runs the same versioned gr
   assert.equal(observation.workflowOutcome, 'waiting-approval', JSON.stringify(observation));
   assert.equal(observation.blocked, null);
   assert.deepEqual(fixture.modelCalls, ['coder:propose-plan', 'coder:propose-plan']);
+  assert.equal(fixture.coderAdmissions.length, 2);
+  assert.notEqual(fixture.coderAdmissions[0], fixture.coderAdmissions[1], 'the Inspect observation is followed by a newly admitted coder turn');
+  assert.deepEqual(fixture.coderAdmissionEvidence[0], []);
+  assert.ok(fixture.coderAdmissionEvidence[1]?.some(item => item.path === 'src/calculator.py' && item.boundedExcerpt.includes('divide')),
+    'the fresh owner admission binds the source observation returned by the actual Inspect tool');
 });
 
 test('parsed provider identity reaches the graph case report without leaking into an unobserved run', async () => {
@@ -572,6 +579,43 @@ test('snapshot evidence grades the generated clarification against a full frozen
   assert.equal(report.exitCode, 0);
   assert.ok(result.limitations.some(item => item.includes('real isolation acceptance')));
   assert.deepEqual(fixture.modelCalls, ['coder:propose-plan']);
+});
+
+test('workflow grader accepts graph verification IDs only when every required binding matches', () => {
+  const reproduction = createFixtureCheckDefinition();
+  const regression = createFixtureCheckDefinition({
+    checkId: 'check-pytest-regression',
+    argv: ['-q', 'tests/test_calculator.py', '-k', 'not test_divide_zero'],
+    purpose: 'regression',
+  });
+  const task = createFixtureBugTask({ requiredChecks: [reproduction, regression] });
+  const state = createFixtureTaskState({
+    taskId: task.taskId,
+    repositoryId: task.repositoryId,
+    repositoryRevisionDigest: task.initialRevisionDigest,
+    runId: 'run-grade-checks-001',
+    requiredCheckIds: task.requiredChecks.map(check => check.checkId),
+  });
+  const diffDigest = digest('workflow-verification-diff');
+  const results: VerificationResult[] = task.requiredChecks.map(check => ({
+    evidenceId: `evidence-verif-${check.checkId}-sha256:${sha256Text(check.checkId)}`,
+    taskId: task.taskId,
+    runId: state.runId,
+    actionId: `action-${check.checkId}`,
+    phase: check.purpose === 'reproduction' ? 'focused' : check.purpose,
+    repoDigest: state.repositoryRevisionDigest,
+    diffDigest,
+    commandIdentity: `${check.executable} ${check.argv.join(' ')}`,
+    outcome: 'pass',
+    testedIds: [check.checkId],
+    diagnosticRefs: [],
+  }));
+
+  assert.deepEqual(deriveVerificationFacts(task, state, diffDigest, results), { required: true, focused: true });
+  const misbound = results.map((result, index) => index === 0 ? { ...result, runId: 'foreign-run' } : result);
+  assert.deepEqual(deriveVerificationFacts(task, state, diffDigest, misbound), { required: false, focused: false });
+  const duplicateEvidenceId = results.map((result, index) => index === 1 ? { ...result, evidenceId: results[0]?.evidenceId ?? result.evidenceId } : result);
+  assert.deepEqual(deriveVerificationFacts(task, state, diffDigest, duplicateEvidenceId), { required: false, focused: false });
 });
 
 test('failed or stale independent grades cannot be upgraded by a matching expected wait', async () => {
@@ -940,6 +984,14 @@ test('the service evaluation graph runs the selected v0.2 route and reuses owner
       readiness,
       coderBudget: { maxModelCalls: 8, maxActiveMs: 60_000, maxRepairs: 2, maxReplans: 3 },
       expectedWait: 'waiting-approval',
+      workflowReport: {
+        profileDigest: readiness.identity.profileDigest ?? '',
+        configDigest: readiness.identity.configDigest ?? '',
+        pricingDigest: readiness.identity.pricingDigest ?? '',
+        adapterVersions: ['controlled-service-adapter-1'],
+        requestedModel: 'controlled-service-model',
+        timestamp: '2026-11-13T00:00:00.000Z',
+      },
       async resolveTask(input) {
         taskResolutions.push({ priorState: input.priorState, sourceKind: input.source.kind });
         return fixture.task;
@@ -972,6 +1024,9 @@ test('the service evaluation graph runs the selected v0.2 route and reuses owner
   const started = await service.startExperiment({ source: { kind: 'catalog', caseIds: ['C01'] }, profileId: 'uc03-runtime-evaluation-v1', idempotencyKey: 'key-C01-start' });
   assert.ok(started.ok);
   assert.equal(started.value.experiment.status, 'waiting-approval');
+  assert.ok(started.value.experiment.workflowReport, 'the service should retain the report for the graph result it just ran');
+  assert.equal(started.value.experiment.workflowReport?.cases[0]?.grade, 'pass');
+  assert.equal(started.value.experiment.workflowReport?.cases[0]?.requestedModel, 'controlled-service-model');
   assert.deepEqual(fixture.modelCalls, ['coder:propose-plan', 'coder:propose-plan']);
   assert.equal(taskResolutions.length, 1);
   assert.equal(taskResolutions[0]?.priorState, null);
@@ -1004,6 +1059,235 @@ test('the service evaluation graph runs the selected v0.2 route and reuses owner
   assert.equal(currentStates[1]?.taskId, fixture.task.taskId);
   assert.deepEqual(controlCalls, [{ expectedTaskVersion: ownerState.stateVersion, expectedControlVersion: 7 }]);
   assert.deepEqual(fixture.modelCalls, ['coder:propose-plan', 'coder:propose-plan']);
+});
+
+async function runServiceClarificationReportGrade(predicate: 'clarification' | 'regression', driftAfterGrade = false) {
+  const fixture = await controlledGeneratedPlanFixture({
+    firstResponse: {
+      proposalId: 'service-c02-ask',
+      content: JSON.stringify({ kind: 'request-info', proposalId: 'service-c02-ask', questions: [{ questionId: 'q-denominator', text: 'What should zero division return?' }], evidenceRefs: [] }),
+    },
+  });
+  const catalogRoot = mkdtempSync(join(tmpdir(), 'uc03-service-c02-grade-'));
+  const fixturePath = join(catalogRoot, 'case.json');
+  const graderPath = join(catalogRoot, 'grader.json');
+  writeFileSync(fixturePath, '{}', 'utf8');
+  writeFileSync(graderPath, '{}', 'utf8');
+  const entry: CatalogEntry = {
+    ...catalogEntryFor('C02', fixture.task),
+    catalogEntryId: 'entry-C02-service-report',
+    initialRepositoryDigest: fixture.task.initialRevisionDigest.replace(/^sha256:/u, ''),
+    fixturePath,
+    grader: { ...catalogEntryFor('C02', fixture.task).grader, path: graderPath },
+  };
+  const profileAdmission = admitEvaluationProfile({ ...rawProfile([entry]), adapterVersions: ['uc03-adapter-1'] });
+  assert.ok(profileAdmission.ok, profileAdmission.ok ? '' : profileAdmission.reasonCode);
+  const profile = profileAdmission.value;
+  const readiness = prepareControlledUC03Host({
+    ...fixture.host.inputs,
+    identity: {
+      profileId: profile.profileId,
+      profileDigest: profile.profileDigest,
+      configDigest: profile.configDigest,
+      pricingDigest: profile.pricingDigest,
+    },
+    config: { ...fixture.host.inputs.config, generation: undefined },
+  });
+  assert.equal(readiness.status, 'controlled-ready');
+  if (readiness.status !== 'controlled-ready') throw new Error('Controlled C02 report route was refused');
+
+  const grader = createSnapshotGrader({
+    criteria: {
+      digest: `sha256:${digest(`service-C02-${predicate}`)}`,
+      criteria: [{ criterionId: `criterion-service-C02-${predicate}`, caseId: 'C02', predicate, hiddenCheckId: null }],
+    },
+    profile: {
+      profileId: 'controlled-service-C02-grader',
+      digest: `sha256:${digest('controlled-service-C02-grader-profile')}`,
+      bounds: { timeoutMs: 10_000, maxCpuMs: 5_000, maxOutputBytes: 65_536, maxMemoryBytes: 536_870_912, maxProcesses: 8 },
+    },
+    isolationAuthority: { admit: () => undefined },
+    executor: { executorId: 'controlled-service-C02-grader', execute: () => undefined },
+    graderPayload: null,
+  });
+  let freezeCalls = 0;
+  let recheckCalls = 0;
+  const finalTreeFor = async (binding: {
+    readonly taskId: string;
+    readonly runId: string;
+    readonly workspaceId: string;
+    readonly repositoryId: string;
+    readonly initialRevisionDigest: string;
+    readonly finalRevisionDigest: string;
+  }, drift: boolean) => {
+    const implementation = await fixture.route.repositoryPort.readFile('src/calculator.py');
+    const hostSnapshot = await readiness.ports.hostAuthority.loadSnapshot({
+      taskId: binding.taskId,
+      workspaceId: binding.workspaceId,
+      repositoryId: binding.repositoryId,
+      expectedRevisionDigest: binding.finalRevisionDigest,
+      expectedCriteriaDigest: computeCanonicalSha256(fixture.task.acceptanceCriteria),
+      expectedCheckSetDigest: computeCheckSetDigest(fixture.task.requiredChecks),
+      expectedTestFiles: ['tests/test_calculator.py'],
+    });
+    const protectedTest = hostSnapshot?.testFiles.find(file => file.path === 'tests/test_calculator.py');
+    assert.ok(protectedTest, 'the trusted host snapshot supplies the protected test file in the full tree');
+    return {
+      ...binding,
+      snapshotId: 'service-c02-tree-' + binding.runId,
+      complete: true as const,
+      // This fixture worktree contains exactly these implementation and protected-test files.
+      files: [
+        { path: 'src/calculator.py', content: implementation.boundedExcerpt },
+        { path: protectedTest.path, content: drift ? 'def test_divide(): assert False\n' : protectedTest.content },
+      ],
+    };
+  };
+  const graph = createUC03EvaluationGraph({
+    catalogRoutes: new Map([['C02', {
+      entry,
+      readiness,
+      coderBudget: { maxModelCalls: 8, maxActiveMs: 60_000, maxRepairs: 2, maxReplans: 3 },
+      expectedWait: 'waiting-info',
+      workflowReport: {
+        profileDigest: profile.profileDigest,
+        configDigest: profile.configDigest,
+        pricingDigest: profile.pricingDigest,
+        adapterVersions: profile.adapterVersions,
+        requestedModel: profile.model,
+        timestamp: '2026-11-13T00:00:00.000Z',
+        workflowEvidence: {
+          grader,
+          finalTree: {
+            async freezeFinalTree(binding) { freezeCalls += 1; return finalTreeFor(binding, false); },
+            async recheckCurrentFinalTree(binding) { recheckCalls += 1; return finalTreeFor(binding, driftAfterGrade); },
+          },
+        },
+      },
+      resolveTask: () => fixture.task,
+      resolveDirection: () => undefined,
+    }]]),
+  });
+  const service = createEvaluationService({
+    profile,
+    catalog: [entry],
+    repositoryIds: [fixture.task.repositoryId],
+    checkSetIds: ['checks-configured'],
+    control: { issue: input => ({ receiptRef: 'service-C02-unused-direction', kind: input.kind, taskId: fixture.task.taskId, controlVersion: input.expectedControlVersion + 1 }) },
+    graph,
+    now: () => '2026-11-13T00:00:00.000Z',
+    ids: () => 'exp-C02-service-report',
+  });
+  const started = await service.startExperiment({ source: { kind: 'catalog', caseIds: ['C02'] }, profileId: profile.profileId, idempotencyKey: `service-C02-${predicate}-${driftAfterGrade}` });
+  return { fixture, started, freezeCalls, recheckCalls };
+}
+
+test('EvaluationService reports a generated C02 clarification from one graph run and grades the expected wait', async () => {
+  const { fixture, started, freezeCalls, recheckCalls } = await runServiceClarificationReportGrade('clarification');
+  assert.ok(started.ok);
+  const report = started.value.experiment.workflowReport;
+  assert.ok(report, 'the service retains the report for the graph result it just ran');
+  assert.equal(started.value.experiment.status, 'waiting-info');
+  const ownerState = await fixture.statePort.loadTask(fixture.task.taskId);
+  assert.ok(ownerState?.clarification);
+  assert.equal(started.value.experiment.workflowClarification?.questionId, ownerState.clarification.questionId);
+  assert.equal(started.value.experiment.workflowClarification?.questions[0]?.questionId, 'q-denominator');
+  assert.equal(report.cases[0]?.workflowOutcome, 'waiting-info');
+  assert.equal(report.cases[0]?.grade, 'pass', JSON.stringify(report.cases[0]));
+  assert.equal(report.cases[0]?.gradeReason, 'criteria-satisfied');
+  assert.equal(report.exitCode, 0);
+  assert.deepEqual(fixture.modelCalls, ['coder:propose-plan']);
+  assert.equal(fixture.coderAdmissions.length, 1, 'one generated question is backed by one admitted coder turn');
+  assert.equal(fixture.route.repositoryPort.commands.length, 2, 'the graph runs one baseline command pair');
+  assert.deepEqual(fixture.route.repositoryPort.patches, []);
+  assert.equal((await fixture.statePort.loadTask(fixture.task.taskId))?.node, 'NeedsInfo');
+  assert.equal((await fixture.statePort.loadTask(fixture.task.taskId))?.clarification?.answer, undefined);
+  assert.equal(freezeCalls, 1);
+  assert.equal(recheckCalls, 1);
+});
+
+test('independent fail or stale C02 grade overrides the service expected-wait pass', async () => {
+  const failed = await runServiceClarificationReportGrade('regression');
+  assert.ok(failed.started.ok);
+  const failedReport = failed.started.value.experiment.workflowReport;
+  assert.ok(failedReport);
+  assert.equal(failedReport.cases[0]?.workflowOutcome, 'waiting-info');
+  assert.equal(failedReport.cases[0]?.grade, 'fail');
+  assert.equal(failedReport.cases[0]?.gradeReason, 'criteria-violation');
+  assert.equal(failedReport.exitCode, 1);
+  assert.equal(failed.freezeCalls, 1);
+  assert.equal(failed.recheckCalls, 1);
+
+  const drifted = await runServiceClarificationReportGrade('clarification', true);
+  assert.ok(drifted.started.ok);
+  const driftedReport = drifted.started.value.experiment.workflowReport;
+  assert.ok(driftedReport);
+  assert.equal(driftedReport.cases[0]?.workflowOutcome, 'waiting-info');
+  assert.equal(driftedReport.cases[0]?.grade, 'not-run');
+  assert.equal(driftedReport.cases[0]?.gradeReason, 'invalid-observation');
+  assert.equal(driftedReport.exitCode, 1);
+  assert.equal(drifted.freezeCalls, 1);
+  assert.equal(drifted.recheckCalls, 1);
+  assert.equal(drifted.fixture.modelCalls.length, 1, 'grading and stability recheck do not replay the graph');
+  assert.equal(drifted.fixture.route.repositoryPort.commands.length, 2, 'the retained baseline commands are not replayed');
+});
+
+test('a workflow report with a mismatched host identity is rejected before owner or graph calls', async () => {
+  const fixture = await controlledGeneratedPlanFixture();
+  const entry = catalogEntryFor('C01', fixture.task);
+  const ready = prepareControlledUC03Host({ ...fixture.host.inputs, config: { ...fixture.host.inputs.config, generation: undefined } });
+  assert.equal(ready.status, 'controlled-ready');
+  if (ready.status !== 'controlled-ready') return;
+
+  let ownerReads = 0;
+  let taskResolutions = 0;
+  const statePort = new Proxy(ready.ports.statePort, {
+    get(target, property, receiver) {
+      const value: unknown = Reflect.get(target, property, receiver);
+      if (property === 'loadTask' && typeof value === 'function') {
+        return (...args: Parameters<typeof target.loadTask>) => {
+          ownerReads += 1;
+          return value.apply(target, args);
+        };
+      }
+      return value;
+    },
+  });
+  const readiness = { ...ready, ports: { ...ready.ports, statePort } };
+  const profileDigest = ready.identity['profileDigest'];
+  const configDigest = ready.identity['configDigest'];
+  const pricingDigest = ready.identity['pricingDigest'];
+  assert.ok(profileDigest && configDigest && pricingDigest);
+  const reportIdentity: NonNullable<UC03EvaluationGraphRoute['workflowReport']> = {
+    profileDigest,
+    configDigest,
+    pricingDigest,
+    adapterVersions: ['controlled-service-adapter-1'],
+    requestedModel: 'controlled-service-model',
+  };
+
+  for (const field of ['profileDigest', 'configDigest', 'pricingDigest'] as const) {
+    assert.throws(() => createUC03EvaluationGraph({
+      catalogRoutes: new Map([['C01', {
+        entry,
+        readiness,
+        coderBudget: { maxModelCalls: 8, maxActiveMs: 60_000, maxRepairs: 2, maxReplans: 3 },
+        expectedWait: 'waiting-approval',
+        workflowReport: {
+          profileDigest: field === 'profileDigest' ? digest(`wrong-${field}`) : reportIdentity.profileDigest,
+          configDigest: field === 'configDigest' ? digest(`wrong-${field}`) : reportIdentity.configDigest,
+          pricingDigest: field === 'pricingDigest' ? digest(`wrong-${field}`) : reportIdentity.pricingDigest,
+          adapterVersions: reportIdentity.adapterVersions,
+          requestedModel: reportIdentity.requestedModel,
+        },
+        resolveTask() { taskResolutions += 1; return fixture.task; },
+        resolveDirection: () => undefined,
+      }]]),
+    }), /does not match the validated host route/u);
+    assert.equal(ownerReads, 0);
+    assert.equal(taskResolutions, 0);
+    assert.deepEqual(fixture.modelCalls, []);
+  }
 });
 
 test('graph clarification answers stay reporter-only until an owner-bound resume continues the same task', async () => {

@@ -181,6 +181,7 @@ export interface UC03GraphConfigV02 {
   readonly trustedExpectedContext: TrustedHostExpectedContext;
   readonly trustedDirection?: TrustedReplanDirection | undefined;
   readonly trustedTransitionContext?: StateTransitionOptions['trusted'] | undefined;
+  readonly completionContextFor?: UC03GraphConfig['completionContextFor'];
   readonly admissionContext?: UC03GraphConfig['admissionContext'];
 }
 

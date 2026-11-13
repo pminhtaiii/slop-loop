@@ -106,6 +106,29 @@ export interface UC03RepositoryAdmission {
   readonly trustedContext: RepositoryAdmissionTrustedContextV02;
 }
 
+export type UC03TrustedCompletion = NonNullable<NonNullable<StateTransitionOptions['trusted']>['completion']>;
+
+/** Exact validated workflow facts presented to the host completion authority. */
+export interface UC03CompletionContextRequest {
+  readonly task: BugTask;
+  readonly state: TaskState;
+  readonly baseline: Baseline;
+  readonly verificationResults: readonly VerificationResult[];
+  readonly reviewRequest: ProviderRequest;
+  readonly reviewResult: ReviewResult;
+  readonly diffInfo: Readonly<{ diffDigest: string; changedFiles: readonly string[] }>;
+  readonly patchAdmission: UC03RepositoryAdmission;
+  readonly patchReceipt: RepositoryExecutionReceiptV02;
+  readonly checkSetDigest: string;
+  readonly originalProtectedTestsDigest: string;
+  readonly protectedTestsDigest: string;
+}
+
+/** Host-owned lookup. Returned records still pass the complete shared completion validator. */
+export type UC03CompletionContextResolver = (
+  request: UC03CompletionContextRequest,
+) => UC03TrustedCompletion | undefined | Promise<UC03TrustedCompletion | undefined>;
+
 export interface UC03CoderAdmissionRequest {
   readonly task: BugTask;
   readonly state: TaskState;
@@ -137,6 +160,8 @@ export interface UC03GraphConfig {
   readonly trustedExpectedContext?: TrustedHostExpectedContext | undefined;
   readonly trustedDirection?: TrustedReplanDirection | undefined;
   readonly trustedTransitionContext?: StateTransitionOptions['trusted'] | undefined;
+  /** Live owner lookup takes precedence over the static compatibility record. */
+  readonly completionContextFor?: UC03CompletionContextResolver | undefined;
   readonly admissionContext?: UC03RepositoryAdmission | UC03PatchAdmissionResolver | undefined;
   readonly reviewerAdmission?: UC03ReviewerAdmission | UC03ReviewerAdmissionResolver | undefined;
   readonly coderAdmission?: UC03CoderAdmission | UC03CoderAdmissionResolver | undefined;

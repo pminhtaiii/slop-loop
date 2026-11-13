@@ -277,6 +277,7 @@ export function createDeliverNode(ports: UC03GraphPorts, config?: UC03GraphConfi
       hostAuthority: ports.hostAuthority,
       trustedExpectedContext: config.trustedExpectedContext,
       trustedCompletion: config.trustedTransitionContext?.completion,
+      completionContextFor: config.completionContextFor,
       patchAdmission: state.patchAdmission,
       patchReceipt: state.patchReceipt,
     });

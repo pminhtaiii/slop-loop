@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import type {
+  FixPlan,
   NormalizedAction,
   ProviderPricingIdentityV02,
   ProviderRequest,
   RepositoryExecutionReceiptV02,
   RepositoryPortV02,
   ReviewFinding,
+  SourceEvidence,
   StateTransitionOptions,
   TaskState,
 } from '../../../../src/contracts/foundation/uc03.ts';
@@ -68,6 +70,8 @@ export interface ControlledGeneratedPlanFixture {
   readonly modelCalls: string[];
   /** Owner-issued coder providerRequestIds, in admission order; the journal claim is `claim-${id}`. */
   readonly coderAdmissions: string[];
+  /** Exact read-only evidence bound into each corresponding coder admission. */
+  readonly coderAdmissionEvidence: (readonly SourceEvidence[])[];
   readonly patchReceipts: RepositoryExecutionReceiptV02[];
   readonly host: ReturnType<typeof controlledHostFixture>;
   readonly config: UC03GraphConfigV02;
@@ -82,12 +86,22 @@ export interface ControlledReviewVerdict {
 
 export interface ControlledFixtureOptions {
   readonly taskState?: Partial<TaskState> | undefined;
+  /** Initial owner-issued fix-plan decision; defaults to pending for the approval barrier fixtures. */
+  readonly initialPlanDecision?: 'approved' | 'pending' | 'rejected' | undefined;
+  /** Seeds a bound feedback state at a prior count to exercise the graph's exhaustion refusal. */
+  readonly initialReplanCount?: number | undefined;
+  /** Raises only the test coder limit so the graph-level task replan cap is reachable. */
+  readonly maxReplans?: number | undefined;
   /** Replaces the first scripted coder response, e.g. with a `request-info` proposal. */
   readonly firstResponse?: { readonly proposalId: string; readonly content: string } | undefined;
+  /** Supplies the generated material plan used only after an owner-directed AwaitFeedback resume. */
+  readonly replanResponse?: { readonly proposalId: string; readonly content: string } | undefined;
   /** Reviewer verdicts returned in order by the controlled reviewer transport; the last repeats. */
   readonly reviewVerdict?: ControlledReviewVerdict | readonly ControlledReviewVerdict[] | undefined;
   /** Extra owner trusted transition contexts, keyed by target state version. */
   readonly transitionContexts?: Readonly<Record<number, NonNullable<StateTransitionOptions['trusted']>>> | undefined;
+  /** Synchronous test-owner lookup for a committed completion-context record. */
+  readonly transitionContextFor?: ((next: Readonly<TaskState>) => NonNullable<StateTransitionOptions['trusted']> | undefined) | undefined;
   /** Replaces the reproduction check's id, e.g. to exercise a long-but-valid durable id. */
   readonly reproductionCheckId?: string | undefined;
   /**
@@ -112,10 +126,41 @@ export interface ControlledFixtureOptions {
 
 export async function controlledGeneratedPlanFixture(options: ControlledFixtureOptions = {}): Promise<ControlledGeneratedPlanFixture> {
   const fixtureSequence = ++controlledFixtureSequence;
-  const route = createPendingApprovalRoute('pending', `dec-plan-${createFixtureBugTask().taskId}-1`, options.transitionContexts ?? {}, options.reproductionCheckId, options.hostTestFileContent);
+  const route = createPendingApprovalRoute(options.initialPlanDecision ?? 'pending', `dec-plan-${createFixtureBugTask().taskId}-1`, options.transitionContexts ?? {}, options.reproductionCheckId, options.hostTestFileContent, options.transitionContextFor);
   const statePort = route.statePort;
   const task = route.task;
-  const graphState = createGraphTaskState(task, options.taskState ?? {});
+  const initialState = createGraphTaskState(task, options.taskState ?? {});
+  const graphState = options.initialReplanCount === undefined ? initialState : (() => {
+    const count = options.initialReplanCount;
+    if (!Number.isSafeInteger(count) || count < 1 || count > task.budgetLimits.maxReplanCount) throw new Error('Controlled fixture replan count is outside its task budget');
+    const baselineRef = `uc04://baseline/${task.taskId}/1`;
+    const decisionRef = `dec-plan-${task.taskId}-1`;
+    const strategy = 'Preserve the original cause while making the zero-denominator response explicit.';
+    const plan: FixPlan = {
+      planVersion: initialState.planVersion,
+      diagnosis: 'The first plan needs a narrower failure explanation.',
+      suspectedCauseLocations: ['src/calculator.py'],
+      evidenceRefs: [baselineRef],
+      strategy,
+      scopedChanges: ['src/calculator.py'],
+      checkSetDigest: computeCheckSetDigest(task.requiredChecks),
+      baselineRef,
+      strategyDigest: computeCanonicalSha256(strategy),
+      decisionRef,
+    };
+    return {
+      ...initialState,
+      node: 'AwaitFeedback' as const,
+      nextAction: 'await-human-feedback-and-direction',
+      plan,
+      activeDecisionId: decisionRef,
+      evidenceRefs: [baselineRef],
+      replanCount: count,
+      budgetLedgers: initialState.budgetLedgers?.map(ledger =>
+        ledger.scope === 'task' && ledger.kind === 'replan' ? { ...ledger, consumed: count } : ledger,
+      ),
+    };
+  })();
   await seedGraphTaskState(statePort, graphState);
   const routeRepository = route.ports.repositoryPort;
   if (!('executionGuardApiVersion' in routeRepository) || routeRepository.executionGuardApiVersion !== '0.2.0') {
@@ -125,6 +170,7 @@ export async function controlledGeneratedPlanFixture(options: ControlledFixtureO
   const repositoryPort = routeRepository as RepositoryPortV02;
   const modelCalls: string[] = [];
   const coderAdmissions: string[] = [];
+  const coderAdmissionEvidence: (readonly SourceEvidence[])[] = [];
   const responses = [
     options.firstResponse ?? {
       proposalId: 'controlled-inspect-1',
@@ -209,6 +255,9 @@ export async function controlledGeneratedPlanFixture(options: ControlledFixtureO
       if (options.failFirstResponse && modelCalls.length === 1) throw new Error('CONTROLLED_PROVIDER_FAULT: simulated uncertain dispatch');
       const proposal = responses.shift();
       if (proposal) return { proposal, observedUsage: USAGE };
+      if (payload.request.purpose === 'propose-replan' && options.replanResponse) {
+        return { proposal: options.replanResponse, observedUsage: USAGE };
+      }
       const plan = payload.state.plan;
       if (!plan?.strategyDigest || !plan.decisionRef) throw new Error('SCRIPT_EXHAUSTED');
       const repair = payload.request.purpose === 'propose-repair';
@@ -249,7 +298,7 @@ export async function controlledGeneratedPlanFixture(options: ControlledFixtureO
     }),
     { providerRole: 'reviewer' as const },
   );
-  const agent = createCoderAgentV02({ model, repository: repositoryPort, budget: BUDGET, guardedRead });
+  const agent = createCoderAgentV02({ model, repository: repositoryPort, budget: { ...BUDGET, maxReplans: options.maxReplans ?? BUDGET.maxReplans }, guardedRead });
   let admissionId = 0;
   const trustedExpectedContext = route.config.trustedExpectedContext;
   if (!trustedExpectedContext) throw new Error('Controlled route is missing its trusted expected context');
@@ -282,6 +331,7 @@ export async function controlledGeneratedPlanFixture(options: ControlledFixtureO
         reservationRef: `coder-allowance-${admissionId}`,
       });
       coderAdmissions.push(request.providerRequestId);
+      coderAdmissionEvidence.push(structuredClone(evidence));
       const receipt = createFixtureProviderAdmissionReceiptV02({
         providerRequestId: request.providerRequestId,
         role: 'coder',
@@ -457,7 +507,7 @@ export async function controlledGeneratedPlanFixture(options: ControlledFixtureO
     hostAuthority: route.hostAuthority,
     contextSource: ports.contextSource,
   });
-  return { route, task, statePort, modelCalls, coderAdmissions, patchReceipts, host: controlled, config, baselineEvidence: () => storedBaseline };
+  return { route, task, statePort, modelCalls, coderAdmissions, coderAdmissionEvidence, patchReceipts, host: controlled, config, baselineEvidence: () => storedBaseline };
 }
 
 /**
