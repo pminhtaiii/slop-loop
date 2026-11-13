@@ -6,6 +6,10 @@ Recorded run results — dates, revisions, pass counts and remaining gaps — be
 
 Use the repository's established test and quality commands. Read `AGENTS.md`, project documentation, and the feature plan for applicable requirements; do not assume a test framework or invent project-wide commands.
 
+UC-06 contract validation:
+
+Run `node --test tests/runtime/contract/uc06-review.test.ts`, then its fresh `dist/tests/runtime/contract/uc06-review.test.js` counterpart after build. These pure public-boundary checks cover profile/context/diff/output/observation/evidence correlation, not owner storage or real workflow. Independent acceptance and current results are in the [UC-06 evidence record](../specs/009-reviewer-agent/checklists/t002-verification.md).
+
 ## What to test
 
 - Prioritize critical functionality: core business logic, authentication, important API endpoints, database operations, and essential user workflows.

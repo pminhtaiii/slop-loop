@@ -23,6 +23,10 @@ G-OWNER's assignment/contract agreement is now recorded on that user-relayed bas
 
 The earlier request to push both repositories separately authorized publication of the planning package, now merged as public PR 177; that publication did not release runtime work. Earlier planning-only/local-only passages below describe the original stage; this entry supersedes only owner-unassigned/unconfirmed wording and T001 authorization, not successor gates or acceptance claims.
 
+## Phase 2 implementation release — 2026-11-12
+
+After T001 the user requested “code phase 2 rồi push đi” and, following an intentional interruption, “làm tiếp đi”. This releases exactly **T002**, including types/runtime validators and tests in its three owned paths, source/controlled verification, independent merger/review, context refresh and paired publication. The public validation seams are those in review-context.md sections 2/3/5/6 and T002 acceptance; apply TDD through exported validation APIs with assertion RED before GREEN. No missing-import RED, actual owner storage implementation, reviewer/transport/graph wiring, T003 onward, real provider/container call, production profile, quality/restart acceptance or merge is released.
+
 ## Selected design proposals
 
 | ID | Proposal | Rationale / limit |

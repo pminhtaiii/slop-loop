@@ -4,6 +4,8 @@ Current state: documentation only. Commands below distinguish current planning c
 
 ## Current planning checks
 
+T002 follow-up: pure types/validators now exist in src/contracts/review.ts and src/uc06/validation.ts. Source and freshly emitted uc06-review tests pass 8/8 each; reviewer regressions pass 25/25 with typecheck/build/scoped lint/format. Independent merger/reviews stopped at usage limits, so T002 remains unchecked. See [current evidence](checklists/t002-verification.md). The original planning observations below remain historical; no future graph/safety/grade suite is claimed implemented by T002.
+
 From C:/SE373:
 
 ```powershell
