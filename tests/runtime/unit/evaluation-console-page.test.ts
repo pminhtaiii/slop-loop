@@ -468,3 +468,39 @@ test('page executes: a selected pass with failed or incomplete cases is unknown'
     assert.match(text, /^selected result: unknown$/mu);
   }
 });
+
+/** UC-05 SafeResult (src/contracts/approvals/v01/types.ts:185) as returned by service-decision.ts:101-111. */
+function safeResult(outcome: string, safeReasonCode: string, recorded: boolean) {
+  return {
+    schemaVersion: 'uc05-approval/0.1-draft',
+    outcome,
+    taskId: 't1',
+    decisionId: 'decision-1',
+    requestVersion: 1,
+    controlVersion: 3,
+    eventRef: recorded ? 'event-1' : null,
+    safeNextAction: recorded ? 'none' : 'retry-read',
+    safeReasonCode,
+    raw: { path: '/etc/passwd' },
+  };
+}
+
+test('page executes: decision outcomes are visible through an allowlist, and a refusal never reads as success', async () => {
+  const cases: Array<[unknown, RegExp]> = [
+    [safeResult('ok', 'decision-recorded', true), /^ok 200\noutcome: ok\nsafeReasonCode: decision-recorded\ndecisionId: decision-1\ntaskId: t1\ncontrolVersion: 3\nsafeNextAction: none$/u],
+    [safeResult('paused', 'decision-recorded', true), /^ok 200\noutcome: paused\n/u],
+    [safeResult('stale', 'decision-not-recorded', false), /^not recorded 200 \(outcome stale\)\noutcome: stale\nsafeReasonCode: decision-not-recorded\n[\s\S]*safeNextAction: retry-read$/u],
+    [safeResult('denied', 'decision-not-recorded', false), /^not recorded 200 \(outcome denied\)\noutcome: denied\n/u],
+    [safeResult('<b>pass</b>', 'decision-recorded', true), /^not recorded 200 \(outcome unknown\)\n/u],
+    [{ decision: 'approved' }, /^ok 200\ndecision: approved$/u],
+  ];
+  for (const [value, expected] of cases) {
+    const b = bootPage(() => ({ ok: true, result: value }));
+    b.el('experiment-id').value = 'exp-1';
+    b.el('submit-decision').handlers.click?.(EVENT);
+    await b.settle();
+    const result = b.el('result').textContent;
+    assert.match(result, expected, result);
+    for (const leak of ['{', '/etc/passwd', 'schemaVersion', 'uc05-approval', 'event-1', 'requestVersion', '<b>']) assert.equal(result.includes(leak), false, `leaked ${leak}`);
+  }
+});

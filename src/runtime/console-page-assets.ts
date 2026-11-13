@@ -47,13 +47,15 @@ export const SCRIPT = `
     });
   }
 
-  // Result pane: allowlisted receipt fields only; views render via formatExperiment, never wholesale.
+  // Result pane: allowlisted receipt/decision scalars only; views render via formatExperiment, never wholesale.
+  // A UC-05 decision arrives as a 200 SafeResult; only outcome ok/paused means it was recorded.
   function describe(out) {
     var d = isObj(out.data) ? out.data : {};
     if (d.ok !== true) return 'error ' + out.status + ' ' + (typeof d.error === 'string' && OPAQUE.test(d.error) ? d.error : 'UNKNOWN');
-    var r = isObj(d.result) && isObj(d.result.receipt) ? d.result.receipt : {};
-    var text = ['ok ' + out.status];
-    ['kind', 'receiptId', 'receiptRef', 'experimentId', 'taskId', 'version', 'controlVersion'].forEach(function (k) {
+    var r = isObj(d.result) ? (isObj(d.result.receipt) ? d.result.receipt : d.result) : {};
+    var o = typeof r.outcome === 'string' && OPAQUE.test(r.outcome) ? r.outcome : 'unknown';
+    var text = [r.outcome === undefined || o === 'ok' || o === 'paused' ? 'ok ' + out.status : 'not recorded ' + out.status + ' (outcome ' + o + ')'];
+    ['outcome', 'decision', 'status', 'safeReasonCode', 'reasonCode', 'kind', 'receiptId', 'receiptRef', 'decisionId', 'experimentId', 'taskId', 'version', 'controlVersion', 'safeNextAction'].forEach(function (k) {
       if ((typeof r[k] === 'string' && OPAQUE.test(r[k])) || cnt(r[k]) !== null) text.push(k + ': ' + r[k]);
     });
     return text.join('\\n');
