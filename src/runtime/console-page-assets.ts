@@ -73,6 +73,53 @@ export const SCRIPT = `
   function lines(text) { return text ? text.split('\\n').map(function (line) { return line.trim(); }).filter(Boolean) : []; }
   function num(id) { return Number(byId(id).value); }
 
+  // Safe report projection: explicit allowlists only; nothing is stringified wholesale.
+  var OPAQUE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+  function isObj(v) { return v !== null && typeof v === 'object' && !Array.isArray(v); }
+  function pick(v, allowed) { return typeof v === 'string' && allowed.indexOf(v) >= 0 ? v : 'unknown'; }
+  function cnt(v) { return typeof v === 'number' && v >= 0 && v <= 1000000 && Math.floor(v) === v ? v : null; }
+  function text1(v, max) { return String(v).replace(/[\\u0000-\\u001f\\u007f]+/g, ' ').slice(0, max); }
+  var OUTCOMES = ['pass', 'fail', 'incomplete'];
+
+  function formatReport(view) {
+    if (view.graded !== true || view.scope === 'exploratory') return ['workflow report: custom submission, ungraded; no grade or acceptance shown'];
+    var r = view.workflowReport;
+    var sel = isObj(r) ? r.selectionResult : null;
+    var suite = isObj(r) ? r.suiteAcceptance : null;
+    if (!isObj(r) || r.suite !== 'uc03' || r.contractVersion !== 'uc03-workflow-evaluation/1' || r.isRealVerified !== false ||
+        (r.tier !== 'controlled' && r.tier !== 'real-integration') || !isObj(sel) || !isObj(suite) || !Array.isArray(r.cases)) {
+      return ['workflow report: unavailable or invalid; acceptance unknown'];
+    }
+    var p = cnt(sel.passed), f = cnt(sel.failed), i = cnt(sel.incomplete);
+    var selOut = pick(sel.outcome, OUTCOMES);
+    if (p === null || f === null || i === null || (selOut === 'pass' && (f !== 0 || i !== 0))) selOut = 'unknown';
+    var need = cnt(suite.requiredCases), have = cnt(suite.satisfiedCases);
+    var suiteOut = pick(suite.outcome, OUTCOMES.concat(['not-applicable']));
+    if (need === null || have === null || (suiteOut === 'pass' && have !== need)) suiteOut = 'unknown';
+    var out = [
+      'workflow report: available (' + r.tier + ')',
+      'real verified: no',
+      'selected result: ' + selOut + (selOut === 'unknown' ? '' : ' (' + p + ' passed, ' + f + ' failed, ' + i + ' incomplete)'),
+      pick(suite.scope, ['catalog', 'exploratory']) + ' acceptance: ' + suiteOut + (need === null || have === null ? '' : ' (' + have + ' of ' + need + ' required)')
+    ];
+    var refs = [];
+    r.cases.slice(0, 32).forEach(function (c) {
+      if (!isObj(c)) { out.push('case unknown'); return; }
+      var id = typeof c.caseId === 'string' && OPAQUE.test(c.caseId) ? c.caseId : 'unknown';
+      out.push('case ' + id + ': workflow ' + pick(c.workflowOutcome, ['COMPLETED', 'IMPLEMENTED_UNVERIFIED', 'FAILED', 'INCOMPLETE', 'waiting-approval', 'waiting-info', 'not-observed']) +
+        '; grade ' + pick(c.grade, ['pass', 'fail', 'not-run']) + ' (' + (typeof c.gradeReason === 'string' && OPAQUE.test(c.gradeReason) ? c.gradeReason : 'unknown') + ')' +
+        '; effects ' + pick(c.effects, ['none', 'observed', 'uncertain']) + '; usage ' + pick(c.usage, ['observed', 'uncertain', 'unavailable']));
+      if (typeof c.diagnostic === 'string' && c.diagnostic) out.push('diagnostic ' + id + ': ' + text1(c.diagnostic, 512));
+      (Array.isArray(c.artifacts) ? c.artifacts.slice(0, 16) : []).forEach(function (a) {
+        if (typeof a === 'string' && OPAQUE.test(a) && refs.indexOf(a) < 0 && refs.length < 16) refs.push(a);
+      });
+    });
+    if (r.cases.length > 32) out.push('additional items omitted');
+    if (refs.length) out.push('artifact refs: ' + refs.join(', '));
+    var joined = out.join('\\n');
+    return joined.length > 8192 ? [joined.slice(0, 8192), 'additional items omitted'] : out;
+  }
+
   function formatExperiment(view) {
     var out = [];
     out.push('id: ' + view.id);
@@ -90,7 +137,7 @@ export const SCRIPT = `
     (view.submission ? view.submission.questions : []).forEach(function (q) {
       out.push('question ' + q.questionId + ': ' + q.text + ' [digest ' + q.questionDigest + ']');
     });
-    return out.join('\\n');
+    return out.concat(formatReport(view)).join('\\n');
   }
 
   function renderExperiment(view) {
@@ -230,6 +277,7 @@ export const SCRIPT = `
 
   byId('load-artifact').addEventListener('click', function () {
     var id = byId('artifact-id').value.trim();
+    if (!OPAQUE.test(id)) { show('artifact', 'artifact unavailable'); return; }
     api('GET', '/api/artifacts/' + encodeURIComponent(id), null).then(function (out) {
       show('artifact', out.data && out.data.ok ? out.data.result.mediaType + ' sha256:' + out.data.result.digest + '\\n' + out.data.result.text : describe(out));
     }, function () { show('artifact', 'artifact unavailable'); });
