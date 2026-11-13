@@ -105,7 +105,7 @@ function blockedObservation(caseId: string, host: WorkflowCaseHost | undefined, 
  * a graph call may have dispatched before returning no state. Also `shortcut:` host usage is
  * read from the authoritative final report only; owner accounting beyond it stays `uncertain`.
  */
-function returnedModelFor(ports: UC03GraphPortsV02 | undefined, result: UC03WorkflowResult, requestedModel: string): string | null {
+function returnedModelFor(ports: Pick<UC03GraphPorts, 'modelPort'> | undefined, result: UC03WorkflowResult, requestedModel: string): string | null {
   const state = result.state;
   const modelPort = ports?.modelPort;
   if (!state || !(modelPort instanceof HostModelPortV02) || !isDeepSeekTransport(modelPort.options.transport)) return null;
@@ -124,7 +124,7 @@ function observationFor(host: WorkflowCaseHost, result: UC03WorkflowResult, port
     repositoryId: state?.repositoryId ?? host.task.repositoryId,
     taskId: state?.taskId ?? null,
     runId: state?.runId ?? null,
-    returnedModel: returnedModelFor(ports, result, requestedModel),
+    returnedModel: returnedModelFor(ports ?? host.ports, result, requestedModel),
     graderDigest: host.entry.grader.digest,
     initialRepositoryDigest: host.entry.initialRepositoryDigest,
     workflowOutcome: outcome,

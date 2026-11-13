@@ -28,6 +28,9 @@ import {
   type TaskState,
 } from '../../../src/contracts/foundation/uc03.ts';
 import { createExecutionGuardV02 } from '../../../src/foundation/execution-guard.ts';
+import { HostModelPortV02 } from '../../../src/foundation/model-v02.ts';
+import { createDeepSeekTransport } from '../../../src/foundation/deepseek-transport.ts';
+import { createHostCoderGeneration } from '../../../src/runtime/host-coder.ts';
 import type { UC03GraphConfig, UC03GraphPorts } from '../../../src/uc03/graph-types.ts';
 import type { BaselineEvidenceAcknowledgement, BaselineEvidenceWriteRequest, BaselineEvidenceWriter, TrustedHostExpectedContext, TrustedHostPort } from '../../../src/uc03/investigation.ts';
 import { admitEvaluationProfile, bindEvaluationSource, type CatalogEntry, type EvaluationProfile } from '../../../src/runtime/evaluation-profile.ts';
@@ -466,6 +469,97 @@ test('driver constructs the controlled host coder and runs the same versioned gr
   assert.equal(observation.workflowOutcome, 'waiting-approval', JSON.stringify(observation));
   assert.equal(observation.blocked, null);
   assert.deepEqual(fixture.modelCalls, ['coder:propose-plan', 'coder:propose-plan']);
+});
+
+test('parsed provider identity reaches the graph case report without leaking into an unobserved run', async () => {
+  const requestedModel = 'model-test-01';
+  const returnedModel = 'actual-provider-model-202611';
+  let fetches = 0;
+  const transport = createDeepSeekTransport({
+    endpoint: 'https://api.deepseek.com/anthropic/v1/messages',
+    apiKey: 'sk-controlled-identity-0123456789',
+    pricing: { inputRate: 1, outputRate: 1, cacheRate: 1, overheadRate: 0, denominator: 1 },
+    fetch: async () => {
+      fetches += 1;
+      return new Response(JSON.stringify({
+        id: 'msg-identity-ask',
+        type: 'message',
+        role: 'assistant',
+        model: returnedModel,
+        content: [{ type: 'text', text: JSON.stringify({ kind: 'request-info', proposalId: 'identity-ask', questions: [{ questionId: 'q-denominator', text: 'What should zero division return?' }], evidenceRefs: [] }) }],
+        stop_reason: 'end_turn',
+        usage: { input_tokens: 10, output_tokens: 10 },
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    },
+  });
+  const hostFor = (fixture: Awaited<ReturnType<typeof controlledGeneratedPlanFixture>>): WorkflowCaseHost => {
+    const readiness = prepareControlledUC03Host({ ...fixture.host.inputs, config: { ...fixture.host.inputs.config, generation: undefined } });
+    assert.equal(readiness.status, 'controlled-ready');
+    if (readiness.status !== 'controlled-ready') throw new Error('Controlled identity fixture is unavailable');
+    const originalModel = readiness.ports.modelPort;
+    assert.ok(originalModel instanceof HostModelPortV02);
+    const model = new HostModelPortV02({ ...originalModel.options, transport });
+    assert.equal(model.provenance, 'real', 'the genuine transport keeps its derived provenance');
+    return {
+      entry: catalogEntryFor('C02', fixture.task),
+      task: fixture.task,
+      expectedWait: 'waiting-info',
+      ports: { ...fixture.route.ports, modelPort: model },
+      config: {
+        mode: 'controlled',
+        trustedExpectedContext: readiness.config.trustedExpectedContext,
+        coderAdmission: readiness.config.coderAdmission,
+        generationV02: createHostCoderGeneration({
+          model,
+          repository: readiness.ports.repositoryPort,
+          guardedRead: readiness.ports.guardedRead,
+          admissionContextForCheck: readiness.config.trustedExpectedContext.admissionContextForCheck,
+          budget: { maxModelCalls: 4, maxActiveMs: 60_000, maxRepairs: 1, maxReplans: 1 },
+        }),
+      },
+    };
+  };
+  const run = async (host: WorkflowCaseHost) => runEvaluation({
+    contractVersion: WORKFLOW_EVALUATION_VERSION,
+    mode: 'mock',
+    cases: ['C02'],
+    profileDigest: digest('identity-profile'),
+    configDigest: digest('identity-config'),
+    pricingDigest: digest('identity-pricing'),
+    adapterVersions: ['controlled-identity-adapter'],
+    requestedModel,
+    driver: createWorkflowDriver(new Map([['C02', host]])),
+    timestamp: '2026-11-13T00:00:00.000Z',
+  });
+  const fixture = await controlledGeneratedPlanFixture();
+  const report = await run(hostFor(fixture));
+  assert.ok('selectionResult' in report);
+  assert.equal(report.tier, 'controlled');
+  assert.equal(report.isRealVerified, false);
+  assert.equal(report.cases[0]?.workflowOutcome, 'waiting-info');
+  assert.equal(fetches, 1);
+  const observed = await fixture.statePort.loadTask(fixture.task.taskId);
+  assert.ok(observed);
+  const requestId = fixture.coderAdmissions[0];
+  assert.ok(requestId);
+  assert.deepEqual(transport.identityForRequest(observed.taskId, observed.runId, requestId), { requested: requestedModel, returned: returnedModel });
+  const journal = fixture.statePort.getJournalSnapshot();
+  const claim = journal.claims.find(item => item.claimId === `claim-${requestId}`);
+  assert.equal(claim?.status, 'settled');
+  assert.equal(journal.attempts.filter(item => item.claimId === claim?.claimId).length, 1);
+  const outcomes = journal.outcomes.filter(item => item.claimId === claim?.claimId);
+  assert.equal(outcomes.length, 1);
+  assert.equal(outcomes[0]?.outcome, 'observed');
+  assert.equal(report.cases[0]?.returnedModel, returnedModel);
+
+  const nextRun = await controlledGeneratedPlanFixture({ taskState: { runId: 'run-no-provider-response', node: 'NeedsInfo' } });
+  const pending = await run(hostFor(nextRun));
+  assert.ok('selectionResult' in pending);
+  assert.equal(pending.cases[0]?.workflowOutcome, 'waiting-info');
+  assert.equal(pending.cases[0]?.returnedModel, null, 'a previous run observation cannot identify an unobserved run');
+  assert.equal(pending.isRealVerified, false);
+  assert.equal(fetches, 1, 'the already-paused run dispatches no provider request');
+  assert.equal(nextRun.coderAdmissions.length, 0);
 });
 
 test('snapshot evidence grades the generated clarification against a full frozen final tree', async () => {
