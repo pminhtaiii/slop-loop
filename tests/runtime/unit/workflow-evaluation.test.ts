@@ -1096,6 +1096,100 @@ test('graph clarification answers stay reporter-only until an owner-bound resume
   assert.deepEqual(resumed?.clarification?.answer?.items, [{ questionId: 'q-denominator', text: 'Raise CalculationError for a zero denominator.' }]);
 });
 
+test('a foreign-task resume receipt refuses before clarification owner calls or persisted effects', async () => {
+  const fixture = await controlledGeneratedPlanFixture({
+    taskState: { evidenceRefs: ['src/calculator.py'] },
+    firstResponse: {
+      proposalId: 'foreign-task-ask',
+      content: JSON.stringify({ kind: 'request-info', proposalId: 'foreign-task-ask', questions: [{ questionId: 'q-denominator', text: 'What should zero division return?' }], evidenceRefs: [] }),
+    },
+  });
+  const entry: CatalogEntry = {
+    ...catalogEntry,
+    catalogEntryId: 'entry-C02-foreign-task',
+    caseId: 'C02',
+    initialRepositoryDigest: fixture.task.initialRevisionDigest.replace(/^sha256:/u, ''),
+  };
+  const readiness = prepareControlledUC03Host({ ...fixture.host.inputs, config: { ...fixture.host.inputs.config, generation: undefined } });
+  assert.equal(readiness.status, 'controlled-ready');
+  if (readiness.status !== 'controlled-ready') return;
+  let directionLookups = 0;
+  let clarificationLookups = 0;
+  const graph = createUC03EvaluationGraph({
+    catalogRoutes: new Map([['C02', {
+      entry,
+      readiness,
+      coderBudget: { maxModelCalls: 8, maxActiveMs: 60_000, maxRepairs: 2, maxReplans: 3 },
+      expectedWait: 'waiting-info',
+      resolveTask: () => fixture.task,
+      resolveDirection() {
+        directionLookups += 1;
+        return undefined;
+      },
+      async resolveClarificationResume(input) {
+        clarificationLookups += 1;
+        const current = await fixture.statePort.loadTask(fixture.task.taskId);
+        if (!current?.clarification || !input.direction) return undefined;
+        return {
+          receiptRef: input.direction.receiptRef,
+          controlVersion: input.direction.controlVersion,
+          taskId: current.taskId,
+          runId: current.runId,
+          workspaceId: current.workspaceId,
+          stateVersion: current.stateVersion,
+          questionId: current.clarification.questionId,
+          questionDigest: current.clarification.questionDigest,
+          answerDigest: input.expectedAnswerDigest,
+        };
+      },
+    }]]),
+  });
+  const service = createEvaluationService({
+    profile: admittedProfile([entry]),
+    catalog: [entry],
+    repositoryIds: [fixture.task.repositoryId],
+    checkSetIds: ['checks-configured'],
+    graph,
+    control: { issue: input => ({ receiptRef: 'ctrl-foreign-task', kind: input.kind, taskId: 'task-other', controlVersion: input.expectedControlVersion + 1 }) },
+    ids: () => 'exp-foreign-task',
+  });
+  const started = await service.startExperiment({ source: { kind: 'catalog', caseIds: ['C02'] }, profileId: 'uc03-runtime-evaluation-v1', idempotencyKey: 'foreign-start' });
+  assert.ok(started.ok);
+  assert.equal(started.value.experiment.status, 'waiting-info');
+  const paused = await fixture.statePort.loadTask(fixture.task.taskId);
+  assert.ok(paused?.clarification);
+  const answered = await service.answerClarification({
+    id: 'exp-foreign-task',
+    questionId: paused.clarification.questionId,
+    questionDigest: paused.clarification.questionDigest,
+    expectedVersion: started.value.experiment.version,
+    answers: ['Raise CalculationError for a zero denominator.'],
+    idempotencyKey: 'foreign-answer',
+  });
+  assert.ok(answered.ok);
+  const direction = await service.issueDirection({ id: 'exp-foreign-task', expectedTaskVersion: paused.stateVersion, expectedControlVersion: 7, kind: 'resume', idempotencyKey: 'foreign-direction' });
+  assert.ok(direction.ok);
+  assert.ok('receiptRef' in direction.value.receipt);
+  const ownerBefore = await fixture.statePort.loadTask(fixture.task.taskId);
+  const journalBefore = fixture.statePort.getJournalSnapshot();
+  const lookupsBefore = directionLookups;
+  const commandsBefore = fixture.route.repositoryPort.commands.length;
+  const modelCallsBefore = [...fixture.modelCalls];
+
+  const continued = await service.continueExperiment({ id: 'exp-foreign-task', expectedVersion: direction.value.experiment.version, directionRef: direction.value.receipt.receiptRef, idempotencyKey: 'foreign-continue' });
+
+  assert.ok(continued.ok);
+  assert.equal(continued.value.experiment.status, 'incomplete');
+  assert.deepEqual(await fixture.statePort.loadTask(fixture.task.taskId), ownerBefore, 'the selected foreign task must refuse before persisting the answer');
+  assert.deepEqual(fixture.statePort.getJournalSnapshot(), journalBefore);
+  assert.equal(directionLookups, lookupsBefore, 'a foreign task must not reach the continuation direction owner');
+  assert.equal(clarificationLookups, 0, 'a foreign task must not reach the clarification owner');
+  assert.equal(commandsBefore, 2);
+  assert.equal(fixture.route.repositoryPort.commands.length, commandsBefore);
+  assert.deepEqual(modelCallsBefore, ['coder:propose-plan']);
+  assert.deepEqual(fixture.modelCalls, modelCallsBefore);
+});
+
 test('service returns the original receipt for a duplicate key and denies stale or conflicting replay', async () => {
   const { service, calls } = createService();
   const first = await service.startExperiment({ source: catalogSource, profileId: 'uc03-runtime-evaluation-v1', idempotencyKey: 'key-dup' });

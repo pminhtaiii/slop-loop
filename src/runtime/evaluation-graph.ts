@@ -241,6 +241,7 @@ export function createUC03EvaluationGraph(options: UC03EvaluationGraphOptions): 
         input.priorState !== null &&
         (input.priorState.taskId !== current.taskId || input.priorState.runId !== current.runId || input.priorState.workspaceId !== current.workspaceId)
       ) return incomplete(input.priorState);
+      if (input.direction && input.direction.taskId !== current.taskId) return incomplete(input.priorState ?? { taskId: current.taskId, runId: current.runId, workspaceId: current.workspaceId });
 
       const priorSession = sessions.get(input.experimentId);
       if (priorSession && (priorSession.route !== route || priorSession.taskDigest !== computeCanonicalSha256(task))) return incomplete(input.priorState);
@@ -330,8 +331,6 @@ export function createUC03EvaluationGraph(options: UC03EvaluationGraphOptions): 
       if (trustedDirection && (!input.direction || !validDirection(trustedDirection, current, input.direction))) {
         return incomplete(input.priorState ?? { taskId: current.taskId, runId: current.runId, workspaceId: current.workspaceId });
       }
-      if (input.direction && input.direction.taskId !== current.taskId) return incomplete(input.priorState ?? { taskId: current.taskId, runId: current.runId, workspaceId: current.workspaceId });
-
       const config: UC03GraphConfigV02 = {
         ...readiness.config,
         generation: session.generation,
