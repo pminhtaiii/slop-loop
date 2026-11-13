@@ -3,6 +3,7 @@ import test from 'node:test';
 import { REVIEW_SCHEMAS } from '../../../src/contracts/review.ts';
 import {
   validateReviewProfile,
+  validateReviewBinding,
   validateReviewContext,
   validateReviewContextAdmission,
   validateReviewDiff,
@@ -80,6 +81,37 @@ test('accepts a complete immutable context with internally consistent identities
     assert.notEqual(result.value, f.context);
   }
 });
+test('accepts ordinary identifiers with an embedded sk- substring through context admission', () => {
+  const f = fixture();
+  const binding = { ...f.context.binding, taskId: 'task-independent' };
+  assert.equal(validateReviewBinding(binding).ok, true);
+  const { contextDigest, ...body } = { ...f.context, binding };
+  const context = { ...body, contextDigest: hash(body) };
+  assert.notEqual(context.contextDigest, contextDigest);
+  assert.equal(validateReviewContext(context).ok, true);
+  assert.equal(validateReviewContextAdmission(context, { binding, authority, sourceEvidence: f.sourceEvidence, requiredCheckIds: ['check'] }).ok, true);
+  assert.equal(validateReviewProfile({ ...profile, profileId: 'task-independent' }).ok, true);
+});
+
+test('still refuses credential tokens and protected content in identifiers and finding messages', () => {
+  const finding = { file: 'src/a.py', line: 1, side: 'new', severity: 'error', message: 'The task-independent result violates the requirement.', evidenceRef: 'source' };
+  assert.equal(validateReviewOutput({ status: 'findings', findings: [finding] }, fixture().context, diff).ok, true);
+  for (const secret of [
+    'sk-exampleCredential',
+    'SK-exampleCredential',
+    'api_key=exampleCredential',
+    'token=exampleCredential',
+    'password=exampleCredential',
+    'bearer exampleCredential',
+    'MARKER_SECRET',
+    'SECRET_KEY',
+    'BEGIN PRIVATE KEY',
+  ]) {
+    assert.equal(validateReviewBinding({ ...fixture().context.binding, taskId: secret }).ok, false);
+    for (const message of [secret, `The task-independent result leaked ${secret}.`, `Credential: "${secret}".`])
+      assert.equal(validateReviewOutput({ status: 'findings', findings: [{ ...finding, message }] }, fixture().context, diff).ok, false);
+  }
+});
 test('validates real changed lines and an evidence-backed finding', () => {
   const result = validateReviewDiff(diff, 49152);
   assert.equal(result.ok, true);
@@ -92,6 +124,26 @@ test('validates real changed lines and an evidence-backed finding', () => {
     ).ok,
     true,
   );
+});
+test('admits ordinary identifiers in changed source lines while refusing protected diff content', () => {
+  const patch = diff.replace('+new', '+task-independent');
+  const result = validateReviewDiff(patch, 49152);
+  assert.equal(result.ok, true);
+  if (result.ok) assert.deepEqual(result.value['src/a.py'], { oldLines: [1], newLines: [1] });
+  for (const secret of [
+    'sk-exampleCredential',
+    'SK-exampleCredential',
+    'token=exampleCredential',
+    'api_key=exampleCredential',
+    'password=exampleCredential',
+    'bearer exampleCredential',
+    'MARKER_SECRET',
+    'SECRET_KEY',
+    'UNAPPROVED_CONTEXT',
+    'BEGIN PRIVATE KEY',
+  ]) {
+    for (const line of [`+${secret}`, `+task-independent ${secret}`, `-${secret}`]) assert.equal(validateReviewDiff(diff.replace(line.startsWith('+') ? '+new' : '-old', line), 49152).ok, false);
+  }
 });
 function observation() {
   const c = fixture().context;
@@ -230,6 +282,23 @@ function gitFileDiff(added: boolean): string {
     ' file mode 100644\nindex abc..def\n' +
     (added ? '--- /dev/null\n+++ b/src/a.py\n@@ -0,0 +1 @@\n+new\n' : '--- a/src/a.py\n+++ /dev/null\n@@ -1 +0,0 @@\n-old\n')
   );
+}
+
+for (const added of [true, false]) {
+  test(`refuses nonzero /dev/null hunk origins for textual ${added ? 'additions' : 'deletions'}`, () => {
+    const gitPatch = gitFileDiff(added);
+    const barePatch = gitPatch.slice(gitPatch.indexOf('--- '));
+    for (const patch of [gitPatch, barePatch]) {
+      const valid = validateReviewDiff(patch, 49152);
+      assert.equal(valid.ok, true);
+      if (valid.ok) assert.deepEqual(valid.value['src/a.py'], { oldLines: added ? [] : [1], newLines: added ? [1] : [] });
+      for (const origin of [1, 42, Number.MAX_SAFE_INTEGER]) {
+        const malformed = patch.replace(added ? '-0,0' : '+0,0', `${added ? '-' : '+'}${origin},0`);
+        assert.equal(validateReviewDiff(malformed, 49152).ok, false, malformed);
+        assert.equal(validateReviewDiff(diff + malformed.replaceAll('src/a.py', 'src/extra.py'), 49152).ok, false, 'A malformed entry must reject the whole diff');
+      }
+    }
+  });
 }
 test('refuses contradictory, repeated and unsupported Git file metadata', () => {
   for (const added of [true, false]) {

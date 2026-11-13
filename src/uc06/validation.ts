@@ -57,7 +57,14 @@ const profileRule = schema('profile'),
   bindingRule = schema('binding'),
   authorityRule = schema('authority');
 function safeContent(v: unknown): boolean {
-  return typeof v === 'string' ? !containsProtectedContent(v) : Array.isArray(v) ? v.every(safeContent) : object(v) ? Object.values(v).every(safeContent) : true;
+  // Match key prefixes at token boundaries; ordinary words such as task-independent contain sk- too.
+  return typeof v === 'string'
+    ? !containsProtectedContent(v.replace(/(?<=[A-Za-z0-9_])sk-/giu, 'sk_'))
+    : Array.isArray(v)
+      ? v.every(safeContent)
+      : object(v)
+        ? Object.values(v).every(safeContent)
+        : true;
 }
 function parse<T>(input: unknown, rule: Rule, check: (v: T) => boolean = () => true): ValidationResult<T> {
   const copy = safeSnapshot(input);
@@ -72,7 +79,7 @@ function invalid<T>(): ValidationResult<T> {
 const equal = (a: unknown, b: unknown) => digest(a) === digest(b);
 /** Whole-input textual modify/add/delete admission; unsupported metadata never disappears silently. */
 export function validateReviewDiff(input: unknown, maxBytes: number): ValidationResult<TrustedDiffLines> {
-  if (typeof input !== 'string' || !positive(maxBytes) || bytes(input) > maxBytes || containsProtectedContent(input)) return invalid();
+  if (typeof input !== 'string' || !positive(maxBytes) || bytes(input) > maxBytes || !safeContent(input)) return invalid();
   const lines = input.replaceAll('\r\n', '\n').split('\n');
   if (lines.at(-1) === '') lines.pop();
   const files: Record<string, { oldLines: number[]; newLines: number[] }> = Object.create(null) as Record<string, { oldLines: number[]; newLines: number[] }>;
@@ -122,8 +129,8 @@ export function validateReviewDiff(input: unknown, maxBytes: number): Validation
         (ol === 0 && nl === 0) ||
         (ol > 0 && on === 0) ||
         (nl > 0 && nn === 0) ||
-        (a === null && ol !== 0) ||
-        (b === null && nl !== 0)
+        (a === null && (on !== 0 || ol !== 0)) ||
+        (b === null && (nn !== 0 || nl !== 0))
       )
         return invalid();
       oldEnd = on + ol;
