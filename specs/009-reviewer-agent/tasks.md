@@ -24,9 +24,10 @@
 **Goal**: Current requirements/conventions/verification reach the same existing reviewer used by UC-03.
 **Independent Test**: Actual reviewer sees captured full context for clean/faulty controlled responses; stale/missing/invalid cases refuse. No model-quality claim.
 
-- [ ] T003 [US1] Assemble immutable host-fed review context in src/uc06/context.ts with tests/runtime/unit/uc06-context.test.ts.
+- [x] T003 [US1] Assemble immutable host-fed review context in src/uc06/context.ts with tests/runtime/unit/uc06-context.test.ts.
   - **Dependencies**: T002.
   - **Owned Paths**: src/uc06/context.ts; tests/runtime/unit/uc06-context.test.ts.
+  - **Verification Evidence**: Integrated `5abd366`; source 47 context +21 contract tests and fresh emitted 68/68 each, noEmit/build/scoped lint/format pass. Separate merger `/root/phase3_merger` verified all T003 pure source/controlled criteria with 266 independent assertions in each source/emitted module, focused suites 47/47 each, fresh 20-input snapshot unchanged; report digest dd2c83e772a3af3eec5555a54afda31519835203279b55672a4913bb1cf7b6b8. Public RED–GREEN covers neutral entry, required source, D0 substitution and malformed data. Host-only requiredSourcePaths makes required spans explicit and permits deletion without a fabricated head excerpt. No actual owner delivery/authority or IO/model/state effects; end-of-batch review/CI/publication remain separate.
   - **Acceptance Checks**: FR-001/002/009, SC-001; measured base/head/diff, actual acknowledged baseline/checks, criteria/constraints/conventions/profile/evidence, current D1/original D0, required passing checks, safe complete bounded context. Zero model/IO/state mutations in pure assembler. Synthetic name collisions, forged/stale records, empty/missing mandatory conventions and truncated evidence refuse. Controlled host doubles explicitly labeled.
 
 - [ ] T004 [P] [US1] Extend existing reviewer snapshot/digest and opt-in context/output validation in src/foundation/reviewer.ts with tests/runtime/unit/uc06-reviewer.test.ts.
