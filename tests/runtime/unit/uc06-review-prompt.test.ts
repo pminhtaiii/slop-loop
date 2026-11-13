@@ -3,8 +3,29 @@ import test from 'node:test';
 import { createDeepSeekTransport, DEEPSEEK_REVIEW_PROMPT, type DeepSeekReviewPrompt } from '../../../src/foundation/deepseek-transport.ts';
 import { buildTransportPayload, type HostModelTransportPayload } from '../../../src/foundation/model.ts';
 import { createFixtureProviderRequest, createFixtureTaskState } from '../support/uc03/port-fixtures.ts';
+import { validateReviewProfile } from '../../../src/uc06/validation.ts';
 
 const config: DeepSeekReviewPrompt = { ...DEEPSEEK_REVIEW_PROMPT, maxOutputBytes: 16384, maxResponseBytes: 131072 };
+
+test('actual compiled reviewer identity is representable by the unchanged context profile', () => {
+  const profile = {
+    profileId: 'controlled-profile',
+    profileVersion: '1',
+    promptVersion: DEEPSEEK_REVIEW_PROMPT.version,
+    promptDigest: DEEPSEEK_REVIEW_PROMPT.digest,
+    requiredConventionPaths: [],
+    optionalEvidenceRefs: [],
+    maxDiffBytes: 49152,
+    maxContextBytes: 65536,
+    maxEvidenceItems: 32,
+    maxEvidenceBytes: 32768,
+    maxFindings: 16,
+    maxMessageBytes: 2048,
+    maxOutputBytes: config.maxOutputBytes,
+    maxResponseBytes: config.maxResponseBytes,
+  };
+  assert.equal(validateReviewProfile(profile).ok, true);
+});
 const content = '{"status":"accepted","findings":[]}';
 function message(text = content): string {
   return JSON.stringify({ model: 'deepseek-review', content: [{ type: 'text', text }], usage: { input_tokens: 12, output_tokens: 4 } });

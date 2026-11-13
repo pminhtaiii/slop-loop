@@ -16,6 +16,8 @@ const usage = { inputTokens: 100, outputTokens: 20, billableTokens: 120, costUsd
 let sequence = 0;
 function fixture() {
   const task = createFixtureBugTask();
+  const approved = createTestProviderAdmissionContextV02();
+  assert.equal(approved.planApplicability, 'approved-plan');
   const source = { path: 'src/a.py', revisionDigest: repo, boundedExcerpt: 'task-independent', resultCount: 1, truncated: false };
   const evidence = [source];
   const profile = {
@@ -63,7 +65,7 @@ function fixture() {
       evidenceDigest: hash(evidence),
       profileDigest: hash(profile),
     },
-    authority: { taskStateVersion: 1, controlVersion: 2, epoch: 1, decisionAuthorityGeneration: 2, planDecisionRef: 'D1', planBindingDigest: repo },
+    authority: { taskStateVersion: 1, controlVersion: 2, epoch: 1, decisionAuthorityGeneration: 2, planDecisionRef: approved.planDecisionRef, planBindingDigest: approved.planBindingDigest },
     profile,
     verification,
     conventions: [],
@@ -91,10 +93,25 @@ test('bound snapshot carries exact context bytes and reserves synthetic paths; l
 
 async function runBound(
   content = JSON.stringify({ status: 'accepted', findings: [] }),
-  options: { prepared?: ReturnType<typeof fixture> | undefined; missing?: boolean; throws?: boolean; mutate?: boolean; proposal?: Record<string, unknown>; requestDigest?: string } = {},
+  options: {
+    prepared?: ReturnType<typeof fixture> | undefined;
+    remint?: boolean;
+    missing?: boolean;
+    throws?: boolean;
+    mutate?: boolean;
+    proposal?: Record<string, unknown>;
+    requestDigest?: string;
+  } = {},
 ) {
   const f = fixture();
-  const snapshot = buildReviewerSnapshot(f.task, diff, f.evidence, repo, binding, f.context);
+  const legacy = buildReviewerSnapshot(f.task, diff, f.evidence, repo, binding);
+  // Independent remint uses exact companion bytes, so request-digest rejection cannot mask a binding defect.
+  const snapshot = options.remint
+    ? {
+        state: legacy.state,
+        evidence: [...legacy.evidence, { path: 'review/context.json', revisionDigest: repo, boundedExcerpt: JSON.stringify(options.prepared?.context ?? f.context), resultCount: 1, truncated: false }],
+      }
+    : buildReviewerSnapshot(f.task, diff, f.evidence, repo, binding, f.context);
   const providerRequestId = `req-uc06-${++sequence}`;
   const request = createTestProviderRequest({
     providerRequestId,
@@ -256,3 +273,23 @@ test('resolver failures refuse safely and borrowed input mutation cannot change 
   assert.equal(mutated.result.status, 'accepted', mutated.reviewer.lastFailureReason);
   assert.equal(mutated.calls, 1);
 });
+
+for (const key of ['baseRevisionDigest', 'planDecisionRef', 'planBindingDigest'] as const) {
+  test(`self-consistent reminted ${key} contradiction refuses before accounting`, async () => {
+    const control = await runBound(undefined, { remint: true });
+    assert.equal(control.result.status, 'accepted');
+    assert.equal(control.calls, 1);
+    assert.equal(control.journal.claims[0]?.status, 'settled');
+    const f = fixture();
+    if (key === 'baseRevisionDigest') f.context.binding.baseRevisionDigest = hash('wrong initial candidate');
+    else f.context.authority[key] = key === 'planDecisionRef' ? 'wrong-current-D1' : hash('wrong current plan');
+    refresh(f);
+    if (key === 'baseRevisionDigest') assert.throws(() => buildReviewerSnapshot(f.task, diff, f.evidence, repo, binding, f.context), /REVIEW_CONTEXT_INVALID/u);
+    const run = await runBound(undefined, { prepared: f, remint: true });
+    assert.equal(run.result.status, 'invalid');
+    assert.equal(run.calls, 0);
+    assert.equal(run.journal.claims.length, 0);
+    assert.equal(run.journal.attempts.length, 0);
+    assert.equal(run.journal.outcomes.length, 0);
+  });
+}

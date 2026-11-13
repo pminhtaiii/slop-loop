@@ -167,6 +167,7 @@ function boundContextFor(
   return b.taskId === task.taskId &&
     b.runId === binding.runId &&
     b.repositoryId === task.repositoryId &&
+    b.baseRevisionDigest === task.initialRevisionDigest &&
     b.headRevisionDigest === repoDigest &&
     b.diffDigest === computeCanonicalSha256(diff) &&
     b.checkSetDigest === computeCheckSetDigest(task.requiredChecks) &&
@@ -309,7 +310,9 @@ export function createRuntimeReviewer(options: RuntimeReviewerOptions): RuntimeR
           !boundContext ||
           boundContext.authority.controlVersion !== admission.expectedControlVersion ||
           boundContext.authority.epoch !== admission.expectedEpoch ||
-          boundContext.authority.decisionAuthorityGeneration !== identity.decisionAuthorityGeneration
+          boundContext.authority.decisionAuthorityGeneration !== identity.decisionAuthorityGeneration ||
+          (admission.planApplicability === 'approved-plan' &&
+            (boundContext.authority.planDecisionRef !== admission.planDecisionRef || boundContext.authority.planBindingDigest !== admission.planBindingDigest))
         )
           return invalid('REVIEW_CONTEXT_INVALID');
       }
