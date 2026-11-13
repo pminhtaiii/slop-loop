@@ -110,16 +110,25 @@ function refused(exitCode: number, error: string): EvaluateCliResult {
 export async function runEvaluationControlCli(args: readonly string[], bindings: EvaluationControlBindings | undefined): Promise<EvaluateCliResult> {
   const request = parse(args);
   if (!request) return refused(2, 'INVALID_ARGUMENTS');
-  if (!bindings || !isEvaluationControlBindings(bindings) || (request.command === 'decision' && !bindings.approval)) return refused(4, 'OPERATOR_CONTROL_UNAVAILABLE');
+  let invoke: () => ServiceResult<unknown> | Promise<ServiceResult<unknown>>;
   try {
-    let result: ServiceResult<unknown>;
-    if (request.command === 'status') result = bindings.service.getExperiment(request.experimentId);
-    else if (request.command === 'decision') {
+    if (!bindings || !isEvaluationControlBindings(bindings)) return refused(4, 'OPERATOR_CONTROL_UNAVAILABLE');
+    if (request.command === 'decision') {
       const approval = bindings.approval;
       if (!approval) return refused(4, 'OPERATOR_CONTROL_UNAVAILABLE');
-      result = await approval.decide(request.input);
-    } else if (request.command === 'direction') result = await bindings.service.issueDirection(request.input);
-    else result = await bindings.service.continueExperiment(request.input);
+      invoke = approval.decide.bind(approval, request.input);
+    } else {
+      const service = bindings.service;
+      if (request.command === 'status') invoke = service.getExperiment.bind(service, request.experimentId);
+      else if (request.command === 'direction') invoke = service.issueDirection.bind(service, request.input);
+      else invoke = service.continueExperiment.bind(service, request.input);
+    }
+  } catch {
+    // Delivery getters and method capture can fail before any owner has been invoked.
+    return refused(4, 'OPERATOR_CONTROL_UNAVAILABLE');
+  }
+  try {
+    const result = await invoke();
     if (!result.ok) return refused(FAILURE_EXIT[result.status], /^[A-Za-z0-9_-]{1,128}$/u.test(result.reasonCode) ? result.reasonCode : 'OWNER_REFUSED');
     const output = sanitizeText(JSON.stringify({ ok: true, result: result.value }));
     if (Buffer.byteLength(output, 'utf8') > 64 * 1024)

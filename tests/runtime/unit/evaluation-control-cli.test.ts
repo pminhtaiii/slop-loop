@@ -140,6 +140,53 @@ function hostFileForAssembly(assemblySource: string) {
   return { directory, assemblyPath, configPath };
 }
 
+test('a changing host control getter refuses safely before invoking the owner', async () => {
+  const { options, calls } = await fixture();
+  const bindingKey = `feature007-changing-control-${Math.random()}`;
+  const host = hostFileForAssembly(`export function createHostAssembly() { return { host: {}, control: Reflect.get(globalThis, ${JSON.stringify(bindingKey)}) }; }`);
+  let approvalReads = 0;
+  const changingControl = {
+    service: options.control.service,
+    get approval() {
+      approvalReads += 1;
+      if (approvalReads >= 3) throw new Error('private-changing-approval-getter');
+      return options.control.approval;
+    },
+  };
+  const args = ['decision', '--experiment', 'exp-1', '--presentation', presentation, '--version', '1', '--choice', 'approve', '--idempotency-key', 'changing-getter-key', '--host', host.configPath];
+  Reflect.set(globalThis, bindingKey, changingControl);
+  try {
+    let result: Awaited<ReturnType<typeof runEvaluateCli>> | undefined;
+    await assert.doesNotReject(async () => { result = await runEvaluateCli(args); });
+    assert.ok(result);
+    assert.equal(result.exitCode, 4);
+    assert.deepEqual(JSON.parse(result.output), { error: 'OPERATOR_CONTROL_UNAVAILABLE' });
+    assert.equal(result.output.includes('private-changing-approval-getter'), false);
+    assert.equal(result.output.includes(host.configPath), false);
+    assert.equal(result.output.includes(host.assemblyPath), false);
+    assert.equal(approvalReads, 3);
+    assert.deepEqual(calls.decision, []);
+    assert.equal(calls.direction, 0);
+    assert.equal(calls.status, 0);
+    assert.equal(calls.graph, 1);
+
+    const approval = {
+      decide(input: unknown) {
+        assert.equal(this, approval, 'the selected owner retains its method receiver');
+        calls.decision.push(input);
+        return { ok: true as const, value: { decisionRef: 'decision-after-getter-recovery' } };
+      },
+    };
+    Reflect.set(globalThis, bindingKey, { service: options.control.service, approval });
+    const recovered = await runEvaluateCli(args);
+    assert.equal(recovered.exitCode, 0);
+    assert.deepEqual(calls.decision, [{ experimentId: 'exp-1', presentationDigest: presentation, expectedVersion: 1, decision: 'approve', idempotencyKey: 'changing-getter-key' }]);
+    assert.equal(calls.graph, 1);
+  } finally {
+    Reflect.deleteProperty(globalThis, bindingKey);
+  }
+});
+
 test('decision records a choice; explicit direction and continuation use the same service', async () => {
   const { options, calls } = await fixture();
   const decision = await runEvaluateCli(['decision', '--experiment', 'exp-1', '--presentation', presentation, '--version', '1', '--choice', 'approve', '--idempotency-key', 'decision-key'], options);
