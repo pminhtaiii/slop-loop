@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "root": "D:\\UIT\\PROJECT\\SE373_PROJECT\\CODING_AGENT\\slop-loop\\.agent-work\\worktrees\\rag-uc02-spec-alignment",
   "branch": "feat/rag-uc02-spec-alignment",
-  "head": "3cea49c59dfb05fc67d680188ab8f0f84d7c95a7",
+  "head": "0aab4c22240a8a2cf0b9ea8b56882751c130c704",
   "files": [
     {
       "path": "specs/008-retrieval-augmented-generation/data-model.md",
@@ -26,7 +26,7 @@
     },
     {
       "path": "specs/008-retrieval-augmented-generation/tasks.md",
-      "sha256": "103c3f1b4c80aec170287aadc0fdca89cd2ce3f78295f39cb1b7002659701f2f"
+      "sha256": "028346aa99ff7a7a218b7fe4e6a1831bacee964d87fb140c0a9e977a3bf0dda1"
     },
     {
       "path": "specs/008-retrieval-augmented-generation/contracts/decisions.md",
