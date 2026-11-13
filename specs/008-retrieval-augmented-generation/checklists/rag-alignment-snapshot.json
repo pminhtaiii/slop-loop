@@ -2,99 +2,99 @@
   "schemaVersion": 1,
   "root": "D:\\UIT\\PROJECT\\SE373_PROJECT\\CODING_AGENT\\slop-loop\\.agent-work\\worktrees\\rag-uc02-spec-alignment",
   "branch": "feat/rag-uc02-spec-alignment",
-  "head": "2b07eb7615544e076e3c30455be82bc41e3818ca",
+  "head": "3cea49c59dfb05fc67d680188ab8f0f84d7c95a7",
   "files": [
     {
       "path": "specs/008-retrieval-augmented-generation/data-model.md",
-      "sha256": "1fd754186f473c79deadc2a3f345d958115d96ac14a7216b2397076b4e4aa570"
+      "sha256": "f355885e3b624123b87df3c6b082f5ca455e298f382f2c2d943310a015057809"
     },
     {
       "path": "specs/008-retrieval-augmented-generation/plan.md",
-      "sha256": "ff8b5c90e0f79556942fcf81ba8056283b5da6a5e7e9b402122ecaff979ac2da"
+      "sha256": "074338236118d1756fc6346c85cfff65f4fb99c6a585c699f8cc08bcb7eea982"
     },
     {
       "path": "specs/008-retrieval-augmented-generation/quickstart.md",
-      "sha256": "40cab54c99cdf61550eaaedb63b64d49a19a0c710c911a8f4ae4e5363cae86ac"
+      "sha256": "ff38e6a220f1aa959cdd9a474f2bb9ebc6cd3a1542388d5e8b8fff65115e1aee"
     },
     {
       "path": "specs/008-retrieval-augmented-generation/research.md",
-      "sha256": "718151d91bfa22a18c719079813351d9ec1f4bbbb7067a40dc2275880bc61f53"
+      "sha256": "41f51b6d2cc8eb7c6a365815dceef9e22cc2dd5e32555bb300818615cb75d363"
     },
     {
       "path": "specs/008-retrieval-augmented-generation/spec.md",
-      "sha256": "49421cff69579a638edc707db2c78a4a807d0c2f657b31120d6cecc3ee0bede1"
+      "sha256": "76e59bb731e237f0e30247f27ecc13f9c9ce2796c2a8c6d821575d05c55e4f4e"
     },
     {
       "path": "specs/008-retrieval-augmented-generation/tasks.md",
-      "sha256": "3563cdd7b10798a959e6c909d51bf8621e879fc00a375f334f0212fb731b146d"
+      "sha256": "103c3f1b4c80aec170287aadc0fdca89cd2ce3f78295f39cb1b7002659701f2f"
     },
     {
       "path": "specs/008-retrieval-augmented-generation/contracts/decisions.md",
-      "sha256": "57763a5e965697a41e03655d85192f9692906e59b07d8dec5616b67750157b90"
+      "sha256": "fe1915ba1762f38b65fe2edfe996966ca7b6073174c896142222dd93037acd59"
     },
     {
       "path": "specs/008-retrieval-augmented-generation/contracts/evaluation.md",
-      "sha256": "7d31e30664237b613e1e8c6680ef93e139fe2a211bddcc56aca09493e7f8fa74"
+      "sha256": "5341d2a8ffea1d4f7e8289bdf31f4dcf09baa4d18429ad9a4f2607cb3e2a6143"
     },
     {
       "path": "specs/008-retrieval-augmented-generation/contracts/question-runtime.md",
-      "sha256": "0c93c32cb24e487c786d88a37f038b68c78a30b1d127a1d041d24975032c0e67"
+      "sha256": "c8a150307c9b31998777c9d94674338416077a00a7c9007405b7de7316137a3c"
     },
     {
       "path": "specs/008-retrieval-augmented-generation/contracts/repository-tools.md",
-      "sha256": "e92d1fcf38515f43a21e6a2f31f214ce6c2edf4bb7a6a95c62361718fc2301ad"
+      "sha256": "5b69cb937881a1b1910bfab14e28760e59b5505eac9e3b81adaf1f6a7f5ac336"
     },
     {
       "path": "specs/008-retrieval-augmented-generation/contracts/retrieval.md",
-      "sha256": "7672d1ce6d21ec5adec4fdc169e87394b6ebbb6a382e82ad62eca8432e26ca24"
+      "sha256": "086fc79ebf5c42b6c8b4970e092da06d8a4db709641b083883b75f9ff52df51e"
     },
     {
       "path": "AGENTS.md",
-      "sha256": "c4e30ac9b0c4b444770d99a8101d78c15c918ec1c9c2edfc6e7b4e67c99d3b81"
+      "sha256": "313b1238e1125d72084c1fecec584102f879f74e9d2234155484fd5355757d3a"
     },
     {
       "path": "GLOSSARY.md",
-      "sha256": "6a9e37c367e6418476f20d298b78b61ba9b79c6d6b23d410ca0760e7f7f1d9a3"
+      "sha256": "03ec97d8ce63d635909d1a0f32fc57923359e32b2c7e7d8a42baf41ebad3f4d4"
     },
     {
       "path": "docs/adr/0008-read-only-target-repository-questions.md",
-      "sha256": "732ccd0dafcc998be5bd73e2895d6d93399ff09689c574cdf3084c22f12332d1"
+      "sha256": "789ff9a9db999555b1488b9b99e3b9ef2a6208abbc2b25c0240c9166c4139566"
     },
     {
       "path": "context/architecture.md",
-      "sha256": "c4289712bcaa939d4b9682a83745f81106f4da9d2f73eabbcee1c5cc072aadd3"
+      "sha256": "d0b2c8a3a697480923ecacd6e61be2b9c8dee5d6d56fcd251676b2004696c577"
     },
     {
       "path": "context/tools_permissions.md",
-      "sha256": "d03c663b0569a1bdf65936a3e7ffeef89058d4d3e9510d075d8c3d6cd1702a01"
+      "sha256": "aefd541cb3773f4bababc71913ffef2d3e24df0bfaf8a549b22639b28b0b40d9"
     },
     {
       "path": "context/runtime_policy.md",
-      "sha256": "966fc46f50c5607632ad1847414d7fa2473e23f27a26ce9d374bfc60000cb215"
+      "sha256": "a1348a4e359e30101a2acc7a91aac88f67837a3bc547788c6448b8acd51d2f29"
     },
     {
       "path": "context/state_and_memory.md",
-      "sha256": "6d2734068d00e2b6d7bb627ee21a3788d70b5d6ee0109aaa81ecd3ec2ced21c8"
+      "sha256": "f4c922fcfd975095b48ab5c8a3f335476e0cace3fe852815f3e293b9523fac80"
     },
     {
       "path": "context/planning.md",
-      "sha256": "a7d33913be2377fd276f6af25ee0f42729f5bb05be4a7552d833d2b6d86ba976"
+      "sha256": "a5c64a77862e30a038fea086965ec6e54af1f49bb8ac6984b913768eac4b67f0"
     },
     {
       "path": ".specify/memory/constitution.md",
-      "sha256": "29fc1837b20f493d302203554923322a245123b4be9ed5734d9e1af96cd5ef0b"
+      "sha256": "ce7549540fa45543cca797a150201d868e64495fdff39dc38246fb17bd4024b3"
     },
     {
       "path": "docs/agents/pr-conventions.md",
-      "sha256": "8f93ad542525a907810186516549b2be9afd72681c947a547be155e3237b2bd6"
+      "sha256": "1a8e62a5dbe663d2cc74d259a52e8f80f0feddb4332eec81163348f5818afe64"
     },
     {
       "path": "docs/use-case-delegation.md",
-      "sha256": "8e782ce5cf61dddfa0508da6ceede70dc11696e8945eb5d67e238b1fdccd9193"
+      "sha256": "b441392befda8dd13dc9476700ab9cc9f3c476576556916b999dbacc0f002a35"
     },
     {
       "path": "docs/progress-checker-matrices.md",
-      "sha256": "0667e898f58c8e31e071a4cdeed7b83c202c1b413dffe6927cfe2704a8485c47"
+      "sha256": "03456c78cf0c11cf5deefa06c07821841a3f7f0cdab67d809f292001f91fa37b"
     }
   ]
 }

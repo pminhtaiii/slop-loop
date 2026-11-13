@@ -7,8 +7,14 @@ The planning validator and context checker validate artifact structure. Independ
 ## Candidate and independent verdicts
 
 - Branch feat/rag-uc02-spec-alignment, base 2b07eb7615544e076e3c30455be82bc41e3818ca.
-- Candidate snapshot SHA-256 e19210d512d0c067a9e702a9dd608899561dbf479fb6192dbef0f47a5b123511, verified 23/23 declared inputs. Historical path specs/008-repository-questions moved in full; original evidence bytes and bindings retained.
+- Candidate snapshot SHA-256 69b594d70f5d893300dc5ebc83ae93203ab04a34820e21148fff6c8b33be95d0 pins 23 Git blobs at 3cea49c59dfb05fc67d680188ab8f0f84d7c95a7. Historical path specs/008-repository-questions moved in full; original evidence bytes and bindings retained.
 - R1 standards findings on durable ownership, revocation/cleanup, tokenizer prerequisites, resource accounting, generation binding and citation rendering were repaired in the plan, data model, retrieval/runtime contracts and tasks.
 - R1 testability findings on reproducible scoring, incomplete ranking, quotas, controlled/real gates, reopening, absence proof and traceability were repaired in the evaluation/retrieval contracts, quickstart and tasks.
 - R2 passed both lanes. R3 adds the user's syntax-first splits, definition linkage and budgeted expansion. Independent standards reviewer /root/grounding and testability reviewer /root/testability each reverified 23/23 and reported no blocking findings for R3.
 - Automated planning validation, context consistency, diff whitespace and both review formats passed. The automated status command reports only structure; the independent verdicts are recorded here. G-IMPLEMENT, compatibility and measured retrieval/answer quality remain pending.
+
+## CodeRabbit repair candidate
+
+The snapshot hashes raw Git blobs, independent of checkout line endings. Its head is the commit containing the reviewed inputs. The subsequent evidence-only commit records the snapshot and verdict. Verify each entry with git cat-file blob <snapshot-head>:<path> and SHA-256 over its raw stdout, then compare the same blob with HEAD:<path>. The workspace verifier hashes checkout bytes and is only applicable when those bytes match the Git blobs.
+
+Independent standards and testability reviews reassessed the changed retrieval and evaluation contracts and verified the unchanged inputs against the repaired candidate. Both the 23 Git blobs and the separate workspace snapshot matched their declared inputs. The repaired plan requires each mandatory family to pass and exact-name tokenization preserves whole Python identifiers.
