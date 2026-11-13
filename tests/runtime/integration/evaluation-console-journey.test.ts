@@ -8,6 +8,7 @@
 
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -211,7 +212,7 @@ async function composeControlledConsole() {
     },
     operatorToken: () => TOKEN,
   };
-  return { fixture, profile, configuration, readiness, assembly, approvalEffects, directions, counters: () => ({ routeCalls }) };
+  return { files, fixture, profile, configuration, readiness, assembly, approvalEffects, directions, counters: () => ({ routeCalls }) };
 }
 
 test('controlled HTTP journey: one composed console host drives intake, approval, continuation, report and comparison', async () => {
@@ -391,5 +392,6 @@ test('controlled HTTP journey: one composed console host drives intake, approval
     assert.equal(composed.directions.length, 2, 'owner control issued exactly the two explicit directions');
   } finally {
     await started.host.close();
+    await rm(composed.files, { recursive: true, force: true });
   }
 });
