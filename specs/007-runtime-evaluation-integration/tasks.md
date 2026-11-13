@@ -265,3 +265,22 @@ Verification at that reconciliation snapshot: `node_modules/.bin/tsc.cmd --noEmi
 These are focused controlled checks, not full-suite, real-owner, provider/container, browser, restart or first-real-repair acceptance. Existing stale planning-only summaries elsewhere do not override the later releases in the decision record.
 
 **2026-11-09 update:** the "T027–T031 are unimplemented" line above is superseded for T027 and T028 only, and neither is closed. T027's §8 `Investigate → END` routing guard has landed at source/controlled tier with its witness still assigned to T030; T028 has new preflight-refusal coverage over code already in HEAD via `521c07df` (PR #155), with its composition-root acceptance untouched. T029–T031 remain unimplemented. Recorded per-task at T027 and T028. **Follow-up same day at `25c7f626`:** T027's §8 kind branch now also refuses an answered clarification replay as a typed `INCOMPLETE` rather than reporting a false pause; §8 names no outcome for that path, so the refusal is inferred from its pause definition and its ban on loops and false completion. Node-level witness only; the graph-level witness for this path is an open gap no task currently owns.
+
+## Phase 11: Convergence
+
+The 2026-11-13 source assessment found three remaining US3 gaps (FR-007/008/010/012/013; plan: shared CLI/console service). T030 controlled acceptance does not supply a runnable console host or report page. The constitution remains an unratified template. The scoped contract is [console-host](contracts/console-host.md); source/controlled implementation requires its independent planning gate. T031 remains open for its external owner-review and contributor workflow obligations; these source tasks do not depend on that unfinished publication gate. No real/browser/restart prerequisite is waived.
+
+- [ ] T035 [US3] Compose a trusted same-process console host and runnable serve entry in src/runtime/evaluation-console-host.ts and src/cli/evaluate.ts with tests/runtime/unit/evaluation-console-host.test.ts and tests/runtime/unit/evaluation-cli.test.ts per FR-010/013 and plan shared-service entry (missing).
+  - **Dependencies**: T015, T029, T030.
+  - **Owned Paths**: src/runtime/evaluation-console-host.ts; src/cli/evaluate.ts; tests/runtime/unit/evaluation-console-host.test.ts; tests/runtime/unit/evaluation-cli.test.ts.
+  - **Acceptance Checks**: Console-host contract startup, authority and lifetime sections; reject malformed args before module load; use existing configuration loader; one exact readiness/graph/service/server; validate admitted profile/catalog/routes/token before listening; live-service report comparison lookup; safe unavailable/listen errors and bounded shutdown. Source/emitted host and CLI tests plus typecheck/build. Production CLI never falls back to controlled adapters.
+
+- [ ] T036 [US3] Project the existing safe workflow report into src/runtime/console-page-assets.ts with tests/runtime/unit/evaluation-console-page.test.ts per US3/AC4 and FR-007/008/010/012 (partial).
+  - **Dependencies**: T016, T035.
+  - **Owned Paths**: src/runtime/console-page-assets.ts; tests/runtime/unit/evaluation-console-page.test.ts.
+  - **Acceptance Checks**: Console-host contract report projection; bounded explicit safe fields rendered with textContent; separate lifecycle, grade, selected and suite acceptance; missing/invalid report unknown rather than passing; no raw payload or paths. Preserve existing server origin/token/body/artifact protections. Source/emitted page tests plus typecheck/build.
+
+- [ ] T037 [US3] Verify the running controlled console host in tests/runtime/integration/evaluation-console-journey.test.ts and refresh specs/007-runtime-evaluation-integration/quickstart.md per US3/AC1-6 and FR-010/011 (missing).
+  - **Dependencies**: T035, T036, T030.
+  - **Owned Paths**: tests/runtime/integration/evaluation-console-journey.test.ts; specs/007-runtime-evaluation-integration/quickstart.md.
+  - **Acceptance Checks**: Console-host contract controlled journey; actual loopback HTTP over one composed host/service/graph; immutable intake, approval presentation/decision, explicit direction/continue, reporter answer without auto-resume, safe report and live comparison; duplicate/stale requests no second effect. Source/emitted journey plus typecheck/build; label controlled HTTP, never actual-browser/real/restart acceptance. Keep T017/T018/T019 and original owner ledgers unchanged. Final context refresh and independent batch review/publication remain required.
