@@ -93,17 +93,17 @@
 
 ## Phase 8: UC-02 retrieval and persistence
 
-- [ ] T019 [US1] Verify pinned SQLite/extension loading on Windows and CI through a disposable DB smoke test in tests/runtime/integration/question-index-platform.test.ts, package.json, ./pnpm-lock.yaml and .github/workflows/runtime-checks.yml.
+- [ ] T019 [US1] Provision the pinned UC-02 dependencies in package.json and ./pnpm-lock.yaml and verify SQLite/extension loading on Windows and CI in tests/runtime/integration/question-index-platform.test.ts and .github/workflows/runtime-checks.yml.
   - **Dependencies**: T001.
-  - **Acceptance**: Run write/query/reopen/cosine and rollback checks on both platforms. Reassess the technology if compatibility fails.
+  - **Acceptance**: T019 exclusively owns both dependency manifests for the UC-02 batch. Pin sqlite-vec, the Tree-sitter WASM runtime and Python grammar dependency where packaged, and the Transformers.js/ONNX runtime dependencies. Frozen installs and Windows/CI write/query/reopen/cosine and rollback checks pass. Reassess the store if compatibility fails.
 - [ ] T020 [US1] Implement guarded corpus segmentation and coverage in src/questions/chunks.ts and tests/runtime/unit/question-chunks.test.ts.
-  - **Dependencies**: T004, T005, T022.
+  - **Dependencies**: T004, T005, T019, T022.
   - **Acceptance**: Python class/function/method and decorator/nested names, logical-unit splits with original-definition linkage, deterministic whole-line fallback, complete provenance, 60 lines/4096 bytes, exact model token counts and no silent truncation.
 - [ ] T021 [US1] Persist and incrementally synchronize vector generations in src/questions/index.ts and tests/runtime/integration/question-index.test.ts.
   - **Dependencies**: T019, T020, T022.
   - **Acceptance**: Atomic commit, new snapshot ID with unchanged corpus reuse, concurrent readers, add/edit/delete/rename, interrupted update, revocation and stage reclamation, budget and stale-generation checks.
 - [ ] T022 [US1] Implement versioned controlled/local embedding adapters in src/questions/embedding.ts and tests/runtime/unit/question-embedding.test.ts.
-  - **Dependencies**: T001, T005.
+  - **Dependencies**: T001, T005, T019.
   - **Acceptance**: Pinned tokenizer/profile, complete input checks, finite normalized vectors, typed cancellation/overflow, no external source transport.
 - [ ] T023 [US1] Implement hybrid retrieval and coverage receipts in src/questions/retrieval.ts and tests/runtime/unit/question-retrieval.test.ts.
   - **Dependencies**: T021, T006.
