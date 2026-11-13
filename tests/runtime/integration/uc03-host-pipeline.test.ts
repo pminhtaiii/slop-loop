@@ -420,6 +420,7 @@ test('the controlled EvaluationService drives one bound graph run through owner 
       admit: (request: EvaluationGradingAdmissionRequest) => ({
         kind: 'injected-mock-isolation-admission',
         admissionId: sha256Text('mock-isolation-' + request.finalSnapshot.digest),
+        checkId: request.checkId,
         finalSnapshot: request.finalSnapshot,
         profile: request.profile,
         executorId: request.executorId,
@@ -429,7 +430,10 @@ test('the controlled EvaluationService drives one bound graph run through owner 
       executorId: 'controlled-service-hidden-check',
       execute(request: EvaluationGraderExecutionRequest) {
         hiddenExecutions += 1;
+        assert.equal(request.checkId, 'hidden-C01-service');
+        assert.equal(request.admission.checkId, 'hidden-C01-service');
         return {
+          checkId: request.checkId,
           finalSnapshot: request.finalSnapshot,
           profile: request.profile,
           executorId: request.executorId,
@@ -561,12 +565,13 @@ test('the controlled EvaluationService drives one bound graph run through owner 
   assert.equal(completed.value.experiment.taskId, fixture.task.taskId);
   assert.equal(completed.value.experiment.runId, firstOwnerState.runId);
   assert.equal(completed.value.experiment.workflowReport?.cases[0]?.workflowOutcome, 'COMPLETED');
-  assert.equal(completed.value.experiment.workflowReport?.cases[0]?.grade, 'not-run', JSON.stringify({ report: completed.value.experiment.workflowReport?.cases[0], freezeCalls, recheckCalls, hiddenExecutions }));
-  assert.equal(completed.value.experiment.workflowReport?.cases[0]?.gradeReason, 'private-grading', JSON.stringify({ report: completed.value.experiment.workflowReport?.cases[0], freezeCalls, recheckCalls, hiddenExecutions }));
+  assert.equal(completed.value.experiment.workflowReport?.cases[0]?.grade, 'pass', JSON.stringify({ report: completed.value.experiment.workflowReport?.cases[0], freezeCalls, recheckCalls, hiddenExecutions }));
+  assert.equal(completed.value.experiment.workflowReport?.cases[0]?.gradeReason, 'criteria-satisfied');
   assert.equal(completed.value.experiment.workflowReport?.cases[0]?.requestedModel, profile.model);
   assert.equal(completed.value.experiment.workflowReport?.cases[0]?.returnedModel, null, 'the fixture transport publishes no returned-model identity');
   assert.equal(completed.value.experiment.workflowReport?.isRealVerified, false);
-  assert.equal(completed.value.experiment.workflowReport?.exitCode, 1, 'a completed repair with unbound hidden-check identity remains not-run/failure-status, not an unresolved-wait exit');
+  assert.equal(completed.value.experiment.workflowReport?.exitCode, 0, 'the selected controlled repair independently passed its pinned hidden check');
+  assert.equal(completed.value.experiment.workflowReport?.suiteAcceptance.outcome, 'incomplete', 'one selected repair does not certify the full suite');
   assert.equal(fixture.route.repositoryPort.patches.length, 1);
   assert.equal(fixture.statePort.getLedgers().find(ledger => ledger.scope === 'task' && ledger.kind === 'repair')?.consumed, 1);
   assert.equal(approvedDecisionIds[0], 'dec-plan-' + fixture.task.taskId + '-1');
@@ -581,7 +586,7 @@ test('the controlled EvaluationService drives one bound graph run through owner 
   ]);
   assert.equal(freezeCalls, recheckCalls, 'every grade rechecks the same full final-tree capture after grading');
   assert.ok(freezeCalls >= 1);
-  assert.equal(hiddenExecutions, 1, 'the controlled hidden check runs once; its unbound identity remains not-run');
+  assert.equal(hiddenExecutions, 1, 'the exact admitted hidden check runs once');
   const publicReport = JSON.stringify(completed.value.experiment.workflowReport);
   assert.equal(publicReport.includes('C:/host-only'), false);
   assert.equal(publicReport.includes('controlled-test-key'), false);

@@ -34,6 +34,10 @@ function hasExactKeys(value: RecordValue, keys: readonly string[]): boolean {
   return actual.length === keys.length && keys.every(key => Object.hasOwn(value, key));
 }
 
+function gradingKeys(keys: readonly string[], checkId: unknown): readonly string[] {
+  return checkId === undefined ? keys : [...keys, 'checkId'];
+}
+
 function isId(value: unknown): value is string {
   return typeof value === 'string' && ID.test(value);
 }
@@ -73,7 +77,8 @@ function isIsolationAuthority(value: unknown): value is EvaluationIsolationAutho
 function isBoundary(value: unknown): value is MockPrivateGradingBoundary {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ['finalSnapshot', 'profile', 'graderPayload', 'isolationAuthority', 'executor']) &&
+    hasExactKeys(value, gradingKeys(['finalSnapshot', 'profile', 'graderPayload', 'isolationAuthority', 'executor'], value['checkId'])) &&
+    (value['checkId'] === undefined || isId(value['checkId'])) &&
     Object.hasOwn(value, 'graderPayload') &&
     isSnapshot(value['finalSnapshot']) &&
     isProfile(value['profile']) &&
@@ -97,7 +102,8 @@ function freezeProfile(value: EvaluationGradingProfile): EvaluationGradingProfil
 function isAdmission(value: unknown, request: EvaluationGradingAdmissionRequest): value is EvaluationGradingAdmission {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ['kind', 'admissionId', 'finalSnapshot', 'profile', 'executorId']) &&
+    hasExactKeys(value, gradingKeys(['kind', 'admissionId', 'finalSnapshot', 'profile', 'executorId'], request.checkId)) &&
+    value['checkId'] === request.checkId &&
     value['kind'] === 'injected-mock-isolation-admission' &&
     isId(value['admissionId']) &&
     value['finalSnapshot'] === request.finalSnapshot &&
@@ -111,12 +117,13 @@ function isOutcome(value: unknown): value is EvaluationOutcome {
 }
 
 function safeResult(value: unknown, request: EvaluationGraderExecutionRequest): SafeEvaluationGradingResult | undefined {
-  if (!isRecord(value) || !hasExactKeys(value, ['finalSnapshot', 'profile', 'executorId', 'status', 'actualOutcome', 'durationMs', 'cpuMs', 'outputBytes'])) return undefined;
+  if (!isRecord(value) || !hasExactKeys(value, gradingKeys(['finalSnapshot', 'profile', 'executorId', 'status', 'actualOutcome', 'durationMs', 'cpuMs', 'outputBytes'], request.checkId))) return undefined;
   const durationMs = value['durationMs'];
   const cpuMs = value['cpuMs'];
   const outputBytes = value['outputBytes'];
   const bounds = request.profile.bounds;
   if (
+    value['checkId'] !== request.checkId ||
     value['finalSnapshot'] !== request.finalSnapshot ||
     value['profile'] !== request.profile ||
     value['executorId'] !== request.executorId ||
@@ -137,6 +144,7 @@ function safeResult(value: unknown, request: EvaluationGraderExecutionRequest): 
   )
     return undefined;
   return Object.freeze({
+    ...(request.checkId === undefined ? {} : { checkId: request.checkId }),
     finalSnapshot: request.finalSnapshot,
     profile: request.profile,
     executorId: request.executorId,
@@ -154,16 +162,18 @@ export async function executeMockPrivateGrading(data: unknown): Promise<SafeEval
     const profile = freezeProfile(data.profile);
     const executor = data.executor;
     const request: EvaluationGradingAdmissionRequest = Object.freeze({
+      ...(data.checkId === undefined ? {} : { checkId: data.checkId }),
       finalSnapshot,
       profile,
       executorId: executor.executorId,
     });
     const rawAdmission: unknown = await data.isolationAuthority.admit(request);
     if (!isAdmission(rawAdmission, request)) return undefined;
+    const admission: EvaluationGradingAdmission = Object.freeze({ ...request, kind: rawAdmission.kind, admissionId: rawAdmission.admissionId });
     const execution: EvaluationGraderExecutionRequest = Object.freeze({
       ...request,
       executor,
-      admission: rawAdmission,
+      admission,
       graderPayload: data.graderPayload,
     });
     const rawResult: unknown = await executor.execute(execution);

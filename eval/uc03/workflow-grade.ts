@@ -337,6 +337,7 @@ export function createSnapshotGrader(data: unknown): SnapshotGrader {
           return judge(criterion.caseId, criterion.criterionId, 'not-run', 'private-grading', evidenceIds, snapshot, evidence.digest, 'No hidden check is pinned for this repair criterion.');
         const hiddenId = `check:${criterion.hiddenCheckId}`;
         const hidden = await executeMockPrivateGrading({
+          checkId: criterion.hiddenCheckId,
           finalSnapshot: snapshot,
           profile: host.profile,
           isolationAuthority: host.isolationAuthority,
@@ -344,7 +345,7 @@ export function createSnapshotGrader(data: unknown): SnapshotGrader {
           graderPayload: host.graderPayload,
         });
         // A missing or forged admission yields no result: not-run, never a guessed pass.
-        if (hidden === undefined)
+        if (hidden === undefined || hidden.checkId !== criterion.hiddenCheckId)
           return judge(
             criterion.caseId,
             criterion.criterionId,
@@ -353,20 +354,9 @@ export function createSnapshotGrader(data: unknown): SnapshotGrader {
             [...evidenceIds, hiddenId],
             snapshot,
             evidence.digest,
-            'The independent hidden check was not run under admitted isolation.',
+            'The independent hidden check lacks admitted isolation or a result bound to its pinned identity.',
           );
-        if (hidden.status !== 'pass') return decide(criterion, false, [...evidenceIds, hiddenId], snapshot, evidence.digest);
-        // Nothing in the executor request or result names the check, so a pass cannot be bound to the pinned id.
-        return judge(
-          criterion.caseId,
-          criterion.criterionId,
-          'not-run',
-          'private-grading',
-          [...evidenceIds, hiddenId],
-          snapshot,
-          evidence.digest,
-          'The hidden check result cannot be bound to its pinned identity, so it stays not-run.',
-        );
+        return decide(criterion, hidden.status === 'pass' && hidden.actualOutcome === 'COMPLETED', [...evidenceIds, hiddenId], snapshot, evidence.digest);
       }
 
       if (criterion.predicate === 'clarification') {

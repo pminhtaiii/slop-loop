@@ -150,6 +150,51 @@ test('workflow COMPLETED alone does not grade as repair success', async () => {
   assert.equal(result.reason, 'criteria-violation');
 });
 
+test('repair success accepts only the pinned admitted hidden check with a completed pass', async () => {
+  let executions = 0;
+  const executor: EvaluationGraderExecutor = {
+    executorId: 'executor-1',
+    execute(request) {
+      executions += 1;
+      assert.equal(request.checkId, 'hidden-c01');
+      assert.equal(request.admission.checkId, 'hidden-c01');
+      return {
+        finalSnapshot: request.finalSnapshot, profile: request.profile, executorId: request.executorId, checkId: request.checkId,
+        status: 'pass', actualOutcome: 'COMPLETED', durationMs: 10, cpuMs: 5, outputBytes: 32,
+      };
+    },
+  };
+  const result = await grader({ executor }).grade('C01', { observation: observation(), snapshot: SNAPSHOT, evidence: evidence() });
+  assert.equal(result.grade, 'pass');
+  assert.equal(result.reason, 'criteria-satisfied');
+  assert.equal(result.criterionId, 'crit-c01');
+  assert.ok(result.evidenceIds.includes('check:hidden-c01'));
+  assert.ok(result.limitations.includes(SNAPSHOT_GRADE_LIMITATION));
+  assert.equal(executions, 1);
+  noPrivatePayload(result);
+
+  for (const checkId of [undefined, 'hidden-other']) {
+    const invalid = await grader({ executor: {
+      executorId: 'executor-1',
+      execute: request => ({
+        finalSnapshot: request.finalSnapshot, profile: request.profile, executorId: request.executorId,
+        ...(checkId === undefined ? {} : { checkId }),
+        status: 'pass', actualOutcome: 'COMPLETED', durationMs: 10, cpuMs: 5, outputBytes: 32,
+      }),
+    } }).grade('C01', { observation: observation(), snapshot: SNAPSHOT, evidence: evidence() });
+    assert.equal(invalid.grade, 'not-run');
+    assert.equal(invalid.reason, 'private-grading');
+  }
+  const incomplete = await grader({ executor: {
+    executorId: 'executor-1',
+    execute: request => ({
+      finalSnapshot: request.finalSnapshot, profile: request.profile, executorId: request.executorId, checkId: request.checkId,
+      status: 'pass', actualOutcome: 'FAILED', durationMs: 10, cpuMs: 5, outputBytes: 32,
+    }),
+  } }).grade('C01', { observation: observation(), snapshot: SNAPSHOT, evidence: evidence() });
+  assert.equal(incomplete.grade, 'fail', 'a passing status cannot upgrade an unsuccessful hidden outcome');
+});
+
 test('a review of a different diff and missing test protection fail the repair predicate', async () => {
   const staleReview = await grader().grade('C01', { observation: observation(), snapshot: SNAPSHOT, evidence: evidence({ reviewedDiffDigest: OTHER_DIGEST }) });
   assert.equal(staleReview.grade, 'fail');
@@ -254,6 +299,7 @@ test('a forged admission receipt or a missing grader is not-run, never a silent 
     executor: {
       executorId: 'executor-1',
       execute: (request: EvaluationGraderExecutionRequest) => ({
+        checkId: request.checkId,
         finalSnapshot: request.finalSnapshot,
         profile: request.profile,
         executorId: request.executorId,
