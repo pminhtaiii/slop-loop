@@ -18,6 +18,7 @@ import {
   validateWorkflowObservation,
 } from './validation.ts';
 import { createEvaluationReport, createWorkflowEvaluationReport, driverErrorCase, notRunCase, notRunWorkflowCase, workflowCaseResult } from './results.ts';
+import { workflowEvidenceDecision } from './workflow-evidence.ts';
 import { executeMockPrivateGrading } from './grading.ts';
 import {
   C17_NOT_RUN_LIMITATION,
@@ -173,7 +174,8 @@ async function runWorkflowEvaluation(options: unknown): Promise<WorkflowEvaluati
         continue;
       }
       try {
-        cases.push(workflowCaseResult(spec, validateWorkflowObservation(observation), binding));
+        const independentGrade = workflowEvidenceDecision(observation);
+        cases.push(workflowCaseResult(spec, validateWorkflowObservation(observation), binding, independentGrade));
       } catch {
         cases.push(notRunWorkflowCase(spec, 'invalid-observation', 'Workflow driver returned an invalid observation.', binding));
       }

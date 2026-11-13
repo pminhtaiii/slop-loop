@@ -32,7 +32,7 @@ import type {
 import type { RealContextSource } from '../approvals/real-context-provider.ts';
 import type { ExecutionGuardReadCapability } from '../foundation/repository-types.ts';
 import type { InvestigationConfigPort, TrustedHostExpectedContext, TrustedHostPort, BaselineEvidenceWriter } from './investigation.ts';
-import type { CoderAgentV02 } from './agent-types.ts';
+import type { CoderAgentV02, CoderTurnInputV02 } from './agent-types.ts';
 import type { TrustedReplanDirection } from './repair-types.ts';
 import type { UC03CoderAdmissionResolver, UC03GraphConfig, UC03ReviewerAdmissionResolver, UC03ReviewerPort } from './graph-types.ts';
 
@@ -118,7 +118,10 @@ export interface UC03GraphPortsV02 {
 
 /** Host wiring for the v0.2 route. Each turn resolves a fresh owner admission; the agent does not claim. */
 export interface UC03GraphGenerationV02 {
-  readonly agent: CoderAgentV02;
+  /** Explicit controlled callers may supply a single prewired agent. */
+  readonly agent?: CoderAgentV02 | undefined;
+  /** Production host construction selects the same run-scoped agent before each counter snapshot. */
+  readonly agentFor?: ((input: CoderTurnInputV02) => CoderAgentV02) | undefined;
 }
 
 /** The T034 reviewer uses a bound request/context bundle; ModelPortV02 owns its claim. */

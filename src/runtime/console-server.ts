@@ -3,8 +3,8 @@
  *
  * A local operator tool over the same injected `EvaluationService` the CLI uses. It owns transport
  * policy only: loopback binding, exact Host/Origin, operator token, a 64 KiB body cap, path-segment
- * decoding before any owner call, serialised mutations and no CORS. UC-05 approval/decision and
- * comparison arrive as narrow injected ports; nothing here reimplements or reconstructs them.
+ * decoding before any owner call, serialised mutations and no CORS. UC-05 approval remains injected;
+ * comparison uses an injected port or validates host-looked-up workflow reports.
  */
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
@@ -12,6 +12,7 @@ import { sha256Text } from '../uc01/contracts.ts';
 import type { CatalogEntry } from './evaluation-profile.ts';
 import { renderConsolePage } from './console-page.ts';
 import { DIGEST, ID, type EvaluationService, type ServiceFailure, type ServiceResult } from './evaluation-service.ts';
+import { compareWorkflowEvaluations } from '../../eval/uc03/compare.ts';
 
 const LOOPBACK = '127.0.0.1';
 const MAX_BODY_BYTES = 64 * 1024;
@@ -47,6 +48,11 @@ export interface ConsoleComparisonPort {
   compare(input: ConsoleComparisonRequest): ConsoleOutcome;
 }
 
+/** Host-owned read-only lookup of persisted workflow reports, indexed by experiment ID. */
+export interface ConsoleWorkflowReportLookup {
+  getWorkflowReport(experimentId: string): unknown | null | undefined | Promise<unknown | null | undefined>;
+}
+
 type ConsoleOutcome = ServiceResult<unknown> | Promise<ServiceResult<unknown>>;
 
 export interface ConsoleServerOptions {
@@ -56,6 +62,7 @@ export interface ConsoleServerOptions {
   readonly artifacts?: ReadonlyMap<string, ConsoleArtifact> | undefined;
   readonly approval?: ConsoleApprovalPort | undefined;
   readonly comparison?: ConsoleComparisonPort | undefined;
+  readonly workflowReportLookup?: ConsoleWorkflowReportLookup | undefined;
 }
 
 export interface ConsoleAddress {
@@ -90,6 +97,29 @@ function comparisonRequest(body: Record<string, unknown>): ConsoleComparisonRequ
   return { idempotencyKey, baselineId: baseline, candidateId: candidate, policy: policy as ConsoleComparisonRequest['policy'] };
 }
 
+function storedWorkflowComparison(lookup: ConsoleWorkflowReportLookup): ConsoleComparisonPort {
+  return {
+    async compare(request) {
+      let baseline: unknown | null | undefined;
+      let candidate: unknown | null | undefined;
+      try {
+        [baseline, candidate] = await Promise.all([lookup.getWorkflowReport(request.baselineId), lookup.getWorkflowReport(request.candidateId)]);
+      } catch {
+        return { ok: false, status: 'blocked', reasonCode: 'WORKFLOW_REPORT_LOOKUP_UNAVAILABLE' };
+      }
+      if (baseline == null || candidate == null) return { ok: false, status: 'not-found', reasonCode: 'WORKFLOW_REPORT_NOT_FOUND' };
+      try {
+        return {
+          ok: true,
+          value: compareWorkflowEvaluations(baseline, candidate, { strictSameConfig: request.policy === 'strict' }),
+        };
+      } catch {
+        return { ok: false, status: 'invalid-input', reasonCode: 'INVALID_WORKFLOW_REPORT' };
+      }
+    },
+  };
+}
+
 function send(res: ServerResponse, status: number, body: unknown): void {
   if (res.writableEnded || res.destroyed) return;
   const text = JSON.stringify(body);
@@ -104,7 +134,8 @@ function send(res: ServerResponse, status: number, body: unknown): void {
 
 /** @param port the actual bound port; the token is the only credential and never enters a URL. */
 export function createConsoleServer(options: ConsoleServerOptions): ConsoleServer {
-  const { service, catalog, operatorToken, artifacts, approval, comparison } = options;
+  const { service, catalog, operatorToken, artifacts, approval } = options;
+  const comparison = options.comparison ?? (options.workflowReportLookup ? storedWorkflowComparison(options.workflowReportLookup) : undefined);
   if (typeof operatorToken !== 'string' || operatorToken.length < 16 || operatorToken.length > 512) throw new Error('Invalid operator token');
   // shortcut: no TLS, the socket is loopback-only and never bound to a routable interface; upgrade if serving off-host.
   const tokenDigest = createHash('sha256').update(operatorToken, 'utf8').digest();

@@ -24,6 +24,10 @@ export interface DeepSeekTransport extends HostModelTransport {
   execute(payload: HostModelTransportPayload): Promise<DeepSeekTransportResult>;
   /** Requested and provider-returned identity of the last validated response. */
   readonly lastModelIdentity: DeepSeekModelIdentity | undefined;
+  /** Identity is keyed by the actual task/run/request that crossed this transport. */
+  identityForRequest(taskId: string, runId: string, providerRequestId: string): DeepSeekModelIdentity | undefined;
+  /** Returns a run identity only when every observed response in that run agrees. */
+  identityForRun(taskId: string, runId: string): DeepSeekModelIdentity | undefined;
 }
 
 export interface DeepSeekTransportOptions {
@@ -37,7 +41,7 @@ export interface DeepSeekTransportOptions {
 const DEEPSEEK_TRANSPORT = Symbol('deepseek-transport');
 
 /** True only for objects returned by createDeepSeekTransport in this process. */
-export function isDeepSeekTransport(value: unknown): boolean {
+export function isDeepSeekTransport(value: unknown): value is DeepSeekTransport {
   const slot = typeof value === 'object' && value !== null ? Object.getOwnPropertyDescriptor(value, DEEPSEEK_TRANSPORT) : undefined;
   return slot !== undefined && 'value' in slot && slot.value === true;
 }
@@ -210,11 +214,24 @@ export function createDeepSeekTransport(options: DeepSeekTransportOptions): Deep
   const pricing = assertPricing(options.pricing);
   const fetchFn = options.fetch ?? globalThis.fetch;
   let lastModelIdentity: DeepSeekModelIdentity | undefined;
+  const runIdentities = new Map<string, Map<string, DeepSeekModelIdentity>>();
+
+  const identityForRequest = (taskId: string, runId: string, providerRequestId: string): DeepSeekModelIdentity | undefined =>
+    runIdentities.get(JSON.stringify([taskId, runId]))?.get(providerRequestId);
+  const identityForRun = (taskId: string, runId: string): DeepSeekModelIdentity | undefined => {
+    const identities = [...(runIdentities.get(JSON.stringify([taskId, runId]))?.values() ?? [])];
+    if (identities.length === 0) return undefined;
+    const first = identities[0];
+    if (!first || identities.some(identity => identity.requested !== first.requested || identity.returned !== first.returned)) return undefined;
+    return first;
+  };
 
   const transport: DeepSeekTransport = {
     get lastModelIdentity() {
       return lastModelIdentity;
     },
+    identityForRequest,
+    identityForRun,
     async execute(payload: HostModelTransportPayload): Promise<DeepSeekTransportResult> {
       const admission = admit(payload, pricing);
       if (!admission.ok) return { outcome: 'denied', reason: admission.reason };
@@ -255,7 +272,20 @@ export function createDeepSeekTransport(options: DeepSeekTransportOptions): Deep
       if (!parsed.ok) {
         return parsed.observedUsage === undefined ? { outcome: 'invalid', errors: parsed.errors } : { outcome: 'invalid', errors: parsed.errors, observedUsage: parsed.observedUsage };
       }
-      lastModelIdentity = Object.freeze({ requested: admission.request.modelId, returned: parsed.model });
+      const identity = Object.freeze({ requested: admission.request.modelId, returned: parsed.model });
+      lastModelIdentity = identity;
+      const runKey = JSON.stringify([payload.state.taskId, payload.state.runId]);
+      let requests = runIdentities.get(runKey);
+      if (requests === undefined) {
+        requests = new Map();
+        runIdentities.set(runKey, requests);
+        // Evaluation runs are finite; bound retained host telemetry without borrowing another run's identity.
+        if (runIdentities.size > 128) {
+          const oldest = runIdentities.keys().next();
+          if (!oldest.done) runIdentities.delete(oldest.value);
+        }
+      }
+      requests.set(admission.request.providerRequestId, identity);
       return { proposal: parsed.proposal, observedUsage: parsed.usage };
     },
   };

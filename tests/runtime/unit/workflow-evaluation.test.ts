@@ -30,13 +30,17 @@ import {
 import { createExecutionGuardV02 } from '../../../src/foundation/execution-guard.ts';
 import type { UC03GraphConfig, UC03GraphPorts } from '../../../src/uc03/graph-types.ts';
 import type { BaselineEvidenceAcknowledgement, BaselineEvidenceWriteRequest, BaselineEvidenceWriter, TrustedHostExpectedContext, TrustedHostPort } from '../../../src/uc03/investigation.ts';
-import { admitEvaluationProfile, type CatalogEntry, type EvaluationProfile } from '../../../src/runtime/evaluation-profile.ts';
+import { admitEvaluationProfile, bindEvaluationSource, type CatalogEntry, type EvaluationProfile } from '../../../src/runtime/evaluation-profile.ts';
 import { createEvaluationService, type ServiceControlReceipt } from '../../../src/runtime/evaluation-service.ts';
+import { createUC03EvaluationGraph } from '../../../src/runtime/evaluation-graph.ts';
+import { prepareControlledUC03Host } from '../../../src/runtime/uc03-host-bootstrap.ts';
 import { canonicalDigest, sha256Text } from '../../../src/uc01/contracts.ts';
 import { createWorkflowDriver, type WorkflowCaseHost } from '../../../eval/uc03/workflow-driver.ts';
+import { createSnapshotGrader } from '../../../eval/uc03/workflow-grade.ts';
+import { issueRealExecutionAdmission, runEvaluation } from '../../../eval/uc03/runner.ts';
 import { registerUC03WorkflowEvaluation } from '../../../eval/uc03/registration.ts';
 import { validateWorkflowObservation } from '../../../eval/uc03/validation.ts';
-import type { EvaluationCaseSpec, WorkflowCaseContext } from '../../../eval/uc03/types.ts';
+import { WORKFLOW_EVALUATION_VERSION, type EvaluationCaseSpec, type WorkflowCaseContext } from '../../../eval/uc03/types.ts';
 import { createFixtureBugTask, createFixtureCheckDefinition, createFixtureExecutorIdentityV02, createFixturePolicyAuthorityRefV02 } from '../support/uc03/port-fixtures.ts';
 import { createGraphRepositoryPort, createGraphTaskState, seedGraphTaskState } from '../support/uc03/graph-fixtures.ts';
 import { createTestApprovalBinding, createTestProviderOutcomeReceiptV02, createTestRepositoryCommandAdmissionContextV02 } from '../support/uc03/state-fixtures.ts';
@@ -44,6 +48,7 @@ import { FakeRepositoryPort } from '../support/uc03/fake-repository.ts';
 import { MemoryStatePortV02 } from '../support/uc03/memory-state.ts';
 import { ScriptedApprovalPort } from '../support/uc03/scripted-approval.ts';
 import { ScriptedModelPort } from '../support/uc03/scripted-model.ts';
+import { controlledGeneratedPlanFixture } from '../support/uc03/controlled-host-journey.ts';
 
 const digest = (seed: string): string => sha256Text(seed);
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
@@ -335,6 +340,75 @@ function catalogEntryFor(caseId: string, task: { initialRevisionDigest: string }
   };
 }
 
+async function runGeneratedAskGrade(predicate: 'clarification' | 'regression', driftAfterGrade = false, completeSnapshot = true) {
+  const fixture = await controlledGeneratedPlanFixture({
+    firstResponse: {
+      proposalId: 'controlled-grade-ask',
+      content: JSON.stringify({ kind: 'request-info', proposalId: 'controlled-grade-ask', questions: [{ questionId: 'q-denominator', text: 'What should zero division return?' }], evidenceRefs: [] }),
+    },
+  });
+  const readiness = prepareControlledUC03Host({
+    ...fixture.host.inputs,
+    config: { ...fixture.host.inputs.config, generation: undefined },
+  });
+  assert.equal(readiness.status, 'controlled-ready');
+  if (readiness.status !== 'controlled-ready') throw new Error('Controlled workflow evidence fixture was refused');
+  const grader = createSnapshotGrader({
+    criteria: { digest: `sha256:${digest(`criteria-${predicate}`)}`, criteria: [{ criterionId: `criterion-C02-${predicate}`, caseId: 'C02', predicate, hiddenCheckId: null }] },
+    profile: {
+      profileId: 'controlled-profile',
+      digest: `sha256:${digest('controlled-profile-digest')}`,
+      bounds: { timeoutMs: 10_000, maxCpuMs: 5_000, maxOutputBytes: 65_536, maxMemoryBytes: 536_870_912, maxProcesses: 8 },
+    },
+    isolationAuthority: { admit: () => undefined },
+    executor: { executorId: 'controlled-grader', execute: () => undefined },
+    graderPayload: null,
+  });
+  const snapshotFor = (binding: {
+    readonly taskId: string;
+    readonly runId: string;
+    readonly workspaceId: string;
+    readonly repositoryId: string;
+    readonly initialRevisionDigest: string;
+    readonly finalRevisionDigest: string;
+  }, drift: boolean) => ({
+    ...binding,
+    snapshotId: `snapshot-${binding.runId}`,
+    complete: completeSnapshot,
+    files: [
+      { path: 'src/calculator.py', content: 'def divide(a, b): return a / b\n' },
+      { path: 'tests/test_calculator.py', content: drift ? 'def test_divide(): assert False\n' : 'def test_divide(): pass\n' },
+    ],
+  });
+  const host: WorkflowCaseHost = {
+    entry: catalogEntryFor('C02', fixture.task),
+    task: fixture.task,
+    expectedWait: 'waiting-info',
+    controlled: { readiness, coderBudget: { maxModelCalls: 8, maxActiveMs: 60_000, maxRepairs: 2, maxReplans: 3 } },
+    workflowEvidence: {
+      grader,
+      finalTree: {
+        freezeFinalTree: binding => snapshotFor(binding, false),
+        recheckCurrentFinalTree: binding => snapshotFor(binding, driftAfterGrade),
+      },
+    },
+  };
+  const rawReport = await runEvaluation({
+    contractVersion: WORKFLOW_EVALUATION_VERSION,
+    mode: 'mock',
+    cases: ['C02'],
+    profileDigest: digest('profile'),
+    configDigest: digest('config'),
+    pricingDigest: digest('pricing'),
+    adapterVersions: ['controlled-adapter-1'],
+    requestedModel: 'controlled-model',
+    driver: createWorkflowDriver(new Map([['C02', host]])),
+    timestamp: '2026-11-13T00:00:00.000Z',
+  });
+  if (!('selectionResult' in rawReport)) throw new Error('Workflow evaluation did not return a workflow report');
+  return { fixture, report: rawReport };
+}
+
 test('driver maps a paused real graph route to a validated waiting-approval observation', async () => {
   const route = createPendingApprovalRoute();
   await seedGraphTaskState(route.statePort, createGraphTaskState(route.task));
@@ -366,6 +440,105 @@ test('driver maps a paused real graph route to a validated waiting-approval obse
     'workflowOutcome',
   ]);
   assert.equal(JSON.stringify(observation).includes('C:/host-only'), false);
+});
+
+test('driver constructs the controlled host coder and runs the same versioned graph', async () => {
+  const fixture = await controlledGeneratedPlanFixture();
+  const config = {
+    ...fixture.host.inputs.config,
+    generation: undefined,
+  };
+  const readiness = prepareControlledUC03Host({ ...fixture.host.inputs, config });
+  assert.equal(readiness.status, 'controlled-ready');
+  if (readiness.status !== 'controlled-ready') return;
+  const budget = { maxModelCalls: 8, maxActiveMs: 60_000, maxRepairs: 2, maxReplans: 3 };
+  const host: WorkflowCaseHost = {
+    entry: catalogEntryFor('C01', fixture.task),
+    task: fixture.task,
+    expectedWait: 'waiting-approval',
+    controlled: { readiness, coderBudget: budget },
+  };
+  const context = observationContext('C01');
+  const driver = createWorkflowDriver(new Map([['C01', host]]));
+
+  const observation = validateWorkflowObservation(await driver.executeCase(context.spec, context));
+
+  assert.equal(observation.workflowOutcome, 'waiting-approval', JSON.stringify(observation));
+  assert.equal(observation.blocked, null);
+  assert.deepEqual(fixture.modelCalls, ['coder:propose-plan', 'coder:propose-plan']);
+});
+
+test('snapshot evidence grades the generated clarification against a full frozen final tree', async () => {
+  const { fixture, report } = await runGeneratedAskGrade('clarification');
+  const result = report.cases.find(item => item.caseId === 'C02');
+  assert.ok(result);
+  assert.equal(result.workflowOutcome, 'waiting-info');
+  assert.equal(result.grade, 'pass', JSON.stringify(result));
+  assert.equal(result.gradeReason, 'criteria-satisfied');
+  assert.equal(report.exitCode, 0);
+  assert.ok(result.limitations.some(item => item.includes('real isolation acceptance')));
+  assert.deepEqual(fixture.modelCalls, ['coder:propose-plan']);
+});
+
+test('failed or stale independent grades cannot be upgraded by a matching expected wait', async () => {
+  const failed = await runGeneratedAskGrade('regression');
+  const failedCase = failed.report.cases.find(item => item.caseId === 'C02');
+  assert.ok(failedCase);
+  assert.equal(failedCase.workflowOutcome, 'waiting-info');
+  assert.equal(failedCase.grade, 'fail', JSON.stringify(failedCase));
+  assert.equal(failedCase.gradeReason, 'criteria-violation');
+  assert.equal(failed.report.exitCode, 1);
+
+  const drifted = await runGeneratedAskGrade('clarification', true);
+  const driftedCase = drifted.report.cases.find(item => item.caseId === 'C02');
+  assert.ok(driftedCase);
+  assert.equal(driftedCase.workflowOutcome, 'waiting-info');
+  assert.equal(driftedCase.grade, 'not-run');
+  assert.equal(driftedCase.gradeReason, 'invalid-observation');
+  assert.equal(drifted.report.exitCode, 1);
+});
+
+test('snapshot evidence stays not-run when the host cannot certify a complete final tree', async () => {
+  const { report } = await runGeneratedAskGrade('clarification', false, false);
+  const result = report.cases.find(item => item.caseId === 'C02');
+  assert.ok(result);
+  assert.equal(result.grade, 'not-run', JSON.stringify(result));
+  assert.equal(report.exitCode, 1);
+});
+
+test('real mode cannot turn a matching lifecycle wait into a pass without independent grading', async () => {
+  const binding = {
+    profileDigest: digest('real-profile'),
+    configDigest: digest('real-config'),
+    pricingDigest: digest('real-pricing'),
+    adapterVersions: ['real-adapter-1'],
+    caseIds: ['C02'],
+    requestedModel: 'deepseek-v4.1',
+  };
+  const observation = validateWorkflowObservation({
+    repositoryId: 'repo-real-evidence', taskId: 'task-real-evidence', runId: 'run-real-evidence', returnedModel: 'deepseek-v4.1',
+    graderDigest: digest('grader-real-evidence'), initialRepositoryDigest: digest('initial-real-evidence'), workflowOutcome: 'waiting-info',
+    expectedWait: 'waiting-info', blocked: null, effects: 'observed', usage: 'observed', diagnostic: null, artifacts: [], limitations: [],
+  });
+  const report = await runEvaluation({
+    contractVersion: WORKFLOW_EVALUATION_VERSION,
+    mode: 'real',
+    cases: ['C02'],
+    profileDigest: binding.profileDigest,
+    configDigest: binding.configDigest,
+    pricingDigest: binding.pricingDigest,
+    adapterVersions: binding.adapterVersions,
+    requestedModel: binding.requestedModel,
+    realAdmission: issueRealExecutionAdmission(binding),
+    driver: { executeCase: async () => observation },
+    timestamp: '2026-11-13T00:00:00.000Z',
+  });
+  assert.ok('selectionResult' in report);
+  if (!('selectionResult' in report)) return;
+  assert.equal(report.cases[0]?.workflowOutcome, 'waiting-info');
+  assert.equal(report.cases[0]?.grade, 'not-run');
+  assert.equal(report.cases[0]?.gradeReason, 'private-grading');
+  assert.equal(report.exitCode, 1);
 });
 
 test('driver maps a needs-info intake task to waiting-info without allocating a task', async () => {
@@ -517,7 +690,7 @@ const catalogEntry: CatalogEntry = {
 };
 const catalog = [catalogEntry] as const;
 
-const rawProfile = (): Record<string, unknown> => ({
+const rawProfile = (profileCatalog: readonly CatalogEntry[] = catalog): Record<string, unknown> => ({
   endpoint: 'https://api.deepseek.com/v1/messages',
   model: 'deepseek-v4.1',
   mode: 'nonstreaming',
@@ -543,11 +716,11 @@ const rawProfile = (): Record<string, unknown> => ({
     cpus: 2,
     processes: 64,
   },
-  catalog,
+  catalog: profileCatalog,
 });
 
-function admittedProfile(): EvaluationProfile {
-  const admitted = admitEvaluationProfile(rawProfile());
+function admittedProfile(profileCatalog: readonly CatalogEntry[] = catalog): EvaluationProfile {
+  const admitted = admitEvaluationProfile(rawProfile(profileCatalog));
   assert.ok(admitted.ok, admitted.ok ? '' : admitted.reasonCode);
   return admitted.value;
 }
@@ -648,6 +821,279 @@ test('service resolves catalog bindings, executes them, and keeps custom submiss
   assert.equal(customStart.value.experiment.scope, 'exploratory');
   assert.deepEqual(customStart.value.experiment.bindings, []);
   assert.deepEqual(customCalls, { run: 1, portsFor: 1 });
+});
+
+test('the service evaluation graph runs the selected v0.2 route and reuses owner task identity on continuation', async () => {
+  const fixture = await controlledGeneratedPlanFixture();
+  const entry: CatalogEntry = {
+    ...catalogEntry,
+    catalogEntryId: 'entry-C01-controlled',
+    caseId: 'C01',
+    initialRepositoryDigest: fixture.task.initialRevisionDigest.replace(/^sha256:/u, ''),
+  };
+  const readiness = prepareControlledUC03Host({
+    ...fixture.host.inputs,
+    config: { ...fixture.host.inputs.config, generation: undefined },
+  });
+  assert.equal(readiness.status, 'controlled-ready');
+  if (readiness.status !== 'controlled-ready') return;
+  const taskResolutions: (Readonly<{ priorState: unknown; sourceKind: string }> | null)[] = [];
+  const selectedDirections: (ServiceControlReceipt | null)[] = [];
+  const currentStates: TaskState[] = [];
+  const graph = createUC03EvaluationGraph({
+    catalogRoutes: new Map([['C01', {
+      entry,
+      readiness,
+      coderBudget: { maxModelCalls: 8, maxActiveMs: 60_000, maxRepairs: 2, maxReplans: 3 },
+      expectedWait: 'waiting-approval',
+      async resolveTask(input) {
+        taskResolutions.push({ priorState: input.priorState, sourceKind: input.source.kind });
+        return fixture.task;
+      },
+      async resolveDirection(input) {
+        selectedDirections.push(input.direction);
+        currentStates.push(input.currentState);
+        return undefined;
+      },
+    }]]),
+  });
+  const controlCalls: { expectedTaskVersion: number; expectedControlVersion: number }[] = [];
+  const evaluationProfile = admittedProfile([entry]);
+  const service = createEvaluationService({
+    profile: evaluationProfile,
+    catalog: [entry],
+    repositoryIds: [fixture.task.repositoryId],
+    checkSetIds: ['checks-configured'],
+    control: {
+      issue(input) {
+        controlCalls.push({ expectedTaskVersion: input.expectedTaskVersion, expectedControlVersion: input.expectedControlVersion });
+        return { receiptRef: 'ctrl-C01-resume', kind: input.kind, taskId: fixture.task.taskId, controlVersion: input.expectedControlVersion + 1 };
+      },
+    },
+    graph,
+    now: () => '2026-11-02T00:00:00.000Z',
+    ids: () => 'exp-C01',
+  });
+
+  const started = await service.startExperiment({ source: { kind: 'catalog', caseIds: ['C01'] }, profileId: 'uc03-runtime-evaluation-v1', idempotencyKey: 'key-C01-start' });
+  assert.ok(started.ok);
+  assert.equal(started.value.experiment.status, 'waiting-approval');
+  assert.deepEqual(fixture.modelCalls, ['coder:propose-plan', 'coder:propose-plan']);
+  assert.equal(taskResolutions.length, 1);
+  assert.equal(taskResolutions[0]?.priorState, null);
+
+  const ownerState = await fixture.statePort.loadTask(fixture.task.taskId);
+  assert.ok(ownerState);
+  const direction = await service.issueDirection({
+    id: 'exp-C01',
+    expectedTaskVersion: ownerState.stateVersion,
+    expectedControlVersion: 7,
+    kind: 'resume',
+    idempotencyKey: 'key-C01-direction',
+  });
+  assert.ok(direction.ok);
+  assert.ok('receiptRef' in direction.value.receipt);
+  const continued = await service.continueExperiment({
+    id: 'exp-C01',
+    expectedVersion: direction.value.experiment.version,
+    directionRef: direction.value.receipt.receiptRef,
+    idempotencyKey: 'key-C01-continue',
+  });
+  assert.ok(continued.ok);
+  assert.equal(continued.value.experiment.taskId, fixture.task.taskId);
+  assert.equal(continued.value.experiment.runId, ownerState.runId);
+  assert.equal(taskResolutions.length, 2);
+  assert.deepEqual(taskResolutions[1], { priorState: { taskId: fixture.task.taskId, runId: ownerState.runId, workspaceId: ownerState.workspaceId }, sourceKind: 'catalog' });
+  assert.equal(selectedDirections.length, 2);
+  assert.equal(selectedDirections[0], null);
+  assert.equal(selectedDirections[1]?.receiptRef, 'ctrl-C01-resume');
+  assert.equal(currentStates[1]?.taskId, fixture.task.taskId);
+  assert.deepEqual(controlCalls, [{ expectedTaskVersion: ownerState.stateVersion, expectedControlVersion: 7 }]);
+  assert.deepEqual(fixture.modelCalls, ['coder:propose-plan', 'coder:propose-plan']);
+});
+
+test('graph clarification answers stay reporter-only until an owner-bound resume continues the same task', async () => {
+  const fixture = await controlledGeneratedPlanFixture({
+    taskState: { evidenceRefs: ['src/calculator.py'] },
+    firstResponse: {
+      proposalId: 'controlled-graph-ask',
+      content: JSON.stringify({ kind: 'request-info', proposalId: 'controlled-graph-ask', questions: [{ questionId: 'q-denominator', text: 'What should zero division return?' }], evidenceRefs: [] }),
+    },
+  });
+  const entry: CatalogEntry = {
+    ...catalogEntry,
+    catalogEntryId: 'entry-C02-controlled',
+    caseId: 'C02',
+    initialRepositoryDigest: fixture.task.initialRevisionDigest.replace(/^sha256:/u, ''),
+  };
+  const readiness = prepareControlledUC03Host({ ...fixture.host.inputs, config: { ...fixture.host.inputs.config, generation: undefined } });
+  assert.equal(readiness.status, 'controlled-ready');
+  if (readiness.status !== 'controlled-ready') return;
+
+  const ownerDirections = new Map<string, Readonly<{ receipt: ServiceControlReceipt; taskVersion: number }>>();
+  const graph = createUC03EvaluationGraph({
+    catalogRoutes: new Map([['C02', {
+      entry,
+      readiness,
+      coderBudget: { maxModelCalls: 8, maxActiveMs: 60_000, maxRepairs: 2, maxReplans: 3 },
+      expectedWait: 'waiting-info',
+      resolveTask: () => fixture.task,
+      resolveDirection: () => undefined,
+      async resolveClarificationResume(input) {
+        const ownerState = await fixture.statePort.loadTask(fixture.task.taskId);
+        const stored = input.direction ? ownerDirections.get(input.direction.receiptRef) : undefined;
+        if (!ownerState || !stored || !input.direction ||
+          stored.receipt.receiptRef !== input.direction.receiptRef ||
+          stored.receipt.kind !== input.direction.kind ||
+          stored.receipt.taskId !== input.direction.taskId ||
+          stored.receipt.controlVersion !== input.direction.controlVersion ||
+          stored.taskVersion !== ownerState.stateVersion) return undefined;
+        if (ownerState.node !== 'NeedsInfo' || !ownerState.clarification || ownerState.clarification.answer) return undefined;
+        return {
+          receiptRef: input.direction.receiptRef,
+          controlVersion: input.direction.controlVersion,
+          taskId: ownerState.taskId,
+          runId: ownerState.runId,
+          workspaceId: ownerState.workspaceId,
+          stateVersion: ownerState.stateVersion,
+          questionId: ownerState.clarification.questionId,
+          questionDigest: ownerState.clarification.questionDigest,
+          answerDigest: input.expectedAnswerDigest,
+        };
+      },
+    }]]),
+  });
+  const evaluationProfile = admittedProfile([entry]);
+  const service = createEvaluationService({
+    profile: evaluationProfile,
+    catalog: [entry],
+    repositoryIds: [fixture.task.repositoryId],
+    checkSetIds: ['checks-configured'],
+    control: {
+      async issue(input) {
+        const receipt = Object.freeze({ receiptRef: 'ctrl-C02-resume', kind: input.kind, taskId: fixture.task.taskId, controlVersion: input.expectedControlVersion + 1 });
+        ownerDirections.set(receipt.receiptRef, { receipt, taskVersion: input.expectedTaskVersion });
+        return receipt;
+      },
+    },
+    graph,
+    now: () => '2026-11-02T00:00:00.000Z',
+    ids: () => 'exp-C02',
+  });
+
+  const started = await service.startExperiment({ source: { kind: 'catalog', caseIds: ['C02'] }, profileId: 'uc03-runtime-evaluation-v1', idempotencyKey: 'key-C02-start' });
+  assert.ok(started.ok);
+  assert.equal(started.value.experiment.status, 'waiting-info');
+  assert.deepEqual(fixture.modelCalls, ['coder:propose-plan']);
+  const asked = await fixture.statePort.loadTask(fixture.task.taskId);
+  assert.ok(asked?.clarification);
+  assert.deepEqual(started.value.experiment.workflowClarification, {
+    questionId: asked.clarification.questionId,
+    questionDigest: asked.clarification.questionDigest,
+    questions: [{ questionId: 'q-denominator', text: 'What should zero division return?' }],
+  });
+
+  const answered = await service.answerClarification({
+    id: 'exp-C02',
+    questionId: asked.clarification.questionId,
+    questionDigest: asked.clarification.questionDigest,
+    expectedVersion: started.value.experiment.version,
+    answers: ['Raise CalculationError for a zero denominator.'],
+    idempotencyKey: 'key-C02-answer',
+  });
+  assert.ok(answered.ok);
+  assert.equal(answered.value.experiment.status, 'waiting-info');
+  assert.deepEqual(fixture.modelCalls, ['coder:propose-plan']);
+  assert.equal((await fixture.statePort.loadTask(fixture.task.taskId))?.clarification?.answer, undefined);
+  const ownerState = await fixture.statePort.loadTask(fixture.task.taskId);
+  assert.ok(ownerState);
+  const direction = await service.issueDirection({
+    id: 'exp-C02', expectedTaskVersion: ownerState.stateVersion, expectedControlVersion: 7, kind: 'resume', idempotencyKey: 'key-C02-direction',
+  });
+  assert.ok(direction.ok);
+  assert.ok('receiptRef' in direction.value.receipt);
+  const baselineCommandCount = fixture.route.repositoryPort.commands.length;
+  assert.equal(baselineCommandCount, 2, 'the initial investigation runs exactly the two admitted baseline commands');
+  const freshGraph = createUC03EvaluationGraph({
+    catalogRoutes: new Map([['C02', {
+      entry,
+      readiness,
+      coderBudget: { maxModelCalls: 8, maxActiveMs: 60_000, maxRepairs: 2, maxReplans: 3 },
+      expectedWait: 'waiting-info',
+      resolveTask: () => fixture.task,
+      resolveDirection: () => undefined,
+      async resolveClarificationResume(input) {
+        const current = await fixture.statePort.loadTask(fixture.task.taskId);
+        const stored = input.direction ? ownerDirections.get(input.direction.receiptRef) : undefined;
+        if (!current || !stored || !input.direction || stored.taskVersion !== current.stateVersion || current.node !== 'NeedsInfo' || !current.clarification || current.clarification.answer) return undefined;
+        return {
+          receiptRef: input.direction.receiptRef,
+          controlVersion: input.direction.controlVersion,
+          taskId: current.taskId,
+          runId: current.runId,
+          workspaceId: current.workspaceId,
+          stateVersion: current.stateVersion,
+          questionId: current.clarification.questionId,
+          questionDigest: current.clarification.questionDigest,
+          answerDigest: input.expectedAnswerDigest,
+        };
+      },
+    }]]),
+  });
+  const freshBound = bindEvaluationSource({ kind: 'catalog', caseIds: ['C02'] }, {
+    profile: evaluationProfile,
+    catalog: [entry],
+    repositoryIds: [fixture.task.repositoryId],
+    checkSetIds: ['checks-configured'],
+  });
+  assert.ok(freshBound.ok);
+  if (!freshBound.ok) return;
+  const freshSource = freshBound.value;
+  const hostAuthority = readiness.ports.hostAuthority;
+  const originalLoadSnapshot = hostAuthority.loadSnapshot.bind(hostAuthority);
+  hostAuthority.loadSnapshot = async request => {
+    const snapshot = await originalLoadSnapshot(request);
+    return { ...snapshot, testFiles: snapshot.testFiles.map(file => ({ ...file, content: 'drifted protected test content' })) };
+  };
+  const driftedRetention = await graph.run({
+    experimentId: 'exp-C02',
+    source: freshSource,
+    ports: graph.portsFor({ experimentId: 'exp-C02', source: freshSource }),
+    priorState: { taskId: ownerState.taskId, runId: ownerState.runId, workspaceId: ownerState.workspaceId },
+    direction: direction.value.receipt,
+    answers: answered.value.experiment.answers,
+  });
+  hostAuthority.loadSnapshot = originalLoadSnapshot;
+  assert.equal(driftedRetention.outcome, 'INCOMPLETE');
+  assert.equal((await fixture.statePort.loadTask(fixture.task.taskId))?.node, 'NeedsInfo', 'protected-test drift refuses before the answer transition');
+  assert.equal((await fixture.statePort.loadTask(fixture.task.taskId))?.clarification?.answer, undefined);
+  assert.equal(fixture.route.repositoryPort.commands.length, baselineCommandCount, 'protected-test drift does not rerun a baseline command');
+  assert.deepEqual(fixture.modelCalls, ['coder:propose-plan'], 'protected-test drift does not dispatch another provider turn');
+  const missingRetention = await freshGraph.run({
+    experimentId: 'exp-C02-fresh-process',
+    source: freshSource,
+    ports: freshGraph.portsFor({ experimentId: 'exp-C02-fresh-process', source: freshSource }),
+    priorState: { taskId: ownerState.taskId, runId: ownerState.runId, workspaceId: ownerState.workspaceId },
+    direction: direction.value.receipt,
+    answers: answered.value.experiment.answers,
+  });
+  assert.equal(missingRetention.outcome, 'INCOMPLETE');
+  assert.equal((await fixture.statePort.loadTask(fixture.task.taskId))?.node, 'NeedsInfo', 'missing private run evidence refuses before the answer transition');
+  assert.equal((await fixture.statePort.loadTask(fixture.task.taskId))?.clarification?.answer, undefined);
+  assert.equal(fixture.route.repositoryPort.commands.length, baselineCommandCount, 'missing evidence does not rerun a baseline command');
+  assert.deepEqual(fixture.modelCalls, ['coder:propose-plan'], 'missing evidence does not dispatch another provider turn');
+  const continued = await service.continueExperiment({
+    id: 'exp-C02', expectedVersion: direction.value.experiment.version, directionRef: direction.value.receipt.receiptRef, idempotencyKey: 'key-C02-continue',
+  });
+  assert.ok(continued.ok);
+  assert.equal(continued.value.experiment.status, 'waiting-approval', JSON.stringify({ answers: continued.value.experiment.answers, workflowClarification: continued.value.experiment.workflowClarification, modelCalls: fixture.modelCalls, ownerState: await fixture.statePort.loadTask(fixture.task.taskId) }));
+  assert.equal(continued.value.experiment.taskId, fixture.task.taskId);
+  assert.equal(continued.value.experiment.runId, ownerState.runId);
+  assert.equal(continued.value.experiment.workflowClarification, null);
+  assert.deepEqual(fixture.modelCalls, ['coder:propose-plan', 'coder:propose-plan']);
+  const resumed = await fixture.statePort.loadTask(fixture.task.taskId);
+  assert.equal(resumed?.node, 'AwaitPlan');
+  assert.deepEqual(resumed?.clarification?.answer?.items, [{ questionId: 'q-denominator', text: 'Raise CalculationError for a zero denominator.' }]);
 });
 
 test('service returns the original receipt for a duplicate key and denies stale or conflicting replay', async () => {
