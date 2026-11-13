@@ -79,7 +79,7 @@ function invalid<T>(): ValidationResult<T> {
 const equal = (a: unknown, b: unknown) => digest(a) === digest(b);
 /** Whole-input textual modify/add/delete admission; unsupported metadata never disappears silently. */
 export function validateReviewDiff(input: unknown, maxBytes: number): ValidationResult<TrustedDiffLines> {
-  if (typeof input !== 'string' || !positive(maxBytes) || bytes(input) > maxBytes || containsProtectedContent(input)) return invalid();
+  if (typeof input !== 'string' || !positive(maxBytes) || bytes(input) > maxBytes || !safeContent(input)) return invalid();
   const lines = input.replaceAll('\r\n', '\n').split('\n');
   if (lines.at(-1) === '') lines.pop();
   const files: Record<string, { oldLines: number[]; newLines: number[] }> = Object.create(null) as Record<string, { oldLines: number[]; newLines: number[] }>;

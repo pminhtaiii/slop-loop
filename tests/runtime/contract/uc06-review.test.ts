@@ -125,6 +125,26 @@ test('validates real changed lines and an evidence-backed finding', () => {
     true,
   );
 });
+test('admits ordinary identifiers in changed source lines while refusing protected diff content', () => {
+  const patch = diff.replace('+new', '+task-independent');
+  const result = validateReviewDiff(patch, 49152);
+  assert.equal(result.ok, true);
+  if (result.ok) assert.deepEqual(result.value['src/a.py'], { oldLines: [1], newLines: [1] });
+  for (const secret of [
+    'sk-exampleCredential',
+    'SK-exampleCredential',
+    'token=exampleCredential',
+    'api_key=exampleCredential',
+    'password=exampleCredential',
+    'bearer exampleCredential',
+    'MARKER_SECRET',
+    'SECRET_KEY',
+    'UNAPPROVED_CONTEXT',
+    'BEGIN PRIVATE KEY',
+  ]) {
+    for (const line of [`+${secret}`, `+task-independent ${secret}`, `-${secret}`]) assert.equal(validateReviewDiff(diff.replace(line.startsWith('+') ? '+new' : '-old', line), 49152).ok, false);
+  }
+});
 function observation() {
   const c = fixture().context;
   return {
