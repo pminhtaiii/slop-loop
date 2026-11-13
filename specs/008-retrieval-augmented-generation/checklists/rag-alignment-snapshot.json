@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 1,
+  "root": "D:\\UIT\\PROJECT\\SE373_PROJECT\\CODING_AGENT\\slop-loop\\.agent-work\\worktrees\\rag-uc02-spec-alignment",
+  "branch": "feat/rag-uc02-spec-alignment",
+  "head": "c8c5cb26db11c3628607751ff98f401c3eeed16c",
+  "files": [
+    {
+      "path": "specs/008-retrieval-augmented-generation/data-model.md",
+      "sha256": "f355885e3b624123b87df3c6b082f5ca455e298f382f2c2d943310a015057809"
+    },
+    {
+      "path": "specs/008-retrieval-augmented-generation/plan.md",
+      "sha256": "074338236118d1756fc6346c85cfff65f4fb99c6a585c699f8cc08bcb7eea982"
+    },
+    {
+      "path": "specs/008-retrieval-augmented-generation/quickstart.md",
+      "sha256": "ff38e6a220f1aa959cdd9a474f2bb9ebc6cd3a1542388d5e8b8fff65115e1aee"
+    },
+    {
+      "path": "specs/008-retrieval-augmented-generation/research.md",
+      "sha256": "41f51b6d2cc8eb7c6a365815dceef9e22cc2dd5e32555bb300818615cb75d363"
+    },
+    {
+      "path": "specs/008-retrieval-augmented-generation/spec.md",
+      "sha256": "76e59bb731e237f0e30247f27ecc13f9c9ce2796c2a8c6d821575d05c55e4f4e"
+    },
+    {
+      "path": "specs/008-retrieval-augmented-generation/tasks.md",
+      "sha256": "028346aa99ff7a7a218b7fe4e6a1831bacee964d87fb140c0a9e977a3bf0dda1"
+    },
+    {
+      "path": "specs/008-retrieval-augmented-generation/contracts/decisions.md",
+      "sha256": "fe1915ba1762f38b65fe2edfe996966ca7b6073174c896142222dd93037acd59"
+    },
+    {
+      "path": "specs/008-retrieval-augmented-generation/contracts/evaluation.md",
+      "sha256": "5341d2a8ffea1d4f7e8289bdf31f4dcf09baa4d18429ad9a4f2607cb3e2a6143"
+    },
+    {
+      "path": "specs/008-retrieval-augmented-generation/contracts/question-runtime.md",
+      "sha256": "c8a150307c9b31998777c9d94674338416077a00a7c9007405b7de7316137a3c"
+    },
+    {
+      "path": "specs/008-retrieval-augmented-generation/contracts/repository-tools.md",
+      "sha256": "5b69cb937881a1b1910bfab14e28760e59b5505eac9e3b81adaf1f6a7f5ac336"
+    },
+    {
+      "path": "specs/008-retrieval-augmented-generation/contracts/retrieval.md",
+      "sha256": "90b76136662dbd57cb86fd5ce92a074663f957d4a323493630620f0baa7b19f2"
+    },
+    {
+      "path": "AGENTS.md",
+      "sha256": "313b1238e1125d72084c1fecec584102f879f74e9d2234155484fd5355757d3a"
+    },
+    {
+      "path": "GLOSSARY.md",
+      "sha256": "03ec97d8ce63d635909d1a0f32fc57923359e32b2c7e7d8a42baf41ebad3f4d4"
+    },
+    {
+      "path": "docs/adr/0008-read-only-target-repository-questions.md",
+      "sha256": "789ff9a9db999555b1488b9b99e3b9ef2a6208abbc2b25c0240c9166c4139566"
+    },
+    {
+      "path": "context/architecture.md",
+      "sha256": "d0b2c8a3a697480923ecacd6e61be2b9c8dee5d6d56fcd251676b2004696c577"
+    },
+    {
+      "path": "context/tools_permissions.md",
+      "sha256": "aefd541cb3773f4bababc71913ffef2d3e24df0bfaf8a549b22639b28b0b40d9"
+    },
+    {
+      "path": "context/runtime_policy.md",
+      "sha256": "a1348a4e359e30101a2acc7a91aac88f67837a3bc547788c6448b8acd51d2f29"
+    },
+    {
+      "path": "context/state_and_memory.md",
+      "sha256": "f4c922fcfd975095b48ab5c8a3f335476e0cace3fe852815f3e293b9523fac80"
+    },
+    {
+      "path": "context/planning.md",
+      "sha256": "a5c64a77862e30a038fea086965ec6e54af1f49bb8ac6984b913768eac4b67f0"
+    },
+    {
+      "path": ".specify/memory/constitution.md",
+      "sha256": "ce7549540fa45543cca797a150201d868e64495fdff39dc38246fb17bd4024b3"
+    },
+    {
+      "path": "docs/agents/pr-conventions.md",
+      "sha256": "1a8e62a5dbe663d2cc74d259a52e8f80f0feddb4332eec81163348f5818afe64"
+    },
+    {
+      "path": "docs/use-case-delegation.md",
+      "sha256": "b441392befda8dd13dc9476700ab9cc9f3c476576556916b999dbacc0f002a35"
+    },
+    {
+      "path": "docs/progress-checker-matrices.md",
+      "sha256": "03456c78cf0c11cf5deefa06c07821841a3f7f0cdab67d809f292001f91fa37b"
+    }
+  ]
+}

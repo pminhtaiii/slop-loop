@@ -36,7 +36,7 @@ Terminalization precedence: answered/insufficient results containing source clai
 
 Private registry owns tool-issued span identity and exact bytes/lines. Proposed citations must belong to this run or have been explicitly re-admitted from a same-binding prior run. Referenced range is within fully exposed lines and correct repository/path/revision/digest. Copied/forged model objects cannot establish issuance. Validate claims/citations and protected content, then `checkBinding` immediately before delivery. Binding drift ends stale; never deliver a current answer with old spans. The final record names its examined revision; a later edit does not retroactively change that record.
 
-Invalid citation -> fixed failed outcome with no invalid answer displayed; no automatic repair retry. An insufficient-evidence outcome may include supported claims only after successful admitted final validation; exhausted outcomes are always claim-free under terminalization precedence. Citation validity is provenance, not proof of correctness. Uncertainty must not become an absence assertion after partial search.
+Render validated citations from canonical host path and inclusive coordinates as path/to/file.py:L12-L40, including path/to/file.py:L12-L12 for a single line. Escape paths for the presentation medium and prevent control characters or forged link targets. Invalid citation -> fixed failed outcome with no invalid answer displayed; no automatic repair retry. An insufficient-evidence outcome may include supported claims only after successful admitted final validation; exhausted outcomes are always claim-free under terminalization precedence. Citation validity is provenance, not proof of correctness. Uncertainty must not become an absence assertion after partial search.
 
 ## State transitions
 
@@ -49,3 +49,7 @@ Product sessions are in-memory and expire on host close/restart. Reconstructed m
 ## Required checks
 
 Contracts malformed inputs/decision/usage, unknown tools, injection, forbidden execution, invalid/late citations and protected final content; unit counters/reservations/deadlines/repeated activity; graph integration known/paraphrased/cross-file/inference/clarification/exhaustion; session concurrent calls, repository drift/switch, compaction and continuation; output capture shows no raw prompt/source/secret logging. Test live-model quality separately.
+
+## Retrieval and scoped absence
+
+After question/binding admission and before supplemental investigation, the host queries the committed compatible generation, freezes the final hybrid ranking for evaluation, and admits bounded source evidence through the guarded reader. Subsequent source reads do not alter that ranking. Index/query embedding work and candidate reads require finite admission budgets and cancellation. A missing or stale generation has a typed unavailable/stale outcome. A model may propose an absence investigation; only the host can issue scoped not-found using current matching generation and complete guarded coverage for the specific lookup. Keep clarification and incomplete outcomes for uncertainty. The citation validator checks source/authority, while semantic review evaluates support without requiring a literal keyword in the excerpt.

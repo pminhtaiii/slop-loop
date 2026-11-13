@@ -1,9 +1,9 @@
 # Feature Specification: Evidence-backed repository questions
 
-**Feature Branch**: `feat/questions-readonly-qa-planning`; initial planning was authored on `feat/uc03-repair-id-storage-safety`, which remains untouched for concurrent work.
+**Feature Branch**: `feat/rag-uc02-spec-alignment`; initial planning was authored on `feat/uc03-repair-id-storage-safety`, which remains untouched for concurrent work.
 **Created**: 2026-11-12 (Asia/Saigon)
 **Status**: Planning candidate; implementation not authorized
-**Input**: User discussion and [ADR-0008](../../docs/adr/0008-read-only-target-repository-questions.md): read-only questions about a separate target Python repository, improved existing search/read tools, active-session follow-ups, and evidence/clarification evaluation. No BM25 or embeddings.
+**Input**: User discussion and [ADR-0008](../../docs/adr/0008-read-only-target-repository-questions.md): read-only questions about a separate target Python repository, improved existing search/read tools, active-session follow-ups, and evidence/clarification evaluation. The 2026-11-13 decision adds persistent hybrid retrieval for UC-02.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -98,5 +98,15 @@ Product session; question task/run; repository binding; admitted source span; an
 ## Assumptions
 
 - Initial targets: Python repositories around 1,000–10,000 LOC; a larger synthetic band probes limits without monorepo promises.
-- No BM25, embeddings, AST index, web retrieval, mutation/execution, new UI/CLI framework or durable session backend.
+- Python syntax-based chunking and a durable local hybrid index are in scope. Web retrieval, BM25, target mutation/execution, a new UI/CLI framework and durable question sessions remain outside the initial scope.
 - Planning/reviews only authorized; shared owner/real-provider gates remain. Fixture budget numbers are not production defaults.
+
+## UC-02 retrieval requirements
+
+- **FR-013**: Ingest eligible Python source/tests and bounded documentation/configuration from a host-admitted immutable snapshot. Chunk functions, classes and methods and index bounded non-symbol source regions. Split oversized definitions at logical syntax boundaries when possible and retain links to the original definition for guarded, budgeted expansion. Persist embeddings and chunk metadata including canonical path, symbol name or null, inclusive line range, file type and source digests.
+- **FR-014**: Combine semantic retrieval and case-sensitive exact definition names. Return a stable ranked list and use controlled source access to admit evidence before answering.
+- **FR-015**: Persist a versioned index across restart. Add or replace only changed/new files and remove deleted paths, preserving unchanged chunks/vectors. Expose a complete compatible generation atomically and require explicit revalidation after interruptions.
+- **FR-016**: Validate every delivered citation automatically for current snapshot, canonical file, line bounds and issued evidence authority. Independently judge semantic support for every factual answer claim, including logic that contains no matching keyword.
+- **FR-017**: Answer “không tìm thấy trong repo” with checked scope only when trusted coverage supports an explicit absence decision. Return insufficient evidence or clarification when scope or coverage is uncertain.
+- **SC-007**: Actual pinned embeddings reach macro Recall@5 ≥ 0.8 under the exact [evaluation rules](contracts/evaluation.md#uc-02-retrieval-acceptance). All five mandatory scenario families pass, all delivered citations are valid and every required factual claim is supported.
+- **SC-008**: Restart reuses unchanged vectors, edit/add/delete refresh touches only changed paths, and interruption cannot expose a mixed/stale generation. Edited-file answers reflect current source.
