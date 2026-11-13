@@ -157,7 +157,7 @@ export function prepareReviewContext(inputs: unknown): ReviewContextPreparation 
         requiredPhase: phase,
         expectedCheckId: check.checkId,
       }).ok ||
-      result.commandIdentity !== hash({ executable: check.executable, argv: check.argv })
+      (result.commandIdentity !== hash({ executable: check.executable, argv: check.argv }) && result.commandIdentity !== `${check.executable} ${check.argv.join(' ')}`)
     )
       return blocked('REQUIRED_EVIDENCE_MISSING');
     const acknowledgements = i.acknowledgedChecks.filter(

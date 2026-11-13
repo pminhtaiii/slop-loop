@@ -187,6 +187,23 @@ function createReviewContextFixture(options: { readonly diff?: string; readonly 
   };
 }
 
+test('accepts the existing verification producer command identity without rewriting acknowledged evidence', () => {
+  const inputs = createReviewContextFixture();
+  const check = inputs.task.requiredChecks[0];
+  assert.ok(check);
+  const verificationResults = inputs.verificationResults.map(result => ({ ...result, commandIdentity: `${check.executable} ${check.argv.join(' ')}` }));
+  const producerInputs = { ...inputs, verificationResults, acknowledgedChecks: structuredClone(verificationResults) };
+  const before = hash(producerInputs);
+  const result = prepareReviewContext(producerInputs);
+  assert.equal(result.status, 'ready', JSON.stringify(result));
+  if (result.status === 'ready') assert.equal(result.context.verification.results[0]?.contentDigest, hash(verificationResults[0]));
+  assert.equal(hash(producerInputs), before);
+
+  const wrong = verificationResults.map(record => ({ ...record, commandIdentity: `${check.executable} different-check.py` }));
+  assert.equal(prepareReviewContext({ ...inputs, verificationResults: wrong, acknowledgedChecks: structuredClone(wrong) }).status, 'blocked');
+  assert.equal(prepareReviewContext({ ...producerInputs, acknowledgedChecks: inputs.acknowledgedChecks }).status, 'blocked');
+});
+
 test('prepares one immutable context from current measured and acknowledged owner records', () => {
   const inputs = createReviewContextFixture();
   const result = prepareReviewContext(inputs);
