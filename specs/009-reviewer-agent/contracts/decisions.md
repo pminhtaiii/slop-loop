@@ -27,6 +27,14 @@ The earlier request to push both repositories separately authorized publication 
 
 After T001 the user requested “code phase 2 rồi push đi” and, following an intentional interruption, “làm tiếp đi”. This releases exactly **T002**, including types/runtime validators and tests in its three owned paths, source/controlled verification, independent merger/review, context refresh and paired publication. The public validation seams are those in review-context.md sections 2/3/5/6 and T002 acceptance; apply TDD through exported validation APIs with assertion RED before GREEN. No missing-import RED, actual owner storage implementation, reviewer/transport/graph wiring, T003 onward, real provider/container call, production profile, quality/restart acceptance or merge is released.
 
+## Phase 3 implementation release — 2026-11-13
+
+The user explicitly requested “tiếp tục code phase 3 đi”. This releases exactly **T003–T006** in their existing owned paths at the **source/controlled tier**, after independently establishing the T002 prerequisite. Use the existing approved context/observation/evidence supplement and T001 user-relayed shared-owner agreement; no new owner agreement or actual owner delivery is inferred. The continuation includes necessary prerequisite verification, TDD, independent merger and end-of-batch review, evidence/context refresh and normal contributor publication. Preserve the user's latest publication preference: do not request CodeRabbit review.
+
+T002's earlier repair-slice passes are not full prerequisite acceptance. Its checkbox may change only after independent criterion-level verification of the complete T002 scope on the current foundation; any concrete failure must be repaired and reverified first. T003 follows accepted T002, T004/T005 may then run in parallel after accepted T003, and T006 follows both. No dependency is waived by this release.
+
+Controlled ports/transports and the planned in-memory ReviewEvidencePortV1 double may prove consumer behavior only. T007 onward, actual UC-04 storage/journal delivery, real provider/container execution, production profiles, quality/restart acceptance and merge remain unreleased. Keep canonical wire schemas/digests and UC-04/UC-05 owner authority unchanged. Missing compatible owner capabilities block the corresponding path instead of authorizing a parallel owner implementation.
+
 ## Selected design proposals
 
 | ID | Proposal | Rationale / limit |

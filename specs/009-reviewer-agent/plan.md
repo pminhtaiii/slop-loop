@@ -2,7 +2,7 @@
 
 **Branch**: `feat/uc06-reviewer-planning` | **Date**: 2026-11-12 (Asia/Saigon) | **Spec**: [spec.md](spec.md)
 **Input**: specs/009-reviewer-agent/spec.md
-**Status**: Planning only; [decisions](contracts/decisions.md) own release/owner gates.
+**Status**: [Decisions](contracts/decisions.md) own release/owner gates; T002 and Phase 3 T003–T006 have separate source/controlled releases. Dependency and acceptance gates remain mandatory.
 
 ## Summary
 

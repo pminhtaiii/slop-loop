@@ -1,7 +1,7 @@
 # Tasks: UC-06 — Reviewer Agent
 
 **Input**: [spec](spec.md), [plan](plan.md), [research](research.md), [data model](data-model.md), [context contract](contracts/review-context.md), [evaluation](contracts/evaluation.md), [decisions](contracts/decisions.md).
-**Status**: T001 agreement is recorded in [decisions](contracts/decisions.md). T002 is released for source/controlled implementation and publication; its implementation remains unchecked pending independent merger/review, interrupted by agent usage limits. T003–T014 remain unreleased. See [T002 evidence](checklists/t002-verification.md). No real integration or full-feature acceptance is claimed.
+**Status**: T001 agreement is recorded in [decisions](contracts/decisions.md). T002 remains unchecked pending full independent prerequisite acceptance; later bounded repair evidence is in [T002 evidence](checklists/t002-verification.md). The user's 2026-11-13 request separately releases Phase 3 T003–T006 at source/controlled tier in dependency order after accepted prerequisites. T007–T014 remain unreleased. No actual owner delivery, real integration or full-feature acceptance is claimed.
 
 ## Phase 1: Setup
 
