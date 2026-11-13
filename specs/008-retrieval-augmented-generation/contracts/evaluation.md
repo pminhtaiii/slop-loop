@@ -53,7 +53,7 @@ Take the final ordered, deduplicated hybrid list of up to five original chunks b
 
 ### Mandatory scenario-family gates
 
-Pin family membership and required gold spans or expected absence dispositions before running. Each required positive question must produce a valid complete ranking and cover every required gold span listed for its family gate. The aggregate Recall@5 still uses all pinned positive questions and their annotated gold spans. Required spans are a declared nonempty subset of each positive family question's gold spans, fixed before measurement.
+Pin family membership and required gold spans or expected absence dispositions before running. Reject inventories without at least one required question in each positive family or without both required absence cases. Each required positive question must produce a valid complete ranking and cover every required gold span listed for its family gate. The aggregate Recall@5 still uses all pinned positive questions and their annotated gold spans. Required spans are a declared nonempty subset of each positive family question's gold spans, fixed before measurement.
 
 | Family | Retrieval passes when |
 | --- | --- |
