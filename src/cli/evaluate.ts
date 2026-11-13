@@ -8,7 +8,7 @@ import type { RealExecutionAdmission } from '../../eval/shared-types.ts';
 import { WORKFLOW_EVALUATION_VERSION, type WorkflowDriver, type WorkflowEvaluationOptions, type WorkflowEvaluationReport } from '../../eval/uc03/types.ts';
 import { prepareUC03Host, type UC03HostInputs, type UC03HostPins, type UC03HostReadiness } from '../runtime/uc03-host-bootstrap.ts';
 import { UC03_PRODUCTION_COMPONENTS_V02, type UC03ProductionComponentV02 } from '../uc03/graph-types-v02.ts';
-import { isEvaluationControlCommand, runEvaluationControlCli, type EvaluationControlBindings } from './evaluate-control.ts';
+import { isEvaluationControlBindings, isEvaluationControlCommand, parseEvaluationControlArgs, runEvaluationControlCli, type EvaluationControlBindings } from './evaluate-control.ts';
 
 export interface EvaluateCliResult {
   readonly exitCode: number;
@@ -51,7 +51,7 @@ export interface HostConfiguration {
 export type HostConfigurationLoad = Readonly<{ ok: true; value: HostConfiguration }> | Readonly<{ ok: false; error: EvaluateCliResult }>;
 
 /** What the operator's assembly module contributes: the host wiring and an optional route binding. */
-export type HostAssemblyResolution = Readonly<{ host: HostAssembly; production?: HostProduction | undefined }>;
+export type HostAssemblyResolution = Readonly<{ host: HostAssembly; production?: HostProduction | undefined; control?: EvaluationControlBindings | undefined }>;
 
 /** The one name an assembly module must export. It is a factory, so the module decides its own wiring. */
 const ASSEMBLY_FACTORY = 'createHostAssembly';
@@ -232,9 +232,15 @@ async function resolveAssembly(reference: string): Promise<HostAssemblyResolutio
     if (typeof resolved !== 'object' || resolved === null) return undefined;
     const host: unknown = Reflect.get(resolved, 'host');
     const production: unknown = Reflect.get(resolved, 'production');
+    const control: unknown = Reflect.get(resolved, 'control');
     if (typeof host !== 'object' || host === null) return undefined;
     if (production !== undefined && typeof production !== 'function') return undefined;
-    return { host: host as HostAssembly, ...(production === undefined ? {} : { production: production as HostProduction }) };
+    if (control !== undefined && !isEvaluationControlBindings(control)) return undefined;
+    return {
+      host: host as HostAssembly,
+      ...(production === undefined ? {} : { production: production as HostProduction }),
+      ...(control === undefined ? {} : { control }),
+    };
   } catch {
     return undefined;
   }
@@ -250,18 +256,15 @@ export async function resolveHostAssembly(configuration: HostConfiguration, supp
 }
 
 /**
- * Run the bootstrap over an operator-supplied assembly. The copy is bounded by `try` because an
- * operator object can carry a throwing getter and there is no non-throwing spread; the bootstrap
- * itself stays outside, so its own defects reach the caller's boundary instead of becoming a gap.
+ * Run the host bootstrap over an operator-supplied assembly. Host objects and nested deliveries may
+ * carry throwing getters, so only this bounded assembly/bootstrap operation is translated to a gap.
  */
 export function prepareAssembly(host: HostAssembly, configuration: HostConfiguration): UC03HostReadiness | undefined {
-  let copied: HostAssembly;
   try {
-    copied = { ...host };
+    return prepareUC03Host({ ...host, pins: configuration.pins, identity: configuration.identity });
   } catch {
     return undefined;
   }
-  return prepareUC03Host({ ...copied, pins: configuration.pins, identity: configuration.identity });
 }
 
 type Assembled = Readonly<{ ok: true; readiness: UC03HostReady; configuration: HostConfiguration; production?: HostProduction | undefined }> | Readonly<{ ok: false; result: EvaluateCliResult }>;
@@ -282,7 +285,16 @@ async function assemble(parsed: ParsedArgs, options: EvaluateCliOptions | undefi
 }
 
 export async function runEvaluateCli(args: readonly string[], options?: EvaluateCliOptions): Promise<EvaluateCliResult> {
-  if (isEvaluationControlCommand(args[0])) return runEvaluationControlCli(args, options?.control);
+  if (isEvaluationControlCommand(args[0])) {
+    const parsedControl = parseEvaluationControlArgs(args);
+    if (parsedControl === undefined) return runEvaluationControlCli(args, undefined);
+    if (options?.control !== undefined) return runEvaluationControlCli(args, options.control);
+    if (parsedControl.hostPath === undefined) return runEvaluationControlCli(args, undefined);
+    const loaded = loadHostConfiguration(parsedControl.hostPath);
+    if (!loaded.ok) return loaded.error;
+    const resolved = await resolveHostAssembly(loaded.value);
+    return runEvaluationControlCli(args, resolved?.control);
+  }
   let parsed: ParsedArgs;
   try {
     parsed = parseCliArgs(args);
