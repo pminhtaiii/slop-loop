@@ -5,12 +5,12 @@
 From repository root:
 
 ```powershell
-node scripts/agents/planning-workflow.mjs validate --dir specs/008-repository-questions
-node scripts/agents/planning-workflow.mjs status --dir specs/008-repository-questions
+node scripts/agents/planning-workflow.mjs validate --dir specs/008-retrieval-augmented-generation
+node scripts/agents/planning-workflow.mjs status --dir specs/008-retrieval-augmented-generation
 git diff --check
 ```
 
-`status` only reports automated validation and always leaves independent reviews separate. Review evidence is in `checklists/planning-validation.md` with pinned snapshot references. No runtime implementation exists from this plan.
+`status` only reports automated validation and always leaves independent reviews separate. Review evidence is in `checklists/rag-alignment-validation.md` with pinned snapshot references. No runtime implementation exists from this plan.
 
 ## Implementation prerequisites
 
@@ -21,12 +21,12 @@ Explicit G-IMPLEMENT release and normal contributor preparation; Node/pnpm insta
 ```powershell
 pnpm exec tsc --noEmit
 node --test tests/runtime/contract/questions.test.ts
-node --test tests/runtime/unit/question-repository.test.ts tests/runtime/unit/question-budget.test.ts tests/runtime/unit/question-evidence.test.ts tests/runtime/unit/question-session.test.ts tests/runtime/unit/question-grade.test.ts
-node --test tests/runtime/integration/question-runtime.test.ts tests/runtime/integration/question-evaluation.test.ts
+node --test tests/runtime/unit/question-repository.test.ts tests/runtime/unit/question-budget.test.ts tests/runtime/unit/question-evidence.test.ts tests/runtime/unit/question-session.test.ts tests/runtime/unit/question-grade.test.ts tests/runtime/unit/question-chunks.test.ts tests/runtime/unit/question-embedding.test.ts tests/runtime/unit/question-retrieval.test.ts tests/runtime/unit/question-recall.test.ts
+node --test tests/runtime/integration/question-runtime.test.ts tests/runtime/integration/question-evaluation.test.ts tests/runtime/integration/question-index.test.ts tests/runtime/integration/question-index-platform.test.ts
 pnpm run build
 node --test dist/tests/runtime/contract/questions.test.js
-node --test dist/tests/runtime/unit/question-repository.test.js dist/tests/runtime/unit/question-budget.test.js dist/tests/runtime/unit/question-evidence.test.js dist/tests/runtime/unit/question-session.test.js dist/tests/runtime/unit/question-grade.test.js
-node --test dist/tests/runtime/integration/question-runtime.test.js dist/tests/runtime/integration/question-evaluation.test.js
+node --test dist/tests/runtime/unit/question-repository.test.js dist/tests/runtime/unit/question-budget.test.js dist/tests/runtime/unit/question-evidence.test.js dist/tests/runtime/unit/question-session.test.js dist/tests/runtime/unit/question-grade.test.js dist/tests/runtime/unit/question-chunks.test.js dist/tests/runtime/unit/question-embedding.test.js dist/tests/runtime/unit/question-retrieval.test.js dist/tests/runtime/unit/question-recall.test.js
+node --test dist/tests/runtime/integration/question-runtime.test.js dist/tests/runtime/integration/question-evaluation.test.js dist/tests/runtime/integration/question-index.test.js dist/tests/runtime/integration/question-index-platform.test.js
 pnpm run lint
 pnpm run format:check
 ```
@@ -47,3 +47,10 @@ The inspected tsconfig uses `outDir: dist` and `rootDir: .`; these are future co
 ## Real-model experiment (not runnable until G-LIVE)
 
 Invoke the library driver only through admitted host composition, with approved provider/model/pricing/accounting/owner and artifact policy. Feed held-out material through evaluator-only port, never target files. Three repetitions per case/profile, each independently bound and graded. Required semantic judgments receive human dispositions; model-assisted grading cannot approve its own outputs. Retain candidate/config/case/report digests and source snapshot; live acceptance must not be inferred from controlled tests, provider availability or report schema validity.
+
+## UC-02 acceptance sequence after explicit release
+
+1. Validate the pinned SQLite extension on Windows and CI. Use a disposable host-owned database.
+2. Run function-location, cross-file, run/config, absent-feature and edited-source cases; inspect automatically validated citations and independent semantic grades.
+3. Stop and restart the host with the same snapshot; verify zero corpus embedding calls. Edit/add/delete paths, restart/refresh, and verify only added/changed files embed. Interrupt before index commit and verify stale data is never served as current.
+4. Run the pinned actual embedding profile and verify Recall@5 by the evaluation contract. Report any unavailable or not-run gate explicitly.

@@ -1,6 +1,6 @@
 # Research and resolved choices
 
-## Retrieval
+## Historical retrieval baseline (superseded for UC-02)
 
 **Decision**: Bounded agentic exploration with literal search/navigation/span reads, no BM25/embeddings.
 **Rationale**: Existing guarded scanner returns prefixes, making late code inaccessible. Improve evidence access before ranking. Agentic describes iterative tool selection, not scoring.
@@ -37,3 +37,11 @@ Official sources consulted in discussion: [Anthropic](https://www.anthropic.com/
 Constitution is a placeholder; repository policies govern. Existing branch and unrelated working-tree edits preserved. `.specify/feature.json` selects Feature 008 for planning commands; setup scripts' logical feature branch is not a claim of actual Git branch creation. No extension-hook configuration existed at preparation. Implementation/live-owner release remains separate, not a hidden unresolved design choice.
 
 For the later user-authorized PR, planning files were copied into an isolated `feat/questions-readonly-qa-planning` checkout based on fetched development. The original authoring checkout remains unchanged. Historical review evidence retains its original source root/HEAD; publication evidence uses a new snapshot and delta review. The only governing source difference from the original review is development's runtime-policy clarification wording; the concurrent uncommitted runtime-policy edit is excluded. Publication is documented in contracts/decisions.md and checklists/publication-validation.md.
+
+## UC-02 technology decisions (2026-11-13)
+
+- **Parser**: Pinned Tree-sitter Python grammar/WASM. It supplies structural boundaries over approved bytes without loading or executing repository Python. Logical statement/suite boundaries keep long definitions interpretable. Original-definition links permit guarded expansion. Bounded fallback text preserves docs/configuration retrieval; parse gaps constrain absence.
+- **Store**: SQLite with sqlite-vec on Node 24. A local DB keeps vectors and manifest state in one transaction boundary without a separately operated service. Compare LanceDB embedded table updates and Qdrant service deployment if SQLite compatibility, bounded resource use or atomic recovery fails. Pin and validate Windows and CI dependency loading, cosine/ranking, rollback and restart before accepting the adapter.
+- **Embedding**: multilingual-e5-small via local Transformers.js/ONNX is the first experiment. Pin artifacts/tokenizer, ONNX variant, runtime, preprocessing, dimensions, pooling and normalization. Pre-count the complete embedding input and split or reject overflow. A failed Recall@5 run leads to another candidate under the same criteria.
+- **Retrieval**: Exact parsed definitions and semantic cosine ranking share one chunk identity. Guarded literal search remains useful for references and coverage, and guarded range reads issue source evidence. No BM25 dependency is needed for this lane.
+- **Sources**: [Tree-sitter bindings](https://tree-sitter.github.io/tree-sitter/6-contributing.html), [sqlite-vec Node example](https://github.com/asg017/sqlite-vec/blob/main/examples/simple-node2/demo.mjs), [SQLite atomic commit](https://www.sqlite.org/atomiccommit.html), [LanceDB updates](https://docs.lancedb.com/tables/update), [Qdrant installation](https://qdrant.tech/documentation/operations/installation/), [E5 model card](https://huggingface.co/intfloat/multilingual-e5-small).

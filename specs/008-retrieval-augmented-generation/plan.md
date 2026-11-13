@@ -1,17 +1,17 @@
 # Implementation Plan: Evidence-backed repository questions
 
-**Branch**: `feat/questions-readonly-qa-planning` | **Date**: 2026-11-12 | **Spec**: [spec.md](spec.md)
+**Branch**: `feat/rag-uc02-spec-alignment` | **Date**: 2026-11-12 | **Spec**: [spec.md](spec.md)
 **Input**: [ADR-0008](../../docs/adr/0008-read-only-target-repository-questions.md).
 
 ## Summary
 
-Read-only repository Q&A with an adaptive search/read loop, span citations, honest clarification/incomplete outcomes, active-session follow-ups and inspectable evaluation. Reuse controlled repository access; add match-centered search/ranged reads through a narrow additive interface, preserving repair signatures/behavior. No BM25 or semantic index. Planning does not release implementation.
+Read-only repository Q&A with an adaptive search/read loop, span citations, honest clarification/incomplete outcomes, active-session follow-ups and inspectable evaluation. Reuse controlled repository access; add match-centered search/ranged reads through a narrow additive interface, preserving repair signatures/behavior. UC-02 adds persistent semantic retrieval with an exact-symbol lane. Planning does not release implementation.
 
 ## Technical Context
 
 **Language/Version**: Existing strict TypeScript 6.0.3, Node.js 24, pnpm 12.5.1.
-**Primary Dependencies**: Existing `@langchain/langgraph`, Node built-ins; none added.
-**Storage**: Host-memory session/evidence/budget state and host-admitted immutable source snapshot; evaluator metadata artifacts outside target workspace; no durable recovery.
+**Primary Dependencies**: Existing `@langchain/langgraph`, Node built-ins; planned Tree-sitter WASM/Python grammar, sqlite-vec and local Transformers.js/ONNX candidate.
+**Storage**: Host-memory session/evidence/budget state and host-admitted immutable source snapshot; evaluator metadata artifacts outside target workspace; durable host-owned SQLite retrieval index; question session recovery remains in-memory only.
 **Testing**: Node runner over compiled TypeScript, controlled model/filesystem/clock/accounting ports and disposable filesystem fixtures; Python never imported/executed.
 **Target Platform**: Local host toolchain; Windows junction tests; canonical relative evidence paths.
 **Project Type**: Internal runtime library and evaluation module; no new service or delegated coding-agent product.
@@ -27,18 +27,18 @@ Constitution is an unratified placeholder, not policy. Apply AGENTS.md and archi
 
 ### Documentation (this feature)
 
-`spec.md`, `plan.md`, `research.md`, `data-model.md`, `quickstart.md`, `tasks.md`, `contracts/{decisions,repository-tools,question-runtime,evaluation}.md`, `checklists/`.
+`spec.md`, `plan.md`, `research.md`, `data-model.md`, `quickstart.md`, `tasks.md`, `contracts/{decisions,repository-tools,question-runtime,evaluation,retrieval}.md`, `checklists/`.
 
 ### Source Code (repository root)
 
 ```text
 src/contracts/questions/{contracts,validation}.ts
 src/foundation/{repository-read,repository-tools,repository-types}.ts
-src/questions/{repository,budget,evidence,model,session,graph,presentation}.ts
-eval/questions/{types,cases,runner,grade,compare}.ts
+src/questions/{repository,budget,evidence,model,session,graph,presentation,chunks,index,embedding,retrieval}.ts
+eval/questions/{types,cases,runner,grade,compare,recall}.ts
 tests/runtime/contract/questions.test.ts
-tests/runtime/unit/{question-repository,question-budget,question-evidence,question-session,question-grade}.test.ts
-tests/runtime/integration/{question-runtime,question-evaluation}.test.ts
+tests/runtime/unit/{question-repository,question-budget,question-evidence,question-session,question-grade,question-chunks,question-embedding,question-retrieval,question-recall}.test.ts
+tests/runtime/integration/{question-runtime,question-evaluation,question-index,question-index-platform}.test.ts
 tests/runtime/support/questions/{fixtures,scripted-model}.ts
 ```
 
@@ -74,4 +74,8 @@ Full feature acceptance requires human-reviewed semantic cases, all mandatory sa
 
 ## Complexity Tracking
 
-No new dependency/database/vector store/multi-agent runtime/index. Additive spans are needed because prefix reads cannot access late definitions; private evidence issuance prevents invented coordinates. No implementation authority granted.
+The local vector index is a derived cache of a guarded immutable snapshot. Keep its dependency and resource surface confined to a host-owned retrieval adapter. Additive spans are needed because prefix reads cannot access late definitions; private evidence issuance prevents invented coordinates. No implementation authority granted.
+
+## UC-02 retrieval integration
+
+Freeze the retrieval contract with existing question contracts. Validate SQLite/extension compatibility on Windows and CI, then integrate a guarded corpus builder, bounded Python chunker, persistent index and hybrid ranking through the same Q&A graph. Use the guarded source reader to re-admit ranked spans before model context, then allow the existing bounded investigation loop. Use a trusted coverage receipt for scoped absence. Exercise physical restart and failed publication with a disposable on-disk database, and evaluate the pinned local embedding candidate independently of scripted answer quality. See [retrieval contract](contracts/retrieval.md) and T019–T026.
