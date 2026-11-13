@@ -7,7 +7,7 @@ The planning validator and context checker validate artifact structure. Independ
 ## Candidate and independent verdicts
 
 - Branch feat/rag-uc02-spec-alignment, base 2b07eb7615544e076e3c30455be82bc41e3818ca.
-- Candidate snapshot SHA-256 97bc88edaa42f2a6b162194e80c74eaf37707bfd1236268af47d65d581cb6607 pins 23 Git blobs at 0aab4c22240a8a2cf0b9ea8b56882751c130c704. Historical path specs/008-repository-questions moved in full; original evidence bytes and bindings retained.
+- Candidate snapshot SHA-256 95a0b3ff0935206c8bf72dcd71a0225696959e9ba2497be99fdb9c9717e82be7 pins 23 Git blobs at c8c5cb26db11c3628607751ff98f401c3eeed16c. Historical path specs/008-repository-questions moved in full; original evidence bytes and bindings retained.
 - R1 standards findings on durable ownership, revocation/cleanup, tokenizer prerequisites, resource accounting, generation binding and citation rendering were repaired in the plan, data model, retrieval/runtime contracts and tasks.
 - R1 testability findings on reproducible scoring, incomplete ranking, quotas, controlled/real gates, reopening, absence proof and traceability were repaired in the evaluation/retrieval contracts, quickstart and tasks.
 - R2 passed both lanes. R3 adds the user's syntax-first splits, definition linkage and budgeted expansion. Independent standards reviewer /root/grounding and testability reviewer /root/testability each reverified 23/23 and reported no blocking findings for R3.
