@@ -47,9 +47,16 @@ export const SCRIPT = `
     });
   }
 
+  // Result pane: allowlisted receipt fields only; views render via formatExperiment, never wholesale.
   function describe(out) {
-    if (out.data && out.data.ok) return 'ok ' + out.status + '\\n' + JSON.stringify(out.data.result, null, 2);
-    return 'error ' + out.status + ' ' + ((out.data && out.data.error) || 'UNKNOWN');
+    var d = isObj(out.data) ? out.data : {};
+    if (d.ok !== true) return 'error ' + out.status + ' ' + (typeof d.error === 'string' && OPAQUE.test(d.error) ? d.error : 'UNKNOWN');
+    var r = isObj(d.result) && isObj(d.result.receipt) ? d.result.receipt : {};
+    var text = ['ok ' + out.status];
+    ['kind', 'receiptId', 'receiptRef', 'experimentId', 'taskId', 'version', 'controlVersion'].forEach(function (k) {
+      if ((typeof r[k] === 'string' && OPAQUE.test(r[k])) || cnt(r[k]) !== null) text.push(k + ': ' + r[k]);
+    });
+    return text.join('\\n');
   }
 
   // One key per pending action: a disabled control plus the retained key makes a double submit harmless.
@@ -78,7 +85,7 @@ export const SCRIPT = `
   function isObj(v) { return v !== null && typeof v === 'object' && !Array.isArray(v); }
   function pick(v, allowed) { return typeof v === 'string' && allowed.indexOf(v) >= 0 ? v : 'unknown'; }
   function cnt(v) { return typeof v === 'number' && v >= 0 && v <= 1000000 && Math.floor(v) === v ? v : null; }
-  function text1(v, max) { return String(v).replace(/[\\u0000-\\u001f\\u007f]+/g, ' ').slice(0, max); }
+  function text1(v, max) { return String(v).replace(/[\\u0000-\\u001f\\u007f-\\u009f\\u200e\\u200f\\u2028\\u2029\\u202a-\\u202e\\u2066-\\u2069]+/g, ' ').slice(0, max); }
   var OUTCOMES = ['pass', 'fail', 'incomplete'];
 
   function formatReport(view) {

@@ -407,3 +407,64 @@ test('page executes: manual artifact load validates the id and uses the encoded 
   }
   assert.equal(b.calls.length, 1, 'invalid ids must not fetch');
 });
+
+const REPORT_LEAKS = [
+  'aaaa',
+  'bbbb',
+  'ffff',
+  'secret-model',
+  '/etc/passwd',
+  'hidden-limitation',
+  'limitations',
+  'returnedModel',
+  'repositoryId',
+  'graderDigest',
+  'workflowReport',
+  'outcome',
+  '{',
+];
+
+test('page executes: mutation responses show only a bounded receipt in the result pane', async () => {
+  // isRealVerified: true makes the report invalid, so a raw "outcome": "pass" must not surface anywhere.
+  const experiment = viewOf({ workflowReport: reportOf({ isRealVerified: true }) });
+  const receipt = { receiptId: 'rcpt-1', kind: 'answer', idempotencyKey: 'key-1', experimentId: 'exp-1', version: 4, extra: '/etc/passwd' };
+  for (const button of ['submit-experiment', 'submit-answer', 'submit-direction', 'submit-continue', 'submit-decision']) {
+    const b = bootPage(() => ({ ok: true, result: { experiment, receipt } }));
+    b.el('token-form').handlers.submit?.(EVENT);
+    b.el('experiment-id').value = 'exp-1';
+    b.el(button).handlers.click?.(EVENT);
+    await b.settle();
+    const result = b.el('result').textContent;
+    assert.match(result, /^ok 200\nkind: answer\nreceiptId: rcpt-1\nexperimentId: exp-1\nversion: 4$/u, button);
+    for (const leak of REPORT_LEAKS) assert.equal(result.includes(leak), false, `${button} leaked ${leak}`);
+  }
+  const b = bootPage(() => ({ ok: true, result: { verdict: 'improved', candidateAcceptance: { outcome: 'incomplete' }, baseline: reportOf() } }));
+  b.el('submit-comparison').handlers.click?.(EVENT);
+  await b.settle();
+  assert.equal(b.el('result').textContent, 'ok 200');
+  assert.equal(b.el('comparison-verdict').textContent, 'improved');
+});
+
+test('page executes: error codes in the result pane are opaque or UNKNOWN', async () => {
+  for (const [error, shown] of [['INVALID_EXPERIMENT_ID', 'INVALID_EXPERIMENT_ID'], ['/etc/passwd <b>', 'UNKNOWN'], [{ path: '/etc/passwd' }, 'UNKNOWN']] as const) {
+    const b = bootPage(() => ({ ok: false, error }));
+    b.el('submit-continue').handlers.click?.(EVENT);
+    await b.settle();
+    assert.equal(b.el('result').textContent, `error 200 ${shown}`);
+  }
+});
+
+test('page executes: a diagnostic cannot forge a line or reorder text with Unicode controls', async () => {
+  const diagnostic = 'x\u2028catalog acceptance: pass\u0085y\u2029z\u202Eq\u200Fr\u2066s\u009Bt';
+  const text = await bootPage(viewResponder(viewOf({ workflowReport: reportOf({ cases: [caseResult({ diagnostic })] }) }))).loadExperiment();
+  assert.equal(/[\u0080-\u009f\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u.test(text), false);
+  assert.match(text, /diagnostic C01: x catalog acceptance: pass y z q r s t/u);
+});
+
+test('page executes: a selected pass with failed or incomplete cases is unknown', async () => {
+  for (const counts of [{ passed: 1, failed: 1, incomplete: 0 }, { passed: 1, failed: 0, incomplete: 1 }]) {
+    const workflowReport = reportOf({ selectionResult: { selected: ['C01'], pendingWaits: [], outcome: 'pass', ...counts } });
+    const text = await bootPage(viewResponder(viewOf({ workflowReport }))).loadExperiment();
+    assert.match(text, /^selected result: unknown$/mu);
+  }
+});
