@@ -31,7 +31,7 @@
 
 - [ ] T004 [P] [US1] Extend existing reviewer snapshot/digest and opt-in context/output validation in src/foundation/reviewer.ts with tests/runtime/unit/uc06-reviewer.test.ts.
   - **Dependencies**: T003.
-  - **Owned Paths**: src/foundation/reviewer.ts; tests/runtime/unit/uc06-reviewer.test.ts.
+  - **Owned Paths**: src/foundation/reviewer.ts; tests/runtime/unit/uc06-reviewer.test.ts; src/foundation/model.ts; tests/runtime/unit/model.test.ts.
   - **Acceptance Checks**: FR-003–006/008, SC-001–003; same existing factory/closure/ingress, optional context resolver and snapshot companion, identical mint/dispatch projection, mandatory evidence/rationale/count/byte limits, no action proposals, no partial acceptance. Existing legacy/runtime/accounting suites remain passing; new suite invokes actual reviewer/HostModelPortV02 with fake transport, no second accounting. Usage of invalid output remains charged.
 
 - [ ] T005 [P] [US1] Add trusted role-specific reviewer instructions/schema in src/foundation/deepseek-transport.ts with tests/runtime/unit/uc06-review-prompt.test.ts.

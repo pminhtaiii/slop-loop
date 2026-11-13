@@ -35,6 +35,10 @@ T002's earlier repair-slice passes are not full prerequisite acceptance. Its che
 
 Controlled ports/transports and the planned in-memory ReviewEvidencePortV1 double may prove consumer behavior only. T007 onward, actual UC-04 storage/journal delivery, real provider/container execution, production profiles, quality/restart acceptance and merge remain unreleased. Keep canonical wire schemas/digests and UC-04/UC-05 owner authority unchanged. Missing compatible owner capabilities block the corresponding path instead of authorizing a parallel owner implementation.
 
+### T004 shared content-screen scope amendment — 2026-11-13
+
+A public `validateBaseModelInputs` probe on the accepted foundation rejects ordinary serialized task identity `task-calc-001` because the shared detector matches embedded `sk-`. This blocks the T004 companion at canonical ingress even though UC-06 validation accepts it. The prepared one-line patch constrains only the shared `sk-` alternative to a token boundary; credential-assignment, Bearer, private-key and protected-marker branches stay enforced. The user explicitly approved expanding T004 to **src/foundation/model.ts and tests/runtime/unit/model.test.ts**, responding “Cho phép; Tai đồng ý phạm vi này”. Record this as user-relayed Tai agreement, not an independent signature or owner delivery. The extension remains source/controlled, under Tai's existing foundation ownership, with public RED–GREEN and independent verification/review. It changes no canonical wire schema, digest input, storage or execution authority.
+
 ## Selected design proposals
 
 | ID | Proposal | Rationale / limit |
