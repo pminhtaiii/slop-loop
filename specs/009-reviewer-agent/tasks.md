@@ -1,7 +1,7 @@
 # Tasks: UC-06 — Reviewer Agent
 
 **Input**: [spec](spec.md), [plan](plan.md), [research](research.md), [data model](data-model.md), [context contract](contracts/review-context.md), [evaluation](contracts/evaluation.md), [decisions](contracts/decisions.md).
-**Status**: T001 agreement is recorded in [decisions](contracts/decisions.md). T002 remains unchecked pending full independent prerequisite acceptance; later bounded repair evidence is in [T002 evidence](checklists/t002-verification.md). The user's 2026-11-13 request separately releases Phase 3 T003–T006 at source/controlled tier in dependency order after accepted prerequisites. T007–T014 remain unreleased. No actual owner delivery, real integration or full-feature acceptance is claimed.
+**Status**: T001 agreement is recorded in [decisions](contracts/decisions.md). T002 passed full independent source/controlled prerequisite verification on `6c08306`; see [T002 evidence](checklists/t002-verification.md). The user's 2026-11-13 request separately releases Phase 3 T003–T006 in dependency order at the same bounded tier. T007–T014 remain unreleased. No actual owner delivery, real integration or full-feature acceptance is claimed.
 
 ## Phase 1: Setup
 
@@ -13,10 +13,10 @@
 
 ## Phase 2: Foundational
 
-- [ ] T002 Add strict versioned review companion types and runtime validation in src/contracts/review.ts and src/uc06/validation.ts with tests/runtime/contract/uc06-review.test.ts.
+- [x] T002 Add strict versioned review companion types and runtime validation in src/contracts/review.ts and src/uc06/validation.ts with tests/runtime/contract/uc06-review.test.ts.
   - **Dependencies**: T001.
   - **Owned Paths**: src/contracts/review.ts; src/uc06/validation.ts; tests/runtime/contract/uc06-review.test.ts.
-  - **Verification Evidence**: Source implementation at 04f055d. Public source/emitted tests pass 8/8 each, existing reviewer regressions 25/25; typecheck/build/scoped lint/format pass. Retained profile/context/diff/observation/evidence assertion RED–GREEN logs and isolated byte-bound mutation kill. Independent merger and two-axis review did not finish because agent usage limits interrupted their turns; T002 remains unchecked and successor work is not accepted or released.
+  - **Verification Evidence**: Original implementation and later bounded repairs are retained in checklists/t002-verification.md. Complete independent merger `/root/phase3_merger` verified `6c08306`: original 230 criteria pass in both source/emitted modules, 29 additional arithmetic controls pass each, public suites 21/21 each. T002-MERGE-003/004 were independently reproduced, repaired with public assertion RED–GREEN, then reverified; noEmit/build/scoped lint pass and omission of the gap guard is assertion-killed in isolation. Snapshot 16/16 unchanged; report digest 380de45342cc293b7597cfc09d8c1b66abd1b944b0073115d9e06a8ac6965f44. Acceptance is pure source/controlled validation/correlation only; no actual owner authority/storage, real execution or successor acceptance follows. End-of-batch review/publication remain separate.
   - **Acceptance Checks**: Contract sections 2/3/5/6; exact companion and ReviewEvidencePortV1 persist/load/recover request/result/ACK fields/digests, candidate-bound recovery without graph locator, safe identifiers/paths/finite bounds, forged/mismatched ACK rejection, mandatory evidence, side/revision mapping, whole-diff/mixed/overflow refusal, contradictions/output bounds and no protected payload. Canonical schemas unchanged. Neutral assertion RED then GREEN; import/type failure is not RED.
 
 ## Phase 3: User Story 1 - Bound review (Priority: P1)
@@ -108,8 +108,8 @@
 
 Internal DAG above is authoritative. T001 → T002 → T003 → {T004,T005} → T006 → T007 → T008; T002 → T009; {T008,T009} → T010 → {T011,T014}; T011 → {T012,T013}. External gates are owner evidence, not fabricated foreign task IDs or authority.
 
-Only T004/T005 have [P]: disjoint paths and the same accepted prerequisite T003. Once T002 completes, T009 may also be scheduled independently of the US1 extension chain in a separate phase with disjoint paths. No unresolved dependency is bypassed by [P]. Shared graph and evaluator files serialize with any other owner work.
+Only T004/T005 have [P]: disjoint paths and the same accepted prerequisite T003. T002 is now accepted at its pure source/controlled scope; T009 still needs a separate release before scheduling. No unresolved dependency is bypassed by [P]. Shared graph and evaluator files serialize with any other owner work.
 
 ## Implementation strategy
 
-MVP T001–T006 covers current bound review while enforcing read-only/admission/accounting invariants from the start; US2 adds hostile/failure proof. US3 adds actual graph loop and independent grading. Controlled T002–T010 can be separately released without real gates. Do not reimplement existing Feature 007 T005/T034, UC-03 reviewer/accounting or UC-04 recovery. Only administrative T001 is checked by the owner-agreement follow-up; no runtime task is complete.
+MVP T001–T006 covers current bound review while enforcing read-only/admission/accounting invariants from the start; US2 adds hostile/failure proof. US3 adds actual graph loop and independent grading. Controlled T002–T010 can be separately released without real gates. Do not reimplement existing Feature 007 T005/T034, UC-03 reviewer/accounting or UC-04 recovery. T001 and the pure source/controlled T002 prerequisite are checked; Phase 3 tasks require their own independent evidence.
