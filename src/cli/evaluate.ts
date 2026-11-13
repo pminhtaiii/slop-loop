@@ -7,12 +7,15 @@ import { runEvaluation } from '../../eval/uc03/runner.ts';
 import type { RealExecutionAdmission } from '../../eval/shared-types.ts';
 import { WORKFLOW_EVALUATION_VERSION, type WorkflowDriver, type WorkflowEvaluationOptions, type WorkflowEvaluationReport } from '../../eval/uc03/types.ts';
 import { prepareUC03Host, type UC03HostInputs, type UC03HostPins, type UC03HostReadiness } from '../runtime/uc03-host-bootstrap.ts';
+import type { EvaluationConsoleFactory } from '../runtime/evaluation-console-host.ts';
 import { UC03_PRODUCTION_COMPONENTS_V02, type UC03ProductionComponentV02 } from '../uc03/graph-types-v02.ts';
 import { isEvaluationControlBindings, isEvaluationControlCommand, parseEvaluationControlArgs, runEvaluationControlCli, type EvaluationControlBindings } from './evaluate-control.ts';
+import { runEvaluationConsoleCli } from './evaluate-console.ts';
 
 export interface EvaluateCliResult {
   readonly exitCode: number;
   readonly output: string;
+  readonly close?: (() => Promise<void>) | undefined;
 }
 
 /** Host-supplied adapter wiring. Pins and identity come from the host-only configuration file. */
@@ -51,7 +54,7 @@ export interface HostConfiguration {
 export type HostConfigurationLoad = Readonly<{ ok: true; value: HostConfiguration }> | Readonly<{ ok: false; error: EvaluateCliResult }>;
 
 /** What the operator's assembly module contributes: the host wiring and an optional route binding. */
-export type HostAssemblyResolution = Readonly<{ host: HostAssembly; production?: HostProduction | undefined; control?: EvaluationControlBindings | undefined }>;
+export type HostAssemblyResolution = Readonly<{ host: HostAssembly; production?: HostProduction | undefined; control?: EvaluationControlBindings | undefined; console?: EvaluationConsoleFactory | undefined }>;
 
 /** The one name an assembly module must export. It is a factory, so the module decides its own wiring. */
 const ASSEMBLY_FACTORY = 'createHostAssembly';
@@ -233,13 +236,16 @@ async function resolveAssembly(reference: string): Promise<HostAssemblyResolutio
     const host: unknown = Reflect.get(resolved, 'host');
     const production: unknown = Reflect.get(resolved, 'production');
     const control: unknown = Reflect.get(resolved, 'control');
+    const consoleFactory: unknown = Reflect.get(resolved, 'console');
     if (typeof host !== 'object' || host === null) return undefined;
     if (production !== undefined && typeof production !== 'function') return undefined;
     if (control !== undefined && !isEvaluationControlBindings(control)) return undefined;
+    if (consoleFactory !== undefined && typeof consoleFactory !== 'function') return undefined;
     return {
       host: host as HostAssembly,
       ...(production === undefined ? {} : { production: production as HostProduction }),
       ...(control === undefined ? {} : { control }),
+      ...(consoleFactory === undefined ? {} : { console: consoleFactory as EvaluationConsoleFactory }),
     };
   } catch {
     return undefined;
@@ -285,6 +291,14 @@ async function assemble(parsed: ParsedArgs, options: EvaluateCliOptions | undefi
 }
 
 export async function runEvaluateCli(args: readonly string[], options?: EvaluateCliOptions): Promise<EvaluateCliResult> {
+  if (args[0] === 'serve') {
+    return runEvaluationConsoleCli(args, {
+      loadConfiguration: loadHostConfiguration,
+      resolveAssembly: configuration => resolveHostAssembly(configuration),
+      prepareAssembly,
+      readinessReport,
+    }, isDirectExecution());
+  }
   if (isEvaluationControlCommand(args[0])) {
     const parsedControl = parseEvaluationControlArgs(args);
     if (parsedControl === undefined) return runEvaluationControlCli(args, undefined);
