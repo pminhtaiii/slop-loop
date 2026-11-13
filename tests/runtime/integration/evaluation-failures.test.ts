@@ -321,3 +321,47 @@ test('a reproduction collection error refuses plan generation without changing o
 test('a pre-existing regression failure refuses plan generation without changing owner state', async () => {
   await assertControlledBaselineRefusal('error', { exitCode: 0, stdout: '1 passed' }, { exitCode: 1, stdout: 'FAILED tests/test_calculator.py::test_divide - AssertionError' });
 });
+
+/* T038: recognized coder-boundary refusals become observed components, via the real controlled graph and driver. */
+
+async function observeCoderRefusal(content: string) {
+  const fixture = await controlledGeneratedPlanFixture({ firstResponse: { proposalId: 'controlled-inspect-1', content } });
+  const readiness = prepareControlledUC03Host(fixture.host.inputs);
+  assert.equal(readiness.status, 'controlled-ready');
+  if (readiness.status !== 'controlled-ready') throw new Error('controlled host not ready');
+  const route = createPendingApprovalRoute();
+  const host: WorkflowCaseHost = { entry: catalogEntry(route, 'C01'), task: fixture.task, expectedWait: null, controlled: { ports: readiness.ports, config: readiness.config } };
+  const report = await runEvaluation({ ...HOST_OPTIONS, mode: 'mock', cases: ['C01'], driver: createWorkflowDriver(new Map([['C01', host]])) } as WorkflowEvaluationOptions);
+  const [observed] = report.cases;
+  assert.ok(observed);
+  return { fixture, observed, serialized: JSON.stringify(report) };
+}
+
+function assertSpentOneDispatchNoPatch(fixture: Awaited<ReturnType<typeof observeCoderRefusal>>['fixture']): void {
+  assert.deepEqual(fixture.modelCalls.length, 1, 'exactly the charged coder dispatch');
+  assert.equal(fixture.coderAdmissions.length, 1);
+  assert.deepEqual(fixture.route.repositoryPort.patches, []);
+}
+
+test('a malformed coder response is reported as an observed model-output refusal at investigate', async () => {
+  const { fixture, observed, serialized } = await observeCoderRefusal('MARKER_NOT_JSON {');
+  assert.equal(observed.workflowOutcome, 'INCOMPLETE');
+  assert.match(observed.diagnostic ?? '', /^UC-03 outcome INCOMPLETE at Investigate \[model-output\/model\/[a-z0-9-]+\]$/u);
+  assert.equal(observed.usage, 'observed');
+  assert.equal(observed.effects, 'observed');
+  assertSpentOneDispatchNoPatch(fixture);
+  assertSafeObservation(observed, serialized);
+  assert.equal(serialized.includes('MARKER_NOT_JSON'), false);
+});
+
+test('an inspect against a path the guarded read refuses is reported as an observed repository-tool refusal at investigate', async () => {
+  const content = JSON.stringify({ kind: 'inspect', proposalId: 'controlled-inspect-1', operation: 'read_file', args: { path: 'src/missing_MARKER_ESCAPE.py' } });
+  const { fixture, observed, serialized } = await observeCoderRefusal(content);
+  assert.equal(observed.workflowOutcome, 'INCOMPLETE');
+  assert.match(observed.diagnostic ?? '', /^UC-03 outcome INCOMPLETE at Investigate \[repository-tool\/tool\/[a-z0-9-]+\]$/u);
+  assert.equal(observed.usage, 'observed');
+  assert.equal(observed.effects, 'observed');
+  assertSpentOneDispatchNoPatch(fixture);
+  assertSafeObservation(observed, serialized);
+  assert.equal(serialized.includes('MARKER_ESCAPE'), false);
+});

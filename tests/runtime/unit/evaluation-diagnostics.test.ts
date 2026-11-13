@@ -4,6 +4,7 @@ import test from 'node:test';
 import type { ApprovalPort, ModelPort, RepositoryPort, StatePort } from '../../../src/contracts/foundation/uc03.ts';
 import { DIAGNOSTIC_ATTRIBUTIONS, DIAGNOSTIC_COMPONENTS, DIAGNOSTIC_STAGES, createEvaluationDiagnostic } from '../../../src/runtime/evaluation-diagnostics.ts';
 import { runUC03Graph, type UC03GraphPorts } from '../../../src/uc03/graph.ts';
+import { diagnosticForOutcome } from '../../../src/uc03/graph-diagnostics.ts';
 import { createGraphTaskState } from '../support/uc03/graph-fixtures.ts';
 import { createFixtureBugTask } from '../support/uc03/port-fixtures.ts';
 
@@ -185,4 +186,27 @@ test('Graph route failure keeps the existing reason and preserves reloaded owner
   const serialized = JSON.stringify(result);
   assert.equal(serialized.includes(SECRET), false);
   assert.equal(serialized.includes(ABSOLUTE_PATH), false);
+});
+
+/* T038: coder-boundary refusal mapping at the result boundary. */
+const refused = (...reasons: string[]) => diagnosticForOutcome({ reasons, state: { node: 'Investigate' }, milestones: [] } as never).diagnostic;
+
+test('recognized coder refusal codes become observed components, labelling only the category', () => {
+  for (const [reason, component, attribution, code] of [
+    ['PROPOSAL_INVALID:MALFORMED_JSON', 'model-output', 'model', 'coder-proposal-invalid'],
+    ['TOOL_ERROR', 'repository-tool', 'tool', 'coder-tool-refused'],
+    ['MODEL_ERROR', 'provider', 'environment', 'coder-dispatch-failed'],
+    ['MODEL_UNCERTAIN:TIMEOUT', 'provider', 'environment', 'coder-dispatch-failed'],
+  ] as const) {
+    const diagnostic = refused('Incomplete verification', `REAL_PROFILE_GENERATION_INVALID: ${reason}`);
+    assert.deepEqual([diagnostic?.stage, diagnostic?.component, diagnostic?.attribution, diagnostic?.attributionConfidence, diagnostic?.reasonCode], ['investigate', component, attribution, 'observed', code]);
+    assert.equal(JSON.stringify(diagnostic).includes(reason), false);
+  }
+});
+
+test('unrecognized or unprefixed coder reasons stay workflow/unknown/route-incomplete', () => {
+  for (const reasons of [['REAL_PROFILE_GENERATION_INVALID: SOMETHING_ELSE'], ['REAL_PROFILE_GENERATION_INVALID: TOOL_ERROR at C:/secret/x.ts'], ['TOOL_ERROR'], ['REAL_PROFILE_GENERATION_INVALID: PROPOSAL_INVALID:lower'], []]) {
+    const diagnostic = refused(...reasons);
+    assert.deepEqual([diagnostic?.component, diagnostic?.attribution, diagnostic?.attributionConfidence, diagnostic?.reasonCode], ['workflow', 'unknown', 'unknown', 'route-incomplete']);
+  }
 });
